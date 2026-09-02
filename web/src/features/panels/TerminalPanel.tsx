@@ -25,7 +25,7 @@ export function TerminalPanel() {
         term.loadAddon(fit);
         term.open(ref.current!);
         fit.fit();
-        const r = await ws.request<{ termId: string }>({ kind: 'terminal.open', cwd: active?.cwd || 'C:\\', cols: term.cols, rows: term.rows });
+        const r = await ws.request<{ termId: string }>({ kind: 'terminal.open', cwd: active?.cwd || '', cols: term.cols, rows: term.rows });
         id = r.termId;
         setTermId(id);
         term.onData((d: string) => ws.request({ kind: 'terminal.input', termId: id!, data: d }));

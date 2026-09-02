@@ -15,11 +15,13 @@ export function TrajectoryView() {
       if (it.kind === 'assistant') turnOf.set(it.id, turn);
     }
     const out: { turn: number; depth: number; name: string; summary: string; status: string; ms?: number; id: string; error?: string }[] = [];
+    let lastTurn = 0;
     for (const { tool, depth, item } of walkTools(active.conv.items)) {
+      if (depth === 0) lastTurn = turnOf.get(item.id) ?? lastTurn;
       const s = toolSummary(tool.name, tool.input);
       if (q && !`${tool.name} ${s} ${tool.result?.content ?? ''}`.toLowerCase().includes(q.toLowerCase())) continue;
       const ms = item.ts && tool.result?.ts ? Date.parse(tool.result.ts) - Date.parse(item.ts) : undefined;
-      out.push({ turn: turnOf.get(item.id) ?? 0, depth, name: tool.name, summary: s, status: tool.status, ms, id: tool.id, error: tool.result?.isError ? tool.result.content.slice(0, 120) : undefined });
+      out.push({ turn: lastTurn, depth, name: tool.name, summary: s, status: tool.status, ms, id: tool.id, error: tool.result?.isError ? tool.result.content.slice(0, 120) : undefined });
     }
     return out;
   }, [active?.version, q]);

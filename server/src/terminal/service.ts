@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
+import os from 'node:os';
 import { resolveClaudeExe } from '../claude-exe.js';
 
 type Pty = { write(d: string): void; resize(c: number, r: number): void; kill(): void; onData(cb: (d: string) => void): void; onExit(cb: (e: { exitCode: number }) => void): void };
@@ -27,7 +28,7 @@ export class TerminalService extends EventEmitter {
   async open(cwd: string, cols: number, rows: number) {
     if (!(await this.available())) throw new Error('node-pty is not installed; run `npm i -w server node-pty` to enable the terminal panel');
     const termId = randomUUID();
-    const p: Pty = this.ptyMod.spawn(resolveClaudeExe(), [], { name: 'xterm-256color', cols, rows, cwd, env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: 'claude-web-terminal' } });
+    const p: Pty = this.ptyMod.spawn(resolveClaudeExe(), [], { name: 'xterm-256color', cols, rows, cwd: cwd || os.homedir(), env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: 'claude-web-terminal' } });
     this.terms.set(termId, p);
     p.onData((d) => this.emit('data', termId, d));
     p.onExit((e) => {
