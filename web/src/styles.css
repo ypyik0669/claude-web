@@ -401,7 +401,7 @@ button.link:hover { text-decoration: underline; }
 .composer-box:focus-within { border-color: var(--fg-2); }
 .composer textarea { width: 100%; background: transparent; border: none; outline: none; resize: none; max-height: 280px; min-height: 26px; line-height: 1.55; padding: 2px 4px; font-size: 14.5px; }
 .composer textarea::placeholder { color: var(--fg-3); }
-.composer-bar { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
+.composer-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .composer-bar .grow { flex: 1; }
 .send { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; transition: transform 0.1s, background 0.12s; }
 .send:hover { transform: scale(1.05); }
