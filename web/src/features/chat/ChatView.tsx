@@ -31,8 +31,8 @@ type Seg = { kind: 'text'; b: Block; i: number } | { kind: 'thinking'; b: Block;
 function segment(blocks: Block[]): Seg[] {
   const out: Seg[] = [];
   blocks.forEach((b, i) => {
-    if (b.type === 'text') out.push({ kind: 'text', b, i });
-    else if (b.type === 'thinking') out.push({ kind: 'thinking', b, i });
+    if (b.type === 'text') { if (b.text.trim() || i === blocks.length - 1) out.push({ kind: 'text', b, i }); }
+    else if (b.type === 'thinking') { if (b.thinking || i === blocks.length - 1) out.push({ kind: 'thinking', b, i }); }
     else if (AGENT_TOOLS.has(b.name)) out.push({ kind: 'agent', t: b });
     else {
       const last = out[out.length - 1];
@@ -47,7 +47,7 @@ function Steps({ tools, version, live }: { tools: ToolUseBlock[]; version: numbe
   const running = tools.some((t) => t.status === 'running' || t.status === 'pending' || t.status === 'streaming');
   const failed = tools.some((t) => t.status === 'error');
   const [open, setOpen] = useState<boolean | null>(null);
-  const show = open ?? (failed || (live && running));
+  const show = open ?? (live && running);
   return (
     <div className="step">
       <div className={clsx('step-head', show && 'open')} onClick={() => setOpen(!show)}>
