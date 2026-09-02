@@ -32,6 +32,19 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - **worktree 会话**：`extraArgs: { worktree: name }`。
 - 浏览器占用 Ctrl+N，新会话快捷键是 Alt+N；命令面板 Ctrl+K。
 
+## 桌面版（desktop/）
+
+```
+npm run desktop         # 编译 server/web/desktop 后用源码起 Electron
+npm run build:desktop   # electron-builder → dist-desktop/ClaudeWeb-<ver>-win-x64.exe (NSIS) + ClaudeWeb-<ver>-portable.exe
+```
+
+- 壳只做四件事：`utilityProcess.fork(server/dist/index.js)`（PORT=0 自选端口 + 随机 token）、BrowserWindow 加载 `http://127.0.0.1:<port>/?token=…`、托盘/菜单/通知、`window.desktop` 桥（preload）。
+- **utilityProcess 里 `process.send` 不存在**，server 用 `process.parentPort.postMessage({type:'ready'})` 报告端口；别给它设 `ELECTRON_RUN_AS_NODE`（会让它拒绝 Chromium 参数直接退出）。
+- 前端通过 `web/src/desktop.ts` 判断是否在桌面壳里：选目录 / 打开路径 / 通知 / 菜单快捷键都走桥，浏览器模式退回原逻辑。`html.desktop` 类让顶栏成为可拖动标题栏，右侧留 150px 给系统窗口按钮。
+- 打包后原生二进制在 `app.asar.unpacked`：`resolveClaudeExe()` 和 node-pty 加载都做了路径修正。
+- 日志：`%APPDATA%\claude-web\server.log`、`main.log`。
+
 ## 结构
 
 - `server/src/protocol.ts` — 前后端共享协议类型（web 通过 `@shared` 别名引用）

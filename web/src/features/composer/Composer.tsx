@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useActive, useStore } from '@/store';
 import { ws } from '@/ws/client';
+import { desktop } from '@/desktop';
 import { clsx, fmtTok, fmtUsd, fmtMs, shortModel, basename } from '@/util';
 import type { EffortLevel, PermissionMode } from '@shared';
 
@@ -126,7 +127,7 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
   const fileInput = useRef<HTMLInputElement>(null);
 
   const pickDir = async () => {
-    const p = await ws.request<string | null>({ kind: 'fs.pickDir' });
+    const p = desktop ? await desktop.pickDir() : await ws.request<string | null>({ kind: 'fs.pickDir' });
     if (p) setCwd(p);
   };
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '@/store';
 import { ws } from '@/ws/client';
+import { desktop } from '@/desktop';
 import { ago, basename, clsx } from '@/util';
 import type { SessionSummary, Workspace } from '@shared';
 
@@ -125,7 +126,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     localStorage.setItem('cw.collapsed', JSON.stringify(next));
   };
   const pickWorkspace = async () => {
-    const p = await ws.request<string | null>({ kind: 'fs.pickDir' });
+    const p = desktop ? await desktop.pickDir() : await ws.request<string | null>({ kind: 'fs.pickDir' });
     if (p) await addWorkspace(p).catch((e) => toast(e.message));
   };
   const list = (arr: SessionSummary[], k: string) => (
@@ -143,7 +144,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         <button className="icon-btn" title="收起侧栏 (Ctrl+B)" onClick={() => useStore.setState({ sidebarOpen: false })}>⇤</button>
       </div>
       <div className="sb-nav">
-        <button className={clsx('nav', !activeId && 'active')} onClick={onNew}><span className="ic">＋</span>新会话<span className="k kbd">Alt N</span></button>
+        <button className={clsx('nav', !activeId && 'active')} onClick={onNew}><span className="ic">＋</span>新会话<span className="k kbd">{desktop ? 'Ctrl N' : 'Alt N'}</span></button>
         <button className="nav" onClick={() => useStore.setState({ paletteOpen: true })}><span className="ic">⌘</span>命令 / 搜索<span className="k kbd">Ctrl K</span></button>
         <button className={clsx('nav', panels.includes('config') && 'active')} onClick={() => togglePanel('config')}><span className="ic">⚙</span>配置中心</button>
         <button className={clsx('nav', panels.includes('usage') && 'active')} onClick={() => togglePanel('usage')}><span className="ic">▤</span>用量</button>

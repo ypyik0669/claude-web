@@ -14,7 +14,8 @@ class WsClient {
 
   connect() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/ws`);
+    const token = new URLSearchParams(location.search).get('token');
+    const ws = new WebSocket(`${proto}://${location.host}/ws${token ? `?token=${encodeURIComponent(token)}` : ''}`);
     this.ws = ws;
     ws.onopen = () => {
       this.connected = true;

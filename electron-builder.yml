@@ -1,0 +1,58 @@
+appId: com.claude-web.desktop
+productName: Claude Web
+directories:
+  output: dist-desktop
+  buildResources: desktop/build
+extraMetadata:
+  main: desktop/dist/main.js
+files:
+  - package.json
+  - desktop/dist/**
+  - desktop/package.json
+  - server/dist/**
+  - server/package.json
+  - web/dist/**
+  - "!**/*.map"
+  - "!**/node_modules/.cache/**"
+  - "!**/node_modules/**/{test,tests,__tests__,docs,example,examples}/**"
+  - "!**/node_modules/**/*.{md,markdown,ts,d.ts,map}"
+  - "!node_modules/electron/**"
+  - "!node_modules/electron-builder/**"
+  - "!node_modules/app-builder-*/**"
+  - "!node_modules/@electron/**"
+  - "!node_modules/typescript/**"
+  - "!node_modules/vite/**"
+  - "!node_modules/@vitejs/**"
+  - "!node_modules/vitest/**"
+  - "!node_modules/tsx/**"
+  - "!node_modules/esbuild/**"
+  - "!node_modules/@esbuild/**"
+  - "!node_modules/rollup/**"
+  - "!node_modules/@rollup/**"
+  - "!node_modules/react/**"
+  - "!node_modules/react-dom/**"
+  - "!node_modules/react-markdown/**"
+  - "!node_modules/remark-*/**"
+  - "!node_modules/@xterm/**"
+  - "!node_modules/zustand/**"
+asarUnpack:
+  - "**/node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/**"
+  - "**/node_modules/node-pty/**"
+extraResources:
+  - from: desktop/build/icon.png
+    to: icon.png
+win:
+  target:
+    - nsis
+    - portable
+  icon: desktop/build/icon.png
+  artifactName: ClaudeWeb-${version}-${os}-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  createDesktopShortcut: true
+  shortcutName: Claude Web
+portable:
+  artifactName: ClaudeWeb-${version}-portable.${ext}
+npmRebuild: true

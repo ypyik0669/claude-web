@@ -1,4 +1,8 @@
 node_modules/
 web/dist/
+server/dist/
+desktop/dist/
+dist-desktop/
 *.log
 hello.txt
+color.txt

@@ -28,6 +28,9 @@ export function resolveClaudeExe(): string {
   } catch {
     /* ignore */
   }
+  // packaged (Electron asar): native binaries live in app.asar.unpacked
+  for (const c of [...candidates]) if (c.includes('app.asar')) candidates.unshift(c.replace(/app\.asar(?!\.unpacked)/, 'app.asar.unpacked'));
+  if ((process as any).resourcesPath) candidates.push(path.join((process as any).resourcesPath, 'app.asar.unpacked', 'node_modules', pkg, process.platform === 'win32' ? 'claude.exe' : 'claude'));
   const found = candidates.find((c) => existsSync(c));
   if (!found) throw new Error(`Claude Code executable not found. Tried: ${candidates.join(', ')}`);
   return found;

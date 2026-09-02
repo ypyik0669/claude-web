@@ -13,10 +13,12 @@ import { TerminalPanel } from '@/features/panels/TerminalPanel';
 import { InspectorPanel } from '@/features/panels/InspectorPanel';
 import { ago, clsx } from '@/util';
 import { CommandPalette } from '@/features/palette/CommandPalette';
+import { desktop } from '@/desktop';
 
 const SHORTCUTS: [string, string][] = [
   ['Ctrl+K', '命令面板 / 全文搜索会话'],
-  ['Alt+N', '新会话（Ctrl+N 被浏览器占用）'],
+  [desktop ? 'Ctrl+N' : 'Alt+N', desktop ? '新会话' : '新会话（Ctrl+N 被浏览器占用）'],
+  ...(desktop ? ([['Ctrl+1 / 2 / 3', '任务 / 文件 / 用量面板'], ['Ctrl+,', '配置中心'], ['Ctrl+`', '终端'], ['Ctrl+W', '结束当前会话进程'], ['Ctrl+Shift+C', '中断当前轮']] as [string, string][]) : []),
   ['Ctrl+B', '收起 / 展开侧栏'],
   ['Enter', '发送'],
   ['Shift+Enter', '换行'],
@@ -114,6 +116,28 @@ export function App() {
 
   const shown: PanelId[] = [...panels, ...(inspect && !panels.includes('inspector') ? (['inspector'] as PanelId[]) : [])];
   const rpWidth = shown.length ? rp : 0;
+
+  // desktop shell: menu accelerators arrive as commands; notifications click → focus session
+  useEffect(() => {
+    if (!desktop) return;
+    const offCmd = desktop.onCommand((id) => {
+      const st = useStore.getState();
+      const a = st.activeId ? st.open[st.activeId] : undefined;
+      if (id === 'new') st.setActive(null);
+      else if (id === 'palette') useStore.setState((s) => ({ paletteOpen: !s.paletteOpen }));
+      else if (id === 'sidebar') useStore.setState((s) => ({ sidebarOpen: !s.sidebarOpen }));
+      else if (id === 'shortcuts') useStore.setState({ shortcutsOpen: true });
+      else if (id === 'tab') st.setTab(st.tab === 'chat' ? 'trajectory' : 'chat');
+      else if (id.startsWith('panel.')) st.togglePanel(id.slice(6) as PanelId);
+      else if (id === 'interrupt' && a) void st.interrupt(a.sessionId);
+      else if (id === 'close' && a) void st.closeSession(a.sessionId);
+    });
+    const offFocus = desktop.onFocusSession((sessionId) => {
+      const st = useStore.getState();
+      st.open[sessionId] ? st.setActive(sessionId) : void st.loadHistory(sessionId);
+    });
+    return () => { offCmd(); offFocus(); };
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

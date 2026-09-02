@@ -140,6 +140,11 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 /* ---------- topbar ---------- */
 .topbar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; min-height: 48px; overflow: hidden; }
 .topbar > * { flex: none; white-space: nowrap; }
+/* desktop shell: the top bar doubles as the window title bar */
+html.desktop .topbar { -webkit-app-region: drag; padding-right: 150px; min-height: 40px; }
+html.desktop .topbar button, html.desktop .topbar .seg, html.desktop .topbar .crumb, html.desktop .topbar .rings, html.desktop .topbar input { -webkit-app-region: no-drag; }
+html.desktop .sb-top { -webkit-app-region: drag; }
+html.desktop .sb-top button { -webkit-app-region: no-drag; }
 .topbar .title { flex: 0 1 auto; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .topbar .title input { background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 6px; padding: 3px 8px; width: 360px; outline: none; }
 .topbar .sub { font-size: 12px; color: var(--fg-2); font-weight: 400; overflow: hidden; text-overflow: ellipsis; }

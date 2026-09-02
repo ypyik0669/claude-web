@@ -4,6 +4,7 @@ import type { EffortLevel, Limits, PermissionMode, PermissionRequestEvent, Runne
 export const THEMES = ['dark', 'light', 'dracula', 'nord', 'tokyo-night', 'paper'] as const;
 export type Theme = (typeof THEMES)[number];
 import { ws } from '@/ws/client';
+import { desktop } from '@/desktop';
 import { applyMessage, applyTranscript, createConversation, walkTools, type Conversation } from '@/model/conversation';
 
 export type PanelId = 'tasks' | 'files' | 'usage' | 'config' | 'terminal' | 'inspector';
@@ -133,15 +134,23 @@ export const useStore = create<State>((set, get) => ({
         case 'session.event':
           set((s) => bump(s, e.sessionId, (o) => applyMessage(o.conv, e.message)));
           break;
-        case 'session.state':
+        case 'session.state': {
+          const prev = get().open[e.sessionId]?.state;
+          if (desktop && e.state === 'idle' && prev === 'running' && !document.hasFocus()) desktop.notify(get().sessions.find((x) => x.sessionId === e.sessionId)?.title ?? '会话', 'Claude 完成了这一轮', e.sessionId);
           set((s) => bump(s, e.sessionId, (o) => { o.state = e.state; if (e.error) o.error = e.error; if (e.state === 'idle' && o.queue.length) { const next = o.queue.shift()!; void get().send(e.sessionId, next); } }));
           set((s) => ({ sessions: s.sessions.map((x) => (x.sessionId === e.sessionId ? { ...x, live: e.state === 'closed' ? undefined : e.state } : x)) }));
           break;
+        }
         case 'session.info':
           set((s) => bump(s, e.info.sessionId, (o) => { o.info = e.info; }));
           break;
         case 'permission.request':
           set((s) => bump(s, e.request.sessionId, (o) => { if (!o.pending.some((p) => p.requestId === e.request.requestId)) o.pending.push(e.request); }));
+          if (desktop) {
+            const title = get().sessions.find((x) => x.sessionId === e.request.sessionId)?.title ?? '会话';
+            const body = e.request.toolName === 'AskUserQuestion' ? 'Claude 有问题要问你' : e.request.toolName === 'ExitPlanMode' ? 'Claude 请求批准计划' : `需要权限：${e.request.toolName}`;
+            desktop.notify(title, body, e.request.sessionId);
+          }
           break;
         case 'permission.resolved':
           set((s) => { const out = { ...s.open }; for (const [id, o] of Object.entries(out)) if (o.pending.some((p) => p.requestId === e.requestId)) out[id] = { ...o, pending: o.pending.filter((p) => p.requestId !== e.requestId), version: o.version + 1 }; return { open: out }; });
@@ -282,6 +291,11 @@ export const useStore = create<State>((set, get) => ({
     localStorage.setItem('cw.theme', theme);
     document.documentElement.dataset.theme = theme;
     set({ theme });
+    const d = desktop;
+    if (d) {
+      const cs = getComputedStyle(document.documentElement);
+      setTimeout(() => d.setTitleBarColors(cs.getPropertyValue('--bg').trim(), cs.getPropertyValue('--fg-1').trim()), 0);
+    }
   },
   async forkAt(sessionId: string, messageUuid: string) {
     const o = get().open[sessionId];

@@ -2,6 +2,9 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { resolveClaudeExe } from '../claude-exe.js';
 
 type Pty = { write(d: string): void; resize(c: number, r: number): void; kill(): void; onData(cb: (d: string) => void): void; onExit(cb: (e: { exitCode: number }) => void): void };
@@ -17,7 +20,11 @@ export class TerminalService extends EventEmitter {
   async available() {
     if (this.ptyMod === undefined) {
       try {
-        this.ptyMod = await import('node-pty' as string);
+        // packaged (Electron asar): node-pty must load from app.asar.unpacked
+        const unpacked = (process as any).resourcesPath ? path.join((process as any).resourcesPath, 'app.asar.unpacked', 'node_modules', 'node-pty') : null;
+        const spec = unpacked && fs.existsSync(unpacked) ? pathToFileURL(path.join(unpacked, 'lib', 'index.js')).href : 'node-pty';
+        this.ptyMod = await import(spec);
+        if (this.ptyMod.default && !this.ptyMod.spawn) this.ptyMod = this.ptyMod.default;
       } catch {
         this.ptyMod = null;
       }
