@@ -12,6 +12,37 @@ import { ConfigPanel } from '@/features/panels/ConfigPanel';
 import { TerminalPanel } from '@/features/panels/TerminalPanel';
 import { InspectorPanel } from '@/features/panels/InspectorPanel';
 import { ago, clsx } from '@/util';
+import { CommandPalette } from '@/features/palette/CommandPalette';
+
+const SHORTCUTS: [string, string][] = [
+  ['Ctrl+K', '命令面板 / 全文搜索会话'],
+  ['Alt+N', '新会话（Ctrl+N 被浏览器占用）'],
+  ['Ctrl+B', '收起 / 展开侧栏'],
+  ['Enter', '发送'],
+  ['Shift+Enter', '换行'],
+  ['Esc', '中断当前轮 / 关闭弹层'],
+  ['/', '命令面板（输入框内）'],
+  ['Tab', '补全命令'],
+  ['Ctrl+V', '粘贴图片'],
+  ['?', '本快捷键表'],
+];
+
+function ShortcutsModal() {
+  const open = useStore((s) => s.shortcutsOpen);
+  if (!open) return null;
+  const close = () => useStore.setState({ shortcutsOpen: false });
+  return (
+    <div className="modal-bg" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <div className="modal">
+        <h3>键盘快捷键</h3>
+        <div className="shortcuts">
+          {SHORTCUTS.map(([k, v]) => <div key={k}><span>{v}</span><span className="kbd">{k}</span></div>)}
+        </div>
+        <div className="actions"><button className="btn" onClick={close}>关闭</button></div>
+      </div>
+    </div>
+  );
+}
 
 const PANEL_TITLES: Record<PanelId, string> = { tasks: '任务 / 子代理', files: '文件改动', usage: '用量', config: '配置中心', terminal: '终端', inspector: '详情' };
 
@@ -86,8 +117,12 @@ export function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); setActive(null); }
+      if (e.altKey && e.key.toLowerCase() === 'n') { e.preventDefault(); setActive(null); }
       if ((e.ctrlKey || e.metaKey) && e.key === 'b') { e.preventDefault(); useStore.setState((s) => ({ sidebarOpen: !s.sidebarOpen })); }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); useStore.setState((s) => ({ paletteOpen: !s.paletteOpen })); }
+      const inField = (e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA';
+      if (e.key === '?' && !inField) useStore.setState({ shortcutsOpen: true });
+      if (e.key === 'Escape') useStore.setState({ shortcutsOpen: false });
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -124,6 +159,8 @@ export function App() {
         {shown.map((p) => <Pane key={p} id={p} />)}
       </div>
       <Toasts />
+      <CommandPalette />
+      <ShortcutsModal />
     </div>
   );
 }

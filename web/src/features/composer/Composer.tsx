@@ -236,6 +236,9 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
             ) : active ? (
               <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{active.state === 'starting' ? '启动中…' : '未运行 · 发送即恢复'}</span>
             ) : null}
+            {busy && canSend && active && (
+              <button className="steer" title="不等这轮结束，立刻插话给 Claude" onClick={async () => { const t = text; setText(''); setDraft(active.sessionId, ''); await send(active.sessionId, t, undefined, true).catch((e) => toast(e.message)); }}>插话 ⤴</button>
+            )}
             {busy ? (
               <button className="send stop" title="中断 (Esc)" onClick={() => active && interrupt(active.sessionId)}>■</button>
             ) : (

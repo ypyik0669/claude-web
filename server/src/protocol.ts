@@ -25,13 +25,23 @@ export interface OpenSessionParams {
   permissionMode?: PermissionMode;
   effort?: EffortLevel;
   fork?: boolean;
+  resumeAt?: string; // fork from this message uuid (implies fork)
+  worktree?: string; // create a git worktree with this name for the session
+  workspaceId?: string;
 }
 
 export interface SendParams {
   sessionId: string;
   text: string;
   images?: { mediaType: string; data: string }[]; // base64
+  steer?: boolean; // deliver mid-turn (SDK priority: 'now') instead of after the turn
 }
+
+export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
+export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[] }
+export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string }
+export interface LimitWindow { label: string; percent: number; resetsAt: string | null; active: boolean; severity?: string }
+export interface Limits { ok: boolean; capturedAt: string; windows: LimitWindow[]; subscriptionType?: string; rateLimitTier?: string; error?: string }
 
 export interface PermissionRequestEvent {
   requestId: string;
@@ -86,6 +96,22 @@ export type ClientRequest =
   | { kind: 'session.contextUsage'; sessionId: string }
   | { kind: 'session.stopTask'; sessionId: string; taskId: string }
   | { kind: 'permission.respond'; requestId: string; response: PermissionResponse }
+  | { kind: 'workspaces.list' }
+  | { kind: 'workspaces.add'; path: string }
+  | { kind: 'workspaces.remove'; id: string }
+  | { kind: 'workspaces.rename'; id: string; name: string }
+  | { kind: 'workspaces.reorder'; ids: string[] }
+  | { kind: 'sessions.meta' }
+  | { kind: 'session.setMeta'; sessionId: string; patch: SessionMeta }
+  | { kind: 'schedules.list' }
+  | { kind: 'schedules.upsert'; schedule: Partial<Schedule> }
+  | { kind: 'schedules.remove'; id: string }
+  | { kind: 'schedules.runNow'; id: string }
+  | { kind: 'limits.get'; force?: boolean }
+  | { kind: 'settings.get' }
+  | { kind: 'settings.set'; key: string; value: unknown }
+  | { kind: 'sessions.search'; query: string; limit?: number }
+  | { kind: 'shell.open'; path: string; app?: 'explorer' | 'code' | 'cursor' }
   | { kind: 'config.overview' }
   | { kind: 'config.plugins' }
   | { kind: 'config.plugin.toggle'; name: string; enable: boolean }
@@ -127,6 +153,8 @@ export type ServerEvent =
   | { kind: 'permission.request'; request: PermissionRequestEvent }
   | { kind: 'permission.resolved'; requestId: string }
   | { kind: 'sessions.changed' }
+  | { kind: 'meta.changed' }
+  | { kind: 'limits'; limits: Limits }
   | { kind: 'terminal.data'; termId: string; data: string }
   | { kind: 'terminal.exit'; termId: string; code: number | null };
 

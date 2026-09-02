@@ -6,6 +6,10 @@ import { ConfigService } from '../config/service.js';
 import { UsageService } from '../usage/service.js';
 import { FilesService } from '../files/service.js';
 import { TerminalService } from '../terminal/service.js';
+import { MetaStore } from '../meta/store.js';
+import { LimitsService } from '../usage/limits.js';
+import { ScheduleService } from '../schedules/service.js';
+import { execFile } from 'node:child_process';
 
 export interface Services {
   pool: RunnerPool;
@@ -14,6 +18,9 @@ export interface Services {
   usage: UsageService;
   files: FilesService;
   terminal: TerminalService;
+  meta: MetaStore;
+  limits: LimitsService;
+  schedules: ScheduleService;
   version: string;
 }
 
@@ -28,6 +35,13 @@ export class Hub {
     s.pool.on('permission', (request) => this.broadcast({ kind: 'permission.request', request }));
     s.pool.on('permissionResolved', (_sid, requestId) => this.broadcast({ kind: 'permission.resolved', requestId }));
     s.sessions.on('changed', () => this.broadcast({ kind: 'sessions.changed' }));
+    s.meta.on('changed', () => this.broadcast({ kind: 'meta.changed' }));
+    const pushLimits = () => s.limits.get().then((limits) => this.broadcast({ kind: 'limits', limits })).catch(() => {});
+    setInterval(pushLimits, 5 * 60_000).unref();
+    let lastIdlePush = 0;
+    s.pool.on('state', (_sid, state) => {
+      if (state === 'idle' && Date.now() - lastIdlePush > 4 * 60_000) { lastIdlePush = Date.now(); setTimeout(pushLimits, 5000); }
+    });
     s.terminal.on('data', (termId, data) => this.broadcast({ kind: 'terminal.data', termId, data }));
     s.terminal.on('exit', (termId, code) => this.broadcast({ kind: 'terminal.exit', termId, code }));
   }
@@ -86,7 +100,13 @@ export class Hub {
         return s.sessions.subagent(req.sessionId, req.agentId);
 
       case 'session.open': {
-        const r = s.pool.open(req.params);
+        let params = req.params;
+        // forks: copy the transcript first (SDK forkSession) so the new session has a real id before the process starts
+        if (params.sessionId && (params.fork || params.resumeAt)) {
+          const newId = await s.sessions.fork(params.sessionId, params.resumeAt);
+          params = { ...params, sessionId: newId, fork: false, resumeAt: undefined };
+        }
+        const r = s.pool.open(params);
         return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
       }
       case 'session.info': {
@@ -94,8 +114,55 @@ export class Hub {
         return { info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
       }
       case 'session.send':
-        this.runner(req.params.sessionId).send(req.params.text, req.params.images);
+        this.runner(req.params.sessionId).send(req.params.text, req.params.images, req.params.steer);
         return null;
+
+      case 'workspaces.list':
+        return s.meta.workspaces();
+      case 'workspaces.add':
+        return s.meta.addWorkspace(req.path);
+      case 'workspaces.remove':
+        await s.meta.removeWorkspace(req.id);
+        return null;
+      case 'workspaces.rename':
+        await s.meta.renameWorkspace(req.id, req.name);
+        return null;
+      case 'workspaces.reorder':
+        await s.meta.reorderWorkspaces(req.ids);
+        return null;
+      case 'sessions.meta':
+        return s.meta.allSessionMeta();
+      case 'session.setMeta':
+        await s.meta.setSessionMeta(req.sessionId, req.patch);
+        return null;
+      case 'schedules.list':
+        return s.meta.schedules();
+      case 'schedules.upsert':
+        return s.meta.upsertSchedule(req.schedule);
+      case 'schedules.remove':
+        await s.meta.removeSchedule(req.id);
+        return null;
+      case 'schedules.runNow': {
+        const sc = s.meta.schedules().find((x) => x.id === req.id);
+        if (!sc) throw new Error('schedule not found');
+        await s.schedules.run(sc);
+        return null;
+      }
+      case 'limits.get':
+        return s.limits.get(req.force);
+      case 'settings.get':
+        return s.meta.settings();
+      case 'settings.set':
+        await s.meta.setSetting(req.key, req.value);
+        return null;
+      case 'sessions.search':
+        return s.sessions.search(req.query, req.limit ?? 30);
+      case 'shell.open': {
+        const app = req.app ?? 'explorer';
+        const cmd = app === 'explorer' ? (process.platform === 'win32' ? 'explorer' : 'open') : app;
+        execFile(cmd, [req.path], { windowsHide: true }, () => {});
+        return null;
+      }
       case 'session.interrupt':
         await this.runner(req.sessionId).interrupt();
         return null;

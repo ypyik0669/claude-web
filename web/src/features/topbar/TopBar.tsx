@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useActive, useStore, type PanelId } from '@/store';
 import { ws } from '@/ws/client';
 import { basename, clsx } from '@/util';
+import type { LimitWindow } from '@shared';
 
 const PANELS: { id: PanelId; l: string; ic: string }[] = [
   { id: 'tasks', l: '任务', ic: '◔' },
@@ -11,9 +12,59 @@ const PANELS: { id: PanelId; l: string; ic: string }[] = [
   { id: 'terminal', l: '终端', ic: '▣' },
 ];
 
+function resetIn(iso: string | null) {
+  if (!iso) return '';
+  const s = Math.max(0, (Date.parse(iso) - Date.now()) / 1000);
+  if (s < 3600) return `${Math.ceil(s / 60)} 分钟后重置`;
+  if (s < 86400) return `${Math.floor(s / 3600)} 小时 ${Math.round((s % 3600) / 60)} 分后重置`;
+  return `${Math.floor(s / 86400)} 天 ${Math.round((s % 86400) / 3600)} 小时后重置`;
+}
+
+function Ring({ w }: { w: LimitWindow }) {
+  const r = 5.5, c = 2 * Math.PI * r;
+  const tone = w.percent >= 90 ? 'crit' : w.percent >= 70 ? 'hot' : '';
+  return (
+    <span className={clsx('ring', tone)} title={`${w.label}: 已用 ${w.percent}% · ${resetIn(w.resetsAt)}`}>
+      <svg width="14" height="14" viewBox="0 0 14 14">
+        <circle cx="7" cy="7" r={r} fill="none" stroke="var(--bg-3)" strokeWidth="2" />
+        <circle cx="7" cy="7" r={r} fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray={`${(w.percent / 100) * c} ${c}`} strokeLinecap="round" />
+      </svg>
+      <span>{w.percent}%</span>
+      <span className="lbl">{w.label}</span>
+    </span>
+  );
+}
+
+/** Claude subscription quota rings — the same 5h / 7d windows the CLI's /usage shows. */
+function UsageRings() {
+  const limits = useStore((s) => s.limits);
+  const [open, setOpen] = useState(false);
+  if (!limits) return null;
+  if (!limits.ok) return <span className="ring" title={limits.error}>额度 –</span>;
+  const shown = limits.windows.slice(0, 3);
+  return (
+    <span className="rings" style={{ position: 'relative' }} onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      {shown.map((w) => <Ring key={w.label} w={w} />)}
+      {open && (
+        <div className="tip">
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>账号额度 {limits.subscriptionType ? `· ${limits.subscriptionType}` : ''}</div>
+          {limits.windows.map((w) => (
+            <div key={w.label} className="row" style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+              <span>{w.label}</span>
+              <span style={{ color: 'var(--fg-2)' }}>{w.percent}% · {resetIn(w.resetsAt)}</span>
+            </div>
+          ))}
+          <div style={{ color: 'var(--fg-3)', fontSize: 11, marginTop: 6 }}>每 90 秒刷新 · 来源 api.anthropic.com/api/oauth/usage</div>
+        </div>
+      )}
+    </span>
+  );
+}
+
 export function TopBar() {
   const active = useActive();
   const sessions = useStore((s) => s.sessions);
+  const workspaces = useStore((s) => s.workspaces);
   const tab = useStore((s) => s.tab);
   const setTab = useStore((s) => s.setTab);
   const panels = useStore((s) => s.panels);
@@ -27,6 +78,7 @@ export function TopBar() {
   const meta = active ? sessions.find((s) => s.sessionId === active.sessionId) : undefined;
   const title = meta?.title ?? active?.sessionId.slice(0, 8) ?? '';
   const live = active && active.state !== 'history' && active.state !== 'closed' && active.state !== 'error';
+  const wsOf = active ? workspaces.find((w) => active.cwd.toLowerCase().startsWith(w.path.toLowerCase())) : undefined;
 
   const rename = async () => {
     if (editing !== null && active && editing.trim() && editing !== title) await ws.request({ kind: 'session.rename', sessionId: active.sessionId, title: editing.trim() }).catch((e) => toast(e.message));
@@ -35,25 +87,24 @@ export function TopBar() {
 
   return (
     <div className="topbar">
-      {!sidebarOpen && (
-        <button className="icon-btn" onClick={() => useStore.setState({ sidebarOpen: true })} title="展开侧栏">☰</button>
-      )}
+      {!sidebarOpen && <button className="icon-btn" onClick={() => useStore.setState({ sidebarOpen: true })} title="展开侧栏 (Ctrl+B)">☰</button>}
       {active ? (
-        <div className="title" onDoubleClick={() => setEditing(title)} title="双击重命名">
+        <div className="crumb" style={{ flex: '0 1 auto' }}>
+          <button title={active.cwd} onClick={() => ws.request({ kind: 'shell.open', path: active.cwd })}>▤ {wsOf?.name ?? basename(active.cwd)}</button>
+          <span className="sep">/</span>
           {live && <span className={clsx('dot', active.state)} />}
           {editing !== null ? (
-            <input autoFocus value={editing} onChange={(e) => setEditing(e.target.value)} onBlur={rename} onKeyDown={(e) => (e.key === 'Enter' ? rename() : e.key === 'Escape' ? setEditing(null) : null)} />
+            <input autoFocus value={editing} onChange={(e) => setEditing(e.target.value)} onBlur={rename} onKeyDown={(e) => (e.key === 'Enter' ? rename() : e.key === 'Escape' ? setEditing(null) : null)} style={{ background: 'var(--bg-1)', border: '1px solid var(--line-1)', borderRadius: 6, padding: '2px 8px', width: 320 }} />
           ) : (
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</span>
+            <span className="cur" onDoubleClick={() => setEditing(title)} title="双击重命名">{title}</span>
           )}
-          <span className="sub" title={active.cwd}>
-            {basename(active.cwd)}{meta?.gitBranch ? ` · ${meta.gitBranch}` : ''}
-          </span>
+          {meta?.gitBranch && <span className="sep" style={{ fontSize: 12 }}>· {meta.gitBranch}</span>}
         </div>
       ) : (
         <div className="title" />
       )}
       <span className="grow" />
+      <UsageRings />
       {active && (
         <>
           <div className="seg">
@@ -74,6 +125,7 @@ export function TopBar() {
           <span style={{ fontSize: 13 }}>{p.ic}</span> {p.l}
         </button>
       ))}
+      <button className="icon-btn" title="命令面板 (Ctrl+K)" onClick={() => useStore.setState({ paletteOpen: true })}>⌘</button>
     </div>
   );
 }

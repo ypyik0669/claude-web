@@ -74,13 +74,18 @@ export class SessionRunner extends EventEmitter {
   constructor(params: OpenSessionParams) {
     super();
     this.cwd = params.cwd;
-    this.sessionId = params.sessionId ?? randomUUID();
+    // a fork gets its own id from the CLI at init; until then use a placeholder so the pool
+    // never clobbers the source session's runner
+    const isFork = !!params.sessionId && (params.fork || !!params.resumeAt);
+    this.sessionId = params.sessionId && !isFork ? params.sessionId : randomUUID();
     this.id = this.sessionId;
     this.model = params.model;
     this.effort = params.effort;
     this.permissionMode = params.permissionMode ?? 'default';
     this.info = { sessionId: this.sessionId, state: 'starting', cwd: this.cwd, model: this.model, effort: this.effort, permissionMode: this.permissionMode };
-    this.start(params.sessionId ? { resume: params.sessionId, forkSession: params.fork } : { sessionId: this.sessionId });
+    const extra: Partial<Options> = params.sessionId ? { resume: params.sessionId, forkSession: params.fork || !!params.resumeAt, resumeSessionAt: params.resumeAt } : { sessionId: this.sessionId };
+    if (params.worktree) extra.extraArgs = { worktree: params.worktree };
+    this.start(extra);
   }
 
   getHistory() {
@@ -224,7 +229,7 @@ export class SessionRunner extends EventEmitter {
     return true;
   }
 
-  send(text: string, images?: { mediaType: string; data: string }[]) {
+  send(text: string, images?: { mediaType: string; data: string }[], steer = false) {
     const content: any[] = [];
     for (const im of images ?? []) content.push({ type: 'image', source: { type: 'base64', media_type: im.mediaType, data: im.data } });
     content.push({ type: 'text', text });
@@ -234,6 +239,7 @@ export class SessionRunner extends EventEmitter {
       parent_tool_use_id: null,
       session_id: this.sessionId,
       origin: { kind: 'human' },
+      ...(steer ? { priority: 'now' } : {}),
     } as SDKUserMessage;
     this.lastActivity = Date.now();
     this.setState('running');

@@ -1,4 +1,4 @@
-import { listSessions, getSessionMessages, getSubagentMessages, listSubagents, renameSession, deleteSession, getSessionInfo, type SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
+import { listSessions, getSessionMessages, getSubagentMessages, listSubagents, renameSession, deleteSession, getSessionInfo, forkSession, type SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 import chokidar from 'chokidar';
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
@@ -82,6 +82,14 @@ export class SessionService extends EventEmitter {
     return getSubagentMessages(sessionId, agentId, { dir: info?.cwd });
   }
 
+  /** Copy a transcript into a new session (optionally only up to a message), returning the new id. */
+  async fork(sessionId: string, upToMessageId?: string): Promise<string> {
+    const info = await getSessionInfo(sessionId);
+    const r = await forkSession(sessionId, { dir: info?.cwd, upToMessageId, title: info ? `${info.customTitle || info.summary || info.firstPrompt || ''} (分叉)`.trim() : undefined });
+    this.bump();
+    return r.sessionId;
+  }
+
   async rename(sessionId: string, title: string) {
     const info = await getSessionInfo(sessionId);
     await renameSession(sessionId, title, { dir: info?.cwd });
@@ -92,6 +100,58 @@ export class SessionService extends EventEmitter {
     const info = await getSessionInfo(sessionId);
     await deleteSession(sessionId, { dir: info?.cwd });
     this.bump();
+  }
+
+  /** Title/first-prompt match first, then a bounded full-text scan of recent transcripts. */
+  async search(query: string, limit = 30): Promise<{ session: SessionSummary; snippet?: string }[]> {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const all = await this.list(5000);
+    const out: { session: SessionSummary; snippet?: string }[] = [];
+    const seen = new Set<string>();
+    for (const s of all) {
+      if (`${s.title} ${s.firstPrompt ?? ''} ${s.cwd}`.toLowerCase().includes(q)) {
+        out.push({ session: s });
+        seen.add(s.sessionId);
+        if (out.length >= limit) return out;
+      }
+    }
+    // full text over the 150 most recent transcripts, user/assistant text only
+    for (const s of all.slice(0, 150)) {
+      if (seen.has(s.sessionId)) continue;
+      const file = await this.locate(s.sessionId);
+      if (!file) continue;
+      let txt: string;
+      try {
+        txt = await fs.readFile(file, 'utf8');
+      } catch {
+        continue;
+      }
+      if (!txt.toLowerCase().includes(q)) continue;
+      // only real user/assistant text — not system reminders, tool schemas or hook output
+      let snippet: string | undefined;
+      for (const line of txt.split('\n')) {
+        if (!line.toLowerCase().includes(q) || line.includes('"isMeta":true')) continue;
+        let rec: any;
+        try {
+          rec = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (rec.type !== 'user' && rec.type !== 'assistant') continue;
+        const content = rec.message?.content;
+        const text = typeof content === 'string' ? content : Array.isArray(content) ? content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n') : '';
+        if (/^<(command-name|local-command|system-reminder|task-notification)/.test(text.trim())) continue;
+        const i = text.toLowerCase().indexOf(q);
+        if (i < 0) continue;
+        snippet = text.slice(Math.max(0, i - 50), i + 70).replace(/\s+/g, ' ');
+        break;
+      }
+      if (!snippet) continue;
+      out.push({ session: s, snippet });
+      if (out.length >= limit) break;
+    }
+    return out;
   }
 
   /** Locate the jsonl file for a session (for usage aggregation / file history). */

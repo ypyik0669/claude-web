@@ -1,5 +1,8 @@
 import { create } from 'zustand';
-import type { EffortLevel, PermissionMode, PermissionRequestEvent, RunnerState, ServerEvent, SessionInfoSnapshot, SessionSummary } from '@shared';
+import type { EffortLevel, Limits, PermissionMode, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, Workspace } from '@shared';
+
+export const THEMES = ['dark', 'light', 'dracula', 'nord', 'tokyo-night', 'paper'] as const;
+export type Theme = (typeof THEMES)[number];
 import { ws } from '@/ws/client';
 import { applyMessage, applyTranscript, createConversation, walkTools, type Conversation } from '@/model/conversation';
 
@@ -28,15 +31,25 @@ interface State {
   panels: PanelId[];
   sidebarOpen: boolean;
   inspect: { sessionId: string; toolUseId: string } | null;
-  theme: 'dark' | 'light';
+  theme: Theme;
   toasts: { id: number; text: string; ok?: boolean }[];
   toast(text: string, ok?: boolean): void;
+  workspaces: Workspace[];
+  sessionMeta: Record<string, SessionMeta>;
+  schedules: Schedule[];
+  limits: Limits | null;
+  paletteOpen: boolean;
+  showArchived: boolean;
+  shortcutsOpen: boolean;
+  loadMeta(): Promise<void>;
+  addWorkspace(path: string): Promise<void>;
+  setSessionMeta(sessionId: string, patch: SessionMeta): Promise<void>;
   // actions
   init(): void;
   refreshSessions(): Promise<void>;
-  openSession(p: { sessionId?: string; cwd: string; model?: string; permissionMode?: PermissionMode; effort?: EffortLevel; fork?: boolean }): Promise<string>;
+  openSession(p: { sessionId?: string; cwd: string; model?: string; permissionMode?: PermissionMode; effort?: EffortLevel; fork?: boolean; resumeAt?: string; worktree?: string }): Promise<string>;
   loadHistory(sessionId: string): Promise<void>;
-  send(sessionId: string, text: string, images?: { mediaType: string; data: string }[]): Promise<void>;
+  send(sessionId: string, text: string, images?: { mediaType: string; data: string }[], steer?: boolean): Promise<void>;
   interrupt(sessionId: string): Promise<void>;
   respondPermission(requestId: string, response: any): Promise<void>;
   loadSubagent(sessionId: string, toolUseId: string): Promise<void>;
@@ -45,7 +58,8 @@ interface State {
   setTab(t: 'chat' | 'trajectory'): void;
   setDraft(sessionId: string, d: string): void;
   closeSession(sessionId: string): Promise<void>;
-  setTheme(t: 'dark' | 'light'): void;
+  setTheme(t: Theme): void;
+  forkAt(sessionId: string, messageUuid: string): Promise<void>;
 }
 
 function bump(s: State, id: string, fn: (o: OpenSession) => void): Partial<State> {
@@ -72,8 +86,31 @@ export const useStore = create<State>((set, get) => ({
   panels: savedPanels,
   sidebarOpen: true,
   inspect: null,
-  theme: (localStorage.getItem('cw.theme') as 'dark' | 'light') || 'dark',
+  theme: (localStorage.getItem('cw.theme') as Theme) || 'dark',
   toasts: [],
+  workspaces: [],
+  sessionMeta: {},
+  schedules: [],
+  limits: null,
+  paletteOpen: false,
+  showArchived: false,
+  shortcutsOpen: false,
+  async loadMeta() {
+    const [workspaces, sessionMeta, schedules] = await Promise.all([
+      ws.request<Workspace[]>({ kind: 'workspaces.list' }),
+      ws.request<Record<string, SessionMeta>>({ kind: 'sessions.meta' }),
+      ws.request<Schedule[]>({ kind: 'schedules.list' }),
+    ]);
+    set({ workspaces, sessionMeta, schedules });
+  },
+  async addWorkspace(path) {
+    await ws.request({ kind: 'workspaces.add', path });
+    await get().loadMeta();
+  },
+  async setSessionMeta(sessionId, patch) {
+    set((s) => ({ sessionMeta: { ...s.sessionMeta, [sessionId]: { ...s.sessionMeta[sessionId], ...patch } } }));
+    await ws.request({ kind: 'session.setMeta', sessionId, patch });
+  },
   toast(text, ok) {
     const id = Date.now() + Math.random();
     set((s) => ({ toasts: [...s.toasts, { id, text, ok }] }));
@@ -85,6 +122,8 @@ export const useStore = create<State>((set, get) => ({
       set({ connected: c });
       if (c) {
         void get().refreshSessions();
+        void get().loadMeta();
+        void ws.request<Limits>({ kind: 'limits.get' }).then((limits) => set({ limits })).catch(() => {});
         // re-attach open live sessions after reconnect
         for (const o of Object.values(get().open)) if (o.state !== 'history') void ws.request({ kind: 'session.info', sessionId: o.sessionId }).then((d: any) => set((s) => bump(s, o.sessionId, (x) => { x.info = d.info; x.pending = d.pending; }))).catch(() => set((s) => bump(s, o.sessionId, (x) => { x.state = 'history'; })));
       }
@@ -110,6 +149,12 @@ export const useStore = create<State>((set, get) => ({
         case 'sessions.changed':
           void get().refreshSessions();
           break;
+        case 'meta.changed':
+          void get().loadMeta();
+          break;
+        case 'limits':
+          set({ limits: e.limits });
+          break;
       }
     });
     ws.connect();
@@ -122,7 +167,7 @@ export const useStore = create<State>((set, get) => ({
 
   async openSession(p) {
     const r = await ws.request<{ sessionId: string; info: SessionInfoSnapshot; history: any[]; pending: PermissionRequestEvent[] }>({ kind: 'session.open', params: p });
-    const existing = p.sessionId && !p.fork ? get().open[p.sessionId] : undefined;
+    const existing = p.sessionId && !p.fork && !p.resumeAt ? get().open[p.sessionId] : undefined;
     const conv = existing?.conv ?? createConversation();
     if (existing) {
       // history already loaded from transcript; only apply live messages we have not seen
@@ -134,13 +179,14 @@ export const useStore = create<State>((set, get) => ({
     const o: OpenSession = { sessionId: r.sessionId, cwd: p.cwd, conv, version: (existing?.version ?? 0) + 1, state: r.info.state, info: r.info, pending: r.pending, loading: false, queue: existing?.queue ?? [], draft: existing?.draft ?? '' };
     set((s) => {
       const open = { ...s.open };
-      if (p.sessionId && p.sessionId !== r.sessionId) delete open[p.sessionId];
+      if (p.sessionId && p.sessionId !== r.sessionId && !p.fork && !p.resumeAt) delete open[p.sessionId];
       open[r.sessionId] = o;
       return { open, activeId: r.sessionId };
     });
     if (!p.sessionId) void get().refreshSessions();
-    // load transcript in the background for resumed sessions with empty conv
+    // load transcript in the background for resumed / forked sessions with empty conv
     if (p.sessionId && !existing) void get().loadHistory(r.sessionId);
+    if (p.fork || p.resumeAt) void get().refreshSessions();
     return r.sessionId;
   },
 
@@ -165,20 +211,20 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
-  async send(sessionId, text, images) {
+  async send(sessionId, text, images, steer = false) {
     const o = get().open[sessionId];
     if (!o) return;
     if (o.state === 'history' || o.state === 'closed' || o.state === 'error') {
       await get().openSession({ sessionId, cwd: o.cwd });
     }
     const cur = get().open[sessionId];
-    if (cur.state === 'running' || cur.state === 'waiting') {
+    if ((cur.state === 'running' || cur.state === 'waiting') && !steer) {
       set((s) => bump(s, sessionId, (x) => { x.queue.push(text); }));
       return;
     }
     // echo locally — the SDK does not replay user messages
-    set((s) => bump(s, sessionId, (x) => { x.conv.items.push({ kind: 'user', id: `local-${Date.now()}`, ts: new Date().toISOString(), text, images: (images ?? []).map((im) => `data:${im.mediaType};base64,${im.data}`) }); x.state = 'running'; }));
-    await ws.request({ kind: 'session.send', params: { sessionId, text, images } });
+    set((s) => bump(s, sessionId, (x) => { x.conv.items.push({ kind: 'user', id: `local-${Date.now()}`, ts: new Date().toISOString(), text, images: (images ?? []).map((im) => `data:${im.mediaType};base64,${im.data}`), meta: false }); x.state = 'running'; }));
+    await ws.request({ kind: 'session.send', params: { sessionId, text, images, steer } });
   },
 
   async loadSubagent(sessionId, toolUseId) {
@@ -236,6 +282,11 @@ export const useStore = create<State>((set, get) => ({
     localStorage.setItem('cw.theme', theme);
     document.documentElement.dataset.theme = theme;
     set({ theme });
+  },
+  async forkAt(sessionId: string, messageUuid: string) {
+    const o = get().open[sessionId];
+    if (!o) return;
+    await get().openSession({ sessionId, cwd: o.cwd, resumeAt: messageUuid });
   },
 }));
 

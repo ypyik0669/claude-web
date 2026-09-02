@@ -24,7 +24,7 @@ export class RunnerPool extends EventEmitter {
   }
 
   open(params: OpenSessionParams): SessionRunner {
-    if (params.sessionId && !params.fork) {
+    if (params.sessionId && !params.fork && !params.resumeAt) {
       const existing = this.runners.get(params.sessionId);
       if (existing && existing.state !== 'closed' && existing.state !== 'error') return existing;
       if (existing) this.runners.delete(params.sessionId);

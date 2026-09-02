@@ -11,6 +11,9 @@ import { UsageService } from './usage/service.js';
 import { FilesService } from './files/service.js';
 import { TerminalService } from './terminal/service.js';
 import { resolveClaudeExe } from './claude-exe.js';
+import { MetaStore } from './meta/store.js';
+import { LimitsService } from './usage/limits.js';
+import { ScheduleService } from './schedules/service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3090);
@@ -55,7 +58,9 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 const pool = new RunnerPool();
-const services = { pool, sessions: new SessionService(), config: new ConfigService(), usage: new UsageService(), files: new FilesService(), terminal: new TerminalService(), version };
+const meta = new MetaStore();
+await meta.load();
+const services = { pool, sessions: new SessionService(), config: new ConfigService(), usage: new UsageService(), files: new FilesService(), terminal: new TerminalService(), meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), version };
 new Hub(wss, services);
 
 server.listen(PORT, HOST, () => {

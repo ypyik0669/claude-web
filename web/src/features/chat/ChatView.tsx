@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { AssistantItem, Block, Item, ToolUseBlock } from '@/model/conversation';
-import { useActive } from '@/store';
+import { useActive, useStore } from '@/store';
 import { clsx, fmtMs, fmtTok, fmtUsd } from '@/util';
 import { Markdown } from './Markdown';
 import { ToolCard } from './ToolCard';
@@ -125,6 +125,12 @@ export function ItemList({ items, version, live = false }: { items: Item[]; vers
           case 'user':
             return (
               <div key={it.id} className={clsx('msg user', it.meta && 'meta')}>
+                {!it.meta && !it.id.startsWith('local-') && (
+                  <div className="hover-actions">
+                    <button title="从这条消息之前分叉出新会话（Claude Code --resume-session-at）" onClick={() => { const st = useStore.getState(); if (st.activeId) void st.forkAt(st.activeId, it.id).catch((e) => st.toast(e.message)); }}>⑂ 从这里分叉</button>
+                    <button title="复制" onClick={() => navigator.clipboard.writeText(it.text)}>⧉</button>
+                  </div>
+                )}
                 <div className="bubble">
                   {it.text}
                   {it.images.map((src, i) => src && <img key={i} src={src} alt="" />)}

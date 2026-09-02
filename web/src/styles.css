@@ -40,6 +40,10 @@
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.08);
   color-scheme: light;
 }
+:root[data-theme='dracula'] { --bg: #282a36; --bg-1: #2c2e3b; --bg-2: #343746; --bg-3: #44475a; --line: #3a3d4d; --line-1: #4b4f63; --fg: #f8f8f2; --fg-1: #c9cbd6; --fg-2: #8b8fa3; --fg-3: #6272a4; --accent: #bd93f9; --accent-soft: rgba(189,147,249,.16); --user-bg: #343746; --green: #50fa7b; --red: #ff5555; --yellow: #f1fa8c; --blue: #8be9fd; }
+:root[data-theme='nord'] { --bg: #2e3440; --bg-1: #333a48; --bg-2: #3b4252; --bg-3: #434c5e; --line: #3b4252; --line-1: #4c566a; --fg: #eceff4; --fg-1: #d8dee9; --fg-2: #9aa5b8; --fg-3: #6d778a; --accent: #88c0d0; --accent-fg: #2e3440; --accent-soft: rgba(136,192,208,.16); --user-bg: #3b4252; --green: #a3be8c; --red: #bf616a; --yellow: #ebcb8b; --blue: #81a1c1; }
+:root[data-theme='tokyo-night'] { --bg: #1a1b26; --bg-1: #1f2030; --bg-2: #24283b; --bg-3: #2f3349; --line: #262a3d; --line-1: #363b54; --fg: #c0caf5; --fg-1: #a9b1d6; --fg-2: #737aa2; --fg-3: #565f89; --accent: #7aa2f7; --accent-fg: #1a1b26; --accent-soft: rgba(122,162,247,.16); --user-bg: #24283b; --green: #9ece6a; --red: #f7768e; --yellow: #e0af68; --blue: #7dcfff; }
+:root[data-theme='paper'] { --bg: #f7f3ea; --bg-1: #f1ece1; --bg-2: #e9e3d6; --bg-3: #ddd6c6; --line: #e2dccd; --line-1: #cfc7b4; --fg: #2b2620; --fg-1: #574f44; --fg-2: #8a8172; --fg-3: #b3aa9a; --accent: #b5563a; --accent-soft: rgba(181,86,58,.12); --user-bg: #ece5d5; --shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.08); color-scheme: light; }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--fg); font: 14px/1.6 var(--font); overflow: hidden; -webkit-font-smoothing: antialiased; }
@@ -314,6 +318,58 @@ input.field:focus { border-color: var(--fg-2); }
 .modal input:focus { border-color: var(--fg-2); }
 .modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .term { flex: 1; background: #000; }
+
+/* ---------- usage rings (top bar) ---------- */
+.rings { display: inline-flex; align-items: center; gap: 10px; padding: 0 6px; }
+.ring { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--fg-1); cursor: default; }
+.ring svg { transform: rotate(-90deg); }
+.ring .lbl { color: var(--fg-3); font-size: 11px; }
+.ring.hot { color: var(--yellow); }
+.ring.crit { color: var(--red); }
+.tip { position: absolute; top: 100%; right: 0; margin-top: 6px; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow); z-index: 40; min-width: 260px; font-size: 12.5px; }
+.tip .row { padding: 4px 0; }
+
+/* breadcrumb */
+.crumb { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-2); font-size: 13px; min-width: 0; }
+.crumb .sep { color: var(--fg-3); }
+.crumb .cur { color: var(--fg); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crumb button { color: inherit; }
+.crumb button:hover { color: var(--fg); }
+
+/* message hover actions */
+.msg.user { position: relative; }
+.msg .hover-actions { position: absolute; right: 0; top: -22px; display: none; gap: 4px; }
+.msg:hover .hover-actions { display: inline-flex; }
+.hover-actions button { font-size: 11px; color: var(--fg-2); background: var(--bg-1); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; }
+.hover-actions button:hover { color: var(--fg); background: var(--bg-2); }
+
+/* command palette */
+.palette-bg { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); z-index: 55; display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; animation: fadein 0.12s; }
+.cmdk { width: 640px; max-width: 92vw; background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+.cmdk input { width: 100%; background: transparent; border: none; outline: none; padding: 14px 18px; font-size: 15px; border-bottom: 1px solid var(--line); }
+.cmdk .list { max-height: 420px; overflow: auto; padding: 6px; }
+.cmdk .grp { font-size: 11px; color: var(--fg-3); padding: 8px 12px 2px; text-transform: uppercase; letter-spacing: 0.4px; }
+.cmdk .it { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13.5px; }
+.cmdk .it.sel, .cmdk .it:hover { background: var(--bg-2); }
+.cmdk .it .ic { width: 18px; text-align: center; color: var(--fg-2); }
+.cmdk .it .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmdk .it .sub { color: var(--fg-3); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; }
+.cmdk .foot { display: flex; gap: 14px; padding: 8px 14px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--fg-3); }
+
+/* workspaces */
+.ws-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px; color: var(--fg-1); font-size: 12.5px; font-weight: 600; cursor: pointer; border-radius: 7px; user-select: none; }
+.ws-head:hover { background: var(--bg-2); }
+.ws-head .ic { color: var(--fg-2); }
+.ws-head .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-head .cnt { font-weight: 400; color: var(--fg-3); font-size: 11.5px; }
+.ws-head .more { display: none; color: var(--fg-2); padding: 0 4px; }
+.ws-head:hover .more { display: inline; }
+.ws-empty { margin: 8px; padding: 18px 12px; border: 1px dashed var(--line-1); border-radius: 10px; text-align: center; color: var(--fg-2); font-size: 12.5px; }
+.ws-empty .btn { margin-top: 10px; }
+.steer { font-size: 12px; color: var(--fg-1); border: 1px solid var(--line-1); border-radius: 8px; padding: 3px 9px; }
+.steer:hover { background: var(--bg-2); }
+.shortcuts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; font-size: 13px; }
+.shortcuts div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); }
 .toast-wrap { position: fixed; bottom: 18px; right: 18px; display: flex; flex-direction: column; gap: 8px; z-index: 60; }
 .toast { background: var(--bg-1); border: 1px solid var(--line-1); border-left: 3px solid var(--red); border-radius: 10px; padding: 10px 14px; font-size: 13px; box-shadow: var(--shadow); max-width: 380px; animation: fadein 0.2s; }
 .toast.ok { border-left-color: var(--green); }
