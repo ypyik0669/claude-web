@@ -13,6 +13,13 @@ import { getToolDef, isStandalone } from './tools/registry';
 
 /** Human summary for a run of consecutive tool calls, Claude-Code-on-web style: "读取 2 个文件 · 运行 1 条命令". */
 function stepLabel(tools: ToolUseBlock[]): string {
+  if (tools.length === 1) {
+    const def = getToolDef(tools[0].name);
+    if (def.category === 'other' || def.category === 'mcp') {
+      const { verb, arg } = def.label(tools[0].input as any);
+      return `${verb || tools[0].name.replace(/^mcp__/, '')} ${arg}`.trim().slice(0, 80);
+    }
+  }
   const c: Record<string, number> = {};
   for (const t of tools) {
     const k = getToolDef(t.name).category;

@@ -43,6 +43,20 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - Langfuse / Artifacts / Web Search 等配置仍是 `~/.claude/settings.json` 的 `env`；配置中心「供应商 / 环境」tab 下半段编辑。
 - ccb 里 `local-jsx` 类型的命令（/goal 面板、/artifacts 列表、/poor、/voice、/buddy 等）是 TUI 专属，headless 发不了；对应能力靠工具（Goal / Artifact / Workflow）或终端面板兜底。
 
+## 渲染与对话交互（阶段 1，2026-09-03）
+
+- **reducer 是唯一真源**：`web/src/model/conversation.ts` 纯函数，`web/src/model/__fixtures__/tools.jsonl` 是用 `server/ws-capture.mjs` 录的真实流（Read 文本+图片 / Glob / Grep / Bash / WebFetch / TodoWrite），`conversation.test.ts` 回放它。改 reducer 先跑 `npm test -w web`。
+- **发送时客户端铸 uuid**（`SendParams.uuid` → `SDKUserMessage.uuid`），本地回显 id 就是 transcript uuid，编辑重发 / 重跑 = `openSession({sessionId, resumeAt: findChainUuidBefore()})` 再发。ccb 不回显 `user_message_uuid`，但 uuid 会落到 jsonl，够用。
+- **工具输出优先用 `tool_use_result`（`result.structured`）**：SDK 的 `sdk-tools.d.ts` 有每个工具的 Output 形状（`structuredPatch` 带行号、`FileReadOutput` 的图片 base64、`GrepOutput.mode`…）。ccb 的 GrepOutput 用 `numLines` 而不是 `numMatches`，卡片两个都认。
+- 工具卡片在 `web/src/features/chat/tools/registry.tsx` 注册（图标 / 分类 / 头部文案 / Body）；`mcp__*` 和未知工具走 `GenericBody`（键值网格 + JsonTree + 图片）。Steps 折叠的分类计数也从注册表取。
+- 健康信号（`model/health.ts`）：卡死判定是客户端计时（15s 无事件、3 分钟无模型调用）；错误分类 `classifyError()` 输入 `api_retry.error` / `result.terminal_reason` / HTTP 状态 / 文本；限流 `rate_limit_event` → `conv.rateLimit`，`settings.autoContinueOnReset` 打开时到 `resetsAt+5s` 自动重发上一条（store 里的 `armAutoContinue`）。
+- **Agent SDK 默认空系统提示**，runner 传 `systemPrompt: {type:'preset', preset:'claude_code'}`（也是过中转指纹的必要条件）。
+- 桌面模式 `PORT=0`，origin 每次变 → 草稿 / 评分 / 思考开关 / diff 模式都进 meta.json（`drafts.*`、`feedback.*`、`settings.set`），不要用 localStorage 存这些。
+- 附件：`POST /api/attachments?sessionId=&rel=`（token 同 `/ws`）存到 `~/.claude-web/attachments/<sid>/`，消息文本后追加 `<attached kind name path size />` 标记，模型自己 Read；`decodeAttachments()` 在渲染时把标记解成芯片。超过 3000 字 / 60 行的粘贴自动变成 `kind="text"` 内联附件。
+- 代码高亮用 lowlight（同步，流式重渲染友好），KaTeX / Mermaid 全部懒加载；`.hljs-*` 颜色映射到每个主题的 `--hl-*` 变量。
+- `scripts/shot.cjs`：用 Electron 给页面截图（`npx electron scripts/shot.cjs <url> out.png "<js>"`），本机 Chrome 扩展连的是别的机器时靠它看 UI。
+- `server/ws-phase1.mjs`：附件上传 / uuid 锚点 / contextUsage / 评分草稿 / 分叉 / 导出 的端到端检查。
+
 ## 桌面版（desktop/）
 
 ```

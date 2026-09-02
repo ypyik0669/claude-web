@@ -1,25 +1,53 @@
 // Sync syntax highlighting via lowlight (highlight.js grammars → hast) rendered with the React JSX runtime.
-import { createLowlight, common } from 'lowlight';
+// A curated grammar set instead of `common` keeps ~90 KB out of the main bundle; unknown languages fall back to plain text.
+import { createLowlight } from 'lowlight';
 import { toJsxRuntime } from 'hast-util-to-jsx-runtime';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
 import type { ReactNode } from 'react';
+import javascript from 'highlight.js/lib/languages/javascript';
+import typescript from 'highlight.js/lib/languages/typescript';
+import python from 'highlight.js/lib/languages/python';
+import bash from 'highlight.js/lib/languages/bash';
+import powershell from 'highlight.js/lib/languages/powershell';
+import json from 'highlight.js/lib/languages/json';
+import xml from 'highlight.js/lib/languages/xml';
+import css from 'highlight.js/lib/languages/css';
+import scss from 'highlight.js/lib/languages/scss';
+import markdown from 'highlight.js/lib/languages/markdown';
+import yaml from 'highlight.js/lib/languages/yaml';
+import ini from 'highlight.js/lib/languages/ini';
+import diff from 'highlight.js/lib/languages/diff';
+import sql from 'highlight.js/lib/languages/sql';
+import go from 'highlight.js/lib/languages/go';
+import rust from 'highlight.js/lib/languages/rust';
+import java from 'highlight.js/lib/languages/java';
+import kotlin from 'highlight.js/lib/languages/kotlin';
+import c from 'highlight.js/lib/languages/c';
+import cpp from 'highlight.js/lib/languages/cpp';
+import csharp from 'highlight.js/lib/languages/csharp';
+import php from 'highlight.js/lib/languages/php';
+import ruby from 'highlight.js/lib/languages/ruby';
+import swift from 'highlight.js/lib/languages/swift';
+import dockerfile from 'highlight.js/lib/languages/dockerfile';
+import makefile from 'highlight.js/lib/languages/makefile';
+import plaintext from 'highlight.js/lib/languages/plaintext';
 
-const lowlight = createLowlight(common);
+const lowlight = createLowlight({ javascript, typescript, python, bash, powershell, json, xml, css, scss, markdown, yaml, ini, diff, sql, go, rust, java, kotlin, c, cpp, csharp, php, ruby, swift, dockerfile, makefile, plaintext });
 
 const ALIASES: Record<string, string> = {
   js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
   ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
-  py: 'python', rb: 'ruby', rs: 'rust', kt: 'kotlin', sh: 'bash', zsh: 'bash', shell: 'bash', console: 'bash',
-  ps1: 'powershell', psm1: 'powershell', yml: 'yaml', md: 'markdown', mdx: 'markdown', htm: 'xml', html: 'xml', svg: 'xml', vue: 'xml',
-  cs: 'csharp', 'c++': 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', h: 'c', golang: 'go', dockerfile: 'dockerfile', toml: 'ini', cfg: 'ini', conf: 'ini', env: 'bash',
-  jsonc: 'json', json5: 'json', txt: 'plaintext', text: 'plaintext', plain: 'plaintext', log: 'plaintext',
+  py: 'python', rb: 'ruby', rs: 'rust', kt: 'kotlin', kts: 'kotlin', sh: 'bash', zsh: 'bash', shell: 'bash', console: 'bash',
+  ps1: 'powershell', psm1: 'powershell', yml: 'yaml', md: 'markdown', mdx: 'markdown', htm: 'xml', html: 'xml', svg: 'xml', vue: 'xml', xaml: 'xml',
+  cs: 'csharp', 'c++': 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', h: 'c', golang: 'go', toml: 'ini', cfg: 'ini', conf: 'ini', env: 'bash',
+  jsonc: 'json', json5: 'json', txt: 'plaintext', text: 'plaintext', plain: 'plaintext', log: 'plaintext', patch: 'diff', less: 'scss',
 };
 
 export function normalizeLang(lang: string | undefined): string | undefined {
   if (!lang) return undefined;
   const l = lang.toLowerCase().trim();
   const a = ALIASES[l] ?? l;
-  return lowlight.registered(a) ? a : a === 'plaintext' ? 'plaintext' : undefined;
+  return lowlight.registered(a) ? a : undefined;
 }
 
 /** Guess a highlight language from a file path. */

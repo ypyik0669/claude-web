@@ -9,10 +9,16 @@ import type { SessionSummary } from '../protocol.js';
 export const claudeDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
 export const projectsDir = path.join(claudeDir, 'projects');
 
+/** Titles derive from the first prompt, which may carry attachment markers and pasted blobs — keep the human part. */
+export function cleanTitle(t: string | undefined): string {
+  if (!t) return '';
+  return t.replace(/<attached\b[^>]*>[\s\S]*?<\/attached>/g, '').replace(/<attached\b[^>]*\/?>/g, '').replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
 function toSummary(s: SDKSessionInfo): SessionSummary {
   return {
     sessionId: s.sessionId,
-    title: s.customTitle || s.summary || s.firstPrompt || s.sessionId.slice(0, 8),
+    title: s.customTitle || cleanTitle(s.summary) || cleanTitle(s.firstPrompt) || s.sessionId.slice(0, 8),
     cwd: s.cwd ?? '',
     lastModified: s.lastModified,
     createdAt: s.createdAt,

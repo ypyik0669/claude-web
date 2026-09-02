@@ -149,6 +149,9 @@ html.desktop .sb-top button { -webkit-app-region: no-drag; }
 .topbar .title input { background: var(--bg-1); border: 1px solid var(--line-1); border-radius: 6px; padding: 3px 8px; width: 360px; outline: none; }
 .topbar .sub { font-size: 12px; color: var(--fg-2); font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
 .topbar .grow { flex: 1; min-width: 0; }
+.topbar .crumb { flex: 0 1 auto !important; min-width: 160px; overflow: hidden; }
+.topbar .rings { flex: 0 1 auto !important; min-width: 0; overflow: hidden; }
+.topbar .crumb .cur { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .seg { display: inline-flex; background: var(--bg-1); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
 .seg button { padding: 3px 10px; border-radius: 6px; font-size: 12.5px; color: var(--fg-2); }
 .seg button.active { background: var(--bg-3); color: var(--fg); }
