@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import { useActive } from '@/store';
+import { useActive, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { clsx } from '@/util';
 
-type Tab = 'overview' | 'plugins' | 'mcp' | 'skills' | 'agents' | 'hooks' | 'settings';
+type Tab = 'overview' | 'engines' | 'providers' | 'plugins' | 'mcp' | 'skills' | 'agents' | 'hooks' | 'settings';
 const TABS: { id: Tab; l: string }[] = [
   { id: 'overview', l: '概览' },
+  { id: 'engines', l: '引擎' },
+  { id: 'providers', l: '供应商 / 环境' },
   { id: 'plugins', l: '插件' },
   { id: 'mcp', l: 'MCP' },
   { id: 'skills', l: 'Skills' },
@@ -182,12 +184,123 @@ function Settings() {
   );
 }
 
+function Engines() {
+  const engines = useStore((s) => s.engines);
+  const loadEngines = useStore((s) => s.loadEngines);
+  const settings = useStore((s) => s.settings);
+  const setSetting = useStore((s) => s.setSetting);
+  const toast = useStore((s) => s.toast);
+  const [busy, setBusy] = useState(false);
+  const [out, setOut] = useState<any>(null);
+  const install = async () => {
+    setBusy(true);
+    try { setOut(await ws.request({ kind: 'engines.install', id: 'ccb' })); await loadEngines(); } catch (e: any) { toast(e.message); }
+    setBusy(false);
+  };
+  const def = (settings.defaultEngine as string) ?? 'claude';
+  return (
+    <>
+      <div className="list">
+        {engines.map((e) => (
+          <div key={e.id} className="row">
+            <span className={clsx('dot', e.installed ? 'idle' : 'error')} />
+            <div className="grow">
+              <div>{e.label} {e.version && <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>v{e.version} · {e.source === 'bundled' ? '内置' : e.source === 'global' ? '全局 npm' : '环境变量'}</span>}</div>
+              <div className="sub">{e.installed ? e.path : e.note}</div>
+            </div>
+            {e.installed ? (
+              <button className={clsx('btn sm', def === e.id && 'primary')} onClick={() => setSetting('defaultEngine', e.id)}>{def === e.id ? '默认' : '设为默认'}</button>
+            ) : e.id === 'ccb' ? (
+              <button className="btn sm" disabled={busy} onClick={install}>{busy ? '安装中…' : '安装'}</button>
+            ) : null}
+            {e.id === 'ccb' && e.installed && <button className="btn sm ghost" disabled={busy} onClick={install} title="npm i -g claude-code-best@latest">更新</button>}
+          </div>
+        ))}
+        {!engines.length && <div className="empty">检测中…</div>}
+      </div>
+      <div className="section" style={{ fontSize: 12, color: 'var(--fg-2)' }}>
+        两个引擎共用同一套 <code>~/.claude</code>（登录、配置、会话记录），会话可以互相 resume。ccb 额外提供 Goal / Artifacts / Ultracode / Pipe IPC / 自定义供应商 / Web Search / 频道 / Computer Use / 协调者 / 主动模式 / /dream 等；在首页输入框的「引擎」和「功能」里选择。
+      </div>
+      <Cmd r={out} />
+    </>
+  );
+}
+
+const ENV_GROUPS: { title: string; tag?: string; keys: { k: string; hint: string; secret?: boolean }[] }[] = [
+  { title: 'Anthropic 兼容端点', keys: [{ k: 'ANTHROPIC_BASE_URL', hint: 'https://…（第三方 Anthropic 兼容 API）' }, { k: 'ANTHROPIC_AUTH_TOKEN', hint: 'Bearer token', secret: true }, { k: 'ANTHROPIC_API_KEY', hint: 'sk-ant-…（设置后不再用 claude.ai 登录）', secret: true }, { k: 'ANTHROPIC_MODEL', hint: '默认模型名' }] },
+  { title: 'OpenAI 兼容（ccb）', tag: 'ccb', keys: [{ k: 'OPENAI_BASE_URL', hint: 'https://api.openai.com/v1 或 DeepSeek/Groq/Qwen…' }, { k: 'OPENAI_API_KEY', hint: 'sk-…', secret: true }, { k: 'OPENAI_DEFAULT_OPUS_MODEL', hint: '映射到 opus 的模型' }, { k: 'OPENAI_DEFAULT_SONNET_MODEL', hint: '映射到 sonnet 的模型' }, { k: 'OPENAI_DEFAULT_HAIKU_MODEL', hint: '映射到 haiku 的模型' }] },
+  { title: 'Gemini（ccb）', tag: 'ccb', keys: [{ k: 'GEMINI_API_KEY', hint: 'AIza…', secret: true }, { k: 'GEMINI_BASE_URL', hint: '可选' }] },
+  { title: 'Web Search（ccb）', tag: 'ccb', keys: [{ k: 'BRAVE_API_KEY', hint: 'Brave Search API key', secret: true }, { k: 'WEB_SEARCH_PROVIDER', hint: 'api | bing | brave' }] },
+  { title: 'Artifacts 上传（ccb）', tag: 'ccb', keys: [{ k: 'ARTIFACTS_URL', hint: '自托管 Worker 地址，默认官方公共实例' }, { k: 'ARTIFACTS_TOKEN', hint: '上传令牌', secret: true }] },
+  { title: 'Langfuse 监控（ccb）', tag: 'ccb', keys: [{ k: 'LANGFUSE_PUBLIC_KEY', hint: 'pk-lf-…' }, { k: 'LANGFUSE_SECRET_KEY', hint: 'sk-lf-…', secret: true }, { k: 'LANGFUSE_BASE_URL', hint: 'https://cloud.langfuse.com' }] },
+  { title: 'Sentry（ccb）', tag: 'ccb', keys: [{ k: 'SENTRY_DSN', hint: 'https://…@sentry.io/…', secret: true }] },
+  { title: '语音（ccb TUI）', tag: 'ccb', keys: [{ k: 'VOICE_PROVIDER', hint: 'doubao …' }, { k: 'VOICE_STREAM_BASE_URL', hint: 'wss://…' }] },
+];
+
+/** Edits the `env` block of ~/.claude/settings.json — both engines read it (ccb's /login writes the same keys). */
+function Providers() {
+  const { data, err, reload } = useReq<{ path: string; text: string }>({ kind: 'config.settings.read', scope: 'user' });
+  const [env, setEnv] = useState<Record<string, string>>({});
+  const [modelType, setModelType] = useState('');
+  const [msg, setMsg] = useState('');
+  const [show, setShow] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    try { const j = JSON.parse(data?.text || '{}'); setEnv(j.env ?? {}); setModelType(j.modelType ?? ''); } catch { /* keep */ }
+  }, [data]);
+  const save = async () => {
+    try {
+      const j = JSON.parse(data?.text || '{}');
+      const cleaned: Record<string, string> = {};
+      for (const [k, v] of Object.entries(env)) if (v?.trim()) cleaned[k] = v.trim();
+      j.env = { ...(j.env ?? {}), ...cleaned };
+      for (const k of Object.keys(j.env)) if (!(k in cleaned) && ENV_GROUPS.some((g) => g.keys.some((x) => x.k === k))) delete j.env[k];
+      if (modelType) j.modelType = modelType; else delete j.modelType;
+      await ws.request({ kind: 'config.settings.write', scope: 'user', json: JSON.stringify(j, null, 2) });
+      setMsg('已保存到 ~/.claude/settings.json，新会话生效');
+      reload();
+    } catch (e: any) { setMsg(e.message); }
+  };
+  if (err) return <div className="empty" style={{ color: 'var(--red)' }}>{err}</div>;
+  return (
+    <div className="section">
+      <div style={{ fontSize: 12, color: 'var(--fg-2)', marginBottom: 8 }}>写入 <code>settings.json</code> 的 <code>env</code>，两个引擎都读。留空表示不设置。</div>
+      <label style={{ fontSize: 12, color: 'var(--fg-2)' }}>modelType（ccb 的供应商类型）</label>
+      <select className="field" value={modelType} onChange={(e) => setModelType(e.target.value)} style={{ display: 'block', marginBottom: 10 }}>
+        <option value="">默认（Anthropic / claude.ai 登录）</option>
+        <option value="anthropic">anthropic（兼容端点）</option>
+        <option value="openai">openai（OpenAI 兼容）</option>
+        <option value="gemini">gemini</option>
+        <option value="bedrock">bedrock</option>
+        <option value="vertex">vertex</option>
+      </select>
+      {ENV_GROUPS.map((g) => (
+        <div key={g.title} style={{ marginBottom: 10 }}>
+          <h5>{g.title} {g.tag && <span className="badge">{g.tag}</span>}</h5>
+          {g.keys.map(({ k, hint, secret }) => (
+            <div key={k} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
+              <code style={{ minWidth: 200, fontSize: 11.5, color: 'var(--fg-1)' }}>{k}</code>
+              <input className="field" style={{ flex: 1 }} type={secret && !show[k] ? 'password' : 'text'} placeholder={hint} value={env[k] ?? ''} onChange={(e) => setEnv({ ...env, [k]: e.target.value })} />
+              {secret && <button className="icon-btn" onClick={() => setShow({ ...show, [k]: !show[k] })}>{show[k] ? '🙈' : '👁'}</button>}
+            </div>
+          ))}
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <button className="btn sm primary" onClick={save}>保存</button>
+        <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{msg}</span>
+      </div>
+    </div>
+  );
+}
+
 export function ConfigPanel() {
   const [tab, setTab] = useState<Tab>('overview');
   return (
     <div>
       <div className="subtabs">{TABS.map((t) => <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}>{t.l}</button>)}</div>
       {tab === 'overview' && <Overview />}
+      {tab === 'engines' && <Engines />}
+      {tab === 'providers' && <Providers />}
       {tab === 'plugins' && <Plugins />}
       {tab === 'mcp' && <Mcp />}
       {tab === 'skills' && <SimpleList kind="config.skills" render={(s) => <div className="grow"><div>/{s.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{s.source}</span></div><div className="sub">{s.description}</div></div>} />}

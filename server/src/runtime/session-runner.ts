@@ -1,8 +1,8 @@
 import { query, type Query, type SDKMessage, type SDKUserMessage, type Options, type PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { resolveClaudeExe, spawnClaude } from '../claude-exe.js';
-import type { EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, RunnerState, SessionInfoSnapshot } from '../protocol.js';
+import { resolveEngine, spawnClaude } from '../claude-exe.js';
+import type { EffortLevel, EngineId, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, RunnerState, SessionFeatures, SessionInfoSnapshot } from '../protocol.js';
 
 /** Unbounded async queue used as the SDK's streaming-input prompt. */
 class InputQueue implements AsyncIterable<SDKUserMessage> {
@@ -68,12 +68,16 @@ export class SessionRunner extends EventEmitter {
   private model?: string;
   private effort?: EffortLevel;
   private permissionMode: PermissionMode;
+  private engine: EngineId;
+  private features: SessionFeatures;
   lastActivity = Date.now();
   private closed = false;
 
   constructor(params: OpenSessionParams) {
     super();
     this.cwd = params.cwd;
+    this.engine = params.engine ?? 'claude';
+    this.features = params.features ?? {};
     // a fork gets its own id from the CLI at init; until then use a placeholder so the pool
     // never clobbers the source session's runner
     const isFork = !!params.sessionId && (params.fork || !!params.resumeAt);
@@ -82,10 +86,31 @@ export class SessionRunner extends EventEmitter {
     this.model = params.model;
     this.effort = params.effort;
     this.permissionMode = params.permissionMode ?? 'default';
-    this.info = { sessionId: this.sessionId, state: 'starting', cwd: this.cwd, model: this.model, effort: this.effort, permissionMode: this.permissionMode };
+    this.info = { sessionId: this.sessionId, state: 'starting', cwd: this.cwd, model: this.model, effort: this.effort, permissionMode: this.permissionMode, engine: this.engine, features: this.features };
     const extra: Partial<Options> = params.sessionId ? { resume: params.sessionId, forkSession: params.fork || !!params.resumeAt, resumeSessionAt: params.resumeAt } : { sessionId: this.sessionId };
-    if (params.worktree) extra.extraArgs = { worktree: params.worktree };
+    extra.extraArgs = { ...this.featureArgs() };
+    if (params.worktree) extra.extraArgs.worktree = params.worktree;
     this.start(extra);
+  }
+
+  /** Map SessionFeatures to CLI flags (`--flag` = null, `--flag value` = string). */
+  private featureArgs(): Record<string, string | null> {
+    const f = this.features;
+    const a: Record<string, string | null> = {};
+    if (f.chrome) a.chrome = null;
+    if (f.computerUse) a['computer-use-mcp'] = null;
+    if (f.proactive) a.proactive = null;
+    if (f.brief) a.brief = null;
+    if (f.channels?.length) a.channels = f.channels.join(',');
+    if (f.devChannels) a['dangerously-load-development-channels'] = null;
+    return a;
+  }
+
+  private featureEnv(): Record<string, string> {
+    const f = this.features;
+    const env: Record<string, string> = { ...(f.env ?? {}) };
+    if (f.coordinator) env.CLAUDE_CODE_COORDINATOR_MODE = '1';
+    return env;
   }
 
   getHistory() {
@@ -103,9 +128,11 @@ export class SessionRunner extends EventEmitter {
   }
 
   private start(extra: Partial<Options>) {
-    const exe = resolveClaudeExe();
+    const exe = resolveEngine(this.engine);
+    const fenv = this.featureEnv();
     const options: Options = {
       cwd: this.cwd,
+      env: Object.keys(fenv).length ? { ...process.env, ...fenv } : undefined,
       model: this.model,
       effort: this.effort,
       permissionMode: this.permissionMode,
@@ -138,8 +165,12 @@ export class SessionRunner extends EventEmitter {
             q.supportedAgents().catch(() => []),
             q.mcpServerStatus().catch(() => []),
           ]);
-          this.info.slashCommands = cmds.map((c) => ({ name: c.name, description: c.description, argumentHint: c.argumentHint }));
-          this.info.models = models.map((m) => ({ value: m.value, displayName: m.displayName, description: m.description, supportsEffort: m.supportsEffort, supportedEffortLevels: m.supportedEffortLevels }));
+          // ccb has no supported_commands/supported_models control requests; fall back to the initialize payload
+          const im = init as any;
+          const cmdSrc: any[] = cmds.length ? cmds : im.commands ?? [];
+          const modelSrc: any[] = models.length ? models : im.models ?? [];
+          this.info.slashCommands = cmdSrc.map((c) => ({ name: c.name, description: c.description ?? '', argumentHint: c.argumentHint ?? c.argument_hint ?? '' }));
+          this.info.models = modelSrc.map((m) => ({ value: m.value, displayName: m.displayName ?? m.value, description: m.description ?? '', supportsEffort: m.supportsEffort, supportedEffortLevels: m.supportedEffortLevels }));
           this.info.agents = agents.map((a) => ({ name: a.name, description: a.description, model: a.model }));
           this.info.mcpServers = mcp.map((m) => ({ name: m.name, status: m.status, error: m.error, tools: m.tools }));
           this.emit('info', this.info);

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { EffortLevel, Limits, PermissionMode, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, Workspace } from '@shared';
+import type { EffortLevel, EngineId, EngineInfo, Limits, PermissionMode, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, Workspace } from '@shared';
 
 export const THEMES = ['dark', 'light', 'dracula', 'nord', 'tokyo-night', 'paper'] as const;
 export type Theme = (typeof THEMES)[number];
@@ -48,7 +48,11 @@ interface State {
   // actions
   init(): void;
   refreshSessions(): Promise<void>;
-  openSession(p: { sessionId?: string; cwd: string; model?: string; permissionMode?: PermissionMode; effort?: EffortLevel; fork?: boolean; resumeAt?: string; worktree?: string }): Promise<string>;
+  openSession(p: { sessionId?: string; cwd: string; model?: string; permissionMode?: PermissionMode; effort?: EffortLevel; fork?: boolean; resumeAt?: string; worktree?: string; engine?: EngineId; features?: SessionFeatures }): Promise<string>;
+  engines: EngineInfo[];
+  settings: Record<string, unknown>;
+  loadEngines(): Promise<void>;
+  setSetting(key: string, value: unknown): Promise<void>;
   loadHistory(sessionId: string): Promise<void>;
   send(sessionId: string, text: string, images?: { mediaType: string; data: string }[], steer?: boolean): Promise<void>;
   interrupt(sessionId: string): Promise<void>;
@@ -96,13 +100,24 @@ export const useStore = create<State>((set, get) => ({
   paletteOpen: false,
   showArchived: false,
   shortcutsOpen: false,
+  engines: [],
+  settings: {},
+  async loadEngines() {
+    const engines = await ws.request<EngineInfo[]>({ kind: 'engines.list' });
+    set({ engines });
+  },
+  async setSetting(key, value) {
+    set((s) => ({ settings: { ...s.settings, [key]: value } }));
+    await ws.request({ kind: 'settings.set', key, value });
+  },
   async loadMeta() {
-    const [workspaces, sessionMeta, schedules] = await Promise.all([
+    const [workspaces, sessionMeta, schedules, settings] = await Promise.all([
       ws.request<Workspace[]>({ kind: 'workspaces.list' }),
       ws.request<Record<string, SessionMeta>>({ kind: 'sessions.meta' }),
       ws.request<Schedule[]>({ kind: 'schedules.list' }),
+      ws.request<Record<string, unknown>>({ kind: 'settings.get' }),
     ]);
-    set({ workspaces, sessionMeta, schedules });
+    set({ workspaces, sessionMeta, schedules, settings });
   },
   async addWorkspace(path) {
     await ws.request({ kind: 'workspaces.add', path });
@@ -124,6 +139,7 @@ export const useStore = create<State>((set, get) => ({
       if (c) {
         void get().refreshSessions();
         void get().loadMeta();
+        void get().loadEngines().catch(() => {});
         void ws.request<Limits>({ kind: 'limits.get' }).then((limits) => set({ limits })).catch(() => {});
         // re-attach open live sessions after reconnect
         for (const o of Object.values(get().open)) if (o.state !== 'history') void ws.request({ kind: 'session.info', sessionId: o.sessionId }).then((d: any) => set((s) => bump(s, o.sessionId, (x) => { x.info = d.info; x.pending = d.pending; }))).catch(() => set((s) => bump(s, o.sessionId, (x) => { x.state = 'history'; })));

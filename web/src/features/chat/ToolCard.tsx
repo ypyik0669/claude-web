@@ -5,7 +5,7 @@ import { clsx, toolSummary } from '@/util';
 import { DiffView, Markdown } from './Markdown';
 import { ItemList } from './ChatView';
 
-const ICON: Record<string, string> = { Bash: '$', PowerShell: '>', Read: '📄', Write: '✎', Edit: '✎', MultiEdit: '✎', Glob: '🔍', Grep: '🔍', Agent: '🤖', Task: '🤖', WebFetch: '🌐', WebSearch: '🌐', Skill: '⚡', TodoWrite: '☑', AskUserQuestion: '❓', ExitPlanMode: '📋', EnterPlanMode: '📋' };
+const ICON: Record<string, string> = { Artifact: '📦', Goal: '🎯', Workflow: '🧩', WebBrowser: '🌐', Monitor: '👁', SendMessage: '📨', Bash: '$', PowerShell: '>', Read: '📄', Write: '✎', Edit: '✎', MultiEdit: '✎', Glob: '🔍', Grep: '🔍', Agent: '🤖', Task: '🤖', WebFetch: '🌐', WebSearch: '🌐', Skill: '⚡', TodoWrite: '☑', AskUserQuestion: '❓', ExitPlanMode: '📋', EnterPlanMode: '📋' };
 
 function ToolBody({ t }: { t: ToolUseBlock }) {
   const inp = t.input as any;
@@ -58,6 +58,40 @@ function ToolBody({ t }: { t: ToolUseBlock }) {
       );
     case 'ExitPlanMode':
       return <Markdown text={inp.plan ?? ''} />;
+    case 'Artifact': {
+      const url = /https?:\/\/\S+/.exec(r?.content ?? '')?.[0];
+      return (
+        <>
+          <div className="lbl">{inp.title ?? inp.name ?? 'artifact'} · {inp.expires ?? inp.ttl ?? ''}</div>
+          {url ? (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <a href={url} target="_blank" rel="noreferrer" className="btn sm">↗ 打开 Artifact</a>
+              <code style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>{url}</code>
+              <button className="btn sm ghost" onClick={() => navigator.clipboard.writeText(url)}>复制链接</button>
+            </div>
+          ) : (
+            <pre>{r?.content ?? '上传中…'}</pre>
+          )}
+          {inp.content && <details style={{ marginTop: 6 }}><summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--fg-2)' }}>HTML 源码 ({String(inp.content).length} 字符)</summary><pre>{String(inp.content).slice(0, 20000)}</pre></details>}
+        </>
+      );
+    }
+    case 'Goal':
+      return (
+        <>
+          <div className="lbl">{inp.action ?? inp.command ?? 'goal'}</div>
+          {inp.objective && <Markdown text={String(inp.objective)} />}
+          {r && <pre>{r.content}</pre>}
+        </>
+      );
+    case 'Workflow':
+      return (
+        <>
+          <div className="lbl">workflow{inp.name ? ` · ${inp.name}` : ''}</div>
+          <pre>{inp.script ?? JSON.stringify(inp, null, 2)}</pre>
+          {r && <pre style={{ color: r.isError ? 'var(--red)' : undefined }}>{r.content}</pre>}
+        </>
+      );
     default:
       return (
         <>

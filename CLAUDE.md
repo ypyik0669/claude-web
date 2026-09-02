@@ -32,6 +32,14 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - **worktree 会话**：`extraArgs: { worktree: name }`。
 - 浏览器占用 Ctrl+N，新会话快捷键是 Alt+N；命令面板 Ctrl+K。
 
+## 引擎：官方 Claude Code 与 ccb（claude-code-best）
+
+- `server/src/claude-exe.ts`：`listEngines()` / `resolveEngine(id)`。官方引擎 = SDK 自带的 claude.exe；ccb = npm 包 `claude-code-best` 的 `dist/cli-node.js`（根 package.json 依赖里内置，也认全局安装）。ccb 是 JS，SDK 会用 `node` 起它；在 Electron 里没有 `node`，`spawnClaude` 把它映射成 `process.execPath` + `ELECTRON_RUN_AS_NODE=1`。
+- ccb 完整实现了 SDK 的 stream-json + control 协议，只缺 `supported_commands` / `supported_models` / `commands_changed`：runner 从 `initializationResult()` 的 `commands`/`models` 兜底。它和官方共用 `~/.claude`（登录、settings、会话 jsonl、subagents），会话可互相 resume。
+- 会话级开关 `SessionFeatures`（`--chrome`、`--computer-use-mcp`、`--proactive`、`--brief`、`--channels`、`CLAUDE_CODE_COORDINATOR_MODE`）在 `session-runner.ts` 的 `featureArgs()/featureEnv()`。
+- 供应商 / Langfuse / Artifacts / Web Search 的配置就是 `~/.claude/settings.json` 的 `env`（ccb 的 `/login` 也写这里）；配置中心「供应商 / 环境」tab 直接编辑。
+- ccb 里 `local-jsx` 类型的命令（/goal 面板、/artifacts 列表、/poor、/voice、/buddy 等）是 TUI 专属，headless 发不了；对应能力靠工具（Goal / Artifact / Workflow）或终端面板兜底。
+
 ## 桌面版（desktop/）
 
 ```

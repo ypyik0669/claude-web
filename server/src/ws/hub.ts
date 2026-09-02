@@ -10,6 +10,7 @@ import { MetaStore } from '../meta/store.js';
 import { LimitsService } from '../usage/limits.js';
 import { ScheduleService } from '../schedules/service.js';
 import { execFile } from 'node:child_process';
+import { installCcb, listEngines, runClaudeCli } from '../claude-exe.js';
 
 export interface Services {
   pool: RunnerPool;
@@ -101,6 +102,8 @@ export class Hub {
 
       case 'session.open': {
         let params = req.params;
+        if (!params.engine) params = { ...params, engine: (s.meta.settings().defaultEngine as any) ?? 'claude' };
+        if (!params.features && s.meta.settings().defaultFeatures) params = { ...params, features: s.meta.settings().defaultFeatures as any };
         // forks: copy the transcript first (SDK forkSession) so the new session has a real id before the process starts
         if (params.sessionId && (params.fork || params.resumeAt)) {
           const newId = await s.sessions.fork(params.sessionId, params.resumeAt);
@@ -150,6 +153,13 @@ export class Hub {
       }
       case 'limits.get':
         return s.limits.get(req.force);
+      case 'engines.list':
+        return listEngines();
+      case 'engines.install':
+        if (req.id !== 'ccb') throw new Error('只支持安装 ccb（官方 Claude Code 已随应用内置）');
+        return installCcb();
+      case 'engine.cli':
+        return runClaudeCli(req.args, { engine: req.engine, cwd: req.cwd, timeoutMs: 120_000 });
       case 'settings.get':
         return s.meta.settings();
       case 'settings.set':

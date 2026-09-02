@@ -269,6 +269,9 @@ html.desktop .sb-top button { -webkit-app-region: no-drag; }
 .welcome .greet .spark { color: var(--accent); font-size: 26px; }
 .welcome .composer { width: 100%; padding: 0; }
 .welcome .composer-inner { max-width: 720px; }
+.engine-status { display: inline-flex; align-items: center; gap: 7px; margin-top: 14px; font-size: 12px; color: var(--fg-2); cursor: pointer; padding: 4px 10px; border-radius: 8px; }
+.engine-status:hover { background: var(--bg-1); color: var(--fg-1); }
+.engine-status .sep { color: var(--fg-3); }
 .welcome .chips { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 16px; max-width: 720px; }
 .welcome .chips .chip { border: 1px solid var(--line); background: var(--bg-1); padding: 5px 12px; font-size: 12.5px; }
 .welcome .recent { margin-top: 36px; width: 100%; max-width: 720px; }

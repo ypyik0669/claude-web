@@ -28,6 +28,23 @@ export interface OpenSessionParams {
   resumeAt?: string; // fork from this message uuid (implies fork)
   worktree?: string; // create a git worktree with this name for the session
   workspaceId?: string;
+  engine?: EngineId; // which CLI drives the session (default: user setting, else 'claude')
+  features?: SessionFeatures; // extra CLI flags / env, mostly ccb-only
+}
+
+export type EngineId = 'claude' | 'ccb';
+export interface EngineInfo { id: EngineId; label: string; installed: boolean; path?: string; version?: string; source?: 'bundled' | 'global' | 'env'; note?: string }
+
+/** Optional per-session switches. Each maps to a CLI flag or env var; unknown to the engine = ignored/error. */
+export interface SessionFeatures {
+  chrome?: boolean; // --chrome (Claude in Chrome MCP)
+  computerUse?: boolean; // --computer-use-mcp (ccb)
+  coordinator?: boolean; // CLAUDE_CODE_COORDINATOR_MODE=1 (ccb)
+  proactive?: boolean; // --proactive (ccb)
+  brief?: boolean; // --brief (SendUserMessage tool)
+  channels?: string[]; // --channels plugin:name@marketplace | server:name (ccb)
+  devChannels?: boolean; // --dangerously-load-development-channels (ccb)
+  env?: Record<string, string>; // extra env for the CLI process (provider keys, LANGFUSE_*, ...)
 }
 
 export interface SendParams {
@@ -73,6 +90,8 @@ export interface SessionInfoSnapshot {
   plugins?: { name: string; path: string; version?: string }[];
   models?: { value: string; displayName: string; description: string; supportsEffort?: boolean; supportedEffortLevels?: EffortLevel[] }[];
   claudeCodeVersion?: string;
+  engine?: EngineId;
+  features?: SessionFeatures;
   error?: string;
 }
 
@@ -108,6 +127,9 @@ export type ClientRequest =
   | { kind: 'schedules.remove'; id: string }
   | { kind: 'schedules.runNow'; id: string }
   | { kind: 'limits.get'; force?: boolean }
+  | { kind: 'engines.list' }
+  | { kind: 'engines.install'; id: EngineId }
+  | { kind: 'engine.cli'; engine: EngineId; args: string[]; cwd?: string }
   | { kind: 'settings.get' }
   | { kind: 'settings.set'; key: string; value: unknown }
   | { kind: 'sessions.search'; query: string; limit?: number }

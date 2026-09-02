@@ -38,6 +38,9 @@ files:
 asarUnpack:
   - "**/node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/**"
   - "**/node_modules/node-pty/**"
+  - "**/node_modules/claude-code-best/**"
+  - "**/node_modules/@claude-code-best/**"
+  - "**/node_modules/@vscode/ripgrep/**"
 extraResources:
   - from: desktop/build/icon.png
     to: icon.png

@@ -14,6 +14,7 @@ import { InspectorPanel } from '@/features/panels/InspectorPanel';
 import { ago, clsx } from '@/util';
 import { CommandPalette } from '@/features/palette/CommandPalette';
 import { desktop } from '@/desktop';
+import { ws } from '@/ws/client';
 
 const SHORTCUTS: [string, string][] = [
   ['Ctrl+K', '命令面板 / 全文搜索会话'],
@@ -68,6 +69,30 @@ function greeting() {
   return h < 5 ? '夜深了' : h < 11 ? '早上好' : h < 14 ? '中午好' : h < 18 ? '下午好' : '晚上好';
 }
 
+/** Startup check strip: which engines were detected and whether Claude Code is logged in. */
+function EngineStatus() {
+  const engines = useStore((s) => s.engines);
+  const togglePanel = useStore((s) => s.togglePanel);
+  const [auth, setAuth] = useState<any>(null);
+  useEffect(() => { ws.request<any>({ kind: 'config.auth' }).then(setAuth).catch(() => setAuth({ loggedIn: false, error: true })); }, []);
+  const claude = engines.find((e) => e.id === 'claude');
+  const ccb = engines.find((e) => e.id === 'ccb');
+  if (!engines.length) return null;
+  const ok = claude?.installed && auth?.loggedIn;
+  return (
+    <div className="engine-status" onClick={() => togglePanel('config')} title="打开配置中心 → 引擎">
+      <span className={clsx('dot', claude?.installed ? 'idle' : 'error')} />
+      <span>Claude Code {claude?.installed ? `v${claude.version ?? ''}` : '未检测到'}</span>
+      <span className="sep">·</span>
+      <span className={clsx('dot', ccb?.installed ? 'idle' : '')} />
+      <span>ccb {ccb?.installed ? `v${ccb.version ?? ''}` : '未安装'}</span>
+      <span className="sep">·</span>
+      {auth === null ? <span>检查登录…</span> : auth.loggedIn ? <span>已登录 {auth.email ?? auth.authMethod ?? ''}</span> : <span style={{ color: 'var(--yellow)' }}>未登录 — 打开终端面板运行 /login</span>}
+      {!ok && auth !== null && <span className="badge err" style={{ marginLeft: 6 }}>需要处理</span>}
+    </div>
+  );
+}
+
 function Welcome() {
   const sessions = useStore((s) => s.sessions);
   const open = useStore((s) => s.open);
@@ -78,6 +103,7 @@ function Welcome() {
     <div className="welcome">
       <h1 className="greet"><span className="spark">✱</span>{greeting()}</h1>
       <Composer welcome />
+      <EngineStatus />
       {recent.length > 0 && (
         <div className="recent">
           <h5>最近</h5>

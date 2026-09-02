@@ -3,7 +3,7 @@ import { useActive, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { clsx, fmtTok, fmtUsd, fmtMs, shortModel, basename } from '@/util';
-import type { EffortLevel, PermissionMode } from '@shared';
+import type { EffortLevel, EngineId, PermissionMode, SessionFeatures } from '@shared';
 
 interface Img { mediaType: string; data: string; url: string }
 
@@ -38,6 +38,35 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
   const [wMode, setWMode] = useState<PermissionMode>((localStorage.getItem('cw.lastMode') as PermissionMode) || 'default');
   const [wEffort, setWEffort] = useState<EffortLevel | ''>('');
   const [starting, setStarting] = useState(false);
+  const engines = useStore((s) => s.engines);
+  const settings = useStore((s) => s.settings);
+  const [wEngine, setWEngine] = useState<EngineId>((localStorage.getItem('cw.lastEngine') as EngineId) || (settings.defaultEngine as EngineId) || 'claude');
+  const [wFeatures, setWFeatures] = useState<SessionFeatures>(() => { try { return JSON.parse(localStorage.getItem('cw.lastFeatures') ?? '{}'); } catch { return {}; } });
+  const [featOpen, setFeatOpen] = useState(false);
+  const [listening, setListening] = useState(false);
+  const recRef = useRef<any>(null);
+  const speechOk = typeof window !== 'undefined' && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+
+  const toggleVoice = () => {
+    if (listening) { recRef.current?.stop(); return; }
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const rec = new SR();
+    rec.lang = navigator.language.startsWith('zh') ? 'zh-CN' : navigator.language;
+    rec.interimResults = true;
+    rec.continuous = true;
+    let base = text;
+    rec.onresult = (ev: any) => {
+      let finalT = '', interim = '';
+      for (let i = 0; i < ev.results.length; i++) { const r = ev.results[i]; if (r.isFinal) finalT += r[0].transcript; else interim += r[0].transcript; }
+      setText(base + finalT + interim);
+    };
+    rec.onend = () => { setListening(false); recRef.current = null; };
+    rec.onerror = () => { setListening(false); recRef.current = null; };
+    recRef.current = rec;
+    setListening(true);
+    rec.start();
+  };
+  const featCount = Object.entries(wFeatures).filter(([k, v]) => k !== 'env' && (Array.isArray(v) ? v.length : !!v)).length;
 
   useEffect(() => {
     if (!cwd && sessions[0]?.cwd) setCwd(sessions[0].cwd);
@@ -76,7 +105,9 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
         localStorage.setItem('cw.lastCwd', cwd);
         localStorage.setItem('cw.lastModel', wModel);
         localStorage.setItem('cw.lastMode', wMode);
-        const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffort || undefined });
+        localStorage.setItem('cw.lastEngine', wEngine);
+        localStorage.setItem('cw.lastFeatures', JSON.stringify(wFeatures));
+        const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffort || undefined, engine: wEngine, features: wFeatures });
         await send(id, t, im);
       } catch (e: any) {
         toast(e.message);
@@ -207,8 +238,40 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
               </>
             ) : null}
             <span className="grow" />
+            {speechOk && (
+              <button className={clsx('icon-btn', listening && 'active')} title={listening ? '停止语音输入' : '语音输入（浏览器识别）'} onClick={toggleVoice}>{listening ? '●' : '🎤'}</button>
+            )}
             {welcome ? (
               <>
+                <label className="chip" title="引擎：官方 Claude Code 或 Claude Code Best（ccb）"><span>{engines.find((e) => e.id === wEngine)?.label.replace(/（.*/, '') ?? wEngine}</span><span className="caret">▾</span>
+                  <select value={wEngine} onChange={(e) => setWEngine(e.target.value as EngineId)}>
+                    {engines.map((e) => <option key={e.id} value={e.id} disabled={!e.installed}>{e.label}{e.installed ? '' : '（未安装）'}</option>)}
+                    {!engines.length && <option value="claude">Claude Code</option>}
+                  </select>
+                </label>
+                <span style={{ position: 'relative' }}>
+                  <button className={clsx('chip', featCount > 0 && 'warn')} onClick={() => setFeatOpen(!featOpen)} title="会话附加功能（Chrome / Computer Use / 协调者 / 主动模式 / 频道）">功能{featCount ? ` ${featCount}` : ''} <span className="caret">▾</span></button>
+                  {featOpen && (
+                    <div className="menu" style={{ bottom: '100%', right: 0, marginBottom: 6, minWidth: 260, padding: 8 }} onMouseLeave={() => setFeatOpen(false)}>
+                      {([
+                        ['chrome', 'Claude in Chrome（浏览器自动化）', ''],
+                        ['computerUse', 'Computer Use（截图 / 键鼠）', 'ccb'],
+                        ['coordinator', '协调者模式（只派活给子代理）', 'ccb'],
+                        ['proactive', '主动模式（空闲时继续干活）', 'ccb'],
+                        ['brief', 'Brief（SendUserMessage 工具）', ''],
+                      ] as [keyof SessionFeatures, string, string][]).map(([k, l, tag]) => (
+                        <label key={k} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 4px', fontSize: 12.5, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={!!wFeatures[k]} onChange={(e) => setWFeatures({ ...wFeatures, [k]: e.target.checked })} />
+                          <span style={{ flex: 1 }}>{l}</span>{tag && <span className="badge">{tag}</span>}
+                        </label>
+                      ))}
+                      <div style={{ padding: '4px 4px', fontSize: 12 }}>
+                        频道 <span className="badge">ccb</span>
+                        <input className="field" style={{ width: '100%', marginTop: 4 }} placeholder="plugin:name@marketplace, server:name" value={(wFeatures.channels ?? []).join(', ')} onChange={(e) => setWFeatures({ ...wFeatures, channels: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) })} />
+                      </div>
+                    </div>
+                  )}
+                </span>
                 <label className="chip"><span>{MODEL_ALIASES.find((m) => m.value === wModel)?.label ?? wModel}</span><span className="caret">▾</span>
                   <select value={wModel} onChange={(e) => setWModel(e.target.value)}>{MODEL_ALIASES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}</select>
                 </label>

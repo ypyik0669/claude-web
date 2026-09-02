@@ -99,6 +99,7 @@ export function TopBar() {
             <span className="cur" onDoubleClick={() => setEditing(title)} title="双击重命名">{title}</span>
           )}
           {meta?.gitBranch && <span className="sep" style={{ fontSize: 12 }}>· {meta.gitBranch}</span>}
+          {active.info?.engine === 'ccb' && <span className="badge" title={`Claude Code Best ${active.info.claudeCodeVersion ?? ''}`} style={{ color: 'var(--blue)' }}>ccb</span>}
         </div>
       ) : (
         <div className="title" />
