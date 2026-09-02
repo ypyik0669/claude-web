@@ -2,7 +2,8 @@
 import WebSocket from 'ws';
 const port = process.argv[2] ?? '3090';
 const engine = process.argv[3] ?? 'claude';
-const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+const token = process.argv[4];
+const ws = new WebSocket(`ws://127.0.0.1:${port}/ws${token ? `?token=${token}` : ''}`);
 let n = 0;
 const pending = new Map();
 const req = (r) => new Promise((res, rej) => { const id = String(++n); pending.set(id, { res, rej }); ws.send(JSON.stringify({ type: 'request', request: { id, req: r } })); });
