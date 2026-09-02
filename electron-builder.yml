@@ -55,4 +55,5 @@ nsis:
   shortcutName: Claude Web
 portable:
   artifactName: ClaudeWeb-${version}-portable.${ext}
-npmRebuild: true
+# node-pty ships N-API prebuilds (prebuilds/win32-x64); no toolchain needed
+npmRebuild: false

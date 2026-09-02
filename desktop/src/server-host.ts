@@ -14,7 +14,8 @@ export class ServerHost extends EventEmitter {
   private proc: UtilityProcess | null = null;
   private stopping = false;
   info: ServerInfo | null = null;
-  readonly token = randomBytes(24).toString('base64url');
+  // CLAUDE_WEB_TOKEN lets a developer open the embedded server in a normal browser for debugging
+  readonly token = process.env.CLAUDE_WEB_TOKEN || randomBytes(24).toString('base64url');
   private log = (s: string) => {
     try {
       fs.appendFileSync(path.join(app.getPath('userData'), 'server.log'), `[${new Date().toISOString()}] ${s}\n`);

@@ -44,6 +44,8 @@ npm run build:desktop   # electron-builder → dist-desktop/ClaudeWeb-<ver>-win-
 - 前端通过 `web/src/desktop.ts` 判断是否在桌面壳里：选目录 / 打开路径 / 通知 / 菜单快捷键都走桥，浏览器模式退回原逻辑。`html.desktop` 类让顶栏成为可拖动标题栏，右侧留 150px 给系统窗口按钮。
 - 打包后原生二进制在 `app.asar.unpacked`：`resolveClaudeExe()` 和 node-pty 加载都做了路径修正。
 - 日志：`%APPDATA%\claude-web\server.log`、`main.log`。
+- electron-builder 只打包**根 package.json 的 dependencies**（workspace 子包的不算），所以 server 的运行时依赖在根 package.json 里也列了一份；`npmRebuild: false`，node-pty 用自带 prebuilds（本机没有 VS Build Tools，rebuild 会失败）。
+- 调试打包后的 server：设 `CLAUDE_WEB_TOKEN=xxx` 起 `electron .`，然后浏览器开 `http://127.0.0.1:<port>/?token=xxx`（端口看 server.log）。
 
 ## 结构
 
