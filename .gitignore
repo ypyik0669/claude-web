@@ -1,0 +1,4 @@
+node_modules/
+web/dist/
+*.log
+hello.txt

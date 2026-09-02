@@ -1,0 +1,134 @@
+// Shared wire protocol between server and web. Web imports this via the `@shared` alias.
+// One WebSocket. Client -> server requests carry an `id` and get exactly one `reply`.
+// Server -> client events carry no `id`.
+
+export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type RunnerState = 'starting' | 'idle' | 'running' | 'waiting' | 'error' | 'closed';
+
+export interface SessionSummary {
+  sessionId: string;
+  title: string;
+  cwd: string;
+  lastModified: number;
+  createdAt?: number;
+  gitBranch?: string;
+  firstPrompt?: string;
+  customTitle?: string;
+  live?: RunnerState; // present when a runner exists for this session
+}
+
+export interface OpenSessionParams {
+  sessionId?: string; // resume this session; omit to start a new one
+  cwd: string;
+  model?: string;
+  permissionMode?: PermissionMode;
+  effort?: EffortLevel;
+  fork?: boolean;
+}
+
+export interface SendParams {
+  sessionId: string;
+  text: string;
+  images?: { mediaType: string; data: string }[]; // base64
+}
+
+export interface PermissionRequestEvent {
+  requestId: string;
+  sessionId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  toolUseId?: string;
+  suggestions?: unknown[];
+  blockedPath?: string;
+  decisionReason?: string;
+}
+
+export type PermissionResponse =
+  | { behavior: 'allow'; updatedInput?: Record<string, unknown>; updatedPermissions?: unknown[] }
+  | { behavior: 'deny'; message: string; interrupt?: boolean };
+
+export interface SessionInfoSnapshot {
+  sessionId: string;
+  state: RunnerState;
+  cwd: string;
+  model?: string;
+  effort?: EffortLevel | null;
+  permissionMode?: PermissionMode;
+  tools?: string[];
+  slashCommands?: { name: string; description: string; argumentHint: string }[];
+  skills?: string[];
+  agents?: { name: string; description: string; model?: string }[];
+  mcpServers?: { name: string; status: string; error?: string; tools?: unknown[] }[];
+  plugins?: { name: string; path: string; version?: string }[];
+  models?: { value: string; displayName: string; description: string; supportsEffort?: boolean; supportedEffortLevels?: EffortLevel[] }[];
+  claudeCodeVersion?: string;
+  error?: string;
+}
+
+// ---- requests ----
+export type ClientRequest =
+  | { kind: 'sessions.list'; limit?: number }
+  | { kind: 'sessions.projects' }
+  | { kind: 'transcript.load'; sessionId: string }
+  | { kind: 'transcript.subagent'; sessionId: string; agentId: string }
+  | { kind: 'transcript.subagents'; sessionId: string }
+  | { kind: 'session.open'; params: OpenSessionParams }
+  | { kind: 'session.info'; sessionId: string }
+  | { kind: 'session.send'; params: SendParams }
+  | { kind: 'session.interrupt'; sessionId: string }
+  | { kind: 'session.close'; sessionId: string }
+  | { kind: 'session.setPermissionMode'; sessionId: string; mode: PermissionMode }
+  | { kind: 'session.setModel'; sessionId: string; model: string }
+  | { kind: 'session.setEffort'; sessionId: string; effort: EffortLevel }
+  | { kind: 'session.rename'; sessionId: string; title: string }
+  | { kind: 'session.delete'; sessionId: string }
+  | { kind: 'session.contextUsage'; sessionId: string }
+  | { kind: 'session.stopTask'; sessionId: string; taskId: string }
+  | { kind: 'permission.respond'; requestId: string; response: PermissionResponse }
+  | { kind: 'config.overview' }
+  | { kind: 'config.plugins' }
+  | { kind: 'config.plugin.toggle'; name: string; enable: boolean }
+  | { kind: 'config.plugin.install'; spec: string }
+  | { kind: 'config.plugin.uninstall'; name: string }
+  | { kind: 'config.marketplaces' }
+  | { kind: 'config.marketplace.add'; source: string }
+  | { kind: 'config.mcp' }
+  | { kind: 'config.mcp.add'; name: string; json: string; scope: 'user' | 'project' | 'local'; cwd?: string }
+  | { kind: 'config.mcp.remove'; name: string; scope?: string; cwd?: string }
+  | { kind: 'config.auth' }
+  | { kind: 'config.settings.read'; scope: 'user' | 'project' | 'local'; cwd?: string }
+  | { kind: 'config.settings.write'; scope: 'user' | 'project' | 'local'; cwd?: string; json: string }
+  | { kind: 'config.skills' }
+  | { kind: 'config.agents' }
+  | { kind: 'config.hooks' }
+  | { kind: 'config.doctor' }
+  | { kind: 'usage.session'; sessionId: string }
+  | { kind: 'usage.global'; days?: number }
+  | { kind: 'files.changed'; sessionId: string }
+  | { kind: 'files.diff'; sessionId: string; path: string }
+  | { kind: 'fs.list'; path: string }
+  | { kind: 'fs.read'; path: string }
+  | { kind: 'fs.pickDir' }
+  | { kind: 'terminal.open'; cwd: string; cols: number; rows: number }
+  | { kind: 'terminal.input'; termId: string; data: string }
+  | { kind: 'terminal.resize'; termId: string; cols: number; rows: number }
+  | { kind: 'terminal.close'; termId: string };
+
+export interface RequestEnvelope { id: string; req: ClientRequest }
+export interface ReplyEnvelope { id: string; ok: boolean; data?: unknown; error?: string }
+
+// ---- events ----
+export type ServerEvent =
+  | { kind: 'hello'; version: string }
+  | { kind: 'session.event'; sessionId: string; message: unknown } // raw SDK message
+  | { kind: 'session.state'; sessionId: string; state: RunnerState; error?: string }
+  | { kind: 'session.info'; info: SessionInfoSnapshot }
+  | { kind: 'permission.request'; request: PermissionRequestEvent }
+  | { kind: 'permission.resolved'; requestId: string }
+  | { kind: 'sessions.changed' }
+  | { kind: 'terminal.data'; termId: string; data: string }
+  | { kind: 'terminal.exit'; termId: string; code: number | null };
+
+export type WireDown = { type: 'reply'; reply: ReplyEnvelope } | { type: 'event'; event: ServerEvent };
+export type WireUp = { type: 'request'; request: RequestEnvelope };
