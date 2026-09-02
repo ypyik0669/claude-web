@@ -108,7 +108,7 @@ export const ToolCard = memo(function ToolCard({ t, version }: { t: ToolUseBlock
   return (
     <div className={clsx('tool', t.status === 'error' && 'error', (t.status === 'running' || t.status === 'pending') && 'running')}>
       <div className="tool-head" onClick={() => setOpen(!show)}>
-        <span>{ICON[t.name] ?? '⚙'}</span>
+        <span className="ic">{ICON[t.name] ?? '⚙'}</span>
         <span className="name">{t.name.replace(/^mcp__/, 'mcp:')}</span>
         <span className="summary">{toolSummary(t.name, t.input)}</span>
         {t.progress?.lastTool && t.status === 'running' && <span className="st">{t.progress.lastTool}</span>}

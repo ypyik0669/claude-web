@@ -29,6 +29,8 @@ interface State {
   sidebarOpen: boolean;
   inspect: { sessionId: string; toolUseId: string } | null;
   theme: 'dark' | 'light';
+  toasts: { id: number; text: string; ok?: boolean }[];
+  toast(text: string, ok?: boolean): void;
   // actions
   init(): void;
   refreshSessions(): Promise<void>;
@@ -71,6 +73,12 @@ export const useStore = create<State>((set, get) => ({
   sidebarOpen: true,
   inspect: null,
   theme: (localStorage.getItem('cw.theme') as 'dark' | 'light') || 'dark',
+  toasts: [],
+  toast(text, ok) {
+    const id = Date.now() + Math.random();
+    set((s) => ({ toasts: [...s.toasts, { id, text, ok }] }));
+    setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 5000);
+  },
 
   init() {
     ws.onStatus = (c) => {
@@ -150,6 +158,8 @@ export const useStore = create<State>((set, get) => ({
         o.conv = conv;
         o.loading = false;
       }));
+      // a runner may already be alive for this session (e.g. page reload): re-attach so controls go live
+      if (meta?.live && meta.live !== 'closed' && meta.live !== 'error') await get().openSession({ sessionId, cwd: meta.cwd });
     } catch (e: any) {
       set((s) => bump(s, sessionId, (o) => { o.loading = false; o.error = e.message; }));
     }
