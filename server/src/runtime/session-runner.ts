@@ -141,6 +141,13 @@ export class SessionRunner extends EventEmitter {
         } catch {
           /* non-fatal */
         }
+        // In --resume mode the CLI only emits `system/init` when the first turn starts, so the
+        // process is ready as soon as the control-channel initialize completes.
+        if (this.state === 'starting') {
+          const im = init as any;
+          if (im.current_permission_mode) this.info.permissionMode = im.current_permission_mode;
+          this.setState('idle');
+        }
       }
       for await (const m of q) {
         this.lastActivity = Date.now();

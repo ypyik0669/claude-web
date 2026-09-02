@@ -62,7 +62,7 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
   useEffect(() => setPalIdx(0), [slashQuery]);
 
   const busy = !welcome && !!active && (active.state === 'running' || active.state === 'waiting' || active.state === 'starting');
-  const canSend = (text.trim().length > 0 || imgs.length > 0) && !starting && (welcome || active?.state !== 'starting');
+  const canSend = (text.trim().length > 0 || imgs.length > 0) && !starting;
 
   const doSend = async () => {
     if (!canSend) return;
@@ -220,7 +220,7 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
               </>
             ) : liveOk ? (
               <>
-                <label className="chip" title="模型"><span>{info.models?.find((m) => m.value === info.model)?.displayName ?? shortModel(info.model)}</span><span className="caret">▾</span>
+                <label className="chip" title="模型"><span>{info.models?.find((m) => m.value === info.model)?.displayName ?? (shortModel(info.model) || '模型')}</span><span className="caret">▾</span>
                   <select value={info.model ?? ''} onChange={(e) => setModel(e.target.value)}>
                     {(info.models ?? []).map((m) => <option key={m.value} value={m.value}>{m.displayName}</option>)}
                     {info.model && !info.models?.some((m) => m.value === info.model) && <option value={info.model}>{shortModel(info.model)}</option>}
