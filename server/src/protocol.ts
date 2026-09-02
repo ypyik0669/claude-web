@@ -76,7 +76,13 @@ export interface SendParams {
   images?: { mediaType: string; data: string }[]; // base64
   steer?: boolean; // deliver mid-turn (SDK priority: 'now') instead of after the turn
   uuid?: string; // client-minted transcript uuid for this user message (fork / rewind anchor)
+  attachments?: AttachmentRef[]; // already uploaded via POST /api/attachments (or inline text)
 }
+
+/** File attached to a user message. `text` kind inlines content; others reference a path the CLI can Read. */
+export interface AttachmentRef { kind: 'image' | 'text' | 'file' | 'folder'; name: string; path?: string; size?: number; text?: string }
+
+export interface MessageFeedback { rating: 'up' | 'down' | null; note?: string; at: number }
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
 export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string }
@@ -138,7 +144,12 @@ export type ClientRequest =
   | { kind: 'session.setEffort'; sessionId: string; effort: EffortLevel }
   | { kind: 'session.rename'; sessionId: string; title: string }
   | { kind: 'session.delete'; sessionId: string }
-  | { kind: 'session.contextUsage'; sessionId: string }
+  | { kind: 'session.contextUsage'; sessionId: string; detail?: 'summary' | 'full' }
+  | { kind: 'feedback.set'; sessionId: string; messageId: string; rating: 'up' | 'down' | null; note?: string }
+  | { kind: 'feedback.list'; sessionId: string }
+  | { kind: 'drafts.set'; key: string; text: string } // key = sessionId | 'welcome'
+  | { kind: 'drafts.get'; key: string }
+  | { kind: 'export.save'; name: string; html: string } // → ~/.claude-web/exports/<name>.html, returns path
   | { kind: 'session.stopTask'; sessionId: string; taskId: string }
   | { kind: 'permission.respond'; requestId: string; response: PermissionResponse }
   | { kind: 'workspaces.list' }

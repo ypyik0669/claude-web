@@ -128,7 +128,7 @@ export class Hub {
         return { info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
       }
       case 'session.send':
-        this.runner(req.params.sessionId).send(req.params.text, req.params.images, req.params.steer, req.params.uuid);
+        this.runner(req.params.sessionId).send(req.params.text, req.params.images, req.params.steer, req.params.uuid, req.params.attachments);
         return null;
 
       case 'workspaces.list':
@@ -215,7 +215,19 @@ export class Hub {
         await s.sessions.delete(req.sessionId);
         return null;
       case 'session.contextUsage':
-        return this.runner(req.sessionId).contextUsage();
+        return this.runner(req.sessionId).contextUsage(req.detail);
+      case 'feedback.set':
+        await s.meta.setFeedback(req.sessionId, req.messageId, req.rating ? { rating: req.rating, note: req.note, at: Date.now() } : null);
+        return null;
+      case 'feedback.list':
+        return s.meta.feedback(req.sessionId);
+      case 'drafts.set':
+        await s.meta.setDraft(req.key, req.text);
+        return null;
+      case 'drafts.get':
+        return s.meta.draft(req.key);
+      case 'export.save':
+        return s.files.saveExport(req.name, req.html);
       case 'session.stopTask':
         await this.runner(req.sessionId).stopTask(req.taskId);
         return null;

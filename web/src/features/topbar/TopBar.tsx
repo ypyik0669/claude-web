@@ -3,6 +3,7 @@ import { useActive, useStore, type PanelId } from '@/store';
 import { ws } from '@/ws/client';
 import { basename, clsx } from '@/util';
 import type { LimitWindow } from '@shared';
+import { shareConversation } from '@/features/chat/MessageActions';
 
 const PANELS: { id: PanelId; l: string; ic: string }[] = [
   { id: 'tasks', l: '任务', ic: '◔' },
@@ -113,6 +114,7 @@ export function TopBar() {
             <button className={clsx(tab === 'trajectory' && 'active')} onClick={() => setTab('trajectory')}>轨迹</button>
           </div>
           <button className="icon-btn" title="从当前会话分叉" onClick={() => openSession({ sessionId: active.sessionId, cwd: active.cwd, fork: true }).catch((e) => toast(e.message))}>⑂</button>
+          <button className="icon-btn" title="导出对话为 HTML（可分享）" onClick={() => shareConversation(active.sessionId)}>↗</button>
           {live ? (
             <button className="icon-btn" title="结束进程（可随时恢复）" onClick={() => closeSession(active.sessionId)}>⏻</button>
           ) : (

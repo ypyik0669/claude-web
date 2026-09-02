@@ -3,9 +3,9 @@ import { useActive, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { clsx, fmtTok, fmtUsd, fmtMs, shortModel, basename } from '@/util';
-import type { EffortLevel, PermissionMode, SessionFeatures } from '@shared';
-
-interface Img { mediaType: string; data: string; url: string }
+import type { AttachmentRef, EffortLevel, PermissionMode, SessionFeatures } from '@shared';
+import { compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachment, uploadAttachment, type DroppedFile, type PendingImage } from '@/model/attachments';
+import { StatusStrip } from '@/features/chat/StatusStrip';
 
 export const MODE_LABEL: Record<PermissionMode, string> = { default: '每次询问', acceptEdits: '自动接受编辑', plan: '计划模式', auto: '自动模式', bypassPermissions: '完全权限', dontAsk: '不询问' };
 const MODEL_ALIASES = [
@@ -25,12 +25,16 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
   const send = useStore((s) => s.send);
   const interrupt = useStore((s) => s.interrupt);
   const setDraft = useStore((s) => s.setDraft);
+  const saveDraft = useStore((s) => s.saveDraft);
   const openSession = useStore((s) => s.openSession);
   const sessions = useStore((s) => s.sessions);
   const toast = useStore((s) => s.toast);
   const ta = useRef<HTMLTextAreaElement>(null);
   const [text, setText] = useState(welcome ? '' : active?.draft ?? '');
-  const [imgs, setImgs] = useState<Img[]>([]);
+  const [imgs, setImgs] = useState<PendingImage[]>([]);
+  const [atts, setAtts] = useState<AttachmentRef[]>([]); // inline text attachments
+  const [files, setFiles] = useState<DroppedFile[]>([]); // uploaded on send
+  const [upload, setUpload] = useState<{ done: number; total: number; name: string } | null>(null);
   const [palIdx, setPalIdx] = useState(0);
   // welcome-mode settings
   const [cwd, setCwd] = useState(localStorage.getItem('cw.lastCwd') || sessions[0]?.cwd || '');
@@ -49,6 +53,18 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
   const [listening, setListening] = useState(false);
   const recRef = useRef<any>(null);
   const speechOk = typeof window !== 'undefined' && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+  const draftKey = welcome ? 'welcome' : active?.sessionId ?? '';
+
+  // welcome draft lives on the server (desktop origin changes with the port)
+  useEffect(() => {
+    if (!welcome) return;
+    void useStore.getState().loadDraft('welcome').then((d) => { if (d) setText((t) => t || d); });
+  }, [welcome]);
+  // a session draft may arrive after mount (loadHistory → loadDraft)
+  useEffect(() => {
+    if (!welcome && active?.draft && !text) setText(active.draft);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.draft]);
 
   const toggleVoice = () => {
     if (listening) { recRef.current?.stop(); return; }
@@ -69,6 +85,7 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
     setListening(true);
     rec.start();
   };
+  useEffect(() => () => { recRef.current?.stop?.(); }, []);
   const featCount = Object.entries(wFeatures).filter(([k, v]) => k !== 'env' && (Array.isArray(v) ? v.length : !!v)).length;
 
   useEffect(() => {
@@ -95,7 +112,30 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
   useEffect(() => setPalIdx(0), [slashQuery]);
 
   const busy = !welcome && !!active && (active.state === 'running' || active.state === 'waiting' || active.state === 'starting');
-  const canSend = (text.trim().length > 0 || imgs.length > 0) && !starting;
+  const canSend = (text.trim().length > 0 || imgs.length > 0 || atts.length > 0 || files.length > 0) && !starting && !upload;
+
+  const onChange = (v: string) => {
+    setText(v);
+    if (active && !welcome) setDraft(active.sessionId, v);
+    if (draftKey) saveDraft(draftKey, v);
+  };
+
+  /** Upload dropped files for `sessionId` and return attachment refs. */
+  const uploadAll = async (sessionId: string): Promise<AttachmentRef[]> => {
+    const out: AttachmentRef[] = [];
+    const folders = new Set<string>();
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      setUpload({ done: i, total: files.length, name: f.rel });
+      const r = await uploadAttachment(sessionId, f.file, f.rel);
+      const top = f.rel.includes('/') ? f.rel.split('/')[0] : null;
+      if (top) {
+        if (!folders.has(top)) { folders.add(top); out.push({ kind: 'folder', name: top, path: r.path.slice(0, r.path.replace(/\\/g, '/').indexOf(top) + top.length), size: undefined }); }
+      } else out.push({ kind: f.file.type.startsWith('image/') ? 'image' : 'file', name: f.file.name, path: r.path, size: r.size });
+    }
+    setUpload(null);
+    return out;
+  };
 
   const doSend = async () => {
     if (!canSend) return;
@@ -112,21 +152,28 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
         localStorage.setItem('cw.lastFeatures', JSON.stringify(wFeatures));
         if (wProvider !== 'claude' && !provider) throw new Error('选中的供应商档案已不存在');
         const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffort || undefined, providerId: provider ? provider.id : 'claude', features: wFeatures });
-        await send(id, t, im);
+        const uploaded = files.length ? await uploadAll(id) : [];
+        await send(id, t, im, false, [...atts, ...uploaded]);
+        saveDraft('welcome', '');
       } catch (e: any) {
         toast(e.message);
       }
       setStarting(false);
+      setUpload(null);
       return;
     }
     if (!active) return;
     setText('');
     setImgs([]);
+    setAtts([]);
     setDraft(active.sessionId, '');
     try {
-      await send(active.sessionId, t, im);
+      const uploaded = files.length ? await uploadAll(active.sessionId) : [];
+      setFiles([]);
+      await send(active.sessionId, t, im, false, [...atts, ...uploaded]);
     } catch (e: any) {
       toast(e.message);
+      setUpload(null);
     }
   };
 
@@ -148,16 +195,35 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
     if (e.key === 'Escape' && busy && active) void interrupt(active.sessionId);
   };
 
-  const addFiles = (files: Iterable<File>) => {
-    for (const f of files) {
-      if (!f.type.startsWith('image/')) continue;
-      const r = new FileReader();
-      r.onload = () => {
-        const url = String(r.result);
-        setImgs((s) => [...s, { mediaType: f.type, data: url.split(',')[1], url }]);
-      };
-      r.readAsDataURL(f);
+  const addImages = async (list: Iterable<File | Blob>, names?: string[]) => {
+    let i = 0;
+    for (const f of list) {
+      if (!f.type.startsWith('image/')) { i++; continue; }
+      const img = await compressImage(f, names?.[i] ?? (f as File).name);
+      setImgs((s) => [...s, img]);
+      i++;
     }
+  };
+
+  const onPaste = (e: React.ClipboardEvent) => {
+    const imgFiles = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith('image/'));
+    if (imgFiles.length) { e.preventDefault(); void addImages(imgFiles); return; }
+    const t = e.clipboardData.getData('text/plain');
+    if (t && isLongPaste(t)) {
+      e.preventDefault();
+      setAtts((s) => [...s, pasteAsAttachment(t)]);
+      toast(`长文本已作为附件（${t.length} 字符）`, true);
+    }
+  };
+
+  const onDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    const { files: dropped, folders, truncated } = await expandDataTransfer(e.dataTransfer);
+    const imgOnly = dropped.filter((d) => !d.rel.includes('/') && d.file.type.startsWith('image/'));
+    const rest = dropped.filter((d) => !imgOnly.includes(d));
+    if (imgOnly.length) void addImages(imgOnly.map((d) => d.file), imgOnly.map((d) => d.file.name));
+    if (rest.length) setFiles((s) => [...s, ...rest].slice(0, 500));
+    if (folders.length) toast(`已附加文件夹 ${folders.join(', ')}（${rest.length} 个文件${truncated ? '，已截断到 500' : ''}）`, true);
   };
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -186,6 +252,8 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
   const last = active?.conv.lastResult;
   const runningTasks = active ? [...active.conv.tasks.values()].filter((t) => t.status === 'running').length : 0;
   const recentDirs = useMemo(() => [...new Set(sessions.map((s) => s.cwd).filter(Boolean))].slice(0, 8), [sessions]);
+  const cu = active?.contextUsage ?? active?.conv.contextUsage;
+  const folderChips = useMemo(() => { const m = new Map<string, number>(); for (const f of files) { const top = f.rel.includes('/') ? f.rel.split('/')[0] : null; if (top) m.set(top, (m.get(top) ?? 0) + 1); } return m; }, [files]);
 
   return (
     <div className="composer">
@@ -200,32 +268,37 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
             ))}
           </div>
         )}
-        {active && active.queue.length > 0 && !welcome && (
-          <div className="queue">
-            <span className="spinner" /> 已排队 {active.queue.length} 条，当前轮结束后发送
-            <button className="btn sm ghost" onClick={() => useStore.setState((s) => ({ open: { ...s.open, [active.sessionId]: { ...active, queue: [] } } }))}>清空</button>
-          </div>
-        )}
-        <div className="composer-box" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }}>
-          {imgs.length > 0 && (
+        {active && !welcome && <StatusStrip sessionId={active.sessionId} onRecall={(t) => { setText((cur) => (cur ? `${cur}\n${t}` : t)); ta.current?.focus(); }} />}
+        <div className="composer-box" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
+          {(imgs.length > 0 || atts.length > 0 || files.length > 0 || upload) && (
             <div className="attach">
               {imgs.map((im, i) => (
-                <img key={i} src={im.url} alt="" onClick={() => setImgs((s) => s.filter((_, j) => j !== i))} title="点击移除" />
+                <img key={i} src={im.url} alt="" onClick={() => setImgs((s) => s.filter((_, j) => j !== i))} title={`${im.name ?? '图片'} · 点击移除`} />
               ))}
+              {atts.map((a, i) => (
+                <span key={`a${i}`} className="att-chip" title={a.text?.slice(0, 300)}>📋 {a.name} <span className="sz">{fmtSize(a.size)}</span><button onClick={() => setAtts((s) => s.filter((_, j) => j !== i))}>✕</button></span>
+              ))}
+              {[...folderChips].map(([name, n]) => (
+                <span key={`d${name}`} className="att-chip" title={`${n} 个文件`}>📁 {name} <span className="sz">{n} 文件</span><button onClick={() => setFiles((s) => s.filter((f) => !f.rel.startsWith(name + '/')))}>✕</button></span>
+              ))}
+              {files.filter((f) => !f.rel.includes('/')).map((f, i) => (
+                <span key={`f${i}`} className="att-chip" title={f.file.name}>📎 {f.file.name} <span className="sz">{fmtSize(f.file.size)}</span><button onClick={() => setFiles((s) => s.filter((x) => x !== f))}>✕</button></span>
+              ))}
+              {upload && <span className="att-chip"><span className="spinner" /> 上传 {upload.done + 1}/{upload.total} · {upload.name}</span>}
             </div>
           )}
           <textarea
             ref={ta}
             rows={1}
             value={text}
-            placeholder={welcome ? '今天做点什么？' : active?.state === 'history' ? '回复以继续这个会话…' : busy ? '运行中，输入会排队 · Esc 中断' : '回复 Claude… 输入 / 查看命令'}
-            onChange={(e) => { setText(e.target.value); if (active && !welcome) setDraft(active.sessionId, e.target.value); }}
+            placeholder={welcome ? '今天做点什么？（可拖入文件或文件夹）' : active?.state === 'history' ? '回复以继续这个会话…' : busy ? '运行中，输入会排队 · Esc 中断' : '回复 Claude… 输入 / 查看命令，拖入文件作为附件'}
+            onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKey}
-            onPaste={(e) => addFiles(e.clipboardData.files)}
+            onPaste={onPaste}
           />
           <div className="composer-bar">
-            <input ref={fileInput} type="file" accept="image/*" multiple hidden onChange={(e) => e.target.files && addFiles(e.target.files)} />
-            <button className="icon-btn" title="添加图片" onClick={() => fileInput.current?.click()}>＋</button>
+            <input ref={fileInput} type="file" multiple hidden onChange={(e) => { const fl = Array.from(e.target.files ?? []); void addImages(fl.filter((f) => f.type.startsWith('image/'))); setFiles((s) => [...s, ...fl.filter((f) => !f.type.startsWith('image/')).map((f) => ({ file: f, rel: f.name }))]); e.target.value = ''; }} />
+            <button className="icon-btn" title="添加图片 / 文件" onClick={() => fileInput.current?.click()}>＋</button>
             {welcome ? (
               <>
                 <button className="dirpick" onClick={pickDir} title={cwd || '选择工作目录'}>
@@ -311,7 +384,7 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
             {busy ? (
               <button className="send stop" title="中断 (Esc)" onClick={() => active && interrupt(active.sessionId)}>■</button>
             ) : (
-              <button className="send" disabled={!canSend} onClick={doSend} title="发送 (Enter)">{starting ? <span className="spinner" /> : '↑'}</button>
+              <button className="send" disabled={!canSend} onClick={doSend} title="发送 (Enter)">{starting || upload ? <span className="spinner" /> : '↑'}</button>
             )}
           </div>
         </div>
@@ -322,6 +395,7 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
             {totals.cache > 0 && <span>缓存 {Math.round((totals.cache / Math.max(1, totals.inp + totals.cache)) * 100)}%</span>}
             {totals.cost > 0 && <span>{fmtUsd(totals.cost)}</span>}
             {last && <span>上轮 {fmtMs(last.durationMs)}</span>}
+            {cu && <span title={`${fmtTok(cu.totalTokens)} / ${fmtTok(cu.maxTokens)} · ${cu.model ?? ''}`} style={{ color: cu.percentage >= 80 ? 'var(--yellow)' : undefined }}>上下文 {cu.percentage}%</span>}
             {runningTasks > 0 && <span style={{ color: 'var(--green)' }}>{runningTasks} 个后台任务</span>}
           </div>
         )}

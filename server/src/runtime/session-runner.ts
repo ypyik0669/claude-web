@@ -3,7 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { resolveEngine, spawnClaude } from '../claude-exe.js';
 import { providerEnv } from '../providers/service.js';
-import type { EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot } from '../protocol.js';
+import type { AttachmentRef, EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot } from '../protocol.js';
+
+const esc = (s: string) => s.replace(/"/g, '&quot;');
 
 /** Unbounded async queue used as the SDK's streaming-input prompt. */
 class InputQueue implements AsyncIterable<SDKUserMessage> {
@@ -271,9 +273,17 @@ export class SessionRunner extends EventEmitter {
     return true;
   }
 
-  send(text: string, images?: { mediaType: string; data: string }[], steer = false, uuid?: string) {
+  send(text: string, images?: { mediaType: string; data: string }[], steer = false, uuid?: string, attachments?: AttachmentRef[]) {
     const content: any[] = [];
     for (const im of images ?? []) content.push({ type: 'image', source: { type: 'base64', media_type: im.mediaType, data: im.data } });
+    // attachments: markers the model can act on (Read the path) and the web UI decodes back into chips
+    if (attachments?.length) {
+      const marks = attachments.map((a) => {
+        const attrs = `kind="${a.kind}" name="${esc(a.name)}"${a.path ? ` path="${esc(a.path)}"` : ''}${a.size !== undefined ? ` size="${a.size}"` : ''}`;
+        return a.kind === 'text' && a.text !== undefined ? `<attached ${attrs}>\n${a.text}\n</attached>` : `<attached ${attrs} />`;
+      });
+      text = `${text}\n\n${marks.join('\n')}`;
+    }
     content.push({ type: 'text', text });
     const msg: SDKUserMessage = {
       type: 'user',
@@ -332,8 +342,8 @@ export class SessionRunner extends EventEmitter {
     await (this.q as any)?.stopTask?.(taskId);
   }
 
-  async contextUsage() {
-    return (this.q as any)?.getContextUsage?.();
+  async contextUsage(detail: 'summary' | 'full' = 'summary') {
+    return (this.q as any)?.getContextUsage?.({ detail });
   }
 
   /** Kill the process and start a new one resuming the same session. */

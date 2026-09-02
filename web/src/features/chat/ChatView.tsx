@@ -1,7 +1,11 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import type { AssistantItem, Block, Item, ToolUseBlock } from '@/model/conversation';
+import type { AssistantItem, Block, Item, ToolUseBlock, UserItem } from '@/model/conversation';
+import { ERROR_HINT, ERROR_LABEL } from '@/model/health';
+import { fmtSize } from '@/model/attachments';
 import { useActive, useStore } from '@/store';
 import { clsx, fmtMs, fmtTok, fmtUsd } from '@/util';
+import { AssistantActions, UserActions, UserEditor } from './MessageActions';
+import { FindBar } from './FindBar';
 import { Markdown } from './Markdown';
 import { ToolCard } from './ToolCard';
 import { PermissionCards } from './PermissionCards';
@@ -121,33 +125,61 @@ function coalesce(items: Item[]): Item[] {
   return out;
 }
 
+function AttachmentChips({ atts }: { atts: NonNullable<UserItem['attachments']> }) {
+  return (
+    <div className="att-chips">
+      {atts.map((a, i) => (
+        <span key={i} className="att-chip" title={a.path ?? a.name} onClick={() => { if (a.path && a.kind !== 'folder') { const st = useStore.getState(); if (st.activeId) useStore.setState({ inspect: { sessionId: st.activeId, file: { path: a.path } } }); } }}>
+          <span className="ic">{a.kind === 'image' ? '🖼' : a.kind === 'folder' ? '📁' : a.kind === 'text' ? '📋' : '📎'}</span>
+          {a.name}{a.size ? <span className="sz"> {fmtSize(a.size)}</span> : null}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function UserRow({ it, version }: { it: UserItem; version: number }) {
+  const sessionId = useStore((s) => s.activeId);
+  const [editing, setEditing] = useState(false);
+  const open = useStore((s) => (sessionId ? s.open[sessionId] : undefined));
+  const images = it.images.filter(Boolean);
+  void version;
+  return (
+    <div className={clsx('msg user', it.meta && 'meta')} data-item-id={it.id}>
+      {!it.meta && sessionId && !editing && <UserActions it={it} sessionId={sessionId} onEdit={() => setEditing(true)} />}
+      {editing && sessionId ? (
+        <UserEditor it={it} sessionId={sessionId} onDone={() => setEditing(false)} />
+      ) : (
+        <div className="bubble">
+          {it.text}
+          {images.length > 0 && <div className="img-grid">{images.map((src, i) => <img key={i} src={src} alt="" onClick={() => open && useStore.getState().openViewer(images, i)} />)}</div>}
+          {it.attachments?.length ? <AttachmentChips atts={it.attachments} /> : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ItemList({ items, version, live = false }: { items: Item[]; version: number; live?: boolean }) {
   const merged = useMemo(() => coalesce(items), [items, version]);
+  const sessionId = useStore((s) => s.activeId);
   return (
     <>
       {merged.map((it) => {
         switch (it.kind) {
           case 'user':
+            return <UserRow key={it.id} it={it} version={version} />;
+          case 'assistant':
             return (
-              <div key={it.id} className={clsx('msg user', it.meta && 'meta')}>
-                {!it.meta && !it.id.startsWith('local-') && (
-                  <div className="hover-actions">
-                    <button title="从这条消息之前分叉出新会话（Claude Code --resume-session-at）" onClick={() => { const st = useStore.getState(); if (st.activeId) void st.forkAt(st.activeId, it.id).catch((e) => st.toast(e.message)); }}>⑂ 从这里分叉</button>
-                    <button title="复制" onClick={() => navigator.clipboard.writeText(it.text)}>⧉</button>
-                  </div>
-                )}
-                <div className="bubble">
-                  {it.text}
-                  {it.images.map((src, i) => src && <img key={i} src={src} alt="" />)}
-                </div>
+              <div key={it.id} className="assistant-wrap" data-item-id={it.id}>
+                <Assistant it={it} version={version} live={live} />
+                {!it.streaming && it.blocks.some((b) => b.type === 'text' && b.text.trim()) && sessionId && <AssistantActions it={it} sessionId={sessionId} />}
               </div>
             );
-          case 'assistant':
-            return <Assistant key={it.id} it={it} version={version} live={live} />;
           case 'result':
             return (
-              <div key={it.id} className={clsx('result-line', it.isError && 'err')}>
-                {it.isError && <span>错误: {it.text}</span>}
+              <div key={it.id} className={clsx('result-line', it.isError && 'err')} data-item-id={it.id}>
+                {it.isError && <span title={it.text}>{it.errorKind ? ERROR_LABEL[it.errorKind] : '错误'}: {(it.text ?? '').slice(0, 200)}</span>}
                 <span>{fmtMs(it.durationMs)}</span>
                 <span>{it.numTurns} 步</span>
                 <span>{fmtUsd(it.costUsd)}</span>
@@ -156,7 +188,8 @@ export function ItemList({ items, version, live = false }: { items: Item[]; vers
             );
           case 'system':
             return (
-              <div key={it.id} className={clsx('sysline', it.subtype === 'command' && 'cmd')}>
+              <div key={it.id} className={clsx('sysline', it.subtype === 'command' && 'cmd', it.level === 'warn' && 'warn', it.level === 'error' && 'err', it.subtype === 'compact' && 'compact')} data-item-id={it.id} title={it.data && typeof it.data === 'object' && (it.data as any).kind ? ERROR_HINT[(it.data as any).kind as keyof typeof ERROR_HINT] : undefined}>
+                {it.subtype === 'compact' && <span className="ic">⇅</span>}
                 {it.text}
               </div>
             );
@@ -171,21 +204,35 @@ export function ChatView() {
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const version = active?.version ?? 0;
+  const [find, setFind] = useState(false);
+  const [atBottom, setAtBottom] = useState(true);
 
   useEffect(() => {
     const el = ref.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [version]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && !e.shiftKey && !e.altKey) { e.preventDefault(); setFind(true); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   if (!active) return null;
   const onScroll = () => {
     const el = ref.current!;
-    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    const b = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    stick.current = b;
+    if (b !== atBottom) setAtBottom(b);
   };
   const live = active.state === 'running' || active.state === 'waiting';
 
   return (
     <div className="chat" ref={ref} onScroll={onScroll}>
+      <FindBar open={find} onClose={() => setFind(false)} root={() => ref.current} />
+      {!atBottom && <button className="jump-bottom" title="回到底部" onClick={() => { const el = ref.current!; el.scrollTop = el.scrollHeight; stick.current = true; }}>↓</button>}
       <div className="chat-inner">
         {active.loading && <div className="sysline"><span className="spinner" /> 加载历史…</div>}
         <ItemList items={active.conv.items} version={version} live={live} />

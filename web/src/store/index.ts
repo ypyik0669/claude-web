@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import type { EffortLevel, EngineInfo, Limits, PermissionMode, Provider, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, Workspace } from '@shared';
+import type { AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, Workspace } from '@shared';
+import { decodeAttachments, findChainUuidBefore, turnStart, type ContextUsage } from '@/model/conversation';
 
 export const THEMES = ['dark', 'light', 'dracula', 'nord', 'tokyo-night', 'paper'] as const;
 export type Theme = (typeof THEMES)[number];
@@ -8,6 +9,8 @@ import { desktop } from '@/desktop';
 import { applyMessage, applyTranscript, createConversation, walkTools, type Conversation } from '@/model/conversation';
 
 export type PanelId = 'tasks' | 'files' | 'usage' | 'config' | 'terminal' | 'inspector';
+
+export interface QueuedMessage { id: string; text: string; images?: { mediaType: string; data: string }[]; attachments?: AttachmentRef[] }
 
 export interface OpenSession {
   sessionId: string;
@@ -19,9 +22,14 @@ export interface OpenSession {
   pending: PermissionRequestEvent[];
   error?: string;
   loading: boolean;
-  queue: string[]; // messages typed while running
+  queue: QueuedMessage[]; // messages typed while running
   draft: string;
+  feedback: Record<string, MessageFeedback>; // messageId -> rating (meta.json)
+  contextUsage?: ContextUsage;
+  lastSent?: QueuedMessage; // for retry / auto-continue
 }
+
+const genUuid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`);
 
 interface State {
   connected: boolean;
@@ -59,7 +67,20 @@ interface State {
   loadProviders(): Promise<void>;
   setSetting(key: string, value: unknown): Promise<void>;
   loadHistory(sessionId: string): Promise<void>;
-  send(sessionId: string, text: string, images?: { mediaType: string; data: string }[], steer?: boolean): Promise<void>;
+  send(sessionId: string, text: string, images?: { mediaType: string; data: string }[], steer?: boolean, attachments?: AttachmentRef[]): Promise<void>;
+  /** remove a queued message (returns it so the composer can restore the text) */
+  recall(sessionId: string, id: string): QueuedMessage | undefined;
+  /** interrupt the running turn and send this queued message right away */
+  stopAndRun(sessionId: string, id: string): Promise<void>;
+  /** fork before this user message and send the edited text into the fork */
+  editAndResend(sessionId: string, userItemId: string, text: string): Promise<void>;
+  rerun(sessionId: string, userItemId: string): Promise<void>;
+  retryLast(sessionId: string): Promise<void>;
+  setFeedback(sessionId: string, messageId: string, rating: 'up' | 'down' | null): Promise<void>;
+  loadFeedback(sessionId: string): Promise<void>;
+  saveDraft(key: string, text: string): void;
+  loadDraft(key: string): Promise<string>;
+  refreshContextUsage(sessionId: string): Promise<void>;
   interrupt(sessionId: string): Promise<void>;
   respondPermission(requestId: string, response: any): Promise<void>;
   loadSubagent(sessionId: string, toolUseId: string): Promise<void>;
@@ -70,7 +91,38 @@ interface State {
   closeSession(sessionId: string): Promise<void>;
   setTheme(t: Theme): void;
   forkAt(sessionId: string, messageUuid: string): Promise<void>;
+  onTurnEnd(sessionId: string): void;
 }
+
+const draftTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const autoTimers = new Map<string, ReturnType<typeof setTimeout>>();
+export const autoContinueAt = new Map<string, number>(); // sessionId -> epoch ms (for the status strip countdown)
+
+function armAutoContinue(sessionId: string, at: number) {
+  disarmAutoContinue(sessionId);
+  autoContinueAt.set(sessionId, at);
+  const fire = () => {
+    autoTimers.delete(sessionId);
+    autoContinueAt.delete(sessionId);
+    const st = useStore.getState();
+    const o = st.open[sessionId];
+    if (!o || !o.lastSent || o.state === 'running' || o.state === 'waiting') return;
+    st.toast('额度已恢复，自动继续上一条消息', true);
+    void st.retryLast(sessionId);
+  };
+  autoTimers.set(sessionId, setTimeout(fire, Math.max(1000, at - Date.now())));
+}
+export function disarmAutoContinue(sessionId: string) {
+  const t = autoTimers.get(sessionId);
+  if (t) clearTimeout(t);
+  autoTimers.delete(sessionId);
+  autoContinueAt.delete(sessionId);
+}
+// timers drift while the tab sleeps: re-arm on visibility change
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  for (const [sid, at] of autoContinueAt) armAutoContinue(sid, at);
+});
 
 function bump(s: State, id: string, fn: (o: OpenSession) => void): Partial<State> {
   const o = s.open[id];
@@ -165,11 +217,12 @@ export const useStore = create<State>((set, get) => ({
       switch (e.kind) {
         case 'session.event':
           set((s) => bump(s, e.sessionId, (o) => applyMessage(o.conv, e.message)));
+          if ((e.message as any)?.type === 'result') get().onTurnEnd(e.sessionId);
           break;
         case 'session.state': {
           const prev = get().open[e.sessionId]?.state;
           if (desktop && e.state === 'idle' && prev === 'running' && !document.hasFocus()) desktop.notify(get().sessions.find((x) => x.sessionId === e.sessionId)?.title ?? '会话', 'Claude 完成了这一轮', e.sessionId);
-          set((s) => bump(s, e.sessionId, (o) => { o.state = e.state; if (e.error) o.error = e.error; if (e.state === 'idle' && o.queue.length) { const next = o.queue.shift()!; void get().send(e.sessionId, next); } }));
+          set((s) => bump(s, e.sessionId, (o) => { o.state = e.state; if (e.error) o.error = e.error; if (e.state === 'idle' && o.queue.length) { const next = o.queue.shift()!; void get().send(e.sessionId, next.text, next.images, false, next.attachments); } }));
           set((s) => ({ sessions: s.sessions.map((x) => (x.sessionId === e.sessionId ? { ...x, live: e.state === 'closed' ? undefined : e.state } : x)) }));
           break;
         }
@@ -218,7 +271,7 @@ export const useStore = create<State>((set, get) => ({
     } else {
       for (const m of r.history) applyMessage(conv, m);
     }
-    const o: OpenSession = { sessionId: r.sessionId, cwd: p.cwd, conv, version: (existing?.version ?? 0) + 1, state: r.info.state, info: r.info, pending: r.pending, loading: false, queue: existing?.queue ?? [], draft: existing?.draft ?? '' };
+    const o: OpenSession = { sessionId: r.sessionId, cwd: p.cwd, conv, version: (existing?.version ?? 0) + 1, state: r.info.state, info: r.info, pending: r.pending, loading: false, queue: existing?.queue ?? [], draft: existing?.draft ?? '', feedback: existing?.feedback ?? {}, contextUsage: existing?.contextUsage, lastSent: existing?.lastSent };
     set((s) => {
       const open = { ...s.open };
       if (p.sessionId && p.sessionId !== r.sessionId && !p.fork && !p.resumeAt) delete open[p.sessionId];
@@ -229,14 +282,116 @@ export const useStore = create<State>((set, get) => ({
     // load transcript in the background for resumed / forked sessions with empty conv
     if (p.sessionId && !existing) void get().loadHistory(r.sessionId);
     if (p.fork || p.resumeAt) void get().refreshSessions();
+    void get().loadFeedback(r.sessionId);
     return r.sessionId;
+  },
+
+  onTurnEnd(sessionId: string) {
+    const o = get().open[sessionId];
+    if (!o) return;
+    void get().refreshContextUsage(sessionId);
+    const res = o.conv.lastResult;
+    // auto-continue when a quota / throttle error ends the turn and the user opted in
+    if (res?.isError && (res.errorKind === 'quota' || res.errorKind === 'throttled') && get().settings.autoContinueOnReset && o.lastSent) {
+      const resetsAt = o.conv.rateLimit?.resetsAt;
+      const at = resetsAt ? resetsAt * (resetsAt < 1e12 ? 1000 : 1) + 5000 : Date.now() + (res.errorKind === 'throttled' ? 60_000 : 30 * 60_000);
+      armAutoContinue(sessionId, at);
+    }
+  },
+
+  async refreshContextUsage(sessionId) {
+    const o = get().open[sessionId];
+    if (!o || o.state === 'history' || o.state === 'closed' || o.state === 'error') return;
+    try {
+      const u: any = await ws.request({ kind: 'session.contextUsage', sessionId, detail: 'summary' });
+      if (!u) return;
+      const cu: ContextUsage = { percentage: u.percentage ?? Math.round(((u.total_tokens ?? 0) / Math.max(1, u.raw_max_tokens ?? 1)) * 100), totalTokens: u.total_tokens ?? 0, maxTokens: u.raw_max_tokens ?? 0, model: u.model, overLimit: u.over_limit ? { tokensOver: u.over_limit.tokens_over, kind: u.over_limit.kind } : undefined };
+      set((s) => bump(s, sessionId, (x) => { x.contextUsage = cu; x.conv.contextUsage = cu; }));
+    } catch {
+      /* runtime without the control request */
+    }
+  },
+
+  recall(sessionId, id) {
+    const o = get().open[sessionId];
+    const q = o?.queue.find((m) => m.id === id);
+    if (!o || !q) return undefined;
+    set((s) => bump(s, sessionId, (x) => { x.queue = x.queue.filter((m) => m.id !== id); }));
+    return q;
+  },
+
+  async stopAndRun(sessionId, id) {
+    const q = get().recall(sessionId, id);
+    if (!q) return;
+    await get().interrupt(sessionId);
+    // the runner flips to idle after the interrupt lands; queue the message at the front so the idle handler sends it
+    set((s) => bump(s, sessionId, (x) => { x.queue.unshift(q); }));
+  },
+
+  async editAndResend(sessionId, userItemId, text) {
+    const o = get().open[sessionId];
+    if (!o) return;
+    const anchor = findChainUuidBefore(o.conv, userItemId);
+    if (anchor === undefined) throw new Error('找不到这条消息');
+    const orig = o.conv.items.find((i) => i.id === userItemId);
+    const atts = orig?.kind === 'user' ? orig.attachments?.filter((a) => a.path).map((a) => ({ kind: a.kind, name: a.name, path: a.path, size: a.size })) : undefined;
+    if (anchor === null) {
+      // first message: brand-new session in the same directory with the same settings
+      const id = await get().openSession({ cwd: o.cwd, model: o.info?.model, permissionMode: o.info?.permissionMode, providerId: o.info?.providerId, features: o.info?.features });
+      await get().send(id, text, undefined, false, atts as AttachmentRef[] | undefined);
+      return;
+    }
+    const id = await get().openSession({ sessionId, cwd: o.cwd, resumeAt: anchor });
+    await get().send(id, text, undefined, false, atts as AttachmentRef[] | undefined);
+  },
+
+  async rerun(sessionId, userItemId) {
+    const o = get().open[sessionId];
+    const it = o?.conv.items.find((i) => i.id === userItemId);
+    if (!o || it?.kind !== 'user') return;
+    await get().editAndResend(sessionId, userItemId, it.text);
+  },
+
+  async retryLast(sessionId) {
+    const o = get().open[sessionId];
+    const last = o?.lastSent;
+    if (!o || !last) return;
+    await get().send(sessionId, last.text, last.images, false, last.attachments);
+  },
+
+  async setFeedback(sessionId, messageId, rating) {
+    set((s) => bump(s, sessionId, (x) => { if (rating) x.feedback[messageId] = { rating, at: Date.now() }; else delete x.feedback[messageId]; }));
+    await ws.request({ kind: 'feedback.set', sessionId, messageId, rating }).catch((e) => get().toast(e.message));
+  },
+  async loadFeedback(sessionId) {
+    try {
+      const fb = await ws.request<Record<string, MessageFeedback>>({ kind: 'feedback.list', sessionId });
+      set((s) => bump(s, sessionId, (x) => { x.feedback = fb ?? {}; }));
+    } catch {
+      /* ignore */
+    }
+  },
+
+  saveDraft(key, text) {
+    const t = draftTimers.get(key);
+    if (t) clearTimeout(t);
+    draftTimers.set(key, setTimeout(() => { draftTimers.delete(key); void ws.request({ kind: 'drafts.set', key, text }).catch(() => {}); }, 500));
+  },
+  async loadDraft(key) {
+    try {
+      return (await ws.request<string>({ kind: 'drafts.get', key })) ?? '';
+    } catch {
+      return '';
+    }
   },
 
   async loadHistory(sessionId) {
     const cur = get().open[sessionId];
     const meta = get().sessions.find((s) => s.sessionId === sessionId);
-    if (!cur) set((s) => ({ open: { ...s.open, [sessionId]: { sessionId, cwd: meta?.cwd ?? '', conv: createConversation(), version: 0, state: 'history', pending: [], loading: true, queue: [], draft: '' } }, activeId: sessionId }));
+    if (!cur) set((s) => ({ open: { ...s.open, [sessionId]: { sessionId, cwd: meta?.cwd ?? '', conv: createConversation(), version: 0, state: 'history', pending: [], loading: true, queue: [], draft: '', feedback: {} } }, activeId: sessionId }));
     else set((s) => bump(s, sessionId, (o) => { o.loading = true; }));
+    void get().loadFeedback(sessionId);
+    if (!cur) void get().loadDraft(sessionId).then((d) => d && set((s) => bump(s, sessionId, (o) => { if (!o.draft) o.draft = d; })));
     try {
       const msgs = await ws.request<any[]>({ kind: 'transcript.load', sessionId });
       set((s) => bump(s, sessionId, (o) => {
@@ -253,7 +408,7 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
-  async send(sessionId, text, images, steer = false) {
+  async send(sessionId, text, images, steer = false, attachments) {
     const o = get().open[sessionId];
     if (!o) return;
     if (o.state === 'history' || o.state === 'closed' || o.state === 'error') {
@@ -261,12 +416,21 @@ export const useStore = create<State>((set, get) => ({
     }
     const cur = get().open[sessionId];
     if ((cur.state === 'running' || cur.state === 'waiting') && !steer) {
-      set((s) => bump(s, sessionId, (x) => { x.queue.push(text); }));
+      set((s) => bump(s, sessionId, (x) => { x.queue.push({ id: genUuid(), text, images, attachments }); }));
       return;
     }
-    // echo locally — the SDK does not replay user messages
-    set((s) => bump(s, sessionId, (x) => { x.conv.items.push({ kind: 'user', id: `local-${Date.now()}`, ts: new Date().toISOString(), text, images: (images ?? []).map((im) => `data:${im.mediaType};base64,${im.data}`), meta: false }); x.state = 'running'; }));
-    await ws.request({ kind: 'session.send', params: { sessionId, text, images, steer } });
+    // client-minted transcript uuid: the local echo id is the real fork / rewind anchor
+    const uuid = genUuid();
+    const shown = decodeAttachments(text);
+    set((s) => bump(s, sessionId, (x) => {
+      x.conv.items.push({ kind: 'user', id: uuid, ts: new Date().toISOString(), text: shown.text, images: (images ?? []).map((im) => `data:${im.mediaType};base64,${im.data}`), attachments: attachments?.length ? attachments.map((a) => ({ kind: a.kind, name: a.name, path: a.path, size: a.size })) : shown.attachments.length ? shown.attachments : undefined, meta: false });
+      x.state = 'running';
+      x.lastSent = { id: uuid, text, images, attachments };
+      x.conv.lastEventAt = Date.now();
+    }));
+    disarmAutoContinue(sessionId);
+    get().saveDraft(sessionId, '');
+    await ws.request({ kind: 'session.send', params: { sessionId, text, images, steer, uuid, attachments } });
   },
 
   async loadSubagent(sessionId, toolUseId) {

@@ -2,19 +2,28 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { EventEmitter } from 'node:events';
-import type { Provider } from '../protocol.js';
+import type { MessageFeedback, Provider } from '../protocol.js';
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
 export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string }
 export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string }
 
-interface Data { version: 1; workspaces: Workspace[]; sessions: Record<string, SessionMeta>; schedules: Schedule[]; settings: Record<string, unknown>; providers: Provider[] }
+interface Data {
+  version: 1;
+  workspaces: Workspace[];
+  sessions: Record<string, SessionMeta>;
+  schedules: Schedule[];
+  settings: Record<string, unknown>;
+  providers: Provider[];
+  feedback: Record<string, Record<string, MessageFeedback>>; // sessionId -> messageId -> feedback
+  drafts: Record<string, { text: string; at: number }>; // sessionId | 'welcome' -> draft
+}
 
 const file = path.join(process.env.CLAUDE_WEB_DIR ?? path.join(os.homedir(), '.claude-web'), 'meta.json');
 
 /** Small JSON store for things Claude Code itself does not persist: workspaces, pin/archive flags, schedules, UI settings. */
 export class MetaStore extends EventEmitter {
-  data: Data = { version: 1, workspaces: [], sessions: {}, schedules: [], settings: {}, providers: [] };
+  data: Data = { version: 1, workspaces: [], sessions: {}, schedules: [], settings: {}, providers: [], feedback: {}, drafts: {} };
   private saving: Promise<void> | null = null;
 
   async load() {
@@ -25,13 +34,13 @@ export class MetaStore extends EventEmitter {
     }
   }
 
-  private async save() {
+  private async save(quiet = false) {
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, JSON.stringify(this.data, null, 2), { encoding: 'utf8', mode: 0o600 }); // holds provider API keys
-    this.emit('changed');
+    if (!quiet) this.emit('changed');
   }
-  private queueSave() {
-    this.saving = (this.saving ?? Promise.resolve()).then(() => this.save());
+  private queueSave(quiet = false) {
+    this.saving = (this.saving ?? Promise.resolve()).then(() => this.save(quiet));
     return this.saving;
   }
 
@@ -120,6 +129,29 @@ export class MetaStore extends EventEmitter {
     this.data.providers = this.providers().filter((x) => x.id !== id);
     if (this.data.settings.defaultProviderId === id) delete this.data.settings.defaultProviderId;
     await this.queueSave();
+  }
+
+  feedback(sessionId: string): Record<string, MessageFeedback> {
+    return (this.data.feedback ??= {})[sessionId] ?? {};
+  }
+  async setFeedback(sessionId: string, messageId: string, f: MessageFeedback | null) {
+    const fb = (this.data.feedback ??= {});
+    const s = (fb[sessionId] ??= {});
+    if (f && f.rating) s[messageId] = f;
+    else delete s[messageId];
+    if (!Object.keys(s).length) delete fb[sessionId];
+    await this.queueSave();
+  }
+
+  draft(key: string) {
+    return (this.data.drafts ??= {})[key]?.text ?? '';
+  }
+  async setDraft(key: string, text: string) {
+    const d = (this.data.drafts ??= {});
+    if (text) d[key] = { text, at: Date.now() };
+    else delete d[key];
+    // drafts change often: save without broadcasting a meta.changed storm
+    await this.queueSave(true);
   }
 
   settings() {

@@ -8,7 +8,7 @@ import { RunnerPool } from './runtime/pool.js';
 import { SessionService } from './sessions/service.js';
 import { ConfigService } from './config/service.js';
 import { UsageService } from './usage/service.js';
-import { FilesService } from './files/service.js';
+import { ATTACH_MAX_BYTES, FilesService, attachmentPath } from './files/service.js';
 import { TerminalService } from './terminal/service.js';
 import { engineInfo } from './claude-exe.js';
 import { MetaStore } from './meta/store.js';
@@ -58,6 +58,23 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     if (url.pathname === '/api/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true, version }));
+      return;
+    }
+    // Binary upload for message attachments: POST /api/attachments?sessionId=&rel=path/in/session (token-guarded like /ws)
+    if (url.pathname === '/api/attachments' && req.method === 'POST') {
+      const tokenOk = !token || url.searchParams.get('token') === token;
+      if (!tokenOk) { res.writeHead(403).end(); return; }
+      const len = Number(req.headers['content-length'] ?? 0);
+      if (len > ATTACH_MAX_BYTES) { res.writeHead(413).end('too large'); return; }
+      let dest: string;
+      try { dest = attachmentPath(url.searchParams.get('sessionId') ?? '', url.searchParams.get('rel') ?? ''); } catch (e: any) { res.writeHead(400).end(e.message); return; }
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      const out = fs.createWriteStream(dest);
+      let size = 0;
+      req.on('data', (c: Buffer) => { size += c.length; if (size > ATTACH_MAX_BYTES) { req.destroy(); out.destroy(); fs.rm(dest, { force: true }, () => {}); } });
+      req.pipe(out);
+      out.on('finish', () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ path: dest, size })); });
+      out.on('error', (e) => { res.writeHead(500).end(e.message); });
       return;
     }
     let file = path.join(distDir, decodeURIComponent(url.pathname));
