@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useActive, useStore } from '@/store';
+import { useScopedSession, useStore } from '@/store';
 import { clsx, toolSummary } from '@/util';
 import type { PermissionRequestEvent } from '@shared';
 import { DiffView, Markdown } from './Markdown';
@@ -124,7 +124,7 @@ function ToolPermission({ p }: { p: PermissionRequestEvent }) {
 }
 
 export function PermissionCards() {
-  const active = useActive();
+  const active = useScopedSession();
   if (!active?.pending.length) return null;
   return (
     <>

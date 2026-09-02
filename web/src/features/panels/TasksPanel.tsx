@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
-import { useActive, useStore } from '@/store';
+import { useScopedSession, useStore } from '@/store';
 import { walkTools, type ToolUseBlock } from '@/model/conversation';
 import { ws } from '@/ws/client';
 import { clsx, fmtMs, toolSummary } from '@/util';
 
-function Schedules() {
+export function Schedules() {
   const schedules = useStore((s) => s.schedules);
-  const active = useActive();
+  const active = useScopedSession();
   const toast = useStore((s) => s.toast);
   const loadHistory = useStore((s) => s.loadHistory);
   const [adding, setAdding] = useState(false);
@@ -48,7 +48,7 @@ function Schedules() {
 }
 
 export function TasksPanel() {
-  const active = useActive();
+  const active = useScopedSession();
   const agents = useMemo(() => {
     if (!active) return [];
     const out: { tool: ToolUseBlock; depth: number }[] = [];

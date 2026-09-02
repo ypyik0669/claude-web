@@ -19,4 +19,8 @@ contextBridge.exposeInMainWorld('desktop', {
   setLoginItem: (on: boolean) => ipcRenderer.invoke('desktop:loginItem:set', on),
   onCommand: on('desktop:command'),
   onFocusSession: on('desktop:focusSession'),
+  windowId: process.argv.find((a) => a.startsWith('--cw-win='))?.slice(9) ?? 'main',
+  newWindow: () => ipcRenderer.invoke('desktop:window:new'),
+  focusWindow: (id: string) => ipcRenderer.invoke('desktop:window:focus', id),
+  listWindows: () => ipcRenderer.invoke('desktop:window:list'),
 });

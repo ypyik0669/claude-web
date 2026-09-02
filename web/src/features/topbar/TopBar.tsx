@@ -1,17 +1,10 @@
 import { useState } from 'react';
-import { useActive, useStore, type PanelId } from '@/store';
-import { ws } from '@/ws/client';
-import { basename, clsx } from '@/util';
+import { useStore, type PanelId } from '@/store';
+import { clsx } from '@/util';
 import type { LimitWindow } from '@shared';
-import { shareConversation } from '@/features/chat/MessageActions';
+import { PANEL_ICONS, PANEL_TITLES } from '@/features/workbench/Dock';
 
-const PANELS: { id: PanelId; l: string; ic: string }[] = [
-  { id: 'tasks', l: '任务', ic: '◔' },
-  { id: 'files', l: '文件', ic: '≡' },
-  { id: 'usage', l: '用量', ic: '▤' },
-  { id: 'config', l: '配置', ic: '⚙' },
-  { id: 'terminal', l: '终端', ic: '▣' },
-];
+const PANELS: PanelId[] = ['tasks', 'files', 'usage', 'config', 'terminal'];
 
 function resetIn(iso: string | null) {
   if (!iso) return '';
@@ -62,70 +55,25 @@ function UsageRings() {
   );
 }
 
+/** Global strip (also the Electron drag region): sidebar toggle · active group name · quota rings · dock toggles · palette. */
 export function TopBar() {
-  const active = useActive();
-  const sessions = useStore((s) => s.sessions);
-  const workspaces = useStore((s) => s.workspaces);
-  const tab = useStore((s) => s.tab);
-  const setTab = useStore((s) => s.setTab);
-  const panels = useStore((s) => s.panels);
-  const togglePanel = useStore((s) => s.togglePanel);
   const sidebarOpen = useStore((s) => s.sidebarOpen);
-  const openSession = useStore((s) => s.openSession);
-  const closeSession = useStore((s) => s.closeSession);
-  const toast = useStore((s) => s.toast);
-  const [editing, setEditing] = useState<string | null>(null);
-
-  const meta = active ? sessions.find((s) => s.sessionId === active.sessionId) : undefined;
-  const title = meta?.title ?? active?.sessionId.slice(0, 8) ?? '';
-  const live = active && active.state !== 'history' && active.state !== 'closed' && active.state !== 'error';
-  const wsOf = active ? workspaces.find((w) => active.cwd.toLowerCase().startsWith(w.path.toLowerCase())) : undefined;
-
-  const rename = async () => {
-    if (editing !== null && active && editing.trim() && editing !== title) await ws.request({ kind: 'session.rename', sessionId: active.sessionId, title: editing.trim() }).catch((e) => toast(e.message));
-    setEditing(null);
-  };
-
+  const dock = useStore((s) => s.layout.dock);
+  const togglePanel = useStore((s) => s.togglePanel);
+  const groupName = useStore((s) => s.layout.groups.find((g) => g.id === s.layout.activeGroupId)?.name ?? '');
+  const running = useStore((s) => Object.values(s.open).filter((o) => o.state === 'running' || o.state === 'waiting').length);
   return (
-    <div className="topbar">
+    <div className="topbar slim">
       {!sidebarOpen && <button className="icon-btn" onClick={() => useStore.setState({ sidebarOpen: true })} title="展开侧栏 (Ctrl+B)">☰</button>}
-      {active ? (
-        <div className="crumb" style={{ flex: '0 1 auto' }}>
-          <button title={active.cwd} onClick={() => ws.request({ kind: 'shell.open', path: active.cwd })}>▤ {wsOf?.name ?? basename(active.cwd)}</button>
-          <span className="sep">/</span>
-          {live && <span className={clsx('dot', active.state)} />}
-          {editing !== null ? (
-            <input autoFocus value={editing} onChange={(e) => setEditing(e.target.value)} onBlur={rename} onKeyDown={(e) => (e.key === 'Enter' ? rename() : e.key === 'Escape' ? setEditing(null) : null)} style={{ background: 'var(--bg-1)', border: '1px solid var(--line-1)', borderRadius: 6, padding: '2px 8px', width: 320 }} />
-          ) : (
-            <span className="cur" onDoubleClick={() => setEditing(title)} title="双击重命名">{title}</span>
-          )}
-          {meta?.gitBranch && <span className="sep" style={{ fontSize: 12 }}>· {meta.gitBranch}</span>}
-          {active.info?.providerId && active.info.providerId !== 'claude' && <span className="badge" title="这个会话走第三方供应商" style={{ color: 'var(--blue)' }}>{active.info.providerName ?? '第三方'}</span>}
-        </div>
-      ) : (
-        <div className="title" />
-      )}
+      <div className="title">
+        <span className="cur">{groupName}</span>
+        {running > 0 && <span className="badge" title="运行中的会话">{running} 运行中</span>}
+      </div>
       <span className="grow" />
       <UsageRings />
-      {active && (
-        <>
-          <div className="seg">
-            <button className={clsx(tab === 'chat' && 'active')} onClick={() => setTab('chat')}>对话</button>
-            <button className={clsx(tab === 'trajectory' && 'active')} onClick={() => setTab('trajectory')}>轨迹</button>
-          </div>
-          <button className="icon-btn" title="从当前会话分叉" onClick={() => openSession({ sessionId: active.sessionId, cwd: active.cwd, fork: true }).catch((e) => toast(e.message))}>⑂</button>
-          <button className="icon-btn" title="导出对话为 HTML（可分享）" onClick={() => shareConversation(active.sessionId)}>↗</button>
-          {live ? (
-            <button className="icon-btn" title="结束进程（可随时恢复）" onClick={() => closeSession(active.sessionId)}>⏻</button>
-          ) : (
-            <button className="btn sm ghost" onClick={() => openSession({ sessionId: active.sessionId, cwd: active.cwd }).catch((e) => toast(e.message))}>▶ 恢复</button>
-          )}
-          <span style={{ width: 1, height: 18, background: 'var(--line)', margin: '0 4px' }} />
-        </>
-      )}
       {PANELS.map((p) => (
-        <button key={p.id} className={clsx('icon-btn', panels.includes(p.id) && 'active')} onClick={() => togglePanel(p.id)} title={p.l} style={{ fontSize: 12.5, gap: 5, padding: '4px 8px' }}>
-          <span style={{ fontSize: 13 }}>{p.ic}</span> {p.l}
+        <button key={p} className={clsx('icon-btn', dock.open && dock.tabs.includes(p) && 'active')} onClick={() => togglePanel(p)} title={PANEL_TITLES[p]} style={{ fontSize: 12.5, gap: 5, padding: '4px 8px' }}>
+          <span style={{ fontSize: 13 }}>{PANEL_ICONS[p]}</span> {PANEL_TITLES[p]}
         </button>
       ))}
       <button className="icon-btn" title="命令面板 (Ctrl+K)" onClick={() => useStore.setState({ paletteOpen: true })}>⌘</button>

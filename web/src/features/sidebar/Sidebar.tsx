@@ -4,6 +4,7 @@ import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { ago, basename, clsx } from '@/util';
 import type { SessionSummary, Workspace } from '@shared';
+import { MIME_SESSION } from '@/features/workbench/dnd';
 
 function SessionMenu({ s, onClose }: { s: SessionSummary; onClose: () => void }) {
   const st = useStore();
@@ -27,8 +28,11 @@ function SessionMenu({ s, onClose }: { s: SessionSummary; onClose: () => void })
     onClose();
   };
   const act = (fn: () => unknown) => () => { void fn(); onClose(); };
+  const openIn = (mode: 'tab' | 'replace') => act(() => (open ? st.openInPane(s.sessionId, mode) : st.loadHistory(s.sessionId, { mode })));
   return (
     <div className="menu" style={{ right: 8, top: 28 }} onClick={(e) => e.stopPropagation()}>
+      <button onClick={openIn('tab')}>▭ 在新标签打开</button>
+      <button onClick={act(() => { const g = st.layout; const before = g; st.dispatchLayout({ t: 'pane.split', paneId: (g.groups.find((x) => x.id === g.activeGroupId) ?? g.groups[0]).focusedPaneId, dir: 'row' }); if (useStore.getState().layout === before) return st.toast('最多 6 个窗格'); open ? st.openInPane(s.sessionId, 'replace') : void st.loadHistory(s.sessionId); })}>◫ 在右侧分屏打开</button>
       <button onClick={act(() => st.openSession({ sessionId: s.sessionId, cwd: s.cwd }).catch((e) => st.toast(e.message)))}>▶ 恢复运行</button>
       <button onClick={act(() => st.openSession({ sessionId: s.sessionId, cwd: s.cwd, fork: true }).catch((e) => st.toast(e.message)))}>⑂ 分叉</button>
       <button onClick={act(() => st.setSessionMeta(s.sessionId, { pinned: !meta.pinned }))}>{meta.pinned ? '⊝ 取消置顶' : '📌 置顶'}</button>
@@ -43,21 +47,52 @@ function SessionMenu({ s, onClose }: { s: SessionSummary; onClose: () => void })
   );
 }
 
+/** Click → focused pane (replace); Ctrl / middle click → new tab; drag → any pane / group tab. */
+function useOpenRow(sessionId: string) {
+  const open = useStore((st) => st.open[sessionId]);
+  const loadHistory = useStore((st) => st.loadHistory);
+  const openInPane = useStore((st) => st.openInPane);
+  return {
+    onClick: (e: React.MouseEvent) => {
+      const mode = e.ctrlKey || e.metaKey ? 'tab' : 'replace';
+      open ? openInPane(sessionId, mode) : void loadHistory(sessionId, { mode });
+    },
+    onAuxClick: (e: React.MouseEvent) => {
+      if (e.button !== 1) return;
+      e.preventDefault();
+      open ? openInPane(sessionId, 'tab') : void loadHistory(sessionId, { mode: 'tab' });
+    },
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => { e.dataTransfer.setData(MIME_SESSION, sessionId); e.dataTransfer.effectAllowed = 'copyMove'; },
+  };
+}
+
 function SessionRow({ s, menu, setMenu }: { s: SessionSummary; menu: string | null; setMenu: (v: string | null) => void }) {
   const open = useStore((st) => st.open[s.sessionId]);
   const activeId = useStore((st) => st.activeId);
   const meta = useStore((st) => st.sessionMeta[s.sessionId]);
-  const loadHistory = useStore((st) => st.loadHistory);
-  const setActive = useStore((st) => st.setActive);
+  const row = useOpenRow(s.sessionId);
   const live = open?.state ?? s.live;
   const isLive = live && live !== 'history' && live !== 'closed';
   return (
-    <div className={clsx('sess', activeId === s.sessionId && 'active')} onClick={() => (open ? setActive(s.sessionId) : loadHistory(s.sessionId))} title={s.firstPrompt}>
+    <div className={clsx('sess', activeId === s.sessionId && 'active')} {...row} title={`${s.firstPrompt ?? s.title}\n点击打开 · Ctrl/中键新标签 · 可拖到窗格`}>
       {isLive ? <span className={clsx('dot', live)} /> : meta?.pinned ? <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>📌</span> : null}
       <span className="t">{s.title}</span>
       <span className="ago">{ago(s.lastModified)}</span>
       <button className="more" onClick={(e) => { e.stopPropagation(); setMenu(menu === s.sessionId ? null : s.sessionId); }}>⋯</button>
       {menu === s.sessionId && <SessionMenu s={s} onClose={() => setMenu(null)} />}
+    </div>
+  );
+}
+
+function RunningRow({ sessionId, cwd, state, title }: { sessionId: string; cwd: string; state: string; title: string }) {
+  const activeId = useStore((st) => st.activeId);
+  const row = useOpenRow(sessionId);
+  return (
+    <div className={clsx('sess', activeId === sessionId && 'active')} {...row}>
+      <span className={clsx('dot', state)} />
+      <span className="t">{title}</span>
+      <span className="ago">{basename(cwd)}</span>
     </div>
   );
 }
@@ -74,6 +109,7 @@ function WorkspaceMenu({ w, onClose }: { w: Workspace; onClose: () => void }) {
     <div className="menu" style={{ right: 8, top: 26 }} onClick={(e) => e.stopPropagation()}>
       <button onClick={act(() => st.openSession({ cwd: w.path }))}>＋ 在这里新建会话</button>
       <button onClick={act(async () => { const n = prompt('worktree 名称', 'feature'); if (n) await st.openSession({ cwd: w.path, worktree: n }).catch((e) => st.toast(e.message)); })}>⑂ 新建 worktree 会话</button>
+      <button onClick={act(() => st.openTile({ id: `t${Date.now()}`, kind: 'term', cwd: w.path }, 'tab'))}>▣ 在这里开终端</button>
       <button onClick={act(async () => { const n = prompt('工作区名称', w.name); if (n) await ws.request({ kind: 'workspaces.rename', id: w.id, name: n }); })}>✎ 重命名</button>
       <button onClick={act(() => ws.request({ kind: 'shell.open', path: w.path }))}>▤ 在资源管理器打开</button>
       <button onClick={act(() => ws.request({ kind: 'shell.open', path: w.path, app: 'code' }))}>⌨ 在 VS Code 打开</button>
@@ -91,14 +127,14 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const sessionMeta = useStore((s) => s.sessionMeta);
   const showArchived = useStore((s) => s.showArchived);
   const addWorkspace = useStore((s) => s.addWorkspace);
-  const setActive = useStore((s) => s.setActive);
   const togglePanel = useStore((s) => s.togglePanel);
-  const panels = useStore((s) => s.panels);
+  const dock = useStore((s) => s.layout.dock);
+  const collapsed = useStore((s) => s.layout.sidebar.sections);
+  const dispatch = useStore((s) => s.dispatchLayout);
   const toast = useStore((s) => s.toast);
   const [q, setQ] = useState('');
   const [menu, setMenu] = useState<string | null>(null);
   const [wsMenu, setWsMenu] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => JSON.parse(localStorage.getItem('cw.collapsed') ?? '{}'));
 
   const ql = q.trim().toLowerCase();
   const visible = useMemo(() => sessions.filter((s) => (showArchived ? true : !sessionMeta[s.sessionId]?.archived) && (!ql || `${s.title} ${s.firstPrompt ?? ''} ${s.cwd}`.toLowerCase().includes(ql))), [sessions, sessionMeta, showArchived, ql]);
@@ -120,11 +156,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     return { byWs, other: [...other.entries()].sort((a, b) => b[1][0].lastModified - a[1][0].lastModified) };
   }, [visible, workspaces, sessionMeta]);
 
-  const toggleGroup = (k: string) => {
-    const next = { ...collapsed, [k]: !collapsed[k] };
-    setCollapsed(next);
-    localStorage.setItem('cw.collapsed', JSON.stringify(next));
-  };
+  const toggleGroup = (k: string) => dispatch({ t: 'sidebar.set', patch: { sections: { ...collapsed, [k]: !collapsed[k] } } });
   const pickWorkspace = async () => {
     const p = desktop ? await desktop.pickDir() : await ws.request<string | null>({ kind: 'fs.pickDir' });
     if (p) await addWorkspace(p).catch((e) => toast(e.message));
@@ -136,6 +168,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
       {!arr.length && k && <div className="sess" style={{ color: 'var(--fg-3)', fontSize: 12 }}>还没有会话</div>}
     </>
   );
+  const panelOn = (p: 'config' | 'usage') => dock.open && dock.tabs.includes(p);
 
   return (
     <>
@@ -146,8 +179,8 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
       <div className="sb-nav">
         <button className={clsx('nav', !activeId && 'active')} onClick={onNew}><span className="ic">＋</span>新会话<span className="k kbd">{desktop ? 'Ctrl N' : 'Alt N'}</span></button>
         <button className="nav" onClick={() => useStore.setState({ paletteOpen: true })}><span className="ic">⌘</span>命令 / 搜索<span className="k kbd">Ctrl K</span></button>
-        <button className={clsx('nav', panels.includes('config') && 'active')} onClick={() => togglePanel('config')}><span className="ic">⚙</span>配置中心</button>
-        <button className={clsx('nav', panels.includes('usage') && 'active')} onClick={() => togglePanel('usage')}><span className="ic">▤</span>用量</button>
+        <button className={clsx('nav', panelOn('config') && 'active')} onClick={() => togglePanel('config')}><span className="ic">⚙</span>配置中心</button>
+        <button className={clsx('nav', panelOn('usage') && 'active')} onClick={() => togglePanel('usage')}><span className="ic">▤</span>用量</button>
       </div>
       <div className="sb-search">
         <input placeholder="筛选会话…" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -155,23 +188,17 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
       <div className="sb-list">
         {running.length > 0 && !ql && (
           <div className="proj">
-            <div className="proj-head"><span className="name">运行中</span><span className="cnt">{running.length}</span></div>
-            {running.map((o) => {
+            <div className="proj-head" onClick={() => toggleGroup('__running')}><span className="ic">{collapsed.__running ? '▸' : '▾'}</span><span className="name">运行中</span><span className="cnt">{running.length}</span></div>
+            {!collapsed.__running && running.map((o) => {
               const s = sessions.find((x) => x.sessionId === o.sessionId);
-              return (
-                <div key={o.sessionId} className={clsx('sess', activeId === o.sessionId && 'active')} onClick={() => setActive(o.sessionId)}>
-                  <span className={clsx('dot', o.state)} />
-                  <span className="t">{s?.title ?? o.sessionId.slice(0, 8)}</span>
-                  <span className="ago">{basename(o.cwd)}</span>
-                </div>
-              );
+              return <RunningRow key={o.sessionId} sessionId={o.sessionId} cwd={o.cwd} state={o.state} title={s?.title ?? o.sessionId.slice(0, 8)} />;
             })}
           </div>
         )}
         {pinned.length > 0 && (
           <div className="proj">
-            <div className="proj-head"><span className="name">置顶</span><span className="cnt">{pinned.length}</span></div>
-            {list(pinned, '')}
+            <div className="proj-head" onClick={() => toggleGroup('__pinned')}><span className="ic">{collapsed.__pinned ? '▸' : '▾'}</span><span className="name">置顶</span><span className="cnt">{pinned.length}</span></div>
+            {!collapsed.__pinned && list(pinned, '')}
           </div>
         )}
         <div className="proj">

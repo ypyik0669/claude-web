@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { useActive } from '@/store';
+import { useScopedSession } from '@/store';
 import { ws } from '@/ws/client';
 
 /** Embedded real `claude` CLI via node-pty + xterm.js. Escape hatch for interactive-only commands (/login, /theme…). */
-export function TerminalPanel() {
-  const active = useActive();
+export function TerminalPanel({ cwd, visible = true }: { cwd?: string; visible?: boolean }) {
+  const active = useScopedSession();
+  const dir = cwd ?? active?.cwd ?? '';
   const ref = useRef<HTMLDivElement>(null);
   const [err, setErr] = useState('');
   const [termId, setTermId] = useState<string | null>(null);
+  const fitRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     let disposed = false;
@@ -15,17 +17,20 @@ export function TerminalPanel() {
     let fit: any;
     let id: string | null = null;
     let off: (() => void) | undefined;
+    let ro: ResizeObserver | undefined;
     (async () => {
       try {
         const [{ Terminal }, { FitAddon }] = await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')]);
         await import('@xterm/xterm/css/xterm.css');
         if (disposed) return;
-        term = new Terminal({ fontFamily: 'Cascadia Code, JetBrains Mono, Consolas, monospace', fontSize: 12.5, theme: { background: '#000000' }, cursorBlink: true, convertEol: false });
+        const cs = getComputedStyle(document.documentElement);
+        term = new Terminal({ fontFamily: 'Cascadia Code, JetBrains Mono, Consolas, monospace', fontSize: 12.5, theme: { background: cs.getPropertyValue('--bg').trim() || '#000', foreground: cs.getPropertyValue('--fg').trim() || '#eee' }, cursorBlink: true, convertEol: false, allowProposedApi: true });
         fit = new FitAddon();
         term.loadAddon(fit);
         term.open(ref.current!);
         fit.fit();
-        const r = await ws.request<{ termId: string }>({ kind: 'terminal.open', cwd: active?.cwd || '', cols: term.cols, rows: term.rows });
+        fitRef.current = () => { try { fit.fit(); if (id) void ws.request({ kind: 'terminal.resize', termId: id, cols: term.cols, rows: term.rows }); } catch { /* ignore */ } };
+        const r = await ws.request<{ termId: string }>({ kind: 'terminal.open', cwd: dir, cols: term.cols, rows: term.rows });
         id = r.termId;
         setTermId(id);
         term.onData((d: string) => ws.request({ kind: 'terminal.input', termId: id!, data: d }));
@@ -33,10 +38,7 @@ export function TerminalPanel() {
           if (e.kind === 'terminal.data' && e.termId === id) term.write(e.data);
           if (e.kind === 'terminal.exit' && e.termId === id) term.write(`\r\n[进程退出 ${e.code}]`);
         });
-        const ro = new ResizeObserver(() => {
-          fit.fit();
-          void ws.request({ kind: 'terminal.resize', termId: id!, cols: term.cols, rows: term.rows });
-        });
+        ro = new ResizeObserver(() => fitRef.current());
         ro.observe(ref.current!);
       } catch (e: any) {
         setErr(e.message);
@@ -45,10 +47,14 @@ export function TerminalPanel() {
     return () => {
       disposed = true;
       off?.();
+      ro?.disconnect();
       if (id) void ws.request({ kind: 'terminal.close', termId: id });
       term?.dispose();
     };
-  }, []);
+  }, [dir]);
+
+  // re-fit when the tile becomes visible again (hidden tiles have zero size)
+  useEffect(() => { if (visible) setTimeout(() => fitRef.current(), 30); }, [visible]);
 
   if (err)
     return (

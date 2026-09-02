@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useActive, useStore } from '@/store';
+import { useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { clsx, fmtTok, fmtUsd, fmtMs, shortModel, basename } from '@/util';
@@ -20,8 +20,8 @@ const MODEL_ALIASES = [
  * The composer is used in two places: inside an open session (sends to it) and on the welcome screen
  * (creates a session on first send). `welcome` mode carries its own model/mode/cwd state.
  */
-export function Composer({ welcome = false }: { welcome?: boolean }) {
-  const active = useActive();
+export function Composer({ welcome = false, target }: { welcome?: boolean; target?: { paneId: string; tileId: string } }) {
+  const active = useScopedSession();
   const send = useStore((s) => s.send);
   const interrupt = useStore((s) => s.interrupt);
   const setDraft = useStore((s) => s.setDraft);
@@ -92,12 +92,21 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
     if (!cwd && sessions[0]?.cwd) setCwd(sessions[0].cwd);
   }, [sessions]);
 
+  const autosize = () => {
+    const el = ta.current;
+    if (!el || !el.clientWidth) return; // hidden / not laid out yet: a bogus scrollHeight would stick
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 280) + 'px';
+  };
+  useEffect(autosize, [text]);
+  // pane resizes / tab switches change the wrap width → re-measure
   useEffect(() => {
     const el = ta.current;
     if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 280) + 'px';
-  }, [text]);
+    const ro = new ResizeObserver(() => autosize());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     if (welcome) ta.current?.focus();
@@ -151,7 +160,7 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
         localStorage.setItem('cw.lastProvider', wProvider);
         localStorage.setItem('cw.lastFeatures', JSON.stringify(wFeatures));
         if (wProvider !== 'claude' && !provider) throw new Error('选中的供应商档案已不存在');
-        const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffort || undefined, providerId: provider ? provider.id : 'claude', features: wFeatures });
+        const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffort || undefined, providerId: provider ? provider.id : 'claude', features: wFeatures }, target);
         const uploaded = files.length ? await uploadAll(id) : [];
         await send(id, t, im, false, [...atts, ...uploaded]);
         saveDraft('welcome', '');

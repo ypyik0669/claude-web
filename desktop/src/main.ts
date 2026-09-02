@@ -4,10 +4,11 @@ import fs from 'node:fs';
 import { ServerHost } from './server-host';
 
 const APP_NAME = 'Claude Web';
-let win: BrowserWindow | null = null;
+const wins = new Map<string, BrowserWindow>(); // winId -> window ("main" is the first one)
 let tray: Tray | null = null;
 let pendingCount = 0;
 let quitting = false;
+let titleBar = { bg: '', fg: '' };
 const host = new ServerHost();
 const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
 
@@ -23,30 +24,53 @@ function iconPath() {
   return fs.existsSync(p) ? p : undefined;
 }
 
-function loadState() {
+interface Bounds { x?: number; y?: number; width?: number; height?: number; maximized?: boolean }
+interface WinState { v: 2; windows: Record<string, Bounds> }
+
+function loadState(): WinState {
   try {
-    return JSON.parse(fs.readFileSync(stateFile(), 'utf8'));
+    const j = JSON.parse(fs.readFileSync(stateFile(), 'utf8'));
+    if (j && j.v === 2 && j.windows) return j;
+    // v1: a single window's bounds
+    return { v: 2, windows: { main: j ?? {} } };
   } catch {
-    return {};
+    return { v: 2, windows: {} };
   }
 }
 function saveState() {
-  if (!win) return;
-  const b = win.getBounds();
-  fs.writeFileSync(stateFile(), JSON.stringify({ ...b, maximized: win.isMaximized() }));
+  const st: WinState = { v: 2, windows: {} };
+  for (const [id, w] of wins) if (!w.isDestroyed()) st.windows[id] = { ...w.getBounds(), maximized: w.isMaximized() };
+  try { fs.writeFileSync(stateFile(), JSON.stringify(st)); } catch { /* ignore */ }
 }
 
-function showWindow() {
-  if (!win) return;
-  if (win.isMinimized()) win.restore();
-  win.show();
-  win.focus();
+/** The window to talk to: focused one, else main, else any. */
+function focusedWin(): BrowserWindow | null {
+  const f = BrowserWindow.getFocusedWindow();
+  if (f && !f.isDestroyed()) return f;
+  const m = wins.get('main');
+  if (m && !m.isDestroyed()) return m;
+  for (const w of wins.values()) if (!w.isDestroyed()) return w;
+  return null;
+}
+function liveWins() { return [...wins.entries()].filter(([, w]) => !w.isDestroyed()); }
+
+function showWindow(w: BrowserWindow | null = focusedWin()) {
+  if (!w) return;
+  if (w.isMinimized()) w.restore();
+  w.show();
+  w.focus();
 }
 
-function createWindow(url: string) {
-  const st = loadState();
+function windowUrl(base: string, winId: string) {
+  const u = new URL(base);
+  u.searchParams.set('win', winId);
+  return u.toString();
+}
+
+function createWindow(url: string, winId = 'main', bounds?: Bounds): BrowserWindow {
+  const st = bounds ?? loadState().windows[winId] ?? {};
   const dark = nativeTheme.shouldUseDarkColors;
-  win = new BrowserWindow({
+  const win = new BrowserWindow({
     width: st.width ?? 1400,
     height: st.height ?? 900,
     x: st.x,
@@ -55,38 +79,56 @@ function createWindow(url: string) {
     minHeight: 600,
     title: APP_NAME,
     icon: iconPath(),
-    backgroundColor: dark ? '#1f1e1b' : '#faf9f5',
+    backgroundColor: titleBar.bg || (dark ? '#1f1e1b' : '#faf9f5'),
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: dark ? '#1f1e1b' : '#faf9f5', symbolColor: dark ? '#bab6ae' : '#4d4a44', height: 40 },
+    titleBarOverlay: { color: titleBar.bg || (dark ? '#1f1e1b' : '#faf9f5'), symbolColor: titleBar.fg || (dark ? '#bab6ae' : '#4d4a44'), height: 40 },
     show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false, additionalArguments: [`--cw-win=${winId}`] },
   });
+  wins.set(winId, win);
   if (st.maximized) win.maximize();
-  win.once('ready-to-show', () => win?.show());
+  win.once('ready-to-show', () => win.show());
   win.on('resize', saveState);
   win.on('move', saveState);
   win.on('close', (e) => {
     if (quitting) return;
+    const visible = liveWins().filter(([, w]) => w.isVisible());
+    if (winId !== 'main' || visible.length > 1) {
+      // secondary window (or main while others stay): really close; its groups are lost unless migrated first
+      wins.delete(winId);
+      saveState();
+      return;
+    }
     e.preventDefault();
-    win?.hide(); // keep running in the tray
+    win.hide(); // last visible window: keep running in the tray
   });
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/.test(url) && !url.startsWith(host.info?.url.split('/?')[0] ?? '\0')) void shell.openExternal(url);
+  win.on('closed', () => { if (wins.get(winId) === win) wins.delete(winId); });
+  win.webContents.setWindowOpenHandler(({ url: target }) => {
+    const origin = host.info?.url.split('/?')[0] ?? '\0';
+    if (target.startsWith(origin)) {
+      // same-origin window.open (browser-style "new window"): give it a real id and our preload
+      const id = `w${Date.now().toString(36)}`;
+      createWindow(windowUrl(target, id), id);
+      return { action: 'deny' };
+    }
+    if (/^https?:/.test(target)) void shell.openExternal(target);
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (e, target) => {
     if (!target.startsWith(`http://${host.info?.host}:${host.info?.port}`)) { e.preventDefault(); void shell.openExternal(target); }
   });
   win.on('focus', () => { pendingCount = 0; updateBadge(); });
-  void win.loadURL(url);
+  void win.loadURL(windowUrl(url, winId));
+  return win;
 }
 
 function updateBadge() {
-  if (process.platform === 'win32' && win) {
+  const m = wins.get('main');
+  if (process.platform === 'win32' && m && !m.isDestroyed()) {
     if (pendingCount > 0) {
       const img = badgeImage(pendingCount);
-      win.setOverlayIcon(img, `${pendingCount} 个待处理`);
-    } else win.setOverlayIcon(null, '');
+      m.setOverlayIcon(img, `${pendingCount} 个待处理`);
+    } else m.setOverlayIcon(null, '');
   }
   tray?.setToolTip(pendingCount > 0 ? `${APP_NAME} · ${pendingCount} 个待处理` : APP_NAME);
 }
@@ -97,38 +139,71 @@ function badgeImage(n: number) {
 }
 
 function sendCommand(id: string) {
-  showWindow();
-  win?.webContents.send('desktop:command', id);
+  const w = focusedWin();
+  showWindow(w);
+  w?.webContents.send('desktop:command', id);
+}
+function broadcast(channel: string, arg: unknown) {
+  for (const [, w] of liveWins()) w.webContents.send(channel, arg);
 }
 
+// Accelerators mirror web/src/features/workbench/shortcuts.ts (desktop column).
 function buildMenu() {
+  const cmd = (label: string, accelerator: string | undefined, id: string): Electron.MenuItemConstructorOptions => ({ label, accelerator, click: () => sendCommand(id) });
   const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: '会话',
       submenu: [
-        { label: '新会话', accelerator: 'CmdOrCtrl+N', click: () => sendCommand('new') },
-        { label: '命令面板', accelerator: 'CmdOrCtrl+K', click: () => sendCommand('palette') },
-        { label: '搜索会话', accelerator: 'CmdOrCtrl+P', click: () => sendCommand('palette') },
+        cmd('新会话', 'CmdOrCtrl+N', 'new'),
+        cmd('命令面板', 'CmdOrCtrl+K', 'palette'),
+        cmd('搜索会话', 'CmdOrCtrl+P', 'palette'),
         { type: 'separator' },
-        { label: '中断当前轮', accelerator: 'CmdOrCtrl+Shift+C', click: () => sendCommand('interrupt') },
-        { label: '结束当前会话进程', accelerator: 'CmdOrCtrl+W', click: () => sendCommand('close') },
+        cmd('中断当前轮', 'CmdOrCtrl+Shift+C', 'interrupt'),
+        cmd('结束当前会话进程', 'CmdOrCtrl+Shift+Q', 'close'),
         { type: 'separator' },
         { label: '退出', accelerator: 'CmdOrCtrl+Q', click: () => void requestQuit() },
       ],
     },
     {
+      label: '工作台',
+      submenu: [
+        cmd('新分组', 'CmdOrCtrl+T', 'group.new'),
+        cmd('关闭分组', 'CmdOrCtrl+Shift+W', 'group.close'),
+        cmd('重命名分组', 'F2', 'group.rename'),
+        cmd('下一个分组', 'CmdOrCtrl+Tab', 'group.next'),
+        cmd('上一个分组', 'CmdOrCtrl+Shift+Tab', 'group.prev'),
+        ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ ...cmd(`跳到分组 ${n}`, `CmdOrCtrl+${n}`, `group.jump.${n - 1}`), visible: n <= 3 })),
+        { type: 'separator' },
+        cmd('向右分屏', 'CmdOrCtrl+D', 'pane.splitRight'),
+        cmd('向下分屏', 'CmdOrCtrl+Shift+D', 'pane.splitDown'),
+        cmd('关闭标签 / 窗格', 'CmdOrCtrl+W', 'tile.close'),
+        cmd('缩放窗格', 'CmdOrCtrl+Shift+Enter', 'pane.zoom'),
+        cmd('下一个窗格', 'CmdOrCtrl+Alt+Right', 'pane.next'),
+        cmd('上一个窗格', 'CmdOrCtrl+Alt+Left', 'pane.prev'),
+        ...[1, 2, 3, 4, 5, 6].map((n) => ({ ...cmd(`跳到窗格 ${n}`, `Alt+${n}`, `pane.jump.${n - 1}`), visible: n <= 2 })),
+        { type: 'separator' },
+        cmd('窗格内新标签', 'CmdOrCtrl+Shift+T', 'tile.new'),
+        cmd('下一个标签', 'CmdOrCtrl+PageDown', 'tile.next'),
+        cmd('上一个标签', 'CmdOrCtrl+PageUp', 'tile.prev'),
+        { type: 'separator' },
+        cmd('在新窗口打开当前分组', 'CmdOrCtrl+Shift+N', 'window.new'),
+      ],
+    },
+    {
       label: '视图',
       submenu: [
-        { label: '侧栏', accelerator: 'CmdOrCtrl+B', click: () => sendCommand('sidebar') },
-        { label: '对话 / 轨迹', accelerator: 'CmdOrCtrl+Shift+J', click: () => sendCommand('tab') },
+        cmd('侧栏', 'CmdOrCtrl+B', 'sidebar'),
+        cmd('对话 / 轨迹', 'Alt+J', 'tab'),
         { type: 'separator' },
-        { label: '任务面板', accelerator: 'CmdOrCtrl+1', click: () => sendCommand('panel.tasks') },
-        { label: '文件改动', accelerator: 'CmdOrCtrl+2', click: () => sendCommand('panel.files') },
-        { label: '用量', accelerator: 'CmdOrCtrl+3', click: () => sendCommand('panel.usage') },
-        { label: '配置中心', accelerator: 'CmdOrCtrl+,', click: () => sendCommand('panel.config') },
-        { label: '终端', accelerator: 'CmdOrCtrl+`', click: () => sendCommand('panel.terminal') },
+        cmd('停靠面板', 'CmdOrCtrl+J', 'dock.toggle'),
+        cmd('最小化停靠面板', 'CmdOrCtrl+Shift+J', 'dock.minimize'),
+        cmd('任务面板', 'CmdOrCtrl+Shift+1', 'panel.tasks'),
+        cmd('文件改动', 'CmdOrCtrl+Shift+2', 'panel.files'),
+        cmd('用量', 'CmdOrCtrl+Shift+3', 'panel.usage'),
+        cmd('配置中心', 'CmdOrCtrl+,', 'panel.config'),
+        cmd('终端', 'CmdOrCtrl+`', 'panel.terminal'),
         { type: 'separator' },
-        { label: '键盘快捷键', accelerator: 'F1', click: () => sendCommand('shortcuts') },
+        cmd('键盘快捷键', 'F1', 'shortcuts'),
         { role: 'togglefullscreen' },
         { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'resetZoom' },
         { type: 'separator' },
@@ -157,47 +232,68 @@ function buildTray() {
   tray = new Tray(img);
   tray.setToolTip(APP_NAME);
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '打开', click: () => showWindow() },
+    { label: '打开', click: () => showWindow(wins.get('main') ?? focusedWin()) },
     { label: '新会话', click: () => sendCommand('new') },
     { type: 'separator' },
     { label: '退出', click: () => void requestQuit() },
   ]));
-  tray.on('click', () => showWindow());
+  tray.on('click', () => showWindow(wins.get('main') ?? focusedWin()));
 }
 
 async function requestQuit() {
-  if (win && !win.isDestroyed()) {
-    const running = await win.webContents.executeJavaScript('Object.values(window.__store?.getState().open ?? {}).filter(o => o.state === "running" || o.state === "waiting").length', true).catch(() => 0);
-    if (running > 0) {
-      const r = await dialog.showMessageBox(win, { type: 'question', buttons: ['退出', '取消'], defaultId: 1, cancelId: 1, message: `还有 ${running} 个会话在运行`, detail: '退出只会结束进程，会话记录保留在磁盘上，下次可以恢复。' });
-      if (r.response !== 0) return;
-    }
+  const ids = new Set<string>();
+  for (const [, w] of liveWins()) {
+    const arr: string[] = await w.webContents.executeJavaScript('Object.values(window.__store?.getState().open ?? {}).filter(o => o.state === "running" || o.state === "waiting").map(o => o.sessionId)', true).catch(() => []);
+    for (const id of arr) ids.add(id);
+  }
+  if (ids.size > 0) {
+    const w = focusedWin();
+    const r = await dialog.showMessageBox(w ?? undefined as any, { type: 'question', buttons: ['退出', '取消'], defaultId: 1, cancelId: 1, message: `还有 ${ids.size} 个会话在运行`, detail: '退出只会结束进程，会话记录保留在磁盘上，下次可以恢复。' });
+    if (r.response !== 0) return;
   }
   quitting = true;
   app.quit();
 }
 
 // ---------- IPC ----------
-ipcMain.handle('desktop:pickDir', async () => {
-  const r = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'], title: '选择工作目录' });
+ipcMain.handle('desktop:pickDir', async (e) => {
+  const w = BrowserWindow.fromWebContents(e.sender) ?? focusedWin();
+  const r = await dialog.showOpenDialog(w!, { properties: ['openDirectory', 'createDirectory'], title: '选择工作目录' });
   return r.canceled ? null : r.filePaths[0];
 });
 ipcMain.handle('desktop:openPath', (_e, p: string) => shell.openPath(p));
 ipcMain.handle('desktop:openExternal', (_e, url: string) => shell.openExternal(url));
-ipcMain.on('desktop:notify', (_e, { title, body, sessionId }: { title: string; body: string; sessionId?: string }) => {
-  if (win?.isFocused()) return;
+ipcMain.on('desktop:notify', (e, { title, body, sessionId }: { title: string; body: string; sessionId?: string }) => {
+  const src = BrowserWindow.fromWebContents(e.sender);
+  if (src?.isFocused()) return;
   pendingCount++;
   updateBadge();
   if (!Notification.isSupported()) return;
   const n = new Notification({ title, body, icon: iconPath(), silent: false });
-  n.on('click', () => { showWindow(); if (sessionId) win?.webContents.send('desktop:focusSession', sessionId); });
+  n.on('click', () => {
+    showWindow(src && !src.isDestroyed() ? src : focusedWin());
+    if (sessionId) broadcast('desktop:focusSession', sessionId); // each window checks whether it holds the session
+  });
   n.show();
-  win?.flashFrame(true);
+  src?.flashFrame(true);
 });
 ipcMain.on('desktop:badge', (_e, n: number) => { pendingCount = n; updateBadge(); });
-ipcMain.on('desktop:titlebar', (_e, { bg, fg }: { bg: string; fg: string }) => { try { win?.setTitleBarOverlay({ color: bg, symbolColor: fg, height: 40 }); } catch { /* not supported */ } });
+ipcMain.on('desktop:titlebar', (_e, { bg, fg }: { bg: string; fg: string }) => {
+  titleBar = { bg, fg };
+  for (const [, w] of liveWins()) { try { w.setTitleBarOverlay({ color: bg, symbolColor: fg, height: 40 }); } catch { /* not supported */ } }
+});
 ipcMain.handle('desktop:loginItem:get', () => app.getLoginItemSettings().openAtLogin);
 ipcMain.handle('desktop:loginItem:set', (_e, on: boolean) => app.setLoginItemSettings({ openAtLogin: on, args: ['--hidden'] }));
+ipcMain.handle('desktop:window:new', () => {
+  if (!host.info) throw new Error('server not ready');
+  const id = `w${Date.now().toString(36)}`;
+  const src = focusedWin();
+  const b = src ? src.getBounds() : undefined;
+  createWindow(host.info.url, id, b ? { x: b.x + 40, y: b.y + 40, width: b.width, height: b.height } : undefined);
+  return id;
+});
+ipcMain.handle('desktop:window:focus', (_e, id: string) => { const w = wins.get(id); if (w && !w.isDestroyed()) showWindow(w); });
+ipcMain.handle('desktop:window:list', () => liveWins().map(([id]) => id));
 
 // ---------- lifecycle ----------
 app.setAppUserModelId('com.claude-web.desktop');
@@ -208,10 +304,12 @@ app.whenReady().then(async () => {
     const info = await host.start();
     buildMenu();
     buildTray();
-    createWindow(info.url);
-    if (process.argv.includes('--hidden')) win?.hide();
+    const st = loadState();
+    createWindow(info.url, 'main');
+    for (const id of Object.keys(st.windows)) if (id !== 'main') createWindow(info.url, id);
+    if (process.argv.includes('--hidden')) for (const [, w] of liveWins()) w.hide();
     host.on('crash', (code) => new Notification({ title: APP_NAME, body: `后台服务退出（${code}），正在重启…` }).show());
-    host.on('ready', (i) => { if (win && !win.isDestroyed() && i.url !== info.url) void win.loadURL(i.url); });
+    host.on('ready', (i) => { if (i.url !== info.url) for (const [id, w] of liveWins()) void w.loadURL(windowUrl(i.url, id)); });
   } catch (e: any) {
     const msg = `启动失败：${e?.stack ?? e?.message ?? e}`;
     try { fs.appendFileSync(path.join(app.getPath('userData'), 'main.log'), `[${new Date().toISOString()}] ${msg}\n`); } catch { /* ignore */ }
@@ -223,7 +321,7 @@ process.on('uncaughtException', (e) => {
   try { fs.appendFileSync(path.join(app.getPath('userData'), 'main.log'), `[${new Date().toISOString()}] uncaught: ${e.stack ?? e}\n`); } catch { /* ignore */ }
 });
 app.on('window-all-closed', () => { /* stay in tray */ });
-app.on('before-quit', () => { quitting = true; });
+app.on('before-quit', () => { quitting = true; saveState(); });
 app.on('will-quit', (e) => {
   if (host.info) {
     e.preventDefault();

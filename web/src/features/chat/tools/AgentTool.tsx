@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ToolUseBlock } from '@/model/conversation';
 import { useStore } from '@/store';
+import { usePaneCtx } from '@/store/paneContext';
 import { fmtMs, fmtTok } from '@/util';
 import { CodeBlock } from '../CodeBlock';
 import { Expandable } from '../Expandable';
@@ -15,7 +16,8 @@ export function AgentBody({ t }: { t: ToolUseBlock }) {
   const st = r?.structured as any;
   const [showPrompt, setShowPrompt] = useState(false);
   const running = t.status === 'running' || t.status === 'pending' || t.status === 'streaming';
-  const task = useStore((s) => { const a = s.activeId ? s.open[s.activeId] : undefined; if (!a) return undefined; for (const x of a.conv.tasks.values()) if (x.toolUseId === t.id) return x; return undefined; });
+  const ctx = usePaneCtx();
+  const task = useStore((s) => { const sid = ctx?.sessionId ?? s.activeId; const a = sid ? s.open[sid] : undefined; if (!a) return undefined; for (const x of a.conv.tasks.values()) if (x.toolUseId === t.id) return x; return undefined; });
   const text = Array.isArray(st?.content) ? st.content.map((c: any) => c.text ?? '').join('\n') : r?.content ?? '';
   return (
     <>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useActive } from '@/store';
+import { useScopedSession } from '@/store';
 import { ws } from '@/ws/client';
 import { basename } from '@/util';
 import { DiffView } from '@/features/chat/Markdown';
@@ -7,7 +7,7 @@ import { DiffView } from '@/features/chat/Markdown';
 interface Changed { path: string; ops: number; tools: string[]; lastTs?: string }
 
 export function FilesPanel() {
-  const active = useActive();
+  const active = useScopedSession();
   const [files, setFiles] = useState<Changed[]>([]);
   const [sel, setSel] = useState<string | null>(null);
   const [diff, setDiff] = useState<{ kind: string; text: string } | null>(null);

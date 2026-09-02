@@ -1,17 +1,19 @@
 import { memo, useState } from 'react';
 import type { ToolUseBlock } from '@/model/conversation';
 import { useStore } from '@/store';
+import { usePaneCtx } from '@/store/paneContext';
 import { clsx } from '@/util';
 import { ItemList } from './ChatView';
 import { getToolDef, splitMcp, toolDisplayName } from './tools/registry';
 
 function SubagentLoader({ toolUseId }: { toolUseId: string }) {
+  const ctx = usePaneCtx();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const load = async () => {
     setBusy(true);
     try {
-      await useStore.getState().loadSubagent(useStore.getState().activeId!, toolUseId);
+      await useStore.getState().loadSubagent((ctx?.sessionId ?? useStore.getState().activeId)!, toolUseId);
     } catch (e: any) {
       setErr(e.message);
     }
@@ -31,7 +33,8 @@ export function ToolHead({ t, onToggle, open }: { t: ToolUseBlock; onToggle?: ()
   const def = getToolDef(t.name);
   const { verb, arg } = def.label(t.input as any);
   const mcp = splitMcp(t.name);
-  const setInspect = (id: string) => useStore.setState({ inspect: { sessionId: useStore.getState().activeId!, toolUseId: id } });
+  const ctx = usePaneCtx();
+  const setInspect = (id: string) => useStore.setState({ inspect: { sessionId: (ctx?.sessionId ?? useStore.getState().activeId)!, toolUseId: id } });
   const st = t.status === 'error' ? '失败' : t.status === 'running' ? (t.progress ? `${Math.round(t.progress.elapsed)}s` : '运行中') : t.status === 'pending' ? '等待' : t.status === 'streaming' ? '…' : '';
   return (
     <div className={clsx('tool-head', open && 'open')} onClick={onToggle}>

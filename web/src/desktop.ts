@@ -12,6 +12,11 @@ export interface DesktopBridge {
   setLoginItem(on: boolean): Promise<void>;
   onCommand(cb: (id: string) => void): () => void;
   onFocusSession(cb: (sessionId: string) => void): () => void;
+  // multi-window (phase 2); optional so an older preload still type-checks
+  windowId?: string;
+  newWindow?(): Promise<string>;
+  focusWindow?(id: string): Promise<void>;
+  listWindows?(): Promise<string[]>;
 }
 
 export const desktop: DesktopBridge | undefined = (window as any).desktop;

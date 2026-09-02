@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
-import { useActive, useStore } from '@/store';
+import { useScopedSession, useStore } from '@/store';
 import { walkTools } from '@/model/conversation';
 import { toolSummary } from '@/util';
 
 export function TrajectoryView() {
-  const active = useActive();
+  const active = useScopedSession();
   const [q, setQ] = useState('');
   const rows = useMemo(() => {
     if (!active) return [];

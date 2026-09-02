@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useActive } from '@/store';
+import { useScopedSession } from '@/store';
 import { ws } from '@/ws/client';
 import { fmtTok, fmtUsd, shortModel, basename } from '@/util';
 
@@ -32,7 +32,7 @@ function Totals({ b }: { b: Bucket }) {
 }
 
 export function UsagePanel() {
-  const active = useActive();
+  const active = useScopedSession();
   const [tab, setTab] = useState<'session' | 'global'>('session');
   const [days, setDays] = useState(30);
   const [sess, setSess] = useState<{ total: Bucket; byModel: Record<string, Bucket> } | null>(null);

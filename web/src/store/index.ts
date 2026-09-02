@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import type { AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, Workspace } from '@shared';
-import { decodeAttachments, findChainUuidBefore, turnStart, type ContextUsage } from '@/model/conversation';
+import { decodeAttachments, findChainUuidBefore, type ContextUsage } from '@/model/conversation';
+import { activeGroup, chatTile, deriveActive, initialLayout, layoutReducer, migrateLegacy, sanitizeLayout, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
+import { PaneContext, winId } from './paneContext';
+import { useContext } from 'react';
 
 export const THEMES = ['dark', 'light', 'dracula', 'nord', 'tokyo-night', 'paper'] as const;
 export type Theme = (typeof THEMES)[number];
@@ -53,20 +56,26 @@ interface State {
   configTab: string | null; // tab the config panel should open on next mount (one-shot)
   viewer: { images: string[]; index: number } | null;
   openViewer(images: string[], index?: number): void;
+  // workbench layout (groups → panes → tiles); `activeId` and `panels` are projections of it
+  layout: LayoutState;
+  dispatchLayout(a: LayoutAction): void;
+  /** open a session (or a fresh empty tile when null) in the focused pane */
+  openInPane(sessionId: string | null, mode?: 'replace' | 'tab', paneId?: string): void;
+  openTile(tile: Tile, mode?: 'replace' | 'tab', paneId?: string): void;
   loadMeta(): Promise<void>;
   addWorkspace(path: string): Promise<void>;
   setSessionMeta(sessionId: string, patch: SessionMeta): Promise<void>;
   // actions
   init(): void;
   refreshSessions(): Promise<void>;
-  openSession(p: { sessionId?: string; cwd: string; model?: string; permissionMode?: PermissionMode; effort?: EffortLevel; fork?: boolean; resumeAt?: string; worktree?: string; providerId?: string; features?: SessionFeatures }): Promise<string>;
+  openSession(p: { sessionId?: string; cwd: string; model?: string; permissionMode?: PermissionMode; effort?: EffortLevel; fork?: boolean; resumeAt?: string; worktree?: string; providerId?: string; features?: SessionFeatures }, target?: { paneId: string; tileId: string } | 'none'): Promise<string>;
   engine: EngineInfo | null;
   providers: Provider[];
   settings: Record<string, unknown>;
   loadEngine(): Promise<void>;
   loadProviders(): Promise<void>;
   setSetting(key: string, value: unknown): Promise<void>;
-  loadHistory(sessionId: string): Promise<void>;
+  loadHistory(sessionId: string, opts?: { focus?: boolean; mode?: 'replace' | 'tab' }): Promise<void>;
   send(sessionId: string, text: string, images?: { mediaType: string; data: string }[], steer?: boolean, attachments?: AttachmentRef[]): Promise<void>;
   /** remove a queued message (returns it so the composer can restore the text) */
   recall(sessionId: string, id: string): QueuedMessage | undefined;
@@ -131,21 +140,57 @@ function bump(s: State, id: string, fn: (o: OpenSession) => void): Partial<State
   return { open: { ...s.open, [id]: { ...o, version: o.version + 1 } } };
 }
 
-const savedPanels = (() => {
+const LAYOUT_KEY = `cw.layout.v2:${winId}`;
+function loadLayout(): LayoutState {
   try {
-    return JSON.parse(localStorage.getItem('cw.panels') ?? '["tasks"]');
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    if (raw) {
+      const s = sanitizeLayout(JSON.parse(raw));
+      if (s) return s;
+    }
+  } catch { /* fall through */ }
+  try {
+    const s = migrateLegacy(localStorage);
+    localStorage.removeItem('cw.panels');
+    localStorage.removeItem('cw.rp');
+    return s;
   } catch {
-    return ['tasks'];
+    return initialLayout();
   }
-})();
+}
+let layoutSaveTimer: ReturnType<typeof setTimeout> | null = null;
+function persistLayout(s: LayoutState) {
+  if (layoutSaveTimer) clearTimeout(layoutSaveTimer);
+  layoutSaveTimer = setTimeout(() => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(s)); } catch { /* ignore */ } }, 300);
+}
+const initialLayoutState = loadLayout();
 
 export const useStore = create<State>((set, get) => ({
   connected: false,
   sessions: [],
   open: {},
-  activeId: null,
+  activeId: deriveActive(initialLayoutState),
   tab: 'chat',
-  panels: savedPanels,
+  panels: initialLayoutState.dock.tabs,
+  layout: initialLayoutState,
+  dispatchLayout(a) {
+    const prev = get().layout;
+    const next = layoutReducer(prev, a);
+    if (next === prev) return;
+    const activeId = deriveActive(next);
+    const patch: Partial<State> = { layout: next, panels: next.dock.tabs };
+    if (activeId !== get().activeId) { patch.activeId = activeId; patch.inspect = null; }
+    set(patch);
+    persistLayout(next);
+  },
+  openInPane(sessionId, mode = 'replace', paneId) {
+    get().openTile(chatTile(sessionId), mode, paneId);
+  },
+  openTile(tile, mode = 'replace', paneId) {
+    const g = activeGroup(get().layout);
+    const single = !!get().settings['ui.singleWindow'];
+    get().dispatchLayout({ t: 'tile.open', paneId: paneId ?? g.focusedPaneId, tile, mode: single ? 'replace' : mode });
+  },
   sidebarOpen: true,
   inspect: null,
   theme: (localStorage.getItem('cw.theme') as Theme) || 'dark',
@@ -260,7 +305,7 @@ export const useStore = create<State>((set, get) => ({
     set({ sessions });
   },
 
-  async openSession(p) {
+  async openSession(p, target) {
     const r = await ws.request<{ sessionId: string; info: SessionInfoSnapshot; history: any[]; pending: PermissionRequestEvent[] }>({ kind: 'session.open', params: p });
     const existing = p.sessionId && !p.fork && !p.resumeAt ? get().open[p.sessionId] : undefined;
     const conv = existing?.conv ?? createConversation();
@@ -276,8 +321,11 @@ export const useStore = create<State>((set, get) => ({
       const open = { ...s.open };
       if (p.sessionId && p.sessionId !== r.sessionId && !p.fork && !p.resumeAt) delete open[p.sessionId];
       open[r.sessionId] = o;
-      return { open, activeId: r.sessionId };
+      return { open };
     });
+    // place it in the workbench: a specific tile (welcome composer), the focused pane, or nowhere (background)
+    if (target && target !== 'none') get().dispatchLayout({ t: 'session.assign', paneId: target.paneId, tileId: target.tileId, sessionId: r.sessionId });
+    else if (target !== 'none') get().openInPane(r.sessionId, p.fork || p.resumeAt ? 'tab' : 'replace');
     if (!p.sessionId) void get().refreshSessions();
     // load transcript in the background for resumed / forked sessions with empty conv
     if (p.sessionId && !existing) void get().loadHistory(r.sessionId);
@@ -385,11 +433,12 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
-  async loadHistory(sessionId) {
+  async loadHistory(sessionId, opts) {
     const cur = get().open[sessionId];
     const meta = get().sessions.find((s) => s.sessionId === sessionId);
-    if (!cur) set((s) => ({ open: { ...s.open, [sessionId]: { sessionId, cwd: meta?.cwd ?? '', conv: createConversation(), version: 0, state: 'history', pending: [], loading: true, queue: [], draft: '', feedback: {} } }, activeId: sessionId }));
+    if (!cur) set((s) => ({ open: { ...s.open, [sessionId]: { sessionId, cwd: meta?.cwd ?? '', conv: createConversation(), version: 0, state: 'history', pending: [], loading: true, queue: [], draft: '', feedback: {} } } }));
     else set((s) => bump(s, sessionId, (o) => { o.loading = true; }));
+    if (opts?.focus !== false) get().openInPane(sessionId, opts?.mode ?? 'replace');
     void get().loadFeedback(sessionId);
     if (!cur) void get().loadDraft(sessionId).then((d) => d && set((s) => bump(s, sessionId, (o) => { if (!o.draft) o.draft = d; })));
     try {
@@ -402,7 +451,7 @@ export const useStore = create<State>((set, get) => ({
         o.loading = false;
       }));
       // a runner may already be alive for this session (e.g. page reload): re-attach so controls go live
-      if (meta?.live && meta.live !== 'closed' && meta.live !== 'error') await get().openSession({ sessionId, cwd: meta.cwd });
+      if (meta?.live && meta.live !== 'closed' && meta.live !== 'error') await get().openSession({ sessionId, cwd: meta.cwd }, 'none');
     } catch (e: any) {
       set((s) => bump(s, sessionId, (o) => { o.loading = false; o.error = e.message; }));
     }
@@ -412,7 +461,7 @@ export const useStore = create<State>((set, get) => ({
     const o = get().open[sessionId];
     if (!o) return;
     if (o.state === 'history' || o.state === 'closed' || o.state === 'error') {
-      await get().openSession({ sessionId, cwd: o.cwd });
+      await get().openSession({ sessionId, cwd: o.cwd }, 'none');
     }
     const cur = get().open[sessionId];
     if ((cur.state === 'running' || cur.state === 'waiting') && !steer) {
@@ -465,14 +514,10 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setActive(id) {
-    set({ activeId: id, inspect: null });
+    get().openInPane(id, 'replace');
   },
   togglePanel(p) {
-    set((s) => {
-      const panels = s.panels.includes(p) ? s.panels.filter((x) => x !== p) : [...s.panels, p];
-      localStorage.setItem('cw.panels', JSON.stringify(panels));
-      return { panels };
-    });
+    get().dispatchLayout({ t: 'dock.toggle', panel: p });
   },
   setTab(tab) {
     set({ tab });
@@ -482,7 +527,8 @@ export const useStore = create<State>((set, get) => ({
   },
   async closeSession(sessionId) {
     await ws.request({ kind: 'session.close', sessionId }).catch(() => {});
-    set((s) => { const open = { ...s.open }; delete open[sessionId]; return { open, activeId: s.activeId === sessionId ? null : s.activeId }; });
+    // keep the tile: it re-loads the transcript as history
+    set((s) => bump(s, sessionId, (o) => { o.state = 'history'; o.pending = []; o.queue = []; }));
   },
   setTheme(theme) {
     localStorage.setItem('cw.theme', theme);
@@ -502,3 +548,16 @@ export const useStore = create<State>((set, get) => ({
 }));
 
 export const useActive = () => useStore((s) => (s.activeId ? s.open[s.activeId] : undefined));
+/** Session of the enclosing workbench pane (falls back to the focused pane's session outside a pane). */
+export const useScopedSession = () => {
+  const ctx = useContext(PaneContext);
+  return useStore((s) => {
+    const id = ctx ? ctx.sessionId : s.activeId;
+    return id ? s.open[id] : undefined;
+  });
+};
+export const useScopedSessionId = () => {
+  const ctx = useContext(PaneContext);
+  const activeId = useStore((s) => s.activeId);
+  return ctx ? ctx.sessionId : activeId;
+};

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useActive, useStore } from '@/store';
+import { useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { clsx } from '@/util';
 import type { Provider, ProviderType } from '@shared';
@@ -118,7 +118,7 @@ function Plugins() {
 }
 
 function Mcp() {
-  const active = useActive();
+  const active = useScopedSession();
   const { data, err, reload } = useReq<{ servers: any[]; userServers: any; projectServers: any; stderr?: string }>({ kind: 'config.mcp' });
   const [name, setName] = useState('');
   const [json, setJson] = useState('{"type":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","."]}');
@@ -174,8 +174,30 @@ function SimpleList({ kind, render }: { kind: 'config.skills' | 'config.agents' 
   return <div className="list">{data.map((x, i) => <div key={i} className="row">{render(x)}</div>)}{!data.length && <div className="empty">空</div>}</div>;
 }
 
+/** UI preferences stored in meta.json (survive the desktop's per-launch origin). */
+function UiSettings() {
+  const settings = useStore((s) => s.settings);
+  const setSetting = useStore((s) => s.setSetting);
+  const rows: { key: string; l: string; hint: string }[] = [
+    { key: 'ui.singleWindow', l: '单窗格模式', hint: '隐藏分组与分屏，所有会话在同一个窗格里切换（像 Mirasim 的「单窗口」）' },
+    { key: 'ui.showThinking', l: '显示思考过程', hint: '在对话里展开模型的 thinking 块' },
+    { key: 'autoContinueOnReset', l: '额度恢复后自动继续', hint: '被限流时到重置时间自动重发上一条' },
+  ];
+  return (
+    <div className="section">
+      <h5>界面</h5>
+      {rows.map((r) => (
+        <div key={r.key} className="row">
+          <button className={clsx('toggle', !!settings[r.key] && 'on')} onClick={() => void setSetting(r.key, !settings[r.key])} />
+          <div className="grow"><div>{r.l}</div><div className="sub">{r.hint}</div></div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Settings() {
-  const active = useActive();
+  const active = useScopedSession();
   const [scope, setScope] = useState<'user' | 'project' | 'local'>('user');
   const { data, err, reload } = useReq<{ path: string; text: string }>({ kind: 'config.settings.read', scope, cwd: active?.cwd }, [scope, active?.cwd]);
   const [text, setText] = useState('');
@@ -397,7 +419,7 @@ export function ConfigPanel() {
       {tab === 'skills' && <SimpleList kind="config.skills" render={(s) => <div className="grow"><div>/{s.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{s.source}</span></div><div className="sub">{s.description}</div></div>} />}
       {tab === 'agents' && <SimpleList kind="config.agents" render={(a) => <div className="grow"><div>{a.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{a.source}{a.model ? ` · ${a.model}` : ''}</span></div><div className="sub">{a.description}</div></div>} />}
       {tab === 'hooks' && <SimpleList kind="config.hooks" render={(h) => <div className="grow"><div>{h.event} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{h.matcher ? `matcher: ${h.matcher}` : ''} · {h.source}</span></div><div className="sub">{(h.hooks ?? []).map((x: any) => x.command ?? x.type).join(' ; ')}</div></div>} />}
-      {tab === 'settings' && <Settings />}
+      {tab === 'settings' && <><UiSettings /><Settings /></>}
     </div>
   );
 }

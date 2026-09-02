@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { AssistantItem, Block, Item, ToolUseBlock, UserItem } from '@/model/conversation';
 import { ERROR_HINT, ERROR_LABEL } from '@/model/health';
 import { fmtSize } from '@/model/attachments';
-import { useActive, useStore } from '@/store';
+import { useScopedSession, useScopedSessionId, useStore } from '@/store';
 import { clsx, fmtMs, fmtTok, fmtUsd } from '@/util';
 import { AssistantActions, UserActions, UserEditor } from './MessageActions';
 import { FindBar } from './FindBar';
@@ -133,10 +133,11 @@ function coalesce(items: Item[]): Item[] {
 }
 
 function AttachmentChips({ atts }: { atts: NonNullable<UserItem['attachments']> }) {
+  const sid = useScopedSessionId();
   return (
     <div className="att-chips">
       {atts.map((a, i) => (
-        <span key={i} className="att-chip" title={a.path ?? a.name} onClick={() => { if (a.path && a.kind !== 'folder') { const st = useStore.getState(); if (st.activeId) useStore.setState({ inspect: { sessionId: st.activeId, file: { path: a.path } } }); } }}>
+        <span key={i} className="att-chip" title={a.path ?? a.name} onClick={() => { if (a.path && a.kind !== 'folder' && sid) useStore.setState({ inspect: { sessionId: sid, file: { path: a.path } } }); }}>
           <span className="ic">{a.kind === 'image' ? '🖼' : a.kind === 'folder' ? '📁' : a.kind === 'text' ? '📋' : '📎'}</span>
           {a.name}{a.size ? <span className="sz"> {fmtSize(a.size)}</span> : null}
         </span>
@@ -146,7 +147,7 @@ function AttachmentChips({ atts }: { atts: NonNullable<UserItem['attachments']> 
 }
 
 function UserRow({ it, version }: { it: UserItem; version: number }) {
-  const sessionId = useStore((s) => s.activeId);
+  const sessionId = useScopedSessionId();
   const [editing, setEditing] = useState(false);
   const open = useStore((s) => (sessionId ? s.open[sessionId] : undefined));
   const images = it.images.filter(Boolean);
@@ -169,7 +170,7 @@ function UserRow({ it, version }: { it: UserItem; version: number }) {
 
 export function ItemList({ items, version, live = false }: { items: Item[]; version: number; live?: boolean }) {
   const merged = useMemo(() => coalesce(items), [items, version]);
-  const sessionId = useStore((s) => s.activeId);
+  const sessionId = useScopedSessionId();
   return (
     <>
       {merged.map((it) => {
@@ -207,7 +208,7 @@ export function ItemList({ items, version, live = false }: { items: Item[]; vers
 }
 
 export function ChatView() {
-  const active = useActive();
+  const active = useScopedSession();
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const version = active?.version ?? 0;

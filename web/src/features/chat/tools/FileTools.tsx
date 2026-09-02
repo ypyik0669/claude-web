@@ -1,5 +1,6 @@
 import type { ToolUseBlock } from '@/model/conversation';
 import { useStore } from '@/store';
+import { usePaneCtx } from '@/store/paneContext';
 import { CodeBlock } from '../CodeBlock';
 import { DiffView, type Hunk } from '../DiffView';
 import { Expandable } from '../Expandable';
@@ -105,9 +106,10 @@ export function NotebookBody({ t }: { t: ToolUseBlock }) {
 
 /** Small helper used by search cards: open a path in the inspector. */
 export function FileLink({ path, line, children }: { path: string; line?: number; children?: React.ReactNode }) {
+  const ctx = usePaneCtx();
   const open = () => {
     const st = useStore.getState();
-    const sid = st.activeId;
+    const sid = ctx?.sessionId ?? st.activeId;
     if (sid) useStore.setState({ inspect: { sessionId: sid, file: { path, line } } });
   };
   return <button className="file-link" onClick={open} title={path}>{children ?? path}</button>;
