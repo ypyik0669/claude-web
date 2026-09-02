@@ -69,26 +69,23 @@ function greeting() {
   return h < 5 ? '夜深了' : h < 11 ? '早上好' : h < 14 ? '中午好' : h < 18 ? '下午好' : '晚上好';
 }
 
-/** Startup check strip: which engines were detected and whether Claude Code is logged in. */
+/** Startup check strip: the runtime that was detected, login state, and how many provider profiles exist. */
 function EngineStatus() {
-  const engines = useStore((s) => s.engines);
+  const engine = useStore((s) => s.engine);
+  const providers = useStore((s) => s.providers);
   const togglePanel = useStore((s) => s.togglePanel);
   const [auth, setAuth] = useState<any>(null);
   useEffect(() => { ws.request<any>({ kind: 'config.auth' }).then(setAuth).catch(() => setAuth({ loggedIn: false, error: true })); }, []);
-  const claude = engines.find((e) => e.id === 'claude');
-  const ccb = engines.find((e) => e.id === 'ccb');
-  if (!engines.length) return null;
-  const ok = claude?.installed && auth?.loggedIn;
+  if (!engine) return null;
+  const needs = auth !== null && !auth.loggedIn && providers.length === 0;
   return (
-    <div className="engine-status" onClick={() => togglePanel('config')} title="打开配置中心 → 引擎">
-      <span className={clsx('dot', claude?.installed ? 'idle' : 'error')} />
-      <span>Claude Code {claude?.installed ? `v${claude.version ?? ''}` : '未检测到'}</span>
+    <div className="engine-status" onClick={() => togglePanel('config')} title="打开配置中心">
+      <span className="dot idle" />
+      <span>Claude Web 引擎 v{engine.version ?? '?'}{engine.runtime === 'claude' ? '（官方 Claude Code）' : ''}</span>
       <span className="sep">·</span>
-      <span className={clsx('dot', ccb?.installed ? 'idle' : '')} />
-      <span>ccb {ccb?.installed ? `v${ccb.version ?? ''}` : '未安装'}</span>
-      <span className="sep">·</span>
-      {auth === null ? <span>检查登录…</span> : auth.loggedIn ? <span>已登录 {auth.email ?? auth.authMethod ?? ''}</span> : <span style={{ color: 'var(--yellow)' }}>未登录 — 打开终端面板运行 /login</span>}
-      {!ok && auth !== null && <span className="badge err" style={{ marginLeft: 6 }}>需要处理</span>}
+      {auth === null ? <span>检查登录…</span> : auth.loggedIn ? <span>已登录 {auth.email ?? auth.authMethod ?? ''}</span> : <span style={{ color: providers.length ? undefined : 'var(--yellow)' }}>未登录 claude.ai</span>}
+      {providers.length > 0 && <><span className="sep">·</span><span>{providers.length} 个供应商</span></>}
+      {needs && <span className="badge err" style={{ marginLeft: 6 }}>去终端 /login 或添加供应商</span>}
     </div>
   );
 }

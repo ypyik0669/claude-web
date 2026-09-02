@@ -3,7 +3,7 @@ import { useActive, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { clsx, fmtTok, fmtUsd, fmtMs, shortModel, basename } from '@/util';
-import type { EffortLevel, EngineId, PermissionMode, SessionFeatures } from '@shared';
+import type { EffortLevel, PermissionMode, SessionFeatures } from '@shared';
 
 interface Img { mediaType: string; data: string; url: string }
 
@@ -38,9 +38,12 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
   const [wMode, setWMode] = useState<PermissionMode>((localStorage.getItem('cw.lastMode') as PermissionMode) || 'default');
   const [wEffort, setWEffort] = useState<EffortLevel | ''>('');
   const [starting, setStarting] = useState(false);
-  const engines = useStore((s) => s.engines);
+  const providers = useStore((s) => s.providers);
   const settings = useStore((s) => s.settings);
-  const [wEngine, setWEngine] = useState<EngineId>((localStorage.getItem('cw.lastEngine') as EngineId) || (settings.defaultEngine as EngineId) || 'claude');
+  const togglePanel = useStore((s) => s.togglePanel);
+  const [wProvider, setWProvider] = useState<string>(localStorage.getItem('cw.lastProvider') || (settings.defaultProviderId as string) || 'claude');
+  const provider = wProvider === 'claude' ? undefined : providers.find((p) => p.id === wProvider);
+  const modelOptions = provider?.models?.length ? [{ value: '', label: provider.defaultModel ? `默认（${provider.defaultModel}）` : '默认模型' }, ...provider.models.map((m) => ({ value: m, label: m }))] : MODEL_ALIASES;
   const [wFeatures, setWFeatures] = useState<SessionFeatures>(() => { try { return JSON.parse(localStorage.getItem('cw.lastFeatures') ?? '{}'); } catch { return {}; } });
   const [featOpen, setFeatOpen] = useState(false);
   const [listening, setListening] = useState(false);
@@ -105,9 +108,10 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
         localStorage.setItem('cw.lastCwd', cwd);
         localStorage.setItem('cw.lastModel', wModel);
         localStorage.setItem('cw.lastMode', wMode);
-        localStorage.setItem('cw.lastEngine', wEngine);
+        localStorage.setItem('cw.lastProvider', wProvider);
         localStorage.setItem('cw.lastFeatures', JSON.stringify(wFeatures));
-        const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffort || undefined, engine: wEngine, features: wFeatures });
+        if (wProvider !== 'claude' && !provider) throw new Error('选中的供应商档案已不存在');
+        const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffort || undefined, providerId: provider ? provider.id : 'claude', features: wFeatures });
         await send(id, t, im);
       } catch (e: any) {
         toast(e.message);
@@ -243,10 +247,11 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
             )}
             {welcome ? (
               <>
-                <label className="chip" title="引擎：官方 Claude Code 或 Claude Code Best（ccb）"><span>{engines.find((e) => e.id === wEngine)?.label.replace(/（.*/, '') ?? wEngine}</span><span className="caret">▾</span>
-                  <select value={wEngine} onChange={(e) => setWEngine(e.target.value as EngineId)}>
-                    {engines.map((e) => <option key={e.id} value={e.id} disabled={!e.installed}>{e.label}{e.installed ? '' : '（未安装）'}</option>)}
-                    {!engines.length && <option value="claude">Claude Code</option>}
+                <label className={clsx('chip', provider && 'info')} title="账号 / 供应商：claude.ai 登录，或配置中心里添加的第三方端点"><span>{provider ? provider.name : 'Claude 账号'}</span><span className="caret">▾</span>
+                  <select value={provider ? provider.id : 'claude'} onChange={(e) => { const v = e.target.value; if (v === '__add') { useStore.setState({ configTab: 'providers' }); if (!useStore.getState().panels.includes('config')) togglePanel('config'); return; } setWProvider(v); setWModel(''); }}>
+                    <option value="claude">Claude 账号（claude.ai 登录）</option>
+                    {providers.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.type}</option>)}
+                    <option value="__add">＋ 添加供应商…</option>
                   </select>
                 </label>
                 <span style={{ position: 'relative' }}>
@@ -254,26 +259,26 @@ export function Composer({ welcome = false }: { welcome?: boolean }) {
                   {featOpen && (
                     <div className="menu" style={{ bottom: '100%', right: 0, marginBottom: 6, minWidth: 260, padding: 8 }} onMouseLeave={() => setFeatOpen(false)}>
                       {([
-                        ['chrome', 'Claude in Chrome（浏览器自动化）', ''],
-                        ['computerUse', 'Computer Use（截图 / 键鼠）', 'ccb'],
-                        ['coordinator', '协调者模式（只派活给子代理）', 'ccb'],
-                        ['proactive', '主动模式（空闲时继续干活）', 'ccb'],
-                        ['brief', 'Brief（SendUserMessage 工具）', ''],
-                      ] as [keyof SessionFeatures, string, string][]).map(([k, l, tag]) => (
+                        ['chrome', 'Claude in Chrome（浏览器自动化）'],
+                        ['computerUse', 'Computer Use（截图 / 键鼠）'],
+                        ['coordinator', '协调者模式（只派活给子代理）'],
+                        ['proactive', '主动模式（空闲时继续干活）'],
+                        ['brief', 'Brief（SendUserMessage 工具）'],
+                      ] as [keyof SessionFeatures, string][]).map(([k, l]) => (
                         <label key={k} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 4px', fontSize: 12.5, cursor: 'pointer' }}>
                           <input type="checkbox" checked={!!wFeatures[k]} onChange={(e) => setWFeatures({ ...wFeatures, [k]: e.target.checked })} />
-                          <span style={{ flex: 1 }}>{l}</span>{tag && <span className="badge">{tag}</span>}
+                          <span style={{ flex: 1 }}>{l}</span>
                         </label>
                       ))}
                       <div style={{ padding: '4px 4px', fontSize: 12 }}>
-                        频道 <span className="badge">ccb</span>
+                        频道
                         <input className="field" style={{ width: '100%', marginTop: 4 }} placeholder="plugin:name@marketplace, server:name" value={(wFeatures.channels ?? []).join(', ')} onChange={(e) => setWFeatures({ ...wFeatures, channels: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) })} />
                       </div>
                     </div>
                   )}
                 </span>
-                <label className="chip"><span>{MODEL_ALIASES.find((m) => m.value === wModel)?.label ?? wModel}</span><span className="caret">▾</span>
-                  <select value={wModel} onChange={(e) => setWModel(e.target.value)}>{MODEL_ALIASES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}</select>
+                <label className="chip"><span>{modelOptions.find((m) => m.value === wModel)?.label ?? wModel}</span><span className="caret">▾</span>
+                  <select value={wModel} onChange={(e) => setWModel(e.target.value)}>{modelOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}{wModel && !modelOptions.some((m) => m.value === wModel) && <option value={wModel}>{wModel}</option>}</select>
                 </label>
                 <label className="chip"><span>{wEffort || 'effort'}</span><span className="caret">▾</span>
                   <select value={wEffort} onChange={(e) => setWEffort(e.target.value as EffortLevel)}><option value="">默认</option>{['low', 'medium', 'high', 'xhigh', 'max'].map((l) => <option key={l} value={l}>{l}</option>)}</select>

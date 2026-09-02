@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { SessionRunner } from './session-runner.js';
 import type { OpenSessionParams, RunnerState } from '../protocol.js';
+import type { ProviderService } from '../providers/service.js';
 
 const IDLE_TTL_MS = 30 * 60 * 1000;
 
@@ -8,7 +9,7 @@ const IDLE_TTL_MS = 30 * 60 * 1000;
 export class RunnerPool extends EventEmitter {
   private runners = new Map<string, SessionRunner>();
 
-  constructor() {
+  constructor(private providers: ProviderService) {
     super();
     setInterval(() => this.reap(), 60_000).unref();
   }
@@ -29,7 +30,7 @@ export class RunnerPool extends EventEmitter {
       if (existing && existing.state !== 'closed' && existing.state !== 'error') return existing;
       if (existing) this.runners.delete(params.sessionId);
     }
-    const r = new SessionRunner(params);
+    const r = new SessionRunner(params, this.providers.forSession(params.providerId));
     this.runners.set(r.id, r);
     r.on('message', (m) => this.emit('message', r.sessionId, m));
     r.on('state', (s, err) => {

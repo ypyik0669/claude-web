@@ -2,18 +2,19 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { EventEmitter } from 'node:events';
+import type { Provider } from '../protocol.js';
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
-export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[] }
+export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string }
 export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string }
 
-interface Data { version: 1; workspaces: Workspace[]; sessions: Record<string, SessionMeta>; schedules: Schedule[]; settings: Record<string, unknown> }
+interface Data { version: 1; workspaces: Workspace[]; sessions: Record<string, SessionMeta>; schedules: Schedule[]; settings: Record<string, unknown>; providers: Provider[] }
 
 const file = path.join(process.env.CLAUDE_WEB_DIR ?? path.join(os.homedir(), '.claude-web'), 'meta.json');
 
 /** Small JSON store for things Claude Code itself does not persist: workspaces, pin/archive flags, schedules, UI settings. */
 export class MetaStore extends EventEmitter {
-  data: Data = { version: 1, workspaces: [], sessions: {}, schedules: [], settings: {} };
+  data: Data = { version: 1, workspaces: [], sessions: {}, schedules: [], settings: {}, providers: [] };
   private saving: Promise<void> | null = null;
 
   async load() {
@@ -26,7 +27,7 @@ export class MetaStore extends EventEmitter {
 
   private async save() {
     await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, JSON.stringify(this.data, null, 2), 'utf8');
+    await fs.writeFile(file, JSON.stringify(this.data, null, 2), { encoding: 'utf8', mode: 0o600 }); // holds provider API keys
     this.emit('changed');
   }
   private queueSave() {
@@ -91,6 +92,34 @@ export class MetaStore extends EventEmitter {
   async touchSchedule(id: string, patch: Partial<Schedule>) {
     const s = this.data.schedules.find((x) => x.id === id);
     if (s) { Object.assign(s, patch); await this.queueSave(); }
+  }
+
+  providers(): Provider[] {
+    return this.data.providers ?? (this.data.providers = []);
+  }
+  provider(id: string) {
+    return this.providers().find((p) => p.id === id);
+  }
+  /** Insert or update. An empty / masked apiKey keeps the stored one. */
+  async upsertProvider(p: Partial<Provider> & { id?: string }): Promise<Provider> {
+    const list = this.providers();
+    let cur = p.id ? list.find((x) => x.id === p.id) : undefined;
+    if (!cur) {
+      cur = { id: Math.random().toString(36).slice(2, 10), name: p.name ?? 'provider', type: p.type ?? 'anthropic', baseUrl: p.baseUrl ?? '', apiKey: '', createdAt: Date.now() };
+      list.push(cur);
+    }
+    const { apiKey, id: _id, createdAt: _c, ...rest } = p;
+    Object.assign(cur, rest);
+    for (const k of ['runtime', 'defaultModel', 'modelMap', 'models'] as const) if ((cur as any)[k] == null) delete (cur as any)[k]; // null clears (JSON drops undefined)
+    if (apiKey && !/^\S{0,4}…\S{0,4}$/.test(apiKey) && !apiKey.includes('…')) cur.apiKey = apiKey.trim();
+    cur.baseUrl = (cur.baseUrl ?? '').trim().replace(/\/+$/, '');
+    await this.queueSave();
+    return cur;
+  }
+  async removeProvider(id: string) {
+    this.data.providers = this.providers().filter((x) => x.id !== id);
+    if (this.data.settings.defaultProviderId === id) delete this.data.settings.defaultProviderId;
+    await this.queueSave();
   }
 
   settings() {

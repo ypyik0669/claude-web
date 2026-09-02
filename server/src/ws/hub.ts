@@ -10,7 +10,8 @@ import { MetaStore } from '../meta/store.js';
 import { LimitsService } from '../usage/limits.js';
 import { ScheduleService } from '../schedules/service.js';
 import { execFile } from 'node:child_process';
-import { installCcb, listEngines, runClaudeCli } from '../claude-exe.js';
+import { engineInfo, installCcb, runClaudeCli } from '../claude-exe.js';
+import type { ProviderService } from '../providers/service.js';
 
 export interface Services {
   pool: RunnerPool;
@@ -22,6 +23,7 @@ export interface Services {
   meta: MetaStore;
   limits: LimitsService;
   schedules: ScheduleService;
+  providers: ProviderService;
   version: string;
 }
 
@@ -102,7 +104,12 @@ export class Hub {
 
       case 'session.open': {
         let params = req.params;
-        if (!params.engine) params = { ...params, engine: (s.meta.settings().defaultEngine as any) ?? 'claude' };
+        // provider: explicit → the one the session was created with → user default (new sessions only)
+        if (params.providerId === undefined) {
+          const remembered = params.sessionId ? s.meta.sessionMeta(params.sessionId).providerId : undefined;
+          const def = params.sessionId ? undefined : (s.meta.settings().defaultProviderId as string | undefined);
+          params = { ...params, providerId: remembered ?? def };
+        }
         if (!params.features && s.meta.settings().defaultFeatures) params = { ...params, features: s.meta.settings().defaultFeatures as any };
         // forks: copy the transcript first (SDK forkSession) so the new session has a real id before the process starts
         if (params.sessionId && (params.fork || params.resumeAt)) {
@@ -110,6 +117,10 @@ export class Hub {
           params = { ...params, sessionId: newId, fork: false, resumeAt: undefined };
         }
         const r = s.pool.open(params);
+        if (params.providerId && params.providerId !== 'claude') {
+          // remember which provider a session uses so resume / fork keep it (the id is known up front: new sessions get a uuid from us)
+          if (s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId });
+        }
         return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
       }
       case 'session.info': {
@@ -153,13 +164,21 @@ export class Hub {
       }
       case 'limits.get':
         return s.limits.get(req.force);
-      case 'engines.list':
-        return listEngines();
-      case 'engines.install':
-        if (req.id !== 'ccb') throw new Error('只支持安装 ccb（官方 Claude Code 已随应用内置）');
+      case 'engine.info':
+        return engineInfo();
+      case 'engine.update':
         return installCcb();
       case 'engine.cli':
-        return runClaudeCli(req.args, { engine: req.engine, cwd: req.cwd, timeoutMs: 120_000 });
+        return runClaudeCli(req.args, { cwd: req.cwd, timeoutMs: 120_000 });
+      case 'providers.list':
+        return s.providers.list();
+      case 'providers.upsert':
+        return s.providers.upsert(req.provider);
+      case 'providers.remove':
+        await s.providers.remove(req.id);
+        return null;
+      case 'providers.probe':
+        return s.providers.probe(req.id, req.provider);
       case 'settings.get':
         return s.meta.settings();
       case 'settings.set':

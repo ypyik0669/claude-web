@@ -7,16 +7,8 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
 
-export type EngineId = 'claude' | 'ccb';
-export interface EngineInfo {
-  id: EngineId;
-  label: string;
-  installed: boolean;
-  path?: string; // executable (.exe) or entry script (.js)
-  version?: string;
-  source?: 'bundled' | 'global' | 'env';
-  note?: string;
-}
+import type { EngineInfo, RuntimeKind } from './protocol.js';
+export type { EngineInfo, RuntimeKind };
 
 const isWin = process.platform === 'win32';
 const unpack = (p: string) => p.replace(/app\.asar(?!\.unpacked)/, 'app.asar.unpacked');
@@ -76,26 +68,37 @@ function versionOf(file: string): string | undefined {
   }
 }
 
-export function listEngines(): EngineInfo[] {
-  const out: EngineInfo[] = [];
-  try {
-    const p = resolveClaudeExe();
-    out.push({ id: 'claude', label: 'Claude Code（官方）', installed: true, path: p, version: versionOf(p), source: p.includes('claude-agent-sdk') ? 'bundled' : 'global' });
-  } catch (e: any) {
-    out.push({ id: 'claude', label: 'Claude Code（官方）', installed: false, note: e.message });
-  }
-  const c = resolveCcbEntry();
-  out.push(c ? { id: 'ccb', label: 'Claude Code Best（ccb）', installed: true, path: c, version: versionOf(c), source: c.includes('app.asar') || c.includes(path.join('claude-web', 'node_modules')) ? 'bundled' : 'global' } : { id: 'ccb', label: 'Claude Code Best（ccb）', installed: false, note: '未安装：npm i -g claude-code-best' });
-  return out;
+function sourceOf(file: string): EngineInfo['source'] {
+  if (file === process.env.CLAUDE_WEB_EXE || file === process.env.CLAUDE_WEB_CCB) return 'env';
+  return file.includes('app.asar') || file.includes('claude-agent-sdk') || file.includes(path.join('claude-web', 'node_modules')) ? 'bundled' : 'global';
 }
 
-export function resolveEngine(id: EngineId = 'claude'): string {
-  if (id === 'ccb') {
-    const c = resolveCcbEntry();
-    if (!c) throw new Error('ccb 未安装（npm i -g claude-code-best）');
-    return c;
+let cached: { file: string; kind: RuntimeKind } | null = null;
+/**
+ * The one runtime every session uses. ccb (claude-code-best) is a superset of Claude Code with the same
+ * protocol and the same ~/.claude, so it is preferred; the official binary is the silent fallback.
+ * `CLAUDE_WEB_RUNTIME=claude` or `prefer: 'claude'` picks the official binary explicitly.
+ */
+export function resolveEngine(prefer?: RuntimeKind): { file: string; kind: RuntimeKind } {
+  const want = prefer ?? (process.env.CLAUDE_WEB_RUNTIME === 'claude' ? 'claude' : 'ccb');
+  if (want === 'claude') return { file: resolveClaudeExe(), kind: 'claude' };
+  if (cached) return cached;
+  const c = resolveCcbEntry();
+  cached = c ? { file: c, kind: 'ccb' } : { file: resolveClaudeExe(), kind: 'claude' };
+  return cached;
+}
+
+export function engineInfo(): EngineInfo {
+  cached = null;
+  const main = resolveEngine();
+  const info: EngineInfo = { runtime: main.kind, version: versionOf(main.file), path: main.file, source: sourceOf(main.file) };
+  try {
+    const other = main.kind === 'ccb' ? resolveClaudeExe() : resolveCcbEntry();
+    if (other) info.fallback = { runtime: main.kind === 'ccb' ? 'claude' : 'ccb', version: versionOf(other), path: other };
+  } catch {
+    /* no fallback */
   }
-  return resolveClaudeExe();
+  return info;
 }
 
 /** Node binary to run JS engines with. Inside Electron there is no `node` on PATH — use the shell itself in Node mode. */
@@ -113,6 +116,12 @@ function nodeCommand(): { command: string; env: Record<string, string> } {
 export function spawnClaude(o: { command: string; args: string[]; cwd?: string; env: Record<string, string | undefined>; signal?: AbortSignal }) {
   let command = o.command;
   let env = { ...o.env } as NodeJS.ProcessEnv;
+  if (env.CLAUDE_WEB_PLAIN_UA) {
+    // third-party provider session: drop the SDK markers so the CLI's User-Agent is the plain `claude-cli/x (external, sdk-cli)`
+    delete env.CLAUDE_WEB_PLAIN_UA;
+    delete env.CLAUDE_AGENT_SDK_VERSION;
+    delete env.CLAUDE_AGENT_SDK_CLIENT_APP;
+  }
   if (command === 'node') {
     const n = nodeCommand();
     command = n.command;
@@ -121,9 +130,9 @@ export function spawnClaude(o: { command: string; args: string[]; cwd?: string; 
   return spawn(command, o.args, { cwd: o.cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, signal: o.signal });
 }
 
-/** Run a `claude <subcommand>` (official engine) and return stdout/stderr. Used by the config center. */
-export async function runClaudeCli(args: string[], opts: { cwd?: string; timeoutMs?: number; engine?: EngineId } = {}): Promise<{ code: number; stdout: string; stderr: string }> {
-  const file = resolveEngine(opts.engine ?? 'claude');
+/** Run a `claude <subcommand>` with the runtime and return stdout/stderr. Used by the config center. */
+export async function runClaudeCli(args: string[], opts: { cwd?: string; timeoutMs?: number; runtime?: RuntimeKind; env?: Record<string, string> } = {}): Promise<{ code: number; stdout: string; stderr: string }> {
+  const { file } = resolveEngine(opts.runtime);
   const isJs = file.endsWith('.js');
   const n = isJs ? nodeCommand() : null;
   try {
@@ -132,7 +141,7 @@ export async function runClaudeCli(args: string[], opts: { cwd?: string; timeout
       timeout: opts.timeoutMs ?? 60_000,
       maxBuffer: 16 * 1024 * 1024,
       windowsHide: true,
-      env: { ...process.env, ...(n?.env ?? {}), CLAUDE_CODE_ENTRYPOINT: 'claude-web' },
+      env: { ...process.env, ...(n?.env ?? {}), ...(opts.env ?? {}) },
     });
     return { code: 0, stdout, stderr };
   } catch (e: any) {
@@ -144,6 +153,7 @@ export async function runClaudeCli(args: string[], opts: { cwd?: string; timeout
 export async function installCcb(): Promise<{ code: number; stdout: string; stderr: string }> {
   try {
     const { stdout, stderr } = await execFileAsync(isWin ? 'npm.cmd' : 'npm', ['i', '-g', 'claude-code-best@latest'], { timeout: 10 * 60_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024, shell: isWin });
+    cached = null;
     return { code: 0, stdout, stderr };
   } catch (e: any) {
     return { code: typeof e.code === 'number' ? e.code : 1, stdout: e.stdout ?? '', stderr: e.stderr ?? String(e.message ?? e) };

@@ -28,12 +28,35 @@ export interface OpenSessionParams {
   resumeAt?: string; // fork from this message uuid (implies fork)
   worktree?: string; // create a git worktree with this name for the session
   workspaceId?: string;
-  engine?: EngineId; // which CLI drives the session (default: user setting, else 'claude')
-  features?: SessionFeatures; // extra CLI flags / env, mostly ccb-only
+  providerId?: string; // API provider profile; omit / 'claude' = the claude.ai login
+  features?: SessionFeatures; // extra CLI flags / env
 }
 
-export type EngineId = 'claude' | 'ccb';
-export interface EngineInfo { id: EngineId; label: string; installed: boolean; path?: string; version?: string; source?: 'bundled' | 'global' | 'env'; note?: string }
+/** The single runtime that drives every session: ccb (claude-code-best, a superset of Claude Code) with the official binary as silent fallback. */
+export type RuntimeKind = 'ccb' | 'claude';
+export interface EngineInfo {
+  runtime: RuntimeKind;
+  version?: string;
+  path: string;
+  source: 'bundled' | 'global' | 'env';
+  fallback?: { runtime: RuntimeKind; version?: string; path: string }; // the other binary, if present
+}
+
+export type ProviderType = 'anthropic' | 'openai' | 'gemini' | 'grok';
+/** A third-party API endpoint profile. Stored in ~/.claude-web/meta.json; the key is injected into the session process env only. */
+export interface Provider {
+  id: string;
+  name: string;
+  type: ProviderType;
+  baseUrl: string;
+  apiKey: string; // masked (sk-…1234) when sent to the client
+  models?: string[]; // last probe result
+  defaultModel?: string;
+  modelMap?: { haiku?: string; sonnet?: string; opus?: string };
+  runtime?: RuntimeKind; // force a runtime for this provider (some relays only accept the official client)
+  createdAt: number;
+}
+export const CLAUDE_PROVIDER_ID = 'claude';
 
 /** Optional per-session switches. Each maps to a CLI flag or env var; unknown to the engine = ignored/error. */
 export interface SessionFeatures {
@@ -55,7 +78,7 @@ export interface SendParams {
 }
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
-export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[] }
+export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string }
 export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string }
 export interface LimitWindow { label: string; percent: number; resetsAt: string | null; active: boolean; severity?: string }
 export interface Limits { ok: boolean; capturedAt: string; windows: LimitWindow[]; subscriptionType?: string; rateLimitTier?: string; error?: string }
@@ -90,7 +113,9 @@ export interface SessionInfoSnapshot {
   plugins?: { name: string; path: string; version?: string }[];
   models?: { value: string; displayName: string; description: string; supportsEffort?: boolean; supportedEffortLevels?: EffortLevel[] }[];
   claudeCodeVersion?: string;
-  engine?: EngineId;
+  runtime?: RuntimeKind;
+  providerId?: string;
+  providerName?: string;
   features?: SessionFeatures;
   error?: string;
 }
@@ -127,9 +152,13 @@ export type ClientRequest =
   | { kind: 'schedules.remove'; id: string }
   | { kind: 'schedules.runNow'; id: string }
   | { kind: 'limits.get'; force?: boolean }
-  | { kind: 'engines.list' }
-  | { kind: 'engines.install'; id: EngineId }
-  | { kind: 'engine.cli'; engine: EngineId; args: string[]; cwd?: string }
+  | { kind: 'engine.info' }
+  | { kind: 'engine.update' } // npm i -g claude-code-best@latest
+  | { kind: 'engine.cli'; args: string[]; cwd?: string }
+  | { kind: 'providers.list' }
+  | { kind: 'providers.upsert'; provider: Partial<Provider> & { id?: string } }
+  | { kind: 'providers.remove'; id: string }
+  | { kind: 'providers.probe'; id?: string; provider?: Partial<Provider> } // saved profile by id, or an unsaved draft
   | { kind: 'settings.get' }
   | { kind: 'settings.set'; key: string; value: unknown }
   | { kind: 'sessions.search'; query: string; limit?: number }

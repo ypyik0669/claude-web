@@ -2,7 +2,8 @@ import { query, type Query, type SDKMessage, type SDKUserMessage, type Options, 
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { resolveEngine, spawnClaude } from '../claude-exe.js';
-import type { EffortLevel, EngineId, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, RunnerState, SessionFeatures, SessionInfoSnapshot } from '../protocol.js';
+import { providerEnv } from '../providers/service.js';
+import type { EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot } from '../protocol.js';
 
 /** Unbounded async queue used as the SDK's streaming-input prompt. */
 class InputQueue implements AsyncIterable<SDKUserMessage> {
@@ -68,25 +69,25 @@ export class SessionRunner extends EventEmitter {
   private model?: string;
   private effort?: EffortLevel;
   private permissionMode: PermissionMode;
-  private engine: EngineId;
+  private provider?: Provider; // resolved third-party profile (undefined = claude.ai login)
   private features: SessionFeatures;
   lastActivity = Date.now();
   private closed = false;
 
-  constructor(params: OpenSessionParams) {
+  constructor(params: OpenSessionParams, provider?: Provider) {
     super();
     this.cwd = params.cwd;
-    this.engine = params.engine ?? 'claude';
+    this.provider = provider;
     this.features = params.features ?? {};
     // a fork gets its own id from the CLI at init; until then use a placeholder so the pool
     // never clobbers the source session's runner
     const isFork = !!params.sessionId && (params.fork || !!params.resumeAt);
     this.sessionId = params.sessionId && !isFork ? params.sessionId : randomUUID();
     this.id = this.sessionId;
-    this.model = params.model;
+    this.model = params.model || provider?.defaultModel || undefined;
     this.effort = params.effort;
     this.permissionMode = params.permissionMode ?? 'default';
-    this.info = { sessionId: this.sessionId, state: 'starting', cwd: this.cwd, model: this.model, effort: this.effort, permissionMode: this.permissionMode, engine: this.engine, features: this.features };
+    this.info = { sessionId: this.sessionId, state: 'starting', cwd: this.cwd, model: this.model, effort: this.effort, permissionMode: this.permissionMode, providerId: provider?.id, providerName: provider?.name, features: this.features };
     const extra: Partial<Options> = params.sessionId ? { resume: params.sessionId, forkSession: params.fork || !!params.resumeAt, resumeSessionAt: params.resumeAt } : { sessionId: this.sessionId };
     extra.extraArgs = { ...this.featureArgs() };
     if (params.worktree) extra.extraArgs.worktree = params.worktree;
@@ -108,7 +109,7 @@ export class SessionRunner extends EventEmitter {
 
   private featureEnv(): Record<string, string> {
     const f = this.features;
-    const env: Record<string, string> = { ...(f.env ?? {}) };
+    const env: Record<string, string> = { ...(this.provider ? providerEnv(this.provider) : {}), ...(f.env ?? {}) };
     if (f.coordinator) env.CLAUDE_CODE_COORDINATOR_MODE = '1';
     return env;
   }
@@ -128,14 +129,22 @@ export class SessionRunner extends EventEmitter {
   }
 
   private start(extra: Partial<Options>) {
-    const exe = resolveEngine(this.engine);
+    const engine = resolveEngine(this.provider?.runtime);
+    const exe = engine.file;
+    this.info.runtime = engine.kind;
     const fenv = this.featureEnv();
+    // a provider session must not inherit provider-ish env from this process (e.g. a global ANTHROPIC_API_KEY)
+    const base = { ...process.env };
+    if (this.provider) for (const k of Object.keys(base)) if (/^(ANTHROPIC|OPENAI|GEMINI|GROK|XAI)_/.test(k) && !(k in fenv)) delete base[k];
     const options: Options = {
       cwd: this.cwd,
-      env: Object.keys(fenv).length ? { ...process.env, ...fenv } : undefined,
+      env: Object.keys(fenv).length ? { ...base, ...fenv } : undefined,
       model: this.model,
       effort: this.effort,
       permissionMode: this.permissionMode,
+      // The SDK defaults to an EMPTY system prompt. We want the real Claude Code prompt: same behaviour as the
+      // CLI, and relays that fingerprint Claude Code requests (e.g. super-nb) reject bodies without it.
+      systemPrompt: { type: 'preset', preset: 'claude_code' },
       includePartialMessages: true,
       includeHookEvents: true,
       forwardSubagentText: true,
@@ -170,7 +179,9 @@ export class SessionRunner extends EventEmitter {
           const cmdSrc: any[] = cmds.length ? cmds : im.commands ?? [];
           const modelSrc: any[] = models.length ? models : im.models ?? [];
           this.info.slashCommands = cmdSrc.map((c) => ({ name: c.name, description: c.description ?? '', argumentHint: c.argumentHint ?? c.argument_hint ?? '' }));
-          this.info.models = modelSrc.map((m) => ({ value: m.value, displayName: m.displayName ?? m.value, description: m.description ?? '', supportsEffort: m.supportsEffort, supportedEffortLevels: m.supportedEffortLevels }));
+          this.info.models = this.provider?.models?.length
+            ? this.provider.models.map((v) => ({ value: v, displayName: v, description: this.provider!.name }))
+            : modelSrc.map((m) => ({ value: m.value, displayName: m.displayName ?? m.value, description: m.description ?? '', supportsEffort: m.supportsEffort, supportedEffortLevels: m.supportedEffortLevels }));
           this.info.agents = agents.map((a) => ({ name: a.name, description: a.description, model: a.model }));
           this.info.mcpServers = mcp.map((m) => ({ name: m.name, status: m.status, error: m.error, tools: m.tools }));
           this.emit('info', this.info);

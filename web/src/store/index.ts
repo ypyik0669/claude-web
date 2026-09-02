@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { EffortLevel, EngineId, EngineInfo, Limits, PermissionMode, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, Workspace } from '@shared';
+import type { EffortLevel, EngineInfo, Limits, PermissionMode, Provider, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, Workspace } from '@shared';
 
 export const THEMES = ['dark', 'light', 'dracula', 'nord', 'tokyo-night', 'paper'] as const;
 export type Theme = (typeof THEMES)[number];
@@ -42,16 +42,19 @@ interface State {
   paletteOpen: boolean;
   showArchived: boolean;
   shortcutsOpen: boolean;
+  configTab: string | null; // tab the config panel should open on next mount (one-shot)
   loadMeta(): Promise<void>;
   addWorkspace(path: string): Promise<void>;
   setSessionMeta(sessionId: string, patch: SessionMeta): Promise<void>;
   // actions
   init(): void;
   refreshSessions(): Promise<void>;
-  openSession(p: { sessionId?: string; cwd: string; model?: string; permissionMode?: PermissionMode; effort?: EffortLevel; fork?: boolean; resumeAt?: string; worktree?: string; engine?: EngineId; features?: SessionFeatures }): Promise<string>;
-  engines: EngineInfo[];
+  openSession(p: { sessionId?: string; cwd: string; model?: string; permissionMode?: PermissionMode; effort?: EffortLevel; fork?: boolean; resumeAt?: string; worktree?: string; providerId?: string; features?: SessionFeatures }): Promise<string>;
+  engine: EngineInfo | null;
+  providers: Provider[];
   settings: Record<string, unknown>;
-  loadEngines(): Promise<void>;
+  loadEngine(): Promise<void>;
+  loadProviders(): Promise<void>;
   setSetting(key: string, value: unknown): Promise<void>;
   loadHistory(sessionId: string): Promise<void>;
   send(sessionId: string, text: string, images?: { mediaType: string; data: string }[], steer?: boolean): Promise<void>;
@@ -100,11 +103,17 @@ export const useStore = create<State>((set, get) => ({
   paletteOpen: false,
   showArchived: false,
   shortcutsOpen: false,
-  engines: [],
+  configTab: null,
+  engine: null,
+  providers: [],
   settings: {},
-  async loadEngines() {
-    const engines = await ws.request<EngineInfo[]>({ kind: 'engines.list' });
-    set({ engines });
+  async loadEngine() {
+    const engine = await ws.request<EngineInfo>({ kind: 'engine.info' });
+    set({ engine });
+  },
+  async loadProviders() {
+    const providers = await ws.request<Provider[]>({ kind: 'providers.list' });
+    set({ providers });
   },
   async setSetting(key, value) {
     set((s) => ({ settings: { ...s.settings, [key]: value } }));
@@ -139,7 +148,8 @@ export const useStore = create<State>((set, get) => ({
       if (c) {
         void get().refreshSessions();
         void get().loadMeta();
-        void get().loadEngines().catch(() => {});
+        void get().loadEngine().catch(() => {});
+        void get().loadProviders().catch(() => {});
         void ws.request<Limits>({ kind: 'limits.get' }).then((limits) => set({ limits })).catch(() => {});
         // re-attach open live sessions after reconnect
         for (const o of Object.values(get().open)) if (o.state !== 'history') void ws.request({ kind: 'session.info', sessionId: o.sessionId }).then((d: any) => set((s) => bump(s, o.sessionId, (x) => { x.info = d.info; x.pending = d.pending; }))).catch(() => set((s) => bump(s, o.sessionId, (x) => { x.state = 'history'; })));
@@ -176,6 +186,7 @@ export const useStore = create<State>((set, get) => ({
           break;
         case 'meta.changed':
           void get().loadMeta();
+          void get().loadProviders().catch(() => {});
           break;
         case 'limits':
           set({ limits: e.limits });

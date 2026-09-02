@@ -10,8 +10,9 @@ import { ConfigService } from './config/service.js';
 import { UsageService } from './usage/service.js';
 import { FilesService } from './files/service.js';
 import { TerminalService } from './terminal/service.js';
-import { resolveClaudeExe } from './claude-exe.js';
+import { engineInfo } from './claude-exe.js';
 import { MetaStore } from './meta/store.js';
+import { ProviderService } from './providers/service.js';
 import { LimitsService } from './usage/limits.js';
 import { ScheduleService } from './schedules/service.js';
 
@@ -87,10 +88,11 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });
 
-  const pool = new RunnerPool();
   const meta = new MetaStore();
   await meta.load();
-  const services = { pool, sessions: new SessionService(), config: new ConfigService(), usage: new UsageService(), files: new FilesService(), terminal: new TerminalService(), meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), version };
+  const providers = new ProviderService(meta);
+  const pool = new RunnerPool(providers);
+  const services = { pool, sessions: new SessionService(), config: new ConfigService(), usage: new UsageService(), files: new FilesService(), terminal: new TerminalService(), meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, version };
   new Hub(wss, services);
 
   await new Promise<void>((res, rej) => {
@@ -98,7 +100,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     server.listen(PORT, HOST, () => res());
   });
   const port = (server.address() as { port: number }).port;
-  console.log(`claude-web ${version} listening on http://${HOST}:${port}  (claude: ${resolveClaudeExe()})`);
+  const eng = engineInfo();
+  console.log(`claude-web ${version} listening on http://${HOST}:${port}  (runtime: ${eng.runtime} ${eng.version ?? ''} ${eng.path})`);
 
   return {
     port,

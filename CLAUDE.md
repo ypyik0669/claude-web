@@ -32,12 +32,15 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - **worktree 会话**：`extraArgs: { worktree: name }`。
 - 浏览器占用 Ctrl+N，新会话快捷键是 Alt+N；命令面板 Ctrl+K。
 
-## 引擎：官方 Claude Code 与 ccb（claude-code-best）
+## 引擎（单运行时）与供应商档案
 
-- `server/src/claude-exe.ts`：`listEngines()` / `resolveEngine(id)`。官方引擎 = SDK 自带的 claude.exe；ccb = npm 包 `claude-code-best` 的 `dist/cli-node.js`（根 package.json 依赖里内置，也认全局安装）。ccb 是 JS，SDK 会用 `node` 起它；在 Electron 里没有 `node`，`spawnClaude` 把它映射成 `process.execPath` + `ELECTRON_RUN_AS_NODE=1`。
-- ccb 完整实现了 SDK 的 stream-json + control 协议，只缺 `supported_commands` / `supported_models` / `commands_changed`：runner 从 `initializationResult()` 的 `commands`/`models` 兜底。它和官方共用 `~/.claude`（登录、settings、会话 jsonl、subagents），会话可互相 resume。
+- **只有一个运行时**：`server/src/claude-exe.ts` 的 `resolveEngine()` 优先 ccb（npm 包 `claude-code-best` 的 `dist/cli-node.js`，根 package.json 内置，也认全局安装），找不到时静默退回 SDK 自带的官方 claude.exe。`engineInfo()` 给配置中心显示版本。`CLAUDE_WEB_RUNTIME=claude` 或档案的 `runtime:'claude'` 可强制官方二进制。ccb 是 JS，SDK 用 `node` 起它；Electron 里没有 `node`，`spawnClaude` 映射成 `process.execPath` + `ELECTRON_RUN_AS_NODE=1`。
+- ccb 是官方的超集：完整实现 stream-json + control 协议，只缺 `supported_commands` / `supported_models` / `commands_changed`（runner 从 `initializationResult()` 的 `commands`/`models` 兜底）；共用 `~/.claude`（登录、settings、会话 jsonl、subagents）。
+- **供应商档案**（`Provider`，存 `~/.claude-web/meta.json`，不写 `~/.claude/settings.json`）：`server/src/providers/service.ts` 的 `providerEnv()` 按类型映射成 env（anthropic → `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`（Bearer）+ `ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_*_MODEL`；openai → `OPENAI_BASE_URL` + `OPENAI_API_KEY` + `CLAUDE_CODE_USE_OPENAI=1`；gemini / grok 同理），`session-runner.ts` 只注入到那个会话的进程；本进程的 `ANTHROPIC_*` 等 env 会被清掉以免混入。会话用的档案记在 `SessionMeta.providerId`，resume / fork 沿用。wire 上 `apiKey` 一律打码。
+- **中转指纹（api.super-nb.me 实测）**：只放行官方 Claude Code 构建发的 `/messages`。三处判据都踩过：① User-Agent 里不能有 SDK 附加的 `agent-sdk/x.y.z`（来自 env `CLAUDE_AGENT_SDK_VERSION`，`spawnClaude` 见到 `CLAUDE_WEB_PLAIN_UA` 就删掉）；② `CLAUDE_CODE_ENTRYPOINT` 必须是 CLI 默认的 `cli`（`sdk-ts`/`claude-web` 都 400「请求可能被第三方中转改写」）；③ 必须带 Claude Code 的主系统提示（Agent SDK 默认是**空**系统提示，runner 显式传 `systemPrompt: {type:'preset', preset:'claude_code'}`）。ccb 本身的请求形状（UA 2.8.4、不同的系统提示和工具表）过不了这种指纹，所以 `ProviderService.probe()` 除了 `/v1/models` 还真跑一轮 `-p`：ccb 被拒就自动把档案 `runtime` 切到 `claude` 并提示。
+- 注意本机开发 shell 继承了 `CLAUDE_CODE_ENTRYPOINT=sdk-cli`（因为在 Claude Code 里跑），测指纹要用 `env -u` 或显式赋值，别被继承值骗了。
 - 会话级开关 `SessionFeatures`（`--chrome`、`--computer-use-mcp`、`--proactive`、`--brief`、`--channels`、`CLAUDE_CODE_COORDINATOR_MODE`）在 `session-runner.ts` 的 `featureArgs()/featureEnv()`。
-- 供应商 / Langfuse / Artifacts / Web Search 的配置就是 `~/.claude/settings.json` 的 `env`（ccb 的 `/login` 也写这里）；配置中心「供应商 / 环境」tab 直接编辑。
+- Langfuse / Artifacts / Web Search 等配置仍是 `~/.claude/settings.json` 的 `env`；配置中心「供应商 / 环境」tab 下半段编辑。
 - ccb 里 `local-jsx` 类型的命令（/goal 面板、/artifacts 列表、/poor、/voice、/buddy 等）是 TUI 专属，headless 发不了；对应能力靠工具（Goal / Artifact / Workflow）或终端面板兜底。
 
 ## 桌面版（desktop/）
