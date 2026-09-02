@@ -271,7 +271,7 @@ export class SessionRunner extends EventEmitter {
     return true;
   }
 
-  send(text: string, images?: { mediaType: string; data: string }[], steer = false) {
+  send(text: string, images?: { mediaType: string; data: string }[], steer = false, uuid?: string) {
     const content: any[] = [];
     for (const im of images ?? []) content.push({ type: 'image', source: { type: 'base64', media_type: im.mediaType, data: im.data } });
     content.push({ type: 'text', text });
@@ -281,6 +281,9 @@ export class SessionRunner extends EventEmitter {
       parent_tool_use_id: null,
       session_id: this.sessionId,
       origin: { kind: 'human' },
+      // client-minted uuid: becomes the transcript uuid, echoed as user_message_uuid on the first reply frame / result,
+      // so the local echo id == fork/rewind point
+      ...(uuid ? { uuid } : {}),
       ...(steer ? { priority: 'now' } : {}),
     } as SDKUserMessage;
     this.lastActivity = Date.now();

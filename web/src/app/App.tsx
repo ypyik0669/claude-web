@@ -13,6 +13,7 @@ import { TerminalPanel } from '@/features/panels/TerminalPanel';
 import { InspectorPanel } from '@/features/panels/InspectorPanel';
 import { ago, clsx } from '@/util';
 import { CommandPalette } from '@/features/palette/CommandPalette';
+import { ImageViewer } from '@/features/chat/ImageViewer';
 import { desktop } from '@/desktop';
 import { ws } from '@/ws/client';
 
@@ -208,6 +209,7 @@ export function App() {
       <Toasts />
       <CommandPalette />
       <ShortcutsModal />
+      <ImageViewer />
     </div>
   );
 }

@@ -5,14 +5,13 @@ import { clsx, fmtMs, fmtTok, fmtUsd } from '@/util';
 import { Markdown } from './Markdown';
 import { ToolCard } from './ToolCard';
 import { PermissionCards } from './PermissionCards';
-
-const AGENT_TOOLS = new Set(['Agent', 'Task', 'Workflow', 'AskUserQuestion', 'ExitPlanMode']);
+import { getToolDef, isStandalone } from './tools/registry';
 
 /** Human summary for a run of consecutive tool calls, Claude-Code-on-web style: "读取 2 个文件 · 运行 1 条命令". */
 function stepLabel(tools: ToolUseBlock[]): string {
   const c: Record<string, number> = {};
   for (const t of tools) {
-    const k = t.name === 'Read' || t.name === 'Glob' || t.name === 'Grep' ? 'read' : t.name === 'Edit' || t.name === 'MultiEdit' || t.name === 'Write' || t.name === 'NotebookEdit' ? 'edit' : t.name === 'Bash' || t.name === 'PowerShell' ? 'cmd' : t.name === 'WebFetch' || t.name === 'WebSearch' ? 'web' : t.name === 'Skill' ? 'skill' : t.name.startsWith('mcp__') ? 'mcp' : 'other';
+    const k = getToolDef(t.name).category;
     c[k] = (c[k] ?? 0) + 1;
   }
   const parts: string[] = [];
@@ -22,7 +21,8 @@ function stepLabel(tools: ToolUseBlock[]): string {
   if (c.web) parts.push(`搜索网页 ${c.web} 次`);
   if (c.skill) parts.push(`调用 ${c.skill} 个 skill`);
   if (c.mcp) parts.push(`MCP ${c.mcp} 次`);
-  if (c.other) parts.push(`${c.other} 步`);
+  const other = (c.other ?? 0) + (c.plan ?? 0) + (c.agent ?? 0);
+  if (other) parts.push(`${other} 步`);
   return parts.join(' · ');
 }
 
@@ -33,7 +33,7 @@ function segment(blocks: Block[]): Seg[] {
   blocks.forEach((b, i) => {
     if (b.type === 'text') { if (b.text.trim() || i === blocks.length - 1) out.push({ kind: 'text', b, i }); }
     else if (b.type === 'thinking') { if (b.thinking || i === blocks.length - 1) out.push({ kind: 'thinking', b, i }); }
-    else if (AGENT_TOOLS.has(b.name)) out.push({ kind: 'agent', t: b });
+    else if (isStandalone(b.name)) out.push({ kind: 'agent', t: b });
     else {
       const last = out[out.length - 1];
       if (last?.kind === 'steps') last.tools.push(b);
@@ -67,19 +67,24 @@ function Steps({ tools, version, live }: { tools: ToolUseBlock[]; version: numbe
   );
 }
 
-function Thinking({ text, streaming }: { text: string; streaming: boolean }) {
-  const [open, setOpen] = useState(false);
-  if (!text && !streaming) return null;
+/** Thinking rows honour settings['ui.showThinking']: 'collapsed' (default) | 'expanded' | 'hidden'. */
+function Thinking({ text, streaming, redacted }: { text: string; streaming: boolean; redacted?: boolean }) {
+  const mode = useStore((s) => (s.settings['ui.showThinking'] as string | undefined) ?? 'collapsed');
+  const [open, setOpen] = useState<boolean | null>(null);
+  if (mode === 'hidden' && !streaming) return null;
+  if (!text && !streaming && !redacted) return null;
+  const show = open ?? (mode === 'expanded');
   return (
-    <div className="step">
-      <div className={clsx('step-head', open && 'open')} onClick={() => setOpen(!open)}>
+    <div className="step thinking">
+      <div className={clsx('step-head', show && 'open')} onClick={() => setOpen(!show)}>
         <span className="chev">▶</span>
-        <span className="lbl">{streaming ? '思考中' : text.length > 1200 ? '深入思考了一会儿' : '思考了一下'}</span>
+        <span className="lbl">{redacted ? '思考内容已隐藏（redacted）' : streaming ? '思考中' : text.length > 1200 ? '深入思考了一会儿' : '思考了一下'}</span>
+        {!streaming && text && <span className="tool-meta">{text.length > 1000 ? `${(text.length / 1000).toFixed(1)}K 字` : `${text.length} 字`}</span>}
         {streaming && <span className="spinner" />}
       </div>
-      {open && (
+      {show && !redacted && (
         <div className="step-body">
-          <div className="thinking-body">{text}</div>
+          <div className="thinking-body"><Markdown text={text} streaming={streaming} /></div>
         </div>
       )}
     </div>
@@ -91,8 +96,8 @@ const Assistant = memo(function Assistant({ it, version, live }: { it: Assistant
   return (
     <div className="msg assistant">
       {segs.map((s, idx) => {
-        if (s.kind === 'text') return <div key={idx} className={clsx(it.streaming && idx === segs.length - 1 && 'cursor')}><Markdown text={(s.b as any).text} /></div>;
-        if (s.kind === 'thinking') return <Thinking key={idx} text={(s.b as any).thinking} streaming={it.streaming && idx === segs.length - 1} />;
+        if (s.kind === 'text') return <div key={idx} className={clsx(it.streaming && idx === segs.length - 1 && 'cursor')}><Markdown text={(s.b as any).text} streaming={it.streaming && idx === segs.length - 1} /></div>;
+        if (s.kind === 'thinking') return <Thinking key={idx} text={(s.b as any).thinking} redacted={(s.b as any).redacted} streaming={it.streaming && idx === segs.length - 1} />;
         if (s.kind === 'agent') return <ToolCard key={s.t.id} t={s.t} version={version} />;
         return <Steps key={idx} tools={s.tools} version={version} live={live} />;
       })}

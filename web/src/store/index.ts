@@ -31,7 +31,7 @@ interface State {
   tab: 'chat' | 'trajectory';
   panels: PanelId[];
   sidebarOpen: boolean;
-  inspect: { sessionId: string; toolUseId: string } | null;
+  inspect: { sessionId: string; toolUseId?: string; file?: { path: string; line?: number } } | null;
   theme: Theme;
   toasts: { id: number; text: string; ok?: boolean }[];
   toast(text: string, ok?: boolean): void;
@@ -43,6 +43,8 @@ interface State {
   showArchived: boolean;
   shortcutsOpen: boolean;
   configTab: string | null; // tab the config panel should open on next mount (one-shot)
+  viewer: { images: string[]; index: number } | null;
+  openViewer(images: string[], index?: number): void;
   loadMeta(): Promise<void>;
   addWorkspace(path: string): Promise<void>;
   setSessionMeta(sessionId: string, patch: SessionMeta): Promise<void>;
@@ -104,6 +106,10 @@ export const useStore = create<State>((set, get) => ({
   showArchived: false,
   shortcutsOpen: false,
   configTab: null,
+  viewer: null,
+  openViewer(images, index = 0) {
+    if (images.length) set({ viewer: { images, index } });
+  },
   engine: null,
   providers: [],
   settings: {},

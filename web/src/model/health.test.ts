@@ -1,0 +1,63 @@
+import { describe, expect, it } from 'vitest';
+import { classifyError, compactionNotice, deriveStall, STALL_NO_MODEL_MS, STALL_QUIET_MS } from './health';
+
+describe('classifyError', () => {
+  it.each([
+    [{ error: 'rate_limit' }, 'throttled'],
+    [{ status: 429 }, 'throttled'],
+    [{ text: 'Too many requests' }, 'throttled'],
+    [{ rateLimitStatus: 'rejected' }, 'quota'],
+    [{ terminalReason: 'blocking_limit' }, 'quota'],
+    [{ error: 'billing_error' }, 'quota'],
+    [{ error: 'authentication_failed' }, 'credential'],
+    [{ status: 401, text: 'API Error: 401' }, 'credential'],
+    [{ terminalReason: 'prompt_too_long' }, 'context'],
+    [{ text: 'prompt is too long: 210000 tokens' }, 'context'],
+    [{ error: 'max_output_tokens' }, 'output_cap'],
+    [{ error: 'overloaded' }, 'server'],
+    [{ status: 503 }, 'server'],
+    [{ status: null, text: 'fetch failed' }, 'network'],
+    [{ text: 'ECONNRESET' }, 'network'],
+    [{ terminalReason: 'aborted_streaming' }, 'aborted'],
+    [{ terminalReason: 'api_error' }, 'server'],
+    [{}, 'unknown'],
+  ] as const)('%o → %s', (sig, kind) => {
+    expect(classifyError(sig as any)).toBe(kind);
+  });
+  it('quota beats throttled when both signals are present', () => {
+    expect(classifyError({ status: 429, rateLimitStatus: 'rejected' })).toBe('quota');
+  });
+});
+
+describe('deriveStall', () => {
+  const t0 = 1_000_000;
+  it('waiting wins', () => {
+    expect(deriveStall({ state: 'waiting', now: t0 })).toEqual({ kind: 'waiting' });
+  });
+  it('idle → null', () => {
+    expect(deriveStall({ state: 'idle', now: t0, lastEventAt: 0 })).toBeNull();
+  });
+  it('compacting', () => {
+    expect(deriveStall({ state: 'running', now: t0, compacting: true })).toEqual({ kind: 'compacting' });
+  });
+  it('running tool with elapsed', () => {
+    expect(deriveStall({ state: 'running', now: t0 + 7000, runningTool: { name: 'Bash', since: t0, elapsed: 7 }, lastEventAt: t0 + 6000 })).toEqual({ kind: 'tool', tool: 'Bash', seconds: 7 });
+  });
+  it('quiet after 15s without events', () => {
+    expect(deriveStall({ state: 'running', now: t0 + STALL_QUIET_MS - 1, lastEventAt: t0 })).toBeNull();
+    expect(deriveStall({ state: 'running', now: t0 + STALL_QUIET_MS, lastEventAt: t0 })).toEqual({ kind: 'quiet', seconds: 15 });
+  });
+  it('no model call for 3 minutes (and no tool running)', () => {
+    const r = deriveStall({ state: 'running', now: t0 + STALL_NO_MODEL_MS, lastEventAt: t0 + STALL_NO_MODEL_MS - 1000, lastModelCallAt: t0 });
+    expect(r).toEqual({ kind: 'no_model', minutes: 3, seconds: 180 });
+  });
+});
+
+describe('compactionNotice', () => {
+  it('percent freed', () => {
+    expect(compactionNotice({ trigger: 'auto', pre_tokens: 120_000, post_tokens: 30_000 })).toBe('上下文已自动压缩 · 释放 75%（120K → 30K）');
+  });
+  it('manual without post', () => {
+    expect(compactionNotice({ trigger: 'manual', pre_tokens: 5_000 })).toBe('上下文已压缩（5K tok）');
+  });
+});

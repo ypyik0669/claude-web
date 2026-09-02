@@ -1,55 +1,65 @@
-import { memo } from 'react';
-import ReactMarkdown from 'react-markdown';
+import { memo, useEffect, useMemo, useState, type ComponentProps } from 'react';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { CodeBlock } from './CodeBlock';
+import { useStore } from '@/store';
+import { desktop } from '@/desktop';
 
-export const Markdown = memo(function Markdown({ text }: { text: string }) {
+export { DiffView } from './DiffView';
+
+const MATH_RE = /\$\$[\s\S]+?\$\$|\\\(|\\\[|^\s*\$[^$\n]+\$\s*$/m;
+type MathPlugins = { remark: any; rehype: any } | null;
+let mathCache: MathPlugins = null;
+let mathPromise: Promise<MathPlugins> | null = null;
+function loadMath(): Promise<MathPlugins> {
+  if (mathCache) return Promise.resolve(mathCache);
+  mathPromise ??= Promise.all([import('remark-math'), import('rehype-katex'), import('katex/dist/katex.min.css' as any)]).then(([rm, rk]) => (mathCache = { remark: rm.default, rehype: rk.default }));
+  return mathPromise;
+}
+
+function openLink(href: string) {
+  if (desktop) void desktop.openExternal(href);
+  else window.open(href, '_blank', 'noopener,noreferrer');
+}
+
+const components: Components = {
+  pre({ children }) {
+    // fenced code: unwrap the <pre><code class="language-x"> pair into CodeBlock
+    const child: any = Array.isArray(children) ? children[0] : children;
+    const props = child?.props ?? {};
+    const lang = /language-([\w+-]+)/.exec(props.className ?? '')?.[1];
+    const code = typeof props.children === 'string' ? props.children : Array.isArray(props.children) ? props.children.join('') : '';
+    return <CodeBlock code={code} lang={lang} streaming={(props as any)['data-streaming']} maxLines={400} />;
+  },
+  code({ className, children, ...rest }: ComponentProps<'code'>) {
+    return <code className={className} {...rest}>{children}</code>;
+  },
+  a({ href, children }) {
+    return (
+      <a href={href} onClick={(e) => { if (href && /^https?:/i.test(href)) { e.preventDefault(); openLink(href); } }} title={href}>
+        {children}
+      </a>
+    );
+  },
+  img({ src, alt }) {
+    const s = typeof src === 'string' ? src : '';
+    return <img src={s} alt={alt ?? ''} className="md-img" onClick={() => useStore.getState().openViewer([s], 0)} />;
+  },
+};
+
+export const Markdown = memo(function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
+  const needMath = useMemo(() => MATH_RE.test(text), [text]);
+  const [math, setMath] = useState<MathPlugins>(mathCache);
+  useEffect(() => {
+    if (needMath && !math) void loadMath().then(setMath);
+  }, [needMath, math]);
+  const remark = useMemo(() => (needMath && math ? [remarkGfm, [math.remark, { singleDollarTextMath: false }]] : [remarkGfm]), [needMath, math]);
+  const rehype = useMemo(() => (needMath && math ? [[math.rehype, { throwOnError: false, strict: false }]] : []), [needMath, math]);
   return (
-    <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    <div className="md" data-streaming={streaming || undefined}>
+      <ReactMarkdown remarkPlugins={remark as any} rehypePlugins={rehype as any} components={components}>
+        {text}
+      </ReactMarkdown>
     </div>
   );
 });
-
-/** Render a unified diff / old-new pair with add/del highlighting. */
-export function DiffView({ oldText, newText, unified }: { oldText?: string; newText?: string; unified?: string }) {
-  if (unified) {
-    return (
-      <div className="diff">
-        {unified.split('\n').map((l, i) => (
-          <span key={i} className={l.startsWith('+') && !l.startsWith('+++') ? 'add' : l.startsWith('-') && !l.startsWith('---') ? 'del' : l.startsWith('@@') ? 'hunk' : 'ctx'}>
-            {l || ' '}
-          </span>
-        ))}
-      </div>
-    );
-  }
-  const a = (oldText ?? '').split('\n');
-  const b = (newText ?? '').split('\n');
-  const rows = lcsDiff(a, b);
-  return (
-    <div className="diff">
-      {rows.map((r, i) => (
-        <span key={i} className={r.t === '+' ? 'add' : r.t === '-' ? 'del' : 'ctx'}>
-          {r.t} {r.s || ' '}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function lcsDiff(a: string[], b: string[]): { t: ' ' | '+' | '-'; s: string }[] {
-  const n = a.length, m = b.length;
-  if (n * m > 4_000_000) return [...a.map((s) => ({ t: '-' as const, s })), ...b.map((s) => ({ t: '+' as const, s }))];
-  const dp: Uint16Array[] = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-  const out: { t: ' ' | '+' | '-'; s: string }[] = [];
-  let i = 0, j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) { out.push({ t: ' ', s: a[i] }); i++; j++; }
-    else if (dp[i + 1][j] >= dp[i][j + 1]) out.push({ t: '-', s: a[i++] });
-    else out.push({ t: '+', s: b[j++] });
-  }
-  while (i < n) out.push({ t: '-', s: a[i++] });
-  while (j < m) out.push({ t: '+', s: b[j++] });
-  return out;
-}

@@ -1,42 +1,66 @@
+import { useEffect, useState } from 'react';
 import { useStore } from '@/store';
+import { ws } from '@/ws/client';
 import { ItemList } from '@/features/chat/ChatView';
-import { DiffView, Markdown } from '@/features/chat/Markdown';
-import { toolSummary } from '@/util';
+import { CodeBlock } from '@/features/chat/CodeBlock';
+import { langFromPath } from '@/features/chat/highlight';
+import { ToolHead } from '@/features/chat/ToolCard';
+import { getToolDef } from '@/features/chat/tools/registry';
+import { JsonTree } from '@/features/chat/tools/McpTool';
+import { basename } from '@/util';
+
+function FileView({ path, line }: { path: string; line?: number }) {
+  const [text, setText] = useState<string | null>(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    setText(null); setErr('');
+    ws.request<string>({ kind: 'fs.read', path }).then(setText).catch((e) => setErr(e.message));
+  }, [path]);
+  useEffect(() => {
+    if (text === null || !line) return;
+    const el = document.querySelector(`.inspector-file .code-table tr:nth-child(${line})`);
+    el?.scrollIntoView({ block: 'center' });
+    el?.classList.add('hl');
+  }, [text, line]);
+  return (
+    <div className="inspector-file" style={{ padding: '8px 12px' }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+        <b>{basename(path)}</b>
+        <span className="mono" style={{ color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, fontSize: 11.5 }} title={path}>{path}</span>
+        <button className="btn sm ghost" onClick={() => ws.request({ kind: 'shell.open', path, app: 'code' }).catch(() => {})}>VS Code</button>
+        <button className="icon-btn" onClick={() => useStore.setState({ inspect: null })}>✕</button>
+      </div>
+      {err && <div style={{ color: 'var(--red)', fontSize: 12 }}>{err}</div>}
+      {text === null && !err && <div className="empty">读取中…</div>}
+      {text !== null && <CodeBlock code={text} lang={langFromPath(path)} title={path} lineNumbers className="tall" />}
+    </div>
+  );
+}
 
 export function InspectorPanel() {
   const inspect = useStore((s) => s.inspect);
   const o = useStore((s) => (inspect ? s.open[inspect.sessionId] : undefined));
-  if (!inspect || !o) return <div className="empty">点击工具卡片右侧 ⧉ 或轨迹表格中的一行查看详情</div>;
-  const t = o.conv.toolIndex.get(inspect.toolUseId);
-  if (!t) return <div className="empty">找不到该工具调用</div>;
-  const inp = t.input as any;
+  if (!inspect) return <div className="empty">点击工具卡片右侧 ⧉、轨迹表格中的一行，或搜索结果里的文件路径查看详情</div>;
+  if (inspect.file) return <FileView path={inspect.file.path} line={inspect.file.line} />;
+  const t = o && inspect.toolUseId ? o.conv.toolIndex.get(inspect.toolUseId) : undefined;
+  if (!o || !t) return <div className="empty">找不到该工具调用</div>;
+  const Body = getToolDef(t.name).Body;
   return (
-    <div style={{ padding: '8px 12px', fontSize: 12.5 }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-        <b>{t.name}</b>
-        <span className={`badge ${t.status === 'done' ? 'ok' : t.status === 'error' ? 'err' : 'run'}`}>{t.status}</span>
-        <span className="mono" style={{ color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{toolSummary(t.name, t.input)}</span>
+    <div className="inspector" style={{ padding: '8px 12px', fontSize: 12.5 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+        <div style={{ flex: 1, minWidth: 0 }}><ToolHead t={t} /></div>
         <button className="icon-btn" onClick={() => useStore.setState({ inspect: null })}>✕</button>
       </div>
-      {t.name === 'Edit' || t.name === 'MultiEdit' ? (
-        (t.name === 'MultiEdit' ? inp.edits ?? [] : [inp]).map((e: any, i: number) => <DiffView key={i} oldText={e.old_string} newText={e.new_string} />)
-      ) : (
-        <>
-          <div className="lbl" style={{ color: 'var(--fg-2)', fontSize: 11, margin: '6px 0 3px' }}>INPUT</div>
-          <pre className="mono" style={{ background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 4, padding: 8, maxHeight: 300, overflow: 'auto' }}>{t.name === 'Bash' ? inp.command : t.name === 'Agent' || t.name === 'Task' ? inp.prompt : JSON.stringify(t.input, null, 2)}</pre>
-        </>
-      )}
+      <Body t={t} />
+      <details className="structured" style={{ marginTop: 8 }}>
+        <summary>原始输入</summary>
+        <div className="jt"><JsonTree value={t.input} /></div>
+      </details>
       {t.result && (
-        <>
-          <div style={{ color: 'var(--fg-2)', fontSize: 11, margin: '6px 0 3px' }}>{t.result.isError ? 'ERROR' : 'RESULT'}</div>
-          {t.name === 'Agent' || t.name === 'Task' ? <Markdown text={t.result.content} /> : <pre className="mono" style={{ background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 4, padding: 8, maxHeight: 400, overflow: 'auto', color: t.result.isError ? 'var(--red)' : undefined }}>{t.result.content}</pre>}
-          {t.result.structured !== undefined && t.name !== 'Agent' && (
-            <details>
-              <summary style={{ cursor: 'pointer', color: 'var(--fg-2)', fontSize: 11 }}>结构化输出</summary>
-              <pre className="mono" style={{ fontSize: 11, maxHeight: 300, overflow: 'auto' }}>{JSON.stringify(t.result.structured, null, 2)}</pre>
-            </details>
-          )}
-        </>
+        <details className="structured">
+          <summary>原始输出（{t.result.content.length} 字符）</summary>
+          <CodeBlock code={t.result.content} lang="plaintext" wrap maxLines={200} />
+        </details>
       )}
       {t.children.length > 0 && (
         <>

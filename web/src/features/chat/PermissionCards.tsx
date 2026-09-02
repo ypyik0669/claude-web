@@ -3,6 +3,9 @@ import { useActive, useStore } from '@/store';
 import { clsx, toolSummary } from '@/util';
 import type { PermissionRequestEvent } from '@shared';
 import { DiffView, Markdown } from './Markdown';
+import { CodeBlock } from './CodeBlock';
+import { langFromPath } from './highlight';
+import { JsonTree } from './tools/McpTool';
 
 function AskQuestion({ p }: { p: PermissionRequestEvent }) {
   const respond = useStore((s) => s.respondPermission);
@@ -94,13 +97,13 @@ function ToolPermission({ p }: { p: PermissionRequestEvent }) {
       </h4>
       {p.decisionReason && <div style={{ fontSize: 12, color: 'var(--fg-2)', marginBottom: 6 }}>{p.decisionReason}</div>}
       {isEdit ? (
-        (p.toolName === 'MultiEdit' ? inp.edits ?? [] : [inp]).map((e: any, i: number) => <DiffView key={i} oldText={e.old_string} newText={e.new_string} />)
+        (p.toolName === 'MultiEdit' ? inp.edits ?? [] : [inp]).map((e: any, i: number) => <DiffView key={i} oldText={String(e.old_string ?? '')} newText={String(e.new_string ?? '')} title={String(inp.file_path ?? '')} collapse={false} />)
       ) : p.toolName === 'Write' ? (
-        <pre>{String(inp.content ?? '').slice(0, 5000)}</pre>
+        <CodeBlock code={String(inp.content ?? '')} lang={langFromPath(String(inp.file_path ?? ''))} title={String(inp.file_path ?? '')} maxLines={60} />
       ) : p.toolName === 'Bash' || p.toolName === 'PowerShell' ? (
-        <pre>{inp.command}</pre>
+        <CodeBlock code={String(inp.command ?? '')} lang={p.toolName === 'PowerShell' ? 'powershell' : 'bash'} title={inp.description ? String(inp.description) : '命令'} wrap />
       ) : (
-        <pre>{JSON.stringify(p.input, null, 2)}</pre>
+        <div className="jt" style={{ background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 8, padding: 6 }}><JsonTree value={p.input} /></div>
       )}
       <div className="actions">
         <button className="btn primary" onClick={() => respond(p.requestId, { behavior: 'allow' })}>

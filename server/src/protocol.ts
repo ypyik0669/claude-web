@@ -75,6 +75,7 @@ export interface SendParams {
   text: string;
   images?: { mediaType: string; data: string }[]; // base64
   steer?: boolean; // deliver mid-turn (SDK priority: 'now') instead of after the turn
+  uuid?: string; // client-minted transcript uuid for this user message (fork / rewind anchor)
 }
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }

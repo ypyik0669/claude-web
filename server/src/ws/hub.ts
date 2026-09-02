@@ -128,7 +128,7 @@ export class Hub {
         return { info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
       }
       case 'session.send':
-        this.runner(req.params.sessionId).send(req.params.text, req.params.images, req.params.steer);
+        this.runner(req.params.sessionId).send(req.params.text, req.params.images, req.params.steer, req.params.uuid);
         return null;
 
       case 'workspaces.list':
