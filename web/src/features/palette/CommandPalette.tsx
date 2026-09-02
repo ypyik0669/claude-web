@@ -3,6 +3,8 @@ import { THEMES, useActive, useStore, type PanelId } from '@/store';
 import { ws } from '@/ws/client';
 import { ago, basename } from '@/util';
 import type { SessionSummary } from '@shared';
+import { SHORTCUTS, keyLabel } from '@/features/workbench/shortcuts';
+import { runCommand } from '@/features/workbench/commands';
 
 interface Cmd { id: string; label: string; sub?: string; ic?: string; group: string; run: () => void }
 
@@ -30,11 +32,16 @@ export function CommandPalette() {
   const commands = useMemo<Cmd[]>(() => {
     const panel = (id: PanelId, l: string): Cmd => ({ id: `panel.${id}`, label: `${st.panels.includes(id) ? '关闭' : '打开'}${l}面板`, ic: '▣', group: '面板', run: () => st.togglePanel(id) });
     const c: Cmd[] = [
-      { id: 'new', label: '新会话', sub: 'Ctrl+N', ic: '＋', group: '会话', run: () => st.setActive(null) },
+      { id: 'new', label: '新会话', sub: keyLabel(SHORTCUTS[0]), ic: '＋', group: '会话', run: () => runCommand('new') },
       { id: 'ws.add', label: '添加工作区…', ic: '▤', group: '会话', run: async () => { const p = await ws.request<string | null>({ kind: 'fs.pickDir' }); if (p) await st.addWorkspace(p); } },
       { id: 'sidebar', label: st.sidebarOpen ? '收起侧栏' : '展开侧栏', sub: 'Ctrl+B', ic: '◧', group: '视图', run: () => useStore.setState((s) => ({ sidebarOpen: !s.sidebarOpen })) },
       { id: 'archived', label: st.showArchived ? '隐藏已归档会话' : '显示已归档会话', ic: '🗄', group: '视图', run: () => useStore.setState((s) => ({ showArchived: !s.showArchived })) },
       { id: 'keys', label: '键盘快捷键', sub: '?', ic: '⌨', group: '视图', run: () => useStore.setState({ shortcutsOpen: true }) },
+      // workbench verbs come straight from the shortcut table so labels / keys never drift
+      ...SHORTCUTS.filter((x) => ['group.new', 'group.close', 'group.next', 'pane.splitRight', 'pane.splitDown', 'tile.close', 'pane.zoom', 'pane.next', 'tile.new', 'dock.toggle', 'dock.minimize'].includes(x.id) && !(st.settings['ui.singleWindow'] && x.group !== '面板'))
+        .map<Cmd>((x) => ({ id: `wb.${x.id}`, label: x.label, sub: keyLabel(x), ic: x.group === '分组' ? '▭' : x.group === '窗格' ? '◫' : '▣', group: '工作台', run: () => runCommand(x.id) })),
+      ...(['single', 'cols2', 'cols3', 'grid2x2', 'mainSide'] as const).map<Cmd>((p) => ({ id: `preset.${p}`, label: `布局预设: ${{ single: '单窗格', cols2: '左右两栏', cols3: '三栏', grid2x2: '四宫格', mainSide: '主 + 侧' }[p]}`, ic: '⊞', group: '工作台', run: () => st.dispatchLayout({ t: 'pane.preset', preset: p }) })),
+      { id: 'window.new', label: '在新窗口打开当前分组', ic: '⧉', group: '工作台', run: () => runCommand('window.new') },
       panel('tasks', '任务'), panel('files', '文件改动'), panel('usage', '用量'), panel('config', '配置中心'), panel('terminal', '终端'),
       ...THEMES.map<Cmd>((t) => ({ id: `theme.${t}`, label: `主题: ${t}${st.theme === t ? ' ✓' : ''}`, ic: '◐', group: '主题', run: () => st.setTheme(t) })),
     ];
@@ -44,7 +51,7 @@ export function CommandPalette() {
         { id: 's.fork', label: '分叉当前会话', ic: '⑂', group: '当前会话', run: () => void st.openSession({ sessionId: active.sessionId, cwd: active.cwd, fork: true }) },
         { id: 's.pin', label: st.sessionMeta[active.sessionId]?.pinned ? '取消置顶' : '置顶当前会话', ic: '📌', group: '当前会话', run: () => void st.setSessionMeta(active.sessionId, { pinned: !st.sessionMeta[active.sessionId]?.pinned }) },
         { id: 's.archive', label: st.sessionMeta[active.sessionId]?.archived ? '取消归档' : '归档当前会话', ic: '🗄', group: '当前会话', run: () => void st.setSessionMeta(active.sessionId, { archived: !st.sessionMeta[active.sessionId]?.archived }) },
-        { id: 's.traj', label: st.tab === 'chat' ? '切到轨迹视图' : '切到对话视图', ic: '⇄', group: '当前会话', run: () => st.setTab(st.tab === 'chat' ? 'trajectory' : 'chat') },
+        { id: 's.traj', label: '对话 ⇄ 轨迹', ic: '⇄', group: '当前会话', run: () => runCommand('tab') },
         { id: 's.open', label: '在资源管理器打开目录', ic: '▤', group: '当前会话', run: () => void ws.request({ kind: 'shell.open', path: active.cwd }) },
         { id: 's.code', label: '在 VS Code 打开目录', ic: '⌨', group: '当前会话', run: () => void ws.request({ kind: 'shell.open', path: active.cwd, app: 'code' }) },
         live ? { id: 's.stop', label: '结束当前会话进程', ic: '⏻', group: '当前会话', run: () => void st.closeSession(active.sessionId) } : { id: 's.resume', label: '恢复当前会话进程', ic: '▶', group: '当前会话', run: () => void st.openSession({ sessionId: active.sessionId, cwd: active.cwd }) },
@@ -52,7 +59,7 @@ export function CommandPalette() {
       );
     }
     return c;
-  }, [st.panels, st.theme, st.sidebarOpen, st.showArchived, st.tab, st.sessionMeta, active?.sessionId, active?.state]);
+  }, [st.panels, st.theme, st.sidebarOpen, st.showArchived, st.settings, st.sessionMeta, active?.sessionId, active?.state]);
 
   const ql = q.replace(/^>/, '').trim().toLowerCase();
   const cmdHits = commands.filter((c) => !ql || c.label.toLowerCase().includes(ql) || c.group.toLowerCase().includes(ql));
