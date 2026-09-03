@@ -112,7 +112,7 @@ export function GitView({ cwd }: { cwd: string }) {
 
   const openDiff = (f: GitFileStatus, staged: boolean) => {
     const abs = `${st!.root}${st!.root!.includes('\\') ? '\\' : '/'}${f.path.replace(/\//g, st!.root!.includes('\\') ? '\\' : '/')}`;
-    openTile({ id: `df${staged ? 's' : 'u'}${f.path}`, kind: 'diff', sessionId: '', path: abs, staged, title: `${staged ? '已暂存 · ' : ''}${basename(f.path)}` } as any, 'tab');
+    openTile({ id: `df${Date.now().toString(36)}`, kind: 'diff', sessionId: '', path: abs, staged, cwd: st!.root!, title: `${staged ? '已暂存 · ' : ''}${basename(f.path)}` }, 'tab');
   };
   const commit = async () => {
     if (!msg.trim() && !amend) return toast('请输入提交信息');
@@ -207,7 +207,7 @@ export function GitView({ cwd }: { cwd: string }) {
       {tab === 'log' && (
         <div className="git-body list">
           {log.map((c) => (
-            <div key={c.hash} className="row clickable" onClick={() => openTile({ id: `c${c.hash}`, kind: 'diff', sessionId: '', path: c.hash, rev: c.hash, title: `${c.short} ${c.subject.slice(0, 30)}` } as any, 'tab')} title={`${c.hash}\n${c.author} <${c.email}>`}>
+            <div key={c.hash} className="row clickable" onClick={() => openTile({ id: `c${Date.now().toString(36)}`, kind: 'diff', sessionId: '', path: c.hash, rev: c.hash, cwd: st.root!, title: `${c.short} ${c.subject.slice(0, 30)}` }, 'tab')} title={`${c.hash}\n${c.author} <${c.email}>`}>
               <span className="mono muted">{c.short}</span>
               <div className="grow">
                 <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.subject} {c.refs.map((r) => <span key={r} className="badge" style={{ marginLeft: 4 }}>{r.replace('HEAD -> ', '')}</span>)}</div>

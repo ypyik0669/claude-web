@@ -99,6 +99,17 @@ export function findPaneGroup(s: LayoutState, paneId: string): Group | undefined
   return s.groups.find((g) => !!g.panes[paneId]);
 }
 
+const normPath = (p: string) => p.replace(/\\/g, '/').toLowerCase();
+/** Two tiles show the same thing (used to de-duplicate tabs). An empty chat tile never equals anything. */
+export function sameTile(a: Tile, b: Tile): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'chat') return b.kind === 'chat' && a.sessionId !== null && a.sessionId === b.sessionId;
+  if (a.kind === 'doc') return b.kind === 'doc' && normPath(a.path) === normPath(b.path);
+  if (a.kind === 'diff') return b.kind === 'diff' && normPath(a.path) === normPath(b.path) && !!a.staged === !!b.staged && a.rev === b.rev;
+  if (a.kind === 'panel') return b.kind === 'panel' && a.panel === b.panel;
+  return false;
+}
+
 export function activeTile(p: Pane | undefined): Tile | undefined {
   return p ? p.tiles.find((t) => t.id === p.activeTileId) ?? p.tiles[0] : undefined;
 }
@@ -159,10 +170,12 @@ export function presetTree(preset: LayoutPreset, existing: Pane[]): { root: Pane
     panes[p.id] = p;
     ids.push(p.id);
   }
-  // leftover panes: merge their tiles into the last kept pane so nothing is lost
+  // leftover panes: merge their tiles into the last kept pane so nothing is lost (same session / file only once)
   for (const p of existing.slice(need)) {
-    const last = panes[ids[ids.length - 1]];
-    last.tiles.push(...p.tiles);
+    const lastId = ids[ids.length - 1];
+    const last = panes[lastId];
+    const extra = p.tiles.filter((t) => !last.tiles.some((x) => sameTile(x, t)));
+    if (extra.length) panes[lastId] = { ...last, tiles: [...last.tiles, ...extra] };
   }
   const leaf = (id: string): PaneNode => ({ type: 'leaf', paneId: id });
   const split = (dir: 'row' | 'col', ratio: number, a: PaneNode, b: PaneNode): PaneNode => ({ type: 'split', id: uid('s'), dir, ratio, a, b });
@@ -327,16 +340,7 @@ export function layoutReducer(s: LayoutState, a: LayoutAction): LayoutState {
         }
         // same session / document / diff already open as a tab → just activate it (docs also take the new line)
         const nt = a.tile;
-        const np = (p: string) => p.replace(/\\/g, '/').toLowerCase();
-        const same = (t: Tile): boolean => {
-          if (t.kind !== nt.kind) return false;
-          if (nt.kind === 'chat') return t.kind === 'chat' && nt.sessionId !== null && t.sessionId === nt.sessionId;
-          if (nt.kind === 'doc') return t.kind === 'doc' && np(t.path) === np(nt.path);
-          if (nt.kind === 'diff') return t.kind === 'diff' && np(t.path) === np(nt.path) && !!t.staged === !!nt.staged && t.rev === nt.rev;
-          if (nt.kind === 'panel') return t.kind === 'panel' && t.panel === nt.panel;
-          return false;
-        };
-        const dup = p.tiles.find(same);
+        const dup = p.tiles.find((t) => sameTile(t, nt));
         if (dup) {
           const tiles = nt.kind === 'doc' && nt.line ? p.tiles.map((t) => (t.id === dup.id ? { ...t, line: nt.line } : t)) : p.tiles;
           return p.activeTileId === dup.id && tiles === p.tiles ? p : { ...p, tiles, activeTileId: dup.id };
