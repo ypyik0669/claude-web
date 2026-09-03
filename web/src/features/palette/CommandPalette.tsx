@@ -43,7 +43,7 @@ export function CommandPalette() {
         .map<Cmd>((x) => ({ id: `wb.${x.id}`, label: x.label, sub: keyLabel(x), ic: x.group === '分组' ? '▭' : x.group === '窗格' ? '◫' : '▣', group: '工作台', run: () => runCommand(x.id) })),
       ...(['single', 'cols2', 'cols3', 'grid2x2', 'mainSide'] as const).map<Cmd>((p) => ({ id: `preset.${p}`, label: `布局预设: ${{ single: '单窗格', cols2: '左右两栏', cols3: '三栏', grid2x2: '四宫格', mainSide: '主 + 侧' }[p]}`, ic: '⊞', group: '工作台', run: () => st.dispatchLayout({ t: 'pane.preset', preset: p }) })),
       { id: 'window.new', label: '在新窗口打开当前分组', ic: '⧉', group: '工作台', run: () => runCommand('window.new') },
-      panel('mission', '总览'), panel('tasks', '任务'), panel('files', '文件改动'), panel('usage', '用量'), panel('config', '配置中心'), panel('terminal', '终端'),
+      panel('mission', '总览'), panel('goals', '目标'), panel('android', 'Android'), panel('tasks', '任务'), panel('files', '文件改动'), panel('usage', '用量'), panel('config', '配置中心'), panel('terminal', '终端'),
       ...THEMES.map<Cmd>((t) => ({ id: `theme.${t}`, label: `主题: ${t}${st.theme === t ? ' ✓' : ''}`, ic: '◐', group: '主题', run: () => st.setTheme(t) })),
     ];
     if (active) {

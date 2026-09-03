@@ -13,7 +13,7 @@ import { applyMessage, applyTranscript, createConversation, walkTools, type Conv
 import { dlg } from '@/ui/dialog';
 import { applyUiSettings, resolveTheme } from '@/features/settings/ui-settings';
 
-export type PanelId = 'tasks' | 'files' | 'usage' | 'config' | 'terminal' | 'inspector' | 'mission';
+export type PanelId = import('@/model/layout').PanelId;
 
 export interface QueuedMessage { id: string; text: string; images?: { mediaType: string; data: string }[]; attachments?: AttachmentRef[] }
 

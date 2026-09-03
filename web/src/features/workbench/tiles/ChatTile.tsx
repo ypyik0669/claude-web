@@ -14,6 +14,7 @@ import { Welcome } from '../Welcome';
 import { FileTree } from '../FileTree';
 import { GitView } from '../GitView';
 import { SearchView } from '../SearchView';
+import { BoardView } from '@/features/vcs/BoardView';
 import type { GitStatus } from '@shared';
 
 /** git status for a cwd, refreshed on git.changed broadcasts (shared by the files tab badges). */
@@ -41,6 +42,7 @@ const WB_TABS: { id: WorkbenchTab; l: string }[] = [
   { id: 'search', l: '搜索' },
   { id: 'schedules', l: '定时' },
   { id: 'artifacts', l: '产物' },
+  { id: 'board', l: '看板' },
 ];
 
 /** Per-session header: breadcrumb · status · rename · chat/trajectory · fork · export · stop/resume. Moved out of TopBar. */
@@ -161,6 +163,7 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
       {tile.wb === 'search' && <div className="wb-body"><SearchView root={active.cwd} /></div>}
       {tile.wb === 'schedules' && <div className="wb-body"><SchedulesView /></div>}
       {tile.wb === 'artifacts' && <div className="wb-body"><Artifacts sessionId={sid} /></div>}
+      {tile.wb === 'board' && <div className="wb-body"><BoardView cwd={active.cwd} sid={sid} /></div>}
     </div>
   );
 }

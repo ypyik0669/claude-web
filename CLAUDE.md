@@ -116,6 +116,13 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - `server/src/im/router.test.ts` 用假 adapter / pool 覆盖路由逻辑；`server/ws-phase6.mjs` 端到端跑远程监听 + 配对 + 设备令牌 + 隧道失败路径 + IM 配置。
 - vitest 只认 `src/**/*.test.ts`；server 的 `tsconfig` 现在排除测试与 `__mocks__`，不然 `npm run build` 会把测试编译进 `dist/` 然后 vitest 连 dist 里的副本一起跑（mock 路径不存在 → 超时）。
 
+## 看板 / 目标 / Android（阶段 7，2026-09-03）
+
+- **Issue / PR 看板**：`server/src/vcs/service.ts`，仓库从 `origin` 解析（https / ssh / git@，GitLab 嵌套 group），也可以显式传 `repo: owner/repo[@host]` 或 URL（看板右上角可切换，存 localStorage `cw.board.repo:<cwd>`）。鉴权只用 CLI 拿 token（`gh auth token -h <host>` / `glab config get token`，或 env GH_TOKEN / GITLAB_TOKEN），之后全部走 fetch：GitHub PR 列表用 GraphQL 一次拿齐 reviewDecision / checks / 增删行，其余 REST；GitLab 走 v4。PR 检出：`git fetch origin +pull/N/head:refs/remotes/origin/pr-N` 再 checkout 或 `worktreeAdd`，然后开会话把「审查」提示发过去。会话 tile 的「看板」标签（`WorkbenchTab 'board'`）。
+- **目标（Goal 房间）**：ccb 的 `/goal` 是 TUI 内存态（Stop hook + 150 轮上限，不落盘），headless 用不了，所以 `server/src/goals/service.ts` 自己实现：目标 = 一句话 objective + 活规格（Markdown，随时改，下一轮提示生效）+ 绑定会话；启动时把 `GOAL_PROTOCOL`（要求最后一行 `GOAL_STATUS: complete|blocked — 原因|continue`）+ 目标 + 规格发给会话，每个 `result` 后解析状态：continue → 1.5s 后自动发「继续」；complete / blocked / 会话出错 / 连续 3 轮无工具且回复相同（卡住）/ 轮数或 token 预算用尽 → 停。证据从流里收：Edit/Write 文件、Bash 命令（含 `git commit` → commit、测试命令 → test，并回填 tool_result 成败）、TodoWrite → 执行图步骤。存 `meta.goals`，事件 `goals.changed`。UI：停靠面板「目标」（执行图 / 活规格 / 证据三个 tab），输入框里 `/goal <目标>` 直接创建并启动。任何 agent 驱动都能跑目标。
+- **Android 预览**（可选）：`server/src/android/service.ts` 找 adb（ANDROID_HOME / SDK 默认路径 / PATH），`exec-out screencap -p` 截图（PNG 头里读宽高），`input tap/swipe/keyevent/text`，安装 APK、列第三方包并 `monkey` 启动、`logcat -d -t`，`emulator -avd` 分离启动。面板「Android」每 0.9s 轮询截图，点击 = tap，拖动 = swipe。本机没 adb，只验证了「未安装」路径。
+- `server/ws-phase7.mjs`：看板对 `anthropics/claude-code` 只读（需要 `gh auth login`）、目标用 mock ACP agent 跑完整回合（mock 回显提示词，里面就带 `GOAL_STATUS: complete`，所以一轮即完成）、android 状态。`web/src/store` 里的 `PanelId` 现在是 `model/layout` 的别名，加面板只改 layout.ts + Dock 的三张表 + TopBar/命令面板/TabStrip 的列表。
+
 ## 桌面版（desktop/）
 
 ```

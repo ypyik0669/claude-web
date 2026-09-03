@@ -27,6 +27,9 @@ import { AgentTranscripts } from './agents/transcript.js';
 import { RemoteService, pairPage } from './remote/service.js';
 import { TunnelManager } from './remote/tunnel.js';
 import { ImService } from './im/service.js';
+import { VcsService } from './vcs/service.js';
+import { GoalService } from './goals/service.js';
+import { AndroidService } from './android/service.js';
 
 const FILE_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.html': 'text/html; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.json': 'application/json' };
 
@@ -189,7 +192,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const tunnels = new TunnelManager();
   const sessionsSvc = new SessionService();
   const im = new ImService(meta, secrets, pool, sessionsSvc);
-  const services = { remote, tunnels, im, pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal: new TerminalService(), meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: new GitService(), search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, version };
+  const gitSvc = new GitService();
+  const services = { remote, tunnels, im, vcs: new VcsService(gitSvc), goals: new GoalService(meta, pool), android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal: new TerminalService(), meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, version };
   new Hub(wss, services);
 
   await new Promise<void>((res, rej) => {

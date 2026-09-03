@@ -4,7 +4,7 @@ import { clsx } from '@/util';
 import type { LimitWindow } from '@shared';
 import { PANEL_ICONS, PANEL_TITLES } from '@/features/workbench/Dock';
 
-const PANELS: PanelId[] = ['mission', 'tasks', 'files', 'usage', 'config', 'terminal'];
+const PANELS: PanelId[] = ['mission', 'goals', 'tasks', 'files', 'usage', 'config', 'terminal'];
 
 function resetIn(iso: string | null) {
   if (!iso) return '';

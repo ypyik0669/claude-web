@@ -124,6 +124,17 @@ export interface ImBinding { gatewayId: string; chatId: string; sessionId: strin
 export interface ImGatewayInfo extends ImGatewayConfig { state: 'stopped' | 'starting' | 'running' | 'error'; error: string; botName: string; inbound: boolean; pairCode: string; pairExpiresAt: number; bindings: ImBinding[] }
 export interface ImKindDef { kind: ImKind; name: string; icon: string; inbound: boolean; fields: { key: string; label: string; secret?: boolean; hint?: string }[]; help: string }
 
+// ---- phase 7: issue / PR boards, goals, android ----
+export interface VcsRepo { provider: 'github' | 'gitlab'; host: string; owner: string; repo: string; url: string; authOk: boolean; user: string; error: string; cli: 'gh' | 'glab'; defaultBranch?: string; openIssues?: number; private?: boolean }
+export interface VcsItem { number: number; title: string; state: 'open' | 'closed' | 'merged'; isPr: boolean; draft?: boolean; author: string; labels: { name: string; color: string }[]; assignees: string[]; comments: number; createdAt: string; updatedAt: string; url: string; milestone?: string; head?: string; base?: string; additions?: number; deletions?: number; changedFiles?: number; reviewDecision?: string; checks?: 'success' | 'failure' | 'pending' | 'none'; mergeable?: boolean }
+export interface VcsDetail extends VcsItem { body: string; comments: any; commentsList: { id: string; author: string; body: string; createdAt: string; url: string }[]; reviews?: { author: string; state: string; submittedAt: string }[]; files?: { path: string; additions: number; deletions: number; status: string }[]; checkRuns?: { name: string; status: string; conclusion: string; url: string }[]; mergeableState?: string }
+export type GoalStatus = 'draft' | 'active' | 'paused' | 'complete' | 'blocked' | 'max_turns';
+export interface GoalStep { id: string; text: string; status: 'pending' | 'in_progress' | 'completed' }
+export interface GoalEvidence { at: number; kind: 'file' | 'command' | 'test' | 'commit' | 'note' | 'error' | 'blocked'; summary: string; ref?: string; ok?: boolean }
+export interface Goal { id: string; objective: string; spec: string; cwd: string; sessionId?: string; status: GoalStatus; turnsExecuted: number; maxTurns: number; tokensUsed: number; tokenBudget: number | null; costUsd?: number; createdAt: number; updatedAt: number; startedAt?: number; completedAt?: number; steps: GoalStep[]; evidence: GoalEvidence[]; lastResult?: string; agent?: string; permissionMode?: string; model?: string }
+export interface AndroidDevice { serial: string; state: 'device' | 'offline' | 'unauthorized' | 'emulator'; model: string; product: string; emulator: boolean }
+export interface AndroidStatus { adb: string; emulator: string; avds: string[]; devices: AndroidDevice[] }
+
 export interface Limits { ok: boolean; capturedAt: string; windows: LimitWindow[]; subscriptionType?: string; rateLimitTier?: string; error?: string }
 
 export interface PermissionRequestEvent {
@@ -306,6 +317,34 @@ export type ClientRequest =
   | { kind: 'im.test'; id: string }
   | { kind: 'im.pairCode'; id: string }
   | { kind: 'im.unbind'; gatewayId: string; chatId: string }
+  | { kind: 'vcs.repo'; cwd: string; repo?: string }
+  | { kind: 'vcs.issues'; cwd: string; repo?: string; state?: 'open' | 'closed' | 'all'; q?: string; page?: number; mine?: boolean }
+  | { kind: 'vcs.pulls'; cwd: string; repo?: string; state?: 'open' | 'closed' | 'merged' | 'all'; page?: number }
+  | { kind: 'vcs.item'; cwd: string; repo?: string; number: number; isPr: boolean }
+  | { kind: 'vcs.comment'; cwd: string; repo?: string; number: number; isPr: boolean; body: string }
+  | { kind: 'vcs.setState'; cwd: string; repo?: string; number: number; isPr: boolean; state: 'open' | 'closed' }
+  | { kind: 'vcs.assign'; cwd: string; repo?: string; number: number; isPr: boolean; assignees: string[] }
+  | { kind: 'vcs.labels'; cwd: string; repo?: string; number: number; isPr: boolean; labels: string[] }
+  | { kind: 'vcs.merge'; cwd: string; repo?: string; number: number; method: 'merge' | 'squash' | 'rebase' }
+  | { kind: 'vcs.create'; cwd: string; repo?: string; title: string; body?: string; isPr?: boolean; head?: string; base?: string; draft?: boolean; labels?: string[] }
+  | { kind: 'vcs.checkout'; cwd: string; repo?: string; number: number; worktree?: boolean }
+  | { kind: 'goals.list' }
+  | { kind: 'goals.create'; objective: string; spec?: string; cwd: string; maxTurns?: number; tokenBudget?: number | null; agent?: string; permissionMode?: string; model?: string }
+  | { kind: 'goals.update'; id: string; patch: Partial<Pick<Goal, 'objective' | 'spec' | 'maxTurns' | 'tokenBudget' | 'cwd' | 'agent' | 'permissionMode' | 'model'>> }
+  | { kind: 'goals.start'; id: string }
+  | { kind: 'goals.pause'; id: string }
+  | { kind: 'goals.resume'; id: string }
+  | { kind: 'goals.complete'; id: string }
+  | { kind: 'goals.remove'; id: string }
+  | { kind: 'goals.note'; id: string; text: string }
+  | { kind: 'android.status' }
+  | { kind: 'android.screenshot'; serial: string }
+  | { kind: 'android.input'; serial: string; input: { kind: 'tap'; x: number; y: number } | { kind: 'swipe'; x1: number; y1: number; x2: number; y2: number; ms?: number } | { kind: 'key'; code: string | number } | { kind: 'text'; text: string } }
+  | { kind: 'android.install'; serial: string; apk: string }
+  | { kind: 'android.logcat'; serial: string; lines?: number; filter?: string; clear?: boolean }
+  | { kind: 'android.packages'; serial: string }
+  | { kind: 'android.launchApp'; serial: string; pkg: string }
+  | { kind: 'android.startEmulator'; avd: string }
   | { kind: 'agents.set'; agent: AgentKind; patch: { command?: string; args?: string[]; env?: Record<string, string>; model?: string; label?: string; enabled?: boolean; name?: string; protocol?: 'acp' | 'codex' } | null }
   | { kind: 'terminal.open'; cwd: string; cols: number; rows: number }
   | { kind: 'terminal.input'; termId: string; data: string }
@@ -328,6 +367,7 @@ export type ServerEvent =
   | { kind: 'remote.changed' }
   | { kind: 'im.changed' }
   | { kind: 'tunnel.changed' }
+  | { kind: 'goals.changed' }
   | { kind: 'limits'; limits: Limits }
   | { kind: 'terminal.data'; termId: string; data: string }
   | { kind: 'terminal.exit'; termId: string; code: number | null }

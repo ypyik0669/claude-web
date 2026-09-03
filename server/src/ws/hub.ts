@@ -21,6 +21,9 @@ import { detectTools } from '../tools/detect.js';
 import type { RemoteService } from '../remote/service.js';
 import type { TunnelManager } from '../remote/tunnel.js';
 import { IM_KINDS, type ImService } from '../im/service.js';
+import type { VcsService } from '../vcs/service.js';
+import type { GoalService } from '../goals/service.js';
+import type { AndroidService } from '../android/service.js';
 import type { LedgerService } from '../usage/ledger.js';
 import { SCHEDULE_TEMPLATES } from '../schedules/service.js';
 import type { AgentRegistry } from '../agents/types.js';
@@ -38,6 +41,9 @@ export interface Services {
   remote: RemoteService;
   tunnels: TunnelManager;
   im: ImService;
+  vcs: VcsService;
+  goals: GoalService;
+  android: AndroidService;
   pool: RunnerPool;
   sessions: SessionService;
   config: ConfigService;
@@ -76,6 +82,7 @@ export class Hub {
     s.remote.on('changed', () => this.broadcast({ kind: 'remote.changed' }));
     s.im.on('changed', () => this.broadcast({ kind: 'im.changed' }));
     s.tunnels.on('changed', () => this.broadcast({ kind: 'tunnel.changed' }));
+    s.goals.on('changed', () => this.broadcast({ kind: 'goals.changed' }));
   }
 
   broadcast(event: ServerEvent) {
@@ -516,6 +523,34 @@ export class Hub {
         await s.meta.removeImBinding(req.gatewayId, req.chatId);
         this.broadcast({ kind: 'im.changed' });
         return null;
+      case 'vcs.repo': return s.vcs.repo(req.cwd, req.repo);
+      case 'vcs.issues': return s.vcs.issues(req.cwd, { state: req.state, q: req.q, page: req.page, repo: req.repo, mine: req.mine });
+      case 'vcs.pulls': return s.vcs.pulls(req.cwd, { state: req.state, page: req.page, repo: req.repo });
+      case 'vcs.item': return s.vcs.item(req.cwd, req.number, req.isPr, req.repo);
+      case 'vcs.comment': await s.vcs.comment(req.cwd, req.number, req.body, req.isPr, req.repo); return null;
+      case 'vcs.setState': await s.vcs.setState(req.cwd, req.number, req.state, req.isPr, req.repo); return null;
+      case 'vcs.assign': await s.vcs.assign(req.cwd, req.number, req.assignees, req.isPr, req.repo); return null;
+      case 'vcs.labels': await s.vcs.labels(req.cwd, req.number, req.labels, req.isPr, req.repo); return null;
+      case 'vcs.merge': await s.vcs.merge(req.cwd, req.number, req.method, req.repo); return null;
+      case 'vcs.create': return s.vcs.create(req.cwd, { title: req.title, body: req.body, isPr: req.isPr, head: req.head, base: req.base, draft: req.draft, labels: req.labels }, req.repo);
+      case 'vcs.checkout': return s.vcs.checkout(req.cwd, req.number, { worktree: req.worktree, repo: req.repo });
+      case 'goals.list': return s.goals.list();
+      case 'goals.create': return s.goals.create({ objective: req.objective, spec: req.spec, cwd: req.cwd, maxTurns: req.maxTurns, tokenBudget: req.tokenBudget, agent: req.agent, permissionMode: req.permissionMode, model: req.model });
+      case 'goals.update': return s.goals.update(req.id, req.patch);
+      case 'goals.start': return s.goals.start(req.id);
+      case 'goals.pause': return s.goals.pause(req.id);
+      case 'goals.resume': return s.goals.resume(req.id);
+      case 'goals.complete': return s.goals.complete(req.id);
+      case 'goals.remove': await s.goals.remove(req.id); return null;
+      case 'goals.note': await s.goals.note(req.id, req.text); return null;
+      case 'android.status': return s.android.status();
+      case 'android.screenshot': return s.android.screenshot(req.serial);
+      case 'android.input': await s.android.input(req.serial, req.input); return null;
+      case 'android.install': return s.android.install(req.serial, req.apk);
+      case 'android.logcat': if (req.clear) { await s.android.clearLogcat(req.serial); return ''; } return s.android.logcat(req.serial, req.lines, req.filter);
+      case 'android.packages': return s.android.packages(req.serial);
+      case 'android.launchApp': return s.android.launchApp(req.serial, req.pkg);
+      case 'android.startEmulator': return s.android.startEmulator(req.avd);
       case 'agents.set':
         await s.agents.setConfig(req.agent, req.patch);
         s.agents.invalidate();

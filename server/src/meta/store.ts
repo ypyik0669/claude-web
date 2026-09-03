@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { EventEmitter } from 'node:events';
-import type { ImBinding, ImGatewayConfig, MessageFeedback, Provider, RemoteHost, Schedule, ScheduleRun } from '../protocol.js';
+import type { Goal, ImBinding, ImGatewayConfig, MessageFeedback, Provider, RemoteHost, Schedule, ScheduleRun } from '../protocol.js';
 import type { DeviceRecord } from '../remote/service.js';
 export type { Schedule } from '../protocol.js';
 
@@ -23,13 +23,14 @@ interface Data {
   remoteHosts: RemoteHost[];
   imGateways: ImGatewayConfig[];
   imBindings: ImBinding[];
+  goals: Goal[];
 }
 
 const file = path.join(process.env.CLAUDE_WEB_DIR ?? path.join(os.homedir(), '.claude-web'), 'meta.json');
 
 /** Small JSON store for things Claude Code itself does not persist: workspaces, pin/archive flags, schedules, UI settings. */
 export class MetaStore extends EventEmitter {
-  data: Data = { version: 1, workspaces: [], sessions: {}, schedules: [], scheduleRuns: [], settings: {}, providers: [], feedback: {}, drafts: {}, devices: [], remoteHosts: [], imGateways: [], imBindings: [] };
+  data: Data = { version: 1, workspaces: [], sessions: {}, schedules: [], scheduleRuns: [], settings: {}, providers: [], feedback: {}, drafts: {}, devices: [], remoteHosts: [], imGateways: [], imBindings: [], goals: [] };
   private saving: Promise<void> | null = null;
 
   async load() {
@@ -192,6 +193,9 @@ export class MetaStore extends EventEmitter {
   imGateways(): ImGatewayConfig[] { return this.data.imGateways ??= []; }
   async setImGateway(g: ImGatewayConfig) { const list = this.imGateways(); const i = list.findIndex((x) => x.id === g.id); if (i >= 0) list[i] = g; else list.push(g); await this.queueSave(true); }
   async removeImGateway(id: string) { this.data.imGateways = this.imGateways().filter((g) => g.id !== id); this.data.imBindings = this.imBindings().filter((b) => b.gatewayId !== id); await this.queueSave(); }
+  goals(): Goal[] { return this.data.goals ??= []; }
+  async setGoal(g: Goal) { const list = this.goals(); const i = list.findIndex((x) => x.id === g.id); if (i >= 0) list[i] = g; else list.push(g); await this.queueSave(true); }
+  async removeGoal(id: string) { this.data.goals = this.goals().filter((g) => g.id !== id); await this.queueSave(true); }
   imBindings(): ImBinding[] { return this.data.imBindings ??= []; }
   async setImBinding(b: ImBinding) { this.data.imBindings = [...this.imBindings().filter((x) => !(x.gatewayId === b.gatewayId && x.chatId === b.chatId)), b]; await this.queueSave(true); }
   async removeImBinding(gatewayId: string, chatId: string) { this.data.imBindings = this.imBindings().filter((x) => !(x.gatewayId === gatewayId && x.chatId === chatId)); await this.queueSave(true); }

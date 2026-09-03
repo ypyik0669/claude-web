@@ -154,6 +154,19 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
   const doSend = async () => {
     if (!canSend) return;
     const t = text;
+    if (/^\/goal\s+\S/.test(t.trim())) {
+      const objective = t.trim().replace(/^\/goal\s+/, '');
+      const cwdFor = welcome ? cwd.trim() : active?.cwd ?? '';
+      if (!cwdFor) { toast('先选一个目录'); return; }
+      try {
+        const g = await ws.request<{ id: string }>({ kind: 'goals.create', objective, cwd: cwdFor, permissionMode: welcome ? wMode : (active?.info?.permissionMode ?? 'acceptEdits'), agent: welcome ? (foreign ? wAgent : undefined) : (active?.info?.agent && active.info.agent !== 'claude' ? active.info.agent : undefined) });
+        await ws.request({ kind: 'goals.start', id: g.id });
+        setText('');
+        if (!useStore.getState().panels.includes('goals')) togglePanel('goals');
+        toast('目标已创建并启动，进度看「目标」面板', true);
+      } catch (e: any) { toast(e.message); }
+      return;
+    }
     const im = imgs.map(({ mediaType, data }) => ({ mediaType, data }));
     if (welcome) {
       if (!cwd.trim()) return toast('请先选择工作目录');

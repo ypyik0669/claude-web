@@ -96,7 +96,7 @@ export function TabStrip({ pane, groupId, index, zoomed, single }: { pane: PaneM
             <div className="menu" style={{ top: 26, left: 0 }} onMouseLeave={() => setMenu(false)}>
               <button onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: chatTile(null), mode: 'tab' }); }}>◌ 新会话</button>
               <button onClick={() => { setMenu(false); const cwd = currentCwd(pane, open); dispatch({ t: 'tile.open', paneId: pane.id, tile: { id: `t${Date.now()}`, kind: 'term', cwd }, mode: 'tab' }); }}>▣ 终端</button>
-              {(['mission', 'tasks', 'files', 'usage', 'config', 'inspector'] as const).map((p) => (
+              {(['mission', 'goals', 'tasks', 'files', 'usage', 'config', 'inspector', 'android'] as const).map((p) => (
                 <button key={p} onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: { id: `t${Date.now()}`, kind: 'panel', panel: p }, mode: 'tab' }); }}>▤ {PANEL_TITLES[p]}</button>
               ))}
             </div>
