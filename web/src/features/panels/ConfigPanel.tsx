@@ -3,6 +3,7 @@ import { useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { clsx } from '@/util';
 import type { Provider, ProviderType } from '@shared';
+import { dlg } from '@/ui/dialog';
 
 type Tab = 'overview' | 'providers' | 'plugins' | 'mcp' | 'skills' | 'agents' | 'hooks' | 'settings';
 const TABS: { id: Tab; l: string }[] = [
@@ -32,7 +33,7 @@ function Cmd({ r }: { r: { code: number; stdout: string; stderr: string } | null
   return <pre className="mono" style={{ fontSize: 11.5, color: r.code ? 'var(--red)' : 'var(--fg-1)', padding: '6px 12px', whiteSpace: 'pre-wrap' }}>{(r.stdout + '\n' + r.stderr).trim()}</pre>;
 }
 
-function Overview() {
+export function Overview() {
   const { data, err } = useReq<any>({ kind: 'config.overview' });
   const engine = useStore((s) => s.engine);
   const loadEngine = useStore((s) => s.loadEngine);
@@ -72,7 +73,7 @@ function Overview() {
   );
 }
 
-function Plugins() {
+export function Plugins() {
   const { data, err, reload } = useReq<{ plugins: any[]; stderr?: string }>({ kind: 'config.plugins' });
   const mk = useReq<{ marketplaces: any }>({ kind: 'config.marketplaces' });
   const [spec, setSpec] = useState('');
@@ -93,7 +94,7 @@ function Plugins() {
               <div className="sub">{p.manifest?.description ?? ''} {p.components ? `· skills ${p.components.skills} / commands ${p.components.commands} / agents ${p.components.agents}${p.components.hooks ? ' / hooks' : ''}${p.components.mcp ? ' / mcp' : ''}` : ''}</div>
             </div>
             <button className={clsx('toggle', p.enabled && 'on')} title={p.enabled ? '禁用' : '启用'} disabled={busy} onClick={() => run({ kind: 'config.plugin.toggle', name: p.id, enable: !p.enabled })} />
-            <button className="btn sm danger" disabled={busy} onClick={() => confirm(`卸载 ${p.id}?`) && run({ kind: 'config.plugin.uninstall', name: p.id })}>卸载</button>
+            <button className="btn sm danger" disabled={busy} onClick={async () => { if (await dlg.confirm(`卸载 ${p.id}?`, { danger: true })) void run({ kind: 'config.plugin.uninstall', name: p.id }); }}>卸载</button>
           </div>
         ))}
         {data && !data.plugins.length && <div className="empty">没有安装插件</div>}
@@ -117,7 +118,7 @@ function Plugins() {
   );
 }
 
-function Mcp() {
+export function Mcp() {
   const active = useScopedSession();
   const { data, err, reload } = useReq<{ servers: any[]; userServers: any; projectServers: any; stderr?: string }>({ kind: 'config.mcp' });
   const [name, setName] = useState('');
@@ -146,7 +147,7 @@ function Mcp() {
           <div key={s.name} className="row">
             <span className={clsx('dot', /Connected/.test(s.status) ? 'idle' : 'error')} />
             <div className="grow"><div>{s.name}</div><div className="sub">{s.target} · {s.status}</div></div>
-            <button className="btn sm danger" onClick={() => confirm(`移除 MCP ${s.name}?`) && run({ kind: 'config.mcp.remove', name: s.name })}>移除</button>
+            <button className="btn sm danger" onClick={async () => { if (await dlg.confirm(`移除 MCP ${s.name}?`, { danger: true })) void run({ kind: 'config.mcp.remove', name: s.name }); }}>移除</button>
           </div>
         ))}
         {data && !data.servers.length && <div className="empty">没有配置 MCP server</div>}
@@ -167,7 +168,7 @@ function Mcp() {
   );
 }
 
-function SimpleList({ kind, render }: { kind: 'config.skills' | 'config.agents' | 'config.hooks'; render: (x: any) => React.ReactNode }) {
+export function SimpleList({ kind, render }: { kind: 'config.skills' | 'config.agents' | 'config.hooks'; render: (x: any) => React.ReactNode }) {
   const { data, err } = useReq<any[]>({ kind });
   if (err) return <div className="empty" style={{ color: 'var(--red)' }}>{err}</div>;
   if (!data) return <div className="empty">加载中…</div>;
@@ -175,7 +176,7 @@ function SimpleList({ kind, render }: { kind: 'config.skills' | 'config.agents' 
 }
 
 /** UI preferences stored in meta.json (survive the desktop's per-launch origin). */
-function UiSettings() {
+export function UiSettings() {
   const settings = useStore((s) => s.settings);
   const setSetting = useStore((s) => s.setSetting);
   const rows: { key: string; l: string; hint: string; def?: boolean }[] = [
@@ -197,7 +198,7 @@ function UiSettings() {
   );
 }
 
-function Settings() {
+export function Settings() {
   const active = useScopedSession();
   const [scope, setScope] = useState<'user' | 'project' | 'local'>('user');
   const { data, err, reload } = useReq<{ path: string; text: string }>({ kind: 'config.settings.read', scope, cwd: active?.cwd }, [scope, active?.cwd]);
@@ -234,7 +235,7 @@ type Draft = Partial<Provider> & { apiKey: string };
 const emptyDraft = (): Draft => ({ name: '', type: 'anthropic', baseUrl: '', apiKey: '', defaultModel: '', modelMap: {} });
 
 /** Third-party endpoint profiles. Keys live in ~/.claude-web/meta.json and are injected per session — settings.json is never touched. */
-function ProviderProfiles() {
+export function ProviderProfiles() {
   const providers = useStore((s) => s.providers);
   const loadProviders = useStore((s) => s.loadProviders);
   const settings = useStore((s) => s.settings);
@@ -273,7 +274,7 @@ function ProviderProfiles() {
     setBusy(false);
   };
   const remove = async (p: Provider) => {
-    if (!confirm(`删除供应商「${p.name}」？已用它创建的会话恢复时会退回 Claude 账号。`)) return;
+    if (!(await dlg.confirm(`删除供应商「${p.name}」？`, { message: '已用它创建的会话恢复时会退回 Claude 账号。', danger: true }))) return;
     await ws.request({ kind: 'providers.remove', id: p.id }).catch((e) => toast(e.message));
     await loadProviders();
   };
@@ -361,7 +362,7 @@ const ENV_GROUPS: { title: string; keys: { k: string; hint: string; secret?: boo
 ];
 
 /** Edits the `env` block of ~/.claude/settings.json for non-provider integrations. */
-function EnvEditor() {
+export function EnvEditor() {
   const { data, err, reload } = useReq<{ path: string; text: string }>({ kind: 'config.settings.read', scope: 'user' });
   const [env, setEnv] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState('');

@@ -3,6 +3,7 @@ import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { basename, clsx } from '@/util';
 import type { SearchOptions, SearchResult } from '@shared';
+import { dlg } from '@/ui/dialog';
 
 /** Cross-file search & replace (ripgrep on the server). Results grouped per file; click → editor at that line. */
 export function SearchView({ root }: { root: string }) {
@@ -37,7 +38,7 @@ export function SearchView({ root }: { root: string }) {
     if (!res) return;
     const targets = only ?? res.files.map((f) => ({ path: f.path, lines: f.matches.map((m) => m.line).filter((l) => !excluded.has(`${f.path}:${l}`)) })).filter((t) => t.lines.length);
     const n = targets.reduce((a, t) => a + (t.lines?.length ?? 0), 0);
-    if (!confirm(`替换 ${n} 处（${targets.length} 个文件）？\n「${q}」→「${rep}」`)) return;
+    if (!(await dlg.confirm(`替换 ${n} 处（${targets.length} 个文件）？`, { message: `「${q}」→「${rep}」`, okLabel: '替换' }))) return;
     try {
       const r = await ws.request<{ files: number; replacements: number }>({ kind: 'search.replace', root, query: q, replacement: rep, options: { ...opt, include: inc.split(',').map((s) => s.trim()).filter(Boolean), exclude: exc.split(',').map((s) => s.trim()).filter(Boolean) }, targets });
       toast(`已替换 ${r.replacements} 处，${r.files} 个文件`, true);

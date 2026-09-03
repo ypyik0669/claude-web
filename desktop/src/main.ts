@@ -2,6 +2,20 @@ import { app, BrowserWindow, Menu, Tray, Notification, dialog, shell, ipcMain, n
 import path from 'node:path';
 import fs from 'node:fs';
 import { ServerHost } from './server-host';
+import { autoUpdater } from 'electron-updater';
+
+// ---------- launch flags (read before `ready`): software rendering fallback ----------
+const flagsFile = () => path.join(app.getPath('userData'), 'flags.json');
+function readFlags(): { softwareRender?: boolean; gpuCrashes?: number } {
+  try { return JSON.parse(fs.readFileSync(flagsFile(), 'utf8')); } catch { return {}; }
+}
+function writeFlags(f: Record<string, unknown>) {
+  try { fs.writeFileSync(flagsFile(), JSON.stringify({ ...readFlags(), ...f })); } catch { /* ignore */ }
+}
+if (readFlags().softwareRender || process.argv.includes('--software-render')) {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu');
+}
 
 const APP_NAME = 'Claude Web';
 const wins = new Map<string, BrowserWindow>(); // winId -> window ("main" is the first one)
@@ -9,6 +23,9 @@ let tray: Tray | null = null;
 let pendingCount = 0;
 let quitting = false;
 let titleBar = { bg: '', fg: '' };
+let gpuCrashes = 0;
+type UpdateState = { status: string; version?: string; percent?: number; error?: string; notes?: string };
+let updateState: UpdateState = { status: 'idle' };
 const host = new ServerHost();
 const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
 
@@ -100,7 +117,8 @@ function createWindow(url: string, winId = 'main', bounds?: Bounds): BrowserWind
       return;
     }
     e.preventDefault();
-    win.hide(); // last visible window: keep running in the tray
+    // last visible window: hide to the tray (default) or quit, per the user's setting
+    void getSetting(win, 'ui.closeToTray', true).then((tray) => { if (tray) win.hide(); else void requestQuit(); });
   });
   win.on('closed', () => { if (wins.get(winId) === win) wins.delete(winId); });
   win.webContents.setWindowOpenHandler(({ url: target }) => {
@@ -197,10 +215,12 @@ function buildMenu() {
         { type: 'separator' },
         cmd('停靠面板', 'CmdOrCtrl+J', 'dock.toggle'),
         cmd('最小化停靠面板', 'CmdOrCtrl+Shift+J', 'dock.minimize'),
+        cmd('总览（Mission Control）', 'CmdOrCtrl+Shift+M', 'panel.mission'),
         cmd('任务面板', 'CmdOrCtrl+Shift+1', 'panel.tasks'),
         cmd('文件改动', 'CmdOrCtrl+Shift+2', 'panel.files'),
         cmd('用量', 'CmdOrCtrl+Shift+3', 'panel.usage'),
-        cmd('配置中心', 'CmdOrCtrl+,', 'panel.config'),
+        cmd('设置', 'CmdOrCtrl+,', 'settings'),
+        cmd('配置中心（停靠面板）', undefined, 'panel.config'),
         cmd('终端', 'CmdOrCtrl+`', 'panel.terminal'),
         { type: 'separator' },
         cmd('键盘快捷键', 'F1', 'shortcuts'),
@@ -240,19 +260,50 @@ function buildTray() {
   tray.on('click', () => showWindow(wins.get('main') ?? focusedWin()));
 }
 
+/** Read one renderer-side setting (meta.json `settings`) from a window; `def` when unavailable. */
+async function getSetting<T>(w: BrowserWindow | null, key: string, def: T): Promise<T> {
+  if (!w || w.isDestroyed()) return def;
+  const v = await w.webContents.executeJavaScript(`window.__store?.getState().settings?.[${JSON.stringify(key)}]`, true).catch(() => undefined);
+  return v === undefined || v === null ? def : (v as T);
+}
+
+/** Exit guard: counts running sessions, pending permissions and unsaved editors across every window. */
 async function requestQuit() {
-  const ids = new Set<string>();
+  const running = new Set<string>();
+  let pending = 0, dirty = 0;
   for (const [, w] of liveWins()) {
-    const arr: string[] = await w.webContents.executeJavaScript('Object.values(window.__store?.getState().open ?? {}).filter(o => o.state === "running" || o.state === "waiting").map(o => o.sessionId)', true).catch(() => []);
-    for (const id of arr) ids.add(id);
+    const r: { running: string[]; pending: number; dirty: number } = await w.webContents.executeJavaScript(`(() => { const s = window.__store?.getState(); if (!s) return { running: [], pending: 0, dirty: 0 }; const open = Object.values(s.open ?? {}); return { running: open.filter(o => o.state === "running" || o.state === "waiting").map(o => o.sessionId), pending: open.reduce((a, o) => a + (o.pending?.length ?? 0), 0), dirty: Object.keys(s.dirtyDocs ?? {}).length }; })()`, true).catch(() => ({ running: [], pending: 0, dirty: 0 }));
+    for (const id of r.running) running.add(id);
+    pending += r.pending;
+    dirty += r.dirty;
   }
-  if (ids.size > 0) {
+  const confirmExit = await getSetting(focusedWin(), 'ui.confirmExit', true);
+  if (confirmExit && (running.size > 0 || pending > 0 || dirty > 0)) {
     const w = focusedWin();
-    const r = await dialog.showMessageBox(w ?? undefined as any, { type: 'question', buttons: ['退出', '取消'], defaultId: 1, cancelId: 1, message: `还有 ${ids.size} 个会话在运行`, detail: '退出只会结束进程，会话记录保留在磁盘上，下次可以恢复。' });
-    if (r.response !== 0) return;
+    const parts = [running.size ? `${running.size} 个会话在运行` : '', pending ? `${pending} 个权限请求待处理` : '', dirty ? `${dirty} 个文件未保存` : ''].filter(Boolean);
+    const r = await dialog.showMessageBox(w ?? undefined as any, { type: 'question', buttons: ['退出', dirty ? '取消（回去保存）' : '取消', '最小化到托盘'], defaultId: 1, cancelId: 1, message: parts.join('，'), detail: '退出会结束会话进程（记录保留在磁盘，可恢复）；未保存的编辑会丢失。' });
+    if (r.response === 1) return;
+    if (r.response === 2) { for (const [, x] of liveWins()) x.hide(); return; }
   }
   quitting = true;
   app.quit();
+}
+
+// ---------- auto-update (electron-updater → GitHub Releases; no-op in dev) ----------
+function setUpdate(s: UpdateState) {
+  updateState = s;
+  broadcast('desktop:update', s);
+}
+function setupUpdater() {
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  (autoUpdater as any).logger = null;
+  autoUpdater.on('checking-for-update', () => setUpdate({ status: 'checking' }));
+  autoUpdater.on('update-available', (i) => setUpdate({ status: 'available', version: i.version, notes: typeof i.releaseNotes === 'string' ? i.releaseNotes.replace(/<[^>]+>/g, '') : undefined }));
+  autoUpdater.on('update-not-available', () => setUpdate({ status: 'none' }));
+  autoUpdater.on('download-progress', (p) => setUpdate({ status: 'downloading', percent: p.percent }));
+  autoUpdater.on('update-downloaded', (i) => setUpdate({ status: 'downloaded', version: i.version }));
+  autoUpdater.on('error', (e) => setUpdate({ status: 'error', error: String(e.message).split('\n')[0] }));
 }
 
 // ---------- IPC ----------
@@ -294,6 +345,17 @@ ipcMain.handle('desktop:window:new', () => {
 });
 ipcMain.handle('desktop:window:focus', (_e, id: string) => { const w = wins.get(id); if (w && !w.isDestroyed()) showWindow(w); });
 ipcMain.handle('desktop:window:list', () => liveWins().map(([id]) => id));
+ipcMain.handle('desktop:update:state', () => updateState);
+ipcMain.handle('desktop:update:check', () => {
+  if (!app.isPackaged) { setUpdate({ status: 'error', error: '开发模式不检查更新' }); return; }
+  autoUpdater.checkForUpdates().catch((e) => setUpdate({ status: 'error', error: e.message }));
+});
+ipcMain.handle('desktop:update:download', () => autoUpdater.downloadUpdate().catch((e) => setUpdate({ status: 'error', error: e.message })));
+ipcMain.handle('desktop:update:install', () => { quitting = true; autoUpdater.quitAndInstall(); });
+ipcMain.handle('desktop:flags:set', (_e, f: Record<string, unknown>) => { writeFlags(f); });
+ipcMain.handle('desktop:flags:get', () => readFlags());
+ipcMain.handle('desktop:relaunch', () => { quitting = true; app.relaunch(); app.exit(0); });
+ipcMain.handle('desktop:quit', () => void requestQuit());
 
 // ---------- lifecycle ----------
 app.setAppUserModelId('com.claude-web.desktop');
@@ -304,6 +366,7 @@ app.whenReady().then(async () => {
     const info = await host.start();
     buildMenu();
     buildTray();
+    setupUpdater();
     const st = loadState();
     createWindow(info.url, 'main');
     for (const id of Object.keys(st.windows)) if (id !== 'main') createWindow(info.url, id);
@@ -321,6 +384,16 @@ process.on('uncaughtException', (e) => {
   try { fs.appendFileSync(path.join(app.getPath('userData'), 'main.log'), `[${new Date().toISOString()}] uncaught: ${e.stack ?? e}\n`); } catch { /* ignore */ }
 });
 app.on('window-all-closed', () => { /* stay in tray */ });
+// GPU process died twice → switch to software rendering and relaunch (the usual fix for driver black screens)
+app.on('child-process-gone', (_e, d) => {
+  if (d.type !== 'GPU' || d.reason === 'clean-exit') return;
+  if (++gpuCrashes >= 2 && !readFlags().softwareRender) {
+    writeFlags({ softwareRender: true, gpuCrashes });
+    quitting = true;
+    app.relaunch();
+    app.exit(0);
+  }
+});
 app.on('before-quit', () => { quitting = true; saveState(); });
 app.on('will-quit', (e) => {
   if (host.info) {

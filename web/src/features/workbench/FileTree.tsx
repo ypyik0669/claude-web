@@ -4,6 +4,7 @@ import { useStore } from '@/store';
 import { clsx } from '@/util';
 import type { FsEntry, GitFileStatus, GitStatus } from '@shared';
 import { MIME_SESSION } from './dnd';
+import { dlg } from '@/ui/dialog';
 
 function join(dir: string, name: string) {
   const sep = dir.includes('\\') ? '\\' : '/';
@@ -115,7 +116,7 @@ function ContextMenu({ m, ctx, onClose }: { m: NonNullable<Ctx['menu']>; ctx: Ct
     ctx.reload(dir);
   };
   const trash = async () => {
-    if (!confirm(`移到回收站？\n${m.path}`)) return;
+    if (!(await dlg.confirm('移到回收站？', { message: m.path, danger: true, okLabel: '移到回收站' }))) return;
     await ws.request({ kind: 'fs.trash', paths: [m.path] }).catch((e) => st.toast(e.message));
     ctx.reload(parentOf(m.path));
   };

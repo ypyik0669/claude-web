@@ -86,7 +86,7 @@ export interface MessageFeedback { rating: 'up' | 'down' | null; note?: string; 
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
 export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string }
-export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string }
+export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; cron?: string; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string; freshSession?: boolean; lastError?: string; runs?: number }
 export interface LimitWindow { label: string; percent: number; resetsAt: string | null; active: boolean; severity?: string }
 export interface Limits { ok: boolean; capturedAt: string; windows: LimitWindow[]; subscriptionType?: string; rateLimitTier?: string; error?: string }
 
@@ -232,6 +232,23 @@ export type ClientRequest =
   | { kind: 'git.worktreeRemove'; cwd: string; dir: string; force?: boolean }
   | { kind: 'git.remotes'; cwd: string }
   | { kind: 'git.watch'; cwd: string }
+  // phase 4: settings center / automation
+  | { kind: 'skills.list'; cwd?: string }
+  | { kind: 'skills.install'; source: string; scope: 'user' | 'project'; cwd?: string; name?: string }
+  | { kind: 'skills.create'; name: string; scope: 'user' | 'project'; cwd?: string; description?: string }
+  | { kind: 'skills.remove'; path: string }
+  | { kind: 'skills.backup' }
+  | { kind: 'skills.restore'; file: string }
+  | { kind: 'tools.detect' }
+  | { kind: 'diag.bundle' }
+  | { kind: 'mcp.registry'; query: string; limit?: number }
+  | { kind: 'mcp.health'; cwd?: string }
+  | { kind: 'secrets.status' }
+  | { kind: 'secrets.migrate' } // re-protect every provider key with the platform scheme
+  | { kind: 'ledger.list'; days?: number; sessionId?: string }
+  | { kind: 'ledger.export'; days?: number } // CSV path
+  | { kind: 'schedules.history'; id?: string; limit?: number }
+  | { kind: 'schedules.templates' }
   | { kind: 'terminal.open'; cwd: string; cols: number; rows: number }
   | { kind: 'terminal.input'; termId: string; data: string }
   | { kind: 'terminal.resize'; termId: string; cols: number; rows: number }
@@ -283,6 +300,16 @@ export interface GitBranch { name: string; current: boolean; remote: boolean; up
 export interface GitWorktree { path: string; head: string; branch: string | null; main: boolean; bare: boolean; locked: boolean }
 export type GitErrorKind = 'not_repo' | 'no_upstream' | 'auth' | 'rejected' | 'conflict' | 'detached' | 'dirty' | 'nothing_to_commit' | 'identity' | 'lock' | 'unrelated' | 'network' | 'unknown_rev' | 'exists' | 'unknown';
 export interface GitError { kind: GitErrorKind; message: string; hint: string }
+
+// ---------- phase 4 ----------
+export interface SkillInfo { name: string; path: string; scope: 'user' | 'project'; description: string; hasReadme: boolean }
+export interface ToolInfo { id: string; label: string; ok: boolean; version: string; path: string; hint: string; url: string }
+export interface McpHealth { name: string; status: 'connected' | 'failed' | 'needs-auth' | 'unknown'; detail: string }
+export interface RegistryServer { name: string; description: string; repo?: string; install?: { transport: 'stdio' | 'http' | 'sse'; command?: string; args?: string[]; url?: string; env?: string[] }; kind: 'npm' | 'pypi' | 'remote' | 'other' }
+export interface SecretsStatus { scheme: 'dpapi' | 'keychain' | 'plain'; total: number; protected: number }
+/** One model call as seen from the runner (per `result` / assistant message). */
+export interface LedgerEntry { ts: number; sessionId: string; model: string; durationMs: number; apiMs?: number; input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number; ok: boolean; error?: string; turns?: number; providerId?: string }
+export interface ScheduleRun { id: string; scheduleId: string; at: number; sessionId?: string; ok: boolean; durationMs?: number; summary?: string; error?: string }
 
 export type WireDown = { type: 'reply'; reply: ReplyEnvelope } | { type: 'event'; event: ServerEvent };
 export type WireUp = { type: 'request'; request: RequestEnvelope };

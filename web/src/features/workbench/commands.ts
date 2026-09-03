@@ -21,6 +21,7 @@ export function runCommand(id: string): boolean {
     case 'palette': useStore.setState((s) => ({ paletteOpen: !s.paletteOpen })); return true;
     case 'sidebar': useStore.setState((s) => ({ sidebarOpen: !s.sidebarOpen })); return true;
     case 'shortcuts': useStore.setState({ shortcutsOpen: true }); return true;
+    case 'settings': st.openSettings(); return true;
     case 'tab': {
       const t = pane?.tiles.find((x) => x.id === pane.activeTileId);
       if (t?.kind === 'chat') d({ t: 'tile.patch', paneId: pane.id, tileId: t.id, patch: { view: t.view === 'chat' ? 'trajectory' : 'chat' } });

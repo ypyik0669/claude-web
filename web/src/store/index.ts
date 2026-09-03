@@ -10,8 +10,10 @@ export type Theme = (typeof THEMES)[number];
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { applyMessage, applyTranscript, createConversation, walkTools, type Conversation } from '@/model/conversation';
+import { dlg } from '@/ui/dialog';
+import { applyUiSettings, resolveTheme } from '@/features/settings/ui-settings';
 
-export type PanelId = 'tasks' | 'files' | 'usage' | 'config' | 'terminal' | 'inspector';
+export type PanelId = 'tasks' | 'files' | 'usage' | 'config' | 'terminal' | 'inspector' | 'mission';
 
 export interface QueuedMessage { id: string; text: string; images?: { mediaType: string; data: string }[]; attachments?: AttachmentRef[] }
 
@@ -54,6 +56,9 @@ interface State {
   showArchived: boolean;
   shortcutsOpen: boolean;
   configTab: string | null; // tab the config panel should open on next mount (one-shot)
+  settingsOpen: { section?: string; query?: string; reveal?: string } | null;
+  metaLoaded: boolean;
+  openSettings(o?: { section?: string; query?: string; reveal?: string }): void;
   viewer: { images: string[]; index: number } | null;
   openViewer(images: string[], index?: number): void;
   // workbench layout (groups → panes → tiles); `activeId` and `panels` are projections of it
@@ -63,7 +68,7 @@ interface State {
   openInPane(sessionId: string | null, mode?: 'replace' | 'tab', paneId?: string): void;
   openTile(tile: Tile, mode?: 'replace' | 'tab', paneId?: string): void;
   /** close a tile; asks first when it is an editor with unsaved changes */
-  closeTile(paneId: string, tileId: string): void;
+  closeTile(paneId: string, tileId: string): Promise<void>;
   dirtyDocs: Record<string, boolean>; // doc tile id -> unsaved
   setDocDirty(tileId: string, dirty: boolean): void;
   loadMeta(): Promise<void>;
@@ -102,7 +107,7 @@ interface State {
   setTab(t: 'chat' | 'trajectory'): void;
   setDraft(sessionId: string, d: string): void;
   closeSession(sessionId: string): Promise<void>;
-  setTheme(t: Theme): void;
+  setTheme(t: Theme, fromSettings?: boolean): void;
   forkAt(sessionId: string, messageUuid: string): Promise<void>;
   onTurnEnd(sessionId: string): void;
 }
@@ -195,8 +200,8 @@ export const useStore = create<State>((set, get) => ({
     const single = !!get().settings['ui.singleWindow'];
     get().dispatchLayout({ t: 'tile.open', paneId: paneId ?? g.focusedPaneId, tile, mode: single ? 'replace' : mode });
   },
-  closeTile(paneId, tileId) {
-    if (get().dirtyDocs[tileId] && !confirm('这个文件有未保存的改动，确定关闭？')) return;
+  async closeTile(paneId, tileId) {
+    if (get().dirtyDocs[tileId] && !(await dlg.confirm('这个文件有未保存的改动，确定关闭？', { okLabel: '关闭', danger: true }))) return;
     get().dispatchLayout({ t: 'tile.close', paneId, tileId });
   },
   dirtyDocs: {},
@@ -235,8 +240,13 @@ export const useStore = create<State>((set, get) => ({
     const providers = await ws.request<Provider[]>({ kind: 'providers.list' });
     set({ providers });
   },
+  settingsOpen: null,
+  metaLoaded: false,
+  openSettings(o = {}) { set({ settingsOpen: o }); },
   async setSetting(key, value) {
     set((s) => ({ settings: { ...s.settings, [key]: value } }));
+    if (key.startsWith('ui.')) { applyUiSettings(get().settings); if (key === 'ui.theme') get().setTheme(resolveTheme(value as any), true); }
+    if (key === 'ui.softwareRender' && desktop?.setFlags) { void desktop.setFlags({ softwareRender: !!value }); get().toast('重启应用后生效', true); }
     await ws.request({ kind: 'settings.set', key, value });
   },
   async loadMeta() {
@@ -246,7 +256,9 @@ export const useStore = create<State>((set, get) => ({
       ws.request<Schedule[]>({ kind: 'schedules.list' }),
       ws.request<Record<string, unknown>>({ kind: 'settings.get' }),
     ]);
-    set({ workspaces, sessionMeta, schedules, settings });
+    set({ workspaces, sessionMeta, schedules, settings, metaLoaded: true });
+    applyUiSettings(settings);
+    if (settings['ui.theme']) get().setTheme(resolveTheme(settings['ui.theme'] as any), true);
   },
   async addWorkspace(path) {
     await ws.request({ kind: 'workspaces.add', path });
@@ -549,10 +561,11 @@ export const useStore = create<State>((set, get) => ({
     // keep the tile: it re-loads the transcript as history
     set((s) => bump(s, sessionId, (o) => { o.state = 'history'; o.pending = []; o.queue = []; }));
   },
-  setTheme(theme) {
+  setTheme(theme, fromSettings = false) {
     localStorage.setItem('cw.theme', theme);
     document.documentElement.dataset.theme = theme;
     set({ theme });
+    if (!fromSettings && get().settings['ui.theme'] !== theme) { set((s) => ({ settings: { ...s.settings, 'ui.theme': theme } })); void ws.request({ kind: 'settings.set', key: 'ui.theme', value: theme }).catch(() => {}); }
     const d = desktop;
     if (d) {
       const cs = getComputedStyle(document.documentElement);

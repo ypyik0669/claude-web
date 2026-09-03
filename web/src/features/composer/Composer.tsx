@@ -47,7 +47,8 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
   const togglePanel = useStore((s) => s.togglePanel);
   const [wProvider, setWProvider] = useState<string>(localStorage.getItem('cw.lastProvider') || (settings.defaultProviderId as string) || 'claude');
   const provider = wProvider === 'claude' ? undefined : providers.find((p) => p.id === wProvider);
-  const modelOptions = provider?.models?.length ? [{ value: '', label: provider.defaultModel ? `默认（${provider.defaultModel}）` : '默认模型' }, ...provider.models.map((m) => ({ value: m, label: m }))] : MODEL_ALIASES;
+  const disabledModels = (settings['ui.disabledModels'] as string[] | undefined) ?? [];
+  const modelOptions = (provider?.models?.length ? [{ value: '', label: provider.defaultModel ? `默认（${provider.defaultModel}）` : '默认模型' }, ...provider.models.map((m) => ({ value: m, label: m }))] : MODEL_ALIASES).filter((o) => !o.value || !disabledModels.includes(provider ? `${provider.id}:${o.value}` : o.value));
   const [wFeatures, setWFeatures] = useState<SessionFeatures>(() => { try { return JSON.parse(localStorage.getItem('cw.lastFeatures') ?? '{}'); } catch { return {}; } });
   const [featOpen, setFeatOpen] = useState(false);
   const [listening, setListening] = useState(false);

@@ -1,7 +1,7 @@
 // Workbench layout model: groups → binary split tree of panes → tiles (tabs) inside a pane.
 // Pure functions, no DOM / store imports, so it can be unit tested.
 
-export type PanelId = 'tasks' | 'files' | 'usage' | 'config' | 'terminal' | 'inspector';
+export type PanelId = 'tasks' | 'files' | 'usage' | 'config' | 'terminal' | 'inspector' | 'mission';
 export type WorkbenchTab = 'live' | 'changes' | 'git' | 'files' | 'search' | 'schedules' | 'artifacts';
 
 export type Tile =

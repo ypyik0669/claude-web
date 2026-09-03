@@ -4,7 +4,7 @@ import { chatTile, paneOrder, activeGroup, MAX_PANES, type Pane as PaneModel, ty
 import { clsx, basename } from '@/util';
 import { MIME_TILE, hasType, tilePayload } from './dnd';
 
-const PANEL_TITLES: Record<string, string> = { tasks: '任务', files: '文件改动', usage: '用量', config: '配置中心', terminal: '终端', inspector: '详情' };
+const PANEL_TITLES: Record<string, string> = { tasks: '任务', files: '文件改动', usage: '用量', config: '配置中心', terminal: '终端', inspector: '详情', mission: '总览' };
 
 export function tileTitle(t: Tile, sessions: { sessionId: string; title: string }[]): { icon: string; text: string } {
   if (t.title) return { icon: iconFor(t), text: t.title };
@@ -96,7 +96,7 @@ export function TabStrip({ pane, groupId, index, zoomed, single }: { pane: PaneM
             <div className="menu" style={{ top: 26, left: 0 }} onMouseLeave={() => setMenu(false)}>
               <button onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: chatTile(null), mode: 'tab' }); }}>◌ 新会话</button>
               <button onClick={() => { setMenu(false); const cwd = currentCwd(pane, open); dispatch({ t: 'tile.open', paneId: pane.id, tile: { id: `t${Date.now()}`, kind: 'term', cwd }, mode: 'tab' }); }}>▣ 终端</button>
-              {(['tasks', 'files', 'usage', 'config', 'inspector'] as const).map((p) => (
+              {(['mission', 'tasks', 'files', 'usage', 'config', 'inspector'] as const).map((p) => (
                 <button key={p} onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: { id: `t${Date.now()}`, kind: 'panel', panel: p }, mode: 'tab' }); }}>▤ {PANEL_TITLES[p]}</button>
               ))}
             </div>

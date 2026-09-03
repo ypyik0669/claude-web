@@ -17,6 +17,11 @@ import { LimitsService } from './usage/limits.js';
 import { ScheduleService } from './schedules/service.js';
 import { GitService } from './git/service.js';
 import { SearchService } from './search/service.js';
+import { SecretService } from './secrets/service.js';
+import { SkillsService } from './skills/service.js';
+import { McpService } from './mcp/service.js';
+import { DiagService } from './diag/service.js';
+import { LedgerService } from './usage/ledger.js';
 
 const FILE_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.html': 'text/html; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.json': 'application/json' };
 
@@ -132,10 +137,14 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
 
   const meta = new MetaStore();
   await meta.load();
-  const providers = new ProviderService(meta);
+  const secrets = new SecretService();
+  const providers = new ProviderService(meta, secrets);
+  await providers.warm();
   const files = new FilesService();
   const pool = new RunnerPool(providers);
-  const services = { pool, sessions: new SessionService(), config: new ConfigService(), usage: new UsageService(), files, terminal: new TerminalService(), meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: new GitService(), search: new SearchService(), version };
+  const ledger = new LedgerService();
+  pool.on('message', (sessionId: string, m: unknown) => ledger.observe(sessionId, m, meta.sessionMeta(sessionId).providerId));
+  const services = { pool, sessions: new SessionService(), config: new ConfigService(), usage: new UsageService(), files, terminal: new TerminalService(), meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: new GitService(), search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, version };
   new Hub(wss, services);
 
   await new Promise<void>((res, rej) => {

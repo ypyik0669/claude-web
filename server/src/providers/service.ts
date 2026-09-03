@@ -2,6 +2,7 @@ import os from 'node:os';
 import { CLAUDE_PROVIDER_ID, type Provider, type ProviderType, type RuntimeKind } from '../protocol.js';
 import type { MetaStore } from '../meta/store.js';
 import { resolveEngine, runClaudeCli } from '../claude-exe.js';
+import type { SecretService } from '../secrets/service.js';
 
 /** Mask an API key for the wire: keep prefix + last 4 chars. */
 export function maskKey(k: string | undefined): string {
@@ -11,7 +12,7 @@ export function maskKey(k: string | undefined): string {
 }
 
 export function publicProvider(p: Provider): Provider {
-  return { ...p, apiKey: maskKey(p.apiKey) };
+  return { ...p, apiKey: p.apiKey?.startsWith('enc:') ? '…' + (p.apiKey.split(':')[1] ?? '') : maskKey(p.apiKey) };
 }
 
 /**
@@ -121,7 +122,33 @@ export async function probeProvider(p: Pick<Provider, 'type' | 'baseUrl' | 'apiK
 }
 
 export class ProviderService {
-  constructor(private meta: MetaStore) {}
+  private revealed = new Map<string, string>(); // stored (possibly encrypted) value -> plaintext
+  constructor(private meta: MetaStore, private secrets?: SecretService) {
+    if (secrets) meta.secretCodec = { protect: async (plain, id) => { const enc = await secrets.protect(plain, id); this.revealed.set(enc, plain); return enc; } };
+  }
+  /** Decrypt every stored key once (startup) so session spawns stay synchronous. */
+  async warm() {
+    for (const p of this.meta.providers()) {
+      if (!p.apiKey) continue;
+      try { this.revealed.set(p.apiKey, this.secrets ? await this.secrets.reveal(p.apiKey) : p.apiKey); } catch (e) { console.error(`[providers] cannot decrypt key of ${p.name}:`, (e as Error).message); }
+    }
+  }
+  private plainKey(p: Provider): string {
+    if (!p.apiKey) return '';
+    const hit = this.revealed.get(p.apiKey);
+    if (hit !== undefined) return hit;
+    if (!p.apiKey.startsWith('enc:')) return p.apiKey;
+    throw new Error(`供应商「${p.name}」的密钥无法解密（换了用户或机器？请重新输入）`);
+  }
+  secretsStatus() {
+    const all = this.meta.providers();
+    return { scheme: this.secrets?.scheme ?? 'plain', total: all.filter((p) => p.apiKey).length, protected: all.filter((p) => p.apiKey?.startsWith('enc:')).length };
+  }
+  /** Re-protect legacy plaintext keys with the platform scheme. */
+  async migrateSecrets() {
+    if (!this.secrets) return;
+    for (const p of this.meta.providers()) if (p.apiKey && !p.apiKey.startsWith('enc:')) await this.meta.upsertProvider({ id: p.id, apiKey: p.apiKey });
+  }
 
   list(): Provider[] {
     return this.meta.providers().map(publicProvider);
@@ -133,7 +160,7 @@ export class ProviderService {
     if (!p) throw new Error(`供应商档案不存在：${id}`);
     if (!p.baseUrl && (p.type === 'anthropic' || p.type === 'openai')) throw new Error(`供应商「${p.name}」没有 Base URL`);
     if (!p.apiKey) throw new Error(`供应商「${p.name}」没有 API Key`);
-    return p;
+    return { ...p, apiKey: this.plainKey(p) };
   }
   async upsert(p: Partial<Provider> & { id?: string }) {
     return publicProvider(await this.meta.upsertProvider(p));
@@ -144,7 +171,7 @@ export class ProviderService {
   /** Probe a saved profile (by id, keeps the stored key) or an unsaved draft; saves the model list on success. */
   async probe(id?: string, draft?: Partial<Provider>): Promise<ProbeResult> {
     const saved = id ? this.meta.provider(id) : undefined;
-    const key = draft?.apiKey && !draft.apiKey.includes('…') ? draft.apiKey : saved?.apiKey ?? '';
+    const key = draft?.apiKey && !draft.apiKey.includes('…') ? draft.apiKey : saved ? this.plainKey(saved) : '';
     const p = { type: draft?.type ?? saved?.type ?? 'anthropic', baseUrl: (draft?.baseUrl ?? saved?.baseUrl ?? '').trim(), apiKey: key.trim() } as Pick<Provider, 'type' | 'baseUrl' | 'apiKey'>;
     if (!p.apiKey) return { ok: false, models: [], error: '没有 API Key', ms: 0 };
     const r = await probeProvider(p);

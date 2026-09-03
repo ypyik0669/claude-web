@@ -17,6 +17,16 @@ export interface DesktopBridge {
   newWindow?(): Promise<string>;
   focusWindow?(id: string): Promise<void>;
   listWindows?(): Promise<string[]>;
+  // phase 4: updater / launch flags / lifecycle
+  updateState?(): Promise<any>;
+  checkUpdate?(): Promise<void>;
+  downloadUpdate?(): Promise<void>;
+  installUpdate?(): Promise<void>;
+  onUpdate?(cb: (s: any) => void): () => void;
+  setFlags?(f: Record<string, unknown>): Promise<void>;
+  getFlags?(): Promise<Record<string, unknown>>;
+  relaunch?(): Promise<void>;
+  quit?(): Promise<void>;
 }
 
 export const desktop: DesktopBridge | undefined = (window as any).desktop;

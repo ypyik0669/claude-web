@@ -10,6 +10,9 @@ import { claimSession } from '@/features/workbench/windows';
 import { clsx } from '@/util';
 import { CommandPalette } from '@/features/palette/CommandPalette';
 import { ImageViewer } from '@/features/chat/ImageViewer';
+import { DialogHost } from '@/ui/dialog';
+import { SettingsModal } from '@/features/settings/SettingsModal';
+import { Onboarding } from '@/features/onboarding/Onboarding';
 import { desktop } from '@/desktop';
 
 function Toasts() {
@@ -68,7 +71,7 @@ export function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { useStore.setState({ shortcutsOpen: false }); return; }
+      if (e.key === 'Escape') { if (useStore.getState().settingsOpen) useStore.setState({ settingsOpen: null }); useStore.setState({ shortcutsOpen: false }); return; }
       const id = matchBrowserKey(e);
       if (!id) return;
       // on desktop the menu accelerators own the Ctrl-only chords; browser-only (Alt) chords still run here
@@ -90,7 +93,10 @@ export function App() {
       <Toasts />
       <CommandPalette />
       <ShortcutsModal />
+      <SettingsModal />
+      <Onboarding />
       <ImageViewer />
+      <DialogHost />
     </div>
   );
 }

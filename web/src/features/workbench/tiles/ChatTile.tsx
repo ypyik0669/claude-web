@@ -8,7 +8,7 @@ import { ChatView } from '@/features/chat/ChatView';
 import { TrajectoryView } from '@/features/trajectory/TrajectoryView';
 import { Composer } from '@/features/composer/Composer';
 import { FilesPanel } from '@/features/panels/FilesPanel';
-import { Schedules } from '@/features/panels/TasksPanel';
+import { SchedulesView } from '@/features/automation/SchedulesView';
 import { shareConversation } from '@/features/chat/MessageActions';
 import { Welcome } from '../Welcome';
 import { FileTree } from '../FileTree';
@@ -154,7 +154,7 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
       {tile.wb === 'git' && <div className="wb-body"><GitView cwd={active.cwd} /></div>}
       {tile.wb === 'files' && <div className="wb-body"><FileTree root={active.cwd} gitStatus={gitStatus} /></div>}
       {tile.wb === 'search' && <div className="wb-body"><SearchView root={active.cwd} /></div>}
-      {tile.wb === 'schedules' && <div className="wb-body list"><Schedules /></div>}
+      {tile.wb === 'schedules' && <div className="wb-body"><SchedulesView /></div>}
       {tile.wb === 'artifacts' && <div className="wb-body"><Artifacts sessionId={sid} /></div>}
     </div>
   );

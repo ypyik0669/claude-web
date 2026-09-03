@@ -5,6 +5,7 @@ import { desktop } from '@/desktop';
 import { ago, basename, clsx } from '@/util';
 import type { SessionSummary, Workspace } from '@shared';
 import { MIME_SESSION } from '@/features/workbench/dnd';
+import { dlg } from '@/ui/dialog';
 
 function SessionMenu({ s, onClose }: { s: SessionSummary; onClose: () => void }) {
   const st = useStore();
@@ -16,12 +17,12 @@ function SessionMenu({ s, onClose }: { s: SessionSummary; onClose: () => void })
     return () => window.removeEventListener('click', k);
   }, [onClose]);
   const rename = async () => {
-    const t = prompt('新标题', s.title);
+    const t = await dlg.prompt('重命名会话', s.title);
     if (t && t !== s.title) await ws.request({ kind: 'session.rename', sessionId: s.sessionId, title: t }).catch((e) => st.toast(e.message));
     onClose();
   };
   const del = async () => {
-    if (!confirm(`删除会话「${s.title}」？文件会从磁盘移除。`)) return;
+    if (!(await dlg.confirm(`删除会话「${s.title}」？`, { message: '会话记录会从磁盘移除。', danger: true, okLabel: '删除' }))) return;
     await st.closeSession(s.sessionId);
     await ws.request({ kind: 'session.delete', sessionId: s.sessionId }).catch((e) => st.toast(e.message));
     await st.refreshSessions();
@@ -108,9 +109,9 @@ function WorkspaceMenu({ w, onClose }: { w: Workspace; onClose: () => void }) {
   return (
     <div className="menu" style={{ right: 8, top: 26 }} onClick={(e) => e.stopPropagation()}>
       <button onClick={act(() => st.openSession({ cwd: w.path }))}>＋ 在这里新建会话</button>
-      <button onClick={act(async () => { const n = prompt('worktree 名称', 'feature'); if (n) await st.openSession({ cwd: w.path, worktree: n }).catch((e) => st.toast(e.message)); })}>⑂ 新建 worktree 会话</button>
+      <button onClick={act(async () => { const n = await dlg.prompt('worktree 名称', 'feature'); if (n) await st.openSession({ cwd: w.path, worktree: n }).catch((e) => st.toast(e.message)); })}>⑂ 新建 worktree 会话</button>
       <button onClick={act(() => st.openTile({ id: `t${Date.now()}`, kind: 'term', cwd: w.path }, 'tab'))}>▣ 在这里开终端</button>
-      <button onClick={act(async () => { const n = prompt('工作区名称', w.name); if (n) await ws.request({ kind: 'workspaces.rename', id: w.id, name: n }); })}>✎ 重命名</button>
+      <button onClick={act(async () => { const n = await dlg.prompt('工作区名称', w.name); if (n) await ws.request({ kind: 'workspaces.rename', id: w.id, name: n }); })}>✎ 重命名</button>
       <button onClick={act(() => ws.request({ kind: 'shell.open', path: w.path }))}>▤ 在资源管理器打开</button>
       <button onClick={act(() => ws.request({ kind: 'shell.open', path: w.path, app: 'code' }))}>⌨ 在 VS Code 打开</button>
       <button className="danger" onClick={act(() => ws.request({ kind: 'workspaces.remove', id: w.id }))}>✕ 移除工作区（不删文件）</button>
@@ -179,7 +180,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
       <div className="sb-nav">
         <button className={clsx('nav', !activeId && 'active')} onClick={onNew}><span className="ic">＋</span>新会话<span className="k kbd">{desktop ? 'Ctrl N' : 'Alt N'}</span></button>
         <button className="nav" onClick={() => useStore.setState({ paletteOpen: true })}><span className="ic">⌘</span>命令 / 搜索<span className="k kbd">Ctrl K</span></button>
-        <button className={clsx('nav', panelOn('config') && 'active')} onClick={() => togglePanel('config')}><span className="ic">⚙</span>配置中心</button>
+        <button className={clsx('nav', panelOn('config') && 'active')} onClick={() => useStore.getState().openSettings()} onContextMenu={(e) => { e.preventDefault(); togglePanel('config'); }} title="设置 (Ctrl+,) · 右键：停靠面板"><span className="ic">⚙</span>设置<span className="k kbd">Ctrl ,</span></button>
         <button className={clsx('nav', panelOn('usage') && 'active')} onClick={() => togglePanel('usage')}><span className="ic">▤</span>用量</button>
       </div>
       <div className="sb-search">

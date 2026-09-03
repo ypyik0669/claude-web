@@ -23,4 +23,13 @@ contextBridge.exposeInMainWorld('desktop', {
   newWindow: () => ipcRenderer.invoke('desktop:window:new'),
   focusWindow: (id: string) => ipcRenderer.invoke('desktop:window:focus', id),
   listWindows: () => ipcRenderer.invoke('desktop:window:list'),
+  updateState: () => ipcRenderer.invoke('desktop:update:state'),
+  checkUpdate: () => ipcRenderer.invoke('desktop:update:check'),
+  downloadUpdate: () => ipcRenderer.invoke('desktop:update:download'),
+  installUpdate: () => ipcRenderer.invoke('desktop:update:install'),
+  onUpdate: on('desktop:update'),
+  setFlags: (f: Record<string, unknown>) => ipcRenderer.invoke('desktop:flags:set', f),
+  getFlags: () => ipcRenderer.invoke('desktop:flags:get'),
+  relaunch: () => ipcRenderer.invoke('desktop:relaunch'),
+  quit: () => ipcRenderer.invoke('desktop:quit'),
 });

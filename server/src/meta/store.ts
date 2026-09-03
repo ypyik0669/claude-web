@@ -2,17 +2,18 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { EventEmitter } from 'node:events';
-import type { MessageFeedback, Provider } from '../protocol.js';
+import type { MessageFeedback, Provider, Schedule, ScheduleRun } from '../protocol.js';
+export type { Schedule } from '../protocol.js';
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
 export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string }
-export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string }
 
 interface Data {
   version: 1;
   workspaces: Workspace[];
   sessions: Record<string, SessionMeta>;
   schedules: Schedule[];
+  scheduleRuns: ScheduleRun[];
   settings: Record<string, unknown>;
   providers: Provider[];
   feedback: Record<string, Record<string, MessageFeedback>>; // sessionId -> messageId -> feedback
@@ -23,7 +24,7 @@ const file = path.join(process.env.CLAUDE_WEB_DIR ?? path.join(os.homedir(), '.c
 
 /** Small JSON store for things Claude Code itself does not persist: workspaces, pin/archive flags, schedules, UI settings. */
 export class MetaStore extends EventEmitter {
-  data: Data = { version: 1, workspaces: [], sessions: {}, schedules: [], settings: {}, providers: [], feedback: {}, drafts: {} };
+  data: Data = { version: 1, workspaces: [], sessions: {}, schedules: [], scheduleRuns: [], settings: {}, providers: [], feedback: {}, drafts: {} };
   private saving: Promise<void> | null = null;
 
   async load() {
@@ -90,7 +91,7 @@ export class MetaStore extends EventEmitter {
       this.data.schedules.push(cur);
     }
     Object.assign(cur, s, { id: cur.id });
-    if (cur.enabled && !cur.nextRunAt) cur.nextRunAt = Date.now() + cur.everyMinutes * 60_000;
+    if (cur.enabled && !cur.nextRunAt && !cur.cron) cur.nextRunAt = Date.now() + cur.everyMinutes * 60_000;
     await this.queueSave();
     return cur;
   }
@@ -100,7 +101,17 @@ export class MetaStore extends EventEmitter {
   }
   async touchSchedule(id: string, patch: Partial<Schedule>) {
     const s = this.data.schedules.find((x) => x.id === id);
-    if (s) { Object.assign(s, patch); await this.queueSave(); }
+    if (s) { Object.assign(s, patch); for (const k of Object.keys(patch) as (keyof Schedule)[]) if (patch[k] === undefined) delete (s as any)[k]; await this.queueSave(); }
+  }
+  scheduleRuns(scheduleId?: string, limit = 50): ScheduleRun[] {
+    const all = this.data.scheduleRuns ?? (this.data.scheduleRuns = []);
+    return (scheduleId ? all.filter((r) => r.scheduleId === scheduleId) : all).slice(-limit).reverse();
+  }
+  async addScheduleRun(r: ScheduleRun) {
+    const all = this.data.scheduleRuns ?? (this.data.scheduleRuns = []);
+    all.push(r);
+    if (all.length > 300) all.splice(0, all.length - 300);
+    await this.queueSave(true);
   }
 
   providers(): Provider[] {
@@ -109,6 +120,8 @@ export class MetaStore extends EventEmitter {
   provider(id: string) {
     return this.providers().find((p) => p.id === id);
   }
+  /** Installed by the SecretService so keys are protected before they hit disk. */
+  secretCodec: { protect(plain: string, id: string): Promise<string> } | null = null;
   /** Insert or update. An empty / masked apiKey keeps the stored one. */
   async upsertProvider(p: Partial<Provider> & { id?: string }): Promise<Provider> {
     const list = this.providers();
@@ -120,7 +133,7 @@ export class MetaStore extends EventEmitter {
     const { apiKey, id: _id, createdAt: _c, ...rest } = p;
     Object.assign(cur, rest);
     for (const k of ['runtime', 'defaultModel', 'modelMap', 'models'] as const) if ((cur as any)[k] == null) delete (cur as any)[k]; // null clears (JSON drops undefined)
-    if (apiKey && !/^\S{0,4}…\S{0,4}$/.test(apiKey) && !apiKey.includes('…')) cur.apiKey = apiKey.trim();
+    if (apiKey && !/^\S{0,4}…\S{0,4}$/.test(apiKey) && !apiKey.includes('…')) cur.apiKey = this.secretCodec ? await this.secretCodec.protect(apiKey.trim(), cur.id) : apiKey.trim();
     cur.baseUrl = (cur.baseUrl ?? '').trim().replace(/\/+$/, '');
     await this.queueSave();
     return cur;

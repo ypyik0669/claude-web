@@ -3,6 +3,10 @@ productName: Claude Web
 directories:
   output: dist-desktop
   buildResources: desktop/build
+publish:
+  provider: github
+  owner: ypyik0669
+  repo: claude-web
 extraMetadata:
   main: desktop/dist/main.js
 files:

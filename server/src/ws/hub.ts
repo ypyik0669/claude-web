@@ -14,10 +14,20 @@ import { engineInfo, installCcb, runClaudeCli } from '../claude-exe.js';
 import type { ProviderService } from '../providers/service.js';
 import type { GitService } from '../git/service.js';
 import type { SearchService } from '../search/service.js';
+import type { SkillsService } from '../skills/service.js';
+import type { McpService } from '../mcp/service.js';
+import type { DiagService } from '../diag/service.js';
+import { detectTools } from '../tools/detect.js';
+import type { LedgerService } from '../usage/ledger.js';
+import { SCHEDULE_TEMPLATES } from '../schedules/service.js';
 
 export interface Services {
   git: GitService;
   search: SearchService;
+  skills: SkillsService;
+  mcp: McpService;
+  diag: DiagService;
+  ledger: LedgerService;
   pool: RunnerPool;
   sessions: SessionService;
   config: ConfigService;
@@ -159,8 +169,12 @@ export class Hub {
         return null;
       case 'schedules.list':
         return s.meta.schedules();
-      case 'schedules.upsert':
-        return s.meta.upsertSchedule(req.schedule);
+      case 'schedules.upsert': {
+        const cur = await s.meta.upsertSchedule(req.schedule);
+        // timing changed (or first enable) → recompute the next run from the new cron / interval
+        if (cur.enabled && (req.schedule.cron !== undefined || req.schedule.everyMinutes !== undefined || req.schedule.enabled !== undefined || !cur.nextRunAt)) await s.meta.touchSchedule(cur.id, { nextRunAt: s.schedules.nextRun(cur) });
+        return s.meta.schedules().find((x) => x.id === cur.id);
+      }
       case 'schedules.remove':
         await s.meta.removeSchedule(req.id);
         return null;
@@ -380,6 +394,41 @@ export class Hub {
         return s.git.remotes(req.cwd);
       case 'git.watch':
         return s.git.watch(req.cwd);
+      case 'skills.list':
+        return s.skills.list(req.cwd);
+      case 'skills.install':
+        return s.skills.install({ source: req.source, scope: req.scope, cwd: req.cwd, name: req.name });
+      case 'skills.create':
+        return s.skills.create({ name: req.name, scope: req.scope, cwd: req.cwd, description: req.description });
+      case 'skills.remove':
+        await s.skills.remove(req.path);
+        return null;
+      case 'skills.backup':
+        return s.skills.backup();
+      case 'skills.restore':
+        await s.skills.restore(req.file);
+        return null;
+      case 'tools.detect':
+        return detectTools();
+      case 'diag.bundle':
+        return s.diag.bundle({ settings: s.meta.settings(), providers: s.providers.list(), sessionsCount: (await s.sessions.list()).length });
+      case 'mcp.registry':
+        return s.mcp.registry(req.query, req.limit);
+      case 'mcp.health':
+        return s.mcp.health(req.cwd);
+      case 'secrets.status':
+        return s.providers.secretsStatus();
+      case 'secrets.migrate':
+        await s.providers.migrateSecrets();
+        return null;
+      case 'ledger.list':
+        return s.ledger.list(req.days, req.sessionId);
+      case 'ledger.export':
+        return s.ledger.exportCsv(req.days);
+      case 'schedules.history':
+        return s.meta.scheduleRuns(req.id, req.limit);
+      case 'schedules.templates':
+        return SCHEDULE_TEMPLATES;
 
       case 'terminal.open':
         return s.terminal.open(req.cwd, req.cols, req.rows);

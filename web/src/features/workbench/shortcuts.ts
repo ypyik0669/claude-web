@@ -28,10 +28,12 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'tile.prev', label: '上一个标签', desktop: 'Ctrl+PageUp', browser: 'Alt+,', group: '窗格' },
   { id: 'dock.toggle', label: '显示 / 隐藏停靠面板', desktop: 'Ctrl+J', browser: 'Ctrl+J', group: '面板' },
   { id: 'dock.minimize', label: '最小化停靠面板', desktop: 'Ctrl+Shift+J', browser: 'Ctrl+Shift+J', group: '面板' },
+  { id: 'panel.mission', label: '总览（Mission Control）', desktop: 'Ctrl+Shift+M', browser: 'Ctrl+Shift+M', group: '面板' },
   { id: 'panel.tasks', label: '任务面板', desktop: 'Ctrl+Shift+1', browser: 'Ctrl+Shift+1', group: '面板' },
   { id: 'panel.files', label: '文件改动面板', desktop: 'Ctrl+Shift+2', browser: 'Ctrl+Shift+2', group: '面板' },
   { id: 'panel.usage', label: '用量面板', desktop: 'Ctrl+Shift+3', browser: 'Ctrl+Shift+3', group: '面板' },
-  { id: 'panel.config', label: '配置中心', desktop: 'Ctrl+,', browser: 'Ctrl+,', group: '面板' },
+  { id: 'settings', label: '设置（可搜索）', desktop: 'Ctrl+,', browser: 'Ctrl+,', group: '面板' },
+  { id: 'panel.config', label: '配置中心（停靠面板）', desktop: '命令面板', browser: '命令面板', group: '面板' },
   { id: 'panel.terminal', label: '终端', desktop: 'Ctrl+`', browser: 'Ctrl+`', group: '面板' },
   { id: 'interrupt', label: '中断当前轮', desktop: 'Ctrl+Shift+C / Esc', browser: 'Esc', group: '会话' },
   { id: 'close', label: '结束当前会话进程', desktop: 'Ctrl+Shift+Q', browser: '命令面板', group: '会话' },
@@ -54,11 +56,12 @@ export function matchBrowserKey(e: KeyboardEvent): string | null {
   if (ctrl && !alt && !shift && lower === 'b') return 'sidebar';
   if (ctrl && !alt && !shift && lower === 'j') return 'dock.toggle';
   if (ctrl && !alt && shift && lower === 'j') return 'dock.minimize';
+  if (ctrl && !alt && shift && lower === 'm') return 'panel.mission';
   if (ctrl && !alt && !shift && lower === 'd') return 'pane.splitRight';
   if (ctrl && !alt && shift && lower === 'd') return 'pane.splitDown';
   if (ctrl && shift && k === 'Enter') return 'pane.zoom';
   if (ctrl && shift && /^[1-5]$/.test(k)) return `panel.${['tasks', 'files', 'usage', 'config', 'terminal'][Number(k) - 1]}`;
-  if (ctrl && !alt && !shift && k === ',') return 'panel.config';
+  if (ctrl && !alt && !shift && k === ',') return 'settings';
   if (ctrl && !alt && !shift && k === '`') return 'panel.terminal';
   if (ctrl && alt && /^[1-9]$/.test(k)) return `group.jump.${Number(k) - 1}`;
   if (ctrl && alt && k === 'ArrowRight') return 'pane.next';

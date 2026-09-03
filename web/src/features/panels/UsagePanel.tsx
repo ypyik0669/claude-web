@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useScopedSession } from '@/store';
 import { ws } from '@/ws/client';
+import { LedgerView } from './LedgerView';
 import { fmtTok, fmtUsd, shortModel, basename } from '@/util';
 
 interface Bucket { input: number; output: number; cacheRead: number; cacheWrite: number; turns: number; costUsd: number }
@@ -33,7 +34,7 @@ function Totals({ b }: { b: Bucket }) {
 
 export function UsagePanel() {
   const active = useScopedSession();
-  const [tab, setTab] = useState<'session' | 'global'>('session');
+  const [tab, setTab] = useState<'session' | 'global' | 'ledger'>('session');
   const [days, setDays] = useState(30);
   const [sess, setSess] = useState<{ total: Bucket; byModel: Record<string, Bucket> } | null>(null);
   const [glob, setGlob] = useState<{ total: Bucket; byDay: Record<string, Bucket>; byModel: Record<string, Bucket>; byProject: Record<string, Bucket> } | null>(null);
@@ -58,6 +59,7 @@ export function UsagePanel() {
       <div className="subtabs">
         <button className={tab === 'session' ? 'active' : ''} onClick={() => setTab('session')}>本会话</button>
         <button className={tab === 'global' ? 'active' : ''} onClick={() => setTab('global')}>全局</button>
+        <button className={tab === 'ledger' ? 'active' : ''} onClick={() => setTab('ledger')}>账本</button>
         {tab === 'global' && (
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ marginLeft: 'auto', background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 4, fontSize: 12 }}>
             {[7, 30, 90, 365].map((d) => <option key={d} value={d}>{d} 天</option>)}
@@ -74,6 +76,7 @@ export function UsagePanel() {
           </div>
         </>
       ) : <div className="empty">{active ? '加载中…' : '没有活动会话'}</div>)}
+      {tab === 'ledger' && <LedgerView />}
       {tab === 'global' && (glob ? (
         <>
           <Totals b={glob.total} />

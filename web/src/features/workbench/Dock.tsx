@@ -7,10 +7,11 @@ import { UsagePanel } from '@/features/panels/UsagePanel';
 import { ConfigPanel } from '@/features/panels/ConfigPanel';
 import { TerminalPanel } from '@/features/panels/TerminalPanel';
 import { InspectorPanel } from '@/features/panels/InspectorPanel';
+import { MissionPanel } from '@/features/panels/MissionPanel';
 import { MIME_PANEL } from './dnd';
 
-export const PANEL_TITLES: Record<PanelId, string> = { tasks: '任务', files: '文件改动', usage: '用量', config: '配置中心', terminal: '终端', inspector: '详情' };
-export const PANEL_ICONS: Record<PanelId, string> = { tasks: '◔', files: '≡', usage: '▤', config: '⚙', terminal: '▣', inspector: '◎' };
+export const PANEL_TITLES: Record<PanelId, string> = { tasks: '任务', files: '文件改动', usage: '用量', config: '配置中心', terminal: '终端', inspector: '详情', mission: '总览' };
+export const PANEL_ICONS: Record<PanelId, string> = { tasks: '◔', files: '≡', usage: '▤', config: '⚙', terminal: '▣', inspector: '◎', mission: '◉' };
 export const DOCK_DEFAULT_WIDTH = 440;
 
 export function PanelBody({ id }: { id: PanelId }) {
@@ -21,6 +22,7 @@ export function PanelBody({ id }: { id: PanelId }) {
     case 'config': return <ConfigPanel />;
     case 'terminal': return <TerminalPanel />;
     case 'inspector': return <InspectorPanel />;
+    case 'mission': return <MissionPanel />;
   }
 }
 
