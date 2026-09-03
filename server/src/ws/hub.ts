@@ -12,8 +12,12 @@ import { ScheduleService } from '../schedules/service.js';
 import { execFile } from 'node:child_process';
 import { engineInfo, installCcb, runClaudeCli } from '../claude-exe.js';
 import type { ProviderService } from '../providers/service.js';
+import type { GitService } from '../git/service.js';
+import type { SearchService } from '../search/service.js';
 
 export interface Services {
+  git: GitService;
+  search: SearchService;
   pool: RunnerPool;
   sessions: SessionService;
   config: ConfigService;
@@ -47,6 +51,8 @@ export class Hub {
     });
     s.terminal.on('data', (termId, data) => this.broadcast({ kind: 'terminal.data', termId, data }));
     s.terminal.on('exit', (termId, code) => this.broadcast({ kind: 'terminal.exit', termId, code }));
+    s.files.on('changed', (e: { path: string; type: any }) => this.broadcast({ kind: 'fs.changed', path: e.path, type: e.type }));
+    s.git.on('changed', (cwd: string) => this.broadcast({ kind: 'git.changed', cwd }));
   }
 
   broadcast(event: ServerEvent) {
@@ -75,7 +81,9 @@ export class Hub {
         const data = await this.handle(req, ws);
         this.send(ws, { type: 'reply', reply: { id, ok: true, data } });
       } catch (e: any) {
-        this.send(ws, { type: 'reply', reply: { id, ok: false, error: e?.message ?? String(e) } });
+        // GitCommandError carries a classified kind + hint; encode them so the client can offer a fix
+        const error = e?.info?.kind ? `${e.info.message}\n\n[${e.info.kind}] ${e.info.hint}` : e?.message ?? String(e);
+        this.send(ws, { type: 'reply', reply: { id, ok: false, error } });
       }
     });
   }
@@ -294,6 +302,84 @@ export class Hub {
         return s.files.read(req.path);
       case 'fs.pickDir':
         return s.terminal.pickDir();
+      case 'fs.stat':
+        return s.files.stat(req.path);
+      case 'fs.open':
+        return s.files.open(req.path);
+      case 'fs.write':
+        return s.files.write(req.path, req.text, req.expectMtime);
+      case 'fs.mkdir':
+        await s.files.mkdir(req.path);
+        return null;
+      case 'fs.create':
+        await s.files.create(req.path, req.text);
+        return null;
+      case 'fs.rename':
+        await s.files.rename(req.from, req.to);
+        return null;
+      case 'fs.copy':
+        await s.files.copy(req.from, req.to);
+        return null;
+      case 'fs.trash':
+        await s.files.trash(req.paths);
+        return null;
+      case 'fs.watch':
+        await s.files.watch(req.path);
+        return null;
+      case 'fs.unwatch':
+        await s.files.unwatch(req.path);
+        return null;
+      case 'search.run':
+        return s.search.search(req.root, req.query, req.options);
+      case 'search.replace':
+        return s.search.replace(req.root, req.query, req.replacement, { ...req.options, targets: req.targets });
+      case 'git.status':
+        return s.git.status(req.cwd);
+      case 'git.diff':
+        return s.git.diff(req.cwd, req.path, !!req.staged);
+      case 'git.stage':
+        await s.git.stage(req.cwd, req.files);
+        return null;
+      case 'git.unstage':
+        await s.git.unstage(req.cwd, req.files);
+        return null;
+      case 'git.discard':
+        await s.git.discard(req.cwd, req.files);
+        return null;
+      case 'git.commit':
+        return s.git.commit(req.cwd, req.message, { amend: req.amend, all: req.all });
+      case 'git.log':
+        return s.git.log(req.cwd, req.n, req.rev);
+      case 'git.show':
+        return s.git.show(req.cwd, req.rev);
+      case 'git.branches':
+        return s.git.listBranches(req.cwd);
+      case 'git.checkout':
+        await s.git.checkout(req.cwd, req.name, { create: req.create, from: req.from });
+        return null;
+      case 'git.deleteBranch':
+        await s.git.deleteBranch(req.cwd, req.name, req.force);
+        return null;
+      case 'git.fetch':
+        await s.git.fetch(req.cwd);
+        return null;
+      case 'git.pull':
+        return s.git.pull(req.cwd, req.rebase ?? true);
+      case 'git.push':
+        return s.git.push(req.cwd, { setUpstream: req.setUpstream, force: req.force });
+      case 'git.stash':
+        return s.git.stash(req.cwd, req.op, req.message);
+      case 'git.worktrees':
+        return s.git.worktrees(req.cwd);
+      case 'git.worktreeAdd':
+        return s.git.worktreeAdd(req.cwd, req.name, { branch: req.branch, from: req.from, dir: req.dir });
+      case 'git.worktreeRemove':
+        await s.git.worktreeRemove(req.cwd, req.dir, req.force);
+        return null;
+      case 'git.remotes':
+        return s.git.remotes(req.cwd);
+      case 'git.watch':
+        return s.git.watch(req.cwd);
 
       case 'terminal.open':
         return s.terminal.open(req.cwd, req.cols, req.rows);

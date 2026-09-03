@@ -1,0 +1,303 @@
+import { execFile } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import path from 'node:path';
+import fs from 'node:fs/promises';
+import chokidar from 'chokidar';
+import type { GitBranch, GitError, GitErrorKind, GitFileStatus, GitLogEntry, GitStatus, GitWorktree } from '../protocol.js';
+
+// for-each-ref does not expand %xNN like log does → pass the separator byte literally
+const SEP = String.fromCharCode(0x1f);
+
+export class GitCommandError extends Error {
+  constructor(public info: GitError) {
+    super(info.message);
+  }
+}
+
+const HINTS: Record<GitErrorKind, string> = {
+  not_repo: '这个目录不是 git 仓库。可以在终端里 git init，或选一个仓库目录。',
+  no_upstream: '当前分支没有上游分支。用「推送并设置上游」（git push -u origin <分支>）。',
+  auth: '认证失败。检查凭据（gh auth login / 凭据管理器），或改用 SSH 远程地址。',
+  rejected: '远程有新提交，推送被拒绝。先拉取（pull --rebase）再推送。',
+  conflict: '有合并冲突。在编辑器里解决冲突文件，暂存后再提交（或 git merge --abort 放弃）。',
+  detached: '当前处于分离 HEAD。先新建分支（checkout -b）再提交。',
+  dirty: '工作区有未提交的改动，会被切换分支覆盖。先提交或 stash。',
+  nothing_to_commit: '没有暂存的改动。先暂存文件再提交。',
+  identity: '没有配置提交身份。运行 git config --global user.name / user.email。',
+  lock: '仓库被锁（.git/index.lock）。确认没有别的 git 进程后删除锁文件。',
+  unrelated: '两个分支没有共同历史。确认远程地址正确，或用 --allow-unrelated-histories。',
+  network: '连不上远程。检查网络、代理或远程地址。',
+  unknown_rev: '找不到这个分支或提交。先 fetch，或检查名字。',
+  exists: '同名分支 / worktree 已存在。换个名字或先删除旧的。',
+  unknown: '',
+};
+
+/** Map git's stderr to one of a handful of causes the UI can offer a fix for. */
+export function classifyGitError(stderr: string, code?: number | null): GitError {
+  const s = stderr.toLowerCase();
+  const pick = (kind: GitErrorKind): GitError => ({ kind, message: stderr.trim().split('\n').filter(Boolean).slice(-3).join('\n') || `git exited ${code}`, hint: HINTS[kind] });
+  if (s.includes('not a git repository')) return pick('not_repo');
+  if (s.includes('has no upstream branch') || s.includes('no tracking information') || s.includes('no upstream configured')) return pick('no_upstream');
+  if (s.includes('authentication failed') || s.includes('could not read username') || s.includes('permission denied (publickey)') || s.includes('403') || s.includes('invalid username or password') || s.includes('terminal prompts disabled')) return pick('auth');
+  if (s.includes('non-fast-forward') || (s.includes('rejected') && s.includes('fetch first')) || s.includes('failed to push some refs')) return pick('rejected');
+  if (s.includes('conflict') || s.includes('needs merge') || s.includes('unmerged')) return pick('conflict');
+  if (s.includes('detached head') || s.includes('not currently on any branch')) return pick('detached');
+  if (s.includes('would be overwritten') || s.includes('please commit your changes or stash')) return pick('dirty');
+  if (s.includes('nothing to commit') || s.includes('no changes added to commit') || s.includes('nothing added to commit')) return pick('nothing_to_commit');
+  if (s.includes('please tell me who you are') || s.includes('author identity unknown') || s.includes('empty ident')) return pick('identity');
+  if (s.includes('index.lock') || s.includes('unable to create') && s.includes('.lock')) return pick('lock');
+  if (s.includes('unrelated histories')) return pick('unrelated');
+  if (s.includes('could not resolve host') || s.includes('connection timed out') || s.includes('unable to access') || s.includes('connection refused') || s.includes('network is unreachable') || s.includes('could not connect')) return pick('network');
+  if (s.includes('unknown revision') || s.includes('did not match any') || s.includes('invalid reference') || s.includes('pathspec') && s.includes('did not match')) return pick('unknown_rev');
+  if (s.includes('already exists') || s.includes('is already checked out')) return pick('exists');
+  return pick('unknown');
+}
+
+function parseXY(x: string, y: string, untracked = false): GitFileStatus['status'] {
+  if (untracked) return 'untracked';
+  const c = (y !== '.' && y !== ' ' ? y : x);
+  switch (c) {
+    case 'M': return 'modified';
+    case 'A': return 'added';
+    case 'D': return 'deleted';
+    case 'R': return 'renamed';
+    case 'C': return 'copied';
+    case 'U': return 'conflict';
+    case 'T': return 'typechange';
+    default: return 'modified';
+  }
+}
+
+export class GitService extends EventEmitter {
+  private watchers = new Map<string, { w: any; timer?: ReturnType<typeof setTimeout> }>();
+  private fetchTimer: ReturnType<typeof setInterval> | null = null;
+  private fetchDirs = new Set<string>();
+
+  async run(cwd: string, args: string[], opts: { input?: string; timeoutMs?: number } = {}): Promise<{ stdout: string; stderr: string }> {
+    return new Promise((resolve, reject) => {
+      const child = execFile('git', ['-c', 'core.quotepath=off', '-c', 'color.ui=never', ...args], {
+        cwd,
+        windowsHide: true,
+        maxBuffer: 32 * 1024 * 1024,
+        timeout: opts.timeoutMs ?? 60_000,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' },
+      }, (err, stdout, stderr) => {
+        if (err) reject(new GitCommandError(classifyGitError(String(stderr || err.message), (err as any).code)));
+        else resolve({ stdout: String(stdout), stderr: String(stderr) });
+      });
+      if (opts.input !== undefined) { child.stdin?.end(opts.input); }
+    });
+  }
+
+  async root(cwd: string): Promise<string | null> {
+    try {
+      const { stdout } = await this.run(cwd, ['rev-parse', '--show-toplevel']);
+      return stdout.trim().replace(/\//g, path.sep);
+    } catch {
+      return null;
+    }
+  }
+
+  async status(cwd: string): Promise<GitStatus> {
+    const root = await this.root(cwd);
+    if (!root) return { root: null, branch: null, upstream: null, ahead: 0, behind: 0, detached: false, files: [], stashes: 0, state: 'clean' };
+    const { stdout } = await this.run(root, ['status', '--porcelain=v2', '--branch', '--untracked-files=all']);
+    const st: GitStatus = { root, branch: null, upstream: null, ahead: 0, behind: 0, detached: false, files: [], stashes: 0, state: 'clean' };
+    for (const line of stdout.split('\n')) {
+      if (!line) continue;
+      if (line.startsWith('# branch.head ')) { const b = line.slice(14); st.branch = b === '(detached)' ? null : b; st.detached = b === '(detached)'; }
+      else if (line.startsWith('# branch.upstream ')) st.upstream = line.slice(18);
+      else if (line.startsWith('# branch.ab ')) { const m = /\+(\d+) -(\d+)/.exec(line); if (m) { st.ahead = Number(m[1]); st.behind = Number(m[2]); } }
+      else if (line.startsWith('1 ') || line.startsWith('2 ')) {
+        const parts = line.split(' ');
+        const xy = parts[1];
+        const x = xy[0], y = xy[1];
+        let p: string, from: string | undefined;
+        if (line.startsWith('2 ')) { const tail = line.split(' ').slice(9).join(' '); [p, from] = tail.split('\t'); }
+        else p = parts.slice(8).join(' ');
+        const f: GitFileStatus = { path: p, from, status: parseXY(x, y), staged: x !== '.', unstaged: y !== '.' };
+        st.files.push(f);
+      } else if (line.startsWith('u ')) {
+        const p = line.split(' ').slice(10).join(' ');
+        st.files.push({ path: p, status: 'conflict', staged: false, unstaged: true });
+      } else if (line.startsWith('? ')) {
+        st.files.push({ path: line.slice(2), status: 'untracked', staged: false, unstaged: true });
+      }
+    }
+    if (st.detached) st.state = 'detached';
+    try {
+      const g = path.join(root, '.git');
+      const gs = await fs.stat(g).catch(() => null);
+      const gitDir = gs?.isFile() ? (await fs.readFile(g, 'utf8')).replace(/^gitdir:\s*/, '').trim() : g;
+      const has = async (n: string) => !!(await fs.stat(path.join(gitDir, n)).catch(() => null));
+      if (await has('MERGE_HEAD')) st.state = 'merging';
+      else if (await has('rebase-merge') || await has('rebase-apply')) st.state = 'rebasing';
+      else if (await has('CHERRY_PICK_HEAD')) st.state = 'cherry-picking';
+      if (st.files.some((f) => f.status === 'conflict')) st.state = st.state === 'clean' ? 'conflict' : st.state;
+    } catch { /* ignore */ }
+    try {
+      const { stdout: sl } = await this.run(root, ['stash', 'list']);
+      st.stashes = sl.split('\n').filter(Boolean).length;
+    } catch { /* ignore */ }
+    return st;
+  }
+
+  async diff(cwd: string, file: string, staged: boolean): Promise<{ kind: 'diff' | 'new' | 'binary' | 'unchanged'; text: string }> {
+    const root = (await this.root(cwd)) ?? cwd;
+    const args = staged ? ['diff', '--cached', '--no-color', '--', file] : ['diff', '--no-color', '--', file];
+    const { stdout } = await this.run(root, args);
+    if (stdout.includes('Binary files')) return { kind: 'binary', text: '' };
+    if (stdout.trim()) return { kind: 'diff', text: stdout };
+    if (!staged) {
+      const { stdout: st } = await this.run(root, ['status', '--porcelain', '--', file]);
+      if (st.startsWith('??')) return { kind: 'new', text: await fs.readFile(path.join(root, file), 'utf8').catch(() => '') };
+    }
+    return { kind: 'unchanged', text: '' };
+  }
+
+  async stage(cwd: string, files: string[] | 'all') {
+    await this.run(cwd, files === 'all' ? ['add', '-A'] : ['add', '-A', '--', ...files]);
+    this.emit('changed', cwd);
+  }
+  async unstage(cwd: string, files: string[] | 'all') {
+    await this.run(cwd, files === 'all' ? ['reset', '-q'] : ['reset', '-q', '--', ...files]);
+    this.emit('changed', cwd);
+  }
+  /** Discard working tree changes (checkout HEAD for tracked, delete untracked). */
+  async discard(cwd: string, files: string[]) {
+    const root = (await this.root(cwd)) ?? cwd;
+    const st = await this.status(root);
+    const untracked = files.filter((f) => st.files.find((x) => x.path === f)?.status === 'untracked');
+    const tracked = files.filter((f) => !untracked.includes(f));
+    if (tracked.length) await this.run(root, ['checkout', 'HEAD', '--', ...tracked]).catch(async () => this.run(root, ['checkout', '--', ...tracked]));
+    for (const f of untracked) await fs.rm(path.join(root, f), { recursive: true, force: true });
+    this.emit('changed', cwd);
+  }
+  async commit(cwd: string, message: string, opts: { amend?: boolean; all?: boolean } = {}) {
+    const args = ['commit', '-F', '-'];
+    if (opts.amend) args.push('--amend');
+    if (opts.all) args.push('-a');
+    const r = await this.run(cwd, args, { input: message });
+    this.emit('changed', cwd);
+    return r.stdout;
+  }
+  async log(cwd: string, n = 30, rev?: string): Promise<GitLogEntry[]> {
+    const fmt = '%H%x1f%h%x1f%an%x1f%ae%x1f%at%x1f%s%x1f%D';
+    const { stdout } = await this.run(cwd, ['log', `-n${n}`, `--format=${fmt}`, ...(rev ? [rev] : [])]).catch(() => ({ stdout: '' }));
+    return stdout.split('\n').filter(Boolean).map((l) => {
+      const [hash, short, author, email, ts, subject, refs] = l.split('\x1f');
+      return { hash, short, author, email, date: Number(ts) * 1000, subject, refs: refs ? refs.split(',').map((x) => x.trim()).filter(Boolean) : [] };
+    });
+  }
+  async show(cwd: string, rev: string): Promise<{ text: string; stat: string }> {
+    const { stdout: stat } = await this.run(cwd, ['show', '--stat', '--format=%H%n%an <%ae>%n%ad%n%n%B', rev]);
+    const { stdout: text } = await this.run(cwd, ['show', '--no-color', '--format=', rev]);
+    return { text, stat };
+  }
+  async listBranches(cwd: string): Promise<GitBranch[]> {
+    const { stdout: local } = await this.run(cwd, ['for-each-ref', `--format=%(refname:short)${SEP}%(HEAD)${SEP}%(upstream:short)${SEP}%(committerdate:unix)${SEP}%(objectname:short)`, 'refs/heads']);
+    const { stdout: remote } = await this.run(cwd, ['for-each-ref', `--format=%(refname:short)${SEP}%(HEAD)${SEP}%(upstream:short)${SEP}%(committerdate:unix)${SEP}%(objectname:short)`, 'refs/remotes']);
+    const parse = (s: string, isRemote: boolean): GitBranch[] => s.split('\n').filter(Boolean).map((l) => {
+      const [name, head, upstream, ts, sha] = l.split('\x1f');
+      return { name, current: head === '*', remote: isRemote, upstream: upstream || null, date: Number(ts) * 1000, sha };
+    });
+    return [...parse(local, false), ...parse(remote, true).filter((b) => !b.name.endsWith('/HEAD'))];
+  }
+  async checkout(cwd: string, name: string, opts: { create?: boolean; from?: string } = {}) {
+    const args = opts.create ? ['checkout', '-b', name, ...(opts.from ? [opts.from] : [])] : ['checkout', name];
+    await this.run(cwd, args);
+    this.emit('changed', cwd);
+  }
+  async deleteBranch(cwd: string, name: string, force = false) {
+    await this.run(cwd, ['branch', force ? '-D' : '-d', name]);
+    this.emit('changed', cwd);
+  }
+  async fetch(cwd: string) {
+    await this.run(cwd, ['fetch', '--prune', '--quiet'], { timeoutMs: 120_000 });
+    this.emit('changed', cwd);
+  }
+  async pull(cwd: string, rebase = true) {
+    const r = await this.run(cwd, ['pull', rebase ? '--rebase' : '--no-rebase', '--quiet'], { timeoutMs: 180_000 });
+    this.emit('changed', cwd);
+    return r.stdout;
+  }
+  async push(cwd: string, opts: { setUpstream?: boolean; force?: boolean } = {}) {
+    const args = ['push', '--quiet'];
+    if (opts.force) args.push('--force-with-lease');
+    if (opts.setUpstream) {
+      const st = await this.status(cwd);
+      if (!st.branch) throw new GitCommandError(classifyGitError('detached HEAD'));
+      const remotes = (await this.run(cwd, ['remote'])).stdout.split('\n').filter(Boolean);
+      args.push('-u', remotes[0] ?? 'origin', st.branch);
+    }
+    const r = await this.run(cwd, args, { timeoutMs: 180_000 });
+    this.emit('changed', cwd);
+    return r.stderr + r.stdout;
+  }
+  async stash(cwd: string, op: 'push' | 'pop' | 'drop' | 'list', message?: string) {
+    if (op === 'list') return (await this.run(cwd, ['stash', 'list'])).stdout;
+    const args = op === 'push' ? ['stash', 'push', '--include-untracked', ...(message ? ['-m', message] : [])] : ['stash', op];
+    const r = await this.run(cwd, args);
+    this.emit('changed', cwd);
+    return r.stdout;
+  }
+  async worktrees(cwd: string): Promise<GitWorktree[]> {
+    const { stdout } = await this.run(cwd, ['worktree', 'list', '--porcelain']);
+    const out: GitWorktree[] = [];
+    let cur: Partial<GitWorktree> = {};
+    for (const line of stdout.split('\n')) {
+      if (line.startsWith('worktree ')) cur = { path: line.slice(9).replace(/\//g, path.sep) };
+      else if (line.startsWith('HEAD ')) cur.head = line.slice(5, 12);
+      else if (line.startsWith('branch ')) cur.branch = line.slice(7).replace('refs/heads/', '');
+      else if (line === 'detached') cur.branch = null;
+      else if (line === 'bare') cur.bare = true;
+      else if (line.startsWith('locked')) cur.locked = true;
+      else if (line === '' && cur.path) { out.push({ path: cur.path!, head: cur.head ?? '', branch: cur.branch ?? null, main: out.length === 0, bare: !!cur.bare, locked: !!cur.locked }); cur = {}; }
+    }
+    if (cur.path) out.push({ path: cur.path, head: cur.head ?? '', branch: cur.branch ?? null, main: out.length === 0, bare: !!cur.bare, locked: !!cur.locked });
+    return out;
+  }
+  /** Add a worktree under <root>/.claude/worktrees/<name> (same convention as Claude Code's --worktree). */
+  async worktreeAdd(cwd: string, name: string, opts: { branch?: string; from?: string; dir?: string } = {}): Promise<GitWorktree> {
+    const root = (await this.root(cwd)) ?? cwd;
+    const dir = opts.dir ?? path.join(root, '.claude', 'worktrees', name);
+    const branch = opts.branch ?? name;
+    const exists = (await this.listBranches(root)).some((b) => !b.remote && b.name === branch);
+    const args = ['worktree', 'add', dir, ...(exists ? [branch] : ['-b', branch, ...(opts.from ? [opts.from] : [])])];
+    await this.run(root, args);
+    this.emit('changed', cwd);
+    return { path: dir, head: '', branch, main: false, bare: false, locked: false };
+  }
+  async worktreeRemove(cwd: string, dir: string, force = false) {
+    await this.run(cwd, ['worktree', 'remove', ...(force ? ['--force'] : []), dir]);
+    this.emit('changed', cwd);
+  }
+  async remotes(cwd: string): Promise<{ name: string; url: string }[]> {
+    const { stdout } = await this.run(cwd, ['remote', '-v']).catch(() => ({ stdout: '' }));
+    const m = new Map<string, string>();
+    for (const l of stdout.split('\n')) { const [n, u] = l.split(/\s+/); if (n && u && !m.has(n)) m.set(n, u); }
+    return [...m].map(([name, url]) => ({ name, url }));
+  }
+
+  /** Watch .git metadata of a repo and broadcast `changed`; also schedule background fetches. */
+  async watch(cwd: string) {
+    const root = await this.root(cwd);
+    if (!root || this.watchers.has(root)) return root;
+    const g = path.join(root, '.git');
+    const w = chokidar.watch([path.join(g, 'HEAD'), path.join(g, 'index'), path.join(g, 'refs'), path.join(g, 'ORIG_HEAD'), path.join(g, 'MERGE_HEAD')], { ignoreInitial: true, depth: 3 });
+    const entry: { w: any; timer?: ReturnType<typeof setTimeout> } = { w };
+    w.on('all', () => { if (entry.timer) clearTimeout(entry.timer); entry.timer = setTimeout(() => this.emit('changed', root), 400); });
+    this.watchers.set(root, entry);
+    this.fetchDirs.add(root);
+    if (!this.fetchTimer) {
+      this.fetchTimer = setInterval(() => { for (const d of this.fetchDirs) this.fetch(d).catch(() => {}); }, 5 * 60_000);
+      this.fetchTimer.unref();
+    }
+    return root;
+  }
+  async unwatch(cwd: string) {
+    const root = (await this.root(cwd)) ?? cwd;
+    const e = this.watchers.get(root);
+    if (e) { await e.w.close(); this.watchers.delete(root); this.fetchDirs.delete(root); }
+  }
+}

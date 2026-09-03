@@ -178,8 +178,9 @@ function SimpleList({ kind, render }: { kind: 'config.skills' | 'config.agents' 
 function UiSettings() {
   const settings = useStore((s) => s.settings);
   const setSetting = useStore((s) => s.setSetting);
-  const rows: { key: string; l: string; hint: string }[] = [
+  const rows: { key: string; l: string; hint: string; def?: boolean }[] = [
     { key: 'ui.singleWindow', l: '单窗格模式', hint: '隐藏分组与分屏，所有会话在同一个窗格里切换（像 Mirasim 的「单窗口」）' },
+    { key: 'ui.autoSave', l: '编辑器自动保存', hint: '停止输入 0.8 秒后写回磁盘；关闭后用 Ctrl+S 保存', def: true },
     { key: 'ui.showThinking', l: '显示思考过程', hint: '在对话里展开模型的 thinking 块' },
     { key: 'autoContinueOnReset', l: '额度恢复后自动继续', hint: '被限流时到重置时间自动重发上一条' },
   ];
@@ -188,7 +189,7 @@ function UiSettings() {
       <h5>界面</h5>
       {rows.map((r) => (
         <div key={r.key} className="row">
-          <button className={clsx('toggle', !!settings[r.key] && 'on')} onClick={() => void setSetting(r.key, !settings[r.key])} />
+          <button className={clsx('toggle', (settings[r.key] ?? r.def ?? false) && 'on')} onClick={() => void setSetting(r.key, !(settings[r.key] ?? r.def ?? false))} />
           <div className="grow"><div>{r.l}</div><div className="sub">{r.hint}</div></div>
         </div>
       ))}

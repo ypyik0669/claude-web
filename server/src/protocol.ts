@@ -199,6 +199,39 @@ export type ClientRequest =
   | { kind: 'fs.list'; path: string }
   | { kind: 'fs.read'; path: string }
   | { kind: 'fs.pickDir' }
+  // phase 3: editor / file operations / search / git
+  | { kind: 'fs.stat'; path: string }
+  | { kind: 'fs.open'; path: string } // text + mtime for the editor
+  | { kind: 'fs.write'; path: string; text: string; expectMtime?: number } // conflict when disk mtime moved past expectMtime
+  | { kind: 'fs.mkdir'; path: string }
+  | { kind: 'fs.create'; path: string; text?: string }
+  | { kind: 'fs.rename'; from: string; to: string }
+  | { kind: 'fs.copy'; from: string; to: string }
+  | { kind: 'fs.trash'; paths: string[] }
+  | { kind: 'fs.watch'; path: string } // directory or file; emits fs.changed
+  | { kind: 'fs.unwatch'; path: string }
+  | { kind: 'search.run'; root: string; query: string; options?: SearchOptions }
+  | { kind: 'search.replace'; root: string; query: string; replacement: string; options?: SearchOptions; targets?: { path: string; lines?: number[] }[] }
+  | { kind: 'git.status'; cwd: string }
+  | { kind: 'git.diff'; cwd: string; path: string; staged?: boolean }
+  | { kind: 'git.stage'; cwd: string; files: string[] | 'all' }
+  | { kind: 'git.unstage'; cwd: string; files: string[] | 'all' }
+  | { kind: 'git.discard'; cwd: string; files: string[] }
+  | { kind: 'git.commit'; cwd: string; message: string; amend?: boolean; all?: boolean }
+  | { kind: 'git.log'; cwd: string; n?: number; rev?: string }
+  | { kind: 'git.show'; cwd: string; rev: string }
+  | { kind: 'git.branches'; cwd: string }
+  | { kind: 'git.checkout'; cwd: string; name: string; create?: boolean; from?: string }
+  | { kind: 'git.deleteBranch'; cwd: string; name: string; force?: boolean }
+  | { kind: 'git.fetch'; cwd: string }
+  | { kind: 'git.pull'; cwd: string; rebase?: boolean }
+  | { kind: 'git.push'; cwd: string; setUpstream?: boolean; force?: boolean }
+  | { kind: 'git.stash'; cwd: string; op: 'push' | 'pop' | 'drop' | 'list'; message?: string }
+  | { kind: 'git.worktrees'; cwd: string }
+  | { kind: 'git.worktreeAdd'; cwd: string; name: string; branch?: string; from?: string; dir?: string }
+  | { kind: 'git.worktreeRemove'; cwd: string; dir: string; force?: boolean }
+  | { kind: 'git.remotes'; cwd: string }
+  | { kind: 'git.watch'; cwd: string }
   | { kind: 'terminal.open'; cwd: string; cols: number; rows: number }
   | { kind: 'terminal.input'; termId: string; data: string }
   | { kind: 'terminal.resize'; termId: string; cols: number; rows: number }
@@ -219,7 +252,37 @@ export type ServerEvent =
   | { kind: 'meta.changed' }
   | { kind: 'limits'; limits: Limits }
   | { kind: 'terminal.data'; termId: string; data: string }
-  | { kind: 'terminal.exit'; termId: string; code: number | null };
+  | { kind: 'terminal.exit'; termId: string; code: number | null }
+  | { kind: 'fs.changed'; path: string; type: 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir' }
+  | { kind: 'git.changed'; cwd: string };
+
+// ---------- phase 3: files / search / git ----------
+export interface FsEntry { name: string; dir: boolean; size?: number; mtime?: number; symlink?: boolean }
+export interface FsStat { path: string; dir: boolean; size: number; mtime: number; binary?: boolean }
+export interface FsOpenResult { text: string; mtime: number; size: number; binary: boolean; truncated?: boolean }
+
+export interface SearchOptions { regex?: boolean; caseSensitive?: boolean; wholeWord?: boolean; include?: string[]; exclude?: string[]; includeHidden?: boolean; noIgnore?: boolean; maxResults?: number }
+export interface SearchMatch { line: number; text: string; ranges: { start: number; end: number }[] }
+export interface SearchResult { files: { path: string; matches: SearchMatch[] }[]; total: number; truncated: boolean }
+
+export type GitFileState = 'modified' | 'added' | 'deleted' | 'renamed' | 'copied' | 'untracked' | 'conflict' | 'typechange';
+export interface GitFileStatus { path: string; from?: string; status: GitFileState; staged: boolean; unstaged: boolean }
+export interface GitStatus {
+  root: string | null;
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  detached: boolean;
+  files: GitFileStatus[];
+  stashes: number;
+  state: 'clean' | 'merging' | 'rebasing' | 'cherry-picking' | 'conflict' | 'detached';
+}
+export interface GitLogEntry { hash: string; short: string; author: string; email: string; date: number; subject: string; refs: string[] }
+export interface GitBranch { name: string; current: boolean; remote: boolean; upstream: string | null; date: number; sha: string }
+export interface GitWorktree { path: string; head: string; branch: string | null; main: boolean; bare: boolean; locked: boolean }
+export type GitErrorKind = 'not_repo' | 'no_upstream' | 'auth' | 'rejected' | 'conflict' | 'detached' | 'dirty' | 'nothing_to_commit' | 'identity' | 'lock' | 'unrelated' | 'network' | 'unknown_rev' | 'exists' | 'unknown';
+export interface GitError { kind: GitErrorKind; message: string; hint: string }
 
 export type WireDown = { type: 'reply'; reply: ReplyEnvelope } | { type: 'event'; event: ServerEvent };
 export type WireUp = { type: 'request'; request: RequestEnvelope };

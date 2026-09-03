@@ -107,12 +107,15 @@ export function NotebookBody({ t }: { t: ToolUseBlock }) {
 /** Small helper used by search cards: open a path in the inspector. */
 export function FileLink({ path, line, children }: { path: string; line?: number; children?: React.ReactNode }) {
   const ctx = usePaneCtx();
-  const open = () => {
+  const open = (e: React.MouseEvent) => {
     const st = useStore.getState();
     const sid = ctx?.sessionId ?? st.activeId;
-    if (sid) useStore.setState({ inspect: { sessionId: sid, file: { path, line } } });
+    // plain click → editor tab at the line; Alt+click → inspector (read-only quick look)
+    if (e.altKey) { if (sid) useStore.setState({ inspect: { sessionId: sid, file: { path, line } } }); return; }
+    st.openTile({ id: `d${Date.now().toString(36)}`, kind: 'doc', path, line }, 'tab');
   };
-  return <button className="file-link" onClick={open} title={path}>{children ?? path}</button>;
+  return <button className="file-link" onClick={open} title={`${path}
+Alt+点击 在详情面板查看`}>{children ?? path}</button>;
 }
 
 export function FileContentPreview({ text, path }: { text: string; path?: string }) {

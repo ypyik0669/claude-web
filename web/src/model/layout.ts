@@ -2,12 +2,12 @@
 // Pure functions, no DOM / store imports, so it can be unit tested.
 
 export type PanelId = 'tasks' | 'files' | 'usage' | 'config' | 'terminal' | 'inspector';
-export type WorkbenchTab = 'live' | 'changes' | 'git' | 'files' | 'schedules' | 'artifacts';
+export type WorkbenchTab = 'live' | 'changes' | 'git' | 'files' | 'search' | 'schedules' | 'artifacts';
 
 export type Tile =
   | { id: string; kind: 'chat'; sessionId: string | null; view: 'chat' | 'trajectory'; wb: WorkbenchTab; title?: string }
-  | { id: string; kind: 'doc'; path: string; title?: string }
-  | { id: string; kind: 'diff'; sessionId: string; path: string; title?: string }
+  | { id: string; kind: 'doc'; path: string; line?: number; title?: string }
+  | { id: string; kind: 'diff'; sessionId: string; path: string; staged?: boolean; rev?: string; cwd?: string; title?: string }
   | { id: string; kind: 'term'; cwd: string; title?: string }
   | { id: string; kind: 'panel'; panel: PanelId; title?: string };
 
@@ -325,11 +325,21 @@ export function layoutReducer(s: LayoutState, a: LayoutAction): LayoutState {
           const tiles = p.tiles.map((t) => (t.id === cur.id ? { ...a.tile, id: a.tile.id || cur.id } : t));
           return { ...p, tiles, activeTileId: tiles.find((t) => t === tiles[p.tiles.indexOf(cur)])!.id };
         }
-        // same session already open as a tab → just activate it
-        if (a.tile.kind === 'chat') {
-          const want = a.tile.sessionId;
-          const dup = want === null ? undefined : p.tiles.find((t) => t.kind === 'chat' && t.sessionId === want);
-          if (dup) return p.activeTileId === dup.id ? p : { ...p, activeTileId: dup.id };
+        // same session / document / diff already open as a tab → just activate it (docs also take the new line)
+        const nt = a.tile;
+        const np = (p: string) => p.replace(/\\/g, '/').toLowerCase();
+        const same = (t: Tile): boolean => {
+          if (t.kind !== nt.kind) return false;
+          if (nt.kind === 'chat') return t.kind === 'chat' && nt.sessionId !== null && t.sessionId === nt.sessionId;
+          if (nt.kind === 'doc') return t.kind === 'doc' && np(t.path) === np(nt.path);
+          if (nt.kind === 'diff') return t.kind === 'diff' && np(t.path) === np(nt.path) && !!t.staged === !!nt.staged && t.rev === nt.rev;
+          if (nt.kind === 'panel') return t.kind === 'panel' && t.panel === nt.panel;
+          return false;
+        };
+        const dup = p.tiles.find(same);
+        if (dup) {
+          const tiles = nt.kind === 'doc' && nt.line ? p.tiles.map((t) => (t.id === dup.id ? { ...t, line: nt.line } : t)) : p.tiles;
+          return p.activeTileId === dup.id && tiles === p.tiles ? p : { ...p, tiles, activeTileId: dup.id };
         }
         return { ...p, tiles: [...p.tiles, a.tile], activeTileId: a.tile.id };
       }));

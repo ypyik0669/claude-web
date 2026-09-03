@@ -23,6 +23,8 @@ function iconFor(t: Tile) {
 /** Tabs of one pane: click / middle-click close / double-click rename / drag reorder & move / ＋ menu / split & zoom buttons. */
 export function TabStrip({ pane, groupId, index, zoomed, single }: { pane: PaneModel; groupId: string; index: number; zoomed: boolean; single: boolean }) {
   const dispatch = useStore((s) => s.dispatchLayout);
+  const closeTile = useStore((s) => s.closeTile);
+  const dirty = useStore((s) => s.dirtyDocs);
   const sessions = useStore((s) => s.sessions);
   const open = useStore((s) => s.open);
   const singleWindow = useStore((s) => !!s.settings['ui.singleWindow']);
@@ -74,7 +76,7 @@ export function TabStrip({ pane, groupId, index, zoomed, single }: { pane: PaneM
               onDragOver={(e) => onDragOver(e, i)}
               onClick={() => dispatch({ t: 'tile.activate', paneId: pane.id, tileId: t.id })}
               onDoubleClick={() => startRename(t)}
-              onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); dispatch({ t: 'tile.close', paneId: pane.id, tileId: t.id }); } }}
+              onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTile(pane.id, t.id); } }}
               title={`${text}\n双击重命名 · 中键关闭 · 可拖到别的窗格`}
             >
               {live && live !== 'history' && live !== 'closed' && <span className={clsx('dot', live)} />}
@@ -82,9 +84,9 @@ export function TabStrip({ pane, groupId, index, zoomed, single }: { pane: PaneM
               {renaming === t.id ? (
                 <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commitRename} onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenaming(null); }} onClick={(e) => e.stopPropagation()} />
               ) : (
-                <span className="t">{text}</span>
+                <span className="t">{text}{dirty[t.id] ? ' •' : ''}</span>
               )}
-              <button className="x" title="关闭" onClick={(e) => { e.stopPropagation(); dispatch({ t: 'tile.close', paneId: pane.id, tileId: t.id }); }}>✕</button>
+              <button className="x" title="关闭" onClick={(e) => { e.stopPropagation(); closeTile(pane.id, t.id); }}>✕</button>
             </div>
           );
         })}

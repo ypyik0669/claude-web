@@ -62,6 +62,10 @@ interface State {
   /** open a session (or a fresh empty tile when null) in the focused pane */
   openInPane(sessionId: string | null, mode?: 'replace' | 'tab', paneId?: string): void;
   openTile(tile: Tile, mode?: 'replace' | 'tab', paneId?: string): void;
+  /** close a tile; asks first when it is an editor with unsaved changes */
+  closeTile(paneId: string, tileId: string): void;
+  dirtyDocs: Record<string, boolean>; // doc tile id -> unsaved
+  setDocDirty(tileId: string, dirty: boolean): void;
   loadMeta(): Promise<void>;
   addWorkspace(path: string): Promise<void>;
   setSessionMeta(sessionId: string, patch: SessionMeta): Promise<void>;
@@ -190,6 +194,19 @@ export const useStore = create<State>((set, get) => ({
     const g = activeGroup(get().layout);
     const single = !!get().settings['ui.singleWindow'];
     get().dispatchLayout({ t: 'tile.open', paneId: paneId ?? g.focusedPaneId, tile, mode: single ? 'replace' : mode });
+  },
+  closeTile(paneId, tileId) {
+    if (get().dirtyDocs[tileId] && !confirm('这个文件有未保存的改动，确定关闭？')) return;
+    get().dispatchLayout({ t: 'tile.close', paneId, tileId });
+  },
+  dirtyDocs: {},
+  setDocDirty(tileId, dirty) {
+    set((s) => {
+      if (!!s.dirtyDocs[tileId] === dirty) return {};
+      const d = { ...s.dirtyDocs };
+      if (dirty) d[tileId] = true; else delete d[tileId];
+      return { dirtyDocs: d };
+    });
   },
   sidebarOpen: true,
   inspect: null,
@@ -435,6 +452,8 @@ export const useStore = create<State>((set, get) => ({
 
   async loadHistory(sessionId, opts) {
     const cur = get().open[sessionId];
+    // tiles restored from a persisted layout can ask before the session list arrived → fetch it first (cwd comes from it)
+    if (!get().sessions.some((s) => s.sessionId === sessionId)) await get().refreshSessions().catch(() => {});
     const meta = get().sessions.find((s) => s.sessionId === sessionId);
     if (!cur) set((s) => ({ open: { ...s.open, [sessionId]: { sessionId, cwd: meta?.cwd ?? '', conv: createConversation(), version: 0, state: 'history', pending: [], loading: true, queue: [], draft: '', feedback: {} } } }));
     else set((s) => bump(s, sessionId, (o) => { o.loading = true; }));

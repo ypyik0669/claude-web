@@ -15,6 +15,10 @@ import { MetaStore } from './meta/store.js';
 import { ProviderService } from './providers/service.js';
 import { LimitsService } from './usage/limits.js';
 import { ScheduleService } from './schedules/service.js';
+import { GitService } from './git/service.js';
+import { SearchService } from './search/service.js';
+
+const FILE_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.html': 'text/html; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.json': 'application/json' };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIME: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.woff2': 'font/woff2', '.png': 'image/png', '.ico': 'image/x-icon' };
@@ -58,6 +62,27 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     if (url.pathname === '/api/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true, version }));
+      return;
+    }
+    // Raw local file for previews (images / pdf / media): GET /api/file?path=<abs>&token= — token-guarded like /ws
+    if (url.pathname === '/api/file' && req.method === 'GET') {
+      if (token && url.searchParams.get('token') !== token) { res.writeHead(403); res.end('forbidden'); return; }
+      const p = url.searchParams.get('path') ?? '';
+      if (!path.isAbsolute(p)) { res.writeHead(400); res.end('absolute path required'); return; }
+      let st: fs.Stats;
+      try { st = fs.statSync(p); } catch { res.writeHead(404); res.end('not found'); return; }
+      if (!st.isFile()) { res.writeHead(400); res.end('not a file'); return; }
+      const type = FILE_MIME[path.extname(p).toLowerCase()] ?? 'application/octet-stream';
+      const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
+      if (range && st.size) {
+        const start = range[1] ? Number(range[1]) : 0;
+        const end = range[2] ? Math.min(Number(range[2]), st.size - 1) : st.size - 1;
+        res.writeHead(206, { 'Content-Type': type, 'Content-Range': `bytes ${start}-${end}/${st.size}`, 'Content-Length': end - start + 1, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache' });
+        fs.createReadStream(p, { start, end }).pipe(res);
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': type, 'Content-Length': st.size, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache', 'Content-Security-Policy': "sandbox; default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; media-src 'self'" });
+      fs.createReadStream(p).pipe(res);
       return;
     }
     // Binary upload for message attachments: POST /api/attachments?sessionId=&rel=path/in/session (token-guarded like /ws)
@@ -108,8 +133,9 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const meta = new MetaStore();
   await meta.load();
   const providers = new ProviderService(meta);
+  const files = new FilesService();
   const pool = new RunnerPool(providers);
-  const services = { pool, sessions: new SessionService(), config: new ConfigService(), usage: new UsageService(), files: new FilesService(), terminal: new TerminalService(), meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, version };
+  const services = { pool, sessions: new SessionService(), config: new ConfigService(), usage: new UsageService(), files, terminal: new TerminalService(), meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: new GitService(), search: new SearchService(), version };
   new Hub(wss, services);
 
   await new Promise<void>((res, rej) => {

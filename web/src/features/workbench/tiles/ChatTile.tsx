@@ -12,6 +12,24 @@ import { Schedules } from '@/features/panels/TasksPanel';
 import { shareConversation } from '@/features/chat/MessageActions';
 import { Welcome } from '../Welcome';
 import { FileTree } from '../FileTree';
+import { GitView } from '../GitView';
+import { SearchView } from '../SearchView';
+import type { GitStatus } from '@shared';
+
+/** git status for a cwd, refreshed on git.changed broadcasts (shared by the files tab badges). */
+function useGitStatus(cwd: string, enabled: boolean): GitStatus | null {
+  const [st, setSt] = useState<GitStatus | null>(null);
+  useEffect(() => {
+    if (!enabled || !cwd) return;
+    let alive = true;
+    const load = () => ws.request<GitStatus>({ kind: 'git.status', cwd }).then((s) => alive && setSt(s)).catch(() => alive && setSt(null));
+    load();
+    void ws.request({ kind: 'git.watch', cwd }).catch(() => {});
+    const off = ws.on((e) => { if (e.kind === 'git.changed' || e.kind === 'fs.changed') load(); });
+    return () => { alive = false; off(); };
+  }, [cwd, enabled]);
+  return st;
+}
 
 type ChatTileModel = Extract<Tile, { kind: 'chat' }>;
 
@@ -20,6 +38,7 @@ const WB_TABS: { id: WorkbenchTab; l: string }[] = [
   { id: 'changes', l: '改动' },
   { id: 'git', l: 'Git' },
   { id: 'files', l: '文件' },
+  { id: 'search', l: '搜索' },
   { id: 'schedules', l: '定时' },
   { id: 'artifacts', l: '产物' },
 ];
@@ -82,15 +101,6 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
   );
 }
 
-function GitPlaceholder({ cwd }: { cwd: string }) {
-  return (
-    <div className="empty" style={{ flexDirection: 'column', gap: 6 }}>
-      <div>Git 面板在阶段 3 上线（暂存 / 提交 / 推拉 / 分支 / worktree）。</div>
-      <div style={{ fontSize: 12 }}><button className="link" onClick={() => ws.request({ kind: 'shell.open', path: cwd, app: 'code' }).catch(() => {})}>先在 VS Code 打开 {basename(cwd)}</button></div>
-    </div>
-  );
-}
-
 /** Files this session produced: Artifact tool outputs and Write-created files, newest first. */
 function Artifacts({ sessionId }: { sessionId: string }) {
   const active = useStore((s) => s.open[sessionId]);
@@ -124,6 +134,7 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
   const has = useStore((s) => (sid ? !!s.open[sid] : true));
   const loadHistory = useStore((s) => s.loadHistory);
   const active = useStore((s) => (sid ? s.open[sid] : undefined));
+  const gitStatus = useGitStatus(active?.cwd ?? '', tile.wb === 'files');
   // restored from a persisted layout: lazily pull the transcript
   useEffect(() => {
     if (sid && !has && visible) void loadHistory(sid, { focus: false });
@@ -140,8 +151,9 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
         </>
       )}
       {tile.wb === 'changes' && <div className="wb-body"><FilesPanel /></div>}
-      {tile.wb === 'git' && <div className="wb-body"><GitPlaceholder cwd={active.cwd} /></div>}
-      {tile.wb === 'files' && <div className="wb-body"><FileTree root={active.cwd} /></div>}
+      {tile.wb === 'git' && <div className="wb-body"><GitView cwd={active.cwd} /></div>}
+      {tile.wb === 'files' && <div className="wb-body"><FileTree root={active.cwd} gitStatus={gitStatus} /></div>}
+      {tile.wb === 'search' && <div className="wb-body"><SearchView root={active.cwd} /></div>}
       {tile.wb === 'schedules' && <div className="wb-body list"><Schedules /></div>}
       {tile.wb === 'artifacts' && <div className="wb-body"><Artifacts sessionId={sid} /></div>}
     </div>

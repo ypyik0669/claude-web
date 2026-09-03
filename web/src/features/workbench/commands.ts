@@ -42,7 +42,7 @@ export function runCommand(id: string): boolean {
       if (useStore.getState().layout === before) st.toast('最多 6 个窗格');
       return true;
     }
-    case 'tile.close': if (pane?.activeTileId) d({ t: 'tile.close', paneId: pane.id, tileId: pane.activeTileId }); return true;
+    case 'tile.close': if (pane?.activeTileId) st.closeTile(pane.id, pane.activeTileId); return true;
     case 'pane.zoom': d({ t: 'pane.zoom', paneId: g.zoomedPaneId ? null : g.focusedPaneId }); return true;
     case 'pane.next': d({ t: 'pane.cycle', dir: 1 }); return true;
     case 'pane.prev': d({ t: 'pane.cycle', dir: -1 }); return true;
