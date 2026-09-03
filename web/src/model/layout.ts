@@ -3,7 +3,7 @@
 
 import type { IconName } from '@/ui/icons';
 
-export type PanelId = 'tasks' | 'files' | 'usage' | 'config' | 'terminal' | 'inspector' | 'mission' | 'goals' | 'android';
+export type PanelId = 'tasks' | 'files' | 'usage' | 'config' | 'terminal' | 'inspector' | 'mission' | 'goals' | 'android' | 'memory';
 export type WorkbenchTab = 'live' | 'changes' | 'git' | 'files' | 'search' | 'schedules' | 'artifacts' | 'board';
 
 /**
@@ -14,6 +14,7 @@ export type WorkbenchTab = 'live' | 'changes' | 'git' | 'files' | 'search' | 'sc
 export const PANELS: { id: PanelId; title: string; icon: IconName; rail?: boolean }[] = [
   { id: 'mission', title: '总览', icon: 'mission', rail: true },
   { id: 'goals', title: '目标', icon: 'goals', rail: true },
+  { id: 'memory', title: '记忆', icon: 'memory', rail: true },
   { id: 'tasks', title: '任务', icon: 'tasks', rail: true },
   { id: 'files', title: '文件改动', icon: 'files', rail: true },
   { id: 'usage', title: '用量', icon: 'usage' },
@@ -140,11 +141,18 @@ export function activeTile(p: Pane | undefined): Tile | undefined {
   return p ? p.tiles.find((t) => t.id === p.activeTileId) ?? p.tiles[0] : undefined;
 }
 
-/** Session shown in the focused pane (for `activeId` derivation). */
+/**
+ * Session shown in the focused pane (for `activeId` derivation).
+ *
+ * Falls back past non-session tiles: bringing a doc / terminal / browser tab to the front must not
+ * strand the dock panels (files, git, memory, tasks…) with no session — they read `activeId`, and a
+ * browser tab next to the chat is the normal way to work.
+ */
 export function deriveActive(s: LayoutState): string | null {
   const g = activeGroup(s);
-  const t = activeTile(g.panes[g.focusedPaneId]);
-  return t?.kind === 'chat' ? t.sessionId : t?.kind === 'diff' ? t.sessionId : null;
+  const held = (t: Tile | undefined) => (t?.kind === 'chat' || t?.kind === 'diff' ? t.sessionId : null);
+  const inPane = (p: Pane | undefined) => (p ? held(activeTile(p)) ?? held(p.tiles.find((t) => held(t))) : null);
+  return inPane(g.panes[g.focusedPaneId]) ?? paneOrder(g.root).map((id) => inPane(g.panes[id])).find(Boolean) ?? null;
 }
 
 export interface Rect { x: number; y: number; w: number; h: number }

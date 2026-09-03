@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { resolveEngine, spawnClaude } from '../claude-exe.js';
 import { providerEnv } from '../providers/service.js';
 import { effortLevels, modelLabel, modelsFor, supportsUltracode } from '../models/catalog.js';
+import { claudeMcpServer } from '../memory/launcher.js';
 import type { AttachmentRef, EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot } from '../protocol.js';
 
 const esc = (s: string) => s.replace(/"/g, '&quot;');
@@ -161,6 +162,9 @@ export class SessionRunner extends EventEmitter {
       // The SDK defaults to an EMPTY system prompt. We want the real Claude Code prompt: same behaviour as the
       // CLI, and relays that fingerprint Claude Code requests (e.g. super-nb) reject bodies without it.
       systemPrompt: { type: 'preset', preset: 'claude_code' },
+      // Shared cross-agent memory, injected per session rather than written into ~/.claude —
+      // uninstalling claude-web must not leave an MCP entry behind in the user's own config.
+      mcpServers: claudeMcpServer({ cwd: this.cwd, sessionId: this.sessionId, agent: 'claude' }),
       includePartialMessages: true,
       includeHookEvents: true,
       forwardSubagentText: true,

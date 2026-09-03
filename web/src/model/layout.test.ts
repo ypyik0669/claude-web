@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { activeGroup, chatTile, deriveActive, initialLayout, layoutRects, layoutReducer, migrateLegacy, MAX_PANES, paneOrder, presetTree, resetIds, sanitizeLayout, type LayoutState } from './layout';
+import { activeGroup, activeTile, chatTile, deriveActive, initialLayout, layoutRects, layoutReducer, migrateLegacy, MAX_PANES, paneOrder, presetTree, resetIds, sanitizeLayout, type LayoutState } from './layout';
 
 beforeEach(() => resetIds());
 
@@ -145,6 +145,19 @@ describe('tiles', () => {
     s = layoutReducer(s, { t: 'pane.split', paneId: p0, dir: 'row', tile: chatTile('y') });
     expect(deriveActive(s)).toBe('y');
     s = layoutReducer(s, { t: 'pane.focus', paneId: p0 });
+    expect(deriveActive(s)).toBe('x');
+  });
+
+  it('deriveActive looks past a browser / doc tab in front', () => {
+    let s = initialLayout();
+    const p0 = focused(s);
+    const t0 = activeGroup(s).panes[p0].tiles[0];
+    s = layoutReducer(s, { t: 'session.assign', paneId: p0, tileId: t0.id, sessionId: 'x' });
+    s = layoutReducer(s, { t: 'tile.open', paneId: p0, mode: 'tab', tile: { kind: 'browser', url: 'http://localhost:3000' } as any });
+    expect(activeTile(activeGroup(s).panes[p0])!.kind).toBe('browser');
+    expect(deriveActive(s)).toBe('x'); // the dock panels stay pointed at the session
+    // …and past a pane that holds no session at all
+    s = layoutReducer(s, { t: 'pane.split', paneId: p0, dir: 'row', tile: { kind: 'term' } as any });
     expect(deriveActive(s)).toBe('x');
   });
 });

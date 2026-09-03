@@ -5,6 +5,13 @@
 export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
 // `ultra` is Codex-only (its own enum member). `ultracode` is NOT here on purpose: in Claude Code it is a
 // separate session-scoped boolean (xhigh + dynamic workflows) that CLAUDE_CODE_EFFORT_LEVEL rejects.
+export type MemoryScope = 'global' | 'project' | 'session';
+export type MemoryKind = 'decision' | 'constraint' | 'fact' | 'deadend' | 'preference' | 'note';
+export interface MemoryItem {
+  id: string; scope: MemoryScope; key: string; kind: MemoryKind; text: string; tags: string[];
+  sourceSession?: string; sourceAgent?: string; pinned: boolean; hits: number; createdAt: number; updatedAt: number;
+}
+
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
 
 /** One entry of an agent's model picker. `value` is what gets sent back as the model id. */
@@ -213,6 +220,12 @@ export type ClientRequest =
   | { kind: 'session.setProvider'; sessionId: string; providerId?: string }
   | { kind: 'session.switchAgent'; sessionId: string; agent: AgentKind; model?: string }
   | { kind: 'session.canonical'; sessionId: string }
+  | { kind: 'memory.search'; query?: string; scope?: MemoryScope; cwd?: string; sessionId?: string; kind_?: MemoryKind; limit?: number }
+  | { kind: 'memory.write'; text: string; scope?: MemoryScope; cwd?: string; sessionId?: string; kind_?: MemoryKind; tags?: string[]; pinned?: boolean }
+  | { kind: 'memory.update'; id: string; patch: { text?: string; kind?: MemoryKind; tags?: string[]; pinned?: boolean; scope?: MemoryScope } }
+  | { kind: 'memory.remove'; id: string }
+  | { kind: 'memory.stats' }
+  | { kind: 'memory.harvest'; sessionId: string }
   | { kind: 'session.rename'; sessionId: string; title: string }
   | { kind: 'session.delete'; sessionId: string }
   | { kind: 'session.contextUsage'; sessionId: string; detail?: 'summary' | 'full' }
@@ -390,6 +403,7 @@ export type ServerEvent =
   | { kind: 'im.changed' }
   | { kind: 'tunnel.changed' }
   | { kind: 'goals.changed' }
+  | { kind: 'memory.changed' }
   | { kind: 'limits'; limits: Limits }
   | { kind: 'terminal.data'; termId: string; data: string }
   | { kind: 'terminal.exit'; termId: string; code: number | null }

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import type { AgentKind, AttachmentRef, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, RunnerState, SessionInfoSnapshot } from '../protocol.js';
 import { JsonRpcProcess } from './jsonrpc.js';
+import { acpMcpServers } from '../memory/launcher.js';
 import { MessageSynth, mapToolName } from './normalize.js';
 import type { AgentTranscripts } from './transcript.js';
 import type { AgentDriver } from './types.js';
@@ -80,11 +81,21 @@ export class AcpDriver extends EventEmitter implements AgentDriver {
       if (!(await this.transcripts.exists(this.sessionId))) await this.transcripts.create({ agent: this.kind, cwd: this.cwd, title: '', createdAt: Date.now(), sessionId: this.sessionId, model: this.model });
       const head = await this.transcripts.head(this.sessionId);
       let loaded = false;
+      // the shared memory store, handed to the agent inline — we never touch its own settings file
+      const mcpServers = acpMcpServers({ cwd: this.cwd, sessionId: this.sessionId, agent: this.kind });
       if (params.sessionId && head?.nativeSessionId && this.caps.loadSession) {
-        try { await rpc.request('session/load', { sessionId: head.nativeSessionId, cwd: this.cwd, mcpServers: [] }, 120_000); this.acpSessionId = head.nativeSessionId; loaded = true; } catch { /* fall back to a fresh session */ }
+        try { await rpc.request('session/load', { sessionId: head.nativeSessionId, cwd: this.cwd, mcpServers }, 120_000); this.acpSessionId = head.nativeSessionId; loaded = true; } catch { /* fall back to a fresh session */ }
       }
       if (!loaded) {
-        const newSession = () => rpc.request('session/new', { cwd: this.cwd, mcpServers: [] }, 120_000);
+        // an agent that chokes on our server must still get a session, so retry bare once
+        const newSession = async () => {
+          try { return await rpc.request('session/new', { cwd: this.cwd, mcpServers }, 120_000); } catch (e) {
+            if (!mcpServers.length) throw e;
+            const r = await rpc.request('session/new', { cwd: this.cwd, mcpServers: [] }, 120_000);
+            this.push(this.synth.systemNote(`${this.launch.name} 不接受共享记忆 MCP，已改为不带它启动。`, 'warning'));
+            return r;
+          }
+        };
         let r: any;
         try { r = await newSession(); } catch (e: any) {
           // ACP: -32000 auth_required → try the agent's auth methods that need no interaction, else tell the user how to log in

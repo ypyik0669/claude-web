@@ -80,6 +80,29 @@ describe('AcpDriver (mock agent)', () => {
     await d.close();
   });
 
+  it('hands the shared memory store to the agent, and starts anyway if it is refused', async () => {
+    const mock = path.join(here, '__mocks__', 'acp-agent.mjs');
+    const textOf = (msgs: any[]) => msgs.filter((m) => m.type === 'stream_event' && m.event.delta?.type === 'text_delta').map((m) => m.event.delta.text).join('');
+
+    const d = new AcpDriver('gemini', { command: process.execPath, args: [mock], env: {}, name: 'Mock ACP' }, { cwd: tmp }, transcripts, null);
+    const msgs = collect(d);
+    await waitFor(() => d.state === 'idle');
+    d.send('what mcp servers do you have');
+    await waitFor(() => msgs.some((m) => m.type === 'result'));
+    expect(textOf(msgs)).toContain('[mcp: memory]');
+    await d.close();
+
+    // an agent that rejects inline MCP servers must still get a usable session
+    const d2 = new AcpDriver('qwen', { command: process.execPath, args: [mock], env: { MOCK_REJECT_MCP: '1' }, name: 'Picky' }, { cwd: tmp }, transcripts, null);
+    const msgs2 = collect(d2);
+    await waitFor(() => d2.state === 'idle');
+    expect(msgs2.some((m) => m.type === 'system' && String(m.note ?? '').includes('共享记忆'))).toBe(true);
+    d2.send('mcp?');
+    await waitFor(() => msgs2.some((m) => m.type === 'result'));
+    expect(textOf(msgs2)).toContain('[mcp: none]');
+    await d2.close();
+  });
+
   it('reports a launch failure as error state', async () => {
     const d = new AcpDriver('kimi', { command: 'definitely-not-a-real-binary-xyz', args: [], env: {}, name: 'Nope' }, { cwd: tmp }, transcripts, null);
     await waitFor(() => d.state === 'error');

@@ -3,6 +3,7 @@ import { modelLabel, modelsFor } from '../models/catalog.js';
 import { randomUUID } from 'node:crypto';
 import type { AgentKind, AttachmentRef, EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, RunnerState, SessionInfoSnapshot } from '../protocol.js';
 import { JsonRpcProcess } from './jsonrpc.js';
+import { insertCodexConfig } from '../memory/launcher.js';
 import { MessageSynth } from './normalize.js';
 import type { AgentTranscripts } from './transcript.js';
 import type { AgentDriver } from './types.js';
@@ -77,7 +78,9 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
 
   private async start(params: OpenSessionParams) {
     try {
-      const rpc = new JsonRpcProcess(this.launch.command, this.launch.args, { cwd: this.cwd, env: this.launch.env });
+      // the shared memory store, injected as `-c` overrides so ~/.codex/config.toml is never touched
+      const args = insertCodexConfig(this.launch.args, { cwd: this.cwd, sessionId: this.sessionId, agent: this.kind });
+      const rpc = new JsonRpcProcess(this.launch.command, args, { cwd: this.cwd, env: this.launch.env });
       this.rpc = rpc;
       rpc.on('exit', (code, err) => { if (!this.closed) this.setState('error', `Codex 退出（${code}）${err ? ` ${err}` : ''}\n${rpc.stderrTail.slice(-800)}`); });
       rpc.on('notification', (m, p) => this.onNotification(m, p));

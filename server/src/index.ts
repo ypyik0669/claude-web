@@ -25,6 +25,8 @@ import { LedgerService } from './usage/ledger.js';
 import { AgentRegistry } from './agents/types.js';
 import { AgentTranscripts } from './agents/transcript.js';
 import { CanonicalLog } from './session/canonical.js';
+import { MemoryService } from './memory/service.js';
+import { setMemoryMcpEnabled } from './memory/launcher.js';
 import { RemoteService, pairPage } from './remote/service.js';
 import { TunnelManager } from './remote/tunnel.js';
 import { ImService } from './im/service.js';
@@ -187,6 +189,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const agents = new AgentRegistry(meta);
   const transcripts = new AgentTranscripts();
   const canonical = new CanonicalLog();
+  const memory = new MemoryService();
+  setMemoryMcpEnabled(meta.settings()['memory.mcp'] !== false);
   const pool = new RunnerPool(providers, agents, transcripts);
   const ledger = new LedgerService();
   pool.on('message', (sessionId: string, m: unknown) => ledger.observe(sessionId, m, meta.sessionMeta(sessionId).providerId));
@@ -195,7 +199,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const sessionsSvc = new SessionService();
   const im = new ImService(meta, secrets, pool, sessionsSvc);
   const gitSvc = new GitService();
-  const services = { remote, tunnels, im, vcs: new VcsService(gitSvc), goals: new GoalService(meta, pool), android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal: new TerminalService(), meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, version };
+  const services = { remote, tunnels, im, vcs: new VcsService(gitSvc), goals: new GoalService(meta, pool), android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal: new TerminalService(), meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, version };
   new Hub(wss, services);
 
   await new Promise<void>((res, rej) => {

@@ -29,6 +29,9 @@ import { SCHEDULE_TEMPLATES } from '../schedules/service.js';
 import type { AgentRegistry } from '../agents/types.js';
 import type { AgentTranscripts } from '../agents/transcript.js';
 import type { CanonicalLog } from '../session/canonical.js';
+import type { MemoryService } from '../memory/service.js';
+import { harvest } from '../memory/extract.js';
+import { setMemoryMcpEnabled } from '../memory/launcher.js';
 import { swapAgent, swapProvider } from '../session/swap.js';
 
 export interface Services {
@@ -41,6 +44,7 @@ export interface Services {
   agents: AgentRegistry;
   transcripts: AgentTranscripts;
   canonical: CanonicalLog;
+  memory: MemoryService;
   remote: RemoteService;
   tunnels: TunnelManager;
   im: ImService;
@@ -88,6 +92,7 @@ export class Hub {
     s.im.on('changed', () => this.broadcast({ kind: 'im.changed' }));
     s.tunnels.on('changed', () => this.broadcast({ kind: 'tunnel.changed' }));
     s.goals.on('changed', () => this.broadcast({ kind: 'goals.changed' }));
+    s.memory.on('changed', () => this.broadcast({ kind: 'memory.changed' }));
   }
 
   broadcast(event: ServerEvent) {
@@ -252,6 +257,8 @@ export class Hub {
         return s.meta.settings();
       case 'settings.set':
         await s.meta.setSetting(req.key, req.value);
+        // takes effect on the next session start — running children keep the servers they were given
+        if (req.key === 'memory.mcp') setMemoryMcpEnabled(req.value !== false);
         return null;
       case 'sessions.search':
         return s.sessions.search(req.query, req.limit ?? 30);
@@ -295,6 +302,25 @@ export class Hub {
       }
       case 'session.canonical':
         return s.canonical.load(req.sessionId);
+
+      // ---- shared memory (also reachable by every agent over MCP; see memory/mcp.ts) ----
+      case 'memory.search':
+        return s.memory.search({ q: req.query, scope: req.scope, cwd: req.cwd, sessionId: req.sessionId, kind: req.kind_, limit: req.limit });
+      case 'memory.write':
+        return s.memory.write({ text: req.text, scope: req.scope, key: (req.scope ?? 'project') === 'session' ? req.sessionId ?? '' : req.cwd ?? '', kind: req.kind_, tags: req.tags, pinned: req.pinned, sourceSession: req.sessionId });
+      case 'memory.update':
+        return s.memory.update(req.id, req.patch) ?? null;
+      case 'memory.remove':
+        return s.memory.remove(req.id);
+      case 'memory.stats':
+        return s.memory.stats();
+      case 'memory.harvest': {
+        // pull the durable facts out of a finished session: dead ends, decisions, constraints
+        const events = await s.canonical.load(req.sessionId);
+        const cwd = s.pool.get(req.sessionId)?.cwd ?? (await s.canonical.head(req.sessionId))?.cwd ?? '';
+        if (!cwd) throw new Error('这个会话没有可用的目录');
+        return harvest(s.memory, events, { cwd, sessionId: req.sessionId, agent: s.pool.get(req.sessionId)?.info.agent });
+      }
       case 'session.rename':
         if (await s.transcripts.exists(req.sessionId)) { await s.transcripts.patchHead(req.sessionId, { title: req.title }); s.sessions.emit('changed'); return null; }
         await s.sessions.rename(req.sessionId, req.title);

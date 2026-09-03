@@ -13,6 +13,7 @@ import { UpdateSection } from './UpdateSection';
 import { DiagnosticsSection } from './DiagnosticsSection';
 import { ModelsSection } from './ModelsSection';
 import { McpCatalog } from './McpCatalog';
+import { MemorySettings } from '@/features/memory/MemorySettings';
 import { Icon, type IconName } from '@/ui/icons';
 
 /** One searchable row. `keywords` widen the match beyond the visible label. */
@@ -82,6 +83,7 @@ export function useSections(): Section[] {
     { id: 'mcp', l: 'MCP', ic: 'mcp', keywords: 'mcp server 目录 registry 健康', body: () => <><McpCatalog /><Mcp /></> },
     { id: 'plugins', l: '插件', ic: 'mcp', keywords: 'plugin marketplace 插件 市场', body: () => <Plugins /> },
     { id: 'skills', l: 'Skills', ic: 'skill', keywords: 'skill 技能 安装 github', body: () => <SkillsSection /> },
+    { id: 'memory', l: '共享记忆', ic: 'memory', keywords: 'memory 记忆 共享 跨 agent mcp sqlite 遗忘', body: () => <MemorySettings /> },
     { id: 'agents', l: 'CLI Agents', ic: 'agent', keywords: 'agent codex gemini qwen kimi acp 多 agent 安装 登录', body: () => <AgentsSection /> },
     { id: 'subagents', l: 'Claude 子代理', ic: 'copy', keywords: 'agent subagent 子代理', body: () => <SimpleList kind="config.agents" render={(a) => <div className="grow"><div>{a.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{a.source}{a.model ? ` · ${a.model}` : ''}</span></div><div className="sub">{a.description}</div></div>} /> },
     { id: 'hooks', l: 'Hooks', ic: 'bolt', keywords: 'hook 钩子', body: () => <SimpleList kind="config.hooks" render={(h) => <div className="grow"><div>{h.event} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{h.matcher ? `matcher: ${h.matcher}` : ''} · {h.source}</span></div><div className="sub">{(h.hooks ?? []).map((x: any) => x.command ?? x.type).join(' ; ')}</div></div>} /> },
