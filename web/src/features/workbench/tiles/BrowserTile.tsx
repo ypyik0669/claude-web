@@ -112,8 +112,9 @@ export function BrowserTile({ tile }: { tile: Extract<Tile, { kind: 'browser' }>
       {err && <div className="board-err">{err} · <button className="btn sm ghost" onClick={() => act('reload')}>重试</button></div>}
       <div className="browser-body">
         {desktop ? (
-          // @ts-expect-error <webview> is an Electron tag, not in React's JSX intrinsics
-          <webview ref={ref} src={tile.url} partition="persist:cw-browser" allowpopups="false" style={{ width: '100%', height: '100%' }} />
+          // No `allowpopups`: the tag reads the attribute's PRESENCE, so `allowpopups="false"` — what
+          // React writes for any non-null value — turns popups ON. Leaving it off is the closed state.
+          <webview ref={ref} src={tile.url} partition="persist:cw-browser" style={{ width: '100%', height: '100%' }} />
         ) : (
           <>
             <iframe ref={ref} src={url} title="in-app browser" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" />
