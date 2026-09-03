@@ -28,6 +28,8 @@ import type { LedgerService } from '../usage/ledger.js';
 import { SCHEDULE_TEMPLATES } from '../schedules/service.js';
 import type { AgentRegistry } from '../agents/types.js';
 import type { AgentTranscripts } from '../agents/transcript.js';
+import type { CanonicalLog } from '../session/canonical.js';
+import { swapAgent, swapProvider } from '../session/swap.js';
 
 export interface Services {
   git: GitService;
@@ -38,6 +40,7 @@ export interface Services {
   ledger: LedgerService;
   agents: AgentRegistry;
   transcripts: AgentTranscripts;
+  canonical: CanonicalLog;
   remote: RemoteService;
   tunnels: TunnelManager;
   im: ImService;
@@ -62,6 +65,8 @@ export class Hub {
 
   constructor(private wss: WebSocketServer, private s: Services) {
     wss.on('connection', (ws) => this.onConnect(ws));
+    // every session is mirrored into the provider-neutral timeline, whichever agent is behind it
+    s.pool.on('message', (sessionId, message) => s.canonical.observe(sessionId, message));
     s.pool.on('message', (sessionId, message) => this.broadcast({ kind: 'session.event', sessionId, message }));
     s.pool.on('state', (sessionId, state, error) => this.broadcast({ kind: 'session.state', sessionId, state, error }));
     s.pool.on('info', (info) => this.broadcast({ kind: 'session.info', info }));
@@ -152,6 +157,7 @@ export class Hub {
         if (params.agent && params.agent !== 'claude') {
           const hist = params.sessionId ? await s.transcripts.load(params.sessionId).catch(() => []) : [];
           const r = s.pool.open(params, hist);
+          await s.canonical.ensure(r.sessionId, params.cwd);
           return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
         }
         // provider: explicit → the one the session was created with → user default (new sessions only)
@@ -167,6 +173,7 @@ export class Hub {
           params = { ...params, sessionId: newId, fork: false, resumeAt: undefined };
         }
         const r = s.pool.open(params);
+        await s.canonical.ensure(r.sessionId, params.cwd);
         if (params.providerId && params.providerId !== 'claude') {
           // remember which provider a session uses so resume / fork keep it (the id is known up front: new sessions get a uuid from us)
           if (s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId });
@@ -179,6 +186,10 @@ export class Hub {
       }
       case 'session.send': {
         this.runner(req.params.sessionId).send(req.params.text, req.params.images, req.params.steer, req.params.uuid, req.params.attachments);
+        // Neither path echoes the user's own message back through the pool (the SDK doesn't, and the
+        // foreign drivers `record()` it without emitting), so the canonical mirror has to be told here
+        // — otherwise a handover briefing would have no idea what was actually asked for.
+        s.canonical.observe(req.params.sessionId, { type: 'user', uuid: req.params.uuid, message: { role: 'user', content: [{ type: 'text', text: req.params.text }] } });
         // foreign agents: first prompt becomes the title (Claude's transcripts derive it themselves)
         const head = await s.transcripts.head(req.params.sessionId);
         if (head && !head.title) { await s.transcripts.patchHead(req.params.sessionId, { title: req.params.text.replace(/<attached[^>]*\/>/g, '').trim().slice(0, 80) }); s.sessions.emit('changed'); }
@@ -268,6 +279,22 @@ export class Hub {
       case 'session.setUltracode':
         await this.runner(req.sessionId).setUltracode?.(req.on);
         return null;
+      // Swapping the provider or the agent behind a live session. Both are an invisible restart:
+      // the CLI's env is fixed at spawn, so "no restart" can only mean the user never sees one.
+      case 'session.setProvider': {
+        const p = req.providerId ? s.providers.forSession(req.providerId) : undefined;
+        if (req.providerId && !p) throw new Error('没有这个供应商档案');
+        const r = await swapProvider({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta }, req.sessionId, req.providerId, p?.name ?? 'Claude 账号');
+        s.sessions.emit('changed');
+        return r;
+      }
+      case 'session.switchAgent': {
+        const r = await swapAgent({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta }, req.sessionId, req.agent, req.model);
+        s.sessions.emit('changed');
+        return r;
+      }
+      case 'session.canonical':
+        return s.canonical.load(req.sessionId);
       case 'session.rename':
         if (await s.transcripts.exists(req.sessionId)) { await s.transcripts.patchHead(req.sessionId, { title: req.title }); s.sessions.emit('changed'); return null; }
         await s.sessions.rename(req.sessionId, req.title);

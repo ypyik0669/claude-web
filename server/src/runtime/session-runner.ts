@@ -92,6 +92,18 @@ export class SessionRunner extends EventEmitter {
     this.permissionMode = params.permissionMode ?? 'default';
     this.info = { sessionId: this.sessionId, state: 'starting', cwd: this.cwd, model: this.model, effort: this.effort, permissionMode: this.permissionMode, providerId: provider?.id, providerName: provider?.name, features: this.features, agent: 'claude' };
     const extra: Partial<Options> = params.sessionId ? { resume: params.sessionId, forkSession: params.fork || !!params.resumeAt, resumeSessionAt: params.resumeAt } : { sessionId: this.sessionId };
+    // Handover from another agent: Claude has no JSONL for this id, so feed it synthesized entries
+    // through the documented SessionStore hook — the SDK materializes them to a temp transcript the
+    // subprocess resumes from natively. `persistSession: false` is incompatible with sessionStore.
+    if (params.resumeEntries?.length) {
+      const entries = params.resumeEntries;
+      extra.resume = this.sessionId;
+      extra.forkSession = false;
+      extra.sessionStore = {
+        append: async () => { /* the local JSONL is already the durable copy */ },
+        load: async () => entries as never,
+      } as Options['sessionStore'];
+    }
     extra.extraArgs = { ...this.featureArgs() };
     if (params.worktree) extra.extraArgs.worktree = params.worktree;
     this.start(extra);

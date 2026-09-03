@@ -17,6 +17,7 @@ import { SearchView } from '../SearchView';
 import { BoardView } from '@/features/vcs/BoardView';
 import type { GitStatus } from '@shared';
 import { Icon } from '@/ui/icons';
+import { EngineSwitcher } from '../EngineSwitcher';
 
 /** git status for a cwd, refreshed on git.changed broadcasts (shared by the files tab badges). */
 function useGitStatus(cwd: string, enabled: boolean): GitStatus | null {
@@ -64,7 +65,6 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
   const agentKind = active?.info?.agent ?? useStore.getState().sessions.find((s) => s.sessionId === sid)?.agent;
   const agentDef = useStore((s) => s.agents.find((a) => a.kind === agentKind));
   const agentName = active?.info?.agentName ?? agentDef?.name ?? agentKind;
-  const agentIcon = agentDef?.icon ?? '◆';
   const rename = async () => {
     if (editing !== null && editing.trim() && editing !== title) await ws.request({ kind: 'session.rename', sessionId: sid, title: editing.trim() }).catch((e) => toast(e.message));
     setEditing(null);
@@ -82,8 +82,8 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
           <span className="cur" onDoubleClick={() => setEditing(title)} title="双击重命名">{title}</span>
         )}
         {meta?.gitBranch && <span className="sep" style={{ fontSize: 12 }}>· {meta.gitBranch}</span>}
-        {active?.info?.providerId && active.info.providerId !== 'claude' && <span className="badge" title="这个会话走第三方供应商" style={{ color: 'var(--blue)' }}>{active.info.providerName ?? '第三方'}</span>}
-        {agentKind && agentKind !== 'claude' && <span className="badge agent" title={`这个会话由 ${agentName} 驱动`}>{agentIcon} {agentName}</span>}
+        {active?.info && live && <EngineSwitcher sessionId={sid} info={active.info} />}
+        {(!active?.info || !live) && agentKind && agentKind !== 'claude' && <span className="badge agent" title={`这个会话由 ${agentName} 驱动`}>{agentName}</span>}
       </div>
       <span className="grow" />
       <button className="icon-btn" title="从当前会话分叉（新标签）" onClick={() => openSession({ sessionId: sid, cwd, fork: true }).catch((e) => toast(e.message))} aria-label="分叉"><Icon name="branch" size={14} /></button>

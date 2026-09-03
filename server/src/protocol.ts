@@ -44,6 +44,9 @@ export interface OpenSessionParams {
   providerId?: string; // API provider profile; omit / 'claude' = the claude.ai login
   features?: SessionFeatures; // extra CLI flags / env
   agent?: AgentKind; // which CLI agent drives the session (default claude)
+  /** Transcript entries to resume a Claude session from (SessionStore.load); used when a session
+   *  is handed over from another agent and Claude has no native JSONL for this id. */
+  resumeEntries?: Record<string, unknown>[];
 }
 
 /** The single runtime that drives every session: ccb (claude-code-best, a superset of Claude Code) with the official binary as silent fallback. */
@@ -207,6 +210,9 @@ export type ClientRequest =
   | { kind: 'session.setModel'; sessionId: string; model: string }
   | { kind: 'session.setEffort'; sessionId: string; effort: EffortLevel }
   | { kind: 'session.setUltracode'; sessionId: string; on: boolean }
+  | { kind: 'session.setProvider'; sessionId: string; providerId?: string }
+  | { kind: 'session.switchAgent'; sessionId: string; agent: AgentKind; model?: string }
+  | { kind: 'session.canonical'; sessionId: string }
   | { kind: 'session.rename'; sessionId: string; title: string }
   | { kind: 'session.delete'; sessionId: string }
   | { kind: 'session.contextUsage'; sessionId: string; detail?: 'summary' | 'full' }
