@@ -16,6 +16,7 @@ export interface SessionSummary {
   firstPrompt?: string;
   customTitle?: string;
   live?: RunnerState; // present when a runner exists for this session
+  agent?: AgentKind; // omitted = Claude Code
 }
 
 export interface OpenSessionParams {
@@ -30,6 +31,7 @@ export interface OpenSessionParams {
   workspaceId?: string;
   providerId?: string; // API provider profile; omit / 'claude' = the claude.ai login
   features?: SessionFeatures; // extra CLI flags / env
+  agent?: AgentKind; // which CLI agent drives the session (default claude)
 }
 
 /** The single runtime that drives every session: ccb (claude-code-best, a superset of Claude Code) with the official binary as silent fallback. */
@@ -57,6 +59,28 @@ export interface Provider {
   createdAt: number;
 }
 export const CLAUDE_PROVIDER_ID = 'claude';
+
+/** Multi-agent (phase 5): built-in kinds plus user-defined ACP agents (`acp:<id>`). */
+export type AgentKind = 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | `acp:${string}`;
+export interface AgentInfo {
+  kind: AgentKind;
+  name: string;
+  icon: string;
+  protocol: 'claude' | 'acp' | 'codex';
+  installed: boolean;
+  version: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  model: string; // default model override ('' = agent default)
+  models: string[]; // known model ids
+  install: string; // install command
+  login: string; // login command (run in a terminal tile)
+  docs: string;
+  label: string; // user note e.g. account name
+  enabled: boolean;
+  builtin: boolean;
+}
 
 /** Optional per-session switches. Each maps to a CLI flag or env var; unknown to the engine = ignored/error. */
 export interface SessionFeatures {
@@ -125,6 +149,8 @@ export interface SessionInfoSnapshot {
   providerName?: string;
   features?: SessionFeatures;
   error?: string;
+  agent?: AgentKind;
+  agentName?: string;
 }
 
 // ---- requests ----
@@ -249,6 +275,8 @@ export type ClientRequest =
   | { kind: 'ledger.export'; days?: number } // CSV path
   | { kind: 'schedules.history'; id?: string; limit?: number }
   | { kind: 'schedules.templates' }
+  | { kind: 'agents.list'; refresh?: boolean }
+  | { kind: 'agents.set'; agent: AgentKind; patch: { command?: string; args?: string[]; env?: Record<string, string>; model?: string; label?: string; enabled?: boolean; name?: string; protocol?: 'acp' | 'codex' } | null }
   | { kind: 'terminal.open'; cwd: string; cols: number; rows: number }
   | { kind: 'terminal.input'; termId: string; data: string }
   | { kind: 'terminal.resize'; termId: string; cols: number; rows: number }

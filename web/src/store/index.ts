@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, Workspace } from '@shared';
+import type { AgentInfo, AgentKind, AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, Workspace } from '@shared';
 import { decodeAttachments, findChainUuidBefore, type ContextUsage } from '@/model/conversation';
 import { activeGroup, chatTile, deriveActive, initialLayout, layoutReducer, migrateLegacy, sanitizeLayout, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
 import { PaneContext, winId } from './paneContext';
@@ -77,9 +77,11 @@ interface State {
   // actions
   init(): void;
   refreshSessions(): Promise<void>;
-  openSession(p: { sessionId?: string; cwd: string; model?: string; permissionMode?: PermissionMode; effort?: EffortLevel; fork?: boolean; resumeAt?: string; worktree?: string; providerId?: string; features?: SessionFeatures }, target?: { paneId: string; tileId: string } | 'none'): Promise<string>;
+  openSession(p: { sessionId?: string; cwd: string; model?: string; permissionMode?: PermissionMode; effort?: EffortLevel; fork?: boolean; resumeAt?: string; worktree?: string; providerId?: string; features?: SessionFeatures; agent?: AgentKind }, target?: { paneId: string; tileId: string } | 'none'): Promise<string>;
   engine: EngineInfo | null;
   providers: Provider[];
+  agents: AgentInfo[];
+  loadAgents(refresh?: boolean): Promise<void>;
   settings: Record<string, unknown>;
   loadEngine(): Promise<void>;
   loadProviders(): Promise<void>;
@@ -240,6 +242,11 @@ export const useStore = create<State>((set, get) => ({
     const providers = await ws.request<Provider[]>({ kind: 'providers.list' });
     set({ providers });
   },
+  agents: [],
+  async loadAgents(refresh = false) {
+    const agents = await ws.request<AgentInfo[]>({ kind: 'agents.list', refresh });
+    set({ agents });
+  },
   settingsOpen: null,
   metaLoaded: false,
   openSettings(o = {}) { set({ settingsOpen: o }); },
@@ -282,6 +289,7 @@ export const useStore = create<State>((set, get) => ({
         void get().loadMeta();
         void get().loadEngine().catch(() => {});
         void get().loadProviders().catch(() => {});
+        void get().loadAgents().catch(() => {});
         void ws.request<Limits>({ kind: 'limits.get' }).then((limits) => set({ limits })).catch(() => {});
         // re-attach open live sessions after reconnect
         for (const o of Object.values(get().open)) if (o.state !== 'history') void ws.request({ kind: 'session.info', sessionId: o.sessionId }).then((d: any) => set((s) => bump(s, o.sessionId, (x) => { x.info = d.info; x.pending = d.pending; }))).catch(() => set((s) => bump(s, o.sessionId, (x) => { x.state = 'history'; })));

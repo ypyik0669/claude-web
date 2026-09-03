@@ -5,6 +5,7 @@ import { EnvEditor, Mcp, Overview, Plugins, ProviderProfiles, Settings, SimpleLi
 import { CJK_FONTS, DENSITIES, FONT_SIZES } from './ui-settings';
 import { SkillsSection } from './SkillsSection';
 import { ToolsSection } from './ToolsSection';
+import { AgentsSection } from './AgentsSection';
 import { SecretsSection } from './SecretsSection';
 import { UpdateSection } from './UpdateSection';
 import { DiagnosticsSection } from './DiagnosticsSection';
@@ -78,7 +79,8 @@ export function useSections(): Section[] {
     { id: 'mcp', l: 'MCP', ic: '⌬', keywords: 'mcp server 目录 registry 健康', body: () => <><McpCatalog /><Mcp /></> },
     { id: 'plugins', l: '插件', ic: '▣', keywords: 'plugin marketplace 插件 市场', body: () => <Plugins /> },
     { id: 'skills', l: 'Skills', ic: '✦', keywords: 'skill 技能 安装 github', body: () => <SkillsSection /> },
-    { id: 'agents', l: 'Agents', ic: '⧉', keywords: 'agent subagent 子代理', body: () => <SimpleList kind="config.agents" render={(a) => <div className="grow"><div>{a.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{a.source}{a.model ? ` · ${a.model}` : ''}</span></div><div className="sub">{a.description}</div></div>} /> },
+    { id: 'agents', l: 'CLI Agents', ic: '🤖', keywords: 'agent codex gemini qwen kimi acp 多 agent 安装 登录', body: () => <AgentsSection /> },
+    { id: 'subagents', l: 'Claude 子代理', ic: '⧉', keywords: 'agent subagent 子代理', body: () => <SimpleList kind="config.agents" render={(a) => <div className="grow"><div>{a.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{a.source}{a.model ? ` · ${a.model}` : ''}</span></div><div className="sub">{a.description}</div></div>} /> },
     { id: 'hooks', l: 'Hooks', ic: '⚓', keywords: 'hook 钩子', body: () => <SimpleList kind="config.hooks" render={(h) => <div className="grow"><div>{h.event} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{h.matcher ? `matcher: ${h.matcher}` : ''} · {h.source}</span></div><div className="sub">{(h.hooks ?? []).map((x: any) => x.command ?? x.type).join(' ; ')}</div></div>} /> },
     { id: 'tools', l: 'CLI 工具', ic: '⌨', keywords: 'git gh node python uv docker ripgrep 工具 检测', body: () => <ToolsSection /> },
     { id: 'update', l: '更新', ic: '⇪', keywords: 'update version release 更新 版本', body: () => <UpdateSection /> },

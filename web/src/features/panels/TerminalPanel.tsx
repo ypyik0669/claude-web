@@ -3,7 +3,7 @@ import { useScopedSession } from '@/store';
 import { ws } from '@/ws/client';
 
 /** Embedded real `claude` CLI via node-pty + xterm.js. Escape hatch for interactive-only commands (/login, /theme…). */
-export function TerminalPanel({ cwd, visible = true }: { cwd?: string; visible?: boolean }) {
+export function TerminalPanel({ cwd, cmd, visible = true }: { cwd?: string; cmd?: string; visible?: boolean }) {
   const active = useScopedSession();
   const dir = cwd ?? active?.cwd ?? '';
   const ref = useRef<HTMLDivElement>(null);
@@ -33,6 +33,7 @@ export function TerminalPanel({ cwd, visible = true }: { cwd?: string; visible?:
         const r = await ws.request<{ termId: string }>({ kind: 'terminal.open', cwd: dir, cols: term.cols, rows: term.rows });
         id = r.termId;
         setTermId(id);
+        if (cmd) setTimeout(() => { void ws.request({ kind: 'terminal.input', termId: id!, data: cmd + '\r' }); }, 400);
         term.onData((d: string) => ws.request({ kind: 'terminal.input', termId: id!, data: d }));
         off = ws.on((e) => {
           if (e.kind === 'terminal.data' && e.termId === id) term.write(e.data);

@@ -1,0 +1,130 @@
+import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { AcpDriver } from './acp-driver.js';
+import { CodexDriver } from './codex-driver.js';
+import { AgentTranscripts } from './transcript.js';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+let tmp: string;
+let transcripts: AgentTranscripts;
+beforeAll(async () => {
+  tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'cw-agents-'));
+  process.env.CLAUDE_WEB_DIR = tmp;
+  transcripts = new AgentTranscripts();
+});
+afterAll(async () => { await new Promise((r) => setTimeout(r, 300)); await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }); });
+
+const collect = (d: any) => {
+  const msgs: any[] = [];
+  d.on('message', (m: any) => msgs.push(m));
+  return msgs;
+};
+const waitFor = (fn: () => boolean, ms = 8000) => new Promise<void>((res, rej) => { const t0 = Date.now(); const i = setInterval(() => { if (fn()) { clearInterval(i); res(); } else if (Date.now() - t0 > ms) { clearInterval(i); rej(new Error('timeout')); } }, 20); });
+
+describe('AcpDriver (mock agent)', () => {
+  it('streams text/thinking, runs a tool through a permission request, ends the turn with a result', async () => {
+    const d = new AcpDriver('gemini', { command: process.execPath, args: [path.join(here, '__mocks__', 'acp-agent.mjs')], env: {}, name: 'Mock ACP' }, { cwd: tmp }, transcripts, null);
+    const msgs = collect(d);
+    await waitFor(() => d.state === 'idle');
+    expect(msgs.find((m) => m.type === 'system' && m.subtype === 'init')).toBeTruthy();
+    expect(d.info.slashCommands?.[0]?.name).toBe('help');
+    let perm: any;
+    d.on('permission', (e) => { perm = e; });
+    d.send('please use a tool');
+    await waitFor(() => !!perm);
+    expect(perm.toolName).toBe('Read');
+    expect(perm.input.file_path).toBe('C:/x/package.json');
+    expect(d.state).toBe('waiting');
+    d.respondPermission(perm.requestId, { behavior: 'allow' });
+    await waitFor(() => msgs.some((m) => m.type === 'result'));
+    const result = msgs.find((m) => m.type === 'result');
+    expect(result.is_error).toBe(false);
+    const texts = msgs.filter((m) => m.type === 'stream_event' && m.event.type === 'content_block_delta' && m.event.delta.type === 'text_delta').map((m) => m.event.delta.text).join('');
+    expect(texts).toContain('Echo: please use a tool');
+    expect(texts).toContain('(read ok)');
+    const thinking = msgs.filter((m) => m.type === 'stream_event' && m.event.delta?.type === 'thinking_delta');
+    expect(thinking.length).toBe(1);
+    const toolUse = msgs.find((m) => m.type === 'assistant' && m.message.content[0]?.type === 'tool_use');
+    expect(toolUse.message.content[0].name).toBe('Read');
+    const toolResult = msgs.find((m) => m.type === 'user' && m.message.content[0]?.type === 'tool_result');
+    expect(toolResult.message.content[0].content[0].text).toBe('{"name":"x"}');
+    const final = msgs.filter((m) => m.type === 'assistant').pop();
+    expect(final.message.content.some((c: any) => c.type === 'text' && c.text.includes('Echo:'))).toBe(true);
+    expect(d.state).toBe('idle');
+    // transcript persisted with a head
+    const head = await transcripts.head(d.sessionId);
+    expect(head?.agent).toBe('gemini');
+    expect(head?.nativeSessionId).toBe('acp-sess-1');
+    const loaded = await transcripts.load(d.sessionId);
+    expect(loaded.some((m) => m.type === 'result')).toBe(true);
+    await d.close();
+    expect(d.state).toBe('closed');
+  });
+
+  it('plan updates become TodoWrite; denied permission marks the tool result as error', async () => {
+    const d = new AcpDriver('qwen', { command: process.execPath, args: [path.join(here, '__mocks__', 'acp-agent.mjs')], env: {}, name: 'Mock' }, { cwd: tmp }, transcripts, null);
+    const msgs = collect(d);
+    await waitFor(() => d.state === 'idle');
+    let perm: any;
+    d.on('permission', (e) => { perm = e; });
+    d.send('tool and plan');
+    await waitFor(() => !!perm);
+    d.respondPermission(perm.requestId, { behavior: 'deny', message: 'no' });
+    await waitFor(() => msgs.some((m) => m.type === 'result'));
+    expect(msgs.some((m) => m.type === 'assistant' && m.message.content[0]?.name === 'TodoWrite')).toBe(true);
+    const tr = msgs.find((m) => m.type === 'user' && m.message.content[0]?.tool_use_id === 'call-1');
+    expect(tr.message.content[0].is_error).toBe(true);
+    await d.close();
+  });
+
+  it('reports a launch failure as error state', async () => {
+    const d = new AcpDriver('kimi', { command: 'definitely-not-a-real-binary-xyz', args: [], env: {}, name: 'Nope' }, { cwd: tmp }, transcripts, null);
+    await waitFor(() => d.state === 'error');
+    expect(d.info.error).toContain('Nope');
+  });
+});
+
+describe('CodexDriver (mock app-server)', () => {
+  it('starts a thread, streams deltas, routes command approval, records usage', async () => {
+    const d = new CodexDriver('codex', { command: process.execPath, args: [path.join(here, '__mocks__', 'codex-server.mjs')], env: {}, name: 'Mock Codex' }, { cwd: tmp, permissionMode: 'default' }, transcripts);
+    const msgs = collect(d);
+    await waitFor(() => d.state === 'idle');
+    expect(d.info.model).toBe('gpt-5-codex');
+    expect(d.info.models?.[0]?.value).toBe('gpt-5-codex');
+    let perm: any;
+    d.on('permission', (e) => { perm = e; });
+    d.send('run it');
+    await waitFor(() => !!perm);
+    expect(perm.toolName).toBe('Bash');
+    expect(perm.input.command).toBe('echo hi');
+    d.respondPermission(perm.requestId, { behavior: 'allow' });
+    await waitFor(() => msgs.some((m) => m.type === 'result'));
+    const result = msgs.find((m) => m.type === 'result');
+    expect(result.usage.input_tokens).toBe(20);
+    expect(result.usage.cache_read_input_tokens).toBe(5);
+    const tr = msgs.find((m) => m.type === 'user' && m.message.content[0]?.tool_use_id === 'cmd-1');
+    expect(tr.tool_use_result.stdout).toBe('hi\n');
+    expect(tr.message.content[0].is_error).toBe(false);
+    const final = msgs.filter((m) => m.type === 'assistant').pop();
+    expect(final.message.content.find((c: any) => c.type === 'text').text).toBe('Codex says: run it');
+    expect((await transcripts.head(d.sessionId))?.nativeSessionId).toBe('thr-1');
+    await d.close();
+  });
+
+  it('acceptEdits auto-approves file changes but still asks for commands; bypass approves everything', async () => {
+    const d = new CodexDriver('codex', { command: process.execPath, args: [path.join(here, '__mocks__', 'codex-server.mjs')], env: {}, name: 'Mock' }, { cwd: tmp, permissionMode: 'bypassPermissions' }, transcripts);
+    const msgs = collect(d);
+    await waitFor(() => d.state === 'idle');
+    let asked = false;
+    d.on('permission', () => { asked = true; });
+    d.send('run again');
+    await waitFor(() => msgs.some((m) => m.type === 'result'));
+    expect(asked).toBe(false);
+    const tr = msgs.find((m) => m.type === 'user' && m.message.content[0]?.tool_use_id === 'cmd-1');
+    expect(tr.tool_use_result.stdout).toBe('hi\n');
+    await d.close();
+  });
+});

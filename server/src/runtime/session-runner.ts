@@ -89,7 +89,7 @@ export class SessionRunner extends EventEmitter {
     this.model = params.model || provider?.defaultModel || undefined;
     this.effort = params.effort;
     this.permissionMode = params.permissionMode ?? 'default';
-    this.info = { sessionId: this.sessionId, state: 'starting', cwd: this.cwd, model: this.model, effort: this.effort, permissionMode: this.permissionMode, providerId: provider?.id, providerName: provider?.name, features: this.features };
+    this.info = { sessionId: this.sessionId, state: 'starting', cwd: this.cwd, model: this.model, effort: this.effort, permissionMode: this.permissionMode, providerId: provider?.id, providerName: provider?.name, features: this.features, agent: 'claude' };
     const extra: Partial<Options> = params.sessionId ? { resume: params.sessionId, forkSession: params.fork || !!params.resumeAt, resumeSessionAt: params.resumeAt } : { sessionId: this.sessionId };
     extra.extraArgs = { ...this.featureArgs() };
     if (params.worktree) extra.extraArgs.worktree = params.worktree;

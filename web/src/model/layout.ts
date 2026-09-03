@@ -8,7 +8,7 @@ export type Tile =
   | { id: string; kind: 'chat'; sessionId: string | null; view: 'chat' | 'trajectory'; wb: WorkbenchTab; title?: string }
   | { id: string; kind: 'doc'; path: string; line?: number; title?: string }
   | { id: string; kind: 'diff'; sessionId: string; path: string; staged?: boolean; rev?: string; cwd?: string; title?: string }
-  | { id: string; kind: 'term'; cwd: string; title?: string }
+  | { id: string; kind: 'term'; cwd: string; title?: string; cmd?: string }
   | { id: string; kind: 'panel'; panel: PanelId; title?: string };
 
 export interface Pane { id: string; tiles: Tile[]; activeTileId: string | null }

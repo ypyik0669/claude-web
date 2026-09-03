@@ -2,14 +2,18 @@ import { EventEmitter } from 'node:events';
 import { SessionRunner } from './session-runner.js';
 import type { OpenSessionParams, RunnerState } from '../protocol.js';
 import type { ProviderService } from '../providers/service.js';
+import type { AgentRegistry, AgentDriver } from '../agents/types.js';
+import type { AgentTranscripts } from '../agents/transcript.js';
+import { AcpDriver } from '../agents/acp-driver.js';
+import { CodexDriver } from '../agents/codex-driver.js';
 
 const IDLE_TTL_MS = 30 * 60 * 1000;
 
 /** sessionId -> live runner. Emits everything runners emit, tagged with the session id. */
 export class RunnerPool extends EventEmitter {
-  private runners = new Map<string, SessionRunner>();
+  private runners = new Map<string, AgentDriver>();
 
-  constructor(private providers: ProviderService) {
+  constructor(private providers: ProviderService, private agents?: AgentRegistry, private transcripts?: AgentTranscripts) {
     super();
     setInterval(() => this.reap(), 60_000).unref();
   }
@@ -24,13 +28,20 @@ export class RunnerPool extends EventEmitter {
     return this.runners.get(sessionId)?.state;
   }
 
-  open(params: OpenSessionParams): SessionRunner {
+  open(params: OpenSessionParams, resumeHistory: unknown[] | null = null): AgentDriver {
     if (params.sessionId && !params.fork && !params.resumeAt) {
       const existing = this.runners.get(params.sessionId);
       if (existing && existing.state !== 'closed' && existing.state !== 'error') return existing;
       if (existing) this.runners.delete(params.sessionId);
     }
-    const r = new SessionRunner(params, this.providers.forSession(params.providerId));
+    const kind = params.agent ?? 'claude';
+    let r: AgentDriver;
+    if (kind === 'claude' || !this.agents || !this.transcripts) r = new SessionRunner(params, this.providers.forSession(params.providerId));
+    else {
+      const l = this.agents.launch(kind);
+      const launch = { command: l.command, args: l.args, env: l.env, model: l.model, name: l.def.name, login: l.def.login };
+      r = l.def.protocol === 'codex' ? new CodexDriver(kind, launch, params, this.transcripts) : new AcpDriver(kind, launch, params, this.transcripts, resumeHistory);
+    }
     this.runners.set(r.id, r);
     r.on('message', (m) => this.emit('message', r.sessionId, m));
     r.on('state', (s, err) => {

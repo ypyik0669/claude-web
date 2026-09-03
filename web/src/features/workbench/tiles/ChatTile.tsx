@@ -58,6 +58,10 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
   const cwd = active?.cwd ?? meta?.cwd ?? '';
   const live = active && active.state !== 'history' && active.state !== 'closed' && active.state !== 'error';
   const wsOf = workspaces.find((w) => cwd.toLowerCase().startsWith(w.path.toLowerCase()));
+  const agentKind = active?.info?.agent ?? useStore.getState().sessions.find((s) => s.sessionId === sid)?.agent;
+  const agentDef = useStore((s) => s.agents.find((a) => a.kind === agentKind));
+  const agentName = active?.info?.agentName ?? agentDef?.name ?? agentKind;
+  const agentIcon = agentDef?.icon ?? '◆';
   const rename = async () => {
     if (editing !== null && editing.trim() && editing !== title) await ws.request({ kind: 'session.rename', sessionId: sid, title: editing.trim() }).catch((e) => toast(e.message));
     setEditing(null);
@@ -76,6 +80,7 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
         )}
         {meta?.gitBranch && <span className="sep" style={{ fontSize: 12 }}>· {meta.gitBranch}</span>}
         {active?.info?.providerId && active.info.providerId !== 'claude' && <span className="badge" title="这个会话走第三方供应商" style={{ color: 'var(--blue)' }}>{active.info.providerName ?? '第三方'}</span>}
+        {agentKind && agentKind !== 'claude' && <span className="badge agent" title={`这个会话由 ${agentName} 驱动`}>{agentIcon} {agentName}</span>}
       </div>
       <span className="grow" />
       <button className="icon-btn" title="从当前会话分叉（新标签）" onClick={() => openSession({ sessionId: sid, cwd, fork: true }).catch((e) => toast(e.message))}>⑂</button>

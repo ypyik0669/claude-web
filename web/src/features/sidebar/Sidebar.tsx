@@ -3,7 +3,12 @@ import { useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { ago, basename, clsx } from '@/util';
-import type { SessionSummary, Workspace } from '@shared';
+import type { AgentKind, SessionSummary, Workspace } from '@shared';
+
+function AgentDot({ kind }: { kind: AgentKind }) {
+  const a = useStore((s) => s.agents.find((x) => x.kind === kind));
+  return <span className="agent-dot" title={a?.name ?? kind}>{a?.icon ?? '◆'}</span>;
+}
 import { MIME_SESSION } from '@/features/workbench/dnd';
 import { dlg } from '@/ui/dialog';
 
@@ -79,6 +84,7 @@ function SessionRow({ s, menu, setMenu }: { s: SessionSummary; menu: string | nu
     <div className={clsx('sess', activeId === s.sessionId && 'active')} {...row} title={`${s.firstPrompt ?? s.title}\n点击打开 · Ctrl/中键新标签 · 可拖到窗格`}>
       {isLive ? <span className={clsx('dot', live)} /> : meta?.pinned ? <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>📌</span> : null}
       <span className="t">{s.title}</span>
+      {s.agent && s.agent !== 'claude' && <AgentDot kind={s.agent} />}
       <span className="ago">{ago(s.lastModified)}</span>
       <button className="more" onClick={(e) => { e.stopPropagation(); setMenu(menu === s.sessionId ? null : s.sessionId); }}>⋯</button>
       {menu === s.sessionId && <SessionMenu s={s} onClose={() => setMenu(null)} />}
@@ -149,7 +155,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     const sorted = [...workspaces].sort((a, b) => b.path.length - a.path.length);
     for (const s of visible) {
       if (sessionMeta[s.sessionId]?.pinned) continue;
-      const w = sorted.find((x) => s.cwd.toLowerCase().startsWith(x.path.toLowerCase()));
+      const w = sorted.find((x) => (s.cwd ?? '').toLowerCase().startsWith(x.path.toLowerCase()));
       const m = w ? byWs : other;
       const k = w ? w.id : s.cwd || '(未知目录)';
       (m.get(k) ?? m.set(k, []).get(k)!).push(s);

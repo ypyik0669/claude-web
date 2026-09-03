@@ -1,0 +1,269 @@
+import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import type { AgentKind, AttachmentRef, EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, RunnerState, SessionInfoSnapshot } from '../protocol.js';
+import { JsonRpcProcess } from './jsonrpc.js';
+import { MessageSynth } from './normalize.js';
+import type { AgentTranscripts } from './transcript.js';
+import type { AgentDriver } from './types.js';
+
+interface PendingPerm { event: PermissionRequestEvent; resolve: (r: any) => void; kind: 'command' | 'file' | 'permissions' }
+
+const EFFORT_MAP: Record<EffortLevel, string> = { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'xhigh' };
+
+/**
+ * OpenAI Codex via `codex app-server` (JSON-RPC v2 over stdio): thread/start|resume → turn/start,
+ * item/* notifications → SDK-shaped messages, approval requests → permission events.
+ */
+export class CodexDriver extends EventEmitter implements AgentDriver {
+  readonly id: string;
+  sessionId: string;
+  state: RunnerState = 'starting';
+  cwd: string;
+  info: SessionInfoSnapshot;
+  lastActivity = Date.now();
+  private rpc: JsonRpcProcess | null = null;
+  private threadId: string | null = null;
+  private turnId: string | null = null;
+  private synth: MessageSynth;
+  private history: unknown[] = [];
+  private pending = new Map<string, PendingPerm>();
+  private items = new Map<string, { type: string; toolName?: string; output: string }>();
+  private turnActive = false;
+  private queue: { text: string; images?: { mediaType: string; data: string }[] }[] = [];
+  private closed = false;
+  private model?: string;
+  private effort?: EffortLevel;
+  private permissionMode: PermissionMode;
+  private usage: { input: number; output: number; cacheRead: number } = { input: 0, output: 0, cacheRead: 0 };
+  private lastUsageTotal = 0;
+
+  constructor(private kind: AgentKind, private launch: { command: string; args: string[]; env: Record<string, string>; model?: string; name: string }, params: OpenSessionParams, private transcripts: AgentTranscripts) {
+    super();
+    this.cwd = params.cwd;
+    this.sessionId = params.sessionId ?? randomUUID();
+    this.id = this.sessionId;
+    this.model = params.model || launch.model;
+    this.effort = params.effort;
+    this.permissionMode = params.permissionMode ?? 'default';
+    this.synth = new MessageSynth(this.sessionId, this.model ?? '');
+    this.info = { sessionId: this.sessionId, state: 'starting', cwd: this.cwd, model: this.model, effort: this.effort, permissionMode: this.permissionMode, agent: kind, agentName: launch.name, runtime: 'ccb', slashCommands: [], models: [] };
+    void this.start(params);
+  }
+
+  getHistory() { return this.history; }
+  getPendingPermissions() { return [...this.pending.values()].map((p) => p.event); }
+  private setState(s: RunnerState, error?: string) { this.state = s; this.info.state = s; if (error) this.info.error = error; this.emit('state', s, error); }
+  private push(m: any) {
+    this.lastActivity = Date.now();
+    if (m.type !== 'stream_event') { this.history.push(m); if (this.history.length > 5000) this.history.splice(0, 1000); this.transcripts.append(this.sessionId, m); }
+    this.emit('message', m);
+  }
+  private pushAll(ms: any[]) { for (const m of ms) this.push(m); }
+  private record(m: any) { this.history.push(m); this.transcripts.append(this.sessionId, m); }
+
+  /** Claude permission modes → codex approval / sandbox policy. */
+  private policy(): { approvalPolicy: any; sandbox: string } {
+    switch (this.permissionMode) {
+      case 'bypassPermissions': return { approvalPolicy: 'never', sandbox: 'danger-full-access' };
+      case 'dontAsk': return { approvalPolicy: 'never', sandbox: 'workspace-write' };
+      case 'acceptEdits': case 'auto': return { approvalPolicy: 'on-request', sandbox: 'workspace-write' };
+      case 'plan': return { approvalPolicy: 'on-request', sandbox: 'read-only' };
+      default: return { approvalPolicy: 'untrusted', sandbox: 'workspace-write' };
+    }
+  }
+
+  private async start(params: OpenSessionParams) {
+    try {
+      const rpc = new JsonRpcProcess(this.launch.command, this.launch.args, { cwd: this.cwd, env: this.launch.env });
+      this.rpc = rpc;
+      rpc.on('exit', (code, err) => { if (!this.closed) this.setState('error', `Codex 退出（${code}）${err ? ` ${err}` : ''}\n${rpc.stderrTail.slice(-800)}`); });
+      rpc.on('notification', (m, p) => this.onNotification(m, p));
+      rpc.onRequest('item/commandExecution/requestApproval', (p) => this.onApproval('command', p));
+      rpc.onRequest('item/fileChange/requestApproval', (p) => this.onApproval('file', p));
+      rpc.onRequest('item/permissions/requestApproval', (p) => this.onApproval('permissions', p));
+      rpc.onRequest('execCommandApproval', (p) => this.onApproval('command', p));
+      rpc.onRequest('applyPatchApproval', (p) => this.onApproval('file', p));
+      await rpc.request('initialize', { clientInfo: { name: 'claude-web', title: 'Claude Web', version: '0.1.0' }, capabilities: null }, 60_000);
+      rpc.notify('initialized', {});
+      const pol = this.policy();
+      if (!(await this.transcripts.exists(this.sessionId))) await this.transcripts.create({ agent: this.kind, cwd: this.cwd, title: '', createdAt: Date.now(), sessionId: this.sessionId, model: this.model });
+      const head = await this.transcripts.head(this.sessionId);
+      let thread: any = null;
+      if (params.sessionId && head?.nativeSessionId) {
+        try { thread = (await rpc.request('thread/resume', { threadId: head.nativeSessionId, cwd: this.cwd, model: this.model ?? null, approvalPolicy: pol.approvalPolicy, sandbox: pol.sandbox }, 120_000)).thread; } catch { thread = null; }
+        if (!thread) this.push(this.synth.systemNote('Codex 线程无法恢复，已新开线程；上面的历史仅供查看。', 'warning'));
+      }
+      if (!thread) {
+        const r = await rpc.request('thread/start', { cwd: this.cwd, model: this.model ?? null, approvalPolicy: pol.approvalPolicy, sandbox: pol.sandbox, sessionStartSource: null }, 120_000);
+        thread = r.thread;
+        if (!this.model && r.model) { this.model = r.model; this.synth.setModel(r.model); this.info.model = r.model; }
+        await this.transcripts.patchHead(this.sessionId, { nativeSessionId: thread.id, model: this.model });
+      }
+      this.threadId = thread.id;
+      let rawModels: any[] = [];
+      try {
+        const ml = await rpc.request('model/list', {}, 30_000);
+        rawModels = ml?.data ?? [];
+        this.info.models = (ml?.data ?? []).filter((m: any) => !m.hidden).map((m: any) => ({ value: m.model, displayName: m.displayName ?? m.model, description: m.description ?? '', supportsEffort: (m.supportedReasoningEfforts ?? []).length > 0, supportedEffortLevels: (m.supportedReasoningEfforts ?? []).map((e: any) => e.reasoningEffort ?? e).filter((e: any) => typeof e === 'string') }));
+      } catch { /* optional */ }
+      // config.toml may name a model this account cannot use (ChatGPT plans reject some ids) — prefer a listed one
+      const listed = this.info.models ?? [];
+      if (listed.length && this.model && !listed.some((m) => m.value === this.model) && !this.launch.model) {
+        const pick = rawModels.find((m: any) => m.isDefault && !m.hidden)?.model ?? listed[0].value;
+        this.push(this.synth.systemNote(`Codex 配置里的模型 ${this.model} 不在可用列表，本会话改用 ${pick}（可在模型菜单切换）。`, 'warning'));
+        this.model = pick; this.synth.setModel(pick); this.info.model = pick;
+        await this.transcripts.patchHead(this.sessionId, { model: pick });
+      }
+      this.push(this.synth.init({ cwd: this.cwd, permissionMode: this.permissionMode, version: 'codex', agent: this.kind }));
+      this.setState('idle');
+      this.emit('info', this.info);
+      this.flush();
+    } catch (e: any) {
+      this.setState('error', `Codex 启动失败：${e.message}${this.rpc?.stderrTail ? `\n${this.rpc.stderrTail.slice(-800)}` : ''}`);
+    }
+  }
+
+  private onNotification(method: string, p: any) {
+    switch (method) {
+      case 'turn/started': this.turnId = p?.turn?.id ?? null; break;
+      case 'item/agentMessage/delta': this.pushAll(this.synth.delta('text', p.delta ?? '')); break;
+      case 'account/rateLimits/updated': {
+        const rl = p.rateLimits ?? {};
+        const win = rl.primary ?? rl.secondary;
+        if (win) {
+          const used = win.usedPercent ?? 0;
+          const status = rl.rateLimitReachedType ? 'rejected' : used >= 80 ? 'allowed_warning' : 'allowed';
+          this.push({ type: 'rate_limit_event', session_id: this.sessionId, uuid: randomUUID(), rate_limit_info: { status, resetsAt: win.resetsAt ?? undefined, rateLimitType: (win.windowDurationMins ?? 0) >= 10080 ? 'seven_day' : 'five_hour', utilization: used / 100, plan: rl.planType } });
+        }
+        break;
+      }
+      case 'warning': this.push(this.synth.systemNote(`Codex：${p.message ?? ''}`, 'warning')); break;
+      case 'mcpServer/startupStatus/updated': if (p.status === 'failed') this.push(this.synth.systemNote(`Codex MCP「${p.name}」启动失败：${p.error ?? ''}`, 'warning')); break;
+      case 'item/reasoning/textDelta': case 'item/reasoning/summaryTextDelta': this.pushAll(this.synth.delta('thinking', p.delta ?? '')); break;
+      case 'item/started': this.onItem(p.item, false); break;
+      case 'item/completed': this.onItem(p.item, true); break;
+      case 'item/commandExecution/outputDelta': { const it = this.items.get(p.itemId); if (it) it.output += p.delta ?? ''; break; }
+      case 'thread/tokenUsage/updated': {
+        const t = p?.tokenUsage?.last ?? p?.tokenUsage?.total;
+        if (t) this.usage = { input: t.inputTokens ?? 0, output: t.outputTokens ?? 0, cacheRead: t.cachedInputTokens ?? 0 };
+        break;
+      }
+      case 'error': if (!p?.willRetry) this.push(this.synth.systemNote(`Codex 错误：${p?.error?.message ?? ''}`, 'error')); break;
+      case 'turn/completed': this.onTurnCompleted(p?.turn); break;
+      case 'thread/name/updated': if (p?.name) void this.transcripts.patchHead(this.sessionId, { title: p.name }); break;
+      default: break;
+    }
+  }
+
+  private onItem(item: any, completed: boolean) {
+    if (!item) return;
+    const known = this.items.get(item.id);
+    switch (item.type) {
+      case 'commandExecution': {
+        if (!known) { this.items.set(item.id, { type: item.type, toolName: 'Bash', output: '' }); this.pushAll(this.synth.toolUse(item.id, 'Bash', { command: item.command, description: item.commandActions?.map((a: any) => a.type).join(', ') })); }
+        if (completed) { const out = item.aggregatedOutput ?? this.items.get(item.id)?.output ?? ''; this.push(this.synth.toolResult(item.id, out, item.status === 'failed' || (item.exitCode ?? 0) !== 0, { stdout: out, stderr: '', interrupted: item.status === 'interrupted', exitCode: item.exitCode })); }
+        break;
+      }
+      case 'fileChange': {
+        if (!known) { this.items.set(item.id, { type: item.type, toolName: 'Edit', output: '' }); for (const ch of item.changes ?? []) this.pushAll(this.synth.toolUse(`${item.id}:${ch.path}`, ch.kind === 'add' ? 'Write' : 'Edit', { file_path: ch.path, diff: ch.diff })); }
+        if (completed) for (const ch of item.changes ?? []) this.push(this.synth.toolResult(`${item.id}:${ch.path}`, ch.diff ?? 'applied', item.status === 'failed', { filePath: ch.path, unified: ch.diff }));
+        break;
+      }
+      case 'mcpToolCall': {
+        const name = `mcp__${item.server}__${item.tool}`;
+        if (!known) { this.items.set(item.id, { type: item.type, toolName: name, output: '' }); this.pushAll(this.synth.toolUse(item.id, name, (item.arguments as any) ?? {})); }
+        if (completed) this.push(this.synth.toolResult(item.id, JSON.stringify(item.result ?? item.error ?? null, null, 2), !!item.error, item.result));
+        break;
+      }
+      case 'dynamicToolCall': {
+        const name = item.tool ?? 'Tool';
+        if (!known) { this.items.set(item.id, { type: item.type, toolName: name, output: '' }); this.pushAll(this.synth.toolUse(item.id, name, (item.arguments as any) ?? {})); }
+        if (completed) this.push(this.synth.toolResult(item.id, (item.contentItems ?? []).map((c: any) => c.text ?? JSON.stringify(c)).join('\n'), item.success === false));
+        break;
+      }
+      case 'plan': if (completed && item.text) this.pushAll(this.synth.delta('text', `\n\n**计划**\n${item.text}\n`)); break;
+      case 'webSearch': {
+        if (!known) { this.items.set(item.id, { type: item.type, toolName: 'WebSearch', output: '' }); this.pushAll(this.synth.toolUse(item.id, 'WebSearch', { query: item.query })); }
+        if (completed) this.push(this.synth.toolResult(item.id, item.query ?? 'done'));
+        break;
+      }
+      default: break;
+    }
+  }
+
+  private onTurnCompleted(turn: any) {
+    const status = turn?.status;
+    const ok = status === 'completed' || status === 'interrupted';
+    this.pushAll(this.synth.endTurn({ ok, error: turn?.error?.message, stopReason: status, usage: { input: this.usage.input, output: this.usage.output, cacheRead: this.usage.cacheRead } }));
+    this.turnActive = false;
+    this.turnId = null;
+    if (!this.closed && this.state !== 'error') { this.setState('idle'); this.flush(); }
+  }
+
+  private async onApproval(kind: PendingPerm['kind'], p: any) {
+    const auto = this.permissionMode === 'bypassPermissions' || this.permissionMode === 'dontAsk' || (this.permissionMode === 'acceptEdits' && kind === 'file');
+    if (auto) return { decision: 'accept' };
+    const requestId = randomUUID();
+    const input = kind === 'command' ? { command: p.command, description: p.reason ?? undefined, cwd: p.cwd } : kind === 'file' ? { file_path: p.grantRoot ?? this.cwd, reason: p.reason } : { permissions: p.permissions ?? p, reason: p.reason };
+    const event: PermissionRequestEvent = { requestId, sessionId: this.sessionId, toolName: kind === 'command' ? 'Bash' : kind === 'file' ? 'Edit' : 'Permissions', input, toolUseId: p.itemId, decisionReason: p.reason ?? undefined };
+    return new Promise((resolve) => {
+      this.pending.set(requestId, { event, resolve, kind });
+      this.setState('waiting');
+      this.emit('permission', event);
+    });
+  }
+
+  respondPermission(requestId: string, r: PermissionResponse): boolean {
+    const p = this.pending.get(requestId);
+    if (!p) return false;
+    this.pending.delete(requestId);
+    p.resolve({ decision: r.behavior === 'allow' ? 'accept' : 'decline' });
+    this.emit('permissionResolved', requestId);
+    if (this.pending.size === 0) this.setState('running');
+    return true;
+  }
+
+  send(text: string, images?: { mediaType: string; data: string }[], steer = false, uuid?: string, attachments?: AttachmentRef[]) {
+    let body = text;
+    for (const a of attachments ?? []) body += a.kind === 'text' && a.text ? `\n\n<attached name="${a.name}">\n${a.text}\n</attached>` : `\n\n<attached kind="${a.kind}" name="${a.name}" path="${a.path ?? ''}" />`;
+    this.record(this.synth.user(body, uuid, images)); // the web client already echoed it locally; keep it for transcripts / resume only
+    if (steer && this.turnActive && this.rpc && this.threadId) {
+      this.rpc.request('turn/steer', { threadId: this.threadId, turnId: this.turnId, input: [{ type: 'text', text: body, text_elements: [] }] }, 30_000).catch(() => this.queue.push({ text: body, images }));
+      return;
+    }
+    this.queue.push({ text: body, images });
+    this.flush();
+  }
+
+  private flush() {
+    if (this.turnActive || this.state === 'starting' || this.state === 'error' || !this.rpc || !this.threadId) return;
+    const next = this.queue.shift();
+    if (!next) return;
+    this.turnActive = true;
+    this.setState('running');
+    this.synth.beginTurn();
+    const input: any[] = [{ type: 'text', text: next.text, text_elements: [] }];
+    for (const im of next.images ?? []) input.push({ type: 'image', url: `data:${im.mediaType};base64,${im.data}` });
+    const pol = this.policy();
+    this.rpc.request('turn/start', { threadId: this.threadId, input, model: this.model ?? null, effort: this.effort ? EFFORT_MAP[this.effort] : null, approvalPolicy: pol.approvalPolicy, sandboxPolicy: null }, 0).then((r) => { this.turnId = r?.turn?.id ?? this.turnId; }, (e) => {
+      this.pushAll(this.synth.endTurn({ ok: false, error: e.message }));
+      this.turnActive = false;
+      if (!this.closed && this.state !== 'error') { this.setState('idle'); this.flush(); }
+    });
+  }
+
+  async interrupt() {
+    this.queue = [];
+    for (const [id, p] of this.pending) { p.resolve({ decision: 'cancel' }); this.pending.delete(id); this.emit('permissionResolved', id); }
+    if (this.rpc && this.threadId && this.turnId) await this.rpc.request('turn/interrupt', { threadId: this.threadId, turnId: this.turnId }, 15_000).catch(() => {});
+  }
+  async setPermissionMode(mode: PermissionMode) { this.permissionMode = mode; this.info.permissionMode = mode; this.emit('info', this.info); }
+  async setModel(model: string) { this.model = model; this.synth.setModel(model); this.info.model = model; this.emit('info', this.info); await this.transcripts.patchHead(this.sessionId, { model }); }
+  async setEffort(effort: EffortLevel) { this.effort = effort; this.info.effort = effort; this.emit('info', this.info); }
+  async close() {
+    this.closed = true;
+    await this.interrupt();
+    this.rpc?.kill();
+    this.setState('closed');
+  }
+}

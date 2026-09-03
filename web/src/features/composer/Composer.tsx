@@ -3,7 +3,7 @@ import { useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { clsx, fmtTok, fmtUsd, fmtMs, shortModel, basename } from '@/util';
-import type { AttachmentRef, EffortLevel, PermissionMode, SessionFeatures } from '@shared';
+import type { AgentKind, AttachmentRef, EffortLevel, PermissionMode, SessionFeatures } from '@shared';
 import { compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachment, uploadAttachment, type DroppedFile, type PendingImage } from '@/model/attachments';
 import { StatusStrip } from '@/features/chat/StatusStrip';
 
@@ -47,8 +47,12 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
   const togglePanel = useStore((s) => s.togglePanel);
   const [wProvider, setWProvider] = useState<string>(localStorage.getItem('cw.lastProvider') || (settings.defaultProviderId as string) || 'claude');
   const provider = wProvider === 'claude' ? undefined : providers.find((p) => p.id === wProvider);
+  const agents = useStore((s) => s.agents);
+  const [wAgent, setWAgent] = useState<AgentKind>((localStorage.getItem('cw.lastAgent') as AgentKind) || 'claude');
+  const agent = wAgent !== 'claude' ? agents.find((a) => a.kind === wAgent) : undefined;
+  const foreign = !!agent;
   const disabledModels = (settings['ui.disabledModels'] as string[] | undefined) ?? [];
-  const modelOptions = (provider?.models?.length ? [{ value: '', label: provider.defaultModel ? `默认（${provider.defaultModel}）` : '默认模型' }, ...provider.models.map((m) => ({ value: m, label: m }))] : MODEL_ALIASES).filter((o) => !o.value || !disabledModels.includes(provider ? `${provider.id}:${o.value}` : o.value));
+  const modelOptions = (agent ? [{ value: '', label: agent.model ? `默认（${agent.model}）` : '默认模型' }, ...agent.models.map((m) => ({ value: m, label: m }))] : provider?.models?.length ? [{ value: '', label: provider.defaultModel ? `默认（${provider.defaultModel}）` : '默认模型' }, ...provider.models.map((m) => ({ value: m, label: m }))] : MODEL_ALIASES).filter((o) => !o.value || !disabledModels.includes(provider ? `${provider.id}:${o.value}` : o.value));
   const [wFeatures, setWFeatures] = useState<SessionFeatures>(() => { try { return JSON.parse(localStorage.getItem('cw.lastFeatures') ?? '{}'); } catch { return {}; } });
   const [featOpen, setFeatOpen] = useState(false);
   const [listening, setListening] = useState(false);
@@ -159,9 +163,11 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
         localStorage.setItem('cw.lastModel', wModel);
         localStorage.setItem('cw.lastMode', wMode);
         localStorage.setItem('cw.lastProvider', wProvider);
+        localStorage.setItem('cw.lastAgent', wAgent);
+        if (wAgent !== 'claude' && !agent) throw new Error('选中的 agent 已不可用');
         localStorage.setItem('cw.lastFeatures', JSON.stringify(wFeatures));
         if (wProvider !== 'claude' && !provider) throw new Error('选中的供应商档案已不存在');
-        const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffort || undefined, providerId: provider ? provider.id : 'claude', features: wFeatures }, target);
+        const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffort || undefined, providerId: foreign ? 'claude' : provider ? provider.id : 'claude', features: foreign ? {} : wFeatures, agent: foreign ? wAgent : undefined }, target);
         const uploaded = files.length ? await uploadAll(id) : [];
         await send(id, t, im, false, [...atts, ...uploaded]);
         saveDraft('welcome', '');
@@ -301,7 +307,7 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
             ref={ta}
             rows={1}
             value={text}
-            placeholder={welcome ? '今天做点什么？（可拖入文件或文件夹）' : active?.state === 'history' ? '回复以继续这个会话…' : busy ? '运行中，输入会排队 · Esc 中断' : '回复 Claude… 输入 / 查看命令，拖入文件作为附件'}
+            placeholder={welcome ? '今天做点什么？（可拖入文件或文件夹）' : active?.state === 'history' ? '回复以继续这个会话…' : busy ? '运行中，输入会排队 · Esc 中断' : `回复 ${info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude'}… 输入 / 查看命令，拖入文件作为附件`}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKey}
             onPaste={onPaste}
@@ -330,14 +336,20 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
             )}
             {welcome ? (
               <>
-                <label className={clsx('chip', provider && 'info')} title="账号 / 供应商：claude.ai 登录，或配置中心里添加的第三方端点"><span>{provider ? provider.name : 'Claude 账号'}</span><span className="caret">▾</span>
-                  <select value={provider ? provider.id : 'claude'} onChange={(e) => { const v = e.target.value; if (v === '__add') { useStore.setState({ configTab: 'providers' }); if (!useStore.getState().panels.includes('config')) togglePanel('config'); return; } setWProvider(v); setWModel(''); }}>
-                    <option value="claude">Claude 账号（claude.ai 登录）</option>
-                    {providers.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.type}</option>)}
-                    <option value="__add">＋ 添加供应商…</option>
+                <label className={clsx('chip', (provider || foreign) && 'info')} title="引擎：Claude 账号 / 第三方供应商 / 其它 CLI agent（Codex、Gemini、Qwen、Kimi、ACP）"><span>{agent ? `${agent.icon} ${agent.name}` : provider ? provider.name : 'Claude 账号'}</span><span className="caret">▾</span>
+                  <select value={foreign ? `agent:${wAgent}` : provider ? provider.id : 'claude'} onChange={(e) => { const v = e.target.value; if (v === '__add') { useStore.setState({ configTab: 'providers' }); if (!useStore.getState().panels.includes('config')) togglePanel('config'); return; } if (v === '__agents') { useStore.getState().openSettings({ section: 'agents' }); return; } if (v.startsWith('agent:')) { setWAgent(v.slice(6) as AgentKind); setWProvider('claude'); } else { setWAgent('claude'); setWProvider(v); } setWModel(''); }}>
+                    <optgroup label="Claude Code">
+                      <option value="claude">Claude 账号（claude.ai 登录）</option>
+                      {providers.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.type}</option>)}
+                      <option value="__add">＋ 添加供应商…</option>
+                    </optgroup>
+                    <optgroup label="其它 agent">
+                      {agents.filter((a) => a.kind !== 'claude' && a.enabled).map((a) => <option key={a.kind} value={`agent:${a.kind}`} disabled={!a.installed}>{a.icon} {a.name}{a.installed ? (a.label ? ` · ${a.label}` : '') : '（未安装）'}</option>)}
+                      <option value="__agents">⚙ 管理 agent…</option>
+                    </optgroup>
                   </select>
                 </label>
-                <span style={{ position: 'relative' }}>
+                {!foreign && <span style={{ position: 'relative' }}>
                   <button className={clsx('chip', featCount > 0 && 'warn')} onClick={() => setFeatOpen(!featOpen)} title="会话附加功能（Chrome / Computer Use / 协调者 / 主动模式 / 频道）">功能{featCount ? ` ${featCount}` : ''} <span className="caret">▾</span></button>
                   {featOpen && (
                     <div className="menu" style={{ bottom: '100%', right: 0, marginBottom: 6, minWidth: 260, padding: 8 }} onMouseLeave={() => setFeatOpen(false)}>
@@ -359,13 +371,13 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
                       </div>
                     </div>
                   )}
-                </span>
+                </span>}
                 <label className="chip"><span>{modelOptions.find((m) => m.value === wModel)?.label ?? wModel}</span><span className="caret">▾</span>
                   <select value={wModel} onChange={(e) => setWModel(e.target.value)}>{modelOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}{wModel && !modelOptions.some((m) => m.value === wModel) && <option value={wModel}>{wModel}</option>}</select>
                 </label>
-                <label className="chip"><span>{wEffort || 'effort'}</span><span className="caret">▾</span>
+                {(!foreign || agent?.protocol === 'codex') && <label className="chip"><span>{wEffort || 'effort'}</span><span className="caret">▾</span>
                   <select value={wEffort} onChange={(e) => setWEffort(e.target.value as EffortLevel)}><option value="">默认</option>{['low', 'medium', 'high', 'xhigh', 'max'].map((l) => <option key={l} value={l}>{l}</option>)}</select>
-                </label>
+                </label>}
                 <label className={clsx('chip', wMode === 'bypassPermissions' && 'warn')}><span>{MODE_LABEL[wMode]}</span><span className="caret">▾</span>
                   <select value={wMode} onChange={(e) => setWMode(e.target.value as PermissionMode)}>{(Object.keys(MODE_LABEL) as PermissionMode[]).map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}</select>
                 </label>

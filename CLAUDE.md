@@ -93,6 +93,17 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - 诊断包：`diag.bundle` → `~/.claude-web/diagnostics/<ts>/`（info.json、server.log / main.log 尾部、脱敏 meta.json 与 settings.json）+ tar。
 - `server/ws-phase4.mjs`：skills / tools / secrets 迁移 / cron / 账本 / 诊断 / 注册表 的端到端检查。首次运行引导只在没有任何工作区时出现。
 
+## 多 agent（阶段 5，2026-09-03）
+
+- **接口**：`server/src/agents/types.ts` 的 `AgentDriver`（send / interrupt / respondPermission / setModel / close / getHistory…），`SessionRunner`（Claude）、`CodexDriver`（`codex app-server`，JSON-RPC v2）、`AcpDriver`（Gemini / Qwen / Kimi / 任何 ACP agent）都实现它；`RunnerPool.open()` 按 `params.agent` 挑驱动。`AGENT_DEFS` 是内置表，用户在 `meta.settings.agents` 里覆盖命令 / 参数 / env / 模型 / 启用，自定义 ACP agent 的 kind 是 `acp:<id>`。
+- **一切都归一成 SDK 消息**：`agents/normalize.ts` 的 `MessageSynth` 把外部 agent 的事件合成 `system/init`、`stream_event`（message_start → content_block_* → message_stop）、`assistant`（tool_use）、`user`（tool_result + `tool_use_result`）、`result`（usage / cost）和 `rate_limit_event`，前端 reducer / 工具卡片 / 健康信号 / 账本 / Mission Control 零改动。ACP 的 `plan` 变 TodoWrite 卡片；工具名用 `mapToolName()` 映射到最近的 Claude 工具以复用卡片。
+- **协议要点**：ACP `initialize{protocolVersion:1}` → `session/new` → `session/prompt`（流式 `session/update` 通知），权限走 agent 发来的 `session/request_permission`（options 的 kind 是 allow_once / reject_once…），`session/load` 只有 `agentCapabilities.loadSession` 才能用；Codex 是 `initialize` + `initialized` 通知 → `thread/start|resume` → `turn/start`，审批是 `item/commandExecution/requestApproval` 等服务端请求，`turn/steer` 做插话，`thread/tokenUsage/updated` 算 usage。形状以 `codex app-server generate-ts` 生成的 TS 为准（不要猜）。权限模式映射：default → `untrusted`，acceptEdits/auto → `on-request`，bypass → `never` + `danger-full-access`。
+- **Windows 下 `gemini` / `codex` 是 npm 的 `.cmd` 垫片**，直接 `spawn('gemini')` ENOENT。`agents/resolve.ts` 的 `resolveSpawn()` 在 PATH 上找到垫片、解析出里面的 JS 入口后用 node 直接起（进程可 kill、Electron 里用 `ELECTRON_RUN_AS_NODE`），其它 `.cmd` 退回 `cmd.exe /d /s /c`；`JsonRpcProcess.kill()` 在 Windows 用 `taskkill /t` 杀整棵树。
+- Codex 的 `config.toml` 里的模型可能是这个账号用不了的（ChatGPT 套餐会 400），驱动启动后对照 `model/list`，不在列表就换成默认并发系统提示。Gemini 没登录时 `session/new` 报 API key 缺失：驱动会尝试非交互的 `authenticate`，不行就把 `login` 命令写进错误里；设置 → CLI Agents 的「登录 / 安装」按钮会开一个终端 tile 并把命令敲进去（`Tile.term.cmd`）。
+- 外部 agent 的会话记录在 `~/.claude-web/agents/<sessionId>.jsonl`，首行是 `cw.meta`（agent / cwd / title / nativeSessionId / model）；`sessions.list` 把它们和 Claude 的 jsonl 合并（`SessionSummary.agent`），`session.open` 恢复时从头部推断 agent。`append()` 在头部不存在时不写（否则会出现没有 cwd 的「幽灵会话」把侧栏搞崩）。
+- 调试真实 agent：`CW_RPC_DEBUG=1` 起 server 会把每条 JSON-RPC 收发打到 stderr；`node server/ws-agent-probe.mjs <agent> "<prompt>"` 单独驱动一个会话并打印所有事件；`node server/ws-phase5.mjs [port] [token] [--real]` 是端到端检查（mock ACP agent 在 `src/agents/__mocks__/`，`--real` 才碰真 gemini / codex，没登录的会 SKIP）。`agents.list` 的版本探测缓存 60 秒，`refresh:true` 强制重探。
+- `scripts/shot.cjs` 现在把渲染进程的 console 错误写进 `<out>.log`；多个截图别并行跑（窗口互相遮挡时 `capturePage` 是黑图）。
+
 ## 桌面版（desktop/）
 
 ```

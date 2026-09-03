@@ -20,6 +20,7 @@ app.whenReady().then(async () => {
     log('ready');
     const win = new BrowserWindow({ width: Number(w), height: Number(h), show: true });
     win.showInactive();
+    win.webContents.on('console-message', (_e, level, message) => { if (level >= 2) log(`console[${level}] ${String(message).slice(0, 500)}`); });
     await win.loadURL(url);
     log('loaded');
     await new Promise((r) => setTimeout(r, 1500));

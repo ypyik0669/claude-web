@@ -20,6 +20,8 @@ import type { DiagService } from '../diag/service.js';
 import { detectTools } from '../tools/detect.js';
 import type { LedgerService } from '../usage/ledger.js';
 import { SCHEDULE_TEMPLATES } from '../schedules/service.js';
+import type { AgentRegistry } from '../agents/types.js';
+import type { AgentTranscripts } from '../agents/transcript.js';
 
 export interface Services {
   git: GitService;
@@ -28,6 +30,8 @@ export interface Services {
   mcp: McpService;
   diag: DiagService;
   ledger: LedgerService;
+  agents: AgentRegistry;
+  transcripts: AgentTranscripts;
   pool: RunnerPool;
   sessions: SessionService;
   config: ConfigService;
@@ -108,12 +112,14 @@ export class Hub {
     const s = this.s;
     switch (req.kind) {
       case 'sessions.list': {
-        const list = await s.sessions.list(req.limit);
+        const [claude, others] = await Promise.all([s.sessions.list(req.limit), s.transcripts.list()]);
+        const list = [...claude, ...others].sort((a, b) => b.lastModified - a.lastModified).slice(0, req.limit ?? 500);
         return list.map((x) => ({ ...x, live: s.pool.stateOf(x.sessionId) }));
       }
       case 'sessions.projects':
         return s.sessions.projects();
       case 'transcript.load':
+        if (await s.transcripts.exists(req.sessionId)) return s.transcripts.load(req.sessionId);
         return s.sessions.transcript(req.sessionId);
       case 'transcript.subagents':
         return s.sessions.subagents(req.sessionId);
@@ -122,6 +128,16 @@ export class Hub {
 
       case 'session.open': {
         let params = req.params;
+        // resuming a foreign-agent session: the transcript head knows which agent it belongs to
+        if (params.sessionId && !params.agent) {
+          const head = await s.transcripts.head(params.sessionId);
+          if (head) params = { ...params, agent: head.agent, fork: false, resumeAt: undefined };
+        }
+        if (params.agent && params.agent !== 'claude') {
+          const hist = params.sessionId ? await s.transcripts.load(params.sessionId).catch(() => []) : [];
+          const r = s.pool.open(params, hist);
+          return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
+        }
         // provider: explicit → the one the session was created with → user default (new sessions only)
         if (params.providerId === undefined) {
           const remembered = params.sessionId ? s.meta.sessionMeta(params.sessionId).providerId : undefined;
@@ -145,9 +161,13 @@ export class Hub {
         const r = this.runner(req.sessionId);
         return { info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
       }
-      case 'session.send':
+      case 'session.send': {
         this.runner(req.params.sessionId).send(req.params.text, req.params.images, req.params.steer, req.params.uuid, req.params.attachments);
+        // foreign agents: first prompt becomes the title (Claude's transcripts derive it themselves)
+        const head = await s.transcripts.head(req.params.sessionId);
+        if (head && !head.title) { await s.transcripts.patchHead(req.params.sessionId, { title: req.params.text.replace(/<attached[^>]*\/>/g, '').trim().slice(0, 80) }); s.sessions.emit('changed'); }
         return null;
+      }
 
       case 'workspaces.list':
         return s.meta.workspaces();
@@ -227,17 +247,19 @@ export class Hub {
         await this.runner(req.sessionId).setModel(req.model);
         return null;
       case 'session.setEffort':
-        await this.runner(req.sessionId).setEffort(req.effort);
+        await this.runner(req.sessionId).setEffort?.(req.effort);
         return null;
       case 'session.rename':
+        if (await s.transcripts.exists(req.sessionId)) { await s.transcripts.patchHead(req.sessionId, { title: req.title }); s.sessions.emit('changed'); return null; }
         await s.sessions.rename(req.sessionId, req.title);
         return null;
       case 'session.delete':
         await s.pool.close(req.sessionId);
+        if (await s.transcripts.exists(req.sessionId)) { await s.transcripts.remove(req.sessionId); s.sessions.emit('changed'); return null; }
         await s.sessions.delete(req.sessionId);
         return null;
       case 'session.contextUsage':
-        return this.runner(req.sessionId).contextUsage(req.detail);
+        return this.runner(req.sessionId).contextUsage?.(req.detail ?? 'summary') ?? null;
       case 'feedback.set':
         await s.meta.setFeedback(req.sessionId, req.messageId, req.rating ? { rating: req.rating, note: req.note, at: Date.now() } : null);
         return null;
@@ -251,7 +273,7 @@ export class Hub {
       case 'export.save':
         return s.files.saveExport(req.name, req.html);
       case 'session.stopTask':
-        await this.runner(req.sessionId).stopTask(req.taskId);
+        await this.runner(req.sessionId).stopTask?.(req.taskId);
         return null;
       case 'permission.respond': {
         const r = s.pool.findPermission(req.requestId);
@@ -429,6 +451,12 @@ export class Hub {
         return s.meta.scheduleRuns(req.id, req.limit);
       case 'schedules.templates':
         return SCHEDULE_TEMPLATES;
+      case 'agents.list':
+        return s.agents.list(!!req.refresh);
+      case 'agents.set':
+        await s.agents.setConfig(req.agent, req.patch);
+        s.agents.invalidate();
+        return s.agents.list();
 
       case 'terminal.open':
         return s.terminal.open(req.cwd, req.cols, req.rows);
