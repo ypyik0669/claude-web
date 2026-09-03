@@ -3,6 +3,7 @@ web/dist/
 server/dist/
 desktop/dist/
 dist-desktop/
+dist-desktop-*/
 *.log
 hello.txt
 color.txt

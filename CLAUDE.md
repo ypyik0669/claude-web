@@ -103,6 +103,11 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - 外部 agent 的会话记录在 `~/.claude-web/agents/<sessionId>.jsonl`，首行是 `cw.meta`（agent / cwd / title / nativeSessionId / model）；`sessions.list` 把它们和 Claude 的 jsonl 合并（`SessionSummary.agent`），`session.open` 恢复时从头部推断 agent。`append()` 在头部不存在时不写（否则会出现没有 cwd 的「幽灵会话」把侧栏搞崩）。
 - 调试真实 agent：`CW_RPC_DEBUG=1` 起 server 会把每条 JSON-RPC 收发打到 stderr；`node server/ws-agent-probe.mjs <agent> "<prompt>"` 单独驱动一个会话并打印所有事件；`node server/ws-phase5.mjs [port] [token] [--real]` 是端到端检查（mock ACP agent 在 `src/agents/__mocks__/`，`--real` 才碰真 gemini / codex，没登录的会 SKIP）。`agents.list` 的版本探测缓存 60 秒，`refresh:true` 强制重探。
 - `scripts/shot.cjs` 现在把渲染进程的 console 错误写进 `<out>.log`；多个截图别并行跑（窗口互相遮挡时 `capturePage` 是黑图）。显示器休眠 / 锁屏时 `capturePage` 抛 `UnknownVizError`，用 `SHOT_OFFSCREEN=1` 走离屏渲染。
+  - **传进去的 JS 必须是一行**：Windows 的命令行带不了换行，多行脚本只有第一行会到达 Electron（而且不报错）。
+  - 完整 URL 走 `SHOT_URL` 环境变量，argv 第一位随便填个 `127.0.0.1:3090` 占位；out 路径是第二位，别搞错顺序。
+  - 驱动页面用 `window.__store`（`main.tsx` 里挂的调试入口）：`__store.getState().loadHistory(sid)` / `openInPane(sid,'replace')` / `setTheme('nord')` / `dispatchLayout(...)` / `openSettings({section})` 比找按钮点可靠得多。
+  - `server/ws-demo-session.mjs` 造一个带工具调用的 mock 会话，`server/ws-demo-running.mjs` 把一个会话停在**回合进行中**（用来截运行态）。都用 mock ACP agent，不花模型 token；截完记得删会话和 `acp:demo` / `acp:slow` 这两个临时 agent。
+- 打包后的桌面版有单实例锁，想在**不打扰用户已经开着的那个**的情况下冷启动验证：`electron-builder --config.directories.output=dist-desktop-p12` 换个输出目录，然后 `"…/Claude Web.exe" --user-data-dir=<临时目录>` 起第二个实例，端口在那个目录的 `server.log` 里。
 
 ## 远程 / 手机 / IM（阶段 6，2026-09-03）
 
@@ -122,6 +127,48 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - **目标（Goal 房间）**：ccb 的 `/goal` 是 TUI 内存态（Stop hook + 150 轮上限，不落盘），headless 用不了，所以 `server/src/goals/service.ts` 自己实现：目标 = 一句话 objective + 活规格（Markdown，随时改，下一轮提示生效）+ 绑定会话；启动时把 `GOAL_PROTOCOL`（要求最后一行 `GOAL_STATUS: complete|blocked — 原因|continue`）+ 目标 + 规格发给会话，每个 `result` 后解析状态：continue → 1.5s 后自动发「继续」；complete / blocked / 会话出错 / 连续 3 轮无工具且回复相同（卡住）/ 轮数或 token 预算用尽 → 停。证据从流里收：Edit/Write 文件、Bash 命令（含 `git commit` → commit、测试命令 → test，并回填 tool_result 成败）、TodoWrite → 执行图步骤。存 `meta.goals`，事件 `goals.changed`。UI：停靠面板「目标」（执行图 / 活规格 / 证据三个 tab），输入框里 `/goal <目标>` 直接创建并启动。任何 agent 驱动都能跑目标。
 - **Android 预览**（可选）：`server/src/android/service.ts` 找 adb（ANDROID_HOME / SDK 默认路径 / PATH），`exec-out screencap -p` 截图（PNG 头里读宽高），`input tap/swipe/keyevent/text`，安装 APK、列第三方包并 `monkey` 启动、`logcat -d -t`，`emulator -avd` 分离启动。面板「Android」每 0.9s 轮询截图，点击 = tap，拖动 = swipe。本机没 adb，只验证了「未安装」路径。
 - `server/ws-phase7.mjs`：看板对 `anthropics/claude-code` 只读（需要 `gh auth login`）、目标用 mock ACP agent 跑完整回合（mock 回显提示词，里面就带 `GOAL_STATUS: complete`，所以一轮即完成）、android 状态。`web/src/store` 里的 `PanelId` 现在是 `model/layout` 的别名，加面板只改 layout.ts + Dock 的三张表 + TopBar/命令面板/TabStrip 的列表。
+
+## 设计令牌 / 图标 / 停靠面板（阶段 8，2026-09-04）
+
+- **令牌是分层的**：主题只定义十来个原色，语义层全部用 `color-mix(in oklab, var(--fg) N%, transparent)` 从里面派生 —— 表面 `--surface-0..3/-elev`、描边 `--edge-subtle/default/strong`、叠加 `--layer-hover/selected/active`、文字 `--ink-1..5`、圆角 `--r-sm..2xl/pill`、阴影 `--elev-1..3`、时长 `--dur-1..4`、缓动 `--ease-out/in-out`、字号 `--fs-micro..xl`、状态 `--ok/warn/err/info/ctl-on`。**加一个主题只要写那十几个原色**，别再往规则里写死颜色或圆角。旧名 `--bg/--fg/--line` 还在但只作兼容，新代码别用。
+- 焦点环统一：全局 `:focus{outline:none}` + `:focus-visible{outline:2px solid var(--focus-ring)}`，删掉了散落的 15 处 `outline:none`。`.icon-btn` 有固定 28×28 盒子（`.xs` 22px），命中区不再等于字形宽度。
+- `.sub` 是**独立的类**，不再只在 `.row` 里生效；`.row .sub` 只额外加单行省略。设置页那种成段的说明文字靠它。
+- **图标全部手写**：`web/src/ui/icons.tsx` 一个 `PATHS` 表，24×24 网格、stroke 1.75、`currentColor`，`<Icon name size />`。没有图标库依赖。原来约 175 处内联 Unicode/emoji 已经换掉；`server` 的 `AGENT_DEFS.icon` 存的是图标名不是字形。
+- **面板表只有一份**：`web/src/model/layout.ts` 的 `PANELS`（id/title/icon/rail）导出 `PANEL_IDS/PANEL_TITLES/PANEL_ICONS`，Dock / TopBar / 命令面板 / TabStrip 全从这里取。加面板 = 往 `PANELS` 加一行 + `PanelBody` 加一个 case。
+- **停靠面板只有一条渲染分支**：最小化靠 CSS（`.dock.min` 收成图标轨）+ `[hidden]`，**绝不卸载面板**，否则终端 pty、xterm 缓冲、表单状态全丢。注意 `.dock-panel{display:flex}` 会盖掉 UA 的 `[hidden]`，所以显式写了 `.dock-panel[hidden]{display:none}`。
+- `deriveActive()` 会**越过**前面的浏览器 / 文档 / 终端标签往后找会话：停靠面板（文件 / Git / 记忆 / 任务）读的是 `activeId`，不这样做的话把浏览器标签切到前面，右边整排面板就空了。
+
+## 对话渲染与 composer（阶段 9，2026-09-04）
+
+- **一轮 = 一条竖向时间线**（`ChatView` 的 `Steps`）。三态必须互不相同：完成 = 空心勾、进行中 = 呼吸方块 + 计时、待执行 = 灰色空心圆（`stepState()`）。折叠态就是这条线，点节点展开该步的卡片（`ToolCard` 的 `bare` 模式只渲染 body，头和导轨由时间线画）。
+- 工具折叠态是**单行**：图标 + 动词 + 目标（路径取 basename，全路径在 title 里）+ 右侧耗时。运行中的秒数：agent 持续发 `tool_progress` 就用它（Claude），不发就用 `startedAt` 的墙上时间自己数（ACP / Codex），否则会一直停在 `0s`。
+- **composer 上方钉两行**：`RunCard`（正在做什么 · 已跑多久 · 第几步 · 停止）和 `ContextRow`（工作目录 · 分支 ↑↓•改动 · worktree · 非 Claude 的 agent 名）。`StatusStrip` 只留 RunCard 说不出来的东西：卡住、失败、限流、排队 —— 别把「运行中」重复两遍。
+- `conv.turnStartedAt` 在用户消息落地时打点、`result` 时清空，RunCard 从它开始计时。
+- **`applyTranscript(c, msgs, {live})`**：点开一个**正在跑**的会话时不能把最后那个工具扫成 `done`，否则一条还在执行的命令会顶着绿勾，`runningTool` 也被清掉（表现为「思考中」但其实在编译）。`live` 由 `SessionSummary.live` 判断，同时用 transcript 里用户消息的时间戳回填 `turnStartedAt`。
+- **模型 / effort 的唯一真相是 `server/src/models/catalog.ts`**：版本化显示名（`Fable 5.1` 不是 `Fable`）、每个模型自己的 effort 档位、别名、`supportsUltracode`、未核实的标 `unverified`。运行时优先用 agent 自报的列表（`info.models` / `model/list`），catalog 只补显示名和档位。`SessionInfoSnapshot.models[].supportsEffort / supportedEffortLevels` 现在真的被前端读了：Gemini 不出 effort chip。
+- **ultracode 不是 effort 等级**：Claude 侧它是「xhigh + 动态工作流编排」的会话级布尔（`CLAUDE_CODE_EFFORT_LEVEL` 不接受这个值），做成 effort chip 旁边独立的 pill（`session.setUltracode`）；Codex 侧的 `ultra` 才是 effort 枚举里真实存在的一档，effort 传给 Claude 前要把 `ultra` 降成 `max`。
+
+## 内嵌浏览器（阶段 10，2026-09-04）
+
+- `Tile` 加了 `{kind:'browser'; url}`。桌面端 `webviewTag: true` 渲染 `<webview>`（`will-attach-webview` 里把我们的 preload 摘掉、`did-attach-webview` 里拒绝弹窗）；浏览器端降级成受限 iframe，**被 `X-Frame-Options` 拒绝的站点就是一片空白，这是浏览器行为不是 bug**，底部一直提示「用右上角在系统浏览器打开」。
+- 地址栏的 `normalise()` 认 `localhost:3000`、`:3000`、裸域名，都不像就当搜索词丢给 Google。
+
+## 会话内核：canonical / 热切换 / 交接（阶段 11，2026-09-04）
+
+- **`server/src/session/canonical.ts`**：所有 agent（含 Claude）的规范时间线，写 `~/.claude-web/canonical/<sid>.jsonl`。只留能跨 provider 的东西：用户消息、助手正文、工具调用（归一名 + 输入 + 结果摘要）、系统提示、用量。**thinking 一律丢弃** —— Claude 的 thinking 带 `signature`、Codex 的 reasoning 带 `encrypted_content`，跨 provider 必然失效（OpenAI 自己的 `/import` 也是降级成纯文本）。
+- **用户消息谁都不回显**：SDK 和外部驱动都不会把用户那条发回来，所以在 hub 的 `session.send` 里直接记进 canonical，别指望从消息流里捞。
+- **供应商热切换 = 用户看不见的重启**：CLI 进程的 env 在 spawn 后不可变，`session.setProvider` 是停子进程 → 用新 env 重开 → 从最后一个 uuid 原生 resume。会话 id、标题、历史、面板全不变，只插一条系统行。
+- **交接到 Claude 走 Agent SDK 的 `SessionStore.load()`**（受支持的 API，返回的 entries 会被物化成临时 JSONL 让子进程 resume），不要去伪造 `~/.claude/projects` 的文件。`handoff.ts` 的 `renderBriefing()` 是给所有 agent 的通用地板（已决定什么 / 磁盘现状 / 试过失败的方案 / 当前目标，并明说推理过程没带过来），`toClaudeEntries()` 额外保证 parentUuid 链不断。
+- 明确不做：不写 Codex 的 rollout 文件与 `state_5.sqlite`（无官方 API，升级即碎）；不尝试携带任何 reasoning。
+
+## 跨 agent 共享记忆（阶段 12，2026-09-04）
+
+- **`node:sqlite` 里已经编译了 FTS5**，不用加依赖（实测过）。库在 `~/.claude-web/memory.db`，scope = global / project(cwd) / session，kind = decision / constraint / fact / deadend / preference / note。
+- **FTS5 不分词中文**，整句会变成一个 token，`"最小化"*` 永远匹配不上句子中间。`hasCjk()` 把中文查询走 LIKE 回退（`service.test.ts` 有回归用例）。项目检索永远把 global 一起带上；project key 做过大小写与分隔符归一。
+- **注入方式三条，一条都不改用户自己的配置文件**（`memory/launcher.ts` 一处收口）：Claude 走 Agent SDK 的 `mcpServers`；ACP agent 走 `session/new` 的 `mcpServers`（agent 拒绝就退回不带它重开一次并提示）；Codex 走 `-c mcp_servers.memory.*` 覆盖，**`-c` 是全局 flag 必须排在 `app-server` 子命令前面**，而且只对真的含 `app-server` 的 argv 动手（自定义命令 / 测试替身原样放行）。值按 TOML 解析，所以 Windows 路径要 JSON 引号，不能裸写。总开关是设置里的 `memory.mcp`（设置 → 共享记忆），下次开会话生效。
+- 打包后 MCP 入口在 asar 里：`ELECTRON_RUN_AS_NODE=1` 起 Electron 二进制读 `app.asar/server/dist/memory/mcp.js` 是可以的（实测握手通过）。
+- 自动萃取只收「死路 / 决定 / 约束」，每个会话最多 12 条；相同文本在同一 scope 里视为同一条（只加命中数）。
+- `server/ws-phase12.mjs` 用**真的 JSON-RPC over stdio** 驱动 MCP server（agent 怎么调它就怎么调），断言 UI 写的 agent 能读到、agent 写的 UI 能读到。
 
 ## 桌面版（desktop/）
 

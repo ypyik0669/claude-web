@@ -644,6 +644,7 @@ input.field:focus { border-color: var(--ink-3); }
 .quota { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: var(--r-md); font-size: var(--fs-sm); color: var(--accent); cursor: default; transition: background var(--dur-2) var(--ease-out); }
 .quota:hover { background: var(--layer-hover); }
 .quota .pct { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.quota.unknown { color: var(--ink-4); }
 .quota.hot { color: var(--warn); }
 .quota.crit { color: var(--err); }
 .quota .tip { left: auto; right: 0; }

@@ -31,7 +31,8 @@ function UsageRings() {
   const limits = useStore((s) => s.limits);
   const [open, setOpen] = useState(false);
   if (!limits) return null;
-  if (!limits.ok) return <span className="quota" title={limits.error}>额度 –</span>;
+  // no reading is not an alarm — the usage endpoint 429s readily and we back off for 15 minutes
+  if (!limits.ok) return <span className="quota unknown" title={limits.error ?? '暂时读不到账号额度'}>额度 –</span>;
   const worst = limits.windows.reduce<LimitWindow | null>((a, w) => (!a || w.percent > a.percent ? w : a), null);
   if (!worst) return null;
   const tone = worst.percent >= 90 ? 'crit' : worst.percent >= 70 ? 'hot' : '';
