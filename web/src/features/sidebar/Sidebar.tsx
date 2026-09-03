@@ -81,7 +81,7 @@ function SessionRow({ s, menu, setMenu }: { s: SessionSummary; menu: string | nu
   const live = open?.state ?? s.live;
   const isLive = live && live !== 'history' && live !== 'closed';
   return (
-    <div className={clsx('sess', activeId === s.sessionId && 'active')} {...row} title={`${s.firstPrompt ?? s.title}\n点击打开 · Ctrl/中键新标签 · 可拖到窗格`}>
+    <div className={clsx('sess', activeId === s.sessionId && 'active')} {...row} onClickCapture={() => { if (window.matchMedia('(max-width: 760px)').matches) setTimeout(() => useStore.setState({ sidebarOpen: false }), 50); }} title={`${s.firstPrompt ?? s.title}\n点击打开 · Ctrl/中键新标签 · 可拖到窗格`}>
       {isLive ? <span className={clsx('dot', live)} /> : meta?.pinned ? <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>📌</span> : null}
       <span className="t">{s.title}</span>
       {s.agent && s.agent !== 'claude' && <AgentDot kind={s.agent} />}

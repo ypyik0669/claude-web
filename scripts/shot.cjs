@@ -18,8 +18,10 @@ setTimeout(() => { log('timeout'); app.exit(6); }, 60_000);
 app.whenReady().then(async () => {
   try {
     log('ready');
-    const win = new BrowserWindow({ width: Number(w), height: Number(h), show: true });
-    win.showInactive();
+    // SHOT_OFFSCREEN=1: render offscreen (works with the display off / locked, when capturePage otherwise throws UnknownVizError)
+    const offscreen = process.env.SHOT_OFFSCREEN === '1';
+    const win = new BrowserWindow({ width: Number(w), height: Number(h), show: !offscreen, webPreferences: { offscreen } });
+    if (!offscreen) win.showInactive();
     win.webContents.on('console-message', (_e, level, message) => { if (level >= 2) log(`console[${level}] ${String(message).slice(0, 500)}`); });
     await win.loadURL(url);
     log('loaded');

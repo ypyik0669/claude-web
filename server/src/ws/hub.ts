@@ -18,6 +18,9 @@ import type { SkillsService } from '../skills/service.js';
 import type { McpService } from '../mcp/service.js';
 import type { DiagService } from '../diag/service.js';
 import { detectTools } from '../tools/detect.js';
+import type { RemoteService } from '../remote/service.js';
+import type { TunnelManager } from '../remote/tunnel.js';
+import { IM_KINDS, type ImService } from '../im/service.js';
 import type { LedgerService } from '../usage/ledger.js';
 import { SCHEDULE_TEMPLATES } from '../schedules/service.js';
 import type { AgentRegistry } from '../agents/types.js';
@@ -32,6 +35,9 @@ export interface Services {
   ledger: LedgerService;
   agents: AgentRegistry;
   transcripts: AgentTranscripts;
+  remote: RemoteService;
+  tunnels: TunnelManager;
+  im: ImService;
   pool: RunnerPool;
   sessions: SessionService;
   config: ConfigService;
@@ -67,6 +73,9 @@ export class Hub {
     s.terminal.on('exit', (termId, code) => this.broadcast({ kind: 'terminal.exit', termId, code }));
     s.files.on('changed', (e: { path: string; type: any }) => this.broadcast({ kind: 'fs.changed', path: e.path, type: e.type }));
     s.git.on('changed', (cwd: string) => this.broadcast({ kind: 'git.changed', cwd }));
+    s.remote.on('changed', () => this.broadcast({ kind: 'remote.changed' }));
+    s.im.on('changed', () => this.broadcast({ kind: 'im.changed' }));
+    s.tunnels.on('changed', () => this.broadcast({ kind: 'tunnel.changed' }));
   }
 
   broadcast(event: ServerEvent) {
@@ -453,6 +462,60 @@ export class Hub {
         return SCHEDULE_TEMPLATES;
       case 'agents.list':
         return s.agents.list(!!req.refresh);
+      case 'remote.status':
+        return s.remote.status();
+      case 'remote.set':
+        await s.remote.set({ enabled: req.enabled, port: req.port });
+        return s.remote.status();
+      case 'remote.pairCode':
+        return s.remote.newPairCode();
+      case 'remote.devices.revoke':
+        await s.remote.revoke(req.id);
+        return null;
+      case 'remote.devices.rename':
+        await s.remote.rename(req.id, req.name);
+        return null;
+      case 'remote.hosts.list':
+        return s.meta.remoteHosts();
+      case 'remote.hosts.set':
+        await s.meta.setRemoteHost(req.host);
+        this.broadcast({ kind: 'tunnel.changed' });
+        return null;
+      case 'remote.hosts.remove':
+        await s.tunnels.close(req.id);
+        await s.meta.removeRemoteHost(req.id);
+        this.broadcast({ kind: 'tunnel.changed' });
+        return null;
+      case 'tunnel.open': {
+        const host = s.meta.remoteHosts().find((h) => h.id === req.hostId);
+        if (!host) throw new Error('主机不存在');
+        return s.tunnels.open(host);
+      }
+      case 'tunnel.close':
+        await s.tunnels.close(req.hostId);
+        return null;
+      case 'tunnel.list':
+        return s.tunnels.list();
+      case 'tunnel.run': {
+        const host = s.meta.remoteHosts().find((h) => h.id === req.hostId);
+        if (!host) throw new Error('主机不存在');
+        return s.tunnels.runRemote(host, req.command);
+      }
+      case 'im.kinds':
+        return IM_KINDS;
+      case 'im.list':
+        return s.im.list();
+      case 'im.set':
+        await s.im.set(req.id, req.patch);
+        return s.im.list();
+      case 'im.test':
+        return s.im.test(req.id);
+      case 'im.pairCode':
+        return s.im.router.newPairCode(req.id);
+      case 'im.unbind':
+        await s.meta.removeImBinding(req.gatewayId, req.chatId);
+        this.broadcast({ kind: 'im.changed' });
+        return null;
       case 'agents.set':
         await s.agents.setConfig(req.agent, req.patch);
         s.agents.invalidate();

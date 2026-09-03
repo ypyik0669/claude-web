@@ -112,6 +112,18 @@ export interface Workspace { id: string; path: string; name: string; addedAt: nu
 export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string }
 export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; cron?: string; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string; freshSession?: boolean; lastError?: string; runs?: number }
 export interface LimitWindow { label: string; percent: number; resetsAt: string | null; active: boolean; severity?: string }
+// ---- remote access / phones / IM (phase 6) ----
+export interface DeviceInfo { id: string; name: string; createdAt: number; lastSeenAt: number; ip?: string; ua?: string }
+export interface RemoteStatus { enabled: boolean; running: boolean; port: number; addresses: string[]; error: string; devices: DeviceInfo[]; pair: { code: string; expiresAt: number } | null }
+/** Another machine running claude-web, reached through an ssh port-forward. */
+export interface RemoteHost { id: string; name: string; target: string; sshPort?: number; identityFile?: string; remotePort: number; token?: string; startCommand?: string }
+export interface TunnelInfo { hostId: string; localPort: number; url: string; state: 'connecting' | 'up' | 'down'; error: string; since: number }
+export type ImKind = 'telegram' | 'discord' | 'slack' | 'feishu' | 'dingtalk' | 'wecom';
+export interface ImGatewayConfig { id: string; kind: ImKind; name: string; enabled: boolean; config: Record<string, string>; allowUsers: string[]; allowNames: Record<string, string>; openAccess: boolean; defaultCwd: string; permissionMode: string; agent: string; verbose: boolean }
+export interface ImBinding { gatewayId: string; chatId: string; sessionId: string; cwd: string; since: number }
+export interface ImGatewayInfo extends ImGatewayConfig { state: 'stopped' | 'starting' | 'running' | 'error'; error: string; botName: string; inbound: boolean; pairCode: string; pairExpiresAt: number; bindings: ImBinding[] }
+export interface ImKindDef { kind: ImKind; name: string; icon: string; inbound: boolean; fields: { key: string; label: string; secret?: boolean; hint?: string }[]; help: string }
+
 export interface Limits { ok: boolean; capturedAt: string; windows: LimitWindow[]; subscriptionType?: string; rateLimitTier?: string; error?: string }
 
 export interface PermissionRequestEvent {
@@ -276,6 +288,24 @@ export type ClientRequest =
   | { kind: 'schedules.history'; id?: string; limit?: number }
   | { kind: 'schedules.templates' }
   | { kind: 'agents.list'; refresh?: boolean }
+  | { kind: 'remote.status' }
+  | { kind: 'remote.set'; enabled?: boolean; port?: number }
+  | { kind: 'remote.pairCode' }
+  | { kind: 'remote.devices.revoke'; id: string }
+  | { kind: 'remote.devices.rename'; id: string; name: string }
+  | { kind: 'remote.hosts.list' }
+  | { kind: 'remote.hosts.set'; host: RemoteHost }
+  | { kind: 'remote.hosts.remove'; id: string }
+  | { kind: 'tunnel.open'; hostId: string }
+  | { kind: 'tunnel.close'; hostId: string }
+  | { kind: 'tunnel.list' }
+  | { kind: 'tunnel.run'; hostId: string; command: string }
+  | { kind: 'im.kinds' }
+  | { kind: 'im.list' }
+  | { kind: 'im.set'; id: string; patch: Partial<ImGatewayConfig> | null }
+  | { kind: 'im.test'; id: string }
+  | { kind: 'im.pairCode'; id: string }
+  | { kind: 'im.unbind'; gatewayId: string; chatId: string }
   | { kind: 'agents.set'; agent: AgentKind; patch: { command?: string; args?: string[]; env?: Record<string, string>; model?: string; label?: string; enabled?: boolean; name?: string; protocol?: 'acp' | 'codex' } | null }
   | { kind: 'terminal.open'; cwd: string; cols: number; rows: number }
   | { kind: 'terminal.input'; termId: string; data: string }
@@ -295,6 +325,9 @@ export type ServerEvent =
   | { kind: 'permission.resolved'; requestId: string }
   | { kind: 'sessions.changed' }
   | { kind: 'meta.changed' }
+  | { kind: 'remote.changed' }
+  | { kind: 'im.changed' }
+  | { kind: 'tunnel.changed' }
   | { kind: 'limits'; limits: Limits }
   | { kind: 'terminal.data'; termId: string; data: string }
   | { kind: 'terminal.exit'; termId: string; code: number | null }

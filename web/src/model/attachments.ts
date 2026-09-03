@@ -1,3 +1,4 @@
+import { authToken } from '@/ws/client';
 // Attachment helpers for the composer: image compression, long-paste → text attachment, folder traversal, upload.
 import type { AttachmentRef } from '@shared';
 
@@ -81,7 +82,7 @@ export async function expandDataTransfer(dt: DataTransfer, max = 500): Promise<{
 }
 
 export function apiToken(): string | null {
-  return new URLSearchParams(location.search).get('token');
+  return authToken();
 }
 
 /** Upload one file for a session; returns the absolute path the CLI can Read. */

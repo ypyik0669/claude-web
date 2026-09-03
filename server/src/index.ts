@@ -24,6 +24,9 @@ import { DiagService } from './diag/service.js';
 import { LedgerService } from './usage/ledger.js';
 import { AgentRegistry } from './agents/types.js';
 import { AgentTranscripts } from './agents/transcript.js';
+import { RemoteService, pairPage } from './remote/service.js';
+import { TunnelManager } from './remote/tunnel.js';
+import { ImService } from './im/service.js';
 
 const FILE_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.html': 'text/html; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.json': 'application/json' };
 
@@ -45,6 +48,11 @@ export interface RunningServer {
   close(): Promise<void>;
 }
 
+function cookieToken(cookie?: string): string | null {
+  const m = /(?:^|;\s*)cw_token=([^;]+)/.exec(cookie ?? '');
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 function readVersion(): string {
   for (const p of [path.resolve(__dirname, '../../package.json'), path.resolve(__dirname, '../package.json')]) {
     try {
@@ -64,8 +72,36 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const distDir = opts.distDir ?? process.env.CLAUDE_WEB_DIST ?? path.resolve(__dirname, '../../web/dist');
   const version = opts.version ?? readVersion();
 
-  const server = http.createServer((req, res) => {
-    const url = new URL(req.url ?? '/', `http://${HOST}`);
+  const meta = new MetaStore();
+  await meta.load();
+  // eslint-disable-next-line prefer-const
+  let remote: RemoteService;
+  /** Main token (desktop / CLI) or a paired device token (query ?token= or cookie cw_token). */
+  const authOk = (req: http.IncomingMessage, url: URL): boolean => {
+    const presented = url.searchParams.get('token') ?? cookieToken(req.headers.cookie);
+    const viaRemote = !!(req.socket as any).cwRemote;
+    if (!token && !viaRemote) return true; // local browser mode without a token: trust loopback
+    if (token && presented === token) return true;
+    return !!presented && !!remote?.authenticate(presented, req);
+  };
+  const handler = (req: http.IncomingMessage, res: http.ServerResponse) => {
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? HOST}`);
+    if (url.pathname === '/pair' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(pairPage()); return; }
+    if (url.pathname === '/api/pair' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c: Buffer) => { body += c.toString(); if (body.length > 4096) req.destroy(); });
+      req.on('end', () => {
+        let j: any = {};
+        try { j = JSON.parse(body || '{}'); } catch { /* ignore */ }
+        remote.redeem(String(j.code ?? ''), String(j.name ?? ''), req).then((r) => {
+          const ok = !('error' in r);
+          res.writeHead(ok ? 200 : 400, { 'content-type': 'application/json', ...(ok ? { 'set-cookie': `cw_token=${(r as any).token}; Path=/; Max-Age=31536000; SameSite=Lax` } : {}) });
+          res.end(JSON.stringify(r));
+        }).catch((e) => { res.writeHead(500).end(e.message); });
+      });
+      return;
+    }
+    if (url.pathname === '/manifest.webmanifest') { res.writeHead(200, { 'content-type': 'application/manifest+json' }); res.end(JSON.stringify({ name: 'Claude Web', short_name: 'Claude Web', start_url: '/', display: 'standalone', background_color: '#1f1e1a', theme_color: '#1f1e1a', icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }, { src: '/icon-192.png', sizes: '192x192', type: 'image/png' }, { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }] })); return; }
     if (url.pathname === '/api/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true, version }));
@@ -73,7 +109,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     }
     // Raw local file for previews (images / pdf / media): GET /api/file?path=<abs>&token= — token-guarded like /ws
     if (url.pathname === '/api/file' && req.method === 'GET') {
-      if (token && url.searchParams.get('token') !== token) { res.writeHead(403); res.end('forbidden'); return; }
+      if (!authOk(req, url)) { res.writeHead(403); res.end('forbidden'); return; }
       const p = url.searchParams.get('path') ?? '';
       if (!path.isAbsolute(p)) { res.writeHead(400); res.end('absolute path required'); return; }
       let st: fs.Stats;
@@ -94,8 +130,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     }
     // Binary upload for message attachments: POST /api/attachments?sessionId=&rel=path/in/session (token-guarded like /ws)
     if (url.pathname === '/api/attachments' && req.method === 'POST') {
-      const tokenOk = !token || url.searchParams.get('token') === token;
-      if (!tokenOk) { res.writeHead(403).end(); return; }
+      if (!authOk(req, url)) { res.writeHead(403).end(); return; }
       const len = Number(req.headers['content-length'] ?? 0);
       if (len > ATTACH_MAX_BYTES) { res.writeHead(413).end('too large'); return; }
       let dest: string;
@@ -122,23 +157,25 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     }
     res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream' });
     fs.createReadStream(file).pipe(res);
-  });
+  };
+  const server = http.createServer(handler);
 
   const wss = new WebSocketServer({ noServer: true });
-  server.on('upgrade', (req, socket, head) => {
+  const upgrade = (req: http.IncomingMessage, socket: any, head: Buffer) => {
     const origin = req.headers.origin ?? '';
-    const url = new URL(req.url ?? '/', `http://${HOST}`);
-    const originOk = !origin || /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin);
-    const tokenOk = !token || url.searchParams.get('token') === token;
-    if (!originOk || !tokenOk || url.pathname !== '/ws') {
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? HOST}`);
+    // same-origin only: localhost, or (remote listener) whatever host the page was served from
+    const originHost = origin ? (() => { try { return new URL(origin).host; } catch { return ''; } })() : '';
+    const originOk = !origin || /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin) || (!!req.headers.host && originHost === req.headers.host);
+    if (!originOk || !authOk(req, url) || url.pathname !== '/ws') {
       socket.destroy();
       return;
     }
+    const presented = url.searchParams.get('token') ?? cookieToken(req.headers.cookie);
+    (req as any).cwDevice = presented && presented !== token ? remote.authenticate(presented, req) : null;
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
-  });
-
-  const meta = new MetaStore();
-  await meta.load();
+  };
+  server.on('upgrade', upgrade);
   const secrets = new SecretService();
   const providers = new ProviderService(meta, secrets);
   await providers.warm();
@@ -148,7 +185,11 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const pool = new RunnerPool(providers, agents, transcripts);
   const ledger = new LedgerService();
   pool.on('message', (sessionId: string, m: unknown) => ledger.observe(sessionId, m, meta.sessionMeta(sessionId).providerId));
-  const services = { pool, sessions: new SessionService(), config: new ConfigService(), usage: new UsageService(), files, terminal: new TerminalService(), meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: new GitService(), search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, version };
+  remote = new RemoteService(meta, () => { const s = http.createServer(handler); s.on('upgrade', upgrade); return s; });
+  const tunnels = new TunnelManager();
+  const sessionsSvc = new SessionService();
+  const im = new ImService(meta, secrets, pool, sessionsSvc);
+  const services = { remote, tunnels, im, pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal: new TerminalService(), meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: new GitService(), search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, version };
   new Hub(wss, services);
 
   await new Promise<void>((res, rej) => {
@@ -156,6 +197,9 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     server.listen(PORT, HOST, () => res());
   });
   const port = (server.address() as { port: number }).port;
+  await remote.start();
+  if (remote.status().running) console.log(`remote access on http://0.0.0.0:${remote.port}  (${remote.addresses().join(', ')})`);
+  await im.startAll();
   const eng = engineInfo();
   console.log(`claude-web ${version} listening on http://${HOST}:${port}  (runtime: ${eng.runtime} ${eng.version ?? ''} ${eng.path})`);
 
@@ -164,6 +208,9 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     host: HOST,
     token,
     async close() {
+      await im.stopAll();
+      await tunnels.closeAll();
+      await remote.stop();
       await pool.closeAll();
       await new Promise<void>((r) => server.close(() => r()));
     },

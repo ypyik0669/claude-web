@@ -8,6 +8,8 @@ document.documentElement.dataset.theme = useStore.getState().theme;
 if ((window as any).desktop) document.documentElement.classList.add('desktop');
 useStore.getState().init();
 (window as any).__store = useStore; // debugging aid
+// installable on phones (LAN access); the desktop shell and dev server skip it
+if ('serviceWorker' in navigator && !(window as any).desktop && location.protocol !== 'file:' && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) navigator.serviceWorker.register('/sw.js').catch(() => {});
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />

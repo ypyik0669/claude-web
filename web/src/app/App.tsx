@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store';
 import { Sidebar } from '@/features/sidebar/Sidebar';
 import { Workbench } from '@/features/workbench/Workbench';
@@ -46,8 +46,13 @@ function SidebarColumn() {
   );
 }
 
+const MOBILE = window.matchMedia('(max-width: 760px)');
+
 export function App() {
   const sidebarOpen = useStore((s) => s.sidebarOpen);
+  const [mobile, setMobile] = useState(MOBILE.matches);
+  useEffect(() => { const on = () => setMobile(MOBILE.matches); MOBILE.addEventListener('change', on); return () => MOBILE.removeEventListener('change', on); }, []);
+  useEffect(() => { if (mobile) useStore.setState({ sidebarOpen: false }); }, [mobile]);
   const sbWidth = useStore((s) => s.layout.sidebar.width);
   const dock = useStore((s) => s.layout.dock);
   const inspect = useStore((s) => s.inspect);
@@ -84,7 +89,8 @@ export function App() {
   }, []);
 
   return (
-    <div className={clsx('app', !sidebarOpen && 'no-sidebar')} style={{ ['--rp' as any]: `${rpWidth}px`, ['--sb' as any]: `${sbWidth}px` }}>
+    <div className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', mobile && sidebarOpen && 'drawer-open')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px` }}>
+      {mobile && sidebarOpen && <div className="drawer-backdrop" onClick={() => useStore.setState({ sidebarOpen: false })} />}
       {sidebarOpen ? <SidebarColumn /> : <div className="sidebar" style={{ display: 'none' }} />}
       <Workbench />
       <div className="rpanel" style={{ display: rpWidth ? 'flex' : 'none' }}>

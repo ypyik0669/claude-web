@@ -6,6 +6,8 @@ import { CJK_FONTS, DENSITIES, FONT_SIZES } from './ui-settings';
 import { SkillsSection } from './SkillsSection';
 import { ToolsSection } from './ToolsSection';
 import { AgentsSection } from './AgentsSection';
+import { RemoteSection } from './RemoteSection';
+import { ImSection } from './ImSection';
 import { SecretsSection } from './SecretsSection';
 import { UpdateSection } from './UpdateSection';
 import { DiagnosticsSection } from './DiagnosticsSection';
@@ -82,6 +84,8 @@ export function useSections(): Section[] {
     { id: 'agents', l: 'CLI Agents', ic: '🤖', keywords: 'agent codex gemini qwen kimi acp 多 agent 安装 登录', body: () => <AgentsSection /> },
     { id: 'subagents', l: 'Claude 子代理', ic: '⧉', keywords: 'agent subagent 子代理', body: () => <SimpleList kind="config.agents" render={(a) => <div className="grow"><div>{a.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{a.source}{a.model ? ` · ${a.model}` : ''}</span></div><div className="sub">{a.description}</div></div>} /> },
     { id: 'hooks', l: 'Hooks', ic: '⚓', keywords: 'hook 钩子', body: () => <SimpleList kind="config.hooks" render={(h) => <div className="grow"><div>{h.event} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{h.matcher ? `matcher: ${h.matcher}` : ''} · {h.source}</span></div><div className="sub">{(h.hooks ?? []).map((x: any) => x.command ?? x.type).join(' ; ')}</div></div>} /> },
+    { id: 'remote', l: '远程 / 手机', ic: '📱', keywords: 'remote lan phone mobile 手机 局域网 配对 二维码 qr 设备 ssh 隧道 tunnel 远程主机', body: () => <RemoteSection /> },
+    { id: 'im', l: 'IM 网关', ic: '💬', keywords: 'telegram discord slack 飞书 feishu lark 钉钉 dingtalk 企业微信 wecom 微信 机器人 bot im', body: () => <ImSection /> },
     { id: 'tools', l: 'CLI 工具', ic: '⌨', keywords: 'git gh node python uv docker ripgrep 工具 检测', body: () => <ToolsSection /> },
     { id: 'update', l: '更新', ic: '⇪', keywords: 'update version release 更新 版本', body: () => <UpdateSection /> },
     { id: 'diagnostics', l: '诊断', ic: '🩺', keywords: 'diagnostic log bundle 日志 诊断包', body: () => <DiagnosticsSection /> },

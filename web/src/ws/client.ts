@@ -14,7 +14,7 @@ class WsClient {
 
   connect() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const token = new URLSearchParams(location.search).get('token');
+    const token = authToken();
     const ws = new WebSocket(`${proto}://${location.host}/ws${token ? `?token=${encodeURIComponent(token)}` : ''}`);
     this.ws = ws;
     ws.onopen = () => {
@@ -60,6 +60,13 @@ class WsClient {
     this.listeners.add(l);
     return () => this.listeners.delete(l);
   }
+}
+
+/** Access token: `?token=` on the page URL (desktop shell / dev) or the device token saved by the /pair page (phones). */
+export function authToken(): string | null {
+  const q = new URLSearchParams(location.search).get('token');
+  if (q) { try { localStorage.setItem('cw.token', q); } catch { /* private mode */ } return q; }
+  try { return localStorage.getItem('cw.token'); } catch { return null; }
 }
 
 export const ws = new WsClient();

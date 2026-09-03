@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { EventEmitter } from 'node:events';
-import type { MessageFeedback, Provider, Schedule, ScheduleRun } from '../protocol.js';
+import type { ImBinding, ImGatewayConfig, MessageFeedback, Provider, RemoteHost, Schedule, ScheduleRun } from '../protocol.js';
+import type { DeviceRecord } from '../remote/service.js';
 export type { Schedule } from '../protocol.js';
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
@@ -18,13 +19,17 @@ interface Data {
   providers: Provider[];
   feedback: Record<string, Record<string, MessageFeedback>>; // sessionId -> messageId -> feedback
   drafts: Record<string, { text: string; at: number }>; // sessionId | 'welcome' -> draft
+  devices: DeviceRecord[]; // paired phones / browsers (token hashes)
+  remoteHosts: RemoteHost[];
+  imGateways: ImGatewayConfig[];
+  imBindings: ImBinding[];
 }
 
 const file = path.join(process.env.CLAUDE_WEB_DIR ?? path.join(os.homedir(), '.claude-web'), 'meta.json');
 
 /** Small JSON store for things Claude Code itself does not persist: workspaces, pin/archive flags, schedules, UI settings. */
 export class MetaStore extends EventEmitter {
-  data: Data = { version: 1, workspaces: [], sessions: {}, schedules: [], scheduleRuns: [], settings: {}, providers: [], feedback: {}, drafts: {} };
+  data: Data = { version: 1, workspaces: [], sessions: {}, schedules: [], scheduleRuns: [], settings: {}, providers: [], feedback: {}, drafts: {}, devices: [], remoteHosts: [], imGateways: [], imBindings: [] };
   private saving: Promise<void> | null = null;
 
   async load() {
@@ -170,6 +175,26 @@ export class MetaStore extends EventEmitter {
   settings() {
     return this.data.settings;
   }
+
+  // ---- remote devices ----
+  devices(): DeviceRecord[] { return this.data.devices ??= []; }
+  async addDevice(d: DeviceRecord) { this.devices().push(d); await this.queueSave(); }
+  async removeDevice(id: string) { this.data.devices = this.devices().filter((d) => d.id !== id); await this.queueSave(); }
+  async renameDevice(id: string, name: string) { const d = this.devices().find((x) => x.id === id); if (d) { d.name = name; await this.queueSave(); } }
+  async touchDevice(id: string, ip?: string) { const d = this.devices().find((x) => x.id === id); if (d) { d.lastSeenAt = Date.now(); if (ip) d.ip = ip; await this.queueSave(true); } }
+
+  // ---- remote hosts (ssh tunnels) ----
+  remoteHosts(): RemoteHost[] { return this.data.remoteHosts ??= []; }
+  async setRemoteHost(h: RemoteHost) { const list = this.remoteHosts(); const i = list.findIndex((x) => x.id === h.id); if (i >= 0) list[i] = h; else list.push(h); await this.queueSave(); }
+  async removeRemoteHost(id: string) { this.data.remoteHosts = this.remoteHosts().filter((h) => h.id !== id); await this.queueSave(); }
+
+  // ---- IM gateways ----
+  imGateways(): ImGatewayConfig[] { return this.data.imGateways ??= []; }
+  async setImGateway(g: ImGatewayConfig) { const list = this.imGateways(); const i = list.findIndex((x) => x.id === g.id); if (i >= 0) list[i] = g; else list.push(g); await this.queueSave(true); }
+  async removeImGateway(id: string) { this.data.imGateways = this.imGateways().filter((g) => g.id !== id); this.data.imBindings = this.imBindings().filter((b) => b.gatewayId !== id); await this.queueSave(); }
+  imBindings(): ImBinding[] { return this.data.imBindings ??= []; }
+  async setImBinding(b: ImBinding) { this.data.imBindings = [...this.imBindings().filter((x) => !(x.gatewayId === b.gatewayId && x.chatId === b.chatId)), b]; await this.queueSave(true); }
+  async removeImBinding(gatewayId: string, chatId: string) { this.data.imBindings = this.imBindings().filter((x) => !(x.gatewayId === gatewayId && x.chatId === chatId)); await this.queueSave(true); }
   async setSetting(k: string, v: unknown) {
     this.data.settings[k] = v;
     await this.queueSave();

@@ -71,11 +71,13 @@ export function TopBar() {
       </div>
       <span className="grow" />
       <UsageRings />
+      <span className="panel-btns" style={{ display: 'contents' }}>
       {PANELS.map((p) => (
         <button key={p} className={clsx('icon-btn', dock.open && dock.tabs.includes(p) && 'active')} onClick={() => togglePanel(p)} title={PANEL_TITLES[p]} style={{ fontSize: 12.5, gap: 5, padding: '4px 8px' }}>
           <span style={{ fontSize: 13 }}>{PANEL_ICONS[p]}</span> {PANEL_TITLES[p]}
         </button>
       ))}
+      </span>
       <button className="icon-btn" title="命令面板 (Ctrl+K)" onClick={() => useStore.setState({ paletteOpen: true })}>⌘</button>
     </div>
   );

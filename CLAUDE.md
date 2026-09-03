@@ -102,7 +102,19 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - Codex 的 `config.toml` 里的模型可能是这个账号用不了的（ChatGPT 套餐会 400），驱动启动后对照 `model/list`，不在列表就换成默认并发系统提示。Gemini 没登录时 `session/new` 报 API key 缺失：驱动会尝试非交互的 `authenticate`，不行就把 `login` 命令写进错误里；设置 → CLI Agents 的「登录 / 安装」按钮会开一个终端 tile 并把命令敲进去（`Tile.term.cmd`）。
 - 外部 agent 的会话记录在 `~/.claude-web/agents/<sessionId>.jsonl`，首行是 `cw.meta`（agent / cwd / title / nativeSessionId / model）；`sessions.list` 把它们和 Claude 的 jsonl 合并（`SessionSummary.agent`），`session.open` 恢复时从头部推断 agent。`append()` 在头部不存在时不写（否则会出现没有 cwd 的「幽灵会话」把侧栏搞崩）。
 - 调试真实 agent：`CW_RPC_DEBUG=1` 起 server 会把每条 JSON-RPC 收发打到 stderr；`node server/ws-agent-probe.mjs <agent> "<prompt>"` 单独驱动一个会话并打印所有事件；`node server/ws-phase5.mjs [port] [token] [--real]` 是端到端检查（mock ACP agent 在 `src/agents/__mocks__/`，`--real` 才碰真 gemini / codex，没登录的会 SKIP）。`agents.list` 的版本探测缓存 60 秒，`refresh:true` 强制重探。
-- `scripts/shot.cjs` 现在把渲染进程的 console 错误写进 `<out>.log`；多个截图别并行跑（窗口互相遮挡时 `capturePage` 是黑图）。
+- `scripts/shot.cjs` 现在把渲染进程的 console 错误写进 `<out>.log`；多个截图别并行跑（窗口互相遮挡时 `capturePage` 是黑图）。显示器休眠 / 锁屏时 `capturePage` 抛 `UnknownVizError`，用 `SHOT_OFFSCREEN=1` 走离屏渲染。
+
+## 远程 / 手机 / IM（阶段 6，2026-09-03）
+
+- **第二个监听器**：`server/src/remote/service.ts` 的 `RemoteService` 在 `remote.enabled` 时用同一个 HTTP handler + upgrade 在 `0.0.0.0:<remote.port>`（默认 3091）再起一个 `http.Server`；socket 打上 `cwRemote` 标记，`authOk()` 对远程连接**必须**有令牌（主令牌或设备令牌），本地回环没配主令牌才放行。停止时要 `closeAllConnections()`，否则 `server.close()` 会等 keep-alive / ws 连接永远不返回。
+- **配对**：`remote.pairCode` 出 6 位码（10 分钟、5 次尝试、单次有效），QR 里是 `http://<局域网 IP>:<port>/pair#<code>`；`/pair` 页面 `POST /api/pair {code,name}` 换到 32 字节设备令牌（meta.json 只存 sha256），页面写 `localStorage.cw.token` 并跳 `/`。前端 `authToken()`（`web/src/ws/client.ts`）优先 URL `?token=`（桌面壳）再 localStorage；`/api/file`、附件上传都走它，服务端也认 `cw_token` cookie。设备表可改名 / 吊销（令牌缓存同步清）。
+- 局域网 IP 排序：`refreshPrimary()` 用 UDP `connect(8.8.8.8:53)` 拿默认路由的源地址放到最前（Windows 上 VMware / WSL 的虚拟网卡名字不可靠，光靠名字过滤会把 `192.168.208.1` 排第一）。
+- **SSH 隧道**：`server/src/remote/tunnel.ts` 用系统 `ssh -N -L 127.0.0.1:<local>:127.0.0.1:<remotePort> target`（`BatchMode=yes` 免密），轮询本地端口可连才算 `up`（最多 20s），失败把 stderr 最后一行给 UI；`startCommand` 会先 `ssh target "<cmd>"` 跑一次（15s 超时）。主机存 `meta.remoteHosts`，UI 在设置 → 远程 / 手机；连上后新窗口打开 `http://127.0.0.1:<local>/?token=`。
+- **手机布局**：`App` 用 `matchMedia('(max-width: 760px)')` 切 `.app.mobile`：侧栏变抽屉（`drawer-open` + 背板，点会话自动收起），停靠面板隐藏，顶栏只留 ☰ / 标题 / 命令面板。PWA：`/manifest.webmanifest` 由服务端直出，`web/public/sw.js` 只做 network-first（安装用，不做离线），只在非 localhost、非桌面壳注册；图标 `web/public/icon-*.png` 用 `scripts/icons.cjs`（Electron 离屏渲染 svg）生成。
+- **IM 网关**：`server/src/im/` — `ImAdapter` 接口（start / stop / send(chatId, text, {buttons}) + 'message' 事件），Telegram（Bot API 长轮询，inline keyboard → callback_query）、Discord（Gateway ws，intents 含 MESSAGE_CONTENT，按钮是 components，交互用 type 6 回执）、Slack（Socket Mode：`apps.connections.open` 拿 ws，events_api / interactive 信封要 ack；频道里只响应 @提及）、钉钉（Stream 模式 `gateway/connections/open` → ws，`ping` 要回，回复走消息里的 `sessionWebhook`，过期后用 robot API）、飞书（`@larksuiteoapi/node-sdk` 的 `WSClient` 长连接 + `EventDispatcher`，按钮是 interactive card → `card.action.trigger`）、企业微信（群机器人 webhook，只能推送）。微信没有开放接口，不做。
+- `ImRouter`：每个 (网关, 聊天) 绑定一个会话（`meta.imBindings`）；未授权用户只回一次提示（1 小时），`/pair <配对码>` 加入 `allowUsers`；命令 `/new /sessions /use /status /stop /allow /deny /mode /model /verbose /help`，其它 `/xxx` 原样转给会话；`result` → 回最后一段 assistant 文本 + 用时 / 费用；权限请求 → 带 允许 / 拒绝 按钮（`perm:<requestId>:allow`），AskUserQuestion → 选项按钮（`ask:<id>:<i>`），ExitPlanMode → 开始执行 / 继续讨论。密钥字段用 `SecretService.protect` 存成 `enc:`，wire 上打码 `••••••`，回传打码值不覆盖。
+- `server/src/im/router.test.ts` 用假 adapter / pool 覆盖路由逻辑；`server/ws-phase6.mjs` 端到端跑远程监听 + 配对 + 设备令牌 + 隧道失败路径 + IM 配置。
+- vitest 只认 `src/**/*.test.ts`；server 的 `tsconfig` 现在排除测试与 `__mocks__`，不然 `npm run build` 会把测试编译进 `dist/` 然后 vitest 连 dist 里的副本一起跑（mock 路径不存在 → 超时）。
 
 ## 桌面版（desktop/）
 
