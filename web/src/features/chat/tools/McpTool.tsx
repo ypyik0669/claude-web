@@ -5,6 +5,7 @@ import { CodeBlock } from '../CodeBlock';
 import { Expandable } from '../Expandable';
 import { Markdown } from '../Markdown';
 import { clsx } from '@/util';
+import { Icon } from '@/ui/icons';
 
 export function ErrorPre({ text }: { text: string }) {
   return <CodeBlock code={text || '(no error text)'} lang="plaintext" title="错误" wrap className="err" maxLines={40} />;
@@ -37,10 +38,10 @@ export function JsonTree({ value, name, depth = 0, path = '$' }: { value: unknow
   return (
     <div>
       <div className="jt-row jt-node" style={{ paddingLeft: depth * 14 }} onClick={() => setOpen(!open)}>
-        <span className="chev" style={{ transform: open ? 'rotate(90deg)' : undefined }}>▶</span>
+        <span className="chev"><Icon name={open ? 'chevronDown' : 'chevronRight'} size={11} /></span>
         {name !== undefined && <span className="jt-key">{name}: </span>}
         <span className="jt-meta">{label}</span>
-        <button className="jt-copy" title={`复制路径 ${path}`} onClick={copy}>⧉</button>
+        <button className="jt-copy" title={`复制路径 ${path}`} onClick={copy} aria-label="复制路径"><Icon name="copy" size={11} /></button>
       </div>
       {open && entries.slice(0, 500).map(([k, v]) => <JsonTree key={k} name={k} value={v} depth={depth + 1} path={Array.isArray(value) ? `${path}[${k}]` : `${path}.${k}`} />)}
       {open && entries.length > 500 && <div className="jt-row" style={{ paddingLeft: (depth + 1) * 14, color: 'var(--fg-3)' }}>… 还有 {entries.length - 500} 项</div>}

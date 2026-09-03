@@ -5,6 +5,7 @@ import { clsx } from '@/util';
 import type { FsEntry, GitFileStatus, GitStatus } from '@shared';
 import { MIME_SESSION } from './dnd';
 import { dlg } from '@/ui/dialog';
+import { Icon } from '@/ui/icons';
 
 function join(dir: string, name: string) {
   const sep = dir.includes('\\') ? '\\' : '/';
@@ -51,8 +52,8 @@ function Node({ path, name, depth, ctx, forceOpen }: { path: string; name: strin
     <div>
       {depth > 0 && (
         <div className={clsx('ft-row', sel && 'sel', changed && 'changed')} style={{ paddingLeft: 6 + depth * 12 }} onClick={() => { setOpen(!open); ctx.setSelected(path); }} onContextMenu={(e) => { e.preventDefault(); ctx.setSelected(path); ctx.setMenu({ path, dir: true, x: e.clientX, y: e.clientY }); }} title={path}>
-          <span className="chev" style={{ transform: isOpen ? 'rotate(90deg)' : undefined }}>▶</span>
-          <span className="ic">{isOpen ? '📂' : '📁'}</span>
+          <span className="chev"><Icon name={isOpen ? 'chevronDown' : 'chevronRight'} size={11} /></span>
+          <span className="ic"><Icon name="folder" size={13} /></span>
           {ctx.editing?.path === path && ctx.editing.mode === 'rename' ? (
             <InlineInput initial={name} onDone={async (v) => { ctx.setEditing(null); if (v && v !== name) { await ws.request({ kind: 'fs.rename', from: path, to: join(parentOf(path), v) }).catch((e) => useStore.getState().toast(e.message)); ctx.reload(parentOf(path)); } }} />
           ) : <span className="t">{name}</span>}
@@ -60,8 +61,8 @@ function Node({ path, name, depth, ctx, forceOpen }: { path: string; name: strin
       )}
       {isOpen && ctx.editing && ctx.editing.path === path && ctx.editing.mode !== 'rename' && (
         <div className="ft-row" style={{ paddingLeft: 6 + (depth + 1) * 12 }}>
-          <span className="chev" style={{ visibility: 'hidden' }}>▶</span>
-          <span className="ic">{ctx.editing.mode === 'newDir' ? '📁' : '📄'}</span>
+          <span className="chev" style={{ visibility: 'hidden' }}><Icon name="chevronRight" size={11} /></span>
+          <span className="ic"><Icon name={ctx.editing.mode === 'newDir' ? 'folder' : 'read'} size={13} /></span>
           <InlineInput initial="" onDone={async (v) => { const mode = ctx.editing!.mode; ctx.setEditing(null); if (!v) return; const target = join(path, v); await ws.request(mode === 'newDir' ? { kind: 'fs.mkdir', path: target } : { kind: 'fs.create', path: target }).catch((e) => useStore.getState().toast(e.message)); ctx.reload(path); if (mode === 'newFile') useStore.getState().openTile({ id: `d${Date.now()}`, kind: 'doc', path: target }, 'tab'); }} />
         </div>
       )}
@@ -90,8 +91,8 @@ function FileRow({ entry, path, depth, ctx }: { entry: FsEntry; path: string; de
       onDragStart={(e) => { e.dataTransfer.setData('text/plain', path); e.dataTransfer.setData(MIME_SESSION + '-file', path); }}
       title={`${path}${entry.size !== undefined ? ` · ${entry.size.toLocaleString()} B` : ''}`}
     >
-      <span className="chev" style={{ visibility: 'hidden' }}>▶</span>
-      <span className="ic">📄</span>
+      <span className="chev" style={{ visibility: 'hidden' }}><Icon name="chevronRight" size={11} /></span>
+      <span className="ic"><Icon name="read" size={13} /></span>
       {ctx.editing?.path === path && ctx.editing.mode === 'rename' ? (
         <InlineInput initial={entry.name} onDone={async (v) => { ctx.setEditing(null); if (v && v !== entry.name) { await ws.request({ kind: 'fs.rename', from: path, to: join(parentOf(path), v) }).catch((e) => useStore.getState().toast(e.message)); ctx.reload(parentOf(path)); } }} />
       ) : <span className="t">{entry.name}</span>}
@@ -183,8 +184,8 @@ export function FileTree({ root, gitStatus }: { root: string; gitStatus?: GitSta
     <div className="filetree">
       <div className="ft-head">
         <input className="field" placeholder="筛选文件名…" value={filter} onChange={(e) => setFilter(e.target.value.toLowerCase())} />
-        <button className="icon-btn" title="新建文件" onClick={() => setEditing({ path: selected && git ? (selected && !selected.includes('.') ? selected : parentOf(selected)) : root, mode: 'newFile' })}>＋</button>
-        <button className="icon-btn" title="刷新" onClick={() => reload(root)}>↻</button>
+        <button className="icon-btn" title="新建文件" onClick={() => setEditing({ path: selected && git ? (selected && !selected.includes('.') ? selected : parentOf(selected)) : root, mode: 'newFile' })} aria-label="新建文件"><Icon name="plus" size={14} /></button>
+        <button className="icon-btn" title="刷新" aria-label="刷新" onClick={() => reload(root)}><Icon name="refresh" size={14} /></button>
       </div>
       <div className="ft-body" onContextMenu={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); setMenu({ path: root, dir: true, x: e.clientX, y: e.clientY }); } }}>
         <Node path={root} name={root} depth={0} ctx={ctx} forceOpen />

@@ -4,6 +4,9 @@ import { promisify } from 'node:util';
 import { EventEmitter } from 'node:events';
 import type { AgentKind, AgentInfo, EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, RunnerState, SessionInfoSnapshot, AttachmentRef } from '../protocol.js';
 import type { MetaStore } from '../meta/store.js';
+import { modelsFor } from '../models/catalog.js';
+
+const catalogIds = (k: AgentKind) => modelsFor(k).map((m) => m.value);
 
 const execFileAsync = promisify(execFile);
 
@@ -24,6 +27,8 @@ export interface AgentDriver extends EventEmitter {
   setPermissionMode(mode: PermissionMode): Promise<void>;
   setModel(model: string): Promise<void>;
   setEffort?(effort: EffortLevel): Promise<void>;
+  /** Claude only: xhigh + dynamic workflows. Separate from effort on purpose — see catalog.ts. */
+  setUltracode?(on: boolean): Promise<void>;
   stopTask?(taskId: string): Promise<void>;
   contextUsage?(detail: 'summary' | 'full'): Promise<unknown>;
   respawn?(): Promise<void>;
@@ -44,12 +49,14 @@ export interface AgentDef {
   builtin?: boolean;
 }
 
+// `icon` is a name in web/src/ui/icons.tsx, not a glyph. `models` comes from the shared catalog so
+// there is one place that knows Fable 5.1 is `claude-fable-5-1`.
 export const AGENT_DEFS: AgentDef[] = [
-  { kind: 'claude', name: 'Claude Code', icon: '✱', protocol: 'claude', command: 'claude', args: [], versionArgs: ['--version'], install: 'npm i -g @anthropic-ai/claude-code', login: 'claude /login', models: ['fable', 'opus', 'sonnet', 'haiku'], docs: 'https://docs.anthropic.com/claude-code', builtin: true },
-  { kind: 'codex', name: 'Codex', icon: '◎', protocol: 'codex', command: 'codex', args: ['app-server'], versionArgs: ['--version'], install: 'npm i -g @openai/codex', login: 'codex login', models: ['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5-codex', 'gpt-5', 'o3'], docs: 'https://github.com/openai/codex' },
-  { kind: 'gemini', name: 'Gemini CLI', icon: '✦', protocol: 'acp', command: 'gemini', args: ['--acp'], versionArgs: ['--version'], install: 'npm i -g @google/gemini-cli', login: 'gemini', models: ['gemini-3-pro-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'], docs: 'https://github.com/google-gemini/gemini-cli' },
-  { kind: 'qwen', name: 'Qwen Code', icon: '☯', protocol: 'acp', command: 'qwen', args: ['--acp'], versionArgs: ['--version'], install: 'npm i -g @qwen-code/qwen-code', login: 'qwen', models: ['qwen3-coder-plus', 'qwen3-coder-flash'], docs: 'https://github.com/QwenLM/qwen-code' },
-  { kind: 'kimi', name: 'Kimi CLI', icon: '◐', protocol: 'acp', command: 'kimi', args: ['acp'], versionArgs: ['--version'], install: 'uv tool install kimi-cli', login: 'kimi login', models: ['kimi-k2-thinking', 'kimi-k2-turbo'], docs: 'https://github.com/MoonshotAI/kimi-cli' },
+  { kind: 'claude', name: 'Claude Code', icon: 'claude', protocol: 'claude', command: 'claude', args: [], versionArgs: ['--version'], install: 'npm i -g @anthropic-ai/claude-code', login: 'claude /login', models: catalogIds('claude'), docs: 'https://docs.anthropic.com/claude-code', builtin: true },
+  { kind: 'codex', name: 'Codex', icon: 'codex', protocol: 'codex', command: 'codex', args: ['app-server'], versionArgs: ['--version'], install: 'npm i -g @openai/codex', login: 'codex login', models: catalogIds('codex'), docs: 'https://github.com/openai/codex' },
+  { kind: 'gemini', name: 'Gemini CLI', icon: 'gemini', protocol: 'acp', command: 'gemini', args: ['--acp'], versionArgs: ['--version'], install: 'npm i -g @google/gemini-cli', login: 'gemini', models: catalogIds('gemini'), docs: 'https://github.com/google-gemini/gemini-cli' },
+  { kind: 'qwen', name: 'Qwen Code', icon: 'qwen', protocol: 'acp', command: 'qwen', args: ['--acp'], versionArgs: ['--version'], install: 'npm i -g @qwen-code/qwen-code', login: 'qwen', models: catalogIds('qwen'), docs: 'https://github.com/QwenLM/qwen-code' },
+  { kind: 'kimi', name: 'Kimi CLI', icon: 'kimi', protocol: 'acp', command: 'kimi', args: ['acp'], versionArgs: ['--version'], install: 'uv tool install kimi-cli', login: 'kimi login', models: catalogIds('kimi'), docs: 'https://github.com/MoonshotAI/kimi-cli' },
 ];
 
 export interface AgentConfig { command?: string; args?: string[]; env?: Record<string, string>; model?: string; label?: string; enabled?: boolean; name?: string; protocol?: 'acp' | 'codex' }

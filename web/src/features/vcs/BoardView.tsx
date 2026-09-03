@@ -5,11 +5,12 @@ import { clsx } from '@/util';
 import { dlg } from '@/ui/dialog';
 import { Markdown } from '@/features/chat/Markdown';
 import type { VcsDetail, VcsItem, VcsRepo } from '@shared';
+import { Icon, type IconName } from '@/ui/icons';
 
 type Mode = 'issues' | 'pulls';
 const ago = (iso: string) => { const s = (Date.now() - new Date(iso).getTime()) / 1000; return s < 3600 ? `${Math.max(1, Math.floor(s / 60))} 分钟前` : s < 86400 ? `${Math.floor(s / 3600)} 小时前` : `${Math.floor(s / 86400)} 天前`; };
 const REVIEW_L: Record<string, string> = { approved: '已批准', changes_requested: '需修改', review_required: '待审', '': '' };
-const CHECK_IC: Record<string, string> = { success: '✓', failure: '✗', pending: '◌', none: '' };
+const CHECK_IC: Record<string, IconName | ''> = { success: 'check', failure: 'close', pending: 'circle', none: '' };
 
 function Card({ it, active, onClick }: { it: VcsItem; active: boolean; onClick: () => void }) {
   return (
@@ -17,8 +18,8 @@ function Card({ it, active, onClick }: { it: VcsItem; active: boolean; onClick: 
       <div className="t"><span className="num">#{it.number}</span> {it.draft && <span className="badge">草稿</span>} {it.title}</div>
       <div className="m">
         <span>{it.author}</span><span>·</span><span>{ago(it.updatedAt)}</span>
-        {it.comments > 0 && <span>· 💬 {it.comments}</span>}
-        {it.isPr && it.checks && it.checks !== 'none' && <span className={clsx('chk', it.checks)}>{CHECK_IC[it.checks]}</span>}
+        {it.comments > 0 && <span>· <Icon name="chat" size={11} /> {it.comments}</span>}
+        {it.isPr && it.checks && it.checks !== 'none' && <span className={clsx('chk', it.checks)}>{CHECK_IC[it.checks] ? <Icon name={CHECK_IC[it.checks] as IconName} size={11} /> : null}</span>}
         {it.isPr && it.reviewDecision && <span className={clsx('rv', it.reviewDecision)}>{REVIEW_L[it.reviewDecision] ?? it.reviewDecision}</span>}
         {it.isPr && it.additions !== undefined && <span className="mono"><span style={{ color: 'var(--green)' }}>+{it.additions}</span> <span style={{ color: 'var(--red)' }}>−{it.deletions}</span></span>}
       </div>
@@ -110,10 +111,10 @@ export function BoardView({ cwd, sid }: { cwd: string; sid: string | null }) {
         </select>
         {mode === 'issues' && <><input className="field sm" placeholder="搜索…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} style={{ width: 160 }} /><label className="chip"><input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} /> 指派给我</label></>}
         <span className="grow" />
-        {repo && <button className="btn sm ghost" title={repo.url} onClick={changeRepo}>{repo.provider === 'gitlab' ? '🦊' : '🐙'} {repo.owner}/{repo.repo}{repo.user ? ` · @${repo.user}` : ''}</button>}
+        {repo && <button className="btn sm ghost" title={repo.url} onClick={changeRepo}><Icon name="branch" size={12} /> {repo.owner}/{repo.repo}{repo.user ? ` · @${repo.user}` : ''}</button>}
         {!repo && <button className="btn sm ghost" onClick={changeRepo}>选择仓库…</button>}
-        <button className="btn sm ghost" onClick={newItem} disabled={!repo?.authOk}>＋ 新建</button>
-        <button className="btn sm ghost" onClick={() => { void loadRepo(); load(); }} disabled={loading}>{loading ? '…' : '↻'}</button>
+        <button className="btn sm ghost" onClick={newItem} disabled={!repo?.authOk}><Icon name="plus" size={12} /> 新建</button>
+        <button className="btn sm ghost" onClick={() => { void loadRepo(); load(); }} disabled={loading} aria-label="刷新">{loading ? '…' : <Icon name="refresh" size={13} />}</button>
       </div>
       {err && <div className="board-err">{err}{/未登录/.test(err) && <> · <a href="#" onClick={(e) => { e.preventDefault(); useStore.getState().openSettings({ section: 'tools' }); }}>安装 / 登录 {repo?.cli ?? 'gh'}</a></>}</div>}
       <div className="board-body">
@@ -131,8 +132,8 @@ export function BoardView({ cwd, sid }: { cwd: string; sid: string | null }) {
             <div className="board-detail-h">
               <b>#{sel}</b>
               <span className="grow" />
-              {detail && <a className="btn sm ghost" href={detail.url} target="_blank" rel="noreferrer">↗ 打开</a>}
-              <button className="icon-btn" onClick={() => setSel(null)}>✕</button>
+              {detail && <a className="btn sm ghost" href={detail.url} target="_blank" rel="noreferrer"><Icon name="external" size={12} /> 打开</a>}
+              <button className="icon-btn" onClick={() => setSel(null)} aria-label="关闭"><Icon name="close" size={14} /></button>
             </div>
             {!detail && <div className="empty">读取中…</div>}
             {detail && (
@@ -147,7 +148,7 @@ export function BoardView({ cwd, sid }: { cwd: string; sid: string | null }) {
                   {detail.state === 'open' ? <button className="btn sm ghost danger" disabled={busy} onClick={() => act(() => ws.request({ kind: 'vcs.setState', cwd, repo: r, number: detail.number, isPr: detail.isPr, state: 'closed' }), '已关闭')}>关闭</button> : detail.state === 'closed' && <button className="btn sm ghost" disabled={busy} onClick={() => act(() => ws.request({ kind: 'vcs.setState', cwd, repo: r, number: detail.number, isPr: detail.isPr, state: 'open' }), '已重开')}>重新打开</button>}
                 </div>
                 {detail.isPr && (detail.checkRuns?.length ?? 0) > 0 && (
-                  <div className="checks">{detail.checkRuns!.map((c, i) => <a key={i} href={c.url || undefined} target="_blank" rel="noreferrer" className={clsx('chk', c.conclusion === 'success' ? 'success' : c.conclusion && c.conclusion !== 'neutral' && c.conclusion !== 'skipped' ? 'failure' : 'pending')}>{c.conclusion === 'success' ? '✓' : c.status === 'completed' ? '✗' : '◌'} {c.name}</a>)}</div>
+                  <div className="checks">{detail.checkRuns!.map((c, i) => <a key={i} href={c.url || undefined} target="_blank" rel="noreferrer" className={clsx('chk', c.conclusion === 'success' ? 'success' : c.conclusion && c.conclusion !== 'neutral' && c.conclusion !== 'skipped' ? 'failure' : 'pending')}><Icon name={c.conclusion === 'success' ? 'check' : c.status === 'completed' ? 'close' : 'circle'} size={11} /> {c.name}</a>)}</div>
                 )}
                 {detail.isPr && (detail.reviews?.length ?? 0) > 0 && <div className="m">评审：{detail.reviews!.map((rv) => `${rv.author} ${REVIEW_L[rv.state] ?? rv.state}`).join(' · ')}</div>}
                 <div className="body"><Markdown text={detail.body || '_没有描述_'} /></div>

@@ -4,7 +4,7 @@ import path from 'node:path';
 
 export default defineConfig({
   plugins: [react()],
-  resolve: { alias: { '@shared': path.resolve(__dirname, '../server/src/protocol.ts'), '@': path.resolve(__dirname, 'src') } },
+  resolve: { alias: { '@shared': path.resolve(__dirname, '../server/src/protocol.ts'), '@catalog': path.resolve(__dirname, '../server/src/models/catalog.ts'), '@': path.resolve(__dirname, 'src') } },
   server: {
     port: 5173,
     strictPort: true,

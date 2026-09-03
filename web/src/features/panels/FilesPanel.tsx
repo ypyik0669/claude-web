@@ -3,6 +3,7 @@ import { useScopedSession } from '@/store';
 import { ws } from '@/ws/client';
 import { basename } from '@/util';
 import { DiffView } from '@/features/chat/Markdown';
+import { Icon } from '@/ui/icons';
 
 interface Changed { path: string; ops: number; tools: string[]; lastTs?: string }
 
@@ -30,7 +31,7 @@ export function FilesPanel() {
       <div className="list" style={{ maxHeight: sel ? '40%' : undefined, overflow: 'auto', flex: sel ? undefined : 1 }}>
         {files.map((f) => (
           <div key={f.path} className={`row clickable ${sel === f.path ? 'sel' : ''}`} style={{ background: sel === f.path ? 'var(--bg-3)' : undefined }} onClick={() => setSel(sel === f.path ? null : f.path)} title={f.path}>
-            <span>✎</span>
+            <span><Icon name="edit" size={13} /></span>
             <div className="grow">
               <div>{basename(f.path)}</div>
               <div className="sub">{f.path}</div>

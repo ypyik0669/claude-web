@@ -2,6 +2,7 @@ import { memo, useMemo, useState } from 'react';
 import { diffLines, diffWordsWithSpace, parsePatch } from 'diff';
 import { clsx } from '@/util';
 import { useStore } from '@/store';
+import { Icon } from '@/ui/icons';
 
 export interface Hunk { oldStart: number; oldLines?: number; newStart: number; newLines?: number; lines: string[] }
 
@@ -212,7 +213,7 @@ export const DiffView = memo(function DiffView(p: DiffViewProps) {
 
 function SpecialRow({ r, span, onOpen }: { r: Row; span?: boolean; onOpen: () => void }) {
   if (r.type === 'hunk') return <div className={clsx('dl hunk', span && 'span')}>{r.text}</div>;
-  if (r.type === 'skip') return <div className={clsx('dl skip', span && 'span')} onClick={onOpen}>⋯ 展开 {r.count} 行未改动内容</div>;
+  if (r.type === 'skip') return <div className={clsx('dl skip', span && 'span')} onClick={onOpen}><Icon name="chevronDown" size={12} /> 展开 {r.count} 行未改动内容</div>;
   return null;
 }
 

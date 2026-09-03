@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '@/store';
 import { ago, basename, clsx, fmtMs } from '@/util';
 import { walkTools } from '@/model/conversation';
+import { Icon } from '@/ui/icons';
 
 type Lane = 'attention' | 'running' | 'idle' | 'error';
 
@@ -47,7 +48,7 @@ export function MissionPanel() {
         <span className="grow" />
         <label className="muted" style={{ fontSize: 12, display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={showIdle} onChange={(e) => setShowIdle(e.target.checked)} /> 显示空闲</label>
       </div>
-      {!total && <div className="empty">没有活动会话。侧栏点开一个，或用 ▶ 恢复。</div>}
+      {!total && <div className="empty">没有活动会话。侧栏点开一个，或用「恢复」继续。</div>}
       <div className="mission-lanes">
         {lanes.filter((l) => l.id !== 'idle' || showIdle).map((lane) => {
           const items = cards.filter((c) => c.lane === lane.id);
@@ -58,7 +59,7 @@ export function MissionPanel() {
               {items.map((c) => (
                 <div key={c.o.sessionId} className="mcard" onClick={() => openInPane(c.o.sessionId, 'replace')}>
                   <div className="t"><span className={clsx('dot', c.o.state)} />{c.title}</div>
-                  <div className="sub">{basename(c.cwd)}{c.meta?.gitBranch ? ` · ${c.meta.gitBranch}` : ''}{c.sched ? ` · ⏱ ${c.sched.name}` : ''}</div>
+                  <div className="sub">{basename(c.cwd)}{c.meta?.gitBranch ? ` · ${c.meta.gitBranch}` : ''}{c.sched ? ` · ${c.sched.name}` : ''}</div>
                   {c.lane === 'attention' && c.o.pending.map((p) => (
                     <div key={p.requestId} className="perm">
                       <span className="mono">{p.toolName}</span> {String((p.input as any).command ?? (p.input as any).file_path ?? (p.input as any).question ?? '').slice(0, 60)}
@@ -72,8 +73,8 @@ export function MissionPanel() {
                   <div className="foot">
                     <span className="muted">{c.turns} 轮{c.cost ? ` · $${c.cost.toFixed(3)}` : ''}{c.lastTool ? ` · 最近 ${c.lastTool.name}` : ''}{c.o.conv.lastEventAt ? ` · ${ago(c.o.conv.lastEventAt)}` : ''}</span>
                     <span className="grow" />
-                    {c.lane === 'running' && <button className="icon-btn" title="中断" onClick={(e) => { e.stopPropagation(); void interrupt(c.o.sessionId); }}>■</button>}
-                    {c.lane === 'error' && <button className="icon-btn" title="重新打开" onClick={(e) => { e.stopPropagation(); void loadHistory(c.o.sessionId); }}>↻</button>}
+                    {c.lane === 'running' && <button className="icon-btn" title="中断" onClick={(e) => { e.stopPropagation(); void interrupt(c.o.sessionId); }} aria-label="中断"><Icon name="stop" size={12} /></button>}
+                    {c.lane === 'error' && <button className="icon-btn" title="重新打开" onClick={(e) => { e.stopPropagation(); void loadHistory(c.o.sessionId); }} aria-label="重新打开"><Icon name="refresh" size={13} /></button>}
                   </div>
                 </div>
               ))}

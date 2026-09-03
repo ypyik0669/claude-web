@@ -4,6 +4,7 @@ import { useStore } from '@/store';
 import { ago, basename, clsx } from '@/util';
 import type { GitBranch, GitError, GitFileStatus, GitLogEntry, GitStatus, GitWorktree } from '@shared';
 import { dlg } from '@/ui/dialog';
+import { Icon } from '@/ui/icons';
 
 const STATUS_LABEL: Record<GitFileStatus['status'], string> = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', copied: 'C', untracked: 'U', conflict: '!', typechange: 'T' };
 
@@ -38,9 +39,9 @@ function FileRows({ files, staged, cwd, root, onOpen }: { files: GitFileStatus[]
           <span className="name">{basename(f.path)}</span>
           <span className="dir">{f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : ''}</span>
           <span className="acts">
-            {staged ? <button title="取消暂存" onClick={act('git.unstage', f)}>−</button> : <button title="暂存" onClick={act('git.stage', f)}>＋</button>}
-            {!staged && <button title="丢弃改动" onClick={act('git.discard', f)}>↶</button>}
-            <button title="在编辑器打开" onClick={(e) => { e.stopPropagation(); useStore.getState().openTile({ id: `d${Date.now()}`, kind: 'doc', path: `${root}\\${f.path.replace(/\//g, '\\')}` }, 'tab'); }}>✎</button>
+            {staged ? <button title="取消暂存" aria-label="取消暂存" onClick={act('git.unstage', f)}>−</button> : <button title="暂存" aria-label="暂存" onClick={act('git.stage', f)}><Icon name="plus" size={12} /></button>}
+            {!staged && <button title="丢弃改动" aria-label="丢弃改动" onClick={act('git.discard', f)}><Icon name="refresh" size={12} /></button>}
+            <button title="在编辑器打开" aria-label="在编辑器打开" onClick={(e) => { e.stopPropagation(); useStore.getState().openTile({ id: `d${Date.now()}`, kind: 'doc', path: `${root}\\${f.path.replace(/\//g, '\\')}` }, 'tab'); }}><Icon name="edit" size={12} /></button>
           </span>
         </div>
       ))}
@@ -139,19 +140,19 @@ export function GitView({ cwd }: { cwd: string }) {
       <div className="git-head">
         <span style={{ position: 'relative' }}>
           <button className="branch" onClick={() => setBranchMenu(!branchMenu)} title="切换分支">
-            ⑂ {st.detached ? `HEAD 分离 ${log[0]?.short ?? ''}` : st.branch}
+            <Icon name="branch" size={13} /> {st.detached ? `HEAD 分离 ${log[0]?.short ?? ''}` : st.branch}
             {st.state !== 'clean' && st.state !== 'detached' && <span className="badge err">{st.state}</span>}
           </button>
           {branchMenu && (
             <div className="menu branch-menu" onMouseLeave={() => setBranchMenu(false)}>
               <input className="field" autoFocus placeholder="筛选或新建分支名…" value={bq} onChange={(e) => setBq(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && bq.trim() && !branches.some((b) => b.name === bq.trim())) { setBranchMenu(false); void run('checkout', { kind: 'git.checkout', cwd, name: bq.trim(), create: true }); } }} />
-              {bq.trim() && !branches.some((b) => b.name === bq.trim()) && <button onClick={() => { setBranchMenu(false); void run('checkout', { kind: 'git.checkout', cwd, name: bq.trim(), create: true }); }}>＋ 新建分支「{bq.trim()}」</button>}
+              {bq.trim() && !branches.some((b) => b.name === bq.trim()) && <button onClick={() => { setBranchMenu(false); void run('checkout', { kind: 'git.checkout', cwd, name: bq.trim(), create: true }); }}><Icon name="plus" size={12} /> 新建分支「{bq.trim()}」</button>}
               <div className="list">
                 {filteredBranches.slice(0, 60).map((b) => (
                   <button key={b.name} className={clsx(b.current && 'cur')} onClick={() => { setBranchMenu(false); if (!b.current) void run('checkout', { kind: 'git.checkout', cwd, name: b.remote ? b.name.replace(/^[^/]+\//, '') : b.name, create: b.remote && !branches.some((x) => !x.remote && x.name === b.name.replace(/^[^/]+\//, '')), from: b.remote ? b.name : undefined }); }}>
-                    <span className="grow">{b.remote ? '☁ ' : ''}{b.name}</span>
+                    <span className="grow">{b.remote && <Icon name="cloud" size={12} />} {b.name}</span>
                     <span className="muted">{ago(b.date)}</span>
-                    {!b.current && !b.remote && <span className="x" title="删除分支" onClick={async (e) => { e.stopPropagation(); if (await dlg.confirm(`删除分支 ${b.name}？`, { danger: true })) void run('branch', { kind: 'git.deleteBranch', cwd, name: b.name }); }}>✕</span>}
+                    {!b.current && !b.remote && <span className="x" title="删除分支" onClick={async (e) => { e.stopPropagation(); if (await dlg.confirm(`删除分支 ${b.name}？`, { danger: true })) void run('branch', { kind: 'git.deleteBranch', cwd, name: b.name }); }}><Icon name="close" size={11} /></span>}
                   </button>
                 ))}
               </div>
@@ -162,10 +163,10 @@ export function GitView({ cwd }: { cwd: string }) {
           {st.upstream ? <>↑{st.ahead} ↓{st.behind}</> : '无上游'}
         </span>
         <span className="grow" />
-        <button className="icon-btn" title="Fetch" disabled={!!busy} onClick={() => run('fetch', { kind: 'git.fetch', cwd })}>{busy === 'fetch' ? '…' : '⟳'}</button>
-        <button className="btn sm ghost" disabled={!!busy} onClick={() => run('pull', { kind: 'git.pull', cwd, rebase: true })}>{busy === 'pull' ? '拉取中…' : '↓ 拉取'}</button>
+        <button className="icon-btn" title="Fetch" disabled={!!busy} onClick={() => run('fetch', { kind: 'git.fetch', cwd })} aria-label="Fetch">{busy === 'fetch' ? '…' : <Icon name="refresh" size={14} />}</button>
+        <button className="btn sm ghost" disabled={!!busy} onClick={() => run('pull', { kind: 'git.pull', cwd, rebase: true })}>{busy === 'pull' ? '拉取中…' : <><Icon name="chevronDown" size={12} /> 拉取</>}</button>
         <button className="btn sm ghost" disabled={!!busy} onClick={() => run('push', { kind: 'git.push', cwd, setUpstream: !st.upstream })}>{busy === 'push' ? '推送中…' : `↑ 推送${st.upstream ? '' : ' (-u)'}`}</button>
-        <button className="icon-btn" title={`Stash（当前 ${st.stashes} 个）`} onClick={async () => { if (!st.stashes) return run('stash', { kind: 'git.stash', cwd, op: 'push' }); if (await dlg.confirm('弹出最近的 stash？')) void run('stash', { kind: 'git.stash', cwd, op: 'pop' }); }}>{st.stashes ? `⇪ ${st.stashes}` : '⇩'}</button>
+        <button className="icon-btn" title={`Stash（当前 ${st.stashes} 个）`} onClick={async () => { if (!st.stashes) return run('stash', { kind: 'git.stash', cwd, op: 'push' }); if (await dlg.confirm('弹出最近的 stash？')) void run('stash', { kind: 'git.stash', cwd, op: 'pop' }); }} aria-label="Stash">{st.stashes ? <><Icon name="archive" size={13} /> {st.stashes}</> : <Icon name="archive" size={13} />}</button>
       </div>
       {err && <ErrorCard err={err} onFix={() => setErr(null)} />}
       <div className="subtabs">
@@ -214,7 +215,7 @@ export function GitView({ cwd }: { cwd: string }) {
                 <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.subject} {c.refs.map((r) => <span key={r} className="badge" style={{ marginLeft: 4 }}>{r.replace('HEAD -> ', '')}</span>)}</div>
                 <div className="sub">{c.author} · {ago(c.date)}</div>
               </div>
-              <button className="icon-btn" title="复制 hash" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(c.hash); }}>⧉</button>
+              <button className="icon-btn" title="复制 hash" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(c.hash); }} aria-label="复制 hash"><Icon name="copy" size={12} /></button>
             </div>
           ))}
           {!log.length && <div className="empty">还没有提交</div>}
@@ -224,14 +225,14 @@ export function GitView({ cwd }: { cwd: string }) {
         <div className="git-body list">
           {wts.map((w) => (
             <div key={w.path} className="row" title={w.path}>
-              <span>{w.main ? '🏠' : '🌿'}</span>
+              <span><Icon name={w.main ? 'folder' : 'branch'} size={13} /></span>
               <div className="grow">
                 <div>{w.branch ?? `(分离 ${w.head})`} {w.locked && <span className="badge">locked</span>}</div>
                 <div className="sub">{w.path}</div>
               </div>
-              <button className="btn sm ghost" onClick={() => useStore.getState().openSession({ cwd: w.path })}>＋ 会话</button>
+              <button className="btn sm ghost" onClick={() => useStore.getState().openSession({ cwd: w.path })}><Icon name="plus" size={12} /> 会话</button>
               <button className="btn sm ghost" onClick={() => ws.request({ kind: 'shell.open', path: w.path, app: 'code' })}>VS Code</button>
-              {!w.main && <button className="btn sm ghost danger" onClick={async () => { if (await dlg.confirm(`删除 worktree ${w.path}？`, { message: '分支保留，目录会被删除。', danger: true })) void run('wt', { kind: 'git.worktreeRemove', cwd, dir: w.path, force: true }); }}>✕</button>}
+              {!w.main && <button className="btn sm ghost danger" onClick={async () => { if (await dlg.confirm(`删除 worktree ${w.path}？`, { message: '分支保留，目录会被删除。', danger: true })) void run('wt', { kind: 'git.worktreeRemove', cwd, dir: w.path, force: true }); }} aria-label="删除 worktree"><Icon name="trash" size={12} /></button>}
             </div>
           ))}
           {newWt ? (
@@ -242,7 +243,7 @@ export function GitView({ cwd }: { cwd: string }) {
               <button className="btn sm" onClick={() => setNewWt(null)}>取消</button>
             </div>
           ) : (
-            <div className="row"><button className="btn sm" onClick={() => setNewWt({ name: '', from: '' })}>＋ 新建 worktree</button><span className="muted" style={{ fontSize: 11.5 }}>放在 .claude/worktrees/&lt;名称&gt;，和 Claude Code 的 --worktree 一致</span></div>
+            <div className="row"><button className="btn sm" onClick={() => setNewWt({ name: '', from: '' })}><Icon name="plus" size={12} /> 新建 worktree</button><span className="muted" style={{ fontSize: 11.5 }}>放在 .claude/worktrees/&lt;名称&gt;，和 Claude Code 的 --worktree 一致</span></div>
           )}
         </div>
       )}

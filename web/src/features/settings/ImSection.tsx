@@ -4,6 +4,7 @@ import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { dlg } from '@/ui/dialog';
 import type { ImGatewayInfo, ImKind, ImKindDef } from '@shared';
+import { Icon } from '@/ui/icons';
 
 const MODES = [['default', '每次询问'], ['acceptEdits', '自动接受编辑'], ['bypassPermissions', '完全权限']];
 
@@ -90,7 +91,7 @@ export function ImSection() {
         <h5 style={{ margin: 0 }}>IM 网关</h5>
         <span className="muted" style={{ fontSize: 12 }}>在聊天软件里和会话对话、处理权限请求、收完成通知</span>
         <span className="grow" />
-        {kinds.map((k) => <button key={k.kind} className="btn sm ghost" onClick={() => add(k.kind)} title={k.help}>＋ {k.icon} {k.name}</button>)}
+        {kinds.map((k) => <button key={k.kind} className="btn sm ghost" onClick={() => add(k.kind)} title={k.help}><Icon name="plus" size={12} /> {k.name}</button>)}
       </div>
       <div className="list">
         {list.map((g) => { const def = kinds.find((k) => k.kind === g.kind); return def ? <GatewayCard key={g.id} g={g} def={def} onChange={load} /> : null; })}

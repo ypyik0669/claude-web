@@ -3,7 +3,18 @@
 // Server -> client events carry no `id`.
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
-export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+// `ultra` is Codex-only (its own enum member). `ultracode` is NOT here on purpose: in Claude Code it is a
+// separate session-scoped boolean (xhigh + dynamic workflows) that CLAUDE_CODE_EFFORT_LEVEL rejects.
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
+
+/** One entry of an agent's model picker. `value` is what gets sent back as the model id. */
+export interface ModelInfo {
+  value: string;
+  displayName: string;
+  description: string;
+  supportsEffort?: boolean;
+  supportedEffortLevels?: EffortLevel[];
+}
 export type RunnerState = 'starting' | 'idle' | 'running' | 'waiting' | 'error' | 'closed';
 
 export interface SessionSummary {
@@ -25,6 +36,7 @@ export interface OpenSessionParams {
   model?: string;
   permissionMode?: PermissionMode;
   effort?: EffortLevel;
+  ultracode?: boolean;
   fork?: boolean;
   resumeAt?: string; // fork from this message uuid (implies fork)
   worktree?: string; // create a git worktree with this name for the session
@@ -165,7 +177,10 @@ export interface SessionInfoSnapshot {
   agents?: { name: string; description: string; model?: string }[];
   mcpServers?: { name: string; status: string; error?: string; tools?: unknown[] }[];
   plugins?: { name: string; path: string; version?: string }[];
-  models?: { value: string; displayName: string; description: string; supportsEffort?: boolean; supportedEffortLevels?: EffortLevel[] }[];
+  models?: ModelInfo[];
+  /** Claude only: xhigh + dynamic workflow orchestration, session-scoped. */
+  ultracode?: boolean;
+  supportsUltracode?: boolean;
   claudeCodeVersion?: string;
   runtime?: RuntimeKind;
   providerId?: string;
@@ -191,6 +206,7 @@ export type ClientRequest =
   | { kind: 'session.setPermissionMode'; sessionId: string; mode: PermissionMode }
   | { kind: 'session.setModel'; sessionId: string; model: string }
   | { kind: 'session.setEffort'; sessionId: string; effort: EffortLevel }
+  | { kind: 'session.setUltracode'; sessionId: string; on: boolean }
   | { kind: 'session.rename'; sessionId: string; title: string }
   | { kind: 'session.delete'; sessionId: string }
   | { kind: 'session.contextUsage'; sessionId: string; detail?: 'summary' | 'full' }

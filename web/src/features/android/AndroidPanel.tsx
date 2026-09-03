@@ -4,11 +4,16 @@ import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { dlg } from '@/ui/dialog';
 import type { AndroidStatus } from '@shared';
+import { Icon } from '@/ui/icons';
 
 const KEYS: [string, string][] = [['BACK', '4'], ['HOME', '3'], ['RECENTS', '187'], ['POWER', '26'], ['VOL+', '24'], ['VOL−', '25'], ['ENTER', '66']];
 
-/** Android emulator / device preview: live screenshots with tap & swipe, keys, text, apk install, logcat. Optional; needs adb. */
-export function AndroidPanel() {
+/**
+ * Android emulator / device preview: live screenshots with tap & swipe, keys, text, apk install, logcat.
+ * Optional; needs adb. `visible` is false while the dock is minimised or another tab is showing —
+ * the screenshot loop must stop then, or a hidden panel keeps an adb round trip running every 0.9s.
+ */
+export function AndroidPanel({ visible = true }: { visible?: boolean }) {
   const toast = useStore((s) => s.toast);
   const [st, setSt] = useState<AndroidStatus | null>(null);
   const [serial, setSerial] = useState('');
@@ -23,7 +28,7 @@ export function AndroidPanel() {
   const refresh = () => ws.request<AndroidStatus>({ kind: 'android.status' }).then((s) => { setSt(s); setErr(''); if (!serial && s.devices[0]) setSerial(s.devices[0].serial); }).catch((e) => setErr(e.message));
   useEffect(() => { void refresh(); }, []);
   const snap = async () => { if (!serial) return; try { setShot(await ws.request({ kind: 'android.screenshot', serial })); } catch (e: any) { setLive(false); toast(e.message); } };
-  useEffect(() => { if (!serial || !live) return; let stop = false; const loop = async () => { while (!stop) { await snap(); await new Promise((r) => setTimeout(r, 900)); } }; void loop(); return () => { stop = true; }; }, [serial, live]);
+  useEffect(() => { if (!serial || !live || !visible) return; let stop = false; const loop = async () => { while (!stop) { await snap(); await new Promise((r) => setTimeout(r, 900)); } }; void loop(); return () => { stop = true; }; }, [serial, live, visible]);
   const toDev = (e: React.MouseEvent) => { const img = imgRef.current!; const r = img.getBoundingClientRect(); const sx = (shot?.width ?? img.naturalWidth) / r.width; const sy = (shot?.height ?? img.naturalHeight) / r.height; return { x: (e.clientX - r.left) * sx, y: (e.clientY - r.top) * sy }; };
   const input = async (i: any) => { try { await ws.request({ kind: 'android.input', serial, input: i }); setTimeout(snap, 250); } catch (e: any) { toast(e.message); } };
   const dev = st?.devices.find((d) => d.serial === serial);
@@ -39,13 +44,14 @@ export function AndroidPanel() {
       <div className="android-head">
         <select className="field sm" value={serial} onChange={(e) => setSerial(e.target.value)}>
           <option value="">选择设备…</option>
-          {st?.devices.map((d) => <option key={d.serial} value={d.serial}>{d.emulator ? '📱' : '🔌'} {d.model || d.serial} {d.state !== 'device' ? `(${d.state})` : ''}</option>)}
+          {/* an <option> can't hold an icon, so the device kind is spelled out */}
+          {st?.devices.map((d) => <option key={d.serial} value={d.serial}>{d.model || d.serial} · {d.emulator ? '模拟器' : 'USB'}{d.state !== 'device' ? ` (${d.state})` : ''}</option>)}
         </select>
         {st && st.avds.length > 0 && <select className="field sm" defaultValue="" onChange={async (e) => { const avd = e.target.value; if (!avd) return; try { await ws.request({ kind: 'android.startEmulator', avd }); toast(`正在启动 ${avd}…`, true); setTimeout(refresh, 8000); } catch (x: any) { toast(x.message); } e.target.value = ''; }}>
           <option value="">启动模拟器…</option>{st.avds.map((a) => <option key={a} value={a}>{a}</option>)}
         </select>}
         <label className="chip"><input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} /> 实时</label>
-        <button className="icon-btn" title="刷新设备" onClick={refresh}>↻</button>
+        <button className="icon-btn" title="刷新设备" aria-label="刷新设备" onClick={refresh}><Icon name="refresh" size={14} /></button>
         <span className="grow" />
         <button className="btn sm ghost" disabled={!serial || busy} onClick={async () => { const p = await dlg.prompt('APK 路径', ''); if (!p) return; setBusy(true); try { toast((await ws.request<string>({ kind: 'android.install', serial, apk: p })).trim() || '已安装', true); } catch (e: any) { toast(e.message); } finally { setBusy(false); } }}>安装 APK</button>
         <button className="btn sm ghost" disabled={!serial} onClick={async () => { try { const pk = await ws.request<string[]>({ kind: 'android.packages', serial }); const p = await dlg.prompt('启动应用（包名）', pk[0] ?? '', { message: pk.slice(0, 30).join('\n') }); if (p) await ws.request({ kind: 'android.launchApp', serial, pkg: p }); } catch (e: any) { toast(e.message); } }}>启动应用</button>

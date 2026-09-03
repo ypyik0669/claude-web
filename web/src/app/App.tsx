@@ -14,6 +14,7 @@ import { DialogHost } from '@/ui/dialog';
 import { SettingsModal } from '@/features/settings/SettingsModal';
 import { Onboarding } from '@/features/onboarding/Onboarding';
 import { desktop } from '@/desktop';
+import { Icon } from '@/ui/icons';
 
 function Toasts() {
   const toasts = useStore((s) => s.toasts);
@@ -32,8 +33,10 @@ function SidebarColumn() {
   const width = useStore((s) => s.layout.sidebar.width);
   const dispatch = useStore((s) => s.dispatchLayout);
   const drag = useRef<{ x0: number; w0: number } | null>(null);
+  // NOTE: no inline `position` here — an inline style beats `.app.mobile .sidebar { position: fixed }`
+  // regardless of specificity, which would leave the drawer in the grid flow and squash the workbench to 0px.
   return (
-    <div className="sidebar" style={{ position: 'relative' }}>
+    <div className="sidebar has-resizer">
       <Sidebar onNew={() => runCommand('new')} />
       <div
         className="resizer right"
@@ -56,8 +59,15 @@ export function App() {
   const sbWidth = useStore((s) => s.layout.sidebar.width);
   const dock = useStore((s) => s.layout.dock);
   const inspect = useStore((s) => s.inspect);
+  const dispatchLayout = useStore((s) => s.dispatchLayout);
   const dockShown = dock.open && (dock.tabs.length > 0 || !!inspect);
   const rpWidth = !dockShown ? 0 : dock.minimized ? 36 : dock.width;
+
+  // asking to inspect a tool call must reveal the dock — otherwise clicking the detail button on a tool row does nothing
+  useEffect(() => {
+    if (!inspect) return;
+    if (!dock.open || dock.minimized) dispatchLayout({ t: 'dock.set', patch: { open: true, minimized: false } });
+  }, [inspect]);
 
   // desktop shell: menu accelerators arrive as commands; notifications click → focus session
   useEffect(() => {

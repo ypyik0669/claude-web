@@ -5,6 +5,7 @@ import { ago, clsx, fmtMs } from '@/util';
 import { dlg } from '@/ui/dialog';
 import type { PermissionMode, Schedule, ScheduleRun } from '@shared';
 import { MODE_LABEL } from '@/features/composer/Composer';
+import { Icon } from '@/ui/icons';
 
 interface Template { id: string; name: string; cron: string; prompt: string; permissionMode: PermissionMode; freshSession?: boolean }
 
@@ -80,7 +81,7 @@ export function SchedulesView({ compact = false }: { compact?: boolean }) {
         <button className={tab === 'templates' ? 'active' : ''} onClick={() => setTab('templates')}>模板</button>
         <button className={tab === 'history' ? 'active' : ''} onClick={() => { setShowRuns(null); setTab('history'); }}>历史</button>
         <span className="grow" />
-        <button className="icon-btn" title="新建" onClick={() => { setMode('cron'); setEditing({ cwd: active?.cwd ?? '', permissionMode: 'acceptEdits', everyMinutes: 60, cron: '0 9 * * 1-5' }); setTab('list'); }}>＋</button>
+        <button className="icon-btn" title="新建" aria-label="新建" onClick={() => { setMode('cron'); setEditing({ cwd: active?.cwd ?? '', permissionMode: 'acceptEdits', everyMinutes: 60, cron: '0 9 * * 1-5' }); setTab('list'); }}><Icon name="plus" size={15} /></button>
       </div>
       {tab === 'list' && (
         <div className="list">
@@ -94,9 +95,9 @@ export function SchedulesView({ compact = false }: { compact?: boolean }) {
               </div>
               {sc.sessionId && <button className="btn sm ghost" title="打开会话" onClick={() => loadHistory(sc.sessionId!)}>会话</button>}
               <button className="btn sm ghost" title="历史" onClick={() => { setShowRuns(sc.id); setTab('history'); }}>历史</button>
-              <button className="btn sm ghost" title="编辑" onClick={() => { setMode(sc.cron ? 'cron' : 'interval'); setEditing({ ...sc }); }}>✎</button>
-              <button className="btn sm ghost" title="立即运行" onClick={() => ws.request({ kind: 'schedules.runNow', id: sc.id }).catch((e) => toast(e.message))}>▶</button>
-              <button className="btn sm ghost danger" title="删除" onClick={async () => { if (await dlg.confirm(`删除定时任务「${sc.name}」？`, { danger: true })) void ws.request({ kind: 'schedules.remove', id: sc.id }); }}>✕</button>
+              <button className="btn sm ghost" title="编辑" onClick={() => { setMode(sc.cron ? 'cron' : 'interval'); setEditing({ ...sc }); }}><Icon name="edit" size={13} /></button>
+              <button className="btn sm ghost" title="立即运行" onClick={() => ws.request({ kind: 'schedules.runNow', id: sc.id }).catch((e) => toast(e.message))}><Icon name="play" size={12} /></button>
+              <button className="btn sm ghost danger" title="删除" onClick={async () => { if (await dlg.confirm(`删除定时任务「${sc.name}」？`, { danger: true })) void ws.request({ kind: 'schedules.remove', id: sc.id }); }}><Icon name="trash" size={13} /></button>
             </div>
           ))}
           {!schedules.length && !editing && <div className="empty">按固定间隔或 cron 往一个会话里发提示词。从「模板」里挑一个开始。</div>}
@@ -106,7 +107,7 @@ export function SchedulesView({ compact = false }: { compact?: boolean }) {
         <div className="list">
           {templates.map((t) => (
             <div key={t.id} className="row">
-              <span>⏱</span>
+              <span><Icon name="tasks" size={13} /></span>
               <div className="grow"><div>{t.name} <span className="mono muted" style={{ fontSize: 11 }}>{t.cron}</span></div><div className="sub">{t.prompt.slice(0, 120)}…</div></div>
               <button className="btn sm" onClick={() => fromTemplate(t)}>使用</button>
             </div>

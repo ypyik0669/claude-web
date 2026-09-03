@@ -1,8 +1,33 @@
 // Workbench layout model: groups → binary split tree of panes → tiles (tabs) inside a pane.
 // Pure functions, no DOM / store imports, so it can be unit tested.
 
+import type { IconName } from '@/ui/icons';
+
 export type PanelId = 'tasks' | 'files' | 'usage' | 'config' | 'terminal' | 'inspector' | 'mission' | 'goals' | 'android';
 export type WorkbenchTab = 'live' | 'changes' | 'git' | 'files' | 'search' | 'schedules' | 'artifacts' | 'board';
+
+/**
+ * The one panel table. Dock tabs, the top bar, the command palette, the pane ＋ menu and
+ * tile titles all read it — adding a panel means adding a row here and a case in `PanelBody`.
+ * `rail` marks the panels the top bar surfaces directly; the rest live in menus.
+ */
+export const PANELS: { id: PanelId; title: string; icon: IconName; rail?: boolean }[] = [
+  { id: 'mission', title: '总览', icon: 'mission', rail: true },
+  { id: 'goals', title: '目标', icon: 'goals', rail: true },
+  { id: 'tasks', title: '任务', icon: 'tasks', rail: true },
+  { id: 'files', title: '文件改动', icon: 'files', rail: true },
+  { id: 'usage', title: '用量', icon: 'usage' },
+  { id: 'config', title: '配置中心', icon: 'config' },
+  { id: 'terminal', title: '终端', icon: 'terminal', rail: true },
+  { id: 'inspector', title: '详情', icon: 'inspector' },
+  { id: 'android', title: 'Android', icon: 'android' },
+];
+export const PANEL_IDS = PANELS.map((p) => p.id);
+export const PANEL_TITLES = Object.fromEntries(PANELS.map((p) => [p.id, p.title])) as Record<PanelId, string>;
+export const PANEL_ICONS = Object.fromEntries(PANELS.map((p) => [p.id, p.icon])) as Record<PanelId, IconName>;
+
+/** Icon for a tile, by kind — the other half of the title/icon pair `tileTitle` builds. */
+export const TILE_ICONS: Record<Tile['kind'], IconName> = { chat: 'chat', doc: 'read', diff: 'files', term: 'terminal', panel: 'inspector' };
 
 export type Tile =
   | { id: string; kind: 'chat'; sessionId: string | null; view: 'chat' | 'trajectory'; wb: WorkbenchTab; title?: string }

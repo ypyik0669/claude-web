@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useScopedSession, useStore } from '@/store';
 import { walkTools } from '@/model/conversation';
 import { toolSummary } from '@/util';
+import { Icon } from '@/ui/icons';
 
 export function TrajectoryView() {
   const active = useScopedSession();
@@ -57,7 +58,7 @@ export function TrajectoryView() {
               <tr key={r.id} onClick={() => useStore.setState({ inspect: { sessionId: active.sessionId, toolUseId: r.id } })}>
                 <td>{r.turn}</td>
                 <td style={{ paddingLeft: 8 + r.depth * 16 }}>
-                  {r.depth > 0 && '↳ '}
+                  {r.depth > 0 && <span className="sub-mark">⤷ </span>}
                   {r.name}
                 </td>
                 <td>

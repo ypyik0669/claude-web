@@ -4,10 +4,11 @@ import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { ago, basename, clsx } from '@/util';
 import type { AgentKind, SessionSummary, Workspace } from '@shared';
+import { Icon, AGENT_ICONS } from '@/ui/icons';
 
 function AgentDot({ kind }: { kind: AgentKind }) {
   const a = useStore((s) => s.agents.find((x) => x.kind === kind));
-  return <span className="agent-dot" title={a?.name ?? kind}>{a?.icon ?? '◆'}</span>;
+  return <span className="agent-dot" title={a?.name ?? kind}><Icon name={AGENT_ICONS[kind] ?? 'agent'} size={12} /></span>;
 }
 import { MIME_SESSION } from '@/features/workbench/dnd';
 import { dlg } from '@/ui/dialog';
@@ -37,18 +38,18 @@ function SessionMenu({ s, onClose }: { s: SessionSummary; onClose: () => void })
   const openIn = (mode: 'tab' | 'replace') => act(() => (open ? st.openInPane(s.sessionId, mode) : st.loadHistory(s.sessionId, { mode })));
   return (
     <div className="menu" style={{ right: 8, top: 28 }} onClick={(e) => e.stopPropagation()}>
-      <button onClick={openIn('tab')}>▭ 在新标签打开</button>
-      <button onClick={act(() => { const g = st.layout; const before = g; st.dispatchLayout({ t: 'pane.split', paneId: (g.groups.find((x) => x.id === g.activeGroupId) ?? g.groups[0]).focusedPaneId, dir: 'row' }); if (useStore.getState().layout === before) return st.toast('最多 6 个窗格'); open ? st.openInPane(s.sessionId, 'replace') : void st.loadHistory(s.sessionId); })}>◫ 在右侧分屏打开</button>
-      <button onClick={act(() => st.openSession({ sessionId: s.sessionId, cwd: s.cwd }).catch((e) => st.toast(e.message)))}>▶ 恢复运行</button>
-      <button onClick={act(() => st.openSession({ sessionId: s.sessionId, cwd: s.cwd, fork: true }).catch((e) => st.toast(e.message)))}>⑂ 分叉</button>
-      <button onClick={act(() => st.setSessionMeta(s.sessionId, { pinned: !meta.pinned }))}>{meta.pinned ? '⊝ 取消置顶' : '📌 置顶'}</button>
-      <button onClick={act(() => st.setSessionMeta(s.sessionId, { archived: !meta.archived }))}>{meta.archived ? '↥ 取消归档' : '🗄 归档'}</button>
-      <button onClick={rename}>✎ 重命名</button>
-      <button onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd }))}>▤ 在资源管理器打开</button>
-      <button onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd, app: 'code' }))}>⌨ 在 VS Code 打开</button>
-      {open && open.state !== 'history' && <button onClick={act(() => st.closeSession(s.sessionId))}>⏻ 结束进程</button>}
-      <button onClick={act(() => { navigator.clipboard.writeText(s.sessionId); st.toast('已复制 session id', true); })}>⧉ 复制 ID</button>
-      <button className="danger" onClick={del}>🗑 删除</button>
+      <button onClick={openIn('tab')}><Icon name="board" size={14} /> 在新标签打开</button>
+      <button onClick={act(() => { const g = st.layout; const before = g; st.dispatchLayout({ t: 'pane.split', paneId: (g.groups.find((x) => x.id === g.activeGroupId) ?? g.groups[0]).focusedPaneId, dir: 'row' }); if (useStore.getState().layout === before) return st.toast('最多 6 个窗格'); open ? st.openInPane(s.sessionId, 'replace') : void st.loadHistory(s.sessionId); })}><Icon name="splitRight" size={14} /> 在右侧分屏打开</button>
+      <button onClick={act(() => st.openSession({ sessionId: s.sessionId, cwd: s.cwd }).catch((e) => st.toast(e.message)))}><Icon name="play" size={14} /> 恢复运行</button>
+      <button onClick={act(() => st.openSession({ sessionId: s.sessionId, cwd: s.cwd, fork: true }).catch((e) => st.toast(e.message)))}><Icon name="branch" size={14} /> 分叉</button>
+      <button onClick={act(() => st.setSessionMeta(s.sessionId, { pinned: !meta.pinned }))}><Icon name="pin" size={14} /> {meta.pinned ? '取消置顶' : '置顶'}</button>
+      <button onClick={act(() => st.setSessionMeta(s.sessionId, { archived: !meta.archived }))}><Icon name="archive" size={14} /> {meta.archived ? '取消归档' : '归档'}</button>
+      <button onClick={rename}><Icon name="edit" size={14} /> 重命名</button>
+      <button onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd }))}><Icon name="folder" size={14} /> 在资源管理器打开</button>
+      <button onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd, app: 'code' }))}><Icon name="keyboard" size={14} /> 在 VS Code 打开</button>
+      {open && open.state !== 'history' && <button onClick={act(() => st.closeSession(s.sessionId))}><Icon name="stop" size={14} /> 结束进程</button>}
+      <button onClick={act(() => { navigator.clipboard.writeText(s.sessionId); st.toast('已复制 session id', true); })}><Icon name="copy" size={14} /> 复制 ID</button>
+      <button className="danger" onClick={del}><Icon name="trash" size={14} /> 删除</button>
     </div>
   );
 }
@@ -82,11 +83,11 @@ function SessionRow({ s, menu, setMenu }: { s: SessionSummary; menu: string | nu
   const isLive = live && live !== 'history' && live !== 'closed';
   return (
     <div className={clsx('sess', activeId === s.sessionId && 'active')} {...row} onClickCapture={() => { if (window.matchMedia('(max-width: 760px)').matches) setTimeout(() => useStore.setState({ sidebarOpen: false }), 50); }} title={`${s.firstPrompt ?? s.title}\n点击打开 · Ctrl/中键新标签 · 可拖到窗格`}>
-      {isLive ? <span className={clsx('dot', live)} /> : meta?.pinned ? <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>📌</span> : null}
+      {isLive ? <span className={clsx('dot', live)} /> : meta?.pinned ? <span className="pin-mark" title="已置顶"><Icon name="pin" size={11} /></span> : <span className="dot ph" />}
       <span className="t">{s.title}</span>
       {s.agent && s.agent !== 'claude' && <AgentDot kind={s.agent} />}
       <span className="ago">{ago(s.lastModified)}</span>
-      <button className="more" onClick={(e) => { e.stopPropagation(); setMenu(menu === s.sessionId ? null : s.sessionId); }}>⋯</button>
+      <button className="more" title="更多" onClick={(e) => { e.stopPropagation(); setMenu(menu === s.sessionId ? null : s.sessionId); }}><Icon name="more" size={14} /></button>
       {menu === s.sessionId && <SessionMenu s={s} onClose={() => setMenu(null)} />}
     </div>
   );
@@ -114,13 +115,13 @@ function WorkspaceMenu({ w, onClose }: { w: Workspace; onClose: () => void }) {
   const act = (fn: () => unknown) => () => { void fn(); onClose(); };
   return (
     <div className="menu" style={{ right: 8, top: 26 }} onClick={(e) => e.stopPropagation()}>
-      <button onClick={act(() => st.openSession({ cwd: w.path }))}>＋ 在这里新建会话</button>
-      <button onClick={act(async () => { const n = await dlg.prompt('worktree 名称', 'feature'); if (n) await st.openSession({ cwd: w.path, worktree: n }).catch((e) => st.toast(e.message)); })}>⑂ 新建 worktree 会话</button>
-      <button onClick={act(() => st.openTile({ id: `t${Date.now()}`, kind: 'term', cwd: w.path }, 'tab'))}>▣ 在这里开终端</button>
-      <button onClick={act(async () => { const n = await dlg.prompt('工作区名称', w.name); if (n) await ws.request({ kind: 'workspaces.rename', id: w.id, name: n }); })}>✎ 重命名</button>
-      <button onClick={act(() => ws.request({ kind: 'shell.open', path: w.path }))}>▤ 在资源管理器打开</button>
-      <button onClick={act(() => ws.request({ kind: 'shell.open', path: w.path, app: 'code' }))}>⌨ 在 VS Code 打开</button>
-      <button className="danger" onClick={act(() => ws.request({ kind: 'workspaces.remove', id: w.id }))}>✕ 移除工作区（不删文件）</button>
+      <button onClick={act(() => st.openSession({ cwd: w.path }))}><Icon name="plus" size={14} /> 在这里新建会话</button>
+      <button onClick={act(async () => { const n = await dlg.prompt('worktree 名称', 'feature'); if (n) await st.openSession({ cwd: w.path, worktree: n }).catch((e) => st.toast(e.message)); })}><Icon name="branch" size={14} /> 新建 worktree 会话</button>
+      <button onClick={act(() => st.openTile({ id: `t${Date.now()}`, kind: 'term', cwd: w.path }, 'tab'))}><Icon name="terminal" size={14} /> 在这里开终端</button>
+      <button onClick={act(async () => { const n = await dlg.prompt('工作区名称', w.name); if (n) await ws.request({ kind: 'workspaces.rename', id: w.id, name: n }); })}><Icon name="edit" size={14} /> 重命名</button>
+      <button onClick={act(() => ws.request({ kind: 'shell.open', path: w.path }))}><Icon name="folder" size={14} /> 在资源管理器打开</button>
+      <button onClick={act(() => ws.request({ kind: 'shell.open', path: w.path, app: 'code' }))}><Icon name="keyboard" size={14} /> 在 VS Code 打开</button>
+      <button className="danger" onClick={act(() => ws.request({ kind: 'workspaces.remove', id: w.id }))}><Icon name="close" size={14} /> 移除工作区（不删文件）</button>
     </div>
   );
 }
@@ -171,8 +172,8 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const list = (arr: SessionSummary[], k: string) => (
     <>
       {arr.slice(0, ql ? 200 : 25).map((s) => <SessionRow key={s.sessionId} s={s} menu={menu} setMenu={setMenu} />)}
-      {arr.length > 25 && !ql && <div className="sess" style={{ color: 'var(--fg-3)', fontSize: 11.5 }} onClick={() => useStore.setState({ paletteOpen: true })}>还有 {arr.length - 25} 个 · Ctrl+K 搜索</div>}
-      {!arr.length && k && <div className="sess" style={{ color: 'var(--fg-3)', fontSize: 12 }}>还没有会话</div>}
+      {arr.length > 25 && !ql && <div className="sess" style={{ color: 'var(--ink-4)', fontSize: 11.5 }} onClick={() => useStore.setState({ paletteOpen: true })}>还有 {arr.length - 25} 个 · Ctrl+K 搜索</div>}
+      {!arr.length && k && <div className="sess" style={{ color: 'var(--ink-4)', fontSize: 12 }}>还没有会话</div>}
     </>
   );
   const panelOn = (p: 'config' | 'usage') => dock.open && dock.tabs.includes(p);
@@ -180,14 +181,14 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   return (
     <>
       <div className="sb-top">
-        <span className="brand"><span className="logo">✱</span>Claude Web</span>
-        <button className="icon-btn" title="收起侧栏 (Ctrl+B)" onClick={() => useStore.setState({ sidebarOpen: false })}>⇤</button>
+        <span className="brand"><span className="logo"><Icon name="claude" size={17} /></span>Claude Web</span>
+        <button className="icon-btn" title="收起侧栏 (Ctrl+B)" aria-label="收起侧栏" onClick={() => useStore.setState({ sidebarOpen: false })}><Icon name="restore" size={16} /></button>
       </div>
       <div className="sb-nav">
-        <button className={clsx('nav', !activeId && 'active')} onClick={onNew}><span className="ic">＋</span>新会话<span className="k kbd">{desktop ? 'Ctrl N' : 'Alt N'}</span></button>
-        <button className="nav" onClick={() => useStore.setState({ paletteOpen: true })}><span className="ic">⌘</span>命令 / 搜索<span className="k kbd">Ctrl K</span></button>
-        <button className={clsx('nav', panelOn('config') && 'active')} onClick={() => useStore.getState().openSettings()} onContextMenu={(e) => { e.preventDefault(); togglePanel('config'); }} title="设置 (Ctrl+,) · 右键：停靠面板"><span className="ic">⚙</span>设置<span className="k kbd">Ctrl ,</span></button>
-        <button className={clsx('nav', panelOn('usage') && 'active')} onClick={() => togglePanel('usage')}><span className="ic">▤</span>用量</button>
+        <button className={clsx('nav', !activeId && 'active')} onClick={onNew}><span className="ic"><Icon name="plus" size={15} /></span>新会话<span className="k kbd">{desktop ? 'Ctrl N' : 'Alt N'}</span></button>
+        <button className="nav" onClick={() => useStore.setState({ paletteOpen: true })}><span className="ic"><Icon name="command" size={15} /></span>命令 / 搜索<span className="k kbd">Ctrl K</span></button>
+        <button className={clsx('nav', panelOn('config') && 'active')} onClick={() => useStore.getState().openSettings()} onContextMenu={(e) => { e.preventDefault(); togglePanel('config'); }} title="设置 (Ctrl+,) · 右键：停靠面板"><span className="ic"><Icon name="settings" size={15} /></span>设置<span className="k kbd">Ctrl ,</span></button>
+        <button className={clsx('nav', panelOn('usage') && 'active')} onClick={() => togglePanel('usage')}><span className="ic"><Icon name="usage" size={15} /></span>用量</button>
       </div>
       <div className="sb-search">
         <input placeholder="筛选会话…" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -195,7 +196,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
       <div className="sb-list">
         {running.length > 0 && !ql && (
           <div className="proj">
-            <div className="proj-head" onClick={() => toggleGroup('__running')}><span className="ic">{collapsed.__running ? '▸' : '▾'}</span><span className="name">运行中</span><span className="cnt">{running.length}</span></div>
+            <div className="proj-head" onClick={() => toggleGroup('__running')}><span className="ic"><Icon name={collapsed.__running ? 'chevronRight' : 'chevronDown'} size={13} /></span><span className="name">运行中</span><span className="cnt">{running.length}</span></div>
             {!collapsed.__running && running.map((o) => {
               const s = sessions.find((x) => x.sessionId === o.sessionId);
               return <RunningRow key={o.sessionId} sessionId={o.sessionId} cwd={o.cwd} state={o.state} title={s?.title ?? o.sessionId.slice(0, 8)} />;
@@ -204,19 +205,19 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         )}
         {pinned.length > 0 && (
           <div className="proj">
-            <div className="proj-head" onClick={() => toggleGroup('__pinned')}><span className="ic">{collapsed.__pinned ? '▸' : '▾'}</span><span className="name">置顶</span><span className="cnt">{pinned.length}</span></div>
+            <div className="proj-head" onClick={() => toggleGroup('__pinned')}><span className="ic"><Icon name={collapsed.__pinned ? 'chevronRight' : 'chevronDown'} size={13} /></span><span className="name">置顶</span><span className="cnt">{pinned.length}</span></div>
             {!collapsed.__pinned && list(pinned, '')}
           </div>
         )}
         <div className="proj">
           <div className="proj-head" style={{ cursor: 'default' }}>
             <span className="name">工作区</span>
-            <button className="icon-btn" title="添加工作区（文件夹）" onClick={pickWorkspace} style={{ padding: '0 4px' }}>＋</button>
+            <button className="icon-btn xs" title="添加工作区（文件夹）" aria-label="添加工作区" onClick={pickWorkspace}><Icon name="plus" size={14} /></button>
           </div>
           {!workspaces.length && (
             <div className="ws-empty">
               还没有工作区。工作区就是一个文件夹，会话在里面运行。
-              <div><button className="btn sm" onClick={pickWorkspace}>＋ 添加工作区</button></div>
+              <div><button className="btn sm" onClick={pickWorkspace}><Icon name="plus" size={13} /> 添加工作区</button></div>
             </div>
           )}
           {workspaces.map((w) => {
@@ -224,10 +225,10 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
             return (
               <div key={w.id} style={{ marginBottom: 6, position: 'relative' }}>
                 <div className="ws-head" onClick={() => toggleGroup(w.id)} title={w.path}>
-                  <span className="ic">{collapsed[w.id] ? '▸' : '▾'}</span>
+                  <span className="ic"><Icon name={collapsed[w.id] ? 'chevronRight' : 'chevronDown'} size={13} /></span>
                   <span className="name">{w.name}</span>
                   <span className="cnt">{arr.length}</span>
-                  <button className="more" onClick={(e) => { e.stopPropagation(); setWsMenu(wsMenu === w.id ? null : w.id); }}>⋯</button>
+                  <button className="more" title="更多" onClick={(e) => { e.stopPropagation(); setWsMenu(wsMenu === w.id ? null : w.id); }}><Icon name="more" size={14} /></button>
                   {wsMenu === w.id && <WorkspaceMenu w={w} onClose={() => setWsMenu(null)} />}
                 </div>
                 {!collapsed[w.id] && list(arr, w.id)}
@@ -241,10 +242,10 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
             {grouped.other.map(([cwd, arr]) => (
               <div key={cwd} style={{ marginBottom: 6 }}>
                 <div className="ws-head" onClick={() => toggleGroup(cwd)} title={cwd}>
-                  <span className="ic">{collapsed[cwd] ? '▸' : '▾'}</span>
+                  <span className="ic"><Icon name={collapsed[cwd] ? 'chevronRight' : 'chevronDown'} size={13} /></span>
                   <span className="name">{basename(cwd) || cwd}</span>
                   <span className="cnt">{arr.length}</span>
-                  <button className="more" title="设为工作区" onClick={(e) => { e.stopPropagation(); void addWorkspace(cwd); }}>＋</button>
+                  <button className="more" title="设为工作区" onClick={(e) => { e.stopPropagation(); void addWorkspace(cwd); }}><Icon name="plus" size={13} /></button>
                 </div>
                 {!collapsed[cwd] && list(arr, '')}
               </div>
@@ -257,8 +258,8 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         <span className={clsx('dot', connected ? 'idle' : 'error')} />
         <span>{connected ? '已连接' : '重连中…'}</span>
         <span style={{ flex: 1 }} />
-        <button className={clsx('icon-btn', showArchived && 'active')} title="显示已归档" onClick={() => useStore.setState({ showArchived: !showArchived })}>🗄</button>
-        <button className="icon-btn" title="主题 / 设置 (Ctrl+K)" onClick={() => useStore.setState({ paletteOpen: true })}>☾</button>
+        <button className={clsx('icon-btn xs', showArchived && 'active')} title="显示已归档" aria-label="显示已归档" onClick={() => useStore.setState({ showArchived: !showArchived })}><Icon name="archive" size={14} /></button>
+        <button className="icon-btn xs" title="主题 / 设置 (Ctrl+K)" aria-label="主题" onClick={() => useStore.setState({ paletteOpen: true })}><Icon name="moon" size={14} /></button>
       </div>
     </>
   );

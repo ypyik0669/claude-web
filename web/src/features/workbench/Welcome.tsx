@@ -3,6 +3,7 @@ import { useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { ago } from '@/util';
 import { Composer } from '@/features/composer/Composer';
+import { Icon } from '@/ui/icons';
 
 function greeting() {
   const h = new Date().getHours();
@@ -43,7 +44,7 @@ export function Welcome({ paneId, tileId }: { paneId: string; tileId: string }) 
   };
   return (
     <div className="welcome">
-      <h1 className="greet"><span className="spark">✱</span>{greeting()}</h1>
+      <h1 className="greet"><span className="spark"><Icon name="claude" size={26} /></span>{greeting()}</h1>
       <Composer welcome target={{ paneId, tileId }} />
       <EngineStatus />
       {recent.length > 0 && (

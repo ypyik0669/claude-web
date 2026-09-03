@@ -6,15 +6,12 @@ import { clsx, fmtTok, fmtUsd, fmtMs, shortModel, basename } from '@/util';
 import type { AgentKind, AttachmentRef, EffortLevel, PermissionMode, SessionFeatures } from '@shared';
 import { compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachment, uploadAttachment, type DroppedFile, type PendingImage } from '@/model/attachments';
 import { StatusStrip } from '@/features/chat/StatusStrip';
+import { Icon } from '@/ui/icons';
+import { CATALOG, effortLevels, modelsFor } from '@catalog';
 
 export const MODE_LABEL: Record<PermissionMode, string> = { default: '每次询问', acceptEdits: '自动接受编辑', plan: '计划模式', auto: '自动模式', bypassPermissions: '完全权限', dontAsk: '不询问' };
-const MODEL_ALIASES = [
-  { value: '', label: '默认模型' },
-  { value: 'fable', label: 'Fable' },
-  { value: 'opus', label: 'Opus' },
-  { value: 'sonnet', label: 'Sonnet' },
-  { value: 'haiku', label: 'Haiku' },
-];
+// Model names must carry their version — "Fable" is not a model, "Fable 5.1" is. Source: @catalog.
+const MODEL_ALIASES = [{ value: '', label: '默认模型' }, ...modelsFor('claude').map((m) => ({ value: m.value, label: m.displayName }))];
 
 /**
  * The composer is used in two places: inside an open session (sends to it) and on the welcome screen
@@ -41,6 +38,7 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
   const [wModel, setWModel] = useState(localStorage.getItem('cw.lastModel') || '');
   const [wMode, setWMode] = useState<PermissionMode>((localStorage.getItem('cw.lastMode') as PermissionMode) || 'default');
   const [wEffort, setWEffort] = useState<EffortLevel | ''>('');
+  const [wUltra, setWUltra] = useState(false);
   const [starting, setStarting] = useState(false);
   const providers = useStore((s) => s.providers);
   const settings = useStore((s) => s.settings);
@@ -52,7 +50,16 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
   const agent = wAgent !== 'claude' ? agents.find((a) => a.kind === wAgent) : undefined;
   const foreign = !!agent;
   const disabledModels = (settings['ui.disabledModels'] as string[] | undefined) ?? [];
-  const modelOptions = (agent ? [{ value: '', label: agent.model ? `默认（${agent.model}）` : '默认模型' }, ...agent.models.map((m) => ({ value: m, label: m }))] : provider?.models?.length ? [{ value: '', label: provider.defaultModel ? `默认（${provider.defaultModel}）` : '默认模型' }, ...provider.models.map((m) => ({ value: m, label: m }))] : MODEL_ALIASES).filter((o) => !o.value || !disabledModels.includes(provider ? `${provider.id}:${o.value}` : o.value));
+  const agentModels = agent ? modelsFor(agent.kind) : [];
+  const modelOptions = (agent
+    ? [{ value: '', label: agent.model ? `默认（${agent.model}）` : '默认模型' }, ...(agentModels.length ? agentModels.map((m) => ({ value: m.value, label: m.displayName })) : agent.models.map((m) => ({ value: m, label: m })))]
+    : provider?.models?.length ? [{ value: '', label: provider.defaultModel ? `默认（${provider.defaultModel}）` : '默认模型' }, ...provider.models.map((m) => ({ value: m, label: m }))]
+      : MODEL_ALIASES).filter((o) => !o.value || !disabledModels.includes(provider ? `${provider.id}:${o.value}` : o.value));
+  // effort is per agent AND per model: Gemini has none, Codex alone has `ultra`, Opus/Sonnet 4.6 have no `xhigh`
+  const wKind: AgentKind = foreign ? wAgent : 'claude';
+  const wEfforts = effortLevels(wKind, wModel || undefined);
+  const wUltracode = !!CATALOG[wKind]?.supportsUltracode;
+  const catalogNote = CATALOG[wKind]?.note;
   const [wFeatures, setWFeatures] = useState<SessionFeatures>(() => { try { return JSON.parse(localStorage.getItem('cw.lastFeatures') ?? '{}'); } catch { return {}; } });
   const [featOpen, setFeatOpen] = useState(false);
   const [listening, setListening] = useState(false);
@@ -180,7 +187,7 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
         if (wAgent !== 'claude' && !agent) throw new Error('选中的 agent 已不可用');
         localStorage.setItem('cw.lastFeatures', JSON.stringify(wFeatures));
         if (wProvider !== 'claude' && !provider) throw new Error('选中的供应商档案已不存在');
-        const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffort || undefined, providerId: foreign ? 'claude' : provider ? provider.id : 'claude', features: foreign ? {} : wFeatures, agent: foreign ? wAgent : undefined }, target);
+        const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffort || undefined, ultracode: wUltra || undefined, providerId: foreign ? 'claude' : provider ? provider.id : 'claude', features: foreign ? {} : wFeatures, agent: foreign ? wAgent : undefined }, target);
         const uploaded = files.length ? await uploadAll(id) : [];
         await send(id, t, im, false, [...atts, ...uploaded]);
         saveDraft('welcome', '');
@@ -264,9 +271,15 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
   // live controls
   const info = active?.info;
   const liveOk = !welcome && active && active.state !== 'history' && active.state !== 'closed' && active.state !== 'error' && info;
+  // the model's own capability flags decide the ladder; fall back to the catalog for agents that don't report
+  const liveModel = info?.models?.find((m) => m.value === info?.model);
+  const liveEfforts: EffortLevel[] = liveModel?.supportedEffortLevels?.length
+    ? liveModel.supportedEffortLevels
+    : liveModel?.supportsEffort === false ? [] : effortLevels(info?.agent ?? 'claude', info?.model ?? undefined);
   const setMode = (mode: PermissionMode) => active && ws.request({ kind: 'session.setPermissionMode', sessionId: active.sessionId, mode }).catch((e) => toast(e.message));
   const setModel = (model: string) => active && ws.request({ kind: 'session.setModel', sessionId: active.sessionId, model }).catch((e) => toast(e.message));
   const setEffort = (effort: EffortLevel) => active && ws.request({ kind: 'session.setEffort', sessionId: active.sessionId, effort }).catch((e) => toast(e.message));
+  const setUltracode = (on: boolean) => active && ws.request({ kind: 'session.setUltracode', sessionId: active.sessionId, on }).catch((e) => toast(e.message));
 
   const totals = useMemo(() => {
     if (!active) return null;
@@ -291,7 +304,7 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
           <div className="palette">
             {matches.map((c, i) => (
               <div key={c.name} className={`it ${i === palIdx ? 'sel' : ''}`} onMouseDown={(e) => { e.preventDefault(); pickCmd(c.name); }}>
-                <span className="n">/{c.name} <span style={{ color: 'var(--fg-3)' }}>{c.argumentHint}</span></span>
+                <span className="n">/{c.name} <span style={{ color: 'var(--ink-4)' }}>{c.argumentHint}</span></span>
                 <span className="d">{c.description}</span>
               </div>
             ))}
@@ -305,13 +318,13 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
                 <img key={i} src={im.url} alt="" onClick={() => setImgs((s) => s.filter((_, j) => j !== i))} title={`${im.name ?? '图片'} · 点击移除`} />
               ))}
               {atts.map((a, i) => (
-                <span key={`a${i}`} className="att-chip" title={a.text?.slice(0, 300)}>📋 {a.name} <span className="sz">{fmtSize(a.size)}</span><button onClick={() => setAtts((s) => s.filter((_, j) => j !== i))}>✕</button></span>
+                <span key={`a${i}`} className="att-chip" title={a.text?.slice(0, 300)}><Icon name="read" size={12} /> {a.name} <span className="sz">{fmtSize(a.size)}</span><button aria-label="移除" onClick={() => setAtts((s) => s.filter((_, j) => j !== i))}><Icon name="close" size={10} /></button></span>
               ))}
               {[...folderChips].map(([name, n]) => (
-                <span key={`d${name}`} className="att-chip" title={`${n} 个文件`}>📁 {name} <span className="sz">{n} 文件</span><button onClick={() => setFiles((s) => s.filter((f) => !f.rel.startsWith(name + '/')))}>✕</button></span>
+                <span key={`d${name}`} className="att-chip" title={`${n} 个文件`}><Icon name="folder" size={12} /> {name} <span className="sz">{n} 文件</span><button aria-label="移除" onClick={() => setFiles((s) => s.filter((f) => !f.rel.startsWith(name + '/')))}><Icon name="close" size={10} /></button></span>
               ))}
               {files.filter((f) => !f.rel.includes('/')).map((f, i) => (
-                <span key={`f${i}`} className="att-chip" title={f.file.name}>📎 {f.file.name} <span className="sz">{fmtSize(f.file.size)}</span><button onClick={() => setFiles((s) => s.filter((x) => x !== f))}>✕</button></span>
+                <span key={`f${i}`} className="att-chip" title={f.file.name}><Icon name="attach" size={12} /> {f.file.name} <span className="sz">{fmtSize(f.file.size)}</span><button aria-label="移除" onClick={() => setFiles((s) => s.filter((x) => x !== f))}><Icon name="close" size={10} /></button></span>
               ))}
               {upload && <span className="att-chip"><span className="spinner" /> 上传 {upload.done + 1}/{upload.total} · {upload.name}</span>}
             </div>
@@ -327,11 +340,11 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
           />
           <div className="composer-bar">
             <input ref={fileInput} type="file" multiple hidden onChange={(e) => { const fl = Array.from(e.target.files ?? []); void addImages(fl.filter((f) => f.type.startsWith('image/'))); setFiles((s) => [...s, ...fl.filter((f) => !f.type.startsWith('image/')).map((f) => ({ file: f, rel: f.name }))]); e.target.value = ''; }} />
-            <button className="icon-btn" title="添加图片 / 文件" onClick={() => fileInput.current?.click()}>＋</button>
+            <button className="icon-btn" title="添加图片 / 文件" aria-label="添加附件" onClick={() => fileInput.current?.click()}><Icon name="plus" size={16} /></button>
             {welcome ? (
               <>
                 <button className="dirpick" onClick={pickDir} title={cwd || '选择工作目录'}>
-                  <span style={{ color: 'var(--fg-2)' }}>▤</span>
+                  <span style={{ color: 'var(--ink-4)', display: 'inline-flex' }}><Icon name="folder" size={13} /></span>
                   <span>{cwd ? basename(cwd) : '选择目录'}</span>
                   {recentDirs.length > 0 && (
                     <select value={cwd} onChange={(e) => setCwd(e.target.value)} onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', opacity: 0, inset: 0, width: '100%', cursor: 'pointer' }}>
@@ -345,25 +358,25 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
             ) : null}
             <span className="grow" />
             {speechOk && (
-              <button className={clsx('icon-btn', listening && 'active')} title={listening ? '停止语音输入' : '语音输入（浏览器识别）'} onClick={toggleVoice}>{listening ? '●' : '🎤'}</button>
+              <button className={clsx('icon-btn', listening && 'active')} title={listening ? '停止语音输入' : '语音输入（浏览器识别）'} onClick={toggleVoice} aria-label="语音输入"><Icon name="mic" size={15} /></button>
             )}
             {welcome ? (
               <>
-                <label className={clsx('chip', (provider || foreign) && 'info')} title="引擎：Claude 账号 / 第三方供应商 / 其它 CLI agent（Codex、Gemini、Qwen、Kimi、ACP）"><span>{agent ? `${agent.icon} ${agent.name}` : provider ? provider.name : 'Claude 账号'}</span><span className="caret">▾</span>
+                <label className={clsx('chip', (provider || foreign) && 'info')} title="引擎：Claude 账号 / 第三方供应商 / 其它 CLI agent（Codex、Gemini、Qwen、Kimi、ACP）"><span>{agent ? `${agent.icon} ${agent.name}` : provider ? provider.name : 'Claude 账号'}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
                   <select value={foreign ? `agent:${wAgent}` : provider ? provider.id : 'claude'} onChange={(e) => { const v = e.target.value; if (v === '__add') { useStore.setState({ configTab: 'providers' }); if (!useStore.getState().panels.includes('config')) togglePanel('config'); return; } if (v === '__agents') { useStore.getState().openSettings({ section: 'agents' }); return; } if (v.startsWith('agent:')) { setWAgent(v.slice(6) as AgentKind); setWProvider('claude'); } else { setWAgent('claude'); setWProvider(v); } setWModel(''); }}>
                     <optgroup label="Claude Code">
                       <option value="claude">Claude 账号（claude.ai 登录）</option>
                       {providers.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.type}</option>)}
-                      <option value="__add">＋ 添加供应商…</option>
+                      <option value="__add">+ 添加供应商…</option>
                     </optgroup>
                     <optgroup label="其它 agent">
                       {agents.filter((a) => a.kind !== 'claude' && a.enabled).map((a) => <option key={a.kind} value={`agent:${a.kind}`} disabled={!a.installed}>{a.icon} {a.name}{a.installed ? (a.label ? ` · ${a.label}` : '') : '（未安装）'}</option>)}
-                      <option value="__agents">⚙ 管理 agent…</option>
+                      <option value="__agents">管理 agent…</option>
                     </optgroup>
                   </select>
                 </label>
                 {!foreign && <span style={{ position: 'relative' }}>
-                  <button className={clsx('chip', featCount > 0 && 'warn')} onClick={() => setFeatOpen(!featOpen)} title="会话附加功能（Chrome / Computer Use / 协调者 / 主动模式 / 频道）">功能{featCount ? ` ${featCount}` : ''} <span className="caret">▾</span></button>
+                  <button className={clsx('chip', featCount > 0 && 'warn')} onClick={() => setFeatOpen(!featOpen)} title="会话附加功能（Chrome / Computer Use / 协调者 / 主动模式 / 频道）">功能{featCount ? ` ${featCount}` : ''} <span className="caret"><Icon name="chevronDown" size={10} /></span></button>
                   {featOpen && (
                     <div className="menu" style={{ bottom: '100%', right: 0, marginBottom: 6, minWidth: 260, padding: 8 }} onMouseLeave={() => setFeatOpen(false)}>
                       {([
@@ -385,41 +398,45 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
                     </div>
                   )}
                 </span>}
-                <label className="chip"><span>{modelOptions.find((m) => m.value === wModel)?.label ?? wModel}</span><span className="caret">▾</span>
+                <label className="chip"><span>{modelOptions.find((m) => m.value === wModel)?.label ?? wModel}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
                   <select value={wModel} onChange={(e) => setWModel(e.target.value)}>{modelOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}{wModel && !modelOptions.some((m) => m.value === wModel) && <option value={wModel}>{wModel}</option>}</select>
                 </label>
-                {(!foreign || agent?.protocol === 'codex') && <label className="chip"><span>{wEffort || 'effort'}</span><span className="caret">▾</span>
-                  <select value={wEffort} onChange={(e) => setWEffort(e.target.value as EffortLevel)}><option value="">默认</option>{['low', 'medium', 'high', 'xhigh', 'max'].map((l) => <option key={l} value={l}>{l}</option>)}</select>
+                {wEfforts.length > 0 && <label className="chip" title={catalogNote ?? 'effort'}><span>{wEffort || 'effort'}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
+                  <select value={wEffort} onChange={(e) => setWEffort(e.target.value as EffortLevel)}><option value="">默认{CATALOG[wKind]?.defaultEffort ? `（${CATALOG[wKind]!.defaultEffort}）` : ''}</option>{wEfforts.map((l) => <option key={l} value={l}>{l}</option>)}</select>
                 </label>}
-                <label className={clsx('chip', wMode === 'bypassPermissions' && 'warn')}><span>{MODE_LABEL[wMode]}</span><span className="caret">▾</span>
+                {wUltracode && <button type="button" className={clsx('chip', wUltra && 'active')} title="ultracode：xhigh + 动态工作流编排（会话级，不是一个 effort 等级）" onClick={() => setWUltra(!wUltra)}><Icon name="bolt" size={12} /> ultracode</button>}
+                <label className={clsx('chip', wMode === 'bypassPermissions' && 'warn')}><span>{MODE_LABEL[wMode]}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
                   <select value={wMode} onChange={(e) => setWMode(e.target.value as PermissionMode)}>{(Object.keys(MODE_LABEL) as PermissionMode[]).map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}</select>
                 </label>
               </>
             ) : liveOk ? (
               <>
-                <label className="chip" title="模型"><span>{info.models?.find((m) => m.value === info.model)?.displayName ?? (shortModel(info.model) || '模型')}</span><span className="caret">▾</span>
+                <label className="chip" title="模型"><span>{info.models?.find((m) => m.value === info.model)?.displayName ?? (shortModel(info.model) || '模型')}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
                   <select value={info.model ?? ''} onChange={(e) => setModel(e.target.value)}>
                     {(info.models ?? []).map((m) => <option key={m.value} value={m.value}>{m.displayName}</option>)}
                     {info.model && !info.models?.some((m) => m.value === info.model) && <option value={info.model}>{shortModel(info.model)}</option>}
                   </select>
                 </label>
-                <label className="chip" title="Effort"><span>{info.effort ?? 'effort'}</span><span className="caret">▾</span>
-                  <select value={info.effort ?? ''} onChange={(e) => setEffort(e.target.value as EffortLevel)}><option value="" disabled>effort</option>{['low', 'medium', 'high', 'xhigh', 'max'].map((l) => <option key={l} value={l}>{l}</option>)}</select>
-                </label>
-                <label className={clsx('chip', info.permissionMode === 'bypassPermissions' && 'warn')} title="权限模式"><span>{MODE_LABEL[info.permissionMode ?? 'default']}</span><span className="caret">▾</span>
+{liveEfforts.length > 0 && <label className="chip" title="Effort"><span>{info.effort ?? 'effort'}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
+                  <select value={info.effort ?? ''} onChange={(e) => setEffort(e.target.value as EffortLevel)}><option value="" disabled>effort</option>{liveEfforts.map((l) => <option key={l} value={l}>{l}</option>)}</select>
+                </label>}
+                {info.supportsUltracode !== false && CATALOG[info.agent ?? 'claude']?.supportsUltracode && (
+                  <button type="button" className={clsx('chip', info.ultracode && 'active')} title="ultracode：xhigh + 动态工作流编排（会话级，不是一个 effort 等级）" onClick={() => setUltracode(!info.ultracode)}><Icon name="bolt" size={12} /> ultracode</button>
+                )}
+                <label className={clsx('chip', info.permissionMode === 'bypassPermissions' && 'warn')} title="权限模式"><span>{MODE_LABEL[info.permissionMode ?? 'default']}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
                   <select value={info.permissionMode ?? 'default'} onChange={(e) => setMode(e.target.value as PermissionMode)}>{(Object.keys(MODE_LABEL) as PermissionMode[]).map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}</select>
                 </label>
               </>
             ) : active ? (
-              <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>{active.state === 'starting' ? '启动中…' : '未运行 · 发送即恢复'}</span>
+              <span style={{ fontSize: 12, color: 'var(--ink-4)' }}>{active.state === 'starting' ? '启动中…' : '未运行 · 发送即恢复'}</span>
             ) : null}
             {busy && canSend && active && (
-              <button className="steer" title="不等这轮结束，立刻插话给 Claude" onClick={async () => { const t = text; setText(''); setDraft(active.sessionId, ''); await send(active.sessionId, t, undefined, true).catch((e) => toast(e.message)); }}>插话 ⤴</button>
+              <button className="steer" title="不等这轮结束，立刻插话给 Claude" onClick={async () => { const t = text; setText(''); setDraft(active.sessionId, ''); await send(active.sessionId, t, undefined, true).catch((e) => toast(e.message)); }}>插话 <Icon name="send" size={12} /></button>
             )}
             {busy ? (
-              <button className="send stop" title="中断 (Esc)" onClick={() => active && interrupt(active.sessionId)}>■</button>
+              <button className="send stop" title="中断 (Esc)" onClick={() => active && interrupt(active.sessionId)} aria-label="中断"><Icon name="stop" size={13} /></button>
             ) : (
-              <button className="send" disabled={!canSend} onClick={doSend} title="发送 (Enter)">{starting || upload ? <span className="spinner" /> : '↑'}</button>
+              <button className="send" disabled={!canSend} onClick={doSend} title="发送 (Enter)" aria-label="发送">{starting || upload ? <span className="spinner" /> : <Icon name="send" size={16} />}</button>
             )}
           </div>
         </div>

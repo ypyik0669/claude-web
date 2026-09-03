@@ -4,6 +4,7 @@ import { deriveStall } from '@/model/health';
 import { ERROR_HINT, ERROR_LABEL } from '@/model/health';
 import { clsx, fmtTok } from '@/util';
 import { ws } from '@/ws/client';
+import { Icon } from '@/ui/icons';
 
 function useTick(active: boolean, ms = 1000) {
   const [, setN] = useState(0);
@@ -54,7 +55,7 @@ export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onReca
   const resetAt = rl?.resetsAt ? rl.resetsAt * (rl.resetsAt < 1e12 ? 1000 : 1) : undefined;
   return (
     <div className="status-strip">
-      {stall?.kind === 'waiting' && <span className="chip warn">● 需要你：查看上面的请求</span>}
+      {stall?.kind === 'waiting' && <span className="chip warn"><Icon name="alert" size={12} /> 需要你：查看上面的请求</span>}
       {stall?.kind === 'compacting' && <span className="chip"><span className="spinner" /> 正在压缩上下文…</span>}
       {stall?.kind === 'tool' && <span className="chip"><span className="spinner" /> {stall.tool} 运行中 {stall.seconds}s</span>}
       {stall?.kind === 'quiet' && <span className="chip muted"><span className="spinner" /> 安静 {stall.seconds}s · 等待模型</span>}

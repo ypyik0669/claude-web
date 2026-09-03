@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { resolveEngine, spawnClaude } from '../claude-exe.js';
 import { providerEnv } from '../providers/service.js';
+import { effortLevels, modelLabel, modelsFor, supportsUltracode } from '../models/catalog.js';
 import type { AttachmentRef, EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot } from '../protocol.js';
 
 const esc = (s: string) => s.replace(/"/g, '&quot;');
@@ -142,7 +143,8 @@ export class SessionRunner extends EventEmitter {
       cwd: this.cwd,
       env: Object.keys(fenv).length ? { ...base, ...fenv } : undefined,
       model: this.model,
-      effort: this.effort,
+      // `ultra` is Codex-only; the Claude SDK's ladder tops out at max
+      effort: this.effort === 'ultra' ? 'max' : this.effort,
       permissionMode: this.permissionMode,
       // The SDK defaults to an EMPTY system prompt. We want the real Claude Code prompt: same behaviour as the
       // CLI, and relays that fingerprint Claude Code requests (e.g. super-nb) reject bodies without it.
@@ -181,9 +183,14 @@ export class SessionRunner extends EventEmitter {
           const cmdSrc: any[] = cmds.length ? cmds : im.commands ?? [];
           const modelSrc: any[] = models.length ? models : im.models ?? [];
           this.info.slashCommands = cmdSrc.map((c) => ({ name: c.name, description: c.description ?? '', argumentHint: c.argumentHint ?? c.argument_hint ?? '' }));
+          // The CLI's own list wins; the catalog only supplies the versioned display name
+          // ("Fable 5.1", not "Fable") and the per-model effort range when the CLI omits them.
           this.info.models = this.provider?.models?.length
-            ? this.provider.models.map((v) => ({ value: v, displayName: v, description: this.provider!.name }))
-            : modelSrc.map((m) => ({ value: m.value, displayName: m.displayName ?? m.value, description: m.description ?? '', supportsEffort: m.supportsEffort, supportedEffortLevels: m.supportedEffortLevels }));
+            ? this.provider.models.map((v) => ({ value: v, displayName: modelLabel('claude', v), description: this.provider!.name, supportsEffort: true, supportedEffortLevels: effortLevels('claude', v) }))
+            : modelSrc.length
+              ? modelSrc.map((m) => ({ value: m.value, displayName: m.displayName && m.displayName !== m.value ? m.displayName : modelLabel('claude', m.value), description: m.description ?? '', supportsEffort: m.supportsEffort ?? true, supportedEffortLevels: m.supportedEffortLevels?.length ? m.supportedEffortLevels : effortLevels('claude', m.value) }))
+              : modelsFor('claude');
+          this.info.supportsUltracode = supportsUltracode('claude');
           this.info.agents = agents.map((a) => ({ name: a.name, description: a.description, model: a.model }));
           this.info.mcpServers = mcp.map((m) => ({ name: m.name, status: m.status, error: m.error, tools: m.tools }));
           this.emit('info', this.info);
@@ -334,8 +341,20 @@ export class SessionRunner extends EventEmitter {
   async setEffort(effort: EffortLevel) {
     this.effort = effort;
     this.info.effort = effort;
+    if (this.info.ultracode) this.info.ultracode = false; // picking a rung leaves ultracode
     // No runtime control for effort: send the slash command through the conversation.
     this.send(`/effort ${effort}`);
+  }
+
+  /**
+   * ultracode = xhigh + dynamic workflow orchestration, session-scoped. It is NOT an effort value:
+   * `CLAUDE_CODE_EFFORT_LEVEL` rejects it and settings.json carries it as its own boolean, so it can
+   * only be reached through `/effort ultracode` in the conversation. Turning it off restores the rung.
+   */
+  async setUltracode(on: boolean) {
+    this.info.ultracode = on;
+    this.send(`/effort ${on ? 'ultracode' : this.effort ?? 'high'}`);
+    this.emit('info', this.info);
   }
 
   async stopTask(taskId: string) {

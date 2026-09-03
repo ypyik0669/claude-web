@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
+import { Icon, type IconName } from '@/ui/icons';
 import { dlg } from '@/ui/dialog';
 import { Markdown } from '@/features/chat/Markdown';
 import type { Goal, GoalEvidence } from '@shared';
 
 const STATUS_L: Record<Goal['status'], string> = { draft: '草稿', active: '进行中', paused: '已暂停', complete: '已完成', blocked: '卡住', max_turns: '到上限' };
-const EV_IC: Record<GoalEvidence['kind'], string> = { file: '✎', command: '›', test: '⚗', commit: '⎇', note: '•', error: '✗', blocked: '⛔' };
+const EV_IC: Record<GoalEvidence['kind'], IconName> = { file: 'edit', command: 'bash', test: 'checkCircle', commit: 'commit', note: 'info', error: 'close', blocked: 'alert' };
 const fmt = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(n));
 const since = (t?: number) => { if (!t) return ''; const s = (Date.now() - t) / 1000; return s < 60 ? `${Math.floor(s)}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${(s / 3600).toFixed(1)}h`; };
 
@@ -58,9 +59,9 @@ function GoalCard({ g, open, onOpen }: { g: Goal; open: boolean; onOpen: () => v
       {open && (
         <div className="goal-b">
           <div className="actions">
-            {(g.status === 'draft' || g.status === 'paused' || g.status === 'blocked' || g.status === 'max_turns') && <button className="btn sm" onClick={() => req({ kind: g.status === 'draft' ? 'goals.start' : 'goals.resume', id: g.id }, g.status === 'draft' ? '已启动' : '继续推进')}>{g.status === 'draft' ? '▶ 启动' : '▶ 继续'}</button>}
-            {g.status === 'active' && <button className="btn sm ghost" onClick={() => req({ kind: 'goals.pause', id: g.id }, '已暂停')}>⏸ 暂停</button>}
-            {g.status !== 'complete' && <button className="btn sm ghost" onClick={() => req({ kind: 'goals.complete', id: g.id }, '已标记完成')}>✓ 标记完成</button>}
+            {(g.status === 'draft' || g.status === 'paused' || g.status === 'blocked' || g.status === 'max_turns') && <button className="btn sm" onClick={() => req({ kind: g.status === 'draft' ? 'goals.start' : 'goals.resume', id: g.id }, g.status === 'draft' ? '已启动' : '继续推进')}><Icon name="play" size={12} /> {g.status === 'draft' ? '启动' : '继续'}</button>}
+            {g.status === 'active' && <button className="btn sm ghost" onClick={() => req({ kind: 'goals.pause', id: g.id }, '已暂停')}><Icon name="pause" size={12} /> 暂停</button>}
+            {g.status !== 'complete' && <button className="btn sm ghost" onClick={() => req({ kind: 'goals.complete', id: g.id }, '已标记完成')}><Icon name="check" size={12} /> 标记完成</button>}
             {g.sessionId && <button className="btn sm ghost" onClick={() => setActive(g.sessionId!)}>打开会话</button>}
             <button className="btn sm ghost" onClick={() => setEditing(!editing)}>{editing ? '收起' : '编辑'}</button>
             <span className="grow" />
@@ -77,7 +78,7 @@ function GoalCard({ g, open, onOpen }: { g: Goal; open: boolean; onOpen: () => v
               {g.steps.length === 0 && <div className="empty">还没有步骤：模型用 TodoWrite 规划后会出现在这里</div>}
               {g.steps.map((s, i) => (
                 <div key={s.id} className={clsx('step', s.status)}>
-                  <span className="n">{s.status === 'completed' ? '✓' : s.status === 'in_progress' ? '▶' : i + 1}</span>
+                  <span className="n">{s.status === 'completed' ? <Icon name="check" size={12} /> : s.status === 'in_progress' ? <Icon name="play" size={11} /> : i + 1}</span>
                   <span className="txt">{s.text}</span>
                   {i < g.steps.length - 1 && <span className="edge" />}
                 </div>
@@ -133,7 +134,7 @@ export function GoalsPanel() {
         <div className="seg mini"><button className={clsx(filter === 'active' && 'active')} onClick={() => setFilter('active')}>未完成</button><button className={clsx(filter === 'all' && 'active')} onClick={() => setFilter('all')}>全部</button></div>
         <span className="muted" style={{ fontSize: 12 }}>{counts.active} 进行中{counts.blocked ? ` · ${counts.blocked} 需要你` : ''}</span>
         <span className="grow" />
-        <button className="btn sm" onClick={() => setCreating(!creating)}>{creating ? '收起' : '＋ 新目标'}</button>
+        <button className="btn sm" onClick={() => setCreating(!creating)}>{creating ? '收起' : <><Icon name="plus" size={12} /> 新目标</>}</button>
       </div>
       {creating && <Editor g={{ cwd: activeCwd ?? workspaces[0]?.path ?? '' }} onDone={async (v) => { try { const g = await ws.request<Goal>({ kind: 'goals.create', ...v }); setCreating(false); setOpenId(g.id); if (await dlg.confirm('目标已创建，现在启动？', { message: '会开一个新会话并把目标 + 规格发过去，然后自动一轮轮推进。', okLabel: '启动' })) await ws.request({ kind: 'goals.start', id: g.id }); } catch (e: any) { toast(e.message); } }} />}
       <div className="goals-list">

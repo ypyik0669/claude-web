@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { modelLabel, modelsFor } from '../models/catalog.js';
 import { randomUUID } from 'node:crypto';
 import type { AgentKind, AttachmentRef, EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, RunnerState, SessionInfoSnapshot } from '../protocol.js';
 import { JsonRpcProcess } from './jsonrpc.js';
@@ -8,7 +9,9 @@ import type { AgentDriver } from './types.js';
 
 interface PendingPerm { event: PermissionRequestEvent; resolve: (r: any) => void; kind: 'command' | 'file' | 'permissions' }
 
-const EFFORT_MAP: Record<EffortLevel, string> = { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'xhigh' };
+// Codex's own ladder, verbatim: low | medium | high | xhigh | max | ultra. `max` and `ultra` are real
+// members here (unlike Claude, where the top rung is a separate ultracode flag).
+const EFFORT_MAP: Record<EffortLevel, string> = { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max', ultra: 'ultra' };
 
 /**
  * OpenAI Codex via `codex app-server` (JSON-RPC v2 over stdio): thread/start|resume → turn/start,
@@ -104,7 +107,8 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
       try {
         const ml = await rpc.request('model/list', {}, 30_000);
         rawModels = ml?.data ?? [];
-        this.info.models = (ml?.data ?? []).filter((m: any) => !m.hidden).map((m: any) => ({ value: m.model, displayName: m.displayName ?? m.model, description: m.description ?? '', supportsEffort: (m.supportedReasoningEfforts ?? []).length > 0, supportedEffortLevels: (m.supportedReasoningEfforts ?? []).map((e: any) => e.reasoningEffort ?? e).filter((e: any) => typeof e === 'string') }));
+        const reported = (ml?.data ?? []).filter((m: any) => !m.hidden).map((m: any) => ({ value: m.model, displayName: m.displayName ?? modelLabel('codex', m.model), description: m.description ?? '', supportsEffort: (m.supportedReasoningEfforts ?? []).length > 0, supportedEffortLevels: (m.supportedReasoningEfforts ?? []).map((e: any) => e.reasoningEffort ?? e).filter((e: any) => typeof e === 'string') }));
+        this.info.models = reported.length ? reported : modelsFor('codex');
       } catch { /* optional */ }
       // config.toml may name a model this account cannot use (ChatGPT plans reject some ids) — prefer a listed one
       const listed = this.info.models ?? [];

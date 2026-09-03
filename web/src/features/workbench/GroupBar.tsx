@@ -5,13 +5,14 @@ import { clsx } from '@/util';
 import { desktop } from '@/desktop';
 import { MIME_SESSION, MIME_TILE, hasType, tilePayload } from './dnd';
 import { offerGroupToNewWindow } from './windows';
+import { Icon, type IconName } from '@/ui/icons';
 
-const PRESETS: { id: LayoutPreset; l: string; ic: string }[] = [
-  { id: 'single', l: '单窗格', ic: '▢' },
-  { id: 'cols2', l: '左右两栏', ic: '◫' },
-  { id: 'cols3', l: '三栏', ic: '⫼' },
-  { id: 'grid2x2', l: '四宫格', ic: '⊞' },
-  { id: 'mainSide', l: '主 + 侧', ic: '◧' },
+const PRESETS: { id: LayoutPreset; l: string; ic: IconName }[] = [
+  { id: 'single', l: '单窗格', ic: 'circle' as const },
+  { id: 'cols2', l: '左右两栏', ic: 'splitRight' as const },
+  { id: 'cols3', l: '三栏', ic: 'board' as const },
+  { id: 'grid2x2', l: '四宫格', ic: 'zoom' as const },
+  { id: 'mainSide', l: '主 + 侧', ic: 'sidebar' as const },
 ];
 
 /** Group tabs (Mirasim's "分组"): each group is an independent pane tree; drag a tile or session onto a tab to move it there. */
@@ -65,21 +66,21 @@ export function GroupBar() {
           ) : (
             <span className="t">{g.name}</span>
           )}
-          {layout.groups.length > 1 && <button className="x" title="关闭分组" onClick={(e) => { e.stopPropagation(); dispatch({ t: 'group.close', id: g.id }); }}>✕</button>}
+          {layout.groups.length > 1 && <button className="x" title="关闭分组" onClick={(e) => { e.stopPropagation(); dispatch({ t: 'group.close', id: g.id }); }} aria-label="关闭分组"><Icon name="close" size={11} /></button>}
         </div>
       ))}
-      <button className="icon-btn" title="新分组" onClick={() => dispatch({ t: 'group.new' })}>＋</button>
+      <button className="icon-btn" title="新分组" aria-label="新分组" onClick={() => dispatch({ t: 'group.new' })}><Icon name="plus" size={15} /></button>
       <span className="grow" />
       <span style={{ position: 'relative' }}>
-        <button className="icon-btn" title="布局预设" onClick={() => setPresets(!presets)}>⊞</button>
+        <button className="icon-btn" title="布局预设" aria-label="布局预设" onClick={() => setPresets(!presets)}><Icon name="zoom" size={15} /></button>
         {presets && (
           <div className="menu" style={{ right: 0, top: 26 }} onMouseLeave={() => setPresets(false)}>
-            {PRESETS.map((p) => <button key={p.id} onClick={() => { setPresets(false); dispatch({ t: 'pane.preset', preset: p.id }); }}>{p.ic} {p.l}</button>)}
-            <button onClick={() => { setPresets(false); dispatch({ t: 'pane.even' }); }}>⇔ 均分所有窗格</button>
+            {PRESETS.map((p) => <button key={p.id} onClick={() => { setPresets(false); dispatch({ t: 'pane.preset', preset: p.id }); }}><Icon name={p.ic} size={13} /> {p.l}</button>)}
+            <button onClick={() => { setPresets(false); dispatch({ t: 'pane.even' }); }}><Icon name="splitRight" size={13} /> 均分所有窗格</button>
           </div>
         )}
       </span>
-      {desktop && <button className="icon-btn" title="在新窗口打开当前分组 (Ctrl+Shift+N)" onClick={() => void offerGroupToNewWindow(layout.activeGroupId)}>⧉</button>}
+      {desktop && <button className="icon-btn" title="在新窗口打开当前分组 (Ctrl+Shift+N)" onClick={() => void offerGroupToNewWindow(layout.activeGroupId)} aria-label="新窗口打开分组"><Icon name="external" size={15} /></button>}
     </div>
   );
 }

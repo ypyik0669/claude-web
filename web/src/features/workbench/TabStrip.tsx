@@ -1,23 +1,23 @@
 import { useState } from 'react';
 import { useStore } from '@/store';
-import { chatTile, paneOrder, activeGroup, MAX_PANES, type Pane as PaneModel, type Tile } from '@/model/layout';
+import { chatTile, paneOrder, activeGroup, MAX_PANES, PANELS, PANEL_ICONS, PANEL_TITLES, TILE_ICONS, type Pane as PaneModel, type Tile } from '@/model/layout';
 import { clsx, basename } from '@/util';
+import { Icon, type IconName } from '@/ui/icons';
 import { MIME_TILE, hasType, tilePayload } from './dnd';
 
-const PANEL_TITLES: Record<string, string> = { tasks: '任务', files: '文件改动', usage: '用量', config: '配置中心', terminal: '终端', inspector: '详情', mission: '总览' };
-
-export function tileTitle(t: Tile, sessions: { sessionId: string; title: string }[]): { icon: string; text: string } {
-  if (t.title) return { icon: iconFor(t), text: t.title };
+export function tileTitle(t: Tile, sessions: { sessionId: string; title: string }[]): { icon: IconName; text: string } {
+  const icon = iconFor(t);
+  if (t.title) return { icon, text: t.title };
   switch (t.kind) {
-    case 'chat': return { icon: '◌', text: t.sessionId ? sessions.find((s) => s.sessionId === t.sessionId)?.title ?? t.sessionId.slice(0, 8) : '新会话' };
-    case 'doc': return { icon: '📄', text: basename(t.path) };
-    case 'diff': return { icon: '±', text: basename(t.path) };
-    case 'term': return { icon: '▣', text: `终端 · ${basename(t.cwd) || t.cwd}` };
-    case 'panel': return { icon: '▤', text: PANEL_TITLES[t.panel] ?? t.panel };
+    case 'chat': return { icon, text: t.sessionId ? sessions.find((s) => s.sessionId === t.sessionId)?.title ?? t.sessionId.slice(0, 8) : '新会话' };
+    case 'doc': return { icon, text: basename(t.path) };
+    case 'diff': return { icon, text: basename(t.path) };
+    case 'term': return { icon, text: `终端 · ${basename(t.cwd) || t.cwd}` };
+    case 'panel': return { icon, text: PANEL_TITLES[t.panel] ?? t.panel };
   }
 }
-function iconFor(t: Tile) {
-  return t.kind === 'chat' ? '◌' : t.kind === 'doc' ? '📄' : t.kind === 'diff' ? '±' : t.kind === 'term' ? '▣' : '▤';
+function iconFor(t: Tile): IconName {
+  return t.kind === 'panel' ? PANEL_ICONS[t.panel] ?? 'inspector' : TILE_ICONS[t.kind];
 }
 
 /** Tabs of one pane: click / middle-click close / double-click rename / drag reorder & move / ＋ menu / split & zoom buttons. */
@@ -80,34 +80,34 @@ export function TabStrip({ pane, groupId, index, zoomed, single }: { pane: PaneM
               title={`${text}\n双击重命名 · 中键关闭 · 可拖到别的窗格`}
             >
               {live && live !== 'history' && live !== 'closed' && <span className={clsx('dot', live)} />}
-              {!live && <span className="ic">{icon}</span>}
+              {!live && <span className="ic"><Icon name={icon} size={14} /></span>}
               {renaming === t.id ? (
                 <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commitRename} onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenaming(null); }} onClick={(e) => e.stopPropagation()} />
               ) : (
                 <span className="t">{text}{dirty[t.id] ? ' •' : ''}</span>
               )}
-              <button className="x" title="关闭" onClick={(e) => { e.stopPropagation(); closeTile(pane.id, t.id); }}>✕</button>
+              <button className="x" title="关闭" aria-label="关闭标签" onClick={(e) => { e.stopPropagation(); closeTile(pane.id, t.id); }}><Icon name="close" size={11} /></button>
             </div>
           );
         })}
         <span style={{ position: 'relative' }}>
-          <button className="tab-add" title="新标签" onClick={() => setMenu(!menu)}>＋</button>
+          <button className="tab-add" title="新标签" aria-label="新标签" onClick={() => setMenu(!menu)}><Icon name="plus" size={14} /></button>
           {menu && (
             <div className="menu" style={{ top: 26, left: 0 }} onMouseLeave={() => setMenu(false)}>
-              <button onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: chatTile(null), mode: 'tab' }); }}>◌ 新会话</button>
-              <button onClick={() => { setMenu(false); const cwd = currentCwd(pane, open); dispatch({ t: 'tile.open', paneId: pane.id, tile: { id: `t${Date.now()}`, kind: 'term', cwd }, mode: 'tab' }); }}>▣ 终端</button>
-              {(['mission', 'goals', 'tasks', 'files', 'usage', 'config', 'inspector', 'android'] as const).map((p) => (
-                <button key={p} onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: { id: `t${Date.now()}`, kind: 'panel', panel: p }, mode: 'tab' }); }}>▤ {PANEL_TITLES[p]}</button>
+              <button onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: chatTile(null), mode: 'tab' }); }}><Icon name="chat" size={14} /> 新会话</button>
+              <button onClick={() => { setMenu(false); const cwd = currentCwd(pane, open); dispatch({ t: 'tile.open', paneId: pane.id, tile: { id: `t${Date.now()}`, kind: 'term', cwd }, mode: 'tab' }); }}><Icon name="terminal" size={14} /> 终端</button>
+              {PANELS.map((p) => (
+                <button key={p.id} onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: { id: `t${Date.now()}`, kind: 'panel', panel: p.id }, mode: 'tab' }); }}><Icon name={p.icon} size={14} /> {p.title}</button>
               ))}
             </div>
           )}
         </span>
       </div>
       <span className="grow" />
-      {canSplit && <button className="icon-btn" title="向右分屏 (Ctrl+D)" onClick={() => dispatch({ t: 'pane.split', paneId: pane.id, dir: 'row' })}>◫</button>}
-      {canSplit && <button className="icon-btn" title="向下分屏 (Ctrl+Shift+D)" onClick={() => dispatch({ t: 'pane.split', paneId: pane.id, dir: 'col' })}>⬓</button>}
-      {!single && <button className={clsx('icon-btn', zoomed && 'active')} title={zoomed ? '还原 (Ctrl+Shift+Enter)' : '缩放此窗格 (Ctrl+Shift+Enter)'} onClick={() => dispatch({ t: 'pane.zoom', paneId: zoomed ? null : pane.id })}>{zoomed ? '⤡' : '⤢'}</button>}
-      {!single && <button className="icon-btn" title="关闭窗格" onClick={() => dispatch({ t: 'pane.close', paneId: pane.id })}>✕</button>}
+      {canSplit && <button className="icon-btn xs" title="向右分屏 (Ctrl+D)" onClick={() => dispatch({ t: 'pane.split', paneId: pane.id, dir: 'row' })}><Icon name="splitRight" size={14} /></button>}
+      {canSplit && <button className="icon-btn xs" title="向下分屏 (Ctrl+Shift+D)" onClick={() => dispatch({ t: 'pane.split', paneId: pane.id, dir: 'col' })}><Icon name="splitDown" size={14} /></button>}
+      {!single && <button className={clsx('icon-btn xs', zoomed && 'active')} title={zoomed ? '还原 (Ctrl+Shift+Enter)' : '缩放此窗格 (Ctrl+Shift+Enter)'} onClick={() => dispatch({ t: 'pane.zoom', paneId: zoomed ? null : pane.id })}><Icon name="zoom" size={14} /></button>}
+      {!single && <button className="icon-btn xs" title="关闭窗格" onClick={() => dispatch({ t: 'pane.close', paneId: pane.id })}><Icon name="close" size={14} /></button>}
     </div>
   );
 }

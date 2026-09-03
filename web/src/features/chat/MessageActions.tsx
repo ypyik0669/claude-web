@@ -4,6 +4,7 @@ import { turnItems } from '@/model/conversation';
 import { buildHtml, downloadHtml } from '@/model/export';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
+import { Icon } from '@/ui/icons';
 
 function useSession(sessionId: string) {
   return useStore((s) => s.open[sessionId]);
@@ -38,11 +39,11 @@ export function UserActions({ it, sessionId, onEdit }: { it: UserItem; sessionId
   const busy = o && (o.state === 'running' || o.state === 'waiting' || o.state === 'starting');
   return (
     <div className="msg-actions">
-      <button title="复制" onClick={() => navigator.clipboard.writeText(it.text)}>⧉</button>
-      <button title="编辑并重新发送（从这里分叉）" disabled={!!busy} onClick={onEdit}>✎ 编辑</button>
-      <button title="用同样的消息重跑（从这里分叉）" disabled={!!busy} onClick={() => st().rerun(sessionId, it.id).catch((e) => st().toast(e.message))}>↻ 重跑</button>
-      <button title="从这条消息之前分叉出新会话" onClick={() => st().forkAt(sessionId, it.id).catch((e) => st().toast(e.message))}>⑂ 分叉</button>
-      <button title="导出这一轮为 HTML" onClick={() => shareTurn(sessionId, it.id)}>↗ 分享本轮</button>
+      <button title="复制" aria-label="复制" onClick={() => navigator.clipboard.writeText(it.text)}><Icon name="copy" size={13} /></button>
+      <button title="编辑并重新发送（从这里分叉）" disabled={!!busy} onClick={onEdit}><Icon name="edit" size={12} /> 编辑</button>
+      <button title="用同样的消息重跑（从这里分叉）" disabled={!!busy} onClick={() => st().rerun(sessionId, it.id).catch((e) => st().toast(e.message))}><Icon name="refresh" size={12} /> 重跑</button>
+      <button title="从这条消息之前分叉出新会话" onClick={() => st().forkAt(sessionId, it.id).catch((e) => st().toast(e.message))}><Icon name="branch" size={12} /> 分叉</button>
+      <button title="导出这一轮为 HTML" onClick={() => shareTurn(sessionId, it.id)}><Icon name="external" size={12} /> 分享本轮</button>
     </div>
   );
 }
@@ -60,10 +61,10 @@ export function AssistantActions({ it, sessionId }: { it: AssistantItem; session
   };
   return (
     <div className="msg-actions">
-      <button title="复制回复（Markdown）" onClick={() => { void navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1200); }}>{copied ? '✓ 已复制' : '⧉ 复制'}</button>
-      <button className={clsx(fb === 'up' && 'on')} title="好评" onClick={() => setFeedback(sessionId, it.id, fb === 'up' ? null : 'up')}>👍</button>
-      <button className={clsx(fb === 'down' && 'on')} title="差评" onClick={() => setFeedback(sessionId, it.id, fb === 'down' ? null : 'down')}>👎</button>
-      <button title="导出这一轮为 HTML" onClick={turn}>↗ 分享本轮</button>
+      <button title="复制回复（Markdown）" onClick={() => { void navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1200); }}>{copied ? <><Icon name="check" size={12} /> 已复制</> : <><Icon name="copy" size={12} /> 复制</>}</button>
+      <button className={clsx(fb === 'up' && 'on')} title="好评" aria-label="好评" onClick={() => setFeedback(sessionId, it.id, fb === 'up' ? null : 'up')}><Icon name="check" size={13} /></button>
+      <button className={clsx(fb === 'down' && 'on')} title="差评" aria-label="差评" onClick={() => setFeedback(sessionId, it.id, fb === 'down' ? null : 'down')}><Icon name="close" size={13} /></button>
+      <button title="导出这一轮为 HTML" onClick={turn}><Icon name="external" size={12} /> 分享本轮</button>
     </div>
   );
 }

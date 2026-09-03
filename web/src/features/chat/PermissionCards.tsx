@@ -6,6 +6,7 @@ import { DiffView, Markdown } from './Markdown';
 import { CodeBlock } from './CodeBlock';
 import { langFromPath } from './highlight';
 import { JsonTree } from './tools/McpTool';
+import { Icon } from '@/ui/icons';
 
 function AskQuestion({ p }: { p: PermissionRequestEvent }) {
   const respond = useStore((s) => s.respondPermission);
@@ -31,7 +32,7 @@ function AskQuestion({ p }: { p: PermissionRequestEvent }) {
   const complete = qs.every((q) => (sel[q.question]?.length ?? 0) > 0 || other[q.question]?.trim());
   return (
     <div className="perm">
-      <h4>❓ Claude 有问题要问你</h4>
+      <h4><Icon name="question" size={15} /> Claude 有问题要问你</h4>
       {qs.map((q) => (
         <div key={q.question} style={{ marginBottom: 12 }}>
           <div style={{ marginBottom: 6 }}>
@@ -39,7 +40,7 @@ function AskQuestion({ p }: { p: PermissionRequestEvent }) {
           </div>
           {q.options.map((o: any) => (
             <div key={o.label} className={clsx('q-opt', sel[q.question]?.includes(o.label) && 'sel')} onClick={() => toggle(q, o.label)}>
-              <span>{sel[q.question]?.includes(o.label) ? (q.multiSelect ? '☑' : '◉') : q.multiSelect ? '☐' : '○'}</span>
+              <span className="opt-mark"><Icon name={sel[q.question]?.includes(o.label) ? 'checkCircle' : 'circle'} size={14} /></span>
               <div style={{ flex: 1 }}>
                 <div>{o.label}</div>
                 <div className="d">{o.description}</div>
@@ -67,7 +68,7 @@ function PlanApproval({ p }: { p: PermissionRequestEvent }) {
   const [msg, setMsg] = useState('');
   return (
     <div className="perm">
-      <h4>📋 Claude 请求批准计划并开始实施</h4>
+      <h4><Icon name="plan" size={15} /> Claude 请求批准计划并开始实施</h4>
       <div style={{ maxHeight: 420, overflow: 'auto', border: '1px solid var(--line)', borderRadius: 4, padding: '4px 12px', background: 'var(--bg)' }}>
         <Markdown text={String(p.input.plan ?? '')} />
       </div>
@@ -92,7 +93,7 @@ function ToolPermission({ p }: { p: PermissionRequestEvent }) {
   return (
     <div className="perm">
       <h4>
-        🔐 需要权限：<span className="mono">{p.toolName}</span>
+        <Icon name="lock" size={13} /> 需要权限：<span className="mono">{p.toolName}</span>
         <span style={{ color: 'var(--fg-2)', fontWeight: 400, fontSize: 12 }}>{toolSummary(p.toolName, p.input)}</span>
       </h4>
       {p.decisionReason && <div style={{ fontSize: 12, color: 'var(--fg-2)', marginBottom: 6 }}>{p.decisionReason}</div>}

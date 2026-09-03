@@ -3,6 +3,7 @@ import { ws } from '@/ws/client';
 import { useScopedSession, useStore } from '@/store';
 import { dlg } from '@/ui/dialog';
 import type { SkillInfo } from '@shared';
+import { Icon } from '@/ui/icons';
 
 const SUGGESTED = [
   { src: 'anthropics/skills', l: 'Anthropic 官方 skills 合集', d: 'docx / pptx / xlsx / pdf 等文档技能' },
@@ -41,14 +42,14 @@ export function SkillsSection() {
         <div className="list">
           {list.map((s) => (
             <div key={s.path} className="row" title={s.path}>
-              <span>✦</span>
+              <span><Icon name="skill" size={13} /></span>
               <div className="grow">
                 <div>/{s.name} <span className="badge">{s.scope === 'user' ? '用户' : '项目'}</span></div>
                 <div className="sub">{s.description || s.path}</div>
               </div>
               <button className="btn sm ghost" onClick={() => openTile({ id: `d${Date.now()}`, kind: 'doc', path: `${s.path}\\SKILL.md` }, 'tab')}>编辑</button>
               <button className="btn sm ghost" onClick={() => ws.request({ kind: 'shell.open', path: s.path })}>目录</button>
-              <button className="btn sm ghost danger" onClick={async () => { if (await dlg.confirm(`删除 skill「${s.name}」？`, { danger: true })) void run(async () => { await ws.request({ kind: 'skills.remove', path: s.path }); return '已删除'; }); }}>✕</button>
+              <button className="btn sm ghost danger" onClick={async () => { if (await dlg.confirm(`删除 skill「${s.name}」？`, { danger: true })) void run(async () => { await ws.request({ kind: 'skills.remove', path: s.path }); return '已删除'; }); }} aria-label="删除"><Icon name="trash" size={12} /></button>
             </div>
           ))}
           {!list.length && <div className="empty">还没有 skill。下面从 GitHub 安装或新建一个。</div>}
@@ -63,7 +64,7 @@ export function SkillsSection() {
             <option value="project" disabled={!cwd}>项目级 .claude/skills</option>
           </select>
           <button className="btn sm primary" disabled={busy || !src.trim()} onClick={() => install()}>{busy ? '处理中…' : '安装'}</button>
-          <button className="btn sm" disabled={busy} onClick={create}>＋ 新建</button>
+          <button className="btn sm" disabled={busy} onClick={create}><Icon name="plus" size={12} /> 新建</button>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
           {SUGGESTED.map((s) => <button key={s.src} className="chip" title={s.d} disabled={busy} onClick={() => install(s.src)}>{s.l}</button>)}

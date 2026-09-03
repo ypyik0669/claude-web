@@ -3,6 +3,7 @@ import { THEMES, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { clsx } from '@/util';
+import { Icon } from '@/ui/icons';
 
 /** First-run wizard: engine & login → workspace → theme → optional provider. Sets `onboarded` when done. */
 export function Onboarding() {
@@ -52,8 +53,8 @@ export function Onboarding() {
           <>
             <h3>添加工作区</h3>
             <p>工作区就是一个项目文件夹，会话在里面运行。可以稍后在侧栏添加更多。</p>
-            <div className="list">{workspaces.map((w) => <div key={w.id} className="row"><span>▤</span><div className="grow"><div>{w.name}</div><div className="sub">{w.path}</div></div></div>)}</div>
-            <div className="actions"><button className="btn" onClick={pick}>＋ 选择文件夹</button><span className="grow" /><button className="btn ghost" onClick={() => setStep(0)}>上一步</button><button className="btn primary" onClick={() => setStep(2)}>{workspaces.length ? '下一步' : '跳过'}</button></div>
+            <div className="list">{workspaces.map((w) => <div key={w.id} className="row"><span><Icon name="folder" size={14} /></span><div className="grow"><div>{w.name}</div><div className="sub">{w.path}</div></div></div>)}</div>
+            <div className="actions"><button className="btn" onClick={pick}><Icon name="plus" size={13} /> 选择文件夹</button><span className="grow" /><button className="btn ghost" onClick={() => setStep(0)}>上一步</button><button className="btn primary" onClick={() => setStep(2)}>{workspaces.length ? '下一步' : '跳过'}</button></div>
           </>
         )}
         {step === 2 && (

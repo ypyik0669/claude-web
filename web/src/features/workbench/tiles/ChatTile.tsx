@@ -16,6 +16,7 @@ import { GitView } from '../GitView';
 import { SearchView } from '../SearchView';
 import { BoardView } from '@/features/vcs/BoardView';
 import type { GitStatus } from '@shared';
+import { Icon } from '@/ui/icons';
 
 /** git status for a cwd, refreshed on git.changed broadcasts (shared by the files tab badges). */
 function useGitStatus(cwd: string, enabled: boolean): GitStatus | null {
@@ -72,7 +73,7 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
   return (
     <div className="sess-head">
       <div className="crumb">
-        <button title={cwd} onClick={() => ws.request({ kind: 'shell.open', path: cwd })}>▤ {wsOf?.name ?? basename(cwd)}</button>
+        <button title={cwd} onClick={() => ws.request({ kind: 'shell.open', path: cwd })}><Icon name="folder" size={12} /> {wsOf?.name ?? basename(cwd)}</button>
         <span className="sep">/</span>
         {live && <span className={clsx('dot', active.state)} />}
         {editing !== null ? (
@@ -85,12 +86,12 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
         {agentKind && agentKind !== 'claude' && <span className="badge agent" title={`这个会话由 ${agentName} 驱动`}>{agentIcon} {agentName}</span>}
       </div>
       <span className="grow" />
-      <button className="icon-btn" title="从当前会话分叉（新标签）" onClick={() => openSession({ sessionId: sid, cwd, fork: true }).catch((e) => toast(e.message))}>⑂</button>
+      <button className="icon-btn" title="从当前会话分叉（新标签）" onClick={() => openSession({ sessionId: sid, cwd, fork: true }).catch((e) => toast(e.message))} aria-label="分叉"><Icon name="branch" size={14} /></button>
       <button className="icon-btn" title="导出对话为 HTML（可分享）" onClick={() => shareConversation(sid)}>↗</button>
       {live ? (
-        <button className="icon-btn" title="结束进程（可随时恢复）" onClick={() => closeSession(sid)}>⏻</button>
+        <button className="icon-btn" title="结束进程（可随时恢复）" onClick={() => closeSession(sid)} aria-label="结束进程"><Icon name="stop" size={13} /></button>
       ) : (
-        <button className="btn sm ghost" onClick={() => openSession({ sessionId: sid, cwd }, 'none').catch((e) => toast(e.message))}>▶ 恢复</button>
+        <button className="btn sm ghost" onClick={() => openSession({ sessionId: sid, cwd }, 'none').catch((e) => toast(e.message))}><Icon name="play" size={12} /> 恢复</button>
       )}
       <div className="sess-tabs">
         <div className="wb-tabs">
@@ -127,7 +128,7 @@ function Artifacts({ sessionId }: { sessionId: string }) {
     <div className="list">
       {items.map((a) => (
         <div key={a.path} className="row clickable" onClick={() => openTile({ id: `d${Date.now()}`, kind: 'doc', path: a.path }, 'tab')} title={a.path}>
-          <span>📄</span>
+          <span><Icon name="read" size={13} /></span>
           <div className="grow"><div>{basename(a.path)}</div><div className="sub">{a.path}</div></div>
           <span className="badge">{a.via}</span>
         </div>

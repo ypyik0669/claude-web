@@ -8,6 +8,7 @@ import { ToolHead } from '@/features/chat/ToolCard';
 import { getToolDef } from '@/features/chat/tools/registry';
 import { JsonTree } from '@/features/chat/tools/McpTool';
 import { basename } from '@/util';
+import { Icon } from '@/ui/icons';
 
 function FileView({ path, line }: { path: string; line?: number }) {
   const [text, setText] = useState<string | null>(null);
@@ -28,7 +29,7 @@ function FileView({ path, line }: { path: string; line?: number }) {
         <b>{basename(path)}</b>
         <span className="mono" style={{ color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, fontSize: 11.5 }} title={path}>{path}</span>
         <button className="btn sm ghost" onClick={() => ws.request({ kind: 'shell.open', path, app: 'code' }).catch(() => {})}>VS Code</button>
-        <button className="icon-btn" onClick={() => useStore.setState({ inspect: null })}>✕</button>
+        <button className="icon-btn" aria-label="关闭" onClick={() => useStore.setState({ inspect: null })}><Icon name="close" size={14} /></button>
       </div>
       {err && <div style={{ color: 'var(--red)', fontSize: 12 }}>{err}</div>}
       {text === null && !err && <div className="empty">读取中…</div>}
@@ -40,7 +41,7 @@ function FileView({ path, line }: { path: string; line?: number }) {
 export function InspectorPanel() {
   const inspect = useStore((s) => s.inspect);
   const o = useStore((s) => (inspect ? s.open[inspect.sessionId] : undefined));
-  if (!inspect) return <div className="empty">点击工具卡片右侧 ⧉、轨迹表格中的一行，或搜索结果里的文件路径查看详情</div>;
+  if (!inspect) return <div className="empty">点击工具行右侧的详情按钮、轨迹表格中的一行，或搜索结果里的文件路径查看详情</div>;
   if (inspect.file) return <FileView path={inspect.file.path} line={inspect.file.line} />;
   const t = o && inspect.toolUseId ? o.conv.toolIndex.get(inspect.toolUseId) : undefined;
   if (!o || !t) return <div className="empty">找不到该工具调用</div>;
@@ -49,7 +50,7 @@ export function InspectorPanel() {
     <div className="inspector" style={{ padding: '8px 12px', fontSize: 12.5 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
         <div style={{ flex: 1, minWidth: 0 }}><ToolHead t={t} /></div>
-        <button className="icon-btn" onClick={() => useStore.setState({ inspect: null })}>✕</button>
+        <button className="icon-btn" aria-label="关闭" onClick={() => useStore.setState({ inspect: null })}><Icon name="close" size={14} /></button>
       </div>
       <Body t={t} />
       <details className="structured" style={{ marginTop: 8 }}>

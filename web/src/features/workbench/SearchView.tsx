@@ -4,6 +4,7 @@ import { useStore } from '@/store';
 import { basename, clsx } from '@/util';
 import type { SearchOptions, SearchResult } from '@shared';
 import { dlg } from '@/ui/dialog';
+import { Icon } from '@/ui/icons';
 
 /** Cross-file search & replace (ripgrep on the server). Results grouped per file; click → editor at that line. */
 export function SearchView({ root }: { root: string }) {
@@ -66,7 +67,7 @@ export function SearchView({ root }: { root: string }) {
     <div className="search-view">
       <div className="search-form">
         <div className="row">
-          <button className={clsx('icon-btn', showRep && 'active')} title="替换" onClick={() => setShowRep(!showRep)}>{showRep ? '▾' : '▸'}</button>
+          <button className={clsx('icon-btn', showRep && 'active')} title="替换" onClick={() => setShowRep(!showRep)} aria-label="替换"><Icon name={showRep ? 'chevronDown' : 'chevronRight'} size={13} /></button>
           <input className="field grow" placeholder="搜索（Enter 立即搜索）" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && run()} autoFocus />
           <button className={clsx('tog', opt.caseSensitive && 'on')} title="区分大小写" onClick={() => setOpt({ ...opt, caseSensitive: !opt.caseSensitive })}>Aa</button>
           <button className={clsx('tog', opt.wholeWord && 'on')} title="全词匹配" onClick={() => setOpt({ ...opt, wholeWord: !opt.wholeWord })}>ab</button>
@@ -92,7 +93,7 @@ export function SearchView({ root }: { root: string }) {
         {res?.files.map((f) => (
           <div key={f.path} className="sr-file">
             <div className="sr-head" onClick={() => setCollapsed({ ...collapsed, [f.path]: !collapsed[f.path] })}>
-              <span className="chev" style={{ transform: collapsed[f.path] ? undefined : 'rotate(90deg)' }}>▶</span>
+              <span className="chev"><Icon name={collapsed[f.path] ? 'chevronRight' : 'chevronDown'} size={11} /></span>
               <b>{basename(f.path)}</b>
               <span className="muted">{rel(f.path).replace(/[\\/][^\\/]+$/, '')}</span>
               <span className="grow" />
@@ -105,7 +106,7 @@ export function SearchView({ root }: { root: string }) {
                 <div key={key} className={clsx('sr-line', excluded.has(key) && 'excluded')} onClick={() => openTile({ id: `d${Date.now().toString(36)}`, kind: 'doc', path: f.path, line: m.line }, 'tab')} title={`${f.path}:${m.line}`}>
                   <span className="ln">{m.line}</span>
                   <span className="tx">{preview(m)}</span>
-                  {showRep && <button className="x" title={excluded.has(key) ? '重新包含' : '从替换中排除'} onClick={(e) => { e.stopPropagation(); const n = new Set(excluded); n.has(key) ? n.delete(key) : n.add(key); setExcluded(n); }}>{excluded.has(key) ? '＋' : '✕'}</button>}
+                  {showRep && <button className="x" title={excluded.has(key) ? '重新包含' : '从替换中排除'} onClick={(e) => { e.stopPropagation(); const n = new Set(excluded); n.has(key) ? n.delete(key) : n.add(key); setExcluded(n); }}><Icon name={excluded.has(key) ? 'plus' : 'close'} size={11} /></button>}
                 </div>
               );
             })}

@@ -10,6 +10,8 @@ import { Markdown } from './Markdown';
 import { ToolCard } from './ToolCard';
 import { PermissionCards } from './PermissionCards';
 import { getToolDef, isStandalone } from './tools/registry';
+import { Icon } from '@/ui/icons';
+import { ToolHead } from './ToolCard';
 
 /** Human summary for a run of consecutive tool calls, Claude-Code-on-web style: "读取 2 个文件 · 运行 1 条命令". */
 function stepLabel(tools: ToolUseBlock[]): string {
@@ -54,27 +56,58 @@ function segment(blocks: Block[]): Seg[] {
   return out;
 }
 
+/**
+ * One run of tool calls as a vertical timeline. Three states, three distinct marks —
+ * done = hollow check, running = breathing square + elapsed, pending = grey ring — so the
+ * collapsed form already tells you where the turn got to. Clicking a node expands that step's card.
+ */
 function Steps({ tools, version, live }: { tools: ToolUseBlock[]; version: number; live: boolean }) {
   const running = tools.some((t) => t.status === 'running' || t.status === 'pending' || t.status === 'streaming');
   const failed = tools.some((t) => t.status === 'error');
-  const [open, setOpen] = useState<boolean | null>(null);
-  const show = open ?? (live && running);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [all, setAll] = useState(false);
   return (
-    <div className="step">
-      <div className={clsx('step-head', show && 'open')} onClick={() => setOpen(!show)}>
-        <span className="chev">▶</span>
+    <div className={clsx('trail', running && 'running')}>
+      {tools.map((t, i) => {
+        const open = all || openId === t.id;
+        return (
+          <div key={t.id} className={clsx('tl', stepState(t), open && 'open')}>
+            {i < tools.length - 1 && <span className="edge" />}
+            <StepMark t={t} />
+            <div className="tl-main">
+              <ToolHead t={t} open={open} onToggle={() => { setAll(false); setOpenId(open ? null : t.id); }} />
+              {open && <ToolCard t={t} version={version} bare />}
+              {!open && t.children.length > 0 && <button className="tl-sub" onClick={() => setOpenId(t.id)}>子代理 {t.children.length} 条消息</button>}
+            </div>
+          </div>
+        );
+      })}
+      <div className="tl-foot">
         <span className="lbl">{stepLabel(tools)}</span>
-        {running && <span className="spinner" />}
         {failed && <span className="badge err">失败</span>}
+        {tools.length > 1 && <button className="tl-all" onClick={() => { setAll(!all); setOpenId(null); }}>{all ? '全部收起' : '全部展开'}</button>}
       </div>
-      {show && (
-        <div className="step-body">
-          {tools.map((t) => (
-            <ToolCard key={t.id} t={t} version={version} />
-          ))}
-        </div>
-      )}
     </div>
+  );
+}
+
+function stepState(t: ToolUseBlock) {
+  if (t.status === 'error') return 'failed';
+  if (t.status === 'running' || t.status === 'streaming') return 'active';
+  if (t.status === 'pending') return 'pending';
+  return 'done';
+}
+
+/** The one visual that must never be ambiguous: which step is finished, which is live, which is queued. */
+function StepMark({ t }: { t: ToolUseBlock }) {
+  const st = stepState(t);
+  return (
+    <span className={clsx('mark', st)} aria-hidden>
+      {st === 'done' && <Icon name="checkCircle" size={16} />}
+      {st === 'failed' && <Icon name="close" size={13} />}
+      {st === 'active' && <span className="pip" />}
+      {st === 'pending' && <Icon name="circle" size={13} />}
+    </span>
   );
 }
 
@@ -86,18 +119,20 @@ function Thinking({ text, streaming, redacted }: { text: string; streaming: bool
   if (!text && !streaming && !redacted) return null;
   const show = open ?? (mode === 'expanded');
   return (
-    <div className="step thinking">
-      <div className={clsx('step-head', show && 'open')} onClick={() => setOpen(!show)}>
-        <span className="chev">▶</span>
-        <span className="lbl">{redacted ? '思考内容已隐藏（redacted）' : streaming ? '思考中' : text.length > 1200 ? '深入思考了一会儿' : '思考了一下'}</span>
-        {!streaming && text && <span className="tool-meta">{text.length > 1000 ? `${(text.length / 1000).toFixed(1)}K 字` : `${text.length} 字`}</span>}
-        {streaming && <span className="spinner" />}
-      </div>
-      {show && !redacted && (
-        <div className="step-body">
-          <div className="thinking-body"><Markdown text={text} streaming={streaming} /></div>
+    <div className={clsx('trail thinking', streaming && 'running')}>
+      <div className={clsx('tl', streaming ? 'active' : 'done', show && 'open')}>
+        <span className={clsx('mark', streaming ? 'active' : 'done')} aria-hidden>
+          {streaming ? <span className="pip" /> : <Icon name="checkCircle" size={16} />}
+        </span>
+        <div className="tl-main">
+          <div className="tl-head" onClick={() => setOpen(!show)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') setOpen(!show); }}>
+            <span className={clsx('lbl', streaming && 'shimmer')}>{redacted ? '思考内容已隐藏（redacted）' : streaming ? '思考中' : text.length > 1200 ? '深入思考了一会儿' : '思考了一下'}</span>
+            {!streaming && text && <span className="tool-meta">{text.length > 1000 ? `${(text.length / 1000).toFixed(1)}K 字` : `${text.length} 字`}</span>}
+            <Icon name={show ? 'chevronDown' : 'chevronRight'} size={13} className="chev" />
+          </div>
+          {show && !redacted && <div className="thinking-body"><Markdown text={text} streaming={streaming} /></div>}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -138,7 +173,7 @@ function AttachmentChips({ atts }: { atts: NonNullable<UserItem['attachments']> 
     <div className="att-chips">
       {atts.map((a, i) => (
         <span key={i} className="att-chip" title={a.path ?? a.name} onClick={() => { if (a.path && a.kind !== 'folder' && sid) useStore.setState({ inspect: { sessionId: sid, file: { path: a.path } } }); }}>
-          <span className="ic">{a.kind === 'image' ? '🖼' : a.kind === 'folder' ? '📁' : a.kind === 'text' ? '📋' : '📎'}</span>
+          <span className="ic"><Icon name={a.kind === 'image' ? 'image' : a.kind === 'folder' ? 'folder' : a.kind === 'text' ? 'read' : 'attach'} size={12} /></span>
           {a.name}{a.size ? <span className="sz"> {fmtSize(a.size)}</span> : null}
         </span>
       ))}
@@ -197,7 +232,7 @@ export function ItemList({ items, version, live = false }: { items: Item[]; vers
           case 'system':
             return (
               <div key={it.id} className={clsx('sysline', it.subtype === 'command' && 'cmd', it.level === 'warn' && 'warn', it.level === 'error' && 'err', it.subtype === 'compact' && 'compact')} data-item-id={it.id} title={it.data && typeof it.data === 'object' && (it.data as any).kind ? ERROR_HINT[(it.data as any).kind as keyof typeof ERROR_HINT] : undefined}>
-                {it.subtype === 'compact' && <span className="ic">⇅</span>}
+                {it.subtype === 'compact' && <span className="ic"><Icon name="refresh" size={12} /></span>}
                 {it.text}
               </div>
             );
@@ -240,7 +275,7 @@ export function ChatView() {
   return (
     <div className="chat" ref={ref} onScroll={onScroll}>
       <FindBar open={find} onClose={() => setFind(false)} root={() => ref.current} />
-      {!atBottom && <button className="jump-bottom" title="回到底部" onClick={() => { const el = ref.current!; el.scrollTop = el.scrollHeight; stick.current = true; }}>↓</button>}
+      {!atBottom && <button className="jump-bottom" title="回到底部" onClick={() => { const el = ref.current!; el.scrollTop = el.scrollHeight; stick.current = true; }} aria-label="回到底部"><Icon name="chevronDown" size={16} /></button>}
       <div className="chat-inner">
         {active.loading && <div className="sysline"><span className="spinner" /> 加载历史…</div>}
         <ItemList items={active.conv.items} version={version} live={live} />

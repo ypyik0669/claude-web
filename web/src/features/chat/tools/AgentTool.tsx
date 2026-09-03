@@ -8,6 +8,7 @@ import { Expandable } from '../Expandable';
 import { Markdown } from '../Markdown';
 import { ErrorPre, JsonTree } from './McpTool';
 import { ExtLink } from './WebTools';
+import { Icon } from '@/ui/icons';
 
 /** Sub-agent: brief (prompt) → trail (progress) → result (report + totals). Children are rendered by ToolCard. */
 export function AgentBody({ t }: { t: ToolUseBlock }) {
@@ -65,7 +66,7 @@ export function TodoBody({ t }: { t: ToolUseBlock }) {
       <ul className="todos">
         {todos.map((td, i) => (
           <li key={i} className={td.status}>
-            <span className="tick">{td.status === 'completed' ? '☑' : td.status === 'in_progress' ? '◐' : '☐'}</span>
+            <span className="tick"><Icon name={td.status === 'completed' ? 'checkCircle' : td.status === 'in_progress' ? 'dot' : 'circle'} size={13} /></span>
             <span>{td.status === 'in_progress' && td.activeForm ? td.activeForm : td.content}</span>
           </li>
         ))}
@@ -105,7 +106,7 @@ export function ArtifactBody({ t }: { t: ToolUseBlock }) {
       <div className="tool-meta">{inp.title ?? inp.name ?? 'artifact'}{inp.expires || inp.ttl ? ` · ${inp.expires ?? inp.ttl}` : ''}</div>
       {url ? (
         <div className="artifact-link">
-          <ExtLink href={url}>↗ 打开 Artifact</ExtLink>
+          <ExtLink href={url}><Icon name="external" size={12} /> 打开 Artifact</ExtLink>
           <code>{url}</code>
           <button className="btn sm ghost" onClick={() => navigator.clipboard.writeText(url)}>复制链接</button>
         </div>

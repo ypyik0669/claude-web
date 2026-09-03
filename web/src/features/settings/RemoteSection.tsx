@@ -6,6 +6,7 @@ import { clsx } from '@/util';
 import { dlg } from '@/ui/dialog';
 import { desktop } from '@/desktop';
 import type { RemoteHost, RemoteStatus, TunnelInfo } from '@shared';
+import { Icon } from '@/ui/icons';
 
 function ago(t: number) { const s = Math.max(0, Date.now() - t) / 1000; return s < 60 ? '刚刚' : s < 3600 ? `${Math.floor(s / 60)} 分钟前` : s < 86400 ? `${Math.floor(s / 3600)} 小时前` : `${Math.floor(s / 86400)} 天前`; }
 
@@ -103,7 +104,7 @@ function HostsSection() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 18, marginBottom: 6 }}>
         <h5 style={{ margin: 0 }}>远程主机（SSH 隧道）</h5>
         <span className="grow" />
-        <button className="btn sm ghost" onClick={() => setEditing({ id: Math.random().toString(36).slice(2, 10), name: '', target: '', remotePort: 3090, token: '', startCommand: '' })}>＋ 添加主机</button>
+        <button className="btn sm ghost" onClick={() => setEditing({ id: Math.random().toString(36).slice(2, 10), name: '', target: '', remotePort: 3090, token: '', startCommand: '' })}><Icon name="plus" size={12} /> 添加主机</button>
       </div>
       <div className="sub">在另一台机器上跑 claude-web，这里用系统 ssh 打一条端口转发，然后在新窗口打开它。需要免密登录（密钥 / agent / ssh config）。</div>
       <div className="list" style={{ marginTop: 6 }}>

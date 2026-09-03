@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Icon } from '@/ui/icons';
 
 const hasHighlight = typeof CSS !== 'undefined' && 'highlights' in CSS && typeof (window as any).Highlight === 'function';
 
@@ -72,9 +73,9 @@ export function FindBar({ open, onClose, root }: { open: boolean; onClose: () =>
     <div className="find-bar" onKeyDown={(e) => { if (e.key === 'Escape') onClose(); if (e.key === 'Enter') step(e.shiftKey ? -1 : 1); }}>
       <input ref={input} value={q} onChange={(e) => { setQ(e.target.value); setIdx(0); }} placeholder="在对话中查找…" />
       <span className="cnt">{count ? `${idx + 1} / ${count}` : q ? '无结果' : ''}</span>
-      <button className="icon-btn" title="上一个 (Shift+Enter)" onClick={() => step(-1)}>↑</button>
-      <button className="icon-btn" title="下一个 (Enter)" onClick={() => step(1)}>↓</button>
-      <button className="icon-btn" title="关闭 (Esc)" onClick={onClose}>✕</button>
+      <button className="icon-btn" title="上一个 (Shift+Enter)" onClick={() => step(-1)} aria-label="上一个"><Icon name="chevronRight" size={14} /></button>
+      <button className="icon-btn" title="下一个 (Enter)" onClick={() => step(1)} aria-label="下一个"><Icon name="chevronDown" size={14} /></button>
+      <button className="icon-btn" title="关闭 (Esc)" onClick={onClose} aria-label="关闭"><Icon name="close" size={14} /></button>
       {!hasHighlight && <span className="tool-meta">此浏览器不支持高亮 API，只能跳转</span>}
     </div>
   );

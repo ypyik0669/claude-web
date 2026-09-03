@@ -4,6 +4,7 @@ import { ws } from '@/ws/client';
 import { clsx } from '@/util';
 import type { Provider, ProviderType } from '@shared';
 import { dlg } from '@/ui/dialog';
+import { Icon } from '@/ui/icons';
 
 type Tab = 'overview' | 'providers' | 'plugins' | 'mcp' | 'skills' | 'agents' | 'hooks' | 'settings';
 const TABS: { id: Tab; l: string }[] = [
@@ -111,7 +112,7 @@ export function Plugins() {
           <input value={mkSrc} onChange={(e) => setMkSrc(e.target.value)} placeholder="owner/repo 或 git URL 或本地路径" style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 4, padding: '4px 8px' }} />
           <button className="btn sm" disabled={busy || !mkSrc} onClick={() => run({ kind: 'config.marketplace.add', source: mkSrc })}>添加市场</button>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 6 }}>启停/安装后需要重启会话进程（顶栏 ■ 再 ▶）才会生效</div>
+        <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 6 }}>启停/安装后需要重启会话进程（会话头的停止再恢复）才会生效</div>
       </div>
       <Cmd r={out} />
     </>
@@ -292,8 +293,8 @@ export function ProviderProfiles() {
   };
   return (
     <div className="section">
-      <h5 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>供应商档案 <span className="grow" /><button className="btn sm" onClick={() => startEdit()}>＋ 添加</button></h5>
-      <div style={{ fontSize: 12, color: 'var(--fg-2)', marginBottom: 8 }}>每个会话可以选一个档案（首页输入框「Claude 账号 ▾」）。密钥只注入到那个会话的进程环境，不写 <code>~/.claude/settings.json</code>，claude.ai 登录照常可用。</div>
+      <h5 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>供应商档案 <span className="grow" /><button className="btn sm" onClick={() => startEdit()}><Icon name="plus" size={12} /> 添加</button></h5>
+      <div style={{ fontSize: 12, color: 'var(--fg-2)', marginBottom: 8 }}>每个会话可以选一个档案（首页输入框「Claude 账号」芯片）。密钥只注入到那个会话的进程环境，不写 <code>~/.claude/settings.json</code>，claude.ai 登录照常可用。</div>
       <div className="list">
         <div className="row">
           <span className="dot idle" />
@@ -323,7 +324,7 @@ export function ProviderProfiles() {
           <input className="field" style={{ width: '100%', marginBottom: 6 }} placeholder={`Base URL · ${PROVIDER_TYPES.find((t) => t.v === editing.type)?.hint}`} value={editing.baseUrl ?? ''} onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })} />
           <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
             <input className="field" style={{ flex: 1 }} type={showKey ? 'text' : 'password'} placeholder={editing.id ? `API Key（留空保持 ${editing.apiKey || '现有值'}）` : 'API Key'} value={editing.apiKey} onChange={(e) => setEditing({ ...editing, apiKey: e.target.value })} autoComplete="off" />
-            <button className="icon-btn" onClick={() => setShowKey(!showKey)}>{showKey ? '🙈' : '👁'}</button>
+            <button className="icon-btn" onClick={() => setShowKey(!showKey)} aria-label="显示密钥"><Icon name="eye" size={14} /></button>
             <button className="btn sm" disabled={busy} onClick={test}>{busy ? '测试中…' : '测试连接'}</button>
           </div>
           {probe && (
@@ -394,7 +395,7 @@ export function EnvEditor() {
             <div key={k} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
               <code style={{ minWidth: 200, fontSize: 11.5, color: 'var(--fg-1)' }}>{k}</code>
               <input className="field" style={{ flex: 1 }} type={secret && !show[k] ? 'password' : 'text'} placeholder={hint} value={env[k] ?? ''} onChange={(e) => setEnv({ ...env, [k]: e.target.value })} />
-              {secret && <button className="icon-btn" onClick={() => setShow({ ...show, [k]: !show[k] })}>{show[k] ? '🙈' : '👁'}</button>}
+              {secret && <button className="icon-btn" onClick={() => setShow({ ...show, [k]: !show[k] })} aria-label="显示密钥"><Icon name="eye" size={14} /></button>}
             </div>
           ))}
         </div>

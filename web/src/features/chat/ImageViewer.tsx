@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
+import { Icon } from '@/ui/icons';
 
 /** Full-screen image viewer: fit / 1:1 / wheel zoom / drag pan / copy / download / thumbnails. */
 export function ImageViewer() {
@@ -54,14 +55,14 @@ export function ImageViewer() {
       <div className="viewer-bar" onMouseDown={(e) => e.stopPropagation()}>
         <span>{v.index + 1} / {v.images.length}</span>
         <span className="grow" />
-        <button className="btn sm ghost" onClick={() => zoom(0.8)}>−</button>
+        <button className="btn sm ghost" onClick={() => zoom(0.8)} aria-label="缩小">−</button>
         <span style={{ minWidth: 48, textAlign: 'center' }}>{fit ? '适配' : `${Math.round(scale * 100)}%`}</span>
-        <button className="btn sm ghost" onClick={() => zoom(1.25)}>＋</button>
+        <button className="btn sm ghost" onClick={() => zoom(1.25)} aria-label="放大"><Icon name="plus" size={13} /></button>
         <button className={clsx('btn sm ghost', fit && 'active')} onClick={() => { setFit(true); setScale(1); setPos({ x: 0, y: 0 }); }} title="适配窗口 (0)">适配</button>
         <button className={clsx('btn sm ghost', !fit && scale === 1 && 'active')} onClick={() => { setFit(false); setScale(1); setPos({ x: 0, y: 0 }); }} title="原始大小 (1)">1:1</button>
         <button className="btn sm ghost" onClick={copy}>复制图片</button>
         <button className="btn sm ghost" onClick={download}>下载</button>
-        <button className="btn sm ghost" onClick={close} title="关闭 (Esc)">✕</button>
+        <button className="btn sm ghost" onClick={close} title="关闭 (Esc)" aria-label="关闭"><Icon name="close" size={13} /></button>
       </div>
       <div className="viewer-stage" onWheel={onWheel} onMouseDown={(e) => { if (e.target === e.currentTarget) close(); else onDown(e); }} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
         <img

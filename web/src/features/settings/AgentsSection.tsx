@@ -4,6 +4,7 @@ import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { dlg } from '@/ui/dialog';
 import type { AgentInfo, AgentKind } from '@shared';
+import { Icon } from '@/ui/icons';
 
 const PROTO_LABEL: Record<AgentInfo['protocol'], string> = { claude: 'Claude Code', acp: 'ACP', codex: 'app-server' };
 
@@ -96,7 +97,7 @@ export function AgentsSection() {
         <h5 style={{ margin: 0 }}>CLI agents</h5>
         <span className="muted" style={{ fontSize: 12 }}>同一个工作台跑多个 agent：新会话的「引擎」下拉里选择</span>
         <span className="grow" />
-        <button className="btn sm ghost" onClick={addCustom}>＋ 自定义 ACP</button>
+        <button className="btn sm ghost" onClick={addCustom}><Icon name="plus" size={12} /> 自定义 ACP</button>
         <button className="btn sm ghost" disabled={busy} onClick={() => reload(true)}>{busy ? '检测中…' : '重新检测'}</button>
       </div>
       <div className="list">

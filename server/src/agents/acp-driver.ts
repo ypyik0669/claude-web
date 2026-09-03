@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { modelsFor } from '../models/catalog.js';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import type { AgentKind, AttachmentRef, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, RunnerState, SessionInfoSnapshot } from '../protocol.js';
@@ -44,7 +45,7 @@ export class AcpDriver extends EventEmitter implements AgentDriver {
     this.permissionMode = params.permissionMode ?? 'default';
     this.autoApprove = this.permissionMode === 'bypassPermissions' || this.permissionMode === 'acceptEdits' || this.permissionMode === 'auto' || this.permissionMode === 'dontAsk';
     this.synth = new MessageSynth(this.sessionId, this.model ?? '');
-    this.info = { sessionId: this.sessionId, state: 'starting', cwd: this.cwd, model: this.model, permissionMode: this.permissionMode, agent: kind, agentName: launch.name, runtime: 'ccb', slashCommands: [], models: [] };
+    this.info = { sessionId: this.sessionId, state: 'starting', cwd: this.cwd, model: this.model, permissionMode: this.permissionMode, agent: kind, agentName: launch.name, runtime: 'ccb', slashCommands: [], models: modelsFor(kind) };
     void this.start(params);
   }
 

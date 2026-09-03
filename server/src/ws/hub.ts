@@ -265,6 +265,9 @@ export class Hub {
       case 'session.setEffort':
         await this.runner(req.sessionId).setEffort?.(req.effort);
         return null;
+      case 'session.setUltracode':
+        await this.runner(req.sessionId).setUltracode?.(req.on);
+        return null;
       case 'session.rename':
         if (await s.transcripts.exists(req.sessionId)) { await s.transcripts.patchHead(req.sessionId, { title: req.title }); s.sessions.emit('changed'); return null; }
         await s.sessions.rename(req.sessionId, req.title);

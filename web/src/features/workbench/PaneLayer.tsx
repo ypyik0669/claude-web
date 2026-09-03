@@ -3,6 +3,7 @@ import { useStore } from '@/store';
 import { activeGroup, layoutRects, paneOrder, type PaneNode, type Rect } from '@/model/layout';
 import { Pane } from './Pane';
 import { Splitter } from './Splitter';
+import { clsx } from '@/util';
 
 const GAP = 6;
 
@@ -46,7 +47,7 @@ export function PaneLayer() {
   const parents = useMemo(() => splitParents(g.root, rect), [g.root, size.w, size.h]);
   const order = paneOrder(g.root);
   return (
-    <div className="pane-layer" ref={ref}>
+    <div className={clsx('pane-layer', order.length > 1 && !g.zoomedPaneId && 'multi')} ref={ref}>
       {size.w > 0 && order.map((id, i) => (
         <Pane key={id} pane={g.panes[id]} groupId={g.id} index={i} rect={rects.panes[id]} focused={g.focusedPaneId === id} zoomed={g.zoomedPaneId === id} single={order.length === 1} hidden={!!g.zoomedPaneId && g.zoomedPaneId !== id} />
       ))}
