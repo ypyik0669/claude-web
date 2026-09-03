@@ -12,7 +12,8 @@ export function resolveRg(): string {
   const exe = process.platform === 'win32' ? 'rg.exe' : 'rg';
   try {
     const pkg = require.resolve('claude-code-best/package.json');
-    const p = path.join(path.dirname(pkg), 'dist', 'vendor', 'ripgrep', plat, exe);
+    // packaged (Electron asar): binaries live in app.asar.unpacked — a spawn from inside the asar is ENOENT
+    const p = path.join(path.dirname(pkg), 'dist', 'vendor', 'ripgrep', plat, exe).replace(/app\.asar(?!\.unpacked)/, 'app.asar.unpacked');
     if (require('node:fs').existsSync(p)) return p;
   } catch { /* not installed */ }
   try {
