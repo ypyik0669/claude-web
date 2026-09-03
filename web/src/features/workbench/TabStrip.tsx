@@ -13,6 +13,7 @@ export function tileTitle(t: Tile, sessions: { sessionId: string; title: string 
     case 'doc': return { icon, text: basename(t.path) };
     case 'diff': return { icon, text: basename(t.path) };
     case 'term': return { icon, text: `终端 · ${basename(t.cwd) || t.cwd}` };
+    case 'browser': return { icon, text: (() => { try { return new URL(t.url).host || t.url; } catch { return t.url; } })() };
     case 'panel': return { icon, text: PANEL_TITLES[t.panel] ?? t.panel };
   }
 }
@@ -96,6 +97,7 @@ export function TabStrip({ pane, groupId, index, zoomed, single }: { pane: PaneM
             <div className="menu" style={{ top: 26, left: 0 }} onMouseLeave={() => setMenu(false)}>
               <button onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: chatTile(null), mode: 'tab' }); }}><Icon name="chat" size={14} /> 新会话</button>
               <button onClick={() => { setMenu(false); const cwd = currentCwd(pane, open); dispatch({ t: 'tile.open', paneId: pane.id, tile: { id: `t${Date.now()}`, kind: 'term', cwd }, mode: 'tab' }); }}><Icon name="terminal" size={14} /> 终端</button>
+              <button onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: { id: `t${Date.now()}`, kind: 'browser', url: 'http://localhost:3000' }, mode: 'tab' }); }}><Icon name="browser" size={14} /> 浏览器</button>
               {PANELS.map((p) => (
                 <button key={p.id} onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: { id: `t${Date.now()}`, kind: 'panel', panel: p.id }, mode: 'tab' }); }}><Icon name={p.icon} size={14} /> {p.title}</button>
               ))}

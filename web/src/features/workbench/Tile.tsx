@@ -4,6 +4,7 @@ import { DocTile } from './tiles/DocTile';
 import { DiffTile } from './tiles/DiffTile';
 import { TermTile } from './tiles/TermTile';
 import { PanelTile } from './tiles/PanelTile';
+import { BrowserTile } from './tiles/BrowserTile';
 
 export function Tile({ tile, paneId, visible }: { tile: TileModel; paneId: string; visible: boolean }) {
   switch (tile.kind) {
@@ -11,6 +12,7 @@ export function Tile({ tile, paneId, visible }: { tile: TileModel; paneId: strin
     case 'doc': return <DocTile tile={tile} />;
     case 'diff': return <DiffTile tile={tile} />;
     case 'term': return <TermTile tile={tile} visible={visible} />;
+    case 'browser': return <BrowserTile tile={tile} />;
     case 'panel': return <PanelTile tile={tile} />;
   }
 }

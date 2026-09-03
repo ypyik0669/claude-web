@@ -100,7 +100,8 @@ function createWindow(url: string, winId = 'main', bounds?: Bounds): BrowserWind
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: titleBar.bg || (dark ? '#1f1e1b' : '#faf9f5'), symbolColor: titleBar.fg || (dark ? '#bab6ae' : '#4d4a44'), height: 40 },
     show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false, additionalArguments: [`--cw-win=${winId}`] },
+    // webviewTag powers the in-app browser tile; each <webview> declares its own partition and denies popups
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false, webviewTag: true, additionalArguments: [`--cw-win=${winId}`] },
   });
   wins.set(winId, win);
   if (st.maximized) win.maximize();
@@ -134,6 +135,18 @@ function createWindow(url: string, winId = 'main', bounds?: Bounds): BrowserWind
   });
   win.webContents.on('will-navigate', (e, target) => {
     if (!target.startsWith(`http://${host.info?.host}:${host.info?.port}`)) { e.preventDefault(); void shell.openExternal(target); }
+  });
+  // in-app browser tiles: strip our preload off the guest page and keep every popup out of process
+  win.webContents.on('will-attach-webview', (_e, prefs) => {
+    delete (prefs as { preload?: string }).preload;
+    prefs.nodeIntegration = false;
+    prefs.contextIsolation = true;
+  });
+  win.webContents.on('did-attach-webview', (_e, guest) => {
+    guest.setWindowOpenHandler(({ url: target }) => {
+      if (/^https?:/.test(target)) void shell.openExternal(target);
+      return { action: 'deny' };
+    });
   });
   win.on('focus', () => { pendingCount = 0; updateBadge(); });
   void win.loadURL(windowUrl(url, winId));

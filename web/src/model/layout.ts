@@ -27,13 +27,14 @@ export const PANEL_TITLES = Object.fromEntries(PANELS.map((p) => [p.id, p.title]
 export const PANEL_ICONS = Object.fromEntries(PANELS.map((p) => [p.id, p.icon])) as Record<PanelId, IconName>;
 
 /** Icon for a tile, by kind — the other half of the title/icon pair `tileTitle` builds. */
-export const TILE_ICONS: Record<Tile['kind'], IconName> = { chat: 'chat', doc: 'read', diff: 'files', term: 'terminal', panel: 'inspector' };
+export const TILE_ICONS: Record<Tile['kind'], IconName> = { chat: 'chat', doc: 'read', diff: 'files', term: 'terminal', panel: 'inspector', browser: 'browser' };
 
 export type Tile =
   | { id: string; kind: 'chat'; sessionId: string | null; view: 'chat' | 'trajectory'; wb: WorkbenchTab; title?: string }
   | { id: string; kind: 'doc'; path: string; line?: number; title?: string }
   | { id: string; kind: 'diff'; sessionId: string; path: string; staged?: boolean; rev?: string; cwd?: string; title?: string }
   | { id: string; kind: 'term'; cwd: string; title?: string; cmd?: string }
+  | { id: string; kind: 'browser'; url: string; title?: string }
   | { id: string; kind: 'panel'; panel: PanelId; title?: string };
 
 export interface Pane { id: string; tiles: Tile[]; activeTileId: string | null }

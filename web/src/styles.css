@@ -1234,3 +1234,11 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
 .android-side .keys { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 .android-log { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .android-log pre { flex: 1; overflow: auto; font-size: 11px; background: var(--surface-2); padding: 6px; border-radius: var(--r-md); margin: 0; white-space: pre-wrap; }
+
+/* ---- in-app browser tile ---- */
+.browser-tile { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--surface-0); }
+.browser-bar { display: flex; align-items: center; gap: 4px; padding: 5px 8px; border-bottom: 1px solid var(--edge-subtle); }
+.browser-bar .field { flex: 1; min-width: 0; font-size: var(--fs-sm); font-family: var(--mono); }
+.browser-body { flex: 1; min-height: 0; position: relative; background: #fff; }
+.browser-body > iframe, .browser-body > webview { width: 100%; height: 100%; border: 0; display: block; }
+.browser-hint { position: absolute; left: 0; right: 0; bottom: 0; padding: 6px 10px; font-size: var(--fs-meta); color: var(--ink-3); background: var(--surface-1); border-top: 1px solid var(--edge-subtle); }
