@@ -484,7 +484,7 @@ export const useStore = create<State>((set, get) => ({
       const msgs = await ws.request<any[]>({ kind: 'transcript.load', sessionId });
       set((s) => bump(s, sessionId, (o) => {
         const conv = createConversation();
-        applyTranscript(conv, msgs);
+        applyTranscript(conv, msgs, { live: meta?.live === 'running' || meta?.live === 'waiting' });
         // re-apply live messages that arrived after spawn (they are also in transcript; duplicates are merged by id)
         o.conv = conv;
         o.loading = false;

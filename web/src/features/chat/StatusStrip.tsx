@@ -50,18 +50,17 @@ export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onReca
   const showErr = !running && res?.isError && res.errorKind && o.conv.items[o.conv.items.length - 1]?.kind === 'result';
   const cu = o.contextUsage ?? o.conv.contextUsage;
   const cuWarn = cu && cu.percentage >= 80;
-  const nothing = !stall && !showErr && !rlActive && !armed && !o.queue.length && !cuWarn;
+  // the ordinary running states (tool / quiet / compacting) are the run card's job now; what is left
+  // here is only what the run card cannot say: it is stuck, it failed, it is throttled, it is queued
+  const alarm = stall?.kind === 'no_model' ? stall : null;
+  const nothing = !alarm && !showErr && !rlActive && !armed && !o.queue.length && !cuWarn;
   if (nothing) return null;
   const resetAt = rl?.resetsAt ? rl.resetsAt * (rl.resetsAt < 1e12 ? 1000 : 1) : undefined;
   return (
     <div className="status-strip">
-      {stall?.kind === 'waiting' && <span className="chip warn"><Icon name="alert" size={12} /> 需要你：查看上面的请求</span>}
-      {stall?.kind === 'compacting' && <span className="chip"><span className="spinner" /> 正在压缩上下文…</span>}
-      {stall?.kind === 'tool' && <span className="chip"><span className="spinner" /> {stall.tool} 运行中 {stall.seconds}s</span>}
-      {stall?.kind === 'quiet' && <span className="chip muted"><span className="spinner" /> 安静 {stall.seconds}s · 等待模型</span>}
-      {stall?.kind === 'no_model' && (
+      {alarm && (
         <span className="chip warn">
-          {stall.minutes} 分钟没有模型调用了，可能卡住
+          {alarm.minutes} 分钟没有模型调用了，可能卡住
           <button className="link" onClick={() => st().interrupt(sessionId)}>中断</button>
         </span>
       )}

@@ -72,6 +72,15 @@ export class MessageSynth {
     return out;
   }
 
+  /**
+   * Tool started running. The SDK's own `tool_progress` — what flips a card from "waiting" to
+   * "running" and gives the timeline its breathing mark. ACP says `status: in_progress` and Codex
+   * says the command began; without this both would sit at "waiting" until they finished.
+   */
+  toolProgress(toolUseId: string, name: string, elapsedSeconds = 0): any {
+    return { type: 'tool_progress', uuid: randomUUID(), session_id: this.sessionId, parent_tool_use_id: null, tool_use_id: toolUseId, tool_name: name, elapsed_time_seconds: elapsedSeconds };
+  }
+
   /** Tool finished: user message with tool_result (+ optional structured output for the cards). */
   toolResult(toolUseId: string, content: string, isError = false, structured?: unknown, images?: string[]): any {
     const parts: any[] = [{ type: 'text', text: content }];

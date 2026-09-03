@@ -178,6 +178,7 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .btn.primary:hover { filter: brightness(1.08); background: var(--accent); }
 .btn.primary:active { filter: brightness(0.94); }
 .btn.sm { padding: 2px 9px; min-height: 24px; font-size: var(--fs-sm); }
+.btn.xs { padding: 1px 7px; min-height: 20px; font-size: var(--fs-meta); gap: 4px; }
 .btn.danger { color: var(--err); border-color: color-mix(in oklab, var(--err) 40%, transparent); }
 .btn.danger:hover { background: var(--err-soft); }
 .btn.ghost { border-color: transparent; color: var(--ink-2); }
@@ -687,6 +688,24 @@ input.field:focus { border-color: var(--ink-3); }
 .attach .att-chip { height: 28px; }
 
 /* status strip (between transcript and composer) */
+/* pinned "it is working" card — the ordinary running state; StatusStrip keeps the exceptions */
+.run-card { display: flex; align-items: center; gap: 8px; margin: 0 2px 6px; padding: 6px 8px 6px 10px; border: 1px solid var(--edge-subtle); border-radius: var(--r-lg); background: var(--surface-1); font-size: 12.5px; color: var(--ink-2); }
+.run-card.waiting { border-color: color-mix(in oklab, var(--warn) 45%, transparent); color: var(--warn); }
+.run-card .pip { width: 8px; height: 8px; border-radius: 2px; background: currentColor; box-shadow: 0 0 7px 1px currentColor; animation: tl-breathe 1.4s var(--ease-in-out) infinite; flex: none; }
+.run-card .what { color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-card.waiting .what { color: inherit; }
+.run-card .what .tgt { color: var(--ink-3); font-family: var(--mono); font-size: 11.5px; margin-left: 6px; }
+.run-card .meta { color: var(--ink-4); font-size: 11.5px; flex: none; }
+.run-card .clock { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+:root[data-reduce-motion='1'] .run-card .pip { animation: none; }
+
+/* where am I typing into: workspace · branch · worktree */
+.ctx-row { display: flex; align-items: center; gap: 4px; padding: 0 4px 5px; font-size: var(--fs-meta); color: var(--ink-4); min-width: 0; }
+.ctx-row .it { display: inline-flex; align-items: center; gap: 4px; padding: 1px 5px; border-radius: var(--r-sm); color: inherit; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-row button.it:hover { background: var(--layer-hover); color: var(--ink-2); }
+.ctx-row .it.warn { color: var(--warn); }
+.ctx-row .it .n { font-family: var(--mono); opacity: 0.8; }
+
 .status-strip { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 0 6px 6px; font-size: 12px; }
 .status-strip .chip { display: inline-flex; gap: 8px; align-items: center; cursor: default; }
 .status-strip .chip.warn { color: var(--warn); border-color: rgba(217, 164, 65, 0.4); }

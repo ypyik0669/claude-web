@@ -22,7 +22,13 @@ app.whenReady().then(async () => {
     const offscreen = process.env.SHOT_OFFSCREEN === '1';
     const win = new BrowserWindow({ width: Number(w), height: Number(h), show: !offscreen, webPreferences: { offscreen } });
     if (!offscreen) win.showInactive();
-    win.webContents.on('console-message', (_e, level, message) => { if (level >= 2) log(`console[${level}] ${String(message).slice(0, 500)}`); });
+    // Electron ≥ 36 passes one event object; older versions pass (event, level, message)
+    win.webContents.on('console-message', (a, b, c) => {
+      const level = typeof a === 'object' && a && 'level' in a ? a.level : b;
+      const message = typeof a === 'object' && a && 'message' in a ? a.message : c;
+      const bad = level === 'error' || level === 'warning' || Number(level) >= 2;
+      if (bad) log(`console[${level}] ${String(message).slice(0, 500)}`);
+    });
     await win.loadURL(url);
     log('loaded');
     await new Promise((r) => setTimeout(r, 1500));

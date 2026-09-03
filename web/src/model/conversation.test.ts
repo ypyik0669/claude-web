@@ -187,3 +187,34 @@ describe('user messages', () => {
     expect((c.items[0] as UserItem).meta).toBe(true);
   });
 });
+
+describe('a turn still in flight', () => {
+  const at = '2026-09-03T10:00:00.000Z';
+  const live = [
+    { type: 'user', uuid: 'u1', session_id: 's', timestamp: at, parent_tool_use_id: null, message: { role: 'user', content: '跑一下测试' } },
+    { type: 'assistant', uuid: 'a1', session_id: 's', parent_tool_use_id: null, message: { id: 'm1', role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm test' } }] } },
+  ];
+
+  it('marks the turn start so the composer can count up from it', () => {
+    const c = createConversation();
+    applyMessage(c, live[0]);
+    expect(c.turnStartedAt).toBeTypeOf('number');
+    applyMessage(c, { type: 'result', uuid: 'r1', session_id: 's', subtype: 'success', duration_ms: 1, duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, is_error: false, result: 'ok' });
+    expect(c.turnStartedAt).toBeUndefined();
+  });
+
+  it('does not put a green check on a command that is still running', () => {
+    const running = createConversation();
+    applyTranscript(running, live, { live: true });
+    const tool = [...walkTools(running.items)][0].tool;
+    expect(tool.status).not.toBe('done');
+    expect(running.runningTool?.name).toBe('Bash');
+    expect(running.turnStartedAt).toBe(Date.parse(at)); // from the transcript, not the replay clock
+
+    // the same transcript replayed for a session that is NOT live is finished, as before
+    const finished = createConversation();
+    applyTranscript(finished, live);
+    expect([...walkTools(finished.items)][0].tool.status).toBe('done');
+    expect(finished.runningTool).toBeNull();
+  });
+});

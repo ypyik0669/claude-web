@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import type { ToolUseBlock } from '@/model/conversation';
 import { useStore } from '@/store';
 import { usePaneCtx } from '@/store/paneContext';
@@ -42,7 +42,8 @@ export function ToolHead({ t, onToggle, open }: { t: ToolUseBlock; onToggle?: ()
   const ctx = usePaneCtx();
   const setInspect = (id: string) => useStore.setState({ inspect: { sessionId: (ctx?.sessionId ?? useStore.getState().activeId)!, toolUseId: id } });
   const short = def.category === 'read' || def.category === 'edit' ? shortPath(arg) : arg;
-  const st = t.status === 'error' ? '失败' : t.status === 'running' ? (t.progress ? `${Math.round(t.progress.elapsed)}s` : '运行中') : t.status === 'pending' ? '等待' : t.status === 'streaming' ? '…' : '';
+  const secs = useElapsed(t);
+  const st = t.status === 'error' ? '失败' : t.status === 'running' ? (secs !== null ? `${secs}s` : '运行中') : t.status === 'pending' ? '等待' : t.status === 'streaming' ? '…' : '';
   return (
     <div className={clsx('tool-head', open && 'open')} onClick={onToggle} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' && onToggle) onToggle(); }} title={arg}>
       <span className="ic"><Icon name={def.icon} size={14} /></span>
@@ -54,6 +55,27 @@ export function ToolHead({ t, onToggle, open }: { t: ToolUseBlock; onToggle?: ()
       <button className="icon-btn xs" title="在右侧查看详情" aria-label="详情" onClick={(e) => { e.stopPropagation(); setInspect(t.id); }}><Icon name="external" size={12} /></button>
     </div>
   );
+}
+
+/**
+ * Seconds a running tool has been going, ticking on its own.
+ *
+ * `progress.elapsed` is authoritative when the agent keeps sending it (Claude does); ACP and Codex
+ * announce the start and then go quiet, so the wall clock since `startedAt` is what stops the row
+ * from sitting at "0s" for the whole command.
+ */
+function useElapsed(t: ToolUseBlock): number | null {
+  const live = t.status === 'running';
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!live) return;
+    const i = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(i);
+  }, [live]);
+  if (!live || (!t.progress && !t.startedAt)) return null; // nothing to count from → just "运行中"
+  const reported = t.progress ? Math.round(t.progress.elapsed) : 0;
+  const wall = t.startedAt ? Math.round((Date.now() - t.startedAt) / 1000) : 0;
+  return Math.max(reported, wall);
 }
 
 /** `a/b/c/file.ts:10-40` → `file.ts:10-40`; the head's tooltip keeps the full string. */

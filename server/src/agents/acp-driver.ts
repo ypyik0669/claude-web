@@ -134,12 +134,14 @@ export class AcpDriver extends EventEmitter implements AgentDriver {
         this.tools.set(u.toolCallId, { name, input, done: false });
         this.pushAll(this.synth.toolUse(u.toolCallId, name, input));
         if (u.status === 'completed' || u.status === 'failed') this.finishTool(u.toolCallId, u);
+        else if (u.status === 'in_progress') this.push(this.synth.toolProgress(u.toolCallId, name));
         break;
       }
       case 'tool_call_update': {
         const t = this.tools.get(u.toolCallId);
         if (!t) { const name = mapToolName(u.kind, u.title, u); this.tools.set(u.toolCallId, { name, input: this.toolInput(name, u), done: false }); this.pushAll(this.synth.toolUse(u.toolCallId, name, this.toolInput(name, u))); }
         if (u.status === 'completed' || u.status === 'failed') this.finishTool(u.toolCallId, u);
+        else if (u.status === 'in_progress') this.push(this.synth.toolProgress(u.toolCallId, this.tools.get(u.toolCallId)!.name));
         break;
       }
       case 'plan': {

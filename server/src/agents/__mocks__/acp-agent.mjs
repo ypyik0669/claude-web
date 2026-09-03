@@ -40,6 +40,12 @@ rl.on('line', async (line) => {
         update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: allowed ? ' (read ok)' : ' (denied)' } });
       }
       if (text.includes('mcp')) update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ` [mcp: ${lastMcp.map((s) => s.name).join(',') || 'none'}]` } });
+      // 'slow' keeps a tool call running so the UI's mid-turn states can be looked at
+      if (text.includes('slow')) {
+        update(sid, { sessionUpdate: 'tool_call', toolCallId: 'slow-1', title: 'npm test -w server', kind: 'execute', status: 'in_progress' });
+        await new Promise((r) => setTimeout(r, Number(process.env.MOCK_SLOW_MS ?? 25000)));
+        update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'slow-1', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: '61 passed' } }] });
+      }
       if (text.includes('plan')) update(sid, { sessionUpdate: 'plan', entries: [{ content: 'step one', status: 'completed', priority: 'high' }, { content: 'step two', status: 'in_progress', priority: 'medium' }] });
       reply({ stopReason: 'end_turn' });
       break;

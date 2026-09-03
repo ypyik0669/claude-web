@@ -105,6 +105,8 @@ export interface Conversation {
   lastEventAt?: number;
   lastModelCallAt?: number;
   runningTool?: { id: string; name: string; since: number; elapsed?: number } | null;
+  /** client clock at the start of the turn in flight — what the composer's run card counts up from */
+  turnStartedAt?: number;
   compacting: boolean;
   contextUsage?: ContextUsage;
   rateLimit?: RateLimitState;
@@ -398,6 +400,7 @@ function applyUser(c: Conversation, m: any) {
   const isMeta = m.isMeta || m.isSynthetic || /^<(command-name|local-command|system-reminder|task-notification)/.test(rawText.trim());
   const { text, attachments } = decodeAttachments(rawText);
   containerFor(c, parent).push({ kind: 'user', id: m.uuid ?? String(Math.random()), ts: m.timestamp, text, images, attachments: attachments.length ? attachments : undefined, meta: isMeta, raw: m });
+  if (!parent && !isMeta) c.turnStartedAt = clock();
 }
 
 function applyResult(c: Conversation, m: any) {
@@ -429,6 +432,7 @@ function applyResult(c: Conversation, m: any) {
   for (const s of c.streaming.values()) s.streaming = false;
   c.streaming.clear();
   c.runningTool = null;
+  c.turnStartedAt = undefined;
   c.compacting = false;
 }
 
@@ -518,11 +522,29 @@ function applySystem(c: Conversation, m: any) {
   }
 }
 
-/** Historical transcript messages have the same shape (type/message/parent_tool_use_id). */
-export function applyTranscript(c: Conversation, msgs: any[]) {
+/**
+ * Historical transcript messages have the same shape (type/message/parent_tool_use_id).
+ *
+ * `live` = a runner is still mid-turn on this session (you clicked a running session in the sidebar).
+ * Then the trailing tool really is running and must keep saying so — sweeping it to `done` is how a
+ * running command ends up wearing a green check.
+ */
+export function applyTranscript(c: Conversation, msgs: any[], opts?: { live?: boolean }) {
   for (const m of msgs) applyMessage(c, m);
+  if (opts?.live) {
+    // the replay stamped turnStartedAt with the replay clock; the transcript knows better
+    for (let i = c.items.length - 1; i >= 0; i--) {
+      const it = c.items[i];
+      if (it.kind !== 'user' || it.meta) continue;
+      const t = it.ts ? Date.parse(it.ts) : NaN;
+      if (!Number.isNaN(t)) c.turnStartedAt = t;
+      break;
+    }
+    return;
+  }
   for (const t of c.toolIndex.values()) if (t.status !== 'done' && t.status !== 'error') t.status = 'done';
   c.runningTool = null;
+  c.turnStartedAt = undefined;
   c.compacting = false;
 }
 
