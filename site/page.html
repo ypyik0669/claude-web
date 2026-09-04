@@ -1,0 +1,584 @@
+<title>Claude Web</title>
+<meta name="description" content="Claude Web：把 Claude Code、Codex、Gemini CLI、Qwen Code 装进同一个本地工作台。会话跨 agent 接力，记忆全员共享，换 API 不重启。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* ---------- tokens: dark-first (the product is a dark workbench); light is a real second theme ---------- */
+:root {
+  --ground: #161412;
+  --surface: #1f1c19;
+  --surface-2: #27231f;
+  --edge: rgba(255, 236, 214, 0.09);
+  --edge-strong: rgba(255, 236, 214, 0.18);
+  --ink: #f1ebe3;
+  --ink-2: #b8ada0;
+  --ink-3: #7f766c;
+  --accent: #e0704d;
+  --accent-ink: #ffb79d;
+  --accent-soft: rgba(224, 112, 77, 0.14);
+  --ok: #6fbf8e;
+  --shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.7), 0 1px 0 rgba(255, 236, 214, 0.06) inset;
+  --display: "Bricolage Grotesque", "Noto Sans SC", system-ui, sans-serif;
+  --body: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --ground: #f6f2ec; --surface: #fffdfa; --surface-2: #f0ebe3;
+    --edge: rgba(40, 28, 16, 0.1); --edge-strong: rgba(40, 28, 16, 0.2);
+    --ink: #1e1a16; --ink-2: #5c534a; --ink-3: #8d8378;
+    --accent: #c85a3a; --accent-ink: #a2452a; --accent-soft: rgba(200, 90, 58, 0.12);
+    --ok: #2f8f5b;
+    --shadow: 0 30px 80px -30px rgba(60, 40, 20, 0.35), 0 1px 0 rgba(255, 255, 255, 0.6) inset;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --ground: #f6f2ec; --surface: #fffdfa; --surface-2: #f0ebe3;
+  --edge: rgba(40, 28, 16, 0.1); --edge-strong: rgba(40, 28, 16, 0.2);
+  --ink: #1e1a16; --ink-2: #5c534a; --ink-3: #8d8378;
+  --accent: #c85a3a; --accent-ink: #a2452a; --accent-soft: rgba(200, 90, 58, 0.12);
+  --ok: #2f8f5b;
+  --shadow: 0 30px 80px -30px rgba(60, 40, 20, 0.35), 0 1px 0 rgba(255, 255, 255, 0.6) inset;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.7; -webkit-font-smoothing: antialiased; }
+img { max-width: 100%; display: block; }
+a { color: inherit; text-decoration: none; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+code, pre, .mono { font-family: var(--mono); }
+.wrap { width: min(1120px, calc(100% - 48px)); margin: 0 auto; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: clamp(28px, 3.4vw, 40px); font-weight: 700; line-height: 1.15; }
+h3 { font-size: 17px; font-weight: 700; line-height: 1.35; }
+p { margin: 0; }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-ink); }
+.lede { color: var(--ink-2); font-size: 17px; max-width: 34em; }
+section { padding: 96px 0; }
+.sec-head { display: grid; gap: 14px; max-width: 42em; margin-bottom: 44px; }
+
+/* ---------- nav ---------- */
+.nav { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(14px); background: color-mix(in oklab, var(--ground) 82%, transparent); border-bottom: 1px solid var(--edge); }
+.nav .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
+.brand { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 700; font-size: 17px; }
+.brand img { width: 26px; height: 26px; border-radius: 7px; }
+.nav-links { display: flex; gap: 22px; font-size: 14px; color: var(--ink-2); margin-left: 8px; }
+.nav-links a:hover { color: var(--ink); }
+.nav .grow { flex: 1; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 10px; font-weight: 500; font-size: 14.5px; border: 1px solid var(--edge-strong); transition: background .16s, border-color .16s, transform .12s; }
+.btn:hover { background: var(--surface-2); }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: color-mix(in oklab, var(--accent) 88%, white); }
+.btn.sm { padding: 7px 13px; font-size: 13.5px; }
+.btn svg { width: 15px; height: 15px; }
+
+/* ---------- hero ---------- */
+.hero { padding: 88px 0 0; }
+.hero-grid { display: grid; gap: 28px; }
+.hero h1 { font-size: clamp(40px, 6.2vw, 78px); font-weight: 800; line-height: 1.02; letter-spacing: -0.025em; max-width: 14em; }
+.hero h1 .thin { display: block; font-weight: 500; font-size: 0.42em; letter-spacing: -0.01em; line-height: 1.3; color: var(--ink-2); margin-top: 22px; }
+.hero-row { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 24px; }
+.hero .lede { font-size: 18px; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.cta .alt { font-family: var(--mono); font-size: 13px; color: var(--ink-2); display: inline-flex; gap: 10px; align-items: center; padding: 10px 14px; border: 1px dashed var(--edge-strong); border-radius: 10px; }
+.cta .alt b { color: var(--ink); font-weight: 500; }
+.platforms { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; color: var(--ink-3); }
+.platforms span::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); margin-right: 8px; vertical-align: 1px; }
+
+/* window frame — the same warm chrome the app has, no fake mac dots */
+.frame { margin-top: 64px; border: 1px solid var(--edge-strong); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+.frame-bar { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 14px; border-bottom: 1px solid var(--edge); font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+.frame-bar .dot { width: 8px; height: 8px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.frame-bar .path { margin-left: auto; }
+.frame img { width: 100%; }
+
+/* ---------- agent strip ---------- */
+.agents { padding: 40px 0 0; }
+.agents .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 28px; padding: 22px 0; border-bottom: 1px solid var(--edge); }
+.agents .lbl { font-size: 13px; color: var(--ink-3); margin-right: auto; }
+.agents .a { font-family: var(--mono); font-size: 14px; color: var(--ink-2); display: inline-flex; gap: 8px; align-items: center; }
+.agents .a small { font-size: 11px; color: var(--ink-3); padding: 1px 6px; border: 1px solid var(--edge); border-radius: 999px; }
+
+/* ---------- the turn: feature tour on the product's own timeline grammar ---------- */
+.turn-grid { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; gap: 48px; align-items: start; }
+.trail { position: relative; display: grid; }
+.step { position: relative; display: grid; grid-template-columns: 28px 1fr; gap: 14px; padding: 14px 12px 18px 8px; border-radius: 12px; text-align: left; transition: background .16s; }
+.step:hover { background: var(--surface); }
+.step[aria-selected="true"] { background: var(--surface); box-shadow: inset 0 0 0 1px var(--edge); }
+.step .rail { position: absolute; left: 21px; top: 44px; bottom: -14px; border-left: 1px dashed var(--edge-strong); }
+.step:last-child .rail { display: none; }
+.mark { width: 28px; height: 28px; display: grid; place-items: center; color: var(--ink-3); }
+.mark svg { width: 18px; height: 18px; }
+.step[aria-selected="true"] .mark { color: var(--accent); }
+.step[aria-selected="true"] .mark .pip { width: 11px; height: 11px; border-radius: 3px; background: currentColor; box-shadow: 0 0 10px currentColor; animation: breathe 1.4s ease-in-out infinite; }
+.step[data-state="done"] .mark { color: var(--ok); }
+@keyframes breathe { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.82); } }
+@media (prefers-reduced-motion: reduce) { .step .mark .pip { animation: none; } html { scroll-behavior: auto; } }
+.step h3 { display: flex; gap: 10px; align-items: baseline; }
+.step h3 .t { font-family: var(--mono); font-weight: 400; font-size: 12px; color: var(--ink-3); margin-left: auto; }
+.step p { color: var(--ink-2); font-size: 14.5px; margin-top: 6px; }
+.step .row { display: none; margin-top: 10px; font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); line-height: 1.9; }
+.step[aria-selected="true"] .row { display: block; }
+.step .row b { font-weight: 500; color: var(--ink); }
+.step .row .d { color: var(--ink-3); float: right; }
+.shot { position: sticky; top: 84px; }
+.shot .frame { margin-top: 0; }
+.shot img { display: none; }
+.shot img.on { display: block; }
+.shot .cap { margin-top: 12px; font-size: 13.5px; color: var(--ink-2); }
+.shot .cap b { color: var(--ink); font-weight: 500; }
+@media (max-width: 860px) { .turn-grid { grid-template-columns: 1fr; } .shot { position: static; } }
+
+/* ---------- three-way divide: the three headline capabilities ---------- */
+.trio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--edge); border: 1px solid var(--edge); border-radius: 16px; overflow: hidden; }
+.trio > div { background: var(--surface); padding: 28px 26px 30px; display: grid; gap: 12px; align-content: start; }
+.trio h3 { font-size: 20px; }
+.trio p { color: var(--ink-2); font-size: 14.5px; }
+.trio .fine { font-size: 12.5px; color: var(--ink-3); border-top: 1px solid var(--edge); padding-top: 12px; margin-top: 6px; }
+.trio pre { margin: 0; font-size: 12px; line-height: 1.7; color: var(--ink-2); background: var(--ground); border: 1px solid var(--edge); border-radius: 10px; padding: 12px 14px; overflow-x: auto; }
+.trio pre b { color: var(--ink); font-weight: 500; }
+.trio pre i { color: var(--accent-ink); font-style: normal; }
+@media (max-width: 860px) { .trio { grid-template-columns: 1fr; } }
+
+/* ---------- bento ---------- */
+.bento { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; }
+.cell { grid-column: span 4; background: var(--surface); border: 1px solid var(--edge); border-radius: 14px; padding: 22px 22px 24px; display: grid; gap: 8px; align-content: start; }
+.cell.wide { grid-column: span 8; }
+.cell.tall { grid-row: span 2; }
+.cell .k { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); letter-spacing: .04em; }
+.cell p { color: var(--ink-2); font-size: 14px; }
+.cell img { border-radius: 8px; border: 1px solid var(--edge); margin-top: 8px; }
+.cell .list { display: grid; gap: 6px; margin-top: 6px; font-size: 13.5px; color: var(--ink-2); }
+.cell .list span::before { content: "—"; color: var(--ink-3); margin-right: 8px; }
+@media (max-width: 860px) { .cell, .cell.wide { grid-column: span 12; } }
+
+/* ---------- open three ways ---------- */
+.ways { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.way { background: var(--surface); border: 1px solid var(--edge); border-radius: 14px; padding: 24px; display: grid; gap: 12px; align-content: start; }
+.way .k { font-family: var(--mono); font-size: 11.5px; color: var(--accent-ink); letter-spacing: .04em; }
+.way p { color: var(--ink-2); font-size: 14px; }
+.way pre { margin: 4px 0 0; font-size: 12.5px; line-height: 1.75; background: var(--ground); border: 1px solid var(--edge); border-radius: 10px; padding: 12px 14px; overflow-x: auto; color: var(--ink-2); }
+.way pre b { color: var(--ink); font-weight: 500; }
+.way .fine { font-size: 12.5px; color: var(--ink-3); }
+@media (max-width: 860px) { .ways { grid-template-columns: 1fr; } }
+
+/* ---------- local / files ---------- */
+.local { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
+.files { font-family: var(--mono); font-size: 13px; line-height: 2; color: var(--ink-2); border: 1px solid var(--edge); border-radius: 14px; background: var(--surface); padding: 18px 22px; }
+.files b { font-weight: 500; color: var(--ink); }
+.files .no { color: var(--ink-3); }
+.files .no::before { content: "×"; color: var(--accent); margin-right: 10px; }
+.files .yes::before { content: "✓"; color: var(--ok); margin-right: 10px; }
+@media (max-width: 860px) { .local { grid-template-columns: 1fr; } }
+
+/* ---------- themes ---------- */
+.themes { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+.themes figure { margin: 0; display: grid; gap: 8px; }
+.themes img { border-radius: 8px; border: 1px solid var(--edge); aspect-ratio: 16 / 10; object-fit: cover; object-position: left top; }
+.themes figcaption { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+@media (max-width: 860px) { .themes { grid-template-columns: repeat(3, 1fr); } }
+
+/* ---------- faq ---------- */
+.faq { display: grid; gap: 0; border-top: 1px solid var(--edge); max-width: 760px; }
+.faq details { border-bottom: 1px solid var(--edge); }
+.faq summary { list-style: none; cursor: pointer; padding: 18px 0; font-weight: 500; display: flex; justify-content: space-between; gap: 20px; }
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after { content: "+"; color: var(--ink-3); font-family: var(--mono); }
+.faq details[open] summary::after { content: "–"; }
+.faq .a { color: var(--ink-2); font-size: 15px; padding: 0 0 20px; max-width: 42em; }
+
+/* ---------- final cta + footer ---------- */
+.final { text-align: left; border-top: 1px solid var(--edge); }
+.final .wrap { display: grid; gap: 22px; }
+.final h2 { font-size: clamp(30px, 4vw, 52px); max-width: 16em; }
+footer { border-top: 1px solid var(--edge); padding: 28px 0 40px; font-size: 13px; color: var(--ink-3); }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 28px; align-items: center; }
+footer .grow { flex: 1; }
+footer a:hover { color: var(--ink); }
+</style>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="assets/icon.svg" alt=""> Claude Web</a>
+    <nav class="nav-links" aria-label="页面导航">
+      <a href="#turn">一轮工作</a>
+      <a href="#cross">跨 agent</a>
+      <a href="#more">工作台</a>
+      <a href="#open">怎么打开</a>
+      <a href="#local">本地</a>
+    </nav>
+    <span class="grow"></span>
+    <a class="btn sm primary" href="#open">下载 Windows 版</a>
+  </div>
+</header>
+
+<main id="top">
+<section class="hero">
+  <div class="wrap hero-grid">
+    <span class="eyebrow">本地运行 · 桌面版 / 浏览器 / 手机</span>
+    <h1>所有编程 agent，<br>一个工作台。<span class="thin">会话能跨 agent 接力，记忆全员共享，换 API 不重启。</span></h1>
+    <div class="hero-row">
+      <p class="lede">Claude Code、Codex、Gemini CLI、Qwen Code 在同一个窗口里跑。一个会话可以从 Codex 交给 Claude 继续做；一个 agent 记下的坑，另一个开口就知道；换 API key 或中转地址不用重启会话。全部在你自己的机器上。</p>
+      <div class="cta">
+        <a class="btn primary" href="#open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>下载 Windows 版</a>
+        <span class="alt">或 <b>npm start</b> 在任何系统的浏览器里打开</span>
+      </div>
+    </div>
+    <div class="platforms"><span>Windows 桌面版</span><span>macOS / Linux 走浏览器模式</span><span>手机配对码 + PWA</span><span>Telegram / Discord / Slack / 飞书 / 钉钉</span></div>
+    <figure class="frame" style="margin-bottom:0">
+      <div class="frame-bar"><span class="dot"></span><span>主工作区 · 1 运行中</span><span class="path">claude-web / master</span></div>
+      <img src="assets/hero.png" alt="Claude Web 主界面：左侧会话列表，中间一轮对话的工具时间线，底部带模型与权限 chip 的输入框" width="1703" height="1079">
+    </figure>
+  </div>
+</section>
+
+<div class="agents">
+  <div class="wrap">
+    <span class="lbl">接进来的 agent</span>
+    <span class="a">Claude Code <small>SDK</small></span>
+    <span class="a">Codex <small>app-server</small></span>
+    <span class="a">Gemini CLI <small>ACP</small></span>
+    <span class="a">Qwen Code <small>ACP</small></span>
+    <span class="a">Kimi <small>ACP</small></span>
+    <span class="a">任意 ACP agent <small>自定义命令</small></span>
+  </div>
+</div>
+
+<section id="turn">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">一轮工作，从头到尾</span>
+      <h2>你看到的不是聊天记录，是 agent 这一轮做了什么。</h2>
+      <p class="lede">每一轮在界面里都是一条时间线：完成的步骤是空心勾，正在跑的是呼吸的方块加计时，还没到的是灰圈。左边这五步就是一轮里会发生的事，点任意一步看对应的画面。</p>
+    </div>
+    <div class="turn-grid">
+      <div class="trail" role="tablist" aria-label="一轮工作的五步">
+        <button class="step" role="tab" data-state="done" data-shot="workbench" aria-selected="false">
+          <span class="rail"></span>
+          <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9.5"/></svg></span>
+          <span><h3>开一组窗格 <span class="t">分组 → 窗格 → 标签</span></h3>
+            <p>最多 6 个窗格并排：这边是会话，那边是编辑器、终端、diff 或内嵌浏览器。窗格永不卸载，切来切去终端缓冲和草稿都在。</p>
+            <span class="row">▤ <b>打开</b> layout.ts <span class="d">Monaco</span><br>▣ <b>终端</b> YPY <span class="d">node-pty</span><br>◫ <b>分屏</b> 右侧 <span class="d">Alt+\</span></span>
+          </span>
+        </button>
+        <button class="step" role="tab" data-shot="timeline" aria-selected="true">
+          <span class="rail"></span>
+          <span class="mark"><span class="pip"></span></span>
+          <span><h3>让 agent 干活 <span class="t">运行中 · 26s</span></h3>
+            <p>工具调用折叠成一行：图标 · 动词 · 文件名 · 耗时。展开才是按类型定制的卡片，不是一坨 JSON。输入框上方钉着「现在在做什么、跑了多久、第几步、停止」。</p>
+            <span class="row">▶ <b>运行命令</b> npm test -w server <span class="d">0/1 步 · 26s</span><br>◎ 处理中<br>📁 claude-web · ⑂ master •15 · Slow Demo</span>
+          </span>
+        </button>
+        <button class="step" role="tab" data-shot="git" aria-selected="false">
+          <span class="rail"></span>
+          <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="8"/></svg></span>
+          <span><h3>看改了什么 <span class="t">Git · 改动 · diff</span></h3>
+            <p>会话触碰过的文件、暂存、提交、拉推、worktree、stash 都在会话旁边的标签里。diff 有行号，内联或并排。出错的 git 命令会被归成 15 类并给一键修复。</p>
+            <span class="row">± <b>layout.ts</b> <span class="d">+17 −13</span><br>M GitView.tsx · M DiffTile.tsx · M layout.ts<br>⑂ master <span class="d">无上游 → 推送 (-u)</span></span>
+          </span>
+        </button>
+        <button class="step" role="tab" data-shot="memory" aria-selected="false">
+          <span class="rail"></span>
+          <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="8"/></svg></span>
+          <span><h3>把该记的记下来 <span class="t">所有 agent 共用</span></h3>
+            <p>决定、约束、走过的死路进同一个 SQLite 库。Claude、Codex、Gemini、Qwen 都通过同一个 MCP 服务读写它，一个 agent 记的另一个开口就能查到。你在面板里能审、能置顶、能删。</p>
+            <span class="row">◈ <b>memory_search</b> "最小化" <span class="d">LIKE 回退（中文）</span><br>◈ <b>memory_write</b> constraint <span class="d">去重 → 命中 +1</span><br>~/.claude-web/memory.db <span class="d">FTS5</span></span>
+          </span>
+        </button>
+        <button class="step" role="tab" data-shot="browser" aria-selected="false">
+          <span class="rail"></span>
+          <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="8"/></svg></span>
+          <span><h3>自己看一眼结果 <span class="t">内嵌浏览器</span></h3>
+            <p>agent 起的 dev server 直接在旁边的标签里打开，地址栏认 <code>localhost:3000</code> 这种写法。当前页面地址和控制台错误一键塞回输入框，让 agent 自己修。</p>
+            <span class="row">⌐ <b>localhost:3000</b> <span class="d">webview · 独立 partition</span><br>↑ 发给会话：URL + console 错误<br>↗ 在系统浏览器打开</span>
+          </span>
+        </button>
+      </div>
+      <div class="shot">
+        <figure class="frame">
+          <div class="frame-bar"><span class="dot"></span><span id="shot-title">让 agent 干活</span><span class="path">Claude Web</span></div>
+          <img data-shot="workbench" src="assets/workbench.png" alt="三个窗格并排：两个会话和一个终端，右侧是文件改动面板" width="1859" height="1002">
+          <img data-shot="timeline" class="on" src="assets/timeline.png" alt="一轮进行中：工具行显示运行命令 npm test，输入框上方是运行卡和上下文行" width="1703" height="1079">
+          <img data-shot="git" src="assets/git.png" alt="左边 Git 面板列出三处改动，右边 layout.ts 的内联 diff 带行号" width="1859" height="1002">
+          <img data-shot="memory" src="assets/memory.png" alt="设置里的共享记忆页：开关、三种注入方式、存储位置" width="1703" height="1079">
+          <img data-shot="browser" src="assets/browser.png" alt="内嵌浏览器标签，地址栏是 http://localhost:3000" width="1703" height="1079">
+        </figure>
+        <p class="cap" id="shot-cap"><b>运行卡</b>钉在输入框上方：正在做什么、多久、第几步、停止。工具行自己数秒，agent 不发进度也不会停在 0s。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="cross">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">跨 agent，三件事</span>
+      <h2>一个会话不属于某一个 agent。</h2>
+      <p class="lede">这是这套系统和「多开几个终端」的区别。三件事共用一条规范时间线：每个 agent 的会话都被镜像成 provider 无关的事件流，只留能跨厂商的东西。</p>
+    </div>
+    <div class="trio">
+      <div>
+        <span class="eyebrow">01 · 接力</span>
+        <h3>Codex 开的会话，Claude 接着做</h3>
+        <p>切换 agent 时，从规范时间线生成一份结构化简报：已经决定了什么、磁盘上改了哪些文件、试过又失败的方案、当前目标。Claude 走 Agent SDK 受支持的 <code>SessionStore</code> 原生续接，其它 agent 把简报当第一条消息收下。会话 id 不变，侧栏里还是同一条。</p>
+        <pre><b>## 交接简报</b>
+目标  把 dock 最小化改成 CSS 收起
+已改  Dock.tsx (+41 −78) · styles.css (+12)
+失败  <i>display:none 会卸载终端 → 放弃</i>
+注意  推理过程没有跟过来（跨厂商不可携带）</pre>
+        <p class="fine">不碰 Codex 的 rollout 文件，不伪造 ~/.claude/projects。thinking 一律不带：Claude 的带签名、Codex 的是加密的，跨厂商必然失效。</p>
+      </div>
+      <div>
+        <span class="eyebrow">02 · 热切换</span>
+        <h3>换 API key、换中转，会话原地不动</h3>
+        <p>供应商档案（base URL + key + 模型映射）只注入到那个会话的进程里，不写你的 <code>~/.claude/settings.json</code>。切换是一次你看不见的重启：停子进程、用新 env 重开、从最后一个 uuid 原生 resume。历史、面板、草稿全在，时间线里多一条「已切换到 …」。</p>
+        <pre>档案  super-nb   → api.super-nb.me
+档案  claude.ai  → 官方登录
+<i>session.setProvider</i>  ⟳ 0.8s
+✓ 同一个 session id · 历史连续</pre>
+        <p class="fine">密钥用 Windows DPAPI / macOS 钥匙串加密存放，wire 上一律打码。中转指纹过不了 ccb 时自动退回官方二进制。</p>
+      </div>
+      <div>
+        <span class="eyebrow">03 · 记忆</span>
+        <h3>一个记住，全员知道</h3>
+        <p>记忆库是自建的：SQLite + FTS5，就在 <code>~/.claude-web/memory.db</code>。以 MCP 暴露 <code>memory_search / memory_write / memory_list</code>，注入到我们启动的每个 agent 进程里 —— Claude 走 SDK、Codex 走 <code>-c</code> 覆盖、ACP agent 走 <code>session/new</code>。会话结束还能自动萃取决定、约束、死路。</p>
+        <pre>[constraint] 停靠面板最小化时绝对不能卸载面板
+[deadend]    :focus outline:none 再补 focus-visible
+[decision]   模型表统一放 models/catalog.ts
+<i>来自 claude · 命中 2</i></pre>
+        <p class="fine">不改 ~/.claude、~/.codex、~/.gemini 里的任何配置。卸载 Claude Web，什么都不留下。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="more">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">工作台里还有</span>
+      <h2>一个 IDE 该有的，围着会话长出来。</h2>
+    </div>
+    <div class="bento">
+      <div class="cell wide">
+        <span class="k">MISSION CONTROL · Ctrl+Shift+M</span>
+        <h3>所有会话一屏看完：需要你 / 运行中 / 出错 / 空闲</h3>
+        <p>卡片上直接允许或拒绝权限、中断、跳转。需要你的排最前。</p>
+        <img src="assets/mission.png" alt="总览面板：需要你 0、运行中 0、空闲 2，叠着首次启动引导" loading="lazy">
+      </div>
+      <div class="cell">
+        <span class="k">编辑器</span>
+        <h3>Monaco，一个路径一个 model</h3>
+        <p>自动保存、磁盘变更检测、未保存关闭确认。主题从 CSS 变量算出来，切主题即刻跟着变。</p>
+      </div>
+      <div class="cell">
+        <span class="k">搜索 / 文件</span>
+        <h3>ripgrep 直出</h3>
+        <p>大小写 / 全词 / 正则 / include / exclude，替换可逐行排除。文件树带 git 徽章、回收站、内联重命名。</p>
+      </div>
+      <div class="cell">
+        <span class="k">看板</span>
+        <h3>Issue / PR 就在会话旁边</h3>
+        <p>GitHub 与 GitLab，按审查状态分列。PR 检出到 worktree 再开会话，「审查」提示自动发过去。</p>
+      </div>
+      <div class="cell">
+        <span class="k">目标</span>
+        <h3>一句话目标，会话自己一轮轮推进</h3>
+        <p><code>/goal 把测试全修绿</code>。活规格随时改，下一轮生效；证据（改过的文件、跑过的命令、提交）自动收集。</p>
+      </div>
+      <div class="cell">
+        <span class="k">定时任务</span>
+        <h3>cron 表达式，6 个模板</h3>
+        <p>CI 巡检、每日总结、依赖更新检查、TODO 巡查……每次运行留一条结果摘要。</p>
+      </div>
+      <div class="cell">
+        <span class="k">模型与 effort</span>
+        <h3>写对版本号，分清 ultracode</h3>
+        <p>Fable 5.1 而不是 Fable。每个模型自己的 effort 档位；ultracode 是会话级开关，不是 effort 里的一档。Codex 的 <code>ultra</code> 才是真的枚举值。</p>
+      </div>
+      <div class="cell">
+        <span class="k">用量</span>
+        <h3>额度环 + 账本</h3>
+        <p>读 CLI 同源的账号额度；每个 result 记一行：延迟、缓存读写、费用、失败原因，可导出 CSV。</p>
+      </div>
+      <div class="cell">
+        <span class="k">配置中心</span>
+        <h3>MCP / 插件 / Skills / Hooks 全在一处</h3>
+        <p>内置约 27 个常用 MCP 服务器配置，官方注册表搜索，健康检查。Skills 支持 GitHub 子目录与本地路径。</p>
+      </div>
+      <div class="cell wide">
+        <span class="k">IM 网关</span>
+        <h3>手机上回一句，会话就继续</h3>
+        <p>Telegram、Discord、Slack、飞书、钉钉、企业微信。权限请求变成「允许 / 拒绝」按钮，AskUserQuestion 变成选项按钮。</p>
+        <div class="list"><span>每个聊天绑定一个会话，<code>/new /use /status /stop</code> 切换</span><span>未授权用户一小时只提示一次，<code>/pair 配对码</code> 加入</span></div>
+      </div>
+      <div class="cell">
+        <span class="k">ANDROID</span>
+        <h3>adb 截图、点、滑、装包</h3>
+        <p>面板里 0.9s 一帧，点击就是 tap，拖动就是 swipe。给做 App 的会话看真机。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="open">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">怎么打开</span>
+      <h2>三种方式，同一个服务。</h2>
+      <p class="lede">一个 Node 进程驱动所有 agent，一条 WebSocket 推给前端。桌面版只是给它套了个壳。</p>
+    </div>
+    <div class="ways">
+      <div class="way">
+        <span class="k">WINDOWS 桌面版</span>
+        <h3>下载安装包或便携版</h3>
+        <p>自带 Claude Code 引擎（claude-code-best，找不到就退回官方 claude.exe），托盘常驻，多窗口，关闭不退出继续跑会话。</p>
+        <pre><b>ClaudeWeb-0.1.0-win-x64.exe</b>     NSIS 安装
+<b>ClaudeWeb-0.1.0-portable.exe</b>    免安装</pre>
+        <a class="btn primary" href="#" aria-disabled="true" title="发布地址待定">下载 Windows 版</a>
+        <p class="fine">macOS / Linux 暂无安装包，用下面的浏览器模式。</p>
+      </div>
+      <div class="way">
+        <span class="k">浏览器</span>
+        <h3>任何系统，三条命令</h3>
+        <p>本机 <code>127.0.0.1:3090</code>。开发模式 server 热重载、前端走 Vite。</p>
+        <pre><b>npm install</b>
+<b>npm run build</b>
+<b>npm start</b>        → http://127.0.0.1:3090</pre>
+        <p class="fine">用你已经登录的 Claude Code 账号；Codex / Gemini 各自的 CLI 装好并登录即可被识别。</p>
+      </div>
+      <div class="way">
+        <span class="k">手机</span>
+        <h3>扫码配对，PWA 装到桌面</h3>
+        <p>设置 → 远程 / 手机 打开局域网监听，生成 6 位配对码和二维码。手机上是抽屉式单列布局。</p>
+        <pre>远程监听  0.0.0.0:3091
+配对码    <b>482 913</b>   10 分钟 · 5 次
+设备令牌  只存 sha256</pre>
+        <p class="fine">出门在外走 SSH 隧道到远程主机，或者干脆在 Telegram 里回。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="local">
+  <div class="wrap local">
+    <div class="sec-head" style="margin-bottom:0">
+      <span class="eyebrow">东西都在你机器上</span>
+      <h2>一个本地进程，几个本地文件。</h2>
+      <p class="lede">Claude Web 不接自己的服务器。模型调用走你自己的账号或 API；会话记录由各家 CLI 自己写，我们只在旁边镜像一份规范时间线。所有它自己产生的东西都在一个目录里，删掉就干净。</p>
+    </div>
+    <div class="files">
+      <div class="yes"><b>~/.claude-web/meta.json</b>   工作区 · 档案 · 设置 · 定时任务</div>
+      <div class="yes"><b>~/.claude-web/memory.db</b>   共享记忆（SQLite + FTS5）</div>
+      <div class="yes"><b>~/.claude-web/canonical/</b>  每个会话的规范时间线</div>
+      <div class="yes"><b>~/.claude-web/agents/</b>     外部 agent 的会话记录</div>
+      <div class="yes"><b>~/.claude-web/ledger.jsonl</b> 用量账本</div>
+      <div class="no">~/.claude/settings.json      不写</div>
+      <div class="no">~/.codex/config.toml         不写</div>
+      <div class="no">~/.gemini/settings.json      不写</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow">外观</span>
+      <h2>六个主题，一套令牌。</h2>
+      <p class="lede">主题只定义十几个原色，表面、描边、文字层级全部从中派生。所以每个主题都完整，包括 Monaco 和代码高亮。</p>
+    </div>
+    <div class="themes">
+      <figure><img src="assets/hero.png" alt="dark 主题" loading="lazy"><figcaption>dark</figcaption></figure>
+      <figure><img src="assets/theme-light.png" alt="light 主题" loading="lazy"><figcaption>light</figcaption></figure>
+      <figure><img src="assets/theme-dracula.png" alt="dracula 主题" loading="lazy"><figcaption>dracula</figcaption></figure>
+      <figure><img src="assets/theme-nord.png" alt="nord 主题" loading="lazy"><figcaption>nord</figcaption></figure>
+      <figure><img src="assets/theme-tokyo-night.png" alt="tokyo night 主题" loading="lazy"><figcaption>tokyo-night</figcaption></figure>
+      <figure><img src="assets/theme-paper.png" alt="paper 主题" loading="lazy"><figcaption>paper</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head"><span class="eyebrow">常见问题</span><h2>几个会先问的。</h2></div>
+    <div class="faq">
+      <details><summary>要收费吗？</summary><p class="a">Claude Web 本身不收费，也没有账号系统。模型用你自己的 Claude 订阅、API key 或中转；Codex、Gemini 用各自 CLI 的登录。</p></details>
+      <details><summary>会话真的能从 Codex 交给 Claude 吗？</summary><p class="a">能，但要说清楚带过去的是什么：用户消息、回复正文、工具调用和结果、磁盘现状，会被整理成一份简报。推理过程（thinking / reasoning）带不过去，任何厂商都做不到，OpenAI 官方的导入器同样是降级成纯文本。</p></details>
+      <details><summary>它会改我的 Claude Code / Codex 配置吗？</summary><p class="a">不会。供应商 env 只注入到我们启动的那个会话进程；记忆 MCP 也只注入到我们启动的进程。你在终端里直接用 <code>claude</code> 或 <code>codex</code> 时，看到的还是你自己的配置。</p></details>
+      <details><summary>没有 macOS 版？</summary><p class="a">目前只打了 Windows 的安装包。macOS 和 Linux 用浏览器模式：<code>npm start</code> 后开 127.0.0.1:3090，功能一样，少的只是托盘和内嵌浏览器的 webview（退化成受限 iframe）。</p></details>
+    </div>
+  </div>
+</section>
+
+<section class="final">
+  <div class="wrap">
+    <span class="eyebrow">开始</span>
+    <h2>打开一个窗口，把几个 agent 都叫进来。</h2>
+    <div class="cta">
+      <a class="btn primary" href="#open">下载 Windows 版</a>
+      <span class="alt"><b>npm start</b> → 127.0.0.1:3090</span>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span class="brand"><img src="assets/icon.svg" alt=""> Claude Web</span>
+    <span>v0.1.0 · 本地运行的多 agent 编程工作台</span>
+    <span class="grow"></span>
+    <a href="#turn">功能</a>
+    <a href="#open">下载</a>
+    <a href="#local">隐私</a>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var steps = document.querySelectorAll('.step');
+  var shots = document.querySelectorAll('.shot img');
+  var title = document.getElementById('shot-title');
+  var cap = document.getElementById('shot-cap');
+  var caps = {
+    workbench: '<b>窗格永不卸载。</b>分屏、拖动、缩放只改矩形，所以 xterm 缓冲、滚动位置、草稿都保得住。',
+    timeline: '<b>运行卡</b>钉在输入框上方：正在做什么、多久、第几步、停止。工具行自己数秒，agent 不发进度也不会停在 0s。',
+    git: '<b>diff 有行号</b>，来自 SDK 的 structuredPatch；内联或并排。git 报错归成 15 类，给一键修复。',
+    memory: '<b>三条注入路径</b>都只作用在我们启动的进程上。真实 Claude 会话报 memory connected，三个工具齐全。',
+    browser: '<b>桌面版是完整的 webview</b>，独立 partition、弹窗一律拒绝并转给系统浏览器；浏览器模式退化为受限 iframe。'
+  };
+  function pick(step) {
+    var id = step.getAttribute('data-shot');
+    steps.forEach(function (s) {
+      var on = s === step;
+      s.setAttribute('aria-selected', on ? 'true' : 'false');
+      var m = s.querySelector('.mark');
+      if (on) { m.innerHTML = '<span class="pip"></span>'; }
+      else if (s.getAttribute('data-state') === 'done') { m.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9.5"/></svg>'; }
+      else { m.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="8"/></svg>'; }
+    });
+    shots.forEach(function (img) { img.classList.toggle('on', img.getAttribute('data-shot') === id); });
+    title.textContent = step.querySelector('h3').firstChild.textContent.trim();
+    cap.innerHTML = caps[id] || '';
+    // steps before the picked one read as done, after it as pending — the timeline's own rule
+    var seen = false;
+    steps.forEach(function (s) {
+      if (s === step) { seen = true; s.removeAttribute('data-state'); return; }
+      if (seen) s.removeAttribute('data-state'); else s.setAttribute('data-state', 'done');
+    });
+    steps.forEach(function (s) { if (s !== step) { var m = s.querySelector('.mark'); m.innerHTML = s.getAttribute('data-state') === 'done' ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5L16 9.5"/></svg>' : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="8"/></svg>'; } });
+  }
+  steps.forEach(function (s) {
+    s.addEventListener('click', function () { pick(s); });
+    s.addEventListener('keydown', function (e) {
+      var i = Array.prototype.indexOf.call(steps, s);
+      if (e.key === 'ArrowDown' && steps[i + 1]) { steps[i + 1].focus(); pick(steps[i + 1]); e.preventDefault(); }
+      if (e.key === 'ArrowUp' && steps[i - 1]) { steps[i - 1].focus(); pick(steps[i - 1]); e.preventDefault(); }
+    });
+  });
+})();
+</script>
