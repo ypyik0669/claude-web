@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionSummary, SourceCaps } from '@shared';
-import { capsIntersection, deleteSummary, effectiveCaps, nativeCliCommand } from './caps';
+import { capsIntersection, deleteSummary, deleteTargets, effectiveCaps, nativeCliCommand } from './caps';
 
 const s = (id: string, o: Partial<SessionSummary> = {}): SessionSummary => ({ sessionId: id, title: id, cwd: '/w', lastModified: 0, ...o });
 const CLAUDE: SourceCaps = { resume: true, rename: true, archive: false, delete: true, fork: true };
@@ -65,5 +65,21 @@ describe('deleteSummary', () => {
   it('states the count and the per-source split, biggest first', () => {
     const list = [s('c1'), s('codex-1', { agent: 'codex' }), s('codex-2', { agent: 'codex' })];
     expect(deleteSummary(list, (k) => ({ codex: 'Codex', claude: 'Claude Code' })[k] ?? k)).toBe('将删除 3 个会话（Codex 2、Claude Code 1）');
+  });
+});
+
+describe('deleteTargets', () => {
+  const names = (k: string) => ({ codex: 'Codex', claude: 'Claude Code', opencode: 'OpenCode' })[k] ?? k;
+  it('imported sessions are deleted from their source, Claude sessions from Claude Code', () => {
+    expect(deleteTargets([s('codex-1', { agent: 'codex', caps: CODEX }), s('c1')], names)).toBe('从 Codex、Claude Code 删除');
+  });
+  it("claude-web's own agent session is deleted from Claude Web only", () => {
+    expect(deleteTargets([s('uuid-own', { agent: 'codex' })], names)).toBe('从 Claude Web 删除');
+  });
+  it('a merged session (backed by a joined source that can delete) is ALSO deleted from that source', () => {
+    expect(deleteTargets([s('uuid-m', { agent: 'codex', caps: CODEX, mergedFrom: 'codex-t1' })], names)).toBe('从 Claude Web 删除，并同时从 Codex 删除它的原始记录');
+  });
+  it('a merged session whose source cannot delete stays in the source', () => {
+    expect(deleteTargets([s('uuid-m', { agent: 'opencode', caps: READONLY, mergedFrom: 'opencode-x' })], names)).toBe('从 Claude Web 删除');
   });
 });

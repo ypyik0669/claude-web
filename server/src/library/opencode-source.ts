@@ -24,6 +24,7 @@
 // - `opencode acp`'s `initialize` response reports `agentCapabilities.loadSession: true`, so
 //   `caps.resume` stays `true` (continuing a session via the ACP driver is supported).
 import { spawn, type ChildProcess } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import type { AgentKind, SessionSummary, SourceCaps, SourceStatus } from '../protocol.js';
 import { resolveSpawn } from '../agents/resolve.js';
 import { execFileTree, killTree } from '../agents/kill-tree.js';
@@ -69,6 +70,8 @@ export class OpenCodeSource implements SessionSource {
   private capsFailedAt = 0;
   private probeChild: ChildProcess | null = null;
   private gen = 0; // bumped by close() to invalidate any spawnProc() still in flight
+  /** native id → the session's directory, from the last list(): `session delete` runs there */
+  private dirs = new Map<string, string>();
 
   constructor(
     private readonly getLaunch: () => { command: string; env: Record<string, string> },
@@ -225,6 +228,7 @@ export class OpenCodeSource implements SessionSource {
       this.probeCaps();
       this.armIdle();
       const all = await this.fetchSessions(p.baseUrl);
+      for (const s of all) if (s?.id && typeof s.directory === 'string' && s.directory) this.dirs.set(s.id, s.directory);
       all.sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
       const offset = o.cursor ? Number(o.cursor) : 0;
       const limit = o.limit ?? 20;
@@ -274,8 +278,12 @@ export class OpenCodeSource implements SessionSource {
   async remove(nativeId: string): Promise<void> {
     const l = this.getLaunch();
     const r = resolveSpawn(l.command, ['session', 'delete', nativeId]);
+    // in the session's own directory when known (opencode scopes sessions by project); a directory
+    // that no longer exists falls back to ours rather than failing the spawn
+    const dir = this.dirs.get(nativeId);
+    const cwd = dir && existsSync(dir) ? dir : undefined;
     try {
-      await execFileTree(r.command, r.args, { timeoutMs: this.opts.deleteTimeoutMs ?? DELETE_TIMEOUT_MS, env: { ...process.env, ...l.env, ...r.env }, windowsVerbatimArguments: r.via === 'cmd' }).done;
+      await execFileTree(r.command, r.args, { cwd, timeoutMs: this.opts.deleteTimeoutMs ?? DELETE_TIMEOUT_MS, env: { ...process.env, ...l.env, ...r.env }, windowsVerbatimArguments: r.via === 'cmd' }).done;
     } catch (e: any) {
       const tail = (e?.killed ? e.message : e?.stderr || e?.message || String(e)).toString().slice(-2000);
       throw new Error(`opencode session delete ${nativeId} 失败：${tail}`);

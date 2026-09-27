@@ -257,6 +257,27 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', { timeout: 
     expect((src as any).rename).toBeUndefined();
   });
 
+  it('remove() runs `session delete` in the session directory when it is known', async () => {
+    const work = await fs.mkdtemp(path.join(os.tmpdir(), 'cw-opencode-work-'));
+    const cwdFile = path.join(os.tmpdir(), `cw-opencode-delete-cwd-${process.pid}-${Date.now()}.txt`);
+    tmpFiles.push(cwdFile);
+    const server = http.createServer((req, res) => {
+      res.setHeader('content-type', 'application/json');
+      if ((req.url ?? '').startsWith('/session')) { res.end(JSON.stringify([{ ...SESSIONS[0], directory: work }])); return; }
+      res.writeHead(404); res.end();
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    mocks.push({ close: () => new Promise((r) => server.close(() => r())) });
+    const addr = server.address() as { port: number };
+    const src = new OpenCodeSource(() => ({ command: fakeCli, env: { FAKE_CWD_FILE: cwdFile } }), { baseUrl: `http://127.0.0.1:${addr.port}` });
+    sources.push(src);
+    await src.list({ limit: 10 });
+    await src.remove('ses-a');
+    const got = await fs.readFile(cwdFile, 'utf8');
+    await fs.rm(work, { recursive: true, force: true });
+    expect(path.resolve(got).toLowerCase()).toBe(path.resolve(work).toLowerCase());
+  });
+
   it('remove() throws with the stderr tail when the CLI exits non-zero', async () => {
     const src = new OpenCodeSource(() => ({ command: fakeCli, env: { FAKE_EXIT_CODE: '1' } }));
     sources.push(src);

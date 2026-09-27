@@ -43,6 +43,7 @@ if (argv[0] === 'serve') {
   setTimeout(() => process.exit(0), Number(process.env.FAKE_DELETE_HANG_MS));
 } else if (argv[0] === 'session' && argv[1] === 'delete') {
   if (process.env.FAKE_ARGV_FILE) fs.writeFileSync(process.env.FAKE_ARGV_FILE, JSON.stringify(argv));
+  if (process.env.FAKE_CWD_FILE) fs.writeFileSync(process.env.FAKE_CWD_FILE, process.cwd());
   const code = Number(process.env.FAKE_EXIT_CODE ?? '0');
   if (code !== 0) process.stderr.write('fake delete failure\n');
   process.exit(code);

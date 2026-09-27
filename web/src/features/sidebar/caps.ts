@@ -42,3 +42,25 @@ export function deleteSummary(list: SessionSummary[], nameOf: (kind: string) => 
   const parts = [...by.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${nameOf(k)} ${n}`);
   return `将删除 ${list.length} 个会话（${parts.join('、')}）`;
 }
+
+/**
+ * Where a delete actually removes things, for the second confirm: an imported session from its
+ * source, a Claude session from Claude Code, claude-web's own agent session from Claude Web — and a
+ * merged one (claude-web's session that continued a joined source's session, `mergedFrom`) ALSO
+ * from that source when the source can delete (the server removes both).
+ */
+export function deleteTargets(list: SessionSummary[], nameOf: (kind: string) => string): string {
+  const from = new Set<string>();
+  const also = new Set<string>();
+  for (const s of list) {
+    const kind = agentOf(s);
+    if (isImportedSessionId(s.sessionId)) from.add(nameOf(kind));
+    else if (kind === 'claude') from.add(nameOf('claude'));
+    else {
+      from.add('Claude Web');
+      if (s.mergedFrom && s.caps?.delete) also.add(nameOf(kind));
+    }
+  }
+  const head = `从 ${[...from].join('、')} 删除`;
+  return also.size ? `${head}，并同时从 ${[...also].join('、')} 删除它的原始记录` : head;
+}

@@ -285,7 +285,7 @@ export class LibraryService extends EventEmitter {
       if (src && lid && this.isJoined(head.agent)) {
         out.delete(lid);
         alias.set(lid, summary.sessionId);
-        out.set(summary.sessionId, { ...src, sessionId: summary.sessionId, agent: head.agent, lastModified: Math.max(src.lastModified, summary.lastModified), caps: src.caps });
+        out.set(summary.sessionId, { ...src, sessionId: summary.sessionId, agent: head.agent, lastModified: Math.max(src.lastModified, summary.lastModified), caps: src.caps, mergedFrom: lid });
       } else {
         out.set(summary.sessionId, summary);
       }

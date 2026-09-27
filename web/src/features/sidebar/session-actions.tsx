@@ -6,7 +6,7 @@ import { dlg } from '@/ui/dialog';
 import { Icon, AGENT_ICONS } from '@/ui/icons';
 import { isImportedSessionId } from '@/util';
 import { agentOf, isArchived } from './filter';
-import { deleteSummary, effectiveCaps, nativeCliCommand } from './caps';
+import { deleteSummary, deleteTargets, effectiveCaps, nativeCliCommand } from './caps';
 
 export { effectiveCaps, capsIntersection, nativeCliCommand, type EffectiveCaps } from './caps';
 
@@ -43,8 +43,8 @@ export async function deleteSessions(list: SessionSummary[]): Promise<boolean> {
   if (!list.length) return false;
   const first = list.length === 1 ? `删除会话「${list[0].title}」？` : `删除选中的 ${list.length} 个会话？`;
   if (!(await dlg.confirm(first, { message: `${deleteSummary(list, (k) => sourceName(k as AgentKind))}。会话记录会从它所属的 agent 里移除；只是不想看到的话，用「归档」。`, danger: true, okLabel: '继续' }))) return false;
-  const sources = [...new Set(list.map(agentOf))].map(sourceName).join('、');
-  if (!(await dlg.confirm('再确认一次：删除后不能在这里恢复', { message: `将先备份到 ~/.claude-web/library-trash，再从 ${sources} 删除`, danger: true, okLabel: '删除' }))) return false;
+  const where = deleteTargets(list, (k) => sourceName(k as AgentKind));
+  if (!(await dlg.confirm('再确认一次：删除后不能在这里恢复', { message: `将先备份到 ~/.claude-web/library-trash，再${where}`, danger: true, okLabel: '删除' }))) return false;
   try {
     const r = await st.libraryOp('delete', { sessionIds: list.map((s) => s.sessionId) });
     const failed: { id: string; error: string }[] = r?.failed ?? [];

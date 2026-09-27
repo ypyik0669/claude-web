@@ -132,6 +132,7 @@ describe('LibraryService', () => {
     expect(hit).toHaveLength(1);
     expect(hit[0].sessionId).toBe('uuid-1'); // claude-web's id
     expect(hit[0].caps).toEqual(srcCaps); // the source's caps
+    expect(hit[0].mergedFrom).toBe('codex-t1'); // the client names the source in the delete confirm
     expect(hit[0].lastModified).toBe(Math.max(200, mtime)); // the newer of the two (file mtime here)
 
     // and when the native side is newer, its lastModified wins

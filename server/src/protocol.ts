@@ -41,6 +41,8 @@ export interface SessionSummary {
   archived?: boolean;
   childCount?: number;
   caps?: SourceCaps;
+  /** claude-web's own session merged with the joined-source session it continues (that library id); deleting it deletes both */
+  mergedFrom?: string;
 }
 
 /** What the library UI may do with a session, given its source's official APIs. */
