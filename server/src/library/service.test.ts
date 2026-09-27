@@ -241,6 +241,75 @@ describe('LibraryService', () => {
     expect((await lib.sources()).find((s) => s.kind === 'codex')?.error).toBeUndefined();
   });
 
+  it('stale-while-revalidate: a cached source past its TTL is served at once and refreshed behind', async () => {
+    lib.dispose();
+    lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents(['codex']), dataDirs: {}, trashDir: path.join(dir, 'library-trash'), listTtlMs: 0 });
+    (codex as any).caps = { ...ALL, archive: false };
+    await lib.join('codex', true);
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'codex-t1', 'c1']);
+    let release!: () => void;
+    codex.list.mockImplementation(() => new Promise((r) => { release = () => r({ items: [item('codex-t9', 'codex', 250)] }); }));
+    const t0 = Date.now();
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'codex-t1', 'c1']); // cached, not waited for
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect((await lib.sources()).find((s) => s.kind === 'codex')?.error).toBeUndefined();
+    const changed = new Promise<void>((r) => lib.once('changed', () => r()));
+    release();
+    await changed;
+    codex.list.mockImplementation(async () => ({ items: [item('codex-t9', 'codex', 250)] }));
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'codex-t9', 'c1']);
+  });
+
+  it('leaving a source while its fetch is in flight: a late success is not cached', async () => {
+    lib.dispose();
+    lib = bounded();
+    (codex as any).caps = { ...ALL, archive: false };
+    let release!: () => void;
+    codex.list.mockImplementationOnce(() => new Promise((r) => { release = () => r({ items: [item('codex-old', 'codex', 1)] }); }));
+    await lib.join('codex', true);
+    await lib.list(); // first load outlives the bound
+    await lib.join('codex', false);
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    codex.list.mockImplementation(() => new Promise(() => {})); // after re-join: still loading
+    await lib.join('codex', true);
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'c1']);
+    const st = (await lib.sources()).find((s) => s.kind === 'codex');
+    expect(st?.count).toBeUndefined();
+    expect(st?.loading).toBe(true);
+  });
+
+  it('leaving a source while its fetch is in flight: a late failure sets no error', async () => {
+    lib.dispose();
+    lib = bounded();
+    (codex as any).caps = { ...ALL, archive: false };
+    let fail!: () => void;
+    codex.list.mockImplementationOnce(() => new Promise((_r, rej) => { fail = () => rej(new Error('late boom')); }));
+    await lib.join('codex', true);
+    await lib.list();
+    await lib.join('codex', false);
+    fail();
+    await new Promise((r) => setTimeout(r, 20));
+    codex.list.mockImplementation(() => new Promise(() => {}));
+    await lib.join('codex', true);
+    await lib.list();
+    expect((await lib.sources()).find((s) => s.kind === 'codex')?.error).toBeUndefined();
+  });
+
+  it('file watchers run only for joined sources: started on join, stopped on leave', async () => {
+    const claudeDir = path.join(dir, 'claude-projects');
+    const codexDir = path.join(dir, 'codex-sessions');
+    fs.mkdirSync(claudeDir);
+    fs.mkdirSync(codexDir);
+    lib.start({ claude: [claudeDir], codex: [codexDir] });
+    const watched = () => [...((lib as any).watchers as Map<string, unknown>).keys()].sort();
+    expect(watched()).toEqual(['claude']);
+    await lib.join('codex', true);
+    expect(watched()).toEqual(['claude', 'codex']);
+    await lib.join('codex', false);
+    expect(watched()).toEqual(['claude']);
+  });
+
   it('a parent cycle folds nothing: every member stays visible', async () => {
     codex.items = [
       item('codex-a', 'codex', 200, { parentId: 'codex-b' }),

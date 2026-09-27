@@ -14,6 +14,7 @@ export class LazyRpc {
   private rpc: JsonRpcProcess | null = null;
   private starting: Promise<JsonRpcProcess> | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
+  private gen = 0; // bumped by close(): a start still in flight when it ran must not be adopted
 
   constructor(
     private readonly spawnFn: () => JsonRpcProcess,
@@ -37,7 +38,8 @@ export class LazyRpc {
   private async ensure(): Promise<JsonRpcProcess> {
     if (this.rpc && !this.rpc.exited) return this.rpc;
     if (this.starting) return this.starting;
-    this.starting = (async () => {
+    const gen = this.gen;
+    const starting = (async () => {
       const rpc = this.spawnFn();
       rpc.on('exit', () => { if (this.rpc === rpc) this.rpc = null; });
       try {
@@ -46,13 +48,19 @@ export class LazyRpc {
         rpc.kill();
         throw e;
       }
+      if (gen !== this.gen) {
+        rpc.kill();
+        throw new Error('LazyRpc：启动完成前已被 close()');
+      }
       this.rpc = rpc;
       return rpc;
     })();
+    this.starting = starting;
     try {
-      return await this.starting;
+      return await starting;
     } finally {
-      this.starting = null;
+      // only our own start: after close() a newer one may already be in flight
+      if (this.starting === starting) this.starting = null;
     }
   }
 
@@ -63,6 +71,7 @@ export class LazyRpc {
   }
 
   async close(): Promise<void> {
+    this.gen++;
     this.clearIdle();
     const rpc = this.rpc;
     this.rpc = null;

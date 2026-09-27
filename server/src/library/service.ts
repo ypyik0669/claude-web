@@ -41,6 +41,8 @@ export interface LibraryOptions {
   trashDir?: string;
   /** Per-source list timeout (default 20 s); tests shorten it. */
   listTimeoutMs?: number;
+  /** How long a source's list stays fresh (default 60 s); past it the cache is served and refreshed behind. */
+  listTtlMs?: number;
 }
 
 interface Resolved { kind: AgentKind; nativeId?: string; source?: SessionSource; head: Head | null }
@@ -50,6 +52,11 @@ function defaultDataDirs(): Partial<Record<AgentKind, string[]>> {
   const oc = [path.join(home, '.local', 'share', 'opencode')];
   if (process.env.LOCALAPPDATA) oc.push(path.join(process.env.LOCALAPPDATA, 'opencode'));
   return { codex: [path.join(home, '.codex', 'sessions')], opencode: oc };
+}
+
+function defaultWatchDirs(): Partial<Record<AgentKind, string[]>> {
+  const claude = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
+  return { claude: [path.join(claude, 'projects')], codex: [path.join(os.homedir(), '.codex', 'sessions')] };
 }
 
 /** user + assistant text blocks only — what the index stores for full-text search. */
@@ -66,7 +73,8 @@ export function messagesText(msgs: any[]): string {
 
 export class LibraryService extends EventEmitter {
   private srcs = new Map<AgentKind, SessionSource>();
-  private perKind = new Map<AgentKind, { at: number; items: SessionSummary[] }>();
+  /** Last good list per source. `dirty`: invalidated (a mutation / watcher) — the next list() waits (bounded) for a refetch. */
+  private perKind = new Map<AgentKind, { at: number; items: SessionSummary[]; dirty?: boolean }>();
   private errors = new Map<AgentKind, string>();
   /** Kinds whose current `errors` entry is a list timeout (cleared by the next successful fetch). */
   private timeoutErr = new Set<AgentKind>();
@@ -79,6 +87,8 @@ export class LibraryService extends EventEmitter {
   /** Bumped by invalidate(): a fetch started under an older generation is neither joined nor cached as fresh. */
   private gens = new Map<AgentKind, number>();
   private allGen = 0;
+  /** Bumped when a source is left: a fetch started before that must not touch any state afterwards. */
+  private leaves = new Map<AgentKind, number>();
   /** transcripts.entries() failed on the last list(): claude-web's own sessions are unknown, don't prune them. */
   private localFailed = false;
   /** Until the first refreshIndex pass completes, search uses the old transcript scan (a half-built index misses things). */
@@ -88,7 +98,9 @@ export class LibraryService extends EventEmitter {
   private indexing: Promise<void> | null = null;
   private indexAgain = false;
   private timers: NodeJS.Timeout[] = [];
-  private watcher: ReturnType<typeof chokidar.watch> | null = null;
+  /** chokidar watchers, one per joined source that has watch dirs (claude always; others while joined). */
+  private watchers = new Map<AgentKind, ReturnType<typeof chokidar.watch>>();
+  private watchDirs: Partial<Record<AgentKind, string[]>> | null = null;
   private indexTimer: NodeJS.Timeout | null = null;
   /** Kinds passed to the constructor (Codex / OpenCode); ACP sources are built on join and dropped on leave. */
   private builtin = new Set<AgentKind>();
@@ -133,9 +145,16 @@ export class LibraryService extends EventEmitter {
   }
 
   // ---------- list ----------
-  invalidate(kind?: AgentKind) {
+  /**
+   * Mark a source's list stale. Hard (default — after our own mutation): the next list() waits
+   * (bounded) for a refetch, and a fetch already in flight is superseded. Soft (a file watcher saw
+   * the source's data change): just expire the TTL, so the next list() serves the cache and
+   * revalidates behind it.
+   */
+  invalidate(kind?: AgentKind, o: { soft?: boolean } = {}) {
     // stale, not forgotten: a source that fails on the next fetch still serves its last good list
-    for (const [k, v] of this.perKind) if (!kind || k === kind) v.at = 0;
+    for (const [k, v] of this.perKind) if (!kind || k === kind) { v.at = 0; if (!o.soft) v.dirty = true; }
+    if (o.soft) return;
     if (kind) this.gens.set(kind, (this.gens.get(kind) ?? 0) + 1);
     else this.allGen++;
   }
@@ -154,24 +173,42 @@ export class LibraryService extends EventEmitter {
     return items;
   }
 
-  /** One in-flight fetch per source: concurrent list() calls share it. */
+  /**
+   * One in-flight fetch per source: concurrent list() calls share it.
+   *
+   * Stale-while-revalidate: a cached list that merely aged past the TTL is returned at once and
+   * refreshed in the background ('changed' when the refresh lands). Only a first load, or a list
+   * explicitly invalidated (our own mutation, a watcher event), waits — and that wait is bounded.
+   */
   private listSource(src: SessionSource): Promise<SessionSummary[]> {
     const hit = this.perKind.get(src.kind);
-    if (hit && Date.now() - hit.at < LIST_TTL_MS) return Promise.resolve(hit.items);
+    if (hit && !hit.dirty && Date.now() - hit.at < (this.opts.listTtlMs ?? LIST_TTL_MS)) return Promise.resolve(hit.items);
     const gen = this.genOf(src.kind);
     const running = this.fetching.get(src.kind);
+    const p = running && running.gen === gen ? running.p : this.startFetch(src, gen);
+    if (hit && !hit.dirty) {
+      this.late.add(p); // announce when it lands
+      return Promise.resolve(hit.items);
+    }
     // callers joining an in-flight fetch are bounded too — otherwise they'd wait out a hung source
-    if (running && running.gen === gen) return this.bounded(src.kind, running.p);
+    return this.bounded(src.kind, p);
+  }
+
+  private startFetch(src: SessionSource, gen: number): Promise<SessionSummary[]> {
+    const errBefore = this.errors.get(src.kind);
     const p = this.fetchSource(src, gen).finally(() => { if (this.fetching.get(src.kind)?.p === p) this.fetching.delete(src.kind); });
     this.fetching.set(src.kind, { gen, p });
-    // a fetch that outlived some caller's bound announces itself once when it settles
+    // a fetch nobody waited for to the end (bound hit, or a background revalidation) announces itself
+    // once when it settles — unless it only repeated the error already shown (no re-list loop)
     const settle = () => {
       if (!this.late.delete(p)) return;
       this.loading.delete(src.kind);
+      const err = this.errors.get(src.kind);
+      if (err && err === errBefore) return;
       this.emit('changed');
     };
     p.then(settle, settle);
-    return this.bounded(src.kind, p);
+    return p;
   }
 
   /**
@@ -205,18 +242,22 @@ export class LibraryService extends EventEmitter {
 
   private async fetchSource(src: SessionSource, gen: number): Promise<SessionSummary[]> {
     const hit = this.perKind.get(src.kind);
+    const epoch = this.leaves.get(src.kind) ?? 0;
+    const left = () => (this.leaves.get(src.kind) ?? 0) !== epoch;
     try {
       // sources that can archive also list their archived sessions (flagged), for the "show archived" view
       const [live, archived] = await Promise.all([this.listPages(src, false), src.caps.archive ? this.listPages(src, true) : Promise.resolve([])]);
       const liveIds = new Set(live.map((x) => x.sessionId));
       const items = [...live, ...archived.filter((x) => !liveIds.has(x.sessionId))];
+      if (left()) return []; // the source was left meanwhile: no cache, no error, nothing
       // invalidated while in flight: keep it as a last-good fallback, but stale (the next list() refetches)
       const current = gen === this.genOf(src.kind);
-      if (current || !this.perKind.has(src.kind)) this.perKind.set(src.kind, { at: current ? Date.now() : 0, items });
+      if (current || !this.perKind.has(src.kind)) this.perKind.set(src.kind, { at: current ? Date.now() : 0, items, dirty: !current });
       // a timeout error is cleared by any later successful fetch, whatever its generation
       if (current || this.timeoutErr.has(src.kind)) { this.errors.delete(src.kind); this.timeoutErr.delete(src.kind); }
       return items;
     } catch (e: any) {
+      if (left()) return [];
       if (gen === this.genOf(src.kind)) { this.errors.set(src.kind, e?.message ?? String(e)); this.timeoutErr.delete(src.kind); }
       return hit?.items ?? [];
     }
@@ -387,11 +428,17 @@ export class LibraryService extends EventEmitter {
       await this.meta.setSetting('library.joined', [...cur, kind]);
       await this.meta.setSetting('library.dismissed', this.setting('library.dismissed').filter((k) => k !== kind));
       this.invalidate(kind);
+      this.watch(kind);
       this.emit('changed');
       this.scheduleIndex();
       return;
     }
     await this.meta.setSetting('library.joined', cur);
+    // in-flight fetches of this source are now stale: they must not re-cache or set errors
+    this.leaves.set(kind, (this.leaves.get(kind) ?? 0) + 1);
+    this.gens.set(kind, (this.gens.get(kind) ?? 0) + 1);
+    this.fetching.delete(kind);
+    this.unwatch(kind);
     const src = this.srcs.get(kind);
     await src?.close().catch(() => {});
     // an on-demand (ACP) source is rebuilt fresh on the next join
@@ -609,23 +656,37 @@ export class LibraryService extends EventEmitter {
   }
 
   // ---------- lifecycle ----------
-  /** Startup: trash cleanup, discovery, first index pass after 10 s, file watchers. */
-  start(watchDirs: string[] = [path.join(os.homedir(), '.claude', 'projects'), path.join(os.homedir(), '.codex', 'sessions')]) {
+  /** Startup: trash cleanup, discovery, first index pass after 10 s, file watchers (joined sources only). */
+  start(watchDirs: Partial<Record<AgentKind, string[]>> = defaultWatchDirs()) {
     void this.cleanTrash();
     void this.announce().catch(() => {});
     const t = setTimeout(() => { void this.refreshIndex().catch(() => {}); }, 10_000);
     t.unref?.();
     this.timers.push(t);
     this.on('changed', () => this.scheduleIndex());
-    const dirs = watchDirs.filter((d) => existsSync(d));
-    if (dirs.length) {
-      this.watcher = chokidar.watch(dirs, { ignoreInitial: true, depth: 4 });
-      this.watcher.on('all', (_ev, p: string) => {
-        if (path.resolve(p).startsWith(path.resolve(os.homedir(), '.codex'))) this.invalidate('codex');
-        this.scheduleIndex();
-      });
-      this.watcher.on('error', () => {});
-    }
+    this.watchDirs = watchDirs;
+    for (const k of Object.keys(watchDirs) as AgentKind[]) if (this.isJoined(k)) this.watch(k);
+  }
+
+  private watch(kind: AgentKind) {
+    if (!this.watchDirs || this.watchers.has(kind)) return;
+    const dirs = (this.watchDirs[kind] ?? []).filter((d) => existsSync(d));
+    if (!dirs.length) return;
+    const w = chokidar.watch(dirs, { ignoreInitial: true, depth: 4 });
+    w.on('all', () => {
+      // Claude's list comes from SessionService (its own watcher keeps it fresh); others revalidate
+      if (kind !== 'claude') this.invalidate(kind, { soft: true });
+      this.scheduleIndex();
+    });
+    w.on('error', () => {});
+    this.watchers.set(kind, w);
+  }
+
+  private unwatch(kind: AgentKind) {
+    const w = this.watchers.get(kind);
+    if (!w) return;
+    this.watchers.delete(kind);
+    void w.close();
   }
 
   /** Stop timers / watchers (no source processes). */
@@ -633,8 +694,8 @@ export class LibraryService extends EventEmitter {
     for (const t of this.timers) clearTimeout(t);
     this.timers = [];
     if (this.indexTimer) { clearTimeout(this.indexTimer); this.indexTimer = null; }
-    void this.watcher?.close();
-    this.watcher = null;
+    for (const k of [...this.watchers.keys()]) this.unwatch(k);
+    this.watchDirs = null;
   }
 
   /** Shutdown: dispose + close every source's library-only background process. */
