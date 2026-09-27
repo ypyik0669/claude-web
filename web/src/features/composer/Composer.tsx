@@ -288,6 +288,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   };
 
   const onPaste = (e: React.ClipboardEvent) => {
+    if (disabled) return;
     const imgFiles = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith('image/'));
     if (imgFiles.length) { e.preventDefault(); void addImages(imgFiles); return; }
     const t = e.clipboardData.getData('text/plain');
@@ -300,6 +301,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
 
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
+    if (disabled) return;
     const { files: dropped, folders, truncated } = await expandDataTransfer(e.dataTransfer);
     const imgOnly = dropped.filter((d) => !d.rel.includes('/') && d.file.type.startsWith('image/'));
     const rest = dropped.filter((d) => !imgOnly.includes(d));
@@ -392,7 +394,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
           />
           <div className="composer-bar">
             <input ref={fileInput} type="file" multiple hidden onChange={(e) => { const fl = Array.from(e.target.files ?? []); void addImages(fl.filter((f) => f.type.startsWith('image/'))); setFiles((s) => [...s, ...fl.filter((f) => !f.type.startsWith('image/')).map((f) => ({ file: f, rel: f.name }))]); e.target.value = ''; }} />
-            <button className="icon-btn" title="添加图片 / 文件" aria-label="添加附件" onClick={() => fileInput.current?.click()}><Icon name="plus" size={16} /></button>
+            <button className="icon-btn" title="添加图片 / 文件" aria-label="添加附件" disabled={disabled} onClick={() => fileInput.current?.click()}><Icon name="plus" size={16} /></button>
             {welcome ? (
               <>
                 <button className="dirpick" onClick={pickDir} title={cwd || '选择工作目录'}>
@@ -480,7 +482,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
                 </label>
               </>
             ) : active ? (
-              <span style={{ fontSize: 12, color: 'var(--ink-4)' }}>{active.state === 'starting' ? '启动中…' : '未运行 · 发送即恢复'}</span>
+              <span style={{ fontSize: 12, color: 'var(--ink-4)' }}>{disabled ? '会话已删除' : active.state === 'starting' ? '启动中…' : '未运行 · 发送即恢复'}</span>
             ) : null}
             {busy && canSend && active && (
               <button className="steer" title="不等这轮结束，立刻插话给 Claude" onClick={async () => { const t = text; setText(''); setDraft(active.sessionId, ''); await send(active.sessionId, t, undefined, true).catch((e) => toast(e.message)); }}>插话 <Icon name="send" size={12} /></button>

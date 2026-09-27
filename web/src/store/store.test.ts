@@ -200,11 +200,31 @@ describe('session library', () => {
     useStore.setState({ deletedSessions: {}, sessions: [{ sessionId: 's1', cwd: '/w', title: 't', lastModified: 0 } as any, { sessionId: 'codex-z', cwd: '/w', title: 'z', lastModified: 0, agent: 'codex' } as any] });
     useStore.setState((s) => ({ open: { ...s.open, 'codex-z': { ...s.open.s1, sessionId: 'codex-z' } } }));
     fake.handlers.set('sessions.list', () => []);
-    fake.handlers.set('library.sources', () => [{ kind: 'codex', name: 'Codex', installed: true, detected: true, joined: false, dismissed: false, enabled: false }]);
+    fake.handlers.set('library.sources', () => [
+      { kind: 'claude', name: 'Claude Code', installed: true, detected: true, joined: true, dismissed: false, enabled: true },
+      { kind: 'codex', name: 'Codex', installed: true, detected: true, joined: false, dismissed: false, enabled: false },
+    ]);
     emit({ kind: 'library.changed' });
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
     expect(useStore.getState().deletedSessions).toEqual({ s1: true });
+  });
+
+  it('no deleted mark when the source reported a listing error', async () => {
+    useStore.setState({ deletedSessions: {}, sessions: [{ sessionId: 's1', cwd: '/w', title: 't', lastModified: 0 } as any] });
+    fake.handlers.set('sessions.list', () => []);
+    fake.handlers.set('library.sources', () => [{ kind: 'claude', name: 'Claude Code', installed: true, detected: true, joined: true, dismissed: false, enabled: true, error: 'EACCES' }]);
+    emit({ kind: 'library.changed' });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(useStore.getState().deletedSessions).toEqual({});
+  });
+
+  it('the deleted mark clears when the session is listed again', async () => {
+    useStore.setState({ deletedSessions: { s1: true, gone: true } });
+    fake.handlers.set('sessions.list', () => [{ sessionId: 's1', cwd: '/w', title: 't', lastModified: 0 }]);
+    await useStore.getState().refreshSessions();
+    expect(useStore.getState().deletedSessions).toEqual({ gone: true });
   });
 
   it('a failed history load keeps the reason in loadError (the chat shows it with a retry)', async () => {

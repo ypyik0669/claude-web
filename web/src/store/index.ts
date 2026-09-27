@@ -377,9 +377,10 @@ export const useStore = create<State>((set, get) => ({
           const before = new Set(get().sessions.map((s) => s.sessionId));
           void Promise.all([get().refreshSessions(), get().loadLibrarySources().catch(() => {})]).then(() => {
             const after = new Set(get().sessions.map((s) => s.sessionId));
-            // a source that was just left takes its sessions out of the list too — that is not a deletion
-            const left = (id: string) => get().librarySources.some((x) => x.kind === parseLibraryId(id).kind && !x.joined);
-            const gone = Object.keys(get().open).filter((id) => before.has(id) && !after.has(id) && !left(id));
+            // only trust the absence when the session's source listed cleanly: a source that was just left, or one
+            // whose listing failed (the server then serves a stale / partial cache), is not evidence of a deletion
+            const listedOk = (id: string) => get().librarySources.some((x) => x.kind === parseLibraryId(id).kind && x.joined && x.enabled && !x.error);
+            const gone = Object.keys(get().open).filter((id) => before.has(id) && !after.has(id) && listedOk(id));
             if (gone.length) get().markDeleted(gone);
           }).catch(() => {});
           break;
@@ -402,7 +403,13 @@ export const useStore = create<State>((set, get) => ({
 
   async refreshSessions() {
     const sessions = await ws.request<SessionSummary[]>({ kind: 'sessions.list' });
-    set({ sessions });
+    // a session marked deleted that is listed again (a transient listing gap, a source re-joined) is not deleted
+    const back = (sessions ?? []).filter((x) => get().deletedSessions[x.sessionId]).map((x) => x.sessionId);
+    if (back.length) {
+      const d = { ...get().deletedSessions };
+      for (const id of back) delete d[id];
+      set({ sessions, deletedSessions: d });
+    } else set({ sessions });
   },
 
   async openSession(p, target) {
