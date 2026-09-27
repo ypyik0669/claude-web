@@ -43,7 +43,9 @@ export class RunnerPool extends EventEmitter {
     if (kind === 'claude' || !this.agents || !this.transcripts) r = new SessionRunner(params, this.providers.forSession(params.providerId));
     else {
       const l = this.agents.launch(kind);
-      const launch = { command: l.command, args: l.args, env: l.env, model: l.model, name: l.def.name, login: l.def.login };
+      // a model-gateway profile works for every agent: its endpoint goes into the agent's own env variables
+      const gwEnv = this.providers.agentEnv?.(params.providerId, l.def.protocol === 'codex' ? 'codex' : 'acp');
+      const launch = { command: l.command, args: l.args, env: { ...l.env, ...(gwEnv ?? {}) }, model: l.model, name: l.def.name, login: l.def.login };
       r = l.def.protocol === 'codex' ? new CodexDriver(kind, launch, params, this.transcripts) : new AcpDriver(kind, launch, params, this.transcripts, resumeHistory);
     }
     this.runners.set(r.id, r);

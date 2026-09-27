@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { EventEmitter } from 'node:events';
-import type { Goal, ImBinding, ImGatewayConfig, MessageFeedback, Provider, RemoteHost, Schedule, ScheduleRun } from '../protocol.js';
+import type { GatewayGroup, Goal, ImBinding, ImGatewayConfig, MessageFeedback, Provider, RemoteHost, Schedule, ScheduleRun } from '../protocol.js';
 import type { DeviceRecord } from '../remote/service.js';
 export type { Schedule } from '../protocol.js';
 
@@ -24,6 +24,8 @@ interface Data {
   imGateways: ImGatewayConfig[];
   imBindings: ImBinding[];
   goals: Goal[];
+  gatewayGroups?: GatewayGroup[]; // model gateway failover groups
+  gateway?: { enabled?: boolean; key?: string }; // key: enc:… (SecretService)
 }
 
 const defaultFile = () => path.join(process.env.CLAUDE_WEB_DIR ?? path.join(os.homedir(), '.claude-web'), 'meta.json');
@@ -229,4 +231,8 @@ export class MetaStore extends EventEmitter {
     this.data.settings[k] = v;
     await this.queueSave();
   }
+  // ---- model gateway ----
+  gatewayGroups(): GatewayGroup[] { return this.data.gatewayGroups ??= []; }
+  gatewayConfig(): { enabled?: boolean; key?: string } { return this.data.gateway ??= {}; }
+  async saveGateway() { await this.queueSave(true); }
 }

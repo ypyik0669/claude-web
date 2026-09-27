@@ -36,6 +36,8 @@ import { setMemoryMcpEnabled } from '../memory/launcher.js';
 import { swapAgent, swapProvider } from '../session/swap.js';
 import { expandSessionRefs } from '../library/briefing.js';
 import type { LibraryService } from '../library/service.js';
+import type { GatewayService } from '../gateway/service.js';
+import { handleGatewayRequest, isGatewayRequest } from '../gateway/handlers.js';
 
 export interface Services {
   /** Unified session library: every joined source's sessions (sessions.list / search / library.*). */
@@ -67,6 +69,8 @@ export interface Services {
   schedules: ScheduleService;
   providers: ProviderService;
   version: string;
+  /** Local model gateway (/gateway/<group>/…). */
+  gateway: GatewayService;
 }
 
 export class Hub {
@@ -100,6 +104,7 @@ export class Hub {
     s.memory.on('changed', () => this.broadcast({ kind: 'memory.changed' }));
     s.library.on('changed', () => this.broadcast({ kind: 'library.changed' }));
     s.library.on('discovered', (kinds) => this.broadcast({ kind: 'library.discovered', kinds }));
+    s.gateway.on('changed', () => this.broadcast({ kind: 'gateway.changed' }));
   }
 
   broadcast(event: ServerEvent) {
@@ -694,6 +699,7 @@ export class Hub {
         s.terminal.close(req.termId);
         return null;
     }
+    if (isGatewayRequest(req)) return handleGatewayRequest(s.gateway, req);
     throw new Error(`unknown request ${(req as any).kind}`);
   }
 }

@@ -39,6 +39,7 @@ import { ClaudeSource } from './library/claude-source.js';
 import { CodexSource } from './library/codex-source.js';
 import { OpenCodeSource } from './library/opencode-source.js';
 import { AcpListSource } from './library/acp-source.js';
+import { GatewayService } from './gateway/service.js';
 
 const FILE_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.html': 'text/html; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.json': 'application/json' };
 
@@ -137,8 +138,12 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     if (token && presented === token) return true;
     return !!presented && !!remote?.authenticate(presented, req);
   };
+  // eslint-disable-next-line prefer-const
+  let gateway: GatewayService;
   const handler = (req: http.IncomingMessage, res: http.ServerResponse) => {
     const url = requestUrl(req, HOST);
+    // model gateway: its own key auth, loopback only (404 on the LAN listener)
+    if (gateway?.handle(req, res, url)) return;
     if (url.pathname === '/pair' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(pairPage()); return; }
     if (url.pathname === '/api/pair' && req.method === 'POST') {
       let body = '';
@@ -246,6 +251,9 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const pool = new RunnerPool(providers, agents, transcripts);
   const ledger = new LedgerService();
   pool.on('message', (sessionId: string, m: unknown) => ledger.observe(sessionId, m, meta.sessionMeta(sessionId).providerId));
+  gateway = new GatewayService({ meta, secrets, member: (id) => providers.member(id), ledger });
+  await gateway.init();
+  providers.gatewayEndpoint = (groupId) => gateway.endpoint(groupId);
   remote = new RemoteService(meta, () => { const s = http.createServer(handler); s.on('upgrade', upgrade); return s; });
   const tunnels = new TunnelManager();
   const sessionsSvc = new SessionService();
@@ -272,7 +280,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   );
   sessionsSvc.on('changed', () => library.invalidate('claude'));
   library.start();
-  const services = { remote, tunnels, im, vcs: new VcsService(gitSvc), goals: new GoalService(meta, pool), android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version };
+  const services = { remote, tunnels, im, vcs: new VcsService(gitSvc), goals: new GoalService(meta, pool), android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, gateway, version };
   new Hub(wss, services);
 
   await new Promise<void>((res, rej) => {
@@ -280,6 +288,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     server.listen(PORT, HOST, () => res());
   });
   const port = (server.address() as { port: number }).port;
+  gateway.port = port;
   await remote.start();
   if (remote.status().running) console.log(`remote access on http://0.0.0.0:${remote.port}  (${remote.addresses().join(', ')})`);
   await im.startAll();
