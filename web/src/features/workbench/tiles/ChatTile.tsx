@@ -81,7 +81,7 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
         ) : (
           <span className="cur" onDoubleClick={() => setEditing(title)} title="双击重命名">{title}</span>
         )}
-        {meta?.gitBranch && <span className="sep" style={{ fontSize: 12 }}>· {meta.gitBranch}</span>}
+        {meta?.gitBranch && <span className="sep branch" style={{ fontSize: 12 }} title={meta.gitBranch}>· {meta.gitBranch}</span>}
         {active?.info && live && <EngineSwitcher sessionId={sid} info={active.info} />}
         {(!active?.info || !live) && agentKind && agentKind !== 'claude' && <span className="badge agent" title={`这个会话由 ${agentName} 驱动`}>{agentName}</span>}
       </div>

@@ -37,7 +37,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'panel.terminal', label: '终端', desktop: 'Ctrl+`', browser: 'Ctrl+`', group: '面板' },
   { id: 'interrupt', label: '中断当前轮', desktop: 'Ctrl+Shift+C / Esc', browser: 'Esc', group: '会话' },
   { id: 'close', label: '结束当前会话进程', desktop: 'Ctrl+Shift+Q', browser: '命令面板', group: '会话' },
-  { id: 'tab', label: '对话 ⇄ 轨迹', desktop: 'Ctrl+Shift+J', browser: 'Alt+J', group: '会话' },
+  { id: 'tab', label: '对话 ⇄ 轨迹', desktop: 'Alt+J', browser: 'Alt+J', group: '会话' },
   { id: 'send', label: '发送 / 换行', desktop: 'Enter / Shift+Enter', browser: 'Enter / Shift+Enter', group: '输入' },
   { id: 'slash', label: '命令补全', desktop: '/ 然后 Tab', browser: '/ 然后 Tab', group: '输入' },
   { id: 'paste', label: '粘贴图片 / 长文本成附件', desktop: 'Ctrl+V', browser: 'Ctrl+V', group: '输入' },
@@ -45,6 +45,8 @@ export const SHORTCUTS: Shortcut[] = [
 
 const isMac = /mac|darwin/i.test(desktop?.platform ?? (typeof navigator !== 'undefined' ? navigator.platform : ''));
 /** The desktop menu uses `CmdOrCtrl+…` accelerators, so on macOS the cheat sheet must say Cmd, not Ctrl. */
+/** Label of the primary modifier for hints written inline (⌘ on macOS). */
+export const modKey = isMac ? '⌘' : 'Ctrl';
 export const keyLabel = (s: Shortcut) => (isDesktop ? (isMac ? s.desktop.replace(/Ctrl/g, 'Cmd') : s.desktop) : s.browser);
 
 // physical key → the character the table means; used when a modifier changed `e.key`

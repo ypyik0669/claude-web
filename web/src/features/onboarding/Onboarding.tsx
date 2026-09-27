@@ -1,3 +1,4 @@
+import { modKey } from '@/features/workbench/shortcuts';
 import { useEffect, useState } from 'react';
 import { THEMES, useStore } from '@/store';
 import { ws } from '@/ws/client';
@@ -71,7 +72,7 @@ export function Onboarding() {
           <>
             <h3>就绪</h3>
             <ul className="ob-tips">
-              <li>输入框直接聊；<b>Ctrl+K</b> 命令面板；<b>Ctrl+,</b> 设置；<b>?</b> 快捷键表。</li>
+              <li>输入框直接聊；<b>{modKey}+K</b> 命令面板；<b>{modKey}+,</b> 设置；<b>?</b> 快捷键表。</li>
               <li>会话标签上方有「改动 / Git / 文件 / 搜索 / 定时」工作台标签。</li>
               <li>拖侧栏的会话到窗格边缘可以分屏；<b>Ctrl+D</b> 向右分屏。</li>
               <li>停靠面板里的「任务」看子代理和后台命令，「用量」看 token 与账本。</li>

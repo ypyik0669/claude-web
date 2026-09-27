@@ -286,7 +286,7 @@ function buildMenu() {
       label: '编辑',
       submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }],
     },
-    ...(isMac ? [{ role: 'windowMenu' } as Electron.MenuItemConstructorOptions] : []),
+    ...(isMac ? [{ label: '窗口', role: 'windowMenu' } as Electron.MenuItemConstructorOptions] : []),
     {
       label: '帮助',
       submenu: [

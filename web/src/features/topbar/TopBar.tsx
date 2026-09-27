@@ -1,3 +1,4 @@
+import { modKey } from '@/features/workbench/shortcuts';
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
@@ -115,7 +116,7 @@ export function TopBar() {
       </span>
       <PanelMenu />
       <button className={clsx('icon-btn', dock.open && 'active')} title="停靠面板 (Ctrl+J)" aria-label="停靠面板" onClick={() => dispatch({ t: 'dock.set', patch: { open: !dock.open, minimized: false } })}><Icon name="inspector" size={16} /></button>
-      <button className="icon-btn" title="命令面板 (Ctrl+K)" aria-label="命令面板" onClick={() => useStore.setState({ paletteOpen: true })}><Icon name="command" size={16} /></button>
+      <button className="icon-btn" title={`命令面板 (${modKey}+K)`} aria-label="命令面板" onClick={() => useStore.setState({ paletteOpen: true })}><Icon name="command" size={16} /></button>
     </div>
   );
 }

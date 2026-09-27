@@ -270,7 +270,7 @@ html.desktop.mac .app.no-sidebar .topbar { padding-left: 84px; }
 .topbar .grow { flex: 1; min-width: 0; }
 .topbar .crumb { flex: 0 1 auto !important; min-width: 160px; overflow: hidden; }
 .topbar .rings { flex: 0 1 auto !important; min-width: 0; overflow: hidden; }
-.topbar .crumb .cur { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.topbar .crumb .cur { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 4em; flex: 0 1 auto; }
 .seg { display: inline-flex; background: var(--surface-1); border: 1px solid var(--edge-default); border-radius: var(--r-lg); padding: 2px; }
 .seg button { padding: 3px 10px; border-radius: var(--r-md); font-size: 12.5px; color: var(--ink-3); }
 .seg button.active { background: var(--surface-3); color: var(--ink-1); }
@@ -659,7 +659,6 @@ input.field:focus { border-color: var(--ink-3); }
 .crumb { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-3); font-size: 13px; min-width: 0; }
 .crumb .sep { color: var(--ink-4); white-space: nowrap; flex: none; }
 .crumb > span, .crumb > button { flex: none; }
-.crumb .cur { flex: 0 1 auto; min-width: 2em; }
 .crumb .cur { color: var(--ink-1); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .crumb button { color: inherit; }
 .crumb button:hover { color: var(--ink-1); }
@@ -844,7 +843,9 @@ input.field:focus { border-color: var(--ink-3); }
 .sess-head .crumb button { color: var(--ink-3); padding: 2px 6px; border-radius: var(--r-md); white-space: nowrap; }
 .sess-head .crumb button:hover { background: var(--surface-2); color: var(--ink-1); }
 .sess-head .crumb .sep { color: var(--ink-4); }
-.sess-head .crumb .cur { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sess-head .crumb .cur { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 4em; flex: 0 1 auto; }
+/* narrow panes: the branch label gives way before the title does */
+.crumb .sep.branch { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .sess-head .crumb input { background: var(--surface-1); border: 1px solid var(--edge-strong); border-radius: var(--r-md); padding: 2px 8px; width: 280px; }
 .sess-head .grow { flex: 1; min-width: 8px; }
 .wb-tabs { display: flex; flex: none; gap: 1px; background: var(--surface-2); border-radius: var(--r-md); padding: 2px; }
@@ -1157,6 +1158,8 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
   .app.mobile .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: min(84vw, 320px); z-index: 60; transform: translateX(-100%); transition: transform var(--dur-4) var(--ease-out); box-shadow: var(--elev-3); }
   .app.mobile.drawer-open .sidebar { transform: none; }
   .app.mobile .sidebar .resizer.right { display: none; }
+  /* phone: the folder name and account badge would leave the session title one glyph wide */
+  .app.mobile .sess-head .crumb > button:first-child, .app.mobile .sess-head .crumb > button:first-child + .sep, .app.mobile .sess-head .crumb > span:last-child:has(.badge.engine) { display: none; }
   .app.mobile .drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 55; }
   .app.mobile .rpanel { display: none !important; }
   .app.mobile .topbar { padding-left: 6px; }

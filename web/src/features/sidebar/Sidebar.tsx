@@ -1,3 +1,4 @@
+import { modKey } from '@/features/workbench/shortcuts';
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '@/store';
 import { ws } from '@/ws/client';
@@ -173,7 +174,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const list = (arr: SessionSummary[], k: string) => (
     <>
       {arr.slice(0, ql ? 200 : 25).map((s) => <SessionRow key={s.sessionId} s={s} menu={menu} setMenu={setMenu} />)}
-      {arr.length > 25 && !ql && <div className="sess" style={{ color: 'var(--ink-4)', fontSize: 11.5 }} onClick={() => useStore.setState({ paletteOpen: true })}>还有 {arr.length - 25} 个 · Ctrl+K 搜索</div>}
+      {arr.length > 25 && !ql && <div className="sess" style={{ color: 'var(--ink-4)', fontSize: 11.5 }} onClick={() => useStore.setState({ paletteOpen: true })}>还有 {arr.length - 25} 个 · {modKey}+K 搜索</div>}
       {!arr.length && k && <div className="sess" style={{ color: 'var(--ink-4)', fontSize: 12 }}>还没有会话</div>}
     </>
   );
@@ -186,9 +187,9 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         <button className="icon-btn" title="收起侧栏 (Ctrl+B)" aria-label="收起侧栏" onClick={() => useStore.setState({ sidebarOpen: false })}><Icon name="restore" size={16} /></button>
       </div>
       <div className="sb-nav">
-        <button className={clsx('nav', !activeId && 'active')} onClick={onNew}><span className="ic"><Icon name="plus" size={15} /></span>新会话<span className="k kbd">{desktop ? 'Ctrl N' : 'Alt N'}</span></button>
-        <button className="nav" onClick={() => useStore.setState({ paletteOpen: true })}><span className="ic"><Icon name="command" size={15} /></span>命令 / 搜索<span className="k kbd">Ctrl K</span></button>
-        <button className={clsx('nav', panelOn('config') && 'active')} onClick={() => useStore.getState().openSettings()} onContextMenu={(e) => { e.preventDefault(); togglePanel('config'); }} title="设置 (Ctrl+,) · 右键：停靠面板"><span className="ic"><Icon name="settings" size={15} /></span>设置<span className="k kbd">Ctrl ,</span></button>
+        <button className={clsx('nav', !activeId && 'active')} onClick={onNew}><span className="ic"><Icon name="plus" size={15} /></span>新会话<span className="k kbd">{desktop ? `${modKey} N` : 'Alt N'}</span></button>
+        <button className="nav" onClick={() => useStore.setState({ paletteOpen: true })}><span className="ic"><Icon name="command" size={15} /></span>命令 / 搜索<span className="k kbd">{modKey} K</span></button>
+        <button className={clsx('nav', panelOn('config') && 'active')} onClick={() => useStore.getState().openSettings()} onContextMenu={(e) => { e.preventDefault(); togglePanel('config'); }} title={`设置 (${modKey}+,) · 右键：停靠面板`}><span className="ic"><Icon name="settings" size={15} /></span>设置<span className="k kbd">{modKey} ,</span></button>
         <button className={clsx('nav', panelOn('usage') && 'active')} onClick={() => togglePanel('usage')}><span className="ic"><Icon name="usage" size={15} /></span>用量</button>
       </div>
       <div className="sb-search">
@@ -260,7 +261,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         <span>{connected ? '已连接' : '重连中…'}</span>
         <span style={{ flex: 1 }} />
         <button className={clsx('icon-btn xs', showArchived && 'active')} title="显示已归档" aria-label="显示已归档" onClick={() => useStore.setState({ showArchived: !showArchived })}><Icon name="archive" size={14} /></button>
-        <button className="icon-btn xs" title="主题 / 设置 (Ctrl+K)" aria-label="主题" onClick={() => useStore.setState({ paletteOpen: true })}><Icon name="moon" size={14} /></button>
+        <button className="icon-btn xs" title={`主题 / 设置 (${modKey}+K)`} aria-label="主题" onClick={() => useStore.setState({ paletteOpen: true })}><Icon name="moon" size={14} /></button>
       </div>
     </>
   );
