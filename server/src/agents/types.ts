@@ -57,6 +57,7 @@ export const AGENT_DEFS: AgentDef[] = [
   { kind: 'gemini', name: 'Gemini CLI', icon: 'gemini', protocol: 'acp', command: 'gemini', args: ['--acp'], versionArgs: ['--version'], install: 'npm i -g @google/gemini-cli', login: 'gemini', models: catalogIds('gemini'), docs: 'https://github.com/google-gemini/gemini-cli' },
   { kind: 'qwen', name: 'Qwen Code', icon: 'qwen', protocol: 'acp', command: 'qwen', args: ['--acp'], versionArgs: ['--version'], install: 'npm i -g @qwen-code/qwen-code', login: 'qwen', models: catalogIds('qwen'), docs: 'https://github.com/QwenLM/qwen-code' },
   { kind: 'kimi', name: 'Kimi CLI', icon: 'kimi', protocol: 'acp', command: 'kimi', args: ['acp'], versionArgs: ['--version'], install: 'uv tool install kimi-cli', login: 'kimi login', models: catalogIds('kimi'), docs: 'https://github.com/MoonshotAI/kimi-cli' },
+  { kind: 'opencode', name: 'OpenCode', icon: 'opencode', protocol: 'acp', command: 'opencode', args: ['acp'], versionArgs: ['--version'], install: 'npm i -g opencode-ai', login: 'opencode auth login', models: [], docs: 'https://opencode.ai' },
 ];
 
 export interface AgentConfig { command?: string; args?: string[]; env?: Record<string, string>; model?: string; label?: string; enabled?: boolean; name?: string; protocol?: 'acp' | 'codex' }

@@ -100,6 +100,7 @@ const PATHS = {
   gemini: ['M12 3.2c.6 4.6 4 8 8.6 8.6-4.6.6-8 4-8.6 8.6-.6-4.6-4-8-8.6-8.6 4.6-.6 8-4 8.6-8.6z'],
   qwen: ['M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17z', 'M12 3.5a4.25 4.25 0 0 0 0 8.5 4.25 4.25 0 0 1 0 8.5'],
   kimi: ['M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17z', ['M12 4.6a7.4 7.4 0 0 1 0 14.8z', { fill: 'currentColor', stroke: 'none' }]],
+  opencode: ['M9.5 7.5L4.5 12l5 4.5', 'M14.5 7.5l5 4.5-5 4.5', 'M13 6.5l-2 11'],
 } satisfies Record<string, P[]>;
 
 export function Icon({ name, size = 16, className, title }: { name: IconName; size?: number; className?: string; title?: string }) {
@@ -114,4 +115,4 @@ export function Icon({ name, size = 16, className, title }: { name: IconName; si
 export const ICON_NAMES = Object.keys(PATHS) as IconName[];
 
 /** Agent kind → icon. Custom ACP agents (`acp:<id>`) fall back to the generic bot. */
-export const AGENT_ICONS: Record<string, IconName> = { claude: 'claude', codex: 'codex', gemini: 'gemini', qwen: 'qwen', kimi: 'kimi' };
+export const AGENT_ICONS: Record<string, IconName> = { claude: 'claude', codex: 'codex', gemini: 'gemini', qwen: 'qwen', kimi: 'kimi', opencode: 'opencode' };
