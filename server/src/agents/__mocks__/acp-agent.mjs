@@ -15,7 +15,23 @@ rl.on('line', async (line) => {
   if (m.id !== undefined && m.method === undefined) { pending.get(m.id)?.(m.result); pending.delete(m.id); return; }
   const reply = (result) => send({ jsonrpc: '2.0', id: m.id, result });
   switch (m.method) {
-    case 'initialize': reply({ protocolVersion: 1, agentCapabilities: { loadSession: false }, agentInfo: { name: 'mock-acp', version: '0.0.1' } }); break;
+    case 'initialize': {
+      const agentCapabilities = process.env.MOCK_ACP_LIST === '1'
+        ? { loadSession: false, sessionCapabilities: { list: {} } }
+        : { loadSession: false };
+      reply({ protocolVersion: 1, agentCapabilities, agentInfo: { name: 'mock-acp', version: '0.0.1' } });
+      break;
+    }
+    case 'session/list': {
+      // Only reachable when MOCK_ACP_LIST=1 advertised the capability above; two fixed sessions.
+      reply({
+        sessions: [
+          { sessionId: 's1', cwd: '/work/one', title: 'Session One', updatedAt: '2026-01-01T00:00:00.000Z' },
+          { sessionId: 's2', cwd: '/work/two', title: 'Session Two', updatedAt: 1780000000000 },
+        ],
+      });
+      break;
+    }
     case 'session/new': {
       const servers = m.params.mcpServers ?? [];
       // MOCK_REJECT_MCP simulates an agent that cannot take inline MCP servers, so the client's
