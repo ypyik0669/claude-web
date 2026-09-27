@@ -4,6 +4,7 @@ import type { MetaStore } from '../meta/store.js';
 import type { AgentKind, OpenSessionParams, SessionInfoSnapshot } from '../protocol.js';
 import type { CanonicalLog } from './canonical.js';
 import { renderBriefing, toClaudeEntries } from './handoff.js';
+import { seedCanonical } from '../library/briefing.js';
 
 /**
  * Swapping what is behind a live session without the user losing the session.
@@ -22,6 +23,10 @@ export interface SwapDeps {
   canonical: CanonicalLog;
   transcripts: AgentTranscripts;
   meta: MetaStore;
+  /** Optional: read a session's native history from the session library (Task 8). Used to seed the
+   * canonical timeline when a session was imported and never ran through this server before, so a
+   * handoff still gets a real briefing instead of an empty one. */
+  readAll?: (id: string) => Promise<any[]>;
 }
 
 export interface SwapResult {
@@ -66,7 +71,17 @@ export async function swapAgent(d: SwapDeps, sessionId: string, agent: AgentKind
   const prev = await stop(d.pool, sessionId);
   const from = prev?.agent ?? (await d.transcripts.head(sessionId))?.agent ?? 'claude';
   const cwd = prev?.cwd ?? (await d.canonical.head(sessionId))?.cwd ?? process.cwd();
-  const events = await d.canonical.load(sessionId);
+  let events = await d.canonical.load(sessionId);
+  if (!events.length && d.readAll) {
+    // an imported library session that never ran through this server: seed the mirror from its
+    // native history so the briefing isn't empty, then re-read what got written
+    const native = await d.readAll(sessionId).catch(() => []);
+    if (native.length) {
+      await d.canonical.ensure(sessionId, cwd);
+      await seedCanonical(d.canonical, sessionId, native);
+      events = await d.canonical.load(sessionId);
+    }
+  }
   const briefing = renderBriefing(events, { fromAgent: from, toAgent: agent, cwd, objective }).text;
   d.canonical.mark(sessionId, { agent, model, note: `已从 ${from} 交接给 ${agent}` });
 

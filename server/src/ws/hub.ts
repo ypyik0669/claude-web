@@ -34,8 +34,11 @@ import type { MemoryService } from '../memory/service.js';
 import { harvest } from '../memory/extract.js';
 import { setMemoryMcpEnabled } from '../memory/launcher.js';
 import { swapAgent, swapProvider } from '../session/swap.js';
+import { expandSessionRefs } from '../library/briefing.js';
 
 export interface Services {
+  /** Session library (Task 8). Optional: without it, `<session-ref>` markers are left unexpanded. */
+  library?: { readAll(id: string): Promise<any[]> };
   git: GitService;
   search: SearchService;
   skills: SkillsService;
@@ -194,7 +197,14 @@ export class Hub {
         return { info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
       }
       case 'session.send': {
-        this.runner(req.params.sessionId).send(req.params.text, req.params.images, req.params.steer, req.params.uuid, req.params.attachments);
+        // `<session-ref>` markers (inserted by the composer when the user references another
+        // library session) get expanded into a briefing only for the agent — the local echo and
+        // the canonical mirror below keep the original, unexpanded text the user actually typed.
+        let outgoing = req.params.text;
+        if (outgoing.includes('<session-ref ') && s.library) {
+          outgoing = await expandSessionRefs(outgoing, (id) => s.library!.readAll(id));
+        }
+        this.runner(req.params.sessionId).send(outgoing, req.params.images, req.params.steer, req.params.uuid, req.params.attachments);
         // Neither path echoes the user's own message back through the pool (the SDK doesn't, and the
         // foreign drivers `record()` it without emitting), so the canonical mirror has to be told here
         // — otherwise a handover briefing would have no idea what was actually asked for.
@@ -303,7 +313,8 @@ export class Hub {
         return r;
       }
       case 'session.switchAgent': {
-        const r = await swapAgent({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta }, req.sessionId, req.agent, req.model);
+        const readAll = s.library ? (id: string) => s.library!.readAll(id) : undefined;
+        const r = await swapAgent({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta, readAll }, req.sessionId, req.agent, req.model);
         s.sessions.emit('changed');
         return r;
       }
