@@ -229,7 +229,7 @@ export class OrchestraService extends EventEmitter {
   async resume(runId: string): Promise<OrchRun> {
     const run = this.get(runId);
     if (run.state !== 'failed' && run.state !== 'cancelled') throw new Error('只有失败或已取消的运行可以续跑');
-    for (const n of run.workflow) if (run.nodes[n.id].state !== 'done') run.nodes[n.id] = newNodeRun(run.nodes[n.id]);
+    for (const n of run.workflow) if (run.nodes[n.id].state !== 'done') { await this.release(run.nodes[n.id]); run.nodes[n.id] = newNodeRun(run.nodes[n.id]); }
     run.state = 'running';
     run.error = undefined;
     run.finishedAt = undefined;
@@ -243,9 +243,10 @@ export class OrchestraService extends EventEmitter {
     if (!nr) throw new Error('节点不存在');
     if (nr.state === 'running' || nr.state === 'pending') throw new Error('节点还没结束');
     if (nr.state === 'waiting' && this.nodeOf(run, nodeId).kind === 'approval') throw new Error('审批节点直接通过 / 驳回即可');
+    await this.release(nr);
     run.nodes[nodeId] = newNodeRun(nr);
     // downstream nodes that never got to run (skipped / cancelled / failed) get another chance too
-    for (const id of downstreamOf(run.workflow, nodeId)) if (run.nodes[id].state !== 'done') run.nodes[id] = newNodeRun(run.nodes[id]);
+    for (const id of downstreamOf(run.workflow, nodeId)) if (run.nodes[id].state !== 'done') { await this.release(run.nodes[id]); run.nodes[id] = newNodeRun(run.nodes[id]); }
     if (run.state !== 'running' && run.state !== 'waiting') { run.state = 'running'; run.error = undefined; run.finishedAt = undefined; }
     this.tick(run);
     return run;
@@ -311,6 +312,15 @@ export class OrchestraService extends EventEmitter {
     this.runs.delete(runId);
     await this.writes.get(runId);
     await fs.rm(path.join(this.d.dir, `${runId}.json`), { force: true });
+  }
+
+  /**
+   * Before a node is reset: stop the sessions that live in its worktrees — the next attempt recreates the
+   * same paths, and Windows can't remove a directory a live process still uses as its cwd.
+   */
+  private async release(nr: NodeRun) {
+    const sids = nr.candidates ? nr.candidates.map((c) => c.sessionId) : nr.worktrees?.length ? nr.sessionIds.slice(-1) : [];
+    for (const sid of sids) if (sid) await this.d.close(sid).catch(() => {});
   }
 
   // ---- scheduling ----

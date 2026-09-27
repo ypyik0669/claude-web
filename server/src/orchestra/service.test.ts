@@ -91,7 +91,7 @@ const session = (agentOrCwdPart: string) => sessions.find((s) => s.prompts.some(
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-orch-'));
-  sessions = []; wfs = []; notified = []; interrupted = []; maxParallel = 3; available = ['claude', 'codex', 'gemini'];
+  sessions = []; closed = []; wfs = []; notified = []; interrupted = []; maxParallel = 3; available = ['claude', 'codex', 'gemini'];
   git = fakeGit();
 });
 afterEach(async () => { for (const m of made) await m.flush(); made = []; fs.rmSync(dir, { recursive: true, force: true }); });
@@ -296,6 +296,19 @@ describe('OrchestraService worktrees and compare', () => {
     expect(run.nodes.cmp.state).toBe('failed');
     expect(run.nodes.cmp.error).toContain('feature');
     expect(git.calls.some((c) => c.startsWith('merge'))).toBe(false);
+  });
+
+  it('retrying a waiting compare closes the old candidate sessions and fans out again', async () => {
+    const svc = svcOf();
+    const run = await startRun(svc, [compare()]);
+    await until(() => sessions.length === 2);
+    sessions[0].reply('a'); sessions[1].reply('b');
+    await until(() => run.state === 'waiting');
+    await svc.retry(run.id, 'cmp');
+    expect(closed).toEqual(expect.arrayContaining(['s1', 's2']));
+    await until(() => sessions.length === 4);
+    expect(run.nodes.cmp.attempts).toBe(2);
+    expect(run.nodes.cmp.candidates?.map((c) => c.sessionId)).toEqual(['s3', 's4']);
   });
 
   it('a judge recommends a winner, the user still confirms', async () => {
