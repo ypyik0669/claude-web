@@ -55,6 +55,7 @@ export class AgentTranscripts {
   async exists(sessionId: string) { return !!(await fs.stat(this.file(sessionId)).catch(() => null)); }
 
   async load(sessionId: string): Promise<any[]> {
+    await this.writers.get(sessionId); // a turn's last lines may still be queued when the client asks right after `result`
     const out: any[] = [];
     const rl = readline.createInterface({ input: createReadStream(this.file(sessionId), 'utf8'), crlfDelay: Infinity });
     for await (const line of rl) {

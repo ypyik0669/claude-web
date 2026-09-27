@@ -166,6 +166,7 @@ export class CanonicalLog {
   }
 
   async load(sessionId: string): Promise<CanonicalEvent[]> {
+    await this.settled(sessionId); // don't hand out a timeline that is missing writes still in flight
     const out: CanonicalEvent[] = [];
     if (!(await this.exists(sessionId))) return out;
     const rl = readline.createInterface({ input: createReadStream(this.file(sessionId), 'utf8'), crlfDelay: Infinity });

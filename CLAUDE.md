@@ -185,6 +185,15 @@ npm run build:desktop   # electron-builder → dist-desktop/ClaudeWeb-<ver>-win-
 - electron-builder 只打包**根 package.json 的 dependencies**（workspace 子包的不算），所以 server 的运行时依赖在根 package.json 里也列了一份；`npmRebuild: false`，node-pty 用自带 prebuilds（本机没有 VS Build Tools，rebuild 会失败）。
 - 调试打包后的 server：设 `CLAUDE_WEB_TOKEN=xxx` 起 `electron .`，然后浏览器开 `http://127.0.0.1:<port>/?token=xxx`（端口看 server.log）。
 
+## macOS / CI（2026-09-27）
+
+- **mac 包只能在 mac 上打**：`.github/workflows/release.yml` 用 `macos-latest`（arm64）+ `macos-15-intel`（x64）分别构建。不能在 arm 机器上交叉打 x64：npm 只装本机 CPU 的 SDK 二进制，ccb 的 ripgrep 也是 postinstall 按 `process.arch` 下载的。推 `v*` tag 才发布到 Releases，`workflow_dispatch` 只产出 artifact。仓库是私有的，electron-updater 在未带 token 的客户端上拿不到更新。
+- 未签名（`identity: null`）：用户首次要右键打开或 `xattr -cr`。`scripts/after-pack.cjs` 给 unpacked 里的 `spawn-helper` / SDK `claude` / `rg` 补 +x；`TerminalService` 运行时也会补 `spawn-helper`。
+- **Finder 启动的 app 只有 `/usr/bin:/bin:/usr/sbin:/sbin`**：`desktop/src/main.ts` 的 `fixPosixPath()` 在 fork server 之前用 `$SHELL -ilc` 取 PATH 并补 Homebrew / `~/.local/bin`。
+- mac 标题栏：`titleBarOverlay` 只在非 mac 用；mac 用系统红绿灯 + `trafficLightPosition`，preload 给 `<html>` 加 `mac/win/linux` 类，`styles.css` 的 `html.desktop.mac` 规则把左侧让出 84px。mac 菜单 Cmd+Tab 被系统占用，分组切换用 Ctrl+Tab。
+- `fs.pickDir`：Windows PowerShell / mac `osascript choose folder` / Linux `zenity`。
+- **CI**（`.github/workflows/ci.yml`，win/mac/linux）：`npm run typecheck`、`npm test`、`npm run build:all`、`npm run e2e`。`scripts/e2e.mjs` 用临时 HOME + `CLAUDE_WEB_DIR` 起 server，跑 phase 3/4/5/6/11/12（mock agent，不花 token）；phase1 要真 Claude、phase7 要 `gh auth`，手动跑。
+
 ## 结构
 
 - `server/src/protocol.ts` — 前后端共享协议类型（web 通过 `@shared` 别名引用）
