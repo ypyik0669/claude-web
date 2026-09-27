@@ -174,8 +174,8 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', () => {
 
     const listPromise = src.list({ limit: 10 }); // kicks off ensure() -> spawnProc(), ~300ms from "listening"
     await src.close(); // races the in-flight start
-    const result = await listPromise;
-    expect(result.items).toEqual([]); // ensure() rejected once the race was detected -> list() degrades to empty
+    // ensure() rejected once the race was detected -> list() surfaces it (the library keeps its cache)
+    await expect(listPromise).rejects.toThrow(/close\(\)/);
 
     // give the fake process time to reach its (delayed) "listening" point and be reaped by our race fix
     await new Promise((r) => setTimeout(r, 600));
@@ -217,7 +217,7 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', () => {
     await expect(src.remove('ses-a')).rejects.toThrow(/fake delete failure/);
   });
 
-  it('reports a broken launch as not enabled, without throwing, and list() degrades to empty', async () => {
+  it('not installed: status disabled, list() / read() empty', async () => {
     const src = new OpenCodeSource(() => ({ command: 'definitely-not-a-real-opencode-binary-xyz', env: {} }));
     sources.push(src);
 
@@ -225,5 +225,17 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', () => {
     expect(status.enabled).toBe(false);
     const listed = await src.list({ limit: 10 });
     expect(listed.items).toEqual([]);
+    expect((await src.read('ses-a', { limit: 10 })).messages).toEqual([]);
+  });
+
+  it('installed but the server answers HTTP 500: list() and read() reject', async () => {
+    const server = http.createServer((_req, res) => { res.writeHead(500); res.end('boom'); });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    mocks.push({ close: () => new Promise((r) => server.close(() => r())) });
+    const addr = server.address() as { port: number };
+    const src = new OpenCodeSource(() => ({ command: fakeCli, env: { FAKE_HAS_DELETE: '0' } }), { baseUrl: `http://127.0.0.1:${addr.port}` });
+    sources.push(src);
+    await expect(src.list({ limit: 10 })).rejects.toThrow(/500/);
+    await expect(src.read('ses-a', { limit: 10 })).rejects.toThrow(/500/);
   });
 });

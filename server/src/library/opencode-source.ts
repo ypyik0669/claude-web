@@ -29,7 +29,7 @@ import type { AgentKind, SessionSummary, SourceCaps, SourceStatus } from '../pro
 import { resolveSpawn } from '../agents/resolve.js';
 import { libraryId } from './ids.js';
 import { opencodeToMessages } from './opencode-convert.js';
-import type { SessionSource } from './types.js';
+import { isNotInstalled, type SessionSource } from './types.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -167,7 +167,7 @@ export class OpenCodeSource implements SessionSource {
       await this.probeCaps();
       this.armIdle();
       const res = await fetch(`${p.baseUrl}/session`);
-      if (!res.ok) return { items: [] };
+      if (!res.ok) throw new Error(`opencode serve GET /session：HTTP ${res.status}`);
       const all: any[] = await res.json();
       all.sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
       const offset = o.cursor ? Number(o.cursor) : 0;
@@ -176,8 +176,9 @@ export class OpenCodeSource implements SessionSource {
       const items = page.map((s) => mapSession(s, this.caps));
       const next = offset + limit < all.length ? String(offset + limit) : undefined;
       return { items, next };
-    } catch {
-      return { items: [] };
+    } catch (e) {
+      if (isNotInstalled(e)) return { items: [] };
+      throw e;
     }
   }
 
@@ -187,7 +188,7 @@ export class OpenCodeSource implements SessionSource {
       await this.probeCaps();
       this.armIdle();
       const res = await fetch(`${p.baseUrl}/session/${nativeId}/message`);
-      if (!res.ok) return { messages: [] };
+      if (!res.ok) throw new Error(`opencode serve GET /session/${nativeId}/message：HTTP ${res.status}`);
       const all: { info: any; parts: any[] }[] = await res.json();
       // Turn boundaries: index of every user message. Page from the tail: the newest `limit` turns
       // first, older ones reachable via `next` (an offset from the end, as a string cursor).
@@ -205,8 +206,9 @@ export class OpenCodeSource implements SessionSource {
       const messages = opencodeToMessages(libraryId('opencode', nativeId), slice);
       const next = startTurn > 0 ? String(offset + limit) : undefined;
       return { messages, next };
-    } catch {
-      return { messages: [] };
+    } catch (e) {
+      if (isNotInstalled(e)) return { messages: [] };
+      throw e;
     }
   }
 
@@ -229,7 +231,8 @@ export class OpenCodeSource implements SessionSource {
     const p = await this.ensure();
     this.armIdle();
     const res = await fetch(`${p.baseUrl}/session/${nativeId}/message`);
-    if (!res.ok) return [];
+    // a failed export must fail the delete (constraints.md: no backup, no delete)
+    if (!res.ok) throw new Error(`opencode serve GET /session/${nativeId}/message：HTTP ${res.status}`);
     return res.json();
   }
 

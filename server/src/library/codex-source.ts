@@ -5,7 +5,7 @@ import { JsonRpcProcess } from '../agents/jsonrpc.js';
 import type { AgentKind, SessionSummary, SourceCaps, SourceStatus } from '../protocol.js';
 import { libraryId } from './ids.js';
 import { LazyRpc } from './lazy-rpc.js';
-import type { SessionSource } from './types.js';
+import { isNotInstalled, type SessionSource } from './types.js';
 
 const SOURCE_KINDS = ['cli', 'vscode', 'exec', 'appServer', 'subAgent', 'subAgentReview', 'subAgentCompact', 'subAgentThreadSpawn', 'subAgentOther'];
 
@@ -81,8 +81,10 @@ export class CodexSource implements SessionSource {
       const r = await this.rpc.request<any>('thread/list', { sortKey: 'updated_at', sortDirection: 'desc', limit: o.limit, cursor: o.cursor, archived: o.archived ?? false, sourceKinds: SOURCE_KINDS }, 30_000);
       const items = (r?.threads ?? []).map(mapThread);
       return { items, next: r?.nextCursor ?? undefined };
-    } catch {
-      return { items: [] };
+    } catch (e: any) {
+      // not installed / too old for thread/list (status() reports both as disabled): nothing to list
+      if (isNotInstalled(e) || e?.code === -32601) return { items: [] };
+      throw e;
     }
   }
 
@@ -93,8 +95,9 @@ export class CodexSource implements SessionSource {
       const turns = (r?.turns ?? []).slice().reverse();
       const messages = codexTurnsToMessages(libraryId('codex', nativeId), turns);
       return { messages, next: r?.nextCursor ?? undefined };
-    } catch {
-      return { messages: [] };
+    } catch (e: any) {
+      if (isNotInstalled(e) || e?.code === -32601) return { messages: [] };
+      throw e;
     }
   }
 

@@ -91,13 +91,33 @@ describe('CodexSource (mock app-server)', () => {
     }
   });
 
-  it('reports a broken launch as not enabled, without throwing, and list() degrades to empty', async () => {
+  it('not installed: status disabled, list() / read() empty (nothing to list, not a failure)', async () => {
     const src = new CodexSource(() => ({ command: 'definitely-not-a-real-codex-binary-xyz', args: [], env: {} }));
     try {
       const status = await src.status();
       expect(status.enabled).toBe(false);
       const listed = await src.list({ limit: 10 });
       expect(listed.items).toEqual([]);
+      expect((await src.read('t', { limit: 10 })).messages).toEqual([]);
+    } finally {
+      await src.close();
+    }
+  });
+
+  it('installed but thread/list errors: list() and read() reject so the library keeps its last good list', async () => {
+    const src = new CodexSource(() => ({ ...launch(), env: { CW_FAIL_LIST: '1' } }));
+    try {
+      await expect(src.list({ limit: 10 })).rejects.toThrow(/mock thread\/list failure/);
+      await expect(src.read('t', { limit: 10 })).rejects.toThrow(/failure/);
+    } finally {
+      await src.close();
+    }
+  });
+
+  it('installed but the process crashes: list() rejects', async () => {
+    const src = new CodexSource(() => ({ command: process.execPath, args: ['-e', 'process.exit(3)'], env: {} }));
+    try {
+      await expect(src.list({ limit: 10 })).rejects.toThrow();
     } finally {
       await src.close();
     }

@@ -5,6 +5,16 @@
 // source truly supports (see constraints.md — never write to an agent's data files directly).
 import type { AgentKind, SessionSummary, SourceCaps, SourceStatus } from '../protocol.js';
 
+/**
+ * The agent's executable isn't there at all (spawn ENOENT) — the one failure a source reports as
+ * "nothing to list". Everything else (crash, RPC error, HTTP error, timeout) must throw, so the
+ * library can tell a transient failure from an empty source and keep its last good list.
+ */
+export function isNotInstalled(e: unknown): boolean {
+  const err = e as { code?: unknown; message?: unknown } | null;
+  return err?.code === 'ENOENT' || /ENOENT/.test(String(err?.message ?? ''));
+}
+
 export interface SessionSource {
   kind: AgentKind;
   caps: SourceCaps;

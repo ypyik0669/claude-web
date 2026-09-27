@@ -74,6 +74,7 @@ rl.on('line', async (line) => {
     case 'initialized': break;
     case 'debug/initCount': reply({ count: readInitCount() }); break;
     case 'thread/list': {
+      if (process.env.CW_FAIL_LIST === '1') { fail(-32000, 'mock thread/list failure'); break; }
       const { limit = 20, cursor, archived = false, sortDirection = 'desc' } = m.params ?? {};
       let list = [...threads.values()].filter((t) => !!t.archived === !!archived);
       list.sort((a, b) => (sortDirection === 'desc' ? b.updatedAt - a.updatedAt : a.updatedAt - b.updatedAt));
@@ -85,6 +86,7 @@ rl.on('line', async (line) => {
       break;
     }
     case 'thread/turns/list': {
+      if (process.env.CW_FAIL_LIST === '1') { fail(-32000, 'mock thread/turns/list failure'); break; }
       const { threadId, limit = 20, cursor, sortDirection = 'desc' } = m.params ?? {};
       const t = threads.get(threadId);
       if (!t) { fail(-32000, `unknown thread ${threadId}`); break; }

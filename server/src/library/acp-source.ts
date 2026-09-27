@@ -5,7 +5,7 @@
 import type { AgentKind, SessionSummary, SourceCaps, SourceStatus } from '../protocol.js';
 import { JsonRpcProcess } from '../agents/jsonrpc.js';
 import { libraryId } from './ids.js';
-import type { SessionSource } from './types.js';
+import { isNotInstalled, type SessionSource } from './types.js';
 
 const IDLE_MS = 300_000; // library-only process, never shared with a live chat session
 const INIT_TIMEOUT_MS = 30_000;
@@ -143,8 +143,9 @@ export class AcpListSource implements SessionSource {
         caps: this.caps,
       }));
       return { items, next: r?.nextCursor ?? undefined };
-    } catch {
-      return { items: [] };
+    } catch (e) {
+      if (isNotInstalled(e)) return { items: [] }; // no session/list capability is handled above
+      throw e;
     }
   }
 

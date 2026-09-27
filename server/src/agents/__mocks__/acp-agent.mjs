@@ -32,6 +32,7 @@ rl.on('line', async (line) => {
       break;
     }
     case 'session/list': {
+      if (process.env.MOCK_ACP_LIST_FAIL === '1') { send({ jsonrpc: '2.0', id: m.id, error: { code: -32000, message: 'mock session/list failure' } }); break; }
       // Only reachable when MOCK_ACP_LIST=1 advertised the capability above; two fixed sessions.
       reply({
         sessions: [

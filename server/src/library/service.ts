@@ -66,7 +66,12 @@ export class LibraryService extends EventEmitter {
   private perKind = new Map<AgentKind, { at: number; items: SessionSummary[] }>();
   private errors = new Map<AgentKind, string>();
   private indexedAtByKind = new Map<AgentKind, number>();
-  private fetching = new Map<AgentKind, Promise<SessionSummary[]>>();
+  private fetching = new Map<AgentKind, { gen: number; p: Promise<SessionSummary[]> }>();
+  /** Bumped by invalidate(): a fetch started under an older generation is neither joined nor cached as fresh. */
+  private gens = new Map<AgentKind, number>();
+  private allGen = 0;
+  /** transcripts.entries() failed on the last list(): claude-web's own sessions are unknown, don't prune them. */
+  private localFailed = false;
   /** Until the first refreshIndex pass completes, search uses the old transcript scan (a half-built index misses things). */
   private indexReady = false;
   private byId = new Map<string, SessionSummary>();
@@ -122,6 +127,8 @@ export class LibraryService extends EventEmitter {
   invalidate(kind?: AgentKind) {
     // stale, not forgotten: a source that fails on the next fetch still serves its last good list
     for (const [k, v] of this.perKind) if (!kind || k === kind) v.at = 0;
+    if (kind) this.gens.set(kind, (this.gens.get(kind) ?? 0) + 1);
+    else this.allGen++;
   }
 
   private async listPages(src: SessionSource, archived: boolean): Promise<SessionSummary[]> {
@@ -142,32 +149,37 @@ export class LibraryService extends EventEmitter {
   private listSource(src: SessionSource): Promise<SessionSummary[]> {
     const hit = this.perKind.get(src.kind);
     if (hit && Date.now() - hit.at < LIST_TTL_MS) return Promise.resolve(hit.items);
+    const gen = this.genOf(src.kind);
     const running = this.fetching.get(src.kind);
-    if (running) return running;
-    const p = this.fetchSource(src).finally(() => this.fetching.delete(src.kind));
-    this.fetching.set(src.kind, p);
+    if (running && running.gen === gen) return running.p;
+    const p = this.fetchSource(src, gen).finally(() => { if (this.fetching.get(src.kind)?.p === p) this.fetching.delete(src.kind); });
+    this.fetching.set(src.kind, { gen, p });
     return p;
   }
 
-  private async fetchSource(src: SessionSource): Promise<SessionSummary[]> {
+  private genOf(kind: AgentKind) { return this.allGen * 1_000_000 + (this.gens.get(kind) ?? 0); }
+
+  private async fetchSource(src: SessionSource, gen: number): Promise<SessionSummary[]> {
     const hit = this.perKind.get(src.kind);
     try {
       // sources that can archive also list their archived sessions (flagged), for the "show archived" view
       const [live, archived] = await Promise.all([this.listPages(src, false), src.caps.archive ? this.listPages(src, true) : Promise.resolve([])]);
       const liveIds = new Set(live.map((x) => x.sessionId));
       const items = [...live, ...archived.filter((x) => !liveIds.has(x.sessionId))];
-      this.perKind.set(src.kind, { at: Date.now(), items });
-      this.errors.delete(src.kind);
+      // invalidated while in flight: keep it as a last-good fallback, but stale (the next list() refetches)
+      const current = gen === this.genOf(src.kind);
+      if (current || !this.perKind.has(src.kind)) this.perKind.set(src.kind, { at: current ? Date.now() : 0, items });
+      if (current) this.errors.delete(src.kind);
       return items;
     } catch (e: any) {
-      this.errors.set(src.kind, e?.message ?? String(e));
+      if (gen === this.genOf(src.kind)) this.errors.set(src.kind, e?.message ?? String(e));
       return hit?.items ?? [];
     }
   }
 
   async list(): Promise<SessionSummary[]> {
     const joined = this.joinedSources();
-    const [lists, local] = await Promise.all([Promise.all(joined.map((s) => this.listSource(s))), this.transcripts.entries().catch(() => [])]);
+    const [lists, local] = await Promise.all([Promise.all(joined.map((s) => this.listSource(s))), this.transcripts.entries().then((r) => { this.localFailed = false; return r; }, () => { this.localFailed = true; return []; })]);
     const byId = new Map<string, SessionSummary>();
     joined.forEach((src, i) => {
       for (const it of lists[i]) {
@@ -465,7 +477,13 @@ export class LibraryService extends EventEmitter {
           await new Promise((r) => setImmediate(r));
         }
         // sessions deleted / left since the last pass
-        for (const id of this.index.ids()) if (!this.byId.has(id)) this.index.remove(id);
+        // …but only for sources that listed successfully: a failed fetch looks like "no sessions"
+        if (!this.localFailed) {
+          for (const id of this.index.ids()) {
+            if (this.byId.has(id) || this.errors.has(parseLibraryId(id).kind)) continue;
+            this.index.remove(id);
+          }
+        }
         const now = Date.now();
         for (const k of done) this.indexedAtByKind.set(k, now);
         this.indexReady = true;

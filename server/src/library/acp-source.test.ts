@@ -78,7 +78,25 @@ describe('AcpListSource (mock ACP agent)', () => {
     }
   });
 
-  it('reports a broken launch as not enabled, without throwing, and list() degrades to empty', async () => {
+  it('installed but session/list errors: list() rejects', async () => {
+    const src = new AcpListSource('acp:e2e', () => launch({ MOCK_ACP_LIST: '1', MOCK_ACP_LIST_FAIL: '1' }));
+    try {
+      await expect(src.list({ limit: 10 })).rejects.toThrow(/mock session\/list failure/);
+    } finally {
+      await src.close();
+    }
+  });
+
+  it('installed but the process crashes: list() rejects', async () => {
+    const src = new AcpListSource('acp:e2e', () => ({ command: process.execPath, args: ['-e', 'process.exit(3)'], env: {} }));
+    try {
+      await expect(src.list({ limit: 10 })).rejects.toThrow();
+    } finally {
+      await src.close();
+    }
+  });
+
+  it('not installed: status disabled and list() empty', async () => {
     const src = new AcpListSource('acp:e2e', () => ({ command: 'definitely-not-a-real-acp-binary-xyz', args: [], env: {} }));
     try {
       const status = await src.status();

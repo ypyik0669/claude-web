@@ -180,6 +180,39 @@ describe('LibraryService', () => {
     expect(index.indexedAt('gone')).toBeUndefined();
   });
 
+  it('refreshIndex keeps the index rows of a source whose fetch failed', async () => {
+    await lib.join('codex', true);
+    await lib.refreshIndex();
+    expect(index.indexedAt('codex-t1')).toBe(200);
+    // a fresh service (e.g. after a restart) has no last good list for codex, and codex fails
+    lib.dispose();
+    codex.list.mockRejectedValue(new Error('app-server crashed'));
+    lib = make();
+    await lib.refreshIndex();
+    expect(index.indexedAt('codex-t1')).toBe(200);
+    expect(index.indexedAt('c1')).toBe(100);
+  });
+
+  it('invalidate() during an in-flight fetch starts a new fetch; the stale one is not cached as fresh', async () => {
+    (codex as any).caps = { ...ALL, archive: false };
+    await lib.join('codex', true);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    codex.list.mockImplementationOnce(async () => { await gate; return { items: [item('codex-old', 'codex', 1)] }; });
+    const first = lib.list();
+    await new Promise((r) => setTimeout(r, 10));
+    lib.invalidate('codex');
+    codex.items = [item('codex-new', 'codex', 2)];
+    const second = lib.list();
+    release();
+    await first;
+    expect((await second).map((s) => s.sessionId)).toContain('codex-new');
+    expect(codex.list).toHaveBeenCalledTimes(2);
+    // the pre-invalidation result must not have become the fresh cache
+    expect((await lib.list()).map((s) => s.sessionId)).toContain('codex-new');
+    expect(codex.list).toHaveBeenCalledTimes(2);
+  });
+
   it('search uses the fallback until the first index pass has finished', async () => {
     const fallback = vi.fn(async () => [{ session: item('fb', 'claude', 1) }]);
     lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents([]), fallbackSearch: fallback, dataDirs: {}, trashDir: path.join(dir, 'library-trash') });
