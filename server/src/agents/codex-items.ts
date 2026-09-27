@@ -20,7 +20,9 @@ export function codexItemMessages(synth: MessageSynth, seen: CodexItemState, ite
       break;
     }
     case 'fileChange': {
-      if (!known) { seen.set(item.id, { type: item.type, toolName: 'Edit', output: '' }); for (const ch of item.changes ?? []) out.push(...synth.toolUse(`${item.id}:${ch.path}`, ch.kind === 'add' ? 'Write' : 'Edit', { file_path: ch.path, diff: ch.diff })); }
+      // PatchChangeKind (per `codex app-server generate-ts`) is `{type:'add'}|{type:'delete'}|{type:'update',move_path}`,
+      // not the bare string 'add' — accept either shape so a genuine kind object is recognized.
+      if (!known) { seen.set(item.id, { type: item.type, toolName: 'Edit', output: '' }); for (const ch of item.changes ?? []) { const kind = typeof ch.kind === 'string' ? ch.kind : ch.kind?.type; out.push(...synth.toolUse(`${item.id}:${ch.path}`, kind === 'add' ? 'Write' : 'Edit', { file_path: ch.path, diff: ch.diff })); } }
       if (completed) for (const ch of item.changes ?? []) out.push(synth.toolResult(`${item.id}:${ch.path}`, ch.diff ?? 'applied', item.status === 'failed', { filePath: ch.path, unified: ch.diff }));
       break;
     }

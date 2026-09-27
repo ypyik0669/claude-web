@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { codexTurnsToMessages } from './codex-items.js';
+import { codexItemMessages, codexTurnsToMessages, type CodexItemState } from './codex-items.js';
+import { MessageSynth } from './normalize.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = JSON.parse(fs.readFileSync(path.join(here, '__fixtures__', 'codex-turns.json'), 'utf8'));
@@ -37,7 +38,30 @@ describe('codexTurnsToMessages', () => {
     const results = msgs.filter((m: any) => m.type === 'result');
     expect(results.length).toBe(2);
 
-    // sessionId is threaded through
-    expect(msgs.every((m: any) => m.session_id === 'codex-x' || m.session_id === undefined)).toBe(true);
+    // sessionId is threaded through onto the messages that carry it
+    expect(firstUser.session_id).toBe('codex-x');
+    expect(results.every((m: any) => m.session_id === 'codex-x')).toBe(true);
+  });
+});
+
+describe('codexItemMessages (fileChange kind)', () => {
+  // PatchChangeKind is an object per `codex app-server generate-ts`, not the bare string 'add' —
+  // this is the same function the live CodexDriver.onItem uses, so it covers both paths.
+  it('a newly added file (kind: {type: "add"}) renders as a Write tool_use', () => {
+    const synth = new MessageSynth('codex-x', '');
+    const seen: CodexItemState = new Map();
+    const item = { id: 'fc-1', type: 'fileChange', status: 'completed', changes: [{ path: '/work/demo/app/new-file.ts', kind: { type: 'add' }, diff: '+content' }] };
+    const msgs = codexItemMessages(synth, seen, item, true);
+    const use = msgs.find((m: any) => m.type === 'assistant' && m.message.content.some((c: any) => c.type === 'tool_use'));
+    expect(use.message.content[0].name).toBe('Write');
+  });
+
+  it('a modified file (kind: {type: "update"}) renders as an Edit tool_use', () => {
+    const synth = new MessageSynth('codex-x', '');
+    const seen: CodexItemState = new Map();
+    const item = { id: 'fc-2', type: 'fileChange', status: 'completed', changes: [{ path: '/work/demo/app/existing.ts', kind: { type: 'update', move_path: null }, diff: '@@ -1 +1 @@' }] };
+    const msgs = codexItemMessages(synth, seen, item, true);
+    const use = msgs.find((m: any) => m.type === 'assistant' && m.message.content.some((c: any) => c.type === 'tool_use'));
+    expect(use.message.content[0].name).toBe('Edit');
   });
 });
