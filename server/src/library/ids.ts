@@ -7,7 +7,9 @@ import type { AgentKind } from '../protocol.js';
 export function libraryId(kind: AgentKind, nativeId: string): string {
   if (kind === 'codex') return `codex-${nativeId}`;
   if (kind === 'opencode') return `opencode-${nativeId}`;
-  if (kind.startsWith('acp:')) return `acp_${kind.slice('acp:'.length)}-${nativeId}`;
+  // Escape '-' as '~' in the agent-id part only, so the first '-' after 'acp_' unambiguously
+  // marks the boundary before nativeId (which may itself contain '-' unescaped).
+  if (kind.startsWith('acp:')) return `acp_${kind.slice('acp:'.length).replace(/-/g, '~')}-${nativeId}`;
   // 'claude' and any other built-in kind (gemini/qwen/kimi) pass through unchanged.
   return nativeId;
 }
@@ -20,7 +22,7 @@ export function parseLibraryId(id: string): { kind: AgentKind; nativeId: string 
     const rest = id.slice('acp_'.length);
     const dash = rest.indexOf('-');
     if (dash >= 0) {
-      return { kind: `acp:${rest.slice(0, dash)}` as AgentKind, nativeId: rest.slice(dash + 1) };
+      return { kind: `acp:${rest.slice(0, dash).replace(/~/g, '-')}` as AgentKind, nativeId: rest.slice(dash + 1) };
     }
   }
   return { kind: 'claude', nativeId: id };

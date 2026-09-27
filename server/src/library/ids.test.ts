@@ -27,11 +27,17 @@ describe('library ids', () => {
     expect(parseLibraryId(uuid)).toEqual({ kind: 'claude', nativeId: uuid });
   });
 
+  it('escapes "-" in a hyphenated ACP agent id so the native id boundary stays unambiguous', () => {
+    expect(libraryId('acp:my-agent', 's-1-2')).toBe('acp_my~agent-s-1-2');
+    expect(parseLibraryId('acp_my~agent-s-1')).toEqual({ kind: 'acp:my-agent', nativeId: 's-1' });
+  });
+
   it('round-trips libraryId -> parseLibraryId for every known kind', () => {
     const cases: [import('../protocol.js').AgentKind, string][] = [
       ['codex', '019a'],
       ['opencode', 'ses_x'],
       ['acp:demo', 's1'],
+      ['acp:my-agent', 's-1-2'],
       ['claude', 'u-1'],
     ];
     for (const [kind, nativeId] of cases) {
