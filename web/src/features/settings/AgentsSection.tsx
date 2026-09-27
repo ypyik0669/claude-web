@@ -3,8 +3,9 @@ import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { dlg } from '@/ui/dialog';
-import type { AgentInfo, AgentKind } from '@shared';
+import type { AgentConfigKind, AgentInfo, AgentKind } from '@shared';
 import { Icon } from '@/ui/icons';
+import { AgentConfigPanel, CONFIGURABLE } from './AgentConfigPanel';
 
 const PROTO_LABEL: Record<AgentInfo['protocol'], string> = { claude: 'Claude Code', acp: 'ACP', codex: 'app-server' };
 
@@ -21,6 +22,8 @@ function runInTerminal(cmd: string) {
 
 function AgentCard({ a, onChange }: { a: AgentInfo; onChange: () => void }) {
   const [open, setOpen] = useState(false);
+  const [cfgOpen, setCfgOpen] = useState(false);
+  const configurable = (CONFIGURABLE as string[]).includes(a.kind);
   const [busy, setBusy] = useState(false);
   const fromAgent = () => ({ command: a.command, args: a.args.join(' '), model: a.model, label: a.label, env: Object.entries(a.env).map(([k, v]) => `${k}=${v}`).join('\n') });
   const [f, setF] = useState(fromAgent);
@@ -55,8 +58,10 @@ function AgentCard({ a, onChange }: { a: AgentInfo; onChange: () => void }) {
         {!a.installed && a.install && <button className="btn sm" onClick={() => runInTerminal(a.install)} title={a.install}>安装</button>}
         {a.installed && a.login && <button className="btn sm ghost" onClick={() => runInTerminal(a.login)} title={a.login}>登录</button>}
         {a.docs && <a className="btn sm ghost" href={a.docs} target="_blank" rel="noreferrer">文档</a>}
-        <button className="btn sm ghost" onClick={() => setOpen(!open)}>{open ? '收起' : '配置'}</button>
+        {configurable && <button className={clsx('btn sm ghost', cfgOpen && 'on')} onClick={() => setCfgOpen(!cfgOpen)} title="说明文件 / MCP / 模型等设置 / 备份">配置中心</button>}
+        <button className="btn sm ghost" onClick={() => setOpen(!open)}>{open ? '收起' : '启动参数'}</button>
       </div>
+      {cfgOpen && configurable && <AgentConfigPanel kind={a.kind as AgentConfigKind} />}
       {open && (
         <div className="agent-form">
           <label>命令<input className="field" value={f.command} onChange={(e) => setF({ ...f, command: e.target.value })} placeholder="可执行文件名或完整路径" /></label>
