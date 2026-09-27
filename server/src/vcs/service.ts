@@ -90,13 +90,19 @@ export class VcsService {
       const key = `${t.provider}:${t.host}`;
       let user = this.users.get(key);
       if (!user) {
-        user = t.provider === 'github' ? (await this.api<any>(t, '/user')).login : (await this.api<any>(t, '/user')).username;
-        this.users.set(key, user ?? '');
+        // app / Actions / narrow fine-grained tokens get 403 on /user yet can read repos: the repo call below decides authOk
+        try {
+          const me = await this.api<any>(t, '/user');
+          user = t.provider === 'github' ? me.login : me.username;
+          this.users.set(key, user ?? '');
+        } catch (e: any) {
+          if (!/^403\b/.test(String(e?.message))) throw e;
+        }
       }
       out.user = user ?? '';
-      out.authOk = true;
       if (t.provider === 'github') { const r = await this.api<any>(t, `/repos/${t.owner}/${t.repo}`); out.defaultBranch = r.default_branch; out.openIssues = r.open_issues_count; out.private = !!r.private; }
       else { const r = await this.api<any>(t, `/projects/${this.pid(t)}`); out.defaultBranch = r.default_branch; out.openIssues = r.open_issues_count; out.private = r.visibility !== 'public'; }
+      out.authOk = true;
     } catch (e: any) { out.error = e.message; }
     return out;
   }
