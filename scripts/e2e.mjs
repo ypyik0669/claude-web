@@ -9,7 +9,7 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-// phase1 needs a real Claude session, phase7 needs `gh auth login`: both stay manual
+// phase1 needs a real Claude session (manual); phase7 needs `gh auth login` or GH_TOKEN (CI passes it explicitly)
 const phases = process.argv.slice(2).length ? process.argv.slice(2) : ['3', '4', '5', '6', '11', '12'];
 const home = mkdtempSync(path.join(os.tmpdir(), 'cw-e2e-'));
 const token = randomBytes(12).toString('hex');

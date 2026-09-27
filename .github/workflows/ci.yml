@@ -26,6 +26,8 @@ jobs:
       - run: npm test
       - run: npm run build:all
       # end-to-end over the real WebSocket with mock agents (no model calls)
-      - name: e2e (mock agents)
+      - name: e2e (mock agents; phase 7 reads public GitHub issues with the workflow token)
         shell: bash
-        run: node scripts/e2e.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/e2e.mjs 3 4 5 6 7 11 12

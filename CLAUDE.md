@@ -193,7 +193,7 @@ npm run build:desktop   # electron-builder → dist-desktop/ClaudeWeb-<ver>-win-
 - **Finder 启动的 app 只有 `/usr/bin:/bin:/usr/sbin:/sbin`**：`desktop/src/main.ts` 的 `fixPosixPath()` 在 fork server 之前用 `$SHELL -ilc` 取 PATH 并补 Homebrew / `~/.local/bin`。
 - mac 标题栏：`titleBarOverlay` 只在非 mac 用；mac 用系统红绿灯 + `trafficLightPosition`，preload 给 `<html>` 加 `mac/win/linux` 类，`styles.css` 的 `html.desktop.mac` 规则把左侧让出 84px。mac 菜单 Cmd+Tab 被系统占用，分组切换用 Ctrl+Tab。
 - `fs.pickDir`：Windows PowerShell / mac `osascript choose folder` / Linux `zenity`。
-- **CI**（`.github/workflows/ci.yml`，win/mac/linux）：`npm run typecheck`、`npm test`、`npm run build:all`、`npm run e2e`。`scripts/e2e.mjs` 用临时 HOME + `CLAUDE_WEB_DIR` 起 server，跑 phase 3/4/5/6/11/12（mock agent，不花 token）；phase1 要真 Claude、phase7 要 `gh auth`，手动跑。
+- **CI**（`.github/workflows/ci.yml`，win/mac/linux）：`npm run typecheck`、`npm test`、`npm run build:all`、`npm run e2e`。`scripts/e2e.mjs` 用临时 HOME + `CLAUDE_WEB_DIR` 起 server，跑 phase 3/4/5/6/11/12（mock agent，不花 token）；CI 额外带 `GH_TOKEN` 跑 phase7；phase1 要真 Claude，手动跑。
 
 ## 结构
 
