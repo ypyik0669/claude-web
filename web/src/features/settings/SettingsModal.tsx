@@ -10,6 +10,7 @@ import { LibrarySection } from './LibrarySection';
 import { RemoteSection } from './RemoteSection';
 import { ImSection } from './ImSection';
 import { SecretsSection } from './SecretsSection';
+import { GatewaySection } from './GatewaySection';
 import { UpdateSection } from './UpdateSection';
 import { DiagnosticsSection } from './DiagnosticsSection';
 import { ModelsSection } from './ModelsSection';
@@ -80,6 +81,7 @@ export function useSections(): Section[] {
     { id: 'engine', l: '引擎与账号', ic: 'settings', keywords: 'engine ccb claude login 登录 doctor 更新', body: () => <Overview /> },
     { id: 'providers', l: '供应商 / 环境', ic: 'cloud', keywords: 'provider api key base url 供应商 中转 env 环境变量 openai gemini', body: () => <><ProviderProfiles /><EnvEditor /></> },
     { id: 'models', l: '模型', ic: 'artifact', keywords: 'model 模型 启用 opus sonnet haiku', body: () => <ModelsSection /> },
+    { id: 'gateway', l: '模型网关', ic: 'gateway', keywords: 'gateway 网关 故障转移 failover 转换 openai anthropic gemini 多账号 额度 轮询 round robin', body: () => <GatewaySection /> },
     { id: 'secrets', l: '密钥', ic: 'lock', keywords: 'secret keychain credential 密钥 钥匙串 加密', body: () => <SecretsSection /> },
     { id: 'mcp', l: 'MCP', ic: 'mcp', keywords: 'mcp server 目录 registry 健康', body: () => <><McpCatalog /><Mcp /></> },
     { id: 'plugins', l: '插件', ic: 'mcp', keywords: 'plugin marketplace 插件 市场', body: () => <Plugins /> },

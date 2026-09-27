@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { clsx } from '@/util';
-import type { Provider, ProviderType } from '@shared';
+import type { GatewayGroup, GatewayStatus, Provider, ProviderType } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
 
@@ -238,6 +238,7 @@ const PROVIDER_TYPES: { v: ProviderType; l: string; hint: string }[] = [
   { v: 'openai', l: 'OpenAI 兼容', hint: 'https://api.openai.com/v1 · DeepSeek / Groq / Qwen / OpenRouter…' },
   { v: 'gemini', l: 'Gemini', hint: '留空用官方 generativelanguage.googleapis.com' },
   { v: 'grok', l: 'Grok (xAI)', hint: '留空用 https://api.x.ai' },
+  { v: 'gateway', l: '模型网关', hint: '走本机模型网关的一个故障转移组（设置 → 模型网关）' },
 ];
 
 type Draft = Partial<Provider> & { apiKey: string };
@@ -255,6 +256,15 @@ export function ProviderProfiles() {
   const [busy, setBusy] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const def = settings.defaultProviderId as string | undefined;
+  // gateway groups, for profiles of type 'gateway' (and to name the group in the list)
+  const [gwGroups, setGwGroups] = useState<GatewayGroup[]>([]);
+  useEffect(() => {
+    const load = () => ws.request<GatewayStatus>({ kind: 'gateway.status' }).then((s) => setGwGroups(s.groups)).catch(() => {});
+    void load();
+    const off = ws.on((e) => { if (e.kind === 'gateway.changed') void load(); });
+    return () => { off(); };
+  }, []);
+  const isGw = editing?.type === 'gateway';
 
   const startEdit = (p?: Provider) => { setEditing(p ? { ...p, modelMap: { ...(p.modelMap ?? {}) } } : emptyDraft()); setProbe(p?.models?.length ? { ok: true, models: p.models, ms: 0 } : null); setShowKey(false); };
   const test = async () => {
@@ -271,7 +281,8 @@ export function ProviderProfiles() {
     if (!editing) return;
     if (!editing.name?.trim()) return toast('请填名称');
     if ((editing.type === 'anthropic' || editing.type === 'openai') && !editing.baseUrl?.trim()) return toast('请填 Base URL');
-    if (!editing.id && !editing.apiKey.trim()) return toast('请填 API Key');
+    if (editing.type === 'gateway' && !editing.gatewayGroupId) return toast('请选一个网关组');
+    if (!editing.id && editing.type !== 'gateway' && !editing.apiKey.trim()) return toast('请填 API Key');
     setBusy(true);
     try {
       const models = probe?.ok && probe.models.length ? probe.models : editing.models;
@@ -314,7 +325,7 @@ export function ProviderProfiles() {
             <span className={clsx('dot', p.models?.length ? 'idle' : 'waiting')} title={p.models?.length ? `已测试 · ${p.models.length} 个模型` : '未测试连接'} />
             <div className="grow">
               <div>{p.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{PROVIDER_TYPES.find((t) => t.v === p.type)?.l}{p.runtime === 'claude' ? ' · 强制官方二进制' : ''}</span></div>
-              <div className="sub mono">{p.baseUrl || '（默认端点）'} · {p.apiKey || '无 key'}{p.defaultModel ? ` · ${p.defaultModel}` : ''}</div>
+              <div className="sub mono">{p.type === 'gateway' ? `组：${gwGroups.find((g) => g.id === p.gatewayGroupId)?.name ?? '（组已删除）'}` : <>{p.baseUrl || '（默认端点）'} · {p.apiKey || '无 key'}</>}{p.defaultModel ? ` · ${p.defaultModel}` : ''}</div>
             </div>
             <button className={clsx('btn sm', def === p.id && 'primary')} onClick={() => setSetting('defaultProviderId', p.id)}>{def === p.id ? '默认' : '设为默认'}</button>
             <button className="btn sm ghost" onClick={() => startEdit(p)}>编辑</button>
@@ -329,12 +340,22 @@ export function ProviderProfiles() {
             <input className="field" style={{ flex: 1 }} placeholder="名称，如 super-nb" value={editing.name ?? ''} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
             <select className="field" value={editing.type} onChange={(e) => setEditing({ ...editing, type: e.target.value as ProviderType })}>{PROVIDER_TYPES.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}</select>
           </div>
-          <input className="field" style={{ width: '100%', marginBottom: 6 }} placeholder={`Base URL · ${PROVIDER_TYPES.find((t) => t.v === editing.type)?.hint}`} value={editing.baseUrl ?? ''} onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })} />
-          <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+          {isGw && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
+              <span style={{ minWidth: 110, fontSize: 12, color: 'var(--fg-2)' }}>网关组</span>
+              <select className="field" style={{ flex: 1 }} value={editing.gatewayGroupId ?? ''} onChange={(e) => setEditing({ ...editing, gatewayGroupId: e.target.value })}>
+                <option value="">选择组…</option>
+                {gwGroups.map((g) => <option key={g.id} value={g.id}>{g.name}（{g.members.length} 个成员）</option>)}
+              </select>
+            </div>
+          )}
+          {isGw && <div className="sub" style={{ marginBottom: 6 }}>地址与密钥在开会话时由网关填入；Claude / Codex / Gemini 等 agent 都能用这个档案。{!gwGroups.length && '还没有组：先去「设置 → 模型网关」建一个。'}</div>}
+          {!isGw && <input className="field" style={{ width: '100%', marginBottom: 6 }} placeholder={`Base URL · ${PROVIDER_TYPES.find((t) => t.v === editing.type)?.hint}`} value={editing.baseUrl ?? ''} onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })} />}
+          {!isGw && <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
             <input className="field" style={{ flex: 1 }} type={showKey ? 'text' : 'password'} placeholder={editing.id ? `API Key（留空保持 ${editing.apiKey || '现有值'}）` : 'API Key'} value={editing.apiKey} onChange={(e) => setEditing({ ...editing, apiKey: e.target.value })} autoComplete="off" />
             <button className="icon-btn" onClick={() => setShowKey(!showKey)} aria-label="显示密钥"><Icon name="eye" size={14} /></button>
             <button className="btn sm" disabled={busy} onClick={test}>{busy ? '测试中…' : '测试连接'}</button>
-          </div>
+          </div>}
           {probe && (
             <div style={{ fontSize: 12, marginBottom: 6, color: probe.ok ? 'var(--green)' : 'var(--red)' }}>
               {probe.models.length > 0 ? `模型列表 ${probe.models.length} 个` : probe.ok ? '连接正常' : `失败${probe.status ? ` HTTP ${probe.status}` : ''}：${probe.error}`}
