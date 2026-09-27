@@ -11,6 +11,11 @@ import { ContextRow } from './ContextRow';
 import { attachmentFolderPath } from '@/features/paths';
 import { Icon } from '@/ui/icons';
 import { CATALOG, effortLevels, modelsFor } from '@catalog';
+import { usePaneCtx } from '@/store/paneContext';
+import { activeGroup } from '@/model/layout';
+import { sessionRefMarker } from '@/model/conversation';
+import { SessionRefChip } from '@/features/chat/ChatView';
+import { REFERENCE_EVENT, type ReferenceDetail } from '@/features/sidebar/session-actions';
 
 export const MODE_LABEL: Record<PermissionMode, string> = { default: '每次询问', acceptEdits: '自动接受编辑', plan: '计划模式', auto: '自动模式', bypassPermissions: '完全权限', dontAsk: '不询问' };
 // Model names must carry their version — "Fable" is not a model, "Fable 5.1" is. Source: @catalog.
@@ -20,7 +25,7 @@ const MODEL_ALIASES = [{ value: '', label: '默认模型' }, ...modelsFor('claud
  * The composer is used in two places: inside an open session (sends to it) and on the welcome screen
  * (creates a session on first send). `welcome` mode carries its own model/mode/cwd state.
  */
-export function Composer({ welcome = false, target }: { welcome?: boolean; target?: { paneId: string; tileId: string } }) {
+export function Composer({ welcome = false, target, disabled = false }: { welcome?: boolean; target?: { paneId: string; tileId: string }; disabled?: boolean }) {
   const active = useScopedSession();
   const send = useStore((s) => s.send);
   const interrupt = useStore((s) => s.interrupt);
@@ -34,6 +39,8 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
   const [imgs, setImgs] = useState<PendingImage[]>([]);
   const [atts, setAtts] = useState<AttachmentRef[]>([]); // inline text attachments
   const [files, setFiles] = useState<DroppedFile[]>([]); // uploaded on send
+  const [refs, setRefs] = useState<{ id: string; title: string }[]>([]); // referenced sessions → <session-ref /> markers on send
+  const pane = usePaneCtx();
   const [upload, setUpload] = useState<{ done: number; total: number; name: string } | null>(null);
   const [palIdx, setPalIdx] = useState(0);
   // welcome-mode settings
@@ -136,7 +143,26 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
   useEffect(() => setPalIdx(0), [slashQuery]);
 
   const busy = !welcome && !!active && (active.state === 'running' || active.state === 'waiting' || active.state === 'starting');
-  const canSend = (text.trim().length > 0 || imgs.length > 0 || atts.length > 0 || files.length > 0) && !starting && !upload;
+  const canSend = (text.trim().length > 0 || imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0) && !starting && !upload && !disabled;
+
+  // "引用到输入框" from a session menu: only the composer of the focused pane's front tile takes it
+  useEffect(() => {
+    const on = (ev: Event) => {
+      const d = (ev as CustomEvent<ReferenceDetail>).detail;
+      if (d.handled || !pane || disabled) return;
+      const g = activeGroup(useStore.getState().layout);
+      const p = g.panes[pane.paneId];
+      if (g.focusedPaneId !== pane.paneId || !p || (p.activeTileId ?? p.tiles[0]?.id) !== pane.tileId) return;
+      if (!welcome && active?.sessionId === d.id) { d.reason = '不能引用会话自己'; return; }
+      d.handled = true;
+      setRefs((r) => (r.some((x) => x.id === d.id) ? r : [...r, { id: d.id, title: d.title }]));
+      ta.current?.focus();
+    };
+    window.addEventListener(REFERENCE_EVENT, on);
+    return () => window.removeEventListener(REFERENCE_EVENT, on);
+  }, [pane?.paneId, pane?.tileId, active?.sessionId, welcome, disabled]);
+  /** the typed text plus one marker per referenced session (the server expands them into briefings) */
+  const withRefs = (t: string) => (refs.length ? `${t}${t ? '\n\n' : ''}${refs.map((r) => sessionRefMarker(r.id, r.title)).join('\n')}` : t);
 
   const onChange = (v: string) => {
     setText(v);
@@ -192,7 +218,8 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
         if (wProvider !== 'claude' && !provider) throw new Error('选中的供应商档案已不存在');
         const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffort || undefined, ultracode: wUltra || undefined, providerId: foreign ? 'claude' : provider ? provider.id : 'claude', features: foreign ? {} : wFeatures, agent: foreign ? wAgent : undefined }, target);
         const uploaded = files.length ? await uploadAll(id) : [];
-        await send(id, t, im, false, [...atts, ...uploaded]);
+        await send(id, withRefs(t), im, false, [...atts, ...uploaded]);
+        setRefs([]);
         saveDraft('welcome', '');
       } catch (e: any) {
         toast(e.message);
@@ -205,8 +232,10 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
     setText('');
     setImgs([]);
     setAtts([]);
+    setRefs([]);
     setDraft(active.sessionId, '');
-    const sentImgs = imgs, sentAtts = atts;
+    const sentImgs = imgs, sentAtts = atts, sentRefs = refs;
+    const full = withRefs(t);
     let uploaded: AttachmentRef[];
     try {
       uploaded = files.length ? await uploadAll(active.sessionId) : [];
@@ -218,11 +247,12 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
       if (t) setDraft(active.sessionId, t);
       setImgs((cur) => (cur.length ? cur : sentImgs));
       setAtts((cur) => (cur.length ? cur : sentAtts));
+      setRefs((cur) => (cur.length ? cur : sentRefs));
       return;
     }
     try {
       setFiles([]);
-      await send(active.sessionId, t, im, false, [...atts, ...uploaded]);
+      await send(active.sessionId, full, im, false, [...atts, ...uploaded]);
     } catch (e: any) {
       toast(e.message);
       setUpload(null);
@@ -258,6 +288,7 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
   };
 
   const onPaste = (e: React.ClipboardEvent) => {
+    if (disabled) return;
     const imgFiles = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith('image/'));
     if (imgFiles.length) { e.preventDefault(); void addImages(imgFiles); return; }
     const t = e.clipboardData.getData('text/plain');
@@ -270,6 +301,7 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
 
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
+    if (disabled) return;
     const { files: dropped, folders, truncated } = await expandDataTransfer(e.dataTransfer);
     const imgOnly = dropped.filter((d) => !d.rel.includes('/') && d.file.type.startsWith('image/'));
     const rest = dropped.filter((d) => !imgOnly.includes(d));
@@ -330,8 +362,11 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
         {active && !welcome && <RunCard sessionId={active.sessionId} />}
         {active && !welcome && active.cwd && <ContextRow cwd={active.cwd} info={info} />}
         <div className="composer-box" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
-          {(imgs.length > 0 || atts.length > 0 || files.length > 0 || upload) && (
+          {(imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0 || upload) && (
             <div className="attach">
+              {refs.map((r) => (
+                <SessionRefChip key={`r${r.id}`} a={{ kind: 'session', name: r.title, sessionId: r.id }} onRemove={() => setRefs((s) => s.filter((x) => x.id !== r.id))} />
+              ))}
               {imgs.map((im, i) => (
                 <img key={i} src={im.url} alt="" onClick={() => setImgs((s) => s.filter((_, j) => j !== i))} title={`${im.name ?? '图片'} · 点击移除`} />
               ))}
@@ -351,14 +386,15 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
             ref={ta}
             rows={1}
             value={text}
-            placeholder={welcome ? '今天做点什么？（可拖入文件或文件夹）' : active?.state === 'history' ? '回复以继续这个会话…' : busy ? '运行中，输入会排队 · Esc 中断' : `回复 ${info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude'}… 输入 / 查看命令，拖入文件作为附件`}
+            disabled={disabled}
+            placeholder={disabled ? '会话已被删除，不能继续' : welcome ? '今天做点什么？（可拖入文件或文件夹）' : active?.state === 'history' ? '回复以继续这个会话…' : busy ? '运行中，输入会排队 · Esc 中断' : `回复 ${info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude'}… 输入 / 查看命令，拖入文件作为附件`}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKey}
             onPaste={onPaste}
           />
           <div className="composer-bar">
             <input ref={fileInput} type="file" multiple hidden onChange={(e) => { const fl = Array.from(e.target.files ?? []); void addImages(fl.filter((f) => f.type.startsWith('image/'))); setFiles((s) => [...s, ...fl.filter((f) => !f.type.startsWith('image/')).map((f) => ({ file: f, rel: f.name }))]); e.target.value = ''; }} />
-            <button className="icon-btn" title="添加图片 / 文件" aria-label="添加附件" onClick={() => fileInput.current?.click()}><Icon name="plus" size={16} /></button>
+            <button className="icon-btn" title="添加图片 / 文件" aria-label="添加附件" disabled={disabled} onClick={() => fileInput.current?.click()}><Icon name="plus" size={16} /></button>
             {welcome ? (
               <>
                 <button className="dirpick" onClick={pickDir} title={cwd || '选择工作目录'}>
@@ -446,7 +482,7 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
                 </label>
               </>
             ) : active ? (
-              <span style={{ fontSize: 12, color: 'var(--ink-4)' }}>{active.state === 'starting' ? '启动中…' : '未运行 · 发送即恢复'}</span>
+              <span style={{ fontSize: 12, color: 'var(--ink-4)' }}>{disabled ? '会话已删除' : active.state === 'starting' ? '启动中…' : '未运行 · 发送即恢复'}</span>
             ) : null}
             {busy && canSend && active && (
               <button className="steer" title="不等这轮结束，立刻插话给 Claude" onClick={async () => { const t = text; setText(''); setDraft(active.sessionId, ''); await send(active.sessionId, t, undefined, true).catch((e) => toast(e.message)); }}>插话 <Icon name="send" size={12} /></button>

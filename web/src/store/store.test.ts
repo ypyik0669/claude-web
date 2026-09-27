@@ -116,3 +116,136 @@ describe('reconnect', () => {
     expect(fake.sent.find((r) => r.kind === 'session.send').params.text).toBe('next');
   });
 });
+
+describe('session library', () => {
+  it('library.changed refetches the session list once, without a limit', async () => {
+    fake.handlers.set('sessions.list', () => []);
+    emit({ kind: 'library.changed' });
+    await new Promise((r) => setTimeout(r, 0));
+    const reqs = fake.sent.filter((r) => r.kind === 'sessions.list');
+    expect(reqs.length).toBe(1);
+    expect(reqs[0].limit).toBeUndefined();
+  });
+
+  it('imported sessions load through library.read and page older history with loadOlder', async () => {
+    useStore.setState({ sessions: [{ sessionId: 'codex-abc', cwd: '/w', title: 'c', lastModified: 0, agent: 'codex' } as any], open: {} });
+    const user = (uuid: string, text: string) => ({ type: 'user', uuid, message: { role: 'user', content: text } });
+    fake.handlers.set('library.read', (req) => (req.cursor === 'c1' ? { messages: [user('u1', 'old')], next: undefined } : { messages: [user('u2', 'new')], next: 'c1' }));
+    await useStore.getState().loadHistory('codex-abc', { focus: false });
+    expect(fake.sent.some((r) => r.kind === 'transcript.load')).toBe(false);
+    expect(useStore.getState().open['codex-abc'].historyCursor).toBe('c1');
+    expect(await useStore.getState().loadOlder('codex-abc')).toBe(false);
+    expect(useStore.getState().open['codex-abc'].conv.items.map((i) => i.id)).toEqual(['u1', 'u2']);
+    fake.sent.length = 0;
+    // no `next` → nothing more to fetch, and no request goes out
+    expect(await useStore.getState().loadOlder('codex-abc')).toBe(false);
+    expect(fake.sent.filter((r) => r.kind === 'library.read').length).toBe(0);
+  });
+
+  it('loadOlder returns true while there is more', async () => {
+    useStore.setState((s) => ({ open: { ...s.open, s1: { ...s.open.s1, historyCursor: 'p1' } } }));
+    fake.handlers.set('library.read', () => ({ messages: [], next: 'p2' }));
+    expect(await useStore.getState().loadOlder('s1')).toBe(true);
+    expect(fake.sent.find((r) => r.kind === 'library.read')).toMatchObject({ sessionId: 's1', cursor: 'p1' });
+  });
+
+  it('two concurrent loadOlder calls send one request and share its result', async () => {
+    useStore.setState((s) => ({ open: { ...s.open, s1: { ...s.open.s1, historyCursor: 'p1' } } }));
+    let release!: (v: unknown) => void;
+    fake.handlers.set('library.read', () => new Promise((r) => { release = r; }));
+    const a = useStore.getState().loadOlder('s1');
+    const b = useStore.getState().loadOlder('s1');
+    release({ messages: [], next: 'p2' });
+    expect(await a).toBe(true);
+    expect(await b).toBe(true);
+    expect(fake.sent.filter((r) => r.kind === 'library.read').length).toBe(1);
+  });
+
+  it('a history reload while loadOlder is in flight discards the stale page', async () => {
+    useStore.setState((s) => ({ open: { ...s.open, s1: { ...s.open.s1, historyCursor: 'p1' } } }));
+    let release!: (v: unknown) => void;
+    fake.handlers.set('library.read', () => new Promise((r) => { release = r; }));
+    const p = useStore.getState().loadOlder('s1');
+    // loadHistory replaced the conversation and minted a new cursor meanwhile
+    useStore.setState((s) => ({ open: { ...s.open, s1: { ...s.open.s1, historyCursor: 'fresh' } } }));
+    release({ messages: [{ type: 'user', uuid: 'old', message: { role: 'user', content: 'stale' } }], next: 'p0' });
+    await p;
+    const o = useStore.getState().open.s1;
+    expect(o.conv.items.length).toBe(0);
+    expect(o.historyCursor).toBe('fresh');
+  });
+
+  it('loadOlder rejects on failure and a later call can retry', async () => {
+    useStore.setState((s) => ({ open: { ...s.open, s1: { ...s.open.s1, historyCursor: 'p1' } } }));
+    fake.handlers.set('library.read', () => Promise.reject(new Error('boom')));
+    await expect(useStore.getState().loadOlder('s1')).rejects.toThrow('boom');
+    fake.handlers.set('library.read', () => ({ messages: [], next: undefined }));
+    expect(await useStore.getState().loadOlder('s1')).toBe(false);
+    expect(fake.sent.filter((r) => r.kind === 'library.read').length).toBe(2);
+  });
+
+  it('library.changed and library.discovered refresh the library sources', async () => {
+    fake.handlers.set('sessions.list', () => []);
+    fake.handlers.set('library.sources', () => [{ kind: 'codex', name: 'Codex', installed: true, detected: true, joined: false, dismissed: false, enabled: false }]);
+    emit({ kind: 'library.discovered', kinds: ['codex'] });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fake.sent.filter((r) => r.kind === 'library.sources').length).toBe(1);
+    expect(useStore.getState().librarySources.map((x) => x.kind)).toEqual(['codex']);
+    emit({ kind: 'library.changed' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fake.sent.filter((r) => r.kind === 'library.sources').length).toBe(2);
+  });
+
+  it('an open session that vanishes on library.changed is marked deleted — unless its source was just left', async () => {
+    useStore.setState({ deletedSessions: {}, sessions: [{ sessionId: 's1', cwd: '/w', title: 't', lastModified: 0 } as any, { sessionId: 'codex-z', cwd: '/w', title: 'z', lastModified: 0, agent: 'codex' } as any] });
+    useStore.setState((s) => ({ open: { ...s.open, 'codex-z': { ...s.open.s1, sessionId: 'codex-z' } } }));
+    fake.handlers.set('sessions.list', () => []);
+    fake.handlers.set('library.sources', () => [
+      { kind: 'claude', name: 'Claude Code', installed: true, detected: true, joined: true, dismissed: false, enabled: true },
+      { kind: 'codex', name: 'Codex', installed: true, detected: true, joined: false, dismissed: false, enabled: false },
+    ]);
+    emit({ kind: 'library.changed' });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(useStore.getState().deletedSessions).toEqual({ s1: true });
+  });
+
+  it('no deleted mark when the source reported a listing error', async () => {
+    useStore.setState({ deletedSessions: {}, sessions: [{ sessionId: 's1', cwd: '/w', title: 't', lastModified: 0 } as any] });
+    fake.handlers.set('sessions.list', () => []);
+    fake.handlers.set('library.sources', () => [{ kind: 'claude', name: 'Claude Code', installed: true, detected: true, joined: true, dismissed: false, enabled: true, error: 'EACCES' }]);
+    emit({ kind: 'library.changed' });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(useStore.getState().deletedSessions).toEqual({});
+  });
+
+  it('the deleted mark clears when the session is listed again', async () => {
+    useStore.setState({ deletedSessions: { s1: true, gone: true } });
+    fake.handlers.set('sessions.list', () => [{ sessionId: 's1', cwd: '/w', title: 't', lastModified: 0 }]);
+    await useStore.getState().refreshSessions();
+    expect(useStore.getState().deletedSessions).toEqual({ gone: true });
+  });
+
+  it('a failed history load keeps the reason in loadError (the chat shows it with a retry)', async () => {
+    useStore.setState({ sessions: [{ sessionId: 'codex-e', cwd: '/w', title: 'c', lastModified: 0, agent: 'codex' } as any], open: {} });
+    fake.handlers.set('library.read', () => Promise.reject(new Error('thread not found')));
+    await useStore.getState().loadHistory('codex-e', { focus: false });
+    expect(useStore.getState().open['codex-e'].loadError).toBe('thread not found');
+    fake.handlers.set('library.read', () => ({ messages: [], next: undefined }));
+    await useStore.getState().loadHistory('codex-e', { focus: false });
+    expect(useStore.getState().open['codex-e'].loadError).toBeUndefined();
+  });
+
+  it('libraryOp sends library.<op> with the payload; sources and filter live on the store', async () => {
+    fake.handlers.set('library.rename', () => ({ ok: true }));
+    await useStore.getState().libraryOp('rename', { sessionId: 's1', title: 'x' });
+    expect(fake.sent.find((r) => r.kind === 'library.rename')).toMatchObject({ sessionId: 's1', title: 'x' });
+    fake.handlers.set('library.sources', () => [{ kind: 'codex', name: 'Codex', installed: true, detected: true, joined: false, dismissed: false, enabled: false }]);
+    await useStore.getState().loadLibrarySources();
+    expect(useStore.getState().librarySources.map((x) => x.kind)).toEqual(['codex']);
+    expect(useStore.getState().sourceFilter).toBe('all');
+    useStore.getState().setSourceFilter('codex');
+    expect(useStore.getState().sourceFilter).toBe('codex');
+  });
+});

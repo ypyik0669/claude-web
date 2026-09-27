@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import type { AssistantItem, Block, Item, ToolUseBlock, UserItem } from '@/model/conversation';
+import type { AssistantItem, Attachment, Block, Item, ToolUseBlock, UserItem } from '@/model/conversation';
 import { ERROR_HINT, ERROR_LABEL } from '@/model/health';
 import { fmtSize } from '@/model/attachments';
 import { useScopedSession, useScopedSessionId, useStore } from '@/store';
@@ -175,13 +175,32 @@ function AttachmentChips({ atts }: { atts: NonNullable<UserItem['attachments']> 
   const sid = useScopedSessionId();
   return (
     <div className="att-chips">
-      {atts.map((a, i) => (
+      {atts.map((a, i) => a.kind === 'session' ? <SessionRefChip key={i} a={a} /> : (
         <span key={i} className="att-chip" title={a.path ?? a.name} onClick={() => { if (a.path && a.kind !== 'folder' && sid) useStore.setState({ inspect: { sessionId: sid, file: { path: a.path } } }); }}>
           <span className="ic"><Icon name={a.kind === 'image' ? 'image' : a.kind === 'folder' ? 'folder' : a.kind === 'text' ? 'read' : 'attach'} size={12} /></span>
           {a.name}{a.size ? <span className="sz"> {fmtSize(a.size)}</span> : null}
         </span>
       ))}
     </div>
+  );
+}
+
+/** A referenced session. Red when it is gone from the library (deleted, or its source left) or failed to expand. */
+export function SessionRefChip({ a, onRemove }: { a: Attachment; onRemove?: () => void }) {
+  const exists = useStore((s) => !!a.sessionId && s.sessions.some((x) => x.sessionId === a.sessionId));
+  const bad = !exists || !!a.error;
+  const title = !exists ? '会话已不存在' : a.error ? a.error : `引用的会话：${a.name}（点击打开）`;
+  const open = () => {
+    if (!exists || !a.sessionId) return;
+    const st = useStore.getState();
+    st.open[a.sessionId] ? st.openInPane(a.sessionId, 'tab') : void st.loadHistory(a.sessionId, { mode: 'tab' });
+  };
+  return (
+    <span className={clsx('att-chip ref', bad && 'bad')} title={title} onClick={open} role={exists ? 'button' : undefined}>
+      <span className="ic"><Icon name="quote" size={12} /></span>
+      {a.name}
+      {onRemove && <button aria-label="移除引用" onClick={(e) => { e.stopPropagation(); onRemove(); }}><Icon name="close" size={10} /></button>}
+    </span>
   );
 }
 
@@ -253,6 +272,10 @@ export function ChatView() {
   const version = active?.version ?? 0;
   const [find, setFind] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
+  const [older, setOlder] = useState<{ busy: boolean; error?: string }>({ busy: false });
+  const sidRef = useRef(active?.sessionId);
+  // the tile switched sessions: an older-page request or its error belongs to the previous one
+  useEffect(() => { sidRef.current = active?.sessionId; setOlder({ busy: false }); }, [active?.sessionId]);
   const pane = usePaneCtx();
 
   useEffect(() => {
@@ -285,6 +308,23 @@ export function ChatView() {
     if (b !== atBottom) setAtBottom(b);
   };
   const live = active.state === 'running' || active.state === 'waiting';
+  const sid = active.sessionId;
+  /** prepend the next older page and keep the message the user was looking at in place */
+  const loadOlder = async () => {
+    const el = ref.current;
+    const h0 = el?.scrollHeight ?? 0, t0 = el?.scrollTop ?? 0;
+    stick.current = false;
+    setOlder({ busy: true });
+    try {
+      await useStore.getState().loadOlder(sid);
+      if (sidRef.current !== sid) return;
+      setOlder({ busy: false });
+      requestAnimationFrame(() => { if (el) el.scrollTop = t0 + (el.scrollHeight - h0); });
+    } catch (e) {
+      if (sidRef.current !== sid) return;
+      setOlder({ busy: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  };
 
   return (
     <div className="chat" ref={ref} onScroll={onScroll}>
@@ -292,6 +332,22 @@ export function ChatView() {
       {!atBottom && <button className="jump-bottom" title="回到底部" onClick={() => { const el = ref.current!; el.scrollTop = el.scrollHeight; stick.current = true; }} aria-label="回到底部"><Icon name="chevronDown" size={16} /></button>}
       <div className="chat-inner" data-session-id={active.sessionId}>
         {active.loading && <div className="sysline"><span className="spinner" /> 加载历史…</div>}
+        {active.loadError && !active.loading && (
+          <div className="load-err" role="alert">
+            <Icon name="alert" size={14} />
+            <span className="why">加载历史失败：{active.loadError}</span>
+            <button className="btn sm" onClick={() => void useStore.getState().loadHistory(sid, { focus: false })}><Icon name="refresh" size={12} /> 重试</button>
+          </div>
+        )}
+        {active.historyCursor && !active.loading && (
+          <div className="older-row">
+            {older.error ? (
+              <span className="load-err inline" role="alert"><span className="why">加载更早的记录失败：{older.error}</span><button className="btn sm" onClick={loadOlder}><Icon name="refresh" size={12} /> 重试</button></span>
+            ) : (
+              <button className="btn sm ghost" disabled={older.busy} onClick={loadOlder}>{older.busy ? <span className="spinner" /> : <Icon name="chevronDown" size={12} className="flip" />} 加载更早的记录</button>
+            )}
+          </div>
+        )}
         <ItemList items={active.conv.items} version={version} live={live} />
         {active.error && <div className="sysline" style={{ color: 'var(--red)' }}>{active.error}</div>}
         <PermissionCards />

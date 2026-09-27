@@ -4,55 +4,40 @@ import { useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { ago, basename, clsx } from '@/util';
-import type { AgentKind, SessionSummary, Workspace } from '@shared';
+import type { AgentKind, SessionSummary, SourceStatus, Workspace } from '@shared';
 import { Icon, AGENT_ICONS } from '@/ui/icons';
+import { MIME_SESSION } from '@/features/workbench/dnd';
+import { dlg } from '@/ui/dialog';
+import { isWithin } from '@/features/paths';
+import { filterSessions, isArchived, renderedRows, sourceCounts } from './filter';
+import { SessionMenu, capsIntersection, deleteSessions, effectiveCaps, setArchived } from './session-actions';
+
+const PAGE_FIRST = 25;
+const PAGE_MORE = 50;
 
 function AgentDot({ kind }: { kind: AgentKind }) {
   const a = useStore((s) => s.agents.find((x) => x.kind === kind));
   return <span className="agent-dot" title={a?.name ?? kind}><Icon name={AGENT_ICONS[kind] ?? 'agent'} size={12} /></span>;
 }
-import { MIME_SESSION } from '@/features/workbench/dnd';
-import { dlg } from '@/ui/dialog';
-import { isWithin } from '@/features/paths';
 
-function SessionMenu({ s, onClose }: { s: SessionSummary; onClose: () => void }) {
+/** Sidebar-only entries of the session menu (where to open it, pin, folder); the rest is the shared SessionMenu. */
+function SidebarMenuExtra({ s, onClose }: { s: SessionSummary; onClose: () => void }) {
   const st = useStore();
   const open = st.open[s.sessionId];
   const meta = st.sessionMeta[s.sessionId] ?? {};
-  useEffect(() => {
-    const k = () => onClose();
-    window.addEventListener('click', k);
-    return () => window.removeEventListener('click', k);
-  }, [onClose]);
-  const rename = async () => {
-    const t = await dlg.prompt('重命名会话', s.title);
-    if (t && t !== s.title) await ws.request({ kind: 'session.rename', sessionId: s.sessionId, title: t }).catch((e) => st.toast(e.message));
-    onClose();
-  };
-  const del = async () => {
-    if (!(await dlg.confirm(`删除会话「${s.title}」？`, { message: '会话记录会从磁盘移除。', danger: true, okLabel: '删除' }))) return;
-    await st.closeSession(s.sessionId);
-    await ws.request({ kind: 'session.delete', sessionId: s.sessionId }).catch((e) => st.toast(e.message));
-    await st.refreshSessions();
-    onClose();
-  };
-  const act = (fn: () => unknown) => () => { void fn(); onClose(); };
+  const act = (fn: () => unknown) => () => { onClose(); void fn(); };
   const openIn = (mode: 'tab' | 'replace') => act(() => (open ? st.openInPane(s.sessionId, mode) : st.loadHistory(s.sessionId, { mode })));
   return (
-    <div className="menu" style={{ right: 8, top: 28 }} onClick={(e) => e.stopPropagation()}>
+    <>
       <button onClick={openIn('tab')}><Icon name="board" size={14} /> 在新标签打开</button>
       <button onClick={act(() => { const g = st.layout; const before = g; st.dispatchLayout({ t: 'pane.split', paneId: (g.groups.find((x) => x.id === g.activeGroupId) ?? g.groups[0]).focusedPaneId, dir: 'row' }); if (useStore.getState().layout === before) return st.toast('最多 6 个窗格'); open ? st.openInPane(s.sessionId, 'replace') : void st.loadHistory(s.sessionId); })}><Icon name="splitRight" size={14} /> 在右侧分屏打开</button>
-      <button onClick={act(() => st.openSession({ sessionId: s.sessionId, cwd: s.cwd }).catch((e) => st.toast(e.message)))}><Icon name="play" size={14} /> 恢复运行</button>
-      <button onClick={act(() => st.openSession({ sessionId: s.sessionId, cwd: s.cwd, fork: true }).catch((e) => st.toast(e.message)))}><Icon name="branch" size={14} /> 分叉</button>
+      {effectiveCaps(s).resume && <button onClick={act(() => st.openSession({ sessionId: s.sessionId, cwd: s.cwd }).catch((e) => st.toast(e.message)))}><Icon name="play" size={14} /> 恢复运行</button>}
       <button onClick={act(() => st.setSessionMeta(s.sessionId, { pinned: !meta.pinned }))}><Icon name="pin" size={14} /> {meta.pinned ? '取消置顶' : '置顶'}</button>
-      <button onClick={act(() => st.setSessionMeta(s.sessionId, { archived: !meta.archived }))}><Icon name="archive" size={14} /> {meta.archived ? '取消归档' : '归档'}</button>
-      <button onClick={rename}><Icon name="edit" size={14} /> 重命名</button>
       <button onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd }))}><Icon name="folder" size={14} /> 在资源管理器打开</button>
       <button onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd, app: 'code' }))}><Icon name="keyboard" size={14} /> 在 VS Code 打开</button>
       {open && open.state !== 'history' && <button onClick={act(() => st.closeSession(s.sessionId))}><Icon name="stop" size={14} /> 结束进程</button>}
-      <button onClick={act(() => { navigator.clipboard.writeText(s.sessionId); st.toast('已复制 session id', true); })}><Icon name="copy" size={14} /> 复制 ID</button>
-      <button className="danger" onClick={del}><Icon name="trash" size={14} /> 删除</button>
-    </div>
+      <div className="menu-sep" />
+    </>
   );
 }
 
@@ -76,21 +61,35 @@ function useOpenRow(sessionId: string) {
   };
 }
 
-function SessionRow({ s, menu, setMenu }: { s: SessionSummary; menu: string | null; setMenu: (v: string | null) => void }) {
+interface Selection { on: boolean; ids: Set<string>; toggle(id: string): void }
+
+function SessionRow({ s, menu, setMenu, sel }: { s: SessionSummary; menu: string | null; setMenu: (v: string | null) => void; sel: Selection }) {
   const open = useStore((st) => st.open[s.sessionId]);
   const activeId = useStore((st) => st.activeId);
   const meta = useStore((st) => st.sessionMeta[s.sessionId]);
   const row = useOpenRow(s.sessionId);
   const live = open?.state ?? s.live;
   const isLive = live && live !== 'history' && live !== 'closed';
+  const checked = sel.on && sel.ids.has(s.sessionId);
+  const archived = isArchived(s, meta ? { [s.sessionId]: meta } : {});
+  const handlers = sel.on ? { onClick: () => sel.toggle(s.sessionId) } : row;
   return (
-    <div className={clsx('sess', activeId === s.sessionId && 'active')} {...row} onClickCapture={() => { if (window.matchMedia('(max-width: 760px)').matches) setTimeout(() => useStore.setState({ sidebarOpen: false }), 50); }} title={`${s.firstPrompt ?? s.title}\n点击打开 · Ctrl/中键新标签 · 可拖到窗格`}>
-      {isLive ? <span className={clsx('dot', live)} /> : meta?.pinned ? <span className="pin-mark" title="已置顶"><Icon name="pin" size={11} /></span> : <span className="dot ph" />}
+    <div
+      className={clsx('sess', activeId === s.sessionId && !sel.on && 'active', checked && 'checked', archived && 'archived')}
+      {...handlers}
+      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu(s.sessionId); }}
+      onClickCapture={() => { if (!sel.on && window.matchMedia('(max-width: 760px)').matches) setTimeout(() => useStore.setState({ sidebarOpen: false }), 50); }}
+      title={sel.on ? s.title : `${s.firstPrompt ?? s.title}\n点击打开 · Ctrl/中键新标签 · 右键菜单 · 可拖到窗格`}
+    >
+      {sel.on ? (
+        <input type="checkbox" className="sel-box" checked={checked} readOnly tabIndex={-1} aria-label="选择" />
+      ) : isLive ? <span className={clsx('dot', live)} /> : meta?.pinned ? <span className="pin-mark" title="已置顶"><Icon name="pin" size={11} /></span> : <span className="dot ph" />}
       <span className="t">{s.title}</span>
+      {!!s.childCount && <span className="kids" title={`${s.childCount} 个子任务会话（分叉 / 子代理），打开父会话查看`}>+{s.childCount} 子任务</span>}
       {s.agent && s.agent !== 'claude' && <AgentDot kind={s.agent} />}
       <span className="ago">{ago(s.lastModified)}</span>
-      <button className="more" title="更多" onClick={(e) => { e.stopPropagation(); setMenu(menu === s.sessionId ? null : s.sessionId); }}><Icon name="more" size={14} /></button>
-      {menu === s.sessionId && <SessionMenu s={s} onClose={() => setMenu(null)} />}
+      {!sel.on && <button className="more" title="更多" onClick={(e) => { e.stopPropagation(); setMenu(menu === s.sessionId ? null : s.sessionId); }}><Icon name="more" size={14} /></button>}
+      {menu === s.sessionId && <SessionMenu s={s} onClose={() => setMenu(null)} extra={<SidebarMenuExtra s={s} onClose={() => setMenu(null)} />} />}
     </div>
   );
 }
@@ -128,6 +127,34 @@ function WorkspaceMenu({ w, onClose }: { w: Workspace; onClose: () => void }) {
   );
 }
 
+/** "Codex / OpenCode sessions were found on this machine — add them?" Joining is opt-in; ignoring it changes nothing. */
+function DiscoveryBanner({ pending }: { pending: SourceStatus[] }) {
+  const toast = useStore((s) => s.toast);
+  const [busy, setBusy] = useState<string | null>(null);
+  const apply = (r: SourceStatus[] | null) => { if (Array.isArray(r)) useStore.setState({ librarySources: r }); };
+  const join = async (k: AgentKind) => {
+    setBusy(k);
+    try { apply(await ws.request<SourceStatus[]>({ kind: 'library.join', kind_: k, joined: true })); } catch (e: any) { toast(e.message); } finally { setBusy(null); }
+  };
+  const later = async () => {
+    setBusy('later');
+    try { for (const p of pending) apply(await ws.request<SourceStatus[]>({ kind: 'library.dismiss', kind_: p.kind })); } catch (e: any) { toast(e.message); } finally { setBusy(null); }
+  };
+  return (
+    <div className="lib-banner" role="status">
+      <div className="msg">检测到本机有 {pending.map((p) => p.name).join('、')} 的会话，要加入会话库吗？</div>
+      <div className="acts">
+        {pending.map((p) => (
+          <button key={p.kind} className="btn sm" disabled={!!busy} onClick={() => join(p.kind)}>
+            {busy === p.kind ? <span className="spinner" /> : <Icon name={AGENT_ICONS[p.kind] ?? 'agent'} size={12} />} 加入 {p.name}
+          </button>
+        ))}
+        <button className="btn sm ghost" disabled={!!busy} onClick={later}>以后再说</button>
+      </div>
+    </div>
+  );
+}
+
 export function Sidebar({ onNew }: { onNew: () => void }) {
   const sessions = useStore((s) => s.sessions);
   const open = useStore((s) => s.open);
@@ -142,12 +169,28 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const collapsed = useStore((s) => s.layout.sidebar.sections);
   const dispatch = useStore((s) => s.dispatchLayout);
   const toast = useStore((s) => s.toast);
+  const sources = useStore((s) => s.librarySources);
+  const sourceFilter = useStore((s) => s.sourceFilter);
+  const setSourceFilter = useStore((s) => s.setSourceFilter);
   const [q, setQ] = useState('');
   const [menu, setMenu] = useState<string | null>(null);
   const [wsMenu, setWsMenu] = useState<string | null>(null);
+  const [shown, setShown] = useState<Record<string, number>>({});
+  const [selecting, setSelecting] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
 
   const ql = q.trim().toLowerCase();
-  const visible = useMemo(() => sessions.filter((s) => (showArchived ? true : !sessionMeta[s.sessionId]?.archived) && (!ql || `${s.title} ${s.firstPrompt ?? ''} ${s.cwd}`.toLowerCase().includes(ql))), [sessions, sessionMeta, showArchived, ql]);
+  const visible = useMemo(() => filterSessions(sessions, { source: sourceFilter, query: q, showArchived, meta: sessionMeta }), [sessions, sessionMeta, showArchived, q, sourceFilter]);
+  // counts follow the archive toggle but not the source filter itself
+  const counts = useMemo(() => sourceCounts(filterSessions(sessions, { source: 'all', query: '', showArchived, meta: sessionMeta })), [sessions, sessionMeta, showArchived]);
+  const agents = useStore((s) => s.agents);
+  // a source still on its first read has no sessions yet: it gets a chip with a spinner instead of a count
+  const chips: Pick<SourceStatus, 'kind' | 'name' | 'error' | 'loading'>[] = sources.filter((x) => x.enabled && ((counts[x.kind] ?? 0) > 0 || x.loading));
+  // the active filter keeps its chip even while the sources are (re)loading, so it can always be seen and cleared
+  if (sourceFilter !== 'all' && !chips.some((x) => x.kind === sourceFilter)) chips.push({ kind: sourceFilter, name: agents.find((a) => a.kind === sourceFilter)?.name ?? sourceFilter });
+  const total = Object.values(counts).reduce((a, b) => a + b, 0);
+  const showChips = chips.length > 1 || sourceFilter !== 'all';
+  const pending = sources.filter((x) => x.kind !== 'claude' && x.detected && !x.joined && !x.dismissed);
   const pinned = visible.filter((s) => sessionMeta[s.sessionId]?.pinned);
   const running = Object.values(open).filter((o) => o.state === 'running' || o.state === 'waiting');
 
@@ -166,18 +209,39 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     return { byWs, other: [...other.entries()].sort((a, b) => b[1][0].lastModified - a[1][0].lastModified) };
   }, [visible, workspaces, sessionMeta]);
 
+  // selection (and 全选) only ever covers rows that are on screen: expanded groups, within their page limit
+  const rendered = useMemo(() => renderedRows([
+    { key: '__pinned', items: pinned, collapsed: !!collapsed.__pinned },
+    ...workspaces.map((w) => ({ key: w.id, items: grouped.byWs.get(w.id) ?? [], collapsed: !!collapsed[w.id] })),
+    ...grouped.other.map(([cwd, arr]) => ({ key: cwd, items: arr, collapsed: !!collapsed[cwd] })),
+  ], shown, PAGE_FIRST), [pinned, workspaces, grouped, collapsed, shown]);
+  const selected = useMemo(() => rendered.filter((s) => picked.has(s.sessionId)), [rendered, picked]);
+  const allOn = rendered.length > 0 && selected.length === rendered.length;
+  const sel: Selection = {
+    on: selecting,
+    ids: picked,
+    toggle: (id) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; }),
+  };
+  const endSelect = () => { setSelecting(false); setPicked(new Set()); };
+  const selCaps = capsIntersection(selected);
+  const allArchived = selected.length > 0 && selected.every((s) => isArchived(s, sessionMeta));
+
   const toggleGroup = (k: string) => dispatch({ t: 'sidebar.set', patch: { sections: { ...collapsed, [k]: !collapsed[k] } } });
   const pickWorkspace = async () => {
     const p = desktop ? await desktop.pickDir() : await ws.request<string | null>({ kind: 'fs.pickDir' });
     if (p) await addWorkspace(p).catch((e) => toast(e.message));
   };
-  const list = (arr: SessionSummary[], k: string) => (
-    <>
-      {arr.slice(0, ql ? 200 : 25).map((s) => <SessionRow key={s.sessionId} s={s} menu={menu} setMenu={setMenu} />)}
-      {arr.length > 25 && !ql && <div className="sess" style={{ color: 'var(--ink-4)', fontSize: 11.5 }} onClick={() => useStore.setState({ paletteOpen: true })}>还有 {arr.length - 25} 个 · {modKey}+K 搜索</div>}
-      {!arr.length && k && <div className="sess" style={{ color: 'var(--ink-4)', fontSize: 12 }}>还没有会话</div>}
-    </>
-  );
+  const list = (arr: SessionSummary[], k: string, emptyHint = true) => {
+    const limit = shown[k] ?? PAGE_FIRST;
+    const rest = arr.length - limit;
+    return (
+      <>
+        {arr.slice(0, limit).map((s) => <SessionRow key={s.sessionId} s={s} menu={menu} setMenu={setMenu} sel={sel} />)}
+        {rest > 0 && <button className="sess more-row" onClick={() => setShown((m) => ({ ...m, [k]: limit + PAGE_MORE }))}><Icon name="chevronDown" size={12} /> 展开更多（剩 {rest}）</button>}
+        {!arr.length && emptyHint && <div className="sess" style={{ color: 'var(--ink-4)', fontSize: 12 }}>{ql ? '没有匹配的会话' : '还没有会话'}</div>}
+      </>
+    );
+  };
   const panelOn = (p: 'config' | 'usage') => dock.open && dock.tabs.includes(p);
 
   return (
@@ -192,11 +256,33 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         <button className={clsx('nav', panelOn('config') && 'active')} onClick={() => useStore.getState().openSettings()} onContextMenu={(e) => { e.preventDefault(); togglePanel('config'); }} title={`设置 (${modKey}+,) · 右键：停靠面板`}><span className="ic"><Icon name="settings" size={15} /></span>设置<span className="k kbd">{modKey} ,</span></button>
         <button className={clsx('nav', panelOn('usage') && 'active')} onClick={() => togglePanel('usage')}><span className="ic"><Icon name="usage" size={15} /></span>用量</button>
       </div>
+      {pending.length > 0 && <DiscoveryBanner pending={pending} />}
+      {showChips && (
+        <div className="sb-sources" role="tablist" aria-label="按来源筛选">
+          <button role="tab" aria-selected={sourceFilter === 'all'} className={clsx('src-chip', sourceFilter === 'all' && 'active')} onClick={() => setSourceFilter('all')}>全部<span className="n">{total}</span></button>
+          {chips.map((x) => (
+            <button key={x.kind} role="tab" aria-selected={sourceFilter === x.kind} className={clsx('src-chip', sourceFilter === x.kind && 'active')} onClick={() => setSourceFilter(x.kind)} title={x.error ? `${x.name}：${x.error}` : x.loading ? `${x.name}：读取中` : x.name}>
+              <Icon name={AGENT_ICONS[x.kind] ?? 'agent'} size={12} />{x.name}{x.loading && !counts[x.kind] ? <span className="spinner" aria-label="读取中" /> : <span className="n">{counts[x.kind] ?? 0}</span>}{x.error && <span className="warn-dot" />}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="sb-search">
         <input placeholder="筛选会话…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <button className={clsx('btn sm ghost sel-toggle', selecting && 'active')} title="多选会话（批量归档 / 删除）" aria-pressed={selecting} onClick={() => (selecting ? endSelect() : setSelecting(true))}>{selecting ? '完成' : '选择'}</button>
       </div>
+      {selecting && (
+        <div className="sel-bar">
+          <span className="n">已选 {selected.length}</span>
+          <button className="btn sm ghost" title="只选当前显示出来的会话（展开的分组、已加载的行）" onClick={() => setPicked(allOn ? new Set() : new Set(rendered.map((s) => s.sessionId)))}>{allOn ? '全不选' : `全选 ${rendered.length}`}</button>
+          <span className="grow" />
+          {selCaps.archive && <button className="btn sm" onClick={async () => { await setArchived(selected, !allArchived); endSelect(); }}><Icon name="archive" size={12} /> {allArchived ? '取消归档' : '归档'}</button>}
+          {selCaps.delete && <button className="btn sm danger" onClick={async () => { if (await deleteSessions(selected)) endSelect(); }}><Icon name="trash" size={12} /> 删除</button>}
+          {selected.length > 0 && !selCaps.archive && !selCaps.delete && <span className="hint">选中的会话来源不支持批量操作</span>}
+        </div>
+      )}
       <div className="sb-list">
-        {running.length > 0 && !ql && (
+        {running.length > 0 && !ql && !selecting && (
           <div className="proj">
             <div className="proj-head" onClick={() => toggleGroup('__running')}><span className="ic"><Icon name={collapsed.__running ? 'chevronRight' : 'chevronDown'} size={13} /></span><span className="name">运行中</span><span className="cnt">{running.length}</span></div>
             {!collapsed.__running && running.map((o) => {
@@ -208,7 +294,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         {pinned.length > 0 && (
           <div className="proj">
             <div className="proj-head" onClick={() => toggleGroup('__pinned')}><span className="ic"><Icon name={collapsed.__pinned ? 'chevronRight' : 'chevronDown'} size={13} /></span><span className="name">置顶</span><span className="cnt">{pinned.length}</span></div>
-            {!collapsed.__pinned && list(pinned, '')}
+            {!collapsed.__pinned && list(pinned, '__pinned', false)}
           </div>
         )}
         <div className="proj">
@@ -249,12 +335,12 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
                   <span className="cnt">{arr.length}</span>
                   <button className="more" title="设为工作区" onClick={(e) => { e.stopPropagation(); void addWorkspace(cwd); }}><Icon name="plus" size={13} /></button>
                 </div>
-                {!collapsed[cwd] && list(arr, '')}
+                {!collapsed[cwd] && list(arr, cwd, false)}
               </div>
             ))}
           </div>
         )}
-        {!visible.length && <div className="empty">没有会话</div>}
+        {!visible.length && <div className="empty">{ql || sourceFilter !== 'all' ? '没有匹配的会话' : '没有会话'}</div>}
       </div>
       <div className="sb-foot">
         <span className={clsx('dot', connected ? 'idle' : 'error')} />

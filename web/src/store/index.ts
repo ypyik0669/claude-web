@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AgentInfo, AgentKind, AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, Workspace } from '@shared';
+import type { AgentInfo, AgentKind, AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, SourceStatus, Workspace } from '@shared';
 import { decodeAttachments, findChainUuidBefore, type ContextUsage } from '@/model/conversation';
 import { activeGroup, chatTile, deriveActive, initialLayout, layoutReducer, migrateLegacy, sanitizeLayout, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
 import { PaneContext, winId } from './paneContext';
@@ -9,7 +9,9 @@ export const THEMES = ['dark', 'light', 'dracula', 'nord', 'tokyo-night', 'paper
 export type Theme = (typeof THEMES)[number];
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
-import { applyMessage, applyTranscript, createConversation, walkTools, type Conversation } from '@/model/conversation';
+import { applyMessage, applyTranscript, createConversation, prependTranscript, walkTools, type Conversation } from '@/model/conversation';
+import { isImportedSessionId } from '@/util';
+import { parseLibraryId } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { applyUiSettings, resolveTheme } from '@/features/settings/ui-settings';
 
@@ -32,7 +34,13 @@ export interface OpenSession {
   feedback: Record<string, MessageFeedback>; // messageId -> rating (meta.json)
   contextUsage?: ContextUsage;
   lastSent?: QueuedMessage; // for retry / auto-continue
+  /** library sessions: cursor for the next OLDER page (`library.read`); absent = nothing older */
+  historyCursor?: string;
+  /** the last transcript.load / library.read failed — the chat shows this with a retry button */
+  loadError?: string;
 }
+
+export type LibraryOp = 'rename' | 'archive' | 'delete' | 'fork';
 
 const genUuid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`);
 
@@ -87,6 +95,18 @@ interface State {
   loadProviders(): Promise<void>;
   setSetting(key: string, value: unknown): Promise<void>;
   loadHistory(sessionId: string, opts?: { focus?: boolean; mode?: 'replace' | 'tab' }): Promise<void>;
+  /** prepend the next older page of an imported session's history; true while there is still more */
+  loadOlder(sessionId: string): Promise<boolean>;
+  // unified session library
+  librarySources: SourceStatus[];
+  sourceFilter: AgentKind | 'all';
+  setSourceFilter(k: AgentKind | 'all'): void;
+  loadLibrarySources(): Promise<void>;
+  /** `library.<op>` with `payload` (rename {sessionId,title} / archive {sessionIds,archived} / delete {sessionIds} / fork {sessionId}) */
+  libraryOp(op: LibraryOp, payload: Record<string, unknown>): Promise<any>;
+  /** sessions deleted while a tile may still show them (the tile shows a banner and locks its composer) */
+  deletedSessions: Record<string, true>;
+  markDeleted(ids: string[]): void;
   send(sessionId: string, text: string, images?: { mediaType: string; data: string }[], steer?: boolean, attachments?: AttachmentRef[]): Promise<void>;
   /** remove a queued message (returns it so the composer can restore the text) */
   recall(sessionId: string, id: string): QueuedMessage | undefined;
@@ -114,6 +134,7 @@ interface State {
   onTurnEnd(sessionId: string): void;
 }
 
+const olderInflight = new Map<string, Promise<boolean>>();
 const draftTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const autoTimers = new Map<string, ReturnType<typeof setTimeout>>();
 export const autoContinueAt = new Map<string, number>(); // sessionId -> epoch ms (for the status strip countdown)
@@ -315,6 +336,7 @@ export const useStore = create<State>((set, get) => ({
         void get().loadEngine().catch(() => {});
         void get().loadProviders().catch(() => {});
         void get().loadAgents().catch(() => {});
+        void get().loadLibrarySources().catch(() => {});
         void ws.request<Limits>({ kind: 'limits.get' }).then((limits) => set({ limits })).catch(() => {});
         // re-attach open live sessions after reconnect
         void resyncOpenSessions();
@@ -350,6 +372,23 @@ export const useStore = create<State>((set, get) => ({
         case 'sessions.changed':
           void get().refreshSessions();
           break;
+        case 'library.changed': {
+          // an open session that was listed before and is gone afterwards was deleted (here or elsewhere)
+          const before = new Set(get().sessions.map((s) => s.sessionId));
+          void Promise.all([get().refreshSessions(), get().loadLibrarySources().catch(() => {})]).then(() => {
+            const after = new Set(get().sessions.map((s) => s.sessionId));
+            // only trust the absence when the session's source listed cleanly: a source that was just left, or one
+            // whose listing failed (the server then serves a stale / partial cache), is not evidence of a deletion
+            const listedOk = (id: string) => get().librarySources.some((x) => x.kind === parseLibraryId(id).kind && x.joined && x.enabled && !x.error);
+            const gone = Object.keys(get().open).filter((id) => before.has(id) && !after.has(id) && listedOk(id));
+            if (gone.length) get().markDeleted(gone);
+          }).catch(() => {});
+          break;
+        }
+        case 'library.discovered':
+          // the sidebar banner reads detected && !joined && !dismissed from the sources
+          void get().loadLibrarySources().catch(() => {});
+          break;
         case 'meta.changed':
           void get().loadMeta();
           void get().loadProviders().catch(() => {});
@@ -363,8 +402,14 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async refreshSessions() {
-    const sessions = await ws.request<SessionSummary[]>({ kind: 'sessions.list', limit: 500 });
-    set({ sessions });
+    const sessions = await ws.request<SessionSummary[]>({ kind: 'sessions.list' });
+    // a session marked deleted that is listed again (a transient listing gap, a source re-joined) is not deleted
+    const back = (sessions ?? []).filter((x) => get().deletedSessions[x.sessionId]).map((x) => x.sessionId);
+    if (back.length) {
+      const d = { ...get().deletedSessions };
+      for (const id of back) delete d[id];
+      set({ sessions, deletedSessions: d });
+    } else set({ sessions });
   },
 
   async openSession(p, target) {
@@ -510,13 +555,21 @@ export const useStore = create<State>((set, get) => ({
     if (!get().sessions.some((s) => s.sessionId === sessionId)) await get().refreshSessions().catch(() => {});
     const meta = get().sessions.find((s) => s.sessionId === sessionId);
     if (!cur) set((s) => ({ open: { ...s.open, [sessionId]: { sessionId, cwd: meta?.cwd ?? '', conv: createConversation(), version: 0, state: 'history', pending: [], loading: true, queue: [], draft: '', feedback: {} } } }));
-    else set((s) => bump(s, sessionId, (o) => { o.loading = true; }));
+    else set((s) => bump(s, sessionId, (o) => { o.loading = true; o.loadError = undefined; }));
     if (opts?.focus !== false) get().openInPane(sessionId, opts?.mode ?? 'replace');
     void get().loadFeedback(sessionId);
     if (!cur) void get().loadDraft(sessionId).then((d) => d && set((s) => bump(s, sessionId, (o) => { if (!o.draft) o.draft = d; })));
     try {
-      const msgs = await ws.request<any[]>({ kind: 'transcript.load', sessionId });
+      // imported sessions page through library.read (transcript.load would give the newest page but no cursor)
+      let msgs: any[];
+      let cursor: string | undefined;
+      if (isImportedSessionId(sessionId)) {
+        const r = await ws.request<{ messages: any[]; next?: string }>({ kind: 'library.read', sessionId });
+        msgs = r?.messages ?? [];
+        cursor = r?.next || undefined;
+      } else msgs = await ws.request<any[]>({ kind: 'transcript.load', sessionId });
       set((s) => bump(s, sessionId, (o) => {
+        o.historyCursor = cursor;
         const conv = createConversation();
         applyTranscript(conv, msgs, { live: meta?.live === 'running' || meta?.live === 'waiting' });
         // re-apply live messages that arrived after spawn (they are also in transcript; duplicates are merged by id)
@@ -526,8 +579,50 @@ export const useStore = create<State>((set, get) => ({
       // a runner may already be alive for this session (e.g. page reload): re-attach so controls go live
       if (meta?.live && meta.live !== 'closed' && meta.live !== 'error') await get().openSession({ sessionId, cwd: meta.cwd }, 'none');
     } catch (e: any) {
-      set((s) => bump(s, sessionId, (o) => { o.loading = false; o.error = e.message; }));
+      set((s) => bump(s, sessionId, (o) => { o.loading = false; o.loadError = e?.message ?? String(e); }));
     }
+  },
+
+  async loadOlder(sessionId) {
+    const inflight = olderInflight.get(sessionId);
+    if (inflight) return inflight;
+    const cursor = get().open[sessionId]?.historyCursor;
+    if (!cursor) return false;
+    const p = (async () => {
+      try {
+        const r = await ws.request<{ messages: any[]; next?: string }>({ kind: 'library.read', sessionId, cursor });
+        const next = r?.next || undefined;
+        set((s) => bump(s, sessionId, (o) => {
+          if (o.historyCursor !== cursor) return; // history was reloaded meanwhile — this page belongs to the old one
+          prependTranscript(o.conv, r?.messages ?? []);
+          o.historyCursor = next;
+        }));
+        return !!get().open[sessionId]?.historyCursor;
+      } finally {
+        olderInflight.delete(sessionId);
+      }
+    })();
+    olderInflight.set(sessionId, p);
+    return p;
+  },
+
+  librarySources: [],
+  sourceFilter: 'all',
+  setSourceFilter(k) {
+    set({ sourceFilter: k });
+  },
+  async loadLibrarySources() {
+    const librarySources = await ws.request<SourceStatus[]>({ kind: 'library.sources' });
+    set({ librarySources: librarySources ?? [] });
+  },
+  deletedSessions: {},
+  markDeleted(ids) {
+    if (!ids.length) return;
+    set((s) => ({ deletedSessions: { ...s.deletedSessions, ...Object.fromEntries(ids.map((id) => [id, true as const])) } }));
+  },
+  async libraryOp(op, payload) {
+    // the server broadcasts library.changed afterwards, which refetches the session list
+    return ws.request({ ...payload, kind: `library.${op}` } as any);
   },
 
   async send(sessionId, text, images, steer = false, attachments) {
@@ -544,8 +639,11 @@ export const useStore = create<State>((set, get) => ({
     // client-minted transcript uuid: the local echo id is the real fork / rewind anchor
     const uuid = genUuid();
     const shown = decodeAttachments(text);
+    // uploaded files travel as refs (their markers are added server-side); session references are in the text
+    const echoed = [...(attachments ?? []).map((a) => ({ kind: a.kind, name: a.name, path: a.path, size: a.size })), ...(attachments?.length ? shown.attachments.filter((a) => a.kind === 'session') : shown.attachments)];
+    const echoAttachments = echoed.length ? echoed : undefined;
     set((s) => bump(s, sessionId, (x) => {
-      x.conv.items.push({ kind: 'user', id: uuid, ts: new Date().toISOString(), text: shown.text, images: (images ?? []).map((im) => `data:${im.mediaType};base64,${im.data}`), attachments: attachments?.length ? attachments.map((a) => ({ kind: a.kind, name: a.name, path: a.path, size: a.size })) : shown.attachments.length ? shown.attachments : undefined, meta: false });
+      x.conv.items.push({ kind: 'user', id: uuid, ts: new Date().toISOString(), text: shown.text, images: (images ?? []).map((im) => `data:${im.mediaType};base64,${im.data}`), attachments: echoAttachments, meta: false });
       x.state = 'running';
       x.lastSent = { id: uuid, text, images, attachments };
       x.conv.lastEventAt = Date.now();

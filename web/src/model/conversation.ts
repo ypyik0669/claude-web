@@ -28,7 +28,8 @@ export interface ToolUseBlock {
 }
 export type Block = TextBlock | ThinkingBlock | ToolUseBlock;
 
-export interface Attachment { kind: 'image' | 'text' | 'file' | 'folder'; name: string; size?: number; path?: string }
+/** `session` = a reference to another library session (`sessionId`; `name` is its title when referenced). */
+export interface Attachment { kind: 'image' | 'text' | 'file' | 'folder' | 'session'; name: string; size?: number; path?: string; sessionId?: string; error?: string }
 
 export interface UserItem {
   kind: 'user';
@@ -365,12 +366,42 @@ function toContextUsage(u: any): ContextUsage {
 /** `<attached kind="file" name="a.txt" path="C:\x\a.txt" size="123">` markers appended by the composer; decoded for display. */
 export const ATTACH_RE = /\n*<attached\s+kind="(image|text|file|folder)"\s+name="([^"]*)"(?:\s+path="([^"]*)")?(?:\s+size="(\d+)")?\s*\/?>(?:[\s\S]*?<\/attached>)?/g;
 
+/**
+ * Session references: the composer appends `<session-ref id="…" title="…" />`; the server expands it
+ * before the agent sees it into `<referenced-session id="…" title="…">briefing</referenced-session>`
+ * (or a self-closing one carrying `error="…"`), which is what a reloaded transcript contains. Both
+ * decode to the same chip. Attribute values are HTML-attribute-escaped (&quot; &amp; &lt; &gt;).
+ */
+export const SESSION_REF_RE = /\n*<(session-ref|referenced-session)\s+([^>]*?)\s*(?:\/>|>[\s\S]*?<\/referenced-session>)/g;
+
+export function escapeAttr(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function unescapeAttr(s: string): string {
+  return s.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+function attrOf(attrs: string, name: string): string | undefined {
+  const m = new RegExp(`(?:^|\\s)${name}="([^"]*)"`).exec(attrs);
+  return m ? unescapeAttr(m[1]) : undefined;
+}
+
+export function sessionRefMarker(id: string, title: string): string {
+  return `<session-ref id="${escapeAttr(id)}" title="${escapeAttr(title)}" />`;
+}
+
 export function decodeAttachments(text: string): { text: string; attachments: Attachment[] } {
   const attachments: Attachment[] = [];
-  const clean = text.replace(ATTACH_RE, (_m, kind, name, path, size) => {
+  let clean = text.replace(ATTACH_RE, (_m, kind, name, path, size) => {
     attachments.push({ kind, name, path: path || undefined, size: size ? Number(size) : undefined });
     return '';
   });
+  if (clean.includes('<session-ref ') || clean.includes('<referenced-session ')) {
+    clean = clean.replace(SESSION_REF_RE, (_m, _tag, attrs: string) => {
+      const sessionId = attrOf(attrs, 'id') ?? '';
+      attachments.push({ kind: 'session', name: attrOf(attrs, 'title') || sessionId, sessionId, error: attrOf(attrs, 'error') });
+      return '';
+    });
+  }
   return { text: clean.replace(/\n{3,}$/, '\n\n').trimEnd(), attachments };
 }
 
@@ -564,6 +595,49 @@ export function applyTranscript(c: Conversation, msgs: any[], opts?: { live?: bo
   c.runningTool = null;
   c.turnStartedAt = undefined;
   c.compacting = false;
+}
+
+/**
+ * Older history arrived (library paging): replay `msgs` into a fresh conversation, then hang the current items
+ * after it. Same rules as a single replay: an API message split across the page boundary (same `message.id`)
+ * becomes one item, items both pages carry are kept once, retracted uuids stay retracted. Live state of `c`
+ * (running tool, turn clock, streaming) belongs to the newest page and is left alone.
+ */
+export function prependTranscript(c: Conversation, msgs: any[]): void {
+  const older = createConversation();
+  for (const u of c.retracted) older.retracted.add(u);
+  applyTranscript(older, msgs);
+  const byId = new Map<string, Item>();
+  for (const it of older.items) byId.set(it.id, it);
+  const items = [...older.items];
+  for (const it of c.items) {
+    const prev = byId.get(it.id);
+    if (!prev) { items.push(it); continue; }
+    if (prev.kind !== 'assistant' || it.kind !== 'assistant') continue; // duplicate: the older copy stands
+    // one API message cut in two: older blocks first, then the newer ones it does not have yet
+    for (const b of it.blocks) {
+      if (b.type === 'tool_use') {
+        // the newer copy carries the result (and is what toolIndex keeps)
+        const at = prev.blocks.findIndex((x) => x.type === 'tool_use' && x.id === b.id);
+        if (at >= 0) prev.blocks[at] = b;
+        else prev.blocks.push(b);
+      }
+      else if (b.type === 'text') { if (!prev.blocks.some((x) => x.type === 'text' && x.text === b.text)) prev.blocks.push(b); }
+      else if (!prev.blocks.some((x) => x.type === 'thinking' && x.thinking === b.thinking && !!x.redacted === !!b.redacted)) prev.blocks.push(b);
+    }
+    if (it.uuid) prev.uuid = it.uuid;
+    if (it.usage) prev.usage = it.usage;
+    prev.model = it.model ?? prev.model;
+    prev.streaming = it.streaming;
+    if (it.error) { prev.error = it.error; prev.errorKind = it.errorKind; }
+    if (it.aborted) prev.aborted = true;
+    for (const [k, v] of c.streaming) if (v === it) c.streaming.set(k, prev);
+  }
+  c.items = items;
+  // newer entries win: a tool_use that appears in both pages is the newer page's block (it carries the result)
+  for (const [k, v] of older.toolIndex) if (!c.toolIndex.has(k)) c.toolIndex.set(k, v);
+  for (const [k, v] of older.tasks) if (!c.tasks.has(k)) c.tasks.set(k, v);
+  for (const u of older.retracted) c.retracted.add(u);
 }
 
 export function* walkTools(items: Item[]): Generator<{ tool: ToolUseBlock; depth: number; item: AssistantItem }> {

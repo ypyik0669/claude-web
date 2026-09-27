@@ -1,0 +1,5 @@
+# Store every text file with LF in git; checkouts keep LF too (editors on Windows handle it).
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.icns binary

@@ -2,13 +2,24 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { THEMES, useActive, useStore, type PanelId } from '@/store';
 import { ws } from '@/ws/client';
 import { ago, basename } from '@/util';
-import { Icon, type IconName } from '@/ui/icons';
+import { Icon, AGENT_ICONS, type IconName } from '@/ui/icons';
 import type { SessionSummary } from '@shared';
 import { PANELS } from '@/model/layout';
 import { SHORTCUTS, keyLabel } from '@/features/workbench/shortcuts';
 import { runCommand } from '@/features/workbench/commands';
 
 interface Cmd { id: string; label: string; sub?: string; ic?: IconName; group: string; run: () => void }
+
+/** `agent:codex in:proj rest` → the same filters the server's library search understands. */
+function parseFilters(raw: string): { agent?: string; cwd?: string; rest: string; filtered: boolean } {
+  let agent: string | undefined, cwd: string | undefined;
+  const rest = raw
+    .replace(/\bagent:(\S+)/gi, (_, v) => { agent = v.toLowerCase(); return ''; })
+    .replace(/\bin:(\S+)/gi, (_, v) => { cwd = v.toLowerCase(); return ''; })
+    .replace(/\s+/g, ' ')
+    .trim();
+  return { agent, cwd, rest, filtered: !!(agent || cwd) };
+}
 
 export function CommandPalette() {
   const open = useStore((s) => s.paletteOpen);
@@ -18,6 +29,7 @@ export function CommandPalette() {
   const [idx, setIdx] = useState(0);
   const [hits, setHits] = useState<{ session: SessionSummary; snippet?: string }[]>([]);
   const inp = useRef<HTMLInputElement>(null);
+  const pf = useMemo(() => parseFilters(q), [q]);
   const close = () => useStore.setState({ paletteOpen: false });
 
   useEffect(() => {
@@ -26,7 +38,8 @@ export function CommandPalette() {
 
   // server-side full-text search (debounced) when the query is not a command prefix
   useEffect(() => {
-    if (!open || q.startsWith('>') || q.trim().length < 2) { setHits([]); return; }
+    // `agent:` / `in:` filters go to the server too, however short the rest of the query is
+    if (!open || q.startsWith('>') || (q.trim().length < 2 && !pf.filtered)) { setHits([]); return; }
     let live = true; // a slower search for an older query must not replace this one's hits
     const t = setTimeout(() => ws.request<typeof hits>({ kind: 'sessions.search', query: q, limit: 20 }).then((h) => live && setHits(h)).catch(() => live && setHits([])), 200);
     return () => { live = false; clearTimeout(t); };
@@ -66,8 +79,10 @@ export function CommandPalette() {
   }, [st.panels, st.theme, st.sidebarOpen, st.showArchived, st.settings, st.sessionMeta, active?.sessionId, active?.state]);
 
   const ql = q.replace(/^>/, '').trim().toLowerCase();
-  const cmdHits = commands.filter((c) => !ql || c.label.toLowerCase().includes(ql) || c.group.toLowerCase().includes(ql));
-  const sessHits: SessionSummary[] = q.startsWith('>') ? [] : hits.length ? hits.map((h) => h.session) : st.sessions.filter((s) => !ql || s.title.toLowerCase().includes(ql)).slice(0, 12);
+  const cmdHits = pf.filtered ? [] : commands.filter((c) => !ql || c.label.toLowerCase().includes(ql) || c.group.toLowerCase().includes(ql));
+  // local fallback (and the only list before the index exists / for filter-only queries the index cannot answer)
+  const localHits = () => st.sessions.filter((s) => !s.parentId && (!pf.agent || (s.agent ?? 'claude') === pf.agent) && (!pf.cwd || (s.cwd ?? '').toLowerCase().includes(pf.cwd)) && (!pf.rest || s.title.toLowerCase().includes(pf.rest.toLowerCase()))).slice(0, pf.filtered ? 30 : 12);
+  const sessHits: SessionSummary[] = q.startsWith('>') ? [] : hits.length ? hits.map((h) => h.session) : localHits();
   const items: { kind: 'cmd'; c: Cmd }[] | { kind: 'sess'; s: SessionSummary; snippet?: string }[] | any[] = [
     ...(ql ? cmdHits.slice(0, 8) : cmdHits).map((c) => ({ kind: 'cmd' as const, c })),
     ...sessHits.map((s) => ({ kind: 'sess' as const, s, snippet: hits.find((h) => h.session.sessionId === s.sessionId)?.snippet })),
@@ -91,7 +106,7 @@ export function CommandPalette() {
   return (
     <div className="palette-bg" onMouseDown={(e) => e.target === e.currentTarget && close()}>
       <div className="cmdk" onKeyDown={onKey}>
-        <input ref={inp} value={q} onChange={(e) => setQ(e.target.value)} placeholder="输入命令，或搜索会话（全文）…  以 > 开头只搜命令" />
+        <input ref={inp} value={q} onChange={(e) => setQ(e.target.value)} placeholder="输入命令，或搜索会话（全文）…  > 只搜命令 · agent:codex · in:目录" />
         <div className="list">
           {items.map((it, i) => {
             const group = it.kind === 'cmd' ? it.c.group : hits.length ? '会话（全文匹配）' : '会话';
@@ -101,9 +116,10 @@ export function CommandPalette() {
               <div key={it.kind === 'cmd' ? it.c.id : it.s.sessionId}>
                 {head}
                 <div className={`it ${i === idx ? 'sel' : ''}`} onMouseEnter={() => setIdx(i)} onClick={() => run(it)}>
-                  <span className="ic"><Icon name={it.kind === 'cmd' ? it.c.ic ?? 'chevronRight' : 'chat'} size={15} /></span>
+                  <span className="ic" title={it.kind === 'sess' ? it.s.agent ?? 'claude' : undefined}><Icon name={it.kind === 'cmd' ? it.c.ic ?? 'chevronRight' : AGENT_ICONS[it.s.agent ?? 'claude'] ?? 'agent'} size={15} /></span>
                   <span className="t">{it.kind === 'cmd' ? it.c.label : it.s.title}</span>
-                  <span className="sub">{it.kind === 'cmd' ? it.c.sub ?? '' : it.snippet ? `…${it.snippet}…` : `${basename(it.s.cwd)} · ${ago(it.s.lastModified)}`}</span>
+                  {it.kind === 'sess' && <span className="dir" title={it.s.cwd}>{basename(it.s.cwd ?? '')}</span>}
+                  <span className="sub">{it.kind === 'cmd' ? it.c.sub ?? '' : it.snippet ? `…${it.snippet}…` : ago(it.s.lastModified)}</span>
                 </div>
               </div>
             );

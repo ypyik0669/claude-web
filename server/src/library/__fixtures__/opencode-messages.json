@@ -1,0 +1,74 @@
+[
+  {
+    "info": {
+      "role": "user",
+      "time": { "created": 1700000000000 },
+      "agent": "build",
+      "model": { "providerID": "opencode", "modelID": "big-pickle" },
+      "id": "msg_demo_user_1",
+      "sessionID": "ses_demo123"
+    },
+    "parts": [
+      { "type": "text", "text": "list the files in /work/demo and tell me what's there", "id": "prt_demo_1", "sessionID": "ses_demo123", "messageID": "msg_demo_user_1" }
+    ]
+  },
+  {
+    "info": {
+      "parentID": "msg_demo_user_1",
+      "role": "assistant",
+      "mode": "build",
+      "agent": "build",
+      "path": { "cwd": "/work/demo", "root": "/" },
+      "cost": 0,
+      "tokens": { "total": 120, "input": 20, "output": 40, "reasoning": 10, "cache": { "write": 0, "read": 0 } },
+      "modelID": "big-pickle",
+      "providerID": "opencode",
+      "time": { "created": 1700000001000, "completed": 1700000005000 },
+      "finish": "stop",
+      "id": "msg_demo_assistant_1",
+      "sessionID": "ses_demo123"
+    },
+    "parts": [
+      { "type": "step-start", "id": "prt_demo_2", "sessionID": "ses_demo123", "messageID": "msg_demo_assistant_1" },
+      {
+        "type": "reasoning",
+        "text": "The user wants a directory listing. I should run `ls` in the working directory.",
+        "time": { "start": 1700000001500, "end": 1700000001800 },
+        "id": "prt_demo_3",
+        "sessionID": "ses_demo123",
+        "messageID": "msg_demo_assistant_1"
+      },
+      {
+        "type": "tool",
+        "callID": "call_demo_1",
+        "tool": "bash",
+        "id": "prt_demo_4",
+        "sessionID": "ses_demo123",
+        "messageID": "msg_demo_assistant_1",
+        "state": {
+          "status": "completed",
+          "input": { "command": "ls -la", "description": "List files in the working directory" },
+          "output": "total 8\ndrwxr-xr-x  2 demo demo 4096 Jan  1 00:00 .\ndrwxr-xr-x 10 demo demo 4096 Jan  1 00:00 ..\n-rw-r--r--  1 demo demo   42 Jan  1 00:00 README.md",
+          "time": { "start": 1700000002000, "end": 1700000004000 }
+        }
+      },
+      {
+        "type": "text",
+        "text": "There's a single README.md file in /work/demo.",
+        "time": { "start": 1700000004200, "end": 1700000004800 },
+        "id": "prt_demo_5",
+        "sessionID": "ses_demo123",
+        "messageID": "msg_demo_assistant_1"
+      },
+      {
+        "reason": "stop",
+        "type": "step-finish",
+        "tokens": { "total": 120, "input": 20, "output": 40, "reasoning": 10, "cache": { "write": 0, "read": 0 } },
+        "cost": 0,
+        "id": "prt_demo_6",
+        "sessionID": "ses_demo123",
+        "messageID": "msg_demo_assistant_1"
+      }
+    ]
+  }
+]

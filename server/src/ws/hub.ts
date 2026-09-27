@@ -34,8 +34,12 @@ import type { MemoryService } from '../memory/service.js';
 import { harvest } from '../memory/extract.js';
 import { setMemoryMcpEnabled } from '../memory/launcher.js';
 import { swapAgent, swapProvider } from '../session/swap.js';
+import { expandSessionRefs } from '../library/briefing.js';
+import type { LibraryService } from '../library/service.js';
 
 export interface Services {
+  /** Unified session library: every joined source's sessions (sessions.list / search / library.*). */
+  library: LibraryService;
   git: GitService;
   search: SearchService;
   skills: SkillsService;
@@ -94,6 +98,8 @@ export class Hub {
     s.tunnels.on('changed', () => this.broadcast({ kind: 'tunnel.changed' }));
     s.goals.on('changed', () => this.broadcast({ kind: 'goals.changed' }));
     s.memory.on('changed', () => this.broadcast({ kind: 'memory.changed' }));
+    s.library.on('changed', () => this.broadcast({ kind: 'library.changed' }));
+    s.library.on('discovered', (kinds) => this.broadcast({ kind: 'library.discovered', kinds }));
   }
 
   broadcast(event: ServerEvent) {
@@ -108,6 +114,8 @@ export class Hub {
   private onConnect(ws: WebSocket) {
     this.clients.add(ws);
     this.send(ws, { type: 'event', event: { kind: 'hello', version: this.s.version } });
+    // startup discovery happens before anyone is connected: tell each new client what's waiting to be joined
+    void this.s.library.detect().then((kinds) => { if (kinds.length) this.send(ws, { type: 'event', event: { kind: 'library.discovered', kinds } }); }).catch(() => {});
     ws.on('close', () => this.clients.delete(ws));
     // without a listener, a malformed frame / oversized payload makes ws emit an 'error' that crashes the server
     ws.on('error', () => this.clients.delete(ws));
@@ -142,15 +150,19 @@ export class Hub {
     const s = this.s;
     switch (req.kind) {
       case 'sessions.list': {
-        const [claude, others] = await Promise.all([s.sessions.list(req.limit), s.transcripts.list()]);
-        const list = [...claude, ...others].sort((a, b) => b.lastModified - a.lastModified).slice(0, req.limit ?? 500);
+        const all = await s.library.list();
+        const list = req.limit ? all.slice(0, req.limit) : all;
         return list.map((x) => ({ ...x, live: s.pool.stateOf(x.sessionId) }));
       }
       case 'sessions.projects':
         return s.sessions.projects();
-      case 'transcript.load':
-        if (await s.transcripts.exists(req.sessionId)) return s.transcripts.load(req.sessionId);
+      case 'transcript.load': {
+        // imported sessions (and anything a joined foreign source lists) are read from the agent itself
+        const head = await s.transcripts.head(req.sessionId);
+        if (head && !head.imported) return s.transcripts.load(req.sessionId);
+        if (head?.imported || (await s.library.kindOf(req.sessionId)) !== 'claude') return (await s.library.read(req.sessionId)).messages;
         return s.sessions.transcript(req.sessionId);
+      }
       case 'transcript.subagents':
         return s.sessions.subagents(req.sessionId);
       case 'transcript.subagent':
@@ -162,9 +174,18 @@ export class Hub {
         if (params.sessionId && !params.agent) {
           const head = await s.transcripts.head(params.sessionId);
           if (head) params = { ...params, agent: head.agent, fork: false, resumeAt: undefined };
+          else if ((await s.library.kindOf(params.sessionId)) !== 'claude') {
+            // a library session from another agent's own store: give it a resume head first, so the
+            // Codex / ACP driver continues the native thread and new turns land in the agent's record
+            const r = await s.library.prepareResume(params.sessionId);
+            params = { ...params, agent: r.agent, cwd: params.cwd || r.cwd, fork: false, resumeAt: undefined };
+          }
         }
         if (params.agent && params.agent !== 'claude') {
-          const hist = params.sessionId ? await s.transcripts.load(params.sessionId).catch(() => []) : [];
+          const head = params.sessionId ? await s.transcripts.head(params.sessionId) : null;
+          const hist = !params.sessionId ? [] : head?.imported
+            ? await s.library.read(params.sessionId).then((r) => r.messages).catch(() => [])
+            : await s.transcripts.load(params.sessionId).catch(() => []);
           const r = s.pool.open(params, hist);
           await s.canonical.ensure(r.sessionId, params.cwd);
           return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
@@ -194,7 +215,14 @@ export class Hub {
         return { info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
       }
       case 'session.send': {
-        this.runner(req.params.sessionId).send(req.params.text, req.params.images, req.params.steer, req.params.uuid, req.params.attachments);
+        // `<session-ref>` markers (inserted by the composer when the user references another
+        // library session) get expanded into a briefing only for the agent — the local echo and
+        // the canonical mirror below keep the original, unexpanded text the user actually typed.
+        let outgoing = req.params.text;
+        if (outgoing.includes('<session-ref ')) {
+          outgoing = await expandSessionRefs(outgoing, (id) => s.library.readAll(id));
+        }
+        this.runner(req.params.sessionId).send(outgoing, req.params.images, req.params.steer, req.params.uuid, req.params.attachments);
         // Neither path echoes the user's own message back through the pool (the SDK doesn't, and the
         // foreign drivers `record()` it without emitting), so the canonical mirror has to be told here
         // — otherwise a handover briefing would have no idea what was actually asked for.
@@ -268,7 +296,32 @@ export class Hub {
         if (req.key === 'memory.mcp') setMemoryMcpEnabled(req.value !== false);
         return null;
       case 'sessions.search':
-        return s.sessions.search(req.query, req.limit ?? 30);
+        return s.library.search(req.query, req.limit ?? 30);
+
+      // ---- unified session library ----
+      case 'library.sources':
+        return s.library.sources();
+      case 'library.read':
+        return s.library.read(req.sessionId, req.cursor, req.limit);
+      case 'library.rename':
+        await s.library.rename(req.sessionId, req.title);
+        return null;
+      case 'library.archive':
+        return s.library.archive(req.sessionIds, req.archived);
+      case 'library.delete':
+        for (const id of req.sessionIds) await s.pool.close(id);
+        return s.library.remove(req.sessionIds);
+      case 'library.fork':
+        return s.library.fork(req.sessionId);
+      case 'library.reindex':
+        await s.library.refreshIndex();
+        return null;
+      case 'library.join':
+        await s.library.join(req.kind_, req.joined);
+        return s.library.sources();
+      case 'library.dismiss':
+        await s.library.dismiss(req.kind_);
+        return s.library.sources();
       case 'shell.open': {
         const app = req.app ?? 'explorer';
         const cmd = app === 'explorer' ? (process.platform === 'win32' ? 'explorer' : process.platform === 'darwin' ? 'open' : 'xdg-open') : app;
@@ -303,7 +356,10 @@ export class Hub {
         return r;
       }
       case 'session.switchAgent': {
-        const r = await swapAgent({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta }, req.sessionId, req.agent, req.model);
+        const readAll = (id: string) => s.library.readAll(id);
+        // imported library sessions hand over into a NEW session (returned sessionId differs); the rest swap in place
+        const imported = (id: string) => s.library.importedInfo(id);
+        const r = await swapAgent({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta, readAll, imported }, req.sessionId, req.agent, req.model);
         s.sessions.emit('changed');
         return r;
       }
@@ -328,15 +384,18 @@ export class Hub {
         if (!cwd) throw new Error('这个会话没有可用的目录');
         return harvest(s.memory, events, { cwd, sessionId: req.sessionId, agent: s.pool.get(req.sessionId)?.info.agent });
       }
+      // legacy shapes, same routing as library.rename / library.delete — so every delete path backs up first
       case 'session.rename':
-        if (await s.transcripts.exists(req.sessionId)) { await s.transcripts.patchHead(req.sessionId, { title: req.title }); s.sessions.emit('changed'); return null; }
-        await s.sessions.rename(req.sessionId, req.title);
+        await s.library.rename(req.sessionId, req.title);
+        s.sessions.emit('changed');
         return null;
-      case 'session.delete':
+      case 'session.delete': {
         await s.pool.close(req.sessionId);
-        if (await s.transcripts.exists(req.sessionId)) { await s.transcripts.remove(req.sessionId); s.sessions.emit('changed'); return null; }
-        await s.sessions.delete(req.sessionId);
+        const r = await s.library.remove([req.sessionId]);
+        if (r.failed.length) throw new Error(r.failed[0].error);
+        s.sessions.emit('changed');
         return null;
+      }
       case 'session.contextUsage':
         return this.runner(req.sessionId).contextUsage?.(req.detail ?? 'summary') ?? null;
       case 'feedback.set':
@@ -530,8 +589,12 @@ export class Hub {
         return s.meta.scheduleRuns(req.id, req.limit);
       case 'schedules.templates':
         return SCHEDULE_TEMPLATES;
-      case 'agents.list':
-        return s.agents.list(!!req.refresh);
+      case 'agents.list': {
+        const list = await s.agents.list(!!req.refresh);
+        // a refresh re-probes what's installed: newly detected agents are offered to the library
+        if (req.refresh) void s.library.announce().catch(() => {});
+        return list;
+      }
       case 'remote.status':
         return s.remote.status();
       case 'remote.set':

@@ -5,7 +5,9 @@ import path from 'node:path';
 import { dataDir } from '../files/service.js';
 import type { AgentKind, SessionSummary } from '../protocol.js';
 
-interface Head { type: 'cw.meta'; agent: AgentKind; cwd: string; title: string; createdAt: number; sessionId: string; model?: string; nativeSessionId?: string }
+// `imported`: a pointer head created by LibraryService.prepareResume for a session that lives in the
+// agent's own store (Codex / OpenCode / ACP) — its history is always read back from the agent.
+export interface Head { type: 'cw.meta'; agent: AgentKind; cwd: string; title: string; createdAt: number; sessionId: string; model?: string; nativeSessionId?: string; imported?: boolean }
 
 /**
  * Transcripts for non-Claude agents live under ~/.claude-web/agents/<sessionId>.jsonl in the same
@@ -68,14 +70,19 @@ export class AgentTranscripts {
   async remove(sessionId: string) { await fs.rm(this.file(sessionId), { force: true }); }
 
   async list(): Promise<SessionSummary[]> {
-    const out: SessionSummary[] = [];
+    return (await this.entries()).map((e) => e.summary);
+  }
+
+  /** Like list(), plus each file's head (the library needs `nativeSessionId` / `imported` to dedupe). */
+  async entries(): Promise<{ summary: SessionSummary; head: Head }[]> {
+    const out: { summary: SessionSummary; head: Head }[] = [];
     const entries = await fs.readdir(this.dir).catch(() => [] as string[]);
     for (const name of entries) {
       if (!name.endsWith('.jsonl')) continue;
       const sessionId = name.slice(0, -6);
       const [head, st] = await Promise.all([this.head(sessionId), fs.stat(path.join(this.dir, name))]);
       if (!head) continue;
-      out.push({ sessionId, title: head.title || `${head.agent} 会话`, cwd: head.cwd, lastModified: st.mtimeMs, createdAt: head.createdAt, agent: head.agent, firstPrompt: head.title });
+      out.push({ head, summary: { sessionId, title: head.title || `${head.agent} 会话`, cwd: head.cwd, lastModified: st.mtimeMs, createdAt: head.createdAt, agent: head.agent, firstPrompt: head.title } });
     }
     return out;
   }

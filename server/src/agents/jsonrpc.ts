@@ -1,6 +1,7 @@
-import { spawn, execFile, type ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { resolveSpawn } from './resolve.js';
+import { killTree } from './kill-tree.js';
 
 /**
  * Newline-delimited JSON-RPC 2.0 over a child process's stdio (what ACP agents and `codex app-server` speak).
@@ -106,9 +107,8 @@ export class JsonRpcProcess extends EventEmitter {
     try { this.child.stdin?.end(); } catch { /* ignore */ }
     setTimeout(() => {
       if (this.exited) return;
-      // Windows: kill the whole tree (a cmd.exe wrapper or node shim would otherwise leave the agent alive)
-      if (process.platform === 'win32' && this.child.pid) execFile('taskkill', ['/pid', String(this.child.pid), '/t', '/f'], { windowsHide: true }, () => {});
-      else { try { this.child.kill(); } catch { /* ignore */ } }
+      // the whole tree (a cmd.exe wrapper or node shim would otherwise leave the agent alive)
+      void killTree(this.child);
     }, 1500);
   }
 }

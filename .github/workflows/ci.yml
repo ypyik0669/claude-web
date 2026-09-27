@@ -30,4 +30,4 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/e2e.mjs 3 4 5 6 7 11 12
+        run: node scripts/e2e.mjs 3 4 5 6 7 11 12 13

@@ -171,6 +171,31 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - 自动萃取只收「死路 / 决定 / 约束」，每个会话最多 12 条；相同文本在同一 scope 里视为同一条（只加命中数）。
 - `server/ws-phase12.mjs` 用**真的 JSON-RPC over stdio** 驱动 MCP server（agent 怎么调它就怎么调），断言 UI 写的 agent 能读到、agent 写的 UI 能读到。
 
+## 统一会话库（2026-09-27）
+
+- **一个入口**：`server/src/library/service.ts` 的 `LibraryService` 把 Claude + 各 agent 自己的会话记录合成一个列表 / 读取 / 搜索面；`sessions.list`、`sessions.search`、`transcript.load`、`session.open` 都走它。来源实现 `SessionSource`（`library/types.ts`），每个来源一个文件：
+
+  | 来源 | 列表 / 读取 | rename | archive | delete | fork | 续聊 |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | Claude（`claude-source.ts`） | SDK `listSessions` / transcript | ✓（SDK） | ✓（只记在 meta.json，Claude Code 没有归档标记） | ✓ | ✓（SDK `forkSession`） | ✓ |
+  | Codex（`codex-source.ts`） | `codex app-server` 的 `thread/list`、`thread/turns/list` | `thread/name/set` | `thread/archive`/`unarchive` | `thread/delete` | `thread/fork` | `thread/resume` |
+  | OpenCode（`opencode-source.ts`） | `opencode serve` 的 `GET /project` + `GET /session` + `/session/:id/message` | — | — | CLI `opencode session delete` | — | ACP `session/load` |
+  | ACP agent（`acp-source.ts`） | 只有声明 `sessionCapabilities.list` 的才能列（`session/list`），无 read | — | — | — | — | 看 `loadSession` |
+
+  能力只来自**官方接口**；没有就是只读，不改 agent 的数据文件。库专用后台进程（app-server / `opencode serve`）每来源一个、`LazyRpc` 闲置 5 分钟退出，不和会话进程共用。
+- **id 规则**：Claude 保持原 UUID；其它 `<agent>-<原生 id>`（`codex-…`、`opencode-…`、`gemini-|qwen-|kimi-…`），自定义 ACP agent `acp:<name>` → `acp_<name 里的 - 转成 ~>-<原生 id>`。不含冒号。前缀表和 `parseLibraryId` 在 `protocol.ts`（web 共用）。续聊时 `prepareResume()` 给它建一个 `imported:true` 的头指向原生 id，驱动走原生 resume，新轮次写回 agent 自己的记录。
+- **加入是可选的**：除 Claude 外默认不加入；检测只看 `AgentRegistry` 版本探测 + 数据目录（`~/.codex/sessions`、`~/.local/share/opencode`、`%LOCALAPPDATA%\opencode`），**不启动任何进程**。`library.discovered {kinds}` 在连接时和 `agents.list {refresh:true}` 后推送，侧栏出「加入 / 以后再说」。状态存 meta `settings['library.joined' | 'library.dismissed']`。移出 = 关掉该来源进程 + 从列表和索引里去掉（agent 数据不动）。
+- **删除先备份**：完整历史导出到 `<dataDir>/library-trash/<id>.json`（`dataDir()` 跟随 `CLAUDE_WEB_DIR`），写成功才调来源的 delete，导出失败就不删；启动时清理 30 天前的备份。界面二次确认，批量默认归档。
+- **索引**：`<dataDir>/library.db`（FTS5），每会话正文摘录上限 20 000 字，中文走 LIKE（同 memory 的 `hasCjk`）；首轮索引完成前搜索退回旧的 transcript 扫描。`agent:codex`、`in:<目录片段>` 是查询前缀。
+- **踩过的坑**：
+  - **来源遇到暂时性失败必须 throw**（不能返回空），否则 service 会以为「没有会话」、把索引和缓存清掉；只有「没装」/「版本不支持」才返回空。service 保留上次缓存并在 `SourceStatus.error` 里带出错误。
+  - **Codex `Thread.source` 不只是字符串**：`"cli"|"vscode"|"exec"|"appServer"|{custom}|{subAgent:…}`，`subAgent` 里又是 `"review"|"compact"|{thread_spawn:{parent_thread_id,…}}|…`。响应是 `{data, nextCursor, backwardsCursor}`（不是 `threads` / `turns`），以 `codex app-server generate-ts` 为准。
+  - **Codex `thread/list` 默认只返回当前 provider 的线程**：真机上 690 个里只列出 399 个；要传 `modelProviders: []`。而且带 `[]` 时子代理线程的 `parentThreadId` 是 null，父线程只在 `source.subAgent.thread_spawn.parent_thread_id` 里（`parentOf()` 兜底，否则 277 个子线程平铺在顶层）。
+  - **OpenCode 的 `/doc` 只写了 2 个路径**（`/auth`、`/log`），能力没法从 OpenAPI 探测，改为解析 `opencode session --help`（Windows 冷启动约 10 秒，超时 60 秒、失败下次重试）。**`GET /session` 只返回 serve 自己 cwd 所在项目的会话**（从 claude-web 仓库起是 0 条），要先 `GET /project` 再逐个带 `x-opencode-directory`（URI 编码）头去取。
+  - **Windows 上 Python 文本模式写文件会把 LF 变成 CRLF**：仓库有 `.gitattributes`（`eol=lf`），改文件用 Edit/Write 或二进制写；提交前 `git diff -w --ignore-cr-at-eol --stat` 应该和 `git diff --stat` 一样。
+- `server/ws-phase13.mjs`：mock Codex（`agents/__mocks__/codex-server.mjs`，`CW_MOCK_RPC_LOG` 记录收到的请求）+ `MOCK_ACP_LIST=1` 的 mock ACP，端到端验证加入前不列、加入后列出并折叠子线程、分页读、搜索、改名、删除备份、`codex-` 会话续聊走 `thread/resume`、`library.sources` 状态。
+- 真机验证（2026-09-27，只读 + 一个自建的测试线程）：Codex 717 条（`~/.codex/sessions` 721 个 jsonl + archived 42，部分没有线程记录）、OpenCode 11 条、Claude 119 条；首轮全量索引约 150 秒（约 850 个会话），之后中文搜索 ~150 ms。测真机时用临时 `CLAUDE_WEB_DIR` 起一个独立 server，别碰用户自己的 `~/.claude-web`。
+
 ## 桌面版（desktop/）
 
 ```

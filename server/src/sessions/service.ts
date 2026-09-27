@@ -32,6 +32,10 @@ function toSummary(s: SDKSessionInfo): SessionSummary {
 export class SessionService extends EventEmitter {
   private timer: NodeJS.Timeout | null = null;
   private cache: SessionSummary[] | null = null;
+  // How many the cache was fetched with (the `limit` passed to the SDK's listSessions, not
+  // cache.length) — a later list() asking for more than this must re-scan, since the cache may be
+  // missing sessions beyond what was originally fetched.
+  private cacheLimit = 0;
   private gen = 0;
 
   constructor() {
@@ -44,19 +48,23 @@ export class SessionService extends EventEmitter {
 
   private bump() {
     this.cache = null;
+    this.cacheLimit = 0;
     this.gen++;
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => this.emit('changed'), 800);
   }
 
   async list(limit = 500): Promise<SessionSummary[]> {
-    if (this.cache) return this.cache.slice(0, limit);
-    // listSessions() without dir lists across all projects
+    if (this.cache && this.cacheLimit >= limit) return this.cache.slice(0, limit);
+    // listSessions() without dir lists across all projects. Always ask for at least 2000 (the old
+    // hardcoded cap) so small requests still cache generously, but never cap below what the caller
+    // actually asked for (library sources like ClaudeSource want everything in one page).
+    const fetchLimit = Math.max(2000, limit);
     const gen = this.gen;
-    const all = await listSessions({ limit: 2000 });
+    const all = await listSessions({ limit: fetchLimit });
     const out = all.map(toSummary).sort((a, b) => b.lastModified - a.lastModified);
     // a write landed while we were scanning: this result may predate it, so don't pin it as the cache
-    if (gen === this.gen) this.cache = out;
+    if (gen === this.gen) { this.cache = out; this.cacheLimit = fetchLimit; }
     return out.slice(0, limit);
   }
 
@@ -162,6 +170,17 @@ export class SessionService extends EventEmitter {
       if (!snippet) continue;
       out.push({ session: s, snippet });
       if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  /** Every project folder's `<id>.jsonl` for a session (normally one) — the delete backup copies them all. */
+  async locateAll(sessionId: string): Promise<string[]> {
+    const dirs = await fs.readdir(projectsDir).catch(() => [] as string[]);
+    const out: string[] = [];
+    for (const d of dirs) {
+      const p = path.join(projectsDir, d, `${sessionId}.jsonl`);
+      if (await fs.access(p).then(() => true, () => false)) out.push(p);
     }
     return out;
   }

@@ -1,5 +1,11 @@
 // Minimal ACP agent used by tests: echoes prompts, runs one fake tool call with a permission request.
+import fs from 'node:fs';
 import readline from 'node:readline';
+
+// So a test can prove a process it thought it killed is actually dead (AcpListSource's
+// close()-during-in-flight-initialize race). Written immediately at startup, before initialize even
+// arrives, matching how the real agent process exists the moment it's spawned.
+if (process.env.MOCK_ACP_PIDFILE) fs.writeFileSync(process.env.MOCK_ACP_PIDFILE, String(process.pid));
 
 const rl = readline.createInterface({ input: process.stdin });
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
@@ -15,7 +21,27 @@ rl.on('line', async (line) => {
   if (m.id !== undefined && m.method === undefined) { pending.get(m.id)?.(m.result); pending.delete(m.id); return; }
   const reply = (result) => send({ jsonrpc: '2.0', id: m.id, result });
   switch (m.method) {
-    case 'initialize': reply({ protocolVersion: 1, agentCapabilities: { loadSession: false }, agentInfo: { name: 'mock-acp', version: '0.0.1' } }); break;
+    case 'initialize': {
+      const agentCapabilities = process.env.MOCK_ACP_LIST === '1'
+        ? { loadSession: false, sessionCapabilities: { list: {} } }
+        : { loadSession: false };
+      // MOCK_ACP_INIT_DELAY_MS (default 0, so every other test is unaffected) lets a test race
+      // close() against an in-flight initialize.
+      const delay = Number(process.env.MOCK_ACP_INIT_DELAY_MS ?? '0');
+      setTimeout(() => reply({ protocolVersion: 1, agentCapabilities, agentInfo: { name: 'mock-acp', version: '0.0.1' } }), delay);
+      break;
+    }
+    case 'session/list': {
+      if (process.env.MOCK_ACP_LIST_FAIL === '1') { send({ jsonrpc: '2.0', id: m.id, error: { code: -32000, message: 'mock session/list failure' } }); break; }
+      // Only reachable when MOCK_ACP_LIST=1 advertised the capability above; two fixed sessions.
+      reply({
+        sessions: [
+          { sessionId: 's1', cwd: '/work/one', title: 'Session One', updatedAt: '2026-01-01T00:00:00.000Z' },
+          { sessionId: 's2', cwd: '/work/two', title: 'Session Two', updatedAt: 1780000000000 },
+        ],
+      });
+      break;
+    }
     case 'session/new': {
       const servers = m.params.mcpServers ?? [];
       // MOCK_REJECT_MCP simulates an agent that cannot take inline MCP servers, so the client's

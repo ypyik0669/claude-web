@@ -5,6 +5,7 @@ import type { AgentKind, AttachmentRef, EffortLevel, OpenSessionParams, Permissi
 import { JsonRpcProcess } from './jsonrpc.js';
 import { insertCodexConfig } from '../memory/launcher.js';
 import { MessageSynth } from './normalize.js';
+import { codexItemMessages, type CodexItemState } from './codex-items.js';
 import type { AgentTranscripts } from './transcript.js';
 import type { AgentDriver } from './types.js';
 
@@ -31,7 +32,7 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
   private synth: MessageSynth;
   private history: unknown[] = [];
   private pending = new Map<string, PendingPerm>();
-  private items = new Map<string, { type: string; toolName?: string; output: string }>();
+  private items: CodexItemState = new Map();
   private turnActive = false;
   private queue: { text: string; images?: { mediaType: string; data: string }[] }[] = [];
   private closed = false;
@@ -163,39 +164,7 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
   }
 
   private onItem(item: any, completed: boolean) {
-    if (!item) return;
-    const known = this.items.get(item.id);
-    switch (item.type) {
-      case 'commandExecution': {
-        if (!known) { this.items.set(item.id, { type: item.type, toolName: 'Bash', output: '' }); this.pushAll(this.synth.toolUse(item.id, 'Bash', { command: item.command, description: item.commandActions?.map((a: any) => a.type).join(', ') })); }
-        if (completed) { const out = item.aggregatedOutput ?? this.items.get(item.id)?.output ?? ''; this.push(this.synth.toolResult(item.id, out, item.status === 'failed' || (item.exitCode ?? 0) !== 0, { stdout: out, stderr: '', interrupted: item.status === 'interrupted', exitCode: item.exitCode })); }
-        break;
-      }
-      case 'fileChange': {
-        if (!known) { this.items.set(item.id, { type: item.type, toolName: 'Edit', output: '' }); for (const ch of item.changes ?? []) this.pushAll(this.synth.toolUse(`${item.id}:${ch.path}`, ch.kind === 'add' ? 'Write' : 'Edit', { file_path: ch.path, diff: ch.diff })); }
-        if (completed) for (const ch of item.changes ?? []) this.push(this.synth.toolResult(`${item.id}:${ch.path}`, ch.diff ?? 'applied', item.status === 'failed', { filePath: ch.path, unified: ch.diff }));
-        break;
-      }
-      case 'mcpToolCall': {
-        const name = `mcp__${item.server}__${item.tool}`;
-        if (!known) { this.items.set(item.id, { type: item.type, toolName: name, output: '' }); this.pushAll(this.synth.toolUse(item.id, name, (item.arguments as any) ?? {})); }
-        if (completed) this.push(this.synth.toolResult(item.id, JSON.stringify(item.result ?? item.error ?? null, null, 2), !!item.error, item.result));
-        break;
-      }
-      case 'dynamicToolCall': {
-        const name = item.tool ?? 'Tool';
-        if (!known) { this.items.set(item.id, { type: item.type, toolName: name, output: '' }); this.pushAll(this.synth.toolUse(item.id, name, (item.arguments as any) ?? {})); }
-        if (completed) this.push(this.synth.toolResult(item.id, (item.contentItems ?? []).map((c: any) => c.text ?? JSON.stringify(c)).join('\n'), item.success === false));
-        break;
-      }
-      case 'plan': if (completed && item.text) this.pushAll(this.synth.delta('text', `\n\n**计划**\n${item.text}\n`)); break;
-      case 'webSearch': {
-        if (!known) { this.items.set(item.id, { type: item.type, toolName: 'WebSearch', output: '' }); this.pushAll(this.synth.toolUse(item.id, 'WebSearch', { query: item.query })); }
-        if (completed) this.push(this.synth.toolResult(item.id, item.query ?? 'done'));
-        break;
-      }
-      default: break;
-    }
+    this.pushAll(codexItemMessages(this.synth, this.items, item, completed));
   }
 
   private onTurnCompleted(turn: any) {

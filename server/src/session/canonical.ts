@@ -44,6 +44,93 @@ function blockText(content: unknown): string {
     .join('');
 }
 
+/**
+ * Apply one SDK message against the tool-call state held for a session (`open`: tool_use id →
+ * the event we're waiting to hear back on), returning whatever canonical events it produces.
+ * Shared by `CanonicalLog.observe` (one message at a time, streaming, per-session `open` map)
+ * and `messagesToEvents` (a whole native transcript at once, fresh `open` map per call).
+ */
+function applyMessage(m: any, t: number, open: Map<string, CanonicalEvent & { kind: 'tool' }>): CanonicalEvent[] {
+  const out: CanonicalEvent[] = [];
+  switch (m.type) {
+    case 'user': {
+      const content = m.message?.content;
+      // a tool_result arrives as a user message — attach it to the tool event, don't log a turn
+      if (Array.isArray(content) && content.some((b: any) => b?.type === 'tool_result')) {
+        for (const b of content) {
+          if (b?.type !== 'tool_result') continue;
+          const ev = open.get(b.tool_use_id);
+          if (!ev) continue;
+          ev.ok = !b.is_error;
+          ev.result = clip(blockText(b.content) || (b.is_error ? '失败' : '完成'), MAX_RESULT_CHARS);
+          open.delete(b.tool_use_id);
+          out.push(ev);
+        }
+        return out;
+      }
+      const text = blockText(content);
+      if (text.trim()) out.push({ t, kind: 'user', text: clip(text, MAX_TEXT_CHARS), uuid: m.uuid });
+      return out;
+    }
+    case 'assistant': {
+      const content = m.message?.content;
+      if (!Array.isArray(content)) return out;
+      const text = blockText(content);
+      if (text.trim()) out.push({ t, kind: 'assistant', text: clip(text, MAX_TEXT_CHARS), uuid: m.uuid });
+      for (const b of content) {
+        if (b?.type !== 'tool_use') continue;
+        // held until the tool_result lands so one line carries the call and its outcome
+        const ev: CanonicalEvent & { kind: 'tool' } = { t, kind: 'tool', name: String(b.name), input: (b.input ?? {}) as Record<string, unknown>, id: String(b.id) };
+        open.set(ev.id, ev);
+      }
+      return out;
+    }
+    case 'system': {
+      if (m.subtype === 'init' || m.subtype === 'status') return out;
+      const text = typeof m.text === 'string' ? m.text : typeof m.message === 'string' ? m.message : '';
+      if (text.trim()) out.push({ t, kind: 'system', text: clip(text, 1000), level: m.level });
+      return out;
+    }
+    case 'result': {
+      out.push({
+        t,
+        kind: 'result',
+        ms: m.duration_ms,
+        costUsd: m.total_cost_usd,
+        inputTokens: m.usage?.input_tokens,
+        outputTokens: m.usage?.output_tokens,
+        error: m.is_error ? String(m.result ?? m.subtype ?? 'error').slice(0, 300) : undefined,
+      });
+      // any tool that never got a result is stranded — record it so the timeline isn't silently short
+      if (open.size) {
+        for (const ev of open.values()) out.push({ ...ev, ok: false, result: '（没有返回结果）' });
+        open.clear();
+      }
+      return out;
+    }
+    default:
+      return out; // stream_event / rate_limit_event / etc. add nothing the timeline needs
+  }
+}
+
+/**
+ * Convert a whole native transcript (e.g. read from another agent's own history) into canonical
+ * events in one pass — same rules as `CanonicalLog.observe`, but pure: no session state, no disk.
+ * `t0` seeds the timestamp (defaults to now); each message advances it by 1ms so ordering survives
+ * a round trip through anything that sorts by `t`.
+ */
+export function messagesToEvents(messages: any[], t0: number = Date.now()): CanonicalEvent[] {
+  const out: CanonicalEvent[] = [];
+  const open = new Map<string, CanonicalEvent & { kind: 'tool' }>();
+  let t = t0;
+  for (const m of messages ?? []) {
+    if (!m || typeof m !== 'object') continue;
+    out.push(...applyMessage(m, t, open));
+    t += 1;
+  }
+  return out;
+}
+
 export class CanonicalLog {
   private dir = path.join(dataDir(), 'canonical');
   private writers = new Map<string, Promise<void>>();
@@ -99,70 +186,9 @@ export class CanonicalLog {
    */
   observe(sessionId: string, m: any) {
     if (!m || typeof m !== 'object') return;
-    const t = Date.now();
-    switch (m.type) {
-      case 'user': {
-        const content = m.message?.content;
-        // a tool_result arrives as a user message — attach it to the tool event, don't log a turn
-        if (Array.isArray(content) && content.some((b: any) => b?.type === 'tool_result')) {
-          const tools = this.open.get(sessionId);
-          for (const b of content) {
-            if (b?.type !== 'tool_result') continue;
-            const ev = tools?.get(b.tool_use_id);
-            if (!ev) continue;
-            ev.ok = !b.is_error;
-            ev.result = clip(blockText(b.content) || (b.is_error ? '失败' : '完成'), MAX_RESULT_CHARS);
-            tools!.delete(b.tool_use_id);
-            this.write(sessionId, ev);
-          }
-          return;
-        }
-        const text = blockText(content);
-        if (text.trim()) this.write(sessionId, { t, kind: 'user', text: clip(text, MAX_TEXT_CHARS), uuid: m.uuid });
-        return;
-      }
-      case 'assistant': {
-        const content = m.message?.content;
-        if (!Array.isArray(content)) return;
-        const text = blockText(content);
-        if (text.trim()) this.write(sessionId, { t, kind: 'assistant', text: clip(text, MAX_TEXT_CHARS), uuid: m.uuid });
-        for (const b of content) {
-          if (b?.type !== 'tool_use') continue;
-          // held until the tool_result lands so one line carries the call and its outcome
-          const ev: CanonicalEvent & { kind: 'tool' } = { t, kind: 'tool', name: String(b.name), input: (b.input ?? {}) as Record<string, unknown>, id: String(b.id) };
-          let tools = this.open.get(sessionId);
-          if (!tools) this.open.set(sessionId, (tools = new Map()));
-          tools.set(ev.id, ev);
-        }
-        return;
-      }
-      case 'system': {
-        if (m.subtype === 'init' || m.subtype === 'status') return;
-        const text = typeof m.text === 'string' ? m.text : typeof m.message === 'string' ? m.message : '';
-        if (text.trim()) this.write(sessionId, { t, kind: 'system', text: clip(text, 1000), level: m.level });
-        return;
-      }
-      case 'result': {
-        this.write(sessionId, {
-          t,
-          kind: 'result',
-          ms: m.duration_ms,
-          costUsd: m.total_cost_usd,
-          inputTokens: m.usage?.input_tokens,
-          outputTokens: m.usage?.output_tokens,
-          error: m.is_error ? String(m.result ?? m.subtype ?? 'error').slice(0, 300) : undefined,
-        });
-        // any tool that never got a result is stranded — record it so the timeline isn't silently short
-        const tools = this.open.get(sessionId);
-        if (tools?.size) {
-          for (const ev of tools.values()) this.write(sessionId, { ...ev, ok: false, result: '（没有返回结果）' });
-          tools.clear();
-        }
-        return;
-      }
-      default:
-        return; // stream_event / rate_limit_event / etc. add nothing the timeline needs
-    }
+    let tools = this.open.get(sessionId);
+    if (!tools) this.open.set(sessionId, (tools = new Map()));
+    for (const e of applyMessage(m, Date.now(), tools)) this.write(sessionId, e);
   }
 
   async load(sessionId: string): Promise<CanonicalEvent[]> {

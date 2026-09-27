@@ -57,10 +57,10 @@ const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCas
  * token and `"最小化"*` never matches it mid-string. Substring LIKE is the correct tool there, and
  * for a personal-scale store it is fast enough. Latin queries still go through FTS for ranking.
  */
-const hasCjk = (s: string) => /[㐀-鿿豈-﫿぀-ヿ가-힯]/.test(s);
+export const hasCjk = (s: string) => /[㐀-鿿豈-﫿぀-ヿ가-힯]/.test(s);
 
 /** FTS5 treats a lot of punctuation as syntax; quote every term so user text can't be a query error. */
-function ftsQuery(q: string): string {
+export function ftsQuery(q: string): string {
   const terms = q.split(/\s+/).map((t) => t.replace(/"/g, '')).filter(Boolean);
   if (!terms.length) return '';
   return terms.map((t) => `"${t}"*`).join(' OR ');
