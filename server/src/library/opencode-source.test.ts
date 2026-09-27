@@ -228,6 +228,47 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', () => {
     expect((await src.read('ses-a', { limit: 10 })).messages).toEqual([]);
   });
 
+  it('a failed `session --help` probe is retried on the next list()', async () => {
+    const mock = await startMock();
+    mocks.push(mock);
+    let launch = { command: path.join(here, '__mocks__', 'no-such-opencode.cmd'), env: {} as Record<string, string> };
+    const src = new OpenCodeSource(() => launch, { baseUrl: mock.baseUrl });
+    sources.push(src);
+    expect((await src.list({ limit: 10 })).items[0].caps?.delete).toBe(false);
+    launch = { command: fakeCli, env: { FAKE_HAS_DELETE: '1' } };
+    expect((await src.list({ limit: 10 })).items[0].caps?.delete).toBe(true);
+  });
+
+  it('lists every project: GET /project, then GET /session per worktree via x-opencode-directory', async () => {
+    // real serve: plain GET /session only answers for the project of serve's own cwd
+    const byDir: Record<string, any[]> = {
+      '/': [SESSIONS[0], SESSIONS[1]],
+      'C:\\仓库\\app': [{ ...SESSIONS[2], id: 'ses-git', parentID: undefined, time: { created: 1, updated: 900 } }, SESSIONS[0]],
+    };
+    const seen: (string | undefined)[] = [];
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      res.setHeader('content-type', 'application/json');
+      if (url.pathname === '/project') { res.end(JSON.stringify([{ id: 'global', worktree: '/' }, { id: 'abc', worktree: 'C:\\仓库\\app' }])); return; }
+      if (url.pathname === '/session') {
+        const h = req.headers['x-opencode-directory'];
+        const dir = typeof h === 'string' ? decodeURIComponent(h) : undefined;
+        seen.push(dir);
+        res.end(JSON.stringify(dir === undefined ? [] : byDir[dir] ?? []));
+        return;
+      }
+      res.writeHead(404); res.end();
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    mocks.push({ close: () => new Promise((r) => server.close(() => r())) });
+    const addr = server.address() as { port: number };
+    const src = new OpenCodeSource(() => ({ command: fakeCli, env: { FAKE_HAS_DELETE: '0' } }), { baseUrl: `http://127.0.0.1:${addr.port}` });
+    sources.push(src);
+    const { items } = await src.list({ limit: 10 });
+    expect(items.map((s) => s.sessionId)).toEqual([libraryId('opencode', 'ses-git'), libraryId('opencode', 'ses-b'), libraryId('opencode', 'ses-a')]);
+    expect(seen).toEqual(['/', 'C:\\仓库\\app']);
+  });
+
   it('installed but the server answers HTTP 500: list() and read() reject', async () => {
     const server = http.createServer((_req, res) => { res.writeHead(500); res.end('boom'); });
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));

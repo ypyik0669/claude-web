@@ -36,7 +36,7 @@ const execFileAsync = promisify(execFile);
 const PORT_RE = /https?:\/\/127\.0\.0\.1:(\d+)/;
 const IDLE_MS = 300_000; // 5 min — library-only process, never shared with a live chat session
 const START_TIMEOUT_MS = 30_000;
-const HELP_TIMEOUT_MS = 15_000;
+const HELP_TIMEOUT_MS = 60_000;
 const DELETE_TIMEOUT_MS = 30_000;
 
 interface Proc {
@@ -64,7 +64,8 @@ export class OpenCodeSource implements SessionSource {
   private proc: Proc | null = null;
   private starting: Promise<Proc> | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
-  private capsProbed = false;
+  /** One probe shared by concurrent callers; dropped after a failure so the next call retries. */
+  private capsProbe: Promise<void> | null = null;
   private gen = 0; // bumped by close() to invalidate any spawnProc() still in flight
 
   constructor(
@@ -136,16 +137,25 @@ export class OpenCodeSource implements SessionSource {
   }
 
   /** `<command> session --help` lists every session subcommand; `delete` is real iff it's in there. */
-  private async probeCaps(): Promise<void> {
-    if (this.capsProbed) return;
-    this.capsProbed = true;
+  // Real machine: `opencode session --help` takes ~10 s cold on Windows (cmd shim → node → opencode.exe)
+  // and longer while `opencode serve` is starting next to it, so the old 15 s one-shot probe timed out
+  // and pinned delete:false for the life of the process. Now: a longer timeout, one probe shared by
+  // concurrent callers, and a retry on the next call after a failure.
+  private probeCaps(): Promise<void> {
+    if (!this.capsProbe) this.capsProbe = this.runCapsProbe();
+    return this.capsProbe;
+  }
+
+  private async runCapsProbe(): Promise<void> {
     try {
       const l = this.getLaunch();
       const r = resolveSpawn(l.command, ['session', '--help']);
       const { stdout, stderr } = await execFileAsync(r.command, r.args, { windowsHide: true, timeout: HELP_TIMEOUT_MS, env: { ...process.env, ...l.env, ...r.env }, windowsVerbatimArguments: r.via === 'cmd' });
       const text = `${stdout}${stderr}`;
       this.caps = { ...this.caps, delete: /\bdelete\b/.test(text) };
-    } catch { /* leave the conservative default (delete: false) */ }
+    } catch {
+      this.capsProbe = null; // keep the conservative default (delete: false) for now; retry next call
+    }
   }
 
   async status(): Promise<SourceStatus> {
@@ -161,14 +171,35 @@ export class OpenCodeSource implements SessionSource {
     }
   }
 
+  /**
+   * Every session of every project. `GET /session` alone only answers for the project that serve's own
+   * cwd resolves to (a git repo is its own project, anything else is "global") — run from the
+   * claude-web repo it returned 0 of the 11 real sessions. So enumerate `GET /project` and ask each one
+   * via the `x-opencode-directory` header (what the official SDK's `directory` option sends; the value
+   * is URI-decoded server-side, so non-ASCII paths go encoded). `/project` missing → the plain call.
+   */
+  private async fetchSessions(baseUrl: string): Promise<any[]> {
+    const one = async (dir?: string) => {
+      const res = await fetch(`${baseUrl}/session`, dir === undefined ? undefined : { headers: { 'x-opencode-directory': encodeURIComponent(dir) } });
+      if (!res.ok) throw new Error(`opencode serve GET /session：HTTP ${res.status}`);
+      const arr = await res.json();
+      return Array.isArray(arr) ? arr : [];
+    };
+    const pr = await fetch(`${baseUrl}/project`);
+    const projects: any[] = pr.ok ? await pr.json().catch(() => []) : [];
+    const dirs = Array.isArray(projects) ? projects.map((x) => x?.worktree).filter((d): d is string => typeof d === 'string' && d.length > 0) : [];
+    if (!dirs.length) return one();
+    const byId = new Map<string, any>();
+    for (const d of dirs) for (const s of await one(d)) if (s?.id && !byId.has(s.id)) byId.set(s.id, s);
+    return [...byId.values()];
+  }
+
   async list(o: { cursor?: string; limit: number; archived?: boolean }): Promise<{ items: SessionSummary[]; next?: string }> {
     try {
       const p = await this.ensure();
       await this.probeCaps();
       this.armIdle();
-      const res = await fetch(`${p.baseUrl}/session`);
-      if (!res.ok) throw new Error(`opencode serve GET /session：HTTP ${res.status}`);
-      const all: any[] = await res.json();
+      const all = await this.fetchSessions(p.baseUrl);
       all.sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
       const offset = o.cursor ? Number(o.cursor) : 0;
       const limit = o.limit ?? 20;

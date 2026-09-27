@@ -465,7 +465,9 @@ export class LibraryService extends EventEmitter {
         this.indexAgain = false;
         await this.list();
         const all = [...this.byId.values()]; // children too
-        const done = new Set<AgentKind>();
+        // every joined source that listed cleanly counts as indexed — including one with no sessions
+        // (otherwise an empty source reads「尚未索引」forever)
+        const done = new Set<AgentKind>(this.joinedSources().map((s) => s.kind).filter((k) => !this.errors.has(k)));
         for (const s of all) {
           const kind = s.agent ?? 'claude';
           done.add(kind);

@@ -174,6 +174,18 @@ describe('LibraryService', () => {
     expect(index.indexedAt('codex-t1')).toBeUndefined();
   });
 
+  it('refreshIndex stamps indexedAt on a joined source with no sessions, not on a failed one', async () => {
+    claude.items = [];
+    codex.list.mockRejectedValue(new Error('app-server crashed'));
+    await lib.join('codex', true);
+    await lib.refreshIndex();
+    const st = await lib.sources();
+    const cl = st.find((s) => s.kind === 'claude');
+    expect(cl?.count).toBe(0);
+    expect(typeof cl?.indexedAt).toBe('number');
+    expect(st.find((s) => s.kind === 'codex')?.indexedAt).toBeUndefined();
+  });
+
   it('refreshIndex prunes ids that no longer exist', async () => {
     index.upsert(item('gone', 'claude', 1), 'stale');
     await lib.refreshIndex();

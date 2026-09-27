@@ -7,6 +7,8 @@ import { libraryId } from './ids.js';
 import { LazyRpc } from './lazy-rpc.js';
 import { isNotInstalled, type SessionSource } from './types.js';
 
+// Real machine (codex 0.155): thread/list without `modelProviders` returns only the *current* provider's
+// threads (399 of 690 here — everything recorded under an older relay was missing); `[]` means every provider.
 const SOURCE_KINDS = ['cli', 'vscode', 'exec', 'appServer', 'subAgent', 'subAgentReview', 'subAgentCompact', 'subAgentThreadSpawn', 'subAgentOther'];
 
 const CAPS: SourceCaps = { resume: true, rename: true, archive: true, delete: true, fork: true };
@@ -24,6 +26,15 @@ function sourceTypeName(source: unknown): string {
   return 'unknown';
 }
 
+// Real machine: with `modelProviders: []` the app-server leaves `parentThreadId` null even on spawned
+// sub-agent threads; the parent is still in `source.subAgent.thread_spawn.parent_thread_id`
+// (SubAgentSource in generate-ts), so fall back to it or 277 sub-agent threads would list top-level.
+function parentOf(t: any): string | undefined {
+  if (typeof t.parentThreadId === 'string' && t.parentThreadId) return t.parentThreadId;
+  const p = t.source?.subAgent?.thread_spawn?.parent_thread_id;
+  return typeof p === 'string' && p ? p : undefined;
+}
+
 function mapThread(t: any): SessionSummary {
   return {
     sessionId: libraryId('codex', t.id),
@@ -33,7 +44,7 @@ function mapThread(t: any): SessionSummary {
     lastModified: (t.updatedAt ?? 0) * 1000,
     createdAt: (t.createdAt ?? 0) * 1000,
     source: sourceTypeName(t.source),
-    parentId: t.parentThreadId ? libraryId('codex', t.parentThreadId) : undefined,
+    parentId: parentOf(t) ? libraryId('codex', parentOf(t)!) : undefined,
     gitBranch: t.gitInfo?.branch,
     agent: 'codex' as AgentKind,
     caps: CAPS,
@@ -64,7 +75,7 @@ export class CodexSource implements SessionSource {
   async status(): Promise<SourceStatus> {
     const base = { kind: this.kind, name: 'Codex', joined: false, dismissed: false };
     try {
-      await this.rpc.request('thread/list', { sortKey: 'updated_at', sortDirection: 'desc', limit: 1, archived: false, sourceKinds: SOURCE_KINDS }, 15_000);
+      await this.rpc.request('thread/list', { sortKey: 'updated_at', sortDirection: 'desc', limit: 1, archived: false, sourceKinds: SOURCE_KINDS, modelProviders: [] }, 15_000);
       return { ...base, installed: true, detected: true, enabled: true, version: this.version };
     } catch (e: any) {
       if (e?.code === -32601) {
@@ -78,8 +89,9 @@ export class CodexSource implements SessionSource {
 
   async list(o: { cursor?: string; limit: number; archived?: boolean }): Promise<{ items: SessionSummary[]; next?: string }> {
     try {
-      const r = await this.rpc.request<any>('thread/list', { sortKey: 'updated_at', sortDirection: 'desc', limit: o.limit, cursor: o.cursor, archived: o.archived ?? false, sourceKinds: SOURCE_KINDS }, 30_000);
-      const items = (r?.threads ?? []).map(mapThread);
+      const r = await this.rpc.request<any>('thread/list', { sortKey: 'updated_at', sortDirection: 'desc', limit: o.limit, cursor: o.cursor, archived: o.archived ?? false, sourceKinds: SOURCE_KINDS, modelProviders: [] }, 30_000);
+      // ThreadListResponse / ThreadTurnsListResponse (generate-ts) are `{ data, nextCursor, backwardsCursor }`
+      const items = (r?.data ?? []).map(mapThread);
       return { items, next: r?.nextCursor ?? undefined };
     } catch (e: any) {
       // not installed / too old for thread/list (status() reports both as disabled): nothing to list
@@ -92,7 +104,7 @@ export class CodexSource implements SessionSource {
     try {
       const limit = o.limit ?? 20;
       const r = await this.rpc.request<any>('thread/turns/list', { threadId: nativeId, itemsView: 'full', sortDirection: 'desc', limit, cursor: o.cursor }, 30_000);
-      const turns = (r?.turns ?? []).slice().reverse();
+      const turns = (r?.data ?? []).slice().reverse();
       const messages = codexTurnsToMessages(libraryId('codex', nativeId), turns);
       return { messages, next: r?.nextCursor ?? undefined };
     } catch (e: any) {
@@ -124,7 +136,7 @@ export class CodexSource implements SessionSource {
     let cursor: string | undefined;
     do {
       const r = await this.rpc.request<any>('thread/turns/list', { threadId: nativeId, itemsView: 'full', sortDirection: 'desc', limit: 100, cursor }, 30_000);
-      out.push(...(r?.turns ?? []));
+      out.push(...(r?.data ?? []));
       cursor = r?.nextCursor ?? undefined;
     } while (cursor);
     return out.reverse();
