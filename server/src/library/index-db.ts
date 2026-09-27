@@ -6,18 +6,11 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import { dataDir } from '../files/service.js';
-import { hasCjk } from '../memory/service.js';
+import { hasCjk, ftsQuery } from '../memory/service.js';
 import type { AgentKind, SessionSummary } from '../protocol.js';
 
 const TEXT_MAX = 20_000;
 const SNIPPET_RADIUS = 40;
-
-/** FTS5 treats a lot of punctuation as syntax; quote every term so user text can't be a query error. */
-function ftsQuery(q: string): string {
-  const terms = q.split(/\s+/).map((t) => t.replace(/"/g, '')).filter(Boolean);
-  if (!terms.length) return '';
-  return terms.map((t) => `"${t}"*`).join(' OR ');
-}
 
 export interface LibrarySearchOptions {
   limit: number;
@@ -135,8 +128,8 @@ export class LibraryIndex {
     let agent: AgentKind | undefined;
     let cwdLike: string | undefined;
     const q = raw
-      .replace(/\bagent:(\S+)/i, (_, v) => { agent = v as AgentKind; return ''; })
-      .replace(/\bin:(\S+)/i, (_, v) => { cwdLike = v; return ''; })
+      .replace(/\bagent:(\S+)/gi, (_, v) => { agent = v as AgentKind; return ''; })
+      .replace(/\bin:(\S+)/gi, (_, v) => { cwdLike = v; return ''; })
       .replace(/\s+/g, ' ')
       .trim();
     const out: LibraryParsedQuery = { q };

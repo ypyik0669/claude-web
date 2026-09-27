@@ -51,6 +51,14 @@ describe('LibraryIndex', () => {
     });
   });
 
+  it('parseQuery strips every agent:/in: token, last one winning, none left in q', () => {
+    expect(LibraryIndex.parseQuery('agent:codex in:claude-web hello in:other-repo world')).toEqual({
+      q: 'hello world',
+      agent: 'codex',
+      cwdLike: 'other-repo',
+    });
+  });
+
   it('updates indexedAt when the same id is upserted again', () => {
     idx.upsert(summary('s1', { lastModified: 1000 }), 'first pass text');
     expect(idx.indexedAt('s1')).toBe(1000);
