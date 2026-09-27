@@ -19,6 +19,14 @@ describe('expandSessionRefs', () => {
     expect(out).toBe('just a normal message, nothing to see');
   });
 
+  it('inserts a briefing containing $-patterns literally (no String.replace substitution)', async () => {
+    const tricky = "use $'x' then $& and $` and $$ literally";
+    const out = await expandSessionRefs('A <session-ref id="codex-abc" title="t" /> B', async () => [sdk.user(tricky), sdk.assistantText('ok'), sdk.result()]);
+    expect(out).toContain(tricky);
+    expect(out.startsWith('A <referenced-session id="codex-abc" title="t">')).toBe(true);
+    expect(out.endsWith('</referenced-session> B')).toBe(true);
+  });
+
   it('expands a readable reference into a briefing and a failing one into an error tag, leaving the rest of the text intact', async () => {
     const text =
       'before ' +

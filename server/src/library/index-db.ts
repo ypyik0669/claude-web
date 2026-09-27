@@ -9,7 +9,9 @@ import { dataDir } from '../files/service.js';
 import { hasCjk, ftsQuery } from '../memory/service.js';
 import type { AgentKind, SessionSummary } from '../protocol.js';
 
-const TEXT_MAX = 20_000;
+/** Per-session text excerpt cap (constraints.md); indexing stops reading history once it has this much. */
+export const INDEX_TEXT_MAX = 20_000;
+const TEXT_MAX = INDEX_TEXT_MAX;
 const SNIPPET_RADIUS = 40;
 
 export interface LibrarySearchOptions {
@@ -156,7 +158,7 @@ export class LibraryIndex {
     const where: string[] = [];
     const args: (string | number)[] = [];
     if (o.agent) { where.push('s.agent = ?'); args.push(o.agent); }
-    if (o.cwdLike) { where.push('lower(s.cwd) LIKE ?'); args.push(`%${o.cwdLike.toLowerCase()}%`); }
+    if (o.cwdLike) { where.push(`lower(s.cwd) LIKE ? ESCAPE '!'`); args.push(`%${likeEscape(o.cwdLike.toLowerCase())}%`); }
 
     if (this.fts && !hasCjk(term)) {
       const fq = ftsQuery(term);
@@ -174,13 +176,24 @@ export class LibraryIndex {
       return rows.map((r) => ({ id: r.id, snippet: r.snip }));
     }
 
-    // CJK (or no-FTS fallback): substring LIKE, ordered by recency, snippet cut by hand.
-    where.push('s.text LIKE ?');
-    args.push(`%${term}%`);
-    const sql = `SELECT s.id, s.text FROM sessions s WHERE ${where.join(' AND ')} ORDER BY s.lastModified DESC LIMIT ?`;
-    const rows = this.db.prepare(sql).all(...args, limit) as { id: string; text: string }[];
-    return rows.map((r) => ({ id: r.id, snippet: likeSnippet(r.text, term) }));
+    // CJK (or no-FTS fallback): substring LIKE over text, title and first prompt (FTS covers the
+    // title too), `%` / `_` in the query escaped; ordered by recency, snippet cut by hand.
+    const pat = `%${likeEscape(term)}%`;
+    where.push(`(s.text LIKE ? ESCAPE '!' OR s.title LIKE ? ESCAPE '!' OR coalesce(s.firstPrompt, '') LIKE ? ESCAPE '!')`);
+    args.push(pat, pat, pat);
+    const sql = `SELECT s.id, s.text, s.title, s.firstPrompt FROM sessions s WHERE ${where.join(' AND ')} ORDER BY s.lastModified DESC LIMIT ?`;
+    const rows = this.db.prepare(sql).all(...args, limit) as { id: string; text: string; title: string; firstPrompt: string | null }[];
+    const lc = term.toLowerCase();
+    return rows.map((r) => {
+      const where = [r.text, r.title, r.firstPrompt ?? ''].find((t) => t.toLowerCase().includes(lc)) ?? r.text;
+      return { id: r.id, snippet: likeSnippet(where, term) };
+    });
   }
+}
+
+/** Escape LIKE wildcards (`%`, `_`) and the escape char itself, for `LIKE ? ESCAPE '!'`. */
+function likeEscape(s: string): string {
+  return s.replace(/[!%_]/g, (c) => `!${c}`);
 }
 
 function likeSnippet(text: string, term: string): string {

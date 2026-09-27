@@ -178,12 +178,11 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', { timeout: 
     // ensure() rejected once the race was detected -> list() surfaces it (the library keeps its cache)
     await expect(listPromise).rejects.toThrow(/close\(\)/);
 
-    // give the fake process time to reach its (delayed) "listening" point and be reaped by our race fix
-    await new Promise((r) => setTimeout(r, 600));
-    const pidText = await fs.readFile(pidFile, 'utf8');
-    const pid = Number(pidText);
+    // the fake process reaches its (delayed) "listening" point and is reaped by our race fix (a tree
+    // kill: taskkill on Windows, which can take a moment under load — poll rather than sleep)
+    const pid = await waitPid(pidFile);
     expect(Number.isFinite(pid)).toBe(true);
-    expect(() => process.kill(pid, 0)).toThrow();
+    expect(await waitDead(pid)).toBe(true);
   });
 
   const waitPid = async (file: string) => {

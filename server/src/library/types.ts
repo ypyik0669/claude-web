@@ -11,8 +11,10 @@ import type { AgentKind, SessionSummary, SourceCaps, SourceStatus } from '../pro
  * library can tell a transient failure from an empty source and keep its last good list.
  */
 export function isNotInstalled(e: unknown): boolean {
-  const err = e as { code?: unknown; message?: unknown } | null;
-  return err?.code === 'ENOENT' || /ENOENT/.test(String(err?.message ?? ''));
+  // only the spawn itself (`syscall: 'spawn <cmd>'`): an RPC / HTTP error whose text mentions ENOENT,
+  // or an ENOENT from opening some file, is a real failure and must surface
+  const err = e as { code?: unknown; syscall?: unknown } | null;
+  return err?.code === 'ENOENT' && typeof err.syscall === 'string' && err.syscall.startsWith('spawn');
 }
 
 export interface SessionSource {

@@ -12,7 +12,7 @@ import type { AgentKind, SessionSummary, SourceStatus } from '../protocol.js';
 import type { AgentTranscripts, Head } from '../agents/transcript.js';
 import type { MetaStore } from '../meta/store.js';
 import { dataDir } from '../files/service.js';
-import { LibraryIndex } from './index-db.js';
+import { INDEX_TEXT_MAX, LibraryIndex } from './index-db.js';
 import { libraryId, parseLibraryId } from './ids.js';
 import type { SessionSource } from './types.js';
 
@@ -347,14 +347,19 @@ export class LibraryService extends EventEmitter {
     return r.source.read(r.nativeId, { cursor, limit });
   }
 
-  /** Every page, oldest first (each page is chronological; later pages are older). */
-  async readAll(id: string): Promise<any[]> {
+  /**
+   * Every page, oldest first (each page is chronological; later pages are older). `maxChars`: stop
+   * reading older pages once that much user/assistant text is in hand (the index keeps 20 000).
+   */
+  async readAll(id: string, o: { maxChars?: number } = {}): Promise<any[]> {
     const pages: any[][] = [];
     let cursor: string | undefined;
     const seen = new Set<string>();
+    let chars = 0;
     for (let i = 0; i < MAX_PAGES; i++) {
       const r = await this.read(id, cursor, READ_PAGE);
       pages.push(r.messages);
+      if (o.maxChars !== undefined && (chars += messagesText(r.messages).length) >= o.maxChars) break;
       if (!r.next || seen.has(r.next)) break;
       seen.add(r.next);
       cursor = r.next;
@@ -611,7 +616,7 @@ export class LibraryService extends EventEmitter {
           done.add(kind);
           if (this.index.indexedAt(s.sessionId) === s.lastModified) continue;
           try {
-            const msgs = await this.readAll(s.sessionId);
+            const msgs = await this.readAll(s.sessionId, { maxChars: INDEX_TEXT_MAX });
             this.index.upsert({ ...s, agent: kind }, messagesText(msgs));
           } catch { /* retried on the next pass */ }
           await new Promise((r) => setImmediate(r));

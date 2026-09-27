@@ -40,7 +40,10 @@ export async function expandSessionRefs(text: string, readAll: (id: string) => P
   const matches = [...text.matchAll(SESSION_REF_RE)];
   if (!matches.length) return text;
 
-  let out = text;
+  // assembled by position, never String.replace: a briefing is arbitrary text and `$&`, `$'`, `` $` ``,
+  // `$$` in it would be read as replacement patterns (and an earlier briefing could contain a marker)
+  let out = '';
+  let last = 0;
   for (const m of matches) {
     const whole = m[0];
     const attrs = m[1];
@@ -58,9 +61,11 @@ export async function expandSessionRefs(text: string, readAll: (id: string) => P
       const reason = e instanceof Error ? e.message : String(e);
       replacement = `<referenced-session id="${idRaw}" title="${titleRaw}" error="无法读取：${escapeAttr(reason)}" />`;
     }
-    out = out.replace(whole, replacement);
+    const at = m.index ?? text.indexOf(whole, last);
+    out += text.slice(last, at) + replacement;
+    last = at + whole.length;
   }
-  return out;
+  return out + text.slice(last);
 }
 
 /**

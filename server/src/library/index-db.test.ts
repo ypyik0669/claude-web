@@ -43,6 +43,22 @@ describe('LibraryIndex', () => {
     expect(codexOnly.map((r) => r.id)).toEqual(['s3']);
   });
 
+  it('CJK queries also match the title and first prompt, not only the text', () => {
+    idx.upsert(summary('t1', { title: '重构登录模块' }), 'nothing relevant here');
+    idx.upsert(summary('t2', { title: 'x', firstPrompt: '帮我重构登录' }), 'still nothing');
+    idx.upsert(summary('t3', { title: 'y' }), 'unrelated');
+    expect(idx.search('重构', { limit: 10 }).map((h) => h.id).sort()).toEqual(['t1', 't2']);
+  });
+
+  it('CJK LIKE treats % and _ in the query literally', () => {
+    idx.upsert(summary('p1'), '进度 100% 完成');
+    idx.upsert(summary('p2'), '进度 100 完成了一半');
+    idx.upsert(summary('u1'), '变量 a_b 中文');
+    idx.upsert(summary('u2'), '变量 axb 中文');
+    expect(idx.search('100% 完成', { limit: 10 }).map((h) => h.id)).toEqual(['p1']);
+    expect(idx.search('a_b 中文', { limit: 10 }).map((h) => h.id)).toEqual(['u1']);
+  });
+
   it('parses agent: and in: prefixes out of the raw query', () => {
     expect(LibraryIndex.parseQuery('agent:codex in:claude-web 登录')).toEqual({
       q: '登录',

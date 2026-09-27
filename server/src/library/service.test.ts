@@ -511,6 +511,21 @@ describe('LibraryService', () => {
     expect(claude.read).toHaveBeenCalledWith('c2', expect.anything());
   });
 
+  it('indexing stops reading older pages once 20 000 chars of text are collected', async () => {
+    claude.items = [item('c1', 'claude', 100)];
+    const big = 'x'.repeat(15_000);
+    claude.read.mockImplementation(async (_id: string, o: { cursor?: string }) => {
+      const n = Number(o.cursor ?? 0);
+      return { messages: [{ type: 'user', message: { role: 'user', content: `${big} page ${n}` } }], next: n < 9 ? String(n + 1) : undefined };
+    });
+    await lib.refreshIndex();
+    expect(claude.read).toHaveBeenCalledTimes(2);
+    expect(index.indexedAt('c1')).toBe(100);
+    // readAll without a budget still reads every page
+    claude.read.mockClear();
+    expect(await lib.readAll('c1')).toHaveLength(10);
+  });
+
   it('search uses the index and fills in summaries', async () => {
     await lib.refreshIndex();
     const hits = await lib.search('hello', 10);
