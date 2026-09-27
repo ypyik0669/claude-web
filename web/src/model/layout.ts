@@ -3,7 +3,7 @@
 
 import type { IconName } from '@/ui/icons';
 
-export type PanelId = 'tasks' | 'files' | 'usage' | 'config' | 'terminal' | 'inspector' | 'mission' | 'goals' | 'android' | 'memory';
+export type PanelId = 'tasks' | 'files' | 'usage' | 'config' | 'terminal' | 'inspector' | 'mission' | 'goals' | 'android' | 'memory' | 'orchestra';
 export type WorkbenchTab = 'live' | 'changes' | 'git' | 'files' | 'search' | 'schedules' | 'artifacts' | 'board';
 
 /**
@@ -14,6 +14,7 @@ export type WorkbenchTab = 'live' | 'changes' | 'git' | 'files' | 'search' | 'sc
 export const PANELS: { id: PanelId; title: string; icon: IconName; rail?: boolean }[] = [
   { id: 'mission', title: '总览', icon: 'mission', rail: true },
   { id: 'goals', title: '目标', icon: 'goals', rail: true },
+  { id: 'orchestra', title: '编排', icon: 'orchestra', rail: true },
   { id: 'memory', title: '记忆', icon: 'memory', rail: true },
   { id: 'tasks', title: '任务', icon: 'tasks', rail: true },
   { id: 'files', title: '文件改动', icon: 'files', rail: true },

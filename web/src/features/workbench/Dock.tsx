@@ -13,6 +13,7 @@ import { MissionPanel } from '@/features/panels/MissionPanel';
 import { GoalsPanel } from '@/features/goals/GoalsPanel';
 import { AndroidPanel } from '@/features/android/AndroidPanel';
 import { MemoryPanel } from '@/features/memory/MemoryPanel';
+import { OrchestraPanel } from '@/features/orchestra/OrchestraPanel';
 import { MIME_PANEL } from './dnd';
 
 export { PANELS, PANEL_ICONS, PANEL_TITLES };
@@ -30,6 +31,7 @@ export function PanelBody({ id, visible }: { id: PanelId; visible: boolean }) {
     case 'goals': return <GoalsPanel />;
     case 'android': return <AndroidPanel visible={visible} />;
     case 'memory': return <MemoryPanel />;
+    case 'orchestra': return <OrchestraPanel />;
   }
 }
 

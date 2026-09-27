@@ -5,6 +5,7 @@ import { ago, basename } from '@/util';
 import { Icon, AGENT_ICONS, type IconName } from '@/ui/icons';
 import type { SessionSummary } from '@shared';
 import { PANELS } from '@/model/layout';
+import { useOrch } from '@/features/orchestra/state';
 import { SHORTCUTS, keyLabel } from '@/features/workbench/shortcuts';
 import { runCommand } from '@/features/workbench/commands';
 
@@ -58,6 +59,8 @@ export function CommandPalette() {
       ...SHORTCUTS.filter((x) => ['group.new', 'group.close', 'group.next', 'pane.splitRight', 'pane.splitDown', 'tile.close', 'pane.zoom', 'pane.next', 'tile.new', 'dock.toggle', 'dock.minimize'].includes(x.id) && !(st.settings['ui.singleWindow'] && x.group !== '面板'))
         .map<Cmd>((x) => ({ id: `wb.${x.id}`, label: x.label, sub: keyLabel(x), ic: x.group === '分组' ? 'board' : x.group === '窗格' ? 'splitRight' : 'terminal', group: '工作台', run: () => runCommand(x.id) })),
       ...(['single', 'cols2', 'cols3', 'grid2x2', 'mainSide'] as const).map<Cmd>((p) => ({ id: `preset.${p}`, label: `布局预设: ${{ single: '单窗格', cols2: '左右两栏', cols3: '三栏', grid2x2: '四宫格', mainSide: '主 + 侧' }[p]}`, ic: 'zoom', group: '工作台', run: () => st.dispatchLayout({ t: 'pane.preset', preset: p }) })),
+      { id: 'orch.new', label: '新建编排', sub: '多 agent 工作流', ic: 'orchestra', group: '编排', run: () => useOrch.getState().ask('new') },
+      { id: 'orch.run', label: '运行编排…', ic: 'play', group: '编排', run: () => useOrch.getState().ask('run') },
       { id: 'window.new', label: '在新窗口打开当前分组', ic: 'copy', group: '工作台', run: () => runCommand('window.new') },
       ...PANELS.map(panel),
       ...THEMES.map<Cmd>((t) => ({ id: `theme.${t}`, label: `主题: ${t}${st.theme === t ? ' ✓' : ''}`, ic: 'moon', group: '主题', run: () => st.setTheme(t) })),

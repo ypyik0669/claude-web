@@ -3,6 +3,8 @@ import { useStore } from '@/store';
 import { ago, basename, clsx, fmtMs } from '@/util';
 import { walkTools } from '@/model/conversation';
 import { Icon } from '@/ui/icons';
+import { useOrch, waitingOf } from '@/features/orchestra/state';
+import { ws } from '@/ws/client';
 
 type Lane = 'attention' | 'running' | 'idle' | 'error';
 
@@ -21,6 +23,9 @@ export function MissionPanel() {
   const [, tick] = useState(0);
   useEffect(() => { const t = setInterval(() => tick((x) => x + 1), 1000); return () => clearInterval(t); }, []);
   const [showIdle, setShowIdle] = useState(true);
+  // orchestration nodes waiting for a human (approval / compare pick) belong in "needs you" too
+  const orchFull = useOrch((s) => s.full);
+  const orchWait = useMemo(() => waitingOf(orchFull), [orchFull]);
 
   const cards = useMemo(() => {
     const now = Date.now();
@@ -44,18 +49,19 @@ export function MissionPanel() {
   return (
     <div className="mission">
       <div className="mission-head">
-        <span>{total} 个活动会话 · {cards.filter((c) => c.lane === 'attention').length} 需要你 · {cards.filter((c) => c.lane === 'running').length} 运行中</span>
+        <span>{total} 个活动会话 · {cards.filter((c) => c.lane === 'attention').length + orchWait.length} 需要你 · {cards.filter((c) => c.lane === 'running').length} 运行中</span>
         <span className="grow" />
         <label className="muted" style={{ fontSize: 12, display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={showIdle} onChange={(e) => setShowIdle(e.target.checked)} /> 显示空闲</label>
       </div>
-      {!total && <div className="empty">没有活动会话。侧栏点开一个，或用「恢复」继续。</div>}
+      {!total && !orchWait.length && <div className="empty">没有活动会话。侧栏点开一个，或用「恢复」继续。</div>}
       <div className="mission-lanes">
         {lanes.filter((l) => l.id !== 'idle' || showIdle).map((lane) => {
           const items = cards.filter((c) => c.lane === lane.id);
+          const orch = lane.id === 'attention' ? orchWait : [];
           if (!items.length && lane.id !== 'attention' && lane.id !== 'running') return null;
           return (
             <div key={lane.id} className={clsx('lane', lane.id)}>
-              <div className="lane-h"><b>{lane.l}</b><span className="badge">{items.length}</span><span className="muted">{lane.hint}</span></div>
+              <div className="lane-h"><b>{lane.l}</b><span className="badge">{items.length + orch.length}</span><span className="muted">{lane.hint}</span></div>
               {items.map((c) => (
                 <div key={c.o.sessionId} className="mcard" onClick={() => openInPane(c.o.sessionId, 'replace')}>
                   <div className="t"><span className={clsx('dot', c.o.state)} />{c.title}</div>
@@ -78,7 +84,19 @@ export function MissionPanel() {
                   </div>
                 </div>
               ))}
-              {!items.length && <div className="empty sm">—</div>}
+              {orch.map((w) => (
+                <div key={`${w.runId}:${w.nodeId}`} className="mcard orch-wait" onClick={() => useOrch.getState().ask('open', w.runId)}>
+                  <div className="t"><Icon name={w.kind === 'approval' ? 'approval' : 'compare'} size={13} />{w.title}</div>
+                  <div className="sub">编排「{w.runName}」· {w.kind === 'approval' ? '等你审批' : '候选跑完了，等你选一个合并'}{w.since ? ` · ${ago(w.since)}` : ''}</div>
+                  {w.kind === 'approval' && (
+                    <div className="orch-wait-acts">
+                      <button className="btn sm primary" onClick={(e) => { e.stopPropagation(); void ws.request({ kind: 'orchestra.node.approve', runId: w.runId, nodeId: w.nodeId, decision: 'approve' }).catch(() => {}); }}>通过</button>
+                      <button className="btn sm" onClick={(e) => { e.stopPropagation(); useOrch.getState().ask('open', w.runId); }}>去看看</button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {!items.length && !orch.length && <div className="empty sm">—</div>}
             </div>
           );
         })}

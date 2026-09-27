@@ -15,6 +15,7 @@ import { SettingsModal } from '@/features/settings/SettingsModal';
 import { Onboarding } from '@/features/onboarding/Onboarding';
 import { desktop } from '@/desktop';
 import { Icon } from '@/ui/icons';
+import { installOrchestra } from '@/features/orchestra/state';
 
 function Toasts() {
   const toasts = useStore((s) => s.toasts);
@@ -56,6 +57,7 @@ export function App() {
   const [mobile, setMobile] = useState(MOBILE.matches);
   useEffect(() => { const on = () => setMobile(MOBILE.matches); MOBILE.addEventListener('change', on); return () => MOBILE.removeEventListener('change', on); }, []);
   useEffect(() => { if (mobile) useStore.setState({ sidebarOpen: false }); }, [mobile]);
+  useEffect(() => installOrchestra(), []);
   const sbWidth = useStore((s) => s.layout.sidebar.width);
   const dock = useStore((s) => s.layout.dock);
   const inspect = useStore((s) => s.inspect);
