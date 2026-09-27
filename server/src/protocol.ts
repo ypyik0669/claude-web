@@ -101,7 +101,7 @@ export interface EngineInfo {
   fallback?: { runtime: RuntimeKind; version?: string; path: string }; // the other binary, if present
 }
 
-export type ProviderType = 'anthropic' | 'openai' | 'gemini' | 'grok';
+export type ProviderType = 'anthropic' | 'openai' | 'gemini' | 'grok' | 'gateway';
 /** A third-party API endpoint profile. Stored in ~/.claude-web/meta.json; the key is injected into the session process env only. */
 export interface Provider {
   id: string;
@@ -113,6 +113,8 @@ export interface Provider {
   defaultModel?: string;
   modelMap?: { haiku?: string; sonnet?: string; opus?: string };
   runtime?: RuntimeKind; // force a runtime for this provider (some relays only accept the official client)
+  /** type 'gateway': the local model-gateway group this profile routes through (baseUrl / apiKey are filled per session). */
+  gatewayGroupId?: string;
   createdAt: number;
 }
 export const CLAUDE_PROVIDER_ID = 'claude';
@@ -447,7 +449,8 @@ export type ClientRequest =
   | { kind: 'library.fork'; sessionId: string }
   | { kind: 'library.reindex' }
   | { kind: 'library.join'; kind_: AgentKind; joined: boolean }
-  | { kind: 'library.dismiss'; kind_: AgentKind };
+  | { kind: 'library.dismiss'; kind_: AgentKind }
+  | GatewayRequest;
 
 export interface RequestEnvelope { id: string; req: ClientRequest }
 export interface ReplyEnvelope { id: string; ok: boolean; data?: unknown; error?: string }
@@ -475,7 +478,8 @@ export type ServerEvent =
   // detected on this machine, not yet joined and not dismissed
   | { kind: 'library.discovered'; kinds: AgentKind[] }
   // a library mutation (join / leave / rename / archive / delete / fork) — refetch sessions.list
-  | { kind: 'library.changed' };
+  | { kind: 'library.changed' }
+  | GatewayEvent;
 
 // ---------- phase 3: files / search / git ----------
 export interface FsEntry { name: string; dir: boolean; size?: number; mtime?: number; symlink?: boolean }
@@ -512,8 +516,12 @@ export interface McpHealth { name: string; status: 'connected' | 'failed' | 'nee
 export interface RegistryServer { name: string; description: string; repo?: string; install?: { transport: 'stdio' | 'http' | 'sse'; command?: string; args?: string[]; url?: string; env?: string[] }; kind: 'npm' | 'pypi' | 'remote' | 'other' }
 export interface SecretsStatus { scheme: 'dpapi' | 'keychain' | 'plain'; total: number; protected: number }
 /** One model call as seen from the runner (per `result` / assistant message). */
-export interface LedgerEntry { ts: number; sessionId: string; model: string; durationMs: number; apiMs?: number; input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number; ok: boolean; error?: string; turns?: number; providerId?: string }
+export interface LedgerEntry { ts: number; sessionId: string; model: string; durationMs: number; apiMs?: number; input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number; ok: boolean; error?: string; turns?: number; providerId?: string; kind?: 'gateway'; gateway?: GatewayLedgerInfo }
 export interface ScheduleRun { id: string; scheduleId: string; at: number; sessionId?: string; ok: boolean; durationMs?: number; summary?: string; error?: string }
 
 export type WireDown = { type: 'reply'; reply: ReplyEnvelope } | { type: 'event'; event: ServerEvent };
 export type WireUp = { type: 'request'; request: RequestEnvelope };
+
+// ---------- model gateway (sub-project 4) ----------
+export * from './gateway/types.js';
+import type { GatewayEvent, GatewayLedgerInfo, GatewayRequest } from './gateway/types.js';
