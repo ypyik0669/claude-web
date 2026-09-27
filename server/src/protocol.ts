@@ -35,6 +35,37 @@ export interface SessionSummary {
   customTitle?: string;
   live?: RunnerState; // present when a runner exists for this session
   agent?: AgentKind; // omitted = Claude Code
+  // ---- unified session library (phase 13) ----
+  source?: string; // cli / vscode / exec / appServer / opencode … (how the native session was created)
+  parentId?: string; // library id of the session this one was forked/resumed from
+  archived?: boolean;
+  childCount?: number;
+  caps?: SourceCaps;
+}
+
+/** What the library UI may do with a session, given its source's official APIs. */
+export interface SourceCaps {
+  resume: boolean;
+  rename: boolean;
+  archive: boolean;
+  delete: boolean;
+  fork: boolean;
+}
+
+/** One row of the "join a source" onboarding list (settings/library). */
+export interface SourceStatus {
+  kind: AgentKind;
+  name: string;
+  installed: boolean;
+  detected: boolean;
+  joined: boolean;
+  dismissed: boolean;
+  enabled: boolean; // joined && installed/available
+  version?: string;
+  count?: number;
+  indexedAt?: number;
+  error?: string;
+  disabledReason?: string;
 }
 
 export interface OpenSessionParams {
@@ -83,7 +114,7 @@ export interface Provider {
 export const CLAUDE_PROVIDER_ID = 'claude';
 
 /** Multi-agent (phase 5): built-in kinds plus user-defined ACP agents (`acp:<id>`). */
-export type AgentKind = 'claude' | 'codex' | 'gemini' | 'qwen' | 'kimi' | `acp:${string}`;
+export type AgentKind = 'claude' | 'codex' | 'opencode' | 'gemini' | 'qwen' | 'kimi' | `acp:${string}`;
 export interface AgentInfo {
   kind: AgentKind;
   name: string;
@@ -384,7 +415,17 @@ export type ClientRequest =
   | { kind: 'terminal.open'; cwd: string; cols: number; rows: number }
   | { kind: 'terminal.input'; termId: string; data: string }
   | { kind: 'terminal.resize'; termId: string; cols: number; rows: number }
-  | { kind: 'terminal.close'; termId: string };
+  | { kind: 'terminal.close'; termId: string }
+  // ---- unified session library (phase 13) ----
+  | { kind: 'library.sources' }
+  | { kind: 'library.read'; sessionId: string; cursor?: string; limit?: number }
+  | { kind: 'library.rename'; sessionId: string; title: string }
+  | { kind: 'library.archive'; sessionIds: string[]; archived: boolean }
+  | { kind: 'library.delete'; sessionIds: string[] }
+  | { kind: 'library.fork'; sessionId: string }
+  | { kind: 'library.reindex' }
+  | { kind: 'library.join'; kind_: AgentKind; joined: boolean }
+  | { kind: 'library.dismiss'; kind_: AgentKind };
 
 export interface RequestEnvelope { id: string; req: ClientRequest }
 export interface ReplyEnvelope { id: string; ok: boolean; data?: unknown; error?: string }
@@ -408,7 +449,9 @@ export type ServerEvent =
   | { kind: 'terminal.data'; termId: string; data: string }
   | { kind: 'terminal.exit'; termId: string; code: number | null }
   | { kind: 'fs.changed'; path: string; type: 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir' }
-  | { kind: 'git.changed'; cwd: string };
+  | { kind: 'git.changed'; cwd: string }
+  // detected on this machine, not yet joined and not dismissed
+  | { kind: 'library.discovered'; kinds: AgentKind[] };
 
 // ---------- phase 3: files / search / git ----------
 export interface FsEntry { name: string; dir: boolean; size?: number; mtime?: number; symlink?: boolean }
