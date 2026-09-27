@@ -149,6 +149,63 @@ describe('session library', () => {
     expect(fake.sent.find((r) => r.kind === 'library.read')).toMatchObject({ sessionId: 's1', cursor: 'p1' });
   });
 
+  it('two concurrent loadOlder calls send one request and share its result', async () => {
+    useStore.setState((s) => ({ open: { ...s.open, s1: { ...s.open.s1, historyCursor: 'p1' } } }));
+    let release!: (v: unknown) => void;
+    fake.handlers.set('library.read', () => new Promise((r) => { release = r; }));
+    const a = useStore.getState().loadOlder('s1');
+    const b = useStore.getState().loadOlder('s1');
+    release({ messages: [], next: 'p2' });
+    expect(await a).toBe(true);
+    expect(await b).toBe(true);
+    expect(fake.sent.filter((r) => r.kind === 'library.read').length).toBe(1);
+  });
+
+  it('a history reload while loadOlder is in flight discards the stale page', async () => {
+    useStore.setState((s) => ({ open: { ...s.open, s1: { ...s.open.s1, historyCursor: 'p1' } } }));
+    let release!: (v: unknown) => void;
+    fake.handlers.set('library.read', () => new Promise((r) => { release = r; }));
+    const p = useStore.getState().loadOlder('s1');
+    // loadHistory replaced the conversation and minted a new cursor meanwhile
+    useStore.setState((s) => ({ open: { ...s.open, s1: { ...s.open.s1, historyCursor: 'fresh' } } }));
+    release({ messages: [{ type: 'user', uuid: 'old', message: { role: 'user', content: 'stale' } }], next: 'p0' });
+    await p;
+    const o = useStore.getState().open.s1;
+    expect(o.conv.items.length).toBe(0);
+    expect(o.historyCursor).toBe('fresh');
+  });
+
+  it('loadOlder rejects on failure and a later call can retry', async () => {
+    useStore.setState((s) => ({ open: { ...s.open, s1: { ...s.open.s1, historyCursor: 'p1' } } }));
+    fake.handlers.set('library.read', () => Promise.reject(new Error('boom')));
+    await expect(useStore.getState().loadOlder('s1')).rejects.toThrow('boom');
+    fake.handlers.set('library.read', () => ({ messages: [], next: undefined }));
+    expect(await useStore.getState().loadOlder('s1')).toBe(false);
+    expect(fake.sent.filter((r) => r.kind === 'library.read').length).toBe(2);
+  });
+
+  it('library.changed and library.discovered refresh the library sources', async () => {
+    fake.handlers.set('sessions.list', () => []);
+    fake.handlers.set('library.sources', () => [{ kind: 'codex', name: 'Codex', installed: true, detected: true, joined: false, dismissed: false, enabled: false }]);
+    emit({ kind: 'library.discovered', kinds: ['codex'] });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fake.sent.filter((r) => r.kind === 'library.sources').length).toBe(1);
+    expect(useStore.getState().librarySources.map((x) => x.kind)).toEqual(['codex']);
+    emit({ kind: 'library.changed' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fake.sent.filter((r) => r.kind === 'library.sources').length).toBe(2);
+  });
+
+  it('a failed history load keeps the reason in loadError (the chat shows it with a retry)', async () => {
+    useStore.setState({ sessions: [{ sessionId: 'codex-e', cwd: '/w', title: 'c', lastModified: 0, agent: 'codex' } as any], open: {} });
+    fake.handlers.set('library.read', () => Promise.reject(new Error('thread not found')));
+    await useStore.getState().loadHistory('codex-e', { focus: false });
+    expect(useStore.getState().open['codex-e'].loadError).toBe('thread not found');
+    fake.handlers.set('library.read', () => ({ messages: [], next: undefined }));
+    await useStore.getState().loadHistory('codex-e', { focus: false });
+    expect(useStore.getState().open['codex-e'].loadError).toBeUndefined();
+  });
+
   it('libraryOp sends library.<op> with the payload; sources and filter live on the store', async () => {
     fake.handlers.set('library.rename', () => ({ ok: true }));
     await useStore.getState().libraryOp('rename', { sessionId: 's1', title: 'x' });

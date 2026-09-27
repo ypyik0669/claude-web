@@ -1,3 +1,5 @@
+import { parseLibraryId } from '@shared';
+
 export function ago(ts: number | string | undefined): string {
   if (!ts) return '';
   const t = typeof ts === 'string' ? Date.parse(ts) : ts;
@@ -82,8 +84,13 @@ export function toolSummary(name: string, input: Record<string, unknown>): strin
 
 /**
  * Session came from the unified library (another agent's own store) — its history is paged through
- * `library.read`. Mirrors the prefixes of `parseLibraryId` in server/src/library/ids.ts (Claude keeps its bare UUID).
+ * `library.read`. The prefix rules live in protocol.ts (shared with server/src/library/ids.ts).
  */
 export function isImportedSessionId(id: string): boolean {
-  return /^(codex|opencode|gemini|qwen|kimi)-/.test(id) || /^acp_[^-]*-/.test(id);
+  return parseLibraryId(id).kind !== 'claude';
+}
+
+/** The id the agent itself uses (what its own CLI's resume flag takes): the library id without its prefix. */
+export function nativeSessionId(id: string): string {
+  return parseLibraryId(id).nativeId;
 }

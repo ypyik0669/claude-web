@@ -28,7 +28,8 @@ export interface ToolUseBlock {
 }
 export type Block = TextBlock | ThinkingBlock | ToolUseBlock;
 
-export interface Attachment { kind: 'image' | 'text' | 'file' | 'folder'; name: string; size?: number; path?: string }
+/** `session` = a reference to another library session (`sessionId`; `name` is its title when referenced). */
+export interface Attachment { kind: 'image' | 'text' | 'file' | 'folder' | 'session'; name: string; size?: number; path?: string; sessionId?: string; error?: string }
 
 export interface UserItem {
   kind: 'user';
@@ -365,12 +366,42 @@ function toContextUsage(u: any): ContextUsage {
 /** `<attached kind="file" name="a.txt" path="C:\x\a.txt" size="123">` markers appended by the composer; decoded for display. */
 export const ATTACH_RE = /\n*<attached\s+kind="(image|text|file|folder)"\s+name="([^"]*)"(?:\s+path="([^"]*)")?(?:\s+size="(\d+)")?\s*\/?>(?:[\s\S]*?<\/attached>)?/g;
 
+/**
+ * Session references: the composer appends `<session-ref id="…" title="…" />`; the server expands it
+ * before the agent sees it into `<referenced-session id="…" title="…">briefing</referenced-session>`
+ * (or a self-closing one carrying `error="…"`), which is what a reloaded transcript contains. Both
+ * decode to the same chip. Attribute values are HTML-attribute-escaped (&quot; &amp; &lt; &gt;).
+ */
+export const SESSION_REF_RE = /\n*<(session-ref|referenced-session)\s+([^>]*?)\s*(?:\/>|>[\s\S]*?<\/referenced-session>)/g;
+
+export function escapeAttr(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function unescapeAttr(s: string): string {
+  return s.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+function attrOf(attrs: string, name: string): string | undefined {
+  const m = new RegExp(`(?:^|\\s)${name}="([^"]*)"`).exec(attrs);
+  return m ? unescapeAttr(m[1]) : undefined;
+}
+
+export function sessionRefMarker(id: string, title: string): string {
+  return `<session-ref id="${escapeAttr(id)}" title="${escapeAttr(title)}" />`;
+}
+
 export function decodeAttachments(text: string): { text: string; attachments: Attachment[] } {
   const attachments: Attachment[] = [];
-  const clean = text.replace(ATTACH_RE, (_m, kind, name, path, size) => {
+  let clean = text.replace(ATTACH_RE, (_m, kind, name, path, size) => {
     attachments.push({ kind, name, path: path || undefined, size: size ? Number(size) : undefined });
     return '';
   });
+  if (clean.includes('<session-ref ') || clean.includes('<referenced-session ')) {
+    clean = clean.replace(SESSION_REF_RE, (_m, _tag, attrs: string) => {
+      const sessionId = attrOf(attrs, 'id') ?? '';
+      attachments.push({ kind: 'session', name: attrOf(attrs, 'title') || sessionId, sessionId, error: attrOf(attrs, 'error') });
+      return '';
+    });
+  }
   return { text: clean.replace(/\n{3,}$/, '\n\n').trimEnd(), attachments };
 }
 

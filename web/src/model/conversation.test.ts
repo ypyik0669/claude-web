@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { applyMessage, applyTranscript, createConversation, decodeAttachments, findChainUuidBefore, prependTranscript, setConversationClock, turnItems, walkTools, type AssistantItem, type Conversation, type UserItem } from './conversation';
+import { applyMessage, applyTranscript, createConversation, decodeAttachments, sessionRefMarker, findChainUuidBefore, prependTranscript, setConversationClock, turnItems, walkTools, type AssistantItem, type Conversation, type UserItem } from './conversation';
 
 const FIXTURE = path.join(__dirname, '__fixtures__', 'tools.jsonl');
 const USER_UUID = '11111111-2222-4333-8444-555555555555';
@@ -173,6 +173,16 @@ describe('user messages', () => {
     expect(u.attachments).toEqual([{ kind: 'file', name: 'a.txt', path: 'C:\\x\\a.txt', size: 12 }]);
     expect(u.images[0]).toBe('data:image/png;base64,AAAA');
     expect(u.id).toBe('u2');
+  });
+
+  it('decodeAttachments turns session-ref markers (raw and server-expanded) into session chips', () => {
+    const raw = `look at this\n\n${sessionRefMarker('codex-1', 'a "quoted" <title> & more')}`;
+    const r = decodeAttachments(raw);
+    expect(r.text).toBe('look at this');
+    expect(r.attachments).toEqual([{ kind: 'session', name: 'a "quoted" <title> & more', sessionId: 'codex-1', error: undefined }]);
+    const expanded = decodeAttachments('hi\n\n<referenced-session id="s-2" title="T">\n# briefing\nline\n</referenced-session>\n<referenced-session id="s-3" title="U" error="无法读取：gone" />');
+    expect(expanded.text).toBe('hi');
+    expect(expanded.attachments.map((a) => [a.sessionId, a.name, a.error])).toEqual([['s-2', 'T', undefined], ['s-3', 'U', '无法读取：gone']]);
   });
 
   it('decodeAttachments round-trips text-kind markers with inlined content', () => {

@@ -35,6 +35,8 @@ export interface OpenSession {
   lastSent?: QueuedMessage; // for retry / auto-continue
   /** library sessions: cursor for the next OLDER page (`library.read`); absent = nothing older */
   historyCursor?: string;
+  /** the last transcript.load / library.read failed — the chat shows this with a retry button */
+  loadError?: string;
 }
 
 export type LibraryOp = 'rename' | 'archive' | 'delete' | 'fork';
@@ -330,6 +332,7 @@ export const useStore = create<State>((set, get) => ({
         void get().loadEngine().catch(() => {});
         void get().loadProviders().catch(() => {});
         void get().loadAgents().catch(() => {});
+        void get().loadLibrarySources().catch(() => {});
         void ws.request<Limits>({ kind: 'limits.get' }).then((limits) => set({ limits })).catch(() => {});
         // re-attach open live sessions after reconnect
         void resyncOpenSessions();
@@ -363,8 +366,15 @@ export const useStore = create<State>((set, get) => ({
           set((s) => { const out = { ...s.open }; for (const [id, o] of Object.entries(out)) if (o.pending.some((p) => p.requestId === e.requestId)) out[id] = { ...o, pending: o.pending.filter((p) => p.requestId !== e.requestId), version: o.version + 1 }; return { open: out }; });
           break;
         case 'sessions.changed':
+          void get().refreshSessions();
+          break;
         case 'library.changed':
           void get().refreshSessions();
+          void get().loadLibrarySources().catch(() => {});
+          break;
+        case 'library.discovered':
+          // the sidebar banner reads detected && !joined && !dismissed from the sources
+          void get().loadLibrarySources().catch(() => {});
           break;
         case 'meta.changed':
           void get().loadMeta();
@@ -526,7 +536,7 @@ export const useStore = create<State>((set, get) => ({
     if (!get().sessions.some((s) => s.sessionId === sessionId)) await get().refreshSessions().catch(() => {});
     const meta = get().sessions.find((s) => s.sessionId === sessionId);
     if (!cur) set((s) => ({ open: { ...s.open, [sessionId]: { sessionId, cwd: meta?.cwd ?? '', conv: createConversation(), version: 0, state: 'history', pending: [], loading: true, queue: [], draft: '', feedback: {} } } }));
-    else set((s) => bump(s, sessionId, (o) => { o.loading = true; }));
+    else set((s) => bump(s, sessionId, (o) => { o.loading = true; o.loadError = undefined; }));
     if (opts?.focus !== false) get().openInPane(sessionId, opts?.mode ?? 'replace');
     void get().loadFeedback(sessionId);
     if (!cur) void get().loadDraft(sessionId).then((d) => d && set((s) => bump(s, sessionId, (o) => { if (!o.draft) o.draft = d; })));
@@ -550,7 +560,7 @@ export const useStore = create<State>((set, get) => ({
       // a runner may already be alive for this session (e.g. page reload): re-attach so controls go live
       if (meta?.live && meta.live !== 'closed' && meta.live !== 'error') await get().openSession({ sessionId, cwd: meta.cwd }, 'none');
     } catch (e: any) {
-      set((s) => bump(s, sessionId, (o) => { o.loading = false; o.error = e.message; }));
+      set((s) => bump(s, sessionId, (o) => { o.loading = false; o.loadError = e?.message ?? String(e); }));
     }
   },
 
@@ -605,8 +615,11 @@ export const useStore = create<State>((set, get) => ({
     // client-minted transcript uuid: the local echo id is the real fork / rewind anchor
     const uuid = genUuid();
     const shown = decodeAttachments(text);
+    // uploaded files travel as refs (their markers are added server-side); session references are in the text
+    const echoed = [...(attachments ?? []).map((a) => ({ kind: a.kind, name: a.name, path: a.path, size: a.size })), ...(attachments?.length ? shown.attachments.filter((a) => a.kind === 'session') : shown.attachments)];
+    const echoAttachments = echoed.length ? echoed : undefined;
     set((s) => bump(s, sessionId, (x) => {
-      x.conv.items.push({ kind: 'user', id: uuid, ts: new Date().toISOString(), text: shown.text, images: (images ?? []).map((im) => `data:${im.mediaType};base64,${im.data}`), attachments: attachments?.length ? attachments.map((a) => ({ kind: a.kind, name: a.name, path: a.path, size: a.size })) : shown.attachments.length ? shown.attachments : undefined, meta: false });
+      x.conv.items.push({ kind: 'user', id: uuid, ts: new Date().toISOString(), text: shown.text, images: (images ?? []).map((im) => `data:${im.mediaType};base64,${im.data}`), attachments: echoAttachments, meta: false });
       x.state = 'running';
       x.lastSent = { id: uuid, text, images, attachments };
       x.conv.lastEventAt = Date.now();
