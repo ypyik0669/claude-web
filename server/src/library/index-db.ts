@@ -112,6 +112,11 @@ export class LibraryIndex {
     return Number((this.db.prepare('SELECT COUNT(*) AS n FROM sessions').get() as { n: number }).n);
   }
 
+  /** Every indexed session id (the library prunes ids that no longer exist). */
+  ids(): string[] {
+    return (this.db.prepare('SELECT id FROM sessions').all() as { id: string }[]).map((r) => r.id);
+  }
+
   /** Last-indexed `lastModified` for a session, or undefined if it isn't in the index. */
   indexedAt(id: string): number | undefined {
     const row = this.db.prepare('SELECT lastModified FROM sessions WHERE id = ?').get(id) as { lastModified: number } | undefined;

@@ -122,14 +122,83 @@ describe('LibraryService', () => {
   });
 
   it('dedupes a claude-web session with the imported item it resumes', async () => {
+    const srcCaps: SourceCaps = { resume: true, rename: false, archive: false, delete: true, fork: false };
+    codex.items = [item('codex-t1', 'codex', 200, { caps: srcCaps, title: 'native title' })];
     await lib.join('codex', true);
     await transcripts.create({ sessionId: 'uuid-1', agent: 'codex', cwd: '/w', title: 'mine', createdAt: 1, nativeSessionId: 't1' });
+    const mtime = fs.statSync(transcripts.file('uuid-1')).mtimeMs;
     const list = await lib.list();
     const hit = list.filter((s) => s.sessionId === 'uuid-1' || s.sessionId === 'codex-t1');
     expect(hit).toHaveLength(1);
-    expect(hit[0].sessionId).toBe('uuid-1');
-    expect(hit[0].caps).toEqual(ALL);
-    expect(hit[0].lastModified).toBeGreaterThan(200); // the transcript file mtime is newer than 200 ms-epoch
+    expect(hit[0].sessionId).toBe('uuid-1'); // claude-web's id
+    expect(hit[0].caps).toEqual(srcCaps); // the source's caps
+    expect(hit[0].lastModified).toBe(Math.max(200, mtime)); // the newer of the two (file mtime here)
+
+    // and when the native side is newer, its lastModified wins
+    const future = Date.now() + 3_600_000;
+    codex.items = [item('codex-t1', 'codex', future, { caps: srcCaps })];
+    lib.invalidate();
+    expect((await lib.list()).find((s) => s.sessionId === 'uuid-1')?.lastModified).toBe(future);
+  });
+
+  it('lists archived sessions of archive-capable sources, flagged archived', async () => {
+    codex.list.mockImplementation(async (o: { archived?: boolean }) => ({ items: o.archived ? [item('codex-old', 'codex', 50)] : codex.items }));
+    await lib.join('codex', true);
+    const list = await lib.list();
+    expect(list.find((s) => s.sessionId === 'codex-old')?.archived).toBe(true);
+    expect(list.find((s) => s.sessionId === 'codex-t1')?.archived).toBeUndefined();
+    expect(codex.list).toHaveBeenCalledWith(expect.objectContaining({ archived: true }));
+  });
+
+  it('does not ask a source without archive caps for archived sessions', async () => {
+    (codex as any).caps = { ...ALL, archive: false };
+    await lib.join('codex', true);
+    await lib.list();
+    expect(codex.list).not.toHaveBeenCalledWith(expect.objectContaining({ archived: true }));
+  });
+
+  it('concurrent list() calls share one fetch per source', async () => {
+    await lib.join('codex', true);
+    await Promise.all([lib.list(), lib.list(), lib.list()]);
+    expect(codex.list).toHaveBeenCalledTimes(2); // one live + one archived page, not 3x
+  });
+
+  it('leaving a source keeps index rows of claude-web sessions of that agent', async () => {
+    await lib.join('codex', true);
+    await transcripts.create({ sessionId: 'uuid-own', agent: 'codex', cwd: '/w', title: 'own', createdAt: 1 });
+    await lib.list();
+    index.upsert(item('uuid-own', 'codex', 1), 'own words');
+    index.upsert(item('codex-t1', 'codex', 200), 'codex words');
+    await lib.join('codex', false);
+    expect(index.indexedAt('uuid-own')).toBe(1);
+    expect(index.indexedAt('codex-t1')).toBeUndefined();
+  });
+
+  it('refreshIndex prunes ids that no longer exist', async () => {
+    index.upsert(item('gone', 'claude', 1), 'stale');
+    await lib.refreshIndex();
+    expect(index.indexedAt('gone')).toBeUndefined();
+  });
+
+  it('search uses the fallback until the first index pass has finished', async () => {
+    const fallback = vi.fn(async () => [{ session: item('fb', 'claude', 1) }]);
+    lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents([]), fallbackSearch: fallback, dataDirs: {}, trashDir: path.join(dir, 'library-trash') });
+    index.upsert(item('c1', 'claude', 100), 'hello partial'); // partially indexed, no pass finished
+    expect((await lib.search('hello', 10)).map((h) => h.session.sessionId)).toEqual(['fb']);
+    expect(fallback).toHaveBeenCalledWith('hello', 10);
+    await lib.refreshIndex();
+    fallback.mockClear();
+    expect((await lib.search('hello', 10)).map((h) => h.session.sessionId).sort()).toEqual(['c1', 'c2']);
+    expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it('routes a prefixed gemini id to the gemini source without any prior list()', async () => {
+    const gem = fakeSource('gemini', [item('gemini-g1', 'gemini', 10)]);
+    lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents(['gemini']), makeSource: (k) => (k === 'gemini' ? gem : null), dataDirs: {}, trashDir: path.join(dir, 'library-trash') });
+    await lib.join('gemini', true);
+    expect(await lib.kindOf('gemini-g1')).toBe('gemini');
+    await lib.read('gemini-g1');
+    expect(gem.read).toHaveBeenCalledWith('g1', expect.anything());
   });
 
   it('folds children under their parent', async () => {

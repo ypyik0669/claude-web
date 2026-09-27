@@ -14,6 +14,14 @@ describe('library ids', () => {
     expect(libraryId('acp:demo', 's1')).toBe('acp_demo-s1');
   });
 
+  it('prefixes built-in ACP agents so their ids never parse back as claude', () => {
+    expect(libraryId('gemini', 'abc')).toBe('gemini-abc');
+    expect(libraryId('qwen', 'abc')).toBe('qwen-abc');
+    expect(libraryId('kimi', 'abc')).toBe('kimi-abc');
+    expect(parseLibraryId('gemini-abc')).toEqual({ kind: 'gemini', nativeId: 'abc' });
+    expect(parseLibraryId('kimi-a-b')).toEqual({ kind: 'kimi', nativeId: 'a-b' });
+  });
+
   it('parses an opencode-prefixed id', () => {
     expect(parseLibraryId('opencode-ses_x')).toEqual({ kind: 'opencode', nativeId: 'ses_x' });
   });
@@ -38,6 +46,9 @@ describe('library ids', () => {
       ['opencode', 'ses_x'],
       ['acp:demo', 's1'],
       ['acp:my-agent', 's-1-2'],
+      ['gemini', 'g-1'],
+      ['qwen', 'q1'],
+      ['kimi', 'k_1'],
       ['claude', 'u-1'],
     ];
     for (const [kind, nativeId] of cases) {

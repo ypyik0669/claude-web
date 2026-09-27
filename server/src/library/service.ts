@@ -40,7 +40,6 @@ export interface LibraryOptions {
   trashDir?: string;
 }
 
-interface Route { kind: AgentKind; nativeId: string }
 interface Resolved { kind: AgentKind; nativeId?: string; source?: SessionSource; head: Head | null }
 
 function defaultDataDirs(): Partial<Record<AgentKind, string[]>> {
@@ -67,7 +66,9 @@ export class LibraryService extends EventEmitter {
   private perKind = new Map<AgentKind, { at: number; items: SessionSummary[] }>();
   private errors = new Map<AgentKind, string>();
   private indexedAtByKind = new Map<AgentKind, number>();
-  private routes = new Map<string, Route>();
+  private fetching = new Map<AgentKind, Promise<SessionSummary[]>>();
+  /** Until the first refreshIndex pass completes, search uses the old transcript scan (a half-built index misses things). */
+  private indexReady = false;
   private byId = new Map<string, SessionSummary>();
   private resuming = new Map<string, Promise<{ agent: AgentKind; cwd: string }>>();
   private indexing: Promise<void> | null = null;
@@ -123,20 +124,38 @@ export class LibraryService extends EventEmitter {
     for (const [k, v] of this.perKind) if (!kind || k === kind) v.at = 0;
   }
 
-  private async listSource(src: SessionSource): Promise<SessionSummary[]> {
+  private async listPages(src: SessionSource, archived: boolean): Promise<SessionSummary[]> {
+    const items: SessionSummary[] = [];
+    let cursor: string | undefined;
+    const seen = new Set<string>();
+    for (let i = 0; i < MAX_PAGES; i++) {
+      const r = await src.list({ cursor, limit: PAGE, archived });
+      items.push(...(archived ? r.items.map((x) => ({ ...x, archived: true })) : r.items));
+      if (!r.next || seen.has(r.next)) break;
+      seen.add(r.next);
+      cursor = r.next;
+    }
+    return items;
+  }
+
+  /** One in-flight fetch per source: concurrent list() calls share it. */
+  private listSource(src: SessionSource): Promise<SessionSummary[]> {
     const hit = this.perKind.get(src.kind);
-    if (hit && Date.now() - hit.at < LIST_TTL_MS) return hit.items;
+    if (hit && Date.now() - hit.at < LIST_TTL_MS) return Promise.resolve(hit.items);
+    const running = this.fetching.get(src.kind);
+    if (running) return running;
+    const p = this.fetchSource(src).finally(() => this.fetching.delete(src.kind));
+    this.fetching.set(src.kind, p);
+    return p;
+  }
+
+  private async fetchSource(src: SessionSource): Promise<SessionSummary[]> {
+    const hit = this.perKind.get(src.kind);
     try {
-      const items: SessionSummary[] = [];
-      let cursor: string | undefined;
-      const seen = new Set<string>();
-      for (let i = 0; i < MAX_PAGES; i++) {
-        const r = await src.list({ cursor, limit: PAGE });
-        items.push(...r.items);
-        if (!r.next || seen.has(r.next)) break;
-        seen.add(r.next);
-        cursor = r.next;
-      }
+      // sources that can archive also list their archived sessions (flagged), for the "show archived" view
+      const [live, archived] = await Promise.all([this.listPages(src, false), src.caps.archive ? this.listPages(src, true) : Promise.resolve([])]);
+      const liveIds = new Set(live.map((x) => x.sessionId));
+      const items = [...live, ...archived.filter((x) => !liveIds.has(x.sessionId))];
       this.perKind.set(src.kind, { at: Date.now(), items });
       this.errors.delete(src.kind);
       return items;
@@ -149,13 +168,9 @@ export class LibraryService extends EventEmitter {
   async list(): Promise<SessionSummary[]> {
     const joined = this.joinedSources();
     const [lists, local] = await Promise.all([Promise.all(joined.map((s) => this.listSource(s))), this.transcripts.entries().catch(() => [])]);
-    const routes = new Map<string, Route>();
     const byId = new Map<string, SessionSummary>();
     joined.forEach((src, i) => {
       for (const it of lists[i]) {
-        const p = parseLibraryId(it.sessionId);
-        // gemini / qwen / kimi ids carry no prefix, so parse would say "claude": the source knows better
-        routes.set(it.sessionId, { kind: src.kind, nativeId: p.kind === src.kind ? p.nativeId : it.sessionId });
         byId.set(it.sessionId, { ...it, agent: it.agent ?? src.kind, caps: it.caps ?? src.caps });
       }
     });
@@ -172,13 +187,11 @@ export class LibraryService extends EventEmitter {
       if (src && lid && this.isJoined(head.agent)) {
         out.delete(lid);
         alias.set(lid, summary.sessionId);
-        routes.set(summary.sessionId, routes.get(lid)!);
         out.set(summary.sessionId, { ...src, sessionId: summary.sessionId, agent: head.agent, lastModified: Math.max(src.lastModified, summary.lastModified), caps: src.caps });
       } else {
         out.set(summary.sessionId, summary);
       }
     }
-    this.routes = routes;
     this.byId = new Map(out);
     // forks / resumed children fold under their parent (an orphan stays visible)
     for (const [id, s] of out) {
@@ -193,11 +206,10 @@ export class LibraryService extends EventEmitter {
   }
 
   // ---------- routing ----------
-  /** Which agent a library id belongs to (a claude-web head wins, then the last list, then the id prefix). */
+  /** Which agent a library id belongs to (a claude-web head wins, then the id prefix). */
   async kindOf(id: string): Promise<AgentKind> {
     const head = await this.transcripts.head(id);
-    if (head) return head.agent;
-    return (this.routes.get(id) ?? parseLibraryId(id)).kind;
+    return head ? head.agent : parseLibraryId(id).kind;
   }
 
   private async resolve(id: string): Promise<Resolved> {
@@ -205,7 +217,7 @@ export class LibraryService extends EventEmitter {
     let kind: AgentKind;
     let nativeId: string | undefined;
     if (head) { kind = head.agent; nativeId = head.nativeSessionId; }
-    else { const r = this.routes.get(id) ?? parseLibraryId(id); kind = r.kind; nativeId = r.nativeId; }
+    else ({ kind, nativeId } = parseLibraryId(id));
     const source = this.isJoined(kind) ? this.source(kind) : undefined;
     return { kind, nativeId, source, head };
   }
@@ -307,10 +319,8 @@ export class LibraryService extends EventEmitter {
     await src?.close().catch(() => {});
     // an on-demand (ACP) source is rebuilt fresh on the next join
     if (src && !this.builtin.has(kind)) this.srcs.delete(kind);
-    const ids = new Set((this.perKind.get(kind)?.items ?? []).map((s) => s.sessionId));
-    for (const [id, r] of this.routes) if (r.kind === kind) ids.add(id);
-    for (const id of ids) this.index.remove(id);
-    this.index.removeAgent(kind);
+    // only what this source listed — claude-web's own sessions with that agent stay (they're still listed)
+    for (const s of this.perKind.get(kind)?.items ?? []) this.index.remove(s.sessionId);
     this.perKind.delete(kind);
     this.errors.delete(kind);
     this.indexedAtByKind.delete(kind);
@@ -424,8 +434,8 @@ export class LibraryService extends EventEmitter {
       if (head) return { agent: head.agent, cwd: head.cwd };
       let s = this.byId.get(id);
       if (!s) { await this.list(); s = this.byId.get(id); }
-      const route = this.routes.get(id);
-      if (!s || !route) throw new Error('会话库里找不到这个会话');
+      const route = parseLibraryId(id);
+      if (!s || route.kind === 'claude') throw new Error('会话库里找不到这个会话');
       if (!this.isJoined(route.kind)) throw new Error('该会话的来源未加入会话库');
       await this.transcripts.create({ sessionId: id, agent: route.kind, cwd: s.cwd, title: s.title, createdAt: s.createdAt ?? s.lastModified ?? Date.now(), nativeSessionId: route.nativeId, imported: true });
       return { agent: route.kind, cwd: s.cwd };
@@ -445,7 +455,7 @@ export class LibraryService extends EventEmitter {
         const all = [...this.byId.values()]; // children too
         const done = new Set<AgentKind>();
         for (const s of all) {
-          const kind = this.routes.get(s.sessionId)?.kind ?? s.agent ?? 'claude';
+          const kind = s.agent ?? 'claude';
           done.add(kind);
           if (this.index.indexedAt(s.sessionId) === s.lastModified) continue;
           try {
@@ -454,8 +464,11 @@ export class LibraryService extends EventEmitter {
           } catch { /* retried on the next pass */ }
           await new Promise((r) => setImmediate(r));
         }
+        // sessions deleted / left since the last pass
+        for (const id of this.index.ids()) if (!this.byId.has(id)) this.index.remove(id);
         const now = Date.now();
         for (const k of done) this.indexedAtByKind.set(k, now);
+        this.indexReady = true;
       } while (this.indexAgain);
     })().finally(() => { this.indexing = null; });
     return this.indexing;
@@ -470,7 +483,7 @@ export class LibraryService extends EventEmitter {
 
   async search(raw: string, limit = 30): Promise<{ session: SessionSummary; snippet?: string }[]> {
     const q = LibraryIndex.parseQuery(raw);
-    if (this.index.count() === 0) {
+    if (!this.indexReady || this.index.count() === 0) {
       return this.opts.fallbackSearch ? this.opts.fallbackSearch(q.q, limit) : [];
     }
     if (!this.byId.size) await this.list();
@@ -516,5 +529,6 @@ export class LibraryService extends EventEmitter {
   async close(): Promise<void> {
     this.dispose();
     await Promise.all([...this.srcs.values()].map((s) => s.close().catch(() => {})));
+    this.index.close();
   }
 }
