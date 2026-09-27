@@ -11,6 +11,7 @@ import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { applyMessage, applyTranscript, createConversation, prependTranscript, walkTools, type Conversation } from '@/model/conversation';
 import { isImportedSessionId } from '@/util';
+import { parseLibraryId } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { applyUiSettings, resolveTheme } from '@/features/settings/ui-settings';
 
@@ -103,6 +104,9 @@ interface State {
   loadLibrarySources(): Promise<void>;
   /** `library.<op>` with `payload` (rename {sessionId,title} / archive {sessionIds,archived} / delete {sessionIds} / fork {sessionId}) */
   libraryOp(op: LibraryOp, payload: Record<string, unknown>): Promise<any>;
+  /** sessions deleted while a tile may still show them (the tile shows a banner and locks its composer) */
+  deletedSessions: Record<string, true>;
+  markDeleted(ids: string[]): void;
   send(sessionId: string, text: string, images?: { mediaType: string; data: string }[], steer?: boolean, attachments?: AttachmentRef[]): Promise<void>;
   /** remove a queued message (returns it so the composer can restore the text) */
   recall(sessionId: string, id: string): QueuedMessage | undefined;
@@ -368,10 +372,18 @@ export const useStore = create<State>((set, get) => ({
         case 'sessions.changed':
           void get().refreshSessions();
           break;
-        case 'library.changed':
-          void get().refreshSessions();
-          void get().loadLibrarySources().catch(() => {});
+        case 'library.changed': {
+          // an open session that was listed before and is gone afterwards was deleted (here or elsewhere)
+          const before = new Set(get().sessions.map((s) => s.sessionId));
+          void Promise.all([get().refreshSessions(), get().loadLibrarySources().catch(() => {})]).then(() => {
+            const after = new Set(get().sessions.map((s) => s.sessionId));
+            // a source that was just left takes its sessions out of the list too — that is not a deletion
+            const left = (id: string) => get().librarySources.some((x) => x.kind === parseLibraryId(id).kind && !x.joined);
+            const gone = Object.keys(get().open).filter((id) => before.has(id) && !after.has(id) && !left(id));
+            if (gone.length) get().markDeleted(gone);
+          }).catch(() => {});
           break;
+        }
         case 'library.discovered':
           // the sidebar banner reads detected && !joined && !dismissed from the sources
           void get().loadLibrarySources().catch(() => {});
@@ -595,6 +607,11 @@ export const useStore = create<State>((set, get) => ({
   async loadLibrarySources() {
     const librarySources = await ws.request<SourceStatus[]>({ kind: 'library.sources' });
     set({ librarySources: librarySources ?? [] });
+  },
+  deletedSessions: {},
+  markDeleted(ids) {
+    if (!ids.length) return;
+    set((s) => ({ deletedSessions: { ...s.deletedSessions, ...Object.fromEntries(ids.map((id) => [id, true as const])) } }));
   },
   async libraryOp(op, payload) {
     // the server broadcasts library.changed afterwards, which refetches the session list

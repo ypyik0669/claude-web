@@ -37,3 +37,23 @@ export function sourceCounts(all: SessionSummary[]): Record<string, number> {
   }
   return out;
 }
+
+export interface RowGroup { key: string; items: SessionSummary[]; collapsed: boolean }
+
+/**
+ * The session rows the sidebar actually renders: expanded groups only, each cut at its page limit
+ * (`shown[key]`, default `first`). Multi-select acts on exactly these — never on rows the user can't see.
+ */
+export function renderedRows(groups: RowGroup[], shown: Record<string, number>, first = 25): SessionSummary[] {
+  const out: SessionSummary[] = [];
+  const seen = new Set<string>();
+  for (const g of groups) {
+    if (g.collapsed) continue;
+    for (const s of g.items.slice(0, shown[g.key] ?? first)) {
+      if (seen.has(s.sessionId)) continue;
+      seen.add(s.sessionId);
+      out.push(s);
+    }
+  }
+  return out;
+}

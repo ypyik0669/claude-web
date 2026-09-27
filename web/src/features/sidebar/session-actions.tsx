@@ -1,45 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { AgentKind, SessionMeta, SessionSummary, SourceCaps } from '@shared';
+import type { AgentKind, SessionMeta, SessionSummary } from '@shared';
 import { useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { dlg } from '@/ui/dialog';
 import { Icon, AGENT_ICONS } from '@/ui/icons';
-import { isImportedSessionId, nativeSessionId } from '@/util';
+import { isImportedSessionId } from '@/util';
 import { agentOf, isArchived } from './filter';
+import { deleteSummary, effectiveCaps, nativeCliCommand } from './caps';
 
-/**
- * Everything the session context menu, the session header menu and the multi-select toolbar can do
- * to a session. What is offered follows the session's `caps` (its source's official APIs); Claude
- * and claude-web's own agent sessions archive in meta, since Claude Code has no archive flag.
- */
-
-export interface EffectiveCaps extends SourceCaps {
-  /** where archive goes: the source's own API, or claude-web's meta */
-  archiveVia: 'library' | 'meta' | null;
-}
-
-export function effectiveCaps(s: SessionSummary): EffectiveCaps {
-  const imported = isImportedSessionId(s.sessionId);
-  // claude-web's own sessions (Claude, or an agent it drove itself) predate caps: everything works
-  const c: SourceCaps = s.caps ?? { resume: true, rename: true, archive: false, delete: !imported, fork: !imported };
-  const archiveVia = c.archive ? 'library' : !imported ? 'meta' : null;
-  return { ...c, archive: !!archiveVia, archiveVia };
-}
-
-/** Caps every selected session supports (the multi-select toolbar only offers these). */
-export function capsIntersection(list: SessionSummary[]): { archive: boolean; delete: boolean } {
-  return { archive: list.length > 0 && list.every((s) => effectiveCaps(s).archive), delete: list.length > 0 && list.every((s) => effectiveCaps(s).delete) };
-}
-
-/** Command that resumes this session in the agent's own CLI, or null when there is no such flag. */
-export function nativeCliCommand(s: SessionSummary): string | null {
-  const kind = agentOf(s);
-  if (kind === 'claude' && !isImportedSessionId(s.sessionId)) return `claude --resume ${s.sessionId}`;
-  if (!isImportedSessionId(s.sessionId)) return null; // an agent claude-web drove: its native id is not the session id
-  if (kind === 'codex') return `codex resume ${nativeSessionId(s.sessionId)}`;
-  if (kind === 'opencode') return `opencode --session ${nativeSessionId(s.sessionId)}`;
-  return null;
-}
+export { effectiveCaps, capsIntersection, nativeCliCommand, type EffectiveCaps } from './caps';
 
 function sourceName(kind: AgentKind): string {
   const st = useStore.getState();
@@ -73,12 +42,13 @@ export async function deleteSessions(list: SessionSummary[]): Promise<boolean> {
   const st = useStore.getState();
   if (!list.length) return false;
   const first = list.length === 1 ? `删除会话「${list[0].title}」？` : `删除选中的 ${list.length} 个会话？`;
-  if (!(await dlg.confirm(first, { message: '会话记录会从它所属的 agent 里移除。只是不想看到的话，用「归档」。', danger: true, okLabel: '继续' }))) return false;
+  if (!(await dlg.confirm(first, { message: `${deleteSummary(list, (k) => sourceName(k as AgentKind))}。会话记录会从它所属的 agent 里移除；只是不想看到的话，用「归档」。`, danger: true, okLabel: '继续' }))) return false;
   const sources = [...new Set(list.map(agentOf))].map(sourceName).join('、');
   if (!(await dlg.confirm('再确认一次：删除后不能在这里恢复', { message: `将先备份到 ~/.claude-web/library-trash，再从 ${sources} 删除`, danger: true, okLabel: '删除' }))) return false;
   try {
     const r = await st.libraryOp('delete', { sessionIds: list.map((s) => s.sessionId) });
     const failed: { id: string; error: string }[] = r?.failed ?? [];
+    st.markDeleted(Array.isArray(r?.removed) ? r.removed : list.map((s) => s.sessionId).filter((id) => !failed.some((f) => f.id === id)));
     if (failed.length) st.toast(`${failed.length} 个会话没有删除：${failed[0].error}`);
     else st.toast(list.length === 1 ? '已删除（备份在 library-trash）' : `已删除 ${list.length} 个会话（备份在 library-trash）`, true);
     await st.refreshSessions().catch(() => {});
@@ -154,17 +124,24 @@ export function SessionMenu({ s, onClose, style, extra }: { s: SessionSummary; o
     else if (h <= a.top - 8) el.style.top = `${a.top - h - 2}px`;
     else { el.style.top = '8px'; el.style.maxHeight = `${vh - 16}px`; }
   }, [handoff]);
+  // parents pass a fresh closure every render; the listeners below must not re-subscribe for that
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
-    const onScroll = (e: Event) => { if (!ref.current?.contains(e.target as Node)) onClose(); };
+    // only a scroll that moves the anchor detaches the fixed menu from it — a streaming chat in another pane
+    // (auto-scroll to bottom) or a scrolling list elsewhere must leave it open
+    const onScroll = (e: Event) => {
+      const anchor = ref.current?.parentElement;
+      const t = e.target as Node | null;
+      if (!anchor || !t || ref.current?.contains(t)) return;
+      if (t === document || (t as Node).contains?.(anchor)) closeRef.current();
+    };
+    const k = () => closeRef.current();
     window.addEventListener('scroll', onScroll, true);
-    return () => window.removeEventListener('scroll', onScroll, true);
-  }, [onClose]);
-  useEffect(() => {
-    const k = () => onClose();
     window.addEventListener('click', k);
     window.addEventListener('contextmenu', k, true);
-    return () => { window.removeEventListener('click', k); window.removeEventListener('contextmenu', k, true); };
-  }, [onClose]);
+    return () => { window.removeEventListener('scroll', onScroll, true); window.removeEventListener('click', k); window.removeEventListener('contextmenu', k, true); };
+  }, []);
   const caps = effectiveCaps(s);
   const archived = isArchived(s, meta ? { [s.sessionId]: meta } : {});
   const cli = nativeCliCommand(s);

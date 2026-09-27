@@ -1348,3 +1348,5 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
 .load-err .why { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--ink-1); }
 .flip { transform: rotate(180deg); }
 .cmdk .it .dir { flex: none; max-width: 22%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font-size: 12px; padding: 0 6px; border-radius: var(--r-sm); background: var(--surface-2); }
+.deleted-banner { display: flex; align-items: center; gap: 6px; margin: 6px 12px 0; padding: 6px 10px; border: 1px solid color-mix(in oklab, var(--err) 40%, transparent); background: var(--err-soft); border-radius: var(--r-lg); color: var(--ink-1); font-size: var(--fs-sm); }
+.deleted-banner svg { color: var(--err); flex: none; }

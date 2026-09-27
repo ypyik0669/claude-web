@@ -29,6 +29,7 @@ export function CommandPalette() {
   const [idx, setIdx] = useState(0);
   const [hits, setHits] = useState<{ session: SessionSummary; snippet?: string }[]>([]);
   const inp = useRef<HTMLInputElement>(null);
+  const pf = useMemo(() => parseFilters(q), [q]);
   const close = () => useStore.setState({ paletteOpen: false });
 
   useEffect(() => {
@@ -38,7 +39,7 @@ export function CommandPalette() {
   // server-side full-text search (debounced) when the query is not a command prefix
   useEffect(() => {
     // `agent:` / `in:` filters go to the server too, however short the rest of the query is
-    if (!open || q.startsWith('>') || (q.trim().length < 2 && !parseFilters(q).filtered)) { setHits([]); return; }
+    if (!open || q.startsWith('>') || (q.trim().length < 2 && !pf.filtered)) { setHits([]); return; }
     let live = true; // a slower search for an older query must not replace this one's hits
     const t = setTimeout(() => ws.request<typeof hits>({ kind: 'sessions.search', query: q, limit: 20 }).then((h) => live && setHits(h)).catch(() => live && setHits([])), 200);
     return () => { live = false; clearTimeout(t); };
@@ -78,8 +79,7 @@ export function CommandPalette() {
   }, [st.panels, st.theme, st.sidebarOpen, st.showArchived, st.settings, st.sessionMeta, active?.sessionId, active?.state]);
 
   const ql = q.replace(/^>/, '').trim().toLowerCase();
-  const cmdHits = parseFilters(q).filtered ? [] : commands.filter((c) => !ql || c.label.toLowerCase().includes(ql) || c.group.toLowerCase().includes(ql));
-  const pf = parseFilters(q);
+  const cmdHits = pf.filtered ? [] : commands.filter((c) => !ql || c.label.toLowerCase().includes(ql) || c.group.toLowerCase().includes(ql));
   // local fallback (and the only list before the index exists / for filter-only queries the index cannot answer)
   const localHits = () => st.sessions.filter((s) => !s.parentId && (!pf.agent || (s.agent ?? 'claude') === pf.agent) && (!pf.cwd || (s.cwd ?? '').toLowerCase().includes(pf.cwd)) && (!pf.rest || s.title.toLowerCase().includes(pf.rest.toLowerCase()))).slice(0, pf.filtered ? 30 : 12);
   const sessHits: SessionSummary[] = q.startsWith('>') ? [] : hits.length ? hits.map((h) => h.session) : localHits();

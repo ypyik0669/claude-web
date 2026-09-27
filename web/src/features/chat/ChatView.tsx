@@ -273,6 +273,9 @@ export function ChatView() {
   const [find, setFind] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [older, setOlder] = useState<{ busy: boolean; error?: string }>({ busy: false });
+  const sidRef = useRef(active?.sessionId);
+  // the tile switched sessions: an older-page request or its error belongs to the previous one
+  useEffect(() => { sidRef.current = active?.sessionId; setOlder({ busy: false }); }, [active?.sessionId]);
   const pane = usePaneCtx();
 
   useEffect(() => {
@@ -314,9 +317,11 @@ export function ChatView() {
     setOlder({ busy: true });
     try {
       await useStore.getState().loadOlder(sid);
+      if (sidRef.current !== sid) return;
       setOlder({ busy: false });
       requestAnimationFrame(() => { if (el) el.scrollTop = t0 + (el.scrollHeight - h0); });
     } catch (e) {
+      if (sidRef.current !== sid) return;
       setOlder({ busy: false, error: e instanceof Error ? e.message : String(e) });
     }
   };

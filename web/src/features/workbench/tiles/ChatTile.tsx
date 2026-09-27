@@ -73,7 +73,9 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
   };
   // a brand-new session may not be in the list yet: the menu still works on what we know
   const summary = meta ?? { sessionId: sid, title, cwd, lastModified: Date.now(), agent: agentKind };
-  const caps = effectiveCaps(summary);
+  const gone = useStore((s) => !!s.deletedSessions[sid]);
+  // a deleted session keeps only what is on screen: nothing to fork, resume or manage any more
+  const caps = gone ? { ...effectiveCaps(summary), fork: false, resume: false, rename: false } : effectiveCaps(summary);
   const canRename = caps.rename;
   const patch = (p: Partial<ChatTileModel>) => dispatch({ t: 'tile.patch', paneId, tileId: tile.id, patch: p });
   return (
@@ -94,13 +96,13 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
       <span className="grow" />
       {caps.fork && <button className="icon-btn" title="从当前会话分叉（新标签）" onClick={() => forkSession(summary)} aria-label="分叉"><Icon name="branch" size={14} /></button>}
       <button className="icon-btn" title="导出对话为 HTML（可分享）" onClick={() => shareConversation(sid)}>↗</button>
-      <span style={{ position: 'relative' }}>
+      {!gone && <span style={{ position: 'relative' }}>
         <button className={clsx('icon-btn', menu && 'active')} title="会话菜单：引用、重命名、归档、删除、交接、原生 CLI…" aria-label="会话菜单" aria-expanded={menu} onClick={(e) => { e.stopPropagation(); setMenu(!menu); }}><Icon name="more" size={14} /></button>
         {menu && <SessionMenu s={summary} onClose={() => setMenu(false)} style={{ right: 0, top: 30 }} />}
-      </span>
+      </span>}
       {live ? (
         <button className="icon-btn" title="结束进程（可随时恢复）" onClick={() => closeSession(sid)} aria-label="结束进程"><Icon name="stop" size={13} /></button>
-      ) : caps.resume ? (
+      ) : gone ? null : caps.resume ? (
         <button className="btn sm ghost" onClick={() => openSession({ sessionId: sid, cwd }, 'none').catch((e) => toast(e.message))}><Icon name="play" size={12} /> 恢复</button>
       ) : (
         <span className="badge" title="这个来源没有官方的续聊接口，只能查看">只读</span>
@@ -155,6 +157,7 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
   const loadHistory = useStore((s) => s.loadHistory);
   const active = useStore((s) => (sid ? s.open[sid] : undefined));
   const gitStatus = useGitStatus(active?.cwd ?? '', tile.wb === 'files');
+  const deleted = useStore((s) => (sid ? !!s.deletedSessions[sid] : false));
   // restored from a persisted layout: lazily pull the transcript
   useEffect(() => {
     if (sid && !has && visible) void loadHistory(sid, { focus: false });
@@ -164,10 +167,11 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
   return (
     <div className="chat-tile">
       <SessionHeader tile={tile} paneId={paneId} />
+      {deleted && <div className="deleted-banner" role="status"><Icon name="trash" size={13} /> 这个会话已被删除（备份在 ~/.claude-web/library-trash），这里只剩最后看到的内容。</div>}
       {tile.wb === 'live' && (
         <>
           {tile.view === 'chat' ? <ChatView key={sid} /> : <TrajectoryView key={sid} />}
-          <Composer key={`c-${sid}`} />
+          <Composer key={`c-${sid}`} disabled={deleted} />
         </>
       )}
       {tile.wb === 'changes' && <div className="wb-body"><FilesPanel /></div>}

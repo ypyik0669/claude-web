@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionSummary } from '@shared';
-import { filterSessions, sourceCounts } from './filter';
+import { filterSessions, renderedRows, sourceCounts } from './filter';
 
 const s = (id: string, o: Partial<SessionSummary> = {}): SessionSummary => ({ sessionId: id, title: id, cwd: '/w', lastModified: 0, ...o });
 
@@ -49,5 +49,24 @@ describe('sourceCounts', () => {
     expect(c.codex).toBe(1);
     expect(c.claude).toBe(3);
     expect(c.opencode).toBe(1);
+  });
+});
+
+describe('renderedRows', () => {
+  const many = (p: string, n: number) => Array.from({ length: n }, (_, i) => s(`${p}${i}`));
+  it('covers only expanded groups, each cut at its page limit', () => {
+    const rows = renderedRows([
+      { key: 'a', items: many('a', 30), collapsed: false },
+      { key: 'b', items: many('b', 5), collapsed: true },
+      { key: 'c', items: many('c', 80), collapsed: false },
+    ], { c: 75 }, 25);
+    expect(rows.length).toBe(25 + 75);
+    expect(rows.some((r) => r.sessionId.startsWith('b'))).toBe(false);
+    expect(rows.map((r) => r.sessionId)).not.toContain('a25');
+  });
+
+  it('a session shown in two groups (pinned + workspace) counts once', () => {
+    const x = s('x');
+    expect(renderedRows([{ key: 'p', items: [x], collapsed: false }, { key: 'w', items: [x], collapsed: false }], {}).length).toBe(1);
   });
 });

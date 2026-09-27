@@ -9,7 +9,7 @@ import { Icon, AGENT_ICONS } from '@/ui/icons';
 import { MIME_SESSION } from '@/features/workbench/dnd';
 import { dlg } from '@/ui/dialog';
 import { isWithin } from '@/features/paths';
-import { filterSessions, isArchived, sourceCounts } from './filter';
+import { filterSessions, isArchived, renderedRows, sourceCounts } from './filter';
 import { SessionMenu, capsIntersection, deleteSessions, effectiveCaps, setArchived } from './session-actions';
 
 const PAGE_FIRST = 25;
@@ -208,8 +208,14 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     return { byWs, other: [...other.entries()].sort((a, b) => b[1][0].lastModified - a[1][0].lastModified) };
   }, [visible, workspaces, sessionMeta]);
 
-  // selection only ever holds sessions that are still listed
-  const selected = useMemo(() => visible.filter((s) => picked.has(s.sessionId)), [visible, picked]);
+  // selection (and 全选) only ever covers rows that are on screen: expanded groups, within their page limit
+  const rendered = useMemo(() => renderedRows([
+    { key: '__pinned', items: pinned, collapsed: !!collapsed.__pinned },
+    ...workspaces.map((w) => ({ key: w.id, items: grouped.byWs.get(w.id) ?? [], collapsed: !!collapsed[w.id] })),
+    ...grouped.other.map(([cwd, arr]) => ({ key: cwd, items: arr, collapsed: !!collapsed[cwd] })),
+  ], shown, PAGE_FIRST), [pinned, workspaces, grouped, collapsed, shown]);
+  const selected = useMemo(() => rendered.filter((s) => picked.has(s.sessionId)), [rendered, picked]);
+  const allOn = rendered.length > 0 && selected.length === rendered.length;
   const sel: Selection = {
     on: selecting,
     ids: picked,
@@ -267,7 +273,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
       {selecting && (
         <div className="sel-bar">
           <span className="n">已选 {selected.length}</span>
-          <button className="btn sm ghost" onClick={() => setPicked(selected.length === visible.length ? new Set() : new Set(visible.map((s) => s.sessionId)))}>{selected.length === visible.length && visible.length ? '全不选' : '全选'}</button>
+          <button className="btn sm ghost" title="只选当前显示出来的会话（展开的分组、已加载的行）" onClick={() => setPicked(allOn ? new Set() : new Set(rendered.map((s) => s.sessionId)))}>{allOn ? '全不选' : `全选 ${rendered.length}`}</button>
           <span className="grow" />
           {selCaps.archive && <button className="btn sm" onClick={async () => { await setArchived(selected, !allArchived); endSelect(); }}><Icon name="archive" size={12} /> {allArchived ? '取消归档' : '归档'}</button>}
           {selCaps.delete && <button className="btn sm danger" onClick={async () => { if (await deleteSessions(selected)) endSelect(); }}><Icon name="trash" size={12} /> 删除</button>}

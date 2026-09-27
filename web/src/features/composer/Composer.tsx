@@ -25,7 +25,7 @@ const MODEL_ALIASES = [{ value: '', label: '默认模型' }, ...modelsFor('claud
  * The composer is used in two places: inside an open session (sends to it) and on the welcome screen
  * (creates a session on first send). `welcome` mode carries its own model/mode/cwd state.
  */
-export function Composer({ welcome = false, target }: { welcome?: boolean; target?: { paneId: string; tileId: string } }) {
+export function Composer({ welcome = false, target, disabled = false }: { welcome?: boolean; target?: { paneId: string; tileId: string }; disabled?: boolean }) {
   const active = useScopedSession();
   const send = useStore((s) => s.send);
   const interrupt = useStore((s) => s.interrupt);
@@ -143,13 +143,13 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
   useEffect(() => setPalIdx(0), [slashQuery]);
 
   const busy = !welcome && !!active && (active.state === 'running' || active.state === 'waiting' || active.state === 'starting');
-  const canSend = (text.trim().length > 0 || imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0) && !starting && !upload;
+  const canSend = (text.trim().length > 0 || imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0) && !starting && !upload && !disabled;
 
   // "引用到输入框" from a session menu: only the composer of the focused pane's front tile takes it
   useEffect(() => {
     const on = (ev: Event) => {
       const d = (ev as CustomEvent<ReferenceDetail>).detail;
-      if (d.handled || !pane) return;
+      if (d.handled || !pane || disabled) return;
       const g = activeGroup(useStore.getState().layout);
       const p = g.panes[pane.paneId];
       if (g.focusedPaneId !== pane.paneId || !p || (p.activeTileId ?? p.tiles[0]?.id) !== pane.tileId) return;
@@ -160,7 +160,7 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
     };
     window.addEventListener(REFERENCE_EVENT, on);
     return () => window.removeEventListener(REFERENCE_EVENT, on);
-  }, [pane?.paneId, pane?.tileId, active?.sessionId, welcome]);
+  }, [pane?.paneId, pane?.tileId, active?.sessionId, welcome, disabled]);
   /** the typed text plus one marker per referenced session (the server expands them into briefings) */
   const withRefs = (t: string) => (refs.length ? `${t}${t ? '\n\n' : ''}${refs.map((r) => sessionRefMarker(r.id, r.title)).join('\n')}` : t);
 
@@ -384,7 +384,8 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
             ref={ta}
             rows={1}
             value={text}
-            placeholder={welcome ? '今天做点什么？（可拖入文件或文件夹）' : active?.state === 'history' ? '回复以继续这个会话…' : busy ? '运行中，输入会排队 · Esc 中断' : `回复 ${info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude'}… 输入 / 查看命令，拖入文件作为附件`}
+            disabled={disabled}
+            placeholder={disabled ? '会话已被删除，不能继续' : welcome ? '今天做点什么？（可拖入文件或文件夹）' : active?.state === 'history' ? '回复以继续这个会话…' : busy ? '运行中，输入会排队 · Esc 中断' : `回复 ${info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude'}… 输入 / 查看命令，拖入文件作为附件`}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKey}
             onPaste={onPaste}

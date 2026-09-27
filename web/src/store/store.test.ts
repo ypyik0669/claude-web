@@ -196,6 +196,17 @@ describe('session library', () => {
     expect(fake.sent.filter((r) => r.kind === 'library.sources').length).toBe(2);
   });
 
+  it('an open session that vanishes on library.changed is marked deleted — unless its source was just left', async () => {
+    useStore.setState({ deletedSessions: {}, sessions: [{ sessionId: 's1', cwd: '/w', title: 't', lastModified: 0 } as any, { sessionId: 'codex-z', cwd: '/w', title: 'z', lastModified: 0, agent: 'codex' } as any] });
+    useStore.setState((s) => ({ open: { ...s.open, 'codex-z': { ...s.open.s1, sessionId: 'codex-z' } } }));
+    fake.handlers.set('sessions.list', () => []);
+    fake.handlers.set('library.sources', () => [{ kind: 'codex', name: 'Codex', installed: true, detected: true, joined: false, dismissed: false, enabled: false }]);
+    emit({ kind: 'library.changed' });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(useStore.getState().deletedSessions).toEqual({ s1: true });
+  });
+
   it('a failed history load keeps the reason in loadError (the chat shows it with a retry)', async () => {
     useStore.setState({ sessions: [{ sessionId: 'codex-e', cwd: '/w', title: 'c', lastModified: 0, agent: 'codex' } as any], open: {} });
     fake.handlers.set('library.read', () => Promise.reject(new Error('thread not found')));
