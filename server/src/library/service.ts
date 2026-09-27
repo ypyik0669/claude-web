@@ -17,6 +17,7 @@ import { libraryId, parseLibraryId } from './ids.js';
 import type { SessionSource } from './types.js';
 
 const LIST_TTL_MS = 60_000;
+const LIST_TIMEOUT_MS = 20_000; // per source, per list() — see bounded()
 const PAGE = 100; // Codex thread/list page size (and everyone else's)
 const MAX_PAGES = 500;
 const READ_PAGE = 50;
@@ -38,6 +39,8 @@ export interface LibraryOptions {
   /** Data dirs whose existence counts as "detected". Defaults: codex ~/.codex/sessions, opencode ~/.local/share/opencode. */
   dataDirs?: Partial<Record<AgentKind, string[]>>;
   trashDir?: string;
+  /** Per-source list timeout (default 20 s); tests shorten it. */
+  listTimeoutMs?: number;
 }
 
 interface Resolved { kind: AgentKind; nativeId?: string; source?: SessionSource; head: Head | null }
@@ -154,7 +157,29 @@ export class LibraryService extends EventEmitter {
     if (running && running.gen === gen) return running.p;
     const p = this.fetchSource(src, gen).finally(() => { if (this.fetching.get(src.kind)?.p === p) this.fetching.delete(src.kind); });
     this.fetching.set(src.kind, { gen, p });
-    return p;
+    return this.bounded(src.kind, p);
+  }
+
+  /**
+   * One slow source must never stall the merged list: past `listTimeoutMs` the caller gets the last
+   * good items and the source shows an error, like a failure. The fetch itself keeps running (and
+   * stays the shared in-flight one, so no duplicate starts); when it lands it caches normally and
+   * 'changed' tells clients to re-list.
+   */
+  private bounded(kind: AgentKind, p: Promise<SessionSummary[]>): Promise<SessionSummary[]> {
+    const ms = this.opts.listTimeoutMs ?? LIST_TIMEOUT_MS;
+    let timedOut = false;
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<SessionSummary[]>((res) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        this.errors.set(kind, `列出会话超时（${Math.round(ms / 1000)} 秒），后台仍在读取`);
+        res(this.perKind.get(kind)?.items ?? []);
+      }, ms);
+      timer.unref?.();
+    });
+    p.then(() => { if (timedOut) this.emit('changed'); }, () => {});
+    return Promise.race([p.finally(() => clearTimeout(timer)), late]);
   }
 
   private genOf(kind: AgentKind) { return this.allGen * 1_000_000 + (this.gens.get(kind) ?? 0); }
@@ -205,14 +230,31 @@ export class LibraryService extends EventEmitter {
       }
     }
     this.byId = new Map(out);
-    // forks / resumed children fold under their parent (an orphan stays visible)
-    for (const [id, s] of out) {
-      if (!s.parentId) continue;
-      const pid = alias.get(s.parentId) ?? s.parentId;
-      const parent = out.get(pid);
-      if (!parent || pid === id) continue;
-      out.set(pid, { ...parent, childCount: (parent.childCount ?? 0) + 1 });
+    // forks / resumed children / sub-agents fold under their top-level ancestor, transitively (a
+    // sub-agent spawned by a sub-agent folds under the root, and childCount counts every descendant);
+    // an orphan — its parent isn't listed — stays visible, as does anything in a parent cycle
+    const all = new Map(out);
+    const rootOf = (id: string): string => {
+      let cur = id;
+      const seen = new Set<string>([cur]);
+      for (;;) {
+        const p = all.get(cur)?.parentId;
+        const pid = p ? alias.get(p) ?? p : undefined;
+        if (!pid || !all.has(pid) || seen.has(pid)) return cur;
+        seen.add(pid);
+        cur = pid;
+      }
+    };
+    const kids = new Map<string, number>();
+    for (const id of all.keys()) {
+      const root = rootOf(id);
+      if (root === id) continue;
+      kids.set(root, (kids.get(root) ?? 0) + 1);
       out.delete(id);
+    }
+    for (const [root, n] of kids) {
+      const r = out.get(root);
+      if (r) out.set(root, { ...r, childCount: (r.childCount ?? 0) + n });
     }
     return [...out.values()].sort((a, b) => b.lastModified - a.lastModified);
   }

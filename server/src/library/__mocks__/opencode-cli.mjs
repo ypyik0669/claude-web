@@ -12,6 +12,9 @@ if (argv[0] === 'serve') {
   const delay = Number(process.env.FAKE_SERVE_DELAY_MS ?? '0');
   setTimeout(() => { process.stdout.write('opencode server listening on http://127.0.0.1:65530\n'); }, delay);
   setInterval(() => {}, 1000); // stay alive until the test kills us, like the real server would
+} else if (argv[0] === 'session' && argv[1] === '--help' && process.env.FAKE_HELP_HANG_MS) {
+  // a probe that hangs (then gives up on its own, so no stray process outlives the test run)
+  setTimeout(() => process.exit(0), Number(process.env.FAKE_HELP_HANG_MS));
 } else if (argv[0] === 'session' && argv[1] === '--help') {
   const lines = [
     'opencode session',

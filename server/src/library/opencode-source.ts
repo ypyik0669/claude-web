@@ -37,6 +37,7 @@ const PORT_RE = /https?:\/\/127\.0\.0\.1:(\d+)/;
 const IDLE_MS = 300_000; // 5 min — library-only process, never shared with a live chat session
 const START_TIMEOUT_MS = 30_000;
 const HELP_TIMEOUT_MS = 60_000;
+const CAPS_RETRY_MS = 300_000; // no new `session --help` probe within 5 min of a failed one
 const DELETE_TIMEOUT_MS = 30_000;
 
 interface Proc {
@@ -64,13 +65,15 @@ export class OpenCodeSource implements SessionSource {
   private proc: Proc | null = null;
   private starting: Promise<Proc> | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
-  /** One probe shared by concurrent callers; dropped after a failure so the next call retries. */
+  /** The in-flight `session --help` probe (never awaited by list/read/status). */
   private capsProbe: Promise<void> | null = null;
+  private capsKnown = false;
+  private capsFailedAt = 0;
   private gen = 0; // bumped by close() to invalidate any spawnProc() still in flight
 
   constructor(
     private readonly getLaunch: () => { command: string; env: Record<string, string> },
-    private readonly opts: { baseUrl?: string } = {},
+    private readonly opts: { baseUrl?: string; capsRetryMs?: number } = {},
   ) {}
 
   private clearIdle() {
@@ -138,12 +141,19 @@ export class OpenCodeSource implements SessionSource {
 
   /** `<command> session --help` lists every session subcommand; `delete` is real iff it's in there. */
   // Real machine: `opencode session --help` takes ~10 s cold on Windows (cmd shim → node → opencode.exe)
-  // and longer while `opencode serve` is starting next to it, so the old 15 s one-shot probe timed out
-  // and pinned delete:false for the life of the process. Now: a longer timeout, one probe shared by
-  // concurrent callers, and a retry on the next call after a failure.
-  private probeCaps(): Promise<void> {
-    if (!this.capsProbe) this.capsProbe = this.runCapsProbe();
-    return this.capsProbe;
+  // and longer while `opencode serve` is starting next to it, so a 15 s one-shot probe timed out and
+  // pinned delete:false for the life of the process. So: started in the background and never awaited
+  // (list/read/status use the caps known so far — delete:false until proven), a 60 s timeout, one
+  // probe at a time, and after a failure no retry for `capsRetryMs` (5 min).
+  private probeCaps(): void {
+    if (this.capsKnown || this.capsProbe) return;
+    if (this.capsFailedAt && Date.now() - this.capsFailedAt < (this.opts.capsRetryMs ?? CAPS_RETRY_MS)) return;
+    this.capsProbe = this.runCapsProbe().finally(() => { this.capsProbe = null; });
+  }
+
+  /** Settles when the probe in flight (if any) does — for tests and callers that want settled caps. */
+  whenCapsProbed(): Promise<void> {
+    return this.capsProbe ?? Promise.resolve();
   }
 
   private async runCapsProbe(): Promise<void> {
@@ -153,8 +163,9 @@ export class OpenCodeSource implements SessionSource {
       const { stdout, stderr } = await execFileAsync(r.command, r.args, { windowsHide: true, timeout: HELP_TIMEOUT_MS, env: { ...process.env, ...l.env, ...r.env }, windowsVerbatimArguments: r.via === 'cmd' });
       const text = `${stdout}${stderr}`;
       this.caps = { ...this.caps, delete: /\bdelete\b/.test(text) };
+      this.capsKnown = true;
     } catch {
-      this.capsProbe = null; // keep the conservative default (delete: false) for now; retry next call
+      this.capsFailedAt = Date.now(); // keep the conservative default (delete: false); back off
     }
   }
 
@@ -162,7 +173,7 @@ export class OpenCodeSource implements SessionSource {
     const base = { kind: this.kind, name: 'OpenCode', joined: false, dismissed: false };
     try {
       await this.ensure();
-      await this.probeCaps();
+      this.probeCaps();
       this.armIdle();
       return { ...base, installed: true, detected: true, enabled: true };
     } catch (e: any) {
@@ -189,15 +200,24 @@ export class OpenCodeSource implements SessionSource {
     const projects: any[] = pr.ok ? await pr.json().catch(() => []) : [];
     const dirs = Array.isArray(projects) ? projects.map((x) => x?.worktree).filter((d): d is string => typeof d === 'string' && d.length > 0) : [];
     if (!dirs.length) return one();
+    // one project's failure (e.g. a worktree that no longer exists) must not hide every other project;
+    // only when every directory fails is it a source failure
     const byId = new Map<string, any>();
-    for (const d of dirs) for (const s of await one(d)) if (s?.id && !byId.has(s.id)) byId.set(s.id, s);
+    let lastErr: unknown;
+    let ok = 0;
+    for (const d of dirs) {
+      let got: any[];
+      try { got = await one(d); ok++; } catch (e) { lastErr = e; continue; }
+      for (const s of got) if (s?.id && !byId.has(s.id)) byId.set(s.id, s);
+    }
+    if (!ok) throw lastErr;
     return [...byId.values()];
   }
 
   async list(o: { cursor?: string; limit: number; archived?: boolean }): Promise<{ items: SessionSummary[]; next?: string }> {
     try {
       const p = await this.ensure();
-      await this.probeCaps();
+      this.probeCaps();
       this.armIdle();
       const all = await this.fetchSessions(p.baseUrl);
       all.sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
@@ -216,7 +236,7 @@ export class OpenCodeSource implements SessionSource {
   async read(nativeId: string, o: { cursor?: string; limit: number }): Promise<{ messages: any[]; next?: string }> {
     try {
       const p = await this.ensure();
-      await this.probeCaps();
+      this.probeCaps();
       this.armIdle();
       const res = await fetch(`${p.baseUrl}/session/${nativeId}/message`);
       if (!res.ok) throw new Error(`opencode serve GET /session/${nativeId}/message：HTTP ${res.status}`);

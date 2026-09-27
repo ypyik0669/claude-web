@@ -57,7 +57,8 @@ function startMock() {
   });
 }
 
-describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', () => {
+// these tests spawn the .cmd fake CLI (cmd.exe → node), slow under a loaded full-suite run
+describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', { timeout: 20_000 }, () => {
   let sources: OpenCodeSource[] = [];
   let mocks: { close: () => Promise<void> }[] = [];
   let tmpFiles: string[] = [];
@@ -193,6 +194,7 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', () => {
 
     const status = await src.status();
     expect(status.enabled).toBe(true);
+    await src.whenCapsProbed(); // the probe runs in the background; status() doesn't wait for it
     expect(src.caps).toEqual({ resume: true, rename: false, archive: false, delete: true, fork: false });
 
     await src.remove('ses-a');
@@ -206,6 +208,7 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', () => {
 
     const status = await src.status();
     expect(status.enabled).toBe(true);
+    await src.whenCapsProbed();
     expect(src.caps.delete).toBe(false);
     expect(src.caps.rename).toBe(false);
     expect((src as any).rename).toBeUndefined();
@@ -228,15 +231,57 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', () => {
     expect((await src.read('ses-a', { limit: 10 })).messages).toEqual([]);
   });
 
-  it('a failed `session --help` probe is retried on the next list()', async () => {
+  it('a failed `session --help` probe backs off, then is retried', async () => {
     const mock = await startMock();
     mocks.push(mock);
     let launch = { command: path.join(here, '__mocks__', 'no-such-opencode.cmd'), env: {} as Record<string, string> };
-    const src = new OpenCodeSource(() => launch, { baseUrl: mock.baseUrl });
+    let retryMs = 300_000;
+    const src = new OpenCodeSource(() => launch, { baseUrl: mock.baseUrl, get capsRetryMs() { return retryMs; } });
     sources.push(src);
     expect((await src.list({ limit: 10 })).items[0].caps?.delete).toBe(false);
+    await src.whenCapsProbed();
     launch = { command: fakeCli, env: { FAKE_HAS_DELETE: '1' } };
+    // within the back-off window: no new probe
+    await src.list({ limit: 10 });
+    await src.whenCapsProbed();
+    expect(src.caps.delete).toBe(false);
+    retryMs = 0;
+    await src.list({ limit: 10 });
+    await src.whenCapsProbed();
     expect((await src.list({ limit: 10 })).items[0].caps?.delete).toBe(true);
+  });
+
+  it('a hanging `session --help` never delays list(): caps stay delete:false meanwhile', async () => {
+    const mock = await startMock();
+    mocks.push(mock);
+    const src = new OpenCodeSource(() => ({ command: fakeCli, env: { FAKE_HAS_DELETE: '1', FAKE_HELP_HANG_MS: '4000' } }), { baseUrl: mock.baseUrl });
+    sources.push(src);
+    const t0 = Date.now();
+    const { items } = await src.list({ limit: 10 });
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(items[0].caps?.delete).toBe(false);
+    expect((await src.status()).enabled).toBe(true);
+    expect(Date.now() - t0).toBeLessThan(2500);
+  });
+
+  it('one project failing its GET /session does not hide the others; all failing rejects', async () => {
+    let failAll = false;
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      res.setHeader('content-type', 'application/json');
+      if (url.pathname === '/project') { res.end(JSON.stringify([{ id: 'gone', worktree: '/gone' }, { id: 'global', worktree: '/' }])); return; }
+      const dir = decodeURIComponent(String(req.headers['x-opencode-directory'] ?? ''));
+      if (url.pathname === '/session' && dir === '/' && !failAll) { res.end(JSON.stringify([SESSIONS[0]])); return; }
+      res.writeHead(500); res.end('boom');
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    mocks.push({ close: () => new Promise((r) => server.close(() => r())) });
+    const addr = server.address() as { port: number };
+    const src = new OpenCodeSource(() => ({ command: fakeCli, env: { FAKE_HAS_DELETE: '0' } }), { baseUrl: `http://127.0.0.1:${addr.port}` });
+    sources.push(src);
+    expect((await src.list({ limit: 10 })).items.map((s) => s.sessionId)).toEqual([libraryId('opencode', 'ses-a')]);
+    failAll = true;
+    await expect(src.list({ limit: 10 })).rejects.toThrow(/500/);
   });
 
   it('lists every project: GET /project, then GET /session per worktree via x-opencode-directory', async () => {

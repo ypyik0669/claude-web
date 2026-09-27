@@ -7,9 +7,11 @@ import { libraryId } from './ids.js';
 import { LazyRpc } from './lazy-rpc.js';
 import { isNotInstalled, type SessionSource } from './types.js';
 
-// Real machine (codex 0.155): thread/list without `modelProviders` returns only the *current* provider's
-// threads (399 of 690 here — everything recorded under an older relay was missing); `[]` means every provider.
 const SOURCE_KINDS = ['cli', 'vscode', 'exec', 'appServer', 'subAgent', 'subAgentReview', 'subAgentCompact', 'subAgentThreadSpawn', 'subAgentOther'];
+// Shared by status() and list(). Real machine (codex 0.155): thread/list without `modelProviders`
+// returns only the *current* provider's threads (399 of 690 here — everything recorded under an older
+// relay was missing); `[]` means every provider (ThreadListParams in generate-ts).
+const LIST_PARAMS = { sortKey: 'updated_at', sortDirection: 'desc', sourceKinds: SOURCE_KINDS, modelProviders: [] as string[] };
 
 const CAPS: SourceCaps = { resume: true, rename: true, archive: true, delete: true, fork: true };
 
@@ -36,6 +38,7 @@ function parentOf(t: any): string | undefined {
 }
 
 function mapThread(t: any): SessionSummary {
+  const parent = parentOf(t);
   return {
     sessionId: libraryId('codex', t.id),
     title: t.name || (t.preview ?? '').slice(0, 80),
@@ -44,7 +47,7 @@ function mapThread(t: any): SessionSummary {
     lastModified: (t.updatedAt ?? 0) * 1000,
     createdAt: (t.createdAt ?? 0) * 1000,
     source: sourceTypeName(t.source),
-    parentId: parentOf(t) ? libraryId('codex', parentOf(t)!) : undefined,
+    parentId: parent ? libraryId('codex', parent) : undefined,
     gitBranch: t.gitInfo?.branch,
     agent: 'codex' as AgentKind,
     caps: CAPS,
@@ -75,7 +78,7 @@ export class CodexSource implements SessionSource {
   async status(): Promise<SourceStatus> {
     const base = { kind: this.kind, name: 'Codex', joined: false, dismissed: false };
     try {
-      await this.rpc.request('thread/list', { sortKey: 'updated_at', sortDirection: 'desc', limit: 1, archived: false, sourceKinds: SOURCE_KINDS, modelProviders: [] }, 15_000);
+      await this.rpc.request('thread/list', { ...LIST_PARAMS, limit: 1, archived: false }, 15_000);
       return { ...base, installed: true, detected: true, enabled: true, version: this.version };
     } catch (e: any) {
       if (e?.code === -32601) {
@@ -89,7 +92,7 @@ export class CodexSource implements SessionSource {
 
   async list(o: { cursor?: string; limit: number; archived?: boolean }): Promise<{ items: SessionSummary[]; next?: string }> {
     try {
-      const r = await this.rpc.request<any>('thread/list', { sortKey: 'updated_at', sortDirection: 'desc', limit: o.limit, cursor: o.cursor, archived: o.archived ?? false, sourceKinds: SOURCE_KINDS, modelProviders: [] }, 30_000);
+      const r = await this.rpc.request<any>('thread/list', { ...LIST_PARAMS, limit: o.limit, cursor: o.cursor, archived: o.archived ?? false }, 30_000);
       // ThreadListResponse / ThreadTurnsListResponse (generate-ts) are `{ data, nextCursor, backwardsCursor }`
       const items = (r?.data ?? []).map(mapThread);
       return { items, next: r?.nextCursor ?? undefined };

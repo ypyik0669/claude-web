@@ -174,6 +174,47 @@ describe('LibraryService', () => {
     expect(index.indexedAt('codex-t1')).toBeUndefined();
   });
 
+  it('a source whose list never settles times out: others still list, it reports an error', async () => {
+    lib.dispose();
+    lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents(['codex']), dataDirs: {}, trashDir: path.join(dir, 'library-trash'), listTimeoutMs: 50 });
+    codex.list.mockImplementation(() => new Promise(() => {}));
+    await lib.join('codex', true);
+    const t0 = Date.now();
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'c1']);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    const st = (await lib.sources()).find((s) => s.kind === 'codex');
+    expect(st?.error).toMatch(/超时/);
+  });
+
+  it('a timed-out fetch that lands later is cached and announced', async () => {
+    lib.dispose();
+    lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents(['codex']), dataDirs: {}, trashDir: path.join(dir, 'library-trash'), listTimeoutMs: 50 });
+    (codex as any).caps = { ...ALL, archive: false };
+    let release!: () => void;
+    codex.list.mockImplementation(() => new Promise((r) => { release = () => r({ items: codex.items }); }));
+    await lib.join('codex', true);
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'c1']);
+    const changed = new Promise<void>((r) => lib.once('changed', () => r()));
+    release();
+    await changed;
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'codex-t1', 'c1']);
+    expect((await lib.sources()).find((s) => s.kind === 'codex')?.error).toBeUndefined();
+  });
+
+  it('nested sub-agents fold transitively under the top-level ancestor', async () => {
+    codex.items = [
+      item('codex-root', 'codex', 200),
+      item('codex-kid', 'codex', 210, { parentId: 'codex-root' }),
+      item('codex-grandkid', 'codex', 220, { parentId: 'codex-kid' }),
+      item('codex-orphan', 'codex', 230, { parentId: 'codex-missing' }),
+    ];
+    await lib.join('codex', true);
+    const list = await lib.list();
+    expect(list.map((s) => s.sessionId)).toEqual(['c2', 'codex-orphan', 'codex-root', 'c1']);
+    expect(list.find((s) => s.sessionId === 'codex-root')?.childCount).toBe(2);
+    expect(list.find((s) => s.sessionId === 'codex-orphan')?.childCount).toBeUndefined();
+  });
+
   it('refreshIndex stamps indexedAt on a joined source with no sessions, not on a failed one', async () => {
     claude.items = [];
     codex.list.mockRejectedValue(new Error('app-server crashed'));
