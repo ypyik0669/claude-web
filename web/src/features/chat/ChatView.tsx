@@ -3,6 +3,8 @@ import type { AssistantItem, Block, Item, ToolUseBlock, UserItem } from '@/model
 import { ERROR_HINT, ERROR_LABEL } from '@/model/health';
 import { fmtSize } from '@/model/attachments';
 import { useScopedSession, useScopedSessionId, useStore } from '@/store';
+import { usePaneCtx } from '@/store/paneContext';
+import { activeGroup } from '@/model/layout';
 import { clsx, fmtMs, fmtTok, fmtUsd } from '@/util';
 import { AssistantActions, UserActions, UserEditor } from './MessageActions';
 import { FindBar } from './FindBar';
@@ -145,7 +147,9 @@ const Assistant = memo(function Assistant({ it, version, live }: { it: Assistant
         if (s.kind === 'text') return <div key={idx} className={clsx(it.streaming && idx === segs.length - 1 && 'cursor')}><Markdown text={(s.b as any).text} streaming={it.streaming && idx === segs.length - 1} /></div>;
         if (s.kind === 'thinking') return <Thinking key={idx} text={(s.b as any).thinking} redacted={(s.b as any).redacted} streaming={it.streaming && idx === segs.length - 1} />;
         if (s.kind === 'agent') return <ToolCard key={s.t.id} t={s.t} version={version} />;
-        return <Steps key={idx} tools={s.tools} version={version} live={live} />;
+        // keyed by its first tool, not its position: a leading empty text/thinking segment drops out once more
+        // blocks arrive, which would shift indices and remount the trail (losing which step was expanded)
+        return <Steps key={`steps-${s.tools[0].id}`} tools={s.tools} version={version} live={live} />;
       })}
       {it.error && <div style={{ color: 'var(--red)', fontSize: 12.5 }}>{it.error}</div>}
     </div>
@@ -249,6 +253,7 @@ export function ChatView() {
   const version = active?.version ?? 0;
   const [find, setFind] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
+  const pane = usePaneCtx();
 
   useEffect(() => {
     const el = ref.current;
@@ -257,11 +262,20 @@ export function ChatView() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && !e.shiftKey && !e.altKey) { e.preventDefault(); setFind(true); }
+      if (!((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f' && !e.shiftKey && !e.altKey)) return;
+      // every pane (and every background tab in a pane) keeps its ChatView mounted: only the one the user is
+      // looking at — the focused pane's active tile — may open its find bar
+      if (pane) {
+        const g = activeGroup(useStore.getState().layout);
+        const p = g.panes[pane.paneId];
+        if (g.focusedPaneId !== pane.paneId || !p || (p.activeTileId ?? p.tiles[0]?.id) !== pane.tileId) return;
+      }
+      e.preventDefault();
+      setFind(true);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [pane?.paneId, pane?.tileId]);
 
   if (!active) return null;
   const onScroll = () => {
@@ -276,7 +290,7 @@ export function ChatView() {
     <div className="chat" ref={ref} onScroll={onScroll}>
       <FindBar open={find} onClose={() => setFind(false)} root={() => ref.current} />
       {!atBottom && <button className="jump-bottom" title="回到底部" onClick={() => { const el = ref.current!; el.scrollTop = el.scrollHeight; stick.current = true; }} aria-label="回到底部"><Icon name="chevronDown" size={16} /></button>}
-      <div className="chat-inner">
+      <div className="chat-inner" data-session-id={active.sessionId}>
         {active.loading && <div className="sysline"><span className="spinner" /> 加载历史…</div>}
         <ItemList items={active.conv.items} version={version} live={live} />
         {active.error && <div className="sysline" style={{ color: 'var(--red)' }}>{active.error}</div>}

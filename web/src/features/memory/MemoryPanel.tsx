@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ws } from '@/ws/client';
 import { useStore, useScopedSession } from '@/store';
 import { clsx, ago } from '@/util';
@@ -43,16 +43,19 @@ export function MemoryPanel() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
+  const seq = useRef(0); // search-as-you-type: an older query's slower answer must not win
   const load = async () => {
+    const n = ++seq.current;
     try {
       const [list, st] = await Promise.all([
         ws.request<MemoryItem[]>({ kind: 'memory.search', query: q.trim() || undefined, scope: scope || undefined, kind_: kind || undefined, cwd, sessionId: active?.sessionId, limit: 200 }),
         ws.request<{ total: number; byScope: Record<string, number> }>({ kind: 'memory.stats' }),
       ]);
+      if (n !== seq.current) return;
       setRows(list);
       setStats(st);
       setErr('');
-    } catch (e: any) { setErr(e.message); }
+    } catch (e: any) { if (n === seq.current) setErr(e.message); }
   };
   useEffect(() => { void load(); }, [q, scope, kind, cwd, active?.sessionId]);
   useEffect(() => {

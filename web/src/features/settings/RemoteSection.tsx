@@ -86,7 +86,9 @@ function HostsSection() {
   const save = async () => {
     if (!editing) return;
     if (!editing.target.trim()) { toast('需要 user@host'); return; }
-    await ws.request({ kind: 'remote.hosts.set', host: { ...editing, name: editing.name.trim() || editing.target, remotePort: Number(editing.remotePort) || 3090, sshPort: Number(editing.sshPort) || undefined } });
+    try {
+      await ws.request({ kind: 'remote.hosts.set', host: { ...editing, name: editing.name.trim() || editing.target, remotePort: Number(editing.remotePort) || 3090, sshPort: Number(editing.sshPort) || undefined } });
+    } catch (e: any) { toast(e.message); return; }
     setEditing(null);
     void load();
   };
@@ -94,7 +96,8 @@ function HostsSection() {
     setBusy(h.id);
     try {
       const t = await ws.request<TunnelInfo>({ kind: 'tunnel.open', hostId: h.id });
-      if (t.state === 'up') { if (desktop?.newWindow) await (desktop as any).openExternal?.(t.url) ?? window.open(t.url, '_blank'); else window.open(t.url, '_blank'); }
+      // openExternal resolves to undefined, so the old `await openExternal() ?? window.open()` opened it twice
+      if (t.state === 'up') { if (desktop?.openExternal) await desktop.openExternal(t.url); else window.open(t.url, '_blank'); }
       else toast(t.error || '连接失败');
     } catch (e: any) { toast(e.message); } finally { setBusy(null); void load(); }
   };

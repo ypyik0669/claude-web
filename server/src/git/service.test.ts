@@ -1,5 +1,8 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { classifyGitError } from './service.js';
+import { classifyGitError, parseStatusV2z, resolveGitDir } from './service.js';
 
 describe('classifyGitError', () => {
   const cases: [string, string][] = [
@@ -24,5 +27,49 @@ describe('classifyGitError', () => {
     const e = classifyGitError('line1\nline2\nfatal: The current branch x has no upstream branch.');
     expect(e.message).toContain('no upstream');
     expect(e.hint).toContain('push -u');
+  });
+});
+
+describe('porcelain v2 -z', () => {
+  it('parses branch headers, renames (origPath is its own field), conflicts, untracked and odd names', () => {
+    const out = [
+      '# branch.oid 0123', '# branch.head main', '# branch.upstream origin/main', '# branch.ab +2 -1',
+      '1 .M N... 100644 100644 100644 aaa bbb dir/with space.ts',
+      '2 R. N... 100644 100644 100644 aaa bbb R100 new name.ts', 'old\tname.ts',
+      'u UU N... 100644 100644 100644 100644 a b c conflict.ts',
+      '? quote"and\slash.txt',
+      '',
+    ].join('\0');
+    const st: any = { branch: null, upstream: null, ahead: 0, behind: 0, detached: false, files: [] };
+    parseStatusV2z(out, st);
+    expect(st).toMatchObject({ branch: 'main', upstream: 'origin/main', ahead: 2, behind: 1, detached: false });
+    expect(st.files).toEqual([
+      { path: 'dir/with space.ts', from: undefined, status: 'modified', staged: false, unstaged: true },
+      { path: 'new name.ts', from: 'old\tname.ts', status: 'renamed', staged: true, unstaged: false },
+      { path: 'conflict.ts', status: 'conflict', staged: false, unstaged: true },
+      { path: 'quote"and\slash.txt', status: 'untracked', staged: false, unstaged: true },
+    ]);
+  });
+
+  it('detached head', () => {
+    const st: any = { branch: 'x', upstream: null, ahead: 0, behind: 0, detached: false, files: [] };
+    parseStatusV2z('# branch.head (detached)\0', st);
+    expect(st.branch).toBeNull();
+    expect(st.detached).toBe(true);
+  });
+});
+
+describe('resolveGitDir', () => {
+  it('follows a relative `gitdir:` file (submodules) relative to the worktree, not process.cwd()', async () => {
+    const base = await fs.mkdtemp(path.join(os.tmpdir(), 'cw-gitdir-'));
+    try {
+      const wt = path.join(base, 'sub');
+      await fs.mkdir(wt, { recursive: true });
+      await fs.writeFile(path.join(wt, '.git'), 'gitdir: ../.git/modules/sub\n');
+      expect(await resolveGitDir(wt)).toBe(path.join(base, '.git', 'modules', 'sub'));
+      expect(await resolveGitDir(base)).toBe(path.join(base, '.git'));
+    } finally {
+      await fs.rm(base, { recursive: true, force: true });
+    }
   });
 });

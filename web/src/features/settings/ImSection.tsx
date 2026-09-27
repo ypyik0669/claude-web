@@ -18,7 +18,11 @@ function GatewayCard({ g, def, onChange }: { g: ImGatewayInfo; def: ImKindDef; o
   const [busy, setBusy] = useState(false);
   const [pair, setPair] = useState<{ code: string; expiresAt: number } | null>(g.pairCode ? { code: g.pairCode, expiresAt: g.pairExpiresAt } : null);
   const [, tick] = useState(0);
-  useEffect(() => { setF({ ...g.config }); setName(g.name); if (g.pairCode) setPair({ code: g.pairCode, expiresAt: g.pairExpiresAt }); }, [g]);
+  // `im.changed` fires on every connection state change and hands us a new `g`; only reset the form
+  // when the saved name / config actually changed, or typing a token gets wiped mid-way
+  const savedKey = JSON.stringify([g.name, g.config]);
+  useEffect(() => { setF({ ...g.config }); setName(g.name); }, [savedKey]);
+  useEffect(() => { if (g.pairCode) setPair({ code: g.pairCode, expiresAt: g.pairExpiresAt }); }, [g.pairCode, g.pairExpiresAt]);
   useEffect(() => { if (!pair) return; const i = setInterval(() => tick((x) => x + 1), 1000); return () => clearInterval(i); }, [pair]);
   const patch = async (p: any) => { setBusy(true); try { await ws.request({ kind: 'im.set', id: g.id, patch: p }); onChange(); } catch (e: any) { toast(e.message); } finally { setBusy(false); } };
   const save = () => patch({ name, config: f });
@@ -58,14 +62,14 @@ function GatewayCard({ g, def, onChange }: { g: ImGatewayInfo; def: ImKindDef; o
                 <span className="sub">在 IM 里给机器人发 <code>/pair 配对码</code> 即可加入</span>
                 <span className="grow" />
                 <label className="chip" title="危险：任何能和机器人说话的人都能操作"><input type="checkbox" checked={g.openAccess} onChange={(e) => patch({ openAccess: e.target.checked })} /> 不限制用户</label>
-                <button className="btn sm" onClick={async () => setPair(await ws.request({ kind: 'im.pairCode', id: g.id }))}>生成配对码</button>
+                <button className="btn sm" onClick={async () => { try { setPair(await ws.request({ kind: 'im.pairCode', id: g.id })); } catch (e: any) { toast(e.message); } }}>生成配对码</button>
               </div>
               {pair && left > 0 && <div style={{ marginTop: 6 }}><span className="pair-code" style={{ fontSize: 22 }}>{pair.code}</span> <span className="sub">{left}s 后失效 · 发送 <code>/pair {pair.code}</code></span></div>}
               <div className="chips" style={{ marginTop: 6 }}>
                 {g.allowUsers.map((u) => <span key={u} className="chip">{g.allowNames?.[u] ?? u} <button className="x" title="移除" onClick={() => patch({ allowUsers: g.allowUsers.filter((x) => x !== u) })}>×</button></span>)}
                 {g.allowUsers.length === 0 && <span className="sub">还没有授权用户</span>}
               </div>
-              {g.bindings.length > 0 && <div className="sub" style={{ marginTop: 6 }}>聊天绑定：{g.bindings.map((b) => <span key={b.chatId} className="chip" style={{ marginRight: 4 }}>{b.chatId} → {b.sessionId.slice(0, 8)} <button className="x" onClick={() => ws.request({ kind: 'im.unbind', gatewayId: g.id, chatId: b.chatId }).then(onChange)}>×</button></span>)}</div>}
+              {g.bindings.length > 0 && <div className="sub" style={{ marginTop: 6 }}>聊天绑定：{g.bindings.map((b) => <span key={b.chatId} className="chip" style={{ marginRight: 4 }}>{b.chatId} → {b.sessionId.slice(0, 8)} <button className="x" onClick={() => ws.request({ kind: 'im.unbind', gatewayId: g.id, chatId: b.chatId }).then(onChange).catch((e) => toast(e.message))}>×</button></span>)}</div>}
             </div>
           )}
         </div>

@@ -58,7 +58,10 @@ export class CanonicalLog {
     await fs.mkdir(this.dir, { recursive: true });
     if (await this.exists(sessionId)) return;
     const head: Head = { type: 'cw.canonical', sessionId, createdAt: Date.now(), cwd };
-    await fs.writeFile(this.file(sessionId), `${JSON.stringify(head)}\n`, 'utf8');
+    // 'wx': two opens of the same session racing past exists() must not truncate what the first one appended
+    await fs.writeFile(this.file(sessionId), `${JSON.stringify(head)}\n`, { encoding: 'utf8', flag: 'wx' }).catch((e) => {
+      if (e?.code !== 'EEXIST') throw e;
+    });
   }
 
   async exists(sessionId: string) {
@@ -72,8 +75,17 @@ export class CanonicalLog {
       .then(async () => {
         if (await this.exists(sessionId)) await fs.appendFile(this.file(sessionId), line, 'utf8');
       })
-      .catch(() => { /* a broken mirror must never break the session */ });
+      .catch(() => { /* a broken mirror must never break the session */ })
+      .finally(() => {
+        // one entry per session ever opened would otherwise accumulate for the life of the server
+        if (this.writers.get(sessionId) === next) this.writers.delete(sessionId);
+      });
     this.writers.set(sessionId, next);
+  }
+
+  /** Resolves once every write queued so far for this session has landed (or been dropped). */
+  async settled(sessionId: string) {
+    await this.writers.get(sessionId);
   }
 
   /** Record an explicit marker (agent / provider switch). */

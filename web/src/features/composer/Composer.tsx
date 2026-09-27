@@ -8,6 +8,7 @@ import { compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachm
 import { StatusStrip } from '@/features/chat/StatusStrip';
 import { RunCard } from '@/features/chat/RunCard';
 import { ContextRow } from './ContextRow';
+import { attachmentFolderPath } from '@/features/paths';
 import { Icon } from '@/ui/icons';
 import { CATALOG, effortLevels, modelsFor } from '@catalog';
 
@@ -153,7 +154,7 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
       const r = await uploadAttachment(sessionId, f.file, f.rel);
       const top = f.rel.includes('/') ? f.rel.split('/')[0] : null;
       if (top) {
-        if (!folders.has(top)) { folders.add(top); out.push({ kind: 'folder', name: top, path: r.path.slice(0, r.path.replace(/\\/g, '/').indexOf(top) + top.length), size: undefined }); }
+        if (!folders.has(top)) { folders.add(top); out.push({ kind: 'folder', name: top, path: attachmentFolderPath(r.path, f.rel, top), size: undefined }); }
       } else out.push({ kind: f.file.type.startsWith('image/') ? 'image' : 'file', name: f.file.name, path: r.path, size: r.size });
     }
     setUpload(null);
@@ -170,7 +171,7 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
       try {
         const g = await ws.request<{ id: string }>({ kind: 'goals.create', objective, cwd: cwdFor, permissionMode: welcome ? wMode : (active?.info?.permissionMode ?? 'acceptEdits'), agent: welcome ? (foreign ? wAgent : undefined) : (active?.info?.agent && active.info.agent !== 'claude' ? active.info.agent : undefined) });
         await ws.request({ kind: 'goals.start', id: g.id });
-        setText('');
+        onChange(''); // also clears the persisted draft, or the /goal line comes back on reopen
         if (!useStore.getState().panels.includes('goals')) togglePanel('goals');
         toast('目标已创建并启动，进度看「目标」面板', true);
       } catch (e: any) { toast(e.message); }
@@ -205,8 +206,21 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
     setImgs([]);
     setAtts([]);
     setDraft(active.sessionId, '');
+    const sentImgs = imgs, sentAtts = atts;
+    let uploaded: AttachmentRef[];
     try {
-      const uploaded = files.length ? await uploadAll(active.sessionId) : [];
+      uploaded = files.length ? await uploadAll(active.sessionId) : [];
+    } catch (e: any) {
+      // nothing was sent: put the message back instead of silently dropping what the user typed
+      toast(e.message);
+      setUpload(null);
+      setText((cur) => cur || t);
+      if (t) setDraft(active.sessionId, t);
+      setImgs((cur) => (cur.length ? cur : sentImgs));
+      setAtts((cur) => (cur.length ? cur : sentAtts));
+      return;
+    }
+    try {
       setFiles([]);
       await send(active.sessionId, t, im, false, [...atts, ...uploaded]);
     } catch (e: any) {
@@ -221,7 +235,7 @@ export function Composer({ welcome = false, target }: { welcome?: boolean; targe
   };
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (matches.length && slashQuery !== null) {
+    if (matches.length && slashQuery !== null && !e.nativeEvent.isComposing) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setPalIdx((i) => (i + 1) % matches.length); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setPalIdx((i) => (i - 1 + matches.length) % matches.length); return; }
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && text !== `/${matches[palIdx].name}`)) { e.preventDefault(); pickCmd(matches[palIdx].name); return; }

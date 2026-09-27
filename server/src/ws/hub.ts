@@ -26,6 +26,7 @@ import type { GoalService } from '../goals/service.js';
 import type { AndroidService } from '../android/service.js';
 import type { LedgerService } from '../usage/ledger.js';
 import { SCHEDULE_TEMPLATES } from '../schedules/service.js';
+import { nextCron } from '../schedules/cron.js';
 import type { AgentRegistry } from '../agents/types.js';
 import type { AgentTranscripts } from '../agents/transcript.js';
 import type { CanonicalLog } from '../session/canonical.js';
@@ -108,6 +109,8 @@ export class Hub {
     this.clients.add(ws);
     this.send(ws, { type: 'event', event: { kind: 'hello', version: this.s.version } });
     ws.on('close', () => this.clients.delete(ws));
+    // without a listener, a malformed frame / oversized payload makes ws emit an 'error' that crashes the server
+    ws.on('error', () => this.clients.delete(ws));
     ws.on('message', async (raw) => {
       let up: WireUp;
       try {
@@ -115,7 +118,8 @@ export class Hub {
       } catch {
         return;
       }
-      if (up.type !== 'request') return;
+      // this listener is async: a throw here (`null`, missing `request`) would be an unhandled rejection
+      if (!up || typeof up !== 'object' || up.type !== 'request' || !up.request || typeof up.request !== 'object' || !up.request.req) return;
       const { id, req } = up.request;
       try {
         const data = await this.handle(req, ws);
@@ -181,7 +185,7 @@ export class Hub {
         await s.canonical.ensure(r.sessionId, params.cwd);
         if (params.providerId && params.providerId !== 'claude') {
           // remember which provider a session uses so resume / fork keep it (the id is known up front: new sessions get a uuid from us)
-          if (s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId });
+          if (s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId }).catch(() => { /* in memory; the next save persists it */ });
         }
         return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
       }
@@ -222,6 +226,9 @@ export class Hub {
       case 'schedules.list':
         return s.meta.schedules();
       case 'schedules.upsert': {
+        // validate before persisting: a bad cron saved first would sit in meta.json and fail every tick
+        // (nextCron parses and also rejects expressions that never fire, e.g. "0 0 30 2 *")
+        if (typeof req.schedule.cron === 'string' && req.schedule.cron.trim()) nextCron(req.schedule.cron);
         const cur = await s.meta.upsertSchedule(req.schedule);
         // timing changed (or first enable) → recompute the next run from the new cron / interval
         if (cur.enabled && (req.schedule.cron !== undefined || req.schedule.everyMinutes !== undefined || req.schedule.enabled !== undefined || !cur.nextRunAt)) await s.meta.touchSchedule(cur.id, { nextRunAt: s.schedules.nextRun(cur) });
@@ -264,7 +271,7 @@ export class Hub {
         return s.sessions.search(req.query, req.limit ?? 30);
       case 'shell.open': {
         const app = req.app ?? 'explorer';
-        const cmd = app === 'explorer' ? (process.platform === 'win32' ? 'explorer' : 'open') : app;
+        const cmd = app === 'explorer' ? (process.platform === 'win32' ? 'explorer' : process.platform === 'darwin' ? 'open' : 'xdg-open') : app;
         execFile(cmd, [req.path], { windowsHide: true }, () => {});
         return null;
       }

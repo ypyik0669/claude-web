@@ -26,7 +26,7 @@ export function DiagnosticsSection() {
       <div className="kv" style={{ marginTop: 10 }}>
         <span className="k">引擎</span><span>{engine ? `${engine.runtime} ${engine.version ?? ''}` : '-'}</span>
         <span className="k">壳</span><span>{desktop ? `桌面 ${desktop.version}` : '浏览器'}</span>
-        <span className="k">日志</span><span className="mono">{desktop ? '%APPDATA%\\claude-web\\server.log · main.log' : '服务终端输出'}</span>
+        <span className="k">日志</span><span className="mono">{desktop ? (desktop.platform === 'win32' ? '%APPDATA%\\claude-web\\server.log · main.log' : desktop.platform === 'darwin' ? '~/Library/Application Support/claude-web/server.log · main.log' : '~/.config/claude-web/server.log · main.log') : '服务终端输出'}</span>
       </div>
     </div>
   );

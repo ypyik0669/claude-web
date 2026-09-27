@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { clsx, fmtMs, fmtTok, shortModel } from '@/util';
@@ -11,7 +11,8 @@ export function LedgerView({ sessionId }: { sessionId?: string }) {
   const [metric, setMetric] = useState<'calls' | 'cost' | 'latency' | 'tokens'>('calls');
   const [onlyErr, setOnlyErr] = useState(false);
   const toast = useStore((s) => s.toast);
-  const load = () => ws.request<LedgerEntry[]>({ kind: 'ledger.list', days, sessionId }).then(setRows).catch((e) => toast(e.message));
+  const seq = useRef(0); // switching 90 → 1 day: the slow 90-day answer must not overwrite the 1-day one
+  const load = () => { const n = ++seq.current; return ws.request<LedgerEntry[]>({ kind: 'ledger.list', days, sessionId }).then((r) => { if (n === seq.current) setRows(r); }).catch((e) => toast(e.message)); };
   useEffect(() => { void load(); }, [days, sessionId]);
   const shown = useMemo(() => (rows ?? []).filter((r) => !onlyErr || !r.ok).slice().reverse(), [rows, onlyErr]);
   const buckets = useMemo(() => {

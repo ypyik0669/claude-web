@@ -34,9 +34,13 @@ export function resolveClaudeExe(): string {
   }
   const rp = (process as any).resourcesPath as string | undefined;
   if (rp) candidates.push(path.join(rp, 'app.asar.unpacked', 'node_modules', pkg, isWin ? 'claude.exe' : 'claude'));
+  // `npm root -g` is a synchronous child process (up to 15s): only pay for it when nothing bundled exists.
+  // This runs on every session start with the official runtime, blocking the event loop each time.
+  let found = candidates.find((c) => existsSync(c));
+  if (found) return found;
   const g = globalRoot();
   if (g) candidates.push(path.join(g, '@anthropic-ai/claude-code/bin', isWin ? 'claude.exe' : 'claude'));
-  const found = candidates.find((c) => existsSync(c));
+  found = candidates.find((c) => existsSync(c));
   if (!found) throw new Error(`Claude Code executable not found. Tried: ${candidates.join(', ')}`);
   return found;
 }

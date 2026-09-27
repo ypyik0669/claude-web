@@ -27,8 +27,9 @@ export function CommandPalette() {
   // server-side full-text search (debounced) when the query is not a command prefix
   useEffect(() => {
     if (!open || q.startsWith('>') || q.trim().length < 2) { setHits([]); return; }
-    const t = setTimeout(() => ws.request<typeof hits>({ kind: 'sessions.search', query: q, limit: 20 }).then(setHits).catch(() => setHits([])), 200);
-    return () => clearTimeout(t);
+    let live = true; // a slower search for an older query must not replace this one's hits
+    const t = setTimeout(() => ws.request<typeof hits>({ kind: 'sessions.search', query: q, limit: 20 }).then((h) => live && setHits(h)).catch(() => live && setHits([])), 200);
+    return () => { live = false; clearTimeout(t); };
   }, [q, open]);
 
   const commands = useMemo<Cmd[]>(() => {
@@ -83,7 +84,8 @@ export function CommandPalette() {
     if (e.key === 'Escape') close();
     if (e.key === 'ArrowDown') { e.preventDefault(); setIdx((i) => Math.min(items.length - 1, i + 1)); }
     if (e.key === 'ArrowUp') { e.preventDefault(); setIdx((i) => Math.max(0, i - 1)); }
-    if (e.key === 'Enter' && items[idx]) run(items[idx]);
+    // Enter that confirms an IME candidate (Chinese / Japanese input) is not "run this item"
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing && items[idx]) run(items[idx]);
   };
   let lastGroup = '';
   return (

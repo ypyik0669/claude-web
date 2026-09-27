@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
@@ -49,15 +49,23 @@ export function BoardView({ cwd, sid }: { cwd: string; sid: string | null }) {
   const [busy, setBusy] = useState(false);
   const r = repoOverride || undefined;
 
-  const loadRepo = () => ws.request<VcsRepo>({ kind: 'vcs.repo', cwd, repo: r }).then((x) => { setRepo(x); setErr(x.error); }).catch((e) => { setRepo(null); setErr(e.message); });
+  // latest-wins: switching PR ↔ Issues (or repo / filter) while a slow list is in flight used to let the
+  // stale answer land last, showing PRs in the Issues columns
+  const repoSeq = useRef(0);
+  const listSeq = useRef(0);
+  const loadRepo = () => { const n = ++repoSeq.current; return ws.request<VcsRepo>({ kind: 'vcs.repo', cwd, repo: r }).then((x) => { if (n !== repoSeq.current) return; setRepo(x); setErr(x.error); }).catch((e) => { if (n !== repoSeq.current) return; setRepo(null); setErr(e.message); }); };
   const load = () => {
+    const n = ++listSeq.current;
     setLoading(true); setErr('');
     const p = mode === 'issues' ? ws.request<VcsItem[]>({ kind: 'vcs.issues', cwd, repo: r, state: state === 'merged' ? 'closed' : state, q: q || undefined, mine }) : ws.request<VcsItem[]>({ kind: 'vcs.pulls', cwd, repo: r, state });
-    p.then(setItems).catch((e) => setErr(e.message)).finally(() => setLoading(false));
+    p.then((x) => { if (n === listSeq.current) setItems(x); }).catch((e) => { if (n === listSeq.current) setErr(e.message); }).finally(() => { if (n === listSeq.current) setLoading(false); });
   };
+  // a different session's directory: its own saved repo override, not the previous one's
+  const firstCwd = useRef(cwd);
+  useEffect(() => { if (firstCwd.current === cwd) return; firstCwd.current = cwd; setRepoOverride(localStorage.getItem(`cw.board.repo:${cwd}`) ?? ''); setItems([]); setSel(null); }, [cwd]);
   useEffect(() => { void loadRepo(); }, [cwd, repoOverride]);
   useEffect(() => { if (repo?.authOk) load(); }, [repo?.authOk, mode, state, mine, repoOverride]);
-  useEffect(() => { if (sel === null) { setDetail(null); return; } setDetail(null); ws.request<VcsDetail>({ kind: 'vcs.item', cwd, repo: r, number: sel, isPr: mode === 'pulls' }).then(setDetail).catch((e) => toast(e.message)); }, [sel]);
+  useEffect(() => { if (sel === null) { setDetail(null); return; } setDetail(null); let live = true; ws.request<VcsDetail>({ kind: 'vcs.item', cwd, repo: r, number: sel, isPr: mode === 'pulls' }).then((d) => live && setDetail(d)).catch((e) => live && toast(e.message)); return () => { live = false; }; }, [sel]);
 
   const columns = useMemo(() => {
     if (mode === 'issues') {
@@ -72,7 +80,7 @@ export function BoardView({ cwd, sid }: { cwd: string; sid: string | null }) {
   const act = async (fn: () => Promise<unknown>, ok?: string) => { setBusy(true); try { await fn(); if (ok) toast(ok, true); load(); if (sel !== null) setDetail(await ws.request<VcsDetail>({ kind: 'vcs.item', cwd, repo: r, number: sel, isPr: mode === 'pulls' })); } catch (e: any) { toast(e.message); } finally { setBusy(false); } };
   const handOff = async (d: VcsDetail, kind: 'fix' | 'review') => {
     const text = kind === 'fix' ? `请处理 ${repo?.url}/issues/${d.number}：\n\n# ${d.title}\n\n${d.body || '(无描述)'}\n\n完成后总结改了什么、怎么验证的。` : `请审查 PR #${d.number}「${d.title}」（分支 ${d.head} → ${d.base}）。\n\n${d.body || ''}\n\n重点：正确性、边界条件、测试覆盖、是否符合仓库约定。给出可直接发到 PR 的评审意见。`;
-    if (sid) await send(sid, text); else { const id = await openSession({ cwd }); await send(id, text); }
+    try { if (sid) await send(sid, text); else { const id = await openSession({ cwd }); await send(id, text); } } catch (e: any) { toast(e.message); }
   };
   const checkoutAndSession = async (d: VcsDetail) => {
     const wt = await dlg.confirm(`检出 PR #${d.number} 到独立 worktree？`, { message: '选「取消」则直接在当前目录切换分支。', okLabel: 'worktree', cancelLabel: '当前目录' });

@@ -3,6 +3,8 @@ import type { Monaco } from './monaco';
 
 let loader: Promise<Monaco> | null = null;
 export const loadMonaco = () => (loader ??= import('./monaco').then((m) => m.monaco));
+/** model → number of mounted editors showing it (models outlive editors and are shared between tiles) */
+const liveEditors = new WeakMap<object, number>();
 
 export interface EditorHandle { getValue(): string; setValue(v: string): void; revealLine(n: number): void; focus(): void }
 
@@ -32,13 +34,20 @@ export function MonacoEditor({ path, value, version, language, readOnly, line, o
   useEffect(() => {
     let disposed = false;
     let editor: any;
+    let mounted: object | undefined;
     let ro: ResizeObserver | undefined;
     loadMonaco().then((monaco) => {
       if (disposed || !ref.current) return;
       const uri = monaco.Uri.file(path.replace(/\\/g, '/'));
       let model = monaco.editor.getModel(uri);
+      const shared = !!model && (liveEditors.get(model) ?? 0) > 0;
       if (!model) model = monaco.editor.createModel(value, language, uri);
+      // another live tile is editing this file: its unsaved edits are in the shared model — don't
+      // reset them to this tile's freshly-read disk text; report them so this tile shows them as dirty
+      else if (shared) { if (model.getValue() !== value) queueMicrotask(() => cb.current.onChange?.(model!.getValue())); }
       else if (model.getValue() !== value && applied.current < 0) model.setValue(value);
+      liveEditors.set(model, (liveEditors.get(model) ?? 0) + 1);
+      mounted = model;
       applied.current = version;
       editor = monaco.editor.create(ref.current, {
         model,
@@ -75,6 +84,7 @@ export function MonacoEditor({ path, value, version, language, readOnly, line, o
     }).catch((e) => setErr(e.message));
     return () => {
       disposed = true;
+      if (mounted) { const n = (liveEditors.get(mounted) ?? 1) - 1; if (n > 0) liveEditors.set(mounted, n); else liveEditors.delete(mounted); }
       ro?.disconnect();
       editor?.dispose(); // model is kept (shared / re-opened cheaply)
       editorRef.current = null;

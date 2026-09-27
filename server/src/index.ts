@@ -59,6 +59,47 @@ function cookieToken(cookie?: string): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
+/** `new URL` throws on a malformed Host header — in a request / upgrade listener that is an uncaught crash. */
+function requestUrl(req: http.IncomingMessage, fallbackHost: string): URL {
+  try {
+    return new URL(req.url ?? '/', `http://${req.headers.host ?? fallbackHost}`);
+  } catch {
+    try {
+      return new URL(req.url ?? '/', `http://${fallbackHost}`);
+    } catch {
+      return new URL('/', `http://${fallbackHost}`);
+    }
+  }
+}
+
+/**
+ * Parse a single `Range: bytes=` header against a file size. Returns null for "serve the whole file",
+ * 'unsatisfiable' for a range outside the file, else inclusive [start, end].
+ */
+export function parseRange(header: string | undefined, size: number): { start: number; end: number } | 'unsatisfiable' | null {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header ?? '');
+  if (!m || !size || (!m[1] && !m[2])) return null;
+  let start: number;
+  let end: number;
+  if (!m[1]) {
+    // suffix range: the last N bytes
+    start = Math.max(0, size - Number(m[2]));
+    end = size - 1;
+  } else {
+    start = Number(m[1]);
+    end = m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+  }
+  if (start >= size || start > end) return 'unsatisfiable';
+  return { start, end };
+}
+
+/** A read stream error (file vanished / locked between stat and read) must end this response, not the process. */
+function pipeFile(file: string, res: http.ServerResponse, opts?: { start: number; end: number }) {
+  const rs = fs.createReadStream(file, opts);
+  rs.on('error', () => res.destroy());
+  rs.pipe(res);
+}
+
 function readVersion(): string {
   for (const p of [path.resolve(__dirname, '../../package.json'), path.resolve(__dirname, '../package.json')]) {
     try {
@@ -91,7 +132,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     return !!presented && !!remote?.authenticate(presented, req);
   };
   const handler = (req: http.IncomingMessage, res: http.ServerResponse) => {
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? HOST}`);
+    const url = requestUrl(req, HOST);
     if (url.pathname === '/pair' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(pairPage()); return; }
     if (url.pathname === '/api/pair' && req.method === 'POST') {
       let body = '';
@@ -122,16 +163,16 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       try { st = fs.statSync(p); } catch { res.writeHead(404); res.end('not found'); return; }
       if (!st.isFile()) { res.writeHead(400); res.end('not a file'); return; }
       const type = FILE_MIME[path.extname(p).toLowerCase()] ?? 'application/octet-stream';
-      const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
-      if (range && st.size) {
-        const start = range[1] ? Number(range[1]) : 0;
-        const end = range[2] ? Math.min(Number(range[2]), st.size - 1) : st.size - 1;
+      const range = parseRange(req.headers.range, st.size);
+      if (range === 'unsatisfiable') { res.writeHead(416, { 'Content-Range': `bytes */${st.size}` }); res.end(); return; }
+      if (range) {
+        const { start, end } = range;
         res.writeHead(206, { 'Content-Type': type, 'Content-Range': `bytes ${start}-${end}/${st.size}`, 'Content-Length': end - start + 1, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache' });
-        fs.createReadStream(p, { start, end }).pipe(res);
+        pipeFile(p, res, { start, end });
         return;
       }
       res.writeHead(200, { 'Content-Type': type, 'Content-Length': st.size, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-cache', 'Content-Security-Policy': "sandbox; default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; media-src 'self'" });
-      fs.createReadStream(p).pipe(res);
+      pipeFile(p, res);
       return;
     }
     // Binary upload for message attachments: POST /api/attachments?sessionId=&rel=path/in/session (token-guarded like /ws)
@@ -141,35 +182,40 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       if (len > ATTACH_MAX_BYTES) { res.writeHead(413).end('too large'); return; }
       let dest: string;
       try { dest = attachmentPath(url.searchParams.get('sessionId') ?? '', url.searchParams.get('rel') ?? ''); } catch (e: any) { res.writeHead(400).end(e.message); return; }
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      try { fs.mkdirSync(path.dirname(dest), { recursive: true }); } catch (e: any) { res.writeHead(500).end(e.message); return; }
       const out = fs.createWriteStream(dest);
       let size = 0;
       req.on('data', (c: Buffer) => { size += c.length; if (size > ATTACH_MAX_BYTES) { req.destroy(); out.destroy(); fs.rm(dest, { force: true }, () => {}); } });
       req.pipe(out);
       out.on('finish', () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ path: dest, size })); });
-      out.on('error', (e) => { res.writeHead(500).end(e.message); });
+      out.on('error', (e) => { if (!res.headersSent) res.writeHead(500).end(e.message); else res.destroy(); });
       return;
     }
-    let file = path.join(distDir, decodeURIComponent(url.pathname));
-    if (!file.startsWith(distDir)) {
+    let pathname: string;
+    // a stray `%` (e.g. GET /%E0) makes decodeURIComponent throw — uncaught, that takes the server down
+    try { pathname = decodeURIComponent(url.pathname); } catch { res.writeHead(400).end(); return; }
+    const root = path.resolve(distDir);
+    let file = path.join(root, pathname);
+    // `root + sep`, not `root`: `/../dist-old/x` resolves to a sibling that merely shares the prefix
+    if (file !== root && !file.startsWith(root + path.sep)) {
       res.writeHead(403).end();
       return;
     }
-    if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(distDir, 'index.html');
+    if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(root, 'index.html');
     if (!fs.existsSync(file)) {
       res.writeHead(200, { 'content-type': 'text/html' });
       res.end('<h3>web/dist not built. Run <code>npm run build</code> or use <code>npm run dev</code> (Vite on :5173).</h3>');
       return;
     }
     res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream' });
-    fs.createReadStream(file).pipe(res);
+    pipeFile(file, res);
   };
   const server = http.createServer(handler);
 
   const wss = new WebSocketServer({ noServer: true });
   const upgrade = (req: http.IncomingMessage, socket: any, head: Buffer) => {
     const origin = req.headers.origin ?? '';
-    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? HOST}`);
+    const url = requestUrl(req, HOST);
     // same-origin only: localhost, or (remote listener) whatever host the page was served from
     const originHost = origin ? (() => { try { return new URL(origin).host; } catch { return ''; } })() : '';
     const originOk = !origin || /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin) || (!!req.headers.host && originHost === req.headers.host);
@@ -199,7 +245,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const sessionsSvc = new SessionService();
   const im = new ImService(meta, secrets, pool, sessionsSvc);
   const gitSvc = new GitService();
-  const services = { remote, tunnels, im, vcs: new VcsService(gitSvc), goals: new GoalService(meta, pool), android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal: new TerminalService(), meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, version };
+  const terminal = new TerminalService();
+  const services = { remote, tunnels, im, vcs: new VcsService(gitSvc), goals: new GoalService(meta, pool), android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, version };
   new Hub(wss, services);
 
   await new Promise<void>((res, rej) => {
@@ -222,7 +269,12 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       await tunnels.closeAll();
       await remote.stop();
       await pool.closeAll();
-      await new Promise<void>((r) => server.close(() => r()));
+      terminal.closeAll(); // pty children (the embedded `claude` terminals) would outlive us otherwise
+      // server.close() waits for every open connection; a connected browser's ws / keep-alive would hang shutdown forever
+      for (const c of wss.clients) c.terminate();
+      const closed = new Promise<void>((r) => server.close(() => r()));
+      server.closeAllConnections();
+      await closed;
     },
   };
 }
@@ -236,8 +288,15 @@ if (isMain || process.env.CLAUDE_WEB_STANDALONE === '1') {
   const parentPort = (process as any).parentPort as { postMessage(m: unknown): void; on(ev: 'message', cb: (e: { data: any }) => void): void } | undefined;
   if (parentPort) parentPort.postMessage(ready);
   else if (process.send) process.send(ready);
+  let stopping = false;
   const shutdown = async () => {
-    await running.close();
+    if (stopping) return; // SIGINT twice / signal + parent message: don't close everything twice
+    stopping = true;
+    try {
+      await running.close();
+    } catch (e) {
+      console.error('shutdown:', e);
+    }
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

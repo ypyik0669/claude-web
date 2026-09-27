@@ -31,6 +31,8 @@ export function TerminalPanel({ cwd, cmd, visible = true }: { cwd?: string; cmd?
         fit.fit();
         fitRef.current = () => { try { fit.fit(); if (id) void ws.request({ kind: 'terminal.resize', termId: id, cols: term.cols, rows: term.rows }); } catch { /* ignore */ } };
         const r = await ws.request<{ termId: string }>({ kind: 'terminal.open', cwd: dir, cols: term.cols, rows: term.rows });
+        // unmounted (or cwd changed) while the pty was spawning: the cleanup ran with no id, so close it here
+        if (disposed) { void ws.request({ kind: 'terminal.close', termId: r.termId }).catch(() => {}); return; }
         id = r.termId;
         setTermId(id);
         if (cmd) setTimeout(() => { void ws.request({ kind: 'terminal.input', termId: id!, data: cmd + '\r' }); }, 400);
@@ -49,7 +51,7 @@ export function TerminalPanel({ cwd, cmd, visible = true }: { cwd?: string; cmd?
       disposed = true;
       off?.();
       ro?.disconnect();
-      if (id) void ws.request({ kind: 'terminal.close', termId: id });
+      if (id) void ws.request({ kind: 'terminal.close', termId: id }).catch(() => {});
       term?.dispose();
     };
   }, [dir]);

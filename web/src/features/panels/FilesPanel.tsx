@@ -14,16 +14,23 @@ export function FilesPanel() {
   const [diff, setDiff] = useState<{ kind: string; text: string } | null>(null);
   const lastResultId = active?.conv.lastResult?.id;
 
-  useEffect(() => {
-    if (!active) return;
-    const t = setTimeout(() => ws.request<Changed[]>({ kind: 'files.changed', sessionId: active.sessionId }).then(setFiles).catch(() => setFiles([])), 800);
-    return () => clearTimeout(t);
-  }, [active?.sessionId, lastResultId]);
+  const sid = active?.sessionId;
+  // another session: its file list / selection must not show the previous session's
+  useEffect(() => { setFiles([]); setSel(null); }, [sid]);
 
   useEffect(() => {
-    if (!sel) return setDiff(null);
-    ws.request<{ kind: string; text: string }>({ kind: 'files.diff', sessionId: active!.sessionId, path: sel }).then(setDiff).catch((e) => setDiff({ kind: 'error', text: e.message }));
-  }, [sel, lastResultId]);
+    if (!sid) return;
+    let live = true;
+    const t = setTimeout(() => ws.request<Changed[]>({ kind: 'files.changed', sessionId: sid }).then((f) => live && setFiles(f)).catch(() => live && setFiles([])), 800);
+    return () => { live = false; clearTimeout(t); };
+  }, [sid, lastResultId]);
+
+  useEffect(() => {
+    if (!sel || !sid) return setDiff(null);
+    let live = true;
+    ws.request<{ kind: string; text: string }>({ kind: 'files.diff', sessionId: sid, path: sel }).then((d) => live && setDiff(d)).catch((e) => live && setDiff({ kind: 'error', text: e.message }));
+    return () => { live = false; };
+  }, [sel, sid, lastResultId]);
 
   if (!active) return <div className="empty">没有活动会话</div>;
   return (

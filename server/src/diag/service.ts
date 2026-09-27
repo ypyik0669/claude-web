@@ -43,7 +43,10 @@ export class DiagService {
     };
     await fs.writeFile(path.join(dir, 'info.json'), maskSecrets(JSON.stringify(info, null, 2)), 'utf8');
     // logs written by the desktop shell (browser mode logs to stdout)
-    const appData = process.env.APPDATA ? path.join(process.env.APPDATA, 'claude-web') : path.join(os.homedir(), '.config', 'claude-web');
+    // Electron's userData: %APPDATA%\<name> on Windows, ~/Library/Application Support/<name> on macOS, ~/.config/<name> on Linux
+    const appData = process.platform === 'win32' ? path.join(process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'), 'claude-web')
+      : process.platform === 'darwin' ? path.join(os.homedir(), 'Library', 'Application Support', 'claude-web')
+      : path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'), 'claude-web');
     for (const f of ['server.log', 'main.log']) {
       const src = path.join(appData, f);
       const text = await fs.readFile(src, 'utf8').catch(() => '');

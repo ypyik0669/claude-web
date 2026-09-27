@@ -105,7 +105,7 @@ function GoalCard({ g, open, onOpen }: { g: Goal; open: boolean; onOpen: () => v
               ))}
               {g.evidence.length === 0 && <div className="empty">还没有证据</div>}
               <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                <input className="field" placeholder="加一条人工备注…" onKeyDown={async (e) => { const v = (e.target as HTMLInputElement).value.trim(); if (e.key === 'Enter' && v) { await req({ kind: 'goals.note', id: g.id, text: v }); (e.target as HTMLInputElement).value = ''; } }} />
+                <input className="field" placeholder="加一条人工备注…" onKeyDown={async (e) => { const v = (e.target as HTMLInputElement).value.trim(); if (e.key === 'Enter' && !e.nativeEvent.isComposing && v) { await req({ kind: 'goals.note', id: g.id, text: v }); (e.target as HTMLInputElement).value = ''; } }} />
               </div>
             </div>
           )}

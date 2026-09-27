@@ -12,6 +12,9 @@ export class SlackAdapter extends EventEmitter implements ImAdapter {
   botName = '';
   private ws: WebSocket | null = null;
   private running = false;
+  private wanted = false; // between start() and stop(): a dropped connection should come back
+  private connected = false;
+  private retry: NodeJS.Timeout | null = null;
   private botUserId = '';
   constructor(private appToken: string, private botToken: string) { super(); }
   private api(method: string, body: unknown, token = this.botToken) {
@@ -22,6 +25,7 @@ export class SlackAdapter extends EventEmitter implements ImAdapter {
   async start() {
     if (this.running) return;
     this.running = true;
+    this.wanted = true;
     this.setState('starting');
     try {
       const auth = await this.api('auth.test', {});
@@ -29,7 +33,13 @@ export class SlackAdapter extends EventEmitter implements ImAdapter {
       this.botName = auth.user ? `@${auth.user}` : '';
       const open = await this.api('apps.connections.open', {}, this.appToken);
       this.connect(open.url);
-    } catch (e: any) { this.setState('error', e.message); this.running = false; }
+    } catch (e: any) { this.setState('error', e.message); this.running = false; if (this.connected) this.scheduleReconnect(30_000); }
+  }
+
+  /** Reconnect later unless stop() was called; one pending retry at most. */
+  private scheduleReconnect(ms: number) {
+    if (!this.wanted || this.retry) return;
+    this.retry = setTimeout(() => { this.retry = null; if (this.wanted) void this.start().catch(() => {}); }, ms);
   }
 
   private connect(url: string) {
@@ -38,7 +48,7 @@ export class SlackAdapter extends EventEmitter implements ImAdapter {
     ws.on('message', (raw) => {
       let m: any;
       try { m = JSON.parse(String(raw)); } catch { return; }
-      if (m.type === 'hello') { this.setState('running'); return; }
+      if (m.type === 'hello') { this.connected = true; this.setState('running'); return; }
       if (m.envelope_id) { try { ws.send(JSON.stringify({ envelope_id: m.envelope_id })); } catch { /* closed */ } }
       if (m.type === 'disconnect') { ws.close(); return; }
       if (m.type === 'events_api') {
@@ -59,11 +69,11 @@ export class SlackAdapter extends EventEmitter implements ImAdapter {
         if (p.channel?.id && p.message?.ts) void this.api('chat.update', { channel: p.channel.id, ts: p.message.ts, text: p.message.text ?? '…', blocks: [] }).catch(() => {});
       }
     });
-    ws.on('close', () => { if (this.running) { this.running = false; this.setState('error', '连接断开，重连中…'); setTimeout(() => { void this.start().catch(() => {}); }, 4000); } });
+    ws.on('close', () => { if (ws === this.ws && this.running) { this.running = false; this.setState('error', '连接断开，重连中…'); this.scheduleReconnect(4000); } });
     ws.on('error', (e) => this.setState('error', e.message));
   }
 
-  async stop() { this.running = false; try { this.ws?.close(); } catch { /* ignore */ } this.ws = null; this.setState('stopped'); }
+  async stop() { this.running = false; this.wanted = false; if (this.retry) clearTimeout(this.retry); this.retry = null; try { this.ws?.close(); } catch { /* ignore */ } this.ws = null; this.setState('stopped'); }
 
   async send(chatId: string, text: string, o: OutboundOptions = {}) {
     const parts = chunk(text || '(空)', this.maxLen);

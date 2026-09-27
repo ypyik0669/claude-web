@@ -21,12 +21,30 @@ export function findOnPath(cmd: string): string | null {
   return null;
 }
 
+/** Does the file start with a `#!…node` shebang (npm's POSIX bin scripts)? */
+export function isNodeScript(file: string): boolean {
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(128);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      return /^#!.*\bnode\b/.test(buf.subarray(0, n).toString('utf8').split('\n')[0]);
+    } finally { fs.closeSync(fd); }
+  } catch { return false; }
+}
+
 /**
  * Turn a user-facing command (`gemini`, `codex`, a path…) into something `child_process.spawn` can run without a shell.
  * npm's Windows `.cmd` shims are unwrapped to `node <entry.js>` so the agent is a direct child (killable, no cmd.exe in between).
  */
 export function resolveSpawn(command: string, args: string[]): { command: string; args: string[]; env: Record<string, string>; via: 'direct' | 'node-shim' | 'cmd' } {
-  if (!isWin) return { command, args, env: {}, via: 'direct' };
+  if (!isWin) {
+    // npm bins are `#!/usr/bin/env node` scripts. A Finder-launched macOS app gets a minimal PATH without node, so
+    // the shebang fails with exit 127 even when the script itself was found — run it with our own Node instead.
+    const found = findOnPath(command);
+    if (found && isNodeScript(found) && !findOnPath('node')) { const n = nodeRuntime(); return { command: n.command, args: [found, ...args], env: n.env, via: 'node-shim' }; }
+    return { command, args, env: {}, via: 'direct' };
+  }
   const found = findOnPath(command) ?? command;
   if (!/\.(cmd|bat)$/i.test(found)) return { command: found, args, env: {}, via: 'direct' };
   try {

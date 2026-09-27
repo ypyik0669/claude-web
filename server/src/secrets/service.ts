@@ -58,6 +58,8 @@ export class SecretService {
     let plain = '';
     try {
       if (scheme === 'dpapi') {
+        // spliced into a PowerShell string literal: a tampered meta.json must not be able to break out of it
+        if (!/^[A-Za-z0-9+/=]*$/.test(rest)) throw new Error('密文格式无效');
         const script = `$b=[Convert]::FromBase64String('${rest}');Add-Type -AssemblyName System.Security;$p=[System.Security.Cryptography.ProtectedData]::Unprotect($b,$null,'CurrentUser');[Convert]::ToBase64String($p)`;
         const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 20_000 });
         plain = Buffer.from(stdout.trim(), 'base64').toString('utf8');

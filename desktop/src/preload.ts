@@ -6,6 +6,9 @@ const on = (channel: string) => (cb: (arg: any) => void) => {
   return () => ipcRenderer.removeListener(channel, h);
 };
 
+// platform class for chrome that differs per OS (macOS traffic lights sit on the left)
+window.addEventListener('DOMContentLoaded', () => document.documentElement.classList.add(process.platform === 'darwin' ? 'mac' : process.platform === 'win32' ? 'win' : 'linux'));
+
 contextBridge.exposeInMainWorld('desktop', {
   version: process.env.CLAUDE_WEB_VERSION ?? '',
   platform: process.platform,

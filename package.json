@@ -16,7 +16,11 @@
     "test": "npm test -w server && npm test -w web",
     "build:all": "npm run build -w server && npm run build -w web && npm run build -w desktop",
     "desktop": "npm run build:all && electron .",
-    "build:desktop": "npm run build:all && electron-builder --config electron-builder.yml --win"
+    "build:desktop": "npm run build:all && electron-builder --config electron-builder.yml --win",
+    "build:desktop:mac": "npm run build:all && electron-builder --config electron-builder.yml --mac",
+    "build:desktop:linux": "npm run build:all && electron-builder --config electron-builder.yml --linux",
+    "typecheck": "tsc --noEmit -p server && tsc --noEmit -p web && tsc --noEmit -p desktop",
+    "e2e": "node scripts/e2e.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.258",

@@ -368,16 +368,18 @@ export function layoutReducer(s: LayoutState, a: LayoutAction): LayoutState {
         const cur = p.tiles.find((t) => t.id === p.activeTileId) ?? p.tiles[0];
         // an empty chat tile is always replaced; otherwise honour mode
         const replace = a.mode === 'replace' || (cur?.kind === 'chat' && cur.sessionId === null);
-        if (replace && cur) {
-          const tiles = p.tiles.map((t) => (t.id === cur.id ? { ...a.tile, id: a.tile.id || cur.id } : t));
-          return { ...p, tiles, activeTileId: tiles.find((t) => t === tiles[p.tiles.indexOf(cur)])!.id };
-        }
-        // same session / document / diff already open as a tab → just activate it (docs also take the new line)
+        // same session / document / diff already open as a tab → just activate it (docs also take the new line).
+        // Checked before replacing too: replacing would put a second tab of the same thing in the pane, or (when it
+        // is the current tab) swap in a new tile id, which remounts the tile and throws away scroll / composer state.
         const nt = a.tile;
         const dup = p.tiles.find((t) => sameTile(t, nt));
         if (dup) {
           const tiles = nt.kind === 'doc' && nt.line ? p.tiles.map((t) => (t.id === dup.id ? { ...t, line: nt.line } : t)) : p.tiles;
           return p.activeTileId === dup.id && tiles === p.tiles ? p : { ...p, tiles, activeTileId: dup.id };
+        }
+        if (replace && cur) {
+          const tiles = p.tiles.map((t) => (t.id === cur.id ? { ...a.tile, id: a.tile.id || cur.id } : t));
+          return { ...p, tiles, activeTileId: tiles.find((t) => t === tiles[p.tiles.indexOf(cur)])!.id };
         }
         return { ...p, tiles: [...p.tiles, a.tile], activeTileId: a.tile.id };
       }));

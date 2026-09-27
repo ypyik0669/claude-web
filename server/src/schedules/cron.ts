@@ -13,11 +13,13 @@ function parseField(f: string, min: number, max: number, names: string[] = []): 
     let lo = m[1] === '*' ? min : val(m[1]);
     let hi = m[1] === '*' ? max : m[2] ? val(m[2]) : lo;
     const step = m[3] ? Number(m[3]) : 1;
+    if (step < 1) throw new Error(`cron 步长无效：${part}`); // "*/0" would loop forever below and hang the server
     if (m[1] !== '*' && !m[2] && m[3]) hi = max; // "5/10" → from 5 step 10
-    if (names === DAYS) { if (lo === 7) lo = 0; if (hi === 7) hi = 0; }
     if (lo < min || hi > max || lo > hi) throw new Error(`cron 范围越界：${part}`);
     for (let v = lo; v <= hi; v += step) out.add(v);
   }
+  // day-of-week 7 is Sunday too; normalising after expansion keeps ranges like "5-7" / "sat-7" valid
+  if (names === DAYS && out.delete(7)) out.add(0);
   return out;
 }
 

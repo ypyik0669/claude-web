@@ -3,6 +3,30 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { ServerHost } from './server-host';
 import { autoUpdater } from 'electron-updater';
+import { execFileSync } from 'node:child_process';
+import os from 'node:os';
+
+const isMac = process.platform === 'darwin';
+
+/**
+ * Apps launched from Finder / the Dock get launchd's minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin), so git, gh,
+ * codex, gemini, ssh-agent helpers and a global npm are all "not found". Ask the user's login shell for its PATH
+ * once, before the server is forked (the server and every session inherit it).
+ */
+function fixPosixPath() {
+  if (process.platform === 'win32') return;
+  const parts: string[] = [];
+  try {
+    const shellBin = process.env.SHELL || (isMac ? '/bin/zsh' : '/bin/bash');
+    const out = execFileSync(shellBin, ['-ilc', 'printf "__CW_PATH__%s__CW_PATH__" "$PATH"'], { encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const m = /__CW_PATH__(.*?)__CW_PATH__/s.exec(out);
+    if (m) parts.push(...m[1].split(':'));
+  } catch { /* shell missing or slow: fall back to the usual locations */ }
+  const home = os.homedir();
+  parts.push(...(process.env.PATH ?? '').split(':'), '/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', path.join(home, '.local', 'bin'), path.join(home, '.npm-global', 'bin'), '/usr/bin', '/bin', '/usr/sbin', '/sbin');
+  process.env.PATH = [...new Set(parts.filter(Boolean))].join(':');
+}
+fixPosixPath();
 
 // ---------- launch flags (read before `ready`): software rendering fallback ----------
 const flagsFile = () => path.join(app.getPath('userData'), 'flags.json');
@@ -30,7 +54,8 @@ const host = new ServerHost();
 const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
 
 // ---------- single instance ----------
-if (!app.requestSingleInstanceLock()) {
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => showWindow());
@@ -98,7 +123,10 @@ function createWindow(url: string, winId = 'main', bounds?: Bounds): BrowserWind
     icon: iconPath(),
     backgroundColor: titleBar.bg || (dark ? '#1f1e1b' : '#faf9f5'),
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: titleBar.bg || (dark ? '#1f1e1b' : '#faf9f5'), symbolColor: titleBar.fg || (dark ? '#bab6ae' : '#4d4a44'), height: 40 },
+    // macOS keeps its own traffic lights (left, see `html.mac` in styles.css); elsewhere we draw the overlay buttons
+    ...(isMac
+      ? { trafficLightPosition: { x: 14, y: 13 } }
+      : { titleBarOverlay: { color: titleBar.bg || (dark ? '#1f1e1b' : '#faf9f5'), symbolColor: titleBar.fg || (dark ? '#bab6ae' : '#4d4a44'), height: 40 } }),
     show: false,
     // webviewTag powers the in-app browser tile; each <webview> declares its own partition and denies popups
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false, webviewTag: true, additionalArguments: [`--cw-win=${winId}`] },
@@ -161,6 +189,7 @@ function updateBadge() {
       m.setOverlayIcon(img, `${pendingCount} 个待处理`);
     } else m.setOverlayIcon(null, '');
   }
+  if (isMac) app.dock?.setBadge(pendingCount > 0 ? String(pendingCount) : '');
   tray?.setToolTip(pendingCount > 0 ? `${APP_NAME} · ${pendingCount} 个待处理` : APP_NAME);
 }
 
@@ -182,6 +211,17 @@ function broadcast(channel: string, arg: unknown) {
 function buildMenu() {
   const cmd = (label: string, accelerator: string | undefined, id: string): Electron.MenuItemConstructorOptions => ({ label, accelerator, click: () => sendCommand(id) });
   const template: Electron.MenuItemConstructorOptions[] = [
+    // macOS: the first menu is always the app menu (About / Hide / Quit); Quit goes through the exit guard
+    ...(isMac ? [{
+      label: APP_NAME,
+      submenu: [
+        { role: 'about' }, { type: 'separator' },
+        { label: '设置…', accelerator: 'Cmd+,', click: () => sendCommand('settings') },
+        { type: 'separator' }, { role: 'services' }, { type: 'separator' },
+        { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' },
+        { label: `退出 ${APP_NAME}`, accelerator: 'Cmd+Q', click: () => void requestQuit() },
+      ],
+    } as Electron.MenuItemConstructorOptions] : []),
     {
       label: '会话',
       submenu: [
@@ -191,8 +231,7 @@ function buildMenu() {
         { type: 'separator' },
         cmd('中断当前轮', 'CmdOrCtrl+Shift+C', 'interrupt'),
         cmd('结束当前会话进程', 'CmdOrCtrl+Shift+Q', 'close'),
-        { type: 'separator' },
-        { label: '退出', accelerator: 'CmdOrCtrl+Q', click: () => void requestQuit() },
+        ...(isMac ? [] : [{ type: 'separator' }, { label: '退出', accelerator: 'CmdOrCtrl+Q', click: () => void requestQuit() }] as Electron.MenuItemConstructorOptions[]),
       ],
     },
     {
@@ -201,8 +240,8 @@ function buildMenu() {
         cmd('新分组', 'CmdOrCtrl+T', 'group.new'),
         cmd('关闭分组', 'CmdOrCtrl+Shift+W', 'group.close'),
         cmd('重命名分组', 'F2', 'group.rename'),
-        cmd('下一个分组', 'CmdOrCtrl+Tab', 'group.next'),
-        cmd('上一个分组', 'CmdOrCtrl+Shift+Tab', 'group.prev'),
+        cmd('下一个分组', 'Ctrl+Tab', 'group.next'),
+        cmd('上一个分组', 'Ctrl+Shift+Tab', 'group.prev'),
         ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ ...cmd(`跳到分组 ${n}`, `CmdOrCtrl+${n}`, `group.jump.${n - 1}`), visible: n <= 3 })),
         { type: 'separator' },
         cmd('向右分屏', 'CmdOrCtrl+D', 'pane.splitRight'),
@@ -232,7 +271,7 @@ function buildMenu() {
         cmd('任务面板', 'CmdOrCtrl+Shift+1', 'panel.tasks'),
         cmd('文件改动', 'CmdOrCtrl+Shift+2', 'panel.files'),
         cmd('用量', 'CmdOrCtrl+Shift+3', 'panel.usage'),
-        cmd('设置', 'CmdOrCtrl+,', 'settings'),
+        ...(isMac ? [] : [cmd('设置', 'CmdOrCtrl+,', 'settings')]),
         cmd('配置中心（停靠面板）', undefined, 'panel.config'),
         cmd('终端', 'CmdOrCtrl+`', 'panel.terminal'),
         { type: 'separator' },
@@ -247,6 +286,7 @@ function buildMenu() {
       label: '编辑',
       submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }],
     },
+    ...(isMac ? [{ role: 'windowMenu' } as Electron.MenuItemConstructorOptions] : []),
     {
       label: '帮助',
       submenu: [
@@ -261,7 +301,7 @@ function buildMenu() {
 
 function buildTray() {
   const ip = iconPath();
-  const img = ip ? nativeImage.createFromPath(ip).resize({ width: 16, height: 16 }) : badgeImage(0);
+  const img = ip ? nativeImage.createFromPath(ip).resize({ width: isMac ? 18 : 16, height: isMac ? 18 : 16 }) : badgeImage(0);
   tray = new Tray(img);
   tray.setToolTip(APP_NAME);
   tray.setContextMenu(Menu.buildFromTemplate([
@@ -270,7 +310,8 @@ function buildTray() {
     { type: 'separator' },
     { label: '退出', click: () => void requestQuit() },
   ]));
-  tray.on('click', () => showWindow(wins.get('main') ?? focusedWin()));
+  // macOS opens the context menu on click by itself; a click handler there would fight it
+  if (!isMac) tray.on('click', () => showWindow(wins.get('main') ?? focusedWin()));
 }
 
 /** Read one renderer-side setting (meta.json `settings`) from a window; `def` when unavailable. */
@@ -344,7 +385,7 @@ ipcMain.on('desktop:notify', (e, { title, body, sessionId }: { title: string; bo
 ipcMain.on('desktop:badge', (_e, n: number) => { pendingCount = n; updateBadge(); });
 ipcMain.on('desktop:titlebar', (_e, { bg, fg }: { bg: string; fg: string }) => {
   titleBar = { bg, fg };
-  for (const [, w] of liveWins()) { try { w.setTitleBarOverlay({ color: bg, symbolColor: fg, height: 40 }); } catch { /* not supported */ } }
+  if (!isMac) for (const [, w] of liveWins()) { try { w.setTitleBarOverlay({ color: bg, symbolColor: fg, height: 40 }); } catch { /* not supported */ } }
 });
 ipcMain.handle('desktop:loginItem:get', () => app.getLoginItemSettings().openAtLogin);
 ipcMain.handle('desktop:loginItem:set', (_e, on: boolean) => app.setLoginItemSettings({ openAtLogin: on, args: ['--hidden'] }));
@@ -371,10 +412,10 @@ ipcMain.handle('desktop:relaunch', () => { quitting = true; app.relaunch(); app.
 ipcMain.handle('desktop:quit', () => void requestQuit());
 
 // ---------- lifecycle ----------
-app.setAppUserModelId('com.claude-web.desktop');
+if (process.platform === 'win32') app.setAppUserModelId('com.claude-web.desktop');
 process.env.CLAUDE_WEB_VERSION = app.getVersion();
 
-app.whenReady().then(async () => {
+if (gotLock) app.whenReady().then(async () => {
   try {
     const info = await host.start();
     buildMenu();
@@ -397,6 +438,8 @@ process.on('uncaughtException', (e) => {
   try { fs.appendFileSync(path.join(app.getPath('userData'), 'main.log'), `[${new Date().toISOString()}] uncaught: ${e.stack ?? e}\n`); } catch { /* ignore */ }
 });
 app.on('window-all-closed', () => { /* stay in tray */ });
+// macOS: clicking the Dock icon brings the (hidden) main window back
+app.on('activate', () => { if (host.info) showWindow(wins.get('main') ?? focusedWin()); });
 // GPU process died twice → switch to software rendering and relaunch (the usual fix for driver black screens)
 app.on('child-process-gone', (_e, d) => {
   if (d.type !== 'GPU' || d.reason === 'clean-exit') return;

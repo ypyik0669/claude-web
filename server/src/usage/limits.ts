@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
 import { claudeDir } from '../sessions/service.js';
 
 export interface LimitWindow {
@@ -27,11 +28,20 @@ export class LimitsService {
   private at = 0;
 
   private backoffUntil = 0;
+  private inflight: Promise<Limits> | null = null;
 
   /** Cached for 4 minutes; a 429 backs off for 15 minutes. The endpoint rate-limits eagerly. */
   async get(force = false): Promise<Limits> {
     const ttl = force ? 30_000 : 4 * 60_000;
     if (this.cache && (Date.now() - this.at < ttl || Date.now() < this.backoffUntil)) return this.cache;
+    // the idle push, the 5-minute push and a client's limits.get can all miss the cache together;
+    // share one request instead of firing several at an endpoint that 429s eagerly
+    if (this.inflight) return this.inflight;
+    this.inflight = this.refresh().finally(() => { this.inflight = null; });
+    return this.inflight;
+  }
+
+  private async refresh(): Promise<Limits> {
     const next = await this.fetch();
     if (next.error === 'HTTP 429') this.backoffUntil = Date.now() + 15 * 60_000;
     // keep the last good reading on transient failures so the UI does not flicker to "–"
@@ -43,7 +53,7 @@ export class LimitsService {
   private async fetch(): Promise<Limits> {
     const now = new Date().toISOString();
     try {
-      const cred = JSON.parse(await fs.readFile(path.join(claudeDir, '.credentials.json'), 'utf8'));
+      const cred = JSON.parse(await readCredentials());
       const o = cred.claudeAiOauth;
       if (!o?.accessToken) return { ok: false, capturedAt: now, windows: [], error: 'no OAuth token (API-key login?)' };
       const r = await fetch('https://api.anthropic.com/api/oauth/usage', {
@@ -65,5 +75,20 @@ export class LimitsService {
     } catch (e: any) {
       return { ok: false, capturedAt: now, windows: [], error: e?.message ?? String(e) };
     }
+  }
+}
+
+/**
+ * Claude Code's OAuth credentials: `~/.claude/.credentials.json` on Windows / Linux; on macOS the CLI keeps
+ * them in the login Keychain instead, so the file is usually absent there.
+ */
+async function readCredentials(): Promise<string> {
+  try {
+    return await fs.readFile(path.join(claudeDir, '.credentials.json'), 'utf8');
+  } catch (e) {
+    if (process.platform !== 'darwin') throw e;
+    return new Promise((res, rej) =>
+      execFile('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'], { timeout: 10_000 }, (err, out) => (err ? rej(e) : res(String(out).trim()))),
+    );
   }
 }

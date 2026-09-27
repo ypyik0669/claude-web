@@ -22,8 +22,12 @@ function runInTerminal(cmd: string) {
 function AgentCard({ a, onChange }: { a: AgentInfo; onChange: () => void }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [f, setF] = useState({ command: a.command, args: a.args.join(' '), model: a.model, label: a.label, env: Object.entries(a.env).map(([k, v]) => `${k}=${v}`).join('\n') });
-  useEffect(() => { setF({ command: a.command, args: a.args.join(' '), model: a.model, label: a.label, env: Object.entries(a.env).map(([k, v]) => `${k}=${v}`).join('\n') }); }, [a]);
+  const fromAgent = () => ({ command: a.command, args: a.args.join(' '), model: a.model, label: a.label, env: Object.entries(a.env).map(([k, v]) => `${k}=${v}`).join('\n') });
+  const [f, setF] = useState(fromAgent);
+  // reset only when the saved config really changed: every agents reload (another card's toggle,
+  // 「重新检测」) hands us a new object, which used to wipe whatever was being typed here
+  const savedKey = JSON.stringify(fromAgent());
+  useEffect(() => { setF(fromAgent()); }, [savedKey]);
   const toast = useStore((s) => s.toast);
   const save = async (patch: Record<string, unknown>) => {
     setBusy(true);

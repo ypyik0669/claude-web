@@ -282,6 +282,31 @@ export const useStore = create<State>((set, get) => ({
   },
 
   init() {
+    // Everything broadcast while the socket was down is gone (state changes, stream events, permission
+    // resolutions). Without this a turn that finished during the outage leaves the session "running"
+    // forever: queued messages never flush and the composer keeps queueing instead of sending.
+    const resyncOpenSessions = async () => {
+      await get().refreshSessions().catch(() => {}); // loadHistory reads `live` from the list
+      for (const o of Object.values(get().open)) {
+        if (o.state === 'history') continue;
+        let d: { info: SessionInfoSnapshot; pending: PermissionRequestEvent[] };
+        try {
+          d = await ws.request({ kind: 'session.info', sessionId: o.sessionId });
+        } catch {
+          set((s) => bump(s, o.sessionId, (x) => { x.state = 'history'; x.pending = []; }));
+          continue;
+        }
+        set((s) => bump(s, o.sessionId, (x) => { x.info = d.info; x.pending = d.pending ?? []; if (d.info?.state) x.state = d.info.state; }));
+        // rebuild the conversation from the transcript (missed events), then flush the queue if the turn ended meanwhile
+        await get().loadHistory(o.sessionId, { focus: false }).catch(() => {});
+        const cur = get().open[o.sessionId];
+        if (cur && cur.state === 'idle' && cur.queue.length) {
+          const next = cur.queue[0];
+          set((s) => bump(s, o.sessionId, (x) => { x.queue = x.queue.filter((q) => q.id !== next.id); }));
+          void get().send(o.sessionId, next.text, next.images, false, next.attachments).catch(() => {});
+        }
+      }
+    };
     ws.onStatus = (c) => {
       set({ connected: c });
       if (c) {
@@ -292,7 +317,7 @@ export const useStore = create<State>((set, get) => ({
         void get().loadAgents().catch(() => {});
         void ws.request<Limits>({ kind: 'limits.get' }).then((limits) => set({ limits })).catch(() => {});
         // re-attach open live sessions after reconnect
-        for (const o of Object.values(get().open)) if (o.state !== 'history') void ws.request({ kind: 'session.info', sessionId: o.sessionId }).then((d: any) => set((s) => bump(s, o.sessionId, (x) => { x.info = d.info; x.pending = d.pending; }))).catch(() => set((s) => bump(s, o.sessionId, (x) => { x.state = 'history'; })));
+        void resyncOpenSessions();
       }
     };
     ws.on((e: ServerEvent) => {
@@ -408,9 +433,18 @@ export const useStore = create<State>((set, get) => ({
   async stopAndRun(sessionId, id) {
     const q = get().recall(sessionId, id);
     if (!q) return;
+    // interrupt() clears the queue (that is what Stop means); here only the chosen message jumps ahead, the rest stay queued
+    const rest = get().open[sessionId]?.queue ?? [];
     await get().interrupt(sessionId);
-    // the runner flips to idle after the interrupt lands; queue the message at the front so the idle handler sends it
-    set((s) => bump(s, sessionId, (x) => { x.queue.unshift(q); }));
+    // the runner flips to idle after the interrupt lands; queue the message at the front so the idle handler sends it.
+    // If the idle already arrived while we awaited, nothing would ever pick it up — send it now instead.
+    const o = get().open[sessionId];
+    if (o && o.state !== 'running' && o.state !== 'waiting') {
+      set((s) => bump(s, sessionId, (x) => { x.queue = [...rest, ...x.queue]; }));
+      await get().send(sessionId, q.text, q.images, false, q.attachments);
+      return;
+    }
+    set((s) => bump(s, sessionId, (x) => { x.queue = [q, ...rest, ...x.queue]; }));
   },
 
   async editAndResend(sessionId, userItemId, text) {
@@ -515,6 +549,9 @@ export const useStore = create<State>((set, get) => ({
       x.state = 'running';
       x.lastSent = { id: uuid, text, images, attachments };
       x.conv.lastEventAt = Date.now();
+      // the SDK never echoes the user message, so applyUser never stamps the turn start for a live send —
+      // without this the run card's clock restarts on every event (a steer joins the turn already running)
+      if (!steer || !x.conv.turnStartedAt) x.conv.turnStartedAt = Date.now();
     }));
     disarmAutoContinue(sessionId);
     get().saveDraft(sessionId, '');
@@ -549,7 +586,14 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async respondPermission(requestId, response) {
-    await ws.request({ kind: 'permission.respond', requestId, response });
+    try {
+      await ws.request({ kind: 'permission.respond', requestId, response });
+    } catch (e: any) {
+      // answered elsewhere (IM, another window) or the runner is gone, and the resolved event was missed:
+      // drop the card instead of leaving buttons that can never succeed
+      if (/not found/i.test(e?.message ?? '')) set((s) => { const out = { ...s.open }; for (const [id, o] of Object.entries(out)) if (o.pending.some((p) => p.requestId === requestId)) out[id] = { ...o, pending: o.pending.filter((p) => p.requestId !== requestId), version: o.version + 1 }; return { open: out }; });
+      get().toast(e?.message ?? String(e));
+    }
   },
 
   setActive(id) {
@@ -562,7 +606,8 @@ export const useStore = create<State>((set, get) => ({
     set({ tab });
   },
   setDraft(sessionId, draft) {
-    set((s) => ({ open: { ...s.open, [sessionId]: { ...s.open[sessionId], draft } } }));
+    // never create a half-formed entry (no conv / state) for a session that is not open
+    set((s) => (s.open[sessionId] ? { open: { ...s.open, [sessionId]: { ...s.open[sessionId], draft } } } : {}));
   },
   async closeSession(sessionId) {
     await ws.request({ kind: 'session.close', sessionId }).catch(() => {});

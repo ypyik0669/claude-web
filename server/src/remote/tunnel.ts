@@ -16,6 +16,7 @@ export class TunnelManager extends EventEmitter {
     const existing = this.tunnels.get(host.id);
     if (existing && existing.info.state === 'up') return existing.info;
     if (existing) await this.close(host.id);
+    assertTarget(host.target);
     if (host.startCommand?.trim()) await this.runRemote(host, host.startCommand.trim());
     const localPort = await freePort();
     const args = ['-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=30', '-o', 'StrictHostKeyChecking=accept-new', '-N', '-L', `127.0.0.1:${localPort}:127.0.0.1:${host.remotePort || 3090}`];
@@ -52,6 +53,7 @@ export class TunnelManager extends EventEmitter {
 
   /** Run a one-off command on the remote host (used to start claude-web there). Resolves when ssh exits or after 15s. */
   runRemote(host: RemoteHost, command: string): Promise<{ code: number | null; output: string }> {
+    assertTarget(host.target);
     return new Promise((res) => {
       const args = ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new'];
       if (host.sshPort) args.push('-p', String(host.sshPort));
@@ -66,6 +68,11 @@ export class TunnelManager extends EventEmitter {
       p.on('error', (e) => { clearTimeout(t); res({ code: -1, output: e.message }); });
     });
   }
+}
+
+/** A target like `-oProxyCommand=…` would be parsed by ssh as an option and run a local command. */
+export function assertTarget(target: string) {
+  if (!target?.trim() || target.trim().startsWith('-')) throw new Error(`无效的 SSH 目标：${target}`);
 }
 
 function freePort(): Promise<number> {

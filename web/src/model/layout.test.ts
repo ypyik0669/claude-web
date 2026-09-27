@@ -102,6 +102,25 @@ describe('tiles', () => {
     expect(activeGroup(s).panes[p0].tiles.map((t: any) => t.sessionId)).toEqual(['c', 'b']);
   });
 
+  it('replace mode never duplicates a tab already in the pane, and keeps the tile id of the current one', () => {
+    let s = initialLayout();
+    const p0 = focused(s);
+    s = layoutReducer(s, { t: 'tile.open', paneId: p0, tile: chatTile('a'), mode: 'replace' });
+    s = layoutReducer(s, { t: 'tile.open', paneId: p0, tile: chatTile('b'), mode: 'tab' });
+    const [ta, tb] = activeGroup(s).panes[p0].tiles;
+    // b is active; "open a" (sidebar click) must switch to the existing a tab, not turn b into a second a
+    s = layoutReducer(s, { t: 'tile.open', paneId: p0, tile: chatTile('a'), mode: 'replace' });
+    let p = activeGroup(s).panes[p0];
+    expect(p.tiles.map((t: any) => t.sessionId)).toEqual(['a', 'b']);
+    expect(p.activeTileId).toBe(ta.id);
+    // re-opening the active session is a no-op: same tile id → the tile is not remounted
+    const before = s;
+    s = layoutReducer(s, { t: 'tile.open', paneId: p0, tile: chatTile('a'), mode: 'replace' });
+    expect(s).toBe(before);
+    p = activeGroup(s).panes[p0];
+    expect(p.tiles.map((t) => t.id)).toEqual([ta.id, tb.id]);
+  });
+
   it('close removes the tile and picks a neighbour; last tile closes the pane', () => {
     let s = initialLayout();
     const p0 = focused(s);

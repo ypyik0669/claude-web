@@ -32,7 +32,11 @@ export class RunnerPool extends EventEmitter {
     if (params.sessionId && !params.fork && !params.resumeAt) {
       const existing = this.runners.get(params.sessionId);
       if (existing && existing.state !== 'closed' && existing.state !== 'error') return existing;
-      if (existing) this.runners.delete(params.sessionId);
+      if (existing) {
+        this.runners.delete(params.sessionId);
+        // an errored runner may still hold a child process / input queue; its late 'closed' is filtered below
+        void existing.close().catch(() => { /* already dead */ });
+      }
     }
     const kind = params.agent ?? 'claude';
     let r: AgentDriver;
@@ -45,8 +49,12 @@ export class RunnerPool extends EventEmitter {
     this.runners.set(r.id, r);
     r.on('message', (m) => this.emit('message', r.sessionId, m));
     r.on('state', (s, err) => {
+      // a replaced runner (reopened after an error) must not report its shutdown as the new one's state
+      const holder = this.runners.get(r.sessionId);
+      if (holder && holder !== r) return;
       this.emit('state', r.sessionId, s, err);
-      if (s === 'closed') this.runners.delete(r.id);
+      // after init the map may be keyed by sessionId rather than id; only drop entries that still point at this runner
+      if (s === 'closed') for (const k of [r.id, r.sessionId]) if (this.runners.get(k) === r) this.runners.delete(k);
     });
     r.on('info', (i) => {
       // session id can be assigned by init (new session) — keep the map keyed by the real id
@@ -76,11 +84,12 @@ export class RunnerPool extends EventEmitter {
   private reap() {
     const now = Date.now();
     for (const [id, r] of this.runners) {
-      if (r.state === 'idle' && now - r.lastActivity > IDLE_TTL_MS) void this.close(id);
+      if (r.state === 'idle' && now - r.lastActivity > IDLE_TTL_MS) void this.close(id).catch(() => { /* already gone */ });
     }
   }
 
   async closeAll() {
-    await Promise.all([...this.runners.keys()].map((id) => this.close(id)));
+    // one runner failing to close must not stop the rest (or the server shutdown) from proceeding
+    await Promise.allSettled([...this.runners.keys()].map((id) => this.close(id)));
   }
 }

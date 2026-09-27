@@ -31,8 +31,10 @@ export class JsonRpcProcess extends EventEmitter {
     });
     this.child.stderr!.setEncoding('utf8');
     this.child.stderr!.on('data', (d: string) => { this.stderrTail = (this.stderrTail + d).slice(-4000); this.emit('stderr', d); });
-    this.child.on('error', (e) => { this.exited = true; this.failAll(e); this.emit('exit', -1, e.message); });
-    this.child.on('exit', (code) => { this.exited = true; this.failAll(new Error(`进程退出 ${code}`)); this.emit('exit', code); });
+    // EPIPE when the agent dies with a write in flight: a stream 'error' with no listener would crash the server
+    this.child.stdin!.on('error', (e) => { this.stderrTail = (this.stderrTail + `\n[stdin] ${e.message}`).slice(-4000); });
+    this.child.on('error', (e) => { const first = !this.exited; this.exited = true; this.failAll(e); if (first) this.emit('exit', -1, e.message); });
+    this.child.on('exit', (code) => { const first = !this.exited; this.exited = true; this.failAll(new Error(`进程退出 ${code}`)); if (first) this.emit('exit', code); });
   }
 
   get pid() { return this.child.pid; }
@@ -84,6 +86,8 @@ export class JsonRpcProcess extends EventEmitter {
 
   request<T = any>(method: string, params?: unknown, timeoutMs = 0): Promise<T> {
     const id = ++this.seq;
+    // write() drops messages once the process is gone; without this a request with no timeout would hang forever
+    if (this.exited) return Promise.reject(new Error(`${method}：进程已退出`));
     return new Promise<T>((resolve, reject) => {
       const p: any = { resolve, reject };
       if (timeoutMs > 0) p.timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`${method} 超时`)); }, timeoutMs);

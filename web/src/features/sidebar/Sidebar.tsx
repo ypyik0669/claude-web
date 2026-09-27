@@ -12,6 +12,7 @@ function AgentDot({ kind }: { kind: AgentKind }) {
 }
 import { MIME_SESSION } from '@/features/workbench/dnd';
 import { dlg } from '@/ui/dialog';
+import { isWithin } from '@/features/paths';
 
 function SessionMenu({ s, onClose }: { s: SessionSummary; onClose: () => void }) {
   const st = useStore();
@@ -156,7 +157,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     const sorted = [...workspaces].sort((a, b) => b.path.length - a.path.length);
     for (const s of visible) {
       if (sessionMeta[s.sessionId]?.pinned) continue;
-      const w = sorted.find((x) => (s.cwd ?? '').toLowerCase().startsWith(x.path.toLowerCase()));
+      const w = sorted.find((x) => isWithin(s.cwd ?? '', x.path)); // segment-bounded: /proj/app must not swallow /proj/app2
       const m = w ? byWs : other;
       const k = w ? w.id : s.cwd || '(未知目录)';
       (m.get(k) ?? m.set(k, []).get(k)!).push(s);

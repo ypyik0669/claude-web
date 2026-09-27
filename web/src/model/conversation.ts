@@ -214,6 +214,9 @@ function applyStream(c: Conversation, m: any) {
   const k = key(m.parent_tool_use_id);
   let cur = c.streaming.get(k);
   if (ev.type === 'message_start') {
+    // a previous message on this lane that never got message_stop (stream dropped mid-way and the CLI retried)
+    // will never finish now — without this it keeps its streaming cursor / "思考中" row for good
+    if (cur) cur.streaming = false;
     cur = { kind: 'assistant', id: ev.message?.id ?? m.uuid, uuid: m.uuid, ts: new Date(clock()).toISOString(), model: ev.message?.model, blocks: [], streaming: true, parentToolUseId: m.parent_tool_use_id ?? null };
     if (m.user_message_uuid) cur.userMessageUuid = m.user_message_uuid;
     c.streaming.set(k, cur);
@@ -533,12 +536,27 @@ export function applyTranscript(c: Conversation, msgs: any[], opts?: { live?: bo
   for (const m of msgs) applyMessage(c, m);
   if (opts?.live) {
     // the replay stamped turnStartedAt with the replay clock; the transcript knows better
+    let turn = 0;
     for (let i = c.items.length - 1; i >= 0; i--) {
       const it = c.items[i];
       if (it.kind !== 'user' || it.meta) continue;
       const t = it.ts ? Date.parse(it.ts) : NaN;
       if (!Number.isNaN(t)) c.turnStartedAt = t;
+      turn = i;
       break;
+    }
+    // Transcripts carry no `result` lines, so nothing swept the earlier turns: a tool whose result never got
+    // written (process killed mid-command) would stay "pending" forever and, being first, grab runningTool —
+    // the run card would then name a command from hours ago. Only the turn in flight can still be running.
+    for (const { tool } of walkTools(c.items.slice(0, turn))) if (tool.status !== 'done' && tool.status !== 'error') tool.status = 'done';
+    c.runningTool = null;
+    for (const it of c.items.slice(turn)) {
+      if (it.kind !== 'assistant') continue;
+      for (const b of it.blocks) {
+        if (b.type !== 'tool_use' || (b.status !== 'pending' && b.status !== 'running' && b.status !== 'streaming')) continue;
+        const since = it.ts ? Date.parse(it.ts) : NaN;
+        c.runningTool = { id: b.id, name: b.name, since: Number.isNaN(since) ? clock() : since };
+      }
     }
     return;
   }

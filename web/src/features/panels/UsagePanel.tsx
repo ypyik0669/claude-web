@@ -41,14 +41,23 @@ export function UsagePanel() {
   const [err, setErr] = useState('');
   const lastResultId = active?.conv.lastResult?.id;
 
+  const sid = active?.sessionId;
+  // don't show the previous session's numbers while this one loads
+  useEffect(() => { setSess(null); }, [sid]);
   useEffect(() => {
-    if (tab !== 'session' || !active) return;
-    ws.request<any>({ kind: 'usage.session', sessionId: active.sessionId }).then(setSess).catch((e) => setErr(e.message));
-  }, [tab, active?.sessionId, lastResultId]);
+    if (tab !== 'session' || !sid) return;
+    let live = true;
+    setErr('');
+    ws.request<any>({ kind: 'usage.session', sessionId: sid }).then((r) => live && setSess(r)).catch((e) => live && setErr(e.message));
+    return () => { live = false; };
+  }, [tab, sid, lastResultId]);
   useEffect(() => {
     if (tab !== 'global') return;
+    let live = true;
     setGlob(null);
-    ws.request<any>({ kind: 'usage.global', days }).then(setGlob).catch((e) => setErr(e.message));
+    setErr('');
+    ws.request<any>({ kind: 'usage.global', days }).then((r) => live && setGlob(r)).catch((e) => live && setErr(e.message));
+    return () => { live = false; };
   }, [tab, days]);
 
   const sorted = (m: Record<string, Bucket>) => Object.entries(m).sort((a, b) => b[1].costUsd - a[1].costUsd);

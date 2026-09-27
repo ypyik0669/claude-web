@@ -26,28 +26,54 @@ interface Data {
   goals: Goal[];
 }
 
-const file = path.join(process.env.CLAUDE_WEB_DIR ?? path.join(os.homedir(), '.claude-web'), 'meta.json');
+const defaultFile = () => path.join(process.env.CLAUDE_WEB_DIR ?? path.join(os.homedir(), '.claude-web'), 'meta.json');
 
 /** Small JSON store for things Claude Code itself does not persist: workspaces, pin/archive flags, schedules, UI settings. */
 export class MetaStore extends EventEmitter {
   data: Data = { version: 1, workspaces: [], sessions: {}, schedules: [], scheduleRuns: [], settings: {}, providers: [], feedback: {}, drafts: {}, devices: [], remoteHosts: [], imGateways: [], imBindings: [], goals: [] };
   private saving: Promise<void> | null = null;
 
+  constructor(private file = defaultFile()) {
+    super();
+  }
+
   async load() {
+    const file = this.file;
+    let txt: string;
     try {
-      this.data = { ...this.data, ...JSON.parse(await fs.readFile(file, 'utf8')) };
+      txt = await fs.readFile(file, 'utf8');
     } catch {
-      /* first run */
+      return; // first run
+    }
+    try {
+      this.data = { ...this.data, ...JSON.parse(txt) };
+    } catch {
+      // A torn / hand-broken file would otherwise be silently replaced by defaults on the next save,
+      // taking workspaces, providers and keys with it. Keep a copy the user can recover from.
+      await fs.copyFile(file, `${file}.corrupt-${Date.now()}`).catch(() => {});
     }
   }
 
   private async save(quiet = false) {
+    const file = this.file;
     await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, JSON.stringify(this.data, null, 2), { encoding: 'utf8', mode: 0o600 }); // holds provider API keys
+    // write-then-rename: a crash mid-write must not leave a truncated meta.json (it holds provider API keys)
+    const tmp = `${file}.${process.pid}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify(this.data, null, 2), { encoding: 'utf8', mode: 0o600 });
+    try {
+      await fs.rename(tmp, file);
+    } catch {
+      // Windows: rename over a file another process holds open fails — fall back to an in-place write
+      await fs.rm(tmp, { force: true }).catch(() => {});
+      await fs.writeFile(file, JSON.stringify(this.data, null, 2), { encoding: 'utf8', mode: 0o600 });
+    }
     if (!quiet) this.emit('changed');
   }
   private queueSave(quiet = false) {
-    this.saving = (this.saving ?? Promise.resolve()).then(() => this.save(quiet));
+    // chain on the previous save's settlement, not its success: one failed write (EBUSY, disk full)
+    // must not make every later save reject without even trying
+    const prev = this.saving ?? Promise.resolve();
+    this.saving = prev.catch(() => {}).then(() => this.save(quiet));
     return this.saving;
   }
 

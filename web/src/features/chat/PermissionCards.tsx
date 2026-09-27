@@ -115,7 +115,7 @@ function ToolPermission({ p }: { p: PermissionRequestEvent }) {
             总是允许
           </button>
         ) : null}
-        <input placeholder="拒绝理由 / 告诉 Claude 该怎么做" value={msg} onChange={(e) => setMsg(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && respond(p.requestId, { behavior: 'deny', message: msg || '用户拒绝' })} />
+        <input placeholder="拒绝理由 / 告诉 Claude 该怎么做" value={msg} onChange={(e) => setMsg(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && respond(p.requestId, { behavior: 'deny', message: msg || '用户拒绝' })} />
         <button className="btn danger" onClick={() => respond(p.requestId, { behavior: 'deny', message: msg || '用户拒绝了这次操作' })}>
           拒绝
         </button>

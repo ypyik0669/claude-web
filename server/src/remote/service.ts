@@ -129,7 +129,7 @@ export class RemoteService extends EventEmitter {
     }
     const d = this.meta.devices().find((x) => x.id === id);
     if (!d) { this.tokenCache.delete(token); return null; }
-    if (Date.now() - d.lastSeenAt > 60_000) { void this.meta.touchDevice(id, req ? clientIp(req) : undefined); }
+    if (Date.now() - d.lastSeenAt > 60_000) { void this.meta.touchDevice(id, req ? clientIp(req) : undefined).catch(() => {}); }
     return id;
   }
 

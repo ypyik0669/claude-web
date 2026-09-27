@@ -38,12 +38,18 @@ export class AgentTranscripts {
     return null;
   }
 
+  /** Rewrites the whole file, so it queues behind (and ahead of) append() — otherwise a line appended between our read and write is lost. */
   async patchHead(sessionId: string, patch: Partial<Head>) {
     const f = this.file(sessionId);
-    const text = await fs.readFile(f, 'utf8');
-    const i = text.indexOf('\n');
-    const head = { ...JSON.parse(text.slice(0, i)), ...patch };
-    await fs.writeFile(f, JSON.stringify(head) + text.slice(i), 'utf8');
+    const prev = this.writers.get(sessionId) ?? Promise.resolve();
+    const run = prev.then(async () => {
+      const text = await fs.readFile(f, 'utf8');
+      const i = text.indexOf('\n');
+      const head = { ...JSON.parse(text.slice(0, i)), ...patch };
+      await fs.writeFile(f, JSON.stringify(head) + text.slice(i), 'utf8');
+    });
+    this.writers.set(sessionId, run.catch(() => {}));
+    return run;
   }
 
   async exists(sessionId: string) { return !!(await fs.stat(this.file(sessionId)).catch(() => null)); }

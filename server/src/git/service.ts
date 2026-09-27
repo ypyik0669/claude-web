@@ -68,6 +68,39 @@ function parseXY(x: string, y: string, untracked = false): GitFileStatus['status
   }
 }
 
+/** Parse `git status --porcelain=v2 -z --branch` into `st` (entries are NUL-terminated; a rename's origPath is its own field). */
+export function parseStatusV2z(stdout: string, st: Pick<GitStatus, 'branch' | 'upstream' | 'ahead' | 'behind' | 'detached' | 'files'>) {
+  const fields = stdout.split('\0');
+  for (let i = 0; i < fields.length; i++) {
+    const line = fields[i];
+    if (!line) continue;
+    if (line.startsWith('# branch.head ')) { const b = line.slice(14); st.branch = b === '(detached)' ? null : b; st.detached = b === '(detached)'; }
+    else if (line.startsWith('# branch.upstream ')) st.upstream = line.slice(18);
+    else if (line.startsWith('# branch.ab ')) { const m = /\+(\d+) -(\d+)/.exec(line); if (m) { st.ahead = Number(m[1]); st.behind = Number(m[2]); } }
+    else if (line.startsWith('1 ') || line.startsWith('2 ')) {
+      const parts = line.split(' ');
+      const x = parts[1][0], y = parts[1][1];
+      let p: string, from: string | undefined;
+      if (line.startsWith('2 ')) { p = parts.slice(9).join(' '); from = fields[++i]; }
+      else p = parts.slice(8).join(' ');
+      st.files.push({ path: p, from, status: parseXY(x, y), staged: x !== '.', unstaged: y !== '.' });
+    } else if (line.startsWith('u ')) {
+      st.files.push({ path: line.split(' ').slice(10).join(' '), status: 'conflict', staged: false, unstaged: true });
+    } else if (line.startsWith('? ')) {
+      st.files.push({ path: line.slice(2), status: 'untracked', staged: false, unstaged: true });
+    }
+  }
+}
+
+/** The repo's git dir: `<root>/.git`, or where a `.git` file points (linked worktrees, submodules — often a relative path). */
+export async function resolveGitDir(root: string): Promise<string> {
+  const g = path.join(root, '.git');
+  const gs = await fs.stat(g).catch(() => null);
+  if (!gs?.isFile()) return g;
+  const target = (await fs.readFile(g, 'utf8')).replace(/^gitdir:\s*/, '').trim();
+  return path.resolve(root, target);
+}
+
 export class GitService extends EventEmitter {
   private watchers = new Map<string, { w: any; timer?: ReturnType<typeof setTimeout> }>();
   private fetchTimer: ReturnType<typeof setInterval> | null = null;
@@ -101,34 +134,14 @@ export class GitService extends EventEmitter {
   async status(cwd: string): Promise<GitStatus> {
     const root = await this.root(cwd);
     if (!root) return { root: null, branch: null, upstream: null, ahead: 0, behind: 0, detached: false, files: [], stashes: 0, state: 'clean' };
-    const { stdout } = await this.run(root, ['status', '--porcelain=v2', '--branch', '--untracked-files=all']);
+    // -z: without it git C-quotes paths containing `"`, `\`, tabs or newlines, and those quoted strings
+    // would be handed back verbatim to add / reset / checkout as pathspecs that match nothing
+    const { stdout } = await this.run(root, ['status', '--porcelain=v2', '-z', '--branch', '--untracked-files=all']);
     const st: GitStatus = { root, branch: null, upstream: null, ahead: 0, behind: 0, detached: false, files: [], stashes: 0, state: 'clean' };
-    for (const line of stdout.split('\n')) {
-      if (!line) continue;
-      if (line.startsWith('# branch.head ')) { const b = line.slice(14); st.branch = b === '(detached)' ? null : b; st.detached = b === '(detached)'; }
-      else if (line.startsWith('# branch.upstream ')) st.upstream = line.slice(18);
-      else if (line.startsWith('# branch.ab ')) { const m = /\+(\d+) -(\d+)/.exec(line); if (m) { st.ahead = Number(m[1]); st.behind = Number(m[2]); } }
-      else if (line.startsWith('1 ') || line.startsWith('2 ')) {
-        const parts = line.split(' ');
-        const xy = parts[1];
-        const x = xy[0], y = xy[1];
-        let p: string, from: string | undefined;
-        if (line.startsWith('2 ')) { const tail = line.split(' ').slice(9).join(' '); [p, from] = tail.split('\t'); }
-        else p = parts.slice(8).join(' ');
-        const f: GitFileStatus = { path: p, from, status: parseXY(x, y), staged: x !== '.', unstaged: y !== '.' };
-        st.files.push(f);
-      } else if (line.startsWith('u ')) {
-        const p = line.split(' ').slice(10).join(' ');
-        st.files.push({ path: p, status: 'conflict', staged: false, unstaged: true });
-      } else if (line.startsWith('? ')) {
-        st.files.push({ path: line.slice(2), status: 'untracked', staged: false, unstaged: true });
-      }
-    }
+    parseStatusV2z(stdout, st);
     if (st.detached) st.state = 'detached';
     try {
-      const g = path.join(root, '.git');
-      const gs = await fs.stat(g).catch(() => null);
-      const gitDir = gs?.isFile() ? (await fs.readFile(g, 'utf8')).replace(/^gitdir:\s*/, '').trim() : g;
+      const gitDir = await resolveGitDir(root);
       const has = async (n: string) => !!(await fs.stat(path.join(gitDir, n)).catch(() => null));
       if (await has('MERGE_HEAD')) st.state = 'merging';
       else if (await has('rebase-merge') || await has('rebase-apply')) st.state = 'rebasing';
@@ -146,7 +159,8 @@ export class GitService extends EventEmitter {
     const root = (await this.root(cwd)) ?? cwd;
     const args = staged ? ['diff', '--cached', '--no-color', '--', file] : ['diff', '--no-color', '--', file];
     const { stdout } = await this.run(root, args);
-    if (stdout.includes('Binary files')) return { kind: 'binary', text: '' };
+    // anchored: a text diff whose *content* mentions "Binary files" (e.g. this very line) is still a text diff
+    if (/^Binary files .* differ$/m.test(stdout)) return { kind: 'binary', text: '' };
     if (stdout.trim()) return { kind: 'diff', text: stdout };
     if (!staged) {
       const { stdout: st } = await this.run(root, ['status', '--porcelain', '--', file]);
@@ -283,10 +297,15 @@ export class GitService extends EventEmitter {
   async watch(cwd: string) {
     const root = await this.root(cwd);
     if (!root || this.watchers.has(root)) return root;
-    const g = path.join(root, '.git');
-    const w = chokidar.watch([path.join(g, 'HEAD'), path.join(g, 'index'), path.join(g, 'refs'), path.join(g, 'ORIG_HEAD'), path.join(g, 'MERGE_HEAD')], { ignoreInitial: true, depth: 3 });
+    // linked worktrees / submodules: `.git` is a file; HEAD + index live in the per-worktree dir, refs in the common dir
+    const g = await resolveGitDir(root);
+    const commonRel = (await fs.readFile(path.join(g, 'commondir'), 'utf8').catch(() => '')).trim();
+    const common = commonRel ? path.resolve(g, commonRel) : g;
+    if (this.watchers.has(root)) return root; // a concurrent watch() won while we were reading
+    const w = chokidar.watch([path.join(g, 'HEAD'), path.join(g, 'index'), path.join(common, 'refs'), path.join(g, 'ORIG_HEAD'), path.join(g, 'MERGE_HEAD')], { ignoreInitial: true, depth: 3 });
     const entry: { w: any; timer?: ReturnType<typeof setTimeout> } = { w };
     w.on('all', () => { if (entry.timer) clearTimeout(entry.timer); entry.timer = setTimeout(() => this.emit('changed', root), 400); });
+    w.on('error', (e: unknown) => console.error('[git] watch error:', (e as Error)?.message ?? e)); // unhandled 'error' would throw
     this.watchers.set(root, entry);
     this.fetchDirs.add(root);
     if (!this.fetchTimer) {
@@ -298,6 +317,6 @@ export class GitService extends EventEmitter {
   async unwatch(cwd: string) {
     const root = (await this.root(cwd)) ?? cwd;
     const e = this.watchers.get(root);
-    if (e) { await e.w.close(); this.watchers.delete(root); this.fetchDirs.delete(root); }
+    if (e) { if (e.timer) clearTimeout(e.timer); this.watchers.delete(root); this.fetchDirs.delete(root); await e.w.close(); }
   }
 }

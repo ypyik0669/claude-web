@@ -77,6 +77,8 @@ export class SessionRunner extends EventEmitter {
   private features: SessionFeatures;
   lastActivity = Date.now();
   private closed = false;
+  /** CLI flags from open (features / worktree), re-applied when the process is respawned */
+  private extraArgs: Record<string, string | null> = {};
 
   constructor(params: OpenSessionParams, provider?: Provider) {
     super();
@@ -107,6 +109,7 @@ export class SessionRunner extends EventEmitter {
     }
     extra.extraArgs = { ...this.featureArgs() };
     if (params.worktree) extra.extraArgs.worktree = params.worktree;
+    this.extraArgs = extra.extraArgs;
     this.start(extra);
   }
 
@@ -225,9 +228,10 @@ export class SessionRunner extends EventEmitter {
         this.lastActivity = Date.now();
         this.ingest(m);
       }
-      if (!this.closed) this.setState('closed');
+      // a respawn replaced this query: its end is expected, not the session closing
+      if (!this.closed && this.q === q) this.setState('closed');
     } catch (e: any) {
-      if (!this.closed) this.setState('error', e?.message ?? String(e));
+      if (!this.closed && this.q === q) this.setState('error', e?.message ?? String(e));
     }
   }
 
@@ -273,6 +277,7 @@ export class SessionRunner extends EventEmitter {
   private onCanUseTool(toolName: string, input: Record<string, unknown>, o: { signal: AbortSignal; suggestions?: unknown[]; toolUseID?: string; blockedPath?: string; decisionReason?: string }): Promise<PermissionResult> {
     const requestId = randomUUID();
     const event: PermissionRequestEvent = { requestId, sessionId: this.sessionId, toolName, input, toolUseId: o.toolUseID, suggestions: o.suggestions, blockedPath: o.blockedPath, decisionReason: o.decisionReason };
+    if (o.signal.aborted) return Promise.resolve({ behavior: 'deny', message: 'cancelled' });
     return new Promise<PermissionResult>((resolve) => {
       this.pending.set(requestId, { event, resolve });
       o.signal.addEventListener('abort', () => {
@@ -280,7 +285,7 @@ export class SessionRunner extends EventEmitter {
           resolve({ behavior: 'deny', message: 'cancelled' });
           this.emit('permissionResolved', requestId);
         }
-      });
+      }, { once: true });
       this.setState('waiting');
       this.emit('permission', event);
     });
@@ -297,6 +302,8 @@ export class SessionRunner extends EventEmitter {
   }
 
   send(text: string, images?: { mediaType: string; data: string }[], steer = false, uuid?: string, attachments?: AttachmentRef[]) {
+    // the query loop is gone: queueing would flip the UI to "running" with nothing ever answering
+    if (this.closed || this.state === 'closed' || this.state === 'error') throw new Error(`session ${this.sessionId} is ${this.closed ? 'closed' : this.state}; reopen it to continue`);
     const content: any[] = [];
     for (const im of images ?? []) content.push({ type: 'image', source: { type: 'base64', media_type: im.mediaType, data: im.data } });
     // attachments: markers the model can act on (Read the path) and the web UI decodes back into chips
@@ -384,6 +391,7 @@ export class SessionRunner extends EventEmitter {
   /** Kill the process and start a new one resuming the same session. */
   async respawn() {
     const old = this.q;
+    this.q = null; // detach first: the old pump sees it was replaced and doesn't report 'closed'
     this.input.close();
     this.input = new InputQueue();
     this.abort.abort();
@@ -393,8 +401,9 @@ export class SessionRunner extends EventEmitter {
     } catch {
       /* ignore */
     }
+    if (this.closed) return; // closed while the old process was shutting down: don't spawn an orphan
     this.setState('starting');
-    this.start({ resume: this.sessionId });
+    this.start({ resume: this.sessionId, extraArgs: { ...this.extraArgs } });
   }
 
   async close() {

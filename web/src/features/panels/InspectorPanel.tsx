@@ -15,7 +15,9 @@ function FileView({ path, line }: { path: string; line?: number }) {
   const [err, setErr] = useState('');
   useEffect(() => {
     setText(null); setErr('');
-    ws.request<string>({ kind: 'fs.read', path }).then(setText).catch((e) => setErr(e.message));
+    let live = true; // a slower read of the previous path must not land under this path's header
+    ws.request<string>({ kind: 'fs.read', path }).then((t) => live && setText(t)).catch((e) => live && setErr(e.message));
+    return () => { live = false; };
   }, [path]);
   useEffect(() => {
     if (text === null || !line) return;

@@ -35,7 +35,7 @@ export function Pane({ pane, groupId, index, rect, focused, zoomed, single, hidd
     const panel = e.dataTransfer.getData(MIME_PANEL);
     if (sid) {
       const tile = chatTile(sid);
-      if (z === 'center') dispatch({ t: 'tile.open', paneId: pane.id, tile, mode: e.ctrlKey ? 'tab' : 'replace' });
+      if (z === 'center') dispatch({ t: 'tile.open', paneId: pane.id, tile, mode: e.ctrlKey || e.metaKey ? 'tab' : 'replace' });
       else dispatch({ t: 'pane.split', paneId: pane.id, dir, tile, before });
     } else if (tp) {
       if (tp.paneId === pane.id && z === 'center') return;

@@ -107,8 +107,8 @@ export async function probeProvider(p: Pick<Provider, 'type' | 'baseUrl' | 'apiK
     const ac = new AbortController();
     const to = setTimeout(() => ac.abort(), 20_000);
     const r = await fetch(url, { headers, signal: ac.signal });
+    const text = await r.text(); // still under the timeout: a relay that sends headers then stalls the body would hang the probe
     clearTimeout(to);
-    const text = await r.text();
     let j: any = null;
     try { j = JSON.parse(text); } catch { /* not json */ }
     if (!r.ok) return { ok: false, status: r.status, models: [], error: j?.error?.message ?? j?.message ?? text.slice(0, 300) ?? `HTTP ${r.status}`, ms: Date.now() - t0 };

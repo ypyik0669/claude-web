@@ -7,10 +7,13 @@ import type { Tile } from '@/model/layout';
 import type { FsOpenResult } from '@shared';
 import { MonacoEditor, type EditorHandle } from '@/features/editor/MonacoEditor';
 import { fileUrl, previewKind } from '@/features/editor/preview';
+import { isWithin } from '@/features/paths';
 
 type DocTileModel = Extract<Tile, { kind: 'doc' }>;
 
 const isMd = (p: string) => /\.(md|mdx|markdown)$/i.test(p);
+/** Same file? Separator-agnostic; case-folded only for Windows-style paths (macOS / Linux names can differ by case alone). */
+const samePath = (a: string, b: string) => isWithin(a, b) && isWithin(b, a);
 
 /** Editable document tile: Monaco + autosave + disk-change detection; images / pdf / media get a preview instead. */
 export function DocTile({ tile }: { tile: DocTileModel }) {
@@ -51,7 +54,7 @@ export function DocTile({ tile }: { tile: DocTileModel }) {
     if (kind !== 'text') return;
     void ws.request({ kind: 'fs.watch', path: tile.path }).catch(() => {});
     const off = ws.on((e) => {
-      if (e.kind !== 'fs.changed' || e.path.replace(/\//g, '\\').toLowerCase() !== tile.path.replace(/\//g, '\\').toLowerCase()) return;
+      if (e.kind !== 'fs.changed' || !samePath(e.path, tile.path)) return;
       if (e.type === 'unlink') { setDiskChanged(true); return; }
       ws.request<any>({ kind: 'fs.stat', path: tile.path }).then((st) => {
         if (Math.abs(st.mtime - mtime.current) < 1) return; // our own save
@@ -66,10 +69,14 @@ export function DocTile({ tile }: { tile: DocTileModel }) {
     if (!doc || saving) return;
     if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
     setSaving(true);
+    const text = latest.current;
     try {
-      const r = await ws.request<{ mtime: number }>({ kind: 'fs.write', path: tile.path, text: latest.current, expectMtime: diskChanged ? undefined : mtime.current });
+      const r = await ws.request<{ mtime: number }>({ kind: 'fs.write', path: tile.path, text, expectMtime: diskChanged ? undefined : mtime.current });
       mtime.current = r.mtime;
-      setDirty(tile.id, false);
+      // what is on disk now is the clean baseline — otherwise undoing back to the text as first loaded reads as
+      // "clean" (no autosave) while the disk still holds the saved edit
+      setDoc((d) => (d ? { ...d, text } : d));
+      setDirty(tile.id, latest.current !== text); // keystrokes that landed while the write was in flight stay dirty
       setDiskChanged(false);
     } catch (e: any) {
       if (/磁盘上已被修改/.test(e.message)) setDiskChanged(true);
@@ -133,7 +140,7 @@ export function DocTile({ tile }: { tile: DocTileModel }) {
         {doc && !doc.binary && (mode === 'preview' && isMd(tile.path) ? (
           <div className="md-doc"><Markdown text={latest.current || doc.text} /></div>
         ) : (
-          <MonacoEditor path={tile.path} value={doc.text} version={version} line={tile.line} readOnly={!!doc.truncated} onChange={onChange} onSave={save} onCursor={(line, col) => setPos({ line, col })} onReady={(h) => { handle.current = h; }} />
+          <MonacoEditor path={tile.path} value={latest.current} version={version} line={tile.line} readOnly={!!doc.truncated} onChange={onChange} onSave={save} onCursor={(line, col) => setPos({ line, col })} onReady={(h) => { handle.current = h; }} />
         ))}
       </div>
       <div className="doc-foot">

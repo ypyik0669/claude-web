@@ -8,6 +8,9 @@ import type { AndroidDevice, AndroidStatus } from '../protocol.js';
 const execFileAsync = promisify(execFile);
 const isWin = process.platform === 'win32';
 
+/** `adb shell` joins its argv into a device-side sh command line, so anything interpolated there must be a plain token. */
+function assertPkg(pkg: string) { if (!/^[A-Za-z0-9_.]+$/.test(pkg)) throw new Error(`无效包名：${pkg}`); }
+
 /** Android emulator / device preview through adb: screenshots, input, apk install, logcat. Optional feature; degrades to "adb 未安装". */
 export class AndroidService {
   private adbPath: string | null | undefined;
@@ -69,10 +72,11 @@ export class AndroidService {
     const buf = await new Promise<Buffer>((res, rej) => {
       const chunks: Buffer[] = [];
       const p = spawn(adb, ['-s', serial, 'exec-out', 'screencap', '-p'], { windowsHide: true });
+      // cleared on exit: the panel polls every 0.9s, so a dangling 15s timer per shot piled up
+      const timer = setTimeout(() => { p.kill(); rej(new Error('screencap 超时')); }, 15_000);
       p.stdout.on('data', (d: Buffer) => chunks.push(d));
-      p.on('error', rej);
-      p.on('close', (code) => (code === 0 ? res(Buffer.concat(chunks)) : rej(new Error(`screencap 退出 ${code}`))));
-      setTimeout(() => { p.kill(); rej(new Error('screencap 超时')); }, 15_000);
+      p.on('error', (e) => { clearTimeout(timer); rej(e); });
+      p.on('close', (code) => { clearTimeout(timer); if (code === 0) res(Buffer.concat(chunks)); else rej(new Error(`screencap 退出 ${code}`)); });
     });
     // PNG IHDR: width/height at bytes 16..24
     const width = buf.length > 24 ? buf.readUInt32BE(16) : 0;
@@ -84,7 +88,7 @@ export class AndroidService {
     switch (i.kind) {
       case 'tap': await this.run(['shell', 'input', 'tap', String(Math.round(i.x)), String(Math.round(i.y))], { serial }); break;
       case 'swipe': await this.run(['shell', 'input', 'swipe', String(Math.round(i.x1)), String(Math.round(i.y1)), String(Math.round(i.x2)), String(Math.round(i.y2)), String(i.ms ?? 300)], { serial }); break;
-      case 'key': await this.run(['shell', 'input', 'keyevent', String(i.code)], { serial }); break;
+      case 'key': if (!/^\w+$/.test(String(i.code))) throw new Error('无效按键'); await this.run(['shell', 'input', 'keyevent', String(i.code)], { serial }); break;
       case 'text': await this.run(['shell', 'input', 'text', i.text.replace(/ /g, '%s').replace(/([()<>|;&*~"'\\$])/g, '\\$1')], { serial }); break;
     }
   }
@@ -95,12 +99,13 @@ export class AndroidService {
     return out.split(/\r?\n/).slice(-lines).join('\n');
   }
   async clearLogcat(serial: string) { await this.run(['logcat', '-c'], { serial }); }
-  async launchApp(serial: string, pkg: string) { return this.run(['shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1'], { serial }); }
+  async launchApp(serial: string, pkg: string) { assertPkg(pkg); return this.run(['shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1'], { serial }); }
   async packages(serial: string) { const out = await this.run(['shell', 'pm', 'list', 'packages', '-3'], { serial }); return out.split(/\r?\n/).map((l) => l.replace(/^package:/, '').trim()).filter(Boolean).sort(); }
   startEmulator(avd: string) {
     const emu = this.emulator();
     if (!emu) throw new Error('未找到 emulator（Android SDK 的 emulator 目录）');
     const p = spawn(emu, ['-avd', avd, '-netdelay', 'none', '-netspeed', 'full'], { detached: true, stdio: 'ignore', windowsHide: true });
+    p.on('error', (e) => console.error('[android] emulator:', e.message)); // EACCES etc. arrive async; unhandled 'error' crashes the server
     p.unref();
     return { pid: p.pid ?? 0 };
   }

@@ -43,7 +43,8 @@ async function stop(pool: RunnerPool, sessionId: string) {
 export async function swapProvider(d: SwapDeps, sessionId: string, providerId: string | undefined, providerName: string): Promise<SwapResult> {
   const prev = await stop(d.pool, sessionId);
   const cwd = prev?.cwd ?? (await d.canonical.head(sessionId))?.cwd ?? process.cwd();
-  d.meta.setSessionMeta(sessionId, { providerId });
+  // not fire-and-forget: a failed meta save would otherwise be an unhandled rejection that kills the server
+  await d.meta.setSessionMeta(sessionId, { providerId }).catch(() => { /* kept in memory; the next save persists it */ });
   d.canonical.mark(sessionId, { providerId, providerName, note: `已切换到供应商「${providerName}」` });
 
   const params: OpenSessionParams = {

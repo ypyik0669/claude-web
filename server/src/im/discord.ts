@@ -17,6 +17,9 @@ export class DiscordAdapter extends EventEmitter implements ImAdapter {
   private hb: NodeJS.Timeout | null = null;
   private seq: number | null = null;
   private running = false;
+  private wanted = false; // between start() and stop(): a dropped connection should come back
+  private connected = false;
+  private retry: NodeJS.Timeout | null = null;
   private botId = '';
   constructor(private token: string) { super(); }
   private rest(path: string, body?: unknown, method = 'POST') {
@@ -27,11 +30,18 @@ export class DiscordAdapter extends EventEmitter implements ImAdapter {
   async start() {
     if (this.running) return;
     this.running = true;
+    this.wanted = true;
     this.setState('starting');
     try {
       const g = await this.rest('/gateway/bot', undefined, 'GET');
       this.connect(`${g.url}/?v=10&encoding=json`);
-    } catch (e: any) { this.setState('error', e.message); this.running = false; }
+    } catch (e: any) { this.setState('error', e.message); this.running = false; if (this.connected) this.scheduleReconnect(30_000); }
+  }
+
+  /** Reconnect later unless stop() was called; one pending retry at most. */
+  private scheduleReconnect(ms: number) {
+    if (!this.wanted || this.retry) return;
+    this.retry = setTimeout(() => { this.retry = null; if (this.wanted) void this.start().catch(() => {}); }, ms);
   }
 
   private connect(url: string) {
@@ -54,12 +64,12 @@ export class DiscordAdapter extends EventEmitter implements ImAdapter {
         default: break;
       }
     });
-    ws.on('close', () => { if (this.hb) clearInterval(this.hb); this.hb = null; if (this.running) { this.setState('error', '连接断开，重连中…'); setTimeout(() => { if (this.running) void this.start().catch(() => {}); this.running = this.running && true; }, 5000); this.running = false; } });
+    ws.on('close', () => { if (ws !== this.ws) return; if (this.hb) clearInterval(this.hb); this.hb = null; if (this.running) { this.running = false; this.setState('error', '连接断开，重连中…'); this.scheduleReconnect(5000); } });
     ws.on('error', (e) => this.setState('error', e.message));
   }
 
   private dispatch(t: string, d: any) {
-    if (t === 'READY') { this.botId = d.user?.id ?? ''; this.botName = d.user?.username ? `@${d.user.username}` : ''; this.setState('running'); return; }
+    if (t === 'READY') { this.connected = true; this.botId = d.user?.id ?? ''; this.botName = d.user?.username ? `@${d.user.username}` : ''; this.setState('running'); return; }
     if (t === 'MESSAGE_CREATE') {
       if (!d.author || d.author.bot) return;
       let text: string = d.content ?? '';
@@ -76,7 +86,7 @@ export class DiscordAdapter extends EventEmitter implements ImAdapter {
     }
   }
 
-  async stop() { this.running = false; if (this.hb) clearInterval(this.hb); this.hb = null; try { this.ws?.close(); } catch { /* ignore */ } this.ws = null; this.setState('stopped'); }
+  async stop() { this.running = false; this.wanted = false; if (this.retry) clearTimeout(this.retry); this.retry = null; if (this.hb) clearInterval(this.hb); this.hb = null; try { this.ws?.close(); } catch { /* ignore */ } this.ws = null; this.setState('stopped'); }
 
   async send(chatId: string, text: string, o: OutboundOptions = {}) {
     const parts = chunk(text || '(空)', this.maxLen);

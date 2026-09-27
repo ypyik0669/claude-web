@@ -8,7 +8,8 @@ class WsClient {
   private pending = new Map<string, { res: (v: unknown) => void; rej: (e: Error) => void }>();
   private listeners = new Set<Listener>();
   private backoff = 500;
-  private queue: string[] = [];
+  /** requests made while the socket was down; sent on (re)open. Their promises stay pending until then. */
+  private queue: { id: string; raw: string }[] = [];
   connected = false;
   onStatus: ((c: boolean) => void) | null = null;
 
@@ -21,14 +22,20 @@ class WsClient {
       this.connected = true;
       this.backoff = 500;
       this.onStatus?.(true);
-      for (const q of this.queue) ws.send(q);
+      for (const q of this.queue) ws.send(q.raw);
       this.queue = [];
     };
     ws.onclose = () => {
       this.connected = false;
       this.onStatus?.(false);
-      for (const p of this.pending.values()) p.rej(new Error('connection closed'));
-      this.pending.clear();
+      // only fail what actually went out on this socket: a queued request was never sent, it is flushed on the
+      // next open — rejecting it here as well would report a failure for a request the server then executes
+      const queued = new Set(this.queue.map((q) => q.id));
+      for (const [id, p] of this.pending) {
+        if (queued.has(id)) continue;
+        p.rej(new Error('connection closed'));
+        this.pending.delete(id);
+      }
       setTimeout(() => this.connect(), this.backoff);
       this.backoff = Math.min(this.backoff * 2, 8000);
     };
@@ -52,7 +59,7 @@ class WsClient {
     return new Promise<T>((res, rej) => {
       this.pending.set(id, { res: res as (v: unknown) => void, rej });
       if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(raw);
-      else this.queue.push(raw);
+      else this.queue.push({ id, raw });
     });
   }
 

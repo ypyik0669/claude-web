@@ -32,15 +32,19 @@ function toSummary(s: SDKSessionInfo): SessionSummary {
 export class SessionService extends EventEmitter {
   private timer: NodeJS.Timeout | null = null;
   private cache: SessionSummary[] | null = null;
+  private gen = 0;
 
   constructor() {
     super();
     const w = chokidar.watch(projectsDir, { ignoreInitial: true, depth: 1, ignored: (p: string) => p.includes(`${path.sep}memory`) || (!p.endsWith('.jsonl') && path.extname(p) !== '') });
     w.on('all', () => this.bump());
+    // chokidar re-emits watcher failures (EPERM when a project dir is removed on Windows); unhandled, that is a crash
+    w.on('error', () => {});
   }
 
   private bump() {
     this.cache = null;
+    this.gen++;
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => this.emit('changed'), 800);
   }
@@ -48,9 +52,11 @@ export class SessionService extends EventEmitter {
   async list(limit = 500): Promise<SessionSummary[]> {
     if (this.cache) return this.cache.slice(0, limit);
     // listSessions() without dir lists across all projects
+    const gen = this.gen;
     const all = await listSessions({ limit: 2000 });
     const out = all.map(toSummary).sort((a, b) => b.lastModified - a.lastModified);
-    this.cache = out;
+    // a write landed while we were scanning: this result may predate it, so don't pin it as the cache
+    if (gen === this.gen) this.cache = out;
     return out.slice(0, limit);
   }
 

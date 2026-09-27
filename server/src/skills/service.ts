@@ -30,7 +30,7 @@ export class SkillsService {
   private async readMeta(p: string): Promise<{ description: string }> {
     try {
       const md = await fs.readFile(path.join(p, 'SKILL.md'), 'utf8');
-      const fm = /^---\n([\s\S]*?)\n---/.exec(md);
+      const fm = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---/.exec(md); // CRLF / BOM: SKILL.md written on Windows
       const desc = fm ? /description:\s*(.+)/.exec(fm[1])?.[1]?.trim() : undefined;
       return { description: desc ?? md.split('\n').find((l) => l.trim() && !l.startsWith('#'))?.trim().slice(0, 160) ?? '' };
     } catch {

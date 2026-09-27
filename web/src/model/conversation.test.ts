@@ -217,4 +217,41 @@ describe('a turn still in flight', () => {
     expect([...walkTools(finished.items)][0].tool.status).toBe('done');
     expect(finished.runningTool).toBeNull();
   });
+
+  it('an earlier turn whose tool never got a result does not hijack the in-flight turn', () => {
+    const early = '2026-09-03T09:00:00.000Z';
+    const msgs = [
+      // turn 1: the process died mid-command — no tool_result was ever written
+      { type: 'user', uuid: 'u0', session_id: 's', timestamp: early, parent_tool_use_id: null, message: { role: 'user', content: '先构建' } },
+      { type: 'assistant', uuid: 'a0', session_id: 's', timestamp: early, parent_tool_use_id: null, message: { id: 'm0', role: 'assistant', content: [{ type: 'tool_use', id: 't0', name: 'Bash', input: { command: 'npm run build' } }] } },
+      // turn 2, in flight
+      ...live,
+      { type: 'assistant', uuid: 'a2', session_id: 's', timestamp: at, parent_tool_use_id: null, message: { id: 'm1', role: 'assistant', content: [{ type: 'tool_use', id: 't2', name: 'Grep', input: { pattern: 'x' } }] } },
+      { type: 'user', uuid: 'r1', session_id: 's', timestamp: at, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } },
+    ];
+    const c = createConversation();
+    applyTranscript(c, msgs, { live: true });
+    const st = Object.fromEntries([...walkTools(c.items)].map(({ tool }) => [tool.id, tool.status]));
+    expect(st.t0).toBe('done'); // earlier turn is over
+    expect(st.t1).toBe('done');
+    expect(st.t2).not.toBe('done');
+    expect(c.runningTool?.id).toBe('t2');
+  });
+});
+
+describe('stream lanes', () => {
+  it('a message that never got message_stop stops streaming when the next one starts on the same lane', () => {
+    const c = createConversation();
+    const se = (event: any) => ({ type: 'stream_event', uuid: `e${Math.random()}`, session_id: 's', parent_tool_use_id: null, event });
+    applyMessage(c, se({ type: 'message_start', message: { id: 'mA', model: 'x' } }));
+    applyMessage(c, se({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }));
+    applyMessage(c, se({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'half an ans' } }));
+    // connection dropped, the CLI retries: a fresh message on the same lane
+    applyMessage(c, se({ type: 'message_start', message: { id: 'mB', model: 'x' } }));
+    const [a, b] = c.items as AssistantItem[];
+    expect(a.id).toBe('mA');
+    expect(a.streaming).toBe(false);
+    expect(b.id).toBe('mB');
+    expect(b.streaming).toBe(true);
+  });
 });

@@ -44,7 +44,9 @@ export function SchedulesView({ compact = false }: { compact?: boolean }) {
     if (!cwd) return toast('需要工作目录');
     const patch: Partial<Schedule> = { ...e, cwd, name: e.name?.trim() || e.prompt!.slice(0, 30), enabled: e.enabled ?? true };
     if (mode === 'cron') { if (!e.cron?.trim()) return toast('需要 cron 表达式'); patch.cron = e.cron.trim(); }
-    else { patch.cron = undefined; patch.everyMinutes = Number(e.everyMinutes) || 60; }
+    // '' not undefined: undefined is dropped by JSON and the server merges the patch, so a cron schedule
+    // switched to an interval kept its cron (which wins over everyMinutes)
+    else { patch.cron = ''; patch.everyMinutes = Number(e.everyMinutes) || 60; }
     try { await ws.request({ kind: 'schedules.upsert', schedule: patch }); setEditing(null); toast('已保存', true); } catch (x: any) { toast(x.message); }
   };
   const fromTemplate = (t: Template) => { setMode('cron'); setEditing({ name: t.name, prompt: t.prompt, cron: t.cron, permissionMode: t.permissionMode, freshSession: t.freshSession, cwd: active?.cwd ?? '' }); setTab('list'); };

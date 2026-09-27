@@ -74,7 +74,11 @@ export class VcsService {
     const token = await this.token(t);
     const url = t.host === 'github.com' ? 'https://api.github.com/graphql' : `https://${t.host}/api/graphql`;
     const r = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': 'claude-web' }, body: JSON.stringify({ query, variables }), signal: AbortSignal.timeout(30_000) });
-    const j: any = await r.json();
+    const text = await r.text();
+    let j: any = null;
+    try { j = JSON.parse(text); } catch { /* HTML error page from a proxy / GHE */ }
+    // 401 "Bad credentials" has no `errors` array — without this the caller crashes on `undefined.repository`
+    if (!r.ok || !j) throw new Error(`${r.status} ${j?.message ?? text.slice(0, 200)}`);
     if (j.errors?.length) throw new Error(j.errors.map((e: any) => e.message).join('; '));
     return j.data as T;
   }

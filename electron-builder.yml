@@ -40,7 +40,7 @@ files:
   - "!node_modules/@xterm/**"
   - "!node_modules/zustand/**"
 asarUnpack:
-  - "**/node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/**"
+  - "**/node_modules/@anthropic-ai/claude-agent-sdk-*/**"
   - "**/node_modules/node-pty/**"
   - "**/node_modules/claude-code-best/**"
   - "**/node_modules/@claude-code-best/**"
@@ -62,5 +62,27 @@ nsis:
   shortcutName: Claude Web
 portable:
   artifactName: ClaudeWeb-${version}-portable.${ext}
-# node-pty ships N-API prebuilds (prebuilds/win32-x64); no toolchain needed
+mac:
+  target:
+    - target: dmg
+    - target: zip
+  category: public.app-category.developer-tools
+  icon: desktop/build/icon.png
+  artifactName: ClaudeWeb-${version}-mac-${arch}.${ext}
+  # unsigned build (no Apple Developer ID): first launch needs right-click → Open, or `xattr -cr "/Applications/Claude Web.app"`
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  darkModeSupport: true
+dmg:
+  artifactName: ClaudeWeb-${version}-mac-${arch}.${ext}
+linux:
+  target:
+    - AppImage
+  category: Development
+  icon: desktop/build/icon.png
+  artifactName: ClaudeWeb-${version}-linux-${arch}.${ext}
+# npm drops the executable bit on some bundled binaries (node-pty spawn-helper, the SDK's claude, ripgrep)
+afterPack: scripts/after-pack.cjs
+# node-pty ships N-API prebuilds (win32 / darwin); no toolchain needed
 npmRebuild: false

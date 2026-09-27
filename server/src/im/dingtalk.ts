@@ -13,6 +13,9 @@ export class DingTalkAdapter extends EventEmitter implements ImAdapter {
   botName = 'DingTalk';
   private ws: WebSocket | null = null;
   private running = false;
+  private wanted = false; // between start() and stop(): a dropped connection should come back
+  private connected = false;
+  private retry: NodeJS.Timeout | null = null;
   private webhooks = new Map<string, { url: string; expiresAt: number }>();
   private accessToken: { token: string; expiresAt: number } | null = null;
   constructor(private clientId: string, private clientSecret: string) { super(); }
@@ -21,18 +24,25 @@ export class DingTalkAdapter extends EventEmitter implements ImAdapter {
   async start() {
     if (this.running) return;
     this.running = true;
+    this.wanted = true;
     this.setState('starting');
     try {
       const r = await jsonFetch<any>('https://api.dingtalk.com/v1.0/gateway/connections/open', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientId: this.clientId, clientSecret: this.clientSecret, subscriptions: [{ type: 'CALLBACK', topic: '/v1.0/im/bot/messages/get' }], ua: 'claude-web/0.1', localIp: firstIp() }) });
       if (!r.endpoint || !r.ticket) throw new Error(`gateway: ${JSON.stringify(r).slice(0, 200)}`);
       this.connect(`${r.endpoint}?ticket=${encodeURIComponent(r.ticket)}`);
-    } catch (e: any) { this.setState('error', e.message); this.running = false; }
+    } catch (e: any) { this.setState('error', e.message); this.running = false; if (this.connected) this.scheduleReconnect(30_000); }
+  }
+
+  /** Reconnect later unless stop() was called; one pending retry at most. */
+  private scheduleReconnect(ms: number) {
+    if (!this.wanted || this.retry) return;
+    this.retry = setTimeout(() => { this.retry = null; if (this.wanted) void this.start().catch(() => {}); }, ms);
   }
 
   private connect(url: string) {
     const ws = new WebSocket(url);
     this.ws = ws;
-    ws.on('open', () => this.setState('running'));
+    ws.on('open', () => { this.connected = true; this.setState('running'); });
     ws.on('message', (raw) => {
       let f: any;
       try { f = JSON.parse(String(raw)); } catch { return; }
@@ -50,11 +60,11 @@ export class DingTalkAdapter extends EventEmitter implements ImAdapter {
         this.emit('message', { chatId, userId: d.senderStaffId ?? d.senderId ?? '', userName: d.senderNick ?? '', text, messageId: d.msgId, raw: d });
       }
     });
-    ws.on('close', () => { if (this.running) { this.running = false; this.setState('error', '连接断开，重连中…'); setTimeout(() => { void this.start().catch(() => {}); }, 5000); } });
+    ws.on('close', () => { if (ws === this.ws && this.running) { this.running = false; this.setState('error', '连接断开，重连中…'); this.scheduleReconnect(5000); } });
     ws.on('error', (e) => this.setState('error', e.message));
   }
 
-  async stop() { this.running = false; try { this.ws?.close(); } catch { /* ignore */ } this.ws = null; this.setState('stopped'); }
+  async stop() { this.running = false; this.wanted = false; if (this.retry) clearTimeout(this.retry); this.retry = null; try { this.ws?.close(); } catch { /* ignore */ } this.ws = null; this.setState('stopped'); }
 
   private async token() {
     if (this.accessToken && this.accessToken.expiresAt > Date.now()) return this.accessToken.token;

@@ -7,7 +7,9 @@ import type { ToolInfo } from '@shared';
 export function ToolsSection() {
   const [tools, setTools] = useState<ToolInfo[] | null>(null);
   const [busy, setBusy] = useState(false);
-  const load = () => { setBusy(true); ws.request<ToolInfo[]>({ kind: 'tools.detect' }).then(setTools).finally(() => setBusy(false)); };
+  const [err, setErr] = useState('');
+  // without the catch a failed detect left 「检测中…」 up forever (tools stayed null)
+  const load = () => { setBusy(true); setErr(''); ws.request<ToolInfo[]>({ kind: 'tools.detect' }).then(setTools).catch((e) => { setErr(e.message); setTools((t) => t ?? []); }).finally(() => setBusy(false)); };
   useEffect(load, []);
   return (
     <div className="section">
@@ -29,6 +31,7 @@ export function ToolsSection() {
           </div>
         ))}
         {!tools && <div className="empty">检测中…</div>}
+        {err && <div className="empty" style={{ color: 'var(--red)' }}>检测失败：{err}</div>}
       </div>
     </div>
   );

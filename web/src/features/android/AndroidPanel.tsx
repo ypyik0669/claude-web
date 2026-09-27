@@ -70,7 +70,7 @@ export function AndroidPanel({ visible = true }: { visible?: boolean }) {
           <div className="android-side">
             <div className="keys">{KEYS.map(([l, c]) => <button key={c} className="btn sm ghost" onClick={() => input({ kind: 'key', code: c })}>{l}</button>)}</div>
             <div style={{ display: 'flex', gap: 4 }}>
-              <input className="field" placeholder="输入文字…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && text) { void input({ kind: 'text', text }); setText(''); } }} />
+              <input className="field" placeholder="输入文字…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && text) { void input({ kind: 'text', text }); setText(''); } }} />
               <button className="btn sm" disabled={!text} onClick={() => { void input({ kind: 'text', text }); setText(''); }}>发送</button>
             </div>
             <div className="sub">{shot ? `${shot.width}×${shot.height}` : ''} · 点击 = tap，拖动 = swipe</div>

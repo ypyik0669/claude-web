@@ -1,6 +1,6 @@
 // Single source of truth for keyboard shortcuts: the browser keydown handler, the Electron menu accelerators
 // (desktop/src/main.ts mirrors the `desktop` column) and the cheat sheet all read this table.
-import { isDesktop } from '@/desktop';
+import { desktop, isDesktop } from '@/desktop';
 
 export interface Shortcut { id: string; label: string; desktop: string; browser: string; group: string }
 
@@ -43,13 +43,29 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'paste', label: '粘贴图片 / 长文本成附件', desktop: 'Ctrl+V', browser: 'Ctrl+V', group: '输入' },
 ];
 
-export const keyLabel = (s: Shortcut) => (isDesktop ? s.desktop : s.browser);
+const isMac = /mac|darwin/i.test(desktop?.platform ?? (typeof navigator !== 'undefined' ? navigator.platform : ''));
+/** The desktop menu uses `CmdOrCtrl+…` accelerators, so on macOS the cheat sheet must say Cmd, not Ctrl. */
+export const keyLabel = (s: Shortcut) => (isDesktop ? (isMac ? s.desktop.replace(/Ctrl/g, 'Cmd') : s.desktop) : s.browser);
+
+// physical key → the character the table means; used when a modifier changed `e.key`
+const CODE_KEYS: Record<string, string> = { BracketLeft: '[', BracketRight: ']', Period: '.', Comma: ',', Backquote: '`' };
+function codeKey(code: string | undefined): string | undefined {
+  if (!code) return undefined;
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
+  if (/^(Digit|Numpad)\d$/.test(code)) return code.slice(-1);
+  return CODE_KEYS[code];
+}
 
 /** Map a browser keydown to a command id (browser column; desktop uses menu accelerators). */
 export function matchBrowserKey(e: KeyboardEvent): string | null {
-  const k = e.key;
   const ctrl = e.ctrlKey || e.metaKey;
   const alt = e.altKey, shift = e.shiftKey;
+  // `e.key` is the produced character: Shift+1 is '!', and on macOS Option+N / Option+1 / Option+[ are
+  // '˜' (dead key) / '¡' / '“' — none of which would match. Fall back to the physical key for those.
+  const phys = codeKey(e.code);
+  // Only when the produced key is not already a plain character, so other layouts (AZERTY…) keep their own letters.
+  const plain = e.key.length === 1 && /[a-z0-9[\].,`]/i.test(e.key);
+  const k = phys && !plain && (alt || shift) ? phys : e.key;
   const lower = k.toLowerCase();
   const inField = (e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA' || (e.target as HTMLElement)?.closest?.('.xterm');
   if (ctrl && !alt && !shift && lower === 'k') return 'palette';

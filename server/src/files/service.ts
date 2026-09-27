@@ -105,7 +105,7 @@ export class FilesService extends EventEmitter {
       return;
     }
     if (process.platform === 'darwin') {
-      const list = paths.map((p) => `POSIX file "${p.replace(/"/g, '\\"')}"`).join(', ');
+      const list = paths.map((p) => `POSIX file "${appleScriptEscape(p)}"`).join(', ');
       await execFileAsync('osascript', ['-e', `tell application "Finder" to delete {${list}}`]);
       return;
     }
@@ -121,8 +121,13 @@ export class FilesService extends EventEmitter {
     const cur = this.watchers.get(p);
     if (cur) { cur.refs++; return; }
     const st = await fs.stat(p);
+    // a concurrent watch() of the same path may have registered while we awaited stat — don't leak a second watcher
+    const raced = this.watchers.get(p);
+    if (raced) { raced.refs++; return; }
     const w = chokidar.watch(p, { ignoreInitial: true, depth: st.isDirectory() ? 0 : undefined, ignored: (x: string) => x.includes(`${path.sep}.git${path.sep}`) || x.endsWith(`${path.sep}.git`) });
     w.on('all', (type: string, file: string) => this.emit('changed', { path: file, type }));
+    // 'error' without a listener throws and takes the server down (EPERM when a watched dir is deleted on Windows)
+    w.on('error', (e: unknown) => console.error('[files] watch error:', (e as Error)?.message ?? e));
     this.watchers.set(p, { w, refs: 1 });
   }
   async unwatch(p: string) {
@@ -212,6 +217,11 @@ export class FilesService extends EventEmitter {
     await fs.writeFile(file, html, 'utf8');
     return file;
   }
+}
+
+/** Escape for an AppleScript double-quoted string literal: backslashes first, then quotes. */
+export function appleScriptEscape(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
 export function dataDir() {

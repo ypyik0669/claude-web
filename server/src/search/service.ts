@@ -17,9 +17,33 @@ export function resolveRg(): string {
     if (require('node:fs').existsSync(p)) return p;
   } catch { /* not installed */ }
   try {
-    return require('@vscode/ripgrep').rgPath;
+    return (require('@vscode/ripgrep').rgPath as string).replace(/app\.asar(?!\.unpacked)/, 'app.asar.unpacked');
   } catch { /* not installed */ }
+  // a Finder-launched macOS app has PATH=/usr/bin:/bin:/usr/sbin:/sbin, so a Homebrew rg is invisible by name
+  if (process.platform !== 'win32') {
+    for (const p of ['/opt/homebrew/bin/rg', '/usr/local/bin/rg', '/usr/bin/rg']) if (require('node:fs').existsSync(p)) return p;
+  }
   return 'rg';
+}
+
+/** rg --json reports submatch offsets in UTF-8 bytes; the UI slices JS strings (UTF-16 units). */
+export function byteRangesToChars(text: string, ranges: { start: number; end: number }[]): { start: number; end: number }[] {
+  if (!/[^\x00-\x7f]/.test(text)) return ranges;
+  const bytes = Buffer.from(text, 'utf8');
+  const at = (b: number) => bytes.subarray(0, Math.min(b, bytes.length)).toString('utf8').length;
+  return ranges.map((r) => ({ start: at(r.start), end: at(r.end) }));
+}
+
+/** One `rg --json` line → a match, or null (non-match events, non-UTF-8 paths reported as `bytes`). */
+export function parseRgLine(line: string): { path: string; match: SearchMatch } | null {
+  let j: any;
+  try { j = JSON.parse(line); } catch { return null; }
+  if (j?.type !== 'match') return null;
+  const p = j.data?.path?.text as string | undefined;
+  if (!p) return null;
+  const text = ((j.data.lines?.text as string | undefined) ?? '').replace(/\r?\n$/, '');
+  const subs = ((j.data.submatches ?? []) as any[]).map((s) => ({ start: s.start as number, end: s.end as number }));
+  return { path: p, match: { line: j.data.line_number as number, text, ranges: byteRangesToChars(text, subs) } };
 }
 
 export class SearchService {
@@ -43,15 +67,11 @@ export class SearchService {
       const files = new Map<string, SearchMatch[]>();
       let total = 0, truncated = false, buf = '';
       const onLine = (line: string) => {
-        if (!line) return;
-        let j: any;
-        try { j = JSON.parse(line); } catch { return; }
-        if (j.type !== 'match') return;
-        const p = j.data.path.text as string;
-        const text = (j.data.lines.text as string ?? '').replace(/\r?\n$/, '');
-        const subs = (j.data.submatches as any[]).map((s) => ({ start: s.start as number, end: s.end as number }));
-        const arr = files.get(p) ?? files.set(p, []).get(p)!;
-        arr.push({ line: j.data.line_number as number, text, ranges: subs });
+        if (!line || truncated) return;
+        const r = parseRgLine(line);
+        if (!r) return;
+        const arr = files.get(r.path) ?? files.set(r.path, []).get(r.path)!;
+        arr.push(r.match);
         total++;
         if (total >= max) { truncated = true; child.kill(); }
       };

@@ -10,11 +10,16 @@ function useSession(sessionId: string) {
   return useStore((s) => s.open[sessionId]);
 }
 
+/** The rendered transcript of THIS session — with split panes / background tabs the first `.chat-inner` is often another one. */
+function chatRoot(sessionId: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`.chat-inner[data-session-id="${CSS.escape(sessionId)}"]`);
+}
+
 /** Export one turn: clone .chat-inner and keep only the rows of that turn. */
 export function shareTurn(sessionId: string, userItemId: string) {
   const st = useStore.getState();
   const o = st.open[sessionId];
-  const root = document.querySelector('.chat-inner') as HTMLElement | null;
+  const root = chatRoot(sessionId);
   if (!o || !root) return;
   const keep = new Set(turnItems(o.conv, userItemId).map((i) => i.id));
   const wrap = document.createElement('div');
@@ -26,8 +31,8 @@ export function shareTurn(sessionId: string, userItemId: string) {
 
 export function shareConversation(sessionId: string) {
   const st = useStore.getState();
-  const root = document.querySelector('.chat-inner') as HTMLElement | null;
-  if (!root) return;
+  const root = chatRoot(sessionId);
+  if (!root) { st.toast('切到这个会话的对话视图后再导出'); return; }
   const s = st.sessions.find((x) => x.sessionId === sessionId);
   const title = s?.title ?? '对话';
   downloadHtml(title, buildHtml({ title, root, meta: `${s?.cwd ?? ''}${s?.gitBranch ? ` · ${s.gitBranch}` : ''}` }));

@@ -33,7 +33,8 @@ describe('CanonicalLog', () => {
     await fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }).catch(() => {});
   });
 
-  const settle = () => new Promise((r) => setTimeout(r, 60));
+  // wait on the write queue itself: a fixed sleep flakes when the whole suite loads the disk
+  const settle = async () => { await log.settled('s1'); await log.settled('ghost'); };
 
   it('pairs a tool call with its result and drops thinking', async () => {
     log.observe('s1', sdk.user('修一下登录'));

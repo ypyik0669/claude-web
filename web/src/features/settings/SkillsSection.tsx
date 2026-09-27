@@ -4,6 +4,7 @@ import { useScopedSession, useStore } from '@/store';
 import { dlg } from '@/ui/dialog';
 import type { SkillInfo } from '@shared';
 import { Icon } from '@/ui/icons';
+import { joinPath } from '@/features/paths';
 
 const SUGGESTED = [
   { src: 'anthropics/skills', l: 'Anthropic 官方 skills 合集', d: 'docx / pptx / xlsx / pdf 等文档技能' },
@@ -33,7 +34,7 @@ export function SkillsSection() {
     const name = await dlg.prompt('新 skill 名称', 'my-skill', { message: '小写字母、数字、连字符' });
     if (!name) return;
     const description = (await dlg.prompt('一句话描述（什么时候用）', '')) ?? '';
-    await run(async () => { const p = await ws.request<string>({ kind: 'skills.create', name, scope, cwd, description }); openTile({ id: `d${Date.now()}`, kind: 'doc', path: `${p}\\SKILL.md` }, 'tab'); return `已创建 ${p}`; });
+    await run(async () => { const p = await ws.request<string>({ kind: 'skills.create', name, scope, cwd, description }); openTile({ id: `d${Date.now()}`, kind: 'doc', path: joinPath(p, 'SKILL.md') }, 'tab'); return `已创建 ${p}`; });
   };
   return (
     <>
@@ -47,7 +48,7 @@ export function SkillsSection() {
                 <div>/{s.name} <span className="badge">{s.scope === 'user' ? '用户' : '项目'}</span></div>
                 <div className="sub">{s.description || s.path}</div>
               </div>
-              <button className="btn sm ghost" onClick={() => openTile({ id: `d${Date.now()}`, kind: 'doc', path: `${s.path}\\SKILL.md` }, 'tab')}>编辑</button>
+              <button className="btn sm ghost" onClick={() => openTile({ id: `d${Date.now()}`, kind: 'doc', path: joinPath(s.path, 'SKILL.md') }, 'tab')}>编辑</button>
               <button className="btn sm ghost" onClick={() => ws.request({ kind: 'shell.open', path: s.path })}>目录</button>
               <button className="btn sm ghost danger" onClick={async () => { if (await dlg.confirm(`删除 skill「${s.name}」？`, { danger: true })) void run(async () => { await ws.request({ kind: 'skills.remove', path: s.path }); return '已删除'; }); }} aria-label="删除"><Icon name="trash" size={12} /></button>
             </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { clsx } from '@/util';
@@ -22,9 +22,16 @@ function useReq<T>(req: any, deps: any[] = []) {
   const [data, setData] = useState<T | null>(null);
   const [err, setErr] = useState('');
   const [n, setN] = useState(0);
+  const depKey = JSON.stringify(deps);
+  const lastKey = useRef(depKey);
   useEffect(() => {
     setErr('');
-    ws.request<T>(req).then(setData).catch((e) => setErr(e.message));
+    // different target (e.g. settings scope user → project): drop the old data so nothing can be
+    // edited / saved against the wrong file while the new one loads
+    if (lastKey.current !== depKey) { lastKey.current = depKey; setData(null); }
+    let live = true; // an out-of-order response for the previous target must not land here
+    ws.request<T>(req).then((d) => live && setData(d)).catch((e) => live && setErr(e.message));
+    return () => { live = false; };
   }, [...deps, n]);
   return { data, err, reload: () => setN((x) => x + 1) };
 }
@@ -207,6 +214,7 @@ export function Settings() {
   const [msg, setMsg] = useState('');
   useEffect(() => setText(data?.text ?? ''), [data]);
   const save = async () => {
+    if (!data) return; // not loaded (or loading another scope): the textarea isn't this file's content
     try { JSON.parse(text); await ws.request({ kind: 'config.settings.write', scope, cwd: active?.cwd, json: text }); setMsg('已保存'); reload(); } catch (e: any) { setMsg(e.message); }
   };
   return (
@@ -218,7 +226,7 @@ export function Settings() {
       {err && <div style={{ color: 'var(--red)', fontSize: 12 }}>{err}</div>}
       <textarea className="code" value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
-        <button className="btn sm primary" onClick={save}>保存</button>
+        <button className="btn sm primary" disabled={!data} onClick={save}>保存</button>
         <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{msg}</span>
       </div>
     </div>
@@ -372,8 +380,12 @@ export function EnvEditor() {
     try { const j = JSON.parse(data?.text || '{}'); setEnv(j.env ?? {}); } catch { /* keep */ }
   }, [data]);
   const save = async () => {
+    if (!data) return;
     try {
-      const j = JSON.parse(data?.text || '{}');
+      // merge into what is on disk NOW: `data` is null before the first load (saving then wrote a
+      // settings.json containing only `env`) and may be stale if the raw editor saved since
+      const fresh = await ws.request<{ path: string; text: string }>({ kind: 'config.settings.read', scope: 'user' });
+      const j = JSON.parse(fresh.text || '{}');
       const cleaned: Record<string, string> = {};
       for (const [k, v] of Object.entries(env)) if (v?.trim()) cleaned[k] = v.trim();
       j.env = { ...(j.env ?? {}), ...cleaned };
@@ -401,7 +413,7 @@ export function EnvEditor() {
         </div>
       ))}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button className="btn sm primary" onClick={save}>保存</button>
+        <button className="btn sm primary" disabled={!data} onClick={save}>保存</button>
         <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{msg}</span>
       </div>
     </div>
