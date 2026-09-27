@@ -22,9 +22,17 @@ export class TerminalService extends EventEmitter {
     if (this.ptyMod === undefined) {
       try {
         // packaged (Electron asar): node-pty must load from app.asar.unpacked
-        const unpacked = (process as any).resourcesPath ? path.join((process as any).resourcesPath, 'app.asar.unpacked', 'node_modules', 'node-pty') : null;
-        const spec = unpacked && fs.existsSync(unpacked) ? pathToFileURL(path.join(unpacked, 'lib', 'index.js')).href : 'node-pty';
-        this.ptyMod = await import(spec);
+        const rp = (process as any).resourcesPath as string | undefined;
+        const unpacked = rp ? path.join(rp, 'app.asar.unpacked', 'node_modules', 'node-pty') : null;
+        // macOS / Linux: node-pty rewrites `app.asar` → `app.asar.unpacked` in its spawn-helper path itself, so it must be
+        // loaded through the asar path — loading it from the unpacked dir yields `app.asar.unpacked.unpacked` and
+        // every spawn fails with "posix_spawnp failed". Windows (no spawn-helper) keeps the unpacked load.
+        const viaAsar = rp && process.platform !== 'win32' ? path.join(rp, 'app.asar', 'node_modules', 'node-pty', 'lib', 'index.js') : null;
+        if (viaAsar && fs.existsSync(viaAsar)) {
+          this.ptyMod = createRequire(import.meta.url)(viaAsar); // CJS require goes through Electron's asar support
+        } else {
+          this.ptyMod = await import(unpacked && fs.existsSync(unpacked) ? pathToFileURL(path.join(unpacked, 'lib', 'index.js')).href : 'node-pty');
+        }
         if (this.ptyMod.default && !this.ptyMod.spawn) this.ptyMod = this.ptyMod.default;
         if (process.platform !== 'win32') fixSpawnHelper(unpacked && fs.existsSync(unpacked) ? unpacked : null);
       } catch {

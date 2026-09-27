@@ -657,7 +657,9 @@ input.field:focus { border-color: var(--ink-3); }
 
 /* breadcrumb */
 .crumb { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-3); font-size: 13px; min-width: 0; }
-.crumb .sep { color: var(--ink-4); }
+.crumb .sep { color: var(--ink-4); white-space: nowrap; flex: none; }
+.crumb > span, .crumb > button { flex: none; }
+.crumb .cur { flex: 0 1 auto; min-width: 2em; }
 .crumb .cur { color: var(--ink-1); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .crumb button { color: inherit; }
 .crumb button:hover { color: var(--ink-1); }
