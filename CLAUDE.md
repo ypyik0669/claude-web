@@ -196,6 +196,17 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - `server/ws-phase13.mjs`：mock Codex（`agents/__mocks__/codex-server.mjs`，`CW_MOCK_RPC_LOG` 记录收到的请求）+ `MOCK_ACP_LIST=1` 的 mock ACP，端到端验证加入前不列、加入后列出并折叠子线程、分页读、搜索、改名、删除备份、`codex-` 会话续聊走 `thread/resume`、`library.sources` 状态。
 - 真机验证（2026-09-27，只读 + 一个自建的测试线程）：Codex 717 条（`~/.codex/sessions` 721 个 jsonl + archived 42，部分没有线程记录）、OpenCode 11 条、Claude 119 条；首轮全量索引约 150 秒（约 850 个会话），之后中文搜索 ~150 ms。测真机时用临时 `CLAUDE_WEB_DIR` 起一个独立 server，别碰用户自己的 `~/.claude-web`。
 
+## 多 agent 编排（2026-09-28）
+
+- **引擎**：`server/src/orchestra/service.ts` 的 `OrchestraService`，依赖全部经 `OrchDeps` 注入（会话打开器、`OrchGit`、GoalService、工作流存储、可用 agent、并发上限、通知），单测用假会话 / 假 git（`service.test.ts`）；纯逻辑（校验、环检测、分层、模板变量、裁判判词）在 `dag.ts`。真正的依赖在 `runtime.ts`：开会话走和 hub `session.open` 相同的路径（canonical、默认供应商、外部 agent 标题），发送走 `expandSessionRefs`。hub 只有一行分发（`isOrchestraRequest` → `handlers.ts`）+ 两行广播；协议类型在 `orchestra/types.ts`，protocol.ts `export *`。
+- **每个任务节点就是普通会话**：侧栏 / Mission Control / 权限 / 账本零改动。提示词第一行加 `[编排 <运行名> · <节点名>]`，外部 agent 的会话头标题写成「编排 · …」。完成判定 = 第一个 `result`（`untilDone` 走 GoalService：`create` + `start`，监听 `changed` 等 complete / blocked / max_turns）。回调都带「这个 NodeRun 对象还是不是当前那个」的守卫：重试 / 续跑会换新对象，老会话晚到的 result 直接丢掉。
+- **调度**：每次状态变化 `tick()`；并发上限按 **run** 计（`orchestra.maxParallel`，默认 3，审批等待不占名额）；上游 failed / skipped / cancelled → 下游 skipped，但不相关的分支继续跑，全部终态后 run 才落 failed。运行时冻结一份 `run.workflow`，改模板不影响正在跑的。
+- **worktree / 比选**：`<repo>/.claude-web/worktrees/<runId>-<nodeId>-<agentSlug>`、分支 `cw/<runId>/<nodeId>-<agentSlug>`（`acp:x` 的冒号不能进路径和 ref，`agentSlug()`）。候选结束时**自动 `git add -A && commit`**（agent 多半不会自己提交；仓库没身份时用 `claude-web` 身份重试），`diff --stat base...branch` 用三点。选胜者：检查主工作区当前分支仍是 `baseBranch` → `merge --no-ff` → 失败就 `merge --abort` 保留 worktree；成功后关候选会话、删所有 worktree 目录、删落选分支（胜者分支保留）。合并串行（`mergeChain`）。`.git/info/exclude` 里追加 `/.claude-web/`。
+- **踩过的坑**：**Windows 删不掉还被进程当 cwd 的目录**——mock agent 进程的 cwd 就是 worktree，`worktree remove` 后目录残留；所以删之前先 `pool.close()` 候选会话，`fs.rm` 再带 `maxRetries`。`.orch-canvas svg {position:absolute}` 会把卡片里的图标 svg 也甩到左上角，只能写 `> svg`。前端冷启动时 `agents.list` 的版本探测要好几秒，`orchestra.templates` 依赖它，别和工作流 / 运行列表放进同一个 `Promise.all`。
+- **持久化**：工作流在 `meta.workflows`；运行记录 `<dataDir>/orchestra/<runId>.json`，每次变化按 run 串行写（tmp + rename）。启动时 `running|waiting` 的 run → 节点 failed「服务重启中断」，`resume` 把非 done 节点重置为 pending（会话 id 历史保留）。
+- **前端**：停靠面板「编排」（`features/orchestra/`）；独立的小 zustand store（`state.ts`，不往 `store/index.ts` 加东西），`installOrchestra()` 在 App 里装一次：订阅 `orchestra.changed`，节点进入 waiting 时 toast + 桌面通知；Mission Control 的「需要你」列读 `waitingOf(full)`（审批可以直接点通过）。执行图布局是纯函数 `graph-layout.ts`（注意别叫 `graph.ts`：和 `Graph.tsx` 在 Windows 上只差大小写，tsc 报 TS1149）。IM：`ImRouter.announce(sessionIds, …)` 推给绑定了该 run 任一会话的聊天，按钮回调前缀 `orch:<runId>:<nodeId>:approve|reject`（`callbackHandlers`）。
+- **调试**：`server/ws-phase14.mjs` 用两个 mock ACP agent（`acp:orch-a/b`，`MOCK_ACP_TAG` 区分内容）+ 临时 git 仓库跑「任务 → 审批 → 任务 → 比选」，断言会话创建、审批阻塞、模板带上游输出与审批意见、worktree 命名、diff、`--no-ff` 合并、清理，外加驳回路径和环校验。mock agent 收到 `WRITE:<文件>` 会在会话 cwd 里写这个文件（内容 = `MOCK_ACP_TAG`）。
+
 ## 桌面版（desktop/）
 
 ```
