@@ -1,6 +1,8 @@
 // Claude session source: the trivial SessionSource wrapper around SessionService (the SDK-backed
 // index over ~/.claude/projects). Unlike every other source, Claude keeps its native UUID session
 // ids as-is (constraints.md) and is always joined — it isn't part of the opt-in join/dismiss flow.
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import type { AgentKind, SessionSummary, SourceCaps, SourceStatus } from '../protocol.js';
 import type { SessionService } from '../sessions/service.js';
 import type { SessionSource } from './types.js';
@@ -48,6 +50,23 @@ export class ClaudeSource implements SessionSource {
   /** Full transcript — a backup before delete (constraints.md). */
   async exportAll(nativeId: string): Promise<unknown> {
     return this.sessions.transcript(nativeId);
+  }
+
+  /**
+   * Raw copy of what `deleteSession` removes: `<project>/<id>.jsonl` (every entry, sidechains and
+   * non-message lines included) and the `<project>/<id>/` directory (subagents/…), per project
+   * folder, into `destDir/<project folder>/`. Read-only on the source side.
+   */
+  async backupTo(nativeId: string, destDir: string): Promise<void> {
+    const files = await this.sessions.locateAll(nativeId);
+    if (!files.length) throw new Error(`找不到会话文件 ${nativeId}.jsonl，未删除`);
+    for (const file of files) {
+      const to = path.join(destDir, path.basename(path.dirname(file)));
+      await fs.mkdir(to, { recursive: true });
+      await fs.copyFile(file, path.join(to, path.basename(file)));
+      const side = path.join(path.dirname(file), nativeId);
+      if (await fs.stat(side).then((st) => st.isDirectory(), () => false)) await fs.cp(side, path.join(to, nativeId), { recursive: true });
+    }
   }
 
   async close(): Promise<void> {

@@ -457,8 +457,9 @@ export class LibraryService extends EventEmitter {
   }
 
   /**
-   * Delete with a backup first: the full history is exported to library-trash/<id>.json, and only
-   * once that file is written is the session actually removed. Any export / write failure → kept.
+   * Delete with a backup first: the full history is exported to library-trash/<id>.json (or, for a
+   * source with backupTo — Claude — its raw files are copied to library-trash/<id>/), and only once
+   * that is written is the session actually removed. Any export / copy / write failure → kept.
    */
   async remove(ids: string[]): Promise<{ removed: string[]; failed: { id: string; error: string }[] }> {
     const removed: string[] = [];
@@ -470,14 +471,19 @@ export class LibraryService extends EventEmitter {
         const native = !!(r.source && r.nativeId && r.source.caps.delete && r.source.remove);
         const local = !!r.head;
         if (!native && (!local || r.head!.imported)) throw new Error(UNSUPPORTED);
-        const backup = {
-          id, agent: r.kind, nativeId: r.nativeId, deletedAt: Date.now(),
-          summary: this.byId.get(id),
-          native: native ? (r.source!.exportAll ? await r.source!.exportAll(r.nativeId!) : await this.readAll(id)) : undefined,
-          local: local ? await this.transcripts.load(id) : undefined,
-        };
+        const safe = id.replace(/[^\w.~-]/g, '_');
+        const base = { id, agent: r.kind, nativeId: r.nativeId, deletedAt: Date.now(), summary: this.byId.get(id), local: local ? await this.transcripts.load(id) : undefined };
         await fs.mkdir(this.trashDir, { recursive: true });
-        await fs.writeFile(path.join(this.trashDir, `${id.replace(/[^\w.~-]/g, '_')}.json`), JSON.stringify(backup), 'utf8');
+        if (native && r.source!.backupTo) {
+          // raw files (Claude: the jsonl plus the <id>/ dir its delete also removes) → library-trash/<id>/
+          const dest = path.join(this.trashDir, safe);
+          await fs.mkdir(dest, { recursive: true });
+          await r.source!.backupTo(r.nativeId!, dest);
+          await fs.writeFile(path.join(dest, 'backup.json'), JSON.stringify(base), 'utf8');
+        } else {
+          const backup = { ...base, native: native ? (r.source!.exportAll ? await r.source!.exportAll(r.nativeId!) : await this.readAll(id)) : undefined };
+          await fs.writeFile(path.join(this.trashDir, `${safe}.json`), JSON.stringify(backup), 'utf8');
+        }
         if (native) await r.source!.remove!(r.nativeId!);
         if (local) await this.transcripts.remove(id);
         this.index.remove(id);
@@ -497,7 +503,8 @@ export class LibraryService extends EventEmitter {
     for (const n of names) {
       const f = path.join(this.trashDir, n);
       const st = await fs.stat(f).catch(() => null);
-      if (st?.isFile() && st.mtimeMs < cutoff) await fs.rm(f, { force: true }).catch(() => {});
+      // <id>.json backups and <id>/ raw-copy directories alike
+      if (st && st.mtimeMs < cutoff) await fs.rm(f, { recursive: true, force: true }).catch(() => {});
     }
   }
 

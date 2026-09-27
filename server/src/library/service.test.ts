@@ -381,6 +381,31 @@ describe('LibraryService', () => {
     expect(fs.readdirSync(t)).toEqual(['new.json']);
   });
 
+  it('cleanTrash also drops raw-copy backup directories older than 30 days', async () => {
+    const t = path.join(dir, 'library-trash');
+    fs.mkdirSync(path.join(t, 'old-dir', 'proj'), { recursive: true });
+    fs.writeFileSync(path.join(t, 'old-dir', 'proj', 'x.jsonl'), '{}');
+    fs.mkdirSync(path.join(t, 'new-dir'));
+    const old = (Date.now() - 31 * 86_400_000) / 1000;
+    fs.utimesSync(path.join(t, 'old-dir'), old, old);
+    await lib.cleanTrash();
+    expect(fs.readdirSync(t)).toEqual(['new-dir']);
+  });
+
+  it('remove: a source with backupTo gets a raw copy dir; a failed copy keeps the session', async () => {
+    const backupTo = vi.fn(async (_n: string, dest: string) => { fs.writeFileSync(path.join(dest, 'raw.jsonl'), 'raw'); });
+    (claude as any).backupTo = backupTo;
+    const r = await lib.remove(['c1']);
+    expect(r.removed).toEqual(['c1']);
+    expect(fs.readFileSync(path.join(dir, 'library-trash', 'c1', 'raw.jsonl'), 'utf8')).toBe('raw');
+    expect(fs.existsSync(path.join(dir, 'library-trash', 'c1', 'backup.json'))).toBe(true);
+    expect(claude.exportAll).not.toHaveBeenCalled();
+    backupTo.mockRejectedValueOnce(new Error('copy failed'));
+    const r2 = await lib.remove(['c2']);
+    expect(r2.failed.map((f) => f.id)).toEqual(['c2']);
+    expect(claude.remove).toHaveBeenCalledTimes(1);
+  });
+
   it('prepareResume creates an imported head once', async () => {
     await lib.join('codex', true);
     const spy = vi.spyOn(transcripts, 'create');

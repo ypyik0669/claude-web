@@ -382,15 +382,18 @@ export class Hub {
         if (!cwd) throw new Error('这个会话没有可用的目录');
         return harvest(s.memory, events, { cwd, sessionId: req.sessionId, agent: s.pool.get(req.sessionId)?.info.agent });
       }
+      // legacy shapes, same routing as library.rename / library.delete — so every delete path backs up first
       case 'session.rename':
-        if (await s.transcripts.exists(req.sessionId)) { await s.transcripts.patchHead(req.sessionId, { title: req.title }); s.sessions.emit('changed'); return null; }
-        await s.sessions.rename(req.sessionId, req.title);
+        await s.library.rename(req.sessionId, req.title);
+        s.sessions.emit('changed');
         return null;
-      case 'session.delete':
+      case 'session.delete': {
         await s.pool.close(req.sessionId);
-        if (await s.transcripts.exists(req.sessionId)) { await s.transcripts.remove(req.sessionId); s.sessions.emit('changed'); return null; }
-        await s.sessions.delete(req.sessionId);
+        const r = await s.library.remove([req.sessionId]);
+        if (r.failed.length) throw new Error(r.failed[0].error);
+        s.sessions.emit('changed');
         return null;
+      }
       case 'session.contextUsage':
         return this.runner(req.sessionId).contextUsage?.(req.detail ?? 'summary') ?? null;
       case 'feedback.set':

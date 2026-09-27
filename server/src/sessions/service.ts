@@ -174,6 +174,17 @@ export class SessionService extends EventEmitter {
     return out;
   }
 
+  /** Every project folder's `<id>.jsonl` for a session (normally one) — the delete backup copies them all. */
+  async locateAll(sessionId: string): Promise<string[]> {
+    const dirs = await fs.readdir(projectsDir).catch(() => [] as string[]);
+    const out: string[] = [];
+    for (const d of dirs) {
+      const p = path.join(projectsDir, d, `${sessionId}.jsonl`);
+      if (await fs.access(p).then(() => true, () => false)) out.push(p);
+    }
+    return out;
+  }
+
   /** Locate the jsonl file for a session (for usage aggregation / file history). */
   async locate(sessionId: string): Promise<string | undefined> {
     const dirs = await fs.readdir(projectsDir).catch(() => []);

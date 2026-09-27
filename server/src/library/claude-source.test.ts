@@ -10,10 +10,13 @@ let ClaudeSource: typeof import('./claude-source.js').ClaudeSource;
 let SessionService: typeof import('../sessions/service.js').SessionService;
 let tmpHome: string;
 let sessionId: string;
+let prevWebDir: string | undefined;
 
 beforeAll(async () => {
   tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), 'cw-claude-source-'));
   process.env.CLAUDE_CONFIG_DIR = path.join(tmpHome, '.claude');
+  prevWebDir = process.env.CLAUDE_WEB_DIR;
+  process.env.CLAUDE_WEB_DIR = path.join(tmpHome, 'claude-web'); // never the real ~/.claude-web
   // The SDK's dir-scoped ops (rename/fork/delete/read-with-dir) resolve the project folder by
   // slugifying `cwd` the same way real Claude Code does — the folder name must match that slug,
   // not just contain the session file (listSessions()/getSessionInfo() scan every folder and don't
@@ -47,6 +50,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (prevWebDir === undefined) delete process.env.CLAUDE_WEB_DIR; else process.env.CLAUDE_WEB_DIR = prevWebDir;
   await fs.rm(tmpHome, { recursive: true, force: true });
 });
 
@@ -104,5 +108,68 @@ describe('ClaudeSource (real SessionService over a scratch ~/.claude/projects)',
     await src.remove!(doomed);
     const { items } = await src.list({ limit: 10 });
     expect(items.some((i) => i.sessionId === doomed)).toBe(false);
+  });
+
+  it('LibraryService.remove backs up the raw jsonl AND the <id>/ dir (subagents) before deleting', async () => {
+    const { LibraryService } = await import('./service.js');
+    const { LibraryIndex } = await import('./index-db.js');
+    const { AgentTranscripts } = await import('../agents/transcript.js');
+    const { MetaStore } = await import('../meta/store.js');
+    const service = new SessionService();
+    const src = new ClaudeSource(service);
+    const doomed = await src.fork!(sessionId);
+    const file = await service.locate(doomed);
+    expect(file).toBeTruthy();
+    const sideDir = path.join(path.dirname(file!), doomed);
+    await fs.mkdir(path.join(sideDir, 'subagents'), { recursive: true });
+    await fs.writeFile(path.join(sideDir, 'subagents', 'agent-abc.jsonl'), '{"type":"user","sidechain":true}\n', 'utf8');
+    const raw = await fs.readFile(file!, 'utf8');
+
+    const webDir = path.join(tmpHome, 'claude-web');
+    const trash = path.join(webDir, 'library-trash');
+    const index = new LibraryIndex(path.join(webDir, 'library.db'));
+    const meta = new MetaStore(path.join(webDir, 'meta.json'));
+    await meta.load();
+    const lib = new LibraryService([src], index, new AgentTranscripts(), meta, { dataDirs: {}, trashDir: trash });
+    try {
+      const r = await lib.remove([doomed]);
+      expect(r.failed).toEqual([]);
+      expect(r.removed).toEqual([doomed]);
+      const proj = path.basename(path.dirname(file!));
+      expect(await fs.readFile(path.join(trash, doomed, proj, `${doomed}.jsonl`), 'utf8')).toBe(raw);
+      expect(await fs.readFile(path.join(trash, doomed, proj, doomed, 'subagents', 'agent-abc.jsonl'), 'utf8')).toContain('sidechain');
+      await expect(fs.access(file!)).rejects.toThrow();
+      await expect(fs.access(sideDir)).rejects.toThrow();
+    } finally {
+      lib.dispose();
+      index.close();
+    }
+  });
+
+  it('a Claude session whose raw backup cannot be made is not deleted', async () => {
+    const { LibraryService } = await import('./service.js');
+    const { LibraryIndex } = await import('./index-db.js');
+    const { AgentTranscripts } = await import('../agents/transcript.js');
+    const { MetaStore } = await import('../meta/store.js');
+    const service = new SessionService();
+    const src = new ClaudeSource(service);
+    const keep = await src.fork!(sessionId);
+    const webDir = path.join(tmpHome, 'claude-web-2');
+    await fs.mkdir(webDir, { recursive: true });
+    const trash = path.join(webDir, 'library-trash');
+    await fs.writeFile(trash, 'not a directory', 'utf8'); // makes every backup write fail
+    const index = new LibraryIndex(path.join(webDir, 'library.db'));
+    const meta = new MetaStore(path.join(webDir, 'meta.json'));
+    await meta.load();
+    const lib = new LibraryService([src], index, new AgentTranscripts(), meta, { dataDirs: {}, trashDir: trash });
+    try {
+      const r = await lib.remove([keep]);
+      expect(r.removed).toEqual([]);
+      expect(r.failed.map((f) => f.id)).toEqual([keep]);
+      expect(await service.locate(keep)).toBeTruthy();
+    } finally {
+      lib.dispose();
+      index.close();
+    }
   });
 });

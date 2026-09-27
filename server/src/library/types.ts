@@ -26,5 +26,12 @@ export interface SessionSource {
   remove?(nativeId: string): Promise<void>;
   fork?(nativeId: string): Promise<string>; // returns the new native id
   exportAll?(nativeId: string): Promise<unknown>; // full backup before delete
+  /**
+   * Raw backup before delete: a read-only copy of the agent's own files for this session into
+   * `destDir` (preferred over exportAll when present — e.g. Claude, whose delete also removes the
+   * `<id>/` side directory with sub-agent transcripts that no message API returns). Must throw if
+   * nothing could be copied.
+   */
+  backupTo?(nativeId: string, destDir: string): Promise<void>;
   close(): Promise<void>;
 }
