@@ -107,6 +107,11 @@ export class LibraryIndex {
       .run(s.sessionId, agent, s.source ?? null, s.cwd ?? '', s.title ?? '', s.firstPrompt ?? null, s.lastModified ?? 0, clipped);
   }
 
+  /** How many sessions are indexed (0 → the library falls back to the old transcript scan). */
+  count(): number {
+    return Number((this.db.prepare('SELECT COUNT(*) AS n FROM sessions').get() as { n: number }).n);
+  }
+
   /** Last-indexed `lastModified` for a session, or undefined if it isn't in the index. */
   indexedAt(id: string): number | undefined {
     const row = this.db.prepare('SELECT lastModified FROM sessions WHERE id = ?').get(id) as { lastModified: number } | undefined;

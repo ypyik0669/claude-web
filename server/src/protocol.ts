@@ -451,7 +451,9 @@ export type ServerEvent =
   | { kind: 'fs.changed'; path: string; type: 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir' }
   | { kind: 'git.changed'; cwd: string }
   // detected on this machine, not yet joined and not dismissed
-  | { kind: 'library.discovered'; kinds: AgentKind[] };
+  | { kind: 'library.discovered'; kinds: AgentKind[] }
+  // a library mutation (join / leave / rename / archive / delete / fork) — refetch sessions.list
+  | { kind: 'library.changed' };
 
 // ---------- phase 3: files / search / git ----------
 export interface FsEntry { name: string; dir: boolean; size?: number; mtime?: number; symlink?: boolean }

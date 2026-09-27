@@ -33,6 +33,12 @@ import { ImService } from './im/service.js';
 import { VcsService } from './vcs/service.js';
 import { GoalService } from './goals/service.js';
 import { AndroidService } from './android/service.js';
+import { LibraryService } from './library/service.js';
+import { LibraryIndex } from './library/index-db.js';
+import { ClaudeSource } from './library/claude-source.js';
+import { CodexSource } from './library/codex-source.js';
+import { OpenCodeSource } from './library/opencode-source.js';
+import { AcpListSource } from './library/acp-source.js';
 
 const FILE_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.html': 'text/html; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.json': 'application/json' };
 
@@ -246,7 +252,27 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const im = new ImService(meta, secrets, pool, sessionsSvc);
   const gitSvc = new GitService();
   const terminal = new TerminalService();
-  const services = { remote, tunnels, im, vcs: new VcsService(gitSvc), goals: new GoalService(meta, pool), android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, version };
+  // Session library: Claude always; Codex / OpenCode constructed but idle until joined (no process is
+  // started before the user joins); other ACP agents get a source built only on join. Launch specs are
+  // read through getters so agents.set overrides apply without a restart.
+  const library = new LibraryService(
+    [
+      new ClaudeSource(sessionsSvc),
+      new CodexSource(() => agents.launch('codex')),
+      new OpenCodeSource(() => agents.launch('opencode')),
+    ],
+    new LibraryIndex(),
+    transcripts,
+    meta,
+    {
+      agents,
+      makeSource: (kind) => (agents.defs().some((d) => d.kind === kind && d.protocol === 'acp') ? new AcpListSource(kind, () => agents.launch(kind)) : null),
+      fallbackSearch: (q, limit) => sessionsSvc.search(q, limit),
+    },
+  );
+  sessionsSvc.on('changed', () => library.invalidate('claude'));
+  library.start();
+  const services = { remote, tunnels, im, vcs: new VcsService(gitSvc), goals: new GoalService(meta, pool), android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version };
   new Hub(wss, services);
 
   await new Promise<void>((res, rej) => {
@@ -269,6 +295,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       await tunnels.closeAll();
       await remote.stop();
       await pool.closeAll();
+      await library.close(); // library-only Codex app-server / opencode serve / ACP processes
       terminal.closeAll(); // pty children (the embedded `claude` terminals) would outlive us otherwise
       // server.close() waits for every open connection; a connected browser's ws / keep-alive would hang shutdown forever
       for (const c of wss.clients) c.terminate();
