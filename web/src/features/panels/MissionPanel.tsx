@@ -40,6 +40,8 @@ export function MissionPanel() {
     { id: 'error', l: '出错', hint: '进程异常退出' },
     { id: 'idle', l: '空闲', hint: '已连接，等待输入' },
   ];
+  // federation: sessions running on other machines that this window has not opened (opened ones are cards above)
+  const remote = useMemo(() => sessions.filter((s) => s.peer && !s.peer.offline && !open[s.sessionId] && (s.live === 'running' || s.live === 'waiting' || s.live === 'starting')), [sessions, open]);
   const total = cards.length;
   return (
     <div className="mission">
@@ -48,8 +50,20 @@ export function MissionPanel() {
         <span className="grow" />
         <label className="muted" style={{ fontSize: 12, display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={showIdle} onChange={(e) => setShowIdle(e.target.checked)} /> 显示空闲</label>
       </div>
-      {!total && <div className="empty">没有活动会话。侧栏点开一个，或用「恢复」继续。</div>}
+      {!total && !remote.length && <div className="empty">没有活动会话。侧栏点开一个，或用「恢复」继续。</div>}
       <div className="mission-lanes">
+        {remote.length > 0 && (
+          <div className="lane running remote">
+            <div className="lane-h"><b>其它机器上运行中</b><span className="badge">{remote.length}</span><span className="muted">点开即可接管：续聊、审批、中断</span></div>
+            {remote.map((s) => (
+              <div key={s.sessionId} className="mcard" onClick={() => void loadHistory(s.sessionId)}>
+                <div className="t"><span className={clsx('dot', s.live)} />{s.title}</div>
+                <div className="sub"><Icon name="machine" size={11} /> {s.peer!.name} · {basename(s.cwd)}{s.gitBranch ? ` · ${s.gitBranch}` : ''}</div>
+                <div className="foot"><span className="muted">{s.live === 'waiting' ? '等待审批' : '运行中'} · {ago(s.lastModified)}</span></div>
+              </div>
+            ))}
+          </div>
+        )}
         {lanes.filter((l) => l.id !== 'idle' || showIdle).map((lane) => {
           const items = cards.filter((c) => c.lane === lane.id);
           if (!items.length && lane.id !== 'attention' && lane.id !== 'running') return null;

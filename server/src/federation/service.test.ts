@@ -152,6 +152,17 @@ describe('FederationService', () => {
     await expect(fed.route({ kind: 'session.interrupt', sessionId: 'peer_b1~s' }, { via: ['srvC'], local: local([]) })).rejects.toThrow('多跳');
   });
 
+  it('sessions.search: ours first, then each online peer\'s hits (prefixed); a peer asking gets only ours', async () => {
+    const { fed, fakes } = setup({ peers: [{ id: 'b1', name: 'B', url: 'http://b', via: 'direct', token: 'x', enabled: true, addedAt: 1 }] });
+    await fed.start();
+    fakes[0].handler = (r) => (r.kind === 'sessions.search' ? [{ session: sum('s1', 1), snippet: 'hit' }] : null);
+    const mine = [{ session: sum('m', 2), snippet: 'x' }];
+    const r = (await fed.route({ kind: 'sessions.search', query: 'q' }, { local: async () => mine })) as any[];
+    expect(r.map((h) => h.session.sessionId)).toEqual(['m', 'peer_b1~s1']);
+    expect(fakes[0].calls[0].req).toEqual({ kind: 'sessions.search', query: 'q', limit: 30 });
+    expect(fed.route({ kind: 'sessions.search', query: 'q' }, { via: ['srvB'], local: async () => mine })).toBeUndefined();
+  });
+
   it('re-emits peer events prefixed; unrelated ones dropped', async () => {
     const { fed, fakes, events } = setup({ peers: [{ id: 'b1', name: 'B', url: 'http://b', via: 'direct', token: 'x', enabled: true, addedAt: 1 }] });
     await fed.start();

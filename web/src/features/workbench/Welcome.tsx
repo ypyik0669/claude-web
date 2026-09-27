@@ -53,7 +53,7 @@ export function Welcome({ paneId, tileId }: { paneId: string; tileId: string }) 
           {recent.map((s) => (
             <div key={s.sessionId} className="sess" onClick={() => pick(s.sessionId)}>
               <span className="t">{s.title}</span>
-              <span className="ago">{s.cwd.split(/[\\/]/).pop()} · {ago(s.lastModified)}</span>
+              <span className="ago">{s.peer ? `${s.peer.name} · ` : ''}{s.cwd.split(/[\\/]/).pop()} · {ago(s.lastModified)}</span>
             </div>
           ))}
         </div>

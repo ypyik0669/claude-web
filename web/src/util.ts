@@ -1,4 +1,4 @@
-import { parseLibraryId } from '@shared';
+import { parseLibraryId, parsePeerId } from '@shared';
 
 export function ago(ts: number | string | undefined): string {
   if (!ts) return '';
@@ -87,10 +87,15 @@ export function toolSummary(name: string, input: Record<string, unknown>): strin
  * `library.read`. The prefix rules live in protocol.ts (shared with server/src/library/ids.ts).
  */
 export function isImportedSessionId(id: string): boolean {
-  return parseLibraryId(id).kind !== 'claude';
+  return parseLibraryId(localId(id)).kind !== 'claude';
 }
 
 /** The id the agent itself uses (what its own CLI's resume flag takes): the library id without its prefix. */
 export function nativeSessionId(id: string): string {
-  return parseLibraryId(id).nativeId;
+  return parseLibraryId(localId(id)).nativeId;
+}
+
+/** A session on another machine (`peer_<peer>~<id>`) → the id it has on that machine; anything else unchanged. */
+export function localId(id: string): string {
+  return parsePeerId(id)?.remoteId ?? id;
 }

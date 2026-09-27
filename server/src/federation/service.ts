@@ -147,7 +147,6 @@ export class FederationService extends EventEmitter {
       const cur = this.rec(p.id);
       if (cur && h.serverId && cur.serverId !== h.serverId) void this.d.store.setPeer({ ...cur, serverId: h.serverId }).catch(() => {});
     });
-    c.on('latency', () => this.emit('latency'));
     if (p.enabled) c.start();
     else c.stop('disabled');
   }
@@ -342,7 +341,8 @@ export class FederationService extends EventEmitter {
       ...peers.map((p) => bound(this.forward(p.id, { kind: 'sessions.search', query, limit }, []).then((d) => inbound('sessions.search', d, { id: p.id, name: p.name }) as { session: SessionSummary; snippet?: string }[]), [])),
     ]);
     if (!peers.length) return mine;
-    return [...(mine ?? []), ...theirs.flat()].slice(0, Math.max(limit, (mine ?? []).length));
+    // no common score across machines: ours first, then each machine's (each already capped at `limit`)
+    return [...(mine ?? []), ...theirs.flat()];
   }
 
   // ---------- hand-over ----------
