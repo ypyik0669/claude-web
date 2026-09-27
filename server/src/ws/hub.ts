@@ -36,10 +36,14 @@ import { setMemoryMcpEnabled } from '../memory/launcher.js';
 import { swapAgent, swapProvider } from '../session/swap.js';
 import { expandSessionRefs } from '../library/briefing.js';
 import type { LibraryService } from '../library/service.js';
+import type { OrchestraService } from '../orchestra/service.js';
+import { handleOrchestra, isOrchestraRequest } from '../orchestra/handlers.js';
 
 export interface Services {
   /** Unified session library: every joined source's sessions (sessions.list / search / library.*). */
   library: LibraryService;
+  /** Multi-agent orchestration (workflows / runs); requests routed by orchestra/handlers.ts */
+  orchestra: OrchestraService;
   git: GitService;
   search: SearchService;
   skills: SkillsService;
@@ -100,6 +104,8 @@ export class Hub {
     s.memory.on('changed', () => this.broadcast({ kind: 'memory.changed' }));
     s.library.on('changed', () => this.broadcast({ kind: 'library.changed' }));
     s.library.on('discovered', (kinds) => this.broadcast({ kind: 'library.discovered', kinds }));
+    s.orchestra.on('changed', (run) => this.broadcast({ kind: 'orchestra.changed', run }));
+    s.orchestra.on('workflows', () => this.broadcast({ kind: 'orchestra.workflows.changed' }));
   }
 
   broadcast(event: ServerEvent) {
@@ -148,6 +154,7 @@ export class Hub {
 
   private async handle(req: ClientRequest, ws: WebSocket): Promise<unknown> {
     const s = this.s;
+    if (isOrchestraRequest(req)) return handleOrchestra(s.orchestra, req);
     switch (req.kind) {
       case 'sessions.list': {
         const all = await s.library.list();

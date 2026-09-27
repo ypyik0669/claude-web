@@ -2,6 +2,9 @@
 // One WebSocket. Client -> server requests carry an `id` and get exactly one `reply`.
 // Server -> client events carry no `id`.
 
+import type { OrchestraEvent, OrchestraRequest } from './orchestra/types.js';
+export * from './orchestra/types.js';
+
 export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
 // `ultra` is Codex-only (its own enum member). `ultracode` is NOT here on purpose: in Claude Code it is a
 // separate session-scoped boolean (xhigh + dynamic workflows) that CLAUDE_CODE_EFFORT_LEVEL rejects.
@@ -447,7 +450,8 @@ export type ClientRequest =
   | { kind: 'library.fork'; sessionId: string }
   | { kind: 'library.reindex' }
   | { kind: 'library.join'; kind_: AgentKind; joined: boolean }
-  | { kind: 'library.dismiss'; kind_: AgentKind };
+  | { kind: 'library.dismiss'; kind_: AgentKind }
+  | OrchestraRequest;
 
 export interface RequestEnvelope { id: string; req: ClientRequest }
 export interface ReplyEnvelope { id: string; ok: boolean; data?: unknown; error?: string }
@@ -475,7 +479,8 @@ export type ServerEvent =
   // detected on this machine, not yet joined and not dismissed
   | { kind: 'library.discovered'; kinds: AgentKind[] }
   // a library mutation (join / leave / rename / archive / delete / fork) — refetch sessions.list
-  | { kind: 'library.changed' };
+  | { kind: 'library.changed' }
+  | OrchestraEvent;
 
 // ---------- phase 3: files / search / git ----------
 export interface FsEntry { name: string; dir: boolean; size?: number; mtime?: number; symlink?: boolean }

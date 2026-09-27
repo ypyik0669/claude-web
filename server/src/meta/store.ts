@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { EventEmitter } from 'node:events';
-import type { Goal, ImBinding, ImGatewayConfig, MessageFeedback, Provider, RemoteHost, Schedule, ScheduleRun } from '../protocol.js';
+import type { Goal, ImBinding, ImGatewayConfig, MessageFeedback, Provider, RemoteHost, Schedule, ScheduleRun, Workflow } from '../protocol.js';
 import type { DeviceRecord } from '../remote/service.js';
 export type { Schedule } from '../protocol.js';
 
@@ -24,6 +24,7 @@ interface Data {
   imGateways: ImGatewayConfig[];
   imBindings: ImBinding[];
   goals: Goal[];
+  workflows?: Workflow[]; // orchestration templates (runs live in <dataDir>/orchestra/)
 }
 
 const defaultFile = () => path.join(process.env.CLAUDE_WEB_DIR ?? path.join(os.homedir(), '.claude-web'), 'meta.json');
@@ -222,6 +223,9 @@ export class MetaStore extends EventEmitter {
   goals(): Goal[] { return this.data.goals ??= []; }
   async setGoal(g: Goal) { const list = this.goals(); const i = list.findIndex((x) => x.id === g.id); if (i >= 0) list[i] = g; else list.push(g); await this.queueSave(true); }
   async removeGoal(id: string) { this.data.goals = this.goals().filter((g) => g.id !== id); await this.queueSave(true); }
+  workflows(): Workflow[] { return this.data.workflows ??= []; }
+  async setWorkflow(w: Workflow) { const list = this.workflows(); const i = list.findIndex((x) => x.id === w.id); if (i >= 0) list[i] = w; else list.push(w); await this.queueSave(true); }
+  async removeWorkflow(id: string) { this.data.workflows = this.workflows().filter((w) => w.id !== id); await this.queueSave(true); }
   imBindings(): ImBinding[] { return this.data.imBindings ??= []; }
   async setImBinding(b: ImBinding) { this.data.imBindings = [...this.imBindings().filter((x) => !(x.gatewayId === b.gatewayId && x.chatId === b.chatId)), b]; await this.queueSave(true); }
   async removeImBinding(gatewayId: string, chatId: string) { this.data.imBindings = this.imBindings().filter((x) => !(x.gatewayId === gatewayId && x.chatId === chatId)); await this.queueSave(true); }
