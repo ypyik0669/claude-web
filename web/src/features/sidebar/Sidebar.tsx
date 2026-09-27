@@ -184,7 +184,8 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   // counts follow the archive toggle but not the source filter itself
   const counts = useMemo(() => sourceCounts(filterSessions(sessions, { source: 'all', query: '', showArchived, meta: sessionMeta })), [sessions, sessionMeta, showArchived]);
   const agents = useStore((s) => s.agents);
-  const chips: Pick<SourceStatus, 'kind' | 'name' | 'error'>[] = sources.filter((x) => x.enabled && (counts[x.kind] ?? 0) > 0);
+  // a source still on its first read has no sessions yet: it gets a chip with a spinner instead of a count
+  const chips: Pick<SourceStatus, 'kind' | 'name' | 'error' | 'loading'>[] = sources.filter((x) => x.enabled && ((counts[x.kind] ?? 0) > 0 || x.loading));
   // the active filter keeps its chip even while the sources are (re)loading, so it can always be seen and cleared
   if (sourceFilter !== 'all' && !chips.some((x) => x.kind === sourceFilter)) chips.push({ kind: sourceFilter, name: agents.find((a) => a.kind === sourceFilter)?.name ?? sourceFilter });
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
@@ -260,8 +261,8 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         <div className="sb-sources" role="tablist" aria-label="按来源筛选">
           <button role="tab" aria-selected={sourceFilter === 'all'} className={clsx('src-chip', sourceFilter === 'all' && 'active')} onClick={() => setSourceFilter('all')}>全部<span className="n">{total}</span></button>
           {chips.map((x) => (
-            <button key={x.kind} role="tab" aria-selected={sourceFilter === x.kind} className={clsx('src-chip', sourceFilter === x.kind && 'active')} onClick={() => setSourceFilter(x.kind)} title={x.error ? `${x.name}：${x.error}` : x.name}>
-              <Icon name={AGENT_ICONS[x.kind] ?? 'agent'} size={12} />{x.name}<span className="n">{counts[x.kind] ?? 0}</span>{x.error && <span className="warn-dot" />}
+            <button key={x.kind} role="tab" aria-selected={sourceFilter === x.kind} className={clsx('src-chip', sourceFilter === x.kind && 'active')} onClick={() => setSourceFilter(x.kind)} title={x.error ? `${x.name}：${x.error}` : x.loading ? `${x.name}：读取中` : x.name}>
+              <Icon name={AGENT_ICONS[x.kind] ?? 'agent'} size={12} />{x.name}{x.loading && !counts[x.kind] ? <span className="spinner" aria-label="读取中" /> : <span className="n">{counts[x.kind] ?? 0}</span>}{x.error && <span className="warn-dot" />}
             </button>
           ))}
         </div>

@@ -14,6 +14,7 @@ if (argv[0] === 'serve') {
   setInterval(() => {}, 1000); // stay alive until the test kills us, like the real server would
 } else if (argv[0] === 'session' && argv[1] === '--help' && process.env.FAKE_HELP_HANG_MS) {
   // a probe that hangs (then gives up on its own, so no stray process outlives the test run)
+  if (process.env.FAKE_PROBE_PID_FILE) fs.writeFileSync(process.env.FAKE_PROBE_PID_FILE, String(process.pid));
   setTimeout(() => process.exit(0), Number(process.env.FAKE_HELP_HANG_MS));
 } else if (argv[0] === 'session' && argv[1] === '--help') {
   const lines = [

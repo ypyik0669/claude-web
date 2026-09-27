@@ -27,7 +27,7 @@ function SourceRow({ x, busy, onToggle }: { x: SourceStatus; busy: boolean; onTo
   const canJoin = x.joined || x.installed || x.detected;
   const meta = [
     x.version,
-    x.joined && x.count != null ? `${x.count} 个会话` : null,
+    x.joined && x.loading ? '正在读取…' : x.joined && x.count != null ? `${x.count} 个会话` : null,
     x.joined ? (x.indexedAt ? `上次索引 ${since(x.indexedAt)}` : '尚未索引') : null,
   ].filter(Boolean).join(' · ');
   return (
@@ -44,7 +44,7 @@ function SourceRow({ x, busy, onToggle }: { x: SourceStatus; busy: boolean; onTo
         {st.tone === 'err' && <div className="sub err">{st.text}</div>}
         {st.tone !== 'err' && x.error && <div className="sub" style={{ color: 'var(--warn)' }}>上次读取失败，显示的是缓存：{x.error}</div>}
       </div>
-      {busy && <span className="spinner" />}
+      {(busy || (x.joined && x.loading)) && <span className="spinner" />}
       {!claude && (
         <button
           className={clsx('toggle', x.joined && 'on')}

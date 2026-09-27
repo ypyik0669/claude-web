@@ -174,31 +174,82 @@ describe('LibraryService', () => {
     expect(index.indexedAt('codex-t1')).toBeUndefined();
   });
 
-  it('a source whose list never settles times out: others still list, it reports an error', async () => {
+  const bounded = () => new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents(['codex']), dataDirs: {}, trashDir: path.join(dir, 'library-trash'), listTimeoutMs: 50 });
+
+  it('first load of a never-settling source: others still list, it is loading (not an error)', async () => {
     lib.dispose();
-    lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents(['codex']), dataDirs: {}, trashDir: path.join(dir, 'library-trash'), listTimeoutMs: 50 });
+    lib = bounded();
     codex.list.mockImplementation(() => new Promise(() => {}));
     await lib.join('codex', true);
     const t0 = Date.now();
     expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'c1']);
     expect(Date.now() - t0).toBeLessThan(2000);
     const st = (await lib.sources()).find((s) => s.kind === 'codex');
-    expect(st?.error).toMatch(/超时/);
+    expect(st?.loading).toBe(true);
+    expect(st?.error).toBeUndefined();
   });
 
-  it('a timed-out fetch that lands later is cached and announced', async () => {
+  it('callers joining the in-flight fetch are bounded too', async () => {
     lib.dispose();
-    lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents(['codex']), dataDirs: {}, trashDir: path.join(dir, 'library-trash'), listTimeoutMs: 50 });
+    lib = bounded();
+    codex.list.mockImplementation(() => new Promise(() => {}));
+    await lib.join('codex', true);
+    const t0 = Date.now();
+    const [a, b] = await Promise.all([lib.list(), lib.list()]);
+    expect(a.map((s) => s.sessionId)).toEqual(['c2', 'c1']);
+    expect(b.map((s) => s.sessionId)).toEqual(['c2', 'c1']);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    // and a later caller that joins the still-hung fetch
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'c1']);
+  });
+
+  it('a first load that lands after the bound clears loading and announces the change', async () => {
+    lib.dispose();
+    lib = bounded();
     (codex as any).caps = { ...ALL, archive: false };
     let release!: () => void;
     codex.list.mockImplementation(() => new Promise((r) => { release = () => r({ items: codex.items }); }));
     await lib.join('codex', true);
     expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'c1']);
+    expect((await lib.sources()).find((s) => s.kind === 'codex')?.loading).toBe(true);
     const changed = new Promise<void>((r) => lib.once('changed', () => r()));
     release();
     await changed;
     expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'codex-t1', 'c1']);
+    const st = (await lib.sources()).find((s) => s.kind === 'codex');
+    expect(st?.loading).toBeUndefined();
+    expect(st?.error).toBeUndefined();
+  });
+
+  it('a timeout with a cached list is an error (cache served), cleared by the next success even from an older generation', async () => {
+    lib.dispose();
+    lib = bounded();
+    (codex as any).caps = { ...ALL, archive: false };
+    await lib.join('codex', true);
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'codex-t1', 'c1']);
+    let release!: () => void;
+    codex.list.mockImplementation(() => new Promise((r) => { release = () => r({ items: codex.items }); }));
+    lib.invalidate('codex');
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'codex-t1', 'c1']);
+    const st = (await lib.sources()).find((s) => s.kind === 'codex');
+    expect(st?.error).toMatch(/超时/);
+    expect(st?.loading).toBeUndefined();
+    lib.invalidate('codex'); // the hung fetch is now an older generation
+    const changed = new Promise<void>((r) => lib.once('changed', () => r()));
+    release();
+    await changed;
     expect((await lib.sources()).find((s) => s.kind === 'codex')?.error).toBeUndefined();
+  });
+
+  it('a parent cycle folds nothing: every member stays visible', async () => {
+    codex.items = [
+      item('codex-a', 'codex', 200, { parentId: 'codex-b' }),
+      item('codex-b', 'codex', 210, { parentId: 'codex-a' }),
+    ];
+    await lib.join('codex', true);
+    const list = await lib.list();
+    expect(list.map((s) => s.sessionId)).toEqual(['c2', 'codex-b', 'codex-a', 'c1']);
+    expect(list.every((s) => !s.childCount)).toBe(true);
   });
 
   it('nested sub-agents fold transitively under the top-level ancestor', async () => {

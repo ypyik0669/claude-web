@@ -264,6 +264,29 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', { timeout: 
     expect(Date.now() - t0).toBeLessThan(2500);
   });
 
+  it('close() kills an in-flight `session --help` probe', async () => {
+    const mock = await startMock();
+    mocks.push(mock);
+    const pidFile = path.join(os.tmpdir(), `cw-opencode-probe-pid-${process.pid}-${Date.now()}.txt`);
+    tmpFiles.push(pidFile);
+    const src = new OpenCodeSource(() => ({ command: fakeCli, env: { FAKE_HELP_HANG_MS: '15000', FAKE_PROBE_PID_FILE: pidFile } }), { baseUrl: mock.baseUrl });
+    sources.push(src);
+    await src.list({ limit: 10 }); // starts the probe in the background
+    let pid = NaN;
+    for (let i = 0; i < 100 && !Number.isFinite(pid); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      pid = Number(await fs.readFile(pidFile, 'utf8').catch(() => 'x'));
+    }
+    expect(Number.isFinite(pid)).toBe(true);
+    await src.close();
+    let alive = true;
+    for (let i = 0; i < 50 && alive; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      try { process.kill(pid, 0); } catch { alive = false; }
+    }
+    expect(alive).toBe(false);
+  });
+
   it('one project failing its GET /session does not hide the others; all failing rejects', async () => {
     let failAll = false;
     const server = http.createServer((req, res) => {

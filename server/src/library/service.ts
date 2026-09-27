@@ -68,6 +68,12 @@ export class LibraryService extends EventEmitter {
   private srcs = new Map<AgentKind, SessionSource>();
   private perKind = new Map<AgentKind, { at: number; items: SessionSummary[] }>();
   private errors = new Map<AgentKind, string>();
+  /** Kinds whose current `errors` entry is a list timeout (cleared by the next successful fetch). */
+  private timeoutErr = new Set<AgentKind>();
+  /** First load still running past the list bound: no cache yet, not an error. */
+  private loading = new Set<AgentKind>();
+  /** In-flight fetches that outlived a caller's bound (they emit 'changed' when they settle). */
+  private late = new Set<Promise<SessionSummary[]>>();
   private indexedAtByKind = new Map<AgentKind, number>();
   private fetching = new Map<AgentKind, { gen: number; p: Promise<SessionSummary[]> }>();
   /** Bumped by invalidate(): a fetch started under an older generation is neither joined nor cached as fresh. */
@@ -154,31 +160,44 @@ export class LibraryService extends EventEmitter {
     if (hit && Date.now() - hit.at < LIST_TTL_MS) return Promise.resolve(hit.items);
     const gen = this.genOf(src.kind);
     const running = this.fetching.get(src.kind);
-    if (running && running.gen === gen) return running.p;
+    // callers joining an in-flight fetch are bounded too — otherwise they'd wait out a hung source
+    if (running && running.gen === gen) return this.bounded(src.kind, running.p);
     const p = this.fetchSource(src, gen).finally(() => { if (this.fetching.get(src.kind)?.p === p) this.fetching.delete(src.kind); });
     this.fetching.set(src.kind, { gen, p });
+    // a fetch that outlived some caller's bound announces itself once when it settles
+    const settle = () => {
+      if (!this.late.delete(p)) return;
+      this.loading.delete(src.kind);
+      this.emit('changed');
+    };
+    p.then(settle, settle);
     return this.bounded(src.kind, p);
   }
 
   /**
-   * One slow source must never stall the merged list: past `listTimeoutMs` the caller gets the last
-   * good items and the source shows an error, like a failure. The fetch itself keeps running (and
-   * stays the shared in-flight one, so no duplicate starts); when it lands it caches normally and
-   * 'changed' tells clients to re-list.
+   * One slow source must never stall the merged list: past `listTimeoutMs` the caller gets what's
+   * cached and the fetch keeps running (still the shared in-flight one, so no duplicate starts); when
+   * it lands it caches normally and 'changed' tells clients to re-list. With a last good list the
+   * timeout is an error (stale data is being shown); with none yet — a first load — the source is
+   * just `loading`, not failed.
    */
   private bounded(kind: AgentKind, p: Promise<SessionSummary[]>): Promise<SessionSummary[]> {
     const ms = this.opts.listTimeoutMs ?? LIST_TIMEOUT_MS;
-    let timedOut = false;
     let timer: NodeJS.Timeout | undefined;
     const late = new Promise<SessionSummary[]>((res) => {
       timer = setTimeout(() => {
-        timedOut = true;
-        this.errors.set(kind, `列出会话超时（${Math.round(ms / 1000)} 秒），后台仍在读取`);
-        res(this.perKind.get(kind)?.items ?? []);
+        this.late.add(p);
+        const cached = this.perKind.get(kind);
+        if (cached) {
+          this.errors.set(kind, `列出会话超时（${Math.round(ms / 1000)} 秒），后台仍在读取`);
+          this.timeoutErr.add(kind);
+        } else {
+          this.loading.add(kind);
+        }
+        res(cached?.items ?? []);
       }, ms);
       timer.unref?.();
     });
-    p.then(() => { if (timedOut) this.emit('changed'); }, () => {});
     return Promise.race([p.finally(() => clearTimeout(timer)), late]);
   }
 
@@ -194,10 +213,11 @@ export class LibraryService extends EventEmitter {
       // invalidated while in flight: keep it as a last-good fallback, but stale (the next list() refetches)
       const current = gen === this.genOf(src.kind);
       if (current || !this.perKind.has(src.kind)) this.perKind.set(src.kind, { at: current ? Date.now() : 0, items });
-      if (current) this.errors.delete(src.kind);
+      // a timeout error is cleared by any later successful fetch, whatever its generation
+      if (current || this.timeoutErr.has(src.kind)) { this.errors.delete(src.kind); this.timeoutErr.delete(src.kind); }
       return items;
     } catch (e: any) {
-      if (gen === this.genOf(src.kind)) this.errors.set(src.kind, e?.message ?? String(e));
+      if (gen === this.genOf(src.kind)) { this.errors.set(src.kind, e?.message ?? String(e)); this.timeoutErr.delete(src.kind); }
       return hit?.items ?? [];
     }
   }
@@ -232,7 +252,8 @@ export class LibraryService extends EventEmitter {
     this.byId = new Map(out);
     // forks / resumed children / sub-agents fold under their top-level ancestor, transitively (a
     // sub-agent spawned by a sub-agent folds under the root, and childCount counts every descendant);
-    // an orphan — its parent isn't listed — stays visible, as does anything in a parent cycle
+    // an orphan — its parent isn't listed — stays visible; a chain that runs into a parent cycle
+    // isn't folded at all (every cycle member stays top-level rather than all of them vanishing)
     const all = new Map(out);
     const rootOf = (id: string): string => {
       let cur = id;
@@ -240,7 +261,8 @@ export class LibraryService extends EventEmitter {
       for (;;) {
         const p = all.get(cur)?.parentId;
         const pid = p ? alias.get(p) ?? p : undefined;
-        if (!pid || !all.has(pid) || seen.has(pid)) return cur;
+        if (!pid || !all.has(pid)) return cur;
+        if (seen.has(pid)) return id;
         seen.add(pid);
         cur = pid;
       }
@@ -333,6 +355,7 @@ export class LibraryService extends EventEmitter {
         dismissed: dismissed.includes(kind),
         count: this.perKind.get(kind)?.items.length,
         indexedAt: this.indexedAtByKind.get(kind),
+        ...(this.loading.has(kind) ? { loading: true } : {}),
         ...(err ? { error: err } : {}),
       };
     }));
@@ -377,6 +400,8 @@ export class LibraryService extends EventEmitter {
     for (const s of this.perKind.get(kind)?.items ?? []) this.index.remove(s.sessionId);
     this.perKind.delete(kind);
     this.errors.delete(kind);
+    this.timeoutErr.delete(kind);
+    this.loading.delete(kind);
     this.indexedAtByKind.delete(kind);
     this.emit('changed');
   }
@@ -509,7 +534,7 @@ export class LibraryService extends EventEmitter {
         const all = [...this.byId.values()]; // children too
         // every joined source that listed cleanly counts as indexed — including one with no sessions
         // (otherwise an empty source reads「尚未索引」forever)
-        const done = new Set<AgentKind>(this.joinedSources().map((s) => s.kind).filter((k) => !this.errors.has(k)));
+        const done = new Set<AgentKind>(this.joinedSources().map((s) => s.kind).filter((k) => !this.errors.has(k) && !this.loading.has(k)));
         for (const s of all) {
           const kind = s.agent ?? 'claude';
           done.add(kind);
@@ -524,7 +549,8 @@ export class LibraryService extends EventEmitter {
         // …but only for sources that listed successfully: a failed fetch looks like "no sessions"
         if (!this.localFailed) {
           for (const id of this.index.ids()) {
-            if (this.byId.has(id) || this.errors.has(parseLibraryId(id).kind)) continue;
+            const k = parseLibraryId(id).kind;
+            if (this.byId.has(id) || this.errors.has(k) || this.loading.has(k)) continue;
             this.index.remove(id);
           }
         }

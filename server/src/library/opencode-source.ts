@@ -69,6 +69,7 @@ export class OpenCodeSource implements SessionSource {
   private capsProbe: Promise<void> | null = null;
   private capsKnown = false;
   private capsFailedAt = 0;
+  private probeChild: ChildProcess | null = null;
   private gen = 0; // bumped by close() to invalidate any spawnProc() still in flight
 
   constructor(
@@ -157,15 +158,21 @@ export class OpenCodeSource implements SessionSource {
   }
 
   private async runCapsProbe(): Promise<void> {
+    const gen = this.gen;
     try {
       const l = this.getLaunch();
       const r = resolveSpawn(l.command, ['session', '--help']);
-      const { stdout, stderr } = await execFileAsync(r.command, r.args, { windowsHide: true, timeout: HELP_TIMEOUT_MS, env: { ...process.env, ...l.env, ...r.env }, windowsVerbatimArguments: r.via === 'cmd' });
+      const run = execFileAsync(r.command, r.args, { windowsHide: true, timeout: HELP_TIMEOUT_MS, env: { ...process.env, ...l.env, ...r.env }, windowsVerbatimArguments: r.via === 'cmd' });
+      this.probeChild = run.child;
+      const { stdout, stderr } = await run;
       const text = `${stdout}${stderr}`;
       this.caps = { ...this.caps, delete: /\bdelete\b/.test(text) };
       this.capsKnown = true;
     } catch {
-      this.capsFailedAt = Date.now(); // keep the conservative default (delete: false); back off
+      // killed by close(): not a verdict on the CLI, so no back-off for the next join
+      if (gen === this.gen) this.capsFailedAt = Date.now(); // keep delete:false; back off
+    } finally {
+      this.probeChild = null;
     }
   }
 
@@ -294,5 +301,10 @@ export class OpenCodeSource implements SessionSource {
     this.proc = null;
     this.starting = null;
     p?.child?.kill();
+    // an in-flight `session --help` goes too (via cmd.exe on Windows: kill the whole tree)
+    const probe = this.probeChild;
+    this.probeChild = null;
+    if (probe?.pid && process.platform === 'win32') execFile('taskkill', ['/pid', String(probe.pid), '/t', '/f'], { windowsHide: true }, () => {});
+    else probe?.kill();
   }
 }

@@ -64,6 +64,8 @@ export interface SourceStatus {
   version?: string;
   count?: number;
   indexedAt?: number;
+  /** First list still running past the per-source bound (no cached list yet) — not an error. */
+  loading?: boolean;
   error?: string;
   disabledReason?: string;
 }

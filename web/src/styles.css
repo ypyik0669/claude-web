@@ -1318,6 +1318,7 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
 .src-chip.active { color: var(--ink-1); background: var(--layer-selected); border-color: var(--edge-strong); }
 .src-chip .n { color: var(--ink-4); font-variant-numeric: tabular-nums; }
 .src-chip.active .n { color: var(--ink-2); }
+.src-chip .spinner { width: 9px; height: 9px; border-width: 1.5px; }
 .src-chip .warn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
 .sb-search { display: flex; gap: 6px; align-items: center; }
 .sb-search input { flex: 1; min-width: 0; }
