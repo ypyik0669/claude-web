@@ -2,6 +2,9 @@
 // One WebSocket. Client -> server requests carry an `id` and get exactly one `reply`.
 // Server -> client events carry no `id`.
 
+import type { AgentConfigRequest } from './agent-config/types.js';
+export type * from './agent-config/types.js';
+
 export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
 // `ultra` is Codex-only (its own enum member). `ultracode` is NOT here on purpose: in Claude Code it is a
 // separate session-scoped boolean (xhigh + dynamic workflows) that CLAUDE_CODE_EFFORT_LEVEL rejects.
@@ -447,7 +450,9 @@ export type ClientRequest =
   | { kind: 'library.fork'; sessionId: string }
   | { kind: 'library.reindex' }
   | { kind: 'library.join'; kind_: AgentKind; joined: boolean }
-  | { kind: 'library.dismiss'; kind_: AgentKind };
+  | { kind: 'library.dismiss'; kind_: AgentKind }
+  // ---- other agents' configuration center (phase 17) ----
+  | AgentConfigRequest;
 
 export interface RequestEnvelope { id: string; req: ClientRequest }
 export interface ReplyEnvelope { id: string; ok: boolean; data?: unknown; error?: string }

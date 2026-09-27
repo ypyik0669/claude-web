@@ -8,7 +8,7 @@ import { RunnerPool } from './runtime/pool.js';
 import { SessionService } from './sessions/service.js';
 import { ConfigService } from './config/service.js';
 import { UsageService } from './usage/service.js';
-import { ATTACH_MAX_BYTES, FilesService, attachmentPath } from './files/service.js';
+import { ATTACH_MAX_BYTES, FilesService, attachmentPath, dataDir } from './files/service.js';
 import { TerminalService } from './terminal/service.js';
 import { engineInfo } from './claude-exe.js';
 import { MetaStore } from './meta/store.js';
@@ -39,6 +39,7 @@ import { ClaudeSource } from './library/claude-source.js';
 import { CodexSource } from './library/codex-source.js';
 import { OpenCodeSource } from './library/opencode-source.js';
 import { AcpListSource } from './library/acp-source.js';
+import { AgentConfigService } from './agent-config/service.js';
 
 const FILE_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.html': 'text/html; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.json': 'application/json' };
 
@@ -272,7 +273,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   );
   sessionsSvc.on('changed', () => library.invalidate('claude'));
   library.start();
-  const services = { remote, tunnels, im, vcs: new VcsService(gitSvc), goals: new GoalService(meta, pool), android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version };
+  const services = { remote, tunnels, im, vcs: new VcsService(gitSvc), goals: new GoalService(meta, pool), android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), version };
   new Hub(wss, services);
 
   await new Promise<void>((res, rej) => {
