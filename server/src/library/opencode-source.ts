@@ -1,5 +1,6 @@
-// OpenCode session source: lists/reads/manages `opencode serve`'s sessions over its official HTTP
-// API (no direct file access — constraints.md). See task-4-brief.md for the wire shapes.
+// OpenCode session source: lists/reads via `opencode serve`'s official HTTP API, deletes via the
+// official `opencode session delete` CLI subcommand (no direct file access — constraints.md).
+// See task-4-brief.md for the wire shapes.
 //
 // Real-machine checks (opencode 1.14.33, Windows, 2026-09-27):
 // - `opencode serve --port 0 --hostname 127.0.0.1` prints to stdout:
@@ -7,31 +8,40 @@
 //     opencode server listening on http://127.0.0.1:<port>
 //   `PORT_RE` below is pinned to that second line; port 0 works (the OS picks a free port), so we
 //   never need to pick one ourselves.
-// - `GET /doc` on this build only documents `/auth/{providerID}` and `/log` — `paths['/session/{id}']`
-//   is absent entirely, even though `PATCH`/`DELETE /session/{id}` are real, working endpoints (per
-//   the brief). That means `probeCaps()` below, which follows the brief's algorithm literally
-//   (rename/delete = presence of patch/delete under `paths['/session/{id}']`), currently reports
-//   `caps.rename` and `caps.delete` as `false` on real machines running this opencode version — a
-//   known limitation of opencode's own (incomplete) OpenAPI doc, not of this adapter. See the task
-//   report for detail; flagged as a concern rather than silently working around the documented
-//   algorithm.
+// - **Fix round 1**: `GET /doc`'s OpenAPI `paths` on this build only lists `/auth/{providerID}` and
+//   `/log` — no `/session*` path at all, so a `/doc`-based capability probe (the original approach)
+//   can never find a session delete/rename operation and always reports both as unsupported. Dropped
+//   that probe entirely. Capability detection now runs `<command> session --help`, whose real output
+//   is:
+//     opencode session
+//     manage sessions
+//     Commands:
+//       opencode session list                list sessions
+//       opencode session delete <sessionID>  delete a session
+//   i.e. a real, working `delete` subcommand exists and is what `remove()` below actually calls.
+//   There is no `rename`/`update` subcommand anywhere in the CLI, so `caps.rename` is hardcoded
+//   `false` and there is no `rename()` method (no official interface to rename a session).
 // - `opencode acp`'s `initialize` response reports `agentCapabilities.loadSession: true`, so
 //   `caps.resume` stays `true` (continuing a session via the ACP driver is supported).
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execFile, type ChildProcess } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { AgentKind, SessionSummary, SourceCaps, SourceStatus } from '../protocol.js';
 import { resolveSpawn } from '../agents/resolve.js';
 import { libraryId } from './ids.js';
 import { opencodeToMessages } from './opencode-convert.js';
 import type { SessionSource } from './types.js';
 
+const execFileAsync = promisify(execFile);
+
 const PORT_RE = /https?:\/\/127\.0\.0\.1:(\d+)/;
 const IDLE_MS = 300_000; // 5 min — library-only process, never shared with a live chat session
 const START_TIMEOUT_MS = 30_000;
+const HELP_TIMEOUT_MS = 15_000;
+const DELETE_TIMEOUT_MS = 30_000;
 
 interface Proc {
   baseUrl: string;
   child: ChildProcess | null; // null when opts.baseUrl was injected by a test
-  capsProbed: boolean;
 }
 
 function mapSession(s: any, caps: SourceCaps): SessionSummary {
@@ -54,6 +64,7 @@ export class OpenCodeSource implements SessionSource {
   private proc: Proc | null = null;
   private starting: Promise<Proc> | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
+  private capsProbed = false;
 
   constructor(
     private readonly getLaunch: () => { command: string; env: Record<string, string> },
@@ -75,7 +86,7 @@ export class OpenCodeSource implements SessionSource {
   }
 
   private spawnProc(): Promise<Proc> {
-    if (this.opts.baseUrl) return Promise.resolve({ baseUrl: this.opts.baseUrl, child: null, capsProbed: false });
+    if (this.opts.baseUrl) return Promise.resolve({ baseUrl: this.opts.baseUrl, child: null });
     const l = this.getLaunch();
     const r = resolveSpawn(l.command, ['serve', '--port', '0', '--hostname', '127.0.0.1']);
     let child: ChildProcess;
@@ -92,7 +103,7 @@ export class OpenCodeSource implements SessionSource {
       const onData = (d: Buffer) => {
         buf += d.toString('utf8');
         const m = PORT_RE.exec(buf);
-        if (m) finish(() => resolve({ baseUrl: `http://127.0.0.1:${m[1]}`, child, capsProbed: false }));
+        if (m) finish(() => resolve({ baseUrl: `http://127.0.0.1:${m[1]}`, child }));
       };
       child.stdout?.on('data', onData);
       child.stderr?.on('data', onData);
@@ -110,23 +121,24 @@ export class OpenCodeSource implements SessionSource {
     return this.starting;
   }
 
-  private async probeCaps(p: Proc): Promise<void> {
-    if (p.capsProbed) return;
-    p.capsProbed = true;
+  /** `<command> session --help` lists every session subcommand; `delete` is real iff it's in there. */
+  private async probeCaps(): Promise<void> {
+    if (this.capsProbed) return;
+    this.capsProbed = true;
     try {
-      const res = await fetch(`${p.baseUrl}/doc`);
-      if (!res.ok) return;
-      const doc: any = await res.json();
-      const methods = doc?.paths?.['/session/{id}'] ?? {};
-      this.caps = { resume: true, rename: !!methods.patch, archive: false, delete: !!methods.delete, fork: false };
-    } catch { /* leave the conservative defaults */ }
+      const l = this.getLaunch();
+      const r = resolveSpawn(l.command, ['session', '--help']);
+      const { stdout, stderr } = await execFileAsync(r.command, r.args, { windowsHide: true, timeout: HELP_TIMEOUT_MS, env: { ...process.env, ...l.env, ...r.env }, windowsVerbatimArguments: r.via === 'cmd' });
+      const text = `${stdout}${stderr}`;
+      this.caps = { ...this.caps, delete: /\bdelete\b/.test(text) };
+    } catch { /* leave the conservative default (delete: false) */ }
   }
 
   async status(): Promise<SourceStatus> {
     const base = { kind: this.kind, name: 'OpenCode', joined: false, dismissed: false };
     try {
-      const p = await this.ensure();
-      await this.probeCaps(p);
+      await this.ensure();
+      await this.probeCaps();
       this.armIdle();
       return { ...base, installed: true, detected: true, enabled: true };
     } catch (e: any) {
@@ -138,7 +150,7 @@ export class OpenCodeSource implements SessionSource {
   async list(o: { cursor?: string; limit: number; archived?: boolean }): Promise<{ items: SessionSummary[]; next?: string }> {
     try {
       const p = await this.ensure();
-      await this.probeCaps(p);
+      await this.probeCaps();
       this.armIdle();
       const res = await fetch(`${p.baseUrl}/session`);
       if (!res.ok) return { items: [] };
@@ -158,7 +170,7 @@ export class OpenCodeSource implements SessionSource {
   async read(nativeId: string, o: { cursor?: string; limit: number }): Promise<{ messages: any[]; next?: string }> {
     try {
       const p = await this.ensure();
-      await this.probeCaps(p);
+      await this.probeCaps();
       this.armIdle();
       const res = await fetch(`${p.baseUrl}/session/${nativeId}/message`);
       if (!res.ok) return { messages: [] };
@@ -184,18 +196,18 @@ export class OpenCodeSource implements SessionSource {
     }
   }
 
-  async rename(nativeId: string, title: string): Promise<void> {
-    const p = await this.ensure();
-    this.armIdle();
-    const res = await fetch(`${p.baseUrl}/session/${nativeId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) });
-    if (!res.ok) throw new Error(`PATCH /session/${nativeId} → ${res.status}`);
-  }
+  /** No official rename interface exists (no CLI subcommand, no documented REST op) — not implemented. */
 
+  /** Official CLI delete: `<command> session delete <nativeId>`. Non-zero exit → throw with stderr tail. */
   async remove(nativeId: string): Promise<void> {
-    const p = await this.ensure();
-    this.armIdle();
-    const res = await fetch(`${p.baseUrl}/session/${nativeId}`, { method: 'DELETE' });
-    if (!res.ok) throw new Error(`DELETE /session/${nativeId} → ${res.status}`);
+    const l = this.getLaunch();
+    const r = resolveSpawn(l.command, ['session', 'delete', nativeId]);
+    try {
+      await execFileAsync(r.command, r.args, { windowsHide: true, timeout: DELETE_TIMEOUT_MS, env: { ...process.env, ...l.env, ...r.env }, windowsVerbatimArguments: r.via === 'cmd' });
+    } catch (e: any) {
+      const tail = (e?.stderr ?? e?.message ?? String(e)).toString().slice(-2000);
+      throw new Error(`opencode session delete ${nativeId} 失败：${tail}`);
+    }
   }
 
   /** Full message history, oldest first — a backup before delete (constraints.md). */

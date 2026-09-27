@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -7,6 +8,7 @@ import { libraryId } from './ids.js';
 import { OpenCodeSource } from './opencode-source.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const fakeCli = path.join(here, '__mocks__', 'opencode-cli.cmd');
 
 const SESSIONS = [
   { id: 'ses-a', slug: 'a', projectID: 'p', directory: '/work/demo', path: 'work/demo', title: 'Session A', version: '1.14.33', time: { created: 100, updated: 300 } },
@@ -14,18 +16,10 @@ const SESSIONS = [
   { id: 'ses-c', slug: 'c', projectID: 'p', directory: '/work/demo2', path: 'work/demo2', title: 'Session C (child)', version: '1.14.33', parentID: 'ses-a', time: { created: 10, updated: 20 } },
 ];
 
-/** A minimal in-memory stand-in for `opencode serve`'s HTTP API, routed the way the brief describes. */
-function startMock(o: { includeDelete: boolean }) {
-  let deleteCalls = 0;
+/** A minimal in-memory stand-in for `opencode serve`'s HTTP API (`GET /session`, `GET /session/{id}/message` only — capability detection and delete no longer go through HTTP, see fix round 1). */
+function startMock() {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-    if (req.method === 'GET' && url.pathname === '/doc') {
-      const methods: Record<string, unknown> = { patch: { operationId: 'session.update' } };
-      if (o.includeDelete) methods.delete = { operationId: 'session.delete' };
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ openapi: '3.1.1', paths: { '/session/{id}': methods } }));
-      return;
-    }
     if (req.method === 'GET' && url.pathname === '/session') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(SESSIONS));
@@ -38,50 +32,36 @@ function startMock(o: { includeDelete: boolean }) {
       res.end(raw);
       return;
     }
-    const idMatch = /^\/session\/([^/]+)$/.exec(url.pathname);
-    if (req.method === 'PATCH' && idMatch) {
-      let body = '';
-      req.on('data', (c) => (body += c));
-      req.on('end', () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: true, body: JSON.parse(body || '{}') })); });
-      return;
-    }
-    if (req.method === 'DELETE' && idMatch) {
-      deleteCalls++;
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
-      return;
-    }
     res.writeHead(404);
     res.end();
   });
-  return new Promise<{ baseUrl: string; close: () => Promise<void>; deleteCalls: () => number }>((resolve) => {
+  return new Promise<{ baseUrl: string; close: () => Promise<void> }>((resolve) => {
     server.listen(0, '127.0.0.1', () => {
       const addr = server.address();
       const port = typeof addr === 'object' && addr ? addr.port : 0;
-      resolve({
-        baseUrl: `http://127.0.0.1:${port}`,
-        close: () => new Promise((r) => server.close(() => r())),
-        deleteCalls: () => deleteCalls,
-      });
+      resolve({ baseUrl: `http://127.0.0.1:${port}`, close: () => new Promise((r) => server.close(() => r())) });
     });
   });
 }
 
-describe('OpenCodeSource (mock opencode serve)', () => {
+describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', () => {
   let sources: OpenCodeSource[] = [];
   let mocks: { close: () => Promise<void> }[] = [];
+  let tmpFiles: string[] = [];
 
   afterEach(async () => {
     await Promise.all(sources.map((s) => s.close()));
     await Promise.all(mocks.map((m) => m.close()));
+    await Promise.all(tmpFiles.map((f) => fs.rm(f, { force: true })));
     sources = [];
     mocks = [];
+    tmpFiles = [];
   });
 
   it('lists sessions newest-updated first and maps fields, including a parentId', async () => {
-    const mock = await startMock({ includeDelete: true });
+    const mock = await startMock();
     mocks.push(mock);
-    const src = new OpenCodeSource(() => ({ command: 'opencode', env: {} }), { baseUrl: mock.baseUrl });
+    const src = new OpenCodeSource(() => ({ command: fakeCli, env: { FAKE_HAS_DELETE: '1' } }), { baseUrl: mock.baseUrl });
     sources.push(src);
 
     const { items } = await src.list({ limit: 10 });
@@ -102,9 +82,9 @@ describe('OpenCodeSource (mock opencode serve)', () => {
   });
 
   it('reads the fixture into user -> assistant(tool_use/tool_result, thinking) -> result', async () => {
-    const mock = await startMock({ includeDelete: true });
+    const mock = await startMock();
     mocks.push(mock);
-    const src = new OpenCodeSource(() => ({ command: 'opencode', env: {} }), { baseUrl: mock.baseUrl });
+    const src = new OpenCodeSource(() => ({ command: fakeCli, env: { FAKE_HAS_DELETE: '1' } }), { baseUrl: mock.baseUrl });
     sources.push(src);
 
     const { messages } = await src.read('ses-a', { limit: 20 });
@@ -129,19 +109,36 @@ describe('OpenCodeSource (mock opencode serve)', () => {
     expect(thinkingText).toContain("There's a single README.md file");
   });
 
-  it('reports caps.delete = false and never calls DELETE when /doc omits it', async () => {
-    const mock = await startMock({ includeDelete: false });
-    mocks.push(mock);
-    const src = new OpenCodeSource(() => ({ command: 'opencode', env: {} }), { baseUrl: mock.baseUrl });
+  it('detects delete via `session --help` and remove() runs the official `session delete <id>` CLI', async () => {
+    const argvFile = path.join(os.tmpdir(), `cw-opencode-delete-argv-${process.pid}-${Date.now()}.json`);
+    tmpFiles.push(argvFile);
+    const src = new OpenCodeSource(() => ({ command: fakeCli, env: { FAKE_HAS_DELETE: '1', FAKE_ARGV_FILE: argvFile } }));
     sources.push(src);
 
     const status = await src.status();
     expect(status.enabled).toBe(true);
-    await src.list({ limit: 10 });
-    await src.read('ses-a', { limit: 20 });
+    expect(src.caps).toEqual({ resume: true, rename: false, archive: false, delete: true, fork: false });
+
+    await src.remove('ses-a');
+    const recorded = JSON.parse(await fs.readFile(argvFile, 'utf8'));
+    expect(recorded).toEqual(['session', 'delete', 'ses-a']);
+  });
+
+  it('caps.delete is false when `session --help` lists no delete subcommand, and no rename() exists', async () => {
+    const src = new OpenCodeSource(() => ({ command: fakeCli, env: { FAKE_HAS_DELETE: '0' } }));
+    sources.push(src);
+
+    const status = await src.status();
+    expect(status.enabled).toBe(true);
     expect(src.caps.delete).toBe(false);
-    expect(src.caps.rename).toBe(true); // /doc's methods still include patch
-    expect(mock.deleteCalls()).toBe(0);
+    expect(src.caps.rename).toBe(false);
+    expect((src as any).rename).toBeUndefined();
+  });
+
+  it('remove() throws with the stderr tail when the CLI exits non-zero', async () => {
+    const src = new OpenCodeSource(() => ({ command: fakeCli, env: { FAKE_EXIT_CODE: '1' } }));
+    sources.push(src);
+    await expect(src.remove('ses-a')).rejects.toThrow(/fake delete failure/);
   });
 
   it('reports a broken launch as not enabled, without throwing, and list() degrades to empty', async () => {
