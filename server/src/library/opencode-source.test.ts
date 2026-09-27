@@ -186,6 +186,50 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', { timeout: 
     expect(() => process.kill(pid, 0)).toThrow();
   });
 
+  const waitPid = async (file: string) => {
+    let pid = NaN;
+    for (let i = 0; i < 100 && !Number.isFinite(pid); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      pid = Number(await fs.readFile(file, 'utf8').catch(() => 'x'));
+    }
+    return pid;
+  };
+  const waitDead = async (pid: number) => {
+    for (let i = 0; i < 50; i++) {
+      try { process.kill(pid, 0); } catch { return true; }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return false;
+  };
+
+  // the real tree on Windows is cmd.exe -> node -> opencode.exe: killing the top pid alone leaves
+  // `opencode serve` (an unsecured HTTP server) running
+  it.each([
+    ['node-shim launcher', fakeCli],
+    ['cmd.exe launcher', path.join(here, '__mocks__', 'opencode-cli-wrapped.cmd')],
+  ])('close() kills the whole `opencode serve` tree (%s)', async (_name, command) => {
+    const gcFile = path.join(os.tmpdir(), `cw-opencode-gc-${process.pid}-${Date.now()}.txt`);
+    tmpFiles.push(gcFile);
+    const src = new OpenCodeSource(() => ({ command, env: { FAKE_GRANDCHILD_PID_FILE: gcFile, FAKE_HAS_DELETE: '0' } }));
+    sources.push(src);
+    expect((await src.status()).enabled).toBe(true);
+    const gc = await waitPid(gcFile);
+    expect(Number.isFinite(gc)).toBe(true);
+    await src.close();
+    expect(await waitDead(gc)).toBe(true);
+  });
+
+  it('a `session delete` that hangs past its timeout is killed with its whole tree', async () => {
+    const gcFile = path.join(os.tmpdir(), `cw-opencode-delgc-${process.pid}-${Date.now()}.txt`);
+    tmpFiles.push(gcFile);
+    const src = new OpenCodeSource(() => ({ command: path.join(here, '__mocks__', 'opencode-cli-wrapped.cmd'), env: { FAKE_DELETE_HANG_MS: '30000', FAKE_GRANDCHILD_PID_FILE: gcFile } }), { deleteTimeoutMs: 1500 });
+    sources.push(src);
+    await expect(src.remove('ses-a')).rejects.toThrow(/超时/);
+    const gc = await waitPid(gcFile);
+    expect(Number.isFinite(gc)).toBe(true);
+    expect(await waitDead(gc)).toBe(true);
+  });
+
   it('detects delete via `session --help` and remove() runs the official `session delete <id>` CLI', async () => {
     const argvFile = path.join(os.tmpdir(), `cw-opencode-delete-argv-${process.pid}-${Date.now()}.json`);
     tmpFiles.push(argvFile);

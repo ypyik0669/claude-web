@@ -23,15 +23,13 @@
 //   `false` and there is no `rename()` method (no official interface to rename a session).
 // - `opencode acp`'s `initialize` response reports `agentCapabilities.loadSession: true`, so
 //   `caps.resume` stays `true` (continuing a session via the ACP driver is supported).
-import { spawn, execFile, type ChildProcess } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn, type ChildProcess } from 'node:child_process';
 import type { AgentKind, SessionSummary, SourceCaps, SourceStatus } from '../protocol.js';
 import { resolveSpawn } from '../agents/resolve.js';
+import { execFileTree, killTree } from '../agents/kill-tree.js';
 import { libraryId } from './ids.js';
 import { opencodeToMessages } from './opencode-convert.js';
 import { isNotInstalled, type SessionSource } from './types.js';
-
-const execFileAsync = promisify(execFile);
 
 const PORT_RE = /https?:\/\/127\.0\.0\.1:(\d+)/;
 const IDLE_MS = 300_000; // 5 min — library-only process, never shared with a live chat session
@@ -74,7 +72,7 @@ export class OpenCodeSource implements SessionSource {
 
   constructor(
     private readonly getLaunch: () => { command: string; env: Record<string, string> },
-    private readonly opts: { baseUrl?: string; capsRetryMs?: number } = {},
+    private readonly opts: { baseUrl?: string; capsRetryMs?: number; deleteTimeoutMs?: number } = {},
   ) {}
 
   private clearIdle() {
@@ -87,7 +85,7 @@ export class OpenCodeSource implements SessionSource {
     this.idleTimer = setTimeout(() => {
       const p = this.proc;
       this.proc = null;
-      p?.child?.kill();
+      void killTree(p?.child);
     }, IDLE_MS);
   }
 
@@ -105,7 +103,7 @@ export class OpenCodeSource implements SessionSource {
       let buf = '';
       let settled = false;
       const finish = (fn: () => void) => { if (settled) return; settled = true; clearTimeout(timer); fn(); };
-      const timer = setTimeout(() => finish(() => { child.kill(); reject(new Error('opencode serve：等待端口超时')); }), START_TIMEOUT_MS);
+      const timer = setTimeout(() => finish(() => { void killTree(child); reject(new Error('opencode serve：等待端口超时')); }), START_TIMEOUT_MS);
       const onData = (d: Buffer) => {
         buf += d.toString('utf8');
         const m = PORT_RE.exec(buf);
@@ -130,7 +128,7 @@ export class OpenCodeSource implements SessionSource {
     this.starting = this.spawnProc()
       .then((p) => {
         if (gen !== this.gen) {
-          p.child?.kill();
+          void killTree(p.child);
           throw new Error('OpenCodeSource：启动完成前已被 close()');
         }
         this.proc = p;
@@ -162,9 +160,9 @@ export class OpenCodeSource implements SessionSource {
     try {
       const l = this.getLaunch();
       const r = resolveSpawn(l.command, ['session', '--help']);
-      const run = execFileAsync(r.command, r.args, { windowsHide: true, timeout: HELP_TIMEOUT_MS, env: { ...process.env, ...l.env, ...r.env }, windowsVerbatimArguments: r.via === 'cmd' });
+      const run = execFileTree(r.command, r.args, { timeoutMs: HELP_TIMEOUT_MS, env: { ...process.env, ...l.env, ...r.env }, windowsVerbatimArguments: r.via === 'cmd' });
       this.probeChild = run.child;
-      const { stdout, stderr } = await run;
+      const { stdout, stderr } = await run.done;
       const text = `${stdout}${stderr}`;
       this.caps = { ...this.caps, delete: /\bdelete\b/.test(text) };
       this.capsKnown = true;
@@ -277,9 +275,9 @@ export class OpenCodeSource implements SessionSource {
     const l = this.getLaunch();
     const r = resolveSpawn(l.command, ['session', 'delete', nativeId]);
     try {
-      await execFileAsync(r.command, r.args, { windowsHide: true, timeout: DELETE_TIMEOUT_MS, env: { ...process.env, ...l.env, ...r.env }, windowsVerbatimArguments: r.via === 'cmd' });
+      await execFileTree(r.command, r.args, { timeoutMs: this.opts.deleteTimeoutMs ?? DELETE_TIMEOUT_MS, env: { ...process.env, ...l.env, ...r.env }, windowsVerbatimArguments: r.via === 'cmd' }).done;
     } catch (e: any) {
-      const tail = (e?.stderr ?? e?.message ?? String(e)).toString().slice(-2000);
+      const tail = (e?.killed ? e.message : e?.stderr || e?.message || String(e)).toString().slice(-2000);
       throw new Error(`opencode session delete ${nativeId} 失败：${tail}`);
     }
   }
@@ -300,11 +298,9 @@ export class OpenCodeSource implements SessionSource {
     const p = this.proc;
     this.proc = null;
     this.starting = null;
-    p?.child?.kill();
-    // an in-flight `session --help` goes too (via cmd.exe on Windows: kill the whole tree)
+    // whole trees: via a cmd.exe shim the real `opencode serve` is a grandchild
     const probe = this.probeChild;
     this.probeChild = null;
-    if (probe?.pid && process.platform === 'win32') execFile('taskkill', ['/pid', String(probe.pid), '/t', '/f'], { windowsHide: true }, () => {});
-    else probe?.kill();
+    await Promise.all([killTree(p?.child), killTree(probe)]);
   }
 }

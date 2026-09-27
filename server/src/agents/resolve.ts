@@ -49,10 +49,17 @@ export function resolveSpawn(command: string, args: string[]): { command: string
   if (!/\.(cmd|bat)$/i.test(found)) return { command: found, args, env: {}, via: 'direct' };
   try {
     const text = fs.readFileSync(found, 'utf8');
-    const m = /"%dp0%\\([^"]+\.(?:m?js|cjs))"/i.exec(text) ?? /"%~dp0\\([^"]+\.(?:m?js|cjs))"/i.exec(text);
-    if (m) {
-      const entry = path.join(path.dirname(found), m[1]);
-      if (fs.existsSync(entry)) { const n = nodeRuntime(); return { command: n.command, args: [entry, ...args], env: n.env, via: 'node-shim' }; }
+    // every quoted `%dp0%\…` / `%~dp0\…` path in the shim, minus the node.exe it may prefer; a .js entry,
+    // or an extensionless one with a node shebang (npm's shim for opencode-ai's `bin/opencode`), runs
+    // under our node — otherwise the tree is cmd.exe → node → agent and only cmd.exe is a direct child
+    const rels = [...text.matchAll(/"%(?:dp0%|~dp0)\\([^"%]+)"/gi)].map((m) => m[1]).filter((r) => !/(^|\\)node(\.exe)?$/i.test(r));
+    for (const rel of rels) {
+      const entry = path.join(path.dirname(found), rel);
+      if (!fs.existsSync(entry)) continue;
+      if (/\.(?:m?js|cjs)$/i.test(rel) || (!path.extname(rel) && isNodeScript(entry))) {
+        const n = nodeRuntime();
+        return { command: n.command, args: [entry, ...args], env: n.env, via: 'node-shim' };
+      }
     }
   } catch { /* fall through */ }
   // generic .cmd/.bat: run through cmd.exe with proper quoting
