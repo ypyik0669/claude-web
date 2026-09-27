@@ -1,5 +1,11 @@
 // Minimal ACP agent used by tests: echoes prompts, runs one fake tool call with a permission request.
+import fs from 'node:fs';
 import readline from 'node:readline';
+
+// So a test can prove a process it thought it killed is actually dead (AcpListSource's
+// close()-during-in-flight-initialize race). Written immediately at startup, before initialize even
+// arrives, matching how the real agent process exists the moment it's spawned.
+if (process.env.MOCK_ACP_PIDFILE) fs.writeFileSync(process.env.MOCK_ACP_PIDFILE, String(process.pid));
 
 const rl = readline.createInterface({ input: process.stdin });
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
@@ -19,7 +25,10 @@ rl.on('line', async (line) => {
       const agentCapabilities = process.env.MOCK_ACP_LIST === '1'
         ? { loadSession: false, sessionCapabilities: { list: {} } }
         : { loadSession: false };
-      reply({ protocolVersion: 1, agentCapabilities, agentInfo: { name: 'mock-acp', version: '0.0.1' } });
+      // MOCK_ACP_INIT_DELAY_MS (default 0, so every other test is unaffected) lets a test race
+      // close() against an in-flight initialize.
+      const delay = Number(process.env.MOCK_ACP_INIT_DELAY_MS ?? '0');
+      setTimeout(() => reply({ protocolVersion: 1, agentCapabilities, agentInfo: { name: 'mock-acp', version: '0.0.1' } }), delay);
       break;
     }
     case 'session/list': {

@@ -1,6 +1,8 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { AcpListSource } from './acp-source.js';
 import { libraryId } from './ids.js';
 
@@ -86,5 +88,34 @@ describe('AcpListSource (mock ACP agent)', () => {
     } finally {
       await src.close();
     }
+  });
+
+  describe('close() during an in-flight initialize', () => {
+    const tmpFiles: string[] = [];
+    afterEach(async () => {
+      await Promise.all(tmpFiles.map((f) => fs.rm(f, { force: true })));
+      tmpFiles.length = 0;
+    });
+
+    it('kills the late-spawned process once initialize resolves, instead of leaking it', async () => {
+      const pidFile = path.join(os.tmpdir(), `cw-acp-pid-${process.pid}-${Date.now()}.txt`);
+      tmpFiles.push(pidFile);
+      const src = new AcpListSource('acp:e2e', () => launch({ MOCK_ACP_LIST: '1', MOCK_ACP_INIT_DELAY_MS: '300', MOCK_ACP_PIDFILE: pidFile }));
+
+      const statusPromise = src.status(); // kicks off ensure() -> spawn + initialize, ~300ms to reply
+      await src.close(); // races the in-flight initialize
+      const status = await statusPromise;
+      // ensure() rejected once the race was detected -> status() degrades to the error branch
+      expect(status.enabled).toBe(false);
+
+      // JsonRpcProcess.kill() gives the child a 1.5s grace period (stdin.end() first) before force-
+      // killing it, and that kill only fires once the delayed initialize reply lands (~300ms) and the
+      // stale-generation check calls it — so the process isn't reliably dead until well past both.
+      await new Promise((r) => setTimeout(r, 2000));
+      const pidText = await fs.readFile(pidFile, 'utf8');
+      const pid = Number(pidText);
+      expect(Number.isFinite(pid)).toBe(true);
+      expect(() => process.kill(pid, 0)).toThrow();
+    });
   });
 });

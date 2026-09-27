@@ -31,6 +31,12 @@ export class AcpListSource implements SessionSource {
   private idleTimer: NodeJS.Timeout | null = null;
   // Cached until close() (per the controller ruling: "status() 探测一次并缓存能力直到 close()").
   private probed: Probed | null = null;
+  // Generation token (same pattern as OpenCodeSource): bumped by close() so an ensure() whose
+  // spawn+initialize is still in flight notices, on the far side of that await, that it was closed
+  // out from under it — and kills the process it just got instead of adopting it (which would
+  // otherwise leak: nothing else references that process once close() has already cleared
+  // this.rpc/this.starting).
+  private gen = 0;
 
   constructor(kind: AgentKind, private readonly getLaunch: () => { command: string; args: string[]; env: Record<string, string> }) {
     this.kind = kind;
@@ -55,6 +61,7 @@ export class AcpListSource implements SessionSource {
   private async ensure(): Promise<JsonRpcProcess> {
     if (this.rpc && !this.rpc.exited) return this.rpc;
     if (this.starting) return this.starting;
+    const gen = this.gen;
     this.starting = (async () => {
       const l = this.getLaunch();
       const rpc = new JsonRpcProcess(l.command, l.args, { env: l.env });
@@ -65,6 +72,9 @@ export class AcpListSource implements SessionSource {
           clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
           clientInfo: { name: 'claude-web', version: '0.1.0' },
         }, INIT_TIMEOUT_MS);
+        // close() ran while initialize was in flight: this process belongs to nobody now — kill it
+        // and refuse to adopt it, rather than silently leaving it running past close().
+        if (gen !== this.gen) { rpc.kill(); throw new Error('AcpListSource：启动完成前已被 close()'); }
         const agentCaps = r?.agentCapabilities ?? {};
         this.probed = {
           hasList: !!agentCaps.sessionCapabilities?.list,
@@ -144,6 +154,7 @@ export class AcpListSource implements SessionSource {
   }
 
   async close(): Promise<void> {
+    this.gen++;
     this.killRpc();
     this.probed = null;
   }
