@@ -70,19 +70,29 @@ export async function forkSession(s: SessionSummary): Promise<void> {
   } catch (e) { st.toast(errText(e)); }
 }
 
+/** Confirm text for a hand-over: in place for claude-web / Claude sessions, a new session for imported ones. */
+export function handOverMessage(sessionId: string): string {
+  const tail = '新 agent 会收到一份结构化交接说明（已决定什么、改过哪些文件、试过什么失败了）。思考/推理内容带签名或加密，跨厂商无法携带，不会带过去。';
+  return isImportedSessionId(sessionId)
+    ? `这是从其它 agent 导入的会话：交接会新建一个会话（同一工作目录），原会话保持不变。${tail}`
+    : `会话 id、标题和历史都保留。${tail}`;
+}
+
 export async function handOver(s: SessionSummary, agent: AgentKind): Promise<void> {
   const st = useStore.getState();
   const name = st.agents.find((a) => a.kind === agent)?.name ?? agent;
   const ok = await dlg.confirm(`把这个会话交给 ${name}？`, {
-    message: '会话 id、标题和历史都保留。新 agent 会收到一份结构化交接说明（已决定什么、改过哪些文件、试过什么失败了）。思考/推理内容带签名或加密，跨厂商无法携带，不会带过去。',
+    message: handOverMessage(s.sessionId),
     okLabel: '交接',
   });
   if (!ok) return;
   try {
-    await ws.request({ kind: 'session.switchAgent', sessionId: s.sessionId, agent });
+    const r = await ws.request<{ sessionId: string }>({ kind: 'session.switchAgent', sessionId: s.sessionId, agent });
     st.toast(`已交接给 ${name}`, true);
     await st.refreshSessions().catch(() => {});
-    await st.loadHistory(s.sessionId);
+    // an imported session is never swapped in place: the hand-over is a new session — open that one
+    if (r?.sessionId && r.sessionId !== s.sessionId) await st.loadHistory(r.sessionId, { mode: 'tab' });
+    else await st.loadHistory(s.sessionId);
   } catch (e) { st.toast(errText(e)); }
 }
 

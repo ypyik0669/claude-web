@@ -357,7 +357,9 @@ export class Hub {
       }
       case 'session.switchAgent': {
         const readAll = (id: string) => s.library.readAll(id);
-        const r = await swapAgent({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta, readAll }, req.sessionId, req.agent, req.model);
+        // imported library sessions hand over into a NEW session (returned sessionId differs); the rest swap in place
+        const imported = (id: string) => s.library.importedInfo(id);
+        const r = await swapAgent({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta, readAll, imported }, req.sessionId, req.agent, req.model);
         s.sessions.emit('changed');
         return r;
       }

@@ -4,6 +4,7 @@ import { ws } from '@/ws/client';
 import { clsx } from '@/util';
 import { Icon, AGENT_ICONS } from '@/ui/icons';
 import { dlg } from '@/ui/dialog';
+import { handOverMessage } from '@/features/sidebar/session-actions';
 import type { AgentKind, SessionInfoSnapshot } from '@shared';
 
 /**
@@ -44,15 +45,21 @@ export function EngineSwitcher({ sessionId, info }: { sessionId: string; info: S
   const switchAgent = async (agent: AgentKind) => {
     const a = agents.find((x) => x.kind === agent);
     const ok = await dlg.confirm(`把这个会话交给 ${a?.name ?? agent}？`, {
-      message: '会话 id、标题和历史都保留。新 agent 会收到一份结构化交接说明（已决定什么、改过哪些文件、试过什么失败了）。思考/推理内容带签名或加密，跨厂商无法携带，不会带过去。',
+      message: handOverMessage(sessionId),
       okLabel: '交接',
     });
     if (!ok) return;
     setBusy(agent);
     try {
-      await ws.request({ kind: 'session.switchAgent', sessionId, agent });
+      const r = await ws.request<{ sessionId: string }>({ kind: 'session.switchAgent', sessionId, agent });
       toast(`已交接给 ${a?.name ?? agent}`, true);
       setOpen(false);
+      // imported sessions hand over into a NEW session (the imported one stays as it was): open it
+      if (r?.sessionId && r.sessionId !== sessionId) {
+        const st = useStore.getState();
+        await st.refreshSessions().catch(() => {});
+        await st.loadHistory(r.sessionId, { mode: 'tab' });
+      }
     } catch (e: any) { toast(e.message); } finally { setBusy(''); }
   };
 

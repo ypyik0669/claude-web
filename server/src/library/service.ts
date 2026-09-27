@@ -509,6 +509,23 @@ export class LibraryService extends EventEmitter {
   }
 
   /**
+   * Is `id` an IMPORTED session (its history lives in another agent's own store)? A head flagged
+   * `imported`, or no head at all and a non-Claude library id. Returns the source agent and the
+   * library summary's cwd / title (the head's as a fallback); null for Claude and claude-web's own.
+   */
+  async importedInfo(id: string): Promise<{ agent: AgentKind; cwd: string; title?: string } | null> {
+    const head = await this.transcripts.head(id);
+    if (head && !head.imported) return null;
+    const route = parseLibraryId(id);
+    if (!head && route.kind === 'claude') return null;
+    let s = this.byId.get(id);
+    if (!s) { await this.list(); s = this.byId.get(id); }
+    const cwd = s?.cwd || head?.cwd;
+    if (!cwd) throw new Error('会话库里找不到这个会话');
+    return { agent: head?.agent ?? route.kind, cwd, title: s?.title ?? head?.title };
+  }
+
+  /**
    * Resuming an imported session: give it a claude-web head pointing at the native id, so the
    * existing Codex / ACP drivers take their resume branch (thread/resume, session/load).
    */
