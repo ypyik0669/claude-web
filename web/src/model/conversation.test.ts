@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { applyMessage, applyTranscript, createConversation, decodeAttachments, findChainUuidBefore, setConversationClock, turnItems, walkTools, type AssistantItem, type Conversation, type UserItem } from './conversation';
+import { applyMessage, applyTranscript, createConversation, decodeAttachments, findChainUuidBefore, prependTranscript, setConversationClock, turnItems, walkTools, type AssistantItem, type Conversation, type UserItem } from './conversation';
 
 const FIXTURE = path.join(__dirname, '__fixtures__', 'tools.jsonl');
 const USER_UUID = '11111111-2222-4333-8444-555555555555';
@@ -253,5 +253,44 @@ describe('stream lanes', () => {
     expect(a.streaming).toBe(false);
     expect(b.id).toBe('mB');
     expect(b.streaming).toBe(true);
+  });
+});
+
+describe('prependTranscript (older history paging)', () => {
+  const user = (uuid: string, text: string) => ({ type: 'user', uuid, parent_tool_use_id: null, message: { role: 'user', content: text } });
+  const asst = (uuid: string, id: string, content: any[]) => ({ type: 'assistant', uuid, parent_tool_use_id: null, message: { id, role: 'assistant', content } });
+
+  it('puts the older page first', () => {
+    const c = createConversation();
+    applyTranscript(c, [user('u3', 'third'), asst('a3', 'm3', [{ type: 'text', text: 'three' }])]);
+    prependTranscript(c, [user('u1', 'first'), asst('a1', 'm1', [{ type: 'text', text: 'one' }])]);
+    expect(c.items.map((i) => i.id)).toEqual(['u1', 'm1', 'u3', 'm3']);
+  });
+
+  it('merges one API message split across the page boundary into a single item', () => {
+    const c = createConversation();
+    // newer page starts with the tool_use block of message mX; the older page ended with its text block
+    applyTranscript(c, [asst('a2', 'mX', [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }]), user('u2', 'next')]);
+    prependTranscript(c, [user('u1', 'go'), asst('a1', 'mX', [{ type: 'text', text: 'running ls' }])]);
+    expect(c.items.map((i) => i.id)).toEqual(['u1', 'mX', 'u2']);
+    const a = c.items[1] as AssistantItem;
+    expect(a.blocks.map((b) => b.type)).toEqual(['text', 'tool_use']);
+    expect(c.toolIndex.get('t1')).toBe(a.blocks[1]);
+  });
+
+  it('drops items the newer page already has (overlapping pages)', () => {
+    const c = createConversation();
+    applyTranscript(c, [user('u2', 'b'), asst('a2', 'm2', [{ type: 'text', text: 'B' }])]);
+    prependTranscript(c, [user('u1', 'a'), user('u2', 'b')]);
+    expect(c.items.map((i) => i.id)).toEqual(['u1', 'u2', 'm2']);
+  });
+
+  it('keeps the live state of the newer page (running tool is not swept)', () => {
+    const c = createConversation();
+    applyTranscript(c, [user('u2', 'b'), asst('a2', 'm2', [{ type: 'tool_use', id: 't2', name: 'Bash', input: {} }])], { live: true });
+    prependTranscript(c, [user('u1', 'a'), asst('a1', 'm1', [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }])]);
+    expect(c.toolIndex.get('t2')!.status).toBe('pending');
+    expect(c.runningTool?.id).toBe('t2');
+    expect(c.toolIndex.get('t1')!.status).toBe('done');
   });
 });

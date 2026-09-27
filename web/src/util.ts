@@ -79,3 +79,11 @@ export function toolSummary(name: string, input: Record<string, unknown>): strin
     }
   }
 }
+
+/**
+ * Session came from the unified library (another agent's own store) — its history is paged through
+ * `library.read`. Mirrors the prefixes of `parseLibraryId` in server/src/library/ids.ts (Claude keeps its bare UUID).
+ */
+export function isImportedSessionId(id: string): boolean {
+  return /^(codex|opencode|gemini|qwen|kimi)-/.test(id) || /^acp_[^-]*-/.test(id);
+}

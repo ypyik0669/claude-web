@@ -566,6 +566,49 @@ export function applyTranscript(c: Conversation, msgs: any[], opts?: { live?: bo
   c.compacting = false;
 }
 
+/**
+ * Older history arrived (library paging): replay `msgs` into a fresh conversation, then hang the current items
+ * after it. Same rules as a single replay: an API message split across the page boundary (same `message.id`)
+ * becomes one item, items both pages carry are kept once, retracted uuids stay retracted. Live state of `c`
+ * (running tool, turn clock, streaming) belongs to the newest page and is left alone.
+ */
+export function prependTranscript(c: Conversation, msgs: any[]): void {
+  const older = createConversation();
+  for (const u of c.retracted) older.retracted.add(u);
+  applyTranscript(older, msgs);
+  const byId = new Map<string, Item>();
+  for (const it of older.items) byId.set(it.id, it);
+  const items = [...older.items];
+  for (const it of c.items) {
+    const prev = byId.get(it.id);
+    if (!prev) { items.push(it); continue; }
+    if (prev.kind !== 'assistant' || it.kind !== 'assistant') continue; // duplicate: the older copy stands
+    // one API message cut in two: older blocks first, then the newer ones it does not have yet
+    for (const b of it.blocks) {
+      if (b.type === 'tool_use') {
+        // the newer copy carries the result (and is what toolIndex keeps)
+        const at = prev.blocks.findIndex((x) => x.type === 'tool_use' && x.id === b.id);
+        if (at >= 0) prev.blocks[at] = b;
+        else prev.blocks.push(b);
+      }
+      else if (b.type === 'text') { if (!prev.blocks.some((x) => x.type === 'text' && x.text === b.text)) prev.blocks.push(b); }
+      else if (!prev.blocks.some((x) => x.type === 'thinking' && x.thinking === b.thinking && !!x.redacted === !!b.redacted)) prev.blocks.push(b);
+    }
+    if (it.uuid) prev.uuid = it.uuid;
+    if (it.usage) prev.usage = it.usage;
+    prev.model = it.model ?? prev.model;
+    prev.streaming = it.streaming;
+    if (it.error) { prev.error = it.error; prev.errorKind = it.errorKind; }
+    if (it.aborted) prev.aborted = true;
+    for (const [k, v] of c.streaming) if (v === it) c.streaming.set(k, prev);
+  }
+  c.items = items;
+  // newer entries win: a tool_use that appears in both pages is the newer page's block (it carries the result)
+  for (const [k, v] of older.toolIndex) if (!c.toolIndex.has(k)) c.toolIndex.set(k, v);
+  for (const [k, v] of older.tasks) if (!c.tasks.has(k)) c.tasks.set(k, v);
+  for (const u of older.retracted) c.retracted.add(u);
+}
+
 export function* walkTools(items: Item[]): Generator<{ tool: ToolUseBlock; depth: number; item: AssistantItem }> {
   const rec = function* (arr: Item[], depth: number): Generator<{ tool: ToolUseBlock; depth: number; item: AssistantItem }> {
     for (const it of arr) {

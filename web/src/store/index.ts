@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AgentInfo, AgentKind, AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, Workspace } from '@shared';
+import type { AgentInfo, AgentKind, AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, SourceStatus, Workspace } from '@shared';
 import { decodeAttachments, findChainUuidBefore, type ContextUsage } from '@/model/conversation';
 import { activeGroup, chatTile, deriveActive, initialLayout, layoutReducer, migrateLegacy, sanitizeLayout, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
 import { PaneContext, winId } from './paneContext';
@@ -9,7 +9,8 @@ export const THEMES = ['dark', 'light', 'dracula', 'nord', 'tokyo-night', 'paper
 export type Theme = (typeof THEMES)[number];
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
-import { applyMessage, applyTranscript, createConversation, walkTools, type Conversation } from '@/model/conversation';
+import { applyMessage, applyTranscript, createConversation, prependTranscript, walkTools, type Conversation } from '@/model/conversation';
+import { isImportedSessionId } from '@/util';
 import { dlg } from '@/ui/dialog';
 import { applyUiSettings, resolveTheme } from '@/features/settings/ui-settings';
 
@@ -32,7 +33,11 @@ export interface OpenSession {
   feedback: Record<string, MessageFeedback>; // messageId -> rating (meta.json)
   contextUsage?: ContextUsage;
   lastSent?: QueuedMessage; // for retry / auto-continue
+  /** library sessions: cursor for the next OLDER page (`library.read`); absent = nothing older */
+  historyCursor?: string;
 }
+
+export type LibraryOp = 'rename' | 'archive' | 'delete' | 'fork';
 
 const genUuid = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`);
 
@@ -87,6 +92,15 @@ interface State {
   loadProviders(): Promise<void>;
   setSetting(key: string, value: unknown): Promise<void>;
   loadHistory(sessionId: string, opts?: { focus?: boolean; mode?: 'replace' | 'tab' }): Promise<void>;
+  /** prepend the next older page of an imported session's history; true while there is still more */
+  loadOlder(sessionId: string): Promise<boolean>;
+  // unified session library
+  librarySources: SourceStatus[];
+  sourceFilter: AgentKind | 'all';
+  setSourceFilter(k: AgentKind | 'all'): void;
+  loadLibrarySources(): Promise<void>;
+  /** `library.<op>` with `payload` (rename {sessionId,title} / archive {sessionIds,archived} / delete {sessionIds} / fork {sessionId}) */
+  libraryOp(op: LibraryOp, payload: Record<string, unknown>): Promise<any>;
   send(sessionId: string, text: string, images?: { mediaType: string; data: string }[], steer?: boolean, attachments?: AttachmentRef[]): Promise<void>;
   /** remove a queued message (returns it so the composer can restore the text) */
   recall(sessionId: string, id: string): QueuedMessage | undefined;
@@ -114,6 +128,7 @@ interface State {
   onTurnEnd(sessionId: string): void;
 }
 
+const olderInflight = new Map<string, Promise<boolean>>();
 const draftTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const autoTimers = new Map<string, ReturnType<typeof setTimeout>>();
 export const autoContinueAt = new Map<string, number>(); // sessionId -> epoch ms (for the status strip countdown)
@@ -348,6 +363,7 @@ export const useStore = create<State>((set, get) => ({
           set((s) => { const out = { ...s.open }; for (const [id, o] of Object.entries(out)) if (o.pending.some((p) => p.requestId === e.requestId)) out[id] = { ...o, pending: o.pending.filter((p) => p.requestId !== e.requestId), version: o.version + 1 }; return { open: out }; });
           break;
         case 'sessions.changed':
+        case 'library.changed':
           void get().refreshSessions();
           break;
         case 'meta.changed':
@@ -363,7 +379,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async refreshSessions() {
-    const sessions = await ws.request<SessionSummary[]>({ kind: 'sessions.list', limit: 500 });
+    const sessions = await ws.request<SessionSummary[]>({ kind: 'sessions.list' });
     set({ sessions });
   },
 
@@ -515,8 +531,16 @@ export const useStore = create<State>((set, get) => ({
     void get().loadFeedback(sessionId);
     if (!cur) void get().loadDraft(sessionId).then((d) => d && set((s) => bump(s, sessionId, (o) => { if (!o.draft) o.draft = d; })));
     try {
-      const msgs = await ws.request<any[]>({ kind: 'transcript.load', sessionId });
+      // imported sessions page through library.read (transcript.load would give the newest page but no cursor)
+      let msgs: any[];
+      let cursor: string | undefined;
+      if (isImportedSessionId(sessionId)) {
+        const r = await ws.request<{ messages: any[]; next?: string }>({ kind: 'library.read', sessionId });
+        msgs = r?.messages ?? [];
+        cursor = r?.next || undefined;
+      } else msgs = await ws.request<any[]>({ kind: 'transcript.load', sessionId });
       set((s) => bump(s, sessionId, (o) => {
+        o.historyCursor = cursor;
         const conv = createConversation();
         applyTranscript(conv, msgs, { live: meta?.live === 'running' || meta?.live === 'waiting' });
         // re-apply live messages that arrived after spawn (they are also in transcript; duplicates are merged by id)
@@ -528,6 +552,43 @@ export const useStore = create<State>((set, get) => ({
     } catch (e: any) {
       set((s) => bump(s, sessionId, (o) => { o.loading = false; o.error = e.message; }));
     }
+  },
+
+  async loadOlder(sessionId) {
+    const inflight = olderInflight.get(sessionId);
+    if (inflight) return inflight;
+    const cursor = get().open[sessionId]?.historyCursor;
+    if (!cursor) return false;
+    const p = (async () => {
+      try {
+        const r = await ws.request<{ messages: any[]; next?: string }>({ kind: 'library.read', sessionId, cursor });
+        const next = r?.next || undefined;
+        set((s) => bump(s, sessionId, (o) => {
+          if (o.historyCursor !== cursor) return; // history was reloaded meanwhile — this page belongs to the old one
+          prependTranscript(o.conv, r?.messages ?? []);
+          o.historyCursor = next;
+        }));
+        return !!get().open[sessionId]?.historyCursor;
+      } finally {
+        olderInflight.delete(sessionId);
+      }
+    })();
+    olderInflight.set(sessionId, p);
+    return p;
+  },
+
+  librarySources: [],
+  sourceFilter: 'all',
+  setSourceFilter(k) {
+    set({ sourceFilter: k });
+  },
+  async loadLibrarySources() {
+    const librarySources = await ws.request<SourceStatus[]>({ kind: 'library.sources' });
+    set({ librarySources: librarySources ?? [] });
+  },
+  async libraryOp(op, payload) {
+    // the server broadcasts library.changed afterwards, which refetches the session list
+    return ws.request({ ...payload, kind: `library.${op}` } as any);
   },
 
   async send(sessionId, text, images, steer = false, attachments) {
