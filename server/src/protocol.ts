@@ -2,6 +2,9 @@
 // One WebSocket. Client -> server requests carry an `id` and get exactly one `reply`.
 // Server -> client events carry no `id`.
 
+export * from './federation/types.js';
+import type { PeerEvent, PeerRequest, SessionPeer } from './federation/types.js';
+
 export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
 // `ultra` is Codex-only (its own enum member). `ultracode` is NOT here on purpose: in Claude Code it is a
 // separate session-scoped boolean (xhigh + dynamic workflows) that CLAUDE_CODE_EFFORT_LEVEL rejects.
@@ -43,6 +46,8 @@ export interface SessionSummary {
   caps?: SourceCaps;
   /** claude-web's own session merged with the joined-source session it continues (that library id); deleting it deletes both */
   mergedFrom?: string;
+  /** lives on another machine (federation); its sessionId is `peer_<peerId>~<remote id>` */
+  peer?: SessionPeer;
 }
 
 /** What the library UI may do with a session, given its source's official APIs. */
@@ -447,14 +452,17 @@ export type ClientRequest =
   | { kind: 'library.fork'; sessionId: string }
   | { kind: 'library.reindex' }
   | { kind: 'library.join'; kind_: AgentKind; joined: boolean }
-  | { kind: 'library.dismiss'; kind_: AgentKind };
+  | { kind: 'library.dismiss'; kind_: AgentKind }
+  // ---- cross-machine sessions (federation) ----
+  | PeerRequest;
 
-export interface RequestEnvelope { id: string; req: ClientRequest }
+/** `via`: serverIds a forwarded request already passed through (federation loop guard). */
+export interface RequestEnvelope { id: string; req: ClientRequest; via?: string[] }
 export interface ReplyEnvelope { id: string; ok: boolean; data?: unknown; error?: string }
 
 // ---- events ----
 export type ServerEvent =
-  | { kind: 'hello'; version: string }
+  | { kind: 'hello'; version: string; serverId?: string; name?: string }
   | { kind: 'session.event'; sessionId: string; message: unknown } // raw SDK message
   | { kind: 'session.state'; sessionId: string; state: RunnerState; error?: string }
   | { kind: 'session.info'; info: SessionInfoSnapshot }
@@ -475,7 +483,8 @@ export type ServerEvent =
   // detected on this machine, not yet joined and not dismissed
   | { kind: 'library.discovered'; kinds: AgentKind[] }
   // a library mutation (join / leave / rename / archive / delete / fork) — refetch sessions.list
-  | { kind: 'library.changed' };
+  | { kind: 'library.changed' }
+  | PeerEvent;
 
 // ---------- phase 3: files / search / git ----------
 export interface FsEntry { name: string; dir: boolean; size?: number; mtime?: number; symlink?: boolean }

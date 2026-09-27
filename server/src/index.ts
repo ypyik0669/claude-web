@@ -39,6 +39,8 @@ import { ClaudeSource } from './library/claude-source.js';
 import { CodexSource } from './library/codex-source.js';
 import { OpenCodeSource } from './library/opencode-source.js';
 import { AcpListSource } from './library/acp-source.js';
+import { FederationService } from './federation/service.js';
+import { swapAgent } from './session/swap.js';
 
 const FILE_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.html': 'text/html; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.json': 'application/json' };
 
@@ -272,7 +274,17 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   );
   sessionsSvc.on('changed', () => library.invalidate('claude'));
   library.start();
-  const services = { remote, tunnels, im, vcs: new VcsService(gitSvc), goals: new GoalService(meta, pool), android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version };
+  // cross-machine sessions: outbound connections to other claude-web servers (meta.peers)
+  const federation = new FederationService({
+    store: meta,
+    secrets,
+    tunnels,
+    version,
+    // same path as handing over an imported library session: a NEW local session seeded with a briefing
+    handover: (a) => swapAgent({ pool, canonical, transcripts, meta, readAll: a.readAll, imported: a.imported }, a.sessionId, a.agent, a.model),
+  });
+  await federation.start();
+  const services = { federation, remote, tunnels, im, vcs: new VcsService(gitSvc), goals: new GoalService(meta, pool), android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version };
   new Hub(wss, services);
 
   await new Promise<void>((res, rej) => {
@@ -292,6 +304,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     token,
     async close() {
       await im.stopAll();
+      await federation.close();
       await tunnels.closeAll();
       await remote.stop();
       await pool.closeAll();
