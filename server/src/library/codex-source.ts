@@ -11,10 +11,17 @@ const SOURCE_KINDS = ['cli', 'vscode', 'exec', 'appServer', 'subAgent', 'subAgen
 
 const CAPS: SourceCaps = { resume: true, rename: true, archive: true, delete: true, fork: true };
 
-function sourceTypeName(source: unknown): string | undefined {
+// Thread.source (per `codex app-server generate-ts`) is `"cli"|"vscode"|"exec"|"appServer"|
+// {custom:string}|{subAgent:SubAgentSource}|"unknown"` — a bare string for the built-in surfaces,
+// or a single-key object for the two variant ones.
+function sourceTypeName(source: unknown): string {
   if (typeof source === 'string') return source;
-  if (source && typeof source === 'object' && typeof (source as any).type === 'string') return (source as any).type;
-  return undefined;
+  if (source && typeof source === 'object') {
+    const o = source as any;
+    if ('subAgent' in o) return 'subAgent';
+    if ('custom' in o) return typeof o.custom === 'string' && o.custom.length > 0 ? o.custom : 'custom';
+  }
+  return 'unknown';
 }
 
 function mapThread(t: any): SessionSummary {

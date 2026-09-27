@@ -47,12 +47,15 @@ function makeTurns(threadId, count) {
 }
 
 const nowSec = Math.floor(Date.now() / 1000);
-// 3 threads: 'thr-a' (a few turns), 'thr-b' (250 turns, for read pagination), 'thr-c' (a subAgent
-// thread whose parentThreadId points at 'thr-a').
+// 4 threads: 'thr-a' (a few turns), 'thr-b' (250 turns, for read pagination), 'thr-c' (a subAgent
+// thread — real Codex v2 shape `{subAgent:{...}}`, not a bare string — whose parentThreadId points
+// at 'thr-a'), 'thr-d' (a custom-tool thread, `{custom:'my-tool'}`, oldest so existing pagination
+// assertions on thr-a/b/c stay unaffected and only the tail page grows).
 const threads = new Map([
   ['thr-a', { id: 'thr-a', name: null, preview: 'first thread preview text', cwd: 'C:/proj', createdAt: nowSec - 300, updatedAt: nowSec - 100, source: 'cli', parentThreadId: null, gitInfo: { branch: 'main' }, archived: false, turns: makeTurns('thr-a', 3) }],
   ['thr-b', { id: 'thr-b', name: null, preview: 'second thread, long history', cwd: 'C:/proj', createdAt: nowSec - 200, updatedAt: nowSec - 50, source: 'cli', parentThreadId: null, gitInfo: { branch: 'dev' }, archived: false, turns: makeTurns('thr-b', 250) }],
-  ['thr-c', { id: 'thr-c', name: null, preview: 'sub agent thread', cwd: 'C:/proj', createdAt: nowSec - 90, updatedAt: nowSec - 10, source: 'subAgent', parentThreadId: 'thr-a', gitInfo: {}, archived: false, turns: makeTurns('thr-c', 1) }],
+  ['thr-c', { id: 'thr-c', name: null, preview: 'sub agent thread', cwd: 'C:/proj', createdAt: nowSec - 90, updatedAt: nowSec - 10, source: { subAgent: { sourceThreadId: 'thr-a', kind: 'general' } }, parentThreadId: 'thr-a', gitInfo: {}, archived: false, turns: makeTurns('thr-c', 1) }],
+  ['thr-d', { id: 'thr-d', name: null, preview: 'custom tool thread', cwd: 'C:/proj', createdAt: nowSec - 400, updatedAt: nowSec - 150, source: { custom: 'my-tool' }, parentThreadId: null, gitInfo: {}, archived: false, turns: makeTurns('thr-d', 1) }],
 ]);
 let forkSeq = 0;
 

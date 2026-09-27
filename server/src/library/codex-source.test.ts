@@ -27,12 +27,17 @@ describe('CodexSource (mock app-server)', () => {
       expect(page1.items[1].sessionId).toBe(libraryId('codex', 'thr-b'));
       // the subAgent thread's parentId points at thr-a's library id
       expect(page1.items[0].parentId).toBe(libraryId('codex', 'thr-a'));
+      // thr-c's wire source is the real object shape `{subAgent:{...}}`, not a bare string
       expect(page1.items[0].source).toBe('subAgent');
       expect(page1.items[0].agent).toBe('codex');
 
+      // thr-a (plain 'cli' string) and thr-d (`{custom:'my-tool'}`, the oldest) make up the tail page
       const page2 = await src.list({ limit: 2, cursor: page1.next });
-      expect(page2.items).toHaveLength(1);
+      expect(page2.items).toHaveLength(2);
       expect(page2.items[0].sessionId).toBe(libraryId('codex', 'thr-a'));
+      expect(page2.items[0].source).toBe('cli');
+      expect(page2.items[1].sessionId).toBe(libraryId('codex', 'thr-d'));
+      expect(page2.items[1].source).toBe('my-tool');
       expect(page2.next).toBeUndefined();
     } finally {
       await src.close();
