@@ -16,6 +16,14 @@ const SESSIONS = [
   { id: 'ses-c', slug: 'c', projectID: 'p', directory: '/work/demo2', path: 'work/demo2', title: 'Session C (child)', version: '1.14.33', parentID: 'ses-a', time: { created: 10, updated: 20 } },
 ];
 
+// Three turns for `ses-multi`, oldest first, used only by the read() pagination test below — kept
+// separate from the shared fixture (opencode-messages.json) so its tool_use/thinking assertions stay
+// unaffected.
+const MULTI_TURN_MESSAGES = [1, 2, 3].flatMap((n) => [
+  { info: { role: 'user', time: { created: n * 1000 }, id: `msg_u${n}`, sessionID: 'ses-multi' }, parts: [{ type: 'text', text: `turn ${n} user`, id: `prt_u${n}`, sessionID: 'ses-multi', messageID: `msg_u${n}` }] },
+  { info: { role: 'assistant', time: { created: n * 1000 + 1, completed: n * 1000 + 2 }, id: `msg_a${n}`, sessionID: 'ses-multi' }, parts: [{ type: 'text', text: `turn ${n} assistant`, id: `prt_a${n}`, sessionID: 'ses-multi', messageID: `msg_a${n}` }] },
+]);
+
 /** A minimal in-memory stand-in for `opencode serve`'s HTTP API (`GET /session`, `GET /session/{id}/message` only — capability detection and delete no longer go through HTTP, see fix round 1). */
 function startMock() {
   const server = http.createServer(async (req, res) => {
@@ -27,6 +35,11 @@ function startMock() {
     }
     const msgMatch = /^\/session\/([^/]+)\/message$/.exec(url.pathname);
     if (req.method === 'GET' && msgMatch) {
+      if (msgMatch[1] === 'ses-multi') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(MULTI_TURN_MESSAGES));
+        return;
+      }
       const raw = await fs.readFile(path.join(here, '__fixtures__', 'opencode-messages.json'), 'utf8');
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(raw);
@@ -107,6 +120,69 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', () => {
     const thinkingText = JSON.stringify(messages);
     expect(thinkingText).toContain('The user wants a directory listing');
     expect(thinkingText).toContain("There's a single README.md file");
+  });
+
+  it('list() pages with a limit smaller than the session count, no overlap between pages', async () => {
+    const mock = await startMock();
+    mocks.push(mock);
+    const src = new OpenCodeSource(() => ({ command: fakeCli, env: { FAKE_HAS_DELETE: '1' } }), { baseUrl: mock.baseUrl });
+    sources.push(src);
+
+    const page1 = await src.list({ limit: 2 });
+    expect(page1.items.map((i) => i.sessionId)).toEqual([libraryId('opencode', 'ses-b'), libraryId('opencode', 'ses-a')]);
+    expect(page1.next).toBeTruthy();
+
+    const page2 = await src.list({ limit: 2, cursor: page1.next });
+    expect(page2.items.map((i) => i.sessionId)).toEqual([libraryId('opencode', 'ses-c')]);
+    expect(page2.next).toBeUndefined();
+
+    // no session repeated across pages, and together they cover every session exactly once
+    const all = [...page1.items, ...page2.items].map((i) => i.sessionId);
+    expect(new Set(all).size).toBe(all.length);
+    expect(all.sort()).toEqual([libraryId('opencode', 'ses-a'), libraryId('opencode', 'ses-b'), libraryId('opencode', 'ses-c')].sort());
+  });
+
+  it('read() pages more turns than the page size, older page via next, chronological, no duplicates at the boundary', async () => {
+    const mock = await startMock();
+    mocks.push(mock);
+    const src = new OpenCodeSource(() => ({ command: fakeCli, env: { FAKE_HAS_DELETE: '1' } }), { baseUrl: mock.baseUrl });
+    sources.push(src);
+
+    // 3 turns total, page size 2: newest page = turns 2,3; older page (via next) = turn 1.
+    const page1 = await src.read('ses-multi', { limit: 2 });
+    const texts1 = page1.messages.filter((m: any) => m.type === 'user').map((m: any) => m.message.content[0].text);
+    expect(texts1).toEqual(['turn 2 user', 'turn 3 user']); // chronological within the page
+    expect(page1.next).toBeTruthy();
+    expect(JSON.stringify(page1.messages)).not.toContain('turn 1');
+
+    const page2 = await src.read('ses-multi', { limit: 2, cursor: page1.next });
+    const texts2 = page2.messages.filter((m: any) => m.type === 'user').map((m: any) => m.message.content[0].text);
+    expect(texts2).toEqual(['turn 1 user']);
+    expect(page2.next).toBeUndefined();
+
+    // no message text duplicated across the two pages
+    const allTexts = [...texts1, ...texts2];
+    expect(new Set(allTexts).size).toBe(allTexts.length);
+    expect(allTexts.sort()).toEqual(['turn 1 user', 'turn 2 user', 'turn 3 user']);
+  });
+
+  it('close() during an in-flight start kills the process once it spawns instead of leaking it', async () => {
+    const pidFile = path.join(os.tmpdir(), `cw-opencode-pid-${process.pid}-${Date.now()}.txt`);
+    tmpFiles.push(pidFile);
+    const src = new OpenCodeSource(() => ({ command: fakeCli, env: { FAKE_SERVE_DELAY_MS: '300', FAKE_PID_FILE: pidFile } }));
+    sources.push(src);
+
+    const listPromise = src.list({ limit: 10 }); // kicks off ensure() -> spawnProc(), ~300ms from "listening"
+    await src.close(); // races the in-flight start
+    const result = await listPromise;
+    expect(result.items).toEqual([]); // ensure() rejected once the race was detected -> list() degrades to empty
+
+    // give the fake process time to reach its (delayed) "listening" point and be reaped by our race fix
+    await new Promise((r) => setTimeout(r, 600));
+    const pidText = await fs.readFile(pidFile, 'utf8');
+    const pid = Number(pidText);
+    expect(Number.isFinite(pid)).toBe(true);
+    expect(() => process.kill(pid, 0)).toThrow();
   });
 
   it('detects delete via `session --help` and remove() runs the official `session delete <id>` CLI', async () => {

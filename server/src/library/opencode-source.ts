@@ -65,6 +65,7 @@ export class OpenCodeSource implements SessionSource {
   private starting: Promise<Proc> | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
   private capsProbed = false;
+  private gen = 0; // bumped by close() to invalidate any spawnProc() still in flight
 
   constructor(
     private readonly getLaunch: () => { command: string; env: Record<string, string> },
@@ -115,8 +116,21 @@ export class OpenCodeSource implements SessionSource {
   private async ensure(): Promise<Proc> {
     if (this.proc) return this.proc;
     if (this.starting) return this.starting;
+    // Generation token: if close() runs while spawnProc() is still in flight, it bumps `gen` so this
+    // continuation — which only runs once the process has actually spawned — notices it was closed
+    // out from under it, kills the process it just got, and rejects instead of silently adopting a
+    // process nobody asked for any more (which would otherwise leak: no idle timer gets armed for a
+    // process assigned after close() already cleared `this.proc`/`this.starting`).
+    const gen = this.gen;
     this.starting = this.spawnProc()
-      .then((p) => { this.proc = p; return p; })
+      .then((p) => {
+        if (gen !== this.gen) {
+          p.child?.kill();
+          throw new Error('OpenCodeSource：启动完成前已被 close()');
+        }
+        this.proc = p;
+        return p;
+      })
       .finally(() => { this.starting = null; });
     return this.starting;
   }
@@ -220,6 +234,7 @@ export class OpenCodeSource implements SessionSource {
   }
 
   async close(): Promise<void> {
+    this.gen++;
     this.clearIdle();
     const p = this.proc;
     this.proc = null;

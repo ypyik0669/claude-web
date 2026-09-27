@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 // Fake `opencode` CLI for OpenCodeSource tests: understands `serve` (prints the real listening line
-// and idles), `session --help`, and `session delete <id>` — controlled by env vars so one script
-// covers every case the tests need.
+// and idles, optionally after a delay so tests can exercise the ensure()/close() race), `session
+// --help`, and `session delete <id>` — controlled by env vars so one script covers every case the
+// tests need.
 import fs from 'node:fs';
 
 const argv = process.argv.slice(2);
 
 if (argv[0] === 'serve') {
-  process.stdout.write('opencode server listening on http://127.0.0.1:65530\n');
+  if (process.env.FAKE_PID_FILE) fs.writeFileSync(process.env.FAKE_PID_FILE, String(process.pid));
+  const delay = Number(process.env.FAKE_SERVE_DELAY_MS ?? '0');
+  setTimeout(() => { process.stdout.write('opencode server listening on http://127.0.0.1:65530\n'); }, delay);
   setInterval(() => {}, 1000); // stay alive until the test kills us, like the real server would
 } else if (argv[0] === 'session' && argv[1] === '--help') {
   const lines = [
