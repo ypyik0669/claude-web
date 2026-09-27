@@ -7,3 +7,4 @@ dist-desktop-*/
 *.log
 hello.txt
 color.txt
+.superpowers/
