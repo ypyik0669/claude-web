@@ -40,6 +40,16 @@ export interface SwapResult {
   briefing?: string;
 }
 
+/**
+ * Non-Claude agents have no way to be resumed from synthesized history, so the briefing IS their
+ * first turn. Drivers queue until ready and record the message into their transcript, so the client
+ * sees it in the returned history. Not mirrored into canonical: it is derived from canonical, and
+ * would otherwise nest into every later briefing.
+ */
+function deliverBriefing(r: ReturnType<RunnerPool['open']>, briefing: string) {
+  r.send(briefing, undefined, false, randomUUID());
+}
+
 async function stop(pool: RunnerPool, sessionId: string) {
   const r = pool.get(sessionId);
   if (!r) return null;
@@ -108,6 +118,7 @@ export async function swapAgent(d: SwapDeps, sessionId: string, agent: AgentKind
   }
 
   const r = d.pool.open(params);
+  if (agent !== 'claude') deliverBriefing(r, briefing);
   return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), briefing: agent === 'claude' ? undefined : briefing };
 }
 
@@ -141,5 +152,6 @@ async function handOverImported(d: SwapDeps, fromId: string, src: { agent: Agent
     resumeEntries: agent === 'claude' ? toClaudeEntries(events, { cwd, sessionId, briefing }) : undefined,
   } as OpenSessionParams;
   const r = d.pool.open(params);
+  if (agent !== 'claude') deliverBriefing(r, briefing);
   return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), briefing: agent === 'claude' ? undefined : briefing };
 }

@@ -25,13 +25,15 @@ function source(kind: AgentKind, items: SessionSummary[]): SessionSource {
 
 function fakePool() {
   const opened: any[] = [];
+  const sent: { sessionId: string; text: string }[] = [];
   return {
     opened,
+    sent,
     get: () => undefined,
     close: vi.fn(async () => {}),
     open: vi.fn((p: any) => {
       opened.push(p);
-      return { sessionId: p.sessionId, info: { sessionId: p.sessionId, cwd: p.cwd, agent: p.agent }, getHistory: () => [] };
+      return { sessionId: p.sessionId, info: { sessionId: p.sessionId, cwd: p.cwd, agent: p.agent }, getHistory: () => [], send: (text: string) => { sent.push({ sessionId: p.sessionId, text }); } };
     }),
   };
 }
@@ -80,6 +82,8 @@ describe('swapAgent / handOver of imported sessions', () => {
     expect(await mods.transcripts.head('codex-t1')).toBeNull(); // untouched
     expect((await lib.list()).map((s: SessionSummary) => s.sessionId)).toContain('codex-t1');
     expect(pool.close).not.toHaveBeenCalledWith('codex-t1');
+    // the non-Claude target actually receives the briefing as its first message
+    expect(pool.sent).toEqual([{ sessionId: r.sessionId, text: r.briefing }]);
   });
 
   it('a previously opened imported session (imported head exists) → same: new session, head untouched', async () => {
@@ -99,11 +103,16 @@ describe('swapAgent / handOver of imported sessions', () => {
     expect(p).toMatchObject({ sessionId: r.sessionId, cwd: '/proj/imported', agent: 'claude' });
     expect(JSON.stringify(p.resumeEntries)).toContain('native question from t1');
     expect(await mods.transcripts.head(r.sessionId)).toBeNull(); // Claude keeps its own jsonl
+    expect(pool.sent).toEqual([]); // Claude gets the briefing inside resumeEntries, not as a message
+    expect(r.briefing).toBeUndefined();
   });
 
   it('a claude-web session (not imported) still swaps in place', async () => {
     await mods.transcripts.create({ sessionId: 'own-1', agent: 'codex', cwd: '/proj/own', title: 'own', createdAt: 1 });
     const r = await mods.swap.swapAgent(deps, 'own-1', 'gemini', undefined);
     expect(r.sessionId).toBe('own-1');
+    expect(pool.sent).toHaveLength(1);
+    expect(pool.sent[0].sessionId).toBe('own-1');
+    expect(pool.sent[0].text).toBe(r.briefing);
   });
 });
