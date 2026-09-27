@@ -18,6 +18,7 @@ import { BoardView } from '@/features/vcs/BoardView';
 import type { GitStatus } from '@shared';
 import { Icon } from '@/ui/icons';
 import { EngineSwitcher } from '../EngineSwitcher';
+import { SessionMenu, effectiveCaps, forkSession } from '@/features/sidebar/session-actions';
 
 /** git status for a cwd, refreshed on git.changed broadcasts (shared by the files tab badges). */
 function useGitStatus(cwd: string, enabled: boolean): GitStatus | null {
@@ -58,6 +59,7 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
   const closeSession = useStore((s) => s.closeSession);
   const toast = useStore((s) => s.toast);
   const [editing, setEditing] = useState<string | null>(null);
+  const [menu, setMenu] = useState(false);
   const title = meta?.title ?? sid.slice(0, 8);
   const cwd = active?.cwd ?? meta?.cwd ?? '';
   const live = active && active.state !== 'history' && active.state !== 'closed' && active.state !== 'error';
@@ -66,9 +68,13 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
   const agentDef = useStore((s) => s.agents.find((a) => a.kind === agentKind));
   const agentName = active?.info?.agentName ?? agentDef?.name ?? agentKind;
   const rename = async () => {
-    if (editing !== null && editing.trim() && editing !== title) await ws.request({ kind: 'session.rename', sessionId: sid, title: editing.trim() }).catch((e) => toast(e.message));
+    if (editing !== null && editing.trim() && editing !== title) await useStore.getState().libraryOp('rename', { sessionId: sid, title: editing.trim() }).catch((e) => toast(e.message));
     setEditing(null);
   };
+  // a brand-new session may not be in the list yet: the menu still works on what we know
+  const summary = meta ?? { sessionId: sid, title, cwd, lastModified: Date.now(), agent: agentKind };
+  const caps = effectiveCaps(summary);
+  const canRename = caps.rename;
   const patch = (p: Partial<ChatTileModel>) => dispatch({ t: 'tile.patch', paneId, tileId: tile.id, patch: p });
   return (
     <div className="sess-head">
@@ -79,19 +85,25 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
         {editing !== null ? (
           <input autoFocus value={editing} onChange={(e) => setEditing(e.target.value)} onBlur={rename} onKeyDown={(e) => (e.key === 'Enter' ? rename() : e.key === 'Escape' ? setEditing(null) : null)} />
         ) : (
-          <span className="cur" onDoubleClick={() => setEditing(title)} title="双击重命名">{title}</span>
+          <span className="cur" onDoubleClick={() => { if (canRename) setEditing(title); }} title={canRename ? '双击重命名' : title}>{title}</span>
         )}
         {meta?.gitBranch && <span className="sep branch" style={{ fontSize: 12 }} title={meta.gitBranch}>· {meta.gitBranch}</span>}
         {active?.info && live && <EngineSwitcher sessionId={sid} info={active.info} />}
         {(!active?.info || !live) && agentKind && agentKind !== 'claude' && <span className="badge agent" title={`这个会话由 ${agentName} 驱动`}>{agentName}</span>}
       </div>
       <span className="grow" />
-      <button className="icon-btn" title="从当前会话分叉（新标签）" onClick={() => openSession({ sessionId: sid, cwd, fork: true }).catch((e) => toast(e.message))} aria-label="分叉"><Icon name="branch" size={14} /></button>
+      {caps.fork && <button className="icon-btn" title="从当前会话分叉（新标签）" onClick={() => forkSession(summary)} aria-label="分叉"><Icon name="branch" size={14} /></button>}
       <button className="icon-btn" title="导出对话为 HTML（可分享）" onClick={() => shareConversation(sid)}>↗</button>
+      <span style={{ position: 'relative' }}>
+        <button className={clsx('icon-btn', menu && 'active')} title="会话菜单：引用、重命名、归档、删除、交接、原生 CLI…" aria-label="会话菜单" aria-expanded={menu} onClick={(e) => { e.stopPropagation(); setMenu(!menu); }}><Icon name="more" size={14} /></button>
+        {menu && <SessionMenu s={summary} onClose={() => setMenu(false)} style={{ right: 0, top: 30 }} />}
+      </span>
       {live ? (
         <button className="icon-btn" title="结束进程（可随时恢复）" onClick={() => closeSession(sid)} aria-label="结束进程"><Icon name="stop" size={13} /></button>
-      ) : (
+      ) : caps.resume ? (
         <button className="btn sm ghost" onClick={() => openSession({ sessionId: sid, cwd }, 'none').catch((e) => toast(e.message))}><Icon name="play" size={12} /> 恢复</button>
+      ) : (
+        <span className="badge" title="这个来源没有官方的续聊接口，只能查看">只读</span>
       )}
       <div className="sess-tabs">
         <div className="wb-tabs">
