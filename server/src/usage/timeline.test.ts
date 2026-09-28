@@ -12,7 +12,7 @@ describe('providerTimeline (which profile answered a turn at time t)', () => {
     expect(providerTimeline([], 'claude', resolve).at(5)).toEqual({ name: 'Claude 账号' });
   });
   it('a deleted profile is not the Claude account', () => {
-    expect(providerTimeline([], 'gone', resolve).at(5)).toEqual({ name: '已删除的档案' });
+    expect(providerTimeline([], 'gone', resolve).at(5)).toEqual({ name: '已删除的供应商' });
   });
   it('switches split the session by time; before the first switch = its recorded "from"', () => {
     const tl = providerTimeline([{ t: 100, providerId: 'gem', providerName: 'Gemini', fromProviderId: 'claude' }, { t: 200, providerId: 'ds', providerName: 'DeepSeek 中转', fromProviderId: 'gem' }], 'ds', resolve);
@@ -20,9 +20,9 @@ describe('providerTimeline (which profile answered a turn at time t)', () => {
     expect(tl.at(150)).toEqual({ type: 'gemini', name: 'Gemini' });
     expect(tl.at(250)).toEqual({ type: 'openai', name: 'DeepSeek 中转' });
   });
-  it('an old mark without "from": turns before it are 未知档案 (not guessed); a deleted profile keeps its recorded name', () => {
+  it('an old mark without "from": turns before it are 未知供应商 (not guessed); a deleted profile keeps its recorded name', () => {
     const tl = providerTimeline([{ t: 100, providerId: 'old', providerName: '旧中转' }], 'old', resolve);
-    expect(tl.at(50)).toEqual({ name: '未知档案' });
+    expect(tl.at(50)).toEqual({ name: '未知供应商' });
     expect(tl.at(150)).toEqual({ name: '旧中转（已删除）' });
   });
   it('a switch to the Claude account (no providerId)', () => {

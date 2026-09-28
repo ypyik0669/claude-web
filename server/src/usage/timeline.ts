@@ -6,12 +6,12 @@ export interface TurnProvider { type?: ProviderType; name: string }
 export interface ProviderTimeline { at(ts: number): TurnProvider; /** changes whenever `at` could answer differently (cache key) */ key: string }
 
 const ACCOUNT: TurnProvider = { name: 'Claude 账号' };
-const UNKNOWN: TurnProvider = { name: '未知档案' };
+const UNKNOWN: TurnProvider = { name: '未知供应商' };
 const norm = (id: string | undefined) => (id && id !== 'claude' ? id : undefined);
 
 /**
  * Which profile answered a turn at time `ts`: switches split a session by time; before the first switch it is that
- * switch's recorded origin (unknown for logs written before the origin was recorded — reported as 未知档案, not
+ * switch's recorded origin (unknown for logs written before the origin was recorded — reported as 未知供应商, not
  * guessed); with no switch it is the session's profile. A deleted profile is never the Claude account.
  */
 export function providerTimeline(marks: ProviderMark[], currentId: string | undefined, resolve: (id: string) => { type: ProviderType; name: string } | undefined): ProviderTimeline {
@@ -19,7 +19,7 @@ export function providerTimeline(marks: ProviderMark[], currentId: string | unde
     const pid = norm(id);
     if (!pid) return ACCOUNT;
     const p = resolve(pid);
-    return p ? { type: p.type, name: p.name } : { name: recordedName ? `${recordedName}（已删除）` : '已删除的档案' };
+    return p ? { type: p.type, name: p.name } : { name: recordedName ? `${recordedName}（已删除）` : '已删除的供应商' };
   };
   const sorted = [...marks].sort((a, b) => a.t - b.t);
   if (!sorted.length) {

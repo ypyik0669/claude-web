@@ -78,7 +78,7 @@ export function BrowserTile({ tile }: { tile: Extract<Tile, { kind: 'browser' }>
   /** Hand the page back to the agent: URL plus whatever the console complained about. */
   const toComposer = async () => {
     const sid = ctx?.sessionId ?? useStore.getState().activeId;
-    if (!sid) return toast('先在这个窗格里打开一个会话');
+    if (!sid) return toast('先在这里打开一个对话');
     let extra = '';
     if (desktop && ref.current) {
       try {

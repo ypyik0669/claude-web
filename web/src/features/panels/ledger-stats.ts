@@ -24,7 +24,7 @@ export function pickRows(rows: LedgerEntry[], source: LedgerSource): { rows: Led
 /** Display name of the profile a row ran on: no id = the Claude account; an id no longer in the list = a deleted profile. */
 export function profileName(providers: readonly { id: string; name: string }[], id?: string): string {
   if (!id) return 'Claude 账号';
-  return providers.find((p) => p.id === id)?.name ?? '已删除的档案';
+  return providers.find((p) => p.id === id)?.name ?? '已删除的供应商';
 }
 
 export interface HitRow { provider: string; model: string; calls: number; input: number; cacheRead: number; cacheWrite: number; hit: number }

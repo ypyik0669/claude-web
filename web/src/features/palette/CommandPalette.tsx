@@ -53,7 +53,7 @@ export function CommandPalette() {
   }, [q, open]);
 
   // a view of the current conversation (the old workbench tabs): the right panel on a desktop (改动 / Git → 审阅,
-  // 文件 / 搜索 / 生成的文件 → 文件…), in place on a phone — with a document / terminal in front, the conversation next
+  // 文件 / 搜索 / 生成的文件 → 文件…; a phone's bottom drawer; 定时任务 → 自动化) — with a document / terminal in front, the conversation next
   // to it is brought forward first, otherwise the command would do nothing visible (openSessionView)
   const showView = (view: WbView) => openSessionView(view);
   const commands = useMemo<Cmd[]>(() => {

@@ -290,7 +290,7 @@ export class ProviderService {
   forSession(id: string | undefined): SessionProvider | undefined {
     if (!id || id === CLAUDE_PROVIDER_ID) return undefined;
     const p = this.meta.provider(id);
-    if (!p) throw new Error(`供应商档案不存在：${id}`);
+    if (!p) throw new Error(`供应商不存在：${id}`);
     if (p.type === 'gateway') {
       const ep = this.gatewayEndpoint?.(p.gatewayGroupId ?? '');
       if (!ep) throw new Error(`供应商「${p.name}」走模型网关，但网关没有启用或组不存在（设置 → 模型网关）`);
@@ -408,7 +408,7 @@ export class ProviderService {
   fitError(id: string | undefined, agent: AgentKind): string | null {
     if (!id || id === CLAUDE_PROVIDER_ID) return null;
     const p = this.meta.provider(id);
-    if (!p) return `供应商档案不存在：${id}`;
+    if (!p) return `供应商不存在：${id}`;
     return profileFitError(agent, p.type, agent === 'claude' && p.type !== 'gateway' ? resolveEngine(p.runtime).kind : undefined);
   }
   async upsert(p: Partial<Provider> & { id?: string }) {

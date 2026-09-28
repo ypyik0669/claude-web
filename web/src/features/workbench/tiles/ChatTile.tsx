@@ -54,7 +54,7 @@ function HeaderMenu({ tile, paneId, s, live, remote, gone, onClose }: { tile: Ch
       <div className="menu-label">查看这个对话的</div>
       <div className="menu-grid" role="group" aria-label="查看这个对话的">
         {viewsFor(remote).map((v) => (
-          // a desktop opens them in the right panel (审阅 / 文件 / a temporary tab); a phone / a remote conversation in place
+          // the right panel opens them (审阅 / 文件 / a temporary tab; a phone's bottom drawer); a remote conversation in place
           <button key={v.id} className={clsx(tile.wb === v.id && 'on')} onClick={act(() => (tile.wb === v.id ? patch({ wb: 'live' }) : openSessionView(v.id, { paneId, tileId: tile.id })))} data-view={v.id}>
             <Icon name={v.icon} size={13} /> {v.label}
           </button>

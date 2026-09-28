@@ -51,7 +51,7 @@ describe('UsageService.session', () => {
     const g = transcript('plain-1', [line('m1', 'claude-opus-4-5', { input_tokens: 10, output_tokens: 1 })]);
     expect(Object.keys((await svc.session(g)).byProvider)).toEqual(['Claude 账号 · claude-opus-4-5']);
     const h = transcript('gone-1', [line('m1', 'deepseek-v4', { input_tokens: 10, output_tokens: 1 })]);
-    expect(Object.keys((await svc.session(h)).byProvider)).toEqual(['已删除的档案 · deepseek-v4']);
+    expect(Object.keys((await svc.session(h)).byProvider)).toEqual(['已删除的供应商 · deepseek-v4']);
   });
 
   it('a session that switched profiles: each turn under the profile that answered it (and Gemini turns deduped)', async () => {

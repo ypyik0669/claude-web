@@ -61,6 +61,6 @@ describe('profileName', () => {
   it('the account, a profile, a deleted profile', () => {
     expect(profileName(providers, undefined)).toBe('Claude 账号');
     expect(profileName(providers, 'ds')).toBe('DeepSeek 中转');
-    expect(profileName(providers, 'gone-1')).toBe('已删除的档案');
+    expect(profileName(providers, 'gone-1')).toBe('已删除的供应商');
   });
 });

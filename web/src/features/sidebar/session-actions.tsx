@@ -131,7 +131,7 @@ export const REFERENCE_EVENT = 'cw:reference';
 export function referenceSession(s: SessionSummary): void {
   const detail: ReferenceDetail = { id: s.sessionId, title: s.title, handled: false };
   window.dispatchEvent(new CustomEvent(REFERENCE_EVENT, { detail }));
-  if (!detail.handled) useStore.getState().toast(detail.reason ?? '先在窗格里打开一个会话（或新会话），再引用');
+  if (!detail.handled) useStore.getState().toast(detail.reason ?? '先打开一个对话（或新对话），再引用');
 }
 
 /**

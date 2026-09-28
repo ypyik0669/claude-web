@@ -272,22 +272,42 @@ describe('default screens outside settings speak the interface vocabulary (phase
     'features/automation/AutomationPage.tsx',
     'features/automation/page.ts',
     'features/automation/SchedulesView.tsx',
+    'features/automation/schedule-text.ts',
+    'features/home/checklist-sync.ts',
     'features/goals/GoalsPanel.tsx',
+    // 编排 on the automation page: the list, a run, the editor, the leftover worktrees (review 7 M12)
     'features/orchestra/OrchestraPanel.tsx',
+    'features/orchestra/RunView.tsx',
+    'features/orchestra/WorkflowEditor.tsx',
+    'features/orchestra/Orphans.tsx',
     'features/panels/TasksPanel.tsx',
+    // toasts of the default screens: 引用到输入框, 用量与账本 (a deleted provider), Ctrl+D, the browser tab
+    'features/sidebar/session-actions.tsx',
+    'features/panels/ledger-stats.ts',
+    'features/workbench/commands.ts',
+    'features/workbench/tiles/BrowserTile.tsx',
+    'features/workbench/ConnectionBanner.tsx',
     'features/composer/Composer.tsx',
     'features/models/ModelMenu.tsx',
     'features/models/route.ts',
+    'ui/EmptyState.tsx',
     'ui/terms.ts',
   ];
+  /** Parts of bigger files: the session header's ··· (its views, 终端 / 任务 on a phone). */
+  const PARTS: [string, string[]][] = [['features/workbench/tiles/ChatTile.tsx', ['HeaderMenu']]];
   const SERVER_CATALOG = '../../server/src/models/catalog.ts';
 
   it('none of them uses an implementation word where it can be seen', () => {
     const bad: string[] = [];
     for (const f of FILES) {
       // terms.ts: only what is shown by default (the tooltips' raw values — effortTitle, ULTRACODE.title — are fine)
-      const src = f === 'ui/terms.ts' ? onlyDeclarations(f, read(f), ['EMPTY', 'DISCONNECTED', 'PERMISSION_MODES', 'EFFORT_LABEL', 'EFFORT_DESC', 'SIMPLIFIED_NOTICE']) : read(f);
+      const src = f === 'ui/terms.ts' ? onlyDeclarations(f, read(f), ['EMPTY', 'DISCONNECTED', 'LOGIN_IN_TERMINAL', 'PERMISSION_MODES', 'EFFORT_LABEL', 'EFFORT_DESC', 'SIMPLIFIED_NOTICE']) : read(f);
       bad.push(...findings(f, src).map((x) => `${f} — ${x}`));
+    }
+    for (const [f, names] of PARTS) {
+      const src = onlyDeclarations(f, read(f), names);
+      expect(src.length, `${f}: ${names.join(', ')} found`).toBeGreaterThan(200);
+      bad.push(...findings(f, src).map((x) => `${f}#${names.join('+')} — ${x}`));
     }
     bad.push(...findings(SERVER_CATALOG, onlyDeclarations(SERVER_CATALOG, read(SERVER_CATALOG), ['profileFitError'])).map((x) => `${SERVER_CATALOG}#profileFitError — ${x}`));
     expect(bad).toEqual([]);

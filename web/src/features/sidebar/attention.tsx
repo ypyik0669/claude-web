@@ -49,7 +49,7 @@ function Item({ it, ctx, dismiss }: { it: AttentionItem; ctx: RowCtx; dismiss: (
   if (it.kind === 'orch') {
     const w = it.wait;
     // ask() brings the orchestration panel to the front (hidden, minimized or behind another tab) and opens the run;
-    // a phone has no right panel: a hint, and no request is left behind
+    // on a phone it is the automation page's 编排 tab (the graph needs the whole screen)
     const go = () => useOrch.getState().ask('open', w.runId);
     return (
       <div className="sess sb-row flat orch" role="button" tabIndex={0} title={`编排「${w.runName}」· ${w.kind === 'approval' ? '等你审批' : '候选跑完了，等你选一个合并'}`}

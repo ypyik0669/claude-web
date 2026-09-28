@@ -41,7 +41,7 @@ export function ToolHead({ t, onToggle, open }: { t: ToolUseBlock; onToggle?: ()
   const mcp = splitMcp(t.name);
   const ctx = usePaneCtx();
   const setInspect = (id: string) => useStore.setState({ inspect: { sessionId: (ctx?.sessionId ?? useStore.getState().activeId)!, toolUseId: id } });
-  // a phone has no right panel for 详情: the row itself expands to the same input and result
+  // on a phone the row has no 详情 button: it expands in place to the same input and result (no drawer needed)
   const phone = useStore((s) => s.mobile);
   const short = def.category === 'read' || def.category === 'edit' ? shortPath(arg) : arg;
   const secs = useElapsed(t);

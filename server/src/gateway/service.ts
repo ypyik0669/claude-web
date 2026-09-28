@@ -144,7 +144,7 @@ export class GatewayService extends EventEmitter {
         const p = this.deps.meta.provider(m.providerId);
         const s = this.states.peek(g.id, m.providerId);
         const health = !p ? 'disabled' : s?.disabled ? 'disabled' : s && s.cooldownUntil > now ? 'cooling' : s?.lastOkAt ? 'ok' : 'unknown';
-        return { providerId: m.providerId, name: p?.name ?? '(已删除的档案)', type: p?.type ?? '', health, cooldownUntil: s && s.cooldownUntil > now ? s.cooldownUntil : undefined, strikes: s?.strikes ?? 0, lastError: !p ? '档案不存在' : s?.lastError, lastStatus: s?.lastStatus, lastOkAt: s?.lastOkAt, lastUsedAt: s?.lastUsedAt };
+        return { providerId: m.providerId, name: p?.name ?? '(已删除的供应商)', type: p?.type ?? '', health, cooldownUntil: s && s.cooldownUntil > now ? s.cooldownUntil : undefined, strikes: s?.strikes ?? 0, lastError: !p ? '供应商不存在' : s?.lastError, lastStatus: s?.lastStatus, lastOkAt: s?.lastOkAt, lastUsedAt: s?.lastUsedAt };
       });
     }
     return { enabled: this.enabled(), baseUrl: this.baseUrl(), keyMasked: maskGatewayKey(this.key), groups: this.groups(), states };
