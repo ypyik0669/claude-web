@@ -30,7 +30,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'dock.minimize', label: '右侧面板收成图标栏', desktop: 'Ctrl+Shift+J', browser: 'Ctrl+Shift+J', group: '面板' },
   { id: 'panel.mission', label: '总览（Mission Control）', desktop: 'Ctrl+Shift+M', browser: 'Ctrl+Shift+M', group: '面板' },
   { id: 'panel.tasks', label: '任务面板', desktop: 'Ctrl+Shift+1', browser: 'Ctrl+Shift+1', group: '面板' },
-  { id: 'panel.files', label: '文件改动面板', desktop: 'Ctrl+Shift+2', browser: 'Ctrl+Shift+2', group: '面板' },
+  { id: 'panel.files', label: '审阅面板（改动）', desktop: 'Ctrl+Shift+2', browser: 'Ctrl+Shift+2', group: '面板' },
   { id: 'panel.usage', label: '用量面板', desktop: 'Ctrl+Shift+3', browser: 'Ctrl+Shift+3', group: '面板' },
   { id: 'settings', label: '设置（可搜索）', desktop: 'Ctrl+,', browser: 'Ctrl+,', group: '面板' },
   { id: 'panel.config', label: '配置中心（右侧面板）', desktop: '命令面板', browser: '命令面板', group: '面板' },

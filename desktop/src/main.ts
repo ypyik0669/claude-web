@@ -270,7 +270,7 @@ function buildMenu() {
         cmd('右侧面板收成图标栏', 'CmdOrCtrl+Shift+J', 'dock.minimize'),
         cmd('总览（Mission Control）', 'CmdOrCtrl+Shift+M', 'panel.mission'),
         cmd('任务面板', 'CmdOrCtrl+Shift+1', 'panel.tasks'),
-        cmd('文件改动', 'CmdOrCtrl+Shift+2', 'panel.files'),
+        cmd('审阅（改动）', 'CmdOrCtrl+Shift+2', 'panel.files'),
         cmd('用量', 'CmdOrCtrl+Shift+3', 'panel.usage'),
         ...(isMac ? [] : [cmd('设置', 'CmdOrCtrl+,', 'settings')]),
         cmd('配置中心（右侧面板）', undefined, 'panel.config'),

@@ -1498,3 +1498,118 @@ html.desktop.mac .app.no-sidebar .groupbar,
 html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left] > .tabstrip,
 html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:not(.tabs) .sess-head,
 html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:not(.tabs) .welcome-top { padding-left: 84px; }
+
+/* ---- redesign phase 2: right panel ---- */
+/* a narrow window: the right panel gives way so the conversation keeps ≥ 360px (it never goes below 300px itself);
+   hidden (0) and the 36px icon strip stay as they are */
+.app:not(.mobile) { grid-template-columns: var(--sb, 264px) 1fr min(var(--rp, 0px), max(300px, calc(100vw - var(--sb, 264px) - 360px))); }
+.app.no-sidebar:not(.mobile) { grid-template-columns: 1fr min(var(--rp, 0px), max(300px, calc(100vw - 360px))); }
+/* the default right panel (spec §5.6, mock-session.png): a white sheet, four text tabs, temporary tabs with a × */
+.dock.simple { background: var(--surface-0); }
+/* the tabs scroll inside their own list; the row itself does not (the 「更多」 menu hangs below it) */
+.dock-tablist { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; }
+.dock-tablist .tab { flex: none; }
+.dock.min .dock-tablist { flex-direction: column; align-items: stretch; gap: 4px; overflow: visible; }
+.dock.simple:not(.min) .dock-tabs { padding: 0 8px 0 12px; overflow: visible; }
+.app:has(.workbench.gb) .dock.simple:not(.min) .dock-tabs { min-height: var(--h-head); }
+.dock.simple:not(.min) .dock-tabs .tab { height: 30px; padding: 0 10px; font-size: var(--fs-base); border: 0; box-shadow: none; }
+.dock.simple:not(.min) .dock-tabs .tab .ic { display: none; }
+.dock.simple:not(.min) .dock-tabs .tab.active { background: var(--layer-selected); color: var(--ink-1); font-weight: 500; }
+.dock.simple:not(.min) .dock-tabs .tab:not(.fixed) { padding-right: 6px; }
+.dock.simple:not(.min) .dock-tabs .tab:not(.fixed)::before { content: ''; width: 1px; height: 14px; margin: 0 6px 0 -6px; background: var(--edge-default); }
+.dock.simple:not(.min) .dock-tabs .tab:not(.fixed) ~ .tab:not(.fixed)::before { display: none; }
+.dock-tabs .tab .n { font-size: var(--fs-meta); color: var(--ink-4); font-weight: 400; font-variant-numeric: tabular-nums; }
+.dock-more { position: relative; display: inline-flex; }
+.dock-more-menu { top: 34px; right: 0; width: 240px; }
+.dock-more-menu .grow { flex: 1; min-width: 0; }
+.dock-panel[data-panel="files"], .dock-panel[data-panel="explorer"] { overflow: hidden; }
+
+/* 审阅 */
+.review { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--surface-0); }
+.review > [hidden] { display: none !important; }
+.rv-main, .rv-git { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.rv-bar { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) 14px 10px; flex: none; }
+.rv-bar .grow { flex: 1; }
+.rv-bar .btn { white-space: nowrap; flex: none; }
+.rv-anchor { position: relative; display: inline-flex; min-width: 0; }
+.rv-bar > .rv-anchor:first-child { flex-shrink: 1; }
+.rv-bar > .rv-anchor:first-child .rv-scope { min-width: 0; }
+.rv-scope { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border-radius: var(--r-md); border: 1px solid var(--edge-default); font-size: var(--fs-base); color: var(--ink-1); max-width: 220px; transition: background var(--dur-2) var(--ease-out); }
+.rv-scope:hover, .rv-scope.on { background: var(--layer-hover); }
+.rv-scope .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-scope svg { color: var(--ink-4); flex: none; }
+.rv-scope-menu { top: 32px; left: 0; width: 300px; max-height: min(460px, 70vh); overflow: auto; }
+.rv-scope-menu .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-scope-menu .n { font-size: var(--fs-meta); color: var(--ink-4); font-variant-numeric: tabular-nums; flex: none; }
+.rv-scope-menu .rv-commit-item .h { font-size: 11.5px; color: var(--ink-3); flex: none; }
+.rv-scope-menu .ck { width: 13px; flex: none; display: inline-flex; color: var(--ink-2); }
+.rv-menu-note { padding: 4px 10px 6px; font-size: var(--fs-meta); color: var(--ink-4); }
+.rv-more-menu { top: 32px; right: 0; width: 280px; }
+.rv-more-menu .grow { flex: 1; min-width: 0; }
+.rv-more-menu button:disabled { opacity: 0.45; }
+.rv-sub-title { font-size: var(--fs-sm); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-git .rv-bar { border-bottom: 1px solid var(--edge-subtle); padding-bottom: var(--sp-3); }
+.rv-git-body { flex: 1; min-height: 0; overflow: auto; }
+.rv-err { margin: 0 14px 10px; }
+.rv-err .row-btns { display: flex; gap: 6px; }
+.rv-commit { margin: 0 14px 10px; font-size: var(--fs-sm); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-commit .mono { color: var(--ink-3); }
+.rv-commit .sub { color: var(--ink-4); }
+.rv-list { flex: 1; min-height: 0; overflow: auto; padding-bottom: 10px; }
+.rv-list > .empty { padding-top: 48px; }
+.rv-file { margin: 0 14px 10px; border: 1px solid var(--edge-default); border-radius: var(--r-lg); overflow: hidden; background: var(--surface-0); }
+.rv-fh { min-height: 38px; display: flex; align-items: center; gap: var(--sp-2); padding: 0 6px 0 10px; background: var(--surface-1); font-size: 12.5px; cursor: pointer; user-select: none; }
+.rv-file.open .rv-fh { border-bottom: 1px solid var(--edge-subtle); }
+.rv-fh:hover { background: color-mix(in oklab, var(--surface-1), var(--fg) 3%); }
+.rv-fh .cv { display: inline-flex; color: var(--ink-4); flex: none; }
+.rv-fh .p { font-family: var(--mono); color: var(--ink-1); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-fh .p .d { color: var(--ink-4); }
+.rv-fh .grow { flex: 1; }
+.rv-stat { flex: none; font-variant-numeric: tabular-nums; font-size: 12px; }
+.rv-stat .add { color: var(--ok); }
+.rv-stat .del { color: var(--err); }
+.rv-tag { flex: none; font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--ink-3); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-tag.warn { color: var(--warn); background: var(--warn-soft); }
+.rv-acts { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+.rv-acts .icon-btn { color: var(--ink-4); }
+.rv-acts .icon-btn:hover { color: var(--ink-1); }
+.rv-body .diff { margin: 0; border: 0; border-radius: 0; }
+.rv-body .diff-head { display: none; } /* the card header has the path and numbers; 上下 / 并排 is in the ··· menu */
+.rv-body .diff-grid { max-height: none; overflow: visible; }
+/* code lines do not wrap (as in the mock): the card scrolls sideways, every row as wide as the widest, numbers stay */
+.rv-body .diff-lines { max-height: none; overflow-x: auto; display: grid; grid-template-columns: minmax(100%, max-content); }
+.rv-body .diff-lines .dl { white-space: pre; word-break: normal; }
+.rv-body .diff-lines .dl .ln { flex-basis: 36px; position: sticky; z-index: 1; }
+.rv-body .diff-lines .dl .ln:first-child { left: 0; }
+.rv-body .diff-lines .dl .ln:nth-child(2) { left: 36px; }
+.rv-note { padding: 10px 12px; font-size: var(--fs-sm); color: var(--ink-3); }
+.rv-note.err { color: var(--err); }
+.rv-list > .rv-note { margin: 0 14px; }
+.rv-pre { margin: 0; padding: 8px 12px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-all; color: var(--ink-2); max-height: 480px; overflow: auto; border-top: 1px solid var(--edge-subtle); }
+.rv-foot { flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) 14px; border-top: 1px solid var(--edge-subtle); }
+.rv-foot .field { flex: 1; min-width: 0; height: 32px; }
+.rv-foot .btn { min-height: 32px; padding: 0 14px; }
+.review.in-place .rv-bar { padding-top: var(--sp-2); }
+
+/* 文件 */
+.files-view { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.fv-head { flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) 14px var(--sp-2); }
+.fv-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.fv-body[hidden] { display: none; }
+.fv-body > .filetree, .fv-body > .search-view { flex: 1; min-height: 0; height: auto; }
+.files-view .ft-head, .files-view .search-form { border-bottom-color: var(--edge-subtle); padding-left: 14px; padding-right: 14px; }
+.fv-group { flex: none; border-bottom: 1px solid var(--edge-subtle); max-height: 40%; overflow: auto; }
+.fv-group-head { width: 100%; display: flex; align-items: center; gap: 6px; padding: 6px 14px; font-size: var(--fs-sm); color: var(--ink-2); }
+.fv-group-head:hover { background: var(--layer-hover); }
+.fv-group-head svg { color: var(--ink-4); }
+.fv-group-head .grow { flex: 1; text-align: left; }
+.fv-group-head .n { font-size: var(--fs-meta); color: var(--ink-4); }
+.fv-group .list { padding-top: 0; }
+
+/* 终端: xterm paints its own default black around the character grid; the panel's page colour instead */
+.dock-panel .term, .dock-panel .term .xterm, .dock-panel .term .xterm-viewport { background-color: var(--bg) !important; }
+
+/* 任务 */
+.tasks-plan .todos { margin: 2px 0 4px; }
+.tasks-link { display: inline-flex; align-items: center; gap: 6px; margin: 8px 14px 12px; padding: 4px 8px; border-radius: var(--r-md); font-size: var(--fs-sm); color: var(--ink-3); }
+.tasks-link:hover { color: var(--ink-1); background: var(--layer-hover); }

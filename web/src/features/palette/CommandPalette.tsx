@@ -8,8 +8,9 @@ import { PANELS } from '@/model/layout';
 import { useOrch } from '@/features/orchestra/state';
 import { SHORTCUTS, keyLabel } from '@/features/workbench/shortcuts';
 import { runCommand } from '@/features/workbench/commands';
-import { viewCommands } from '@/features/workbench/wb-views';
-import { currentChatTile, panelToggleEffect } from '@/model/layout';
+import { viewCommands, type WbView } from '@/features/workbench/wb-views';
+import { openSessionView } from '@/features/workbench/right-panel';
+import { panelToggleEffect } from '@/model/layout';
 import { shareConversation } from '@/features/chat/MessageActions';
 import { TERMS, panelToggleLabel } from '@/ui/terms';
 
@@ -50,18 +51,13 @@ export function CommandPalette() {
     return () => { live = false; clearTimeout(t); };
   }, [q, open]);
 
-  // a view of the current conversation (the old workbench tabs): with a document / terminal in front, the
-  // conversation next to it is brought forward first — otherwise the command would do nothing visible
-  const showView = (view: string) => {
-    const s = useStore.getState();
-    const at = currentChatTile(s.layout);
-    if (!at) { s.toast('先打开一个对话'); return; }
-    s.dispatchLayout({ t: 'tile.activate', paneId: at.paneId, tileId: at.tileId });
-    s.dispatchLayout({ t: 'tile.patch', paneId: at.paneId, tileId: at.tileId, patch: { wb: view as never } });
-  };
+  // a view of the current conversation (the old workbench tabs): the right panel on a desktop (改动 / Git → 审阅,
+  // 文件 / 搜索 / 生成的文件 → 文件…), in place on a phone — with a document / terminal in front, the conversation next
+  // to it is brought forward first, otherwise the command would do nothing visible (openSessionView)
+  const showView = (view: WbView) => openSessionView(view);
   const commands = useMemo<Cmd[]>(() => {
     // the label says what the toggle will do right now (a hidden or minimized panel is opened; the terminal is hidden, not closed)
-    const panel = (p: (typeof PANELS)[number]): Cmd => ({ id: `panel.${p.id}`, label: panelToggleLabel(panelToggleEffect(st.layout.dock, p.id), p.title), ic: p.icon, group: '面板', run: () => st.togglePanel(p.id) });
+    const panel = (p: (typeof PANELS)[number]): Cmd => ({ id: `panel.${p.id}`, label: panelToggleLabel(panelToggleEffect(st.layout.dock, p.id, st.settings['ui.workbench'] === true), p.title, p.keepAlive), ic: p.icon, group: '面板', run: () => st.togglePanel(p.id) });
     const c: Cmd[] = [
       { id: 'new', label: '新对话', sub: keyLabel(SHORTCUTS[0]), ic: 'plus', group: '对话', run: () => runCommand('new') },
       { id: 'ws.add', label: '打开项目文件夹…', ic: 'folder', group: '对话', run: async () => { const p = await ws.request<string | null>({ kind: 'fs.pickDir' }); if (p) await st.addWorkspace(p); } },

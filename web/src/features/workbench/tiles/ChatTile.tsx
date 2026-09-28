@@ -2,13 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { basename, clsx } from '@/util';
-import { walkTools } from '@/model/conversation';
 import { sessionDiffStat } from '@/model/diffstat';
 import type { Tile } from '@/model/layout';
 import { ChatView } from '@/features/chat/ChatView';
 import { TrajectoryView } from '@/features/trajectory/TrajectoryView';
 import { Composer } from '@/features/composer/Composer';
-import { FilesPanel } from '@/features/panels/FilesPanel';
+import { ReviewView } from '../ReviewView';
 import { SchedulesView } from '@/features/automation/SchedulesView';
 import { shareConversation } from '@/features/chat/MessageActions';
 import { Welcome } from '../Welcome';
@@ -16,39 +15,19 @@ import { FileTree } from '../FileTree';
 import { GitView } from '../GitView';
 import { SearchView } from '../SearchView';
 import { BoardView } from '@/features/vcs/BoardView';
-import type { GitStatus, SessionSummary } from '@shared';
+import type { SessionSummary } from '@shared';
 import { Icon } from '@/ui/icons';
 import { SessionMenu, effectiveCaps } from '@/features/sidebar/session-actions';
 import { sessionPeer } from '@/features/peers';
-import { blockRemoteOpen } from '@/features/remote-guard';
-import { coalesce, gitEventConcerns } from '../git-refresh';
+import { useGitStatus } from '../git-status';
+import { Artifacts } from '../Artifacts';
+import { openReview, openSessionView } from '../right-panel';
 import { SidebarReveal, usePaneEdge } from '../pane-edge';
 import { useRepoContext } from '../repo-context';
 import { viewsFor, WB_VIEWS } from '../wb-views';
 import { runCommand } from '../commands';
 import { modKey } from '../shortcuts';
 import { TERMS } from '@/ui/terms';
-
-/**
- * git status for a cwd (the files tab badges). Refreshed only by events about THIS repo (`gitEventConcerns`:
- * its resolved root or the cwd form, which differ behind a junction / symlink) and coalesced — 400 ms of
- * quiet, but at least every 2 s during a steady stream: a status is a git process on the server.
- */
-function useGitStatus(cwd: string, enabled: boolean): GitStatus | null {
-  const [st, setSt] = useState<GitStatus | null>(null);
-  useEffect(() => {
-    if (!enabled || !cwd) return;
-    let alive = true;
-    let root: string | null = null;
-    const load = () => ws.request<GitStatus>({ kind: 'git.status', cwd }).then((s) => { if (alive) { root = s.root; setSt(s); } }).catch(() => alive && setSt(null));
-    const soon = coalesce(load, 400, 2000);
-    load();
-    void ws.request({ kind: 'git.watch', cwd }).catch(() => {});
-    const off = ws.on((e) => { if (gitEventConcerns(e, { cwd, root })) soon.trigger(); });
-    return () => { alive = false; soon.cancel(); off(); };
-  }, [cwd, enabled]);
-  return st;
-}
 
 type ChatTileModel = Extract<Tile, { kind: 'chat' }>;
 
@@ -74,7 +53,8 @@ function HeaderMenu({ tile, paneId, s, live, remote, gone, onClose }: { tile: Ch
       <div className="menu-label">查看这个对话的</div>
       <div className="menu-grid" role="group" aria-label="查看这个对话的">
         {viewsFor(remote).map((v) => (
-          <button key={v.id} className={clsx(tile.wb === v.id && 'on')} onClick={act(() => patch({ wb: tile.wb === v.id ? 'live' : v.id }))} data-view={v.id}>
+          // a desktop opens them in the right panel (审阅 / 文件 / a temporary tab); a phone / a remote conversation in place
+          <button key={v.id} className={clsx(tile.wb === v.id && 'on')} onClick={act(() => (tile.wb === v.id ? patch({ wb: 'live' }) : openSessionView(v.id, { paneId, tileId: tile.id })))} data-view={v.id}>
             <Icon name={v.icon} size={13} /> {v.label}
           </button>
         ))}
@@ -134,7 +114,7 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
   const dockShown = dock.open && (dock.tabs.length > 0 || inspect);
   // minimized to its icon rail, the panel is there but not open: the button brings it back instead of hiding it
   const dockMin = dockShown && dock.minimized;
-  const toggleDock = () => (dockMin ? dispatch({ t: 'dock.set', patch: { minimized: false } }) : dockShown ? dispatch({ t: 'dock.set', patch: { open: false } }) : dock.tabs.length ? runCommand('dock.toggle') : dispatch({ t: 'dock.show', panel: 'tasks' }));
+  const toggleDock = () => (dockMin ? dispatch({ t: 'dock.set', patch: { minimized: false } }) : dockShown ? dispatch({ t: 'dock.set', patch: { open: false } }) : runCommand('dock.toggle'));
   const terminalOn = dockShown && dock.active === 'terminal' && !dock.minimized;
   const viewDef = tile.wb !== 'live' ? WB_VIEWS.find((v) => v.id === tile.wb) : undefined;
   const dirty = git?.files.length ?? 0;
@@ -153,7 +133,7 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
             ? <span className="it" title={`${cwd}（在机器「${peer.name}」上）`}><Icon name="machine" size={12} /><span className="nm">{peer.name} · {basename(cwd)}</span></span>
             : cwd && <button className="it" title={`${cwd}\n点击在资源管理器打开`} onClick={() => ws.request({ kind: 'shell.open', path: cwd })}><Icon name="folder" size={12} /><span className="nm">{wsOf?.name ?? basename(cwd)}</span></button>}
           {branch && !peer && (
-            <button className={clsx('it branch', git && git.state !== 'clean' && 'dirty')} title={`${branch}${git?.upstream ? ` → ${git.upstream}` : git ? ' · 无上游' : ''}${git ? (dirty ? ` · ${dirty} 处未提交的改动` : ' · 干净') : ''}${git?.ahead ? ` · 领先 ${git.ahead}` : ''}${git?.behind ? ` · 落后 ${git.behind}` : ''}\n点击查看文件改动`} onClick={() => dispatch({ t: 'dock.show', panel: 'files' })}>
+            <button className={clsx('it branch', git && git.state !== 'clean' && 'dirty')} title={`${branch}${git?.upstream ? ` → ${git.upstream}` : git ? ' · 无上游' : ''}${git ? (dirty ? ` · ${dirty} 处未提交的改动` : ' · 干净') : ''}${git?.ahead ? ` · 领先 ${git.ahead}` : ''}${git?.behind ? ` · 落后 ${git.behind}` : ''}\n点击审阅未提交的改动`} onClick={() => openReview({ scope: 'uncommitted' })}>
               <Icon name="branch" size={12} /><span className="nm bn">{branch}</span>
             </button>
           )}
@@ -171,7 +151,7 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
       <span className="sh-actions">
         {/* phone: no right panel to show them in (spec §5.11) — 改动 / Git / 文件 are views in ··· */}
         {!mobile && stat && stat.files > 0 && (
-          <button className="sh-diff" title={`这个对话改了 ${stat.files} 个文件：+${stat.added} 行 −${stat.removed} 行\n点击查看改动`} onClick={() => dispatch({ t: 'dock.show', panel: 'files' })}>
+          <button className="sh-diff" title={`这个对话改了 ${stat.files} 个文件：+${stat.added} 行 −${stat.removed} 行\n点击在右侧审阅这些改动`} onClick={() => openReview({ scope: 'session' })}>
             <span className="add">+{stat.added}</span><span className="del">−{stat.removed}</span>
           </button>
         )}
@@ -182,34 +162,6 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
           {menu && <SessionMenu s={summary} deleted={gone} handoffInline onClose={() => setMenu(false)} style={{ right: 0, top: 34 }} extra={<HeaderMenu tile={tile} paneId={paneId} s={summary} live={live} remote={!!peer} gone={gone} onClose={() => setMenu(false)} />} />}
         </span>
       </span>
-    </div>
-  );
-}
-
-/** Files this session produced: Artifact tool outputs and Write-created files, newest first. */
-function Artifacts({ sessionId }: { sessionId: string }) {
-  const active = useStore((s) => s.open[sessionId]);
-  const openTile = useStore((s) => s.openTile);
-  const items = useMemo(() => {
-    if (!active) return [];
-    const seen = new Map<string, { path: string; via: string }>();
-    for (const { tool } of walkTools(active.conv.items)) {
-      const inp = tool.input as any;
-      const p: string | undefined = tool.name === 'Write' ? inp.file_path : tool.name === 'Artifact' ? inp.path ?? inp.file_path ?? (tool.result?.structured as any)?.path : undefined;
-      if (p && tool.status === 'done') seen.set(p, { path: p, via: tool.name });
-    }
-    return [...seen.values()].reverse();
-  }, [active?.version]);
-  if (!items.length) return <div className="empty">还没有生成的文件。Claude 新建的文件（Write / Artifact）之后会出现在这里。</div>;
-  return (
-    <div className="list">
-      {items.map((a) => (
-        <div key={a.path} className="row clickable" onClick={() => { if (!blockRemoteOpen(sessionId, a.path)) openTile({ id: `d${Date.now()}`, kind: 'doc', path: a.path }, 'tab'); }} title={a.path}>
-          <span><Icon name="read" size={13} /></span>
-          <div className="grow"><div>{basename(a.path)}</div><div className="sub">{a.path}</div></div>
-          <span className="badge">{a.via}</span>
-        </div>
-      ))}
     </div>
   );
 }
@@ -243,7 +195,7 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
       )}
       {remoteView && <div className="wb-body"><div className="remote-only"><Icon name="machine" size={22} /><div>这个对话在机器「{peer!.name}」上，它的文件 / Git / 搜索 / 定时任务都在那台机器上。</div><div className="sub">请在该机器上查看；这里可以继续对话、审批、中断。</div></div></div>}
       {remoteView ? null : <>
-      {tile.wb === 'changes' && <div className="wb-body"><FilesPanel /></div>}
+      {tile.wb === 'changes' && <div className="wb-body"><ReviewView inPlace visible={visible} /></div>}
       {tile.wb === 'git' && <div className="wb-body"><GitView cwd={active.cwd} /></div>}
       {tile.wb === 'files' && <div className="wb-body"><FileTree root={active.cwd} gitStatus={gitStatus} /></div>}
       {tile.wb === 'search' && <div className="wb-body"><SearchView root={active.cwd} /></div>}

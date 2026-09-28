@@ -63,6 +63,9 @@ const PATHS = {
   chevronRight: ['M9.5 5.5l6.5 6.5-6.5 6.5'],
   chevronDown: ['M5.5 9.5l6.5 6.5 6.5-6.5'],
   plus: ['M12 5v14M5 12h14'],
+  minus: ['M5 12h14'],
+  // revert: an arrow curling back to where it started
+  undo: ['M8.5 5L4.5 9l4 4', 'M4.5 9h9.5a5.5 5.5 0 0 1 0 11H9'],
   check: ['M5 12.5l4.6 4.5L19 7.5'],
   checkCircle: ['M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17z', 'M8.2 12.2l2.7 2.6 4.9-5.2'],
   circle: ['M12 4.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15z'],
