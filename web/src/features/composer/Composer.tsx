@@ -31,6 +31,8 @@ import { BranchChip, ProjectChip } from './ProjectChip';
 import { ContextMeter } from './ContextMeter';
 import { BAR_ID } from './ids';
 import { FEATURE_DEFAULTS_KEY, LEGACY_FEATURES_KEY, capabilityTags, migrateFeatureDefaults, withoutTag } from './capabilities';
+import { FILL_EVENT, type FillDetail } from './fill';
+import { applyStarter, initialCwd } from '@/features/home/model';
 
 // sessions on another machine: uploads land on this machine's disk, out of the remote agent's reach
 const REMOTE_ATTACH = '附件在本机，远端读不到，请粘贴内容（图片可以直接发）';
@@ -87,8 +89,9 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   // a session on another machine: uploaded files land on THIS machine's disk, the remote agent can't read
   // their paths — images (sent inline) and pasted text still work
   const remote = !welcome && !!active && !!parsePeerId(active.sessionId);
-  // welcome-mode settings
-  const [cwd, setCwd] = useState(localStorage.getItem('cw.lastCwd') || sessions[0]?.cwd || '');
+  // welcome-mode settings: the project the last conversation was started in (spec §5.8), see `initialCwd`
+  const workspaces = useStore((s) => s.workspaces);
+  const [cwd, setCwd] = useState(() => initialCwd({ stored: localStorage.getItem('cw.lastCwd'), sessions, workspaces }));
   const [wModel, setWModel] = useState(localStorage.getItem('cw.lastModel') || '');
   const settings = useStore((s) => s.settings);
   // an explicit 「新对话默认权限」 (settings, or 「设为新对话的默认…」 in the permission menu) wins over the last one used
@@ -172,9 +175,27 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   };
   useEffect(() => () => { recRef.current?.stop?.(); }, []);
 
+  // the list / the projects arrive after the first paint (and the desktop app forgets localStorage every start)
   useEffect(() => {
-    if (!cwd && sessions[0]?.cwd) setCwd(sessions[0].cwd);
-  }, [sessions]);
+    if (!cwd) { const c = initialCwd({ stored: null, sessions, workspaces }); if (c) setCwd(c); }
+  }, [sessions, workspaces]);
+
+  // a starter / the 入门清单 fills this (welcome) composer: text, project, focus (fill.ts)
+  const textRef = useRef(text);
+  textRef.current = text;
+  useEffect(() => {
+    if (!welcome || !target) return;
+    const on = (ev: Event) => {
+      const d = (ev as CustomEvent<FillDetail>).detail;
+      if (d.tileId && d.tileId !== target.tileId) return;
+      if (d.cwd) setCwd(d.cwd);
+      if (d.text !== undefined) onChange(applyStarter(textRef.current, d.text));
+      if (d.text !== undefined || d.focus) requestAnimationFrame(() => { const el = ta.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } });
+    };
+    window.addEventListener(FILL_EVENT, on);
+    return () => window.removeEventListener(FILL_EVENT, on);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [welcome, target?.tileId]);
 
   const autosize = () => {
     const el = ta.current;
