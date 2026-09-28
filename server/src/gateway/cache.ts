@@ -11,19 +11,20 @@ const header = (h: http.IncomingHttpHeaders, k: string) => str(Array.isArray(h[k
 
 /**
  * The client's session identity, in order of how explicitly it names a cache route: the body's
- * `prompt_cache_key` (Codex, OpenAI SDKs) → `session_id` / `x-client-request-id` headers (Codex, Pi) →
- * `x-claude-code-session-id` (Claude Code) → Anthropic `metadata.user_id`.
+ * `prompt_cache_key` (Codex, OpenAI SDKs) → `session_id` header (Codex, Pi) → `x-claude-code-session-id`
+ * (Claude Code) → Anthropic `metadata.user_id`. Not `x-client-request-id`: that names one request.
  */
 export function cacheKeyOf(json: any, headers: http.IncomingHttpHeaders): string | undefined {
-  return str(json?.prompt_cache_key) ?? header(headers, 'session_id') ?? header(headers, 'x-client-request-id') ?? header(headers, 'x-claude-code-session-id') ?? str(json?.metadata?.user_id);
+  return str(json?.prompt_cache_key) ?? header(headers, 'session_id') ?? header(headers, 'x-claude-code-session-id') ?? str(json?.metadata?.user_id);
 }
 
 /**
- * Session-affinity headers relays route on (new-api channel affinity, Pi / Codex conventions); xAI keeps a
+ * Session-affinity headers relays route on (new-api channel affinity, Pi conventions); xAI keeps a
  * conversation on one cache host by `x-grok-conv-id`. Only added when the client did not send them.
+ * (No `x-client-request-id`: a request id reused for every call of a session is a lie to the relay's logs.)
  */
 export function affinityHeaders(key: string, grok: boolean): Record<string, string> {
-  const h: Record<string, string> = { session_id: key, 'x-session-affinity': key, 'x-client-request-id': key };
+  const h: Record<string, string> = { session_id: key, 'x-session-affinity': key };
   if (grok) h['x-grok-conv-id'] = key;
   return h;
 }
@@ -38,8 +39,11 @@ export const mentionsCacheKey = (text: string) => /prompt_cache_key/i.test(text)
 /** Status codes where a request we decorated with prompt_cache_key is retried once without it. */
 export const isParamRejection = (status: number) => status === 400 || status === 422;
 
-/** Claude Code puts a per-build/per-request billing line first in `system`: useless (and prefix-breaking) elsewhere. */
-export const isBillingHeader = (text: string) => /^\s*x-anthropic-billing-header\s*:/i.test(text);
+/**
+ * Claude Code puts a per-build / per-request billing line first in `system`: useless (and prefix-breaking)
+ * for any other vendor. Removes just the lines that start with it; the rest of the text stays.
+ */
+export const stripBillingHeader = (text: string) => text.split(/\r?\n/).filter((l) => !/^\s*x-anthropic-billing-header\s*:/i.test(l)).join('\n');
 
 /**
  * Insert `"key": value` as the FIRST member of a top-level JSON object, leaving every other byte as it was

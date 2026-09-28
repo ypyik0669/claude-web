@@ -313,7 +313,8 @@ describe('prompt caching on translated requests', () => {
     const ok = await call('/mixed/v1/messages', msg, { 'x-claude-code-session-id': 'sess-42' });
     expect(ok.status).toBe(200);
     expect(JSON.parse(O.hits[0].body).prompt_cache_key).toBe('sess-42');
-    expect(O.hits[0].headers).toMatchObject({ session_id: 'sess-42', 'x-session-affinity': 'sess-42', 'x-client-request-id': 'sess-42' });
+    expect(O.hits[0].headers).toMatchObject({ session_id: 'sess-42', 'x-session-affinity': 'sess-42' });
+    expect(O.hits[0].headers['x-client-request-id']).toBeUndefined();
     expect(ledger[0]).toMatchObject({ input: 20, cacheRead: 80, sessionId: 'sess-42' });
     rejectKey = true;
     O.hits.length = 0;
@@ -327,6 +328,16 @@ describe('prompt caching on translated requests', () => {
     expect(O.hits).toHaveLength(1); // not sent (and not retried) any more
     expect(JSON.parse(O.hits[0].body).prompt_cache_key).toBeUndefined();
     delete meta.provider('o')!.noPromptCacheKey;
+  });
+  it('a 400 that does not name prompt_cache_key: this request is retried without it, but nothing is remembered', async () => {
+    O.handler.fn = (_q, res, body) => {
+      if (JSON.parse(body).prompt_cache_key) { res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":{"message":"transient validation hiccup"}}'); return; }
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'c', object: 'chat.completion', model: 'gpt-4.1', choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }));
+    };
+    const r = await call('/mixed/v1/messages', msg, { 'x-claude-code-session-id': 'sess-44' });
+    expect(r.status).toBe(200);
+    expect(O.hits).toHaveLength(2);
+    expect(meta.provider('o')!.noPromptCacheKey).toBeUndefined();
   });
   it('a 400 that is not about the key is still returned as is after the one retry', async () => {
     O.handler.fn = (_q, res) => res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":{"message":"context too long"}}');

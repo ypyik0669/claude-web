@@ -1,20 +1,25 @@
-// Per-profile prompt-cache shim: `/gateway/~p/<providerId>/k/<sessionKey>/v1/…` on the main server.
+// Per-profile prompt-cache shim: `/gateway/~p/<providerId>/k/<cacheKey>[/s/<sessionId>]/v1/…` on the main server.
 //
 // ccb's OpenAI / Grok clients cannot be configured to send a cache key or extra headers (no defaultHeaders; ccb
 // only sets prompt_cache_key for api.openai.com), and relays route requests without one to random channels.
 // So an openai / grok profile's Claude session points OPENAI_BASE_URL / GROK_BASE_URL here (providerEnv), and
 // the shim, per request:
-//   · inserts `prompt_cache_key: "cw:<session>"` when missing (no other byte of the body changes); an upstream
-//     that 400s on it gets the request again without it, and the profile remembers (`noPromptCacheKey`);
-//   · adds session-affinity headers (session_id / x-session-affinity / x-client-request-id; grok: x-grok-conv-id);
+//   · inserts `prompt_cache_key: "cw:<cacheKey>"` when missing (no other byte of the body changes); an upstream
+//     that 400s gets this request again without it, and the profile only remembers (`noPromptCacheKey`) when
+//     the error named the field;
+//   · adds session-affinity headers (session_id / x-session-affinity; grok: x-grok-conv-id);
 //   · rewrites the one usage chunk whose hit count sits only at the top level (DeepSeek prompt_cache_hit_tokens,
 //     Kimi cached_tokens) into prompt_tokens_details.cached_tokens — the field ccb reads; the rest passes as is;
 //   · for gpt-* on openai profiles (switch `responsesApi`, default on) speaks /v1/responses upstream
-//     (store:false + prompt_cache_key — what new-api's default Codex affinity rule routes on) and streams the
-//     answer back as chat.completion.chunk; an endpoint without /v1/responses falls back and is remembered;
-//   · logs every call in the ledger (kind 'gateway', via 'shim').
-// Independent of the gateway's on/off switch, but like it: loopback only (GatewayService.handle) and only with
-// the internal key, which is minted per process and never stored — sessions die with the server anyway.
+//     (store:false + prompt_cache_key + prompt_cache_retention 24h — new-api's default Codex affinity rule
+//     routes on the key) and streams the answer back as chat.completion.chunk. A 404 / 405 / 501 / 400 / 5xx
+//     there sends this request to chat/completions instead; only "no such endpoint" (404 / 405 / 501, not a
+//     model error) followed by a working chat call is remembered (`noResponsesApi`);
+//   · logs every call in the ledger (kind 'gateway', via 'shim', under the session's own id `/s/…`).
+// Forwards only what ccb needs: POST /v1/chat/completions and GET /v1/models[/<id>].
+// Independent of the gateway's on/off switch, but like it: loopback only (GatewayService.handle), and the key
+// is per profile — HMAC(per-process secret, providerId): minted per process, never stored, one profile's
+// session cannot use another profile's credentials through it.
 import crypto from 'node:crypto';
 import http from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
@@ -35,6 +40,13 @@ const IDLE_MS = 5 * 60_000;
 const BODY_LIMIT = 64 * 1024 * 1024;
 /** Models the shim sends to /v1/responses (profile switch `responsesApi`). */
 export const wantsResponses = (model: string) => /^gpt-/i.test(model);
+/** Responses retention for the long-retention (openai-type) profiles the shim serves. */
+const RETENTION = '24h';
+const mentionsRetention = (text: string) => /prompt_cache_retention/i.test(text);
+/** /v1/responses statuses that send this one request to chat/completions instead. */
+const fallsBack = (s: number) => s === 404 || s === 405 || s === 501 || s === 400 || s === 422 || s >= 500;
+/** …and the ones that may mean "this endpoint has no Responses API" (remembered only once chat then works). */
+const endpointMissing = (s: number, text: string) => (s === 404 || s === 405 || s === 501) && !/model/i.test(text);
 
 export interface ShimDeps {
   meta: MetaStore;
@@ -52,7 +64,8 @@ interface Ctx {
   search: string;
   raw: Buffer;
   headers: Record<string, string>;
-  sessionKey: string;
+  /** the session the call belongs to (ledger); a fork's own id while its cache key is the parent's */
+  sessionId: string;
   cacheKey?: string;
   signal: AbortSignal;
   t0: number;
@@ -63,14 +76,18 @@ interface Ctx {
 interface Outcome { ok: boolean; status: number; model: string; usage?: Partial<IrUsage> | null; error?: string; outbound: 'openai' | 'responses'; stream: boolean; firstByteMs?: number }
 
 export class CacheShim {
-  /** Internal credential (per process, never persisted): what OPENAI_API_KEY / GROK_API_KEY carry to us. */
-  readonly key = `cws-${crypto.randomBytes(24).toString('hex')}`;
+  private secret = crypto.randomBytes(32);
   constructor(private deps: ShimDeps) {}
 
-  private keyOk(req: http.IncomingMessage): boolean {
+  /** The credential a session of this profile gets in OPENAI_API_KEY / GROK_API_KEY. */
+  keyFor(providerId: string): string {
+    return `cws-${crypto.createHmac('sha256', this.secret).update(providerId).digest('hex')}`;
+  }
+
+  private keyOk(req: http.IncomingMessage, providerId: string): boolean {
     const h = req.headers;
     const bearer = /^Bearer\s+(.+)$/i.exec(String(h.authorization ?? ''))?.[1];
-    const want = Buffer.from(this.key);
+    const want = Buffer.from(this.keyFor(providerId));
     return [bearer, h['x-api-key']].some((v) => { const b = Buffer.from(String(v ?? '').trim()); return b.length === want.length && crypto.timingSafeEqual(b, want); });
   }
 
@@ -80,15 +97,18 @@ export class CacheShim {
   }
 
   async serve(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
-    const m = /^\/gateway\/~p\/([^/]+)(?:\/k\/([^/]*))?(\/.*)?$/.exec(url.pathname);
+    const m = /^\/gateway\/~p\/([^/]+)(?:\/k\/([^/]*))?(?:\/s\/([^/]*))?(\/.*)?$/.exec(url.pathname);
     if (!m) return this.fail(res, 404, '缓存垫片地址不对');
-    if (!this.keyOk(req)) return this.fail(res, 401, '缓存垫片密钥无效（只接受本进程发给会话的内部密钥）');
-    let providerId: string, sessionKey: string;
-    try { providerId = decodeURIComponent(m[1]); sessionKey = decodeURIComponent(m[2] ?? ''); } catch { return this.fail(res, 400, '地址编码错误'); }
+    let providerId: string, cacheKey: string, sessionId: string;
+    try { providerId = decodeURIComponent(m[1]); cacheKey = decodeURIComponent(m[2] ?? ''); sessionId = decodeURIComponent(m[3] ?? '') || cacheKey; } catch { return this.fail(res, 400, '地址编码错误'); }
+    if (!this.keyOk(req, providerId)) return this.fail(res, 401, '缓存垫片密钥无效（只接受本进程发给这个档案的会话的内部密钥）');
     const p = this.deps.member(providerId);
     if (!p || (p.type !== 'openai' && p.type !== 'grok')) return this.fail(res, 404, `没有这个 OpenAI / Grok 型档案：${providerId}`);
-    let rest = m[3] ?? '/';
+    let rest = m[4] ?? '/';
     if (!/^\/v\d/.test(rest)) rest = `/v1${rest === '/' ? '' : rest}`;
+    const method = (req.method ?? 'GET').toUpperCase();
+    const isChat = method === 'POST' && rest === '/v1/chat/completions';
+    if (!isChat && !(method === 'GET' && /^\/v1\/models(\/[^/]+)?$/.test(rest))) return this.fail(res, 404, `缓存垫片不转发这个接口：${method} ${rest}`);
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const c of req) {
@@ -96,20 +116,20 @@ export class CacheShim {
       if (size > BODY_LIMIT) return this.fail(res, 413, '请求体过大');
       chunks.push(c as Buffer);
     }
-    const cacheKey = sessionKey ? `cw:${sessionKey}`.slice(0, CACHE_KEY_MAX) : undefined;
+    const key = cacheKey ? `cw:${cacheKey}`.slice(0, CACHE_KEY_MAX) : undefined;
     const headers = passthroughHeaders(req.rawHeaders, 'openai', p.apiKey);
-    if (cacheKey) addMissing(headers, affinityHeaders(cacheKey, p.type === 'grok'));
+    if (key) addMissing(headers, affinityHeaders(key, p.type === 'grok'));
     const ac = new AbortController();
     res.on('close', () => { if (!res.writableFinished) ac.abort(); });
-    const ctx: Ctx = { req, res, p, base: openaiBase(p.baseUrl || DEFAULT_BASE[p.type]), rest, search: url.search, raw: Buffer.concat(chunks), headers, sessionKey, cacheKey, signal: ac.signal, t0: Date.now() };
+    const ctx: Ctx = { req, res, p, base: openaiBase(p.baseUrl || DEFAULT_BASE[p.type]), rest, search: url.search, raw: Buffer.concat(chunks), headers, sessionId, cacheKey: key, signal: ac.signal, t0: Date.now() };
     let json: any;
-    if ((req.method ?? 'GET').toUpperCase() === 'POST' && rest === '/v1/chat/completions') { try { json = JSON.parse(ctx.raw.toString('utf8')); } catch { /* not ours to fix */ } }
+    if (isChat) { try { json = JSON.parse(ctx.raw.toString('utf8')); } catch { /* not ours to fix */ } }
     if (!json || typeof json !== 'object' || Array.isArray(json)) return this.forward(ctx);
     if (p.type === 'openai' && p.responsesApi !== false && !p.noResponsesApi && wantsResponses(String(json.model ?? ''))) return this.viaResponses(ctx, json);
     return this.chat(ctx, json);
   }
 
-  /** Anything else (model list, …): bytes both ways, credential swapped. */
+  /** The model list (or a chat body we cannot parse): bytes both ways, credential swapped. */
   private async forward(ctx: Ctx) {
     let up: UpstreamResponse;
     try {
@@ -123,17 +143,21 @@ export class CacheShim {
   }
 
   /**
-   * One upstream request; a body we decorated with prompt_cache_key that the upstream refuses (400 / 422) is
-   * sent again without it, and the profile stops getting it when the retry works or the error named the field.
+   * One upstream request. A body we decorated (prompt_cache_key / prompt_cache_retention) that the upstream
+   * refuses with 400 / 422 is sent once more undecorated; the profile stops getting a field only when the
+   * error named it — a retry that happens to work proves nothing (the 400 may have been about anything).
    */
-  private async send(ctx: Ctx, url: string, body: Buffer, withoutKey: Buffer | null, stream: boolean): Promise<UpstreamResponse | null> {
+  private async send(ctx: Ctx, url: string, body: Buffer, bare: Buffer | null, stream: boolean): Promise<UpstreamResponse | null> {
     try {
       let up = await sendUpstream(url, { method: 'POST', headers: ctx.headers, body, signal: ctx.signal, headerTimeoutMs: TIMEOUT_MS });
-      if (withoutKey && isParamRejection(up.status)) {
+      if (bare && isParamRejection(up.status)) {
         let text = '';
         try { text = await readText(up.body, 1024 * 1024); } catch { /* keep empty */ }
-        up = await sendUpstream(url, { method: 'POST', headers: ctx.headers, body: withoutKey, signal: ctx.signal, headerTimeoutMs: TIMEOUT_MS });
-        if ((up.status >= 200 && up.status < 300) || mentionsCacheKey(text)) await this.remember(ctx.p, { noPromptCacheKey: true });
+        const learned: Partial<Provider> = {};
+        if (mentionsCacheKey(text)) learned.noPromptCacheKey = true;
+        if (mentionsRetention(text)) learned.noCacheRetention = true;
+        if (Object.keys(learned).length) await this.remember(ctx.p, learned);
+        up = await sendUpstream(url, { method: 'POST', headers: ctx.headers, body: bare, signal: ctx.signal, headerTimeoutMs: TIMEOUT_MS });
       }
       return up;
     } catch (e: any) {
@@ -157,19 +181,32 @@ export class CacheShim {
     this.record(ctx, { ok: false, status: up.status, model, error: `HTTP ${up.status} ${upstreamErrorMessage(text)}`.slice(0, 200), outbound, stream });
   }
 
-  /** chat/completions as the client sent it (+ prompt_cache_key); only the usage chunk may change on the way back. */
-  private async chat(ctx: Ctx, json: any) {
+  /**
+   * chat/completions as the client sent it (+ prompt_cache_key); only the usage chunk may change on the way back.
+   * Streaming or not is what the REQUEST asked for (relays mislabel SSE as text/plain or JSON). `onOk`: runs once
+   * the upstream answered 2xx (the Responses fallback remembers a missing endpoint only then). `original`: the
+   * Responses error this fallback is for — when chat fails too, that is the error the client sees (a model error
+   * from /v1/responses says more than "no such route" from chat/completions).
+   */
+  private async chat(ctx: Ctx, json: any, onOk?: () => Promise<void>, original?: { status: number; headers: http.IncomingHttpHeaders; text: string }) {
     const model = String(json.model ?? '');
     const stream = !!json.stream;
     let body = ctx.raw;
-    let withoutKey: Buffer | null = null;
+    let bare: Buffer | null = null;
+    ctx.keyed = false;
     if (ctx.cacheKey && !ctx.p.noPromptCacheKey && json.prompt_cache_key === undefined) {
       const s = insertTopLevelField(ctx.raw.toString('utf8'), 'prompt_cache_key', ctx.cacheKey);
-      if (s) { withoutKey = ctx.raw; body = Buffer.from(s); ctx.keyed = true; }
+      if (s) { bare = ctx.raw; body = Buffer.from(s); ctx.keyed = true; }
     }
-    const up = await this.send(ctx, joinUrl(ctx.base, '/v1/chat/completions') + ctx.search, body, withoutKey, stream);
+    const up = await this.send(ctx, joinUrl(ctx.base, '/v1/chat/completions') + ctx.search, body, bare, stream);
     if (!up) return;
+    if ((up.status < 200 || up.status >= 300) && original) {
+      up.body.resume();
+      if (!ctx.res.headersSent) ctx.res.writeHead(original.status, { ...errorHeaders(original.headers), 'content-type': String(original.headers['content-type'] ?? 'application/json') }).end(original.text);
+      return this.record(ctx, { ok: false, status: original.status, model, error: `HTTP ${original.status} ${upstreamErrorMessage(original.text)}（chat/completions 退回也失败：HTTP ${up.status}）`.slice(0, 240), outbound: 'responses', stream });
+    }
     if (up.status < 200 || up.status >= 300) return this.passError(ctx, up, model, 'openai', stream);
+    await onOk?.();
     const firstByteMs = Date.now() - ctx.t0;
     const { res } = ctx;
     // decoded on our side: the one line we may rewrite has to be readable (the local hop is uncompressed)
@@ -178,9 +215,8 @@ export class CacheShim {
     delete headers['content-length'];
     res.writeHead(up.status, headers);
     const src = decoded(up.body);
-    const isSse = /event-stream/i.test(String(up.headers['content-type'] ?? ''));
     let usage: Partial<IrUsage> | null = null;
-    if (!isSse) {
+    if (!stream) {
       let text = '';
       try {
         const bufs: Buffer[] = [];
@@ -223,28 +259,31 @@ export class CacheShim {
     const model = String(json.model ?? '');
     const stream = !!json.stream;
     const ir = { ...C.parseRequest(json), model, stream };
-    const build = (key?: string) => {
-      const b = R.renderRequest(ir, { cacheKey: key, store: false });
+    const key = ctx.p.noPromptCacheKey ? undefined : ctx.cacheKey;
+    const retention = ctx.p.noCacheRetention ? undefined : RETENTION;
+    const build = (decorate: boolean) => {
+      const b = R.renderRequest(ir, decorate ? { cacheKey: key, retention, store: false } : { store: false });
       if (typeof json.reasoning_effort === 'string') b.reasoning = { effort: json.reasoning_effort };
       return Buffer.from(JSON.stringify(b));
     };
-    const key = ctx.p.noPromptCacheKey ? undefined : ctx.cacheKey;
     ctx.keyed = !!key;
-    const up = await this.send(ctx, joinUrl(ctx.base, '/v1/responses') + ctx.search, build(key), key ? build(undefined) : null, stream);
+    const up = await this.send(ctx, joinUrl(ctx.base, '/v1/responses') + ctx.search, build(true), key || retention ? build(false) : null, stream);
     if (!up) return;
-    if (up.status === 404 || up.status === 405 || up.status === 501) {
-      // this endpoint has no Responses API: chat/completions from now on (the profile remembers)
-      up.body.resume();
-      await this.remember(ctx.p, { noResponsesApi: true });
-      return this.chat({ ...ctx, p: { ...ctx.p, noResponsesApi: true } }, json);
+    if (fallsBack(up.status)) {
+      // this one request goes to chat/completions; "no such endpoint" is remembered only if chat then works
+      let text = '';
+      try { text = await readText(up.body, 1024 * 1024); } catch { /* keep empty */ }
+      const missing = endpointMissing(up.status, text);
+      if (missing) return this.chat(ctx, json, () => this.remember(ctx.p, { noResponsesApi: true }));
+      return this.chat(ctx, json, undefined, { status: up.status, headers: up.headers, text });
     }
     if (up.status < 200 || up.status >= 300) return this.passError(ctx, up, model, 'responses', stream);
     const firstByteMs = Date.now() - ctx.t0;
     const { res } = ctx;
-    const isSse = /event-stream/i.test(String(up.headers['content-type'] ?? ''));
     const usage: Partial<IrUsage> = {};
     let failed = ''; // an error event inside a 200 stream (response.failed)
-    if (!stream || !isSse) {
+    // the request decides; a relay that answers a stream request with one JSON object is replayed as a stream
+    if (!stream || /application\/json/i.test(String(up.headers['content-type'] ?? ''))) {
       let text = '';
       try { text = await readText(up.body); } catch (e: any) { return this.brokenBeforeStart(ctx, model, e?.message ?? String(e), stream, firstByteMs); }
       let resp;
@@ -252,7 +291,6 @@ export class CacheShim {
       if (!stream) {
         res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(C.renderResponse(resp, model)));
       } else {
-        // asked for a stream, got a whole answer: replay it as one
         const renderer = new C.ChatStreamRenderer(model, !!json.stream_options?.include_usage);
         res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache' });
         res.end(R.irEvents(resp).map((e) => renderer.push(e)).join('') + renderer.end());
@@ -304,7 +342,7 @@ export class CacheShim {
     }
     this.deps.ledger?.record({
       ts: Date.now(),
-      sessionId: ctx.sessionKey,
+      sessionId: ctx.sessionId,
       model: o.model,
       durationMs: Date.now() - ctx.t0,
       apiMs: o.firstByteMs,
@@ -313,6 +351,7 @@ export class CacheShim {
       cacheRead: u.cacheRead ?? 0,
       cacheWrite: u.cacheWrite ?? 0,
       costUsd: 0,
+      costUnknown: true,
       ok: o.ok,
       error: o.error,
       providerId: ctx.p.id,

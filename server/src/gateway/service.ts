@@ -122,9 +122,9 @@ export class GatewayService extends EventEmitter {
     return { baseUrl: `${this.baseUrl()}/${groupId}`, key: this.key, runtime: this.needsOfficialClient(g) ? 'claude' : undefined };
   }
 
-  /** The cache shim's base for a profile (the session appends `/k/<session>/v1`), or null before the server listens. */
+  /** The cache shim's base for a profile (the session appends `/k/<key>[/s/<id>]/v1`) + its per-profile key; null before listening. */
   shimEndpoint(providerId: string): { base: string; key: string } | null {
-    return this.port ? { base: `${this.baseUrl()}/~p/${encodeURIComponent(providerId)}`, key: this.shim.key } : null;
+    return this.port ? { base: `${this.baseUrl()}/~p/${encodeURIComponent(providerId)}`, key: this.shim.keyFor(providerId) } : null;
   }
 
   /**
@@ -371,6 +371,7 @@ export class GatewayService extends EventEmitter {
       cacheRead: usage?.cacheRead ?? 0,
       cacheWrite: usage?.cacheWrite ?? 0,
       costUsd: 0,
+      costUnknown: true, // the gateway never knows a price
       ok: a.kind === 'done',
       error: a.kind === 'done' ? undefined : a.kind === 'final' ? `HTTP ${a.status} ${upstreamErrorMessage(a.text)}`.slice(0, 200) : a.message.slice(0, 200),
       providerId: p.id,
@@ -431,13 +432,13 @@ export class GatewayService extends EventEmitter {
     let up: UpstreamResponse;
     try {
       up = await sendUpstream(url, { method: 'POST', headers, body, signal: ctx.signal, headerTimeoutMs: waitMs });
-      // an upstream that does not know prompt_cache_key: once more without it; remembered on the profile when
-      // the retry works or the error named the field (a 400 about something else stays that 400)
+      // an upstream that may not know prompt_cache_key: this request once more without it; the profile only
+      // remembers when the error named the field (a retry that happens to work proves nothing about the key)
       if (retryBody && isParamRejection(up.status)) {
         let text = '';
         try { text = await readText(up.body, 1024 * 1024); } catch { /* keep empty */ }
+        if (mentionsCacheKey(text)) void this.deps.meta.upsertProvider({ id: p.id, noPromptCacheKey: true }, { mustExist: true }).catch(() => { /* next request tries again */ });
         up = await sendUpstream(url, { method: 'POST', headers, body: retryBody, signal: ctx.signal, headerTimeoutMs: waitMs });
-        if ((up.status >= 200 && up.status < 300) || mentionsCacheKey(text)) void this.deps.meta.upsertProvider({ id: p.id, noPromptCacheKey: true }, { mustExist: true }).catch(() => { /* next request tries again */ });
       }
     } catch (e: any) {
       if (ctx.signal.aborted) return aborted();

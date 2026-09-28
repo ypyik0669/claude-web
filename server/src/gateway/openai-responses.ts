@@ -69,6 +69,8 @@ export function parseRequest(body: any): IrRequest {
 export interface ResponsesRenderOpts {
   /** `prompt_cache_key` — with it new-api's default "codex cli trace" affinity pins the session to one channel */
   cacheKey?: string;
+  /** `prompt_cache_retention` (OpenAI extended retention, e.g. '24h') */
+  retention?: string;
   /** default false: stateless, the full history goes every time (like chat/completions) */
   store?: boolean;
 }
@@ -115,6 +117,7 @@ export function renderRequest(r: IrRequest, opts: ResponsesRenderOpts = {}): any
   out.store = opts.store ?? false;
   out.stream = r.stream;
   if (opts.cacheKey) out.prompt_cache_key = opts.cacheKey.slice(0, CACHE_KEY_MAX);
+  if (opts.retention) out.prompt_cache_retention = opts.retention;
   return out;
 }
 

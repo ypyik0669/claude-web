@@ -5,6 +5,7 @@ import { resolveEngine, runClaudeCli } from '../claude-exe.js';
 import type { SecretService } from '../secrets/service.js';
 import { CODEX_KEY_ENV, codexGatewayArgs, codexProviderArgs, geminiApiKeyEnv } from '../gateway/agents.js';
 import { profileFitError } from '../models/catalog.js';
+import { wantsResponses } from '../gateway/shim.js';
 
 /** Mask an API key for the wire: keep prefix + last 4 chars. */
 export function maskKey(k: string | undefined): string {
@@ -24,15 +25,20 @@ export function publicProvider(p: Provider): Provider {
  */
 export type SessionProvider = Provider & { shim?: { base: string; key: string } };
 
-/** `<shim base>/k/<session key>/v1` — what ccb's OpenAI-SDK clients use as their base URL. */
-export const shimBaseUrl = (s: { base: string }, sessionKey?: string) => `${s.base}${sessionKey ? `/k/${encodeURIComponent(sessionKey)}` : ''}/v1`;
+/**
+ * `<shim base>/k/<cache key>[/s/<session id>]/v1` — what ccb's OpenAI-SDK clients use as their base URL. The cache
+ * key routes the prompt cache (a fork keeps its parent's); the session id, when it differs, names the ledger rows.
+ */
+export const shimBaseUrl = (s: { base: string }, sessionKey?: string, sessionId?: string) =>
+  `${s.base}${sessionKey ? `/k/${encodeURIComponent(sessionKey)}` : ''}${sessionKey && sessionId && sessionId !== sessionKey ? `/s/${encodeURIComponent(sessionId)}` : ''}/v1`;
 
 /**
  * Map a provider profile to the env the runtime reads. Only what the CLI needs — the profile itself never
  * touches ~/.claude/settings.json, so the claude.ai login keeps working for sessions without a provider.
- * `sessionKey` (the session id; a fork's parent id) keys the cache shim's routes for openai / grok profiles.
+ * `sessionKey` (the session id; a fork's parent id) keys the cache shim's routes for openai / grok profiles,
+ * `sessionId` (when known up front) is the session its ledger rows belong to.
  */
-export function providerEnv(p: SessionProvider, agent: 'claude' | 'codex' | 'acp' = 'claude', opts: { sessionKey?: string } = {}): Record<string, string> {
+export function providerEnv(p: SessionProvider, agent: 'claude' | 'codex' | 'acp' = 'claude', opts: { sessionKey?: string; sessionId?: string } = {}): Record<string, string> {
   if (p.type === 'gateway' && agent !== 'claude') return gatewayAgentEnv(p, agent);
   // Relays that fingerprint Claude Code (super-nb & co.) reject the `agent-sdk/x.y.z` User-Agent suffix the SDK
   // makes the CLI add. spawnClaude() strips that env when this marker is present, so the request looks like `claude -p`.
@@ -55,7 +61,7 @@ export function providerEnv(p: SessionProvider, agent: 'claude' | 'codex' | 'acp
       break;
     case 'openai':
       // through the cache shim unless the profile turned it off: the real key never reaches the child
-      env.OPENAI_BASE_URL = p.shim ? shimBaseUrl(p.shim, opts.sessionKey) : openaiBase(p.baseUrl);
+      env.OPENAI_BASE_URL = p.shim ? shimBaseUrl(p.shim, opts.sessionKey, opts.sessionId) : openaiBase(p.baseUrl);
       env.OPENAI_API_KEY = p.shim ? p.shim.key : p.apiKey;
       env.CLAUDE_CODE_USE_OPENAI = '1';
       if (p.defaultModel) env.OPENAI_MODEL = p.defaultModel;
@@ -82,7 +88,7 @@ export function providerEnv(p: SessionProvider, agent: 'claude' | 'codex' | 'acp
     case 'grok': {
       env.CLAUDE_CODE_USE_GROK = '1';
       env.GROK_API_KEY = p.shim ? p.shim.key : p.apiKey; // ccb: GROK_API_KEY || XAI_API_KEY
-      if (p.shim) env.GROK_BASE_URL = shimBaseUrl(p.shim, opts.sessionKey);
+      if (p.shim) env.GROK_BASE_URL = shimBaseUrl(p.shim, opts.sessionKey, opts.sessionId);
       else if (p.baseUrl) env.GROK_BASE_URL = openaiBase(p.baseUrl); // an OpenAI SDK client: the base ends in /v1
       // unmapped families fall back to ccb's own grok defaults, so only what the profile says is set
       const fam = { HAIKU: m.haiku || p.defaultModel, SONNET: m.sonnet || p.defaultModel, OPUS: m.opus || p.defaultModel };
@@ -131,8 +137,9 @@ function modelsUrl(type: ProviderType, baseUrl: string): string {
   return /\/v\d+$/.test(b) ? `${b}/models` : `${b}/v1/models`;
 }
 
-export interface ChatProbe { ok: boolean; runtime: RuntimeKind | 'api'; model: string; error?: string; ms: number; switched?: boolean }
-export interface ProbeResult { ok: boolean; status?: number; models: string[]; error?: string; ms: number; chat?: ChatProbe }
+export interface ChatProbe { ok: boolean; runtime: RuntimeKind | 'api'; model: string; error?: string; ms: number; switched?: boolean; status?: number }
+/** `responses`: openai profiles whose default model is gpt-* — the /v1/responses check the cache shim relies on. */
+export interface ProbeResult { ok: boolean; status?: number; models: string[]; error?: string; ms: number; chat?: ChatProbe; responses?: ChatProbe }
 
 /**
  * One real one-shot turn through the CLI (`-p`), exactly the way a session will talk to the endpoint. The model list
@@ -171,6 +178,30 @@ export async function openaiChatProbe(p: Pick<Provider, 'baseUrl' | 'apiKey'>, m
     if (r.ok && Array.isArray(j?.choices)) return { ok: true, runtime: 'api', model, ms: Date.now() - t0 };
     const err = String(j?.error?.message ?? j?.message ?? text ?? `HTTP ${r.status}`).replace(/\s+/g, ' ').trim().slice(0, 300);
     return { ok: false, runtime: 'api', model, error: `HTTP ${r.status} ${err}`, ms: Date.now() - t0 };
+  } catch (e: any) {
+    return { ok: false, runtime: 'api', model, error: e?.message ?? String(e), ms: Date.now() - t0 };
+  }
+}
+
+/**
+ * One minimal `/v1/responses` request (a few tokens): whether the endpoint has the Responses API the cache shim
+ * sends gpt-* to. `status` lets the caller tell "no such endpoint" (404 / 405 / 501) from a model error or an outage.
+ */
+export async function openaiResponsesProbe(p: Pick<Provider, 'baseUrl' | 'apiKey'>, model: string): Promise<ChatProbe> {
+  const t0 = Date.now();
+  try {
+    const r = await fetch(`${openaiBase(p.baseUrl)}/responses`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${p.apiKey}` },
+      body: JSON.stringify({ model, input: 'Reply with exactly: ok', max_output_tokens: 16, store: false }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const text = await r.text();
+    let j: any = null;
+    try { j = JSON.parse(text); } catch { /* not json */ }
+    if (r.ok && (j?.object === 'response' || Array.isArray(j?.output))) return { ok: true, runtime: 'api', model, ms: Date.now() - t0, status: r.status };
+    const err = String(j?.error?.message ?? j?.message ?? (text || `HTTP ${r.status}`)).replace(/\s+/g, ' ').trim().slice(0, 300);
+    return { ok: false, runtime: 'api', model, error: `HTTP ${r.status} ${err}${j?.error?.code ? ` (${j.error.code})` : ''}`, ms: Date.now() - t0, status: r.status };
   } catch (e: any) {
     return { ok: false, runtime: 'api', model, error: e?.message ?? String(e), ms: Date.now() - t0 };
   }
@@ -403,7 +434,16 @@ export class ProviderService {
     // round would cost a whole Claude Code system prompt (~50k tokens) per click.
     if (p.type === 'openai') {
       const chat = await openaiChatProbe(full, model);
-      return { ...r, ok: chat.ok, chat, error: chat.ok ? undefined : chat.error };
+      // the cache shim sends gpt-* to /v1/responses (unless switched off): check that path too, and record what it
+      // proves — works → clear a stale "no Responses API"; no such endpoint while chat works → remember it
+      const shimResponses = (draft?.cacheShim ?? saved?.cacheShim) !== false && (draft?.responsesApi ?? saved?.responsesApi) !== false;
+      let responses: ChatProbe | undefined;
+      if (shimResponses && wantsResponses(model)) {
+        responses = await openaiResponsesProbe(full, model);
+        const missing = !responses.ok && [404, 405, 501].includes(responses.status ?? 0) && !/model/i.test(responses.error ?? '');
+        if (saved && (responses.ok || (missing && chat.ok))) await this.meta.upsertProvider({ id: saved.id, noResponsesApi: responses.ok ? (null as unknown as undefined) : true }, { mustExist: true });
+      }
+      return { ...r, ok: chat.ok, chat, ...(responses ? { responses } : {}), error: chat.ok ? undefined : chat.error };
     }
     const explicit = (draft?.runtime ?? saved?.runtime) as RuntimeKind | undefined;
     let chat = await chatProbe(full, explicit, model);

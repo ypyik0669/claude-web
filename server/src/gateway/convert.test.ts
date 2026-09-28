@@ -3,7 +3,7 @@ import { buildOutbound, inboundStreamRenderer, joinUrl, outboundStreamParser, pa
 import { SseParser } from './sse.js';
 import { collect, type IrEvent } from './ir.js';
 import { sanitizeSchema } from './gemini.js';
-import { cacheKeyOf } from './cache.js';
+import { affinityHeaders, cacheKeyOf } from './cache.js';
 
 // Fixtures follow the documented shapes of each API.
 const anthropicReq = {
@@ -379,13 +379,24 @@ describe('prompt caching on translated requests', () => {
     // no key → breakpoints still, no metadata
     expect(buildOutbound('anthropic', { ...ir, cacheKey: undefined }).body.metadata).toBeUndefined();
   });
-  it('the cache key comes from prompt_cache_key → session_id / x-client-request-id → x-claude-code-session-id → metadata.user_id', () => {
+  it('the cache key comes from prompt_cache_key → session_id → x-claude-code-session-id → metadata.user_id (never x-client-request-id: that is per request)', () => {
     expect(cacheKeyOf({ prompt_cache_key: 'k1', metadata: { user_id: 'u' } }, { session_id: 's' })).toBe('k1');
     expect(cacheKeyOf({ metadata: { user_id: 'u' } }, { session_id: 's', 'x-client-request-id': 'r' })).toBe('s');
-    expect(cacheKeyOf({}, { 'x-client-request-id': 'r', 'x-claude-code-session-id': 'c' })).toBe('r');
+    expect(cacheKeyOf({}, { 'x-client-request-id': 'r', 'x-claude-code-session-id': 'c' })).toBe('c');
     expect(cacheKeyOf({ metadata: { user_id: 'u' } }, { 'x-claude-code-session-id': 'c' })).toBe('c');
-    expect(cacheKeyOf({ metadata: { user_id: 'u' } }, {})).toBe('u');
-    expect(cacheKeyOf({}, {})).toBeUndefined();
+    expect(cacheKeyOf({ metadata: { user_id: 'u' } }, { 'x-client-request-id': 'r' })).toBe('u');
+    expect(cacheKeyOf({}, { 'x-client-request-id': 'r' })).toBeUndefined();
+  });
+  it('outbound affinity headers: session_id + x-session-affinity (+ x-grok-conv-id), no x-client-request-id', () => {
+    expect(affinityHeaders('k', false)).toEqual({ session_id: 'k', 'x-session-affinity': 'k' });
+    expect(affinityHeaders('k', true)).toEqual({ session_id: 'k', 'x-session-affinity': 'k', 'x-grok-conv-id': 'k' });
+  });
+  it('only the billing-header LINE goes, the rest of its block / string stays', () => {
+    const sys = (system: unknown) => parseInbound('anthropic', { model: 'x', max_tokens: 1, system, messages: [{ role: 'user', content: 'hi' }] }, { stream: false }).system;
+    expect(sys('x-anthropic-billing-header: cc_version=1;\nYou are Claude Code, do X')).toBe('You are Claude Code, do X');
+    expect(sys([{ type: 'text', text: 'x-anthropic-billing-header: v=1;\nYou are Claude Code' }, { type: 'text', text: 'More' }])).toBe('You are Claude Code\n\nMore');
+    expect(sys([{ type: 'text', text: 'x-anthropic-billing-header: v=1;' }, { type: 'text', text: 'Only this' }])).toBe('Only this');
+    expect(sys('Mentions x-anthropic-billing-header: mid-line stays')).toBe('Mentions x-anthropic-billing-header: mid-line stays');
   });
   it('anthropic → openai drops the per-request x-anthropic-billing-header block so sessions share one static prefix', () => {
     const req = { model: 'claude-x', max_tokens: 10, system: [{ type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.300.a1b; cc_entrypoint=cli; cch=0f3e1;' }, { type: 'text', text: 'You are Claude Code.', cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: 'hi' }] };

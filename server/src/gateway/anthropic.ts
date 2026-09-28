@@ -1,11 +1,17 @@
 // Anthropic Messages API ⇄ IR. Shapes per docs.anthropic.com (Messages, streaming events).
 import { newId, safeJson, mergeAlternating, type IrEvent, type IrMessage, type IrPart, type IrRequest, type IrResponse, type IrStop, type IrTool, type IrUsage, type StreamParser, type StreamRenderer } from './ir.js';
 import { sse } from './sse.js';
-import { isBillingHeader } from './cache.js';
+import { stripBillingHeader } from './cache.js';
 
 const textOf = (c: unknown): string => typeof c === 'string' ? c : Array.isArray(c) ? c.map((b: any) => (b?.type === 'text' ? b.text ?? '' : '')).filter(Boolean).join('\n\n') : '';
-/** System text for translation: Claude Code's per-request billing line would make every session's prefix differ. */
-const systemOf = (c: unknown): string => textOf(Array.isArray(c) ? c.filter((b: any) => !(b?.type === 'text' && isBillingHeader(String(b.text ?? '')))) : typeof c === 'string' && isBillingHeader(c) ? '' : c);
+/**
+ * System text for translation: Claude Code's per-request billing line would make every session's prefix differ.
+ * Only that line goes; a block left empty by it is dropped.
+ */
+const noBilling = (t: string) => { const s = stripBillingHeader(t); return s === t ? t : s.trim(); };
+const systemOf = (c: unknown): string => typeof c === 'string'
+  ? noBilling(c)
+  : textOf(Array.isArray(c) ? c.map((b: any) => (b?.type === 'text' ? { ...b, text: noBilling(String(b.text ?? '')) } : b)) : c);
 
 export interface AnthropicRenderOpts { /** `1h` = the extended cache TTL (2× base write price vs 1.25×); default 5 minutes */ cacheTtl?: '1h' }
 
