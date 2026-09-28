@@ -95,6 +95,16 @@ function MoreMenu({ mounted, open: temps, active, onPick, onClose }: { mounted: 
   const close = useCallback((refocus: boolean) => { setOpen(false); if (refocus) btn.current?.focus(); }, []);
   const front = !!active && temps.includes(active);
   const names = temps.map((id) => PANEL_TITLES[id]).join('、');
+  // closing one from 「已打开」 (the × was focused — a keyboard user): the focus moves to the next open row, else the
+  // one before it; with none left the menu closes and the focus goes back to 「更多」 (never left on <body>, where
+  // neither the arrows nor Esc reach the menu)
+  const closeOpen = (id: PanelId) => {
+    const i = temps.indexOf(id);
+    const next = temps[i + 1] ?? temps[i - 1];
+    onClose(id);
+    if (!next) { close(true); return; }
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`.dock-more-menu .dock-more-open[data-open="${next}"] > button[data-panel]`)?.focus());
+  };
   const title = temps.length ? `更多面板 · 已打开：${names}` : '更多面板：目标、编排、用量、Issue 与 PR…';
   return (
     <>
@@ -112,7 +122,7 @@ function MoreMenu({ mounted, open: temps, active, onPick, onClose }: { mounted: 
                   <button role="menuitemradio" aria-checked={active === id} data-mi data-panel={id} onClick={() => { onPick(id); setOpen(false); }}>
                     <Icon name={PANEL_ICONS[id]} size={14} /><span className="grow">{PANEL_TITLES[id]}</span>{active === id && <Icon name="check" size={13} />}
                   </button>
-                  <button className="x" role="menuitem" data-mi title={`关闭${PANEL_TITLES[id]}`} aria-label={`关闭${PANEL_TITLES[id]}`} onClick={() => { onClose(id); if (temps.length <= 1) setOpen(false); }}><Icon name="close" size={12} /></button>
+                  <button className="x" role="menuitem" data-mi title={`关闭${PANEL_TITLES[id]}`} aria-label={`关闭${PANEL_TITLES[id]}`} onClick={() => closeOpen(id)}><Icon name="close" size={12} /></button>
                 </div>
               ))}
               <div className="menu-sep" />
@@ -176,6 +186,8 @@ export function Dock() {
   const stacked = simple && place.stacked;
   // no room for a strip: the temporary tabs are listed in 「更多」 (default look only; workbench tabs are icons)
   const folded = simple && place.folded && temps.length > 0;
+  // …and one of them is in front: nothing in the row names it, so the panel gets a title row with its ×
+  const foldedFront = folded && !!active && temps.some((t) => t.id === active);
 
   // the temporary strip's edges fade (and get an arrow) while there is more to scroll to on that side
   const updateFade = () => {
@@ -322,7 +334,17 @@ export function Dock() {
           {!min && <button className="icon-btn" title={`隐藏${TERMS.dock} (${modKey}+J)`} aria-label={`隐藏${TERMS.dock}`} onClick={() => dispatch({ t: 'dock.set', patch: { open: false } })}><Icon name="close" size={15} /></button>}
         </span>
       </div>
-      <div className="dock-body">
+      <div className={clsx('dock-body', foldedFront && 'headed')}>
+        {/* a temporary panel in front that has no tab of its own (folded into 「更多」): its name and × on top of the
+            panel itself — the tab row does not move, no fixed tab is lit, and it says what this is and how to close it */}
+        {foldedFront && active && (
+          <div className="dock-foldhead" data-panel={active}>
+            <Icon name={PANEL_ICONS[active]} size={14} />
+            <span className="t">{PANEL_TITLES[active]}</span>
+            <span className="grow" />
+            <button className="icon-btn xs" title={`关闭${PANEL_TITLES[active]}`} aria-label={`关闭${PANEL_TITLES[active]}`} onClick={() => close(active)}><Icon name="close" size={12} /></button>
+          </div>
+        )}
         {mounted.map((id) => (
           <div key={id} className="dock-panel" hidden={active !== id} data-panel={id}>
             <PanelBody id={id} visible={shown && !min && active === id} />

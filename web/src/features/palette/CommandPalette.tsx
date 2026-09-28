@@ -97,7 +97,7 @@ export function CommandPalette() {
   }, [st.layout.dock, st.theme, st.sidebarOpen, st.showArchived, st.settings, st.sessionMeta, active?.sessionId, active?.state]);
 
   const ql = q.replace(/^>/, '').trim().toLowerCase();
-  // name hits first, then the conversations, then the rest of a group the query names (「面板」 → every panel)
+  // name hits first, then the conversations, then (in one block each) every group the query names (「面板」 → every panel)
   const { named: cmdHits, grouped: groupHits } = pf.filtered ? { named: [], grouped: [] } : commandHits(commands, ql);
   // local fallback (and the only list before the index exists / for filter-only queries the index cannot answer)
   const localHits = () => st.sessions.filter((s) => !s.parentId && (!pf.agent || (s.agent ?? 'claude') === pf.agent) && (!pf.cwd || (s.cwd ?? '').toLowerCase().includes(pf.cwd)) && (!pf.rest || s.title.toLowerCase().includes(pf.rest.toLowerCase()))).slice(0, pf.filtered ? 30 : 12);

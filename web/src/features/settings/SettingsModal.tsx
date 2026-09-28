@@ -264,7 +264,7 @@ function useNavStatus() {
   const [gateway, setGateway] = useState<boolean | null>(null);
   useEffect(() => {
     let live = true;
-    ws.request<any>({ kind: 'config.auth' }).then((a) => live && setLoggedIn(typeof a?.loggedIn === 'boolean' ? a.loggedIn : null)).catch(() => {});
+    useStore.getState().checkAuth().then((a) => live && setLoggedIn(typeof a?.loggedIn === 'boolean' ? a.loggedIn : null)).catch(() => {});
     const loadGw = () => ws.request<GatewayStatus>({ kind: 'gateway.status' }).then((g) => live && setGateway(!!g?.enabled)).catch(() => {});
     void loadGw();
     const off = ws.on((e) => { if (e.kind === 'gateway.changed') void loadGw(); });

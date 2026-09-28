@@ -24,7 +24,7 @@ export function Onboarding() {
   const [checking, setChecking] = useState(false);
   // first run only: existing installs (already have a workspace) skip the wizard
   const show = metaLoaded && !settings.onboarded && workspaces.length === 0;
-  const checkAuth = (force = false) => { setChecking(true); ws.request<any>({ kind: 'config.auth', force }).then(setAuth).catch(() => setAuth({ loggedIn: false })).finally(() => setChecking(false)); };
+  const checkAuth = (force = false) => { setChecking(true); useStore.getState().checkAuth(force).then(setAuth).catch(() => setAuth({ loggedIn: false })).finally(() => setChecking(false)); };
   useEffect(() => { if (show) checkAuth(); }, [show]);
   if (!show) return null;
   const finish = () => void setSetting('onboarded', true);
