@@ -8,6 +8,7 @@ import { RunnerPool } from './runtime/pool.js';
 import { SessionService } from './sessions/service.js';
 import { ConfigService } from './config/service.js';
 import { UsageService } from './usage/service.js';
+import { providerTimeline } from './usage/timeline.js';
 import { ATTACH_MAX_BYTES, FilesService, attachmentPath, dataDir } from './files/service.js';
 import { TerminalService } from './terminal/service.js';
 import { engineInfo } from './claude-exe.js';
@@ -301,7 +302,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   fedHealth = (nonce, authed) => federation.healthInfo(nonce, authed);
   const goals = new GoalService(meta, pool);
   const orchestra = await createOrchestra({ pool, meta, canonical, transcripts, agents, git: gitSvc, goals, library, im });
-  const services = { orchestra, remote, tunnels, im, vcs: new VcsService(gitSvc), goals, android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService((sid) => { const pid = meta.sessionMeta(sid).providerId; const p = pid ? meta.provider(pid) : undefined; return p ? { type: p.type, name: p.name } : undefined; }), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway };
+  const services = { orchestra, remote, tunnels, im, vcs: new VcsService(gitSvc), goals, android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(async (sid) => providerTimeline(await canonical.providerSwitches(sid), meta.sessionMeta(sid).providerId, (id) => { const p = meta.provider(id); return p ? { type: p.type, name: p.name } : undefined; })), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway };
   new Hub(wss, services);
   // model lists older than a day (or never pulled) are refreshed in the background — list only, no tokens
   void providers.autoRefreshModels();

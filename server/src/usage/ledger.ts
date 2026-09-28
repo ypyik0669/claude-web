@@ -47,6 +47,7 @@ export class LedgerService {
       const type = providerId ? this.providerType?.(providerId) : undefined;
       const cacheRead = u.cache_read_input_tokens ?? 0;
       const input = u.input_tokens ?? 0;
+      const unknown = !!m.cost_unknown || !trustsCliCost(type, model);
       this.record({
         ts: Date.now(),
         sessionId,
@@ -57,8 +58,9 @@ export class LedgerService {
         output: u.output_tokens ?? 0,
         cacheRead,
         cacheWrite: u.cache_creation_input_tokens ?? 0,
-        // ccb prices every model with Claude's table: meaningless for other vendors' models (0 = unknown)
-        costUsd: trustsCliCost(type, model) ? m.total_cost_usd ?? 0 : 0,
+        // ccb prices every model with Claude's table: meaningless for other vendors' models (0 + costUnknown)
+        costUsd: unknown ? 0 : m.total_cost_usd ?? 0,
+        ...(unknown ? { costUnknown: true } : {}),
         ok: !m.is_error,
         error: m.is_error ? (m.subtype ?? m.terminal_reason ?? 'error') : undefined,
         turns: m.num_turns,

@@ -32,6 +32,12 @@ describe('LedgerService.observe', () => {
     l.observe('s', result('claude-opus-4-5', { input_tokens: 1, output_tokens: 1 }), 'ant');
     l.observe('s', result('claude-opus-4-5', { input_tokens: 1, output_tokens: 1 }));
     expect(rows.map((r) => r.costUsd)).toEqual([0, 0, 0, 0, 1.23, 1.23]);
+    expect(rows.map((r) => !!r.costUnknown)).toEqual([true, true, true, true, false, false]);
+  });
+  it('a result already marked cost_unknown (runner / Codex / ACP) stays unknown', () => {
+    const { l, rows } = ledger();
+    l.observe('s', { ...result('gpt-5-codex', { input_tokens: 1, output_tokens: 1 }, 0), cost_unknown: true });
+    expect(rows[0]).toMatchObject({ costUsd: 0, costUnknown: true });
   });
   it('cache writes are recorded', () => {
     const { l, rows } = ledger();

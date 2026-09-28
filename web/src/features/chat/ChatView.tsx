@@ -5,7 +5,8 @@ import { fmtSize } from '@/model/attachments';
 import { useScopedSession, useScopedSessionId, useStore } from '@/store';
 import { usePaneCtx } from '@/store/paneContext';
 import { activeGroup } from '@/model/layout';
-import { clsx, fmtMs, fmtTok, fmtUsd } from '@/util';
+import { clsx, fmtMs, fmtTok } from '@/util';
+import { fmtCost } from '@/model/cost';
 import { AssistantActions, UserActions, UserEditor } from './MessageActions';
 import { FindBar } from './FindBar';
 import { Markdown } from './Markdown';
@@ -249,7 +250,7 @@ export function ItemList({ items, version, live = false }: { items: Item[]; vers
                 {it.isError && <span title={it.text}>{it.errorKind ? ERROR_LABEL[it.errorKind] : '错误'}: {(it.text ?? '').slice(0, 200)}</span>}
                 <span>{fmtMs(it.durationMs)}</span>
                 <span>{it.numTurns} 步</span>
-                <span>{fmtUsd(it.costUsd)}</span>
+                <span title={it.costUnknown ? '这个模型 / agent 没有可靠的价格（ccb 按 Claude 价表估的数不作数）' : undefined}>{fmtCost(it.costUsd, it.costUnknown)}</span>
                 {it.usage ? <span>↑{fmtTok((it.usage as any).input_tokens + (it.usage as any).cache_read_input_tokens)} ↓{fmtTok((it.usage as any).output_tokens)}</span> : null}
               </div>
             );

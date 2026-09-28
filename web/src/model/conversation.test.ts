@@ -118,6 +118,14 @@ describe('health signals', () => {
     expect(c.lastResult?.errorKind).toBeUndefined();
   });
 
+  it('a result the server marked cost_unknown (non-Claude model / Codex / ACP) carries costUnknown — never shown as $0', () => {
+    const c = createConversation();
+    applyMessage(c, { ...base, type: 'result', subtype: 'success', is_error: false, result: 'ok', duration_ms: 1, duration_api_ms: 1, num_turns: 1, total_cost_usd: 0, cost_unknown: true });
+    expect(c.lastResult?.costUnknown).toBe(true);
+    applyMessage(c, { ...base, type: 'result', subtype: 'success', is_error: false, result: 'ok', duration_ms: 1, duration_api_ms: 1, num_turns: 1, total_cost_usd: 0.5 });
+    expect(c.lastResult?.costUnknown).toBeFalsy();
+  });
+
   it('rate_limit_event rejected → quota state + notice; later error result inherits quota kind', () => {
     const c = createConversation();
     applyMessage(c, { ...base, type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: Math.floor(now / 1000) + 3600, rateLimitType: 'five_hour', utilization: 1 } });

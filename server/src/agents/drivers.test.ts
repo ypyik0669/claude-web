@@ -128,6 +128,8 @@ describe('CodexDriver (mock app-server)', () => {
     const result = msgs.find((m) => m.type === 'result');
     // the whole turn (two model calls, one update re-sent), with the cached part taken out of input
     expect(result.usage).toMatchObject({ input_tokens: 25, cache_read_input_tokens: 23, cache_creation_input_tokens: 2, output_tokens: 14 });
+    // Codex reports no price: unknown, never shown as $0
+    expect(result).toMatchObject({ total_cost_usd: 0, cost_unknown: true });
     const tr = msgs.find((m) => m.type === 'user' && m.message.content[0]?.tool_use_id === 'cmd-1');
     expect(tr.tool_use_result.stdout).toBe('hi\n');
     expect(tr.message.content[0].is_error).toBe(false);

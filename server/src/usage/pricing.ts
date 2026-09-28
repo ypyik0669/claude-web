@@ -32,6 +32,19 @@ export function trustsCliCost(type: ProviderType | undefined, model: string): bo
 }
 
 /**
+ * A Claude session's `result` message with an untrustworthy cost: `total_cost_usd` → 0 and `cost_unknown: true`,
+ * before the chat, Mission Control, goals, IM and orchestration ever see it (they show nothing for 0; the chat's
+ * result row says 费用未知). Mutates and returns the message; anything else passes as is.
+ */
+export function markUnknownCost<T extends { type?: string; total_cost_usd?: number; modelUsage?: Record<string, unknown>; cost_unknown?: boolean }>(m: T, type: ProviderType | undefined): T {
+  if (m?.type !== 'result') return m;
+  const models = Object.keys(m.modelUsage ?? {});
+  const trusted = models.length ? models.every((x) => trustsCliCost(type, x)) : trustsCliCost(type, '');
+  if (!trusted) { m.total_cost_usd = 0; m.cost_unknown = true; }
+  return m;
+}
+
+/**
  * ccb's Gemini adapter reports `promptTokenCount` (which already includes the cached part) as input_tokens
  * AND the cached part as cache_read_input_tokens — the hit would be counted twice. Other adapters subtract it.
  */

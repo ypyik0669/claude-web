@@ -115,6 +115,8 @@ export class MessageSynth {
       duration_api_ms: Date.now() - this.turnStart,
       num_turns: 1 + this.toolsInTurn,
       total_cost_usd: o.costUsd ?? 0,
+      // Codex / ACP agents report no cost: unknown, not $0
+      ...(o.costUsd === undefined ? { cost_unknown: true } : {}),
       usage: { input_tokens: o.usage?.input ?? 0, output_tokens: o.usage?.output ?? 0, cache_read_input_tokens: o.usage?.cacheRead ?? 0, cache_creation_input_tokens: o.usage?.cacheWrite ?? 0 },
       modelUsage: this.model ? { [this.model]: { inputTokens: o.usage?.input ?? 0, outputTokens: o.usage?.output ?? 0, costUSD: o.costUsd ?? 0 } } : {},
       terminal_reason: ok ? 'completed' : 'api_error',

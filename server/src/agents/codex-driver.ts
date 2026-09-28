@@ -155,7 +155,8 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
       case 'item/started': this.onItem(p.item, false); break;
       case 'item/completed': this.onItem(p.item, true); break;
       case 'item/commandExecution/outputDelta': { const it = this.items.get(p.itemId); if (it) it.output += p.delta ?? ''; break; }
-      case 'thread/tokenUsage/updated': this.usage.update(p?.tokenUsage); break;
+      // only this thread's: sub-agent threads report their own cumulative totals on the same connection
+      case 'thread/tokenUsage/updated': if (!p?.threadId || p.threadId === this.threadId) this.usage.update(p?.tokenUsage); break;
       case 'error': if (!p?.willRetry) this.push(this.synth.systemNote(`Codex 错误：${p?.error?.message ?? ''}`, 'error')); break;
       case 'turn/completed': this.onTurnCompleted(p?.turn); break;
       case 'thread/name/updated': if (p?.name) void this.transcripts.patchHead(this.sessionId, { title: p.name }); break;

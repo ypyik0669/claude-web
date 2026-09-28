@@ -145,6 +145,8 @@ rl.on('line', async (line) => {
         notify('item/commandExecution/outputDelta', { threadId, turnId: 'turn-1', itemId: 'cmd-1', delta: ok ? 'hi\n' : '' });
         notify('item/completed', { threadId, turnId: 'turn-1', item: { type: 'commandExecution', id: 'cmd-1', command: 'echo hi', cwd: 'C:/x', status: ok ? 'completed' : 'declined', aggregatedOutput: ok ? 'hi\n' : '', exitCode: ok ? 0 : 1, commandActions: [] } });
       }
+      // a sub-agent thread's usage arrives on the same connection: it is not this thread's turn
+      notify('thread/tokenUsage/updated', { threadId: 'thr-subagent', turnId: 'turn-x', tokenUsage: { total: bd(777_000, 1, 0, 5), last: bd(777_000, 1, 0, 5), modelContextWindow: 200000 } });
       for (const call of TURN_CALLS) {
         usageTotal = sum(usageTotal, call);
         notify('thread/tokenUsage/updated', { threadId, turnId: 'turn-1', tokenUsage: { total: usageTotal, last: call, modelContextWindow: 200000 } });
