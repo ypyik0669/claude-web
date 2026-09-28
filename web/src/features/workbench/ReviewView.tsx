@@ -8,7 +8,8 @@ import { DiffView } from '@/features/chat/DiffView';
 import { sessionPeer } from '@/features/peers';
 import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
-import { TERMS } from '@/ui/terms';
+import { EMPTY, TERMS, emptyText } from '@/ui/terms';
+import { EmptyState } from '@/ui/EmptyState';
 import { GitView } from './GitView';
 import { Popover } from '@/features/composer/Popover';
 import { coalesce, gitEventConcerns } from './git-refresh';
@@ -313,16 +314,16 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
   const closeMore = useCallback((refocus: boolean) => { setMoreMenu(false); if (refocus) moreBtn.current?.focus(); }, []);
   const setAll = (v: boolean) => setOpen((o) => { const n = { ...o }; for (const r of rows) n[`${sc}|${r.key}`] = v; return n; });
 
-  if (!active) return <div className="empty">还没有打开对话。打开一个对话后，它的改动会出现在这里。</div>;
+  if (!active) return <EmptyState e={EMPTY.reviewNoChat} />;
   if (peer) return <div className="empty">这个对话在机器「{peer.name}」上，它的改动要在那台机器上审阅。</div>;
 
   // (before the status arrives the default scope is only a guess: say so instead of showing one and jumping)
   const scopeLabel = !scope && !loaded ? '读取中…' : sc === 'commit' && rev ? `提交 ${rev.short}` : SCOPE_LABEL[sc];
   const empty =
     !loaded ? '读取中…'
-    : sc === 'uncommitted' ? '没有未提交的改动，工作区是干净的。'
-    : sc === 'staged' ? '还没有暂存的改动。在「未提交的改动」里点文件右边的 ＋，或者用「全部暂存」。'
-    : sc === 'session' ? '这个对话还没有改动文件。Claude 改了文件之后会出现在这里。'
+    : sc === 'uncommitted' ? emptyText(EMPTY.reviewUncommitted)
+    : sc === 'staged' ? emptyText(EMPTY.reviewStaged)
+    : sc === 'session' ? emptyText(EMPTY.reviewSession)
     : !rev ? '从左上角的范围菜单里选一次提交。'
     : commitText === null ? '读取中…' : '这次提交没有改动文件。';
 

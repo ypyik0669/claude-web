@@ -155,8 +155,11 @@ const WHITELIST: [string, string, string][] = [
 function badWords(text: string): string[] {
   return [...CJK_BANNED.filter((w) => text.includes(w)), ...LATIN_BANNED.filter(([, re]) => re.test(text)).map(([w]) => w)];
 }
+/** A protocol request / event kind (`session.setEffort`, `goals.create`): an id the server reads, not text. */
+const PROTOCOL_KIND = /^[a-z][a-zA-Z]*(\.[a-zA-Z]+)+$/;
 function findings(file: string, src: string): string[] {
   return textsOf(file, src)
+    .filter((t) => !PROTOCOL_KIND.test(t))
     .filter((t) => !WHITELIST.some(([f, lit]) => f === file && t === lit))
     .flatMap((t) => badWords(t).map((w) => `${w}: ${t.trim().slice(0, 80)}`));
 }
@@ -224,6 +227,12 @@ describe('non-advanced settings pages speak the interface vocabulary (ui/terms.t
     expect(bad).toEqual([]);
   });
 
+  it('the scanner skips protocol request kinds (`session.setEffort`) — they are ids, not text', () => {
+    expect(findings('x.ts', `ws.request({ kind: 'session.setEffort', effort });`)).toEqual([]);
+    // …but only a whole literal that is nothing else: text around one is still text
+    expect(findings('x.ts', `toast('session.setEffort 档案');`).length).toBeGreaterThan(0);
+  });
+
   it('the scanner catches words in text and strings, not in tooltips, class names or comments', () => {
     const f = 'x.tsx';
     expect(findings(f, `const a = <div title="供应商档案">ok</div>; // 引擎`)).toEqual([]);
@@ -242,5 +251,50 @@ describe('non-advanced settings pages speak the interface vocabulary (ui/terms.t
     expect(findings(f, `const a = toast(\`\${n} 个档案已刷新\`);`)).toHaveLength(1);
     expect(findings(f, `const r = /'/; const a = <b>档案</b>;`)).toHaveLength(1);
     expect(findings('y.ts', `st.toast('还没有可刷新的供应商档案');`)).toHaveLength(1);
+  });
+});
+
+/**
+ * Redesign phase 7: the same gate for the default screens outside the settings page — the start page (its notice,
+ * 入门清单, lists), the first-run wizard, the automation page and what it shows (定时任务 / 目标 / 编排), 任务, the
+ * composer and the model menu (their toasts and routes), and the server's own message for a provider an agent cannot
+ * use (`profileFitError`, shown as a toast when a model is picked).
+ */
+describe('default screens outside settings speak the interface vocabulary (phase 7)', () => {
+  const FILES = [
+    'features/workbench/Welcome.tsx',
+    'features/home/model.ts',
+    'features/home/Checklist.tsx',
+    'features/home/EngineNotice.tsx',
+    'features/home/HomeLists.tsx',
+    'features/onboarding/Onboarding.tsx',
+    'features/onboarding/steps.ts',
+    'features/automation/AutomationPage.tsx',
+    'features/automation/page.ts',
+    'features/automation/SchedulesView.tsx',
+    'features/goals/GoalsPanel.tsx',
+    'features/orchestra/OrchestraPanel.tsx',
+    'features/panels/TasksPanel.tsx',
+    'features/composer/Composer.tsx',
+    'features/models/ModelMenu.tsx',
+    'features/models/route.ts',
+    'ui/terms.ts',
+  ];
+  const SERVER_CATALOG = '../../server/src/models/catalog.ts';
+
+  it('none of them uses an implementation word where it can be seen', () => {
+    const bad: string[] = [];
+    for (const f of FILES) {
+      // terms.ts: only what is shown by default (the tooltips' raw values — effortTitle, ULTRACODE.title — are fine)
+      const src = f === 'ui/terms.ts' ? onlyDeclarations(f, read(f), ['EMPTY', 'DISCONNECTED', 'PERMISSION_MODES', 'EFFORT_LABEL', 'EFFORT_DESC', 'SIMPLIFIED_NOTICE']) : read(f);
+      bad.push(...findings(f, src).map((x) => `${f} — ${x}`));
+    }
+    bad.push(...findings(SERVER_CATALOG, onlyDeclarations(SERVER_CATALOG, read(SERVER_CATALOG), ['profileFitError'])).map((x) => `${SERVER_CATALOG}#profileFitError — ${x}`));
+    expect(bad).toEqual([]);
+  });
+
+  it('the model menu searches 「模型或供应商」, and a picked provider with no default model says 供应商', () => {
+    expect(textsOf('features/models/ModelMenu.tsx', read('features/models/ModelMenu.tsx'))).toContain('搜索模型或供应商…');
+    expect(read('features/models/route.ts')).toMatch(/供应商「\$\{/);
   });
 });

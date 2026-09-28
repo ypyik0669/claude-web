@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useScopedSession, useStore } from '@/store';
 import { clsx } from '@/util';
 import { sessionPeer } from '@/features/peers';
-import { TERMS } from '@/ui/terms';
+import { EMPTY, TERMS } from '@/ui/terms';
+import { EmptyState } from '@/ui/EmptyState';
 import { Icon } from '@/ui/icons';
 import { FileTree } from './FileTree';
 import { SearchView } from './SearchView';
@@ -46,7 +47,7 @@ export function FilesView({ visible, inDock }: { visible: boolean; inDock?: bool
   const [shownSid, setShownSid] = useState(sid);
   if (shownSid !== sid) { setShownSid(sid); setAskedArtifacts(false); }
 
-  if (!active) return <div className="empty">还没有打开对话。打开一个对话后，这里是它所在项目的文件。</div>;
+  if (!active) return <EmptyState e={EMPTY.filesNoChat} />;
   if (peer) return <div className="empty">这个对话在机器「{peer.name}」上，它的文件在那台机器上。</div>;
   const pick = (m: 'tree' | 'search') => { setMode(m); if (m === 'search') setSearched(true); };
   return (

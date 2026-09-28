@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EffortLevel, PermissionMode } from '@shared';
-import { EFFORT_DESC, EFFORT_LABEL, MODE_LABEL, PERMISSION_MODES, PERMISSION_MODE_ORDER, PHONE_NO_PANEL, ULTRACODE, WORKBENCH_VIEW_LABEL, effortLabel, effortTitle, panelToggleLabel } from './terms';
+import { DISCONNECTED, EFFORT_DESC, EFFORT_LABEL, EMPTY, MODE_LABEL, PERMISSION_MODES, PERMISSION_MODE_ORDER, ULTRACODE, WORKBENCH_VIEW_LABEL, effortLabel, effortTitle, emptyText, panelToggleLabel } from './terms';
 import { WORKBENCH_TABS } from '@/model/layout';
 
 const EFFORTS: EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
@@ -70,6 +70,21 @@ describe('right-panel toggle labels say what the toggle does (I6)', () => {
     expect(panelToggleLabel('show', '终端')).toBe('打开终端面板');
     expect(panelToggleLabel('hide', '终端')).toMatch(/^隐藏终端面板/);
     expect(panelToggleLabel('remove', '文件改动')).toBe('关闭文件改动面板');
-    expect(PHONE_NO_PANEL).not.toMatch(IMPL);
+  });
+});
+
+describe('empty states: one sentence (spec §5.8)', () => {
+  it('「还没有 X。Y 之后会出现在这里。」 everywhere, in interface words', () => {
+    for (const [k, e] of Object.entries(EMPTY)) {
+      const t = emptyText(e);
+      expect(t, k).toMatch(/^还没有[^。]+。[^。]+之后(，[^。]+)?会出现在这里。$/);
+      expect(t, k).not.toMatch(IMPL);
+      expect(t, k).not.toMatch(/会话/);
+    }
+    expect(emptyText(EMPTY.schedules)).toBe('还没有定时任务。设好时间和提示词之后会出现在这里。');
+    expect(emptyText(EMPTY.reviewNoChat)).toBe('还没有打开对话。打开一个对话之后，它的改动会出现在这里。');
+  });
+  it('the disconnect line', () => {
+    expect(DISCONNECTED).toBe('连接断开，正在重连…');
   });
 });

@@ -172,7 +172,7 @@ const AGENT_LABEL: Partial<Record<string, string>> = { claude: 'Claude Code', co
  */
 export function profileFitError(agent: AgentKind, type: ProviderType, runtime?: RuntimeKind): string | null {
   const types = providerTypesFor(agent);
-  if (!types.includes(type)) return `${AGENT_LABEL[agent] ?? agent} 不能用 ${type} 类型的档案（只支持 ${types.join(' / ')}）`;
-  if (agent === 'claude' && runtime === 'claude' && (type === 'openai' || type === 'gemini' || type === 'grok')) return `官方 Claude Code 引擎只支持 Anthropic 兼容 / 模型网关档案，${type} 类型需要 ccb 引擎`;
+  if (!types.includes(type)) return `${AGENT_LABEL[agent] ?? agent} 不能用 ${type} 类型的供应商（只支持 ${types.join(' / ')}）`;
+  if (agent === 'claude' && runtime === 'claude' && (type === 'openai' || type === 'gemini' || type === 'grok')) return `官方 Claude Code 只支持 Anthropic 兼容 / 模型网关类型的供应商，${type} 类型要换成 ccb 运行内核（设置 → 账号与登录 → 更多选项）`;
   return null;
 }

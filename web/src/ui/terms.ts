@@ -74,14 +74,37 @@ export const WORKBENCH_SETTING_PATH = '设置 → 通用';
 /** One-time toast for people who knew the old screen and land on the simplified one (ui.simplifiedNotice). */
 export const SIMPLIFIED_NOTICE = `界面已简化；需要分屏 / 标签 / 面板图标栏可在 ${WORKBENCH_SETTING_PATH} 打开「${TERMS.workbench}」`;
 
-/** A panel toggle on a phone, where the right panel is not drawn (spec §5.11; the bottom drawer comes in phase 7). */
-export const PHONE_NO_PANEL = `手机上没有${TERMS.dock}：改动 / Git / 文件在对话右上角的 ··· 里`;
-/** `openSchedules()` on a phone with no conversation open (with one, the list opens in its place). */
-export const PHONE_SCHEDULES_NO_CHAT = '手机上的定时任务在对话右上角的 ··· 里：先打开一个对话';
-/** `openSchedules()` on a phone whose current conversation is on another machine (its ··· has no scheduled tasks). */
-export const PHONE_SCHEDULES_REMOTE = '这个对话在另一台机器上：打开一个本机的对话，再从右上角的 ··· 打开定时任务';
-/** 详情 (a tool row, an attachment chip) on a phone: no right panel; a step opens in place in the conversation. */
-export const PHONE_NO_INSPECTOR = `手机上没有${TERMS.dock}：点对话里的这一步就能展开它的输入和结果`;
+/** The connection to the server is down (the main area's banner, the account row). */
+export const DISCONNECTED = '连接断开，正在重连…';
+
+/**
+ * Empty states say one thing the same way (spec §5.8): 「还没有 X。Y 之后会出现在这里。」 — with at most one button next
+ * to it. `subject` names what appears when that is not X itself (「…打开一个对话之后，它的改动会出现在这里。」).
+ */
+export interface EmptyTerm { what: string; when: string; subject?: string }
+export function emptyText(e: EmptyTerm): string {
+  return `还没有${e.what}。${e.when}之后${e.subject ? `，${e.subject}` : ''}会出现在这里。`;
+}
+export const EMPTY = {
+  // the right panel
+  reviewNoChat: { what: '打开对话', when: '打开一个对话', subject: '它的改动' },
+  reviewSession: { what: '改动', when: 'Claude 改了文件' },
+  reviewUncommitted: { what: '未提交的改动', when: '项目里的文件有了改动' },
+  reviewStaged: { what: '暂存的改动', when: '在「未提交的改动」里暂存文件' },
+  filesNoChat: { what: '打开对话', when: '打开一个对话', subject: '它所在项目的文件' },
+  artifacts: { what: '生成的文件', when: 'Claude 新建了文件' },
+  tasksNoChat: { what: '打开对话', when: '打开一个对话', subject: '它的子代理、后台任务和计划' },
+  tasks: { what: '子代理或后台任务', when: 'Claude 派出子代理、在后台跑命令' },
+  // the automation page
+  schedules: { what: '定时任务', when: '设好时间和提示词' },
+  scheduleRuns: { what: '运行记录', when: '定时任务跑过一次' },
+  goals: { what: '目标', when: '用「新目标」或在输入框里输入 /goal 设定一个' },
+  workflows: { what: '工作流', when: '新建一个或从模板开始' },
+  orchestraRuns: { what: '运行记录', when: '运行一个工作流' },
+  // the start page
+  recent: { what: '对话', when: '发出第一个任务' },
+  archived: { what: '归档的对话', when: '归档一个对话' },
+} as const satisfies Record<string, EmptyTerm>;
 
 /**
  * Palette / rail label for toggling a right-panel tab, from what the toggle will do (`panelToggleEffect`): the

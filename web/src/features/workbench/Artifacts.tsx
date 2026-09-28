@@ -4,6 +4,8 @@ import { basename } from '@/util';
 import { walkTools } from '@/model/conversation';
 import { blockRemoteOpen } from '@/features/remote-guard';
 import { Icon } from '@/ui/icons';
+import { EmptyState } from '@/ui/EmptyState';
+import { EMPTY } from '@/ui/terms';
 
 /** Files a session produced: Artifact tool outputs and Write-created files, newest first. */
 export function useArtifacts(sessionId: string | null | undefined): { path: string; via: string }[] {
@@ -24,7 +26,7 @@ export function useArtifacts(sessionId: string | null | undefined): { path: stri
 export function Artifacts({ sessionId, compact }: { sessionId: string; compact?: boolean }) {
   const items = useArtifacts(sessionId);
   const openTile = useStore((s) => s.openTile);
-  if (!items.length) return compact ? null : <div className="empty">还没有生成的文件。Claude 新建的文件（Write / Artifact）之后会出现在这里。</div>;
+  if (!items.length) return compact ? null : <EmptyState e={EMPTY.artifacts} />;
   return (
     <div className="list">
       {items.map((a) => (
