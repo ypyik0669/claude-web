@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefO
 import { createPortal } from 'react-dom';
 import { clsx } from '@/util';
 import { placeMenu, samePlacement, type Placement } from '@/features/models/place';
-import { menuKey } from './dir-menu';
+import { fieldStep, menuKey } from './dir-menu';
 
 const FIELD_KEYS = new Set(['ArrowUp', 'ArrowDown', 'Escape', 'Tab']);
 
@@ -11,7 +11,8 @@ const FIELD_KEYS = new Set(['ArrowUp', 'ArrowDown', 'Escape', 'Tab']);
  * to its chip — a pane's `overflow: hidden` would clip it otherwise — on whichever side has more room (placeMenu),
  * following the chip when the composer grows or the pane is resized. Closes on a click outside (the chip's own
  * click toggles it), Esc / Tab (focus back to the chip). ↑ ↓ Home End move between the rows (`[data-mi]`; a text
- * field can be one of them); inside a text field only ↑ ↓ leave it — Home / End move the caret.
+ * field can be one of them); inside a text field ↑ ↓ and Tab / Shift+Tab move on to the rows (a search box goes to
+ * the first result after it) — Home / End move the caret.
  */
 export function Popover({ anchor, onClose, prefer = 'up', align = 'left', className, label, children, role = 'menu' }: {
   anchor: RefObject<HTMLElement | null>;
@@ -74,10 +75,23 @@ export function Popover({ anchor, onClose, prefer = 'up', align = 'left', classN
   }, [anchor, onClose]);
   const onKey = (e: React.KeyboardEvent) => {
     const t = e.target as HTMLElement;
-    // in a text field only ↑ ↓ (to the rows), Esc and Tab belong to the menu; Home / End / typing stay the field's
-    if ((t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') && (e.nativeEvent.isComposing || !FIELD_KEYS.has(e.key))) return;
+    const field = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA';
+    // in a text field only ↑ ↓ Tab (on to the rows) and Esc belong to the menu; Home / End / typing stay the field's
+    if (field && (e.nativeEvent.isComposing || !FIELD_KEYS.has(e.key))) return;
     const rows = [...(box.current?.querySelectorAll<HTMLElement>('[data-mi]:not(:disabled)') ?? [])];
-    const act = menuKey(e.key, rows.indexOf(document.activeElement as HTMLElement), rows.length);
+    // Tab in a text field moves on like ↓ (Shift+Tab like ↑) instead of closing the menu mid-search
+    const key = field && e.key === 'Tab' ? (e.shiftKey ? 'ArrowUp' : 'ArrowDown') : e.key;
+    const idx = rows.indexOf(document.activeElement as HTMLElement);
+    if (field && idx < 0 && (key === 'ArrowDown' || key === 'ArrowUp')) {
+      // a search box that is not a row: the first result after it, not the 返回 button before it
+      const before = rows.filter((r) => t.compareDocumentPosition(r) & Node.DOCUMENT_POSITION_PRECEDING).length;
+      const next = fieldStep(key === 'ArrowDown' ? 'down' : 'up', before, rows.length);
+      e.preventDefault();
+      e.stopPropagation();
+      if (next !== null) rows[next]?.focus();
+      return;
+    }
+    const act = menuKey(key, idx, rows.length);
     if (!act) return;
     e.preventDefault();
     e.stopPropagation();

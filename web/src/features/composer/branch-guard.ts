@@ -23,18 +23,22 @@ export function busyInCheckout(root: string | null | undefined, sessions: readon
 
 /**
  * Every conversation this server knows to be alive: the session list's `live` (runners started anywhere — another
- * window, IM, a schedule) overlaid with this window's open sessions (fresher; brand-new ones are not listed yet).
+ * window, IM, a schedule) overlaid with this window's open sessions (fresher state; brand-new ones are not listed
+ * yet). Where it works: the list's cwd when there is one (the transcript's — a worktree conversation's is its
+ * worktree), else the open session's; a conversation opened with `{worktree}` keeps the repository ROOT as its
+ * `cwd` (Claude Code moves itself into `<root>/.claude/worktrees/<name>`), so its own checkout is that path.
  * Sessions on another machine are left out — their paths are not this disk.
  */
 export function liveSessions(
   list: readonly { sessionId: string; cwd: string; live?: string; peer?: unknown }[],
-  open: Readonly<Record<string, { cwd: string; state: string }>>,
+  open: Readonly<Record<string, { cwd: string; state: string; worktree?: string }>>,
 ): CheckoutUser[] {
   const out = new Map<string, CheckoutUser>();
   for (const s of list) if (!s.peer) out.set(s.sessionId, { cwd: s.cwd, state: s.live });
   for (const [id, o] of Object.entries(open)) {
     if (id.startsWith('peer_')) continue;
-    out.set(id, { cwd: o.cwd || out.get(id)?.cwd || '', state: o.state });
+    const own = o.worktree && o.cwd ? `${o.cwd.replace(/[\\/]+$/, '')}/.claude/worktrees/${o.worktree}` : o.cwd;
+    out.set(id, { cwd: out.get(id)?.cwd || own || '', state: o.state });
   }
   return [...out.values()];
 }

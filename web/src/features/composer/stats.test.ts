@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ringLevel, sessionTotals, usageLines } from './stats';
+import { meterMode, ringLevel, sessionTotals, usageLines } from './stats';
 
 const items = [
   { kind: 'user' },
@@ -24,6 +24,11 @@ describe('the old stats bar, now behind the usage ring', () => {
     expect(ringLevel(80)).toBe('strong');
     expect(ringLevel(94)).toBe('strong');
     expect(ringLevel(95)).toBe('err');
+  });
+  it('the corner: a ring with an occupancy, else a plain stats icon once there is a turn, else nothing (re-review 3 Minor 1)', () => {
+    expect(meterMode(40, 0)).toBe('ring');
+    expect(meterMode(undefined, 3)).toBe('plain');
+    expect(meterMode(undefined, 0)).toBeNull();
   });
   it('the lines the hover card shows (every field of the old bar)', () => {
     const lines = usageLines(sessionTotals(items), { lastMs: 4200, context: { percentage: 72, totalTokens: 145_000, maxTokens: 200_000 }, tasks: 2 });

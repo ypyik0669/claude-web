@@ -26,6 +26,11 @@ export interface QueuedMessage { id: string; text: string; images?: { mediaType:
 export interface OpenSession {
   sessionId: string;
   cwd: string;
+  /**
+   * opened with `openSession({worktree})`: Claude Code works in `<cwd>/.claude/worktrees/<name>` (its own checkout),
+   * while `cwd` stays the repository root the runner was started in
+   */
+  worktree?: string;
   conv: Conversation;
   version: number; // bumped on every mutation so React re-renders
   state: RunnerState | 'history';
@@ -451,7 +456,8 @@ export const useStore = create<State>((set, get) => ({
     } else {
       for (const m of r.history) applyMessage(conv, m);
     }
-    const o: OpenSession = { sessionId: r.sessionId, cwd: p.cwd, conv, version: (existing?.version ?? 0) + 1, state: r.info.state, info: r.info, pending: r.pending, loading: false, queue: existing?.queue ?? [], draft: existing?.draft ?? '', feedback: existing?.feedback ?? {}, contextUsage: existing?.contextUsage, lastSent: existing?.lastSent };
+    const worktree = p.worktree ?? (existing ? existing.worktree : undefined);
+    const o: OpenSession = { sessionId: r.sessionId, cwd: p.cwd, ...(worktree ? { worktree } : {}), conv, version: (existing?.version ?? 0) + 1, state: r.info.state, info: r.info, pending: r.pending, loading: false, queue: existing?.queue ?? [], draft: existing?.draft ?? '', feedback: existing?.feedback ?? {}, contextUsage: existing?.contextUsage, lastSent: existing?.lastSent };
     set((s) => {
       const open = { ...s.open };
       if (p.sessionId && p.sessionId !== r.sessionId && !p.fork && !p.resumeAt) delete open[p.sessionId];

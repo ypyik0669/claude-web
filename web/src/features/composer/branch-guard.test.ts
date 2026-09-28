@@ -34,4 +34,19 @@ describe('switching the welcome page\'s branch asks first when conversations wor
     expect(users).toHaveLength(3);
     expect(busyInCheckout('C:/r', users)).toBe(3); // a (another window), b (this window is fresher), d (not listed yet)
   });
+
+  // re-review 3 Important 1: a conversation opened here with {worktree} keeps the repository root as its cwd
+  it('a worktree conversation opened in this window is not 「in this checkout」 — listed or not yet listed', () => {
+    const root = 'C:\\work\\todo-api';
+    // listed: the list's cwd (the worktree) wins over this window's root-cwd
+    expect(busyInCheckout(root, liveSessions(
+      [{ sessionId: 'w1', cwd: `${root}\\.claude\\worktrees\\task-1`, live: 'running' }],
+      { w1: { cwd: root, state: 'running', worktree: 'task-1' } },
+    ))).toBe(0);
+    // brand-new, not in the list yet: only the open entry, whose worktree says where it works
+    expect(busyInCheckout(root, liveSessions([], { w1: { cwd: root, state: 'starting', worktree: 'task-1' } }))).toBe(0);
+    expect(busyInCheckout(`${root}\\`, liveSessions([], { w1: { cwd: `${root}\\`, state: 'running', worktree: 'task-1' } }))).toBe(0);
+    // an ordinary conversation next to it still counts
+    expect(busyInCheckout(root, liveSessions([], { w1: { cwd: root, state: 'running', worktree: 'task-1' }, n: { cwd: root, state: 'running' } }))).toBe(1);
+  });
 });

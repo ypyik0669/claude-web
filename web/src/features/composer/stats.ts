@@ -34,6 +34,15 @@ export function ringLevel(pct: number | undefined): RingLevel | null {
   return pct >= 95 ? 'err' : pct >= 80 ? 'strong' : 'note';
 }
 
+/**
+ * What sits in the composer's corner: the ring when the agent reports an occupancy; without one, a plain stats icon
+ * once the conversation has a turn (the old stats bar must stay reachable); nothing for an empty conversation.
+ */
+export function meterMode(pct: number | undefined, turns: number): 'ring' | 'plain' | null {
+  if (ringLevel(pct) !== null) return 'ring';
+  return turns > 0 ? 'plain' : null;
+}
+
 export function usageLines(t: Totals, o: { lastMs?: number; context?: { percentage: number; totalTokens: number; maxTokens: number; model?: string }; tasks?: number }): [string, string][] {
   const lines: [string, string][] = [
     ['轮数', String(t.turns)],

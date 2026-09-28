@@ -1,6 +1,5 @@
 import type { PermissionMode } from '@shared';
-
-const MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'];
+import { PERMISSION_MODE_ORDER } from '@/ui/terms';
 
 /**
  * 「新对话默认权限」 (settings `ui.defaultMode`) for a brand-new conversation opened without an explicit mode — the
@@ -10,5 +9,5 @@ const MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan', 'aut
 export function withDefaultMode<P extends { sessionId?: string; permissionMode?: PermissionMode }>(p: P, settings: Record<string, unknown>): P {
   if (p.sessionId || p.permissionMode) return p;
   const m = settings['ui.defaultMode'];
-  return typeof m === 'string' && (MODES as readonly string[]).includes(m) ? { ...p, permissionMode: m as PermissionMode } : p;
+  return typeof m === 'string' && (PERMISSION_MODE_ORDER as readonly string[]).includes(m) ? { ...p, permissionMode: m as PermissionMode } : p;
 }

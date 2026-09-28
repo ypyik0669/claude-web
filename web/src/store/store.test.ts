@@ -349,3 +349,19 @@ describe('新对话默认权限 (ui.defaultMode) for new conversations opened an
     expect(opened().map((p: any) => p.permissionMode)).toEqual([undefined, undefined]);
   });
 });
+
+describe('an open session remembers the worktree it was started in (re-review 3 Important 1)', () => {
+  beforeEach(() => {
+    const id = (p: any) => p.sessionId ?? (p.worktree ? 'wt1' : 'n2');
+    fake.handlers.set('session.open', (req: any) => ({ sessionId: id(req.params), info: { sessionId: id(req.params), state: 'starting', cwd: req.params.cwd }, history: [], pending: [] }));
+    fake.handlers.set('sessions.list', () => []);
+  });
+  it('openSession({worktree}) keeps the root as cwd and records the worktree; reopening without it keeps it', async () => {
+    await useStore.getState().openSession({ cwd: '/repo', worktree: 'task-1' }, 'none');
+    expect(useStore.getState().open.wt1).toMatchObject({ cwd: '/repo', worktree: 'task-1' });
+    await useStore.getState().openSession({ sessionId: 'wt1', cwd: '/repo' }, 'none');
+    expect(useStore.getState().open.wt1.worktree).toBe('task-1');
+    await useStore.getState().openSession({ cwd: '/repo' }, 'none'); // an ordinary one: no worktree at all
+    expect('worktree' in useStore.getState().open.n2).toBe(false);
+  });
+});

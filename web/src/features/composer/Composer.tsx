@@ -29,10 +29,6 @@ import { PermissionChip } from './PermissionChip';
 import { BranchChip, ProjectChip } from './ProjectChip';
 import { ContextMeter } from './ContextMeter';
 import { BAR_ID } from './ids';
-import { COMPOSER_REACH, PLACE_CONTAINER, PLACE_OPENER } from './reach';
-
-// ui-smoke walks the same reach table reach.test.ts checks (where every control of the old composer went)
-if (typeof window !== 'undefined') (window as any).__cwComposerReach = { reach: COMPOSER_REACH, container: PLACE_CONTAINER, opener: PLACE_OPENER };
 import { FEATURE_DEFAULTS_KEY, LEGACY_FEATURES_KEY, capabilityTags, migrateFeatureDefaults, withoutTag } from './capabilities';
 
 // sessions on another machine: uploads land on this machine's disk, out of the remote agent's reach
@@ -428,7 +424,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
       // the same hand-over as ··· 「交给其它 Agent 继续」 (same confirm, same refresh), on the picked model
       const summary = sessions.find((s) => s.sessionId === active.sessionId) ?? { sessionId: active.sessionId, title: '', cwd: active.cwd, lastModified: 0 };
       setSwapping(true);
-      try { return await handOver(summary, act.agent, act.model); } finally { setSwapping(false); }
+      try { return await handOver(summary, act.agent, act.model, it.display); } finally { setSwapping(false); }
     }
     if (act.confirm && !(await dlg.confirm('切换供应商？', { message: '对话正在运行，当前这一轮会被中断。换供应商会重启对话进程，历史保留。', okLabel: '切换' }))) return false;
     setSwapping(true);

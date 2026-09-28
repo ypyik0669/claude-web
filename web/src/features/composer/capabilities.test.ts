@@ -59,7 +59,8 @@ describe('+ menu sections', () => {
     const s = plusSections({ claude: true, live: true });
     expect(s.readOnly).toBe(true);
     expect(s.note).toBe(LIVE_CAPS_NOTE);
-    expect(LIVE_CAPS_NOTE).toMatch(/新对话生效/);
+    expect(LIVE_CAPS_NOTE).toMatch(/要改请在新对话的 \+ 里设置/);
+    expect(LIVE_CAPS_NOTE).not.toMatch(/生效/); // 「…在新对话生效」 read as if this menu changed them
   });
   it('other agents: no Claude-only capabilities (the old `!foreign` condition), goals still work', () => {
     const s = plusSections({ claude: false, live: false });

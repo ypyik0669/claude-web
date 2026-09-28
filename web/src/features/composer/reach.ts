@@ -15,10 +15,10 @@ export interface ReachEntry {
   place: ComposerPlace;
   sel: string;
   /**
-   * only present in some states: a running turn (插话), a browser with speech recognition (mic), a conversation whose
-   * agent reports the context occupancy (the ring), the + menu's 「Brief、频道…」 expanded (more)
+   * only present in some states: a running turn (插话), a browser with speech recognition (mic), a conversation with
+   * something to count — a turn or a reported occupancy (the ring / stats icon), the + menu's 「Brief、频道…」 expanded
    */
-  when?: 'running' | 'speech' | 'context' | 'more';
+  when?: 'running' | 'speech' | 'usage' | 'more';
 }
 
 /** The element each place lives in (after its chip is clicked). */
@@ -70,5 +70,5 @@ export const COMPOSER_REACH: ReachEntry[] = [
   { was: '插话', place: 'bar', sel: idSel(BAR_ID.steer), when: 'running' },
   { was: '发送 / 中断', place: 'bar', sel: idSel(BAR_ID.send) },
   // the stats bar under the composer (a conversation with context usage)
-  { was: '统计栏（轮数 / token / 缓存 / 费用 / 上轮 / 上下文 / 后台任务）', place: 'meter', sel: idSel(BAR_ID.meter), when: 'context' },
+  { was: '统计栏（轮数 / token / 缓存 / 费用 / 上轮 / 上下文 / 后台任务）', place: 'meter', sel: idSel(BAR_ID.meter), when: 'usage' },
 ];

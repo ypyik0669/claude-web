@@ -73,8 +73,11 @@ export function withoutTag(f: SessionFeatures, key: CapabilityTag['key']): Sessi
 
 export interface AttachItem { id: typeof PLUS_ID.files | typeof PLUS_ID.folder | typeof PLUS_ID.reference; label: string; icon: IconName; note?: string; disabled?: string }
 
-/** Under 「这次对话可以…」 in a running conversation: the switches show what it was started with, read-only. */
-export const LIVE_CAPS_NOTE = '开对话时就定下了，改动在新对话生效';
+/**
+ * Under 「这次对话可以…」 in a running conversation: the switches show what it was started with, read-only — the note
+ * says where they CAN be changed (「改动在新对话生效」 read as if this menu changed them).
+ */
+export const LIVE_CAPS_NOTE = '开对话时就定下了，要改请在新对话的 + 里设置';
 
 /**
  * What the + menu shows. `claude` = the conversation runs on Claude (the capabilities are Claude Code flags: the old

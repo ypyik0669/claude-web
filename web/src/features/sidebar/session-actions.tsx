@@ -5,6 +5,7 @@ import { ws } from '@/ws/client';
 import { dlg } from '@/ui/dialog';
 import { Icon, AGENT_ICONS } from '@/ui/icons';
 import { isImportedSessionId } from '@/util';
+import { handOverConfirmText, turnRunning } from './handover-text';
 import { agentOf, isArchived } from './filter';
 import { deleteSummary, deleteTargets, effectiveCaps, nativeCliCommand } from './caps';
 import { TERMS } from '@/ui/terms';
@@ -71,27 +72,16 @@ export async function forkSession(s: SessionSummary): Promise<void> {
   } catch (e) { st.toast(errText(e)); }
 }
 
-/** Confirm text for a hand-over: in place for claude-web / Claude sessions, a new session for imported ones. */
-export function handOverMessage(sessionId: string): string {
-  const tail = '新 agent 会收到一份结构化交接说明（已决定什么、改过哪些文件、试过什么失败了）。思考/推理内容带签名或加密，跨厂商无法携带，不会带过去。';
-  return isImportedSessionId(sessionId)
-    ? `这是从其它 agent 导入的会话：交接会新建一个会话（同一工作目录），原会话保持不变。${tail}`
-    : `会话 id、标题和历史都保留。${tail}`;
-}
-
 /**
- * Hand a session to another agent (··· and the model menu, which passes the model picked in that agent's section).
- * false = cancelled or failed.
+ * Hand a session to another agent (··· and the model menu, which passes the model picked in that agent's section
+ * and its name as the menu shows it). false = cancelled or failed.
  */
-export async function handOver(s: SessionSummary, agent: AgentKind, model?: string): Promise<boolean> {
+export async function handOver(s: SessionSummary, agent: AgentKind, model?: string, modelLabel?: string): Promise<boolean> {
   const st = useStore.getState();
   const name = agent === 'claude' ? 'Claude Code' : st.agents.find((a) => a.kind === agent)?.name ?? agent;
-  const state = st.open[s.sessionId]?.state;
-  const running = state === 'running' || state === 'waiting' || state === 'starting';
-  const ok = await dlg.confirm(`把这个对话交给 ${name}${model ? `（${model}）` : ''}？`, {
-    message: `${running ? '对话正在运行，当前这一轮会被中断。' : ''}${handOverMessage(s.sessionId)}`,
-    okLabel: '交接',
-  });
+  const running = turnRunning(st.open[s.sessionId]?.state, s.live);
+  const text = handOverConfirmText({ sessionId: s.sessionId, agentName: name, modelLabel: model ? modelLabel || model : undefined, running });
+  const ok = await dlg.confirm(text.title, { message: text.message, okLabel: '交接' });
   if (!ok) return false;
   try {
     const r = await ws.request<{ sessionId: string }>({ kind: 'session.switchAgent', sessionId: s.sessionId, agent, model });

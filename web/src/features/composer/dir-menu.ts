@@ -14,7 +14,18 @@ export function menuKey(key: string, index: number, count: number): { focus: num
   }
 }
 
-export type DirMenuLayout = Placement & { maxWidth: number; minWidth: number };
+/**
+ * Leaving a text field that is not a row itself (a search box above a list): ↓ / Tab go to the first row AFTER the
+ * field — the results, not a 「返回」 button placed before it — and ↑ / Shift+Tab to the row just before it, wrapping.
+ * `before` = how many rows precede the field in document order.
+ */
+export function fieldStep(key: 'down' | 'up', before: number, count: number): number | null {
+  if (!count) return null;
+  if (key === 'down') return before < count ? before : 0;
+  return before > 0 ? before - 1 : count - 1;
+}
+
+export type DirMenuLayout =Placement & { maxWidth: number; minWidth: number };
 
 /**
  * Where the menu goes and how wide it may be, as one value: below the chip, left-aligned; min / max width from
