@@ -31,7 +31,7 @@ const drafts = new Map<string, string>();
 /** The last open request (`useRightPanel().review.n`) the right panel's review applied: each is applied once, also
  *  across a remount (a request is not replayed when the tab is closed and opened again in workbench mode). */
 let appliedIntent = 0;
-/** The same for a phone's in-place 改动 view (`useRightPanel().inPlace.n`). */
+/** The same for an in-place 改动 view (`useRightPanel().inPlace.n`). */
 let appliedPlace = 0;
 /** Git 视图 in words the default UI uses (TERMS.worktree); the git words stay in the tooltip. */
 const GIT_VIEW_LABEL = 'Git：分支、拉取推送、历史…';
@@ -98,7 +98,8 @@ function FileBody({ row, diff }: { row: ReviewRow; diff: DiffResult | undefined 
  * background `git fetch` every 5 minutes on the server) the first time it is shown for that repo, never while the
  * panel is only mounted; events while hidden mark it stale for the next show.
  * `inDock`: the right panel's own copy — it takes the open requests (`right-panel.ts`) and publishes the tab's count.
- * `inPlace`: the phone's in-place 改动 view (starts on this conversation's changes).
+ * `inPlace`: the conversation's own 改动 view in place of the chat, starting on this conversation's changes (where
+ * `viewTarget` says so — since phase 7 a phone uses the bottom drawer; a layout saved with the view open still has it).
  */
 export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inPlace?: boolean; inDock?: boolean }) {
   const active = useScopedSession();
