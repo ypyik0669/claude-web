@@ -19,6 +19,7 @@ import type { GitStatus } from '@shared';
 import { Icon } from '@/ui/icons';
 import { EngineSwitcher } from '../EngineSwitcher';
 import { SessionMenu, effectiveCaps, forkSession } from '@/features/sidebar/session-actions';
+import { sessionPeer } from '@/features/peers';
 
 /** git status for a cwd, refreshed on git.changed broadcasts (shared by the files tab badges). */
 function useGitStatus(cwd: string, enabled: boolean): GitStatus | null {
@@ -63,7 +64,8 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
   const [editing, setEditing] = useState<string | null>(null);
   const [menu, setMenu] = useState(false);
   const title = meta?.title ?? sid.slice(0, 8);
-  const peer = meta?.peer;
+  const sessions = useStore((s) => s.sessions);
+  const peer = sessionPeer(sid, sessions);
   const cwd = active?.cwd ?? meta?.cwd ?? '';
   const live = active && active.state !== 'history' && active.state !== 'closed' && active.state !== 'error';
   const wsOf = workspaces.find((w) => cwd.toLowerCase().startsWith(w.path.toLowerCase()));
@@ -162,9 +164,11 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
   const has = useStore((s) => (sid ? !!s.open[sid] : true));
   const loadHistory = useStore((s) => s.loadHistory);
   const active = useStore((s) => (sid ? s.open[sid] : undefined));
-  const gitStatus = useGitStatus(active?.cwd ?? '', tile.wb === 'files');
+  const sessions = useStore((s) => s.sessions);
+  // by id, not by the list: a fork or a restored layout may render before the list has the row
+  const peer = sessionPeer(sid, sessions);
+  const gitStatus = useGitStatus(active?.cwd ?? '', tile.wb === 'files' && !peer);
   const deleted = useStore((s) => (sid ? !!s.deletedSessions[sid] : false));
-  const peer = useStore((s) => (sid ? s.sessions.find((x) => x.sessionId === sid)?.peer : undefined));
   // restored from a persisted layout: lazily pull the transcript
   useEffect(() => {
     if (sid && !has && visible) void loadHistory(sid, { focus: false });

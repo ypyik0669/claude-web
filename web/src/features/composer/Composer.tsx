@@ -3,7 +3,7 @@ import { useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { clsx, fmtTok, fmtUsd, fmtMs, shortModel, basename } from '@/util';
-import type { AgentKind, AttachmentRef, EffortLevel, PermissionMode, SessionFeatures } from '@shared';
+import { parsePeerId, type AgentKind, type AttachmentRef, type EffortLevel, type PermissionMode, type SessionFeatures } from '@shared';
 import { compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachment, uploadAttachment, type DroppedFile, type PendingImage } from '@/model/attachments';
 import { StatusStrip } from '@/features/chat/StatusStrip';
 import { RunCard } from '@/features/chat/RunCard';
@@ -20,6 +20,8 @@ import { REFERENCE_EVENT, type ReferenceDetail } from '@/features/sidebar/sessio
 export const MODE_LABEL: Record<PermissionMode, string> = { default: '每次询问', acceptEdits: '自动接受编辑', plan: '计划模式', auto: '自动模式', bypassPermissions: '完全权限', dontAsk: '不询问' };
 // Model names must carry their version — "Fable" is not a model, "Fable 5.1" is. Source: @catalog.
 const MODEL_ALIASES = [{ value: '', label: '默认模型' }, ...modelsFor('claude').map((m) => ({ value: m.value, label: m.displayName }))];
+// sessions on another machine: uploads land on this machine's disk, out of the remote agent's reach
+const REMOTE_ATTACH = '附件在本机，远端读不到，请粘贴内容（图片可以直接发）';
 
 /**
  * The composer is used in two places: inside an open session (sends to it) and on the welcome screen
@@ -43,6 +45,9 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   const pane = usePaneCtx();
   const [upload, setUpload] = useState<{ done: number; total: number; name: string } | null>(null);
   const [palIdx, setPalIdx] = useState(0);
+  // a session on another machine: uploaded files land on THIS machine's disk, the remote agent can't read
+  // their paths — images (sent inline) and pasted text still work
+  const remote = !welcome && !!active && !!parsePeerId(active.sessionId);
   // welcome-mode settings
   const [cwd, setCwd] = useState(localStorage.getItem('cw.lastCwd') || sessions[0]?.cwd || '');
   const [wModel, setWModel] = useState(localStorage.getItem('cw.lastModel') || '');
@@ -306,6 +311,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     const imgOnly = dropped.filter((d) => !d.rel.includes('/') && d.file.type.startsWith('image/'));
     const rest = dropped.filter((d) => !imgOnly.includes(d));
     if (imgOnly.length) void addImages(imgOnly.map((d) => d.file), imgOnly.map((d) => d.file.name));
+    if (rest.length && remote) { toast(REMOTE_ATTACH); return; }
     if (rest.length) setFiles((s) => [...s, ...rest].slice(0, 500));
     if (folders.length) toast(`已附加文件夹 ${folders.join(', ')}（${rest.length} 个文件${truncated ? '，已截断到 500' : ''}）`, true);
   };
@@ -360,7 +366,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
         )}
         {active && !welcome && <StatusStrip sessionId={active.sessionId} onRecall={(t) => { setText((cur) => (cur ? `${cur}\n${t}` : t)); ta.current?.focus(); }} />}
         {active && !welcome && <RunCard sessionId={active.sessionId} />}
-        {active && !welcome && active.cwd && <ContextRow cwd={active.cwd} info={info} />}
+        {active && !welcome && active.cwd && <ContextRow cwd={active.cwd} info={info} sessionId={active.sessionId} />}
         <div className="composer-box" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
           {(imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0 || upload) && (
             <div className="attach">
@@ -393,7 +399,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
             onPaste={onPaste}
           />
           <div className="composer-bar">
-            <input ref={fileInput} type="file" multiple hidden onChange={(e) => { const fl = Array.from(e.target.files ?? []); void addImages(fl.filter((f) => f.type.startsWith('image/'))); setFiles((s) => [...s, ...fl.filter((f) => !f.type.startsWith('image/')).map((f) => ({ file: f, rel: f.name }))]); e.target.value = ''; }} />
+            <input ref={fileInput} type="file" multiple hidden onChange={(e) => { const fl = Array.from(e.target.files ?? []); void addImages(fl.filter((f) => f.type.startsWith('image/'))); if (remote && fl.some((f) => !f.type.startsWith('image/'))) { toast(REMOTE_ATTACH); e.target.value = ''; return; } setFiles((s) => [...s, ...fl.filter((f) => !f.type.startsWith('image/')).map((f) => ({ file: f, rel: f.name }))]); e.target.value = ''; }} />
             <button className="icon-btn" title="添加图片 / 文件" aria-label="添加附件" disabled={disabled} onClick={() => fileInput.current?.click()}><Icon name="plus" size={16} /></button>
             {welcome ? (
               <>

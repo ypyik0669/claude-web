@@ -3,6 +3,7 @@ import { useStore } from '@/store';
 import { ago, basename, clsx, fmtMs } from '@/util';
 import { walkTools } from '@/model/conversation';
 import { Icon } from '@/ui/icons';
+import { sessionPeer } from '@/features/peers';
 
 type Lane = 'attention' | 'running' | 'idle' | 'error';
 
@@ -31,7 +32,7 @@ export function MissionPanel() {
       const lastTool = tools.length ? tools[tools.length - 1].tool : undefined;
       const running = o.conv.runningTool;
       const cost = o.conv.lastResult?.costUsd ?? 0;
-      return { o, meta, lane, title: meta?.title ?? o.sessionId.slice(0, 8), cwd: o.cwd, lastTool, running, quietMs: o.conv.lastEventAt ? now - o.conv.lastEventAt : 0, cost, turns: o.conv.items.filter((i) => i.kind === 'user').length, sched: schedules.find((s) => s.sessionId === o.sessionId) };
+      return { o, meta, peer: sessionPeer(o.sessionId, sessions), lane, title: meta?.title ?? o.sessionId.slice(0, 8), cwd: o.cwd, lastTool, running, quietMs: o.conv.lastEventAt ? now - o.conv.lastEventAt : 0, cost, turns: o.conv.items.filter((i) => i.kind === 'user').length, sched: schedules.find((s) => s.sessionId === o.sessionId) };
     });
   }, [open, sessions, schedules]);
   const lanes: { id: Lane; l: string; hint: string }[] = [
@@ -73,7 +74,7 @@ export function MissionPanel() {
               {items.map((c) => (
                 <div key={c.o.sessionId} className="mcard" onClick={() => openInPane(c.o.sessionId, 'replace')}>
                   <div className="t"><span className={clsx('dot', c.o.state)} />{c.title}</div>
-                  <div className="sub">{basename(c.cwd)}{c.meta?.gitBranch ? ` · ${c.meta.gitBranch}` : ''}{c.sched ? ` · ${c.sched.name}` : ''}</div>
+                  <div className="sub">{c.peer && <><Icon name="machine" size={11} /> {c.peer.name} · </>}{basename(c.cwd)}{c.meta?.gitBranch ? ` · ${c.meta.gitBranch}` : ''}{c.sched ? ` · ${c.sched.name}` : ''}</div>
                   {c.lane === 'attention' && c.o.pending.map((p) => (
                     <div key={p.requestId} className="perm">
                       <span className="mono">{p.toolName}</span> {String((p.input as any).command ?? (p.input as any).file_path ?? (p.input as any).question ?? '').slice(0, 60)}

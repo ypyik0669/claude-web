@@ -205,7 +205,11 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - **踩过的坑：两台互为 peer 会事件回声**。A 收到 B 的 `sessions.changed` 转播给自己的客户端，其中就有 B 的 PeerClient，B 再转回来……无限弹。所以 peer 连接用 `?peer=` 自报身份，hub `broadcast(e, fromPeer)` 不把「从 peer 来的事件」发给 peer 连接；`rewriteEvent()` 另外丢弃所有已带 `peer_` 的事件做双保险。
 - **令牌失效判定**：upgrade 失败时服务端直接 `socket.destroy()`，拿不到 401。借现有接口：`/api/health` 通 + `GET /api/file?token=<令牌>` 返回 403 → `unauthorized`（不再重连，等「重新配对」）；400 = 令牌有效（参数不对）。注意 `RemoteService.revoke()` 不踢已建立的连接，吊销要等下次断线才体现。
 - **交接到本机**：`peers.handover {sessionId, agent, cwd}` → 通过 peer 用 `library.read` 逐页读完整历史 → `swapAgent()` 的 imported 分支（= `handOverImported`：新本机会话 + 简报），cwd 由用户选（远端路径在本机多半不存在）。
-- 已知限制：附件存本机（`/api/attachments`），发给远端会话时对方读不到路径；远端的文件 / Git / 搜索不做（ChatTile 对 `s.peer` 只留 对话 / 产物 标签）。
+- **路由表要覆盖前端所有带 sessionId 的请求**（`rewrite.test.ts` 有一条逐个列举的用例）：`memory.search/write` 是 LOCAL（记忆库在本机，sessionId 只是 scope 键），`usage.session / files.changed / files.diff` 是 FORWARD（transcript 和文件在那台机器上）；`memory.harvest`、`session.setProvider/switchAgent` 拒绝，前端对远端会话隐藏对应按钮（MemoryPanel 的「从会话提取」、EngineSwitcher 变只读徽章）。新增带 sessionId 的请求时记得往表里放。
+- **前端判断「是不是远端会话」只看 id**（`features/peers.ts` 的 `sessionPeer()` = `parsePeerId`，机器名从列表取、取不到用 peerId）：分叉后 / 布局恢复时列表还没到，按列表判断会误判成本机，然后在本机对远端路径跑 FileTree / GitView / `git.watch`。ContextRow 对远端会话只显示「机器名 · 目录名」、不发 git / fs；终端面板不用远端 cwd；composer 拒绝基于路径的附件（图片和粘贴仍可）。
+- **自己加自己 / serverId 冲突**：`/api/health` 带 `serverId` + 每进程随机的 `bootId`，`peers.add` 兑换配对码**之前**先查：serverId 相同且 bootId 相同 = 本机（拒绝，不留孤儿设备令牌）；bootId 不同 = 拷贝了 `~/.claude-web`（`SERVER_ID_CONFLICT` 提示删 meta.json 的 serverId）。老版本对端 health 不带 serverId 时靠 hello 兜底，并用 `revokeDevice` 吊销刚兑换的本机设备。
+- **peer 连接的判定**：`fromPeer = via 非空 || 连接带 ?peer=`；来自 peer 的请求不能碰 `peers.*`、只拿本机列表、不多跳。SSH 方式 peer 令牌失效后不会自己好：`remote.hosts.set` 会对骑在这个主机上的 peer `hostChanged()` 重连，界面也有「重试」（`peers.retry`）。
+- 已知限制：附件存本机（`/api/attachments`），发给远端会话时对方读不到路径（composer 已拦）；远端的文件 / Git / 搜索不做（ChatTile 对远端会话只留 对话 / 产物 标签）；`sessions.search` 合并时一个慢 peer 会把整次搜索拖到 5s 上限；SSH peer 每次重连都会 `TunnelManager.open()`，主机配了 `startCommand` 就会在远端重跑一次。
 - 调试：`node server/ws-phase15.mjs [port] [token]` 自己用临时 HOME 起第二个 server B（开远程监听、mock ACP 造会话），A 配对加入后测列表合并 / 打开发送 / 权限往返 / 交接 / 防环 / 吊销→令牌失效→重新配对 / B 下线；`CW_DEBUG=1` 打印两边收到的帧。单测：`federation/*.test.ts`（`peer-client.test.ts` 用进程内假服务器）。
 
 ## 桌面版（desktop/）

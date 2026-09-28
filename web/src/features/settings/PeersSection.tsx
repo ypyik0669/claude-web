@@ -73,6 +73,7 @@ export function PeersSection() {
                 </div>
               </div>
               {p.via === 'direct' && p.state === 'unauthorized' && <button className="btn sm" disabled={busy === p.id} onClick={() => repair(p)}>重新配对</button>}
+              {p.enabled && (p.state === 'offline' || (p.via === 'ssh' && p.state === 'unauthorized')) && <button className="btn sm" disabled={busy === p.id} title={p.via === 'ssh' ? '改好 SSH 主机里的令牌后重连（保存主机也会自动重连）' : '立即重连'} onClick={() => run(p.id, () => ws.request({ kind: 'peers.retry', id: p.id }))}>重试</button>}
               <button className="btn sm ghost" onClick={() => run(p.id, async () => { const n = (await dlg.prompt('机器名称', p.name))?.trim(); if (n && n !== p.name) await ws.request({ kind: 'peers.update', id: p.id, patch: { name: n } }); })}>改名</button>
               <button className="btn sm ghost" disabled={busy === p.id} onClick={() => run(p.id, () => ws.request({ kind: 'peers.update', id: p.id, patch: { enabled: !p.enabled } }))}>{p.enabled ? '停用' : '启用'}</button>
               <button className="btn sm ghost danger" onClick={() => run(p.id, async () => { if (await dlg.confirm(`移除「${p.name}」？`, { message: '它的会话不再出现在这里（那台机器上的会话不受影响）。那台机器的「已配对设备」里本机的记录要在那边吊销。', danger: true, okLabel: '移除' })) await ws.request({ kind: 'peers.remove', id: p.id }); })}>移除</button>
