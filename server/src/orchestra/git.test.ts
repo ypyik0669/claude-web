@@ -172,6 +172,47 @@ describe('worktrees are never deleted behind the user’s back (C2 / I1)', SLOW,
     expect(git(repo, 'branch', '--list', 'cw/x')).toContain('cw/x');
   });
 
+  it('a failed worktree add removes the branch it just created (still at base) and its directory (N6)', async () => {
+    const hooks = path.join(repo, '.git', 'hooks');
+    fs.mkdirSync(hooks, { recursive: true });
+    write(path.join(hooks, 'post-checkout'), '#!/bin/sh\nexit 1\n');
+    fs.chmodSync(path.join(hooks, 'post-checkout'), 0o755);
+    const dir = path.join(tmp, 'wt', 'fails');
+    await expect(g.worktreeAdd(repo, dir, 'cw/r/fails', 'main')).rejects.toThrow();
+    expect(git(repo, 'branch', '--list', 'cw/r/fails')).toBe('');
+    expect(exists(dir)).toBe(false);
+    expect(git(repo, 'worktree', 'list', '--porcelain')).not.toContain('fails');
+  });
+
+  it('inspect tells a broken git link from a dirty worktree, and repairs a moved repo first (N2)', async () => {
+    const dir = path.join(tmp, 'wt', 'one');
+    await g.worktreeAdd(repo, dir, 'cw/r/one', 'main');
+    // the repo is moved: the worktree's back-link is stale until `git worktree repair`
+    const moved = path.join(tmp, 'moved');
+    fs.renameSync(repo, moved);
+    const info = await g.inspect(moved, dir, 'cw/r/one', 'main');
+    expect(info).toMatchObject({ exists: true, linked: true, dirty: false });
+    // a directory git doesn't know at all (registration pruned away): broken, not "dirty"
+    const stray = path.join(tmp, 'wt', 'stray');
+    fs.mkdirSync(stray, { recursive: true });
+    write(path.join(stray, '.git'), 'gitdir: /nowhere/.git/worktrees/stray\n');
+    expect(await g.inspect(moved, stray, 'cw/r/stray', 'main')).toMatchObject({ exists: true, linked: false });
+  });
+
+  it('orphan: reports the owning repo / dirty state, or a broken link it cannot vouch for (N2)', async () => {
+    const dir = path.join(tmp, 'wt', 'orph');
+    await g.worktreeAdd(repo, dir, 'cw/r/orph', 'main');
+    const o = await g.orphan(dir);
+    expect(o).toMatchObject({ broken: false, dirty: false, branch: 'cw/r/orph' });
+    expect(path.resolve(o.root!).toLowerCase()).toBe(path.resolve(repo).toLowerCase());
+    write(path.join(dir, 'x.txt'), 'x\n');
+    expect((await g.orphan(dir)).dirty).toBe(true);
+    const stray = path.join(tmp, 'wt', 'stray');
+    fs.mkdirSync(stray, { recursive: true });
+    write(path.join(stray, '.git'), 'gitdir: /nowhere/.git/worktrees/stray\n');
+    expect((await g.orphan(stray)).broken).toBe(true);
+  });
+
   it('diffStat / diff compare the branch with the base (three-dot)', async () => {
     cleanBranch(repo, 'cw/x');
     const st = await g.diffStat(repo, 'main', 'cw/x');

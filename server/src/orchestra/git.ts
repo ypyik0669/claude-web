@@ -6,7 +6,10 @@ import path from 'node:path';
 import type { GitService } from '../git/service.js';
 
 export type MergeResult = { ok: true } | { ok: false; kind: 'busy' | 'dirty' | 'conflict' | 'failed'; error: string };
-export interface WorktreeInfo { exists: boolean; dirty: boolean; branchExists: boolean; tip?: string; unmerged: number }
+/** `linked`: git still knows the directory as a worktree of this repo (after prune + repair). */
+export interface WorktreeInfo { exists: boolean; linked: boolean; dirty: boolean; branchExists: boolean; tip?: string; unmerged: number }
+/** A directory under the worktree root that no run record references any more. */
+export interface OrphanInfo { broken: boolean; root?: string; dirty?: boolean; branch?: string }
 
 export interface OrchGit {
   root(cwd: string): Promise<string | null>;
@@ -26,7 +29,9 @@ export interface OrchGit {
    * a conflict this merge caused is aborted — nothing else ever is.
    */
   merge(cwd: string, branch: string, message: string): Promise<MergeResult>;
+  /** prunes stale registrations and repairs links (moved repo) before looking */
   inspect(root: string, dir: string, branch: string, base: string): Promise<WorktreeInfo>;
+  orphan(dir: string): Promise<OrphanInfo>;
   /** plain `git worktree remove` (no --force): refuses a dirty worktree */
   worktreeRemove(root: string, dir: string): Promise<void>;
   /** `branch -d` (refuses unmerged commits), or `-D` when `force` */
@@ -67,8 +72,20 @@ export function gitAdapter(git: GitService): OrchGit {
     async worktreeAdd(root, dir, branch, from) {
       if (await exists(dir)) throw new Error(`目录已存在，不会覆盖：${dir}`);
       if (await branchExists(root, branch)) throw new Error(`分支已存在，不会覆盖：${branch}`);
+      const base = (await git.run(root, ['rev-parse', '--verify', `${from}^{commit}`])).stdout.trim();
       await fs.mkdir(path.dirname(dir), { recursive: true });
-      await git.run(root, ['worktree', 'add', '-b', branch, dir, from]);
+      try {
+        await git.run(root, [...(process.platform === 'win32' ? ['-c', 'core.longpaths=true'] : []), 'worktree', 'add', '-b', branch, dir, from]);
+      } catch (e) {
+        // `-b` creates the branch before the checkout: a failure after that leaves it (and a half-made
+        // directory) behind. Both were just created by this call (checked above), so they can go —
+        // the branch only while it still points at the base it was made from.
+        if (await registered(root, dir)) await git.run(root, ['worktree', 'remove', '--force', dir]).catch(() => {});
+        await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {});
+        await git.run(root, ['worktree', 'prune']).catch(() => {});
+        if ((await branchExists(root, branch)) === base) await git.run(root, ['branch', '-D', branch]).catch(() => {});
+        throw e;
+      }
       git.emit('changed', root);
     },
     async commitAll(dir, message) {
@@ -106,11 +123,26 @@ export function gitAdapter(git: GitService): OrchGit {
       }
     },
     async inspect(root, dir, branch, base) {
+      await git.run(root, ['worktree', 'prune']).catch(() => {});
       const there = await exists(dir);
-      const dirty = there ? !!(await git.run(dir, ['status', '--porcelain']).then((r) => r.stdout.trim(), () => 'unknown')) : false;
+      const ok = async () => (await registered(root, dir)) && (await git.run(dir, ['rev-parse', '--git-dir']).then(() => true, () => false));
+      let linked = there && (await ok());
+      if (there && !linked) {
+        // the repo (or the worktree) was moved: repair re-points both links, then look again
+        await git.run(root, ['worktree', 'repair', dir]).catch(() => {});
+        linked = await ok();
+      }
+      const dirty = there && linked ? !!(await git.run(dir, ['status', '--porcelain']).then((r) => r.stdout.trim(), () => 'unknown')) : false;
       const tip = await branchExists(root, branch);
       const unmerged = tip ? Number((await git.run(root, ['rev-list', '--count', `${base}..${branch}`]).catch(() => ({ stdout: '1' }))).stdout.trim()) || 0 : 0;
-      return { exists: there, dirty, branchExists: !!tip, tip, unmerged };
+      return { exists: there, linked, dirty, branchExists: !!tip, tip, unmerged };
+    },
+    async orphan(dir) {
+      const common = await git.run(dir, ['rev-parse', '--git-common-dir']).then((r) => r.stdout.trim(), () => null);
+      const status = common ? await git.run(dir, ['status', '--porcelain']).then((r) => r.stdout, () => null) : null;
+      if (!common || status === null) return { broken: true };
+      const branch = await git.run(dir, ['symbolic-ref', '--short', '-q', 'HEAD']).then((r) => r.stdout.trim() || undefined, () => undefined);
+      return { broken: false, root: path.dirname(path.resolve(dir, common)), dirty: !!status.trim(), branch };
     },
     async worktreeRemove(root, dir) {
       await git.run(root, ['worktree', 'remove', dir]);

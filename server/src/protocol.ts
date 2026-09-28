@@ -187,7 +187,7 @@ export interface AttachmentRef { kind: 'image' | 'text' | 'file' | 'folder'; nam
 export interface MessageFeedback { rating: 'up' | 'down' | null; note?: string; at: number }
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
-export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string }
+export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string }
 export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; cron?: string; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string; freshSession?: boolean; lastError?: string; runs?: number }
 export interface LimitWindow { label: string; percent: number; resetsAt: string | null; active: boolean; severity?: string }
 // ---- remote access / phones / IM (phase 6) ----

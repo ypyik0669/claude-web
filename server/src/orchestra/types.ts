@@ -57,6 +57,8 @@ export interface NodeRun {
   attempts?: number;
   /** worktrees of earlier attempts (retry / resume never delete them; the run's cleanup lists / removes them) */
   retained?: OrchWorktree[];
+  /** worktree task: finished, but merging its branch back failed — `orchestra.node.remerge` tries again */
+  mergePending?: boolean;
   /** non-fatal information for the user (e.g. which worktrees were kept after a merge and why) */
   note?: string;
 }
@@ -85,9 +87,15 @@ export type OrchestraRequest =
   | { kind: 'orchestra.node.retry'; runId: string; nodeId: string }
   | { kind: 'orchestra.node.approve'; runId: string; nodeId: string; decision: 'approve' | 'reject'; comment?: string }
   | { kind: 'orchestra.node.pick'; runId: string; nodeId: string; winner: AgentKind }
-  | { kind: 'orchestra.node.diff'; runId: string; nodeId: string; agent: AgentKind };
+  | { kind: 'orchestra.node.diff'; runId: string; nodeId: string; agent: AgentKind }
+  | { kind: 'orchestra.node.remerge'; runId: string; nodeId: string }
+  | { kind: 'orchestra.orphans.list' }
+  | { kind: 'orchestra.orphans.remove'; path: string };
 
 /** Result of cleaning up a run's worktrees / branches: anything with uncommitted changes or unmerged commits is only listed. */
 export interface OrchCleanup { removed: string[]; kept: { path?: string; branch: string; reason: string }[] }
+
+/** A directory under <dataDir>/worktrees that no run record references (e.g. the record was deleted). */
+export interface OrchOrphan { path: string; broken: boolean; dirty?: boolean; root?: string; branch?: string }
 
 export type OrchestraEvent = { kind: 'orchestra.changed'; run: OrchRun; removed?: boolean } | { kind: 'orchestra.workflows.changed' };

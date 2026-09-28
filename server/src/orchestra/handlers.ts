@@ -79,5 +79,8 @@ export async function handleOrchestra(o: OrchestraService, req: OrchestraRequest
     case 'orchestra.node.approve': return o.approve(req.runId, req.nodeId, req.decision, req.comment);
     case 'orchestra.node.pick': return o.pick(req.runId, req.nodeId, req.winner);
     case 'orchestra.node.diff': return o.diff(req.runId, req.nodeId, req.agent);
+    case 'orchestra.node.remerge': return o.remerge(req.runId, req.nodeId);
+    case 'orchestra.orphans.list': return o.orphans();
+    case 'orchestra.orphans.remove': return o.removeOrphan(req.path);
   }
 }

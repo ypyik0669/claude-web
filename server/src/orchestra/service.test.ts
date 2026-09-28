@@ -23,7 +23,8 @@ function fakeGit(o: { repo?: boolean } = {}) {
   const wts = new Map<string, { branch: string; dirty: boolean }>();
   const branches = new Map<string, { tip: string; unmerged: number }>();
   let seq = 0;
-  const git: OrchGit & { calls: string[]; branch: string | null; mergeResult: MergeResult; wts: typeof wts; branches: typeof branches; mergeGate?: Promise<void> } = {
+  const git: OrchGit & { calls: string[]; branch: string | null; mergeResult: MergeResult; wts: typeof wts; branches: typeof branches; mergeGate?: Promise<void>; commitGate?: Promise<void>; inspectGate?: Promise<void>; broken: Set<string>; orphans: Map<string, { broken: boolean; dirty?: boolean; root?: string; branch?: string }> } = {
+    broken: new Set(), orphans: new Map(),
     calls, branch: 'main', mergeResult: { ok: true }, wts, branches,
     async root(cwd) { return o.repo === false ? null : cwd; },
     async currentBranch() { return git.branch; },
@@ -35,6 +36,7 @@ function fakeGit(o: { repo?: boolean } = {}) {
       branches.set(branch, { tip: `t${++seq}`, unmerged: 0 });
     },
     async commitAll(dir) {
+      if (git.commitGate) await git.commitGate;
       calls.push(`commit ${path.basename(dir)}`);
       const w = wts.get(dir);
       if (!w) return false;
@@ -53,7 +55,8 @@ function fakeGit(o: { repo?: boolean } = {}) {
       if (git.mergeResult.ok) { const b = branches.get(branch); if (b) b.unmerged = 0; }
       return git.mergeResult;
     },
-    async inspect(_r, dir, branch) { const w = wts.get(dir); const b = branches.get(branch); return { exists: !!w, dirty: !!w?.dirty, branchExists: !!b, tip: b?.tip, unmerged: b?.unmerged ?? 0 }; },
+    async inspect(_r, dir, branch) { if (git.inspectGate) await git.inspectGate; const w = wts.get(dir); const b = branches.get(branch); return { exists: !!w, linked: !!w && !git.broken.has(dir), dirty: !!w?.dirty, branchExists: !!b, tip: b?.tip, unmerged: b?.unmerged ?? 0 }; },
+    async orphan(dir) { return git.orphans.get(dir) ?? { broken: true }; },
     async worktreeRemove(_r, dir) { if (wts.get(dir)?.dirty) throw new Error('dirty'); calls.push(`rm ${path.basename(dir)}`); wts.delete(dir); },
     async deleteBranch(_r, branch, force) { const b = branches.get(branch); if (!force && b?.unmerged) throw new Error('unmerged'); calls.push(`del ${branch}`); branches.delete(branch); },
   };
@@ -100,6 +103,8 @@ let goals: FakeGoals;
 let openGate: Promise<void> | undefined;
 let made: OrchestraService[] = [];
 let events: { run: OrchRun; removed?: boolean }[];
+let sessionStates: Map<string, string>;
+let tags: string[];
 
 function svcOf() { const s = new OrchestraService(deps()); made.push(s); s.on('changed', (run, removed) => events.push({ run, removed })); return s; }
 function deps(): OrchDeps {
@@ -113,6 +118,8 @@ function deps(): OrchDeps {
     send: async (sid, text, isCancelled) => { if (isCancelled?.()) return false; byId(sid).prompts.push(text); return true; },
     watch: (sid, on) => {
       const s = byId(sid);
+      const sw = () => on.swapped?.();
+      s.on('swapped', sw);
       const m = (x: unknown) => on.message?.(x);
       const st = (a: string, e?: string) => on.state?.(a, e);
       s.on('message', m); s.on('state', st);
@@ -120,6 +127,8 @@ function deps(): OrchDeps {
     },
     stop: async (sid) => { stopped.push(sid); },
     close: async (sid) => { closed.push(sid); },
+    sessionState: (sid) => sessionStates.get(sid),
+    tag: async (sid, groupCwd) => { tags.push(`${sid}@${groupCwd}`); },
     expand: async (t) => t.replace(/<session-ref id="([^"]+)"[^>]*\/>/g, '[briefing $1]'),
     git,
     goals: goals as any,
@@ -140,6 +149,8 @@ beforeEach(() => {
   wtRoot = path.join(dir, 'worktrees');
   sessions = []; closed = []; stopped = []; wfs = []; notified = []; events = []; maxParallel = 3; available = ['claude', 'codex', 'gemini'];
   openGate = undefined;
+  sessionStates = new Map();
+  tags = [];
   git = fakeGit();
 });
 afterEach(async () => { for (const m of made) await m.flush(); made = []; fs.rmSync(dir, { recursive: true, force: true }); });
@@ -541,6 +552,134 @@ describe('OrchestraService persistence and removal', () => {
     expect(events.at(-1)).toMatchObject({ removed: true });
     await svc.flush();
     expect(fs.existsSync(path.join(dir, `${run.id}.json`))).toBe(false);
+  });
+});
+
+describe('second review (N1–N9)', () => {
+  it('N1: a worktree task whose merge failed can be re-merged from its kept branch; downstream continues', async () => {
+    git.mergeResult = { ok: false, kind: 'conflict', error: 'CONFLICT' };
+    const svc = svcOf();
+    const run = await startRun(svc, [task('w', [], { workspace: 'worktree' }), task('next', ['w'])]);
+    await until(() => sessions.length === 1 && sessions[0].prompts.length === 1);
+    sessions[0].reply('done');
+    await until(() => run.state === 'failed');
+    expect(run.nodes.w.mergePending).toBe(true);
+    expect(run.nodes.w.error).toContain('重新合并');
+    expect(run.nodes.next.state).toBe('skipped');
+    await expect(svc.remerge(run.id, 'next')).rejects.toThrow();
+    git.mergeResult = { ok: true };
+    await svc.remerge(run.id, 'w');
+    expect(run.nodes.w.state).toBe('done');
+    expect(run.nodes.w.mergePending).toBeUndefined();
+    expect(git.calls.filter((c) => c === `merge cw/${run.id}/w-claude`)).toHaveLength(2);
+    expect(git.calls).toContain(`rm ${run.id}-w-claude`);
+    await until(() => sessions.length === 2 && sessions[1].prompts.length === 1);
+    sessions[1].reply('ok');
+    await until(() => run.state === 'done');
+  });
+
+  it('N2: cleanup tells a broken git link from uncommitted changes', async () => {
+    const svc = svcOf();
+    const run = await toWaitingCompare(svc);
+    await svc.cancel(run.id);
+    git.broken.add(wtDir(`${run.id}-cmp-claude`));
+    git.wts.get(wtDir(`${run.id}-cmp-codex`))!.dirty = true;
+    const res = await svc.remove(run.id, true);
+    expect(res.kept.find((k) => k.branch.endsWith('claude'))?.reason).toContain('链接已断');
+    expect(res.kept.find((k) => k.branch.endsWith('codex'))?.reason).toContain('未提交');
+  });
+
+  it('N2: orphan worktree directories are listed and removed only when provably clean', async () => {
+    const svc = svcOf();
+    const repoDir = path.join(wtRoot, 'repo-12345678');
+    const mk = (name: string) => { const p = path.join(repoDir, name); fs.mkdirSync(p, { recursive: true }); return p; };
+    const clean = mk('aa-x-claude'), dirty = mk('bb-x-codex'), broken = mk('cc-x-gemini');
+    git.orphans.set(clean, { broken: false, dirty: false, root: '/repo', branch: 'cw/aa/x-claude' });
+    git.orphans.set(dirty, { broken: false, dirty: true, root: '/repo', branch: 'cw/bb/x-codex' });
+    git.wts.set(clean, { branch: 'cw/aa/x-claude', dirty: false });
+    const list = await svc.orphans();
+    expect(list.map((o) => path.basename(o.path)).sort()).toEqual(['aa-x-claude', 'bb-x-codex', 'cc-x-gemini']);
+    expect(list.find((o) => o.path === broken)?.broken).toBe(true);
+    await expect(svc.removeOrphan(dirty)).rejects.toThrow(/未提交/);
+    await expect(svc.removeOrphan(broken)).rejects.toThrow(/链接已断/);
+    await expect(svc.removeOrphan(path.join(dir, 'outside'))).rejects.toThrow();
+    await svc.removeOrphan(clean);
+    expect(git.calls).toContain('rm aa-x-claude');
+    // a directory that a run still references is not an orphan
+    const run = await toWaitingCompare(svc);
+    expect((await svc.orphans()).some((o) => o.path.includes(run.id))).toBe(false);
+  });
+
+  it('N3: the merge guard is held until the node is settled (no cancel between merge and cleanup)', async () => {
+    const svc = svcOf();
+    const run = await toWaitingCompare(svc);
+    const gate = deferred();
+    git.inspectGate = gate.p;
+    const pick = svc.pick(run.id, 'cmp', 'codex');
+    await until(() => git.calls.includes(`merge cw/${run.id}/cmp-codex`));
+    await expect(svc.cancel(run.id)).rejects.toThrow(/合并/);
+    gate.open();
+    await pick;
+    expect(run.state).toBe('done');
+  });
+
+  it('N5: a hot swap mid-turn is noted on the node; the node still completes from the new runner', async () => {
+    const svc = svcOf();
+    const run = await startRun(svc, [task('a')]);
+    await until(() => sessions.length === 1 && sessions[0].prompts.length === 1);
+    sessions[0].emit('swapped');
+    expect(run.nodes.a.note).toContain('热切换');
+    sessions[0].reply('continued');
+    await until(() => run.state === 'done');
+    expect(run.nodes.a.note).toBeUndefined();
+  });
+
+  it('N6: long node / agent names give bounded worktree directory names', async () => {
+    const long = 'n'.repeat(80);
+    const agent = `acp:${'x'.repeat(60)}` as AgentKind;
+    available.push(agent);
+    const svc = svcOf();
+    const run = await startRun(svc, [task(long, [], { workspace: 'worktree', agent })]);
+    await until(() => git.wts.size === 1);
+    const name = path.basename([...git.wts.keys()][0]);
+    expect(name.startsWith(run.id)).toBe(true);
+    expect(name.length).toBeLessThanOrEqual(48);
+  });
+
+  it('N7: the compare stays running (and unpickable) until every candidate is committed', async () => {
+    const svc = svcOf();
+    const run = await startRun(svc, [compare()]);
+    await until(() => sessions.length === 2 && sessions.every((s) => s.prompts.length));
+    const gate = deferred();
+    git.commitGate = gate.p;
+    sessions[0].reply('a'); sessions[1].reply('b');
+    await tick(); await tick();
+    expect(run.nodes.cmp.state).toBe('running');
+    expect(notified).toEqual([]);
+    await expect(svc.pick(run.id, 'cmp', 'claude')).rejects.toThrow();
+    gate.open();
+    git.commitGate = undefined;
+    await until(() => run.nodes.cmp.state === 'waiting');
+    expect(run.nodes.cmp.candidates!.every((c) => c.head)).toBe(true);
+    expect(notified).toEqual(['compare:cmp']);
+  });
+
+  it('N8: picking a winner whose session is still running is refused', async () => {
+    const svc = svcOf();
+    const run = await toWaitingCompare(svc);
+    const winnerSid = run.nodes.cmp.candidates!.find((c) => c.agent === 'codex')!.sessionId!;
+    sessionStates.set(winnerSid, 'running');
+    await expect(svc.pick(run.id, 'cmp', 'codex')).rejects.toThrow(/还在运行/);
+    expect(run.nodes.cmp.state).toBe('waiting');
+    sessionStates.set(winnerSid, 'idle');
+    await svc.pick(run.id, 'cmp', 'codex');
+    expect(run.state).toBe('done');
+  });
+
+  it('N9: sessions opened in worktrees are grouped under the run directory', async () => {
+    const svc = svcOf();
+    await toWaitingCompare(svc);
+    expect(tags.sort()).toEqual(['s1@/repo', 's2@/repo']);
   });
 });
 

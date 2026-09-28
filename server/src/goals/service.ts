@@ -91,6 +91,8 @@ export class GoalService extends EventEmitter {
     const tryOnce = (n: number) => {
       if (r.state === 'closed' || r.state === 'error') return;
       if (r.state === 'starting' && n < 200) { setTimeout(() => tryOnce(n + 1), 250); return; }
+      // paused / completed / removed while the session was starting: the prompt must not go out anymore
+      if (this.get(goalId)?.status !== 'active') return;
       r.send(text);
       this.turnTools.set(goalId, 0);
     };

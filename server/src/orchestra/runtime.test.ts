@@ -11,7 +11,7 @@ function fakePool() {
 }
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-describe('poolWatch (I6)', () => {
+describe('poolWatch (I6 / N5)', () => {
   it('delivers events by session id, whichever runner emits them', () => {
     const pool = fakePool();
     const got: unknown[] = [];
@@ -24,21 +24,34 @@ describe('poolWatch (I6)', () => {
     expect(got).toEqual(['from runner A', 'from runner B']);
   });
 
-  it("a 'closed' followed by a new runner under the same id (provider / agent swap) is not reported", async () => {
+  it("a hot swap (announced with 'swapping') is a handover, not a close — and is reported as swapped", async () => {
     const pool = fakePool();
     const states: string[] = [];
-    poolWatch(pool as any, 's1', { state: (s) => states.push(s) }, 30);
+    let swapped = 0;
+    poolWatch(pool as any, 's1', { state: (s) => states.push(s), swapped: () => { swapped++; } }, 30);
+    pool.emit('swapping', 's1');
     pool.emit('state', 's1', 'closed');
     pool.live.set('s1', { state: 'starting' });
     await wait(60);
     expect(states).toEqual([]);
+    expect(swapped).toBe(1);
   });
 
-  it("a real close is reported after the grace period; errors immediately", async () => {
+  it('a close without the swap signal counts right away, even if the same id is reopened quickly', async () => {
+    const pool = fakePool();
+    const states: string[] = [];
+    poolWatch(pool as any, 's1', { state: (s) => states.push(s) }, 30);
+    pool.emit('state', 's1', 'closed');
+    pool.live.set('s1', { state: 'starting' }); // e.g. the user reopening it from the sidebar
+    expect(states).toEqual(['closed']);
+  });
+
+  it('a swap that never produces a new runner still ends as closed; errors are immediate', async () => {
     const pool = fakePool();
     const states: string[] = [];
     poolWatch(pool as any, 's1', { state: (s) => states.push(s) }, 20);
     pool.emit('state', 's1', 'error', 'boom');
+    pool.emit('swapping', 's1');
     pool.emit('state', 's1', 'closed');
     expect(states).toEqual(['error']);
     await wait(50);

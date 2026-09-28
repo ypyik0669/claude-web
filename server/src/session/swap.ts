@@ -54,6 +54,8 @@ async function stop(pool: RunnerPool, sessionId: string) {
   const r = pool.get(sessionId);
   if (!r) return null;
   const info = r.info;
+  // tell session watchers (orchestration) that the coming 'closed' is a handover to a new runner
+  pool.emit('swapping', sessionId);
   await pool.close(sessionId).catch(() => { /* already gone */ });
   return info;
 }

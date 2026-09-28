@@ -20,23 +20,32 @@ const SWAP_GRACE_MS = 3000;
 
 /**
  * Subscribe to one session through the pool (events are tagged with the session id), not to a runner:
- * a hot swap replaces the runner but keeps the id. A 'closed' only counts if no live runner holds the id
- * again after `graceMs`.
+ * a hot swap replaces the runner but keeps the id. Only a close announced by the swap path
+ * (`pool.emit('swapping', id)`, session/swap.ts) may be a handover — it counts as one when a live runner
+ * holds the id again within `graceMs` (then `swapped()`); any other close is final immediately, even if
+ * the same id is reopened a moment later (the user reopening it is not the node's session continuing).
  */
 export function poolWatch(pool: Pick<RunnerPool, 'on' | 'off' | 'get'>, sessionId: string, on: SessionHandlers, graceMs = SWAP_GRACE_MS): () => void {
   let active = true;
+  let swapping = false;
   const onMsg = (sid: string, m: unknown) => { if (active && sid === sessionId) on.message?.(m); };
+  const onSwap = (sid: string) => { if (sid === sessionId) swapping = true; };
   const onState = (sid: string, state: string, err?: string) => {
     if (!active || sid !== sessionId) return;
     if (state !== 'closed') { on.state?.(state, err); return; }
+    if (!swapping) { on.state?.('closed'); return; }
+    swapping = false;
     setTimeout(() => {
+      if (!active) return;
       const r = pool.get(sessionId);
-      if (active && (!r || r.state === 'closed' || r.state === 'error')) on.state?.('closed');
+      if (!r || r.state === 'closed' || r.state === 'error') on.state?.('closed');
+      else on.swapped?.();
     }, graceMs).unref?.();
   };
   pool.on('message', onMsg);
   pool.on('state', onState);
-  return () => { active = false; pool.off('message', onMsg); pool.off('state', onState); };
+  pool.on('swapping', onSwap);
+  return () => { active = false; pool.off('message', onMsg); pool.off('state', onState); pool.off('swapping', onSwap); };
 }
 
 export interface RuntimeServices {
@@ -106,5 +115,8 @@ export function orchestraDeps(s: RuntimeServices, dirs: { runs: string; worktree
       else await r.interrupt();
     },
     async close(sessionId) { await s.pool.close(sessionId); },
+    sessionState: (sessionId) => s.pool.stateOf(sessionId),
+    // the sidebar groups by cwd; a worktree session belongs with the run's own directory
+    async tag(sessionId, groupCwd) { await s.meta.setSessionMeta(sessionId, { groupCwd }); },
   };
 }

@@ -7,7 +7,7 @@ import type { DeviceRecord } from '../remote/service.js';
 export type { Schedule } from '../protocol.js';
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
-export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string }
+export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string }
 
 interface Data {
   version: 1;

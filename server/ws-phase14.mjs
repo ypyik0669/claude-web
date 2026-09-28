@@ -157,6 +157,10 @@ ws.on('open', async () => {
     const cleaned = await req({ kind: 'orchestra.run.remove', runId: run.id, cleanup: true });
     runIds.splice(runIds.indexOf(run.id), 1);
     check('remove with cleanup deletes the merged winner branch, broadcasts the removal', cleaned.removed.includes(winner) && !git('branch', '--format=%(refname:short)').split('\n').includes(winner) && !!(await removal), JSON.stringify(cleaned));
+    const orphans = await req({ kind: 'orchestra.orphans.list' });
+    check('no orphan worktrees left after cleanup', !orphans.some((o) => path.basename(o.path).startsWith(run.id)), JSON.stringify(orphans));
+    const metas = await req({ kind: 'sessions.meta' });
+    check('worktree sessions are grouped under the repo in the sidebar (groupCwd)', cands.every((c) => metas[c.sessionId]?.groupCwd === repo), JSON.stringify(cands.map((c) => metas[c.sessionId])));
     check('orchestra.changed events were broadcast', events.some((e) => e.kind === 'orchestra.changed' && e.run.id === run.id && e.run.nodes.gate.state === 'waiting'));
 
     // rejection path: the run fails, downstream is skipped, the comment is kept
