@@ -365,8 +365,12 @@ function driver() {
 
       // ---- model menu
       phase = 'model-menu';
+      // the other agents are sections of this menu, and agents.list probes every CLI's version first (≈ 13 s on a
+      // cold machine): wait for the list rather than racing it
+      check('agent list arrived (other agents in the model menu)', await waitFor('window.__store.getState().agents.length > 0', 30_000));
       await click('.welcome .mm-anchor > button.chip');
       check('model menu opens', await waitFor('!!document.querySelector(".menu.mm")', 5000));
+      await waitFor('!!document.querySelector(\'.menu.mm [data-sec^="agent:"]\')', 30_000);
       await sleep(600);
       await shot('model-menu');
       check('model menu without error boundary', !(await noBoundary('body')), await noBoundary('body'));
@@ -394,14 +398,29 @@ function driver() {
       await sleep(600);
       const bar = await js(`(() => { const b = document.querySelector('.welcome .composer-bar'); return { plus: !!b.querySelector('.plus'), project: !!b.querySelector('.dirpick'), model: !!b.querySelector('.mm-anchor'), perm: !!b.querySelector('.perm-chip'), send: !!b.querySelector('[data-id="send"]'), selects: document.querySelectorAll('.composer select').length }; })()`);
       check('welcome row: + · project · model · permission · send, no hidden <select>', bar.plus && bar.project && bar.model && bar.perm && bar.send && !bar.selects, JSON.stringify(bar));
+      // every control of the old composer, from the reach table the unit test checks (web/src/features/composer/reach.ts):
+      // open each place (+ / project / model / permission menu, or the row itself) and query every selector in it
+      const reach = await js('window.__cwComposerReach ? JSON.parse(JSON.stringify(window.__cwComposerReach)) : null');
+      check('composer reach table exposed (window.__cwComposerReach)', !!reach && reach.reach.length > 20);
+      const speech = await js('!!(window.SpeechRecognition || window.webkitSpeechRecognition)');
+      const walk = async (place, scope, states = {}) => {
+        const wanted = reach.reach.filter((r) => r.place === place && (!r.when || r.when === 'more' || (r.when === 'speech' && speech && !states.mobile) || states[r.when]));
+        const opener = reach.opener[place];
+        const box = opener ? reach.container[place] : `${scope} ${reach.container[place]}`;
+        if (opener) { await click(`${scope} ${opener}`); await waitFor(`!!document.querySelector(${JSON.stringify(box)})`, 5000); }
+        const missing = (list) => js(`${JSON.stringify(list)}.filter((r) => !document.querySelector(${JSON.stringify(box)} + ' ' + r.sel)).map((r) => r.was + ' → ' + r.sel)`);
+        const miss = await missing(wanted.filter((r) => r.when !== 'more'));
+        const later = wanted.filter((r) => r.when === 'more');
+        if (later.length) { await click(`${box} [data-id="more"]`); miss.push(...(await missing(later))); }
+        if (opener) { await key('Escape'); await sleep(200); }
+        return { n: wanted.length, miss };
+      };
+      for (const place of ['plus', ...(E.SMOKE_REPO ? ['project'] : []), 'model', 'permission', 'bar']) {
+        const w = await walk(place, '.welcome');
+        check(`reach · ${place}: every old control is there (${w.n})`, w.n > 0 && !w.miss.length, w.miss.join(' ; '));
+      }
       await click('.welcome .cb .plus');
-      const plusIds = () => js(`[...document.querySelectorAll('.menu.plus-menu [data-id]')].map((e) => e.dataset.id)`);
-      const pi = await plusIds();
-      check('+ menu: files · folder · reference · browser · computer · goal · coordinator · proactive', ['files', 'folder', 'reference', 'chrome', 'computerUse', 'goal', 'coordinator', 'proactive'].every((i) => pi.includes(i)), JSON.stringify(pi));
       await shot('composer-plus');
-      await click('.menu.plus-menu [data-id="more"]');
-      const pi2 = await plusIds();
-      check('+ menu: Brief and channels behind 「Brief、频道…」', pi2.includes('brief') && pi2.includes('channels'), JSON.stringify(pi2));
       await click('.menu.plus-menu [data-id="chrome"]');
       const on = await js(`document.querySelector('.menu.plus-menu [data-id="chrome"]').getAttribute('aria-checked')`);
       await key('Escape');
@@ -410,6 +429,22 @@ function driver() {
       await click('.welcome .cap-tag[data-cap="chrome"] button');
       check('the tag\'s × turns it off again', await waitFor('!document.querySelector(\'.welcome .cap-tag[data-cap="chrome"]\')', 2000));
       if (E.SMOKE_READONLY !== '1') {
+        // 频道: clicking 「Brief、频道…」 (the row goes away) moves the focus to Brief, ↓ reaches the field, and what is
+        // typed survives a click outside (it is saved as you type, into meta.json ui.featureDefaults)
+        await click('.welcome .cb .plus');
+        await click('.menu.plus-menu [data-id="more"]');
+        const afterMore = await js('document.activeElement?.dataset?.id ?? document.activeElement?.tagName');
+        await key('Down');
+        const inField = await js('document.activeElement?.closest?.(\'[data-id="channels"]\') ? "channels" : document.activeElement?.tagName');
+        wc.insertText('server:smoke');
+        await sleep(100);
+        await click('.welcome .composer textarea');
+        const saved = await waitFor('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"]?.channels) === \'["server:smoke"]\'', 3000);
+        check('频道: 「Brief、频道…」 hands the focus to Brief, ↓ reaches the field, typing survives a click outside', afterMore === 'brief' && inField === 'channels' && saved && !(await js('!!document.querySelector(".menu.plus-menu")')), JSON.stringify({ afterMore, inField, saved }));
+        check('频道 shows as a removable tag', await waitFor('!!document.querySelector(\'.welcome .cap-tag[data-cap="channels"]\')', 2000));
+        await click('.welcome .cap-tag[data-cap="channels"] button');
+        await waitFor('!document.querySelector(\'.welcome .cap-tag[data-cap="channels"]\')', 2000);
+        check('the capability defaults live in meta.json, not localStorage', await js('localStorage.getItem("cw.lastFeatures") === null && !!window.__store.getState().settings["ui.featureDefaults"]'));
         await click('.welcome .cb .plus');
         await click('.menu.plus-menu [data-id="goal"]');
         check('设定一个目标 puts /goal into the text box', await waitFor('document.querySelector(".welcome .composer textarea").value.startsWith("/goal")', 2000));
@@ -485,13 +520,34 @@ function driver() {
         // ---- redesign phase 3: the stats bar is behind the context ring; + says the capabilities apply to new conversations
         phase = 'session-composer';
         check('no stats bar under the composer', !(await js('!!document.querySelector(".pane .composer .statusbar")')));
+        const sidJs = JSON.stringify(E.SMOKE_SID);
+        // no occupancy reported → no ring at all (an empty circle reads as a radio button / a spinner)
+        const noCu = await js(`(() => { const o = window.__store.getState().open[${sidJs}]; return !!o && !(o.contextUsage ?? o.conv.contextUsage); })()`);
+        if (noCu) check('no context ring while the agent reports no occupancy', !(await js('!!document.querySelector(".pane .composer .ctx-meter")')));
+        const setCu = (cu) => js(`(() => { const st = window.__store; const o = st.getState().open[${sidJs}]; st.setState({ open: { ...st.getState().open, [${sidJs}]: { ...o, contextUsage: ${JSON.stringify(cu)}, version: o.version + 1 } } }); })()`);
+        await setCu({ percentage: 83, totalTokens: 166_000, maxTokens: 200_000 });
+        const ring = await waitFor('!!document.querySelector(".pane .composer .ctx-meter")', 2000);
+        const ringLook = await js(`(() => { const m = document.querySelector('.pane .composer .ctx-meter'); if (!m) return null; const cs = getComputedStyle(m); return { cls: m.className, pct: m.textContent, weight: cs.fontWeight, color: cs.color, warn: getComputedStyle(document.documentElement).getPropertyValue('--warn').trim() }; })()`);
+        check('83 %: the ring shows the percentage in ink, bold, not yellow', ring && ringLook && /strong/.test(ringLook.cls) && ringLook.pct === '83%' && Number(ringLook.weight) >= 600, JSON.stringify(ringLook));
+        // the rest of the row is in the reach table too (the ring = the old stats bar)
+        for (const place of ['meter', 'bar']) {
+          const w = await walk(place, '.pane .composer', { context: true });
+          check(`reach · ${place} in a conversation (${w.n})`, w.n > 0 && !w.miss.length, w.miss.join(' ; '));
+        }
         await click('.pane .composer .ctx-meter');
         const card = await js(`document.querySelector('.ctx-card')?.innerText ?? null`);
-        check('the context ring shows the old stats (轮数 / 输入 / 输出) on click', !!card && /轮数/.test(card) && /输入/.test(card), JSON.stringify(card));
+        check('the context ring shows the old stats (轮数 / 输入 / 输出 / 上下文) on click', !!card && /轮数/.test(card) && /输入/.test(card) && /上下文/.test(card), JSON.stringify(card));
         await click('.pane .composer .ctx-meter');
+        await setCu(undefined);
+        await sleep(200);
+        // + in a running conversation: the switches show THIS conversation's state, read-only; 「新对话生效」 once
         await click('.pane .composer .cb .plus');
-        const note = await js(`document.querySelector('.menu.plus-menu .cm-note')?.textContent ?? null`);
-        check('in a conversation the + capabilities say 「新对话时生效」', note === '新对话时生效', String(note));
+        const live = await js(`(() => { const m = document.querySelector('.menu.plus-menu'); if (!m) return null; const rows = [...m.querySelectorAll('[role="menuitemcheckbox"]')]; return { sub: m.querySelector('.cm-sub')?.textContent ?? null, mentions: (m.innerText.match(/新对话/g) || []).length, rows: rows.length, ro: rows.every((r) => r.getAttribute('aria-disabled') === 'true'), checked: rows.filter((r) => r.getAttribute('aria-checked') === 'true').map((r) => r.dataset.id) }; })()`);
+        const before = await js('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"] ?? null)');
+        await click('.menu.plus-menu [data-id="chrome"]');
+        const after = await js('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"] ?? null)');
+        const stillOff = await js(`document.querySelector('.menu.plus-menu [data-id="chrome"]')?.getAttribute('aria-checked')`);
+        check('in a conversation the + capabilities show its own state, read-only, 「新对话生效」 said once', live && /新对话生效/.test(live.sub ?? '') && live.mentions === 1 && live.rows >= 4 && live.ro && !live.checked.length && before === after && stillOff === 'false', JSON.stringify({ live, before, after, stillOff }));
         await key('Escape');
 
         // ---- redesign phase 1: one ≤ 52px row above the conversation; the workbench tabs live in ···
