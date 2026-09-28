@@ -543,9 +543,9 @@ function driver() {
         check('审阅 scope menu: 未提交 / 已暂存 / 本次对话 + commits', scopes && ['未提交的改动', '已暂存', '本次对话改动'].every((l) => scopeItems.some((t) => t.includes(l))), JSON.stringify(scopeItems));
         await js(`[...document.querySelectorAll('.rv-scope-menu button')].find((b) => b.textContent.includes('未提交'))?.click()`);
         const readme = await waitFor('[...document.querySelectorAll(".dock .rv-file")].some((f) => f.textContent.includes("README.md") && f.querySelector(".rv-body .diff"))', 8000);
-        check('未提交的改动 lists the modified README.md with its diff; 提交 box at the bottom', readme && (await js('!!document.querySelector(".dock .rv-foot input")')));
+        check('未提交的改动 lists the modified README.md with its diff; 提交 box at the bottom', readme && (await js('!!document.querySelector(".dock .rv-foot textarea")')));
         await shot('right-panel-review');
-        await js('document.querySelector(".dock .rv-bar .rv-anchor .icon-btn")?.click()');
+        await js('document.querySelector(\'.dock .rv-bar button[aria-label="更多审阅操作"]\')?.click()');
         await sleep(300);
         await js(`[...document.querySelectorAll('.rv-more-menu button')].find((b) => b.textContent.includes('Git'))?.click()`);
         const gitView = await waitFor('!!document.querySelector(".dock .rv-git:not([hidden]) .git-view .git-head")', 6000);
@@ -558,7 +558,7 @@ function driver() {
         const search = await waitFor('document.querySelector(".dock .dock-tabs .tab.active")?.dataset.panel === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .search-view")', 5000);
         check('··· 搜索 opens 文件 in search mode', search);
         // 「更多」: the extra tier as temporary tabs with a ×
-        await click('.dock .dock-more > .icon-btn');
+        await click('.dock button.dock-more');
         const more = await js(`[...document.querySelectorAll('.dock-more-menu [data-panel]')].map((b) => b.dataset.panel)`);
         check('「更多」 lists the extra panels (目标 / 编排 / 用量 / 详情 / Issue 与 PR)', ['goals', 'orchestra', 'usage', 'inspector', 'board'].every((p) => more.includes(p)) && !more.includes('files'), JSON.stringify(more));
         await js(`document.querySelector('.dock-more-menu [data-panel="goals"]')?.click()`);
@@ -586,6 +586,155 @@ function driver() {
           await sleep(300);
           const hid = await js('(() => { const d = window.__store.getState().layout.dock; return !d.open && d.tabs.includes("files"); })()');
           check('toggling 审阅 in view hides the right panel and keeps its tab', hid, await js(dockState));
+        }
+
+        // ---- redesign phase 2 review fixes
+        // I1: a window whose right panel was never opened mounts no 审阅 and never asks the server to watch the repo
+        // (a watch = a file watcher + a background `git fetch` every 5 minutes). A second window with a fresh layout
+        // (?win=) records every WebSocket frame it sends: a preload in the page's own world (no context isolation,
+        // this window only) wraps WebSocket#send before any page script runs.
+        if (E.SMOKE_READONLY !== '1') {
+          phase = 'right-panel-cold';
+          const recorder = path.join(out, 'smoke-ws-recorder.cjs');
+          fs.writeFileSync(recorder, '(() => { const sent = (window.__cwSent = []); const send = WebSocket.prototype.send; WebSocket.prototype.send = function (d) { sent.push(typeof d === "string" ? d : "[binary]"); return send.call(this, d); }; })();\n');
+          const cold = new BrowserWindow({ width: 1360, height: 860, show: false, webPreferences: { offscreen: true, backgroundThrottling: false, preload: recorder, contextIsolation: false, sandbox: false } });
+          const cw = cold.webContents;
+          cw.on('console-message', (a, b, c) => {
+            const level = typeof a === 'object' && a && 'level' in a ? a.level : b;
+            const message = typeof a === 'object' && a && 'message' in a ? a.message : c;
+            if (level === 'error' || level === 'warning' || Number(level) >= 2) res.console.push({ phase, level: String(level), message: `[cold window] ${String(message).slice(0, 780)}` });
+          });
+          const cjs = (code) => cw.executeJavaScript(code, true);
+          const cwait = async (code, ms = 15_000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await cjs(code).catch(() => false)) return true; await sleep(150); } return false; };
+          try {
+            const u = new URL(E.SMOKE_URL);
+            u.searchParams.set('win', 'smoke-cold');
+            await Promise.race([cold.loadURL(u.toString()), sleep(20_000)]);
+            await cwait('!!window.__store && window.__store.getState().connected && window.__store.getState().metaLoaded && Array.isArray(window.__cwSent)', 20_000);
+            await cjs(`window.__store.getState().loadHistory(${JSON.stringify(E.SMOKE_SID)})`);
+            const opened = await cwait('!!document.querySelector(".sess-head") && !document.querySelector(".welcome")', 10_000);
+            await sleep(2500);
+            const st = await cjs(`({ review: !!document.querySelector('.dock-panel[data-panel="files"]'), panels: document.querySelectorAll('.dock-panel').length, tabs: window.__store.getState().layout.dock.tabs, watch: window.__cwSent.filter((m) => m.includes('"git.watch"')).length, sent: window.__cwSent.length })`);
+            check('cold start, right panel never opened: no 审阅 mounted, no git.watch sent', opened && st.sent > 0 && !st.review && !st.panels && st.watch === 0, JSON.stringify(st));
+            // …and the other way round: opening it mounts 审阅, which watches the repo once it is on screen
+            await cjs(`document.querySelector('.sess-head button[aria-label="右侧面板"]').click()`);
+            const watched = await cwait(`!!document.querySelector('.dock-panel[data-panel="files"]:not([hidden]) .review') && window.__cwSent.some((m) => m.includes('"git.watch"'))`, 8000);
+            check('opening the right panel mounts 审阅 on screen, and only then is the repo watched', watched);
+          } catch (e) {
+            check('cold-start window', false, String(e && e.message || e));
+          }
+          cold.destroy();
+          phase = 'right-panel';
+        }
+
+        // I5: every panel from the command palette (it is 2 clicks away: 搜索 → the item), by its label
+        const pickItem = async (label) => {
+          const ok = await js(`(() => { document.querySelectorAll('[data-smoke-pick]').forEach((e) => e.removeAttribute('data-smoke-pick')); const it = [...document.querySelectorAll('.cmdk .it')].find((x) => x.querySelector('.t')?.textContent === ${JSON.stringify(label)}); if (!it) return false; it.setAttribute('data-smoke-pick', '1'); return true; })()`);
+          if (ok) await click('[data-smoke-pick]');
+          return ok;
+        };
+        const dockBefore = await js(dockState);
+        const paletteMiss = [];
+        for (const p of inv.panels) {
+          if (E.SMOKE_READONLY === '1' && p.id === 'terminal') continue;
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+          await js('window.__store.setState({ paletteOpen: true })');
+          await waitFor('!!document.querySelector(".cmdk input")', 3000);
+          await js('document.querySelector(".cmdk input").focus()');
+          wc.insertText(`>${p.title}`);
+          await sleep(250);
+          const listed = await pickItem(`打开${p.title}面板`);
+          const shown = listed && await waitFor(`(() => { const d = window.__store.getState().layout.dock; return d.open && document.querySelector('.dock .dock-tabs .tab.active')?.dataset.panel === ${JSON.stringify(p.id)} && !!document.querySelector('.dock-panel[data-panel="${p.id}"]:not([hidden])'); })()`, 4000);
+          if (!shown) { paletteMiss.push(`${p.id}${listed ? '' : ' (not listed)'}`); await js('window.__store.setState({ paletteOpen: false })'); }
+        }
+        check('palette: every panel is listed as 「打开…面板」 and opens in the right panel', !paletteMiss.length, paletteMiss.join(', '));
+        // the palette's 「面板」 group is not cut to 8 when the query names it
+        await js('window.__store.setState({ paletteOpen: true })');
+        await waitFor('!!document.querySelector(".cmdk input")', 3000);
+        await js('document.querySelector(".cmdk input").focus()');
+        wc.insertText('>面板');
+        await sleep(250);
+        const inGroup = await js(`[...document.querySelectorAll('.cmdk .it .t')].filter((t) => /^(打开|隐藏|关闭).*面板/.test(t.textContent)).length`);
+        check('palette: searching 「面板」 lists every panel', inGroup >= inv.panels.length, `${inGroup} / ${inv.panels.length}`);
+        await js('window.__store.setState({ paletteOpen: false })');
+        await js(`(() => { const d = JSON.parse(${JSON.stringify(dockBefore)}); window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { tabs: d.tabs, active: d.active, open: false, minimized: false } }); })()`);
+        await sleep(300);
+
+        // I5: every view in the header ··· lands where viewTarget (panel-entries.ts) sends it — the same table
+        // panel-entries.test.ts pins: 改动 / Git → 审阅, 文件 / 搜索 / 生成的文件 → 文件, Issue 与 PR → a tab, 定时任务 in place
+        const activeTab = 'document.querySelector(".dock:not([hidden]) .dock-tabs .tab.active")?.dataset.panel';
+        const landing = {
+          changes: `${activeTab} === "files" && document.querySelector(".dock .rv-main:not([hidden]) .rv-scope .t")?.textContent === "本次对话改动"`,
+          git: `${activeTab} === "files" && !!document.querySelector(".dock .rv-git:not([hidden])")`,
+          files: `${activeTab} === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .filetree")`,
+          search: `${activeTab} === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .search-view")`,
+          artifacts: `${activeTab} === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .fv-group.open")`,
+          board: `${activeTab} === "board"`,
+          schedules: '!!document.querySelector(".pane.focused .sh-view") && !!document.querySelector(".pane.focused .wb-body")',
+        };
+        const viewMiss = [];
+        for (const [view, expect] of Object.entries(landing)) {
+          if (E.SMOKE_READONLY === '1' && view !== 'schedules' && view !== 'artifacts') continue;
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+          await sleep(350); // the columns animate
+          await openHeaderMenu();
+          await click(`.menu.sess-menu [data-view="${view}"]`);
+          const ok = await waitFor(`!!(${expect})`, 6000);
+          const inPlace = await js('!!document.querySelector(".pane.focused .sh-view")');
+          if (!ok || (view !== 'schedules' && inPlace)) viewMiss.push(`${view}: ${await js(`JSON.stringify({ tab: ${activeTab}, open: window.__store.getState().layout.dock.open, inPlace: ${inPlace} })`)}`);
+          if (inPlace) { await click('.pane.focused .sh-view'); await sleep(250); }
+          if (view === 'git') await js('document.querySelector(".dock .rv-git .rv-bar .btn")?.click()');
+        }
+        check('every header ··· view lands where viewTarget says (审阅 / 文件 / Issue 与 PR tab / 定时任务 in place)', !viewMiss.length, viewMiss.join(' | '));
+
+        if (E.SMOKE_READONLY !== '1') {
+          // I5: the header's terminal button → 终端
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+          await sleep(350);
+          await click('.sess-head button[aria-label="终端"]');
+          check('the header terminal button opens 终端', await waitFor(`${activeTab} === "terminal" && !!document.querySelector(".dock .xterm")`, 8000));
+
+          // I5: a tool row's 详情 → 详情; closing it (M12) keeps the default panel open on a fixed tab
+          const t = new Date().toISOString();
+          const base = { isSidechain: false, userType: 'external', cwd: E.SMOKE_REPO, sessionId: E.SMOKE_SID, version: '2.1.281', gitBranch: 'master' };
+          const lines = [
+            { ...base, parentUuid: '00000000-0000-4000-8000-000000000002', type: 'assistant', message: { id: 'msg_smoke_read', type: 'message', role: 'assistant', model: 'claude-smoke', content: [{ type: 'tool_use', id: 'toolu_smoke_read', name: 'Read', input: { file_path: path.join(E.SMOKE_REPO, 'README.md') } }], stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } }, uuid: '00000000-0000-4000-8000-000000000003', timestamp: t },
+            { ...base, parentUuid: '00000000-0000-4000-8000-000000000003', type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_smoke_read', content: '# smoke repo' }] }, uuid: '00000000-0000-4000-8000-000000000004', timestamp: t },
+          ];
+          fs.appendFileSync(E.SMOKE_TRANSCRIPT, lines.map((x) => JSON.stringify(x)).join('\n') + '\n');
+          // only the fixed tabs open (the palette walk above opened every panel): 详情 is the one temporary tab
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { tabs: ['files', 'explorer', 'terminal', 'tasks'], active: 'terminal' } })`);
+          await js(`window.__store.getState().loadHistory(${JSON.stringify(E.SMOKE_SID)})`);
+          const row = await waitFor('!!document.querySelector(\'.pane.focused .tool-head button[aria-label="详情"]\')', 8000);
+          await click('.pane.focused .tool-head button[aria-label="详情"]');
+          const detail = row && await waitFor(`${activeTab} === "inspector" && !!document.querySelector('.dock-panel[data-panel="inspector"]:not([hidden])')`, 4000);
+          check('a tool row’s 详情 opens 详情 in the right panel', detail, JSON.stringify({ row }));
+          await click('.dock .dock-tabs .tab[data-panel="inspector"] .x');
+          const landed = await waitFor(`window.__store.getState().layout.dock.open && !document.querySelector('.dock .dock-tabs .tab[data-panel="inspector"]') && !!document.querySelector('.dock .dock-tabs .tab.fixed.active')`, 3000);
+          check('closing the last temporary tab keeps the right panel open on a fixed tab', landed, await js(dockState));
+
+          // I2: the desktop app on Windows at 1024 wide — the caption buttons take the top-right 150px of the tab
+          // row: the four fixed tabs stay whole (never scrolled away), the 「更多」 menu stays inside the window
+          phase = 'right-panel-desktop';
+          win.setContentSize(1024, 860);
+          await waitFor('innerWidth === 1024', 4000);
+          await js(`document.documentElement.classList.add('desktop', 'win'); window.__store.setState({ sidebarOpen: true })`);
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'files' })`);
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'goals' })`);
+          await sleep(900);
+          const fit = await js(`(() => { const vw = innerWidth; const rp = document.querySelector('.rpanel').getBoundingClientRect(); const tabs = [...document.querySelectorAll('.dock .dock-tabs .tab.fixed')].map((t) => { const r = t.getBoundingClientRect(); const whole = r.width > 0 && r.left >= rp.left - 0.5 && r.right <= Math.min(rp.right, vw) + 0.5; const underCaption = r.top < 40 && r.right > vw - 150; return { id: t.dataset.panel, ok: whole && !underCaption }; }); return { vw, rp: Math.round(rp.width), stacked: !!document.querySelector('.dock-tabs.stacked'), tabs }; })()`);
+          check('desktop · Windows, 1024 wide, a temporary tab open: the four fixed tabs are fully visible', fit.tabs.length === 4 && fit.tabs.every((x) => x.ok), JSON.stringify(fit));
+          await click('.dock button.dock-more');
+          const menu = await js(`(() => { const m = document.querySelector('.dock-more-menu'); if (!m) return null; const r = m.getBoundingClientRect(); return { l: Math.round(r.left), r: Math.round(r.right), b: Math.round(r.bottom), vw: innerWidth, vh: innerHeight }; })()`);
+          check('desktop · Windows, 1024 wide: the 「更多」 menu is inside the window', !!menu && menu.l >= 0 && menu.r <= menu.vw && menu.b <= menu.vh, JSON.stringify(menu));
+          await shot('right-panel-desktop-win');
+          await key('Escape');
+          await click('.dock .dock-tabs .tab[data-panel="goals"] .x');
+          await js(`document.documentElement.classList.remove('desktop', 'win')`);
+          win.setContentSize(1360, 860);
+          await waitFor('innerWidth === 1360', 4000);
+          await sleep(300);
+          phase = 'right-panel';
         }
         const err3 = await noBoundary('.dock');
         check('right panel checks without error boundary', !err3, err3);
