@@ -1579,8 +1579,9 @@ html[data-density='compact'] .sb-row.sess { height: 28px; padding: 0 10px 0 var(
 .sb-hint { flex: none; margin: 0 var(--sp-2) 6px; padding: 4px 4px 4px 10px; border-radius: var(--r-md); background: var(--surface-2); font-size: 12px; color: var(--ink-3); }
 .sb-hint .line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .sb-hint .line > svg { flex: none; }
-.sb-hint .msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
-.sb-hint .link { color: var(--ink-1); font-weight: 500; font-size: 12px; }
+/* several agents' names wrap onto a second line instead of being cut off (the full text is also the tooltip) */
+.sb-hint .msg { flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; line-height: 1.45; color: var(--ink-2); }
+.sb-hint .link { flex: none; white-space: nowrap; color: var(--ink-1); font-weight: 500; font-size: 12px; }
 .sb-hint .picks { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 2px; }
 
 /* phone drawer: touch-sized rows; no hover there, so the status stays and a long press opens the menu */
