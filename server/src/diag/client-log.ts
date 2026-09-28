@@ -2,14 +2,20 @@ import type { ClientRequest } from '../protocol.js';
 
 type ClientLog = Extract<ClientRequest, { kind: 'client.log' }>;
 
-// ANSI CSI / OSC sequences, then any other C0 control (keeps \n and \t, which the formatting handles) and DEL
+// ANSI CSI / OSC sequences; then C0 controls (keeping \n and \t, which the formatting handles), DEL, C1 controls
+// (U+0080–U+009F, incl. the 8-bit CSI) and the bidi embedding / override / isolate characters (U+202A–U+202E,
+// U+2066–U+2069), which can make a log line display in a different order than it reads
 const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_]/g;
-const CONTROL = /[\x00-\x08\x0b-\x1f\x7f]/g;
-const clean = (s: unknown) => String(s ?? '').replace(ANSI, '').replace(/\r\n?/g, '\n').replace(CONTROL, '');
-const clip = (t: string, n: number) => (t.length > n ? `${t.slice(0, n)}… (+${t.length - n})` : t);
+const CONTROL = /[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g;
+const clean = (t: string) => t.replace(ANSI, '').replace(/\r\n?/g, '\n').replace(CONTROL, '');
+/** cut first (on what the renderer sent), clean the kept part: an enormous report never reaches the regexes */
+const clipped = (s: unknown, n: number): [string, string] => {
+  const t = String(s ?? '');
+  return t.length > n ? [t.slice(0, n), `… (+${t.length - n})`] : [t, ''];
+};
 /** one line per field: a renderer can send anything, and a newline must not forge a log line of its own */
-const flat = (s: unknown, n: number) => clip(clean(s).replace(/\n+/g, ' ⏎ ').replace(/\t/g, ' ').replace(/ {2,}/g, ' ').trim(), n);
-const block = (s: unknown, n: number) => clip(clean(s), n).split('\n').map((l) => `    | ${l}`).join('\n');
+const flat = (s: unknown, n: number) => { const [t, more] = clipped(s, n); return `${clean(t).replace(/\n+/g, ' ⏎ ').replace(/\t/g, ' ').replace(/ {2,}/g, ' ').trim()}${more}`; };
+const block = (s: unknown, n: number) => { const [t, more] = clipped(s, n); return `${clean(t)}${more}`.split('\n').map((l) => `    | ${l}`).join('\n'); };
 
 /**
  * Renderer error reports (`client.log`, sent by ErrorBoundary) → server log lines. The renderer is not trusted:
@@ -57,7 +63,7 @@ export class ClientLogGate<K extends object> {
     this.take(this.all, this.global, now);
     this.seen.set(key, { t: now, dup: 0 });
     if (this.seen.size > 500) for (const [k, v] of this.seen) { if (now - v.t >= this.windowMs || this.seen.size > 500) this.seen.delete(k); else break; }
-    const repeats = prev?.dup ? `（前一分钟内另有 ${prev.dup} 次相同报告）` : '';
+    const repeats = prev?.dup ? `（自上次记录以来重复 ${prev.dup} 次）` : '';
     const parts = [`[web ${req.level === 'warn' ? 'warn' : 'error'}] ${area}: ${message}${repeats}${req.url ? `  (${flat(req.url, 200)})` : ''}`];
     if (req.stack) parts.push(block(req.stack, 4000));
     if (req.componentStack) parts.push(`  component stack:\n${block(req.componentStack, 2000)}`);

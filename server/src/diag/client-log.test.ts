@@ -25,6 +25,24 @@ describe('client.log gate', () => {
     expect(line).toContain('at X');
   });
 
+  it('strips C1 controls and bidi overrides (a report must not reorder or hide text in the log)', () => {
+    const { g } = gate();
+    const line = g.admit({}, report('a\u0085b\u009bc\u202ed\u2066e\u2069f\u202ag', 'x\u202ey', { stack: 'at \u2067Z\u2069\u0090' }))!;
+    expect(line).not.toMatch(/[\u0080-\u009f\u202a-\u202e\u2066-\u2069]/);
+    expect(line.split('\n')[0]).toBe('[web error] xy: abcdefg');
+    expect(line).toContain('at Z');
+  });
+
+  it('truncates before cleaning: a huge report costs little, and the cut is counted on what was sent', () => {
+    const { g } = gate();
+    const raw = `${'x'.repeat(600)}${'\x1b[31m'.repeat(100)}`; // 600 + 500 characters
+    expect(g.admit({}, report(raw))!.split('\n')[0]).toMatch(/… \(\+600\)$/);
+    const t0 = Date.now();
+    const huge = g.admit({}, report('\x1b[1m'.repeat(1_000_000), 'big', { stack: '\u202e'.repeat(2_000_000) }))!;
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(huge.length).toBeLessThan(6000);
+  });
+
   it('caps sizes', () => {
     const { g } = gate();
     expect(g.admit({}, report('y'.repeat(2000)))!.length).toBeLessThan(600);
@@ -39,7 +57,7 @@ describe('client.log gate', () => {
     expect(g.admit({}, report('same'))).toBeNull(); // from another connection too (a render loop in every window)
     expect(g.admit(c, report('other'))).toBeTruthy(); // a different message is not a duplicate
     at(61_000);
-    expect(g.admit(c, report('same'))).toMatch(/另有 2 次相同报告/);
+    expect(g.admit(c, report('same'))).toMatch(/（自上次记录以来重复 2 次）/);
   });
 
   it('per connection and global budgets per window; duplicates do not use them up', () => {
