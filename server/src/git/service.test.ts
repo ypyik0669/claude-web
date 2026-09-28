@@ -151,3 +151,35 @@ describe('GitService.status process count and stash count', () => {
     } finally { await fs.rm(base, { recursive: true, force: true }); }
   });
 });
+
+describe('stash count in a reftable repository (no .git/logs)', () => {
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid' };
+  const reftableOk = (() => {
+    const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
+    const d = require('node:fs').mkdtempSync(path.join(os.tmpdir(), 'cw-rt-probe-'));
+    const r = spawnSync('git', ['init', '-q', '--ref-format=reftable', d], { windowsHide: true });
+    require('node:fs').rmSync(d, { recursive: true, force: true });
+    return r.status === 0; // git ≥ 2.45
+  })();
+
+  it.skipIf(!reftableOk)('asks git (rev-list --walk-reflogs) instead of reading a reflog file that does not exist', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const { GitService } = await import('./service.js');
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'cw-reftable-')));
+    try {
+      const git = (...a: string[]) => execFileSync('git', a, { cwd: base, windowsHide: true, stdio: 'ignore', env });
+      git('init', '-q', '--ref-format=reftable');
+      await fs.writeFile(path.join(base, 'a.txt'), '1\n');
+      git('add', '-A');
+      git('commit', '-q', '-m', 'init');
+      const svc = new GitService();
+      expect((await svc.status(base)).stashes).toBe(0);
+      for (const v of ['2', '3']) { await fs.writeFile(path.join(base, 'a.txt'), `${v}\n`); git('stash', '-q'); }
+      expect((await svc.status(base)).stashes).toBe(2);
+      git('stash', 'drop', '-q');
+      expect((await svc.status(base)).stashes).toBe(1);
+      git('stash', 'clear');
+      expect((await svc.status(base)).stashes).toBe(0);
+    } finally { await fs.rm(base, { recursive: true, force: true }); }
+  });
+});

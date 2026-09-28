@@ -99,12 +99,19 @@ export async function resolveCommonDir(gitDir: string): Promise<string> {
 }
 
 /**
- * Number of stashes without a git process: one reflog line per stash entry in `<common dir>/logs/refs/stash`
- * (`stash drop` rewrites it, `stash clear` deletes it). Not `status --show-stash`: git 2.14–2.34 accept the flag
- * but print no `# stash` line, older git rejects it, and current git omits the line at zero.
+ * Number of stashes. Files ref backend (the default): no git process — one reflog line per stash entry in
+ * `<common dir>/logs/refs/stash` (`stash drop` rewrites it, `stash clear` deletes it). A reftable repository
+ * (`<common dir>/reftable`) keeps reflogs inside its tables and has no logs/ at all: ask git
+ * (`rev-list --walk-reflogs --count refs/stash`; an error means no stash ref, i.e. 0).
+ * Not `status --show-stash`: git 2.14–2.34 accept the flag but print no `# stash` line, older git rejects it,
+ * and current git omits the line at zero.
  */
-export async function stashCount(root: string): Promise<number> {
+export async function stashCount(root: string, git: (args: string[]) => Promise<string>): Promise<number> {
   const common = await resolveCommonDir(await resolveGitDir(root));
+  if (await fs.stat(path.join(common, 'reftable')).then((st) => st.isDirectory(), () => false)) {
+    const out = await git(['rev-list', '--walk-reflogs', '--count', 'refs/stash', '--']).catch(() => '0');
+    return Number(out.trim()) || 0;
+  }
   const log = await fs.readFile(path.join(common, 'logs', 'refs', 'stash'), 'utf8').catch(() => '');
   return log.split('\n').filter((l) => l.trim()).length;
 }
@@ -187,7 +194,7 @@ export class GitService extends EventEmitter {
       else if (await has('CHERRY_PICK_HEAD')) st.state = 'cherry-picking';
       if (st.files.some((f) => f.status === 'conflict')) st.state = st.state === 'clean' ? 'conflict' : st.state;
     } catch { /* ignore */ }
-    st.stashes = await stashCount(root).catch(() => 0); // the reflog, not a `stash list` process
+    st.stashes = await stashCount(root, async (a) => (await this.run(root, a)).stdout).catch(() => 0); // the reflog, not `stash list`
     return st;
   }
 
