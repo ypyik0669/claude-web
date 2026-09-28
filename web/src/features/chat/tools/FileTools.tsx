@@ -6,6 +6,7 @@ import { DiffView, type Hunk } from '../DiffView';
 import { Expandable } from '../Expandable';
 import { langFromPath } from '../highlight';
 import { ErrorPre, ImageGrid } from './McpTool';
+import { blockRemoteOpen } from '@/features/remote-guard';
 
 export function ReadBody({ t }: { t: ToolUseBlock }) {
   const inp = t.input as any;
@@ -110,6 +111,8 @@ export function FileLink({ path, line, children }: { path: string; line?: number
   const open = (e: React.MouseEvent) => {
     const st = useStore.getState();
     const sid = ctx?.sessionId ?? st.activeId;
+    // a session on another machine: this path is on THAT disk — neither the editor nor the inspector may read it here
+    if (blockRemoteOpen(sid, path)) return;
     // plain click → editor tab at the line; Alt+click → inspector (read-only quick look)
     if (e.altKey) { if (sid) useStore.setState({ inspect: { sessionId: sid, file: { path, line } } }); return; }
     st.openTile({ id: `d${Date.now().toString(36)}`, kind: 'doc', path, line }, 'tab');

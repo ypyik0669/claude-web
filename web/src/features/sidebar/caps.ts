@@ -14,6 +14,8 @@ export interface EffectiveCaps extends SourceCaps {
 }
 
 export function effectiveCaps(s: SessionSummary): EffectiveCaps {
+  // a machine that is offline right now: its rows come from the last cached list and are read-only
+  if (s.peer?.offline) return { resume: false, rename: false, archive: false, delete: false, fork: false, archiveVia: null };
   const imported = isImportedSessionId(s.sessionId);
   // claude-web's own sessions (Claude, or an agent it drove itself) predate caps: everything works
   const c: SourceCaps = s.caps ?? { resume: true, rename: true, archive: false, delete: !imported, fork: !imported };
@@ -29,6 +31,7 @@ export function capsIntersection(list: SessionSummary[]): { archive: boolean; de
 /** Command that resumes this session in the agent's own CLI, or null when there is no such flag. */
 export function nativeCliCommand(s: SessionSummary): string | null {
   const kind = agentOf(s);
+  if (s.peer) return null; // lives on another machine: its CLI and files are there
   if (!isImportedSessionId(s.sessionId)) return kind === 'claude' ? `claude --resume ${s.sessionId}` : null; // an agent claude-web drove: its native id is not the session id
   if (kind === 'codex') return `codex resume ${nativeSessionId(s.sessionId)}`;
   if (kind === 'opencode') return `opencode --session ${nativeSessionId(s.sessionId)}`;
@@ -54,7 +57,8 @@ export function deleteTargets(list: SessionSummary[], nameOf: (kind: string) => 
   const also = new Set<string>();
   for (const s of list) {
     const kind = agentOf(s);
-    if (isImportedSessionId(s.sessionId)) from.add(nameOf(kind));
+    if (s.peer) from.add(`机器「${s.peer.name}」`);
+    else if (isImportedSessionId(s.sessionId)) from.add(nameOf(kind));
     else if (kind === 'claude') from.add(nameOf('claude'));
     else {
       from.add('Claude Web');

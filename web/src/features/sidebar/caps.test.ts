@@ -83,3 +83,23 @@ describe('deleteTargets', () => {
     expect(deleteTargets([s('uuid-m', { agent: 'opencode', caps: READONLY, mergedFrom: 'opencode-x' })], names)).toBe('从 Claude Web 删除');
   });
 });
+
+describe('sessions on other machines (federation)', () => {
+  const B = { id: 'b1', name: 'Box B' };
+  const names = (k: string) => ({ codex: 'Codex', claude: 'Claude Code' })[k] ?? k;
+  it('an online peer session keeps its caps; an imported one on the peer pages through library.read', () => {
+    expect(effectiveCaps(s('peer_b1~uuid', { peer: B })).resume).toBe(true);
+    expect(effectiveCaps(s('peer_b1~codex-t', { peer: B, agent: 'codex', caps: CODEX })).archiveVia).toBe('library');
+  });
+  it('an offline peer session is read-only', () => {
+    const c = effectiveCaps(s('peer_b1~uuid', { peer: { ...B, offline: true }, caps: CODEX }));
+    expect(c).toMatchObject({ resume: false, rename: false, archive: false, delete: false, fork: false, archiveVia: null });
+  });
+  it('no native CLI command: the session is not on this machine', () => {
+    expect(nativeCliCommand(s('peer_b1~uuid', { peer: B }))).toBeNull();
+    expect(nativeCliCommand(s('peer_b1~codex-t', { peer: B, agent: 'codex' }))).toBeNull();
+  });
+  it('the delete confirm names the machine', () => {
+    expect(deleteTargets([s('peer_b1~uuid', { peer: B })], names)).toBe('从 机器「Box B」 删除');
+  });
+});

@@ -96,6 +96,28 @@ export async function handOver(s: SessionSummary, agent: AgentKind): Promise<voi
   } catch (e) { st.toast(errText(e)); }
 }
 
+/**
+ * 「交给本机 agent 继续」: a session on another machine is read through that machine and handed to an agent
+ * HERE as a new session with a briefing. Its paths are the other machine's, so the user picks the local
+ * directory (default: the first workspace).
+ */
+export async function handOverToLocal(s: SessionSummary, agent: AgentKind): Promise<void> {
+  const st = useStore.getState();
+  const name = st.agents.find((a) => a.kind === agent)?.name ?? agent;
+  const def = st.workspaces[0]?.path ?? '';
+  const cwd = (await dlg.prompt(`交给本机的 ${name}：在哪个目录继续？`, def, {
+    message: `这个会话在机器「${s.peer?.name ?? '?'}」上（目录 ${s.cwd}），那里的路径在本机多半不存在。会新建一个本机会话，带上一份交接说明；原会话保持不变。`,
+    okLabel: '交接',
+  }))?.trim();
+  if (!cwd) return;
+  try {
+    const r = await ws.request<{ sessionId: string }>({ kind: 'peers.handover', sessionId: s.sessionId, agent, cwd });
+    st.toast(`已交给本机的 ${name}`, true);
+    await st.refreshSessions().catch(() => {});
+    if (r?.sessionId) await st.loadHistory(r.sessionId, { mode: 'tab' });
+  } catch (e) { st.toast(errText(e)); }
+}
+
 export function openNativeCli(s: SessionSummary): void {
   const cmd = nativeCliCommand(s);
   if (!cmd) return;
@@ -157,6 +179,10 @@ export function SessionMenu({ s, onClose, style, extra }: { s: SessionSummary; o
   const cli = nativeCliCommand(s);
   const act = (fn: () => unknown) => () => { onClose(); void fn(); };
   const cur = agentOf(s);
+  // a session on another machine can go to ANY local agent (the same kind included: it moves machines);
+  // an offline machine can't be read, so there is nothing to hand over
+  const remote = !!s.peer;
+  const targets = remote && s.peer?.offline ? [] : agents.filter((a) => a.installed !== false && a.enabled !== false && (remote || a.kind !== cur));
   return (
     <div ref={ref} className="menu sess-menu" style={style ?? { right: 8, top: 28 }} onClick={(e) => e.stopPropagation()} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}>
       {extra}
@@ -164,13 +190,13 @@ export function SessionMenu({ s, onClose, style, extra }: { s: SessionSummary; o
       {caps.rename && <button onClick={act(() => renameSession(s))}><Icon name="edit" size={14} /> 重命名</button>}
       {caps.fork && <button onClick={act(() => forkSession(s))}><Icon name="branch" size={14} /> 分叉</button>}
       {caps.archive && <button onClick={act(() => setArchived([s], !archived))}><Icon name="archive" size={14} /> {archived ? '取消归档' : '归档'}</button>}
-      <button onClick={() => setHandoff(!handoff)} aria-expanded={handoff}><Icon name="agent" size={14} /> <span style={{ flex: 1 }}>交给其它 agent</span><Icon name={handoff ? 'chevronDown' : 'chevronRight'} size={12} /></button>
+      <button onClick={() => setHandoff(!handoff)} aria-expanded={handoff}><Icon name="agent" size={14} /> <span style={{ flex: 1 }}>{remote ? '交给本机 agent 继续' : '交给其它 agent'}</span><Icon name={handoff ? 'chevronDown' : 'chevronRight'} size={12} /></button>
       {handoff && (
         <div className="sub-menu">
-          {agents.filter((a) => a.installed !== false && a.enabled !== false && a.kind !== cur).map((a) => (
-            <button key={a.kind} onClick={act(() => handOver(s, a.kind))}><Icon name={AGENT_ICONS[a.kind] ?? 'agent'} size={13} /> {a.name}</button>
+          {targets.map((a) => (
+            <button key={a.kind} onClick={act(() => (remote ? handOverToLocal(s, a.kind) : handOver(s, a.kind)))}><Icon name={AGENT_ICONS[a.kind] ?? 'agent'} size={13} /> {a.name}</button>
           ))}
-          {!agents.some((a) => a.installed !== false && a.enabled !== false && a.kind !== cur) && <div className="menu-note">没有其它可用的 agent</div>}
+          {!targets.length && <div className="menu-note">没有其它可用的 agent</div>}
         </div>
       )}
       {cli && <button onClick={act(() => openNativeCli(s))} title={cli}><Icon name="terminal" size={14} /> 在原生 CLI 打开</button>}

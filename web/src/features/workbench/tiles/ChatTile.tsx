@@ -19,6 +19,8 @@ import type { GitStatus } from '@shared';
 import { Icon } from '@/ui/icons';
 import { EngineSwitcher } from '../EngineSwitcher';
 import { SessionMenu, effectiveCaps, forkSession } from '@/features/sidebar/session-actions';
+import { sessionPeer } from '@/features/peers';
+import { blockRemoteOpen } from '@/features/remote-guard';
 
 /** git status for a cwd, refreshed on git.changed broadcasts (shared by the files tab badges). */
 function useGitStatus(cwd: string, enabled: boolean): GitStatus | null {
@@ -47,6 +49,8 @@ const WB_TABS: { id: WorkbenchTab; l: string }[] = [
   { id: 'artifacts', l: '产物' },
   { id: 'board', l: '看板' },
 ];
+/** A session on another machine: its files, git, search, schedules live there — only these tabs make sense here. */
+const REMOTE_TABS = new Set<WorkbenchTab>(['live', 'artifacts']);
 
 /** Per-session header: breadcrumb · status · rename · chat/trajectory · fork · export · stop/resume. Moved out of TopBar. */
 function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }) {
@@ -61,6 +65,8 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
   const [editing, setEditing] = useState<string | null>(null);
   const [menu, setMenu] = useState(false);
   const title = meta?.title ?? sid.slice(0, 8);
+  const sessions = useStore((s) => s.sessions);
+  const peer = sessionPeer(sid, sessions);
   const cwd = active?.cwd ?? meta?.cwd ?? '';
   const live = active && active.state !== 'history' && active.state !== 'closed' && active.state !== 'error';
   const wsOf = workspaces.find((w) => cwd.toLowerCase().startsWith(w.path.toLowerCase()));
@@ -81,7 +87,9 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
   return (
     <div className="sess-head">
       <div className="crumb">
-        <button title={cwd} onClick={() => ws.request({ kind: 'shell.open', path: cwd })}><Icon name="folder" size={12} /> {wsOf?.name ?? basename(cwd)}</button>
+        {peer
+          ? <button title={`${cwd}（在机器「${peer.name}」上）`} disabled><Icon name="machine" size={12} /> {peer.name} · {basename(cwd)}</button>
+          : <button title={cwd} onClick={() => ws.request({ kind: 'shell.open', path: cwd })}><Icon name="folder" size={12} /> {wsOf?.name ?? basename(cwd)}</button>}
         <span className="sep">/</span>
         {live && <span className={clsx('dot', active.state)} />}
         {editing !== null ? (
@@ -109,7 +117,8 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
       )}
       <div className="sess-tabs">
         <div className="wb-tabs">
-          {WB_TABS.map((t) => <button key={t.id} className={clsx(tile.wb === t.id && 'active')} onClick={() => patch({ wb: t.id })}>{t.l}</button>)}
+          {(peer ? WB_TABS.filter((t) => REMOTE_TABS.has(t.id)) : WB_TABS).map((t) => <button key={t.id} className={clsx(tile.wb === t.id && 'active')} onClick={() => patch({ wb: t.id })}>{t.l}</button>)}
+          {peer && <span className="peer-note" title={`文件 / Git / 搜索在机器「${peer.name}」上，请在那台机器上查看`}><Icon name="machine" size={11} /> 文件 / Git / 搜索：在该机器上查看</span>}
         </div>
         <span className="grow" />
         {tile.wb === 'live' && (
@@ -141,7 +150,7 @@ function Artifacts({ sessionId }: { sessionId: string }) {
   return (
     <div className="list">
       {items.map((a) => (
-        <div key={a.path} className="row clickable" onClick={() => openTile({ id: `d${Date.now()}`, kind: 'doc', path: a.path }, 'tab')} title={a.path}>
+        <div key={a.path} className="row clickable" onClick={() => { if (!blockRemoteOpen(sessionId, a.path)) openTile({ id: `d${Date.now()}`, kind: 'doc', path: a.path }, 'tab'); }} title={a.path}>
           <span><Icon name="read" size={13} /></span>
           <div className="grow"><div>{basename(a.path)}</div><div className="sub">{a.path}</div></div>
           <span className="badge">{a.via}</span>
@@ -156,7 +165,10 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
   const has = useStore((s) => (sid ? !!s.open[sid] : true));
   const loadHistory = useStore((s) => s.loadHistory);
   const active = useStore((s) => (sid ? s.open[sid] : undefined));
-  const gitStatus = useGitStatus(active?.cwd ?? '', tile.wb === 'files');
+  const sessions = useStore((s) => s.sessions);
+  // by id, not by the list: a fork or a restored layout may render before the list has the row
+  const peer = sessionPeer(sid, sessions);
+  const gitStatus = useGitStatus(active?.cwd ?? '', tile.wb === 'files' && !peer);
   const deleted = useStore((s) => (sid ? !!s.deletedSessions[sid] : false));
   // restored from a persisted layout: lazily pull the transcript
   useEffect(() => {
@@ -174,6 +186,8 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
           <Composer key={`c-${sid}`} disabled={deleted} />
         </>
       )}
+      {peer && !REMOTE_TABS.has(tile.wb) && <div className="wb-body"><div className="remote-only"><Icon name="machine" size={22} /><div>这个会话在机器「{peer.name}」上，它的文件 / Git / 搜索 / 定时任务都在那台机器上。</div><div className="sub">请在该机器上查看；这里可以继续对话、审批、中断。</div></div></div>}
+      {peer && !REMOTE_TABS.has(tile.wb) ? null : <>
       {tile.wb === 'changes' && <div className="wb-body"><FilesPanel /></div>}
       {tile.wb === 'git' && <div className="wb-body"><GitView cwd={active.cwd} /></div>}
       {tile.wb === 'files' && <div className="wb-body"><FileTree root={active.cwd} gitStatus={gitStatus} /></div>}
@@ -181,6 +195,7 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
       {tile.wb === 'schedules' && <div className="wb-body"><SchedulesView /></div>}
       {tile.wb === 'artifacts' && <div className="wb-body"><Artifacts sessionId={sid} /></div>}
       {tile.wb === 'board' && <div className="wb-body"><BoardView cwd={active.cwd} sid={sid} /></div>}
+      </>}
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { getToolDef } from '@/features/chat/tools/registry';
 import { JsonTree } from '@/features/chat/tools/McpTool';
 import { basename } from '@/util';
 import { Icon } from '@/ui/icons';
+import { remoteFileNote, sessionPeer } from '@/features/peers';
 
 function FileView({ path, line }: { path: string; line?: number }) {
   const [text, setText] = useState<string | null>(null);
@@ -43,8 +44,14 @@ function FileView({ path, line }: { path: string; line?: number }) {
 export function InspectorPanel() {
   const inspect = useStore((s) => s.inspect);
   const o = useStore((s) => (inspect ? s.open[inspect.sessionId] : undefined));
+  const sessions = useStore((s) => s.sessions);
   if (!inspect) return <div className="empty">点击工具行右侧的详情按钮、轨迹表格中的一行，或搜索结果里的文件路径查看详情</div>;
-  if (inspect.file) return <FileView path={inspect.file.path} line={inspect.file.line} />;
+  if (inspect.file) {
+    // a session on another machine: the path is on THAT disk — never read the same path here
+    const peer = sessionPeer(inspect.sessionId, sessions);
+    if (peer) return <div className="remote-only"><Icon name="machine" size={22} /><div>{remoteFileNote(peer, inspect.file.path)}</div></div>;
+    return <FileView path={inspect.file.path} line={inspect.file.line} />;
+  }
   const t = o && inspect.toolUseId ? o.conv.toolIndex.get(inspect.toolUseId) : undefined;
   if (!o || !t) return <div className="empty">找不到该工具调用</div>;
   const Body = getToolDef(t.name).Body;

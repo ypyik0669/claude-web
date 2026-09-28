@@ -4,6 +4,8 @@ import os from 'node:os';
 import { EventEmitter } from 'node:events';
 import type { GatewayGroup, Goal, ImBinding, ImGatewayConfig, MessageFeedback, Provider, RemoteHost, Schedule, ScheduleRun } from '../protocol.js';
 import type { DeviceRecord } from '../remote/service.js';
+import type { PeerRecord } from '../federation/types.js';
+import { randomBytes } from 'node:crypto';
 export type { Schedule } from '../protocol.js';
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
@@ -26,6 +28,9 @@ interface Data {
   goals: Goal[];
   gatewayGroups?: GatewayGroup[]; // model gateway failover groups
   gateway?: { enabled?: boolean; key?: string }; // key: enc:… (SecretService)
+
+  peers?: PeerRecord[]; // other machines this one federates with (tokens enc:)
+  serverId?: string; // this server's stable id (federation loop guard)
 }
 
 const defaultFile = () => path.join(process.env.CLAUDE_WEB_DIR ?? path.join(os.homedir(), '.claude-web'), 'meta.json');
@@ -227,6 +232,15 @@ export class MetaStore extends EventEmitter {
   imBindings(): ImBinding[] { return this.data.imBindings ??= []; }
   async setImBinding(b: ImBinding) { this.data.imBindings = [...this.imBindings().filter((x) => !(x.gatewayId === b.gatewayId && x.chatId === b.chatId)), b]; await this.queueSave(true); }
   async removeImBinding(gatewayId: string, chatId: string) { this.data.imBindings = this.imBindings().filter((x) => !(x.gatewayId === gatewayId && x.chatId === chatId)); await this.queueSave(true); }
+  // ---- federation (other machines) ----
+  peers(): PeerRecord[] { return this.data.peers ??= []; }
+  async setPeer(p: PeerRecord) { const list = this.peers(); const i = list.findIndex((x) => x.id === p.id); if (i >= 0) list[i] = p; else list.push(p); await this.queueSave(true); }
+  async removePeer(id: string) { this.data.peers = this.peers().filter((p) => p.id !== id); await this.queueSave(true); }
+  /** Generated once and persisted: identifies this server in forwarded requests' `via` chain. */
+  async serverId(): Promise<string> {
+    if (!this.data.serverId) { this.data.serverId = randomBytes(8).toString('hex'); await this.queueSave(true); }
+    return this.data.serverId;
+  }
   async setSetting(k: string, v: unknown) {
     this.data.settings[k] = v;
     await this.queueSave();

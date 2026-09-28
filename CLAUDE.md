@@ -225,6 +225,24 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - 冷启动的 `agents.list` 版本探测可能要十几秒（`opencode --version` 冷启动约 10 s），`infos()` 等 3 s 后退回 `findOnPath` 判断是否安装，面板不被卡住。
 - 调试：`server/src/agent-config/__mocks__/fake-cli.mjs` 扮演 codex / gemini / qwen（`--as=<kind>` 或 `CW_FAKE_AS`），`CW_FAKE_CLI_LOG` 记录每次 argv；`server/ws-phase17.mjs` **自己起一个 server**（CLI 是在 server 的 PATH 上找的），把 npm 形状的 `.cmd` 垫片放在临时 bin 目录并加到 PATH 最前。本机真 CLI 只读实测过 help；测真 CLI 的写操作一律用临时 `CODEX_HOME` / `GEMINI_CLI_HOME`。
 
+## 跨机器会话 / 联邦（2026-09-28）
+
+- **联邦在服务端做**：`server/src/federation/`。每台加入的机器是一个 `PeerClient`（`peer-client.ts`）：到对方 `/ws?token=<设备令牌>&peer=<本机 serverId>` 的普通客户端连接，30s ws ping（pong 往返就是延迟，10s 无 pong 断开），断线 1s→30s 指数退避。加入 = 本机代为 `POST <url>/api/pair` 兑换配对码（和手机同一个接口），令牌 `SecretService.protect` 后存 `meta.peers`；SSH 方式不存令牌，每次连接 `TunnelManager.open(host)` 后用主机配置里的 token 连 `127.0.0.1:<本地端口>`。`meta.serverId` 首次启动生成。
+- **id**：远端会话 = `peer_<peerId>~<远端 id>`，**权限请求的 requestId 也加同样的前缀**（`permission.resolved` / `permission.respond` 只带 requestId，不加没法路由）。`parsePeerId()` 在 `federation/types.ts`，protocol.ts `export *`，web 的 `isImportedSessionId / nativeSessionId` 先 `localId()` 剥前缀（远端的 `codex-…` 会话照样走 `library.read` 分页）。
+- **hub 只加了一个钩子**：处理请求前 `federation.route(req, {via, local})`，返回 undefined 就照常 `handle()`。路由表在 `rewrite.ts` 的 `planRoute()`：FORWARD（session.* / permission.respond / transcript.* / library.read|rename|fork …）去前缀转发、回包加前缀；SPLIT（library.archive / delete）按机器拆开再合并结果；LOCAL（草稿 / 评分 / 置顶 meta 等本机 UI 状态）留在本机；其它带 peer id 的一律拒绝。`sessions.list` / `sessions.search` 合并：每 peer 5s 上限、30s 缓存、对方 `sessions.changed` / `library.changed` 失效；离线时返回上次缓存并标 `peer.offline`（前端置灰、`effectiveCaps` 全只读）。
+- **防环**：`RequestEnvelope.via` 是经过的 serverId 链，自己在链上 → 拒绝；带 via 来的请求（= 来自 peer）只拿本机列表，碰到本机的 peer id 直接拒绝（不做多跳）；远端列表里已带 `peer` 的行丢掉。`hello` 带 `serverId`，对方 serverId 等于自己 = 把本机加成了 peer，立即撤销。
+- **踩过的坑：两台互为 peer 会事件回声**。A 收到 B 的 `sessions.changed` 转播给自己的客户端，其中就有 B 的 PeerClient，B 再转回来……无限弹。所以 peer 连接用 `?peer=` 自报身份，hub `broadcast(e, fromPeer)` 不把「从 peer 来的事件」发给 peer 连接；`rewriteEvent()` 另外丢弃所有已带 `peer_` 的事件做双保险。
+- **令牌失效判定**：upgrade 失败时服务端直接 `socket.destroy()`，拿不到 401。借现有接口：`/api/health` 通 + `GET /api/file?token=<令牌>` 返回 403 → `unauthorized`（不再重连，等「重新配对」）；400 = 令牌有效（参数不对）。注意 `RemoteService.revoke()` 不踢已建立的连接，吊销要等下次断线才体现。
+- **交接到本机**：`peers.handover {sessionId, agent, cwd}` → 通过 peer 用 `library.read` 逐页读完整历史 → `swapAgent()` 的 imported 分支（= `handOverImported`：新本机会话 + 简报），cwd 由用户选（远端路径在本机多半不存在）。
+- **路由表要覆盖前端所有带 sessionId 的请求**（`rewrite.test.ts` 有一条逐个列举的用例）：`memory.search/write` 是 LOCAL（记忆库在本机，sessionId 只是 scope 键），`usage.session / files.changed / files.diff` 是 FORWARD（transcript 和文件在那台机器上）；`memory.harvest`、`session.setProvider/switchAgent` 拒绝，前端对远端会话隐藏对应按钮（MemoryPanel 的「从会话提取」、EngineSwitcher 变只读徽章）。新增带 sessionId 的请求时记得往表里放。
+- **前端判断「是不是远端会话」只看 id**（`features/peers.ts` 的 `sessionPeer()` = `parsePeerId`，机器名从列表取、取不到用 peerId）：分叉后 / 布局恢复时列表还没到，按列表判断会误判成本机，然后在本机对远端路径跑 FileTree / GitView / `git.watch`。ContextRow 对远端会话只显示「机器名 · 目录名」、不发 git / fs；终端面板不用远端 cwd；composer 拒绝基于路径的附件（图片和粘贴仍可）。
+- **自己加自己 / serverId 冲突**：`peers.add` 兑换配对码**之前**先 `GET /api/health?nonce=<随机>`。未鉴权的 health 只给 `serverIdHash`（serverId 的哈希）和 `selfProof = sha256(nonce + 本进程 bootId)`，serverId / bootId 原文只给带有效令牌的请求（`FederationService.healthInfo()`）。哈希相同且 selfProof 与自己算的一致 = 本机（拒绝，不留孤儿设备令牌）；哈希相同但 proof 不同 = 拷贝了 `~/.claude-web`（`SERVER_ID_CONFLICT`，提示删 meta.json 的 serverId）。老版本对端 health 不带这些时靠 hello 兜底，并用 `revokeDevice` 吊销刚兑换的本机设备。**PeerClient 的错误文案用哨兵常量 `SELF_PEER` / `SERVER_ID_CONFLICT` 做 `===` 比较**，别用 `includes('本机')`（冲突文案里也有「本机」）。
+- **远端会话里的文件路径不能在本机打开**：同一个路径在本机是另一份文件（编辑器还会自动保存进去）。工具卡片的路径（`FileLink`，含 Alt+点击的详情面板）、消息里的附件芯片、「产物」标签、详情面板的文件视图都先过 `features/remote-guard.ts` 的 `blockRemoteOpen()`（纯逻辑在 `peers.ts` 的 `remoteOpenBlock()`），远端时只提示「文件在机器 X 上」。命令面板对远端会话不给「在资源管理器 / VS Code 打开目录」。新增从会话上下文打开文件的入口时也要过它。
+- `hostChanged(hostId, prev)` 只在 token / target / sshPort / remotePort / identityFile 变了才重连并关隧道（`CONNECTION_FIELDS`），改名、改 startCommand 不断连。
+- **peer 连接的判定**：`fromPeer = via 非空 || 连接带 ?peer=`；来自 peer 的请求不能碰 `peers.*`、只拿本机列表、不多跳。SSH 方式 peer 令牌失效后不会自己好：`remote.hosts.set` 会对骑在这个主机上的 peer `hostChanged()` 重连，界面也有「重试」（`peers.retry`）。
+- 已知限制：附件存本机（`/api/attachments`），发给远端会话时对方读不到路径（composer 已拦）；远端的文件 / Git / 搜索不做（ChatTile 对远端会话只留 对话 / 产物 标签）；`sessions.search` 合并时一个慢 peer 会把整次搜索拖到 5s 上限；SSH peer 每次重连都会 `TunnelManager.open()`，主机配了 `startCommand` 就会在远端重跑一次。
+- 调试：`node server/ws-phase15.mjs [port] [token]` 自己用临时 HOME 起第二个 server B（开远程监听、mock ACP 造会话），A 配对加入后测列表合并 / 打开发送 / 权限往返 / 交接 / 防环 / 吊销→令牌失效→重新配对 / B 下线；`CW_DEBUG=1` 打印两边收到的帧；失败时脚本自己打印 B 的日志尾部，`scripts/e2e.mjs` 对失败 / 超时（默认 300s，`E2E_PHASE_TIMEOUT_MS`）的 phase 重印完整输出和 A 的日志尾部。add / repair 之后用 `onlineIn()` 轮询 `peers.list` 到 online，别信单个等待窗口。单测：`federation/*.test.ts`（`peer-client.test.ts` 用进程内假服务器）。
+
 ## 桌面版（desktop/）
 
 ```

@@ -3,7 +3,7 @@ import { THEMES, useActive, useStore, type PanelId } from '@/store';
 import { ws } from '@/ws/client';
 import { ago, basename } from '@/util';
 import { Icon, AGENT_ICONS, type IconName } from '@/ui/icons';
-import type { SessionSummary } from '@shared';
+import { parsePeerId, type SessionSummary } from '@shared';
 import { PANELS } from '@/model/layout';
 import { SHORTCUTS, keyLabel } from '@/features/workbench/shortcuts';
 import { runCommand } from '@/features/workbench/commands';
@@ -69,8 +69,8 @@ export function CommandPalette() {
         { id: 's.pin', label: st.sessionMeta[active.sessionId]?.pinned ? '取消置顶' : '置顶当前会话', ic: 'pin', group: '当前会话', run: () => void st.setSessionMeta(active.sessionId, { pinned: !st.sessionMeta[active.sessionId]?.pinned }) },
         { id: 's.archive', label: st.sessionMeta[active.sessionId]?.archived ? '取消归档' : '归档当前会话', ic: 'archive', group: '当前会话', run: () => void st.setSessionMeta(active.sessionId, { archived: !st.sessionMeta[active.sessionId]?.archived }) },
         { id: 's.traj', label: '对话 ⇄ 轨迹', ic: 'refresh', group: '当前会话', run: () => runCommand('tab') },
-        { id: 's.open', label: '在资源管理器打开目录', ic: 'folder', group: '当前会话', run: () => void ws.request({ kind: 'shell.open', path: active.cwd }) },
-        { id: 's.code', label: '在 VS Code 打开目录', ic: 'keyboard', group: '当前会话', run: () => void ws.request({ kind: 'shell.open', path: active.cwd, app: 'code' }) },
+        ...(parsePeerId(active.sessionId) ? [] : [{ id: 's.open', label: '在资源管理器打开目录', ic: 'folder' as const, group: '当前会话', run: () => void ws.request({ kind: 'shell.open', path: active.cwd }) },
+        { id: 's.code', label: '在 VS Code 打开目录', ic: 'keyboard' as const, group: '当前会话', run: () => void ws.request({ kind: 'shell.open', path: active.cwd, app: 'code' }) }]),
         live ? { id: 's.stop', label: '结束当前会话进程', ic: 'stop', group: '当前会话', run: () => void st.closeSession(active.sessionId) } : { id: 's.resume', label: '恢复当前会话进程', ic: 'play', group: '当前会话', run: () => void st.openSession({ sessionId: active.sessionId, cwd: active.cwd }) },
         ...(live ? [{ id: 's.compact', label: '/compact 压缩上下文', ic: 'copy' as const, group: '当前会话', run: () => void st.send(active.sessionId, '/compact') }] : []),
       );

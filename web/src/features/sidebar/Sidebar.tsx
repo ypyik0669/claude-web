@@ -9,7 +9,7 @@ import { Icon, AGENT_ICONS } from '@/ui/icons';
 import { MIME_SESSION } from '@/features/workbench/dnd';
 import { dlg } from '@/ui/dialog';
 import { isWithin } from '@/features/paths';
-import { filterSessions, isArchived, renderedRows, sourceCounts } from './filter';
+import { filterSessions, isArchived, machineCounts, renderedRows, sourceCounts } from './filter';
 import { SessionMenu, capsIntersection, deleteSessions, effectiveCaps, setArchived } from './session-actions';
 
 const PAGE_FIRST = 25;
@@ -33,8 +33,8 @@ function SidebarMenuExtra({ s, onClose }: { s: SessionSummary; onClose: () => vo
       <button onClick={act(() => { const g = st.layout; const before = g; st.dispatchLayout({ t: 'pane.split', paneId: (g.groups.find((x) => x.id === g.activeGroupId) ?? g.groups[0]).focusedPaneId, dir: 'row' }); if (useStore.getState().layout === before) return st.toast('最多 6 个窗格'); open ? st.openInPane(s.sessionId, 'replace') : void st.loadHistory(s.sessionId); })}><Icon name="splitRight" size={14} /> 在右侧分屏打开</button>
       {effectiveCaps(s).resume && <button onClick={act(() => st.openSession({ sessionId: s.sessionId, cwd: s.cwd }).catch((e) => st.toast(e.message)))}><Icon name="play" size={14} /> 恢复运行</button>}
       <button onClick={act(() => st.setSessionMeta(s.sessionId, { pinned: !meta.pinned }))}><Icon name="pin" size={14} /> {meta.pinned ? '取消置顶' : '置顶'}</button>
-      <button onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd }))}><Icon name="folder" size={14} /> 在资源管理器打开</button>
-      <button onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd, app: 'code' }))}><Icon name="keyboard" size={14} /> 在 VS Code 打开</button>
+      {!s.peer && <button onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd }))}><Icon name="folder" size={14} /> 在资源管理器打开</button>}
+      {!s.peer && <button onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd, app: 'code' }))}><Icon name="keyboard" size={14} /> 在 VS Code 打开</button>}
       {open && open.state !== 'history' && <button onClick={act(() => st.closeSession(s.sessionId))}><Icon name="stop" size={14} /> 结束进程</button>}
       <div className="menu-sep" />
     </>
@@ -75,11 +75,11 @@ function SessionRow({ s, menu, setMenu, sel }: { s: SessionSummary; menu: string
   const handlers = sel.on ? { onClick: () => sel.toggle(s.sessionId) } : row;
   return (
     <div
-      className={clsx('sess', activeId === s.sessionId && !sel.on && 'active', checked && 'checked', archived && 'archived')}
+      className={clsx('sess', activeId === s.sessionId && !sel.on && 'active', checked && 'checked', archived && 'archived', s.peer?.offline && 'offline')}
       {...handlers}
       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu(s.sessionId); }}
       onClickCapture={() => { if (!sel.on && window.matchMedia('(max-width: 760px)').matches) setTimeout(() => useStore.setState({ sidebarOpen: false }), 50); }}
-      title={sel.on ? s.title : `${s.firstPrompt ?? s.title}\n点击打开 · Ctrl/中键新标签 · 右键菜单 · 可拖到窗格`}
+      title={sel.on ? s.title : `${s.firstPrompt ?? s.title}${s.peer ? `\n在机器「${s.peer.name}」上${s.peer.offline ? '（离线，只读）' : ''}` : ''}\n点击打开 · Ctrl/中键新标签 · 右键菜单 · 可拖到窗格`}
     >
       {sel.on ? (
         <input type="checkbox" className="sel-box" checked={checked} readOnly tabIndex={-1} aria-label="选择" />
@@ -87,6 +87,7 @@ function SessionRow({ s, menu, setMenu, sel }: { s: SessionSummary; menu: string
       <span className="t">{s.title}</span>
       {!!s.childCount && <span className="kids" title={`${s.childCount} 个子任务会话（分叉 / 子代理），打开父会话查看`}>+{s.childCount} 子任务</span>}
       {s.agent && s.agent !== 'claude' && <AgentDot kind={s.agent} />}
+      {s.peer && <span className={clsx('peer-badge', s.peer.offline && 'off')} title={`在机器「${s.peer.name}」上${s.peer.offline ? '（离线）' : ''}`}><Icon name="machine" size={11} />{s.peer.name}</span>}
       <span className="ago">{ago(s.lastModified)}</span>
       {!sel.on && <button className="more" title="更多" onClick={(e) => { e.stopPropagation(); setMenu(menu === s.sessionId ? null : s.sessionId); }}><Icon name="more" size={14} /></button>}
       {menu === s.sessionId && <SessionMenu s={s} onClose={() => setMenu(null)} extra={<SidebarMenuExtra s={s} onClose={() => setMenu(null)} />} />}
@@ -178,11 +179,15 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const [shown, setShown] = useState<Record<string, number>>({});
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [machine, setMachine] = useState<string>('all');
 
   const ql = q.trim().toLowerCase();
-  const visible = useMemo(() => filterSessions(sessions, { source: sourceFilter, query: q, showArchived, meta: sessionMeta }), [sessions, sessionMeta, showArchived, q, sourceFilter]);
+  const visible = useMemo(() => filterSessions(sessions, { source: sourceFilter, query: q, showArchived, meta: sessionMeta, machine }), [sessions, sessionMeta, showArchived, q, sourceFilter, machine]);
   // counts follow the archive toggle but not the source filter itself
-  const counts = useMemo(() => sourceCounts(filterSessions(sessions, { source: 'all', query: '', showArchived, meta: sessionMeta })), [sessions, sessionMeta, showArchived]);
+  const counts = useMemo(() => sourceCounts(filterSessions(sessions, { source: 'all', query: '', showArchived, meta: sessionMeta, machine })), [sessions, sessionMeta, showArchived, machine]);
+  // machines (federation): 本机 + every other machine with sessions; follows the source filter, not itself
+  const machines = useMemo(() => machineCounts(filterSessions(sessions, { source: sourceFilter, query: '', showArchived, meta: sessionMeta })), [sessions, sessionMeta, showArchived, sourceFilter]);
+  const showMachines = machines.length > 1 || machine !== 'all';
   const agents = useStore((s) => s.agents);
   // a source still on its first read has no sessions yet: it gets a chip with a spinner instead of a count
   const chips: Pick<SourceStatus, 'kind' | 'name' | 'error' | 'loading'>[] = sources.filter((x) => x.enabled && ((counts[x.kind] ?? 0) > 0 || x.loading));
@@ -198,15 +203,17 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const grouped = useMemo(() => {
     const byWs = new Map<string, SessionSummary[]>();
     const other = new Map<string, SessionSummary[]>();
+    const byPeer = new Map<string, SessionSummary[]>(); // other machines: their paths mean nothing here
     const sorted = [...workspaces].sort((a, b) => b.path.length - a.path.length);
     for (const s of visible) {
       if (sessionMeta[s.sessionId]?.pinned) continue;
+      if (s.peer) { (byPeer.get(s.peer.id) ?? byPeer.set(s.peer.id, []).get(s.peer.id)!).push(s); continue; }
       const w = sorted.find((x) => isWithin(s.cwd ?? '', x.path)); // segment-bounded: /proj/app must not swallow /proj/app2
       const m = w ? byWs : other;
       const k = w ? w.id : s.cwd || '(未知目录)';
       (m.get(k) ?? m.set(k, []).get(k)!).push(s);
     }
-    return { byWs, other: [...other.entries()].sort((a, b) => b[1][0].lastModified - a[1][0].lastModified) };
+    return { byWs, other: [...other.entries()].sort((a, b) => b[1][0].lastModified - a[1][0].lastModified), peers: [...byPeer.entries()] };
   }, [visible, workspaces, sessionMeta]);
 
   // selection (and 全选) only ever covers rows that are on screen: expanded groups, within their page limit
@@ -214,6 +221,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     { key: '__pinned', items: pinned, collapsed: !!collapsed.__pinned },
     ...workspaces.map((w) => ({ key: w.id, items: grouped.byWs.get(w.id) ?? [], collapsed: !!collapsed[w.id] })),
     ...grouped.other.map(([cwd, arr]) => ({ key: cwd, items: arr, collapsed: !!collapsed[cwd] })),
+    ...grouped.peers.map(([id, arr]) => ({ key: `peer:${id}`, items: arr, collapsed: !!collapsed[`peer:${id}`] })),
   ], shown, PAGE_FIRST), [pinned, workspaces, grouped, collapsed, shown]);
   const selected = useMemo(() => rendered.filter((s) => picked.has(s.sessionId)), [rendered, picked]);
   const allOn = rendered.length > 0 && selected.length === rendered.length;
@@ -263,6 +271,16 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
           {chips.map((x) => (
             <button key={x.kind} role="tab" aria-selected={sourceFilter === x.kind} className={clsx('src-chip', sourceFilter === x.kind && 'active')} onClick={() => setSourceFilter(x.kind)} title={x.error ? `${x.name}：${x.error}` : x.loading ? `${x.name}：读取中` : x.name}>
               <Icon name={AGENT_ICONS[x.kind] ?? 'agent'} size={12} />{x.name}{x.loading && !counts[x.kind] ? <span className="spinner" aria-label="读取中" /> : <span className="n">{counts[x.kind] ?? 0}</span>}{x.error && <span className="warn-dot" />}
+            </button>
+          ))}
+        </div>
+      )}
+      {showMachines && (
+        <div className="sb-sources machines" role="tablist" aria-label="按机器筛选">
+          <button role="tab" aria-selected={machine === 'all'} className={clsx('src-chip', machine === 'all' && 'active')} onClick={() => setMachine('all')}>所有机器</button>
+          {machines.map((m) => (
+            <button key={m.id} role="tab" aria-selected={machine === m.id} className={clsx('src-chip', machine === m.id && 'active', m.offline && 'off')} onClick={() => setMachine(m.id)} title={m.offline ? `${m.name}：离线（显示上次的列表，只读）` : m.name}>
+              <Icon name={m.id === 'local' ? 'device' : 'machine'} size={12} />{m.name}<span className="n">{m.n}</span>{m.offline && <span className="warn-dot" />}
             </button>
           ))}
         </div>
@@ -340,7 +358,23 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
             ))}
           </div>
         )}
-        {!visible.length && <div className="empty">{ql || sourceFilter !== 'all' ? '没有匹配的会话' : '没有会话'}</div>}
+        {grouped.peers.map(([id, arr]) => {
+          const k = `peer:${id}`;
+          const p = arr[0]?.peer;
+          return (
+            <div key={k} className="proj peer">
+              <div className="ws-head peer-head" onClick={() => toggleGroup(k)} title={p?.offline ? '离线：显示上次的列表，只读' : '在另一台机器上：打开、续聊、审批都经那台机器'}>
+                <span className="ic"><Icon name={collapsed[k] ? 'chevronRight' : 'chevronDown'} size={13} /></span>
+                <Icon name="machine" size={13} />
+                <span className="name">{p?.name ?? id}</span>
+                {p?.offline && <span className="badge">离线</span>}
+                <span className="cnt">{arr.length}</span>
+              </div>
+              {!collapsed[k] && list(arr, k, false)}
+            </div>
+          );
+        })}
+        {!visible.length && <div className="empty">{ql || sourceFilter !== 'all' || machine !== 'all' ? '没有匹配的会话' : '没有会话'}</div>}
       </div>
       <div className="sb-foot">
         <span className={clsx('dot', connected ? 'idle' : 'error')} />

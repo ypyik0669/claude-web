@@ -4,6 +4,7 @@ import { useStore } from '@/store';
 import { basename, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import type { FsStat, GitStatus, SessionInfoSnapshot } from '@shared';
+import { sessionPeer } from '@/features/peers';
 
 /**
  * The line above the composer that answers "where am I typing into".
@@ -12,13 +13,16 @@ import type { FsStat, GitStatus, SessionInfoSnapshot } from '@shared';
  * three things that decide whether a message is safe to send, and the three that are invisible
  * otherwise. It is deliberately quiet: 11px, no borders, and it disappears outside a repo.
  */
-export function ContextRow({ cwd, info }: { cwd: string; info?: SessionInfoSnapshot }) {
+export function ContextRow({ cwd, info, sessionId }: { cwd: string; info?: SessionInfoSnapshot; sessionId?: string }) {
   const [git, setGit] = useState<GitStatus | null>(null);
   const [worktree, setWorktree] = useState<boolean | null>(null);
   const dispatch = useStore((s) => s.dispatchLayout);
+  const sessions = useStore((s) => s.sessions);
+  // a session on another machine: its path means nothing here — no git / fs probes, no local file panel
+  const peer = sessionPeer(sessionId, sessions);
 
   useEffect(() => {
-    if (!cwd) { setGit(null); return; }
+    if (!cwd || peer) { setGit(null); setWorktree(null); return; }
     let live = true;
     const load = async () => {
       const s = await ws.request<GitStatus>({ kind: 'git.status', cwd }).catch(() => null);
@@ -33,9 +37,17 @@ export function ContextRow({ cwd, info }: { cwd: string; info?: SessionInfoSnaps
     void load();
     const off = ws.on((e) => { if (e.kind === 'git.changed' && git?.root && e.cwd.toLowerCase() === git.root.toLowerCase()) void load(); });
     return () => { live = false; off(); };
-  }, [cwd, git?.root]);
+  }, [cwd, git?.root, !!peer]);
 
   if (!cwd) return null;
+  if (peer) {
+    return (
+      <div className="ctx-row">
+        <span className="it" title={`${cwd}（在机器「${peer.name}」上）`}><Icon name="machine" size={11} /> {peer.name} · {basename(cwd) || cwd}</span>
+        {info?.agent && info.agent !== 'claude' && <span className="it" title={`由 ${info.agentName ?? info.agent} 运行`}>{info.agentName ?? info.agent}</span>}
+      </div>
+    );
+  }
   const dirty = git?.files.length ?? 0;
   return (
     <div className="ctx-row">

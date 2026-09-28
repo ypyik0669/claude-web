@@ -1398,3 +1398,24 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
 .acfg-result { display: flex; align-items: baseline; gap: 6px; overflow-wrap: anywhere; }
 .acfg-result.ok svg { color: var(--ok); }
 .acfg-result.err svg { color: var(--err); }
+
+/* ---- cross-machine sessions (federation) ---- */
+.sess .peer-badge { display: inline-flex; align-items: center; gap: 3px; flex: none; max-width: 38%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; line-height: 16px; padding: 0 5px; color: var(--ink-3); border: 1px solid var(--edge-subtle); border-radius: var(--r-pill); background: var(--surface-1); }
+.sess .peer-badge svg { flex: none; }
+.sess .peer-badge.off { color: var(--ink-5); border-style: dashed; }
+.sess.offline .t, .sess.offline .ago { color: var(--ink-4); }
+.sess.offline .dot { opacity: .4; }
+.src-chip.off { color: var(--ink-4); border-style: dashed; }
+.sb-sources.machines { margin-top: -2px; }
+.ws-head.peer-head { gap: 6px; }
+.ws-head.peer-head > svg { color: var(--ink-3); flex: none; }
+.ws-head.peer-head .badge { font-size: 10.5px; }
+.remote-only { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 32px 16px; color: var(--ink-3); text-align: center; font-size: var(--fs-sm); }
+.remote-only svg { color: var(--ink-4); }
+.wb-tabs .peer-note { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; color: var(--ink-4); font-size: 11.5px; white-space: nowrap; }
+.peer-row .lat { font-variant-numeric: tabular-nums; color: var(--ink-4); font-size: 11.5px; }
+.peer-add { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; padding: 10px 0 0; }
+.peer-add label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-3); }
+.peer-add .acts { grid-column: 1 / -1; display: flex; gap: 6px; justify-content: flex-end; }
+/* inside its machine group the machine badge says nothing new */
+.proj.peer .sess .peer-badge { display: none; }

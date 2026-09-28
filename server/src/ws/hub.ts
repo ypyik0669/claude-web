@@ -42,11 +42,17 @@ import { handleGatewayRequest, isGatewayRequest } from '../gateway/handlers.js';
 import type { AgentConfigService } from '../agent-config/service.js';
 import { handleAgentConfig, isAgentConfigRequest } from '../agent-config/handlers.js';
 
+import type { FederationService } from '../federation/service.js';
+import type { IncomingMessage } from 'node:http';
+
 export interface Services {
   /** Unified session library: every joined source's sessions (sessions.list / search / library.*). */
   library: LibraryService;
   /** Other agents' config center: MCP / instructions / settings of Codex, Gemini, Qwen, OpenCode (agentConfig.*). */
   agentConfig: AgentConfigService;
+
+  /** Cross-machine sessions: routes peer_… requests / merges lists before handle(); optional (tests). */
+  federation?: FederationService;
   git: GitService;
   search: SearchService;
   skills: SkillsService;
@@ -80,9 +86,11 @@ export interface Services {
 
 export class Hub {
   private clients = new Set<WebSocket>();
+  /** Connections from another machine's FederationService (`?peer=<serverId>`): never sent what we got from our own peers. */
+  private peerConns = new WeakSet<WebSocket>();
 
   constructor(private wss: WebSocketServer, private s: Services) {
-    wss.on('connection', (ws) => this.onConnect(ws));
+    wss.on('connection', (ws, req: IncomingMessage) => this.onConnect(ws, req));
     // every session is mirrored into the provider-neutral timeline, whichever agent is behind it
     s.pool.on('message', (sessionId, message) => s.canonical.observe(sessionId, message));
     s.pool.on('message', (sessionId, message) => this.broadcast({ kind: 'session.event', sessionId, message }));
@@ -110,20 +118,25 @@ export class Hub {
     s.library.on('changed', () => this.broadcast({ kind: 'library.changed' }));
     s.library.on('discovered', (kinds) => this.broadcast({ kind: 'library.discovered', kinds }));
     s.gateway.on('changed', () => this.broadcast({ kind: 'gateway.changed' }));
+
+    s.federation?.on('event', (e: ServerEvent) => this.broadcast(e, true));
   }
 
-  broadcast(event: ServerEvent) {
+  /** `fromPeer`: re-broadcast of another machine's event — local clients only (two machines peering each other would echo forever). */
+  broadcast(event: ServerEvent, fromPeer = false) {
     const msg = JSON.stringify({ type: 'event', event } satisfies WireDown);
-    for (const c of this.clients) if (c.readyState === c.OPEN) c.send(msg);
+    for (const c of this.clients) if (c.readyState === c.OPEN && !(fromPeer && this.peerConns.has(c))) c.send(msg);
   }
 
   private send(ws: WebSocket, down: WireDown) {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(down));
   }
 
-  private onConnect(ws: WebSocket) {
+  private onConnect(ws: WebSocket, req?: IncomingMessage) {
     this.clients.add(ws);
-    this.send(ws, { type: 'event', event: { kind: 'hello', version: this.s.version } });
+    try { if (req && new URL(req.url ?? '/', 'http://x').searchParams.get('peer')) this.peerConns.add(ws); } catch { /* not a peer */ }
+    const fed = this.s.federation;
+    this.send(ws, { type: 'event', event: { kind: 'hello', version: this.s.version, ...(fed ? { serverId: fed.serverId, name: fed.name, bootId: fed.bootId } : {}) } });
     // startup discovery happens before anyone is connected: tell each new client what's waiting to be joined
     void this.s.library.detect().then((kinds) => { if (kinds.length) this.send(ws, { type: 'event', event: { kind: 'library.discovered', kinds } }); }).catch(() => {});
     ws.on('close', () => this.clients.delete(ws));
@@ -140,7 +153,8 @@ export class Hub {
       if (!up || typeof up !== 'object' || up.type !== 'request' || !up.request || typeof up.request !== 'object' || !up.request.req) return;
       const { id, req } = up.request;
       try {
-        const data = await this.handle(req, ws);
+        const routed = this.s.federation?.route(req, { via: up.request.via, peerConn: this.peerConns.has(ws), local: (r = req) => this.handle(r, ws) });
+        const data = await (routed ?? this.handle(req, ws));
         this.send(ws, { type: 'reply', reply: { id, ok: true, data } });
       } catch (e: any) {
         // GitCommandError carries a classified kind + hint; encode them so the client can offer a fix
@@ -621,10 +635,14 @@ export class Hub {
         return null;
       case 'remote.hosts.list':
         return s.meta.remoteHosts();
-      case 'remote.hosts.set':
+      case 'remote.hosts.set': {
+        const prev = s.meta.remoteHosts().find((h) => h.id === req.host.id);
+        const before = prev ? { ...prev } : undefined; // setRemoteHost replaces the entry; keep the old values
         await s.meta.setRemoteHost(req.host);
         this.broadcast({ kind: 'tunnel.changed' });
+        await s.federation?.hostChanged(req.host.id, before); // peers riding this host reconnect when its connection settings moved
         return null;
+      }
       case 'remote.hosts.remove':
         await s.tunnels.close(req.id);
         await s.meta.removeRemoteHost(req.id);
