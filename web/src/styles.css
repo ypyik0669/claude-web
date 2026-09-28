@@ -2092,8 +2092,17 @@ html.desktop.mac .sp-nav-top { min-height: 40px; padding-left: 76px; }
 .auto-body[hidden] { display: none; }
 .auto-body.narrow { padding: 0 var(--sp-5) var(--sp-6); }
 .auto-body.narrow > * { width: 100%; max-width: 860px; flex: 1 0 auto; }
-.auto-body .sched-view.page .subtabs { border-bottom: 1px solid var(--edge-subtle); padding: var(--sp-2) 0; }
+/* the page's 定时任务: no inner tab row — a thin bar (运行记录 › / ‹ 定时任务 / 运行记录), the list, 从模板开始 */
+.auto-body .sched-view.page .sv-bar { display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; border-bottom: 1px solid var(--edge-subtle); font-size: var(--fs-base); color: var(--ink-3); }
+.auto-body .sched-view.page .sv-bar .grow { flex: 1 1 auto; }
+.auto-body .sched-view.page .sv-bar .link { color: var(--ink-2); font-size: var(--fs-base); }
+.auto-body .sched-view.page .sv-bar .link:hover { color: var(--ink-1); }
+.auto-body .sched-view.page .sv-back { display: inline-flex; align-items: center; gap: 2px; margin-left: -3px; }
+.auto-body .sched-view.page .sv-sep { color: var(--ink-4); }
+.auto-body .sched-view.page .sv-cur { color: var(--ink-1); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .auto-body .sched-view.page .list { padding: var(--sp-2) 0; }
+.auto-body .sched-view.page .sv-templates { border-top: 1px solid var(--edge-subtle); margin-top: var(--sp-2); }
+.auto-body .sched-view.page .sv-h { padding: var(--sp-2) 0 var(--sp-1); font-size: var(--fs-sm); font-weight: 600; color: var(--ink-3); }
 .auto-body .goals.page { height: auto; }
 .auto-body .goals.page .goals-head { border-bottom: 1px solid var(--edge-subtle); padding: var(--sp-2) 0; }
 .auto-body .goals.page .goals-list { padding: var(--sp-3) 0; overflow: visible; }

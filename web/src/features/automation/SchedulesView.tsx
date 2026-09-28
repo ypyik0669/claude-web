@@ -115,15 +115,43 @@ export function SchedulesView({ compact = false, page = false, newSignal = 0 }: 
     </div>
   );
 
+  const templateRows = templates.map((t) => (
+    <div key={t.id} className="row">
+      <span><Icon name="tasks" size={13} /></span>
+      <div className="grow"><div>{t.name} <span className="muted sched-period" title={`cron：${t.cron}`}>{cronText(t.cron) ?? t.cron}</span></div><div className="sub">{t.prompt.slice(0, 120)}…</div></div>
+      <button className="btn sm" onClick={() => fromTemplate(t)}>使用</button>
+    </div>
+  ));
+
   return (
-    <div className={clsx('sched-view', compact && 'compact', page && 'page')}>
-      <div className="subtabs">
-        <button className={tab === 'list' ? 'active' : ''} onClick={() => setTab('list')} title={schedules.length ? `${schedules.filter((x) => x.enabled).length} 个启用` : undefined}>{page ? '全部' : '定时任务'}{!page && schedules.length ? <> <span className="badge">{schedules.length}</span></> : null}</button>
-        <button className={tab === 'templates' ? 'active' : ''} onClick={() => setTab('templates')}>模板</button>
-        <button className={tab === 'history' ? 'active' : ''} onClick={() => { setShowRuns(null); setTab('history'); }}>历史</button>
-        <span className="grow" />
-        {!page && <button className="icon-btn" title="新建定时任务" aria-label="新建定时任务" onClick={startNew}><Icon name="plus" size={15} /></button>}
-      </div>
+    <div className={clsx('sched-view', compact && 'compact', page && 'page')} data-view={tab}>
+      {/* the automation page's own 定时任务 tab is the title: no second tab row under it (polish: 定时任务 › 全部 read
+          twice) — the list, then 从模板开始 below it; 运行记录 is a link, and the records say how to get back */}
+      {page ? (
+        <div className="sv-bar">
+          {tab === 'history' ? (
+            <>
+              <button className="link sv-back" data-id="sched-back" onClick={() => { setShowRuns(null); setTab('list'); }}><Icon name="chevronLeft" size={13} />定时任务</button>
+              <span className="sv-sep">/</span>
+              <span className="sv-cur">运行记录{showRuns ? `：${byId.get(showRuns)?.name ?? showRuns}` : ''}</span>
+              {showRuns && <button className="link" onClick={() => setShowRuns(null)}>看全部</button>}
+            </>
+          ) : (
+            <>
+              <span className="grow" />
+              <button className="link" data-id="sched-runs" title="每次运行的结果和它的对话" onClick={() => { setShowRuns(null); setTab('history'); }}>运行记录</button>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="subtabs">
+          <button className={tab === 'list' ? 'active' : ''} onClick={() => setTab('list')} title={schedules.length ? `${schedules.filter((x) => x.enabled).length} 个启用` : undefined}>定时任务{schedules.length ? <> <span className="badge">{schedules.length}</span></> : null}</button>
+          <button className={tab === 'templates' ? 'active' : ''} onClick={() => setTab('templates')}>模板</button>
+          <button className={tab === 'history' ? 'active' : ''} onClick={() => { setShowRuns(null); setTab('history'); }}>历史</button>
+          <span className="grow" />
+          <button className="icon-btn" title="新建定时任务" aria-label="新建定时任务" onClick={startNew}><Icon name="plus" size={15} /></button>
+        </div>
+      )}
       {tab === 'list' && (
         <div className="list">
           {form}
@@ -141,23 +169,20 @@ export function SchedulesView({ compact = false, page = false, newSignal = 0 }: 
               <button className="btn sm ghost danger" title="删除" onClick={async () => { if (await dlg.confirm(`删除定时任务「${sc.name}」？`, { danger: true })) void ws.request({ kind: 'schedules.remove', id: sc.id }); }}><Icon name="trash" size={13} /></button>
             </div>
           ))}
-          {!schedules.length && !editing && <EmptyState e={EMPTY.schedules} action={<button className="btn sm" onClick={() => setTab('templates')}>从模板开始</button>} />}
+          {/* on the page the templates are right below: no button needed to reach them */}
+          {!schedules.length && !editing && <EmptyState e={EMPTY.schedules} action={page ? undefined : <button className="btn sm" onClick={() => setTab('templates')}>从模板开始</button>} />}
         </div>
       )}
-      {tab === 'templates' && (
-        <div className="list">
-          {templates.map((t) => (
-            <div key={t.id} className="row">
-              <span><Icon name="tasks" size={13} /></span>
-              <div className="grow"><div>{t.name} <span className="muted sched-period" title={`cron：${t.cron}`}>{cronText(t.cron) ?? t.cron}</span></div><div className="sub">{t.prompt.slice(0, 120)}…</div></div>
-              <button className="btn sm" onClick={() => fromTemplate(t)}>使用</button>
-            </div>
-          ))}
+      {page && tab === 'list' && templates.length > 0 && (
+        <div className="list sv-templates" data-id="sched-templates">
+          <div className="sv-h">从模板开始</div>
+          {templateRows}
         </div>
       )}
+      {!page && tab === 'templates' && <div className="list">{templateRows}</div>}
       {tab === 'history' && (
         <div className="list">
-          {showRuns && <div className="row muted" style={{ fontSize: 12 }}>只看「{byId.get(showRuns)?.name ?? showRuns}」 <button className="link" onClick={() => setShowRuns(null)}>全部</button></div>}
+          {!page && showRuns && <div className="row muted" style={{ fontSize: 12 }}>只看「{byId.get(showRuns)?.name ?? showRuns}」 <button className="link" onClick={() => setShowRuns(null)}>全部</button></div>}
           {runs.map((r) => (
             <div key={r.id} className="row">
               <span className={clsx('dot', r.ok ? 'idle' : 'error')} />
