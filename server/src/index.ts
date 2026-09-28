@@ -260,6 +260,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   gateway = new GatewayService({ meta, secrets, member: (id) => providers.member(id), ledger });
   await gateway.init();
   providers.gatewayEndpoint = (groupId) => gateway.endpoint(groupId);
+  providers.shimEndpoint = (providerId) => gateway.shimEndpoint(providerId);
   remote = new RemoteService(meta, () => { const s = http.createServer(handler); s.on('upgrade', upgrade); return s; });
   const tunnels = new TunnelManager();
   const sessionsSvc = new SessionService();

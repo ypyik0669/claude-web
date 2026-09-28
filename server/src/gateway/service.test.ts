@@ -129,6 +129,25 @@ describe('passthrough', () => {
     expect(JSON.stringify(h.rawHeaders)).not.toContain(key);
     expect(ledger[0]).toMatchObject({ kind: 'gateway', ok: true, providerId: 'a', input: 10, output: 2, gateway: { group: 'Main', inbound: 'anthropic', member: 'P-a', switches: 0, stream: false } });
   });
+  it('prompt-cache work never touches the Anthropic passthrough (fingerprint path): same bytes, no added headers', async () => {
+    const raw = '{"model":"claude-opus-4-5","max_tokens":8,"metadata":{"user_id":"user_x_account_y_session_z"},"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.300; cc_entrypoint=cli;"},{"type":"text","text":"You are Claude Code","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}';
+    // exact client headers (not fetch, which adds its own), in this order and casing
+    const sent: [string, string][] = [['X-Api-Key', key], ['anthropic-version', '2023-06-01'], ['User-Agent', 'claude-cli/2.1.300 (external, cli)'], ['X-Claude-Code-Session-Id', 'sess-fp'], ['anthropic-beta', 'claude-code-20250219'], ['x-app', 'cli'], ['Content-Type', 'application/json']];
+    const status = await new Promise<number>((resolve, reject) => {
+      const q = http.request(`${base}/main/v1/messages`, { method: 'POST' }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode ?? 0)); });
+      for (const [n, v] of sent) q.setHeader(n, v);
+      q.setHeader('Content-Length', Buffer.byteLength(raw));
+      q.on('error', reject);
+      q.end(raw);
+    });
+    expect(status).toBe(200);
+    const h = A.hits[0];
+    expect(h.body).toBe(raw);
+    for (const k of ['session_id', 'x-session-affinity', 'x-client-request-id', 'x-grok-conv-id']) expect(h.headers[k]).toBeUndefined();
+    const up: [string, string][] = [];
+    for (let i = 0; i < h.rawHeaders.length; i += 2) up.push([h.rawHeaders[i], h.rawHeaders[i + 1]]);
+    expect(up.filter(([n]) => !/^(host|connection|content-length)$/i.test(n))).toEqual([['X-Api-Key', 'sk-a'], ...sent.slice(1)]);
+  });
   it('streams SSE through and sniffs usage for the ledger', async () => {
     A.handler.fn = anthropicSse();
     const r = await call('/main/v1/messages', { ...msg, stream: true });

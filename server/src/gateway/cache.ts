@@ -58,6 +58,46 @@ export function insertTopLevelField(json: string, key: string, value: unknown): 
  * DeepSeek; `cached_tokens` — Kimi). Clients that only read `prompt_tokens_details.cached_tokens` (ccb, the
  * OpenAI SDK's typing) then show 0 %. Adds the details field in place; false when nothing had to change.
  */
+/**
+ * Line-level SSE pass-through that may rewrite single `data:` lines (a usage chunk) and leaves every other
+ * byte — line endings included — as received. A trailing lone `\r` waits for the next chunk (half a CRLF).
+ */
+export class SseLines {
+  private buf = '';
+  constructor(private rewrite: (data: any) => boolean) {}
+  push(s: string): string {
+    this.buf += s;
+    let out = '';
+    for (;;) {
+      const i = this.nextBreak();
+      if (i < 0) break;
+      const len = this.buf[i] === '\r' && this.buf[i + 1] === '\n' ? 2 : 1;
+      out += this.line(this.buf.slice(0, i)) + this.buf.slice(i, i + len);
+      this.buf = this.buf.slice(i + len);
+    }
+    return out;
+  }
+  end(): string {
+    const s = this.buf ? this.line(this.buf) : '';
+    this.buf = '';
+    return s;
+  }
+  private nextBreak(): number {
+    for (let i = 0; i < this.buf.length; i++) {
+      const c = this.buf[i];
+      if (c === '\n') return i;
+      if (c === '\r') return i + 1 < this.buf.length ? i : -1;
+    }
+    return -1;
+  }
+  private line(l: string): string {
+    if (!l.startsWith('data:') || !l.includes('"usage"')) return l;
+    let j: any;
+    try { j = JSON.parse(l.slice(5)); } catch { return l; }
+    return this.rewrite(j) ? `data: ${JSON.stringify(j)}` : l;
+  }
+}
+
 export function fixChatUsage(u: any): boolean {
   if (!u || typeof u !== 'object') return false;
   const d = u.prompt_tokens_details;

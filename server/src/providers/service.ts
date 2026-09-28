@@ -18,10 +18,21 @@ export function publicProvider(p: Provider): Provider {
 }
 
 /**
+ * A profile resolved for one session (plaintext key). `shim`: openai / grok profiles whose Claude sessions go
+ * through the local prompt-cache shim (gateway/shim.ts) — its base (the session key is appended) and the
+ * internal key that replaces the real one in the child's env.
+ */
+export type SessionProvider = Provider & { shim?: { base: string; key: string } };
+
+/** `<shim base>/k/<session key>/v1` — what ccb's OpenAI-SDK clients use as their base URL. */
+export const shimBaseUrl = (s: { base: string }, sessionKey?: string) => `${s.base}${sessionKey ? `/k/${encodeURIComponent(sessionKey)}` : ''}/v1`;
+
+/**
  * Map a provider profile to the env the runtime reads. Only what the CLI needs — the profile itself never
  * touches ~/.claude/settings.json, so the claude.ai login keeps working for sessions without a provider.
+ * `sessionKey` (the session id; a fork's parent id) keys the cache shim's routes for openai / grok profiles.
  */
-export function providerEnv(p: Provider, agent: 'claude' | 'codex' | 'acp' = 'claude'): Record<string, string> {
+export function providerEnv(p: SessionProvider, agent: 'claude' | 'codex' | 'acp' = 'claude', opts: { sessionKey?: string } = {}): Record<string, string> {
   if (p.type === 'gateway' && agent !== 'claude') return gatewayAgentEnv(p, agent);
   // Relays that fingerprint Claude Code (super-nb & co.) reject the `agent-sdk/x.y.z` User-Agent suffix the SDK
   // makes the CLI add. spawnClaude() strips that env when this marker is present, so the request looks like `claude -p`.
@@ -39,10 +50,13 @@ export function providerEnv(p: Provider, agent: 'claude' | 'codex' | 'acp' = 'cl
       if (m.haiku) { env.ANTHROPIC_DEFAULT_HAIKU_MODEL = m.haiku; env.ANTHROPIC_SMALL_FAST_MODEL = m.haiku; }
       if (m.sonnet) env.ANTHROPIC_DEFAULT_SONNET_MODEL = m.sonnet;
       if (m.opus) env.ANTHROPIC_DEFAULT_OPUS_MODEL = m.opus;
+      // official binary: 1-hour cache TTL on every breakpoint (2x base write price instead of 1.25x); opt-in per profile
+      if (p.type === 'anthropic' && p.cache1h) env.ENABLE_PROMPT_CACHING_1H = '1';
       break;
     case 'openai':
-      env.OPENAI_BASE_URL = openaiBase(p.baseUrl);
-      env.OPENAI_API_KEY = p.apiKey;
+      // through the cache shim unless the profile turned it off: the real key never reaches the child
+      env.OPENAI_BASE_URL = p.shim ? shimBaseUrl(p.shim, opts.sessionKey) : openaiBase(p.baseUrl);
+      env.OPENAI_API_KEY = p.shim ? p.shim.key : p.apiKey;
       env.CLAUDE_CODE_USE_OPENAI = '1';
       if (p.defaultModel) env.OPENAI_MODEL = p.defaultModel;
       if (m.haiku) { env.OPENAI_DEFAULT_HAIKU_MODEL = m.haiku; env.OPENAI_SMALL_FAST_MODEL = m.haiku; }
@@ -67,8 +81,9 @@ export function providerEnv(p: Provider, agent: 'claude' | 'codex' | 'acp' = 'cl
     }
     case 'grok': {
       env.CLAUDE_CODE_USE_GROK = '1';
-      env.GROK_API_KEY = p.apiKey; // ccb: GROK_API_KEY || XAI_API_KEY
-      if (p.baseUrl) env.GROK_BASE_URL = openaiBase(p.baseUrl); // an OpenAI SDK client: the base ends in /v1
+      env.GROK_API_KEY = p.shim ? p.shim.key : p.apiKey; // ccb: GROK_API_KEY || XAI_API_KEY
+      if (p.shim) env.GROK_BASE_URL = shimBaseUrl(p.shim, opts.sessionKey);
+      else if (p.baseUrl) env.GROK_BASE_URL = openaiBase(p.baseUrl); // an OpenAI SDK client: the base ends in /v1
       // unmapped families fall back to ccb's own grok defaults, so only what the profile says is set
       const fam = { HAIKU: m.haiku || p.defaultModel, SONNET: m.sonnet || p.defaultModel, OPUS: m.opus || p.defaultModel };
       for (const [k, v] of Object.entries(fam)) if (v) env[`GROK_DEFAULT_${k}_MODEL`] = v;
@@ -208,6 +223,8 @@ export class ProviderService {
   private revealed = new Map<string, string>(); // stored (possibly encrypted) value -> plaintext
   /** Set by the server once the model gateway is up: group id → local endpoint + gateway key (null = unavailable). */
   gatewayEndpoint: ((groupId: string) => { baseUrl: string; key: string; runtime?: RuntimeKind } | null) | null = null;
+  /** Set by the server: the prompt-cache shim for an openai / grok profile (null = not listening yet). */
+  shimEndpoint: ((providerId: string) => { base: string; key: string } | null) | null = null;
   constructor(readonly meta: MetaStore, private secrets?: SecretService) {
     if (secrets) meta.secretCodec = { protect: async (plain, id) => { const enc = await secrets.protect(plain, id); this.revealed.set(enc, plain); return enc; } };
   }
@@ -239,7 +256,7 @@ export class ProviderService {
     return this.meta.providers().map(publicProvider);
   }
   /** Resolve for a session: undefined = claude.ai login. */
-  forSession(id: string | undefined): Provider | undefined {
+  forSession(id: string | undefined): SessionProvider | undefined {
     if (!id || id === CLAUDE_PROVIDER_ID) return undefined;
     const p = this.meta.provider(id);
     if (!p) throw new Error(`供应商档案不存在：${id}`);
@@ -251,7 +268,13 @@ export class ProviderService {
     }
     if (!p.baseUrl && (p.type === 'anthropic' || p.type === 'openai')) throw new Error(`供应商「${p.name}」没有 Base URL`);
     if (!p.apiKey) throw new Error(`供应商「${p.name}」没有 API Key`);
-    return { ...p, apiKey: this.plainKey(p) };
+    const out: SessionProvider = { ...p, apiKey: this.plainKey(p) };
+    // OpenAI-compatible profiles: through the local cache shim (profile switch cacheShim, default on)
+    if ((p.type === 'openai' || p.type === 'grok') && p.cacheShim !== false) {
+      const s = this.shimEndpoint?.(p.id);
+      if (s) out.shim = s;
+    }
+    return out;
   }
   /** A gateway member: the profile with its plaintext key, or null when missing / undecryptable / itself a gateway. */
   member(id: string): Provider | null {

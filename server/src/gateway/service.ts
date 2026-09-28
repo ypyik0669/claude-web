@@ -17,7 +17,8 @@ import {
   parseOutboundResponse, renderInboundError, renderInboundResponse, sniffUsage, supported, upstreamErrorMessage, type Outbound, type OutboundOpts,
 } from './convert.js';
 import { CACHE_KEY_MAX, addMissing, affinityHeaders, cacheKeyOf, isParamRejection, mentionsCacheKey } from './cache.js';
-import { UpstreamError, decoded, decoder, errorHeaders, passthroughHeaders, readText, replaceTopLevelString, responseHeaders, sendUpstream, translatedHeaders, type UpstreamResponse } from './upstream.js';
+import { CacheShim, SHIM_PREFIX } from './shim.js';
+import { UpstreamError, decoded, decoder, errorHeaders, passthroughHeaders, readText, replaceTopLevelString, responseHeaders, sendUpstream, translatedHeaders, waitDrain, withTimeout, type UpstreamResponse } from './upstream.js';
 
 /** Streaming: time from sending a request to the first body byte before the member counts as failed. */
 export const FIRST_BYTE_MS = 60_000;
@@ -89,6 +90,8 @@ export class GatewayService extends EventEmitter {
   /** Main server port; set once listening (desktop mode picks a new one every start). */
   port = 0;
   readonly states = new MemberStates();
+  /** openai / grok profiles' prompt-cache shim (/gateway/~p/…): works whether or not the gateway is enabled */
+  readonly shim: CacheShim;
   private key = '';
   private firstByteMs: number;
   private nonStreamMs: number;
@@ -97,6 +100,7 @@ export class GatewayService extends EventEmitter {
     super();
     this.firstByteMs = deps.firstByteMs ?? FIRST_BYTE_MS;
     this.nonStreamMs = deps.nonStreamMs ?? NONSTREAM_MS;
+    this.shim = new CacheShim({ meta: deps.meta, member: deps.member, ledger: deps.ledger });
   }
 
   /** Decrypt the stored key (startup). */
@@ -116,6 +120,11 @@ export class GatewayService extends EventEmitter {
     const g = this.group(groupId);
     if (!this.enabled() || !this.port || !g) return null;
     return { baseUrl: `${this.baseUrl()}/${groupId}`, key: this.key, runtime: this.needsOfficialClient(g) ? 'claude' : undefined };
+  }
+
+  /** The cache shim's base for a profile (the session appends `/k/<session>/v1`), or null before the server listens. */
+  shimEndpoint(providerId: string): { base: string; key: string } | null {
+    return this.port ? { base: `${this.baseUrl()}/~p/${encodeURIComponent(providerId)}`, key: this.shim.key } : null;
   }
 
   /**
@@ -198,6 +207,14 @@ export class GatewayService extends EventEmitter {
     if (url.pathname !== '/gateway' && !url.pathname.startsWith('/gateway/')) return false;
     // never reachable from the LAN listener (nor from anything that is not this machine)
     if ((req.socket as any).cwRemote || !isLoopback(req.socket.remoteAddress)) { res.writeHead(404).end(); return true; }
+    if (url.pathname.startsWith(SHIM_PREFIX)) {
+      void this.shim.serve(req, res, url).catch((e) => {
+        console.error('[gateway shim]', e);
+        if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: String(e?.message ?? e) } }));
+        else res.destroy();
+      });
+      return true;
+    }
     void this.serve(req, res, url).catch((e) => {
       console.error('[gateway]', e);
       if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: String(e?.message ?? e) } }));
@@ -567,25 +584,6 @@ export class GatewayService extends EventEmitter {
       return { ok: false, status: 0, ms: Date.now() - t0, error: e?.message ?? String(e) };
     }
   }
-}
-
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  p.catch(() => { /* a late rejection after the timeout must not go unhandled */ });
-  return new Promise<T>((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('timeout')), Math.max(0, ms));
-    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
-  });
-}
-
-function waitDrain(res: http.ServerResponse, signal: AbortSignal): Promise<void> {
-  // an abort that already happened will never fire its listener again, and a dead socket never drains
-  if (signal.aborted || res.destroyed || res.writableEnded) return Promise.resolve();
-  return new Promise((r) => {
-    const done = () => { res.off('drain', done); res.off('close', done); signal.removeEventListener('abort', done); r(); };
-    res.once('drain', done);
-    res.once('close', done);
-    signal.addEventListener('abort', done, { once: true });
-  });
 }
 
 /** Reads usage out of a passthrough body (SSE or JSON, possibly compressed) without delaying the bytes. */
