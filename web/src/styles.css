@@ -2010,6 +2010,7 @@ html.desktop.mac .sp-nav-top { min-height: 40px; padding-left: 76px; }
 .turn-sum:hover { background: var(--layer-hover); color: var(--ink-2); }
 .turn-sum .chev { flex: none; color: var(--ink-4); }
 .turn-sum .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.turn-sum .lbl .err { color: var(--err); }
 .turn.folded.open > .turn-body { border-left: 1.5px solid var(--edge-subtle); padding-left: 12px; margin: 2px 0 6px 5px; animation: fadein var(--dur-2) var(--ease-out); }
 .turn.folded.open > .turn-body > .assistant-wrap:first-child > .msg.assistant > .trail:first-child { margin-top: 4px; }
 :root[data-reduce-motion='1'] .turn.folded.open > .turn-body { animation: none; }
@@ -2022,6 +2023,8 @@ html.desktop.mac .sp-nav-top { min-height: 40px; padding-left: 76px; }
 /* 「改动了 N 个文件 +a −b [审阅]」 at the end of a turn */
 .fcard { border: 1px solid var(--edge-default); border-radius: var(--r-xl); overflow: hidden; margin: 6px 0 4px; background: var(--surface-0); }
 .turn + .turn > .msg.user:first-child { margin-top: 20px; }
+/* a round nobody typed here (a goal's 继续, IM, another window): no user message on top, a little room instead */
+.turn + .turn[data-turn^="cont-"] { margin-top: 12px; }
 .fcard-h { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 0 8px 0 14px; font-size: 13.5px; font-weight: 500; color: var(--ink-1); }
 .fcard-h > svg { flex: none; color: var(--ink-3); }
 .fcard-h .t { white-space: nowrap; }
@@ -2084,6 +2087,8 @@ html.desktop.mac .sp-nav-top { min-height: 40px; padding-left: 76px; }
 .pd-other { width: 100%; margin-top: 4px; padding: 6px 10px; border: 1px solid var(--edge-default); border-radius: var(--r-md); background: var(--surface-0); font-size: 13px; }
 .pd-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .pd-hint { flex: 1; min-width: 0; font-size: 12px; color: var(--ink-4); }
+/* what Enter does right now when that is not the usual (words from before the card, queued words, attachments) */
+.pd-hint.note { color: var(--ink-2); font-weight: 500; }
 .pd-actions .btn { flex: none; min-height: 30px; white-space: nowrap; }
 .pd-main .pd-kbd { font-family: var(--font); font-size: 11px; line-height: 14px; padding: 0 4px; border: 1px solid color-mix(in oklab, var(--primary-fg) 45%, transparent); border-radius: 4px; opacity: 0.85; }
 /* narrow (a split pane, a phone): the hint gets its own line, 允许一次 its own full-width row (spec §5.11) */

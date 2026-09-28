@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { applyMessage, applyTranscript, createConversation, setConversationClock, type AssistantItem, type Item, type ResultItem, type ToolUseBlock, type UserItem } from './conversation';
 import { fileChanges, sessionDiffStat } from './diffstat';
-import { displayPath, fmtDuration, groupTurns, splitTurnBody, turnSummary, turnSummaryText } from './turn';
+import { displayPath, fmtDuration, groupTurns, splitTurnBody, turnDone, turnMemo, turnSummary, turnSummaryParts, turnSummaryText } from './turn';
 
 const FIXTURE = path.join(__dirname, '__fixtures__', 'tools.jsonl');
 const loadFixture = (): any[] => fs.readFileSync(FIXTURE, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
@@ -36,7 +36,7 @@ describe('turnSummary against the captured stream (tools.jsonl)', () => {
     expect(t.result?.durationMs).toBe(26825);
     const s = turnSummary(t);
     // Read package.json + Read icon.png · Glob + Grep · Bash git log · WebFetch + TodoWrite
-    expect(s).toEqual({ durationMs: 26825, reads: 2, edits: 0, commands: 1, searches: 2, others: 2, tools: 7 });
+    expect(s).toEqual({ durationMs: 26825, reads: 2, edits: 0, commands: 1, searches: 2, others: 2, failed: 0, tools: 7 });
     expect(turnSummaryText(s)).toBe('已处理 27 秒 · 读了 2 个文件 · 搜索 2 次 · 运行 1 条命令 · 其它 2 步');
   });
 
@@ -62,6 +62,76 @@ describe('turnSummary against the captured stream (tools.jsonl)', () => {
     expect(folded).toContain('thinking');
     expect(parts.tail).toEqual([]);
   });
+
+  it('a second round nobody typed here (a goal 继续) is a turn of its own; the one still running stays open', () => {
+    // review I1: round 1 is the captured turn (with its result); round 2 arrives right after it — GoalService sent
+    // 「继续」 itself, which the SDK never echoes — and its command is still running
+    const c = createConversation();
+    c.items.push({ kind: 'user', id: 'u-goal', text: '/goal tidy', images: [] });
+    for (const m of msgs) applyMessage(c, m);
+    applyMessage(c, { type: 'assistant', uuid: 'a2', parent_tool_use_id: null, message: { id: 'msg_round2', role: 'assistant', model: 'm', content: [{ type: 'tool_use', id: 'toolu_round2', name: 'Bash', input: { command: 'npm run build' } }] } });
+    const turns = groupTurns(c.items);
+    expect(turns.map((t) => [t.id, !!t.user, !!t.result])).toEqual([['u-goal', true, true], ['cont-msg_round2', false, false]]);
+    const [one, two] = turns;
+    // each round has its own numbers: round 1 is the fixture's alone, round 2 has its one command
+    expect(turnSummary(one)).toMatchObject({ durationMs: 26825, commands: 1, tools: 7 });
+    expect(turnSummary(two)).toMatchObject({ commands: 1, tools: 1 });
+    // while the conversation runs: round 1 is done (folds), round 2 — the last — is not, its running step in view
+    expect(turnDone(one, { last: false, live: true })).toBe(true);
+    expect(turnDone(two, { last: true, live: true })).toBe(false);
+    // the result of round 2 closes it; nothing running → everything folds
+    applyMessage(c, { type: 'result', subtype: 'success', uuid: 'r2', duration_ms: 4000, duration_api_ms: 1, is_error: false, num_turns: 1, total_cost_usd: 0, usage: {} });
+    const after = groupTurns(c.items);
+    expect(after).toHaveLength(2);
+    expect(after[1].result?.durationMs).toBe(4000);
+    expect(turnSummary(after[1]).durationMs).toBe(4000);
+    expect(turnDone(after[1], { last: true, live: false })).toBe(true);
+  });
+});
+
+describe('turnDone', () => {
+  const running = () => tool('Bash', { command: 'npm test' }, undefined, { status: 'running', result: undefined });
+  it('the last turn never folds while the conversation runs, even with a result', () => {
+    const [t] = groupTurns([user('go'), asst(tool('Read', { file_path: '/w/a' })), result(10)]);
+    expect(turnDone(t, { last: true, live: true })).toBe(false);
+    expect(turnDone(t, { last: true, live: false })).toBe(true);
+  });
+  it('a turn before a steer message is not done while its tools still run (or its text still streams)', () => {
+    const turns = groupTurns([user('go'), asst(running()), user('also do x')]);
+    expect(turnDone(turns[0], { last: false, live: true })).toBe(false);
+    const streaming = groupTurns([user('go'), { ...asst(tool('Read', { file_path: '/w/a' }), { type: 'text', text: 'so' }), streaming: true }, user('also')]);
+    expect(turnDone(streaming[0], { last: false, live: true })).toBe(false);
+    const finished = groupTurns([user('go'), asst(tool('Read', { file_path: '/w/a' })), user('also')]);
+    expect(turnDone(finished[0], { last: false, live: true })).toBe(true);
+    // nothing runs any more: a step left running (an interrupted turn) does not keep it open
+    expect(turnDone(turns[0], { last: false, live: false })).toBe(true);
+  });
+});
+
+describe('turnMemo (review I2: a reloaded conversation must not keep showing the old objects)', () => {
+  const msgs = loadFixture();
+  it('the same turn content from a reloaded conversation is worked out again, on the new tool blocks', () => {
+    const load = () => {
+      const c = createConversation();
+      applyTranscript(c, [{ type: 'user', uuid: 'u1', message: { role: 'user', content: 'go' } }, ...msgs.filter((m) => m.type !== 'result')]);
+      return c;
+    };
+    const a = load();
+    const [ta] = groupTurns(a.items);
+    const m1 = turnMemo(undefined, ta, true, 0);
+    expect(turnMemo(m1, groupTurns(a.items)[0], true, 0)).toBe(m1); // nothing changed: kept
+    // loadHistory on an open conversation (reconnect, Mission Control, …) builds a new conversation, same content
+    const b = load();
+    const [tb] = groupTurns(b.items);
+    expect(tb.body.length).toBe(ta.body.length);
+    const m2 = turnMemo(m1, tb, true, 0);
+    expect(m2).not.toBe(m1);
+    const steps = m2.parts.process.flatMap((i) => (i.kind === 'assistant' ? i.blocks.filter((x): x is ToolUseBlock => x.type === 'tool_use') : []));
+    expect(steps.length).toBeGreaterThan(0);
+    for (const s of steps) expect(s).toBe(b.toolIndex.get(s.id)); // loadSubagent writes children into these
+    // a running (volatile) turn is redone on every version
+    expect(turnMemo(m2, tb, false, 7)).not.toBe(m2);
+  });
 });
 
 describe('groupTurns', () => {
@@ -80,10 +150,28 @@ describe('groupTurns', () => {
   it('empty → no turns', () => {
     expect(groupTurns([])).toEqual([]);
   });
+
+  it('after a result, anything but a user message opens a headless continuation turn', () => {
+    const u1 = user('first');
+    const a1 = asst(tool('Bash', { command: 'ls' })), r1 = result(1000);
+    const a2 = asst(tool('Bash', { command: 'npm test' })), r2 = result(2000);
+    const note: Item = { kind: 'system', id: 'note', subtype: 'notification', text: 'x' };
+    const u2 = user('second'), a3 = asst({ type: 'text', text: 'ok' });
+    const turns = groupTurns([u1, a1, r1, a2, r2, note, u2, a3]);
+    expect(turns.map((t) => [t.id, t.user?.id, t.body.map((i) => i.id), t.result?.id])).toEqual([
+      [u1.id, u1.id, [a1.id, r1.id], r1.id],
+      [`cont-${a2.id}`, undefined, [a2.id, r2.id], r2.id],
+      ['cont-note', undefined, ['note'], undefined],
+      [u2.id, u2.id, [a3.id], undefined],
+    ]);
+  });
 });
 
 describe('turnSummary', () => {
-  it('reads count distinct files, edits the files the change card lists (subagents included), commands every call', () => {
+  // What counts: the turn's own top-level calls that worked. A call that failed or was refused is 「失败」, not 「读了 /
+  // 运行」 (review M1). 「改了 N 个」 is the change card's rows — a subagent's edits included (they are this turn's
+  // changes, and the card / header count them) — while a subagent's own reads and commands are not counted.
+  it('reads count distinct files, edits the files the change card lists (subagents included), commands the ones that ran', () => {
     const sub = asst(tool('Edit', { file_path: '/w/sub.ts', old_string: 'a', new_string: 'b' }));
     const items: Item[] = [
       user('go', '2026-09-28T10:00:00.000Z'),
@@ -102,8 +190,25 @@ describe('turnSummary', () => {
     ];
     const [t] = groupTurns(items);
     const s = turnSummary(t);
-    expect(s).toEqual({ durationMs: 102_000, reads: 2, edits: 2, commands: 2, searches: 0, others: 2, tools: 9 });
-    expect(turnSummaryText(s)).toBe('已处理 1 分 42 秒 · 读了 2 个文件 · 改了 2 个 · 运行 2 条命令 · 其它 2 步');
+    // the failed Bash and the failed Edit are 「失败 2 个」, not a command run / a file changed
+    expect(s).toEqual({ durationMs: 102_000, reads: 2, edits: 2, commands: 1, searches: 0, others: 2, failed: 2, tools: 9 });
+    expect(turnSummaryText(s)).toBe('已处理 1 分 42 秒 · 读了 2 个文件 · 改了 2 个 · 运行 1 条命令 · 其它 2 步 · 失败 2 个');
+    expect(turnSummaryParts(s).filter((p) => p.err).map((p) => p.text)).toEqual(['失败 2 个']);
+  });
+
+  it('a refused command, a missing file and reading a background shell are not 「运行 2 条命令 · 读了 1 个文件」', () => {
+    const refused = tool('Bash', { command: 'rm -rf build' }, undefined, { status: 'error', result: { content: "The user doesn't want to proceed with this tool use.", isError: true } });
+    const missing = tool('Read', { file_path: '/w/nope.ts' }, undefined, { status: 'error', result: { content: 'File does not exist.', isError: true } });
+    const [t] = groupTurns([user('go'), asst(refused, missing, tool('BashOutput', { bash_id: 'b1' }), tool('KillShell', { shell_id: 'b1' }))]);
+    const s = turnSummary(t);
+    expect(s).toMatchObject({ reads: 0, commands: 0, others: 2, failed: 2, tools: 4 });
+    expect(turnSummaryText(s)).toBe('已处理 · 其它 2 步 · 失败 2 个');
+  });
+
+  it("a subagent's edits count, its reads and commands do not", () => {
+    const sub = asst(tool('Read', { file_path: '/w/x.ts' }), tool('Bash', { command: 'ls' }), tool('Write', { file_path: '/w/y.ts', content: 'a' }));
+    const [t] = groupTurns([user('go'), asst(tool('Agent', { prompt: 'p' }, undefined, { children: [sub] }))]);
+    expect(turnSummary(t)).toMatchObject({ reads: 0, commands: 0, edits: 1, others: 1, tools: 1 });
   });
 
   it('the result duration wins over timestamps; no duration → no number', () => {

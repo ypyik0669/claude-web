@@ -3,8 +3,8 @@ import type { PermissionRequestEvent } from '@shared';
 import type { AssistantItem, Attachment, Block, Item, ResultItem, ThinkingBlock, ToolUseBlock, UserItem } from '@/model/conversation';
 import { ERROR_HINT, ERROR_LABEL } from '@/model/health';
 import { fmtSize } from '@/model/attachments';
-import { fileChanges, type FileChange } from '@/model/diffstat';
-import { displayPath, fmtDuration, groupTurns, splitTurnBody, turnSummary, turnSummaryText, type Turn } from '@/model/turn';
+import type { FileChange } from '@/model/diffstat';
+import { displayPath, fmtDuration, groupTurns, turnDone, turnMemo, turnSummaryParts, type Turn, type TurnMemo } from '@/model/turn';
 import { useScopedSession, useScopedSessionId, useStore } from '@/store';
 import { usePaneCtx } from '@/store/paneContext';
 import { activeGroup } from '@/model/layout';
@@ -355,14 +355,13 @@ const foldMemory = new Map<string, boolean>();
  * export un-hides it.
  */
 function TurnView({ turn, last, live, version, sessionId, cwd }: { turn: Turn; last: boolean; live: boolean; version: number; sessionId: string; cwd: string }) {
-  const done = !!turn.result || !last || !live;
-  // with nothing running, a turn does not change any more: its parts are worked out once (while a turn runs every
-  // turn is redone — a tool still finishing behind a steer message belongs to the one before)
-  const sig = live || last ? `v${version}` : `${turn.body.length}|${done}`;
-  const parts = useMemo(() => splitTurnBody(turn.body), [sig]);
+  const done = turnDone(turn, { last, live });
+  // with nothing running, a turn does not change any more: its parts are worked out once per set of items (while a
+  // turn runs every turn is redone — a tool still finishing behind a steer message belongs to the one before)
+  const memo = useRef<TurnMemo>(undefined);
+  memo.current = turnMemo(memo.current, turn, done, live || last ? version : 0);
+  const { parts, summary, changes } = memo.current;
   const fold = done && parts.work;
-  const summary = useMemo(() => (fold ? turnSummary(turn) : null), [sig, fold]);
-  const changes = useMemo(() => (fold ? fileChanges(turn.body) : []), [sig, fold]);
   const key = `${sessionId}|${turn.id}`;
   const [choice, setChoice] = useState<boolean | undefined>(() => foldMemory.get(key));
   const setOpen = (v: boolean) => { foldMemory.set(key, v); setChoice(v); };
@@ -387,7 +386,7 @@ function TurnView({ turn, last, live, version, sessionId, cwd }: { turn: Turn; l
         <div className="turn-sum-row" data-item-id={parts.process[0]?.id}>
           <button className="turn-sum" aria-expanded={open} onClick={() => setOpen(!open)} title={`${open ? '收起' : '展开'}这一轮的步骤${turn.result ? `\n${resultStats(turn.result).join(' · ')}` : ''}`}>
             <Icon name={open ? 'chevronDown' : 'chevronRight'} size={13} className="chev" />
-            <span className="lbl">{turnSummaryText(summary)}</span>
+            <span className="lbl">{turnSummaryParts(summary).map((p, i) => <span key={i} className={clsx(p.err && 'err')}>{i > 0 && ' · '}{p.text}</span>)}</span>
           </button>
         </div>
       )}

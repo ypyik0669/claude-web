@@ -2,11 +2,17 @@
 // folded into one line — 「已处理 1 分 42 秒 · 读了 4 个文件 · 改了 2 个 · 运行 2 条命令」 — the answer, and a card of
 // the files it changed. Pure (no React, no tool registry) so it can be replayed against captured streams.
 import type { AssistantItem, Item, ResultItem, UserItem } from './conversation';
-import { fileChanges, pathKey } from './diffstat';
+import { fileChanges, pathKey, type FileChange } from './diffstat';
 
-/** A user message and everything up to the next one (meta messages — reminders, command output — stay inside). */
+/**
+ * A user message and everything up to the next one (meta messages — reminders, command output — stay inside), or a
+ * headless round: the SDK and the agents never echo a user message, so only what THIS window sent is in the list. A
+ * round started elsewhere — a goal's 「继续」, IM, a schedule, the orchestra, another window — arrives as a second run
+ * of assistant messages after the first one's `result`; that is a turn of its own (`cont-<id>`), with its own summary,
+ * time and change card (review I1).
+ */
 export interface Turn {
-  /** the user message's id; for a page that starts mid-turn, the first item's */
+  /** the user message's id; a page that starts mid-turn: `pre-<first item>`; a round after a result: `cont-<first item>` */
   id: string;
   user?: UserItem;
   body: Item[];
@@ -23,32 +29,46 @@ export function groupTurns(items: Item[]): Turn[] {
       out.push(cur);
       continue;
     }
-    if (!cur) { cur = { id: `pre-${it.id}`, body: [] }; out.push(cur); }
+    if (!cur || cur.result) { cur = { id: `${cur ? 'cont' : 'pre'}-${it.id}`, body: [] }; out.push(cur); }
     cur.body.push(it);
     if (it.kind === 'result') cur.result = it;
   }
   return out;
 }
 
+const unfinished = (t: Turn): boolean => t.body.some((it) => it.kind === 'assistant' && (it.streaming || it.blocks.some((b) => b.type === 'tool_use' && (b.status === 'pending' || b.status === 'running' || b.status === 'streaming'))));
+
+/**
+ * Whether a turn is over (and may fold). While the conversation runs, the last turn never is — even with a result:
+ * the next round can follow it at once — and an earlier one is not while a step of it still runs or its text still
+ * streams (a steer message starts a new turn in the middle of it). With nothing running, every turn is.
+ */
+export function turnDone(t: Turn, o: { last: boolean; live: boolean }): boolean {
+  if (!o.live) return true;
+  return !o.last && !unfinished(t);
+}
+
 export interface TurnSummary {
   durationMs?: number;
-  /** distinct files read (Read / NotebookRead), top level */
+  /** distinct files read (Read / NotebookRead) that worked, top level */
   reads: number;
   /** distinct files changed — the change card's rows (successful edits, subagents included) */
   edits: number;
-  /** shell commands run, top level */
+  /** shell commands that ran (Bash / PowerShell), top level */
   commands: number;
   /** Glob / Grep, top level */
   searches: number;
-  /** every other top-level tool call (web, plan, subagents, MCP, …) */
+  /** every other top-level tool call that worked (web, plan, subagents, MCP, a background shell's output, …) */
   others: number;
+  /** top-level calls that failed or were refused — not counted as read / run / changed */
+  failed: number;
   /** all top-level tool calls */
   tools: number;
 }
 
 const READ = new Set(['Read', 'NotebookRead']);
 const EDIT = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
-const SHELL = new Set(['Bash', 'PowerShell', 'BashOutput']);
+const SHELL = new Set(['Bash', 'PowerShell']);
 const SEARCH = new Set(['Glob', 'Grep', 'LS']);
 
 const tsOf = (it: Item): number => {
@@ -60,7 +80,9 @@ const tsOf = (it: Item): number => {
 /** How long the turn took: the result's own number, else the user message's time to the last thing that happened. */
 export function turnDuration(t: Turn): number | undefined {
   if (t.result && typeof t.result.durationMs === 'number' && t.result.durationMs > 0) return t.result.durationMs;
-  const start = t.user ? tsOf(t.user) : NaN;
+  // a headless round starts with its first message
+  const first = t.user ?? t.body[0];
+  const start = first ? tsOf(first) : NaN;
   if (Number.isNaN(start)) return undefined;
   let end = NaN;
   for (const it of t.body) {
@@ -71,14 +93,21 @@ export function turnDuration(t: Turn): number | undefined {
   return Number.isNaN(end) || end < start ? undefined : end - start;
 }
 
+/**
+ * The folded turn's numbers. Only this turn's own top-level calls that worked are 「读了 / 运行 / 搜索 / 其它」; a call
+ * that failed or was refused is 「失败 N 个」 instead (review M1). 「改了 N 个」 is the change card's rows: successful
+ * edits, a subagent's included (they are this turn's changes, and the card and the header count them) — a subagent's
+ * own reads and commands are not counted.
+ */
 export function turnSummary(t: Turn): TurnSummary {
   const reads = new Set<string>();
-  let commands = 0, searches = 0, others = 0, tools = 0;
+  let commands = 0, searches = 0, others = 0, failed = 0, tools = 0;
   for (const it of t.body) {
     if (it.kind !== 'assistant') continue;
     for (const b of it.blocks) {
       if (b.type !== 'tool_use') continue;
       tools++;
+      if (b.status === 'error' || b.result?.isError) { failed++; continue; }
       if (READ.has(b.name)) {
         const p = String(b.input.file_path ?? b.input.notebook_path ?? b.input.path ?? '');
         if (p) reads.add(pathKey(p));
@@ -89,7 +118,7 @@ export function turnSummary(t: Turn): TurnSummary {
     }
   }
   const durationMs = turnDuration(t);
-  return { ...(durationMs !== undefined ? { durationMs } : {}), reads: reads.size, edits: fileChanges(t.body).length, commands, searches, others, tools };
+  return { ...(durationMs !== undefined ? { durationMs } : {}), reads: reads.size, edits: fileChanges(t.body).length, commands, searches, others, failed, tools };
 }
 
 /** `1 秒` · `42 秒` · `1 分 42 秒` · `2 分钟` · `1 小时 5 分` */
@@ -101,15 +130,32 @@ export function fmtDuration(ms: number): string {
   return `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
 }
 
-/** The folded turn's one line: 「已处理 1 分 42 秒 · 读了 4 个文件 · 改了 2 个 · 运行 2 条命令」. */
-export function turnSummaryText(s: TurnSummary): string {
-  const parts = [s.durationMs !== undefined ? `已处理 ${fmtDuration(s.durationMs)}` : '已处理'];
-  if (s.reads) parts.push(`读了 ${s.reads} 个文件`);
-  if (s.edits) parts.push(`改了 ${s.edits} 个${s.reads ? '' : '文件'}`);
-  if (s.searches) parts.push(`搜索 ${s.searches} 次`);
-  if (s.commands) parts.push(`运行 ${s.commands} 条命令`);
-  if (s.others) parts.push(`其它 ${s.others} 步`);
-  return parts.join(' · ');
+/** The folded turn's one line, in parts: 「已处理 1 分 42 秒 · 读了 4 个文件 · 改了 2 个 · 运行 2 条命令 · 失败 1 个」 (`err`: shown in red). */
+export function turnSummaryParts(s: TurnSummary): { text: string; err?: boolean }[] {
+  const parts: { text: string; err?: boolean }[] = [{ text: s.durationMs !== undefined ? `已处理 ${fmtDuration(s.durationMs)}` : '已处理' }];
+  if (s.reads) parts.push({ text: `读了 ${s.reads} 个文件` });
+  if (s.edits) parts.push({ text: `改了 ${s.edits} 个${s.reads ? '' : '文件'}` });
+  if (s.searches) parts.push({ text: `搜索 ${s.searches} 次` });
+  if (s.commands) parts.push({ text: `运行 ${s.commands} 条命令` });
+  if (s.others) parts.push({ text: `其它 ${s.others} 步` });
+  if (s.failed) parts.push({ text: `失败 ${s.failed} 个`, err: true });
+  return parts;
+}
+
+export const turnSummaryText = (s: TurnSummary): string => turnSummaryParts(s).map((p) => p.text).join(' · ');
+
+/**
+ * What a turn shows, worked out once and kept while nothing it depends on changed: the same items (by identity — a
+ * reloaded conversation has the same content in new objects, and `loadSubagent` writes into the new ones: review I2),
+ * the same `done`, and `stamp` (the conversation's version while the turn can still change, else 0).
+ */
+export interface TurnMemo { first?: Item; lastItem?: Item; len: number; done: boolean; stamp: number; parts: TurnParts; summary: TurnSummary | null; changes: FileChange[] }
+export function turnMemo(prev: TurnMemo | undefined, t: Turn, done: boolean, stamp: number): TurnMemo {
+  const first = t.body[0], lastItem = t.body[t.body.length - 1];
+  if (prev && prev.first === first && prev.lastItem === lastItem && prev.len === t.body.length && prev.done === done && prev.stamp === stamp) return prev;
+  const parts = splitTurnBody(t.body);
+  const fold = done && parts.work;
+  return { first, lastItem, len: t.body.length, done, stamp, parts, summary: fold ? turnSummary(t) : null, changes: fold ? fileChanges(t.body) : [] };
 }
 
 /**
