@@ -51,7 +51,7 @@ export async function refreshAllModels(ids?: string[]): Promise<ModelRefreshResu
   if (run.running) return run.results;
   const st = useStore.getState();
   const targets = ids ?? st.providers.filter((p) => p.type !== 'gateway').map((p) => p.id);
-  if (!targets.length) { st.toast('还没有可刷新的供应商档案'); return []; }
+  if (!targets.length) { st.toast('还没有可刷新的供应商'); return []; }
   run = { running: true, ids: targets, done: 0, total: targets.length, results: [] };
   emit();
   let next = 0;
@@ -70,7 +70,7 @@ export async function refreshAllModels(ids?: string[]): Promise<ModelRefreshResu
   emit();
   const bad = run.results.filter((r) => !r.ok);
   const models = run.results.reduce((n, r) => n + r.count, 0);
-  st.toast(bad.length ? `${run.results.length - bad.length} 个档案已刷新（${models} 个模型），${bad.length} 个失败：${bad.map((b) => b.name).join('、')}` : `${run.results.length} 个档案已刷新，共 ${models} 个模型`, !bad.length);
+  st.toast(bad.length ? `${run.results.length - bad.length} 个供应商已刷新（${models} 个模型），${bad.length} 个失败：${bad.map((b) => b.name).join('、')}` : `${run.results.length} 个供应商已刷新，共 ${models} 个模型`, !bad.length);
   void st.loadProviders().catch(() => {});
   return run.results;
 }

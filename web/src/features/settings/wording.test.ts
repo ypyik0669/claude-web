@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseAst } from 'vite';
 import { describe, expect, it } from 'vitest';
+import { CATALOG } from '@catalog';
 import { BODY_INFO, SETTINGS_SECTIONS, VISIBLE_SECTIONS, allBodies, type BodyId } from './catalog';
 
 /**
@@ -9,7 +11,8 @@ import { BODY_INFO, SETTINGS_SECTIONS, VISIBLE_SECTIONS, allBodies, type BodyId 
  *    pair (hooks ⇄ subagents, both SimpleList) or a part pointing at the wrong component fails here;
  *  - what the non-advanced pages show by default does not use implementation words (spec §5.12, ui/terms.ts):
  *    档案 → 供应商, 引擎 → Agent / 运行内核, effort → 智能程度, 窗格 → 分屏, 停靠 → 右侧面板, ACP and source paths only in
- *    tooltips / the advanced pages. Tooltips (`title=`), `aria-label=`, class names and comments are not scanned.
+ *    tooltips / the advanced pages. The text comes from the syntax tree: string literals, template text, JSX text;
+ *    tooltips (`title=`), `aria-label=`, class names, keys, data-*, comments and import paths are not text.
  */
 const SRC = path.resolve(__dirname, '..', '..');
 const read = (f: string) => fs.readFileSync(path.join(SRC, f), 'utf8');
@@ -92,103 +95,50 @@ describe('settings parts are drawn by the right component (BODIES)', () => {
 
 // ---------------------------------------------------------------------------------------------------------------
 
-type Tok = { t: 'code' | 'str'; v: string };
+type N = { type: string; [k: string]: any };
 
-/** Split TS/TSX source into code and string-literal contents (template `${}` parts are code); comments dropped. */
-function tokenize(src: string): Tok[] {
-  const out: Tok[] = [];
-  let code = '';
-  const flush = () => { if (code) out.push({ t: 'code', v: code }); code = ''; };
-  const readTemplate = (i: number): number => {
-    // i is just past the opening backtick
-    let text = '';
-    while (i < src.length) {
-      const c = src[i];
-      if (c === '\\') { text += src.slice(i, i + 2); i += 2; continue; }
-      if (c === '`') { out.push({ t: 'str', v: text }); return i + 1; }
-      if (c === '$' && src[i + 1] === '{') {
-        out.push({ t: 'str', v: text }); text = '';
-        i = readCode(i + 2, true);
-        continue;
-      }
-      text += c; i++;
+/** Attributes nobody reads on screen by default: tooltips, accessible names, class names, keys, data-*. */
+const HIDDEN_ATTR = /^(title|aria-label|className|key|data-[\w-]+)$/;
+const attrName = (n: N): string => (n.name?.type === 'JSXNamespacedName' ? `${n.name.namespace.name}:${n.name.name.name}` : n.name?.name ?? '');
+
+/**
+ * Every piece of text a file can put on screen, from its syntax tree (vite's parser, TSX aware): string literals,
+ * template text and JSX text — also JSX text after an expression (`{n} effort`) and text with `//` in it (a URL).
+ * Not scanned: comments, import / re-export paths, string literal *types*, and the HIDDEN_ATTR attributes.
+ */
+function textsOf(file: string, src: string): string[] {
+  const out: string[] = [];
+  const walk = (x: unknown): void => {
+    if (!x || typeof x !== 'object') return;
+    if (Array.isArray(x)) { for (const y of x) walk(y); return; }
+    const n = x as N;
+    switch (n.type) {
+      case 'ImportDeclaration':
+      case 'ExportAllDeclaration':
+      case 'TSLiteralType':
+        return;
+      case 'ExportNamedDeclaration':
+        if (n.source) return;
+        break;
+      case 'JSXAttribute':
+        if (HIDDEN_ATTR.test(attrName(n))) return;
+        break;
+      case 'JSXText':
+        if (String(n.value).trim()) out.push(n.value);
+        return;
+      case 'Literal':
+        if (typeof n.value === 'string') out.push(n.value);
+        return;
+      case 'TemplateElement':
+        out.push(n.value?.cooked ?? n.value?.raw ?? '');
+        return;
     }
-    out.push({ t: 'str', v: text });
-    return i;
+    for (const k of Object.keys(n)) if (k !== 'type' && k !== 'start' && k !== 'end') walk(n[k]);
   };
-  const readCode = (i: number, untilBrace: boolean): number => {
-    let depth = 0;
-    while (i < src.length) {
-      const c = src[i];
-      const d = src[i + 1];
-      if (c === '/' && d === '/') { const e = src.indexOf('\n', i); i = e < 0 ? src.length : e; continue; }
-      if (c === '/' && d === '*') { const e = src.indexOf('*/', i + 2); i = e < 0 ? src.length : e + 2; continue; }
-      if (c === '\'' || c === '"') {
-        flush();
-        let k = i + 1; let text = '';
-        while (k < src.length && src[k] !== c && src[k] !== '\n') { if (src[k] === '\\') { text += src.slice(k, k + 2); k += 2; continue; } text += src[k]; k++; }
-        out.push({ t: 'str', v: text });
-        i = k + 1;
-        continue;
-      }
-      if (c === '`') { flush(); i = readTemplate(i + 1); continue; }
-      if (untilBrace) {
-        if (c === '{') depth++;
-        if (c === '}') { if (depth === 0) { flush(); return i + 1; } depth--; }
-      }
-      code += c; i++;
-    }
-    flush();
-    return i;
-  };
-  readCode(0, false);
+  walk(parse(file, src));
   return out;
 }
-
-/** Index just past the string (quotes / template) or balanced `{…}` starting at `i`; strings inside are skipped whole. */
-function skipValue(src: string, i: number): number {
-  const c = src[i];
-  if (c === '"' || c === '\'') {
-    let k = i + 1;
-    while (k < src.length && src[k] !== c) k += src[k] === '\\' ? 2 : 1;
-    return k + 1;
-  }
-  if (c === '`') {
-    let k = i + 1;
-    while (k < src.length && src[k] !== '`') {
-      if (src[k] === '\\') { k += 2; continue; }
-      if (src[k] === '$' && src[k + 1] === '{') { k = skipValue(src, k + 1); continue; }
-      k++;
-    }
-    return k + 1;
-  }
-  let depth = 0;
-  for (let k = i; k < src.length; k++) {
-    const d = src[k];
-    if (d === '"' || d === '\'' || d === '`') { k = skipValue(src, k) - 1; continue; }
-    if (d === '{') depth++;
-    else if (d === '}' && --depth === 0) return k + 1;
-  }
-  return src.length;
-}
-
-/** Drop attributes nobody reads on screen by default: tooltips, accessible names, class names, data-*, keys. */
-function dropHiddenAttrs(src: string): string {
-  const ATTR = /(?<=[\s{(,])(?:title|aria-label|className|key|data-[\w-]+)=(?=["'{`])/g;
-  let out = '';
-  let last = 0;
-  for (const m of src.matchAll(ATTR)) {
-    if (m.index! < last) continue;
-    out += src.slice(last, m.index);
-    last = skipValue(src, m.index! + m[0].length);
-  }
-  return out + src.slice(last);
-}
-
-/** JSX text in a code token: after a tag's `>` (not an arrow) up to the next tag / expression. */
-function jsxText(code: string): string[] {
-  return [...code.matchAll(/(?<![=>])>([^<>{}]+)(?=[<{])/g)].map((m) => m[1]).filter((x) => x.trim());
-}
+const parse = (file: string, src: string) => parseAst(src, { lang: file.endsWith('.tsx') ? 'tsx' : 'ts' }) as unknown as N;
 
 const CJK_BANNED = ['档案', '引擎', '窗格', '停靠'];
 const LATIN_BANNED: [string, RegExp][] = [
@@ -197,33 +147,37 @@ const LATIN_BANNED: [string, RegExp][] = [
   ['ACP', /\bACP\b/],
   ['source path', /\b(server|web)\/src\b/],
 ];
-/** Deliberate exceptions: [file, the literal, why]. */
+/** Deliberate exceptions: [file, the whole literal, why]. */
 const WHITELIST: [string, string, string][] = [
   [S('AgentsSection.tsx'), 'ACP', 'PROTO_LABEL: only rendered inside the agent name\'s title tooltip'],
 ];
 
+function badWords(text: string): string[] {
+  return [...CJK_BANNED.filter((w) => text.includes(w)), ...LATIN_BANNED.filter(([, re]) => re.test(text)).map(([w]) => w)];
+}
 function findings(file: string, src: string): string[] {
-  const toks = tokenize(dropHiddenAttrs(src));
-  const bad: string[] = [];
-  const allowed = (v: string) => WHITELIST.some(([f, lit]) => f === file && v === lit);
-  for (const tk of toks) {
-    for (const w of CJK_BANNED) if (tk.v.includes(w) && !allowed(tk.v)) bad.push(`${w}: ${tk.v.trim().slice(0, 80)}`);
-    const texts = tk.t === 'str' ? [tk.v] : jsxText(tk.v);
-    for (const x of texts) for (const [w, re] of LATIN_BANNED) if (re.test(x) && !allowed(x)) bad.push(`${w}: ${x.trim().slice(0, 80)}`);
-  }
-  return bad;
+  return textsOf(file, src)
+    .filter((t) => !WHITELIST.some(([f, lit]) => f === file && t === lit))
+    .flatMap((t) => badWords(t).map((w) => `${w}: ${t.trim().slice(0, 80)}`));
 }
 
-/** Top-level declarations of a file, by name (`function X`, `export function X`, `const X`). */
-function declarations(src: string): Map<string, string> {
-  const parts = src.split(/^(?=(?:export )?(?:async )?(?:function|const|class) )/m);
-  const out = new Map<string, string>();
-  for (const p of parts) {
-    const m = /^(?:export )?(?:async )?(?:function|const|class) (\w+)/.exec(p);
-    if (m) out.set(m[1], p);
+/** A file cut down to some of its top-level declarations (functions, components, constants), by name. */
+function onlyDeclarations(file: string, src: string, names: string[]): string {
+  const found = new Map<string, string>();
+  for (const st of parse(file, src).body as N[]) {
+    const d = st.type === 'ExportNamedDeclaration' && st.declaration ? st.declaration : st;
+    const ids = d.type === 'FunctionDeclaration' ? [d.id?.name] : d.type === 'VariableDeclaration' ? d.declarations.map((v: N) => v.id?.name) : [];
+    for (const id of ids) if (id) found.set(id, src.slice(st.start, st.end));
   }
-  return out;
+  const missing = names.filter((n) => !found.has(n));
+  expect(missing, `${file}: declarations`).toEqual([]);
+  return names.map((n) => found.get(n)).join('\n');
 }
+
+/** Helpers the settings pages use from files that also hold other things. */
+const CONFIG_HELPERS = ['Cmd', 'CacheOptions', 'PROVIDER_TYPES'];
+/** Modules the visible pages call that put text on screen themselves (toasts, dialogs, sub-panels). */
+const PAGE_HELPERS = ['features/models/data.ts', S('AgentConfigPanel.tsx'), S('agent-config-form.ts')];
 
 describe('non-advanced settings pages speak the interface vocabulary (ui/terms.ts)', () => {
   const advanced = new Set(SETTINGS_SECTIONS.filter((s) => s.advanced).flatMap((s) => [...(s.bodies ?? []), ...(s.more ?? [])]));
@@ -234,10 +188,10 @@ describe('non-advanced settings pages speak the interface vocabulary (ui/terms.t
     for (const b of visibleBodies) expect(advanced.has(b), b).toBe(false);
   });
 
-  it('the components drawing those pages (and the page itself) use no implementation words', () => {
+  it('the components drawing those pages, their helpers and the page itself use no implementation words', () => {
     const scanned: string[] = [];
     const bad: string[] = [];
-    // files that hold one page's parts: scanned whole (their helpers draw the same page)
+    const scan = (file: string, src: string, label = file) => { scanned.push(label); bad.push(...findings(file, src).map((x) => `${label} — ${x}`)); };
     const byFile = new Map<string, Set<string>>();
     for (const b of visibleBodies) {
       const { comp, file } = BODY_SOURCE[b];
@@ -245,36 +199,18 @@ describe('non-advanced settings pages speak the interface vocabulary (ui/terms.t
       byFile.get(file)!.add(comp);
     }
     for (const [file, comps] of byFile) {
-      const src = read(file);
-      if (file === CONFIG) {
-        // the dock's config panel shares this file: only the functions the settings pages draw, and their helpers
-        const decl = declarations(src);
-        for (const name of [...comps, 'Cmd', 'CacheOptions']) {
-          const part = decl.get(name);
-          expect(part, `${file}: ${name}`).toBeTruthy();
-          scanned.push(`${file}#${name}`);
-          bad.push(...findings(file, part!).map((x) => `${file}#${name} — ${x}`));
-        }
-      } else {
-        scanned.push(file);
-        bad.push(...findings(file, src).map((x) => `${file} — ${x}`));
-      }
+      // the dock's config panel shares ConfigPanel.tsx: only what the settings pages draw, and its helpers
+      if (file === CONFIG) scan(file, onlyDeclarations(file, read(file), [...comps, ...CONFIG_HELPERS]), `${file}#${[...comps, ...CONFIG_HELPERS].join(',')}`);
+      else scan(file, read(file)); // files that hold one page's parts: whole (their helpers draw the same page)
     }
-    for (const file of [S('SettingsModal.tsx'), S('controls.tsx')]) {
-      scanned.push(file);
-      bad.push(...findings(file, read(file)).map((x) => `${file} — ${x}`));
-    }
-    expect(scanned.length).toBeGreaterThan(15);
+    for (const file of [S('SettingsModal.tsx'), S('controls.tsx'), ...PAGE_HELPERS]) scan(file, read(file));
+    expect(scanned.length).toBeGreaterThanOrEqual(18);
     expect(bad).toEqual([]);
   });
 
-  it('the settings map shows none of them on visible pages (labels, lead lines, hints, part names)', () => {
+  it('the settings map and the model catalog notes shown on the 模型与智能程度 page use none of them either', () => {
     const bad: string[] = [];
-    const check = (where: string, text: string | undefined) => {
-      if (!text) return;
-      for (const w of CJK_BANNED) if (text.includes(w)) bad.push(`${where}: ${w}`);
-      for (const [w, re] of LATIN_BANNED) if (re.test(text)) bad.push(`${where}: ${w}`);
-    };
+    const check = (where: string, text: string | undefined) => { if (text) for (const w of badWords(text)) bad.push(`${where}: ${w}`); };
     for (const s of VISIBLE_SECTIONS) {
       check(`${s.id}.l`, s.l);
       check(`${s.id}.desc`, s.desc);
@@ -282,18 +218,29 @@ describe('non-advanced settings pages speak the interface vocabulary (ui/terms.t
       for (const e of s.entries ?? []) { check(e.id, e.label); check(`${e.id}.hint`, e.hint); check(`${e.id}.block`, e.block); check(`${e.id}.tag`, e.tag); }
     }
     for (const b of visibleBodies) check(`BODY_INFO.${b}`, BODY_INFO[b].l);
+    // ModelsSection shows each agent's `note` under its 智能程度 row (按供应商 view)
+    for (const [agent, c] of Object.entries(CATALOG)) check(`CATALOG.${agent}.note`, c?.note);
+    expect(Object.values(CATALOG).some((c) => c?.note)).toBe(true);
     expect(bad).toEqual([]);
   });
 
-  it('the scanner itself catches words in text and strings, not in tooltips or comments', () => {
+  it('the scanner catches words in text and strings, not in tooltips, class names or comments', () => {
     const f = 'x.tsx';
     expect(findings(f, `const a = <div title="供应商档案">ok</div>; // 引擎`)).toEqual([]);
-    expect(findings(f, `const a = <div aria-label={\`effort \${x}\`}>ok</div>;`)).toEqual([]);
+    expect(findings(f, `const a = <div aria-label={\`effort \${x}\`}>ok</div>; /* 档案 */`)).toEqual([]);
     expect(findings(f, `const a = <div className="efforts">ok</div>;`)).toEqual([]);
+    expect(findings(f, `type K = 'effort' | 'acp'; import x from './effort';`)).toEqual([]);
+    expect(findings(f, `const a = c.effort.map((e) => <span>{e}</span>);`)).toEqual([]);
     expect(findings(f, `const a = <div>供应商档案</div>;`)).toHaveLength(1);
     expect(findings(f, `const a = <div>high effort</div>;`)).toHaveLength(1);
     expect(findings(f, `const a = toast('见 server/src/x.ts');`)).toHaveLength(1);
-    expect(findings(f, `const a = c.effort.map((e) => <span>{e}</span>);`)).toEqual([]);
     expect(findings(f, `const a = <b>{x ? 'ACP' : ''}</b>;`)).toHaveLength(1);
+    // the review's blind spots: text after an expression, `//` inside text, template text, a quote in a regex
+    expect(findings(f, `const a = <div>{n} high effort levels</div>;`)).toHaveLength(1);
+    expect(findings(f, `const a = <div>{x}effort{y}</div>;`)).toHaveLength(1);
+    expect(findings(f, `const a = <div>见 https://x.y/z 的档案</div>;`)).toHaveLength(1);
+    expect(findings(f, `const a = toast(\`\${n} 个档案已刷新\`);`)).toHaveLength(1);
+    expect(findings(f, `const r = /'/; const a = <b>档案</b>;`)).toHaveLength(1);
+    expect(findings('y.ts', `st.toast('还没有可刷新的供应商档案');`)).toHaveLength(1);
   });
 });
