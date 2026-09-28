@@ -266,8 +266,12 @@ function driver() {
     const js = (code) => wc.executeJavaScript(code, true);
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const waitFor = async (code, ms = 15_000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await js(code).catch(() => false)) return true; await sleep(150); } return false; };
+    // every empty state seen on the way (redesign phase 7: 「还没有 X。Y 之后会出现在这里。」, at most one button)
+    const emptySeen = new Map();
     const shot = async (name) => {
       try {
+        const empties = await js(`[...document.querySelectorAll('.empty-state')].filter((e) => e.getClientRects().length).map((e) => ({ t: e.querySelector('.es-text')?.textContent ?? '', b: e.querySelectorAll('button').length }))`).catch(() => []);
+        for (const e of empties) emptySeen.set(e.t, e.b);
         const img = await wc.capturePage();
         const f = path.join(out, `ux-${name}.png`);
         fs.writeFileSync(f, img.toPNG());
@@ -293,8 +297,36 @@ function driver() {
       phase = 'onboarding';
       if (await js('!!document.querySelector(".modal.onboarding")')) {
         await shot('onboarding');
-        if (E.SMOKE_READONLY !== '1') await js('window.__store.getState().setSetting("onboarded", true)');
-        else await js('document.querySelector(".modal-bg")?.remove()');
+        if (E.SMOKE_READONLY === '1' || E.SMOKE_MODE === 'idle' || !E.SMOKE_REPO) {
+          if (E.SMOKE_READONLY !== '1') await js('window.__store.getState().setSetting("onboarded", true)');
+          else await js('document.querySelector(".modal-bg")?.remove()');
+        } else {
+          // redesign phase 7 (spec §5.8 / §7 row 7): two steps — ① 登录 (skippable) ② a project folder — and the
+          // first message is one Enter away: 先跳过 · the folder · Enter = 3 steps from a cold start
+          const steps = await js(`[...document.querySelectorAll('.modal.onboarding .ob-steps li')].map((l) => l.textContent)`);
+          check('onboarding: two steps (登录 · 选一个项目文件夹)', steps.length === 2 && /登录/.test(steps[0]) && /项目文件夹/.test(steps[1]), JSON.stringify(steps));
+          let taken = 0;
+          if (await js(`document.querySelector('.modal.onboarding')?.dataset.step === 'login'`)) {
+            const loginRow = await js(`[...document.querySelectorAll('.modal.onboarding .ob-actions button')].map((b) => b.textContent.trim())`);
+            check('onboarding ①: 在终端登录 / 添加供应商 / 先跳过', ['在终端登录', '添加供应商', '先跳过'].every((t) => loginRow.some((x) => x.includes(t))), JSON.stringify(loginRow));
+            await click('.modal.onboarding [data-ob="skip"]');
+            taken++;
+          }
+          const folderSel = `.modal.onboarding [data-ob="folder"][title=${JSON.stringify(E.SMOKE_REPO)}]`;
+          const listed = await waitFor(`!!document.querySelector(${JSON.stringify(folderSel)})`, 8000);
+          check('onboarding ②: the folder the CLI already worked in is one click away', listed, await js(`[...document.querySelectorAll('.modal.onboarding [data-ob]')].map((b) => b.dataset.ob + ':' + (b.title || b.textContent)).join(' | ')`));
+          await shot('onboarding-project');
+          await click(folderSel);
+          taken++;
+          const done = await waitFor(`!document.querySelector('.modal.onboarding') && window.__store.getState().workspaces.some((w) => w.path === ${JSON.stringify(E.SMOKE_REPO)})`, 5000);
+          const ready = await waitFor(`document.activeElement === document.querySelector('.welcome .composer textarea') && (document.querySelector('.welcome .dirpick')?.textContent || '').includes(${JSON.stringify(path.basename(E.SMOKE_REPO))})`, 4000);
+          wc.insertText('smoke：第一条');
+          await sleep(250);
+          const sendable = await js(`(() => { const b = document.querySelector('.welcome .composer [data-id="send"]'); return !!b && !b.disabled; })()`);
+          check('cold start → first message in ≤ 3 steps (先跳过 · the folder · Enter): the composer is on that folder, focused, ready to send', done && ready && sendable && taken + 1 <= 3, JSON.stringify({ done, ready, sendable, steps: taken + 1 }));
+          wc.selectAll(); wc.delete();
+          await sleep(200);
+        }
         await sleep(400);
       }
 
@@ -342,6 +374,33 @@ function driver() {
       // ---- welcome composer: a click in the text box types, nothing opens over it
       phase = 'welcome';
       check('welcome composer present', await waitFor('!!document.querySelector(".welcome .composer textarea")'));
+      // redesign phase 7 (spec §5.8, mock-home.png): 「今天想做点什么？」 · four starters that only fill the box · the
+      // login notice only when something is wrong · 入门清单 · 最近任务 / 定时任务 / 已归档
+      {
+        const home = await js(`(() => { const w = document.querySelector('.welcome'); if (!w) return null; return { title: w.querySelector('h1.greet')?.textContent ?? '', starters: [...w.querySelectorAll('.starters .starter')].map((b) => b.dataset.starter), tabs: [...w.querySelectorAll('.home-tabs [role="tab"]')].map((t) => t.dataset.tab), rows: w.querySelectorAll('.home-list .home-row').length, greetWords: /早上好|下午好|晚上好/.test(w.innerText) }; })()`);
+        check('home: 「今天想做点什么？」, 4 starters, 最近任务 / 已归档 with the seeded conversation, no time-of-day greeting', home && home.title === '今天想做点什么？' && home.starters.length === 4 && home.tabs.includes('recent') && home.tabs.includes('archived') && (!E.SMOKE_SID || home.rows >= 1) && !home.greetWords, JSON.stringify(home));
+        if (E.SMOKE_READONLY !== '1') {
+          const layoutBefore = await js('JSON.stringify(window.__store.getState().layout.groups.map((g) => Object.values(g.panes).map((p) => p.tiles.map((t) => t.kind + ":" + (t.sessionId || "")))))');
+          await click('.welcome .starters [data-starter="explain"]');
+          await sleep(250);
+          const filled = await js(`({ text: document.querySelector('.welcome .composer textarea').value, focused: document.activeElement === document.querySelector('.welcome .composer textarea'), layout: JSON.stringify(window.__store.getState().layout.groups.map((g) => Object.values(g.panes).map((p) => p.tiles.map((t) => t.kind + ":" + (t.sessionId || ""))))) })`);
+          check('a starter fills the box (focused) and sends nothing', filled.text.length > 4 && filled.focused && filled.layout === layoutBefore, JSON.stringify({ ...filled, layoutBefore }));
+          wc.selectAll(); wc.delete();
+          await sleep(200);
+        }
+        // the 入门清单: one row (入门 d/4 · next step · its button · ×) that unfolds into the four steps
+        const guide = await js(`(() => { const g = document.querySelector('.welcome .guide'); if (!g) return null; return { count: g.querySelector('.guide-count .n')?.textContent ?? '', next: g.querySelector('.guide-next')?.textContent ?? '' }; })()`);
+        await click('.welcome .guide .guide-count');
+        const steps = await js(`[...document.querySelectorAll('.welcome .guide .guide-steps li')].map((l) => l.dataset.step + (l.classList.contains('done') ? ':done' : ''))`);
+        check('入门清单: 入门 d/4 with the next step, unfolding into 选项目 / 发任务 / 审阅 / Ctrl K (the project done by the wizard)', guide && /^入门 \d\/4$/.test(guide.count) && /下一步/.test(guide.next) && steps.length === 4 && (E.SMOKE_READONLY === '1' || !E.SMOKE_REPO || steps.includes('project:done')), JSON.stringify({ guide, steps }));
+        await shot('home-checklist');
+        await click('.welcome .guide .guide-count');
+        // the login notice: exactly when the auth check says 「not logged in」 and no provider is set up
+        await waitFor('window.__store.getState().auth !== null', 20_000);
+        const notice = await js(`({ auth: window.__store.getState().auth?.loggedIn ?? null, providers: window.__store.getState().providers.length, text: document.querySelector('.welcome .home-notice')?.textContent ?? null })`);
+        const wantNotice = notice.auth === false && notice.providers === 0;
+        check('home: 「还没登录 Claude。[在终端登录] [添加供应商]」 only when not logged in (nothing when fine)', wantNotice ? /还没登录 Claude。/.test(notice.text ?? '') && /在终端登录/.test(notice.text) && /添加供应商/.test(notice.text) : notice.text === null || !/登录/.test(notice.text), JSON.stringify(notice));
+      }
       // redesign phase 1: one pane, one tab, no workbench setting → no global top bar, no group bar, no tab strip, no panel rail
       if (E.SMOKE_READONLY !== '1') {
         const chrome = await js('({ wb: window.__store.getState().settings["ui.workbench"], topbar: !!document.querySelector(".topbar"), groupbar: !!document.querySelector(".groupbar"), strips: document.querySelectorAll(".tabstrip").length, rail: !!document.querySelector(".dock-rail") })');
@@ -788,17 +847,33 @@ function driver() {
         const views = await js(`[...document.querySelectorAll('.menu.sess-menu [data-view]')].map((b) => b.dataset.view)`);
         check('··· lists every workbench view', ['changes', 'git', 'files', 'search', 'schedules', 'artifacts', 'board'].every((v) => views.includes(v)), JSON.stringify(views));
         await shot('session-menu');
-        await click('.menu.sess-menu [data-view="schedules"]'); // still an in-place view (文件 / 改动… open the right panel since phase 2)
-        const inView = await waitFor('!!document.querySelector(".pane.focused .wb-body") && !!document.querySelector(".pane.focused .sh-view")', 4000);
-        await click('.pane.focused .sh-view');
-        const back = await waitFor('!!document.querySelector(".pane.focused .chat") && !document.querySelector(".pane.focused .sh-view")', 4000);
-        check('a view opens from ··· and the header pill returns to the conversation', inView && back);
+        // 定时任务 are this machine's, not the conversation's: the automation page (phase 7) over the main area; the
+        // conversation underneath stays mounted (inert), × brings it back
+        await click('.menu.sess-menu [data-view="schedules"]');
+        const autoShown = '(() => { const p = document.querySelector(".auto-page"); return !!p && !p.hidden && p.dataset.tab === "schedules" && !!p.querySelector(".auto-body[data-body=schedules]:not([hidden]) .sched-view") && !!document.querySelector(".pane-layer[inert]"); })()';
+        const inView = await waitFor(autoShown, 4000);
+        const noPill = await js('!document.querySelector(".pane.focused .sh-view") && !!document.querySelector(".pane.focused .chat")');
+        await shot('automation-from-header');
+        await click('.auto-page .auto-head button[aria-label="关闭自动化"]');
+        const back = await waitFor('document.querySelector(".auto-page")?.hidden === true && !document.querySelector(".pane-layer[inert]") && !!document.querySelector(".pane.focused .chat")', 4000);
+        check('··· 定时任务 opens the automation page over the conversation (kept mounted underneath); × returns to it', inView && noPill && back, JSON.stringify({ inView, noPill, back }));
 
         // collapsed sidebar: the centre takes the whole width and the header's first button brings the sidebar back
         await js('window.__store.setState({ sidebarOpen: false })');
         await sleep(500);
         const collapsed = await js(`(() => { const c = document.querySelector('.center').getBoundingClientRect(); return { left: Math.round(c.left), reveal: !!document.querySelector('.pane .sess-head > .sb-reveal') }; })()`);
         check('collapsed sidebar: the centre starts at the window edge, the header shows 展开侧栏', collapsed.left === 0 && collapsed.reveal, JSON.stringify(collapsed));
+        // review M10: 「连接断开，正在重连…」 at the top of the main area — seen with the sidebar (and its account row) away
+        const banner = `(() => { const b = document.querySelector('.center .conn-banner'); if (!b) return null; const r = b.getBoundingClientRect(), c = document.querySelector('.center').getBoundingClientRect(); return { text: b.textContent, inCenter: r.left >= c.left && r.right <= c.right + 1, top: Math.round(r.top), visible: r.width > 0 && r.height > 0 && getComputedStyle(b).visibility !== 'hidden' }; })()`;
+        if (E.SMOKE_READONLY !== '1') {
+          await js('window.__store.setState({ connected: false })');
+          await waitFor(`!!${banner}`, 4000);
+          const down = await js(banner);
+          await shot('disconnected');
+          await js('window.__store.setState({ connected: true })');
+          const gone = await waitFor(`!${banner}`, 2000);
+          check('disconnected: 「连接断开，正在重连…」 at the top of the main area with the sidebar collapsed; gone when back', down && down.text === '连接断开，正在重连…' && down.inCenter && down.visible && down.top < 140 && gone, JSON.stringify({ down, gone }));
+        }
         await click('.pane .sess-head > .sb-reveal');
         const reopened = await waitFor(`!!document.querySelector('.sidebar.has-resizer') && Math.round(document.querySelector('.center').getBoundingClientRect().left) === Math.round(document.querySelector('.sidebar.has-resizer').getBoundingClientRect().right) && !document.querySelector('.sb-reveal')`, 4000);
         check('展开侧栏 brings the sidebar back beside the centre', reopened);
@@ -898,10 +973,83 @@ function driver() {
           win.setContentSize(740, 860);
           await sleep(400);
           await js('window.__store.setState({ settingsOpen: null, sidebarOpen: false })');
-          const before = await js('JSON.stringify(window.__store.getState().layout.dock)');
+          // redesign phase 7 (spec §5.11): on a phone the right panel is a bottom drawer — the same Dock moved by CSS,
+          // so nothing is mounted twice (one xterm) and nothing unmounts when it slides away. The default look from here.
+          await js('window.__store.getState().setSetting("ui.workbench", false)');
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+          await sleep(400);
+          const sheet = `(() => { const a = document.querySelector('.app'); const r = document.querySelector('.rpanel'); if (!r) return null; const b = r.getBoundingClientRect(); return { open: a.classList.contains('sheet-open'), bottom: Math.round(innerHeight - b.bottom), w: Math.round(b.width), vw: innerWidth, h: Math.round(b.height), backdrop: !!document.querySelector('.sheet-backdrop'), active: window.__store.getState().layout.dock.active, drawer: a.classList.contains('drawer-open'), toasts: [...document.querySelectorAll('.toast')].map((t) => t.textContent) }; })()`;
+          const drawerUp = (s, panel) => !!s && s.open && Math.abs(s.bottom) <= 1 && s.w >= s.vw - 1 && s.h > 200 && s.backdrop && s.active === panel && !s.drawer && !s.toasts.some((t) => /手机/.test(t));
+          // a tap on the backdrop above the drawer (its middle is under the drawer)
+          const tapAbove = async () => {
+            const at = await js(`(() => { const p = document.querySelector('.rpanel').getBoundingClientRect(); return { x: Math.round(innerWidth / 2), y: Math.max(4, Math.round(p.top / 2)) }; })()`);
+            const hit = await js(`document.elementFromPoint(${at.x}, ${at.y})?.className ?? ''`);
+            if (hit !== 'sheet-backdrop') log(`tapAbove: ${hit} at ${at.x},${at.y}`);
+            wc.sendInputEvent({ type: 'mouseDown', x: at.x, y: at.y, button: 'left', clickCount: 1 });
+            wc.sendInputEvent({ type: 'mouseUp', x: at.x, y: at.y, button: 'left', clickCount: 1 });
+            await sleep(350);
+          };
+          const phoneMenu = async () => { await click('.pane .sess-head .sh-more > button'); await waitFor('!!document.querySelector(".menu.sess-menu [data-view]")', 3000); await sleep(200); };
+          const phoneViews = await (async () => { await phoneMenu(); const v = await js(`[...document.querySelectorAll('.menu.sess-menu [data-view]')].map((b) => b.dataset.view)`); await key('Escape'); return v; })();
+          check('phone ···: the views plus 终端 / 任务 (the header has no buttons for them)', ['changes', 'files', 'schedules', 'terminal', 'tasks'].every((v) => phoneViews.includes(v)), JSON.stringify(phoneViews));
+          await phoneMenu();
+          await click('.menu.sess-menu [data-view="changes"]');
+          await waitFor(`(${drawerUp.toString()})(${sheet}, 'files')`, 4000);
+          const sChanges = await js(sheet);
+          await sleep(300);
+          await shot('phone-sheet-review');
+          check('phone: ··· 改动 slides 审阅 up from the bottom (full width, over a backdrop), no toast', drawerUp(sChanges, 'files'), JSON.stringify(sChanges));
+          await tapAbove();
+          const down = await waitFor(`!document.querySelector('.app').classList.contains('sheet-open') && !!document.querySelector('.dock-panel[data-panel="files"]')`, 3000);
+          check('phone: the backdrop puts the drawer away, 审阅 stays mounted', down);
+          await phoneMenu();
+          await click('.menu.sess-menu [data-view="terminal"]');
+          const termUp = await waitFor(`(${drawerUp.toString()})(${sheet}, 'terminal') && !!document.querySelector('.dock-panel[data-panel="terminal"] .xterm')`, 8000);
+          await js(`document.querySelector('.dock-panel[data-panel="terminal"] .xterm').dataset.smokeMark = 'phone'`);
+          await shot('phone-sheet-terminal');
+          await tapAbove();
+          await sleep(300);
           await js(`window.__store.getState().togglePanel('terminal')`);
-          const after = await js('JSON.stringify(window.__store.getState().layout.dock)');
-          check('phone: a panel toggle opens nothing behind the screen', before === after, after);
+          const termAgain = await waitFor(`(${drawerUp.toString()})(${sheet}, 'terminal')`, 3000);
+          const xterms = await js(`({ n: document.querySelectorAll('.rpanel .xterm').length, same: document.querySelector('.dock-panel[data-panel="terminal"] .xterm')?.dataset.smokeMark === 'phone' })`);
+          check('phone: ··· 终端 opens the terminal in the drawer; put away and toggled back it is the same terminal (one xterm)', termUp && termAgain && xterms.n === 1 && xterms.same, JSON.stringify({ termUp, termAgain, xterms }));
+          await tapAbove();
+          await sleep(300);
+          // review 4b M3: from the phone's sidebar, 自动化 and the account menu's 用量 / 配置中心 open what they name
+          // (the automation page / the drawer), no unrelated 「手机上没有右侧面板」, and both close the drawer alike
+          await click('.pane .sess-head .sb-reveal');
+          await waitFor('document.querySelector(".app").classList.contains("drawer-open")', 3000);
+          await click('.sidebar [data-id="automation"]');
+          const autoPhone = await waitFor(`(() => { const p = document.querySelector('.auto-page'); return !!p && !p.hidden && !document.querySelector('.app').classList.contains('drawer-open'); })()`, 3000);
+          await click('.auto-page .auto-tabs [data-id="goals"]');
+          const goalsPhone = await waitFor(`(() => { const b = document.querySelector('.auto-page .auto-body[data-body="goals"]:not([hidden])'); return !!b && b.getBoundingClientRect().height > 0; })()`, 3000);
+          await click('.auto-page .auto-tabs [data-id="orchestra"]');
+          const orchPhone = await waitFor(`(() => { const b = document.querySelector('.auto-page .auto-body[data-body="orchestra"]:not([hidden])'); return !!b && b.getBoundingClientRect().height > 0; })()`, 3000);
+          const autoToasts = await js(`[...document.querySelectorAll('.toast')].map((t) => t.textContent)`);
+          await shot('phone-automation');
+          check('phone: sidebar 自动化 opens the automation page (目标 / 编排 tabs there), the drawer shuts, no toast', autoPhone && goalsPhone && orchPhone && !autoToasts.some((t) => /手机/.test(t)), JSON.stringify({ autoPhone, goalsPhone, orchPhone, autoToasts }));
+          await key('Escape');
+          await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000);
+          for (const [item, label] of [['usage', '用量与账本'], ['config', '配置中心']]) {
+            await click('.pane .sess-head .sb-reveal');
+            await waitFor('document.querySelector(".app").classList.contains("drawer-open")', 3000);
+            await click('.sidebar [data-id="account"]');
+            await click(`.menu.sb-acct-menu [data-id="${item}"]`);
+            await waitFor(`(${drawerUp.toString()})(${sheet}, '${item}')`, 4000);
+            const s = await js(sheet);
+            check(`phone: 账户 → ${label} opens it in the bottom drawer and shuts the sidebar drawer, no toast`, drawerUp(s, item), JSON.stringify(s));
+            await tapAbove();
+            await sleep(300);
+          }
+          // the disconnect banner with the phone's drawer shut
+          await js('window.__store.setState({ connected: false })');
+          await waitFor(`!!${banner}`, 4000);
+          const downPhone = await js(banner);
+          await shot('phone-disconnected');
+          await js('window.__store.setState({ connected: true })');
+          await waitFor(`!${banner}`, 2000);
+          check('phone: the disconnect banner shows over the conversation with the drawer shut', downPhone && downPhone.inCenter && downPhone.visible && downPhone.top < 120, JSON.stringify(downPhone));
+          await js('window.__store.getState().setSetting("ui.workbench", true)');
           win.setContentSize(1360, 860);
           await js('window.__store.getState().setSetting("ui.workbench", false)');
           await waitFor('!document.querySelector(".app").classList.contains("mobile") && !document.querySelector(".groupbar")', 4000);
@@ -1052,7 +1200,8 @@ function driver() {
         await sleep(300);
 
         // I5: every view in the header ··· lands where viewTarget (panel-entries.ts) sends it — the same table
-        // panel-entries.test.ts pins: 改动 / Git → 审阅, 文件 / 搜索 / 生成的文件 → 文件, Issue 与 PR → a tab, 定时任务 in place
+        // panel-entries.test.ts pins: 改动 / Git → 审阅, 文件 / 搜索 / 生成的文件 → 文件, Issue 与 PR → a tab, 定时任务 →
+        // the automation page (phase 7)
         const activeTab = 'document.querySelector(".dock:not([hidden]) .dock-tabs .tab.active")?.dataset.panel';
         const landing = {
           changes: `${activeTab} === "files" && document.querySelector(".dock .rv-main:not([hidden]) .rv-scope .t")?.textContent === "本次对话改动"`,
@@ -1061,7 +1210,7 @@ function driver() {
           search: `${activeTab} === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .search-view")`,
           artifacts: `${activeTab} === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .fv-group.open")`,
           board: `${activeTab} === "board"`,
-          schedules: '!!document.querySelector(".pane.focused .sh-view") && !!document.querySelector(".pane.focused .wb-body")',
+          schedules: '(() => { const p = document.querySelector(".auto-page"); return !!p && !p.hidden && p.dataset.tab === "schedules"; })()',
         };
         const viewMiss = [];
         for (const [view, expect] of Object.entries(landing)) {
@@ -1072,11 +1221,12 @@ function driver() {
           await click(`.menu.sess-menu [data-view="${view}"]`);
           const ok = await waitFor(`!!(${expect})`, 6000);
           const inPlace = await js('!!document.querySelector(".pane.focused .sh-view")');
-          if (!ok || (view !== 'schedules' && inPlace)) viewMiss.push(`${view}: ${await js(`JSON.stringify({ tab: ${activeTab}, open: window.__store.getState().layout.dock.open, inPlace: ${inPlace} })`)}`);
+          if (!ok || inPlace) viewMiss.push(`${view}: ${await js(`JSON.stringify({ tab: ${activeTab}, open: window.__store.getState().layout.dock.open, inPlace: ${inPlace}, auto: !document.querySelector('.auto-page')?.hidden })`)}`);
           if (inPlace) { await click('.pane.focused .sh-view'); await sleep(250); }
+          if (view === 'schedules') { await js('document.querySelector(".auto-page .auto-head button[aria-label=关闭自动化]")?.click()'); await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000); }
           if (view === 'git') await js('document.querySelector(".dock .rv-git .rv-bar .btn")?.click()');
         }
-        check('every header ··· view lands where viewTarget says (审阅 / 文件 / Issue 与 PR tab / 定时任务 in place)', !viewMiss.length, viewMiss.join(' | '));
+        check('every header ··· view lands where viewTarget says (审阅 / 文件 / Issue 与 PR tab / 定时任务 → 自动化)', !viewMiss.length, viewMiss.join(' | '));
 
         if (E.SMOKE_READONLY !== '1') {
           // I5: the header's terminal button → 终端
@@ -1241,7 +1391,7 @@ function driver() {
           const PLACES = inv.sidebar;
           const SCOPES = {
             top: '.sidebar .sb-top [data-id], .sidebar .sb-nav [data-id]',
-            automation: '.menu.sb-auto-menu [data-id]',
+            automation: '.auto-page .auto-tabs [data-id]',
             section: '.sidebar .sb-sec[data-id], .sidebar .sb-group[data-id]',
             head: '.sidebar [data-id="projects"] > .sb-sec-h [data-id]',
             filter: '.menu.sb-filter [data-id]',
@@ -1281,30 +1431,61 @@ function driver() {
             check('清除 brings the list back', await waitFor(`!document.querySelector('.sidebar .sb-filtered') && !!document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + ']')`, 3000));
           }
           await closeMenus();
-          // one menu at a time: with the funnel open, 自动化 replaces it (the toggles stop the click that closes menus,
-          // so only the one menu state can close the other; the funnel's menu does not cover the 自动化 row)
+          // redesign phase 7: 自动化 is a page over the main area (spec §5.9) — tabs 定时任务 / 目标 / 编排, 新建 at the
+          // top right. Opening it closes whatever sidebar menu was open (here: the funnel)
+          const dockClosed = `window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`;
+          const autoTab = (tab) => `(() => { const p = document.querySelector('.auto-page'); const b = p && p.querySelector('.auto-body[data-body="${tab}"]:not([hidden])'); return !!p && !p.hidden && p.dataset.tab === '${tab}' && !!b && b.getBoundingClientRect().height > 0; })()`;
           await click('.sidebar [data-id="filter"]');
           await click('.sidebar [data-id="automation"]');
-          const one = { menus: await count('.menu.sb-menu, .menu.sess-menu'), auto: await exists('.menu.sb-auto-menu'), funnel: await exists('.menu.sb-filter') };
-          check('the sidebar shows one menu at a time (漏斗 → 自动化 closes the funnel)', one.menus === 1 && one.auto && !one.funnel, JSON.stringify(one));
-          // 自动化 → the schedules / goals / orchestration panels (until the automation page)
-          if (!one.auto) await click('.sidebar [data-id="automation"]');
-          const am = await ids('.menu.sb-auto-menu [data-id]');
-          check('自动化 lists 定时任务 / 目标 / 编排', has(am, ['schedules', 'goals', 'orchestra']), JSON.stringify(am));
+          const one = { menus: await count('.menu.sb-menu, .menu.sess-menu'), page: await waitFor(`(() => { const p = document.querySelector('.auto-page'); return !!p && !p.hidden; })()`, 3000), funnel: await exists('.menu.sb-filter'), inert: await exists('.pane-layer[inert]'), active: await exists('.sidebar [data-id="automation"].active') };
+          check('自动化 opens the automation page (panes underneath inert, the entry marked) and closes the funnel', !one.menus && one.page && !one.funnel && one.inert && one.active, JSON.stringify(one));
+          const am = await ids('.auto-page .auto-tabs [data-id]');
+          const newBtn = await js(`document.querySelector('.auto-page .auto-head [data-new]')?.textContent ?? null`);
+          check('自动化 page: tabs 定时任务 / 目标 / 编排, 新建 at the top right', has(am, ['schedules', 'goals', 'orchestra']) && !!newBtn, JSON.stringify({ am, newBtn }));
           await harvest();
-          await click('.menu.sb-auto-menu [data-id="goals"]');
-          check('自动化 → 目标 shows the goals panel', await waitFor(`(() => { const d = window.__store.getState().layout.dock; return d.open && d.active === 'goals'; })()`, 3000));
-          const dockClosed = `window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`;
-          await js(dockClosed);
-          await sleep(300);
-          // 自动化 → 定时任务: from a closed right panel, two clicks to the list (任务, its scheduled tasks unfolded; openSchedules)
+          await shot('automation-schedules');
+          const autoMiss = [];
+          for (const tab of ['goals', 'orchestra', 'schedules']) {
+            await click(`.auto-page .auto-tabs [data-id="${tab}"]`);
+            if (!(await waitFor(autoTab(tab), 4000))) autoMiss.push(tab);
+            const newFor = await js(`document.querySelector('.auto-page .auto-head [data-new]')?.dataset.new`);
+            if (newFor !== tab) autoMiss.push(`${tab}: 新建 is for ${newFor}`);
+            await shot(`automation-${tab}`);
+          }
+          const autoErr = await noBoundary('.auto-page');
+          check('自动化 page: each tab shows its list (the three bodies stay mounted), without error boundary', !autoMiss.length && !autoErr && (await count('.auto-page .auto-body')) === 3, autoErr || autoMiss.join(', '));
+          // 新建 on 定时任务 opens the new-schedule form in the page (nothing saved until 保存)
+          await click('.auto-page .auto-head [data-new]');
+          const form = await waitFor(`!!document.querySelector('.auto-page .auto-body[data-body="schedules"]:not([hidden]) .sched-view input, .auto-page .auto-body[data-body="schedules"]:not([hidden]) .sched-view textarea')`, 3000);
+          check('自动化 → 新建 (定时任务) opens the form in the page', form);
+          await shot('automation-new');
+          // the main area goes elsewhere (a conversation from the sidebar): the page gets out of the way, stays mounted
+          await click(`.sidebar .sb-list [data-sid=${SID}]`);
+          const away = await waitFor(`(() => { const p = document.querySelector('.auto-page'); return !!p && p.hidden && p.querySelectorAll('.auto-body').length === 3 && !document.querySelector('.pane-layer[inert]'); })()`, 3000);
+          check('opening a conversation closes the automation page (kept mounted, hidden)', away);
+          // 自动化 → 定时任务: 1 click when it is the tab shown last, 2 from another tab (spec §4.2: ≤ 2)
           let clicks = 0;
           const counted = async (sel) => { clicks++; return click(sel); };
           await counted('.sidebar [data-id="automation"]');
-          await counted('.menu.sb-auto-menu [data-id="schedules"]');
-          const schedVisible = `(() => { const v = document.querySelector('.dock:not([hidden]) .dock-panel[data-panel="tasks"]:not([hidden]) .sched-view'); return !!v && v.getBoundingClientRect().height > 0; })()`;
-          const sched = await waitFor(schedVisible, 4000);
-          check('自动化 → 定时任务 shows the scheduled-task list, in 2 clicks', sched && clicks === 2, await js(`JSON.stringify({ clicks: ${clicks}, dock: window.__store.getState().layout.dock, toasts: [...document.querySelectorAll('.toast')].map((t) => t.textContent) })`));
+          const sched1 = await waitFor(`${autoTab('schedules')} && !!document.querySelector('.auto-page .auto-body[data-body="schedules"] .sched-view')`, 3000);
+          check('自动化 → 定时任务 in 1 click (the tab shown last), the scheduled-task list on screen', sched1 && clicks === 1, await js(`JSON.stringify({ clicks: ${clicks}, tab: document.querySelector('.auto-page')?.dataset.tab, toasts: [...document.querySelectorAll('.toast')].map((t) => t.textContent) })`));
+          await click('.auto-page .auto-tabs [data-id="goals"]');
+          await key('Escape');
+          const escClosed = await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000);
+          clicks = 0;
+          await counted('.sidebar [data-id="automation"]');
+          await counted('.auto-page .auto-tabs [data-id="schedules"]');
+          const sched2 = await waitFor(autoTab('schedules'), 3000);
+          check('Esc closes the page; from another tab 定时任务 is 2 clicks', escClosed && sched2 && clicks === 2, JSON.stringify({ escClosed, sched2, clicks }));
+          await click('.auto-page .auto-head button[aria-label="关闭自动化"]');
+          await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000);
+          // 任务 (right panel) keeps a link to them
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'tasks' })`);
+          await waitFor(`!!document.querySelector('.dock:not([hidden]) .dock-panel[data-panel="tasks"]:not([hidden]) .tasks-link')`, 3000);
+          await click('.dock-panel[data-panel="tasks"] .tasks-link');
+          check('任务 → 「定时任务 … 在「自动化」里」 opens the page on 定时任务', await waitFor(autoTab('schedules'), 3000));
+          await click('.auto-page .auto-head button[aria-label="关闭自动化"]');
+          await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000);
           await js(dockClosed);
           await sleep(300);
           // the account row: quota, today's spend, usage & ledger, the config panel, appearance, shortcuts, palette
@@ -1492,6 +1673,9 @@ function driver() {
           }
         }
       }
+
+      const emptyBad = [...emptySeen].filter(([t, b]) => !/^还没有[^。]+。[^。]*之后[^。]*会出现在这里。$/.test(t) || b > 1).map(([t, b]) => `${t} (${b} buttons)`);
+      check(`empty states read 「还没有 X。Y 之后会出现在这里。」 with at most one button (${emptySeen.size} seen)`, emptySeen.size > 0 && !emptyBad.length, emptyBad.join(' | ') || [...emptySeen.keys()].join(' | '));
 
       // ---- error boundary probe: a crash in one settings section stays in that section, 重试 recovers it
       if (E.SMOKE_READONLY !== '1') {
