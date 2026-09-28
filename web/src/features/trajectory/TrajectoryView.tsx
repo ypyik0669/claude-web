@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useScopedSession, useStore } from '@/store';
 import { walkTools } from '@/model/conversation';
+import { groupTurns } from '@/model/turn';
 import { toolSummary } from '@/util';
 import { Icon } from '@/ui/icons';
 
@@ -9,12 +10,10 @@ export function TrajectoryView() {
   const [q, setQ] = useState('');
   const rows = useMemo(() => {
     if (!active) return [];
-    let turn = 0;
+    // 「轮」 counts the conversation's turns as the chat draws them (`groupTurns`): a round after a result that no
+    // message of this window started — a goal's 继续, IM, a schedule — is a round of its own (review M-11)
     const turnOf = new Map<string, number>();
-    for (const it of active.conv.items) {
-      if (it.kind === 'user' && !it.meta) turn++;
-      if (it.kind === 'assistant') turnOf.set(it.id, turn);
-    }
+    groupTurns(active.conv.items).forEach((t, i) => { for (const it of t.body) if (it.kind === 'assistant') turnOf.set(it.id, i + 1); });
     const out: { turn: number; depth: number; name: string; summary: string; status: string; ms?: number; id: string; error?: string }[] = [];
     let lastTurn = 0;
     for (const { tool, depth, item } of walkTools(active.conv.items)) {
