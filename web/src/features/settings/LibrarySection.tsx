@@ -94,8 +94,8 @@ export function LibrarySection() {
   return (
     <div className="section">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <h5 style={{ margin: 0 }}>会话库</h5>
-        <span className="sub">把其它 agent 自己的会话记录也列进侧栏，一起搜索、续聊</span>
+        <h5 style={{ margin: 0 }}>来源</h5>
+        <span className="sub">加入后，它的历史对话出现在侧栏，可以一起搜索、接着聊</span>
       </div>
       <div className="list">
         {rows.map((x) => <SourceRow key={x.kind} x={x} busy={busyKind === x.kind} onToggle={toggle} />)}

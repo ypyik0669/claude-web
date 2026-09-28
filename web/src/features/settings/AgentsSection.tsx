@@ -6,6 +6,7 @@ import { dlg } from '@/ui/dialog';
 import type { AgentConfigKind, AgentInfo, AgentKind } from '@shared';
 import { ICON_NAMES, Icon, type IconName } from '@/ui/icons';
 import { AgentConfigPanel, CONFIGURABLE } from './AgentConfigPanel';
+import { TERMS } from '@/ui/terms';
 
 const PROTO_LABEL: Record<AgentInfo['protocol'], string> = { claude: 'Claude Code', acp: 'ACP', codex: 'app-server' };
 
@@ -52,7 +53,7 @@ function AgentCard({ a, onChange }: { a: AgentInfo; onChange: () => void }) {
         {/* AgentInfo.icon is an icon name (custom ACP agents may still carry an old glyph) */}
         <Icon name={(ICON_NAMES as string[]).includes(a.icon) ? (a.icon as IconName) : 'agent'} size={16} />
         <div className="grow">
-          <div>{a.name} <span className="mono muted" style={{ fontSize: 11.5 }}>{a.installed ? a.version : '未安装'}</span> <span className="badge" style={{ marginLeft: 6 }}>{PROTO_LABEL[a.protocol]}</span>{a.label && <span className="badge" style={{ marginLeft: 4, color: 'var(--blue)' }}>{a.label}</span>}</div>
+          <div title={`接入方式：${PROTO_LABEL[a.protocol]}`}>{a.name} <span className="mono muted" style={{ fontSize: 11.5 }}>{a.installed ? a.version : '未安装'}</span>{a.label && <span className="badge" style={{ marginLeft: 6, color: 'var(--blue)' }}>{a.label}</span>}</div>
           <div className="sub mono">{a.command} {a.args.join(' ')}</div>
         </div>
         {a.kind !== 'claude' && <label className="chip" title="关掉后新会话选择器里不再出现"><input type="checkbox" checked={a.enabled} onChange={(e) => save({ enabled: e.target.checked })} /> 启用</label>}
@@ -93,7 +94,7 @@ export function AgentsSection() {
   const reload = (refresh = false) => { setBusy(true); loadAgents(refresh).catch((e) => toast(e.message)).finally(() => setBusy(false)); };
   useEffect(() => { reload(false); }, []);
   const addCustom = async () => {
-    const name = await dlg.prompt('自定义 ACP agent', '', { message: '任何实现 Agent Client Protocol 的命令行 agent（Hermes、OpenCode、自研…）。先起名字。' });
+    const name = await dlg.prompt('添加自定义 Agent', '', { message: '任何实现 Agent Client Protocol 的命令行 agent（Hermes、OpenCode、自研…）。先起名字。' });
     if (!name) return;
     const command = await dlg.prompt('启动命令', '', { message: '例如 `hermes --acp` 或 `node ./my-agent.js`；后面可在配置里改参数与环境变量。' });
     if (!command) return;
@@ -104,19 +105,18 @@ export function AgentsSection() {
   return (
     <div className="section">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <h5 style={{ margin: 0 }}>CLI agents</h5>
-        <span className="muted" style={{ fontSize: 12 }}>同一个工作台跑多个 agent：新会话的「引擎」下拉里选择</span>
+        <h5 style={{ margin: 0 }}>{TERMS.agents}</h5>
+        <span className="muted" style={{ fontSize: 12 }}>新对话在输入框的模型菜单里选；已有对话在右上角菜单里「{TERMS.handoff}」</span>
         <span className="grow" />
-        <button className="btn sm ghost" onClick={addCustom}><Icon name="plus" size={12} /> 自定义 ACP</button>
+        <button className="btn sm ghost" onClick={addCustom} title="任何实现 Agent Client Protocol（ACP）的命令行 agent"><Icon name="plus" size={12} /> 自定义 Agent</button>
         <button className="btn sm ghost" disabled={busy} onClick={() => reload(true)}>{busy ? '检测中…' : '重新检测'}</button>
       </div>
       <div className="list">
         {agents.map((a) => <AgentCard key={a.kind} a={a} onChange={() => reload(false)} />)}
         {agents.length === 0 && <div className="empty">检测中…</div>}
       </div>
-      <div className="sub" style={{ marginTop: 8 }}>
-        Codex 走 <code>codex app-server</code>（JSON-RPC），Gemini / Qwen / Kimi 和自定义 agent 走 ACP（<code>--acp</code> / <code>--experimental-acp</code>）。
-        权限请求、工具卡片、Mission Control、账本对所有 agent 一致；会话记录存在 <code>~/.claude-web/agents/</code>。
+      <div className="sub" style={{ marginTop: 8 }} title="Codex 走 codex app-server（JSON-RPC），Gemini / Qwen / Kimi 和自定义 agent 走 ACP（--acp / --experimental-acp）">
+        权限确认、工具卡片、总览、账本对所有 Agent 一致；它们的对话记录存在 <code>~/.claude-web/agents/</code>。
       </div>
     </div>
   );

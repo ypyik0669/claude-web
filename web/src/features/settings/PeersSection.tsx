@@ -18,7 +18,8 @@ type Draft = { mode: 'code' | 'ssh'; url: string; code: string; name: string; ho
 
 /**
  * 「其它机器」: other computers running claude-web whose sessions show up in this sidebar. Joining = the
- * other machine's pairing code (this server redeems it for a device token) or one of the SSH hosts below.
+ * other machine's pairing code (this server redeems it for a device token) or one of the SSH hosts (HostsSection,
+ * under 更多选项 on the same settings page).
  */
 export function PeersSection() {
   const toast = useStore((s) => s.toast);
@@ -87,7 +88,7 @@ export function PeersSection() {
         <div className="peer-add">
           <div className="seg mini" style={{ gridColumn: '1 / -1', justifySelf: 'start' }}>
             <button className={clsx(draft.mode === 'code' && 'active')} onClick={() => setDraft({ ...draft, mode: 'code' })}>地址 + 配对码</button>
-            <button className={clsx(draft.mode === 'ssh' && 'active')} onClick={() => setDraft({ ...draft, mode: 'ssh' })} disabled={!freeHosts.length} title={freeHosts.length ? '' : '先在下面「远程主机（SSH 隧道）」里添加主机'}>SSH 主机</button>
+            <button className={clsx(draft.mode === 'ssh' && 'active')} onClick={() => setDraft({ ...draft, mode: 'ssh' })} disabled={!freeHosts.length} title={freeHosts.length ? '' : '先在下面「更多选项」→「远程主机（SSH 隧道）」里添加主机'}>SSH 主机</button>
           </div>
           {draft.mode === 'code' ? <>
             <label>地址<input className="field" autoFocus value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} placeholder="http://192.168.1.20:3091" /></label>

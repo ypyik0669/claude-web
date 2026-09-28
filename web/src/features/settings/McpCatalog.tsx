@@ -4,6 +4,7 @@ import { useScopedSession, useStore } from '@/store';
 import { clsx } from '@/util';
 import type { McpHealth, RegistryServer } from '@shared';
 import { dlg } from '@/ui/dialog';
+import { mcpChanged, useMcpChanged } from '@/features/panels/ConfigPanel';
 
 interface CatalogItem { id: string; name: string; desc: string; cat: string; json: Record<string, unknown>; env?: string[]; oauth?: boolean }
 
@@ -54,6 +55,7 @@ export function McpCatalog() {
   const cats = ['全部', ...new Set(MCP_CATALOG.map((c) => c.cat))];
   const reloadInstalled = () => ws.request<{ servers: any[] }>({ kind: 'config.mcp' }).then((r) => setInstalled((r.servers ?? []).map((s: any) => s.name))).catch(() => {});
   useEffect(() => { void reloadInstalled(); }, []);
+  useMcpChanged(() => void reloadInstalled()); // the list above / the JSON form added or removed one
   const install = async (name: string, json: Record<string, unknown>, env?: string[], oauth?: boolean) => {
     let cfg = { ...json } as any;
     if (env?.length) {
@@ -63,8 +65,8 @@ export function McpCatalog() {
     }
     try {
       await ws.request({ kind: 'config.mcp.add', name, json: JSON.stringify(cfg), scope, cwd });
-      toast(`已添加 ${name}${oauth ? '，首次使用在会话里输入 /mcp 完成 OAuth 授权' : ''}`, true);
-      await reloadInstalled();
+      toast(`已添加 ${name}${oauth ? '，首次使用在对话里输入 /mcp 完成 OAuth 授权' : ''}`, true);
+      mcpChanged();
     } catch (e: any) { toast(e.message); }
   };
   const searchRegistry = async () => {

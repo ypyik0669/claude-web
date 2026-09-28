@@ -92,14 +92,14 @@ export function ImSection() {
   return (
     <div className="section">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-        <h5 style={{ margin: 0 }}>IM 网关</h5>
-        <span className="muted" style={{ fontSize: 12 }}>在聊天软件里和会话对话、处理权限请求、收完成通知</span>
+        <h5 style={{ margin: 0 }}>机器人</h5>
         <span className="grow" />
+        <span className="muted" style={{ fontSize: 12 }}>添加</span>
         {kinds.map((k) => <button key={k.kind} className="btn sm ghost" onClick={() => add(k.kind)} title={k.help}><Icon name="plus" size={12} /> {k.name}</button>)}
       </div>
       <div className="list">
         {list.map((g) => { const def = kinds.find((k) => k.kind === g.kind); return def ? <GatewayCard key={g.id} g={g} def={def} onChange={load} /> : null; })}
-        {list.length === 0 && <div className="empty">还没有网关。点上面的按钮添加一个：Telegram 最简单（找 @BotFather 要个 token）。</div>}
+        {list.length === 0 && <div className="empty">还没有机器人。点上面的按钮添加一个：Telegram 最简单（找 @BotFather 要个 token）。</div>}
       </div>
       <div className="sub" style={{ marginTop: 8 }}>
         每个聊天绑定一个会话：直接发文字就是提问；<code>/new</code> 开新会话、<code>/sessions</code> + <code>/use</code> 切换、<code>/stop</code> 中断、<code>/allow</code> / <code>/deny</code> 或按钮处理权限；其它 <code>/命令</code> 原样转给 Claude。
