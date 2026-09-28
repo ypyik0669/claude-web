@@ -46,6 +46,9 @@ function client(url, label) {
   return { ws, req, raw, events, waitEvent, open };
 }
 const until = async (fn, ms = 20000, step = 250) => { const t = Date.now(); for (;;) { const v = await fn().catch(() => null); if (v) return v; if (Date.now() - t > ms) return null; await sleep(step); } };
+// peers.add / peers.repair answer after a short wait for the first connect; a slow machine may still be
+// "connecting" then — poll the list instead of trusting one window
+const onlineIn = (c, id, ms = 30000) => until(async () => (await c.req({ kind: 'peers.list' })).find((p) => p.id === id && p.state === 'online') ?? null, ms);
 
 // ---- start B ----
 const homeB = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-e2e-b-'));
@@ -102,7 +105,8 @@ try {
   check('A: wrong pairing code is refused', !!bad && bad.includes('不对'), bad ?? '');
   const peer = await A.req({ kind: 'peers.add', url: `127.0.0.1:${remotePort}`, code: pc.code });
   peerId = peer.id;
-  check('A: peers.add pairs by code and connects', peer.state === 'online' && /^[a-z0-9]+$/.test(peer.id) && peer.via === 'direct', `${peer.state} ${peer.name} ${peer.error ?? ''}`);
+  const peerOn = await onlineIn(A, peer.id);
+  check('A: peers.add pairs by code and connects', !!peerOn && /^[a-z0-9]+$/.test(peer.id) && peer.via === 'direct', `${peerOn?.state ?? peer.state} ${peer.name} ${peer.error ?? ''}`);
   const peers = await A.req({ kind: 'peers.list' });
   check('A: peers.list never carries the token', peers.length === 1 && !('token' in peers[0]) && !JSON.stringify(peers).includes('enc:'));
   const devs = (await B.req({ kind: 'remote.status' })).devices;
@@ -119,7 +123,7 @@ try {
   check('A: remote listener up (for B to join)', stA.running, stA.error);
   const pcA = await A.req({ kind: 'remote.pairCode' });
   const peerA = await B.req({ kind: 'peers.add', url: `http://127.0.0.1:${remoteA}`, code: pcA.code });
-  check('B: adds A as a peer (mutual)', peerA.state === 'online', `${peerA.state} ${peerA.error ?? ''}`);
+  check('B: adds A as a peer (mutual)', !!(await onlineIn(B, peerA.id)), `${peerA.state} ${peerA.error ?? ''}`);
   const bLocalIds = new Set(bList.map((s) => s.sessionId));
   const bBack = await until(async () => { const l = await B.req({ kind: 'sessions.list' }); return l.some((s) => s.peer?.id === peerA.id) ? l : null; });
   const fromA = (bBack ?? []).filter((s) => s.peer);
@@ -198,7 +202,7 @@ try {
   check('A: a revoked device token shows "令牌失效"', !!unauth && unauth.error.includes('重新配对'), unauth?.error);
   const pc2 = await B.req({ kind: 'remote.pairCode' });
   const re = await A.req({ kind: 'peers.repair', id: peerId, code: pc2.code });
-  check('A: re-pair keeps the peer id and comes back online', re.id === peerId && re.state === 'online', re.state);
+  check('A: re-pair keeps the peer id and comes back online', re.id === peerId && !!(await onlineIn(A, peerId)), re.state);
 
   // ---- B goes down ----
   serverB.kill();
@@ -229,5 +233,7 @@ B.ws.close();
 await sleep(500);
 try { fs.rmSync(homeB, { recursive: true, force: true }); } catch { /* windows may still hold a handle */ }
 const pass = results.filter((r) => r[1]).length;
+// B is this script's own server: its log is nowhere else, so a failure prints its tail here
+if (pass !== results.length) console.log(`\n----- server B log (last 60 lines) -----\n${logB.split('\n').slice(-60).join('\n')}`);
 console.log(`\n${pass}/${results.length} checks passed`);
 process.exit(pass === results.length ? 0 : 1);

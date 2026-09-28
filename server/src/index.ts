@@ -131,7 +131,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   await meta.load();
   // eslint-disable-next-line prefer-const
   let remote: RemoteService;
-  let fedIds: (() => { serverId: string; bootId: string }) | null = null;
+  let fedHealth: ((nonce: string | null, authed: boolean) => object) | null = null;
   /** Main token (desktop / CLI) or a paired device token (query ?token= or cookie cw_token). */
   const authOk = (req: http.IncomingMessage, url: URL): boolean => {
     const presented = url.searchParams.get('token') ?? cookieToken(req.headers.cookie);
@@ -160,8 +160,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     if (url.pathname === '/manifest.webmanifest') { res.writeHead(200, { 'content-type': 'application/manifest+json' }); res.end(JSON.stringify({ name: 'Claude Web', short_name: 'Claude Web', start_url: '/', display: 'standalone', background_color: '#1f1e1a', theme_color: '#1f1e1a', icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }, { src: '/icon-192.png', sizes: '192x192', type: 'image/png' }, { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }] })); return; }
     if (url.pathname === '/api/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      // serverId / bootId: lets another machine see "that address is you" BEFORE redeeming a pairing code (federation)
-      res.end(JSON.stringify({ ok: true, version, ...(fedIds?.() ?? {}) }));
+      // federation: a hash of the serverId (+ a nonce proof) for anyone; the ids themselves only with a valid token
+      res.end(JSON.stringify({ ok: true, version, ...(fedHealth?.(url.searchParams.get('nonce'), authOk(req, url)) ?? {}) }));
       return;
     }
     // Raw local file for previews (images / pdf / media): GET /api/file?path=<abs>&token= — token-guarded like /ws
@@ -287,7 +287,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     handover: (a) => swapAgent({ pool, canonical, transcripts, meta, readAll: a.readAll, imported: a.imported }, a.sessionId, a.agent, a.model),
   });
   await federation.start();
-  fedIds = () => federation.ids();
+  fedHealth = (nonce, authed) => federation.healthInfo(nonce, authed);
   const services = { federation, remote, tunnels, im, vcs: new VcsService(gitSvc), goals: new GoalService(meta, pool), android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version };
   new Hub(wss, services);
 

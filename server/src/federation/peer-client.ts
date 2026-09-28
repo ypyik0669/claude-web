@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 import type { ClientRequest, ServerEvent, WireDown } from '../protocol.js';
-import { SERVER_ID_CONFLICT, type PeerState } from './types.js';
+import { SELF_PEER, SERVER_ID_CONFLICT, type PeerState } from './types.js';
 
 /** Where to reach the peer right now. SSH peers resolve this by (re)opening their tunnel. */
 export interface PeerEndpoint { url: string; token: string }
@@ -177,7 +177,7 @@ export class PeerClient extends EventEmitter {
           // unless it's a different process with our serverId (a copied ~/.claude-web): say so
           const conflict = !!e.bootId && !!this.o.selfBootId && e.bootId !== this.o.selfBootId;
           this.stop('offline');
-          this.setState('offline', conflict ? SERVER_ID_CONFLICT : '这个地址就是本机');
+          this.setState('offline', conflict ? SERVER_ID_CONFLICT : SELF_PEER);
           return;
         }
         this.attempt = 0;

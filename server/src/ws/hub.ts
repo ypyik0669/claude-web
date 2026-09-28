@@ -621,11 +621,14 @@ export class Hub {
         return null;
       case 'remote.hosts.list':
         return s.meta.remoteHosts();
-      case 'remote.hosts.set':
+      case 'remote.hosts.set': {
+        const prev = s.meta.remoteHosts().find((h) => h.id === req.host.id);
+        const before = prev ? { ...prev } : undefined; // setRemoteHost replaces the entry; keep the old values
         await s.meta.setRemoteHost(req.host);
         this.broadcast({ kind: 'tunnel.changed' });
-        await s.federation?.hostChanged(req.host.id); // peers riding this host reconnect with the new settings
+        await s.federation?.hostChanged(req.host.id, before); // peers riding this host reconnect when its connection settings moved
         return null;
+      }
       case 'remote.hosts.remove':
         await s.tunnels.close(req.id);
         await s.meta.removeRemoteHost(req.id);

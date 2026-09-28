@@ -1,10 +1,10 @@
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type { AgentKind, ClientRequest, RemoteHost, ServerEvent, SessionSummary, TunnelInfo } from '../protocol.js';
 import { PeerClient, type PeerClientOptions, type PeerEndpoint } from './peer-client.js';
 import { inbound, outbound, planRoute, importList, rewriteEvent, type PeerRef } from './rewrite.js';
-import { SERVER_ID_CONFLICT, parsePeerId, type PeerInfo, type PeerRecord, type PeerRequest, type PeerState } from './types.js';
+import { SELF_PEER, SERVER_ID_CONFLICT, parsePeerId, type PeerInfo, type PeerRecord, type PeerRequest, type PeerState } from './types.js';
 
 /** What the service needs from MetaStore (peers + serverId + ssh hosts). */
 export interface FederationStore {
@@ -58,6 +58,15 @@ const LIST_TIMEOUT = 5_000;
 const LIST_TTL = 30_000;
 const OPEN_TIMEOUT = 120_000;
 
+/** SSH host settings a peer's connection depends on (hostChanged reconnects only when one of these moved). */
+const CONNECTION_FIELDS = ['token', 'target', 'sshPort', 'remotePort', 'identityFile'] as const satisfies readonly (keyof RemoteHost)[];
+
+const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+/** What /api/health shows unauthenticated callers instead of the serverId. */
+export const serverIdHash = (serverId: string) => sha(`cw-server:${serverId}`).slice(0, 32);
+/** Proof over a caller's nonce with our bootId: equal to the caller's own computation only if it IS us. */
+export const selfProof = (nonce: string, bootId: string) => sha(`cw-self:${nonce}:${bootId}`);
+
 /** `http://1.2.3.4:3091/` → `http://1.2.3.4:3091`; a bare `host:port` gets http://. */
 export function normalizePeerUrl(raw: string): string {
   let s = (raw ?? '').trim();
@@ -92,7 +101,7 @@ export class FederationService extends EventEmitter {
   constructor(private d: FederationDeps) {
     super();
     this.name = d.name ?? os.hostname();
-    this.bootId = d.bootId ?? randomBytes(6).toString('hex');
+    this.bootId = d.bootId ?? randomBytes(12).toString('hex');
     this.listTimeout = d.listTimeoutMs ?? LIST_TIMEOUT;
     this.listTtl = d.listTtlMs ?? LIST_TTL;
     this.fetchFn = d.fetch ?? globalThis.fetch.bind(globalThis);
@@ -108,8 +117,22 @@ export class FederationService extends EventEmitter {
     this.clients.clear();
   }
 
-  /** What /api/health and hello tell other machines about us. */
+  /** Our ids (hello to authenticated peers carries them). */
   ids() { return { serverId: this.serverId, bootId: this.bootId }; }
+
+  /**
+   * The federation part of /api/health. Unauthenticated callers get only a hash of the serverId (enough to
+   * notice "same id as mine") and, when they send a `nonce`, a proof that hashes it with our bootId (lets
+   * the caller tell "that is me" from "a copy of my data dir" without us revealing the bootId). The ids
+   * themselves only go to callers holding a valid token.
+   */
+  healthInfo(nonce: string | null, authed: boolean): { serverIdHash: string; selfProof?: string; serverId?: string; bootId?: string } {
+    if (!this.serverId) return { serverIdHash: '' };
+    const out: { serverIdHash: string; selfProof?: string; serverId?: string; bootId?: string } = { serverIdHash: serverIdHash(this.serverId) };
+    if (nonce && /^[A-Za-z0-9_-]{8,64}$/.test(nonce)) out.selfProof = selfProof(nonce, this.bootId);
+    if (authed) Object.assign(out, this.ids());
+    return out;
+  }
 
   private rec(id: string) { return this.d.store.peers().find((p) => p.id === id); }
   private ref(id: string): PeerRef { return { id, name: this.rec(id)?.name ?? id }; }
@@ -197,7 +220,7 @@ export class FederationService extends EventEmitter {
     // give it a moment so the answer can say online / why not; a self-pairing is undone right away
     const c = this.clients.get(rec.id)!;
     await waitFor(() => c.state !== 'connecting', 8_000);
-    if (c.state === 'offline' && c.error.includes('本机')) {
+    if (c.state === 'offline' && c.error === SELF_PEER) {
       await this.remove(rec.id);
       // the device token we just redeemed was minted by OUR OWN listener: don't leave it behind
       if (pairedDevice) await this.d.revokeDevice?.(pairedDevice).catch(() => {});
@@ -209,16 +232,18 @@ export class FederationService extends EventEmitter {
     return this.list().find((x) => x.id === rec.id)!;
   }
 
-  /** Redeem a pairing code on the other machine's /api/pair (the same endpoint a phone uses). */
-  /** Before redeeming a code: is that address us (or a server with our copied serverId)? Older servers
-   *  don't report a serverId in /api/health — then the hello check after connecting catches it. */
+  /** Before redeeming a code: is that address us (or a server with our copied serverId)? We have no token
+   *  yet, so all /api/health gives us is a hash of its serverId and a proof over our nonce with its bootId.
+   *  Older servers report neither — then the hello check after connecting catches it. */
   private async checkNotSelf(url: string) {
+    const nonce = randomBytes(12).toString('hex');
     let j: any = null;
-    try { j = await (await this.fetchFn(`${url}/api/health`, { signal: AbortSignal.timeout(5000) })).json(); } catch { return; /* pair() reports reachability */ }
-    if (!j?.serverId || j.serverId !== this.serverId) return;
-    throw new Error(j.bootId && j.bootId !== this.bootId ? SERVER_ID_CONFLICT : '这个地址就是本机，不能把自己加为其它机器');
+    try { j = await (await this.fetchFn(`${url}/api/health?nonce=${nonce}`, { signal: AbortSignal.timeout(5000) })).json(); } catch { return; /* pair() reports reachability */ }
+    if (!j?.serverIdHash || j.serverIdHash !== serverIdHash(this.serverId)) return;
+    throw new Error(j.selfProof === selfProof(nonce, this.bootId) ? `${SELF_PEER}，不能把自己加为其它机器` : SERVER_ID_CONFLICT);
   }
 
+  /** Redeem a pairing code on the other machine's /api/pair (the same endpoint a phone uses). */
   private async pair(url: string, code: string): Promise<{ token: string; deviceId?: string }> {
     if (!/^\d{6}$/.test(code.trim())) throw new Error('配对码是 6 位数字（在那台机器的 设置 → 远程 / 手机 里生成）');
     let r: Response;
@@ -261,7 +286,10 @@ export class FederationService extends EventEmitter {
   }
 
   /** An ssh host's settings changed (token / port / target): every peer riding it reconnects with them. */
-  async hostChanged(hostId: string) {
+  async hostChanged(hostId: string, prev?: RemoteHost) {
+    // only what the connection depends on: a rename (or a new startCommand) must not drop the link / tunnel
+    const cur = this.d.store.remoteHosts().find((h) => h.id === hostId);
+    if (prev && cur && CONNECTION_FIELDS.every((k) => (prev[k] ?? '') === (cur[k] ?? ''))) return;
     for (const p of this.d.store.peers()) if (p.via === 'ssh' && p.hostId === hostId && p.enabled) await this.retry(p.id);
   }
 

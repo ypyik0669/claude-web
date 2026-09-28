@@ -86,5 +86,9 @@ export type PeerRequest =
 
 export type PeerEvent = { kind: 'peers.changed' };
 
+/** PeerClient's error when the address turned out to be this very server. Compared with ===, never by substring
+ *  (SERVER_ID_CONFLICT mentions 本机 too). */
+export const SELF_PEER = '这个地址就是本机';
+
 /** Two servers answering with one serverId: a claude-web data dir copied to another machine. */
 export const SERVER_ID_CONFLICT = '那台机器的 serverId 和本机相同（多半是把 ~/.claude-web 拷贝了过去）。请在其中一台的 ~/.claude-web/meta.json 里删掉 "serverId" 那一行再重启它，然后重新加入';

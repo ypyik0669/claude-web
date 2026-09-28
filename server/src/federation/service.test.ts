@@ -2,8 +2,8 @@ import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import type { ClientRequest, RemoteHost, ServerEvent, SessionSummary, TunnelInfo } from '../protocol.js';
 import type { PeerClientOptions } from './peer-client.js';
-import { FederationService, normalizePeerUrl, type FederationStore, type PeerLike } from './service.js';
-import type { PeerRecord, PeerState } from './types.js';
+import { FederationService, normalizePeerUrl, selfProof, serverIdHash, type FederationStore, type PeerLike } from './service.js';
+import { SELF_PEER, SERVER_ID_CONFLICT, type PeerRecord, type PeerState } from './types.js';
 
 class FakePeer extends EventEmitter {
   state: PeerState = 'connecting';
@@ -34,7 +34,7 @@ class FakePeer extends EventEmitter {
   }
 }
 
-function setup(o: { self?: string; peers?: PeerRecord[]; health?: Record<string, unknown> } = {}) {
+function setup(o: { self?: string; peers?: PeerRecord[]; health?: (u: URL) => Record<string, unknown>; bootId?: string } = {}) {
   const peers: PeerRecord[] = [...(o.peers ?? [])];
   const hosts: RemoteHost[] = [{ id: 'h1', name: 'Lab', target: 'me@lab', remotePort: 3090, token: 'tok' }];
   const tunnelOpens: string[] = [];
@@ -60,13 +60,13 @@ function setup(o: { self?: string; peers?: PeerRecord[]; health?: Record<string,
     secrets: { protect: async (p) => `enc:plain:${p}`, reveal: async (v) => (v ?? '').replace(/^enc:plain:/, '') },
     version: '1',
     name: 'box-a',
-    bootId: 'boot-a',
+    bootId: o.bootId ?? 'boot-a',
     listTimeoutMs: 150,
     tunnels,
     revokeDevice: async (id) => { revoked.push(id); },
     makeClient: (opts) => { const f = new FakePeer(opts); if (o.self) f.remote.serverId = o.self; fakes.push(f); return f as unknown as PeerLike; },
     fetch: (async (url: string, init: any) => {
-      if (url.endsWith('/api/health')) return new Response(JSON.stringify({ ok: true, version: '1', ...(o.health ?? {}) }), { status: 200 });
+      if (new URL(url).pathname === '/api/health') return new Response(JSON.stringify({ ok: true, version: '1', ...(o.health?.(new URL(url)) ?? {}) }), { status: 200 });
       pairs.push({ url, body: JSON.parse(init.body) });
       return new Response(JSON.stringify({ token: 'devtok', device: { id: 'dev1', name: 'x' } }), { status: 200 });
     }) as any,
@@ -101,28 +101,67 @@ describe('FederationService', () => {
     await expect(fed.add({ url: '10.0.0.2:3091', code: '12' })).rejects.toThrow('6 位');
   });
 
-  it('refuses to add itself BEFORE redeeming the code (no orphan device token)', async () => {
-    const { fed, peers, pairs } = setup({ health: { serverId: 'srvA', bootId: 'boot-a' } });
+  it('/api/health: without a token only a hash of the serverId (+ a nonce proof); ids only with a token', async () => {
+    const { fed } = setup();
     await fed.start(); await settle();
-    expect(fed.ids()).toEqual({ serverId: 'srvA', bootId: 'boot-a' });
-    await expect(fed.add({ url: 'http://127.0.0.1:3091', code: '123456' })).rejects.toThrow('本机');
+    const anon = fed.healthInfo(null, false);
+    expect(anon).toEqual({ serverIdHash: serverIdHash('srvA') });
+    expect(JSON.stringify(anon)).not.toContain('srvA');
+    const probed = fed.healthInfo('n0nce-123', false);
+    expect(probed.selfProof).toBe(selfProof('n0nce-123', 'boot-a'));
+    expect(JSON.stringify(probed)).not.toContain('boot-a');
+    expect(fed.healthInfo(null, true)).toMatchObject({ serverId: 'srvA', bootId: 'boot-a', serverIdHash: serverIdHash('srvA') });
+  });
+
+  it('refuses to add itself BEFORE redeeming the code (no orphan device token)', async () => {
+    let self: FederationService | null = null;
+    const env = setup({ health: (u) => self!.healthInfo(u.searchParams.get('nonce'), false) });
+    self = env.fed;
+    await env.fed.start(); await settle();
+    expect(env.fed.ids()).toEqual({ serverId: 'srvA', bootId: 'boot-a' });
+    await expect(env.fed.add({ url: 'http://127.0.0.1:3091', code: '123456' })).rejects.toThrow(SELF_PEER);
+    expect(env.pairs).toHaveLength(0);
+    expect(env.peers).toHaveLength(0);
+  });
+
+  it('same serverId from a different process = a copied ~/.claude-web: explicit message, nothing redeemed', async () => {
+    const other = setup({ bootId: 'boot-other' });
+    await other.fed.start();
+    const { fed, peers, pairs } = setup({ health: (u) => other.fed.healthInfo(u.searchParams.get('nonce'), false) });
+    await fed.start(); await settle();
+    await expect(fed.add({ url: 'http://10.0.0.9:3091', code: '123456' })).rejects.toThrow(SERVER_ID_CONFLICT);
     expect(pairs).toHaveLength(0);
     expect(peers).toHaveLength(0);
   });
 
-  it('same serverId from a different process = a copied ~/.claude-web: explicit message, nothing redeemed', async () => {
-    const { fed, peers, pairs } = setup({ health: { serverId: 'srvA', bootId: 'someone-else' } });
+  it('a different machine (serverId hash differs) pairs normally', async () => {
+    const other = setup({ bootId: 'boot-b' });
+    (other.fed as any).d.store.serverId = async () => 'srvB';
+    await other.fed.start();
+    const { fed, pairs } = setup({ health: (u) => other.fed.healthInfo(u.searchParams.get('nonce'), false) });
     await fed.start(); await settle();
-    await expect(fed.add({ url: 'http://10.0.0.9:3091', code: '123456' })).rejects.toThrow('serverId');
-    expect(pairs).toHaveLength(0);
-    expect(peers).toHaveLength(0);
+    await fed.add({ url: 'http://10.0.0.9:3091', code: '123456' });
+    expect(pairs).toHaveLength(1);
+  });
+
+  it('a serverId conflict only noticed at hello: the conflict message (it mentions 本机 too), no local revoke', async () => {
+    const { fed, peers, revoked } = setup();
+    await fed.start(); await settle();
+    const origStart = FakePeer.prototype.start;
+    FakePeer.prototype.start = function (this: FakePeer) { this.set('offline', SERVER_ID_CONFLICT); };
+    try {
+      await expect(fed.add({ url: 'http://10.0.0.9:3091', code: '123456' })).rejects.toThrow(SERVER_ID_CONFLICT);
+      expect(peers).toHaveLength(0);
+      // the device was minted by the OTHER machine: nothing of ours to revoke
+      expect(revoked).toEqual([]);
+    } finally { FakePeer.prototype.start = origStart; }
   });
 
   it('a self-pairing only noticed at hello (no serverId in health) revokes the device it just created', async () => {
     const { fed, peers, revoked } = setup({ self: 'srvA' });
     await fed.start(); await settle();
     const origStart = FakePeer.prototype.start;
-    FakePeer.prototype.start = function (this: FakePeer) { this.set('offline', '这个地址就是本机'); };
+    FakePeer.prototype.start = function (this: FakePeer) { this.set('offline', SELF_PEER); };
     try {
       await expect(fed.add({ url: 'http://127.0.0.1:3091', code: '123456' })).rejects.toThrow('本机');
       expect(peers).toHaveLength(0);
@@ -260,20 +299,36 @@ describe('FederationService', () => {
     await fed.start(); await settle();
     const info = await fed.add({ hostId: 'h1' });
     expect(info).toMatchObject({ via: 'ssh', url: 'ssh://me@lab', name: 'Lab', state: 'online' });
+    const now0 = () => fakes[fakes.length - 1];
     expect(peers[0].token).toBe('');
     expect(tunnelOpens).toEqual(['h1']);
     expect(fakes[0].endpoint).toEqual({ url: 'http://127.0.0.1:4567', token: 'tok' });
     await expect(fed.add({ hostId: 'h1' })).rejects.toThrow('已经加入');
     // token rejected → unauthorized; the user fixes the host's token → the peer reconnects with it
+    // a rename (or anything the connection doesn't depend on) keeps the connection and the tunnel
+    const before = hosts[0];
+    hosts[0] = { ...before, name: 'Lab 2', startCommand: 'echo hi' };
+    await fed.hostChanged('h1', before); await settle();
+    expect(fakes).toHaveLength(1);
+    expect(tunnelOpens).toEqual(['h1']);
     fakes[0].set('unauthorized', '令牌失效，请重新配对');
-    hosts[0] = { ...hosts[0], token: 'tok2' };
-    await fed.hostChanged('h1'); await settle();
+    const renamed = hosts[0];
+    hosts[0] = { ...renamed, token: 'tok2' };
+    await fed.hostChanged('h1', renamed); await settle();
     const now = fakes[fakes.length - 1];
     expect(now).not.toBe(fakes[0]);
     expect(now.endpoint).toEqual({ url: 'http://127.0.0.1:4568', token: 'tok2' });
     expect(fed.list()[0].state).toBe('online');
+    // target / ssh port / remote port / identity file changes reconnect too
+    for (const patch of [{ target: 'me@lab2' }, { sshPort: 2222 }, { remotePort: 3999 }, { identityFile: '~/.ssh/k' }]) {
+      const n = fakes.length;
+      const prev = hosts[0];
+      hosts[0] = { ...prev, ...patch };
+      await fed.hostChanged('h1', prev); await settle();
+      expect(fakes.length, JSON.stringify(patch)).toBe(n + 1);
+    }
     // an explicit retry does the same
-    now.set('unauthorized', 'x');
+    now0().set('unauthorized', 'x');
     await fed.retry(info.id); await settle();
     expect(fed.list()[0].state).toBe('online');
     // a host that is gone: offline with a reason, not a crash
