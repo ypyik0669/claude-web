@@ -60,7 +60,11 @@ export type Tile =
 export interface Pane { id: string; tiles: Tile[]; activeTileId: string | null }
 export type PaneNode = { type: 'leaf'; paneId: string } | { type: 'split'; id: string; dir: 'row' | 'col'; ratio: number; a: PaneNode; b: PaneNode };
 export interface Group { id: string; name: string; root: PaneNode; panes: Record<string, Pane>; focusedPaneId: string; zoomedPaneId: string | null }
-export interface Dock { open: boolean; minimized: boolean; width: number; tabs: PanelId[]; active: PanelId | null }
+/**
+ * The right panel. `lastCore`: the fixed tab (审阅 · 文件 · 终端 · 任务) last in front — closing the last temporary tab
+ * in the default look goes back to it, not to whichever fixed tab comes first.
+ */
+export interface Dock { open: boolean; minimized: boolean; width: number; tabs: PanelId[]; active: PanelId | null; lastCore?: PanelId }
 export interface LayoutState {
   version: 2;
   groups: Group[];
@@ -408,6 +412,13 @@ function removePane(g: Group, paneId: string): Group {
 }
 
 export function layoutReducer(s: LayoutState, a: LayoutAction): LayoutState {
+  const next = reduceLayout(s, a);
+  // remember the fixed tab in front (whatever put it there: a click, a toggle, a show, a close)
+  const d = next.dock;
+  return d.active && CORE_PANELS.includes(d.active) && d.lastCore !== d.active ? { ...next, dock: { ...d, lastCore: d.active } } : next;
+}
+
+function reduceLayout(s: LayoutState, a: LayoutAction): LayoutState {
   switch (a.t) {
     case 'group.new': {
       const g = newGroup(a.name ?? `组 ${s.groups.length + 1}`, a.tile);
@@ -620,12 +631,14 @@ export function layoutReducer(s: LayoutState, a: LayoutAction): LayoutState {
       const front = s.dock.active === a.panel || !s.dock.active;
       if (a.workbench === false) {
         // the default right panel: the fixed tabs stay in the row, so the panel stays open — the front moves to the
-        // next temporary tab, else back to a fixed tab (审阅 when none has been opened yet: mount it)
+        // next temporary tab, else back to the fixed tab last in front (`lastCore`, while it is still mounted), else
+        // the first mounted one (审阅 when none has been opened yet: mount it)
         if (!front) return { ...s, dock: { ...s.dock, tabs } };
         const temps = s.dock.tabs.filter((t) => !CORE_PANELS.includes(t));
         const j = temps.indexOf(a.panel);
         const rest = temps.filter((t) => t !== a.panel);
-        const next = rest[Math.min(Math.max(j, 0), rest.length - 1)] ?? CORE_PANELS.find((c) => tabs.includes(c)) ?? defaultDockPanel(false);
+        const last = s.dock.lastCore && tabs.includes(s.dock.lastCore) ? s.dock.lastCore : undefined;
+        const next = rest[Math.min(Math.max(j, 0), rest.length - 1)] ?? last ?? CORE_PANELS.find((c) => tabs.includes(c)) ?? defaultDockPanel(false);
         return { ...s, dock: { ...s.dock, tabs: tabs.includes(next) ? tabs : [...tabs, next], active: next } };
       }
       const active = front ? tabs[Math.min(i, tabs.length - 1)] ?? null : s.dock.active;
@@ -680,6 +693,7 @@ export function sanitizeLayout(x: unknown): LayoutState | null {
   // a panel this version does not have (a newer / older build wrote the save) would be a tab with no body
   const tabs = (Array.isArray(dock.tabs) ? dock.tabs : []).filter((id) => PANEL_IDS.includes(id));
   s.dock = { open: dock.open ?? true, minimized: dock.minimized ?? false, width: dock.width ?? 440, tabs, active: dock.active && tabs.includes(dock.active) ? dock.active : tabs[0] ?? null };
+  if (dock.lastCore && CORE_PANELS.includes(dock.lastCore)) s.dock.lastCore = dock.lastCore;
   const sb: Partial<LayoutState['sidebar']> = s.sidebar ?? {};
   s.sidebar = { width: sb.width ?? 264, sections: sb.sections ?? {} };
   return s;

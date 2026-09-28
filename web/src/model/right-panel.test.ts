@@ -122,6 +122,35 @@ describe('toggling and closing', () => {
     expect(s.dock).toMatchObject({ tabs: ['files'], active: 'files', open: true });
   });
 
+  it('default mode: closing the last temporary tab goes back to the fixed tab last in front, not the first one (N7)', () => {
+    // 审阅 and 终端 open, looking at 终端 → 详情 opened from a tool row → × → back on 终端
+    let s: LayoutState = { ...initialLayout(), dock: dock({ tabs: [], active: null }) };
+    s = layoutReducer(s, { t: 'dock.show', panel: 'files' });
+    s = layoutReducer(s, { t: 'dock.show', panel: 'terminal' });
+    expect(s.dock.lastCore).toBe('terminal');
+    s = layoutReducer(s, { t: 'dock.show', panel: 'inspector' });
+    s = layoutReducer(s, { t: 'dock.show', panel: 'usage' });
+    expect(s.dock.lastCore).toBe('terminal');
+    s = layoutReducer(s, { t: 'dock.close', panel: 'usage', workbench: false });
+    expect(s.dock.active).toBe('inspector');
+    s = layoutReducer(s, { t: 'dock.close', panel: 'inspector', workbench: false });
+    expect(s.dock).toMatchObject({ tabs: ['files', 'terminal'], active: 'terminal', open: true });
+    // a click on a fixed tab (dock.set) counts too
+    s = layoutReducer(s, { t: 'dock.set', patch: { active: 'files' } });
+    s = layoutReducer(s, { t: 'dock.show', panel: 'goals' });
+    s = layoutReducer(s, { t: 'dock.close', panel: 'goals', workbench: false });
+    expect(s.dock.active).toBe('files');
+  });
+
+  it('lastCore that is no longer mounted is not remounted (a closed terminal would start a new shell): first mounted fixed tab', () => {
+    let s: LayoutState = { ...initialLayout(), dock: dock({ tabs: ['files', 'goals'], active: 'goals', lastCore: 'terminal' }) };
+    s = layoutReducer(s, { t: 'dock.close', panel: 'goals', workbench: false });
+    expect(s.dock).toMatchObject({ tabs: ['files'], active: 'files' });
+    // persisted: kept when it is a fixed tab, dropped otherwise
+    expect(sanitizeLayout({ ...initialLayout(), dock: dock({ tabs: ['terminal'], active: 'terminal', lastCore: 'terminal' }) })!.dock.lastCore).toBe('terminal');
+    expect(sanitizeLayout({ ...initialLayout(), dock: dock({ tabs: ['goals'], active: 'goals', lastCore: 'goals' }) })!.dock.lastCore).toBeUndefined();
+  });
+
   it('the palette label says what happens: a hidden fixed tab has nothing running in the background', () => {
     expect(panelToggleLabel('hide', '审阅', false)).toBe('隐藏审阅面板');
     expect(panelToggleLabel('hide', '终端')).toMatch(/继续在后台运行/);
