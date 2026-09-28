@@ -1491,6 +1491,7 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:
 
 /* a project / folder / machine and its conversations */
 .sb-group { margin-top: 2px; }
+.sb-group.sb-sec { margin-top: 14px; }
 .ws-head.sb-group-head { height: 30px; gap: 8px; padding: 0 6px 0 10px; font-size: 13.5px; font-weight: 500; color: var(--ink-2); position: relative; }
 .ws-head.sb-group-head:hover { background: var(--layer-hover); }
 .sb-group-head .ic { display: inline-flex; width: 15px; justify-content: center; color: var(--ink-3); flex: none; }
