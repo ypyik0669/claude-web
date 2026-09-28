@@ -1,5 +1,7 @@
-// UI smoke test: every settings section, every dock panel, the model menu and the welcome composer, driven in a
-// real Chromium (Electron) against a throwaway server — and it FAILS on any console error / warning.
+// UI smoke test: every settings section, every dock panel, the model menu and the welcome composer (its one row at
+// 1440 / 1024 / 760, the + / permission / project menus, every control the old composer had — see
+// web/src/features/composer/reach.ts), driven in a real Chromium (Electron) against a throwaway server — and it
+// FAILS on any console error / warning.
 //
 //   npm run build:all && node scripts/ui-smoke.cjs [--out <dir>] [--show] [--keep]
 //   node scripts/ui-smoke.cjs --idle 180 [--live] [--activity] [--out <dir>]   # spawn-frequency measurement (CW_SPAWN_LOG)
@@ -346,11 +348,14 @@ function driver() {
         win.setSize(1360, 860);
         await sleep(700);
         const focused = () => js('(() => { const a = document.activeElement; return a ? (a.dataset.dir ? "row" : a.classList.contains("dirpick") ? "chip" : a.textContent.trim()) : null; })()');
+        // redesign phase 3: the project chip's menu = recent projects · 打开文件夹… · 在独立副本里运行 (worktree)
+        const projRows = await js(`({ browse: !!document.querySelector('.menu.dirmenu [data-id="browse"]'), worktree: !!document.querySelector('.menu.dirmenu [data-id="worktree"]') })`);
+        check('project menu: 打开文件夹… and the 独立副本 (worktree) switch', projRows.browse && projRows.worktree, JSON.stringify(projRows));
         await key('End');
         const atEnd = await focused();
         await key('Home');
         const atHome = await focused();
-        check('Home / End move to the first / last entry', atHome === 'row' && /浏览文件夹/.test(atEnd), `${atHome} / ${atEnd}`);
+        check('Home / End move to the first / last entry', atHome === 'row' && /独立副本/.test(atEnd), `${atHome} / ${atEnd}`);
         await key('Tab');
         check('Tab closes the directory menu and focus returns to the chip', !(await js('!!document.querySelector(".menu.dirmenu")')) && (await focused()) === 'chip');
         await click('.welcome .dirpick');
@@ -360,13 +365,120 @@ function driver() {
 
       // ---- model menu
       phase = 'model-menu';
+      // the other agents are sections of this menu, and agents.list probes every CLI's version first (≈ 13 s on a
+      // cold machine): wait for the list rather than racing it
+      check('agent list arrived (other agents in the model menu)', await waitFor('window.__store.getState().agents.length > 0', 30_000));
       await click('.welcome .mm-anchor > button.chip');
       check('model menu opens', await waitFor('!!document.querySelector(".menu.mm")', 5000));
+      await waitFor('!!document.querySelector(\'.menu.mm [data-sec^="agent:"]\')', 30_000);
       await sleep(600);
       await shot('model-menu');
       check('model menu without error boundary', !(await noBoundary('body')), await noBoundary('body'));
+      // redesign phase 3: 智能程度 + 深度编排 on top, the other agents as sections of the same flat list (no sub-menu)
+      const mm = await js(`(() => { const m = document.querySelector('.menu.mm'); if (!m) return null; return { levels: [...m.querySelectorAll('.mm-intel [data-level]')].map((b) => b.textContent), ultra: !!m.querySelector('[data-id="ultracode"]'), agents: m.querySelectorAll('[data-sec^="agent:"]').length, nested: m.querySelectorAll('.menu').length, ids: ['add-provider', 'agents', 'manage', 'refresh'].filter((i) => !m.querySelector('[data-id="' + i + '"]')), words: /effort|ultracode|档案|引擎/i.test(m.innerText) }; })()`);
+      check('model menu: 智能程度 (快…极限), 深度编排, other agents flat, add / manage / refresh', mm && mm.levels.join('') === '快均衡深入更深极限' && mm.ultra && mm.agents >= 1 && !mm.nested && !mm.ids.length, JSON.stringify(mm));
+      check('model menu shows no implementation words (effort / ultracode / 档案 / 引擎)', mm && !mm.words);
+      await click('.menu.mm .mm-intel [data-level="low"]');
+      const chipLow = await js(`document.querySelector('.welcome .mm-anchor > button.chip').getAttribute('aria-label')`);
+      check('picking 快 keeps the menu open and the chip says 模型 · 快', /· 快$/.test(chipLow) && !!(await js('!!document.querySelector(".menu.mm")')), chipLow);
+      await click('.menu.mm .mm-intel [data-level="high"]');
       await key('Escape');
       await sleep(200);
+
+      // ---- redesign phase 3: the composer row, the + menu, the permission menu
+      phase = 'composer';
+      const oneRow = `(() => { const bar = document.querySelector('.welcome .composer-bar'); if (!bar) return null; const b = bar.getBoundingClientRect(); const kids = [...bar.querySelectorAll('.cb-left > *, .cb-right > *')].filter((e) => e.getBoundingClientRect().width > 0); const inside = kids.every((e) => { const r = e.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1 && r.left >= b.left - 8 && r.right <= b.right + 1; }); return { w: Math.round(b.width), h: Math.round(b.height), n: kids.length, inside, overflow: bar.scrollWidth > bar.clientWidth + 1 }; })()`;
+      for (const [w, h] of [[1440, 900], [1024, 800], [760, 860]]) {
+        win.setSize(w, h);
+        await sleep(700);
+        const r = await js(oneRow);
+        check(`composer row stays one line at ${w} wide`, r && r.h <= 36 && r.inside && !r.overflow && r.n >= 5, JSON.stringify(r));
+      }
+      win.setSize(1360, 860);
+      await sleep(600);
+      const bar = await js(`(() => { const b = document.querySelector('.welcome .composer-bar'); return { plus: !!b.querySelector('.plus'), project: !!b.querySelector('.dirpick'), model: !!b.querySelector('.mm-anchor'), perm: !!b.querySelector('.perm-chip'), send: !!b.querySelector('[data-id="send"]'), selects: document.querySelectorAll('.composer select').length }; })()`);
+      check('welcome row: + · project · model · permission · send, no hidden <select>', bar.plus && bar.project && bar.model && bar.perm && bar.send && !bar.selects, JSON.stringify(bar));
+      // every control of the old composer, from the reach table the unit test checks (web/src/features/composer/reach.ts):
+      // open each place (+ / project / model / permission menu, or the row itself) and query every selector in it
+      const reach = await js('window.__cwComposerReach ? JSON.parse(JSON.stringify(window.__cwComposerReach)) : null');
+      check('composer reach table exposed (window.__cwComposerReach)', !!reach && reach.reach.length > 20);
+      const speech = await js('!!(window.SpeechRecognition || window.webkitSpeechRecognition)');
+      const walk = async (place, scope, states = {}) => {
+        const wanted = reach.reach.filter((r) => r.place === place && (!r.when || r.when === 'more' || (r.when === 'speech' && speech && !states.mobile) || states[r.when]));
+        const opener = reach.opener[place];
+        const box = opener ? reach.container[place] : `${scope} ${reach.container[place]}`;
+        if (opener) { await click(`${scope} ${opener}`); await waitFor(`!!document.querySelector(${JSON.stringify(box)})`, 5000); }
+        const missing = (list) => js(`${JSON.stringify(list)}.filter((r) => !document.querySelector(${JSON.stringify(box)} + ' ' + r.sel)).map((r) => r.was + ' → ' + r.sel)`);
+        const miss = await missing(wanted.filter((r) => r.when !== 'more'));
+        const later = wanted.filter((r) => r.when === 'more');
+        if (later.length) { await click(`${box} [data-id="more"]`); miss.push(...(await missing(later))); }
+        if (opener) { await key('Escape'); await sleep(200); }
+        return { n: wanted.length, miss };
+      };
+      for (const place of ['plus', ...(E.SMOKE_REPO ? ['project'] : []), 'model', 'permission', 'bar']) {
+        const w = await walk(place, '.welcome');
+        check(`reach · ${place}: every old control is there (${w.n})`, w.n > 0 && !w.miss.length, w.miss.join(' ; '));
+      }
+      await click('.welcome .cb .plus');
+      await shot('composer-plus');
+      await click('.menu.plus-menu [data-id="chrome"]');
+      const on = await js(`document.querySelector('.menu.plus-menu [data-id="chrome"]').getAttribute('aria-checked')`);
+      await key('Escape');
+      const tag = await waitFor('!!document.querySelector(\'.welcome .cap-tag[data-cap="chrome"]\')', 2000);
+      check('switching on 控制浏览器 shows a removable tag in the text box', on === 'true' && tag, JSON.stringify({ on, tag }));
+      await click('.welcome .cap-tag[data-cap="chrome"] button');
+      check('the tag\'s × turns it off again', await waitFor('!document.querySelector(\'.welcome .cap-tag[data-cap="chrome"]\')', 2000));
+      if (E.SMOKE_READONLY !== '1') {
+        // 频道: clicking 「Brief、频道…」 (the row goes away) moves the focus to Brief, ↓ reaches the field, and what is
+        // typed survives a click outside (it is saved as you type, into meta.json ui.featureDefaults)
+        await click('.welcome .cb .plus');
+        await click('.menu.plus-menu [data-id="more"]');
+        const afterMore = await js('document.activeElement?.dataset?.id ?? document.activeElement?.tagName');
+        await key('Down');
+        const inField = await js('document.activeElement?.closest?.(\'[data-id="channels"]\') ? "channels" : document.activeElement?.tagName');
+        wc.insertText('server:smoke');
+        await sleep(100);
+        await click('.welcome .composer textarea');
+        const saved = await waitFor('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"]?.channels) === \'["server:smoke"]\'', 3000);
+        check('频道: 「Brief、频道…」 hands the focus to Brief, ↓ reaches the field, typing survives a click outside', afterMore === 'brief' && inField === 'channels' && saved && !(await js('!!document.querySelector(".menu.plus-menu")')), JSON.stringify({ afterMore, inField, saved }));
+        check('频道 shows as a removable tag', await waitFor('!!document.querySelector(\'.welcome .cap-tag[data-cap="channels"]\')', 2000));
+        await click('.welcome .cap-tag[data-cap="channels"] button');
+        await waitFor('!document.querySelector(\'.welcome .cap-tag[data-cap="channels"]\')', 2000);
+        check('the capability defaults live in meta.json, not localStorage', await js('localStorage.getItem("cw.lastFeatures") === null && !!window.__store.getState().settings["ui.featureDefaults"]'));
+        await click('.welcome .cb .plus');
+        await click('.menu.plus-menu [data-id="goal"]');
+        check('设定一个目标 puts /goal into the text box', await waitFor('document.querySelector(".welcome .composer textarea").value.startsWith("/goal")', 2000));
+        wc.selectAll(); wc.delete(); await sleep(200);
+        if (E.SMOKE_SID) {
+          await click('.welcome .cb .plus');
+          await click('.menu.plus-menu [data-id="reference"]');
+          const listed = await waitFor('document.querySelectorAll(".menu.plus-menu .cm-ref-list .cm-it").length > 0', 3000);
+          // from the search box ↓ and Tab land on the first result (not the 返回 button, not closing the menu)
+          const where = 'document.activeElement?.closest?.(".cm-ref-list") ? "result" : document.activeElement?.getAttribute?.("aria-label") ?? document.activeElement?.tagName';
+          const inSearch = await js('document.activeElement?.getAttribute?.("aria-label")');
+          await key('Down');
+          const afterDown = await js(where);
+          await js(`document.querySelector('.menu.plus-menu .cm-ref-head input')?.focus()`);
+          await key('Tab');
+          const afterTab = await js(where);
+          check('reference search: ↓ and Tab go to the first result and keep the menu open', inSearch === '搜索对话' && afterDown === 'result' && afterTab === 'result' && !!(await js('!!document.querySelector(".menu.plus-menu")')), JSON.stringify({ inSearch, afterDown, afterTab }));
+          await click('.menu.plus-menu .cm-ref-list .cm-it');
+          const refChip = await waitFor('!!document.querySelector(".welcome .attach .att-chip.ref")', 2000);
+          check('引用另一个对话 lists conversations and adds the reference chip', listed && refChip, JSON.stringify({ listed, refChip }));
+          await js(`document.querySelector('.welcome .attach .att-chip.ref button')?.click()`);
+          await sleep(200);
+        }
+      }
+      await click('.welcome .cb .perm-chip');
+      const perm = await js(`(() => { const m = document.querySelector('.menu.perm-menu'); if (!m) return null; return { modes: [...m.querySelectorAll('[data-mode]')].map((b) => b.dataset.mode), danger: m.querySelector('[data-mode="bypassPermissions"]').classList.contains('danger'), rec: !!m.querySelector('[data-mode="default"] .cm-rec'), foot: /设为新对话的默认/.test(m.innerText), lines: [...m.querySelectorAll('[data-mode] .cm-d')].every((d) => d.textContent.length > 6) }; })()`);
+      check('permission menu: six modes with one line each, 完全放开 in the danger colour, 推荐, 设为新对话的默认…', perm && perm.modes.length === 6 && perm.danger && perm.rec && perm.foot && perm.lines, JSON.stringify(perm));
+      await shot('composer-perm');
+      await click('.menu.perm-menu [data-mode="acceptEdits"]');
+      const permLabel = await js(`document.querySelector('.welcome .cb .perm-chip').getAttribute('aria-label')`);
+      check('picking a mode updates the chip', /自动改文件/.test(permLabel), permLabel);
+      await click('.welcome .cb .perm-chip');
+      await click('.menu.perm-menu [data-mode="default"]');
+      check('composer menus without error boundary', !(await noBoundary('body')), await noBoundary('body'));
 
       // ---- every settings section
       for (const s of inv.sections) {
@@ -414,6 +526,50 @@ function driver() {
         check('session tile without error boundary', !err, err);
         await shot('session');
 
+        // ---- redesign phase 3: the stats bar is behind the context ring; + says the capabilities apply to new conversations
+        phase = 'session-composer';
+        check('no stats bar under the composer', !(await js('!!document.querySelector(".pane .composer .statusbar")')));
+        const sidJs = JSON.stringify(E.SMOKE_SID);
+        // no occupancy reported (a conversation opened from history, ACP…) → no ring (an empty circle reads as a
+        // radio button / a spinner), but with a turn behind it a plain stats icon keeps the numbers one click away
+        const noCu = await js(`(() => { const o = window.__store.getState().open[${sidJs}]; return !!o && !(o.contextUsage ?? o.conv.contextUsage); })()`);
+        if (noCu) {
+          const plain = await js(`(() => { const m = document.querySelector('.pane .composer .ctx-meter'); return m ? { cls: m.className, circles: m.querySelectorAll('circle').length } : null; })()`);
+          await click('.pane .composer .ctx-meter');
+          const plainCard = await js(`document.querySelector('.ctx-card')?.innerText ?? null`);
+          await click('.pane .composer .ctx-meter');
+          check('no occupancy: no ring, a plain stats icon whose card still has 轮数 / 输入 (no 上下文 line)', plain && /plain/.test(plain.cls) && !plain.circles && !!plainCard && /轮数/.test(plainCard) && !/上下文/.test(plainCard), JSON.stringify({ plain, plainCard }));
+        }
+        const setCu = (cu) => js(`(() => { const st = window.__store; const o = st.getState().open[${sidJs}]; st.setState({ open: { ...st.getState().open, [${sidJs}]: { ...o, contextUsage: ${JSON.stringify(cu)}, version: o.version + 1 } } }); })()`);
+        await setCu({ percentage: 83, totalTokens: 166_000, maxTokens: 200_000 });
+        const ring = await waitFor('!!document.querySelector(".pane .composer .ctx-meter circle")', 2000);
+        const ringLook = await js(`(() => { const m = document.querySelector('.pane .composer .ctx-meter'); if (!m) return null; const cs = getComputedStyle(m); return { cls: m.className, pct: m.textContent, weight: cs.fontWeight, chip: !!document.querySelector('.pane .status-strip .ctx-full') }; })()`);
+        check('83 %: the ring shows the percentage in ink, bold, not yellow; no second 83 % above the composer', ring && ringLook && /strong/.test(ringLook.cls) && ringLook.pct === '83%' && Number(ringLook.weight) >= 600 && !ringLook.chip, JSON.stringify(ringLook));
+        // the rest of the row is in the reach table too (the ring = the old stats bar)
+        for (const place of ['meter', 'bar']) {
+          const w = await walk(place, '.pane .composer', { usage: true });
+          check(`reach · ${place} in a conversation (${w.n})`, w.n > 0 && !w.miss.length, w.miss.join(' ; '));
+        }
+        await click('.pane .composer .ctx-meter');
+        const card = await js(`document.querySelector('.ctx-card')?.innerText ?? null`);
+        check('the context ring shows the old stats (轮数 / 输入 / 输出 / 上下文) on click', !!card && /轮数/.test(card) && /输入/.test(card) && /上下文/.test(card), JSON.stringify(card));
+        await click('.pane .composer .ctx-meter');
+        await setCu({ percentage: 97, totalTokens: 194_000, maxTokens: 200_000 });
+        const full = await waitFor('!!document.querySelector(".pane .status-strip .ctx-full")', 2000);
+        const fullText = await js(`document.querySelector('.pane .status-strip .ctx-full')?.textContent ?? null`);
+        check('≥ 95 %: the strip offers /compact once, without repeating the percentage', full && /compact/.test(fullText ?? '') && !/%/.test(fullText ?? ''), JSON.stringify(fullText));
+        await setCu(undefined);
+        await sleep(200);
+        // + in a running conversation: the switches show THIS conversation's state, read-only; one note says where to change them
+        await click('.pane .composer .cb .plus');
+        const live = await js(`(() => { const m = document.querySelector('.menu.plus-menu'); if (!m) return null; const rows = [...m.querySelectorAll('[role="menuitemcheckbox"]')]; return { sub: m.querySelector('.cm-sub')?.textContent ?? null, mentions: (m.innerText.match(/新对话/g) || []).length, rows: rows.length, ro: rows.every((r) => r.getAttribute('aria-disabled') === 'true'), checked: rows.filter((r) => r.getAttribute('aria-checked') === 'true').map((r) => r.dataset.id) }; })()`);
+        const before = await js('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"] ?? null)');
+        await click('.menu.plus-menu [data-id="chrome"]');
+        const after = await js('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"] ?? null)');
+        const stillOff = await js(`document.querySelector('.menu.plus-menu [data-id="chrome"]')?.getAttribute('aria-checked')`);
+        check('in a conversation the + capabilities show its own state, read-only, 「要改请在新对话的 + 里设置」 said once', live && /要改请在新对话的 \+ 里设置/.test(live.sub ?? '') && live.mentions === 1 && live.rows >= 4 && live.ro && !live.checked.length && before === after && stillOff === 'false', JSON.stringify({ live, before, after, stillOff }));
+        await key('Escape');
+
         // ---- redesign phase 1: one ≤ 52px row above the conversation; the workbench tabs live in ···
         phase = 'session-chrome';
         const head = await js(`(() => { const p = document.querySelector('.pane.focused') || document.querySelector('.pane'); const h = p && p.querySelector('.sess-head'); const c = p && p.querySelector('.chat'); if (!h || !c) return null; const pr = p.getBoundingClientRect(); return { h: Math.round(h.getBoundingClientRect().height), above: Math.round(c.getBoundingClientRect().top - pr.top), strips: p.querySelectorAll('.tabstrip').length, wbTabs: !!document.querySelector('.wb-tabs') }; })()`);
@@ -445,6 +601,8 @@ function driver() {
         const split = await waitFor('document.querySelectorAll(".pane").length === 2 && document.querySelectorAll(".pane .tabstrip").length === 2', 4000);
         check('Ctrl+D splits and both panes get a tab strip', split, `strips ${await strips()}`);
         await shot('split');
+        const splitBars = await js(`[...document.querySelectorAll('.pane .composer-bar')].map((bar) => ({ w: Math.round(bar.getBoundingClientRect().width), h: Math.round(bar.getBoundingClientRect().height), overflow: bar.scrollWidth > bar.clientWidth + 1 }))`);
+        check('split panes: each composer row is still one line', splitBars.length === 2 && splitBars.every((b) => b.h <= 36 && !b.overflow), JSON.stringify(splitBars));
         await click('.pane.focused .tabstrip button[aria-label="关闭这个分屏"]');
         const merged = await waitFor('document.querySelectorAll(".pane").length === 1 && document.querySelectorAll(".pane .tabstrip").length === 0', 4000);
         check('closing the split hides the tab strip again', merged, `strips ${await strips()}`);
@@ -499,6 +657,8 @@ function driver() {
           const phoneHead = await js(`(() => { const h = document.querySelector('.pane .sess-head'); if (!h) return null; return { reveal: !!h.querySelector('.sb-reveal'), diff: !!h.querySelector('.sh-diff'), term: !!h.querySelector('button[aria-label="终端"]'), panel: !!h.querySelector('button[aria-label="右侧面板"], button[aria-label="展开右侧面板"]'), more: !!h.querySelector('.sh-more > button') }; })()`);
           check('phone + workbench tools: no group bar / tab strip; header has 展开侧栏 and ··· but no 改动 / 终端 / 右侧面板', phone && phoneHead && phoneHead.reveal && phoneHead.more && !phoneHead.diff && !phoneHead.term && !phoneHead.panel, JSON.stringify({ phone, phoneHead }));
           await shot('phone-workbench');
+          const phoneBar = await js(`(() => { const bar = document.querySelector('.pane .composer-bar'); if (!bar) return null; const b = bar.getBoundingClientRect(); return { h: Math.round(b.height), overflow: bar.scrollWidth > bar.clientWidth + 1, mic: !!bar.querySelector('[data-id="mic"]') }; })()`);
+          check('phone: the composer row is one line, no mic (spec §5.11)', phoneBar && phoneBar.h <= 36 && !phoneBar.overflow && !phoneBar.mic, JSON.stringify(phoneBar));
           await click('.pane .sess-head .sb-reveal');
           const drawer = await waitFor('document.querySelector(".app").classList.contains("drawer-open") && !!document.querySelector(".sidebar.has-resizer")', 3000);
           check('phone: 展开侧栏 opens the sidebar drawer', drawer);

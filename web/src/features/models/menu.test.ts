@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GatewayGroup, Provider } from '@shared';
-import { buildModelMenu, chipLabel, compatibleTypes, filterMenu, gatewayModels, modelKey, modelTable, pushRecent, recentKey, usableProfile } from './menu';
+import { buildModelMenu, chipLabel, compatibleTypes, filterMenu, gatewayModels, modelKey, modelTable, pushRecent, recentKey, usableProfile, type AgentSource } from './menu';
 
 const prov = (id: string, o: Partial<Provider> = {}): Provider => ({ id, name: id, type: 'anthropic', baseUrl: 'https://x', apiKey: '…', createdAt: 0, ...o });
 const PROVIDERS: Provider[] = [
@@ -193,5 +193,50 @@ describe('usableProfile (welcome composer remembered profile)', () => {
     expect(usableProfile(PROVIDERS, 'gw', { agent: 'codex', gatewayEnabled: true, gatewayGroups: GROUPS })?.id).toBe('gw');
     expect(usableProfile(PROVIDERS, 'claude', { agent: 'claude' })).toBeUndefined();
     expect(usableProfile(PROVIDERS, 'gone', { agent: 'claude' })).toBeUndefined();
+  });
+});
+
+describe('other agents as sources in the same flat list (the old agent picker, spec §5.5 / 定案 1)', () => {
+  const AGENTS: AgentSource[] = [
+    { kind: 'codex', name: 'Codex', installed: true },
+    { kind: 'gemini', name: 'Gemini CLI', installed: false },
+    { kind: 'opencode', name: 'OpenCode', installed: true, models: ['anthropic/claude-x'], defaultModel: 'anthropic/claude-x' },
+  ];
+  const withAgents = (o: Partial<Parameters<typeof buildModelMenu>[0]> = {}) => menu({ otherAgents: AGENTS, ...o });
+
+  it('each other agent is one more section after the profiles, flat (default + its models), no sub-menu', () => {
+    const m = withAgents();
+    expect(sectionIds(m)).toEqual(['builtin', 'gkey', 'snbchr', 'gem', 'xai', 'empty', 'gw', 'agent:codex', 'agent:gemini', 'agent:opencode']);
+    const codex = m.sections.find((s) => s.id === 'agent:codex')!;
+    expect(codex).toMatchObject({ kind: 'agent', title: 'Codex', agent: 'codex' });
+    expect(codex.items[0]).toMatchObject({ agent: 'codex', providerId: 'claude', model: '', isDefault: true, label: 'Codex · 默认模型' });
+    expect(codex.items.find((i) => i.model === 'gpt-5.6-sol')).toMatchObject({ label: 'Codex · 5.6 Sol', key: 'codex:gpt-5.6-sol', current: false });
+  });
+  it('an agent without a catalog lists the models it reported; its configured default is named', () => {
+    const oc = withAgents().sections.find((s) => s.id === 'agent:opencode')!;
+    expect(oc.items.map((i) => i.model)).toEqual(['', 'anthropic/claude-x']);
+    expect(oc.items[0].display).toBe('默认（anthropic/claude-x）');
+  });
+  it('not installed: shown greyed with the reason, not pickable', () => {
+    const g = withAgents().sections.find((s) => s.id === 'agent:gemini')!;
+    expect(g.unavailable).toMatch(/未安装/);
+    expect(g.items.every((i) => i.unavailable)).toBe(true);
+  });
+  it('the current agent is never listed as "other"; Claude is one when another agent is current', () => {
+    const m = menu({ agent: 'codex', otherAgents: [{ kind: 'claude', name: 'Claude Code', installed: true }, { kind: 'codex', name: 'Codex', installed: true }] });
+    expect(sectionIds(m)).toEqual(['builtin', 'gkey', 'gw', 'agent:claude']);
+    expect(m.sections.at(-1)!.items.find((i) => i.model === 'claude-opus-5')).toMatchObject({ agent: 'claude', key: 'claude-opus-5', label: 'Claude Code · Opus 5' });
+  });
+  it('other agents stay out of favourites / recents (picking them in a session is a hand-over)', () => {
+    const m = withAgents({ settings: { 'ui.favoriteModels': ['codex:gpt-5.6-sol'], 'ui.recentModels': ['@codex:gpt-5.6-sol'] } });
+    expect(sectionIds(m)).not.toContain('favorites');
+    expect(sectionIds(m)).not.toContain('recent');
+  });
+  it("ui.disabledModels hides another agent's model by its `<agent>:<model>` key", () => {
+    const m = withAgents({ settings: { 'ui.disabledModels': ['codex:gpt-5.6-luna'] } });
+    expect(m.sections.find((s) => s.id === 'agent:codex')!.items.some((i) => i.model === 'gpt-5.6-luna')).toBe(false);
+  });
+  it('search finds an agent by name', () => {
+    expect(filterMenu(withAgents(), 'codex sol').sections.map((s) => s.id)).toEqual(['agent:codex']);
   });
 });

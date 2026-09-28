@@ -2,13 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
-import { clsx, fmtTok, fmtMs, shortModel } from '@/util';
-import { fmtCost, sumCosts } from '@/model/cost';
+import { clsx, shortModel } from '@/util';
 import { parsePeerId, type AgentKind, type AttachmentRef, type EffortLevel, type PermissionMode, type SessionFeatures } from '@shared';
 import { compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachment, uploadAttachment, type DroppedFile, type PendingImage } from '@/model/attachments';
+import { pickFolderFiles } from '@/model/attachment-filter';
 import { StatusStrip } from '@/features/chat/StatusStrip';
 import { RunCard } from '@/features/chat/RunCard';
-import { DirPicker } from './DirPicker';
 import { attachmentFolderPath } from '@/features/paths';
 import { Icon } from '@/ui/icons';
 import { CATALOG, effortLevels, modelsFor } from '@catalog';
@@ -16,20 +15,54 @@ import { usePaneCtx } from '@/store/paneContext';
 import { activeGroup } from '@/model/layout';
 import { sessionRefMarker } from '@/model/conversation';
 import { SessionRefChip } from '@/features/chat/ChatView';
-import { REFERENCE_EVENT, type ReferenceDetail } from '@/features/sidebar/session-actions';
+import { REFERENCE_EVENT, handOver, type ReferenceDetail } from '@/features/sidebar/session-actions';
 import { ModelChip } from '@/features/models/ModelMenu';
-import { chipLabel, compatibleTypes, usableProfile, type ModelMenuItem } from '@/features/models/menu';
+import { usableProfile, type AgentSource, type ModelMenuItem } from '@/features/models/menu';
 import { routePick, switchedNote } from '@/features/models/route';
+import { modelChipText } from '@/features/models/intelligence';
 import { providersLoaded, useGatewayStatus } from '@/features/models/data';
 import { dlg } from '@/ui/dialog';
-import { MODE_LABEL, PERMISSION_MODES, PERMISSION_MODE_ORDER, ULTRACODE, effortLabel, effortTitle } from '@/ui/terms';
+import { TERMS } from '@/ui/terms';
+import { ComposerBar } from './ComposerBar';
+import { PlusMenu } from './PlusMenu';
+import { PermissionChip } from './PermissionChip';
+import { BranchChip, ProjectChip } from './ProjectChip';
+import { ContextMeter } from './ContextMeter';
+import { BAR_ID } from './ids';
+import { FEATURE_DEFAULTS_KEY, LEGACY_FEATURES_KEY, capabilityTags, migrateFeatureDefaults, withoutTag } from './capabilities';
 
 // sessions on another machine: uploads land on this machine's disk, out of the remote agent's reach
 const REMOTE_ATTACH = '附件在本机，远端读不到，请粘贴内容（图片可以直接发）';
+// goals run on THIS machine (GoalService drives a local runner): it cannot drive a conversation over there
+const REMOTE_GOAL = '其它机器上的对话不能在这里设定目标（目标由本机驱动）。可以到那台机器上设定，或先「交给本机的 Agent 继续」';
+const NO_FEATURES: SessionFeatures = {};
+const isFeatures = (v: unknown): v is SessionFeatures => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * Once per page, after meta.json arrived: older builds kept the capability defaults in localStorage
+ * (`cw.lastFeatures`), which the desktop app loses on every start (its origin changes with the port). Take them
+ * over into `ui.featureDefaults` unless meta.json already has a value, then drop the key.
+ */
+let featuresMigrated = false;
+function migrateFeaturesOnce(): void {
+  if (featuresMigrated) return;
+  featuresMigrated = true;
+  let legacy: string | null = null;
+  try { legacy = localStorage.getItem(LEGACY_FEATURES_KEY); } catch { return; }
+  const st = useStore.getState();
+  const r = migrateFeatureDefaults(st.settings[FEATURE_DEFAULTS_KEY], legacy);
+  const drop = () => { try { localStorage.removeItem(LEGACY_FEATURES_KEY); } catch { /* storage blocked */ } };
+  if (r.write) void st.setSetting(FEATURE_DEFAULTS_KEY, r.value).then(drop, () => { featuresMigrated = false; });
+  else if (r.dropLegacy) drop();
+}
 
 /**
  * The composer is used in two places: inside an open session (sends to it) and on the welcome screen
- * (creates a session on first send). `welcome` mode carries its own model/mode/cwd state.
+ * (creates a session on first send). `welcome` mode carries its own agent / profile / model / effort / mode /
+ * cwd state. Layout (spec §5.4): text box, then one row — `+` · project · branch | model · permission · mic · send
+ * (ComposerBar). Everything the old row of chips did is still here: attachments, references and the session
+ * capabilities in `+` (PlusMenu), the agent, profile, model, effort and 深度编排 in the model menu, the permission
+ * modes in PermissionChip, the stats bar behind the context ring (ContextMeter).
  */
 export function Composer({ welcome = false, target, disabled = false }: { welcome?: boolean; target?: { paneId: string; tileId: string }; disabled?: boolean }) {
   const active = useScopedSession();
@@ -40,6 +73,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   const openSession = useStore((s) => s.openSession);
   const sessions = useStore((s) => s.sessions);
   const toast = useStore((s) => s.toast);
+  const mobile = useStore((s) => s.mobile);
   const ta = useRef<HTMLTextAreaElement>(null);
   const [text, setText] = useState(welcome ? '' : active?.draft ?? '');
   const [imgs, setImgs] = useState<PendingImage[]>([]);
@@ -55,13 +89,17 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   // welcome-mode settings
   const [cwd, setCwd] = useState(localStorage.getItem('cw.lastCwd') || sessions[0]?.cwd || '');
   const [wModel, setWModel] = useState(localStorage.getItem('cw.lastModel') || '');
-  const [wMode, setWMode] = useState<PermissionMode>((localStorage.getItem('cw.lastMode') as PermissionMode) || 'default');
+  const settings = useStore((s) => s.settings);
+  // an explicit 「新对话默认权限」 (settings, or 「设为新对话的默认…」 in the permission menu) wins over the last one used
+  const defaultMode = settings['ui.defaultMode'] as PermissionMode | undefined;
+  const [wMode, setWMode] = useState<PermissionMode>(() => defaultMode || (localStorage.getItem('cw.lastMode') as PermissionMode) || 'default');
+  const modeTouched = useRef(false);
+  useEffect(() => { if (welcome && defaultMode && !modeTouched.current) setWMode(defaultMode); }, [welcome, defaultMode]);
   const [wEffort, setWEffort] = useState<EffortLevel | ''>('');
   const [wUltra, setWUltra] = useState(false);
+  const [wWorktree, setWWorktree] = useState('');
   const [starting, setStarting] = useState(false);
   const providers = useStore((s) => s.providers);
-  const settings = useStore((s) => s.settings);
-  const togglePanel = useStore((s) => s.togglePanel);
   const [wProvider, setWProvider] = useState<string>(localStorage.getItem('cw.lastProvider') || (settings.defaultProviderId as string) || 'claude');
   const agents = useStore((s) => s.agents);
   const [wAgent, setWAgent] = useState<AgentKind>((localStorage.getItem('cw.lastAgent') as AgentKind) || 'claude');
@@ -75,7 +113,6 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   const provider = usableProfile(providers, wProvider, { agent: wKind, engine, gatewayGroups: gatewayView.groups, gatewayEnabled: gatewayView.enabled });
   // the agent's own model list: the catalog, or what the agent registry probed when the catalog has none
   const wBuiltin = agent && !modelsFor(agent.kind).length ? agent.models.map((m) => ({ value: m, displayName: m })) : undefined;
-  const pickWelcome = (it: ModelMenuItem) => { setWProvider(it.providerId); setWModel(it.model); return true; };
   // the remembered profile is gone (deleted, or unusable by this agent): its model goes with it, or a relay's
   // model id would be sent to the agent's own login
   useEffect(() => {
@@ -87,10 +124,16 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   }, [welcome, wProvider, provider, providers]);
   // effort is per agent AND per model: Gemini has none, Codex alone has `ultra`, Opus/Sonnet 4.6 have no `xhigh`
   const wEfforts = effortLevels(wKind, wModel || undefined);
+  // a level picked for another model that this one lacks falls back to the default (not sent, not shown)
+  const wEffortOk = wEffort && wEfforts.includes(wEffort) ? wEffort : undefined;
   const wUltracode = !!CATALOG[wKind]?.supportsUltracode;
-  const catalogNote = CATALOG[wKind]?.note;
-  const [wFeatures, setWFeatures] = useState<SessionFeatures>(() => { try { return JSON.parse(localStorage.getItem('cw.lastFeatures') ?? '{}'); } catch { return {}; } });
-  const [featOpen, setFeatOpen] = useState(false);
+  // the capabilities (+ menu): one set of defaults for new conversations in meta.json, so every composer on screen
+  // (and the next start of the desktop app) sees the same
+  const storedFeatures = settings[FEATURE_DEFAULTS_KEY];
+  const featDefaults: SessionFeatures = isFeatures(storedFeatures) ? storedFeatures : NO_FEATURES;
+  const metaLoaded = useStore((s) => s.metaLoaded);
+  useEffect(() => { if (metaLoaded) migrateFeaturesOnce(); }, [metaLoaded]);
+  const setFeatures = (f: SessionFeatures) => { void useStore.getState().setSetting(FEATURE_DEFAULTS_KEY, f).catch((e) => toast(e.message)); };
   const [listening, setListening] = useState(false);
   const recRef = useRef<any>(null);
   const speechOk = typeof window !== 'undefined' && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
@@ -127,7 +170,6 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     rec.start();
   };
   useEffect(() => () => { recRef.current?.stop?.(); }, []);
-  const featCount = Object.entries(wFeatures).filter(([k, v]) => k !== 'env' && (Array.isArray(v) ? v.length : !!v)).length;
 
   useEffect(() => {
     if (!cwd && sessions[0]?.cwd) setCwd(sessions[0].cwd);
@@ -167,6 +209,10 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   const busy = !welcome && !!active && (active.state === 'running' || active.state === 'waiting' || active.state === 'starting');
   const canSend = (text.trim().length > 0 || imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0) && !starting && !upload && !disabled;
 
+  const addRef = (d: { id: string; title: string }) => {
+    setRefs((r) => (r.some((x) => x.id === d.id) ? r : [...r, d]));
+    ta.current?.focus();
+  };
   // "引用到输入框" from a session menu: only the composer of the focused pane's front tile takes it
   useEffect(() => {
     const on = (ev: Event) => {
@@ -177,8 +223,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
       if (g.focusedPaneId !== pane.paneId || !p || (p.activeTileId ?? p.tiles[0]?.id) !== pane.tileId) return;
       if (!welcome && active?.sessionId === d.id) { d.reason = '不能引用会话自己'; return; }
       d.handled = true;
-      setRefs((r) => (r.some((x) => x.id === d.id) ? r : [...r, { id: d.id, title: d.title }]));
-      ta.current?.focus();
+      addRef({ id: d.id, title: d.title });
     };
     window.addEventListener(REFERENCE_EVENT, on);
     return () => window.removeEventListener(REFERENCE_EVENT, on);
@@ -213,21 +258,23 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     if (!canSend) return;
     const t = text;
     if (/^\/goal\s+\S/.test(t.trim())) {
+      // the text stays: the user may still want to send it as a plain message, or copy it over there
+      if (remote) { toast(REMOTE_GOAL); return; }
       const objective = t.trim().replace(/^\/goal\s+/, '');
       const cwdFor = welcome ? cwd.trim() : active?.cwd ?? '';
-      if (!cwdFor) { toast('先选一个目录'); return; }
+      if (!cwdFor) { toast('先选一个项目文件夹'); return; }
       try {
         const g = await ws.request<{ id: string }>({ kind: 'goals.create', objective, cwd: cwdFor, permissionMode: welcome ? wMode : (active?.info?.permissionMode ?? 'acceptEdits'), agent: welcome ? (foreign ? wAgent : undefined) : (active?.info?.agent && active.info.agent !== 'claude' ? active.info.agent : undefined) });
         await ws.request({ kind: 'goals.start', id: g.id });
         onChange(''); // also clears the persisted draft, or the /goal line comes back on reopen
-        if (!useStore.getState().panels.includes('goals')) togglePanel('goals');
+        if (!useStore.getState().panels.includes('goals')) useStore.getState().togglePanel('goals');
         toast('目标已创建并启动，进度看「目标」面板', true);
       } catch (e: any) { toast(e.message); }
       return;
     }
     const im = imgs.map(({ mediaType, data }) => ({ mediaType, data }));
     if (welcome) {
-      if (!cwd.trim()) return toast('请先选择工作目录');
+      if (!cwd.trim()) return toast('请先选择项目文件夹');
       setStarting(true);
       try {
         localStorage.setItem('cw.lastCwd', cwd);
@@ -236,8 +283,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
         localStorage.setItem('cw.lastProvider', wProvider);
         localStorage.setItem('cw.lastAgent', wAgent);
         if (wAgent !== 'claude' && !agent) throw new Error('选中的 agent 已不可用');
-        localStorage.setItem('cw.lastFeatures', JSON.stringify(wFeatures));
-        const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffort || undefined, ultracode: wUltra || undefined, providerId: provider ? provider.id : 'claude', features: foreign ? {} : wFeatures, agent: foreign ? wAgent : undefined }, target);
+        const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffortOk, ultracode: wUltracode && wUltra ? true : undefined, worktree: wWorktree || undefined, providerId: provider ? provider.id : 'claude', features: foreign ? {} : featDefaults, agent: foreign ? wAgent : undefined }, target);
         const uploaded = files.length ? await uploadAll(id) : [];
         await send(id, withRefs(t), im, false, [...atts, ...uploaded]);
         setRefs([]);
@@ -332,6 +378,18 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     if (folders.length) toast(`已附加文件夹 ${folders.join(', ')}（${rest.length} 个文件${truncated ? '，已截断到 500' : ''}）`, true);
   };
   const fileInput = useRef<HTMLInputElement>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
+  // 添加文件夹 (+ menu): the same shape a dropped folder has — every file with its path under the folder
+  const onFolderPicked = (list: FileList | null) => {
+    const fl = Array.from(list ?? []);
+    if (!fl.length) return;
+    if (remote) { toast(REMOTE_ATTACH); return; }
+    // node_modules / .git / dist… are dropped before the 500 cap, same rule as a dropped folder
+    const { files: picked, top, truncated, skipped } = pickFolderFiles(fl);
+    if (!picked.length) { toast(`文件夹 ${top} 里只有依赖 / 构建产物 / .git，没有可附加的文件`); return; }
+    setFiles((s) => [...s, ...picked].slice(0, 500));
+    toast(`已附加文件夹 ${top}（${picked.length} 个文件${truncated ? '，已截断到 500' : ''}${skipped ? `，跳过 node_modules / .git 等 ${skipped} 个` : ''}）`, true);
+  };
 
   const pickDir = async () => {
     const p = desktop ? await desktop.pickDir() : await ws.request<string | null>({ kind: 'fs.pickDir' });
@@ -347,9 +405,8 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     ? liveModel.supportedEffortLevels
     : liveModel?.supportsEffort === false ? [] : effortLevels(info?.agent ?? 'claude', info?.model ?? undefined);
   const setMode = (mode: PermissionMode) => active && ws.request({ kind: 'session.setPermissionMode', sessionId: active.sessionId, mode }).catch((e) => toast(e.message));
-  const setModel = (model: string) => active && ws.request({ kind: 'session.setModel', sessionId: active.sessionId, model }).catch((e) => toast(e.message));
   // the unified model menu inside a session: same profile → setModel; another profile → the invisible
-  // restart of session.setProvider, started directly on the picked model
+  // restart of session.setProvider, started directly on the picked model; another agent → the hand-over
   const [swapping, setSwapping] = useState(false);
   const liveAgent: AgentKind = info?.agent ?? 'claude';
   const liveProvider = info?.providerId && info.providerId !== 'claude' ? info.providerId : 'claude';
@@ -363,7 +420,13 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     if (act.kind === 'setModel') {
       try { await ws.request({ kind: 'session.setModel', sessionId: active.sessionId, model: act.model }); toast(switchedNote(it.label, active.conv.items.length > 0), true); return true; } catch (e: any) { toast(e.message); return false; }
     }
-    if (act.confirm && !(await dlg.confirm('切换供应商档案？', { message: '会话正在运行。换档案会重启会话进程（历史保留），当前这一轮会被中断。', okLabel: '切换' }))) return false;
+    if (act.kind === 'handover') {
+      // the same hand-over as ··· 「交给其它 Agent 继续」 (same confirm, same refresh), on the picked model
+      const summary = sessions.find((s) => s.sessionId === active.sessionId) ?? { sessionId: active.sessionId, title: '', cwd: active.cwd, lastModified: 0 };
+      setSwapping(true);
+      try { return await handOver(summary, act.agent, act.model, it.display); } finally { setSwapping(false); }
+    }
+    if (act.confirm && !(await dlg.confirm('切换供应商？', { message: '对话正在运行，当前这一轮会被中断。换供应商会重启对话进程，历史保留。', okLabel: '切换' }))) return false;
     setSwapping(true);
     try {
       await ws.request({ kind: 'session.setProvider', sessionId: active.sessionId, providerId: act.providerId, model: act.model });
@@ -371,24 +434,110 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
       return true;
     } catch (e: any) { toast(e.message); return false; } finally { setSwapping(false); }
   };
+  const pickWelcome = (it: ModelMenuItem) => {
+    if (it.agent && it.agent !== wKind) {
+      // another agent's own login: switch agent (the old agent picker), its default effort
+      setWAgent(it.agent);
+      setWProvider('claude');
+      setWModel(it.model);
+      setWEffort('');
+      return true;
+    }
+    setWProvider(it.providerId);
+    setWModel(it.model);
+    return true;
+  };
   const setEffort = (effort: EffortLevel) => active && ws.request({ kind: 'session.setEffort', sessionId: active.sessionId, effort }).catch((e) => toast(e.message));
   const setUltracode = (on: boolean) => active && ws.request({ kind: 'session.setUltracode', sessionId: active.sessionId, on }).catch((e) => toast(e.message));
 
-  const totals = useMemo(() => {
-    if (!active) return null;
-    let inp = 0, out = 0, cache = 0, turns = 0;
-    for (const it of active.conv.items) {
-      if (it.kind === 'assistant' && it.usage) { inp += it.usage.input; out += it.usage.output; cache += it.usage.cacheRead; }
-      if (it.kind === 'user' && !it.meta) turns++;
-    }
-    const { cost, unknown: costUnknown } = sumCosts(active.conv.items);
-    return { inp, out, cache, cost, costUnknown, turns };
-  }, [active?.version]);
-  const last = active?.conv.lastResult;
-  const runningTasks = active ? [...active.conv.tasks.values()].filter((t) => t.status === 'running').length : 0;
+  // the other agents as sources in the model menu (Claude Code included when another agent is current)
+  const otherAgents = useMemo<AgentSource[]>(() => {
+    const list: AgentSource[] = agents.filter((a) => a.enabled !== false).map((a) => ({ kind: a.kind, name: a.name, installed: a.installed !== false, models: a.models, defaultModel: a.model || undefined }));
+    if (!list.some((a) => a.kind === 'claude')) list.unshift({ kind: 'claude', name: 'Claude Code', installed: true });
+    return list;
+  }, [agents]);
+
   const recentDirs = useMemo(() => [...new Set(sessions.map((s) => s.cwd).filter(Boolean))].slice(0, 8), [sessions]);
-  const cu = active?.contextUsage ?? active?.conv.contextUsage;
   const folderChips = useMemo(() => { const m = new Map<string, number>(); for (const f of files) { const top = f.rel.includes('/') ? f.rel.split('/')[0] : null; if (top) m.set(top, (m.get(top) ?? 0) + 1); } return m; }, [files]);
+
+  // the capabilities: on the welcome page the ones the new conversation will get (removable); in a running one
+  // what it was started with (fixed — a launch parameter)
+  // a conversation not running yet has no info: its agent comes from the list
+  const sessionAgent = info?.agent ?? sessions.find((s) => s.sessionId === active?.sessionId)?.agent ?? 'claude';
+  const claudeHere = welcome ? !foreign : sessionAgent === 'claude';
+  const sessionFeatures = info?.features ?? NO_FEATURES;
+  const tags = welcome ? (claudeHere ? capabilityTags(featDefaults) : []) : capabilityTags(sessionFeatures);
+  const hasChips = imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0 || !!upload || tags.length > 0 || (welcome && !!wWorktree);
+  const insertGoal = () => { const v = text.trim() ? `/goal ${text.trim()}` : '/goal '; onChange(v); requestAnimationFrame(() => { const el = ta.current; if (el) { el.focus(); el.setSelectionRange(v.length, v.length); } }); };
+
+  // ---- the row's pieces
+  const plus = (
+    <PlusMenu claude={claudeHere} live={!welcome} remote={remote} disabled={disabled}
+      features={welcome ? featDefaults : sessionFeatures} onFeatures={setFeatures} selfId={welcome ? undefined : active?.sessionId}
+      onFiles={() => fileInput.current?.click()} onFolder={() => folderInput.current?.click()} onReference={addRef} onGoal={insertGoal} />
+  );
+  const send_ = busy ? (
+    <button className="send stop" data-id={BAR_ID.send} title="中断 (Esc)" onClick={() => active && interrupt(active.sessionId)} aria-label="中断"><Icon name="stop" size={13} /></button>
+  ) : (
+    <button className="send" data-id={BAR_ID.send} disabled={!canSend} onClick={doSend} title="发送 (Enter)" aria-label="发送">{starting || upload ? <span className="spinner" /> : <Icon name="send" size={16} />}</button>
+  );
+  const steer = busy && canSend && active ? (
+    <button className="steer" data-id={BAR_ID.steer} title={`${TERMS.steer}：不等这一轮结束，马上把这句话告诉 Claude`} aria-label={TERMS.steer} onClick={async () => { const t = text; setText(''); setDraft(active.sessionId, ''); await send(active.sessionId, t, undefined, true).catch((e) => toast(e.message)); }}>插话 <Icon name="send" size={12} /></button>
+  ) : null;
+  const mic = speechOk && !mobile ? (
+    <button data-id={BAR_ID.mic} className={clsx('icon-btn', listening && 'active')} title={listening ? '停止语音输入' : '语音输入（浏览器识别）'} onClick={toggleVoice} aria-label="语音输入"><Icon name="mic" size={15} /></button>
+  ) : null;
+
+  let model: React.ReactNode = null, permission: React.ReactNode = null, meter: React.ReactNode = null, status: React.ReactNode = null;
+  if (welcome) {
+    const t = modelChipText({ agent: wKind, agentName: agent?.name, providers, providerId: provider?.id, model: wModel, builtin: wBuiltin, agentDefault: agent?.model || undefined, efforts: wEfforts, effort: wEffortOk, defaultEffort: CATALOG[wKind]?.defaultEffort, ultracode: wUltracode && wUltra });
+    model = (
+      <ModelChip
+        agent={wKind}
+        current={{ providerId: provider ? provider.id : 'claude', model: wModel }}
+        label={t.main}
+        suffix={t.suffix}
+        title={`${t.main}${t.suffix ? ` · ${t.suffix}` : ''}\n用哪个模型、想多深：Agent、供应商、模型、${TERMS.effort}、${TERMS.ultracode}都在这里`}
+        builtin={wBuiltin}
+        builtinTitle={agent ? `${agent.name} 账号` : 'Claude 账号'}
+        agentDefault={agent?.model || undefined}
+        otherAgents={otherAgents}
+        intelligence={{ levels: wEfforts, value: wEffortOk, defaultLevel: CATALOG[wKind]?.defaultEffort, onChange: setWEffort }}
+        ultracode={wUltracode ? { on: wUltra, onChange: setWUltra } : undefined}
+        onPick={pickWelcome}
+      />
+    );
+    permission = <PermissionChip mode={wMode} compact={mobile} onPick={(m) => { modeTouched.current = true; setWMode(m); }} />;
+  } else if (liveOk) {
+    const ultraOk = info.supportsUltracode !== false && !!CATALOG[liveAgent]?.supportsUltracode;
+    const defaultEffort = CATALOG[liveAgent]?.defaultEffort;
+    const t = modelChipText({ agent: liveAgent, agentName: info.agentName, providers, providerId: remote ? 'claude' : liveProvider, providerName: info.providerName, model: info.model, builtin: liveProvider === 'claude' && info.models?.length ? info.models : undefined, agentDefault: liveAgentDefault, efforts: liveEfforts, effort: info.effort, defaultEffort, ultracode: ultraOk && !!info.ultracode });
+    const remoteLabel = `${info.providerName ? `${info.providerName} / ` : ''}${info.models?.find((m) => m.value === info.model)?.displayName ?? (shortModel(info.model) || '模型')}`;
+    model = (
+      <ModelChip
+        agent={liveAgent}
+        current={{ providerId: remote ? 'claude' : liveProvider, model: info.model }}
+        label={remote ? remoteLabel : t.main}
+        suffix={t.suffix}
+        title={remote ? '模型（其它机器上的对话：换供应商请在那台机器上操作）' : `${t.main}${t.suffix ? ` · ${t.suffix}` : ''}\n同一供应商直接换模型；换供应商会无感重启对话；选其它 Agent 的模型 = 交给它继续`}
+        builtin={(remote || liveProvider === 'claude') && info.models?.length ? info.models : undefined}
+        builtinTitle={remote ? info.providerName ?? info.agentName ?? '模型' : liveAgent === 'claude' ? 'Claude 账号' : `${info.agentName ?? liveAgent} 账号`}
+        agentDefault={liveAgentDefault}
+        lockProvider={remote ? 'claude' : undefined}
+        lockNote="其它机器上的对话：只能换模型，换供应商请在那台机器上操作"
+        otherAgents={remote ? undefined : otherAgents}
+        intelligence={{ levels: liveEfforts, value: info.effort, defaultLevel: defaultEffort, onChange: setEffort }}
+        ultracode={ultraOk ? { on: !!info.ultracode, onChange: setUltracode } : undefined}
+        busy={swapping}
+        disabled={swapping}
+        onPick={pickLive}
+      />
+    );
+    permission = <PermissionChip mode={info.permissionMode ?? 'default'} compact={mobile} onPick={setMode} />;
+  } else if (active) {
+    status = <span className="cb-status">{disabled ? '对话已删除' : active.state === 'starting' ? '启动中…' : '未运行 · 发送即恢复'}</span>;
+  }
+  if (!welcome && active) meter = <ContextMeter sessionId={active.sessionId} />;
 
   return (
     <div className="composer">
@@ -406,8 +555,20 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
         {active && !welcome && <StatusStrip sessionId={active.sessionId} onRecall={(t) => { setText((cur) => (cur ? `${cur}\n${t}` : t)); ta.current?.focus(); }} />}
         {active && !welcome && <RunCard sessionId={active.sessionId} />}
         <div className="composer-box" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
-          {(imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0 || upload) && (
+          {hasChips && (
             <div className="attach">
+              {tags.map((t) => (
+                <span key={`t${t.key}`} className={clsx('cap-tag', !welcome && 'fixed')} data-cap={t.key} title={welcome ? t.title : `${t.title}\n这个对话开始时就开着`}>
+                  <Icon name={t.icon} size={12} /> {t.label}
+                  {welcome && <button aria-label={`关闭${t.label}`} onClick={() => setFeatures(withoutTag(featDefaults, t.key))}><Icon name="close" size={10} /></button>}
+                </span>
+              ))}
+              {welcome && wWorktree && (
+                <span className="cap-tag" data-cap="worktree" title={`新对话在项目的独立副本（git worktree「${wWorktree}」）里运行`}>
+                  <Icon name="branch" size={12} /> 独立副本 · {wWorktree}
+                  <button aria-label="不用独立副本" onClick={() => setWWorktree('')}><Icon name="close" size={10} /></button>
+                </span>
+              )}
               {refs.map((r) => (
                 <SessionRefChip key={`r${r.id}`} a={{ kind: 'session', name: r.title, sessionId: r.id }} onRemove={() => setRefs((s) => s.filter((x) => x.id !== r.id))} />
               ))}
@@ -431,134 +592,26 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
             rows={1}
             value={text}
             disabled={disabled}
-            placeholder={disabled ? '会话已被删除，不能继续' : welcome ? '今天做点什么？（可拖入文件或文件夹）' : active?.state === 'history' ? '回复以继续这个会话…' : busy ? '运行中，输入会排队 · Esc 中断' : `回复 ${info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude'}… 输入 / 查看命令，拖入文件作为附件`}
+            placeholder={disabled ? '对话已被删除，不能继续' : welcome ? '描述一个任务，或者问个问题。输入 / 查看命令，拖入文件作为附件' : active?.state === 'history' ? '发送即可继续这个对话…' : busy ? '运行中，输入会排队 · Esc 中断' : `回复 ${info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude'}… 输入 / 查看命令，拖入文件作为附件`}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKey}
             onPaste={onPaste}
           />
-          <div className="composer-bar">
-            <input ref={fileInput} type="file" multiple hidden onChange={(e) => { const fl = Array.from(e.target.files ?? []); void addImages(fl.filter((f) => f.type.startsWith('image/'))); if (remote && fl.some((f) => !f.type.startsWith('image/'))) { toast(REMOTE_ATTACH); e.target.value = ''; return; } setFiles((s) => [...s, ...fl.filter((f) => !f.type.startsWith('image/')).map((f) => ({ file: f, rel: f.name }))]); e.target.value = ''; }} />
-            <button className="icon-btn" title="添加图片 / 文件" aria-label="添加附件" disabled={disabled} onClick={() => fileInput.current?.click()}><Icon name="plus" size={16} /></button>
-            {welcome ? <DirPicker cwd={cwd} recent={recentDirs} onPick={setCwd} onBrowse={() => void pickDir()} /> : null}
-            <span className="grow" />
-            {speechOk && (
-              <button className={clsx('icon-btn', listening && 'active')} title={listening ? '停止语音输入' : '语音输入（浏览器识别）'} onClick={toggleVoice} aria-label="语音输入"><Icon name="mic" size={15} /></button>
-            )}
-            {welcome ? (
-              <>
-                <label className={clsx('chip', foreign && 'info')} title="agent：Claude Code 或其它 CLI agent（Codex、Gemini、Qwen、Kimi、ACP）；供应商档案在模型菜单里选"><span>{agent ? agent.name : 'Claude Code'}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
-                  <select value={foreign ? `agent:${wAgent}` : 'claude'} onChange={(e) => {
-                    const v = e.target.value;
-                    if (v === '__add') { useStore.setState({ configTab: 'providers' }); if (!useStore.getState().panels.includes('config')) togglePanel('config'); return; }
-                    if (v === '__agents') { useStore.getState().openSettings({ section: 'agents' }); return; }
-                    const kind = (v.startsWith('agent:') ? v.slice(6) : 'claude') as AgentKind;
-                    setWAgent(kind);
-                    // keep the profile when the new agent can use it; the model list differs per agent, so reset the model
-                    const cur = providers.find((p) => p.id === wProvider);
-                    if (!cur || !compatibleTypes(kind).includes(cur.type)) setWProvider('claude');
-                    setWModel('');
-                  }}>
-                    <option value="claude">Claude Code</option>
-                    <optgroup label="其它 agent">
-                      {agents.filter((a) => a.kind !== 'claude' && a.enabled).map((a) => <option key={a.kind} value={`agent:${a.kind}`} disabled={!a.installed}>{a.name}{a.installed ? (a.label ? ` · ${a.label}` : '') : '（未安装）'}</option>)}
-                      <option value="__agents">管理 agent…</option>
-                    </optgroup>
-                    <option value="__add">+ 添加供应商档案…</option>
-                  </select>
-                </label>
-                {!foreign && <span style={{ position: 'relative' }}>
-                  <button className={clsx('chip', featCount > 0 && 'warn')} onClick={() => setFeatOpen(!featOpen)} title="会话附加功能（Chrome / Computer Use / 协调者 / 主动模式 / 频道）">功能{featCount ? ` ${featCount}` : ''} <span className="caret"><Icon name="chevronDown" size={10} /></span></button>
-                  {featOpen && (
-                    <div className="menu" style={{ bottom: '100%', right: 0, marginBottom: 6, minWidth: 260, padding: 8 }} onMouseLeave={() => setFeatOpen(false)}>
-                      {([
-                        ['chrome', 'Claude in Chrome（浏览器自动化）'],
-                        ['computerUse', 'Computer Use（截图 / 键鼠）'],
-                        ['coordinator', '协调者模式（只派活给子代理）'],
-                        ['proactive', '主动模式（空闲时继续干活）'],
-                        ['brief', 'Brief（SendUserMessage 工具）'],
-                      ] as [keyof SessionFeatures, string][]).map(([k, l]) => (
-                        <label key={k} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 4px', fontSize: 12.5, cursor: 'pointer' }}>
-                          <input type="checkbox" checked={!!wFeatures[k]} onChange={(e) => setWFeatures({ ...wFeatures, [k]: e.target.checked })} />
-                          <span style={{ flex: 1 }}>{l}</span>
-                        </label>
-                      ))}
-                      <div style={{ padding: '4px 4px', fontSize: 12 }}>
-                        频道
-                        <input className="field" style={{ width: '100%', marginTop: 4 }} placeholder="plugin:name@marketplace, server:name" value={(wFeatures.channels ?? []).join(', ')} onChange={(e) => setWFeatures({ ...wFeatures, channels: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) })} />
-                      </div>
-                    </div>
-                  )}
-                </span>}
-                <ModelChip
-                  agent={wKind}
-                  current={{ providerId: provider ? provider.id : 'claude', model: wModel }}
-                  label={chipLabel({ agent: wKind, providers, providerId: provider?.id, model: wModel, builtin: wBuiltin, agentDefault: agent?.model || undefined })}
-                  title="供应商档案 / 模型：一次选中两者"
-                  builtin={wBuiltin}
-                  builtinTitle={agent ? `${agent.name} 账号` : 'Claude 账号'}
-                  agentDefault={agent?.model || undefined}
-                  onPick={pickWelcome}
-                />
-                {wEfforts.length > 0 && <label className="chip" title={effortTitle(wEffort || CATALOG[wKind]?.defaultEffort, catalogNote)}><span>{wEffort ? effortLabel(wEffort) : CATALOG[wKind]?.defaultEffort ? effortLabel(CATALOG[wKind]!.defaultEffort) : effortLabel(undefined)}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
-                  <select value={wEffort} onChange={(e) => setWEffort(e.target.value as EffortLevel)}><option value="">默认{CATALOG[wKind]?.defaultEffort ? `（${effortLabel(CATALOG[wKind]!.defaultEffort)}）` : ''}</option>{wEfforts.map((l) => <option key={l} value={l}>{effortLabel(l)}</option>)}</select>
-                </label>}
-                {wUltracode && <button type="button" className={clsx('chip', wUltra && 'active')} title={ULTRACODE.title} onClick={() => setWUltra(!wUltra)}><Icon name="bolt" size={12} /> {ULTRACODE.label}</button>}
-                <label className={clsx('chip', PERMISSION_MODES[wMode]?.danger && 'warn')} title={PERMISSION_MODES[wMode]?.desc}><span>{MODE_LABEL[wMode]}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
-                  <select value={wMode} onChange={(e) => setWMode(e.target.value as PermissionMode)}>{PERMISSION_MODE_ORDER.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}</select>
-                </label>
-              </>
-            ) : liveOk ? (
-              <>
-                <ModelChip
-                  agent={liveAgent}
-                  current={{ providerId: remote ? 'claude' : liveProvider, model: info.model }}
-                  label={remote
-                    ? `${info.providerName ? `${info.providerName} / ` : ''}${info.models?.find((m) => m.value === info.model)?.displayName ?? (shortModel(info.model) || '模型')}`
-                    : chipLabel({ agent: liveAgent, providers, providerId: liveProvider, providerName: info.providerName, model: info.model, builtin: liveProvider === 'claude' && info.models?.length ? info.models : undefined, agentDefault: liveAgentDefault })}
-                  title={remote ? '模型（其它机器上的会话：换档案请在那台机器上操作）' : '供应商档案 / 模型：同一档案直接换模型，换档案会无感重启会话'}
-                  builtin={(remote || liveProvider === 'claude') && info.models?.length ? info.models : undefined}
-                  builtinTitle={remote ? info.providerName ?? info.agentName ?? '模型' : liveAgent === 'claude' ? 'Claude 账号' : `${info.agentName ?? liveAgent} 账号`}
-                  agentDefault={liveAgentDefault}
-                  lockProvider={remote ? 'claude' : undefined}
-                  lockNote="其它机器上的会话：只能换模型，换档案请在那台机器上操作"
-                  busy={swapping}
-                  disabled={swapping}
-                  onPick={pickLive}
-                />
-                {liveEfforts.length > 0 && <label className="chip" title={effortTitle(info.effort)}><span>{effortLabel(info.effort)}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
-                  <select value={info.effort ?? ''} onChange={(e) => setEffort(e.target.value as EffortLevel)}><option value="" disabled>{effortLabel(undefined)}</option>{liveEfforts.map((l) => <option key={l} value={l}>{effortLabel(l)}</option>)}</select>
-                </label>}
-                {info.supportsUltracode !== false && CATALOG[info.agent ?? 'claude']?.supportsUltracode && (
-                  <button type="button" className={clsx('chip', info.ultracode && 'active')} title={ULTRACODE.title} onClick={() => setUltracode(!info.ultracode)}><Icon name="bolt" size={12} /> {ULTRACODE.label}</button>
-                )}
-                <label className={clsx('chip', PERMISSION_MODES[info.permissionMode ?? 'default']?.danger && 'warn')} title={`权限：${PERMISSION_MODES[info.permissionMode ?? 'default']?.desc ?? ''}`}><span>{MODE_LABEL[info.permissionMode ?? 'default']}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
-                  <select value={info.permissionMode ?? 'default'} onChange={(e) => setMode(e.target.value as PermissionMode)}>{PERMISSION_MODE_ORDER.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}</select>
-                </label>
-              </>
-            ) : active ? (
-              <span style={{ fontSize: 12, color: 'var(--ink-4)' }}>{disabled ? '会话已删除' : active.state === 'starting' ? '启动中…' : '未运行 · 发送即恢复'}</span>
-            ) : null}
-            {busy && canSend && active && (
-              <button className="steer" title="不等这轮结束，立刻插话给 Claude" onClick={async () => { const t = text; setText(''); setDraft(active.sessionId, ''); await send(active.sessionId, t, undefined, true).catch((e) => toast(e.message)); }}>插话 <Icon name="send" size={12} /></button>
-            )}
-            {busy ? (
-              <button className="send stop" title="中断 (Esc)" onClick={() => active && interrupt(active.sessionId)} aria-label="中断"><Icon name="stop" size={13} /></button>
-            ) : (
-              <button className="send" disabled={!canSend} onClick={doSend} title="发送 (Enter)" aria-label="发送">{starting || upload ? <span className="spinner" /> : <Icon name="send" size={16} />}</button>
-            )}
-          </div>
+          <input ref={fileInput} type="file" multiple hidden onChange={(e) => { const fl = Array.from(e.target.files ?? []); void addImages(fl.filter((f) => f.type.startsWith('image/'))); if (remote && fl.some((f) => !f.type.startsWith('image/'))) { toast(REMOTE_ATTACH); e.target.value = ''; return; } setFiles((s) => [...s, ...fl.filter((f) => !f.type.startsWith('image/')).map((f) => ({ file: f, rel: f.name }))]); e.target.value = ''; }} />
+          <input ref={folderInput} type="file" multiple hidden {...{ webkitdirectory: '' }} onChange={(e) => { onFolderPicked(e.target.files); e.target.value = ''; }} />
+          <ComposerBar
+            plus={plus}
+            project={welcome ? <ProjectChip cwd={cwd} recent={recentDirs} onPick={setCwd} onBrowse={() => void pickDir()} worktree={wWorktree} onWorktree={setWWorktree} /> : null}
+            branch={welcome && !mobile ? <BranchChip cwd={cwd} /> : null}
+            status={status}
+            meter={meter}
+            model={model}
+            permission={permission}
+            mic={mic}
+            steer={steer}
+            send={send_}
+          />
         </div>
-        {!welcome && totals && (
-          <div className="statusbar">
-            <span>{totals.turns} 轮</span>
-            <span>↑{fmtTok(totals.inp + totals.cache)} ↓{fmtTok(totals.out)}</span>
-            {totals.cache > 0 && <span>缓存 {Math.round((totals.cache / Math.max(1, totals.inp + totals.cache)) * 100)}%</span>}
-            {(totals.cost > 0 || totals.costUnknown > 0) && <span title={totals.costUnknown ? `${totals.costUnknown} 轮没有可靠价格（非 Claude 模型 / 外部 agent）` : undefined}>{fmtCost(totals.cost, totals.costUnknown)}</span>}
-            {last && <span>上轮 {fmtMs(last.durationMs)}</span>}
-            {cu && <span title={`${fmtTok(cu.totalTokens)} / ${fmtTok(cu.maxTokens)} · ${cu.model ?? ''}`} style={{ color: cu.percentage >= 80 ? 'var(--yellow)' : undefined }}>上下文 {cu.percentage}%</span>}
-            {runningTasks > 0 && <span style={{ color: 'var(--green)' }}>{runningTasks} 个后台任务</span>}
-          </div>
-        )}
       </div>
     </div>
   );

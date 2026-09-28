@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dirMenuLayout, menuKey, menuMaxWidth, sameLayout } from './dir-menu';
+import { dirMenuLayout, fieldStep, menuKey, menuMaxWidth, sameLayout } from './dir-menu';
 
 describe('directory menu keyboard', () => {
   it('↑ ↓ wrap around, Home / End jump to the ends', () => {
@@ -14,6 +14,18 @@ describe('directory menu keyboard', () => {
   it('Esc and Tab close the menu and hand focus back to the chip', () => {
     expect(menuKey('Escape', 1, 3)).toEqual({ close: true, refocus: true });
     expect(menuKey('Tab', 1, 3)).toEqual({ close: true, refocus: true });
+  });
+
+  it('from a search box (not a row): ↓ / Tab to the first row after it, ↑ to the one before it (re-review 3 Minor 4)', () => {
+    // 引用另一个对话: [返回] <search> [r1] [r2] → ↓ lands on r1 (index 1), not on 返回
+    expect(fieldStep('down', 1, 3)).toBe(1);
+    expect(fieldStep('up', 1, 3)).toBe(0);
+    // 筛选分支…: <filter> [b1] [b2] → ↓ b1, ↑ wraps to the last
+    expect(fieldStep('down', 0, 2)).toBe(0);
+    expect(fieldStep('up', 0, 2)).toBe(1);
+    // everything above the field: ↓ wraps to the first
+    expect(fieldStep('down', 2, 2)).toBe(0);
+    expect(fieldStep('down', 0, 0)).toBeNull();
   });
 
   it('other keys are left alone', () => {

@@ -22,17 +22,6 @@ function countdown(at: number) {
   return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
 }
 
-function ContextRing({ pct }: { pct: number }) {
-  const r = 6, c = 2 * Math.PI * r;
-  const p = Math.min(100, Math.max(0, pct));
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" className="ctx-ring">
-      <circle cx="8" cy="8" r={r} fill="none" stroke="var(--bg-3)" strokeWidth="2.5" />
-      <circle cx="8" cy="8" r={r} fill="none" stroke="currentColor" strokeWidth="2.5" strokeDasharray={`${(p / 100) * c} ${c}`} strokeLinecap="round" transform="rotate(-90 8 8)" />
-    </svg>
-  );
-}
-
 /** Chips between the transcript and the composer: stall / compaction / error taxonomy / rate limit / context / queue. */
 export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onRecall: (text: string) => void }) {
   const o = useStore((s) => s.open[sessionId]);
@@ -49,7 +38,8 @@ export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onReca
   const res = o.conv.lastResult;
   const showErr = !running && res?.isError && res.errorKind && o.conv.items[o.conv.items.length - 1]?.kind === 'result';
   const cu = o.contextUsage ?? o.conv.contextUsage;
-  const cuWarn = cu && cu.percentage >= 80;
+  // the percentage itself is the composer ring's job; here only the action, and only when it is nearly full
+  const cuWarn = cu && cu.percentage >= 95;
   // the ordinary running states (tool / quiet / compacting) are the run card's job now; what is left
   // here is only what the run card cannot say: it is stuck, it failed, it is throttled, it is queued
   const alarm = stall?.kind === 'no_model' ? stall : null;
@@ -81,10 +71,11 @@ export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onReca
         </span>
       )}
       {armed && <span className="chip"><span className="spinner" /> {countdown(armed)} 后自动继续 <button className="link" onClick={() => { disarmAutoContinue(sessionId); useStore.setState({}); }}>取消</button></span>}
+      {/* ≥ 95 % only, and only the action: the ring in the composer already says how full it is */}
       {cuWarn && cu && (
-        <span className={clsx('chip', cu.percentage >= 95 ? 'err' : 'warn')} title={`${fmtTok(cu.totalTokens)} / ${fmtTok(cu.maxTokens)}`}>
-          <ContextRing pct={cu.percentage} /> 上下文 {cu.percentage}%{cu.overLimit ? ' · 已超限' : ''}
-          <button className="link" onClick={() => st().send(sessionId, '/compact')}>/compact</button>
+        <span className="chip err ctx-full" title={`上下文 ${cu.percentage}% · ${fmtTok(cu.totalTokens)} / ${fmtTok(cu.maxTokens)}`}>
+          {cu.overLimit ? '上下文已超限' : '上下文快满了'}
+          <button className="link" onClick={() => st().send(sessionId, '/compact')}>/compact 压缩</button>
         </span>
       )}
       {o.queue.length > 0 && (
