@@ -1506,22 +1506,39 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:
 .app.no-sidebar:not(.mobile) { grid-template-columns: 1fr min(var(--rp, 0px), max(300px, calc(100vw - 360px))); }
 /* the default right panel (spec §5.6, mock-session.png): a white sheet, four text tabs, temporary tabs with a × */
 .dock.simple { background: var(--surface-0); }
-/* the tabs scroll inside their own list; the row itself does not (the 「更多」 menu hangs below it) */
-.dock-tablist { position: relative; display: flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; }
-.dock-tablist .tab { flex: none; }
-.dock.min .dock-tablist { flex-direction: column; align-items: stretch; gap: 4px; overflow: visible; }
+/* the tab row: the fixed tabs never scroll; only the temporary tabs do, in their own strip, whose edges fade and get
+   an arrow while there is more on that side. The menus hang in <body> (Popover), nothing here clips them. */
+.dock-tabgroups { display: flex; align-items: center; min-width: 0; flex: 0 1 auto; }
+.dock-fixed { display: flex; align-items: center; gap: 2px; flex: none; }
+.dock-sep { flex: none; width: 1px; height: 14px; margin: 0 6px; background: var(--edge-default); }
+.dock-temps { position: relative; display: flex; min-width: 0; flex: 0 1 auto; }
+.dock-tablist { display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.dock-tablist::-webkit-scrollbar { display: none; }
+.dock-tablist .tab, .dock-fixed .tab { flex: none; }
+.dock-temps.fade-l .dock-tablist { -webkit-mask-image: linear-gradient(to right, transparent 0, black 28px); mask-image: linear-gradient(to right, transparent 0, black 28px); }
+.dock-temps.fade-r .dock-tablist { -webkit-mask-image: linear-gradient(to left, transparent 0, black 28px); mask-image: linear-gradient(to left, transparent 0, black 28px); }
+.dock-temps.fade-l.fade-r .dock-tablist { -webkit-mask-image: linear-gradient(to right, transparent 0, black 28px, black calc(100% - 28px), transparent 100%); mask-image: linear-gradient(to right, transparent 0, black 28px, black calc(100% - 28px), transparent 100%); }
+.dock-scroll { position: absolute; top: 50%; z-index: 1; transform: translateY(-50%); width: 18px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-sm); color: var(--ink-3); }
+.dock-scroll:hover { color: var(--ink-1); background: var(--layer-hover); }
+.dock-scroll.l { left: 0; }
+.dock-scroll.r { right: 0; }
+.dock-ctl { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+.dock.min .dock-tabgroups, .dock.min .dock-fixed, .dock.min .dock-temps, .dock.min .dock-tablist, .dock.min .dock-ctl { flex-direction: column; align-items: stretch; gap: 4px; overflow: visible; }
+.dock.min .dock-tablist { -webkit-mask-image: none; mask-image: none; }
+.dock.min .dock-sep { width: auto; height: 1px; margin: 2px 6px; }
+.dock.min .dock-scroll, .dock.min .dock-tabs .tab .n { display: none; }
 .dock.simple:not(.min) .dock-tabs { padding: 0 8px 0 12px; overflow: visible; }
 .app:has(.workbench.gb) .dock.simple:not(.min) .dock-tabs { min-height: var(--h-head); }
+/* the desktop app (Windows / Linux) when the fixed tabs and the buttons do not fit beside the caption buttons: the
+   row moves below them (Dock's `stacked`) instead of pushing tabs out of sight */
+html.desktop:not(.mac) .app.dock-open .dock:not(.min) .dock-tabs.stacked { padding-right: 8px; padding-top: 40px; }
 .dock.simple:not(.min) .dock-tabs .tab { height: 30px; padding: 0 10px; font-size: var(--fs-base); border: 0; box-shadow: none; }
 .dock.simple:not(.min) .dock-tabs .tab .ic { display: none; }
 .dock.simple:not(.min) .dock-tabs .tab.active { background: var(--layer-selected); color: var(--ink-1); font-weight: 500; }
 .dock.simple:not(.min) .dock-tabs .tab:not(.fixed) { padding-right: 6px; }
-.dock.simple:not(.min) .dock-tabs .tab:not(.fixed)::before { content: ''; width: 1px; height: 14px; margin: 0 6px 0 -6px; background: var(--edge-default); }
-.dock.simple:not(.min) .dock-tabs .tab:not(.fixed) ~ .tab:not(.fixed)::before { display: none; }
 .dock-tabs .tab .n { font-size: var(--fs-meta); color: var(--ink-4); font-weight: 400; font-variant-numeric: tabular-nums; }
-.dock-more { position: relative; display: inline-flex; }
-html.desktop .dock-tabs .menu { -webkit-app-region: no-drag; } /* the 「更多」 menu hangs from the title-bar row */
-.dock-more-menu { top: 34px; right: 0; width: 240px; }
+/* right-panel popovers (Popover.tsx): fixed coordinates in <body> */
+.menu.rp-pop { position: fixed; z-index: 1000; overflow: auto; }
 .dock-more-menu .grow { flex: 1; min-width: 0; }
 .dock-panel[data-panel="files"], .dock-panel[data-panel="explorer"] { overflow: hidden; }
 
@@ -1532,20 +1549,16 @@ html.desktop .dock-tabs .menu { -webkit-app-region: no-drag; } /* the 「更多�
 .rv-bar { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) 14px 10px; flex: none; }
 .rv-bar .grow { flex: 1; }
 .rv-bar .btn { white-space: nowrap; flex: none; }
-.rv-anchor { position: relative; display: inline-flex; min-width: 0; }
-.rv-bar > .rv-anchor:first-child { flex-shrink: 1; }
-.rv-bar > .rv-anchor:first-child .rv-scope { min-width: 0; }
+.rv-bar > .rv-scope { flex-shrink: 1; min-width: 0; }
 .rv-scope { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border-radius: var(--r-md); border: 1px solid var(--edge-default); font-size: var(--fs-base); color: var(--ink-1); max-width: 220px; transition: background var(--dur-2) var(--ease-out); }
 .rv-scope:hover, .rv-scope.on { background: var(--layer-hover); }
 .rv-scope .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rv-scope svg { color: var(--ink-4); flex: none; }
-.rv-scope-menu { top: 32px; left: 0; width: 300px; max-height: min(460px, 70vh); overflow: auto; }
 .rv-scope-menu .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rv-scope-menu .n { font-size: var(--fs-meta); color: var(--ink-4); font-variant-numeric: tabular-nums; flex: none; }
 .rv-scope-menu .rv-commit-item .h { font-size: 11.5px; color: var(--ink-3); flex: none; }
 .rv-scope-menu .ck { width: 13px; flex: none; display: inline-flex; color: var(--ink-2); }
 .rv-menu-note { padding: 4px 10px 6px; font-size: var(--fs-meta); color: var(--ink-4); }
-.rv-more-menu { top: 32px; right: 0; width: 280px; }
 .rv-more-menu .grow { flex: 1; min-width: 0; }
 .rv-more-menu button:disabled { opacity: 0.45; }
 .rv-sub-title { font-size: var(--fs-sm); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1587,9 +1600,16 @@ html.desktop .dock-tabs .menu { -webkit-app-region: no-drag; } /* the 「更多�
 .rv-note.err { color: var(--err); }
 .rv-list > .rv-note { margin: 0 14px; }
 .rv-pre { margin: 0; padding: 8px 12px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-all; color: var(--ink-2); max-height: 480px; overflow: auto; border-top: 1px solid var(--edge-subtle); }
-.rv-foot { flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) 14px; border-top: 1px solid var(--edge-subtle); }
-.rv-foot .field { flex: 1; min-width: 0; height: 32px; }
+.rv-foot { flex: none; display: flex; align-items: flex-end; gap: var(--sp-2); padding: var(--sp-3) 14px; border-top: 1px solid var(--edge-subtle); }
+/* the commit message grows with its lines (Enter = new line, Ctrl+Enter = commit), up to a few */
+.rv-foot textarea.field { flex: 1; min-width: 0; min-height: 32px; max-height: 128px; padding: 6px 10px; line-height: 1.45; resize: none; field-sizing: content; }
 .rv-foot .btn { min-height: 32px; padding: 0 14px; }
+.rv-foot-note { flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: 8px 14px; border-top: 1px solid var(--edge-subtle); font-size: var(--fs-sm); color: var(--warn); }
+.rv-foot-note .grow { flex: 1; min-width: 0; }
+.rv-foot-note + .rv-foot { border-top: 0; padding-top: 0; }
+/* a destructive confirmation lists what it touches */
+.dialog-items { list-style: none; margin: 0 0 12px; padding: 6px 10px; max-height: 180px; overflow: auto; border-radius: var(--r-md); background: var(--surface-1); font-family: var(--mono); font-size: 12px; line-height: 1.6; color: var(--ink-2); }
+.dialog-items li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .review.in-place .rv-bar { padding-top: var(--sp-2); }
 
 /* 文件 */
@@ -1606,11 +1626,14 @@ html.desktop .dock-tabs .menu { -webkit-app-region: no-drag; } /* the 「更多�
 .fv-group-head .grow { flex: 1; text-align: left; }
 .fv-group-head .n { font-size: var(--fs-meta); color: var(--ink-4); }
 .fv-group .list { padding-top: 0; }
+.fv-empty { padding: 2px 14px 10px 32px; font-size: var(--fs-sm); color: var(--ink-4); }
 
 /* 终端: xterm paints its own default black around the character grid; the panel's page colour instead */
 .dock-panel .term, .dock-panel .term .xterm, .dock-panel .term .xterm-viewport { background-color: var(--bg) !important; }
 
 /* 任务 */
 .tasks-plan .todos { margin: 2px 0 4px; }
-.tasks-link { display: inline-flex; align-items: center; gap: 6px; margin: 8px 14px 12px; padding: 4px 8px; border-radius: var(--r-md); font-size: var(--fs-sm); color: var(--ink-3); }
+.tasks-sched { border-top: 1px solid var(--edge-subtle); margin-top: 4px; }
+.tasks-link { display: inline-flex; align-items: center; gap: 6px; margin: 8px 10px; padding: 4px 8px; border-radius: var(--r-md); font-size: var(--fs-sm); color: var(--ink-3); }
 .tasks-link:hover { color: var(--ink-1); background: var(--layer-hover); }
+.tasks-sched.open .tasks-link { color: var(--ink-1); }

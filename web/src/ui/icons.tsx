@@ -61,6 +61,7 @@ const PATHS = {
   more: [['M6 12h.01M12 12h.01M18 12h.01', { 'stroke-width': 2.4 }]],
   refresh: ['M20 6.5v5h-5', 'M19.4 11.5a7.5 7.5 0 1 0-1.6 5.4'],
   chevronRight: ['M9.5 5.5l6.5 6.5-6.5 6.5'],
+  chevronLeft: ['M14.5 5.5L8 12l6.5 6.5'],
   chevronDown: ['M5.5 9.5l6.5 6.5 6.5-6.5'],
   plus: ['M12 5v14M5 12h14'],
   minus: ['M5 12h14'],

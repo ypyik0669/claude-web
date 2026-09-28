@@ -8,10 +8,13 @@ import { DiffView } from '@/features/chat/DiffView';
 import { sessionPeer } from '@/features/peers';
 import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
+import { TERMS } from '@/ui/terms';
 import { GitView } from './GitView';
+import { Popover } from './Popover';
 import { coalesce, gitEventConcerns } from './git-refresh';
-import { SCOPE_LABEL, bulkTargets, commitPlan, diffRequest, reviewRows, scopeCounts, splitPath, splitUnifiedByFile, unifiedStat, type DiffResult, type ReviewRow, type ReviewScope } from './review-model';
+import { SCOPE_LABEL, bulkTargets, commitPlan, diffRequest, discardConfirm, reviewRows, scopeCounts, splitPath, splitUnifiedByFile, stageAllConfirm, unifiedStat, type DiffResult, type ReviewRow, type ReviewScope } from './review-model';
 import { useRightPanel } from './right-panel';
+import { modKey } from './shortcuts';
 
 /** Diffs fetched up front (for the +N −M on every row); the rest when a file is opened. */
 const EAGER = 8;
@@ -23,7 +26,12 @@ const MAX_LINES = 1500;
 const MAX_ROWS = 300;
 /** Commit message per repo, kept across tab / conversation switches (not persisted). */
 const drafts = new Map<string, string>();
+/** The last open request (`useRightPanel().review.n`) the right panel's review applied: each is applied once, also
+ *  across a remount (a request is not replayed when the tab is closed and opened again in workbench mode). */
 let appliedIntent = 0;
+/** Git 视图 in words the default UI uses (TERMS.worktree); the git words stay in the tooltip. */
+const GIT_VIEW_LABEL = 'Git：分支、拉取推送、历史…';
+const GIT_VIEW_TITLE = `完整的 Git 视图：分支、拉取 / 推送、提交历史、修改上一次提交、暂存区快照（stash）、${TERMS.worktree}`;
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const lines = (t: string) => (t ? t.split('\n').length - (t.endsWith('\n') ? 1 : 0) : 0);
@@ -34,20 +42,6 @@ function gitError(e: unknown): GitError {
   const msg = String((e as Error)?.message ?? e);
   const m = /^([\s\S]*?)\n\n\[(\w+)\] ([\s\S]*)$/.exec(msg);
   return m ? { kind: m[2] as GitError['kind'], message: m[1], hint: m[3] } : { kind: 'unknown', message: msg, hint: '' };
-}
-
-/** Close a popover on an outside click / Esc. */
-function useDismiss(open: boolean, close: () => void) {
-  const ref = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const down = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) close(); };
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('mousedown', down);
-    document.addEventListener('keydown', key);
-    return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key); };
-  }, [open]);
-  return ref;
 }
 
 function statOf(row: ReviewRow, d: DiffResult | undefined): { added: number; removed: number } | null {
@@ -96,10 +90,13 @@ function FileBody({ row, diff }: { row: ReviewRow; diff: DiffResult | undefined 
  * and a commit box at the bottom. Everything else git — branches, pull / push, stash, worktrees, history, amend —
  * is the full Git view (GitView, unchanged) behind ···. It merges the old 文件改动 panel (the conversation scope)
  * and GitView's status / diff / stage / commit.
- * Git is asked only while it is on screen (`visible`); events while hidden mark it stale for the next show.
- * `inPlace`: the phone's in-place 改动 view — it ignores the right panel's requests and does not publish its count.
+ * Git is asked only while it is on screen (`visible`): the repo is watched (`git.watch`, which also schedules a
+ * background `git fetch` every 5 minutes on the server) the first time it is shown for that repo, never while the
+ * panel is only mounted; events while hidden mark it stale for the next show.
+ * `inDock`: the right panel's own copy — it takes the open requests (`right-panel.ts`) and publishes the tab's count.
+ * `inPlace`: the phone's in-place 改动 view (starts on this conversation's changes).
  */
-export function ReviewView({ visible, inPlace }: { visible: boolean; inPlace?: boolean }) {
+export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inPlace?: boolean; inDock?: boolean }) {
   const active = useScopedSession();
   const sessions = useStore((s) => s.sessions);
   const toast = useStore((s) => s.toast);
@@ -137,8 +134,8 @@ export function ReviewView({ visible, inPlace }: { visible: boolean; inPlace?: b
   rootRef.current = root;
   // default: 未提交的改动 in a repo, the conversation's files elsewhere (a git scope asked for outside a repo too)
   const sc: ReviewScope = !scope ? (root ? 'uncommitted' : 'session') : loaded && !root && scope !== 'session' ? 'session' : scope;
-  const scopeRef = useDismiss(scopeMenu, () => setScopeMenu(false));
-  const moreRef = useDismiss(moreMenu, () => setMoreMenu(false));
+  const scopeBtn = useRef<HTMLButtonElement>(null);
+  const moreBtn = useRef<HTMLButtonElement>(null);
 
   /** reload now when on screen, else on the next show */
   const bump = () => { if (visibleRef.current) setGen((g) => g + 1); else stale.current = true; };
@@ -155,7 +152,7 @@ export function ReviewView({ visible, inPlace }: { visible: boolean; inPlace?: b
   // a request from the 改动 button / header ··· / palette (each one once)
   const intent = useRightPanel((s) => s.review);
   useEffect(() => {
-    if (inPlace || !intent || intent.n <= appliedIntent) return;
+    if (!inDock || !intent || intent.n <= appliedIntent) return;
     appliedIntent = intent.n;
     if (intent.git) { setSub('git'); setGitMounted(true); return; }
     setSub('diff');
@@ -176,10 +173,16 @@ export function ReviewView({ visible, inPlace }: { visible: boolean; inPlace?: b
   }, [gen]);
 
   // git / file events for this repo, and the conversation finishing a turn / an edit: refresh (coalesced — every
-  // refresh is a few git processes on the server)
+  // refresh is a few git processes on the server). The repo is watched once it is on screen, not before: a watch
+  // is a file watcher plus a background `git fetch` every 5 minutes, for good.
+  const watched = useRef<string | null>(null);
+  useEffect(() => {
+    if (!visible || !cwd || peer || watched.current === cwd) return;
+    watched.current = cwd;
+    void ws.request({ kind: 'git.watch', cwd }).catch(() => {});
+  }, [visible, cwd, !!peer]);
   useEffect(() => {
     if (!cwd || peer) return;
-    void ws.request({ kind: 'git.watch', cwd }).catch(() => {});
     const soon = coalesce(bump, 600, 3000);
     const off = ws.on((e) => { if (gitEventConcerns(e, { cwd, root: rootRef.current })) soon.trigger(); });
     return () => { soon.cancel(); off(); };
@@ -246,12 +249,12 @@ export function ReviewView({ visible, inPlace }: { visible: boolean; inPlace?: b
     });
   }, [rows, open, visible, loaded]);
 
-  // the tab's number
+  // the tab's number (the right panel's copy only)
   useEffect(() => {
-    if (inPlace) return;
-    useRightPanel.setState({ reviewCount: rows.length });
-  }, [rows.length, inPlace]);
-  useEffect(() => () => { if (!inPlace) useRightPanel.setState({ reviewCount: 0 }); }, []);
+    if (!inDock) return;
+    useRightPanel.setState({ reviewCount: loaded ? rows.length : 0 });
+  }, [rows.length, inDock, loaded]);
+  useEffect(() => () => { if (inDock) useRightPanel.setState({ reviewCount: 0 }); }, []);
 
   // scroll to the file a request named (a file card in the conversation, phase 5)
   useEffect(() => {
@@ -279,23 +282,29 @@ export function ReviewView({ visible, inPlace }: { visible: boolean; inPlace?: b
   };
   const stage = (files: string[]) => act('stage', () => ws.request({ kind: 'git.stage', cwd: root!, files }));
   const unstage = (files: string[]) => act('unstage', () => ws.request({ kind: 'git.unstage', cwd: root!, files }));
+  // 还原 is `checkout HEAD` + deleting new files: the dialog names the files and what is lost, and 取消 has the focus
   const discard = async (files: string[]) => {
     if (!files.length) return;
-    const one = files.length === 1;
-    if (!(await dlg.confirm(one ? `还原 ${files[0]}？` : `还原 ${files.length} 个文件？`, { message: '改动会被丢弃，未跟踪的新文件会被删除。这一步不能撤销。', danger: true, okLabel: '还原' }))) return;
+    const c = discardConfirm(rows.filter((r) => files.includes(r.rel)), sc);
+    if (!(await dlg.confirm(c.title, { message: c.message, items: c.items, danger: true, okLabel: c.okLabel, focusCancel: true }))) return;
     await act('discard', () => ws.request({ kind: 'git.discard', cwd: root!, files }));
   };
   const commit = async () => {
-    if (!root || plan === 'none') return;
+    if (!root || (plan.kind !== 'commit' && plan.kind !== 'stageAll')) return;
     if (!msg.trim()) { toast('先写一句提交说明'); return; }
-    if (plan === 'stageAll' && !(await dlg.confirm('还没有暂存的改动', { message: `把全部 ${status!.files.length} 个改动暂存并提交？`, okLabel: '全部暂存并提交' }))) return;
+    if (plan.kind === 'stageAll') {
+      const q = stageAllConfirm(plan);
+      if (!(await dlg.confirm(q.title, { message: q.message, items: q.items, okLabel: q.okLabel }))) return;
+    }
     await act('commit', async () => {
-      if (plan === 'stageAll') await ws.request({ kind: 'git.stage', cwd: root, files: 'all' });
+      // the same files 全部暂存 takes (never a conflicted one), not `git add -A`
+      if (plan.kind === 'stageAll') await ws.request({ kind: 'git.stage', cwd: root, files: plan.stage });
       await ws.request({ kind: 'git.commit', cwd: root, message: msg });
       setMsg('');
       toast('已提交', true);
     });
   };
+  const openGit = () => { setSub('git'); setGitMounted(true); };
   const openFile = (r: ReviewRow) => openTile({ id: `d${Date.now().toString(36)}`, kind: 'doc', path: r.abs }, 'tab');
   const pickScope = (s: ReviewScope) => { setScope(s); setScopeMenu(false); setErr(null); };
   const toggleScopeMenu = () => setScopeMenu(!scopeMenu);
@@ -304,7 +313,8 @@ export function ReviewView({ visible, inPlace }: { visible: boolean; inPlace?: b
   if (!active) return <div className="empty">还没有打开对话。打开一个对话后，它的改动会出现在这里。</div>;
   if (peer) return <div className="empty">这个对话在机器「{peer.name}」上，它的改动要在那台机器上审阅。</div>;
 
-  const scopeLabel = sc === 'commit' && rev ? `提交 ${rev.short}` : SCOPE_LABEL[sc];
+  // (before the status arrives the default scope is only a guess: say so instead of showing one and jumping)
+  const scopeLabel = !scope && !loaded ? '读取中…' : sc === 'commit' && rev ? `提交 ${rev.short}` : SCOPE_LABEL[sc];
   const empty =
     !loaded ? '读取中…'
     : sc === 'uncommitted' ? '没有未提交的改动，工作区是干净的。'
@@ -318,61 +328,51 @@ export function ReviewView({ visible, inPlace }: { visible: boolean; inPlace?: b
       <div className="rv-git" hidden={sub !== 'git'}>
         <div className="rv-bar">
           <button className="btn sm ghost" onClick={() => setSub('diff')} title="回到审阅"><Icon name="restore" size={13} /> 审阅</button>
-          <span className="rv-sub-title">Git：分支、拉取推送、stash、worktree、历史</span>
+          <span className="rv-sub-title" title={GIT_VIEW_TITLE}>{GIT_VIEW_LABEL.replace('…', '')}</span>
         </div>
         {gitMounted && root && <div className="rv-git-body"><GitView cwd={cwd} /></div>}
         {gitMounted && !root && <div className="empty">{loaded ? `${cwd} 不是 git 仓库。` : '读取中…'}</div>}
       </div>
       <div className="rv-main" hidden={sub !== 'diff'}>
         <div className="rv-bar">
-          <span className="rv-anchor" ref={scopeRef}>
-            <button className={clsx('rv-scope', scopeMenu && 'on')} onClick={toggleScopeMenu} aria-haspopup="menu" aria-expanded={scopeMenu} title="要看哪些改动">
-              <span className="t">{scopeLabel}</span><Icon name="chevronDown" size={12} />
-            </button>
-            {scopeMenu && (
-              <div className="menu rv-scope-menu" role="menu">
-                {root && <button role="menuitemradio" aria-checked={sc === 'uncommitted'} onClick={() => pickScope('uncommitted')}><span className="grow">{SCOPE_LABEL.uncommitted}</span><span className="n">{counts.uncommitted}</span><span className="ck">{sc === 'uncommitted' && <Icon name="check" size={13} />}</span></button>}
-                {root && <button role="menuitemradio" aria-checked={sc === 'staged'} onClick={() => pickScope('staged')}><span className="grow">{SCOPE_LABEL.staged}</span><span className="n">{counts.staged}</span><span className="ck">{sc === 'staged' && <Icon name="check" size={13} />}</span></button>}
-                <button role="menuitemradio" aria-checked={sc === 'session'} onClick={() => pickScope('session')}><span className="grow">{SCOPE_LABEL.session}</span><span className="n">{counts.session}</span><span className="ck">{sc === 'session' && <Icon name="check" size={13} />}</span></button>
-                {root && <div className="menu-label">某次提交</div>}
-                {root && log === null && <div className="rv-menu-note">读取中…</div>}
-                {root && log?.map((c) => (
-                  <button key={c.hash} role="menuitemradio" aria-checked={sc === 'commit' && rev?.hash === c.hash} className="rv-commit-item" title={`${c.hash}\n${c.author} · ${new Date(c.date).toLocaleString()}`} onClick={() => { setRev(c); pickScope('commit'); }}>
-                    <span className="mono h">{c.short}</span><span className="grow s">{c.subject}</span><span className="n">{ago(c.date)}</span><span className="ck">{sc === 'commit' && rev?.hash === c.hash && <Icon name="check" size={13} />}</span>
-                  </button>
-                ))}
-                {root && log?.length === 0 && <div className="rv-menu-note">还没有提交</div>}
-              </div>
-            )}
-          </span>
+          <button ref={scopeBtn} className={clsx('rv-scope', scopeMenu && 'on')} onClick={toggleScopeMenu} aria-haspopup="menu" aria-expanded={scopeMenu} title="要看哪些改动">
+            <span className="t">{scopeLabel}</span><Icon name="chevronDown" size={12} />
+          </button>
+          <Popover anchor={scopeBtn} open={scopeMenu} onClose={() => setScopeMenu(false)} width={300} align="left" className="rv-scope-menu" label="审阅范围">
+            {root && <button role="menuitemradio" aria-checked={sc === 'uncommitted'} onClick={() => pickScope('uncommitted')}><span className="grow">{SCOPE_LABEL.uncommitted}</span><span className="n">{counts.uncommitted}</span><span className="ck">{sc === 'uncommitted' && <Icon name="check" size={13} />}</span></button>}
+            {root && <button role="menuitemradio" aria-checked={sc === 'staged'} onClick={() => pickScope('staged')}><span className="grow">{SCOPE_LABEL.staged}</span><span className="n">{counts.staged}</span><span className="ck">{sc === 'staged' && <Icon name="check" size={13} />}</span></button>}
+            <button role="menuitemradio" aria-checked={sc === 'session'} onClick={() => pickScope('session')}><span className="grow">{SCOPE_LABEL.session}</span><span className="n">{counts.session}</span><span className="ck">{sc === 'session' && <Icon name="check" size={13} />}</span></button>
+            {root && <div className="menu-label">某次提交</div>}
+            {root && log === null && <div className="rv-menu-note">读取中…</div>}
+            {root && log?.map((c) => (
+              <button key={c.hash} role="menuitemradio" aria-checked={sc === 'commit' && rev?.hash === c.hash} className="rv-commit-item" title={`${c.hash}\n${c.author} · ${new Date(c.date).toLocaleString()}`} onClick={() => { setRev(c); pickScope('commit'); }}>
+                <span className="mono h">{c.short}</span><span className="grow s">{c.subject}</span><span className="n">{ago(c.date)}</span><span className="ck">{sc === 'commit' && rev?.hash === c.hash && <Icon name="check" size={13} />}</span>
+              </button>
+            ))}
+            {root && log?.length === 0 && <div className="rv-menu-note">还没有提交</div>}
+          </Popover>
           <span className="grow" />
-          {root && (sc === 'uncommitted' || sc === 'session') && (
-            <>
-              <button className="btn sm ghost" disabled={!!busy || !targets.discard.length} onClick={() => discard(targets.discard)} title="把这些文件恢复成上一次提交的样子（新文件会被删除）">全部还原</button>
-              <button className="btn sm" disabled={!!busy || !targets.stage.length} onClick={() => stage(targets.stage)} title="把这些改动加入下一次提交">全部暂存</button>
-            </>
-          )}
+          {/* 全部还原 only over the whole working tree: in 本次对话改动 it would also drop changes this conversation did
+              not make (a checkout takes the whole file back) — there each file has its own 还原, with its own warning */}
+          {root && sc === 'uncommitted' && <button className="btn sm ghost" disabled={!!busy || !targets.discard.length} onClick={() => discard(targets.discard)} title="把这些文件恢复成上一次提交的样子：已暂存的改动也会丢掉，新文件会被永久删除">全部还原</button>}
+          {root && (sc === 'uncommitted' || sc === 'session') && <button className="btn sm" disabled={!!busy || !targets.stage.length} onClick={() => stage(targets.stage)} title="把这些改动加入下一次提交（有冲突的文件除外）">全部暂存</button>}
           {root && sc === 'staged' && <button className="btn sm" disabled={!!busy || !targets.unstage.length} onClick={() => unstage(targets.unstage)}>全部取消暂存</button>}
           {root && sc === 'commit' && rev && <button className="btn sm ghost" onClick={() => openTile({ id: `c${Date.now().toString(36)}`, kind: 'diff', sessionId: '', path: rev.hash, rev: rev.hash, cwd: root, title: `${rev.short} ${rev.subject.slice(0, 30)}` }, 'tab')} title="在一个标签页里打开整个提交">在标签页打开</button>}
-          <span className="rv-anchor" ref={moreRef}>
-            <button className={clsx('icon-btn', moreMenu && 'active')} aria-label="更多审阅操作" title="Git（分支 / 拉取推送 / stash / worktree / 历史）、展开折叠、diff 显示方式" aria-haspopup="menu" aria-expanded={moreMenu} onClick={() => setMoreMenu(!moreMenu)}><Icon name="more" size={16} /></button>
-            {moreMenu && (
-              <div className="menu rv-more-menu" role="menu" onClick={() => setMoreMenu(false)}>
-                <button onClick={() => { setSub('git'); setGitMounted(true); }} disabled={!root}><Icon name="branch" size={14} /> <span className="grow">Git：分支、拉取推送、stash、worktree、历史…</span></button>
-                <div className="menu-sep" />
-                <button onClick={() => setAll(true)} disabled={!rows.length}><Icon name="chevronDown" size={14} /> 全部展开</button>
-                <button onClick={() => setAll(false)} disabled={!rows.length}><Icon name="chevronRight" size={14} /> 全部折叠</button>
-                <button onClick={() => void setSetting('ui.diffMode', diffMode === 'split' ? 'unified' : 'split')}><Icon name="diff" size={14} /> {diffMode === 'split' ? '改成上下对照' : '改成左右并排'}</button>
-                <button onClick={bump}><Icon name="refresh" size={14} /> 刷新</button>
-              </div>
-            )}
-          </span>
+          <button ref={moreBtn} className={clsx('icon-btn', moreMenu && 'active')} aria-label="更多审阅操作" title="Git 视图（分支、拉取推送、历史…）、展开折叠、diff 显示方式" aria-haspopup="menu" aria-expanded={moreMenu} onClick={() => setMoreMenu(!moreMenu)}><Icon name="more" size={16} /></button>
+          <Popover anchor={moreBtn} open={moreMenu} onClose={() => setMoreMenu(false)} width={280} align="right" className="rv-more-menu" label="更多审阅操作" onClick={() => setMoreMenu(false)}>
+            <button onClick={openGit} disabled={!root} title={GIT_VIEW_TITLE}><Icon name="branch" size={14} /> <span className="grow">{GIT_VIEW_LABEL}</span></button>
+            <div className="menu-sep" />
+            <button onClick={() => setAll(true)} disabled={!rows.length}><Icon name="chevronDown" size={14} /> 全部展开</button>
+            <button onClick={() => setAll(false)} disabled={!rows.length}><Icon name="chevronRight" size={14} /> 全部折叠</button>
+            <button onClick={() => void setSetting('ui.diffMode', diffMode === 'split' ? 'unified' : 'split')}><Icon name="diff" size={14} /> {diffMode === 'split' ? '改成上下对照' : '改成左右并排'}</button>
+            <button onClick={bump}><Icon name="refresh" size={14} /> 刷新</button>
+          </Popover>
         </div>
         {err && (
           <div className="git-error rv-err">
             <div className="msg">{err.message}</div>
             {err.hint && <div className="hint">{err.hint}</div>}
-            <span className="row-btns"><button className="btn sm" onClick={() => { setSub('git'); setGitMounted(true); }}>在 Git 视图里处理</button><button className="btn sm ghost" onClick={() => setErr(null)}>知道了</button></span>
+            <span className="row-btns"><button className="btn sm" onClick={openGit}>在 Git 视图里处理</button><button className="btn sm ghost" onClick={() => setErr(null)}>知道了</button></span>
           </div>
         )}
         {sc === 'commit' && rev && (
@@ -412,10 +412,27 @@ export function ReviewView({ visible, inPlace }: { visible: boolean; inPlace?: b
           {rows.length > MAX_ROWS && <div className="rv-note">还有 {rows.length - MAX_ROWS} 个文件没有列出来：在 ··· →「Git」里可以看到全部。</div>}
           {!rows.length && <div className="empty">{empty}</div>}
         </div>
+        {root && sc !== 'commit' && plan.kind === 'conflicts' && (
+          <div className="rv-foot-note">
+            <Icon name="alert" size={13} />
+            <span className="grow">有 {plan.conflicts} 个冲突文件：先在 Git 视图里解决，再回来提交。</span>
+            <button className="btn sm ghost" onClick={openGit}>打开 Git 视图</button>
+          </div>
+        )}
         {root && sc !== 'commit' && (
           <div className="rv-foot">
-            <input className="field" placeholder={plan === 'none' ? '没有可以提交的改动' : '提交说明…'} value={msg} onChange={(e) => setMsg(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); void commit(); } }} disabled={plan === 'none'} aria-label="提交说明" />
-            <button className="btn primary sm" disabled={!!busy || plan === 'none' || !msg.trim()} onClick={() => void commit()} title={plan === 'stageAll' ? '还没有暂存的改动：会先问你要不要全部暂存' : `提交已暂存的改动（${status?.files.filter((f) => f.staged).length ?? 0} 个文件）`}>{busy === 'commit' ? '提交中…' : '提交'}</button>
+            {/* several lines like the Git view's box: Enter is a new line, Ctrl+Enter commits */}
+            <textarea
+              className="field"
+              rows={1}
+              placeholder={plan.kind === 'none' ? '没有可以提交的改动' : plan.kind === 'conflicts' ? '有冲突的文件解决之后才能提交' : `提交说明…（${modKey}+Enter 提交）`}
+              value={msg}
+              onChange={(e) => setMsg(e.target.value)}
+              onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); void commit(); } }}
+              disabled={plan.kind === 'none'}
+              aria-label="提交说明"
+            />
+            <button className="btn primary sm" disabled={!!busy || (plan.kind !== 'commit' && plan.kind !== 'stageAll') || !msg.trim()} onClick={() => void commit()} title={plan.kind === 'stageAll' ? `还没有暂存的改动：会先问你要不要把 ${plan.stage.length} 个文件暂存` : plan.kind === 'conflicts' ? '有冲突的文件：先在 Git 视图里解决' : `提交已暂存的改动（${plan.staged} 个文件）`}>{busy === 'commit' ? '提交中…' : '提交'}</button>
           </div>
         )}
       </div>

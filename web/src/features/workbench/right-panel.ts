@@ -13,13 +13,21 @@ interface RightPanelState {
   /** the last request for the review; `n` grows so asking for the same thing twice still applies */
   review: (ReviewIntent & { n: number }) | null;
   explorer: { mode: ExplorerMode; n: number } | null;
-  /** how many files the review lists right now (its tab shows the number, like the mock's 「审阅 3」) */
+  /** a request to unfold 任务's scheduled tasks (its `n`; 0 = none yet) */
+  schedules: number;
+  /** how many files the right panel's review lists right now (its tab shows the number, like the mock's 「审阅 3」) */
   reviewCount: number;
 }
-export const useRightPanel = create<RightPanelState>(() => ({ review: null, explorer: null, reviewCount: 0 }));
+export const useRightPanel = create<RightPanelState>(() => ({ review: null, explorer: null, schedules: 0, reviewCount: 0 }));
 let seq = 0;
 
-/** Bring a panel to the front of the right panel. A phone draws none: it says where things are instead. */
+// The functions below are the right panel's public entry points (the sidebar, the composer, the palette and the
+// header call them): keep their signatures stable.
+
+/**
+ * Bring a panel to the front of the right panel (mounting it if needed; `true` when it is on screen). A phone
+ * draws none: it says where things are instead and returns `false`.
+ */
 export function showPanel(panel: PanelId): boolean {
   const st = useStore.getState();
   if (st.mobile) { st.toast(PHONE_NO_PANEL); return false; }
@@ -35,6 +43,11 @@ export function openReview(intent: ReviewIntent = {}): void {
 /** 文件 on the tree, the search, or this conversation's generated files. */
 export function openExplorer(mode: ExplorerMode): void {
   if (showPanel('explorer')) useRightPanel.setState({ explorer: { mode, n: ++seq } });
+}
+
+/** 任务 with its scheduled tasks unfolded (they sit folded at its bottom in the default UI). */
+export function openSchedules(): void {
+  if (showPanel('tasks')) useRightPanel.setState({ schedules: ++seq });
 }
 
 /**

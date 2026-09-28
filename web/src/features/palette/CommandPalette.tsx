@@ -10,9 +10,10 @@ import { SHORTCUTS, keyLabel } from '@/features/workbench/shortcuts';
 import { runCommand } from '@/features/workbench/commands';
 import { viewCommands, type WbView } from '@/features/workbench/wb-views';
 import { openSessionView } from '@/features/workbench/right-panel';
-import { panelToggleEffect } from '@/model/layout';
+import { panelCommandLabel } from '@/features/workbench/panel-entries';
 import { shareConversation } from '@/features/chat/MessageActions';
-import { TERMS, panelToggleLabel } from '@/ui/terms';
+import { TERMS } from '@/ui/terms';
+import { commandHits } from './filter';
 
 interface Cmd { id: string; label: string; sub?: string; ic?: IconName; group: string; run: () => void }
 
@@ -57,7 +58,7 @@ export function CommandPalette() {
   const showView = (view: WbView) => openSessionView(view);
   const commands = useMemo<Cmd[]>(() => {
     // the label says what the toggle will do right now (a hidden or minimized panel is opened; the terminal is hidden, not closed)
-    const panel = (p: (typeof PANELS)[number]): Cmd => ({ id: `panel.${p.id}`, label: panelToggleLabel(panelToggleEffect(st.layout.dock, p.id, st.settings['ui.workbench'] === true), p.title, p.keepAlive), ic: p.icon, group: '面板', run: () => st.togglePanel(p.id) });
+    const panel = (p: (typeof PANELS)[number]): Cmd => ({ id: `panel.${p.id}`, label: panelCommandLabel(st.layout.dock, p, st.settings['ui.workbench'] === true), ic: p.icon, group: '面板', run: () => st.togglePanel(p.id) });
     const c: Cmd[] = [
       { id: 'new', label: '新对话', sub: keyLabel(SHORTCUTS[0]), ic: 'plus', group: '对话', run: () => runCommand('new') },
       { id: 'ws.add', label: '打开项目文件夹…', ic: 'folder', group: '对话', run: async () => { const p = await ws.request<string | null>({ kind: 'fs.pickDir' }); if (p) await st.addWorkspace(p); } },
@@ -96,12 +97,12 @@ export function CommandPalette() {
   }, [st.layout.dock, st.theme, st.sidebarOpen, st.showArchived, st.settings, st.sessionMeta, active?.sessionId, active?.state]);
 
   const ql = q.replace(/^>/, '').trim().toLowerCase();
-  const cmdHits = pf.filtered ? [] : commands.filter((c) => !ql || c.label.toLowerCase().includes(ql) || c.group.toLowerCase().includes(ql));
+  const cmdHits = pf.filtered ? [] : commandHits(commands, ql);
   // local fallback (and the only list before the index exists / for filter-only queries the index cannot answer)
   const localHits = () => st.sessions.filter((s) => !s.parentId && (!pf.agent || (s.agent ?? 'claude') === pf.agent) && (!pf.cwd || (s.cwd ?? '').toLowerCase().includes(pf.cwd)) && (!pf.rest || s.title.toLowerCase().includes(pf.rest.toLowerCase()))).slice(0, pf.filtered ? 30 : 12);
   const sessHits: SessionSummary[] = q.startsWith('>') ? [] : hits.length ? hits.map((h) => h.session) : localHits();
   const items: { kind: 'cmd'; c: Cmd }[] | { kind: 'sess'; s: SessionSummary; snippet?: string }[] | any[] = [
-    ...(ql ? cmdHits.slice(0, 8) : cmdHits).map((c) => ({ kind: 'cmd' as const, c })),
+    ...cmdHits.map((c) => ({ kind: 'cmd' as const, c })),
     ...sessHits.map((s) => ({ kind: 'sess' as const, s, snippet: hits.find((h) => h.session.sessionId === s.sessionId)?.snippet })),
   ];
   useEffect(() => setIdx(0), [q, hits.length]);

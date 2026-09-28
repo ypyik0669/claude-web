@@ -7,6 +7,7 @@ import { ShortcutsModal } from '@/features/workbench/ShortcutsModal';
 import { matchBrowserKey } from '@/features/workbench/shortcuts';
 import { runCommand } from '@/features/workbench/commands';
 import { claimSession } from '@/features/workbench/windows';
+import { showPanel } from '@/features/workbench/right-panel';
 import { clsx } from '@/util';
 import { CommandPalette } from '@/features/palette/CommandPalette';
 import { ImageViewer } from '@/features/chat/ImageViewer';
@@ -93,10 +94,10 @@ export function App() {
     return () => clearTimeout(t);
   }, [theme, sideSurface]);
 
-  // asking to inspect a tool call must reveal the dock — otherwise clicking the detail button on a tool row does nothing
+  // asking to inspect a tool call must bring 详情 to the front of the right panel — also when it is already a tab
+  // behind another one (otherwise the detail button on a tool row does nothing visible); a phone says where it is
   useEffect(() => {
-    if (!inspect) return;
-    if (!dock.open || dock.minimized) dispatchLayout({ t: 'dock.set', patch: { open: true, minimized: false } });
+    if (inspect) showPanel('inspector');
   }, [inspect]);
 
   // desktop shell: menu accelerators arrive as commands; notifications click → focus session

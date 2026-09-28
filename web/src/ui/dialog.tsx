@@ -14,6 +14,10 @@ export interface DialogSpec {
   defaultValue?: string;
   placeholder?: string;
   multiline?: boolean;
+  /** a short list shown under the message (e.g. the files a destructive action touches) */
+  items?: string[];
+  /** a destructive confirm: 取消 has the focus, so an Enter right after the click does not go through */
+  focusCancel?: boolean;
 }
 interface Pending { spec: DialogSpec; resolve: (v: any) => void }
 interface DialogState { queue: Pending[]; push(p: Pending): void; shift(): void }
@@ -52,14 +56,15 @@ export function DialogHost() {
       <div className="modal dialog" role="dialog" aria-modal="true">
         <h3>{spec.title}</h3>
         {spec.message && <div className="dialog-msg">{spec.message}</div>}
+        {!!spec.items?.length && <ul className="dialog-items">{spec.items.map((it, i) => <li key={i}>{it}</li>)}</ul>}
         {spec.kind === 'prompt' && (spec.multiline ? (
           <textarea ref={inp as any} className="field" rows={4} value={value} placeholder={spec.placeholder} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') ok(); }} />
         ) : (
           <input ref={inp as any} className="field" value={value} placeholder={spec.placeholder} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') ok(); }} />
         ))}
         <div className="actions">
-          {spec.kind !== 'alert' && <button className="btn" onClick={cancel}>{spec.cancelLabel}</button>}
-          <button className={`btn ${spec.danger ? 'danger' : 'primary'}`} autoFocus={spec.kind !== 'prompt'} onClick={ok}>{spec.okLabel}</button>
+          {spec.kind !== 'alert' && <button className="btn" autoFocus={!!spec.focusCancel && spec.kind === 'confirm'} onClick={cancel}>{spec.cancelLabel}</button>}
+          <button className={`btn ${spec.danger ? 'danger' : 'primary'}`} autoFocus={spec.kind !== 'prompt' && !(spec.focusCancel && spec.kind === 'confirm')} onClick={ok}>{spec.okLabel}</button>
         </div>
       </div>
     </div>
