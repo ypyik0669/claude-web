@@ -9,10 +9,41 @@ import type { GitBranch, GitError, GitErrorKind, GitFileStatus, GitLogEntry, Git
 const SEP = String.fromCharCode(0x1f);
 
 export class GitCommandError extends Error {
-  constructor(public info: GitError) {
+  /** `stderr`: git's whole output (`info.message` keeps only the last lines — after a usage dump, not the error) */
+  constructor(public info: GitError, public stderr = '') {
     super(info.message);
   }
 }
+
+/** `--pathspec-from-file` (paths on stdin) is git 2.25+ (add / reset / checkout); older git says "unknown option". */
+export function pathspecFileSupported(versionOutput: string): boolean {
+  const m = /git version (\d+)\.(\d+)/.exec(versionOutput);
+  if (!m) return false;
+  const [major, minor] = [Number(m[1]), Number(m[2])];
+  return major > 2 || (major === 2 && minor >= 25);
+}
+/** The option itself refused (a git that is older than its version string says, or a subcommand without it). */
+const PATHSPEC_FILE_REFUSED = /unknown option|pathspec-from-file/i;
+/** Paths per git command on the command line (older git): Windows allows 32 767 characters for the whole line. */
+export const ARGV_PATHS_BUDGET = 24_000;
+/** Split `files` into batches whose command-line length (path + quotes + space each) stays within `budget`. */
+export function argvBatches(files: string[], budget = ARGV_PATHS_BUDGET): string[][] {
+  const out: string[][] = [];
+  let cur: string[] = [];
+  let len = 0;
+  for (const f of files) {
+    const n = f.length + 3;
+    if (cur.length && len + n > budget) { out.push(cur); cur = []; len = 0; }
+    cur.push(f);
+    len += n;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+/** Whether this git takes paths on stdin: asked once per process (`git --version`), shared by every GitService. */
+let pathspecFile: Promise<boolean> | null = null;
+/** Tests: forget the answer (a stubbed `git --version` is asked again). */
+export function resetGitVersionCache() { pathspecFile = null; }
 
 const HINTS: Record<GitErrorKind, string> = {
   not_repo: '这个目录不是 git 仓库。可以在终端里 git init，或选一个仓库目录。',
@@ -148,7 +179,7 @@ export class GitService extends EventEmitter {
         timeout: opts.timeoutMs ?? 60_000,
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' },
       }, (err, stdout, stderr) => {
-        if (err) reject(new GitCommandError(classifyGitError(String(stderr || err.message), (err as any).code)));
+        if (err) reject(new GitCommandError(classifyGitError(String(stderr || err.message), (err as any).code), String(stderr || err.message)));
         else resolve({ stdout: String(stdout), stderr: String(stderr) });
       });
       if (opts.input !== undefined) { child.stdin?.end(opts.input); }
@@ -212,14 +243,32 @@ export class GitService extends EventEmitter {
     return { kind: 'unchanged', text: '' };
   }
 
+  /** Whether this git takes paths on stdin (git ≥ 2.25; `git --version` asked once per process). */
+  pathspecFromFile(): Promise<boolean> {
+    pathspecFile ??= this.run(process.cwd(), ['--version']).then((r) => pathspecFileSupported(r.stdout), () => false);
+    return pathspecFile;
+  }
   /**
-   * A git command over a list of paths, the paths on stdin (`--pathspec-from-file=- --pathspec-file-nul`, git ≥ 2.26
-   * for checkout) instead of the command line: 全部暂存 / 全部还原 / 全部取消暂存 over a few hundred files outgrow
-   * Windows' 32 767-character command line (`spawn ENAMETOOLONG`, nothing staged). `--literal-pathspecs`: they are
-   * file names out of `git status`, not patterns (`a[1].txt` must not also match `a1.txt`).
+   * A git command over a list of paths. `--literal-pathspecs`: they are file names out of `git status`, not patterns
+   * (`a[1].txt` must not also match `a1.txt`).
+   *  - git ≥ 2.25: the paths on stdin (`--pathspec-from-file=- --pathspec-file-nul`) — 全部暂存 / 全部还原 / 全部取消暂存
+   *    over a few hundred files outgrow Windows' 32 767-character command line (`spawn ENAMETOOLONG`, nothing staged);
+   *  - older git (Ubuntu 18.04 has 2.17, Debian 10 2.20 — remote machines often do): `-- <paths>` on the command line
+   *    as before, in batches of ≤ `ARGV_PATHS_BUDGET` characters. Also when a git refuses the option after all
+   *    (unknown option): that answer then sticks for the process.
    */
-  runPaths(cwd: string, args: string[], files: string[]) {
-    return this.run(cwd, ['--literal-pathspecs', ...args, '--pathspec-from-file=-', '--pathspec-file-nul'], { input: files.join('\0') });
+  async runPaths(cwd: string, args: string[], files: string[]) {
+    if (await this.pathspecFromFile()) {
+      try {
+        return await this.run(cwd, ['--literal-pathspecs', ...args, '--pathspec-from-file=-', '--pathspec-file-nul'], { input: files.join('\0') });
+      } catch (e) {
+        if (!(e instanceof GitCommandError) || !PATHSPEC_FILE_REFUSED.test(e.stderr)) throw e;
+        pathspecFile = Promise.resolve(false);
+      }
+    }
+    let last = { stdout: '', stderr: '' };
+    for (const batch of argvBatches(files)) last = await this.run(cwd, ['--literal-pathspecs', ...args, '--', ...batch]);
+    return last;
   }
   /** `files`: repo-relative paths (an empty list stages nothing — not `git add -A --`, which would stage everything) */
   async stage(cwd: string, files: string[] | 'all') {
