@@ -101,7 +101,7 @@ const GENERAL: EntryMeta[] = [
   { id: 'ui.autoSave', block: '工作台', label: '编辑器自动保存', hint: '停止输入 0.8 秒后写回磁盘；关掉后用 Ctrl+S 保存。', keywords: 'editor autosave monaco 保存' },
   { id: 'ui.notifications', block: '提醒与窗口', label: '桌面通知', hint: '对话需要你确认，或者任务完成时提醒你。', keywords: 'notification 通知' },
   { id: 'ui.closeToTray', block: '提醒与窗口', label: '关闭窗口时留在托盘', hint: '桌面版：关掉最后一个窗口不退出，任务在后台继续跑，从托盘图标回来。', keywords: 'tray minimize close 托盘 最小化' },
-  { id: 'ui.confirmExit', more: true, label: '退出前确认', hint: '有运行中的对话或没保存的文件时先问一句。', keywords: 'quit exit close 退出 关闭 确认' },
+  { id: 'ui.confirmExit', block: '提醒与窗口', label: '退出前确认', hint: '有运行中的对话或没保存的文件时先问一句。', keywords: 'quit exit close 退出 关闭 确认' },
   { id: 'ui.softwareRender', more: true, label: '软件渲染（桌面版）', hint: '显卡驱动异常导致黑屏 / 闪烁时打开，重启后生效。', keywords: 'gpu render 黑屏 闪烁 disable-gpu 显卡' },
   { id: 'orchestra.maxParallel', more: true, label: '编排并发上限', hint: '一次编排里同时执行的任务 / 比选数（等你审批的不占名额）。', keywords: 'orchestra workflow parallel 编排 并发 多 agent' },
 ];
@@ -111,7 +111,7 @@ const APPEARANCE: EntryMeta[] = [
   { id: 'ui.fontSize', block: '显示', label: '字号', hint: '整个界面的字号（像素）。', keywords: 'font size 字体大小' },
   { id: 'ui.density', block: '显示', label: '密度', hint: '紧凑模式减少行高与内边距。', keywords: 'density compact 紧凑 宽松' },
   { id: 'ui.cjkFont', more: true, label: '中文字体', hint: '优先用于中日韩文字的字体。', keywords: 'cjk font 中文 字体 雅黑 苹方' },
-  { id: 'ui.reduceMotion', more: true, label: '减少动画', hint: '关掉界面里的过渡与动画。', keywords: 'motion animation 动画 过渡' },
+  { id: 'ui.reduceMotion', block: '显示', label: '减少动画', hint: '关掉界面里的过渡与动画。', keywords: 'motion animation 动画 过渡' },
 ];
 
 export const SETTINGS_SECTIONS: SectionMeta[] = [
@@ -159,11 +159,14 @@ export const VISIBLE_SECTIONS = SETTINGS_SECTIONS.filter((s) => !s.advanced);
 export const ADVANCED_SECTIONS = SETTINGS_SECTIONS.filter((s) => s.advanced);
 export const DEFAULT_SECTION = 'general';
 
-/** Old flat-window ids whose page got another name; the other old ids are still page ids. */
-export const LEGACY_SECTIONS: Record<string, { section: string; tab?: string }> = {
+/**
+ * Old flat-window ids whose page got another name; the other old ids are still page ids. 引擎与账号's engine rows
+ * (运行内核) now sit in 账号与登录 › 更多选项, so the old id opens that and scrolls to them.
+ */
+export const LEGACY_SECTIONS: Record<string, { section: string; tab?: string; more?: boolean; body?: BodyId }> = {
   interface: { section: 'general' },
   session: { section: 'general' },
-  engine: { section: 'account' },
+  engine: { section: 'account', more: true, body: 'engine' },
   plugins: { section: 'mcp', tab: 'plugins' },
   subagents: { section: 'agents', tab: 'subagents' },
 };

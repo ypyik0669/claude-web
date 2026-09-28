@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ADVANCED_SECTIONS, BODY_INFO, DEFAULT_SECTION, LEGACY_SECTIONS, SETTINGS_GROUPS, SETTINGS_SECTIONS, VISIBLE_SECTIONS,
-  allBodies, allEntries, findSection, moreHint, navStatus, resolveSettingsTarget, searchSettings, targetBodies,
-  type BodyId, type SettingsHit,
+  activeTab, allBodies, allEntries, findSection, moreHint, navStatus, resolveSettingsTarget, searchSettings,
+  targetBodies, type BodyId, type SettingsHit, type SettingsTarget,
 } from './catalog';
 import { WORKBENCH_SETTING_PATH } from '@/ui/terms';
 
@@ -37,6 +37,26 @@ const LEGACY: Record<string, { entries?: string[]; bodies?: BodyId[] }> = {
 };
 /** Parts that intentionally left their old page (spec §5.7): → the section that has them now. */
 const MOVED: Partial<Record<BodyId, string>> = { env: 'env' };
+/**
+ * Old content that is now one click away: behind its page's 更多选项, which stays collapsed when the old id opens the
+ * page. Everything else an old id showed must be on the page directly (or 更多选项 must open with it, like engine).
+ */
+const BEHIND_MORE: Record<string, string[]> = {
+  appearance: ['ui.cjkFont'],
+  session: ['ui.softwareRender', 'orchestra.maxParallel'],
+  mcp: ['mcpJson'],
+  skills: ['skillsBackup'],
+  remote: ['hosts'],
+};
+
+/** What opening a target shows: rows and parts on the page, and the ones behind 更多选项 when it opens collapsed. */
+function shownBy(t: SettingsTarget): { direct: string[]; behindMore: string[] } {
+  const sec = findSection(t.section)!;
+  const tab = activeTab(sec, t.tab);
+  const main = [...(sec.entries ?? []).filter((e) => !e.more).map((e) => e.id), ...(tab ? tab.bodies : sec.bodies ?? [])];
+  const more = [...(sec.entries ?? []).filter((e) => e.more).map((e) => e.id), ...(tab ? tab.more ?? [] : sec.more ?? [])];
+  return t.more ? { direct: [...main, ...more], behindMore: [] } : { direct: main, behindMore: more };
+}
 
 const ids = (hits: SettingsHit[]) => hits.map((h) => (h.kind === 'entry' ? `entry:${h.entry.id}` : `page:${h.section.id}${h.tab ? `/${h.tab.id}` : ''}${h.body ? `#${h.body}` : ''}`));
 
@@ -92,15 +112,28 @@ describe('settings map (spec §5.7)', () => {
       if (t.tab) expect(sec!.tabs?.some((x) => x.id === t.tab), `${old} → ${t.section}/${t.tab}`).toBe(true);
       for (const e of want.entries ?? []) expect(sec!.entries?.some((x) => x.id === e), `${old}: ${e}`).toBe(true);
       const shown = targetBodies(t);
+      const { direct, behindMore } = shownBy(t);
       for (const b of want.bodies ?? []) {
-        if (MOVED[b]) expect(targetBodies({ section: MOVED[b]! }), `${old}: ${b} moved`).toContain(b);
-        else expect(shown, `${old}: ${b}`).toContain(b);
+        if (MOVED[b]) { expect(targetBodies({ section: MOVED[b]! }), `${old}: ${b} moved`).toContain(b); continue; }
+        expect(shown, `${old}: ${b}`).toContain(b);
       }
+      // directly in view vs. behind a collapsed 更多选项 — exactly as BEHIND_MORE says
+      for (const x of [...(want.entries ?? []), ...(want.bodies ?? []).filter((b) => !MOVED[b])]) {
+        if (BEHIND_MORE[old]?.includes(x)) expect(behindMore, `${old}: ${x} behind 更多选项`).toContain(x);
+        else expect(direct, `${old}: ${x} directly on the page`).toContain(x);
+      }
+    }
+    for (const [old, xs] of Object.entries(BEHIND_MORE)) {
+      const was = [...(LEGACY[old].entries ?? []), ...(LEGACY[old].bodies ?? [])];
+      for (const x of xs) expect(was, `BEHIND_MORE.${old}: ${x} was on that page`).toContain(x);
     }
     // the ones that changed name are explicit aliases
     expect(Object.keys(LEGACY_SECTIONS).sort()).toEqual(['engine', 'interface', 'plugins', 'session', 'subagents']);
     expect(resolveSettingsTarget({ section: 'plugins' })).toEqual({ section: 'mcp', tab: 'plugins' });
     expect(resolveSettingsTarget({ section: 'subagents' })).toEqual({ section: 'agents', tab: 'subagents' });
+    // 引擎与账号 → 账号与登录 with 更多选项 open, scrolled to 运行内核 (both old parts in view)
+    expect(resolveSettingsTarget({ section: 'engine' })).toEqual({ section: 'account', more: true, body: 'engine' });
+    expect(shownBy(resolveSettingsTarget({ section: 'engine' })).direct).toEqual(expect.arrayContaining(['account', 'engine']));
   });
 
   it('new ids resolve to themselves; nothing / unknown → 通用', () => {
@@ -117,16 +150,21 @@ describe('settings map (spec §5.7)', () => {
     expect(resolveSettingsTarget({ reveal: 'ui.softwareRender' }).more).toBe(true);
     expect(resolveSettingsTarget({ reveal: 'ui.workbench' }).more).toBeUndefined();
     // an unknown reveal falls back to the section
-    expect(resolveSettingsTarget({ section: 'engine', reveal: 'nope' })).toEqual({ section: 'account' });
+    expect(resolveSettingsTarget({ section: 'engine', reveal: 'nope' })).toEqual({ section: 'account', more: true, body: 'engine' });
   });
 
   it('更多选项 lists what it holds; pages without low-frequency parts have none', () => {
-    expect(moreHint(findSection('general')!)).toBe('退出前确认、软件渲染（桌面版）、编排并发上限');
+    expect(moreHint(findSection('general')!)).toBe('软件渲染（桌面版）、编排并发上限');
+    expect(moreHint(findSection('appearance')!)).toBe('中文字体');
     expect(moreHint(findSection('account')!)).toBe('运行内核');
     expect(moreHint(findSection('remote')!)).toBe('SSH 隧道');
     expect(moreHint(findSection('mcp')!, 'servers')).toBe('手动添加（JSON）');
     expect(moreHint(findSection('mcp')!, 'plugins')).toBe('');
     expect(moreHint(findSection('secrets')!)).toBe('');
+  });
+
+  it('退出前确认 and 减少动画 are on their pages, not behind 更多选项', () => {
+    for (const id of ['ui.confirmExit', 'ui.reduceMotion']) expect(allEntries().find(({ entry }) => entry.id === id)!.entry.more, id).toBeFalsy();
   });
 
   it('「显示工作台工具」 lives on 通用, and the one-time notice says so', () => {
