@@ -503,9 +503,11 @@ function driver() {
           const drawer = await waitFor('document.querySelector(".app").classList.contains("drawer-open") && !!document.querySelector(".sidebar.has-resizer")', 3000);
           check('phone: 展开侧栏 opens the sidebar drawer', drawer);
           await shot('phone-drawer');
-          await click('.sidebar .nav[title^="设置"]');
+          const drawerParts = await js(`({ nav: [...document.querySelectorAll('.sidebar .sb-nav [data-id]')].map((e) => e.dataset.id), account: !!document.querySelector('.sidebar .sb-account [data-id="account"]') })`);
+          check('phone: the drawer is the same sidebar (新对话 / 搜索 / 自动化, account row)', ['new', 'search', 'automation'].every((x) => drawerParts.nav.includes(x)) && drawerParts.account, JSON.stringify(drawerParts));
+          await click('.sidebar .sb-account [data-id="settings"]');
           const settings = await waitFor('!!document.querySelector(".modal.settings")', 3000);
-          check('phone: settings open from the sidebar', settings);
+          check('phone: settings open from the sidebar (account row gear)', settings);
           await js('window.__store.setState({ settingsOpen: null, sidebarOpen: false })');
           const before = await js('JSON.stringify(window.__store.getState().layout.dock)');
           await js(`window.__store.getState().togglePanel('terminal')`);
@@ -518,6 +520,93 @@ function driver() {
         }
         const err2 = await noBoundary('body');
         check('session chrome checks without error boundary', !err2, err2);
+
+        // ---- redesign phase 4: the sidebar — every entry point of the old one is still reachable
+        // (ids from web/src/features/sidebar/entries.ts; menus are checked by what they list, not by how they look)
+        phase = 'sidebar';
+        const SID = JSON.stringify(E.SMOKE_SID);
+        const ids = (sel) => js(`[...document.querySelectorAll(${JSON.stringify(sel)})].map((e) => e.dataset.id)`);
+        const has = (list, want) => want.every((x) => list.includes(x));
+        const closeMenus = async () => { await js('document.body.click()'); await sleep(250); };
+        await js('window.__store.setState({ sidebarOpen: true })'); // the phone phase closed it
+        await waitFor('!!document.querySelector(".sidebar .sb-nav")', 3000);
+        await sleep(300);
+        const ctxMenu = (sel) => js(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return false; el.scrollIntoView({ block: 'nearest' }); const b = el.getBoundingClientRect(); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.left + 40, clientY: b.top + 8, button: 2 })); return true; })()`);
+        const sb = await js(`({ chipRows: !!document.querySelector('.sidebar .sb-sources, .sidebar .src-chip, .sidebar .sb-search, .sidebar .lib-banner'), top: [...document.querySelectorAll('.sidebar .sb-top [data-id], .sidebar .sb-nav [data-id]')].map((e) => e.dataset.id), head: [...document.querySelectorAll('.sidebar [data-id="projects"] > .sb-sec-h [data-id]')].map((e) => e.dataset.id), account: [...document.querySelectorAll('.sidebar .sb-account [data-id]')].map((e) => e.dataset.id), row: !!document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + '] [data-id="status"]') })`);
+        check('sidebar: no chip / filter-box rows; 新对话 · 搜索 · 自动化; funnel + 打开文件夹 on 项目; account row (connection, settings); the row ends in one status',
+          !sb.chipRows && has(sb.top, ['collapse', 'new', 'search', 'automation']) && has(sb.head, ['filter', 'add-project']) && has(sb.account, ['account', 'connection', 'settings']) && sb.row, JSON.stringify(sb));
+        await shot('sidebar');
+        // the funnel: sources, machines (when there are other machines), archived, multi-select, the filter box
+        await click('.sidebar [data-id="filter"]');
+        const fm = await ids('.menu.sb-filter [data-id]');
+        const fmIn = await js('(() => { const m = document.querySelector(".menu.sb-filter"); if (!m) return false; const r = m.getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })()');
+        check('funnel menu: filter box, sources, 显示已归档, 选择多个, 管理对话来源 — inside the window', has(fm, ['query', 'source', 'archived', 'select', 'library']) && fmIn, JSON.stringify({ fm, fmIn }));
+        await shot('sidebar-filter');
+        if (E.SMOKE_READONLY !== '1') {
+          wc.insertText('zzz-no-such-conversation');
+          await sleep(400);
+          const filtered = await js('({ summary: document.querySelector(".sidebar .sb-filtered .what")?.textContent || "", rows: document.querySelectorAll(".sidebar .sb-list .sb-row").length })');
+          check('the filter box filters the list and the list says it is filtered', filtered.rows === 0 && filtered.summary.includes('zzz-no-such'), JSON.stringify(filtered));
+          await closeMenus();
+          await click('.sidebar .sb-filtered .link');
+          check('清除 brings the list back', await waitFor(`!document.querySelector('.sidebar .sb-filtered') && !!document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + ']')`, 3000));
+        }
+        await closeMenus();
+        // 自动化 → the schedules / goals / orchestration panels (until the automation page)
+        await click('.sidebar [data-id="automation"]');
+        const am = await ids('.menu.sb-auto-menu [data-id]');
+        check('自动化 lists 定时任务 / 目标 / 编排', has(am, ['schedules', 'goals', 'orchestra']), JSON.stringify(am));
+        await click('.menu.sb-auto-menu [data-id="goals"]');
+        check('自动化 → 目标 shows the goals panel', await waitFor(`(() => { const d = window.__store.getState().layout.dock; return d.open && d.active === 'goals'; })()`, 3000));
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+        // the account row: quota, today's spend, usage & ledger, the config panel, appearance, shortcuts, palette
+        await click('.sidebar [data-id="account"]');
+        const acc = await ids('.menu.sb-acct-menu [data-id]');
+        check('account popover: 今日费用, 用量与账本, 配置中心, 外观, 快捷键, 命令面板', has(acc, ['today', 'usage', 'config', 'appearance', 'shortcuts', 'palette']), JSON.stringify(acc));
+        await shot('sidebar-account');
+        await closeMenus();
+        // the conversation menu (right-click = ···): every session action, by capability
+        await ctxMenu(`.sidebar .sb-list [data-sid=${SID}]`);
+        await sleep(300);
+        const rm = await ids('.menu.sess-menu [data-id]');
+        check('conversation right-click menu: open in tab / split, resume, pin, folder, VS Code, reference, rename, fork, archive, hand-over, native CLI, copy id, delete',
+          has(rm, ['open-tab', 'open-split', 'resume', 'pin', 'explorer', 'vscode', 'reference', 'rename', 'fork', 'archive', 'handoff', 'native-cli', 'copy-id', 'delete']), JSON.stringify(rm));
+        await shot('sidebar-row-menu');
+        if (E.SMOKE_READONLY !== '1') {
+          await click('.menu.sess-menu [data-id="pin"]');
+          check('置顶 moves the conversation into the 置顶 section', await waitFor(`!!document.querySelector('.sidebar [data-group="__pinned"] [data-sid=' + ${JSON.stringify(SID)} + ']')`, 4000));
+          await js(`window.__store.getState().setSessionMeta(${SID}, { pinned: false })`);
+          await waitFor(`!document.querySelector('.sidebar [data-group="__pinned"]')`, 4000);
+          // a project: its right-click menu has everything the old workspace ··· had
+          await js(`window.__store.getState().addWorkspace(${JSON.stringify(E.SMOKE_REPO)})`);
+          const proj = await waitFor(`!!document.querySelector('.sidebar [data-id="projects"] .sb-group [data-sid=' + ${JSON.stringify(SID)} + ']')`, 5000);
+          await ctxMenu(`.sidebar [data-id="projects"] .sb-group:has([data-sid=${SID}]) .sb-group-head`);
+          await sleep(300);
+          const pm = await ids('.menu.sb-menu[aria-label^="项目"] [data-id]');
+          check('a project (opened folder) groups its conversations; its menu: new here, worktree, terminal, rename, folder, VS Code, remove', proj && has(pm, ['new-here', 'worktree', 'terminal', 'rename', 'explorer', 'vscode', 'remove']), JSON.stringify({ proj, pm }));
+          await closeMenus();
+          // 需要你: a conversation waiting for a permission shows there and at its row's end (the request is faked client-side)
+          await js(`window.__store.setState((s) => { const o = s.open[${SID}]; return o ? { open: { ...s.open, [${SID}]: { ...o, state: 'waiting', pending: [{ requestId: 'smoke-fake', sessionId: ${SID}, toolName: 'Bash', input: { command: 'echo smoke' } }] } } } : {}; })`);
+          const attn = await waitFor(`(() => { const a = document.querySelector('.sidebar [data-id="attention"] [data-sid=' + ${JSON.stringify(SID)} + '] [data-id="status"]'); const r = document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + '] [data-id="status"]'); return !!a && a.textContent === '待确认' && r && r.textContent === '待确认'; })()`, 3000);
+          check('需要你 lists a conversation waiting for a permission; its row ends in 待确认', attn);
+          await shot('sidebar-needs-you');
+          await js(`window.__store.setState((s) => { const o = s.open[${SID}]; return o ? { open: { ...s.open, [${SID}]: { ...o, state: 'history', pending: [] } } } : {}; })`);
+          check('需要你 disappears when nothing waits', await waitFor('!document.querySelector(\'.sidebar [data-id="attention"]\')', 3000));
+        }
+        // Shift-click starts multi-select (batch archive / delete); Esc ends it
+        const rowAt = await js(`(() => { const el = document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + '] .t'); if (!el) return null; el.scrollIntoView({ block: 'nearest' }); const b = el.getBoundingClientRect(); return { x: Math.round(b.left + 20), y: Math.round(b.top + b.height / 2) }; })()`);
+        if (rowAt) {
+          wc.sendInputEvent({ type: 'mouseDown', x: rowAt.x, y: rowAt.y, button: 'left', clickCount: 1, modifiers: ['shift'] });
+          wc.sendInputEvent({ type: 'mouseUp', x: rowAt.x, y: rowAt.y, button: 'left', clickCount: 1, modifiers: ['shift'] });
+          await sleep(300);
+        }
+        const selOn = await js('({ bar: !!document.querySelector(".sidebar .sel-bar"), checked: document.querySelectorAll(".sidebar .sb-list .sel-box:checked").length })');
+        await shot('sidebar-select');
+        await key('Escape');
+        const selOff = await js('!document.querySelector(".sidebar .sel-bar") && !document.querySelector(".sidebar .sel-box")');
+        check('Shift-click starts multi-select with that row checked; Esc ends it', selOn.bar && selOn.checked >= 1 && selOff, JSON.stringify({ selOn, selOff }));
+        const err3 = await noBoundary('.sidebar');
+        check('sidebar checks without error boundary', !err3, err3);
       }
 
       // ---- error boundary probe: a crash in one settings section stays in that section, 重试 recovers it
