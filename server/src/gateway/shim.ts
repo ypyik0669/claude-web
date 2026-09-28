@@ -56,6 +56,8 @@ interface Ctx {
   cacheKey?: string;
   signal: AbortSignal;
   t0: number;
+  /** prompt_cache_key we put in (for the CW_SHIM_DEBUG line) */
+  keyed?: boolean;
 }
 
 interface Outcome { ok: boolean; status: number; model: string; usage?: Partial<IrUsage> | null; error?: string; outbound: 'openai' | 'responses'; stream: boolean; firstByteMs?: number }
@@ -163,7 +165,7 @@ export class CacheShim {
     let withoutKey: Buffer | null = null;
     if (ctx.cacheKey && !ctx.p.noPromptCacheKey && json.prompt_cache_key === undefined) {
       const s = insertTopLevelField(ctx.raw.toString('utf8'), 'prompt_cache_key', ctx.cacheKey);
-      if (s) { withoutKey = ctx.raw; body = Buffer.from(s); }
+      if (s) { withoutKey = ctx.raw; body = Buffer.from(s); ctx.keyed = true; }
     }
     const up = await this.send(ctx, joinUrl(ctx.base, '/v1/chat/completions') + ctx.search, body, withoutKey, stream);
     if (!up) return;
@@ -227,6 +229,7 @@ export class CacheShim {
       return Buffer.from(JSON.stringify(b));
     };
     const key = ctx.p.noPromptCacheKey ? undefined : ctx.cacheKey;
+    ctx.keyed = !!key;
     const up = await this.send(ctx, joinUrl(ctx.base, '/v1/responses') + ctx.search, build(key), key ? build(undefined) : null, stream);
     if (!up) return;
     if (up.status === 404 || up.status === 405 || up.status === 501) {
@@ -240,6 +243,7 @@ export class CacheShim {
     const { res } = ctx;
     const isSse = /event-stream/i.test(String(up.headers['content-type'] ?? ''));
     const usage: Partial<IrUsage> = {};
+    let failed = ''; // an error event inside a 200 stream (response.failed)
     if (!stream || !isSse) {
       let text = '';
       try { text = await readText(up.body); } catch (e: any) { return this.brokenBeforeStart(ctx, model, e?.message ?? String(e), stream, firstByteMs); }
@@ -263,7 +267,11 @@ export class CacheShim {
     const emit = async (evs: IrEvent[]) => {
       if (ctx.signal.aborted) return;
       let out = '';
-      for (const e of evs) { if (e.t === 'usage') Object.assign(usage, e.usage); out += renderer.push(e); }
+      for (const e of evs) {
+        if (e.t === 'usage') Object.assign(usage, e.usage);
+        else if (e.t === 'error') failed ||= e.message;
+        out += renderer.push(e);
+      }
       if (out && !res.write(out)) await waitDrain(res, ctx.signal);
     };
     const it = decoded(up.body)[Symbol.asyncIterator]() as AsyncIterator<Buffer>;
@@ -279,7 +287,7 @@ export class CacheShim {
     if (broken) await emit([{ t: 'error', message: broken }]);
     else { for (const ev of sse.feed(dec.end())) await emit(parser.feed(ev)); for (const ev of sse.end()) await emit(parser.feed(ev)); await emit(parser.end()); }
     res.end(renderer.end() || undefined);
-    this.record(ctx, { ok: !broken, status: broken ? 502 : up.status, model, usage, error: broken || undefined, outbound: 'responses', stream, firstByteMs });
+    this.record(ctx, { ok: !broken && !failed, status: broken ? 502 : up.status, model, usage, error: broken || failed || undefined, outbound: 'responses', stream, firstByteMs });
   }
 
   private brokenBeforeStart(ctx: Ctx, model: string, message: string, stream: boolean, firstByteMs: number) {
@@ -289,6 +297,11 @@ export class CacheShim {
 
   private record(ctx: Ctx, o: Outcome) {
     const u = o.usage ?? {};
+    // one line per call for checking a real relay (no secrets: profile name, key presence, status, token counts)
+    if (process.env.CW_SHIM_DEBUG) {
+      const all = (u.input ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0);
+      console.error(`[shim] ${ctx.p.name} ${o.outbound} ${o.model} status=${o.status} key=${ctx.keyed ? (ctx.cacheKey ?? '') : '-'} in=${u.input ?? 0} read=${u.cacheRead ?? 0} write=${u.cacheWrite ?? 0} hit=${all ? Math.round(((u.cacheRead ?? 0) / all) * 100) : 0}%${o.error ? ` err=${o.error.slice(0, 120)}` : ''}`);
+    }
     this.deps.ledger?.record({
       ts: Date.now(),
       sessionId: ctx.sessionKey,

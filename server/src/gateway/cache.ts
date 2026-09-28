@@ -68,13 +68,15 @@ export class SseLines {
   push(s: string): string {
     this.buf += s;
     let out = '';
+    let pos = 0;
     for (;;) {
-      const i = this.nextBreak();
+      const i = this.nextBreak(pos);
       if (i < 0) break;
       const len = this.buf[i] === '\r' && this.buf[i + 1] === '\n' ? 2 : 1;
-      out += this.line(this.buf.slice(0, i)) + this.buf.slice(i, i + len);
-      this.buf = this.buf.slice(i + len);
+      out += this.line(this.buf.slice(pos, i)) + this.buf.slice(i, i + len);
+      pos = i + len;
     }
+    this.buf = this.buf.slice(pos);
     return out;
   }
   end(): string {
@@ -82,8 +84,8 @@ export class SseLines {
     this.buf = '';
     return s;
   }
-  private nextBreak(): number {
-    for (let i = 0; i < this.buf.length; i++) {
+  private nextBreak(from: number): number {
+    for (let i = from; i < this.buf.length; i++) {
       const c = this.buf[i];
       if (c === '\n') return i;
       if (c === '\r') return i + 1 < this.buf.length ? i : -1;

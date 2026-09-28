@@ -182,6 +182,13 @@ describe('cache shim: gpt-* via /v1/responses', () => {
     await post('gpt', 'sess-6', chatBody('gpt-5.6'));
     expect(U.hits.map((h) => h.url)).toEqual(['/v1/chat/completions']);
   });
+  it('a Responses stream that fails mid-way reaches the client as an error chunk and a failed ledger line', async () => {
+    U.handler.fn = (_q, res) => { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(rsse({ type: 'response.created', response: { id: 'r', model: 'gpt-5.6' } }) + rsse({ type: 'response.failed', response: { status: 'failed', error: { message: 'upstream exploded' } } })); };
+    const r = await post('gpt', 'sess-8', chatBody('gpt-5.6'));
+    expect(r.status).toBe(200);
+    expect(r.text).toContain('upstream exploded');
+    expect(ledger[0]).toMatchObject({ ok: false, error: 'upstream exploded', gateway: { outbound: 'responses' } });
+  });
   it('non-gpt models never convert', async () => {
     await post('gpt', 'sess-7', chatBody('deepseek-v4'));
     expect(U.hits[0].url).toBe('/v1/chat/completions');
