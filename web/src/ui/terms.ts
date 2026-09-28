@@ -66,6 +66,14 @@ export const ULTRACODE = {
   title: `${TERMS.ultracode}（ultracode）：最深思考 + 自动拆成并行子任务，更慢、更费额度。对整个对话生效`,
 } as const;
 
+/**
+ * Where 「显示工作台工具」 lives in the settings window. It is the 界面 section today; the settings regroup (redesign
+ * phase 6) moves it to 通用 — change it here, the one-time notice below follows.
+ */
+export const WORKBENCH_SETTING_PATH = '设置 → 界面';
+/** One-time toast for people who knew the old screen and land on the simplified one (ui.simplifiedNotice). */
+export const SIMPLIFIED_NOTICE = `界面已简化；需要分屏 / 标签 / 面板图标栏可在 ${WORKBENCH_SETTING_PATH} 打开「${TERMS.workbench}」`;
+
 /** The per-session views that used to be the 8 workbench tabs (spec §4.2). */
 export const WORKBENCH_VIEW_LABEL: Record<WorkbenchTab, string> = {
   live: '对话',

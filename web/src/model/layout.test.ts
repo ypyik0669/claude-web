@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { activeGroup, activeTile, chatTile, chromeVisibility, deriveActive, hasLegacyLayout, initialLayout, layoutRects, layoutReducer, migrateLegacy, migrateWorkbench, MAX_PANES, paneOrder, presetTree, resetIds, sanitizeLayout, workbenchOn, type LayoutState } from './layout';
+import { activeGroup, activeTile, chatTile, chromeVisibility, deriveActive, hasLegacyLayout, initialLayout, layoutRects, layoutReducer, migrateLegacy, migrateWorkbench, needsSimplifiedNotice, SIMPLIFIED_NOTICE_KEY, MAX_PANES, paneOrder, presetTree, resetIds, sanitizeLayout, workbenchOn, type LayoutState } from './layout';
 
 beforeEach(() => resetIds());
 
@@ -332,13 +332,27 @@ describe('ui.singleWindow → ui.workbench migration', () => {
     expect(migrateWorkbench({ 'ui.singleWindow': true }, split())).toBe(false);
   });
 
-  it('someone already using splits, groups or the dock keeps the workbench', () => {
+  it('someone really using splits or groups keeps the workbench', () => {
     let s = initialLayout();
     s = layoutReducer(s, { t: 'pane.split', paneId: focused(s), dir: 'row' });
     expect(migrateWorkbench({}, s)).toBe(true);
     expect(migrateWorkbench({}, layoutReducer(initialLayout(), { t: 'group.new' }))).toBe(true);
-    expect(migrateWorkbench({}, layoutReducer(initialLayout(), { t: 'dock.show', panel: 'files' }))).toBe(true);
-    expect(migrateWorkbench({ 'ui.singleWindow': false }, layoutReducer(initialLayout(), { t: 'dock.show', panel: 'files' }))).toBe(true);
+  });
+
+  it('an open dock alone does not count (it was open by default; Ctrl+J still opens it)', () => {
+    const docked = layoutReducer(initialLayout(), { t: 'dock.show', panel: 'files' });
+    expect(migrateWorkbench({}, docked)).toBe(false);
+    expect(migrateWorkbench({ 'ui.singleWindow': false }, docked)).toBe(false);
+  });
+
+  it('the one-time 「界面已简化」 notice: old users landing on the quiet UI, once, never fresh installs', () => {
+    const docked = layoutReducer(initialLayout(), { t: 'dock.show', panel: 'files' });
+    expect(needsSimplifiedNotice({}, docked, false)).toBe(true);
+    expect(needsSimplifiedNotice({ onboarded: true }, null, false)).toBe(true); // desktop: the layout is per-origin, gone every launch
+    expect(needsSimplifiedNotice({ 'ui.singleWindow': true }, null, false)).toBe(true);
+    expect(needsSimplifiedNotice({}, null, false)).toBe(false); // fresh install: nothing changed for them
+    expect(needsSimplifiedNotice({}, docked, true)).toBe(false); // kept the workbench: nothing changed either
+    expect(needsSimplifiedNotice({ [SIMPLIFIED_NOTICE_KEY]: true, onboarded: true }, docked, false)).toBe(false); // only once
   });
 
   it('a saved single pane with the dock closed is not a workbench user', () => {

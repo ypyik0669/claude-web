@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { AgentInfo, AgentKind, AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, SourceStatus, Workspace } from '@shared';
 import { decodeAttachments, findChainUuidBefore, type ContextUsage } from '@/model/conversation';
-import { activeGroup, chatTile, deriveActive, hasLegacyLayout, initialLayout, layoutReducer, migrateLegacy, migrateWorkbench, sanitizeLayout, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
+import { activeGroup, chatTile, deriveActive, hasLegacyLayout, initialLayout, layoutReducer, migrateLegacy, migrateWorkbench, needsSimplifiedNotice, sanitizeLayout, SIMPLIFIED_NOTICE_KEY, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
 import { PaneContext, winId } from './paneContext';
 import { useContext } from 'react';
 
@@ -15,6 +15,7 @@ import { reopenSettings } from './reopen';
 import { parseLibraryId } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { DEFAULT_THEME, applyUiSettings, resolveTheme, setSystemThemeHandler } from '@/features/settings/ui-settings';
+import { SIMPLIFIED_NOTICE } from '@/ui/terms';
 
 export type PanelId = import('@/model/layout').PanelId;
 
@@ -56,7 +57,7 @@ interface State {
   inspect: { sessionId: string; toolUseId?: string; file?: { path: string; line?: number } } | null;
   theme: Theme;
   toasts: { id: number; text: string; ok?: boolean }[];
-  toast(text: string, ok?: boolean): void;
+  toast(text: string, ok?: boolean, ms?: number): void;
   workspaces: Workspace[];
   sessionMeta: Record<string, SessionMeta>;
   schedules: Schedule[];
@@ -290,10 +291,18 @@ export const useStore = create<State>((set, get) => ({
       ws.request<Record<string, unknown>>({ kind: 'settings.get' }),
     ]);
     // one-time: ui.singleWindow → ui.workbench, decided from the layout this window started with
-    const wb = migrateWorkbench(settings, loadedLayout.saved ? initialLayoutState : null);
+    const saved = loadedLayout.saved ? initialLayoutState : null;
+    const wb = migrateWorkbench(settings, saved);
     if (wb !== undefined) {
+      // someone who knew the old screen and now lands on the quiet one hears once where the tools went
+      const notice = needsSimplifiedNotice(settings, saved, wb);
       settings['ui.workbench'] = wb;
       void ws.request({ kind: 'settings.set', key: 'ui.workbench', value: wb }).catch(() => {});
+      if (notice) {
+        settings[SIMPLIFIED_NOTICE_KEY] = true;
+        void ws.request({ kind: 'settings.set', key: SIMPLIFIED_NOTICE_KEY, value: true }).catch(() => {});
+        get().toast(SIMPLIFIED_NOTICE, true, 12_000);
+      }
     }
     set({ workspaces, sessionMeta, schedules, settings, metaLoaded: true });
     applyUiSettings(settings);
@@ -307,10 +316,10 @@ export const useStore = create<State>((set, get) => ({
     set((s) => ({ sessionMeta: { ...s.sessionMeta, [sessionId]: { ...s.sessionMeta[sessionId], ...patch } } }));
     await ws.request({ kind: 'session.setMeta', sessionId, patch });
   },
-  toast(text, ok) {
+  toast(text, ok, ms = 5000) {
     const id = Date.now() + Math.random();
     set((s) => ({ toasts: [...s.toasts, { id, text, ok }] }));
-    setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 5000);
+    setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), ms);
   },
 
   init() {

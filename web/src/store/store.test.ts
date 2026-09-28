@@ -251,6 +251,8 @@ describe('session library', () => {
 });
 
 describe('workbench chrome (redesign phase 1)', () => {
+  let SIMPLIFIED_NOTICE = '';
+  beforeAll(async () => { ({ SIMPLIFIED_NOTICE } = await import('@/ui/terms')); });
   const meta = (settings: Record<string, unknown>) => {
     fake.handlers.set('workspaces.list', () => []);
     fake.handlers.set('sessions.meta', () => ({}));
@@ -267,6 +269,21 @@ describe('workbench chrome (redesign phase 1)', () => {
     meta({ 'ui.workbench': true });
     await useStore.getState().loadMeta();
     expect(useStore.getState().settings['ui.workbench']).toBe(true);
+    expect(fake.sent.some((r) => r.kind === 'settings.set')).toBe(false);
+    expect(useStore.getState().toasts).toEqual([]); // a fresh install gets no 「界面已简化」 notice
+  });
+
+  it('an old user landing on the quiet UI gets the notice once, and the flag is stored in meta.json', async () => {
+    meta({ onboarded: true });
+    await useStore.getState().loadMeta();
+    expect(useStore.getState().settings['ui.workbench']).toBe(false);
+    expect(useStore.getState().toasts.map((t) => t.text)).toEqual([SIMPLIFIED_NOTICE]);
+    expect(fake.sent.filter((r) => r.kind === 'settings.set').map((r) => [r.key, r.value])).toEqual([['ui.workbench', false], ['ui.simplifiedNotice', true]]);
+    useStore.setState({ toasts: [] });
+    fake.sent.length = 0;
+    meta({ onboarded: true, 'ui.workbench': false, 'ui.simplifiedNotice': true });
+    await useStore.getState().loadMeta();
+    expect(useStore.getState().toasts).toEqual([]);
     expect(fake.sent.some((r) => r.kind === 'settings.set')).toBe(false);
   });
 

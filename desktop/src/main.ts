@@ -207,7 +207,8 @@ function broadcast(channel: string, arg: unknown) {
   for (const [, w] of liveWins()) w.webContents.send(channel, arg);
 }
 
-// Accelerators mirror web/src/features/workbench/shortcuts.ts (desktop column).
+// Accelerators mirror web/src/features/workbench/shortcuts.ts (desktop column); labels use the same user words as
+// its `label`s and web/src/ui/terms.ts (对话 / 分屏 / 标签页 / 右侧面板 / 步骤视图 — never 会话 / 窗格 / 停靠 / 轨迹).
 function buildMenu() {
   const cmd = (label: string, accelerator: string | undefined, id: string): Electron.MenuItemConstructorOptions => ({ label, accelerator, click: () => sendCommand(id) });
   const template: Electron.MenuItemConstructorOptions[] = [
@@ -223,14 +224,14 @@ function buildMenu() {
       ],
     } as Electron.MenuItemConstructorOptions] : []),
     {
-      label: '会话',
+      label: '对话',
       submenu: [
-        cmd('新会话', 'CmdOrCtrl+N', 'new'),
+        cmd('新对话', 'CmdOrCtrl+N', 'new'),
         cmd('命令面板', 'CmdOrCtrl+K', 'palette'),
-        cmd('搜索会话', 'CmdOrCtrl+P', 'palette'),
+        cmd('搜索对话', 'CmdOrCtrl+P', 'palette'),
         { type: 'separator' },
         cmd('中断当前轮', 'CmdOrCtrl+Shift+C', 'interrupt'),
-        cmd('结束当前会话进程', 'CmdOrCtrl+Shift+Q', 'close'),
+        cmd('结束当前对话的进程', 'CmdOrCtrl+Shift+Q', 'close'),
         ...(isMac ? [] : [{ type: 'separator' }, { label: '退出', accelerator: 'CmdOrCtrl+Q', click: () => void requestQuit() }] as Electron.MenuItemConstructorOptions[]),
       ],
     },
@@ -246,15 +247,15 @@ function buildMenu() {
         { type: 'separator' },
         cmd('向右分屏', 'CmdOrCtrl+D', 'pane.splitRight'),
         cmd('向下分屏', 'CmdOrCtrl+Shift+D', 'pane.splitDown'),
-        cmd('关闭标签 / 窗格', 'CmdOrCtrl+W', 'tile.close'),
-        cmd('缩放窗格', 'CmdOrCtrl+Shift+Enter', 'pane.zoom'),
-        cmd('下一个窗格', 'CmdOrCtrl+Alt+Right', 'pane.next'),
-        cmd('上一个窗格', 'CmdOrCtrl+Alt+Left', 'pane.prev'),
-        ...[1, 2, 3, 4, 5, 6].map((n) => ({ ...cmd(`跳到窗格 ${n}`, `Alt+${n}`, `pane.jump.${n - 1}`), visible: n <= 2 })),
+        cmd('关闭标签页（最后一个则关掉这个分屏）', 'CmdOrCtrl+W', 'tile.close'),
+        cmd('放大 / 还原分屏', 'CmdOrCtrl+Shift+Enter', 'pane.zoom'),
+        cmd('下一个分屏', 'CmdOrCtrl+Alt+Right', 'pane.next'),
+        cmd('上一个分屏', 'CmdOrCtrl+Alt+Left', 'pane.prev'),
+        ...[1, 2, 3, 4, 5, 6].map((n) => ({ ...cmd(`跳到分屏 ${n}`, `Alt+${n}`, `pane.jump.${n - 1}`), visible: n <= 2 })),
         { type: 'separator' },
-        cmd('窗格内新标签', 'CmdOrCtrl+Shift+T', 'tile.new'),
-        cmd('下一个标签', 'CmdOrCtrl+PageDown', 'tile.next'),
-        cmd('上一个标签', 'CmdOrCtrl+PageUp', 'tile.prev'),
+        cmd('新标签页', 'CmdOrCtrl+Shift+T', 'tile.new'),
+        cmd('下一个标签页', 'CmdOrCtrl+PageDown', 'tile.next'),
+        cmd('上一个标签页', 'CmdOrCtrl+PageUp', 'tile.prev'),
         { type: 'separator' },
         cmd('在新窗口打开当前分组', 'CmdOrCtrl+Shift+N', 'window.new'),
       ],
@@ -263,16 +264,16 @@ function buildMenu() {
       label: '视图',
       submenu: [
         cmd('侧栏', 'CmdOrCtrl+B', 'sidebar'),
-        cmd('对话 / 轨迹', 'Alt+J', 'tab'),
+        cmd('对话 / 步骤视图', 'Alt+J', 'tab'),
         { type: 'separator' },
-        cmd('停靠面板', 'CmdOrCtrl+J', 'dock.toggle'),
-        cmd('最小化停靠面板', 'CmdOrCtrl+Shift+J', 'dock.minimize'),
+        cmd('右侧面板', 'CmdOrCtrl+J', 'dock.toggle'),
+        cmd('右侧面板收成图标栏', 'CmdOrCtrl+Shift+J', 'dock.minimize'),
         cmd('总览（Mission Control）', 'CmdOrCtrl+Shift+M', 'panel.mission'),
         cmd('任务面板', 'CmdOrCtrl+Shift+1', 'panel.tasks'),
         cmd('文件改动', 'CmdOrCtrl+Shift+2', 'panel.files'),
         cmd('用量', 'CmdOrCtrl+Shift+3', 'panel.usage'),
         ...(isMac ? [] : [cmd('设置', 'CmdOrCtrl+,', 'settings')]),
-        cmd('配置中心（停靠面板）', undefined, 'panel.config'),
+        cmd('配置中心（右侧面板）', undefined, 'panel.config'),
         cmd('终端', 'CmdOrCtrl+`', 'panel.terminal'),
         { type: 'separator' },
         cmd('键盘快捷键', 'F1', 'shortcuts'),
@@ -306,7 +307,7 @@ function buildTray() {
   tray.setToolTip(APP_NAME);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '打开', click: () => showWindow(wins.get('main') ?? focusedWin()) },
-    { label: '新会话', click: () => sendCommand('new') },
+    { label: '新对话', click: () => sendCommand('new') },
     { type: 'separator' },
     { label: '退出', click: () => void requestQuit() },
   ]));
@@ -334,8 +335,8 @@ async function requestQuit() {
   const confirmExit = await getSetting(focusedWin(), 'ui.confirmExit', true);
   if (confirmExit && (running.size > 0 || pending > 0 || dirty > 0)) {
     const w = focusedWin();
-    const parts = [running.size ? `${running.size} 个会话在运行` : '', pending ? `${pending} 个权限请求待处理` : '', dirty ? `${dirty} 个文件未保存` : ''].filter(Boolean);
-    const r = await dialog.showMessageBox(w ?? undefined as any, { type: 'question', buttons: ['退出', dirty ? '取消（回去保存）' : '取消', '最小化到托盘'], defaultId: 1, cancelId: 1, message: parts.join('，'), detail: '退出会结束会话进程（记录保留在磁盘，可恢复）；未保存的编辑会丢失。' });
+    const parts = [running.size ? `${running.size} 个对话在运行` : '', pending ? `${pending} 个权限请求待处理` : '', dirty ? `${dirty} 个文件未保存` : ''].filter(Boolean);
+    const r = await dialog.showMessageBox(w ?? undefined as any, { type: 'question', buttons: ['退出', dirty ? '取消（回去保存）' : '取消', '最小化到托盘'], defaultId: 1, cancelId: 1, message: parts.join('，'), detail: '退出会结束对话的进程（记录保留在磁盘，发消息即可继续）；未保存的编辑会丢失。' });
     if (r.response === 1) return;
     if (r.response === 2) { for (const [, x] of liveWins()) x.hide(); return; }
   }

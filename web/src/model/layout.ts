@@ -141,16 +141,28 @@ export const workbenchOn = (settings: Record<string, unknown>) => settings['ui.w
 
 /**
  * One-time move from `ui.singleWindow` to `ui.workbench` (the value to store, or undefined when it is already set).
- * People already using the workbench — more than one group or pane, or the dock open — keep seeing all of it;
- * single-window users and fresh installs (no saved layout) get the quiet default.
+ * Only people really using the workbench — a group with more than one pane, or more than one group — keep seeing
+ * all of it. An open dock does not count (it was open by default, and it is still one Ctrl+J away); single-window
+ * users and fresh installs (no saved layout) get the quiet default too.
  */
 export function migrateWorkbench(settings: Record<string, unknown>, saved: LayoutState | null): boolean | undefined {
   if (typeof settings['ui.workbench'] === 'boolean') return undefined;
   if (settings['ui.singleWindow'] === true) return false;
   if (!saved) return false;
-  const panes = saved.groups.some((g) => paneOrder(g.root).length > 1);
-  const dock = saved.dock.open && saved.dock.tabs.length > 0;
-  return saved.groups.length > 1 || panes || dock;
+  return saved.groups.length > 1 || saved.groups.some((g) => paneOrder(g.root).length > 1);
+}
+
+/** meta.json key recording that the one-time 「界面已简化」 notice was shown. */
+export const SIMPLIFIED_NOTICE_KEY = 'ui.simplifiedNotice';
+
+/**
+ * Show the one-time 「界面已简化」 notice? Only to someone who used the app before the redesign (a saved layout,
+ * finished onboarding, or a `ui.singleWindow` choice) and now lands on the quiet UI; never twice (meta.json flag);
+ * never on a fresh install — there is nothing that changed for them.
+ */
+export function needsSimplifiedNotice(settings: Record<string, unknown>, saved: LayoutState | null, workbench: boolean): boolean {
+  if (workbench || settings[SIMPLIFIED_NOTICE_KEY] === true) return false;
+  return !!saved || settings.onboarded === true || typeof settings['ui.singleWindow'] === 'boolean';
 }
 
 /** Leaf pane ids in DFS order (a before b) — this is the Alt+1..6 / cycle order. */
