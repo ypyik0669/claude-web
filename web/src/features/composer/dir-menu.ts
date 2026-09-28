@@ -1,3 +1,5 @@
+import { placeMenu, samePlacement, type Placement } from '@/features/models/place';
+
 /** Keyboard of the working-directory menu: which row to focus, or close (handing focus back to the chip). */
 export function menuKey(key: string, index: number, count: number): { focus: number } | { close: true; refocus: true } | null {
   if (!count) return key === 'Escape' || key === 'Tab' ? { close: true, refocus: true } : null;
@@ -10,6 +12,23 @@ export function menuKey(key: string, index: number, count: number): { focus: num
     case 'Tab': return { close: true, refocus: true };
     default: return null;
   }
+}
+
+export type DirMenuLayout = Placement & { maxWidth: number; minWidth: number };
+
+/**
+ * Where the menu goes and how wide it may be, as one value: below the chip, left-aligned; min / max width from
+ * the room right of its left edge. Width depends on the viewport, not only on the position — so a resize that
+ * leaves the chip where it was still yields a different layout (and a re-render).
+ */
+export function dirMenuLayout(chip: { top: number; bottom: number; left: number; right: number }, view: { vw: number; vh: number }): DirMenuLayout {
+  const pos = placeMenu(chip, view, 'down', 'left');
+  const maxWidth = menuMaxWidth(pos, view.vw);
+  return { ...pos, maxWidth, minWidth: Math.min(280, maxWidth) };
+}
+
+export function sameLayout(a: DirMenuLayout | null, b: DirMenuLayout): boolean {
+  return samePlacement(a, b) && a!.maxWidth === b.maxWidth && a!.minWidth === b.minWidth;
 }
 
 const CAP = 520;

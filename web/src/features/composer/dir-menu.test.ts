@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { menuKey, menuMaxWidth } from './dir-menu';
+import { dirMenuLayout, menuKey, menuMaxWidth, sameLayout } from './dir-menu';
 
 describe('directory menu keyboard', () => {
   it('↑ ↓ wrap around, Home / End jump to the ends', () => {
@@ -19,6 +19,25 @@ describe('directory menu keyboard', () => {
   it('other keys are left alone', () => {
     expect(menuKey('a', 0, 3)).toBeNull();
     expect(menuKey('Enter', 0, 3)).toBeNull(); // the focused button's own click
+  });
+});
+
+describe('directory menu layout (position + width as one value)', () => {
+  const chip = { top: 500, bottom: 526, left: 300, right: 400 };
+  it('a narrower window with the chip where it was: same position, smaller width → a different layout', () => {
+    const wide = dirMenuLayout(chip, { vw: 1360, vh: 860 });
+    const narrow = dirMenuLayout(chip, { vw: 600, vh: 860 });
+    expect(narrow.left).toBe(wide.left);
+    expect(narrow.top).toBe(wide.top);
+    expect([wide.maxWidth, narrow.maxWidth]).toEqual([520, 292]);
+    expect(narrow.minWidth).toBe(280);
+    expect(sameLayout(wide, narrow)).toBe(false); // a resize must re-render even though the menu did not move
+    expect(sameLayout(wide, dirMenuLayout(chip, { vw: 1360, vh: 860 }))).toBe(true);
+    expect(sameLayout(null, wide)).toBe(false);
+  });
+
+  it('min-width never exceeds the room', () => {
+    expect(dirMenuLayout(chip, { vw: 500, vh: 860 })).toMatchObject({ maxWidth: 192, minWidth: 192 });
   });
 });
 

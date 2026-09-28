@@ -2,9 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { basename, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
-import { placeMenu, samePlacement, type Placement } from '@/features/models/place';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
-import { menuKey, menuMaxWidth } from './dir-menu';
+import { dirMenuLayout, menuKey, sameLayout, type DirMenuLayout } from './dir-menu';
 
 /**
  * Working-directory chip of the welcome composer. The list of recent directories opens only from this chip,
@@ -47,13 +46,14 @@ export function DirPicker({ cwd, recent, onPick, onBrowse }: { cwd: string; rece
 
 function DirMenu({ anchor, cwd, dirs, onPick, onBrowse, onClose }: { anchor: React.RefObject<HTMLButtonElement | null>; cwd: string; dirs: string[]; onPick: (d: string) => void; onBrowse: () => void; onClose: (refocus: boolean) => void }) {
   const box = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<Placement | null>(null);
+  const [pos, setPos] = useState<DirMenuLayout | null>(null);
   useLayoutEffect(() => {
     const a = anchor.current;
     if (!a) return;
     const place = () => {
-      const next = placeMenu(a.getBoundingClientRect(), { vw: window.innerWidth, vh: window.innerHeight }, 'down', 'left');
-      setPos((cur) => (samePlacement(cur, next) ? cur : next));
+      // position AND width: a resize can shrink the room without moving the chip
+      const next = dirMenuLayout(a.getBoundingClientRect(), { vw: window.innerWidth, vh: window.innerHeight });
+      setPos((cur) => (sameLayout(cur, next) ? cur : next));
     };
     place();
     const onScroll = (e: Event) => { if (!box.current?.contains(e.target as Node)) place(); };
@@ -87,9 +87,8 @@ function DirMenu({ anchor, cwd, dirs, onPick, onBrowse, onClose }: { anchor: Rea
     else onClose(act.refocus);
   };
   if (!pos) return null;
-  const maxW = menuMaxWidth(pos, window.innerWidth); // min-width must not push it past the right edge either
   return createPortal(
-    <div ref={box} className="menu dirmenu" style={{ ...pos, maxWidth: maxW, minWidth: Math.min(280, maxW) }} role="menu" aria-label="工作目录" onKeyDown={onKey}>
+    <div ref={box} className="menu dirmenu" style={pos} role="menu" aria-label="工作目录" onKeyDown={onKey}>
       <div className="dirmenu-head">最近的目录</div>
       <div className="dirmenu-list">
         {dirs.map((d) => (

@@ -329,8 +329,15 @@ function driver() {
         await click('.welcome .dirpick');
         const listed = await js(`[...document.querySelectorAll('.menu.dirmenu [data-dir]')].map((b) => b.dataset.dir)`);
         check('directory chip opens the directory menu', listed.includes(E.SMOKE_REPO), JSON.stringify(listed));
-        check('directory menu stays inside the window', await js('(() => { const r = document.querySelector(".menu.dirmenu").getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth - 8 && r.bottom <= innerHeight; })()'));
+        const inside = '(() => { const m = document.querySelector(".menu.dirmenu"); if (!m) return "closed"; const r = m.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth - 8 && r.bottom <= innerHeight ? true : JSON.stringify({ left: r.left, right: r.right, vw: innerWidth }); })()';
+        check('directory menu stays inside the window', (await js(inside)) === true);
         await shot('dirmenu');
+        win.setSize(620, 860); // narrower window while the menu is open: its width must follow
+        await sleep(700);
+        const narrow = await js(inside);
+        check('directory menu stays inside a window narrowed while it is open', narrow === true, String(narrow));
+        win.setSize(1360, 860);
+        await sleep(700);
         const focused = () => js('(() => { const a = document.activeElement; return a ? (a.dataset.dir ? "row" : a.classList.contains("dirpick") ? "chip" : a.textContent.trim()) : null; })()');
         await key('End');
         const atEnd = await focused();
