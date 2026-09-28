@@ -51,4 +51,20 @@ describe.skipIf(process.platform !== 'win32')('resolveSpawn (Windows .cmd shims)
     const { shim } = setup('#!/bin/sh\necho 1\n');
     expect(resolveSpawn(shim, ['serve']).via).toBe('cmd');
   });
+
+  it('refuses arguments cmd.exe would expand or split (`%VAR%`, newlines) instead of passing them mangled', () => {
+    const { shim } = setup('#!/bin/sh\necho 1\n');
+    expect(() => resolveSpawn(shim, ['--token=%USERPROFILE%'])).toThrow(/%/);
+    // the message names the argument, never its value (it may be a secret)
+    let msg = '';
+    try { resolveSpawn(shim, ['serve', '--api-key=s3cr%t']); } catch (e: any) { msg = e.message; }
+    expect(msg).toContain('第 2 个参数');
+    expect(msg).toContain('--api-key');
+    expect(msg).not.toContain('s3cr');
+    try { resolveSpawn(shim, ['pa%ss']); } catch (e: any) { msg = e.message; }
+    expect(msg).toContain('第 1 个参数');
+    expect(msg).not.toContain('pa%ss');
+    expect(() => resolveSpawn(shim, ['a\nb'])).toThrow(/换行/);
+    expect(resolveSpawn(shim, ['50 percent', 'x"y']).via).toBe('cmd');
+  });
 });

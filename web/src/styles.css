@@ -1377,3 +1377,24 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
 .gw-test { font-size: 12px; padding: 6px 10px; border-radius: var(--r-md); background: var(--surface-2); overflow-wrap: anywhere; }
 .gw-test.ok { color: var(--ok); }
 .gw-test.err { color: var(--err); }
+
+/* ---- agent config center (settings → CLI Agents → 配置中心) ---- */
+.acfg { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 2px 26px; padding: 8px 10px; border: 1px solid var(--edge-subtle); border-radius: var(--r-lg); background: var(--surface-1); }
+.acfg .list { gap: 2px; }
+.acfg-head { display: flex; align-items: center; gap: 6px; margin-top: 4px; min-width: 0; }
+.acfg-head h6 { margin: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--ink-2); }
+.acfg-head > .sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acfg-cwd { max-width: 50%; font-size: 12px; }
+.acfg-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; padding: 8px; border: 1px dashed var(--edge-default); border-radius: var(--r-md); }
+.acfg-form label, .acfg-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--ink-3); min-width: 0; }
+.acfg-form label.chip { flex-direction: row; align-items: center; }
+.acfg-form .wide { grid-column: 1 / -1; }
+.acfg-form textarea.field { font-family: var(--mono); resize: vertical; }
+.acfg-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.acfg-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px 12px; }
+.acfg-field .mono { font-size: 11px; }
+.acfg-error { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--err); overflow-wrap: anywhere; }
+.acfg-results { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.acfg-result { display: flex; align-items: baseline; gap: 6px; overflow-wrap: anywhere; }
+.acfg-result.ok svg { color: var(--ok); }
+.acfg-result.err svg { color: var(--err); }

@@ -28,7 +28,9 @@
     "chokidar": "^5.0.0",
     "claude-code-best": "^2.8.4",
     "electron-updater": "^6.8.9",
+    "jsonc-parser": "^3.3.1",
     "node-pty": "^1.1.0",
+    "smol-toml": "^1.9.0",
     "ws": "^8.21.3",
     "zod": "^4.5.4"
   },

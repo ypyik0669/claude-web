@@ -39,9 +39,14 @@ import type { LibraryService } from '../library/service.js';
 import type { GatewayService } from '../gateway/service.js';
 import { handleGatewayRequest, isGatewayRequest } from '../gateway/handlers.js';
 
+import type { AgentConfigService } from '../agent-config/service.js';
+import { handleAgentConfig, isAgentConfigRequest } from '../agent-config/handlers.js';
+
 export interface Services {
   /** Unified session library: every joined source's sessions (sessions.list / search / library.*). */
   library: LibraryService;
+  /** Other agents' config center: MCP / instructions / settings of Codex, Gemini, Qwen, OpenCode (agentConfig.*). */
+  agentConfig: AgentConfigService;
   git: GitService;
   search: SearchService;
   skills: SkillsService;
@@ -153,6 +158,7 @@ export class Hub {
 
   private async handle(req: ClientRequest, ws: WebSocket): Promise<unknown> {
     const s = this.s;
+    if (isAgentConfigRequest(req)) return handleAgentConfig(s.agentConfig, req);
     switch (req.kind) {
       case 'sessions.list': {
         const all = await s.library.list();
