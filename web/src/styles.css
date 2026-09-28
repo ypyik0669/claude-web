@@ -593,7 +593,7 @@ button.link:hover { text-decoration: underline; }
 .dirpick .dirpick-ic { color: var(--ink-4); display: inline-flex; flex: none; }
 .dirpick .dirpick-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dirpick .caret { color: var(--ink-4); display: inline-flex; flex: none; }
-.menu.dirmenu { position: fixed; z-index: 1000; display: flex; flex-direction: column; min-width: 280px; max-width: min(520px, calc(100vw - 16px)); overflow: hidden; }
+.menu.dirmenu { position: fixed; z-index: 1000; display: flex; flex-direction: column; overflow: hidden; } /* min / max width: inline, from its left edge (dir-menu.ts) */
 .dirmenu-head { padding: 5px 10px 3px; font-size: var(--fs-micro); color: var(--ink-4); font-weight: 600; }
 .dirmenu-list { overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
 .menu.dirmenu .dirmenu-list button { align-items: flex-start; }

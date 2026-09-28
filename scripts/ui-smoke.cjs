@@ -329,9 +329,19 @@ function driver() {
         await click('.welcome .dirpick');
         const listed = await js(`[...document.querySelectorAll('.menu.dirmenu [data-dir]')].map((b) => b.dataset.dir)`);
         check('directory chip opens the directory menu', listed.includes(E.SMOKE_REPO), JSON.stringify(listed));
+        check('directory menu stays inside the window', await js('(() => { const r = document.querySelector(".menu.dirmenu").getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth - 8 && r.bottom <= innerHeight; })()'));
         await shot('dirmenu');
+        const focused = () => js('(() => { const a = document.activeElement; return a ? (a.dataset.dir ? "row" : a.classList.contains("dirpick") ? "chip" : a.textContent.trim()) : null; })()');
+        await key('End');
+        const atEnd = await focused();
+        await key('Home');
+        const atHome = await focused();
+        check('Home / End move to the first / last entry', atHome === 'row' && /浏览文件夹/.test(atEnd), `${atHome} / ${atEnd}`);
+        await key('Tab');
+        check('Tab closes the directory menu and focus returns to the chip', !(await js('!!document.querySelector(".menu.dirmenu")')) && (await focused()) === 'chip');
+        await click('.welcome .dirpick');
         await key('Escape');
-        check('Esc closes the directory menu', !(await js('!!document.querySelector(".menu.dirmenu")')));
+        check('Esc closes the directory menu', !(await js('!!document.querySelector(".menu.dirmenu")')) && (await focused()) === 'chip');
       }
 
       // ---- model menu

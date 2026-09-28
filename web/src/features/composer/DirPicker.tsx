@@ -4,6 +4,7 @@ import { basename, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { placeMenu, samePlacement, type Placement } from '@/features/models/place';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
+import { menuKey, menuMaxWidth } from './dir-menu';
 
 /**
  * Working-directory chip of the welcome composer. The list of recent directories opens only from this chip,
@@ -78,15 +79,17 @@ function DirMenu({ anchor, cwd, dirs, onPick, onBrowse, onClose }: { anchor: Rea
   }, [anchor, onClose]);
   const onKey = (e: React.KeyboardEvent) => {
     const rows = [...(box.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
-    const i = rows.indexOf(document.activeElement as HTMLButtonElement);
-    if (e.key === 'ArrowDown') { e.preventDefault(); rows[(i + 1) % rows.length]?.focus(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); rows[(i - 1 + rows.length) % rows.length]?.focus(); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(true); }
-    else if (e.key === 'Tab') onClose(false);
+    const act = menuKey(e.key, rows.indexOf(document.activeElement as HTMLButtonElement), rows.length);
+    if (!act) return;
+    e.preventDefault(); // Tab too: focus goes back to the chip, not into whatever follows <body>'s portal
+    e.stopPropagation();
+    if ('focus' in act) rows[act.focus]?.focus();
+    else onClose(act.refocus);
   };
   if (!pos) return null;
+  const maxW = menuMaxWidth(pos, window.innerWidth); // min-width must not push it past the right edge either
   return createPortal(
-    <div ref={box} className="menu dirmenu" style={pos} role="menu" aria-label="工作目录" onKeyDown={onKey}>
+    <div ref={box} className="menu dirmenu" style={{ ...pos, maxWidth: maxW, minWidth: Math.min(280, maxW) }} role="menu" aria-label="工作目录" onKeyDown={onKey}>
       <div className="dirmenu-head">最近的目录</div>
       <div className="dirmenu-list">
         {dirs.map((d) => (
