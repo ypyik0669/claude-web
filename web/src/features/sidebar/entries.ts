@@ -1,6 +1,7 @@
 // Every way into the sidebar's functions, as ids the components put on their elements (`data-id`, checked with
 // `satisfies` at compile time) — and where each entry point of the old sidebar went (spec 2026-09-28 §4.2).
-// entries.test.ts asserts nothing of the old sidebar is lost; scripts/ui-smoke.cjs finds the ids in the DOM.
+// entries.test.ts checks the table itself (every old entry resolves, every id has a reason); only
+// scripts/ui-smoke.cjs proves the ids are rendered: it parses PLACES and must find every id in its place in the DOM.
 
 /** Top: brand row + three navigation rows. */
 export const TOP = ['collapse', 'new', 'search', 'automation'] as const;
