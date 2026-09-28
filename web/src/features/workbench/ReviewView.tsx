@@ -144,7 +144,8 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
   // another conversation: its own scope, files and diffs (the commit draft is per repo and stays)
   useEffect(() => {
     setStatus(null); setLoaded(false); setChanged([]); setScope(inPlace ? 'session' : null); setRev(null); setCommitText(null); setLog(null);
-    setOpen({}); setDiffs({}); setErr(null); setSub('diff');
+    // (the Git view is another repo's now: dropped, not remounted hidden — it would run its git and watch the repo)
+    setOpen({}); setDiffs({}); setErr(null); setSub('diff'); setGitMounted(false);
     fetched.current.clear();
     bump();
   }, [sid, cwd]);
@@ -332,7 +333,7 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
           <button className="btn sm ghost" onClick={() => setSub('diff')} title="回到审阅"><Icon name="restore" size={13} /> 审阅</button>
           <span className="rv-sub-title" title={GIT_VIEW_TITLE}>{GIT_VIEW_LABEL.replace('…', '')}</span>
         </div>
-        {gitMounted && root && <div className="rv-git-body"><GitView cwd={cwd} /></div>}
+        {gitMounted && root && <div className="rv-git-body"><GitView cwd={cwd} visible={visible && sub === 'git'} /></div>}
         {gitMounted && !root && <div className="empty">{loaded ? `${cwd} 不是 git 仓库。` : '读取中…'}</div>}
       </div>
       <div className="rv-main" hidden={sub !== 'diff'}>

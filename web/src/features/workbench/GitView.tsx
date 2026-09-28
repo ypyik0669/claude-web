@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { ago, basename, clsx } from '@/util';
@@ -49,8 +49,12 @@ function FileRows({ files, staged, cwd, root, onOpen }: { files: GitFileStatus[]
   );
 }
 
-/** Source control view for one working directory: branch / sync / changes / commit / log / worktrees / stash. */
-export function GitView({ cwd }: { cwd: string }) {
+/**
+ * Source control view for one working directory: branch / sync / changes / commit / log / worktrees / stash.
+ * `visible` (default true): kept mounted but out of sight (审阅's Git view behind the diff list, a hidden right panel)
+ * it runs no git — events only mark it stale for the next show — and the repo is watched once it is first shown.
+ */
+export function GitView({ cwd, visible = true }: { cwd: string; visible?: boolean }) {
   const toast = useStore((s) => s.toast);
   const openTile = useStore((s) => s.openTile);
   const [st, setSt] = useState<GitStatus | null>(null);
@@ -77,12 +81,22 @@ export function GitView({ cwd }: { cwd: string }) {
       }
     } catch (e: any) { setErr(gitErr(e)); }
   };
+  const visRef = useRef(visible);
+  visRef.current = visible;
+  const stale = useRef(false);
+  const watched = useRef<string | null>(null);
+  // on screen: load now; out of sight: load on the next show
+  const load = () => { if (visRef.current) { stale.current = false; void refresh(); } else stale.current = true; };
   useEffect(() => {
-    void refresh();
-    void ws.request({ kind: 'git.watch', cwd }).catch(() => {});
-    const off = ws.on((e) => { if (e.kind === 'git.changed' && (st?.root ? e.cwd.toLowerCase() === st.root.toLowerCase() : true)) void refresh(); });
+    load();
+    const off = ws.on((e) => { if (e.kind === 'git.changed' && (st?.root ? e.cwd.toLowerCase() === st.root.toLowerCase() : true)) load(); });
     return () => { off(); };
   }, [cwd, st?.root]);
+  useEffect(() => {
+    if (!visible) return;
+    if (stale.current) { stale.current = false; void refresh(); }
+    if (watched.current !== cwd) { watched.current = cwd; void ws.request({ kind: 'git.watch', cwd }).catch(() => {}); }
+  }, [visible, cwd]);
 
   const run = async (label: string, req: any, opts: { fixFor?: (e: GitError) => { label: string; run: () => void } | undefined; then?: (r: any) => void } = {}) => {
     setBusy(label); setErr(null);

@@ -196,7 +196,7 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
       {remoteView && <div className="wb-body"><div className="remote-only"><Icon name="machine" size={22} /><div>这个对话在机器「{peer!.name}」上，它的文件 / Git / 搜索 / 定时任务都在那台机器上。</div><div className="sub">请在该机器上查看；这里可以继续对话、审批、中断。</div></div></div>}
       {remoteView ? null : <>
       {tile.wb === 'changes' && <div className="wb-body"><ReviewView inPlace visible={visible} /></div>}
-      {tile.wb === 'git' && <div className="wb-body"><GitView cwd={active.cwd} /></div>}
+      {tile.wb === 'git' && <div className="wb-body"><GitView cwd={active.cwd} visible={visible} /></div>}
       {tile.wb === 'files' && <div className="wb-body"><FileTree root={active.cwd} gitStatus={gitStatus} /></div>}
       {tile.wb === 'search' && <div className="wb-body"><SearchView root={active.cwd} /></div>}
       {tile.wb === 'schedules' && <div className="wb-body"><SchedulesView /></div>}
