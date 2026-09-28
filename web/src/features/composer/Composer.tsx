@@ -17,9 +17,9 @@ import { sessionRefMarker } from '@/model/conversation';
 import { SessionRefChip } from '@/features/chat/ChatView';
 import { REFERENCE_EVENT, type ReferenceDetail } from '@/features/sidebar/session-actions';
 import { ModelChip } from '@/features/models/ModelMenu';
-import { chipLabel, compatibleTypes, type ModelMenuItem } from '@/features/models/menu';
+import { chipLabel, compatibleTypes, usableProfile, type ModelMenuItem } from '@/features/models/menu';
 import { routePick } from '@/features/models/route';
-import { providersLoaded } from '@/features/models/data';
+import { providersLoaded, useGatewayStatus } from '@/features/models/data';
 import { dlg } from '@/ui/dialog';
 
 export const MODE_LABEL: Record<PermissionMode, string> = { default: '每次询问', acceptEdits: '自动接受编辑', plan: '计划模式', auto: '自动模式', bypassPermissions: '完全权限', dontAsk: '不询问' };
@@ -68,7 +68,10 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   const foreign = !!agent;
   const wKind: AgentKind = foreign ? wAgent : 'claude';
   // a remembered profile the chosen agent cannot use (or one since deleted) falls back to the agent's own login
-  const provider = wProvider === 'claude' ? undefined : providers.find((p) => p.id === wProvider && compatibleTypes(wKind).includes(p.type));
+  const engine = useStore((s) => s.engine);
+  const gatewayView = useGatewayStatus();
+  // unusable right now (official engine, gateway off / group gone) counts as gone too
+  const provider = usableProfile(providers, wProvider, { agent: wKind, engine, gatewayGroups: gatewayView.groups, gatewayEnabled: gatewayView.enabled });
   // the agent's own model list: the catalog, or what the agent registry probed when the catalog has none
   const wBuiltin = agent && !modelsFor(agent.kind).length ? agent.models.map((m) => ({ value: m, displayName: m })) : undefined;
   const pickWelcome = (it: ModelMenuItem) => { setWProvider(it.providerId); setWModel(it.model); return true; };

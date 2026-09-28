@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import type { AgentKind } from '@shared';
 import { useStore } from '@/store';
@@ -6,7 +6,7 @@ import { ago, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { buildModelMenu, filterMenu, pushRecent, recentKey, type ModelMenuItem, type ModelMenuSection } from './menu';
 import { refreshAllModels, useGatewayStatus, useRefreshRun } from './data';
-import { placeMenu } from './place';
+import { placeMenu, samePlacement, type Placement } from './place';
 import './models.css';
 
 /** `5 分钟前` / `刚刚` / a date */
@@ -52,7 +52,7 @@ export function ModelMenu(p: ModelMenuProps) {
   const box = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
-  const [pos, setPos] = useState<CSSProperties | null>(null);
+  const [pos, setPos] = useState<Placement | null>(null);
   const keyNav = useRef(false); // scroll the active row into view only when the keyboard moved it
 
   // portalled: follow the anchor — window resizes, scrolling, and layout changes that move it without resizing
@@ -61,15 +61,17 @@ export function ModelMenu(p: ModelMenuProps) {
     const a = p.anchor?.current;
     if (!a) return;
     const place = () => {
-      const r = a.getBoundingClientRect();
-      setPos(placeMenu(r, { vw: window.innerWidth, vh: window.innerHeight }, p.placement ?? 'up', p.align ?? 'right'));
+      const next = placeMenu(a.getBoundingClientRect(), { vw: window.innerWidth, vh: window.innerHeight }, p.placement ?? 'up', p.align ?? 'right');
+      setPos((cur) => (samePlacement(cur, next) ? cur : next)); // unchanged coordinates: no re-render
     };
+    // scrolling the menu's own list moves nothing: only scrolls elsewhere can move the anchor
+    const onScroll = (e: Event) => { if (!box.current?.contains(e.target as Node)) place(); };
     place();
     const ro = new ResizeObserver(place);
     for (const el of [a, a.closest('.composer'), a.closest('.pane'), document.body]) if (el) ro.observe(el);
     window.addEventListener('resize', place);
-    window.addEventListener('scroll', place, true);
-    return () => { ro.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
+    window.addEventListener('scroll', onScroll, true);
+    return () => { ro.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', onScroll, true); };
   }, [p.anchor, p.placement, p.align]);
   useLayoutEffect(() => {
     const el = box.current;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { placeMenu } from './place';
+import { placeMenu, samePlacement } from './place';
 
 const rect = (top: number, bottom: number, left = 600, right = 700) => ({ top, bottom, left, right });
 
@@ -27,5 +27,14 @@ describe('placeMenu', () => {
   it('keeps a gutter at the edges', () => {
     expect(placeMenu(rect(800, 830, 900, 1398), { vw: 1400, vh: 900 }, 'up', 'right').right).toBe(8);
     expect(placeMenu(rect(800, 830, 2, 60), { vw: 1400, vh: 900 }, 'up', 'left').left).toBe(8);
+  });
+});
+
+describe('samePlacement', () => {
+  it('equal coordinates are the same placement (no re-render); any change is not', () => {
+    const a = placeMenu(rect(800, 830), { vw: 1400, vh: 900 }, 'up', 'right');
+    expect(samePlacement(a, placeMenu(rect(800, 830), { vw: 1400, vh: 900 }, 'up', 'right'))).toBe(true);
+    expect(samePlacement(a, placeMenu(rect(790, 820), { vw: 1400, vh: 900 }, 'up', 'right'))).toBe(false);
+    expect(samePlacement(null, a)).toBe(false);
   });
 });

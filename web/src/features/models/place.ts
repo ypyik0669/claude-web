@@ -27,3 +27,8 @@ export function placeMenu(r: { top: number; bottom: number; left: number; right:
   if (align === 'right') st.right = Math.max(MARGIN, vw - r.right); else st.left = Math.max(MARGIN, r.left);
   return st;
 }
+
+/** Same coordinates: the layout observers fire often (every keystroke that grows the composer), skip the re-render. */
+export function samePlacement(a: Placement | null, b: Placement): boolean {
+  return !!a && a.top === b.top && a.bottom === b.bottom && a.left === b.left && a.right === b.right && a.maxHeight === b.maxHeight;
+}

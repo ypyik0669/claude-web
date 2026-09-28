@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GatewayGroup, Provider } from '@shared';
-import { buildModelMenu, chipLabel, compatibleTypes, filterMenu, gatewayModels, modelKey, modelTable, pushRecent, recentKey } from './menu';
+import { buildModelMenu, chipLabel, compatibleTypes, filterMenu, gatewayModels, modelKey, modelTable, pushRecent, recentKey, usableProfile } from './menu';
 
 const prov = (id: string, o: Partial<Provider> = {}): Provider => ({ id, name: id, type: 'anthropic', baseUrl: 'https://x', apiKey: '…', createdAt: 0, ...o });
 const PROVIDERS: Provider[] = [
@@ -181,5 +181,17 @@ describe('unavailable profiles (engine / gateway)', () => {
     const m = menu({ engine: official, settings: { 'ui.favoriteModels': ['gkey:gpt-6-astra'], 'ui.recentModels': ['gkey:gpt-5.6-sol'] } });
     expect(sectionIds(m)).not.toContain('favorites');
     expect(sectionIds(m)).not.toContain('recent');
+  });
+});
+
+describe('usableProfile (welcome composer remembered profile)', () => {
+  it('only a profile the agent takes and that is available now', () => {
+    expect(usableProfile(PROVIDERS, 'gkey', { agent: 'claude' })?.id).toBe('gkey');
+    expect(usableProfile(PROVIDERS, 'gkey', { agent: 'claude', engine: { runtime: 'claude' } })).toBeUndefined();
+    expect(usableProfile(PROVIDERS, 'snbchr', { agent: 'codex' })).toBeUndefined();
+    expect(usableProfile(PROVIDERS, 'gw', { agent: 'codex', gatewayEnabled: false })).toBeUndefined();
+    expect(usableProfile(PROVIDERS, 'gw', { agent: 'codex', gatewayEnabled: true, gatewayGroups: GROUPS })?.id).toBe('gw');
+    expect(usableProfile(PROVIDERS, 'claude', { agent: 'claude' })).toBeUndefined();
+    expect(usableProfile(PROVIDERS, 'gone', { agent: 'claude' })).toBeUndefined();
   });
 });

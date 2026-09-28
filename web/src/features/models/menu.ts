@@ -278,3 +278,11 @@ export function modelTable(providers: Provider[], groups: GatewayGroup[] | undef
     .filter((r) => !terms.length || terms.every((t) => `${r.model} ${r.providers.map((x) => x.name).join(' ')}`.toLowerCase().includes(t)))
     .sort((a, b) => b.providers.length - a.providers.length || a.model.localeCompare(b.model));
 }
+
+/** The welcome composer's remembered profile, if the chosen agent can use it right now (else undefined → own login). */
+export function usableProfile(providers: Provider[], id: string | undefined, i: Pick<BuildMenuInput, 'agent' | 'engine' | 'gatewayGroups' | 'gatewayEnabled'>): Provider | undefined {
+  if (!id || id === OWN_PROVIDER) return undefined;
+  const p = providers.find((x) => x.id === id);
+  if (!p || !compatibleTypes(i.agent).includes(p.type) || profileUnavailable(p, i)) return undefined;
+  return p;
+}
