@@ -20,6 +20,7 @@ import { Icon } from '@/ui/icons';
 import { EngineSwitcher } from '../EngineSwitcher';
 import { SessionMenu, effectiveCaps, forkSession } from '@/features/sidebar/session-actions';
 import { sessionPeer } from '@/features/peers';
+import { blockRemoteOpen } from '@/features/remote-guard';
 
 /** git status for a cwd, refreshed on git.changed broadcasts (shared by the files tab badges). */
 function useGitStatus(cwd: string, enabled: boolean): GitStatus | null {
@@ -149,7 +150,7 @@ function Artifacts({ sessionId }: { sessionId: string }) {
   return (
     <div className="list">
       {items.map((a) => (
-        <div key={a.path} className="row clickable" onClick={() => openTile({ id: `d${Date.now()}`, kind: 'doc', path: a.path }, 'tab')} title={a.path}>
+        <div key={a.path} className="row clickable" onClick={() => { if (!blockRemoteOpen(sessionId, a.path)) openTile({ id: `d${Date.now()}`, kind: 'doc', path: a.path }, 'tab'); }} title={a.path}>
           <span><Icon name="read" size={13} /></span>
           <div className="grow"><div>{basename(a.path)}</div><div className="sub">{a.path}</div></div>
           <span className="badge">{a.via}</span>

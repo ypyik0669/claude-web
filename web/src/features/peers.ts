@@ -13,3 +13,14 @@ export function sessionPeer(sessionId: string | null | undefined, sessions: Sess
   const listed = sessions.find((s) => s.sessionId === sessionId)?.peer ?? sessions.find((s) => s.peer?.id === p.peerId)?.peer;
   return listed ? { ...listed, id: p.peerId } : { id: p.peerId, name: p.peerId };
 }
+
+/** Opening `path` from this session's context: null = fine (a local session), else the message to show instead. */
+export function remoteOpenBlock(sessionId: string | null | undefined, sessions: SessionSummary[], path?: string): string | null {
+  const peer = sessionPeer(sessionId, sessions);
+  return peer ? remoteFileNote(peer, path) : null;
+}
+
+/** What to tell the user instead of opening a remote session's file here (same path on this disk ≠ that file). */
+export function remoteFileNote(peer: Pick<SessionPeer, 'name'>, path?: string): string {
+  return `文件在机器「${peer.name}」上${path ? `（${path}）` : ''}，请在那台机器上打开`;
+}
