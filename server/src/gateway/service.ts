@@ -14,8 +14,9 @@ import { estimateTokens, type IrEvent, type IrRequest, type IrUsage } from './ir
 import { SseParser } from './sse.js';
 import {
   DEFAULT_BASE, PROTOCOL_LABEL, buildOutbound, inboundStreamRenderer, isPassthrough, joinUrl, outboundOf, outboundStreamParser, parseInbound,
-  parseOutboundResponse, renderInboundError, renderInboundResponse, sniffUsage, supported, upstreamErrorMessage, type Outbound,
+  parseOutboundResponse, renderInboundError, renderInboundResponse, sniffUsage, supported, upstreamErrorMessage, type Outbound, type OutboundOpts,
 } from './convert.js';
+import { CACHE_KEY_MAX, addMissing, affinityHeaders, cacheKeyOf, isParamRejection, mentionsCacheKey } from './cache.js';
 import { UpstreamError, decoded, decoder, errorHeaders, passthroughHeaders, readText, replaceTopLevelString, responseHeaders, sendUpstream, translatedHeaders, type UpstreamResponse } from './upstream.js';
 
 /** Streaming: time from sending a request to the first body byte before the member counts as failed. */
@@ -172,6 +173,7 @@ export class GatewayService extends EventEmitter {
       g.members = patch.members.filter((m) => m?.providerId && !seen.has(m.providerId) && seen.add(m.providerId)).map((m) => ({ providerId: m.providerId, ...(m.model?.trim() ? { model: m.model.trim() } : {}), ...(m.weight && m.weight !== 1 ? { weight: Math.max(1, Math.floor(m.weight)) } : {}) }));
     }
     if (patch.modelMap !== undefined) g.modelMap = Object.fromEntries(Object.entries(patch.modelMap ?? {}).map(([k, v]) => [k.trim(), String(v).trim()]).filter(([k, v]) => k && v));
+    if (patch.cache1h !== undefined) { if (patch.cache1h) g.cache1h = true; else delete g.cache1h; }
     this.states.reset(g.id); // edited group: disabled members get another chance
     await this.deps.meta.saveGateway();
     this.emit('changed');
@@ -281,6 +283,7 @@ export class GatewayService extends EventEmitter {
   private irOf(ctx: Ctx): IrRequest {
     if (!ctx.ir) {
       ctx.ir = parseInbound(ctx.route.inbound, ctx.json, { stream: ctx.route.stream, model: ctx.model });
+      ctx.ir.cacheKey = cacheKeyOf(ctx.json, ctx.req.headers);
       for (const t of ctx.ir.tools ?? []) if (t.custom) ctx.customTools.add(t.name);
     }
     return ctx.ir;
@@ -369,6 +372,8 @@ export class GatewayService extends EventEmitter {
     let path: string;
     let body: Buffer;
     let headers: Record<string, string>;
+    // translated requests carry prompt caching the client could not have put there (cache.ts)
+    let retryBody: Buffer | null = null; // the same request without prompt_cache_key, for an upstream that rejects it
     try {
       if (pass) {
         if (route.inbound === 'gemini') {
@@ -381,10 +386,17 @@ export class GatewayService extends EventEmitter {
         }
         headers = passthroughHeaders(ctx.req.rawHeaders, outbound, p.apiKey);
       } else {
-        const out = buildOutbound(outbound, { ...this.irOf(ctx), model, stream: route.stream });
+        const ir = { ...this.irOf(ctx), model, stream: route.stream };
+        const opts: OutboundOpts = outbound === 'anthropic' ? { cacheTtl: group.cache1h || p.cache1h ? '1h' : undefined }
+          : outbound === 'openai' ? { promptCacheKey: !p.noPromptCacheKey, cacheControl: p.cacheControlFormat === 'anthropic' } : {};
+        const out = buildOutbound(outbound, ir, opts);
         path = out.path;
         body = Buffer.from(JSON.stringify(out.body));
         headers = translatedHeaders(outbound, p.apiKey, route.stream, String(ctx.req.headers['user-agent'] ?? ''));
+        if (outbound === 'openai' && ir.cacheKey) {
+          addMissing(headers, affinityHeaders(ir.cacheKey.slice(0, CACHE_KEY_MAX), p.type === 'grok'));
+          if (out.body.prompt_cache_key) retryBody = Buffer.from(JSON.stringify(buildOutbound(outbound, ir, { ...opts, promptCacheKey: false }).body));
+        }
       }
     } catch (e: any) {
       return { kind: 'final', status: 400, text: JSON.stringify(renderInboundError(route.inbound, 400, `请求转换失败：${e?.message ?? e}`)), headers: {}, passthrough: true, model };
@@ -402,6 +414,14 @@ export class GatewayService extends EventEmitter {
     let up: UpstreamResponse;
     try {
       up = await sendUpstream(url, { method: 'POST', headers, body, signal: ctx.signal, headerTimeoutMs: waitMs });
+      // an upstream that does not know prompt_cache_key: once more without it; remembered on the profile when
+      // the retry works or the error named the field (a 400 about something else stays that 400)
+      if (retryBody && isParamRejection(up.status)) {
+        let text = '';
+        try { text = await readText(up.body, 1024 * 1024); } catch { /* keep empty */ }
+        up = await sendUpstream(url, { method: 'POST', headers, body: retryBody, signal: ctx.signal, headerTimeoutMs: waitMs });
+        if ((up.status >= 200 && up.status < 300) || mentionsCacheKey(text)) void this.deps.meta.upsertProvider({ id: p.id, noPromptCacheKey: true }, { mustExist: true }).catch(() => { /* next request tries again */ });
+      }
     } catch (e: any) {
       if (ctx.signal.aborted) return aborted();
       return switchOn(e instanceof UpstreamError && e.timeout ? 504 : 502, e?.message ?? String(e));

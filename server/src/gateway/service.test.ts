@@ -264,6 +264,60 @@ describe('session wiring', () => {
   });
 });
 
+describe('prompt caching on translated requests', () => {
+  const chatReq = { model: 'claude-x', prompt_cache_key: 'codex-thread-1', messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'hi' }], tools: [{ type: 'function', function: { name: 'ls', parameters: { type: 'object' } } }] };
+  const ccCount = (body: string) => body.match(/"cache_control"/g)?.length ?? 0;
+  it('→ Anthropic member: 3 cache_control breakpoints + metadata.user_id = the client\'s cache key; group 1h option', async () => {
+    await gw.upsertGroup({ id: 'main', members: [{ providerId: 'a' }] });
+    const r = await fetch(`${base}/main/v1/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: JSON.stringify(chatReq) });
+    expect(r.status).toBe(200);
+    const up = JSON.parse(A.hits[0].body);
+    expect(ccCount(A.hits[0].body)).toBe(3);
+    expect(up.metadata).toEqual({ user_id: 'codex-thread-1' });
+    expect(up.system[0].cache_control).toEqual({ type: 'ephemeral' });
+    await gw.upsertGroup({ id: 'main', cache1h: true });
+    expect(gw.group('main')!.cache1h).toBe(true);
+    await fetch(`${base}/main/v1/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json', session_id: 'from-header' }, body: JSON.stringify({ ...chatReq, prompt_cache_key: undefined }) });
+    const up2 = JSON.parse(A.hits[1].body);
+    expect(up2.system[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' });
+    expect(up2.metadata).toEqual({ user_id: 'from-header' });
+    await gw.upsertGroup({ id: 'main', cache1h: false, members: [{ providerId: 'a' }, { providerId: 'b' }] });
+    expect(gw.group('main')!.cache1h).toBeUndefined();
+  });
+  it('→ OpenAI member: prompt_cache_key + affinity headers from the Claude Code session; a 400 about the key → retried without it and remembered', async () => {
+    let rejectKey = true;
+    O.handler.fn = (_q, res, body) => {
+      if (rejectKey && JSON.parse(body).prompt_cache_key) { res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":{"message":"Unrecognized request argument supplied: prompt_cache_key"}}'); return; }
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'c', object: 'chat.completion', model: 'gpt-4.1', choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 1, prompt_cache_hit_tokens: 80 } }));
+    };
+    rejectKey = false;
+    const ok = await call('/mixed/v1/messages', msg, { 'x-claude-code-session-id': 'sess-42' });
+    expect(ok.status).toBe(200);
+    expect(JSON.parse(O.hits[0].body).prompt_cache_key).toBe('sess-42');
+    expect(O.hits[0].headers).toMatchObject({ session_id: 'sess-42', 'x-session-affinity': 'sess-42', 'x-client-request-id': 'sess-42' });
+    expect(ledger[0]).toMatchObject({ input: 20, cacheRead: 80, sessionId: 'sess-42' });
+    rejectKey = true;
+    O.hits.length = 0;
+    const r = await call('/mixed/v1/messages', msg, { 'x-claude-code-session-id': 'sess-42' });
+    expect(r.status).toBe(200);
+    expect(O.hits).toHaveLength(2);
+    expect(JSON.parse(O.hits[1].body).prompt_cache_key).toBeUndefined();
+    expect(meta.provider('o')!.noPromptCacheKey).toBe(true);
+    O.hits.length = 0;
+    await call('/mixed/v1/messages', msg, { 'x-claude-code-session-id': 'sess-42' });
+    expect(O.hits).toHaveLength(1); // not sent (and not retried) any more
+    expect(JSON.parse(O.hits[0].body).prompt_cache_key).toBeUndefined();
+    delete meta.provider('o')!.noPromptCacheKey;
+  });
+  it('a 400 that is not about the key is still returned as is after the one retry', async () => {
+    O.handler.fn = (_q, res) => res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":{"message":"context too long"}}');
+    const r = await call('/mixed/v1/messages', msg, { 'x-claude-code-session-id': 'sess-43' });
+    expect(r.status).toBe(400);
+    expect(JSON.parse(r.text).error.message).toBe('context too long');
+    expect(meta.provider('o')!.noPromptCacheKey).toBeUndefined();
+  });
+});
+
 // ---- review regressions ----
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Raw http client that hangs up after `cutMs` from the first response byte (or from sending, when no response comes). */

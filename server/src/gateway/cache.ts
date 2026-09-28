@@ -1,0 +1,69 @@
+// Prompt-cache helpers shared by the gateway's translated requests and the per-profile cache shim.
+// Caches are keyed on an exact prefix (and, at OpenAI-style providers / new-api relays, on a routing key),
+// so everything here is about making the same session send the same bytes with the same key.
+import type http from 'node:http';
+
+/** OpenAI caps prompt_cache_key at 64 characters. */
+export const CACHE_KEY_MAX = 64;
+
+const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+const header = (h: http.IncomingHttpHeaders, k: string) => str(Array.isArray(h[k]) ? h[k]![0] : h[k]);
+
+/**
+ * The client's session identity, in order of how explicitly it names a cache route: the body's
+ * `prompt_cache_key` (Codex, OpenAI SDKs) → `session_id` / `x-client-request-id` headers (Codex, Pi) →
+ * `x-claude-code-session-id` (Claude Code) → Anthropic `metadata.user_id`.
+ */
+export function cacheKeyOf(json: any, headers: http.IncomingHttpHeaders): string | undefined {
+  return str(json?.prompt_cache_key) ?? header(headers, 'session_id') ?? header(headers, 'x-client-request-id') ?? header(headers, 'x-claude-code-session-id') ?? str(json?.metadata?.user_id);
+}
+
+/**
+ * Session-affinity headers relays route on (new-api channel affinity, Pi / Codex conventions); xAI keeps a
+ * conversation on one cache host by `x-grok-conv-id`. Only added when the client did not send them.
+ */
+export function affinityHeaders(key: string, grok: boolean): Record<string, string> {
+  const h: Record<string, string> = { session_id: key, 'x-session-affinity': key, 'x-client-request-id': key };
+  if (grok) h['x-grok-conv-id'] = key;
+  return h;
+}
+export function addMissing(headers: Record<string, string>, extra: Record<string, string>): Record<string, string> {
+  const have = new Set(Object.keys(headers).map((k) => k.toLowerCase()));
+  for (const [k, v] of Object.entries(extra)) if (!have.has(k)) headers[k] = v;
+  return headers;
+}
+
+/** An upstream 400 that is about the cache key (so dropping it and retrying is the fix). */
+export const mentionsCacheKey = (text: string) => /prompt_cache_key/i.test(text);
+/** Status codes where a request we decorated with prompt_cache_key is retried once without it. */
+export const isParamRejection = (status: number) => status === 400 || status === 422;
+
+/** Claude Code puts a per-build/per-request billing line first in `system`: useless (and prefix-breaking) elsewhere. */
+export const isBillingHeader = (text: string) => /^\s*x-anthropic-billing-header\s*:/i.test(text);
+
+/**
+ * Insert `"key": value` as the FIRST member of a top-level JSON object, leaving every other byte as it was
+ * (a relay may hash the body; a cache is keyed on the prefix after all). Null when the text is not an object.
+ */
+export function insertTopLevelField(json: string, key: string, value: unknown): string | null {
+  const i = json.search(/\S/);
+  if (i < 0 || json[i] !== '{') return null;
+  const rest = json.slice(i + 1);
+  const empty = /^\s*\}/.test(rest);
+  return `${json.slice(0, i + 1)}${JSON.stringify(key)}:${JSON.stringify(value)}${empty ? '' : ','}${rest}`;
+}
+
+/**
+ * Some OpenAI-compatible upstreams report the hit only at the top level (`prompt_cache_hit_tokens` —
+ * DeepSeek; `cached_tokens` — Kimi). Clients that only read `prompt_tokens_details.cached_tokens` (ccb, the
+ * OpenAI SDK's typing) then show 0 %. Adds the details field in place; false when nothing had to change.
+ */
+export function fixChatUsage(u: any): boolean {
+  if (!u || typeof u !== 'object') return false;
+  const d = u.prompt_tokens_details;
+  if (d && typeof d === 'object' && typeof d.cached_tokens === 'number') return false;
+  const hit = typeof u.prompt_cache_hit_tokens === 'number' ? u.prompt_cache_hit_tokens : typeof u.cached_tokens === 'number' ? u.cached_tokens : undefined;
+  if (hit === undefined) return false;
+  u.prompt_tokens_details = { ...(d && typeof d === 'object' ? d : {}), cached_tokens: hit };
+  return true;
+}

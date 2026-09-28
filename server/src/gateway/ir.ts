@@ -34,6 +34,11 @@ export interface IrRequest {
   topK?: number;
   stop?: string[];
   stream: boolean;
+  /**
+   * The client's session identity (cache.ts `cacheKeyOf`): Anthropic outbound sends it as
+   * `metadata.user_id`, OpenAI outbound as `prompt_cache_key` — both are what relays route a cache on.
+   */
+  cacheKey?: string;
 }
 
 export type IrStop = 'end' | 'max_tokens' | 'tool_use' | 'stop_sequence' | 'refusal';

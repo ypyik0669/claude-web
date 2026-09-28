@@ -130,6 +130,19 @@ export interface Provider {
   /** type 'gateway': the local model-gateway group this profile routes through (baseUrl / apiKey are filled per session). */
   gatewayGroupId?: string;
   createdAt: number;
+  // ---- prompt caching (2026-09-28; gateway/cache.ts, gateway/shim.ts) ----
+  /** openai / grok: Claude (ccb) sessions go through the local cache shim (default on; false = straight to the endpoint). */
+  cacheShim?: boolean;
+  /** openai: inside the shim, gpt-* chat/completions → /v1/responses (default on; false = keep chat/completions). */
+  responsesApi?: boolean;
+  /** anthropic: 1-hour cache TTL — ENABLE_PROMPT_CACHING_1H for the official binary, ttl '1h' on gateway-translated requests. */
+  cache1h?: boolean;
+  /** openai: Anthropic-style cache_control markers on gateway-translated requests (Bailian explicit cache, OpenRouter anthropic/*). */
+  cacheControlFormat?: 'anthropic';
+  /** learned: the endpoint rejected `prompt_cache_key` (400) — no longer sent. */
+  noPromptCacheKey?: boolean;
+  /** learned: the endpoint has no /v1/responses (404 / 405 / 501) — the shim keeps chat/completions. */
+  noResponsesApi?: boolean;
 }
 export const CLAUDE_PROVIDER_ID = 'claude';
 /** One profile's result of `providers.refreshModels` (model list only — no chat request, no tokens). */

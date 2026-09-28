@@ -1,6 +1,7 @@
 // OpenAI Chat Completions ⇄ IR. Shapes per platform.openai.com (chat/completions, chat.completion.chunk).
 import { newId, safeJson, type IrEvent, type IrMessage, type IrPart, type IrRequest, type IrResponse, type IrStop, type IrTool, type IrUsage, type StreamParser, type StreamRenderer } from './ir.js';
 import { sse } from './sse.js';
+import { CACHE_KEY_MAX } from './cache.js';
 
 function contentParts(c: unknown): IrPart[] {
   if (typeof c === 'string') return c ? [{ type: 'text', text: c }] : [];
@@ -60,10 +61,17 @@ export function parseRequest(body: any): IrRequest {
 
 const partOut = (p: IrPart): any => p.type === 'text' ? { type: 'text', text: p.text } : p.type === 'image' ? { type: 'image_url', image_url: { url: p.data ? `data:${p.mediaType};base64,${p.data}` : p.url } } : null;
 
-/** Reasoning-family models reject `max_tokens` and want `max_completion_tokens`. */
-const wantsCompletionTokens = (model: string) => /^(o\d|gpt-5)/i.test(model);
+/** Reasoning-family models reject `max_tokens` and want `max_completion_tokens` (and no sampling knobs on Responses). */
+export const wantsCompletionTokens = (model: string) => /^(o\d|gpt-5)/i.test(model);
 
-export function renderRequest(r: IrRequest): any {
+export interface ChatRenderOpts {
+  /** send `r.cacheKey` as `prompt_cache_key` (off once the member rejected the field) */
+  promptCacheKey?: boolean;
+  /** Anthropic-style `cache_control` markers (Bailian explicit cache, OpenRouter anthropic/*): profile `cacheControlFormat: 'anthropic'` */
+  cacheControl?: boolean;
+}
+
+export function renderRequest(r: IrRequest, opts: ChatRenderOpts = {}): any {
   const messages: any[] = [];
   if (r.system) messages.push({ role: 'system', content: r.system });
   for (const m of r.messages) {
@@ -101,7 +109,23 @@ export function renderRequest(r: IrRequest): any {
     if (r.toolChoice) out.tool_choice = r.toolChoice.type === 'tool' ? { type: 'function', function: { name: r.toolChoice.name } } : r.toolChoice.type === 'any' ? 'required' : r.toolChoice.type;
   }
   if (r.stream) { out.stream = true; out.stream_options = { include_usage: true }; }
+  if (opts.promptCacheKey && r.cacheKey) out.prompt_cache_key = r.cacheKey.slice(0, CACHE_KEY_MAX);
+  if (opts.cacheControl) markCacheControl(out);
   return out;
+}
+
+/** Breakpoints in Anthropic's format on an OpenAI body: system, last tool, last message's last part. */
+function markCacheControl(body: any) {
+  const cc = { type: 'ephemeral' };
+  const mark = (m: any) => {
+    if (!m) return;
+    if (typeof m.content === 'string' && m.content) m.content = [{ type: 'text', text: m.content, cache_control: cc }];
+    else if (Array.isArray(m.content) && m.content.length) m.content[m.content.length - 1] = { ...m.content[m.content.length - 1], cache_control: cc };
+  };
+  const msgs: any[] = body.messages;
+  if (msgs[0]?.role === 'system') mark(msgs[0]);
+  if (body.tools?.length) body.tools[body.tools.length - 1].cache_control = cc;
+  if (msgs.length > 1 || msgs[0]?.role !== 'system') mark(msgs[msgs.length - 1]);
 }
 
 const STOP_IN: Record<string, IrStop> = { stop: 'end', length: 'max_tokens', tool_calls: 'tool_use', function_call: 'tool_use', content_filter: 'refusal' };
