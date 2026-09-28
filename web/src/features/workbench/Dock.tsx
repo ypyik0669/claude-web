@@ -176,6 +176,8 @@ export function Dock() {
   const stacked = simple && place.stacked;
   // no room for a strip: the temporary tabs are listed in 「更多」 (default look only; workbench tabs are icons)
   const folded = simple && place.folded && temps.length > 0;
+  // …and one of them is in front: nothing in the row names it, so the panel gets a title row with its ×
+  const foldedFront = folded && !!active && temps.some((t) => t.id === active);
 
   // the temporary strip's edges fade (and get an arrow) while there is more to scroll to on that side
   const updateFade = () => {
@@ -322,7 +324,17 @@ export function Dock() {
           {!min && <button className="icon-btn" title={`隐藏${TERMS.dock} (${modKey}+J)`} aria-label={`隐藏${TERMS.dock}`} onClick={() => dispatch({ t: 'dock.set', patch: { open: false } })}><Icon name="close" size={15} /></button>}
         </span>
       </div>
-      <div className="dock-body">
+      <div className={clsx('dock-body', foldedFront && 'headed')}>
+        {/* a temporary panel in front that has no tab of its own (folded into 「更多」): its name and × on top of the
+            panel itself — the tab row does not move, no fixed tab is lit, and it says what this is and how to close it */}
+        {foldedFront && active && (
+          <div className="dock-foldhead" data-panel={active}>
+            <Icon name={PANEL_ICONS[active]} size={14} />
+            <span className="t">{PANEL_TITLES[active]}</span>
+            <span className="grow" />
+            <button className="icon-btn xs" title={`关闭${PANEL_TITLES[active]}`} aria-label={`关闭${PANEL_TITLES[active]}`} onClick={() => close(active)}><Icon name="close" size={12} /></button>
+          </div>
+        )}
         {mounted.map((id) => (
           <div key={id} className="dock-panel" hidden={active !== id} data-panel={id}>
             <PanelBody id={id} visible={shown && !min && active === id} />

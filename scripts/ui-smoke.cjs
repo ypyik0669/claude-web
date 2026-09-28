@@ -1107,6 +1107,9 @@ function driver() {
           await sleep(900);
           const fit = await js(`(() => { const vw = innerWidth; const rp = document.querySelector('.rpanel').getBoundingClientRect(); const tabs = [...document.querySelectorAll('.dock .dock-tabs .tab.fixed')].map((t) => { const r = t.getBoundingClientRect(); const whole = r.width > 0 && r.left >= rp.left - 0.5 && r.right <= Math.min(rp.right, vw) + 0.5; const underCaption = r.top < 40 && r.right > vw - 150; return { id: t.dataset.panel, ok: whole && !underCaption }; }); return { vw, rp: Math.round(rp.width), stacked: !!document.querySelector('.dock-tabs.stacked'), tabs }; })()`);
           check('desktop · Windows, 1024 wide, a temporary tab open: the four fixed tabs are fully visible', fit.tabs.length === 4 && fit.tabs.every((x) => x.ok), JSON.stringify(fit));
+          // the temporary tab has its own tab here (the strip): no title row on top of the panel as well
+          const noHead = await js(`!document.querySelector('.dock .dock-foldhead') && !!document.querySelector('.dock .dock-tablist .tab.active[data-panel="goals"]')`);
+          check('a temporary tab shown in the strip gets no extra title row on its panel', noHead);
           await click('.dock button.dock-more');
           const menu = await js(`(() => { const m = document.querySelector('.dock-more-menu'); if (!m) return null; const r = m.getBoundingClientRect(); return { l: Math.round(r.left), r: Math.round(r.right), b: Math.round(r.bottom), vw: innerWidth, vh: innerHeight }; })()`);
           check('desktop · Windows, 1024 wide: the 「更多」 menu is inside the window', !!menu && menu.l >= 0 && menu.r <= menu.vw && menu.b <= menu.vh, JSON.stringify(menu));
@@ -1132,6 +1135,10 @@ function driver() {
           const r1440 = await js(rowProbe);
           check('desktop · Windows, 1440 wide, default panel, 审阅 with files, a temporary tab open: the row is not moved below the caption buttons', counted && r1440.rp === 440 && !r1440.stacked && r1440.fixedOk && r1440.bodyTop <= 53, JSON.stringify(r1440));
           check('…and the temporary tab is reachable: its own tab, or 「更多」 counting it (and marked while it is in front)', r1440.strip || (r1440.badge === '1' && r1440.moreActive), JSON.stringify(r1440));
+          // folded into 「更多」 and in front: the panel says what it is (目标) and has its ×; no fixed tab is lit
+          const headProbe = `(() => { const h = document.querySelector('.dock .dock-foldhead'); const p = document.querySelector('.dock .dock-panel[data-panel="goals"]'); if (!h) return null; const hr = h.getBoundingClientRect(); return { text: h.querySelector('.t')?.textContent, x: !!h.querySelector('button[aria-label="关闭目标"]'), h: Math.round(hr.height), headTop: Math.round(hr.top), panelTop: p ? Math.round(p.getBoundingClientRect().top) : null, lit: document.querySelectorAll('.dock .dock-tabs .tab.fixed.active').length }; })()`;
+          const head = await js(headProbe);
+          check('1440: the folded temporary panel in front gets a title row — 目标 and a close ×, inside the panel (tab row unmoved), no fixed tab lit', r1440.strip ? !head : !!head && head.text === '目标' && head.x && head.h >= 32 && head.h <= 36 && head.headTop === r1440.bodyTop && head.panelTop >= head.headTop + head.h && head.lit === 0, JSON.stringify({ head, bodyTop: r1440.bodyTop }));
           await shot('right-panel-desktop-win-1440');
           await click('.dock button.dock-more');
           const openRow = await js(`(() => { const b = document.querySelector('.dock-more-menu .dock-more-open[data-open="goals"] button[data-panel="goals"]'); return b ? b.getAttribute('aria-checked') : null; })()`);
@@ -1148,13 +1155,22 @@ function driver() {
           check('the 「更多」 menu closes when settings open and when the right panel is hidden', closedBySettings && reopened && closedByHide, JSON.stringify({ closedBySettings, reopened, closedByHide }));
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: true } })`);
           await sleep(400);
-          // closing it from the menu goes back to the fixed tab that was in front (审阅: shown before 目标)
+          // the title row's × closes it and goes back to the fixed tab that was in front (审阅: shown before 目标)
+          const landedOn = (id) => `!window.__store.getState().layout.dock.tabs.includes('${id}') && !!document.querySelector('.dock .dock-tabs .tab.fixed.active[data-panel="files"]') && !document.querySelector('.dock .dock-more-n') && !document.querySelector('.dock .dock-foldhead')`;
+          if (!r1440.strip) await click('.dock .dock-foldhead button[aria-label="关闭目标"]');
+          else await click('.dock .dock-tabs .tab[data-panel="goals"] .x');
+          const back = await waitFor(landedOn('goals'), 3000);
+          check('the title row’s × closes the temporary panel and lands on 审阅 (the fixed tab in front before); the count and the row go', back, await js(dockState));
+          // …and closing one from 「更多」 does the same
           if (!r1440.strip) {
             await click('.dock button.dock-more');
-            await click('.dock-more-menu .dock-more-open[data-open="goals"] button.x');
-          } else await click('.dock .dock-tabs .tab[data-panel="goals"] .x');
-          const back = await waitFor(`!window.__store.getState().layout.dock.tabs.includes('goals') && !!document.querySelector('.dock .dock-tabs .tab.fixed.active[data-panel="files"]') && !document.querySelector('.dock .dock-more-n')`, 3000);
-          check('closing the temporary tab from 「更多」 lands on 审阅 (the fixed tab in front before) and the count goes', back, await js(dockState));
+            await click('.dock-more-menu [data-panel="usage"]');
+            await sleep(500);
+            await click('.dock button.dock-more');
+            await click('.dock-more-menu .dock-more-open[data-open="usage"] button.x');
+            const back2 = await waitFor(landedOn('usage'), 3000);
+            check('closing the temporary tab from 「更多」 lands on 审阅 too', back2, await js(dockState));
+          }
           // switching conversation (审阅 reloads: its count goes empty, then back) never moves the row or the panel
           await js(`(() => { const r = document.querySelector('.dock .dock-tabs'); window.__cwFlips = []; window.__cwFlipObs = new MutationObserver(() => window.__cwFlips.push(r.className)); window.__cwFlipObs.observe(r, { attributes: true, attributeFilter: ['class'] }); })()`);
           const top0 = await js(rowProbe);

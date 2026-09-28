@@ -1515,6 +1515,12 @@ html.desktop:not(.mac) .dock.simple:not(.min) .dock-tabs .tab.fixed { padding: 0
 /* the temporary tabs folded into 「更多」: the button says how many */
 .dock-more { position: relative; }
 .dock-more-n { position: absolute; top: 1px; right: 0; min-width: 13px; height: 13px; padding: 0 3px; border-radius: var(--r-pill); background: var(--surface-2); box-shadow: 0 0 0 1px var(--edge-default); color: var(--ink-1); font-size: var(--fs-micro); line-height: 13px; text-align: center; font-variant-numeric: tabular-nums; pointer-events: none; }
+/* …and when one of them is in front, the panel body starts with its name and × (inside the body: the tab row stays) */
+.dock-foldhead { position: absolute; top: 0; left: 0; right: 0; height: 34px; display: flex; align-items: center; gap: var(--sp-2); padding: 0 8px 0 12px; border-bottom: 1px solid var(--edge-subtle); background: var(--surface-0); color: var(--ink-1); font-size: var(--fs-base); font-weight: 500; }
+.dock-foldhead > svg { color: var(--ink-4); flex: none; }
+.dock-foldhead .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock-foldhead .grow { flex: 1; }
+.dock-body.headed > .dock-panel { top: 35px; }
 /* right-panel menus are the composer's Popover (features/composer/Popover.tsx, `.menu.cm`, fixed in <body>) */
 .menu.cm.dock-more-menu { min-width: 240px; max-width: min(260px, calc(100vw - 16px)); }
 .menu.cm.rv-more-menu { min-width: 280px; }
