@@ -3,7 +3,15 @@
 import { classifyError, type ErrorKind } from './health';
 
 export interface TextBlock { type: 'text'; text: string }
-export interface ThinkingBlock { type: 'thinking'; thinking: string; redacted?: boolean }
+export interface ThinkingBlock {
+  type: 'thinking';
+  thinking: string;
+  redacted?: boolean;
+  /** how long the model thought (「思考了 12 秒」): stream start → stop, or in a transcript the line before → this line */
+  ms?: number;
+  /** client clock when the streamed block started (internal: turned into `ms` at its stop) */
+  startedAt?: number;
+}
 export interface ToolResult {
   content: string;
   isError: boolean;
@@ -115,6 +123,8 @@ export interface Conversation {
   rateLimit?: RateLimitState;
   /** uuids retracted by refusal fallback / supersedes — kept so a late duplicate is ignored */
   retracted: Set<string>;
+  /** the last transcript timestamp applied (a thinking line's time is counted from it) */
+  lastTs?: string;
 }
 
 export function createConversation(): Conversation {
@@ -164,6 +174,11 @@ function findItem(c: Conversation, parent: string | null | undefined, pred: (i: 
 export function applyMessage(c: Conversation, m: any): void {
   if (m && m.type !== 'stream_event') c.lastEventAt = clock();
   else if (m?.type === 'stream_event') c.lastEventAt = clock();
+  dispatch(c, m);
+  if (typeof m?.timestamp === 'string') c.lastTs = m.timestamp;
+}
+
+function dispatch(c: Conversation, m: any): void {
   switch (m.type) {
     case 'stream_event':
       return applyStream(c, m);
@@ -212,6 +227,15 @@ function resetText(resetsAt: number) {
   return m < 60 ? `${m} 分钟后重置` : `${Math.floor(m / 60)} 小时 ${m % 60} 分后重置`;
 }
 
+/**
+ * Where a streamed block sits in its item. Normally its stream index; but an agent's synthesised turn (ACP / Codex,
+ * server/src/agents/normalize.ts) counts only its text / thinking blocks and sends each tool call as a whole
+ * `assistant` frame of the same message — so a text block streamed after a tool call arrives with an index the tool
+ * call already holds. It goes after it instead (and its deltas / stop follow it), rather than overwriting the call.
+ */
+const slots = new WeakMap<AssistantItem, Map<number, number>>();
+const slotOf = (item: AssistantItem, index: number) => slots.get(item)?.get(index) ?? index;
+
 function applyStream(c: Conversation, m: any) {
   const ev = m.event;
   const k = key(m.parent_tool_use_id);
@@ -231,16 +255,24 @@ function applyStream(c: Conversation, m: any) {
   if (m.user_message_uuid && !cur.userMessageUuid) cur.userMessageUuid = m.user_message_uuid;
   if (ev.type === 'content_block_start') {
     const b = ev.content_block;
-    if (b.type === 'text') cur.blocks[ev.index] = { type: 'text', text: b.text ?? '' };
-    else if (b.type === 'thinking') cur.blocks[ev.index] = { type: 'thinking', thinking: b.thinking ?? '' };
-    else if (b.type === 'redacted_thinking') cur.blocks[ev.index] = { type: 'thinking', thinking: '', redacted: true };
+    let at: number = ev.index;
+    if (cur.blocks[at] !== undefined) {
+      // taken by a whole frame that came first (a synthesised tool call): after it
+      at = cur.blocks.length;
+      let map = slots.get(cur);
+      if (!map) slots.set(cur, (map = new Map()));
+      map.set(ev.index, at);
+    }
+    if (b.type === 'text') cur.blocks[at] = { type: 'text', text: b.text ?? '' };
+    else if (b.type === 'thinking') cur.blocks[at] = { type: 'thinking', thinking: b.thinking ?? '', startedAt: clock() };
+    else if (b.type === 'redacted_thinking') cur.blocks[at] = { type: 'thinking', thinking: '', redacted: true, startedAt: clock() };
     else if (b.type === 'tool_use') {
       const tb: ToolUseBlock = { type: 'tool_use', id: b.id, name: b.name, input: b.input ?? {}, inputJson: '', children: [], status: 'streaming', startedAt: clock() };
-      cur.blocks[ev.index] = tb;
+      cur.blocks[at] = tb;
       c.toolIndex.set(b.id, tb);
     }
   } else if (ev.type === 'content_block_delta') {
-    const b = cur.blocks[ev.index];
+    const b = cur.blocks[slotOf(cur, ev.index)];
     const d = ev.delta;
     if (!b) return;
     if (d.type === 'text_delta' && b.type === 'text') b.text += d.text;
@@ -254,7 +286,11 @@ function applyStream(c: Conversation, m: any) {
       }
     }
   } else if (ev.type === 'content_block_stop') {
-    const b = cur.blocks[ev.index];
+    const b = cur.blocks[slotOf(cur, ev.index)];
+    if (b?.type === 'thinking' && b.startedAt !== undefined) {
+      b.ms = Math.max(0, clock() - b.startedAt);
+      delete b.startedAt;
+    }
     if (b?.type === 'tool_use') {
       if (b.inputJson) {
         try {
@@ -295,6 +331,13 @@ function evict(c: Conversation, uuids: string[] | undefined) {
     }
   };
   prune(c.items);
+}
+
+/** A transcript's thinking line: from the line before it (the user's message, the last tool result) to this one. */
+function thinkingMs(prev: string | undefined, at: unknown): number | undefined {
+  if (!prev || typeof at !== 'string') return undefined;
+  const a = Date.parse(prev), b = Date.parse(at);
+  return Number.isNaN(a) || Number.isNaN(b) || b < a ? undefined : b - a;
 }
 
 function applyAssistant(c: Conversation, m: any) {
@@ -342,14 +385,17 @@ function applyAssistant(c: Conversation, m: any) {
       const last = item.blocks[item.blocks.length - 1];
       // a streamed text block will already exist with identical text
       if (last?.type === 'text' && (last.text === b.text || item.streaming)) last.text = b.text;
-      else if (!item.blocks.some((x) => x.type === 'text' && x.text === b.text)) item.blocks.push({ type: 'text', text: b.text });
+      else if (!item.blocks.some((x) => x.type === 'text' && x.text === b.text) && !restates(item, 'text', b.text)) item.blocks.push({ type: 'text', text: b.text });
     } else if (b.type === 'thinking' || b.type === 'redacted_thinking') {
       const redacted = b.type === 'redacted_thinking';
       const t = redacted ? '' : b.thinking ?? '';
-      if (!item.blocks.some((x) => x.type === 'thinking' && x.thinking === t && !!x.redacted === redacted)) {
+      if (!item.blocks.some((x) => x.type === 'thinking' && x.thinking === t && !!x.redacted === redacted) && !(t && restates(item, 'thinking', t))) {
         const last = item.blocks[item.blocks.length - 1];
         if (last?.type === 'thinking' && item.streaming) { last.thinking = t; last.redacted = redacted || undefined; }
-        else item.blocks.push({ type: 'thinking', thinking: t, redacted: redacted || undefined });
+        else {
+          const ms = thinkingMs(c.lastTs, m.timestamp);
+          item.blocks.push({ type: 'thinking', thinking: t, redacted: redacted || undefined, ...(ms !== undefined ? { ms } : {}) });
+        }
       }
     }
   }
@@ -359,6 +405,15 @@ function applyAssistant(c: Conversation, m: any) {
     // keep streaming flag until message_stop arrives; final assistant message w/o stream implies done
     if (!c.streaming.has(k)) item.streaming = false;
   }
+}
+
+/**
+ * An agent's synthesised turn closes with one frame that restates all of its text (and thinking) run together; the
+ * pieces were streamed already, on both sides of its tool calls. Not a new block when it is exactly those pieces.
+ */
+function restates(item: AssistantItem, kind: 'text' | 'thinking', whole: string): boolean {
+  const parts = item.blocks.flatMap((x) => (x.type === 'text' && kind === 'text' ? [x.text] : x.type === 'thinking' && kind === 'thinking' ? [x.thinking] : []));
+  return parts.length > 1 && parts.join('') === whole;
 }
 
 function toContextUsage(u: any): ContextUsage {
