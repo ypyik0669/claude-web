@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { ago, basename, clsx } from '@/util';
@@ -9,6 +9,7 @@ import { WorkflowEditor, type WorkflowDraft } from './WorkflowEditor';
 import { RunView, RUN_L } from './RunView';
 import { useOrch } from './state';
 import { Orphans } from './Orphans';
+import { EMPTY, emptyText } from '@/ui/terms';
 import './orchestra.css';
 
 type View = { kind: 'none' } | { kind: 'edit'; draft: WorkflowDraft; key: number } | { kind: 'run'; runId: string };
@@ -23,9 +24,10 @@ export async function startWorkflow(w: Workflow): Promise<OrchRun | null> {
 
 /**
  * Orchestration panel: workflows + run history on the left; the form editor (with a live graph preview)
- * or a run view (execution graph, approvals, compare) on the right. Stacks vertically when narrow.
+ * or a run view (execution graph, approvals, compare) on the right. Stacks vertically when narrow. `newSignal`: the
+ * automation page's 新建 (its last click) opens a new workflow.
  */
-export function OrchestraPanel() {
+export function OrchestraPanel({ newSignal = 0 }: { newSignal?: number }) {
   const workflows = useOrch((s) => s.workflows);
   const runs = useOrch((s) => s.runs);
   const templates = useOrch((s) => s.templates);
@@ -41,6 +43,8 @@ export function OrchestraPanel() {
   const run = async (w: Workflow) => { const r = await startWorkflow(w); if (r) { useOrch.setState((s) => ({ full: { ...s.full, [r.id]: r } })); setView({ kind: 'run', runId: r.id }); } };
 
   useEffect(() => { void useOrch.getState().loadAll().catch(() => {}); }, []);
+  const appliedNew = useRef(newSignal);
+  useEffect(() => { if (newSignal && newSignal !== appliedNew.current) { appliedNew.current = newSignal; edit(newDraft()); } }, [newSignal]);
   useEffect(() => {
     if (!intent) return;
     if (intent.mode === 'new') edit(newDraft());
@@ -72,7 +76,7 @@ export function OrchestraPanel() {
               <button className="icon-btn xs" title="删除" aria-label={`删除 ${w.name}`} onClick={async (e) => { e.stopPropagation(); if (await dlg.confirm(`删除工作流「${w.name}」？`, { message: '运行记录保留。', danger: true, okLabel: '删除' })) { await ws.request({ kind: 'orchestra.workflows.remove', id: w.id }).catch(() => {}); if (view.kind === 'edit' && view.draft.id === w.id) setView({ kind: 'none' }); } }}><Icon name="trash" size={12} /></button>
             </div>
           ))}
-          {!workflows.length && <div className="orch-empty sm">还没有工作流。点 + 新建，或从模板开始。</div>}
+          {!workflows.length && <div className="orch-empty sm">{emptyText(EMPTY.workflows)}</div>}
         </div>
         <div className="orch-side-h"><b>运行记录</b><span className="grow" /><span className="muted">{runs.length}</span></div>
         <div className="orch-list runs">
@@ -86,7 +90,7 @@ export function OrchestraPanel() {
               {r.waiting > 0 && <span className="badge run">{r.waiting} 等你</span>}
             </div>
           ))}
-          {!runs.length && <div className="orch-empty sm">还没有运行过</div>}
+          {!runs.length && <div className="orch-empty sm">{emptyText(EMPTY.orchestraRuns)}</div>}
         </div>
         <Orphans />
       </div>

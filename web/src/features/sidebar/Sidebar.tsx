@@ -7,7 +7,6 @@ import { basename, clsx } from '@/util';
 import type { AgentKind, SessionSummary } from '@shared';
 import { Icon } from '@/ui/icons';
 import { isWithin } from '@/features/paths';
-import { useOrch, waitingOf } from '@/features/orchestra/state';
 import { agentOf, childrenOf, filterSessions, filterSummary, isArchived, machineCounts, renderedRows, sourceCounts } from './filter';
 import { capsIntersection, deleteSessions, setArchived } from './session-actions';
 import { rangeIds } from './status';
@@ -17,35 +16,9 @@ import { NeedsYou } from './attention';
 import { FilterMenu, type SourceChip } from './filter-menu';
 import { AccountRow } from './account';
 import { DiscoveryHint } from './hint';
-import { Menu, closeDrawer } from './menus';
-import { openSchedules, showPanel } from '@/features/workbench/right-panel';
-import { AUTOMATION_PANELS, type AutomationId, type ProjectMenuId, type ProjectsHeadId, type RowId, type SectionId, type TopId } from './entries';
-
-/**
- * 自动化 → the scheduled tasks, goals and orchestration (the full automation page comes with redesign phase 7), through
- * the right panel's own entry points: `openSchedules()` (任务 with its scheduled tasks unfolded; on a phone the current
- * conversation's in-place view, or a hint) and `showPanel()` (a phone says there is no right panel). The phone drawer
- * closes only when something opened.
- */
-function AutomationMenu({ onClose }: { onClose: () => void }) {
-  const schedules = useStore((s) => s.schedules);
-  const orchFull = useOrch((s) => s.full);
-  const orchWaiting = useMemo(() => waitingOf(orchFull).length, [orchFull]);
-  const go = (x: AutomationId) => () => {
-    onClose();
-    const shown = x === 'schedules' ? openSchedules() : showPanel(AUTOMATION_PANELS[x]);
-    if (shown) closeDrawer();
-  };
-  const id = (x: AutomationId) => x;
-  const on = schedules.filter((s) => s.enabled).length;
-  return (
-    <Menu onClose={onClose} className="sb-auto-menu" align="left" label="自动化">
-      <button data-id={id('schedules')} onClick={go('schedules')}><Icon name="tasks" size={14} /><span className="grow"><span className="l">定时任务</span><span className="d">按时间自动开对话、跑提示词</span></span>{schedules.length > 0 && <span className="n">{on}/{schedules.length}</span>}</button>
-      <button data-id={id('goals')} onClick={go('goals')}><Icon name="goals" size={14} /><span className="grow"><span className="l">目标</span><span className="d">定一个目标，让 Claude 一轮轮做到完成</span></span></button>
-      <button data-id={id('orchestra')} onClick={go('orchestra')}><Icon name="orchestra" size={14} /><span className="grow"><span className="l">编排</span><span className="d">多个 Agent 分工、审批、比选</span></span>{orchWaiting > 0 && <span className="n need">{orchWaiting} 等你</span>}</button>
-    </Menu>
-  );
-}
+import { closeDrawer } from './menus';
+import { openAutomation, useAutomation } from '@/features/automation/state';
+import type { ProjectMenuId, ProjectsHeadId, RowId, SectionId, TopId } from './entries';
 
 /** Ids of conversations that must stay in view past a group's cut: running / waiting ones (a stable string, not the `open` map). */
 const busyIds = (s: ReturnType<typeof useStore.getState>) =>
@@ -93,8 +66,9 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const sourceFilter = useStore((s) => s.sourceFilter);
   const setSourceFilter = useStore((s) => s.setSourceFilter);
   const busy = useStore(busyIds);
+  const autoOpen = useAutomation((s) => s.open);
   const [q, setQ] = useState('');
-  // the sidebar's one open menu: `auto` · `filter` · `account` · `proj:<id>` · `row:<list|attn>:<id>` (opening one closes the others)
+  // the sidebar's one open menu: `filter` · `account` · `proj:<id>` · `row:<list|attn>:<id>` (opening one closes the others)
   const [menu, setMenu] = useState<string | null>(null);
   const [shown, setShown] = useState<Record<string, number | undefined>>({});
   const [selecting, setSelecting] = useState(false);
@@ -223,12 +197,10 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         <button className="icon-btn" data-id={top('collapse')} title={`收起侧栏 (${modKey}+B)`} aria-label="收起侧栏" onClick={() => useStore.setState({ sidebarOpen: false })}><Icon name="sidebar" size={16} /></button>
       </div>
       <nav className="sb-nav" aria-label="导航">
-        <button className={clsx('nav', !activeId && 'active')} data-id={top('new')} onClick={() => { onNew(); closeDrawer(); }}><Icon name="edit" size={16} />新对话<span className="k">{desktop ? `${modKey} N` : 'Alt N'}</span></button>
+        <button className={clsx('nav', !activeId && !autoOpen && 'active')} data-id={top('new')} onClick={() => { onNew(); closeDrawer(); }}><Icon name="edit" size={16} />新对话<span className="k">{desktop ? `${modKey} N` : 'Alt N'}</span></button>
         <button className="nav" data-id={top('search')} title="搜索对话、命令和设置" onClick={() => { useStore.setState({ paletteOpen: true }); closeDrawer(); }}><Icon name="search" size={16} />搜索<span className="k">{modKey} K</span></button>
-        <div className="nav-anchor">
-          <button className={clsx('nav', menu === 'auto' && 'on')} data-id={top('automation')} aria-haspopup="menu" aria-expanded={menu === 'auto'} onClick={toggleMenu('auto')}><Icon name="tasks" size={16} />自动化</button>
-          {menu === 'auto' && <AutomationMenu onClose={() => closeMenu('auto')} />}
-        </div>
+        {/* 自动化 → the automation page (定时任务 · 目标 · 编排, spec §5.9) over the main area, on the tab shown last */}
+        <button className={clsx('nav', autoOpen && 'active')} data-id={top('automation')} title="定时任务、目标、编排" aria-pressed={autoOpen} onClick={() => { setMenu(null); openAutomation(); }}><Icon name="tasks" size={16} />自动化</button>
       </nav>
       <NeedsYou ctx={ctx} />
       <div className={clsx('sb-list', selecting && 'selecting')}>

@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { ago, clsx, fmtMs } from '@/util';
 import { dlg } from '@/ui/dialog';
 import type { PermissionMode, Schedule, ScheduleRun } from '@shared';
-import { MODE_LABEL } from '@/ui/terms';
+import { EMPTY, MODE_LABEL } from '@/ui/terms';
+import { EmptyState } from '@/ui/EmptyState';
+import { untilText } from '@/features/home/model';
 import { Icon } from '@/ui/icons';
 
 interface Template { id: string; name: string; cron: string; prompt: string; permissionMode: PermissionMode; freshSession?: boolean }
@@ -22,8 +24,11 @@ function describe(s: Schedule) {
   return `每 ${s.everyMinutes} 分钟`;
 }
 
-/** Schedule editor: interval or cron, template gallery, run history with links into the session. */
-export function SchedulesView({ compact = false }: { compact?: boolean }) {
+/**
+ * Schedule editor: interval or cron, template gallery, run history with links into the conversation. `page`: on the
+ * automation page, whose header has the 新建 button (`newSignal` is its last click); `compact`: in 任务.
+ */
+export function SchedulesView({ compact = false, page = false, newSignal = 0 }: { compact?: boolean; page?: boolean; newSignal?: number }) {
   const schedules = useStore((s) => s.schedules);
   const active = useScopedSession();
   const toast = useStore((s) => s.toast);
@@ -51,6 +56,10 @@ export function SchedulesView({ compact = false }: { compact?: boolean }) {
   };
   const fromTemplate = (t: Template) => { setMode('cron'); setEditing({ name: t.name, prompt: t.prompt, cron: t.cron, permissionMode: t.permissionMode, freshSession: t.freshSession, cwd: active?.cwd ?? '' }); setTab('list'); };
   const byId = useMemo(() => new Map(schedules.map((s) => [s.id, s])), [schedules]);
+  const startNew = () => { setMode('cron'); setEditing({ cwd: active?.cwd ?? '', permissionMode: 'acceptEdits', everyMinutes: 60, cron: '0 9 * * 1-5' }); setTab('list'); };
+  // the automation page's 新建: each click once (not on mount — the page mounts this tab on its first visit)
+  const appliedNew = useRef(newSignal);
+  useEffect(() => { if (newSignal && newSignal !== appliedNew.current) { appliedNew.current = newSignal; startNew(); } }, [newSignal]);
 
   const form = editing && (
     <div className="sched-form">
@@ -71,19 +80,19 @@ export function SchedulesView({ compact = false }: { compact?: boolean }) {
         <input className="field grow" placeholder={active?.cwd ? `工作目录：${active.cwd}` : '工作目录'} value={editing.cwd ?? ''} onChange={(e) => setEditing({ ...editing, cwd: e.target.value })} />
         <select className="field" value={editing.permissionMode ?? 'acceptEdits'} onChange={(e) => setEditing({ ...editing, permissionMode: e.target.value })}>{Object.entries(MODE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
       </div>
-      <label className="row muted" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!editing.freshSession} onChange={(e) => setEditing({ ...editing, freshSession: e.target.checked })} /> 每次新开会话（不累积上下文）</label>
+      <label className="row muted" style={{ gap: 6, fontSize: 12 }}><input type="checkbox" checked={!!editing.freshSession} onChange={(e) => setEditing({ ...editing, freshSession: e.target.checked })} /> 每次新开对话（不累积上下文）</label>
       <div className="row" style={{ gap: 6 }}><button className="btn sm primary" onClick={save}>保存</button><button className="btn sm" onClick={() => setEditing(null)}>取消</button></div>
     </div>
   );
 
   return (
-    <div className={clsx('sched-view', compact && 'compact')}>
+    <div className={clsx('sched-view', compact && 'compact', page && 'page')}>
       <div className="subtabs">
-        <button className={tab === 'list' ? 'active' : ''} onClick={() => setTab('list')}>定时任务 {schedules.length ? <span className="badge">{schedules.length}</span> : null}</button>
+        <button className={tab === 'list' ? 'active' : ''} onClick={() => setTab('list')}>{page ? '全部' : '定时任务'} {schedules.length ? <span className="badge">{schedules.length}</span> : null}</button>
         <button className={tab === 'templates' ? 'active' : ''} onClick={() => setTab('templates')}>模板</button>
         <button className={tab === 'history' ? 'active' : ''} onClick={() => { setShowRuns(null); setTab('history'); }}>历史</button>
         <span className="grow" />
-        <button className="icon-btn" title="新建" aria-label="新建" onClick={() => { setMode('cron'); setEditing({ cwd: active?.cwd ?? '', permissionMode: 'acceptEdits', everyMinutes: 60, cron: '0 9 * * 1-5' }); setTab('list'); }}><Icon name="plus" size={15} /></button>
+        {!page && <button className="icon-btn" title="新建定时任务" aria-label="新建定时任务" onClick={startNew}><Icon name="plus" size={15} /></button>}
       </div>
       {tab === 'list' && (
         <div className="list">
@@ -92,17 +101,17 @@ export function SchedulesView({ compact = false }: { compact?: boolean }) {
             <div key={sc.id} className={clsx('row sched', sc.lastError && 'err')}>
               <button className={clsx('toggle', sc.enabled && 'on')} onClick={() => ws.request({ kind: 'schedules.upsert', schedule: { id: sc.id, enabled: !sc.enabled } })} />
               <div className="grow" style={{ minWidth: 0 }}>
-                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sc.name} <span className="mono muted" style={{ fontSize: 11 }}>{describe(sc)}</span>{sc.freshSession && <span className="badge">新会话</span>}</div>
-                <div className="sub">{sc.lastRunAt ? `上次 ${ago(sc.lastRunAt)}` : '未运行'}{sc.runs ? ` · ${sc.runs} 次` : ''}{sc.enabled && sc.nextRunAt ? ` · 下次 ${fmtMs(Math.max(0, sc.nextRunAt - Date.now()))} 后` : ''}{sc.lastError ? ` · ${sc.lastError}` : ''}</div>
+                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sc.name} <span className="mono muted" style={{ fontSize: 11 }}>{describe(sc)}</span>{sc.freshSession && <span className="badge">每次新对话</span>}</div>
+                <div className="sub">{sc.lastRunAt ? `上次 ${ago(sc.lastRunAt)}` : '未运行'}{sc.runs ? ` · ${sc.runs} 次` : ''}{sc.enabled && sc.nextRunAt ? ` · 下次 ${untilText(sc.nextRunAt)}` : ''}{sc.lastError ? ` · ${sc.lastError}` : ''}</div>
               </div>
-              {sc.sessionId && <button className="btn sm ghost" title="打开会话" onClick={() => loadHistory(sc.sessionId!)}>会话</button>}
+              {sc.sessionId && <button className="btn sm ghost" title="打开它的对话" onClick={() => loadHistory(sc.sessionId!)}>对话</button>}
               <button className="btn sm ghost" title="历史" onClick={() => { setShowRuns(sc.id); setTab('history'); }}>历史</button>
               <button className="btn sm ghost" title="编辑" onClick={() => { setMode(sc.cron ? 'cron' : 'interval'); setEditing({ ...sc }); }}><Icon name="edit" size={13} /></button>
               <button className="btn sm ghost" title="立即运行" onClick={() => ws.request({ kind: 'schedules.runNow', id: sc.id }).catch((e) => toast(e.message))}><Icon name="play" size={12} /></button>
               <button className="btn sm ghost danger" title="删除" onClick={async () => { if (await dlg.confirm(`删除定时任务「${sc.name}」？`, { danger: true })) void ws.request({ kind: 'schedules.remove', id: sc.id }); }}><Icon name="trash" size={13} /></button>
             </div>
           ))}
-          {!schedules.length && !editing && <div className="empty">按固定间隔或 cron 往一个会话里发提示词。从「模板」里挑一个开始。</div>}
+          {!schedules.length && !editing && <EmptyState e={EMPTY.schedules} action={<button className="btn sm" onClick={() => setTab('templates')}>从模板开始</button>} />}
         </div>
       )}
       {tab === 'templates' && (
@@ -126,10 +135,10 @@ export function SchedulesView({ compact = false }: { compact?: boolean }) {
                 <div>{byId.get(r.scheduleId)?.name ?? r.scheduleId} <span className="muted" style={{ fontSize: 11.5 }}>{ago(r.at)}{r.durationMs ? ` · ${fmtMs(r.durationMs)}` : ''}</span></div>
                 <div className="sub" style={{ whiteSpace: 'pre-wrap' }}>{r.error ?? r.summary ?? ''}</div>
               </div>
-              {r.sessionId && <button className="btn sm ghost" onClick={() => loadHistory(r.sessionId!)}>会话</button>}
+              {r.sessionId && <button className="btn sm ghost" title="打开这次运行的对话" onClick={() => loadHistory(r.sessionId!)}>对话</button>}
             </div>
           ))}
-          {!runs.length && <div className="empty">还没有运行记录</div>}
+          {!runs.length && <EmptyState e={EMPTY.scheduleRuns} />}
         </div>
       )}
     </div>

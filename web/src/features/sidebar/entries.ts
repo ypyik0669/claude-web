@@ -6,7 +6,10 @@ import type { PanelId } from '@/model/layout';
 
 /** Top: brand row + three navigation rows. */
 export const TOP = ['collapse', 'new', 'search', 'automation'] as const;
-/** The 自动化 menu (until the automation page of redesign phase 7): the existing panels. */
+/**
+ * 自动化 opens the automation page (redesign phase 7, `features/automation/`): these are its tabs (定时任务 · 目标 ·
+ * 编排), the same ids as `AUTOMATION_TABS` there. The phase-4 menu they used to be in is gone.
+ */
 export const AUTOMATION = ['schedules', 'goals', 'orchestra'] as const;
 /** Sections of the list, in order. */
 export const SECTIONS = ['attention', 'pinned', 'projects', 'other', 'peers'] as const;
@@ -37,11 +40,12 @@ export type AccountId = (typeof ACCOUNT)[number];
 export type HintId = (typeof HINT)[number];
 
 /**
- * The right-panel panels the sidebar opens — 自动化 → 定时任务 (任务, its scheduled tasks unfolded) / 目标 / 编排, the
- * account popover → 用量 / 配置中心. The menus read these; `workbench/panel-entries.ts` counts them as the sidebar's
- * 2-click entries (`sidebarAutomation` / `accountMenu`), so both tables use the same ids.
+ * The panels whose content the sidebar reaches — 自动化 → the page's 目标 / 编排 tabs (the same GoalsPanel /
+ * OrchestraPanel the right panel shows; 定时任务 is a view, not a panel), the account popover → 用量 / 配置中心.
+ * `workbench/panel-entries.ts` counts them as the sidebar's 2-click entries (`sidebarAutomation` / `accountMenu`), so
+ * both tables use the same ids.
  */
-export const AUTOMATION_PANELS = { schedules: 'tasks', goals: 'goals', orchestra: 'orchestra' } as const satisfies Record<AutomationId, PanelId>;
+export const AUTOMATION_PANELS = { goals: 'goals', orchestra: 'orchestra' } as const satisfies Partial<Record<AutomationId, PanelId>>;
 export const ACCOUNT_PANELS = { usage: 'usage', config: 'config' } as const satisfies Partial<Record<AccountId, PanelId>>;
 
 export const PLACES = {

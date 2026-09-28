@@ -28,7 +28,7 @@ function splitParents(root: PaneNode, rect: Rect, out: Record<string, Rect> = {}
  * Renders every pane of the active group absolutely positioned. Panes are never unmounted by split / move / zoom
  * (only by close), so xterm buffers, scroll positions and composer drafts survive layout changes.
  */
-export function PaneLayer({ tabStrips, underGroupBar, workbench }: { tabStrips: Record<string, boolean>; underGroupBar: boolean; workbench: boolean }) {
+export function PaneLayer({ tabStrips, underGroupBar, workbench, inert = false }: { tabStrips: Record<string, boolean>; underGroupBar: boolean; workbench: boolean; inert?: boolean }) {
   const layout = useStore((s) => s.layout);
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -50,7 +50,7 @@ export function PaneLayer({ tabStrips, underGroupBar, workbench }: { tabStrips: 
   // gap on the right, sidebar reveal / traffic-light gap on the left)
   const edges = (r: Rect) => ({ top: !underGroupBar && r.y <= 0, left: r.x <= 0, right: r.x + r.w >= size.w - 1 });
   return (
-    <div className={clsx('pane-layer', order.length > 1 && !g.zoomedPaneId && 'multi')} ref={ref}>
+    <div className={clsx('pane-layer', order.length > 1 && !g.zoomedPaneId && 'multi')} ref={ref} inert={inert || undefined}>
       {size.w > 0 && order.map((id, i) => (
         <Pane key={id} pane={g.panes[id]} groupId={g.id} index={i} rect={rects.panes[id]} edges={edges(rects.panes[id])} strip={!!tabStrips[id]} workbench={workbench} paneCount={order.length} focused={g.focusedPaneId === id} zoomed={g.zoomedPaneId === id} single={order.length === 1} hidden={!!g.zoomedPaneId && g.zoomedPaneId !== id} />
       ))}

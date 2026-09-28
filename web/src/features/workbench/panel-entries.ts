@@ -20,7 +20,7 @@ export const ENTRY_CLICKS: Record<EntryVia, number> = {
   headerMore: 2, // the session header's ··· → an item
   palette: 2, // the sidebar's 搜索 (command palette) → an item; every panel is listed there
   panelMore: 3, // right-panel button → 「更多」 → an item (2 once the panel is open)
-  sidebarAutomation: 2, // the sidebar's 自动化 → 定时任务 / 目标 / 编排 (sidebar/entries.ts AUTOMATION_PANELS)
+  sidebarAutomation: 2, // the sidebar's 自动化 → the automation page's tab 定时任务 / 目标 / 编排 (1 when it is the tab shown last)
   accountMenu: 2, // the sidebar's account row → 用量与账本 / 配置中心 (sidebar/entries.ts ACCOUNT_PANELS)
 };
 
@@ -37,16 +37,18 @@ export type ExplorerMode = 'tree' | 'search' | 'artifacts';
 /** What the review opens on: a scope, a commit, a file to scroll to, or the full Git view. */
 export interface ReviewIntent { scope?: ReviewScope; rev?: string; path?: string; git?: boolean }
 
-export type ViewTarget = { to: 'tile' } | { to: 'panel'; panel: PanelId; review?: ReviewIntent; explorer?: ExplorerMode };
+export type ViewTarget = { to: 'tile' } | { to: 'automation'; tab: 'schedules' } | { to: 'panel'; panel: PanelId; review?: ReviewIntent; explorer?: ExplorerMode };
 
 /**
- * Where a per-session view (the old workbench tab row) opens. On a desktop the right panel took them over: 改动 →
- * 审阅 on this conversation's files, Git → 审阅's full Git view, 文件 / 搜索 / 生成的文件 → 文件, Issue 与 PR → a
- * temporary tab. 定时任务 stays an in-place view until the automation page (phase 7). A phone has no right panel and
- * a conversation on another machine has its files there, so both keep the in-place views.
+ * Where a per-session view (the old workbench tab row) opens. The right panel took them over (on a phone it is the
+ * bottom drawer): 改动 → 审阅 on this conversation's files, Git → 审阅's full Git view, 文件 / 搜索 / 生成的文件 →
+ * 文件, Issue 与 PR → a temporary tab. 定时任务 are this machine's, not the conversation's: the automation page. A
+ * conversation on another machine has its files there, so it keeps the in-place views. (`mobile` no longer changes
+ * the answer since the drawer; kept so callers need not change.)
  */
 export function viewTarget(view: WbView, o: { mobile: boolean; remote: boolean }): ViewTarget {
-  if (o.mobile || o.remote) return { to: 'tile' };
+  if (view === 'schedules') return { to: 'automation', tab: 'schedules' };
+  if (o.remote) return { to: 'tile' };
   switch (view) {
     case 'changes': return { to: 'panel', panel: 'files', review: { scope: 'session' } };
     case 'git': return { to: 'panel', panel: 'files', review: { git: true } };
@@ -54,7 +56,6 @@ export function viewTarget(view: WbView, o: { mobile: boolean; remote: boolean }
     case 'search': return { to: 'panel', panel: 'explorer', explorer: 'search' };
     case 'artifacts': return { to: 'panel', panel: 'explorer', explorer: 'artifacts' };
     case 'board': return { to: 'panel', panel: 'board' };
-    case 'schedules': return { to: 'tile' };
   }
 }
 
@@ -66,7 +67,7 @@ export function viewEntries(view: WbView, remote = false): EntryVia[] {
   const out: EntryVia[] = [];
   if (viewsFor(remote).some((v) => v.id === view)) out.push('headerMore');
   if (viewCommands(remote).some((c) => c.view === view)) out.push('palette');
-  // 自动化 → 定时任务 opens them wherever the conversation is (openSchedules: 任务 on a desktop, in place on a phone)
+  // 自动化 → 定时任务: the automation page, with or without a conversation, on a desktop and a phone
   if (view === 'schedules') out.push('sidebarAutomation');
   return out;
 }

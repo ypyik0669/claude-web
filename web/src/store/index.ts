@@ -18,7 +18,7 @@ import { reopenSettings } from './reopen';
 import { parseLibraryId } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { DEFAULT_THEME, applyUiSettings, resolveTheme, setSystemThemeHandler } from '@/features/settings/ui-settings';
-import { PHONE_NO_PANEL, SIMPLIFIED_NOTICE } from '@/ui/terms';
+import { SIMPLIFIED_NOTICE } from '@/ui/terms';
 import { MOBILE_QUERY } from '@/ui/viewport';
 
 export type PanelId = import('@/model/layout').PanelId;
@@ -227,6 +227,16 @@ function persistLayout(s: LayoutState) {
 const loadedLayout = loadLayout();
 const initialLayoutState = loadedLayout.layout;
 
+/**
+ * Told about every layout action before it is applied — a no-op too (opening the conversation already in front).
+ * A page laid over the main area (the automation page) closes when the main area is sent somewhere.
+ */
+const layoutWatchers = new Set<(a: LayoutAction) => void>();
+export function onLayoutAction(fn: (a: LayoutAction) => void): () => void {
+  layoutWatchers.add(fn);
+  return () => { layoutWatchers.delete(fn); };
+}
+
 export const useStore = create<State>((set, get) => ({
   connected: false,
   sessions: [],
@@ -236,6 +246,7 @@ export const useStore = create<State>((set, get) => ({
   panels: initialLayoutState.dock.tabs,
   layout: initialLayoutState,
   dispatchLayout(a) {
+    for (const f of layoutWatchers) f(a);
     const prev = get().layout;
     const next = layoutReducer(prev, a);
     if (next === prev) return;
@@ -760,8 +771,7 @@ export const useStore = create<State>((set, get) => ({
     get().openInPane(id, 'replace');
   },
   togglePanel(p) {
-    // the right panel is not drawn on a phone: opening a tab there would start things (a terminal pty) nobody sees
-    if (get().mobile) { get().toast(PHONE_NO_PANEL); return; }
+    // (a phone's right panel is the bottom drawer: the same panels, so the same toggle)
     // without the workbench tools the four fixed tabs (审阅 / 文件 / 终端 / 任务) are hidden, never closed
     get().dispatchLayout({ t: 'dock.toggle', panel: p, workbench: get().settings['ui.workbench'] === true });
   },

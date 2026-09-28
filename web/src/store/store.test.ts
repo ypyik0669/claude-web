@@ -26,6 +26,7 @@ vi.mock('@/ws/client', () => ({
 
 const mem = new Map<string, string>();
 let useStore: typeof import('./index').useStore;
+let onLayoutAction: typeof import('./index').onLayoutAction;
 let ws: typeof import('@/ws/client').ws;
 
 beforeAll(async () => {
@@ -33,7 +34,7 @@ beforeAll(async () => {
   vi.stubGlobal('document', { addEventListener() {}, hasFocus: () => true, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} }, classList: { toggle() {}, add() {}, remove() {} } } });
   vi.stubGlobal('localStorage', { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v), removeItem: (k: string) => void mem.delete(k) });
   vi.stubGlobal('location', { search: '', protocol: 'http:', host: 'x' });
-  ({ useStore } = await import('./index'));
+  ({ useStore, onLayoutAction } = await import('./index'));
   ({ ws } = await import('@/ws/client'));
   useStore.getState().init();
 });
@@ -312,18 +313,31 @@ describe('workbench chrome (redesign phase 1)', () => {
     useStore.getState().dispatchLayout({ t: 'tile.close', paneId: pane().id, tileId: pane().tiles[1].id });
   });
 
-  it('on a phone there is no right panel: a panel toggle says so and opens nothing (no terminal behind the screen)', () => {
-    const before = useStore.getState().layout.dock;
-    useStore.setState({ mobile: true });
+  it('on a phone the right panel is the bottom drawer (phase 7): the same toggle, the same dock — one terminal, hidden not closed', () => {
+    useStore.setState({ mobile: true, toasts: [] });
     useStore.getState().togglePanel('terminal');
-    expect(useStore.getState().layout.dock).toBe(before);
-    expect(useStore.getState().toasts).toHaveLength(1);
-    useStore.setState({ mobile: false, toasts: [] });
-    useStore.getState().togglePanel('terminal');
-    expect(useStore.getState().layout.dock.tabs).toContain('terminal');
+    expect(useStore.getState().layout.dock).toMatchObject({ open: true, active: 'terminal' });
+    expect(useStore.getState().toasts).toHaveLength(0);
     useStore.getState().togglePanel('terminal'); // shown → hidden, the tab (and its process) stays
     expect(useStore.getState().layout.dock).toMatchObject({ open: false, active: 'terminal' });
+    // back on a desktop width: still the one terminal tab, shown again
+    useStore.setState({ mobile: false });
+    useStore.getState().togglePanel('terminal');
+    expect(useStore.getState().layout.dock.tabs.filter((t) => t === 'terminal')).toHaveLength(1);
+    useStore.getState().togglePanel('terminal');
+    expect(useStore.getState().layout.dock).toMatchObject({ open: false, active: 'terminal' });
     expect(useStore.getState().layout.dock.tabs).toContain('terminal');
+  });
+
+  it('layout actions are announced before they apply — also a no-op one (onLayoutAction)', () => {
+    const seen: string[] = [];
+    const off = onLayoutAction((a) => seen.push(a.t));
+    const l = useStore.getState().layout;
+    useStore.getState().dispatchLayout({ t: 'group.activate', id: l.activeGroupId }); // already active: no change
+    expect(useStore.getState().layout).toBe(l);
+    off();
+    useStore.getState().dispatchLayout({ t: 'group.activate', id: l.activeGroupId });
+    expect(seen).toEqual(['group.activate']);
   });
 });
 

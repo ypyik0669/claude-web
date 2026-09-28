@@ -6,6 +6,7 @@ import { CORE_PANELS, PANELS, WORKBENCH_TABS, type Dock } from '@/model/layout';
 import { ENTRY_CLICKS, MORE_PANELS, minClicks, panelCommandLabel, panelEntries, viewEntries, viewTarget } from './panel-entries';
 import { WB_VIEWS } from './wb-views';
 import { ACCOUNT, ACCOUNT_PANELS, AUTOMATION, AUTOMATION_PANELS } from '@/features/sidebar/entries';
+import { AUTOMATION_TABS, tabClicks } from '@/features/automation/page';
 
 // the 11 panels of the pre-redesign dock: none may disappear
 const OLD_PANELS = ['mission', 'goals', 'orchestra', 'memory', 'tasks', 'files', 'usage', 'config', 'terminal', 'inspector', 'android'];
@@ -39,17 +40,21 @@ describe('every panel is reachable in ≤ 2 clicks', () => {
     expect(panelCommandLabel(d, p('files'), true)).toBe('关闭审阅面板');
   });
 
-  it('the sidebar\'s entries (same ids as sidebar/entries.ts): 自动化 → 定时任务 / 目标 / 编排, account → 用量 / 配置中心, 2 clicks', () => {
+  it('the sidebar\'s entries (same ids as sidebar/entries.ts): 自动化 → the page\'s 定时任务 / 目标 / 编排, account → 用量 / 配置中心, 2 clicks', () => {
     expect(ENTRY_CLICKS.sidebarAutomation).toBe(2);
     expect(ENTRY_CLICKS.accountMenu).toBe(2);
-    // every item of the 自动化 menu is a panel, and only those are counted
-    expect(Object.keys(AUTOMATION_PANELS).sort()).toEqual([...AUTOMATION].sort());
+    // the automation page's tabs are the sidebar's automation ids; the two that show a panel's content are counted
+    expect([...AUTOMATION]).toEqual([...AUTOMATION_TABS]);
+    for (const t of AUTOMATION_TABS) for (const last of AUTOMATION_TABS) expect(tabClicks(t, last)).toBeLessThanOrEqual(ENTRY_CLICKS.sidebarAutomation);
+    expect(Object.keys(AUTOMATION_PANELS).sort()).toEqual(['goals', 'orchestra']);
     for (const k of Object.keys(ACCOUNT_PANELS)) expect(ACCOUNT as readonly string[]).toContain(k);
     for (const p of PANELS) {
       expect(panelEntries(p.id).includes('sidebarAutomation')).toBe((Object.values(AUTOMATION_PANELS) as string[]).includes(p.id));
       expect(panelEntries(p.id).includes('accountMenu')).toBe((Object.values(ACCOUNT_PANELS) as string[]).includes(p.id));
     }
-    expect(panelEntries('tasks')).toContain('sidebarAutomation');
+    // 任务 is the conversation's; its old 定时任务 fold moved to the automation page
+    expect(panelEntries('tasks')).not.toContain('sidebarAutomation');
+    expect(minClicks(panelEntries('tasks'))).toBeLessThanOrEqual(2);
     expect(panelEntries('goals')).toContain('sidebarAutomation');
     expect(panelEntries('orchestra')).toContain('sidebarAutomation');
     expect(panelEntries('usage')).toContain('accountMenu');
@@ -76,15 +81,17 @@ describe('the old 8 workbench tabs', () => {
   });
 
   it('the entries come from the menus’ own tables: a conversation on another machine only offers 生成的文件', () => {
-    // (定时任务 are this machine's: 自动化 still opens them — on a phone with a hint instead, see openSchedules)
+    // (定时任务 are this machine's: 自动化 opens them on the automation page)
     const header = (v: (typeof views)[number]) => viewEntries(v, true).filter((e) => e !== 'sidebarAutomation');
     expect(views.filter((v) => header(v).length)).toEqual(['artifacts']);
     for (const v of views) if (v !== 'artifacts') expect(header(v)).toEqual([]);
   });
 
-  it('on a desktop they open in the right panel (spec §4.2) — except 定时任务, which waits for the automation page', () => {
-    const where = Object.fromEntries(views.map((v) => { const t = viewTarget(v, { mobile: false, remote: false }); return [v, t.to === 'panel' ? t.panel : 'tile']; }));
-    expect(where).toEqual({ changes: 'files', git: 'files', files: 'explorer', search: 'explorer', artifacts: 'explorer', board: 'board', schedules: 'tile' });
+  it('they open in the right panel (spec §4.2; the bottom drawer on a phone) — 定时任务 on the automation page', () => {
+    for (const mobile of [false, true]) {
+      const where = Object.fromEntries(views.map((v) => { const t = viewTarget(v, { mobile, remote: false }); return [v, t.to === 'panel' ? t.panel : t.to]; }));
+      expect(where).toEqual({ changes: 'files', git: 'files', files: 'explorer', search: 'explorer', artifacts: 'explorer', board: 'board', schedules: 'automation' });
+    }
     for (const v of views) {
       const t = viewTarget(v, { mobile: false, remote: false });
       if (t.to === 'panel') expect(PANELS.find((p) => p.id === t.panel)?.tier).toMatch(/core|extra/);
@@ -98,10 +105,9 @@ describe('the old 8 workbench tabs', () => {
     expect(viewTarget('artifacts', { mobile: false, remote: false })).toMatchObject({ explorer: 'artifacts' });
   });
 
-  it('a phone (no right panel) and a conversation on another machine keep the in-place views', () => {
+  it('a conversation on another machine keeps the in-place views (its files are over there); 定时任务 are this machine\'s', () => {
     for (const v of views) {
-      expect(viewTarget(v, { mobile: true, remote: false }).to).toBe('tile');
-      expect(viewTarget(v, { mobile: false, remote: true }).to).toBe('tile');
+      for (const mobile of [false, true]) expect(viewTarget(v, { mobile, remote: true }).to).toBe(v === 'schedules' ? 'automation' : 'tile');
     }
   });
 });

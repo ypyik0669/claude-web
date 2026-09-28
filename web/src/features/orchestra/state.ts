@@ -5,6 +5,7 @@ import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { useStore } from '@/store';
 import { showPanel } from '@/features/workbench/right-panel';
+import { openAutomation } from '@/features/automation/state';
 import type { ClientRequest, OrchRun, OrchRunSummary, ServerEvent, Workflow, WorkflowTemplate } from '@shared';
 
 export interface OrchWaiting { runId: string; runName: string; nodeId: string; title: string; kind: 'approval' | 'compare'; since?: number }
@@ -65,9 +66,11 @@ export const useOrch = create<OrchState>((set, get) => ({
     return run;
   },
   ask(mode, runId) {
-    // to the front whatever state the panel is in (not a tab yet, hidden by Ctrl+J, minimized, behind another tab) —
-    // a toggle would close it when it is already open; a phone has no right panel (a hint, no request left behind)
-    if (!showPanel('orchestra')) return;
+    // a desktop: the right panel's 编排, to the front whatever state it is in (not a tab yet, hidden by Ctrl+J,
+    // minimized, behind another tab) — a toggle would close it when it is already open. A phone: the automation
+    // page's 编排 tab — a whole screen, where the right panel is only a bottom drawer (redesign phase 7)
+    const shown = useStore.getState().mobile ? openAutomation('orchestra') : showPanel('orchestra');
+    if (!shown) return;
     set({ intent: mode === 'open' ? { mode, runId: runId!, at: Date.now() } : { mode, at: Date.now() } });
   },
 }));
