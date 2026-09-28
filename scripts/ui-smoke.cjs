@@ -1,0 +1,407 @@
+// UI smoke test: every settings section, every dock panel, the model menu and the welcome composer, driven in a
+// real Chromium (Electron) against a throwaway server — and it FAILS on any console error / warning.
+//
+//   npm run build:all && node scripts/ui-smoke.cjs [--out <dir>] [--show] [--keep]
+//   node scripts/ui-smoke.cjs --idle 180 [--live] [--activity] [--out <dir>]   # spawn-frequency measurement (CW_SPAWN_LOG)
+//     --live      also opens a real engine session in the seeded repo (ccb / claude starts, no prompt is sent)
+//     --activity  during the window, append to the seeded transcript every 5 s, edit a repo file every 10 s and
+//                 run `git status` in the repo every 20 s (what a session working in the background looks like)
+//   node scripts/ui-smoke.cjs --url "http://127.0.0.1:<port>/?token=…"  # an already running server (read-only phases)
+//
+// Plain `node` runs the orchestration half: temp HOME + CLAUDE_WEB_DIR (never the real ~/.claude / ~/.claude-web),
+// a seeded git repo + one seeded Claude session (so the welcome page has a recent directory), the built server
+// (server/dist), then Electron with this same file as its main script. Electron is a GUI app on Windows and prints
+// nothing to a bash pipe, so the Electron half reports through a JSON file; options travel in env vars (an argv
+// token containing ':' makes Electron treat the launch as "open URL" and exit 127).
+//
+// Output (default: <tmp>/cw-ui-smoke): ui-smoke.json (checks, console messages, idle window), ux-*.png
+// screenshots, server.log. `--idle` adds spawn-summary.json (per-minute spawn counts and their sources).
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+
+const ROOT = path.resolve(__dirname, '..');
+const isElectronMain = !!process.versions.electron && !process.env.ELECTRON_RUN_AS_NODE;
+if (isElectronMain) driver();
+else runner().catch((e) => { console.error(e.stack || e); process.exit(2); });
+
+/* ------------------------------------------------------------------ orchestration (plain node) */
+
+/** Section ids + labels straight from SettingsModal.tsx (`{ id: 'x', l: '…'`), panels from layout.ts PANELS. */
+function uiInventory() {
+  const settings = fs.readFileSync(path.join(ROOT, 'web/src/features/settings/SettingsModal.tsx'), 'utf8');
+  const sections = [...settings.matchAll(/\{ id: '([\w.-]+)', l: '([^']+)', ic: '/g)].map((m) => ({ id: m[1], label: m[2] }));
+  const layout = fs.readFileSync(path.join(ROOT, 'web/src/model/layout.ts'), 'utf8');
+  const block = layout.slice(layout.indexOf('export const PANELS'), layout.indexOf('];', layout.indexOf('export const PANELS')));
+  const panels = [...block.matchAll(/\{ id: '(\w+)', title: '([^']+)'/g)].map((m) => ({ id: m[1], title: m[2] }));
+  if (!sections.length || !panels.length) throw new Error('could not read the settings sections / panels from the sources');
+  return { sections, panels };
+}
+
+function arg(name, def) {
+  const i = process.argv.indexOf(name);
+  if (i < 0) return def;
+  const v = process.argv[i + 1];
+  return v === undefined || v.startsWith('--') ? true : v;
+}
+
+function seedHome(home) {
+  const { execFileSync } = require('node:child_process');
+  const repo = path.join(home, 'repo');
+  fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'README.md'), '# smoke repo\n');
+  fs.writeFileSync(path.join(repo, 'src', 'index.ts'), 'export const x = 1;\n');
+  const git = (...a) => execFileSync('git', a, { cwd: repo, windowsHide: true, stdio: 'ignore', env: { ...process.env, GIT_AUTHOR_NAME: 'smoke', GIT_AUTHOR_EMAIL: 'smoke@example.invalid', GIT_COMMITTER_NAME: 'smoke', GIT_COMMITTER_EMAIL: 'smoke@example.invalid' } });
+  git('init', '-q');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'init');
+  fs.writeFileSync(path.join(repo, 'README.md'), '# smoke repo\n\nchanged\n'); // one modified file for the git badges
+  // one finished Claude session in that repo (Claude Code's own transcript layout) → a recent directory
+  const sid = '5a0e0e0e-0000-4000-8000-00000000c0de';
+  const proj = path.join(home, '.claude', 'projects', repo.replace(/[^A-Za-z0-9]/g, '-'));
+  fs.mkdirSync(proj, { recursive: true });
+  const t = new Date().toISOString();
+  const base = { isSidechain: false, userType: 'external', cwd: repo, sessionId: sid, version: '2.1.281', gitBranch: 'master' };
+  fs.writeFileSync(path.join(proj, `${sid}.jsonl`), [
+    { ...base, parentUuid: null, type: 'user', message: { role: 'user', content: 'smoke: seeded session' }, uuid: '00000000-0000-4000-8000-000000000001', timestamp: t },
+    { ...base, parentUuid: '00000000-0000-4000-8000-000000000001', type: 'assistant', message: { id: 'msg_smoke', type: 'message', role: 'assistant', model: 'claude-smoke', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }, uuid: '00000000-0000-4000-8000-000000000002', timestamp: t },
+  ].map((x) => JSON.stringify(x)).join('\n') + '\n');
+  return { repo, sid, transcript: path.join(proj, `${sid}.jsonl`) };
+}
+
+async function startServer(home, out, extraEnv) {
+  const { spawn } = require('node:child_process');
+  const token = require('node:crypto').randomBytes(12).toString('hex');
+  const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: path.join(home, '.claude-web'), CW_NO_MODEL_REFRESH: '1', ...extraEnv };
+  for (const k of Object.keys(env)) if (/^(ANTHROPIC_|CLAUDE_CODE_)/.test(k)) delete env[k];
+  const logFile = path.join(out, 'server.log');
+  fs.writeFileSync(logFile, '');
+  const server = spawn(process.execPath, [path.join(ROOT, 'server', 'dist', 'index.js')], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  let log = '';
+  const onData = (d) => { log += d; fs.appendFileSync(logFile, d); };
+  server.stderr.on('data', onData);
+  const port = await new Promise((res, rej) => {
+    const t = setTimeout(() => rej(new Error(`server did not start in 60s\n${log}`)), 60_000);
+    server.stdout.on('data', (d) => {
+      onData(d);
+      const m = /listening on http:\/\/[^:]+:(\d+)/.exec(log);
+      if (m) { clearTimeout(t); res(m[1]); }
+    });
+    server.on('exit', (c) => rej(new Error(`server exited (${c})\n${log}`)));
+  });
+  return { server, url: `http://127.0.0.1:${port}/?token=${token}`, log: () => log };
+}
+
+function runElectron(env, timeoutMs) {
+  const { spawn } = require('node:child_process');
+  const electron = require(path.join(ROOT, 'node_modules', 'electron')); // the binary path when required from node
+  const e = { ...process.env, ...env };
+  delete e.ELECTRON_RUN_AS_NODE;
+  e.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true'; // Electron's dev-only CSP notice (never shown when packaged) is not an app error
+  return new Promise((res) => {
+    const c = spawn(electron, [__filename], { env: e, stdio: 'ignore', windowsHide: false });
+    const t = setTimeout(() => { c.kill(); res(-1); }, timeoutMs);
+    c.on('exit', (code) => { clearTimeout(t); res(code); });
+  });
+}
+
+/** Per-minute spawn counts inside [from, to] of a CW_SPAWN_LOG file, with the top sources. */
+function spawnSummary(file, from, to) {
+  const recs = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean) : [];
+  if (!from) from = recs.length ? recs[0].t : to; // "from the start of the log"
+  const inWin = recs.filter((r) => r.t >= from && r.t <= to);
+  const minutes = Math.max(1, (to - from) / 60_000);
+  const by = {};
+  for (const r of inWin) {
+    const k = `${r.role} · ${path.basename(String(r.cmd))} ${(r.args || []).slice(0, 2).join(' ')} ← ${r.from}`;
+    by[k] = (by[k] || 0) + 1;
+  }
+  const perMinute = [];
+  for (let m = from; m < to; m += 60_000) perMinute.push(inWin.filter((r) => r.t >= m && r.t < m + 60_000).length);
+  return { total: inWin.length, minutes: +minutes.toFixed(2), perMinute: +(inWin.length / minutes).toFixed(2), byMinute: perMinute, sources: Object.entries(by).sort((a, b) => b[1] - a[1]).map(([k, n]) => ({ n, k })), allRecords: recs.length };
+}
+
+async function runner() {
+  const out = path.resolve(String(arg('--out', path.join(os.tmpdir(), 'cw-ui-smoke'))));
+  fs.mkdirSync(out, { recursive: true });
+  for (const f of fs.readdirSync(out)) if (/^(ux-.*\.png|ui-smoke\.json|spawn-summary\.json)$/.test(f)) fs.rmSync(path.join(out, f), { force: true });
+  const idle = Number(arg('--idle', 0)) || 0;
+  const live = !!arg('--live', false);
+  const external = arg('--url', '');
+  const inv = uiInventory();
+
+  let home = null, srv = null, seed = null;
+  const spawnLog = path.join(out, 'spawn-log.jsonl');
+  if (external) {
+    console.log(`using ${String(external).replace(/token=[^&]+/, 'token=…')} (read-only phases only)`);
+  } else {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-smoke-'));
+    seed = seedHome(home);
+    if (idle) fs.rmSync(spawnLog, { force: true });
+    srv = await startServer(home, out, idle ? { CW_SPAWN_LOG: '1', CW_SPAWN_LOG_FILE: spawnLog } : {});
+    console.log(`server up (HOME=${home})`);
+  }
+  const result = path.join(out, 'ui-smoke.json');
+  fs.rmSync(result, { force: true });
+  const code = await runElectron({
+    SMOKE_URL: external || srv.url,
+    SMOKE_OUT: out,
+    SMOKE_RESULT: result,
+    SMOKE_MODE: idle ? 'idle' : 'smoke',
+    SMOKE_IDLE: String(idle),
+    SMOKE_LIVE: live ? '1' : '',
+    SMOKE_ACTIVITY: arg('--activity', false) ? '1' : '',
+    SMOKE_TRANSCRIPT: seed?.transcript ?? '',
+    SMOKE_READONLY: external ? '1' : '',
+    SMOKE_REPO: seed?.repo ?? '',
+    SMOKE_SID: seed?.sid ?? '',
+    SMOKE_SHOW: arg('--show', false) ? '1' : '',
+    SMOKE_INVENTORY: JSON.stringify(inv),
+  }, (idle + 240) * 1000);
+  let r = null;
+  try { r = JSON.parse(fs.readFileSync(result, 'utf8')); } catch { /* electron died */ }
+  let failed = !r || code !== 0;
+  if (r) {
+    for (const c of r.checks) console.log(`${c.ok ? 'PASS' : 'FAIL'} ${c.name}${c.detail ? ` — ${c.detail}` : ''}`);
+    const bad = r.console.filter((m) => !m.expected);
+    console.log(`\nconsole errors/warnings: ${bad.length}${r.console.length !== bad.length ? ` (+${r.console.length - bad.length} expected from the crash probe)` : ''}`);
+    for (const m of bad.slice(0, 40)) console.log(`  [${m.phase}] ${m.level}: ${m.message}`);
+    if (bad.length || r.checks.some((c) => !c.ok)) failed = true;
+    console.log(`screenshots: ${r.shots.length} in ${out}`);
+    if (r.idle && idle) {
+      const s = spawnSummary(spawnLog, r.idle.start, r.idle.end);
+      const pre = spawnSummary(spawnLog, 0, r.idle.start); // server start → UI loaded → session opened → settled
+      s.startup = { total: pre.total, sources: pre.sources.slice(0, 15) };
+      fs.writeFileSync(path.join(out, 'spawn-summary.json'), JSON.stringify(s, null, 2));
+      console.log(`\nstartup (server start → settled, before the window): ${pre.total} spawns`);
+      for (const x of pre.sources.slice(0, 12)) console.log(`  ${String(x.n).padStart(4)}  ${x.k}`);
+      console.log(`idle ${s.minutes} min: ${s.total} spawns = ${s.perMinute}/min  (per minute: ${s.byMinute.join(', ')})`);
+      for (const x of s.sources.slice(0, 20)) console.log(`  ${String(x.n).padStart(4)}  ${x.k}`);
+    }
+  } else {
+    console.log(`electron exited ${code} without a result (see ${result}.log)`);
+  }
+  if (srv) {
+    // the crash probe must have reached the server log through client.log
+    if (r && !external && idle === 0) {
+      const ok = /\[web error\] 设置 · 模型: /.test(srv.log());
+      console.log(`${ok ? 'PASS' : 'FAIL'} boundary error reached the server log (client.log)`);
+      if (!ok) failed = true;
+    }
+    srv.server.kill();
+    await new Promise((res) => setTimeout(res, 800));
+  }
+  if (home && !arg('--keep', false)) { try { fs.rmSync(home, { recursive: true, force: true }); } catch { /* windows may still hold a handle */ } }
+  console.log(failed ? '\nUI SMOKE FAILED' : '\nUI smoke passed');
+  process.exit(failed ? 1 : 0);
+}
+
+/* ------------------------------------------------------------------ Electron half */
+
+function driver() {
+  const { app, BrowserWindow } = require('electron');
+  const E = process.env;
+  const out = E.SMOKE_OUT;
+  const logFile = `${E.SMOKE_RESULT}.log`;
+  const log = (s) => { try { fs.appendFileSync(logFile, `${new Date().toISOString()} ${s}\n`); } catch { /* ignore */ } };
+  try { fs.writeFileSync(logFile, ''); } catch { /* ignore */ }
+  const inv = JSON.parse(E.SMOKE_INVENTORY);
+  const res = { checks: [], console: [], shots: [], idle: null };
+  let phase = 'load';
+  let expectErrors = false;
+  const check = (name, ok, detail) => { res.checks.push({ name, ok: !!ok, detail: detail || undefined }); log(`${ok ? 'PASS' : 'FAIL'} ${name} ${detail || ''}`); };
+  const finish = (code) => { try { fs.writeFileSync(E.SMOKE_RESULT, JSON.stringify(res, null, 2)); } catch { /* ignore */ } app.exit(code); };
+  process.on('uncaughtException', (e) => { log(`uncaught ${e.stack || e}`); check('driver', false, String(e.message || e)); finish(3); });
+  const hardStop = setTimeout(() => { check('driver finished in time', false); finish(6); }, (Number(E.SMOKE_IDLE || 0) + 200) * 1000);
+
+  app.whenReady().then(async () => {
+    const show = E.SMOKE_SHOW === '1';
+    const win = new BrowserWindow({ width: 1360, height: 860, show, webPreferences: { offscreen: !show, backgroundThrottling: false } });
+    if (show) win.showInactive();
+    const wc = win.webContents;
+    wc.on('console-message', (a, b, c) => {
+      const level = typeof a === 'object' && a && 'level' in a ? a.level : b;
+      const message = typeof a === 'object' && a && 'message' in a ? a.message : c;
+      const bad = level === 'error' || level === 'warning' || Number(level) >= 2;
+      if (bad) res.console.push({ phase, level: String(level), message: String(message).slice(0, 800), expected: expectErrors || undefined });
+    });
+    wc.on('render-process-gone', (_e, d) => check('renderer alive', false, d.reason));
+    wc.on('did-fail-load', (_e, code, desc) => check('page load', false, `${code} ${desc}`));
+    const js = (code) => wc.executeJavaScript(code, true);
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const waitFor = async (code, ms = 15_000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await js(code).catch(() => false)) return true; await sleep(150); } return false; };
+    const shot = async (name) => {
+      try {
+        const img = await wc.capturePage();
+        const f = path.join(out, `ux-${name}.png`);
+        fs.writeFileSync(f, img.toPNG());
+        res.shots.push(f);
+      } catch (e) { log(`shot ${name} failed: ${e.message}`); }
+    };
+    const click = async (selector) => {
+      const r = await js(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; el.scrollIntoView({ block: 'nearest' }); const b = el.getBoundingClientRect(); return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) }; })()`);
+      if (!r) return null;
+      wc.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y });
+      wc.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 });
+      wc.sendInputEvent({ type: 'mouseUp', x: r.x, y: r.y, button: 'left', clickCount: 1 });
+      await sleep(250);
+      return r;
+    };
+    const key = async (keyCode) => { wc.sendInputEvent({ type: 'keyDown', keyCode }); wc.sendInputEvent({ type: 'keyUp', keyCode }); await sleep(200); };
+    const noBoundary = (scope) => js(`[...document.querySelectorAll(${JSON.stringify(`${scope} .err-boundary`)})].map((e) => e.dataset.area + ': ' + e.querySelector('.eb-msg')?.textContent).join(' | ')`);
+
+    try {
+      await win.loadURL(E.SMOKE_URL);
+      check('app mounted and connected', await waitFor('!!window.__store && window.__store.getState().connected && window.__store.getState().metaLoaded', 30_000));
+      await sleep(1500);
+      phase = 'onboarding';
+      if (await js('!!document.querySelector(".modal.onboarding")')) {
+        await shot('onboarding');
+        if (E.SMOKE_READONLY !== '1') await js('window.__store.getState().setSetting("onboarded", true)');
+        else await js('document.querySelector(".modal-bg")?.remove()');
+        await sleep(400);
+      }
+
+      if (E.SMOKE_MODE === 'idle') {
+        // a git-repo session in view (history → ContextRow / git status), optionally a live one (spawns the engine)
+        phase = 'idle-setup';
+        if (E.SMOKE_SID) { await js(`window.__store.getState().loadHistory(${JSON.stringify(E.SMOKE_SID)})`); await sleep(2000); }
+        if (E.SMOKE_LIVE === '1' && E.SMOKE_REPO) {
+          await js(`window.__store.getState().openSession({ cwd: ${JSON.stringify(E.SMOKE_REPO)}, providerId: 'claude' })`).catch((e) => log(`openSession: ${e.message}`));
+        }
+        // a second tile on the same session showing the workbench 文件 tab (git badges → useGitStatus)
+        if (E.SMOKE_SID) {
+          const sid = JSON.stringify(E.SMOKE_SID);
+          await js(`(() => { const st = window.__store.getState(); const g = st.layout.groups.find((x) => x.id === st.layout.activeGroupId); const paneId = Object.keys(g.panes).find((p) => g.panes[p].tiles.some((t) => t.kind === 'chat' && t.sessionId === ${sid})) || g.focusedPaneId; st.dispatchLayout({ t: 'pane.split', paneId, dir: 'row', tile: { id: 'smoke-files', kind: 'chat', sessionId: ${sid}, view: 'chat', wb: 'files' } }); })()`).catch((e) => log(`split: ${e.message}`));
+        }
+        await sleep(30_000); // let startup and the session settle before the measured window
+        await shot('idle-start');
+        phase = 'idle';
+        res.idle = { start: Date.now(), end: 0 };
+        const timers = [];
+        if (E.SMOKE_ACTIVITY === '1') {
+          let n = 0;
+          timers.push(setInterval(() => {
+            n++;
+            const line = { isSidechain: false, userType: 'external', cwd: E.SMOKE_REPO, sessionId: E.SMOKE_SID, version: '2.1.281', parentUuid: null, type: 'assistant', message: { id: `msg_act_${n}`, type: 'message', role: 'assistant', model: 'claude-smoke', content: [{ type: 'text', text: `working ${n}` }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }, uuid: `00000000-0000-4000-9000-${String(n).padStart(12, '0')}`, timestamp: new Date().toISOString() };
+            try { fs.appendFileSync(E.SMOKE_TRANSCRIPT, `${JSON.stringify(line)}\n`); } catch (e) { log(`append: ${e.message}`); }
+          }, 5000));
+          // the agent edits files (top level: the file tree watches depth 1) and runs `git status` now and then,
+          // which refreshes .git/index → git.changed
+          timers.push(setInterval(() => {
+            try { fs.writeFileSync(path.join(E.SMOKE_REPO, 'README.md'), `# smoke repo\n\n${Date.now()}\n`); } catch (e) { log(`edit: ${e.message}`); }
+          }, 10_000));
+          timers.push(setInterval(() => {
+            require('node:child_process').execFile('git', ['status', '--short'], { cwd: E.SMOKE_REPO, windowsHide: true }, () => {});
+          }, 20_000));
+        }
+        await sleep(Number(E.SMOKE_IDLE) * 1000);
+        for (const t of timers) clearInterval(t);
+        res.idle.end = Date.now();
+        await shot('idle-end');
+        clearTimeout(hardStop);
+        return finish(0);
+      }
+
+      // ---- welcome composer: a click in the text box types, nothing opens over it
+      phase = 'welcome';
+      check('welcome composer present', await waitFor('!!document.querySelector(".welcome .composer textarea")'));
+      await shot('welcome');
+      const leaks = await js(`[...document.querySelectorAll('.composer select')].filter((s) => { const p = s.closest('.chip, label, .dirpick') || s.parentElement; const a = s.getBoundingClientRect(), b = p.getBoundingClientRect(); return a.width > b.width + 2 || a.height > b.height + 2; }).map((s) => s.outerHTML.slice(0, 80))`);
+      check('no invisible <select> larger than its chip', !leaks.length, leaks.join(' ; '));
+      const at = await click('.welcome .composer textarea');
+      const hit = at && await js(`(() => { const el = document.elementFromPoint(${at.x}, ${at.y}); return { hit: el && el.tagName, focused: document.activeElement && document.activeElement.tagName }; })()`);
+      check('click on the welcome text box lands on the text box', hit && hit.hit === 'TEXTAREA' && hit.focused === 'TEXTAREA', JSON.stringify(hit));
+      // typing saves the welcome draft on the server: not against somebody's running server (--url)
+      if (E.SMOKE_READONLY !== '1') {
+        wc.insertText('smoke：输入测试');
+        await sleep(300);
+        check('typing goes into the text box', await js('document.querySelector(".welcome .composer textarea").value.includes("输入测试")'));
+      }
+      check('no dropdown / menu open after clicking the text box', !(await js('!!document.querySelector(".menu.dirmenu, .menu.mm")')));
+      await shot('welcome-click');
+      if (E.SMOKE_READONLY !== '1') { wc.selectAll(); wc.delete(); await sleep(200); }
+
+      // ---- working-directory chip: our own menu, only from the chip
+      phase = 'dirpicker';
+      if (E.SMOKE_REPO) {
+        await click('.welcome .dirpick');
+        const listed = await js(`[...document.querySelectorAll('.menu.dirmenu [data-dir]')].map((b) => b.dataset.dir)`);
+        check('directory chip opens the directory menu', listed.includes(E.SMOKE_REPO), JSON.stringify(listed));
+        await shot('dirmenu');
+        await key('Escape');
+        check('Esc closes the directory menu', !(await js('!!document.querySelector(".menu.dirmenu")')));
+      }
+
+      // ---- model menu
+      phase = 'model-menu';
+      await click('.welcome .mm-anchor > button.chip');
+      check('model menu opens', await waitFor('!!document.querySelector(".menu.mm")', 5000));
+      await sleep(600);
+      await shot('model-menu');
+      check('model menu without error boundary', !(await noBoundary('body')), await noBoundary('body'));
+      await key('Escape');
+      await sleep(200);
+
+      // ---- every settings section
+      for (const s of inv.sections) {
+        phase = `settings:${s.id}`;
+        await js(`window.__store.getState().openSettings({ section: ${JSON.stringify(s.id)} })`);
+        const opened = await waitFor(`document.querySelector('.modal.settings .set-head h3')?.textContent === ${JSON.stringify(s.label)}`, 5000);
+        await sleep(1500); // requests the section fires on mount
+        const err = await noBoundary('.modal.settings');
+        check(`settings · ${s.label}`, opened && !err, err || (opened ? '' : 'section did not open'));
+        await shot(`settings-${s.id}`);
+      }
+      await js('window.__store.setState({ settingsOpen: null })');
+      await sleep(300);
+
+      // ---- every dock panel
+      for (const p of inv.panels) {
+        if (E.SMOKE_READONLY === '1' && p.id === 'terminal') continue; // would start a pty on that server
+        phase = `panel:${p.id}`;
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: ${JSON.stringify(p.id)} })`);
+        const shown = await waitFor(`!!document.querySelector('.dock .dock-tabs .tab.active') && document.querySelector('.dock .dock-tabs .tab.active .t')?.textContent === ${JSON.stringify(p.title)}`, 5000);
+        await sleep(1500);
+        const err = await noBoundary('.dock');
+        check(`panel · ${p.title}`, shown && !err, err || (shown ? '' : 'panel did not open'));
+        await shot(`panel-${p.id}`);
+      }
+
+      // ---- a seeded session in a pane (chat tile, ContextRow, git badges)
+      if (E.SMOKE_SID) {
+        phase = 'session';
+        await js(`window.__store.getState().loadHistory(${JSON.stringify(E.SMOKE_SID)})`);
+        check('seeded session renders', await waitFor('!!document.querySelector(".composer textarea") && !document.querySelector(".welcome")', 10_000));
+        await sleep(1500);
+        const err = await noBoundary('body');
+        check('session tile without error boundary', !err, err);
+        await shot('session');
+      }
+
+      // ---- error boundary probe: a crash in one settings section stays in that section, 重试 recovers it
+      if (E.SMOKE_READONLY !== '1') {
+        phase = 'crash-probe';
+        await js('window.__store.getState().openSettings({ section: "models" })');
+        await sleep(800);
+        expectErrors = true;
+        await js('window.__cwCrash("设置 · 模型")');
+        const caught = await waitFor('!!document.querySelector(\'.modal.settings .err-boundary[data-area="设置 · 模型"]\')', 5000);
+        const rest = await js('!!document.querySelector(".modal.settings .set-nav") && !!document.querySelector(".sidebar")');
+        check('boundary catches a crash in its own section only', caught && rest);
+        await shot('crash-boundary');
+        await js('document.querySelector(\'.modal.settings .err-boundary[data-area="设置 · 模型"] .eb-actions .btn\').click()');
+        await sleep(600);
+        expectErrors = false;
+        check('重试 remounts the section', !(await js('!!document.querySelector(".modal.settings .err-boundary")')));
+        await js('window.__store.setState({ settingsOpen: null })');
+        await sleep(1500); // let the client.log request land
+      }
+    } catch (e) {
+      check('driver', false, e.stack || String(e));
+    }
+    clearTimeout(hardStop);
+    finish(0);
+  });
+}

@@ -144,9 +144,12 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   useEffect(() => {
     const el = ta.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => autosize());
+    // autosize() changes the observed box itself: run it a frame later, or the browser reports
+    // "ResizeObserver loop completed with undelivered notifications" as a console error
+    let raf = 0;
+    const ro = new ResizeObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(autosize); });
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => { ro.disconnect(); cancelAnimationFrame(raf); };
   }, []);
 
   useEffect(() => {
