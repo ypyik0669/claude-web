@@ -726,7 +726,8 @@ export const useStore = create<State>((set, get) => ({
   togglePanel(p) {
     // the right panel is not drawn on a phone: opening a tab there would start things (a terminal pty) nobody sees
     if (get().mobile) { get().toast(PHONE_NO_PANEL); return; }
-    get().dispatchLayout({ t: 'dock.toggle', panel: p });
+    // without the workbench tools the four fixed tabs (审阅 / 文件 / 终端 / 任务) are hidden, never closed
+    get().dispatchLayout({ t: 'dock.toggle', panel: p, workbench: get().settings['ui.workbench'] === true });
   },
   setTab(tab) {
     set({ tab });

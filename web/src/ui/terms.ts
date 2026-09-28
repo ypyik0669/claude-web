@@ -79,10 +79,11 @@ export const PHONE_NO_PANEL = `手机上没有${TERMS.dock}：改动 / Git / 文
 
 /**
  * Palette / rail label for toggling a right-panel tab, from what the toggle will do (`panelToggleEffect`): the
- * terminal is only hidden (its process keeps running), other panels close their tab.
+ * terminal is only hidden (its process keeps running), other panels close their tab — except the fixed tabs of the
+ * default right panel, which are hidden too (`keepAlive` false: nothing keeps running, so no 后台 note).
  */
-export function panelToggleLabel(effect: 'show' | 'hide' | 'remove', title: string): string {
-  return effect === 'show' ? `打开${title}面板` : effect === 'hide' ? `隐藏${title}面板（继续在后台运行）` : `关闭${title}面板`;
+export function panelToggleLabel(effect: 'show' | 'hide' | 'remove', title: string, keepAlive = true): string {
+  return effect === 'show' ? `打开${title}面板` : effect === 'hide' ? `隐藏${title}面板${keepAlive ? '（继续在后台运行）' : ''}` : `关闭${title}面板`;
 }
 
 /** The per-session views that used to be the 8 workbench tabs (spec §4.2). */
