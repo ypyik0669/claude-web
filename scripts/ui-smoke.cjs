@@ -453,6 +453,15 @@ function driver() {
           await click('.welcome .cb .plus');
           await click('.menu.plus-menu [data-id="reference"]');
           const listed = await waitFor('document.querySelectorAll(".menu.plus-menu .cm-ref-list .cm-it").length > 0', 3000);
+          // from the search box ↓ and Tab land on the first result (not the 返回 button, not closing the menu)
+          const where = 'document.activeElement?.closest?.(".cm-ref-list") ? "result" : document.activeElement?.getAttribute?.("aria-label") ?? document.activeElement?.tagName';
+          const inSearch = await js('document.activeElement?.getAttribute?.("aria-label")');
+          await key('Down');
+          const afterDown = await js(where);
+          await js(`document.querySelector('.menu.plus-menu .cm-ref-head input')?.focus()`);
+          await key('Tab');
+          const afterTab = await js(where);
+          check('reference search: ↓ and Tab go to the first result and keep the menu open', inSearch === '搜索对话' && afterDown === 'result' && afterTab === 'result' && !!(await js('!!document.querySelector(".menu.plus-menu")')), JSON.stringify({ inSearch, afterDown, afterTab }));
           await click('.menu.plus-menu .cm-ref-list .cm-it');
           const refChip = await waitFor('!!document.querySelector(".welcome .attach .att-chip.ref")', 2000);
           check('引用另一个对话 lists conversations and adds the reference chip', listed && refChip, JSON.stringify({ listed, refChip }));
@@ -521,33 +530,44 @@ function driver() {
         phase = 'session-composer';
         check('no stats bar under the composer', !(await js('!!document.querySelector(".pane .composer .statusbar")')));
         const sidJs = JSON.stringify(E.SMOKE_SID);
-        // no occupancy reported → no ring at all (an empty circle reads as a radio button / a spinner)
+        // no occupancy reported (a conversation opened from history, ACP…) → no ring (an empty circle reads as a
+        // radio button / a spinner), but with a turn behind it a plain stats icon keeps the numbers one click away
         const noCu = await js(`(() => { const o = window.__store.getState().open[${sidJs}]; return !!o && !(o.contextUsage ?? o.conv.contextUsage); })()`);
-        if (noCu) check('no context ring while the agent reports no occupancy', !(await js('!!document.querySelector(".pane .composer .ctx-meter")')));
+        if (noCu) {
+          const plain = await js(`(() => { const m = document.querySelector('.pane .composer .ctx-meter'); return m ? { cls: m.className, circles: m.querySelectorAll('circle').length } : null; })()`);
+          await click('.pane .composer .ctx-meter');
+          const plainCard = await js(`document.querySelector('.ctx-card')?.innerText ?? null`);
+          await click('.pane .composer .ctx-meter');
+          check('no occupancy: no ring, a plain stats icon whose card still has 轮数 / 输入 (no 上下文 line)', plain && /plain/.test(plain.cls) && !plain.circles && !!plainCard && /轮数/.test(plainCard) && !/上下文/.test(plainCard), JSON.stringify({ plain, plainCard }));
+        }
         const setCu = (cu) => js(`(() => { const st = window.__store; const o = st.getState().open[${sidJs}]; st.setState({ open: { ...st.getState().open, [${sidJs}]: { ...o, contextUsage: ${JSON.stringify(cu)}, version: o.version + 1 } } }); })()`);
         await setCu({ percentage: 83, totalTokens: 166_000, maxTokens: 200_000 });
-        const ring = await waitFor('!!document.querySelector(".pane .composer .ctx-meter")', 2000);
-        const ringLook = await js(`(() => { const m = document.querySelector('.pane .composer .ctx-meter'); if (!m) return null; const cs = getComputedStyle(m); return { cls: m.className, pct: m.textContent, weight: cs.fontWeight, color: cs.color, warn: getComputedStyle(document.documentElement).getPropertyValue('--warn').trim() }; })()`);
-        check('83 %: the ring shows the percentage in ink, bold, not yellow', ring && ringLook && /strong/.test(ringLook.cls) && ringLook.pct === '83%' && Number(ringLook.weight) >= 600, JSON.stringify(ringLook));
+        const ring = await waitFor('!!document.querySelector(".pane .composer .ctx-meter circle")', 2000);
+        const ringLook = await js(`(() => { const m = document.querySelector('.pane .composer .ctx-meter'); if (!m) return null; const cs = getComputedStyle(m); return { cls: m.className, pct: m.textContent, weight: cs.fontWeight, chip: !!document.querySelector('.pane .status-strip .ctx-full') }; })()`);
+        check('83 %: the ring shows the percentage in ink, bold, not yellow; no second 83 % above the composer', ring && ringLook && /strong/.test(ringLook.cls) && ringLook.pct === '83%' && Number(ringLook.weight) >= 600 && !ringLook.chip, JSON.stringify(ringLook));
         // the rest of the row is in the reach table too (the ring = the old stats bar)
         for (const place of ['meter', 'bar']) {
-          const w = await walk(place, '.pane .composer', { context: true });
+          const w = await walk(place, '.pane .composer', { usage: true });
           check(`reach · ${place} in a conversation (${w.n})`, w.n > 0 && !w.miss.length, w.miss.join(' ; '));
         }
         await click('.pane .composer .ctx-meter');
         const card = await js(`document.querySelector('.ctx-card')?.innerText ?? null`);
         check('the context ring shows the old stats (轮数 / 输入 / 输出 / 上下文) on click', !!card && /轮数/.test(card) && /输入/.test(card) && /上下文/.test(card), JSON.stringify(card));
         await click('.pane .composer .ctx-meter');
+        await setCu({ percentage: 97, totalTokens: 194_000, maxTokens: 200_000 });
+        const full = await waitFor('!!document.querySelector(".pane .status-strip .ctx-full")', 2000);
+        const fullText = await js(`document.querySelector('.pane .status-strip .ctx-full')?.textContent ?? null`);
+        check('≥ 95 %: the strip offers /compact once, without repeating the percentage', full && /compact/.test(fullText ?? '') && !/%/.test(fullText ?? ''), JSON.stringify(fullText));
         await setCu(undefined);
         await sleep(200);
-        // + in a running conversation: the switches show THIS conversation's state, read-only; 「新对话生效」 once
+        // + in a running conversation: the switches show THIS conversation's state, read-only; one note says where to change them
         await click('.pane .composer .cb .plus');
         const live = await js(`(() => { const m = document.querySelector('.menu.plus-menu'); if (!m) return null; const rows = [...m.querySelectorAll('[role="menuitemcheckbox"]')]; return { sub: m.querySelector('.cm-sub')?.textContent ?? null, mentions: (m.innerText.match(/新对话/g) || []).length, rows: rows.length, ro: rows.every((r) => r.getAttribute('aria-disabled') === 'true'), checked: rows.filter((r) => r.getAttribute('aria-checked') === 'true').map((r) => r.dataset.id) }; })()`);
         const before = await js('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"] ?? null)');
         await click('.menu.plus-menu [data-id="chrome"]');
         const after = await js('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"] ?? null)');
         const stillOff = await js(`document.querySelector('.menu.plus-menu [data-id="chrome"]')?.getAttribute('aria-checked')`);
-        check('in a conversation the + capabilities show its own state, read-only, 「新对话生效」 said once', live && /新对话生效/.test(live.sub ?? '') && live.mentions === 1 && live.rows >= 4 && live.ro && !live.checked.length && before === after && stillOff === 'false', JSON.stringify({ live, before, after, stillOff }));
+        check('in a conversation the + capabilities show its own state, read-only, 「要改请在新对话的 + 里设置」 said once', live && /要改请在新对话的 \+ 里设置/.test(live.sub ?? '') && live.mentions === 1 && live.rows >= 4 && live.ro && !live.checked.length && before === after && stillOff === 'false', JSON.stringify({ live, before, after, stillOff }));
         await key('Escape');
 
         // ---- redesign phase 1: one ≤ 52px row above the conversation; the workbench tabs live in ···
