@@ -30,6 +30,12 @@ describe('the old stats bar, now behind the usage ring', () => {
     expect(meterMode(undefined, 3)).toBe('plain');
     expect(meterMode(undefined, 0)).toBeNull();
   });
+  it('a phone keeps its composer to + · model · send (spec §5.11): the ring only once the context is filling up', () => {
+    expect(meterMode(40, 3, { phone: true })).toBeNull();
+    expect(meterMode(undefined, 3, { phone: true })).toBeNull();
+    expect(meterMode(60, 3, { phone: true })).toBe('ring');
+    expect(meterMode(97, 0, { phone: true })).toBe('ring');
+  });
   it('the lines the hover card shows (every field of the old bar)', () => {
     const lines = usageLines(sessionTotals(items), { lastMs: 4200, context: { percentage: 72, totalTokens: 145_000, maxTokens: 200_000 }, tasks: 2 });
     expect(lines.map((l) => l[0])).toEqual(['轮数', '输入 / 输出', '缓存命中', '费用', '上一轮用时', '上下文', '后台任务']);

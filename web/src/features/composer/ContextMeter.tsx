@@ -16,6 +16,7 @@ import { BAR_ID } from './ids';
  */
 export function ContextMeter({ sessionId }: { sessionId: string }) {
   const o = useStore((s) => s.open[sessionId]);
+  const phone = useStore((s) => s.mobile);
   const [pinned, setPinned] = useState(false);
   const [hover, setHover] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
@@ -26,7 +27,7 @@ export function ContextMeter({ sessionId }: { sessionId: string }) {
   if (!o || !totals) return null;
   // no occupancy reported (ACP agents, a conversation opened from history): no ring, but the numbers stay one
   // hover away once there is something to count — a plain stats icon opening the same card
-  const mode = meterMode(pct, totals.turns);
+  const mode = meterMode(pct, totals.turns, { phone });
   if (!mode) return null;
   const ring = mode === 'ring';
   const tasks = [...o.conv.tasks.values()].filter((t) => t.status === 'running').length;

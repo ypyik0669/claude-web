@@ -20,7 +20,8 @@ import { installOrchestra } from '@/features/orchestra/state';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { chromeVisibility, workbenchOn } from '@/model/layout';
 import { MOBILE_QUERY } from '@/ui/viewport';
-import { PHONE_NO_INSPECTOR } from '@/ui/terms';
+import { installAutomation } from '@/features/automation/state';
+import { installChecklist } from '@/features/home/checklist-sync';
 
 /** Width of the right panel minimized to its icon rail. */
 const MIN_RAIL = 36;
@@ -67,12 +68,16 @@ export function App() {
   useEffect(() => { const on = () => useStore.setState({ mobile: MOBILE.matches }); on(); MOBILE.addEventListener('change', on); return () => MOBILE.removeEventListener('change', on); }, []);
   useEffect(() => { if (mobile) useStore.setState({ sidebarOpen: false }); }, [mobile]);
   useEffect(() => installOrchestra(), []);
+  useEffect(() => installAutomation(), []);
+  useEffect(() => installChecklist(), []);
   const sbWidth = useStore((s) => s.layout.sidebar.width);
   const dock = useStore((s) => s.layout.dock);
   const inspect = useStore((s) => s.inspect);
   const dispatchLayout = useStore((s) => s.dispatchLayout);
   const dockShown = dock.open && (dock.tabs.length > 0 || !!inspect);
   const rpWidth = !dockShown ? 0 : dock.minimized ? MIN_RAIL : dock.width;
+  // the phone's bottom drawer has no icon rail to be minimised to: shown, it is shown whole
+  useEffect(() => { if (mobile && dockShown && dock.minimized) dispatchLayout({ t: 'dock.set', patch: { minimized: false } }); }, [mobile, dockShown, dock.minimized]);
 
   // desktop caption buttons (Windows / Linux overlay) are painted in one colour: match whatever row is under them —
   // the page (--bg) when the session header / empty page is there, the side surface (--bg-1) for the right panel's
@@ -98,15 +103,14 @@ export function App() {
   }, [theme, sideSurface]);
 
   // asking to inspect a tool call must bring 详情 to the front of the right panel — also when it is already a tab
-  // behind another one (otherwise the detail button on a tool row does nothing visible). A phone has no right panel:
-  // a file (an attachment chip, Alt+click on a path) opens in place like a plain click on a path; a step says it
-  // expands where it is (the tool rows there have no 详情 button); either way the request is dropped
+  // behind another one (otherwise the detail button on a tool row does nothing visible). On a phone the right panel is
+  // the bottom drawer: a step (the steps view) shows there too; a file (an attachment chip, Alt+click on a path) opens
+  // in place like a plain click on a path — a whole screen beats a drawer for reading a file
   useEffect(() => {
     if (!inspect) return;
-    if (!useStore.getState().mobile) { showPanel('inspector'); return; }
     const st = useStore.getState();
-    if (inspect.file) st.openTile({ id: `d${Date.now().toString(36)}`, kind: 'doc', path: inspect.file.path, line: inspect.file.line }, 'tab');
-    else st.toast(PHONE_NO_INSPECTOR);
+    if (!st.mobile || !inspect.file) { showPanel('inspector'); return; }
+    st.openTile({ id: `d${Date.now().toString(36)}`, kind: 'doc', path: inspect.file.path, line: inspect.file.line }, 'tab');
     useStore.setState({ inspect: null });
   }, [inspect]);
 
@@ -142,8 +146,10 @@ export function App() {
   return (
     // `dock-open`: the right panel owns the window's top-right corner (desktop caption buttons sit over its tab row).
     // Not when it is minimized to its 36px icon rail: the buttons then cover the workbench's top-right row as well.
-    <div className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', mobile && sidebarOpen && 'drawer-open', rpWidth > MIN_RAIL && !mobile && 'dock-open')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px` }}>
+    <div className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', mobile && sidebarOpen && 'drawer-open', rpWidth > MIN_RAIL && !mobile && 'dock-open', mobile && rpWidth > 0 && 'sheet-open')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px` }}>
       {mobile && sidebarOpen && <div className="drawer-backdrop" onClick={() => useStore.setState({ sidebarOpen: false })} />}
+      {/* phone: the right panel is a bottom drawer over the conversation; a tap above it puts it away (hidden, not closed) */}
+      {mobile && rpWidth > 0 && <div className="sheet-backdrop" onClick={() => dispatchLayout({ t: 'dock.set', patch: { open: false } })} />}
       {sidebarOpen ? <SidebarColumn /> : <div className="sidebar" style={{ display: 'none' }} />}
       <ErrorBoundary area="工作台"><Workbench /></ErrorBoundary>
       <div className="rpanel" style={{ display: rpWidth ? 'flex' : 'none' }}>

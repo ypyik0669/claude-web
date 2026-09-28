@@ -40,6 +40,7 @@ type ChatTileModel = Extract<Tile, { kind: 'chat' }>;
  */
 function HeaderMenu({ tile, paneId, s, live, remote, gone, onClose }: { tile: ChatTileModel; paneId: string; s: SessionSummary; live: boolean; remote: boolean; gone: boolean; onClose: () => void }) {
   const pinned = useStore((st) => !!st.sessionMeta[s.sessionId]?.pinned);
+  const mobile = useStore((st) => st.mobile);
   const caps = effectiveCaps(s);
   const act = (fn: () => unknown) => () => { onClose(); void fn(); };
   const st = () => useStore.getState();
@@ -58,6 +59,9 @@ function HeaderMenu({ tile, paneId, s, live, remote, gone, onClose }: { tile: Ch
             <Icon name={v.icon} size={13} /> {v.label}
           </button>
         ))}
+        {/* phone: the header has no terminal button; the drawer's 终端 / 任务 from here too */}
+        {mobile && !remote && <button onClick={act(() => st().dispatchLayout({ t: 'dock.show', panel: 'terminal' }))} data-view="terminal"><Icon name="terminal" size={13} /> 终端</button>}
+        {mobile && <button onClick={act(() => st().dispatchLayout({ t: 'dock.show', panel: 'tasks' }))} data-view="tasks"><Icon name="tasks" size={13} /> 任务</button>}
       </div>
       <div className="menu-sep" />
       {!gone && <button onClick={act(() => st().setSessionMeta(s.sessionId, { pinned: !pinned }))}><Icon name="pin" size={14} /> {pinned ? '取消置顶' : '置顶'}</button>}
@@ -149,7 +153,8 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
         )}
       </div>
       <span className="sh-actions">
-        {/* phone: no right panel to show them in (spec §5.11) — 改动 / Git / 文件 are views in ··· */}
+        {/* phone (spec §5.11): ☰ · title · ··· only — 改动 / 终端 / 任务 and the other views are in ··· and open the
+            bottom drawer (whose own tabs switch between 审阅 · 文件 · 终端 · 任务) */}
         {!mobile && stat && stat.files > 0 && (
           <button className="sh-diff" title={`这个对话改了 ${stat.files} 个文件：+${stat.added} 行 −${stat.removed} 行\n点击在右侧审阅这些改动`} onClick={() => openReview({ scope: 'session' })}>
             <span className="add">+{stat.added}</span><span className="del">−{stat.removed}</span>

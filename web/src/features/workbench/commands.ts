@@ -1,7 +1,6 @@
 // Command dispatcher shared by browser keydown, Electron menu accelerators and the command palette.
 import { useStore, type PanelId } from '@/store';
 import { activeGroup, chatTile, currentChatTile, defaultDockPanel, workbenchOn } from '@/model/layout';
-import { PHONE_NO_PANEL } from '@/ui/terms';
 import { offerGroupToNewWindow } from './windows';
 
 export function runCommand(id: string): boolean {
@@ -14,8 +13,8 @@ export function runCommand(id: string): boolean {
   // stays in the sidebar, a running one keeps running); a terminal / document in front is never replaced — the
   // reducer opens a tab next to it. Splits / groups / tabs still work from the keyboard and bring their own chrome.
   const workbench = workbenchOn(st.settings);
-  // a phone draws no right panel: opening it would only start things (a terminal) nobody can see
-  if (st.mobile && (id === 'dock.toggle' || id === 'dock.minimize')) { st.toast(PHONE_NO_PANEL); return true; }
+  // a phone's right panel is the bottom drawer: it has no icon rail to minimise to — the same key shows / hides it
+  if (st.mobile && id === 'dock.minimize') return runCommand('dock.toggle');
   const m = /^(group\.jump|pane\.jump)\.(\d)$/.exec(id);
   if (m) {
     if (m[1] === 'group.jump') { const t = st.layout.groups[Number(m[2])]; if (t) d({ t: 'group.activate', id: t.id }); }

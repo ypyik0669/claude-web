@@ -75,7 +75,8 @@ function AccountMenu({ auth, name, onClose }: { auth: AccountAuth | null; name: 
     return () => { live = false; };
   }, []);
   const id = (x: AccountId) => x;
-  const act = (fn: () => void) => () => { onClose(); closeDrawer(); fn(); };
+  // like 自动化: the phone drawer gets out of the way only when something opened (a panel is the bottom drawer there)
+  const act = (fn: () => boolean | void) => () => { onClose(); if (fn() !== false) closeDrawer(); };
   const st = useStore.getState;
   const plan = planLabel(limits?.subscriptionType ?? auth?.subscriptionType);
   return (

@@ -38,8 +38,11 @@ export function ringLevel(pct: number | undefined): RingLevel | null {
  * What sits in the composer's corner: the ring when the agent reports an occupancy; without one, a plain stats icon
  * once the conversation has a turn (the old stats bar must stay reachable); nothing for an empty conversation.
  */
-export function meterMode(pct: number | undefined, turns: number): 'ring' | 'plain' | null {
-  if (ringLevel(pct) !== null) return 'ring';
+export function meterMode(pct: number | undefined, turns: number, o: { phone?: boolean } = {}): 'ring' | 'plain' | null {
+  const level = ringLevel(pct);
+  // a phone's composer is + · model · send (spec §5.11): the ring shows up only when the context is filling up
+  if (o.phone) return level !== null && level !== 'quiet' ? 'ring' : null;
+  if (level !== null) return 'ring';
   return turns > 0 ? 'plain' : null;
 }
 
