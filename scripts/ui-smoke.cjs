@@ -95,7 +95,28 @@ function seedHome(home) {
     { ...base, parentUuid: null, type: 'user', message: { role: 'user', content: 'smoke: seeded session' }, uuid: '00000000-0000-4000-8000-000000000001', timestamp: t },
     { ...base, parentUuid: '00000000-0000-4000-8000-000000000001', type: 'assistant', message: { id: 'msg_smoke', type: 'message', role: 'assistant', model: 'claude-smoke', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }, uuid: '00000000-0000-4000-8000-000000000002', timestamp: t },
   ].map((x) => JSON.stringify(x)).join('\n') + '\n');
-  return { repo, sid, transcript: path.join(proj, `${sid}.jsonl`) };
+  // a second, finished conversation with a turn of work (redesign phase 5: the fold, the change card, thinking time)
+  const toolsSid = '5a0e0e0e-0000-4000-8000-00000000c0d5';
+  const t0 = Date.now() - 600_000;
+  const at = (s) => new Date(t0 + s * 1000).toISOString();
+  const tb = { ...base, sessionId: toolsSid };
+  const readme = path.join(repo, 'README.md');
+  let pu = null, un = 0;
+  const line = (o, s) => { const uuid = `00000000-0000-4000-8000-0000000c0d${String(++un).padStart(2, '0')}`; const l = { ...tb, parentUuid: pu, uuid, timestamp: at(s), ...o }; pu = uuid; return l; };
+  const am = (content, s, id) => line({ type: 'assistant', message: { id, type: 'message', role: 'assistant', model: 'claude-smoke', content, stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } } }, s);
+  const tr = (id, content, s) => line({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] } }, s);
+  fs.writeFileSync(path.join(proj, `${toolsSid}.jsonl`), [
+    line({ type: 'user', message: { role: 'user', content: 'smoke: tidy the readme' } }, 0),
+    am([{ type: 'thinking', thinking: 'read it first', signature: 'x' }], 12, 'msg_t1'),
+    am([{ type: 'text', text: 'Looking at the readme.' }, { type: 'tool_use', id: 'toolu_t_read', name: 'Read', input: { file_path: readme } }], 13, 'msg_t1'),
+    tr('toolu_t_read', '1\t# smoke repo', 14),
+    am([{ type: 'tool_use', id: 'toolu_t_edit', name: 'Edit', input: { file_path: readme, old_string: '# smoke repo', new_string: '# smoke repo\n\nchanged' } }], 30, 'msg_t2'),
+    tr('toolu_t_edit', 'updated', 31),
+    am([{ type: 'tool_use', id: 'toolu_t_bash', name: 'Bash', input: { command: 'git status --short' } }], 40, 'msg_t3'),
+    tr('toolu_t_bash', ' M README.md', 41),
+    am([{ type: 'text', text: 'smoke: the readme is tidy now.' }], 45, 'msg_t4'),
+  ].map((x) => JSON.stringify(x)).join('\n') + '\n');
+  return { repo, sid, toolsSid, transcript: path.join(proj, `${sid}.jsonl`) };
 }
 
 async function startServer(home, out, extraEnv) {
@@ -184,9 +205,12 @@ async function runner() {
     SMOKE_READONLY: external ? '1' : '',
     SMOKE_REPO: seed?.repo ?? '',
     SMOKE_SID: seed?.sid ?? '',
+    SMOKE_TOOLS_SID: seed?.toolsSid ?? '',
+    // the mock ACP agent (phase 5: a real permission request) runs under this node, not Electron
+    SMOKE_NODE: process.execPath,
     SMOKE_SHOW: arg('--show', false) ? '1' : '',
     SMOKE_INVENTORY: JSON.stringify(inv),
-  }, (idle + 240) * 1000);
+  }, (idle + 360) * 1000);
   let r = null;
   try { r = JSON.parse(fs.readFileSync(result, 'utf8')); } catch { /* electron died */ }
   let failed = !r || code !== 0;
@@ -241,7 +265,7 @@ function driver() {
   const check = (name, ok, detail) => { res.checks.push({ name, ok: !!ok, detail: detail || undefined }); log(`${ok ? 'PASS' : 'FAIL'} ${name} ${detail || ''}`); };
   const finish = (code) => { try { fs.writeFileSync(E.SMOKE_RESULT, JSON.stringify(res, null, 2)); } catch { /* ignore */ } app.exit(code); };
   process.on('uncaughtException', (e) => { log(`uncaught ${e.stack || e}`); check('driver', false, String(e.message || e)); finish(3); });
-  const hardStop = setTimeout(() => { check('driver finished in time', false); finish(6); }, (Number(E.SMOKE_IDLE || 0) + 200) * 1000);
+  const hardStop = setTimeout(() => { check('driver finished in time', false); finish(6); }, (Number(E.SMOKE_IDLE || 0) + 320) * 1000);
 
   app.whenReady().then(async () => {
     const show = E.SMOKE_SHOW === '1';
@@ -267,8 +291,9 @@ function driver() {
         res.shots.push(f);
       } catch (e) { log(`shot ${name} failed: ${e.message}`); }
     };
+    // an element below the fold is scrolled to the middle, not flush with the bottom edge (a toast sits there)
     const click = async (selector) => {
-      const r = await js(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; el.scrollIntoView({ block: 'nearest' }); const b = el.getBoundingClientRect(); return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) }; })()`);
+      const r = await js(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; const b0 = el.getBoundingClientRect(); el.scrollIntoView({ block: b0.top < 0 || b0.bottom > innerHeight - 48 ? 'center' : 'nearest' }); const b = el.getBoundingClientRect(); return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) }; })()`);
       if (!r) return null;
       wc.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y });
       wc.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 });
@@ -1087,7 +1112,10 @@ function driver() {
           // only the fixed tabs open (the palette walk above opened every panel): 详情 is the one temporary tab
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { tabs: ['files', 'explorer', 'terminal', 'tasks'], active: 'terminal' } })`);
           await js(`window.__store.getState().loadHistory(${JSON.stringify(E.SMOKE_SID)})`);
-          const row = await waitFor('!!document.querySelector(\'.pane.focused .tool-head button[aria-label="详情"]\')', 8000);
+          // (phase 5: a finished turn folds its steps into one line — open it to reach the row)
+          await waitFor('!!document.querySelector(".pane.focused .turn-sum")', 8000);
+          if (await js('!!document.querySelector(".pane.focused .turn-sum[aria-expanded=\\"false\\"]")')) await click('.pane.focused .turn-sum');
+          const row = await waitFor('!!document.querySelector(\'.pane.focused .turn-body:not([hidden]) .tool-head button[aria-label="详情"]\')', 8000);
           await click('.pane.focused .tool-head button[aria-label="详情"]');
           const detail = row && await waitFor(`${activeTab} === "inspector" && !!document.querySelector('.dock-panel[data-panel="inspector"]:not([hidden])')`, 4000);
           check('a tool row’s 详情 opens 详情 in the right panel', detail, JSON.stringify({ row }));
@@ -1175,6 +1203,163 @@ function driver() {
         }
         const err3 = await noBoundary('.dock');
         check('right panel checks without error boundary', !err3, err3);
+      }
+
+      // ---- redesign phase 5: chat rendering — folded turns, the change card, thinking time, hover actions, and the
+      // permission card docked above the composer (a real request from the mock ACP agent: allow once with an empty
+      // Enter, deny with the words in the box, 拒绝 with a reason; 总是允许 and 「还有 N 条」 on staged requests)
+      if (E.SMOKE_READONLY !== '1' && E.SMOKE_TOOLS_SID) {
+        phase = 'chat-turns';
+        const tsid = JSON.stringify(E.SMOKE_TOOLS_SID);
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+        await js(`window.__store.getState().loadHistory(${tsid})`);
+        const folded = await waitFor(`!!document.querySelector('.pane.focused .chat-inner[data-session-id=${tsid}] .turn.folded .turn-sum')`, 10_000);
+        const turn = await js(`(() => { const t = document.querySelector('.pane.focused .turn.folded'); if (!t) return null; const body = t.querySelector('.turn-body'); return { sum: t.querySelector('.turn-sum').textContent, expanded: t.querySelector('.turn-sum').getAttribute('aria-expanded'), hidden: body.hidden, answer: t.querySelector('.turn-answer .md')?.textContent ?? null, card: t.querySelector('.fcard .fcard-h .t')?.textContent ?? null, rows: [...t.querySelectorAll('.fcard .fcard-f[data-path]')].map((r) => r.querySelector('.p').textContent), steps: body.querySelectorAll('.tl').length }; })()`);
+        check('a finished turn folds to 「已处理 45 秒 · 读了 1 个文件 · 改了 1 个 · 运行 1 条命令」; the answer and 「改动了 1 个文件」 stay out', folded && turn && turn.sum === '已处理 45 秒 · 读了 1 个文件 · 改了 1 个 · 运行 1 条命令' && turn.expanded === 'false' && turn.hidden && /readme is tidy/.test(turn.answer ?? '') && turn.card === '改动了 1 个文件' && turn.rows.join() === 'README.md' && turn.steps >= 3, JSON.stringify(turn));
+        await shot('chat-folded');
+        await click('.pane.focused .turn-sum');
+        const opened = await js(`(() => { const t = document.querySelector('.pane.focused .turn.folded'); const body = t.querySelector('.turn-body'); return { expanded: t.querySelector('.turn-sum').getAttribute('aria-expanded'), hidden: body.hidden, visible: body.getBoundingClientRect().height > 40, thinking: body.querySelector('.trail.thinking .tl-head .lbl')?.textContent ?? null, diffs: body.querySelectorAll('.diff').length }; })()`);
+        check('clicking the line opens the same timeline; the thinking says 「思考了 12 秒」 folded; no diff open by default', opened.expanded === 'true' && !opened.hidden && opened.visible && opened.thinking === '思考了 12 秒' && opened.diffs === 0, JSON.stringify(opened));
+        await shot('chat-expanded');
+        // 在对话里直接展开改动 (ui.inlineDiffs): the edit step starts open
+        await js('window.__store.getState().setSetting("ui.inlineDiffs", true)');
+        const inline = await waitFor(`document.querySelectorAll('.pane.focused .turn.folded .turn-body .tl.open .diff').length === 1`, 3000);
+        await js('window.__store.getState().setSetting("ui.inlineDiffs", false)');
+        check('「在对话里直接展开改动」 opens the edit step\'s diff; off closes it again', inline && await waitFor(`document.querySelectorAll('.pane.focused .turn.folded .turn-body .diff').length === 0`, 3000));
+        await click('.pane.focused .turn-sum');
+        check('clicking it again folds the turn', await js(`document.querySelector('.pane.focused .turn.folded .turn-body').hidden`));
+        // the message actions: hidden until hover / keyboard focus inside the message
+        const actOpacity = () => js(`(() => { const a = document.querySelector('.pane.focused .turn-answer > .msg-actions'); return a ? getComputedStyle(a).opacity : null; })()`);
+        wc.sendInputEvent({ type: 'mouseMove', x: 4, y: 400 });
+        await sleep(300);
+        const idle = await actOpacity();
+        await js(`document.querySelector('.pane.focused .turn-answer > .msg-actions button').focus()`);
+        await sleep(350);
+        const focused = await actOpacity();
+        await js('document.activeElement.blur()');
+        check('message actions: invisible at rest, shown when the keyboard focus is inside the message', idle === '0' && focused === '1', JSON.stringify({ idle, focused }));
+        // a file row of the change card: 审阅 on this conversation's changes, scrolled to that file and open
+        await click('.pane.focused .fcard .fcard-f[data-path]');
+        const reviewed = await waitFor(`!!document.querySelector('.dock-panel[data-panel="files"]:not([hidden]) .review') && /本次对话/.test(document.querySelector('.dock-panel[data-panel="files"] .rv-scope')?.textContent ?? '')`, 6000);
+        const fileOpen = reviewed && await waitFor(`[...document.querySelectorAll('.dock-panel[data-panel="files"] .rv-fh')].some((h) => /README\\.md/.test(h.textContent) && h.getAttribute('aria-expanded') === 'true')`, 6000);
+        check('a file row of the change card opens 审阅 on 本次对话改动 with that file open', reviewed && fileOpen, JSON.stringify({ reviewed, fileOpen }));
+        await shot('chat-card-review');
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+        await sleep(300);
+        win.setContentSize(740, 860);
+        await waitFor('document.querySelector(".app").classList.contains("mobile")', 4000);
+        await sleep(400);
+        await click('.pane .fcard .fcard-f[data-path]');
+        const inPlace = await waitFor(`[...document.querySelectorAll('.pane .wb-body .review.in-place .rv-fh')].some((h) => /README\\.md/.test(h.textContent) && h.getAttribute('aria-expanded') === 'true')`, 6000);
+        check('phone: a file row of the change card opens this conversation\'s 改动 in place, at that file', inPlace);
+        await click('.pane .sh-view');
+        await waitFor('!!document.querySelector(".pane .chat")', 3000);
+        win.setContentSize(1360, 860);
+        await waitFor('!document.querySelector(".app").classList.contains("mobile")', 4000);
+        await sleep(300);
+
+        // ---- the docked permission card, with a real request (the mock ACP agent asks before its Read)
+        phase = 'chat-permission';
+        // one request to the server from here (the page's socket is not reachable): agents.set, goals.create / start
+        const serverRequest = (req) => new Promise((res, rej) => {
+          const WS = require(path.join(ROOT, 'node_modules', 'ws'));
+          const u = new URL(E.SMOKE_URL);
+          const s = new WS(`ws://${u.host}/ws?token=${u.searchParams.get('token')}`);
+          s.on('error', rej);
+          s.on('open', () => s.send(JSON.stringify({ type: 'request', request: { id: '1', req } })));
+          s.on('message', (raw) => { const m = JSON.parse(String(raw)); if (m.type === 'reply' && m.reply.id === '1') { s.close(); m.reply.ok ? res(m.reply.data) : rej(new Error(m.reply.error)); } });
+        });
+        await serverRequest({ kind: 'agents.set', agent: 'acp:smoke', patch: { name: 'Smoke Agent', command: E.SMOKE_NODE, args: [path.join(ROOT, 'server', 'src', 'agents', '__mocks__', 'acp-agent.mjs')], env: { MOCK_SLOW_MS: '12000' }, protocol: 'acp', label: 'smoke' } });
+        const psid = await js(`window.__store.getState().openSession({ cwd: ${JSON.stringify(E.SMOKE_REPO)}, agent: 'acp:smoke', permissionMode: 'default' })`);
+        const pj = JSON.stringify(psid);
+        check('a mock-agent conversation opens', !!psid && await waitFor(`window.__store.getState().open[${pj}]?.state === 'idle'`, 20_000), String(psid));
+        // record what the page answers (the WebSocket frames it sends)
+        await js(`(() => { window.__permSent = []; const orig = WebSocket.prototype.send; if (orig.__smoke) return; const wrap = function (d) { try { const m = JSON.parse(d); if (m && m.request && m.request.req && m.request.req.kind === 'permission.respond') window.__permSent.push(m.request.req); } catch {} return orig.call(this, d); }; wrap.__smoke = true; WebSocket.prototype.send = wrap; })()`);
+        const lastSent = () => js('JSON.stringify(window.__permSent[window.__permSent.length - 1] ?? null)');
+        const askTool = async (text) => {
+          await js(`window.__store.getState().send(${pj}, ${JSON.stringify(text)})`);
+          return waitFor(`!!document.querySelector('.pane.focused .composer .pdock[data-kind="tool"]')`, 15_000);
+        };
+        const docked = await askTool('smoke: please use a tool');
+        const dock = await js(`(() => { const c = document.querySelector('.pane.focused .composer'); const d = c.querySelector('.pdock'); if (!d) return null; return { title: d.querySelector('.pd-title')?.textContent, runCard: !!c.querySelector('.run-card'), inStream: !!document.querySelector('.pane.focused .chat .pdock, .pane.focused .chat .perm'), aboveBox: d.getBoundingClientRect().bottom <= c.querySelector('.composer-box').getBoundingClientRect().top + 1, allow: d.querySelector('[data-act="allow"]')?.textContent, always: !!d.querySelector('[data-act="always"]'), hint: d.querySelector('.pd-hint')?.textContent, placeholder: c.querySelector('textarea').placeholder, waitingStep: document.querySelector('.pane.focused .tl.waiting .tool-head .st.wait')?.textContent ?? null }; })()`);
+        check('a permission request docks above the composer (not in the conversation), replacing the run card; the step says 等你确认', docked && dock && /想读取/.test(dock.title) && !dock.runCard && !dock.inStream && dock.aboveBox && /允许一次/.test(dock.allow) && !dock.always && /也可以直接在下面输入/.test(dock.hint) && /允许一次/.test(dock.placeholder) && dock.waitingStep === '等你确认', JSON.stringify(dock));
+        await sleep(400); // (an offscreen capture right after a change can still show the frame before it)
+        await shot('chat-permission');
+        // Mission Control still answers from its own card
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'mission' })`);
+        check('Mission Control still lists the request (允许 / 拒绝 there)', await waitFor(`!!document.querySelector('.dock-panel[data-panel="mission"]:not([hidden]) .mcard .perm')`, 4000));
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+        // 1. an empty box + Enter = 允许一次
+        await click('.pane.focused .composer textarea');
+        await key('Return');
+        const allowed = await waitFor(`!document.querySelector('.pane.focused .composer .pdock') && /read ok/.test(document.querySelector('.pane.focused .chat-inner').textContent)`, 15_000);
+        const allowSent = await lastSent();
+        check('empty box + Enter = 允许一次: {behavior: allow} goes out, the card leaves, the agent carries on', allowed && /"behavior":"allow"/.test(allowSent) && !/updatedPermissions/.test(allowSent), allowSent);
+        check('the turn folds once it is done', await waitFor(`[...document.querySelectorAll('.pane.focused .turn.folded .turn-sum')].some((s) => /^已处理/.test(s.textContent))`, 10_000));
+        // 2. words in the box + Enter = deny with those words (the old card's 拒绝理由 field)
+        await askTool('smoke: please use a tool again');
+        await click('.pane.focused .composer textarea');
+        wc.insertText('smoke: use another way');
+        await sleep(200);
+        const denyLabel = await js(`document.querySelector('.pane.focused .composer .steer.deny')?.textContent ?? null`);
+        await key('Return');
+        const denied = await waitFor(`!document.querySelector('.pane.focused .composer .pdock') && /denied/.test(document.querySelector('.pane.focused .chat-inner').textContent)`, 15_000);
+        const denySent = await lastSent();
+        const boxAfter = await js(`document.querySelector('.pane.focused .composer textarea').value`);
+        check('words in the box + Enter = deny with them as the reason; the box is cleared; the send slot says 拒绝并发送', denied && /"behavior":"deny"/.test(denySent) && /"message":"smoke: use another way"/.test(denySent) && boxAfter === '' && /拒绝并发送/.test(denyLabel ?? ''), JSON.stringify({ denySent, boxAfter, denyLabel }));
+        // 3. the card's 拒绝 with words in the box sends them too
+        await askTool('smoke: a tool once more');
+        await click('.pane.focused .composer textarea');
+        wc.insertText('smoke: not now');
+        await sleep(200);
+        await click('.pane.focused .composer .pdock [data-act="deny"]');
+        await waitFor(`!document.querySelector('.pane.focused .composer .pdock')`, 15_000);
+        const btnSent = await lastSent();
+        check('拒绝 on the card with words in the box: deny with them, the box is cleared', /"behavior":"deny"/.test(btnSent) && /"message":"smoke: not now"/.test(btnSent) && (await js(`document.querySelector('.pane.focused .composer textarea').value`)) === '', btnSent);
+        await waitFor(`window.__store.getState().open[${pj}]?.state === 'idle'`, 15_000);
+        // 4. 总是允许 and 「还有 N 条」: two staged requests with a suggestion (the mock agent sends none; the server
+        // answers 「not found」 for these ids, and the card goes away as it does for one answered elsewhere)
+        const stage = (n) => `{ requestId: 'smoke-always-${n}', sessionId: ${pj}, toolName: 'Bash', input: { command: 'npm test' }, suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test:*' }], behavior: 'allow', destination: 'localSettings' }] }`;
+        await js(`(() => { const st = window.__store; const o = st.getState().open[${pj}]; st.setState({ open: { ...st.getState().open, [${pj}]: { ...o, pending: [${stage(1)}, ${stage(2)}], version: o.version + 1 } } }); })()`);
+        await waitFor(`!!document.querySelector('.pane.focused .composer .pdock [data-act="always"]')`, 4000);
+        const staged = await js(`(() => { const d = document.querySelector('.pane.focused .composer .pdock'); return { title: d.querySelector('.pd-title')?.textContent, more: d.querySelector('.pd-more')?.textContent ?? null, always: d.querySelector('[data-act="always"]')?.textContent, cmd: d.querySelector('.pd-cmd code')?.textContent }; })()`);
+        await sleep(400);
+        await shot('chat-permission-always');
+        await click('.pane.focused .composer .pdock [data-act="always"]');
+        await waitFor(`window.__permSent.some((r) => r.requestId === 'smoke-always-1')`, 4000);
+        const alwaysSent = await js(`JSON.stringify(window.__permSent.find((r) => r.requestId === 'smoke-always-1') ?? null)`);
+        const next = await waitFor(`document.querySelector('.pane.focused .composer .pdock')?.dataset.request === 'smoke-always-2' && !document.querySelector('.pane.focused .composer .pdock .pd-more')`, 6000);
+        check('总是允许 (only with suggestions) sends {allow, updatedPermissions}; 「还有 1 条」 then the next request', /想运行一条命令$/.test(staged.title ?? '') && staged.more === '还有 1 条' && staged.always === '总是允许 npm test' && staged.cmd === 'npm test' && /"behavior":"allow"/.test(alwaysSent) && /"updatedPermissions":\[\{"type":"addRules"/.test(alwaysSent) && next, JSON.stringify({ staged, alwaysSent, next }));
+        // phone width: 允许一次 takes a row of its own when the buttons do not fit
+        win.setContentSize(480, 860);
+        await waitFor('innerWidth === 480', 4000);
+        await sleep(500);
+        const narrow = await js(`(() => { const d = document.querySelector('.pane .composer .pdock'); if (!d) return null; const a = d.querySelector('[data-act="allow"]').getBoundingClientRect(), r = d.querySelector('[data-act="deny"]').getBoundingClientRect(), box = d.getBoundingClientRect(); return { own: a.top >= r.bottom - 1, wide: a.width >= box.width - 40, inside: box.left >= 0 && box.right <= innerWidth }; })()`);
+        check('phone width: the card is full width and 允许一次 gets its own row', narrow && narrow.own && narrow.wide && narrow.inside, JSON.stringify(narrow));
+        await sleep(400);
+        await shot('chat-permission-phone');
+        win.setContentSize(1360, 860);
+        await waitFor('innerWidth === 1360', 4000);
+        await click('.pane.focused .composer .pdock [data-act="deny"]');
+        await waitFor(`!document.querySelector('.pane.focused .composer .pdock')`, 6000);
+
+        // ---- the goal bar: a goal runs in a conversation of its own (goals.create + start, as 目标 / `/goal` do); open it
+        phase = 'chat-goal';
+        const goal = await serverRequest({ kind: 'goals.create', objective: 'smoke slow goal', cwd: E.SMOKE_REPO, agent: 'acp:smoke', permissionMode: 'default' });
+        const started = await serverRequest({ kind: 'goals.start', id: goal.id });
+        if (started && started.sessionId) await js(`window.__store.getState().loadHistory(${JSON.stringify(started.sessionId)})`).catch(() => {});
+        const bar = await waitFor(`/目标：smoke slow goal/.test(document.querySelector('.pane.focused .goal-bar')?.textContent ?? '') && /第 1 轮/.test(document.querySelector('.pane.focused .goal-bar')?.textContent ?? '')`, 10_000);
+        check('a running goal shows 「目标：… · 第 1 轮 · 查看」 on top of its conversation', bar, await js(`document.querySelector('.pane.focused .goal-bar')?.textContent ?? null`));
+        await sleep(400);
+        await shot('chat-goal');
+        if (bar) {
+          await click('.pane.focused .goal-bar .gb-go');
+          check('查看 opens the 目标 panel', await waitFor(`window.__store.getState().layout.dock.active === 'goals' && !!document.querySelector('.dock-panel[data-panel="goals"]:not([hidden])')`, 4000));
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+          check('the bar goes once the goal is done', await waitFor(`!document.querySelector('.pane.focused .goal-bar')`, 20_000));
+        }
+        const err5 = await noBoundary('body');
+        check('chat rendering checks without error boundary', !err5, err5);
       }
 
       // ---- error boundary probe: a crash in one settings section stays in that section, 重试 recovers it
