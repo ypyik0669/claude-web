@@ -97,11 +97,47 @@ export class AgentRegistry {
     return { command: c.command || def.command, args: c.args ?? def.args, env: c.env ?? {}, model: c.model || undefined, def };
   }
 
+  /**
+   * `<agent> --version` results. A probe is a whole CLI start (opencode's alone runs four PowerShell AVX
+   * checks), and list() has many callers — every ws connection (library detect + agents.list + library
+   * sources), orchestra, every library.changed during a live session — so: one probe in flight per agent
+   * however many callers, and results kept for PROBE_TTL_MS — a miss ("not installed") only MISS_TTL_MS, so
+   * a freshly installed agent shows up within a minute. Settings → CLI Agents "刷新" (refresh) re-probes.
+   * `gen` makes refresh / invalidate final: a probe started before them may still answer its own callers,
+   * but it cannot write its (older) result over the cache.
+   */
   private probeCache = new Map<string, { at: number; version: string; ok: boolean }>();
-  invalidate() { this.probeCache.clear(); }
+  private probing = new Map<string, Promise<{ version: string; ok: boolean }>>();
+  private gen = 0;
+  static PROBE_TTL_MS = 10 * 60_000;
+  static MISS_TTL_MS = 45_000;
+  invalidate() { this.gen++; this.probeCache.clear(); this.probing.clear(); }
+
+  private fresh(hit: { at: number; ok: boolean } | undefined): boolean {
+    return !!hit && Date.now() - hit.at < (hit.ok ? AgentRegistry.PROBE_TTL_MS : AgentRegistry.MISS_TTL_MS);
+  }
+
+  private probe(key: string, command: string, versionArgs: string[]): Promise<{ version: string; ok: boolean }> {
+    const running = this.probing.get(key);
+    if (running) return running;
+    const gen = this.gen;
+    const p = (async () => {
+      let version = '', ok = false;
+      try {
+        const r = resolveSpawn(command, versionArgs);
+        const { stdout, stderr } = await execFileAsync(r.command, r.args, { windowsHide: true, timeout: 15_000, env: { ...process.env, ...r.env }, windowsVerbatimArguments: r.via === 'cmd' });
+        version = `${stdout}${stderr}`.trim().split('\n')[0].slice(0, 60);
+        ok = true;
+      } catch { ok = false; }
+      if (gen === this.gen) this.probeCache.set(key, { at: Date.now(), ok, version });
+      return { version, ok };
+    })().finally(() => { if (this.probing.get(key) === p) this.probing.delete(key); });
+    this.probing.set(key, p);
+    return p;
+  }
 
   async list(refresh = false): Promise<AgentInfo[]> {
-    if (refresh) this.probeCache.clear();
+    if (refresh) this.invalidate();
     return Promise.all(this.defs().map(async (d) => {
       const c = this.config(d.kind);
       const command = c.command || d.command;
@@ -110,14 +146,7 @@ export class AgentRegistry {
       else if (command) {
         const key = `${d.kind}|${command}`;
         const hit = this.probeCache.get(key);
-        if (hit && Date.now() - hit.at < 60_000) { ok = hit.ok; version = hit.version; }
-        else try {
-          const r = resolveSpawn(command, d.versionArgs);
-          const { stdout, stderr } = await execFileAsync(r.command, r.args, { windowsHide: true, timeout: 15_000, env: { ...process.env, ...r.env }, windowsVerbatimArguments: r.via === 'cmd' });
-          version = `${stdout}${stderr}`.trim().split('\n')[0].slice(0, 60);
-          ok = true;
-        } catch { ok = false; }
-        if (!hit || Date.now() - hit.at >= 60_000) this.probeCache.set(key, { at: Date.now(), ok, version });
+        ({ version, ok } = this.fresh(hit) ? hit! : await this.probe(key, command, d.versionArgs));
       }
       return { kind: d.kind, name: d.name, icon: d.icon, protocol: d.protocol, installed: ok, version, command, args: c.args ?? d.args, env: c.env ?? {}, model: c.model ?? '', models: d.models, install: d.install, login: d.login, docs: d.docs, label: c.label ?? '', enabled: c.enabled !== false, builtin: !!d.builtin };
     }));

@@ -18,7 +18,7 @@ function fixPosixPath() {
   const parts: string[] = [];
   try {
     const shellBin = process.env.SHELL || (isMac ? '/bin/zsh' : '/bin/bash');
-    const out = execFileSync(shellBin, ['-ilc', 'printf "__CW_PATH__%s__CW_PATH__" "$PATH"'], { encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const out = execFileSync(shellBin, ['-ilc', 'printf "__CW_PATH__%s__CW_PATH__" "$PATH"'], { encoding: 'utf8', timeout: 8000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
     const m = /__CW_PATH__(.*?)__CW_PATH__/s.exec(out);
     if (m) parts.push(...m[1].split(':'));
   } catch { /* shell missing or slow: fall back to the usual locations */ }

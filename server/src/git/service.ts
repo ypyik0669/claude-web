@@ -92,6 +92,30 @@ export function parseStatusV2z(stdout: string, st: Pick<GitStatus, 'branch' | 'u
   }
 }
 
+/** Where shared refs live: a linked worktree's git dir names its common dir in `commondir` (usually relative). */
+export async function resolveCommonDir(gitDir: string): Promise<string> {
+  const rel = (await fs.readFile(path.join(gitDir, 'commondir'), 'utf8').catch(() => '')).trim();
+  return rel ? path.resolve(gitDir, rel) : gitDir;
+}
+
+/**
+ * Number of stashes. Files ref backend (the default): no git process — one reflog line per stash entry in
+ * `<common dir>/logs/refs/stash` (`stash drop` rewrites it, `stash clear` deletes it). A reftable repository
+ * (`<common dir>/reftable`) keeps reflogs inside its tables and has no logs/ at all: ask git
+ * (`rev-list --walk-reflogs --count refs/stash`; an error means no stash ref, i.e. 0).
+ * Not `status --show-stash`: git 2.14–2.34 accept the flag but print no `# stash` line, older git rejects it,
+ * and current git omits the line at zero.
+ */
+export async function stashCount(root: string, git: (args: string[]) => Promise<string>): Promise<number> {
+  const common = await resolveCommonDir(await resolveGitDir(root));
+  if (await fs.stat(path.join(common, 'reftable')).then((st) => st.isDirectory(), () => false)) {
+    const out = await git(['rev-list', '--walk-reflogs', '--count', 'refs/stash', '--']).catch(() => '0');
+    return Number(out.trim()) || 0;
+  }
+  const log = await fs.readFile(path.join(common, 'logs', 'refs', 'stash'), 'utf8').catch(() => '');
+  return log.split('\n').filter((l) => l.trim()).length;
+}
+
 /** The repo's git dir: `<root>/.git`, or where a `.git` file points (linked worktrees, submodules — often a relative path). */
 export async function resolveGitDir(root: string): Promise<string> {
   const g = path.join(root, '.git');
@@ -105,6 +129,15 @@ export class GitService extends EventEmitter {
   private watchers = new Map<string, { w: any; timer?: ReturnType<typeof setTimeout> }>();
   private fetchTimer: ReturnType<typeof setInterval> | null = null;
   private fetchDirs = new Set<string>();
+  /**
+   * cwd → repo root. `rev-parse --show-toplevel` is one more git process in front of every status / watch / diff,
+   * and status runs on every git.changed for every view showing the repo. Roots barely move: positive answers
+   * are kept a minute, "not a repo" a few seconds (a fresh `git init` shows up quickly); worktree add / remove
+   * and any failing status drop the entries.
+   */
+  private roots = new Map<string, { root: string | null; at: number }>();
+  static ROOT_TTL_MS = 60_000;
+  static NO_ROOT_TTL_MS = 5_000;
 
   async run(cwd: string, args: string[], opts: { input?: string; timeoutMs?: number } = {}): Promise<{ stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
@@ -123,20 +156,33 @@ export class GitService extends EventEmitter {
   }
 
   async root(cwd: string): Promise<string | null> {
+    const key = path.resolve(cwd);
+    const hit = this.roots.get(key);
+    if (hit && Date.now() - hit.at < (hit.root ? GitService.ROOT_TTL_MS : GitService.NO_ROOT_TTL_MS)) return hit.root;
+    let root: string | null;
     try {
       const { stdout } = await this.run(cwd, ['rev-parse', '--show-toplevel']);
-      return stdout.trim().replace(/\//g, path.sep);
+      root = stdout.trim().replace(/\//g, path.sep);
     } catch {
-      return null;
+      root = null;
     }
+    this.roots.set(key, { root, at: Date.now() });
+    return root;
   }
+  forgetRoots() { this.roots.clear(); }
 
   async status(cwd: string): Promise<GitStatus> {
     const root = await this.root(cwd);
     if (!root) return { root: null, branch: null, upstream: null, ahead: 0, behind: 0, detached: false, files: [], stashes: 0, state: 'clean' };
     // -z: without it git C-quotes paths containing `"`, `\`, tabs or newlines, and those quoted strings
     // would be handed back verbatim to add / reset / checkout as pathspecs that match nothing
-    const { stdout } = await this.run(root, ['status', '--porcelain=v2', '-z', '--branch', '--untracked-files=all']);
+    let stdout: string;
+    try {
+      ({ stdout } = await this.run(root, ['status', '--porcelain=v2', '-z', '--branch', '--untracked-files=all']));
+    } catch (e) {
+      this.roots.delete(path.resolve(cwd)); // the repo moved / vanished: resolve it again next time
+      throw e;
+    }
     const st: GitStatus = { root, branch: null, upstream: null, ahead: 0, behind: 0, detached: false, files: [], stashes: 0, state: 'clean' };
     parseStatusV2z(stdout, st);
     if (st.detached) st.state = 'detached';
@@ -148,10 +194,7 @@ export class GitService extends EventEmitter {
       else if (await has('CHERRY_PICK_HEAD')) st.state = 'cherry-picking';
       if (st.files.some((f) => f.status === 'conflict')) st.state = st.state === 'clean' ? 'conflict' : st.state;
     } catch { /* ignore */ }
-    try {
-      const { stdout: sl } = await this.run(root, ['stash', 'list']);
-      st.stashes = sl.split('\n').filter(Boolean).length;
-    } catch { /* ignore */ }
+    st.stashes = await stashCount(root, async (a) => (await this.run(root, a)).stdout).catch(() => 0); // the reflog, not `stash list`
     return st;
   }
 
@@ -279,11 +322,13 @@ export class GitService extends EventEmitter {
     const exists = (await this.listBranches(root)).some((b) => !b.remote && b.name === branch);
     const args = ['worktree', 'add', dir, ...(exists ? [branch] : ['-b', branch, ...(opts.from ? [opts.from] : [])])];
     await this.run(root, args);
+    this.roots.clear();
     this.emit('changed', cwd);
     return { path: dir, head: '', branch, main: false, bare: false, locked: false };
   }
   async worktreeRemove(cwd: string, dir: string, force = false) {
     await this.run(cwd, ['worktree', 'remove', ...(force ? ['--force'] : []), dir]);
+    this.roots.clear();
     this.emit('changed', cwd);
   }
   async remotes(cwd: string): Promise<{ name: string; url: string }[]> {
@@ -299,8 +344,7 @@ export class GitService extends EventEmitter {
     if (!root || this.watchers.has(root)) return root;
     // linked worktrees / submodules: `.git` is a file; HEAD + index live in the per-worktree dir, refs in the common dir
     const g = await resolveGitDir(root);
-    const commonRel = (await fs.readFile(path.join(g, 'commondir'), 'utf8').catch(() => '')).trim();
-    const common = commonRel ? path.resolve(g, commonRel) : g;
+    const common = await resolveCommonDir(g);
     if (this.watchers.has(root)) return root; // a concurrent watch() won while we were reading
     const w = chokidar.watch([path.join(g, 'HEAD'), path.join(g, 'index'), path.join(common, 'refs'), path.join(g, 'ORIG_HEAD'), path.join(g, 'MERGE_HEAD')], { ignoreInitial: true, depth: 3 });
     const entry: { w: any; timer?: ReturnType<typeof setTimeout> } = { w };

@@ -16,6 +16,7 @@ import { Onboarding } from '@/features/onboarding/Onboarding';
 import { desktop } from '@/desktop';
 import { Icon } from '@/ui/icons';
 import { installOrchestra } from '@/features/orchestra/state';
+import { ErrorBoundary } from '@/ui/ErrorBoundary';
 
 function Toasts() {
   const toasts = useStore((s) => s.toasts);
@@ -38,7 +39,7 @@ function SidebarColumn() {
   // regardless of specificity, which would leave the drawer in the grid flow and squash the workbench to 0px.
   return (
     <div className="sidebar has-resizer">
-      <Sidebar onNew={() => runCommand('new')} />
+      <ErrorBoundary area="侧栏"><Sidebar onNew={() => runCommand('new')} /></ErrorBoundary>
       <div
         className="resizer right"
         onPointerDown={(e) => { drag.current = { x0: e.clientX, w0: width }; (e.target as HTMLElement).setPointerCapture(e.pointerId); }}
@@ -104,17 +105,17 @@ export function App() {
     <div className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', mobile && sidebarOpen && 'drawer-open')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px` }}>
       {mobile && sidebarOpen && <div className="drawer-backdrop" onClick={() => useStore.setState({ sidebarOpen: false })} />}
       {sidebarOpen ? <SidebarColumn /> : <div className="sidebar" style={{ display: 'none' }} />}
-      <Workbench />
+      <ErrorBoundary area="工作台"><Workbench /></ErrorBoundary>
       <div className="rpanel" style={{ display: rpWidth ? 'flex' : 'none' }}>
-        <Dock />
+        <ErrorBoundary area="停靠面板"><Dock /></ErrorBoundary>
       </div>
-      <Toasts />
-      <CommandPalette />
-      <ShortcutsModal />
-      <SettingsModal />
-      <Onboarding />
-      <ImageViewer />
-      <DialogHost />
+      <ErrorBoundary area="通知" floating><Toasts /></ErrorBoundary>
+      <ErrorBoundary area="命令面板" floating><CommandPalette /></ErrorBoundary>
+      <ErrorBoundary area="快捷键" floating><ShortcutsModal /></ErrorBoundary>
+      <ErrorBoundary area="设置" floating onReset={() => useStore.setState({ settingsOpen: null })}><SettingsModal /></ErrorBoundary>
+      <ErrorBoundary area="首次引导" floating><Onboarding /></ErrorBoundary>
+      <ErrorBoundary area="图片查看" floating><ImageViewer /></ErrorBoundary>
+      <ErrorBoundary area="对话框" floating><DialogHost /></ErrorBoundary>
     </div>
   );
 }

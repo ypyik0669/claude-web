@@ -1,3 +1,4 @@
+import './runtime/spawn-guard-install.js'; // first: child_process defaults to windowsHide before anything else loads
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -316,7 +317,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   await remote.start();
   if (remote.status().running) console.log(`remote access on http://0.0.0.0:${remote.port}  (${remote.addresses().join(', ')})`);
   await im.startAll();
-  const eng = engineInfo();
+  const eng = await engineInfo();
   console.log(`claude-web ${version} listening on http://${HOST}:${port}  (runtime: ${eng.runtime} ${eng.version ?? ''} ${eng.path})`);
 
   return {

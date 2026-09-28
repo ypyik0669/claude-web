@@ -73,3 +73,113 @@ describe('resolveGitDir', () => {
     }
   });
 });
+
+describe('GitService.status process count and stash count', () => {
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid' };
+  const setup = async () => {
+    const { execFileSync } = await import('node:child_process');
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'cw-gitst-')));
+    const git = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, windowsHide: true, stdio: 'ignore', env });
+    git(base, 'init', '-q');
+    await fs.writeFile(path.join(base, 'a.txt'), '1\n');
+    git(base, 'add', '-A');
+    git(base, 'commit', '-q', '-m', 'init');
+    const stash = async (n: number) => { for (let i = 0; i < n; i++) { await fs.writeFile(path.join(base, 'a.txt'), `s${i}\n`); git(base, 'stash', '-q'); } };
+    return { base, git, stash };
+  };
+  const counting = async () => {
+    const { GitService } = await import('./service.js');
+    const svc = new GitService();
+    const runs: string[][] = [];
+    const run = svc.run.bind(svc);
+    svc.run = (cwd, args, opts) => { runs.push(args); return run(cwd, args, opts); };
+    return { svc, runs };
+  };
+
+  it('never asks git for --show-stash: git 2.14–2.34 accepts it but prints no `# stash` line, older git rejects it', async () => {
+    const { base, stash } = await setup();
+    try {
+      await stash(1);
+      const { svc, runs } = await counting();
+      await svc.status(base);
+      expect(runs.flat()).not.toContain('--show-stash');
+    } finally { await fs.rm(base, { recursive: true, force: true }); }
+  });
+
+  it('counts stashes from the stash reflog: 0, 2, after a drop, after a clear', async () => {
+    const { base, git, stash } = await setup();
+    try {
+      const { svc } = await counting();
+      expect((await svc.status(base)).stashes).toBe(0);
+      await stash(2);
+      expect((await svc.status(base)).stashes).toBe(2);
+      git(base, 'stash', 'drop', '-q');
+      expect((await svc.status(base)).stashes).toBe(1);
+      git(base, 'stash', 'clear');
+      expect((await svc.status(base)).stashes).toBe(0);
+    } finally { await fs.rm(base, { recursive: true, force: true }); }
+  });
+
+  it('a linked worktree sees the stashes of the common dir', async () => {
+    const { base, git, stash } = await setup();
+    const wt = `${base}-wt`;
+    try {
+      await stash(2);
+      git(base, 'worktree', 'add', '-q', wt, '-b', 'wt');
+      const { svc } = await counting();
+      expect((await svc.status(wt)).stashes).toBe(2);
+    } finally {
+      await fs.rm(wt, { recursive: true, force: true });
+      await fs.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it('one git process per status once the root is known; the answer matches a fresh service', async () => {
+    const { base, stash } = await setup();
+    try {
+      await stash(1);
+      await fs.writeFile(path.join(base, 'b.txt'), 'new\n');
+      const { svc, runs } = await counting();
+      const first = await svc.status(base);
+      expect(first).toMatchObject({ stashes: 1, files: [{ path: 'b.txt', status: 'untracked' }] });
+      runs.length = 0;
+      const again = await svc.status(path.join(base, '.')); // same repo, root cached
+      expect(runs.map((a) => a[0])).toEqual(['status']);
+      expect(again).toEqual(first);
+      const { GitService } = await import('./service.js');
+      expect(await new GitService().status(base)).toEqual(first);
+    } finally { await fs.rm(base, { recursive: true, force: true }); }
+  });
+});
+
+describe('stash count in a reftable repository (no .git/logs)', () => {
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid' };
+  const reftableOk = (() => {
+    const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
+    const d = require('node:fs').mkdtempSync(path.join(os.tmpdir(), 'cw-rt-probe-'));
+    const r = spawnSync('git', ['init', '-q', '--ref-format=reftable', d], { windowsHide: true });
+    require('node:fs').rmSync(d, { recursive: true, force: true });
+    return r.status === 0; // git ≥ 2.45
+  })();
+
+  it.skipIf(!reftableOk)('asks git (rev-list --walk-reflogs) instead of reading a reflog file that does not exist', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const { GitService } = await import('./service.js');
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'cw-reftable-')));
+    try {
+      const git = (...a: string[]) => execFileSync('git', a, { cwd: base, windowsHide: true, stdio: 'ignore', env });
+      git('init', '-q', '--ref-format=reftable');
+      await fs.writeFile(path.join(base, 'a.txt'), '1\n');
+      git('add', '-A');
+      git('commit', '-q', '-m', 'init');
+      const svc = new GitService();
+      expect((await svc.status(base)).stashes).toBe(0);
+      for (const v of ['2', '3']) { await fs.writeFile(path.join(base, 'a.txt'), `${v}\n`); git('stash', '-q'); }
+      expect((await svc.status(base)).stashes).toBe(2);
+      git('stash', 'drop', '-q');
+      expect((await svc.status(base)).stashes).toBe(1);
+      git('stash', 'clear');
+      expect((await svc.status(base)).stashes).toBe(0);
+    } finally { await fs.rm(base, { recursive: true, force: true }); }
+  });
+});

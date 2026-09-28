@@ -68,3 +68,29 @@ describe.skipIf(process.platform !== 'win32')('resolveSpawn (Windows .cmd shims)
     expect(resolveSpawn(shim, ['50 percent', 'x"y']).via).toBe('cmd');
   });
 });
+
+describe.skipIf(process.platform !== 'win32')('resolveSpawn puts the spawn guard in front of a node-shim entry', () => {
+  let dir: string;
+  const saved = { log: process.env.CW_SPAWN_LOG, dir: process.env.CLAUDE_WEB_DIR };
+  afterEach(() => {
+    if (saved.log === undefined) delete process.env.CW_SPAWN_LOG; else process.env.CW_SPAWN_LOG = saved.log;
+    if (saved.dir === undefined) delete process.env.CLAUDE_WEB_DIR; else process.env.CLAUDE_WEB_DIR = saved.dir;
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('`--require <preload>` before the entry, the agent args after it', () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-resolve-guard-'));
+    fs.mkdirSync(path.join(dir, 'node_modules', 'fake-ai', 'bin'), { recursive: true });
+    const entry = path.join(dir, 'node_modules', 'fake-ai', 'bin', 'fake');
+    fs.writeFileSync(entry, '#!/usr/bin/env node\nconsole.log(1)\n');
+    const shim = path.join(dir, 'fake.cmd');
+    fs.writeFileSync(shim, NPM_SHIM);
+    process.env.CW_SPAWN_LOG = '1'; // a plain node gets the guard only with spawn logging on (Electron always)
+    process.env.CLAUDE_WEB_DIR = path.join(dir, 'cw');
+    const r = resolveSpawn(shim, ['serve']);
+    expect(r.via).toBe('node-shim');
+    expect(r.args[0]).toBe('--require');
+    expect(r.args[1]).toMatch(/spawn-guard-[0-9a-f]{10}\.cjs$/);
+    expect(r.args.slice(2)).toEqual([entry, 'serve']);
+  });
+});

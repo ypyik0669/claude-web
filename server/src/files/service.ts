@@ -106,11 +106,11 @@ export class FilesService extends EventEmitter {
     }
     if (process.platform === 'darwin') {
       const list = paths.map((p) => `POSIX file "${appleScriptEscape(p)}"`).join(', ');
-      await execFileAsync('osascript', ['-e', `tell application "Finder" to delete {${list}}`]);
+      await execFileAsync('osascript', ['-e', `tell application "Finder" to delete {${list}}`], { windowsHide: true });
       return;
     }
     try {
-      await execFileAsync('gio', ['trash', ...paths]);
+      await execFileAsync('gio', ['trash', ...paths], { windowsHide: true });
     } catch {
       for (const p of paths) await fs.rm(p, { recursive: true, force: true });
     }

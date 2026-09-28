@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './app/App';
+import { ErrorBoundary } from './ui/ErrorBoundary';
 import { useStore } from './store';
 import './styles.css';
 
@@ -12,6 +13,8 @@ useStore.getState().init();
 if ('serviceWorker' in navigator && !(window as any).desktop && location.protocol !== 'file:' && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) navigator.serviceWorker.register('/sw.js').catch(() => {});
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <ErrorBoundary area="应用" full>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>,
 );

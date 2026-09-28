@@ -24,7 +24,7 @@ export function Onboarding() {
   const [checking, setChecking] = useState(false);
   // first run only: existing installs (already have a workspace) skip the wizard
   const show = metaLoaded && !settings.onboarded && workspaces.length === 0;
-  const checkAuth = () => { setChecking(true); ws.request<any>({ kind: 'config.auth' }).then(setAuth).catch(() => setAuth({ loggedIn: false })).finally(() => setChecking(false)); };
+  const checkAuth = (force = false) => { setChecking(true); ws.request<any>({ kind: 'config.auth', force }).then(setAuth).catch(() => setAuth({ loggedIn: false })).finally(() => setChecking(false)); };
   useEffect(() => { if (show) checkAuth(); }, [show]);
   if (!show) return null;
   const finish = () => void setSetting('onboarded', true);
@@ -47,7 +47,7 @@ export function Onboarding() {
               <span>{checking ? '检查中…' : auth?.loggedIn ? `已登录 ${auth.email ?? auth.authMethod ?? ''}` : <>未登录 — <button className="link" onClick={() => useStore.getState().openTile({ id: `t${Date.now()}`, kind: 'term', cwd: '' }, 'tab')}>打开终端运行 /login</button>，或下一步添加第三方供应商</>}</span>
             </div>
             <div className="sub" style={{ marginTop: 8 }}>{providers.length ? `已有 ${providers.length} 个供应商档案。` : '没有 Claude 账号也可以：在「设置 → 供应商」里填一个兼容 Anthropic / OpenAI 的接口。'}</div>
-            <div className="actions"><button className="btn ghost" onClick={checkAuth}>重新检查</button><button className="btn ghost" onClick={() => { finish(); openSettings({ section: 'providers' }); }}>去添加供应商</button><button className="btn primary" onClick={() => setStep(1)}>下一步</button></div>
+            <div className="actions"><button className="btn ghost" onClick={() => checkAuth(true)}>重新检查</button><button className="btn ghost" onClick={() => { finish(); openSettings({ section: 'providers' }); }}>去添加供应商</button><button className="btn primary" onClick={() => setStep(1)}>下一步</button></div>
           </>
         )}
         {step === 1 && (

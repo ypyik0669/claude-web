@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
-import { clsx, fmtTok, fmtMs, shortModel, basename } from '@/util';
+import { clsx, fmtTok, fmtMs, shortModel } from '@/util';
 import { fmtCost, sumCosts } from '@/model/cost';
 import { parsePeerId, type AgentKind, type AttachmentRef, type EffortLevel, type PermissionMode, type SessionFeatures } from '@shared';
 import { compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachment, uploadAttachment, type DroppedFile, type PendingImage } from '@/model/attachments';
 import { StatusStrip } from '@/features/chat/StatusStrip';
 import { RunCard } from '@/features/chat/RunCard';
 import { ContextRow } from './ContextRow';
+import { DirPicker } from './DirPicker';
 import { attachmentFolderPath } from '@/features/paths';
 import { Icon } from '@/ui/icons';
 import { CATALOG, effortLevels, modelsFor } from '@catalog';
@@ -144,9 +145,12 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   useEffect(() => {
     const el = ta.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => autosize());
+    // autosize() changes the observed box itself: run it a frame later, or the browser reports
+    // "ResizeObserver loop completed with undelivered notifications" as a console error
+    let raf = 0;
+    const ro = new ResizeObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(autosize); });
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => { ro.disconnect(); cancelAnimationFrame(raf); };
   }, []);
 
   useEffect(() => {
@@ -437,21 +441,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
           <div className="composer-bar">
             <input ref={fileInput} type="file" multiple hidden onChange={(e) => { const fl = Array.from(e.target.files ?? []); void addImages(fl.filter((f) => f.type.startsWith('image/'))); if (remote && fl.some((f) => !f.type.startsWith('image/'))) { toast(REMOTE_ATTACH); e.target.value = ''; return; } setFiles((s) => [...s, ...fl.filter((f) => !f.type.startsWith('image/')).map((f) => ({ file: f, rel: f.name }))]); e.target.value = ''; }} />
             <button className="icon-btn" title="添加图片 / 文件" aria-label="添加附件" disabled={disabled} onClick={() => fileInput.current?.click()}><Icon name="plus" size={16} /></button>
-            {welcome ? (
-              <>
-                <button className="dirpick" onClick={pickDir} title={cwd || '选择工作目录'}>
-                  <span style={{ color: 'var(--ink-4)', display: 'inline-flex' }}><Icon name="folder" size={13} /></span>
-                  <span>{cwd ? basename(cwd) : '选择目录'}</span>
-                  {recentDirs.length > 0 && (
-                    <select value={cwd} onChange={(e) => setCwd(e.target.value)} onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', opacity: 0, inset: 0, width: '100%', cursor: 'pointer' }}>
-                      {recentDirs.map((d) => <option key={d} value={d}>{d}</option>)}
-                      {cwd && !recentDirs.includes(cwd) && <option value={cwd}>{cwd}</option>}
-                    </select>
-                  )}
-                </button>
-                <button className="btn sm ghost" onClick={pickDir} title="浏览文件夹">…</button>
-              </>
-            ) : null}
+            {welcome ? <DirPicker cwd={cwd} recent={recentDirs} onPick={setCwd} onBrowse={() => void pickDir()} /> : null}
             <span className="grow" />
             {speechOk && (
               <button className={clsx('icon-btn', listening && 'active')} title={listening ? '停止语音输入' : '语音输入（浏览器识别）'} onClick={toggleVoice} aria-label="语音输入"><Icon name="mic" size={15} /></button>
