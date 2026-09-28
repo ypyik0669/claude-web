@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionSummary } from '@shared';
-import { filterSessions, machineCounts, renderedRows, sourceCounts } from './filter';
+import { childrenOf, filterSessions, filterSummary, machineCounts, renderedRows, sourceCounts } from './filter';
 
 const s = (id: string, o: Partial<SessionSummary> = {}): SessionSummary => ({ sessionId: id, title: id, cwd: '/w', lastModified: 0, ...o });
 
@@ -68,6 +68,36 @@ describe('renderedRows', () => {
   it('a session shown in two groups (pinned + workspace) counts once', () => {
     const x = s('x');
     expect(renderedRows([{ key: 'p', items: [x], collapsed: false }, { key: 'w', items: [x], collapsed: false }], {}).length).toBe(1);
+  });
+
+  it('rows kept in view beyond the cut (active / running) are on screen too', () => {
+    const rows = renderedRows([{ key: 'a', items: many('a', 12), collapsed: false }], {}, 5, { keep: (x) => x.sessionId === 'a9' });
+    expect(rows.map((r) => r.sessionId)).toEqual(['a0', 'a1', 'a2', 'a3', 'a4', 'a9']);
+  });
+
+  it('an expanded parent brings its children, right after it', () => {
+    const kids: Record<string, SessionSummary[]> = { a1: [s('k1', { parentId: 'a1' }), s('k2', { parentId: 'a1' })] };
+    const rows = renderedRows([{ key: 'a', items: many('a', 3), collapsed: false }], {}, 5, { kids: (x) => kids[x.sessionId] ?? [] });
+    expect(rows.map((r) => r.sessionId)).toEqual(['a0', 'a1', 'k1', 'k2', 'a2']);
+  });
+});
+
+describe('childrenOf', () => {
+  it("a parent's child sessions, newest first; archived ones only when archived are shown", () => {
+    const all = [s('p'), s('k1', { parentId: 'p', lastModified: 1 }), s('k2', { parentId: 'p', lastModified: 5 }), s('k3', { parentId: 'p', archived: true }), s('x', { parentId: 'q' })];
+    expect(ids(childrenOf(all, 'p', { showArchived: false, meta: {} }))).toEqual(['k2', 'k1']);
+    expect(ids(childrenOf(all, 'p', { showArchived: true, meta: {} }))).toContain('k3');
+  });
+});
+
+describe('filterSummary: what the funnel is hiding, in words', () => {
+  const names = (k: string) => ({ codex: 'Codex', claude: 'Claude Code' })[k] ?? k;
+  const machineName = (id: string) => ({ b1: 'Box B', local: '本机' })[id] ?? id;
+  it('nothing active → empty', () => {
+    expect(filterSummary({ source: 'all', machine: 'all', query: '  ', showArchived: false }, names, machineName)).toEqual([]);
+  });
+  it('source, machine, archived and the text query', () => {
+    expect(filterSummary({ source: 'codex', machine: 'b1', query: ' login ', showArchived: true }, names, machineName)).toEqual(['Codex', 'Box B', '含已归档', '“login”']);
   });
 });
 

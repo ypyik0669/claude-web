@@ -61,20 +61,51 @@ export function sourceCounts(all: SessionSummary[]): Record<string, number> {
 
 export interface RowGroup { key: string; items: SessionSummary[]; collapsed: boolean }
 
+export interface RowOptions {
+  /** rows that stay on screen past the group's cut (the active one, a running one) */
+  keep?: (s: SessionSummary) => boolean;
+  /** an expanded parent's child sessions, drawn right under it */
+  kids?: (s: SessionSummary) => SessionSummary[];
+}
+
 /**
  * The session rows the sidebar actually renders: expanded groups only, each cut at its page limit
- * (`shown[key]`, default `first`). Multi-select acts on exactly these — never on rows the user can't see.
+ * (`shown[key]`, default `first`) plus the rows `keep` holds in view, with expanded children after their parent.
+ * Multi-select (全选, Shift ranges) acts on exactly these — never on rows the user can't see.
  */
-export function renderedRows(groups: RowGroup[], shown: Record<string, number>, first = 25): SessionSummary[] {
+export function renderedRows(groups: RowGroup[], shown: Record<string, number>, first = 25, o: RowOptions = {}): SessionSummary[] {
   const out: SessionSummary[] = [];
   const seen = new Set<string>();
+  const add = (s: SessionSummary) => { if (seen.has(s.sessionId)) return; seen.add(s.sessionId); out.push(s); };
   for (const g of groups) {
     if (g.collapsed) continue;
-    for (const s of g.items.slice(0, shown[g.key] ?? first)) {
-      if (seen.has(s.sessionId)) continue;
-      seen.add(s.sessionId);
-      out.push(s);
+    const limit = shown[g.key] ?? first;
+    const rows = g.items.slice(0, limit);
+    if (o.keep) for (const s of g.items.slice(limit)) if (o.keep(s)) rows.push(s);
+    for (const s of rows) {
+      add(s);
+      for (const k of o.kids?.(s) ?? []) add(k);
     }
   }
+  return out;
+}
+
+/** A parent's child sessions (forks / sub-agent threads), newest first, following the archive toggle. */
+export function childrenOf(all: SessionSummary[], parentId: string, o: Pick<SessionFilter, 'showArchived' | 'meta'>): SessionSummary[] {
+  return all.filter((s) => s.parentId === parentId && (o.showArchived || !isArchived(s, o.meta))).sort((a, b) => b.lastModified - a.lastModified);
+}
+
+/** The active filters as short words (「Codex · Box B · 含已归档 · “login”」); empty = the list is unfiltered. */
+export function filterSummary(
+  f: { source: AgentKind | 'all'; machine: string; query: string; showArchived: boolean },
+  sourceName: (kind: string) => string,
+  machineName: (id: string) => string,
+): string[] {
+  const out: string[] = [];
+  if (f.source !== 'all') out.push(sourceName(f.source));
+  if (f.machine !== 'all') out.push(machineName(f.machine));
+  if (f.showArchived) out.push('含已归档');
+  const q = f.query.trim();
+  if (q) out.push(`“${q}”`);
   return out;
 }
