@@ -360,7 +360,7 @@ export function ProviderProfiles() {
             <div style={{ fontSize: 12, marginBottom: 6, color: probe.ok ? 'var(--green)' : 'var(--red)' }}>
               {probe.models.length > 0 ? `模型列表 ${probe.models.length} 个` : probe.ok ? '连接正常' : `失败${probe.status ? ` HTTP ${probe.status}` : ''}：${probe.error}`}
               {probe.chat && (probe.chat.ok
-                ? ` · 对话测试通过（${probe.chat.model} · ${probe.chat.runtime === 'claude' ? '官方二进制' : 'ccb'} · ${(probe.chat.ms / 1000).toFixed(1)}s）`
+                ? ` · 对话测试通过（${probe.chat.model} · ${probe.chat.runtime === 'claude' ? '官方二进制' : probe.chat.runtime === 'api' ? '直连接口' : 'ccb'} · ${(probe.chat.ms / 1000).toFixed(1)}s）`
                 : ` · 对话测试失败：${probe.chat.error}`)}
               {probe.chat?.switched && <div style={{ color: 'var(--yellow)' }}>这个端点拒绝 ccb 的请求，已自动改为官方 Claude Code 二进制（ccb 专属功能在该供应商的会话里不可用）</div>}
             </div>

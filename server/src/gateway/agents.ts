@@ -14,11 +14,16 @@ export const CODEX_KEY_ENV = 'CW_GATEWAY_KEY';
  * Values are TOML, hence JSON quoting. Global flags: they go before the `app-server` subcommand.
  */
 export function codexGatewayArgs(groupBaseUrl: string, model?: string): string[] {
+  return codexProviderArgs(`${groupBaseUrl}/v1`, 'claude-web gateway', model);
+}
+
+/** Same override for any OpenAI-compatible endpoint (`baseV1` already ends in its version segment). */
+export function codexProviderArgs(baseV1: string, name: string, model?: string): string[] {
   return [
     // the profile's default model: whatever the user's config.toml names is a ChatGPT model the gateway may not route
     ...(model?.trim() ? ['-c', `model=${JSON.stringify(model.trim())}`] : []),
-    '-c', `model_providers.cwgw.name=${JSON.stringify('claude-web gateway')}`,
-    '-c', `model_providers.cwgw.base_url=${JSON.stringify(`${groupBaseUrl}/v1`)}`,
+    '-c', `model_providers.cwgw.name=${JSON.stringify(name)}`,
+    '-c', `model_providers.cwgw.base_url=${JSON.stringify(baseV1)}`,
     '-c', `model_providers.cwgw.env_key=${JSON.stringify(CODEX_KEY_ENV)}`,
     '-c', 'model_providers.cwgw.wire_api="responses"',
     '-c', 'model_provider="cwgw"',

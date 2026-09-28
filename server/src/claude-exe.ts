@@ -140,13 +140,15 @@ export async function runClaudeCli(args: string[], opts: { cwd?: string; timeout
   const isJs = file.endsWith('.js');
   const n = isJs ? nodeCommand() : null;
   try {
-    const { stdout, stderr } = await execFileAsync(isJs ? n!.command : file, isJs ? [file, ...args] : args, {
+    const p = execFileAsync(isJs ? n!.command : file, isJs ? [file, ...args] : args, {
       cwd: opts.cwd,
       timeout: opts.timeoutMs ?? 60_000,
       maxBuffer: 16 * 1024 * 1024,
       windowsHide: true,
       env: { ...process.env, ...(n?.env ?? {}), ...(opts.env ?? {}) },
     });
+    p.child.stdin?.end(); // `-p` otherwise waits 3 s for piped input and prints a warning to stderr
+    const { stdout, stderr } = await p;
     return { code: 0, stdout, stderr };
   } catch (e: any) {
     return { code: typeof e.code === 'number' ? e.code : 1, stdout: e.stdout ?? '', stderr: e.stderr ?? String(e.message ?? e) };

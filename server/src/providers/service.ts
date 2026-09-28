@@ -3,7 +3,7 @@ import { CLAUDE_PROVIDER_ID, type Provider, type ProviderType, type RuntimeKind 
 import type { MetaStore } from '../meta/store.js';
 import { resolveEngine, runClaudeCli } from '../claude-exe.js';
 import type { SecretService } from '../secrets/service.js';
-import { CODEX_KEY_ENV, codexGatewayArgs, geminiApiKeyEnv } from '../gateway/agents.js';
+import { CODEX_KEY_ENV, codexGatewayArgs, codexProviderArgs, geminiApiKeyEnv } from '../gateway/agents.js';
 
 /** Mask an API key for the wire: keep prefix + last 4 chars. */
 export function maskKey(k: string | undefined): string {
@@ -40,7 +40,7 @@ export function providerEnv(p: Provider, agent: 'claude' | 'codex' | 'acp' = 'cl
       if (m.opus) env.ANTHROPIC_DEFAULT_OPUS_MODEL = m.opus;
       break;
     case 'openai':
-      env.OPENAI_BASE_URL = p.baseUrl;
+      env.OPENAI_BASE_URL = openaiBase(p.baseUrl);
       env.OPENAI_API_KEY = p.apiKey;
       env.CLAUDE_CODE_USE_OPENAI = '1';
       if (p.defaultModel) env.OPENAI_MODEL = p.defaultModel;
@@ -78,6 +78,16 @@ function gatewayAgentEnv(p: Provider, agent: 'codex' | 'acp'): Record<string, st
   return env;
 }
 
+/**
+ * OpenAI-compatible clients (ccb's OpenAI mode, the OpenAI SDK) append `/chat/completions` to the base URL,
+ * so it has to end in the version segment. Users paste the relay's bare host (`https://relay.example/`), which
+ * the model-list probe tolerated but real sessions did not — every such profile failed at the first turn.
+ */
+export function openaiBase(baseUrl: string): string {
+  const b = baseUrl.trim().replace(/\/+$/, '');
+  return !b || /\/v\d+[a-z]*$/.test(b) ? b : `${b}/v1`;
+}
+
 function modelsUrl(type: ProviderType, baseUrl: string): string {
   const b = baseUrl.replace(/\/+$/, '');
   if (type === 'gemini') return `${b || 'https://generativelanguage.googleapis.com'}/v1beta/models`;
@@ -86,7 +96,7 @@ function modelsUrl(type: ProviderType, baseUrl: string): string {
   return /\/v\d+$/.test(b) ? `${b}/models` : `${b}/v1/models`;
 }
 
-export interface ChatProbe { ok: boolean; runtime: RuntimeKind; model: string; error?: string; ms: number; switched?: boolean }
+export interface ChatProbe { ok: boolean; runtime: RuntimeKind | 'api'; model: string; error?: string; ms: number; switched?: boolean }
 export interface ProbeResult { ok: boolean; status?: number; models: string[]; error?: string; ms: number; chat?: ChatProbe }
 
 /**
@@ -104,8 +114,31 @@ export async function chatProbe(p: Provider, runtime: RuntimeKind | undefined, m
   let out: any = null;
   try { out = JSON.parse(r.stdout.trim().split('\n').filter((l) => l.startsWith('{')).pop() ?? ''); } catch { /* not json */ }
   if (out && out.type === 'result' && !out.is_error) return { ok: true, runtime: kind, model, ms };
-  const err = (out?.result ?? out?.error ?? r.stderr ?? r.stdout).toString().replace(/\s+/g, ' ').trim().slice(0, 300) || `exit ${r.code}`;
+  // an error result carries `errors` / `subtype` rather than `result`; stderr is often just a warning line
+  const stderr = r.stderr.split('\n').filter((l) => l.trim() && !/^Warning: no stdin data/.test(l)).join(' ');
+  const err = (out?.result ?? (Array.isArray(out?.errors) && out.errors.length ? out.errors.join('; ') : undefined) ?? out?.error ?? (out?.is_error ? out.subtype : undefined) ?? (stderr || r.stdout)).toString().replace(/\s+/g, ' ').trim().slice(0, 300) || `exit ${r.code}`;
   return { ok: false, runtime: kind, model, error: err, ms };
+}
+
+/** One minimal `/chat/completions` request (a few tokens) — the chat check for OpenAI-compatible profiles. */
+export async function openaiChatProbe(p: Pick<Provider, 'baseUrl' | 'apiKey'>, model: string): Promise<ChatProbe> {
+  const t0 = Date.now();
+  try {
+    const r = await fetch(`${openaiBase(p.baseUrl)}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${p.apiKey}` },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply with exactly: ok' }], max_tokens: 16 }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    const text = await r.text();
+    let j: any = null;
+    try { j = JSON.parse(text); } catch { /* not json */ }
+    if (r.ok && Array.isArray(j?.choices)) return { ok: true, runtime: 'api', model, ms: Date.now() - t0 };
+    const err = String(j?.error?.message ?? j?.message ?? text ?? `HTTP ${r.status}`).replace(/\s+/g, ' ').trim().slice(0, 300);
+    return { ok: false, runtime: 'api', model, error: `HTTP ${r.status} ${err}`, ms: Date.now() - t0 };
+  } catch (e: any) {
+    return { ok: false, runtime: 'api', model, error: e?.message ?? String(e), ms: Date.now() - t0 };
+  }
 }
 
 /**
@@ -194,9 +227,21 @@ export class ProviderService {
     if (!p || p.type === 'gateway') return null;
     try { return { ...p, apiKey: this.plainKey(p) }; } catch { return null; }
   }
-  /** Extra env + global args for a non-Claude agent session that picked a gateway profile (nothing for any other type). */
+  /**
+   * Extra env + global args for a non-Claude agent session that picked a gateway or OpenAI-compatible profile
+   * (nothing for any other type). Without this Codex ignores the profile and talks to api.openai.com.
+   */
   agentLaunch(id: string | undefined, agent: 'codex' | 'acp', kind?: string): { env: Record<string, string>; args: string[] } {
-    if (!id || id === CLAUDE_PROVIDER_ID || this.meta.provider(id)?.type !== 'gateway') return { env: {}, args: [] };
+    const type = id && id !== CLAUDE_PROVIDER_ID ? this.meta.provider(id)?.type : undefined;
+    if (type === 'openai') {
+      const p = this.forSession(id)!;
+      const base = openaiBase(p.baseUrl);
+      const env: Record<string, string> = { OPENAI_BASE_URL: base, OPENAI_API_KEY: p.apiKey };
+      if (p.defaultModel) env.OPENAI_MODEL = p.defaultModel;
+      if (agent === 'codex') return { env: { ...env, [CODEX_KEY_ENV]: p.apiKey }, args: codexProviderArgs(base, p.name, p.defaultModel) };
+      return { env, args: [] };
+    }
+    if (type !== 'gateway') return { env: {}, args: [] };
     const p = this.forSession(id)!;
     const env = providerEnv(p, agent);
     // account logins must not win over the gateway: Codex gets its own provider, Gemini CLI a forced auth type
@@ -223,6 +268,12 @@ export class ProviderService {
     // Real chat check, with automatic fallback to the official binary when the endpoint rejects ccb.
     const full: Provider = { id: saved?.id ?? 'draft', name: draft?.name ?? saved?.name ?? 'draft', createdAt: 0, ...saved, ...p, defaultModel: draft?.defaultModel ?? saved?.defaultModel, modelMap: draft?.modelMap ?? saved?.modelMap };
     const model = full.defaultModel || r.models.find((m) => /haiku/i.test(m)) || r.models[0] || 'haiku';
+    // OpenAI-compatible relays don't fingerprint the client, so one tiny chat request proves the key; a CLI
+    // round would cost a whole Claude Code system prompt (~50k tokens) per click.
+    if (p.type === 'openai') {
+      const chat = await openaiChatProbe(full, model);
+      return { ...r, ok: chat.ok, chat, error: chat.ok ? undefined : chat.error };
+    }
     const explicit = (draft?.runtime ?? saved?.runtime) as RuntimeKind | undefined;
     let chat = await chatProbe(full, explicit, model);
     if (!chat.ok && chat.runtime === 'ccb' && !explicit) {

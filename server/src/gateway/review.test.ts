@@ -144,6 +144,30 @@ describe('second review', () => {
     }
   });
 
+  it('an OpenAI-compatible profile is applied to Codex (own -c provider, /v1 base) and to ACP agents (env)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-openai-launch-'));
+    const prev = process.env.CLAUDE_WEB_DIR;
+    process.env.CLAUDE_WEB_DIR = dir;
+    try {
+      const meta = new MetaStore(path.join(dir, 'meta.json'));
+      const p = await meta.upsertProvider({ name: 'relay', type: 'openai', baseUrl: 'https://relay.example/', apiKey: 'sk-test', defaultModel: 'gpt-x' });
+      const svc = new ProviderService(meta);
+      const codex = svc.agentLaunch(p.id, 'codex', 'codex');
+      expect(codex.args).toContain('model_providers.cwgw.base_url="https://relay.example/v1"');
+      expect(codex.args).toContain('model_provider="cwgw"');
+      expect(codex.args.slice(0, 2)).toEqual(['-c', 'model="gpt-x"']);
+      expect(codex.env.CW_GATEWAY_KEY).toBe('sk-test');
+      expect(codex.args.join(' ')).not.toContain('sk-test'); // the key only travels in env
+      const qwen = svc.agentLaunch(p.id, 'acp', 'qwen');
+      expect(qwen).toEqual({ env: { OPENAI_BASE_URL: 'https://relay.example/v1', OPENAI_API_KEY: 'sk-test', OPENAI_MODEL: 'gpt-x' }, args: [] });
+      const anth = await meta.upsertProvider({ name: 'a', type: 'anthropic', baseUrl: 'https://a.example', apiKey: 'k' });
+      expect(svc.agentLaunch(anth.id, 'codex', 'codex')).toEqual({ env: {}, args: [] });
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_WEB_DIR; else process.env.CLAUDE_WEB_DIR = prev;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('C: settings copy is written atomically (replaces in one step, leaves no temp files)', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-gw-atomic-'));
     try {
