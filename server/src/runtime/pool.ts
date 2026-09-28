@@ -17,12 +17,19 @@ const IDLE_TTL_MS = 30 * 60 * 1000;
  *   openai / grok (OpenAI in-memory 5–60 min + extended 24 h retention, DeepSeek's disk cache lasts hours) → 2 h;
  *   anthropic with the 1-hour TTL → just past it (65 min); everything else (5-minute Anthropic cache, Gemini's
  *   short implicit cache, gateway groups of unknown members, the claude.ai login) → the old 30 min.
+ * The long TTL belongs to the cache optimisation: a profile with the shim switched off (cacheShim:false) gets 30 min.
  */
-export function idleTtlFor(p: Pick<Provider, 'type' | 'cache1h'> | undefined): number {
-  if (p?.type === 'openai' || p?.type === 'grok') return 2 * 3600_000;
+export function idleTtlFor(p: Pick<Provider, 'type' | 'cache1h' | 'cacheShim'> | undefined): number {
+  if ((p?.type === 'openai' || p?.type === 'grok') && p.cacheShim !== false) return 2 * 3600_000;
   if (p?.type === 'anthropic' && p.cache1h) return 65 * 60_000;
   return IDLE_TTL_MS;
 }
+
+/**
+ * Longer TTLs mean more idle ccb processes (~150–300 MB each): past this many idle Claude sessions the least
+ * recently used one is closed anyway (it resumes on the next message, paying one uncached turn).
+ */
+export const MAX_IDLE_CLAUDE = 12;
 
 /** sessionId -> live runner. Emits everything runners emit, tagged with the session id. */
 export class RunnerPool extends EventEmitter {
@@ -57,6 +64,11 @@ export class RunnerPool extends EventEmitter {
     const kind = params.agent ?? 'claude';
     let r: AgentDriver;
     if (kind === 'claude' || !this.agents || !this.transcripts) {
+      // a fork routes its prompt cache under its root's key; every reopen (goals, IM, schedules, hot switch) keeps it
+      if (params.sessionId && !params.fork && !params.resumeAt && !params.cacheParentId) {
+        const recorded = this.providers.meta?.sessionMeta(params.sessionId).cacheKey;
+        if (recorded) params = { ...params, cacheParentId: recorded };
+      }
       const sp = this.providers.forSession(params.providerId);
       r = new SessionRunner(params, sp);
       this.ttl.set(r, idleTtlFor(sp));
@@ -108,9 +120,15 @@ export class RunnerPool extends EventEmitter {
 
   private reap() {
     const now = Date.now();
+    const idleClaude: [string, AgentDriver][] = [];
     for (const [id, r] of this.runners) {
-      if (r.state === 'idle' && now - r.lastActivity > (this.ttl.get(r) ?? IDLE_TTL_MS)) void this.close(id).catch(() => { /* already gone */ });
+      if (r.state !== 'idle') continue;
+      if (now - r.lastActivity > (this.ttl.get(r) ?? IDLE_TTL_MS)) void this.close(id).catch(() => { /* already gone */ });
+      else if (this.ttl.has(r)) idleClaude.push([id, r]);
     }
+    // cap on idle Claude processes: the least recently used beyond MAX_IDLE_CLAUDE go
+    idleClaude.sort((a, b) => a[1].lastActivity - b[1].lastActivity);
+    for (const [id] of idleClaude.slice(0, Math.max(0, idleClaude.length - MAX_IDLE_CLAUDE))) void this.close(id).catch(() => { /* already gone */ });
   }
 
   async closeAll() {

@@ -11,10 +11,12 @@ vi.mock('./session-runner.js', async () => {
     info: any;
     lastActivity = Date.now();
     closeCalls = 0;
+    params: any;
     constructor(params: any) {
       super();
       this.id = this.sessionId = params.sessionId ?? `new-${Math.random()}`;
       this.cwd = params.cwd;
+      this.params = params;
       this.info = { sessionId: this.sessionId };
     }
     setState(s: string) {
@@ -32,7 +34,7 @@ vi.mock('./session-runner.js', async () => {
   return { SessionRunner: FakeRunner };
 });
 
-const { RunnerPool, idleTtlFor } = await import('./pool.js');
+const { RunnerPool, idleTtlFor, MAX_IDLE_CLAUDE } = await import('./pool.js');
 
 const pool = () => new RunnerPool({ forSession: () => undefined } as any);
 
@@ -81,6 +83,27 @@ describe('RunnerPool', () => {
     expect(idleTtlFor({ type: 'gateway' } as any)).toBe(30 * MIN);
     expect(idleTtlFor({ type: 'anthropic' } as any)).toBe(30 * MIN);
     expect(idleTtlFor({ type: 'anthropic', cache1h: true } as any)).toBe(65 * MIN);
+    // the long TTL is part of the cache optimisation: a profile that switched the shim off is back to 30 min
+    expect(idleTtlFor({ type: 'openai', cacheShim: false } as any)).toBe(30 * MIN);
+    expect(idleTtlFor({ type: 'grok', cacheShim: false } as any)).toBe(30 * MIN);
+  });
+
+  it('at most MAX_IDLE_CLAUDE idle Claude processes: beyond that the least recently used go first', () => {
+    const p = pool();
+    const now = Date.now();
+    const rs: any[] = [];
+    for (let i = 0; i < MAX_IDLE_CLAUDE + 3; i++) {
+      const r: any = p.open({ sessionId: `cap-${i}`, cwd: '/x' });
+      r.state = 'idle';
+      r.lastActivity = now - (100 - i) * 1000; // cap-0 is the oldest
+      rs.push(r);
+    }
+    const busy: any = p.open({ sessionId: 'cap-busy', cwd: '/x' });
+    busy.state = 'running';
+    busy.lastActivity = now - 999_000; // running ones never count / never go
+    (p as any).reap();
+    expect(rs.filter((r) => r.closeCalls).map((r) => r.sessionId)).toEqual(['cap-0', 'cap-1', 'cap-2']);
+    expect(busy.closeCalls).toBe(0);
   });
 
   it('the reaper uses the per-session TTL', () => {
@@ -100,5 +123,15 @@ describe('RunnerPool', () => {
     a.close = async () => { throw new Error('boom'); };
     await expect(p.closeAll()).resolves.toBeUndefined();
     expect(b.closeCalls).toBe(1);
+  });
+});
+
+describe('RunnerPool: prompt-cache key of a reopened session', () => {
+  it('a session reopened from anywhere (goals, IM, schedules, hot switch) keeps the key recorded for it', () => {
+    const recorded: Record<string, any> = { 'fork-1': { cacheKey: 'root' } };
+    const p = new RunnerPool({ forSession: () => undefined, meta: { sessionMeta: (id: string) => recorded[id] ?? {} } } as any);
+    expect((p.open({ sessionId: 'fork-1', cwd: 'C:/x' }) as any).params.cacheParentId).toBe('root');
+    expect((p.open({ sessionId: 'plain', cwd: 'C:/x' }) as any).params.cacheParentId).toBeUndefined();
+    expect((p.open({ sessionId: 'other', cwd: 'C:/x', cacheParentId: 'explicit' }) as any).params.cacheParentId).toBe('explicit');
   });
 });

@@ -69,3 +69,32 @@ describe('SessionRunner', () => {
     await r.close();
   });
 });
+
+describe('SessionRunner prompt-cache routing (cache shim)', () => {
+  const prov = { id: 'ds', name: 'DS', type: 'openai', baseUrl: 'https://relay/v1', apiKey: 'sk', createdAt: 0, shim: { base: 'http://127.0.0.1:9/gateway/~p/ds', key: 'cws-x' } } as any;
+  const baseOf = (i: number) => queries[i].options.env.OPENAI_BASE_URL as string;
+  it('a new session keys the cache on its own id', async () => {
+    queries.length = 0;
+    const r = new SessionRunner({ cwd: '/x' } as any, prov);
+    await tick();
+    expect(baseOf(0)).toBe(`http://127.0.0.1:9/gateway/~p/ds/k/${r.sessionId}/v1`);
+    await r.close();
+  });
+  it('a hub fork (new id up front, cacheParentId = parent) routes on the parent and logs under its own id; a respawn keeps both', async () => {
+    queries.length = 0;
+    const r = new SessionRunner({ sessionId: 'fork-1', cacheParentId: 'parent-1', cwd: '/x' } as any, prov);
+    await tick();
+    expect(baseOf(0)).toBe('http://127.0.0.1:9/gateway/~p/ds/k/parent-1/s/fork-1/v1');
+    await r.setModel('m2'); // → respawn
+    await tick();
+    expect(baseOf(1)).toBe('http://127.0.0.1:9/gateway/~p/ds/k/parent-1/s/fork-1/v1');
+    await r.close();
+  });
+  it('an SDK fork (id only known at init) routes on the parent and does not name a placeholder id', async () => {
+    queries.length = 0;
+    const r = new SessionRunner({ sessionId: 'parent-2', fork: true, cwd: '/x' } as any, prov);
+    await tick();
+    expect(baseOf(0)).toBe('http://127.0.0.1:9/gateway/~p/ds/k/parent-2/v1');
+    await r.close();
+  });
+});
