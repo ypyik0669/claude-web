@@ -51,6 +51,15 @@ describe('setTomlTopLevel', () => {
     expect(parseToml(out).model).toBe('a"b\\c');
   });
 
+  it('touches only the target line: other lines keep their own line endings, BOM kept, no trailing newline added', () => {
+    const src = '﻿# a\r\nmodel = "x"\napproval_policy = "never"\r\n\r\n[t]\r\nk = 1';
+    expect(setTomlTopLevel(src, 'model', 'y')).toBe('﻿# a\r\nmodel = "y"\napproval_policy = "never"\r\n\r\n[t]\r\nk = 1');
+    expect(setTomlTopLevel(src, 'model', undefined)).toBe('﻿# a\r\napproval_policy = "never"\r\n\r\n[t]\r\nk = 1');
+    const ins = setTomlTopLevel(src, 'sandbox_mode', 'read-only');
+    expect(ins).toBe('﻿# a\r\nmodel = "x"\napproval_policy = "never"\r\nsandbox_mode = "read-only"\r\n\r\n[t]\r\nk = 1');
+    expect(setTomlTopLevel('model = "x"', 'sandbox_mode', 'a')).toBe('model = "x"\nsandbox_mode = "a"\n');
+  });
+
   it('refuses a multi-line value it cannot rewrite in place', () => {
     expect(() => setTomlTopLevel('model = """\nx\n"""\n', 'model', 'y')).toThrow();
   });
@@ -80,6 +89,15 @@ describe('setJsonPath', () => {
     const b = setJsonPath(GEMINI, ['model', 'name'], undefined);
     expect((parseConfig(b, 'json') as any).model).toEqual({});
   });
+  it('reads and keeps a UTF-8 BOM', () => {
+    const src = '﻿{\n  "model": { "name": "a" }\n}\n';
+    expect((parseConfig(src, 'json') as any).model.name).toBe('a');
+    const out = setJsonPath(src, ['model', 'name'], 'b');
+    expect(out.startsWith('﻿{')).toBe(true);
+    expect((parseConfig(out, 'json') as any).model.name).toBe('b');
+    expect((parseConfig('﻿model = "a"\n', 'toml') as any).model).toBe('a');
+  });
+
   it('writes whole objects (OpenCode mcp entries)', () => {
     const out = setJsonPath('{ "$schema": "https://opencode.ai/config.json" }', ['mcp', 'web'], { type: 'remote', url: 'https://x', enabled: true });
     expect((parseConfig(out, 'json') as any).mcp.web.url).toBe('https://x');

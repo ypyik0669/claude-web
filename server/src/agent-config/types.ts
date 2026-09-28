@@ -64,6 +64,8 @@ export interface AgentConfigBackup {
   at: number;
   reason: string;
   size: number;
+  /** the file's state before the config center first touched it — never pruned */
+  first?: boolean;
 }
 
 /** A Claude Code MCP server offered as a sync source (values masked). */

@@ -7,8 +7,11 @@ import * as jsonc from 'jsonc-parser';
 
 export type ConfigFormat = 'toml' | 'json';
 
-/** Parse a config file; blank = `{}`. Throws with the first error position on malformed input. */
+const BOM = '﻿';
+
+/** Parse a config file (a UTF-8 BOM is skipped); blank = `{}`. Throws with the first error position on malformed input. */
 export function parseConfig(text: string, format: ConfigFormat): Record<string, unknown> {
+  if (text.startsWith(BOM)) text = text.slice(1);
   if (!text.trim()) return {};
   if (format === 'toml') return tomlParse(text) as Record<string, unknown>;
   const errors: jsonc.ParseError[] = [];
@@ -46,16 +49,20 @@ function canon(v: unknown): string {
  */
 export function setTomlTopLevel(text: string, key: string, value: string | undefined): string {
   const before = parseConfig(text, 'toml');
-  const nl = text.includes('\r\n') ? '\r\n' : '\n';
-  const lines = text.split(/\r?\n/);
-  const firstTable = lines.findIndex((l) => HEADER.test(l));
-  const top = firstTable < 0 ? lines.length : firstTable;
+  const bom = text.startsWith(BOM) ? BOM : '';
+  // every line keeps its own terminator ('' for an unterminated last line); only the target line changes
+  const parts = text.slice(bom.length).split(/(\r?\n)/);
+  const rows: { text: string; eol: string }[] = [];
+  for (let i = 0; i < parts.length; i += 2) rows.push({ text: parts[i], eol: parts[i + 1] ?? '' });
+  const dom = rows.find((r) => r.eol)?.eol ?? '\n';
+  const firstTable = rows.findIndex((r) => HEADER.test(r.text));
+  const top = firstTable < 0 ? rows.length : firstTable;
   const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re = new RegExp(`^\\s*(?:${esc}|"${esc}"|'${esc}')\\s*=`);
-  const at = lines.slice(0, top).findIndex((l) => re.test(l));
+  const at = rows.slice(0, top).findIndex((r) => re.test(r.text));
   const newLine = value === undefined ? null : `${tomlKey(key)} = ${tomlString(value)}`;
   if (at >= 0) {
-    const line = lines[at];
+    const line = rows[at].text;
     let single: Record<string, unknown>;
     try { single = tomlParse(line) as Record<string, unknown>; } catch { throw new Error(`${key} 的值跨多行，不能定点修改`); }
     // keep a trailing comment: the first `#` after which the line still parses to the same value
@@ -63,16 +70,17 @@ export function setTomlTopLevel(text: string, key: string, value: string | undef
     for (let i = line.indexOf('#'); i > 0; i = line.indexOf('#', i + 1)) {
       try { if (canon((tomlParse(line.slice(0, i)) as any)[key]) === canon(single[key])) { comment = ' ' + line.slice(i).trimStart(); break; } } catch { /* # inside the value */ }
     }
-    if (newLine === null) lines.splice(at, 1); else lines[at] = newLine + comment;
+    if (newLine === null) rows.splice(at, 1); else rows[at] = { text: newLine + comment, eol: rows[at].eol };
   } else if (newLine !== null) {
     let last = -1;
-    for (let i = 0; i < top; i++) if (!blankOrComment(lines[i])) last = i;
+    for (let i = 0; i < top; i++) if (!blankOrComment(rows[i].text)) last = i;
     const ins = last + 1;
+    if (ins > 0 && !rows[ins - 1].eol) rows[ins - 1].eol = dom; // appending after an unterminated last line
     // keep a blank line between the new key and a table header right after it
-    lines.splice(ins, 0, ...(HEADER.test(lines[ins] ?? '') ? [newLine, ''] : [newLine]));
+    const add = HEADER.test(rows[ins]?.text ?? '') ? [{ text: newLine, eol: dom }, { text: '', eol: dom }] : [{ text: newLine, eol: dom }];
+    rows.splice(ins, 0, ...add);
   }
-  let out = lines.join(nl);
-  if (out && !out.endsWith(nl)) out += nl;
+  const out = bom + rows.map((r) => r.text + r.eol).join('');
   const after = parseConfig(out, 'toml');
   const expect = { ...before } as Record<string, unknown>;
   if (value === undefined) delete expect[key]; else expect[key] = value;
@@ -84,8 +92,9 @@ export function setTomlTopLevel(text: string, key: string, value: string | undef
 export function appendTomlTable(text: string, tablePath: string[], entries: Record<string, string>): string {
   const nl = text.includes('\r\n') ? '\r\n' : '\n';
   const body = [`[${tablePath.map(tomlKey).join('.')}]`, ...Object.entries(entries).map(([k, v]) => `${tomlKey(k)} = ${tomlString(v)}`)].join(nl);
-  const base = text.replace(/\s*$/, '');
-  const out = `${base}${base ? nl + nl : ''}${body}${nl}`;
+  // existing bytes stay as they are: only an unterminated last line gets a terminator, then a blank line + the table
+  const base = text && !text.endsWith('\n') ? text + nl : text;
+  const out = `${base}${base.replace(BOM, '').trim() ? nl : ''}${body}${nl}`;
   const doc = parseConfig(out, 'toml') as any; // throws on e.g. a duplicate table
   let node = doc;
   for (const k of tablePath) node = node?.[k];
@@ -95,11 +104,13 @@ export function appendTomlTable(text: string, tablePath: string[], entries: Reco
 
 /** Set / remove one (possibly nested) key in a JSON / JSONC document, keeping comments and formatting. */
 export function setJsonPath(text: string, jsonPath: string[], value: unknown): string {
-  const src = text.trim() ? text : '{}\n';
+  const bom = text.startsWith(BOM) ? BOM : '';
+  const body = text.slice(bom.length);
+  const src = body.trim() ? body : '{}\n';
   parseConfig(src, 'json');
   const nl = src.includes('\r\n') ? '\r\n' : '\n';
   const edits = jsonc.modify(src, jsonPath, value, { formattingOptions: { insertSpaces: true, tabSize: 2, eol: nl } });
-  const out = jsonc.applyEdits(src, edits);
+  const out = bom + jsonc.applyEdits(src, edits);
   let node: any = parseConfig(out, 'json');
   for (const k of jsonPath) node = node?.[k];
   if (canon(node) !== canon(value)) throw new Error(`改写 ${jsonPath.join('.')} 后内容不一致，已放弃`);
