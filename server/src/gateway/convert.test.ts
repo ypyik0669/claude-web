@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildOutbound, inboundStreamRenderer, joinUrl, outboundStreamParser, parseInbound, parseOutboundResponse, renderInboundResponse, supported } from './convert.js';
+import { buildOutbound, inboundStreamRenderer, joinUrl, outboundStreamParser, parseInbound, parseOutboundResponse, renderInboundResponse, sniffUsage, supported } from './convert.js';
 import { SseParser } from './sse.js';
 import { collect, type IrEvent } from './ir.js';
 import { sanitizeSchema } from './gemini.js';
@@ -356,5 +356,32 @@ describe('stream robustness', () => {
     const a = p.feed('event: x\r');
     const b = p.feed('\ndata: 1\ndata: 2\r\n\r\n');
     expect([...a, ...b]).toEqual([{ event: 'x', data: '1\n2' }]);
+  });
+});
+
+describe('OpenAI-compatible usage shapes (cached tokens are inside prompt_tokens)', () => {
+  const inOf = (u: any) => ({ input: 0, output: 0, ...sniffUsage('openai', { usage: u }) });
+  it('OpenAI: prompt_tokens_details.cached_tokens', () => {
+    expect(inOf({ prompt_tokens: 20_000, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 15_000 } })).toMatchObject({ input: 5_000, output: 5, cacheRead: 15_000 });
+  });
+  it('DeepSeek: prompt_cache_hit_tokens / prompt_cache_miss_tokens', () => {
+    expect(inOf({ prompt_tokens: 20_000, completion_tokens: 5, prompt_cache_hit_tokens: 15_000, prompt_cache_miss_tokens: 5_000 })).toMatchObject({ input: 5_000, cacheRead: 15_000 });
+  });
+  it('Kimi / Moonshot: top-level cached_tokens', () => {
+    expect(inOf({ prompt_tokens: 20_000, completion_tokens: 5, cached_tokens: 12_000 })).toMatchObject({ input: 8_000, cacheRead: 12_000 });
+  });
+  it('cache writes (OpenRouter cache_write_tokens / Anthropic-style cache_creation_input_tokens) leave input too', () => {
+    expect(inOf({ prompt_tokens: 20_000, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 10_000, cache_write_tokens: 6_000 } })).toMatchObject({ input: 4_000, cacheRead: 10_000, cacheWrite: 6_000 });
+    expect(inOf({ prompt_tokens: 20_000, completion_tokens: 5, prompt_tokens_details: { cache_creation_input_tokens: 3_000 } })).toMatchObject({ input: 17_000, cacheRead: 0, cacheWrite: 3_000 });
+  });
+  it('`??` not `||`: an explicit 0 in prompt_tokens_details wins over the fallbacks; Responses input_tokens_details too', () => {
+    expect(inOf({ prompt_tokens: 100, completion_tokens: 1, prompt_tokens_details: { cached_tokens: 0 }, cached_tokens: 50 })).toMatchObject({ input: 100, cacheRead: 0 });
+    expect({ input: 0, output: 0, ...sniffUsage('responses', { type: 'response.completed', response: { usage: { input_tokens: 900, output_tokens: 3, input_tokens_details: { cached_tokens: 800 } } } }) }).toMatchObject({ input: 100, output: 3, cacheRead: 800 });
+  });
+  it('rendered back out: cache_write_tokens round-trips in prompt_tokens_details', () => {
+    const out = renderInboundResponse('openai', { id: 'x', model: 'm', parts: [{ type: 'text', text: 'hi' }], stop: 'end', usage: { input: 4, output: 1, cacheRead: 10, cacheWrite: 6 } }, 'm', new Set());
+    expect(out.usage).toEqual({ prompt_tokens: 20, completion_tokens: 1, total_tokens: 21, prompt_tokens_details: { cached_tokens: 10, cache_write_tokens: 6 } });
+    const noWrite = renderInboundResponse('openai', { id: 'x', model: 'm', parts: [], stop: 'end', usage: { input: 4, output: 1, cacheRead: 10 } }, 'm', new Set());
+    expect(noWrite.usage.prompt_tokens_details).toEqual({ cached_tokens: 10 });
   });
 });

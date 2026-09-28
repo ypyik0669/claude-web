@@ -3,6 +3,7 @@ import { useScopedSession } from '@/store';
 import { ws } from '@/ws/client';
 import { LedgerView } from './LedgerView';
 import { fmtTok, fmtUsd, shortModel, basename } from '@/util';
+import { hitRate } from './ledger-stats';
 
 interface Bucket { input: number; output: number; cacheRead: number; cacheWrite: number; turns: number; costUsd: number }
 
@@ -11,7 +12,7 @@ function Row({ k, b, max }: { k: string; b: Bucket; max: number }) {
     <div style={{ padding: '3px 0' }}>
       <div style={{ display: 'flex', fontSize: 12 }}>
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={k}>{k}</span>
-        <span style={{ color: 'var(--fg-2)' }}>{fmtUsd(b.costUsd)} · {fmtTok(b.input + b.output + b.cacheRead + b.cacheWrite)}</span>
+        <span style={{ color: 'var(--fg-2)' }}>{fmtUsd(b.costUsd)} · {fmtTok(b.input + b.output + b.cacheRead + b.cacheWrite)} · 命中 {Math.round(hitRate(b) * 100)}%</span>
       </div>
       <div className="bar"><i style={{ width: `${max ? (b.costUsd / max) * 100 : 0}%` }} /></div>
     </div>
@@ -36,8 +37,8 @@ export function UsagePanel() {
   const active = useScopedSession();
   const [tab, setTab] = useState<'session' | 'global' | 'ledger'>('session');
   const [days, setDays] = useState(30);
-  const [sess, setSess] = useState<{ total: Bucket; byModel: Record<string, Bucket> } | null>(null);
-  const [glob, setGlob] = useState<{ total: Bucket; byDay: Record<string, Bucket>; byModel: Record<string, Bucket>; byProject: Record<string, Bucket> } | null>(null);
+  const [sess, setSess] = useState<{ total: Bucket; byModel: Record<string, Bucket>; byProvider?: Record<string, Bucket> } | null>(null);
+  const [glob, setGlob] = useState<{ total: Bucket; byDay: Record<string, Bucket>; byModel: Record<string, Bucket>; byProject: Record<string, Bucket>; byProvider?: Record<string, Bucket> } | null>(null);
   const [err, setErr] = useState('');
   const lastResultId = active?.conv.lastResult?.id;
 
@@ -82,6 +83,7 @@ export function UsagePanel() {
           <div className="section">
             <h5>按模型</h5>
             {sorted(sess.byModel).map(([k, b]) => <Row key={k} k={shortModel(k)} b={b} max={maxOf(sess.byModel)} />)}
+            {sess.byProvider && <><h5>按供应商 × 模型</h5>{sorted(sess.byProvider).map(([k, b]) => <Row key={k} k={k} b={b} max={maxOf(sess.byProvider!)} />)}</>}
           </div>
         </>
       ) : <div className="empty">{active ? '加载中…' : '没有活动会话'}</div>)}
@@ -94,10 +96,11 @@ export function UsagePanel() {
             {Object.entries(glob.byDay).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 31).map(([k, b]) => <Row key={k} k={k} b={b} max={maxOf(glob.byDay)} />)}
             <h5>按模型</h5>
             {sorted(glob.byModel).map(([k, b]) => <Row key={k} k={shortModel(k)} b={b} max={maxOf(glob.byModel)} />)}
+            {glob.byProvider && <><h5>按供应商 × 模型</h5>{sorted(glob.byProvider).map(([k, b]) => <Row key={k} k={k} b={b} max={maxOf(glob.byProvider!)} />)}</>}
             <h5>按项目</h5>
             {sorted(glob.byProject).slice(0, 20).map(([k, b]) => <Row key={k} k={basename(k.replace(/^C--/, 'C:/').replace(/-/g, '/'))} b={b} max={maxOf(glob.byProject)} />)}
           </div>
-          <div className="empty" style={{ fontSize: 11 }}>成本按公开定价估算，订阅用户仅供参考</div>
+          <div className="empty" style={{ fontSize: 11 }}>成本按 Claude 公开定价估算（其它厂商的模型记 0），订阅用户仅供参考</div>
         </>
       ) : <div className="empty">扫描 ~/.claude/projects…</div>)}
     </div>

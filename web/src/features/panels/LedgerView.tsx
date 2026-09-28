@@ -3,6 +3,7 @@ import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { clsx, fmtMs, fmtTok, shortModel } from '@/util';
 import type { LedgerEntry } from '@shared';
+import { hitRate, hitRates } from './ledger-stats';
 
 /** Traffic ledger: per-call latency / cache / cost table with a bar chart per hour or day, CSV export. */
 export function LedgerView({ sessionId }: { sessionId?: string }) {
@@ -12,6 +13,7 @@ export function LedgerView({ sessionId }: { sessionId?: string }) {
   const [onlyErr, setOnlyErr] = useState(false);
   const [source, setSource] = useState<'all' | 'session' | 'gateway'>('session'); // gateway rows = one per request through the model gateway; a session through the gateway has both kinds, so totals default to sessions
   const toast = useStore((s) => s.toast);
+  const providers = useStore((s) => s.providers);
   const seq = useRef(0); // switching 90 → 1 day: the slow 90-day answer must not overwrite the 1-day one
   const load = () => { const n = ++seq.current; return ws.request<LedgerEntry[]>({ kind: 'ledger.list', days, sessionId }).then((r) => { if (n === seq.current) setRows(r); }).catch((e) => toast(e.message)); };
   useEffect(() => { void load(); }, [days, sessionId]);
@@ -35,6 +37,7 @@ export function LedgerView({ sessionId }: { sessionId?: string }) {
     for (const r of picked) { t.calls++; if (!r.ok) t.err++; t.cost += r.costUsd; t.lat += r.apiMs ?? r.durationMs; t.cacheRead += r.cacheRead; t.input += r.input + r.cacheRead + r.cacheWrite; }
     return t;
   }, [picked]);
+  const byProvider = useMemo(() => hitRates(picked, (id) => (id ? providers.find((p) => p.id === id)?.name ?? id : 'Claude 账号')), [picked, providers]);
   const fmtVal = (v: number) => metric === 'cost' ? `$${v.toFixed(3)}` : metric === 'latency' ? fmtMs(v) : metric === 'tokens' ? fmtTok(v) : String(v);
   return (
     <div className="ledger">
@@ -54,6 +57,18 @@ export function LedgerView({ sessionId }: { sessionId?: string }) {
         <span>平均 <b>{fmtMs(totals.calls ? totals.lat / totals.calls : 0)}</b></span>
         <span>缓存命中 <b>{totals.input ? Math.round((totals.cacheRead / totals.input) * 100) : 0}%</b></span>
       </div>
+      {byProvider.length > 0 && (
+        <details style={{ fontSize: 12, margin: '2px 0 6px' }}>
+          <summary className="muted" style={{ cursor: 'pointer' }}>缓存命中 · 按供应商 × 模型</summary>
+          {byProvider.map((h) => (
+            <div key={`${h.provider}|${h.model}`} style={{ display: 'flex', gap: 8, padding: '1px 0' }} title={`输入 ${fmtTok(h.input)} · 缓存读 ${fmtTok(h.cacheRead)} · 缓存写 ${fmtTok(h.cacheWrite)}`}>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.provider} · {shortModel(h.model) || h.model}</span>
+              <span className="muted">{h.calls} 次</span>
+              <b style={{ minWidth: 40, textAlign: 'right' }}>{Math.round(hitRate(h) * 100)}%</b>
+            </div>
+          ))}
+        </details>
+      )}
       <div className="ledger-chart" title="按天 / 小时聚合">
         {buckets.map(([k, b]) => (
           <div key={k} className="bar" title={`${k}: ${fmtVal(val(b))}${b.err ? ` · ${b.err} 失败` : ''}`}>

@@ -107,16 +107,28 @@ export function renderRequest(r: IrRequest): any {
 const STOP_IN: Record<string, IrStop> = { stop: 'end', length: 'max_tokens', tool_calls: 'tool_use', function_call: 'tool_use', content_filter: 'refusal' };
 const STOP_OUT: Record<IrStop, string> = { end: 'stop', max_tokens: 'length', tool_use: 'tool_calls', stop_sequence: 'stop', refusal: 'content_filter' };
 
-/** OpenAI's prompt_tokens includes cached tokens; the IR (like Anthropic) counts them apart. */
+const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+
+/**
+ * OpenAI-compatible usage → IR. prompt_tokens (Responses: input_tokens) INCLUDES the cached / cache-write
+ * part; the IR (like Anthropic) counts them apart. Where vendors put the hit count:
+ *   OpenAI            prompt_tokens_details.cached_tokens (Responses: input_tokens_details.cached_tokens)
+ *   DeepSeek          prompt_cache_hit_tokens (+ prompt_cache_miss_tokens)
+ *   Kimi / Moonshot   top-level cached_tokens
+ * and the write count: prompt_tokens_details.cache_write_tokens (OpenRouter) or cache_creation_input_tokens.
+ * `??`, not `||`: an explicit 0 in the details is an answer, not a missing field.
+ */
 export function usageIn(u: any): Partial<IrUsage> {
-  if (!u) return {};
-  const cached = u.prompt_tokens_details?.cached_tokens ?? u.input_tokens_details?.cached_tokens ?? 0;
-  const prompt = u.prompt_tokens ?? u.input_tokens ?? 0;
-  return { input: Math.max(0, prompt - cached), output: u.completion_tokens ?? u.output_tokens ?? 0, cacheRead: cached };
+  if (!u || typeof u !== 'object') return {};
+  const d = u.prompt_tokens_details ?? u.input_tokens_details ?? {};
+  const cached = num(d.cached_tokens) ?? num(u.prompt_cache_hit_tokens) ?? num(u.cached_tokens) ?? 0;
+  const write = num(d.cache_write_tokens) ?? num(d.cache_creation_input_tokens) ?? num(u.cache_creation_input_tokens) ?? 0;
+  const prompt = num(u.prompt_tokens) ?? num(u.input_tokens) ?? 0;
+  return { input: Math.max(0, prompt - cached - write), output: num(u.completion_tokens) ?? num(u.output_tokens) ?? 0, cacheRead: cached, ...(write ? { cacheWrite: write } : {}) };
 }
-const usageOut = (u: IrUsage) => {
+export const usageOut = (u: IrUsage) => {
   const prompt = u.input + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0);
-  return { prompt_tokens: prompt, completion_tokens: u.output, total_tokens: prompt + u.output, prompt_tokens_details: { cached_tokens: u.cacheRead ?? 0 } };
+  return { prompt_tokens: prompt, completion_tokens: u.output, total_tokens: prompt + u.output, prompt_tokens_details: { cached_tokens: u.cacheRead ?? 0, ...(u.cacheWrite ? { cache_write_tokens: u.cacheWrite } : {}) } };
 };
 
 export function parseResponse(j: any): IrResponse {

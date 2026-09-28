@@ -63,7 +63,7 @@ export function parseRequest(body: any): IrRequest {
 
 const usageOut = (u: IrUsage) => {
   const input = u.input + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0);
-  return { input_tokens: input, input_tokens_details: { cached_tokens: u.cacheRead ?? 0 }, output_tokens: u.output, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: input + u.output };
+  return { input_tokens: input, input_tokens_details: { cached_tokens: u.cacheRead ?? 0, ...(u.cacheWrite ? { cache_write_tokens: u.cacheWrite } : {}) }, output_tokens: u.output, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: input + u.output };
 };
 
 function toolItem(p: Extract<IrPart, { type: 'tool_call' }>, custom: Set<string>, status = 'completed') {
