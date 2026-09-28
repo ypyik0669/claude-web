@@ -1686,29 +1686,43 @@ function driver() {
         await sleep(1200);
         const two = { first: await sentFor('smoke-two-1'), second: await sentFor('smoke-two-2'), docked: await js(`document.querySelector('.pane.focused .composer .pdock')?.dataset.request ?? null`) };
         check('two requests, Enter pressed twice in a row: only the first is allowed, the second stays docked', two.first === '[{"behavior":"allow"}]' && two.second === '[]' && two.docked === 'smoke-two-2', JSON.stringify(two));
-        // words written before a card came: Enter queues them as before (the card says so), the next Enter takes
-        // them back as the reason
-        await setOpen(`pending: []`);
-        await waitFor(`!document.querySelector('.pane.focused .composer .pdock')`, 3000);
-        await click('.pane.focused .composer textarea');
-        wc.insertText('smoke: the next thing');
-        await sleep(200);
-        await setOpen(`pending: [${stageReq('smoke-carried')}], state: 'waiting'`);
-        await sleep(800);
-        const carriedNote = await js(`document.querySelector('.pane.focused .composer .pdock .pd-hint.note')?.textContent ?? null`);
+        // words written before a card came: Enter queues them as before (the card says so). After that an empty
+        // Enter means what it always means (允许一次); answering with the queued words is the card's own button
+        const queueTexts = `window.__store.getState().open[${pj}].queue.map((q) => q.text)`;
+        const carryInto = async (id) => {
+          await setOpen(`pending: []`);
+          await waitFor(`!document.querySelector('.pane.focused .composer .pdock')`, 3000);
+          await click('.pane.focused .composer textarea');
+          wc.insertText('smoke: the next thing');
+          await sleep(200);
+          await setOpen(`pending: [${stageReq(id)}], state: 'waiting'`);
+          await sleep(800);
+          const note = await js(`document.querySelector('.pane.focused .composer .pdock .pd-hint.note')?.textContent ?? null`);
+          await key('Return');
+          await sleep(300);
+          return { note, after: await js(`({ queue: ${queueTexts}, box: document.querySelector('.pane.focused .composer textarea').value, note: document.querySelector('.pane.focused .composer .pdock .pd-hint.note')?.textContent ?? null, button: document.querySelector('.pane.focused .composer .pdock [data-act="deny-queued"]')?.textContent ?? null })`), sent: await sentFor(id) };
+        };
+        // (a) queued, then an empty Enter: 允许一次 — the queued message stays queued
+        const ca = await carryInto('smoke-carried-a');
         await key('Return');
-        await sleep(300);
-        const queued = await js(`({ queue: window.__store.getState().open[${pj}].queue.map((q) => q.text), box: document.querySelector('.pane.focused .composer textarea').value, note: document.querySelector('.pane.focused .composer .pdock .pd-hint.note')?.textContent ?? null })`);
-        const carriedSent0 = await sentFor('smoke-carried');
-        await key('Return');
-        await waitFor(`window.__permSent.some((r) => r.requestId === 'smoke-carried')`, 3000);
-        const carriedSent = await sentFor('smoke-carried');
-        const queueAfter = await js(`window.__store.getState().open[${pj}].queue.length`);
-        check('words from before the card: Enter queues them (not a deny), the card offers 「再按一次 Enter 会用这段话拒绝」, which takes them back as the reason',
-          /卡出现前写的/.test(carriedNote ?? '') && queued.queue.join() === 'smoke: the next thing' && queued.box === '' && /再按一次 Enter 会用这段话拒绝/.test(queued.note ?? '') && carriedSent0 === '[]'
-          && carriedSent === '[{"behavior":"deny","message":"smoke: the next thing"}]' && queueAfter === 0, JSON.stringify({ carriedNote, queued, carriedSent0, carriedSent, queueAfter }));
+        await waitFor(`window.__permSent.some((r) => r.requestId === 'smoke-carried-a')`, 3000);
+        const caSent = await sentFor('smoke-carried-a');
+        const caQueue = await js(queueTexts);
+        check('words from before the card: Enter queues them (not a deny) and the card offers 「改用排队的这段话拒绝」; an empty Enter after that is still 允许一次',
+          /卡出现前写的/.test(ca.note ?? '') && ca.sent === '[]' && ca.after.queue.join() === 'smoke: the next thing' && ca.after.box === '' && /点右边的按钮/.test(ca.after.note ?? '') && ca.after.button === '改用排队的这段话拒绝'
+          && caSent === '[{"behavior":"allow"}]' && caQueue.join() === 'smoke: the next thing', JSON.stringify({ ca, caSent, caQueue }));
+        await js(`(() => { const st = window.__store.getState(); for (const q of st.open[${pj}].queue) st.recall(${pj}, q.id); })()`);
+        // (b) queued, then the button: the queued message comes back out of the queue as the reason
+        const cb = await carryInto('smoke-carried-b');
+        await click('.pane.focused .composer .pdock [data-act="deny-queued"]');
+        await waitFor(`window.__permSent.some((r) => r.requestId === 'smoke-carried-b')`, 3000);
+        const cbSent = await sentFor('smoke-carried-b');
+        const cbQueue = await js(`${queueTexts}.length`);
+        check('…and 「改用排队的这段话拒绝」 takes the queued message back and denies with its words',
+          cb.sent === '[]' && cb.after.button === '改用排队的这段话拒绝' && cbSent === '[{"behavior":"deny","message":"smoke: the next thing"}]' && cbQueue === 0, JSON.stringify({ cb, cbSent, cbQueue }));
         // a plan: an empty Enter does nothing, Ctrl+Enter approves
         await setOpen(`pending: [${stageReq('smoke-plan', 'ExitPlanMode', "{ plan: '## smoke plan' }")}], state: 'idle'`);
+        await click('.pane.focused .composer textarea'); // (the button clicked above took the focus)
         await sleep(800);
         const planPh = await js(`document.querySelector('.pane.focused .composer textarea').placeholder`);
         await key('Return');

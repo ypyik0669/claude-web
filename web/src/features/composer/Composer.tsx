@@ -233,10 +233,13 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   } else if (seenRef.current) seenRef.current = null;
   const setSeen = (patch: Partial<DockSeen>) => { if (seenRef.current) { seenRef.current = { ...seenRef.current, ...patch }; setSeenTick((n) => n + 1); } };
   const dockClick = docked ? dockAction(docked, { text, attachments: hasAttachments, seen: seenRef.current, now: Date.now() }) : 'send';
+  // words from before the card that an Enter queued: the card offers a button to answer with them instead, while
+  // that message is still waiting in the queue (sent already → nothing to take back)
+  const queuedOffer = docked && seenRef.current?.queued && active?.queue.some((q) => q.id === seenRef.current?.queued?.id) ? seenRef.current.queued : undefined;
   const dockNote = !docked ? undefined
-    : seenRef.current?.queued && !text.trim() ? DOCK_REQUEUED[dockKind(docked)]
     : dockClick === 'blocked' ? DOCK_BLOCKED
     : seenRef.current?.carried && text.trim() && !text.trim().startsWith('/') ? DOCK_CARRIED
+    : queuedOffer && !text.trim() ? DOCK_REQUEUED[dockKind(docked)]
     : undefined;
 
   const addRef = (d: { id: string; title: string }) => {
@@ -266,10 +269,9 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     if (active && !welcome) setDraft(active.sessionId, v);
     if (draftKey) saveDraft(draftKey, v);
     // words from before the card stay 「from before」 while the user keeps writing them; once the box is empty,
-    // whatever is typed next is typed with the card in view (an answer to it). Typing also ends the offer to take
-    // queued words back.
+    // whatever is typed next is typed with the card in view (an answer to it)
     const s = seenRef.current;
-    if (s && ((s.carried && !v.trim()) || (s.queued && v.trim()))) setSeen({ carried: s.carried && !!v.trim(), queued: v.trim() ? undefined : s.queued });
+    if (s?.carried && !v.trim()) setSeen({ carried: false });
   };
 
   /** Upload dropped files for `sessionId` and return attachment refs. */
@@ -295,7 +297,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     void useStore.getState().respondPermission(docked.requestId, denyResponse(docked, text));
     onChange('');
   };
-  /** the Enter after words from before the card were queued: take that message back and deny with it */
+  /** the card's 「改用排队的这段话拒绝」: take the queued message back and answer the card with its words */
   const denyQueued = () => {
     const s = seenRef.current;
     if (!docked || !active || !s?.queued) return;
@@ -413,7 +415,6 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
         const act = dockAction(docked, { text, attachments: hasAttachments, seen: seenRef.current, now: Date.now(), enter: { repeat: e.repeat, ctrl: e.ctrlKey || e.metaKey } });
         // an empty box under a docked card: Enter is the card's main button (允许一次 ↵ / 提交回答; a plan: Ctrl+Enter)
         if (act === 'primary') { runDockPrimary(primaryKey(dockScope, docked.requestId)); return; }
-        if (act === 'deny-queued') { denyQueued(); return; }
         if (act === 'ignore') return;
       }
       void doSend();
@@ -634,7 +635,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
         {active && !welcome && <StatusStrip sessionId={active.sessionId} onRecall={(t) => { setText((cur) => (cur ? `${cur}\n${t}` : t)); ta.current?.focus(); }} />}
         {/* a docked card takes the run card's place (spec §4.2: 「等确认时被权限卡替代」) */}
         {active && !welcome && (docked
-          ? <PermissionDock sessionId={active.sessionId} reason={text} onReasonUsed={() => onChange('')} scope={dockScope} note={dockNote} />
+          ? <PermissionDock sessionId={active.sessionId} reason={text} onReasonUsed={() => onChange('')} scope={dockScope} note={dockNote} onDenyQueued={queuedOffer ? denyQueued : undefined} />
           : <RunCard sessionId={active.sessionId} />)}
         <div className="composer-box" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
           {hasChips && (

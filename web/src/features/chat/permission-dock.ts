@@ -14,8 +14,9 @@ export const DOCK_COOLDOWN_MS = 600;
 
 /**
  * What the composer knows about the card docked above it: when it came (`shownAt`), whether the box already had
- * words then (`carried` — cleared once the user edits them), and the message those words were queued as by the
- * first Enter (`queued`: the next Enter can take it back as the reason).
+ * words then (`carried` — cleared once the box is emptied), and the message those words were queued as by the
+ * first Enter (`queued`: the card's 「改用排队的这段话拒绝」 button can take it back as the reason — a click only:
+ * what Enter means never depends on state the user cannot see).
  */
 export interface DockSeen { requestId: string; shownAt: number; carried: boolean; queued?: { id: string; text: string } }
 
@@ -28,15 +29,14 @@ export interface DockSeen { requestId: string; shownAt: number; carried: boolean
  *    field, now the composer);
  *  - `blocked`: words and attachments typed while the card is up — a deny carries text only, so neither is sent
  *    (review M2; the composer says why);
- *  - `deny-queued`: an empty Enter right after carried words were queued → take that message back and deny with it
- *    (the card says 「再按一次 Enter 会用这段话拒绝」);
  *  - `primary`: an empty Enter on a card that has been on screen for `DOCK_COOLDOWN_MS` → its main button (允许一次 /
- *    提交回答; a plan only on Ctrl+Enter — it is long, and an Enter while reading it must not start the work);
+ *    提交回答; a plan only on Ctrl+Enter — it is long, and an Enter while reading it must not start the work). Also
+ *    right after carried words were queued: taking them back as the reason is the card's button, not an Enter;
  *  - `ignore`: anything else — a held-down Enter, an Enter in a card's first moments (the next card replacing the one
  *    just answered, a card arriving while the user types), an empty Enter on a plan, the send button on an empty box.
  * Review I3.
  */
-export type DockAct = 'send' | 'deny' | 'blocked' | 'deny-queued' | 'primary' | 'ignore';
+export type DockAct = 'send' | 'deny' | 'blocked' | 'primary' | 'ignore';
 export function dockAction(
   p: PermissionRequestEvent | undefined,
   o: { text: string; attachments: boolean; seen?: DockSeen | null; now: number; enter?: { repeat?: boolean; ctrl?: boolean } },
@@ -51,7 +51,6 @@ export function dockAction(
   }
   if (o.attachments) return 'send';
   if (!o.enter) return 'ignore';
-  if (seen?.queued) return 'deny-queued';
   if (!seen || o.now - seen.shownAt < DOCK_COOLDOWN_MS) return 'ignore';
   if (dockKind(p) === 'plan' && !o.enter.ctrl) return 'ignore';
   return 'primary';

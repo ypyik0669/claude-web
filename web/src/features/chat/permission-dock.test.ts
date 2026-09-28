@@ -50,9 +50,11 @@ describe('dockAction: Enter / send in the composer while a card sits above it', 
     const carried = settled(bash, { carried: true });
     expect(enter(bash, '下一步把 README 也改了', { seen: carried })).toBe('send');
     expect(click(bash, '下一步把 README 也改了', { seen: carried })).toBe('send');
-    // …and right after, the next Enter (box now empty) takes them back as the reason, instead of allowing
+    // …and after that, an empty Enter means what it always means (allow, past the cool-down): taking the queued
+    // words back as the reason is the card's button, never an Enter whose meaning depends on hidden state
     const queued = settled(bash, { queued: { id: 'q1', text: '下一步把 README 也改了' } });
-    expect(enter(bash, '', { seen: queued })).toBe('deny-queued');
+    expect(enter(bash, '', { seen: queued })).toBe('primary');
+    expect(enter(bash, '', { seen: { ...queued, shownAt: T - 10 } })).toBe('ignore');
     // (a click on send with an empty box does nothing)
     expect(click(bash, '', { seen: queued })).toBe('ignore');
   });
