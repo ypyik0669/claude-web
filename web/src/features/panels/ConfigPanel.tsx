@@ -126,7 +126,7 @@ export function Plugins() {
           <input value={mkSrc} onChange={(e) => setMkSrc(e.target.value)} placeholder="owner/repo 或 git URL 或本地路径" style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 4, padding: '4px 8px' }} />
           <button className="btn sm" disabled={busy || !mkSrc} onClick={() => run({ kind: 'config.marketplace.add', source: mkSrc })}>添加市场</button>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 6 }}>启停/安装后需要重启会话进程（会话头的停止再恢复）才会生效</div>
+        <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 6 }}>启停 / 安装后要重启对话进程才生效（对话右上角 ··· →「结束进程」，再发一条消息继续）</div>
       </div>
       <Cmd r={out} />
     </>
@@ -159,7 +159,7 @@ export function Mcp() {
       <div className="list">
         {live && (
           <>
-            <h5 style={{ margin: '4px 8px', fontSize: 11.5, color: 'var(--fg-2)' }}>当前会话</h5>
+            <h5 style={{ margin: '4px 8px', fontSize: 11.5, color: 'var(--fg-2)' }}>当前对话</h5>
             {live.map((s) => (
               <div key={s.name} className="row">
                 <span className={clsx('dot', s.status === 'connected' ? 'idle' : s.status === 'failed' ? 'error' : 'waiting')} />
@@ -335,7 +335,7 @@ export function ProviderProfiles() {
     setBusy(false);
   };
   const remove = async (p: Provider) => {
-    if (!(await dlg.confirm(`删除供应商「${p.name}」？`, { message: '已用它创建的会话恢复时会退回 Claude 账号。', danger: true }))) return;
+    if (!(await dlg.confirm(`删除供应商「${p.name}」？`, { message: '用它开的对话恢复时会退回 Claude 账号。', danger: true }))) return;
     await ws.request({ kind: 'providers.remove', id: p.id }).catch((e) => toast(e.message));
     await loadProviders();
   };
@@ -365,7 +365,7 @@ export function ProviderProfiles() {
           <div key={p.id} className="row">
             <span className={clsx('dot', p.models?.length ? 'idle' : 'waiting')} title={p.models?.length ? `已测试 · ${p.models.length} 个模型` : '未测试连接'} />
             <div className="grow">
-              <div>{p.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{PROVIDER_TYPES.find((t) => t.v === p.type)?.l}{p.runtime === 'claude' ? ' · 强制官方二进制' : ''}</span></div>
+              <div title={p.runtime === 'claude' ? '这个端点只认官方 Claude Code 二进制（编辑里可以改）' : undefined}>{p.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{PROVIDER_TYPES.find((t) => t.v === p.type)?.l}</span></div>
               <div className="sub mono">{p.type === 'gateway' ? `组：${gwGroups.find((g) => g.id === p.gatewayGroupId)?.name ?? '（组已删除）'}` : <>{p.baseUrl || '（默认端点）'} · {p.apiKey || '无 key'}</>}{p.defaultModel ? ` · ${p.defaultModel}` : ''}</div>
             </div>
             <button className={clsx('btn sm', def === p.id && 'primary')} onClick={() => setSetting('defaultProviderId', p.id)}>{def === p.id ? '默认' : '设为默认'}</button>
@@ -390,7 +390,7 @@ export function ProviderProfiles() {
               </select>
             </div>
           )}
-          {isGw && <div className="sub" style={{ marginBottom: 6 }}>地址与密钥在开会话时由网关填入；Claude / Codex / Gemini 等 agent 都能用这个档案。组里有「只认官方二进制」的 Anthropic 成员时，Claude 会话默认也用官方二进制（下面的勾选优先）。Codex、Gemini CLI 即使登录了自己的账号，也会被强制走网关；Qwen Code 等其它 ACP agent 只注入环境变量，在 OAuth 登录状态下可能不走网关（先退出登录或改用 API Key 模式）。{!gwGroups.length && '还没有组：先去「设置 → 模型网关」建一个。'}</div>}
+          {isGw && <div className="sub" style={{ marginBottom: 6 }}>地址与密钥在对话开始时由网关填入；Claude / Codex / Gemini 等 Agent 都能用这个供应商。组里有「只认官方二进制」的 Anthropic 成员时，Claude 对话默认也用官方二进制（下面的勾选优先）。Codex、Gemini CLI 即使登录了自己的账号，也会被强制走网关；Qwen Code 等其它 Agent 只注入环境变量，在 OAuth 登录状态下可能不走网关（先退出登录或改用 API Key 模式）。{!gwGroups.length && '还没有组：先去「设置 → 模型网关」建一个。'}</div>}
           {!isGw && <input className="field" style={{ width: '100%', marginBottom: 6 }} placeholder={`Base URL · ${PROVIDER_TYPES.find((t) => t.v === editing.type)?.hint}`} value={editing.baseUrl ?? ''} onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })} />}
           {!isGw && <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
             <input className="field" style={{ flex: 1 }} type={showKey ? 'text' : 'password'} placeholder={editing.id ? `API Key（留空保持 ${editing.apiKey || '现有值'}）` : 'API Key'} value={editing.apiKey} onChange={(e) => setEditing({ ...editing, apiKey: e.target.value })} autoComplete="off" />
@@ -403,10 +403,10 @@ export function ProviderProfiles() {
               {probe.chat && (probe.chat.ok
                 ? ` · 对话测试通过（${probe.chat.model} · ${probe.chat.runtime === 'claude' ? '官方二进制' : probe.chat.runtime === 'api' ? '直连接口' : 'ccb'} · ${(probe.chat.ms / 1000).toFixed(1)}s）`
                 : ` · 对话测试失败：${probe.chat.error}`)}
-              {probe.chat?.switched && <div style={{ color: 'var(--yellow)' }}>这个端点拒绝 ccb 的请求，已自动改为官方 Claude Code 二进制（ccb 专属功能在该供应商的会话里不可用）</div>}
+              {probe.chat?.switched && <div style={{ color: 'var(--yellow)' }}>这个端点拒绝 ccb 的请求，已自动改为官方 Claude Code 二进制（ccb 专属功能在该供应商的对话里不可用）</div>}
               {probe.responses && (probe.responses.ok
                 ? <div style={{ color: 'var(--green)' }}>/v1/responses 通过（{probe.responses.model}，gpt-* 会经垫片走这条路）</div>
-                : <div style={{ color: 'var(--yellow)' }}>/v1/responses 不可用：{probe.responses.error}{[404, 405, 501].includes(probe.responses.status ?? 0) && !/model/i.test(probe.responses.error ?? '') ? '（已记下，gpt-* 改走 chat/completions）' : '（没有记下：可能是模型或临时错误，会话里仍会先试 /v1/responses，失败这一次退回 chat/completions）'}</div>)}
+                : <div style={{ color: 'var(--yellow)' }}>/v1/responses 不可用：{probe.responses.error}{[404, 405, 501].includes(probe.responses.status ?? 0) && !/model/i.test(probe.responses.error ?? '') ? '（已记下，gpt-* 改走 chat/completions）' : '（没有记下：可能是模型或临时错误，对话里仍会先试 /v1/responses，失败这一次退回 chat/completions）'}</div>)}
             </div>
           )}
           {modelPick('默认模型', 'defaultModel')}

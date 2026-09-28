@@ -40,7 +40,7 @@ export function routePick(it: ModelMenuItem, c: PickContext): PickAction {
     if (!model) {
       if (own && c.agent === 'claude') model = 'default';
       else if (own) {
-        if (!c.agentDefault) return { kind: 'error', message: '这个 agent 没有配置默认模型（设置 → CLI Agents 里可以设），请选一个具体的模型' };
+        if (!c.agentDefault) return { kind: 'error', message: '这个 agent 没有配置默认模型（设置 → Agents 与子代理 → 其它 Agent 里可以设），请选一个具体的模型' };
         model = c.agentDefault;
       } else {
         if (!profile?.defaultModel) return { kind: 'error', message: `档案「${profile?.name ?? it.providerName}」没有设默认模型，请选一个具体的模型` };

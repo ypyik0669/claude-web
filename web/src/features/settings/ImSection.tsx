@@ -5,8 +5,9 @@ import { clsx } from '@/util';
 import { dlg } from '@/ui/dialog';
 import type { ImGatewayInfo, ImKind, ImKindDef } from '@shared';
 import { Icon } from '@/ui/icons';
+import { MODE_LABEL } from '@/ui/terms';
 
-const MODES = [['default', '每次询问'], ['acceptEdits', '自动接受编辑'], ['bypassPermissions', '完全权限']];
+const MODES = (['default', 'acceptEdits', 'bypassPermissions'] as const).map((m) => [m, MODE_LABEL[m]] as const);
 
 function GatewayCard({ g, def, onChange }: { g: ImGatewayInfo; def: ImKindDef; onChange: () => void }) {
   const toast = useStore((s) => s.toast);
@@ -45,13 +46,13 @@ function GatewayCard({ g, def, onChange }: { g: ImGatewayInfo; def: ImKindDef; o
         <div className="agent-form">
           <label>名称<input className="field" value={name} onChange={(e) => setName(e.target.value)} /></label>
           {def.fields.map((fl) => <label key={fl.key}>{fl.label}<input className="field" type={fl.secret ? 'password' : 'text'} value={f[fl.key] ?? ''} onChange={(e) => setF({ ...f, [fl.key]: e.target.value })} placeholder={fl.hint ?? ''} autoComplete="off" /></label>)}
-          <label>默认目录<select className="field" value={g.defaultCwd} onChange={(e) => patch({ defaultCwd: e.target.value })}><option value="">第一个工作区</option>{workspaces.map((w) => <option key={w.id} value={w.path}>{w.name} · {w.path}</option>)}</select></label>
+          <label>默认项目<select className="field" value={g.defaultCwd} onChange={(e) => patch({ defaultCwd: e.target.value })}><option value="">第一个项目</option>{workspaces.map((w) => <option key={w.id} value={w.path}>{w.name} · {w.path}</option>)}</select></label>
           <label>权限模式<select className="field" value={g.permissionMode} onChange={(e) => patch({ permissionMode: e.target.value })}>{MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
-          <label>引擎<select className="field" value={g.agent} onChange={(e) => patch({ agent: e.target.value })}><option value="">Claude Code</option>{agents.filter((a) => a.kind !== 'claude' && a.installed && a.enabled).map((a) => <option key={a.kind} value={a.kind}>{a.name}</option>)}</select></label>
+          <label>用哪个 Agent<select className="field" value={g.agent} onChange={(e) => patch({ agent: e.target.value })}><option value="">Claude Code</option>{agents.filter((a) => a.kind !== 'claude' && a.installed && a.enabled).map((a) => <option key={a.kind} value={a.kind}>{a.name}</option>)}</select></label>
           <label className="chip" style={{ alignSelf: 'end' }}><input type="checkbox" checked={g.verbose} onChange={(e) => patch({ verbose: e.target.checked })} /> 推送工具调用过程</label>
           <div style={{ gridColumn: '1 / -1' }} className="sub">{def.help}</div>
           <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', gridColumn: '1 / -1' }}>
-            <button className="btn sm ghost danger" onClick={async () => { if (await dlg.confirm(`删除网关「${g.name}」？`, { danger: true, okLabel: '删除' })) await patch(null); }}>删除</button>
+            <button className="btn sm ghost danger" onClick={async () => { if (await dlg.confirm(`删除机器人「${g.name}」？`, { danger: true, okLabel: '删除' })) await patch(null); }}>删除</button>
             <span className="grow" />
             <button className="btn sm" disabled={busy} onClick={save}>保存并连接</button>
           </div>
@@ -102,7 +103,7 @@ export function ImSection() {
         {list.length === 0 && <div className="empty">还没有机器人。点上面的按钮添加一个：Telegram 最简单（找 @BotFather 要个 token）。</div>}
       </div>
       <div className="sub" style={{ marginTop: 8 }}>
-        每个聊天绑定一个会话：直接发文字就是提问；<code>/new</code> 开新会话、<code>/sessions</code> + <code>/use</code> 切换、<code>/stop</code> 中断、<code>/allow</code> / <code>/deny</code> 或按钮处理权限；其它 <code>/命令</code> 原样转给 Claude。
+        每个聊天绑定一个对话：直接发文字就是提问；<code>/new</code> 开新对话、<code>/sessions</code> + <code>/use</code> 切换、<code>/stop</code> 中断、<code>/allow</code> / <code>/deny</code> 或按钮处理权限；其它 <code>/命令</code> 原样转给 Claude。
         微信没有开放的机器人接口，暂不支持；企业微信只能推送通知。
       </div>
     </div>

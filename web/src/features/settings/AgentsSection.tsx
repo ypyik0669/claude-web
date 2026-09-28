@@ -56,7 +56,7 @@ function AgentCard({ a, onChange }: { a: AgentInfo; onChange: () => void }) {
           <div title={`接入方式：${PROTO_LABEL[a.protocol]}`}>{a.name} <span className="mono muted" style={{ fontSize: 11.5 }}>{a.installed ? a.version : '未安装'}</span>{a.label && <span className="badge" style={{ marginLeft: 6, color: 'var(--blue)' }}>{a.label}</span>}</div>
           <div className="sub mono">{a.command} {a.args.join(' ')}</div>
         </div>
-        {a.kind !== 'claude' && <label className="chip" title="关掉后新会话选择器里不再出现"><input type="checkbox" checked={a.enabled} onChange={(e) => save({ enabled: e.target.checked })} /> 启用</label>}
+        {a.kind !== 'claude' && <label className="chip" title="关掉后新对话的选择器里不再出现"><input type="checkbox" checked={a.enabled} onChange={(e) => save({ enabled: e.target.checked })} /> 启用</label>}
         {!a.installed && a.install && <button className="btn sm" onClick={() => runInTerminal(a.install)} title={a.install}>安装</button>}
         {a.installed && a.login && <button className="btn sm ghost" onClick={() => runInTerminal(a.login)} title={a.login}>登录</button>}
         {a.docs && <a className="btn sm ghost" href={a.docs} target="_blank" rel="noreferrer">文档</a>}

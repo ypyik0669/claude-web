@@ -96,7 +96,7 @@ export function McpCatalog() {
         </div>
         {health && (
           <div className="list" style={{ marginBottom: 8 }}>
-            {health.map((h) => <div key={h.name} className="row"><span className={clsx('dot', h.status === 'connected' ? 'idle' : h.status === 'needs-auth' ? 'waiting' : 'error')} /><div className="grow"><div>{h.name}</div><div className="sub">{h.detail}</div></div>{h.status === 'needs-auth' && <span className="badge">会话里 /mcp 授权</span>}</div>)}
+            {health.map((h) => <div key={h.name} className="row"><span className={clsx('dot', h.status === 'connected' ? 'idle' : h.status === 'needs-auth' ? 'waiting' : 'error')} /><div className="grow"><div>{h.name}</div><div className="sub">{h.detail}</div></div>{h.status === 'needs-auth' && <span className="badge">对话里 /mcp 授权</span>}</div>)}
             {!health.length && <div className="empty">没有配置 MCP 服务器</div>}
           </div>
         )}
