@@ -103,3 +103,22 @@ export const WORKBENCH_VIEW_LABEL: Record<WorkbenchTab, string> = {
   artifacts: TERMS.artifacts,
   board: 'Issue 与 PR',
 };
+
+/** Chat rendering (redesign phase 5, spec §5.3): a step blocked on the user (yellow = 「需要你」, §6.4). */
+export const WAITING_FOR_YOU = '等你确认';
+/** Under a card docked above the composer: the composer is where a different instruction goes (sending it = deny with those words). */
+export const DOCK_HINT = {
+  tool: (agent: string) => `也可以直接在下面输入，告诉 ${agent} 换个做法`,
+  plan: () => '也可以直接在下面输入修改意见',
+  ask: (agent: string) => `也可以直接在下面输入，不回答这些问题，直接告诉 ${agent}`,
+} as const;
+/** The composer's placeholder while a card is docked above it. */
+export const DOCK_PLACEHOLDER = {
+  tool: (agent: string) => `告诉 ${agent} 换个做法（发送 = 拒绝并说明）· 空着按 Enter = 允许一次`,
+  plan: () => '写下修改意见（发送 = 要求修改）· 空着按 Enter = 批准并开始',
+  ask: (agent: string) => `直接回复 ${agent}（发送 = 不回答这些问题）`,
+} as const;
+/** The send slot while a card is docked and the box has words. */
+export const DOCK_SEND = { tool: '拒绝并发送', plan: '要求修改', ask: '跳过并发送' } as const;
+/** The setting that opens every change in the conversation again (`ui.inlineDiffs`; off by default since phase 5). */
+export const INLINE_DIFFS_LABEL = '在对话里直接展开改动';

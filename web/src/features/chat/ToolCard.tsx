@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useContext, useEffect, useState } from 'react';
 import type { ToolUseBlock } from '@/model/conversation';
 import { useStore } from '@/store';
 import { usePaneCtx } from '@/store/paneContext';
@@ -6,6 +6,8 @@ import { clsx, basename } from '@/util';
 import { Icon } from '@/ui/icons';
 import { ItemList } from './ChatView';
 import { getToolDef, splitMcp, toolDisplayName } from './tools/registry';
+import { WaitingCtx } from './turn-context';
+import { WAITING_FOR_YOU } from '@/ui/terms';
 
 function SubagentLoader({ toolUseId }: { toolUseId: string }) {
   const ctx = usePaneCtx();
@@ -45,7 +47,10 @@ export function ToolHead({ t, onToggle, open }: { t: ToolUseBlock; onToggle?: ()
   const phone = useStore((s) => s.mobile);
   const short = def.category === 'read' || def.category === 'edit' ? shortPath(arg) : arg;
   const secs = useElapsed(t);
-  const st = t.status === 'error' ? '失败' : t.status === 'running' ? (secs !== null ? `${secs}s` : '运行中') : t.status === 'pending' ? '等待' : t.status === 'streaming' ? '…' : '';
+  // blocked on a permission card above the composer (the node is a yellow shield): say so instead of 等待
+  const waitingIds = useContext(WaitingCtx);
+  const waiting = t.status !== 'done' && t.status !== 'error' && waitingIds.has(t.id);
+  const st = t.status === 'error' ? '失败' : waiting ? WAITING_FOR_YOU : t.status === 'running' ? (secs !== null ? `${secs}s` : '运行中') : t.status === 'pending' ? '等待' : t.status === 'streaming' ? '…' : '';
   return (
     <div className={clsx('tool-head', open && 'open')} onClick={onToggle} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' && onToggle) onToggle(); }} title={arg}>
       <span className="ic"><Icon name={def.icon} size={14} /></span>
@@ -53,7 +58,7 @@ export function ToolHead({ t, onToggle, open }: { t: ToolUseBlock; onToggle?: ()
       {mcp && verb && <span className="verb">{verb}</span>}
       <span className="summary">{short}</span>
       {t.progress?.lastTool && t.status === 'running' && <span className="st">{t.progress.lastTool}</span>}
-      {st && <span className={clsx('st', t.status === 'error' && 'err')}>{st}</span>}
+      {st && <span className={clsx('st', t.status === 'error' && 'err', waiting && 'wait')}>{st}</span>}
       {!phone && <button className="icon-btn xs" title="在右侧查看详情" aria-label="详情" onClick={(e) => { e.stopPropagation(); setInspect(t.id); }}><Icon name="external" size={12} /></button>}
     </div>
   );

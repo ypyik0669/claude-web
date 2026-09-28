@@ -45,6 +45,7 @@ const CONTROLS: Record<EntryId, (e: EntryMeta) => ReactNode> = {
   autoContinueOnReset: (e) => <Toggle k={e.id} label={e.label} />,
   'ui.showThinking': (e) => <Toggle k={e.id} label={e.label} />,
   'ui.diffMode': (e) => <Seg k={e.id} def="unified" label={e.label} options={[{ id: 'unified', l: '上下对照' }, { id: 'split', l: '左右并排' }]} />,
+  'ui.inlineDiffs': (e) => <Toggle k={e.id} label={e.label} />,
   'ui.workbench': (e) => <Toggle k={e.id} label={e.label} />,
   'ui.autoSave': (e) => <Toggle k={e.id} def label={e.label} />,
   'ui.notifications': (e) => <Toggle k={e.id} def label={e.label} />,

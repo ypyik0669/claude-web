@@ -8,6 +8,8 @@ import { compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachm
 import { pickFolderFiles } from '@/model/attachment-filter';
 import { StatusStrip } from '@/features/chat/StatusStrip';
 import { RunCard } from '@/features/chat/RunCard';
+import { PermissionDock, runDockPrimary } from '@/features/chat/PermissionCards';
+import { composerAct, denyResponse, dockKind } from '@/features/chat/permission-dock';
 import { attachmentFolderPath } from '@/features/paths';
 import { Icon } from '@/ui/icons';
 import { CATALOG, effortLevels, modelsFor } from '@catalog';
@@ -22,7 +24,7 @@ import { routePick, switchedNote } from '@/features/models/route';
 import { modelChipText } from '@/features/models/intelligence';
 import { providersLoaded, useGatewayStatus } from '@/features/models/data';
 import { dlg } from '@/ui/dialog';
-import { TERMS } from '@/ui/terms';
+import { DOCK_PLACEHOLDER, DOCK_SEND, TERMS } from '@/ui/terms';
 import { showPanel } from '@/features/workbench/right-panel';
 import { ComposerBar } from './ComposerBar';
 import { PlusMenu } from './PlusMenu';
@@ -38,6 +40,11 @@ const REMOTE_ATTACH = '附件在本机，远端读不到，请粘贴内容（图
 const REMOTE_GOAL = '其它机器上的对话不能在这里设定目标（目标由本机驱动）。可以到那台机器上设定，或先「交给本机的 Agent 继续」';
 const NO_FEATURES: SessionFeatures = {};
 const isFeatures = (v: unknown): v is SessionFeatures => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** The agent's name in a docked card's words: 「告诉 Claude 换个做法」, 「告诉 Codex …」. */
+function agentWord(info: { agent?: string; agentName?: string } | undefined): string {
+  return info?.agent && info.agent !== 'claude' ? info.agentName ?? info.agent : 'Claude';
+}
 
 /**
  * Once per page, after meta.json arrived: older builds kept the capability defaults in localStorage
@@ -209,6 +216,12 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
 
   const busy = !welcome && !!active && (active.state === 'running' || active.state === 'waiting' || active.state === 'starting');
   const canSend = (text.trim().length > 0 || imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0) && !starting && !upload && !disabled;
+  // a permission / question / plan card docked above the box (redesign phase 5): words typed here are its 拒绝理由 /
+  // 修改意见 — sending them denies with them (the old card's reason field, same response); an empty Enter presses the
+  // card's main button (允许一次 ↵). Attachments without words are still an ordinary message (queued, never an approval).
+  const docked = !welcome && !disabled && active ? active.pending[0] : undefined;
+  const dockAgent = agentWord(active?.info);
+  const hasAttachments = imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0;
 
   const addRef = (d: { id: string; title: string }) => {
     setRefs((r) => (r.some((x) => x.id === d.id) ? r : [...r, d]));
@@ -255,8 +268,16 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     return out;
   };
 
+  /** send the box's words as the docked card's deny reason (拒绝理由 / 修改意见 / 不回答问题) and clear the box */
+  const denyDocked = () => {
+    if (!docked) return;
+    void useStore.getState().respondPermission(docked.requestId, denyResponse(docked, text));
+    onChange('');
+  };
+
   const doSend = async () => {
     if (!canSend) return;
+    if (composerAct(docked, { text, attachments: hasAttachments }) === 'deny') { denyDocked(); return; }
     const t = text;
     if (/^\/goal\s+\S/.test(t.trim())) {
       // the text stays: the user may still want to send it as a plain message, or copy it over there
@@ -342,6 +363,8 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     }
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
+      // an empty box under a docked card: Enter is the card's main button (允许一次 ↵ / 批准并开始 / 提交回答)
+      if (docked && composerAct(docked, { text, attachments: hasAttachments }) === 'primary') { runDockPrimary(docked.requestId); return; }
       void doSend();
     }
     if (e.key === 'Escape' && busy && active) void interrupt(active.sessionId);
@@ -484,7 +507,9 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   ) : (
     <button className="send" data-id={BAR_ID.send} disabled={!canSend} onClick={doSend} title="发送 (Enter)" aria-label="发送">{starting || upload ? <span className="spinner" /> : <Icon name="send" size={16} />}</button>
   );
-  const steer = busy && canSend && active ? (
+  const steer = docked && text.trim() ? (
+    <button className="steer deny" data-id={BAR_ID.steer} title={`拒绝这次请求，并把这段话告诉 ${dockAgent}（Enter）`} onClick={denyDocked}>{DOCK_SEND[dockKind(docked)]} <Icon name="send" size={12} /></button>
+  ) : busy && canSend && active ? (
     <button className="steer" data-id={BAR_ID.steer} title={`${TERMS.steer}：不等这一轮结束，马上把这句话告诉 Claude`} aria-label={TERMS.steer} onClick={async () => { const t = text; setText(''); setDraft(active.sessionId, ''); await send(active.sessionId, t, undefined, true).catch((e) => toast(e.message)); }}>插话 <Icon name="send" size={12} /></button>
   ) : null;
   const mic = speechOk && !mobile ? (
@@ -556,7 +581,10 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
           </div>
         )}
         {active && !welcome && <StatusStrip sessionId={active.sessionId} onRecall={(t) => { setText((cur) => (cur ? `${cur}\n${t}` : t)); ta.current?.focus(); }} />}
-        {active && !welcome && <RunCard sessionId={active.sessionId} />}
+        {/* a docked card takes the run card's place (spec §4.2: 「等确认时被权限卡替代」) */}
+        {active && !welcome && (docked
+          ? <PermissionDock sessionId={active.sessionId} reason={text} onReasonUsed={() => onChange('')} />
+          : <RunCard sessionId={active.sessionId} />)}
         <div className="composer-box" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
           {hasChips && (
             <div className="attach">
@@ -595,7 +623,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
             rows={1}
             value={text}
             disabled={disabled}
-            placeholder={disabled ? '对话已被删除，不能继续' : welcome ? '描述一个任务，或者问个问题。输入 / 查看命令，拖入文件作为附件' : active?.state === 'history' ? '发送即可继续这个对话…' : busy ? '运行中，输入会排队 · Esc 中断' : `回复 ${info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude'}… 输入 / 查看命令，拖入文件作为附件`}
+            placeholder={disabled ? '对话已被删除，不能继续' : docked ? DOCK_PLACEHOLDER[dockKind(docked)](dockAgent) : welcome ? '描述一个任务，或者问个问题。输入 / 查看命令，拖入文件作为附件' : active?.state === 'history' ? '发送即可继续这个对话…' : busy ? '运行中，输入会排队 · Esc 中断' : `回复 ${info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude'}… 输入 / 查看命令，拖入文件作为附件`}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKey}
             onPaste={onPaste}

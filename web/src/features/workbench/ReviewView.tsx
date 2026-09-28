@@ -29,6 +29,8 @@ const drafts = new Map<string, string>();
 /** The last open request (`useRightPanel().review.n`) the right panel's review applied: each is applied once, also
  *  across a remount (a request is not replayed when the tab is closed and opened again in workbench mode). */
 let appliedIntent = 0;
+/** The same for a phone's in-place 改动 view (`useRightPanel().inPlace.n`). */
+let appliedPlace = 0;
 /** Git 视图 in words the default UI uses (TERMS.worktree); the git words stay in the tooltip. */
 const GIT_VIEW_LABEL = 'Git：分支、拉取推送、历史…';
 const GIT_VIEW_TITLE = `完整的 Git 视图：分支、拉取 / 推送、提交历史、修改上一次提交、暂存区快照（stash）、${TERMS.worktree}`;
@@ -161,6 +163,15 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
     else if (intent.scope) setScope(intent.scope);
     if (intent.path) setFocus(intent.path);
   }, [intent?.n]);
+  // a phone's change card (no right panel): only this conversation's in-place view takes it, once
+  const placeReq = useRightPanel((s) => s.inPlace);
+  useEffect(() => {
+    if (!inPlace || !placeReq || placeReq.sessionId !== sid || placeReq.n <= appliedPlace) return;
+    appliedPlace = placeReq.n;
+    setSub('diff');
+    setScope('session');
+    if (placeReq.path) setFocus(placeReq.path);
+  }, [placeReq?.n, sid]);
 
   // status + the conversation's files
   useEffect(() => {

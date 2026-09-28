@@ -6,6 +6,7 @@ import { parsePeerId } from '@shared';
 import { useStore } from '@/store';
 import { currentChatTile, workbenchOn, type PanelId } from '@/model/layout';
 import { PHONE_NO_PANEL, PHONE_SCHEDULES_NO_CHAT, PHONE_SCHEDULES_REMOTE } from '@/ui/terms';
+import { blockRemoteOpen } from '@/features/remote-guard';
 import { viewTarget, type ExplorerMode, type ReviewIntent } from './panel-entries';
 import type { WbView } from './wb-views';
 
@@ -17,8 +18,10 @@ interface RightPanelState {
   schedules: number;
   /** how many files the right panel's review lists right now (its tab shows the number, like the mock's 「审阅 3」) */
   reviewCount: number;
+  /** a phone's in-place 改动 view: the file a change card asked for (only that conversation's in-place review takes it) */
+  inPlace: { sessionId: string; path?: string; n: number } | null;
 }
-export const useRightPanel = create<RightPanelState>(() => ({ review: null, explorer: null, schedules: 0, reviewCount: 0 }));
+export const useRightPanel = create<RightPanelState>(() => ({ review: null, explorer: null, schedules: 0, reviewCount: 0, inPlace: null }));
 let seq = 0;
 
 // The functions below are the right panel's public entry points (the sidebar, the composer, the palette and the
@@ -90,4 +93,20 @@ export function openSessionView(view: WbView, at?: { paneId: string; tileId: str
   if (target.review) openReview(target.review);
   else if (target.explorer) openExplorer(target.explorer);
   else showPanel(target.panel);
+}
+
+/**
+ * A turn's 「改动了 N 个文件」 card (redesign phase 5): 审阅 on this conversation's changes, scrolled to `path` and
+ * opened. A desktop uses the right panel; a phone (no right panel) opens the conversation's own 改动 view in place
+ * (`at`: its tile) and scrolls that; a conversation on another machine has its files there — a note says so.
+ */
+export function openChangedFile(sessionId: string, path?: string, at?: { paneId: string; tileId: string }): void {
+  if (blockRemoteOpen(sessionId, path)) return;
+  const s = useStore.getState();
+  if (s.mobile) {
+    openSessionView('changes', at);
+    useRightPanel.setState({ inPlace: { sessionId, path, n: ++seq } });
+    return;
+  }
+  openReview({ scope: 'session', path });
 }

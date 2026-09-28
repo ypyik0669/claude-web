@@ -89,12 +89,17 @@ describe('settings map (spec §5.7)', () => {
     expect(DEFAULT_SECTION).toBe('general');
   });
 
-  it('every entry of the old window is still there, exactly once', () => {
+  it('every entry of the old window is still there, exactly once (plus the rows added since, named here)', () => {
     const legacy = Object.values(LEGACY).flatMap((x) => x.entries ?? []);
+    // redesign phase 5: 「在对话里直接展开改动」 — the per-step diffs no longer start open (spec §5.3: 设置里可以改回)
+    const added = ['ui.inlineDiffs'];
     const now = allEntries().map(({ entry }) => entry.id);
     expect(new Set(now).size).toBe(now.length);
     for (const id of legacy) expect(now, id).toContain(id);
-    expect([...now].sort()).toEqual([...legacy].sort());
+    expect([...now].sort()).toEqual([...legacy, ...added].sort());
+    const at = (id: string) => allEntries().find((e) => e.entry.id === id);
+    expect(at('ui.inlineDiffs')?.section.id).toBe(at('ui.diffMode')?.section.id);
+    expect(at('ui.inlineDiffs')?.entry.block).toBe(at('ui.diffMode')?.entry.block);
   });
 
   it('every part of the old window is on exactly one page', () => {

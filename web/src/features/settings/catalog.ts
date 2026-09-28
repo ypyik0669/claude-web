@@ -4,7 +4,7 @@
 // unions below, so a row or part without a renderer does not compile. catalog.test.ts holds the old window's
 // contents as the contract: nothing it had may go missing.
 import type { IconName } from '@/ui/icons';
-import { TERMS } from '@/ui/terms';
+import { INLINE_DIFFS_LABEL, TERMS } from '@/ui/terms';
 
 export type SettingsGroupId = 'common' | 'model' | 'ext' | 'connect' | 'data' | 'advanced';
 export const SETTINGS_GROUPS: { id: SettingsGroupId; l: string }[] = [
@@ -18,7 +18,7 @@ export const SETTINGS_GROUPS: { id: SettingsGroupId; l: string }[] = [
 
 /** One setting row (a meta.json key). */
 export type EntryId =
-  | 'ui.defaultMode' | 'autoContinueOnReset' | 'ui.showThinking' | 'ui.diffMode' | 'ui.workbench' | 'ui.autoSave'
+  | 'ui.defaultMode' | 'autoContinueOnReset' | 'ui.showThinking' | 'ui.diffMode' | 'ui.inlineDiffs' | 'ui.workbench' | 'ui.autoSave'
   | 'ui.notifications' | 'ui.closeToTray' | 'ui.confirmExit' | 'ui.softwareRender' | 'orchestra.maxParallel'
   | 'ui.theme' | 'ui.fontSize' | 'ui.density' | 'ui.cjkFont' | 'ui.reduceMotion';
 
@@ -97,6 +97,7 @@ const GENERAL: EntryMeta[] = [
   { id: 'autoContinueOnReset', block: '新对话', label: '额度用完后自动继续', hint: '被限流时，等到额度重置再自动发出上一条消息。', keywords: 'rate limit quota 限流 额度 额度恢复后自动继续' },
   { id: 'ui.showThinking', block: '对话显示', label: '显示思考过程', hint: '展开模型回答之前的推理内容。关掉更清爽。', keywords: 'thinking reasoning 思考' },
   { id: 'ui.diffMode', block: '对话显示', label: '改动的显示方式', hint: '审阅改动时 diff 的默认样式。', keywords: 'diff split unified 并排 内联 默认 diff 视图 上下对照 左右并排' },
+  { id: 'ui.inlineDiffs', block: '对话显示', label: INLINE_DIFFS_LABEL, hint: '每一步改了什么直接在对话里展开。关着时（默认）点那一步，或回合末尾的「改动了 N 个文件」查看。', keywords: 'diff inline expand edit 展开 改动 大 diff 内联 默认展开' },
   { id: 'ui.workbench', block: '工作台', label: TERMS.workbench, tag: '进阶', hint: '一直显示分屏标签条、分组栏和右侧面板图标栏。关着时它们只在用到时出现（Ctrl+D 分屏、开第二个标签页），快捷键和 Ctrl K 照常可用。', keywords: 'workbench 工作台 分屏 分组 标签 停靠 图标栏 single pane layout 单窗格模式 界面' },
   { id: 'ui.autoSave', block: '工作台', label: '编辑器自动保存', hint: '停止输入 0.8 秒后写回磁盘；关掉后用 Ctrl+S 保存。', keywords: 'editor autosave monaco 保存' },
   { id: 'ui.notifications', block: '提醒与窗口', label: '桌面通知', hint: '对话需要你确认，或者任务完成时提醒你。', keywords: 'notification 通知' },
