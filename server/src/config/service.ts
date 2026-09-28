@@ -2,6 +2,16 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { runClaudeCli } from '../claude-exe.js';
 import { claudeDir } from '../sessions/service.js';
+import { Memo } from '../runtime/memo.js';
+
+/**
+ * `claude mcp list` starts the engine AND every configured MCP server to health-check it (npx, uvx… each a
+ * process tree). Settings → MCP asks twice on mount (installed list + health) and the config center once more:
+ * one run per cwd shared while in flight, reused 15 s; adding / removing a server drops it.
+ */
+const mcpListMemo = new Memo<{ code: number; stdout: string; stderr: string }>(15_000, Date.now, { keep: (r) => r.code === 0 }); // a failed run is not reused
+export const mcpList = (cwd?: string, force = false) => mcpListMemo.get(cwd ?? '', () => runClaudeCli(['mcp', 'list'], { cwd, timeoutMs: 90_000 }), force);
+export const forgetMcpList = () => mcpListMemo.clear();
 
 function tryJson<T>(s: string, fallback: T): T {
   try {
@@ -79,7 +89,7 @@ export class ConfigService {
   }
 
   async mcp(cwd?: string) {
-    const r = await runClaudeCli(['mcp', 'list'], { cwd, timeoutMs: 90_000 });
+    const r = await mcpList(cwd);
     // "name: target - ✔ Connected" lines
     const servers = r.stdout
       .split(/\r?\n/)
@@ -91,15 +101,24 @@ export class ConfigService {
     return { servers, userServers: userCfg?.mcpServers ?? {}, projectServers: projectCfg?.mcpServers ?? {}, stderr: r.code ? r.stderr : undefined };
   }
   async mcpAdd(name: string, json: string, scope: string, cwd?: string) {
-    return runClaudeCli(['mcp', 'add-json', name, json, '-s', scope], { cwd });
+    return runClaudeCli(['mcp', 'add-json', name, json, '-s', scope], { cwd }).finally(forgetMcpList);
   }
   async mcpRemove(name: string, scope?: string, cwd?: string) {
-    return runClaudeCli(['mcp', 'remove', name, ...(scope ? ['-s', scope] : [])], { cwd });
+    return runClaudeCli(['mcp', 'remove', name, ...(scope ? ['-s', scope] : [])], { cwd }).finally(forgetMcpList);
   }
 
-  async auth() {
-    const r = await runClaudeCli(['auth', 'status']);
-    return { ...tryJson<any>(r.stdout, { raw: r.stdout }), stderr: r.code ? r.stderr : undefined };
+  /**
+   * `claude auth status` is a whole engine start (a second or two of node). The welcome page asks on every mount,
+   * the onboarding and the settings overview too: one run shared while in flight and kept 30 s;
+   * `force` (onboarding → 重新检查, after a /login) asks again.
+   */
+  // only a real answer is reused (logged out is one: exit 1 + JSON); an engine error / timeout / garbage is asked again
+  private authMemo = new Memo<any>(30_000, Date.now, { keep: (v) => typeof v?.loggedIn === 'boolean' });
+  auth(force = false): Promise<any> {
+    return this.authMemo.get('auth', async () => {
+      const r = await runClaudeCli(['auth', 'status']);
+      return { ...tryJson<any>(r.stdout, { raw: r.stdout }), stderr: r.code ? r.stderr : undefined };
+    }, force);
   }
 
   async doctor() {

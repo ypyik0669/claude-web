@@ -10,6 +10,9 @@ import { refreshAllModels, useGatewayGroups, useRefreshRun } from '@/features/mo
 import { agoText } from '@/features/models/ModelMenu';
 import '@/features/models/models.css';
 
+/** stable fallback for the selectors below (a fresh `[]` per call re-renders forever: React #185) */
+const NONE: string[] = [];
+
 const AGENTS: { kind: AgentKind; name: string }[] = [
   { kind: 'claude', name: 'Claude Code' },
   { kind: 'codex', name: 'Codex' },
@@ -25,8 +28,9 @@ const AGENTS: { kind: AgentKind; name: string }[] = [
  * (`ui.disabledModels`) and favourites (`ui.favoriteModels`) feed the composer's model menu.
  */
 export function ModelsSection() {
-  const disabled = useStore((s) => (s.settings['ui.disabledModels'] as string[] | undefined) ?? []);
-  const favorites = useStore((s) => (s.settings['ui.favoriteModels'] as string[] | undefined) ?? []);
+  // a selector must return a stable reference: a fresh `[]` per call makes zustand re-render forever (React #185)
+  const disabled = useStore((s) => (s.settings['ui.disabledModels'] as string[] | undefined) ?? NONE);
+  const favorites = useStore((s) => (s.settings['ui.favoriteModels'] as string[] | undefined) ?? NONE);
   const setSetting = useStore((s) => s.setSetting);
   const providers = useStore((s) => s.providers);
   const toast = useStore((s) => s.toast);

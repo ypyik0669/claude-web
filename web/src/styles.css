@@ -588,9 +588,21 @@ button.link:hover { text-decoration: underline; }
 .welcome .recent { margin-top: 36px; width: 100%; max-width: 720px; }
 .welcome .recent h5 { font-size: 11.5px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.4px; margin: 0 0 8px; font-weight: 600; }
 .welcome .recent .sess { padding: 8px 10px; }
-.dirpick { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); background: var(--surface-0); border: 1px solid var(--edge-default); border-radius: var(--r-lg); padding: 3px 8px; cursor: pointer; max-width: 320px; }
-.dirpick:hover { border-color: var(--edge-strong); }
-.dirpick span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dirpick { position: relative; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); background: var(--surface-0); border: 1px solid var(--edge-default); border-radius: var(--r-lg); padding: 3px 8px; cursor: pointer; max-width: 320px; min-width: 0; }
+.dirpick:hover, .dirpick.active { border-color: var(--edge-strong); }
+.dirpick .dirpick-ic { color: var(--ink-4); display: inline-flex; flex: none; }
+.dirpick .dirpick-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dirpick .caret { color: var(--ink-4); display: inline-flex; flex: none; }
+.menu.dirmenu { position: fixed; z-index: 1000; display: flex; flex-direction: column; overflow: hidden; } /* min / max width: inline, from its left edge (dir-menu.ts) */
+.dirmenu-head { padding: 5px 10px 3px; font-size: var(--fs-micro); color: var(--ink-4); font-weight: 600; }
+.dirmenu-list { overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+.menu.dirmenu .dirmenu-list button { align-items: flex-start; }
+.menu.dirmenu button.cur { background: var(--layer-selected); }
+.menu.dirmenu button:focus-visible { outline-offset: -2px; }
+.dirmenu-check { width: 14px; flex: none; display: inline-flex; padding-top: 2px; color: var(--accent); }
+.dirmenu-text { display: flex; flex-direction: column; min-width: 0; }
+.dirmenu-text .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dirmenu-text .p { font-size: var(--fs-micro); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- trajectory ---------- */
 .traj { padding: 12px 20px; }
@@ -1419,3 +1431,16 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
 .peer-add .acts { grid-column: 1 / -1; display: flex; gap: 6px; justify-content: flex-end; }
 /* inside its machine group the machine badge says nothing new */
 .proj.peer .sess .peer-badge { display: none; }
+
+/* ---------- error boundary fallback (ui/ErrorBoundary.tsx) ---------- */
+.err-boundary { margin: 12px; padding: 12px 14px; border: 1px solid color-mix(in oklab, var(--err) 35%, transparent); background: var(--err-soft); border-radius: var(--r-lg); color: var(--ink-2); display: flex; flex-direction: column; gap: 8px; min-width: 0; max-width: 640px; }
+.err-boundary.full { margin: 48px auto; }
+.err-boundary .eb-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.err-boundary .eb-ic { color: var(--err); display: inline-flex; flex: none; }
+.err-boundary .eb-title { font-weight: 600; color: var(--ink-1); white-space: nowrap; }
+.err-boundary .eb-area { font-size: var(--fs-sm); color: var(--ink-4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.err-boundary .eb-msg { font-family: var(--mono); font-size: var(--fs-sm); color: var(--ink-2); overflow-wrap: anywhere; }
+.err-boundary .eb-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.err-boundary.compact { margin: 0; padding: 6px 8px; gap: 4px; display: inline-flex; max-width: 360px; }
+.err-boundary.compact .eb-msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.err-boundary.floating { position: fixed; right: 16px; bottom: 16px; z-index: 2000; margin: 0; max-width: min(420px, calc(100vw - 32px)); background: color-mix(in oklab, var(--err) 10%, var(--surface-elev)); box-shadow: var(--elev-3); }

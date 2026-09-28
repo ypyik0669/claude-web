@@ -88,7 +88,7 @@ async function readCredentials(): Promise<string> {
   } catch (e) {
     if (process.platform !== 'darwin') throw e;
     return new Promise((res, rej) =>
-      execFile('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'], { timeout: 10_000 }, (err, out) => (err ? rej(e) : res(String(out).trim()))),
+      execFile('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'], { windowsHide: true, timeout: 10_000 }, (err, out) => (err ? rej(e) : res(String(out).trim()))),
     );
   }
 }

@@ -20,6 +20,8 @@ export function TerminalPanel({ cwd, cmd, visible = true }: { cwd?: string; cmd?
     let id: string | null = null;
     let off: (() => void) | undefined;
     let ro: ResizeObserver | undefined;
+    let raf = 0;
+    let sent = ''; // cols x rows the pty last heard about
     (async () => {
       try {
         const [{ Terminal }, { FitAddon }] = await Promise.all([import('@xterm/xterm'), import('@xterm/addon-fit')]);
@@ -31,19 +33,28 @@ export function TerminalPanel({ cwd, cmd, visible = true }: { cwd?: string; cmd?
         term.loadAddon(fit);
         term.open(ref.current!);
         fit.fit();
-        fitRef.current = () => { try { fit.fit(); if (id) void ws.request({ kind: 'terminal.resize', termId: id, cols: term.cols, rows: term.rows }); } catch { /* ignore */ } };
+        fitRef.current = () => {
+          try {
+            fit.fit();
+            const size = `${term.cols}x${term.rows}`;
+            if (id && size !== sent) { sent = size; void ws.request({ kind: 'terminal.resize', termId: id, cols: term.cols, rows: term.rows }); }
+          } catch { /* ignore */ }
+        };
+        sent = `${term.cols}x${term.rows}`;
         const r = await ws.request<{ termId: string }>({ kind: 'terminal.open', cwd: dir, cols: term.cols, rows: term.rows });
         // unmounted (or cwd changed) while the pty was spawning: the cleanup ran with no id, so close it here
         if (disposed) { void ws.request({ kind: 'terminal.close', termId: r.termId }).catch(() => {}); return; }
         id = r.termId;
         setTermId(id);
+        fitRef.current(); // the box may have changed size while the pty was starting
         if (cmd) setTimeout(() => { void ws.request({ kind: 'terminal.input', termId: id!, data: cmd + '\r' }); }, 400);
         term.onData((d: string) => ws.request({ kind: 'terminal.input', termId: id!, data: d }));
         off = ws.on((e) => {
           if (e.kind === 'terminal.data' && e.termId === id) term.write(e.data);
           if (e.kind === 'terminal.exit' && e.termId === id) term.write(`\r\n[进程退出 ${e.code}]`);
         });
-        ro = new ResizeObserver(() => fitRef.current());
+        // fit() resizes the observed box: defer it a frame, or the browser reports "ResizeObserver loop completed"
+        ro = new ResizeObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => fitRef.current()); });
         ro.observe(ref.current!);
       } catch (e: any) {
         setErr(e.message);
@@ -53,6 +64,7 @@ export function TerminalPanel({ cwd, cmd, visible = true }: { cwd?: string; cmd?
       disposed = true;
       off?.();
       ro?.disconnect();
+      cancelAnimationFrame(raf);
       if (id) void ws.request({ kind: 'terminal.close', termId: id }).catch(() => {});
       term?.dispose();
     };

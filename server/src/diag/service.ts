@@ -25,7 +25,7 @@ export class DiagService {
     const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '');
     const dir = path.join(dataDir(), 'diagnostics', ts);
     await fs.mkdir(dir, { recursive: true });
-    const eng = engineInfo();
+    const eng = await engineInfo().catch((e: Error) => ({ error: e.message })); // a bundle is most wanted when the engine is missing
     const info = {
       app: this.version,
       time: new Date().toISOString(),

@@ -21,18 +21,25 @@ import { EngineSwitcher } from '../EngineSwitcher';
 import { SessionMenu, effectiveCaps, forkSession } from '@/features/sidebar/session-actions';
 import { sessionPeer } from '@/features/peers';
 import { blockRemoteOpen } from '@/features/remote-guard';
+import { coalesce, gitEventConcerns } from '../git-refresh';
 
-/** git status for a cwd, refreshed on git.changed broadcasts (shared by the files tab badges). */
+/**
+ * git status for a cwd (the files tab badges). Refreshed only by events about THIS repo (`gitEventConcerns`:
+ * its resolved root or the cwd form, which differ behind a junction / symlink) and coalesced — 400 ms of
+ * quiet, but at least every 2 s during a steady stream: a status is a git process on the server.
+ */
 function useGitStatus(cwd: string, enabled: boolean): GitStatus | null {
   const [st, setSt] = useState<GitStatus | null>(null);
   useEffect(() => {
     if (!enabled || !cwd) return;
     let alive = true;
-    const load = () => ws.request<GitStatus>({ kind: 'git.status', cwd }).then((s) => alive && setSt(s)).catch(() => alive && setSt(null));
+    let root: string | null = null;
+    const load = () => ws.request<GitStatus>({ kind: 'git.status', cwd }).then((s) => { if (alive) { root = s.root; setSt(s); } }).catch(() => alive && setSt(null));
+    const soon = coalesce(load, 400, 2000);
     load();
     void ws.request({ kind: 'git.watch', cwd }).catch(() => {});
-    const off = ws.on((e) => { if (e.kind === 'git.changed' || e.kind === 'fs.changed') load(); });
-    return () => { alive = false; off(); };
+    const off = ws.on((e) => { if (gitEventConcerns(e, { cwd, root })) soon.trigger(); });
+    return () => { alive = false; soon.cancel(); off(); };
   }, [cwd, enabled]);
   return st;
 }

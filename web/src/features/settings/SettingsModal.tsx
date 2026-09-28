@@ -17,6 +17,7 @@ import { ModelsSection } from './ModelsSection';
 import { McpCatalog } from './McpCatalog';
 import { MemorySettings } from '@/features/memory/MemorySettings';
 import { Icon, type IconName } from '@/ui/icons';
+import { ErrorBoundary } from '@/ui/ErrorBoundary';
 
 /** One searchable row. `keywords` widen the match beyond the visible label. */
 export interface Entry { id: string; label: string; hint?: string; keywords?: string; render: () => ReactNode }
@@ -143,15 +144,15 @@ export function SettingsModal() {
             {ql ? (
               hits.length ? hits.map(({ s, e }) => (
                 e ? (
-                  <div key={`${s.id}:${e.id}`} data-entry={e.id} className="set-row-wrap"><div className="set-crumb">{s.l}</div><Row label={e.label} hint={e.hint}>{e.render()}</Row></div>
+                  <div key={`${s.id}:${e.id}`} data-entry={e.id} className="set-row-wrap"><div className="set-crumb">{s.l}</div><ErrorBoundary area={`设置 · ${s.l} · ${e.label}`} compact><Row label={e.label} hint={e.hint}>{e.render()}</Row></ErrorBoundary></div>
                 ) : (
                   <div key={s.id} className="set-row-wrap"><button className="set-jump" onClick={() => { setQ(''); setSec(s.id); }}><span className="ic"><Icon name={s.ic} size={15} /></span>{s.l} <span className="muted">打开分区 →</span></button></div>
                 )
               )) : <div className="empty">没有匹配的设置</div>
             ) : cur.entries ? (
-              cur.entries.map((e) => <div key={e.id} data-entry={e.id} className={clsx('set-row-wrap', open.reveal === e.id && 'reveal')}><Row label={e.label} hint={e.hint}>{e.render()}</Row></div>)
+              cur.entries.map((e) => <div key={e.id} data-entry={e.id} className={clsx('set-row-wrap', open.reveal === e.id && 'reveal')}><ErrorBoundary area={`设置 · ${cur.l} · ${e.label}`} compact><Row label={e.label} hint={e.hint}>{e.render()}</Row></ErrorBoundary></div>)
             ) : (
-              <div className="set-section">{cur.body?.()}</div>
+              <div className="set-section"><ErrorBoundary area={`设置 · ${cur.l}`} resetKeys={[cur.id]}>{cur.body?.()}</ErrorBoundary></div>
             )}
           </div>
         </div>

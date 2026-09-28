@@ -1,4 +1,4 @@
-import { runClaudeCli } from '../claude-exe.js';
+import { mcpList } from '../config/service.js';
 
 export interface McpHealth { name: string; status: 'connected' | 'failed' | 'needs-auth' | 'unknown'; detail: string }
 export interface RegistryServer { name: string; description: string; repo?: string; install?: { transport: 'stdio' | 'http' | 'sse'; command?: string; args?: string[]; url?: string; env?: string[] }; kind: 'npm' | 'pypi' | 'remote' | 'other' }
@@ -6,7 +6,7 @@ export interface RegistryServer { name: string; description: string; repo?: stri
 /** MCP helpers on top of the CLI: connection health (`claude mcp list`) and the official registry search. */
 export class McpService {
   async health(cwd?: string): Promise<McpHealth[]> {
-    const r = await runClaudeCli(['mcp', 'list'], { cwd, timeoutMs: 60_000 });
+    const r = await mcpList(cwd, true); // the 检查健康 button: a fresh run (config.mcp calls share it)
     const out: McpHealth[] = [];
     for (const raw of `${r.stdout}\n${r.stderr}`.split('\n')) {
       const line = raw.replace(/\x1b\[[0-9;]*m/g, '').trim();

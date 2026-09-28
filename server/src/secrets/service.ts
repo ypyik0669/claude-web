@@ -35,7 +35,7 @@ export class SecretService {
       }
       if (this.scheme === 'keychain') {
         const account = `provider-${id}`;
-        await execFileAsync('security', ['add-generic-password', '-U', '-s', 'claude-web', '-a', account, '-w', plain], { timeout: 20_000 });
+        await execFileAsync('security', ['add-generic-password', '-U', '-s', 'claude-web', '-a', account, '-w', plain], { windowsHide: true, timeout: 20_000 });
         const out = `${PREFIX}keychain:${account}`;
         this.cache.set(out, plain);
         return out;
@@ -64,7 +64,7 @@ export class SecretService {
         const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 20_000 });
         plain = Buffer.from(stdout.trim(), 'base64').toString('utf8');
       } else if (scheme === 'keychain') {
-        const { stdout } = await execFileAsync('security', ['find-generic-password', '-s', 'claude-web', '-a', rest, '-w'], { timeout: 20_000 });
+        const { stdout } = await execFileAsync('security', ['find-generic-password', '-s', 'claude-web', '-a', rest, '-w'], { windowsHide: true, timeout: 20_000 });
         plain = stdout.replace(/\n$/, '');
       } else {
         plain = Buffer.from(payload ?? rest, 'base64').toString('utf8');
