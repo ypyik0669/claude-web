@@ -2059,6 +2059,18 @@ function driver() {
           await click('.pane.focused .goal-bar .gb-go');
           check('查看 opens the 目标 panel', await waitFor(`window.__store.getState().layout.dock.active === 'goals' && !!document.querySelector('.dock-panel[data-panel="goals"]:not([hidden])')`, 4000));
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+          // a phone: 查看 is showGoals() too — the automation page's 目标 tab, as /goal and every goal entry (review 7 M11)
+          win.setContentSize(740, 860);
+          await waitFor('document.querySelector(".app").classList.contains("mobile")', 4000);
+          await sleep(400);
+          await click('.pane.focused .goal-bar .gb-go');
+          const goalsPhone = await waitFor(`(() => { const p = document.querySelector('.auto-page'); const b = p && p.querySelector('.auto-body[data-body="goals"]:not([hidden])'); return !!b && !p.hidden && p.dataset.tab === 'goals' && !document.querySelector('.app').classList.contains('sheet-open'); })()`, 4000);
+          check('phone: the goal bar\'s 查看 opens the automation page on 目标 (not the drawer)', goalsPhone);
+          await click('.auto-page .auto-head button[aria-label="关闭自动化"]');
+          await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000);
+          win.setContentSize(1360, 860);
+          await waitFor('!document.querySelector(".app").classList.contains("mobile")', 4000);
+          await sleep(300);
           // round 2 running: round 1 folded with its own line, round 2 open with its running command in view
           const turnsNow = `(() => { const turns = [...document.querySelectorAll('.pane.focused .chat .turn')]; const last = turns[turns.length - 1], prev = turns[turns.length - 2]; return { n: turns.length, lastId: last?.dataset.turn ?? null, prevFolded: !!prev && prev.classList.contains('folded') && !prev.classList.contains('open'), prevSum: prev?.querySelector('.turn-sum')?.textContent ?? null, lastOpen: !!last && !last.classList.contains('folded'), running: !!last && [...last.querySelectorAll('.tl.active, .tl.pending')].some((el) => el.offsetParent !== null) }; })()`;
           const round2 = await waitFor(`/第 2 轮/.test(${barText}) && (${turnsNow}).running`, 30_000);
