@@ -199,24 +199,38 @@ export function installSpawnGuard(opts: { role?: string } = {}): boolean {
   return guardApi().install({ role: opts.role ?? 'server', stderr: true, summary: true });
 }
 
-const PRELOAD = `${GUARD_SOURCE}\nmodule.exports.install({ role: require('path').basename(process.argv[1] || 'node') });\n`;
-const PRELOAD_NAME = `spawn-guard-${createHash('sha256').update(PRELOAD).digest('hex').slice(0, 10)}.cjs`;
+const PRELOAD = Buffer.from(`${GUARD_SOURCE}\nmodule.exports.install({ role: require('path').basename(process.argv[1] || 'node') });\n`);
+const PRELOAD_HASH = createHash('sha256').update(PRELOAD).digest('hex');
+const PRELOAD_NAME = `spawn-guard-${PRELOAD_HASH.slice(0, 10)}.cjs`;
+
+/** Is `file` exactly the preload (size first, then the full hash)? */
+function isPreload(file: string): boolean {
+  try {
+    const st = fs.statSync(file);
+    if (!st.isFile() || st.size !== PRELOAD.length) return false;
+    return createHash('sha256').update(fs.readFileSync(file)).digest('hex') === PRELOAD_HASH;
+  } catch {
+    return false;
+  }
+}
 
 /**
- * The guard as a `--require`-able file (content-addressed, rewritten if something deleted it).
- * Null when it cannot be written — the child then just runs unguarded.
+ * The guard as a `--require`-able file, content-addressed. Reused only when its bytes are the guard's (a
+ * truncated or altered file is rewritten); written to a .tmp and renamed into place. Null when it cannot be
+ * put in place — the child then runs unguarded rather than failing to start — and no .tmp is left behind.
  */
 export function preloadFile(dir = path.join(dataDir(), 'runtime')): string | null {
   const file = path.join(dir, PRELOAD_NAME);
+  if (isPreload(file)) return file;
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   try {
-    if (fs.existsSync(file)) return file;
     fs.mkdirSync(dir, { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, PRELOAD);
     fs.renameSync(tmp, file);
     return file;
   } catch {
-    return fs.existsSync(file) ? file : null;
+    try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ }
+    return isPreload(file) ? file : null; // another process may have put the same bytes there first
   }
 }
 
@@ -226,8 +240,8 @@ export function preloadFile(dir = path.join(dataDir(), 'runtime')): string | nul
  * a real node.exe gets a hidden console from `windowsHide` that its own children inherit. Also added
  * whenever spawn logging is on, so the children's spawns land in the same log.
  */
-export function guardNodeArgs(): string[] {
-  const needed = (process.platform === 'win32' && !!process.versions.electron) || spawnLogEnabled();
+export function guardNodeArgs(host: { platform: NodeJS.Platform; electron: boolean } = { platform: process.platform, electron: !!process.versions.electron }): string[] {
+  const needed = (host.platform === 'win32' && host.electron) || spawnLogEnabled();
   if (!needed) return [];
   const f = preloadFile();
   return f ? ['--require', f] : [];

@@ -129,6 +129,37 @@ describe('spawn guard: --require preload in a child node process', () => {
     expect(fs.existsSync(a)).toBe(true);
   });
 
+  it('rewrites a preload whose content is not the guard (truncated / same size but altered)', () => {
+    const d = path.join(dir, 'runtime');
+    const a = preloadFile(d)!;
+    const good = fs.readFileSync(a);
+    fs.writeFileSync(a, good.subarray(0, 100)); // a crash mid-write elsewhere, a disk-full
+    expect(preloadFile(d)).toBe(a);
+    expect(fs.readFileSync(a).equals(good)).toBe(true);
+    const altered = Buffer.from(good);
+    altered[altered.length - 5] ^= 1; // same size, different bytes
+    fs.writeFileSync(a, altered);
+    expect(preloadFile(d)).toBe(a);
+    expect(fs.readFileSync(a).equals(good)).toBe(true);
+  });
+
+  it('when the file cannot be put in place: null (child runs unguarded) and no .tmp left behind', () => {
+    const d = path.join(dir, 'runtime');
+    const a = preloadFile(d)!;
+    fs.rmSync(a);
+    fs.mkdirSync(a); // something occupies the name: the rename fails
+    expect(preloadFile(d)).toBeNull();
+    expect(fs.readdirSync(d).filter((n) => n.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('guardNodeArgs: Electron-as-node on Windows always gets the preload; a real node only with spawn logging', () => {
+    delete process.env.CW_SPAWN_LOG;
+    process.env.CLAUDE_WEB_DIR = dir;
+    expect(guardNodeArgs({ platform: 'win32', electron: true })[0]).toBe('--require');
+    expect(guardNodeArgs({ platform: 'win32', electron: false })).toEqual([]);
+    expect(guardNodeArgs({ platform: 'darwin', electron: true })).toEqual([]);
+  });
+
   it('adds no node args outside Electron unless spawn logging is on', () => {
     delete process.env.CW_SPAWN_LOG;
     if (!process.versions.electron) expect(guardNodeArgs()).toEqual([]);
