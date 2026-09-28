@@ -7,7 +7,7 @@ import { CodeBlock } from './CodeBlock';
 import { langFromPath } from './highlight';
 import { JsonTree } from './tools/McpTool';
 import { Icon } from '@/ui/icons';
-import { DOCK_DENY_QUEUED, DOCK_HINT } from '@/ui/terms';
+import { DOCK_DENY_QUEUED, DOCK_HINT, DOCK_STATUS } from '@/ui/terms';
 import { alwaysDetails, alwaysLabel, denyResponse, dockKind, permissionTitle, primaryKey } from './permission-dock';
 
 // The card a permission request, an AskUserQuestion or an ExitPlanMode docks above the composer (redesign phase 5,
@@ -48,8 +48,26 @@ function useRespond(p: PermissionRequestEvent) {
 
 interface CardProps { p: PermissionRequestEvent; agent: string; cwd: string; more: number; reason: string; onReasonUsed: () => void; scope: string; note?: string; onDenyQueued?: () => void }
 
-/** The line left of the buttons: the hint (the composer is where another instruction goes), or the composer's note about what Enter will do now. */
-const Hint = ({ hint, note }: { hint: string; note?: string }) => (note ? <span className="pd-hint note" role="status">{note}</span> : <span className="pd-hint">{hint}</span>);
+/**
+ * The line left of the buttons: the hint (the composer is where another instruction goes), or the composer's note
+ * about what Enter will do now. Announced through the card's status line (`DockLive`), not from here.
+ */
+const Hint = ({ hint, note }: { hint: string; note?: string }) => (note ? <span className="pd-hint note">{note}</span> : <span className="pd-hint">{hint}</span>);
+
+/**
+ * The card's status line for screen readers (`aria-live="polite"`, visually hidden): what the card asks and what an
+ * empty Enter does on it (「Claude 想运行一条命令。空着按 Enter 允许一次」), then whatever the composer has to say —
+ * an Enter it did not take, words that will be queued… (review M-6). The region stays mounted while cards come and
+ * go and gets its words a moment after they change, so every change is read out.
+ */
+function DockLive({ text }: { text: string }) {
+  const [said, setSaid] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setSaid(text), 60);
+    return () => clearTimeout(t);
+  }, [text]);
+  return <div className="pd-live" role="status" aria-live="polite" aria-atomic="true">{said}</div>;
+}
 
 /**
  * After words written before the card were queued by an Enter: take that message back and answer the card with it
@@ -205,8 +223,10 @@ export function PermissionDock({ sessionId, reason, onReasonUsed, scope, note, o
   const agent = o.info?.agent && o.info.agent !== 'claude' ? o.info.agentName ?? o.info.agent : 'Claude';
   const props: CardProps = { p, agent, cwd: o.cwd, more: o.pending.length - 1, reason, onReasonUsed, scope, note, onDenyQueued };
   const kind = dockKind(p);
+  const title = permissionTitle(p, agent);
   return (
-    <div className={clsx('pdock', kind)} role="region" aria-label={permissionTitle(p, agent)} data-request={p.requestId} data-kind={kind}>
+    <div className={clsx('pdock', kind)} role="region" aria-label={title} data-request={p.requestId} data-kind={kind}>
+      <DockLive text={note ?? `${title}。${DOCK_STATUS[kind]}`} />
       {kind === 'ask' ? <AskQuestion key={p.requestId} {...props} /> : kind === 'plan' ? <PlanApproval key={p.requestId} {...props} /> : <ToolPermission key={p.requestId} {...props} />}
     </div>
   );

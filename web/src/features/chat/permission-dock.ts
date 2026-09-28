@@ -37,24 +37,32 @@ export interface DockSeen { requestId: string; shownAt: number; carried: boolean
  * Review I3.
  */
 export type DockAct = 'send' | 'deny' | 'blocked' | 'primary' | 'ignore';
-export function dockAction(
-  p: PermissionRequestEvent | undefined,
-  o: { text: string; attachments: boolean; seen?: DockSeen | null; now: number; enter?: { repeat?: boolean; ctrl?: boolean } },
-): DockAct {
-  if (!p) return 'send';
-  if (o.enter?.repeat) return 'ignore';
+/** Why an Enter did nothing, when the user should be told (the card's status line, review M-6): too soon, or a plan. */
+export type DockWhy = 'soon' | 'plan';
+type DockInput = { text: string; attachments: boolean; seen?: DockSeen | null; now: number; enter?: { repeat?: boolean; ctrl?: boolean } };
+
+export function dockDecide(p: PermissionRequestEvent | undefined, o: DockInput): { act: DockAct; why?: DockWhy } {
+  if (!p) return { act: 'send' };
+  if (o.enter?.repeat) return { act: 'ignore' };
   const seen = o.seen && o.seen.requestId === p.requestId ? o.seen : null;
   const words = o.text.trim();
   if (words) {
-    if (words.startsWith('/') || seen?.carried) return 'send';
-    return o.attachments ? 'blocked' : 'deny';
+    if (isSlashCommand(words) || seen?.carried) return { act: 'send' };
+    return { act: o.attachments ? 'blocked' : 'deny' };
   }
-  if (o.attachments) return 'send';
-  if (!o.enter) return 'ignore';
-  if (!seen || o.now - seen.shownAt < DOCK_COOLDOWN_MS) return 'ignore';
-  if (dockKind(p) === 'plan' && !o.enter.ctrl) return 'ignore';
-  return 'primary';
+  if (o.attachments) return { act: 'send' };
+  if (!o.enter) return { act: 'ignore' };
+  if (!seen || o.now - seen.shownAt < DOCK_COOLDOWN_MS) return { act: 'ignore', why: 'soon' };
+  if (dockKind(p) === 'plan' && !o.enter.ctrl) return { act: 'ignore', why: 'plan' };
+  return { act: 'primary' };
 }
+export const dockAction = (p: PermissionRequestEvent | undefined, o: DockInput): DockAct => dockDecide(p, o).act;
+
+/**
+ * A slash command: `/name` and then a space or the end — `/compact`, `/goal 把测试补齐`, `/plugin:cmd`. Not a path
+ * or anything else that starts with a slash (`/usr/bin 下没有这个`: an answer to the card, review M-10).
+ */
+export const isSlashCommand = (words: string): boolean => /^\/[A-Za-z][\w:-]*(\s|$)/.test(words.trim());
 
 /** The main-button registry's key: the composer's pane and tile + the request (one conversation can be open in two panes: review M3). */
 export const primaryKey = (scope: string, requestId: string): string => `${scope}\u0000${requestId}`;

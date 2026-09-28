@@ -60,11 +60,17 @@ rl.on('line', async (line) => {
       const sid = m.params.sessionId;
       const text = m.params.prompt.map((p) => p.text ?? '').join('');
       update(sid, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'thinking about it' } });
-      update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Echo: ' } });
       // a goal's prompt carries 「GOAL_STATUS: complete…」, so the echo finishes a goal in one round; the first
       // MOCK_GOAL_CONTINUE goal prompts answer 「GOAL_STATUS: continue」 instead (a goal that runs several rounds)
       const goalContinue = /GOAL_STATUS/.test(text) && ++goalPrompts <= Number(process.env.MOCK_GOAL_CONTINUE ?? 0);
-      update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: goalContinue ? `${text.replace(/GOAL_STATUS/g, 'GOAL-STATUS')}\nGOAL_STATUS: continue` : text } });
+      const echo = () => {
+        update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Echo: ' } });
+        update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: goalContinue ? `${text.replace(/GOAL_STATUS/g, 'GOAL-STATUS')}\nGOAL_STATUS: continue` : text } });
+      };
+      // MOCK_SLOW_ANSWER=1: a 'slow' prompt is answered after its command (an answer below the folded steps, as a
+      // real agent's), not before it
+      const answerLast = process.env.MOCK_SLOW_ANSWER === '1' && text.includes('slow');
+      if (!answerLast) echo();
       // one id per call (call-1, call-2 … / slow-1 …): a later prompt reusing an id would update the earlier step
       const callId = text.includes('tool') ? `call-${++callSeq}` : '', slowId = text.includes('slow') ? `slow-${++slowSeq}` : '';
       if (text.includes('tool')) {
@@ -81,6 +87,7 @@ rl.on('line', async (line) => {
         await new Promise((r) => setTimeout(r, Number(process.env.MOCK_SLOW_MS ?? 25000)));
         update(sid, { sessionUpdate: 'tool_call_update', toolCallId: slowId, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: '61 passed' } }] });
       }
+      if (answerLast) echo();
       // 'WRITE:<file>' writes <file> in the session cwd (content = MOCK_ACP_TAG) so orchestration e2e has a diff to merge
       for (const w of text.matchAll(/WRITE:([\w.-]+)/g)) fs.writeFileSync(path.join(sessionCwd, w[1]), `${process.env.MOCK_ACP_TAG ?? 'mock'}\n`);
       if (text.includes('plan')) update(sid, { sessionUpdate: 'plan', entries: [{ content: 'step one', status: 'completed', priority: 'high' }, { content: 'step two', status: 'in_progress', priority: 'medium' }] });

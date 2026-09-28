@@ -1911,6 +1911,10 @@ function driver() {
         const docked = await askTool('smoke: please use a tool');
         const dock = await js(`(() => { const c = document.querySelector('.pane.focused .composer'); const d = c.querySelector('.pdock'); if (!d) return null; return { title: d.querySelector('.pd-title')?.textContent, runCard: !!c.querySelector('.run-card'), inStream: !!document.querySelector('.pane.focused .chat .pdock, .pane.focused .chat .perm'), aboveBox: d.getBoundingClientRect().bottom <= c.querySelector('.composer-box').getBoundingClientRect().top + 1, allow: d.querySelector('[data-act="allow"]')?.textContent, always: !!d.querySelector('[data-act="always"]'), hint: d.querySelector('.pd-hint')?.textContent, placeholder: c.querySelector('textarea').placeholder, waitingStep: document.querySelector('.pane.focused .tl.waiting .tool-head .st.wait')?.textContent ?? null }; })()`);
         check('a permission request docks above the composer (not in the conversation), replacing the run card; the step says 等你确认', docked && dock && /想读取/.test(dock.title) && !dock.runCard && !dock.inStream && dock.aboveBox && /允许一次/.test(dock.allow) && !dock.always && /也可以直接在下面输入/.test(dock.hint) && /允许一次/.test(dock.placeholder) && dock.waitingStep === '等你确认', JSON.stringify(dock));
+        // its status line (aria-live, not shown) reads out the title and what an empty Enter does (review M-6)
+        await waitFor(`/空着按 Enter 允许一次/.test(document.querySelector('.pane.focused .composer .pdock .pd-live')?.textContent ?? '')`, 2000);
+        const live = await js(`(() => { const l = document.querySelector('.pane.focused .composer .pdock .pd-live'); if (!l) return null; const r = l.getBoundingClientRect(); return { text: l.textContent, live: l.getAttribute('aria-live'), role: l.getAttribute('role'), w: r.width, h: r.height }; })()`);
+        check('the card has a polite live status line (hidden): its title + 「空着按 Enter 允许一次」', !!live && live.live === 'polite' && live.role === 'status' && /想读取/.test(live.text) && /空着按 Enter 允许一次/.test(live.text) && live.w <= 1 && live.h <= 1, JSON.stringify(live));
         await sleep(400); // (an offscreen capture right after a change can still show the frame before it)
         await shot('chat-permission');
         // Mission Control still answers from its own card
@@ -1960,8 +1964,9 @@ function driver() {
         const sentFor = (id) => js(`JSON.stringify(window.__permSent.filter((r) => r.requestId === ${JSON.stringify(id)}).map((r) => r.response))`);
         await click('.pane.focused .composer textarea');
         // an Enter in the card's first moments (it has just docked), then a held-down (repeating) Enter
-        const early = await js(`(async () => { const st = window.__store; const o = st.getState().open[${pj}]; st.setState({ open: { ...st.getState().open, [${pj}]: { ...o, pending: [${stageReq('smoke-early')}], version: o.version + 1 } } }); await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30))); const ta = document.querySelector('.pane.focused .composer textarea'); const docked0 = document.querySelector('.pane.focused .composer .pdock')?.dataset.request ?? null; ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); await new Promise((r) => setTimeout(r, 800)); ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, repeat: true })); await new Promise((r) => setTimeout(r, 300)); return { docked0, docked: document.querySelector('.pane.focused .composer .pdock')?.dataset.request ?? null, sent: window.__permSent.filter((r) => r.requestId === 'smoke-early').length }; })()`);
+        const early = await js(`(async () => { const st = window.__store; const o = st.getState().open[${pj}]; st.setState({ open: { ...st.getState().open, [${pj}]: { ...o, pending: [${stageReq('smoke-early')}], version: o.version + 1 } } }); await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30))); const ta = document.querySelector('.pane.focused .composer textarea'); const docked0 = document.querySelector('.pane.focused .composer .pdock')?.dataset.request ?? null; ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); await new Promise((r) => setTimeout(r, 200)); const note = document.querySelector('.pane.focused .composer .pdock .pd-hint.note')?.textContent ?? null; const live = document.querySelector('.pane.focused .composer .pdock .pd-live')?.textContent ?? null; await new Promise((r) => setTimeout(r, 600)); ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, repeat: true })); await new Promise((r) => setTimeout(r, 300)); return { docked0, note, live, docked: document.querySelector('.pane.focused .composer .pdock')?.dataset.request ?? null, sent: window.__permSent.filter((r) => r.requestId === 'smoke-early').length }; })()`);
         check('an Enter in a card\'s first 600 ms and a held-down Enter answer nothing', early && early.docked0 === 'smoke-early' && early.docked === 'smoke-early' && early.sent === 0, JSON.stringify(early));
+        check('…and the card says the early Enter did nothing (on the card and in its status line, review M-6)', !!early && /刚出现/.test(early.note ?? '') && /刚出现/.test(early.live ?? ''), JSON.stringify(early));
         // two requests, Enter twice in a row: the first is allowed, the second (just docked) is not
         await setOpen(`pending: [${stageReq('smoke-two-1')}, ${stageReq('smoke-two-2')}]`);
         await sleep(800);
@@ -1987,12 +1992,18 @@ function driver() {
         };
         // (a) queued, then an empty Enter: 允许一次 — the queued message stays queued
         const ca = await carryInto('smoke-carried-a');
+        // the Enter right after the one that queued (the box was just emptied) is in the card's first moments again (review M-3)
+        await key('Return');
+        await sleep(250);
+        const caDouble = { sent: await sentFor('smoke-carried-a'), note: await js(`document.querySelector('.pane.focused .composer .pdock .pd-hint.note')?.textContent ?? null`) };
+        check('an Enter right after the queueing Enter answers nothing (the cool-down starts again when the box empties)', caDouble.sent === '[]' && /刚出现/.test(caDouble.note ?? ''), JSON.stringify(caDouble));
+        await sleep(700);
         await key('Return');
         await waitFor(`window.__permSent.some((r) => r.requestId === 'smoke-carried-a')`, 3000);
         const caSent = await sentFor('smoke-carried-a');
         const caQueue = await js(queueTexts);
         check('words from before the card: Enter queues them (not a deny) and the card offers 「改用排队的这段话拒绝」; an empty Enter after that is still 允许一次',
-          /卡出现前写的/.test(ca.note ?? '') && ca.sent === '[]' && ca.after.queue.join() === 'smoke: the next thing' && ca.after.box === '' && /点右边的按钮/.test(ca.after.note ?? '') && ca.after.button === '改用排队的这段话拒绝'
+          /卡出现前写的/.test(ca.note ?? '') && ca.sent === '[]' && ca.after.queue.join() === 'smoke: the next thing' && ca.after.box === '' && /点卡片上的「改用排队的这段话拒绝」/.test(ca.after.note ?? '') && ca.after.button === '改用排队的这段话拒绝'
           && caSent === '[{"behavior":"allow"}]' && caQueue.join() === 'smoke: the next thing', JSON.stringify({ ca, caSent, caQueue }));
         await js(`(() => { const st = window.__store.getState(); for (const q of st.open[${pj}].queue) st.recall(${pj}, q.id); })()`);
         // (b) queued, then the button: the queued message comes back out of the queue as the reason
@@ -2011,10 +2022,12 @@ function driver() {
         await key('Return');
         await sleep(300);
         const planEnter = await sentFor('smoke-plan');
+        const planNote = await js(`({ note: document.querySelector('.pane.focused .composer .pdock .pd-hint.note')?.textContent ?? null, live: document.querySelector('.pane.focused .composer .pdock .pd-live')?.textContent ?? null })`);
         wc.sendInputEvent({ type: 'keyDown', keyCode: 'Return', modifiers: ['control'] }); wc.sendInputEvent({ type: 'keyUp', keyCode: 'Return', modifiers: ['control'] });
         await waitFor(`window.__permSent.some((r) => r.requestId === 'smoke-plan')`, 3000);
         const planCtrl = await sentFor('smoke-plan');
         check('a plan: an empty Enter does nothing, Ctrl+Enter approves (the placeholder says so)', planEnter === '[]' && /^\[\{"behavior":"allow"/.test(planCtrl) && /Ctrl\+Enter/.test(planPh), JSON.stringify({ planEnter, planCtrl, planPh }));
+        check('…and the empty Enter on a plan says 「批准请按 Ctrl+Enter」 (on the card and in its status line, review M-6)', /批准请按 Ctrl\+Enter/.test(planNote.note ?? '') && /批准请按 Ctrl\+Enter/.test(planNote.live ?? ''), JSON.stringify(planNote));
         await setOpen(`pending: []`);
         await sleep(300);
         // 5. 总是允许 and 「还有 N 条」: two staged requests with a suggestion (the mock agent sends none)
@@ -2044,28 +2057,41 @@ function driver() {
 
         // ---- the goal bar, and a goal that runs two rounds (review I1): GoalService sends round 2 (「继续」) itself, so
         // it follows round 1's result with no user message in this window. The mock answers its first goal prompt
-        // with 「GOAL_STATUS: continue」 (MOCK_GOAL_CONTINUE); the objective has 「slow」, so each round runs a command.
+        // with 「GOAL_STATUS: continue」 (MOCK_GOAL_CONTINUE); the objective has 「slow」, so each round runs a command
+        // and answers after it (MOCK_SLOW_ANSWER: the answer, with its 分享本轮, sits below the folded steps).
         phase = 'chat-goal';
-        await serverRequest({ kind: 'agents.set', agent: 'acp:smoke', patch: { name: 'Smoke Agent', command: E.SMOKE_NODE, args: [path.join(ROOT, 'server', 'src', 'agents', '__mocks__', 'acp-agent.mjs')], env: { MOCK_SLOW_MS: '6000', MOCK_GOAL_CONTINUE: '1' }, protocol: 'acp', label: 'smoke' } });
-        const goal = await serverRequest({ kind: 'goals.create', objective: 'smoke slow goal', cwd: E.SMOKE_REPO, agent: 'acp:smoke', permissionMode: 'default' });
-        const started = await serverRequest({ kind: 'goals.start', id: goal.id });
-        if (started && started.sessionId) await js(`window.__store.getState().loadHistory(${JSON.stringify(started.sessionId)})`).catch(() => {});
+        await serverRequest({ kind: 'agents.set', agent: 'acp:smoke', patch: { name: 'Smoke Agent', command: E.SMOKE_NODE, args: [path.join(ROOT, 'server', 'src', 'agents', '__mocks__', 'acp-agent.mjs')], env: { MOCK_SLOW_MS: '6000', MOCK_GOAL_CONTINUE: '1', MOCK_SLOW_ANSWER: '1' }, protocol: 'acp', label: 'smoke' } });
+        // typed in the conversation's composer, as a user would: `/goal …` runs in a conversation of its own, which
+        // then opens here — with its folder (review I-1: it used to open with an empty cwd and resume in the wrong place)
+        await click('.pane.focused .composer textarea');
+        wc.insertText('/goal smoke slow goal');
+        await sleep(200);
+        await key('Return');
+        const goalSid = await waitFor(`(() => { const t = document.querySelector('.pane.focused .chat-inner')?.dataset.sessionId; return !!t && t !== ${pj}; })()`, 10_000)
+          ? await js(`document.querySelector('.pane.focused .chat-inner').dataset.sessionId`) : null;
         const barText = `(document.querySelector('.pane.focused .goal-bar')?.textContent ?? '')`;
         const bar = await waitFor(`/目标：smoke slow goal/.test(${barText}) && /第 1 轮/.test(${barText})`, 10_000);
-        check('a running goal shows 「目标：… · 第 1 轮 · 查看」 on top of its conversation', bar, await js(`document.querySelector('.pane.focused .goal-bar')?.textContent ?? null`));
+        check('`/goal` typed in a conversation opens the goal\'s own conversation here; its bar says 「目标：… · 第 1 轮 · 查看」', !!goalSid && bar, await js(`document.querySelector('.pane.focused .goal-bar')?.textContent ?? null`));
+        const norm = (p) => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+        const goalHead = await js(`(() => { const it = document.querySelector('.pane.focused .sess-head .sh-meta button.it:not(.branch)'); return { cwd: window.__store.getState().open[${JSON.stringify(goalSid)}]?.cwd ?? null, folder: it ? it.title.split('\\n')[0] : null, name: it?.querySelector('.nm')?.textContent ?? null }; })()`);
+        check('…with its project in the header (the conversation knows its folder)', goalHead && norm(goalHead.cwd) === norm(E.SMOKE_REPO) && norm(goalHead.folder) === norm(E.SMOKE_REPO) && !!goalHead.name, JSON.stringify(goalHead));
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+        await sleep(300);
         await sleep(400);
         await shot('chat-goal');
         if (bar) {
           await click('.pane.focused .goal-bar .gb-go');
           check('查看 opens the 目标 panel', await waitFor(`window.__store.getState().layout.dock.active === 'goals' && !!document.querySelector('.dock-panel[data-panel="goals"]:not([hidden])')`, 4000));
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
-          // a phone: 查看 is showGoals() too — the automation page's 目标 tab, as /goal and every goal entry (review 7 M11)
+          // a phone: 查看 is back (phase 5 hid it while a phone had nowhere to show a goal) and is showGoals() too — the
+          // automation page's 目标 tab, as /goal and every goal entry (review 7 M11)
           win.setContentSize(740, 860);
           await waitFor('document.querySelector(".app").classList.contains("mobile")', 4000);
           await sleep(400);
+          const goPhone = await js(`(() => { const b = document.querySelector('.pane.focused .goal-bar .gb-go'); return !!b && b.getBoundingClientRect().width > 0; })()`);
           await click('.pane.focused .goal-bar .gb-go');
           const goalsPhone = await waitFor(`(() => { const p = document.querySelector('.auto-page'); const b = p && p.querySelector('.auto-body[data-body="goals"]:not([hidden])'); return !!b && !p.hidden && p.dataset.tab === 'goals' && !document.querySelector('.app').classList.contains('sheet-open'); })()`, 4000);
-          check('phone: the goal bar\'s 查看 opens the automation page on 目标 (not the drawer)', goalsPhone);
+          check('phone: the goal bar has 查看 and it opens the automation page on 目标 (not the drawer)', goPhone && goalsPhone, JSON.stringify({ goPhone, goalsPhone }));
           await click('.auto-page .auto-head button[aria-label="关闭自动化"]');
           await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000);
           win.setContentSize(1360, 860);
@@ -2081,6 +2107,30 @@ function driver() {
           check('the bar goes once the goal is done', await waitFor(`!document.querySelector('.pane.focused .goal-bar')`, 30_000));
           const folded = await waitFor(`(() => { const turns = [...document.querySelectorAll('.pane.focused .chat .turn')].slice(-2); return turns.length === 2 && turns.every((t) => t.classList.contains('folded') && /^已处理/.test(t.querySelector('.turn-sum')?.textContent ?? '')); })()`, 8000);
           check('…then both rounds are folded, each with its own summary line', folded, await js(`JSON.stringify([...document.querySelectorAll('.pane.focused .chat .turn')].map((t) => [t.dataset.turn, t.className, t.querySelector('.turn-sum')?.textContent ?? null]))`));
+          // 分享本轮 under round 2's answer exports round 2 — its own `cont-…` turn, not round 1 (review M-4). The
+          // download is caught in the page: the blob's HTML is read back, the anchor's click does nothing
+          const shared = await js(`(async () => {
+            const turns = [...document.querySelectorAll('.pane.focused .chat .turn')];
+            const last = turns[turns.length - 1];
+            const btn = last?.querySelector('.msg-actions button[aria-label="分享本轮"]');
+            if (!btn) return { err: 'no share button', id: last?.dataset.turn ?? null };
+            let html = null;
+            const oc = URL.createObjectURL, ac = HTMLAnchorElement.prototype.click;
+            URL.createObjectURL = (b) => { b.text().then((t) => { html = t; }); return 'blob:smoke'; };
+            HTMLAnchorElement.prototype.click = function () {};
+            try { btn.click(); } finally { URL.createObjectURL = oc; HTMLAnchorElement.prototype.click = ac; }
+            for (let i = 0; i < 40 && html === null; i++) await new Promise((r) => setTimeout(r, 50));
+            const doc = new DOMParser().parseFromString(html ?? '', 'text/html');
+            return { id: last.dataset.turn, exported: [...doc.querySelectorAll('.turn')].map((t) => t.dataset.turn) };
+          })()`);
+          check('分享本轮 under a round this window did not start exports that round (its cont- turn), not the one before', !!shared && /^cont-/.test(shared.id ?? '') && Array.isArray(shared.exported) && shared.exported.length === 1 && shared.exported[0] === shared.id, JSON.stringify(shared));
+          // the step view's 「轮」 counts the rounds as the chat draws them: the goal's second round is 2 (review M-11)
+          const setView = (v) => js(`(() => { const st = window.__store.getState(); const g = st.layout.groups.find((x) => x.id === st.layout.activeGroupId); const p = g.panes[g.focusedPaneId]; const t = p.tiles.find((x) => x.id === p.activeTileId) ?? p.tiles[0]; st.dispatchLayout({ t: 'tile.patch', paneId: p.id, tileId: t.id, patch: { view: ${JSON.stringify(v)} } }); })()`);
+          await setView('trajectory');
+          await waitFor(`!!document.querySelector('.pane.focused .traj tbody tr')`, 4000);
+          const trajTurns = await js(`[...new Set([...document.querySelectorAll('.pane.focused .traj tbody tr')].map((r) => r.cells[0].textContent))]`);
+          await setView('chat');
+          check('the step view numbers the goal\'s rounds 1 and 2, as the chat has them', Array.isArray(trajTurns) && trajTurns.includes('1') && trajTurns.includes('2') && !trajTurns.includes('0'), JSON.stringify(trajTurns));
         }
         const err5 = await noBoundary('body');
         check('chat rendering checks without error boundary', !err5, err5);

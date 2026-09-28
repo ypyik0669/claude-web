@@ -9,7 +9,7 @@ import { pickFolderFiles } from '@/model/attachment-filter';
 import { StatusStrip } from '@/features/chat/StatusStrip';
 import { RunCard } from '@/features/chat/RunCard';
 import { PermissionDock, runDockPrimary } from '@/features/chat/PermissionCards';
-import { denyResponse, dockAction, dockKind, primaryKey, type DockSeen } from '@/features/chat/permission-dock';
+import { denyResponse, dockAction, dockDecide, dockKind, isSlashCommand, primaryKey, type DockSeen, type DockWhy } from '@/features/chat/permission-dock';
 import { attachmentFolderPath } from '@/features/paths';
 import { Icon } from '@/ui/icons';
 import { CATALOG, effortLevels, modelsFor } from '@catalog';
@@ -24,7 +24,7 @@ import { routePick, switchedNote } from '@/features/models/route';
 import { modelChipText } from '@/features/models/intelligence';
 import { providersLoaded, useGatewayStatus } from '@/features/models/data';
 import { dlg } from '@/ui/dialog';
-import { DOCK_BLOCKED, DOCK_CARRIED, DOCK_PLACEHOLDER, DOCK_REQUEUED, DOCK_SEND, TERMS } from '@/ui/terms';
+import { DOCK_BLOCKED, DOCK_CARRIED, DOCK_ENTER_IGNORED, DOCK_PLACEHOLDER, DOCK_REQUEUED, DOCK_SEND, TERMS } from '@/ui/terms';
 import { showGoals } from '@/features/workbench/right-panel';
 import { ComposerBar } from './ComposerBar';
 import { PlusMenu } from './PlusMenu';
@@ -74,7 +74,7 @@ function migrateFeaturesOnce(): void {
  * capabilities in `+` (PlusMenu), the agent, profile, model, effort and 深度编排 in the model menu, the permission
  * modes in PermissionChip, the stats bar behind the context ring (ContextMeter).
  */
-export function Composer({ welcome = false, target, disabled = false }: { welcome?: boolean; target?: { paneId: string; tileId: string }; disabled?: boolean }) {
+export function Composer({ welcome = false, target, disabled = false, visible = true }: { welcome?: boolean; target?: { paneId: string; tileId: string }; disabled?: boolean; visible?: boolean }) {
   const active = useScopedSession();
   const send = useStore((s) => s.send);
   const interrupt = useStore((s) => s.interrupt);
@@ -156,9 +156,13 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     if (!welcome) return;
     void useStore.getState().loadDraft('welcome').then((d) => { if (d) setText((t) => t || d); });
   }, [welcome]);
-  // a session draft may arrive after mount (loadHistory → loadDraft)
+  // a session draft may arrive after mount (loadHistory → loadDraft); under a docked card those are words from
+  // before it (the user's next message), not an answer to it (review M-9)
   useEffect(() => {
-    if (!welcome && active?.draft && !text) setText(active.draft);
+    if (!welcome && active?.draft && !text) {
+      setText(active.draft);
+      if (seenRef.current && active.draft.trim()) setSeen({ carried: true });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.draft]);
 
@@ -254,13 +258,29 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     if (seenRef.current?.requestId !== docked.requestId) seenRef.current = { requestId: docked.requestId, shownAt: Date.now(), carried: !!text.trim() };
   } else if (seenRef.current) seenRef.current = null;
   const setSeen = (patch: Partial<DockSeen>) => { if (seenRef.current) { seenRef.current = { ...seenRef.current, ...patch }; setSeenTick((n) => n + 1); } };
+  // a card that came while this conversation was out of sight (another tab / pane / window in front) shows when it
+  // comes into view: its first moments start then (review M-9)
+  useEffect(() => { if (visible && seenRef.current) setSeen({ shownAt: Date.now() }); }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const on = () => { if (document.visibilityState === 'visible' && seenRef.current) setSeen({ shownAt: Date.now() }); };
+    document.addEventListener('visibilitychange', on);
+    return () => document.removeEventListener('visibilitychange', on);
+  }, []);
+  // an Enter the card did not take, said on the card for a moment (and announced: its status line, review M-6)
+  const [enterNote, setEnterNote] = useState<{ requestId: string; why: DockWhy } | null>(null);
+  useEffect(() => {
+    if (!enterNote) return;
+    const t = setTimeout(() => setEnterNote(null), 3000);
+    return () => clearTimeout(t);
+  }, [enterNote]);
   const dockClick = docked ? dockAction(docked, { text, attachments: hasAttachments, seen: seenRef.current, now: Date.now() }) : 'send';
   // words from before the card that an Enter queued: the card offers a button to answer with them instead, while
   // that message is still waiting in the queue (sent already → nothing to take back)
   const queuedOffer = docked && seenRef.current?.queued && active?.queue.some((q) => q.id === seenRef.current?.queued?.id) ? seenRef.current.queued : undefined;
   const dockNote = !docked ? undefined
+    : enterNote?.requestId === docked.requestId && !text.trim() ? DOCK_ENTER_IGNORED[enterNote.why]
     : dockClick === 'blocked' ? DOCK_BLOCKED
-    : seenRef.current?.carried && text.trim() && !text.trim().startsWith('/') ? DOCK_CARRIED
+    : seenRef.current?.carried && text.trim() && !isSlashCommand(text) ? DOCK_CARRIED
     : queuedOffer && !text.trim() ? DOCK_REQUEUED[dockKind(docked)]
     : undefined;
 
@@ -336,7 +356,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     if (act === 'blocked') { toast(DOCK_BLOCKED); return; }
     if (act !== 'send') return;
     // words from before the card go out as an ordinary (queued) message; the card then offers to take them back
-    const requeue = !!docked && !!seenRef.current?.carried && !hasAttachments && !imgs.length && !text.trim().startsWith('/');
+    const requeue = !!docked && !!seenRef.current?.carried && !hasAttachments && !imgs.length && !isSlashCommand(text);
     const t = text;
     if (/^\/goal\s+\S/.test(t.trim())) {
       // the text stays: the user may still want to send it as a plain message, or copy it over there
@@ -349,8 +369,9 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
         const started = await ws.request<{ sessionId?: string }>({ kind: 'goals.start', id: g.id });
         onChange(''); // also clears the persisted draft, or the /goal line comes back on reopen
         // the goal runs in a conversation of its own (goals.create takes no conversation): open it here, where its bar
-        // (目标 · 第 N 轮 · 查看) shows — otherwise nothing on screen says where it went (review 5 M6)
-        if (started?.sessionId) void useStore.getState().loadHistory(started.sessionId);
+        // (目标 · 第 N 轮 · 查看) shows — otherwise nothing on screen says where it went (review 5 M6); with its folder:
+        // the list does not have it yet, and a later resume must not start in the wrong place
+        if (started?.sessionId) void useStore.getState().loadHistory(started.sessionId, { cwd: cwdFor });
         // its progress: the right panel's 目标 on a desktop (brought to the front even when it is a tab behind another
         // one). A phone keeps that conversation in front — its bar's 查看 opens the automation page's 目标 tab
         // (showGoals, review 7 M11); with no conversation to show, the page opens right away
@@ -385,7 +406,9 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     }
     if (!active) return;
     setText('');
-    if (seenRef.current?.carried) setSeen({ carried: false }); // the box is empty now: what comes next is typed with the card in view
+    // the box is empty now: what comes next is typed with the card in view — and its first moments start again, so
+    // an Enter right after this one (a double press) does not answer the card (review M-3)
+    if (docked && seenRef.current) setSeen({ carried: false, shownAt: Date.now() });
     setImgs([]);
     setAtts([]);
     setRefs([]);
@@ -436,10 +459,10 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       if (docked) {
-        const act = dockAction(docked, { text, attachments: hasAttachments, seen: seenRef.current, now: Date.now(), enter: { repeat: e.repeat, ctrl: e.ctrlKey || e.metaKey } });
+        const { act, why } = dockDecide(docked, { text, attachments: hasAttachments, seen: seenRef.current, now: Date.now(), enter: { repeat: e.repeat, ctrl: e.ctrlKey || e.metaKey } });
         // an empty box under a docked card: Enter is the card's main button (允许一次 ↵ / 提交回答; a plan: Ctrl+Enter)
         if (act === 'primary') { runDockPrimary(primaryKey(dockScope, docked.requestId)); return; }
-        if (act === 'ignore') return;
+        if (act === 'ignore') { if (why) setEnterNote({ requestId: docked.requestId, why }); return; }
       }
       void doSend();
     }

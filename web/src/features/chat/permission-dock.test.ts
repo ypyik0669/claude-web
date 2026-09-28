@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PermissionRequestEvent } from '@shared';
 import type { AssistantItem, Item, ToolUseBlock } from '@/model/conversation';
-import { alwaysDetails, alwaysLabel, DOCK_COOLDOWN_MS, dockAction, denyResponse, dockKind, permissionTitle, primaryKey, waitingToolIds, type DockSeen } from './permission-dock';
+import { alwaysDetails, alwaysLabel, DOCK_COOLDOWN_MS, dockAction, dockDecide, denyResponse, dockKind, isSlashCommand, permissionTitle, primaryKey, waitingToolIds, type DockSeen } from './permission-dock';
 
 const req = (toolName: string, input: Record<string, unknown> = {}, extra: Partial<PermissionRequestEvent> = {}): PermissionRequestEvent => ({ requestId: `r-${toolName}`, sessionId: 's', toolName, input, ...extra });
 
@@ -62,6 +62,25 @@ describe('dockAction: Enter / send in the composer while a card sits above it', 
     expect(enter(bash, '/compact')).toBe('send');
     expect(enter(bash, '  /goal 把测试补齐')).toBe('send');
     expect(click(req('ExitPlanMode', { plan: 'x' }), '/model opus')).toBe('send');
+  });
+  it('only a command name counts as a slash command — a path is an answer to the card (review M-10)', () => {
+    expect(enter(bash, '/usr/bin 下没有这个，换个做法')).toBe('deny');
+    expect(enter(bash, '/ 不对')).toBe('deny');
+    expect(enter(bash, '/tmp/x.log 看一下')).toBe('deny');
+    for (const c of ['/compact', '/goal 把测试补齐', '/model opus', '/plugin:cmd arg', '/mcp__srv__tool', '/effort high\n再说']) expect(isSlashCommand(c), c).toBe(true);
+    for (const c of ['/usr/bin', '/ 空格', '/1abc', '//x', 'compact', '/中文命令']) expect(isSlashCommand(c), c).toBe(false);
+  });
+  it('an ignored Enter says why when the user should know: too soon, or an empty Enter on a plan (review M-6)', () => {
+    const plan = req('ExitPlanMode', { plan: 'x' });
+    const at = (p: PermissionRequestEvent, shownAt: number, o: { repeat?: boolean; ctrl?: boolean } = {}) =>
+      dockDecide(p, { text: '', attachments: false, seen: { requestId: p.requestId, shownAt, carried: false }, now: T, enter: o });
+    expect(at(bash, T - 10)).toEqual({ act: 'ignore', why: 'soon' });
+    expect(at(plan, T - 10)).toEqual({ act: 'ignore', why: 'soon' });
+    expect(at(plan, T - DOCK_COOLDOWN_MS - 1)).toEqual({ act: 'ignore', why: 'plan' });
+    expect(at(plan, T - DOCK_COOLDOWN_MS - 1, { ctrl: true })).toEqual({ act: 'primary' });
+    // a held-down key says nothing (it would repeat the note many times a second)
+    expect(at(bash, T - 10, { repeat: true })).toEqual({ act: 'ignore' });
+    expect(at(bash, T - DOCK_COOLDOWN_MS - 1)).toEqual({ act: 'primary' });
   });
   it('a plan is approved by a click or Ctrl+Enter only; an empty Enter does nothing', () => {
     const plan = req('ExitPlanMode', { plan: 'x' });

@@ -47,7 +47,8 @@ function useSessionGoal(sessionId: string | undefined): GoalBarInfo | null {
 /**
  * 「目标：把 README 翻成英文 · 第 3 轮 · 查看」 on top of a conversation while a goal drives it (spec §5.3). 查看 is
  * `showGoals()`, the one rule for where goals are: the right panel's 目标 on a desktop, the automation page's 目标 tab
- * on a phone (review 7 M11 — the drawer is too small for the execution graph and the live spec).
+ * on a phone (review 7 M11 — the drawer is too small for the execution graph and the live spec). Phase 5 hid it on a
+ * phone while there was nowhere to show a goal there (review M-5); phase 7's automation page is that place.
  */
 export function GoalBar({ sessionId }: { sessionId: string }) {
   const g = useSessionGoal(sessionId);

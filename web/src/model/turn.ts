@@ -130,15 +130,18 @@ export function fmtDuration(ms: number): string {
   return `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
 }
 
-/** The folded turn's one line, in parts: 「已处理 1 分 42 秒 · 读了 4 个文件 · 改了 2 个 · 运行 2 条命令 · 失败 1 个」 (`err`: shown in red). */
+/**
+ * The folded turn's one line, in parts: 「已处理 1 分 42 秒 · 失败 1 个 · 读了 4 个文件 · 改了 2 个 · 运行 2 条命令」 (`err`:
+ * shown in red). A failure comes first after the time, where it is seen (review M-7), not at the end of a long line.
+ */
 export function turnSummaryParts(s: TurnSummary): { text: string; err?: boolean }[] {
   const parts: { text: string; err?: boolean }[] = [{ text: s.durationMs !== undefined ? `已处理 ${fmtDuration(s.durationMs)}` : '已处理' }];
+  if (s.failed) parts.push({ text: `失败 ${s.failed} 个`, err: true });
   if (s.reads) parts.push({ text: `读了 ${s.reads} 个文件` });
   if (s.edits) parts.push({ text: `改了 ${s.edits} 个${s.reads ? '' : '文件'}` });
   if (s.searches) parts.push({ text: `搜索 ${s.searches} 次` });
   if (s.commands) parts.push({ text: `运行 ${s.commands} 条命令` });
   if (s.others) parts.push({ text: `其它 ${s.others} 步` });
-  if (s.failed) parts.push({ text: `失败 ${s.failed} 个`, err: true });
   return parts;
 }
 
@@ -147,16 +150,33 @@ export const turnSummaryText = (s: TurnSummary): string => turnSummaryParts(s).m
 /**
  * What a turn shows, worked out once and kept while nothing it depends on changed: the same items (by identity — a
  * reloaded conversation has the same content in new objects, and `loadSubagent` writes into the new ones: review I2),
- * the same `done`, and `stamp` (the conversation's version while the turn can still change, else 0).
+ * the same `done`, the same subagent contents (`loadSubagent` fills a finished turn's Agent step in place — its
+ * edits count toward 「改了 N 个」 and the change card: review M-1), and `stamp` (see `turnStamp`).
  */
-export interface TurnMemo { first?: Item; lastItem?: Item; len: number; done: boolean; stamp: number; parts: TurnParts; summary: TurnSummary | null; changes: FileChange[] }
+export interface TurnMemo { first?: Item; lastItem?: Item; len: number; done: boolean; sub: number; stamp: number; parts: TurnParts; summary: TurnSummary | null; changes: FileChange[] }
 export function turnMemo(prev: TurnMemo | undefined, t: Turn, done: boolean, stamp: number): TurnMemo {
   const first = t.body[0], lastItem = t.body[t.body.length - 1];
-  if (prev && prev.first === first && prev.lastItem === lastItem && prev.len === t.body.length && prev.done === done && prev.stamp === stamp) return prev;
+  const sub = subagentSig(t);
+  if (prev && prev.first === first && prev.lastItem === lastItem && prev.len === t.body.length && prev.done === done && prev.sub === sub && prev.stamp === stamp) return prev;
   const parts = splitTurnBody(t.body);
   const fold = done && parts.work;
-  return { first, lastItem, len: t.body.length, done, stamp, parts, summary: fold ? turnSummary(t) : null, changes: fold ? fileChanges(t.body) : [] };
+  return { first, lastItem, len: t.body.length, done, sub, stamp, parts, summary: fold ? turnSummary(t) : null, changes: fold ? fileChanges(t.body) : [] };
 }
+
+/** How much the turn's subagents hold (their messages, loaded on demand into the top-level Agent steps). */
+export function subagentSig(t: Turn): number {
+  let n = 0;
+  for (const it of t.body) if (it.kind === 'assistant') for (const b of it.blocks) if (b.type === 'tool_use' && b.children.length) n += b.children.length;
+  return n;
+}
+
+/**
+ * `turnMemo`'s stamp: the conversation's version for a turn that can still change on any event (the last one, one
+ * that is not done), 0 for a finished earlier one — which then is not worked out again on every streamed event of a
+ * long conversation (review M-2: 200 finished turns cost ~10 ms per event when every turn was redone). What can still
+ * change a finished turn is covered by `turnMemo`'s other keys (a reload: identity; a loaded subagent: `subagentSig`).
+ */
+export const turnStamp = (o: { last: boolean; done: boolean; version: number }): number => (o.last || !o.done ? o.version : 0);
 
 /**
  * What a finished turn shows where. `work`: the turn called tools — then `process` (every step, the thinking, the

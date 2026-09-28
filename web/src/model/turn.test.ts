@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { applyMessage, applyTranscript, createConversation, setConversationClock, type AssistantItem, type Item, type ResultItem, type ToolUseBlock, type UserItem } from './conversation';
 import { fileChanges, sessionDiffStat } from './diffstat';
-import { displayPath, fmtDuration, groupTurns, splitTurnBody, turnDone, turnMemo, turnSummary, turnSummaryParts, turnSummaryText } from './turn';
+import { displayPath, fmtDuration, groupTurns, splitTurnBody, turnDone, turnMemo, turnStamp, turnSummary, turnSummaryParts, turnSummaryText, type TurnMemo } from './turn';
 
 const FIXTURE = path.join(__dirname, '__fixtures__', 'tools.jsonl');
 const loadFixture = (): any[] => fs.readFileSync(FIXTURE, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
@@ -132,6 +132,54 @@ describe('turnMemo (review I2: a reloaded conversation must not keep showing the
     // a running (volatile) turn is redone on every version
     expect(turnMemo(m2, tb, false, 7)).not.toBe(m2);
   });
+
+  it('a subagent loaded into a finished turn counts: its edits show in 「改了 N 个」 and the change card (review M-1)', () => {
+    const c = createConversation();
+    applyTranscript(c, [
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: 'delegate' } },
+      { type: 'assistant', uuid: 'a1', message: { id: 'm1', role: 'assistant', content: [{ type: 'tool_use', id: 'ag', name: 'Agent', input: { prompt: 'p' } }] } },
+      { type: 'user', uuid: 'r1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'ag', content: 'agentId: abcdef1234' }] } },
+      { type: 'assistant', uuid: 'a2', message: { id: 'm2', role: 'assistant', content: [{ type: 'text', text: 'done' }] } },
+      { type: 'user', uuid: 'u2', message: { role: 'user', content: 'next' } },
+    ]);
+    const [t1] = groupTurns(c.items);
+    const m1 = turnMemo(undefined, t1, true, 0);
+    expect(m1.changes).toHaveLength(0);
+    // what loadSubagent does: the Agent step's children filled in place, nothing else changes
+    const sub = createConversation();
+    applyTranscript(sub, [
+      { type: 'assistant', uuid: 's1', message: { id: 'sm1', role: 'assistant', content: [{ type: 'tool_use', id: 'se', name: 'Edit', input: { file_path: '/w/a.txt', old_string: 'a', new_string: 'b' } }] } },
+      { type: 'user', uuid: 's2', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'se', content: 'ok' }] } },
+    ]);
+    c.toolIndex.get('ag')!.children = sub.items;
+    const [t1b] = groupTurns(c.items);
+    const m2 = turnMemo(m1, t1b, true, 0);
+    expect(m2).not.toBe(m1);
+    expect(m2.changes.map((r) => r.path)).toEqual(['/w/a.txt']);
+    expect(m2.summary?.edits).toBe(1);
+    expect(turnMemo(m2, groupTurns(c.items)[0], true, 0)).toBe(m2);
+  });
+
+  it('turnStamp: a finished earlier turn is not redone on every event; the last one and an unfinished one are (review M-2)', () => {
+    expect(turnStamp({ last: false, done: true, version: 41 })).toBe(0);
+    expect(turnStamp({ last: false, done: true, version: 42 })).toBe(0);
+    expect(turnStamp({ last: true, done: true, version: 42 })).toBe(42);
+    expect(turnStamp({ last: false, done: false, version: 42 })).toBe(42);
+    // 200 finished turns while the last one streams: every earlier turn's memo is kept across events
+    const c = createConversation();
+    for (let i = 0; i < 200; i++) {
+      c.items.push({ kind: 'user', id: `u${i}`, text: 'go', images: [] });
+      for (const m of msgs) applyMessage(c, JSON.parse(JSON.stringify(m).replace(/"(toolu_[A-Za-z0-9]+|msg_[A-Za-z0-9]+)"/g, (_s: string, id: string) => `"${id}_${i}"`)));
+    }
+    const frame = (memos: TurnMemo[], version: number) => {
+      const turns = groupTurns(c.items);
+      return turns.map((t, i) => { const last = i === turns.length - 1; const done = turnDone(t, { last, live: true }); return turnMemo(memos[i], t, done, turnStamp({ last, done, version })); });
+    };
+    const a = frame([], 1);
+    const b = frame(a, 2);
+    const kept = b.filter((m, i) => m === a[i]).length;
+    expect(kept).toBe(199);
+  });
 });
 
 describe('groupTurns', () => {
@@ -192,7 +240,7 @@ describe('turnSummary', () => {
     const s = turnSummary(t);
     // the failed Bash and the failed Edit are 「失败 2 个」, not a command run / a file changed
     expect(s).toEqual({ durationMs: 102_000, reads: 2, edits: 2, commands: 1, searches: 0, others: 2, failed: 2, tools: 9 });
-    expect(turnSummaryText(s)).toBe('已处理 1 分 42 秒 · 读了 2 个文件 · 改了 2 个 · 运行 1 条命令 · 其它 2 步 · 失败 2 个');
+    expect(turnSummaryText(s)).toBe('已处理 1 分 42 秒 · 失败 2 个 · 读了 2 个文件 · 改了 2 个 · 运行 1 条命令 · 其它 2 步');
     expect(turnSummaryParts(s).filter((p) => p.err).map((p) => p.text)).toEqual(['失败 2 个']);
   });
 
@@ -202,7 +250,7 @@ describe('turnSummary', () => {
     const [t] = groupTurns([user('go'), asst(refused, missing, tool('BashOutput', { bash_id: 'b1' }), tool('KillShell', { shell_id: 'b1' }))]);
     const s = turnSummary(t);
     expect(s).toMatchObject({ reads: 0, commands: 0, others: 2, failed: 2, tools: 4 });
-    expect(turnSummaryText(s)).toBe('已处理 · 其它 2 步 · 失败 2 个');
+    expect(turnSummaryText(s)).toBe('已处理 · 失败 2 个 · 其它 2 步');
   });
 
   it("a subagent's edits count, its reads and commands do not", () => {

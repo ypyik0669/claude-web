@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { AssistantItem, UserItem } from '@/model/conversation';
-import { turnItems } from '@/model/conversation';
+import { groupTurns } from '@/model/turn';
 import { buildHtml, downloadHtml } from '@/model/export';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
@@ -15,23 +15,35 @@ function chatRoot(sessionId: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`.chat-inner[data-session-id="${CSS.escape(sessionId)}"]`);
 }
 
-/** Export one turn: clone .chat-inner and keep only the rows of that turn. */
-export function shareTurn(sessionId: string, userItemId: string) {
+/**
+ * Export one turn (`turnId` = a `Turn.id`: the user message's id, or `cont-…` / `pre-…` for a round without one of
+ * its own — a goal's 继续, IM, a schedule: review M-4): the turn as drawn, else its rows.
+ */
+export function shareTurn(sessionId: string, turnId: string) {
   const st = useStore.getState();
   const o = st.open[sessionId];
   const root = chatRoot(sessionId);
   if (!o || !root) return;
+  const turn = groupTurns(o.conv.items).find((t) => t.id === turnId);
   const wrap = document.createElement('div');
   // the turn as drawn (its folded steps, the answer, the change card); buildHtml un-hides the fold
-  const drawn = root.querySelector<HTMLElement>(`.turn[data-turn="${CSS.escape(userItemId)}"]`);
+  const drawn = root.querySelector<HTMLElement>(`.turn[data-turn="${CSS.escape(turnId)}"]`);
   if (drawn) wrap.appendChild(drawn.cloneNode(true));
-  else {
-    const keep = new Set(turnItems(o.conv, userItemId).map((i) => i.id));
+  else if (turn) {
+    const keep = new Set([...(turn.user ? [turn.user.id] : []), ...turn.body.map((i) => i.id)]);
     root.querySelectorAll<HTMLElement>('[data-item-id]').forEach((n) => { if (keep.has(n.dataset.itemId!)) wrap.appendChild(n.cloneNode(true)); });
   }
   const title = st.sessions.find((x) => x.sessionId === sessionId)?.title ?? '对话';
-  const first = o.conv.items.find((i) => i.id === userItemId);
-  downloadHtml(`${title} - 一轮`, buildHtml({ title: `${title} · 一轮`, root: wrap, meta: first?.ts ? new Date(first.ts).toLocaleString() : '' }));
+  const ts = (turn?.user ?? (turn?.body[0] as { ts?: string } | undefined))?.ts;
+  downloadHtml(`${title} - 一轮`, buildHtml({ title: `${title} · 一轮`, root: wrap, meta: ts ? new Date(ts).toLocaleString() : '' }));
+}
+
+/** The turn a message's 分享本轮 button sits in (the `.turn` around it), else the turn that holds the message. */
+function turnIdOf(el: Element, sessionId: string, itemId: string): string | undefined {
+  const drawn = el.closest<HTMLElement>('.turn')?.dataset.turn;
+  if (drawn) return drawn;
+  const o = useStore.getState().open[sessionId];
+  return o ? groupTurns(o.conv.items).find((t) => t.user?.id === itemId || t.body.some((i) => i.id === itemId))?.id : undefined;
 }
 
 export function shareConversation(sessionId: string) {
@@ -57,7 +69,7 @@ export function UserActions({ it, sessionId, onEdit }: { it: UserItem; sessionId
       <button title="编辑并重新发送（从这里分叉）" aria-label="编辑" disabled={!!busy} onClick={onEdit}><Icon name="edit" size={14} /></button>
       <button title="用同样的消息重跑（从这里分叉）" aria-label="重跑" disabled={!!busy} onClick={() => st().rerun(sessionId, it.id).catch((e) => st().toast(e.message))}><Icon name="refresh" size={14} /></button>
       <button title="从这条消息之前分叉出新对话" aria-label="分叉" onClick={() => st().forkAt(sessionId, it.id).catch((e) => st().toast(e.message))}><Icon name="branch" size={14} /></button>
-      <button title="导出这一轮为 HTML" aria-label="分享本轮" onClick={() => shareTurn(sessionId, it.id)}><Icon name="share" size={14} /></button>
+      <button title="导出这一轮为 HTML" aria-label="分享本轮" onClick={(e) => shareTurn(sessionId, turnIdOf(e.currentTarget, sessionId, it.id) ?? it.id)}><Icon name="share" size={14} /></button>
     </div>
   );
 }
@@ -67,11 +79,10 @@ export function AssistantActions({ it, sessionId }: { it: AssistantItem; session
   const setFeedback = useStore((s) => s.setFeedback);
   const text = it.blocks.filter((b) => b.type === 'text').map((b: any) => b.text).join('\n\n');
   const [copied, setCopied] = useState(false);
-  const turn = () => {
-    const o = useStore.getState().open[sessionId];
-    if (!o) return;
-    const idx = o.conv.items.findIndex((x) => x.id === it.id);
-    for (let i = idx; i >= 0; i--) { const x = o.conv.items[i]; if (x.kind === 'user' && !x.meta) { shareTurn(sessionId, x.id); return; } }
+  // the round this reply is in — its own `cont-…` turn when no user message of this window started it (review M-4)
+  const turn = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const id = turnIdOf(e.currentTarget, sessionId, it.id);
+    if (id) shareTurn(sessionId, id);
   };
   return (
     <div className="msg-actions" role="toolbar" aria-label="这条回复的操作">
