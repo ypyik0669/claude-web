@@ -1137,7 +1137,9 @@ function driver() {
           await js(`window.__store.getState().loadHistory(${JSON.stringify(E.SMOKE_SID)})`);
           // (phase 5: a finished turn folds its steps into one line — open it to reach the row)
           await waitFor('!!document.querySelector(".pane.focused .turn-sum")', 8000);
-          if (await js('!!document.querySelector(".pane.focused .turn-sum[aria-expanded=\\"false\\"]")')) await click('.pane.focused .turn-sum');
+          // the appended Read lands in its own continuation turn (after the seeded turn's result): open every folded turn
+          await js('document.querySelectorAll(".pane.focused .turn-sum[aria-expanded=\\"false\\"]").forEach((b) => b.click())');
+          await sleep(250);
           const row = await waitFor('!!document.querySelector(\'.pane.focused .turn-body:not([hidden]) .tool-head button[aria-label="详情"]\')', 8000);
           await click('.pane.focused .tool-head button[aria-label="详情"]');
           const detail = row && await waitFor(`${activeTab} === "inspector" && !!document.querySelector('.dock-panel[data-panel="inspector"]:not([hidden])')`, 4000);
