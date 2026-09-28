@@ -1,23 +1,56 @@
 import { describe, expect, it } from 'vitest';
-import { LogBudget, clientLogLine } from './client-log.js';
+import { ClientLogGate } from './client-log.js';
 
-describe('client.log', () => {
+const report = (message: string, area = '设置 · 模型', extra: Record<string, string> = {}) => ({ kind: 'client.log' as const, level: 'error' as const, area, message, ...extra });
+
+describe('client.log gate', () => {
+  const gate = (o: { perConn?: number; global?: number } = {}) => {
+    let t = 0;
+    return { g: new ClientLogGate<object>({ ...o, windowMs: 60_000, now: () => t }), at: (ms: number) => { t = ms; } };
+  };
+
   it('formats a boundary report, indenting stacks so they cannot pose as log lines', () => {
-    const line = clientLogLine({ kind: 'client.log', level: 'error', area: '设置 · 模型', message: 'boom\n[fake] line', stack: 'Error: boom\n    at A', componentStack: '\n    at ModelsSection' }, true)!;
+    const { g } = gate();
+    const line = g.admit({}, report('boom\n[fake] line', '设置 · 模型', { stack: 'Error: boom\n    at A', componentStack: '\n    at ModelsSection' }))!;
     const lines = line.split('\n');
     expect(lines[0]).toBe('[web error] 设置 · 模型: boom ⏎ [fake] line');
     expect(lines.slice(1).every((l) => l.startsWith('    |') || l === '  component stack:')).toBe(true);
   });
 
-  it('caps sizes and drops reports over budget', () => {
-    expect(clientLogLine({ kind: 'client.log', level: 'error', area: 'x', message: 'y'.repeat(2000) }, true)!.length).toBeLessThan(600);
-    expect(clientLogLine({ kind: 'client.log', level: 'error', area: 'x', message: 'y' }, false)).toBeNull();
+  it('strips ANSI escapes and control characters everywhere', () => {
+    const { g } = gate();
+    const line = g.admit({}, report('\x1b[31mred\x1b[0m\x07 bell\x00\x1b]0;title\x07 done', 'area\x1b[2J', { stack: 'at \x1b[1mX\x1b[22m\x08' }))!;
+    expect(line).not.toMatch(/[\x00-\x08\x0b-\x1f\x7f]/);
+    expect(line.split('\n')[0]).toBe('[web error] area: red bell done');
+    expect(line).toContain('at X');
   });
 
-  it('budgets per connection per minute', () => {
-    const b = new LogBudget<object>(2, 60_000);
-    const a = {}, c = {};
-    expect([b.take(a, 0), b.take(a, 1), b.take(a, 2), b.take(c, 3)]).toEqual([true, true, false, true]);
-    expect(b.take(a, 60_010)).toBe(true);
+  it('caps sizes', () => {
+    const { g } = gate();
+    expect(g.admit({}, report('y'.repeat(2000)))!.length).toBeLessThan(600);
+  });
+
+  it('the same report again within the window is counted, not logged; the next one after it says how many', () => {
+    const { g, at } = gate();
+    const c = {};
+    expect(g.admit(c, report('same'))).toBeTruthy();
+    at(1000);
+    expect(g.admit(c, report('same'))).toBeNull();
+    expect(g.admit({}, report('same'))).toBeNull(); // from another connection too (a render loop in every window)
+    expect(g.admit(c, report('other'))).toBeTruthy(); // a different message is not a duplicate
+    at(61_000);
+    expect(g.admit(c, report('same'))).toMatch(/另有 2 次相同报告/);
+  });
+
+  it('per connection and global budgets per window; duplicates do not use them up', () => {
+    const { g, at } = gate({ perConn: 3, global: 5 });
+    const a = {}, b = {};
+    const n = (conn: object, prefix: string, k: number) => Array.from({ length: k }, (_, i) => g.admit(conn, report(`${prefix}${i}`))).filter(Boolean).length;
+    expect(g.admit(a, report('dup'))).toBeTruthy();
+    for (let i = 0; i < 10; i++) g.admit(a, report('dup'));
+    expect(n(a, 'a', 5)).toBe(2); // 1 used by the first 'dup' → 2 more for this connection
+    expect(n(b, 'b', 5)).toBe(2); // global 5: 3 used by a → 2 left for everyone
+    at(60_001);
+    expect(n(b, 'c', 5)).toBe(3); // new window: per-connection cap again
   });
 });

@@ -18,7 +18,7 @@ import type { SkillsService } from '../skills/service.js';
 import type { McpService } from '../mcp/service.js';
 import type { DiagService } from '../diag/service.js';
 import { detectTools } from '../tools/detect.js';
-import { LogBudget, clientLogLine } from '../diag/client-log.js';
+import { ClientLogGate } from '../diag/client-log.js';
 import type { RemoteService } from '../remote/service.js';
 import type { TunnelManager } from '../remote/tunnel.js';
 import { IM_KINDS, type ImService } from '../im/service.js';
@@ -93,8 +93,8 @@ export class Hub {
   private clients = new Set<WebSocket>();
   /** Connections from another machine's FederationService (`?peer=<serverId>`): never sent what we got from our own peers. */
   private peerConns = new WeakSet<WebSocket>();
-  /** renderer error reports (`client.log`) per connection per minute */
-  private clientLogs = new LogBudget<WebSocket>(20);
+  /** renderer error reports (`client.log`): 20 per connection, 60 in all per minute, duplicates counted */
+  private clientLogs = new ClientLogGate<WebSocket>();
 
   constructor(private wss: WebSocketServer, private s: Services) {
     wss.on('connection', (ws, req: IncomingMessage) => this.onConnect(ws, req));
@@ -620,7 +620,7 @@ export class Hub {
       case 'diag.bundle':
         return s.diag.bundle({ settings: s.meta.settings(), providers: s.providers.list(), sessionsCount: (await s.sessions.list()).length });
       case 'client.log': {
-        const line = clientLogLine(req, this.clientLogs.take(ws));
+        const line = this.clientLogs.admit(ws, req);
         if (line) (req.level === 'warn' ? console.warn : console.error)(line);
         return null;
       }
