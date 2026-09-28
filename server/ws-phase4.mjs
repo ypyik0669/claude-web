@@ -67,7 +67,7 @@ ws.on('open', async () => {
     // diagnostics
     const diag = await req({ kind: 'diag.bundle' });
     const info = JSON.parse(fs.readFileSync(path.join(diag.dir, 'info.json'), 'utf8'));
-    check('diag.bundle', !!info.engine && !JSON.stringify(info).includes('sk-REDACTED'), diag.tar ?? diag.dir);
+    check('diag.bundle', !!info.engine && !/sk-[A-Za-z0-9_-]{20,}/.test(JSON.stringify(info)), diag.tar ?? diag.dir);
     // mcp registry (network; tolerate failure)
     try {
       const reg = await req({ kind: 'mcp.registry', query: 'filesystem', limit: 5 });
