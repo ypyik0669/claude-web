@@ -301,11 +301,18 @@ function driver() {
     // an element below the fold is scrolled to the middle, not flush with the bottom edge (a toast sits there). When
     // that scrolled anything, wait for the scroll event before clicking: it fires on the next frame, and a menu the
     // click opens (the sidebar's anchored menus close when their anchor scrolls) would take it for its own.
+    // A page still settling (a settings page mounting its parts) can move the target between measuring and clicking:
+    // the point is checked with elementFromPoint and measured again (a few times) until the target is there.
     const click = async (selector) => {
-      const measure = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; const b = el.getBoundingClientRect(); return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) }; })()`;
-      let r = await js(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; const b0 = el.getBoundingClientRect(); el.scrollIntoView({ block: b0.top < 0 || b0.bottom > innerHeight - 48 ? 'center' : 'nearest' }); const b = el.getBoundingClientRect(); return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2), moved: Math.round(b.top) !== Math.round(b0.top) }; })()`);
+      const measure = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; const b = el.getBoundingClientRect(); const x = Math.round(b.left + b.width / 2), y = Math.round(b.top + b.height / 2); const at = document.elementFromPoint(x, y); return { x, y, hit: !!at && (el === at || el.contains(at)) }; })()`;
+      let r = await js(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; const b0 = el.getBoundingClientRect(); el.scrollIntoView({ block: b0.top < 0 || b0.bottom > innerHeight - 48 ? 'center' : 'nearest' }); const b = el.getBoundingClientRect(); const x = Math.round(b.left + b.width / 2), y = Math.round(b.top + b.height / 2); const at = document.elementFromPoint(x, y); return { x, y, moved: Math.round(b.top) !== Math.round(b0.top), hit: !!at && (el === at || el.contains(at)) }; })()`);
       if (!r) return null;
       if (r.moved) { await sleep(150); r = await js(measure); if (!r) return null; }
+      for (let i = 0; i < 4 && !r.hit; i++) {
+        await sleep(150);
+        await js(`document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({ block: 'nearest' })`);
+        r = (await js(measure)) ?? r;
+      }
       wc.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y });
       wc.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 });
       wc.sendInputEvent({ type: 'mouseUp', x: r.x, y: r.y, button: 'left', clickCount: 1 });
@@ -1627,12 +1634,20 @@ function driver() {
         await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'mission' })`);
         check('Mission Control still lists the request (允许 / 拒绝 there)', await waitFor(`!!document.querySelector('.dock-panel[data-panel="mission"]:not([hidden]) .mcard .perm')`, 4000));
         await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
-        // 1. an empty box + Enter = 允许一次
+        // …and the sidebar's 需要你 (phase 4) lists it from the same pending list (the sidebar was collapsed earlier)
+        if (await js(`!!document.querySelector('.pane.focused .sess-head > .sb-reveal')`)) await click('.pane.focused .sess-head > .sb-reveal');
+        await waitFor(`!!document.querySelector('.sidebar .sb-attn .sb-attn-item')`, 4000);
+        const attnCount = `document.querySelectorAll('.sidebar .sb-attn .sb-attn-item').length`;
+        const attn1 = await js(attnCount);
+        // 1. an empty box + Enter = 允许一次 — once the card has been on screen for a moment (review I3: 600 ms)
         await click('.pane.focused .composer textarea');
+        await sleep(700);
         await key('Return');
         const allowed = await waitFor(`!document.querySelector('.pane.focused .composer .pdock') && /read ok/.test(document.querySelector('.pane.focused .chat-inner').textContent)`, 15_000);
         const allowSent = await lastSent();
         check('empty box + Enter = 允许一次: {behavior: allow} goes out, the card leaves, the agent carries on', allowed && /"behavior":"allow"/.test(allowSent) && !/updatedPermissions/.test(allowSent), allowSent);
+        const attn2 = await js(attnCount);
+        check('the sidebar 需要你 row for the request goes with the card', attn1 >= 1 && attn2 === attn1 - 1, JSON.stringify({ attn1, attn2 }));
         check('the turn folds once it is done', await waitFor(`[...document.querySelectorAll('.pane.focused .turn.folded .turn-sum')].some((s) => /^已处理/.test(s.textContent))`, 10_000));
         // 2. words in the box + Enter = deny with those words (the old card's 拒绝理由 field)
         await askTool('smoke: please use a tool again');
@@ -1655,8 +1670,57 @@ function driver() {
         const btnSent = await lastSent();
         check('拒绝 on the card with words in the box: deny with them, the box is cleared', /"behavior":"deny"/.test(btnSent) && /"message":"smoke: not now"/.test(btnSent) && (await js(`document.querySelector('.pane.focused .composer textarea').value`)) === '', btnSent);
         await waitFor(`window.__store.getState().open[${pj}]?.state === 'idle'`, 15_000);
-        // 4. 总是允许 and 「还有 N 条」: two staged requests with a suggestion (the mock agent sends none; the server
-        // answers 「not found」 for these ids, and the card goes away as it does for one answered elsewhere)
+        // 4. an Enter meant for something else answers nothing (review I3). Staged requests from here on: the server
+        // answers 「not found」 for these ids, and the card goes away as it does for one answered elsewhere
+        const stageReq = (id, tool = 'Bash', input = `{ command: 'echo ${id}' }`) => `{ requestId: '${id}', sessionId: ${pj}, toolName: '${tool}', input: ${input} }`;
+        const setOpen = (patch) => js(`(() => { const st = window.__store; const o = st.getState().open[${pj}]; st.setState({ open: { ...st.getState().open, [${pj}]: { ...o, ${patch}, version: o.version + 1 } } }); })()`);
+        const sentFor = (id) => js(`JSON.stringify(window.__permSent.filter((r) => r.requestId === ${JSON.stringify(id)}).map((r) => r.response))`);
+        await click('.pane.focused .composer textarea');
+        // an Enter in the card's first moments (it has just docked), then a held-down (repeating) Enter
+        const early = await js(`(async () => { const st = window.__store; const o = st.getState().open[${pj}]; st.setState({ open: { ...st.getState().open, [${pj}]: { ...o, pending: [${stageReq('smoke-early')}], version: o.version + 1 } } }); await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30))); const ta = document.querySelector('.pane.focused .composer textarea'); const docked0 = document.querySelector('.pane.focused .composer .pdock')?.dataset.request ?? null; ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); await new Promise((r) => setTimeout(r, 800)); ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, repeat: true })); await new Promise((r) => setTimeout(r, 300)); return { docked0, docked: document.querySelector('.pane.focused .composer .pdock')?.dataset.request ?? null, sent: window.__permSent.filter((r) => r.requestId === 'smoke-early').length }; })()`);
+        check('an Enter in a card\'s first 600 ms and a held-down Enter answer nothing', early && early.docked0 === 'smoke-early' && early.docked === 'smoke-early' && early.sent === 0, JSON.stringify(early));
+        // two requests, Enter twice in a row: the first is allowed, the second (just docked) is not
+        await setOpen(`pending: [${stageReq('smoke-two-1')}, ${stageReq('smoke-two-2')}]`);
+        await sleep(800);
+        for (let i = 0; i < 2; i++) { wc.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); wc.sendInputEvent({ type: 'keyUp', keyCode: 'Return' }); }
+        await sleep(1200);
+        const two = { first: await sentFor('smoke-two-1'), second: await sentFor('smoke-two-2'), docked: await js(`document.querySelector('.pane.focused .composer .pdock')?.dataset.request ?? null`) };
+        check('two requests, Enter pressed twice in a row: only the first is allowed, the second stays docked', two.first === '[{"behavior":"allow"}]' && two.second === '[]' && two.docked === 'smoke-two-2', JSON.stringify(two));
+        // words written before a card came: Enter queues them as before (the card says so), the next Enter takes
+        // them back as the reason
+        await setOpen(`pending: []`);
+        await waitFor(`!document.querySelector('.pane.focused .composer .pdock')`, 3000);
+        await click('.pane.focused .composer textarea');
+        wc.insertText('smoke: the next thing');
+        await sleep(200);
+        await setOpen(`pending: [${stageReq('smoke-carried')}], state: 'waiting'`);
+        await sleep(800);
+        const carriedNote = await js(`document.querySelector('.pane.focused .composer .pdock .pd-hint.note')?.textContent ?? null`);
+        await key('Return');
+        await sleep(300);
+        const queued = await js(`({ queue: window.__store.getState().open[${pj}].queue.map((q) => q.text), box: document.querySelector('.pane.focused .composer textarea').value, note: document.querySelector('.pane.focused .composer .pdock .pd-hint.note')?.textContent ?? null })`);
+        const carriedSent0 = await sentFor('smoke-carried');
+        await key('Return');
+        await waitFor(`window.__permSent.some((r) => r.requestId === 'smoke-carried')`, 3000);
+        const carriedSent = await sentFor('smoke-carried');
+        const queueAfter = await js(`window.__store.getState().open[${pj}].queue.length`);
+        check('words from before the card: Enter queues them (not a deny), the card offers 「再按一次 Enter 会用这段话拒绝」, which takes them back as the reason',
+          /卡出现前写的/.test(carriedNote ?? '') && queued.queue.join() === 'smoke: the next thing' && queued.box === '' && /再按一次 Enter 会用这段话拒绝/.test(queued.note ?? '') && carriedSent0 === '[]'
+          && carriedSent === '[{"behavior":"deny","message":"smoke: the next thing"}]' && queueAfter === 0, JSON.stringify({ carriedNote, queued, carriedSent0, carriedSent, queueAfter }));
+        // a plan: an empty Enter does nothing, Ctrl+Enter approves
+        await setOpen(`pending: [${stageReq('smoke-plan', 'ExitPlanMode', "{ plan: '## smoke plan' }")}], state: 'idle'`);
+        await sleep(800);
+        const planPh = await js(`document.querySelector('.pane.focused .composer textarea').placeholder`);
+        await key('Return');
+        await sleep(300);
+        const planEnter = await sentFor('smoke-plan');
+        wc.sendInputEvent({ type: 'keyDown', keyCode: 'Return', modifiers: ['control'] }); wc.sendInputEvent({ type: 'keyUp', keyCode: 'Return', modifiers: ['control'] });
+        await waitFor(`window.__permSent.some((r) => r.requestId === 'smoke-plan')`, 3000);
+        const planCtrl = await sentFor('smoke-plan');
+        check('a plan: an empty Enter does nothing, Ctrl+Enter approves (the placeholder says so)', planEnter === '[]' && /^\[\{"behavior":"allow"/.test(planCtrl) && /Ctrl\+Enter/.test(planPh), JSON.stringify({ planEnter, planCtrl, planPh }));
+        await setOpen(`pending: []`);
+        await sleep(300);
+        // 5. 总是允许 and 「还有 N 条」: two staged requests with a suggestion (the mock agent sends none)
         const stage = (n) => `{ requestId: 'smoke-always-${n}', sessionId: ${pj}, toolName: 'Bash', input: { command: 'npm test' }, suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test:*' }], behavior: 'allow', destination: 'localSettings' }] }`;
         await js(`(() => { const st = window.__store; const o = st.getState().open[${pj}]; st.setState({ open: { ...st.getState().open, [${pj}]: { ...o, pending: [${stage(1)}, ${stage(2)}], version: o.version + 1 } } }); })()`);
         await waitFor(`!!document.querySelector('.pane.focused .composer .pdock [data-act="always"]')`, 4000);
@@ -1681,12 +1745,16 @@ function driver() {
         await click('.pane.focused .composer .pdock [data-act="deny"]');
         await waitFor(`!document.querySelector('.pane.focused .composer .pdock')`, 6000);
 
-        // ---- the goal bar: a goal runs in a conversation of its own (goals.create + start, as 目标 / `/goal` do); open it
+        // ---- the goal bar, and a goal that runs two rounds (review I1): GoalService sends round 2 (「继续」) itself, so
+        // it follows round 1's result with no user message in this window. The mock answers its first goal prompt
+        // with 「GOAL_STATUS: continue」 (MOCK_GOAL_CONTINUE); the objective has 「slow」, so each round runs a command.
         phase = 'chat-goal';
+        await serverRequest({ kind: 'agents.set', agent: 'acp:smoke', patch: { name: 'Smoke Agent', command: E.SMOKE_NODE, args: [path.join(ROOT, 'server', 'src', 'agents', '__mocks__', 'acp-agent.mjs')], env: { MOCK_SLOW_MS: '6000', MOCK_GOAL_CONTINUE: '1' }, protocol: 'acp', label: 'smoke' } });
         const goal = await serverRequest({ kind: 'goals.create', objective: 'smoke slow goal', cwd: E.SMOKE_REPO, agent: 'acp:smoke', permissionMode: 'default' });
         const started = await serverRequest({ kind: 'goals.start', id: goal.id });
         if (started && started.sessionId) await js(`window.__store.getState().loadHistory(${JSON.stringify(started.sessionId)})`).catch(() => {});
-        const bar = await waitFor(`/目标：smoke slow goal/.test(document.querySelector('.pane.focused .goal-bar')?.textContent ?? '') && /第 1 轮/.test(document.querySelector('.pane.focused .goal-bar')?.textContent ?? '')`, 10_000);
+        const barText = `(document.querySelector('.pane.focused .goal-bar')?.textContent ?? '')`;
+        const bar = await waitFor(`/目标：smoke slow goal/.test(${barText}) && /第 1 轮/.test(${barText})`, 10_000);
         check('a running goal shows 「目标：… · 第 1 轮 · 查看」 on top of its conversation', bar, await js(`document.querySelector('.pane.focused .goal-bar')?.textContent ?? null`));
         await sleep(400);
         await shot('chat-goal');
@@ -1694,7 +1762,16 @@ function driver() {
           await click('.pane.focused .goal-bar .gb-go');
           check('查看 opens the 目标 panel', await waitFor(`window.__store.getState().layout.dock.active === 'goals' && !!document.querySelector('.dock-panel[data-panel="goals"]:not([hidden])')`, 4000));
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
-          check('the bar goes once the goal is done', await waitFor(`!document.querySelector('.pane.focused .goal-bar')`, 20_000));
+          // round 2 running: round 1 folded with its own line, round 2 open with its running command in view
+          const turnsNow = `(() => { const turns = [...document.querySelectorAll('.pane.focused .chat .turn')]; const last = turns[turns.length - 1], prev = turns[turns.length - 2]; return { n: turns.length, lastId: last?.dataset.turn ?? null, prevFolded: !!prev && prev.classList.contains('folded') && !prev.classList.contains('open'), prevSum: prev?.querySelector('.turn-sum')?.textContent ?? null, lastOpen: !!last && !last.classList.contains('folded'), running: !!last && [...last.querySelectorAll('.tl.active, .tl.pending')].some((el) => el.offsetParent !== null) }; })()`;
+          const round2 = await waitFor(`/第 2 轮/.test(${barText}) && (${turnsNow}).running`, 30_000);
+          const r2 = await js(turnsNow);
+          check('a goal\'s second round: round 1 folded with its own line, round 2 (no user message here) open with its running step in view', round2 && r2.n >= 2 && r2.prevFolded && /^已处理/.test(r2.prevSum ?? '') && r2.lastOpen && r2.running, JSON.stringify(r2));
+          await sleep(400);
+          await shot('chat-goal-round2');
+          check('the bar goes once the goal is done', await waitFor(`!document.querySelector('.pane.focused .goal-bar')`, 30_000));
+          const folded = await waitFor(`(() => { const turns = [...document.querySelectorAll('.pane.focused .chat .turn')].slice(-2); return turns.length === 2 && turns.every((t) => t.classList.contains('folded') && /^已处理/.test(t.querySelector('.turn-sum')?.textContent ?? '')); })()`, 8000);
+          check('…then both rounds are folded, each with its own summary line', folded, await js(`JSON.stringify([...document.querySelectorAll('.pane.focused .chat .turn')].map((t) => [t.dataset.turn, t.className, t.querySelector('.turn-sum')?.textContent ?? null]))`));
         }
         const err5 = await noBoundary('body');
         check('chat rendering checks without error boundary', !err5, err5);
