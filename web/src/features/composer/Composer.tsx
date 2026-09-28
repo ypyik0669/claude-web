@@ -416,7 +416,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
             )}
             {welcome ? (
               <>
-                <label className={clsx('chip', (provider || foreign) && 'info')} title="引擎：Claude 账号 / 第三方供应商 / 其它 CLI agent（Codex、Gemini、Qwen、Kimi、ACP）"><span>{agent ? `${agent.icon} ${agent.name}` : provider ? provider.name : 'Claude 账号'}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
+                <label className={clsx('chip', (provider || foreign) && 'info')} title="引擎：Claude 账号 / 第三方供应商 / 其它 CLI agent（Codex、Gemini、Qwen、Kimi、ACP）"><span>{agent ? agent.name : provider ? provider.name : 'Claude 账号'}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
                   <select value={foreign ? `agent:${wAgent}` : provider ? provider.id : 'claude'} onChange={(e) => { const v = e.target.value; if (v === '__add') { useStore.setState({ configTab: 'providers' }); if (!useStore.getState().panels.includes('config')) togglePanel('config'); return; } if (v === '__agents') { useStore.getState().openSettings({ section: 'agents' }); return; } if (v.startsWith('agent:')) { setWAgent(v.slice(6) as AgentKind); setWProvider('claude'); } else { setWAgent('claude'); setWProvider(v); } setWModel(''); }}>
                     <optgroup label="Claude Code">
                       <option value="claude">Claude 账号（claude.ai 登录）</option>
@@ -424,7 +424,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
                       <option value="__add">+ 添加供应商…</option>
                     </optgroup>
                     <optgroup label="其它 agent">
-                      {agents.filter((a) => a.kind !== 'claude' && a.enabled).map((a) => <option key={a.kind} value={`agent:${a.kind}`} disabled={!a.installed}>{a.icon} {a.name}{a.installed ? (a.label ? ` · ${a.label}` : '') : '（未安装）'}</option>)}
+                      {agents.filter((a) => a.kind !== 'claude' && a.enabled).map((a) => <option key={a.kind} value={`agent:${a.kind}`} disabled={!a.installed}>{a.name}{a.installed ? (a.label ? ` · ${a.label}` : '') : '（未安装）'}</option>)}
                       <option value="__agents">管理 agent…</option>
                     </optgroup>
                   </select>
