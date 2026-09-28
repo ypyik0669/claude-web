@@ -20,6 +20,14 @@ export interface PickContext {
 }
 
 /**
+ * Toast after a model / provider switch in a live session. Prompt caches are per model (and per provider), so
+ * with history behind it the next turn pays full price for the whole context once — say so.
+ */
+export function switchedNote(label: string, hasContext: boolean): string {
+  return hasContext ? `已切换到 ${label}（提示缓存不跨模型 / 供应商，下一轮会按全价重新计费全部上下文）` : `已切换到 ${label}`;
+}
+
+/**
  * Route one pick. A default entry is resolved to a concrete value here, never left empty: an empty model
  * used to make the server keep the previous one, which on another profile is a model that endpoint lacks.
  */

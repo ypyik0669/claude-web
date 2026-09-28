@@ -37,7 +37,7 @@ export function EngineSwitcher({ sessionId, info }: { sessionId: string; info: S
     setBusy(providerId || 'claude');
     try {
       await ws.request({ kind: 'session.setProvider', sessionId, providerId: providerId || undefined });
-      toast('已切换供应商，会话继续', true);
+      toast('已切换供应商，会话继续（提示缓存不跨供应商，下一轮会按全价重新计费全部上下文）', true);
       setOpen(false);
     } catch (e: any) { toast(e.message); } finally { setBusy(''); }
   };

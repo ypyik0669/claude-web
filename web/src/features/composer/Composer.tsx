@@ -18,7 +18,7 @@ import { SessionRefChip } from '@/features/chat/ChatView';
 import { REFERENCE_EVENT, type ReferenceDetail } from '@/features/sidebar/session-actions';
 import { ModelChip } from '@/features/models/ModelMenu';
 import { chipLabel, compatibleTypes, usableProfile, type ModelMenuItem } from '@/features/models/menu';
-import { routePick } from '@/features/models/route';
+import { routePick, switchedNote } from '@/features/models/route';
 import { providersLoaded, useGatewayStatus } from '@/features/models/data';
 import { dlg } from '@/ui/dialog';
 
@@ -357,13 +357,13 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     if (act.kind === 'none') return true;
     if (act.kind === 'error') { toast(act.message); return false; }
     if (act.kind === 'setModel') {
-      try { await ws.request({ kind: 'session.setModel', sessionId: active.sessionId, model: act.model }); return true; } catch (e: any) { toast(e.message); return false; }
+      try { await ws.request({ kind: 'session.setModel', sessionId: active.sessionId, model: act.model }); toast(switchedNote(it.label, active.conv.items.length > 0), true); return true; } catch (e: any) { toast(e.message); return false; }
     }
     if (act.confirm && !(await dlg.confirm('切换供应商档案？', { message: '会话正在运行。换档案会重启会话进程（历史保留），当前这一轮会被中断。', okLabel: '切换' }))) return false;
     setSwapping(true);
     try {
       await ws.request({ kind: 'session.setProvider', sessionId: active.sessionId, providerId: act.providerId, model: act.model });
-      toast(`已切换到 ${it.label}，会话继续`, true);
+      toast(switchedNote(it.label, active.conv.items.length > 0), true);
       return true;
     } catch (e: any) { toast(e.message); return false; } finally { setSwapping(false); }
   };

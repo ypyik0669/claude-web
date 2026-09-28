@@ -32,7 +32,7 @@ vi.mock('./session-runner.js', async () => {
   return { SessionRunner: FakeRunner };
 });
 
-const { RunnerPool } = await import('./pool.js');
+const { RunnerPool, idleTtlFor } = await import('./pool.js');
 
 const pool = () => new RunnerPool({ forSession: () => undefined } as any);
 
@@ -70,6 +70,27 @@ describe('RunnerPool', () => {
     expect(p.get('real-id')).toBe(a);
     a.setState('closed');
     expect(p.get('real-id')).toBeUndefined();
+  });
+
+  it('idle TTL follows the profile\'s cache retention: long-retention providers keep the process (a resume rebuilds the prompt prefix)', () => {
+    const MIN = 60_000;
+    expect(idleTtlFor(undefined)).toBe(30 * MIN);
+    expect(idleTtlFor({ type: 'openai' } as any)).toBe(120 * MIN);
+    expect(idleTtlFor({ type: 'grok' } as any)).toBe(120 * MIN);
+    expect(idleTtlFor({ type: 'gemini' } as any)).toBe(30 * MIN);
+    expect(idleTtlFor({ type: 'gateway' } as any)).toBe(30 * MIN);
+    expect(idleTtlFor({ type: 'anthropic' } as any)).toBe(30 * MIN);
+    expect(idleTtlFor({ type: 'anthropic', cache1h: true } as any)).toBe(65 * MIN);
+  });
+
+  it('the reaper uses the per-session TTL', () => {
+    const p = new RunnerPool({ forSession: (id?: string) => (id === 'oai' ? { type: 'openai' } : undefined) } as any);
+    const long: any = p.open({ sessionId: 'long', cwd: '/x', providerId: 'oai' });
+    const plain: any = p.open({ sessionId: 'plain', cwd: '/x' });
+    for (const r of [long, plain]) { r.state = 'idle'; r.lastActivity = Date.now() - 45 * 60_000; }
+    (p as any).reap();
+    expect(plain.closeCalls).toBe(1);
+    expect(long.closeCalls).toBe(0);
   });
 
   it('closeAll survives a runner whose close rejects', async () => {
