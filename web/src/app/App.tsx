@@ -74,12 +74,14 @@ export function App() {
 
   // desktop caption buttons (Windows / Linux overlay) are painted in one colour: match whatever row is under them —
   // the page (--bg) when the session header / empty page is there, the side surface (--bg-1) for the right panel's
-  // tab row, the group bar or a tab strip
+  // tab row, the group bar or a tab strip; the settings page covers the whole window with its page (--bg) there
   const theme = useStore((s) => s.theme);
-  const sideSurface = useStore((s) => {
+  const settingsOpen = useStore((s) => !!s.settingsOpen);
+  const chromeRow = useStore((s) => {
     const vis = chromeVisibility(s.layout, { workbench: workbenchOn(s.settings) });
     return vis.groupBar || Object.values(vis.tabStrip).some(Boolean);
-  }) || rpWidth > MIN_RAIL;
+  });
+  const sideSurface = !settingsOpen && (chromeRow || rpWidth > MIN_RAIL);
   useEffect(() => {
     const d = desktop;
     if (!d) return;

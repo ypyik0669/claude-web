@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { THEMES, useStore } from '@/store';
 import { clsx } from '@/util';
 import { ws } from '@/ws/client';
@@ -31,6 +31,7 @@ import {
   type SettingsTarget,
 } from './catalog';
 import { NumberSelect, Row, Seg, Select, Toggle } from './controls';
+import { coverApp } from './cover';
 
 export { Row } from './controls';
 
@@ -115,7 +116,10 @@ function SettingsPage({ open }: { open: { section?: string; query?: string; reve
   const [phonePage, setPhonePage] = useState(!!(open.section || open.reveal));
   const inp = useRef<HTMLInputElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  const root = useRef<HTMLDivElement>(null);
   const close = () => useStore.setState({ settingsOpen: null });
+  // desktop: the search box; phones: the page itself (focusing an input would pop the keyboard up)
+  const focusStart = () => { if (useStore.getState().mobile) root.current?.focus({ preventScroll: true }); else inp.current?.focus(); };
 
   const go = (t: SettingsTarget) => {
     setTarget(t);
@@ -123,25 +127,38 @@ function SettingsPage({ open }: { open: { section?: string; query?: string; reve
     setPhonePage(true);
     if (findSection(t.section)?.advanced) setAdvOpen(true);
   };
-  // a new openSettings() while open (a link in a section, the model menu's 管理模型…) moves to that page
+  // the app underneath stays mounted but must not keep the keyboard: typing would land in the covered composer, Esc
+  // would interrupt its turn. Inert while open, focus here, and back to where it was on close (cover.ts).
+  useLayoutEffect(() => {
+    const prev = document.activeElement;
+    const el = root.current;
+    if (!el) return;
+    const undo = coverApp(el, prev);
+    focusStart();
+    return undo;
+  }, []);
+  // a new openSettings() while open (a link in a section, the model menu's 管理模型…) moves to that page; one without
+  // a section / row (Ctrl+, again) keeps the page and only starts over at the search box
   const seen = useRef(open);
-  useEffect(() => { if (open.query) inp.current?.focus(); }, []);
   useEffect(() => {
     if (seen.current === open) return;
     seen.current = open;
     setQ(open.query ?? '');
-    go(resolveSettingsTarget(open));
+    if (open.section || open.reveal) go(resolveSettingsTarget(open));
+    focusStart();
   }, [open]);
   // the phone drawer would sit above this page
   useEffect(() => { const st = useStore.getState(); if (st.mobile && st.sidebarOpen) useStore.setState({ sidebarOpen: false }); }, []);
   // after a move: scroll to the revealed row / part, or to the top
   useEffect(() => {
     const id = requestAnimationFrame(() => {
-      const root = scroller.current;
-      if (!root) return;
-      const el = target.reveal ? root.querySelector(`[data-entry="${CSS.escape(target.reveal)}"]`) : target.body ? root.querySelector(`[data-body="${CSS.escape(target.body)}"]`) : null;
+      // the nav keeps the current page in view (an advanced page, or a short window)
+      root.current?.querySelector('.sp-si.on')?.scrollIntoView({ block: 'nearest' });
+      const box = scroller.current;
+      if (!box) return;
+      const el = target.reveal ? box.querySelector(`[data-entry="${CSS.escape(target.reveal)}"]`) : target.body ? box.querySelector(`[data-body="${CSS.escape(target.body)}"]`) : null;
       if (el) el.scrollIntoView({ block: 'center' });
-      else root.scrollTop = 0;
+      else box.scrollTop = 0;
     });
     return () => cancelAnimationFrame(id);
   }, [target]);
@@ -166,15 +183,19 @@ function SettingsPage({ open }: { open: { section?: string; query?: string; reve
 
   return (
     <div
+      ref={root}
+      tabIndex={-1}
       className={clsx('modal settings sp', phonePage && 'phone-page', searching && 'searching')}
       role="dialog"
+      aria-modal="true"
       aria-label="设置"
       data-section={sec.id}
       data-tab={activeTab(sec, target.tab)?.id}
       onKeyDown={(e) => {
         if (e.key !== 'Escape') return;
         e.stopPropagation();
-        if (searching && e.target === inp.current) setQ('');
+        // with a search typed, Esc clears it wherever the focus is; otherwise it closes
+        if (searching) setQ('');
         else close();
       }}
     >

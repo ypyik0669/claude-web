@@ -1480,6 +1480,7 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:
   display: grid; grid-template-columns: 260px minmax(0, 1fr); overflow: hidden; animation: sp-in var(--dur-2) var(--ease-out);
 }
 @keyframes sp-in { from { opacity: 0; } to { opacity: 1; } } /* no slide: the page covers the whole window */
+.modal.settings.sp:focus-visible { outline: none; } /* focused itself on phones (cover.ts) — a ring around the whole window says nothing */
 .sp-nav { background: var(--surface-1); border-right: 1px solid var(--edge-subtle); display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 10px var(--sp-2) var(--sp-3); }
 .sp-nav-top { display: flex; align-items: center; min-height: 34px; }
 .sp-back { height: 34px; display: inline-flex; align-items: center; gap: var(--sp-2); padding: 0 10px; border-radius: var(--r-md); font-size: 13.5px; color: var(--ink-2); }
