@@ -69,7 +69,7 @@ function parseXY(x: string, y: string, untracked = false): GitFileStatus['status
 }
 
 /** Parse `git status --porcelain=v2 -z --branch` into `st` (entries are NUL-terminated; a rename's origPath is its own field). */
-export function parseStatusV2z(stdout: string, st: Pick<GitStatus, 'branch' | 'upstream' | 'ahead' | 'behind' | 'detached' | 'files'> & { stashes?: number }) {
+export function parseStatusV2z(stdout: string, st: Pick<GitStatus, 'branch' | 'upstream' | 'ahead' | 'behind' | 'detached' | 'files'>) {
   const fields = stdout.split('\0');
   for (let i = 0; i < fields.length; i++) {
     const line = fields[i];
@@ -77,7 +77,6 @@ export function parseStatusV2z(stdout: string, st: Pick<GitStatus, 'branch' | 'u
     if (line.startsWith('# branch.head ')) { const b = line.slice(14); st.branch = b === '(detached)' ? null : b; st.detached = b === '(detached)'; }
     else if (line.startsWith('# branch.upstream ')) st.upstream = line.slice(18);
     else if (line.startsWith('# branch.ab ')) { const m = /\+(\d+) -(\d+)/.exec(line); if (m) { st.ahead = Number(m[1]); st.behind = Number(m[2]); } }
-    else if (line.startsWith('# stash ')) st.stashes = Number(line.slice(8)) || 0; // --show-stash (git ≥ 2.35)
     else if (line.startsWith('1 ') || line.startsWith('2 ')) {
       const parts = line.split(' ');
       const x = parts[1][0], y = parts[1][1];
@@ -91,6 +90,23 @@ export function parseStatusV2z(stdout: string, st: Pick<GitStatus, 'branch' | 'u
       st.files.push({ path: line.slice(2), status: 'untracked', staged: false, unstaged: true });
     }
   }
+}
+
+/** Where shared refs live: a linked worktree's git dir names its common dir in `commondir` (usually relative). */
+export async function resolveCommonDir(gitDir: string): Promise<string> {
+  const rel = (await fs.readFile(path.join(gitDir, 'commondir'), 'utf8').catch(() => '')).trim();
+  return rel ? path.resolve(gitDir, rel) : gitDir;
+}
+
+/**
+ * Number of stashes without a git process: one reflog line per stash entry in `<common dir>/logs/refs/stash`
+ * (`stash drop` rewrites it, `stash clear` deletes it). Not `status --show-stash`: git 2.14–2.34 accept the flag
+ * but print no `# stash` line, older git rejects it, and current git omits the line at zero.
+ */
+export async function stashCount(root: string): Promise<number> {
+  const common = await resolveCommonDir(await resolveGitDir(root));
+  const log = await fs.readFile(path.join(common, 'logs', 'refs', 'stash'), 'utf8').catch(() => '');
+  return log.split('\n').filter((l) => l.trim()).length;
 }
 
 /** The repo's git dir: `<root>/.git`, or where a `.git` file points (linked worktrees, submodules — often a relative path). */
@@ -115,8 +131,6 @@ export class GitService extends EventEmitter {
   private roots = new Map<string, { root: string | null; at: number }>();
   static ROOT_TTL_MS = 60_000;
   static NO_ROOT_TTL_MS = 5_000;
-  /** `status --show-stash` saves the separate `stash list` process; false once this git turned out too old for it */
-  private showStash = true;
 
   async run(cwd: string, args: string[], opts: { input?: string; timeoutMs?: number } = {}): Promise<{ stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
@@ -155,20 +169,12 @@ export class GitService extends EventEmitter {
     if (!root) return { root: null, branch: null, upstream: null, ahead: 0, behind: 0, detached: false, files: [], stashes: 0, state: 'clean' };
     // -z: without it git C-quotes paths containing `"`, `\`, tabs or newlines, and those quoted strings
     // would be handed back verbatim to add / reset / checkout as pathspecs that match nothing
-    const args = ['status', '--porcelain=v2', '-z', '--branch', '--untracked-files=all'];
     let stdout: string;
-    let stashCounted = this.showStash;
     try {
-      ({ stdout } = await this.run(root, this.showStash ? [...args, '--show-stash'] : args));
+      ({ stdout } = await this.run(root, ['status', '--porcelain=v2', '-z', '--branch', '--untracked-files=all']));
     } catch (e) {
-      if (this.showStash && e instanceof GitCommandError && /show-stash/.test(e.message)) {
-        this.showStash = false; // git < 2.35
-        stashCounted = false;
-        ({ stdout } = await this.run(root, args));
-      } else {
-        this.roots.delete(path.resolve(cwd)); // the repo moved / vanished: resolve it again next time
-        throw e;
-      }
+      this.roots.delete(path.resolve(cwd)); // the repo moved / vanished: resolve it again next time
+      throw e;
     }
     const st: GitStatus = { root, branch: null, upstream: null, ahead: 0, behind: 0, detached: false, files: [], stashes: 0, state: 'clean' };
     parseStatusV2z(stdout, st);
@@ -181,12 +187,7 @@ export class GitService extends EventEmitter {
       else if (await has('CHERRY_PICK_HEAD')) st.state = 'cherry-picking';
       if (st.files.some((f) => f.status === 'conflict')) st.state = st.state === 'clean' ? 'conflict' : st.state;
     } catch { /* ignore */ }
-    if (!stashCounted) {
-      try {
-        const { stdout: sl } = await this.run(root, ['stash', 'list']);
-        st.stashes = sl.split('\n').filter(Boolean).length;
-      } catch { /* ignore */ }
-    }
+    st.stashes = await stashCount(root).catch(() => 0); // the reflog, not a `stash list` process
     return st;
   }
 
@@ -336,8 +337,7 @@ export class GitService extends EventEmitter {
     if (!root || this.watchers.has(root)) return root;
     // linked worktrees / submodules: `.git` is a file; HEAD + index live in the per-worktree dir, refs in the common dir
     const g = await resolveGitDir(root);
-    const commonRel = (await fs.readFile(path.join(g, 'commondir'), 'utf8').catch(() => '')).trim();
-    const common = commonRel ? path.resolve(g, commonRel) : g;
+    const common = await resolveCommonDir(g);
     if (this.watchers.has(root)) return root; // a concurrent watch() won while we were reading
     const w = chokidar.watch([path.join(g, 'HEAD'), path.join(g, 'index'), path.join(common, 'refs'), path.join(g, 'ORIG_HEAD'), path.join(g, 'MERGE_HEAD')], { ignoreInitial: true, depth: 3 });
     const entry: { w: any; timer?: ReturnType<typeof setTimeout> } = { w };
