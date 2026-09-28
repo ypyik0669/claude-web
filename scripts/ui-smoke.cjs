@@ -1092,8 +1092,9 @@ function driver() {
           const detail = row && await waitFor(`${activeTab} === "inspector" && !!document.querySelector('.dock-panel[data-panel="inspector"]:not([hidden])')`, 4000);
           check('a tool row’s 详情 opens 详情 in the right panel', detail, JSON.stringify({ row }));
           await click('.dock .dock-tabs .tab[data-panel="inspector"] .x');
-          const landed = await waitFor(`window.__store.getState().layout.dock.open && !document.querySelector('.dock .dock-tabs .tab[data-panel="inspector"]') && !!document.querySelector('.dock .dock-tabs .tab.fixed.active')`, 3000);
-          check('closing the last temporary tab keeps the right panel open on a fixed tab', landed, await js(dockState));
+          // N7: back on the fixed tab that was in front before (终端), not the first one (审阅)
+          const landed = await waitFor(`window.__store.getState().layout.dock.open && !document.querySelector('.dock .dock-tabs .tab[data-panel="inspector"]') && !!document.querySelector('.dock .dock-tabs .tab.fixed.active[data-panel="terminal"]')`, 3000);
+          check('closing the last temporary tab keeps the right panel open, on the fixed tab last in front (终端)', landed, await js(dockState));
 
           // I2: the desktop app on Windows at 1024 wide — the caption buttons take the top-right 150px of the tab
           // row: the four fixed tabs stay whole (never scrolled away), the 「更多」 menu stays inside the window
@@ -1112,6 +1113,60 @@ function driver() {
           await shot('right-panel-desktop-win');
           await key('Escape');
           await click('.dock .dock-tabs .tab[data-panel="goals"] .x');
+
+          // N1: the default size — 1440 wide, the 440px panel, 审阅 listing files, one temporary tab open: the row stays
+          // beside the caption buttons (no room for a strip there: the temporary tab is in 「更多」, which says so)
+          win.setContentSize(1440, 900);
+          await waitFor('innerWidth === 1440', 4000);
+          await js(`(() => { const d = window.__store.getState().dispatchLayout; d({ t: 'dock.set', patch: { width: 440 } }); d({ t: 'dock.show', panel: 'files' }); })()`);
+          const countSel = `(document.querySelector('.dock .dock-tabs .tab[data-panel="files"] .n')?.textContent || '')`;
+          // (the ··· walk above left 审阅 on 本次对话改动, which lists nothing here: back to 未提交的改动 — README.md)
+          await sleep(400);
+          await click('.dock .rv-scope');
+          await waitFor('!!document.querySelector(".rv-scope-menu")', 3000);
+          await js(`[...document.querySelectorAll('.rv-scope-menu button')].find((b) => b.textContent.includes('未提交'))?.click()`);
+          const counted = await waitFor(`${countSel} !== ''`, 8000);
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'goals' })`);
+          await sleep(700);
+          const rowProbe = `(() => { const vw = innerWidth; const rp = document.querySelector('.rpanel').getBoundingClientRect(); const fixed = [...document.querySelectorAll('.dock .dock-tabs .tab.fixed')].map((t) => { const r = t.getBoundingClientRect(); return r.width > 0 && r.right <= Math.min(rp.right, vw) + 0.5 && !(r.top < 40 && r.right > vw - 150); }); const strip = document.querySelector('.dock .dock-tablist .tab[data-panel="goals"]'); return { vw, rp: Math.round(rp.width), stacked: !!document.querySelector('.dock-tabs.stacked'), fixedOk: fixed.length === 4 && fixed.every(Boolean), count: ${countSel}, badge: document.querySelector('.dock .dock-more-n')?.textContent ?? null, strip: !!strip && strip.getBoundingClientRect().width > 0, moreActive: !!document.querySelector('.dock button.dock-more.active'), fixedW: Math.round(document.querySelector('.dock .dock-fixed').getBoundingClientRect().width), ctlW: Math.round(document.querySelector('.dock .dock-ctl').getBoundingClientRect().width), bodyTop: Math.round(document.querySelector('.dock .dock-body').getBoundingClientRect().top) }; })()`;
+          const r1440 = await js(rowProbe);
+          check('desktop · Windows, 1440 wide, default panel, 审阅 with files, a temporary tab open: the row is not moved below the caption buttons', counted && r1440.rp === 440 && !r1440.stacked && r1440.fixedOk && r1440.bodyTop <= 53, JSON.stringify(r1440));
+          check('…and the temporary tab is reachable: its own tab, or 「更多」 counting it (and marked while it is in front)', r1440.strip || (r1440.badge === '1' && r1440.moreActive), JSON.stringify(r1440));
+          await shot('right-panel-desktop-win-1440');
+          await click('.dock button.dock-more');
+          const openRow = await js(`(() => { const b = document.querySelector('.dock-more-menu .dock-more-open[data-open="goals"] button[data-panel="goals"]'); return b ? b.getAttribute('aria-checked') : null; })()`);
+          check('1440: 「更多」 lists the open temporary tab on top, checked while it is in front', r1440.strip || openRow === 'true', String(openRow));
+          // N2: the menu closes when the settings page covers the window, and when its button goes away (Ctrl+J)
+          await js('window.__store.getState().openSettings()');
+          const closedBySettings = await waitFor('!document.querySelector(".dock-more-menu")', 3000);
+          await js('window.__store.setState({ settingsOpen: null })');
+          await sleep(300);
+          await click('.dock button.dock-more');
+          const reopened = await waitFor('!!document.querySelector(".dock-more-menu")', 2000);
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+          const closedByHide = await waitFor('!document.querySelector(".dock-more-menu")', 3000);
+          check('the 「更多」 menu closes when settings open and when the right panel is hidden', closedBySettings && reopened && closedByHide, JSON.stringify({ closedBySettings, reopened, closedByHide }));
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: true } })`);
+          await sleep(400);
+          // closing it from the menu goes back to the fixed tab that was in front (审阅: shown before 目标)
+          if (!r1440.strip) {
+            await click('.dock button.dock-more');
+            await click('.dock-more-menu .dock-more-open[data-open="goals"] button.x');
+          } else await click('.dock .dock-tabs .tab[data-panel="goals"] .x');
+          const back = await waitFor(`!window.__store.getState().layout.dock.tabs.includes('goals') && !!document.querySelector('.dock .dock-tabs .tab.fixed.active[data-panel="files"]') && !document.querySelector('.dock .dock-more-n')`, 3000);
+          check('closing the temporary tab from 「更多」 lands on 审阅 (the fixed tab in front before) and the count goes', back, await js(dockState));
+          // switching conversation (审阅 reloads: its count goes empty, then back) never moves the row or the panel
+          await js(`(() => { const r = document.querySelector('.dock .dock-tabs'); window.__cwFlips = []; window.__cwFlipObs = new MutationObserver(() => window.__cwFlips.push(r.className)); window.__cwFlipObs.observe(r, { attributes: true, attributeFilter: ['class'] }); })()`);
+          const top0 = await js(rowProbe);
+          await js(`window.__store.getState().openInPane(null, 'replace')`);
+          await sleep(900);
+          const topMid = await js(rowProbe);
+          await js(`window.__store.getState().openInPane(${JSON.stringify(E.SMOKE_SID)}, 'replace')`);
+          const recounted = await waitFor(`${countSel} !== ''`, 8000);
+          await sleep(300);
+          const top1 = await js(rowProbe);
+          const flips = await js('(() => { window.__cwFlipObs.disconnect(); return window.__cwFlips; })()');
+          check('switching conversation and back: the panel top stays put and the row never moves down', recounted && top0.bodyTop === topMid.bodyTop && top1.bodyTop === top0.bodyTop && !top0.stacked && !flips.some((c) => /stacked/.test(c)), JSON.stringify({ top0: top0.bodyTop, mid: [topMid.bodyTop, topMid.count], top1: [top1.bodyTop, top1.count], flips }));
           await js(`document.documentElement.classList.remove('desktop', 'win')`);
           win.setContentSize(1360, 860);
           await waitFor('innerWidth === 1360', 4000);
