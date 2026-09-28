@@ -13,7 +13,7 @@ import { applyMessage, applyTranscript, createConversation, prependTranscript, w
 import { isImportedSessionId } from '@/util';
 import { parseLibraryId } from '@shared';
 import { dlg } from '@/ui/dialog';
-import { applyUiSettings, resolveTheme } from '@/features/settings/ui-settings';
+import { DEFAULT_THEME, applyUiSettings, resolveTheme, setSystemThemeHandler } from '@/features/settings/ui-settings';
 
 export type PanelId = import('@/model/layout').PanelId;
 
@@ -238,7 +238,8 @@ export const useStore = create<State>((set, get) => ({
   },
   sidebarOpen: true,
   inspect: null,
-  theme: (localStorage.getItem('cw.theme') as Theme) || 'dark',
+  // cached resolved theme until meta.json arrives; a first run follows the system (spec §6: default = 跟随系统)
+  theme: (localStorage.getItem('cw.theme') as Theme) || resolveTheme(DEFAULT_THEME),
   toasts: [],
   workspaces: [],
   sessionMeta: {},
@@ -273,7 +274,7 @@ export const useStore = create<State>((set, get) => ({
   openSettings(o = {}) { set({ settingsOpen: o }); },
   async setSetting(key, value) {
     set((s) => ({ settings: { ...s.settings, [key]: value } }));
-    if (key.startsWith('ui.')) { applyUiSettings(get().settings); if (key === 'ui.theme') get().setTheme(resolveTheme(value as any), true); }
+    if (key.startsWith('ui.')) { applyUiSettings(get().settings); if (key === 'ui.theme') get().setTheme(resolveTheme((value as any) ?? DEFAULT_THEME), true); }
     if (key === 'ui.softwareRender' && desktop?.setFlags) { void desktop.setFlags({ softwareRender: !!value }); get().toast('重启应用后生效', true); }
     await ws.request({ kind: 'settings.set', key, value });
   },
@@ -286,7 +287,7 @@ export const useStore = create<State>((set, get) => ({
     ]);
     set({ workspaces, sessionMeta, schedules, settings, metaLoaded: true });
     applyUiSettings(settings);
-    if (settings['ui.theme']) get().setTheme(resolveTheme(settings['ui.theme'] as any), true);
+    get().setTheme(resolveTheme((settings['ui.theme'] as any) ?? DEFAULT_THEME), true);
   },
   async addWorkspace(path) {
     await ws.request({ kind: 'workspaces.add', path });
@@ -729,6 +730,9 @@ export const useStore = create<State>((set, get) => ({
     await get().openSession({ sessionId, cwd: o.cwd, resumeAt: messageUuid });
   },
 }));
+
+// following the system: an OS light / dark switch also updates the cached theme and the desktop title bar colours
+setSystemThemeHandler((t) => useStore.getState().setTheme(t, true));
 
 export const useActive = () => useStore((s) => (s.activeId ? s.open[s.activeId] : undefined));
 /** Session of the enclosing workbench pane (falls back to the focused pane's session outside a pane). */

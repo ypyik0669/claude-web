@@ -52,7 +52,7 @@ function GoalCard({ g, open, onOpen }: { g: Goal; open: boolean; onOpen: () => v
         <span className={clsx('dot', g.status === 'active' ? 'running' : g.status === 'blocked' ? 'error' : g.status === 'complete' ? 'idle' : g.status === 'paused' || g.status === 'max_turns' ? 'waiting' : 'idle')} />
         <div className="grow">
           <div className="t">{g.objective.split('\n')[0].slice(0, 120)}</div>
-          <div className="m">{STATUS_L[g.status]} · {g.turnsExecuted}/{g.maxTurns} 轮 · {fmt(g.tokensUsed)} tok{g.tokenBudget ? ` / ${fmt(g.tokenBudget)}` : ''}{g.costUsd ? ` · $${g.costUsd.toFixed(2)}` : ''}{g.startedAt && g.status === 'active' ? ` · ${since(g.startedAt)}` : ''}{lastTest ? ` · 测试 ${lastTest.ok === false ? '✗' : lastTest.ok ? '✓' : '…'}` : ''}</div>
+          <div className="m">{STATUS_L[g.status]} · {g.turnsExecuted}/{g.maxTurns} 轮 · {fmt(g.tokensUsed)} tok{g.tokenBudget ? ` / ${fmt(g.tokenBudget)}` : ''}{g.costUsd ? ` · $${g.costUsd.toFixed(2)}` : ''}{g.startedAt && g.status === 'active' ? ` · ${since(g.startedAt)}` : ''}{lastTest ? ` · 测试${lastTest.ok === false ? '失败' : lastTest.ok ? '通过' : '运行中'}` : ''}</div>
         </div>
         <div className="prog" title={`${done}/${g.steps.length} 步`}><div style={{ width: `${pct}%` }} /></div>
       </div>

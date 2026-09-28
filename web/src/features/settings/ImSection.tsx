@@ -66,10 +66,10 @@ function GatewayCard({ g, def, onChange }: { g: ImGatewayInfo; def: ImKindDef; o
               </div>
               {pair && left > 0 && <div style={{ marginTop: 6 }}><span className="pair-code" style={{ fontSize: 22 }}>{pair.code}</span> <span className="sub">{left}s 后失效 · 发送 <code>/pair {pair.code}</code></span></div>}
               <div className="chips" style={{ marginTop: 6 }}>
-                {g.allowUsers.map((u) => <span key={u} className="chip">{g.allowNames?.[u] ?? u} <button className="x" title="移除" onClick={() => patch({ allowUsers: g.allowUsers.filter((x) => x !== u) })}>×</button></span>)}
+                {g.allowUsers.map((u) => <span key={u} className="chip">{g.allowNames?.[u] ?? u} <button className="x" title="移除" aria-label="移除" onClick={() => patch({ allowUsers: g.allowUsers.filter((x) => x !== u) })}><Icon name="close" size={10} /></button></span>)}
                 {g.allowUsers.length === 0 && <span className="sub">还没有授权用户</span>}
               </div>
-              {g.bindings.length > 0 && <div className="sub" style={{ marginTop: 6 }}>聊天绑定：{g.bindings.map((b) => <span key={b.chatId} className="chip" style={{ marginRight: 4 }}>{b.chatId} → {b.sessionId.slice(0, 8)} <button className="x" onClick={() => ws.request({ kind: 'im.unbind', gatewayId: g.id, chatId: b.chatId }).then(onChange).catch((e) => toast(e.message))}>×</button></span>)}</div>}
+              {g.bindings.length > 0 && <div className="sub" style={{ marginTop: 6 }}>聊天绑定：{g.bindings.map((b) => <span key={b.chatId} className="chip" style={{ marginRight: 4 }}>{b.chatId} → {b.sessionId.slice(0, 8)} <button className="x" title="解除绑定" aria-label="解除绑定" onClick={() => ws.request({ kind: 'im.unbind', gatewayId: g.id, chatId: b.chatId }).then(onChange).catch((e) => toast(e.message))}><Icon name="close" size={10} /></button></span>)}</div>}
             </div>
           )}
         </div>

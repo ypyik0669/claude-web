@@ -1,3 +1,4 @@
+import { Icon } from '@/ui/icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ws } from '@/ws/client';
 import { useStore } from '@/store';
@@ -74,7 +75,7 @@ export function LedgerView({ sessionId }: { sessionId?: string }) {
             <span>{fmtTok(r.cacheRead)}</span>
             <span>{fmtTok(r.output)}</span>
             <span>{r.costUsd ? `$${r.costUsd.toFixed(4)}` : '-'}</span>
-            <span>{r.ok ? '✓' : `✗ ${r.error ?? ''}`.slice(0, 24)}</span>
+            <span className={r.ok ? 'ok' : 'err'} title={r.ok ? '成功' : r.error ?? '失败'}>{r.ok ? <Icon name="check" size={12} /> : <><Icon name="close" size={12} /> {(r.error ?? '').slice(0, 22)}</>}</span>
           </div>
         ))}
         {rows && !shown.length && <div className="empty">没有记录</div>}

@@ -4,7 +4,9 @@
 import type { IconName } from '@/ui/icons';
 
 export type PanelId = 'tasks' | 'files' | 'usage' | 'config' | 'terminal' | 'inspector' | 'mission' | 'goals' | 'android' | 'memory' | 'orchestra';
-export type WorkbenchTab = 'live' | 'changes' | 'git' | 'files' | 'search' | 'schedules' | 'artifacts' | 'board';
+/** A chat tile's view: the conversation (`live`) or one of the per-session workbench views. */
+export const WORKBENCH_TABS = ['live', 'changes', 'git', 'files', 'search', 'schedules', 'artifacts', 'board'] as const;
+export type WorkbenchTab = (typeof WORKBENCH_TABS)[number];
 
 /**
  * The one panel table. Dock tabs, the top bar, the command palette, the pane ＋ menu and

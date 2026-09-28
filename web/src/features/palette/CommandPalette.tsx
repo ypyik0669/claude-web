@@ -63,7 +63,7 @@ export function CommandPalette() {
       { id: 'orch.run', label: '运行编排…', ic: 'play', group: '编排', run: () => useOrch.getState().ask('run') },
       { id: 'window.new', label: '在新窗口打开当前分组', ic: 'copy', group: '工作台', run: () => runCommand('window.new') },
       ...PANELS.map(panel),
-      ...THEMES.map<Cmd>((t) => ({ id: `theme.${t}`, label: `主题: ${t}${st.theme === t ? ' ✓' : ''}`, ic: 'moon', group: '主题', run: () => st.setTheme(t) })),
+      ...THEMES.map<Cmd>((t) => ({ id: `theme.${t}`, label: `主题: ${t}${st.theme === t ? '（当前）' : ''}`, ic: 'moon', group: '主题', run: () => st.setTheme(t) })),
     ];
     if (active) {
       const live = active.state !== 'history' && active.state !== 'closed' && active.state !== 'error';

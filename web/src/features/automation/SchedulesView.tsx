@@ -4,7 +4,7 @@ import { ws } from '@/ws/client';
 import { ago, clsx, fmtMs } from '@/util';
 import { dlg } from '@/ui/dialog';
 import type { PermissionMode, Schedule, ScheduleRun } from '@shared';
-import { MODE_LABEL } from '@/features/composer/Composer';
+import { MODE_LABEL } from '@/ui/terms';
 import { Icon } from '@/ui/icons';
 
 interface Template { id: string; name: string; cron: string; prompt: string; permissionMode: PermissionMode; freshSession?: boolean }

@@ -15,19 +15,26 @@ export const CJK_FONTS = [
 
 const mq = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 let systemListener: (() => void) | null = null;
+let onSystemTheme: ((t: Theme) => void) | null = null;
+
+/** The default theme: an unset `ui.theme` follows the operating system. */
+export const DEFAULT_THEME: UiTheme = 'system';
 
 export function resolveTheme(t: UiTheme | undefined): Theme {
   if (!t || t === 'system') return mq?.matches === false ? 'light' : 'dark';
   return (THEMES as readonly string[]).includes(t) ? (t as Theme) : 'dark';
 }
 
+/** Called when the OS switches light / dark while the theme follows the system (the store updates its copy + title bar). */
+export function setSystemThemeHandler(fn: ((t: Theme) => void) | null) { onSystemTheme = fn; }
+
 /** Apply every ui.* setting to the document. Idempotent; call after settings load / change. */
 export function applyUiSettings(settings: Record<string, unknown>) {
   const root = document.documentElement;
-  const theme = settings['ui.theme'] as UiTheme | undefined;
+  const theme = (settings['ui.theme'] as UiTheme | undefined) ?? DEFAULT_THEME;
   root.dataset.theme = resolveTheme(theme);
   if (theme === 'system' && mq && !systemListener) {
-    systemListener = () => { root.dataset.theme = resolveTheme('system'); };
+    systemListener = () => { const t = resolveTheme('system'); root.dataset.theme = t; onSystemTheme?.(t); };
     mq.addEventListener('change', systemListener);
   } else if (theme !== 'system' && mq && systemListener) {
     mq.removeEventListener('change', systemListener);

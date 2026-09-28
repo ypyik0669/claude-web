@@ -98,7 +98,7 @@ export function SearchView({ root }: { root: string }) {
               <span className="muted">{rel(f.path).replace(/[\\/][^\\/]+$/, '')}</span>
               <span className="grow" />
               <span className="badge">{f.matches.length}</span>
-              {showRep && <button className="x" title="替换此文件" onClick={(e) => { e.stopPropagation(); void replaceAll([{ path: f.path, lines: f.matches.map((m) => m.line).filter((l) => !excluded.has(`${f.path}:${l}`)) }]); }}>⇄</button>}
+              {showRep && <button className="x" title="替换此文件" aria-label="替换此文件" onClick={(e) => { e.stopPropagation(); void replaceAll([{ path: f.path, lines: f.matches.map((m) => m.line).filter((l) => !excluded.has(`${f.path}:${l}`)) }]); }}><Icon name="replace" size={12} /></button>}
             </div>
             {!collapsed[f.path] && f.matches.map((m) => {
               const key = `${f.path}:${m.line}`;

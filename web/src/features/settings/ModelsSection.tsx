@@ -9,6 +9,7 @@ import { modelTable, profileModels, type ModelRow } from '@/features/models/menu
 import { refreshAllModels, useGatewayGroups, useRefreshRun } from '@/features/models/data';
 import { agoText } from '@/features/models/ModelMenu';
 import '@/features/models/models.css';
+import { TERMS, ULTRACODE, effortLabel, effortTitle } from '@/ui/terms';
 
 /** stable fallback for the selectors below (a fresh `[]` per call re-renders forever: React #185) */
 const NONE: string[] = [];
@@ -139,12 +140,12 @@ export function ModelsSection() {
                 <div className="efforts">
                   {c?.supportsEffort && c.effort.length > 0 ? (
                     <>
-                      <span className="label">effort</span>
-                      {c.effort.map((e) => <span key={e} className={clsx('badge', e === c.defaultEffort && 'ok')} title={e === c.defaultEffort ? '默认' : undefined}>{e}</span>)}
-                      {c.supportsUltracode && <span className="badge" title="xhigh + 动态工作流编排，会话级；不是一个 effort 等级"><Icon name="bolt" size={10} /> ultracode</span>}
+                      <span className="label">{TERMS.effort}</span>
+                      {c.effort.map((e) => <span key={e} className={clsx('badge', e === c.defaultEffort && 'ok')} title={`${effortTitle(e)}${e === c.defaultEffort ? ' · 默认' : ''}`}>{effortLabel(e)}</span>)}
+                      {c.supportsUltracode && <span className="badge" title={ULTRACODE.title}><Icon name="bolt" size={10} /> {ULTRACODE.label}</span>}
                     </>
                   ) : (
-                    <span className="sub">没有 effort 开关</span>
+                    <span className="sub">不能调智能程度</span>
                   )}
                 </div>
                 {c?.note && <div className="sub" style={{ padding: '2px 4px' }}>{c.note}</div>}
@@ -165,7 +166,7 @@ export function ModelsSection() {
           })}
         </>
       )}
-      <div className="sub" style={{ padding: '8px 4px 0' }}>关掉的模型不再出现在输入框的模型菜单里；星标的模型在菜单里置顶。「刷新全部模型」只请求各档案的 <code>/v1/models</code>，不跑对话、不花 token；启动后也会在后台刷新超过 24 小时的列表。模型表与 effort 等级来自 <code>server/src/models/catalog.ts</code>，agent 自己上报的列表优先。</div>
+      <div className="sub" style={{ padding: '8px 4px 0' }}>关掉的模型不再出现在输入框的模型菜单里；星标的模型在菜单里置顶。「刷新全部模型」只请求各档案的 <code>/v1/models</code>，不跑对话、不花 token；启动后也会在后台刷新超过 24 小时的列表。模型表与智能程度（effort）档位来自 <code>server/src/models/catalog.ts</code>，agent 自己上报的列表优先。</div>
     </>
   );
 }

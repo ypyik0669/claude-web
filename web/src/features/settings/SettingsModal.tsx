@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { THEMES, useStore } from '@/store';
 import { clsx } from '@/util';
 import { EnvEditor, Mcp, Overview, Plugins, ProviderProfiles, Settings, SimpleList } from '@/features/panels/ConfigPanel';
-import { CJK_FONTS, DENSITIES, FONT_SIZES } from './ui-settings';
+import { CJK_FONTS, DEFAULT_THEME, DENSITIES, FONT_SIZES } from './ui-settings';
 import { SkillsSection } from './SkillsSection';
 import { ToolsSection } from './ToolsSection';
 import { AgentsSection } from './AgentsSection';
@@ -18,6 +18,11 @@ import { McpCatalog } from './McpCatalog';
 import { MemorySettings } from '@/features/memory/MemorySettings';
 import { Icon, type IconName } from '@/ui/icons';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
+import { MODE_LABEL, TERMS } from '@/ui/terms';
+import type { PermissionMode } from '@shared';
+
+/** Modes offered as the default for new sessions (dontAsk is a per-session choice, not a default). */
+const DEFAULT_MODES: PermissionMode[] = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'];
 
 /** One searchable row. `keywords` widen the match beyond the visible label. */
 export interface Entry { id: string; label: string; hint?: string; keywords?: string; render: () => ReactNode }
@@ -59,7 +64,7 @@ export function Row({ label, hint, children }: { label: string; hint?: string; c
 export function useSections(): Section[] {
   return useMemo<Section[]>(() => [
     { id: 'appearance', l: '外观', ic: 'moon', entries: [
-      { id: 'ui.theme', label: '主题', hint: '跟随系统会按操作系统的深浅色切换', keywords: 'theme dark light 深色 浅色 system', render: () => <Select k="ui.theme" def="dark" options={[{ id: 'system', l: '跟随系统' }, ...THEMES.map((t) => ({ id: t, l: t }))]} /> },
+      { id: 'ui.theme', label: '主题', hint: '跟随系统会按操作系统的深浅色切换', keywords: 'theme dark light 深色 浅色 system', render: () => <Select k="ui.theme" def={DEFAULT_THEME} options={[{ id: 'system', l: '跟随系统' }, ...THEMES.map((t) => ({ id: t, l: t }))]} /> },
       { id: 'ui.fontSize', label: '字号', hint: '整体界面字号（像素）', keywords: 'font size 字体大小', render: () => <NumberSelect k="ui.fontSize" def={14} options={FONT_SIZES} /> },
       { id: 'ui.density', label: '密度', hint: '紧凑模式减少行高与内边距', keywords: 'density compact 紧凑', render: () => <Select k="ui.density" def="comfortable" options={DENSITIES as any} /> },
       { id: 'ui.cjkFont', label: '中文字体', hint: '优先用于中日韩文字的字体', keywords: 'cjk font 中文 字体 雅黑 苹方', render: () => <Select k="ui.cjkFont" def="" options={CJK_FONTS} /> },
@@ -76,7 +81,7 @@ export function useSections(): Section[] {
     ] },
     { id: 'session', l: '会话', ic: 'chat', entries: [
       { id: 'autoContinueOnReset', label: '额度恢复后自动继续', hint: '被限流时到重置时间自动重发上一条', keywords: 'rate limit quota 限流 额度', render: () => <Toggle k="autoContinueOnReset" /> },
-      { id: 'ui.defaultMode', label: '新会话默认权限模式', keywords: 'permission mode 权限', render: () => <Select k="ui.defaultMode" def="default" options={[{ id: 'default', l: '每次询问' }, { id: 'acceptEdits', l: '自动接受编辑' }, { id: 'plan', l: '计划模式' }, { id: 'auto', l: '自动模式' }, { id: 'bypassPermissions', l: '完全权限' }]} /> },
+      { id: 'ui.defaultMode', label: '新会话默认权限模式', keywords: 'permission mode 权限', render: () => <Select k="ui.defaultMode" def="default" options={DEFAULT_MODES.map((m) => ({ id: m, l: MODE_LABEL[m] }))} /> },
       { id: 'ui.softwareRender', label: '软件渲染（桌面版）', hint: '显卡驱动异常导致黑屏 / 闪烁时打开，重启后生效', keywords: 'gpu render 黑屏 闪烁 disable-gpu', render: () => <Toggle k="ui.softwareRender" /> },
       { id: 'orchestra.maxParallel', label: '编排并发上限', hint: '一次编排运行里同时执行的任务 / 比选节点数（审批等待不占名额）', keywords: 'orchestra workflow parallel 编排 并发 多 agent', render: () => <NumberSelect k="orchestra.maxParallel" def={3} options={[1, 2, 3, 4, 6, 8]} /> },
     ] },

@@ -22,8 +22,8 @@ import { chipLabel, compatibleTypes, usableProfile, type ModelMenuItem } from '@
 import { routePick } from '@/features/models/route';
 import { providersLoaded, useGatewayStatus } from '@/features/models/data';
 import { dlg } from '@/ui/dialog';
+import { MODE_LABEL, PERMISSION_MODES, PERMISSION_MODE_ORDER, ULTRACODE, effortLabel, effortTitle } from '@/ui/terms';
 
-export const MODE_LABEL: Record<PermissionMode, string> = { default: '每次询问', acceptEdits: '自动接受编辑', plan: '计划模式', auto: '自动模式', bypassPermissions: '完全权限', dontAsk: '不询问' };
 // sessions on another machine: uploads land on this machine's disk, out of the remote agent's reach
 const REMOTE_ATTACH = '附件在本机，远端读不到，请粘贴内容（图片可以直接发）';
 
@@ -500,12 +500,12 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
                   agentDefault={agent?.model || undefined}
                   onPick={pickWelcome}
                 />
-                {wEfforts.length > 0 && <label className="chip" title={catalogNote ?? 'effort'}><span>{wEffort || 'effort'}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
-                  <select value={wEffort} onChange={(e) => setWEffort(e.target.value as EffortLevel)}><option value="">默认{CATALOG[wKind]?.defaultEffort ? `（${CATALOG[wKind]!.defaultEffort}）` : ''}</option>{wEfforts.map((l) => <option key={l} value={l}>{l}</option>)}</select>
+                {wEfforts.length > 0 && <label className="chip" title={effortTitle(wEffort || CATALOG[wKind]?.defaultEffort, catalogNote)}><span>{wEffort ? effortLabel(wEffort) : CATALOG[wKind]?.defaultEffort ? effortLabel(CATALOG[wKind]!.defaultEffort) : effortLabel(undefined)}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
+                  <select value={wEffort} onChange={(e) => setWEffort(e.target.value as EffortLevel)}><option value="">默认{CATALOG[wKind]?.defaultEffort ? `（${effortLabel(CATALOG[wKind]!.defaultEffort)}）` : ''}</option>{wEfforts.map((l) => <option key={l} value={l}>{effortLabel(l)}</option>)}</select>
                 </label>}
-                {wUltracode && <button type="button" className={clsx('chip', wUltra && 'active')} title="ultracode：xhigh + 动态工作流编排（会话级，不是一个 effort 等级）" onClick={() => setWUltra(!wUltra)}><Icon name="bolt" size={12} /> ultracode</button>}
-                <label className={clsx('chip', wMode === 'bypassPermissions' && 'warn')}><span>{MODE_LABEL[wMode]}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
-                  <select value={wMode} onChange={(e) => setWMode(e.target.value as PermissionMode)}>{(Object.keys(MODE_LABEL) as PermissionMode[]).map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}</select>
+                {wUltracode && <button type="button" className={clsx('chip', wUltra && 'active')} title={ULTRACODE.title} onClick={() => setWUltra(!wUltra)}><Icon name="bolt" size={12} /> {ULTRACODE.label}</button>}
+                <label className={clsx('chip', PERMISSION_MODES[wMode]?.danger && 'warn')} title={PERMISSION_MODES[wMode]?.desc}><span>{MODE_LABEL[wMode]}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
+                  <select value={wMode} onChange={(e) => setWMode(e.target.value as PermissionMode)}>{PERMISSION_MODE_ORDER.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}</select>
                 </label>
               </>
             ) : liveOk ? (
@@ -526,14 +526,14 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
                   disabled={swapping}
                   onPick={pickLive}
                 />
-{liveEfforts.length > 0 && <label className="chip" title="Effort"><span>{info.effort ?? 'effort'}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
-                  <select value={info.effort ?? ''} onChange={(e) => setEffort(e.target.value as EffortLevel)}><option value="" disabled>effort</option>{liveEfforts.map((l) => <option key={l} value={l}>{l}</option>)}</select>
+                {liveEfforts.length > 0 && <label className="chip" title={effortTitle(info.effort)}><span>{effortLabel(info.effort)}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
+                  <select value={info.effort ?? ''} onChange={(e) => setEffort(e.target.value as EffortLevel)}><option value="" disabled>{effortLabel(undefined)}</option>{liveEfforts.map((l) => <option key={l} value={l}>{effortLabel(l)}</option>)}</select>
                 </label>}
                 {info.supportsUltracode !== false && CATALOG[info.agent ?? 'claude']?.supportsUltracode && (
-                  <button type="button" className={clsx('chip', info.ultracode && 'active')} title="ultracode：xhigh + 动态工作流编排（会话级，不是一个 effort 等级）" onClick={() => setUltracode(!info.ultracode)}><Icon name="bolt" size={12} /> ultracode</button>
+                  <button type="button" className={clsx('chip', info.ultracode && 'active')} title={ULTRACODE.title} onClick={() => setUltracode(!info.ultracode)}><Icon name="bolt" size={12} /> {ULTRACODE.label}</button>
                 )}
-                <label className={clsx('chip', info.permissionMode === 'bypassPermissions' && 'warn')} title="权限模式"><span>{MODE_LABEL[info.permissionMode ?? 'default']}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
-                  <select value={info.permissionMode ?? 'default'} onChange={(e) => setMode(e.target.value as PermissionMode)}>{(Object.keys(MODE_LABEL) as PermissionMode[]).map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}</select>
+                <label className={clsx('chip', PERMISSION_MODES[info.permissionMode ?? 'default']?.danger && 'warn')} title={`权限：${PERMISSION_MODES[info.permissionMode ?? 'default']?.desc ?? ''}`}><span>{MODE_LABEL[info.permissionMode ?? 'default']}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
+                  <select value={info.permissionMode ?? 'default'} onChange={(e) => setMode(e.target.value as PermissionMode)}>{PERMISSION_MODE_ORDER.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}</select>
                 </label>
               </>
             ) : active ? (
