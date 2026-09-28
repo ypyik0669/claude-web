@@ -51,4 +51,11 @@ describe.skipIf(process.platform !== 'win32')('resolveSpawn (Windows .cmd shims)
     const { shim } = setup('#!/bin/sh\necho 1\n');
     expect(resolveSpawn(shim, ['serve']).via).toBe('cmd');
   });
+
+  it('refuses arguments cmd.exe would expand or split (`%VAR%`, newlines) instead of passing them mangled', () => {
+    const { shim } = setup('#!/bin/sh\necho 1\n');
+    expect(() => resolveSpawn(shim, ['--token=%USERPROFILE%'])).toThrow(/%/);
+    expect(() => resolveSpawn(shim, ['a\nb'])).toThrow(/换行/);
+    expect(resolveSpawn(shim, ['50 percent', 'x"y']).via).toBe('cmd');
+  });
 });
