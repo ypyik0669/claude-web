@@ -97,7 +97,7 @@ export class ImRouter {
   private async onCallback(gw: string, m: InboundMessage, reply: (t: string) => Promise<void>) {
     const [kind, requestId, choice] = (m.callback ?? '').split(':');
     const extra = this.callbackHandlers.get(kind);
-    if (extra) { await reply(await extra((m.callback ?? '').split(':').slice(1)).catch((e) => `出错：${e.message}`)); return; }
+    if (extra) { await reply(await extra((m.callback ?? '').split(':').slice(1), { gatewayId: gw, chatId: m.chatId, sessionId: this.bindingFor(gw, m.chatId)?.sessionId }).catch((e) => `出错：${e.message}`)); return; }
     if (kind === 'perm' || kind === 'ask') {
       const runner = this.d.pool.findPermission(requestId);
       const event = runner?.getPendingPermissions().find((p) => p.requestId === requestId);
@@ -185,8 +185,8 @@ export class ImRouter {
   }
 
   // ---- outbound ----
-  /** Button callbacks with other prefixes (e.g. `orch:` for orchestration approvals); the handler returns the reply text. */
-  callbackHandlers = new Map<string, (parts: string[]) => Promise<string>>();
+  /** Button callbacks with other prefixes (e.g. `orch:` for orchestration approvals); gets the chat and the session it is bound to, returns the reply text. */
+  callbackHandlers = new Map<string, (parts: string[], ctx: { gatewayId: string; chatId: string; sessionId?: string }) => Promise<string>>();
 
   /** Push to every chat bound to any of these sessions, once per chat. */
   async announce(sessionIds: string[], text: string, o?: { buttons?: { id: string; label: string; danger?: boolean }[] }) {

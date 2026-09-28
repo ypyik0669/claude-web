@@ -33,6 +33,8 @@ export interface CompareCandidate {
   output?: string; error?: string; worktree?: OrchWorktree;
   /** `git diff --stat base..branch` after the candidate's changes were committed */
   diffStat?: string; files?: number; costUsd?: number;
+  /** branch tip right after the candidate's changes were committed: a later tip means someone added work → never auto-delete */
+  head?: string;
 }
 export interface JudgeRun { agent: AgentKind; sessionId?: string; state: 'running' | 'done' | 'failed'; output?: string; recommended?: AgentKind; error?: string }
 
@@ -53,6 +55,10 @@ export interface NodeRun {
   /** untilDone task: the goal driving it */
   goalId?: string;
   attempts?: number;
+  /** worktrees of earlier attempts (retry / resume never delete them; the run's cleanup lists / removes them) */
+  retained?: OrchWorktree[];
+  /** non-fatal information for the user (e.g. which worktrees were kept after a merge and why) */
+  note?: string;
 }
 
 export interface OrchRun {
@@ -75,10 +81,13 @@ export type OrchestraRequest =
   | { kind: 'orchestra.run.get'; runId: string }
   | { kind: 'orchestra.run.cancel'; runId: string }
   | { kind: 'orchestra.run.resume'; runId: string }
-  | { kind: 'orchestra.run.remove'; runId: string }
+  | { kind: 'orchestra.run.remove'; runId: string; cleanup?: boolean }
   | { kind: 'orchestra.node.retry'; runId: string; nodeId: string }
   | { kind: 'orchestra.node.approve'; runId: string; nodeId: string; decision: 'approve' | 'reject'; comment?: string }
   | { kind: 'orchestra.node.pick'; runId: string; nodeId: string; winner: AgentKind }
   | { kind: 'orchestra.node.diff'; runId: string; nodeId: string; agent: AgentKind };
 
-export type OrchestraEvent = { kind: 'orchestra.changed'; run: OrchRun } | { kind: 'orchestra.workflows.changed' };
+/** Result of cleaning up a run's worktrees / branches: anything with uncommitted changes or unmerged commits is only listed. */
+export interface OrchCleanup { removed: string[]; kept: { path?: string; branch: string; reason: string }[] }
+
+export type OrchestraEvent = { kind: 'orchestra.changed'; run: OrchRun; removed?: boolean } | { kind: 'orchestra.workflows.changed' };

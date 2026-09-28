@@ -27,6 +27,7 @@ export function validateWorkflow(w: { nodes: OrchNode[] }, o: { isGitRepo: boole
   }
   for (const n of w.nodes) {
     const label = n.title || n.id;
+    if (!['task', 'compare', 'approval'].includes((n as { kind: string }).kind)) { errs.push(`「${label}」的类型 ${(n as { kind: string }).kind} 不认识（只能是 task / compare / approval）`); continue; }
     for (const d of n.dependsOn ?? []) if (!ids.has(d)) errs.push(`「${label}」依赖的节点 ${d} 不存在`);
     if (n.kind === 'task') {
       if (!n.prompt?.trim()) errs.push(`「${label}」没有提示词`);
@@ -97,6 +98,13 @@ export function topoLayers<T extends { id: string; dependsOn: string[] }>(nodes:
   return out;
 }
 
+/**
+ * Text that came from the user's run input or an agent's reply must not be able to pull other sessions
+ * into a prompt: `<session-ref` there is defused, so only the references renderPrompt itself writes (for
+ * truncated outputs) reach `expandSessionRefs`.
+ */
+export const defuseRefs = (t: string) => t.replace(/<session-ref/gi, '&lt;session-ref');
+
 export interface PromptContext { input: string; nodes: Record<string, Pick<Partial<NodeRun>, 'output' | 'approval' | 'sessionIds'>> }
 
 /**
@@ -106,15 +114,15 @@ export interface PromptContext { input: string; nodes: Record<string, Pick<Parti
  */
 export function renderPrompt(tpl: string, ctx: PromptContext): string {
   return tpl.replace(/\{\{\s*(input|nodes\.([A-Za-z0-9_-]+)\.(output|approval))\s*\}\}/g, (_m, all: string, id?: string, field?: string) => {
-    if (all === 'input') return ctx.input ?? '';
+    if (all === 'input') return defuseRefs(ctx.input ?? '');
     const n = id ? ctx.nodes[id] : undefined;
     if (!n) return '';
     if (field === 'approval') {
       if (!n.approval) return '';
       const verdict = n.approval.decision === 'approve' ? '通过' : '驳回';
-      return n.approval.comment ? `${verdict}：${n.approval.comment}` : verdict;
+      return n.approval.comment ? `${verdict}：${defuseRefs(n.approval.comment)}` : verdict;
     }
-    const out = n.output ?? '';
+    const out = defuseRefs(n.output ?? '');
     if (out.length <= OUTPUT_LIMIT) return out;
     const sid = n.sessionIds?.[n.sessionIds.length - 1];
     return `${out.slice(0, OUTPUT_LIMIT)}\n…（上游输出过长，已截断${sid ? '，完整内容见下面引用的会话' : ''}）${sid ? `\n<session-ref id="${sid}" title="上游节点 ${id}" />` : ''}`;

@@ -104,7 +104,7 @@ export class Hub {
     s.memory.on('changed', () => this.broadcast({ kind: 'memory.changed' }));
     s.library.on('changed', () => this.broadcast({ kind: 'library.changed' }));
     s.library.on('discovered', (kinds) => this.broadcast({ kind: 'library.discovered', kinds }));
-    s.orchestra.on('changed', (run) => this.broadcast({ kind: 'orchestra.changed', run }));
+    s.orchestra.on('changed', (run, removed) => this.broadcast({ kind: 'orchestra.changed', run, removed }));
     s.orchestra.on('workflows', () => this.broadcast({ kind: 'orchestra.workflows.changed' }));
   }
 
