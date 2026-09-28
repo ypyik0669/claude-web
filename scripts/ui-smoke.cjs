@@ -1202,6 +1202,22 @@ function driver() {
           await closeMenus();
           const leftover = await js('[...document.querySelectorAll(".menu")].map((m) => m.className).join(" | ")');
           check('sidebar phase starts with no menu left open by the right-panel phase', !leftover, leftover);
+          // one anchored menu app-wide (re-review N2): the header ··· and the sidebar funnel replace each other
+          await js(`window.__store.getState().openInPane(${SID}, 'replace')`);
+          if (await waitFor('!!document.querySelector(".pane.focused .sess-head .sh-more > button")', 4000)) {
+            const menusNow = () => js('[...document.querySelectorAll(".menu")].map((m) => m.className)');
+            await click('.pane.focused .sess-head .sh-more > button');
+            const headerOpen = await waitFor('!!document.querySelector(".menu.sess-menu")', 3000);
+            await click('.sidebar [data-id="filter"]');
+            await sleep(250);
+            const m1 = await menusNow();
+            check('one menu app-wide: opening the sidebar funnel closes the header ···', headerOpen && m1.length === 1 && /sb-filter/.test(m1[0]), JSON.stringify({ headerOpen, m1 }));
+            await click('.pane.focused .sess-head .sh-more > button');
+            await sleep(250);
+            const m2 = await menusNow();
+            check('… and opening the header ··· closes the funnel', m2.length === 1 && /sess-menu/.test(m2[0]), JSON.stringify(m2));
+            await closeMenus();
+          } else check('one menu app-wide: a conversation header to test with', false, 'no .sess-head in the focused pane');
           const ctxMenu = (sel) => js(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return false; el.scrollIntoView({ block: 'nearest' }); const b = el.getBoundingClientRect(); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.left + 40, clientY: b.top + 8, button: 2 })); return true; })()`);
           const count = (sel) => js(`document.querySelectorAll(${JSON.stringify(sel)}).length`);
           const exists = (sel) => js(`!!document.querySelector(${JSON.stringify(sel)})`);
@@ -1360,7 +1376,10 @@ function driver() {
           /**
            * Scenarios the seeded HOME does not have, faked client-side (`__store.setState`): other machines (one offline),
            * a conversation with a fork, one running outside every project, account limits, an undiscovered source, a
-           * live runner. Then every id of entries.ts PLACES must have been seen in its place.
+           * live runner. Then every id of entries.ts PLACES must have been seen in its place. Real events replace what
+           * is faked (`sessions.changed` / `library.changed` → the list, the hub's 5-minute `limits`, `library.*` → the
+           * sources), so for the whole scenario a `__store.subscribe` puts the fakes back whenever one of those three
+           * changes; it is removed before the real state is restored.
            */
           async function sidebarScenarios() {
             const now = Date.now();
@@ -1374,13 +1393,32 @@ function driver() {
               { sessionId: 'smoke-child', title: 'the fork', cwd: E.SMOKE_REPO, lastModified: now - 400, parentId: 'smoke-parent' },
               { sessionId: 'smoke-elsewhere', title: 'running outside the projects', cwd: elsewhere, lastModified: now - 300, live: 'running' },
             ];
-            // a sessions.changed from the server replaces the list: put the fakes back before each step
-            const inject = () => js(`(() => { const F = ${JSON.stringify(fakes)}; const s = window.__store.getState(); const have = new Set(s.sessions.map((x) => x.sessionId)); const add = F.filter((f) => !have.has(f.sessionId)); if (add.length) window.__store.setState({ sessions: [...s.sessions, ...add] }); return add.length; })()`);
             const saved = await js('JSON.stringify({ limits: window.__store.getState().limits, sources: window.__store.getState().librarySources })');
             const limits = { ok: true, capturedAt: new Date(now).toISOString(), subscriptionType: 'max', windows: [{ label: '5 小时', percent: 34, resetsAt: new Date(now + 3600e3).toISOString(), active: true }] };
             const codex = { kind: 'codex', name: 'Codex', installed: true, detected: true, joined: false, dismissed: false, enabled: false };
-            await js(`(() => { const s = window.__store.getState(); const c = ${JSON.stringify(codex)}; window.__store.setState({ limits: ${JSON.stringify(limits)}, librarySources: [...s.librarySources.filter((x) => x.kind !== 'codex'), c] }); })()`);
-            await inject();
+            const installed = await js(`(() => {
+              const st = window.__store, F = ${JSON.stringify(fakes)}, L = ${JSON.stringify(limits)}, C = ${JSON.stringify(codex)};
+              const apply = () => {
+                const s = st.getState(), patch = {};
+                const have = new Set(s.sessions.map((x) => x.sessionId));
+                const add = F.filter((f) => !have.has(f.sessionId));
+                if (add.length) patch.sessions = [...s.sessions, ...add];
+                if (s.limits !== L) patch.limits = L;
+                if (!s.librarySources.includes(C)) patch.librarySources = [...s.librarySources.filter((x) => x.kind !== C.kind), C];
+                if (Object.keys(patch).length) st.setState(patch);
+              };
+              if (window.__cwSmokeFakesOff) window.__cwSmokeFakesOff();
+              let busy = false;
+              const off = st.subscribe((s, prev) => {
+                if (busy || (s.sessions === prev.sessions && s.limits === prev.limits && s.librarySources === prev.librarySources)) return;
+                busy = true;
+                try { apply(); } finally { busy = false; }
+              });
+              window.__cwSmokeFakesOff = () => { off(); window.__cwSmokeFakesOff = null; };
+              apply();
+              return true;
+            })()`);
+            check('sidebar scenarios: fakes installed (kept by a store subscription while they run)', installed);
             await sleep(400);
             await harvest();
             check('library hint: a detected source that was not joined shows the one-line hint (加入 / 以后再说)', await exists('.sidebar .sb-hint [data-id="library-join"]') && await exists('.sidebar .sb-hint [data-id="library-later"]'));
@@ -1393,12 +1431,10 @@ function driver() {
             await harvest();
             await click('.sidebar [data-id="other"] > .sb-sec-h');
             // a fork under its parent
-            await inject();
             await click('.sidebar .sb-list [data-sid="smoke-parent"] [data-id="kids"]');
             check('the arrow before a parent lists its forks underneath', await waitFor('!!document.querySelector(\'.sidebar .sb-list [data-sid="smoke-child"].kid\')', 3000));
             await harvest();
             // other machines: grouped by machine, 5 rows then 再显示 N 个 / 收起; an offline machine says so
-            await inject();
             const peers = { rows: await count('.sidebar [data-group="peer:smokepeer"] .sb-row'), off: await exists('.sidebar [data-group="peer:offpeer"] .badge'), offRow: await exists('.sidebar [data-group="peer:offpeer"] .sb-row.offline') };
             await click('.sidebar [data-group="peer:smokepeer"] [data-id="more"]');
             const peersMore = { rows: await count('.sidebar [data-group="peer:smokepeer"] .sb-row'), less: await exists('.sidebar [data-group="peer:smokepeer"] [data-id="less"]') };
@@ -1406,7 +1442,6 @@ function driver() {
             await harvest();
             await click('.sidebar [data-group="peer:smokepeer"] [data-id="less"]');
             // the funnel lists the machines once there is another one
-            await inject();
             await click('.sidebar [data-id="filter"]');
             await harvest();
             check('funnel menu: 机器 once another machine has conversations', await exists('.menu.sb-filter [data-id="machine"]'));
@@ -1431,7 +1466,8 @@ function driver() {
             await harvest();
             await closeMenus();
             await js(`window.__store.setState((s) => { const o = s.open[${SID}]; return o ? { open: { ...s.open, [${SID}]: { ...o, state: 'history' } } } : {}; })`);
-            // back to the real list
+            // back to the real list: stop re-applying first
+            await js('window.__cwSmokeFakesOff && window.__cwSmokeFakesOff()');
             await js(`(() => { const ids = new Set(${JSON.stringify(fakes.map((f) => f.sessionId))}); const r = JSON.parse(${JSON.stringify(saved)}); window.__store.setState((s) => ({ sessions: s.sessions.filter((x) => !ids.has(x.sessionId)), limits: r.limits, librarySources: r.sources })); })()`);
             // nothing is reachable only in the table: every id of every place was on screen
             const missing = [];
