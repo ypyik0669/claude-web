@@ -28,15 +28,22 @@ else runner().catch((e) => { console.error(e.stack || e); process.exit(2); });
 
 /* ------------------------------------------------------------------ orchestration (plain node) */
 
-/** Section ids + labels straight from SettingsModal.tsx (`{ id: 'x', l: '…'`), panels from layout.ts PANELS. */
+/**
+ * Settings pages straight from features/settings/catalog.ts (`id: 'x', l: '…', ic: '…', group: '…'`, their tabs
+ * `{ id: 't', l: …, bodies: … }` and the old-id aliases of LEGACY_SECTIONS), panels from layout.ts PANELS.
+ */
 function uiInventory() {
-  const settings = fs.readFileSync(path.join(ROOT, 'web/src/features/settings/SettingsModal.tsx'), 'utf8');
-  const sections = [...settings.matchAll(/\{ id: '([\w.-]+)', l: '([^']+)', ic: '/g)].map((m) => ({ id: m[1], label: m[2] }));
+  const cat = fs.readFileSync(path.join(ROOT, 'web/src/features/settings/catalog.ts'), 'utf8');
+  const list = cat.slice(cat.indexOf('export const SETTINGS_SECTIONS'), cat.indexOf('export const VISIBLE_SECTIONS'));
+  const sections = [...list.matchAll(/id: '([\w.-]+)', l: '([^']+)', ic: '\w+', group: '(\w+)'(, advanced: true)?/g)].map((m) => ({ id: m[1], label: m[2], group: m[3], advanced: !!m[4], at: m.index, tabs: [] }));
+  for (const t of list.matchAll(/\{ id: '(\w+)', l: [^,]+, bodies: /g)) sections.filter((s) => s.at < t.index).pop()?.tabs.push(t[1]);
+  const legacy = cat.slice(cat.indexOf('export const LEGACY_SECTIONS'), cat.indexOf('};', cat.indexOf('export const LEGACY_SECTIONS')));
+  const aliases = [...legacy.matchAll(/(\w+): \{ section: '(\w+)'(?:, tab: '(\w+)')? \}/g)].map((m) => ({ old: m[1], section: m[2], tab: m[3] || '' }));
   const layout = fs.readFileSync(path.join(ROOT, 'web/src/model/layout.ts'), 'utf8');
   const block = layout.slice(layout.indexOf('export const PANELS'), layout.indexOf('];', layout.indexOf('export const PANELS')));
   const panels = [...block.matchAll(/\{ id: '(\w+)', title: '([^']+)'/g)].map((m) => ({ id: m[1], title: m[2] }));
-  if (!sections.length || !panels.length) throw new Error('could not read the settings sections / panels from the sources');
-  return { sections, panels };
+  if (sections.length < 15 || !aliases.length || !panels.length || !sections.some((s) => s.tabs.length)) throw new Error('could not read the settings pages / aliases / panels from the sources');
+  return { sections: sections.map(({ at, ...s }) => s), aliases, panels };
 }
 
 function arg(name, def) {
@@ -185,7 +192,7 @@ async function runner() {
   if (srv) {
     // the crash probe must have reached the server log through client.log
     if (r && !external && idle === 0) {
-      const ok = /\[web error\] 设置 · 模型: /.test(srv.log());
+      const ok = /\[web error\] 设置 · 模型与智能程度: /.test(srv.log());
       console.log(`${ok ? 'PASS' : 'FAIL'} boundary error reached the server log (client.log)`);
       if (!ok) failed = true;
     }
@@ -368,17 +375,68 @@ function driver() {
       await key('Escape');
       await sleep(200);
 
-      // ---- every settings section
+      // ---- settings (redesign phase 6): a full-window page, 5 groups + a collapsed 高级, every page and tab, old ids
+      phase = 'settings';
+      const onPage = (id, tab) => `(() => { const r = document.querySelector('.modal.settings.sp'); return !!r && r.dataset.section === ${JSON.stringify(id)}${tab ? ` && r.dataset.tab === ${JSON.stringify(tab)}` : ''}; })()`;
+      await js('window.__store.getState().openSettings()');
+      check('settings open on 通用', await waitFor(onPage('general'), 5000));
+      const frame = await js(`(() => { const r = document.querySelector('.modal.settings.sp').getBoundingClientRect(); return { l: Math.round(r.left), t: Math.round(r.top), w: Math.round(r.width) - innerWidth, h: Math.round(r.height) - innerHeight }; })()`);
+      check('settings fill the window (not a dialog)', frame.l === 0 && frame.t === 0 && frame.w === 0 && frame.h === 0, JSON.stringify(frame));
+      const nav = await js(`({ items: document.querySelectorAll('.sp-nav .sp-si').length, groups: [...document.querySelectorAll('.sp-nav .sp-gh')].map((g) => g.textContent.trim()), adv: document.querySelector('.sp-adv-h')?.getAttribute('aria-expanded') })`);
+      check('settings nav: ≤ 15 pages in 5 groups, 高级 collapsed', nav.items <= 15 && nav.items === inv.sections.filter((s) => !s.advanced).length && nav.groups.join(',') === '常用,模型,扩展,连接,数据,高级' && nav.adv === 'false', JSON.stringify(nav));
+      const wbRow = await js(`!!document.querySelector('.modal.settings [data-entry="ui.workbench"] .toggle')`);
+      check('「显示工作台工具」 is on 通用', wbRow);
+      await shot('settings-general');
       for (const s of inv.sections) {
         phase = `settings:${s.id}`;
         await js(`window.__store.getState().openSettings({ section: ${JSON.stringify(s.id)} })`);
-        const opened = await waitFor(`document.querySelector('.modal.settings .set-head h3')?.textContent === ${JSON.stringify(s.label)}`, 5000);
-        await sleep(1500); // requests the section fires on mount
-        const err = await noBoundary('.modal.settings');
-        check(`settings · ${s.label}`, opened && !err, err || (opened ? '' : 'section did not open'));
+        const opened = await waitFor(`${onPage(s.id)} && document.querySelector('.modal.settings .sp-title')?.textContent === ${JSON.stringify(s.label)}`, 5000);
+        await sleep(1500); // requests the page fires on mount
+        let err = await noBoundary('.modal.settings');
+        if (s.advanced) err = err || ((await js(`document.querySelector('.sp-adv-h')?.getAttribute('aria-expanded')`)) === 'true' ? '' : '高级 did not expand for an advanced page');
+        check(`settings · ${s.label}`, opened && !err, err || (opened ? '' : 'page did not open'));
         await shot(`settings-${s.id}`);
+        for (const t of s.tabs.slice(1)) {
+          await click(`.modal.settings .sp-tabs [data-tab="${t}"]`);
+          const on = await waitFor(onPage(s.id, t), 3000);
+          await sleep(1500);
+          const terr = await noBoundary('.modal.settings');
+          check(`settings · ${s.label} › ${t}`, on && !terr, terr || (on ? '' : 'tab did not open'));
+          await shot(`settings-${s.id}-${t}`);
+        }
       }
-      await js('window.__store.setState({ settingsOpen: null })');
+      // the old flat-window ids still open the page (and tab) that has their content now
+      for (const a of inv.aliases) {
+        phase = `settings:alias:${a.old}`;
+        await js(`window.__store.getState().openSettings({ section: ${JSON.stringify(a.old)} })`);
+        check(`settings · old id ${a.old} → ${a.section}${a.tab ? `/${a.tab}` : ''}`, await waitFor(onPage(a.section, a.tab), 3000));
+      }
+      // reveal: an entry under 更多选项 opens it and is highlighted
+      phase = 'settings:reveal';
+      await js('window.__store.getState().openSettings({ reveal: "ui.softwareRender" })');
+      check('reveal opens 更多选项 and highlights the row', await waitFor(`${onPage('general')} && !!document.querySelector('.sp-more.open [data-entry="ui.softwareRender"].reveal')`, 3000));
+      // search: rows with a 分组 › 分区 crumb; a part under 更多选项 jumps there and opens it
+      phase = 'settings:search';
+      await js('window.__store.getState().openSettings()');
+      await waitFor(onPage('general'), 3000);
+      wc.focus();
+      await key('/');
+      const searchFocused = await js(`document.activeElement === document.querySelector('.sp-search input')`);
+      if (!searchFocused) await click('.sp-search input');
+      wc.insertText('托盘');
+      const tray = await waitFor(`[...document.querySelectorAll('.sp-hit')].some((h) => h.querySelector('[data-entry="ui.closeToTray"]') && h.querySelector('.sp-crumb')?.textContent === '常用 › 通用')`, 3000);
+      check('search finds a row with its 分组 › 分区 crumb (「/」 focuses the search)', tray && searchFocused, JSON.stringify({ tray, searchFocused }));
+      await shot('settings-search');
+      await js(`(() => { const i = document.querySelector('.sp-search input'); i.select(); })()`);
+      wc.insertText('ssh');
+      const hostHit = await waitFor(`!!document.querySelector('.sp-jump[data-target="remote#hosts"]')`, 3000);
+      await click('.sp-jump[data-target="remote#hosts"]');
+      const hosts = await waitFor(`${onPage('remote')} && !!document.querySelector('.sp-more.open [data-body="hosts"]') && !document.querySelector('.sp-hits')`, 3000);
+      check('search finds a part under 更多选项 and opens it there', hostHit && hosts, JSON.stringify({ hostHit, hosts }));
+      // Esc in the page closes it; the app underneath was never unmounted
+      await click('.modal.settings .sp-title');
+      await key('Escape');
+      check('Esc closes the settings page', await waitFor('!document.querySelector(".modal.settings") && !!document.querySelector(".sidebar") && !!document.querySelector(".pane")', 3000));
       await sleep(300);
 
       // ---- every dock panel
@@ -526,12 +584,12 @@ function driver() {
         await js('window.__store.getState().openSettings({ section: "models" })');
         await sleep(800);
         expectErrors = true;
-        await js('window.__cwCrash("设置 · 模型")');
-        const caught = await waitFor('!!document.querySelector(\'.modal.settings .err-boundary[data-area="设置 · 模型"]\')', 5000);
-        const rest = await js('!!document.querySelector(".modal.settings .set-nav") && !!document.querySelector(".sidebar")');
+        await js('window.__cwCrash("设置 · 模型与智能程度")');
+        const caught = await waitFor('!!document.querySelector(\'.modal.settings .err-boundary[data-area="设置 · 模型与智能程度"]\')', 5000);
+        const rest = await js('!!document.querySelector(".modal.settings .sp-nav") && !!document.querySelector(".sidebar")');
         check('boundary catches a crash in its own section only', caught && rest);
         await shot('crash-boundary');
-        await js('document.querySelector(\'.modal.settings .err-boundary[data-area="设置 · 模型"] .eb-actions .btn\').click()');
+        await js('document.querySelector(\'.modal.settings .err-boundary[data-area="设置 · 模型与智能程度"] .eb-actions .btn\').click()');
         await sleep(600);
         expectErrors = false;
         check('重试 remounts the section', !(await js('!!document.querySelector(".modal.settings .err-boundary")')));
