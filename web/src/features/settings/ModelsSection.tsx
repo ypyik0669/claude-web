@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '@/store';
+
+const NONE: string[] = [];
 import { ws } from '@/ws/client';
 import { clsx } from '@/util';
 import { Icon, AGENT_ICONS } from '@/ui/icons';
@@ -25,8 +27,9 @@ const AGENTS: { kind: AgentKind; name: string }[] = [
  * (`ui.disabledModels`) and favourites (`ui.favoriteModels`) feed the composer's model menu.
  */
 export function ModelsSection() {
-  const disabled = useStore((s) => (s.settings['ui.disabledModels'] as string[] | undefined) ?? []);
-  const favorites = useStore((s) => (s.settings['ui.favoriteModels'] as string[] | undefined) ?? []);
+  // a selector must return a stable reference: a fresh `[]` per call makes zustand re-render forever (React #185)
+  const disabled = useStore((s) => (s.settings['ui.disabledModels'] as string[] | undefined) ?? NONE);
+  const favorites = useStore((s) => (s.settings['ui.favoriteModels'] as string[] | undefined) ?? NONE);
   const setSetting = useStore((s) => s.setSetting);
   const providers = useStore((s) => s.providers);
   const toast = useStore((s) => s.toast);
