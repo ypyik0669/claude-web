@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { CORE_PANELS, PANELS, WORKBENCH_TABS, type Dock } from '@/model/layout';
 import { ENTRY_CLICKS, MORE_PANELS, minClicks, panelCommandLabel, panelEntries, viewEntries, viewTarget } from './panel-entries';
 import { WB_VIEWS } from './wb-views';
+import { ACCOUNT, ACCOUNT_PANELS, AUTOMATION, AUTOMATION_PANELS } from '@/features/sidebar/entries';
 
 // the 11 panels of the pre-redesign dock: none may disappear
 const OLD_PANELS = ['mission', 'goals', 'orchestra', 'memory', 'tasks', 'files', 'usage', 'config', 'terminal', 'inspector', 'android'];
@@ -38,6 +39,25 @@ describe('every panel is reachable in ≤ 2 clicks', () => {
     expect(panelCommandLabel(d, p('files'), true)).toBe('关闭审阅面板');
   });
 
+  it('the sidebar\'s entries (same ids as sidebar/entries.ts): 自动化 → 定时任务 / 目标 / 编排, account → 用量 / 配置中心, 2 clicks', () => {
+    expect(ENTRY_CLICKS.sidebarAutomation).toBe(2);
+    expect(ENTRY_CLICKS.accountMenu).toBe(2);
+    // every item of the 自动化 menu is a panel, and only those are counted
+    expect(Object.keys(AUTOMATION_PANELS).sort()).toEqual([...AUTOMATION].sort());
+    for (const k of Object.keys(ACCOUNT_PANELS)) expect(ACCOUNT as readonly string[]).toContain(k);
+    for (const p of PANELS) {
+      expect(panelEntries(p.id).includes('sidebarAutomation')).toBe((Object.values(AUTOMATION_PANELS) as string[]).includes(p.id));
+      expect(panelEntries(p.id).includes('accountMenu')).toBe((Object.values(ACCOUNT_PANELS) as string[]).includes(p.id));
+    }
+    expect(panelEntries('tasks')).toContain('sidebarAutomation');
+    expect(panelEntries('goals')).toContain('sidebarAutomation');
+    expect(panelEntries('orchestra')).toContain('sidebarAutomation');
+    expect(panelEntries('usage')).toContain('accountMenu');
+    expect(panelEntries('config')).toContain('accountMenu');
+    // 定时任务 is also a view: 自动化 reaches it in 2 clicks with or without a conversation
+    expect(viewEntries('schedules')).toContain('sidebarAutomation');
+  });
+
   it('the 「更多」 menu holds exactly the extra tier (never a fixed tab)', () => {
     expect(MORE_PANELS.map((p) => p.id)).toEqual(PANELS.filter((p) => p.tier === 'extra').map((p) => p.id));
     for (const p of MORE_PANELS) expect(CORE_PANELS).not.toContain(p.id);
@@ -50,14 +70,16 @@ describe('the old 8 workbench tabs', () => {
   it('each is still a view with an entry in ≤ 2 clicks (header ··· / palette)', () => {
     expect(WB_VIEWS.map((v) => v.id).sort()).toEqual(views.slice().sort());
     for (const v of views) {
-      expect(viewEntries(v)).toEqual(['headerMore', 'palette']);
+      expect(viewEntries(v)).toEqual(v === 'schedules' ? ['headerMore', 'palette', 'sidebarAutomation'] : ['headerMore', 'palette']);
       expect(minClicks(viewEntries(v))).toBeLessThanOrEqual(2);
     }
   });
 
   it('the entries come from the menus’ own tables: a conversation on another machine only offers 生成的文件', () => {
-    expect(views.filter((v) => viewEntries(v, true).length)).toEqual(['artifacts']);
-    for (const v of views) if (v !== 'artifacts') expect(viewEntries(v, true)).toEqual([]);
+    // (定时任务 are this machine's: 自动化 still opens them — on a phone with a hint instead, see openSchedules)
+    const header = (v: (typeof views)[number]) => viewEntries(v, true).filter((e) => e !== 'sidebarAutomation');
+    expect(views.filter((v) => header(v).length)).toEqual(['artifacts']);
+    for (const v of views) if (v !== 'artifacts') expect(header(v)).toEqual([]);
   });
 
   it('on a desktop they open in the right panel (spec §4.2) — except 定时任务, which waits for the automation page', () => {

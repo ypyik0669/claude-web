@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { Row } from './controls';
@@ -17,8 +16,8 @@ export function AccountSection() {
   const [busy, setBusy] = useState(false);
   const check = (force = false) => {
     setBusy(true);
-    ws.request<AuthStatus>({ kind: 'config.auth', force })
-      .then((a) => setAuth(a ?? { loggedIn: false }))
+    useStore.getState().checkAuth(force)
+      .then((a) => setAuth((a as AuthStatus | null) ?? { loggedIn: false }))
       .catch(() => setAuth({ loggedIn: false, error: true }))
       .finally(() => setBusy(false));
   };

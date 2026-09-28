@@ -64,7 +64,13 @@ function uiInventory() {
   const panels = [...block.matchAll(/\{ id: '(\w+)', title: '([^']+)'/g)].map((m) => ({ id: m[1], title: m[2] }));
   const withMore = sections.flatMap((s) => s.pages.filter((p) => p.more.length || p.moreEntries.length));
   if (sections.length < 15 || aliases.length < 5 || !panels.length || !sections.some((s) => s.tabs.length) || withMore.length < 5 || !aliases.some((a) => a.more)) throw new Error('could not read the settings pages / 更多选项 / aliases / panels from the sources');
-  return { sections: sections.map(({ at, ...s }) => s), aliases, panels };
+  // the sidebar's entry ids by place (web/src/features/sidebar/entries.ts PLACES): the sidebar phase must find each in the DOM
+  const sbSrc = fs.readFileSync(path.join(ROOT, 'web/src/features/sidebar/entries.ts'), 'utf8');
+  const lists = Object.fromEntries([...sbSrc.matchAll(/export const (\w+) = \[([^\]]*)\] as const;/g)].map((m) => [m[1], [...m[2].matchAll(/'([\w-]+)'/g)].map((x) => x[1])]));
+  const placesAt = sbSrc.indexOf('export const PLACES');
+  const sidebar = Object.fromEntries([...sbSrc.slice(placesAt, sbSrc.indexOf('} as const;', placesAt)).matchAll(/(\w+): ([A-Z_]+)\b/g)].map((m) => [m[1], lists[m[2]]]));
+  if (Object.keys(sidebar).length < 8 || Object.values(sidebar).some((v) => !v || !v.length)) throw new Error('could not read the sidebar PLACES from entries.ts');
+  return { sections: sections.map(({ at, ...s }) => s), aliases, panels, sidebar };
 }
 
 function arg(name, def) {
@@ -186,7 +192,7 @@ async function runner() {
     SMOKE_SID: seed?.sid ?? '',
     SMOKE_SHOW: arg('--show', false) ? '1' : '',
     SMOKE_INVENTORY: JSON.stringify(inv),
-  }, (idle + 240) * 1000);
+  }, (idle + 400) * 1000);
   let r = null;
   try { r = JSON.parse(fs.readFileSync(result, 'utf8')); } catch { /* electron died */ }
   let failed = !r || code !== 0;
@@ -196,7 +202,7 @@ async function runner() {
     console.log(`\nconsole errors/warnings: ${bad.length}${r.console.length !== bad.length ? ` (+${r.console.length - bad.length} expected from the crash probe)` : ''}`);
     for (const m of bad.slice(0, 40)) console.log(`  [${m.phase}] ${m.level}: ${m.message}`);
     if (bad.length || r.checks.some((c) => !c.ok)) failed = true;
-    console.log(`screenshots: ${r.shots.length} in ${out}`);
+    console.log(`screenshots: ${r.shots.length} in ${out}${r.seconds ? ` (driver: ${r.seconds} s)` : ""}`);
     if (r.idle && idle) {
       const s = spawnSummary(spawnLog, r.idle.start, r.idle.end);
       const pre = spawnSummary(spawnLog, 0, r.idle.start); // server start → UI loaded → session opened → settled
@@ -235,13 +241,14 @@ function driver() {
   const log = (s) => { try { fs.appendFileSync(logFile, `${new Date().toISOString()} ${s}\n`); } catch { /* ignore */ } };
   try { fs.writeFileSync(logFile, ''); } catch { /* ignore */ }
   const inv = JSON.parse(E.SMOKE_INVENTORY);
-  const res = { checks: [], console: [], shots: [], idle: null };
+  const res = { checks: [], console: [], shots: [], idle: null, startedAt: Date.now(), seconds: 0 };
   let phase = 'load';
   let expectErrors = false;
   const check = (name, ok, detail) => { res.checks.push({ name, ok: !!ok, detail: detail || undefined }); log(`${ok ? 'PASS' : 'FAIL'} ${name} ${detail || ''}`); };
-  const finish = (code) => { try { fs.writeFileSync(E.SMOKE_RESULT, JSON.stringify(res, null, 2)); } catch { /* ignore */ } app.exit(code); };
+  const finish = (code) => { res.seconds = Math.round((Date.now() - res.startedAt) / 1000); try { fs.writeFileSync(E.SMOKE_RESULT, JSON.stringify(res, null, 2)); } catch { /* ignore */ } app.exit(code); };
   process.on('uncaughtException', (e) => { log(`uncaught ${e.stack || e}`); check('driver', false, String(e.message || e)); finish(3); });
-  const hardStop = setTimeout(() => { check('driver finished in time', false); finish(6); }, (Number(E.SMOKE_IDLE || 0) + 200) * 1000);
+  // the right-panel (phase 2) and sidebar (phase 4) phases together take ~4 minutes on a busy machine
+  const hardStop = setTimeout(() => { check('driver finished in time', false); finish(6); }, (Number(E.SMOKE_IDLE || 0) + 360) * 1000);
 
   app.whenReady().then(async () => {
     const show = E.SMOKE_SHOW === '1';
@@ -866,7 +873,9 @@ function driver() {
           const drawer = await waitFor('document.querySelector(".app").classList.contains("drawer-open") && !!document.querySelector(".sidebar.has-resizer")', 3000);
           check('phone: 展开侧栏 opens the sidebar drawer', drawer);
           await shot('phone-drawer');
-          await click('.sidebar .nav[title^="设置"]');
+          const drawerParts = await js(`({ nav: [...document.querySelectorAll('.sidebar .sb-nav [data-id]')].map((e) => e.dataset.id), account: !!document.querySelector('.sidebar .sb-account [data-id="account"]') })`);
+          check('phone: the drawer is the same sidebar (新对话 / 搜索 / 自动化, account row)', ['new', 'search', 'automation'].every((x) => drawerParts.nav.includes(x)) && drawerParts.account, JSON.stringify(drawerParts));
+          await click('.sidebar .sb-account [data-id="settings"]');
           const settings = await waitFor('!!document.querySelector(".modal.settings")', 3000);
           await sleep(200);
           const phoneFocus = await js('document.activeElement === document.querySelector(".modal.settings.sp")');
@@ -1189,8 +1198,299 @@ function driver() {
           await sleep(300);
           phase = 'right-panel';
         }
-        const err3 = await noBoundary('.dock');
-        check('right panel checks without error boundary', !err3, err3);
+        const errRp = await noBoundary('.dock');
+        check('right panel checks without error boundary', !errRp, errRp);
+
+        {
+          // ---- redesign phase 4: the sidebar — every entry point of the old one is still reachable
+          // (ids from web/src/features/sidebar/entries.ts; menus are checked by what they list, not by how they look)
+          phase = 'sidebar';
+          const SID = JSON.stringify(E.SMOKE_SID);
+          const ids = (sel) => js(`[...document.querySelectorAll(${JSON.stringify(sel)})].map((e) => e.dataset.id)`);
+          const has = (list, want) => want.every((x) => list.includes(x));
+          const closeMenus = async () => { await js('document.body.click()'); await sleep(250); };
+          await js('window.__store.setState({ sidebarOpen: true })'); // the phone phase closed it
+          await waitFor('!!document.querySelector(".sidebar .sb-nav")', 3000);
+          await sleep(300);
+          // the right-panel phase before this one opens the header ··· and panel menus: nothing of it may be left over
+          // (the one-menu checks below count menus)
+          await js('window.dispatchEvent(new Event("cw:close-menus"))');
+          await closeMenus();
+          const leftover = await js('[...document.querySelectorAll(".menu")].map((m) => m.className).join(" | ")');
+          check('sidebar phase starts with no menu left open by the right-panel phase', !leftover, leftover);
+          // one anchored menu app-wide (re-review N2): the header ··· and the sidebar funnel replace each other
+          await js(`window.__store.getState().openInPane(${SID}, 'replace')`);
+          if (await waitFor('!!document.querySelector(".pane.focused .sess-head .sh-more > button")', 4000)) {
+            const menusNow = () => js('[...document.querySelectorAll(".menu")].map((m) => m.className)');
+            await click('.pane.focused .sess-head .sh-more > button');
+            const headerOpen = await waitFor('!!document.querySelector(".menu.sess-menu")', 3000);
+            await click('.sidebar [data-id="filter"]');
+            await sleep(250);
+            const m1 = await menusNow();
+            check('one menu app-wide: opening the sidebar funnel closes the header ···', headerOpen && m1.length === 1 && /sb-filter/.test(m1[0]), JSON.stringify({ headerOpen, m1 }));
+            await click('.pane.focused .sess-head .sh-more > button');
+            await sleep(250);
+            const m2 = await menusNow();
+            check('… and opening the header ··· closes the funnel', m2.length === 1 && /sess-menu/.test(m2[0]), JSON.stringify(m2));
+            await closeMenus();
+          } else check('one menu app-wide: a conversation header to test with', false, 'no .sess-head in the focused pane');
+          const ctxMenu = (sel) => js(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return false; el.scrollIntoView({ block: 'nearest' }); const b = el.getBoundingClientRect(); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.left + 40, clientY: b.top + 8, button: 2 })); return true; })()`);
+          const count = (sel) => js(`document.querySelectorAll(${JSON.stringify(sel)}).length`);
+          const exists = (sel) => js(`!!document.querySelector(${JSON.stringify(sel)})`);
+          // every id of entries.ts PLACES must be seen in the DOM, each in its own place, at some point of this phase
+          const PLACES = inv.sidebar;
+          const SCOPES = {
+            top: '.sidebar .sb-top [data-id], .sidebar .sb-nav [data-id]',
+            automation: '.menu.sb-auto-menu [data-id]',
+            section: '.sidebar .sb-sec[data-id], .sidebar .sb-group[data-id]',
+            head: '.sidebar [data-id="projects"] > .sb-sec-h [data-id]',
+            filter: '.menu.sb-filter [data-id]',
+            project: '.menu.sb-menu[aria-label^="项目"] [data-id], .sidebar .sb-group-head .acts [data-id]',
+            row: '.sidebar .sb-list [data-id], .sidebar .sb-attn [data-id]',
+            rowMenu: '.menu.sess-menu [data-id]',
+            account: '.sidebar .sb-account [data-id]',
+            hint: '.sidebar .sb-hint [data-id]',
+          };
+          const seen = {};
+          const harvest = async () => {
+            const got = await js(`(() => { const S = ${JSON.stringify(SCOPES)}; const o = {}; for (const p of Object.keys(S)) o[p] = [...document.querySelectorAll(S[p])].map((e) => e.dataset.id); return o; })()`);
+            for (const p of Object.keys(got)) for (const id of got[p]) if ((PLACES[p] || []).includes(id)) (seen[p] = seen[p] || new Set()).add(id);
+          };
+          const sb = await js(`({ chipRows: !!document.querySelector('.sidebar .sb-sources, .sidebar .src-chip, .sidebar .sb-search, .sidebar .lib-banner'), top: [...document.querySelectorAll('.sidebar .sb-top [data-id], .sidebar .sb-nav [data-id]')].map((e) => e.dataset.id), head: [...document.querySelectorAll('.sidebar [data-id="projects"] > .sb-sec-h [data-id]')].map((e) => e.dataset.id), account: [...document.querySelectorAll('.sidebar .sb-account [data-id]')].map((e) => e.dataset.id), row: !!document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + '] [data-id="status"]') })`);
+          check('sidebar: no chip / filter-box rows; 新对话 · 搜索 · 自动化; funnel + 打开文件夹 on 项目; account row (connection, settings); the row ends in one status',
+            !sb.chipRows && has(sb.top, ['collapse', 'new', 'search', 'automation']) && has(sb.head, ['filter', 'add-project']) && has(sb.account, ['account', 'connection', 'settings']) && sb.row, JSON.stringify(sb));
+          await harvest();
+          await shot('sidebar');
+          // the funnel: sources, machines (when there are other machines), archived, multi-select, the filter box
+          await click('.sidebar [data-id="filter"]');
+          const fm = await ids('.menu.sb-filter [data-id]');
+          const fmIn = await js('(() => { const m = document.querySelector(".menu.sb-filter"); if (!m) return false; const r = m.getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })()');
+          check('funnel menu: filter box, sources, 显示已归档, 选择多个, 管理对话来源 — inside the window', has(fm, ['query', 'source', 'archived', 'select', 'library']) && fmIn, JSON.stringify({ fm, fmIn }));
+          await harvest();
+          await shot('sidebar-filter');
+          if (E.SMOKE_READONLY !== '1') {
+            wc.insertText('zzz-no-such-conversation');
+            await sleep(400);
+            const filtered = await js('({ summary: document.querySelector(".sidebar .sb-filtered .what")?.textContent || "", rows: document.querySelectorAll(".sidebar .sb-list .sb-row").length })');
+            check('the filter box filters the list and the list says it is filtered', filtered.rows === 0 && filtered.summary.includes('zzz-no-such'), JSON.stringify(filtered));
+            // the 已筛选 row pushed the funnel down: the menu follows its anchor instead of covering it
+            const follow = await js('(() => { const b = document.querySelector(".sidebar [data-id=filter]")?.getBoundingClientRect(); const m = document.querySelector(".menu.sb-filter")?.getBoundingClientRect(); return !!b && !!m && (m.top >= b.bottom - 1 || m.bottom <= b.top + 1); })()');
+            check('the funnel menu follows its button when the list above it changes', follow);
+            await closeMenus();
+            await click('.sidebar .sb-filtered .link');
+            check('清除 brings the list back', await waitFor(`!document.querySelector('.sidebar .sb-filtered') && !!document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + ']')`, 3000));
+          }
+          await closeMenus();
+          // one menu at a time: with the funnel open, 自动化 replaces it (the toggles stop the click that closes menus,
+          // so only the one menu state can close the other; the funnel's menu does not cover the 自动化 row)
+          await click('.sidebar [data-id="filter"]');
+          await click('.sidebar [data-id="automation"]');
+          const one = { menus: await count('.menu.sb-menu, .menu.sess-menu'), auto: await exists('.menu.sb-auto-menu'), funnel: await exists('.menu.sb-filter') };
+          check('the sidebar shows one menu at a time (漏斗 → 自动化 closes the funnel)', one.menus === 1 && one.auto && !one.funnel, JSON.stringify(one));
+          // 自动化 → the schedules / goals / orchestration panels (until the automation page)
+          if (!one.auto) await click('.sidebar [data-id="automation"]');
+          const am = await ids('.menu.sb-auto-menu [data-id]');
+          check('自动化 lists 定时任务 / 目标 / 编排', has(am, ['schedules', 'goals', 'orchestra']), JSON.stringify(am));
+          await harvest();
+          await click('.menu.sb-auto-menu [data-id="goals"]');
+          check('自动化 → 目标 shows the goals panel', await waitFor(`(() => { const d = window.__store.getState().layout.dock; return d.open && d.active === 'goals'; })()`, 3000));
+          const dockClosed = `window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`;
+          await js(dockClosed);
+          await sleep(300);
+          // 自动化 → 定时任务: from a closed right panel, two clicks to the list (任务, its scheduled tasks unfolded; openSchedules)
+          let clicks = 0;
+          const counted = async (sel) => { clicks++; return click(sel); };
+          await counted('.sidebar [data-id="automation"]');
+          await counted('.menu.sb-auto-menu [data-id="schedules"]');
+          const schedVisible = `(() => { const v = document.querySelector('.dock:not([hidden]) .dock-panel[data-panel="tasks"]:not([hidden]) .sched-view'); return !!v && v.getBoundingClientRect().height > 0; })()`;
+          const sched = await waitFor(schedVisible, 4000);
+          check('自动化 → 定时任务 shows the scheduled-task list, in 2 clicks', sched && clicks === 2, await js(`JSON.stringify({ clicks: ${clicks}, dock: window.__store.getState().layout.dock, toasts: [...document.querySelectorAll('.toast')].map((t) => t.textContent) })`));
+          await js(dockClosed);
+          await sleep(300);
+          // the account row: quota, today's spend, usage & ledger, the config panel, appearance, shortcuts, palette
+          await click('.sidebar [data-id="account"]');
+          const acc = await ids('.menu.sb-acct-menu [data-id]');
+          check('account popover: 今日费用, 用量与账本, 配置中心, 外观, 快捷键, 命令面板', has(acc, ['today', 'usage', 'config', 'appearance', 'shortcuts', 'palette']), JSON.stringify(acc));
+          await harvest();
+          await shot('sidebar-account');
+          await closeMenus();
+          // 账户 → 用量与账本 / 配置中心: two clicks to that right-panel tab
+          for (const [item, label] of [['usage', '用量与账本'], ['config', '配置中心']]) {
+            await js(dockClosed);
+            await sleep(300);
+            await click('.sidebar [data-id="account"]');
+            await click(`.menu.sb-acct-menu [data-id="${item}"]`);
+            const shown = await waitFor(`(() => { const d = window.__store.getState().layout.dock; return d.open && d.active === '${item}' && !!document.querySelector('.dock:not([hidden]) .dock-panel[data-panel="${item}"]:not([hidden])'); })()`, 4000);
+            check(`账户 → ${label} shows that right-panel tab (2 clicks)`, shown, await js('JSON.stringify(window.__store.getState().layout.dock)'));
+          }
+          await js(dockClosed);
+          await sleep(300);
+          // the conversation menu (right-click = ···): every session action, by capability
+          await ctxMenu(`.sidebar .sb-list [data-sid=${SID}]`);
+          await sleep(300);
+          const rm = await ids('.menu.sess-menu [data-id]');
+          check('conversation right-click menu: open in tab / split, resume, pin, folder, VS Code, reference, rename, fork, archive, hand-over, native CLI, copy id, delete',
+            has(rm, ['open-tab', 'open-split', 'resume', 'pin', 'explorer', 'vscode', 'reference', 'rename', 'fork', 'archive', 'handoff', 'native-cli', 'copy-id', 'delete']), JSON.stringify(rm));
+          await harvest();
+          await shot('sidebar-row-menu');
+          if (E.SMOKE_READONLY !== '1') {
+            await click('.menu.sess-menu [data-id="pin"]');
+            check('置顶 moves the conversation into the 置顶 section', await waitFor(`!!document.querySelector('.sidebar [data-group="__pinned"] [data-sid=' + ${JSON.stringify(SID)} + ']')`, 4000));
+            await harvest();
+            await js(`window.__store.getState().setSessionMeta(${SID}, { pinned: false })`);
+            await waitFor(`!document.querySelector('.sidebar [data-group="__pinned"]')`, 4000);
+            // a project: its right-click menu has everything the old workspace ··· had
+            await js(`window.__store.getState().addWorkspace(${JSON.stringify(E.SMOKE_REPO)})`);
+            const proj = await waitFor(`!!document.querySelector('.sidebar [data-id="projects"] .sb-group [data-sid=' + ${JSON.stringify(SID)} + ']')`, 5000);
+            await ctxMenu(`.sidebar [data-id="projects"] .sb-group:has([data-sid=${SID}]) .sb-group-head`);
+            await sleep(300);
+            const pm = await ids('.menu.sb-menu[aria-label^="项目"] [data-id]');
+            check('a project (opened folder) groups its conversations; its menu: new here, worktree, terminal, rename, folder, VS Code, remove', proj && has(pm, ['new-here', 'worktree', 'terminal', 'rename', 'explorer', 'vscode', 'remove']), JSON.stringify({ proj, pm }));
+            await harvest();
+            await closeMenus();
+            // 需要你: a conversation waiting for a permission shows there and at its row's end (the request is faked client-side)
+            await js(`window.__store.setState((s) => { const o = s.open[${SID}]; return o ? { open: { ...s.open, [${SID}]: { ...o, state: 'waiting', pending: [{ requestId: 'smoke-fake', sessionId: ${SID}, toolName: 'Bash', input: { command: 'echo smoke' } }] } } } : {}; })`);
+            const attn = await waitFor(`(() => { const a = document.querySelector('.sidebar [data-id="attention"] [data-sid=' + ${JSON.stringify(SID)} + '] [data-id="status"]'); const r = document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + '] [data-id="status"]'); return !!a && a.textContent === '待确认' && r && r.textContent === '待确认'; })()`, 3000);
+            check('需要你 lists a conversation waiting for a permission; its row ends in 待确认', attn);
+            await harvest();
+            await shot('sidebar-needs-you');
+            // the same conversation is in 需要你 and in its project: a right-click opens one menu, on the row that was used
+            await ctxMenu(`.sidebar [data-id="attention"] [data-sid=${SID}]`);
+            await sleep(300);
+            const attnMenu = { menus: await count('.menu.sess-menu'), inAttn: await count('.sidebar [data-id="attention"] .menu.sess-menu') };
+            check('right-click on a 需要你 row opens exactly one conversation menu, there', attnMenu.menus === 1 && attnMenu.inAttn === 1, JSON.stringify(attnMenu));
+            await closeMenus();
+            await js(`window.__store.setState((s) => { const o = s.open[${SID}]; return o ? { open: { ...s.open, [${SID}]: { ...o, state: 'history', pending: [] } } } : {}; })`);
+            check('需要你 disappears when nothing waits', await waitFor('!document.querySelector(\'.sidebar [data-id="attention"]\')', 3000));
+          }
+          // Shift-click starts multi-select (batch archive / delete); Esc ends it
+          const rowAt = await js(`(() => { const el = document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + '] .t'); if (!el) return null; el.scrollIntoView({ block: 'nearest' }); const b = el.getBoundingClientRect(); return { x: Math.round(b.left + 20), y: Math.round(b.top + b.height / 2) }; })()`);
+          if (rowAt) {
+            wc.sendInputEvent({ type: 'mouseDown', x: rowAt.x, y: rowAt.y, button: 'left', clickCount: 1, modifiers: ['shift'] });
+            wc.sendInputEvent({ type: 'mouseUp', x: rowAt.x, y: rowAt.y, button: 'left', clickCount: 1, modifiers: ['shift'] });
+            await sleep(300);
+          }
+          const selOn = await js('({ bar: !!document.querySelector(".sidebar .sel-bar"), checked: document.querySelectorAll(".sidebar .sb-list .sel-box:checked").length })');
+          await harvest();
+          await shot('sidebar-select');
+          // Esc belongs to what is on top: closing the command palette leaves the multi-select alone
+          await js('window.__store.setState({ paletteOpen: true })');
+          await waitFor('!!document.querySelector(".palette-bg")', 3000);
+          await key('Escape');
+          await sleep(200);
+          const selKept = { palette: await exists('.palette-bg'), bar: await exists('.sidebar .sel-bar') };
+          check('Esc in the command palette closes the palette, not the multi-select', !selKept.palette && selKept.bar, JSON.stringify(selKept));
+          await js(`document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + ']')?.focus()`);
+          await key('Escape');
+          const selOff = await js('!document.querySelector(".sidebar .sel-bar") && !document.querySelector(".sidebar .sel-box")');
+          check('Shift-click starts multi-select with that row checked; Esc (in the sidebar) ends it', selOn.bar && selOn.checked >= 1 && selOff, JSON.stringify({ selOn, selOff }));
+          if (E.SMOKE_READONLY !== '1') await sidebarScenarios();
+          else check('sidebar entry coverage: skipped (read-only run: the scenarios change the list)', true);
+          const errSb = await noBoundary('.sidebar');
+          check('sidebar checks without error boundary', !errSb, errSb);
+
+          /**
+           * Scenarios the seeded HOME does not have, faked client-side (`__store.setState`): other machines (one offline),
+           * a conversation with a fork, one running outside every project, account limits, an undiscovered source, a
+           * live runner. Then every id of entries.ts PLACES must have been seen in its place. Real events replace what
+           * is faked (`sessions.changed` / `library.changed` → the list, the hub's 5-minute `limits`, `library.*` → the
+           * sources), so for the whole scenario a `__store.subscribe` puts the fakes back whenever one of those three
+           * changes; it is removed before the real state is restored.
+           */
+          async function sidebarScenarios() {
+            const now = Date.now();
+            const sep = E.SMOKE_REPO.includes('\\') ? '\\' : '/';
+            const elsewhere = E.SMOKE_REPO.slice(0, E.SMOKE_REPO.lastIndexOf(sep)) + sep + 'elsewhere';
+            const box = { id: 'smokepeer', name: 'Smoke Box' };
+            const fakes = [
+              ...Array.from({ length: 7 }, (_, i) => ({ sessionId: 'peer_smokepeer~s' + i, title: 'remote ' + i, cwd: '/remote/w', lastModified: now - 1000 * (i + 1), peer: box })),
+              { sessionId: 'peer_offpeer~s0', title: 'offline machine', cwd: '/remote/x', lastModified: now - 9000, peer: { id: 'offpeer', name: 'Off Box', offline: true } },
+              { sessionId: 'smoke-parent', title: 'has a fork', cwd: E.SMOKE_REPO, lastModified: now - 500, childCount: 1 },
+              { sessionId: 'smoke-child', title: 'the fork', cwd: E.SMOKE_REPO, lastModified: now - 400, parentId: 'smoke-parent' },
+              { sessionId: 'smoke-elsewhere', title: 'running outside the projects', cwd: elsewhere, lastModified: now - 300, live: 'running' },
+            ];
+            const saved = await js('JSON.stringify({ limits: window.__store.getState().limits, sources: window.__store.getState().librarySources })');
+            const limits = { ok: true, capturedAt: new Date(now).toISOString(), subscriptionType: 'max', windows: [{ label: '5 小时', percent: 34, resetsAt: new Date(now + 3600e3).toISOString(), active: true }] };
+            const codex = { kind: 'codex', name: 'Codex', installed: true, detected: true, joined: false, dismissed: false, enabled: false };
+            const installed = await js(`(() => {
+              const st = window.__store, F = ${JSON.stringify(fakes)}, L = ${JSON.stringify(limits)}, C = ${JSON.stringify(codex)};
+              const apply = () => {
+                const s = st.getState(), patch = {};
+                const have = new Set(s.sessions.map((x) => x.sessionId));
+                const add = F.filter((f) => !have.has(f.sessionId));
+                if (add.length) patch.sessions = [...s.sessions, ...add];
+                if (s.limits !== L) patch.limits = L;
+                if (!s.librarySources.includes(C)) patch.librarySources = [...s.librarySources.filter((x) => x.kind !== C.kind), C];
+                if (Object.keys(patch).length) st.setState(patch);
+              };
+              if (window.__cwSmokeFakesOff) window.__cwSmokeFakesOff();
+              let busy = false;
+              const off = st.subscribe((s, prev) => {
+                if (busy || (s.sessions === prev.sessions && s.limits === prev.limits && s.librarySources === prev.librarySources)) return;
+                busy = true;
+                try { apply(); } finally { busy = false; }
+              });
+              window.__cwSmokeFakesOff = () => { off(); window.__cwSmokeFakesOff = null; };
+              apply();
+              return true;
+            })()`);
+            check('sidebar scenarios: fakes installed (kept by a store subscription while they run)', installed);
+            await sleep(400);
+            await harvest();
+            check('library hint: a detected source that was not joined shows the one-line hint (加入 / 以后再说)', await exists('.sidebar .sb-hint [data-id="library-join"]') && await exists('.sidebar .sb-hint [data-id="library-later"]'));
+            // 其它文件夹 starts folded when there are projects: its running conversation stays in view, the header spins
+            const other = { spin: await exists('.sidebar [data-id="other"] > .sb-sec-h .spin'), row: await exists('.sidebar [data-id="other"] .sb-kept [data-sid="smoke-elsewhere"] .st.run') };
+            check('folded 其它文件夹: the header spins and the running conversation stays listed under it', other.spin && other.row, JSON.stringify(other));
+            await js('document.querySelector(\'.sidebar [data-id="other"] > .sb-sec-h\')?.focus()');
+            await key('Space');
+            check('Space unfolds 其它文件夹 (its folders: 设为项目)', await waitFor('document.querySelector(\'.sidebar [data-id="other"] > .sb-sec-h\')?.getAttribute("aria-expanded") === "true" && !!document.querySelector(\'.sidebar [data-id="other"] .sb-group-head .acts [data-id="make-project"]\')', 3000));
+            await harvest();
+            await click('.sidebar [data-id="other"] > .sb-sec-h');
+            // a fork under its parent
+            await click('.sidebar .sb-list [data-sid="smoke-parent"] [data-id="kids"]');
+            check('the arrow before a parent lists its forks underneath', await waitFor('!!document.querySelector(\'.sidebar .sb-list [data-sid="smoke-child"].kid\')', 3000));
+            await harvest();
+            // other machines: grouped by machine, 5 rows then 再显示 N 个 / 收起; an offline machine says so
+            const peers = { rows: await count('.sidebar [data-group="peer:smokepeer"] .sb-row'), off: await exists('.sidebar [data-group="peer:offpeer"] .badge'), offRow: await exists('.sidebar [data-group="peer:offpeer"] .sb-row.offline') };
+            await click('.sidebar [data-group="peer:smokepeer"] [data-id="more"]');
+            const peersMore = { rows: await count('.sidebar [data-group="peer:smokepeer"] .sb-row'), less: await exists('.sidebar [data-group="peer:smokepeer"] [data-id="less"]') };
+            check('其它电脑: 5 rows, 再显示 shows the rest and 收起; an offline machine is marked and read-only', peers.rows === 5 && peers.off && peers.offRow && peersMore.rows === 7 && peersMore.less, JSON.stringify({ peers, peersMore }));
+            await harvest();
+            await click('.sidebar [data-group="peer:smokepeer"] [data-id="less"]');
+            // the funnel lists the machines once there is another one
+            await click('.sidebar [data-id="filter"]');
+            await harvest();
+            check('funnel menu: 机器 once another machine has conversations', await exists('.menu.sb-filter [data-id="machine"]'));
+            await closeMenus();
+            // 显示已归档 widens the list, it is not a filter: no 已筛选 row, empty projects stay, the funnel shows it is on
+            await js(`window.__store.getState().addWorkspace(${JSON.stringify(E.SMOKE_REPO + sep + 'src')})`);
+            await waitFor('window.__store.getState().workspaces.length >= 2', 4000);
+            await js('window.__store.setState({ showArchived: true })');
+            await sleep(300);
+            const arch = { row: await exists('.sidebar .sb-filtered'), dot: await exists('.sidebar [data-id="filter"] .fdot'), groups: await count('.sidebar [data-id="projects"] .sb-group'), projects: await js('window.__store.getState().workspaces.length') };
+            check('显示已归档 is not a filter: no 已筛选 row, empty projects stay listed, the funnel is marked', !arch.row && arch.dot && arch.groups === arch.projects, JSON.stringify(arch));
+            await js('window.__store.setState({ showArchived: false })');
+            // the account popover with the account's limits: the quota windows
+            await click('.sidebar [data-id="account"]');
+            await harvest();
+            check('account popover: the quota windows when the limits are known', await exists('.menu.sb-acct-menu [data-id="quota"]'));
+            await closeMenus();
+            // a live runner: 结束进程 in the conversation menu
+            await js(`window.__store.setState((s) => { const o = s.open[${SID}]; return o ? { open: { ...s.open, [${SID}]: { ...o, state: 'idle' } } } : {}; })`);
+            await ctxMenu(`.sidebar .sb-list [data-sid=${SID}]`);
+            await sleep(300);
+            await harvest();
+            await closeMenus();
+            await js(`window.__store.setState((s) => { const o = s.open[${SID}]; return o ? { open: { ...s.open, [${SID}]: { ...o, state: 'history' } } } : {}; })`);
+            // back to the real list: stop re-applying first
+            await js('window.__cwSmokeFakesOff && window.__cwSmokeFakesOff()');
+            await js(`(() => { const ids = new Set(${JSON.stringify(fakes.map((f) => f.sessionId))}); const r = JSON.parse(${JSON.stringify(saved)}); window.__store.setState((s) => ({ sessions: s.sessions.filter((x) => !ids.has(x.sessionId)), limits: r.limits, librarySources: r.sources })); })()`);
+            // nothing is reachable only in the table: every id of every place was on screen
+            const missing = [];
+            for (const p of Object.keys(PLACES)) for (const id of PLACES[p]) if (!(seen[p] && seen[p].has(id))) missing.push(p + ':' + id);
+            check(`sidebar entries: all ${Object.values(PLACES).reduce((n, v) => n + v.length, 0)} ids of entries.ts PLACES were found in the DOM, each in its place`, !missing.length, missing.join(', '));
+          }
+        }
       }
 
       // ---- error boundary probe: a crash in one settings section stays in that section, 重试 recovers it

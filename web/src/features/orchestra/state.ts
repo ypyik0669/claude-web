@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { useStore } from '@/store';
+import { showPanel } from '@/features/workbench/right-panel';
 import type { ClientRequest, OrchRun, OrchRunSummary, ServerEvent, Workflow, WorkflowTemplate } from '@shared';
 
 export interface OrchWaiting { runId: string; runName: string; nodeId: string; title: string; kind: 'approval' | 'compare'; since?: number }
@@ -64,8 +65,9 @@ export const useOrch = create<OrchState>((set, get) => ({
     return run;
   },
   ask(mode, runId) {
-    const st = useStore.getState();
-    if (!st.panels.includes('orchestra')) st.togglePanel('orchestra');
+    // to the front whatever state the panel is in (not a tab yet, hidden by Ctrl+J, minimized, behind another tab) —
+    // a toggle would close it when it is already open; a phone has no right panel (a hint, no request left behind)
+    if (!showPanel('orchestra')) return;
     set({ intent: mode === 'open' ? { mode, runId: runId!, at: Date.now() } : { mode, at: Date.now() } });
   },
 }));
