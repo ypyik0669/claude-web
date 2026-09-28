@@ -588,9 +588,21 @@ button.link:hover { text-decoration: underline; }
 .welcome .recent { margin-top: 36px; width: 100%; max-width: 720px; }
 .welcome .recent h5 { font-size: 11.5px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.4px; margin: 0 0 8px; font-weight: 600; }
 .welcome .recent .sess { padding: 8px 10px; }
-.dirpick { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); background: var(--surface-0); border: 1px solid var(--edge-default); border-radius: var(--r-lg); padding: 3px 8px; cursor: pointer; max-width: 320px; }
-.dirpick:hover { border-color: var(--edge-strong); }
-.dirpick span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dirpick { position: relative; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); background: var(--surface-0); border: 1px solid var(--edge-default); border-radius: var(--r-lg); padding: 3px 8px; cursor: pointer; max-width: 320px; min-width: 0; }
+.dirpick:hover, .dirpick.active { border-color: var(--edge-strong); }
+.dirpick .dirpick-ic { color: var(--ink-4); display: inline-flex; flex: none; }
+.dirpick .dirpick-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dirpick .caret { color: var(--ink-4); display: inline-flex; flex: none; }
+.menu.dirmenu { position: fixed; z-index: 1000; display: flex; flex-direction: column; min-width: 280px; max-width: min(520px, calc(100vw - 16px)); overflow: hidden; }
+.dirmenu-head { padding: 5px 10px 3px; font-size: var(--fs-micro); color: var(--ink-4); font-weight: 600; }
+.dirmenu-list { overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+.menu.dirmenu .dirmenu-list button { align-items: flex-start; }
+.menu.dirmenu button.cur { background: var(--layer-selected); }
+.menu.dirmenu button:focus-visible { outline-offset: -2px; }
+.dirmenu-check { width: 14px; flex: none; display: inline-flex; padding-top: 2px; color: var(--accent); }
+.dirmenu-text { display: flex; flex-direction: column; min-width: 0; }
+.dirmenu-text .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dirmenu-text .p { font-size: var(--fs-micro); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- trajectory ---------- */
 .traj { padding: 12px 20px; }
