@@ -57,6 +57,12 @@ export function layoutGraph(nodes: GraphNodeIn[]): GraphLayout {
   return { boxes, edges, cols: cols.length, width: PAD * 2 + cols.length * CARD_W + Math.max(0, cols.length - 1) * GAP_X, height: PAD * 2 + rows * CARD_H + Math.max(0, rows - 1) * GAP_Y };
 }
 
+/** Zoom that fits a graph of `width` into `available` px: ≤ 1, and not below `floor` (then it scrolls). */
+export function fitScale(width: number, available: number, floor = 0.5): number {
+  if (width <= 0 || available <= 0 || width <= available) return 1;
+  return Math.max(floor, available / width);
+}
+
 /** Next free `n<k>` id for a new node. */
 export function nextNodeId(ids: string[]): string {
   let k = ids.length + 1;

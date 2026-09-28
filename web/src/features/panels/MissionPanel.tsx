@@ -3,8 +3,7 @@ import { useStore } from '@/store';
 import { ago, basename, clsx, fmtMs } from '@/util';
 import { walkTools } from '@/model/conversation';
 import { Icon } from '@/ui/icons';
-import { useOrch, waitingOf } from '@/features/orchestra/state';
-import { ws } from '@/ws/client';
+import { orchAct, useOrch, useOrchBusy, waitingOf } from '@/features/orchestra/state';
 
 type Lane = 'attention' | 'running' | 'idle' | 'error';
 
@@ -26,6 +25,7 @@ export function MissionPanel() {
   // orchestration nodes waiting for a human (approval / compare pick) belong in "needs you" too
   const orchFull = useOrch((s) => s.full);
   const orchWait = useMemo(() => waitingOf(orchFull), [orchFull]);
+  const orchBusy = useOrchBusy((s) => s.keys);
 
   const cards = useMemo(() => {
     const now = Date.now();
@@ -90,7 +90,7 @@ export function MissionPanel() {
                   <div className="sub">编排「{w.runName}」· {w.kind === 'approval' ? '等你审批' : '候选跑完了，等你选一个合并'}{w.since ? ` · ${ago(w.since)}` : ''}</div>
                   {w.kind === 'approval' && (
                     <div className="orch-wait-acts">
-                      <button className="btn sm primary" onClick={(e) => { e.stopPropagation(); void ws.request({ kind: 'orchestra.node.approve', runId: w.runId, nodeId: w.nodeId, decision: 'approve' }).catch(() => {}); }}>通过</button>
+                      <button className="btn sm primary" disabled={!!orchBusy[`${w.runId}:${w.nodeId}`]} onClick={(e) => { e.stopPropagation(); void orchAct(`${w.runId}:${w.nodeId}`, { kind: 'orchestra.node.approve', runId: w.runId, nodeId: w.nodeId, decision: 'approve' }, '已通过'); }}>通过</button>
                       <button className="btn sm" onClick={(e) => { e.stopPropagation(); useOrch.getState().ask('open', w.runId); }}>去看看</button>
                     </div>
                   )}

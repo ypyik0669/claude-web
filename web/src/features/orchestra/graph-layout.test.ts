@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CARD_W, layers, layoutGraph, nextNodeId, promptVars } from './graph-layout';
+import { CARD_W, fitScale, layers, layoutGraph, nextNodeId, promptVars } from './graph-layout';
 
 const n = (id: string, dependsOn: string[] = []) => ({ id, dependsOn });
 
@@ -34,5 +34,11 @@ describe('orchestra graph layout', () => {
   it('prompt variables list input + other nodes', () => {
     const v = promptVars([{ id: 'a', kind: 'task', title: 'A' }, { id: 'g', kind: 'approval', title: 'G' }, { id: 'me', kind: 'task', title: 'Me' }], 'me');
     expect(v.map((x) => x.token)).toEqual(['{{input}}', '{{nodes.a.output}}', '{{nodes.g.approval}}']);
+  });
+  it('fitScale shrinks a wide graph to the available width, never below the floor, never above 1', () => {
+    expect(fitScale(800, 1000)).toBe(1);
+    expect(fitScale(1000, 800)).toBeCloseTo(0.8);
+    expect(fitScale(2000, 400)).toBe(0.5);
+    expect(fitScale(0, 400)).toBe(1);
   });
 });

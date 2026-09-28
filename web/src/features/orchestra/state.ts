@@ -4,7 +4,7 @@ import { create } from 'zustand';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { useStore } from '@/store';
-import type { OrchRun, OrchRunSummary, ServerEvent, Workflow, WorkflowTemplate } from '@shared';
+import type { ClientRequest, OrchRun, OrchRunSummary, ServerEvent, Workflow, WorkflowTemplate } from '@shared';
 
 export interface OrchWaiting { runId: string; runName: string; nodeId: string; title: string; kind: 'approval' | 'compare'; since?: number }
 /** What the command palette asked the panel to show. */
@@ -70,6 +70,25 @@ export const useOrch = create<OrchState>((set, get) => ({
   },
 }));
 
+/** Requests in flight, by key (`<runId>` for run-wide actions): buttons are disabled while theirs runs. */
+export const useOrchBusy = create<{ keys: Record<string, true> }>(() => ({ keys: {} }));
+
+/** Send an orchestra request under `key` (ignored if one is already in flight); toast errors / `ok`. */
+export async function orchAct<T = unknown>(key: string, req: ClientRequest, ok?: string): Promise<T | null> {
+  if (useOrchBusy.getState().keys[key]) return null;
+  useOrchBusy.setState((s) => ({ keys: { ...s.keys, [key]: true } }));
+  try {
+    const v = await ws.request<T>(req);
+    if (ok) useStore.getState().toast(ok, true);
+    return v;
+  } catch (e: any) {
+    useStore.getState().toast(e.message);
+    return null;
+  } finally {
+    useOrchBusy.setState((s) => { const keys = { ...s.keys }; delete keys[key]; return { keys }; });
+  }
+}
+
 let installed = false;
 /** Subscribe once (App mount): keep runs fresh and notify when a node starts waiting for a human. */
 export function installOrchestra() {
@@ -79,6 +98,10 @@ export function installOrchestra() {
   ws.on((e: ServerEvent) => {
     if (e.kind === 'hello' || e.kind === 'orchestra.workflows.changed') { refresh(); return; }
     if (e.kind !== 'orchestra.changed') return;
+    if (e.removed) {
+      useOrch.setState((s) => { const full = { ...s.full }; delete full[e.run.id]; return { full, runs: s.runs.filter((r) => r.id !== e.run.id) }; });
+      return;
+    }
     const prev = useOrch.getState().full[e.run.id];
     useOrch.setState((s) => {
       const sum = summarize(e.run);

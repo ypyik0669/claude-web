@@ -131,3 +131,9 @@
 .mcard.orch-wait { border-color: var(--warn); }
 .mcard.orch-wait .t { display: flex; align-items: center; gap: 6px; }
 .mcard .orch-wait-acts { display: flex; gap: 6px; margin-top: 6px; }
+
+/* merge / cleanup notes, kept worktrees */
+.orch-note { font-size: var(--fs-meta); color: var(--ink-2); background: var(--warn-soft); border-radius: var(--r-md); padding: 4px 8px; white-space: pre-wrap; }
+.orch-wts { font-size: var(--fs-micro); color: var(--ink-3); }
+.orch-wts summary { cursor: pointer; }
+.orch-wts .mono { padding: 1px 0 1px 12px; word-break: break-all; }

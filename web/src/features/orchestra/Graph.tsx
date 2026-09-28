@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx, fmtMs } from '@/util';
 import { Icon, type IconName } from '@/ui/icons';
 import type { NodeRun, OrchNode } from '@shared';
-import { CARD_H, CARD_W, layoutGraph } from './graph-layout';
+import { CARD_H, CARD_W, fitScale, layoutGraph } from './graph-layout';
 import { agentLabel } from './labels';
 
 export const KIND_ICON: Record<OrchNode['kind'], IconName> = { task: 'agent', compare: 'compare', approval: 'approval' };
@@ -22,10 +22,23 @@ export function Graph({ nodes, runs, selected, onSelect }: { nodes: OrchNode[]; 
   const live = !!runs && Object.values(runs).some((r) => r.state === 'running');
   const [, tick] = useState(0);
   useEffect(() => { if (!live) return; const t = setInterval(() => tick((x) => x + 1), 1000); return () => clearInterval(t); }, [live]);
-  if (!nodes.length) return <div className="orch-graph empty">还没有节点</div>;
+  // fit the graph to the panel width (down to 50 %, then it scrolls) so wide DAGs aren't cut off
+  const box = useRef<HTMLDivElement>(null);
+  const [avail, setAvail] = useState(0);
+  const hasNodes = nodes.length > 0;
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setAvail(el.clientWidth - 20));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hasNodes]);
+  const scale = fitScale(g.width, avail);
+  if (!hasNodes) return <div className="orch-graph empty">还没有节点</div>;
   return (
-    <div className="orch-graph">
-      <div className="orch-canvas" style={{ width: g.width, height: g.height }}>
+    <div className="orch-graph" ref={box}>
+      <div style={{ width: g.width * scale, height: g.height * scale }}>
+      <div className="orch-canvas" style={{ width: g.width, height: g.height, transform: scale < 1 ? `scale(${scale})` : undefined, transformOrigin: '0 0' }}>
         <svg width={g.width} height={g.height} aria-hidden="true">
           {g.edges.map((e) => <path key={`${e.from}>${e.to}`} d={e.d} className={clsx('edge', runs && `st-${runs[e.from]?.state ?? 'pending'}`)} />)}
         </svg>
@@ -44,6 +57,7 @@ export function Graph({ nodes, runs, selected, onSelect }: { nodes: OrchNode[]; 
             </button>
           );
         })}
+      </div>
       </div>
     </div>
   );

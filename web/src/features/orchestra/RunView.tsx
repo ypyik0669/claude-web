@@ -5,10 +5,10 @@ import { ago, basename, clsx, fmtMs } from '@/util';
 import { Icon } from '@/ui/icons';
 import { dlg } from '@/ui/dialog';
 import { Markdown } from '@/features/chat/Markdown';
-import type { CompareCandidate, NodeRun, OrchNode, OrchRun } from '@shared';
+import type { CompareCandidate, NodeRun, OrchCleanup, OrchNode, OrchRun } from '@shared';
 import { Graph, KIND_ICON, STATE_L } from './Graph';
 import { agentIcon, agentLabel } from './labels';
-import { useOrch } from './state';
+import { orchAct, useOrch, useOrchBusy } from './state';
 
 export const RUN_L: Record<OrchRun['state'], string> = { running: '运行中', waiting: '等你', done: '完成', failed: '失败', cancelled: '已取消' };
 const OUT_SHOW = 6000;
@@ -43,9 +43,16 @@ function Candidate({ run, nodeId, c, winner, recommended, canPick }: { run: Orch
     if (!open && diff === null) setDiff(((await req({ kind: 'orchestra.node.diff', runId: run.id, nodeId, agent: c.agent })) as string | null) ?? '');
     setOpen(!open);
   };
+  const busy = useOrchBusy((s) => !!s.keys[run.id]);
   const pick = async () => {
-    if (!(await dlg.confirm(`选 ${agentLabel(c.agent)} 的实现？`, { message: `把 ${c.worktree?.branch} 用 merge --no-ff 合并到 ${run.baseBranch}，其它候选的 worktree 和分支会被删除。`, okLabel: '合并' }))) return;
-    await req({ kind: 'orchestra.node.pick', runId: run.id, nodeId, winner: c.agent }, '已合并');
+    const message = [
+      `1. 先把 ${c.worktree?.path} 里还没提交的改动提交到 ${c.worktree?.branch}；`,
+      `2. 用 merge --no-ff 合并到 ${run.baseBranch}（你手上有进行中的 merge / rebase 或暂存区有改动时会拒绝，什么都不动）；`,
+      '3. 合并成功后：各候选的 worktree 目录在没有未提交改动时删除；落选分支只有在没被人动过（仍是跑完时的提交）时才删除；胜者分支保留。有改动的一律保留并列出来。',
+      '合并失败时节点回到「等你选」，所有 worktree 和分支都不动。',
+    ].join('\n');
+    if (!(await dlg.confirm(`选 ${agentLabel(c.agent)} 的实现？`, { message, okLabel: '合并' }))) return;
+    await orchAct(run.id, { kind: 'orchestra.node.pick', runId: run.id, nodeId, winner: c.agent }, '已处理');
   };
   return (
     <div className={clsx('orch-cand', `st-${c.state}`, winner === c.agent && 'win')}>
@@ -64,7 +71,7 @@ function Candidate({ run, nodeId, c, winner, recommended, canPick }: { run: Orch
         {c.sessionId && <button className="btn xs ghost" onClick={() => void loadHistory(c.sessionId!)}><Icon name="chat" size={11} /> 会话</button>}
         {c.state === 'done' && c.worktree && !winner && <button className="btn xs ghost" onClick={() => void toggleDiff()}><Icon name="eye" size={11} /> {open ? '收起 diff' : '完整 diff'}</button>}
         <span className="grow" />
-        {canPick && c.state === 'done' && <button className="btn xs primary" onClick={() => void pick()}><Icon name="check" size={11} /> 选它合并</button>}
+        {canPick && c.state === 'done' && <button className="btn xs primary" disabled={busy} onClick={() => void pick()}><Icon name="check" size={11} /> 选它合并</button>}
       </div>
       {open && diff !== null && (diff ? <DiffText text={diff} /> : <div className="muted sm">没有改动</div>)}
     </div>
@@ -73,14 +80,16 @@ function Candidate({ run, nodeId, c, winner, recommended, canPick }: { run: Orch
 
 function ApprovalBox({ run, node }: { run: OrchRun; node: OrchNode & { kind: 'approval' } }) {
   const [comment, setComment] = useState('');
-  const act = (decision: 'approve' | 'reject') => req({ kind: 'orchestra.node.approve', runId: run.id, nodeId: node.id, decision, comment }, decision === 'approve' ? '已通过' : '已驳回');
+  const key = `${run.id}:${node.id}`;
+  const busy = useOrchBusy((s) => !!s.keys[key]);
+  const act = (decision: 'approve' | 'reject') => orchAct(key, { kind: 'orchestra.node.approve', runId: run.id, nodeId: node.id, decision, comment }, decision === 'approve' ? '已通过' : '已驳回');
   return (
     <div className="orch-approval">
       {node.note && <div className="note">{node.note}</div>}
       <textarea className="field" rows={2} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="意见（可选；下游提示词里用 {{nodes.<id>.approval}} 引用）" />
       <div className="acts">
-        <button className="btn sm primary" onClick={() => void act('approve')}><Icon name="check" size={12} /> 通过</button>
-        <button className="btn sm danger" onClick={() => void act('reject')}><Icon name="close" size={12} /> 驳回</button>
+        <button className="btn sm primary" disabled={busy} onClick={() => void act('approve')}><Icon name="check" size={12} /> 通过</button>
+        <button className="btn sm danger" disabled={busy} onClick={() => void act('reject')}><Icon name="close" size={12} /> 驳回</button>
       </div>
     </div>
   );
@@ -89,6 +98,16 @@ function ApprovalBox({ run, node }: { run: OrchRun; node: OrchNode & { kind: 'ap
 function NodeDetail({ run, node, nr, selected }: { run: OrchRun; node: OrchNode; nr: NodeRun; selected: boolean }) {
   const secs = nr.startedAt ? (nr.finishedAt ?? Date.now()) - nr.startedAt : 0;
   const canRetry = nr.state === 'failed' || nr.state === 'cancelled' || nr.state === 'skipped' || (node.kind === 'compare' && nr.state === 'waiting');
+  const busy = useOrchBusy((s) => !!s.keys[run.id]);
+  const wts = [...(nr.worktrees ?? []), ...(nr.retained ?? [])];
+  const retry = async () => {
+    const lines = [
+      node.kind === 'compare' ? '所有候选会在新的会话、新的 worktree（名字带 -attempt 后缀）里重新跑一遍，已经跑完的结果不再能选。' : '这个节点会在新的会话里重新跑，还没完成的下游节点也会重新排队。',
+      wts.length ? `现有的 worktree 与分支都保留，不会删除：\n${wts.map((w) => `· ${w.path}（${w.branch}）`).join('\n')}` : '',
+    ].filter(Boolean).join('\n\n');
+    if (nr.state === 'waiting' || wts.length) { if (!(await dlg.confirm(`重试「${node.title || node.id}」？`, { message: lines, okLabel: '重试' }))) return; }
+    await orchAct(run.id, { kind: 'orchestra.node.retry', runId: run.id, nodeId: node.id }, '已重新开始');
+  };
   return (
     <div className={clsx('orch-detail', `st-${nr.state}`, selected && 'sel')} id={`orch-node-${run.id}-${node.id}`}>
       <div className="hd">
@@ -98,9 +117,10 @@ function NodeDetail({ run, node, nr, selected }: { run: OrchRun; node: OrchNode;
         <span className="muted">{node.kind === 'task' ? agentLabel(node.agent) : node.kind === 'compare' ? node.agents.map(agentLabel).join(' / ') : ''}{secs && nr.state !== 'pending' ? ` · ${fmtMs(secs)}` : ''}{nr.costUsd ? ` · $${nr.costUsd.toFixed(3)}` : ''}{(nr.attempts ?? 0) > 1 ? ` · 第 ${nr.attempts} 次` : ''}</span>
         <span className="grow" />
         {node.kind !== 'compare' && <SessionLinks ids={nr.sessionIds} />}
-        {canRetry && <button className="btn xs ghost" onClick={() => void req({ kind: 'orchestra.node.retry', runId: run.id, nodeId: node.id }, '已重新开始')}><Icon name="refresh" size={11} /> 重试</button>}
+        {canRetry && <button className="btn xs ghost" disabled={busy} onClick={() => void retry()}><Icon name="refresh" size={11} /> 重试</button>}
       </div>
       {nr.error && <div className="orch-errline">{nr.error}</div>}
+      {nr.note && <div className="orch-note">{nr.note}</div>}
       {node.kind === 'approval' && nr.state === 'waiting' && <ApprovalBox run={run} node={node} />}
       {node.kind === 'approval' && nr.approval && <div className="muted sm">{nr.approval.decision === 'approve' ? '已通过' : '已驳回'}{nr.approval.comment ? `：${nr.approval.comment}` : ''} · {ago(nr.approval.at)}</div>}
       {node.kind === 'compare' && nr.candidates && (
@@ -116,7 +136,9 @@ function NodeDetail({ run, node, nr, selected }: { run: OrchRun; node: OrchNode;
           </div>
         </>
       )}
-      {node.kind === 'task' && nr.worktrees?.length && nr.state === 'failed' ? <div className="muted sm mono">worktree：{nr.worktrees[0].path}（{nr.worktrees[0].branch}）</div> : null}
+      {wts.length > 0 && nr.state !== 'done' && (
+        <details className="orch-wts"><summary>worktree {wts.length} 个（保留着，不会自动删除）</summary>{wts.map((w) => <div key={w.path} className="mono">{w.path} · {w.branch}</div>)}</details>
+      )}
       {nr.output && node.kind !== 'approval' && (
         <details className="orch-out" open={selected && node.kind === 'task'}>
           <summary>输出{nr.output.length > OUT_SHOW ? `（前 ${OUT_SHOW} 字）` : ''}</summary>
@@ -131,11 +153,21 @@ function NodeDetail({ run, node, nr, selected }: { run: OrchRun; node: OrchNode;
 export function RunView({ runId, onClose }: { runId: string; onClose: () => void }) {
   const run = useOrch((s) => s.full[runId]);
   const [sel, setSel] = useState<string | null>(null);
+  const busy = useOrchBusy((s) => !!s.keys[runId]);
   const [, tick] = useState(0);
   useEffect(() => { if (!run) void useOrch.getState().loadRun(runId); }, [runId, !!run]);
   useEffect(() => { if (run?.state !== 'running' && run?.state !== 'waiting') return; const t = setInterval(() => tick((x) => x + 1), 1000); return () => clearInterval(t); }, [run?.state]);
   if (!run) return <div className="orch-empty">加载中…</div>;
   const live = run.state === 'running' || run.state === 'waiting';
+  const removeRun = async () => {
+    if (!(await dlg.confirm('删除这条运行记录？', { message: '会话本身不会被删除。', danger: true, okLabel: '删除' }))) return;
+    const hasWts = Object.values(run.nodes).some((n) => n.worktrees?.length || n.retained?.length || n.candidates?.some((c) => c.worktree));
+    const cleanup = hasWts && (await dlg.confirm('同时清理这次运行的 worktree 与 cw/ 分支？', { message: '只删除干净、已合并（或仍是编排自己提交的）的 worktree 与分支；有未提交改动或未合并提交的只列出来，不删。', okLabel: '清理', cancelLabel: '只删记录' }));
+    const r = await orchAct<OrchCleanup>(runId, { kind: 'orchestra.run.remove', runId, cleanup });
+    if (!r) return;
+    onClose();
+    if (r.kept.length) await dlg.alert('这些没有删除', { message: r.kept.map((k) => `· ${k.path ?? k.branch}（${k.branch}）：${k.reason}`).join('\n') });
+  };
   const select = (id: string) => { setSel(id); document.getElementById(`orch-node-${run.id}-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); };
   return (
     <div className="orch-run">
@@ -144,9 +176,9 @@ export function RunView({ runId, onClose }: { runId: string; onClose: () => void
         <b className="name">{run.name}</b>
         <span className="muted">{basename(run.cwd)}{run.baseBranch ? ` · ${run.baseBranch}` : ''} · {live ? fmtMs(Date.now() - run.startedAt) : `${ago(run.startedAt)}${run.finishedAt ? ` · 用时 ${fmtMs(run.finishedAt - run.startedAt)}` : ''}`}</span>
         <span className="grow" />
-        {live && <button className="btn xs ghost" onClick={async () => { if (await dlg.confirm('取消这次运行？', { message: '会中断正在运行的会话；已经建的 worktree 会保留。', danger: true, okLabel: '取消运行' })) await req({ kind: 'orchestra.run.cancel', runId }); }}><Icon name="stop" size={11} /> 取消</button>}
-        {(run.state === 'failed' || run.state === 'cancelled') && <button className="btn xs" onClick={() => void req({ kind: 'orchestra.run.resume', runId }, '从未完成的节点续跑')}><Icon name="play" size={11} /> 续跑</button>}
-        {!live && <button className="btn xs ghost" onClick={async () => { if (await dlg.confirm('删除这条运行记录？', { message: '会话本身不会被删除。', danger: true, okLabel: '删除' })) { await req({ kind: 'orchestra.run.remove', runId }); useOrch.setState((s) => { const full = { ...s.full }; delete full[runId]; return { full, runs: s.runs.filter((r) => r.id !== runId) }; }); onClose(); } }}><Icon name="trash" size={11} /></button>}
+        {live && <button className="btn xs ghost" disabled={busy} onClick={async () => { if (await dlg.confirm('取消这次运行？', { message: '会中断正在运行的会话；已经建的 worktree 与分支都保留。正在合并时不能取消。', danger: true, okLabel: '取消运行' })) await orchAct(runId, { kind: 'orchestra.run.cancel', runId }); }}><Icon name="stop" size={11} /> 取消</button>}
+        {(run.state === 'failed' || run.state === 'cancelled') && <button className="btn xs" disabled={busy} onClick={() => void orchAct(runId, { kind: 'orchestra.run.resume', runId }, '从未完成的节点续跑')}><Icon name="play" size={11} /> 续跑</button>}
+        {!live && <button className="btn xs ghost" disabled={busy} title="删除运行记录" aria-label="删除运行记录" onClick={() => void removeRun()}><Icon name="trash" size={11} /></button>}
       </div>
       {run.error && <div className="orch-errline">{run.error}</div>}
       {run.input && <details className="orch-input"><summary>输入</summary><div className="mono">{run.input}</div></details>}

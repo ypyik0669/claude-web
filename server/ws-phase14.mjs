@@ -115,13 +115,29 @@ ws.on('open', async () => {
     const cands = r4.nodes.cmp.candidates;
     for (const c of cands) if (c.sessionId) sessions.add(c.sessionId);
     check('compare fanned out to two worktree sessions', cands.length === 2 && cands.every((c) => c.state === 'done' && c.worktree && fs.existsSync(c.worktree.path)), cands.map((c) => `${c.agent}:${c.state}`).join(' '));
-    check('worktree paths / branches follow the naming rule', cands.every((c) => c.worktree.path.replace(/\\/g, '/').includes(`/.claude-web/worktrees/${run.id}-cmp-`) && c.worktree.branch.startsWith(`cw/${run.id}/cmp-`)), cands.map((c) => c.worktree.branch).join(' '));
+    check('worktrees live under <dataDir>/worktrees, named per run / node / agent', cands.every((c) => path.resolve(c.worktree.path).toLowerCase().startsWith(path.resolve(webDir, 'worktrees').toLowerCase()) && path.basename(c.worktree.path).startsWith(`${run.id}-cmp-`) && c.worktree.branch.startsWith(`cw/${run.id}/cmp-`)), cands.map((c) => c.worktree.branch).join(' '));
     check('each candidate has a diff --stat with its file', cands.every((c) => c.diffStat?.includes('result.txt') && c.files === 1), cands.map((c) => c.diffStat).join(' | '));
     const diffB = await req({ kind: 'orchestra.node.diff', runId: run.id, nodeId: 'cmp', agent: B });
     check('full diff of a candidate', diffB.includes('+from-B'), diffB.split('\n').slice(0, 3).join(' '));
     check('base worktree untouched before the pick', !fs.existsSync(path.join(repo, 'result.txt')));
-    check('.claude-web excluded from git status', !git('status', '--porcelain').includes('.claude-web'), git('status', '--porcelain'));
+    check('the user repo itself stays clean (worktrees are outside it)', git('status', '--porcelain') === '', git('status', '--porcelain'));
 
+    // the user starts their own conflicting merge in the base repo: the pick must refuse and leave it alone
+    git('checkout', '-q', '-b', 'user-side');
+    fs.writeFileSync(path.join(repo, 'README.md'), 'user side\n');
+    git('commit', '-q', '-am', 'user side');
+    git('checkout', '-q', 'main');
+    fs.writeFileSync(path.join(repo, 'README.md'), 'main side\n');
+    git('commit', '-q', '-am', 'main side');
+    let userMerge = false;
+    try { git('merge', 'user-side'); } catch { userMerge = true; }
+    await req({ kind: 'orchestra.node.pick', runId: run.id, nodeId: 'cmp', winner: B });
+    const refused = await req({ kind: 'orchestra.run.get', runId: run.id });
+    const mergeHead = fs.existsSync(path.join(repo, '.git', 'MERGE_HEAD'));
+    check('pick refused during the user\'s own merge; their merge untouched, node back to waiting', userMerge && mergeHead && refused.nodes.cmp.state === 'waiting' && /进行中的 merge/.test(refused.nodes.cmp.error ?? '') && cands.every((c) => fs.existsSync(c.worktree.path)), refused.nodes.cmp.error ?? refused.nodes.cmp.state);
+    git('merge', '--abort');
+    git('reset', '-q', '--hard', 'HEAD~1');
+    git('branch', '-q', '-D', 'user-side');
     await req({ kind: 'orchestra.node.pick', runId: run.id, nodeId: 'cmp', winner: B });
     const r5 = await waitRun(run.id, (r) => r.state === 'done' || r.state === 'failed');
     check('run done after the pick', r5.state === 'done' && r5.nodes.cmp.winner === B, `${r5.state} ${r5.error ?? ''}`);
@@ -137,6 +153,10 @@ ws.on('open', async () => {
     check('run record written to <dataDir>/orchestra', fs.existsSync(path.join(webDir, 'orchestra', `${run.id}.json`)));
     const runs = await req({ kind: 'orchestra.runs.list' });
     check('runs.list summary', runs.some((x) => x.id === run.id && x.state === 'done' && x.done === 4 && x.total === 4));
+    const removal = waitEvent((e) => e.kind === 'orchestra.changed' && e.removed && e.run.id === run.id, 10000).catch(() => null);
+    const cleaned = await req({ kind: 'orchestra.run.remove', runId: run.id, cleanup: true });
+    runIds.splice(runIds.indexOf(run.id), 1);
+    check('remove with cleanup deletes the merged winner branch, broadcasts the removal', cleaned.removed.includes(winner) && !git('branch', '--format=%(refname:short)').split('\n').includes(winner) && !!(await removal), JSON.stringify(cleaned));
     check('orchestra.changed events were broadcast', events.some((e) => e.kind === 'orchestra.changed' && e.run.id === run.id && e.run.nodes.gate.state === 'waiting'));
 
     // rejection path: the run fails, downstream is skipped, the comment is kept
