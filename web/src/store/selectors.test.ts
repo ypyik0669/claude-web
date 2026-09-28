@@ -63,28 +63,114 @@ function topIndexOf(s: string, needle: string, from = 0): number {
   return -1;
 }
 
+/** Indices of the depth-0 characters of `s` (strings and bracket contents skipped). */
+function topChars(s: string): number[] {
+  const out: number[] = [];
+  for (let k = 0; k < s.length; k++) {
+    const c = s[k];
+    if (c === '"' || c === "'" || c === '`') { k = skipString(s, k) - 1; continue; }
+    if (OPEN.includes(c)) { k = matchClose(s, k) - 1; continue; }
+    out.push(k);
+  }
+  return out;
+}
+
+/** `cond ? a : b` at the top level → [a, b] (nested ternaries in b stay in b), else null. `?.` / `??` are not it. */
+function splitTernary(e: string): [string, string] | null {
+  const at = topChars(e);
+  const isQ = (k: number) => e[k] === '?' && e[k + 1] !== '.' && e[k + 1] !== '?' && e[k - 1] !== '?';
+  const q = at.find(isQ);
+  if (q === undefined) return null;
+  let depth = 0;
+  for (const k of at) {
+    if (k <= q) continue;
+    if (isQ(k)) depth++;
+    else if (e[k] === ':' && depth-- === 0) return [e.slice(q + 1, k), e.slice(k + 1)];
+  }
+  return null;
+}
+
+/** Split at every top-level occurrence of one of `ops` (longest first): `a || b ?? c` → [a, b, c]. */
+function splitTop(e: string, ops: string[]): string[] {
+  const parts: string[] = [];
+  let from = 0;
+  const at = topChars(e);
+  for (let i = 0; i < at.length; i++) {
+    const k = at[i];
+    if (k < from) continue;
+    const op = ops.find((o) => e.startsWith(o, k) && at.includes(k + o.length - 1));
+    if (op) { parts.push(e.slice(from, k)); from = k + op.length; }
+  }
+  parts.push(e.slice(from));
+  return parts;
+}
+
+// a `.slice(…)` on something that is plainly a string (ids, names, paths…) makes a string, not a new array
+const STRINGISH = /(?:^|[^A-Za-z0-9_$])(?:[a-z]*(?:[Ii]d|ID|[Nn]ame|[Tt]itle|[Tt]ext|[Pp]ath|[Cc]wd|[Uu]rl|URL|[Mm]essage|[Ll]abel|[Mm]odel|[Vv]ersion|[Kk]ey|[Dd]raft|[Qq]uery|[Pp]rompt|[Ss]tr)|String\(…\)|''|\.(?:toString|trim|toLowerCase|toUpperCase|join)\(…\))$/;
+// methods whose result is a primitive (boolean / number / string)
+const PRIMITIVE_TAIL = /(?:\.(?:length|size)|\.(?:some|every|includes|has|startsWith|endsWith|test|indexOf|lastIndexOf|findIndex|join|toString|toFixed|trim|trimStart|trimEnd|toLowerCase|toUpperCase|padStart|padEnd|repeat|replace|replaceAll|charAt|normalize|localeCompare)\(…\))$/;
+
 /** Does evaluating `expr` hand back a value that is new on every call (and not a primitive)? */
 function freshExpr(expr: string): boolean {
-  const e = expr.trim().replace(/;$/, '');
+  const e = expr.trim().replace(/;$/, '').trim();
+  if (!e) return false;
+  // `c ? a : b` — either branch may be what the selector returns (the condition never is)
+  const tern = splitTernary(e);
+  if (tern) return tern.some(freshExpr);
+  // `a || b` / `a ?? b` — any alternative may be returned; `a && b` — only b can be an object
+  const alts = splitTop(e, ['||', '??']);
+  const ands = alts.map((a) => splitTop(a, ['&&']));
+  if (alts.length > 1 || ands[0].length > 1) return ands.some((parts) => freshExpr(parts[parts.length - 1]));
   if (/^\(\s*\{/.test(e) || /^[[{]/.test(e) || /^\(\s*\[/.test(e)) return true; // an object / array literal
   const top = collapse(e);
   if (/^\(…\)$/.test(top)) return freshExpr(e.slice(1, -1)); // parenthesised expression
-  // derivations that end in a primitive: a count, a boolean, a string / number fallback
+  // a primitive: negation / comparison / typeof (no top-level `?` is left to confuse it), a primitive-returning tail
   if (/^!|===|!==|==|!=|<=|>=|\s[<>]\s|\btypeof\b/.test(top)) return false;
-  if (/\.(length|size)(\s*\?\?\s*\d+)?$/.test(top)) return false;
-  if (/\.(some|every|includes|has|startsWith|endsWith|test)\(…\)$/.test(top)) return false;
-  if (/\?\?\s*(''|-?\d+|true|false|null|undefined)$/.test(top)) return false;
+  if (PRIMITIVE_TAIL.test(top)) return false;
+  const slice = /^(.*?)\??\.slice\(…\)$/.exec(top);
+  if (slice && STRINGISH.test(slice[1])) return false;
   return FRESH_TOP.test(top);
 }
 
-/** The expressions a block body returns (`return x;` anywhere inside it). */
+/** Is the `{` at `k` the body of a function (arrow, `function`, method shorthand) rather than a control-flow block? */
+function isFunctionBody(s: string, k: number): boolean {
+  const before = s.slice(0, k).trimEnd();
+  if (before.endsWith('=>')) return true;
+  if (!before.endsWith(')')) return false;
+  // find the `(` that opens this parameter / condition list
+  let depth = 0;
+  let i = before.length - 1;
+  for (; i >= 0; i--) {
+    if (before[i] === ')') depth++;
+    else if (before[i] === '(' && --depth === 0) break;
+  }
+  const head = before.slice(0, Math.max(0, i)).trimEnd();
+  if (/\bfunction\s*\*?\s*[\w$]*$/.test(head)) return true;
+  const word = /([\w$]+)$/.exec(head)?.[1];
+  return !!word && !['if', 'for', 'while', 'switch', 'catch', 'with'].includes(word); // `name(args) {` = a method
+}
+
+/** The expressions a block body itself returns — not the returns of callbacks / functions nested in it. */
 function returnedExprs(block: string): string[] {
   const out: string[] = [];
-  for (const m of block.matchAll(/\breturn\b/g)) {
-    const from = m.index! + 6;
-    const semi = topIndexOf(block, ';', from);
-    const end = semi >= 0 ? semi : block.length - 1;
-    if (block.slice(from, end).trim()) out.push(block.slice(from, end));
+  for (let k = 0; k < block.length; k++) {
+    const c = block[k];
+    if (c === '"' || c === "'" || c === '`') { k = skipString(block, k) - 1; continue; }
+    if (c === '{' && isFunctionBody(block, k)) { k = matchClose(block, k) - 1; continue; }
+    if (block.startsWith('return', k) && !/[\w$]/.test(block[k - 1] ?? '') && !/[\w$]/.test(block[k + 6] ?? '')) {
+      // the expression runs to `;` at its own level, or to the `}` / `)` that closes the enclosing block
+      let depth = 0;
+      let end = k + 6;
+      for (; end < block.length; end++) {
+        const ch = block[end];
+        if (ch === '"' || ch === "'" || ch === '`') { end = skipString(block, end) - 1; continue; }
+        if (OPEN.includes(ch)) depth++;
+        else if (CLOSE.includes(ch) && --depth < 0) break;
+        else if (ch === ';' && depth === 0) break;
+      }
+      if (block.slice(k + 6, end).trim()) out.push(block.slice(k + 6, end));
+      k = end;
+    }
   }
   return out;
 }
@@ -146,6 +232,22 @@ const r = useStore((s) => { for (const x of s.list) if (x.id === id) return x; r
 const u = useStore(useShallow((s) => ({ a: s.a, b: s.b })));                       // stable
 const v = useStore((s) => s.list.filter((x) => x.on).length > 0);                  // stable
 const w = useStore((s) => (s.settings['k'] as string | undefined) ?? 'default');   // stable
+const a2 = useStore((s) => (s.a === 1 ? [] : s.b));                                // fresh
+const b2 = useStore((s) => s.mode !== 'x' ? s.list : s.list.filter(Boolean));      // fresh
+const c2 = useStore((s) => s.n > 0 && s.list.map((x) => x.id));                    // fresh
+const d2 = useStore((s) => s.count > 0 || Object.keys(s.map));                     // fresh
+const e2 = useStore((s) => s.ready && { n: s.n });                                 // fresh
+const f2 = useStore((s) => { if (s.a) { return [s.a]; } return NONE; });           // fresh
+const g2 = useStore((s) => s.sessions.slice(0, 6));                                // fresh
+const h2 = useStore((s) => s.list.filter(Boolean) || NONE);                        // fresh
+const i2 = useStore((s) => s.activeId?.slice(0, 8));                               // stable
+const j2 = useStore((s) => s.title.slice(0, 20).toUpperCase());                    // stable
+const k2 = useStore((s) => { const hit = s.list.find((x) => { return [x]; }); return hit; }); // stable
+const l2 = useStore((s) => { const f = function () { return {}; }; return f === null; }); // stable
+const m2 = useStore((s) => (s.a === 1 ? 'a' : 'b'));                               // stable
+const n2 = useStore((s) => (s.flag ? s.list : NONE));                              // stable
+const o2 = useStore((s) => s.ok && s.list.length > 0);                             // stable
+const p2 = useStore((s) => s.names.join(', '));                                    // stable
 `;
   it('the scan itself flags every fresh form and none of the stable ones', () => {
     const lines = CASES.split('\n');
