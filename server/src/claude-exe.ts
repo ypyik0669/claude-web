@@ -1,5 +1,6 @@
-import { spawn, execFile, execSync } from 'node:child_process';
+import { spawn, exec, execFile, execSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -15,23 +16,49 @@ const isWin = process.platform === 'win32';
 const unpack = (p: string) => p.replace(/app\.asar(?!\.unpacked)/, 'app.asar.unpacked');
 
 /**
- * `npm root -g` — a synchronous child process (npm is slow to start: seconds, blocking the event loop), so it
- * runs only when nothing bundled was found, and a found prefix is remembered (it does not move). A failure
- * (npm missing, timeout, empty output) is not: the next lookup tries again. Exported for tests.
+ * Lookups that start a process (`npm root -g`, `<binary> --version`) remember a success for good (the global
+ * prefix does not move; a version is per file + mtime) and a failure (npm missing, timeout, empty output) for
+ * LOOKUP_FAIL_TTL_MS: long enough that a broken npm does not cost every connection a 15–20 s wait, short
+ * enough that fixing it shows up within a minute.
  */
-let globalRootMemo: string | null = null;
-export function globalRoot(): string | null {
-  if (globalRootMemo) return globalRootMemo;
-  try {
-    globalRootMemo = execSync('npm root -g', { encoding: 'utf8', windowsHide: true, timeout: 15_000 }).trim() || null;
-  } catch {
-    globalRootMemo = null;
-  }
-  return globalRootMemo;
+export const LOOKUP_FAIL_TTL_MS = 60_000;
+type Looked<T> = { v: T | null; at: number };
+const fresh = <T>(e: Looked<T> | undefined): e is Looked<T> => !!e && (e.v !== null || Date.now() - e.at < LOOKUP_FAIL_TTL_MS);
+let globalRootMemo: Looked<string> | undefined;
+let globalRootRun: Promise<string | null> | null = null;
+const versionMemo = new Map<string, Looked<string>>();
+const versionRuns = new Map<string, Promise<string | undefined>>();
+/** Forget every lookup (tests). */
+export function resetLookups() { globalRootMemo = undefined; globalRootRun = null; versionMemo.clear(); versionRuns.clear(); }
+
+/** Callback exec → promise of stdout (no promisify: its shape depends on util.promisify.custom). */
+function execOut(run: (cb: (err: Error | null, stdout: string | Buffer) => void) => void): Promise<string> {
+  return new Promise((res, rej) => run((err, stdout) => (err ? rej(err) : res(String(stdout)))));
 }
 
-/** Official Claude Code: SDK's platform binary (bundled) → global npm install. */
-export function resolveClaudeExe(): string {
+/**
+ * `npm root -g`, synchronous: only for the spawn paths (resolveClaudeExe / resolveCcbEntry), and only when
+ * nothing bundled exists. engine.info uses globalRootAsync. Both share one memo. Exported for tests.
+ */
+export function globalRoot(): string | null {
+  if (fresh(globalRootMemo)) return globalRootMemo.v;
+  let v: string | null = null;
+  try { v = execSync('npm root -g', { encoding: 'utf8', windowsHide: true, timeout: 15_000 }).trim() || null; } catch { v = null; }
+  globalRootMemo = { v, at: Date.now() };
+  return v;
+}
+
+/** `npm root -g` without blocking the event loop; concurrent callers share one run. */
+export function globalRootAsync(): Promise<string | null> {
+  if (fresh(globalRootMemo)) return Promise.resolve(globalRootMemo.v);
+  globalRootRun ??= execOut((cb) => exec('npm root -g', { encoding: 'utf8', windowsHide: true, timeout: 15_000 }, cb))
+    .then((out) => out.trim() || null, () => null)
+    .then((v) => { globalRootMemo = { v, at: Date.now() }; globalRootRun = null; return v; });
+  return globalRootRun;
+}
+
+/** Official Claude Code: SDK's platform binary (bundled) → global npm install (`root` = the npm prefix lookup). */
+export function resolveClaudeExe(root: () => string | null = globalRoot): string {
   const candidates: string[] = [];
   const pkg = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`;
   if (process.env.CLAUDE_WEB_EXE) candidates.push(process.env.CLAUDE_WEB_EXE);
@@ -47,7 +74,7 @@ export function resolveClaudeExe(): string {
   // This runs on every session start with the official runtime, blocking the event loop each time.
   let found = candidates.find((c) => existsSync(c));
   if (found) return found;
-  const g = globalRoot();
+  const g = root();
   if (g) candidates.push(path.join(g, '@anthropic-ai/claude-code/bin', isWin ? 'claude.exe' : 'claude'));
   found = candidates.find((c) => existsSync(c));
   if (!found) throw new Error(`Claude Code executable not found. Tried: ${candidates.join(', ')}`);
@@ -55,7 +82,7 @@ export function resolveClaudeExe(): string {
 }
 
 /** claude-code-best (ccb): bundled npm dependency → global npm install. Entry is a JS file run by node. */
-export function resolveCcbEntry(): string | null {
+export function resolveCcbEntry(root: () => string | null = globalRoot): string | null {
   const candidates: string[] = [];
   if (process.env.CLAUDE_WEB_CCB) candidates.push(process.env.CLAUDE_WEB_CCB);
   try {
@@ -67,26 +94,30 @@ export function resolveCcbEntry(): string | null {
   if (rp) candidates.push(path.join(rp, 'app.asar.unpacked', 'node_modules', 'claude-code-best', 'dist', 'cli-node.js'));
   const found = candidates.find((c) => existsSync(c));
   if (found) return found;
-  const g = globalRoot(); // only when nothing bundled exists (see globalRoot)
+  const g = root(); // only when nothing bundled exists (see globalRoot)
   const global = g ? path.join(g, 'claude-code-best', 'dist', 'cli-node.js') : null;
   return global && existsSync(global) ? global : null;
 }
 
 /**
- * `<binary> --version` is a synchronous process start (seconds for claude.exe): a version is remembered per
- * file + mtime; a failure (timeout, crash, empty output) is not. Exported for tests.
+ * An engine's version: a JS engine's from its package.json; a binary's from `<binary> --version` (seconds for
+ * claude.exe) run asynchronously, per file + mtime, failures kept LOOKUP_FAIL_TTL_MS. Exported for tests.
  */
-const versionMemo = new Map<string, string>();
-export function versionOf(file: string): string | undefined {
+export async function versionOf(file: string): Promise<string | undefined> {
   try {
     const pkg = file.endsWith('.js') ? path.resolve(path.dirname(file), '..', 'package.json') : null;
-    if (pkg && existsSync(pkg)) return JSON.parse(require('node:fs').readFileSync(pkg, 'utf8')).version;
+    if (pkg && existsSync(pkg)) return JSON.parse(await readFile(pkg, 'utf8')).version;
     const key = `${file}|${statSync(file).mtimeMs}`;
     const hit = versionMemo.get(key);
-    if (hit) return hit;
-    const v = execSync(`"${file}" --version`, { encoding: 'utf8', windowsHide: true, timeout: 20_000 }).trim().split(/\s+/)[0];
-    if (v) versionMemo.set(key, v);
-    return v || undefined;
+    if (fresh(hit)) return hit.v ?? undefined;
+    let run = versionRuns.get(key);
+    if (!run) {
+      run = execOut((cb) => execFile(file, ['--version'], { encoding: 'utf8', windowsHide: true, timeout: 20_000 }, cb))
+        .then((out) => out.trim().split(/\s+/)[0] || null, () => null)
+        .then((v) => { versionMemo.set(key, { v, at: Date.now() }); versionRuns.delete(key); return v ?? undefined; });
+      versionRuns.set(key, run);
+    }
+    return await run;
   } catch {
     return undefined;
   }
@@ -112,16 +143,30 @@ export function resolveEngine(prefer?: RuntimeKind): { file: string; kind: Runti
   return cached;
 }
 
-export function engineInfo(): EngineInfo {
-  cached = null;
-  const main = resolveEngine();
-  const info: EngineInfo = { runtime: main.kind, version: versionOf(main.file), path: main.file, source: sourceOf(main.file) };
-  try {
-    const other = main.kind === 'ccb' ? resolveClaudeExe() : resolveCcbEntry();
-    if (other) info.fallback = { runtime: main.kind === 'ccb' ? 'claude' : 'ccb', version: versionOf(other), path: other };
-  } catch {
-    /* no fallback */
+/**
+ * What the config center / welcome strip show: the runtime sessions use, its version and the fallback. Asked
+ * on every connection, so nothing here runs a synchronous process: bundled engines are found on disk, the npm
+ * prefix (only needed when one is not bundled) and `--version` are asked asynchronously.
+ */
+export async function engineInfo(): Promise<EngineInfo> {
+  const bundledOnly = () => null;
+  let ccb = resolveCcbEntry(bundledOnly);
+  let claude: string | null = null;
+  try { claude = resolveClaudeExe(bundledOnly); } catch { /* not bundled */ }
+  if (!ccb || !claude) {
+    const g = await globalRootAsync();
+    const fromNpm = () => g;
+    ccb ??= resolveCcbEntry(fromNpm);
+    if (!claude) try { claude = resolveClaudeExe(fromNpm); } catch { /* not installed */ }
   }
+  const wantClaude = process.env.CLAUDE_WEB_RUNTIME === 'claude';
+  const main: { file: string; kind: RuntimeKind } | null = wantClaude ? (claude ? { file: claude, kind: 'claude' } : null) : ccb ? { file: ccb, kind: 'ccb' } : claude ? { file: claude, kind: 'claude' } : null;
+  if (!main) throw new Error('Claude Code executable not found (neither ccb nor the official binary)');
+  cached = wantClaude ? null : main; // resolveEngine's default pick, refreshed
+  const other = main.kind === 'ccb' ? claude : ccb;
+  const [version, otherVersion] = await Promise.all([versionOf(main.file), other ? versionOf(other) : undefined]);
+  const info: EngineInfo = { runtime: main.kind, version, path: main.file, source: sourceOf(main.file) };
+  if (other) info.fallback = { runtime: main.kind === 'ccb' ? 'claude' : 'ccb', version: otherVersion, path: other };
   return info;
 }
 

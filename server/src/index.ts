@@ -315,7 +315,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   await remote.start();
   if (remote.status().running) console.log(`remote access on http://0.0.0.0:${remote.port}  (${remote.addresses().join(', ')})`);
   await im.startAll();
-  const eng = engineInfo();
+  const eng = await engineInfo();
   console.log(`claude-web ${version} listening on http://${HOST}:${port}  (runtime: ${eng.runtime} ${eng.version ?? ''} ${eng.path})`);
 
   return {
