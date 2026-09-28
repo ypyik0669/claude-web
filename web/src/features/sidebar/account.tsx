@@ -36,7 +36,8 @@ function loadToday(): Promise<Today> {
  * The account row at the bottom of the sidebar (spec §5.1): avatar · name · 「Max 套餐 · 已用 34%」 · settings gear.
  * The row opens a popover upwards (quota windows, today's spend, usage & ledger, the config panel, appearance,
  * shortcuts, the command palette). The connection shows only when it is lost (red dot on the avatar + the line).
- * Who is signed in comes from the store (`auth`, asked once per connection); the popover is the sidebar's one menu.
+ * Who is signed in comes from the store (`auth`: asked once per connection, and updated by every `checkAuth` — the
+ * welcome page's 重新检查 / focus re-check, onboarding, settings); the popover is the sidebar's one menu.
  */
 export function AccountRow({ open, setOpen }: { open: boolean; setOpen(v: boolean): void }) {
   const auth = useStore((s) => s.auth);

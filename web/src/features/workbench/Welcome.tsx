@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '@/store';
-import { ws } from '@/ws/client';
 import { ago } from '@/util';
 import { Composer } from '@/features/composer/Composer';
 import { Icon } from '@/ui/icons';
@@ -22,7 +21,7 @@ function EngineStatus() {
   // mount: the server's shared answer; 重新检查: a fresh one; coming back to the window (after a /login
   // elsewhere): a fresh one only while it says "not logged in" and there is no provider profile to use instead
   const checker = useMemo(() => authChecker({
-    request: (force) => { setChecking(true); return ws.request<any>({ kind: 'config.auth', force }).finally(() => setChecking(false)); },
+    request: (force) => { setChecking(true); return useStore.getState().checkAuth(force).finally(() => setChecking(false)); },
     onResult: setAuth,
     recheckOnFocus: (last) => (last as { loggedIn?: boolean } | null)?.loggedIn === false && useStore.getState().providers.length === 0,
     focusGapMs: 30_000,

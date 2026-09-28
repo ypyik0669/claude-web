@@ -5,9 +5,8 @@ import { decodeAttachments, findChainUuidBefore, type ContextUsage } from '@/mod
 import { activeGroup, chatTile, deriveActive, hasLegacyLayout, initialLayout, layoutReducer, migrateLegacy, migrateWorkbench, needsSimplifiedNotice, sanitizeLayout, SIMPLIFIED_NOTICE_KEY, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
 import { PaneContext, winId } from './paneContext';
 import { useContext } from 'react';
-
-/** `config.auth` (`claude auth status`), as far as the sidebar's account row reads it. */
-export interface AccountAuth { loggedIn?: boolean; email?: string; orgName?: string; subscriptionType?: string; authMethod?: string }
+import { isAuthAnswer, type AccountAuth } from './auth';
+export type { AccountAuth } from './auth';
 
 export const THEMES = ['dark', 'light', 'dracula', 'nord', 'tokyo-night', 'paper'] as const;
 export type Theme = (typeof THEMES)[number];
@@ -77,8 +76,15 @@ interface State {
   /**
    * Who is signed in (`config.auth` = `claude auth status`), for the sidebar's account row. Asked once per connection
    * (like `limits`), never polled and never on mount: every forced check is an engine start. null = not answered yet.
+   * Every check made anywhere (welcome page, onboarding, settings) goes through `checkAuth` and lands here too.
    */
   auth: AccountAuth | null;
+  /**
+   * `config.auth` for everyone who asks (the welcome page, onboarding, settings, the connection): the reply is
+   * returned as is, and written to `auth` when it is an answer about the login (a boolean `loggedIn`). `force` = a
+   * fresh `claude auth status` instead of the server's 30 s shared result.
+   */
+  checkAuth(force?: boolean): Promise<AccountAuth | null>;
   /** 「需要你」 errors the user dismissed (`<sessionId>:<error>`); a changed error shows again. Not persisted. */
   attnDismissed: Record<string, true>;
   paletteOpen: boolean;
@@ -271,6 +277,11 @@ export const useStore = create<State>((set, get) => ({
   schedules: [],
   limits: null,
   auth: null,
+  async checkAuth(force = false) {
+    const a = await ws.request<AccountAuth | null>({ kind: 'config.auth', force });
+    if (isAuthAnswer(a)) set({ auth: a });
+    return a ?? null;
+  },
   attnDismissed: {},
   paletteOpen: false,
   showArchived: false,
@@ -380,8 +391,9 @@ export const useStore = create<State>((set, get) => ({
         void get().loadAgents().catch(() => {});
         void get().loadLibrarySources().catch(() => {});
         void ws.request<Limits>({ kind: 'limits.get' }).then((limits) => set({ limits })).catch(() => {});
-        // a failed check keeps the last answer (a reconnect must not turn a signed-in account into 「未登录」)
-        void ws.request<AccountAuth>({ kind: 'config.auth' }).then((a) => set({ auth: a ?? { loggedIn: false } })).catch(() => { if (!get().auth) set({ auth: { loggedIn: false } }); });
+        // a failed check keeps the last answer (a reconnect must not turn a signed-in account into 「未登录」); with
+        // none yet the row stops waiting and shows what it can
+        void get().checkAuth().catch(() => null).then(() => { if (!get().auth) set({ auth: { loggedIn: false } }); });
         // re-attach open live sessions after reconnect
         void resyncOpenSessions();
       }
