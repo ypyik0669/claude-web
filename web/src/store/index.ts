@@ -121,7 +121,8 @@ interface State {
   loadEngine(): Promise<void>;
   loadProviders(): Promise<void>;
   setSetting(key: string, value: unknown): Promise<void>;
-  loadHistory(sessionId: string, opts?: { focus?: boolean; mode?: 'replace' | 'tab' }): Promise<void>;
+  /** `cwd`: the conversation's folder when the caller knows it and the list may not have the session yet (a goal's new conversation) */
+  loadHistory(sessionId: string, opts?: { focus?: boolean; mode?: 'replace' | 'tab'; cwd?: string }): Promise<void>;
   /** prepend the next older page of an imported session's history; true while there is still more */
   loadOlder(sessionId: string): Promise<boolean>;
   // unified session library
@@ -412,7 +413,7 @@ export const useStore = create<State>((set, get) => ({
           break;
         }
         case 'session.info':
-          set((s) => bump(s, e.info.sessionId, (o) => { o.info = e.info; }));
+          set((s) => bump(s, e.info.sessionId, (o) => { o.info = e.info; if (!o.cwd && e.info.cwd) o.cwd = e.info.cwd; }));
           break;
         case 'permission.request':
           set((s) => bump(s, e.request.sessionId, (o) => { if (!o.pending.some((p) => p.requestId === e.request.requestId)) o.pending.push(e.request); }));
@@ -466,6 +467,11 @@ export const useStore = create<State>((set, get) => ({
       for (const id of back) delete d[id];
       set({ sessions, deletedSessions: d });
     } else set({ sessions });
+    // an open conversation that was opened before the list had it (a goal's new conversation) takes its folder now
+    for (const x of sessions ?? []) {
+      const o = get().open[x.sessionId];
+      if (o && !o.cwd && x.cwd) set((s) => bump(s, x.sessionId, (y) => { if (!y.cwd) y.cwd = x.cwd; }));
+    }
   },
 
   async openSession(p0, target) {
@@ -614,8 +620,11 @@ export const useStore = create<State>((set, get) => ({
     // tiles restored from a persisted layout can ask before the session list arrived → fetch it first (cwd comes from it)
     if (!get().sessions.some((s) => s.sessionId === sessionId)) await get().refreshSessions().catch(() => {});
     const meta = get().sessions.find((s) => s.sessionId === sessionId);
-    if (!cur) set((s) => ({ open: { ...s.open, [sessionId]: { sessionId, cwd: meta?.cwd ?? '', conv: createConversation(), version: 0, state: 'history', pending: [], loading: true, queue: [], draft: '', feedback: {} } } }));
-    else set((s) => bump(s, sessionId, (o) => { o.loading = true; o.loadError = undefined; }));
+    // an open conversation never keeps an empty folder once one is known: a resume would start it in the server's
+    // own directory (the list, the caller's hint, later `session.info` / the refreshed list fill it)
+    const cwdKnown = meta?.cwd || opts?.cwd || '';
+    if (!cur) set((s) => ({ open: { ...s.open, [sessionId]: { sessionId, cwd: cwdKnown, conv: createConversation(), version: 0, state: 'history', pending: [], loading: true, queue: [], draft: '', feedback: {} } } }));
+    else set((s) => bump(s, sessionId, (o) => { o.loading = true; o.loadError = undefined; if (!o.cwd && cwdKnown) o.cwd = cwdKnown; }));
     if (opts?.focus !== false) get().openInPane(sessionId, opts?.mode ?? 'replace');
     void get().loadFeedback(sessionId);
     if (!cur) void get().loadDraft(sessionId).then((d) => d && set((s) => bump(s, sessionId, (o) => { if (!o.draft) o.draft = d; })));

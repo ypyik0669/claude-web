@@ -93,7 +93,7 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
   const title = meta?.title ?? sid.slice(0, 8);
   const sessions = useStore((s) => s.sessions);
   const peer = sessionPeer(sid, sessions);
-  const cwd = active?.cwd ?? meta?.cwd ?? '';
+  const cwd = active?.cwd || meta?.cwd || '';
   const live = !!active && active.state !== 'history' && active.state !== 'closed' && active.state !== 'error';
   const wsOf = workspaces.find((w) => cwd.toLowerCase().startsWith(w.path.toLowerCase()));
   const agentKind = active?.info?.agent ?? meta?.agent;

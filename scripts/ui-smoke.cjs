@@ -1766,12 +1766,22 @@ function driver() {
         // with 「GOAL_STATUS: continue」 (MOCK_GOAL_CONTINUE); the objective has 「slow」, so each round runs a command.
         phase = 'chat-goal';
         await serverRequest({ kind: 'agents.set', agent: 'acp:smoke', patch: { name: 'Smoke Agent', command: E.SMOKE_NODE, args: [path.join(ROOT, 'server', 'src', 'agents', '__mocks__', 'acp-agent.mjs')], env: { MOCK_SLOW_MS: '6000', MOCK_GOAL_CONTINUE: '1' }, protocol: 'acp', label: 'smoke' } });
-        const goal = await serverRequest({ kind: 'goals.create', objective: 'smoke slow goal', cwd: E.SMOKE_REPO, agent: 'acp:smoke', permissionMode: 'default' });
-        const started = await serverRequest({ kind: 'goals.start', id: goal.id });
-        if (started && started.sessionId) await js(`window.__store.getState().loadHistory(${JSON.stringify(started.sessionId)})`).catch(() => {});
+        // typed in the conversation's composer, as a user would: `/goal …` runs in a conversation of its own, which
+        // then opens here — with its folder (review I-1: it used to open with an empty cwd and resume in the wrong place)
+        await click('.pane.focused .composer textarea');
+        wc.insertText('/goal smoke slow goal');
+        await sleep(200);
+        await key('Return');
+        const goalSid = await waitFor(`(() => { const t = document.querySelector('.pane.focused .chat-inner')?.dataset.sessionId; return !!t && t !== ${pj}; })()`, 10_000)
+          ? await js(`document.querySelector('.pane.focused .chat-inner').dataset.sessionId`) : null;
         const barText = `(document.querySelector('.pane.focused .goal-bar')?.textContent ?? '')`;
         const bar = await waitFor(`/目标：smoke slow goal/.test(${barText}) && /第 1 轮/.test(${barText})`, 10_000);
-        check('a running goal shows 「目标：… · 第 1 轮 · 查看」 on top of its conversation', bar, await js(`document.querySelector('.pane.focused .goal-bar')?.textContent ?? null`));
+        check('`/goal` typed in a conversation opens the goal\'s own conversation here; its bar says 「目标：… · 第 1 轮 · 查看」', !!goalSid && bar, await js(`document.querySelector('.pane.focused .goal-bar')?.textContent ?? null`));
+        const norm = (p) => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+        const goalHead = await js(`(() => { const it = document.querySelector('.pane.focused .sess-head .sh-meta button.it:not(.branch)'); return { cwd: window.__store.getState().open[${JSON.stringify(goalSid)}]?.cwd ?? null, folder: it ? it.title.split('\\n')[0] : null, name: it?.querySelector('.nm')?.textContent ?? null }; })()`);
+        check('…with its project in the header (the conversation knows its folder)', goalHead && norm(goalHead.cwd) === norm(E.SMOKE_REPO) && norm(goalHead.folder) === norm(E.SMOKE_REPO) && !!goalHead.name, JSON.stringify(goalHead));
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+        await sleep(300);
         await sleep(400);
         await shot('chat-goal');
         if (bar) {

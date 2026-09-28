@@ -328,7 +328,8 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
         onChange(''); // also clears the persisted draft, or the /goal line comes back on reopen
         // the goal runs in a conversation of its own (goals.create takes no conversation): open it here, where its bar
         // (目标 · 第 N 轮) shows — otherwise nothing on screen says where it went (review M6; a phone has no 目标 panel)
-        if (started?.sessionId) void useStore.getState().loadHistory(started.sessionId);
+        // (with its folder: the list does not have it yet, and a later resume must not start in the wrong place)
+        if (started?.sessionId) void useStore.getState().loadHistory(started.sessionId, { cwd: cwdFor });
         // brought to the front of the right panel even when it is already a tab behind another one (a phone has none)
         const phone = useStore.getState().mobile;
         if (!phone) showPanel('goals');
