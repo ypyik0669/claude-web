@@ -21,13 +21,12 @@ import { EngineSwitcher } from '../EngineSwitcher';
 import { SessionMenu, effectiveCaps, forkSession } from '@/features/sidebar/session-actions';
 import { sessionPeer } from '@/features/peers';
 import { blockRemoteOpen } from '@/features/remote-guard';
-
-const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+import { coalesce, gitEventConcerns } from '../git-refresh';
 
 /**
- * git status for a cwd (the files tab badges). Refreshed only by events about THIS repo — git.changed for its
- * root, fs.changed under it — and coalesced: a status is a git process on the server, and a build or an agent
- * writing files sends bursts of events (every repo's events used to reload every tile's status).
+ * git status for a cwd (the files tab badges). Refreshed only by events about THIS repo (`gitEventConcerns`:
+ * its resolved root or the cwd form, which differ behind a junction / symlink) and coalesced — 400 ms of
+ * quiet, but at least every 2 s during a steady stream: a status is a git process on the server.
  */
 function useGitStatus(cwd: string, enabled: boolean): GitStatus | null {
   const [st, setSt] = useState<GitStatus | null>(null);
@@ -35,16 +34,12 @@ function useGitStatus(cwd: string, enabled: boolean): GitStatus | null {
     if (!enabled || !cwd) return;
     let alive = true;
     let root: string | null = null;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const load = () => ws.request<GitStatus>({ kind: 'git.status', cwd }).then((s) => { if (alive) { root = s.root; setSt(s); } }).catch(() => alive && setSt(null));
-    const soon = () => { clearTimeout(timer); timer = setTimeout(load, 400); };
-    const under = (p: string) => { const base = normPath(root ?? cwd); const q = normPath(p); return q === base || q.startsWith(`${base}/`); };
+    const soon = coalesce(load, 400, 2000);
     load();
     void ws.request({ kind: 'git.watch', cwd }).catch(() => {});
-    const off = ws.on((e) => {
-      if (e.kind === 'git.changed' ? under(e.cwd) : e.kind === 'fs.changed' && under(e.path)) soon();
-    });
-    return () => { alive = false; clearTimeout(timer); off(); };
+    const off = ws.on((e) => { if (gitEventConcerns(e, { cwd, root })) soon.trigger(); });
+    return () => { alive = false; soon.cancel(); off(); };
   }, [cwd, enabled]);
   return st;
 }
