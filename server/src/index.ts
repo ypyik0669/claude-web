@@ -8,7 +8,7 @@ import { RunnerPool } from './runtime/pool.js';
 import { SessionService } from './sessions/service.js';
 import { ConfigService } from './config/service.js';
 import { UsageService } from './usage/service.js';
-import { ATTACH_MAX_BYTES, FilesService, attachmentPath } from './files/service.js';
+import { ATTACH_MAX_BYTES, FilesService, attachmentPath, dataDir } from './files/service.js';
 import { TerminalService } from './terminal/service.js';
 import { engineInfo } from './claude-exe.js';
 import { MetaStore } from './meta/store.js';
@@ -39,6 +39,11 @@ import { ClaudeSource } from './library/claude-source.js';
 import { CodexSource } from './library/codex-source.js';
 import { OpenCodeSource } from './library/opencode-source.js';
 import { AcpListSource } from './library/acp-source.js';
+import { GatewayService } from './gateway/service.js';
+import { AgentConfigService } from './agent-config/service.js';
+import { FederationService } from './federation/service.js';
+import { swapAgent } from './session/swap.js';
+import { createOrchestra } from './orchestra/handlers.js';
 
 const FILE_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.html': 'text/html; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.json': 'application/json' };
 
@@ -129,6 +134,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   await meta.load();
   // eslint-disable-next-line prefer-const
   let remote: RemoteService;
+  let fedHealth: ((nonce: string | null, authed: boolean) => object) | null = null;
   /** Main token (desktop / CLI) or a paired device token (query ?token= or cookie cw_token). */
   const authOk = (req: http.IncomingMessage, url: URL): boolean => {
     const presented = url.searchParams.get('token') ?? cookieToken(req.headers.cookie);
@@ -137,8 +143,12 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     if (token && presented === token) return true;
     return !!presented && !!remote?.authenticate(presented, req);
   };
+  // eslint-disable-next-line prefer-const
+  let gateway: GatewayService;
   const handler = (req: http.IncomingMessage, res: http.ServerResponse) => {
     const url = requestUrl(req, HOST);
+    // model gateway: its own key auth, loopback only (404 on the LAN listener)
+    if (gateway?.handle(req, res, url)) return;
     if (url.pathname === '/pair' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(pairPage()); return; }
     if (url.pathname === '/api/pair' && req.method === 'POST') {
       let body = '';
@@ -157,7 +167,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     if (url.pathname === '/manifest.webmanifest') { res.writeHead(200, { 'content-type': 'application/manifest+json' }); res.end(JSON.stringify({ name: 'Claude Web', short_name: 'Claude Web', start_url: '/', display: 'standalone', background_color: '#1f1e1a', theme_color: '#1f1e1a', icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }, { src: '/icon-192.png', sizes: '192x192', type: 'image/png' }, { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }] })); return; }
     if (url.pathname === '/api/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, version }));
+      // federation: a hash of the serverId (+ a nonce proof) for anyone; the ids themselves only with a valid token
+      res.end(JSON.stringify({ ok: true, version, ...(fedHealth?.(url.searchParams.get('nonce'), authOk(req, url)) ?? {}) }));
       return;
     }
     // Raw local file for previews (images / pdf / media): GET /api/file?path=<abs>&token= — token-guarded like /ws
@@ -246,6 +257,9 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const pool = new RunnerPool(providers, agents, transcripts);
   const ledger = new LedgerService();
   pool.on('message', (sessionId: string, m: unknown) => ledger.observe(sessionId, m, meta.sessionMeta(sessionId).providerId));
+  gateway = new GatewayService({ meta, secrets, member: (id) => providers.member(id), ledger });
+  await gateway.init();
+  providers.gatewayEndpoint = (groupId) => gateway.endpoint(groupId);
   remote = new RemoteService(meta, () => { const s = http.createServer(handler); s.on('upgrade', upgrade); return s; });
   const tunnels = new TunnelManager();
   const sessionsSvc = new SessionService();
@@ -272,7 +286,21 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   );
   sessionsSvc.on('changed', () => library.invalidate('claude'));
   library.start();
-  const services = { remote, tunnels, im, vcs: new VcsService(gitSvc), goals: new GoalService(meta, pool), android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version };
+  // cross-machine sessions: outbound connections to other claude-web servers (meta.peers)
+  const federation = new FederationService({
+    store: meta,
+    secrets,
+    tunnels,
+    version,
+    revokeDevice: (id) => remote.revoke(id),
+    // same path as handing over an imported library session: a NEW local session seeded with a briefing
+    handover: (a) => swapAgent({ pool, canonical, transcripts, meta, readAll: a.readAll, imported: a.imported }, a.sessionId, a.agent, a.model),
+  });
+  await federation.start();
+  fedHealth = (nonce, authed) => federation.healthInfo(nonce, authed);
+  const goals = new GoalService(meta, pool);
+  const orchestra = await createOrchestra({ pool, meta, canonical, transcripts, agents, git: gitSvc, goals, library, im });
+  const services = { orchestra, remote, tunnels, im, vcs: new VcsService(gitSvc), goals, android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway };
   new Hub(wss, services);
 
   await new Promise<void>((res, rej) => {
@@ -280,6 +308,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     server.listen(PORT, HOST, () => res());
   });
   const port = (server.address() as { port: number }).port;
+  gateway.port = port;
   await remote.start();
   if (remote.status().running) console.log(`remote access on http://0.0.0.0:${remote.port}  (${remote.addresses().join(', ')})`);
   await im.startAll();
@@ -292,8 +321,10 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     token,
     async close() {
       await im.stopAll();
+      await federation.close();
       await tunnels.closeAll();
       await remote.stop();
+      await orchestra.shutdown(); // before the pool: session closes must not fail / advance runs
       await pool.closeAll();
       await library.close(); // library-only Codex app-server / opencode serve / ACP processes
       terminal.closeAll(); // pty children (the embedded `claude` terminals) would outlive us otherwise

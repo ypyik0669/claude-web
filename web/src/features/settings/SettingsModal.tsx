@@ -10,6 +10,7 @@ import { LibrarySection } from './LibrarySection';
 import { RemoteSection } from './RemoteSection';
 import { ImSection } from './ImSection';
 import { SecretsSection } from './SecretsSection';
+import { GatewaySection } from './GatewaySection';
 import { UpdateSection } from './UpdateSection';
 import { DiagnosticsSection } from './DiagnosticsSection';
 import { ModelsSection } from './ModelsSection';
@@ -76,10 +77,12 @@ export function useSections(): Section[] {
       { id: 'autoContinueOnReset', label: '额度恢复后自动继续', hint: '被限流时到重置时间自动重发上一条', keywords: 'rate limit quota 限流 额度', render: () => <Toggle k="autoContinueOnReset" /> },
       { id: 'ui.defaultMode', label: '新会话默认权限模式', keywords: 'permission mode 权限', render: () => <Select k="ui.defaultMode" def="default" options={[{ id: 'default', l: '每次询问' }, { id: 'acceptEdits', l: '自动接受编辑' }, { id: 'plan', l: '计划模式' }, { id: 'auto', l: '自动模式' }, { id: 'bypassPermissions', l: '完全权限' }]} /> },
       { id: 'ui.softwareRender', label: '软件渲染（桌面版）', hint: '显卡驱动异常导致黑屏 / 闪烁时打开，重启后生效', keywords: 'gpu render 黑屏 闪烁 disable-gpu', render: () => <Toggle k="ui.softwareRender" /> },
+      { id: 'orchestra.maxParallel', label: '编排并发上限', hint: '一次编排运行里同时执行的任务 / 比选节点数（审批等待不占名额）', keywords: 'orchestra workflow parallel 编排 并发 多 agent', render: () => <NumberSelect k="orchestra.maxParallel" def={3} options={[1, 2, 3, 4, 6, 8]} /> },
     ] },
     { id: 'engine', l: '引擎与账号', ic: 'settings', keywords: 'engine ccb claude login 登录 doctor 更新', body: () => <Overview /> },
     { id: 'providers', l: '供应商 / 环境', ic: 'cloud', keywords: 'provider api key base url 供应商 中转 env 环境变量 openai gemini', body: () => <><ProviderProfiles /><EnvEditor /></> },
     { id: 'models', l: '模型', ic: 'artifact', keywords: 'model 模型 启用 opus sonnet haiku', body: () => <ModelsSection /> },
+    { id: 'gateway', l: '模型网关', ic: 'gateway', keywords: 'gateway 网关 故障转移 failover 转换 openai anthropic gemini 多账号 额度 轮询 round robin', body: () => <GatewaySection /> },
     { id: 'secrets', l: '密钥', ic: 'lock', keywords: 'secret keychain credential 密钥 钥匙串 加密', body: () => <SecretsSection /> },
     { id: 'mcp', l: 'MCP', ic: 'mcp', keywords: 'mcp server 目录 registry 健康', body: () => <><McpCatalog /><Mcp /></> },
     { id: 'plugins', l: '插件', ic: 'mcp', keywords: 'plugin marketplace 插件 市场', body: () => <Plugins /> },
@@ -89,7 +92,7 @@ export function useSections(): Section[] {
     { id: 'agents', l: 'CLI Agents', ic: 'agent', keywords: 'agent codex gemini qwen kimi acp 多 agent 安装 登录', body: () => <AgentsSection /> },
     { id: 'subagents', l: 'Claude 子代理', ic: 'copy', keywords: 'agent subagent 子代理', body: () => <SimpleList kind="config.agents" render={(a) => <div className="grow"><div>{a.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{a.source}{a.model ? ` · ${a.model}` : ''}</span></div><div className="sub">{a.description}</div></div>} /> },
     { id: 'hooks', l: 'Hooks', ic: 'bolt', keywords: 'hook 钩子', body: () => <SimpleList kind="config.hooks" render={(h) => <div className="grow"><div>{h.event} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{h.matcher ? `matcher: ${h.matcher}` : ''} · {h.source}</span></div><div className="sub">{(h.hooks ?? []).map((x: any) => x.command ?? x.type).join(' ; ')}</div></div>} /> },
-    { id: 'remote', l: '远程 / 手机', ic: 'device', keywords: 'remote lan phone mobile 手机 局域网 配对 二维码 qr 设备 ssh 隧道 tunnel 远程主机', body: () => <RemoteSection /> },
+    { id: 'remote', l: '远程 / 手机', ic: 'device', keywords: 'remote lan phone mobile 手机 局域网 配对 二维码 qr 设备 ssh 隧道 tunnel 远程主机 其它机器 跨机器 联邦 peer federation', body: () => <RemoteSection /> },
     { id: 'im', l: 'IM 网关', ic: 'chat', keywords: 'telegram discord slack 飞书 feishu lark 钉钉 dingtalk 企业微信 wecom 微信 机器人 bot im', body: () => <ImSection /> },
     { id: 'tools', l: 'CLI 工具', ic: 'keyboard', keywords: 'git gh node python uv docker ripgrep 工具 检测', body: () => <ToolsSection /> },
     { id: 'update', l: '更新', ic: 'minimize', keywords: 'update version release 更新 版本', body: () => <UpdateSection /> },

@@ -7,6 +7,7 @@ import { dlg } from '@/ui/dialog';
 import { desktop } from '@/desktop';
 import type { RemoteHost, RemoteStatus, TunnelInfo } from '@shared';
 import { Icon } from '@/ui/icons';
+import { PeersSection } from './PeersSection';
 
 function ago(t: number) { const s = Math.max(0, Date.now() - t) / 1000; return s < 60 ? '刚刚' : s < 3600 ? `${Math.floor(s / 60)} 分钟前` : s < 86400 ? `${Math.floor(s / 3600)} 小时前` : `${Math.floor(s / 86400)} 天前`; }
 
@@ -69,6 +70,7 @@ export function RemoteSection() {
         ))}
         {st.devices.length === 0 && <div className="empty">还没有配对的设备</div>}
       </div>
+      <PeersSection />
       <HostsSection />
     </div>
   );

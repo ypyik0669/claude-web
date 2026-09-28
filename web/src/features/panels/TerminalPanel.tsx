@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useScopedSession } from '@/store';
 import { ws } from '@/ws/client';
+import { parsePeerId } from '@shared';
 
 /** Embedded real `claude` CLI via node-pty + xterm.js. Escape hatch for interactive-only commands (/login, /theme…). */
 export function TerminalPanel({ cwd, cmd, visible = true }: { cwd?: string; cmd?: string; visible?: boolean }) {
   const active = useScopedSession();
-  const dir = cwd ?? active?.cwd ?? '';
+  // a session on another machine: its cwd doesn't exist here — the terminal opens in the default directory
+  const dir = cwd ?? (active && !parsePeerId(active.sessionId) ? active.cwd : '');
   const ref = useRef<HTMLDivElement>(null);
   const [err, setErr] = useState('');
   const [termId, setTermId] = useState<string | null>(null);

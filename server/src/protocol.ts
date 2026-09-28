@@ -2,6 +2,14 @@
 // One WebSocket. Client -> server requests carry an `id` and get exactly one `reply`.
 // Server -> client events carry no `id`.
 
+import type { AgentConfigRequest } from './agent-config/types.js';
+export type * from './agent-config/types.js';
+
+export * from './federation/types.js';
+import type { PeerEvent, PeerRequest, SessionPeer } from './federation/types.js';
+import type { OrchestraEvent, OrchestraRequest } from './orchestra/types.js';
+export * from './orchestra/types.js';
+
 export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
 // `ultra` is Codex-only (its own enum member). `ultracode` is NOT here on purpose: in Claude Code it is a
 // separate session-scoped boolean (xhigh + dynamic workflows) that CLAUDE_CODE_EFFORT_LEVEL rejects.
@@ -43,6 +51,8 @@ export interface SessionSummary {
   caps?: SourceCaps;
   /** claude-web's own session merged with the joined-source session it continues (that library id); deleting it deletes both */
   mergedFrom?: string;
+  /** lives on another machine (federation); its sessionId is `peer_<peerId>~<remote id>` */
+  peer?: SessionPeer;
 }
 
 /** What the library UI may do with a session, given its source's official APIs. */
@@ -101,7 +111,7 @@ export interface EngineInfo {
   fallback?: { runtime: RuntimeKind; version?: string; path: string }; // the other binary, if present
 }
 
-export type ProviderType = 'anthropic' | 'openai' | 'gemini' | 'grok';
+export type ProviderType = 'anthropic' | 'openai' | 'gemini' | 'grok' | 'gateway';
 /** A third-party API endpoint profile. Stored in ~/.claude-web/meta.json; the key is injected into the session process env only. */
 export interface Provider {
   id: string;
@@ -113,6 +123,8 @@ export interface Provider {
   defaultModel?: string;
   modelMap?: { haiku?: string; sonnet?: string; opus?: string };
   runtime?: RuntimeKind; // force a runtime for this provider (some relays only accept the official client)
+  /** type 'gateway': the local model-gateway group this profile routes through (baseUrl / apiKey are filled per session). */
+  gatewayGroupId?: string;
   createdAt: number;
 }
 export const CLAUDE_PROVIDER_ID = 'claude';
@@ -184,7 +196,7 @@ export interface AttachmentRef { kind: 'image' | 'text' | 'file' | 'folder'; nam
 export interface MessageFeedback { rating: 'up' | 'down' | null; note?: string; at: number }
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
-export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string }
+export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string }
 export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; cron?: string; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string; freshSession?: boolean; lastError?: string; runs?: number }
 export interface LimitWindow { label: string; percent: number; resetsAt: string | null; active: boolean; severity?: string }
 // ---- remote access / phones / IM (phase 6) ----
@@ -447,14 +459,23 @@ export type ClientRequest =
   | { kind: 'library.fork'; sessionId: string }
   | { kind: 'library.reindex' }
   | { kind: 'library.join'; kind_: AgentKind; joined: boolean }
-  | { kind: 'library.dismiss'; kind_: AgentKind };
+  | { kind: 'library.dismiss'; kind_: AgentKind }
+  | GatewayRequest
+  // ---- other agents' configuration center (phase 17) ----
+  | AgentConfigRequest
+  // ---- multi-agent orchestration ----
+  | OrchestraRequest
 
-export interface RequestEnvelope { id: string; req: ClientRequest }
+  // ---- cross-machine sessions (federation) ----
+  | PeerRequest;
+
+/** `via`: serverIds a forwarded request already passed through (federation loop guard). */
+export interface RequestEnvelope { id: string; req: ClientRequest; via?: string[] }
 export interface ReplyEnvelope { id: string; ok: boolean; data?: unknown; error?: string }
 
 // ---- events ----
 export type ServerEvent =
-  | { kind: 'hello'; version: string }
+  | { kind: 'hello'; version: string; serverId?: string; name?: string; bootId?: string }
   | { kind: 'session.event'; sessionId: string; message: unknown } // raw SDK message
   | { kind: 'session.state'; sessionId: string; state: RunnerState; error?: string }
   | { kind: 'session.info'; info: SessionInfoSnapshot }
@@ -475,7 +496,10 @@ export type ServerEvent =
   // detected on this machine, not yet joined and not dismissed
   | { kind: 'library.discovered'; kinds: AgentKind[] }
   // a library mutation (join / leave / rename / archive / delete / fork) — refetch sessions.list
-  | { kind: 'library.changed' };
+  | { kind: 'library.changed' }
+  | GatewayEvent
+  | PeerEvent
+  | OrchestraEvent;
 
 // ---------- phase 3: files / search / git ----------
 export interface FsEntry { name: string; dir: boolean; size?: number; mtime?: number; symlink?: boolean }
@@ -512,8 +536,12 @@ export interface McpHealth { name: string; status: 'connected' | 'failed' | 'nee
 export interface RegistryServer { name: string; description: string; repo?: string; install?: { transport: 'stdio' | 'http' | 'sse'; command?: string; args?: string[]; url?: string; env?: string[] }; kind: 'npm' | 'pypi' | 'remote' | 'other' }
 export interface SecretsStatus { scheme: 'dpapi' | 'keychain' | 'plain'; total: number; protected: number }
 /** One model call as seen from the runner (per `result` / assistant message). */
-export interface LedgerEntry { ts: number; sessionId: string; model: string; durationMs: number; apiMs?: number; input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number; ok: boolean; error?: string; turns?: number; providerId?: string }
+export interface LedgerEntry { ts: number; sessionId: string; model: string; durationMs: number; apiMs?: number; input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number; ok: boolean; error?: string; turns?: number; providerId?: string; kind?: 'gateway'; gateway?: GatewayLedgerInfo }
 export interface ScheduleRun { id: string; scheduleId: string; at: number; sessionId?: string; ok: boolean; durationMs?: number; summary?: string; error?: string }
 
 export type WireDown = { type: 'reply'; reply: ReplyEnvelope } | { type: 'event'; event: ServerEvent };
 export type WireUp = { type: 'request'; request: RequestEnvelope };
+
+// ---------- model gateway (sub-project 4) ----------
+export * from './gateway/types.js';
+import type { GatewayEvent, GatewayLedgerInfo, GatewayRequest } from './gateway/types.js';

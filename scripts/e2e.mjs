@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // phase1 needs a real Claude session (manual); phase7 needs `gh auth login` or GH_TOKEN (CI passes it explicitly)
-const phases = process.argv.slice(2).length ? process.argv.slice(2) : ['3', '4', '5', '6', '11', '12', '13'];
+const phases = process.argv.slice(2).length ? process.argv.slice(2) : ['3', '4', '5', '6', '11', '12', '13', '14', '15', '16', '17'];
 const home = mkdtempSync(path.join(os.tmpdir(), 'cw-e2e-'));
 const token = randomBytes(12).toString('hex');
 const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: path.join(home, '.claude-web') };
@@ -30,15 +30,29 @@ const port = await new Promise((res, rej) => {
 });
 console.log(`server on :${port} (HOME=${home})`);
 
+const PHASE_TIMEOUT_MS = Number(process.env.E2E_PHASE_TIMEOUT_MS ?? 300_000);
 let failed = [];
 for (const p of phases) {
   console.log(`\n===== phase ${p} =====`);
-  const code = await new Promise((res) => {
-    const c = spawn(process.execPath, [path.join(root, 'server', `ws-phase${p}.mjs`), port, token], { cwd: root, env, stdio: 'inherit' });
-    const t = setTimeout(() => c.kill(), 180_000);
-    c.on('exit', (code) => { clearTimeout(t); res(code); });
+  const serverLogFrom = log.length;
+  const started = Date.now();
+  // streamed as before (the concise PASS lines), and kept: a failure / timeout reprints it with the server log
+  let out = '';
+  const { code, timedOut } = await new Promise((res) => {
+    const c = spawn(process.execPath, [path.join(root, 'server', `ws-phase${p}.mjs`), port, token], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    c.stdout.on('data', (d) => { out += d; process.stdout.write(d); });
+    c.stderr.on('data', (d) => { out += d; process.stderr.write(d); });
+    let timedOut = false;
+    const t = setTimeout(() => { timedOut = true; c.kill(); }, PHASE_TIMEOUT_MS);
+    c.on('exit', (code) => { clearTimeout(t); res({ code, timedOut }); });
   });
-  if (code !== 0) failed.push(p);
+  if (code !== 0) {
+    failed.push(p);
+    const why = timedOut ? `TIMED OUT after ${Math.round((Date.now() - started) / 1000)}s` : `exit ${code} after ${Math.round((Date.now() - started) / 1000)}s`;
+    console.log(`\n----- phase ${p} FAILED (${why}): full output -----\n${out || '(no output)'}`);
+    const serverTail = log.slice(serverLogFrom).split('\n').slice(-80).join('\n');
+    console.log(`----- server log during phase ${p} (last 80 lines) -----\n${serverTail || '(nothing)'}\n----- end phase ${p} -----`);
+  }
 }
 server.kill();
 await new Promise((r) => setTimeout(r, 500));

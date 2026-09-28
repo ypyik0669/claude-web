@@ -8,3 +8,4 @@ dist-desktop-*/
 hello.txt
 color.txt
 .superpowers/
+.claude/worktrees/

@@ -5,7 +5,7 @@ import { clsx } from '@/util';
 import { Icon, AGENT_ICONS } from '@/ui/icons';
 import { dlg } from '@/ui/dialog';
 import { handOverMessage } from '@/features/sidebar/session-actions';
-import type { AgentKind, SessionInfoSnapshot } from '@shared';
+import { parsePeerId, type AgentKind, type SessionInfoSnapshot } from '@shared';
 
 /**
  * Change what is driving a live session — a different provider profile, or a different agent —
@@ -62,6 +62,16 @@ export function EngineSwitcher({ sessionId, info }: { sessionId: string; info: S
       }
     } catch (e: any) { toast(e.message); } finally { setBusy(''); }
   };
+
+  // a session on another machine: its providers / agents are that machine's — switching happens there;
+  // moving it here is the session menu's 「交给本机 agent 继续」
+  if (parsePeerId(sessionId)) {
+    return (
+      <span className="badge engine" title="其它机器上的会话：换供应商 / agent 请在那台机器上操作，或用会话菜单「交给本机 agent 继续」">
+        <Icon name={AGENT_ICONS[curAgent] ?? 'agent'} size={11} /> {label}
+      </span>
+    );
+  }
 
   return (
     <span ref={ref} style={{ position: 'relative' }}>

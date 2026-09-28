@@ -4,7 +4,7 @@ import { useStore, useScopedSession } from '@/store';
 import { clsx, ago } from '@/util';
 import { dlg } from '@/ui/dialog';
 import { Icon, type IconName } from '@/ui/icons';
-import type { MemoryItem, MemoryKind, MemoryScope } from '@shared';
+import { parsePeerId, type MemoryItem, type MemoryKind, type MemoryScope } from '@shared';
 
 const KINDS: { id: MemoryKind; l: string; ic: IconName }[] = [
   { id: 'decision', l: '决定', ic: 'check' },
@@ -101,7 +101,7 @@ export function MemoryPanel() {
           {KINDS.map((k) => <option key={k.id} value={k.id}>{k.l}</option>)}
         </select>
         <span className="grow" />
-        <button className="btn sm ghost" disabled={busy || !active} title="扫描当前会话，提取决定 / 约束 / 走过的死路" onClick={harvest}><Icon name="bolt" size={12} /> 从会话提取</button>
+        {!(active && parsePeerId(active.sessionId)) && <button className="btn sm ghost" disabled={busy || !active} title="扫描当前会话，提取决定 / 约束 / 走过的死路" onClick={harvest}><Icon name="bolt" size={12} /> 从会话提取</button>}
       </div>
 
       <div className="memory-new">

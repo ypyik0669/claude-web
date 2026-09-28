@@ -13,7 +13,7 @@ const execFileAsync = promisify(execFile);
 export function maskSecrets(text: string): string {
   return text
     .replace(/(sk-[A-Za-z0-9_-]{6})[A-Za-z0-9_-]{8,}/g, '$1…')
-    .replace(/("(?:apiKey|api_key|token|authToken|password|secret)"\s*:\s*")([^"]{4})[^"]*(")/gi, '$1$2…$3')
+    .replace(/("(?:apiKey|api_key|key|token|authToken|password|secret)"\s*:\s*")([^"]{4})[^"]*(")/gi, '$1$2…$3')
     .replace(/(enc:(?:dpapi|keychain|plain):)[^"\s]+/g, '$1…');
 }
 

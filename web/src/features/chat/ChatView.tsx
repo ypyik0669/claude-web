@@ -14,6 +14,7 @@ import { PermissionCards } from './PermissionCards';
 import { getToolDef, isStandalone } from './tools/registry';
 import { Icon } from '@/ui/icons';
 import { ToolHead } from './ToolCard';
+import { blockRemoteOpen } from '@/features/remote-guard';
 
 /** Human summary for a run of consecutive tool calls, Claude-Code-on-web style: "读取 2 个文件 · 运行 1 条命令". */
 function stepLabel(tools: ToolUseBlock[]): string {
@@ -176,7 +177,7 @@ function AttachmentChips({ atts }: { atts: NonNullable<UserItem['attachments']> 
   return (
     <div className="att-chips">
       {atts.map((a, i) => a.kind === 'session' ? <SessionRefChip key={i} a={a} /> : (
-        <span key={i} className="att-chip" title={a.path ?? a.name} onClick={() => { if (a.path && a.kind !== 'folder' && sid) useStore.setState({ inspect: { sessionId: sid, file: { path: a.path } } }); }}>
+        <span key={i} className="att-chip" title={a.path ?? a.name} onClick={() => { if (a.path && a.kind !== 'folder' && sid && !blockRemoteOpen(sid, a.path)) useStore.setState({ inspect: { sessionId: sid, file: { path: a.path } } }); }}>
           <span className="ic"><Icon name={a.kind === 'image' ? 'image' : a.kind === 'folder' ? 'folder' : a.kind === 'text' ? 'read' : 'attach'} size={12} /></span>
           {a.name}{a.size ? <span className="sz"> {fmtSize(a.size)}</span> : null}
         </span>

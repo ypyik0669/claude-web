@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionSummary } from '@shared';
-import { filterSessions, renderedRows, sourceCounts } from './filter';
+import { filterSessions, machineCounts, renderedRows, sourceCounts } from './filter';
 
 const s = (id: string, o: Partial<SessionSummary> = {}): SessionSummary => ({ sessionId: id, title: id, cwd: '/w', lastModified: 0, ...o });
 
@@ -68,5 +68,37 @@ describe('renderedRows', () => {
   it('a session shown in two groups (pinned + workspace) counts once', () => {
     const x = s('x');
     expect(renderedRows([{ key: 'p', items: [x], collapsed: false }, { key: 'w', items: [x], collapsed: false }], {}).length).toBe(1);
+  });
+});
+
+describe('machine dimension (federation)', () => {
+  const peerB = { id: 'b1', name: 'Box B' };
+  const mixed: SessionSummary[] = [
+    s('c1'),
+    s('peer_b1~x', { peer: peerB, title: 'remote one' }),
+    s('peer_b1~y', { peer: peerB, agent: 'codex' }),
+    s('peer_c2~z', { peer: { id: 'c2', name: 'Box C', offline: true } }),
+    s('peer_b1~kid', { peer: peerB, parentId: 'peer_b1~x' }),
+  ];
+  const mbase = { ...base, meta: {} };
+
+  it("machine 'local' keeps this machine's sessions only; a peer id keeps that machine's", () => {
+    expect(ids(filterSessions(mixed, { ...mbase, machine: 'local' }))).toEqual(['c1']);
+    expect(ids(filterSessions(mixed, { ...mbase, machine: 'b1' }))).toEqual(['peer_b1~x', 'peer_b1~y']);
+    expect(ids(filterSessions(mixed, { ...mbase, machine: 'all' }))).toHaveLength(4);
+    expect(ids(filterSessions(mixed, mbase))).toHaveLength(4);
+  });
+
+  it('source and machine combine', () => {
+    expect(ids(filterSessions(mixed, { ...mbase, machine: 'b1', source: 'codex' }))).toEqual(['peer_b1~y']);
+  });
+
+  it('machineCounts: local + one entry per machine, with its name and offline flag; children excluded', () => {
+    expect(machineCounts(mixed)).toEqual([
+      { id: 'local', name: '本机', n: 1 },
+      { id: 'b1', name: 'Box B', n: 2 },
+      { id: 'c2', name: 'Box C', n: 1, offline: true },
+    ]);
+    expect(machineCounts([s('a')])).toEqual([{ id: 'local', name: '本机', n: 1 }]);
   });
 });

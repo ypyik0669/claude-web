@@ -1,5 +1,6 @@
 // Minimal ACP agent used by tests: echoes prompts, runs one fake tool call with a permission request.
 import fs from 'node:fs';
+import path from 'node:path';
 import readline from 'node:readline';
 
 // So a test can prove a process it thought it killed is actually dead (AcpListSource's
@@ -11,6 +12,7 @@ const rl = readline.createInterface({ input: process.stdin });
 const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 let nextId = 100;
 let lastMcp = [];
+let sessionCwd = process.cwd();
 const pending = new Map();
 const req = (method, params) => new Promise((res) => { const id = nextId++; pending.set(id, res); send({ jsonrpc: '2.0', id, method, params }); });
 const update = (sessionId, update) => send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update } });
@@ -48,6 +50,7 @@ rl.on('line', async (line) => {
       // retry-without-them path gets exercised
       if (process.env.MOCK_REJECT_MCP && servers.length) { send({ jsonrpc: '2.0', id: m.id, error: { code: -32602, message: 'mcpServers unsupported' } }); break; }
       lastMcp = servers;
+      sessionCwd = m.params.cwd ?? sessionCwd;
       reply({ sessionId: 'acp-sess-1' });
       update('acp-sess-1', { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'help', description: 'mock help' }] });
       break;
@@ -72,6 +75,8 @@ rl.on('line', async (line) => {
         await new Promise((r) => setTimeout(r, Number(process.env.MOCK_SLOW_MS ?? 25000)));
         update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'slow-1', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: '61 passed' } }] });
       }
+      // 'WRITE:<file>' writes <file> in the session cwd (content = MOCK_ACP_TAG) so orchestration e2e has a diff to merge
+      for (const w of text.matchAll(/WRITE:([\w.-]+)/g)) fs.writeFileSync(path.join(sessionCwd, w[1]), `${process.env.MOCK_ACP_TAG ?? 'mock'}\n`);
       if (text.includes('plan')) update(sid, { sessionUpdate: 'plan', entries: [{ content: 'step one', status: 'completed', priority: 'high' }, { content: 'step two', status: 'in_progress', priority: 'medium' }] });
       reply({ stopReason: 'end_turn' });
       break;

@@ -79,9 +79,9 @@ export class LedgerService {
 
   async exportCsv(days = 30): Promise<string> {
     const rows = await this.list(days);
-    const head = ['time', 'sessionId', 'provider', 'model', 'ok', 'error', 'durationMs', 'apiMs', 'input', 'output', 'cacheRead', 'cacheWrite', 'costUsd', 'turns'];
+    const head = ['time', 'sessionId', 'provider', 'model', 'ok', 'error', 'durationMs', 'apiMs', 'input', 'output', 'cacheRead', 'cacheWrite', 'costUsd', 'turns', 'source', 'gatewayMember', 'switches'];
     const esc = (v: unknown) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const lines = [head.join(','), ...rows.map((r) => [new Date(r.ts).toISOString(), r.sessionId, r.providerId ?? 'claude', r.model, r.ok, r.error, r.durationMs, r.apiMs, r.input, r.output, r.cacheRead, r.cacheWrite, r.costUsd, r.turns].map(esc).join(','))];
+    const lines = [head.join(','), ...rows.map((r) => [new Date(r.ts).toISOString(), r.sessionId, r.providerId ?? 'claude', r.model, r.ok, r.error, r.durationMs, r.apiMs, r.input, r.output, r.cacheRead, r.cacheWrite, r.costUsd, r.turns, r.kind ?? 'session', r.gateway?.member, r.gateway?.switches].map(esc).join(','))];
     const dir = path.join(dataDir(), 'exports');
     await fs.mkdir(dir, { recursive: true });
     const file = path.join(dir, `ledger-${new Date().toISOString().slice(0, 10)}.csv`);
