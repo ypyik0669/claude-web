@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import type { AgentKind, SessionMeta, SessionSummary } from '@shared';
 import { useStore } from '@/store';
 import { ws } from '@/ws/client';
@@ -7,6 +7,8 @@ import { Icon, AGENT_ICONS } from '@/ui/icons';
 import { isImportedSessionId } from '@/util';
 import { agentOf, isArchived } from './filter';
 import { deleteSummary, deleteTargets, effectiveCaps, nativeCliCommand } from './caps';
+import { useAnchoredMenu } from './menus';
+import type { RowMenuId } from './entries';
 import { TERMS } from '@/ui/terms';
 
 export { effectiveCaps, capsIntersection, nativeCliCommand, type EffectiveCaps } from './caps';
@@ -148,35 +150,7 @@ export function SessionMenu({ s, onClose, style, extra, handoffInline, deleted }
   const ref = useRef<HTMLDivElement>(null);
   // fixed to the viewport next to its anchor: a scrolling sidebar list or a pane edge never clips it, and a long
   // menu near the bottom of the window opens upwards instead
-  useLayoutEffect(() => {
-    const el = ref.current, anchor = el?.parentElement;
-    if (!el || !anchor) return;
-    const a = anchor.getBoundingClientRect();
-    const w = el.offsetWidth, h = el.scrollHeight, vh = window.innerHeight, vw = window.innerWidth;
-    Object.assign(el.style, { position: 'fixed', right: 'auto', bottom: 'auto', maxHeight: '' });
-    el.style.left = `${Math.max(8, Math.min(a.right - w - 6, vw - w - 8))}px`;
-    if (h <= vh - a.bottom - 8) el.style.top = `${a.bottom + 2}px`;
-    else if (h <= a.top - 8) el.style.top = `${a.top - h - 2}px`;
-    else { el.style.top = '8px'; el.style.maxHeight = `${vh - 16}px`; }
-  }, [handoff]);
-  // parents pass a fresh closure every render; the listeners below must not re-subscribe for that
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
-  useEffect(() => {
-    // only a scroll that moves the anchor detaches the fixed menu from it — a streaming chat in another pane
-    // (auto-scroll to bottom) or a scrolling list elsewhere must leave it open
-    const onScroll = (e: Event) => {
-      const anchor = ref.current?.parentElement;
-      const t = e.target as Node | null;
-      if (!anchor || !t || ref.current?.contains(t)) return;
-      if (t === document || (t as Node).contains?.(anchor)) closeRef.current();
-    };
-    const k = () => closeRef.current();
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('click', k);
-    window.addEventListener('contextmenu', k, true);
-    return () => { window.removeEventListener('scroll', onScroll, true); window.removeEventListener('click', k); window.removeEventListener('contextmenu', k, true); };
-  }, []);
+  useAnchoredMenu(ref, onClose, { deps: [handoff] });
   const caps = effectiveCaps(s);
   const archived = isArchived(s, meta ? { [s.sessionId]: meta } : {});
   const cli = nativeCliCommand(s);
@@ -188,25 +162,26 @@ export function SessionMenu({ s, onClose, style, extra, handoffInline, deleted }
   const targets = remote && s.peer?.offline ? [] : agents.filter((a) => a.installed !== false && a.enabled !== false && (remote || a.kind !== cur));
   const handoffLabel = remote ? '交给本机的 Agent 继续' : TERMS.handoff;
   const agentButtons = targets.map((a) => (
-    <button key={a.kind} onClick={act(() => (remote ? handOverToLocal(s, a.kind) : handOver(s, a.kind)))}><Icon name={AGENT_ICONS[a.kind] ?? 'agent'} size={13} /> {a.name}</button>
+    <button key={a.kind} data-agent={a.kind} onClick={act(() => (remote ? handOverToLocal(s, a.kind) : handOver(s, a.kind)))}><Icon name={AGENT_ICONS[a.kind] ?? 'agent'} size={13} /> {a.name}</button>
   ));
+  const id = (x: RowMenuId) => x;
   return (
-    <div ref={ref} className="menu sess-menu" style={style ?? { right: 8, top: 28 }} onClick={(e) => e.stopPropagation()} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+    <div ref={ref} className="menu sess-menu" role="menu" title="" style={style ?? { right: 8, top: 28 }} onClick={(e) => e.stopPropagation()} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}>
       {extra}
       {!deleted && <>
-      <button onClick={act(() => referenceSession(s))}><Icon name="quote" size={14} /> 引用到输入框</button>
-      {caps.rename && <button onClick={act(() => renameSession(s))}><Icon name="edit" size={14} /> 重命名</button>}
-      {caps.fork && <button onClick={act(() => forkSession(s))}><Icon name="branch" size={14} /> 分叉</button>}
-      {caps.archive && <button onClick={act(() => setArchived([s], !archived))}><Icon name="archive" size={14} /> {archived ? '取消归档' : '归档'}</button>}
+      <button data-id={id('reference')} onClick={act(() => referenceSession(s))}><Icon name="quote" size={14} /> 引用到输入框</button>
+      {caps.rename && <button data-id={id('rename')} onClick={act(() => renameSession(s))}><Icon name="edit" size={14} /> 重命名</button>}
+      {caps.fork && <button data-id={id('fork')} onClick={act(() => forkSession(s))}><Icon name="branch" size={14} /> 分叉</button>}
+      {caps.archive && <button data-id={id('archive')} onClick={act(() => setArchived([s], !archived))}><Icon name="archive" size={14} /> {archived ? '取消归档' : '归档'}</button>}
       {handoffInline ? (
         <>
-          <div className="menu-label">{handoffLabel}</div>
+          <div className="menu-label" data-id={id('handoff')}>{handoffLabel}</div>
           {agentButtons}
           {!targets.length && <div className="menu-note">没有其它可用的 agent</div>}
         </>
       ) : (
         <>
-          <button onClick={() => setHandoff(!handoff)} aria-expanded={handoff}><Icon name="agent" size={14} /> <span style={{ flex: 1 }}>{handoffLabel}</span><Icon name={handoff ? 'chevronDown' : 'chevronRight'} size={12} /></button>
+          <button data-id={id('handoff')} onClick={() => setHandoff(!handoff)} aria-expanded={handoff}><Icon name="agent" size={14} /> <span style={{ flex: 1 }}>{handoffLabel}</span><Icon name={handoff ? 'chevronDown' : 'chevronRight'} size={12} /></button>
           {handoff && (
             <div className="sub-menu">
               {agentButtons}
@@ -215,10 +190,10 @@ export function SessionMenu({ s, onClose, style, extra, handoffInline, deleted }
           )}
         </>
       )}
-      {cli && <button onClick={act(() => openNativeCli(s))} title={cli}><Icon name="terminal" size={14} /> 在原生 CLI 打开</button>}
+      {cli && <button data-id={id('native-cli')} onClick={act(() => openNativeCli(s))} title={cli}><Icon name="terminal" size={14} /> 在原生 CLI 打开</button>}
       </>}
-      <button onClick={act(() => { void navigator.clipboard.writeText(s.sessionId); useStore.getState().toast('已复制 session id', true); })}><Icon name="copy" size={14} /> 复制 ID</button>
-      {!deleted && caps.delete && <button className="danger" onClick={act(() => deleteSessions([s]))}><Icon name="trash" size={14} /> 删除…</button>}
+      <button data-id={id('copy-id')} onClick={act(() => { void navigator.clipboard.writeText(s.sessionId); useStore.getState().toast('已复制 session id', true); })}><Icon name="copy" size={14} /> 复制 ID</button>
+      {!deleted && caps.delete && <button data-id={id('delete')} className="danger" onClick={act(() => deleteSessions([s]))}><Icon name="trash" size={14} /> 删除…</button>}
     </div>
   );
 }
