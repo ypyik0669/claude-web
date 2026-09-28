@@ -112,13 +112,19 @@ export const DOCK_HINT = {
   plan: () => '也可以直接在下面输入修改意见',
   ask: (agent: string) => `也可以直接在下面输入，不回答这些问题，直接告诉 ${agent}`,
 } as const;
-/** The composer's placeholder while a card is docked above it. */
+/** The composer's placeholder while a card is docked above it (a plan is approved by a click or Ctrl+Enter only). */
 export const DOCK_PLACEHOLDER = {
   tool: (agent: string) => `告诉 ${agent} 换个做法（发送 = 拒绝并说明）· 空着按 Enter = 允许一次`,
-  plan: () => '写下修改意见（发送 = 要求修改）· 空着按 Enter = 批准并开始',
+  plan: () => '写下修改意见后按 Enter 发出 · 批准请点「批准并开始」或按 Ctrl+Enter',
   ask: (agent: string) => `直接回复 ${agent}（发送 = 不回答这些问题）`,
 } as const;
 /** The send slot while a card is docked and the box has words. */
 export const DOCK_SEND = { tool: '拒绝并发送', plan: '要求修改', ask: '跳过并发送' } as const;
+/** On the card, when the box already had words before it came: Enter queues them as before (review I3). */
+export const DOCK_CARRIED = '输入框里的话是这张卡出现前写的：按 Enter 照常排队发送，不会当成回答';
+/** On the card, right after those words were queued: the next Enter takes them back as the answer. */
+export const DOCK_REQUEUED = { tool: '已排队发送。再按一次 Enter 会用这段话拒绝', plan: '已排队发送。再按一次 Enter 会用这段话要求修改', ask: '已排队发送。再按一次 Enter 会跳过提问、改发这段话' } as const;
+/** Words and attachments while a card is docked: a deny carries words only (review M2). */
+export const DOCK_BLOCKED = '附件不能随拒绝一起发出：先处理上面的卡片，或者移除附件';
 /** The setting that opens every change in the conversation again (`ui.inlineDiffs`; off by default since phase 5). */
 export const INLINE_DIFFS_LABEL = '在对话里直接展开改动';

@@ -8,28 +8,29 @@ import { langFromPath } from './highlight';
 import { JsonTree } from './tools/McpTool';
 import { Icon } from '@/ui/icons';
 import { DOCK_HINT } from '@/ui/terms';
-import { alwaysLabel, denyResponse, dockKind, permissionTitle } from './permission-dock';
+import { alwaysDetails, alwaysLabel, denyResponse, dockKind, permissionTitle, primaryKey } from './permission-dock';
 
 // The card a permission request, an AskUserQuestion or an ExitPlanMode docks above the composer (redesign phase 5,
 // spec §5.3 / §5.11): one at a time, 「还有 N 条」 when more wait. The old 「拒绝理由 / 修改意见」 field is the composer
-// itself — sending there denies with those words (Composer + `composerAct`), and an empty Enter is this card's main
-// button, registered here by request id. Mission Control, IM and the sidebar answer through the same
-// `respondPermission`; a request answered there disappears here on `permission.resolved`.
+// itself — sending there denies with those words (Composer + `dockAction`), and an empty Enter is this card's main
+// button, registered here by the composer's pane + request id. Mission Control, IM and the sidebar answer through
+// the same `respondPermission`; a request answered there disappears here on `permission.resolved`.
 
 /** The main button of each docked card (允许一次 / 批准并开始 / 提交回答), for the composer's empty Enter. */
 const primaries = new Map<string, () => boolean>();
-/** Press the docked card's main button; false when it cannot go yet (a question with no answer picked). */
-export function runDockPrimary(requestId: string): boolean {
-  return primaries.get(requestId)?.() ?? false;
+/** Press the docked card's main button (`key` = `primaryKey(scope, requestId)`); false when it cannot go yet (a question with no answer picked). */
+export function runDockPrimary(key: string): boolean {
+  return primaries.get(key)?.() ?? false;
 }
-function usePrimary(requestId: string, fn: () => boolean) {
+function usePrimary(scope: string, requestId: string, fn: () => boolean) {
   const ref = useRef(fn);
   ref.current = fn;
   useEffect(() => {
+    const key = primaryKey(scope, requestId);
     const f = () => ref.current();
-    primaries.set(requestId, f);
-    return () => { if (primaries.get(requestId) === f) primaries.delete(requestId); };
-  }, [requestId]);
+    primaries.set(key, f);
+    return () => { if (primaries.get(key) === f) primaries.delete(key); };
+  }, [scope, requestId]);
 }
 
 /** One answer per request: the buttons stay disabled until the server says it is resolved (or it failed). */
@@ -45,7 +46,10 @@ function useRespond(p: PermissionRequestEvent) {
   return { busy, send };
 }
 
-interface CardProps { p: PermissionRequestEvent; agent: string; cwd: string; more: number; reason: string; onReasonUsed: () => void }
+interface CardProps { p: PermissionRequestEvent; agent: string; cwd: string; more: number; reason: string; onReasonUsed: () => void; scope: string; note?: string }
+
+/** The line left of the buttons: the hint (the composer is where another instruction goes), or the composer's note about what Enter will do now. */
+const Hint = ({ hint, note }: { hint: string; note?: string }) => (note ? <span className="pd-hint note" role="status">{note}</span> : <span className="pd-hint">{hint}</span>);
 
 function Head({ p, agent, more, where }: { p: PermissionRequestEvent; agent: string; more: number; where?: string }) {
   const kind = dockKind(p);
@@ -63,11 +67,11 @@ function Head({ p, agent, more, where }: { p: PermissionRequestEvent; agent: str
 /** Enter in an empty composer = this; the ↵ on the button says so. */
 const Enter = () => <kbd className="pd-kbd" aria-hidden>↵</kbd>;
 
-function ToolPermission({ p, agent, cwd, more, reason, onReasonUsed }: CardProps) {
+function ToolPermission({ p, agent, cwd, more, reason, onReasonUsed, scope, note }: CardProps) {
   const { busy, send } = useRespond(p);
   const inp = p.input as Record<string, any>;
   const allowOnce = () => send({ behavior: 'allow' });
-  usePrimary(p.requestId, allowOnce);
+  usePrimary(scope, p.requestId, allowOnce);
   const always = alwaysLabel(p.suggestions);
   const deny = () => { if (send(denyResponse(p, reason)) && reason.trim()) onReasonUsed(); };
   const shell = p.toolName === 'Bash' || p.toolName === 'PowerShell';
@@ -91,34 +95,35 @@ function ToolPermission({ p, agent, cwd, more, reason, onReasonUsed }: CardProps
         {p.decisionReason && <div className="pd-note">{p.decisionReason}</div>}
       </div>
       <div className="pd-actions">
-        <span className="pd-hint">{DOCK_HINT.tool(agent)}</span>
+        <Hint hint={DOCK_HINT.tool(agent)} note={note} />
         <button className="btn" data-act="deny" disabled={busy} onClick={deny} title={reason.trim() ? `拒绝，并把输入框里的话告诉 ${agent}` : '拒绝这次操作'}>拒绝</button>
-        {always && <button className="btn" data-act="always" disabled={busy} title="写进权限规则，之后同样的操作不再询问" onClick={() => send({ behavior: 'allow', updatedPermissions: p.suggestions })}>{always}</button>}
+        {always && <button className="btn" data-act="always" disabled={busy} title={`允许，并写进权限规则，之后同样的操作不再询问：\n${alwaysDetails(p.suggestions).join('\n')}`} onClick={() => send({ behavior: 'allow', updatedPermissions: p.suggestions })}>{always}</button>}
         <button className="btn primary pd-main" data-act="allow" disabled={busy} onClick={allowOnce} title="允许这一次（输入框空着时按 Enter 也是）">允许一次 <Enter /></button>
       </div>
     </>
   );
 }
 
-function PlanApproval({ p, agent, more, reason, onReasonUsed }: CardProps) {
+function PlanApproval({ p, agent, more, reason, onReasonUsed, scope, note }: CardProps) {
   const { busy, send } = useRespond(p);
   const approve = () => send({ behavior: 'allow', updatedInput: p.input });
-  usePrimary(p.requestId, approve);
+  // Ctrl+Enter only (the composer decides): a plan is long, an Enter while reading it must not start the work
+  usePrimary(scope, p.requestId, approve);
   const revise = () => { if (send(denyResponse(p, reason)) && reason.trim()) onReasonUsed(); };
   return (
     <>
       <Head p={p} agent={agent} more={more} />
       <div className="pd-body"><div className="pd-scroll pd-plan"><Markdown text={String(p.input.plan ?? '')} /></div></div>
       <div className="pd-actions">
-        <span className="pd-hint">{DOCK_HINT.plan()}</span>
+        <Hint hint={DOCK_HINT.plan()} note={note} />
         <button className="btn" data-act="deny" disabled={busy} onClick={revise} title={reason.trim() ? '把输入框里的修改意见发给 Claude' : '要求修改计划'}>要求修改</button>
-        <button className="btn primary pd-main" data-act="allow" disabled={busy} onClick={approve} title="批准并开始（输入框空着时按 Enter 也是）">批准并开始 <Enter /></button>
+        <button className="btn primary pd-main" data-act="allow" disabled={busy} onClick={approve} title="批准并开始（输入框空着时按 Ctrl+Enter 也是）">批准并开始 <kbd className="pd-kbd" aria-hidden>Ctrl ↵</kbd></button>
       </div>
     </>
   );
 }
 
-function AskQuestion({ p, agent, more, reason, onReasonUsed }: CardProps) {
+function AskQuestion({ p, agent, more, reason, onReasonUsed, scope, note }: CardProps) {
   const { busy, send } = useRespond(p);
   const qs: any[] = (p.input.questions as any[]) ?? [];
   const [sel, setSel] = useState<Record<string, string[]>>({});
@@ -141,7 +146,7 @@ function AskQuestion({ p, agent, more, reason, onReasonUsed }: CardProps) {
     }
     return send({ behavior: 'allow', updatedInput: { ...p.input, answers } });
   };
-  usePrimary(p.requestId, submit);
+  usePrimary(scope, p.requestId, submit);
   const skip = () => { if (send(denyResponse(p, reason)) && reason.trim()) onReasonUsed(); };
   return (
     <>
@@ -168,7 +173,7 @@ function AskQuestion({ p, agent, more, reason, onReasonUsed }: CardProps) {
         ))}
       </div>
       <div className="pd-actions">
-        <span className="pd-hint">{DOCK_HINT.ask(agent)}</span>
+        <Hint hint={DOCK_HINT.ask(agent)} note={note} />
         <button className="btn" data-act="deny" disabled={busy} onClick={skip}>跳过</button>
         <button className="btn primary pd-main" data-act="allow" disabled={busy || !complete} onClick={submit} title="提交回答（选好之后在空输入框按 Enter 也是）">提交回答 <Enter /></button>
       </div>
@@ -179,14 +184,15 @@ function AskQuestion({ p, agent, more, reason, onReasonUsed }: CardProps) {
 /**
  * The first pending request of this conversation, docked above its composer (it replaces the run card while it is
  * there). `reason`: what is typed in the composer — 拒绝 / 要求修改 / 跳过 send it as the reason, then `onReasonUsed`
- * clears the box.
+ * clears the box. `scope`: the composer's pane + tile (the main button is registered per pane). `note`: what Enter
+ * will do now, when that is not the usual (words from before the card, queued words, attachments).
  */
-export function PermissionDock({ sessionId, reason, onReasonUsed }: { sessionId: string; reason: string; onReasonUsed: () => void }) {
+export function PermissionDock({ sessionId, reason, onReasonUsed, scope, note }: { sessionId: string; reason: string; onReasonUsed: () => void; scope: string; note?: string }) {
   const o = useStore((s) => s.open[sessionId]);
   const p = o?.pending[0];
   if (!o || !p) return null;
   const agent = o.info?.agent && o.info.agent !== 'claude' ? o.info.agentName ?? o.info.agent : 'Claude';
-  const props: CardProps = { p, agent, cwd: o.cwd, more: o.pending.length - 1, reason, onReasonUsed };
+  const props: CardProps = { p, agent, cwd: o.cwd, more: o.pending.length - 1, reason, onReasonUsed, scope, note };
   const kind = dockKind(p);
   return (
     <div className={clsx('pdock', kind)} role="region" aria-label={permissionTitle(p, agent)} data-request={p.requestId} data-kind={kind}>

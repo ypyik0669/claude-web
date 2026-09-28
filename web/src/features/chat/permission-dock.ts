@@ -9,20 +9,56 @@ export type DockKind = 'tool' | 'ask' | 'plan';
 
 export const dockKind = (p: Pick<PermissionRequestEvent, 'toolName'>): DockKind => (p.toolName === 'AskUserQuestion' ? 'ask' : p.toolName === 'ExitPlanMode' ? 'plan' : 'tool');
 
+/** How long a card (or the next one taking its place) is on screen before an empty Enter may answer it. */
+export const DOCK_COOLDOWN_MS = 600;
+
 /**
- * What Enter (or the send slot) in the composer does while a card sits above it:
- *  - `deny`: the box has words → deny with them as the reason (the old card's 「拒绝理由 / 修改意见」 field, now the
- *    composer: same response the card sent);
- *  - `primary`: the box is empty → the card's main button (允许一次 ↵ / 批准并开始 / 提交回答 when complete);
- *  - `send`: no card, or only attachments without words → an ordinary message (queued behind the turn, as before —
- *    never an approval).
+ * What the composer knows about the card docked above it: when it came (`shownAt`), whether the box already had
+ * words then (`carried` — cleared once the user edits them), and the message those words were queued as by the
+ * first Enter (`queued`: the next Enter can take it back as the reason).
  */
-export type ComposerAct = 'send' | 'deny' | 'primary';
-export function composerAct(p: PermissionRequestEvent | undefined, o: { text: string; attachments: boolean }): ComposerAct {
+export interface DockSeen { requestId: string; shownAt: number; carried: boolean; queued?: { id: string; text: string } }
+
+/**
+ * What Enter (`enter` set) or the send slot (`enter` absent) in the composer does while a card sits above it:
+ *  - `send`: an ordinary message (queued behind the turn, as before) — no card; a slash command (/compact, /goal …);
+ *    words that were in the box before the card came (`carried`: the user was writing the next message); only
+ *    attachments without words. Never an approval.
+ *  - `deny`: words typed while the card is up → deny with them as the reason (the old card's 「拒绝理由 / 修改意见」
+ *    field, now the composer);
+ *  - `blocked`: words and attachments typed while the card is up — a deny carries text only, so neither is sent
+ *    (review M2; the composer says why);
+ *  - `deny-queued`: an empty Enter right after carried words were queued → take that message back and deny with it
+ *    (the card says 「再按一次 Enter 会用这段话拒绝」);
+ *  - `primary`: an empty Enter on a card that has been on screen for `DOCK_COOLDOWN_MS` → its main button (允许一次 /
+ *    提交回答; a plan only on Ctrl+Enter — it is long, and an Enter while reading it must not start the work);
+ *  - `ignore`: anything else — a held-down Enter, an Enter in a card's first moments (the next card replacing the one
+ *    just answered, a card arriving while the user types), an empty Enter on a plan, the send button on an empty box.
+ * Review I3.
+ */
+export type DockAct = 'send' | 'deny' | 'blocked' | 'deny-queued' | 'primary' | 'ignore';
+export function dockAction(
+  p: PermissionRequestEvent | undefined,
+  o: { text: string; attachments: boolean; seen?: DockSeen | null; now: number; enter?: { repeat?: boolean; ctrl?: boolean } },
+): DockAct {
   if (!p) return 'send';
-  if (o.text.trim()) return 'deny';
-  return o.attachments ? 'send' : 'primary';
+  if (o.enter?.repeat) return 'ignore';
+  const seen = o.seen && o.seen.requestId === p.requestId ? o.seen : null;
+  const words = o.text.trim();
+  if (words) {
+    if (words.startsWith('/') || seen?.carried) return 'send';
+    return o.attachments ? 'blocked' : 'deny';
+  }
+  if (o.attachments) return 'send';
+  if (!o.enter) return 'ignore';
+  if (seen?.queued) return 'deny-queued';
+  if (!seen || o.now - seen.shownAt < DOCK_COOLDOWN_MS) return 'ignore';
+  if (dockKind(p) === 'plan' && !o.enter.ctrl) return 'ignore';
+  return 'primary';
 }
+
+/** The main-button registry's key: the composer's pane and tile + the request (one conversation can be open in two panes: review M3). */
+export const primaryKey = (scope: string, requestId: string): string => `${scope}\u0000${requestId}`;
 
 const DENY_DEFAULT: Record<DockKind, string> = { tool: '用户拒绝了这次操作', plan: '用户要求修改计划', ask: '用户取消了提问' };
 
@@ -56,34 +92,65 @@ export function permissionTitle(p: Pick<PermissionRequestEvent, 'toolName' | 'in
 
 const MAX_RULE = 25;
 
-/**
- * The 总是允许 button's words, from the request's suggestions (what the CLI would write into the permission
- * rules); `null` = no suggestions → no button (as before).
- */
-export function alwaysLabel(suggestions: unknown[] | undefined): string | null {
-  if (!suggestions?.length) return null;
-  for (const s of suggestions as Record<string, any>[]) {
-    if (s?.type === 'addRules' && Array.isArray(s.rules) && s.rules.length === 1) {
-      const r = s.rules[0] ?? {};
-      const what = String(r.ruleContent ?? '').replace(/:\*$/, '').trim() || String(r.toolName ?? '');
-      if (what) return `总是允许 ${what.length > MAX_RULE ? `${what.slice(0, MAX_RULE)}…` : what}`;
-    }
-    if (s?.type === 'setMode' && s.mode === 'acceptEdits') return '这个对话里都允许改文件';
-    if (s?.type === 'addDirectories') return '总是允许这个目录';
+/** One suggestion in words (the first half of the 总是允许 label), or null when it has no short name. */
+function suggestionLabel(s: Record<string, any>): string | null {
+  if (s?.type === 'addRules' && Array.isArray(s.rules)) {
+    if (s.rules.length !== 1) return s.rules.length > 1 ? `总是允许 ${s.rules.length} 条规则` : null;
+    const r = s.rules[0] ?? {};
+    const what = String(r.ruleContent ?? '').replace(/:\*$/, '').trim() || String(r.toolName ?? '');
+    return what ? `总是允许 ${what.length > MAX_RULE ? `${what.slice(0, MAX_RULE)}…` : what}` : null;
   }
-  return '总是允许';
+  if (s?.type === 'setMode' && s.mode === 'acceptEdits') return '这个对话里都允许改文件';
+  if (s?.type === 'addDirectories') return '总是允许这个目录';
+  return null;
 }
 
 /**
- * The steps that wait on the user (「等你确认」 on their node): the request's tool use id; an agent that sends no id
- * (some ACP agents) → the last unfinished call of that tool.
+ * The 总是允许 button's words, from the request's suggestions (what the CLI would write into the permission rules);
+ * `null` = no suggestions → no button (as before). The button writes every suggestion (like the CLI's 「don't ask
+ * again」), so with several the words say 「等 N 项」 and the tooltip (`alwaysDetails`) lists each (review M4).
+ */
+export function alwaysLabel(suggestions: unknown[] | undefined): string | null {
+  if (!suggestions?.length) return null;
+  const list = suggestions as Record<string, any>[];
+  const first = list.map(suggestionLabel).find((x) => x) ?? '总是允许';
+  return list.length > 1 ? `${first} 等 ${list.length} 项` : first;
+}
+
+const WHERE: Record<string, string> = { session: '只在这个对话里', localSettings: '写入本项目的本地设置', projectSettings: '写入项目设置（会进版本库）', userSettings: '写入你的用户设置', cliArg: '只在这次运行里' };
+const MODE: Record<string, string> = { acceptEdits: '自动接受改动', bypassPermissions: '完全放开', plan: '只规划', default: '每步询问' };
+
+/** Each suggestion 总是允许 would write, with where it goes (the button's tooltip). */
+export function alwaysDetails(suggestions: unknown[] | undefined): string[] {
+  const out: string[] = [];
+  for (const s of (suggestions ?? []) as Record<string, any>[]) {
+    const where = WHERE[String(s?.destination)] ?? String(s?.destination ?? '');
+    const tail = where ? ` · ${where}` : '';
+    if (s?.type === 'addRules' || s?.type === 'replaceRules') for (const r of (s.rules ?? []) as Record<string, any>[]) out.push(`${s.behavior === 'deny' ? '拒绝' : s.behavior === 'ask' ? '询问' : '允许'}规则 ${r.toolName ?? ''}${r.ruleContent ? `(${r.ruleContent})` : ''}${tail}`);
+    else if (s?.type === 'addDirectories') for (const d of (s.directories ?? []) as string[]) out.push(`允许访问目录 ${d}${tail}`);
+    else if (s?.type === 'setMode') out.push(`切换到「${MODE[String(s.mode)] ?? s.mode}」模式${tail}`);
+    else out.push(`${String(s?.type ?? '规则')}${tail}`);
+  }
+  return out;
+}
+
+/**
+ * The steps that wait on the user (「等你确认」 on their node): the request's tool use id — and, for Codex, the steps
+ * made from that item (a file-change approval names the item; its steps are `<item>:<path>`, review M5); an agent
+ * that sends no id (some ACP agents) → the last unfinished call of that tool.
  */
 export function waitingToolIds(pending: PermissionRequestEvent[], items: Item[]): Set<string> {
   const out = new Set<string>();
   if (!pending.length) return out;
   let all: { tool: ToolUseBlock }[] | null = null;
   for (const p of pending) {
-    if (p.toolUseId) { out.add(p.toolUseId); continue; }
+    if (p.toolUseId) {
+      out.add(p.toolUseId);
+      all ??= [...walkTools(items)];
+      const pre = `${p.toolUseId}:`;
+      for (const { tool } of all) if (tool.id.startsWith(pre)) out.add(tool.id);
+      continue;
+    }
     all ??= [...walkTools(items)];
     for (let i = all.length - 1; i >= 0; i--) {
       const t = all[i].tool;

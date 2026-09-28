@@ -9,7 +9,7 @@ import { pickFolderFiles } from '@/model/attachment-filter';
 import { StatusStrip } from '@/features/chat/StatusStrip';
 import { RunCard } from '@/features/chat/RunCard';
 import { PermissionDock, runDockPrimary } from '@/features/chat/PermissionCards';
-import { composerAct, denyResponse, dockKind } from '@/features/chat/permission-dock';
+import { denyResponse, dockAction, dockKind, primaryKey, type DockSeen } from '@/features/chat/permission-dock';
 import { attachmentFolderPath } from '@/features/paths';
 import { Icon } from '@/ui/icons';
 import { CATALOG, effortLevels, modelsFor } from '@catalog';
@@ -24,7 +24,7 @@ import { routePick, switchedNote } from '@/features/models/route';
 import { modelChipText } from '@/features/models/intelligence';
 import { providersLoaded, useGatewayStatus } from '@/features/models/data';
 import { dlg } from '@/ui/dialog';
-import { DOCK_PLACEHOLDER, DOCK_SEND, TERMS } from '@/ui/terms';
+import { DOCK_BLOCKED, DOCK_CARRIED, DOCK_PLACEHOLDER, DOCK_REQUEUED, DOCK_SEND, TERMS } from '@/ui/terms';
 import { showPanel } from '@/features/workbench/right-panel';
 import { ComposerBar } from './ComposerBar';
 import { PlusMenu } from './PlusMenu';
@@ -218,10 +218,26 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   const canSend = (text.trim().length > 0 || imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0) && !starting && !upload && !disabled;
   // a permission / question / plan card docked above the box (redesign phase 5): words typed here are its 拒绝理由 /
   // 修改意见 — sending them denies with them (the old card's reason field, same response); an empty Enter presses the
-  // card's main button (允许一次 ↵). Attachments without words are still an ordinary message (queued, never an approval).
+  // card's main button (允许一次 ↵). What exactly Enter does is `dockAction` (review I3: not in a card's first 600 ms,
+  // not on key repeat, words from before the card are queued as before, slash commands are sent, a plan wants
+  // Ctrl+Enter). Attachments without words are still an ordinary message (queued, never an approval).
   const docked = !welcome && !disabled && active ? active.pending[0] : undefined;
   const dockAgent = agentWord(active?.info);
   const hasAttachments = imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0;
+  const dockScope = pane ? `${pane.paneId}|${pane.tileId}` : 'none';
+  // when the card on top came, and whether the box had words then (recorded as it first renders: that is when it shows)
+  const seenRef = useRef<DockSeen | null>(null);
+  const [, setSeenTick] = useState(0);
+  if (docked) {
+    if (seenRef.current?.requestId !== docked.requestId) seenRef.current = { requestId: docked.requestId, shownAt: Date.now(), carried: !!text.trim() };
+  } else if (seenRef.current) seenRef.current = null;
+  const setSeen = (patch: Partial<DockSeen>) => { if (seenRef.current) { seenRef.current = { ...seenRef.current, ...patch }; setSeenTick((n) => n + 1); } };
+  const dockClick = docked ? dockAction(docked, { text, attachments: hasAttachments, seen: seenRef.current, now: Date.now() }) : 'send';
+  const dockNote = !docked ? undefined
+    : seenRef.current?.queued && !text.trim() ? DOCK_REQUEUED[dockKind(docked)]
+    : dockClick === 'blocked' ? DOCK_BLOCKED
+    : seenRef.current?.carried && text.trim() && !text.trim().startsWith('/') ? DOCK_CARRIED
+    : undefined;
 
   const addRef = (d: { id: string; title: string }) => {
     setRefs((r) => (r.some((x) => x.id === d.id) ? r : [...r, d]));
@@ -249,6 +265,11 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     setText(v);
     if (active && !welcome) setDraft(active.sessionId, v);
     if (draftKey) saveDraft(draftKey, v);
+    // words from before the card stay 「from before」 while the user keeps writing them; once the box is empty,
+    // whatever is typed next is typed with the card in view (an answer to it). Typing also ends the offer to take
+    // queued words back.
+    const s = seenRef.current;
+    if (s && ((s.carried && !v.trim()) || (s.queued && v.trim()))) setSeen({ carried: s.carried && !!v.trim(), queued: v.trim() ? undefined : s.queued });
   };
 
   /** Upload dropped files for `sessionId` and return attachment refs. */
@@ -274,10 +295,24 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     void useStore.getState().respondPermission(docked.requestId, denyResponse(docked, text));
     onChange('');
   };
+  /** the Enter after words from before the card were queued: take that message back and deny with it */
+  const denyQueued = () => {
+    const s = seenRef.current;
+    if (!docked || !active || !s?.queued) return;
+    setSeen({ queued: undefined });
+    const q = useStore.getState().recall(active.sessionId, s.queued.id);
+    if (!q) { toast('那段话已经发出去了'); return; }
+    void useStore.getState().respondPermission(docked.requestId, denyResponse(docked, q.text));
+  };
 
   const doSend = async () => {
     if (!canSend) return;
-    if (composerAct(docked, { text, attachments: hasAttachments }) === 'deny') { denyDocked(); return; }
+    const act = docked ? dockAction(docked, { text, attachments: hasAttachments, seen: seenRef.current, now: Date.now() }) : 'send';
+    if (act === 'deny') { denyDocked(); return; }
+    if (act === 'blocked') { toast(DOCK_BLOCKED); return; }
+    if (act !== 'send') return;
+    // words from before the card go out as an ordinary (queued) message; the card then offers to take them back
+    const requeue = !!docked && !!seenRef.current?.carried && !hasAttachments && !imgs.length && !text.trim().startsWith('/');
     const t = text;
     if (/^\/goal\s+\S/.test(t.trim())) {
       // the text stays: the user may still want to send it as a plain message, or copy it over there
@@ -287,12 +322,15 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
       if (!cwdFor) { toast('先选一个项目文件夹'); return; }
       try {
         const g = await ws.request<{ id: string }>({ kind: 'goals.create', objective, cwd: cwdFor, permissionMode: welcome ? wMode : (active?.info?.permissionMode ?? 'acceptEdits'), agent: welcome ? (foreign ? wAgent : undefined) : (active?.info?.agent && active.info.agent !== 'claude' ? active.info.agent : undefined) });
-        await ws.request({ kind: 'goals.start', id: g.id });
+        const started = await ws.request<{ sessionId?: string }>({ kind: 'goals.start', id: g.id });
         onChange(''); // also clears the persisted draft, or the /goal line comes back on reopen
+        // the goal runs in a conversation of its own (goals.create takes no conversation): open it here, where its bar
+        // (目标 · 第 N 轮) shows — otherwise nothing on screen says where it went (review M6; a phone has no 目标 panel)
+        if (started?.sessionId) void useStore.getState().loadHistory(started.sessionId);
         // brought to the front of the right panel even when it is already a tab behind another one (a phone has none)
         const phone = useStore.getState().mobile;
         if (!phone) showPanel('goals');
-        toast(phone ? '目标已创建并启动' : '目标已创建并启动，进度看「目标」面板', true);
+        toast(started?.sessionId ? '目标已创建，在新对话里运行' : phone ? '目标已创建并启动' : '目标已创建并启动，进度看「目标」面板', true);
       } catch (e: any) { toast(e.message); }
       return;
     }
@@ -321,6 +359,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     }
     if (!active) return;
     setText('');
+    if (seenRef.current?.carried) setSeen({ carried: false }); // the box is empty now: what comes next is typed with the card in view
     setImgs([]);
     setAtts([]);
     setRefs([]);
@@ -343,7 +382,14 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     }
     try {
       setFiles([]);
-      await send(active.sessionId, full, im, false, [...atts, ...uploaded]);
+      const sid = active.sessionId;
+      const before = useStore.getState().open[sid]?.queue.length ?? 0;
+      await send(sid, full, im, false, [...atts, ...uploaded]);
+      if (requeue && seenRef.current?.requestId === docked?.requestId) {
+        const q = useStore.getState().open[sid]?.queue ?? [];
+        const mine = q.length > before ? q[q.length - 1] : undefined;
+        setSeen({ carried: false, queued: mine && mine.text === full ? { id: mine.id, text: mine.text } : undefined });
+      }
     } catch (e: any) {
       toast(e.message);
       setUpload(null);
@@ -363,8 +409,13 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     }
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      // an empty box under a docked card: Enter is the card's main button (允许一次 ↵ / 批准并开始 / 提交回答)
-      if (docked && composerAct(docked, { text, attachments: hasAttachments }) === 'primary') { runDockPrimary(docked.requestId); return; }
+      if (docked) {
+        const act = dockAction(docked, { text, attachments: hasAttachments, seen: seenRef.current, now: Date.now(), enter: { repeat: e.repeat, ctrl: e.ctrlKey || e.metaKey } });
+        // an empty box under a docked card: Enter is the card's main button (允许一次 ↵ / 提交回答; a plan: Ctrl+Enter)
+        if (act === 'primary') { runDockPrimary(primaryKey(dockScope, docked.requestId)); return; }
+        if (act === 'deny-queued') { denyQueued(); return; }
+        if (act === 'ignore') return;
+      }
       void doSend();
     }
     if (e.key === 'Escape' && busy && active) void interrupt(active.sessionId);
@@ -507,8 +558,8 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   ) : (
     <button className="send" data-id={BAR_ID.send} disabled={!canSend} onClick={doSend} title="发送 (Enter)" aria-label="发送">{starting || upload ? <span className="spinner" /> : <Icon name="send" size={16} />}</button>
   );
-  const steer = docked && text.trim() ? (
-    <button className="steer deny" data-id={BAR_ID.steer} title={`拒绝这次请求，并把这段话告诉 ${dockAgent}（Enter）`} onClick={denyDocked}>{DOCK_SEND[dockKind(docked)]} <Icon name="send" size={12} /></button>
+  const steer = docked && (dockClick === 'deny' || dockClick === 'blocked') ? (
+    <button className="steer deny" data-id={BAR_ID.steer} disabled={dockClick === 'blocked'} title={dockClick === 'blocked' ? DOCK_BLOCKED : `拒绝这次请求，并把这段话告诉 ${dockAgent}（Enter）`} onClick={denyDocked}>{DOCK_SEND[dockKind(docked)]} <Icon name="send" size={12} /></button>
   ) : busy && canSend && active ? (
     <button className="steer" data-id={BAR_ID.steer} title={`${TERMS.steer}：不等这一轮结束，马上把这句话告诉 Claude`} aria-label={TERMS.steer} onClick={async () => { const t = text; setText(''); setDraft(active.sessionId, ''); await send(active.sessionId, t, undefined, true).catch((e) => toast(e.message)); }}>插话 <Icon name="send" size={12} /></button>
   ) : null;
@@ -583,7 +634,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
         {active && !welcome && <StatusStrip sessionId={active.sessionId} onRecall={(t) => { setText((cur) => (cur ? `${cur}\n${t}` : t)); ta.current?.focus(); }} />}
         {/* a docked card takes the run card's place (spec §4.2: 「等确认时被权限卡替代」) */}
         {active && !welcome && (docked
-          ? <PermissionDock sessionId={active.sessionId} reason={text} onReasonUsed={() => onChange('')} />
+          ? <PermissionDock sessionId={active.sessionId} reason={text} onReasonUsed={() => onChange('')} scope={dockScope} note={dockNote} />
           : <RunCard sessionId={active.sessionId} />)}
         <div className="composer-box" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
           {hasChips && (
