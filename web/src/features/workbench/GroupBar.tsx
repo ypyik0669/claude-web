@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useStore } from '@/store';
+import { useDropdown } from '@/ui/menus';
 import { paneOrder, type LayoutPreset } from '@/model/layout';
 import { clsx } from '@/util';
 import { desktop } from '@/desktop';
@@ -29,6 +30,9 @@ export function GroupBar({ rail = false }: { rail?: boolean }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [presets, setPresets] = useState(false);
+  const presetBox = useRef<HTMLSpanElement>(null);
+  // one anchored menu app-wide (polish P2): also closes on a click outside, Esc, another menu opening
+  useDropdown(presets, () => setPresets(false), presetBox);
   const [over, setOver] = useState<string | null>(null);
   const commit = () => { if (renaming && draft.trim()) dispatch({ t: 'group.rename', id: renaming, name: draft.trim() }); setRenaming(null); };
   const busy = (gid: string) => {
@@ -80,10 +84,10 @@ export function GroupBar({ rail = false }: { rail?: boolean }) {
       <button className="icon-btn" title="新分组" aria-label="新分组" onClick={() => dispatch({ t: 'group.new' })}><Icon name="plus" size={15} /></button>
       </div>
       <span className="grow" />
-      <span style={{ position: 'relative' }}>
-        <button className="icon-btn" title="布局预设" aria-label="布局预设" onClick={() => setPresets(!presets)}><Icon name="zoom" size={15} /></button>
+      <span ref={presetBox} style={{ position: 'relative' }}>
+        <button className="icon-btn" title="布局预设" aria-label="布局预设" aria-haspopup="menu" aria-expanded={presets} onClick={() => setPresets(!presets)}><Icon name="zoom" size={15} /></button>
         {presets && (
-          <div className="menu" style={{ right: 0, top: 26 }} onMouseLeave={() => setPresets(false)}>
+          <div className="menu" role="menu" aria-label="布局预设" style={{ right: 0, top: 26 }} onMouseLeave={() => setPresets(false)}>
             {PRESETS.map((p) => <button key={p.id} onClick={() => { setPresets(false); dispatch({ t: 'pane.preset', preset: p.id }); }}><Icon name={p.ic} size={13} /> {p.l}</button>)}
             <button onClick={() => { setPresets(false); dispatch({ t: 'pane.even' }); }}><Icon name="splitRight" size={13} /> 均分所有分屏</button>
           </div>

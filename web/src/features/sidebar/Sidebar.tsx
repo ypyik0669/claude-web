@@ -17,6 +17,7 @@ import { FilterMenu, type SourceChip } from './filter-menu';
 import { AccountRow } from './account';
 import { DiscoveryHint } from './hint';
 import { closeDrawer } from './menus';
+import { anchoredMenuOpen } from '@/ui/menus';
 import { openAutomation, useAutomation } from '@/features/automation/state';
 import type { ProjectMenuId, ProjectsHeadId, RowId, SectionId, TopId } from './entries';
 
@@ -25,22 +26,24 @@ const busyIds = (s: ReturnType<typeof useStore.getState>) =>
   Object.values(s.open).filter((o) => o.state === 'running' || o.state === 'starting' || o.state === 'waiting' || o.pending.length).map((o) => o.sessionId).sort().join('|');
 
 /**
- * What takes an Esc before the sidebar's multi-select: a menu of the sidebar's own, and what can sit over the sidebar
- * (a dialog or the shortcuts sheet, the command palette, the model menu, the directory menu). A menu elsewhere — a
- * group bar / tab strip / dock-rail menu that only closes on mouse-leave — is not in the way.
+ * What takes an Esc before the sidebar's multi-select besides a menu: a dialog or the shortcuts sheet, the command
+ * palette. Any `.menu` on screen counts too (a menu that forgot to claim itself still gets its Esc first).
  */
-const OVER_SIDEBAR = '.sidebar .menu, .modal-bg, .palette-bg, .menu.mm, .menu.dirmenu';
+const OVER_SIDEBAR = '.menu, .modal-bg, .palette-bg';
 
 /**
- * Esc ends multi-select only when it is meant for the sidebar: focus in the sidebar (or nowhere) and nothing of
- * OVER_SIDEBAR open (nor the settings page / an image viewer). Runs in the capture phase on window — before anything
- * else sees the key, so before those overlays close themselves on it — and only reads, never stops the event.
+ * Esc ends multi-select only when it is meant for the sidebar: focus in the sidebar (or nowhere) and nothing that
+ * takes the key first open — no anchored menu (`anchoredMenuOpen()`: the sidebar's own, the header ···, a composer /
+ * right-panel popover, the model / directory menu, a workbench dropdown, the file tree's right-click menu…; polish P1:
+ * with the focus on <body> the header ··· used to close and the selection went with it), nothing of OVER_SIDEBAR, no
+ * settings page / image viewer. One Esc does one thing. Runs in the capture phase on window — before anything else
+ * sees the key, so before those overlays close themselves on it — and only reads, never stops the event.
  */
 function escForSidebar(e: KeyboardEvent): boolean {
   if (e.key !== 'Escape') return false;
   const st = useStore.getState();
   if (st.paletteOpen || st.settingsOpen || st.shortcutsOpen || st.viewer) return false;
-  if (document.querySelector(OVER_SIDEBAR)) return false;
+  if (anchoredMenuOpen() || document.querySelector(OVER_SIDEBAR)) return false;
   const a = document.activeElement;
   return !a || a === document.body || !!a.closest('.sidebar');
 }

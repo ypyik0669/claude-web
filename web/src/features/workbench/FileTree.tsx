@@ -6,6 +6,7 @@ import type { FsEntry, GitFileStatus, GitStatus } from '@shared';
 import { MIME_SESSION } from './dnd';
 import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
+import { useDropdown } from '@/ui/menus';
 
 function join(dir: string, name: string) {
   const sep = dir.includes('\\') ? '\\' : '/';
@@ -103,12 +104,18 @@ function FileRow({ entry, path, depth, ctx }: { entry: FsEntry; path: string; de
 
 function ContextMenu({ m, ctx, onClose }: { m: NonNullable<Ctx['menu']>; ctx: Ctx; onClose: () => void }) {
   const st = useStore.getState();
+  const box = useRef<HTMLDivElement>(null);
+  // the one anchored menu app-wide (polish P2 / re-review 4b M2: it used to stay open next to the sidebar funnel,
+  // and under the settings page); a click outside and Esc close it — Esc only that
+  useDropdown(true, onClose, box);
+  // any other key closes it too (as before)
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
-    const k = () => onClose();
-    window.addEventListener('click', k);
+    const k = (e: KeyboardEvent) => { if (e.key !== 'Escape') closeRef.current(); };
     window.addEventListener('keydown', k);
-    return () => { window.removeEventListener('click', k); window.removeEventListener('keydown', k); };
-  }, [onClose]);
+    return () => window.removeEventListener('keydown', k);
+  }, []);
   const dir = m.dir ? m.path : parentOf(m.path);
   const act = (fn: () => unknown) => (e: React.MouseEvent) => { e.stopPropagation(); onClose(); void fn(); };
   const copyPath = async () => {
@@ -122,7 +129,7 @@ function ContextMenu({ m, ctx, onClose }: { m: NonNullable<Ctx['menu']>; ctx: Ct
     ctx.reload(parentOf(m.path));
   };
   return (
-    <div className="menu" style={{ position: 'fixed', left: Math.min(m.x, window.innerWidth - 220), top: Math.min(m.y, window.innerHeight - 320) }} onClick={(e) => e.stopPropagation()}>
+    <div ref={box} className="menu ft-menu" role="menu" aria-label="文件操作" style={{ position: 'fixed', left: Math.min(m.x, window.innerWidth - 220), top: Math.min(m.y, window.innerHeight - 320) }} onClick={(e) => e.stopPropagation()}>
       {!m.dir && <button onClick={act(() => st.openTile({ id: `d${Date.now()}`, kind: 'doc', path: m.path }, 'tab'))}>打开</button>}
       {!m.dir && <button onClick={act(() => { const before = st.layout; st.dispatchLayout({ t: 'pane.split', paneId: (st.layout.groups.find((g) => g.id === st.layout.activeGroupId) ?? st.layout.groups[0]).focusedPaneId, dir: 'row' }); if (useStore.getState().layout !== before) useStore.getState().openTile({ id: `d${Date.now()}`, kind: 'doc', path: m.path }, 'replace'); })}>在右侧分屏打开</button>}
       {!m.dir && ctx.git.get(norm(m.path)) && <button onClick={act(() => st.openTile({ id: `df${Date.now()}`, kind: 'diff', sessionId: '', path: m.path }, 'tab'))}>查看改动 (diff)</button>}

@@ -3,6 +3,7 @@ import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
+import { anchoredMenuOpen } from '@/ui/menus';
 import { GoalsPanel } from '@/features/goals/GoalsPanel';
 import { OrchestraPanel } from '@/features/orchestra/OrchestraPanel';
 import { useOrch, waitingOf } from '@/features/orchestra/state';
@@ -24,7 +25,7 @@ function Body({ tab }: { tab: AutomationTab }) {
 /** Something else has the keyboard's Esc: a dialog, a menu, the palette, the settings page, the shortcut sheet. */
 const escTaken = () => {
   const st = useStore.getState();
-  return !!st.settingsOpen || st.paletteOpen || st.shortcutsOpen || !!document.querySelector('.modal-bg, .menu, .cmdk');
+  return !!st.settingsOpen || st.paletteOpen || st.shortcutsOpen || anchoredMenuOpen() || !!document.querySelector('.modal-bg, .menu, .cmdk');
 };
 
 /** Back from the page: the keyboard goes to the conversation's composer in front (not left on <body>). */

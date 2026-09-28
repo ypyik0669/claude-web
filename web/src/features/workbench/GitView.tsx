@@ -5,6 +5,7 @@ import { ago, basename, clsx } from '@/util';
 import type { GitBranch, GitError, GitFileStatus, GitLogEntry, GitStatus, GitWorktree } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
+import { useDropdown } from '@/ui/menus';
 
 const STATUS_LABEL: Record<GitFileStatus['status'], string> = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', copied: 'C', untracked: 'U', conflict: '!', typechange: 'T' };
 
@@ -66,6 +67,9 @@ export function GitView({ cwd, visible = true }: { cwd: string; visible?: boolea
   const [amend, setAmend] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [branchMenu, setBranchMenu] = useState(false);
+  const branchBox = useRef<HTMLSpanElement>(null);
+  // one anchored menu app-wide (polish P2): also closes on a click outside, Esc, another menu opening
+  useDropdown(branchMenu, () => setBranchMenu(false), branchBox);
   const [bq, setBq] = useState('');
   const [tab, setTab] = useState<'changes' | 'log' | 'worktrees'>('changes');
   const [newWt, setNewWt] = useState<{ name: string; from: string } | null>(null);
@@ -152,8 +156,8 @@ export function GitView({ cwd, visible = true }: { cwd: string; visible?: boolea
   return (
     <div className="git-view">
       <div className="git-head">
-        <span style={{ position: 'relative' }}>
-          <button className="branch" onClick={() => setBranchMenu(!branchMenu)} title="切换分支">
+        <span ref={branchBox} style={{ position: 'relative' }}>
+          <button className="branch" onClick={() => setBranchMenu(!branchMenu)} title="切换分支" aria-haspopup="menu" aria-expanded={branchMenu}>
             <Icon name="branch" size={13} /> {st.detached ? `HEAD 分离 ${log[0]?.short ?? ''}` : st.branch}
             {st.state !== 'clean' && st.state !== 'detached' && <span className="badge err">{st.state}</span>}
           </button>

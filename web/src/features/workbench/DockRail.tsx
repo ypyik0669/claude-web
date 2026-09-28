@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { PANELS, panelToggleEffect } from '@/model/layout';
@@ -6,6 +6,7 @@ import { TERMS, panelToggleLabel } from '@/ui/terms';
 import { Icon } from '@/ui/icons';
 import { modKey } from './shortcuts';
 import { runCommand } from './commands';
+import { useDropdown } from '@/ui/menus';
 
 /** Every panel behind one button (the rail-marked few also get a direct button). */
 function PanelMenu() {
@@ -13,18 +14,14 @@ function PanelMenu() {
   const togglePanel = useStore((s) => s.togglePanel);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const off = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', off);
-    return () => document.removeEventListener('mousedown', off);
-  }, [open]);
+  // one anchored menu app-wide; closes on a click outside, Esc, another menu opening (polish P2)
+  useDropdown(open, () => setOpen(false), ref);
   const on = (id: (typeof PANELS)[number]['id']) => panelToggleEffect(dock, id) !== 'show';
   return (
     <span ref={ref} style={{ position: 'relative' }}>
-      <button className={clsx('icon-btn', open && 'active')} title="全部面板" aria-label="全部面板" onClick={() => setOpen(!open)}><Icon name="board" size={16} /></button>
+      <button className={clsx('icon-btn', open && 'active')} title="全部面板" aria-label="全部面板" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}><Icon name="board" size={16} /></button>
       {open && (
-        <div className="menu" style={{ top: 32, right: 0 }}>
+        <div className="menu" role="menu" aria-label="全部面板" style={{ top: 32, right: 0 }}>
           {PANELS.map((p) => (
             <button key={p.id} title={panelToggleLabel(panelToggleEffect(dock, p.id), p.title, !!p.keepAlive)} onClick={() => { togglePanel(p.id); setOpen(false); }}>
               <Icon name={p.icon} size={14} />

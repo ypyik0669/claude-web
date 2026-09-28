@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useStore } from '@/store';
+import { useDropdown } from '@/ui/menus';
 import { chatTile, MAX_PANES, PANELS, PANEL_ICONS, PANEL_TITLES, TILE_ICONS, type Pane as PaneModel, type Tile } from '@/model/layout';
 import { clsx, basename } from '@/util';
 import { Icon, type IconName } from '@/ui/icons';
@@ -36,6 +37,9 @@ export function TabStrip({ pane, groupId, index, zoomed, single, lead, workbench
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [menu, setMenu] = useState(false);
+  const addBox = useRef<HTMLSpanElement>(null);
+  // one anchored menu app-wide (polish P2): also closes on a click outside, Esc, another menu opening
+  useDropdown(menu, () => setMenu(false), addBox);
   const [over, setOver] = useState<number | null>(null);
   // split buttons are workbench tools; Ctrl+D / Ctrl+Shift+D work regardless
   const canSplit = workbench && paneCount < MAX_PANES;
@@ -95,10 +99,10 @@ export function TabStrip({ pane, groupId, index, zoomed, single, lead, workbench
             </div>
           );
         })}
-        <span style={{ position: 'relative' }}>
-          <button className="tab-add" title="新标签页" aria-label="新标签页" onClick={() => setMenu(!menu)}><Icon name="plus" size={14} /></button>
+        <span ref={addBox} style={{ position: 'relative' }}>
+          <button className="tab-add" title="新标签页" aria-label="新标签页" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}><Icon name="plus" size={14} /></button>
           {menu && (
-            <div className="menu" style={{ top: 26, left: 0 }} onMouseLeave={() => setMenu(false)}>
+            <div className="menu" role="menu" aria-label="新标签页" style={{ top: 26, left: 0 }} onMouseLeave={() => setMenu(false)}>
               <button onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: chatTile(null), mode: 'tab' }); }}><Icon name="chat" size={14} /> 新对话</button>
               <button onClick={() => { setMenu(false); const cwd = currentCwd(pane, open); dispatch({ t: 'tile.open', paneId: pane.id, tile: { id: `t${Date.now()}`, kind: 'term', cwd }, mode: 'tab' }); }}><Icon name="terminal" size={14} /> 终端</button>
               <button onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: { id: `t${Date.now()}`, kind: 'browser', url: 'http://localhost:3000' }, mode: 'tab' }); }}><Icon name="browser" size={14} /> 浏览器</button>
