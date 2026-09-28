@@ -4,6 +4,8 @@ import { useStore } from '@/store';
 import { basename } from '@/util';
 import { Icon } from '@/ui/icons';
 import { dlg } from '@/ui/dialog';
+import { EmptyState } from '@/ui/EmptyState';
+import { EMPTY } from '@/ui/terms';
 import type { OrchOrphan } from '@shared';
 
 /**
@@ -28,8 +30,8 @@ export function Orphans() {
         <span className="grow" />
         <button className="icon-btn xs" title={list ? '刷新' : '检查'} aria-label="检查遗留 worktree" disabled={busy} onClick={() => void load()}><Icon name="refresh" size={12} /></button>
       </div>
-      {list === null && <div className="orch-empty sm">删除运行记录时没清理的 worktree 会留在数据目录里，点右上角检查。</div>}
-      {list?.length === 0 && <div className="orch-empty sm">没有遗留的 worktree</div>}
+      {list === null && <div className="orch-idle sm">删除运行记录时没清理的 worktree 会留在数据目录里，点右上角检查。</div>}
+      {list?.length === 0 && <EmptyState e={EMPTY.orphans} className="orch-empty sm" />}
       {list?.map((o) => (
         <div key={o.path} className="orch-row" title={o.path}>
           <div className="grow">

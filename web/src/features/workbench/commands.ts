@@ -1,5 +1,8 @@
 // Command dispatcher shared by browser keydown, Electron menu accelerators and the command palette.
-import { useStore, type PanelId } from '@/store';
+import { hideSheet, useStore, type PanelId } from '@/store';
+import { TERMS } from '@/ui/terms';
+import { closeAutomation, useAutomation } from '@/features/automation/state';
+import { markChecklist } from '@/features/home/checklist-sync';
 import { activeGroup, chatTile, currentChatTile, defaultDockPanel, workbenchOn } from '@/model/layout';
 import { offerGroupToNewWindow } from './windows';
 
@@ -13,8 +16,21 @@ export function runCommand(id: string): boolean {
   // stays in the sidebar, a running one keeps running); a terminal / document in front is never replaced — the
   // reducer opens a tab next to it. Splits / groups / tabs still work from the keyboard and bring their own chrome.
   const workbench = workbenchOn(st.settings);
-  // a phone's right panel is the bottom drawer: it has no icon rail to minimise to — the same key shows / hides it
-  if (st.mobile && id === 'dock.minimize') return runCommand('dock.toggle');
+  // a phone's right panel is the bottom drawer (no icon rail to minimise to): both keys bring it up / put it away,
+  // and putting it away does not write the desktop's open / closed (store `sheetAt`)
+  if (st.mobile && (id === 'dock.toggle' || id === 'dock.minimize')) {
+    const up = st.sheetAt > 0 && st.layout.dock.open && (st.layout.dock.tabs.length > 0 || !!st.inspect);
+    if (up) hideSheet();
+    else if (!st.layout.dock.tabs.length && !st.inspect) d({ t: 'dock.show', panel: defaultDockPanel(workbench) });
+    else d({ t: 'dock.set', patch: { open: true } });
+    return true;
+  }
+  // the automation page lies over the main area: a key meant for what is under it does not act on the unseen
+  // (review 7 I3) — 关闭标签 closes the page itself; switching tabs / panes first gets the page out of the way
+  if (useAutomation.getState().open) {
+    if (id === 'tile.close') { closeAutomation(); return true; }
+    if (/^(tile\.(next|prev|new)|pane\.|group\.|tab$|new$|interrupt$|close$)/.test(id)) closeAutomation();
+  }
   const m = /^(group\.jump|pane\.jump)\.(\d)$/.exec(id);
   if (m) {
     if (m[1] === 'group.jump') { const t = st.layout.groups[Number(m[2])]; if (t) d({ t: 'group.activate', id: t.id }); }
@@ -23,7 +39,11 @@ export function runCommand(id: string): boolean {
   }
   switch (id) {
     case 'new': st.openInPane(null, workbench ? 'tab' : 'replace'); return true;
-    case 'palette': useStore.setState((s) => ({ paletteOpen: !s.paletteOpen })); return true;
+    case 'palette':
+      // 入门清单 「试试 Ctrl K」: the shortcut itself (the sidebar's 搜索 does not count)
+      if (!st.paletteOpen) markChecklist('palette');
+      useStore.setState((s) => ({ paletteOpen: !s.paletteOpen }));
+      return true;
     case 'sidebar': useStore.setState((s) => ({ sidebarOpen: !s.sidebarOpen })); return true;
     case 'shortcuts': useStore.setState({ shortcutsOpen: true }); return true;
     case 'settings': st.openSettings(); return true;
@@ -48,7 +68,7 @@ export function runCommand(id: string): boolean {
     case 'pane.splitRight': case 'pane.splitDown': {
       const before = st.layout;
       d({ t: 'pane.split', paneId: g.focusedPaneId, dir: id === 'pane.splitRight' ? 'row' : 'col' });
-      if (useStore.getState().layout === before) st.toast('最多 6 个窗格');
+      if (useStore.getState().layout === before) st.toast(`最多 6 个${TERMS.pane}`);
       return true;
     }
     case 'tile.close': if (pane?.activeTileId) st.closeTile(pane.id, pane.activeTileId); return true;

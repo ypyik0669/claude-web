@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type { AgentInfo, AgentKind, AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, SourceStatus, Workspace } from '@shared';
 import { withDefaultMode } from './default-mode';
 import { decodeAttachments, findChainUuidBefore, type ContextUsage } from '@/model/conversation';
-import { activeGroup, chatTile, deriveActive, hasLegacyLayout, initialLayout, layoutReducer, migrateLegacy, migrateWorkbench, needsSimplifiedNotice, sanitizeLayout, SIMPLIFIED_NOTICE_KEY, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
+import { activeGroup, chatTile, deriveActive, hasLegacyLayout, initialLayout, layoutReducer, migrateLegacy, migrateWorkbench, needsSimplifiedNotice, panelToggleEffect, sanitizeLayout, SIMPLIFIED_NOTICE_KEY, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
 import { PaneContext, winId } from './paneContext';
 import { useContext } from 'react';
 import { isAuthAnswer, type AccountAuth } from './auth';
@@ -63,8 +63,13 @@ interface State {
   tab: 'chat' | 'trajectory';
   panels: PanelId[];
   sidebarOpen: boolean;
-  /** Phone-width window (≤ 760px, spec §5.11): no workbench chrome, no right panel. Set by App from a media query. */
+  /** Phone-width window (≤ 760px, spec §5.11): no workbench chrome; the right panel is a bottom drawer. Set by App from a media query. */
   mobile: boolean;
+  /**
+   * Phone: when the right panel's bottom drawer was brought up (0 = it is down). The drawer is the same Dock; this
+   * is only whether it is on screen — not persisted, and putting it away never writes the desktop's `dock.open`.
+   */
+  sheetAt: number;
   inspect: { sessionId: string; toolUseId?: string; file?: { path: string; line?: number } } | null;
   theme: Theme;
   toasts: { id: number; text: string; ok?: boolean }[];
@@ -228,14 +233,29 @@ const loadedLayout = loadLayout();
 const initialLayoutState = loadedLayout.layout;
 
 /**
- * Told about every layout action before it is applied — a no-op too (opening the conversation already in front).
- * A page laid over the main area (the automation page) closes when the main area is sent somewhere.
+ * What a watcher is told besides the action: `since` = the action places the answer to a request sent at that
+ * time (a new conversation put in its tile once `session.open` came back) rather than following a click now.
  */
-const layoutWatchers = new Set<(a: LayoutAction) => void>();
-export function onLayoutAction(fn: (a: LayoutAction) => void): () => void {
+export interface LayoutActionMeta { since?: number }
+/**
+ * Told about every layout action before it is applied — a no-op too (opening the conversation already in front).
+ * A page laid over the main area (the automation page) closes when the main area is sent somewhere; the phone's
+ * drawer goes down.
+ */
+const layoutWatchers = new Set<(a: LayoutAction, meta: LayoutActionMeta) => void>();
+export function onLayoutAction(fn: (a: LayoutAction, meta: LayoutActionMeta) => void): () => void {
   layoutWatchers.add(fn);
   return () => { layoutWatchers.delete(fn); };
 }
+let actionSince: number | undefined;
+/** Run `fn`'s layout actions as the answer to a request sent at `since` (see `LayoutActionMeta`). */
+export function answering<T>(since: number, fn: () => T): T {
+  const prev = actionSince;
+  actionSince = since;
+  try { return fn(); } finally { actionSince = prev; }
+}
+/** Phone: put the bottom drawer away (the panels stay mounted; the desktop's open / closed is not touched). */
+export const hideSheet = (): void => { if (useStore.getState().sheetAt) useStore.setState({ sheetAt: 0 }); };
 
 export const useStore = create<State>((set, get) => ({
   connected: false,
@@ -246,9 +266,17 @@ export const useStore = create<State>((set, get) => ({
   panels: initialLayoutState.dock.tabs,
   layout: initialLayoutState,
   dispatchLayout(a) {
-    for (const f of layoutWatchers) f(a);
+    const meta: LayoutActionMeta = actionSince === undefined ? {} : { since: actionSince };
+    for (const f of layoutWatchers) f(a, meta);
     const prev = get().layout;
-    const next = layoutReducer(prev, a);
+    let next = layoutReducer(prev, a);
+    if (get().mobile) {
+      // the phone's drawer is never minimised (Dock derives it) and does not un-minimise the desktop's panel either
+      if (prev.dock.minimized && !next.dock.minimized) next = { ...next, dock: { ...next.dock, minimized: true } };
+      // bringing a panel forward brings the drawer up
+      const up = a.t === 'dock.show' || (a.t === 'dock.set' && a.patch.open === true) || (a.t === 'dock.toggle' && next.dock.open && next.dock.active === a.panel);
+      if (up) set({ sheetAt: Date.now() });
+    }
     if (next === prev) return;
     const activeId = deriveActive(next);
     const patch: Partial<State> = { layout: next, panels: next.dock.tabs };
@@ -279,6 +307,7 @@ export const useStore = create<State>((set, get) => ({
   },
   sidebarOpen: true,
   mobile: typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia(MOBILE_QUERY).matches,
+  sheetAt: 0,
   inspect: null,
   // cached resolved theme until meta.json arrives; a first run follows the system (spec §6: default = 跟随系统)
   theme: (localStorage.getItem('cw.theme') as Theme) || resolveTheme(DEFAULT_THEME),
@@ -483,6 +512,7 @@ export const useStore = create<State>((set, get) => ({
     // a brand-new conversation (sidebar 新建 / worktree, Git view, board…) starts in 「新对话默认权限」 unless the
     // caller chose one — resumes, forks and reopens keep their own (they carry a sessionId)
     const p = withDefaultMode(p0, get().settings);
+    const sentAt = Date.now();
     const r = await ws.request<{ sessionId: string; info: SessionInfoSnapshot; history: any[]; pending: PermissionRequestEvent[] }>({ kind: 'session.open', params: p });
     const existing = p.sessionId && !p.fork && !p.resumeAt ? get().open[p.sessionId] : undefined;
     const conv = existing?.conv ?? createConversation();
@@ -501,9 +531,12 @@ export const useStore = create<State>((set, get) => ({
       open[r.sessionId] = o;
       return { open };
     });
-    // place it in the workbench: a specific tile (welcome composer), the focused pane, or nowhere (background)
-    if (target && target !== 'none') get().dispatchLayout({ t: 'session.assign', paneId: target.paneId, tileId: target.tileId, sessionId: r.sessionId });
-    else if (target !== 'none') get().openInPane(r.sessionId, p.fork || p.resumeAt ? 'tab' : 'replace');
+    // place it in the workbench: a specific tile (welcome composer), the focused pane, or nowhere (background).
+    // It is the answer to a request: what the user opened meanwhile (the automation page, the phone's drawer) stays
+    answering(sentAt, () => {
+      if (target && target !== 'none') get().dispatchLayout({ t: 'session.assign', paneId: target.paneId, tileId: target.tileId, sessionId: r.sessionId });
+      else if (target !== 'none') get().openInPane(r.sessionId, p.fork || p.resumeAt ? 'tab' : 'replace');
+    });
     if (!p.sessionId) void get().refreshSessions();
     // load transcript in the background for resumed / forked sessions with empty conv
     if (p.sessionId && !existing) void get().loadHistory(r.sessionId);
@@ -771,9 +804,18 @@ export const useStore = create<State>((set, get) => ({
     get().openInPane(id, 'replace');
   },
   togglePanel(p) {
-    // (a phone's right panel is the bottom drawer: the same panels, so the same toggle)
     // without the workbench tools the four fixed tabs (审阅 / 文件 / 终端 / 任务) are hidden, never closed
-    get().dispatchLayout({ t: 'dock.toggle', panel: p, workbench: get().settings['ui.workbench'] === true });
+    const workbench = get().settings['ui.workbench'] === true;
+    const st = get();
+    if (st.mobile) {
+      // a phone's right panel is the bottom drawer: a panel is in view only while the drawer is up, and hiding it
+      // puts the drawer away (the desktop's dock.open stays as it was)
+      const up = st.sheetAt > 0 && st.layout.dock.open;
+      const effect = up ? panelToggleEffect({ ...st.layout.dock, minimized: false }, p, workbench) : 'show';
+      if (effect === 'show') return get().dispatchLayout({ t: 'dock.show', panel: p });
+      if (effect === 'hide') return hideSheet();
+    }
+    get().dispatchLayout({ t: 'dock.toggle', panel: p, workbench });
   },
   setTab(tab) {
     set({ tab });

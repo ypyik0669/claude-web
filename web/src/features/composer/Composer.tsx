@@ -23,7 +23,7 @@ import { modelChipText } from '@/features/models/intelligence';
 import { providersLoaded, useGatewayStatus } from '@/features/models/data';
 import { dlg } from '@/ui/dialog';
 import { TERMS } from '@/ui/terms';
-import { showPanel } from '@/features/workbench/right-panel';
+import { showGoals } from '@/features/workbench/right-panel';
 import { ComposerBar } from './ComposerBar';
 import { PlusMenu } from './PlusMenu';
 import { PermissionChip } from './PermissionChip';
@@ -91,7 +91,8 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   const remote = !welcome && !!active && !!parsePeerId(active.sessionId);
   // welcome-mode settings: the project the last conversation was started in (spec §5.8), see `initialCwd`
   const workspaces = useStore((s) => s.workspaces);
-  const [cwd, setCwd] = useState(() => initialCwd({ stored: localStorage.getItem('cw.lastCwd'), sessions, workspaces }));
+  const sessionMeta = useStore((s) => s.sessionMeta);
+  const [cwd, setCwd] = useState(() => initialCwd({ stored: localStorage.getItem('cw.lastCwd'), sessions, workspaces, meta: sessionMeta }));
   const [wModel, setWModel] = useState(localStorage.getItem('cw.lastModel') || '');
   const settings = useStore((s) => s.settings);
   // an explicit 「新对话默认权限」 (settings, or 「设为新对话的默认…」 in the permission menu) wins over the last one used
@@ -177,8 +178,8 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
 
   // the list / the projects arrive after the first paint (and the desktop app forgets localStorage every start)
   useEffect(() => {
-    if (!cwd) { const c = initialCwd({ stored: null, sessions, workspaces }); if (c) setCwd(c); }
-  }, [sessions, workspaces]);
+    if (!cwd) { const c = initialCwd({ stored: null, sessions, workspaces, meta: sessionMeta }); if (c) setCwd(c); }
+  }, [sessions, workspaces, sessionMeta]);
 
   // a starter / the 入门清单 fills this (welcome) composer: text, project, focus (fill.ts)
   const textRef = useRef(text);
@@ -289,10 +290,10 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
         const g = await ws.request<{ id: string }>({ kind: 'goals.create', objective, cwd: cwdFor, permissionMode: welcome ? wMode : (active?.info?.permissionMode ?? 'acceptEdits'), agent: welcome ? (foreign ? wAgent : undefined) : (active?.info?.agent && active.info.agent !== 'claude' ? active.info.agent : undefined) });
         await ws.request({ kind: 'goals.start', id: g.id });
         onChange(''); // also clears the persisted draft, or the /goal line comes back on reopen
-        // brought to the front of the right panel even when it is already a tab behind another one (a phone has none)
-        const phone = useStore.getState().mobile;
-        if (!phone) showPanel('goals');
-        toast(phone ? '目标已创建并启动' : '目标已创建并启动，进度看「目标」面板', true);
+        // its progress: the right panel's 目标 (brought to the front even when it is a tab behind another one); on a
+        // phone the automation page's 目标 tab (review 7 M11 — the drawer is too small for the execution graph)
+        showGoals();
+        toast('目标已创建并启动，进度在「目标」里', true);
       } catch (e: any) { toast(e.message); }
       return;
     }

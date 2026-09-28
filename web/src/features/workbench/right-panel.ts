@@ -51,6 +51,15 @@ export function openSchedules(): boolean {
 }
 
 /**
+ * Goals' progress (after `/goal`, a goal's 查看…): the right panel's 目标 on a desktop; on a phone the automation
+ * page's 目标 tab — the drawer is too small for the execution graph and the live spec (review 7 M11). One rule for
+ * every caller.
+ */
+export function showGoals(): boolean {
+  return useStore.getState().mobile ? openAutomation('goals') : showPanel('goals');
+}
+
+/**
  * A per-session view (the old workbench tab row) from the header ··· or the palette. The right panel (the bottom
  * drawer on a phone) shows it for that conversation (its tile is brought forward, which is what the right panel
  * follows, and goes back to the conversation itself); 定时任务 is the automation page; a conversation on another

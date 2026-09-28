@@ -1061,11 +1061,20 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
 
 /* ===== 阶段 4b：定时任务 / Mission Control / 账本 / 引导 ===== */
 .sched-view { display: flex; flex-direction: column; min-height: 0; }
-.sched-form { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--edge-default); background: var(--surface-1); }
-.sched-form .field { width: 100%; }
-.sched-form .row { display: flex; align-items: center; }
-.sched-form .row .grow { flex: 1; width: auto; }
+.sched-form { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3); border-bottom: 1px solid var(--edge-default); background: var(--surface-1); }
+.sched-form .field.sf-full { width: 100%; box-sizing: border-box; }
 .sched-form textarea.field { resize: vertical; font-family: var(--font); }
+/* one line per setting: a short label, then controls that keep their own width (review 7 I4: a 100%-wide select
+   used to squeeze the folder input next to it to 20px) */
+.sched-form .sf-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); }
+.sched-form .sf-row .field { width: auto; flex: none; }
+.sched-form .sf-l { flex: none; min-width: 2.5em; color: var(--ink-3); font-size: var(--fs-sm); }
+.sched-form .sf-cron { width: 11em; }
+.sched-form .sf-num { width: 5em; }
+.sched-form .field.sf-proj { flex: 1 1 16em; min-width: 12em; max-width: 100%; }
+.sched-form .sf-hint { color: var(--ink-3); font-size: var(--fs-sm); }
+.sched-form .sf-check { display: flex; align-items: center; gap: var(--sp-2); color: var(--ink-3); font-size: var(--fs-sm); }
+.sched-period { font-size: var(--fs-sm); margin-left: var(--sp-1); }
 .row.sched.err .sub { color: var(--err); }
 
 .mission { display: flex; flex-direction: column; height: 100%; min-height: 0; }
@@ -1116,6 +1125,8 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
 .ob-steps .done { color: var(--ok); }
 .modal.onboarding h3 { margin: 0 0 var(--sp-2); font-size: var(--fs-xl); font-weight: 600; letter-spacing: -0.01em; }
 .modal.onboarding p { color: var(--ink-2); font-size: var(--fs-base); margin: 0 0 var(--sp-4); line-height: var(--lh-base); }
+.modal.onboarding p.ob-checking { display: flex; align-items: center; gap: var(--sp-2); color: var(--ink-3); min-height: 60px; }
+.ob-checking .spin { width: 12px; height: 12px; border-radius: 50%; border: 1.6px solid var(--edge-default); border-top-color: var(--ink-2); animation: spin 0.9s linear infinite; flex: none; }
 .ob-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; margin-top: var(--sp-4); }
 .ob-actions .grow { flex: 1; }
 .ob-folders { display: flex; flex-direction: column; border: 1px solid var(--edge-default); border-radius: var(--r-xl); overflow: hidden; }
@@ -1536,13 +1547,6 @@ html[data-density='compact'] .sb-row.sess { height: 28px; padding: 0 10px 0 var(
 .menu.sb-filter button.off { color: var(--ink-3); }
 .menu.sb-filter .warn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); flex: none; }
 .menu.sb-filter .spinner { width: 10px; height: 10px; border-width: 1.5px; margin-left: auto; }
-.menu.sb-auto-menu { width: 288px; }
-.menu.sb-auto-menu button { align-items: flex-start; padding: 7px 10px; }
-.menu.sb-auto-menu button > svg { margin-top: 3px; }
-.menu.sb-auto-menu .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.menu.sb-auto-menu .l { color: var(--ink-1); }
-.menu.sb-auto-menu .d { font-size: 12px; color: var(--ink-4); }
-.menu.sb-auto-menu button .n { margin-top: 2px; }
 
 /* account row: avatar · name · plan + quota ring · settings */
 .sb-foot.sb-account { height: 60px; padding: 0 var(--sp-2); gap: 4px; flex: none; }
@@ -2046,7 +2050,7 @@ html.desktop.mac .sp-nav-top { min-height: 40px; padding-left: 76px; }
 .home-row:last-child { border-bottom: 0; }
 .home-row:hover { background: var(--layer-hover); }
 .home-row > .grow { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
-.home-tabs > .grow, .guide-row > .grow, .guide-steps .grow, .auto-head > .grow, .tasks-link > .grow { flex: 1 1 auto; }
+.home-tabs > .grow, .guide-row > .grow, .guide-steps .grow, .tasks-link > .grow { flex: 1 1 auto; }
 .tasks-sched .tasks-link { display: flex; width: calc(100% - 20px); box-sizing: border-box; }
 .tasks-link .to { color: var(--ink-4); }
 .home-row .tt { font-size: 14px; color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2071,6 +2075,11 @@ html.desktop.mac .sp-nav-top { min-height: 40px; padding-left: 76px; }
 .auto-page[hidden] { display: none; }
 .auto-page:focus { outline: none; }
 .auto-head { height: var(--h-head); flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: 0 var(--sp-3) 0 var(--sp-5); }
+/* the title and 新建 span the content below: on the narrow tabs 新建 ends where the list ends (review 7 M13) */
+.auto-head-in { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: var(--sp-2); }
+.auto-head.narrow .auto-head-in { max-width: 860px; }
+.auto-head-in > .grow { flex: 1 1 auto; }
+.auto-head > .icon-btn { margin-left: auto; flex: none; }
 .auto-head h2 { margin: 0; font-size: var(--fs-lg); font-weight: 600; color: var(--ink-1); }
 .auto-head .sb-reveal { margin-left: calc(-1 * var(--sp-2)); }
 .auto-new { gap: 5px; }
@@ -2086,26 +2095,34 @@ html.desktop.mac .sp-nav-top { min-height: 40px; padding-left: 76px; }
 .auto-body .goals.page .goals-head { border-bottom: 1px solid var(--edge-subtle); padding: var(--sp-2) 0; }
 .auto-body .goals.page .goals-list { padding: var(--sp-3) 0; overflow: visible; }
 .goal-go { flex: none; }
+.auto-body[data-body='orchestra'] { padding: var(--sp-2) var(--sp-5) var(--sp-4); }
 .auto-body[data-body='orchestra'] > * { flex: 1; min-height: 0; }
+.auto-body[data-body='orchestra'] .orch { border: 1px solid var(--edge-subtle); border-radius: var(--r-lg); overflow: hidden; }
 html.desktop .workbench:not(.gb) .auto-head { -webkit-app-region: drag; }
 html.desktop .auto-head button, html.desktop .auto-head [title] { -webkit-app-region: no-drag; }
 html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .auto-head { padding-right: 150px; }
 html.desktop.mac .app.no-sidebar .workbench:not(.gb) .auto-head { padding-left: 84px; }
 
 /* 「连接断开，正在重连…」 at the top of the main area */
-.conn-banner { position: absolute; top: calc(var(--h-head) + 8px); left: 50%; transform: translateX(-50%); z-index: 30; display: inline-flex; align-items: center; gap: var(--sp-2); padding: 6px 14px; border-radius: var(--r-pill); background: var(--surface-elev); border: 1px solid var(--edge-default); box-shadow: var(--elev-2); color: var(--ink-1); font-size: var(--fs-base); white-space: nowrap; animation: fadein var(--dur-3) var(--ease-out); }
-.conn-banner .spin { width: 12px; height: 12px; border-radius: 50%; border: 1.6px solid var(--edge-default); border-top-color: var(--err); animation: spin 0.9s linear infinite; flex: none; }
-html.desktop .conn-banner { -webkit-app-region: no-drag; }
+/* a thin full-width strip under the main area's first row (review 7 M7): it takes no clicks, and while the settings
+   page covers the window it sits on top of that (z above the page's 50) */
+.conn-banner { position: absolute; top: var(--h-head); left: 0; right: 0; z-index: 51; pointer-events: none; display: flex; align-items: center; justify-content: center; gap: var(--sp-2); height: 24px; padding: 0 var(--sp-3); background: color-mix(in oklab, var(--err) 10%, var(--surface-0)); border-bottom: 1px solid color-mix(in oklab, var(--err) 30%, transparent); color: var(--ink-1); font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; animation: fadein var(--dur-3) var(--ease-out); }
+.conn-banner.over-settings { position: fixed; top: env(safe-area-inset-top, 0px); }
+.conn-banner button { pointer-events: auto; }
+.conn-banner .spin { width: 11px; height: 11px; border-radius: 50%; border: 1.6px solid var(--edge-default); border-top-color: var(--err); animation: spin 0.9s linear infinite; flex: none; }
 
 /* ---- phone (≤ 760px, spec §5.11) ---- */
 @media (max-width: 760px) {
   /* the right panel is a bottom drawer: the same Dock (never remounted — the terminal keeps its pty), fixed at the
-     bottom; a tap above it (the backdrop) hides it */
-  .app.mobile .rpanel { position: fixed; left: 0; right: 0; bottom: 0; height: min(78vh, calc(100dvh - var(--h-head) - 8px)); z-index: 58; border-left: 0; border-top: 1px solid var(--edge-default); border-radius: var(--r-2xl) var(--r-2xl) 0 0; background: var(--surface-0); box-shadow: var(--elev-3); padding-bottom: env(safe-area-inset-bottom); animation: sheet-up var(--dur-3) var(--ease-out); }
-  .app.mobile .rpanel::before { content: ''; flex: none; width: 36px; height: 4px; margin: 6px auto 0; border-radius: 2px; background: var(--edge-strong); }
+     bottom; a tap above it (the backdrop) or its × puts it away. Below the settings page (50), the palette (55),
+     the shortcut sheet (50) and the sidebar drawer (60) — and hidden (not unmounted) while those are open, so a tap
+     never lands on something covered (review 7 I1). Its bottom rides above a soft keyboard (`--kb`, App from
+     visualViewport; review 7 M6); 78vh first for browsers without dvh. No grab handle: it does not swipe. */
+  .app.mobile .rpanel { position: fixed; left: 0; right: 0; bottom: var(--kb, 0px); height: 78vh; height: min(78vh, calc(100dvh - var(--h-head) - 8px - var(--kb, 0px))); z-index: 48; border-left: 0; border-top: 1px solid var(--edge-default); border-radius: var(--r-2xl) var(--r-2xl) 0 0; background: var(--surface-0); box-shadow: var(--elev-3); padding-bottom: env(safe-area-inset-bottom); animation: sheet-up var(--dur-3) var(--ease-out); }
   .app.mobile .rpanel .dock { width: 100%; }
   .app.mobile .rpanel .dock > .resizer { display: none; }
-  .app.mobile .sheet-backdrop { position: fixed; inset: 0; z-index: 57; background: var(--scrim); }
+  .app.mobile .sheet-backdrop { position: fixed; inset: 0; z-index: 47; background: var(--scrim); }
+  .app.mobile.sheet-covered .rpanel, .app.mobile.sheet-covered .sheet-backdrop { visibility: hidden; }
   /* permission cards: full width; when the buttons do not fit on one line 允许一次 gets a line of its own */
   .app.mobile .perm { margin: var(--sp-3) 0; container-type: inline-size; }
   .app.mobile .perm .actions .btn { min-height: 36px; }

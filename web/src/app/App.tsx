@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useStore } from '@/store';
+import { hideSheet, useStore } from '@/store';
 import { Sidebar } from '@/features/sidebar/Sidebar';
 import { Workbench } from '@/features/workbench/Workbench';
 import { Dock } from '@/features/workbench/Dock';
@@ -73,11 +73,26 @@ export function App() {
   const sbWidth = useStore((s) => s.layout.sidebar.width);
   const dock = useStore((s) => s.layout.dock);
   const inspect = useStore((s) => s.inspect);
-  const dispatchLayout = useStore((s) => s.dispatchLayout);
   const dockShown = dock.open && (dock.tabs.length > 0 || !!inspect);
-  const rpWidth = !dockShown ? 0 : dock.minimized ? MIN_RAIL : dock.width;
-  // the phone's bottom drawer has no icon rail to be minimised to: shown, it is shown whole
-  useEffect(() => { if (mobile && dockShown && dock.minimized) dispatchLayout({ t: 'dock.set', patch: { minimized: false } }); }, [mobile, dockShown, dock.minimized]);
+  // a phone's right panel is the bottom drawer: on screen only while it is up (store `sheetAt`), never minimised —
+  // both derived here, nothing written to the desktop's layout (review 7 M4)
+  const sheetUp = useStore((s) => s.sheetAt > 0);
+  const rpWidth = !dockShown ? 0 : mobile ? (sheetUp ? dock.width : 0) : dock.minimized ? MIN_RAIL : dock.width;
+  // going narrow (or wide) never brings the drawer up by itself: a desktop's open panel stays where it is
+  useEffect(() => { useStore.setState({ sheetAt: 0 }); }, [mobile]);
+  // the settings page, the palette and the shortcut sheet cover the drawer while they are open (review 7 I1)
+  const covered = useStore((s) => !!s.settingsOpen || s.paletteOpen || s.shortcutsOpen);
+  // phone: a soft keyboard shrinks the visual viewport; the drawer's bottom rides above it (review 7 M6)
+  useEffect(() => {
+    const vv = window.visualViewport;
+    const root = document.documentElement;
+    if (!mobile || !vv) { root.style.removeProperty('--kb'); return; }
+    const on = () => root.style.setProperty('--kb', `${Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop))}px`);
+    on();
+    vv.addEventListener('resize', on);
+    vv.addEventListener('scroll', on);
+    return () => { vv.removeEventListener('resize', on); vv.removeEventListener('scroll', on); root.style.removeProperty('--kb'); };
+  }, [mobile]);
 
   // desktop caption buttons (Windows / Linux overlay) are painted in one colour: match whatever row is under them —
   // the page (--bg) when the session header / empty page is there, the side surface (--bg-1) for the right panel's
@@ -146,10 +161,11 @@ export function App() {
   return (
     // `dock-open`: the right panel owns the window's top-right corner (desktop caption buttons sit over its tab row).
     // Not when it is minimized to its 36px icon rail: the buttons then cover the workbench's top-right row as well.
-    <div className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', mobile && sidebarOpen && 'drawer-open', rpWidth > MIN_RAIL && !mobile && 'dock-open', mobile && rpWidth > 0 && 'sheet-open')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px` }}>
+    <div className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', mobile && sidebarOpen && 'drawer-open', rpWidth > MIN_RAIL && !mobile && 'dock-open', mobile && rpWidth > 0 && 'sheet-open', mobile && rpWidth > 0 && covered && 'sheet-covered')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px` }}>
       {mobile && sidebarOpen && <div className="drawer-backdrop" onClick={() => useStore.setState({ sidebarOpen: false })} />}
-      {/* phone: the right panel is a bottom drawer over the conversation; a tap above it puts it away (hidden, not closed) */}
-      {mobile && rpWidth > 0 && <div className="sheet-backdrop" onClick={() => dispatchLayout({ t: 'dock.set', patch: { open: false } })} />}
+      {/* phone: the right panel is a bottom drawer over the conversation; a tap above it puts it away (hidden, not
+          closed — the desktop's open / closed is not written) */}
+      {mobile && rpWidth > 0 && <div className="sheet-backdrop" onClick={hideSheet} />}
       {sidebarOpen ? <SidebarColumn /> : <div className="sidebar" style={{ display: 'none' }} />}
       <ErrorBoundary area="工作台"><Workbench /></ErrorBoundary>
       <div className="rpanel" style={{ display: rpWidth ? 'flex' : 'none' }}>

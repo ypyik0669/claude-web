@@ -9,7 +9,8 @@ import { WorkflowEditor, type WorkflowDraft } from './WorkflowEditor';
 import { RunView, RUN_L } from './RunView';
 import { useOrch } from './state';
 import { Orphans } from './Orphans';
-import { EMPTY, emptyText } from '@/ui/terms';
+import { EMPTY } from '@/ui/terms';
+import { EmptyState } from '@/ui/EmptyState';
 import './orchestra.css';
 
 type View = { kind: 'none' } | { kind: 'edit'; draft: WorkflowDraft; key: number } | { kind: 'run'; runId: string };
@@ -24,10 +25,11 @@ export async function startWorkflow(w: Workflow): Promise<OrchRun | null> {
 
 /**
  * Orchestration panel: workflows + run history on the left; the form editor (with a live graph preview)
- * or a run view (execution graph, approvals, compare) on the right. Stacks vertically when narrow. `newSignal`: the
- * automation page's 新建 (its last click) opens a new workflow.
+ * or a run view (execution graph, approvals, compare) on the right. Stacks vertically when narrow. `page`: on the
+ * automation page, whose header 新建 (`newSignal`, its last click) is the one way to start a workflow there; in the
+ * right panel it is the list's +. Templates are the list's 模板… (review 7 M13: one 新建 entry, not three).
  */
-export function OrchestraPanel({ newSignal = 0 }: { newSignal?: number }) {
+export function OrchestraPanel({ newSignal = 0, page = false }: { newSignal?: number; page?: boolean }) {
   const workflows = useOrch((s) => s.workflows);
   const runs = useOrch((s) => s.runs);
   const templates = useOrch((s) => s.templates);
@@ -62,7 +64,7 @@ export function OrchestraPanel({ newSignal = 0 }: { newSignal?: number }) {
             <option value="">模板…</option>
             {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
-          <button className="icon-btn xs" title="新建工作流" aria-label="新建工作流" onClick={() => edit(newDraft())}><Icon name="plus" size={13} /></button>
+          {!page && <button className="icon-btn xs" title="新建工作流" aria-label="新建工作流" onClick={() => edit(newDraft())}><Icon name="plus" size={13} /></button>}
         </div>
         {hint && <div className="orch-hint">选一个工作流，点 <Icon name="play" size={11} /> 运行</div>}
         <div className="orch-list">
@@ -76,7 +78,7 @@ export function OrchestraPanel({ newSignal = 0 }: { newSignal?: number }) {
               <button className="icon-btn xs" title="删除" aria-label={`删除 ${w.name}`} onClick={async (e) => { e.stopPropagation(); if (await dlg.confirm(`删除工作流「${w.name}」？`, { message: '运行记录保留。', danger: true, okLabel: '删除' })) { await ws.request({ kind: 'orchestra.workflows.remove', id: w.id }).catch(() => {}); if (view.kind === 'edit' && view.draft.id === w.id) setView({ kind: 'none' }); } }}><Icon name="trash" size={12} /></button>
             </div>
           ))}
-          {!workflows.length && <div className="orch-empty sm">{emptyText(EMPTY.workflows)}</div>}
+          {!workflows.length && <EmptyState e={EMPTY.workflows} className="orch-empty sm" />}
         </div>
         <div className="orch-side-h"><b>运行记录</b><span className="grow" /><span className="muted">{runs.length}</span></div>
         <div className="orch-list runs">
@@ -90,21 +92,12 @@ export function OrchestraPanel({ newSignal = 0 }: { newSignal?: number }) {
               {r.waiting > 0 && <span className="badge run">{r.waiting} 等你</span>}
             </div>
           ))}
-          {!runs.length && <div className="orch-empty sm">{emptyText(EMPTY.orchestraRuns)}</div>}
+          {!runs.length && <EmptyState e={EMPTY.orchestraRuns} className="orch-empty sm" />}
         </div>
         <Orphans />
       </div>
       <div className="orch-main">
-        {view.kind === 'none' && (
-          <div className="orch-empty">
-            <Icon name="orchestra" size={28} />
-            <div>把一件事拆成几步，每步交给一个 agent；可以并行、可以让几个 agent 各做一版再比选，关键节点等你审批。</div>
-            <div className="acts">
-              <button className="btn sm" onClick={() => edit(newDraft())}><Icon name="plus" size={12} /> 新建工作流</button>
-              {templates.map((t) => <button key={t.id} className="btn sm ghost" onClick={() => edit(newDraft(t))}>{t.name}</button>)}
-            </div>
-          </div>
-        )}
+        {view.kind === 'none' && <EmptyState e={EMPTY.workflowOpen} className="orch-empty" />}
         {view.kind === 'edit' && <WorkflowEditor key={view.key} initial={view.draft} onSaved={(w) => useOrch.setState((s) => ({ workflows: [w, ...s.workflows.filter((x) => x.id !== w.id)] }))} onRun={(w) => void run(w)} onCancel={() => setView({ kind: 'none' })} />}
         {view.kind === 'run' && <RunView key={view.runId} runId={view.runId} onClose={() => setView({ kind: 'none' })} />}
       </div>

@@ -313,15 +313,28 @@ describe('workbench chrome (redesign phase 1)', () => {
     useStore.getState().dispatchLayout({ t: 'tile.close', paneId: pane().id, tileId: pane().tiles[1].id });
   });
 
-  it('on a phone the right panel is the bottom drawer (phase 7): the same toggle, the same dock — one terminal, hidden not closed', () => {
-    useStore.setState({ mobile: true, toasts: [] });
+  it('on a phone the right panel is the bottom drawer (phase 7): the same toggle, the same dock — one terminal; putting it away leaves the desktop layout alone (review 7 M4)', () => {
+    useStore.setState({ mobile: true, toasts: [], sheetAt: 0 });
     useStore.getState().togglePanel('terminal');
     expect(useStore.getState().layout.dock).toMatchObject({ open: true, active: 'terminal' });
+    expect(useStore.getState().sheetAt).toBeGreaterThan(0);
     expect(useStore.getState().toasts).toHaveLength(0);
-    useStore.getState().togglePanel('terminal'); // shown → hidden, the tab (and its process) stays
-    expect(useStore.getState().layout.dock).toMatchObject({ open: false, active: 'terminal' });
-    // back on a desktop width: still the one terminal tab, shown again
+    const shown = JSON.stringify(useStore.getState().layout.dock);
+    useStore.getState().togglePanel('terminal'); // up → down: only the drawer goes, the tab (and its process) stays
+    expect(useStore.getState().sheetAt).toBe(0);
+    expect(JSON.stringify(useStore.getState().layout.dock)).toBe(shown);
+    useStore.getState().togglePanel('terminal'); // and back up
+    expect(useStore.getState().sheetAt).toBeGreaterThan(0);
+    // a panel minimised on the desktop stays minimised there: the phone shows it whole without writing that down
     useStore.setState({ mobile: false });
+    useStore.getState().dispatchLayout({ t: 'dock.set', patch: { minimized: true } });
+    useStore.setState({ mobile: true, sheetAt: 0 });
+    useStore.getState().togglePanel('files');
+    expect(useStore.getState().layout.dock).toMatchObject({ active: 'files', minimized: true });
+    expect(useStore.getState().sheetAt).toBeGreaterThan(0);
+    // back on a desktop width: still the one terminal tab
+    useStore.setState({ mobile: false, sheetAt: 0 });
+    useStore.getState().dispatchLayout({ t: 'dock.set', patch: { minimized: false } });
     useStore.getState().togglePanel('terminal');
     expect(useStore.getState().layout.dock.tabs.filter((t) => t === 'terminal')).toHaveLength(1);
     useStore.getState().togglePanel('terminal');

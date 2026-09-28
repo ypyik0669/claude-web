@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useScopedSession, useStore } from '@/store';
+import { hideSheet, useScopedSession, useStore } from '@/store';
 import { PANELS, PANEL_ICONS, PANEL_TITLES, defaultDockPanel, dockView, workbenchOn, type DockTab, type PanelId } from '@/model/layout';
 import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
@@ -180,7 +180,9 @@ export function Dock() {
   const { tabs, active, mounted } = view;
   const fixed = tabs.filter((t) => t.fixed);
   const temps = tabs.filter((t) => !t.fixed);
-  const min = dock.minimized;
+  // a phone's right panel is the bottom drawer: never an icon rail (derived here, the desktop's state is kept)
+  const mobile = useStore((s) => s.mobile);
+  const min = dock.minimized && !mobile;
   const shown = dock.open;
   const simple = !workbench && !min;
   const stacked = simple && place.stacked;
@@ -326,12 +328,13 @@ export function Dock() {
         <span className="grow" />
         <span className="dock-ctl" ref={ctlRef}>
           {simple && <MoreMenu mounted={mounted} open={folded ? temps.map((t) => t.id) : NONE} active={active} onPick={pick} onClose={close} />}
-          {(workbench || min) && (
+          {(workbench || min) && !mobile && (
             <button className="icon-btn" title={min ? `还原${TERMS.dock} (${modKey}+Shift+J)` : `最小化 (${modKey}+Shift+J)`} onClick={() => dispatch({ t: 'dock.set', patch: { minimized: !min } })}>
               <Icon name={min ? 'restore' : 'minimize'} size={16} />
             </button>
           )}
-          {!min && <button className="icon-btn" title={`隐藏${TERMS.dock} (${modKey}+J)`} aria-label={`隐藏${TERMS.dock}`} onClick={() => dispatch({ t: 'dock.set', patch: { open: false } })}><Icon name="close" size={15} /></button>}
+          {/* phone: × puts the drawer away (like a tap above it) without touching the desktop's open / closed */}
+          {!min && <button className="icon-btn" title={mobile ? '收起' : `隐藏${TERMS.dock} (${modKey}+J)`} aria-label={mobile ? '收起' : `隐藏${TERMS.dock}`} onClick={() => (mobile ? hideSheet() : dispatch({ t: 'dock.set', patch: { open: false } }))}><Icon name="close" size={15} /></button>}
         </span>
       </div>
       <div className={clsx('dock-body', foldedFront && 'headed')}>

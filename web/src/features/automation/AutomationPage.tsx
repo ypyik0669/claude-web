@@ -17,8 +17,24 @@ function Body({ tab }: { tab: AutomationTab }) {
   switch (tab) {
     case 'schedules': return <SchedulesView page newSignal={n} />;
     case 'goals': return <GoalsPanel page newSignal={n} />;
-    case 'orchestra': return <OrchestraPanel newSignal={n} />;
+    case 'orchestra': return <OrchestraPanel page newSignal={n} />;
   }
+}
+
+/** Something else has the keyboard's Esc: a dialog, a menu, the palette, the settings page, the shortcut sheet. */
+const escTaken = () => {
+  const st = useStore.getState();
+  return !!st.settingsOpen || st.paletteOpen || st.shortcutsOpen || !!document.querySelector('.modal-bg, .menu, .cmdk');
+};
+
+/** Back from the page: the keyboard goes to the conversation's composer in front (not left on <body>). */
+function focusComposer() {
+  requestAnimationFrame(() => {
+    const a = document.activeElement;
+    if (a && a !== document.body && !a.closest('.auto-page')) return; // something else took it (a new conversation…)
+    const t = document.querySelector<HTMLTextAreaElement>('.pane.focused .composer textarea') ?? document.querySelector<HTMLTextAreaElement>('.pane .composer textarea');
+    t?.focus({ preventScroll: true });
+  });
 }
 
 /**
@@ -37,12 +53,38 @@ export function AutomationPage() {
   const orchFull = useOrch((s) => s.full);
   const orchWaiting = useMemo(() => waitingOf(orchFull).length, [orchFull]);
   const root = useRef<HTMLDivElement>(null);
-  // the page takes the keyboard when it opens (the conversation under it is inert while it is open)
-  useEffect(() => { if (open) root.current?.focus({ preventScroll: true }); }, [open]);
+  // the page takes the keyboard when it opens (the conversation under it is inert while it is open); closing gives
+  // it back to the composer (review 7 M1)
+  const wasOpen = useRef(open);
+  useEffect(() => {
+    if (open) root.current?.focus({ preventScroll: true });
+    else if (wasOpen.current) focusComposer();
+    wasOpen.current = open;
+  }, [open]);
+  // Esc also when the focus fell to <body> (a click on empty space, a closed menu) — unless something else owns it
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const a = document.activeElement;
+      if (a && a !== document.body) return;
+      if (escTaken()) return;
+      closeAutomation();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+  // the tab says how many there are (review 7 M3: not 「2/3」); how many are on is the tooltip. 编排's number is
+  // what waits for you (审批 / 比选), a status rather than a count
   const count: Record<AutomationTab, React.ReactNode> = {
-    schedules: schedules.length ? <span className="n">{schedules.filter((s) => s.enabled).length}/{schedules.length}</span> : null,
+    schedules: schedules.length ? <span className="n">{schedules.length}</span> : null,
     goals: null,
     orchestra: orchWaiting ? <span className="n need">{orchWaiting} 等你</span> : null,
+  };
+  const tabTitle: Record<AutomationTab, string | undefined> = {
+    schedules: schedules.length ? `${schedules.length} 个定时任务，${schedules.filter((s) => s.enabled).length} 个启用` : undefined,
+    goals: undefined,
+    orchestra: orchWaiting ? `${orchWaiting} 个审批 / 比选在等你` : undefined,
   };
   const info = AUTOMATION_TAB_INFO[tab];
   const id = (x: AutomationId) => x;
@@ -63,16 +105,19 @@ export function AutomationPage() {
         closeAutomation();
       }}
     >
-      <div className="auto-head">
+      <div className={clsx('auto-head', tab !== 'orchestra' && 'narrow')}>
         <SidebarReveal />
-        <h2>自动化</h2>
-        <span className="grow" />
-        <button className="btn sm primary auto-new" onClick={() => newInAutomation(tab)} data-new={tab}><Icon name="plus" size={13} />{info.newLabel}</button>
+        {/* the title and 新建 span the content's width (新建 lines up with the list's right edge, review 7 M13) */}
+        <div className="auto-head-in">
+          <h2>自动化</h2>
+          <span className="grow" />
+          <button className="btn sm primary auto-new" onClick={() => newInAutomation(tab)} data-new={tab}><Icon name="plus" size={13} />{info.newLabel}</button>
+        </div>
         <button className="icon-btn" title="关闭 (Esc)" aria-label="关闭自动化" onClick={closeAutomation}><Icon name="close" size={16} /></button>
       </div>
       <div className="utabs auto-tabs" role="tablist" aria-label="自动化">
         {AUTOMATION_TABS.map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} className={clsx('ht', tab === t && 'on')} data-id={id(t)} onClick={() => showAutomationTab(t)}>
+          <button key={t} role="tab" aria-selected={tab === t} className={clsx('ht', tab === t && 'on')} data-id={id(t)} title={tabTitle[t]} onClick={() => showAutomationTab(t)}>
             <Icon name={AUTOMATION_TAB_INFO[t].icon} size={14} />{AUTOMATION_TAB_INFO[t].label}{count[t]}
           </button>
         ))}

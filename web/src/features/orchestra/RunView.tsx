@@ -168,7 +168,7 @@ export function RunView({ runId, onClose }: { runId: string; onClose: () => void
   const [, tick] = useState(0);
   useEffect(() => { if (!run) void useOrch.getState().loadRun(runId); }, [runId, !!run]);
   useEffect(() => { if (run?.state !== 'running' && run?.state !== 'waiting') return; const t = setInterval(() => tick((x) => x + 1), 1000); return () => clearInterval(t); }, [run?.state]);
-  if (!run) return <div className="orch-empty">加载中…</div>;
+  if (!run) return <div className="orch-idle">加载中…</div>;
   const live = run.state === 'running' || run.state === 'waiting';
   const removeRun = async () => {
     if (!(await dlg.confirm('删除这条运行记录？', { message: '会话本身不会被删除。', danger: true, okLabel: '删除' }))) return;
