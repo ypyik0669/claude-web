@@ -102,11 +102,12 @@ export function openSessionView(view: WbView, at?: { paneId: string; tileId: str
  */
 export function openChangedFile(sessionId: string, path?: string, at?: { paneId: string; tileId: string }): void {
   if (blockRemoteOpen(sessionId, path)) return;
-  const s = useStore.getState();
-  if (s.mobile) {
+  // where 改动 opens is `viewTarget`'s call (the same as ··· → 改动), not this card's
+  const target = viewTarget('changes', { mobile: useStore.getState().mobile, remote: false });
+  if (target.to === 'tile') {
     openSessionView('changes', at);
     useRightPanel.setState({ inPlace: { sessionId, path, n: ++seq } });
     return;
   }
-  openReview({ scope: 'session', path });
+  openReview({ ...(target.review ?? { scope: 'session' }), path });
 }
