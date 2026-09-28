@@ -3,30 +3,45 @@
 
 import type { IconName } from '@/ui/icons';
 
-export type PanelId = 'tasks' | 'files' | 'usage' | 'config' | 'terminal' | 'inspector' | 'mission' | 'goals' | 'android' | 'memory' | 'orchestra';
+export type PanelId = 'tasks' | 'files' | 'explorer' | 'usage' | 'config' | 'terminal' | 'inspector' | 'mission' | 'goals' | 'android' | 'memory' | 'orchestra' | 'board';
 /** A chat tile's view: the conversation (`live`) or one of the per-session workbench views. */
 export const WORKBENCH_TABS = ['live', 'changes', 'git', 'files', 'search', 'schedules', 'artifacts', 'board'] as const;
 export type WorkbenchTab = (typeof WORKBENCH_TABS)[number];
 
 /**
- * The one panel table. Dock tabs, the top bar, the command palette, the pane ＋ menu and
- * tile titles all read it — adding a panel means adding a row here and a case in `PanelBody`.
- * `rail` marks the panels the top bar surfaces directly; the rest live in menus.
+ * Where a panel sits in the right panel of the default (quiet) UI — spec §5.6:
+ *  - `core`: one of the four fixed tabs 审阅 · 文件 · 终端 · 任务 (never closed, only hidden);
+ *  - `extra`: in the right panel's 「更多」 menu, opens as a temporary tab with a ×;
+ *  - `workbench`: only from the command palette / its shortcut (also a temporary tab), and on the icon rail once
+ *    「显示工作台工具」 is on.
+ * With 「显示工作台工具」 every panel is an ordinary closable tab, exactly as before the redesign.
  */
-export const PANELS: { id: PanelId; title: string; icon: IconName; rail?: boolean; keepAlive?: boolean }[] = [
-  { id: 'mission', title: '总览', icon: 'mission', rail: true },
-  { id: 'goals', title: '目标', icon: 'goals', rail: true },
-  { id: 'orchestra', title: '编排', icon: 'orchestra', rail: true },
-  { id: 'memory', title: '记忆', icon: 'memory', rail: true },
-  { id: 'tasks', title: '任务', icon: 'tasks', rail: true },
-  { id: 'files', title: '文件改动', icon: 'files', rail: true },
-  { id: 'usage', title: '用量', icon: 'usage' },
-  { id: 'config', title: '配置中心', icon: 'config' },
+export type PanelTier = 'core' | 'extra' | 'workbench';
+
+/**
+ * The one panel table. Dock tabs, the icon rail, the command palette, the pane ＋ menu and
+ * tile titles all read it — adding a panel means adding a row here and a case in `PanelBody`.
+ * `rail` marks the panels the workbench icon rail surfaces directly; the rest live in menus.
+ */
+export const PANELS: { id: PanelId; title: string; icon: IconName; tier: PanelTier; rail?: boolean; keepAlive?: boolean }[] = [
+  { id: 'mission', title: '总览', icon: 'mission', tier: 'workbench', rail: true },
+  { id: 'goals', title: '目标', icon: 'goals', tier: 'extra', rail: true },
+  { id: 'orchestra', title: '编排', icon: 'orchestra', tier: 'extra', rail: true },
+  { id: 'memory', title: '记忆', icon: 'memory', tier: 'workbench', rail: true },
+  { id: 'tasks', title: '任务', icon: 'tasks', tier: 'core', rail: true },
+  // 审阅 grew out of the 文件改动 panel and keeps its id: `panel.files` / Ctrl+Shift+2 and saved layouts still open it
+  { id: 'files', title: '审阅', icon: 'diff', tier: 'core', rail: true },
+  { id: 'explorer', title: '文件', icon: 'folder', tier: 'core' },
+  { id: 'usage', title: '用量', icon: 'usage', tier: 'extra' },
+  { id: 'config', title: '配置中心', icon: 'config', tier: 'workbench' },
   // keepAlive: the tab holds a live process (a pty) — toggling it off hides the panel instead of closing the tab
-  { id: 'terminal', title: '终端', icon: 'terminal', rail: true, keepAlive: true },
-  { id: 'inspector', title: '详情', icon: 'inspector' },
-  { id: 'android', title: 'Android', icon: 'android' },
+  { id: 'terminal', title: '终端', icon: 'terminal', tier: 'core', rail: true, keepAlive: true },
+  { id: 'inspector', title: '详情', icon: 'inspector', tier: 'extra' },
+  { id: 'board', title: 'Issue 与 PR', icon: 'board', tier: 'extra' },
+  { id: 'android', title: 'Android', icon: 'android', tier: 'workbench' },
 ];
+/** The fixed tabs of the default right panel, in row order (审阅 · 文件 · 终端 · 任务). */
+export const CORE_PANELS: PanelId[] = ['files', 'explorer', 'terminal', 'tasks'];
 export const PANEL_IDS = PANELS.map((p) => p.id);
 export const PANEL_TITLES = Object.fromEntries(PANELS.map((p) => [p.id, p.title])) as Record<PanelId, string>;
 export const PANEL_ICONS = Object.fromEntries(PANELS.map((p) => [p.id, p.icon])) as Record<PanelId, IconName>;
@@ -45,7 +60,11 @@ export type Tile =
 export interface Pane { id: string; tiles: Tile[]; activeTileId: string | null }
 export type PaneNode = { type: 'leaf'; paneId: string } | { type: 'split'; id: string; dir: 'row' | 'col'; ratio: number; a: PaneNode; b: PaneNode };
 export interface Group { id: string; name: string; root: PaneNode; panes: Record<string, Pane>; focusedPaneId: string; zoomedPaneId: string | null }
-export interface Dock { open: boolean; minimized: boolean; width: number; tabs: PanelId[]; active: PanelId | null }
+/**
+ * The right panel. `lastCore`: the fixed tab (审阅 · 文件 · 终端 · 任务) last in front — closing the last temporary tab
+ * in the default look goes back to it, not to whichever fixed tab comes first.
+ */
+export interface Dock { open: boolean; minimized: boolean; width: number; tabs: PanelId[]; active: PanelId | null; lastCore?: PanelId }
 export interface LayoutState {
   version: 2;
   groups: Group[];
@@ -82,8 +101,12 @@ export type LayoutAction =
   | { t: 'tile.next'; paneId: string; dir: 1 | -1 }
   | { t: 'session.assign'; paneId: string; tileId: string; sessionId: string }
   | { t: 'dock.set'; patch: Partial<Dock> }
-  | { t: 'dock.toggle'; panel: PanelId }
+  /** `workbench`: whether 「显示工作台工具」 is on (default true = the pre-redesign rules, see `panelToggleEffect`) */
+  | { t: 'dock.toggle'; panel: PanelId; workbench?: boolean }
   | { t: 'dock.show'; panel: PanelId }
+  /** a tab's ×: remove that tab (unmount it) whether or not it is the one in front. `workbench` false (the default
+   *  right panel): the fixed tabs are always in the row, so closing the last temporary tab keeps the panel open */
+  | { t: 'dock.close'; panel: PanelId; workbench?: boolean }
   | { t: 'sidebar.set'; patch: Partial<LayoutState['sidebar']> };
 
 export const MAX_PANES = 6;
@@ -109,10 +132,40 @@ export function newGroup(name = '工作区', tile?: Tile): Group {
   return { id: uid('g'), name, root: { type: 'leaf', paneId: p.id }, panes: { [p.id]: p }, focusedPaneId: p.id, zoomedPaneId: null };
 }
 
-/** A fresh window: one pane, one empty chat, the dock closed (it opens from the session header / Ctrl+J). */
+/**
+ * A fresh window: one pane, one empty chat, the dock closed with no panel mounted. Nothing in it runs until it is
+ * opened (the session header / Ctrl+J → `dock.toggle` mounts `defaultDockPanel()`): a mounted, hidden 审阅 would
+ * already watch the conversation's repo (a background `git fetch` every 5 minutes) — and the desktop app starts
+ * from a fresh layout every time.
+ */
 export function initialLayout(): LayoutState {
   const g = newGroup('主工作区');
-  return { version: 2, groups: [g], activeGroupId: g.id, sidebar: { width: 264, sections: {} }, dock: { open: false, minimized: false, width: 440, tabs: ['tasks'], active: 'tasks' } };
+  return { version: 2, groups: [g], activeGroupId: g.id, sidebar: { width: 264, sections: {} }, dock: { open: false, minimized: false, width: 440, tabs: [], active: null } };
+}
+
+/** The tab the right panel opens on when it has none yet: 审阅 (spec §5.6), 任务 with the workbench tools as before. */
+export const defaultDockPanel = (workbench: boolean): PanelId => (workbench ? 'tasks' : 'files');
+
+/**
+ * The right panel's tab row and which panel bodies exist.
+ *  - `mounted`: panels whose body is rendered (the dock's tabs + 详情 while an inspection is asked for). Bodies are
+ *    never unmounted by switching tabs, hiding the panel or flipping 「显示工作台工具」 — only a tab's × does that.
+ *  - `tabs`: with the workbench tools, exactly the mounted panels (all closable, as before the redesign); in the
+ *    default mode the four fixed tabs first (shown even before they are opened — clicking one mounts it), then any
+ *    other open panel as a temporary tab.
+ *  - `active`: a requested inspection first; otherwise the dock's active panel when it is mounted, else the first
+ *    mounted tab in row order.
+ */
+export interface DockTab { id: PanelId; fixed: boolean; mounted: boolean }
+export function dockView(dock: Dock, o: { workbench: boolean; inspect: boolean }): { tabs: DockTab[]; active: PanelId | null; mounted: PanelId[] } {
+  const mounted: PanelId[] = [...dock.tabs, ...(o.inspect && !dock.tabs.includes('inspector') ? (['inspector'] as PanelId[]) : [])];
+  const tabs: DockTab[] = o.workbench
+    ? mounted.map((id) => ({ id, fixed: false, mounted: true }))
+    : [...CORE_PANELS.map((id) => ({ id, fixed: true, mounted: mounted.includes(id) })), ...mounted.filter((id) => !CORE_PANELS.includes(id)).map((id) => ({ id, fixed: false, mounted: true }))];
+  const active = o.inspect && dock.active !== 'inspector' && !dock.tabs.includes('inspector')
+    ? 'inspector'
+    : dock.active && mounted.includes(dock.active) ? dock.active : tabs.find((t) => t.mounted)?.id ?? null;
+  return { tabs, active, mounted };
 }
 
 /**
@@ -142,13 +195,16 @@ export function chromeVisibility(s: LayoutState, o: { workbench: boolean; mobile
 
 /**
  * What toggling a right-panel tab does (Ctrl+`, the rail icons, the palette): `show` it when it is not in view;
- * when it is, `hide` the panel for a tab that holds a live process (the terminal: closing the tab would kill it),
- * otherwise `remove` the tab. Labels are built from this so they say what will happen.
+ * when it is, `hide` the panel for a tab that holds a live process (the terminal: closing the tab would kill it) —
+ * and, in the default mode (`workbench` false), for the four fixed tabs, which are never closed (审阅 / 文件 keep
+ * their scroll, scope and search) — otherwise `remove` the tab. Labels are built from this so they say what will
+ * happen. `workbench` defaults to true: the pre-redesign rules.
  */
-export function panelToggleEffect(dock: Dock, panel: PanelId): 'show' | 'hide' | 'remove' {
+export function panelToggleEffect(dock: Dock, panel: PanelId, workbench = true): 'show' | 'hide' | 'remove' {
   const inView = dock.open && !dock.minimized && dock.active === panel && dock.tabs.includes(panel);
   if (!inView) return 'show';
-  return PANELS.find((p) => p.id === panel)?.keepAlive ? 'hide' : 'remove';
+  const p = PANELS.find((x) => x.id === panel);
+  return p?.keepAlive || (!workbench && p?.tier === 'core') ? 'hide' : 'remove';
 }
 
 /** `ui.workbench` as a boolean (unset = off). */
@@ -356,6 +412,13 @@ function removePane(g: Group, paneId: string): Group {
 }
 
 export function layoutReducer(s: LayoutState, a: LayoutAction): LayoutState {
+  const next = reduceLayout(s, a);
+  // remember the fixed tab in front (whatever put it there: a click, a toggle, a show, a close)
+  const d = next.dock;
+  return d.active && CORE_PANELS.includes(d.active) && d.lastCore !== d.active ? { ...next, dock: { ...d, lastCore: d.active } } : next;
+}
+
+function reduceLayout(s: LayoutState, a: LayoutAction): LayoutState {
   switch (a.t) {
     case 'group.new': {
       const g = newGroup(a.name ?? `组 ${s.groups.length + 1}`, a.tile);
@@ -552,7 +615,7 @@ export function layoutReducer(s: LayoutState, a: LayoutAction): LayoutState {
     case 'dock.set':
       return { ...s, dock: { ...s.dock, ...a.patch } };
     case 'dock.toggle': {
-      const effect = panelToggleEffect(s.dock, a.panel);
+      const effect = panelToggleEffect(s.dock, a.panel, a.workbench ?? true);
       if (effect === 'hide') return { ...s, dock: { ...s.dock, open: false } };
       if (effect === 'remove') {
         const tabs = s.dock.tabs.filter((t) => t !== a.panel);
@@ -560,6 +623,26 @@ export function layoutReducer(s: LayoutState, a: LayoutAction): LayoutState {
       }
       const tabs = s.dock.tabs.includes(a.panel) ? s.dock.tabs : [...s.dock.tabs, a.panel];
       return { ...s, dock: { ...s.dock, tabs, active: a.panel, open: true, minimized: false } };
+    }
+    case 'dock.close': {
+      const i = s.dock.tabs.indexOf(a.panel);
+      if (i < 0) return s;
+      const tabs = s.dock.tabs.filter((t) => t !== a.panel);
+      const front = s.dock.active === a.panel || !s.dock.active;
+      if (a.workbench === false) {
+        // the default right panel: the fixed tabs stay in the row, so the panel stays open — the front moves to the
+        // next temporary tab, else back to the fixed tab last in front (`lastCore`, while it is still mounted), else
+        // the first mounted one (审阅 when none has been opened yet: mount it)
+        if (!front) return { ...s, dock: { ...s.dock, tabs } };
+        const temps = s.dock.tabs.filter((t) => !CORE_PANELS.includes(t));
+        const j = temps.indexOf(a.panel);
+        const rest = temps.filter((t) => t !== a.panel);
+        const last = s.dock.lastCore && tabs.includes(s.dock.lastCore) ? s.dock.lastCore : undefined;
+        const next = rest[Math.min(Math.max(j, 0), rest.length - 1)] ?? last ?? CORE_PANELS.find((c) => tabs.includes(c)) ?? defaultDockPanel(false);
+        return { ...s, dock: { ...s.dock, tabs: tabs.includes(next) ? tabs : [...tabs, next], active: next } };
+      }
+      const active = front ? tabs[Math.min(i, tabs.length - 1)] ?? null : s.dock.active;
+      return { ...s, dock: { ...s.dock, tabs, active, open: s.dock.open && tabs.length > 0 } };
     }
     case 'dock.show': {
       const tabs = s.dock.tabs.includes(a.panel) ? s.dock.tabs : [...s.dock.tabs, a.panel];
@@ -607,7 +690,10 @@ export function sanitizeLayout(x: unknown): LayoutState | null {
   }
   if (!s.groups.some((g) => g.id === s.activeGroupId)) s.activeGroupId = s.groups[0].id;
   const dock: Partial<Dock> = s.dock ?? {};
-  s.dock = { open: dock.open ?? true, minimized: dock.minimized ?? false, width: dock.width ?? 440, tabs: dock.tabs ?? [], active: dock.active ?? null };
+  // a panel this version does not have (a newer / older build wrote the save) would be a tab with no body
+  const tabs = (Array.isArray(dock.tabs) ? dock.tabs : []).filter((id) => PANEL_IDS.includes(id));
+  s.dock = { open: dock.open ?? true, minimized: dock.minimized ?? false, width: dock.width ?? 440, tabs, active: dock.active && tabs.includes(dock.active) ? dock.active : tabs[0] ?? null };
+  if (dock.lastCore && CORE_PANELS.includes(dock.lastCore)) s.dock.lastCore = dock.lastCore;
   const sb: Partial<LayoutState['sidebar']> = s.sidebar ?? {};
   s.sidebar = { width: sb.width ?? 264, sections: sb.sections ?? {} };
   return s;

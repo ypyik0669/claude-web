@@ -24,6 +24,6 @@ function TileBody({ tile, paneId, visible }: { tile: TileModel; paneId: string; 
     case 'diff': return <DiffTile tile={tile} />;
     case 'term': return <TermTile tile={tile} visible={visible} />;
     case 'browser': return <BrowserTile tile={tile} />;
-    case 'panel': return <PanelTile tile={tile} />;
+    case 'panel': return <PanelTile tile={tile} visible={visible} />;
   }
 }

@@ -8,10 +8,12 @@ import { PANELS } from '@/model/layout';
 import { useOrch } from '@/features/orchestra/state';
 import { SHORTCUTS, keyLabel } from '@/features/workbench/shortcuts';
 import { runCommand } from '@/features/workbench/commands';
-import { viewCommands } from '@/features/workbench/wb-views';
-import { currentChatTile, panelToggleEffect } from '@/model/layout';
+import { viewCommands, type WbView } from '@/features/workbench/wb-views';
+import { openSessionView } from '@/features/workbench/right-panel';
+import { panelCommandLabel } from '@/features/workbench/panel-entries';
 import { shareConversation } from '@/features/chat/MessageActions';
-import { TERMS, panelToggleLabel } from '@/ui/terms';
+import { TERMS } from '@/ui/terms';
+import { commandHits } from './filter';
 
 interface Cmd { id: string; label: string; sub?: string; ic?: IconName; group: string; run: () => void }
 
@@ -50,18 +52,13 @@ export function CommandPalette() {
     return () => { live = false; clearTimeout(t); };
   }, [q, open]);
 
-  // a view of the current conversation (the old workbench tabs): with a document / terminal in front, the
-  // conversation next to it is brought forward first — otherwise the command would do nothing visible
-  const showView = (view: string) => {
-    const s = useStore.getState();
-    const at = currentChatTile(s.layout);
-    if (!at) { s.toast('先打开一个对话'); return; }
-    s.dispatchLayout({ t: 'tile.activate', paneId: at.paneId, tileId: at.tileId });
-    s.dispatchLayout({ t: 'tile.patch', paneId: at.paneId, tileId: at.tileId, patch: { wb: view as never } });
-  };
+  // a view of the current conversation (the old workbench tabs): the right panel on a desktop (改动 / Git → 审阅,
+  // 文件 / 搜索 / 生成的文件 → 文件…), in place on a phone — with a document / terminal in front, the conversation next
+  // to it is brought forward first, otherwise the command would do nothing visible (openSessionView)
+  const showView = (view: WbView) => openSessionView(view);
   const commands = useMemo<Cmd[]>(() => {
     // the label says what the toggle will do right now (a hidden or minimized panel is opened; the terminal is hidden, not closed)
-    const panel = (p: (typeof PANELS)[number]): Cmd => ({ id: `panel.${p.id}`, label: panelToggleLabel(panelToggleEffect(st.layout.dock, p.id), p.title), ic: p.icon, group: '面板', run: () => st.togglePanel(p.id) });
+    const panel = (p: (typeof PANELS)[number]): Cmd => ({ id: `panel.${p.id}`, label: panelCommandLabel(st.layout.dock, p, st.settings['ui.workbench'] === true), ic: p.icon, group: '面板', run: () => st.togglePanel(p.id) });
     const c: Cmd[] = [
       { id: 'new', label: '新对话', sub: keyLabel(SHORTCUTS[0]), ic: 'plus', group: '对话', run: () => runCommand('new') },
       { id: 'ws.add', label: '打开项目文件夹…', ic: 'folder', group: '对话', run: async () => { const p = await ws.request<string | null>({ kind: 'fs.pickDir' }); if (p) await st.addWorkspace(p); } },
@@ -100,13 +97,15 @@ export function CommandPalette() {
   }, [st.layout.dock, st.theme, st.sidebarOpen, st.showArchived, st.settings, st.sessionMeta, active?.sessionId, active?.state]);
 
   const ql = q.replace(/^>/, '').trim().toLowerCase();
-  const cmdHits = pf.filtered ? [] : commands.filter((c) => !ql || c.label.toLowerCase().includes(ql) || c.group.toLowerCase().includes(ql));
+  // name hits first, then the conversations, then the rest of a group the query names (「面板」 → every panel)
+  const { named: cmdHits, grouped: groupHits } = pf.filtered ? { named: [], grouped: [] } : commandHits(commands, ql);
   // local fallback (and the only list before the index exists / for filter-only queries the index cannot answer)
   const localHits = () => st.sessions.filter((s) => !s.parentId && (!pf.agent || (s.agent ?? 'claude') === pf.agent) && (!pf.cwd || (s.cwd ?? '').toLowerCase().includes(pf.cwd)) && (!pf.rest || s.title.toLowerCase().includes(pf.rest.toLowerCase()))).slice(0, pf.filtered ? 30 : 12);
   const sessHits: SessionSummary[] = q.startsWith('>') ? [] : hits.length ? hits.map((h) => h.session) : localHits();
   const items: { kind: 'cmd'; c: Cmd }[] | { kind: 'sess'; s: SessionSummary; snippet?: string }[] | any[] = [
-    ...(ql ? cmdHits.slice(0, 8) : cmdHits).map((c) => ({ kind: 'cmd' as const, c })),
+    ...cmdHits.map((c) => ({ kind: 'cmd' as const, c })),
     ...sessHits.map((s) => ({ kind: 'sess' as const, s, snippet: hits.find((h) => h.session.sessionId === s.sessionId)?.snippet })),
+    ...groupHits.map((c) => ({ kind: 'cmd' as const, c })),
   ];
   useEffect(() => setIdx(0), [q, hits.length]);
 
@@ -117,7 +116,8 @@ export function CommandPalette() {
     else st.open[it.s.sessionId] ? st.setActive(it.s.sessionId) : void st.loadHistory(it.s.sessionId);
   };
   const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') close();
+    // only the palette: the global Esc would also close the settings page it was opened over
+    if (e.key === 'Escape') { e.stopPropagation(); close(); }
     if (e.key === 'ArrowDown') { e.preventDefault(); setIdx((i) => Math.min(items.length - 1, i + 1)); }
     if (e.key === 'ArrowUp') { e.preventDefault(); setIdx((i) => Math.max(0, i - 1)); }
     // Enter that confirms an IME candidate (Chinese / Japanese input) is not "run this item"

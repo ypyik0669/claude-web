@@ -11,11 +11,10 @@ const SUGGESTED = [
   { src: 'obra/superpowers', l: 'superpowers', d: 'brainstorm / TDD / 调试 / 计划 等工作流技能' },
 ];
 
-/** Skills: list (user + project), install from GitHub / local, scaffold new, open in editor, remove, backup / restore. */
+/** Skills: list (user + project), install from GitHub / local, scaffold new, open in editor, remove. The backup is `SkillsBackup`. */
 export function SkillsSection() {
   const active = useScopedSession();
   const openTile = useStore((s) => s.openTile);
-  const toast = useStore((s) => s.toast);
   const [list, setList] = useState<SkillInfo[]>([]);
   const [src, setSrc] = useState('');
   const [scope, setScope] = useState<'user' | 'project'>('user');
@@ -72,14 +71,29 @@ export function SkillsSection() {
         </div>
         {msg && <div className="sub" style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{msg}</div>}
       </div>
-      <div className="section">
-        <h5>备份</h5>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button className="btn sm" disabled={busy} onClick={() => run(async () => { const f = await ws.request<string>({ kind: 'skills.backup' }); toast('已备份', true); return `已备份到 ${f}`; })}>备份用户级 skills</button>
-          <button className="btn sm ghost" onClick={() => ws.request({ kind: 'shell.open', path: '~/.claude-web/backups' }).catch(() => {})}>打开备份目录</button>
-        </div>
-        <div className="sub" style={{ marginTop: 4 }}>tar 归档放在 ~/.claude-web/backups；恢复：把 tar 解压回 ~/.claude 即可。</div>
-      </div>
     </>
+  );
+}
+
+/** Backup of the user-level skills (a tar in ~/.claude-web/backups). Settings → Skills → 更多选项. */
+export function SkillsBackup() {
+  const toast = useStore((s) => s.toast);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const backup = async () => {
+    setBusy(true); setMsg('');
+    try { const f = await ws.request<string>({ kind: 'skills.backup' }); toast('已备份', true); setMsg(`已备份到 ${f}`); } catch (e: any) { setMsg(e.message); }
+    setBusy(false);
+  };
+  return (
+    <div className="section">
+      <h5>备份</h5>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button className="btn sm" disabled={busy} onClick={backup}>备份用户级 skills</button>
+        <button className="btn sm ghost" onClick={() => ws.request({ kind: 'shell.open', path: '~/.claude-web/backups' }).catch(() => {})}>打开备份目录</button>
+      </div>
+      <div className="sub" style={{ marginTop: 4 }}>tar 归档放在 ~/.claude-web/backups；恢复：把 tar 解压回 ~/.claude 即可。</div>
+      {msg && <div className="sub" style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{msg}</div>}
+    </div>
   );
 }

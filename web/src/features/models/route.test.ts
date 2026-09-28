@@ -15,7 +15,7 @@ describe('routePick (in-session model menu)', () => {
   });
   it('same profile, its default entry → the profile default model; none set → an error, not a guess', () => {
     expect(routePick(item('a', ''), ctx())).toEqual({ kind: 'setModel', model: 'a-default' });
-    expect(routePick(item('b', ''), ctx({ currentProvider: 'b' }))).toMatchObject({ kind: 'error', message: expect.stringContaining('b') });
+    expect(routePick(item('b', ''), ctx({ currentProvider: 'b' }))).toMatchObject({ kind: 'error', message: expect.stringContaining('供应商「b」') });
   });
   it('the Claude login default → `default`', () => {
     expect(routePick(item('claude', ''), ctx({ currentProvider: 'claude' }))).toEqual({ kind: 'setModel', model: 'default' });
@@ -24,8 +24,8 @@ describe('routePick (in-session model menu)', () => {
     expect(routePick(item('claude', ''), ctx({ agent: 'codex', currentProvider: 'claude', agentDefault: 'gpt-5.6-sol' }))).toEqual({ kind: 'setModel', model: 'gpt-5.6-sol' });
     const r = routePick(item('claude', ''), ctx({ agent: 'codex', currentProvider: 'claude' }));
     expect(r).toMatchObject({ kind: 'error' });
-    expect((r as { message: string }).message).toMatch(/agent/);
-    expect((r as { message: string }).message).not.toMatch(/档案/);
+    expect((r as { message: string }).message).toMatch(/Agents 与子代理/);
+    expect((r as { message: string }).message).not.toMatch(/档案|CLI Agents/);
   });
   it('another profile → setProvider with the picked model', () => {
     expect(routePick(item('b', 'x'), ctx())).toEqual({ kind: 'setProvider', providerId: 'b', model: 'x', confirm: false });
@@ -44,6 +44,16 @@ describe('routePick (in-session model menu)', () => {
   });
   it('an unavailable entry is refused with its reason', () => {
     expect(routePick(item('b', 'x', { unavailable: '网关未启用' }), ctx())).toEqual({ kind: 'error', message: '网关未启用' });
+  });
+  it("another agent's model = a hand-over to that agent (the same confirm as ···), on the picked model", () => {
+    expect(routePick(item('claude', 'gpt-5.6-sol', { agent: 'codex' }), ctx())).toEqual({ kind: 'handover', agent: 'codex', model: 'gpt-5.6-sol' });
+    expect(routePick(item('claude', '', { agent: 'codex', isDefault: true }), ctx())).toEqual({ kind: 'handover', agent: 'codex', model: undefined });
+  });
+  it('a remote session is not handed over from the model menu (···: 交给本机的 Agent 继续)', () => {
+    expect(routePick(item('claude', 'x', { agent: 'codex' }), ctx({ remote: true }))).toMatchObject({ kind: 'error' });
+  });
+  it('the item of the current agent is not a hand-over', () => {
+    expect(routePick(item('claude', 'm2', { agent: 'claude' }), ctx({ currentProvider: 'claude' }))).toEqual({ kind: 'setModel', model: 'm2' });
   });
 });
 

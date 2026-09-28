@@ -1,6 +1,6 @@
 // Command dispatcher shared by browser keydown, Electron menu accelerators and the command palette.
 import { useStore, type PanelId } from '@/store';
-import { activeGroup, chatTile, currentChatTile, workbenchOn } from '@/model/layout';
+import { activeGroup, chatTile, currentChatTile, defaultDockPanel, workbenchOn } from '@/model/layout';
 import { PHONE_NO_PANEL } from '@/ui/terms';
 import { offerGroupToNewWindow } from './windows';
 
@@ -59,8 +59,16 @@ export function runCommand(id: string): boolean {
     case 'tile.new': d({ t: 'tile.open', paneId: g.focusedPaneId, tile: chatTile(null), mode: 'tab' }); return true;
     case 'tile.next': d({ t: 'tile.next', paneId: g.focusedPaneId, dir: 1 }); return true;
     case 'tile.prev': d({ t: 'tile.next', paneId: g.focusedPaneId, dir: -1 }); return true;
-    case 'dock.toggle': d({ t: 'dock.set', patch: { open: !st.layout.dock.open, minimized: false } }); return true;
-    case 'dock.minimize': d({ t: 'dock.set', patch: { minimized: !st.layout.dock.minimized, open: true } }); return true;
+    case 'dock.toggle':
+      // nothing to show yet (a fresh window mounts no panel, every tab closed): open it on its first tab instead of an
+      // empty column — that is where 审阅 is mounted (and starts watching the repo) the first time
+      if (!st.layout.dock.tabs.length && !st.inspect) d({ t: 'dock.show', panel: defaultDockPanel(workbench) });
+      else d({ t: 'dock.set', patch: { open: !st.layout.dock.open, minimized: false } });
+      return true;
+    case 'dock.minimize':
+      if (!st.layout.dock.tabs.length && !st.inspect) d({ t: 'dock.show', panel: defaultDockPanel(workbench) });
+      d({ t: 'dock.set', patch: { minimized: !st.layout.dock.minimized, open: true } });
+      return true;
     case 'interrupt': if (a) void st.interrupt(a.sessionId); return true;
     case 'close': if (a) void st.closeSession(a.sessionId); return true;
     case 'window.new': void offerGroupToNewWindow(st.layout.activeGroupId); return true;

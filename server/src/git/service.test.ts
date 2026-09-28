@@ -152,6 +152,66 @@ describe('GitService.status process count and stash count', () => {
   });
 });
 
+describe('stage / unstage / discard over many files (paths on stdin, not the command line)', () => {
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid' };
+  // 1400 names of ~90 characters: ~126 000 characters of arguments, far over Windows' 32 767 (spawn ENAMETOOLONG)
+  const N = 1400;
+  const name = (i: number) => `deep/${'long-directory-name-'.repeat(3)}/file-number-${String(i).padStart(4, '0')}-with-a-long-tail.txt`;
+
+  it('1400 long paths: stage, unstage and discard each run as one git command', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'cw-gitmany-')));
+    const git = (...a: string[]) => execFileSync('git', a, { cwd: base, windowsHide: true, stdio: 'ignore', env });
+    try {
+      git('init', '-q');
+      await fs.mkdir(path.join(base, path.dirname(name(0))), { recursive: true });
+      const files = Array.from({ length: N }, (_, i) => name(i));
+      for (const f of files) await fs.writeFile(path.join(base, f), 'v1\n');
+      git('add', '-A');
+      git('commit', '-q', '-m', 'init');
+      for (const f of files) await fs.writeFile(path.join(base, f), 'v2\n');
+      expect(files.join(' ').length).toBeGreaterThan(32_767);
+
+      const { GitService } = await import('./service.js');
+      const svc = new GitService();
+      const runs: string[][] = [];
+      const run = svc.run.bind(svc);
+      svc.run = (cwd, args, opts) => { runs.push(args); return run(cwd, args, opts); };
+
+      await svc.stage(base, files);
+      let st = await svc.status(base);
+      expect(st.files.filter((f) => f.staged && !f.unstaged)).toHaveLength(N);
+      await svc.unstage(base, files);
+      st = await svc.status(base);
+      expect(st.files.filter((f) => !f.staged && f.unstaged)).toHaveLength(N);
+      await svc.stage(base, files.slice(0, 10)); // a staged change is thrown away too (checkout HEAD)
+      await svc.discard(base, files);
+      expect((await svc.status(base)).files).toEqual([]);
+      expect((await fs.readFile(path.join(base, files[N - 1]), 'utf8')).trim()).toBe('v1'); // (core.autocrlf may add \r)
+      // no command carried the paths as arguments
+      for (const a of runs) expect(a.join(' ').length).toBeLessThan(1000);
+    } finally { await fs.rm(base, { recursive: true, force: true }); }
+  }, 120_000);
+
+  it('paths are literal: staging `glob[1].txt` does not also stage `glob1.txt`; an empty list stages nothing', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'cw-gitlit-')));
+    const git = (...a: string[]) => execFileSync('git', a, { cwd: base, windowsHide: true, stdio: 'ignore', env });
+    try {
+      git('init', '-q');
+      for (const f of ['glob[1].txt', 'glob1.txt', 'with space.txt']) await fs.writeFile(path.join(base, f), 'x\n');
+      const { GitService } = await import('./service.js');
+      const svc = new GitService();
+      await svc.stage(base, []);
+      expect((await svc.status(base)).files.every((f) => !f.staged)).toBe(true);
+      await svc.stage(base, ['glob[1].txt', 'with space.txt']);
+      const st = await svc.status(base);
+      expect(st.files.filter((f) => f.staged).map((f) => f.path).sort()).toEqual(['glob[1].txt', 'with space.txt']);
+      expect(st.files.find((f) => f.path === 'glob1.txt')).toMatchObject({ status: 'untracked' });
+    } finally { await fs.rm(base, { recursive: true, force: true }); }
+  }, 60_000);
+});
+
 describe('stash count in a reftable repository (no .git/logs)', () => {
   const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid' };
   const reftableOk = (() => {

@@ -41,6 +41,8 @@ export function ToolHead({ t, onToggle, open }: { t: ToolUseBlock; onToggle?: ()
   const mcp = splitMcp(t.name);
   const ctx = usePaneCtx();
   const setInspect = (id: string) => useStore.setState({ inspect: { sessionId: (ctx?.sessionId ?? useStore.getState().activeId)!, toolUseId: id } });
+  // a phone has no right panel for 详情: the row itself expands to the same input and result
+  const phone = useStore((s) => s.mobile);
   const short = def.category === 'read' || def.category === 'edit' ? shortPath(arg) : arg;
   const secs = useElapsed(t);
   const st = t.status === 'error' ? '失败' : t.status === 'running' ? (secs !== null ? `${secs}s` : '运行中') : t.status === 'pending' ? '等待' : t.status === 'streaming' ? '…' : '';
@@ -52,7 +54,7 @@ export function ToolHead({ t, onToggle, open }: { t: ToolUseBlock; onToggle?: ()
       <span className="summary">{short}</span>
       {t.progress?.lastTool && t.status === 'running' && <span className="st">{t.progress.lastTool}</span>}
       {st && <span className={clsx('st', t.status === 'error' && 'err')}>{st}</span>}
-      <button className="icon-btn xs" title="在右侧查看详情" aria-label="详情" onClick={(e) => { e.stopPropagation(); setInspect(t.id); }}><Icon name="external" size={12} /></button>
+      {!phone && <button className="icon-btn xs" title="在右侧查看详情" aria-label="详情" onClick={(e) => { e.stopPropagation(); setInspect(t.id); }}><Icon name="external" size={12} /></button>}
     </div>
   );
 }

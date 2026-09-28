@@ -14,8 +14,14 @@ export interface DialogSpec {
   defaultValue?: string;
   placeholder?: string;
   multiline?: boolean;
+  /** a short list shown under the message (e.g. the files a destructive action touches) */
+  items?: string[];
+  /** a destructive confirm: 取消 has the focus, so an Enter right after the click does not go through */
+  focusCancel?: boolean;
 }
-interface Pending { spec: DialogSpec; resolve: (v: any) => void }
+/** `id`: each dialog is its own element — a queued one must not reuse the buttons (and the focus) of the one before */
+interface Pending { id: number; spec: DialogSpec; resolve: (v: any) => void }
+let dialogSeq = 0;
 interface DialogState { queue: Pending[]; push(p: Pending): void; shift(): void }
 export const useDialogStore = create<DialogState>((set) => ({
   queue: [],
@@ -24,7 +30,7 @@ export const useDialogStore = create<DialogState>((set) => ({
 }));
 
 function ask<T>(spec: DialogSpec): Promise<T> {
-  return new Promise<T>((resolve) => useDialogStore.getState().push({ spec, resolve }));
+  return new Promise<T>((resolve) => useDialogStore.getState().push({ id: ++dialogSeq, spec, resolve }));
 }
 export const dlg = {
   confirm: (title: string, o: Partial<DialogSpec> = {}) => ask<boolean>({ kind: 'confirm', title, okLabel: '确定', cancelLabel: '取消', ...o }),
@@ -48,18 +54,19 @@ export function DialogHost() {
   const cancel = () => done(spec.kind === 'confirm' ? false : spec.kind === 'prompt' ? null : undefined);
   const ok = () => done(spec.kind === 'confirm' ? true : spec.kind === 'prompt' ? value : undefined);
   return (
-    <div className="modal-bg dialog-bg" onMouseDown={(e) => e.target === e.currentTarget && cancel()} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); cancel(); } }}>
+    <div key={cur.id} className="modal-bg dialog-bg" onMouseDown={(e) => e.target === e.currentTarget && cancel()} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); cancel(); } }}>
       <div className="modal dialog" role="dialog" aria-modal="true">
         <h3>{spec.title}</h3>
         {spec.message && <div className="dialog-msg">{spec.message}</div>}
+        {!!spec.items?.length && <ul className="dialog-items">{spec.items.map((it, i) => <li key={i}>{it}</li>)}</ul>}
         {spec.kind === 'prompt' && (spec.multiline ? (
           <textarea ref={inp as any} className="field" rows={4} value={value} placeholder={spec.placeholder} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') ok(); }} />
         ) : (
           <input ref={inp as any} className="field" value={value} placeholder={spec.placeholder} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') ok(); }} />
         ))}
         <div className="actions">
-          {spec.kind !== 'alert' && <button className="btn" onClick={cancel}>{spec.cancelLabel}</button>}
-          <button className={`btn ${spec.danger ? 'danger' : 'primary'}`} autoFocus={spec.kind !== 'prompt'} onClick={ok}>{spec.okLabel}</button>
+          {spec.kind !== 'alert' && <button className="btn" autoFocus={!!spec.focusCancel && spec.kind === 'confirm'} onClick={cancel}>{spec.cancelLabel}</button>}
+          <button className={`btn ${spec.danger ? 'danger' : 'primary'}`} autoFocus={spec.kind !== 'prompt' && !(spec.focusCancel && spec.kind === 'confirm')} onClick={ok}>{spec.okLabel}</button>
         </div>
       </div>
     </div>

@@ -79,7 +79,7 @@ export class ImRouter {
         return;
       }
       const key = `${gw}:${m.userId}`;
-      if (Date.now() - (this.lastDenied.get(key) ?? 0) > 60 * 60_000) { this.lastDenied.set(key, Date.now()); await reply(`未授权。请在电脑上 Claude Web → 设置 → IM 网关 生成配对码，然后发送：/pair 123456\n（你的 id：${m.userId}）`); }
+      if (Date.now() - (this.lastDenied.get(key) ?? 0) > 60 * 60_000) { this.lastDenied.set(key, Date.now()); await reply(`未授权。请在电脑上 Claude Web → 设置 → IM 机器人 生成配对码，然后发送：/pair 123456\n（你的 id：${m.userId}）`); }
       return;
     }
     if (m.callback) return this.onCallback(gw, m, reply);

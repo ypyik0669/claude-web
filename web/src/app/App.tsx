@@ -7,6 +7,7 @@ import { ShortcutsModal } from '@/features/workbench/ShortcutsModal';
 import { matchBrowserKey } from '@/features/workbench/shortcuts';
 import { runCommand } from '@/features/workbench/commands';
 import { claimSession } from '@/features/workbench/windows';
+import { showPanel } from '@/features/workbench/right-panel';
 import { clsx } from '@/util';
 import { CommandPalette } from '@/features/palette/CommandPalette';
 import { ImageViewer } from '@/features/chat/ImageViewer';
@@ -19,6 +20,7 @@ import { installOrchestra } from '@/features/orchestra/state';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { chromeVisibility, workbenchOn } from '@/model/layout';
 import { MOBILE_QUERY } from '@/ui/viewport';
+import { PHONE_NO_INSPECTOR } from '@/ui/terms';
 
 /** Width of the right panel minimized to its icon rail. */
 const MIN_RAIL = 36;
@@ -74,12 +76,17 @@ export function App() {
 
   // desktop caption buttons (Windows / Linux overlay) are painted in one colour: match whatever row is under them —
   // the page (--bg) when the session header / empty page is there, the side surface (--bg-1) for the right panel's
-  // tab row, the group bar or a tab strip
+  // tab row, the group bar or a tab strip; the settings page covers the whole window with its page (--bg) there
   const theme = useStore((s) => s.theme);
-  const sideSurface = useStore((s) => {
+  const settingsOpen = useStore((s) => !!s.settingsOpen);
+  const workbench = useStore((s) => workbenchOn(s.settings));
+  const chromeRow = useStore((s) => {
     const vis = chromeVisibility(s.layout, { workbench: workbenchOn(s.settings) });
     return vis.groupBar || Object.values(vis.tabStrip).some(Boolean);
-  }) || rpWidth > MIN_RAIL;
+  });
+  // the settings page covers everything with --bg; an open right panel owns the corner — its tab row is --bg-1 only
+  // with the workbench tools (the default one is white)
+  const sideSurface = !settingsOpen && (rpWidth > MIN_RAIL ? workbench : chromeRow);
   useEffect(() => {
     const d = desktop;
     if (!d) return;
@@ -90,10 +97,17 @@ export function App() {
     return () => clearTimeout(t);
   }, [theme, sideSurface]);
 
-  // asking to inspect a tool call must reveal the dock — otherwise clicking the detail button on a tool row does nothing
+  // asking to inspect a tool call must bring 详情 to the front of the right panel — also when it is already a tab
+  // behind another one (otherwise the detail button on a tool row does nothing visible). A phone has no right panel:
+  // a file (an attachment chip, Alt+click on a path) opens in place like a plain click on a path; a step says it
+  // expands where it is (the tool rows there have no 详情 button); either way the request is dropped
   useEffect(() => {
     if (!inspect) return;
-    if (!dock.open || dock.minimized) dispatchLayout({ t: 'dock.set', patch: { open: true, minimized: false } });
+    if (!useStore.getState().mobile) { showPanel('inspector'); return; }
+    const st = useStore.getState();
+    if (inspect.file) st.openTile({ id: `d${Date.now().toString(36)}`, kind: 'doc', path: inspect.file.path, line: inspect.file.line }, 'tab');
+    else st.toast(PHONE_NO_INSPECTOR);
+    useStore.setState({ inspect: null });
   }, [inspect]);
 
   // desktop shell: menu accelerators arrive as commands; notifications click → focus session

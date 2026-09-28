@@ -212,21 +212,34 @@ export class GitService extends EventEmitter {
     return { kind: 'unchanged', text: '' };
   }
 
+  /**
+   * A git command over a list of paths, the paths on stdin (`--pathspec-from-file=- --pathspec-file-nul`, git ≥ 2.26
+   * for checkout) instead of the command line: 全部暂存 / 全部还原 / 全部取消暂存 over a few hundred files outgrow
+   * Windows' 32 767-character command line (`spawn ENAMETOOLONG`, nothing staged). `--literal-pathspecs`: they are
+   * file names out of `git status`, not patterns (`a[1].txt` must not also match `a1.txt`).
+   */
+  runPaths(cwd: string, args: string[], files: string[]) {
+    return this.run(cwd, ['--literal-pathspecs', ...args, '--pathspec-from-file=-', '--pathspec-file-nul'], { input: files.join('\0') });
+  }
+  /** `files`: repo-relative paths (an empty list stages nothing — not `git add -A --`, which would stage everything) */
   async stage(cwd: string, files: string[] | 'all') {
-    await this.run(cwd, files === 'all' ? ['add', '-A'] : ['add', '-A', '--', ...files]);
+    if (files === 'all') await this.run(cwd, ['add', '-A']);
+    else if (files.length) await this.runPaths(cwd, ['add', '-A'], files);
     this.emit('changed', cwd);
   }
   async unstage(cwd: string, files: string[] | 'all') {
-    await this.run(cwd, files === 'all' ? ['reset', '-q'] : ['reset', '-q', '--', ...files]);
+    if (files === 'all') await this.run(cwd, ['reset', '-q']);
+    else if (files.length) await this.runPaths(cwd, ['reset', '-q'], files);
     this.emit('changed', cwd);
   }
   /** Discard working tree changes (checkout HEAD for tracked, delete untracked). */
   async discard(cwd: string, files: string[]) {
     const root = (await this.root(cwd)) ?? cwd;
     const st = await this.status(root);
-    const untracked = files.filter((f) => st.files.find((x) => x.path === f)?.status === 'untracked');
-    const tracked = files.filter((f) => !untracked.includes(f));
-    if (tracked.length) await this.run(root, ['checkout', 'HEAD', '--', ...tracked]).catch(async () => this.run(root, ['checkout', '--', ...tracked]));
+    const untrackedSet = new Set(st.files.filter((x) => x.status === 'untracked').map((x) => x.path));
+    const untracked = files.filter((f) => untrackedSet.has(f));
+    const tracked = files.filter((f) => !untrackedSet.has(f));
+    if (tracked.length) await this.runPaths(root, ['checkout', 'HEAD'], tracked).catch(async () => this.runPaths(root, ['checkout'], tracked));
     for (const f of untracked) await fs.rm(path.join(root, f), { recursive: true, force: true });
     this.emit('changed', cwd);
   }

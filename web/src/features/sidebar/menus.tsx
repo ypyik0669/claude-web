@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
+import { onCloseMenus } from '@/ui/menus';
 import { placeFixed } from './place';
 
 /** On a phone the sidebar is a drawer over the page: after an action it gets out of the way of what the action did. */
@@ -51,7 +52,8 @@ export function useAnchoredMenu(ref: React.RefObject<HTMLElement | null>, onClos
     window.addEventListener('click', k);
     window.addEventListener('contextmenu', k, true);
     window.addEventListener('keydown', esc, true);
-    return () => { window.removeEventListener('scroll', onScroll, true); window.removeEventListener('click', k); window.removeEventListener('contextmenu', k, true); window.removeEventListener('keydown', esc, true); };
+    const offCover = onCloseMenus(k); // the settings page opening over the app
+    return () => { window.removeEventListener('scroll', onScroll, true); window.removeEventListener('click', k); window.removeEventListener('contextmenu', k, true); window.removeEventListener('keydown', esc, true); offCover(); };
   }, []);
 }
 

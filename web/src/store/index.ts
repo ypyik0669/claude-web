@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { AgentInfo, AgentKind, AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, SourceStatus, Workspace } from '@shared';
+import { withDefaultMode } from './default-mode';
 import { decodeAttachments, findChainUuidBefore, type ContextUsage } from '@/model/conversation';
 import { activeGroup, chatTile, deriveActive, hasLegacyLayout, initialLayout, layoutReducer, migrateLegacy, migrateWorkbench, needsSimplifiedNotice, sanitizeLayout, SIMPLIFIED_NOTICE_KEY, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
 import { PaneContext, winId } from './paneContext';
@@ -28,6 +29,11 @@ export interface QueuedMessage { id: string; text: string; images?: { mediaType:
 export interface OpenSession {
   sessionId: string;
   cwd: string;
+  /**
+   * opened with `openSession({worktree})`: Claude Code works in `<cwd>/.claude/worktrees/<name>` (its own checkout),
+   * while `cwd` stays the repository root the runner was started in
+   */
+  worktree?: string;
   conv: Conversation;
   version: number; // bumped on every mutation so React re-renders
   state: RunnerState | 'history';
@@ -450,7 +456,10 @@ export const useStore = create<State>((set, get) => ({
     } else set({ sessions });
   },
 
-  async openSession(p, target) {
+  async openSession(p0, target) {
+    // a brand-new conversation (sidebar 新建 / worktree, Git view, board…) starts in 「新对话默认权限」 unless the
+    // caller chose one — resumes, forks and reopens keep their own (they carry a sessionId)
+    const p = withDefaultMode(p0, get().settings);
     const r = await ws.request<{ sessionId: string; info: SessionInfoSnapshot; history: any[]; pending: PermissionRequestEvent[] }>({ kind: 'session.open', params: p });
     const existing = p.sessionId && !p.fork && !p.resumeAt ? get().open[p.sessionId] : undefined;
     const conv = existing?.conv ?? createConversation();
@@ -461,7 +470,8 @@ export const useStore = create<State>((set, get) => ({
     } else {
       for (const m of r.history) applyMessage(conv, m);
     }
-    const o: OpenSession = { sessionId: r.sessionId, cwd: p.cwd, conv, version: (existing?.version ?? 0) + 1, state: r.info.state, info: r.info, pending: r.pending, loading: false, queue: existing?.queue ?? [], draft: existing?.draft ?? '', feedback: existing?.feedback ?? {}, contextUsage: existing?.contextUsage, lastSent: existing?.lastSent };
+    const worktree = p.worktree ?? (existing ? existing.worktree : undefined);
+    const o: OpenSession = { sessionId: r.sessionId, cwd: p.cwd, ...(worktree ? { worktree } : {}), conv, version: (existing?.version ?? 0) + 1, state: r.info.state, info: r.info, pending: r.pending, loading: false, queue: existing?.queue ?? [], draft: existing?.draft ?? '', feedback: existing?.feedback ?? {}, contextUsage: existing?.contextUsage, lastSent: existing?.lastSent };
     set((s) => {
       const open = { ...s.open };
       if (p.sessionId && p.sessionId !== r.sessionId && !p.fork && !p.resumeAt) delete open[p.sessionId];
@@ -740,7 +750,8 @@ export const useStore = create<State>((set, get) => ({
   togglePanel(p) {
     // the right panel is not drawn on a phone: opening a tab there would start things (a terminal pty) nobody sees
     if (get().mobile) { get().toast(PHONE_NO_PANEL); return; }
-    get().dispatchLayout({ t: 'dock.toggle', panel: p });
+    // without the workbench tools the four fixed tabs (审阅 / 文件 / 终端 / 任务) are hidden, never closed
+    get().dispatchLayout({ t: 'dock.toggle', panel: p, workbench: get().settings['ui.workbench'] === true });
   },
   setTab(tab) {
     set({ tab });

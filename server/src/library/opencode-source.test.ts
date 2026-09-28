@@ -58,7 +58,7 @@ function startMock() {
 }
 
 // these tests spawn the .cmd fake CLI (cmd.exe → node), slow under a loaded full-suite run
-describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', { timeout: 20_000 }, () => {
+describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', { timeout: 45_000 }, () => {
   let sources: OpenCodeSource[] = [];
   let mocks: { close: () => Promise<void> }[] = [];
   let tmpFiles: string[] = [];
@@ -194,7 +194,7 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', { timeout: 
     return pid;
   };
   const waitDead = async (pid: number) => {
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 200; i++) { // taskkill of a whole tree can take seconds while the full suite runs
       try { process.kill(pid, 0); } catch { return true; }
       await new Promise((r) => setTimeout(r, 100));
     }
@@ -218,10 +218,12 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', { timeout: 
     expect(await waitDead(gc)).toBe(true);
   });
 
+  // The timeout has to outlast cmd.exe -> node -> grandchild startup even when the whole suite is running in
+  // parallel on Windows (1.5 s did not: the tree was killed before the grandchild wrote its pid).
   it('a `session delete` that hangs past its timeout is killed with its whole tree', async () => {
     const gcFile = path.join(os.tmpdir(), `cw-opencode-delgc-${process.pid}-${Date.now()}.txt`);
     tmpFiles.push(gcFile);
-    const src = new OpenCodeSource(() => ({ command: path.join(here, '__mocks__', 'opencode-cli-wrapped.cmd'), env: { FAKE_DELETE_HANG_MS: '30000', FAKE_GRANDCHILD_PID_FILE: gcFile } }), { deleteTimeoutMs: 1500 });
+    const src = new OpenCodeSource(() => ({ command: path.join(here, '__mocks__', 'opencode-cli-wrapped.cmd'), env: { FAKE_DELETE_HANG_MS: '30000', FAKE_GRANDCHILD_PID_FILE: gcFile } }), { deleteTimeoutMs: 8000 });
     sources.push(src);
     await expect(src.remove('ses-a')).rejects.toThrow(/超时/);
     const gc = await waitPid(gcFile);

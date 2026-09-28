@@ -9,7 +9,7 @@ import type { MemoryItem } from '@shared';
 const AGENTS = [
   { l: 'Claude', how: 'Agent SDK 的 mcpServers（进程内注入）' },
   { l: 'Codex', how: '-c mcp_servers.memory.* 命令行覆盖' },
-  { l: 'Gemini / Qwen / Kimi / 任何 ACP agent', how: 'session/new 的 mcpServers 字段' },
+  { l: 'Gemini / Qwen / Kimi / 其它 Agent', how: 'session/new 的 mcpServers 字段' },
 ];
 
 /**
@@ -40,7 +40,7 @@ export function MemorySettings() {
       <div className="row">
         <div className="grow">
           <div>把记忆开放给所有 agent</div>
-          <div className="sub">关掉之后 agent 不再看到 memory_search / memory_write 工具，记忆面板仍然可用。改动在下次开会话时生效。</div>
+          <div className="sub">关掉之后 agent 不再看到 memory_search / memory_write 工具，记忆面板仍然可用。改动在下次开对话时生效。</div>
         </div>
         <button className={clsx('toggle', on && 'on')} onClick={() => void setSetting('memory.mcp', !on)} />
       </div>
@@ -59,7 +59,7 @@ export function MemorySettings() {
       <div className="row">
         <div className="grow">
           <div>{stats ? `共 ${stats.total} 条` : '读取中…'}</div>
-          <div className="sub">~/.claude-web/memory.db（SQLite + FTS5）{stats ? ` · 全局 ${stats.byScope.global ?? 0} · 项目 ${stats.byScope.project ?? 0} · 会话 ${stats.byScope.session ?? 0}` : ''}</div>
+          <div className="sub">~/.claude-web/memory.db（SQLite + FTS5）{stats ? ` · 全局 ${stats.byScope.global ?? 0} · 项目 ${stats.byScope.project ?? 0} · 对话 ${stats.byScope.session ?? 0}` : ''}</div>
         </div>
         <button className="btn sm ghost" onClick={() => dispatch({ t: 'dock.show', panel: 'memory' })}><Icon name="memory" size={13} /> 打开面板</button>
         <button className="btn sm danger" disabled={!stats?.total} onClick={clear}>清空</button>
