@@ -6,6 +6,8 @@
 import WebSocket from 'ws';
 import http from 'node:http';
 import net from 'node:net';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const port = args[0] ?? '3090';
@@ -167,7 +169,19 @@ ws.on('open', async () => {
     const one = await req({ kind: 'providers.refreshModels', ids: [po.id] });
     check('refreshModels with ids refreshes only those', one.length === 1 && one[0].id === po.id && one[0].ok);
 
-    // 8) the LAN listener never serves the gateway
+    // 8) session.setProvider refuses a profile the agent cannot use (an ACP agent speaks OpenAI, not Anthropic)
+    const mock = path.join(path.dirname(fileURLToPath(import.meta.url)), 'src', 'agents', '__mocks__', 'acp-agent.mjs');
+    await req({ kind: 'agents.set', agent: 'acp:e2e-fit', patch: { name: 'Fit', command: process.execPath, args: [mock], env: {}, protocol: 'acp' } });
+    const so = await req({ kind: 'session.open', params: { cwd: process.cwd(), agent: 'acp:e2e-fit', permissionMode: 'default' } });
+    let refused = '';
+    try { await req({ kind: 'session.setProvider', sessionId: so.sessionId, providerId: pa.id }); } catch (e) { refused = e.message; }
+    check('setProvider: an Anthropic profile on an ACP agent is refused with the reason', /anthropic/.test(refused), refused);
+    const swp = await req({ kind: 'session.setProvider', sessionId: so.sessionId, providerId: po.id, model: 'gpt-e2e-2' });
+    check('setProvider: an OpenAI profile is accepted and starts on the picked model', swp.info?.providerId === po.id && swp.info?.model === 'gpt-e2e-2', JSON.stringify({ p: swp.info?.providerId, m: swp.info?.model }));
+    await req({ kind: 'session.close', sessionId: so.sessionId }).catch(() => {});
+    await req({ kind: 'agents.set', agent: 'acp:e2e-fit', patch: null }).catch(() => {});
+
+    // 9) the LAN listener never serves the gateway
     remotePort = await freePort();
     const rs = await req({ kind: 'remote.set', enabled: true, port: remotePort });
     if (rs.running) {

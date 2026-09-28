@@ -1,9 +1,10 @@
 import os from 'node:os';
-import { CLAUDE_PROVIDER_ID, type ModelRefreshResult, type Provider, type ProviderType, type RuntimeKind } from '../protocol.js';
+import { CLAUDE_PROVIDER_ID, type AgentKind, type ModelRefreshResult, type Provider, type ProviderType, type RuntimeKind } from '../protocol.js';
 import type { MetaStore } from '../meta/store.js';
 import { resolveEngine, runClaudeCli } from '../claude-exe.js';
 import type { SecretService } from '../secrets/service.js';
 import { CODEX_KEY_ENV, codexGatewayArgs, codexProviderArgs, geminiApiKeyEnv } from '../gateway/agents.js';
+import { profileFitError } from '../models/catalog.js';
 
 /** Mask an API key for the wire: keep prefix + last 4 chars. */
 export function maskKey(k: string | undefined): string {
@@ -162,7 +163,8 @@ export async function probeProvider(p: Pick<Provider, 'type' | 'baseUrl' | 'apiK
     clearTimeout(to);
     let j: any = null;
     try { j = JSON.parse(text); } catch { /* not json */ }
-    if (!r.ok) return { ok: false, status: r.status, models: [], error: j?.error?.message ?? j?.message ?? text.slice(0, 300) ?? `HTTP ${r.status}`, ms: Date.now() - t0 };
+    // `||`: an empty body is an empty string, which would otherwise become the whole error message
+    if (!r.ok) return { ok: false, status: r.status, models: [], error: j?.error?.message || j?.message || text.slice(0, 300) || `HTTP ${r.status}`, ms: Date.now() - t0 };
     const raw: any[] = Array.isArray(j?.data) ? j.data : Array.isArray(j?.models) ? j.models : Array.isArray(j) ? j : [];
     const models = raw.map((m) => String(m.id ?? m.name ?? m).replace(/^models\//, '')).filter(Boolean).sort();
     if (!models.length && !j) return { ok: false, status: r.status, models: [], error: '返回不是 JSON 模型列表', ms: Date.now() - t0 };
@@ -287,10 +289,22 @@ export class ProviderService {
       try { key = this.plainKey(t); } catch (e) { return { ...base, ok: false, count: 0, error: (e as Error).message, ms: 0 }; }
       if (!key) return { ...base, ok: false, count: 0, error: '没有 API Key', ms: 0 };
       const r = await probeProvider({ type: t.type, baseUrl: t.baseUrl, apiKey: key });
+      // the profile may have been deleted while the request was out: write back only onto one that still exists
+      const gone = { ...base, ok: false, count: 0, error: '档案已删除', ms: r.ms };
+      if (!r.ok) {
+        const error = r.error || `HTTP ${r.status ?? '?'}`;
+        if (!(await this.meta.upsertProvider({ id: t.id, modelsError: error }, { mustExist: true }))) return gone;
+        return { ...base, ok: false, count: 0, error, ms: r.ms };
+      }
+      // a relay answering 200 with nothing (maintenance, a broken proxy) must not empty a list that worked yesterday
+      if (!r.models.length && this.meta.provider(t.id)?.models?.length) {
+        const error = '返回空列表（保留原列表）';
+        if (!(await this.meta.upsertProvider({ id: t.id, modelsError: error }, { mustExist: true }))) return gone;
+        return { ...base, ok: false, count: 0, error, ms: r.ms };
+      }
       // null clears the field (upsertProvider drops null-valued optional keys)
-      if (r.ok) await this.meta.upsertProvider({ id: t.id, models: r.models, modelsAt: Date.now(), modelsError: null as unknown as undefined });
-      else await this.meta.upsertProvider({ id: t.id, modelsError: r.error ?? `HTTP ${r.status ?? '?'}` });
-      return { ...base, ok: r.ok, count: r.ok ? r.models.length : 0, error: r.ok ? undefined : r.error ?? `HTTP ${r.status ?? '?'}`, ms: r.ms };
+      if (!(await this.meta.upsertProvider({ id: t.id, models: r.models, modelsAt: Date.now(), modelsError: null as unknown as undefined }, { mustExist: true }))) return gone;
+      return { ...base, ok: true, count: r.models.length, ms: r.ms };
     };
     let next = 0;
     const worker = async () => {
@@ -307,6 +321,8 @@ export class ProviderService {
    * unref'd so it never holds the process open; failures only land in `modelsError`.
    */
   autoRefreshModels(delayMs = 5000): Promise<ModelRefreshResult[]> {
+    // off switch for test servers (scripts/e2e.mjs): a background pull would race the checks' request counts
+    if (process.env.CW_NO_MODEL_REFRESH) return Promise.resolve([]);
     return new Promise((resolve) => {
       const t = setTimeout(() => {
         const due = this.meta.providers().filter((p) => needsModelRefresh(p)).map((p) => p.id);
@@ -314,6 +330,13 @@ export class ProviderService {
       }, delayMs);
       t.unref?.();
     });
+  }
+  /** Why profile `id` cannot drive `agent` (null = it can); for Claude the engine it would actually run on counts. */
+  fitError(id: string | undefined, agent: AgentKind): string | null {
+    if (!id || id === CLAUDE_PROVIDER_ID) return null;
+    const p = this.meta.provider(id);
+    if (!p) return `供应商档案不存在：${id}`;
+    return profileFitError(agent, p.type, agent === 'claude' && p.type !== 'gateway' ? resolveEngine(p.runtime).kind : undefined);
   }
   async upsert(p: Partial<Provider> & { id?: string }) {
     return publicProvider(await this.meta.upsertProvider(p));
@@ -329,7 +352,7 @@ export class ProviderService {
     const p = { type: draft?.type ?? saved?.type ?? 'anthropic', baseUrl: (draft?.baseUrl ?? saved?.baseUrl ?? '').trim(), apiKey: key.trim() } as Pick<Provider, 'type' | 'baseUrl' | 'apiKey'>;
     if (!p.apiKey) return { ok: false, models: [], error: '没有 API Key', ms: 0 };
     const r = await probeProvider(p);
-    if (r.ok && saved && r.models.length) await this.meta.upsertProvider({ id: saved.id, models: r.models, modelsAt: Date.now(), modelsError: null as unknown as undefined });
+    if (r.ok && saved && r.models.length) await this.meta.upsertProvider({ id: saved.id, models: r.models, modelsAt: Date.now(), modelsError: null as unknown as undefined }, { mustExist: true });
     if (!r.ok || (p.type !== 'anthropic' && p.type !== 'openai')) return r;
     // Real chat check, with automatic fallback to the official binary when the endpoint rejects ccb.
     const full: Provider = { id: saved?.id ?? 'draft', name: draft?.name ?? saved?.name ?? 'draft', createdAt: 0, ...saved, ...p, defaultModel: draft?.defaultModel ?? saved?.defaultModel, modelMap: draft?.modelMap ?? saved?.modelMap };
@@ -346,7 +369,7 @@ export class ProviderService {
       const again = await chatProbe(full, 'claude', model);
       if (again.ok) {
         chat = { ...again, switched: true };
-        if (saved) await this.meta.upsertProvider({ id: saved.id, runtime: 'claude' });
+        if (saved) await this.meta.upsertProvider({ id: saved.id, runtime: 'claude' }, { mustExist: true });
       } else chat = { ...again, error: `ccb: ${chat.error} · 官方: ${again.error}` };
     }
     return { ...r, ok: chat.ok, chat, error: chat.ok ? undefined : chat.error };

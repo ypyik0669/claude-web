@@ -115,11 +115,80 @@ describe('swapAgent / handOver of imported sessions', () => {
     expect(pool.sent[0].sessionId).toBe('own-1');
     expect(pool.sent[0].text).toBe(r.briefing);
   });
+});
 
-  it('swapProvider respawns on the model picked with the profile, else keeps the old one', async () => {
-    await mods.swap.swapProvider(deps, 'own-2', 'prov-a', 'A', 'gpt-6-astra');
-    expect(pool.opened[0]).toMatchObject({ sessionId: 'own-2', providerId: 'prov-a', model: 'gpt-6-astra' });
-    await mods.swap.swapProvider(deps, 'own-2', 'prov-b', 'B');
-    expect(pool.opened[1].model).toBeUndefined(); // fake pool has no live runner → no previous model
+// A pool that holds live runners (info with model / provider), so swapProvider sees what it is replacing.
+function livePool(initial: Record<string, any>) {
+  const runners = new Map<string, any>(Object.entries(initial).map(([id, info]) => [id, { info: { sessionId: id, cwd: '/proj', agent: 'claude', ...info } }]));
+  const opened: any[] = [];
+  const events: string[] = [];
+  return {
+    opened, events,
+    emit: () => true,
+    get: (id: string) => runners.get(id),
+    close: vi.fn(async (id: string) => { events.push(`close:${id}`); await new Promise((r) => setTimeout(r, 20)); runners.delete(id); }),
+    open: vi.fn((p: any) => {
+      events.push(`open:${p.sessionId}:${p.providerId ?? 'claude'}`);
+      opened.push(p);
+      const r = { sessionId: p.sessionId, info: { sessionId: p.sessionId, cwd: p.cwd, agent: p.agent, model: p.model, providerId: p.providerId }, getHistory: () => [], send: () => {} };
+      runners.set(p.sessionId, r);
+      return r;
+    }),
+  };
+}
+
+describe('swapProvider (model with the profile)', () => {
+  let dir: string;
+  let deps: any;
+  let swap: any;
+  beforeEach(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-swapp-'));
+    const [{ MetaStore }, { CanonicalLog }, { AgentTranscripts }] = await Promise.all([import('../meta/store.js'), import('./canonical.js'), import('../agents/transcript.js')]);
+    swap = await import('./swap.js');
+    const meta = new MetaStore(path.join(dir, 'meta.json'));
+    deps = { canonical: new CanonicalLog(), transcripts: new AgentTranscripts(), meta };
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
+
+  it('another profile with a picked model → that model', async () => {
+    const pool = livePool({ s1: { model: 'claude-opus-5', providerId: 'prov-a' } });
+    await swap.swapProvider({ ...deps, pool }, 's1', 'prov-b', 'B', 'gpt-6-astra');
+    expect(pool.opened[0]).toMatchObject({ providerId: 'prov-b', model: 'gpt-6-astra' });
+  });
+  it('another profile without a model → no model (the profile / login default), never the model of the old profile', async () => {
+    const pool = livePool({ s1: { model: 'claude-opus-5', providerId: 'prov-a' } });
+    await swap.swapProvider({ ...deps, pool }, 's1', 'prov-b', 'B');
+    expect(pool.opened[0].model).toBeUndefined();
+    const pool2 = livePool({ s2: { model: 'gpt-6-astra', providerId: 'prov-b' } });
+    await swap.swapProvider({ ...deps, pool: pool2 }, 's2', undefined, 'Claude 账号');
+    expect(pool2.opened[0].model).toBeUndefined();
+  });
+  it('the same profile without a model (a plain restart) keeps the current model', async () => {
+    const pool = livePool({ s1: { model: 'claude-opus-5', providerId: 'prov-a' } });
+    await swap.swapProvider({ ...deps, pool }, 's1', 'prov-a', 'A');
+    expect(pool.opened[0].model).toBe('claude-opus-5');
+  });
+  it('without a live runner the remembered profile decides whether it changed', async () => {
+    const pool = livePool({});
+    await deps.meta.setSessionMeta('s3', { providerId: 'prov-a' });
+    await swap.swapProvider({ ...deps, pool }, 's3', 'prov-b', 'B');
+    expect(pool.opened[0].model).toBeUndefined();
+  });
+});
+
+describe('per-session swap lock', () => {
+  it('two swaps of one session run one after the other; other sessions are not held up', async () => {
+    const { withSessionLock } = await import('./swap.js');
+    const log: string[] = [];
+    const task = (id: string, tag: string, ms: number) => withSessionLock(id, async () => { log.push(`start ${tag}`); await new Promise((r) => setTimeout(r, ms)); log.push(`end ${tag}`); return tag; });
+    const all = await Promise.all([task('s', 'a', 40), task('s', 'b', 5), task('t', 'c', 5)]);
+    expect(all).toEqual(['a', 'b', 'c']);
+    expect(log.indexOf('end a')).toBeLessThan(log.indexOf('start b'));
+    expect(log.indexOf('end c')).toBeLessThan(log.indexOf('end a'));
+  });
+  it('a failed swap does not wedge the next one', async () => {
+    const { withSessionLock } = await import('./swap.js');
+    await expect(withSessionLock('x', async () => { throw new Error('boom'); })).rejects.toThrow('boom');
+    await expect(withSessionLock('x', async () => 'ok')).resolves.toBe('ok');
   });
 });

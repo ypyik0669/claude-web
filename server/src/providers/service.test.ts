@@ -49,3 +49,30 @@ describe('agentLaunch (gemini profile)', () => {
     }
   });
 });
+
+describe('fitError (session.setProvider guard)', () => {
+  it('refuses a profile the agent / engine cannot use, with the reason', async () => {
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { MetaStore } = await import('../meta/store.js');
+    const { ProviderService } = await import('./service.js');
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cw-fit-'));
+    try {
+      const meta = new MetaStore(path.join(dir, 'meta.json'));
+      const svc = new ProviderService(meta);
+      const anth = await meta.upsertProvider({ name: 'a', type: 'anthropic', baseUrl: 'https://a', apiKey: 'k' });
+      const oai = await meta.upsertProvider({ name: 'o', type: 'openai', baseUrl: 'https://o', apiKey: 'k' });
+      const oaiOfficial = await meta.upsertProvider({ name: 'oo', type: 'openai', baseUrl: 'https://o', apiKey: 'k', runtime: 'claude' });
+      expect(svc.fitError(anth.id, 'codex')).toMatch(/Codex/);
+      expect(svc.fitError(oai.id, 'codex')).toBeNull();
+      expect(svc.fitError(anth.id, 'claude')).toBeNull();
+      expect(svc.fitError(oaiOfficial.id, 'claude')).toMatch(/官方/);
+      expect(svc.fitError(undefined, 'codex')).toBeNull();
+      expect(svc.fitError('claude', 'claude')).toBeNull();
+      expect(svc.fitError('nope', 'claude')).toMatch(/不存在/);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});

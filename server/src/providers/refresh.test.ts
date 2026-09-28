@@ -22,6 +22,8 @@ beforeAll(async () => {
     maxInFlight = Math.max(maxInFlight, inFlight);
     setTimeout(() => {
       inFlight--;
+      if (key === 'k-500') { s.writeHead(500).end(); return; }
+      if (key === 'k-empty') { s.writeHead(200, { 'content-type': 'application/json' }).end('{"object":"list","data":[]}'); return; }
       if (key === 'k-bad') { s.writeHead(401, { 'content-type': 'application/json' }).end('{"error":{"message":"invalid key"}}'); return; }
       const n = Number(/k-(\d+)/.exec(key)?.[1] ?? 1);
       s.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ object: 'list', data: Array.from({ length: n }, (_, i) => ({ id: `m-${key}-${i}` })) }));
@@ -94,6 +96,53 @@ describe('providers.refreshModels', () => {
   });
 });
 
+describe('refreshModels edge cases', () => {
+  it('an error with an empty body falls back to HTTP <status>', async () => {
+    const { meta, svc } = await service();
+    const p = await meta.upsertProvider({ name: 'x', type: 'openai', baseUrl: `${base}/v1`, apiKey: 'k-500' });
+    const [r] = await svc.refreshModels([p.id]);
+    expect(r.error).toBe('HTTP 500');
+    expect(meta.provider(p.id)!.modelsError).toBe('HTTP 500');
+  });
+  it('200 with an empty list does not wipe a non-empty list', async () => {
+    const { meta, svc } = await service();
+    const p = await meta.upsertProvider({ name: 'x', type: 'openai', baseUrl: `${base}/v1`, apiKey: 'k-empty', models: ['keep-me'], modelsAt: 5 });
+    const [r] = await svc.refreshModels([p.id]);
+    expect(r.ok).toBe(false);
+    expect(meta.provider(p.id)).toMatchObject({ models: ['keep-me'], modelsAt: 5, modelsError: expect.stringContaining('空列表') });
+    // nothing to lose: an empty list on a profile that had none is simply recorded
+    const q = await meta.upsertProvider({ name: 'y', type: 'openai', baseUrl: `${base}/v1`, apiKey: 'k-empty' });
+    const [r2] = await svc.refreshModels([q.id]);
+    expect(r2).toMatchObject({ ok: true, count: 0 });
+    expect(meta.provider(q.id)!.modelsAt).toBeGreaterThan(0);
+  });
+  it('a profile deleted while its list is being pulled stays deleted (no ghost)', async () => {
+    const { meta, svc } = await service();
+    const p = await meta.upsertProvider({ name: 'doomed', type: 'anthropic', baseUrl: base, apiKey: 'k-3' });
+    const run = svc.refreshModels([p.id]);
+    await new Promise((r) => setTimeout(r, 10)); // request in flight (the fake holds it 40 ms)
+    await meta.removeProvider(p.id);
+    const [r] = await run;
+    expect(meta.provider(p.id)).toBeUndefined();
+    expect(meta.providers()).toHaveLength(0);
+    expect(r).toMatchObject({ ok: false, error: expect.stringContaining('已删除') });
+  });
+  it('probe() on a profile deleted meanwhile does not bring it back either', async () => {
+    const { meta, svc } = await service();
+    const p = await meta.upsertProvider({ name: 'doomed', type: 'gemini', baseUrl: base, apiKey: 'k-2' });
+    const run = svc.probe(p.id);
+    await new Promise((r) => setTimeout(r, 10));
+    await meta.removeProvider(p.id);
+    await run;
+    expect(meta.providers()).toHaveLength(0);
+  });
+  it('upsertProvider({mustExist}) is a no-op for a missing id', async () => {
+    const { meta } = await service();
+    expect(await meta.upsertProvider({ id: 'gone', models: ['x'] }, { mustExist: true })).toBeNull();
+    expect(meta.providers()).toHaveLength(0);
+  });
+});
+
 describe('needsModelRefresh (startup auto refresh)', () => {
   const now = 10 * MODEL_REFRESH_MAX_AGE;
   const p = (x: Partial<Provider>): Provider => ({ id: 'p', name: 'p', type: 'anthropic', baseUrl: 'https://r.example', apiKey: 'enc:dpapi:x', createdAt: 0, ...x });
@@ -103,6 +152,13 @@ describe('needsModelRefresh (startup auto refresh)', () => {
   it('gateway profiles and profiles without a key are never due', () => {
     expect(needsModelRefresh(p({ type: 'gateway', apiKey: '' }), now)).toBe(false);
     expect(needsModelRefresh(p({ apiKey: '' }), now)).toBe(false);
+  });
+  it('CW_NO_MODEL_REFRESH turns the startup refresh off', async () => {
+    const { meta, svc } = await service();
+    await meta.upsertProvider({ name: 'stale', type: 'anthropic', baseUrl: base, apiKey: 'k-2' });
+    process.env.CW_NO_MODEL_REFRESH = '1';
+    try { expect(await svc.autoRefreshModels(0)).toEqual([]); } finally { delete process.env.CW_NO_MODEL_REFRESH; }
+    expect(hits).toHaveLength(0);
   });
   it('the service schedules only the due ones, after a delay', async () => {
     const { meta, svc } = await service();

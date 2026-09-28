@@ -33,7 +33,7 @@ import type { CanonicalLog } from '../session/canonical.js';
 import type { MemoryService } from '../memory/service.js';
 import { harvest } from '../memory/extract.js';
 import { setMemoryMcpEnabled } from '../memory/launcher.js';
-import { swapAgent, swapProvider } from '../session/swap.js';
+import { swapAgent, swapProvider, withSessionLock } from '../session/swap.js';
 import { expandSessionRefs } from '../library/briefing.js';
 import type { LibraryService } from '../library/service.js';
 import type { GatewayService } from '../gateway/service.js';
@@ -388,7 +388,11 @@ export class Hub {
       case 'session.setProvider': {
         const p = req.providerId ? s.providers.forSession(req.providerId) : undefined;
         if (req.providerId && !p) throw new Error('没有这个供应商档案');
-        const r = await swapProvider({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta }, req.sessionId, req.providerId, p?.name ?? 'Claude 账号', req.model);
+        // the agent behind the session must be able to use this profile type (Codex cannot talk to an Anthropic relay…)
+        const agent = s.pool.get(req.sessionId)?.info.agent ?? (await s.transcripts.head(req.sessionId).catch(() => null))?.agent ?? 'claude';
+        const unfit = s.providers.fitError(req.providerId, agent);
+        if (unfit) throw new Error(unfit);
+        const r = await withSessionLock(req.sessionId, () => swapProvider({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta }, req.sessionId, req.providerId, p?.name ?? 'Claude 账号', req.model));
         s.sessions.emit('changed');
         return r;
       }
@@ -396,7 +400,7 @@ export class Hub {
         const readAll = (id: string) => s.library.readAll(id);
         // imported library sessions hand over into a NEW session (returned sessionId differs); the rest swap in place
         const imported = (id: string) => s.library.importedInfo(id);
-        const r = await swapAgent({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta, readAll, imported }, req.sessionId, req.agent, req.model);
+        const r = await withSessionLock(req.sessionId, () => swapAgent({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta, readAll, imported }, req.sessionId, req.agent, req.model));
         s.sessions.emit('changed');
         return r;
       }

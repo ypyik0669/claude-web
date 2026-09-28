@@ -163,9 +163,13 @@ export class MetaStore extends EventEmitter {
   /** Installed by the SecretService so keys are protected before they hit disk. */
   secretCodec: { protect(plain: string, id: string): Promise<string> } | null = null;
   /** Insert or update. An empty / masked apiKey keeps the stored one. */
-  async upsertProvider(p: Partial<Provider> & { id?: string }): Promise<Provider> {
+  /** `mustExist`: a background write-back (model refresh / probe) for a profile deleted meanwhile is dropped, not a re-create. */
+  async upsertProvider(p: Partial<Provider> & { id?: string }, opts: { mustExist: true }): Promise<Provider | null>;
+  async upsertProvider(p: Partial<Provider> & { id?: string }, opts?: { mustExist?: false }): Promise<Provider>;
+  async upsertProvider(p: Partial<Provider> & { id?: string }, opts: { mustExist?: boolean } = {}): Promise<Provider | null> {
     const list = this.providers();
     let cur = p.id ? list.find((x) => x.id === p.id) : undefined;
+    if (!cur && opts.mustExist) return null;
     if (!cur) {
       cur = { id: Math.random().toString(36).slice(2, 10), name: p.name ?? 'provider', type: p.type ?? 'anthropic', baseUrl: p.baseUrl ?? '', apiKey: '', createdAt: Date.now() };
       list.push(cur);
