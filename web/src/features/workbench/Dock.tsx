@@ -95,6 +95,16 @@ function MoreMenu({ mounted, open: temps, active, onPick, onClose }: { mounted: 
   const close = useCallback((refocus: boolean) => { setOpen(false); if (refocus) btn.current?.focus(); }, []);
   const front = !!active && temps.includes(active);
   const names = temps.map((id) => PANEL_TITLES[id]).join('、');
+  // closing one from 「已打开」 (the × was focused — a keyboard user): the focus moves to the next open row, else the
+  // one before it; with none left the menu closes and the focus goes back to 「更多」 (never left on <body>, where
+  // neither the arrows nor Esc reach the menu)
+  const closeOpen = (id: PanelId) => {
+    const i = temps.indexOf(id);
+    const next = temps[i + 1] ?? temps[i - 1];
+    onClose(id);
+    if (!next) { close(true); return; }
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`.dock-more-menu .dock-more-open[data-open="${next}"] > button[data-panel]`)?.focus());
+  };
   const title = temps.length ? `更多面板 · 已打开：${names}` : '更多面板：目标、编排、用量、Issue 与 PR…';
   return (
     <>
@@ -112,7 +122,7 @@ function MoreMenu({ mounted, open: temps, active, onPick, onClose }: { mounted: 
                   <button role="menuitemradio" aria-checked={active === id} data-mi data-panel={id} onClick={() => { onPick(id); setOpen(false); }}>
                     <Icon name={PANEL_ICONS[id]} size={14} /><span className="grow">{PANEL_TITLES[id]}</span>{active === id && <Icon name="check" size={13} />}
                   </button>
-                  <button className="x" role="menuitem" data-mi title={`关闭${PANEL_TITLES[id]}`} aria-label={`关闭${PANEL_TITLES[id]}`} onClick={() => { onClose(id); if (temps.length <= 1) setOpen(false); }}><Icon name="close" size={12} /></button>
+                  <button className="x" role="menuitem" data-mi title={`关闭${PANEL_TITLES[id]}`} aria-label={`关闭${PANEL_TITLES[id]}`} onClick={() => closeOpen(id)}><Icon name="close" size={12} /></button>
                 </div>
               ))}
               <div className="menu-sep" />
