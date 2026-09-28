@@ -195,13 +195,14 @@ export class ProviderService {
     try { return { ...p, apiKey: this.plainKey(p) }; } catch { return null; }
   }
   /** Extra env + global args for a non-Claude agent session that picked a gateway profile (nothing for any other type). */
-  agentLaunch(id: string | undefined, agent: 'codex' | 'acp'): { env: Record<string, string>; args: string[] } {
+  agentLaunch(id: string | undefined, agent: 'codex' | 'acp', kind?: string): { env: Record<string, string>; args: string[] } {
     if (!id || id === CLAUDE_PROVIDER_ID || this.meta.provider(id)?.type !== 'gateway') return { env: {}, args: [] };
     const p = this.forSession(id)!;
     const env = providerEnv(p, agent);
     // account logins must not win over the gateway: Codex gets its own provider, Gemini CLI a forced auth type
-    if (agent === 'codex') return { env, args: codexGatewayArgs(p.baseUrl) };
-    return { env: { ...env, ...geminiApiKeyEnv() }, args: [] };
+    if (agent === 'codex') return { env, args: codexGatewayArgs(p.baseUrl, p.defaultModel) };
+    // the settings override is Gemini CLI's own mechanism; other ACP agents (Qwen Code…) only get the env
+    return { env: kind === 'gemini' ? { ...env, ...geminiApiKeyEnv() } : env, args: [] };
   }
   async upsert(p: Partial<Provider> & { id?: string }) {
     return publicProvider(await this.meta.upsertProvider(p));

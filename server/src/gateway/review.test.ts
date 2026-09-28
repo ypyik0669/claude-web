@@ -5,9 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { buildOutbound, parseInbound } from './convert.js';
-import { MemberStates } from './failover.js';
+import { MemberStates, classify } from './failover.js';
 import { acceptEncoding, errorHeaders, passthroughHeaders } from './upstream.js';
-import { beforeAppServer, codexGatewayArgs, geminiApiKeyEnv } from './agents.js';
+import { beforeAppServer, codexGatewayArgs, geminiApiKeyEnv, writeAtomic } from './agents.js';
+import { MetaStore } from '../meta/store.js';
+import { ProviderService } from '../providers/service.js';
 import type { GatewayGroup } from './types.js';
 
 describe('codecs', () => {
@@ -62,7 +64,7 @@ describe('concurrent outcomes', () => {
     s.fail('g', 'a', { action: 'switch', kind: 'rate', cooldownMs: 240_000 }, 429, 'rl', 12, 2);
     const st = s.get('g', 'a');
     expect(st.strikes).toBe(1);
-    expect(st.cooldownUntil).toBe(12 + 240_000); // the longest reset still wins
+    expect(st.cooldownUntil).toBe(10 + 60_000); // backoff guesses from concurrent requests do not extend it
     expect(s.order(g, 1000)).toHaveLength(0);
   });
   it('an older success finishing late does not clear a newer cooldown', () => {
@@ -102,5 +104,54 @@ describe('agent wiring', () => {
       if (prev.s === undefined) delete process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH; else process.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = prev.s;
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('second review', () => {
+  it('A: six concurrent 429s without reset headers keep the first 60s cooldown', () => {
+    const s = new MemberStates();
+    for (let i = 0; i < 6; i++) {
+      const v = classify(429, {}, '', s.get('g', 'a').strikes);
+      s.fail('g', 'a', v, 429, 'rl', 100 + i, i); // all sent before the first answer came back
+    }
+    expect(s.get('g', 'a').cooldownUntil).toBe(100 + 60_000);
+    expect(s.get('g', 'a').strikes).toBe(1);
+    // a stated reset still extends it
+    s.fail('g', 'a', classify(429, { 'retry-after': '300' }, '', 1), 429, 'rl', 200, 5);
+    expect(s.get('g', 'a').cooldownUntil).toBe(200 + 300_000);
+  });
+
+  it('B/D: only the gemini kind gets the settings override; codex gets the profile model', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-gw-launch-'));
+    const prev = process.env.CLAUDE_WEB_DIR;
+    process.env.CLAUDE_WEB_DIR = dir;
+    try {
+      const meta = new MetaStore(path.join(dir, 'meta.json'));
+      const p = await meta.upsertProvider({ name: 'GW', type: 'gateway', gatewayGroupId: 'g', baseUrl: '', apiKey: '', defaultModel: 'claude-sonnet-4-5' });
+      const svc = new ProviderService(meta);
+      svc.gatewayEndpoint = () => ({ baseUrl: 'http://127.0.0.1:1/gateway/g', key: 'cwg-k' });
+      expect(svc.agentLaunch(p.id, 'acp', 'gemini').env.GEMINI_CLI_SYSTEM_SETTINGS_PATH).toBeTruthy();
+      const qwen = svc.agentLaunch(p.id, 'acp', 'qwen');
+      expect(qwen.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH).toBeUndefined();
+      expect(qwen.env.OPENAI_BASE_URL).toBe('http://127.0.0.1:1/gateway/g/v1');
+      const codex = svc.agentLaunch(p.id, 'codex', 'codex');
+      expect(codex.args.slice(0, 2)).toEqual(['-c', 'model="claude-sonnet-4-5"']);
+      expect(codex.env.CW_GATEWAY_KEY).toBe('cwg-k');
+      expect(codexGatewayArgs('http://x')).not.toContain('-c model');
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_WEB_DIR; else process.env.CLAUDE_WEB_DIR = prev;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('C: settings copy is written atomically (replaces in one step, leaves no temp files)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-gw-atomic-'));
+    try {
+      const f = path.join(dir, 's.json');
+      writeAtomic(f, '{"a":1}');
+      writeAtomic(f, '{"a":2}');
+      expect(fs.readFileSync(f, 'utf8')).toBe('{"a":2}');
+      expect(fs.readdirSync(dir)).toEqual(['s.json']);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 });

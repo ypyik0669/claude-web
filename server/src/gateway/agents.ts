@@ -13,8 +13,10 @@ export const CODEX_KEY_ENV = 'CW_GATEWAY_KEY';
  * reference: `model_providers.<id>.{name, base_url, env_key, wire_api}`; `wire_api` "responses".
  * Values are TOML, hence JSON quoting. Global flags: they go before the `app-server` subcommand.
  */
-export function codexGatewayArgs(groupBaseUrl: string): string[] {
+export function codexGatewayArgs(groupBaseUrl: string, model?: string): string[] {
   return [
+    // the profile's default model: whatever the user's config.toml names is a ChatGPT model the gateway may not route
+    ...(model?.trim() ? ['-c', `model=${JSON.stringify(model.trim())}`] : []),
     '-c', `model_providers.cwgw.name=${JSON.stringify('claude-web gateway')}`,
     '-c', `model_providers.cwgw.base_url=${JSON.stringify(`${groupBaseUrl}/v1`)}`,
     '-c', `model_providers.cwgw.env_key=${JSON.stringify(CODEX_KEY_ENV)}`,
@@ -28,6 +30,22 @@ export function beforeAppServer(args: string[], extra: string[]): string[] {
   const at = args.indexOf('app-server');
   if (at < 0 || !extra.length) return args;
   return [...args.slice(0, at), ...extra, ...args.slice(at)];
+}
+
+/**
+ * Write-then-rename, so a Gemini process starting concurrently never reads a half-written file. On Windows
+ * the rename fails with EPERM / EBUSY / EACCES while another process has the target open: retry briefly.
+ */
+export function writeAtomic(file: string, text: string, tries = 10) {
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  fs.writeFileSync(tmp, text, 'utf8');
+  for (let i = 0; ; i++) {
+    try { fs.renameSync(tmp, file); return; } catch (e: any) {
+      if (i >= tries - 1 || !['EPERM', 'EBUSY', 'EACCES'].includes(e?.code)) { try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ } throw e; }
+      const until = Date.now() + 20 * (i + 1);
+      while (Date.now() < until) { /* short synchronous back-off: this runs once per session start */ }
+    }
+  }
 }
 
 function systemSettingsDefault(): string {
@@ -52,7 +70,7 @@ export function geminiApiKeyEnv(): Record<string, string> {
   const out = path.join(dataDir(), 'gateway', 'gemini-system-settings.json');
   try {
     fs.mkdirSync(path.dirname(out), { recursive: true });
-    fs.writeFileSync(out, JSON.stringify(base, null, 2), 'utf8');
+    writeAtomic(out, JSON.stringify(base, null, 2));
   } catch {
     return {};
   }

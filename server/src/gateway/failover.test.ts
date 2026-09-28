@@ -7,7 +7,7 @@ const g = (over: Partial<GatewayGroup> = {}): GatewayGroup => ({ id: 'g1', name:
 
 describe('classify', () => {
   it('429 with retry-after cools down for that long', () => {
-    expect(classify(429, { 'retry-after': '30' }, '', 0)).toEqual({ action: 'switch', kind: 'rate', cooldownMs: 30_000 });
+    expect(classify(429, { 'retry-after': '30' }, '', 0)).toEqual({ action: 'switch', kind: 'rate', cooldownMs: 30_000, fromHeaders: true });
   });
   it('429 without hints backs off from 60s, doubling, capped at 30 min', () => {
     expect(classify(429, {}, '', 0)).toMatchObject({ cooldownMs: 60_000 });

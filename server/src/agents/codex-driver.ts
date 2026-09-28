@@ -7,6 +7,7 @@ import { insertCodexConfig } from '../memory/launcher.js';
 import { MessageSynth } from './normalize.js';
 import { codexItemMessages, type CodexItemState } from './codex-items.js';
 import type { AgentTranscripts } from './transcript.js';
+import { CODEX_KEY_ENV } from '../gateway/agents.js';
 import type { AgentDriver } from './types.js';
 
 interface PendingPerm { event: PermissionRequestEvent; resolve: (r: any) => void; kind: 'command' | 'file' | 'permissions' }
@@ -116,7 +117,9 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
       } catch { /* optional */ }
       // config.toml may name a model this account cannot use (ChatGPT plans reject some ids) — prefer a listed one
       const listed = this.info.models ?? [];
-      if (listed.length && this.model && !listed.some((m) => m.value === this.model) && !this.launch.model) {
+      // (not for a gateway profile: the models behind the gateway are never in the ChatGPT account's list)
+      const viaGateway = !!this.launch.env?.[CODEX_KEY_ENV];
+      if (listed.length && this.model && !listed.some((m) => m.value === this.model) && !this.launch.model && !viaGateway) {
         const pick = rawModels.find((m: any) => m.isDefault && !m.hidden)?.model ?? listed[0].value;
         this.push(this.synth.systemNote(`Codex 配置里的模型 ${this.model} 不在可用列表，本会话改用 ${pick}（可在模型菜单切换）。`, 'warning'));
         this.model = pick; this.synth.setModel(pick); this.info.model = pick;

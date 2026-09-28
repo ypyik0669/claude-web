@@ -21,7 +21,7 @@ export interface MemberRuntime {
 
 export type Verdict =
   | { action: 'final' } // the client's problem (400/404/413/422…): do not switch, return as is
-  | { action: 'switch'; kind: 'rate'; cooldownMs: number } // 429 / quota exhausted
+  | { action: 'switch'; kind: 'rate'; cooldownMs: number; fromHeaders?: boolean } // 429 / quota exhausted; fromHeaders = the upstream said how long
   | { action: 'switch'; kind: 'transient' } // 5xx / 529 / network / timeout
   | { action: 'switch'; kind: 'auth' }; // 401 / 403: member disabled until the user resets it
 
@@ -75,7 +75,7 @@ export function classify(status: number, headers: Headers, bodyText: string, str
   const quota = QUOTA_RE.test(bodyText);
   if (status === 429 || status === 402 || (quota && status >= 400 && status < 500)) {
     const fromHeaders = status === 429 ? cooldownFromHeaders(headers) : null;
-    return { action: 'switch', kind: 'rate', cooldownMs: fromHeaders ?? backoffMs(strikes) };
+    return fromHeaders !== null ? { action: 'switch', kind: 'rate', cooldownMs: fromHeaders, fromHeaders: true } : { action: 'switch', kind: 'rate', cooldownMs: backoffMs(strikes) };
   }
   if (status === 401 || status === 403) return { action: 'switch', kind: 'auth' };
   if (status >= 500 || status === 408) return { action: 'switch', kind: 'transient' };
@@ -142,7 +142,8 @@ export class MemberStates {
     const already = s.cooldownUntil > sentAt;
     s.lastFailAt = now;
     if (v.kind === 'rate') {
-      if (already) { s.cooldownUntil = Math.max(s.cooldownUntil, now + v.cooldownMs); if (s.cooldownKind !== 'rate') s.cooldownKind = 'rate'; return; }
+      // already cooling: only a reset time the upstream stated may extend it — our own backoff guess must not climb a step per concurrent 429
+      if (already) { if (v.fromHeaders) s.cooldownUntil = Math.max(s.cooldownUntil, now + v.cooldownMs); s.cooldownKind = 'rate'; return; }
       s.cooldownUntil = now + v.cooldownMs; s.cooldownKind = 'rate'; s.strikes++;
     }
     else if (v.kind === 'transient') { if (!already) { s.cooldownUntil = now + TRANSIENT_COOLDOWN_MS; s.cooldownKind = 'transient'; } }
