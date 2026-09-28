@@ -93,7 +93,7 @@ export function orchestraDeps(s: RuntimeServices, dirs: { runs: string; worktree
       }
       if (isCancelled?.()) return false;
       const r = runner();
-      if (!r || r.state === 'closed' || r.state === 'error') throw new Error('会话没能启动');
+      if (!r || r.state === 'closed' || r.state === 'error') throw new Error('对话没能启动');
       const outgoing = await expand(text);
       if (isCancelled?.()) return false;
       const uuid = randomUUID();

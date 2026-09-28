@@ -127,10 +127,10 @@ export function CommandPalette() {
   return (
     <div className="palette-bg" onMouseDown={(e) => e.target === e.currentTarget && close()}>
       <div className="cmdk" onKeyDown={onKey}>
-        <input ref={inp} value={q} onChange={(e) => setQ(e.target.value)} placeholder="输入命令，或搜索会话（全文）…  > 只搜命令 · agent:codex · in:目录" />
+        <input ref={inp} value={q} onChange={(e) => setQ(e.target.value)} placeholder="输入命令，或搜索对话（全文）…  > 只搜命令 · agent:codex · in:目录" />
         <div className="list">
           {items.map((it, i) => {
-            const group = it.kind === 'cmd' ? it.c.group : hits.length ? '会话（全文匹配）' : '会话';
+            const group = it.kind === 'cmd' ? it.c.group : hits.length ? '对话 · 全文匹配' : ql ? '匹配的对话' : '最近的对话';
             const head = group !== lastGroup ? <div className="grp" key={`g${i}`}>{group}</div> : null;
             lastGroup = group;
             return (

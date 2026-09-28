@@ -447,7 +447,7 @@ export const useStore = create<State>((set, get) => ({
           break;
         case 'session.state': {
           const prev = get().open[e.sessionId]?.state;
-          if (desktop && e.state === 'idle' && prev === 'running' && !document.hasFocus()) desktop.notify(get().sessions.find((x) => x.sessionId === e.sessionId)?.title ?? '会话', 'Claude 完成了这一轮', e.sessionId);
+          if (desktop && e.state === 'idle' && prev === 'running' && !document.hasFocus()) desktop.notify(get().sessions.find((x) => x.sessionId === e.sessionId)?.title ?? '对话', 'Claude 完成了这一轮', e.sessionId);
           set((s) => bump(s, e.sessionId, (o) => { o.state = e.state; if (e.error) o.error = e.error; if (e.state === 'idle' && o.queue.length) { const next = o.queue.shift()!; void get().send(e.sessionId, next.text, next.images, false, next.attachments); } }));
           set((s) => ({ sessions: s.sessions.map((x) => (x.sessionId === e.sessionId ? { ...x, live: e.state === 'closed' ? undefined : e.state } : x)) }));
           break;
@@ -458,7 +458,7 @@ export const useStore = create<State>((set, get) => ({
         case 'permission.request':
           set((s) => bump(s, e.request.sessionId, (o) => { if (!o.pending.some((p) => p.requestId === e.request.requestId)) o.pending.push(e.request); }));
           if (desktop) {
-            const title = get().sessions.find((x) => x.sessionId === e.request.sessionId)?.title ?? '会话';
+            const title = get().sessions.find((x) => x.sessionId === e.request.sessionId)?.title ?? '对话';
             const body = e.request.toolName === 'AskUserQuestion' ? 'Claude 有问题要问你' : e.request.toolName === 'ExitPlanMode' ? 'Claude 请求批准计划' : `需要权限：${e.request.toolName}`;
             desktop.notify(title, body, e.request.sessionId);
           }

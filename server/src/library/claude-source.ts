@@ -59,7 +59,7 @@ export class ClaudeSource implements SessionSource {
    */
   async backupTo(nativeId: string, destDir: string): Promise<void> {
     const files = await this.sessions.locateAll(nativeId);
-    if (!files.length) throw new Error(`找不到会话文件 ${nativeId}.jsonl，未删除`);
+    if (!files.length) throw new Error(`找不到对话文件 ${nativeId}.jsonl，未删除`);
     for (const file of files) {
       const to = path.join(destDir, path.basename(path.dirname(file)));
       await fs.mkdir(to, { recursive: true });

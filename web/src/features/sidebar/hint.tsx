@@ -8,7 +8,7 @@ import type { HintId } from './entries';
 /**
  * 「Codex / OpenCode conversations were found on this machine — add them?」 as one quiet line above the account row
  * (it used to be a card over the list). 加入 joins (one source directly; several → pick which), × is 以后再说.
- * Joining is opt-in; ignoring it changes nothing; settings → 会话库 manages the sources later.
+ * Joining is opt-in; ignoring it changes nothing; settings → 对话库 manages the sources later.
  */
 export function DiscoveryHint({ pending }: { pending: SourceStatus[] }) {
   const toast = useStore((s) => s.toast);
@@ -33,7 +33,7 @@ export function DiscoveryHint({ pending }: { pending: SourceStatus[] }) {
         <button className="link" data-id={id('library-join')} disabled={!!busy} aria-expanded={pending.length > 1 ? pick : undefined} onClick={() => (pending.length === 1 ? void join(pending[0].kind) : setPick(!pick))}>
           {busy && busy !== 'later' && pending.length === 1 ? <span className="spinner" /> : '加入'}{pending.length > 1 ? '…' : ''}
         </button>
-        <button className="icon-btn xs" data-id={id('library-later')} title="以后再说（设置 → 会话库 里随时可以加入）" aria-label="以后再说" disabled={!!busy} onClick={later}><Icon name="close" size={12} /></button>
+        <button className="icon-btn xs" data-id={id('library-later')} title="以后再说（设置 → 对话库 里随时可以加入）" aria-label="以后再说" disabled={!!busy} onClick={later}><Icon name="close" size={12} /></button>
       </div>
       {pick && pending.length > 1 && (
         <div className="picks">

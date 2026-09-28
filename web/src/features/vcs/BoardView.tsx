@@ -88,7 +88,7 @@ export function BoardView({ cwd, sid }: { cwd: string; sid: string | null }) {
       const res = await ws.request<{ branch: string; path: string }>({ kind: 'vcs.checkout', cwd, repo: r, number: d.number, worktree: wt });
       const id = await openSession({ cwd: res.path });
       await send(id, `这是 PR #${d.number}「${d.title}」的检出（分支 ${res.branch}）。先读一遍改动（git diff ${d.base}...HEAD），然后告诉我它做了什么、有没有问题。`);
-    }, '已检出并开了会话');
+    }, '已检出并开了一个对话');
   };
   const newItem = async () => {
     const title = await dlg.prompt(mode === 'issues' ? '新 Issue 标题' : '新 PR 标题', '');
@@ -150,7 +150,7 @@ export function BoardView({ cwd, sid }: { cwd: string; sid: string | null }) {
                 <div className="m">{detail.author} · 创建于 {new Date(detail.createdAt).toLocaleDateString()} · 更新 {ago(detail.updatedAt)}{detail.isPr && <> · <code>{detail.head}</code> → <code>{detail.base}</code></>}{detail.milestone && <> · 里程碑 {detail.milestone}</>}</div>
                 <div className="actions">
                   <button className="btn sm" disabled={busy} onClick={() => handOff(detail, detail.isPr ? 'review' : 'fix')}>{detail.isPr ? '让 Claude 审查' : '让 Claude 处理'}</button>
-                  {detail.isPr && detail.state === 'open' && <button className="btn sm ghost" disabled={busy} onClick={() => checkoutAndSession(detail)}>检出 → 新会话</button>}
+                  {detail.isPr && detail.state === 'open' && <button className="btn sm ghost" disabled={busy} onClick={() => checkoutAndSession(detail)}>检出 → 新对话</button>}
                   {detail.state === 'open' && repo?.user && !detail.assignees.includes(repo.user) && <button className="btn sm ghost" disabled={busy} onClick={() => act(() => ws.request({ kind: 'vcs.assign', cwd, repo: r, number: detail.number, isPr: detail.isPr, assignees: [...detail.assignees, repo.user] }), '已指派给你')}>指派给我</button>}
                   {detail.state === 'open' && detail.isPr && detail.mergeable !== false && <button className="btn sm ghost" disabled={busy || detail.checks === 'failure'} onClick={async () => { const m = await dlg.confirm(`合并 #${detail.number}？`, { message: 'squash 合并；取消则不合并。', okLabel: 'Squash 合并' }); if (m) await act(() => ws.request({ kind: 'vcs.merge', cwd, repo: r, number: detail.number, method: 'squash' }), '已合并'); }}>合并</button>}
                   {detail.state === 'open' ? <button className="btn sm ghost danger" disabled={busy} onClick={() => act(() => ws.request({ kind: 'vcs.setState', cwd, repo: r, number: detail.number, isPr: detail.isPr, state: 'closed' }), '已关闭')}>关闭</button> : detail.state === 'closed' && <button className="btn sm ghost" disabled={busy} onClick={() => act(() => ws.request({ kind: 'vcs.setState', cwd, repo: r, number: detail.number, isPr: detail.isPr, state: 'open' }), '已重开')}>重新打开</button>}

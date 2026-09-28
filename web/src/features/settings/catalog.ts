@@ -145,7 +145,7 @@ export const SETTINGS_SECTIONS: SectionMeta[] = [
   { id: 'remote', l: '手机与其它电脑', ic: 'device', group: 'connect', desc: '在手机上接着用，或者把其它电脑上的对话接到这里。', keywords: '远程 / 手机 remote phone 手机 远程', bodies: ['remote', 'peers'], more: ['hosts'] },
   { id: 'im', l: 'IM 机器人', ic: 'chat', group: 'connect', desc: '在 Telegram、飞书、钉钉等聊天软件里给 Claude 派活、批准操作。', keywords: 'IM 网关 im bot 机器人', bodies: ['im'] },
   // 数据
-  { id: 'library', l: '会话库', ic: 'archive', group: 'data', desc: '把 Codex、OpenCode 等其它 Agent 的历史对话并进侧栏和搜索。', keywords: 'library 会话库 历史', bodies: ['library'] },
+  { id: 'library', l: '对话库', ic: 'archive', group: 'data', desc: '把 Codex、OpenCode 等其它 Agent 的历史对话并进侧栏和搜索。', keywords: 'library 会话库 对话库 历史', bodies: ['library'] },
   { id: 'secrets', l: '密钥', ic: 'lock', group: 'data', desc: '供应商的 API Key 怎么存在本机。', keywords: 'secret 密钥 加密', bodies: ['secrets'] },
   // 高级
   { id: 'hooks', l: 'Hooks', ic: 'bolt', group: 'advanced', advanced: true, desc: 'Claude Code 在某些事件时运行的命令（只读列表，来自 settings.json 和插件）。', keywords: 'hook 钩子', bodies: ['hooks'] },

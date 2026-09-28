@@ -6,9 +6,9 @@ const panels = PANELS.map((p) => ({ label: `打开${p.title}面板`, group: '面
 const others = Array.from({ length: 12 }, (_, i) => ({ label: `隐藏右侧面板 ${i}`, group: '工作台' }));
 const chat = [{ label: '新对话', group: '对话' }, { label: '打开项目文件夹…', group: '对话' }, { label: '置顶当前对话', group: '当前对话' }, { label: '导出为 HTML', group: '当前对话' }];
 
-/** The group titles as the palette draws them: named, the conversations (one 会话 block), grouped. */
+/** The group titles as the palette draws them: named, the conversations (one 匹配的对话 block), grouped. */
 const titles = (h: { named: Filterable[]; grouped: Filterable[] }, sessions = 3) => {
-  const rows = [...h.named.map((c) => c.group), ...Array(sessions).fill('会话'), ...h.grouped.map((c) => c.group)];
+  const rows = [...h.named.map((c) => c.group), ...Array(sessions).fill('匹配的对话'), ...h.grouped.map((c) => c.group)];
   return rows.filter((g, i) => g !== rows[i - 1]);
 };
 
@@ -25,11 +25,11 @@ describe('palette command filter', () => {
     const cmds = [...others.slice(0, 3), ...panels, ...others.slice(3)];
     const h = commandHits(cmds, '面板');
     const t = titles(h);
-    expect(t).toEqual(['工作台', '会话', '面板']);
+    expect(t).toEqual(['工作台', '匹配的对话', '面板']);
     expect(new Set(t).size).toBe(t.length);
     // two groups named at once (「对话」 is in 对话 and 当前对话): each one block
     const t2 = titles(commandHits([chat[0], chat[2], chat[1], chat[3]], '对话'));
-    expect(t2).toEqual(['会话', '对话', '当前对话']);
+    expect(t2).toEqual(['匹配的对话', '对话', '当前对话']);
   });
 
   it('name hits from interleaved groups are gathered by group (a title shows once there too)', () => {

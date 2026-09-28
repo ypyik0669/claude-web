@@ -433,7 +433,7 @@ export class Hub {
         // pull the durable facts out of a finished session: dead ends, decisions, constraints
         const events = await s.canonical.load(req.sessionId);
         const cwd = s.pool.get(req.sessionId)?.cwd ?? (await s.canonical.head(req.sessionId))?.cwd ?? '';
-        if (!cwd) throw new Error('这个会话没有可用的目录');
+        if (!cwd) throw new Error('这个对话没有可用的目录');
         return harvest(s.memory, events, { cwd, sessionId: req.sessionId, agent: s.pool.get(req.sessionId)?.info.agent });
       }
       // legacy shapes, same routing as library.rename / library.delete — so every delete path backs up first

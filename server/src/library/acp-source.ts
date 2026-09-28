@@ -109,7 +109,7 @@ export class AcpListSource implements SessionSource {
     // Cached: a prior status()/list() already probed this agent's capabilities.
     const cached = this.getProbed();
     if (cached) {
-      if (!cached.hasList) return { ...base, installed: true, detected: true, enabled: false, version: cached.version, disabledReason: '该 agent 不支持会话列表' };
+      if (!cached.hasList) return { ...base, installed: true, detected: true, enabled: false, version: cached.version, disabledReason: '这个 Agent 不支持列出对话' };
       return { ...base, installed: true, detected: true, enabled: true, version: cached.version };
     }
     try {
@@ -118,7 +118,7 @@ export class AcpListSource implements SessionSource {
       if (!probed?.hasList) {
         // Not supported: don't leave the process running just to have checked this once.
         this.killRpc();
-        return { ...base, installed: true, detected: true, enabled: false, version: probed?.version, disabledReason: '该 agent 不支持会话列表' };
+        return { ...base, installed: true, detected: true, enabled: false, version: probed?.version, disabledReason: '这个 Agent 不支持列出对话' };
       }
       this.armIdle();
       return { ...base, installed: true, detected: true, enabled: true, version: probed.version };

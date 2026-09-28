@@ -7,7 +7,7 @@ export function formatErrorReport(r: ErrorReport, extra: { version?: string; url
   return [
     `区域：${r.area}`,
     `错误：${r.message}`,
-    extra.version ? `引擎：${extra.version}` : '',
+    extra.version ? `运行内核：${extra.version}` : '',
     extra.url ? `页面：${extra.url}` : '',
     extra.userAgent ? `UA：${extra.userAgent}` : '',
     r.stack ? `\n堆栈：\n${r.stack}` : '',

@@ -226,7 +226,7 @@ export class LibraryService extends EventEmitter {
         this.late.add(p);
         const cached = this.perKind.get(kind);
         if (cached) {
-          this.errors.set(kind, `列出会话超时（${Math.round(ms / 1000)} 秒），后台仍在读取`);
+          this.errors.set(kind, `列出对话超时（${Math.round(ms / 1000)} 秒），后台仍在读取`);
           this.timeoutErr.add(kind);
         } else {
           this.loading.add(kind);
@@ -343,7 +343,7 @@ export class LibraryService extends EventEmitter {
   async read(id: string, cursor?: string, limit = 20): Promise<{ messages: any[]; next?: string }> {
     const r = await this.resolve(id);
     if (r.head && !r.head.imported) return { messages: await this.transcripts.load(id) };
-    if (!r.source || !r.nativeId) throw new Error('该会话的来源未加入会话库');
+    if (!r.source || !r.nativeId) throw new Error('这个对话的来源没有加入对话库');
     return r.source.read(r.nativeId, { cursor, limit });
   }
 
@@ -389,7 +389,7 @@ export class LibraryService extends EventEmitter {
       const src = this.source(kind);
       let st: SourceStatus;
       try {
-        st = src ? await src.status() : { kind, name: defName, installed, detected: installed, joined: true, dismissed: false, enabled: false, disabledReason: '没有可用的会话来源' };
+        st = src ? await src.status() : { kind, name: defName, installed, detected: installed, joined: true, dismissed: false, enabled: false, disabledReason: '没有可用的对话来源' };
       } catch (e: any) {
         st = { kind, name: defName, installed, detected: installed, joined: true, dismissed: false, enabled: false, error: e?.message ?? String(e) };
       }
@@ -424,12 +424,12 @@ export class LibraryService extends EventEmitter {
 
   async join(kind: AgentKind, joined: boolean): Promise<void> {
     if (kind === 'claude') {
-      if (!joined) throw new Error('Claude Code 会话始终在会话库里，不能移出');
+      if (!joined) throw new Error('Claude Code 的对话始终在对话库里，不能移出');
       return;
     }
     const cur = this.setting('library.joined').filter((k) => k !== kind);
     if (joined) {
-      if (!this.source(kind)) throw new Error(`没有 ${kind} 的会话来源`);
+      if (!this.source(kind)) throw new Error(`没有 ${kind} 的对话来源`);
       await this.meta.setSetting('library.joined', [...cur, kind]);
       await this.meta.setSetting('library.dismissed', this.setting('library.dismissed').filter((k) => k !== kind));
       this.invalidate(kind);
@@ -573,7 +573,7 @@ export class LibraryService extends EventEmitter {
     let s = this.byId.get(id);
     if (!s) { await this.list(); s = this.byId.get(id); }
     const cwd = s?.cwd || head?.cwd;
-    if (!cwd) throw new Error('会话库里找不到这个会话');
+    if (!cwd) throw new Error('对话库里找不到这个对话');
     return { agent: head?.agent ?? route.kind, cwd, title: s?.title ?? head?.title };
   }
 
@@ -590,8 +590,8 @@ export class LibraryService extends EventEmitter {
       let s = this.byId.get(id);
       if (!s) { await this.list(); s = this.byId.get(id); }
       const route = parseLibraryId(id);
-      if (!s || route.kind === 'claude') throw new Error('会话库里找不到这个会话');
-      if (!this.isJoined(route.kind)) throw new Error('该会话的来源未加入会话库');
+      if (!s || route.kind === 'claude') throw new Error('对话库里找不到这个对话');
+      if (!this.isJoined(route.kind)) throw new Error('这个对话的来源没有加入对话库');
       await this.transcripts.create({ sessionId: id, agent: route.kind, cwd: s.cwd, title: s.title, createdAt: s.createdAt ?? s.lastModified ?? Date.now(), nativeSessionId: route.nativeId, imported: true });
       return { agent: route.kind, cwd: s.cwd };
     })();

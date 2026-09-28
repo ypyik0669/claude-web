@@ -16,7 +16,7 @@ describe('error boundary reports', () => {
 
   it('formats the text 复制错误信息 copies', () => {
     const text = formatErrorReport({ area: '停靠面板 · 终端', message: 'boom', stack: 'Error: boom\n  at X', componentStack: '\n  at TerminalPanel' }, { version: 'ccb 2.8.4', url: '/' });
-    expect(text.split('\n').slice(0, 4)).toEqual(['区域：停靠面板 · 终端', '错误：boom', '引擎：ccb 2.8.4', '页面：/']);
+    expect(text.split('\n').slice(0, 4)).toEqual(['区域：停靠面板 · 终端', '错误：boom', '运行内核：ccb 2.8.4', '页面：/']);
     expect(text).toContain('堆栈：\nError: boom');
     expect(text).toContain('组件栈：\n  at TerminalPanel');
   });

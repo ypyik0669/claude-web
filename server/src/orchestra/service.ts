@@ -318,7 +318,7 @@ export class OrchestraService extends EventEmitter {
       if (node.kind !== 'compare' || nr.state !== 'waiting') throw new Error('这个节点不在等待选择');
       const cand = nr.candidates?.find((c) => c.agent === winner);
       if (!cand || cand.state !== 'done' || !cand.worktree) throw new Error('只能选一个成功完成的候选');
-      if (cand.sessionId && isBusy(this.d.sessionState(cand.sessionId))) throw new Error('胜者会话还在运行，先停止或等它结束再选');
+      if (cand.sessionId && isBusy(this.d.sessionState(cand.sessionId))) throw new Error('胜者的对话还在运行，先停止或等它结束再选');
       const wt = cand.worktree;
       const root = (await this.d.git.root(run.cwd)) ?? run.cwd;
       nr.state = 'running';
@@ -630,7 +630,7 @@ export class OrchestraService extends EventEmitter {
       this.watchSession(s.sessionId, finish, true, () => {
         // a provider / agent hot swap restarts the process: a turn that was in flight is gone
         if (!current()) return;
-        nr.note = '会话被热切换（供应商 / agent），这一轮可能中断了：需要在会话里继续，回复结束后节点才会完成';
+        nr.note = '对话被热切换（供应商 / Agent），这一轮可能中断了：需要在对话里继续，回复结束后节点才会完成';
         this.save(run);
       });
       const sent = await this.d.send(s.sessionId, prompt, () => !current());
@@ -806,12 +806,12 @@ export class OrchestraService extends EventEmitter {
           if (t.trim()) lastText = t;
         } else if (m?.type === 'result' && resultEnds) {
           const out = typeof m.result === 'string' && m.result.trim() ? m.result : lastText;
-          end(m.is_error ? { ok: false, output: out, error: out?.slice(0, 300) || m.subtype || '会话报错', costUsd: m.total_cost_usd } : { ok: true, output: out, costUsd: m.total_cost_usd });
+          end(m.is_error ? { ok: false, output: out, error: out?.slice(0, 300) || m.subtype || '对话报错', costUsd: m.total_cost_usd } : { ok: true, output: out, costUsd: m.total_cost_usd });
         }
       },
       state: (st, err) => {
-        if (st === 'error') end({ ok: false, output: lastText, error: (err ?? '会话出错').split('\n')[0] });
-        else if (st === 'closed') end({ ok: false, output: lastText, error: '会话已关闭' });
+        if (st === 'error') end({ ok: false, output: lastText, error: (err ?? '对话出错').split('\n')[0] });
+        else if (st === 'closed') end({ ok: false, output: lastText, error: '对话已关闭' });
       },
       swapped: () => { if (!settled) onSwapped?.(); },
     });

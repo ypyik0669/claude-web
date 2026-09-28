@@ -45,7 +45,7 @@ export function LedgerView({ sessionId }: { sessionId?: string }) {
       <div className="ledger-bar">
         <select className="field" value={days} onChange={(e) => setDays(Number(e.target.value))}>{[1, 2, 7, 30, 90].map((d) => <option key={d} value={d}>{d} 天</option>)}</select>
         <span className="seg mini">{(['calls', 'cost', 'latency', 'tokens'] as const).map((m) => <button key={m} className={metric === m ? 'active' : ''} onClick={() => setMetric(m)}>{{ calls: '调用', cost: '费用', latency: '延迟', tokens: 'token' }[m]}</button>)}</span>
-        <span className="seg mini" title="来源">{(['all', 'session', 'gateway'] as const).map((k) => <button key={k} className={source === k ? 'active' : ''} title={k === 'all' ? '经网关 / 缓存垫片的会话同时有会话行（每轮）和网关行（每次调用）；这里只算会话行，其它客户端的网关行照算' : k === 'gateway' ? '每次经模型网关 / 缓存垫片的调用一行' : undefined} onClick={() => setSource(k)}>{{ all: '全部', session: '会话', gateway: '网关' }[k]}</button>)}</span>
+        <span className="seg mini" title="来源">{(['all', 'session', 'gateway'] as const).map((k) => <button key={k} className={source === k ? 'active' : ''} title={k === 'all' ? '经网关 / 缓存垫片的对话同时有对话行（每轮）和网关行（每次调用）；这里只算对话行，其它客户端的网关行照算' : k === 'gateway' ? '每次经模型网关 / 缓存垫片的调用一行' : undefined} onClick={() => setSource(k)}>{{ all: '全部', session: '对话', gateway: '网关' }[k]}</button>)}</span>
         <label className="muted" style={{ fontSize: 12, display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={onlyErr} onChange={(e) => setOnlyErr(e.target.checked)} /> 只看失败</label>
         <span className="grow" />
         <button className="btn sm ghost" onClick={load}>刷新</button>
@@ -57,7 +57,7 @@ export function LedgerView({ sessionId }: { sessionId?: string }) {
         <span title={totals.costUnknown ? `${totals.costUnknown} 次调用没有可靠价格（非 Claude 模型 / 外部 agent / 网关行），不计入` : undefined}><b>{totals.costUnknown && !totals.cost ? '费用未知' : `$${totals.cost.toFixed(3)}`}</b>{totals.costUnknown && totals.cost ? <span className="muted">（{totals.costUnknown} 次未知）</span> : null}</span>
         <span>平均 <b>{fmtMs(totals.calls ? totals.lat / totals.calls : 0)}</b></span>
         <span>缓存命中 <b>{totals.input ? Math.round((totals.cacheRead / totals.input) * 100) : 0}%</b></span>
-        {dropped > 0 && <span className="muted" title="这些会话自己的行已经在列表里，同一份流量不算两遍；切到「网关」看逐次调用">已合并 {dropped} 条网关 / 垫片行</span>}
+        {dropped > 0 && <span className="muted" title="这些对话自己的行已经在列表里，同一份流量不算两遍；切到「网关」看逐次调用">已合并 {dropped} 条网关 / 垫片行</span>}
       </div>
       {byProvider.length > 0 && (
         <details style={{ fontSize: 12, margin: '2px 0 6px' }}>

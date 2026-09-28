@@ -148,7 +148,7 @@ async function swapAgentNow(d: SwapDeps, sessionId: string, agent: AgentKind, mo
   // the foreign-agent transcript has to exist (and name the new agent) before the driver appends
   if (agent !== 'claude') {
     if (await d.transcripts.exists(sessionId)) await d.transcripts.patchHead(sessionId, { agent, model });
-    else await d.transcripts.create({ agent, cwd, title: objective ?? '交接的会话', createdAt: Date.now(), sessionId, model });
+    else await d.transcripts.create({ agent, cwd, title: objective ?? '交接的对话', createdAt: Date.now(), sessionId, model });
   }
 
   const r = d.pool.open(params);
@@ -164,7 +164,7 @@ async function swapAgentNow(d: SwapDeps, sessionId: string, agent: AgentKind, mo
  * in the library summary's cwd, never this process's.
  */
 async function handOverImported(d: SwapDeps, fromId: string, src: { agent: AgentKind; cwd: string; title?: string }, agent: AgentKind, model: string | undefined, objective?: string): Promise<SwapResult> {
-  if (!d.readAll) throw new Error('会话库不可用，无法交接导入的会话');
+  if (!d.readAll) throw new Error('对话库不可用，无法交接导入的对话');
   const native = await d.readAll(fromId); // no history → no hand-over (don't start an empty session)
   const sessionId = randomUUID();
   const cwd = src.cwd;
@@ -172,10 +172,10 @@ async function handOverImported(d: SwapDeps, fromId: string, src: { agent: Agent
   if (native.length) await seedCanonical(d.canonical, sessionId, native);
   const events = await d.canonical.load(sessionId);
   const briefing = renderBriefing(events, { fromAgent: src.agent, toAgent: agent, cwd, objective }).text;
-  d.canonical.mark(sessionId, { agent, model, note: `已从 ${src.agent} 的会话 ${fromId} 交接给 ${agent}` });
+  d.canonical.mark(sessionId, { agent, model, note: `已从 ${src.agent} 的对话 ${fromId} 交接给 ${agent}` });
 
   if (agent !== 'claude') {
-    const title = objective ?? (src.title ? `${src.title}（交接）` : '交接的会话');
+    const title = objective ?? (src.title ? `${src.title}（交接）` : '交接的对话');
     await d.transcripts.create({ agent, cwd, title, createdAt: Date.now(), sessionId, model });
   }
   const params = {

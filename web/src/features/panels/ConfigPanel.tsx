@@ -437,9 +437,9 @@ function CacheOptions({ editing, set }: { editing: Draft; set: (d: Draft) => voi
   return (
     <>
       {oai && (
-        <label style={row} title="Claude 会话经本机缓存垫片访问这个端点：补 prompt_cache_key 与会话亲和头（中转按它把同一会话路由到同一渠道），把只报在顶层的命中数（DeepSeek / Kimi）补到 ccb 读的字段里，每次调用记账本">
+        <label style={row} title="Claude 对话经本机缓存垫片访问这个端点：补 prompt_cache_key 与会话亲和头（session affinity：中转按它把同一对话路由到同一渠道），把只报在顶层的命中数（DeepSeek / Kimi）补到 ccb 读的字段里，每次调用记账本">
           <input type="checkbox" checked={shimOn} onChange={(e) => set({ ...editing, cacheShim: e.target.checked ? (null as any) : false })} />
-          缓存优化（经本机垫片补缓存键 / 会话亲和、修正命中统计；关掉 = 直连）
+          缓存优化（经本机垫片补上缓存键、让同一对话走同一渠道，修正命中统计；关掉 = 直连）
         </label>
       )}
       {editing.type === 'openai' && shimOn && (
@@ -455,7 +455,7 @@ function CacheOptions({ editing, set }: { editing: Draft; set: (d: Draft) => voi
         </label>
       )}
       {editing.type === 'anthropic' && (
-        <label style={row} title="官方二进制：ENABLE_PROMPT_CACHING_1H=1；模型网关转成 Anthropic 请求给这个成员时：ttl 1h。写入按 2× 基础价（5 分钟是 1.25×），适合经常停下来超过 5 分钟的会话">
+        <label style={row} title="官方二进制：ENABLE_PROMPT_CACHING_1H=1；模型网关转成 Anthropic 请求给这个成员时：ttl 1h。写入按 2× 基础价（5 分钟是 1.25×），适合经常停下来超过 5 分钟的对话">
           <input type="checkbox" checked={!!editing.cache1h} onChange={(e) => set({ ...editing, cache1h: e.target.checked ? true : (null as any) })} />
           1 小时提示缓存（官方二进制 / 经模型网关；写入 2× 基础价）
         </label>

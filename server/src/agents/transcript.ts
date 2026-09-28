@@ -82,7 +82,7 @@ export class AgentTranscripts {
       const sessionId = name.slice(0, -6);
       const [head, st] = await Promise.all([this.head(sessionId), fs.stat(path.join(this.dir, name))]);
       if (!head) continue;
-      out.push({ head, summary: { sessionId, title: head.title || `${head.agent} 会话`, cwd: head.cwd, lastModified: st.mtimeMs, createdAt: head.createdAt, agent: head.agent, firstPrompt: head.title } });
+      out.push({ head, summary: { sessionId, title: head.title || `${head.agent} 对话`, cwd: head.cwd, lastModified: st.mtimeMs, createdAt: head.createdAt, agent: head.agent, firstPrompt: head.title } });
     }
     return out;
   }

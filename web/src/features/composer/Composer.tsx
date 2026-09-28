@@ -296,7 +296,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
       const g = activeGroup(useStore.getState().layout);
       const p = g.panes[pane.paneId];
       if (g.focusedPaneId !== pane.paneId || !p || (p.activeTileId ?? p.tiles[0]?.id) !== pane.tileId) return;
-      if (!welcome && active?.sessionId === d.id) { d.reason = '不能引用会话自己'; return; }
+      if (!welcome && active?.sessionId === d.id) { d.reason = '不能引用这个对话自己'; return; }
       d.handled = true;
       addRef({ id: d.id, title: d.title });
     };

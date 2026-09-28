@@ -66,7 +66,7 @@ export class ScheduleService {
       const runner = this.pool.open({ sessionId: s.freshSession ? undefined : s.sessionId, cwd: s.cwd, model: s.model, permissionMode: (s.permissionMode as PermissionMode) ?? 'acceptEdits' });
       for (let i = 0; i < 60 && runner.state === 'starting'; i++) await new Promise((r) => setTimeout(r, 500));
       if (runner.state === 'running' || runner.state === 'waiting') {
-        await this.meta.touchSchedule(s.id, { nextRunAt: Date.now() + 60_000, lastError: '会话正忙，1 分钟后重试' });
+        await this.meta.touchSchedule(s.id, { nextRunAt: Date.now() + 60_000, lastError: '对话正忙，1 分钟后重试' });
         return; // busy — try again in a minute
       }
       runner.send(s.prompt);

@@ -106,7 +106,7 @@ const attrName = (n: N): string => (n.name?.type === 'JSXNamespacedName' ? `${n.
  * template text and JSX text — also JSX text after an expression (`{n} effort`) and text with `//` in it (a URL).
  * Not scanned: comments, import / re-export paths, string literal *types*, and the HIDDEN_ATTR attributes.
  */
-function textsOf(file: string, src: string): string[] {
+function textsOf(file: string, src: string, opts: { tooltips?: boolean; skipKeys?: Set<string> } = {}): string[] {
   const out: string[] = [];
   const walk = (x: unknown): void => {
     if (!x || typeof x !== 'object') return;
@@ -120,8 +120,15 @@ function textsOf(file: string, src: string): string[] {
       case 'ExportNamedDeclaration':
         if (n.source) return;
         break;
-      case 'JSXAttribute':
-        if (HIDDEN_ATTR.test(attrName(n))) return;
+      case 'JSXAttribute': {
+        const a = attrName(n);
+        // tooltips and accessible names are read too, when asked (`tooltips`); class names, keys, data-* never are
+        if (HIDDEN_ATTR.test(a) && !(opts.tooltips && (a === 'title' || a === 'aria-label'))) return;
+        break;
+      }
+      case 'Property':
+        // an object key that is never shown (search keywords, a table of where the old UI's entries went)
+        if (opts.skipKeys && (n.key?.name ?? n.key?.value) && opts.skipKeys.has(n.key.name ?? n.key.value)) return;
         break;
       case 'JSXText':
         if (String(n.value).trim()) out.push(n.value);
@@ -316,5 +323,70 @@ describe('default screens outside settings speak the interface vocabulary (phase
   it('the model menu searches 「模型或供应商」, and a picked provider with no default model says 供应商', () => {
     expect(textsOf('features/models/ModelMenu.tsx', read('features/models/ModelMenu.tsx'))).toContain('搜索模型或供应商…');
     expect(read('features/models/route.ts')).toMatch(/供应商「\$\{/);
+  });
+});
+
+/**
+ * Polish P6: the whole web app, not a list of files — every text a file can put on screen. Two rules:
+ *  - 对话, never 会话, anywhere a user reads it: text, placeholders, and here also tooltips and accessible names
+ *    (`会话亲和` is the networking term session affinity, in two tooltips of the cache options);
+ *  - no implementation word (档案 / 引擎 / 窗格 / 停靠 / effort / ultracode / ACP / source paths) on the default
+ *    screens: tooltips are fine, and so are the advanced settings pages (诊断 / 更新 / CLI 工具 / 环境变量 /
+ *    settings.json / Hooks) and the files that only hold ids.
+ * Never shown, so not scanned: search `keywords` (they keep the old words so a search still finds them), the
+ * tables of where the old sidebar / composer entries went (`old` / `was`), comments, imports, protocol kinds.
+ */
+describe('the whole interface: 对话 not 会话, no implementation words by default (polish P6)', () => {
+  const walkDir = (dir: string, out: string[] = []): string[] => {
+    for (const e of fs.readdirSync(path.join(SRC, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) { if (!e.name.startsWith('__')) walkDir(rel, out); } else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name)) out.push(rel);
+    }
+    return out;
+  };
+  const ALL = fs.readdirSync(SRC, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walkDir(e.name) : /\.tsx?$/.test(e.name) && !/\.test\./.test(e.name) ? [e.name] : []));
+  const SKIP_KEYS = new Set(['keywords', 'old', 'was']);
+  /** The advanced settings pages' own files, and the ids-only table. */
+  const NOT_DEFAULT = [S('DiagnosticsSection.tsx'), S('UpdateSection.tsx'), S('ToolsSection.tsx'), S('EnvEditor.tsx'), 'features/composer/ids.ts'];
+  /** Deliberate exceptions: [file, a piece of the literal, why]. */
+  const ALLOWED: [string, string, string][] = [
+    [S('AgentsSection.tsx'), 'ACP', 'PROTO_LABEL: only rendered inside the agent name\'s title tooltip'],
+    ['ui/terms.ts', '（effort', 'effortTitle(): the raw value, in the effort control\'s tooltip'],
+    ['ui/terms.ts', '（ultracode）', 'ULTRACODE.title: the 深度编排 switch\'s tooltip'],
+  ];
+
+  it('reads every source file of the app', () => {
+    expect(ALL.length).toBeGreaterThan(150);
+    expect(ALL).toContain('features/chat/ChatView.tsx');
+  });
+
+  it('says 对话 everywhere a user reads it (text, placeholders, tooltips, accessible names)', () => {
+    const bad: string[] = [];
+    for (const f of ALL) {
+      for (const t of textsOf(f, read(f), { tooltips: true, skipKeys: SKIP_KEYS })) {
+        if (/会话/.test(t.replace(/会话亲和/g, ''))) bad.push(`${f} — ${t.trim().slice(0, 80)}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('uses no implementation word on the default screens (tooltips and the advanced pages aside)', () => {
+    const bad: string[] = [];
+    for (const f of ALL) {
+      if (NOT_DEFAULT.includes(f)) continue;
+      for (const t of textsOf(f, read(f), { skipKeys: SKIP_KEYS })) {
+        if (PROTOCOL_KIND.test(t) || ALLOWED.some(([af, piece]) => af === f && t.includes(piece))) continue;
+        for (const w of badWords(t)) bad.push(`${f} — ${w}: ${t.trim().slice(0, 80)}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('the scanner reads tooltips only when asked, and skips keywords / old-entry tables', () => {
+    const f = 'x.tsx';
+    const src = `const a = <div title="会话" aria-label="会话" className="会话">ok</div>; const k = { keywords: '会话', old: '会话', label: '对话' };`;
+    expect(textsOf(f, src, { skipKeys: SKIP_KEYS }).filter((t) => t.includes('会话'))).toEqual([]);
+    expect(textsOf(f, src, { tooltips: true, skipKeys: SKIP_KEYS }).filter((t) => t.includes('会话'))).toEqual(['会话', '会话']);
+    expect(textsOf(f, src, { tooltips: true })).toContain('对话');
   });
 });

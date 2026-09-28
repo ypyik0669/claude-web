@@ -122,7 +122,7 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
       const viaGateway = !!this.launch.env?.[CODEX_KEY_ENV];
       if (listed.length && this.model && !listed.some((m) => m.value === this.model) && !this.launch.model && !viaGateway) {
         const pick = rawModels.find((m: any) => m.isDefault && !m.hidden)?.model ?? listed[0].value;
-        this.push(this.synth.systemNote(`Codex 配置里的模型 ${this.model} 不在可用列表，本会话改用 ${pick}（可在模型菜单切换）。`, 'warning'));
+        this.push(this.synth.systemNote(`Codex 配置里的模型 ${this.model} 不在可用列表，这个对话改用 ${pick}（可在模型菜单切换）。`, 'warning'));
         this.model = pick; this.synth.setModel(pick); this.info.model = pick;
         await this.transcripts.patchHead(this.sessionId, { model: pick });
       }

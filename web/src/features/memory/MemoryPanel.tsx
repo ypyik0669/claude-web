@@ -17,7 +17,7 @@ const KINDS: { id: MemoryKind; l: string; ic: IconName }[] = [
 const SCOPES: { id: MemoryScope; l: string; hint: string }[] = [
   { id: 'project', l: '本项目', hint: '按工作目录归属，绝大多数记忆放这里' },
   { id: 'global', l: '全局', hint: '到哪个项目都成立的事' },
-  { id: 'session', l: '本会话', hint: '临时的，换会话就不再出现' },
+  { id: 'session', l: '本对话', hint: '临时的，换一个对话就不再出现' },
 ];
 const kindOf = (k: MemoryKind) => KINDS.find((x) => x.id === k) ?? KINDS[5];
 
@@ -74,11 +74,11 @@ export function MemoryPanel() {
     } catch (e: any) { toast(e.message); } finally { setBusy(false); }
   };
   const harvest = async () => {
-    if (!active) return toast('先打开一个会话');
+    if (!active) return toast('先打开一个对话');
     setBusy(true);
     try {
       const r = await ws.request<{ written: number; skipped: number }>({ kind: 'memory.harvest', sessionId: active.sessionId });
-      toast(r.written ? `从这个会话提取了 ${r.written} 条` : '这个会话里没有值得记住的东西', !!r.written);
+      toast(r.written ? `从这个对话提取了 ${r.written} 条` : '这个对话里没有值得记住的东西', !!r.written);
     } catch (e: any) { toast(e.message); } finally { setBusy(false); }
   };
 
@@ -101,7 +101,7 @@ export function MemoryPanel() {
           {KINDS.map((k) => <option key={k.id} value={k.id}>{k.l}</option>)}
         </select>
         <span className="grow" />
-        {!(active && parsePeerId(active.sessionId)) && <button className="btn sm ghost" disabled={busy || !active} title="扫描当前会话，提取决定 / 约束 / 走过的死路" onClick={harvest}><Icon name="bolt" size={12} /> 从会话提取</button>}
+        {!(active && parsePeerId(active.sessionId)) && <button className="btn sm ghost" disabled={busy || !active} title="扫描当前对话，提取决定 / 约束 / 走过的死路" onClick={harvest}><Icon name="bolt" size={12} /> 从对话提取</button>}
       </div>
 
       <div className="memory-new">
@@ -126,7 +126,7 @@ export function MemoryPanel() {
         {!rows.length && !err && (
           <div className="empty" style={{ padding: 20 }}>
             <div style={{ marginBottom: 6 }}>还没有记忆</div>
-            <div className="sub">所有 agent（Claude / Codex / Gemini / Qwen）都通过同一个 MCP 服务读写这里，一个 agent 记下的事另一个能直接读到。上面手写一条，或从一个会话里提取。</div>
+            <div className="sub">所有 agent（Claude / Codex / Gemini / Qwen）都通过同一个 MCP 服务读写这里，一个 agent 记下的事另一个能直接读到。上面手写一条，或从一个对话里提取。</div>
           </div>
         )}
       </div>

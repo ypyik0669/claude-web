@@ -9,7 +9,7 @@ const tail = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
  */
 export function tileArea(tile: Tile): string {
   switch (tile.kind) {
-    case 'chat': return `会话 · ${tile.sessionId ? tile.sessionId.slice(0, 8) : '新会话'}`;
+    case 'chat': return `对话 · ${tile.sessionId ? tile.sessionId.slice(0, 8) : '新对话'}`;
     case 'doc': return `文档 · ${tail(tile.path)}`;
     case 'diff': return `差异 · ${tail(tile.path)}`;
     case 'term': return '终端';

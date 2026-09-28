@@ -70,7 +70,7 @@ export function UsagePanel() {
   return (
     <div>
       <div className="subtabs">
-        <button className={tab === 'session' ? 'active' : ''} onClick={() => setTab('session')}>本会话</button>
+        <button className={tab === 'session' ? 'active' : ''} onClick={() => setTab('session')}>本对话</button>
         <button className={tab === 'global' ? 'active' : ''} onClick={() => setTab('global')}>全局</button>
         <button className={tab === 'ledger' ? 'active' : ''} onClick={() => setTab('ledger')}>账本</button>
         {tab === 'global' && (
@@ -89,7 +89,7 @@ export function UsagePanel() {
             {sess.byProvider && <><h5>按供应商 × 模型</h5>{sorted(sess.byProvider).map(([k, b]) => <Row key={k} k={k} b={b} max={maxOf(sess.byProvider!)} />)}</>}
           </div>
         </>
-      ) : <div className="empty">{active ? '加载中…' : '没有活动会话'}</div>)}
+      ) : <div className="empty">{active ? '加载中…' : '没有打开的对话'}</div>)}
       {tab === 'ledger' && <LedgerView />}
       {tab === 'global' && (glob ? (
         <>

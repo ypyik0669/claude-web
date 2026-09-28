@@ -49,7 +49,7 @@ function turnIdOf(el: Element, sessionId: string, itemId: string): string | unde
 export function shareConversation(sessionId: string) {
   const st = useStore.getState();
   const root = chatRoot(sessionId);
-  if (!root) { st.toast('切到这个会话的对话视图后再导出'); return; }
+  if (!root) { st.toast('先切回这个对话（不是步骤视图）再导出'); return; }
   const s = st.sessions.find((x) => x.sessionId === sessionId);
   const title = s?.title ?? '对话';
   downloadHtml(title, buildHtml({ title, root, meta: `${s?.cwd ?? ''}${s?.gitBranch ? ` · ${s.gitBranch}` : ''}` }));
@@ -113,7 +113,7 @@ export function UserEditor({ it, sessionId, onDone }: { it: UserItem; sessionId:
     <div className="user-editor">
       <textarea autoFocus value={text} onChange={(e) => setText(e.target.value)} rows={Math.min(12, text.split('\n').length + 1)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit(); } if (e.key === 'Escape') onDone(); }} />
       <div className="actions">
-        <span className="tool-meta">会从这条消息之前分叉出新会话，原会话保持不变</span>
+        <span className="tool-meta">会从这条消息之前分叉出一个新对话，原对话保持不变</span>
         <span className="grow" />
         <button className="btn sm ghost" onClick={onDone}>取消</button>
         <button className="btn sm primary" disabled={busy || !text.trim()} onClick={submit}>{busy ? '发送中…' : '发送到新分支'}</button>

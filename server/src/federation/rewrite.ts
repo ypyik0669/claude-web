@@ -51,8 +51,8 @@ export function planRoute(req: ClientRequest): RoutePlan {
   if (!peers.size) return { kind: 'none' };
   if (SPLIT.has(req.kind)) return { kind: 'split' };
   if (LOCAL.has(req.kind)) return { kind: 'local' };
-  if (req.kind === 'session.switchAgent') return { kind: 'reject', reason: '远端会话请用「交给本机 agent 继续」' };
-  if (!FORWARD.has(req.kind)) return { kind: 'reject', reason: `其它机器上的会话不支持「${req.kind}」` };
+  if (req.kind === 'session.switchAgent') return { kind: 'reject', reason: '其它机器上的对话请用「交给本机的 Agent 继续」' };
+  if (!FORWARD.has(req.kind)) return { kind: 'reject', reason: `其它机器上的对话不支持「${req.kind}」` };
   // a forwarded request goes to exactly one machine, and only concerns that machine's sessions
   if (peers.size > 1 || ids.some((id) => !isPeerId(id))) return { kind: 'reject', reason: '一个请求不能同时涉及多台机器' };
   return { kind: 'forward', peerId: [...peers][0] };

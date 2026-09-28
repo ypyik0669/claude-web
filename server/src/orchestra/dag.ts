@@ -125,7 +125,7 @@ export function renderPrompt(tpl: string, ctx: PromptContext): string {
     const out = defuseRefs(n.output ?? '');
     if (out.length <= OUTPUT_LIMIT) return out;
     const sid = n.sessionIds?.[n.sessionIds.length - 1];
-    return `${out.slice(0, OUTPUT_LIMIT)}\n…（上游输出过长，已截断${sid ? '，完整内容见下面引用的会话' : ''}）${sid ? `\n<session-ref id="${sid}" title="上游节点 ${id}" />` : ''}`;
+    return `${out.slice(0, OUTPUT_LIMIT)}\n…（上游输出过长，已截断${sid ? '，完整内容见下面引用的对话' : ''}）${sid ? `\n<session-ref id="${sid}" title="上游节点 ${id}" />` : ''}`;
   });
 }
 

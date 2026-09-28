@@ -575,7 +575,7 @@ export class GatewayService extends EventEmitter {
       const text = await r.text();
       const member = r.headers.get('x-cw-gateway-member');
       const out: GatewayTestResult = { ok: r.ok, status: r.status, ms: Date.now() - t0, member: member ? decodeURIComponent(member) : undefined, switches: Number(r.headers.get('x-cw-gateway-switches') ?? 0) };
-      if (g.members.some((m) => this.deps.meta.provider(m.providerId)?.type === 'anthropic')) out.note = '测试请求不带 Claude Code 指纹（系统提示 / UA），只认官方客户端的中转可能拒绝这条测试，但真实的 Claude 会话经网关透传能通过。';
+      if (g.members.some((m) => this.deps.meta.provider(m.providerId)?.type === 'anthropic')) out.note = '测试请求不带 Claude Code 指纹（系统提示 / UA），只认官方客户端的中转可能拒绝这条测试，但真实的 Claude 对话经网关透传能通过。';
       let j: any = null;
       try { j = JSON.parse(text); } catch { /* not json */ }
       if (r.ok) out.text = (j?.content?.[0]?.text ?? j?.choices?.[0]?.message?.content ?? j?.output?.[0]?.content?.[0]?.text ?? j?.candidates?.[0]?.content?.parts?.[0]?.text ?? text).toString().slice(0, 200);

@@ -443,7 +443,7 @@ export class FederationService extends EventEmitter {
 
   async handover(req: Extract<PeerRequest, { kind: 'peers.handover' }>) {
     const p = parsePeerId(req.sessionId);
-    if (!p) throw new Error('不是其它机器上的会话');
+    if (!p) throw new Error('不是其它机器上的对话');
     if (!this.d.handover) throw new Error('交接不可用');
     if (!req.cwd?.trim()) throw new Error('需要本机的工作目录');
     let summary = this.lists.get(p.peerId)?.items.find((s) => s.sessionId === req.sessionId);
@@ -451,7 +451,7 @@ export class FederationService extends EventEmitter {
       // not in the cache (fork, list not fetched yet): ask the peer — the briefing must name the right source agent
       const fresh = importList(await this.forward(p.peerId, { kind: 'sessions.list' }, []), this.ref(p.peerId));
       summary = fresh.find((s) => s.sessionId === req.sessionId);
-      if (!summary) throw new Error(`在机器「${this.ref(p.peerId).name}」上找不到这个会话（已删除？）`);
+      if (!summary) throw new Error(`在机器「${this.ref(p.peerId).name}」上找不到这个对话（已删除？）`);
     }
     const from = (summary.agent ?? 'claude') as AgentKind;
     const title = summary.title ? `${summary.title}（来自 ${this.ref(p.peerId).name}）` : undefined;

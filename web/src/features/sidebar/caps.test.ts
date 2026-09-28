@@ -64,7 +64,7 @@ describe('nativeCliCommand', () => {
 describe('deleteSummary', () => {
   it('states the count and the per-source split, biggest first', () => {
     const list = [s('c1'), s('codex-1', { agent: 'codex' }), s('codex-2', { agent: 'codex' })];
-    expect(deleteSummary(list, (k) => ({ codex: 'Codex', claude: 'Claude Code' })[k] ?? k)).toBe('将删除 3 个会话（Codex 2、Claude Code 1）');
+    expect(deleteSummary(list, (k) => ({ codex: 'Codex', claude: 'Claude Code' })[k] ?? k)).toBe('将删除 3 个对话（Codex 2、Claude Code 1）');
   });
 });
 

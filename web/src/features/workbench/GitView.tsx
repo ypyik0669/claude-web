@@ -248,7 +248,7 @@ export function GitView({ cwd, visible = true }: { cwd: string; visible?: boolea
                 <div>{w.branch ?? `(分离 ${w.head})`} {w.locked && <span className="badge">locked</span>}</div>
                 <div className="sub">{w.path}</div>
               </div>
-              <button className="btn sm ghost" onClick={() => useStore.getState().openSession({ cwd: w.path })}><Icon name="plus" size={12} /> 会话</button>
+              <button className="btn sm ghost" onClick={() => useStore.getState().openSession({ cwd: w.path })}><Icon name="plus" size={12} /> 对话</button>
               <button className="btn sm ghost" onClick={() => ws.request({ kind: 'shell.open', path: w.path, app: 'code' })}>VS Code</button>
               {!w.main && <button className="btn sm ghost danger" onClick={async () => { if (await dlg.confirm(`删除 worktree ${w.path}？`, { message: '分支保留，目录会被删除。', danger: true })) void run('wt', { kind: 'git.worktreeRemove', cwd, dir: w.path, force: true }); }} aria-label="删除 worktree"><Icon name="trash" size={12} /></button>}
             </div>

@@ -105,7 +105,7 @@ export function BrowserTile({ tile }: { tile: Extract<Tile, { kind: 'browser' }>
           onChange={(e) => setAddr(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') go(addr); if (e.key === 'Escape') setAddr(url); }}
         />
-        <button className="icon-btn xs" title="把页面地址和控制台错误放进输入框" aria-label="发给会话" onClick={toComposer}><Icon name="send" size={14} /></button>
+        <button className="icon-btn xs" title="把页面地址和控制台错误放进输入框" aria-label="发给对话" onClick={toComposer}><Icon name="send" size={14} /></button>
         <button className="icon-btn xs" title="在系统浏览器打开" aria-label="外部打开" onClick={() => (desktop ? desktop.openExternal(url) : window.open(url, '_blank', 'noopener,noreferrer'))}><Icon name="external" size={14} /></button>
         {desktop && <button className="icon-btn xs" title="开发者工具" aria-label="开发者工具" onClick={() => { try { ref.current?.openDevTools(); } catch { /* ignore */ } }}><Icon name="bash" size={14} /></button>}
       </div>

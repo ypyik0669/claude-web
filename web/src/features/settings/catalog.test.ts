@@ -69,7 +69,7 @@ describe('settings map (spec §5.7)', () => {
       模型: ['模型与智能程度', '供应商', '模型网关'],
       扩展: ['MCP 与插件', 'Skills', 'Agents 与子代理', '共享记忆'],
       连接: ['手机与其它电脑', 'IM 机器人'],
-      数据: ['会话库', '密钥'],
+      数据: ['对话库', '密钥'],
       高级: ['Hooks', '环境变量', 'CLI 工具', '诊断', '更新', 'settings.json'],
     });
     expect(VISIBLE_SECTIONS.length).toBeLessThanOrEqual(15);

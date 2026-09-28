@@ -22,7 +22,7 @@ function SessionLinks({ ids }: { ids: string[] }) {
   if (!ids.length) return null;
   return (
     <span className="orch-sess">
-      {ids.map((id, i) => <button key={id} className="btn xs ghost" onClick={() => void loadHistory(id)} title={id}><Icon name="chat" size={11} /> 会话{ids.length > 1 ? ` ${i + 1}` : ''}</button>)}
+      {ids.map((id, i) => <button key={id} className="btn xs ghost" onClick={() => void loadHistory(id)} title={id}><Icon name="chat" size={11} /> 对话{ids.length > 1 ? ` ${i + 1}` : ''}</button>)}
     </span>
   );
 }
@@ -70,11 +70,11 @@ function Candidate({ run, nodeId, c, winner, recommended, canPick }: { run: Orch
       {c.output && <div className="reply"><Markdown text={c.output.slice(0, OUT_SHOW)} /></div>}
       {c.diffStat && <pre className="stat">{c.diffStat}</pre>}
       <div className="acts">
-        {c.sessionId && <button className="btn xs ghost" onClick={() => void loadHistory(c.sessionId!)}><Icon name="chat" size={11} /> 会话</button>}
+        {c.sessionId && <button className="btn xs ghost" onClick={() => void loadHistory(c.sessionId!)}><Icon name="chat" size={11} /> 对话</button>}
         {c.state === 'done' && c.worktree && !winner && <button className="btn xs ghost" onClick={() => void toggleDiff()}><Icon name="eye" size={11} /> {open ? '收起 diff' : '完整 diff'}</button>}
         <span className="grow" />
-        {canPick && c.state === 'done' && live && <span className="muted sm">胜者会话还在运行，先停止或等它结束</span>}
-        {canPick && c.state === 'done' && <button className="btn xs primary" disabled={busy || live} title={live ? '胜者会话还在运行，先停止或等它结束' : undefined} onClick={() => void pick()}><Icon name="check" size={11} /> 选它合并</button>}
+        {canPick && c.state === 'done' && live && <span className="muted sm">胜者的对话还在运行，先停止或等它结束</span>}
+        {canPick && c.state === 'done' && <button className="btn xs primary" disabled={busy || live} title={live ? '胜者的对话还在运行，先停止或等它结束' : undefined} onClick={() => void pick()}><Icon name="check" size={11} /> 选它合并</button>}
       </div>
       {open && diff !== null && (diff ? <DiffText text={diff} /> : <div className="muted sm">没有改动</div>)}
     </div>
@@ -105,7 +105,7 @@ function NodeDetail({ run, node, nr, selected }: { run: OrchRun; node: OrchNode;
   const wts = [...(nr.worktrees ?? []), ...(nr.retained ?? [])];
   const retry = async () => {
     const lines = [
-      node.kind === 'compare' ? '所有候选会在新的会话、新的 worktree（名字带 -attempt 后缀）里重新跑一遍，已经跑完的结果不再能选。' : '这个节点会在新的会话里重新跑，还没完成的下游节点也会重新排队。',
+      node.kind === 'compare' ? '所有候选会在新的对话、新的 worktree（名字带 -attempt 后缀）里重新跑一遍，已经跑完的结果不再能选。' : '这个节点会在新的对话里重新跑，还没完成的下游节点也会重新排队。',
       nr.mergePending ? '这个节点的活已经做完、只是没合并进去：处理冲突后点「重新合并」就够了（或手动 git merge 它的分支），不必整个重跑。' : '',
       wts.length ? `现有的 worktree 与分支都保留，不会删除：\n${wts.map((w) => `· ${w.path}（${w.branch}）`).join('\n')}` : '',
     ].filter(Boolean).join('\n\n');
@@ -171,7 +171,7 @@ export function RunView({ runId, onClose }: { runId: string; onClose: () => void
   if (!run) return <div className="orch-idle">加载中…</div>;
   const live = run.state === 'running' || run.state === 'waiting';
   const removeRun = async () => {
-    if (!(await dlg.confirm('删除这条运行记录？', { message: '会话本身不会被删除。', danger: true, okLabel: '删除' }))) return;
+    if (!(await dlg.confirm('删除这条运行记录？', { message: '对话本身不会被删除。', danger: true, okLabel: '删除' }))) return;
     const hasWts = Object.values(run.nodes).some((n) => n.worktrees?.length || n.retained?.length || n.candidates?.some((c) => c.worktree));
     const cleanup = hasWts && (await dlg.confirm('同时清理这次运行的 worktree 与 cw/ 分支？', { message: '只删除干净、已合并（或仍是编排自己提交的）的 worktree 与分支；有未提交改动或未合并提交的只列出来，不删。', okLabel: '清理', cancelLabel: '只删记录' }));
     const r = await orchAct<OrchCleanup>(runId, { kind: 'orchestra.run.remove', runId, cleanup });
@@ -187,7 +187,7 @@ export function RunView({ runId, onClose }: { runId: string; onClose: () => void
         <b className="name">{run.name}</b>
         <span className="muted">{basename(run.cwd)}{run.baseBranch ? ` · ${run.baseBranch}` : ''} · {live ? fmtMs(Date.now() - run.startedAt) : `${ago(run.startedAt)}${run.finishedAt ? ` · 用时 ${fmtMs(run.finishedAt - run.startedAt)}` : ''}`}</span>
         <span className="grow" />
-        {live && <button className="btn xs ghost" disabled={busy} onClick={async () => { if (await dlg.confirm('取消这次运行？', { message: '会中断正在运行的会话；已经建的 worktree 与分支都保留。正在合并时不能取消。', danger: true, okLabel: '取消运行' })) await orchAct(runId, { kind: 'orchestra.run.cancel', runId }); }}><Icon name="stop" size={11} /> 取消</button>}
+        {live && <button className="btn xs ghost" disabled={busy} onClick={async () => { if (await dlg.confirm('取消这次运行？', { message: '会中断正在运行的对话；已经建的 worktree 与分支都保留。正在合并时不能取消。', danger: true, okLabel: '取消运行' })) await orchAct(runId, { kind: 'orchestra.run.cancel', runId }); }}><Icon name="stop" size={11} /> 取消</button>}
         {(run.state === 'failed' || run.state === 'cancelled') && <button className="btn xs" disabled={busy} onClick={() => void orchAct(runId, { kind: 'orchestra.run.resume', runId }, '从未完成的节点续跑')}><Icon name="play" size={11} /> 续跑</button>}
         {!live && <button className="btn xs ghost" disabled={busy} title="删除运行记录" aria-label="删除运行记录" onClick={() => void removeRun()}><Icon name="trash" size={11} /></button>}
       </div>

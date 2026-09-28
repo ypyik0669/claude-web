@@ -101,7 +101,7 @@ export class CacheShim {
     if (!m) return this.fail(res, 404, '缓存垫片地址不对');
     let providerId: string, cacheKey: string, sessionId: string;
     try { providerId = decodeURIComponent(m[1]); cacheKey = decodeURIComponent(m[2] ?? ''); sessionId = decodeURIComponent(m[3] ?? '') || cacheKey; } catch { return this.fail(res, 400, '地址编码错误'); }
-    if (!this.keyOk(req, providerId)) return this.fail(res, 401, '缓存垫片密钥无效（只接受本进程发给这个档案的会话的内部密钥）');
+    if (!this.keyOk(req, providerId)) return this.fail(res, 401, '缓存垫片密钥无效（只接受本进程发给这个供应商的对话的内部密钥）');
     const p = this.deps.member(providerId);
     if (!p || (p.type !== 'openai' && p.type !== 'grok')) return this.fail(res, 404, `没有这个 OpenAI / Grok 型档案：${providerId}`);
     let rest = m[4] ?? '/';

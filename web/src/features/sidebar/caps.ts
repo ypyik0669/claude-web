@@ -38,12 +38,12 @@ export function nativeCliCommand(s: SessionSummary): string | null {
   return null;
 }
 
-/** 「将删除 12 个会话（Codex 8、Claude Code 4）」 — the count and where they are deleted from, biggest source first. */
+/** 「将删除 12 个对话（Codex 8、Claude Code 4）」 — the count and where they are deleted from, biggest source first. */
 export function deleteSummary(list: SessionSummary[], nameOf: (kind: string) => string): string {
   const by = new Map<string, number>();
   for (const s of list) by.set(agentOf(s), (by.get(agentOf(s)) ?? 0) + 1);
   const parts = [...by.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${nameOf(k)} ${n}`);
-  return `将删除 ${list.length} 个会话（${parts.join('、')}）`;
+  return `将删除 ${list.length} 个对话（${parts.join('、')}）`;
 }
 
 /**

@@ -50,8 +50,8 @@ function SourceRow({ x, busy, onToggle }: { x: SourceStatus; busy: boolean; onTo
           className={clsx('toggle', x.joined && 'on')}
           role="switch"
           aria-checked={x.joined}
-          aria-label={x.joined ? `从会话库移出 ${x.name}` : `把 ${x.name} 加入会话库`}
-          title={x.joined ? '移出：只是不在这里显示，不会删除 agent 自己的记录' : canJoin ? '加入会话库：列出它的会话并建立索引' : '未安装，无法加入'}
+          aria-label={x.joined ? `从对话库移出 ${x.name}` : `把 ${x.name} 加入对话库`}
+          title={x.joined ? '移出：只是不在这里显示，不会删除 agent 自己的记录' : canJoin ? '加入对话库：列出它的对话并建立索引' : '未安装，无法加入'}
           disabled={busy || !canJoin}
           onClick={() => onToggle(x)}
         />
@@ -60,7 +60,7 @@ function SourceRow({ x, busy, onToggle }: { x: SourceStatus; busy: boolean; onTo
   );
 }
 
-/** 设置 → 会话库: which agents' own session records show up in the sidebar, and the search index. */
+/** 设置 → 对话库: which agents' own session records show up in the sidebar, and the search index. */
 export function LibrarySection() {
   const sources = useStore((s) => s.librarySources);
   const load = useStore((s) => s.loadLibrarySources);
@@ -71,7 +71,7 @@ export function LibrarySection() {
   useEffect(() => { load().catch((e) => toast(e.message)).finally(() => setLoaded(true)); }, []);
 
   const toggle = async (x: SourceStatus) => {
-    if (x.joined && !(await dlg.confirm(`从会话库移出「${x.name}」？`, { message: '只是不在这里显示，不会删除 agent 自己的记录；以后可以随时重新加入。', okLabel: '移出' }))) return;
+    if (x.joined && !(await dlg.confirm(`从对话库移出「${x.name}」？`, { message: '只是不在这里显示，不会删除 agent 自己的记录；以后可以随时重新加入。', okLabel: '移出' }))) return;
     setBusyKind(x.kind);
     try {
       const r = await ws.request<SourceStatus[]>({ kind: 'library.join', kind_: x.kind, joined: !x.joined });

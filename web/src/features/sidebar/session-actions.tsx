@@ -23,7 +23,7 @@ const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export async function renameSession(s: SessionSummary): Promise<void> {
   const st = useStore.getState();
-  const t = (await dlg.prompt('重命名会话', s.title))?.trim();
+  const t = (await dlg.prompt('重命名对话', s.title))?.trim();
   if (!t || t === s.title) return;
   await st.libraryOp('rename', { sessionId: s.sessionId, title: t }).catch((e) => st.toast(errText(e)));
 }
@@ -36,7 +36,7 @@ export async function setArchived(list: SessionSummary[], archived: boolean): Pr
   if (viaLib.length) {
     try {
       const r = await st.libraryOp('archive', { sessionIds: viaLib.map((s) => s.sessionId), archived });
-      if (r?.failed?.length) st.toast(`${r.failed.length} 个会话${archived ? '归档' : '取消归档'}失败：${r.failed[0].error}`);
+      if (r?.failed?.length) st.toast(`${r.failed.length} 个对话${archived ? '归档' : '取消归档'}失败：${r.failed[0].error}`);
     } catch (e) { st.toast(errText(e)); }
   }
 }
@@ -45,16 +45,16 @@ export async function setArchived(list: SessionSummary[], archived: boolean): Pr
 export async function deleteSessions(list: SessionSummary[]): Promise<boolean> {
   const st = useStore.getState();
   if (!list.length) return false;
-  const first = list.length === 1 ? `删除会话「${list[0].title}」？` : `删除选中的 ${list.length} 个会话？`;
-  if (!(await dlg.confirm(first, { message: `${deleteSummary(list, (k) => sourceName(k as AgentKind))}。会话记录会从它所属的 agent 里移除；只是不想看到的话，用「归档」。`, danger: true, okLabel: '继续' }))) return false;
+  const first = list.length === 1 ? `删除对话「${list[0].title}」？` : `删除选中的 ${list.length} 个对话？`;
+  if (!(await dlg.confirm(first, { message: `${deleteSummary(list, (k) => sourceName(k as AgentKind))}。对话记录会从它所属的 agent 里移除；只是不想看到的话，用「归档」。`, danger: true, okLabel: '继续' }))) return false;
   const where = deleteTargets(list, (k) => sourceName(k as AgentKind));
   if (!(await dlg.confirm('再确认一次：删除后不能在这里恢复', { message: `将先备份到 ~/.claude-web/library-trash，再${where}`, danger: true, okLabel: '删除' }))) return false;
   try {
     const r = await st.libraryOp('delete', { sessionIds: list.map((s) => s.sessionId) });
     const failed: { id: string; error: string }[] = r?.failed ?? [];
     st.markDeleted(Array.isArray(r?.removed) ? r.removed : list.map((s) => s.sessionId).filter((id) => !failed.some((f) => f.id === id)));
-    if (failed.length) st.toast(`${failed.length} 个会话没有删除：${failed[0].error}`);
-    else st.toast(list.length === 1 ? '已删除（备份在 library-trash）' : `已删除 ${list.length} 个会话（备份在 library-trash）`, true);
+    if (failed.length) st.toast(`${failed.length} 个对话没有删除：${failed[0].error}`);
+    else st.toast(list.length === 1 ? '已删除（备份在 library-trash）' : `已删除 ${list.length} 个对话（备份在 library-trash）`, true);
     await st.refreshSessions().catch(() => {});
     return !failed.length;
   } catch (e) {
@@ -106,7 +106,7 @@ export async function handOverToLocal(s: SessionSummary, agent: AgentKind): Prom
   const name = st.agents.find((a) => a.kind === agent)?.name ?? agent;
   const def = st.workspaces[0]?.path ?? '';
   const cwd = (await dlg.prompt(`交给本机的 ${name}：在哪个目录继续？`, def, {
-    message: `这个会话在机器「${s.peer?.name ?? '?'}」上（目录 ${s.cwd}），那里的路径在本机多半不存在。会新建一个本机会话，带上一份交接说明；原会话保持不变。`,
+    message: `这个对话在机器「${s.peer?.name ?? '?'}」上（目录 ${s.cwd}），那里的路径在本机多半不存在。会新建一个本机对话，带上一份交接说明；原对话保持不变。`,
     okLabel: '交接',
   }))?.trim();
   if (!cwd) return;

@@ -108,7 +108,7 @@ export class AcpDriver extends EventEmitter implements AgentDriver {
         }
         this.acpSessionId = r.sessionId;
         await this.transcripts.patchHead(this.sessionId, { nativeSessionId: r.sessionId });
-        if (params.sessionId && this.resumeHistory?.length) this.push(this.synth.systemNote(`${this.launch.name} 不支持恢复上下文，已新开会话；上面的历史仅供查看。`, 'warning'));
+        if (params.sessionId && this.resumeHistory?.length) this.push(this.synth.systemNote(`${this.launch.name} 不支持恢复上下文，已新开一个对话；上面的历史仅供查看。`, 'warning'));
       }
       if (this.model && this.caps?.sessionCapabilities?.setModel !== false) {
         try { await rpc.request('session/set_model', { sessionId: this.acpSessionId, modelId: this.model }, 30_000); } catch { /* not supported */ }

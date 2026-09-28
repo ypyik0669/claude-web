@@ -4,9 +4,9 @@ import { tileArea } from './tile-area';
 describe('tileArea (error boundary area names, which go to server.log)', () => {
   it('a chat tile is named by its session id, never its title (titles are the user\'s prompts)', () => {
     const a = tileArea({ id: 't1', kind: 'chat', sessionId: '0f1e2d3c-aaaa-bbbb-cccc-123456789abc', view: 'chat', wb: 'live', title: '帮我改一下 secret-project 的登录逻辑' });
-    expect(a).toBe('会话 · 0f1e2d3c');
+    expect(a).toBe('对话 · 0f1e2d3c');
     expect(a).not.toContain('secret');
-    expect(tileArea({ id: 't2', kind: 'chat', sessionId: null, view: 'chat', wb: 'live' })).toBe('会话 · 新会话');
+    expect(tileArea({ id: 't2', kind: 'chat', sessionId: null, view: 'chat', wb: 'live' })).toBe('对话 · 新对话');
   });
 
   it('other tiles: kind + file name / panel title, no custom tab titles', () => {

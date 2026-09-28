@@ -221,7 +221,7 @@ function AttachmentChips({ atts }: { atts: NonNullable<UserItem['attachments']> 
 export function SessionRefChip({ a, onRemove }: { a: Attachment; onRemove?: () => void }) {
   const exists = useStore((s) => !!a.sessionId && s.sessions.some((x) => x.sessionId === a.sessionId));
   const bad = !exists || !!a.error;
-  const title = !exists ? '会话已不存在' : a.error ? a.error : `引用的会话：${a.name}（点击打开）`;
+  const title = !exists ? '这个对话已不存在' : a.error ? a.error : `引用的对话：${a.name}（点击打开）`;
   const open = () => {
     if (!exists || !a.sessionId) return;
     const st = useStore.getState();

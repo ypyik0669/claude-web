@@ -166,6 +166,6 @@ export class GoalService extends EventEmitter {
   private onState(sid: string, state: string, err?: string) {
     const g = this.goalOfSession(sid);
     if (!g) return;
-    if (state === 'error') { g.status = 'blocked'; this.addEvidence(g, { kind: 'error', summary: (err ?? '会话出错').split('\n')[0] }); void this.save(g); }
+    if (state === 'error') { g.status = 'blocked'; this.addEvidence(g, { kind: 'error', summary: (err ?? '对话出错').split('\n')[0] }); void this.save(g); }
   }
 }
