@@ -49,19 +49,31 @@ export function providerEnv(p: Provider, agent: 'claude' | 'codex' | 'acp' = 'cl
       if (m.sonnet) env.OPENAI_DEFAULT_SONNET_MODEL = m.sonnet;
       if (m.opus) env.OPENAI_DEFAULT_OPUS_MODEL = m.opus;
       break;
-    case 'gemini':
-      if (p.baseUrl) env.GEMINI_BASE_URL = p.baseUrl;
+    // ccb (claude-code-best) picks its API provider in `getAPIProvider()`: settings `modelType`, then
+    // CLAUDE_CODE_USE_BEDROCK / VERTEX / FOUNDRY / OPENAI / GEMINI / GROK, else first-party Anthropic. Without the
+    // switch a gemini / grok profile silently talks to the Anthropic default. Variable names below are the ones
+    // ccb's Gemini / Grok clients read (dist, 2026-09). GEMINI_MODEL / GROK_MODEL are deliberately NOT set: ccb
+    // returns them for every request, so an in-session model switch would do nothing. Model ids without a
+    // haiku / sonnet / opus family pass through unchanged; the family ones are mapped here.
+    case 'gemini': {
+      env.CLAUDE_CODE_USE_GEMINI = '1';
       env.GEMINI_API_KEY = p.apiKey;
-      if (p.defaultModel) env.GEMINI_MODEL = p.defaultModel;
-      if (m.haiku) { env.GEMINI_DEFAULT_HAIKU_MODEL = m.haiku; env.GEMINI_SMALL_FAST_MODEL = m.haiku; }
-      if (m.sonnet) env.GEMINI_DEFAULT_SONNET_MODEL = m.sonnet;
-      if (m.opus) env.GEMINI_DEFAULT_OPUS_MODEL = m.opus;
+      if (p.baseUrl) env.GEMINI_BASE_URL = geminiBase(p.baseUrl); // requests go to `<base>/models/<id>:streamGenerateContent`
+      // the Gemini client throws for a family model it cannot map, so all three get a value
+      const fallback = p.defaultModel || p.models?.[0];
+      const fam = { HAIKU: m.haiku || fallback, SONNET: m.sonnet || fallback, OPUS: m.opus || fallback };
+      for (const [k, v] of Object.entries(fam)) if (v) env[`GEMINI_DEFAULT_${k}_MODEL`] = v;
       break;
-    case 'grok':
-      if (p.baseUrl) env.GROK_BASE_URL = p.baseUrl;
-      env.XAI_API_KEY = p.apiKey;
-      if (p.defaultModel) env.GROK_MODEL = p.defaultModel;
+    }
+    case 'grok': {
+      env.CLAUDE_CODE_USE_GROK = '1';
+      env.GROK_API_KEY = p.apiKey; // ccb: GROK_API_KEY || XAI_API_KEY
+      if (p.baseUrl) env.GROK_BASE_URL = openaiBase(p.baseUrl); // an OpenAI SDK client: the base ends in /v1
+      // unmapped families fall back to ccb's own grok defaults, so only what the profile says is set
+      const fam = { HAIKU: m.haiku || p.defaultModel, SONNET: m.sonnet || p.defaultModel, OPUS: m.opus || p.defaultModel };
+      for (const [k, v] of Object.entries(fam)) if (v) env[`GROK_DEFAULT_${k}_MODEL`] = v;
       break;
+    }
   }
   return env;
 }
@@ -89,10 +101,17 @@ export function openaiBase(baseUrl: string): string {
   return !b || /\/v\d+[a-z]*$/.test(b) ? b : `${b}/v1`;
 }
 
+/** Gemini REST base with its version segment (`/v1beta` unless one is given) — what ccb's Gemini client expects. */
+export function geminiBase(baseUrl: string): string {
+  const b = baseUrl.trim().replace(/\/+$/, '');
+  return !b || /\/v\d+[a-z]*$/.test(b) ? b : `${b}/v1beta`;
+}
+
 function modelsUrl(type: ProviderType, baseUrl: string): string {
   const b = baseUrl.replace(/\/+$/, '');
-  if (type === 'gemini') return `${b || 'https://generativelanguage.googleapis.com'}/v1beta/models`;
-  if (type === 'grok') return `${b || 'https://api.x.ai'}/v1/models`;
+  // same base the session will use, so a URL that probes fine also works in the session
+  if (type === 'gemini') return `${geminiBase(b || 'https://generativelanguage.googleapis.com')}/models`;
+  if (type === 'grok') return `${openaiBase(b || 'https://api.x.ai')}/models`;
   if (type === 'openai') return /\/v\d+$/.test(b) ? `${b}/models` : `${b}/v1/models`;
   return /\/v\d+$/.test(b) ? `${b}/models` : `${b}/v1/models`;
 }

@@ -154,7 +154,8 @@ export class SessionRunner extends EventEmitter {
     const fenv = this.featureEnv();
     // a provider session must not inherit provider-ish env from this process (e.g. a global ANTHROPIC_API_KEY)
     const base = { ...process.env };
-    if (this.provider) for (const k of Object.keys(base)) if (/^(ANTHROPIC|OPENAI|GEMINI|GROK|XAI)_/.test(k) && !(k in fenv)) delete base[k];
+    // …including a stray CLAUDE_CODE_USE_* switch, which would route the profile to another ccb provider
+    if (this.provider) for (const k of Object.keys(base)) if (/^((ANTHROPIC|OPENAI|GEMINI|GROK|XAI)_|CLAUDE_CODE_USE_)/.test(k) && !(k in fenv)) delete base[k];
     const options: Options = {
       cwd: this.cwd,
       env: Object.keys(fenv).length ? { ...base, ...fenv } : undefined,

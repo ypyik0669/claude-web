@@ -176,6 +176,9 @@ ws.on('open', async () => {
     let refused = '';
     try { await req({ kind: 'session.setProvider', sessionId: so.sessionId, providerId: pa.id }); } catch (e) { refused = e.message; }
     check('setProvider: an Anthropic profile on an ACP agent is refused with the reason', /anthropic/.test(refused), refused);
+    let openRefused = '';
+    try { await req({ kind: 'session.open', params: { cwd: process.cwd(), agent: 'acp:e2e-fit', providerId: pa.id, permissionMode: 'default' } }); } catch (e) { openRefused = e.message; }
+    check('session.open: an Anthropic profile for an ACP agent is refused up front', /anthropic/.test(openRefused), openRefused);
     const swp = await req({ kind: 'session.setProvider', sessionId: so.sessionId, providerId: po.id, model: 'gpt-e2e-2' });
     check('setProvider: an OpenAI profile is accepted and starts on the picked model', swp.info?.providerId === po.id && swp.info?.model === 'gpt-e2e-2', JSON.stringify({ p: swp.info?.providerId, m: swp.info?.model }));
     await req({ kind: 'session.close', sessionId: so.sessionId }).catch(() => {});

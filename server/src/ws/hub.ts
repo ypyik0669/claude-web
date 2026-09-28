@@ -33,7 +33,7 @@ import type { CanonicalLog } from '../session/canonical.js';
 import type { MemoryService } from '../memory/service.js';
 import { harvest } from '../memory/extract.js';
 import { setMemoryMcpEnabled } from '../memory/launcher.js';
-import { swapAgent, swapProvider, withSessionLock } from '../session/swap.js';
+import { swapAgent, swapProvider } from '../session/swap.js';
 import { expandSessionRefs } from '../library/briefing.js';
 import type { LibraryService } from '../library/service.js';
 import type { GatewayService } from '../gateway/service.js';
@@ -213,6 +213,9 @@ export class Hub {
             params = { ...params, agent: r.agent, cwd: params.cwd || r.cwd, fork: false, resumeAt: undefined };
           }
         }
+        // an explicitly chosen profile must fit the agent / engine (welcome page, schedules, IM, orchestration all land here)
+        const unfitOpen = s.providers.fitError(req.params.providerId, params.agent ?? 'claude');
+        if (unfitOpen) throw new Error(unfitOpen);
         if (params.agent && params.agent !== 'claude') {
           // the profile a foreign-agent session was started / switched with survives a resume, like Claude's
           if (params.providerId === undefined && params.sessionId) params = { ...params, providerId: s.meta.sessionMeta(params.sessionId).providerId };
@@ -392,7 +395,7 @@ export class Hub {
         const agent = s.pool.get(req.sessionId)?.info.agent ?? (await s.transcripts.head(req.sessionId).catch(() => null))?.agent ?? 'claude';
         const unfit = s.providers.fitError(req.providerId, agent);
         if (unfit) throw new Error(unfit);
-        const r = await withSessionLock(req.sessionId, () => swapProvider({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta }, req.sessionId, req.providerId, p?.name ?? 'Claude 账号', req.model));
+        const r = await swapProvider({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta }, req.sessionId, req.providerId, p?.name ?? 'Claude 账号', req.model); // serialised per session inside
         s.sessions.emit('changed');
         return r;
       }
@@ -400,7 +403,7 @@ export class Hub {
         const readAll = (id: string) => s.library.readAll(id);
         // imported library sessions hand over into a NEW session (returned sessionId differs); the rest swap in place
         const imported = (id: string) => s.library.importedInfo(id);
-        const r = await withSessionLock(req.sessionId, () => swapAgent({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta, readAll, imported }, req.sessionId, req.agent, req.model));
+        const r = await swapAgent({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta, readAll, imported }, req.sessionId, req.agent, req.model);
         s.sessions.emit('changed');
         return r;
       }

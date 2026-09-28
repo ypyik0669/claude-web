@@ -168,6 +168,11 @@ describe('swapProvider (model with the profile)', () => {
     await swap.swapProvider({ ...deps, pool }, 's1', 'prov-a', 'A');
     expect(pool.opened[0].model).toBe('claude-opus-5');
   });
+  it('two swaps of one session issued at once never interleave (the lock is inside swapProvider, whoever calls it)', async () => {
+    const pool = livePool({ s1: { model: 'm', providerId: 'prov-a' } });
+    await Promise.all([swap.swapProvider({ ...deps, pool }, 's1', 'prov-b', 'B'), swap.swapProvider({ ...deps, pool }, 's1', 'prov-c', 'C')]);
+    expect(pool.events).toEqual(['close:s1', 'open:s1:prov-b', 'close:s1', 'open:s1:prov-c']);
+  });
   it('without a live runner the remembered profile decides whether it changed', async () => {
     const pool = livePool({});
     await deps.meta.setSessionMeta('s3', { providerId: 'prov-a' });

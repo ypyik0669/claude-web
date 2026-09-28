@@ -62,7 +62,8 @@ async function stop(pool: RunnerPool, sessionId: string) {
 
 /**
  * One swap at a time per session. setProvider / switchAgent close the runner and open a new one; two of them
- * interleaving (a double click, two windows) would open two processes on one session id.
+ * interleaving (a double click, two windows) would open two processes on one session id. Not re-entrant:
+ * never call swapProvider / swapAgent from inside a locked section of the same session.
  */
 const swapLocks = new Map<string, Promise<unknown>>();
 export function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
@@ -81,7 +82,11 @@ const normProvider = (id: string | undefined) => (id && id !== 'claude' ? id : u
  * `model`: what to start on. Omitted on a real profile change = the new profile's / login's default — the old
  * profile's model id rarely exists behind another endpoint; omitted on the same profile = keep the current one.
  */
-export async function swapProvider(d: SwapDeps, sessionId: string, providerId: string | undefined, providerName: string, model?: string): Promise<SwapResult> {
+export function swapProvider(d: SwapDeps, sessionId: string, providerId: string | undefined, providerName: string, model?: string): Promise<SwapResult> {
+  // the lock lives here, not in the hub: federation hand-overs, orchestration and IM reach these without the hub
+  return withSessionLock(sessionId, () => swapProviderNow(d, sessionId, providerId, providerName, model));
+}
+async function swapProviderNow(d: SwapDeps, sessionId: string, providerId: string | undefined, providerName: string, model?: string): Promise<SwapResult> {
   const live = d.pool.get(sessionId);
   const before = normProvider(live ? live.info.providerId : d.meta.sessionMeta(sessionId).providerId);
   const changed = before !== normProvider(providerId);
@@ -106,7 +111,10 @@ export async function swapProvider(d: SwapDeps, sessionId: string, providerId: s
 }
 
 /** Different agent: close, spawn the new one on the same session id, hand it a briefing. */
-export async function swapAgent(d: SwapDeps, sessionId: string, agent: AgentKind, model: string | undefined, objective?: string): Promise<SwapResult> {
+export function swapAgent(d: SwapDeps, sessionId: string, agent: AgentKind, model: string | undefined, objective?: string): Promise<SwapResult> {
+  return withSessionLock(sessionId, () => swapAgentNow(d, sessionId, agent, model, objective));
+}
+async function swapAgentNow(d: SwapDeps, sessionId: string, agent: AgentKind, model: string | undefined, objective?: string): Promise<SwapResult> {
   const imp = d.imported ? await d.imported(sessionId) : null;
   if (imp) return handOverImported(d, sessionId, imp, agent, model, objective);
   const prev = await stop(d.pool, sessionId);
