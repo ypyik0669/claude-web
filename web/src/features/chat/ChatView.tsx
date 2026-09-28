@@ -4,7 +4,7 @@ import type { AssistantItem, Attachment, Block, Item, ResultItem, ThinkingBlock,
 import { ERROR_HINT, ERROR_LABEL } from '@/model/health';
 import { fmtSize } from '@/model/attachments';
 import type { FileChange } from '@/model/diffstat';
-import { displayPath, fmtDuration, groupTurns, turnDone, turnMemo, turnSummaryParts, type Turn, type TurnMemo } from '@/model/turn';
+import { displayPath, fmtDuration, groupTurns, turnDone, turnMemo, turnStamp, turnSummaryParts, type Turn, type TurnMemo } from '@/model/turn';
 import { useScopedSession, useScopedSessionId, useStore } from '@/store';
 import { usePaneCtx } from '@/store/paneContext';
 import { activeGroup } from '@/model/layout';
@@ -356,10 +356,10 @@ const foldMemory = new Map<string, boolean>();
  */
 function TurnView({ turn, last, live, version, sessionId, cwd }: { turn: Turn; last: boolean; live: boolean; version: number; sessionId: string; cwd: string }) {
   const done = turnDone(turn, { last, live });
-  // with nothing running, a turn does not change any more: its parts are worked out once per set of items (while a
-  // turn runs every turn is redone — a tool still finishing behind a steer message belongs to the one before)
+  // a finished earlier turn is worked out once per set of items (and per loaded subagent); the last turn and one not
+  // done yet (a tool still finishing behind a steer message) are redone on every event
   const memo = useRef<TurnMemo>(undefined);
-  memo.current = turnMemo(memo.current, turn, done, live || last ? version : 0);
+  memo.current = turnMemo(memo.current, turn, done, turnStamp({ last, done, version }));
   const { parts, summary, changes } = memo.current;
   const fold = done && parts.work;
   const key = `${sessionId}|${turn.id}`;
