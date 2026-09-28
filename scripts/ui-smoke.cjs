@@ -307,6 +307,13 @@ function driver() {
       // ---- welcome composer: a click in the text box types, nothing opens over it
       phase = 'welcome';
       check('welcome composer present', await waitFor('!!document.querySelector(".welcome .composer textarea")'));
+      // redesign phase 1: one pane, one tab, no workbench setting → no global top bar, no group bar, no tab strip, no panel rail
+      if (E.SMOKE_READONLY !== '1') {
+        const chrome = await js('({ wb: window.__store.getState().settings["ui.workbench"], topbar: !!document.querySelector(".topbar"), groupbar: !!document.querySelector(".groupbar"), strips: document.querySelectorAll(".tabstrip").length, rail: !!document.querySelector(".dock-rail") })');
+        check('default chrome: no top bar / group bar / tab strip / panel rail', chrome.wb === false && !chrome.topbar && !chrome.groupbar && !chrome.strips && !chrome.rail, JSON.stringify(chrome));
+        const quota = await js('[...document.querySelectorAll(".quota")].every((q) => q.closest(".sb-foot"))');
+        check('the quota ring lives in the sidebar bottom row', quota);
+      }
       await shot('welcome');
       const leaks = await js(`[...document.querySelectorAll('.composer select')].filter((s) => { const p = s.closest('.chip, label, .dirpick') || s.parentElement; const a = s.getBoundingClientRect(), b = p.getBoundingClientRect(); return a.width > b.width + 2 || a.height > b.height + 2; }).map((s) => s.outerHTML.slice(0, 80))`);
       check('no invisible <select> larger than its chip', !leaks.length, leaks.join(' ; '));
@@ -386,7 +393,18 @@ function driver() {
         await shot(`panel-${p.id}`);
       }
 
-      // ---- a seeded session in a pane (chat tile, ContextRow, git badges)
+      // ---- hiding the right panel (Ctrl+J / the header button) is CSS: the terminal keeps its pty and buffer
+      if (E.SMOKE_READONLY !== '1') {
+        phase = 'dock-hide';
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'terminal' })`);
+        const term = await waitFor('!!document.querySelector(".dock .xterm")', 8000);
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+        await sleep(400);
+        const kept = await js('!!document.querySelector(".dock .xterm") && document.querySelector(".rpanel").offsetWidth === 0');
+        check('hiding the right panel keeps the terminal mounted', term && kept, JSON.stringify({ term, kept }));
+      }
+
+      // ---- a seeded session in a pane (chat tile, session header, git badges)
       if (E.SMOKE_SID) {
         phase = 'session';
         await js(`window.__store.getState().loadHistory(${JSON.stringify(E.SMOKE_SID)})`);
@@ -395,6 +413,54 @@ function driver() {
         const err = await noBoundary('body');
         check('session tile without error boundary', !err, err);
         await shot('session');
+
+        // ---- redesign phase 1: one ≤ 52px row above the conversation; the workbench tabs live in ···
+        phase = 'session-chrome';
+        const head = await js(`(() => { const p = document.querySelector('.pane.focused') || document.querySelector('.pane'); const h = p && p.querySelector('.sess-head'); const c = p && p.querySelector('.chat'); if (!h || !c) return null; const pr = p.getBoundingClientRect(); return { h: Math.round(h.getBoundingClientRect().height), above: Math.round(c.getBoundingClientRect().top - pr.top), strips: p.querySelectorAll('.tabstrip').length, wbTabs: !!document.querySelector('.wb-tabs') }; })()`);
+        check('one header row above the conversation (≤ 52px, no tab strip, no workbench tab row)', head && head.h <= 52 && head.above <= 53 && !head.strips && !head.wbTabs, JSON.stringify(head));
+        await click('.sess-head .sh-more > button');
+        const views = await js(`[...document.querySelectorAll('.menu.sess-menu [data-view]')].map((b) => b.dataset.view)`);
+        check('··· lists every workbench view', ['changes', 'git', 'files', 'search', 'schedules', 'artifacts', 'board'].every((v) => views.includes(v)), JSON.stringify(views));
+        await shot('session-menu');
+        await click('.menu.sess-menu [data-view="files"]');
+        const inView = await waitFor('!!document.querySelector(".pane.focused .wb-body") && !!document.querySelector(".pane.focused .sh-view")', 4000);
+        await click('.pane.focused .sh-view');
+        const back = await waitFor('!!document.querySelector(".pane.focused .chat") && !document.querySelector(".pane.focused .sh-view")', 4000);
+        check('a view opens from ··· and the header pill returns to the conversation', inView && back);
+
+        // collapsed sidebar: the centre takes the whole width and the header's first button brings the sidebar back
+        await js('window.__store.setState({ sidebarOpen: false })');
+        await sleep(500);
+        const collapsed = await js(`(() => { const c = document.querySelector('.center').getBoundingClientRect(); return { left: Math.round(c.left), reveal: !!document.querySelector('.pane .sess-head > .sb-reveal') }; })()`);
+        check('collapsed sidebar: the centre starts at the window edge, the header shows 展开侧栏', collapsed.left === 0 && collapsed.reveal, JSON.stringify(collapsed));
+        await click('.pane .sess-head > .sb-reveal');
+        const reopened = await waitFor(`!!document.querySelector('.sidebar.has-resizer') && Math.round(document.querySelector('.center').getBoundingClientRect().left) === Math.round(document.querySelector('.sidebar.has-resizer').getBoundingClientRect().right) && !document.querySelector('.sb-reveal')`, 4000);
+        check('展开侧栏 brings the sidebar back beside the centre', reopened);
+
+        // Ctrl+D: the split brings the tab strips; closing the split takes them away again
+        const strips = () => js('document.querySelectorAll(".pane .tabstrip").length');
+        wc.focus();
+        wc.sendInputEvent({ type: 'keyDown', keyCode: 'D', modifiers: ['control'] });
+        wc.sendInputEvent({ type: 'keyUp', keyCode: 'D', modifiers: ['control'] });
+        const split = await waitFor('document.querySelectorAll(".pane").length === 2 && document.querySelectorAll(".pane .tabstrip").length === 2', 4000);
+        check('Ctrl+D splits and both panes get a tab strip', split, `strips ${await strips()}`);
+        await shot('split');
+        await click('.pane.focused .tabstrip button[aria-label="关闭这个分屏"]');
+        const merged = await waitFor('document.querySelectorAll(".pane").length === 1 && document.querySelectorAll(".pane .tabstrip").length === 0', 4000);
+        check('closing the split hides the tab strip again', merged, `strips ${await strips()}`);
+
+        // 「显示工作台工具」 brings everything back; off hides it again
+        if (E.SMOKE_READONLY !== '1') {
+          await js('window.__store.getState().setSetting("ui.workbench", true)');
+          const on = await waitFor('!!document.querySelector(".groupbar") && !!document.querySelector(".dock-rail") && document.querySelectorAll(".pane .tabstrip").length === 1', 4000);
+          check('workbench tools on: group bar, panel rail and tab strip', on);
+          await shot('workbench');
+          await js('window.__store.getState().setSetting("ui.workbench", false)');
+          const off = await waitFor('!document.querySelector(".groupbar") && !document.querySelector(".dock-rail") && !document.querySelector(".pane .tabstrip")', 4000);
+          check('workbench tools off: back to one row', off);
+        }
+        const err2 = await noBoundary('body');
+        check('session chrome checks without error boundary', !err2, err2);
       }
 
       // ---- error boundary probe: a crash in one settings section stays in that section, 重试 recovers it
