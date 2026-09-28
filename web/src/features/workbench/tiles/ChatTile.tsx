@@ -192,7 +192,7 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
         <>
           <GoalBar sessionId={sid} />
           {tile.view === 'chat' ? <ChatView key={sid} /> : <TrajectoryView key={sid} />}
-          <Composer key={`c-${sid}`} disabled={deleted} />
+          <Composer key={`c-${sid}`} disabled={deleted} visible={visible} />
         </>
       )}
       {remoteView && <div className="wb-body"><div className="remote-only"><Icon name="machine" size={22} /><div>这个对话在机器「{peer!.name}」上，它的文件 / Git / 搜索 / 定时任务都在那台机器上。</div><div className="sub">请在该机器上查看；这里可以继续对话、审批、中断。</div></div></div>}

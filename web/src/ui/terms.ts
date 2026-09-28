@@ -122,10 +122,21 @@ export const DOCK_PLACEHOLDER = {
 export const DOCK_SEND = { tool: '拒绝并发送', plan: '要求修改', ask: '跳过并发送' } as const;
 /** On the card, when the box already had words before it came: Enter queues them as before (review I3). */
 export const DOCK_CARRIED = '输入框里的话是这张卡出现前写的：按 Enter 照常排队发送，不会当成回答';
-/** On the card, once those words were queued: its secondary button takes them back as the answer (Enter keeps its usual meaning). */
-export const DOCK_REQUEUED = { tool: '那段话已排队发送；想用它拒绝这次操作，点右边的按钮', plan: '那段话已排队发送；想把它当修改意见，点右边的按钮', ask: '那段话已排队发送；想跳过提问、改发这段话，点右边的按钮' } as const;
 /** The card's secondary button after words were queued: take the queued message back and answer with it. */
 export const DOCK_DENY_QUEUED = { tool: '改用排队的这段话拒绝', plan: '改用排队的这段话要求修改', ask: '改用排队的这段话回复' } as const;
+/**
+ * On the card, once those words were queued: its secondary button takes them back as the answer (Enter keeps its
+ * usual meaning). The button by name — in a narrow card it is not to the right of anything (review M-8).
+ */
+export const DOCK_REQUEUED = {
+  tool: `那段话已排队发送；想用它拒绝这次操作，点卡片上的「${DOCK_DENY_QUEUED.tool}」`,
+  plan: `那段话已排队发送；想把它当修改意见，点卡片上的「${DOCK_DENY_QUEUED.plan}」`,
+  ask: `那段话已排队发送；想跳过提问、改发这段话，点卡片上的「${DOCK_DENY_QUEUED.ask}」`,
+} as const;
+/** The card's status line (`aria-live`, announced after its title): what an empty Enter does on it (review M-6). */
+export const DOCK_STATUS = { tool: '空着按 Enter 允许一次', ask: '选好后空着按 Enter 提交回答', plan: '批准请按 Ctrl+Enter' } as const;
+/** An Enter the card did not take (review M-6): in its first moments (`DOCK_COOLDOWN_MS`), or an empty Enter on a plan. */
+export const DOCK_ENTER_IGNORED = { soon: '卡片刚出现，这次 Enter 没有生效：看清楚后再按', plan: '批准请按 Ctrl+Enter' } as const;
 /** Words and attachments while a card is docked: a deny carries words only (review M2). */
 export const DOCK_BLOCKED = '附件不能随拒绝一起发出：先处理上面的卡片，或者移除附件';
 /** The setting that opens every change in the conversation again (`ui.inlineDiffs`; off by default since phase 5). */
