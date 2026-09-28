@@ -225,7 +225,7 @@ Claude 要执行命令或改文件时，对话里会出现一张权限卡片：*
 | --- | --- |
 | 说明文件 | 全局与当前工作区的 `AGENTS.md` / `GEMINI.md` / `QWEN.md` 以及配置文件本身，点「打开」在编辑器标签里改；不存在的一键创建 |
 | MCP 服务器 | 列出、添加（可从常用目录填入）、删除。Codex / Gemini / Qwen 走它们自己的 `mcp add / remove` 命令（用户级），OpenCode 没有非交互命令，直接改 `opencode.json` 的 `mcp` 键 |
-| 从 Claude 同步 | 选一个 Claude Code 里已配置的 MCP 服务器，勾选要同步到的 agent，逐个报告成功 / 失败原因；同名默认不覆盖，勾「覆盖同名」才替换 |
+| 同步到多个 agent | 来源选 Claude Code 里已配置的 MCP 服务器或常用目录里的条目，勾选要同步到的 agent，逐个报告成功 / 失败原因；同名默认不覆盖，勾「覆盖同名」才替换 |
 | 设置 | 只开放实测存在的键：Codex 的模型 / 推理强度 / 审批策略 / 沙箱，Gemini 的模型 / 默认审批模式，Qwen 与 OpenCode 的模型。改完立即写入，只改这一个键，注释和其它内容保持原样 |
 | 备份 | 每次写入前都会把原文件备份到 `~/.claude-web/config-backups/<agent>/`，这里可以一键恢复 |
 
