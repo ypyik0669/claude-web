@@ -16,19 +16,18 @@ const unpack = (p: string) => p.replace(/app\.asar(?!\.unpacked)/, 'app.asar.unp
 
 /**
  * `npm root -g` — a synchronous child process (npm is slow to start: seconds, blocking the event loop), so it
- * runs at most once per process and only when nothing bundled was found. The global prefix does not move.
+ * runs only when nothing bundled was found, and a found prefix is remembered (it does not move). A failure
+ * (npm missing, timeout, empty output) is not: the next lookup tries again. Exported for tests.
  */
-let globalRootMemo: { v: string | null } | null = null;
-function globalRoot(): string | null {
-  if (globalRootMemo) return globalRootMemo.v;
-  let v: string | null = null;
+let globalRootMemo: string | null = null;
+export function globalRoot(): string | null {
+  if (globalRootMemo) return globalRootMemo;
   try {
-    v = execSync('npm root -g', { encoding: 'utf8', windowsHide: true, timeout: 15_000 }).trim() || null;
+    globalRootMemo = execSync('npm root -g', { encoding: 'utf8', windowsHide: true, timeout: 15_000 }).trim() || null;
   } catch {
-    v = null;
+    globalRootMemo = null;
   }
-  globalRootMemo = { v };
-  return v;
+  return globalRootMemo;
 }
 
 /** Official Claude Code: SDK's platform binary (bundled) → global npm install. */
@@ -73,23 +72,21 @@ export function resolveCcbEntry(): string | null {
   return global && existsSync(global) ? global : null;
 }
 
-/** `<binary> --version` is a synchronous process start (seconds for claude.exe): remembered per file + mtime. */
-const versionMemo = new Map<string, string | undefined>();
-function versionOf(file: string): string | undefined {
+/**
+ * `<binary> --version` is a synchronous process start (seconds for claude.exe): a version is remembered per
+ * file + mtime; a failure (timeout, crash, empty output) is not. Exported for tests.
+ */
+const versionMemo = new Map<string, string>();
+export function versionOf(file: string): string | undefined {
   try {
     const pkg = file.endsWith('.js') ? path.resolve(path.dirname(file), '..', 'package.json') : null;
     if (pkg && existsSync(pkg)) return JSON.parse(require('node:fs').readFileSync(pkg, 'utf8')).version;
     const key = `${file}|${statSync(file).mtimeMs}`;
-    if (!versionMemo.has(key)) {
-      let v: string | undefined;
-      try {
-        v = execSync(`"${file}" --version`, { encoding: 'utf8', windowsHide: true, timeout: 20_000 }).trim().split(/\s+/)[0];
-      } catch {
-        v = undefined;
-      }
-      versionMemo.set(key, v);
-    }
-    return versionMemo.get(key);
+    const hit = versionMemo.get(key);
+    if (hit) return hit;
+    const v = execSync(`"${file}" --version`, { encoding: 'utf8', windowsHide: true, timeout: 20_000 }).trim().split(/\s+/)[0];
+    if (v) versionMemo.set(key, v);
+    return v || undefined;
   } catch {
     return undefined;
   }

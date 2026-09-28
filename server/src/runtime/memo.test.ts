@@ -25,3 +25,17 @@ describe('Memo', () => {
     expect(n).toBe(2);
   });
 });
+
+describe('Memo keep predicate', () => {
+  it('shares a failed-looking result with callers already waiting, but does not keep it', async () => {
+    const m = new Memo<{ ok: boolean; n: number }>(60_000, Date.now, { keep: (v) => v.ok });
+    let n = 0;
+    const bad = () => new Promise<{ ok: boolean; n: number }>((r) => setTimeout(() => r({ ok: false, n: ++n }), 5));
+    const [a, b] = await Promise.all([m.get('k', bad), m.get('k', bad)]);
+    expect([a.n, b.n]).toEqual([1, 1]); // one run for concurrent callers
+    expect((await m.get('k', bad)).n).toBe(2); // …but not remembered
+    const good = async () => ({ ok: true, n: ++n });
+    expect((await m.get('k', good)).n).toBe(3);
+    expect((await m.get('k', good)).n).toBe(3); // kept
+  });
+});

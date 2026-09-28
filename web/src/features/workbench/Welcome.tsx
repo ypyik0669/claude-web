@@ -4,6 +4,7 @@ import { ws } from '@/ws/client';
 import { ago } from '@/util';
 import { Composer } from '@/features/composer/Composer';
 import { Icon } from '@/ui/icons';
+import { authChecker } from './auth-check';
 
 function greeting() {
   const h = new Date().getHours();
@@ -16,7 +17,20 @@ function EngineStatus() {
   const providers = useStore((s) => s.providers);
   const togglePanel = useStore((s) => s.togglePanel);
   const [auth, setAuth] = useState<any>(null);
-  useEffect(() => { ws.request<any>({ kind: 'config.auth' }).then(setAuth).catch(() => setAuth({ loggedIn: false, error: true })); }, []);
+  const [checking, setChecking] = useState(false);
+  // mount: the server's shared answer; 重新检查 / coming back to the window (after a /login elsewhere): a fresh one
+  const checker = useMemo(() => authChecker({
+    request: (force) => { setChecking(true); return ws.request<any>({ kind: 'config.auth', force }).finally(() => setChecking(false)); },
+    onResult: setAuth,
+    focusGapMs: 30_000,
+  }), []);
+  useEffect(() => {
+    void checker.check();
+    const onFocus = () => { if (document.visibilityState === 'visible') void checker.onFocus(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => { window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onFocus); };
+  }, [checker]);
   if (!engine) return null;
   const needs = auth !== null && !auth.loggedIn && providers.length === 0;
   return (
@@ -25,6 +39,9 @@ function EngineStatus() {
       <span>Claude Web 引擎 v{engine.version ?? '?'}{engine.runtime === 'claude' ? '（官方 Claude Code）' : ''}</span>
       <span className="sep">·</span>
       {auth === null ? <span>检查登录…</span> : auth.loggedIn ? <span>已登录 {auth.email ?? auth.authMethod ?? ''}</span> : <span style={{ color: providers.length ? undefined : 'var(--yellow)' }}>未登录 claude.ai</span>}
+      {auth !== null && !auth.loggedIn && (
+        <button type="button" className="link" disabled={checking} onClick={(e) => { e.stopPropagation(); void checker.check(true); }}>{checking ? '检查中…' : '重新检查'}</button>
+      )}
       {providers.length > 0 && <><span className="sep">·</span><span>{providers.length} 个供应商</span></>}
       {needs && <span className="badge err" style={{ marginLeft: 6 }}>去终端 /login 或添加供应商</span>}
     </div>

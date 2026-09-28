@@ -9,7 +9,7 @@ import { Memo } from '../runtime/memo.js';
  * process tree). Settings → MCP asks twice on mount (installed list + health) and the config center once more:
  * one run per cwd shared while in flight, reused 15 s; adding / removing a server drops it.
  */
-const mcpListMemo = new Memo<{ code: number; stdout: string; stderr: string }>(15_000);
+const mcpListMemo = new Memo<{ code: number; stdout: string; stderr: string }>(15_000, Date.now, { keep: (r) => r.code === 0 }); // a failed run is not reused
 export const mcpList = (cwd?: string, force = false) => mcpListMemo.get(cwd ?? '', () => runClaudeCli(['mcp', 'list'], { cwd, timeoutMs: 90_000 }), force);
 export const forgetMcpList = () => mcpListMemo.clear();
 
@@ -112,7 +112,8 @@ export class ConfigService {
    * the onboarding and the settings overview too: one run shared while in flight and kept 30 s;
    * `force` (onboarding → 重新检查, after a /login) asks again.
    */
-  private authMemo = new Memo<any>(30_000);
+  // only a real answer is reused (logged out is one: exit 1 + JSON); an engine error / timeout / garbage is asked again
+  private authMemo = new Memo<any>(30_000, Date.now, { keep: (v) => typeof v?.loggedIn === 'boolean' });
   auth(force = false): Promise<any> {
     return this.authMemo.get('auth', async () => {
       const r = await runClaudeCli(['auth', 'status']);
