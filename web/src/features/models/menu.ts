@@ -1,5 +1,5 @@
-import type { AgentKind, GatewayGroup, Provider, ProviderType } from '@shared';
-import { modelsFor } from '@catalog';
+import type { AgentKind, GatewayGroup, Provider, ProviderType, RuntimeKind } from '@shared';
+import { modelsFor, profileFitError, providerTypesFor } from '@catalog';
 
 /**
  * The unified model picker (AiMaMi-style): every provider profile's models flattened into one list of
@@ -33,6 +33,8 @@ export interface ModelMenuItem {
   /** the profile's configured default model */
   profileDefault?: boolean;
   hint?: string;
+  /** shown but not pickable, with the reason (the official engine cannot speak it, gateway off…) */
+  unavailable?: string;
 }
 
 export interface ModelMenuSection {
@@ -45,6 +47,8 @@ export interface ModelMenuSection {
   count?: number; // models listed for the profile (after hiding)
   modelsAt?: number;
   error?: string;
+  /** the whole profile is shown disabled: why */
+  unavailable?: string;
 }
 
 export interface ModelMenu {
@@ -65,13 +69,35 @@ export interface BuildMenuInput {
   builtinTitle?: string;
   /** a foreign agent's configured default model, shown on its default entry */
   agentDefault?: string;
+  /** engine.info: which binary Claude sessions run on (the official one only speaks Anthropic) */
+  engine?: { runtime: RuntimeKind; fallback?: { runtime: RuntimeKind } } | null;
+  /** gateway.status().enabled; undefined = not loaded yet (gateway profiles are not judged) */
+  gatewayEnabled?: boolean;
 }
 
-/** Which profile types can drive an agent (what the server's providerEnv / agentLaunch actually wire up). */
-export function compatibleTypes(agent: AgentKind): ProviderType[] {
-  if (agent === 'claude') return ['anthropic', 'openai', 'gemini', 'grok', 'gateway'];
-  if (agent === 'gemini') return ['gemini', 'gateway'];
-  return ['openai', 'gateway']; // codex, qwen, kimi, opencode, custom ACP agents: OpenAI-compatible endpoints
+/** Which profile types can drive an agent — @catalog's table, shared with session.setProvider on the server. */
+export const compatibleTypes = (agent: AgentKind): ProviderType[] => providerTypesFor(agent);
+
+/**
+ * The engine a Claude session on profile `p` would really run on (server: `resolveEngine(p.runtime)`):
+ * a profile forcing the official binary gets it; otherwise ccb when it is the engine, or when the profile asks
+ * for it and it is installed (the fallback); else the official binary (ccb missing, or env-forced).
+ */
+export function effectiveRuntime(p: Pick<Provider, 'runtime'>, engine: BuildMenuInput['engine']): RuntimeKind | undefined {
+  if (p.runtime === 'claude') return 'claude';
+  if (!engine) return undefined;
+  if (engine.runtime === 'ccb') return 'ccb';
+  return p.runtime === 'ccb' && engine.fallback?.runtime === 'ccb' ? 'ccb' : 'claude';
+}
+
+/** Why profile `p` cannot be picked right now although the agent takes its type (null = it can). */
+export function profileUnavailable(p: Provider, i: Pick<BuildMenuInput, 'agent' | 'engine' | 'gatewayGroups' | 'gatewayEnabled'>): string | null {
+  if (p.type === 'gateway') {
+    if (i.gatewayEnabled === false) return '模型网关未启用（设置 → 模型网关）';
+    if (i.gatewayEnabled && i.gatewayGroups && !i.gatewayGroups.some((g) => g.id === p.gatewayGroupId)) return '网关组不存在（设置 → 模型网关）';
+    return null;
+  }
+  return i.agent === 'claude' ? profileFitError('claude', p.type, effectiveRuntime(p, i.engine)) : null;
 }
 
 export function modelKey(agent: AgentKind, providerId: string, model: string): string {
@@ -147,6 +173,7 @@ export function buildModelMenu(i: BuildMenuInput): ModelMenu {
     };
   };
   const visible = (it: ModelMenuItem) => it.compatible && (it.isDefault || !disabled.has(it.key));
+  const pickable = (it: ModelMenuItem) => visible(it) && !it.unavailable;
 
   const items: ModelMenuItem[] = [];
   const sections: ModelMenuSection[] = [];
@@ -161,10 +188,11 @@ export function buildModelMenu(i: BuildMenuInput): ModelMenu {
 
   for (const p of i.providers) {
     const compatible = types.includes(p.type);
+    const unavailable = compatible ? profileUnavailable(p, i) ?? undefined : undefined;
     const models = profileModels(p, i.gatewayGroups, i.providers);
     const list = models.length
-      ? models.map((m) => make(p.id, p.name, m, m, compatible, { profileDefault: m === p.defaultModel }))
-      : [make(p.id, p.name, '', '默认模型', compatible, { isDefault: true })];
+      ? models.map((m) => make(p.id, p.name, m, m, compatible, { profileDefault: m === p.defaultModel, unavailable }))
+      : [make(p.id, p.name, '', '默认模型', compatible, { isDefault: true, unavailable })];
     items.push(...list);
     if (!compatible) continue;
     const shown = list.filter(visible);
@@ -175,14 +203,15 @@ export function buildModelMenu(i: BuildMenuInput): ModelMenu {
       title: p.name,
       providerId: p.id,
       providerType: p.type,
-      items: shown.length ? shown : [make(p.id, p.name, '', '默认模型', compatible, { isDefault: true })],
+      items: shown.length ? shown : [make(p.id, p.name, '', '默认模型', compatible, { isDefault: true, unavailable })],
       count: shown.filter((x) => !x.isDefault).length,
       modelsAt: p.modelsAt,
       error: p.modelsError,
+      unavailable,
     });
   }
 
-  const pool = items.filter(visible);
+  const pool = items.filter(pickable);
   const byKey = (k: string) => pool.find((x) => !x.isDefault && x.key === k);
   const favs = favorites.map(byKey).filter((x): x is ModelMenuItem => !!x).sort((a, b) => a.label.localeCompare(b.label));
   const rec = recents

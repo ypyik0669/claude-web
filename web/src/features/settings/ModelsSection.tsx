@@ -106,7 +106,7 @@ export function ModelsSection() {
                         const p = providers.find((pp) => pp.id === x.id);
                         return p
                           ? <button key={x.id} className={clsx('prov-chip', x.isDefault && 'def')} title={x.isDefault ? `「${p.name}」的默认模型` : `设为「${p.name}」的默认模型`} onClick={() => void makeDefault(p, r.model)}>{x.isDefault && <Icon name="check" size={10} />}{x.name}</button>
-                          : <span key={x.id} className="prov-chip" title="claude.ai 登录">{x.name}</span>;
+                          : <span key={x.id} className="prov-chip static" title="claude.ai 登录（内置模型，没有默认模型可设）">{x.name}</span>;
                       })}
                     </td>
                     <td className="acts">

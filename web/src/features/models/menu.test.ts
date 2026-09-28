@@ -144,3 +144,42 @@ describe('modelTable (settings, by model)', () => {
     expect(modelTable(PROVIDERS, GROUPS, 'xai').map((r) => r.model)).toEqual(['grok-5']);
   });
 });
+
+describe('unavailable profiles (engine / gateway)', () => {
+  const ccb = { runtime: 'ccb' as const };
+  const official = { runtime: 'claude' as const }; // ccb missing (silent fallback) or forced by env
+  it('on the official Claude Code engine, openai / gemini / grok profiles are shown but disabled with the reason', () => {
+    const m = menu({ engine: official });
+    const gkey = m.sections.find((s) => s.id === 'gkey')!;
+    expect(gkey.unavailable).toMatch(/官方/);
+    expect(gkey.items.every((i) => i.unavailable)).toBe(true);
+    expect(m.sections.find((s) => s.id === 'snbchr')!.unavailable).toBeUndefined();
+    expect(m.sections.find((s) => s.id === 'gw')!.unavailable).toBeUndefined();
+  });
+  it('a profile forced to the official binary is disabled for its non-Anthropic type even on ccb', () => {
+    const provs = [...PROVIDERS, prov('forced', { type: 'openai', runtime: 'claude', models: ['x'] }), prov('forcedA', { type: 'anthropic', runtime: 'claude', models: ['y'] })];
+    const m = buildModelMenu({ agent: 'claude', providers: provs, gatewayGroups: GROUPS, settings: {}, engine: ccb });
+    expect(m.sections.find((s) => s.id === 'forced')!.unavailable).toMatch(/官方/);
+    expect(m.sections.find((s) => s.id === 'forcedA')!.unavailable).toBeUndefined();
+    expect(m.sections.find((s) => s.id === 'gkey')!.unavailable).toBeUndefined();
+  });
+  it('asking for ccb helps only when ccb is installed', () => {
+    const provs = [prov('wantccb', { type: 'openai', runtime: 'ccb', models: ['x'] })];
+    expect(buildModelMenu({ agent: 'claude', providers: provs, settings: {}, engine: { runtime: 'claude', fallback: { runtime: 'ccb' } } }).sections[1].unavailable).toBeUndefined();
+    expect(buildModelMenu({ agent: 'claude', providers: provs, settings: {}, engine: { runtime: 'claude' } }).sections[1].unavailable).toMatch(/官方/);
+  });
+  it('the engine does not matter for other agents', () => {
+    expect(menu({ agent: 'codex', engine: official }).sections.find((s) => s.id === 'gkey')!.unavailable).toBeUndefined();
+  });
+  it('gateway profile: gateway off / group missing → disabled with the reason; unknown status → not judged', () => {
+    expect(menu({ gatewayEnabled: false }).sections.find((s) => s.id === 'gw')!.unavailable).toMatch(/未启用/);
+    const orphan = [...PROVIDERS, prov('gw2', { type: 'gateway', gatewayGroupId: 'nope' })];
+    expect(buildModelMenu({ agent: 'claude', providers: orphan, gatewayGroups: GROUPS, gatewayEnabled: true, settings: {} }).sections.find((s) => s.id === 'gw2')!.unavailable).toMatch(/组不存在/);
+    expect(menu({}).sections.find((s) => s.id === 'gw')!.unavailable).toBeUndefined();
+  });
+  it('unavailable entries never appear in favourites or recents', () => {
+    const m = menu({ engine: official, settings: { 'ui.favoriteModels': ['gkey:gpt-6-astra'], 'ui.recentModels': ['gkey:gpt-5.6-sol'] } });
+    expect(sectionIds(m)).not.toContain('favorites');
+    expect(sectionIds(m)).not.toContain('recent');
+  });
+});

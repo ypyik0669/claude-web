@@ -18,6 +18,8 @@ import { SessionRefChip } from '@/features/chat/ChatView';
 import { REFERENCE_EVENT, type ReferenceDetail } from '@/features/sidebar/session-actions';
 import { ModelChip } from '@/features/models/ModelMenu';
 import { chipLabel, compatibleTypes, type ModelMenuItem } from '@/features/models/menu';
+import { routePick } from '@/features/models/route';
+import { providersLoaded } from '@/features/models/data';
 import { dlg } from '@/ui/dialog';
 
 export const MODE_LABEL: Record<PermissionMode, string> = { default: '每次询问', acceptEdits: '自动接受编辑', plan: '计划模式', auto: '自动模式', bypassPermissions: '完全权限', dontAsk: '不询问' };
@@ -69,7 +71,16 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   const provider = wProvider === 'claude' ? undefined : providers.find((p) => p.id === wProvider && compatibleTypes(wKind).includes(p.type));
   // the agent's own model list: the catalog, or what the agent registry probed when the catalog has none
   const wBuiltin = agent && !modelsFor(agent.kind).length ? agent.models.map((m) => ({ value: m, displayName: m })) : undefined;
-  const pickWelcome = (it: ModelMenuItem) => { setWProvider(it.providerId); setWModel(it.model); };
+  const pickWelcome = (it: ModelMenuItem) => { setWProvider(it.providerId); setWModel(it.model); return true; };
+  // the remembered profile is gone (deleted, or unusable by this agent): its model goes with it, or a relay's
+  // model id would be sent to the agent's own login
+  useEffect(() => {
+    if (!welcome || wProvider === 'claude' || provider || !providersLoaded(providers)) return;
+    setWProvider('claude');
+    setWModel('');
+    localStorage.removeItem('cw.lastProvider');
+    localStorage.removeItem('cw.lastModel');
+  }, [welcome, wProvider, provider, providers]);
   // effort is per agent AND per model: Gemini has none, Codex alone has `ultra`, Opus/Sonnet 4.6 have no `xhigh`
   const wEfforts = effortLevels(wKind, wModel || undefined);
   const wUltracode = !!CATALOG[wKind]?.supportsUltracode;
@@ -336,20 +347,22 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   const liveAgent: AgentKind = info?.agent ?? 'claude';
   const liveProvider = info?.providerId && info.providerId !== 'claude' ? info.providerId : 'claude';
   const liveAgentDefault = liveAgent !== 'claude' ? agents.find((a) => a.kind === liveAgent)?.model || undefined : undefined;
-  const pickLive = async (it: ModelMenuItem) => {
-    if (!active) return;
-    if (remote || it.providerId === liveProvider) {
-      const model = it.model || (it.providerId === 'claude' ? (liveAgent === 'claude' ? 'default' : liveAgentDefault) : providers.find((p) => p.id === it.providerId)?.defaultModel);
-      if (!model) { toast('这个档案没有默认模型，请选一个具体的模型'); return; }
-      if (model !== info?.model) void setModel(model);
-      return;
+  /** false = nothing happened (refused / cancelled / failed): the menu then does not record it as recent */
+  const pickLive = async (it: ModelMenuItem): Promise<boolean> => {
+    if (!active || swapping) return false;
+    const act = routePick(it, { agent: liveAgent, currentProvider: remote ? 'claude' : liveProvider, currentModel: info?.model, remote, busy, providers, agentDefault: liveAgentDefault });
+    if (act.kind === 'none') return true;
+    if (act.kind === 'error') { toast(act.message); return false; }
+    if (act.kind === 'setModel') {
+      try { await ws.request({ kind: 'session.setModel', sessionId: active.sessionId, model: act.model }); return true; } catch (e: any) { toast(e.message); return false; }
     }
-    if (busy && !(await dlg.confirm('切换供应商档案？', { message: '会话正在运行。换档案会重启会话进程（历史保留），当前这一轮会被中断。', okLabel: '切换' }))) return;
+    if (act.confirm && !(await dlg.confirm('切换供应商档案？', { message: '会话正在运行。换档案会重启会话进程（历史保留），当前这一轮会被中断。', okLabel: '切换' }))) return false;
     setSwapping(true);
     try {
-      await ws.request({ kind: 'session.setProvider', sessionId: active.sessionId, providerId: it.providerId === 'claude' ? undefined : it.providerId, model: it.model || undefined });
+      await ws.request({ kind: 'session.setProvider', sessionId: active.sessionId, providerId: act.providerId, model: act.model });
       toast(`已切换到 ${it.label}，会话继续`, true);
-    } catch (e: any) { toast(e.message); } finally { setSwapping(false); }
+      return true;
+    } catch (e: any) { toast(e.message); return false; } finally { setSwapping(false); }
   };
   const setEffort = (effort: EffortLevel) => active && ws.request({ kind: 'session.setEffort', sessionId: active.sessionId, effort }).catch((e) => toast(e.message));
   const setUltracode = (on: boolean) => active && ws.request({ kind: 'session.setUltracode', sessionId: active.sessionId, on }).catch((e) => toast(e.message));
@@ -517,7 +530,8 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
                   lockProvider={remote ? 'claude' : undefined}
                   lockNote="其它机器上的会话：只能换模型，换档案请在那台机器上操作"
                   busy={swapping}
-                  onPick={(it) => void pickLive(it)}
+                  disabled={swapping}
+                  onPick={pickLive}
                 />
 {liveEfforts.length > 0 && <label className="chip" title="Effort"><span>{info.effort ?? 'effort'}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
                   <select value={info.effort ?? ''} onChange={(e) => setEffort(e.target.value as EffortLevel)}><option value="" disabled>effort</option>{liveEfforts.map((l) => <option key={l} value={l}>{l}</option>)}</select>

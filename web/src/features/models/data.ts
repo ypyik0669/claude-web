@@ -14,22 +14,26 @@ const listeners = new Set<Listener>();
 const emit = () => { for (const l of listeners) l(); };
 const subscribe = (l: Listener) => { listeners.add(l); return () => { listeners.delete(l); }; };
 
-let groups: GatewayGroup[] = [];
+/** `enabled` undefined until the first gateway.status arrives (the menu does not judge gateway profiles before). */
+export interface GatewayView { enabled?: boolean; groups: GatewayGroup[] }
+let gateway: GatewayView = { groups: [] };
 let groupsLoaded = false;
 let groupsWatch: (() => void) | null = null;
 
 function loadGroups() {
-  return ws.request<GatewayStatus>({ kind: 'gateway.status' }).then((s) => { groups = s.groups; groupsLoaded = true; emit(); }).catch(() => {});
+  return ws.request<GatewayStatus>({ kind: 'gateway.status' }).then((s) => { gateway = { enabled: s.enabled, groups: s.groups }; groupsLoaded = true; emit(); }).catch(() => {});
 }
 
-/** Gateway groups, loaded on first use and kept current through `gateway.changed`. */
-export function useGatewayGroups(): GatewayGroup[] {
+/** Gateway on/off + groups, loaded on first use and kept current through `gateway.changed`. */
+export function useGatewayStatus(): GatewayView {
   useEffect(() => {
     if (!groupsLoaded) void loadGroups();
     if (!groupsWatch) groupsWatch = ws.on((e) => { if (e.kind === 'gateway.changed') void loadGroups(); });
   }, []);
-  return useSyncExternalStore(subscribe, () => groups);
+  return useSyncExternalStore(subscribe, () => gateway);
 }
+
+export const useGatewayGroups = (): GatewayGroup[] => useGatewayStatus().groups;
 
 export interface RefreshRun { running: boolean; ids: string[]; done: number; total: number; results: ModelRefreshResult[]; at?: number }
 let run: RefreshRun = { running: false, ids: [], done: 0, total: 0, results: [] };
@@ -70,3 +74,8 @@ export async function refreshAllModels(ids?: string[]): Promise<ModelRefreshResu
   void st.loadProviders().catch(() => {});
   return run.results;
 }
+
+// the store starts with this very array; loadProviders always sets a new one, so identity tells "loaded"
+const INITIAL_PROVIDERS = useStore.getState().providers;
+/** Has the provider list arrived at least once (an empty list then really means "no profiles")? */
+export const providersLoaded = (list: unknown[]): boolean => list !== INITIAL_PROVIDERS;
