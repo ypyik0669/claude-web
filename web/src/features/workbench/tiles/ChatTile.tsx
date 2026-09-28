@@ -7,6 +7,7 @@ import type { Tile } from '@/model/layout';
 import { ChatView } from '@/features/chat/ChatView';
 import { TrajectoryView } from '@/features/trajectory/TrajectoryView';
 import { Composer } from '@/features/composer/Composer';
+import { GoalBar } from '@/features/goals/GoalBar';
 import { ReviewView } from '../ReviewView';
 import { SchedulesView } from '@/features/automation/SchedulesView';
 import { shareConversation } from '@/features/chat/MessageActions';
@@ -189,6 +190,7 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
       {deleted && <div className="deleted-banner" role="status"><Icon name="trash" size={13} /> 这个对话已被删除（备份在 ~/.claude-web/library-trash），这里只剩最后看到的内容。</div>}
       {tile.wb === 'live' && (
         <>
+          <GoalBar sessionId={sid} />
           {tile.view === 'chat' ? <ChatView key={sid} /> : <TrajectoryView key={sid} />}
           <Composer key={`c-${sid}`} disabled={deleted} />
         </>
