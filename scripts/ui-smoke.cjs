@@ -270,7 +270,9 @@ function driver() {
     const emptySeen = new Map();
     const shot = async (name) => {
       try {
-        const empties = await js(`[...document.querySelectorAll('.empty-state')].filter((e) => e.getClientRects().length).map((e) => ({ t: e.querySelector('.es-text')?.textContent ?? '', b: e.querySelectorAll('button').length }))`).catch(() => []);
+        // every empty state on screen, also the orchestra's own (.orch-empty) — one not built with EmptyState has no
+        // .es-text, its whole text is checked (review 7 M14)
+        const empties = await js(`[...document.querySelectorAll('.empty-state, .orch-empty')].filter((e) => e.getClientRects().length).map((e) => ({ t: (e.querySelector('.es-text') ?? e).textContent.trim(), b: e.querySelectorAll('button').length }))`).catch(() => []);
         for (const e of empties) emptySeen.set(e.t, e.b);
         const img = await wc.capturePage();
         const f = path.join(out, `ux-${name}.png`);
@@ -306,6 +308,10 @@ function driver() {
           const steps = await js(`[...document.querySelectorAll('.modal.onboarding .ob-steps li')].map((l) => l.textContent)`);
           check('onboarding: two steps (登录 · 选一个项目文件夹)', steps.length === 2 && /登录/.test(steps[0]) && /项目文件夹/.test(steps[1]), JSON.stringify(steps));
           let taken = 0;
+          // before the login check answers, a neutral 正在检查登录… (review 7 M9) — not a step to act on
+          const checking = await js(`document.querySelector('.modal.onboarding')?.dataset.step === 'checking' ? (document.querySelector('.modal.onboarding .ob-checking')?.textContent ?? '') : null`);
+          if (checking !== null) check('onboarding: 正在检查登录… until the login check answers (no login buttons yet)', /正在检查登录/.test(checking) && !(await js(`!!document.querySelector('.modal.onboarding [data-ob="skip"]')`)), checking);
+          await waitFor(`document.querySelector('.modal.onboarding')?.dataset.step !== 'checking'`, 30_000);
           if (await js(`document.querySelector('.modal.onboarding')?.dataset.step === 'login'`)) {
             const loginRow = await js(`[...document.querySelectorAll('.modal.onboarding .ob-actions button')].map((b) => b.textContent.trim())`);
             check('onboarding ①: 在终端登录 / 添加供应商 / 先跳过', ['在终端登录', '添加供应商', '先跳过'].every((t) => loginRow.some((x) => x.includes(t))), JSON.stringify(loginRow));
@@ -323,9 +329,20 @@ function driver() {
           wc.insertText('smoke：第一条');
           await sleep(250);
           const sendable = await js(`(() => { const b = document.querySelector('.welcome .composer [data-id="send"]'); return !!b && !b.disabled; })()`);
-          check('cold start → first message in ≤ 3 steps (先跳过 · the folder · Enter): the composer is on that folder, focused, ready to send', done && ready && sendable && taken + 1 <= 3, JSON.stringify({ done, ready, sendable, steps: taken + 1 }));
-          wc.selectAll(); wc.delete();
-          await sleep(200);
+          // step 3 for real (review 7 M14): Enter sends — the tile becomes that conversation and holds the message
+          await key('Enter');
+          taken++;
+          const sentExpr = `(() => { const st = window.__store.getState(); const o = Object.values(st.open).find((x) => x.conv.items.some((i) => i.kind === 'user' && String(i.text).includes('smoke：第一条'))); return o ? { sid: o.sessionId, cwd: o.cwd, lastSent: !!o.lastSent, inPane: st.layout.groups.some((g) => Object.values(g.panes).some((p) => p.tiles.some((t) => t.kind === 'chat' && t.sessionId === o.sessionId))) } : null; })()`;
+          await waitFor(`!!${sentExpr}`, 30_000);
+          const sent = await js(sentExpr);
+          check('cold start → first message in 3 steps (先跳过 · the folder · Enter): Enter sent it from that folder into this tile', done && ready && sendable && taken <= 3 && !!sent && sent.lastSent && sent.inPane && sent.cwd === E.SMOKE_REPO, JSON.stringify({ done, ready, sendable, steps: taken, sent }));
+          // the first message also ticks 发出第一个任务 in the 入门清单 (only a message sent from here does)
+          check('入门清单: the message sent from here marks 发出第一个任务', await waitFor(`(window.__store.getState().settings['onboarding.checklist']?.done || []).includes('send')`, 5000));
+          // leave its process (no login in this HOME) and come back to an empty start page for the checks below
+          if (sent) await js(`window.__store.getState().closeSession(${JSON.stringify(sent.sid)})`).catch(() => {});
+          await js(`window.__store.getState().openInPane(null, 'replace')`);
+          await waitFor('!!document.querySelector(".welcome .composer textarea")', 5000);
+          await sleep(300);
         }
         await sleep(400);
       }
@@ -616,6 +633,8 @@ function driver() {
           await waitFor(onPage(s.id), 3000);
           if (pg.tab) { await click(`.modal.settings .sp-tabs [data-tab="${pg.tab}"]`); await waitFor(onPage(s.id, pg.tab), 3000); }
           const before = await js(shownParts);
+          // the page's own requests can still grow it: let it settle, or the click lands where the button was
+          await sleep(400);
           await click('.modal.settings .sp-more-h');
           const opened = await waitFor(`document.querySelector('.modal.settings .sp-more-h')?.getAttribute('aria-expanded') === 'true'`, 3000);
           await sleep(1500); // requests the parts fire on first open
@@ -1041,6 +1060,51 @@ function driver() {
             await tapAbove();
             await sleep(300);
           }
+          // review 7 I1: the settings page and the palette open over the drawer — a tap in the middle of the screen (or
+          // where the drawer is) lands on them, never on the drawer underneath; the drawer is back when they close
+          const hitAt = (fy) => js(`(() => { const e = document.elementFromPoint(Math.round(innerWidth / 2), Math.round(innerHeight * ${fy})); return e ? (e.closest('.modal.settings') ? 'settings' : e.closest('.palette-bg') ? 'palette' : e.closest('.rpanel') ? 'drawer' : e.className || e.tagName) : null; })()`);
+          await phoneMenu();
+          await click('.menu.sess-menu [data-view="changes"]');
+          await waitFor(`(${drawerUp.toString()})(${sheet}, 'files')`, 4000);
+          await js(`window.__store.getState().openSettings({ section: 'general' })`);
+          await waitFor('!!document.querySelector(".modal.settings")', 3000);
+          await sleep(300);
+          const overSettings = [await hitAt(0.5), await hitAt(0.75)];
+          await shot('phone-settings-over-drawer');
+          await js('window.__store.setState({ settingsOpen: null })');
+          await sleep(300);
+          const drawerBack = await js(`(${drawerUp.toString()})(${sheet}, 'files') && getComputedStyle(document.querySelector('.rpanel')).visibility !== 'hidden'`);
+          await js('window.__store.setState({ paletteOpen: true })');
+          await waitFor('!!document.querySelector(".cmdk")', 3000);
+          await sleep(200);
+          const overPalette = [await hitAt(0.5), await hitAt(0.75)];
+          await js('window.__store.setState({ paletteOpen: false })');
+          await sleep(200);
+          check('phone, drawer up: the settings page and the palette take the taps (the middle of the screen and where the drawer is), the drawer comes back after', overSettings.every((h) => h === 'settings') && overPalette.every((h) => h === 'palette') && drawerBack, JSON.stringify({ overSettings, overPalette, drawerBack }));
+          // review 7 I2: going somewhere from inside the drawer puts it away — 任务's 定时任务 line opens the automation page on top
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'tasks' })`);
+          await waitFor(`(${drawerUp.toString()})(${sheet}, 'tasks') && !!document.querySelector('.dock-panel[data-panel="tasks"]:not([hidden]) .tasks-link')`, 4000);
+          await click('.dock-panel[data-panel="tasks"] .tasks-link');
+          const fromDrawer = await waitFor(`(() => { const p = document.querySelector('.auto-page'); return !!p && !p.hidden && p.dataset.tab === 'schedules' && !document.querySelector('.app').classList.contains('sheet-open'); })()`, 3000);
+          const hitPage = await js(`!!document.elementFromPoint(Math.round(innerWidth / 2), Math.round(innerHeight * 0.6))?.closest('.auto-page')`);
+          check('phone: 任务 → 定时任务 from inside the drawer opens the automation page and the drawer goes down (the page is what the tap reaches)', fromDrawer && hitPage, JSON.stringify({ fromDrawer, hitPage }));
+          await key('Escape');
+          await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000);
+          // a conversation on another machine keeps its views in place (its files are there): ··· → a view replaces the
+          // conversation, the header pill brings it back (review 7 M14). A copy of the seeded conversation, as if remote
+          const RID = 'peer_smokepeer~remote-1';
+          await js(`(() => { const st = window.__store.getState(); const o = st.open[${sidJs}]; const s = st.sessions.find((x) => x.sessionId === ${sidJs}); window.__store.setState({ open: { ...st.open, ${JSON.stringify(RID)}: { ...o, sessionId: ${JSON.stringify(RID)}, pending: [], state: 'history' } }, sessions: [...st.sessions, { ...s, sessionId: ${JSON.stringify(RID)}, title: 'smoke: 远端对话', peer: { id: 'smokepeer', name: '另一台电脑' } }] }); st.openInPane(${JSON.stringify(RID)}, 'replace'); })()`);
+          await waitFor(`!!document.querySelector('.pane.focused .sess-head')`, 3000);
+          await phoneMenu();
+          const remoteViews = await js(`[...document.querySelectorAll('.menu.sess-menu [data-view]')].map((b) => b.dataset.view)`);
+          await click('.menu.sess-menu [data-view="artifacts"]');
+          const inPlace = await waitFor('!!document.querySelector(".pane.focused .sh-view") && !!document.querySelector(".pane.focused .wb-body") && !document.querySelector(".app").classList.contains("sheet-open")', 3000);
+          await shot('phone-remote-in-place');
+          await click('.pane.focused .sh-view');
+          const pillBack = await waitFor('!!document.querySelector(".pane.focused .chat-tile .composer textarea") && !document.querySelector(".pane.focused .wb-body") && !document.querySelector(".pane.focused .sh-view")', 3000);
+          check('phone, a remote conversation: ··· lists only its views, a view opens in place (not the drawer), the header pill returns', remoteViews.length >= 1 && !remoteViews.includes('terminal') && inPlace && pillBack, JSON.stringify({ remoteViews, inPlace, pillBack }));
+          await js(`(() => { const st = window.__store.getState(); st.openInPane(${sidJs}, 'replace'); const open = { ...st.open }; delete open[${JSON.stringify(RID)}]; window.__store.setState({ open, sessions: st.sessions.filter((x) => x.sessionId !== ${JSON.stringify(RID)}) }); })()`);
+          await sleep(300);
           // the disconnect banner with the phone's drawer shut
           await js('window.__store.setState({ connected: false })');
           await waitFor(`!!${banner}`, 4000);
@@ -1476,6 +1540,10 @@ function driver() {
           await click('.auto-page .auto-head [data-new]');
           const form = await waitFor(`!!document.querySelector('.auto-page .auto-body[data-body="schedules"]:not([hidden]) .sched-view input, .auto-page .auto-body[data-body="schedules"]:not([hidden]) .sched-view textarea')`, 3000);
           check('自动化 → 新建 (定时任务) opens the form in the page', form);
+          // review 7 I4: the working directory is a 「项目」 choice (the current project first, 其它文件夹… to browse), and
+          // no row of the form sticks out of it
+          const sf = await js(`(() => { const f = document.querySelector('.auto-page .sched-form'); const p = f && f.querySelector('[data-id="sched-project"]'); if (!f || !p) return null; const fr = f.getBoundingClientRect(); const pr = p.getBoundingClientRect(); const over = [...f.querySelectorAll('input, select, textarea, button')].filter((e) => { const r = e.getBoundingClientRect(); return r.width && (r.right > fr.right + 1 || r.left < fr.left - 1); }).length; return { w: Math.round(pr.width), value: p.value, options: [...p.options].map((o) => o.textContent), over }; })()`);
+          check('新定时任务: 「项目」 is a dropdown (a project chosen, 其它文件夹… last), nothing sticks out of the form', !!sf && sf.w >= 150 && !!sf.value && sf.options[sf.options.length - 1] === '其它文件夹…' && sf.over === 0, JSON.stringify(sf));
           await shot('automation-new');
           // the main area goes elsewhere (a conversation from the sidebar): the page gets out of the way, stays mounted
           await click(`.sidebar .sb-list [data-sid=${SID}]`);
@@ -1497,6 +1565,35 @@ function driver() {
           check('Esc closes the page; from another tab 定时任务 is 2 clicks', escClosed && sched2 && clicks === 2, JSON.stringify({ escClosed, sched2, clicks }));
           await click('.auto-page .auto-head button[aria-label="关闭自动化"]');
           await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000);
+          // review 7 M1: Esc with the focus nowhere (on <body>, after a click on empty space) closes the page too, and
+          // the focus goes back to the conversation's composer (it was under the page)
+          await click('.sidebar [data-id="automation"]');
+          await waitFor(autoTab('schedules'), 3000);
+          await js('document.activeElement?.blur()');
+          const onBody = await js('document.activeElement === document.body');
+          await key('Escape');
+          const escBody = await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000);
+          const toComposer = await waitFor(`!!document.activeElement?.matches('.pane.focused .composer textarea')`, 2000);
+          check('Esc with the focus on <body> closes the automation page, the focus returns to the composer', onBody && escBody && toComposer, JSON.stringify({ onBody, escBody, toComposer, at: await js('document.activeElement?.className ?? null') }));
+          if (E.SMOKE_READONLY !== '1') {
+            // review 7 I3: keys meant for the tabs under the page do not act on them unseen — Alt+W with a terminal in
+            // front closes the page, the terminal (its shell) stays
+            await js(`window.__store.getState().openTile({ id: 'smoke-altw', kind: 'term', cwd: ${JSON.stringify(E.SMOKE_REPO || '')} }, 'tab')`);
+            await waitFor('!!document.querySelector(".pane.focused .xterm")', 8000);
+            await click('.sidebar [data-id="automation"]');
+            await waitFor(autoTab('schedules'), 3000);
+            wc.focus();
+            wc.sendInputEvent({ type: 'keyDown', keyCode: 'W', modifiers: ['alt'] });
+            wc.sendInputEvent({ type: 'keyUp', keyCode: 'W', modifiers: ['alt'] });
+            await sleep(500);
+            const tileIds = `(() => { const st = window.__store.getState(); const g = st.layout.groups.find((x) => x.id === st.layout.activeGroupId); return Object.values(g.panes).flatMap((p) => p.tiles.map((t) => t.id)); })()`;
+            const altW = { page: await js('document.querySelector(".auto-page")?.hidden === true'), tiles: await js(tileIds) };
+            check('Alt+W with the automation page over a terminal closes the page, not the terminal (review 7 I3)', altW.page && altW.tiles.includes('smoke-altw'), JSON.stringify(altW));
+            await js(`(() => { const st = window.__store.getState(); const g = st.layout.groups.find((x) => x.id === st.layout.activeGroupId); for (const p of Object.values(g.panes)) { const t = p.tiles.find((x) => x.id === 'smoke-altw'); if (t) st.dispatchLayout({ t: 'tile.close', paneId: p.id, tileId: t.id }); } })()`);
+            await sleep(300);
+            await js(`window.__store.getState().openInPane(${SID}, 'replace')`);
+            await sleep(300);
+          }
           // 任务 (right panel) keeps a link to them
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'tasks' })`);
           await waitFor(`!!document.querySelector('.dock:not([hidden]) .dock-panel[data-panel="tasks"]:not([hidden]) .tasks-link')`, 3000);
@@ -1656,8 +1753,10 @@ function driver() {
             check('其它电脑: 5 rows, 再显示 shows the rest and 收起; an offline machine is marked and read-only', peers.rows === 5 && peers.off && peers.offRow && peersMore.rows === 7 && peersMore.less, JSON.stringify({ peers, peersMore }));
             await harvest();
             await click('.sidebar [data-group="peer:smokepeer"] [data-id="less"]');
-            // the funnel lists the machines once there is another one
+            // the funnel lists the machines once there is another one (the list just shrank: let it settle first)
+            await sleep(300);
             await click('.sidebar [data-id="filter"]');
+            await waitFor('!!document.querySelector(".menu.sb-filter")', 2000);
             await harvest();
             check('funnel menu: 机器 once another machine has conversations', await exists('.menu.sb-filter [data-id="machine"]'));
             await closeMenus();
