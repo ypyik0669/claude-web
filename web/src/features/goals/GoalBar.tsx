@@ -46,17 +46,19 @@ function useSessionGoal(sessionId: string | undefined): GoalBarInfo | null {
 
 /**
  * 「目标：把 README 翻成英文 · 第 3 轮 · 查看」 on top of a conversation while a goal drives it (spec §5.3). 查看 is
- * `showPanel('goals')`, which decides where that is (the right panel; on a phone whatever it has for panels).
+ * `showPanel('goals')` (the right panel). A phone has no right panel yet, so there is no 查看 there — rather than a
+ * button that only says so (review M-5; phase 7 gives the phone somewhere to show a goal, then it comes back).
  */
 export function GoalBar({ sessionId }: { sessionId: string }) {
   const g = useSessionGoal(sessionId);
+  const phone = useStore((s) => s.mobile);
   if (!g) return null;
   return (
     <div className="goal-bar" role="status" data-goal={g.id}>
       <Icon name="goals" size={13} className="gb-ic" />
       <span className="gb-t" title={g.objective}>目标：{g.objective}</span>
       <span className="gb-r" title={`最多 ${g.maxTurns} 轮`}>第 {g.round} 轮</span>
-      <button className="gb-go" onClick={() => showPanel('goals')} title="查看目标的执行图、规格和证据">查看</button>
+      {!phone && <button className="gb-go" onClick={() => showPanel('goals')} title="查看目标的执行图、规格和证据">查看</button>}
     </div>
   );
 }
