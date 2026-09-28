@@ -4,7 +4,6 @@ import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { useOrch, waitingOf } from '@/features/orchestra/state';
 import { NO_SELECTION, SessionRow, StatusMark, openFromSidebar, type RowCtx } from './rows';
-import { showPanel } from './panels';
 import { dismissKey, needsYou, type AttentionItem, type OpenLike } from './status';
 import type { SectionId } from './entries';
 
@@ -49,13 +48,9 @@ function Item({ it, ctx, dismiss }: { it: AttentionItem; ctx: RowCtx; dismiss: (
   const error = useStore((s) => (it.kind === 'session' ? s.open[it.sessionId]?.error : undefined));
   if (it.kind === 'orch') {
     const w = it.wait;
-    // bring the orchestration panel into view first: `ask()` only toggles it when it is not a tab yet, so a tab that
-    // is hidden (Ctrl+J), minimized or behind another tab would get the intent and stay out of sight
-    // (a phone has no dock: showPanel says so in a toast, and no intent is left behind for later)
-    const go = () => {
-      showPanel('orchestra');
-      if (!useStore.getState().mobile) useOrch.getState().ask('open', w.runId);
-    };
+    // ask() brings the orchestration panel to the front (hidden, minimized or behind another tab) and opens the run;
+    // a phone has no right panel: a hint, and no request is left behind
+    const go = () => useOrch.getState().ask('open', w.runId);
     return (
       <div className="sess sb-row flat orch" role="button" tabIndex={0} title={`编排「${w.runName}」· ${w.kind === 'approval' ? '等你审批' : '候选跑完了，等你选一个合并'}`}
         onClick={go} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } }}>

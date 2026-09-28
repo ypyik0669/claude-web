@@ -7,8 +7,9 @@ import { PANELS, panelToggleEffect, type Dock, type PanelId } from '@/model/layo
 import { panelToggleLabel } from '@/ui/terms';
 import type { ReviewScope } from './review-model';
 import { WB_VIEWS, viewCommands, viewsFor, type WbView } from './wb-views';
+import { ACCOUNT_PANELS, AUTOMATION_PANELS } from '@/features/sidebar/entries';
 
-export type EntryVia = 'changesButton' | 'terminalButton' | 'toolDetail' | 'panelButton' | 'headerMore' | 'palette' | 'panelMore';
+export type EntryVia = 'changesButton' | 'terminalButton' | 'toolDetail' | 'panelButton' | 'headerMore' | 'palette' | 'panelMore' | 'sidebarAutomation' | 'accountMenu';
 
 /** Clicks from a conversation with the right panel closed. */
 export const ENTRY_CLICKS: Record<EntryVia, number> = {
@@ -19,7 +20,12 @@ export const ENTRY_CLICKS: Record<EntryVia, number> = {
   headerMore: 2, // the session header's ··· → an item
   palette: 2, // the sidebar's 搜索 (command palette) → an item; every panel is listed there
   panelMore: 3, // right-panel button → 「更多」 → an item (2 once the panel is open)
+  sidebarAutomation: 2, // the sidebar's 自动化 → 定时任务 / 目标 / 编排 (sidebar/entries.ts AUTOMATION_PANELS)
+  accountMenu: 2, // the sidebar's account row → 用量与账本 / 配置中心 (sidebar/entries.ts ACCOUNT_PANELS)
 };
+
+const SIDEBAR_AUTOMATION: readonly PanelId[] = Object.values(AUTOMATION_PANELS);
+const ACCOUNT_MENU: readonly PanelId[] = Object.values(ACCOUNT_PANELS);
 
 export const minClicks = (entries: EntryVia[]) => Math.min(...entries.map((e) => ENTRY_CLICKS[e]));
 
@@ -60,6 +66,8 @@ export function viewEntries(view: WbView, remote = false): EntryVia[] {
   const out: EntryVia[] = [];
   if (viewsFor(remote).some((v) => v.id === view)) out.push('headerMore');
   if (viewCommands(remote).some((c) => c.view === view)) out.push('palette');
+  // 自动化 → 定时任务 opens them wherever the conversation is (openSchedules: 任务 on a desktop, in place on a phone)
+  if (view === 'schedules') out.push('sidebarAutomation');
   return out;
 }
 
@@ -78,6 +86,8 @@ export function panelEntries(id: PanelId): EntryVia[] {
   if (id === 'files') out.push('changesButton');
   if (id === 'terminal') out.push('terminalButton');
   if (id === 'inspector') out.push('toolDetail');
+  if (SIDEBAR_AUTOMATION.includes(id)) out.push('sidebarAutomation');
+  if (ACCOUNT_MENU.includes(id)) out.push('accountMenu');
   // a panel a header ··· view opens (审阅, 文件, Issue 与 PR)
   if (WB_VIEWS.some((v) => { const t = viewTarget(v.id, { mobile: false, remote: false }); return t.to === 'panel' && t.panel === id; })) out.push('headerMore');
   return out;

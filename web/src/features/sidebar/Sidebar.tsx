@@ -18,20 +18,29 @@ import { FilterMenu, type SourceChip } from './filter-menu';
 import { AccountRow } from './account';
 import { DiscoveryHint } from './hint';
 import { Menu, closeDrawer } from './menus';
-import { showPanel } from './panels';
-import type { AutomationId, ProjectMenuId, ProjectsHeadId, RowId, SectionId, TopId } from './entries';
+import { openSchedules, showPanel } from '@/features/workbench/right-panel';
+import { AUTOMATION_PANELS, type AutomationId, type ProjectMenuId, type ProjectsHeadId, type RowId, type SectionId, type TopId } from './entries';
 
-/** 自动化 → the schedules, goals and orchestration panels (the full automation page comes with redesign phase 7). */
+/**
+ * 自动化 → the scheduled tasks, goals and orchestration (the full automation page comes with redesign phase 7), through
+ * the right panel's own entry points: `openSchedules()` (任务 with its scheduled tasks unfolded; on a phone the current
+ * conversation's in-place view, or a hint) and `showPanel()` (a phone says there is no right panel). The phone drawer
+ * closes only when something opened.
+ */
 function AutomationMenu({ onClose }: { onClose: () => void }) {
   const schedules = useStore((s) => s.schedules);
   const orchFull = useOrch((s) => s.full);
   const orchWaiting = useMemo(() => waitingOf(orchFull).length, [orchFull]);
-  const go = (p: 'tasks' | 'goals' | 'orchestra') => () => { onClose(); showPanel(p); if (!useStore.getState().mobile || p === 'tasks') closeDrawer(); };
+  const go = (x: AutomationId) => () => {
+    onClose();
+    const shown = x === 'schedules' ? openSchedules() : showPanel(AUTOMATION_PANELS[x]);
+    if (shown) closeDrawer();
+  };
   const id = (x: AutomationId) => x;
   const on = schedules.filter((s) => s.enabled).length;
   return (
     <Menu onClose={onClose} className="sb-auto-menu" align="left" label="自动化">
-      <button data-id={id('schedules')} onClick={go('tasks')}><Icon name="tasks" size={14} /><span className="grow"><span className="l">定时任务</span><span className="d">按时间自动开对话、跑提示词</span></span>{schedules.length > 0 && <span className="n">{on}/{schedules.length}</span>}</button>
+      <button data-id={id('schedules')} onClick={go('schedules')}><Icon name="tasks" size={14} /><span className="grow"><span className="l">定时任务</span><span className="d">按时间自动开对话、跑提示词</span></span>{schedules.length > 0 && <span className="n">{on}/{schedules.length}</span>}</button>
       <button data-id={id('goals')} onClick={go('goals')}><Icon name="goals" size={14} /><span className="grow"><span className="l">目标</span><span className="d">定一个目标，让 Claude 一轮轮做到完成</span></span></button>
       <button data-id={id('orchestra')} onClick={go('orchestra')}><Icon name="orchestra" size={14} /><span className="grow"><span className="l">编排</span><span className="d">多个 Agent 分工、审批、比选</span></span>{orchWaiting > 0 && <span className="n need">{orchWaiting} 等你</span>}</button>
     </Menu>

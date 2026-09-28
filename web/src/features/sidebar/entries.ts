@@ -2,6 +2,7 @@
 // `satisfies` at compile time) — and where each entry point of the old sidebar went (spec 2026-09-28 §4.2).
 // entries.test.ts checks the table itself (every old entry resolves, every id has a reason); only
 // scripts/ui-smoke.cjs proves the ids are rendered: it parses PLACES and must find every id in its place in the DOM.
+import type { PanelId } from '@/model/layout';
 
 /** Top: brand row + three navigation rows. */
 export const TOP = ['collapse', 'new', 'search', 'automation'] as const;
@@ -34,6 +35,14 @@ export type RowMenuId = (typeof ROW_MENU)[number];
 export type RowId = (typeof ROW)[number];
 export type AccountId = (typeof ACCOUNT)[number];
 export type HintId = (typeof HINT)[number];
+
+/**
+ * The right-panel panels the sidebar opens — 自动化 → 定时任务 (任务, its scheduled tasks unfolded) / 目标 / 编排, the
+ * account popover → 用量 / 配置中心. The menus read these; `workbench/panel-entries.ts` counts them as the sidebar's
+ * 2-click entries (`sidebarAutomation` / `accountMenu`), so both tables use the same ids.
+ */
+export const AUTOMATION_PANELS = { schedules: 'tasks', goals: 'goals', orchestra: 'orchestra' } as const satisfies Record<AutomationId, PanelId>;
+export const ACCOUNT_PANELS = { usage: 'usage', config: 'config' } as const satisfies Partial<Record<AccountId, PanelId>>;
 
 export const PLACES = {
   top: TOP, automation: AUTOMATION, section: SECTIONS, head: PROJECTS_HEAD, filter: FILTER,

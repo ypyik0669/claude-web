@@ -1262,7 +1262,19 @@ function driver() {
           await harvest();
           await click('.menu.sb-auto-menu [data-id="goals"]');
           check('自动化 → 目标 shows the goals panel', await waitFor(`(() => { const d = window.__store.getState().layout.dock; return d.open && d.active === 'goals'; })()`, 3000));
-          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+          const dockClosed = `window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`;
+          await js(dockClosed);
+          await sleep(300);
+          // 自动化 → 定时任务: from a closed right panel, two clicks to the list (任务, its scheduled tasks unfolded; openSchedules)
+          let clicks = 0;
+          const counted = async (sel) => { clicks++; return click(sel); };
+          await counted('.sidebar [data-id="automation"]');
+          await counted('.menu.sb-auto-menu [data-id="schedules"]');
+          const schedVisible = `(() => { const v = document.querySelector('.dock:not([hidden]) .dock-panel[data-panel="tasks"]:not([hidden]) .sched-view'); return !!v && v.getBoundingClientRect().height > 0; })()`;
+          const sched = await waitFor(schedVisible, 4000);
+          check('自动化 → 定时任务 shows the scheduled-task list, in 2 clicks', sched && clicks === 2, await js(`JSON.stringify({ clicks: ${clicks}, dock: window.__store.getState().layout.dock, toasts: [...document.querySelectorAll('.toast')].map((t) => t.textContent) })`));
+          await js(dockClosed);
+          await sleep(300);
           // the account row: quota, today's spend, usage & ledger, the config panel, appearance, shortcuts, palette
           await click('.sidebar [data-id="account"]');
           const acc = await ids('.menu.sb-acct-menu [data-id]');
@@ -1270,6 +1282,17 @@ function driver() {
           await harvest();
           await shot('sidebar-account');
           await closeMenus();
+          // 账户 → 用量与账本 / 配置中心: two clicks to that right-panel tab
+          for (const [item, label] of [['usage', '用量与账本'], ['config', '配置中心']]) {
+            await js(dockClosed);
+            await sleep(300);
+            await click('.sidebar [data-id="account"]');
+            await click(`.menu.sb-acct-menu [data-id="${item}"]`);
+            const shown = await waitFor(`(() => { const d = window.__store.getState().layout.dock; return d.open && d.active === '${item}' && !!document.querySelector('.dock:not([hidden]) .dock-panel[data-panel="${item}"]:not([hidden])'); })()`, 4000);
+            check(`账户 → ${label} shows that right-panel tab (2 clicks)`, shown, await js('JSON.stringify(window.__store.getState().layout.dock)'));
+          }
+          await js(dockClosed);
+          await sleep(300);
           // the conversation menu (right-click = ···): every session action, by capability
           await ctxMenu(`.sidebar .sb-list [data-sid=${SID}]`);
           await sleep(300);

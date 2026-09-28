@@ -9,8 +9,8 @@ import { modKey } from '@/features/workbench/shortcuts';
 import { Menu, closeDrawer } from './menus';
 import { QuotaWindows, UsageRing } from './UsageRing';
 import { accountName, planLabel, todayCost } from './status';
-import type { AccountId } from './entries';
-import { showPanel } from './panels';
+import { ACCOUNT_PANELS, type AccountId } from './entries';
+import { showPanel } from '@/features/workbench/right-panel';
 
 /**
  * Today's spend for the account popover: `ledger.list` parses the whole ledger file on the server, so one answer is
@@ -57,7 +57,7 @@ export function AccountRow({ open, setOpen }: { open: boolean; setOpen(v: boolea
           <span className="sub">{connected ? <UsageRing tip={false} fallbackPlan={auth?.subscriptionType} /> : <span className="conn-off">连接断开，正在重连…</span>}</span>
         </span>
       </button>
-      <button className="icon-btn" data-id={id('settings')} title={`设置 (${modKey}+,) · 右键：在右侧面板打开配置中心`} aria-label="设置" onClick={settings} onContextMenu={(e) => { e.preventDefault(); showPanel('config'); closeDrawer(); }}>
+      <button className="icon-btn" data-id={id('settings')} title={`设置 (${modKey}+,) · 右键：在右侧面板打开配置中心`} aria-label="设置" onClick={settings} onContextMenu={(e) => { e.preventDefault(); if (showPanel(ACCOUNT_PANELS.config)) closeDrawer(); }}>
         <Icon name="settings" size={16} />
       </button>
       {open && <AccountMenu auth={auth} name={who.name} onClose={() => setOpen(false)} />}
@@ -94,8 +94,8 @@ function AccountMenu({ auth, name, onClose }: { auth: AccountAuth | null; name: 
         <span className="v">{today ? fmtCost(today.cost, today.unknown) : '…'}</span>
       </div>
       <div className="menu-sep" />
-      <button data-id={id('usage')} onClick={act(() => showPanel('usage'))}><Icon name="usage" size={14} /> 用量与账本</button>
-      <button data-id={id('config')} onClick={act(() => showPanel('config'))}><Icon name="config" size={14} /> 配置中心（右侧面板）</button>
+      <button data-id={id('usage')} onClick={act(() => showPanel(ACCOUNT_PANELS.usage))}><Icon name="usage" size={14} /> 用量与账本</button>
+      <button data-id={id('config')} onClick={act(() => showPanel(ACCOUNT_PANELS.config))}><Icon name="config" size={14} /> 配置中心（右侧面板）</button>
       <button data-id={id('appearance')} onClick={act(() => st().openSettings({ section: 'appearance' }))}><Icon name="sun" size={14} /> 外观与主题…</button>
       <button data-id={id('shortcuts')} onClick={act(() => useStore.setState({ shortcutsOpen: true }))}><Icon name="keyboard" size={14} /> 键盘快捷键<span className="k">?</span></button>
       <button data-id={id('palette')} onClick={act(() => useStore.setState({ paletteOpen: true }))}><Icon name="command" size={14} /> 命令面板<span className="k">{modKey} K</span></button>
