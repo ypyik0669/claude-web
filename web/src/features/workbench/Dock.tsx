@@ -22,6 +22,7 @@ import { FilesView } from './FilesView';
 import { MORE_PANELS } from './panel-entries';
 import { Popover } from '@/features/composer/Popover';
 import { useRightPanel } from './right-panel';
+import { countText, panelColumnWidth, rowStacked, tempsFolded, type RowMeasure } from './tab-row';
 import { modKey } from './shortcuts';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 
@@ -64,7 +65,7 @@ function BoardPanel({ visible }: { visible: boolean }) {
 
 function PanelContent({ id, visible, host }: { id: PanelId; visible: boolean; host: PanelHost }) {
   switch (id) {
-    case 'tasks': return <TasksPanel />;
+    case 'tasks': return <TasksPanel inDock={host === 'dock'} />;
     case 'files': return <ReviewView visible={visible} inDock={host === 'dock'} />;
     case 'explorer': return <FilesView visible={visible} inDock={host === 'dock'} />;
     case 'usage': return <UsagePanel />;
@@ -80,17 +81,43 @@ function PanelContent({ id, visible, host }: { id: PanelId; visible: boolean; ho
   }
 }
 
-/** The default right panel's 「更多」 menu: the extra-tier panels, opened as temporary tabs (spec §5.6). */
-function MoreMenu({ mounted }: { mounted: PanelId[] }) {
+const NONE: PanelId[] = [];
+
+/**
+ * The default right panel's 「更多」 menu: the extra-tier panels, opened as temporary tabs (spec §5.6). When the row has
+ * no room for the temporary strip (`tab-row.ts`), the open temporary tabs are here too, on top — switch to one or
+ * close it — and the button says how many there are (and is marked while one of them is in front).
+ */
+function MoreMenu({ mounted, open: temps, active, onPick, onClose }: { mounted: PanelId[]; open: PanelId[]; active: PanelId | null; onPick: (id: PanelId) => void; onClose: (id: PanelId) => void }) {
   const dispatch = useStore((s) => s.dispatchLayout);
   const [open, setOpen] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
   const close = useCallback((refocus: boolean) => { setOpen(false); if (refocus) btn.current?.focus(); }, []);
+  const front = !!active && temps.includes(active);
+  const names = temps.map((id) => PANEL_TITLES[id]).join('、');
+  const title = temps.length ? `更多面板 · 已打开：${names}` : '更多面板：目标、编排、用量、Issue 与 PR…';
   return (
     <>
-      <button ref={btn} className={clsx('icon-btn dock-more', open && 'active')} title="更多面板：目标、编排、用量、Issue 与 PR…" aria-label="更多面板" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}><Icon name="plus" size={15} /></button>
+      <button ref={btn} className={clsx('icon-btn dock-more', (open || front) && 'active')} title={title} aria-label={temps.length ? `更多面板（已打开 ${temps.length} 个）` : '更多面板'} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Icon name="plus" size={15} />
+        {temps.length > 0 && <span className="dock-more-n" aria-hidden>{temps.length}</span>}
+      </button>
       {open && (
         <Popover anchor={btn} onClose={close} prefer="down" align="right" className="dock-more-menu" label="更多面板">
+          {temps.length > 0 && (
+            <>
+              <div className="menu-label">已打开</div>
+              {temps.map((id) => (
+                <div key={id} className="dock-more-open" data-open={id}>
+                  <button role="menuitemradio" aria-checked={active === id} data-mi data-panel={id} onClick={() => { onPick(id); setOpen(false); }}>
+                    <Icon name={PANEL_ICONS[id]} size={14} /><span className="grow">{PANEL_TITLES[id]}</span>{active === id && <Icon name="check" size={13} />}
+                  </button>
+                  <button className="x" role="menuitem" data-mi title={`关闭${PANEL_TITLES[id]}`} aria-label={`关闭${PANEL_TITLES[id]}`} onClick={() => { onClose(id); if (temps.length <= 1) setOpen(false); }}><Icon name="close" size={12} /></button>
+                </div>
+              ))}
+              <div className="menu-sep" />
+            </>
+          )}
           <div className="menu-label">在右侧面板打开</div>
           {MORE_PANELS.map((p) => (
             <button key={p.id} role="menuitem" data-mi data-panel={p.id} onClick={() => { dispatch({ t: 'dock.show', panel: p.id }); setOpen(false); }}>
@@ -105,12 +132,6 @@ function MoreMenu({ mounted }: { mounted: PanelId[] }) {
   );
 }
 
-/** The caption buttons of the desktop app on Windows / Linux: styles.css gives the right panel's tab row this much
- *  room on its right (`html.desktop:not(.mac) … .dock-tabs { padding-right: 150px }`). */
-const CAPTION_W = 150;
-/** What a row of temporary tabs gets at least before the tab row moves below the caption buttons. */
-const MIN_TEMPS = 72;
-
 /**
  * Right-hand dock (the 右侧面板): one tab row, one visible panel.
  *
@@ -119,9 +140,10 @@ const MIN_TEMPS = 72;
  * mock's inspector); with 「显示工作台工具」 the pre-redesign dock — every panel an icon tab that can be closed,
  * dragged into a pane, and a minimise-to-rail button.
  *
- * The fixed tabs never scroll: only the temporary tabs do, in their own strip with fading edges and arrows. On the
- * desktop app (Windows / Linux) the row shares the top 40px with the window's caption buttons; when the fixed tabs
- * and the buttons do not fit beside them the row moves below them (`stacked`).
+ * The fixed tabs never scroll: only the temporary tabs do, in their own strip with fading edges and arrows — or, with
+ * no room for a strip, listed in 「更多」. On the desktop app (Windows / Linux) the row shares the top 40px with the
+ * window's caption buttons; only when the fixed tabs and the buttons themselves do not fit beside them does the row
+ * move below them (`stacked`; the decisions and their numbers are in `tab-row.ts`).
  *
  * There is exactly ONE render branch for the bodies. Minimising collapses the column to an icon rail with CSS and
  * hides the panel bodies — it must never unmount them, or the terminal loses its pty and xterm buffer and every form
@@ -135,12 +157,14 @@ export function Dock() {
   const workbench = useStore((s) => workbenchOn(s.settings));
   const dispatch = useStore((s) => s.dispatchLayout);
   const reviewCount = useRightPanel((s) => s.reviewCount);
+  const sidebarOpen = useStore((s) => s.sidebarOpen);
+  const sbWidth = useStore((s) => s.layout.sidebar.width);
   const drag = useRef<{ x0: number; w0: number; id: number } | null>(null);
   const row = useRef<HTMLDivElement>(null);
   const fixedRef = useRef<HTMLDivElement>(null);
   const ctlRef = useRef<HTMLSpanElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  const [stacked, setStacked] = useState(false);
+  const [place, setPlace] = useState({ stacked: false, folded: false });
   const [fade, setFade] = useState({ l: false, r: false });
   const view = dockView(dock, { workbench, inspect: !!inspect });
   const { tabs, active, mounted } = view;
@@ -148,6 +172,10 @@ export function Dock() {
   const temps = tabs.filter((t) => !t.fixed);
   const min = dock.minimized;
   const shown = dock.open;
+  const simple = !workbench && !min;
+  const stacked = simple && place.stacked;
+  // no room for a strip: the temporary tabs are listed in 「更多」 (default look only; workbench tabs are icons)
+  const folded = simple && place.folded && temps.length > 0;
 
   // the temporary strip's edges fade (and get an arrow) while there is more to scroll to on that side
   const updateFade = () => {
@@ -164,33 +192,43 @@ export function Dock() {
       else if (t.offsetLeft + t.offsetWidth > l.scrollLeft + l.clientWidth) l.scrollLeft = t.offsetLeft + t.offsetWidth - l.clientWidth;
     }
     updateFade();
-  }, [active, temps.length, dock.open, dock.minimized, workbench, stacked]);
+  }, [active, temps.length, dock.open, dock.minimized, workbench, stacked, folded]);
 
-  // the desktop app's caption buttons: does the row fit beside them? (only the fixed tabs' and the buttons' natural
-  // widths and the row's width count — none of which change when the row moves down, so it never flips back and forth)
+  // where the row goes (`tab-row.ts`): from the column's final width (the grid clamp, not the width in the middle of
+  // the opening transition) and the natural widths of the fixed tabs (the count has a fixed room) and the buttons —
+  // none of which change with the temporary tabs, the count, or the row moving down, so it does not jump
   useLayoutEffect(() => {
     const r = row.current;
-    if (!r) return;
+    if (!r || !simple || !shown) return;
     let raf = 0;
     const measure = () => {
       const root = document.documentElement;
       const caption = root.classList.contains('desktop') && !root.classList.contains('mac');
-      let next = false;
-      if (caption && !workbench && shown && !min) {
-        const pl = parseFloat(getComputedStyle(r).paddingLeft) || 0;
-        const need = (fixedRef.current?.scrollWidth ?? 0) + (temps.length ? MIN_TEMPS : 0) + (ctlRef.current?.offsetWidth ?? 0) + 16;
-        next = need > r.clientWidth - pl - CAPTION_W;
-      }
-      setStacked(next);
+      const cs = getComputedStyle(r);
+      const m: RowMeasure = {
+        row: panelColumnWidth({ dock: dock.width, viewport: window.innerWidth, sidebar: sidebarOpen ? sbWidth : 0 }) - 1,
+        padLeft: parseFloat(cs.paddingLeft) || 0,
+        fixed: fixedRef.current?.getBoundingClientRect().width ?? 0,
+        controls: ctlRef.current?.getBoundingClientRect().width ?? 0,
+        gaps: 2 * (parseFloat(cs.columnGap) || 0),
+      };
+      setPlace((cur) => {
+        const s = rowStacked(cur.stacked, m, caption);
+        const f = tempsFolded(m, { stacked: s, caption });
+        return cur.stacked === s && cur.folded === f ? cur : { stacked: s, folded: f };
+      });
       updateFade();
     };
     measure();
-    const ro = new ResizeObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(measure); });
+    const again = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(measure); };
+    const ro = new ResizeObserver(again);
     ro.observe(r);
     if (fixedRef.current) ro.observe(fixedRef.current);
+    if (ctlRef.current) ro.observe(ctlRef.current);
     if (list.current) ro.observe(list.current);
-    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
-  }, [workbench, shown, min, temps.length, !!mounted.length]);
+    window.addEventListener('resize', again);
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); window.removeEventListener('resize', again); };
+  }, [simple, shown, !!mounted.length, temps.length > 0, folded, dock.width, sidebarOpen, sbWidth]);
 
   // hidden (Ctrl+J / the header's right-panel button) is CSS too: closing the panel must not end the terminal's pty
   if (!mounted.length) return null;
@@ -251,7 +289,8 @@ export function Dock() {
     >
       <span className="ic"><Icon name={PANEL_ICONS[id]} size={15} /></span>
       <span className="t">{PANEL_TITLES[id]}</span>
-      {!workbench && id === 'files' && reviewCount > 0 && <span className="n" aria-label={`${reviewCount} 个文件`}>{reviewCount}</span>}
+      {/* always there in the default look, with a fixed two-digit room: 0 → 3 → 12 files must not move the row */}
+      {!workbench && id === 'files' && <span className="n" aria-label={reviewCount > 0 ? `${reviewCount} 个文件` : undefined} title={reviewCount > 99 ? `${reviewCount} 个文件` : undefined}>{countText(reviewCount)}</span>}
       {!isFixed && <button className="x" title="关闭" aria-label={`关闭${PANEL_TITLES[id]}`} onClick={(e) => { e.stopPropagation(); close(id); }}><Icon name="close" size={11} /></button>}
     </div>
   );
@@ -262,17 +301,19 @@ export function Dock() {
       <div className={clsx('dock-tabs', stacked && 'stacked')} ref={row}>
         <div className="dock-tabgroups" role="tablist" aria-label={TERMS.dock}>
           {fixed.length > 0 && <div className="dock-fixed" ref={fixedRef}>{fixed.map(tab)}</div>}
-          {fixed.length > 0 && temps.length > 0 && <span className="dock-sep" aria-hidden />}
+          {fixed.length > 0 && temps.length > 0 && !folded && <span className="dock-sep" aria-hidden />}
           {/* only the temporary tabs scroll; the menus hang in <body>, so nothing here clips them */}
-          <div className={clsx('dock-temps', fade.l && 'fade-l', fade.r && 'fade-r')}>
-            {fade.l && <button className="dock-scroll l" tabIndex={-1} aria-hidden title="向左滚动" onClick={() => scrollTemps(-1)}><Icon name="chevronLeft" size={12} /></button>}
-            <div className="dock-tablist" ref={list} onScroll={updateFade} onWheel={onWheel}>{temps.map(tab)}</div>
-            {fade.r && <button className="dock-scroll r" tabIndex={-1} aria-hidden title="向右滚动" onClick={() => scrollTemps(1)}><Icon name="chevronRight" size={12} /></button>}
-          </div>
+          {!folded && (
+            <div className={clsx('dock-temps', fade.l && 'fade-l', fade.r && 'fade-r')}>
+              {fade.l && <button className="dock-scroll l" tabIndex={-1} aria-hidden title="向左滚动" onClick={() => scrollTemps(-1)}><Icon name="chevronLeft" size={12} /></button>}
+              <div className="dock-tablist" ref={list} onScroll={updateFade} onWheel={onWheel}>{temps.map(tab)}</div>
+              {fade.r && <button className="dock-scroll r" tabIndex={-1} aria-hidden title="向右滚动" onClick={() => scrollTemps(1)}><Icon name="chevronRight" size={12} /></button>}
+            </div>
+          )}
         </div>
         <span className="grow" />
         <span className="dock-ctl" ref={ctlRef}>
-          {!workbench && !min && <MoreMenu mounted={mounted} />}
+          {simple && <MoreMenu mounted={mounted} open={folded ? temps.map((t) => t.id) : NONE} active={active} onPick={pick} onClose={close} />}
           {(workbench || min) && (
             <button className="icon-btn" title={min ? `还原${TERMS.dock} (${modKey}+Shift+J)` : `最小化 (${modKey}+Shift+J)`} onClick={() => dispatch({ t: 'dock.set', patch: { minimized: !min } })}>
               <Icon name={min ? 'restore' : 'minimize'} size={16} />

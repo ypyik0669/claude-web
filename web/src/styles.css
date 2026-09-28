@@ -1498,18 +1498,30 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:
 .dock.min .dock-scroll, .dock.min .dock-tabs .tab .n { display: none; }
 .dock.simple:not(.min) .dock-tabs { padding: 0 8px 0 12px; overflow: visible; }
 .app:has(.workbench.gb) .dock.simple:not(.min) .dock-tabs { min-height: var(--h-head); }
-/* the desktop app (Windows / Linux) when the fixed tabs and the buttons do not fit beside the caption buttons: the
-   row moves below them (Dock's `stacked`) instead of pushing tabs out of sight */
+/* the desktop app (Windows / Linux) when the fixed tabs and the buttons themselves do not fit beside the caption
+   buttons (a panel under ~430px): the row moves below them (Dock's `stacked`, tab-row.ts) instead of pushing tabs out
+   of sight. Temporary tabs never cause it: they scroll, or fold into 「更多」 */
 html.desktop:not(.mac) .app.dock-open .dock:not(.min) .dock-tabs.stacked { padding-right: 8px; padding-top: 40px; }
 .dock.simple:not(.min) .dock-tabs .tab { height: 30px; padding: 0 10px; font-size: var(--fs-base); border: 0; box-shadow: none; }
+/* beside the caption buttons every pixel counts: the default 440px panel at 1440 fits the four tabs + buttons */
+html.desktop:not(.mac) .dock.simple:not(.min) .dock-tabs .tab.fixed { padding: 0 8px; }
 .dock.simple:not(.min) .dock-tabs .tab .ic { display: none; }
 .dock.simple:not(.min) .dock-tabs .tab.active { background: var(--layer-selected); color: var(--ink-1); font-weight: 500; }
 .dock.simple:not(.min) .dock-tabs .tab:not(.fixed) { padding-right: 6px; }
 .dock-tabs .tab .n { font-size: var(--fs-meta); color: var(--ink-4); font-weight: 400; font-variant-numeric: tabular-nums; }
+/* 审阅's count has a fixed two-digit room (empty for 0; 99+ spills into the tab's padding): the tab is as wide with
+   0, 3 or 12 files, so loading, switching conversation or committing never moves the row */
+.dock.simple:not(.min) .dock-tabs .tab .n { display: inline-block; width: 2ch; margin-left: -2px; text-align: left; white-space: nowrap; overflow: visible; }
+/* the temporary tabs folded into 「更多」: the button says how many */
+.dock-more { position: relative; }
+.dock-more-n { position: absolute; top: 1px; right: 0; min-width: 13px; height: 13px; padding: 0 3px; border-radius: var(--r-pill); background: var(--surface-2); box-shadow: 0 0 0 1px var(--edge-default); color: var(--ink-1); font-size: var(--fs-micro); line-height: 13px; text-align: center; font-variant-numeric: tabular-nums; pointer-events: none; }
 /* right-panel menus are the composer's Popover (features/composer/Popover.tsx, `.menu.cm`, fixed in <body>) */
 .menu.cm.dock-more-menu { min-width: 240px; max-width: min(260px, calc(100vw - 16px)); }
 .menu.cm.rv-more-menu { min-width: 280px; }
 .dock-more-menu .grow { flex: 1; min-width: 0; }
+.dock-more-open { display: flex; align-items: center; gap: 2px; }
+.menu.cm .dock-more-open > button[data-panel] { flex: 1; min-width: 0; }
+.menu.cm .dock-more-open > button.x { flex: none; width: 28px; justify-content: center; padding: 5px 0; }
 .dock-panel[data-panel="files"], .dock-panel[data-panel="explorer"] { overflow: hidden; }
 
 /* 审阅 */
