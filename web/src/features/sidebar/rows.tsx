@@ -69,6 +69,8 @@ export interface RowCtx {
   /** the sidebar's one open menu (`row:<where>:<id>`, `filter`, `auto`, `account`, `proj:<id>`), or null */
   menu: string | null;
   setMenu(v: string | null): void;
+  /** close the menu `key` if it is still the open one */
+  closeMenu(key: string): void;
   sel: Selection;
   expanded: ReadonlySet<string>;
   toggleKids(id: string): void;
@@ -124,7 +126,7 @@ export function SessionRow({ s, ctx, depth = 0, flat = false, pip = false }: { s
   const meta = useStore((st) => st.sessionMeta[s.sessionId]);
   const tag = ctx.tagFor(s);
   const st = useRowStatus(s, tag);
-  const { sel, menu, setMenu } = ctx;
+  const { sel, menu, setMenu, closeMenu } = ctx;
   const id = s.sessionId;
   const key = rowMenuKey(ctx.where, id);
   const checked = sel.on && sel.ids.has(id);
@@ -170,7 +172,7 @@ export function SessionRow({ s, ctx, depth = 0, flat = false, pip = false }: { s
       {s.peer && <span className="peer-tag" title={`在机器「${s.peer.name}」上${s.peer.offline ? '（离线）' : ''}`}>{s.peer.name}</span>}
       <StatusMark st={st} />
       {!sel.on && <button className="more" title="更多" aria-label="更多" onClick={(e) => { e.stopPropagation(); setMenu(menu === key ? null : key); }}><Icon name="more" size={14} /></button>}
-      {menu === key && <SessionMenu s={s} onClose={() => setMenu(null)} extra={<SidebarMenuExtra s={s} onClose={() => setMenu(null)} />} />}
+      {menu === key && <SessionMenu s={s} onClose={() => closeMenu(key)} extra={<SidebarMenuExtra s={s} onClose={() => closeMenu(key)} />} />}
     </div>
   );
 }

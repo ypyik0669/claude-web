@@ -52,15 +52,22 @@ const busyIds = (s: ReturnType<typeof useStore.getState>) =>
   Object.values(s.open).filter((o) => o.state === 'running' || o.state === 'starting' || o.state === 'waiting' || o.pending.length).map((o) => o.sessionId).sort().join('|');
 
 /**
- * Esc ends multi-select only when it is meant for the sidebar: focus in the sidebar (or nowhere), nothing above it
- * (command palette, settings, a dialog, the shortcuts sheet, an image viewer, any menu) and nobody handled it yet.
- * Runs in the capture phase, before those overlays close themselves on the same key.
+ * What takes an Esc before the sidebar's multi-select: a menu of the sidebar's own, and what can sit over the sidebar
+ * (a dialog or the shortcuts sheet, the command palette, the model menu, the directory menu). A menu elsewhere — a
+ * group bar / tab strip / dock-rail menu that only closes on mouse-leave — is not in the way.
+ */
+const OVER_SIDEBAR = '.sidebar .menu, .modal-bg, .palette-bg, .menu.mm, .menu.dirmenu';
+
+/**
+ * Esc ends multi-select only when it is meant for the sidebar: focus in the sidebar (or nowhere) and nothing of
+ * OVER_SIDEBAR open (nor the settings page / an image viewer). Runs in the capture phase on window — before anything
+ * else sees the key, so before those overlays close themselves on it — and only reads, never stops the event.
  */
 function escForSidebar(e: KeyboardEvent): boolean {
-  if (e.key !== 'Escape' || e.defaultPrevented) return false;
+  if (e.key !== 'Escape') return false;
   const st = useStore.getState();
   if (st.paletteOpen || st.settingsOpen || st.shortcutsOpen || st.viewer) return false;
-  if (document.querySelector('.modal-bg, .palette-bg, .menu')) return false;
+  if (document.querySelector(OVER_SIDEBAR)) return false;
   const a = document.activeElement;
   return !a || a === document.body || !!a.closest('.sidebar');
 }
@@ -96,7 +103,8 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const [machine, setMachine] = useState<string>('all');
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const toggleMenu = (k: string) => (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); setMenu((m) => (m === k ? null : k)); };
-  const closeMenu = () => setMenu(null);
+  // a menu closes only itself: a late close from the one being replaced must not shut the one that just opened
+  const closeMenu = useCallback((k: string) => setMenu((m) => (m === k ? null : m)), []);
 
   const ql = q.trim();
   const visible = useMemo(() => filterSessions(sessions, { source: sourceFilter, query: q, showArchived, meta: sessionMeta, machine }), [sessions, sessionMeta, showArchived, q, sourceFilter, machine]);
@@ -184,7 +192,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const allArchived = selected.length > 0 && selected.every((s) => isArchived(s, sessionMeta));
 
   const ctx: RowCtx = {
-    where: 'list', menu, setMenu, sel, expanded,
+    where: 'list', menu, setMenu, closeMenu, sel, expanded,
     toggleKids: (id) => setExpanded((e) => { const n = new Set(e); if (n.has(id)) n.delete(id); else n.add(id); return n; }),
     tagFor: (s) => { const k = agentOf(s); return k === 'claude' ? null : nameOf(k); },
   };
@@ -219,7 +227,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         <button className="nav" data-id={top('search')} title="搜索对话、命令和设置" onClick={() => { useStore.setState({ paletteOpen: true }); closeDrawer(); }}><Icon name="search" size={16} />搜索<span className="k">{modKey} K</span></button>
         <div className="nav-anchor">
           <button className={clsx('nav', menu === 'auto' && 'on')} data-id={top('automation')} aria-haspopup="menu" aria-expanded={menu === 'auto'} onClick={toggleMenu('auto')}><Icon name="tasks" size={16} />自动化</button>
-          {menu === 'auto' && <AutomationMenu onClose={closeMenu} />}
+          {menu === 'auto' && <AutomationMenu onClose={() => closeMenu('auto')} />}
         </div>
       </nav>
       <NeedsYou ctx={ctx} />
@@ -255,12 +263,12 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
               </button>
               {menu === 'filter' && (
                 <FilterMenu
-                  onClose={closeMenu}
+                  onClose={() => closeMenu('filter')}
                   query={q} setQuery={setQ}
                   sources={chips} counts={counts} total={total} source={sourceFilter} setSource={(k: AgentKind | 'all') => setSourceFilter(k)}
                   machines={machines} machine={machine} setMachine={setMachine} showMachines={showMachines}
                   showArchived={showArchived} setShowArchived={(v) => useStore.setState({ showArchived: v })}
-                  onSelect={() => { setSelecting(true); closeMenu(); }}
+                  onSelect={() => { setSelecting(true); closeMenu('filter'); }}
                 />
               )}
             </span>
@@ -289,7 +297,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
                   <button className="icon-btn xs" data-id={pm('new-here')} title="在这里新建对话" aria-label="在这里新建对话" onClick={() => { void useStore.getState().openSession({ cwd: w.path }).catch((e) => toast(e.message)); closeDrawer(); }}><Icon name="edit" size={13} /></button>
                   <button className="icon-btn xs" title="更多" aria-label="项目菜单" aria-haspopup="menu" aria-expanded={menu === mk} onClick={projMenu}><Icon name="more" size={14} /></button>
                 </>}
-                menu={menu === mk ? <ProjectMenu w={w} onClose={closeMenu} /> : undefined}
+                menu={menu === mk ? <ProjectMenu w={w} onClose={() => closeMenu(mk)} /> : undefined}
               />
             );
           })}
@@ -349,7 +357,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         )}
       </div>
       {pending.length > 0 && <DiscoveryHint pending={pending} />}
-      <AccountRow open={menu === 'account'} setOpen={(v) => setMenu(v ? 'account' : null)} />
+      <AccountRow open={menu === 'account'} setOpen={(v) => (v ? setMenu('account') : closeMenu('account'))} />
     </>
   );
 }
