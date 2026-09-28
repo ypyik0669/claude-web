@@ -208,9 +208,11 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     for (const s of visible) {
       if (sessionMeta[s.sessionId]?.pinned) continue;
       if (s.peer) { (byPeer.get(s.peer.id) ?? byPeer.set(s.peer.id, []).get(s.peer.id)!).push(s); continue; }
-      const w = sorted.find((x) => isWithin(s.cwd ?? '', x.path)); // segment-bounded: /proj/app must not swallow /proj/app2
+      // orchestration worktrees live outside the repo: group them with the run's own directory
+      const cwd = sessionMeta[s.sessionId]?.groupCwd ?? s.cwd ?? '';
+      const w = sorted.find((x) => isWithin(cwd, x.path)); // segment-bounded: /proj/app must not swallow /proj/app2
       const m = w ? byWs : other;
-      const k = w ? w.id : s.cwd || '(未知目录)';
+      const k = w ? w.id : cwd || '(未知目录)';
       (m.get(k) ?? m.set(k, []).get(k)!).push(s);
     }
     return { byWs, other: [...other.entries()].sort((a, b) => b[1][0].lastModified - a[1][0].lastModified), peers: [...byPeer.entries()] };

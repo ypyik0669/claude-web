@@ -44,6 +44,8 @@ import { handleAgentConfig, isAgentConfigRequest } from '../agent-config/handler
 
 import type { FederationService } from '../federation/service.js';
 import type { IncomingMessage } from 'node:http';
+import type { OrchestraService } from '../orchestra/service.js';
+import { handleOrchestra, isOrchestraRequest } from '../orchestra/handlers.js';
 
 export interface Services {
   /** Unified session library: every joined source's sessions (sessions.list / search / library.*). */
@@ -53,6 +55,8 @@ export interface Services {
 
   /** Cross-machine sessions: routes peer_… requests / merges lists before handle(); optional (tests). */
   federation?: FederationService;
+  /** Multi-agent orchestration (workflows / runs); requests routed by orchestra/handlers.ts */
+  orchestra: OrchestraService;
   git: GitService;
   search: SearchService;
   skills: SkillsService;
@@ -120,6 +124,8 @@ export class Hub {
     s.gateway.on('changed', () => this.broadcast({ kind: 'gateway.changed' }));
 
     s.federation?.on('event', (e: ServerEvent) => this.broadcast(e, true));
+    s.orchestra.on('changed', (run, removed) => this.broadcast({ kind: 'orchestra.changed', run, removed }));
+    s.orchestra.on('workflows', () => this.broadcast({ kind: 'orchestra.workflows.changed' }));
   }
 
   /** `fromPeer`: re-broadcast of another machine's event — local clients only (two machines peering each other would echo forever). */
@@ -173,6 +179,7 @@ export class Hub {
   private async handle(req: ClientRequest, ws: WebSocket): Promise<unknown> {
     const s = this.s;
     if (isAgentConfigRequest(req)) return handleAgentConfig(s.agentConfig, req);
+    if (isOrchestraRequest(req)) return handleOrchestra(s.orchestra, req);
     switch (req.kind) {
       case 'sessions.list': {
         const all = await s.library.list();

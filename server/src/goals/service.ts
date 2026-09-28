@@ -36,8 +36,8 @@ export class GoalService extends EventEmitter {
 
   private async save(g: Goal) { g.updatedAt = Date.now(); await this.meta.setGoal(g); this.emit('changed'); }
 
-  async create(p: { objective: string; spec?: string; cwd: string; maxTurns?: number; tokenBudget?: number | null; agent?: string; permissionMode?: string; model?: string }): Promise<Goal> {
-    const g: Goal = { id: randomBytes(5).toString('hex'), objective: p.objective.trim(), spec: p.spec ?? '', cwd: p.cwd, status: 'draft', turnsExecuted: 0, maxTurns: p.maxTurns ?? 50, tokensUsed: 0, tokenBudget: p.tokenBudget ?? null, createdAt: Date.now(), updatedAt: Date.now(), steps: [], evidence: [], agent: p.agent || undefined, permissionMode: p.permissionMode, model: p.model };
+  async create(p: { objective: string; spec?: string; cwd: string; maxTurns?: number; tokenBudget?: number | null; agent?: string; permissionMode?: string; model?: string; sessionId?: string }): Promise<Goal> {
+    const g: Goal = { id: randomBytes(5).toString('hex'), objective: p.objective.trim(), spec: p.spec ?? '', cwd: p.cwd, status: 'draft', turnsExecuted: 0, maxTurns: p.maxTurns ?? 50, tokensUsed: 0, tokenBudget: p.tokenBudget ?? null, createdAt: Date.now(), updatedAt: Date.now(), steps: [], evidence: [], agent: p.agent || undefined, permissionMode: p.permissionMode, model: p.model, sessionId: p.sessionId };
     await this.save(g);
     return g;
   }
@@ -91,6 +91,8 @@ export class GoalService extends EventEmitter {
     const tryOnce = (n: number) => {
       if (r.state === 'closed' || r.state === 'error') return;
       if (r.state === 'starting' && n < 200) { setTimeout(() => tryOnce(n + 1), 250); return; }
+      // paused / completed / removed while the session was starting: the prompt must not go out anymore
+      if (this.get(goalId)?.status !== 'active') return;
       r.send(text);
       this.turnTools.set(goalId, 0);
     };

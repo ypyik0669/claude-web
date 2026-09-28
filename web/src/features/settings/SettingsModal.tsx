@@ -77,6 +77,7 @@ export function useSections(): Section[] {
       { id: 'autoContinueOnReset', label: '额度恢复后自动继续', hint: '被限流时到重置时间自动重发上一条', keywords: 'rate limit quota 限流 额度', render: () => <Toggle k="autoContinueOnReset" /> },
       { id: 'ui.defaultMode', label: '新会话默认权限模式', keywords: 'permission mode 权限', render: () => <Select k="ui.defaultMode" def="default" options={[{ id: 'default', l: '每次询问' }, { id: 'acceptEdits', l: '自动接受编辑' }, { id: 'plan', l: '计划模式' }, { id: 'auto', l: '自动模式' }, { id: 'bypassPermissions', l: '完全权限' }]} /> },
       { id: 'ui.softwareRender', label: '软件渲染（桌面版）', hint: '显卡驱动异常导致黑屏 / 闪烁时打开，重启后生效', keywords: 'gpu render 黑屏 闪烁 disable-gpu', render: () => <Toggle k="ui.softwareRender" /> },
+      { id: 'orchestra.maxParallel', label: '编排并发上限', hint: '一次编排运行里同时执行的任务 / 比选节点数（审批等待不占名额）', keywords: 'orchestra workflow parallel 编排 并发 多 agent', render: () => <NumberSelect k="orchestra.maxParallel" def={3} options={[1, 2, 3, 4, 6, 8]} /> },
     ] },
     { id: 'engine', l: '引擎与账号', ic: 'settings', keywords: 'engine ccb claude login 登录 doctor 更新', body: () => <Overview /> },
     { id: 'providers', l: '供应商 / 环境', ic: 'cloud', keywords: 'provider api key base url 供应商 中转 env 环境变量 openai gemini', body: () => <><ProviderProfiles /><EnvEditor /></> },

@@ -7,6 +7,8 @@ export type * from './agent-config/types.js';
 
 export * from './federation/types.js';
 import type { PeerEvent, PeerRequest, SessionPeer } from './federation/types.js';
+import type { OrchestraEvent, OrchestraRequest } from './orchestra/types.js';
+export * from './orchestra/types.js';
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
 // `ultra` is Codex-only (its own enum member). `ultracode` is NOT here on purpose: in Claude Code it is a
@@ -194,7 +196,7 @@ export interface AttachmentRef { kind: 'image' | 'text' | 'file' | 'folder'; nam
 export interface MessageFeedback { rating: 'up' | 'down' | null; note?: string; at: number }
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
-export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string }
+export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string }
 export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; cron?: string; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string; freshSession?: boolean; lastError?: string; runs?: number }
 export interface LimitWindow { label: string; percent: number; resetsAt: string | null; active: boolean; severity?: string }
 // ---- remote access / phones / IM (phase 6) ----
@@ -461,6 +463,8 @@ export type ClientRequest =
   | GatewayRequest
   // ---- other agents' configuration center (phase 17) ----
   | AgentConfigRequest
+  // ---- multi-agent orchestration ----
+  | OrchestraRequest
 
   // ---- cross-machine sessions (federation) ----
   | PeerRequest;
@@ -494,8 +498,8 @@ export type ServerEvent =
   // a library mutation (join / leave / rename / archive / delete / fork) — refetch sessions.list
   | { kind: 'library.changed' }
   | GatewayEvent
-
-  | PeerEvent;
+  | PeerEvent
+  | OrchestraEvent;
 
 // ---------- phase 3: files / search / git ----------
 export interface FsEntry { name: string; dir: boolean; size?: number; mtime?: number; symlink?: boolean }

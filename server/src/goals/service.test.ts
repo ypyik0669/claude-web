@@ -30,6 +30,32 @@ describe('GoalService', () => {
     expect(svc.get(g.id)!.sessionId).toBe('s1');
   });
 
+  it('a prompt waiting for a starting session is dropped if the goal stopped being active meanwhile (N4)', async () => {
+    vi.useFakeTimers();
+    try {
+      const g = await svc.create({ objective: 'x', cwd: 'C:/p' });
+      await svc.start(g.id);
+      const r = pool.runners.get('s1')!;
+      r.state = 'starting';
+      await vi.advanceTimersByTimeAsync(10);
+      r.sent = [];
+      await svc.start(g.id); // queues another send while still starting
+      await svc.pause(g.id);
+      r.state = 'idle';
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(r.sent).toEqual([]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('create can adopt an already-open session', async () => {
+    const pre = pool.open({ cwd: 'C:/p' });
+    const g = await svc.create({ objective: 'x', cwd: 'C:/p', sessionId: pre.sessionId });
+    await svc.start(g.id);
+    await tick();
+    expect(pool.opened).toHaveLength(1);
+    expect(pre.sent[0]).toContain(GOAL_PROTOCOL);
+  });
+
   it('harvests steps and evidence, auto-continues on GOAL_STATUS: continue, completes on complete', async () => {
     vi.useFakeTimers();
     try {

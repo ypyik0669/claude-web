@@ -2,14 +2,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { EventEmitter } from 'node:events';
-import type { GatewayGroup, Goal, ImBinding, ImGatewayConfig, MessageFeedback, Provider, RemoteHost, Schedule, ScheduleRun } from '../protocol.js';
+import type { GatewayGroup, Goal, ImBinding, ImGatewayConfig, MessageFeedback, Provider, RemoteHost, Schedule, ScheduleRun, Workflow } from '../protocol.js';
 import type { DeviceRecord } from '../remote/service.js';
 import type { PeerRecord } from '../federation/types.js';
 import { randomBytes } from 'node:crypto';
 export type { Schedule } from '../protocol.js';
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
-export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string }
+export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string }
 
 interface Data {
   version: 1;
@@ -31,6 +31,7 @@ interface Data {
 
   peers?: PeerRecord[]; // other machines this one federates with (tokens enc:)
   serverId?: string; // this server's stable id (federation loop guard)
+  workflows?: Workflow[]; // orchestration templates (runs live in <dataDir>/orchestra/)
 }
 
 const defaultFile = () => path.join(process.env.CLAUDE_WEB_DIR ?? path.join(os.homedir(), '.claude-web'), 'meta.json');
@@ -229,6 +230,9 @@ export class MetaStore extends EventEmitter {
   goals(): Goal[] { return this.data.goals ??= []; }
   async setGoal(g: Goal) { const list = this.goals(); const i = list.findIndex((x) => x.id === g.id); if (i >= 0) list[i] = g; else list.push(g); await this.queueSave(true); }
   async removeGoal(id: string) { this.data.goals = this.goals().filter((g) => g.id !== id); await this.queueSave(true); }
+  workflows(): Workflow[] { return this.data.workflows ??= []; }
+  async setWorkflow(w: Workflow) { const list = this.workflows(); const i = list.findIndex((x) => x.id === w.id); if (i >= 0) list[i] = w; else list.push(w); await this.queueSave(true); }
+  async removeWorkflow(id: string) { this.data.workflows = this.workflows().filter((w) => w.id !== id); await this.queueSave(true); }
   imBindings(): ImBinding[] { return this.data.imBindings ??= []; }
   async setImBinding(b: ImBinding) { this.data.imBindings = [...this.imBindings().filter((x) => !(x.gatewayId === b.gatewayId && x.chatId === b.chatId)), b]; await this.queueSave(true); }
   async removeImBinding(gatewayId: string, chatId: string) { this.data.imBindings = this.imBindings().filter((x) => !(x.gatewayId === gatewayId && x.chatId === chatId)); await this.queueSave(true); }
