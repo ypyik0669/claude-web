@@ -76,6 +76,12 @@ export const SIMPLIFIED_NOTICE = `界面已简化；需要分屏 / 标签 / 面�
 
 /** A panel toggle on a phone, where the right panel is not drawn (spec §5.11; the bottom drawer comes in phase 7). */
 export const PHONE_NO_PANEL = `手机上没有${TERMS.dock}：改动 / Git / 文件在对话右上角的 ··· 里`;
+/** `openSchedules()` on a phone with no conversation open (with one, the list opens in its place). */
+export const PHONE_SCHEDULES_NO_CHAT = '手机上的定时任务在对话右上角的 ··· 里：先打开一个对话';
+/** `openSchedules()` on a phone whose current conversation is on another machine (its ··· has no scheduled tasks). */
+export const PHONE_SCHEDULES_REMOTE = '这个对话在另一台机器上：打开一个本机的对话，再从右上角的 ··· 打开定时任务';
+/** 详情 (a tool row, an attachment chip) on a phone: no right panel; a step opens in place in the conversation. */
+export const PHONE_NO_INSPECTOR = `手机上没有${TERMS.dock}：点对话里的这一步就能展开它的输入和结果`;
 
 /**
  * Palette / rail label for toggling a right-panel tab, from what the toggle will do (`panelToggleEffect`): the

@@ -10,18 +10,20 @@ import { useRightPanel } from '@/features/workbench/right-panel';
 import { Icon } from '@/ui/icons';
 export { SchedulesView as Schedules };
 
+/** The last `openSchedules()` request applied (a module value: a remounted fold must not replay an old one). */
 let appliedSchedules = 0;
 
 /**
  * The scheduled tasks, folded at the bottom of 任务 in the default UI (spec §5.6: they move to the automation page
- * later) — the same with or without a conversation; `openSchedules()` (right-panel.ts) unfolds it.
+ * later) — the same with or without a conversation; `openSchedules()` (right-panel.ts) unfolds it. Only the right
+ * panel's copy (`inDock`) takes the request: a 任务 tile in a pane (workbench mode) must not swallow it.
  */
-function SchedulesFold() {
+function SchedulesFold({ inDock }: { inDock: boolean }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const ask = useRightPanel((s) => s.schedules);
   useEffect(() => {
-    if (!ask || ask <= appliedSchedules) return;
+    if (!inDock || !ask || ask <= appliedSchedules) return;
     appliedSchedules = ask;
     setOpen(true);
     requestAnimationFrame(() => box.current?.scrollIntoView({ block: 'nearest' }));
@@ -41,7 +43,7 @@ function SchedulesFold() {
  * tree and its latest TodoWrite plan. The scheduled tasks list sits on top only with 「显示工作台工具」 (as before
  * the redesign); by default it is folded at the bottom — with or without a conversation.
  */
-export function TasksPanel() {
+export function TasksPanel({ inDock = true }: { inDock?: boolean }) {
   const active = useScopedSession();
   const workbench = useStore((s) => workbenchOn(s.settings));
   const { agents, plan } = useMemo(() => {
@@ -59,7 +61,7 @@ export function TasksPanel() {
       <div className="list tasks-panel">
         {workbench && <SchedulesView compact />}
         <div className="empty">打开一个对话后，这里显示它的子代理、后台任务和计划。</div>
-        {!workbench && <SchedulesFold />}
+        {!workbench && <SchedulesFold inDock={inDock} />}
       </div>
     );
   }
@@ -111,7 +113,7 @@ export function TasksPanel() {
         ))}
         {!agents.length && !tasks.length && <div className="empty">这个对话还没有子代理或后台任务。Claude 派出子代理、在后台跑命令之后会出现在这里。</div>}
       </div>
-      {!workbench && <SchedulesFold />}
+      {!workbench && <SchedulesFold inDock={inDock} />}
     </div>
   );
 }

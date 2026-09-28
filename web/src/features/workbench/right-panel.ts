@@ -4,8 +4,8 @@
 import { create } from 'zustand';
 import { parsePeerId } from '@shared';
 import { useStore } from '@/store';
-import { currentChatTile, type PanelId } from '@/model/layout';
-import { PHONE_NO_PANEL } from '@/ui/terms';
+import { currentChatTile, workbenchOn, type PanelId } from '@/model/layout';
+import { PHONE_NO_PANEL, PHONE_SCHEDULES_NO_CHAT, PHONE_SCHEDULES_REMOTE } from '@/ui/terms';
 import { viewTarget, type ExplorerMode, type ReviewIntent } from './panel-entries';
 import type { WbView } from './wb-views';
 
@@ -45,9 +45,28 @@ export function openExplorer(mode: ExplorerMode): void {
   if (showPanel('explorer')) useRightPanel.setState({ explorer: { mode, n: ++seq } });
 }
 
-/** 任务 with its scheduled tasks unfolded (they sit folded at its bottom in the default UI). */
-export function openSchedules(): void {
-  if (showPanel('tasks')) useRightPanel.setState({ schedules: ++seq });
+/**
+ * The scheduled tasks (定时任务; the sidebar's automation entry and the like). Returns whether they are on screen.
+ *  - desktop, default look: 任务 with its scheduled tasks unfolded (they sit folded at its bottom);
+ *  - desktop, 「显示工作台工具」: 任务 — its list is already on top, so no request is left behind (one would unfold
+ *    the fold later, when the setting is turned off);
+ *  - phone (no right panel): the current conversation shows them in place (its ··· view); with no conversation, or
+ *    one on another machine, a hint that says how to get there, and `false`.
+ */
+export function openSchedules(): boolean {
+  const s = useStore.getState();
+  if (s.mobile) {
+    const cur = currentChatTile(s.layout);
+    const tile = cur && s.layout.groups.flatMap((g) => g.panes[cur.paneId]?.tiles ?? []).find((t) => t.id === cur.tileId);
+    const sid = tile?.kind === 'chat' ? tile.sessionId : null;
+    if (!cur || !sid) { s.toast(PHONE_SCHEDULES_NO_CHAT); return false; }
+    if (parsePeerId(sid)) { s.toast(PHONE_SCHEDULES_REMOTE); return false; }
+    openSessionView('schedules', cur);
+    return true;
+  }
+  if (!showPanel('tasks')) return false;
+  if (!workbenchOn(s.settings)) useRightPanel.setState({ schedules: ++seq });
+  return true;
 }
 
 /**

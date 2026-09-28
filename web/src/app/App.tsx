@@ -20,6 +20,7 @@ import { installOrchestra } from '@/features/orchestra/state';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { chromeVisibility, workbenchOn } from '@/model/layout';
 import { MOBILE_QUERY } from '@/ui/viewport';
+import { PHONE_NO_INSPECTOR } from '@/ui/terms';
 
 /** Width of the right panel minimized to its icon rail. */
 const MIN_RAIL = 36;
@@ -97,9 +98,16 @@ export function App() {
   }, [theme, sideSurface]);
 
   // asking to inspect a tool call must bring 详情 to the front of the right panel — also when it is already a tab
-  // behind another one (otherwise the detail button on a tool row does nothing visible); a phone says where it is
+  // behind another one (otherwise the detail button on a tool row does nothing visible). A phone has no right panel:
+  // a file (an attachment chip, Alt+click on a path) opens in place like a plain click on a path; a step says it
+  // expands where it is (the tool rows there have no 详情 button); either way the request is dropped
   useEffect(() => {
-    if (inspect) showPanel('inspector');
+    if (!inspect) return;
+    if (!useStore.getState().mobile) { showPanel('inspector'); return; }
+    const st = useStore.getState();
+    if (inspect.file) st.openTile({ id: `d${Date.now().toString(36)}`, kind: 'doc', path: inspect.file.path, line: inspect.file.line }, 'tab');
+    else st.toast(PHONE_NO_INSPECTOR);
+    useStore.setState({ inspect: null });
   }, [inspect]);
 
   // desktop shell: menu accelerators arrive as commands; notifications click → focus session
