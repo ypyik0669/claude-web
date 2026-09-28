@@ -39,3 +39,19 @@ describe('Memo keep predicate', () => {
     expect((await m.get('k', good)).n).toBe(3); // kept
   });
 });
+
+describe('Memo force', () => {
+  it('force skips a settled result but joins a run already in flight', async () => {
+    const m = new Memo<number>(60_000);
+    let n = 0;
+    const slow = () => new Promise<number>((r) => setTimeout(() => r(++n), 20));
+    const first = m.get('k', slow);
+    const forced = m.get('k', slow, true); // while the first run is still going: the same run
+    expect(await first).toBe(1);
+    expect(await forced).toBe(1);
+    expect(n).toBe(1);
+    expect(await m.get('k', slow, true)).toBe(2); // settled: force asks again
+    const [a, b] = await Promise.all([m.get('k', slow, true), m.get('k', slow, true)]);
+    expect([a, b, n]).toEqual([3, 3, 3]); // two forced callers at once still share one run
+  });
+});

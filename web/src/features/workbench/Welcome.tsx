@@ -18,10 +18,12 @@ function EngineStatus() {
   const togglePanel = useStore((s) => s.togglePanel);
   const [auth, setAuth] = useState<any>(null);
   const [checking, setChecking] = useState(false);
-  // mount: the server's shared answer; 重新检查 / coming back to the window (after a /login elsewhere): a fresh one
+  // mount: the server's shared answer; 重新检查: a fresh one; coming back to the window (after a /login
+  // elsewhere): a fresh one only while it says "not logged in" and there is no provider profile to use instead
   const checker = useMemo(() => authChecker({
     request: (force) => { setChecking(true); return ws.request<any>({ kind: 'config.auth', force }).finally(() => setChecking(false)); },
     onResult: setAuth,
+    recheckOnFocus: (last) => (last as { loggedIn?: boolean } | null)?.loggedIn === false && useStore.getState().providers.length === 0,
     focusGapMs: 30_000,
   }), []);
   useEffect(() => {

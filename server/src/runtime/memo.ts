@@ -9,9 +9,10 @@ export class Memo<T> {
   private entries = new Map<string, { p: Promise<T>; settledAt: number | null }>();
   constructor(private ttlMs: number, private now: () => number = Date.now, private opts: { keep?: (v: T) => boolean } = {}) {}
 
+  /** `force` skips a settled result, but still joins a run that is in flight (it is as fresh as a new one). */
   get(key: string, fn: () => Promise<T>, force = false): Promise<T> {
     const e = this.entries.get(key);
-    if (!force && e && (e.settledAt === null || this.now() - e.settledAt < this.ttlMs)) return e.p;
+    if (e && (e.settledAt === null || (!force && this.now() - e.settledAt < this.ttlMs))) return e.p;
     const entry: { p: Promise<T>; settledAt: number | null } = { p: undefined as unknown as Promise<T>, settledAt: null };
     const drop = () => { if (this.entries.get(key) === entry) this.entries.delete(key); };
     entry.p = fn().then(
