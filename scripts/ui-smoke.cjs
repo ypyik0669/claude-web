@@ -424,8 +424,9 @@ function driver() {
           await shot(`settings-${s.id}-${t}`);
         }
       }
-      // 更多选项 on every page that has one: it opens without an error boundary, and the page then shows exactly the
-      // parts the catalog lists (a part drawn by the wrong component shows up as another data-body, or not at all)
+      // 更多选项 on every page that has one: it opens without an error boundary, and the page lays out the parts the
+      // catalog lists, in and out of 更多选项. `data-body` is written by the page from the catalog, so this says nothing
+      // about which component draws a part — that is wording.test.ts (the BODIES table)
       const shownParts = `[...document.querySelectorAll('.modal.settings .sp-main [data-body]')].filter((e) => !e.closest('[hidden]')).map((e) => e.dataset.body).sort().join(',')`;
       const moreRows = `[...document.querySelectorAll('.modal.settings .sp-more-body:not([hidden]) [data-entry]')].map((e) => e.dataset.entry).sort().join(',')`;
       for (const s of inv.sections) {
@@ -534,6 +535,53 @@ function driver() {
         check('Esc closes the settings: no key reached the composer, focus is back in it, nothing left inert', !back.open && back.kd === 0 && back.focus && back.inert === 0 && back.ta === 'abc', JSON.stringify(back));
         await js(`document.querySelector(${JSON.stringify(ta)}).removeEventListener('keydown', window.__cwKdFn, true)`);
         wc.selectAll(); wc.delete(); await sleep(300);
+
+        // a menu left open when the page opens is closed (portalled to <body>, it would float over the page)
+        phase = 'settings:menus';
+        const ctrl = async (k) => { wc.sendInputEvent({ type: 'keyDown', keyCode: k, modifiers: ['control'] }); wc.sendInputEvent({ type: 'keyUp', keyCode: k, modifiers: ['control'] }); await sleep(300); };
+        const menusLeft = [];
+        for (const [chip, menu] of [['.welcome .dirpick', '.menu.dirmenu'], ['.welcome .mm-anchor > button.chip', '.menu.mm']]) {
+          await click(chip);
+          const opened = await waitFor(`!!document.querySelector(${JSON.stringify(menu)})`, 3000);
+          await ctrl(',');
+          await waitFor('!!document.querySelector(".modal.settings.sp")', 3000);
+          const still = await js(`!!document.querySelector(${JSON.stringify(menu)})`);
+          if (!opened || still) menusLeft.push(`${menu} ${opened ? 'still open' : 'did not open'}`);
+          await js('window.__store.setState({ settingsOpen: null })');
+          await sleep(300);
+        }
+        check('opening settings closes a menu left open (directory menu, model menu)', !menusLeft.length, menusLeft.join(' ; '));
+        // Esc with a search typed and the focus nowhere (<body>) still only clears the search
+        phase = 'settings:esc-body';
+        await ctrl(',');
+        await waitFor('!!document.querySelector(".modal.settings.sp")', 3000);
+        wc.insertText('托盘');
+        await sleep(300);
+        await js('document.activeElement && document.activeElement.blur()');
+        const onBody = await js('document.activeElement === document.body');
+        await key('Escape');
+        const bodyEsc = await js(`({ open: !!document.querySelector('.modal.settings.sp'), q: document.querySelector('.sp-search input')?.value })`);
+        check('Esc with a search typed and the focus on <body> only clears the search', onBody && bodyEsc.open && bodyEsc.q === '', JSON.stringify({ onBody, ...bodyEsc }));
+        // the command palette over the page: Esc closes the palette only
+        phase = 'settings:palette';
+        await ctrl('K');
+        const pal = await waitFor('!!document.querySelector(".palette-bg")', 3000);
+        await key('Escape');
+        const afterPal = await js(`({ palette: !!document.querySelector('.palette-bg'), open: !!document.querySelector('.modal.settings.sp') })`);
+        check('the command palette opened over settings: Esc closes only the palette', pal && !afterPal.palette && afterPal.open, JSON.stringify({ pal, ...afterPal }));
+        // nodes inserted while the page is open are covered too: Ctrl+B twice swaps the sidebar for a placeholder and back
+        phase = 'settings:swap';
+        const sbState = `({ open: window.__store.getState().sidebarOpen, sb: [...document.querySelectorAll('.app > .sidebar')].map((e) => (e.classList.contains('has-resizer') ? 'column' : 'placeholder') + (e.hasAttribute('inert') ? ':inert' : '')) })`;
+        const swap0 = await js(sbState);
+        await ctrl('B');
+        const swap1 = await js(sbState);
+        await ctrl('B');
+        const swap2 = await js(sbState);
+        const swapped = swap1.open !== swap0.open && swap2.open === swap0.open && [swap1, swap2].every((x) => x.sb.length === 1 && x.sb[0].endsWith(':inert')) && swap1.sb[0] !== swap2.sb[0];
+        check('while settings are open, the sidebar node swapped in by Ctrl+B (twice) is inert both times', swapped, JSON.stringify({ swap0, swap1, swap2 }));
+        await key('Escape');
+        const clean = await js(`({ open: !!document.querySelector('.modal.settings'), inert: document.querySelectorAll('.app [inert]').length })`);
+        check('closing settings after that leaves nothing inert', !clean.open && clean.inert === 0, JSON.stringify(clean));
       }
 
       // ---- every dock panel
@@ -663,6 +711,11 @@ function driver() {
           await sleep(200);
           const phoneFocus = await js('document.activeElement === document.querySelector(".modal.settings.sp")');
           check('phone: settings open from the sidebar, the page itself takes the focus (no keyboard pops up)', settings && phoneFocus, JSON.stringify({ settings, phoneFocus }));
+          wc.sendInputEvent({ type: 'keyDown', keyCode: 'B', modifiers: ['control'] });
+          wc.sendInputEvent({ type: 'keyUp', keyCode: 'B', modifiers: ['control'] });
+          await sleep(400);
+          const noDrawer = await js(`({ open: window.__store.getState().sidebarOpen, drawer: document.querySelector('.app').classList.contains('drawer-open') })`);
+          check('phone: Ctrl+B with settings open does not bring the drawer over the page', !noDrawer.open && !noDrawer.drawer, JSON.stringify(noDrawer));
           // settings at phone width (≤ 600px): the page list first, a page replaces it, 全部设置 brings the list back
           win.setContentSize(480, 860);
           await sleep(600);
