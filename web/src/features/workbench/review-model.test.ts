@@ -2,7 +2,7 @@
 // button, and splitting a commit's patch per file.
 import { describe, expect, it } from 'vitest';
 import type { GitFileStatus, GitStatus } from '@shared';
-import { bulkTargets, commitPlan, diffRequest, joinPath, relToRoot, reviewRows, scopeCounts, splitPath, splitUnifiedByFile, unifiedStat } from './review-model';
+import { bulkTargets, commitPlan, diffRequest, discardConfirm, joinPath, relToRoot, reviewRows, scopeCounts, splitPath, splitUnifiedByFile, stageAllConfirm, unifiedStat } from './review-model';
 
 const f = (path: string, patch: Partial<GitFileStatus> = {}): GitFileStatus => ({ path, status: 'modified', staged: false, unstaged: true, ...patch });
 const status = (files: GitFileStatus[], root: string | null = 'C:\\w\\repo'): GitStatus => ({ root, branch: 'main', upstream: null, ahead: 0, behind: 0, detached: false, files, stashes: 0, state: 'clean' });
@@ -150,10 +150,62 @@ describe('bulk actions and the commit button', () => {
     expect(bulkTargets(rows)).toEqual({ stage: ['m.ts'], discard: ['m.ts'], unstage: [] });
   });
 
-  it('提交: commits what is staged; with nothing staged it offers to stage everything first', () => {
-    expect(commitPlan(st)).toBe('commit');
-    expect(commitPlan(status([f('m.ts')]))).toBe('stageAll');
-    expect(commitPlan(status([]))).toBe('none');
-    expect(commitPlan(null)).toBe('none');
+  it('a staged rename / copy is only unstaged, never 还原d (checkout HEAD finds nothing at the new path)', () => {
+    const rows = reviewRows('uncommitted', { status: status([f('new.ts', { status: 'renamed', from: 'old.ts', staged: true, unstaged: false }), f('cp.ts', { status: 'copied', staged: true, unstaged: true })]) });
+    const t = bulkTargets(rows);
+    expect(t.discard).toEqual([]);
+    expect(t.unstage.sort()).toEqual(['cp.ts', 'new.ts']);
+    for (const r of rows) expect(bulkTargets([r]).discard).toEqual([]);
+  });
+
+  it('提交: commits what is staged; with nothing staged it offers to stage 全部暂存’s files first', () => {
+    expect(commitPlan(status([f('m.ts'), f('s.ts', { staged: true, unstaged: false })]))).toMatchObject({ kind: 'commit', staged: 1 });
+    expect(commitPlan(status([f('m.ts')]))).toMatchObject({ kind: 'stageAll', stage: ['m.ts'], untracked: 0 });
+    expect(commitPlan(status([]))).toMatchObject({ kind: 'none' });
+    expect(commitPlan(null)).toMatchObject({ kind: 'none' });
+  });
+
+  it('提交 with untracked files around: they are staged too, and counted for the question', () => {
+    const plan = commitPlan(status([f('m.ts'), f('new.ts', { status: 'untracked' }), f('tmp.log', { status: 'untracked' })]));
+    expect(plan).toMatchObject({ kind: 'stageAll', untracked: 2 });
+    expect(plan.stage.sort()).toEqual(['m.ts', 'new.ts', 'tmp.log']);
+    const q = stageAllConfirm(plan);
+    expect(q.message).toMatch(/3 个文件/);
+    expect(q.message).toMatch(/2 个是没有提交过的新文件/);
+    expect(q.items?.sort()).toEqual(['m.ts', 'new.ts', 'tmp.log']);
+  });
+
+  it('提交 with a conflicted file: nothing is offered (git add would mark it resolved with its markers in it)', () => {
+    // a cherry-pick / stash pop stopped on a conflict: nothing staged, only the conflict (+ an untracked file)
+    const plan = commitPlan(status([f('c.ts', { status: 'conflict' }), f('u.ts', { status: 'untracked' })]));
+    expect(plan).toMatchObject({ kind: 'conflicts', conflicts: 1, stage: [] });
+    // staged files alongside a conflict: still not committable (git refuses unmerged files)
+    expect(commitPlan(st)).toMatchObject({ kind: 'conflicts', conflicts: 1, staged: 2 });
+  });
+});
+
+describe('the 还原 confirmation says what is lost', () => {
+  const rows = (files: GitFileStatus[]) => reviewRows('uncommitted', { status: status(files) });
+
+  it('bulk: names the files (8 at most + a count), staged changes, changes not made by this conversation, permanent deletion', () => {
+    const many = rows(Array.from({ length: 11 }, (_, i) => f(`f${String(i).padStart(2, '0')}.ts`, i === 0 ? { staged: true } : i === 1 ? { status: 'untracked' } : {})));
+    const c = discardConfirm(many, 'uncommitted');
+    expect(c.title).toBe('还原 11 个文件？');
+    expect(c.items).toHaveLength(9);
+    expect(c.items![0]).toBe('f00.ts');
+    expect(c.items![8]).toBe('…等 11 个文件');
+    expect(c.message).toMatch(/包括已暂存的改动/);
+    expect(c.message).toMatch(/不只是这个对话做的改动/);
+    expect(c.message).toMatch(/永久删除（不进回收站）/);
+    expect(c.message).toMatch(/不能撤销/);
+  });
+
+  it('one file: a new file is deleted for good; a staged one loses its staged changes; the conversation scope warns about other changes', () => {
+    expect(discardConfirm(rows([f('n.ts', { status: 'untracked' })]), 'uncommitted').message).toMatch(/永久删除（不进回收站）/);
+    const staged = discardConfirm(rows([f('s.ts', { staged: true, unstaged: true })]), 'uncommitted');
+    expect(staged.title).toBe('还原 s.ts？');
+    expect(staged.message).toMatch(/已暂存的改动也会一起丢掉/);
+    expect(discardConfirm(rows([f('m.ts')]), 'session').message).toMatch(/不只是这个对话做的/);
+    expect(discardConfirm(rows([f('m.ts')]), 'uncommitted').message).not.toMatch(/已暂存/);
   });
 });

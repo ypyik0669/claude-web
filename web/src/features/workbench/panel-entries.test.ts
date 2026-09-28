@@ -2,8 +2,8 @@
 // in at most 2 clicks from a conversation, in the default (quiet) UI. The menus that offer them are built from the
 // tables asserted here (the right panel's fixed tabs / 「更多」 menu, the header ···, the palette).
 import { describe, expect, it } from 'vitest';
-import { CORE_PANELS, PANELS, WORKBENCH_TABS } from '@/model/layout';
-import { ENTRY_CLICKS, MORE_PANELS, minClicks, panelEntries, viewEntries, viewTarget } from './panel-entries';
+import { CORE_PANELS, PANELS, WORKBENCH_TABS, type Dock } from '@/model/layout';
+import { ENTRY_CLICKS, MORE_PANELS, minClicks, panelCommandLabel, panelEntries, viewEntries, viewTarget } from './panel-entries';
 import { WB_VIEWS } from './wb-views';
 
 // the 11 panels of the pre-redesign dock: none may disappear
@@ -29,6 +29,15 @@ describe('every panel is reachable in ≤ 2 clicks', () => {
     expect(ENTRY_CLICKS.changesButton).toBe(1);
   });
 
+  it('the palette label: a fixed tab in view is hidden with nothing “running in the background”; the terminal is', () => {
+    const d: Dock = { open: true, minimized: false, width: 440, tabs: ['files', 'terminal'], active: 'files' };
+    const p = (id: string) => PANELS.find((x) => x.id === id)!;
+    expect(panelCommandLabel(d, p('files'), false)).toBe('隐藏审阅面板');
+    expect(panelCommandLabel({ ...d, active: 'terminal' }, p('terminal'), false)).toBe('隐藏终端面板（继续在后台运行）');
+    expect(panelCommandLabel(d, p('tasks'), false)).toBe('打开任务面板');
+    expect(panelCommandLabel(d, p('files'), true)).toBe('关闭审阅面板');
+  });
+
   it('the 「更多」 menu holds exactly the extra tier (never a fixed tab)', () => {
     expect(MORE_PANELS.map((p) => p.id)).toEqual(PANELS.filter((p) => p.tier === 'extra').map((p) => p.id));
     for (const p of MORE_PANELS) expect(CORE_PANELS).not.toContain(p.id);
@@ -40,7 +49,15 @@ describe('the old 8 workbench tabs', () => {
 
   it('each is still a view with an entry in ≤ 2 clicks (header ··· / palette)', () => {
     expect(WB_VIEWS.map((v) => v.id).sort()).toEqual(views.slice().sort());
-    for (const v of views) expect(minClicks(viewEntries(v))).toBeLessThanOrEqual(2);
+    for (const v of views) {
+      expect(viewEntries(v)).toEqual(['headerMore', 'palette']);
+      expect(minClicks(viewEntries(v))).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it('the entries come from the menus’ own tables: a conversation on another machine only offers 生成的文件', () => {
+    expect(views.filter((v) => viewEntries(v, true).length)).toEqual(['artifacts']);
+    for (const v of views) if (v !== 'artifacts') expect(viewEntries(v, true)).toEqual([]);
   });
 
   it('on a desktop they open in the right panel (spec §4.2) — except 定时任务, which waits for the automation page', () => {

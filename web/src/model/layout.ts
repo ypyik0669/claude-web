@@ -100,8 +100,9 @@ export type LayoutAction =
   /** `workbench`: whether 「显示工作台工具」 is on (default true = the pre-redesign rules, see `panelToggleEffect`) */
   | { t: 'dock.toggle'; panel: PanelId; workbench?: boolean }
   | { t: 'dock.show'; panel: PanelId }
-  /** a tab's ×: remove that tab (unmount it) whether or not it is the one in front */
-  | { t: 'dock.close'; panel: PanelId }
+  /** a tab's ×: remove that tab (unmount it) whether or not it is the one in front. `workbench` false (the default
+   *  right panel): the fixed tabs are always in the row, so closing the last temporary tab keeps the panel open */
+  | { t: 'dock.close'; panel: PanelId; workbench?: boolean }
   | { t: 'sidebar.set'; patch: Partial<LayoutState['sidebar']> };
 
 export const MAX_PANES = 6;
@@ -127,10 +128,15 @@ export function newGroup(name = '工作区', tile?: Tile): Group {
   return { id: uid('g'), name, root: { type: 'leaf', paneId: p.id }, panes: { [p.id]: p }, focusedPaneId: p.id, zoomedPaneId: null };
 }
 
-/** A fresh window: one pane, one empty chat, the dock closed (it opens from the session header / Ctrl+J) on 审阅. */
+/**
+ * A fresh window: one pane, one empty chat, the dock closed with no panel mounted. Nothing in it runs until it is
+ * opened (the session header / Ctrl+J → `dock.toggle` mounts `defaultDockPanel()`): a mounted, hidden 审阅 would
+ * already watch the conversation's repo (a background `git fetch` every 5 minutes) — and the desktop app starts
+ * from a fresh layout every time.
+ */
 export function initialLayout(): LayoutState {
   const g = newGroup('主工作区');
-  return { version: 2, groups: [g], activeGroupId: g.id, sidebar: { width: 264, sections: {} }, dock: { open: false, minimized: false, width: 440, tabs: ['files'], active: 'files' } };
+  return { version: 2, groups: [g], activeGroupId: g.id, sidebar: { width: 264, sections: {} }, dock: { open: false, minimized: false, width: 440, tabs: [], active: null } };
 }
 
 /** The tab the right panel opens on when it has none yet: 审阅 (spec §5.6), 任务 with the workbench tools as before. */
@@ -611,7 +617,18 @@ export function layoutReducer(s: LayoutState, a: LayoutAction): LayoutState {
       const i = s.dock.tabs.indexOf(a.panel);
       if (i < 0) return s;
       const tabs = s.dock.tabs.filter((t) => t !== a.panel);
-      const active = s.dock.active === a.panel || !s.dock.active ? tabs[Math.min(i, tabs.length - 1)] ?? null : s.dock.active;
+      const front = s.dock.active === a.panel || !s.dock.active;
+      if (a.workbench === false) {
+        // the default right panel: the fixed tabs stay in the row, so the panel stays open — the front moves to the
+        // next temporary tab, else back to a fixed tab (审阅 when none has been opened yet: mount it)
+        if (!front) return { ...s, dock: { ...s.dock, tabs } };
+        const temps = s.dock.tabs.filter((t) => !CORE_PANELS.includes(t));
+        const j = temps.indexOf(a.panel);
+        const rest = temps.filter((t) => t !== a.panel);
+        const next = rest[Math.min(Math.max(j, 0), rest.length - 1)] ?? CORE_PANELS.find((c) => tabs.includes(c)) ?? defaultDockPanel(false);
+        return { ...s, dock: { ...s.dock, tabs: tabs.includes(next) ? tabs : [...tabs, next], active: next } };
+      }
+      const active = front ? tabs[Math.min(i, tabs.length - 1)] ?? null : s.dock.active;
       return { ...s, dock: { ...s.dock, tabs, active, open: s.dock.open && tabs.length > 0 } };
     }
     case 'dock.show': {

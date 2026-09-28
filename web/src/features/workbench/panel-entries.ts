@@ -1,9 +1,12 @@
 // Where every right-panel panel and every per-session view is reached in the default (quiet) UI — redesign phase 2,
 // spec §4.2 / §5.6. The right panel's 「更多」 menu is built from MORE_PANELS, the header ··· views and the palette
-// route through `viewTarget`; `panel-entries.test.ts` asserts that nothing is more than 2 clicks away.
-import { PANELS, type PanelId } from '@/model/layout';
+// route through `viewTarget`; `panel-entries.test.ts` asserts that nothing is more than 2 clicks away. The click
+// counts are a declared table: `scripts/ui-smoke.cjs` walks the same entries in the DOM (the palette opens every
+// panel, every ··· view lands where `viewTarget` says, the header's terminal button, a tool row's 详情).
+import { PANELS, panelToggleEffect, type Dock, type PanelId } from '@/model/layout';
+import { panelToggleLabel } from '@/ui/terms';
 import type { ReviewScope } from './review-model';
-import { WB_VIEWS, type WbView } from './wb-views';
+import { WB_VIEWS, viewCommands, viewsFor, type WbView } from './wb-views';
 
 export type EntryVia = 'changesButton' | 'terminalButton' | 'toolDetail' | 'panelButton' | 'headerMore' | 'palette' | 'panelMore';
 
@@ -49,8 +52,21 @@ export function viewTarget(view: WbView, o: { mobile: boolean; remote: boolean }
   }
 }
 
-/** Every view is in the header ··· grid and in the palette (`s.<view>`). */
-export const viewEntries = (_view: WbView): EntryVia[] => ['headerMore', 'palette'];
+/**
+ * Where a view is offered, read from the same tables the menus are built from: the header ··· grid renders
+ * `viewsFor(remote)` and the palette `viewCommands(remote)` (`s.<view>`) — drop a view from either and this shrinks.
+ */
+export function viewEntries(view: WbView, remote = false): EntryVia[] {
+  const out: EntryVia[] = [];
+  if (viewsFor(remote).some((v) => v.id === view)) out.push('headerMore');
+  if (viewCommands(remote).some((c) => c.view === view)) out.push('palette');
+  return out;
+}
+
+/** The palette's label for a panel: what toggling it does right now (only a panel with a live process runs on). */
+export function panelCommandLabel(dock: Dock, p: (typeof PANELS)[number], workbench: boolean): string {
+  return panelToggleLabel(panelToggleEffect(dock, p.id, workbench), p.title, !!p.keepAlive);
+}
 
 /** How a panel is reached in the default UI (see ENTRY_CLICKS). */
 export function panelEntries(id: PanelId): EntryVia[] {

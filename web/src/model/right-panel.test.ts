@@ -103,6 +103,25 @@ describe('toggling and closing', () => {
     expect(s.dock).toMatchObject({ tabs: [], active: null, open: false });
   });
 
+  it('default mode: closing the last temporary tab keeps the panel open on a fixed tab (审阅 if none is open yet)', () => {
+    let s: LayoutState = { ...initialLayout(), dock: dock({ tabs: ['goals'], active: 'goals' }) };
+    s = layoutReducer(s, { t: 'dock.close', panel: 'goals', workbench: false });
+    expect(s.dock).toMatchObject({ tabs: ['files'], active: 'files', open: true });
+    s = { ...s, dock: dock({ tabs: ['terminal', 'usage'], active: 'usage' }) };
+    s = layoutReducer(s, { t: 'dock.close', panel: 'usage', workbench: false });
+    expect(s.dock).toMatchObject({ tabs: ['terminal'], active: 'terminal', open: true });
+  });
+
+  it('default mode: closing the front temporary tab moves to the next temporary tab; a background one leaves the front alone', () => {
+    let s: LayoutState = { ...initialLayout(), dock: dock({ tabs: ['files', 'goals', 'usage', 'board'], active: 'usage' }) };
+    s = layoutReducer(s, { t: 'dock.close', panel: 'usage', workbench: false });
+    expect(s.dock).toMatchObject({ tabs: ['files', 'goals', 'board'], active: 'board', open: true });
+    s = layoutReducer(s, { t: 'dock.close', panel: 'goals', workbench: false });
+    expect(s.dock).toMatchObject({ tabs: ['files', 'board'], active: 'board', open: true });
+    s = layoutReducer(s, { t: 'dock.close', panel: 'board', workbench: false });
+    expect(s.dock).toMatchObject({ tabs: ['files'], active: 'files', open: true });
+  });
+
   it('the palette label says what happens: a hidden fixed tab has nothing running in the background', () => {
     expect(panelToggleLabel('hide', '审阅', false)).toBe('隐藏审阅面板');
     expect(panelToggleLabel('hide', '终端')).toMatch(/继续在后台运行/);
@@ -111,6 +130,14 @@ describe('toggling and closing', () => {
   it('opening the empty panel picks 审阅 in the default mode and 任务 with the workbench tools (as before)', () => {
     expect(defaultDockPanel(false)).toBe('files');
     expect(defaultDockPanel(true)).toBe('tasks');
+  });
+
+  it('a fresh window mounts no panel: nothing (no git watch behind a hidden 审阅) runs before the panel is opened', () => {
+    const d = initialLayout().dock;
+    expect(d).toMatchObject({ open: false, tabs: [], active: null });
+    for (const workbench of [false, true]) expect(dockView(d, { workbench, inspect: false }).mounted).toEqual([]);
+    // the default mode still draws the four fixed tabs (unmounted) once it is opened
+    expect(dockView(d, { workbench: false, inspect: false }).tabs.map((t) => t.id)).toEqual(CORE_PANELS);
   });
 });
 

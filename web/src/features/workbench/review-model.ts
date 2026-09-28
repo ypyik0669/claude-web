@@ -136,10 +136,11 @@ export function diffRequest(row: ReviewRow, scope: ReviewScope, ctx: { root: str
 }
 
 /**
- * What 全部暂存 / 全部还原 / 全部取消暂存 act on (repo-relative paths). A conflicted file is never touched by them —
- * staging it marks the conflict resolved, a checkout throws one side away; resolve it in the full Git view / a
- * terminal. 还原 is `checkout HEAD` (index and working tree) or deleting an untracked file, so a file that is only
- * added to the index has nothing to go back to and is left for 取消暂存.
+ * What 全部暂存 / 全部还原 / 全部取消暂存 act on (repo-relative paths), and the per-file buttons (a one-row list).
+ * A conflicted file is never touched by them — staging it marks the conflict resolved, a checkout throws one side
+ * away; resolve it in the full Git view / a terminal. 还原 is `checkout HEAD` (index and working tree) or deleting an
+ * untracked file, so a file that is only added to the index has nothing to go back to and is left for 取消暂存; so
+ * is a staged rename / copy (`checkout HEAD -- <new path>` finds nothing and the server's fallback is a no-op).
  */
 export function bulkTargets(rows: ReviewRow[]): { stage: string[]; discard: string[]; unstage: string[] } {
   const stage: string[] = [], discard: string[] = [], unstage: string[] = [];
@@ -147,16 +148,90 @@ export function bulkTargets(rows: ReviewRow[]): { stage: string[]; discard: stri
     const g = r.git;
     if (!g || g.status === 'conflict') continue;
     const untracked = g.status === 'untracked';
+    const moved = g.status === 'renamed' || g.status === 'copied';
     if (g.unstaged || untracked) stage.push(r.rel);
-    if (g.unstaged || untracked || (g.staged && g.status !== 'added')) discard.push(r.rel);
+    if (!moved && (g.unstaged || untracked || (g.staged && g.status !== 'added'))) discard.push(r.rel);
     if (g.staged) unstage.push(r.rel);
   }
   return { stage, discard, unstage };
 }
 
-/** 提交: commit the index; with nothing staged but changes around, offer to stage everything first. */
-export function commitPlan(status: GitStatus | null): 'commit' | 'stageAll' | 'none' {
-  if (!status?.root) return 'none';
-  if (status.files.some((g) => g.staged)) return 'commit';
-  return status.files.length ? 'stageAll' : 'none';
+/** What 提交 does. */
+export interface CommitPlan {
+  /** commit the index · stage `stage` first (asked) · resolve the conflicts first (in the Git view) · nothing to commit */
+  kind: 'commit' | 'stageAll' | 'conflicts' | 'none';
+  /** files with staged changes */
+  staged: number;
+  /** stageAll: what 全部暂存并提交 stages — 全部暂存's own list, never a conflicted file */
+  stage: string[];
+  /** stageAll: how many of `stage` are new, untracked files (they go into the commit too) */
+  untracked: number;
+  conflicts: number;
+}
+
+/**
+ * 提交: commit the index; with nothing staged but changes around, offer to stage them first (the same files
+ * 全部暂存 takes). With a conflicted file around nothing is offered: `git add` would mark it resolved with the
+ * conflict markers still in it (and git refuses a commit over unmerged files anyway) — resolve it in the Git view.
+ */
+export function commitPlan(status: GitStatus | null): CommitPlan {
+  const none: CommitPlan = { kind: 'none', staged: 0, stage: [], untracked: 0, conflicts: 0 };
+  if (!status?.root) return none;
+  const files = status.files;
+  const conflicts = files.filter((g) => g.status === 'conflict').length;
+  const staged = files.filter((g) => g.staged).length;
+  if (conflicts) return { ...none, kind: 'conflicts', staged, conflicts };
+  if (staged) return { ...none, kind: 'commit', staged };
+  const stage = bulkTargets(files.map((g) => ({ key: g.path, rel: g.path, abs: g.path, git: g }))).stage;
+  if (!stage.length) return none;
+  return { ...none, kind: 'stageAll', stage, untracked: files.filter((g) => g.status === 'untracked' && stage.includes(g.path)).length };
+}
+
+/** Text of a confirmation dialog (`dlg.confirm`). */
+export interface ConfirmText { title: string; message: string; items?: string[]; okLabel: string }
+
+/** Files listed by name in a bulk confirmation; the rest are counted. */
+export const CONFIRM_LIST_MAX = 8;
+
+/**
+ * The 还原 confirmation. 还原 is `git checkout HEAD -- <files>` plus deleting untracked files (`fs.rm`, not the
+ * recycle bin): it takes the whole file back to the last commit — staged changes too, and every change in it,
+ * not only the ones this conversation made. The dialog says so, and names the files.
+ */
+export function discardConfirm(rows: ReviewRow[], scope: ReviewScope): ConfirmText {
+  const n = rows.length;
+  if (n === 1) {
+    const r = rows[0];
+    const g = r.git;
+    const lines: string[] = [];
+    if (g?.status === 'untracked') lines.push('这是一个没有提交过的新文件：还原会把它永久删除（不进回收站）。');
+    else if (g?.status === 'added') lines.push('这是刚加入暂存区的新文件：会回到暂存区里的版本，之后在工作区里的改动都会丢掉。');
+    else {
+      lines.push(`文件会回到上一次提交时的样子，里面所有未提交的改动都会丢掉${scope === 'session' ? '——不只是这个对话做的' : ''}。`);
+      if (g?.staged) lines.push('已暂存的改动也会一起丢掉。');
+    }
+    lines.push('这一步不能撤销。');
+    return { title: `还原 ${r.rel}？`, message: lines.join('\n'), okLabel: '还原' };
+  }
+  const staged = rows.filter((r) => r.git?.staged).length;
+  const fresh = rows.filter((r) => r.git?.status === 'untracked').length;
+  const items = rows.slice(0, CONFIRM_LIST_MAX).map((r) => r.rel);
+  if (n > CONFIRM_LIST_MAX) items.push(`…等 ${n} 个文件`);
+  const message = [
+    '这些文件会回到上一次提交时的样子：',
+    `· 包括已暂存的改动${staged ? `（${staged} 个文件有）` : ''}；`,
+    '· 不只是这个对话做的改动：文件里所有未提交的改动都会丢掉；',
+    `· 新建的文件会被永久删除（不进回收站）${fresh ? `：${fresh} 个` : ''}。`,
+    '这一步不能撤销。',
+  ].join('\n');
+  return { title: `还原 ${n} 个文件？`, message, items, okLabel: `还原 ${n} 个文件` };
+}
+
+/** The 全部暂存并提交 question (commitPlan 'stageAll'): how many files, and that new files go in too. */
+export function stageAllConfirm(plan: CommitPlan): ConfirmText {
+  const n = plan.stage.length;
+  const items = plan.stage.slice(0, CONFIRM_LIST_MAX);
+  if (n > CONFIRM_LIST_MAX) items.push(`…等 ${n} 个文件`);
+  const message = `把 ${n} 个文件的改动暂存并提交？${plan.untracked ? `\n其中 ${plan.untracked} 个是没有提交过的新文件，也会进这次提交。` : ''}`;
+  return { title: '还没有暂存的改动', message, items, okLabel: '全部暂存并提交' };
 }
