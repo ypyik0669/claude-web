@@ -167,18 +167,18 @@ function SettingsPage({ open }: { open: { section?: string; query?: string; reve
     window.addEventListener('keydown', on, true);
     return () => window.removeEventListener('keydown', on, true);
   }, []);
-  // after a move: scroll to the revealed row / part, or to the top
-  useEffect(() => {
-    const id = requestAnimationFrame(() => {
-      // the nav keeps the current page in view (an advanced page, or a short window)
-      root.current?.querySelector('.sp-si.on')?.scrollIntoView({ block: 'nearest' });
-      const box = scroller.current;
-      if (!box) return;
-      const el = target.reveal ? box.querySelector(`[data-entry="${CSS.escape(target.reveal)}"]`) : target.body ? box.querySelector(`[data-body="${CSS.escape(target.body)}"]`) : null;
-      if (el) el.scrollIntoView({ block: 'center' });
-      else box.scrollTop = 0;
-    });
-    return () => cancelAnimationFrame(id);
+  // after a move: scroll to the revealed row / part, or to the top — in the commit that shows the new page, before it is
+  // painted. It used to wait a frame (requestAnimationFrame): anything that scrolled the page in between — a wheel turn
+  // right after the click, ui-smoke's scrollIntoView of 「更多选项」 — was undone a moment later (polish P5: 通用's
+  // 更多选项, below the fold, jumped back down between measuring and clicking)
+  useLayoutEffect(() => {
+    // the nav keeps the current page in view (an advanced page, or a short window)
+    root.current?.querySelector('.sp-si.on')?.scrollIntoView({ block: 'nearest' });
+    const box = scroller.current;
+    if (!box) return;
+    const el = target.reveal ? box.querySelector(`[data-entry="${CSS.escape(target.reveal)}"]`) : target.body ? box.querySelector(`[data-body="${CSS.escape(target.body)}"]`) : null;
+    if (el) el.scrollIntoView({ block: 'center' });
+    else box.scrollTop = 0;
   }, [target]);
   // '/' → search (like the mock's hint), unless typing somewhere
   useEffect(() => {

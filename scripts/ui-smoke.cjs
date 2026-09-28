@@ -309,21 +309,74 @@ function driver() {
     // click opens (the sidebar's anchored menus close when their anchor scrolls) would take it for its own.
     // A page still settling (a settings page mounting its parts) can move the target between measuring and clicking:
     // the point is checked with elementFromPoint and measured again (a few times) until the target is there.
-    const click = async (selector) => {
-      const measure = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; const b = el.getBoundingClientRect(); const x = Math.round(b.left + b.width / 2), y = Math.round(b.top + b.height / 2); const at = document.elementFromPoint(x, y); return { x, y, hit: !!at && (el === at || el.contains(at)) }; })()`;
-      let r = await js(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; const b0 = el.getBoundingClientRect(); el.scrollIntoView({ block: b0.top < 0 || b0.bottom > innerHeight - 48 ? 'center' : 'nearest' }); const b = el.getBoundingClientRect(); const x = Math.round(b.left + b.width / 2), y = Math.round(b.top + b.height / 2); const at = document.elementFromPoint(x, y); return { x, y, moved: Math.round(b.top) !== Math.round(b0.top), hit: !!at && (el === at || el.contains(at)) }; })()`);
-      if (!r) return null;
-      if (r.moved) { await sleep(150); r = await js(measure); if (!r) return null; }
-      for (let i = 0; i < 4 && !r.hit; i++) {
-        await sleep(150);
-        await js(`document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({ block: 'nearest' })`);
-        r = (await js(measure)) ?? r;
+    // A real mouse click at the target's centre — guarded (polish P5). The point is measured in the page but the input
+    // event arrives a few ms later, asynchronously: a page still answering its own requests moves things in between
+    // (设置 → 账号与登录 grows ~66px when the login check answers, 手机与其它电脑 ~200px when the remote / peer status
+    // arrives — later on a busy server), and the old helper, after four failed hit tests, clicked anyway. So:
+    //  1. wait until the target's box is the same on consecutive animation frames (it is not moving right now);
+    //  2. arm a one-shot guard in the page: a mouse-down that does not land inside the target is swallowed together with
+    //     its mouse-up / click (nothing else gets clicked by mistake) and reported;
+    //  3. on a miss, measure again and click again (a few times), logging where each miss landed.
+    // `beforeSend` (the helper's own check only): page code run once, after the first measurement, before the events
+    const click = async (selector, { beforeSend } = {}) => {
+      const S = JSON.stringify(selector);
+      const place = (scroll) => js(`new Promise((res) => {
+        const el0 = document.querySelector(${S});
+        if (!el0) return res(null);
+        const b0 = el0.getBoundingClientRect();
+        // below the fold → the middle (flush with the bottom edge a toast sits there); else only as far as needed
+        if (${scroll}) el0.scrollIntoView({ block: b0.top < 0 || b0.bottom > innerHeight - 48 ? 'center' : 'nearest' });
+        let last = '', same = 0, n = 0, done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          const el = document.querySelector(${S});
+          if (!el) return res(null);
+          const b = el.getBoundingClientRect();
+          const x = Math.round(b.left + b.width / 2), y = Math.round(b.top + b.height / 2);
+          const at = document.elementFromPoint(x, y);
+          res({ x, y, hit: !!at && (el === at || el.contains(at)), frames: n });
+        };
+        const tick = () => {
+          if (done) return;
+          const el = document.querySelector(${S});
+          if (!el) { done = true; return res(null); }
+          const b = el.getBoundingClientRect();
+          const k = [b.left, b.top, b.width, b.height].map(Math.round).join(',');
+          same = k === last ? same + 1 : 0;
+          last = k;
+          if (same >= 2 || ++n >= 90) return finish();
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+        setTimeout(finish, 2000); // frames stalled: measure anyway
+      })`);
+      let r = null;
+      const misses = [];
+      for (let attempt = 1; attempt <= 4; attempt++) {
+        r = (await place(attempt === 1 || attempt === 3)) ?? r;
+        if (!r) return null;
+        await js(`(() => {
+          const sel = ${S};
+          const g = window.__smokeGuard = { down: null, stop: (e) => { e.preventDefault(); e.stopImmediatePropagation(); } };
+          g.onDown = (e) => {
+            const t = e.target;
+            g.down = { hit: !!t.closest?.(sel), at: [t.tagName, String(t.className?.baseVal ?? t.className ?? ''), (t.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 30)].join(' · ') };
+            if (!g.down.hit) { g.stop(e); addEventListener('mouseup', g.stop, true); addEventListener('click', g.stop, true); }
+          };
+          addEventListener('mousedown', g.onDown, { capture: true, once: true });
+        })()`);
+        if (beforeSend && attempt === 1) await js(beforeSend);
+        wc.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y });
+        wc.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 });
+        wc.sendInputEvent({ type: 'mouseUp', x: r.x, y: r.y, button: 'left', clickCount: 1 });
+        await sleep(250);
+        const down = await js(`(() => { const g = window.__smokeGuard; removeEventListener('mousedown', g.onDown, true); removeEventListener('mouseup', g.stop, true); removeEventListener('click', g.stop, true); window.__smokeGuard = null; return g.down; })()`);
+        if (down && down.hit) return { ...r, attempts: attempt, misses };
+        misses.push(down ? down.at : 'nothing');
+        log(`click ${selector} (attempt ${attempt}) at ${r.x},${r.y}${r.hit ? '' : ' (not on top there when measured)'} landed on ${down ? down.at : 'nothing'} — swallowed`);
       }
-      wc.sendInputEvent({ type: 'mouseMove', x: r.x, y: r.y });
-      wc.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 });
-      wc.sendInputEvent({ type: 'mouseUp', x: r.x, y: r.y, button: 'left', clickCount: 1 });
-      await sleep(250);
-      return r;
+      return { ...r, missed: true, misses };
     };
     const key = async (keyCode) => { wc.sendInputEvent({ type: 'keyDown', keyCode }); wc.sendInputEvent({ type: 'keyUp', keyCode }); await sleep(200); };
     const noBoundary = (scope) => js(`[...document.querySelectorAll(${JSON.stringify(`${scope} .err-boundary`)})].map((e) => e.dataset.area + ': ' + e.querySelector('.eb-msg')?.textContent).join(' | ')`);
@@ -655,6 +708,23 @@ function driver() {
           await shot(`settings-${s.id}-${t}`);
         }
       }
+      // the click helper itself (polish P5): the page moves down 44px between the measurement and the click (what a late
+      // answer to the page's own request does), so the row above 更多选项 sits under the point; the mouse-down that lands
+      // there is swallowed — no switch of that page flips — and the helper measures and clicks again. A transform, not
+      // padding: the scroller's scroll anchoring cancels a padding shift above a scrolled-to button (tests nothing)
+      phase = 'settings:click-guard';
+      await js(`window.__store.getState().openSettings({ section: 'general' })`);
+      await waitFor(onPage('general'), 3000);
+      const generalValues = `JSON.stringify(${JSON.stringify(['ui.defaultMode', 'autoContinueOnReset', 'ui.showThinking', 'ui.diffMode', 'ui.inlineDiffs', 'ui.workbench', 'ui.autoSave', 'ui.notifications', 'ui.closeToTray', 'ui.confirmExit'])}.map((k) => window.__store.getState().settings[k]))`;
+      const valuesBefore = await js(generalValues);
+      const shifted = await click('.modal.settings .sp-more-h', { beforeSend: `document.querySelector('.modal.settings .sp-inner').style.transform = 'translateY(44px)'` });
+      const guardOpened = await waitFor(`document.querySelector('.modal.settings .sp-more-h')?.getAttribute('aria-expanded') === 'true'`, 3000);
+      await js(`document.querySelector('.modal.settings .sp-inner').style.transform = ''`);
+      const valuesAfter = await js(generalValues);
+      check('ui-smoke click helper: a click the page moved off its target is swallowed (nothing under it toggled) and made again (polish P5)', guardOpened && !!shifted && shifted.attempts === 2 && shifted.misses.length === 1 && shifted.misses[0] !== 'nothing' && valuesBefore === valuesAfter, JSON.stringify({ guardOpened, attempts: shifted && shifted.attempts, misses: shifted && shifted.misses, valuesBefore, valuesAfter }));
+      // the loop below starts from a closed 更多选项 (another page resets it)
+      await js(`window.__store.getState().openSettings({ section: 'appearance' })`);
+      await waitFor(onPage('appearance'), 3000);
       // 更多选项 on every page that has one: it opens without an error boundary, and the page lays out the parts the
       // catalog lists, in and out of 更多选项. `data-body` is written by the page from the catalog, so this says nothing
       // about which component draws a part — that is wording.test.ts (the BODIES table)
@@ -671,8 +741,12 @@ function driver() {
           const before = await js(shownParts);
           // the page's own requests can still grow it: let it settle, or the click lands where the button was
           await sleep(400);
-          await click('.modal.settings .sp-more-h');
+          // (diagnostics) the button's position every frame from here on, and what is on screen around it
+          await js(`(() => { const L = window.__moreTrail = []; const t0 = performance.now(); let last = ''; const tick = () => { if (window.__moreTrail !== L) return; const b = document.querySelector('.modal.settings .sp-more-h'); const s = b ? Math.round(b.getBoundingClientRect().top) + '/' + document.querySelector('.sp-scroll')?.scrollTop + '/' + b.getAttribute('aria-expanded') : 'none'; if (s !== last) { L.push(Math.round(performance.now() - t0) + ':' + s); last = s; } requestAnimationFrame(tick); }; requestAnimationFrame(tick); })()`);
+          const at = await click('.modal.settings .sp-more-h');
           const opened = await waitFor(`document.querySelector('.modal.settings .sp-more-h')?.getAttribute('aria-expanded') === 'true'`, 3000);
+          if (!opened) log(`更多选项 on ${name} did not open: click ${JSON.stringify(at)} trail ${await js('JSON.stringify(window.__moreTrail)')} toasts ${await js('JSON.stringify([...document.querySelectorAll(".toast")].map((t) => t.textContent.slice(0, 60)))')} over ${await js(`(() => { const b = document.querySelector('.modal.settings .sp-more-h')?.getBoundingClientRect(); if (!b) return null; const e = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return e && [e.tagName, e.className].join(' '); })()`)}`);
+          await js('window.__moreTrail = null');
           await sleep(1500); // requests the parts fire on first open
           const after = await js(shownParts);
           const rows = await js(moreRows);
@@ -1506,6 +1580,37 @@ function driver() {
             const m2 = await menusNow();
             check('… and opening the header ··· closes the funnel', m2.length === 1 && /sess-menu/.test(m2[0]), JSON.stringify(m2));
             await closeMenus();
+            // polish P2 (re-review 4b M2): the 文件 panel's right-click menu is one of them — the funnel opened after
+            // it leaves one .menu; the settings page closes it (it used to reappear when the page closed); Esc closes it
+            const dockWas = await js('JSON.stringify(window.__store.getState().layout.dock)');
+            await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'explorer' })`);
+            const ftRow = '.dock:not([hidden]) .dock-panel[data-panel="explorer"]:not([hidden]) .filetree .ft-row';
+            if (await waitFor(`!!document.querySelector(${JSON.stringify(ftRow)})`, 6000)) {
+              await sleep(300); // the right panel's width transition
+              const rightClick = () => js(`(() => { const el = document.querySelector(${JSON.stringify(ftRow)}); if (!el) return false; const b = el.getBoundingClientRect(); el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: b.left + 30, clientY: b.top + 8, button: 2 })); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.left + 30, clientY: b.top + 8, button: 2 })); return true; })()`);
+              await rightClick();
+              const ftOpen = await waitFor('!!document.querySelector(".menu.ft-menu")', 2000);
+              await click('.sidebar [data-id="filter"]');
+              await sleep(250);
+              const m3 = await menusNow();
+              check('one menu app-wide: the 文件 right-click menu, then the sidebar funnel → only the funnel is open (polish P2)', ftOpen && m3.length === 1 && /sb-filter/.test(m3[0]), JSON.stringify({ ftOpen, m3 }));
+              await closeMenus();
+              await rightClick();
+              await waitFor('!!document.querySelector(".menu.ft-menu")', 2000);
+              await js('window.__store.getState().openSettings()');
+              await waitFor('!!document.querySelector(".modal.settings.sp")', 3000);
+              const underSettings = await js('!!document.querySelector(".menu.ft-menu")');
+              await js('window.__store.setState({ settingsOpen: null })');
+              await sleep(250);
+              const afterSettings = await js('!!document.querySelector(".menu.ft-menu")');
+              await rightClick();
+              const again = await waitFor('!!document.querySelector(".menu.ft-menu")', 2000);
+              await key('Escape');
+              const escClosed = !(await js('!!document.querySelector(".menu.ft-menu")'));
+              check('the 文件 right-click menu closes when the settings page opens (not back after it closes) and on Esc', !underSettings && !afterSettings && again && escClosed, JSON.stringify({ underSettings, afterSettings, again, escClosed }));
+            } else check('one menu app-wide: a file tree row to right-click', false, 'no .ft-row in the 文件 panel');
+            await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: ${'JSON.parse(' + JSON.stringify(dockWas) + ')'} })`);
+            await closeMenus();
           } else check('one menu app-wide: a conversation header to test with', false, 'no .sess-head in the focused pane');
           const ctxMenu = (sel) => js(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return false; el.scrollIntoView({ block: 'nearest' }); const b = el.getBoundingClientRect(); el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: b.left + 40, clientY: b.top + 8, button: 2 })); return true; })()`);
           const count = (sel) => js(`document.querySelectorAll(${JSON.stringify(sel)}).length`);
@@ -1577,6 +1682,16 @@ function driver() {
           }
           const autoErr = await noBoundary('.auto-page');
           check('自动化 page: each tab shows its list (the three bodies stay mounted), without error boundary', !autoMiss.length && !autoErr && (await count('.auto-page .auto-body')) === 3, autoErr || autoMiss.join(', '));
+          // polish: the page's 定时任务 tab has no second tab row under it (定时任务 › 全部 read twice): the list, then
+          // 从模板开始; 运行记录 is a link and the records lead back
+          const sv = '.auto-page .auto-body[data-body="schedules"]:not([hidden]) .sched-view';
+          await waitFor(`!!document.querySelector('${sv} [data-id="sched-templates"] button')`, 5000);
+          const svList = await js(`(() => { const v = document.querySelector('${sv}'); return v && { subtabs: !!v.querySelector('.subtabs'), runs: !!v.querySelector('[data-id="sched-runs"]'), templates: v.querySelectorAll('[data-id="sched-templates"] .row').length, view: v.dataset.view }; })()`);
+          await click(`${sv} [data-id="sched-runs"]`);
+          const svRuns = await waitFor(`document.querySelector('${sv}')?.dataset.view === 'history' && !!document.querySelector('${sv} [data-id="sched-back"]') && !document.querySelector('${sv} [data-id="sched-templates"]')`, 3000);
+          await click(`${sv} [data-id="sched-back"]`);
+          const svBack = await waitFor(`document.querySelector('${sv}')?.dataset.view === 'list'`, 3000);
+          check('自动化 → 定时任务: no inner tab row; list + 从模板开始; 运行记录 opens the records and ‹ 定时任务 comes back', !!svList && !svList.subtabs && svList.runs && svList.templates > 0 && svList.view === 'list' && svRuns && svBack, JSON.stringify({ svList, svRuns, svBack }));
           // 新建 on 定时任务 opens the new-schedule form in the page (nothing saved until 保存)
           await click('.auto-page .auto-head [data-new]');
           const form = await waitFor(`!!document.querySelector('.auto-page .auto-body[data-body="schedules"]:not([hidden]) .sched-view input, .auto-page .auto-body[data-body="schedules"]:not([hidden]) .sched-view textarea')`, 3000);
@@ -1717,6 +1832,19 @@ function driver() {
           await sleep(200);
           const selKept = { palette: await exists('.palette-bg'), bar: await exists('.sidebar .sel-bar') };
           check('Esc in the command palette closes the palette, not the multi-select', !selKept.palette && selKept.bar, JSON.stringify(selKept));
+          // polish P1 (re-review 4b M1): one Esc does one thing — with a menu open and the focus nowhere (<body>, as
+          // after a click on a menu's heading) Esc closes only the menu; the multi-select and what is picked stay
+          for (const [name, opener, menuSel] of [['the header ···', '.pane.focused .sess-head .sh-more > button', '.menu.sess-menu'], ['the composer +', '.pane.focused .composer .cb .plus', '.menu.cm']]) {
+            const picked0 = await count('.sidebar .sb-list .sel-box:checked');
+            await click(opener);
+            const opened = await waitFor(`!!document.querySelector(${JSON.stringify(menuSel)})`, 3000);
+            await js('document.activeElement?.blur()');
+            const onBody = await js('!document.activeElement || document.activeElement === document.body');
+            await key('Escape');
+            await sleep(200);
+            const after = { menu: await exists(menuSel), bar: await exists('.sidebar .sel-bar'), picked: await count('.sidebar .sb-list .sel-box:checked') };
+            check(`Esc with ${name} open and the focus on <body> closes only the menu: the multi-select and its picks stay (polish P1)`, opened && onBody && !after.menu && after.bar && picked0 >= 1 && after.picked === picked0, JSON.stringify({ opened, onBody, picked0, ...after }));
+          }
           await js(`document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + ']')?.focus()`);
           await key('Escape');
           const selOff = await js('!document.querySelector(".sidebar .sel-bar") && !document.querySelector(".sidebar .sel-box")');
@@ -1775,6 +1903,12 @@ function driver() {
             await sleep(400);
             await harvest();
             check('library hint: a detected source that was not joined shows the one-line hint (加入 / 以后再说)', await exists('.sidebar .sb-hint [data-id="library-join"]') && await exists('.sidebar .sb-hint [data-id="library-later"]'));
+            // several agents' names wrap onto a second line instead of being cut off; the full text is the tooltip
+            await js(`(() => { const names = { opencode: 'OpenCode', gemini: 'Gemini CLI', qwen: 'Qwen Code' }; const extra = Object.keys(names).map((k) => ({ kind: k, name: names[k], installed: true, detected: true, joined: false, dismissed: false, enabled: false })); const st = window.__store.getState(); window.__store.setState({ librarySources: [...st.librarySources.filter((x) => !names[x.kind]), ...extra] }); })()`);
+            await sleep(300);
+            const hintFit = await js(`(() => { const m = document.querySelector('.sidebar .sb-hint .msg'); if (!m) return null; const lh = parseFloat(getComputedStyle(m).lineHeight); const j = document.querySelector('.sidebar .sb-hint [data-id="library-join"]').getBoundingClientRect(); const h = document.querySelector('.sidebar .sb-hint').getBoundingClientRect(); return { text: m.textContent, lines: Math.round(m.clientHeight / lh), clipped: m.scrollHeight > m.clientHeight + 1, title: m.title.includes('Qwen Code'), joinInside: j.right <= h.right && j.width > 10 }; })()`);
+            check('library hint: four agents’ names wrap onto two lines instead of one cut-off line; what still does not fit is in the tooltip; 加入 stays whole', !!hintFit && hintFit.lines === 2 && hintFit.title && hintFit.joinInside, JSON.stringify(hintFit));
+            await shot('sidebar-hint-wrap');
             // 其它文件夹 starts folded when there are projects: its running conversation stays in view, the header spins
             const other = { spin: await exists('.sidebar [data-id="other"] > .sb-sec-h .spin'), row: await exists('.sidebar [data-id="other"] .sb-kept [data-sid="smoke-elsewhere"] .st.run') };
             check('folded 其它文件夹: the header spins and the running conversation stays listed under it', other.spin && other.row, JSON.stringify(other));
