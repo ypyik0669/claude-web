@@ -166,7 +166,7 @@ function SettingsPage({ open }: { open: { section?: string; query?: string; reve
 
   return (
     <div
-      className={clsx('modal settings sp', phonePage && 'phone-page')}
+      className={clsx('modal settings sp', phonePage && 'phone-page', searching && 'searching')}
       role="dialog"
       aria-label="设置"
       data-section={sec.id}
@@ -330,7 +330,7 @@ function SearchResults({ q, hits, pick }: { q: string; hits: SettingsHit[]; pick
       <div className="sp-hits">
         {hits.map((h) => h.kind === 'entry' ? (
           <div key={`e:${h.entry.id}`} className="sp-hit">
-            <div className="sp-crumb">{h.crumb}</div>
+            <button className="sp-crumb" title="打开这一页" onClick={() => pick({ section: h.section.id, reveal: h.entry.id, more: h.entry.more })}>{h.crumb}</button>
             <div className="sp-card"><EntryRow sec={h.section} e={h.entry} /></div>
           </div>
         ) : (

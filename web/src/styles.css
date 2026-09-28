@@ -1567,6 +1567,8 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:
 /* search results: each row live in its card with a 分组 › 分区 crumb; pages / parts as jump rows */
 .sp-hits { display: flex; flex-direction: column; gap: var(--sp-3); }
 .sp-crumb { margin: 0 0 6px 2px; font-size: 12px; color: var(--ink-4); }
+button.sp-crumb { display: inline-flex; padding: 0; border-radius: var(--r-sm); text-align: left; }
+button.sp-crumb:hover { color: var(--ink-1); text-decoration: underline; }
 .sp-jump { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 16px; border: 1px solid var(--edge-default); border-radius: var(--r-xl); background: var(--surface-0); font-size: 13.5px; color: var(--ink-1); text-align: left; }
 .sp-jump:hover { background: var(--layer-hover); }
 .sp-jump svg { flex: none; color: var(--ink-3); }
@@ -1589,6 +1591,11 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:
   .modal.settings.sp.phone-page .sp-nav { display: none; }
   .sp-phone-back { display: inline-flex; }
   .sp-inner { padding: 12px var(--sp-4) 48px; }
+  /* searching on a phone: the search box stays on top, the results fill the rest */
+  .modal.settings.sp.searching { grid-template-rows: auto minmax(0, 1fr); }
+  .modal.settings.sp.searching .sp-nav, .modal.settings.sp.searching .sp-main { display: flex; }
+  .modal.settings.sp.searching .sp-nav { border-right: 0; border-bottom: 1px solid var(--edge-subtle); padding-bottom: var(--sp-2); }
+  .modal.settings.sp.searching .sp-groups, .modal.settings.sp.searching .sp-ver, .modal.settings.sp.searching .sp-phone-back { display: none; }
   .sp-row { flex-wrap: wrap; }
   .env-row code { min-width: 0; }
 }

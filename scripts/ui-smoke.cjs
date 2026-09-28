@@ -564,6 +564,18 @@ function driver() {
           await click('.sidebar .nav[title^="设置"]');
           const settings = await waitFor('!!document.querySelector(".modal.settings")', 3000);
           check('phone: settings open from the sidebar', settings);
+          // settings at phone width (≤ 600px): the page list first, a page replaces it, 全部设置 brings the list back
+          win.setContentSize(480, 860);
+          await sleep(600);
+          const spVis = `(() => { const d = (s) => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== 'none'; }; return { nav: d('.sp-nav'), main: d('.sp-main'), drawer: document.querySelector('.app').classList.contains('drawer-open') }; })()`;
+          const listFirst = await js(spVis);
+          await click('.sp-nav .sp-si[data-section="appearance"]');
+          const pageNow = await js(spVis);
+          await click('.sp-phone-back');
+          const listAgain = await js(spVis);
+          check('phone settings: the list first (drawer closed), a page replaces it, 全部设置 returns', listFirst.nav && !listFirst.main && !listFirst.drawer && !pageNow.nav && pageNow.main && listAgain.nav && !listAgain.main, JSON.stringify({ listFirst, pageNow, listAgain }));
+          win.setContentSize(740, 860);
+          await sleep(400);
           await js('window.__store.setState({ settingsOpen: null, sidebarOpen: false })');
           const before = await js('JSON.stringify(window.__store.getState().layout.dock)');
           await js(`window.__store.getState().togglePanel('terminal')`);
