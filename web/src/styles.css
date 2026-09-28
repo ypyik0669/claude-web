@@ -1696,6 +1696,10 @@ html.desktop:not(.mac) .dock.simple:not(.min) .dock-tabs .tab.fixed { padding: 0
 .rv-fh .p { display: flex; font-family: var(--mono); color: var(--ink-1); min-width: 0; white-space: nowrap; }
 .rv-fh .p .d { color: var(--ink-4); flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .rv-fh .p .f { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+/* a squeezed folder read as part of the name ("smenu.ts" in a narrow split): text-overflow never ellipses the first
+   character, so keep room for it and the ellipsis whenever there is a folder ("s…menu.ts") */
+.rv-fh .p .d:not(:empty), .fcard-f .p .d:not(:empty) { min-width: 2.4ch; }
+.rv-fh .p .d:not(:empty) + .f, .fcard-f .p .d:not(:empty) + .f { max-width: calc(100% - 2.4ch); }
 .rv-fh .grow { flex: 1; }
 .rv-stat { flex: none; font-variant-numeric: tabular-nums; font-size: 12px; }
 .rv-stat .add { color: var(--ok); }
