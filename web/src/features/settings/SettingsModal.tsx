@@ -71,7 +71,7 @@ export function useSections(): Section[] {
       { id: 'ui.reduceMotion', label: '减少动画', keywords: 'motion animation 动画', render: () => <Toggle k="ui.reduceMotion" /> },
     ] },
     { id: 'interface', l: '界面', ic: 'board', entries: [
-      { id: 'ui.singleWindow', label: '单窗格模式', hint: '隐藏分组与分屏，所有会话在同一个窗格里切换', keywords: 'single pane layout 分屏 分组', render: () => <Toggle k="ui.singleWindow" /> },
+      { id: 'ui.workbench', label: TERMS.workbench, hint: '一直显示分组栏、每个分屏的标签条和右侧面板图标栏。关着时它们只在用到时出现（按 Ctrl+D 分屏、开第二个标签页）', keywords: 'workbench 工作台 分屏 分组 标签 停靠 图标栏 single pane layout 单窗格模式', render: () => <Toggle k="ui.workbench" /> },
       { id: 'ui.showThinking', label: '显示思考过程', hint: '展开模型的 thinking 块', keywords: 'thinking reasoning 思考', render: () => <Toggle k="ui.showThinking" /> },
       { id: 'ui.autoSave', label: '编辑器自动保存', hint: '停止输入 0.8 秒后写回磁盘', keywords: 'editor autosave monaco 保存', render: () => <Toggle k="ui.autoSave" def /> },
       { id: 'ui.diffMode', label: '默认 diff 视图', keywords: 'diff split unified 并排 内联', render: () => <Select k="ui.diffMode" def="unified" options={[{ id: 'unified', l: '内联' }, { id: 'split', l: '并排' }]} /> },

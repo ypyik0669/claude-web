@@ -11,6 +11,7 @@ import { dlg } from '@/ui/dialog';
 import { isWithin } from '@/features/paths';
 import { filterSessions, isArchived, machineCounts, renderedRows, sourceCounts } from './filter';
 import { SessionMenu, capsIntersection, deleteSessions, effectiveCaps, setArchived } from './session-actions';
+import { UsageRing } from './UsageRing';
 
 const PAGE_FIRST = 25;
 const PAGE_MORE = 50;
@@ -379,8 +380,9 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         {!visible.length && <div className="empty">{ql || sourceFilter !== 'all' || machine !== 'all' ? '没有匹配的会话' : '没有会话'}</div>}
       </div>
       <div className="sb-foot">
-        <span className={clsx('dot', connected ? 'idle' : 'error')} />
-        <span>{connected ? '已连接' : '重连中…'}</span>
+        <span className={clsx('dot', connected ? 'idle' : 'error')} title={connected ? '已连接' : '连接断开，正在重连…'} />
+        {!connected && <span>重连中…</span>}
+        <UsageRing />
         <span style={{ flex: 1 }} />
         <button className={clsx('icon-btn xs', showArchived && 'active')} title="显示已归档" aria-label="显示已归档" onClick={() => useStore.setState({ showArchived: !showArchived })}><Icon name="archive" size={14} /></button>
         <button className="icon-btn xs" title={`主题 / 设置 (${modKey}+K)`} aria-label="主题" onClick={() => useStore.setState({ paletteOpen: true })}><Icon name="moon" size={14} /></button>

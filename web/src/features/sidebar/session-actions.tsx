@@ -7,6 +7,7 @@ import { Icon, AGENT_ICONS } from '@/ui/icons';
 import { isImportedSessionId } from '@/util';
 import { agentOf, isArchived } from './filter';
 import { deleteSummary, deleteTargets, effectiveCaps, nativeCliCommand } from './caps';
+import { TERMS } from '@/ui/terms';
 
 export { effectiveCaps, capsIntersection, nativeCliCommand, type EffectiveCaps } from './caps';
 
@@ -190,7 +191,7 @@ export function SessionMenu({ s, onClose, style, extra }: { s: SessionSummary; o
       {caps.rename && <button onClick={act(() => renameSession(s))}><Icon name="edit" size={14} /> 重命名</button>}
       {caps.fork && <button onClick={act(() => forkSession(s))}><Icon name="branch" size={14} /> 分叉</button>}
       {caps.archive && <button onClick={act(() => setArchived([s], !archived))}><Icon name="archive" size={14} /> {archived ? '取消归档' : '归档'}</button>}
-      <button onClick={() => setHandoff(!handoff)} aria-expanded={handoff}><Icon name="agent" size={14} /> <span style={{ flex: 1 }}>{remote ? '交给本机 agent 继续' : '交给其它 agent'}</span><Icon name={handoff ? 'chevronDown' : 'chevronRight'} size={12} /></button>
+      <button onClick={() => setHandoff(!handoff)} aria-expanded={handoff}><Icon name="agent" size={14} /> <span style={{ flex: 1 }}>{remote ? '交给本机的 Agent 继续' : TERMS.handoff}</span><Icon name={handoff ? 'chevronDown' : 'chevronRight'} size={12} /></button>
       {handoff && (
         <div className="sub-menu">
           {targets.map((a) => (

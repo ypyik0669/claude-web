@@ -5,6 +5,7 @@ import { ago } from '@/util';
 import { Composer } from '@/features/composer/Composer';
 import { Icon } from '@/ui/icons';
 import { authChecker } from './auth-check';
+import { SidebarReveal, usePaneEdge } from './pane-edge';
 
 function greeting() {
   const h = new Date().getHours();
@@ -57,26 +58,31 @@ export function Welcome({ paneId, tileId }: { paneId: string; tileId: string }) 
   const loadHistory = useStore((s) => s.loadHistory);
   const dispatch = useStore((s) => s.dispatchLayout);
   const recent = useMemo(() => sessions.slice(0, 6), [sessions]);
+  const edge = usePaneEdge();
   const pick = (sid: string) => {
     if (open[sid]) dispatch({ t: 'session.assign', paneId, tileId, sessionId: sid });
     else { dispatch({ t: 'session.assign', paneId, tileId, sessionId: sid }); void loadHistory(sid, { focus: false }); }
   };
   return (
-    <div className="welcome">
-      <h1 className="greet"><span className="spark"><Icon name="claude" size={26} /></span>{greeting()}</h1>
-      <Composer welcome target={{ paneId, tileId }} />
-      <EngineStatus />
-      {recent.length > 0 && (
-        <div className="recent">
-          <h5>最近</h5>
-          {recent.map((s) => (
-            <div key={s.sessionId} className="sess" onClick={() => pick(s.sessionId)}>
-              <span className="t">{s.title}</span>
-              <span className="ago">{s.peer ? `${s.peer.name} · ` : ''}{s.cwd.split(/[\\/]/).pop()} · {ago(s.lastModified)}</span>
-            </div>
-          ))}
-        </div>
-      )}
+    <div className="welcome-tile">
+      {/* the empty page's top row: nothing but the sidebar reveal; on the desktop it is also the title bar (drag) */}
+      <div className="welcome-top">{edge.lead && !edge.strip && <SidebarReveal />}</div>
+      <div className="welcome">
+        <h1 className="greet"><span className="spark"><Icon name="claude" size={26} /></span>{greeting()}</h1>
+        <Composer welcome target={{ paneId, tileId }} />
+        <EngineStatus />
+        {recent.length > 0 && (
+          <div className="recent">
+            <h5>最近</h5>
+            {recent.map((s) => (
+              <div key={s.sessionId} className="sess" onClick={() => pick(s.sessionId)}>
+                <span className="t">{s.title}</span>
+                <span className="ago">{s.peer ? `${s.peer.name} · ` : ''}{s.cwd.split(/[\\/]/).pop()} · {ago(s.lastModified)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

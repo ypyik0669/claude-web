@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { useStore } from '@/store';
-import { chatTile, paneOrder, activeGroup, MAX_PANES, PANELS, PANEL_ICONS, PANEL_TITLES, TILE_ICONS, type Pane as PaneModel, type Tile } from '@/model/layout';
+import { chatTile, MAX_PANES, PANELS, PANEL_ICONS, PANEL_TITLES, TILE_ICONS, type Pane as PaneModel, type Tile } from '@/model/layout';
 import { clsx, basename } from '@/util';
 import { Icon, type IconName } from '@/ui/icons';
 import { MIME_TILE, hasType, tilePayload } from './dnd';
+import { SidebarReveal } from './pane-edge';
 
 export function tileTitle(t: Tile, sessions: { sessionId: string; title: string }[]): { icon: IconName; text: string } {
   const icon = iconFor(t);
   if (t.title) return { icon, text: t.title };
   switch (t.kind) {
-    case 'chat': return { icon, text: t.sessionId ? sessions.find((s) => s.sessionId === t.sessionId)?.title ?? t.sessionId.slice(0, 8) : '新会话' };
+    case 'chat': return { icon, text: t.sessionId ? sessions.find((s) => s.sessionId === t.sessionId)?.title ?? t.sessionId.slice(0, 8) : '新对话' };
     case 'doc': return { icon, text: basename(t.path) };
     case 'diff': return { icon, text: basename(t.path) };
     case 'term': return { icon, text: `终端 · ${basename(t.cwd) || t.cwd}` };
@@ -21,21 +22,23 @@ function iconFor(t: Tile): IconName {
   return t.kind === 'panel' ? PANEL_ICONS[t.panel] ?? 'inspector' : TILE_ICONS[t.kind];
 }
 
-/** Tabs of one pane: click / middle-click close / double-click rename / drag reorder & move / ＋ menu / split & zoom buttons. */
-export function TabStrip({ pane, groupId, index, zoomed, single }: { pane: PaneModel; groupId: string; index: number; zoomed: boolean; single: boolean }) {
+/**
+ * Tabs of one pane: click / middle-click close / double-click rename / drag reorder & move / ＋ menu / split & zoom buttons.
+ * Rendered only when the pane needs it (`chromeVisibility`: several tabs, several panes, a lone non-chat tile, or
+ * workbench mode). The pane number, split buttons and zoom only appear where they mean something.
+ */
+export function TabStrip({ pane, groupId, index, zoomed, single, lead, workbench, paneCount }: { pane: PaneModel; groupId: string; index: number; zoomed: boolean; single: boolean; lead: boolean; workbench: boolean; paneCount: number }) {
   const dispatch = useStore((s) => s.dispatchLayout);
   const closeTile = useStore((s) => s.closeTile);
   const dirty = useStore((s) => s.dirtyDocs);
   const sessions = useStore((s) => s.sessions);
   const open = useStore((s) => s.open);
-  const singleWindow = useStore((s) => !!s.settings['ui.singleWindow']);
-  const layout = useStore((s) => s.layout);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [menu, setMenu] = useState(false);
   const [over, setOver] = useState<number | null>(null);
-  const paneCount = paneOrder(activeGroup(layout).root).length;
-  const canSplit = !singleWindow && paneCount < MAX_PANES;
+  // split buttons are workbench tools; Ctrl+D / Ctrl+Shift+D work regardless
+  const canSplit = workbench && paneCount < MAX_PANES;
 
   const startRename = (t: Tile) => { setRenaming(t.id); setDraft(tileTitle(t, sessions).text); };
   const commitRename = () => { if (renaming) dispatch({ t: 'tile.rename', paneId: pane.id, tileId: renaming, title: draft.trim() }); setRenaming(null); };
@@ -62,7 +65,8 @@ export function TabStrip({ pane, groupId, index, zoomed, single }: { pane: PaneM
 
   return (
     <div className="tabstrip" onDragOver={(e) => { if (hasType(e.dataTransfer, MIME_TILE)) { e.preventDefault(); e.stopPropagation(); } }} onDrop={onDrop} onDragLeave={() => setOver(null)}>
-      <span className="pane-idx" title={`窗格 ${index + 1}（Alt+${index + 1}）`}>{index + 1}</span>
+      {lead && <SidebarReveal />}
+      {paneCount > 1 && <span className="pane-idx" title={`分屏 ${index + 1}（Alt+${index + 1}）`}>{index + 1}</span>}
       <div className="tabs">
         {pane.tiles.map((t, i) => {
           const { icon, text } = tileTitle(t, sessions);
@@ -78,7 +82,7 @@ export function TabStrip({ pane, groupId, index, zoomed, single }: { pane: PaneM
               onClick={() => dispatch({ t: 'tile.activate', paneId: pane.id, tileId: t.id })}
               onDoubleClick={() => startRename(t)}
               onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTile(pane.id, t.id); } }}
-              title={`${text}\n双击重命名 · 中键关闭 · 可拖到别的窗格`}
+              title={`${text}\n双击重命名 · 中键关闭 · 可拖到别的分屏`}
             >
               {live && live !== 'history' && live !== 'closed' && <span className={clsx('dot', live)} />}
               {!live && <span className="ic"><Icon name={icon} size={14} /></span>}
@@ -92,10 +96,10 @@ export function TabStrip({ pane, groupId, index, zoomed, single }: { pane: PaneM
           );
         })}
         <span style={{ position: 'relative' }}>
-          <button className="tab-add" title="新标签" aria-label="新标签" onClick={() => setMenu(!menu)}><Icon name="plus" size={14} /></button>
+          <button className="tab-add" title="新标签页" aria-label="新标签页" onClick={() => setMenu(!menu)}><Icon name="plus" size={14} /></button>
           {menu && (
             <div className="menu" style={{ top: 26, left: 0 }} onMouseLeave={() => setMenu(false)}>
-              <button onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: chatTile(null), mode: 'tab' }); }}><Icon name="chat" size={14} /> 新会话</button>
+              <button onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: chatTile(null), mode: 'tab' }); }}><Icon name="chat" size={14} /> 新对话</button>
               <button onClick={() => { setMenu(false); const cwd = currentCwd(pane, open); dispatch({ t: 'tile.open', paneId: pane.id, tile: { id: `t${Date.now()}`, kind: 'term', cwd }, mode: 'tab' }); }}><Icon name="terminal" size={14} /> 终端</button>
               <button onClick={() => { setMenu(false); dispatch({ t: 'tile.open', paneId: pane.id, tile: { id: `t${Date.now()}`, kind: 'browser', url: 'http://localhost:3000' }, mode: 'tab' }); }}><Icon name="browser" size={14} /> 浏览器</button>
               {PANELS.map((p) => (
@@ -108,8 +112,8 @@ export function TabStrip({ pane, groupId, index, zoomed, single }: { pane: PaneM
       <span className="grow" />
       {canSplit && <button className="icon-btn xs" title="向右分屏 (Ctrl+D)" onClick={() => dispatch({ t: 'pane.split', paneId: pane.id, dir: 'row' })}><Icon name="splitRight" size={14} /></button>}
       {canSplit && <button className="icon-btn xs" title="向下分屏 (Ctrl+Shift+D)" onClick={() => dispatch({ t: 'pane.split', paneId: pane.id, dir: 'col' })}><Icon name="splitDown" size={14} /></button>}
-      {!single && <button className={clsx('icon-btn xs', zoomed && 'active')} title={zoomed ? '还原 (Ctrl+Shift+Enter)' : '缩放此窗格 (Ctrl+Shift+Enter)'} onClick={() => dispatch({ t: 'pane.zoom', paneId: zoomed ? null : pane.id })}><Icon name="zoom" size={14} /></button>}
-      {!single && <button className="icon-btn xs" title="关闭窗格" onClick={() => dispatch({ t: 'pane.close', paneId: pane.id })}><Icon name="close" size={14} /></button>}
+      {!single && <button className={clsx('icon-btn xs', zoomed && 'active')} title={zoomed ? '还原 (Ctrl+Shift+Enter)' : '放大这个分屏 (Ctrl+Shift+Enter)'} onClick={() => dispatch({ t: 'pane.zoom', paneId: zoomed ? null : pane.id })}><Icon name="zoom" size={14} /></button>}
+      {!single && <button className="icon-btn xs" title="关闭这个分屏" aria-label="关闭这个分屏" onClick={() => dispatch({ t: 'pane.close', paneId: pane.id })}><Icon name="close" size={14} /></button>}
     </div>
   );
 }

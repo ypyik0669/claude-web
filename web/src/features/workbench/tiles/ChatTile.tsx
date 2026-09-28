@@ -3,7 +3,8 @@ import { useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { basename, clsx } from '@/util';
 import { walkTools } from '@/model/conversation';
-import type { Tile, WorkbenchTab } from '@/model/layout';
+import { sessionDiffStat } from '@/model/diffstat';
+import type { Tile } from '@/model/layout';
 import { ChatView } from '@/features/chat/ChatView';
 import { TrajectoryView } from '@/features/trajectory/TrajectoryView';
 import { Composer } from '@/features/composer/Composer';
@@ -15,13 +16,18 @@ import { FileTree } from '../FileTree';
 import { GitView } from '../GitView';
 import { SearchView } from '../SearchView';
 import { BoardView } from '@/features/vcs/BoardView';
-import type { GitStatus } from '@shared';
+import type { GitStatus, SessionSummary } from '@shared';
 import { Icon } from '@/ui/icons';
-import { EngineSwitcher } from '../EngineSwitcher';
-import { SessionMenu, effectiveCaps, forkSession } from '@/features/sidebar/session-actions';
+import { SessionMenu, effectiveCaps } from '@/features/sidebar/session-actions';
 import { sessionPeer } from '@/features/peers';
 import { blockRemoteOpen } from '@/features/remote-guard';
 import { coalesce, gitEventConcerns } from '../git-refresh';
+import { SidebarReveal, usePaneEdge } from '../pane-edge';
+import { useRepoContext } from '../repo-context';
+import { viewsFor, WB_VIEWS } from '../wb-views';
+import { runCommand } from '../commands';
+import { modKey } from '../shortcuts';
+import { TERMS } from '@/ui/terms';
 
 /**
  * git status for a cwd (the files tab badges). Refreshed only by events about THIS repo (`gitEventConcerns`:
@@ -46,95 +52,129 @@ function useGitStatus(cwd: string, enabled: boolean): GitStatus | null {
 
 type ChatTileModel = Extract<Tile, { kind: 'chat' }>;
 
-const WB_TABS: { id: WorkbenchTab; l: string }[] = [
-  { id: 'live', l: '对话' },
-  { id: 'changes', l: '改动' },
-  { id: 'git', l: 'Git' },
-  { id: 'files', l: '文件' },
-  { id: 'search', l: '搜索' },
-  { id: 'schedules', l: '定时' },
-  { id: 'artifacts', l: '产物' },
-  { id: 'board', l: '看板' },
-];
-/** A session on another machine: its files, git, search, schedules live there — only these tabs make sense here. */
-const REMOTE_TABS = new Set<WorkbenchTab>(['live', 'artifacts']);
+/**
+ * The ··· menu's own part (what used to be header buttons and the 8 workbench tabs): export, the steps view, the
+ * per-session views, pin, open the folder, stop / resume. The shared SessionMenu adds rename, fork, archive,
+ * hand-over, native CLI, copy id and delete below it.
+ */
+function HeaderMenu({ tile, paneId, s, live, remote, onClose }: { tile: ChatTileModel; paneId: string; s: SessionSummary; live: boolean; remote: boolean; onClose: () => void }) {
+  const st = useStore();
+  const pinned = !!st.sessionMeta[s.sessionId]?.pinned;
+  const caps = effectiveCaps(s);
+  const act = (fn: () => unknown) => () => { onClose(); void fn(); };
+  const patch = (p: Partial<ChatTileModel>) => st.dispatchLayout({ t: 'tile.patch', paneId, tileId: tile.id, patch: p });
+  return (
+    <>
+      <button onClick={act(() => shareConversation(s.sessionId))}><Icon name="share" size={14} /> 导出为 HTML</button>
+      <button onClick={act(() => patch({ wb: 'live', view: tile.view === 'trajectory' && tile.wb === 'live' ? 'chat' : 'trajectory' }))} title={`对话 ⇄ ${TERMS.trajectory}（Alt+J）`}>
+        <Icon name="workflow" size={14} /> <span style={{ flex: 1 }}>{TERMS.trajectory}</span>{tile.wb === 'live' && tile.view === 'trajectory' && <Icon name="check" size={13} />}
+      </button>
+      <div className="menu-label">查看这个对话的</div>
+      <div className="menu-grid" role="group" aria-label="查看这个对话的">
+        {viewsFor(remote).map((v) => (
+          <button key={v.id} className={clsx(tile.wb === v.id && 'on')} onClick={act(() => patch({ wb: tile.wb === v.id ? 'live' : v.id }))} data-view={v.id}>
+            <Icon name={v.icon} size={13} /> {v.label}
+          </button>
+        ))}
+      </div>
+      <div className="menu-sep" />
+      <button onClick={act(() => st.setSessionMeta(s.sessionId, { pinned: !pinned }))}><Icon name="pin" size={14} /> {pinned ? '取消置顶' : '置顶'}</button>
+      {!remote && <button onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd }))}><Icon name="folder" size={14} /> 在资源管理器打开</button>}
+      {!remote && <button onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd, app: 'code' }))}><Icon name="keyboard" size={14} /> 在 VS Code 打开</button>}
+      {live
+        ? <button onClick={act(() => st.closeSession(s.sessionId))} title="进程会退出，对话留着，发消息即可继续"><Icon name="stop" size={14} /> 结束进程</button>
+        : caps.resume && <button onClick={act(() => st.openSession({ sessionId: s.sessionId, cwd: s.cwd }, 'none').catch((e) => st.toast(e.message)))}><Icon name="play" size={14} /> 恢复运行</button>}
+      <div className="menu-sep" />
+    </>
+  );
+}
 
-/** Per-session header: breadcrumb · status · rename · chat/trajectory · fork · export · stop/resume. Moved out of TopBar. */
+/**
+ * The one row above a conversation (spec §5.2, ≤ 52px): title (double-click to rename) · project · branch ·
+ * worktree, and on the right 「改动 +N −M」, terminal, the right-panel toggle and ···. Everything the old header
+ * and its workbench-tab row did is in the ··· menu (see HeaderMenu) or the command palette.
+ */
 function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }) {
   const sid = tile.sessionId!;
   const active = useStore((s) => s.open[sid]);
   const meta = useStore((s) => s.sessions.find((x) => x.sessionId === sid));
   const workspaces = useStore((s) => s.workspaces);
   const dispatch = useStore((s) => s.dispatchLayout);
-  const openSession = useStore((s) => s.openSession);
-  const closeSession = useStore((s) => s.closeSession);
   const toast = useStore((s) => s.toast);
+  const dock = useStore((s) => s.layout.dock);
+  const inspect = useStore((s) => !!s.inspect);
+  const edge = usePaneEdge();
   const [editing, setEditing] = useState<string | null>(null);
   const [menu, setMenu] = useState(false);
   const title = meta?.title ?? sid.slice(0, 8);
   const sessions = useStore((s) => s.sessions);
   const peer = sessionPeer(sid, sessions);
   const cwd = active?.cwd ?? meta?.cwd ?? '';
-  const live = active && active.state !== 'history' && active.state !== 'closed' && active.state !== 'error';
+  const live = !!active && active.state !== 'history' && active.state !== 'closed' && active.state !== 'error';
   const wsOf = workspaces.find((w) => cwd.toLowerCase().startsWith(w.path.toLowerCase()));
-  const agentKind = active?.info?.agent ?? useStore.getState().sessions.find((s) => s.sessionId === sid)?.agent;
+  const agentKind = active?.info?.agent ?? meta?.agent;
   const agentDef = useStore((s) => s.agents.find((a) => a.kind === agentKind));
   const agentName = active?.info?.agentName ?? agentDef?.name ?? agentKind;
+  const { git, worktree } = useRepoContext(cwd, sid);
+  const branch = git?.branch ?? meta?.gitBranch;
+  const stat = useMemo(() => (active ? sessionDiffStat(active.conv.items) : null), [active?.version]);
   const rename = async () => {
     if (editing !== null && editing.trim() && editing !== title) await useStore.getState().libraryOp('rename', { sessionId: sid, title: editing.trim() }).catch((e) => toast(e.message));
     setEditing(null);
   };
   // a brand-new session may not be in the list yet: the menu still works on what we know
-  const summary = meta ?? { sessionId: sid, title, cwd, lastModified: Date.now(), agent: agentKind };
+  const summary: SessionSummary = meta ?? { sessionId: sid, title, cwd, lastModified: Date.now(), agent: agentKind };
   const gone = useStore((s) => !!s.deletedSessions[sid]);
   // a deleted session keeps only what is on screen: nothing to fork, resume or manage any more
   const caps = gone ? { ...effectiveCaps(summary), fork: false, resume: false, rename: false } : effectiveCaps(summary);
-  const canRename = caps.rename;
   const patch = (p: Partial<ChatTileModel>) => dispatch({ t: 'tile.patch', paneId, tileId: tile.id, patch: p });
+  const dockShown = dock.open && (dock.tabs.length > 0 || inspect);
+  const toggleDock = () => (dockShown ? dispatch({ t: 'dock.set', patch: { open: false } }) : dock.tabs.length ? runCommand('dock.toggle') : dispatch({ t: 'dock.show', panel: 'tasks' }));
+  const terminalOn = dockShown && dock.active === 'terminal' && !dock.minimized;
+  const viewDef = tile.wb !== 'live' ? WB_VIEWS.find((v) => v.id === tile.wb) : undefined;
+  const dirty = git?.files.length ?? 0;
   return (
     <div className="sess-head">
-      <div className="crumb">
-        {peer
-          ? <button title={`${cwd}（在机器「${peer.name}」上）`} disabled><Icon name="machine" size={12} /> {peer.name} · {basename(cwd)}</button>
-          : <button title={cwd} onClick={() => ws.request({ kind: 'shell.open', path: cwd })}><Icon name="folder" size={12} /> {wsOf?.name ?? basename(cwd)}</button>}
-        <span className="sep">/</span>
-        {live && <span className={clsx('dot', active.state)} />}
+      {edge.lead && !edge.strip && <SidebarReveal />}
+      <div className="sh-main">
         {editing !== null ? (
-          <input autoFocus value={editing} onChange={(e) => setEditing(e.target.value)} onBlur={rename} onKeyDown={(e) => (e.key === 'Enter' ? rename() : e.key === 'Escape' ? setEditing(null) : null)} />
+          <input className="sh-rename" autoFocus value={editing} onChange={(e) => setEditing(e.target.value)} onBlur={rename} onKeyDown={(e) => (e.key === 'Enter' ? rename() : e.key === 'Escape' ? setEditing(null) : null)} aria-label="对话标题" />
         ) : (
-          <span className="cur" onDoubleClick={() => { if (canRename) setEditing(title); }} title={canRename ? '双击重命名' : title}>{title}</span>
+          <span className="sh-title" onDoubleClick={() => { if (caps.rename) setEditing(title); }} title={caps.rename ? `${title}\n双击重命名` : title}>{title}</span>
         )}
-        {meta?.gitBranch && <span className="sep branch" style={{ fontSize: 12 }} title={meta.gitBranch}>· {meta.gitBranch}</span>}
-        {active?.info && live && <EngineSwitcher sessionId={sid} info={active.info} />}
-        {(!active?.info || !live) && agentKind && agentKind !== 'claude' && <span className="badge agent" title={`这个会话由 ${agentName} 驱动`}>{agentName}</span>}
-      </div>
-      <span className="grow" />
-      {caps.fork && <button className="icon-btn" title="从当前会话分叉（新标签）" onClick={() => forkSession(summary)} aria-label="分叉"><Icon name="branch" size={14} /></button>}
-      <button className="icon-btn" title="导出对话为 HTML（可分享）" onClick={() => shareConversation(sid)}>↗</button>
-      {!gone && <span style={{ position: 'relative' }}>
-        <button className={clsx('icon-btn', menu && 'active')} title="会话菜单：引用、重命名、归档、删除、交接、原生 CLI…" aria-label="会话菜单" aria-expanded={menu} onClick={(e) => { e.stopPropagation(); setMenu(!menu); }}><Icon name="more" size={14} /></button>
-        {menu && <SessionMenu s={summary} onClose={() => setMenu(false)} style={{ right: 0, top: 30 }} />}
-      </span>}
-      {live ? (
-        <button className="icon-btn" title="结束进程（可随时恢复）" onClick={() => closeSession(sid)} aria-label="结束进程"><Icon name="stop" size={13} /></button>
-      ) : gone ? null : caps.resume ? (
-        <button className="btn sm ghost" onClick={() => openSession({ sessionId: sid, cwd }, 'none').catch((e) => toast(e.message))}><Icon name="play" size={12} /> 恢复</button>
-      ) : (
-        <span className="badge" title="这个来源没有官方的续聊接口，只能查看">只读</span>
-      )}
-      <div className="sess-tabs">
-        <div className="wb-tabs">
-          {(peer ? WB_TABS.filter((t) => REMOTE_TABS.has(t.id)) : WB_TABS).map((t) => <button key={t.id} className={clsx(tile.wb === t.id && 'active')} onClick={() => patch({ wb: t.id })}>{t.l}</button>)}
-          {peer && <span className="peer-note" title={`文件 / Git / 搜索在机器「${peer.name}」上，请在那台机器上查看`}><Icon name="machine" size={11} /> 文件 / Git / 搜索：在该机器上查看</span>}
-        </div>
-        <span className="grow" />
-        {tile.wb === 'live' && (
-          <div className="seg mini">
-            <button className={clsx(tile.view === 'chat' && 'active')} onClick={() => patch({ view: 'chat' })}>对话</button>
-            <button className={clsx(tile.view === 'trajectory' && 'active')} onClick={() => patch({ view: 'trajectory' })}>轨迹</button>
-          </div>
+        <span className="sh-meta">
+          {peer
+            ? <span className="it" title={`${cwd}（在机器「${peer.name}」上）`}><Icon name="machine" size={12} /><span className="nm">{peer.name} · {basename(cwd)}</span></span>
+            : cwd && <button className="it" title={`${cwd}\n点击在资源管理器打开`} onClick={() => ws.request({ kind: 'shell.open', path: cwd })}><Icon name="folder" size={12} /><span className="nm">{wsOf?.name ?? basename(cwd)}</span></button>}
+          {branch && !peer && (
+            <button className={clsx('it branch', git && git.state !== 'clean' && 'dirty')} title={`${branch}${git?.upstream ? ` → ${git.upstream}` : git ? ' · 无上游' : ''}${git ? (dirty ? ` · ${dirty} 处未提交的改动` : ' · 干净') : ''}${git?.ahead ? ` · 领先 ${git.ahead}` : ''}${git?.behind ? ` · 落后 ${git.behind}` : ''}\n点击查看文件改动`} onClick={() => dispatch({ t: 'dock.show', panel: 'files' })}>
+              <Icon name="branch" size={12} /><span className="nm bn">{branch}</span>
+            </button>
+          )}
+          {worktree && <span className="tag" title="这个对话在仓库的一个独立副本（git worktree）里运行，不是主检出">独立副本</span>}
+          {agentKind && agentKind !== 'claude' && <span className="tag" title={`这个对话由 ${agentName} 运行`}>{agentName}</span>}
+          {!live && !gone && !caps.resume && <span className="tag" title="这个来源没有官方的续聊接口，只能查看">只读</span>}
+        </span>
+        {viewDef && (
+          <button className="sh-view" onClick={() => patch({ wb: 'live' })} title="回到对话"><Icon name={viewDef.icon} size={13} /> {viewDef.label}<Icon name="close" size={11} /></button>
+        )}
+        {!viewDef && tile.view === 'trajectory' && (
+          <button className="sh-view" onClick={() => patch({ view: 'chat' })} title="回到对话（Alt+J）"><Icon name="workflow" size={13} /> {TERMS.trajectory}<Icon name="close" size={11} /></button>
         )}
       </div>
+      <span className="sh-actions">
+        {stat && stat.files > 0 && (
+          <button className="sh-diff" title={`这个对话改了 ${stat.files} 个文件：+${stat.added} 行 −${stat.removed} 行\n点击查看改动`} onClick={() => dispatch({ t: 'dock.show', panel: 'files' })}>
+            <span className="add">+{stat.added}</span><span className="del">−{stat.removed}</span>
+          </button>
+        )}
+        {!peer && <button className={clsx('icon-btn', terminalOn && 'active')} title={`终端 (${modKey}+\`)`} aria-label="终端" onClick={() => (terminalOn ? dispatch({ t: 'dock.set', patch: { open: false } }) : dispatch({ t: 'dock.show', panel: 'terminal' }))}><Icon name="terminal" size={16} /></button>}
+        <button className={clsx('icon-btn', dockShown && 'active')} title={`${TERMS.dock} (${modKey}+J)`} aria-label={TERMS.dock} aria-pressed={dockShown} onClick={toggleDock}><Icon name="inspector" size={16} /></button>
+        {!gone && <span className="sh-more">
+          <button className={clsx('icon-btn', menu && 'active')} title="这个对话的更多操作：导出、步骤视图、改动 / Git / 文件…、重命名、分叉、归档、交给其它 Agent、删除" aria-label="更多操作" aria-expanded={menu} aria-haspopup="menu" onClick={(e) => { e.stopPropagation(); setMenu(!menu); }}><Icon name="more" size={16} /></button>
+          {menu && <SessionMenu s={summary} onClose={() => setMenu(false)} style={{ right: 0, top: 34 }} extra={<HeaderMenu tile={tile} paneId={paneId} s={summary} live={live} remote={!!peer} onClose={() => setMenu(false)} />} />}
+        </span>}
+      </span>
     </div>
   );
 }
@@ -153,7 +193,7 @@ function Artifacts({ sessionId }: { sessionId: string }) {
     }
     return [...seen.values()].reverse();
   }, [active?.version]);
-  if (!items.length) return <div className="empty">这个会话还没有产物（Artifact 工具或 Write 新建的文件会出现在这里）。</div>;
+  if (!items.length) return <div className="empty">还没有生成的文件。Claude 新建的文件（Write / Artifact）之后会出现在这里。</div>;
   return (
     <div className="list">
       {items.map((a) => (
@@ -175,6 +215,7 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
   const sessions = useStore((s) => s.sessions);
   // by id, not by the list: a fork or a restored layout may render before the list has the row
   const peer = sessionPeer(sid, sessions);
+  const remoteView = !!peer && !viewsFor(true).some((v) => v.id === tile.wb) && tile.wb !== 'live';
   const gitStatus = useGitStatus(active?.cwd ?? '', tile.wb === 'files' && !peer);
   const deleted = useStore((s) => (sid ? !!s.deletedSessions[sid] : false));
   // restored from a persisted layout: lazily pull the transcript
@@ -182,19 +223,19 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
     if (sid && !has && visible) void loadHistory(sid, { focus: false });
   }, [sid, has, visible]);
   if (!sid) return <Welcome paneId={paneId} tileId={tile.id} />;
-  if (!active) return <div className="empty">加载会话…</div>;
+  if (!active) return <div className="empty">加载对话…</div>;
   return (
     <div className="chat-tile">
       <SessionHeader tile={tile} paneId={paneId} />
-      {deleted && <div className="deleted-banner" role="status"><Icon name="trash" size={13} /> 这个会话已被删除（备份在 ~/.claude-web/library-trash），这里只剩最后看到的内容。</div>}
+      {deleted && <div className="deleted-banner" role="status"><Icon name="trash" size={13} /> 这个对话已被删除（备份在 ~/.claude-web/library-trash），这里只剩最后看到的内容。</div>}
       {tile.wb === 'live' && (
         <>
           {tile.view === 'chat' ? <ChatView key={sid} /> : <TrajectoryView key={sid} />}
           <Composer key={`c-${sid}`} disabled={deleted} />
         </>
       )}
-      {peer && !REMOTE_TABS.has(tile.wb) && <div className="wb-body"><div className="remote-only"><Icon name="machine" size={22} /><div>这个会话在机器「{peer.name}」上，它的文件 / Git / 搜索 / 定时任务都在那台机器上。</div><div className="sub">请在该机器上查看；这里可以继续对话、审批、中断。</div></div></div>}
-      {peer && !REMOTE_TABS.has(tile.wb) ? null : <>
+      {remoteView && <div className="wb-body"><div className="remote-only"><Icon name="machine" size={22} /><div>这个对话在机器「{peer!.name}」上，它的文件 / Git / 搜索 / 定时任务都在那台机器上。</div><div className="sub">请在该机器上查看；这里可以继续对话、审批、中断。</div></div></div>}
+      {remoteView ? null : <>
       {tile.wb === 'changes' && <div className="wb-body"><FilesPanel /></div>}
       {tile.wb === 'git' && <div className="wb-body"><GitView cwd={active.cwd} /></div>}
       {tile.wb === 'files' && <div className="wb-body"><FileTree root={active.cwd} gitStatus={gitStatus} /></div>}

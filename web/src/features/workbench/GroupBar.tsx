@@ -6,17 +6,23 @@ import { desktop } from '@/desktop';
 import { MIME_SESSION, MIME_TILE, hasType, tilePayload } from './dnd';
 import { offerGroupToNewWindow } from './windows';
 import { Icon, type IconName } from '@/ui/icons';
+import { DockRail } from './DockRail';
+import { SidebarReveal } from './pane-edge';
 
 const PRESETS: { id: LayoutPreset; l: string; ic: IconName }[] = [
-  { id: 'single', l: '单窗格', ic: 'circle' as const },
+  { id: 'single', l: '不分屏', ic: 'circle' as const },
   { id: 'cols2', l: '左右两栏', ic: 'splitRight' as const },
   { id: 'cols3', l: '三栏', ic: 'board' as const },
   { id: 'grid2x2', l: '四宫格', ic: 'zoom' as const },
   { id: 'mainSide', l: '主 + 侧', ic: 'sidebar' as const },
 ];
 
-/** Group tabs (Mirasim's "分组"): each group is an independent pane tree; drag a tile or session onto a tab to move it there. */
-export function GroupBar() {
+/**
+ * Group tabs (Mirasim's "分组"): each group is an independent pane tree; drag a tile or session onto a tab to move it
+ * there. Shown only with more than one group or in workbench mode (`chromeVisibility`); it is then the window's top
+ * row, so it also carries the sidebar reveal and, in workbench mode, the panel rail.
+ */
+export function GroupBar({ rail = false }: { rail?: boolean }) {
   const layout = useStore((s) => s.layout);
   const dispatch = useStore((s) => s.dispatchLayout);
   const open = useStore((s) => s.open);
@@ -48,6 +54,8 @@ export function GroupBar() {
   };
   return (
     <div className="groupbar">
+      <SidebarReveal />
+      <div className="gtabs">
       {layout.groups.map((g, i) => (
         <div
           key={g.id}
@@ -58,7 +66,7 @@ export function GroupBar() {
           onDragOver={(e) => { if (hasType(e.dataTransfer, MIME_TILE) || hasType(e.dataTransfer, MIME_SESSION)) { e.preventDefault(); setOver(g.id); } }}
           onDragLeave={() => setOver(null)}
           onDrop={(e) => onDrop(e, g.id)}
-          title={`${g.name} · ${paneOrder(g.root).length} 个窗格 · 双击重命名 · 中键关闭 · ${desktop ? 'Ctrl' : 'Ctrl+Alt'}+${i + 1}`}
+          title={`${g.name} · ${paneOrder(g.root).length} 个分屏 · 双击重命名 · 中键关闭 · ${desktop ? 'Ctrl' : 'Ctrl+Alt'}+${i + 1}`}
         >
           {busy(g.id) && <span className="dot running" />}
           {renaming === g.id ? (
@@ -70,17 +78,19 @@ export function GroupBar() {
         </div>
       ))}
       <button className="icon-btn" title="新分组" aria-label="新分组" onClick={() => dispatch({ t: 'group.new' })}><Icon name="plus" size={15} /></button>
+      </div>
       <span className="grow" />
       <span style={{ position: 'relative' }}>
         <button className="icon-btn" title="布局预设" aria-label="布局预设" onClick={() => setPresets(!presets)}><Icon name="zoom" size={15} /></button>
         {presets && (
           <div className="menu" style={{ right: 0, top: 26 }} onMouseLeave={() => setPresets(false)}>
             {PRESETS.map((p) => <button key={p.id} onClick={() => { setPresets(false); dispatch({ t: 'pane.preset', preset: p.id }); }}><Icon name={p.ic} size={13} /> {p.l}</button>)}
-            <button onClick={() => { setPresets(false); dispatch({ t: 'pane.even' }); }}><Icon name="splitRight" size={13} /> 均分所有窗格</button>
+            <button onClick={() => { setPresets(false); dispatch({ t: 'pane.even' }); }}><Icon name="splitRight" size={13} /> 均分所有分屏</button>
           </div>
         )}
       </span>
       {desktop && <button className="icon-btn" title="在新窗口打开当前分组 (Ctrl+Shift+N)" onClick={() => void offerGroupToNewWindow(layout.activeGroupId)} aria-label="新窗口打开分组"><Icon name="external" size={15} /></button>}
+      {rail && <><span className="rail-sep" /><DockRail /></>}
     </div>
   );
 }

@@ -17,6 +17,7 @@ import { desktop } from '@/desktop';
 import { Icon } from '@/ui/icons';
 import { installOrchestra } from '@/features/orchestra/state';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
+import { chromeVisibility, workbenchOn } from '@/model/layout';
 
 function Toasts() {
   const toasts = useStore((s) => s.toasts);
@@ -66,6 +67,24 @@ export function App() {
   const dockShown = dock.open && (dock.tabs.length > 0 || !!inspect);
   const rpWidth = !dockShown ? 0 : dock.minimized ? 36 : dock.width;
 
+  // desktop caption buttons (Windows / Linux overlay) are painted in one colour: match whatever row is under them —
+  // the page (--bg) when the session header / empty page is there, the side surface (--bg-1) for the right panel's
+  // tab row, the group bar or a tab strip
+  const theme = useStore((s) => s.theme);
+  const sideSurface = useStore((s) => {
+    const vis = chromeVisibility(s.layout, { workbench: workbenchOn(s.settings) });
+    return vis.groupBar || Object.values(vis.tabStrip).some(Boolean);
+  }) || rpWidth > 0;
+  useEffect(() => {
+    const d = desktop;
+    if (!d) return;
+    const t = setTimeout(() => {
+      const cs = getComputedStyle(document.documentElement);
+      d.setTitleBarColors(cs.getPropertyValue(sideSurface ? '--bg-1' : '--bg').trim(), cs.getPropertyValue('--fg-1').trim());
+    }, 0);
+    return () => clearTimeout(t);
+  }, [theme, sideSurface]);
+
   // asking to inspect a tool call must reveal the dock — otherwise clicking the detail button on a tool row does nothing
   useEffect(() => {
     if (!inspect) return;
@@ -102,7 +121,8 @@ export function App() {
   }, []);
 
   return (
-    <div className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', mobile && sidebarOpen && 'drawer-open')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px` }}>
+    // `dock-open`: the right panel owns the window's top-right corner (desktop caption buttons sit over its tab row)
+    <div className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', mobile && sidebarOpen && 'drawer-open', rpWidth > 0 && !mobile && 'dock-open')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px` }}>
       {mobile && sidebarOpen && <div className="drawer-backdrop" onClick={() => useStore.setState({ sidebarOpen: false })} />}
       {sidebarOpen ? <SidebarColumn /> : <div className="sidebar" style={{ display: 'none' }} />}
       <ErrorBoundary area="工作台"><Workbench /></ErrorBoundary>

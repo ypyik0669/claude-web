@@ -7,7 +7,6 @@ import { parsePeerId, type AgentKind, type AttachmentRef, type EffortLevel, type
 import { compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachment, uploadAttachment, type DroppedFile, type PendingImage } from '@/model/attachments';
 import { StatusStrip } from '@/features/chat/StatusStrip';
 import { RunCard } from '@/features/chat/RunCard';
-import { ContextRow } from './ContextRow';
 import { DirPicker } from './DirPicker';
 import { attachmentFolderPath } from '@/features/paths';
 import { Icon } from '@/ui/icons';
@@ -405,7 +404,6 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
         )}
         {active && !welcome && <StatusStrip sessionId={active.sessionId} onRecall={(t) => { setText((cur) => (cur ? `${cur}\n${t}` : t)); ta.current?.focus(); }} />}
         {active && !welcome && <RunCard sessionId={active.sessionId} />}
-        {active && !welcome && active.cwd && <ContextRow cwd={active.cwd} info={info} sessionId={active.sessionId} />}
         <div className="composer-box" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
           {(imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0 || upload) && (
             <div className="attach">

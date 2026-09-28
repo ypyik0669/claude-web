@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { AgentInfo, AgentKind, AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, SourceStatus, Workspace } from '@shared';
 import { decodeAttachments, findChainUuidBefore, type ContextUsage } from '@/model/conversation';
-import { activeGroup, chatTile, deriveActive, initialLayout, layoutReducer, migrateLegacy, sanitizeLayout, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
+import { activeGroup, chatTile, deriveActive, hasLegacyLayout, initialLayout, layoutReducer, migrateLegacy, migrateWorkbench, sanitizeLayout, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
 import { PaneContext, winId } from './paneContext';
 import { useContext } from 'react';
 
@@ -173,21 +173,23 @@ function bump(s: State, id: string, fn: (o: OpenSession) => void): Partial<State
 }
 
 const LAYOUT_KEY = `cw.layout.v2:${winId}`;
-function loadLayout(): LayoutState {
+/** The saved layout (or one rebuilt from the pre-workbench keys); `saved` is false on a first run. */
+function loadLayout(): { layout: LayoutState; saved: boolean } {
   try {
     const raw = localStorage.getItem(LAYOUT_KEY);
     if (raw) {
       const s = sanitizeLayout(JSON.parse(raw));
-      if (s) return s;
+      if (s) return { layout: s, saved: true };
     }
   } catch { /* fall through */ }
   try {
+    const saved = hasLegacyLayout(localStorage);
     const s = migrateLegacy(localStorage);
     localStorage.removeItem('cw.panels');
     localStorage.removeItem('cw.rp');
-    return s;
+    return { layout: s, saved };
   } catch {
-    return initialLayout();
+    return { layout: initialLayout(), saved: false };
   }
 }
 let layoutSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -195,7 +197,8 @@ function persistLayout(s: LayoutState) {
   if (layoutSaveTimer) clearTimeout(layoutSaveTimer);
   layoutSaveTimer = setTimeout(() => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(s)); } catch { /* ignore */ } }, 300);
 }
-const initialLayoutState = loadLayout();
+const loadedLayout = loadLayout();
+const initialLayoutState = loadedLayout.layout;
 
 export const useStore = create<State>((set, get) => ({
   connected: false,
@@ -220,8 +223,8 @@ export const useStore = create<State>((set, get) => ({
   },
   openTile(tile, mode = 'replace', paneId) {
     const g = activeGroup(get().layout);
-    const single = !!get().settings['ui.singleWindow'];
-    get().dispatchLayout({ t: 'tile.open', paneId: paneId ?? g.focusedPaneId, tile, mode: single ? 'replace' : mode });
+    // a second tab is fine without the workbench setting: the tab strip shows up by itself (chromeVisibility)
+    get().dispatchLayout({ t: 'tile.open', paneId: paneId ?? g.focusedPaneId, tile, mode });
   },
   async closeTile(paneId, tileId) {
     if (get().dirtyDocs[tileId] && !(await dlg.confirm('这个文件有未保存的改动，确定关闭？', { okLabel: '关闭', danger: true }))) return;
@@ -285,6 +288,12 @@ export const useStore = create<State>((set, get) => ({
       ws.request<Schedule[]>({ kind: 'schedules.list' }),
       ws.request<Record<string, unknown>>({ kind: 'settings.get' }),
     ]);
+    // one-time: ui.singleWindow → ui.workbench, decided from the layout this window started with
+    const wb = migrateWorkbench(settings, loadedLayout.saved ? initialLayoutState : null);
+    if (wb !== undefined) {
+      settings['ui.workbench'] = wb;
+      void ws.request({ kind: 'settings.set', key: 'ui.workbench', value: wb }).catch(() => {});
+    }
     set({ workspaces, sessionMeta, schedules, settings, metaLoaded: true });
     applyUiSettings(settings);
     get().setTheme(resolveTheme((settings['ui.theme'] as any) ?? DEFAULT_THEME), true);
@@ -718,11 +727,7 @@ export const useStore = create<State>((set, get) => ({
     document.documentElement.dataset.theme = theme;
     set({ theme });
     if (!fromSettings && get().settings['ui.theme'] !== theme) { set((s) => ({ settings: { ...s.settings, 'ui.theme': theme } })); void ws.request({ kind: 'settings.set', key: 'ui.theme', value: theme }).catch(() => {}); }
-    const d = desktop;
-    if (d) {
-      const cs = getComputedStyle(document.documentElement);
-      setTimeout(() => d.setTitleBarColors(cs.getPropertyValue('--bg').trim(), cs.getPropertyValue('--fg-1').trim()), 0);
-    }
+    // the desktop caption-button colours follow the theme AND what sits in the top-right corner: App's useTitleBarColors
   },
   async forkAt(sessionId: string, messageUuid: string) {
     const o = get().open[sessionId];

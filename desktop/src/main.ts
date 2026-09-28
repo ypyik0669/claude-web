@@ -121,12 +121,12 @@ function createWindow(url: string, winId = 'main', bounds?: Bounds): BrowserWind
     minHeight: 600,
     title: APP_NAME,
     icon: iconPath(),
-    backgroundColor: titleBar.bg || (dark ? '#1f1e1b' : '#faf9f5'),
+    backgroundColor: titleBar.bg || (dark ? '#1a1a19' : '#ffffff'),
     titleBarStyle: 'hidden',
-    // macOS keeps its own traffic lights (left, see `html.mac` in styles.css); elsewhere we draw the overlay buttons
+    // macOS keeps its own traffic lights (left, see `html.mac` in styles.css; y centres them in the 52px top rows); elsewhere we draw the overlay buttons
     ...(isMac
-      ? { trafficLightPosition: { x: 14, y: 13 } }
-      : { titleBarOverlay: { color: titleBar.bg || (dark ? '#1f1e1b' : '#faf9f5'), symbolColor: titleBar.fg || (dark ? '#bab6ae' : '#4d4a44'), height: 40 } }),
+      ? { trafficLightPosition: { x: 14, y: 19 } }
+      : { titleBarOverlay: { color: titleBar.bg || (dark ? '#1a1a19' : '#ffffff'), symbolColor: titleBar.fg || (dark ? '#b9b9b4' : '#474744'), height: 40 } }),
     show: false,
     // webviewTag powers the in-app browser tile; each <webview> declares its own partition and denies popups
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false, webviewTag: true, additionalArguments: [`--cw-win=${winId}`] },

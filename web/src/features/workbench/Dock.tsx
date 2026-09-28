@@ -50,7 +50,9 @@ function PanelContent({ id, visible }: { id: PanelId; visible: boolean }) {
  *
  * There is exactly ONE render branch. Minimising collapses the column to an icon rail with CSS and
  * hides the panel bodies with `visibility` — it must never unmount them, or the terminal loses its
- * pty and xterm buffer and every form loses its state. Same discipline as `PaneLayer`.
+ * pty and xterm buffer and every form loses its state. Same discipline as `PaneLayer`. Hiding the whole dock
+ * (Ctrl+J, the session header's right-panel button) is the same: `hidden`, not unmounted. Only closing a tab
+ * (its ×, middle click) unmounts that one panel.
  */
 export function Dock() {
   const dock = useStore((s) => s.layout.dock);
@@ -59,8 +61,10 @@ export function Dock() {
   const drag = useRef<{ x0: number; w0: number; id: number } | null>(null);
   const tabs: PanelId[] = [...dock.tabs, ...(inspect && !dock.tabs.includes('inspector') ? (['inspector'] as PanelId[]) : [])];
   const active: PanelId | null = inspect && dock.active !== 'inspector' && !dock.tabs.includes('inspector') ? 'inspector' : dock.active && tabs.includes(dock.active) ? dock.active : tabs[0] ?? null;
-  if (!tabs.length || !dock.open) return null;
+  // hidden (Ctrl+J / the header's right-panel button) is CSS too: closing the panel must not end the terminal's pty
+  if (!tabs.length) return null;
   const min = dock.minimized;
+  const shown = dock.open;
 
   const close = (id: PanelId) => (id === 'inspector' ? useStore.setState({ inspect: null }) : dispatch({ t: 'dock.toggle', panel: id }));
   const onDown = (e: React.PointerEvent) => {
@@ -81,7 +85,7 @@ export function Dock() {
   const pick = (id: PanelId) => dispatch({ t: 'dock.set', patch: min ? { minimized: false, active: id } : { active: id } });
 
   return (
-    <div className={clsx('dock', min && 'min')}>
+    <div className={clsx('dock', min && 'min')} hidden={!shown}>
       {!min && <div className="resizer" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onDoubleClick={() => dispatch({ t: 'dock.set', patch: { width: DOCK_DEFAULT_WIDTH } })} title="拖动调整 · 双击复位" />}
       <div className="dock-tabs">
         {tabs.map((id) => (
@@ -112,7 +116,7 @@ export function Dock() {
       <div className="dock-body">
         {tabs.map((id) => (
           <div key={id} className="dock-panel" hidden={active !== id}>
-            <PanelBody id={id} visible={!min && active === id} />
+            <PanelBody id={id} visible={shown && !min && active === id} />
           </div>
         ))}
       </div>

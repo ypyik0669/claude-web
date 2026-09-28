@@ -249,3 +249,35 @@ describe('session library', () => {
     expect(useStore.getState().sourceFilter).toBe('codex');
   });
 });
+
+describe('workbench chrome (redesign phase 1)', () => {
+  const meta = (settings: Record<string, unknown>) => {
+    fake.handlers.set('workspaces.list', () => []);
+    fake.handlers.set('sessions.meta', () => ({}));
+    fake.handlers.set('schedules.list', () => []);
+    fake.handlers.set('settings.get', () => ({ ...settings }));
+  };
+
+  it('first load decides ui.workbench once (a fresh window without a saved layout: off)', async () => {
+    meta({});
+    await useStore.getState().loadMeta();
+    expect(useStore.getState().settings['ui.workbench']).toBe(false);
+    expect(fake.sent.filter((r) => r.kind === 'settings.set' && r.key === 'ui.workbench').map((r) => r.value)).toEqual([false]);
+    fake.sent.length = 0;
+    meta({ 'ui.workbench': true });
+    await useStore.getState().loadMeta();
+    expect(useStore.getState().settings['ui.workbench']).toBe(true);
+    expect(fake.sent.some((r) => r.kind === 'settings.set')).toBe(false);
+  });
+
+  it('a second tab shows up as a tab (the strip appears on its own); the old single-window forcing is gone', () => {
+    useStore.setState({ settings: { 'ui.singleWindow': true } });
+    const pane = () => { const l = useStore.getState().layout; const g = l.groups.find((x) => x.id === l.activeGroupId)!; return g.panes[g.focusedPaneId]; };
+    useStore.getState().openInPane('s1', 'replace');
+    expect(pane().tiles.map((t) => (t.kind === 'chat' ? t.sessionId : t.id))).toEqual(['s1']);
+    useStore.getState().openTile({ id: 'doc-x', kind: 'doc', path: '/w/a.ts' }, 'tab');
+    expect(pane().tiles.map((t) => (t.kind === 'chat' ? t.sessionId : t.id))).toEqual(['s1', 'doc-x']);
+    useStore.getState().dispatchLayout({ t: 'tile.close', paneId: pane().id, tileId: 'doc-x' });
+    expect(pane().tiles).toHaveLength(1);
+  });
+});

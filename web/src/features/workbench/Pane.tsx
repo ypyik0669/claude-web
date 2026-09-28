@@ -6,10 +6,10 @@ import { clsx } from '@/util';
 import { TabStrip } from './TabStrip';
 import { Tile } from './Tile';
 import { MIME_PANEL, MIME_SESSION, MIME_TILE, hasType, tilePayload, zoneAt, type DropZone } from './dnd';
+import { PaneEdgeContext } from './pane-edge';
 
-export function Pane({ pane, groupId, index, rect, focused, zoomed, single, hidden }: { pane: PaneModel; groupId: string; index: number; rect: Rect; focused: boolean; zoomed: boolean; single: boolean; hidden: boolean }) {
+export function Pane({ pane, groupId, index, rect, edges, strip, workbench, paneCount, focused, zoomed, single, hidden }: { pane: PaneModel; groupId: string; index: number; rect: Rect; edges: { top: boolean; left: boolean; right: boolean }; strip: boolean; workbench: boolean; paneCount: number; focused: boolean; zoomed: boolean; single: boolean; hidden: boolean }) {
   const dispatch = useStore((s) => s.dispatchLayout);
-  const singleWindow = useStore((s) => !!s.settings['ui.singleWindow']);
   const [zone, setZone] = useState<DropZone | null>(null);
   const enter = useRef(0);
   const active = pane.tiles.find((t) => t.id === pane.activeTileId) ?? pane.tiles[0];
@@ -19,7 +19,7 @@ export function Pane({ pane, groupId, index, rect, focused, zoomed, single, hidd
   const onDragOver = (e: React.DragEvent) => {
     if (!accepts(e.dataTransfer)) return;
     e.preventDefault();
-    const z = singleWindow ? 'center' : zoneAt((e.currentTarget as HTMLElement).getBoundingClientRect(), e.clientX, e.clientY);
+    const z = zoneAt((e.currentTarget as HTMLElement).getBoundingClientRect(), e.clientX, e.clientY);
     if (z !== zone) setZone(z);
   };
   const onDrop = (e: React.DragEvent) => {
@@ -55,10 +55,15 @@ export function Pane({ pane, groupId, index, rect, focused, zoomed, single, hidd
     }
   };
   const style: React.CSSProperties = { left: rect.x, top: rect.y, width: rect.w, height: rect.h, visibility: hidden ? 'hidden' : undefined };
+  const lead = edges.top && edges.left;
   return (
     <PaneContext.Provider value={{ paneId: pane.id, tileId: active?.id ?? '', sessionId }}>
+      <PaneEdgeContext.Provider value={{ lead, strip }}>
       <div
-        className={clsx('pane', focused && 'focused', zoomed && 'zoomed')}
+        className={clsx('pane', focused && 'focused', zoomed && 'zoomed', strip && 'tabs')}
+        data-top={edges.top || undefined}
+        data-left={edges.left || undefined}
+        data-right={edges.right || undefined}
         style={style}
         onMouseDownCapture={() => !focused && dispatch({ t: 'pane.focus', paneId: pane.id })}
         onFocusCapture={() => !focused && dispatch({ t: 'pane.focus', paneId: pane.id })}
@@ -68,7 +73,8 @@ export function Pane({ pane, groupId, index, rect, focused, zoomed, single, hidd
         onDrop={onDrop}
         data-pane-id={pane.id}
       >
-        <TabStrip pane={pane} groupId={groupId} index={index} zoomed={zoomed} single={single} />
+        {/* the strip is chrome: it comes and goes (chromeVisibility); the tiles below never unmount for it */}
+        {strip && <TabStrip pane={pane} groupId={groupId} index={index} zoomed={zoomed} single={single} lead={lead} workbench={workbench} paneCount={paneCount} />}
         <div className="pane-content">
           {pane.tiles.map((t) => (
             <div key={t.id} className="tile-slot" style={{ display: t.id === active?.id ? undefined : 'none' }}>
@@ -80,6 +86,7 @@ export function Pane({ pane, groupId, index, rect, focused, zoomed, single, hidd
         </div>
         {zone && <div className={clsx('drop-hint', zone)} />}
       </div>
+      </PaneEdgeContext.Provider>
     </PaneContext.Provider>
   );
 }

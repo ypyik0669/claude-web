@@ -188,7 +188,7 @@ export function UiSettings() {
   const settings = useStore((s) => s.settings);
   const setSetting = useStore((s) => s.setSetting);
   const rows: { key: string; l: string; hint: string; def?: boolean }[] = [
-    { key: 'ui.singleWindow', l: '单窗格模式', hint: '隐藏分组与分屏，所有会话在同一个窗格里切换（像 Mirasim 的「单窗口」）' },
+    { key: 'ui.workbench', l: '显示工作台工具', hint: '一直显示分组栏、分屏标签条和右侧面板图标栏；关着时它们只在用到时出现' },
     { key: 'ui.autoSave', l: '编辑器自动保存', hint: '停止输入 0.8 秒后写回磁盘；关闭后用 Ctrl+S 保存', def: true },
     { key: 'ui.showThinking', l: '显示思考过程', hint: '在对话里展开模型的 thinking 块' },
     { key: 'autoContinueOnReset', l: '额度恢复后自动继续', hint: '被限流时到重置时间自动重发上一条' },

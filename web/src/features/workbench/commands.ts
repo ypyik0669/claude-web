@@ -1,6 +1,6 @@
 // Command dispatcher shared by browser keydown, Electron menu accelerators and the command palette.
 import { useStore, type PanelId } from '@/store';
-import { activeGroup, chatTile } from '@/model/layout';
+import { activeGroup, chatTile, workbenchOn } from '@/model/layout';
 import { offerGroupToNewWindow } from './windows';
 
 export function runCommand(id: string): boolean {
@@ -9,7 +9,9 @@ export function runCommand(id: string): boolean {
   const g = activeGroup(st.layout);
   const pane = g.panes[g.focusedPaneId];
   const a = st.activeId ? st.open[st.activeId] : undefined;
-  const single = !!st.settings['ui.singleWindow'];
+  // without the workbench setting a new conversation takes the pane's place (the old one stays in the sidebar);
+  // splits / groups / tabs still work from the keyboard and bring their own chrome with them (chromeVisibility)
+  const workbench = workbenchOn(st.settings);
   const m = /^(group\.jump|pane\.jump)\.(\d)$/.exec(id);
   if (m) {
     if (m[1] === 'group.jump') { const t = st.layout.groups[Number(m[2])]; if (t) d({ t: 'group.activate', id: t.id }); }
@@ -17,7 +19,7 @@ export function runCommand(id: string): boolean {
     return true;
   }
   switch (id) {
-    case 'new': st.openInPane(null, single ? 'replace' : 'tab'); return true;
+    case 'new': st.openInPane(null, workbench ? 'tab' : 'replace'); return true;
     case 'palette': useStore.setState((s) => ({ paletteOpen: !s.paletteOpen })); return true;
     case 'sidebar': useStore.setState((s) => ({ sidebarOpen: !s.sidebarOpen })); return true;
     case 'shortcuts': useStore.setState({ shortcutsOpen: true }); return true;
@@ -27,7 +29,7 @@ export function runCommand(id: string): boolean {
       if (t?.kind === 'chat') d({ t: 'tile.patch', paneId: pane.id, tileId: t.id, patch: { view: t.view === 'chat' ? 'trajectory' : 'chat' } });
       return true;
     }
-    case 'group.new': if (!single) d({ t: 'group.new' }); return true;
+    case 'group.new': d({ t: 'group.new' }); return true;
     case 'group.close': d({ t: 'group.close', id: st.layout.activeGroupId }); return true;
     case 'group.next': d({ t: 'group.next', dir: 1 }); return true;
     case 'group.prev': d({ t: 'group.next', dir: -1 }); return true;
@@ -37,7 +39,6 @@ export function runCommand(id: string): boolean {
       return true;
     }
     case 'pane.splitRight': case 'pane.splitDown': {
-      if (single) return true;
       const before = st.layout;
       d({ t: 'pane.split', paneId: g.focusedPaneId, dir: id === 'pane.splitRight' ? 'row' : 'col' });
       if (useStore.getState().layout === before) st.toast('最多 6 个窗格');
@@ -47,7 +48,7 @@ export function runCommand(id: string): boolean {
     case 'pane.zoom': d({ t: 'pane.zoom', paneId: g.zoomedPaneId ? null : g.focusedPaneId }); return true;
     case 'pane.next': d({ t: 'pane.cycle', dir: 1 }); return true;
     case 'pane.prev': d({ t: 'pane.cycle', dir: -1 }); return true;
-    case 'tile.new': d({ t: 'tile.open', paneId: g.focusedPaneId, tile: chatTile(null), mode: single ? 'replace' : 'tab' }); return true;
+    case 'tile.new': d({ t: 'tile.open', paneId: g.focusedPaneId, tile: chatTile(null), mode: 'tab' }); return true;
     case 'tile.next': d({ t: 'tile.next', paneId: g.focusedPaneId, dir: 1 }); return true;
     case 'tile.prev': d({ t: 'tile.next', paneId: g.focusedPaneId, dir: -1 }); return true;
     case 'dock.toggle': d({ t: 'dock.set', patch: { open: !st.layout.dock.open, minimized: false } }); return true;
