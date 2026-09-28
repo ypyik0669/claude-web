@@ -272,6 +272,28 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - **踩过的坑**：① 菜单挂在窗格里会被 `.pane{overflow:hidden}` 裁掉，所以 `ModelChip` 把菜单 portal 到 body、按锚点算 fixed 坐标（纯函数 `models/place.ts`：哪边空间大开哪边、高度取可用空间且 ≥120、不超视口；ResizeObserver 盯锚点、composer、pane，分屏拖动和输入框变高都跟着走）。② 通用的 `.menu button{width:100%}` 会把行尾星标按钮撑到 500px、把模型名挤成 0 宽；星标的规则都写成 `.menu.mm .mm-star` 抬优先级。③ `width:max-content` 的弹层里 `flex:1`（basis 0%）的子项在 Chromium 下贡献 0 宽，名字列要 `flex:1 1 auto`。④ shot.cjs 的 JS 里别写 `{section:'models'}` 这种带冒号的字面量（Electron 当 URL 退出），用 `Object.fromEntries`；打开会话后布局存进了截图用的 Electron profile，下一张欢迎页截图要换 `?win=`。
 - **调试**：`server/ws-phase16.mjs` 末尾的假上游对 `GET /v1/models` 返回列表，断言每个档案的结果、写回、失败保留、gateway 跳过、只发了 GET。单测 `server/src/providers/refresh.test.ts` 用 node:http 假 `/v1/models`（按 key 决定行为，数并发峰值）。
 
+## 提示缓存（2026-09-28）
+
+- **先修统计**（命中率低有一半是算错了）：
+  - **Codex**：`thread/tokenUsage/updated` 的 `inputTokens` **包含** `cachedInputTokens` / `cacheWriteInputTokens`，`last` 只是这一轮最后一次模型调用。`agents/codex-usage.ts` 的 `CodexUsageMeter` 用「轮末 total − 轮初 total」算一轮（Codex 会随限流刷新重发同一份 total，差值法天然不重复计；恢复的线程第一次更新用 total − last 当轮初），input 再减掉缓存读写。mock（`agents/__mocks__/codex-server.mjs`）每轮两次调用 + 一次重发，resume 时 total 带历史。
+  - **OpenAI 兼容 usage 四种形状**（`gateway/openai-chat.ts usageIn`，一律 `??`，显式 0 算答案）：`prompt_tokens_details.cached_tokens`（OpenAI；Responses 是 `input_tokens_details`）、`prompt_cache_hit_tokens`（DeepSeek）、顶层 `cached_tokens`（Kimi）、写入 `cache_write_tokens` / `cache_creation_input_tokens`；input = prompt − 命中 − 写入；`usageOut` 回写 `cache_write_tokens`。
+  - **ccb 的 Gemini 适配器**把 `promptTokenCount`（已含命中）当 input_tokens 又另报 cache_read：`usage/pricing.ts inputIncludesCacheRead()`，账本 `observe()` 和 `usage/service.ts` 按会话档案类型减掉（`LedgerService` / `UsageService` 构造时注入按 id 查档案的函数，index.ts 里）。ccb 的 OpenAI 适配器自己会减，别重复减。
+  - **费用裁决**：ccb 对所有模型都按 Claude 价表算 `total_cost_usd`（DeepSeek 显示 $5/M）。openai / gemini / grok 型档案或非 Claude 模型 id → 记 0（= 未知），不维护第三方价表（中转各自定价、常变）；用量面板同理（以前未知模型按 Sonnet 价估）。经网关的 Claude 会话仍按 Claude 价估（网关把 claude-* 映射成别家模型时不准，网关行本身是 0）。
+  - 账本面板「缓存命中 · 按供应商 × 模型」（`features/panels/ledger-stats.ts hitRates`，网关 / 垫片行记在应答成员名下）；用量面板每行带命中率 + 「按供应商 × 模型」分组。UI 改版时这两处只是最小改动，逻辑在纯函数里。
+- **网关转换路径**（透传一个字节都不动，`service.test.ts` 用原始 http 客户端逐个比对头顺序 / 大小写 / 请求体）：`IrRequest.cacheKey` 在 `irOf()` 由 `gateway/cache.ts cacheKeyOf()` 取：入站 `prompt_cache_key` → `session_id` / `x-client-request-id` 头 → `x-claude-code-session-id` → `metadata.user_id`。
+  - 转 Anthropic：system 变块数组，system + 最后一个工具 + 最后一条消息的最后一块共 3 个 `cache_control`（上限 4）；`metadata.user_id` = 键（new-api「claude cli trace」亲和按它）；组 `cache1h` 或成员档案 `cache1h` → `ttl:'1h'`（已 GA，不用 beta 头）。
+  - 转 OpenAI：`prompt_cache_key`（≤ 64）+ `session_id` / `x-session-affinity` / `x-client-request-id`（grok 加 `x-grok-conv-id`）；上游 400/422 → 去掉键重发一次，重发成功或错误里点名这个字段才在档案上记 `noPromptCacheKey`（别的 400 照原样回）；Anthropic 入站 system 里 Claude Code 的 `x-anthropic-billing-header` 块丢掉（每次都变，跨会话 ~2 万 token 的静态前缀因此对不上）；档案 `cacheControlFormat:'anthropic'` 在 system / 最后工具 / 最后消息加 Anthropic 格式 `cache_control`（百炼 qwen 显式缓存、OpenRouter anthropic/*）。
+- **缓存垫片**（`gateway/shim.ts`）：ccb 的 OpenAI / Grok 客户端没有 defaultHeaders、只对 `api.openai.com` 发 `prompt_cache_key`，只能在网络层补。openai / grok 档案的 **Claude 会话** `providerEnv(p, 'claude', {sessionKey})` 把 `OPENAI_BASE_URL` / `GROK_BASE_URL` 指到 `http://127.0.0.1:<port>/gateway/~p/<档案 id>/k/<会话 id>/v1`，key 换成本进程随机的 `cws-…`（不落盘，子进程拿不到真 key）。会话键 = 会话 id，分叉沿用父会话 id（`SessionRunner.cacheKey`，前缀本来就一样）。挂在 `GatewayService.handle` 里：回环 + 内部密钥，**不看网关总开关**，远程监听器 404。
+  - 每个请求：缺 `prompt_cache_key` 时在 JSON 最前面插 `"prompt_cache_key":"cw:<会话>"`（`insertTopLevelField`，其它字节不动），400/422 同上重试并记住；亲和头只补客户端没发的；响应在本机解压后**按行**透传（`SseLines`），只改写「命中数只在顶层」的那一行 usage（补 `prompt_tokens_details.cached_tokens`——ccb 只读它）；每次调用一行账本（`kind:'gateway'`、`gateway.via:'shim'`、`group:'缓存垫片'`，sessionId = 会话键）。`CW_SHIM_DEBUG=1` 每次调用往 stderr 打一行（档案名 / 是否带键 / 状态 / in / read / 命中率，无密钥）。
+  - **gpt-***（openai 型，档案开关 `responsesApi` 默认开）：chat/completions → IR → `/v1/responses`（`store:false` + `prompt_cache_key`，推理模型不带 temperature / top_p，`reasoning_effort` → `reasoning.effort`），`ResponsesStreamParser` → `ChatStreamRenderer` 流回 chat.completion.chunk（只发 `.done` 不发 delta 的中转也兼容）。上游 404/405/501 → 这次改走 chat/completions 并记 `noResponsesApi`。原因：new-api 默认亲和规则只有「codex cli trace」（gpt-*、`/v1/responses`、键 `prompt_cache_key`）和「claude cli trace」（`/v1/messages`、`metadata.user_id`），chat/completions 没规则 → 每次随机渠道。
+  - 只对 openai / grok 档案的 Claude 会话；Codex / ACP 用 openai 档案不经垫片（Codex 自己发 `prompt_cache_key` + Responses）；Anthropic / gateway 档案的 env 与之前逐字相同（`providers/service.test.ts`、`shim.test.ts` 有断言）。档案 `cacheShim:false` = 直连（旧行为）。
+  - 设置 → 供应商 / 环境 → 档案编辑：「缓存优化」「gpt-* 改走 /v1/responses」「Anthropic 格式 cache_control」「1 小时提示缓存」；自动记下的两个标记可「保存后重新检测」清掉（值为 null 删字段，新字段都加进了 `upsertProvider` 的清理表）。网关组卡片有「1 小时缓存」。
+- **1h TTL**：anthropic 档案 `cache1h` → `ENABLE_PROMPT_CACHING_1H=1`（官方二进制认，ccb 不认；1h 写入 2× 基础价，5m 是 1.25×），默认关。
+- **闲置回收裁决**（`runtime/pool.ts idleTtlFor()`）：openai / grok 档案的 Claude 会话闲置 2 h 才回收（OpenAI 内存缓存 5–60 min + 24 h 延长保留、DeepSeek 磁盘缓存以小时计），anthropic + 1h TTL 65 min，其余 30 min。原因：ccb `--resume` 会重建第一条用户消息（skills 提醒消失），前缀在第 3 条断，缓存还热的时候回收 = 下一轮全价重付。会话里切模型 / 供应商的 toast 写明「下一轮会按全价重新计费全部上下文」（`models/route.ts switchedNote`）。
+- **踩过的坑**：bash 里 `node -e "…"` 带反引号会被 shell 当命令替换执行（模板字符串整段消失且不报错）——含反引号的改动用 Edit；`http.request` 的 `headers` 传扁平数组，服务器回空 body 的 400，要逐个 `setHeader` 才能控制头顺序和大小写。
+- **没做 / 待办**：网关侧 Anthropic 预热（Pi 的 cache-warmer：TTL 90% 处小 `max_tokens` 重放，省得多才做）；「缓存浪费」原因（闲置超 TTL / 换模型 / resume）；垫片不做 `cacheControlFormat`（要改请求体，与「其余字节不动」冲突，只在网关转换路径生效）；openai / grok 档案探测可精简前缀（Anthropic 档案不行，指纹要完整系统提示）。
+- **验证**：单测 `gateway/{cache,shim,responses-out,convert,service}.test.ts`、`agents/codex-usage.test.ts`、`usage/{ledger,service}.test.ts`、`runtime/pool.test.ts`、web `ledger-stats.test.ts`；`server/ws-phase18.mjs` 用真 ccb + 本地假上游（DeepSeek 形状的 chat、OpenAI 形状的 Responses、Anthropic 形状的成员）跑 18 项：垫片带键 / 亲和头 / 真 key、ccb 拿到命中（mock 75 %，关掉垫片同一上游 0 %）、400 重试记住、gpt-* 走 Responses（mock 90 %）、账本行、401 / 远程 404、网关两个方向。真机：设置里给中转建 openai 档案（缓存优化默认开），用 `CW_SHIM_DEBUG=1` 起 server，同一会话连发 3–4 轮，看 stderr 的 `[shim]` 行（`key=cw:…`、`read` 从第 2 轮起应 > 0）和账本「网关」来源的垫片行 / 「缓存命中 · 按供应商 × 模型」。
+
 ## 桌面版（desktop/）
 
 ```
@@ -294,7 +316,7 @@ npm run build:desktop   # electron-builder → dist-desktop/ClaudeWeb-<ver>-win-
 - **Finder 启动的 app 只有 `/usr/bin:/bin:/usr/sbin:/sbin`**：`desktop/src/main.ts` 的 `fixPosixPath()` 在 fork server 之前用 `$SHELL -ilc` 取 PATH 并补 Homebrew / `~/.local/bin`。
 - mac 标题栏：`titleBarOverlay` 只在非 mac 用；mac 用系统红绿灯 + `trafficLightPosition`，preload 给 `<html>` 加 `mac/win/linux` 类，`styles.css` 的 `html.desktop.mac` 规则把左侧让出 84px。mac 菜单 Cmd+Tab 被系统占用，分组切换用 Ctrl+Tab。
 - `fs.pickDir`：Windows PowerShell / mac `osascript choose folder` / Linux `zenity`。
-- **CI**（`.github/workflows/ci.yml`，win/mac/linux）：`npm run typecheck`、`npm test`、`npm run build:all`、`npm run e2e`。`scripts/e2e.mjs` 用临时 HOME + `CLAUDE_WEB_DIR` 起 server，跑 phase 3/4/5/6/11/12/13/14/15/16/17（mock agent / 假上游，不花 token；每个 phase 默认 300 s 上限，`E2E_PHASE_TIMEOUT_MS` 可调，失败时打印该 phase 全部输出和 server 日志尾部）；CI 额外带 `GH_TOKEN` 跑 phase7；phase1 要真 Claude，手动跑。
+- **CI**（`.github/workflows/ci.yml`，win/mac/linux）：`npm run typecheck`、`npm test`、`npm run build:all`、`npm run e2e`。`scripts/e2e.mjs` 用临时 HOME + `CLAUDE_WEB_DIR` 起 server，跑 phase 3/4/5/6/11/12/13/14/15/16/17/18（mock agent / 假上游，不花 token；每个 phase 默认 300 s 上限，`E2E_PHASE_TIMEOUT_MS` 可调，失败时打印该 phase 全部输出和 server 日志尾部）；CI 额外带 `GH_TOKEN` 跑 phase7；phase1 要真 Claude，手动跑。
 
 ## 结构
 
