@@ -62,16 +62,22 @@ if (as === 'codex') {
   const file = path.join(dir, 'settings.json');
   const read = () => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {});
   const write = (doc) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify(doc, null, 2)); };
+  // like the real yargs parser: a known option is consumed wherever it appears (even after the command, so
+  // `docker run -e X --timeout 5` loses those), unknown ones stay positional, everything after `--` is literal
   const opts = { scope: as === 'qwen' ? 'user' : 'project', transport: 'stdio', env: [], header: [] };
+  const withValue = new Set(['-s', '--scope', '-t', '--transport', '--type', '-e', '--env', '-H', '--header', '--timeout', '--description', '--include-tools', '--exclude-tools']);
+  const flags = new Set(['--trust', '-d', '--debug']);
   const pos = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
-    if (pos.length < 2 && (a === '-s' || a === '--scope')) opts.scope = rest[++i];
-    else if (pos.length < 2 && (a === '-t' || a === '--transport')) opts.transport = rest[++i];
-    else if (pos.length < 2 && (a === '-e' || a === '--env')) opts.env.push(rest[++i]);
-    else if (pos.length < 2 && (a === '-H' || a === '--header')) opts.header.push(rest[++i]);
-    else if (a === '--' && pos.length >= 2) continue;
-    else pos.push(a);
+    if (a === '--') { pos.push(...rest.slice(i + 1)); break; }
+    if (flags.has(a)) continue;
+    if (!withValue.has(a)) { pos.push(a); continue; }
+    const v = rest[++i];
+    if (a === '-s' || a === '--scope') opts.scope = v;
+    else if (a === '-t' || a === '--transport' || a === '--type') opts.transport = v;
+    else if (a === '-e' || a === '--env') opts.env.push(v);
+    else if (a === '-H' || a === '--header') opts.header.push(v);
   }
   if (opts.scope !== 'user') die('fake: tests must use --scope user');
   const doc = read();
@@ -80,7 +86,8 @@ if (as === 'codex') {
     const [name, target, ...args] = pos;
     if (!name || !target) die('Not enough non-option arguments');
     const headers = Object.fromEntries(opts.header.map((h) => { const [k, ...v] = h.split(':'); return [k.trim(), v.join(':').trim()]; }));
-    const env = Object.fromEntries(opts.env.map((e) => { const [k, ...v] = e.split('='); return [k, v.join('=')]; }));
+    // gemini-cli 0.41 does `const [k, v] = e.split('=')` — anything after a second `=` is lost; qwen splits at the first `=`
+    const env = Object.fromEntries(opts.env.map((e) => (as === 'gemini' ? e.split('=').slice(0, 2) : [e.slice(0, e.indexOf('=')), e.slice(e.indexOf('=') + 1)])));
     const had = !!servers[name];
     if (opts.transport === 'stdio') servers[name] = { command: target, args, ...(opts.env.length ? { env } : {}) };
     else if (opts.transport === 'http') servers[name] = as === 'qwen' ? { httpUrl: target, headers } : { url: target, type: 'http', headers };

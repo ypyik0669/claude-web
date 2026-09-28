@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { AgentConfigBackup, AgentSettingField, McpSpec } from './types.js';
 import { checkField, cliEnv, fieldValue, fileList, homeOf, readConfig, standardFiles, type AdapterCtx, type AgentConfigAdapter } from './adapter.js';
 import { runCliOk } from './cli.js';
-import { setJsonPath } from './edit.js';
+import { parseConfig, setJsonPath } from './edit.js';
 
 interface Flavor {
   kind: 'gemini' | 'qwen';
@@ -67,9 +67,37 @@ export class GeminiLikeConfigAdapter implements AgentConfigAdapter {
     for (const [k, v] of Object.entries(spec.env ?? {})) if (spec.transport === 'stdio') args.push('-e', `${k}=${v}`);
     for (const [k, v] of Object.entries(spec.headers ?? {})) if (spec.transport !== 'stdio') args.push('-H', `${k}: ${v}`);
     args.push(spec.name, spec.transport === 'stdio' ? spec.command! : spec.url!);
-    if (spec.transport === 'stdio') args.push(...(spec.args ?? []));
-    await this.ctx.backups.guard(this.kind, this.configPath(), `mcp add ${spec.name}`, () => runCliOk(this.ctx.cli(), args, { cwd: homeOf(this.ctx) }));
-    return `已通过 ${this.kind} mcp add 添加（用户级）`;
+    // after `--` yargs takes everything literally — otherwise `docker run -e X --timeout 5 --trust` loses the
+    // options it knows (they'd configure the server entry instead of being its arguments)
+    if (spec.transport === 'stdio' && spec.args?.length) args.push('--', ...spec.args);
+    let corrected = false;
+    await this.ctx.backups.guard(this.kind, this.configPath(), `mcp add ${spec.name}`, () => runCliOk(this.ctx.cli(), args, { cwd: homeOf(this.ctx) }), (text) => {
+      // the CLI can still lose data (gemini-cli 0.41 splits `-e K=a=b` at every `=`): compare what it wrote
+      // with the spec and write the entry ourselves where they differ
+      const next = this.correctEntry(text, spec);
+      corrected = next !== null;
+      return next;
+    });
+    return `已通过 ${this.kind} mcp add 添加（用户级）${corrected ? '，并按原值修正了 CLI 写错的字段' : ''}`;
+  }
+
+  /** The settings.json text with `mcpServers.<name>` fixed up to match `spec`, or null if the CLI got it right. */
+  private correctEntry(text: string, spec: McpSpec): string | null {
+    const doc = parseConfig(text, 'json') as any;
+    const cur = doc.mcpServers?.[spec.name];
+    if (!cur || typeof cur !== 'object') throw new Error(`${this.kind} mcp add 之后 settings.json 里没有 ${spec.name}`);
+    const want: Record<string, unknown> = spec.transport === 'stdio'
+      ? { command: spec.command, args: spec.args ?? [], env: spec.env && Object.keys(spec.env).length ? spec.env : undefined }
+      : spec.transport === 'http'
+        ? (this.kind === 'qwen' ? { httpUrl: spec.url, headers: spec.headers } : { url: spec.url, type: 'http', headers: spec.headers })
+        : { url: spec.url, headers: spec.headers };
+    const norm = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length ? undefined : v);
+    const same = (a: unknown, b: unknown) => JSON.stringify(norm(a) ?? null) === JSON.stringify(norm(b) ?? null);
+    const wrong = Object.keys(want).filter((k) => !same(cur[k], want[k]));
+    if (!wrong.length) return null;
+    const fixed = { ...cur };
+    for (const k of wrong) { if (want[k] === undefined) delete fixed[k]; else fixed[k] = want[k]; }
+    return setJsonPath(text, ['mcpServers', spec.name], fixed);
   }
 
   async mcpRemove(name: string): Promise<string> {

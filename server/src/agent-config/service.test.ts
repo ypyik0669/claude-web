@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parse as parseToml } from 'smol-toml';
-import { AgentConfigService, MASK, validateSpec } from './service.js';
+import { AgentConfigService, MASK, maskSpec, validateSpec } from './service.js';
 import type { AgentConfigKind } from './types.js';
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), '__mocks__', 'fake-cli.mjs');
@@ -68,12 +68,28 @@ describe('AgentConfigService (fake CLIs)', { timeout: 60_000 }, () => {
     await svc.mcpAdd('gemini', { name: 'fs', transport: 'stdio', command: 'npx', args: ['-y', 'pkg'], env: { A: '1' } });
     await svc.mcpAdd('qwen', { name: 'web', transport: 'http', url: 'https://q/mcp', headers: { Authorization: 'Bearer t' } });
     const c = calls().filter((x) => x.argv[1] === 'add');
-    expect(c[0].argv).toEqual(['mcp', 'add', '-s', 'user', '-t', 'stdio', '-e', 'A=1', 'fs', 'npx', '-y', 'pkg']);
+    expect(c[0].argv).toEqual(['mcp', 'add', '-s', 'user', '-t', 'stdio', '-e', 'A=1', 'fs', 'npx', '--', '-y', 'pkg']);
     expect(c[1].argv).toEqual(['mcp', 'add', '-s', 'user', '-t', 'http', '-H', 'Authorization: Bearer t', 'web', 'https://q/mcp']);
     const q = await svc.get('qwen');
     expect(q.mcp).toEqual([{ name: 'web', transport: 'http', url: 'https://q/mcp', headers: { Authorization: MASK }, env: undefined }]);
     await svc.mcpRemove('gemini', 'fs');
     expect(calls().at(-1).argv).toEqual(['mcp', 'remove', '-s', 'user', 'fs']);
+  });
+
+  it('gemini / qwen: args that look like CLI options and env values with `=` survive (CLI result verified and corrected)', async () => {
+    const spec = { name: 'gh', transport: 'stdio' as const, command: 'docker', args: ['run', '-i', '--rm', '-e', 'X', '--timeout', '5', '--trust', 'img'], env: { TOKEN: 'abc==', B: 'x=y=z' } };
+    for (const k of ['gemini', 'qwen'] as const) {
+      await svc.mcpAdd(k, spec);
+      const file = k === 'gemini' ? path.join(home, '.gemini', 'settings.json') : path.join(home, '.qwen', 'settings.json');
+      const saved = JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.gh;
+      expect(saved.command).toBe('docker');
+      expect(saved.args).toEqual(spec.args);
+      expect(saved.env).toEqual(spec.env);
+    }
+    // http: url + headers verified too; a header value with `:` is kept whole
+    await svc.mcpAdd('gemini', { name: 'web', transport: 'http', url: 'https://g/mcp?x=1', headers: { Authorization: 'Bearer a:b' } });
+    const web = JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'settings.json'), 'utf8')).mcpServers.web;
+    expect(web).toEqual({ url: 'https://g/mcp?x=1', type: 'http', headers: { Authorization: 'Bearer a:b' } });
   });
 
   it('opencode: MCP is a structured edit of opencode.json, comments kept', async () => {
@@ -154,6 +170,27 @@ describe('AgentConfigService (fake CLIs)', { timeout: 60_000 }, () => {
     expect(all.find((s) => s.kind === 'gemini')?.installed).toBe(false);
   });
 
+  it('duplicate check: an unreadable list is an error, not "no duplicate"', async () => {
+    const cfg = path.join(home, '.gemini', 'settings.json');
+    fs.mkdirSync(path.dirname(cfg), { recursive: true });
+    fs.writeFileSync(cfg, '{ broken');
+    await expect(svc.mcpAdd('gemini', { name: 'fs', transport: 'stdio', command: 'x' })).rejects.toThrow(/无法读取/);
+    expect(calls()).toEqual([]);
+  });
+
+  it('set: key / value must be strings (null clears)', async () => {
+    await expect(svc.set('gemini', 1 as any, 'x')).rejects.toThrow();
+    await expect(svc.set('gemini', 'model.name', 5 as any)).rejects.toThrow(/字符串/);
+    await expect(svc.set('gemini', 'model.name', { a: 1 } as any)).rejects.toThrow(/字符串/);
+  });
+
+  it('list masks url secrets and secret args', async () => {
+    await svc.mcpAdd('gemini', { name: 'q', transport: 'http', url: 'https://h/mcp?apikey=s3cret' });
+    await svc.mcpAdd('gemini', { name: 'r', transport: 'stdio', command: 'node', args: ['--token=s3cret'] });
+    const st = await svc.get('gemini');
+    expect(JSON.stringify(st.mcp)).not.toContain('s3cret');
+  });
+
   it('a failing CLI surfaces its message', async () => {
     const failing = new AgentConfigService({
       agents: { list: async () => [], launch: () => ({ command: 'x', env: {} }) },
@@ -165,8 +202,30 @@ describe('AgentConfigService (fake CLIs)', { timeout: 60_000 }, () => {
   });
 });
 
+describe('maskSpec', () => {
+  it('masks URL userinfo / query values and secret-looking args', () => {
+    const m = maskSpec({ name: 'a', transport: 'http', url: 'https://user:pw@h.example:8443/mcp?key=abc&mode=x#f' });
+    expect(m.url).toBe(`https://${MASK}@h.example:8443/mcp?key=${MASK}&mode=${MASK}#f`);
+    const s = maskSpec({ name: 'a', transport: 'stdio', command: 'x', args: ['--token=abc', '--api-key', 'k1', '--password=p', '--port', '3', '-y', '--auth-token=z', 'plain'] });
+    expect(s.args).toEqual([`--token=${MASK}`, '--api-key', MASK, `--password=${MASK}`, '--port', '3', '-y', `--auth-token=${MASK}`, 'plain']);
+    expect(maskSpec({ name: 'a', transport: 'http', url: 'https://h/mcp' }).url).toBe('https://h/mcp');
+  });
+});
+
 describe('validateSpec', () => {
   const T = ['stdio', 'http', 'sse'] as const;
+  it('checks every field is a string (no objects / numbers from the wire)', () => {
+    expect(() => validateSpec({ name: 'a', transport: 'stdio', command: 1 as any }, [...T])).toThrow();
+    expect(() => validateSpec({ name: 'a', transport: 'stdio', command: 'x', args: [1 as any] }, [...T])).toThrow(/args/);
+    expect(() => validateSpec({ name: 'a', transport: 'stdio', command: 'x', env: { A: 1 as any } }, [...T])).toThrow(/A/);
+    expect(() => validateSpec({ name: 'a', transport: 'stdio', command: 'x', env: [] as any }, [...T])).toThrow(/env/);
+    expect(() => validateSpec({ name: 'a', transport: 'http', url: 'https://x', headers: 'h' as any }, [...T])).toThrow(/header/);
+    expect(() => validateSpec({ name: {} as any, transport: 'stdio', command: 'x' }, [...T])).toThrow(/名称/);
+  });
+  it('refuses masked values coming back in url / args', () => {
+    expect(() => validateSpec({ name: 'a', transport: 'http', url: `https://h/mcp?key=${MASK}` }, [...T])).toThrow(/打码/);
+    expect(() => validateSpec({ name: 'a', transport: 'stdio', command: 'x', args: [`--token=${MASK}`] }, [...T])).toThrow(/打码/);
+  });
   it('rejects names / env / headers that could break argv or TOML', () => {
     expect(() => validateSpec({ name: 'a.b', transport: 'stdio', command: 'x' }, [...T])).toThrow(/名称/);
     expect(() => validateSpec({ name: 'a', transport: 'stdio', command: '' }, [...T])).toThrow(/命令/);

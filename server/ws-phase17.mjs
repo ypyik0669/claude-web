@@ -99,6 +99,17 @@ async function main() {
   const over = await req({ kind: 'agentConfig.mcp.sync', source: { claude: 'fs' }, targets: ['gemini', 'codex'], overwrite: true });
   check('mcp.sync stdio with env (overwrite)', over.every((r) => r.ok), over.map((r) => r.message).join(' | '));
 
+  // the fake gemini parses like gemini-cli 0.41's yargs: options anywhere are eaten, `-e K=a==` is truncated
+  const tricky = { name: 'dock', transport: 'stdio', command: 'docker', args: ['run', '-i', '--rm', '-e', 'X', '--timeout', '5', '--trust', 'img'], env: { TOKEN: 'abc==' } };
+  const trickyMsg = await req({ kind: 'agentConfig.mcp.add', agent: 'gemini', spec: tricky });
+  const dock = JSON.parse(fs.readFileSync(geminiJson, 'utf8')).mcpServers.dock;
+  check('gemini add: option-like args after `--` and env with `=` survive (verified + corrected)', JSON.stringify(dock.args) === JSON.stringify(tricky.args) && dock.env?.TOKEN === 'abc==', trickyMsg);
+
+  const cat = await req({ kind: 'agentConfig.mcp.sync', source: { spec: { name: 'context7', transport: 'http', url: 'https://mcp.context7.com/mcp' } }, targets: ['codex', 'gemini', 'opencode'] });
+  check('mcp.sync from a catalog spec', cat.every((r) => r.ok), cat.map((r) => `${r.agent}:${r.ok}`).join(' '));
+  const masked = await req({ kind: 'agentConfig.mcp.add', agent: 'gemini', spec: { name: 'm', transport: 'http', url: 'https://x/mcp?k=••••••' } }).then(() => 'accepted', (e) => e.message);
+  check('masked values sent back are refused', /打码/.test(masked), masked);
+
   const cx2 = await req({ kind: 'agentConfig.get', agent: 'codex' });
   check('get codex: list via `codex mcp list --json`, masked', ['files', 'gh', 'fs'].every((n) => cx2.mcp.some((m) => m.name === n)) && cx2.mcp.find((m) => m.name === 'gh').headers?.Authorization === '••••••', cx2.mcp.map((m) => m.name).join(','));
 
@@ -112,8 +123,8 @@ async function main() {
   check('set: enum values validated', /只能是/.test(bad), bad);
 
   const backups = await req({ kind: 'agentConfig.backups' });
-  // files that did not exist yet (opencode.json before the first sync) have nothing to back up
-  check('backups: every write to an existing file backed up', backups.length >= 5 && backups.some((b) => b.agent === 'gemini') && backups.some((b) => b.agent === 'codex') && backups.every((b) => b.agent !== 'opencode'), `${backups.length} backups`);
+  // opencode.json did not exist before its first sync (nothing to back up then), only before the second one
+  check('backups: every write to an existing file backed up', backups.length >= 8 && ['codex', 'gemini'].every((a) => backups.some((b) => b.agent === a)) && backups.filter((b) => b.agent === 'opencode').length === 1 && backups.filter((b) => b.first).length === 3, `${backups.length} backups`);
   await req({ kind: 'agentConfig.restore', id: b1.id });
   check('restore: codex config back to before the model write', fs.readFileSync(codexToml, 'utf8') === before);
 

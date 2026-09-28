@@ -40,14 +40,20 @@ const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** Reject specs the CLIs would choke on (or that could smuggle extra argv / TOML keys). */
 export function validateSpec(spec: McpSpec, transports: McpSpec['transport'][]): McpSpec {
-  if (!spec || typeof spec !== 'object') throw new Error('缺少 MCP 配置');
-  if (!NAME.test(spec.name ?? '')) throw new Error(`名称 ${spec.name ?? ''} 不合法：只能用字母、数字、_ 和 -`);
-  if (!['stdio', 'http', 'sse'].includes(spec.transport)) throw new Error(`未知传输方式 ${spec.transport}`);
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw new Error('缺少 MCP 配置');
+  const str = (v: unknown) => v === undefined || typeof v === 'string';
+  const dict = (v: unknown) => v === undefined || (!!v && typeof v === 'object' && !Array.isArray(v));
+  if (typeof spec.name !== 'string' || !NAME.test(spec.name)) throw new Error(`名称 ${typeof spec.name === 'string' ? spec.name : ''} 不合法：只能用字母、数字、_ 和 -`);
+  if (!['stdio', 'http', 'sse'].includes(spec.transport)) throw new Error(`未知传输方式 ${String(spec.transport)}`);
   if (!transports.includes(spec.transport)) throw new Error(`不支持 ${spec.transport} 传输`);
+  if (!str(spec.command) || !str(spec.url)) throw new Error('command / url 必须是字符串');
+  if (spec.args !== undefined && (!Array.isArray(spec.args) || spec.args.some((a) => typeof a !== 'string'))) throw new Error('args 必须是字符串数组');
+  if (!dict(spec.env)) throw new Error('env 必须是对象');
+  if (!dict(spec.headers)) throw new Error('headers 必须是对象');
   if (spec.transport === 'stdio') {
     if (!spec.command?.trim()) throw new Error('stdio 服务器需要命令');
-    if (spec.args && (!Array.isArray(spec.args) || spec.args.some((a) => typeof a !== 'string'))) throw new Error('args 必须是字符串数组');
   } else if (!/^https?:\/\/\S+$/i.test(spec.url ?? '')) throw new Error('URL 必须以 http:// 或 https:// 开头');
+  if (spec.url?.includes(MASK) || spec.command?.includes(MASK) || spec.args?.some((a) => a.includes(MASK))) throw new Error('URL / 参数里有打码值，请填写真实值');
   for (const [k, v] of Object.entries(spec.env ?? {})) {
     if (!ENV_KEY.test(k)) throw new Error(`环境变量名 ${k} 不合法`);
     if (typeof v !== 'string' || /[\r\n]/.test(v)) throw new Error(`环境变量 ${k} 的值不合法`);
@@ -61,10 +67,32 @@ export function validateSpec(spec: McpSpec, transports: McpSpec['transport'][]):
   return spec;
 }
 
-/** Secrets never leave the server: env / header values become MASK. */
+// `--token`, `--api-key`, `--auth-token`, `--client-secret`, `--password`, `--pat`…
+const SECRET_FLAG = /^--?[\w-]*(?:token|api[-_]?key|apikey|secret|passw(?:or)?d|pass|pat|credential|auth)$/i;
+
+/** URL with userinfo and every query value masked (the shape stays readable). */
+export function maskUrl(url: string): string {
+  let u: URL;
+  try { u = new URL(url); } catch { return url; }
+  if (!u.username && !u.password && !u.search) return url;
+  const q = [...u.searchParams.keys()].map((k) => `${encodeURIComponent(k)}=${MASK}`).join('&');
+  return `${u.protocol}//${u.username || u.password ? `${MASK}@` : ''}${u.host}${u.pathname}${q ? `?${q}` : ''}${u.hash}`;
+}
+
+/** `--token=x` → `--token=••••••`; `--api-key x` → `--api-key ••••••`. */
+export function maskArgs(args: string[]): string[] {
+  return args.map((a, i) => {
+    const eq = a.indexOf('=');
+    if (eq > 0 && SECRET_FLAG.test(a.slice(0, eq))) return `${a.slice(0, eq)}=${MASK}`;
+    if (i > 0 && SECRET_FLAG.test(args[i - 1]) && !args[i - 1].includes('=') && !a.startsWith('-')) return MASK;
+    return a;
+  });
+}
+
+/** Secrets never leave the server: env / header values, URL userinfo / query values and secret-looking args become MASK. */
 export function maskSpec(spec: McpSpec): McpSpec {
   const m = (o?: Record<string, string>) => (o ? Object.fromEntries(Object.keys(o).map((k) => [k, MASK])) : undefined);
-  return { ...spec, env: m(spec.env), headers: m(spec.headers) };
+  return { ...spec, env: m(spec.env), headers: m(spec.headers), ...(spec.url ? { url: maskUrl(spec.url) } : {}), ...(spec.args ? { args: maskArgs(spec.args) } : {}) };
 }
 
 /** Claude's `{type, command, args, env, url, headers}` → neutral spec. */
@@ -142,7 +170,8 @@ export class AgentConfigService {
     const a = this.adapter(kind);
     validateSpec(spec, a.transports);
     if (!overwrite) {
-      const existing = await a.mcpList().catch(() => [] as McpSpec[]);
+      let existing: McpSpec[];
+      try { existing = await a.mcpList(); } catch (e: any) { throw new Error(`无法读取 ${a.name} 现有的 MCP 列表，未添加：${e?.message ?? e}`); }
       if (existing.some((s) => s.name === spec.name)) throw new Error(`已存在同名服务器 ${spec.name}（勾选「覆盖」可替换）`);
     }
     return a.mcpAdd(spec);
@@ -164,6 +193,8 @@ export class AgentConfigService {
   }
 
   async set(kind: AgentConfigKind, key: string, value: string | null): Promise<AgentConfigBackup | null> {
+    if (typeof key !== 'string') throw new Error('设置项名必须是字符串');
+    if (value !== null && typeof value !== 'string') throw new Error('设置值必须是字符串（或 null 清除）');
     return this.adapter(kind).setSetting(key, value);
   }
 
