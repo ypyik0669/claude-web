@@ -333,7 +333,7 @@ function ChangesCard({ rows, sessionId, cwd }: { rows: FileChange[]; sessionId: 
         const p = displayPath(r.path, cwd);
         return (
           <button key={r.path} className="fcard-f" onClick={() => open(r.path)} title={`${r.path}\n点击审阅这个文件的改动`} data-path={r.path}>
-            <span className="p"><span className="d">{p.dir}</span>{p.name}</span>
+            <span className="p"><span className="d">{p.dir}</span><span className="f">{p.name}</span></span>
             <span className="n"><span className="add">+{r.added}</span> <span className="del">−{r.removed}</span></span>
           </button>
         );
@@ -432,6 +432,9 @@ export function ChatView() {
   const pane = usePaneCtx();
   const pending = active?.pending ?? NO_PENDING;
   const waiting = useMemo(() => waitingToolIds(pending, active?.conv.items ?? []), [pending, version]);
+  // the change cards' paths read relative to the conversation's folder — the list's when the open conversation has
+  // none yet (like the header)
+  const listCwd = useStore((s) => (active && !active.cwd ? s.sessions.find((x) => x.sessionId === active.sessionId)?.cwd : undefined));
 
   useEffect(() => {
     const el = ref.current;
@@ -504,7 +507,7 @@ export function ChatView() {
           </div>
         )}
         <WaitingCtx.Provider value={waiting}>
-          <TurnList items={active.conv.items} version={version} live={live} sessionId={sid} cwd={active.cwd} />
+          <TurnList items={active.conv.items} version={version} live={live} sessionId={sid} cwd={active.cwd || listCwd || ''} />
         </WaitingCtx.Provider>
         {active.error && <div className="sysline" style={{ color: 'var(--red)' }}>{active.error}</div>}
         {active.state === 'running' && !active.conv.streaming.size && (

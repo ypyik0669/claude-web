@@ -236,7 +236,10 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
     return () => { alive = false; };
   }, [scopeMenu, root]);
 
-  const rows = useMemo(() => reviewRows(sc, { status, changed, patches }), [sc, status, changed, patches]);
+  // files outside the repo read relative to the conversation's folder (the header's: the list's when the open
+  // conversation has none yet)
+  const shownCwd = cwd || sessions.find((x) => x.sessionId === sid)?.cwd || '';
+  const rows = useMemo(() => reviewRows(sc, { status, cwd: shownCwd, changed, patches }), [sc, status, shownCwd, changed, patches]);
   const isOpen = (r: ReviewRow, i: number) => open[`${sc}|${r.key}`] ?? i < OPEN_FIRST;
 
   // the diffs: the first few (their numbers) and every open file — again whenever the list is reloaded. Each file
@@ -424,7 +427,7 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
               <div key={k} className={clsx('rv-file', on && 'open')} data-key={r.key}>
                 <div className="rv-fh" role="button" tabIndex={0} aria-expanded={on} onClick={() => setOpen((o) => ({ ...o, [k]: !on }))} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen((o) => ({ ...o, [k]: !on })); } }} title={r.abs}>
                   <span className="cv"><Icon name={on ? 'chevronDown' : 'chevronRight'} size={13} /></span>
-                  <span className="p"><span className="d">{dir}</span>{name}</span>
+                  <span className="p"><span className="d">{dir}</span><span className="f">{name}</span></span>
                   {stat && (stat.added > 0 || stat.removed > 0) && <span className="rv-stat"><span className="add">+{stat.added}</span> <span className="del">−{stat.removed}</span></span>}
                   {tag && <span className={clsx('rv-tag', tag === '冲突' && 'warn')}>{tag}</span>}
                   <span className="grow" />

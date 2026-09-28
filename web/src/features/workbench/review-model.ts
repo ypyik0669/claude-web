@@ -15,7 +15,8 @@ export type DiffResult =
 export interface ReviewRow {
   /** stable id within a scope: the repo-relative path, or the absolute one outside the repo */
   key: string;
-  /** what is shown: repo-relative with `/`, or the absolute path outside the repo */
+  /** what is shown: repo-relative with `/`; outside the repo relative to the conversation folder (`/`), or the
+   *  absolute path outside both. Git commands use it only for rows with `git` (repo-relative then) */
   rel: string;
   /** absolute path (editor, `files.diff`) */
   abs: string;
@@ -92,9 +93,11 @@ const byRel = (a: ReviewRow, b: ReviewRow) => (a.rel < b.rel ? -1 : a.rel > b.re
  *  - 已暂存: the staged ones;
  *  - 本次对话改动: the files the conversation's tools wrote (`files.changed`, absolute paths), in that order, with
  *    their git state while they still differ from HEAD (a file it changed and you committed since is listed clean);
+ *    one outside the repo (or with no repo at all) is shown relative to the conversation's folder `cwd` (polish P4:
+ *    not a full path that the row cuts off before the file name), a full path only when it is outside that too;
  *  - 某次提交: the files of the commit's patch.
  */
-export function reviewRows(scope: ReviewScope, o: { status: GitStatus | null; changed?: string[]; patches?: FilePatch[] }): ReviewRow[] {
+export function reviewRows(scope: ReviewScope, o: { status: GitStatus | null; cwd?: string; changed?: string[]; patches?: FilePatch[] }): ReviewRow[] {
   const root = o.status?.root ?? null;
   const fromGit = (g: GitFileStatus): ReviewRow => ({ key: g.path, rel: g.path, abs: root ? joinPath(root, g.path) : g.path, git: g });
   switch (scope) {
@@ -104,7 +107,8 @@ export function reviewRows(scope: ReviewScope, o: { status: GitStatus | null; ch
       const git = new Map((o.status?.files ?? []).map((g) => [g.path.toLowerCase(), g]));
       return (o.changed ?? []).map((abs) => {
         const rel = root ? relToRoot(abs, root) : null;
-        return rel ? { key: rel, rel, abs, git: git.get(rel.toLowerCase()) } : { key: abs, rel: abs, abs };
+        if (rel) return { key: rel, rel, abs, git: git.get(rel.toLowerCase()) };
+        return { key: abs, rel: (o.cwd && relToRoot(abs, o.cwd)) || abs, abs };
       });
     }
     case 'commit': return (o.patches ?? []).map((p) => ({ key: p.path, rel: p.path, abs: root ? joinPath(root, p.path) : p.path, patch: p }));

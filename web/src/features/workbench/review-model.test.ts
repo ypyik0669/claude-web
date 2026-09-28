@@ -108,6 +108,26 @@ describe('rows per scope', () => {
     expect(reviewRows('session', { status: none, changed: ['/tmp/x.txt'] }).map((r) => r.rel)).toEqual(['/tmp/x.txt']);
   });
 
+  // polish P4: a folder that is not a git repo shows the conversation's files relative to its folder, not absolute
+  // (the full path stays in `abs`, the row's tooltip); a file outside the folder keeps its full path
+  it('outside a repo the conversation scope is relative to the conversation folder', () => {
+    const none = status([], null);
+    const rows = reviewRows('session', { status: none, cwd: 'C:\\Users\\me\\todo-api', changed: ['C:\\Users\\me\\todo-api\\src\\index.ts', 'c:\\users\\me\\todo-api\\README.md', 'C:\\Users\\me\\other\\x.txt'] });
+    expect(rows.map((r) => r.rel)).toEqual(['src/index.ts', 'README.md', 'C:\\Users\\me\\other\\x.txt']);
+    expect(rows.map((r) => r.abs)).toEqual(['C:\\Users\\me\\todo-api\\src\\index.ts', 'c:\\users\\me\\todo-api\\README.md', 'C:\\Users\\me\\other\\x.txt']);
+    // the key stays the absolute path (stable when the folder changes)
+    expect(rows[0].key).toBe('C:\\Users\\me\\todo-api\\src\\index.ts');
+    expect(splitPath(rows[0].rel)).toEqual({ dir: 'src/', name: 'index.ts' });
+    // a trailing separator on the folder and / paths
+    expect(reviewRows('session', { status: none, cwd: '/home/me/app/', changed: ['/home/me/app/lib/a.js'] })[0].rel).toBe('lib/a.js');
+  });
+
+  it('in a repo a changed file outside the repo but inside the conversation folder is relative to the folder', () => {
+    const rows = reviewRows('session', { status: st, cwd: 'D:\\scratch', changed: ['C:\\w\\repo\\b.ts', 'D:\\scratch\\notes\\x.md'] });
+    expect(rows.map((r) => r.rel)).toEqual(['b.ts', 'notes/x.md']);
+    expect(rows[1].git).toBeUndefined();
+  });
+
   it('counts for the scope menu', () => {
     expect(scopeCounts(st, 5)).toEqual({ uncommitted: 4, staged: 2, session: 5 });
     expect(scopeCounts(null, 0)).toEqual({ uncommitted: 0, staged: 0, session: 0 });

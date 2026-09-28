@@ -1691,8 +1691,10 @@ html.desktop:not(.mac) .dock.simple:not(.min) .dock-tabs .tab.fixed { padding: 0
 .rv-file.open .rv-fh { border-bottom: 1px solid var(--edge-subtle); }
 .rv-fh:hover { background: color-mix(in oklab, var(--surface-1), var(--fg) 3%); }
 .rv-fh .cv { display: inline-flex; color: var(--ink-4); flex: none; }
-.rv-fh .p { font-family: var(--mono); color: var(--ink-1); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rv-fh .p .d { color: var(--ink-4); }
+/* a path: the grey folder gives way first (its own ellipsis), the file name stays readable (polish P4) */
+.rv-fh .p { display: flex; font-family: var(--mono); color: var(--ink-1); min-width: 0; white-space: nowrap; }
+.rv-fh .p .d { color: var(--ink-4); flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rv-fh .p .f { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .rv-fh .grow { flex: 1; }
 .rv-stat { flex: none; font-variant-numeric: tabular-nums; font-size: 12px; }
 .rv-stat .add { color: var(--ok); }
@@ -2183,8 +2185,9 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .auto-head { padding-left: 
 .fcard .del { color: var(--err); }
 .fcard-f { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 34px; padding: 0 14px; border-top: 1px solid var(--edge-subtle); font-size: 12.5px; text-align: left; transition: background var(--dur-2) var(--ease-out); }
 .fcard-f:hover { background: var(--layer-hover); }
-.fcard-f .p { flex: 1; min-width: 0; font-family: var(--mono); color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fcard-f .p .d { color: var(--ink-4); }
+.fcard-f .p { flex: 1; display: flex; min-width: 0; font-family: var(--mono); color: var(--ink-1); white-space: nowrap; }
+.fcard-f .p .d { color: var(--ink-4); flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fcard-f .p .f { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .fcard-f .n { flex: none; font-size: 12px; font-variant-numeric: tabular-nums; }
 .fcard-f.more { color: var(--ink-3); font-family: inherit; }
 
