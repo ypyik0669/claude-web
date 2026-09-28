@@ -324,6 +324,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       await federation.close();
       await tunnels.closeAll();
       await remote.stop();
+      await orchestra.shutdown(); // before the pool: session closes must not fail / advance runs
       await pool.closeAll();
       await library.close(); // library-only Codex app-server / opencode serve / ACP processes
       terminal.closeAll(); // pty children (the embedded `claude` terminals) would outlive us otherwise

@@ -196,7 +196,7 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - `server/ws-phase13.mjs`：mock Codex（`agents/__mocks__/codex-server.mjs`，`CW_MOCK_RPC_LOG` 记录收到的请求）+ `MOCK_ACP_LIST=1` 的 mock ACP，端到端验证加入前不列、加入后列出并折叠子线程、分页读、搜索、改名、删除备份、`codex-` 会话续聊走 `thread/resume`、`library.sources` 状态。
 - 真机验证（2026-09-27，只读 + 一个自建的测试线程）：Codex 717 条（`~/.codex/sessions` 721 个 jsonl + archived 42，部分没有线程记录）、OpenCode 11 条、Claude 119 条；首轮全量索引约 150 秒（约 850 个会话），之后中文搜索 ~150 ms。测真机时用临时 `CLAUDE_WEB_DIR` 起一个独立 server，别碰用户自己的 `~/.claude-web`。
 
-## 模型网关（子项目 4，2026-09-28）
+## 模型网关（2026-09-28）
 
 - **位置**：`server/src/gateway/`，挂在主 HTTP handler 最前面（`gateway.handle(req,res,url)` 只认 `/gateway/…`）。`socket.cwRemote` 或非回环地址一律 404（远程监听器共用同一个 handler）。鉴权 `x-api-key` / `Bearer` / `x-goog-api-key` / `?key=` 任一，`timingSafeEqual` 比对；密钥 `cwg-…` 存 meta `gateway.key`（`enc:`），wire 上只有 `keyMasked`，`gateway.revealKey` 按需取明文给「复制」。组存 `meta.gatewayGroups`，成员运行态（冷却 / 停用 / 最近错误）只在内存（`failover.ts` 的 `MemberStates`），事件 `gateway.changed`（只在状态真的变了时发，不是每个请求）。
 - **分层**：`ir.ts`（中间表示 + 流事件 `start/text/tool/args/usage/end/error`，块按顺序）→ 每协议一个文件（`anthropic.ts` / `openai-chat.ts` / `openai-responses.ts`（只有入口）/ `gemini.ts`：parseRequest / renderRequest / parseResponse / renderResponse / StreamParser / StreamRenderer / renderError）→ `convert.ts` 路由表（`isPassthrough` / `TRANSLATIONS` 六个方向，其余 400）。thinking / reasoning 一律丢。
@@ -283,7 +283,7 @@ npm run build:desktop   # electron-builder → dist-desktop/ClaudeWeb-<ver>-win-
 - **Finder 启动的 app 只有 `/usr/bin:/bin:/usr/sbin:/sbin`**：`desktop/src/main.ts` 的 `fixPosixPath()` 在 fork server 之前用 `$SHELL -ilc` 取 PATH 并补 Homebrew / `~/.local/bin`。
 - mac 标题栏：`titleBarOverlay` 只在非 mac 用；mac 用系统红绿灯 + `trafficLightPosition`，preload 给 `<html>` 加 `mac/win/linux` 类，`styles.css` 的 `html.desktop.mac` 规则把左侧让出 84px。mac 菜单 Cmd+Tab 被系统占用，分组切换用 Ctrl+Tab。
 - `fs.pickDir`：Windows PowerShell / mac `osascript choose folder` / Linux `zenity`。
-- **CI**（`.github/workflows/ci.yml`，win/mac/linux）：`npm run typecheck`、`npm test`、`npm run build:all`、`npm run e2e`。`scripts/e2e.mjs` 用临时 HOME + `CLAUDE_WEB_DIR` 起 server，跑 phase 3/4/5/6/11/12（mock agent，不花 token）；CI 额外带 `GH_TOKEN` 跑 phase7；phase1 要真 Claude，手动跑。
+- **CI**（`.github/workflows/ci.yml`，win/mac/linux）：`npm run typecheck`、`npm test`、`npm run build:all`、`npm run e2e`。`scripts/e2e.mjs` 用临时 HOME + `CLAUDE_WEB_DIR` 起 server，跑 phase 3/4/5/6/11/12/13/14/15/16/17（mock agent / 假上游，不花 token；每个 phase 默认 300 s 上限，`E2E_PHASE_TIMEOUT_MS` 可调，失败时打印该 phase 全部输出和 server 日志尾部）；CI 额外带 `GH_TOKEN` 跑 phase7；phase1 要真 Claude，手动跑。
 
 ## 结构
 

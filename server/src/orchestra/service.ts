@@ -146,10 +146,13 @@ export class OrchestraService extends EventEmitter {
   private merging = new Map<string, number>();
   /** compare nodes whose candidates are being committed (not pickable yet) */
   private sealing = new Set<NodeRun>();
+  /** set by shutdown(): nothing new starts and session closes are not failures (init() marks them on next boot) */
+  private stopping = false;
 
   constructor(private d: OrchDeps) {
     super();
     d.goals?.on('changed', () => {
+      if (this.stopping) return;
       for (const [id, cb] of [...this.goalWatch]) cb(d.goals!.get(id));
     });
   }
@@ -536,7 +539,7 @@ export class OrchestraService extends EventEmitter {
     return n;
   }
 
-  private alive(run: OrchRun) { return this.runs.get(run.id) === run && (run.state === 'running' || run.state === 'waiting'); }
+  private alive(run: OrchRun) { return !this.stopping && this.runs.get(run.id) === run && (run.state === 'running' || run.state === 'waiting'); }
 
   /** Advance a run: skip what can't run, start what's ready (≤ maxParallel), then derive the run state. */
   private tick(run: OrchRun) {
@@ -795,7 +798,7 @@ export class OrchestraService extends EventEmitter {
     let lastText = '';
     let settled = false;
     let off = () => {};
-    const end = (f: Finish) => { if (settled) return; settled = true; off(); cb(f); };
+    const end = (f: Finish) => { if (settled || this.stopping) return; settled = true; off(); cb(f); };
     off = this.d.watch(sessionId, {
       message: (m: any) => {
         if (m?.type === 'assistant') {
@@ -839,6 +842,16 @@ export class OrchestraService extends EventEmitter {
 
   /** For tests / shutdown: wait until every queued write is on disk. */
   async flush() { await Promise.all(this.writes.values()); }
+
+  /**
+   * Server shutdown: call before the pool closes its sessions. Otherwise every `closed` would fail its
+   * node, tick() would start the next ready ones (new processes, `git worktree add`) mid-exit, and the
+   * run would read 会话已关闭 instead of the resumable restart error init() writes on the next boot.
+   */
+  async shutdown() {
+    this.stopping = true;
+    await this.flush();
+  }
 
   /** Which agents the node set needs (for the UI's availability hint). */
   static agentsOf(nodes: OrchNode[]) { return [...new Set(nodes.flatMap(nodeAgents))]; }

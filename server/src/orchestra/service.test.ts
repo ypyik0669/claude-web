@@ -538,6 +538,26 @@ describe('OrchestraService persistence and removal', () => {
     expect(svc2.list()[0]).toMatchObject({ id: run.id, state: 'done', total: 2, done: 2 });
   });
 
+  it('shutdown(): session closes during server exit neither fail nodes nor start the next ones', async () => {
+    maxParallel = 1;
+    const svc = svcOf();
+    const run = await startRun(svc, [task('a'), task('b')]);
+    await until(() => sessions.length === 1 && sessions[0].prompts.length === 1);
+    await svc.shutdown();
+    sessions[0].emit('state', 'closed'); // what pool.closeAll() does next
+    await tick();
+    expect(run.nodes.a.state).toBe('running');
+    expect(run.nodes.b.state).toBe('pending');
+    expect(sessions.length).toBe(1); // b was not started mid-exit
+
+    const svc2 = svcOf();
+    await svc2.init();
+    const r2 = svc2.get(run.id);
+    expect(r2.state).toBe('failed');
+    expect(r2.error).toBe('服务重启中断');
+    expect(r2.nodes.a.error).toBe('服务重启中断');
+  });
+
   it('remove broadcasts; with cleanup it removes clean merged leftovers and only lists the rest (M7)', async () => {
     const svc = svcOf();
     const run = await toWaitingCompare(svc);
