@@ -97,13 +97,15 @@ export function CommandPalette() {
   }, [st.layout.dock, st.theme, st.sidebarOpen, st.showArchived, st.settings, st.sessionMeta, active?.sessionId, active?.state]);
 
   const ql = q.replace(/^>/, '').trim().toLowerCase();
-  const cmdHits = pf.filtered ? [] : commandHits(commands, ql);
+  // name hits first, then the conversations, then the rest of a group the query names (「面板」 → every panel)
+  const { named: cmdHits, grouped: groupHits } = pf.filtered ? { named: [], grouped: [] } : commandHits(commands, ql);
   // local fallback (and the only list before the index exists / for filter-only queries the index cannot answer)
   const localHits = () => st.sessions.filter((s) => !s.parentId && (!pf.agent || (s.agent ?? 'claude') === pf.agent) && (!pf.cwd || (s.cwd ?? '').toLowerCase().includes(pf.cwd)) && (!pf.rest || s.title.toLowerCase().includes(pf.rest.toLowerCase()))).slice(0, pf.filtered ? 30 : 12);
   const sessHits: SessionSummary[] = q.startsWith('>') ? [] : hits.length ? hits.map((h) => h.session) : localHits();
   const items: { kind: 'cmd'; c: Cmd }[] | { kind: 'sess'; s: SessionSummary; snippet?: string }[] | any[] = [
     ...cmdHits.map((c) => ({ kind: 'cmd' as const, c })),
     ...sessHits.map((s) => ({ kind: 'sess' as const, s, snippet: hits.find((h) => h.session.sessionId === s.sessionId)?.snippet })),
+    ...groupHits.map((c) => ({ kind: 'cmd' as const, c })),
   ];
   useEffect(() => setIdx(0), [q, hits.length]);
 
