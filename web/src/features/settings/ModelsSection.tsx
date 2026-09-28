@@ -66,14 +66,14 @@ export function ModelsSection() {
   return (
     <>
       <div className="models-top">
-        <button className="btn sm" onClick={() => void refreshAllModels()} disabled={refresh.running || !fetchable.length} title="拉取每个供应商档案的 /v1/models（只列模型，不花 token）">
+        <button className="btn sm" onClick={() => void refreshAllModels()} disabled={refresh.running || !fetchable.length} title="拉取每个供应商的 /v1/models（只列模型，不花 token）">
           {refresh.running ? <span className="spinner" /> : <Icon name="refresh" size={13} />} {refresh.running ? `刷新中 ${refresh.done}/${refresh.total}` : '刷新全部模型'}
         </button>
         <div className="seg" role="tablist">
           <button role="tab" aria-selected={view === 'model'} className={clsx(view === 'model' && 'active')} onClick={() => setView('model')}>按模型</button>
-          <button role="tab" aria-selected={view === 'profile'} className={clsx(view === 'profile' && 'active')} onClick={() => setView('profile')}>按档案</button>
+          <button role="tab" aria-selected={view === 'profile'} className={clsx(view === 'profile' && 'active')} onClick={() => setView('profile')}>按供应商</button>
         </div>
-        {view === 'model' && <input className="field" value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索模型或档案…" aria-label="搜索模型" />}
+        {view === 'model' && <input className="field" value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索模型或供应商…" aria-label="搜索模型" />}
       </div>
 
       {fetchable.length > 0 && (
@@ -84,7 +84,7 @@ export function ModelsSection() {
               <div key={p.id} className="pf">
                 <div className="n">
                   <Icon name="cloud" size={12} /><span title={p.name}>{p.name}</span><span className="badge">{p.type}</span>
-                  <button className="icon-btn xs" title="只刷新这个档案" aria-label={`刷新 ${p.name}`} disabled={refresh.running} onClick={() => void refreshAllModels([p.id])}>{pending ? <span className="spinner" /> : <Icon name="refresh" size={11} />}</button>
+                  <button className="icon-btn xs" title="只刷新这个供应商" aria-label={`刷新 ${p.name}`} disabled={refresh.running} onClick={() => void refreshAllModels([p.id])}>{pending ? <span className="spinner" /> : <Icon name="refresh" size={11} />}</button>
                 </div>
                 {p.modelsError
                   ? <div className="s err" title={p.modelsError}>拉取失败：{p.modelsError}</div>
@@ -98,7 +98,7 @@ export function ModelsSection() {
       {view === 'model' ? (
         <div className="models-table-wrap">
           <table className="models-table">
-            <thead><tr><th>模型</th><th>提供它的档案（点击设为该档案默认）</th><th aria-label="收藏与显示" /></tr></thead>
+            <thead><tr><th>模型</th><th>提供它的供应商（点击设为它的默认模型）</th><th aria-label="收藏与显示" /></tr></thead>
             <tbody>
               {rows.map((r) => {
                 const hidden = rowHidden(r);
@@ -121,7 +121,7 @@ export function ModelsSection() {
                   </tr>
                 );
               })}
-              {!rows.length && <tr><td colSpan={3} className="empty">{q ? `没有匹配「${q}」的模型` : '还没有模型：加一个供应商档案，然后点「刷新全部模型」'}</td></tr>}
+              {!rows.length && <tr><td colSpan={3} className="empty">{q ? `没有匹配「${q}」的模型` : '还没有模型：加一个供应商，然后点「刷新全部模型」'}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -166,7 +166,7 @@ export function ModelsSection() {
           })}
         </>
       )}
-      <div className="sub" style={{ padding: '8px 4px 0' }}>关掉的模型不再出现在输入框的模型菜单里；星标的模型在菜单里置顶。「刷新全部模型」只请求各档案的 <code>/v1/models</code>，不跑对话、不花 token；启动后也会在后台刷新超过 24 小时的列表。模型表与智能程度（effort）档位来自 <code>server/src/models/catalog.ts</code>，agent 自己上报的列表优先。</div>
+      <div className="sub" style={{ padding: '8px 4px 0' }}>关掉的模型不再出现在输入框的模型菜单里；星标的模型在菜单里置顶。「刷新全部模型」只请求各供应商的 <code>/v1/models</code>，不跑对话、不花 token；启动后也会在后台刷新超过 24 小时的列表。每个模型能调的智能程度是内置的，Agent 自己报上来的模型列表优先。</div>
     </>
   );
 }

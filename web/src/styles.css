@@ -188,7 +188,7 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .resizer { width: 5px; cursor: col-resize; background: transparent; z-index: 2; transition: background var(--dur-2) var(--ease-out); }
 
 /* Small uppercase section label — one definition, seven call sites. */
-.label, .proj-head, .tool-body .lbl, .welcome .recent h5, .section h5, .cmdk .grp, .sc-group h5, .set-crumb {
+.label, .proj-head, .tool-body .lbl, .welcome .recent h5, .section h5, .cmdk .grp, .sc-group h5 {
   font-size: var(--fs-meta); font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase; color: var(--ink-4);
 }
 .section h5 { display: flex; align-items: center; gap: 6px; }
@@ -1067,34 +1067,6 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
 .btn.danger.solid { background: var(--err); color: #fff; border-color: transparent; }
 .btn.danger.solid:hover { filter: brightness(1.1); background: var(--err); }
 
-.modal.settings { width: min(1040px, 94vw); height: min(720px, 90vh); padding: 0; display: flex; overflow: hidden; }
-.set-side { width: 220px; border-right: 1px solid var(--edge-default); background: var(--surface-1); display: flex; flex-direction: column; padding: 12px 8px; gap: 8px; }
-.set-side .field { width: 100%; }
-.set-nav { display: flex; flex-direction: column; gap: 1px; overflow: auto; }
-.set-nav button { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: var(--r-md); font-size: 13px; color: var(--ink-2); text-align: left; }
-.set-nav button { transition: background var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out); }
-.set-nav button:hover { background: var(--layer-hover); color: var(--ink-1); }
-.set-nav button.active { background: var(--layer-selected); color: var(--ink-1); font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
-.set-nav .ic { width: 18px; text-align: center; color: var(--ink-3); }
-.set-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.set-head { display: flex; align-items: center; gap: 8px; padding: 12px 20px 8px; border-bottom: 1px solid var(--edge-default); }
-.set-head h3 { margin: 0; font-size: 15px; }
-.set-head .grow { flex: 1; }
-.set-body { flex: 1; overflow: auto; padding: 8px 20px 20px; }
-.set-row-wrap { border-bottom: 1px solid var(--edge-default); }
-.set-row-wrap.reveal { background: color-mix(in srgb, var(--accent) 10%, transparent); border-radius: var(--r-md); }
-.set-row { display: flex; align-items: center; gap: 16px; padding: 12px 4px; }
-.set-row .grow { flex: 1; min-width: 0; }
-.set-row .l { font-size: 13.5px; }
-.set-row .sub { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
-.set-row .ctl { flex: none; }
-.set-row .ctl .field { min-width: 160px; }
-.set-crumb { font-size: 11px; color: var(--ink-4); padding: 8px 4px 0; text-transform: uppercase; letter-spacing: 0.4px; }
-.set-jump { display: flex; align-items: center; gap: 8px; padding: 10px 4px; width: 100%; text-align: left; font-size: 13.5px; }
-.set-jump:hover { color: var(--accent); }
-.set-jump .muted { color: var(--ink-4); font-size: 12px; margin-left: auto; }
-.set-section .section { padding: 8px 0; }
-.set-section .list { border: 1px solid var(--edge-default); border-radius: var(--r-lg); }
 
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip.active { border-color: var(--accent); color: var(--accent); }
@@ -1211,7 +1183,6 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
   .app.mobile .welcome h1 { font-size: 24px; }
   .app.mobile .welcome .recent { display: none; }
   .app.mobile .msg.user .bubble { max-width: 92%; }
-  .app.mobile .modal.settings { width: 100vw; height: 100vh; max-width: none; max-height: none; border-radius: 0; }
   .app.mobile .tabstrip .tab { max-width: 140px; }
   .app.mobile .icon-btn { min-width: 34px; min-height: 34px; }
   .app.mobile .pair-box { flex-direction: column; }
@@ -1606,3 +1577,141 @@ svg.flip { transform: scaleX(-1); }
 /* popovers portalled to <body> can overlap a 52px title row (a short window): a drag region under them would
    swallow their clicks, so they are explicitly not draggable */
 html.desktop body > .menu, html.desktop .menu.cm, html.desktop .menu.dirmenu, html.desktop .menu.mm, html.desktop .ctx-card { -webkit-app-region: no-drag; }
+
+/* ---- redesign phase 6: settings ---- */
+/* Full-window settings (spec §5.7, mock-settings.png): grouped navigation + search on the left, the page in a 660px
+   column on the right, 「分节标题 + 卡片 + 行」. The root keeps `.modal.settings` because the section components were
+   tuned for `.modal input / select / label`; everything else is `sp-*`. */
+.modal.settings.sp {
+  position: fixed; inset: 0; z-index: 50; width: auto; height: auto; max-width: none; max-height: none;
+  margin: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; background: var(--surface-0);
+  display: grid; grid-template-columns: 260px minmax(0, 1fr); overflow: hidden; animation: sp-in var(--dur-2) var(--ease-out);
+}
+@keyframes sp-in { from { opacity: 0; } to { opacity: 1; } } /* no slide: the page covers the whole window */
+.modal.settings.sp:focus-visible { outline: none; } /* focused itself on phones (cover.ts) — a ring around the whole window says nothing */
+.sp-nav { background: var(--surface-1); border-right: 1px solid var(--edge-subtle); display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 10px var(--sp-2) var(--sp-3); }
+.sp-nav-top { display: flex; align-items: center; min-height: 34px; }
+.sp-back { height: 34px; display: inline-flex; align-items: center; gap: var(--sp-2); padding: 0 10px; border-radius: var(--r-md); font-size: 13.5px; color: var(--ink-2); }
+.sp-back:hover { background: var(--layer-hover); color: var(--ink-1); }
+.sp-back svg { color: var(--ink-3); }
+.modal.settings .sp-search { display: flex; align-items: center; gap: var(--sp-2); height: 34px; margin: var(--sp-2) 2px 6px; padding: 0 8px 0 10px; border: 1px solid var(--edge-default); border-radius: var(--r-md); background: var(--surface-0); color: var(--ink-4); font-size: 13px; cursor: text; }
+.modal.settings .sp-search:focus-within { border-color: var(--edge-strong); }
+.modal.settings .sp-search input { flex: 1; min-width: 0; width: auto; height: 100%; border: 0; border-radius: 0; background: transparent; padding: 0; font-size: 13px; color: var(--ink-1); }
+.modal.settings .sp-search input:focus-visible { outline: none; }
+.sp-search .kbd { font-family: var(--font); line-height: 14px; color: var(--ink-4); border-color: var(--edge-default); }
+.sp-groups { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: var(--sp-2); }
+.sp-g { margin-top: var(--sp-3); }
+.sp-gh { display: flex; align-items: center; gap: 4px; height: 24px; padding: 0 10px; font-size: 12px; font-weight: 500; color: var(--ink-4); }
+.sp-si { display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 10px; border-radius: var(--r-md); font-size: 13.5px; color: var(--ink-2); text-align: left; transition: background var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out); }
+.sp-si svg { color: var(--ink-3); flex: none; }
+.sp-si .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-si .r { flex: none; font-size: 11.5px; font-weight: 400; color: var(--ink-4); }
+.sp-si:hover { background: var(--layer-hover); color: var(--ink-1); }
+.sp-si.on { background: var(--layer-selected); color: var(--ink-1); font-weight: 500; }
+.sp-si.on svg { color: var(--ink-1); }
+.sp-adv-h { width: 100%; text-align: left; }
+.sp-adv-h:hover { color: var(--ink-2); }
+.sp-adv-sub { display: block; width: 100%; padding: 0 10px; text-align: left; font-size: 11.5px; line-height: 1.5; color: var(--ink-4); }
+.sp-adv-sub:hover { color: var(--ink-3); }
+.sp-ver { display: flex; align-items: center; gap: 6px; margin-top: var(--sp-2); padding: 4px 10px; border-radius: var(--r-md); font-size: 12px; color: var(--ink-4); text-align: left; }
+.sp-ver:hover { background: var(--layer-hover); color: var(--ink-2); }
+.sp-ver .dot { width: 6px; height: 6px; background: var(--ink-5); }
+.sp-ver .dot.ok { background: var(--ok); }
+.sp-ver .dot.new { background: var(--accent); }
+
+.sp-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.sp-drag { display: none; flex: none; }
+.sp-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.sp-inner { max-width: calc(660px + 2 * var(--sp-6)); margin: 0 auto; padding: 34px var(--sp-6) 72px; }
+.sp-phone-back { display: none; align-items: center; gap: 6px; height: 32px; margin: 0 0 var(--sp-3) -8px; padding: 0 8px; border-radius: var(--r-md); font-size: 13px; color: var(--ink-3); }
+.sp-title { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink-1); }
+.sp-lead { margin: 6px 0 22px; font-size: 13.5px; line-height: 1.6; color: var(--ink-3); }
+.sp-blk-h { margin: 22px 0 8px 2px; font-size: 13px; font-weight: 600; color: var(--ink-1); }
+.sp-card { border: 1px solid var(--edge-default); border-radius: var(--r-xl); background: var(--surface-0); }
+.sp-row-wrap + .sp-row-wrap { border-top: 1px solid var(--edge-subtle); }
+.sp-row-wrap:first-child { border-top-left-radius: inherit; border-top-right-radius: inherit; }
+.sp-row-wrap:last-child { border-bottom-left-radius: inherit; border-bottom-right-radius: inherit; }
+.sp-row-wrap.reveal { background: color-mix(in oklab, var(--accent) 9%, transparent); }
+.sp-row-wrap > .err-boundary { margin: 8px 16px; }
+.sp-row { display: flex; align-items: center; gap: var(--sp-4); min-height: 56px; padding: 12px 16px; }
+.sp-row .grow { flex: 1; min-width: 0; }
+.sp-row .l { font-size: 13.5px; color: var(--ink-1); }
+.sp-row .sub { margin-top: 2px; font-size: 12.5px; line-height: 1.5; color: var(--ink-3); }
+.sp-row .ctl { flex: none; display: flex; align-items: center; gap: var(--sp-2); color: var(--ink-2); font-size: 13px; }
+.modal.settings .sp-row .ctl select.field { width: auto; min-width: 150px; height: 30px; padding: 0 8px; border: 1px solid var(--edge-default); border-radius: var(--r-md); background: var(--surface-0); font-size: 13px; color: var(--ink-1); }
+.sp-tag { display: inline-flex; align-items: center; height: 18px; margin-left: 6px; padding: 0 6px; border-radius: 5px; background: var(--surface-2); font-size: 11px; font-weight: 500; color: var(--ink-3); vertical-align: 1px; }
+.sp-seg, .sp-tabs { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-md); background: var(--surface-2); }
+.sp-seg button, .sp-tabs button { height: 26px; padding: 0 12px; border-radius: 6px; font-size: 12.5px; color: var(--ink-3); white-space: nowrap; }
+.sp-seg button.on, .sp-tabs button.on { background: var(--surface-elev); color: var(--ink-1); font-weight: 500; box-shadow: var(--elev-1); }
+.sp-seg button:hover:not(.on), .sp-tabs button:hover:not(.on) { color: var(--ink-1); }
+.sp-tabs { margin: 0 0 var(--sp-2); }
+.sp-tabs button { height: 28px; padding: 0 14px; font-size: 13px; }
+.sp-state { font-size: 12.5px; color: var(--ink-3); white-space: nowrap; }
+.sp-state.ok { color: var(--ok); }
+.sp-state.off { color: var(--warn); }
+
+/* 更多选项 */
+.sp-more { margin-top: 18px; }
+.sp-more-h { display: flex; align-items: center; gap: var(--sp-2); padding: 4px 2px; border-radius: var(--r-md); font-size: 13px; color: var(--ink-3); text-align: left; }
+.sp-more-h:hover { color: var(--ink-1); }
+.sp-more-h svg { flex: none; color: var(--ink-4); }
+.sp-more-h .faint { color: var(--ink-4); }
+.sp-more-body { margin-top: 10px; }
+.sp-more-body > * + * { margin-top: var(--sp-4); }
+
+/* the section components (lists, forms, key-value blocks) inside a page: headings like 分节标题, lists like cards */
+.sp-bodies > .sp-body + .sp-body { margin-top: var(--sp-5); }
+.sp .sp-body .section { padding: 0; }
+.sp .sp-body .section + .section { margin-top: var(--sp-5); }
+.sp .sp-body .section h5 { margin: 22px 0 8px 2px; font-size: 13px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--ink-1); }
+.sp .sp-body .list { padding: 4px; border: 1px solid var(--edge-default); border-radius: var(--r-xl); background: var(--surface-0); }
+.sp .sp-body .list:empty { display: none; }
+.sp .sp-body .kv { padding: 12px 16px; border: 1px solid var(--edge-default); border-radius: var(--r-xl); }
+.sp .sp-body > .empty { padding: 20px; }
+/* `.modal input / select` make every field 100% wide: a select beside a search box squeezed the box to nothing */
+.modal.settings.sp .sp-body input.field, .modal.settings.sp .sp-body select.field { padding: 5px 9px; border-radius: var(--r-md); }
+.modal.settings.sp .sp-body select.field { width: auto; max-width: 100%; }
+.modal.settings.sp .sp-body .btn { white-space: nowrap; }
+
+/* search results: each row live in its card with a 分组 › 分区 crumb; pages / parts as jump rows */
+.sp-hits { display: flex; flex-direction: column; gap: var(--sp-3); }
+.sp-crumb { margin: 0 0 6px 2px; font-size: 12px; color: var(--ink-4); }
+button.sp-crumb { display: inline-flex; padding: 0; border-radius: var(--r-sm); text-align: left; }
+button.sp-crumb:hover { color: var(--ink-1); text-decoration: underline; }
+.sp-jump { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 16px; border: 1px solid var(--edge-default); border-radius: var(--r-xl); background: var(--surface-0); font-size: 13.5px; color: var(--ink-1); text-align: left; }
+.sp-jump:hover { background: var(--layer-hover); }
+.sp-jump svg { flex: none; color: var(--ink-3); }
+.sp-jump .t { flex: none; }
+.sp-jump .sp-crumb { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+
+/* 高级 → 环境变量 */
+.env-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.env-row code { flex: none; min-width: 200px; font-size: 11.5px; color: var(--ink-2); }
+.env-row .field { flex: 1; min-width: 0; }
+
+/* narrower windows: a slimmer navigation; phones: the navigation and the page take turns */
+@media (max-width: 900px) {
+  .modal.settings.sp { grid-template-columns: 220px minmax(0, 1fr); }
+  .sp-inner { padding: 26px var(--sp-5) 56px; }
+}
+@media (max-width: 600px) {
+  .modal.settings.sp { grid-template-columns: minmax(0, 1fr); }
+  .modal.settings.sp:not(.phone-page) .sp-main { display: none; }
+  .modal.settings.sp.phone-page .sp-nav { display: none; }
+  .sp-phone-back { display: inline-flex; }
+  .sp-inner { padding: 12px var(--sp-4) 48px; }
+  /* searching on a phone: the search box stays on top, the results fill the rest */
+  .modal.settings.sp.searching { grid-template-rows: auto minmax(0, 1fr); }
+  .modal.settings.sp.searching .sp-nav, .modal.settings.sp.searching .sp-main { display: flex; }
+  .modal.settings.sp.searching .sp-nav { border-right: 0; border-bottom: 1px solid var(--edge-subtle); padding-bottom: var(--sp-2); }
+  .modal.settings.sp.searching .sp-groups, .modal.settings.sp.searching .sp-ver, .modal.settings.sp.searching .sp-phone-back { display: none; }
+  .sp-row { flex-wrap: wrap; }
+  .env-row code { min-width: 0; }
+}
+
+/* desktop: the top row of each column is the title bar (see 「desktop title bar」 above) */
+html.desktop .sp-nav-top, html.desktop .sp-drag { -webkit-app-region: drag; }
+html.desktop .sp-nav-top button { -webkit-app-region: no-drag; }
+html.desktop .sp-drag { display: block; height: 40px; }
+html.desktop .sp-inner { padding-top: 6px; }
+html.desktop.mac .sp-nav-top { min-height: 40px; padding-left: 76px; }

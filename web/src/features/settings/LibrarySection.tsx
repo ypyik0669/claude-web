@@ -27,7 +27,7 @@ function SourceRow({ x, busy, onToggle }: { x: SourceStatus; busy: boolean; onTo
   const canJoin = x.joined || x.installed || x.detected;
   const meta = [
     x.version,
-    x.joined && x.loading ? '正在读取…' : x.joined && x.count != null ? `${x.count} 个会话` : null,
+    x.joined && x.loading ? '正在读取…' : x.joined && x.count != null ? `${x.count} 个对话` : null,
     x.joined ? (x.indexedAt ? `上次索引 ${since(x.indexedAt)}` : '尚未索引') : null,
   ].filter(Boolean).join(' · ');
   return (
@@ -94,8 +94,8 @@ export function LibrarySection() {
   return (
     <div className="section">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <h5 style={{ margin: 0 }}>会话库</h5>
-        <span className="sub">把其它 agent 自己的会话记录也列进侧栏，一起搜索、续聊</span>
+        <h5 style={{ margin: 0 }}>来源</h5>
+        <span className="sub">加入后，它的历史对话出现在侧栏，可以一起搜索、接着聊</span>
       </div>
       <div className="list">
         {rows.map((x) => <SourceRow key={x.kind} x={x} busy={busyKind === x.kind} onToggle={toggle} />)}
@@ -103,7 +103,7 @@ export function LibrarySection() {
       </div>
       <div className="sub" style={{ marginTop: 8 }}>
         加入后才会启动该 agent 的读取进程并建立索引；移出只是不在这里显示，不会删除 agent 自己的记录。
-        修改其它 agent 的会话只走它的官方接口，没有接口的来源只读。
+        修改其它 Agent 的对话只走它的官方接口，没有接口的来源只读。
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
         <button className="btn sm" disabled={indexing} onClick={reindex}>

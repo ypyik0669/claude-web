@@ -12,6 +12,7 @@ import { effortCaption, effortSegments } from './intelligence';
 import { MODEL_MENU_ID } from '@/features/composer/ids';
 import './models.css';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
+import { onCloseMenus } from '@/ui/menus';
 
 /** `5 分钟前` / `刚刚` / a date */
 export function agoText(t: number): string {
@@ -140,7 +141,8 @@ export function ModelMenu(p: ModelMenuProps) {
       p.onClose();
     };
     document.addEventListener('mousedown', off);
-    return () => document.removeEventListener('mousedown', off);
+    const offCover = onCloseMenus(() => p.onClose()); // the settings page opening over the app
+    return () => { document.removeEventListener('mousedown', off); offCover(); };
   }, [p.onClose, p.anchor]);
 
   const pick = async (it: ModelMenuItem) => {

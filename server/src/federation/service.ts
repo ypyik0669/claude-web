@@ -245,7 +245,7 @@ export class FederationService extends EventEmitter {
 
   /** Redeem a pairing code on the other machine's /api/pair (the same endpoint a phone uses). */
   private async pair(url: string, code: string): Promise<{ token: string; deviceId?: string }> {
-    if (!/^\d{6}$/.test(code.trim())) throw new Error('配对码是 6 位数字（在那台机器的 设置 → 远程 / 手机 里生成）');
+    if (!/^\d{6}$/.test(code.trim())) throw new Error('配对码是 6 位数字（在那台机器的 设置 → 手机与其它电脑 里生成）');
     let r: Response;
     try {
       r = await this.fetchFn(`${url}/api/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: code.trim(), name: `${this.name}（Claude Web）` }), signal: AbortSignal.timeout(10_000) });

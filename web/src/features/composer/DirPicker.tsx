@@ -5,6 +5,7 @@ import { Icon } from '@/ui/icons';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { dirMenuLayout, menuKey, sameLayout, type DirMenuLayout } from './dir-menu';
 import { PROJECT_MENU_ID } from './ids';
+import { onCloseMenus } from '@/ui/menus';
 
 /**
  * Working-directory chip of the welcome composer. The list of recent directories opens only from this chip,
@@ -87,7 +88,8 @@ function DirMenu({ anchor, cwd, dirs, onPick, onBrowse, onClose, footer }: { anc
       onClose(false);
     };
     document.addEventListener('mousedown', off);
-    return () => document.removeEventListener('mousedown', off);
+    const offCover = onCloseMenus(() => onClose(false)); // the settings page opening over the app
+    return () => { document.removeEventListener('mousedown', off); offCover(); };
   }, [anchor, onClose]);
   const onKey = (e: React.KeyboardEvent) => {
     const rows = [...(box.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])];

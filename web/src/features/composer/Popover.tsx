@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { clsx } from '@/util';
 import { placeMenu, samePlacement, type Placement } from '@/features/models/place';
 import { fieldStep, menuKey } from './dir-menu';
+import { onCloseMenus } from '@/ui/menus';
 
 const FIELD_KEYS = new Set(['ArrowUp', 'ArrowDown', 'Escape', 'Tab']);
 
@@ -71,7 +72,8 @@ export function Popover({ anchor, onClose, prefer = 'up', align = 'left', classN
       onClose(false);
     };
     document.addEventListener('mousedown', off);
-    return () => document.removeEventListener('mousedown', off);
+    const offCover = onCloseMenus(() => onClose(false)); // the settings page opening over the app
+    return () => { document.removeEventListener('mousedown', off); offCover(); };
   }, [anchor, onClose]);
   const onKey = (e: React.KeyboardEvent) => {
     const t = e.target as HTMLElement;

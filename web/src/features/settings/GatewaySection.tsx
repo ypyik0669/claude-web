@@ -43,8 +43,8 @@ export function GatewaySection() {
   const setEnabled = async (on: boolean) => { setBusy(true); try { setSt(await ws.request<GatewayStatus>({ kind: 'gateway.set', enabled: on })); } catch (e: any) { toast(e.message); } finally { setBusy(false); } };
   const copyKey = async () => { try { const k = await ws.request<string>({ kind: 'gateway.revealKey' }); await navigator.clipboard.writeText(k); toast('已复制网关密钥', true); } catch (e: any) { toast(e.message); } };
   const regen = async () => {
-    if (!(await dlg.confirm('重新生成网关密钥？', { message: '旧密钥立即失效。已经在跑的会话要重开才会拿到新密钥；手动配置过的外部工具需要换成新的。', danger: true, okLabel: '重新生成' }))) return;
-    try { setSt(await ws.request<GatewayStatus>({ kind: 'gateway.regenerateKey' })); toast('已生成新密钥。运行中的会话还拿着旧密钥，需要重开才能继续走网关', true); } catch (e: any) { toast(e.message); }
+    if (!(await dlg.confirm('重新生成网关密钥？', { message: '旧密钥立即失效。已经在跑的对话要重开才会拿到新密钥；手动配置过的外部工具需要换成新的。', danger: true, okLabel: '重新生成' }))) return;
+    try { setSt(await ws.request<GatewayStatus>({ kind: 'gateway.regenerateKey' })); toast('已生成新密钥。运行中的对话还拿着旧密钥，需要重开才能继续走网关', true); } catch (e: any) { toast(e.message); }
   };
   const addGroup = async () => {
     const name = await dlg.prompt('组名称', '默认组');
@@ -60,8 +60,8 @@ export function GatewaySection() {
         <span className={clsx('badge', st.enabled && 'ok')}>{st.enabled ? '运行中' : '关闭'}</span>
       </div>
       <div className="sub" style={{ marginTop: 6 }}>
-        在本机对 agent 同时提供 Anthropic / OpenAI / Gemini 三种接口，后面接你自己的供应商档案：同协议原样透传（中转的指纹检查照样通过），跨协议自动转换；一个组里的成员按顺序故障转移，额度用尽或限流的成员自动冷却。只接受本机回环连接，局域网监听器上不可见。
-        不转发任何订阅登录（claude.ai / ChatGPT / Google 账号）—— 只用你配置的 API 档案。
+        在本机对各个 Agent 同时提供 Anthropic / OpenAI / Gemini 三种接口，后面接你自己的供应商：同协议原样透传（中转的指纹检查照样通过），跨协议自动转换；一个组里的成员按顺序故障转移，额度用尽或限流的成员自动冷却。只接受本机回环连接，局域网监听器上不可见。
+        不转发任何订阅登录（claude.ai / ChatGPT / Google 账号）—— 只用你配置的供应商。
       </div>
       {st.enabled && (
         <div className="gw-endpoint">
@@ -71,7 +71,7 @@ export function GatewaySection() {
             <button className="btn sm ghost" onClick={copyKey}><Icon name="copy" size={12} /> 复制</button>
             <button className="btn sm ghost danger" onClick={regen}>重新生成</button>
           </div>
-          <div className="sub">会话里用：在「供应商 / 环境」新建类型为「模型网关」的档案并选组，Claude / Codex / Gemini 会话开的时候自动拿到地址和密钥（桌面版端口每次启动会变，所以别手抄地址）。</div>
+          <div className="sub">对话里用：在「设置 → 供应商」新建一个类型为「模型网关」的供应商并选组，Claude / Codex / Gemini 的对话开始时自动拿到地址和密钥（桌面版端口每次启动会变，所以别手抄地址）。</div>
         </div>
       )}
 
@@ -80,7 +80,7 @@ export function GatewaySection() {
         <span className="grow" />
         <button className="btn sm ghost" onClick={addGroup}><Icon name="plus" size={12} /> 新建组</button>
       </div>
-      {!st.groups.length && <div className="empty">还没有组。新建一个，把几个供应商档案按优先级拖进去。</div>}
+      {!st.groups.length && <div className="empty">还没有组。新建一个，把几个供应商按优先级拖进去。</div>}
       {st.groups.map((g) => <GroupCard key={g.id} group={g} states={st.states[g.id] ?? []} providers={members} enabled={st.enabled} baseUrl={st.baseUrl} />)}
     </div>
   );
@@ -110,7 +110,7 @@ function GroupCard({ group, states, providers, enabled, baseUrl }: { group: Gate
     } catch (e: any) { toast(e.message); }
   };
   const remove = async () => {
-    if (!(await dlg.confirm(`删除组「${group.name}」？`, { message: '引用它的「模型网关」档案会失效，用它的新会话会报错。', danger: true, okLabel: '删除' }))) return;
+    if (!(await dlg.confirm(`删除组「${group.name}」？`, { message: '引用它的「模型网关」供应商会失效，用它的新对话会报错。', danger: true, okLabel: '删除' }))) return;
     await ws.request({ kind: 'gateway.groups.remove', id: group.id }).catch((e) => toast(e.message));
   };
   const runTest = async () => {
@@ -154,7 +154,7 @@ function GroupCard({ group, states, providers, enabled, baseUrl }: { group: Gate
               <span className="gw-order">{i + 1}</span>
               <span className={clsx('dot', health === 'ok' ? 'running' : health === 'cooling' ? 'waiting' : health === 'disabled' ? 'error' : 'idle')} />
               <div className="grow">
-                <div>{p?.name ?? '（档案已删除）'} <span className="muted" style={{ fontSize: 11 }}>{p ? TYPE_LABEL[p.type] ?? p.type : ''}</span></div>
+                <div>{p?.name ?? '（供应商已删除）'} <span className="muted" style={{ fontSize: 11 }}>{p ? TYPE_LABEL[p.type] ?? p.type : ''}</span></div>
                 <div className="sub">
                   {health === 'cooling' ? `冷却中 · 还剩 ${left(s?.cooldownUntil)}` : health === 'disabled' ? '已停用' : health === 'ok' ? `正常${s?.lastOkAt ? ` · ${since(s.lastOkAt)}` : ''}` : '未使用'}
                   {s?.lastError ? ` · ${s.lastError}` : ''}
@@ -171,7 +171,7 @@ function GroupCard({ group, states, providers, enabled, baseUrl }: { group: Gate
         {!draft.members.length && <div className="empty">组里还没有成员</div>}
         {addable.length > 0 && (
           <select className="field gw-add" value="" onChange={(e) => { if (e.target.value) edit({ members: [...draft.members, { providerId: e.target.value }] }); }}>
-            <option value="">＋ 添加供应商档案…</option>
+            <option value="">＋ 添加供应商…</option>
             {addable.map((p) => <option key={p.id} value={p.id}>{p.name}（{TYPE_LABEL[p.type] ?? p.type}）</option>)}
           </select>
         )}

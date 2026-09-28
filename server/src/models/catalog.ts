@@ -93,20 +93,20 @@ export const CATALOG: Partial<Record<AgentKind, AgentCatalog>> = {
     ],
     effort: [],
     supportsEffort: false,
-    note: 'Gemini CLI 没有 /effort：思考深度由 thinkingLevel 控制，随包 SDK 只有 LOW / HIGH。',
+    note: 'Gemini CLI 不能调智能程度：思考深度由它自己的 thinkingLevel 控制，随包 SDK 只有 LOW / HIGH。',
   },
   qwen: {
     models: [{ id: 'qwen3-coder-plus', label: 'Qwen3 Coder Plus' }],
     effort: FIVE,
     supportsEffort: true,
-    note: '官方文档只列出了 qwen3-coder-plus；effort 会按各家 provider 的支持情况截断。',
+    note: '官方文档只列出了 qwen3-coder-plus；智能程度会按各家接口的支持情况截断。',
   },
   kimi: {
     models: [],
     effort: [],
     supportsEffort: false,
     unverified: true,
-    note: 'Kimi CLI 的模型表与 effort 开关未能核实，请以 `kimi --help` / 官方文档为准。',
+    note: 'Kimi CLI 的模型表与智能程度开关未能核实，请以 `kimi --help` / 官方文档为准。',
   },
 };
 
