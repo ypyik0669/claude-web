@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Claude Web 改版 · 输入框与三个菜单</title>
+<style>
+/* ===== Proposed token values (light). Same names as web/src/styles.css — only the primitives change. ===== */
+:root {
+  --bg: #ffffff;        /* 主区：纯白，像纸 */
+  --bg-1: #f8f8f7;      /* 侧栏 / 卡片底 */
+  --bg-2: #f1f1ef;      /* inset、hover 底 */
+  --bg-3: #e7e7e4;      /* 禁用底、头像 */
+  --bg-elev: #ffffff;
+  --fg: #1b1b1a;
+  --fg-1: #474744;
+  --fg-2: #6b6b66;
+  --fg-3: #8e8e88;
+  --accent: #d97757;    /* 只给品牌标和焦点，不再给按钮 */
+  --user-bg: #f2f2f0;
+  --green: #187a42;
+  --red: #cf4439;
+  --yellow: #9a6412;
+  --blue: #2f6feb;
+  /* new semantic: primary action = ink, like Codex / ChatGPT */
+  --primary: #1b1b1a;
+  --primary-fg: #ffffff;
+
+  --surface-0: var(--bg); --surface-1: var(--bg-1); --surface-2: var(--bg-2); --surface-3: var(--bg-3);
+  --edge-subtle: color-mix(in oklab, var(--fg) 7%, transparent);
+  --edge-default: color-mix(in oklab, var(--fg) 12%, transparent);
+  --edge-strong: color-mix(in oklab, var(--fg) 22%, transparent);
+  --layer-hover: color-mix(in oklab, var(--fg) 5%, transparent);
+  --layer-selected: color-mix(in oklab, var(--fg) 8%, transparent);
+  --ink-1: var(--fg); --ink-2: var(--fg-1); --ink-3: var(--fg-2); --ink-4: var(--fg-3);
+  --ok: var(--green); --warn: var(--yellow); --err: var(--red);
+  --ok-soft: color-mix(in oklab, var(--green) 11%, transparent);
+  --err-soft: color-mix(in oklab, var(--red) 10%, transparent);
+  --warn-soft: color-mix(in oklab, var(--yellow) 13%, transparent);
+  --r-sm: 6px; --r-md: 8px; --r-lg: 10px; --r-xl: 14px; --r-2xl: 22px; --r-pill: 999px;
+  --elev-1: 0 1px 2px rgba(20, 20, 18, .05);
+  --elev-2: 0 1px 3px rgba(20, 20, 18, .05), 0 10px 30px rgba(20, 20, 18, .08);
+  --font: 'Inter', 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --mono: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { width: 1440px; height: 900px; overflow: hidden; background: var(--surface-0); color: var(--ink-1); font: 14px/1.55 var(--font); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+.i { width: 16px; height: 16px; flex: none; display: inline-block; vertical-align: middle; }
+.i.s13 { width: 13px; height: 13px; } .i.s14 { width: 14px; height: 14px; } .i.s15 { width: 15px; height: 15px; } .i.s18 { width: 18px; height: 18px; } .i.s20 { width: 20px; height: 20px; }
+.grow { flex: 1; }
+.mono { font-family: var(--mono); }
+.muted { color: var(--ink-3); }
+.faint { color: var(--ink-4); }
+
+/* ---------- app frame ---------- */
+.app { display: grid; grid-template-columns: 260px 1fr; height: 900px; }
+.app.with-insp { grid-template-columns: 260px 1fr 440px; }
+
+/* ---------- sidebar ---------- */
+.sb { background: var(--surface-1); border-right: 1px solid var(--edge-subtle); display: flex; flex-direction: column; min-width: 0; }
+.sb-top { height: 52px; display: flex; align-items: center; gap: 9px; padding: 0 12px 0 16px; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; letter-spacing: -.01em; }
+.brand .mark { color: var(--accent); display: inline-flex; }
+.iconbtn { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-md); color: var(--ink-3); }
+.iconbtn:hover, .iconbtn.on { background: var(--layer-hover); color: var(--ink-1); }
+.iconbtn.on { background: var(--layer-selected); }
+.sb-nav { padding: 2px 8px 6px; display: flex; flex-direction: column; gap: 1px; }
+.nav { height: 34px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-radius: var(--r-md); color: var(--ink-2); font-size: 13.5px; }
+.nav .i { color: var(--ink-3); }
+.nav:hover { background: var(--layer-hover); }
+.nav .k { margin-left: auto; font-size: 11.5px; color: var(--ink-4); }
+.sb-scroll { flex: 1; overflow: hidden; padding: 4px 8px; }
+.sec { margin-top: 14px; }
+.sec-h { display: flex; align-items: center; gap: 4px; height: 26px; padding: 0 6px 0 10px; font-size: 12px; color: var(--ink-4); font-weight: 500; }
+.sec-h .iconbtn { width: 24px; height: 24px; }
+.proj { margin-top: 2px; }
+.proj-h { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: var(--r-md); color: var(--ink-2); font-size: 13.5px; font-weight: 500; }
+.proj-h .i { color: var(--ink-3); }
+.proj-h .n { margin-left: auto; font-size: 12px; color: var(--ink-4); font-weight: 400; }
+.row { height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 34px; border-radius: var(--r-md); font-size: 13.5px; color: var(--ink-2); }
+.row .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .r { font-size: 12px; color: var(--ink-4); flex: none; }
+.row.active { background: var(--layer-selected); color: var(--ink-1); }
+.row.more { color: var(--ink-4); font-size: 12.5px; }
+.row.flat { padding-left: 10px; }
+.stat { font-family: var(--mono); font-size: 11.5px; letter-spacing: -.02em; }
+.stat .a { color: var(--green); } .stat .d { color: var(--red); }
+.spin { width: 12px; height: 12px; border-radius: 50%; border: 1.6px solid var(--edge-default); border-top-color: var(--ink-2); flex: none; }
+.pip { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--yellow); box-shadow: 0 0 0 3px var(--warn-soft); }
+.pip.err { background: var(--red); box-shadow: 0 0 0 3px var(--err-soft); }
+.need { color: var(--yellow); font-size: 12px; font-weight: 500; }
+.sb-foot { height: 60px; border-top: 1px solid var(--edge-subtle); display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; background: #3b3b38; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; flex: none; }
+.who { flex: 1; min-width: 0; line-height: 1.3; }
+.who .nm { font-size: 13.5px; font-weight: 500; }
+.who .sub { font-size: 12px; color: var(--ink-4); white-space: nowrap; display: flex; align-items: center; gap: 5px; }
+.ring { width: 12px; height: 12px; border-radius: 50%; background: conic-gradient(var(--ink-3) 0 34%, var(--edge-default) 34% 100%); -webkit-mask: radial-gradient(circle, transparent 3.2px, #000 3.6px); mask: radial-gradient(circle, transparent 3.2px, #000 3.6px); flex: none; }
+
+/* ---------- main ---------- */
+.main { display: flex; flex-direction: column; min-width: 0; position: relative; }
+.bar { height: 52px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 20px; flex: none; }
+.bar.line { border-bottom: 1px solid var(--edge-subtle); }
+
+/* ---------- chips & buttons ---------- */
+.chip { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: var(--r-pill); font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.chip .i { color: var(--ink-3); }
+.chip .cv { width: 11px; height: 11px; color: var(--ink-4); margin-left: -1px; }
+.chip:hover, .chip.on { background: var(--layer-hover); }
+.chip.outline { border: 1px solid var(--edge-default); }
+.chip .dim { color: var(--ink-4); }
+.btn { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; border-radius: var(--r-md); font-size: 13px; font-weight: 500; border: 1px solid var(--edge-default); background: var(--surface-0); color: var(--ink-1); white-space: nowrap; }
+.btn.primary { background: var(--primary); color: var(--primary-fg); border-color: transparent; }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--ink-2); }
+.btn.sm { height: 26px; padding: 0 10px; font-size: 12.5px; }
+.kbd { font-family: var(--font); font-size: 11px; color: var(--ink-4); border: 1px solid var(--edge-default); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; line-height: 16px; }
+.send { width: 32px; height: 32px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--primary); color: #fff; flex: none; }
+.send.off { background: var(--bg-3); color: #fff; }
+.send.stop { background: var(--primary); }
+.send.stop .sq { width: 10px; height: 10px; border-radius: 2px; background: #fff; }
+
+/* ---------- composer ---------- */
+.composer { background: var(--surface-0); border: 1px solid var(--edge-default); border-radius: var(--r-2xl); box-shadow: var(--elev-1); padding: 14px 12px 10px 16px; }
+.composer .ph { color: var(--ink-4); font-size: 15px; min-height: 48px; padding: 1px 4px 0 2px; }
+.composer .ph.one { min-height: 26px; }
+.composer .ctl { display: flex; align-items: center; gap: 2px; margin-left: -6px; }
+.composer .plus { width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--ink-2); border: 1px solid var(--edge-default); margin-right: 4px; }
+
+/* ---------- misc ---------- */
+.toggle { width: 34px; height: 20px; border-radius: 999px; background: var(--bg-3); position: relative; flex: none; }
+.toggle::after { content: ''; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.18); }
+.toggle.on { background: var(--primary); }
+.toggle.on::after { left: 16px; }
+.select { height: 30px; display: inline-flex; align-items: center; gap: 8px; padding: 0 10px 0 12px; border: 1px solid var(--edge-default); border-radius: var(--r-md); font-size: 13px; color: var(--ink-1); background: var(--surface-0); white-space: nowrap; }
+.select .cv { width: 12px; height: 12px; color: var(--ink-4); }
+code, .code { font-family: var(--mono); font-size: .88em; background: var(--bg-2); border-radius: 5px; padding: 1px 5px; }
+.annot { position: absolute; font: 500 11.5px/1.35 var(--font); color: #9a4a2f; background: #fff4ee; border: 1px solid #f1cdbd; border-radius: 8px; padding: 5px 8px; box-shadow: 0 2px 6px rgba(217,119,87,.12); max-width: 230px; z-index: 50; }
+.annot b { color: #7e3a22; }
+
+</style>
+<style>
+  body { background: var(--surface-1); }
+  .sheet { padding: 22px 40px; }
+  .top { display: flex; align-items: baseline; gap: 14px; }
+  h2 { font-size: 19px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
+  .top .s { color: var(--ink-3); font-size: 13px; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 18px; }
+  .lbl { font-size: 12px; font-weight: 600; color: var(--ink-3); margin: 0 0 8px 4px; display: flex; align-items: center; gap: 8px; }
+  .lbl .pill { font-weight: 500; font-size: 11.5px; padding: 1px 7px; border-radius: 999px; }
+  .lbl .pill.old { background: var(--err-soft); color: #9b3027; }
+  .lbl .pill.new { background: var(--ok-soft); color: #176b3b; }
+  /* replica of today's welcome composer (light theme) */
+  .old .composer { box-shadow: none; }
+  .old .ctl { flex-wrap: wrap; row-gap: 6px; }
+  .ochip { height: 28px; display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid var(--edge-default); border-radius: 999px; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; margin-right: 4px; }
+  .ochip .cv { width: 10px; height: 10px; color: var(--ink-4); }
+  .obox { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--edge-default); border-radius: 8px; font-size: 12.5px; color: var(--ink-2); margin-right: 4px; }
+  .menus { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; margin-top: 22px; align-items: start; }
+  .cap { font-size: 13px; font-weight: 600; margin: 0 0 3px 4px; }
+  .cap-s { font-size: 12.5px; color: var(--ink-3); margin: 0 0 10px 4px; line-height: 1.5; min-height: 38px; }
+  .menu { background: var(--surface-0); border: 1px solid var(--edge-default); border-radius: 14px; box-shadow: var(--elev-2); padding: 6px; }
+  .m-search { height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 10px; margin: 0 0 4px; font-size: 13px; color: var(--ink-4); border-bottom: 1px solid var(--edge-subtle); border-radius: 0; }
+  .m-h { font-size: 11.5px; color: var(--ink-4); font-weight: 500; padding: 8px 10px 4px; }
+  .m-it { min-height: 34px; display: flex; align-items: center; gap: 10px; padding: 4px 10px; border-radius: 8px; font-size: 13.5px; color: var(--ink-1); }
+  .m-it .i { color: var(--ink-3); }
+  .m-it .d { font-size: 12px; color: var(--ink-3); margin-top: 1px; line-height: 1.4; }
+  .m-it .r { margin-left: auto; font-size: 12px; color: var(--ink-4); display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .m-it.sel { background: var(--layer-hover); }
+  .m-it .ck { width: 16px; color: var(--ink-1); flex: none; display: inline-flex; }
+  .m-sep { height: 1px; background: var(--edge-subtle); margin: 5px 4px; }
+  .m-foot { display: flex; align-items: center; gap: 8px; padding: 8px 10px 4px; font-size: 12.5px; color: var(--ink-3); border-top: 1px solid var(--edge-subtle); margin-top: 4px; }
+  .lvl { padding: 6px 10px 8px; }
+  .lvl .row1 { display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; color: var(--ink-2); margin-bottom: 7px; }
+  .lvl .seg { display: grid; grid-template-columns: repeat(5, 1fr); background: var(--bg-2); border-radius: 9px; padding: 2px; }
+  .lvl .seg span { height: 26px; display: flex; align-items: center; justify-content: center; font-size: 12.5px; color: var(--ink-3); border-radius: 7px; }
+  .lvl .seg span.on { background: var(--surface-0); color: var(--ink-1); box-shadow: var(--elev-1); font-weight: 500; }
+  .lvl .desc { font-size: 12px; color: var(--ink-3); margin-top: 7px; }
+  .toggle.sm { width: 28px; height: 16px; }
+  .toggle.sm::after { width: 12px; height: 12px; }
+  .toggle.sm.on::after { left: 14px; }
+  .warn { color: #9a5b10 !important; }
+  .rec { font-size: 11px; padding: 1px 6px; border-radius: 5px; background: var(--bg-2); color: var(--ink-3); margin-left: 6px; font-weight: 500; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="i-mission" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z" fill="currentColor" stroke="none"/><path d="M12 4.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15z"/></symbol><symbol id="i-goals" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4.5"/><path d="M5 5.5h11.5l-1.8 3.4 1.8 3.4H5"/></symbol><symbol id="i-orchestra" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/><path d="M19 3.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/><path d="M19 15.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/><path d="M7.5 12h2.2c1.6 0 2.3-1 2.8-2.5S14.1 6 16.5 6"/><path d="M9.7 12c1.6 0 2.3 1 2.8 2.5s1.6 3.5 4 3.5"/></symbol><symbol id="i-compare" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h6.5v14H4z"/><path d="M13.5 5H20v14h-6.5z"/><path d="M6.5 9h1.5M16 9h1.5M6.5 12.5h1.5M16 12.5h1.5"/></symbol><symbol id="i-approval" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l7 2.8v5.2c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9V6.3z"/><path d="M8.8 12.2l2.2 2.2 4.2-4.4"/></symbol><symbol id="i-tasks" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16z"/><path d="M12 7.8V12l2.8 1.8"/></symbol><symbol id="i-files" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h7l5 5v12H6z"/><path d="M13 3.5v5h5"/><path d="M9.5 14h5M12 11.5v5"/></symbol><symbol id="i-usage" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16"/><path d="M7.5 20v-6M12 20V7M16.5 20v-9"/></symbol><symbol id="i-config" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5h4M13 7.5h7M4 16.5h7M16 16.5h4"/><path d="M10.5 5.5v4M13.5 14.5v4"/></symbol><symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5.5h17v13h-17z"/><path d="M7 10l2.5 2.2L7 14.4M12.5 15h4.5"/></symbol><symbol id="i-inspector" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5h17v14h-17z"/><path d="M14.5 5v14"/></symbol><symbol id="i-android" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.5h10v17H7z"/><path d="M10.5 17.5h3"/></symbol><symbol id="i-board" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 4.5h17v15h-17z"/><path d="M9.5 4.5v15M15 4.5v15"/></symbol><symbol id="i-memory" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5.2c-2.4-1.9-6 -.3-6 2.6 -1.7.9-1.7 3.5 0 4.5 -.4 2.6 2.6 4.3 4.6 2.8"/><path d="M12 5.2c2.4-1.9 6-.3 6 2.6 1.7.9 1.7 3.5 0 4.5 .4 2.6-2.6 4.3-4.6 2.8"/><path d="M12 5.2V20"/></symbol><symbol id="i-browser" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 4.5h17v15h-17z"/><path d="M3.5 9h17"/><path d="M6.5 6.75h.01M9 6.75h.01"/></symbol><symbol id="i-read" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h7l5 5v12H6z"/><path d="M13 3.5v5h5"/><path d="M9 12.5h6M9 15.5h4"/></symbol><symbol id="i-write" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h7l5 5v12H6z"/><path d="M13 3.5v5h5"/><path d="M12 11.5v5M9.5 14h5"/></symbol><symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 19.5h4l10-10a2.1 2.1 0 0 0-3-3l-10 10z"/><path d="M14 7l3 3"/></symbol><symbol id="i-bash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5.5h17v13h-17z"/><path d="M7 10l2.5 2.2L7 14.4M12.5 15h4.5"/></symbol><symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13z"/><path d="M15.8 15.8L20 20"/></symbol><symbol id="i-glob" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6.5a2 2 0 0 1 2-2h3.2l1.8 2.3h8a2 2 0 0 1 2 2v9.7a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2z"/><path d="M9.5 13.5h5"/></symbol><symbol id="i-web" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17z"/><path d="M3.6 12h16.8"/><path d="M12 3.5c2.2 2.4 3.3 5.3 3.3 8.5s-1.1 6.1-3.3 8.5c-2.2-2.4-3.3-5.3-3.3-8.5s1.1-6.1 3.3-8.5z"/></symbol><symbol id="i-agent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8.5h12v10H6z"/><path d="M12 4.5v4"/><path d="M9.5 12.5h.01M14.5 12.5h.01"/><path d="M9.5 15.8h5"/></symbol><symbol id="i-mcp" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 3.5v6M15.5 3.5v6"/><path d="M6 9.5h12v3a6 6 0 0 1-12 0z"/><path d="M12 18.5v2"/></symbol><symbol id="i-skill" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.9 4.6 4.6 1.9-4.6 1.9-1.9 4.6-1.9-4.6L5.5 10l4.6-1.9z"/><path d="M18 16.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/></symbol><symbol id="i-todo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5l1.6 1.6L8.4 5.3M4 12.5l1.6 1.6 2.8-2.8M4 18.5l1.6 1.6 2.8-2.8"/><path d="M11.5 7h8.5M11.5 13h8.5M11.5 19h8.5"/></symbol><symbol id="i-plan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 4.5h9v16h-9z"/><path d="M9.5 3h5v3h-5z"/><path d="M10 11h4M10 15h4"/></symbol><symbol id="i-question" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17z"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.3 2.4c-.6.2-.9.8-.9 1.4v.6"/><path d="M12 16.6h.01" stroke-width="2.2"/></symbol><symbol id="i-artifact" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l7.5 4.2v8.6L12 20.5 4.5 16.3V7.7z"/><path d="M4.7 7.8L12 12l7.3-4.2M12 12v8.5"/></symbol><symbol id="i-workflow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM7 14.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM17.5 4.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/><path d="M7 9.5v5"/><path d="M17.5 9.5v1.5a3 3 0 0 1-3 3H10"/></symbol><symbol id="i-image" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5h17v14h-17z"/><path d="M8.2 10.2a1.3 1.3 0 1 0 0-.02z"/><path d="M3.5 16.5l4.8-4 4 3.3 3.2-2.6 3 2.6"/></symbol><symbol id="i-sidebar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5h17v14h-17z"/><path d="M9.5 5v14"/></symbol><symbol id="i-splitRight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5h17v14h-17z"/><path d="M12 5v14"/><path d="M15 12h3M16.5 10.5L18 12l-1.5 1.5"/></symbol><symbol id="i-splitDown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5h17v14h-17z"/><path d="M3.5 12h17"/><path d="M12 15v3M10.5 16.5L12 18l1.5-1.5"/></symbol><symbol id="i-zoom" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4.5h4.5M20 15v4.5h-4.5M15.5 4.5H20V9M8.5 19.5H4V15"/></symbol><symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol><symbol id="i-minimize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5v14"/><path d="M9 12h11M15.5 7.5L20 12l-4.5 4.5"/></symbol><symbol id="i-restore" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 5v14"/><path d="M15 12H4M8.5 7.5L4 12l4.5 4.5"/></symbol><symbol id="i-more" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="2.4"/></symbol><symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6.5v5h-5"/><path d="M19.4 11.5a7.5 7.5 0 1 0-1.6 5.4"/></symbol><symbol id="i-chevronRight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 5.5l6.5 6.5-6.5 6.5"/></symbol><symbol id="i-chevronDown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 9.5l6.5 6.5 6.5-6.5"/></symbol><symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.6 4.5L19 7.5"/></symbol><symbol id="i-checkCircle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17z"/><path d="M8.2 12.2l2.7 2.6 4.9-5.2"/></symbol><symbol id="i-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15z"/></symbol><symbol id="i-dot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12a3 3 0 1 0 0-.01z" fill="currentColor" stroke="none"/></symbol><symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.2L21 19.5H3z"/><path d="M12 10v4"/><path d="M12 17h.01" stroke-width="2.2"/></symbol><symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17z"/><path d="M12 11.2v5"/><path d="M12 8h.01" stroke-width="2.2"/></symbol><symbol id="i-command" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 4.5a2.5 2.5 0 1 1 2.5 2.5h-2.5zM15.5 4.5a2.5 2.5 0 1 0-2.5 2.5h2.5zM8.5 19.5a2.5 2.5 0 1 0 2.5-2.5h-2.5zM15.5 19.5a2.5 2.5 0 1 1-2.5-2.5h2.5z"/><path d="M8.5 8.5h7v7h-7z"/></symbol><symbol id="i-keyboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5h18v11H3z"/><path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M6.5 14h11"/></symbol><symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6z"/><path d="M19.1 14.4a1.5 1.5 0 0 0 .3 1.7l.1.1a1.8 1.8 0 1 1-2.6 2.6l-.1-.1a1.5 1.5 0 0 0-2.5 1v.3a1.8 1.8 0 1 1-3.6 0v-.2a1.5 1.5 0 0 0-2.6-1l-.1.1a1.8 1.8 0 1 1-2.6-2.6l.1-.1a1.5 1.5 0 0 0-1-2.5h-.3a1.8 1.8 0 1 1 0-3.6h.2a1.5 1.5 0 0 0 1-2.6l-.1-.1a1.8 1.8 0 1 1 2.6-2.6l.1.1a1.5 1.5 0 0 0 1.7.3h.1a1.5 1.5 0 0 0 .9-1.4v-.3a1.8 1.8 0 1 1 3.6 0v.2a1.5 1.5 0 0 0 2.5 1l.1-.1a1.8 1.8 0 1 1 2.6 2.6l-.1.1a1.5 1.5 0 0 0-.3 1.7v.1a1.5 1.5 0 0 0 1.4.9h.3a1.8 1.8 0 1 1 0 3.6h-.2a1.5 1.5 0 0 0-1.4.9z"/></symbol><symbol id="i-star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.9l2.45 5 5.5.8-3.98 3.88.94 5.47L12 16.47l-4.91 2.58.94-5.47L4.05 9.7l5.5-.8z"/></symbol><symbol id="i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3.5h6l-.8 6 3.3 3.2H6.5L9.8 9.5z"/><path d="M12 12.7v7.8"/></symbol><symbol id="i-archive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 4.5h17v4h-17z"/><path d="M5.5 8.5v11h13v-11"/><path d="M10 12.5h4"/></symbol><symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6.5h15"/><path d="M9 6.5V4.2h6v2.3"/><path d="M6.5 6.5l1 13h9l1-13"/><path d="M10.5 10v6M13.5 10v6"/></symbol><symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9h11v11H9z"/><path d="M15 9V4H4v11h5"/></symbol><symbol id="i-quote" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10 7H5.5v5H10v-5"/><path d="M10 12c0 2.8-1.2 4.4-3.8 5.3"/><path d="M18.5 7H14v5h4.5v-5"/><path d="M18.5 12c0 2.8-1.2 4.4-3.8 5.3"/></symbol><symbol id="i-external" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4.5h5.5V10"/><path d="M19.5 4.5L11 13"/><path d="M17 13.5v5a1.5 1.5 0 0 1-1.5 1.5H6a1.5 1.5 0 0 1-1.5-1.5V9A1.5 1.5 0 0 1 6 7.5h5"/></symbol><symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6.5a2 2 0 0 1 2-2h3.2l1.8 2.3h8a2 2 0 0 1 2 2v9.7a2 2 0 0 1-2 2h-15a2 2 0 0 1-2-2z"/></symbol><symbol id="i-branch" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM7 14.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM17 4.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/><path d="M7 9.5v5"/><path d="M17 9.5v1a4 4 0 0 1-4 4H7"/></symbol><symbol id="i-commit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z"/><path d="M3.5 12h5M15.5 12h5"/></symbol><symbol id="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 5.2l10 6.8-10 6.8z"/></symbol><symbol id="i-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5.5v13M15 5.5v13"/></symbol><symbol id="i-stop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 6.5h11v11h-11z"/></symbol><symbol id="i-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19.5V5"/><path d="M6 11l6-6 6 6"/></symbol><symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5a2.7 2.7 0 0 1 2.7 2.7v5a2.7 2.7 0 0 1-5.4 0v-5A2.7 2.7 0 0 1 12 3.5z"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5v3"/></symbol><symbol id="i-attach" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 11.2l-7.6 7.6a4.2 4.2 0 0 1-6-6l8-8a2.8 2.8 0 0 1 4 4l-8 8a1.4 1.4 0 0 1-2-2l7.3-7.3"/></symbol><symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2.8 12S6.5 5.8 12 5.8 21.2 12 21.2 12 17.5 18.2 12 18.2 2.8 12 2.8 12z"/><path d="M12 9.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6z"/></symbol><symbol id="i-filter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5.5h17l-6.6 7.6v5.6l-3.8 2v-7.6z"/></symbol><symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/><path d="M12 2.8v2M12 19.2v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.8 12h2M19.2 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/></symbol><symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.2A8.5 8.5 0 1 1 9.8 4a6.8 6.8 0 0 0 10.2 10.2z"/></symbol><symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10.5h12v9H6z"/><path d="M8.8 10.5V7.8a3.2 3.2 0 0 1 6.4 0v2.7"/></symbol><symbol id="i-cloud" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6.8 18.5a4 4 0 0 1-.4-8A5.6 5.6 0 0 1 17.3 10a3.8 3.8 0 0 1 .3 7.6z"/></symbol><symbol id="i-gateway" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 12a2.5 2.5 0 1 0 5 0 2.5 2.5 0 1 0-5 0"/><path d="M3.5 7h3l3.2 3.4M3.5 17h3l3.2-3.4"/><path d="M14.5 12h6"/><path d="M17.8 9.2l2.7 2.8-2.7 2.8"/></symbol><symbol id="i-grip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 6.5h.01M14.5 6.5h.01M9.5 12h.01M14.5 12h.01M9.5 17.5h.01M14.5 17.5h.01"/></symbol><symbol id="i-arrowRight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12h15"/><path d="M14 6.5l5.5 5.5-5.5 5.5"/></symbol><symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5a3.6 3.6 0 1 0 0 7.2 3.6 3.6 0 0 0 0-7.2z"/><path d="M4.8 20.2a7.4 7.4 0 0 1 14.4 0"/></symbol><symbol id="i-device" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.5h10v17H7z"/><path d="M10.5 17.5h3"/></symbol><symbol id="i-machine" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5h17v11h-17z"/><path d="M12 16v3.5"/><path d="M8.5 19.5h7"/></symbol><symbol id="i-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v10H9.5L5.5 19v-3.5H4z"/></symbol><symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5a5.5 5.5 0 0 1 5.5 5.5c0 4 1.5 5.5 1.5 5.5H5s1.5-1.5 1.5-5.5A5.5 5.5 0 0 1 12 3.5z"/><path d="M10.2 18a2 2 0 0 0 3.6 0"/></symbol><symbol id="i-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3l-8 11h5.5l-1.5 7 8-11h-5.5z"/></symbol><symbol id="i-claude" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2v17.6M4.4 7.6l15.2 8.8M19.6 7.6L4.4 16.4"/></symbol><symbol id="i-codex" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4l7.4 4.3v8.6L12 20.6 4.6 16.3V7.7z"/><path d="M12 9.4a2.6 2.6 0 1 0 0 5.2 2.6 2.6 0 0 0 0-5.2z"/></symbol><symbol id="i-gemini" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2c.6 4.6 4 8 8.6 8.6-4.6.6-8 4-8.6 8.6-.6-4.6-4-8-8.6-8.6 4.6-.6 8-4 8.6-8.6z"/></symbol><symbol id="i-qwen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17z"/><path d="M12 3.5a4.25 4.25 0 0 0 0 8.5 4.25 4.25 0 0 1 0 8.5"/></symbol><symbol id="i-kimi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17z"/><path d="M12 4.6a7.4 7.4 0 0 1 0 14.8z" fill="currentColor" stroke="none"/></symbol><symbol id="i-opencode" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 7.5L4.5 12l5 4.5"/><path d="M14.5 7.5l5 4.5-5 4.5"/><path d="M13 6.5l-2 11"/></symbol></svg>
+<div class="sheet">
+  <div class="top">
+    <h2>输入框：一排 8 个开关，收成 4 个入口</h2>
+    <span class="s">功能一个不少：引擎 / 档案 / 模型 / effort / ultracode 合进「模型」，会话能力进「+」，权限用一句话说清楚。</span>
+  </div>
+
+  <div class="pair">
+    <div class="old">
+      <div class="lbl"><span class="pill old">现在</span>首页输入框 · 1440 宽下折成两行</div>
+      <div class="composer">
+        <div class="ph one">今天做点什么？（可拖入文件或文件夹）</div>
+        <div class="ctl" style="margin-left:0">
+          <span class="plus" style="width:28px;height:28px"><svg class="i s14"><use href="#i-plus"/></svg></span>
+          <span class="obox"><svg class="i s13"><use href="#i-folder"/></svg>选择目录</span>
+          <span class="obox">…</span>
+          <span class="iconbtn" style="width:26px"><svg class="i s14"><use href="#i-mic"/></svg></span>
+          <span class="ochip">Claude Code<svg class="i cv"><use href="#i-chevronDown"/></svg></span>
+          <span class="ochip">功能<svg class="i cv"><use href="#i-chevronDown"/></svg></span>
+          <span class="ochip">默认模型<svg class="i cv"><use href="#i-chevronDown"/></svg></span>
+          <span class="ochip">effort<svg class="i cv"><use href="#i-chevronDown"/></svg></span>
+          <span class="ochip"><svg class="i s13"><use href="#i-bolt"/></svg>ultracode</span>
+          <span class="ochip">每次询问<svg class="i cv"><use href="#i-chevronDown"/></svg></span>
+          <span class="send off" style="width:28px;height:28px"><svg class="i s14"><use href="#i-send"/></svg></span>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="lbl"><span class="pill new">改版</span>项目 · 分支 在左，模型 · 权限 在右，永远一行</div>
+      <div class="composer">
+        <div class="ph one">描述一个任务，或者问个问题</div>
+        <div class="ctl">
+          <button class="plus"><svg class="i"><use href="#i-plus"/></svg></button>
+          <button class="chip"><svg class="i s15"><use href="#i-folder"/></svg>claude-web<svg class="i cv"><use href="#i-chevronDown"/></svg></button>
+          <button class="chip"><svg class="i s15"><use href="#i-branch"/></svg>main<svg class="i cv"><use href="#i-chevronDown"/></svg></button>
+          <span class="grow"></span>
+          <button class="chip on">Sonnet 5 <span class="dim">· 深入</span><svg class="i cv"><use href="#i-chevronDown"/></svg></button>
+          <button class="chip"><svg class="i s15"><use href="#i-approval"/></svg>每步询问<svg class="i cv"><use href="#i-chevronDown"/></svg></button>
+          <button class="iconbtn"><svg class="i"><use href="#i-mic"/></svg></button>
+          <button class="send off"><svg class="i"><use href="#i-send"/></svg></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="menus">
+    <!-- ============ model menu ============ -->
+    <div>
+      <div class="cap">模型：选一次就够</div>
+      <div class="cap-s">智能程度用人话（快 → 极限）代替 low…max；ultracode 是一个开关；其它 Agent 和供应商都在同一个列表里。</div>
+      <div class="menu">
+        <div class="m-search"><svg class="i s14"><use href="#i-search"/></svg>搜索模型或供应商</div>
+        <div class="lvl">
+          <div class="row1"><span>智能程度</span><span class="faint" style="font-size:11.5px">effort</span></div>
+          <div class="seg"><span>快</span><span>均衡</span><span class="on">深入</span><span>更深</span><span>极限</span></div>
+          <div class="desc">深入（默认）：复杂改动更稳，速度适中。</div>
+        </div>
+        <div class="m-it"><svg class="i s15"><use href="#i-bolt"/></svg><div class="grow"><div>深度编排</div><div class="d">最深思考 + 自动拆成并行子任务，更慢、更费额度</div></div><span class="toggle sm"></span></div>
+        <div class="m-sep"></div>
+        <div class="m-h">Claude 账号</div>
+        <div class="m-it"><span class="ck"></span><div class="grow">Fable 5.1</div><span class="r">最强，慢、贵</span></div>
+        <div class="m-it"><span class="ck"></span><div class="grow">Opus 5</div><span class="r">复杂任务</span></div>
+        <div class="m-it sel"><span class="ck"><svg class="i s14"><use href="#i-check"/></svg></span><div class="grow">Sonnet 5</div><span class="r">日常编码</span></div>
+        <div class="m-it"><span class="ck"></span><div class="grow">Haiku 4.5</div><span class="r">快、便宜</span></div>
+        <div class="m-h">其它来源</div>
+        <div class="m-it"><span class="ck"><svg class="i s14" style="color:var(--ink-3)"><use href="#i-cloud"/></svg></span><div class="grow">super-nb 中转</div><span class="r">12 个模型<svg class="i s13"><use href="#i-chevronRight"/></svg></span></div>
+        <div class="m-it"><span class="ck"><svg class="i s14" style="color:var(--ink-3)"><use href="#i-codex"/></svg></span><div class="grow">Codex</div><span class="r">5.6 Sol 等<svg class="i s13"><use href="#i-chevronRight"/></svg></span></div>
+        <div class="m-it"><span class="ck"><svg class="i s14" style="color:var(--ink-3)"><use href="#i-gemini"/></svg></span><div class="grow">Gemini CLI</div><span class="r">未登录<svg class="i s13"><use href="#i-chevronRight"/></svg></span></div>
+        <div class="m-foot"><svg class="i s14"><use href="#i-settings"/></svg>管理模型与供应商…<span class="grow"></span><svg class="i s14"><use href="#i-refresh"/></svg></div>
+      </div>
+    </div>
+
+    <!-- ============ plus menu ============ -->
+    <div>
+      <div class="cap">「+」：附件与这次对话的能力</div>
+      <div class="cap-s">原「功能」菜单里的 Chrome、Computer Use、协调者、主动模式挪到这里；打开的能力在输入框里显示成可删除的小标签。</div>
+      <div class="menu">
+        <div class="m-it"><svg class="i s15"><use href="#i-attach"/></svg><div class="grow">添加文件或图片</div><span class="r">或拖进来</span></div>
+        <div class="m-it"><svg class="i s15"><use href="#i-folder"/></svg><div class="grow">添加文件夹</div></div>
+        <div class="m-it"><svg class="i s15"><use href="#i-quote"/></svg><div class="grow">引用另一个对话</div></div>
+        <div class="m-sep"></div>
+        <div class="m-h">这次对话可以…</div>
+        <div class="m-it sel"><svg class="i s15"><use href="#i-browser"/></svg><div class="grow"><div>控制浏览器</div><div class="d">Claude in Chrome：打开网页、点击、填表</div></div><span class="toggle sm on"></span></div>
+        <div class="m-it"><svg class="i s15"><use href="#i-machine"/></svg><div class="grow"><div>操控电脑</div><div class="d">Computer Use：截图、键盘鼠标</div></div><span class="toggle sm"></span></div>
+        <div class="m-it"><svg class="i s15"><use href="#i-goals"/></svg><div class="grow"><div>设定一个目标</div><div class="d">一轮接一轮做下去，直到完成或卡住</div></div><span class="r"><svg class="i s13"><use href="#i-chevronRight"/></svg></span></div>
+        <div class="m-sep"></div>
+        <div class="m-h">进阶</div>
+        <div class="m-it"><svg class="i s15"><use href="#i-orchestra"/></svg><div class="grow"><div>协调者模式</div><div class="d">自己不动手，只派活给子代理</div></div><span class="toggle sm"></span></div>
+        <div class="m-it"><svg class="i s15"><use href="#i-play"/></svg><div class="grow"><div>主动模式</div><div class="d">空闲时继续推进</div></div><span class="toggle sm"></span></div>
+        <div class="m-it"><svg class="i s15"><use href="#i-more"/></svg><div class="grow faint">Brief、频道…</div></div>
+      </div>
+      <div style="margin-top:12px" class="composer">
+        <div style="display:flex;gap:6px;margin:-2px 0 8px -2px"><span class="chip outline" style="height:26px;font-size:12.5px"><svg class="i s14"><use href="#i-browser"/></svg>控制浏览器<svg class="i s13" style="color:var(--ink-4)"><use href="#i-close"/></svg></span></div>
+        <div class="ph one" style="min-height:22px">打开的能力像这样显示在输入框里</div>
+      </div>
+    </div>
+
+    <!-- ============ permission menu ============ -->
+    <div>
+      <div class="cap">权限：说后果，不说术语</div>
+      <div class="cap-s">六种模式全保留。每一项一句话讲清楚 Claude 会做什么；「完全放开」用警示色。</div>
+      <div class="menu">
+        <div class="m-it sel"><span class="ck"><svg class="i s14"><use href="#i-check"/></svg></span><div class="grow"><div>每步询问<span class="rec">推荐</span></div><div class="d">改文件、运行命令之前都先问你</div></div></div>
+        <div class="m-it"><span class="ck"></span><div class="grow"><div>自动改文件</div><div class="d">直接改文件；运行命令之前问你</div></div></div>
+        <div class="m-it"><span class="ck"></span><div class="grow"><div>只做计划</div><div class="d">先读代码、写方案，你点头后才动手</div></div></div>
+        <div class="m-it"><span class="ck"></span><div class="grow"><div>自动判断</div><div class="d">Claude 自己判断哪些操作需要问你</div></div></div>
+        <div class="m-it"><span class="ck"></span><div class="grow"><div>只做已允许的</div><div class="d">不弹确认；没事先允许的操作一律跳过</div></div></div>
+        <div class="m-sep"></div>
+        <div class="m-it"><span class="ck"><svg class="i s14 warn"><use href="#i-alert"/></svg></span><div class="grow"><div class="warn">完全放开</div><div class="d">什么都不问直接执行。只在可以随便弄坏的环境里用</div></div></div>
+        <div class="m-foot"><svg class="i s14"><use href="#i-settings"/></svg>设为新对话的默认…</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
