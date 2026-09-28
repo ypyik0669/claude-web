@@ -1,5 +1,5 @@
 import { spawn, execFile, execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -14,12 +14,21 @@ export type { EngineInfo, RuntimeKind };
 const isWin = process.platform === 'win32';
 const unpack = (p: string) => p.replace(/app\.asar(?!\.unpacked)/, 'app.asar.unpacked');
 
+/**
+ * `npm root -g` — a synchronous child process (npm is slow to start: seconds, blocking the event loop), so it
+ * runs at most once per process and only when nothing bundled was found. The global prefix does not move.
+ */
+let globalRootMemo: { v: string | null } | null = null;
 function globalRoot(): string | null {
+  if (globalRootMemo) return globalRootMemo.v;
+  let v: string | null = null;
   try {
-    return execSync('npm root -g', { encoding: 'utf8', windowsHide: true, timeout: 15_000 }).trim();
+    v = execSync('npm root -g', { encoding: 'utf8', windowsHide: true, timeout: 15_000 }).trim() || null;
   } catch {
-    return null;
+    v = null;
   }
+  globalRootMemo = { v };
+  return v;
 }
 
 /** Official Claude Code: SDK's platform binary (bundled) → global npm install. */
@@ -57,17 +66,30 @@ export function resolveCcbEntry(): string | null {
   }
   const rp = (process as any).resourcesPath as string | undefined;
   if (rp) candidates.push(path.join(rp, 'app.asar.unpacked', 'node_modules', 'claude-code-best', 'dist', 'cli-node.js'));
-  const g = globalRoot();
-  if (g) candidates.push(path.join(g, 'claude-code-best', 'dist', 'cli-node.js'));
-  return candidates.find((c) => existsSync(c)) ?? null;
+  const found = candidates.find((c) => existsSync(c));
+  if (found) return found;
+  const g = globalRoot(); // only when nothing bundled exists (see globalRoot)
+  const global = g ? path.join(g, 'claude-code-best', 'dist', 'cli-node.js') : null;
+  return global && existsSync(global) ? global : null;
 }
 
+/** `<binary> --version` is a synchronous process start (seconds for claude.exe): remembered per file + mtime. */
+const versionMemo = new Map<string, string | undefined>();
 function versionOf(file: string): string | undefined {
   try {
     const pkg = file.endsWith('.js') ? path.resolve(path.dirname(file), '..', 'package.json') : null;
     if (pkg && existsSync(pkg)) return JSON.parse(require('node:fs').readFileSync(pkg, 'utf8')).version;
-    const out = execSync(`"${file}" --version`, { encoding: 'utf8', windowsHide: true, timeout: 20_000 });
-    return out.trim().split(/\s+/)[0];
+    const key = `${file}|${statSync(file).mtimeMs}`;
+    if (!versionMemo.has(key)) {
+      let v: string | undefined;
+      try {
+        v = execSync(`"${file}" --version`, { encoding: 'utf8', windowsHide: true, timeout: 20_000 }).trim().split(/\s+/)[0];
+      } catch {
+        v = undefined;
+      }
+      versionMemo.set(key, v);
+    }
+    return versionMemo.get(key);
   } catch {
     return undefined;
   }

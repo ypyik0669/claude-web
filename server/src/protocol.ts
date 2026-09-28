@@ -341,7 +341,7 @@ export type ClientRequest =
   | { kind: 'config.mcp' }
   | { kind: 'config.mcp.add'; name: string; json: string; scope: 'user' | 'project' | 'local'; cwd?: string }
   | { kind: 'config.mcp.remove'; name: string; scope?: string; cwd?: string }
-  | { kind: 'config.auth' }
+  | { kind: 'config.auth'; force?: boolean }
   | { kind: 'config.settings.read'; scope: 'user' | 'project' | 'local'; cwd?: string }
   | { kind: 'config.settings.write'; scope: 'user' | 'project' | 'local'; cwd?: string; json: string }
   | { kind: 'config.skills' }

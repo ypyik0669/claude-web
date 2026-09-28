@@ -69,7 +69,7 @@ function parseXY(x: string, y: string, untracked = false): GitFileStatus['status
 }
 
 /** Parse `git status --porcelain=v2 -z --branch` into `st` (entries are NUL-terminated; a rename's origPath is its own field). */
-export function parseStatusV2z(stdout: string, st: Pick<GitStatus, 'branch' | 'upstream' | 'ahead' | 'behind' | 'detached' | 'files'>) {
+export function parseStatusV2z(stdout: string, st: Pick<GitStatus, 'branch' | 'upstream' | 'ahead' | 'behind' | 'detached' | 'files'> & { stashes?: number }) {
   const fields = stdout.split('\0');
   for (let i = 0; i < fields.length; i++) {
     const line = fields[i];
@@ -77,6 +77,7 @@ export function parseStatusV2z(stdout: string, st: Pick<GitStatus, 'branch' | 'u
     if (line.startsWith('# branch.head ')) { const b = line.slice(14); st.branch = b === '(detached)' ? null : b; st.detached = b === '(detached)'; }
     else if (line.startsWith('# branch.upstream ')) st.upstream = line.slice(18);
     else if (line.startsWith('# branch.ab ')) { const m = /\+(\d+) -(\d+)/.exec(line); if (m) { st.ahead = Number(m[1]); st.behind = Number(m[2]); } }
+    else if (line.startsWith('# stash ')) st.stashes = Number(line.slice(8)) || 0; // --show-stash (git ≥ 2.35)
     else if (line.startsWith('1 ') || line.startsWith('2 ')) {
       const parts = line.split(' ');
       const x = parts[1][0], y = parts[1][1];
@@ -105,6 +106,17 @@ export class GitService extends EventEmitter {
   private watchers = new Map<string, { w: any; timer?: ReturnType<typeof setTimeout> }>();
   private fetchTimer: ReturnType<typeof setInterval> | null = null;
   private fetchDirs = new Set<string>();
+  /**
+   * cwd → repo root. `rev-parse --show-toplevel` is one more git process in front of every status / watch / diff,
+   * and status runs on every git.changed for every view showing the repo. Roots barely move: positive answers
+   * are kept a minute, "not a repo" a few seconds (a fresh `git init` shows up quickly); worktree add / remove
+   * and any failing status drop the entries.
+   */
+  private roots = new Map<string, { root: string | null; at: number }>();
+  static ROOT_TTL_MS = 60_000;
+  static NO_ROOT_TTL_MS = 5_000;
+  /** `status --show-stash` saves the separate `stash list` process; false once this git turned out too old for it */
+  private showStash = true;
 
   async run(cwd: string, args: string[], opts: { input?: string; timeoutMs?: number } = {}): Promise<{ stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
@@ -123,20 +135,41 @@ export class GitService extends EventEmitter {
   }
 
   async root(cwd: string): Promise<string | null> {
+    const key = path.resolve(cwd);
+    const hit = this.roots.get(key);
+    if (hit && Date.now() - hit.at < (hit.root ? GitService.ROOT_TTL_MS : GitService.NO_ROOT_TTL_MS)) return hit.root;
+    let root: string | null;
     try {
       const { stdout } = await this.run(cwd, ['rev-parse', '--show-toplevel']);
-      return stdout.trim().replace(/\//g, path.sep);
+      root = stdout.trim().replace(/\//g, path.sep);
     } catch {
-      return null;
+      root = null;
     }
+    this.roots.set(key, { root, at: Date.now() });
+    return root;
   }
+  forgetRoots() { this.roots.clear(); }
 
   async status(cwd: string): Promise<GitStatus> {
     const root = await this.root(cwd);
     if (!root) return { root: null, branch: null, upstream: null, ahead: 0, behind: 0, detached: false, files: [], stashes: 0, state: 'clean' };
     // -z: without it git C-quotes paths containing `"`, `\`, tabs or newlines, and those quoted strings
     // would be handed back verbatim to add / reset / checkout as pathspecs that match nothing
-    const { stdout } = await this.run(root, ['status', '--porcelain=v2', '-z', '--branch', '--untracked-files=all']);
+    const args = ['status', '--porcelain=v2', '-z', '--branch', '--untracked-files=all'];
+    let stdout: string;
+    let stashCounted = this.showStash;
+    try {
+      ({ stdout } = await this.run(root, this.showStash ? [...args, '--show-stash'] : args));
+    } catch (e) {
+      if (this.showStash && e instanceof GitCommandError && /show-stash/.test(e.message)) {
+        this.showStash = false; // git < 2.35
+        stashCounted = false;
+        ({ stdout } = await this.run(root, args));
+      } else {
+        this.roots.delete(path.resolve(cwd)); // the repo moved / vanished: resolve it again next time
+        throw e;
+      }
+    }
     const st: GitStatus = { root, branch: null, upstream: null, ahead: 0, behind: 0, detached: false, files: [], stashes: 0, state: 'clean' };
     parseStatusV2z(stdout, st);
     if (st.detached) st.state = 'detached';
@@ -148,10 +181,12 @@ export class GitService extends EventEmitter {
       else if (await has('CHERRY_PICK_HEAD')) st.state = 'cherry-picking';
       if (st.files.some((f) => f.status === 'conflict')) st.state = st.state === 'clean' ? 'conflict' : st.state;
     } catch { /* ignore */ }
-    try {
-      const { stdout: sl } = await this.run(root, ['stash', 'list']);
-      st.stashes = sl.split('\n').filter(Boolean).length;
-    } catch { /* ignore */ }
+    if (!stashCounted) {
+      try {
+        const { stdout: sl } = await this.run(root, ['stash', 'list']);
+        st.stashes = sl.split('\n').filter(Boolean).length;
+      } catch { /* ignore */ }
+    }
     return st;
   }
 
@@ -279,11 +314,13 @@ export class GitService extends EventEmitter {
     const exists = (await this.listBranches(root)).some((b) => !b.remote && b.name === branch);
     const args = ['worktree', 'add', dir, ...(exists ? [branch] : ['-b', branch, ...(opts.from ? [opts.from] : [])])];
     await this.run(root, args);
+    this.roots.clear();
     this.emit('changed', cwd);
     return { path: dir, head: '', branch, main: false, bare: false, locked: false };
   }
   async worktreeRemove(cwd: string, dir: string, force = false) {
     await this.run(cwd, ['worktree', 'remove', ...(force ? ['--force'] : []), dir]);
+    this.roots.clear();
     this.emit('changed', cwd);
   }
   async remotes(cwd: string): Promise<{ name: string; url: string }[]> {

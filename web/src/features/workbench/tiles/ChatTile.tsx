@@ -22,17 +22,29 @@ import { SessionMenu, effectiveCaps, forkSession } from '@/features/sidebar/sess
 import { sessionPeer } from '@/features/peers';
 import { blockRemoteOpen } from '@/features/remote-guard';
 
-/** git status for a cwd, refreshed on git.changed broadcasts (shared by the files tab badges). */
+const normPath = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+
+/**
+ * git status for a cwd (the files tab badges). Refreshed only by events about THIS repo — git.changed for its
+ * root, fs.changed under it — and coalesced: a status is a git process on the server, and a build or an agent
+ * writing files sends bursts of events (every repo's events used to reload every tile's status).
+ */
 function useGitStatus(cwd: string, enabled: boolean): GitStatus | null {
   const [st, setSt] = useState<GitStatus | null>(null);
   useEffect(() => {
     if (!enabled || !cwd) return;
     let alive = true;
-    const load = () => ws.request<GitStatus>({ kind: 'git.status', cwd }).then((s) => alive && setSt(s)).catch(() => alive && setSt(null));
+    let root: string | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = () => ws.request<GitStatus>({ kind: 'git.status', cwd }).then((s) => { if (alive) { root = s.root; setSt(s); } }).catch(() => alive && setSt(null));
+    const soon = () => { clearTimeout(timer); timer = setTimeout(load, 400); };
+    const under = (p: string) => { const base = normPath(root ?? cwd); const q = normPath(p); return q === base || q.startsWith(`${base}/`); };
     load();
     void ws.request({ kind: 'git.watch', cwd }).catch(() => {});
-    const off = ws.on((e) => { if (e.kind === 'git.changed' || e.kind === 'fs.changed') load(); });
-    return () => { alive = false; off(); };
+    const off = ws.on((e) => {
+      if (e.kind === 'git.changed' ? under(e.cwd) : e.kind === 'fs.changed' && under(e.path)) soon();
+    });
+    return () => { alive = false; clearTimeout(timer); off(); };
   }, [cwd, enabled]);
   return st;
 }

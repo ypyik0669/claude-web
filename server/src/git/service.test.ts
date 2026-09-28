@@ -73,3 +73,40 @@ describe('resolveGitDir', () => {
     }
   });
 });
+
+describe('GitService.status process count', () => {
+  it('reads the stash count from `status --show-stash` (no separate `stash list`)', () => {
+    const st: any = { branch: null, upstream: null, ahead: 0, behind: 0, detached: false, files: [] };
+    parseStatusV2z(['# branch.head main', '# stash 3', ''].join('\0'), st);
+    expect(st.stashes).toBe(3);
+  });
+
+  it('one git process per status once the root is known; the answer matches a fresh service', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const { GitService } = await import('./service.js');
+    const base = await fs.mkdtemp(path.join(os.tmpdir(), 'cw-gitst-'));
+    try {
+      const git = (...a: string[]) => execFileSync('git', a, { cwd: base, windowsHide: true, stdio: 'ignore', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid' } });
+      git('init', '-q');
+      await fs.writeFile(path.join(base, 'a.txt'), '1\n');
+      git('add', '-A');
+      git('commit', '-q', '-m', 'init');
+      await fs.writeFile(path.join(base, 'a.txt'), '2\n');
+      git('stash', '-q');
+      await fs.writeFile(path.join(base, 'b.txt'), 'new\n');
+      const svc = new GitService();
+      const runs: string[][] = [];
+      const run = svc.run.bind(svc);
+      svc.run = (cwd, args, opts) => { runs.push(args); return run(cwd, args, opts); };
+      const first = await svc.status(base);
+      expect(first).toMatchObject({ stashes: 1, files: [{ path: 'b.txt', status: 'untracked' }] });
+      runs.length = 0;
+      const again = await svc.status(path.join(base, '.')); // same repo, root cached
+      expect(runs.map((a) => a[0])).toEqual(['status']);
+      expect(again).toEqual(first);
+      expect(await new GitService().status(base)).toEqual(first);
+    } finally {
+      await fs.rm(base, { recursive: true, force: true });
+    }
+  });
+});

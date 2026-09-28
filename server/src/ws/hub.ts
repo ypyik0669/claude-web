@@ -485,7 +485,7 @@ export class Hub {
       case 'config.mcp.remove':
         return s.config.mcpRemove(req.name, req.scope, req.cwd);
       case 'config.auth':
-        return s.config.auth();
+        return s.config.auth(req.force);
       case 'config.settings.read':
         return s.config.settingsRead(req.scope, req.cwd);
       case 'config.settings.write':
