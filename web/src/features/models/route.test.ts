@@ -45,6 +45,16 @@ describe('routePick (in-session model menu)', () => {
   it('an unavailable entry is refused with its reason', () => {
     expect(routePick(item('b', 'x', { unavailable: '网关未启用' }), ctx())).toEqual({ kind: 'error', message: '网关未启用' });
   });
+  it("another agent's model = a hand-over to that agent (the same confirm as ···), on the picked model", () => {
+    expect(routePick(item('claude', 'gpt-5.6-sol', { agent: 'codex' }), ctx())).toEqual({ kind: 'handover', agent: 'codex', model: 'gpt-5.6-sol' });
+    expect(routePick(item('claude', '', { agent: 'codex', isDefault: true }), ctx())).toEqual({ kind: 'handover', agent: 'codex', model: undefined });
+  });
+  it('a remote session is not handed over from the model menu (···: 交给本机的 Agent 继续)', () => {
+    expect(routePick(item('claude', 'x', { agent: 'codex' }), ctx({ remote: true }))).toMatchObject({ kind: 'error' });
+  });
+  it('the item of the current agent is not a hand-over', () => {
+    expect(routePick(item('claude', 'm2', { agent: 'claude' }), ctx({ currentProvider: 'claude' }))).toEqual({ kind: 'setModel', model: 'm2' });
+  });
 });
 
 describe('switchedNote (prompt cache does not follow a model / provider change)', () => {

@@ -7,7 +7,9 @@ export type PickAction =
   | { kind: 'error'; message: string }
   | { kind: 'setModel'; model: string }
   /** the invisible restart of session.setProvider; model undefined = the new profile's / login's default */
-  | { kind: 'setProvider'; providerId?: string; model?: string; confirm: boolean };
+  | { kind: 'setProvider'; providerId?: string; model?: string; confirm: boolean }
+  /** another agent's model: session.switchAgent (交给其它 Agent 继续), after the same confirm as the ··· menu */
+  | { kind: 'handover'; agent: AgentKind; model?: string };
 
 export interface PickContext {
   agent: AgentKind;
@@ -33,6 +35,11 @@ export function switchedNote(label: string, hasContext: boolean): string {
  */
 export function routePick(it: ModelMenuItem, c: PickContext): PickAction {
   if (it.unavailable) return { kind: 'error', message: it.unavailable };
+  if (it.agent && it.agent !== c.agent) {
+    return c.remote
+      ? { kind: 'error', message: '其它机器上的对话在这里只能换模型；要交给本机的 Agent，用右上角 ··· 里的「交给本机的 Agent 继续」' }
+      : { kind: 'handover', agent: it.agent, model: it.model || undefined };
+  }
   const own = it.providerId === OWN_PROVIDER;
   const profile = own ? undefined : c.providers.find((p) => p.id === it.providerId);
   if (c.remote || it.providerId === c.currentProvider) {
