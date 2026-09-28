@@ -12,6 +12,7 @@ import { isWithin } from '@/features/paths';
 import { filterSessions, isArchived, machineCounts, renderedRows, sourceCounts } from './filter';
 import { SessionMenu, capsIntersection, deleteSessions, effectiveCaps, setArchived } from './session-actions';
 import { UsageRing } from './UsageRing';
+import { onCloseMenus } from '@/ui/menus';
 
 const PAGE_FIRST = 25;
 const PAGE_MORE = 50;
@@ -113,7 +114,8 @@ function WorkspaceMenu({ w, onClose }: { w: Workspace; onClose: () => void }) {
   useEffect(() => {
     const k = () => onClose();
     window.addEventListener('click', k);
-    return () => window.removeEventListener('click', k);
+    const offCover = onCloseMenus(k); // the settings page opening over the app
+    return () => { window.removeEventListener('click', k); offCover(); };
   }, [onClose]);
   const act = (fn: () => unknown) => () => { void fn(); onClose(); };
   return (

@@ -147,8 +147,25 @@ function SettingsPage({ open }: { open: { section?: string; query?: string; reve
     if (open.section || open.reveal) go(resolveSettingsTarget(open));
     focusStart();
   }, [open]);
-  // the phone drawer would sit above this page
-  useEffect(() => { const st = useStore.getState(); if (st.mobile && st.sidebarOpen) useStore.setState({ sidebarOpen: false }); }, []);
+  // the phone drawer is a layer of its own above the page: closed on open, and kept closed while open (Ctrl+B)
+  useEffect(() => {
+    const shut = (st: { mobile: boolean; sidebarOpen: boolean }) => { if (st.mobile && st.sidebarOpen) useStore.setState({ sidebarOpen: false }); };
+    shut(useStore.getState());
+    return useStore.subscribe(shut);
+  }, []);
+  // Esc: a typed search is cleared first, then the page closes. Inside the page that is the root's onKeyDown (after
+  // the page's own controls had their say); with the focus nowhere (<body>: after a dialog closed, a toast was
+  // clicked, the focused row went away) the window catches it here, before the global Esc that would close the page
+  const esc = useRef(() => {});
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || (e.target !== document.body && e.target !== document.documentElement)) return;
+      e.stopPropagation();
+      esc.current();
+    };
+    window.addEventListener('keydown', on, true);
+    return () => window.removeEventListener('keydown', on, true);
+  }, []);
   // after a move: scroll to the revealed row / part, or to the top
   useEffect(() => {
     const id = requestAnimationFrame(() => {
@@ -172,6 +189,7 @@ function SettingsPage({ open }: { open: { section?: string; query?: string; reve
   const status = useNavStatus();
   const sec = findSection(target.section) ?? VISIBLE_SECTIONS[0];
   const searching = !!q.trim();
+  esc.current = () => { if (searching) setQ(''); else close(); };
   const hits = searching ? searchSettings(q) : [];
   const pick = (t: SettingsTarget) => { setQ(''); go(t); };
 
@@ -194,9 +212,7 @@ function SettingsPage({ open }: { open: { section?: string; query?: string; reve
       onKeyDown={(e) => {
         if (e.key !== 'Escape') return;
         e.stopPropagation();
-        // with a search typed, Esc clears it wherever the focus is; otherwise it closes
-        if (searching) setQ('');
-        else close();
+        esc.current();
       }}
     >
       <nav className="sp-nav">

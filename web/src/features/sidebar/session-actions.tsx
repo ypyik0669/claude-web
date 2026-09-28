@@ -8,6 +8,7 @@ import { isImportedSessionId } from '@/util';
 import { agentOf, isArchived } from './filter';
 import { deleteSummary, deleteTargets, effectiveCaps, nativeCliCommand } from './caps';
 import { TERMS } from '@/ui/terms';
+import { onCloseMenus } from '@/ui/menus';
 
 export { effectiveCaps, capsIntersection, nativeCliCommand, type EffectiveCaps } from './caps';
 
@@ -175,7 +176,8 @@ export function SessionMenu({ s, onClose, style, extra, handoffInline, deleted }
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('click', k);
     window.addEventListener('contextmenu', k, true);
-    return () => { window.removeEventListener('scroll', onScroll, true); window.removeEventListener('click', k); window.removeEventListener('contextmenu', k, true); };
+    const offCover = onCloseMenus(k); // the settings page opening over the app
+    return () => { window.removeEventListener('scroll', onScroll, true); window.removeEventListener('click', k); window.removeEventListener('contextmenu', k, true); offCover(); };
   }, []);
   const caps = effectiveCaps(s);
   const archived = isArchived(s, meta ? { [s.sessionId]: meta } : {});
