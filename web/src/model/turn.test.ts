@@ -240,7 +240,7 @@ describe('turnSummary', () => {
     const s = turnSummary(t);
     // the failed Bash and the failed Edit are 「失败 2 个」, not a command run / a file changed
     expect(s).toEqual({ durationMs: 102_000, reads: 2, edits: 2, commands: 1, searches: 0, others: 2, failed: 2, tools: 9 });
-    expect(turnSummaryText(s)).toBe('已处理 1 分 42 秒 · 读了 2 个文件 · 改了 2 个 · 运行 1 条命令 · 其它 2 步 · 失败 2 个');
+    expect(turnSummaryText(s)).toBe('已处理 1 分 42 秒 · 失败 2 个 · 读了 2 个文件 · 改了 2 个 · 运行 1 条命令 · 其它 2 步');
     expect(turnSummaryParts(s).filter((p) => p.err).map((p) => p.text)).toEqual(['失败 2 个']);
   });
 
@@ -250,7 +250,7 @@ describe('turnSummary', () => {
     const [t] = groupTurns([user('go'), asst(refused, missing, tool('BashOutput', { bash_id: 'b1' }), tool('KillShell', { shell_id: 'b1' }))]);
     const s = turnSummary(t);
     expect(s).toMatchObject({ reads: 0, commands: 0, others: 2, failed: 2, tools: 4 });
-    expect(turnSummaryText(s)).toBe('已处理 · 其它 2 步 · 失败 2 个');
+    expect(turnSummaryText(s)).toBe('已处理 · 失败 2 个 · 其它 2 步');
   });
 
   it("a subagent's edits count, its reads and commands do not", () => {

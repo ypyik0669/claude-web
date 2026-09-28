@@ -130,15 +130,18 @@ export function fmtDuration(ms: number): string {
   return `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
 }
 
-/** The folded turn's one line, in parts: 「已处理 1 分 42 秒 · 读了 4 个文件 · 改了 2 个 · 运行 2 条命令 · 失败 1 个」 (`err`: shown in red). */
+/**
+ * The folded turn's one line, in parts: 「已处理 1 分 42 秒 · 失败 1 个 · 读了 4 个文件 · 改了 2 个 · 运行 2 条命令」 (`err`:
+ * shown in red). A failure comes first after the time, where it is seen (review M-7), not at the end of a long line.
+ */
 export function turnSummaryParts(s: TurnSummary): { text: string; err?: boolean }[] {
   const parts: { text: string; err?: boolean }[] = [{ text: s.durationMs !== undefined ? `已处理 ${fmtDuration(s.durationMs)}` : '已处理' }];
+  if (s.failed) parts.push({ text: `失败 ${s.failed} 个`, err: true });
   if (s.reads) parts.push({ text: `读了 ${s.reads} 个文件` });
   if (s.edits) parts.push({ text: `改了 ${s.edits} 个${s.reads ? '' : '文件'}` });
   if (s.searches) parts.push({ text: `搜索 ${s.searches} 次` });
   if (s.commands) parts.push({ text: `运行 ${s.commands} 条命令` });
   if (s.others) parts.push({ text: `其它 ${s.others} 步` });
-  if (s.failed) parts.push({ text: `失败 ${s.failed} 个`, err: true });
   return parts;
 }
 
