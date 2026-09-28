@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionSummary } from '@shared';
 import {
-  CHECKLIST, CHECKLIST_KEY, STARTERS, agoText, applyStarter, untilText, checklistView, engineNotice, homeRows, homeTabs, initialCwd, readChecklist, reconcileChecklist, waitingText,
+  CHECKLIST, CHECKLIST_KEY, STARTERS, agoText, applyStarter, checklistView, engineNotice, homeRows, homeTabs, initialCwd, readChecklist, reconcileChecklist, waitingText,
 } from './model';
+import { nextRunText } from '@/features/automation/schedule-text';
 
 const NOW = Date.UTC(2026, 8, 28, 12, 0, 0);
 const min = 60_000, hour = 3600_000, day = 86400_000;
@@ -32,15 +33,17 @@ describe('入门清单 (settings[onboarding.checklist])', () => {
     expect(readChecklist('x')).toEqual({ done: [] });
     expect(readChecklist({ done: ['review', 'nope', 'review'], dismissed: true })).toEqual({ done: ['review'], dismissed: true });
   });
-  it('projects and conversations complete their steps by themselves; the rest are recorded when they happen', () => {
-    expect(reconcileChecklist({ done: [] }, { projects: 0, sessions: 0 })).toBeNull();
-    expect(reconcileChecklist({ done: [] }, { projects: 1, sessions: 3 })).toEqual({ done: ['project', 'send'] });
-    expect(reconcileChecklist({ done: ['project'] }, { projects: 1, sessions: 0, event: 'palette' })).toEqual({ done: ['project', 'palette'] });
+  it('a project completes its step by itself; the rest only when they happen in this app (review 7 M8)', () => {
+    expect(reconcileChecklist({ done: [] }, { projects: 0 })).toBeNull();
+    // the CLI's old conversations do not make 发出第一个任务 done: only a message sent from here does
+    expect(reconcileChecklist({ done: [] }, { projects: 1 })).toEqual({ done: ['project'] });
+    expect(reconcileChecklist({ done: ['project'] }, { projects: 1, event: 'send' })).toEqual({ done: ['project', 'send'] });
+    expect(reconcileChecklist({ done: ['project'] }, { projects: 1, event: 'palette' })).toEqual({ done: ['project', 'palette'] });
     // nothing new → no write
-    expect(reconcileChecklist({ done: ['project', 'send'] }, { projects: 2, sessions: 5 })).toBeNull();
+    expect(reconcileChecklist({ done: ['project', 'send'] }, { projects: 2 })).toBeNull();
     // dismissed / finished: never written again
-    expect(reconcileChecklist({ done: [], dismissed: true }, { projects: 1, sessions: 1, event: 'review' })).toBeNull();
-    expect(reconcileChecklist({ done: ['project', 'send', 'review', 'palette'] }, { projects: 0, sessions: 0 })).toBeNull();
+    expect(reconcileChecklist({ done: [], dismissed: true }, { projects: 1, event: 'review' })).toBeNull();
+    expect(reconcileChecklist({ done: ['project', 'send', 'review', 'palette'] }, { projects: 0 })).toBeNull();
   });
   it('once recorded a step stays done (removing the last project does not bring the card back)', () => {
     const v = checklistView({ done: ['project', 'send', 'review', 'palette'] });
@@ -108,8 +111,11 @@ describe('the start page lists (最近任务 / 定时任务 / 已归档)', () =>
         { id: 's3', name: '坏的', cwd: 'C:/code/app', everyMinutes: 60, enabled: true, lastError: 'no cwd', prompt: '' },
       ] as never,
     });
-    expect(r.rows.map((x) => [x.title, x.where, x.when])).toEqual([['每日 CI', 'app', '0 9 * * 1-5'], ['整理', 'app', '每 240 分钟'], ['坏的', 'app', '每 60 分钟']]);
-    expect(r.rows[0].status).toMatchObject({ kind: 'time', label: '5 小时后' });
+    // the period in words, the expression in the tooltip; the next run as nextRunText says it (schedule-text.test.ts)
+    expect(r.rows.map((x) => [x.title, x.where, x.when])).toEqual([['每日 CI', 'app', '工作日 09:00'], ['整理', 'app', '每 240 分钟'], ['坏的', 'app', '每 60 分钟']]);
+    expect(r.rows[0].whenTitle).toBe('cron：0 9 * * 1-5');
+    expect(r.rows[1].whenTitle).toBeUndefined();
+    expect(r.rows[0].status).toMatchObject({ kind: 'time', label: nextRunText(NOW + 5 * hour, NOW) });
     expect(r.rows[1].status).toMatchObject({ kind: 'paused', label: '已暂停' });
     expect(r.rows[2].status).toMatchObject({ kind: 'error' });
   });
@@ -123,12 +129,6 @@ describe('the start page lists (最近任务 / 定时任务 / 已归档)', () =>
     expect(waitingText([{ toolName: 'AskUserQuestion' }])).toBe('有问题问你');
     expect(waitingText([{ toolName: 'mcp__x' }, { toolName: 'Bash' }])).toBe('等你确认 2 个操作');
     expect(waitingText([])).toBe('等你确认');
-  });
-  it('untilText (a schedule’s next run)', () => {
-    expect(untilText(NOW + 30_000, NOW)).toBe('1 分钟后');
-    expect(untilText(NOW + 274 * min, NOW)).toBe('5 小时后');
-    expect(untilText(NOW + 3 * day, NOW)).toBe('3 天后');
-    expect(untilText(NOW - min, NOW)).toBe('1 分钟后');
   });
   it('agoText', () => {
     expect(agoText(NOW - 20_000, NOW)).toBe('刚刚');
@@ -146,6 +146,17 @@ describe('the project chip starts on the last project', () => {
     expect(initialCwd({ stored: '', sessions: [S('p', { cwd: '/remote', peer: { id: 'm', name: 'm' } }), S('a', { cwd: 'C:/code/app' })], workspaces: [] })).toBe('C:/code/app');
     expect(initialCwd({ stored: null, sessions: [], workspaces: [{ path: 'C:/w' }] })).toBe('C:/w');
     expect(initialCwd({ stored: null, sessions: [], workspaces: [] })).toBe('');
+  });
+  it('a conversation counts as its project: the sidebar group, a worktree session as its repo; forks and orchestration worktrees are skipped (review 7 M10)', () => {
+    const orch = S('o', { cwd: 'C:/Users/me/.claude-web/worktrees/app-1a2b3c4d/r1-n1-claude', lastModified: NOW });
+    // an orchestration node records its run folder as the group
+    expect(initialCwd({ stored: null, sessions: [orch], workspaces: [], meta: { o: { groupCwd: 'C:/code/app' } } })).toBe('C:/code/app');
+    // without the record its worktree is not offered; the next conversation is
+    expect(initialCwd({ stored: null, sessions: [orch, S('a', { cwd: 'C:/code/web' })], workspaces: [] })).toBe('C:/code/web');
+    // a fork / sub-agent follows its parent: skipped
+    expect(initialCwd({ stored: null, sessions: [S('f', { cwd: 'C:/tmp/fork', parentId: 'a', lastModified: NOW }), S('a', { cwd: 'C:/code/web' })], workspaces: [] })).toBe('C:/code/web');
+    // Claude Code's own worktree → the repo
+    expect(initialCwd({ stored: null, sessions: [S('w', { cwd: 'C:/code/app/.claude/worktrees/task-1' })], workspaces: [] })).toBe('C:/code/app');
   });
 });
 

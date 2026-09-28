@@ -34,7 +34,7 @@ function Line({ row, st, onClick }: { row: HomeRow; st: HomeStatus | null; onCli
     <button className="home-row" onClick={onClick} data-row={row.id}>
       <span className="grow">
         <span className="tt">{row.title}</span>
-        <span className="ss">{[row.where, row.agent, row.when].filter(Boolean).map((x, i) => <span key={i}>{i > 0 && <span className="sep">·</span>}{x}</span>)}</span>
+        <span className="ss">{[row.where, row.agent, row.when].filter(Boolean).map((x, i, all) => <span key={i} title={i === all.length - 1 ? row.whenTitle : undefined}>{i > 0 && <span className="sep">·</span>}{x}</span>)}</span>
       </span>
       <StatusEnd st={st} />
     </button>

@@ -16,6 +16,7 @@ import { coalesce, gitEventConcerns } from './git-refresh';
 import { SCOPE_LABEL, bulkTargets, commitPlan, diffRequest, discardConfirm, reviewRows, scopeCounts, splitPath, splitUnifiedByFile, stageAllConfirm, unifiedStat, type DiffResult, type ReviewRow, type ReviewScope } from './review-model';
 import { useRightPanel } from './right-panel';
 import { modKey } from './shortcuts';
+import { markChecklist } from '@/features/home/checklist-sync';
 
 /** Diffs fetched up front (for the +N −M on every row); the rest when a file is opened. */
 const EAGER = 8;
@@ -250,6 +251,17 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
       ws.request<DiffResult>(req).then(put).catch((e) => put({ kind: 'error', text: String(e?.message ?? e) }));
     });
   }, [rows, open, visible, loaded]);
+
+  // 入门清单 「审阅一次改动」: a file with changes unfolded on screen (not merely the panel opened on nothing)
+  useEffect(() => {
+    if (!visible || !loaded) return;
+    const seen = rows.slice(0, MAX_ROWS).some((r, i) => {
+      if (!isOpen(r, i)) return false;
+      const s = statOf(r, diffs[`${sc}|${r.key}`]);
+      return !!s && (s.added > 0 || s.removed > 0);
+    });
+    if (seen) markChecklist('review');
+  }, [visible, loaded, rows, diffs, open]);
 
   // the tab's number (the right panel's copy only)
   useEffect(() => {

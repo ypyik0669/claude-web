@@ -5,6 +5,7 @@ import { desktop } from '@/desktop';
 import { basename, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { fillComposer } from '@/features/composer/fill';
+import { LOGIN_IN_TERMINAL } from '@/ui/terms';
 import { currentStep, onboardingSteps, recentFolders } from './steps';
 
 const STEP_LABEL = { login: '登录', project: '选一个项目文件夹' } as const;
@@ -28,10 +29,12 @@ export function Onboarding() {
   const toast = useStore((s) => s.toast);
   const [skipped, setSkipped] = useState(false);
   const [checking, setChecking] = useState(false);
+  // the first answer about the login has come back (or failed): until then the wizard shows neither step
+  const [asked, setAsked] = useState(false);
   const [busy, setBusy] = useState(false);
   // first run only: existing installs (already have a project) skip the wizard
   const show = metaLoaded && !settings.onboarded && workspaces.length === 0;
-  const check = (force = false) => { setChecking(true); void useStore.getState().checkAuth(force).catch(() => null).finally(() => setChecking(false)); };
+  const check = (force = false) => { setChecking(true); void useStore.getState().checkAuth(force).catch(() => null).finally(() => { setChecking(false); setAsked(true); }); };
   useEffect(() => { if (show) check(); }, [show]);
   // back from a terminal where /login was run: ask again (the server shares one answer for 30 s; this one is fresh)
   useEffect(() => {
@@ -41,7 +44,9 @@ export function Onboarding() {
     return () => window.removeEventListener('focus', on);
   }, [show]);
   const steps = onboardingSteps({ auth, providers: providers.length });
-  const step = currentStep(steps, skipped);
+  // not known yet (review 7 M9): a neutral line, not step ① flashing up for someone who is logged in
+  const pending = auth === null && providers.length === 0 && !asked;
+  const step = pending ? null : currentStep(steps, skipped);
   const folders = useMemo(() => recentFolders(sessions, workspaces.map((w) => w.path)), [sessions, workspaces]);
   if (!show) return null;
 
@@ -65,27 +70,33 @@ export function Onboarding() {
   // 入门清单, and the composer's project chip)
   const login = () => {
     useStore.getState().openTile({ id: `t${Date.now()}`, kind: 'term', cwd: '', title: '登录 Claude' }, 'tab');
-    toast('在终端里运行 claude，再输入 /login；登录好了回到这里就能用', true, 10_000);
+    toast(LOGIN_IN_TERMINAL, true, 12_000);
     finish();
   };
   const allSteps: ('login' | 'project')[] = ['login', 'project'];
   return (
     <div className="modal-bg" style={{ zIndex: 150 }}>
-      <div className="modal onboarding" role="dialog" aria-label="开始使用" data-step={step}>
+      <div className="modal onboarding" role="dialog" aria-label="开始使用" data-step={step ?? 'checking'}>
         <ol className="ob-steps">
           {allSteps.map((s, i) => {
             // the login step is done (logged in, or a provider to use) or was skipped
-            const done = s === 'login' && !steps.includes('login');
-            const skippedHere = s === 'login' && steps.includes('login') && step === 'project';
+            const done = !pending && s === 'login' && !steps.includes('login');
+            const skippedHere = !pending && s === 'login' && steps.includes('login') && step === 'project';
             return <li key={s} className={clsx(s === step && 'cur', done && 'done', skippedHere && 'skipped')}>{done ? <Icon name="check" size={12} /> : <span className="num">{i + 1}</span>}{STEP_LABEL[s]}{skippedHere ? '（已跳过）' : ''}</li>;
           })}
         </ol>
+        {pending && (
+          <>
+            <h3>欢迎使用 Claude Web</h3>
+            <p className="ob-checking" role="status"><span className="spin" aria-hidden />正在检查登录…</p>
+          </>
+        )}
         {step === 'login' && (
           <>
             <h3>欢迎使用 Claude Web</h3>
-            <p>{auth === null ? '正在检查登录…' : '先登录 Claude 账号。没有账号也行：添加一个第三方接口（供应商），用它来跑。'}</p>
+            <p>先登录 Claude 账号。没有账号也行：添加一个第三方接口（供应商），用它来跑。</p>
             <div className="ob-actions">
-              <button className="btn primary" disabled={auth === null} onClick={login}><Icon name="terminal" size={14} /> 在终端登录</button>
+              <button className="btn primary" onClick={login}><Icon name="terminal" size={14} /> 在终端登录</button>
               <button className="btn" onClick={() => { finish(); useStore.getState().openSettings({ section: 'providers' }); }}>添加供应商</button>
               <button className="link" disabled={checking} onClick={() => check(true)}>{checking ? '检查中…' : '我已经登录了，重新检查'}</button>
               <span className="grow" />

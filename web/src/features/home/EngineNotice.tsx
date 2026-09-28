@@ -3,6 +3,7 @@ import { useStore } from '@/store';
 import { Icon } from '@/ui/icons';
 import { authChecker } from '@/features/workbench/auth-check';
 import { engineNotice, type NoticeAction } from './model';
+import { LOGIN_IN_TERMINAL } from '@/ui/terms';
 
 const ACTION_LABEL: Record<NoticeAction, string> = { login: '在终端登录', provider: '添加供应商', runtime: '查看运行内核' };
 
@@ -10,7 +11,7 @@ function act(a: NoticeAction) {
   const st = useStore.getState();
   if (a === 'login') {
     st.openTile({ id: `t${Date.now()}`, kind: 'term', cwd: '', title: '登录 Claude' }, 'tab');
-    st.toast('在终端里运行 claude，再输入 /login；登录好回到这里点「重新检查」', true, 10_000);
+    st.toast(LOGIN_IN_TERMINAL, true, 12_000);
   } else if (a === 'provider') st.openSettings({ section: 'providers' });
   else st.openSettings({ section: 'engine' });
 }

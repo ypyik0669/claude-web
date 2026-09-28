@@ -78,6 +78,12 @@ export const SIMPLIFIED_NOTICE = `界面已简化；需要分屏 / 标签 / 面�
 export const DISCONNECTED = '连接断开，正在重连…';
 
 /**
+ * 「在终端登录」 (first-run wizard, the start page's notice): the terminal tile runs Claude Code itself, not a shell —
+ * typing `claude` there would be sent as a prompt (review 7 I5).
+ */
+export const LOGIN_IN_TERMINAL = '终端里就是 Claude Code：按提示选择登录方式（或输入 /login），登录好回到这里';
+
+/**
  * Empty states say one thing the same way (spec §5.8): 「还没有 X。Y 之后会出现在这里。」 — with at most one button next
  * to it. `subject` names what appears when that is not X itself (「…打开一个对话之后，它的改动会出现在这里。」).
  */
@@ -100,7 +106,9 @@ export const EMPTY = {
   scheduleRuns: { what: '运行记录', when: '定时任务跑过一次' },
   goals: { what: '目标', when: '用「新目标」或在输入框里输入 /goal 设定一个' },
   workflows: { what: '工作流', when: '新建一个或从模板开始' },
+  workflowOpen: { what: '打开的工作流', when: '在左边选一个工作流或新建一个' },
   orchestraRuns: { what: '运行记录', when: '运行一个工作流' },
+  orphans: { what: '遗留的 worktree', when: '删除运行记录时没清理它的 worktree' },
   // the start page
   recent: { what: '对话', when: '发出第一个任务' },
   archived: { what: '归档的对话', when: '归档一个对话' },

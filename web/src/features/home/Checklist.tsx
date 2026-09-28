@@ -8,6 +8,7 @@ import { modKey } from '@/features/workbench/shortcuts';
 import { openReview } from '@/features/workbench/right-panel';
 import { fillComposer } from '@/features/composer/fill';
 import { CHECKLIST_KEY, checklistView, readChecklist, type ChecklistId } from './model';
+import { markChecklist } from './checklist-sync';
 
 /** What each step says; the palette step also carries the shortcuts the old 就绪 page listed (spec §5.8). */
 const STEP: Record<ChecklistId, { label: string; hint: string; action: string }> = {
@@ -38,7 +39,7 @@ function run(id: ChecklistId, tileId: string) {
   if (id === 'project') void pickProject(tileId);
   else if (id === 'send') fillComposer({ tileId, focus: true });
   else if (id === 'review') goReview();
-  else useStore.setState({ paletteOpen: true });
+  else { markChecklist('palette'); useStore.setState({ paletteOpen: true }); }
 }
 
 /**

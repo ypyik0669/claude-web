@@ -7,6 +7,7 @@ import { isArchived } from '@/features/sidebar/filter';
 import { rowStatus } from '@/features/sidebar/status';
 import { basename } from '@/util';
 import { isWithin } from '@/features/paths';
+import { nextRunText, scheduleText } from '@/features/automation/schedule-text';
 
 // ---------------------------------------------------------------------------------------------------- starters
 
@@ -45,22 +46,22 @@ export function readChecklist(raw: unknown): ChecklistStore {
 
 export interface ChecklistFacts {
   projects: number;
-  /** local conversations (any agent) */
-  sessions: number;
-  /** a step that just happened: the palette was opened, 审阅 came to the front */
+  /**
+   * a step that just happened in this app: a message sent from a composer, a changed file looked at in 审阅, the
+   * palette opened with its shortcut. Conversations that merely exist (the CLI's history) do not count.
+   */
   event?: ChecklistId;
 }
 
 /**
- * The stored progress with what is true now: a project exists → 选一个项目, a conversation exists → 发出第一个任务,
- * plus the step that just happened. Steps are recorded, never derived only — removing the last project must not
- * bring a finished card back. null = nothing to write (also once it is dismissed or finished: it is gone for good).
+ * The stored progress with what is true now: a project exists → 选一个项目, plus the step that just happened.
+ * Steps are recorded, never derived only — removing the last project must not bring a finished card back. null =
+ * nothing to write (also once it is dismissed or finished: it is gone for good).
  */
 export function reconcileChecklist(stored: ChecklistStore, f: ChecklistFacts): ChecklistStore | null {
   if (stored.dismissed || stored.done.length >= IDS.length) return null;
   const add = new Set(stored.done);
   if (f.projects > 0) add.add('project');
-  if (f.sessions > 0) add.add('send');
   if (f.event) add.add(f.event);
   if (add.size === stored.done.length) return null;
   return { ...stored, done: IDS.filter((id) => add.has(id)) };
@@ -90,7 +91,7 @@ export type HomeStatus =
   | { kind: 'diff'; label: string; title: string; added: number; removed: number }
   | { kind: 'time'; label: string; title: string };
 
-export interface HomeRow { id: string; title: string; where: string; agent?: string; when: string; status: HomeStatus | null }
+export interface HomeRow { id: string; title: string; where: string; agent?: string; when: string; whenTitle?: string; status: HomeStatus | null }
 
 /** The runner state this window knows about a conversation (open sessions), for the row's status. */
 export interface KnownStatus { state?: string; pending?: readonly { toolName: string }[]; error?: string; diff?: { added: number; removed: number } | null }
@@ -118,14 +119,6 @@ export function agoText(ts: number, now = Date.now()): string {
   if (d < 7 * 86400_000) return `${Math.floor(d / 86400_000)} 天前`;
   const t = new Date(ts);
   return `${t.getMonth() + 1}/${t.getDate()}`;
-}
-
-/** In how long: 5 分钟后 / 3 小时后 / 2 天后 (a schedule's next run). */
-export function untilText(ts: number, now = Date.now()): string {
-  const d = Math.max(0, ts - now);
-  if (d < 3600_000) return `${Math.max(1, Math.round(d / 60_000))} 分钟后`;
-  if (d < 86400_000) return `${Math.round(d / 3600_000)} 小时后`;
-  return `${Math.round(d / 86400_000)} 天后`;
 }
 
 /** A waiting request in words: which kind of thing Claude waits on. */
@@ -163,16 +156,20 @@ export function homeRows(tab: HomeTab, o: HomeInput): { rows: HomeRow[]; more: n
   if (tab === 'schedules') {
     // in the order the automation page lists them
     const list = o.schedules ?? [];
-    const rows = list.slice(0, HOME_PAGE).map((sc): HomeRow => ({
-      id: sc.id,
-      title: sc.name || sc.prompt.slice(0, 30),
-      where: sc.cwd ? projectOf(sc.cwd, o.workspaces) : '',
-      when: sc.cron ? sc.cron : `每 ${sc.everyMinutes} 分钟`,
-      status: sc.lastError ? { kind: 'error', label: '出错', title: sc.lastError }
-        : !sc.enabled ? { kind: 'paused', label: '已暂停', title: '没有启用' }
-        : sc.nextRunAt ? { kind: 'time', label: untilText(sc.nextRunAt, now), title: `下次运行：${new Date(sc.nextRunAt).toLocaleString()}` }
-        : null,
-    }));
+    const rows = list.slice(0, HOME_PAGE).map((sc): HomeRow => {
+      const period = scheduleText(sc);
+      return {
+        id: sc.id,
+        title: sc.name || sc.prompt.slice(0, 30),
+        where: sc.cwd ? projectOf(sc.cwd, o.workspaces) : '',
+        when: period.text,
+        ...(period.title ? { whenTitle: period.title } : {}),
+        status: sc.lastError ? { kind: 'error', label: '出错', title: sc.lastError }
+          : !sc.enabled ? { kind: 'paused', label: '已暂停', title: '没有启用' }
+          : sc.nextRunAt ? { kind: 'time', label: nextRunText(sc.nextRunAt, now), title: `下次运行：${new Date(sc.nextRunAt).toLocaleString()}` }
+          : null,
+      };
+    });
     return { rows, more: Math.max(0, list.length - rows.length) };
   }
   const list = o.sessions
@@ -195,15 +192,26 @@ export function homeRows(tab: HomeTab, o: HomeInput): { rows: HomeRow[]; more: n
 
 // ---------------------------------------------------------------------------------------------------- the composer's project
 
+/** A throwaway checkout the user did not pick: an orchestration worktree (kept outside the repo, under the data dir). */
+const ORCH_WORKTREE = /[\\/]\.claude-web[\\/]worktrees[\\/]/i;
+/** Claude Code's own worktree session: `<repo>/.claude/worktrees/<name>` → the repo. */
+const CLAUDE_WORKTREE = /[\\/]\.claude[\\/]worktrees[\\/][^\\/]+[\\/]?$/i;
+
 /**
- * The folder the start page's composer begins with: the one used last (remembered by this browser), else the folder
- * of the newest conversation on this machine, else the first project. A conversation on another machine has a path
- * that does not exist here.
+ * The folder the start page's composer begins with: the one used last (remembered by this browser), else the project
+ * of the newest top-level conversation on this machine, else the first project. A conversation's project is its
+ * sidebar group (`SessionMeta.groupCwd`: an orchestration node's run folder, not its worktree); a worktree session
+ * counts as its repo; forks / sub-agents are skipped (they follow their parent). A conversation on another machine
+ * has a path that does not exist here.
  */
-export function initialCwd(o: { stored: string | null | undefined; sessions: SessionSummary[]; workspaces: { path: string }[] }): string {
+export function initialCwd(o: { stored: string | null | undefined; sessions: SessionSummary[]; workspaces: { path: string }[]; meta?: Record<string, SessionMeta> }): string {
   if (o.stored) return o.stored;
-  const local = o.sessions.filter((s) => !s.peer && s.cwd).sort((a, b) => b.lastModified - a.lastModified)[0];
-  return local?.cwd ?? o.workspaces[0]?.path ?? '';
+  const local = o.sessions.filter((s) => !s.peer && !s.parentId && s.cwd).sort((a, b) => b.lastModified - a.lastModified);
+  for (const s of local) {
+    const dir = o.meta?.[s.sessionId]?.groupCwd ?? s.cwd.replace(CLAUDE_WORKTREE, '');
+    if (dir && !ORCH_WORKTREE.test(dir)) return dir;
+  }
+  return o.workspaces[0]?.path ?? '';
 }
 
 // ---------------------------------------------------------------------------------------------------- the notice
