@@ -48,6 +48,9 @@ export class RunnerPool extends EventEmitter {
       const gw = this.providers.agentLaunch?.(params.providerId, l.def.protocol === 'codex' ? 'codex' : 'acp', kind) ?? { env: {}, args: [] };
       const launch = { command: l.command, args: beforeAppServer(l.args, gw.args), env: { ...l.env, ...gw.env }, model: l.model, name: l.def.name, login: l.def.login };
       r = l.def.protocol === 'codex' ? new CodexDriver(kind, launch, params, this.transcripts) : new AcpDriver(kind, launch, params, this.transcripts, resumeHistory);
+      // the composer's model chip reads the profile off the info (`档案 / 模型`); Claude's runner sets it itself
+      const name = params.providerId && params.providerId !== 'claude' ? this.providers.meta?.provider(params.providerId)?.name : undefined;
+      if (name) Object.assign(r.info, { providerId: params.providerId, providerName: name });
     }
     this.runners.set(r.id, r);
     r.on('message', (m) => this.emit('message', r.sessionId, m));

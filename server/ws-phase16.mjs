@@ -6,6 +6,8 @@
 import WebSocket from 'ws';
 import http from 'node:http';
 import net from 'node:net';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const port = args[0] ?? '3090';
@@ -33,7 +35,10 @@ function upstream(handle) {
   return new Promise((r) => srv.listen(0, '127.0.0.1', () => r({ srv, hits, url: `http://127.0.0.1:${srv.address().port}` })));
 }
 const sseEv = (o) => `event: ${o.type}\ndata: ${JSON.stringify(o)}\n\n`;
+// GET /v1/models (providers.refreshModels) is answered before the hit counter matters: only chat requests count
+const modelList = (ids) => JSON.stringify({ object: 'list', data: ids.map((id) => ({ id, object: 'model' })) });
 const A = await upstream((q, s, body, n) => {
+  if (q.method === 'GET' && q.url.startsWith('/v1/models')) { s.writeHead(200, { 'content-type': 'application/json' }).end(modelList(['claude-e2e-b', 'claude-e2e-a'])); return; }
   if (n === 1) { s.writeHead(529, { 'content-type': 'application/json' }).end('{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}'); return; }
   const j = JSON.parse(body || '{}');
   if (j.stream) {
@@ -51,6 +56,7 @@ const A = await upstream((q, s, body, n) => {
   s.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'msg_a', type: 'message', role: 'assistant', model: j.model, content: [{ type: 'text', text: 'A-json' }], stop_reason: 'end_turn', usage: { input_tokens: 9, output_tokens: 2 } }));
 });
 const O = await upstream((q, s, body) => {
+  if (q.method === 'GET' && q.url.startsWith('/v1/models')) { s.writeHead(200, { 'content-type': 'application/json' }).end(modelList(['gpt-e2e-1', 'gpt-e2e-2', 'gpt-e2e-3'])); return; }
   const j = JSON.parse(body || '{}');
   if (j.stream) {
     s.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -146,7 +152,39 @@ ws.on('open', async () => {
     const t = await req({ kind: 'gateway.test', groupId: onlyO.id, protocol: 'openai' });
     check('gateway.test reports the member it went through', t.ok && t.member === 'e2e-openai' && t.text === 'O-json', JSON.stringify(t).slice(0, 120));
 
-    // 7) the LAN listener never serves the gateway
+    // 7) providers.refreshModels: model lists only (GET /v1/models), per-profile results, written back
+    const dead = await req({ kind: 'providers.upsert', provider: { name: 'e2e-dead', type: 'openai', baseUrl: 'http://127.0.0.1:1/v1', apiKey: 'sk-e2e-dead' } });
+    const gwp = await req({ kind: 'providers.upsert', provider: { name: 'e2e-gw', type: 'gateway', baseUrl: '', gatewayGroupId: main.id } });
+    created.push(dead.id, gwp.id);
+    const aHits = A.hits.length;
+    const rr = await req({ kind: 'providers.refreshModels' });
+    const byId = Object.fromEntries(rr.map((x) => [x.id, x]));
+    check('refreshModels: one result per non-gateway profile', byId[pa.id] && byId[po.id] && byId[dead.id] && !byId[gwp.id], JSON.stringify(rr.map((x) => [x.name, x.ok, x.count])));
+    check('refreshModels: counts and failure reported', byId[pa.id].ok && byId[pa.id].count === 2 && byId[po.id].ok && byId[po.id].count === 3 && !byId[dead.id].ok && !!byId[dead.id].error, byId[dead.id]?.error);
+    check('refreshModels only lists models (GET /v1/models, no chat request)', A.hits.slice(aHits).every((h) => h.url === '/v1/models' && !h.body), A.hits.slice(aHits).map((h) => h.url).join(','));
+    const plist = await req({ kind: 'providers.list' });
+    const pA = plist.find((x) => x.id === pa.id), pO = plist.find((x) => x.id === po.id), pD = plist.find((x) => x.id === dead.id), pG = plist.find((x) => x.id === gwp.id);
+    check('lists written back with modelsAt', JSON.stringify(pA.models) === '["claude-e2e-a","claude-e2e-b"]' && pO.models.length === 3 && pA.modelsAt > 0 && !pA.modelsError, JSON.stringify(pA));
+    check('failed profile keeps an error, gateway profile untouched', !!pD.modelsError && !pD.modelsAt && !pG.modelsAt && !pG.modelsError, pD.modelsError);
+    const one = await req({ kind: 'providers.refreshModels', ids: [po.id] });
+    check('refreshModels with ids refreshes only those', one.length === 1 && one[0].id === po.id && one[0].ok);
+
+    // 8) session.setProvider refuses a profile the agent cannot use (an ACP agent speaks OpenAI, not Anthropic)
+    const mock = path.join(path.dirname(fileURLToPath(import.meta.url)), 'src', 'agents', '__mocks__', 'acp-agent.mjs');
+    await req({ kind: 'agents.set', agent: 'acp:e2e-fit', patch: { name: 'Fit', command: process.execPath, args: [mock], env: {}, protocol: 'acp' } });
+    const so = await req({ kind: 'session.open', params: { cwd: process.cwd(), agent: 'acp:e2e-fit', permissionMode: 'default' } });
+    let refused = '';
+    try { await req({ kind: 'session.setProvider', sessionId: so.sessionId, providerId: pa.id }); } catch (e) { refused = e.message; }
+    check('setProvider: an Anthropic profile on an ACP agent is refused with the reason', /anthropic/.test(refused), refused);
+    let openRefused = '';
+    try { await req({ kind: 'session.open', params: { cwd: process.cwd(), agent: 'acp:e2e-fit', providerId: pa.id, permissionMode: 'default' } }); } catch (e) { openRefused = e.message; }
+    check('session.open: an Anthropic profile for an ACP agent is refused up front', /anthropic/.test(openRefused), openRefused);
+    const swp = await req({ kind: 'session.setProvider', sessionId: so.sessionId, providerId: po.id, model: 'gpt-e2e-2' });
+    check('setProvider: an OpenAI profile is accepted and starts on the picked model', swp.info?.providerId === po.id && swp.info?.model === 'gpt-e2e-2', JSON.stringify({ p: swp.info?.providerId, m: swp.info?.model }));
+    await req({ kind: 'session.close', sessionId: so.sessionId }).catch(() => {});
+    await req({ kind: 'agents.set', agent: 'acp:e2e-fit', patch: null }).catch(() => {});
+
+    // 9) the LAN listener never serves the gateway
     remotePort = await freePort();
     const rs = await req({ kind: 'remote.set', enabled: true, port: remotePort });
     if (rs.running) {

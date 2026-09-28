@@ -213,13 +213,19 @@ export class Hub {
             params = { ...params, agent: r.agent, cwd: params.cwd || r.cwd, fork: false, resumeAt: undefined };
           }
         }
+        // an explicitly chosen profile must fit the agent / engine (welcome page, schedules, IM, orchestration all land here)
+        const unfitOpen = s.providers.fitError(req.params.providerId, params.agent ?? 'claude');
+        if (unfitOpen) throw new Error(unfitOpen);
         if (params.agent && params.agent !== 'claude') {
+          // the profile a foreign-agent session was started / switched with survives a resume, like Claude's
+          if (params.providerId === undefined && params.sessionId) params = { ...params, providerId: s.meta.sessionMeta(params.sessionId).providerId };
           const head = params.sessionId ? await s.transcripts.head(params.sessionId) : null;
           const hist = !params.sessionId ? [] : head?.imported
             ? await s.library.read(params.sessionId).then((r) => r.messages).catch(() => [])
             : await s.transcripts.load(params.sessionId).catch(() => []);
           const r = s.pool.open(params, hist);
           await s.canonical.ensure(r.sessionId, params.cwd);
+          if (params.providerId && params.providerId !== 'claude' && s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId }).catch(() => { /* in memory; the next save persists it */ });
           return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
         }
         // provider: explicit → the one the session was created with → user default (new sessions only)
@@ -320,6 +326,8 @@ export class Hub {
         return null;
       case 'providers.probe':
         return s.providers.probe(req.id, req.provider);
+      case 'providers.refreshModels':
+        return s.providers.refreshModels(req.ids);
       case 'settings.get':
         return s.meta.settings();
       case 'settings.set':
@@ -383,7 +391,11 @@ export class Hub {
       case 'session.setProvider': {
         const p = req.providerId ? s.providers.forSession(req.providerId) : undefined;
         if (req.providerId && !p) throw new Error('没有这个供应商档案');
-        const r = await swapProvider({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta }, req.sessionId, req.providerId, p?.name ?? 'Claude 账号');
+        // the agent behind the session must be able to use this profile type (Codex cannot talk to an Anthropic relay…)
+        const agent = s.pool.get(req.sessionId)?.info.agent ?? (await s.transcripts.head(req.sessionId).catch(() => null))?.agent ?? 'claude';
+        const unfit = s.providers.fitError(req.providerId, agent);
+        if (unfit) throw new Error(unfit);
+        const r = await swapProvider({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta }, req.sessionId, req.providerId, p?.name ?? 'Claude 账号', req.model); // serialised per session inside
         s.sessions.emit('changed');
         return r;
       }

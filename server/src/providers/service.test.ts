@@ -24,3 +24,92 @@ describe('providerEnv (openai)', () => {
     expect(providerEnv(prov('https://www.aizhongzhuan.cc/')).OPENAI_BASE_URL).toBe('https://www.aizhongzhuan.cc/v1');
   });
 });
+
+describe('agentLaunch (gemini profile)', () => {
+  it('Gemini CLI gets the profile key / base URL / model and the API-key auth override; other ACP agents get nothing', async () => {
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { MetaStore } = await import('../meta/store.js');
+    const { ProviderService } = await import('./service.js');
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cw-agentlaunch-'));
+    const prev = process.env.CLAUDE_WEB_DIR;
+    process.env.CLAUDE_WEB_DIR = dir;
+    try {
+      const meta = new MetaStore(path.join(dir, 'meta.json'));
+      const svc = new ProviderService(meta);
+      const p = await meta.upsertProvider({ name: 'g', type: 'gemini', baseUrl: 'https://g.example', apiKey: 'AIza-test', defaultModel: 'gemini-3-pro' });
+      const l = svc.agentLaunch(p.id, 'acp', 'gemini');
+      expect(l.env).toMatchObject({ GEMINI_API_KEY: 'AIza-test', GOOGLE_GEMINI_BASE_URL: 'https://g.example', GEMINI_MODEL: 'gemini-3-pro' });
+      expect(l.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH).toContain(dir);
+      expect(svc.agentLaunch(p.id, 'acp', 'qwen')).toEqual({ env: {}, args: [] });
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_WEB_DIR; else process.env.CLAUDE_WEB_DIR = prev;
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('fitError (session.setProvider guard)', () => {
+  it('refuses a profile the agent / engine cannot use, with the reason', async () => {
+    const fs = await import('node:fs/promises');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { MetaStore } = await import('../meta/store.js');
+    const { ProviderService } = await import('./service.js');
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cw-fit-'));
+    try {
+      const meta = new MetaStore(path.join(dir, 'meta.json'));
+      const svc = new ProviderService(meta);
+      const anth = await meta.upsertProvider({ name: 'a', type: 'anthropic', baseUrl: 'https://a', apiKey: 'k' });
+      const oai = await meta.upsertProvider({ name: 'o', type: 'openai', baseUrl: 'https://o', apiKey: 'k' });
+      const oaiOfficial = await meta.upsertProvider({ name: 'oo', type: 'openai', baseUrl: 'https://o', apiKey: 'k', runtime: 'claude' });
+      expect(svc.fitError(anth.id, 'codex')).toMatch(/Codex/);
+      expect(svc.fitError(oai.id, 'codex')).toBeNull();
+      expect(svc.fitError(anth.id, 'claude')).toBeNull();
+      expect(svc.fitError(oaiOfficial.id, 'claude')).toMatch(/官方/);
+      expect(svc.fitError(undefined, 'codex')).toBeNull();
+      expect(svc.fitError('claude', 'claude')).toBeNull();
+      expect(svc.fitError('nope', 'claude')).toMatch(/不存在/);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('providerEnv (gemini / grok through ccb)', () => {
+  const p = (o: Partial<Provider>): Provider => ({ id: 'p', name: 'p', type: 'gemini', baseUrl: '', apiKey: 'k', createdAt: 0, ...o });
+  it('gemini: switches ccb to its Gemini provider with the variables that provider reads', () => {
+    const env = providerEnv(p({ type: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com', defaultModel: 'gemini-3-pro', modelMap: { haiku: 'gemini-3-flash' } }));
+    expect(env.CLAUDE_CODE_USE_GEMINI).toBe('1');
+    expect(env.GEMINI_API_KEY).toBe('k');
+    expect(env.GEMINI_BASE_URL).toBe('https://generativelanguage.googleapis.com/v1beta'); // ccb appends /models/<id>:streamGenerateContent
+    // every family is mapped (ccb throws on an unmapped haiku/sonnet/opus); the default fills the gaps
+    expect(env).toMatchObject({ GEMINI_DEFAULT_HAIKU_MODEL: 'gemini-3-flash', GEMINI_DEFAULT_SONNET_MODEL: 'gemini-3-pro', GEMINI_DEFAULT_OPUS_MODEL: 'gemini-3-pro' });
+    // GEMINI_MODEL pins every request (in-session model switches would do nothing)
+    expect(env.GEMINI_MODEL).toBeUndefined();
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+  });
+  it('gemini: a versioned base URL is kept, an empty one left to the default; no default model → first listed model', () => {
+    expect(providerEnv(p({ baseUrl: 'https://relay.example/v1beta/' })).GEMINI_BASE_URL).toBe('https://relay.example/v1beta');
+    const env = providerEnv(p({ models: ['gemini-3-flash', 'gemini-3-pro'] }));
+    expect(env.GEMINI_BASE_URL).toBeUndefined();
+    expect(env.GEMINI_DEFAULT_SONNET_MODEL).toBe('gemini-3-flash');
+  });
+  it('grok: switches ccb to its Grok provider (OpenAI-style base with /v1, GROK_API_KEY, family defaults)', () => {
+    const env = providerEnv(p({ type: 'grok', baseUrl: 'https://api.x.ai', apiKey: 'xai-k', defaultModel: 'grok-5', modelMap: { haiku: 'grok-5-mini' } }));
+    expect(env.CLAUDE_CODE_USE_GROK).toBe('1');
+    expect(env.GROK_API_KEY).toBe('xai-k');
+    expect(env.GROK_BASE_URL).toBe('https://api.x.ai/v1');
+    expect(env).toMatchObject({ GROK_DEFAULT_HAIKU_MODEL: 'grok-5-mini', GROK_DEFAULT_SONNET_MODEL: 'grok-5', GROK_DEFAULT_OPUS_MODEL: 'grok-5' });
+    expect(env.GROK_MODEL).toBeUndefined();
+    expect(providerEnv(p({ type: 'grok' })).GROK_BASE_URL).toBeUndefined();
+  });
+  it('only one ccb provider switch per type', () => {
+    const flags = (t: Provider['type']) => Object.keys(providerEnv(p({ type: t, baseUrl: 'https://x' }))).filter((k) => /^CLAUDE_CODE_USE_/.test(k));
+    expect(flags('openai')).toEqual(['CLAUDE_CODE_USE_OPENAI']);
+    expect(flags('gemini')).toEqual(['CLAUDE_CODE_USE_GEMINI']);
+    expect(flags('grok')).toEqual(['CLAUDE_CODE_USE_GROK']);
+    expect(flags('anthropic')).toEqual([]);
+  });
+});

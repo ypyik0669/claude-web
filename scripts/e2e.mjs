@@ -13,7 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const phases = process.argv.slice(2).length ? process.argv.slice(2) : ['3', '4', '5', '6', '11', '12', '13', '14', '15', '16', '17'];
 const home = mkdtempSync(path.join(os.tmpdir(), 'cw-e2e-'));
 const token = randomBytes(12).toString('hex');
-const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: path.join(home, '.claude-web') };
+const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: path.join(home, '.claude-web'), CW_NO_MODEL_REFRESH: '1' }; // no background /v1/models pulls racing the checks
 for (const k of Object.keys(env)) if (/^(ANTHROPIC_|CLAUDE_CODE_)/.test(k)) delete env[k];
 
 const server = spawn(process.execPath, [path.join(root, 'server', 'dist', 'index.js')], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });

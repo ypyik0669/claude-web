@@ -1,4 +1,4 @@
-import type { AgentKind, EffortLevel, ModelInfo } from '../protocol.js';
+import type { AgentKind, EffortLevel, ModelInfo, ProviderType, RuntimeKind } from '../protocol.js';
 
 /**
  * The one model / effort table.
@@ -151,4 +151,28 @@ export function modelsFor(agent: AgentKind, reported?: { id: string; label?: str
 
 export function supportsUltracode(agent: AgentKind): boolean {
   return !!CATALOG[agent]?.supportsUltracode;
+}
+
+/**
+ * Which provider-profile types can drive an agent — what providerEnv / agentLaunch actually wire up.
+ * Shared by the model menu (web) and session.setProvider (server), so both refuse the same things.
+ */
+export function providerTypesFor(agent: AgentKind): ProviderType[] {
+  if (agent === 'claude') return ['anthropic', 'openai', 'gemini', 'grok', 'gateway'];
+  if (agent === 'gemini') return ['gemini', 'gateway'];
+  return ['openai', 'gateway']; // codex, qwen, kimi, opencode, custom ACP agents: OpenAI-compatible endpoints
+}
+
+const AGENT_LABEL: Partial<Record<string, string>> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI', qwen: 'Qwen Code', kimi: 'Kimi CLI', opencode: 'OpenCode' };
+
+/**
+ * Why a profile of `type` cannot drive `agent` (null = it can). `runtime` is the engine a Claude session would
+ * run on: only ccb speaks OpenAI / Gemini / Grok; the official Claude Code binary (forced per profile, or the
+ * silent fallback when ccb is missing) only talks Anthropic — to a relay or through the local gateway.
+ */
+export function profileFitError(agent: AgentKind, type: ProviderType, runtime?: RuntimeKind): string | null {
+  const types = providerTypesFor(agent);
+  if (!types.includes(type)) return `${AGENT_LABEL[agent] ?? agent} 不能用 ${type} 类型的档案（只支持 ${types.join(' / ')}）`;
+  if (agent === 'claude' && runtime === 'claude' && (type === 'openai' || type === 'gemini' || type === 'grok')) return `官方 Claude Code 引擎只支持 Anthropic 兼容 / 模型网关档案，${type} 类型需要 ccb 引擎`;
+  return null;
 }

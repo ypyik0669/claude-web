@@ -16,10 +16,13 @@ import { activeGroup } from '@/model/layout';
 import { sessionRefMarker } from '@/model/conversation';
 import { SessionRefChip } from '@/features/chat/ChatView';
 import { REFERENCE_EVENT, type ReferenceDetail } from '@/features/sidebar/session-actions';
+import { ModelChip } from '@/features/models/ModelMenu';
+import { chipLabel, compatibleTypes, usableProfile, type ModelMenuItem } from '@/features/models/menu';
+import { routePick } from '@/features/models/route';
+import { providersLoaded, useGatewayStatus } from '@/features/models/data';
+import { dlg } from '@/ui/dialog';
 
 export const MODE_LABEL: Record<PermissionMode, string> = { default: '每次询问', acceptEdits: '自动接受编辑', plan: '计划模式', auto: '自动模式', bypassPermissions: '完全权限', dontAsk: '不询问' };
-// Model names must carry their version — "Fable" is not a model, "Fable 5.1" is. Source: @catalog.
-const MODEL_ALIASES = [{ value: '', label: '默认模型' }, ...modelsFor('claude').map((m) => ({ value: m.value, label: m.displayName }))];
 // sessions on another machine: uploads land on this machine's disk, out of the remote agent's reach
 const REMOTE_ATTACH = '附件在本机，远端读不到，请粘贴内容（图片可以直接发）';
 
@@ -59,19 +62,29 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   const settings = useStore((s) => s.settings);
   const togglePanel = useStore((s) => s.togglePanel);
   const [wProvider, setWProvider] = useState<string>(localStorage.getItem('cw.lastProvider') || (settings.defaultProviderId as string) || 'claude');
-  const provider = wProvider === 'claude' ? undefined : providers.find((p) => p.id === wProvider);
   const agents = useStore((s) => s.agents);
   const [wAgent, setWAgent] = useState<AgentKind>((localStorage.getItem('cw.lastAgent') as AgentKind) || 'claude');
   const agent = wAgent !== 'claude' ? agents.find((a) => a.kind === wAgent) : undefined;
   const foreign = !!agent;
-  const disabledModels = (settings['ui.disabledModels'] as string[] | undefined) ?? [];
-  const agentModels = agent ? modelsFor(agent.kind) : [];
-  const modelOptions = (agent
-    ? [{ value: '', label: agent.model ? `默认（${agent.model}）` : '默认模型' }, ...(agentModels.length ? agentModels.map((m) => ({ value: m.value, label: m.displayName })) : agent.models.map((m) => ({ value: m, label: m })))]
-    : provider?.models?.length ? [{ value: '', label: provider.defaultModel ? `默认（${provider.defaultModel}）` : '默认模型' }, ...provider.models.map((m) => ({ value: m, label: m }))]
-      : MODEL_ALIASES).filter((o) => !o.value || !disabledModels.includes(provider ? `${provider.id}:${o.value}` : o.value));
-  // effort is per agent AND per model: Gemini has none, Codex alone has `ultra`, Opus/Sonnet 4.6 have no `xhigh`
   const wKind: AgentKind = foreign ? wAgent : 'claude';
+  // a remembered profile the chosen agent cannot use (or one since deleted) falls back to the agent's own login
+  const engine = useStore((s) => s.engine);
+  const gatewayView = useGatewayStatus();
+  // unusable right now (official engine, gateway off / group gone) counts as gone too
+  const provider = usableProfile(providers, wProvider, { agent: wKind, engine, gatewayGroups: gatewayView.groups, gatewayEnabled: gatewayView.enabled });
+  // the agent's own model list: the catalog, or what the agent registry probed when the catalog has none
+  const wBuiltin = agent && !modelsFor(agent.kind).length ? agent.models.map((m) => ({ value: m, displayName: m })) : undefined;
+  const pickWelcome = (it: ModelMenuItem) => { setWProvider(it.providerId); setWModel(it.model); return true; };
+  // the remembered profile is gone (deleted, or unusable by this agent): its model goes with it, or a relay's
+  // model id would be sent to the agent's own login
+  useEffect(() => {
+    if (!welcome || wProvider === 'claude' || provider || !providersLoaded(providers)) return;
+    setWProvider('claude');
+    setWModel('');
+    localStorage.removeItem('cw.lastProvider');
+    localStorage.removeItem('cw.lastModel');
+  }, [welcome, wProvider, provider, providers]);
+  // effort is per agent AND per model: Gemini has none, Codex alone has `ultra`, Opus/Sonnet 4.6 have no `xhigh`
   const wEfforts = effortLevels(wKind, wModel || undefined);
   const wUltracode = !!CATALOG[wKind]?.supportsUltracode;
   const catalogNote = CATALOG[wKind]?.note;
@@ -220,8 +233,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
         localStorage.setItem('cw.lastAgent', wAgent);
         if (wAgent !== 'claude' && !agent) throw new Error('选中的 agent 已不可用');
         localStorage.setItem('cw.lastFeatures', JSON.stringify(wFeatures));
-        if (wProvider !== 'claude' && !provider) throw new Error('选中的供应商档案已不存在');
-        const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffort || undefined, ultracode: wUltra || undefined, providerId: foreign ? 'claude' : provider ? provider.id : 'claude', features: foreign ? {} : wFeatures, agent: foreign ? wAgent : undefined }, target);
+        const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffort || undefined, ultracode: wUltra || undefined, providerId: provider ? provider.id : 'claude', features: foreign ? {} : wFeatures, agent: foreign ? wAgent : undefined }, target);
         const uploaded = files.length ? await uploadAll(id) : [];
         await send(id, withRefs(t), im, false, [...atts, ...uploaded]);
         setRefs([]);
@@ -332,6 +344,29 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     : liveModel?.supportsEffort === false ? [] : effortLevels(info?.agent ?? 'claude', info?.model ?? undefined);
   const setMode = (mode: PermissionMode) => active && ws.request({ kind: 'session.setPermissionMode', sessionId: active.sessionId, mode }).catch((e) => toast(e.message));
   const setModel = (model: string) => active && ws.request({ kind: 'session.setModel', sessionId: active.sessionId, model }).catch((e) => toast(e.message));
+  // the unified model menu inside a session: same profile → setModel; another profile → the invisible
+  // restart of session.setProvider, started directly on the picked model
+  const [swapping, setSwapping] = useState(false);
+  const liveAgent: AgentKind = info?.agent ?? 'claude';
+  const liveProvider = info?.providerId && info.providerId !== 'claude' ? info.providerId : 'claude';
+  const liveAgentDefault = liveAgent !== 'claude' ? agents.find((a) => a.kind === liveAgent)?.model || undefined : undefined;
+  /** false = nothing happened (refused / cancelled / failed): the menu then does not record it as recent */
+  const pickLive = async (it: ModelMenuItem): Promise<boolean> => {
+    if (!active || swapping) return false;
+    const act = routePick(it, { agent: liveAgent, currentProvider: remote ? 'claude' : liveProvider, currentModel: info?.model, remote, busy, providers, agentDefault: liveAgentDefault });
+    if (act.kind === 'none') return true;
+    if (act.kind === 'error') { toast(act.message); return false; }
+    if (act.kind === 'setModel') {
+      try { await ws.request({ kind: 'session.setModel', sessionId: active.sessionId, model: act.model }); return true; } catch (e: any) { toast(e.message); return false; }
+    }
+    if (act.confirm && !(await dlg.confirm('切换供应商档案？', { message: '会话正在运行。换档案会重启会话进程（历史保留），当前这一轮会被中断。', okLabel: '切换' }))) return false;
+    setSwapping(true);
+    try {
+      await ws.request({ kind: 'session.setProvider', sessionId: active.sessionId, providerId: act.providerId, model: act.model });
+      toast(`已切换到 ${it.label}，会话继续`, true);
+      return true;
+    } catch (e: any) { toast(e.message); return false; } finally { setSwapping(false); }
+  };
   const setEffort = (effort: EffortLevel) => active && ws.request({ kind: 'session.setEffort', sessionId: active.sessionId, effort }).catch((e) => toast(e.message));
   const setUltracode = (on: boolean) => active && ws.request({ kind: 'session.setUltracode', sessionId: active.sessionId, on }).catch((e) => toast(e.message));
 
@@ -422,17 +457,24 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
             )}
             {welcome ? (
               <>
-                <label className={clsx('chip', (provider || foreign) && 'info')} title="引擎：Claude 账号 / 第三方供应商 / 其它 CLI agent（Codex、Gemini、Qwen、Kimi、ACP）"><span>{agent ? agent.name : provider ? provider.name : 'Claude 账号'}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
-                  <select value={foreign ? `agent:${wAgent}` : provider ? provider.id : 'claude'} onChange={(e) => { const v = e.target.value; if (v === '__add') { useStore.setState({ configTab: 'providers' }); if (!useStore.getState().panels.includes('config')) togglePanel('config'); return; } if (v === '__agents') { useStore.getState().openSettings({ section: 'agents' }); return; } if (v.startsWith('agent:')) { setWAgent(v.slice(6) as AgentKind); setWProvider('claude'); } else { setWAgent('claude'); setWProvider(v); } setWModel(''); }}>
-                    <optgroup label="Claude Code">
-                      <option value="claude">Claude 账号（claude.ai 登录）</option>
-                      {providers.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.type}</option>)}
-                      <option value="__add">+ 添加供应商…</option>
-                    </optgroup>
+                <label className={clsx('chip', foreign && 'info')} title="agent：Claude Code 或其它 CLI agent（Codex、Gemini、Qwen、Kimi、ACP）；供应商档案在模型菜单里选"><span>{agent ? agent.name : 'Claude Code'}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
+                  <select value={foreign ? `agent:${wAgent}` : 'claude'} onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === '__add') { useStore.setState({ configTab: 'providers' }); if (!useStore.getState().panels.includes('config')) togglePanel('config'); return; }
+                    if (v === '__agents') { useStore.getState().openSettings({ section: 'agents' }); return; }
+                    const kind = (v.startsWith('agent:') ? v.slice(6) : 'claude') as AgentKind;
+                    setWAgent(kind);
+                    // keep the profile when the new agent can use it; the model list differs per agent, so reset the model
+                    const cur = providers.find((p) => p.id === wProvider);
+                    if (!cur || !compatibleTypes(kind).includes(cur.type)) setWProvider('claude');
+                    setWModel('');
+                  }}>
+                    <option value="claude">Claude Code</option>
                     <optgroup label="其它 agent">
                       {agents.filter((a) => a.kind !== 'claude' && a.enabled).map((a) => <option key={a.kind} value={`agent:${a.kind}`} disabled={!a.installed}>{a.name}{a.installed ? (a.label ? ` · ${a.label}` : '') : '（未安装）'}</option>)}
                       <option value="__agents">管理 agent…</option>
                     </optgroup>
+                    <option value="__add">+ 添加供应商档案…</option>
                   </select>
                 </label>
                 {!foreign && <span style={{ position: 'relative' }}>
@@ -458,9 +500,16 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
                     </div>
                   )}
                 </span>}
-                <label className="chip"><span>{modelOptions.find((m) => m.value === wModel)?.label ?? wModel}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
-                  <select value={wModel} onChange={(e) => setWModel(e.target.value)}>{modelOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}{wModel && !modelOptions.some((m) => m.value === wModel) && <option value={wModel}>{wModel}</option>}</select>
-                </label>
+                <ModelChip
+                  agent={wKind}
+                  current={{ providerId: provider ? provider.id : 'claude', model: wModel }}
+                  label={chipLabel({ agent: wKind, providers, providerId: provider?.id, model: wModel, builtin: wBuiltin, agentDefault: agent?.model || undefined })}
+                  title="供应商档案 / 模型：一次选中两者"
+                  builtin={wBuiltin}
+                  builtinTitle={agent ? `${agent.name} 账号` : 'Claude 账号'}
+                  agentDefault={agent?.model || undefined}
+                  onPick={pickWelcome}
+                />
                 {wEfforts.length > 0 && <label className="chip" title={catalogNote ?? 'effort'}><span>{wEffort || 'effort'}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
                   <select value={wEffort} onChange={(e) => setWEffort(e.target.value as EffortLevel)}><option value="">默认{CATALOG[wKind]?.defaultEffort ? `（${CATALOG[wKind]!.defaultEffort}）` : ''}</option>{wEfforts.map((l) => <option key={l} value={l}>{l}</option>)}</select>
                 </label>}
@@ -471,12 +520,22 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
               </>
             ) : liveOk ? (
               <>
-                <label className="chip" title="模型"><span>{info.models?.find((m) => m.value === info.model)?.displayName ?? (shortModel(info.model) || '模型')}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
-                  <select value={info.model ?? ''} onChange={(e) => setModel(e.target.value)}>
-                    {(info.models ?? []).map((m) => <option key={m.value} value={m.value}>{m.displayName}</option>)}
-                    {info.model && !info.models?.some((m) => m.value === info.model) && <option value={info.model}>{shortModel(info.model)}</option>}
-                  </select>
-                </label>
+                <ModelChip
+                  agent={liveAgent}
+                  current={{ providerId: remote ? 'claude' : liveProvider, model: info.model }}
+                  label={remote
+                    ? `${info.providerName ? `${info.providerName} / ` : ''}${info.models?.find((m) => m.value === info.model)?.displayName ?? (shortModel(info.model) || '模型')}`
+                    : chipLabel({ agent: liveAgent, providers, providerId: liveProvider, providerName: info.providerName, model: info.model, builtin: liveProvider === 'claude' && info.models?.length ? info.models : undefined, agentDefault: liveAgentDefault })}
+                  title={remote ? '模型（其它机器上的会话：换档案请在那台机器上操作）' : '供应商档案 / 模型：同一档案直接换模型，换档案会无感重启会话'}
+                  builtin={(remote || liveProvider === 'claude') && info.models?.length ? info.models : undefined}
+                  builtinTitle={remote ? info.providerName ?? info.agentName ?? '模型' : liveAgent === 'claude' ? 'Claude 账号' : `${info.agentName ?? liveAgent} 账号`}
+                  agentDefault={liveAgentDefault}
+                  lockProvider={remote ? 'claude' : undefined}
+                  lockNote="其它机器上的会话：只能换模型，换档案请在那台机器上操作"
+                  busy={swapping}
+                  disabled={swapping}
+                  onPick={pickLive}
+                />
 {liveEfforts.length > 0 && <label className="chip" title="Effort"><span>{info.effort ?? 'effort'}</span><span className="caret"><Icon name="chevronDown" size={10} /></span>
                   <select value={info.effort ?? ''} onChange={(e) => setEffort(e.target.value as EffortLevel)}><option value="" disabled>effort</option>{liveEfforts.map((l) => <option key={l} value={l}>{l}</option>)}</select>
                 </label>}
