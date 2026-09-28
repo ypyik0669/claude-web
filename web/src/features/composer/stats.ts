@@ -21,10 +21,17 @@ export function sessionTotals(items: readonly Item[]): Totals {
   return { turns, inp, out, cache, cost, costUnknown: unknown };
 }
 
-/** quiet < 60 % (a faint ring), note ≥ 60 % (the spec's threshold: the percentage shows), warn ≥ 80 %, err ≥ 95 %. */
-export function ringLevel(pct: number | undefined): 'quiet' | 'note' | 'warn' | 'err' {
-  if (pct === undefined || pct < 60) return 'quiet';
-  return pct >= 95 ? 'err' : pct >= 80 ? 'warn' : 'note';
+export type RingLevel = 'quiet' | 'note' | 'strong' | 'err';
+
+/**
+ * null = no occupancy reported (ACP agents…): no ring at all — an empty circle reads as a radio button or a spinner.
+ * quiet < 60 % (a faint ring), note ≥ 60 % (the spec's threshold: the percentage shows), strong ≥ 80 % (ink, bold),
+ * err ≥ 95 %. No yellow: spec §6.4 keeps it for 「需要你」.
+ */
+export function ringLevel(pct: number | undefined): RingLevel | null {
+  if (pct === undefined || !Number.isFinite(pct)) return null;
+  if (pct < 60) return 'quiet';
+  return pct >= 95 ? 'err' : pct >= 80 ? 'strong' : 'note';
 }
 
 export function usageLines(t: Totals, o: { lastMs?: number; context?: { percentage: number; totalTokens: number; maxTokens: number; model?: string }; tasks?: number }): [string, string][] {

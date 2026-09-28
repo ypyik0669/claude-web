@@ -4,6 +4,7 @@ import { basename, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { dirMenuLayout, menuKey, sameLayout, type DirMenuLayout } from './dir-menu';
+import { PROJECT_MENU_ID } from './ids';
 
 /**
  * Working-directory chip of the welcome composer. The list of recent directories opens only from this chip,
@@ -112,7 +113,7 @@ function DirMenu({ anchor, cwd, dirs, onPick, onBrowse, onClose, footer }: { anc
         </div>
         <div className="menu-sep" />
       </>}
-      <button type="button" role="menuitem" data-id="browse" onClick={onBrowse}><Icon name="folder" size={13} /> 打开文件夹…</button>
+      <button type="button" role="menuitem" data-id={PROJECT_MENU_ID.browse} onClick={onBrowse}><Icon name="folder" size={13} /> 打开文件夹…</button>
       {footer}
     </div>,
     document.body,

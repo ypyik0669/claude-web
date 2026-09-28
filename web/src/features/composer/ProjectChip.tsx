@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { GitBranch } from '@shared';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { GitBranch, GitStatus } from '@shared';
 import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
@@ -7,9 +7,10 @@ import { Icon } from '@/ui/icons';
 import { dlg } from '@/ui/dialog';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { TERMS } from '@/ui/terms';
-import { useRepoContext } from '@/features/workbench/repo-context';
 import { DirPicker } from './DirPicker';
 import { Popover } from './Popover';
+import { PROJECT_MENU_ID } from './ids';
+import { busyInCheckout, liveSessions } from './branch-guard';
 
 /** A default name for a new worktree: `task-0928-1432`. */
 export function worktreeName(d = new Date()): string {
@@ -40,7 +41,7 @@ export function ProjectChip({ cwd, recent, onPick, onBrowse, worktree, onWorktre
   return (
     <DirPicker cwd={cwd} recent={recent} onPick={onPick} onBrowse={onBrowse}
       footer={(close) => (
-        <button type="button" role="menuitemcheckbox" aria-checked={!!worktree} data-id="worktree" className="dirmenu-wt" onClick={() => void toggle(close)} title="Claude Code 的 --worktree：在仓库的独立副本里运行，改动在自己的分支上">
+        <button type="button" role="menuitemcheckbox" aria-checked={!!worktree} data-id={PROJECT_MENU_ID.worktree} className="dirmenu-wt" onClick={() => void toggle(close)} title="Claude Code 的 --worktree：在仓库的独立副本里运行，改动在自己的分支上">
           <Icon name="branch" size={13} />
           <span className="grow">在{TERMS.worktree}里运行{worktree ? `：${worktree}` : ''}</span>
           <span className={clsx('toggle sm', worktree && 'on')} aria-hidden />
@@ -52,10 +53,11 @@ export function ProjectChip({ cwd, recent, onPick, onBrowse, worktree, onWorktre
 /**
  * The branch of the chosen project, next to the project chip (welcome page only; in a conversation the branch is in
  * the header). Its menu switches branches (git.checkout, same as the Git view); a dirty tree is carried over or
- * refused by git itself.
+ * refused by git itself. Conversations running in the same checkout are asked about first (they would see the other
+ * branch's files), and the chip re-reads the branch itself afterwards — the repo may not be watched (no git.changed).
  */
 export function BranchChip({ cwd }: { cwd: string }) {
-  const { git } = useRepoContext(cwd);
+  const { git, reload } = useBranchStatus(cwd);
   const [open, setOpen] = useState(false);
   const chip = useRef<HTMLButtonElement>(null);
   if (!cwd || !git?.branch) return null;
@@ -71,7 +73,7 @@ export function BranchChip({ cwd }: { cwd: string }) {
       {open && (
         <ErrorBoundary area="分支菜单" compact onReset={() => setOpen(false)}>
           <Popover anchor={chip} onClose={(r) => { setOpen(false); if (r) chip.current?.focus(); }} prefer="down" align="left" className="cm-branch" label="分支">
-            <BranchList cwd={cwd} onDone={() => { setOpen(false); chip.current?.focus(); }} />
+            <BranchList cwd={cwd} root={git.root ?? cwd} onDone={(changed) => { setOpen(false); chip.current?.focus(); if (changed) reload(); }} />
           </Popover>
         </ErrorBoundary>
       )}
@@ -79,7 +81,29 @@ export function BranchChip({ cwd }: { cwd: string }) {
   );
 }
 
-function BranchList({ cwd, onDone }: { cwd: string; onDone: () => void }) {
+/** git.status of the chosen project, re-read on git.changed for its root and on demand (after our own checkout). */
+function useBranchStatus(cwd: string): { git: GitStatus | null; reload: () => void } {
+  const [git, setGit] = useState<GitStatus | null>(null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!cwd) { setGit(null); return; }
+    let live = true;
+    let root: string | null = null;
+    const load = async () => {
+      const s = await ws.request<GitStatus>({ kind: 'git.status', cwd }).catch(() => null);
+      if (!live) return;
+      setGit(s);
+      root = s?.root ?? null;
+    };
+    void load();
+    const off = ws.on((e) => { if (e.kind === 'git.changed' && root && e.cwd.toLowerCase() === root.toLowerCase()) void load(); });
+    return () => { live = false; off(); };
+  }, [cwd, tick]);
+  const reload = useCallback(() => setTick((t) => t + 1), []);
+  return { git, reload };
+}
+
+function BranchList({ cwd, root, onDone }: { cwd: string; root: string; onDone: (changed: boolean) => void }) {
   const [branches, setBranches] = useState<GitBranch[] | null>(null);
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
@@ -87,12 +111,21 @@ function BranchList({ cwd, onDone }: { cwd: string; onDone: () => void }) {
   useEffect(() => { void ws.request<GitBranch[]>({ kind: 'git.branches', cwd }).then(setBranches).catch(() => setBranches([])); }, [cwd]);
   const local = useMemo(() => (branches ?? []).filter((b) => !b.remote && (!q.trim() || b.name.toLowerCase().includes(q.trim().toLowerCase()))), [branches, q]);
   const checkout = async (b: GitBranch) => {
-    if (b.current) { onDone(); return; }
+    if (b.current) { onDone(false); return; }
+    const st = useStore.getState();
+    const n = busyInCheckout(root, liveSessions(st.sessions, st.open));
+    if (n > 0) {
+      onDone(false); // the question comes up over the page, not under a menu that stays open
+      if (!(await dlg.confirm(`切换到 ${b.name}？`, {
+        message: `${n} 个对话正在这个项目里运行，切换后它们会看到切换后的文件（它们读写的是同一份检出）。想让新对话和它们互不干扰，可以改用「在${TERMS.worktree}里运行」。`,
+        okLabel: '仍然切换',
+      }))) return;
+    }
     setBusy(true);
     try {
       await ws.request({ kind: 'git.checkout', cwd, name: b.name });
       toast(`已切换到 ${b.name}`, true);
-      onDone();
+      onDone(true);
     } catch (e: any) { toast(String(e.message).split('\n\n')[0]); } finally { setBusy(false); }
   };
   return (

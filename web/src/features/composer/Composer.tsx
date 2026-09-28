@@ -5,6 +5,7 @@ import { desktop } from '@/desktop';
 import { clsx, shortModel } from '@/util';
 import { parsePeerId, type AgentKind, type AttachmentRef, type EffortLevel, type PermissionMode, type SessionFeatures } from '@shared';
 import { compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachment, uploadAttachment, type DroppedFile, type PendingImage } from '@/model/attachments';
+import { pickFolderFiles } from '@/model/attachment-filter';
 import { StatusStrip } from '@/features/chat/StatusStrip';
 import { RunCard } from '@/features/chat/RunCard';
 import { attachmentFolderPath } from '@/features/paths';
@@ -14,7 +15,7 @@ import { usePaneCtx } from '@/store/paneContext';
 import { activeGroup } from '@/model/layout';
 import { sessionRefMarker } from '@/model/conversation';
 import { SessionRefChip } from '@/features/chat/ChatView';
-import { REFERENCE_EVENT, handOverMessage, type ReferenceDetail } from '@/features/sidebar/session-actions';
+import { REFERENCE_EVENT, handOver, type ReferenceDetail } from '@/features/sidebar/session-actions';
 import { ModelChip } from '@/features/models/ModelMenu';
 import { usableProfile, type AgentSource, type ModelMenuItem } from '@/features/models/menu';
 import { routePick, switchedNote } from '@/features/models/route';
@@ -27,11 +28,37 @@ import { PlusMenu } from './PlusMenu';
 import { PermissionChip } from './PermissionChip';
 import { BranchChip, ProjectChip } from './ProjectChip';
 import { ContextMeter } from './ContextMeter';
-import { FEATURE_DEFAULTS_EVENT, capabilityTags, loadFeatureDefaults, saveFeatureDefaults, withoutTag } from './capabilities';
+import { BAR_ID } from './ids';
+import { COMPOSER_REACH, PLACE_CONTAINER, PLACE_OPENER } from './reach';
+
+// ui-smoke walks the same reach table reach.test.ts checks (where every control of the old composer went)
+if (typeof window !== 'undefined') (window as any).__cwComposerReach = { reach: COMPOSER_REACH, container: PLACE_CONTAINER, opener: PLACE_OPENER };
+import { FEATURE_DEFAULTS_KEY, LEGACY_FEATURES_KEY, capabilityTags, migrateFeatureDefaults, withoutTag } from './capabilities';
 
 // sessions on another machine: uploads land on this machine's disk, out of the remote agent's reach
 const REMOTE_ATTACH = '附件在本机，远端读不到，请粘贴内容（图片可以直接发）';
+// goals run on THIS machine (GoalService drives a local runner): it cannot drive a conversation over there
+const REMOTE_GOAL = '其它机器上的对话不能在这里设定目标（目标由本机驱动）。可以到那台机器上设定，或先「交给本机的 Agent 继续」';
 const NO_FEATURES: SessionFeatures = {};
+const isFeatures = (v: unknown): v is SessionFeatures => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * Once per page, after meta.json arrived: older builds kept the capability defaults in localStorage
+ * (`cw.lastFeatures`), which the desktop app loses on every start (its origin changes with the port). Take them
+ * over into `ui.featureDefaults` unless meta.json already has a value, then drop the key.
+ */
+let featuresMigrated = false;
+function migrateFeaturesOnce(): void {
+  if (featuresMigrated) return;
+  featuresMigrated = true;
+  let legacy: string | null = null;
+  try { legacy = localStorage.getItem(LEGACY_FEATURES_KEY); } catch { return; }
+  const st = useStore.getState();
+  const r = migrateFeatureDefaults(st.settings[FEATURE_DEFAULTS_KEY], legacy);
+  const drop = () => { try { localStorage.removeItem(LEGACY_FEATURES_KEY); } catch { /* storage blocked */ } };
+  if (r.write) void st.setSetting(FEATURE_DEFAULTS_KEY, r.value).then(drop, () => { featuresMigrated = false; });
+  else if (r.dropLegacy) drop();
+}
 
 /**
  * The composer is used in two places: inside an open session (sends to it) and on the welcome screen
@@ -104,14 +131,13 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   // a level picked for another model that this one lacks falls back to the default (not sent, not shown)
   const wEffortOk = wEffort && wEfforts.includes(wEffort) ? wEffort : undefined;
   const wUltracode = !!CATALOG[wKind]?.supportsUltracode;
-  // the capabilities (+ menu): one set of defaults for new conversations, shared by every composer on screen
-  const [featDefaults, setFeatDefaults] = useState<SessionFeatures>(loadFeatureDefaults);
-  useEffect(() => {
-    const on = (e: Event) => setFeatDefaults((e as CustomEvent<SessionFeatures>).detail ?? loadFeatureDefaults());
-    window.addEventListener(FEATURE_DEFAULTS_EVENT, on);
-    return () => window.removeEventListener(FEATURE_DEFAULTS_EVENT, on);
-  }, []);
-  const setFeatures = (f: SessionFeatures) => { setFeatDefaults(f); saveFeatureDefaults(f); };
+  // the capabilities (+ menu): one set of defaults for new conversations in meta.json, so every composer on screen
+  // (and the next start of the desktop app) sees the same
+  const storedFeatures = settings[FEATURE_DEFAULTS_KEY];
+  const featDefaults: SessionFeatures = isFeatures(storedFeatures) ? storedFeatures : NO_FEATURES;
+  const metaLoaded = useStore((s) => s.metaLoaded);
+  useEffect(() => { if (metaLoaded) migrateFeaturesOnce(); }, [metaLoaded]);
+  const setFeatures = (f: SessionFeatures) => { void useStore.getState().setSetting(FEATURE_DEFAULTS_KEY, f).catch((e) => toast(e.message)); };
   const [listening, setListening] = useState(false);
   const recRef = useRef<any>(null);
   const speechOk = typeof window !== 'undefined' && !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
@@ -236,6 +262,8 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     if (!canSend) return;
     const t = text;
     if (/^\/goal\s+\S/.test(t.trim())) {
+      // the text stays: the user may still want to send it as a plain message, or copy it over there
+      if (remote) { toast(REMOTE_GOAL); return; }
       const objective = t.trim().replace(/^\/goal\s+/, '');
       const cwdFor = welcome ? cwd.trim() : active?.cwd ?? '';
       if (!cwdFor) { toast('先选一个项目文件夹'); return; }
@@ -360,10 +388,11 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     const fl = Array.from(list ?? []);
     if (!fl.length) return;
     if (remote) { toast(REMOTE_ATTACH); return; }
-    const picked = fl.map((f) => ({ file: f, rel: ((f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name).replace(/\\/g, '/') }));
-    const top = picked[0].rel.split('/')[0];
+    // node_modules / .git / dist… are dropped before the 500 cap, same rule as a dropped folder
+    const { files: picked, top, truncated, skipped } = pickFolderFiles(fl);
+    if (!picked.length) { toast(`文件夹 ${top} 里只有依赖 / 构建产物 / .git，没有可附加的文件`); return; }
     setFiles((s) => [...s, ...picked].slice(0, 500));
-    toast(`已附加文件夹 ${top}（${picked.length} 个文件${picked.length > 500 ? '，已截断到 500' : ''}）`, true);
+    toast(`已附加文件夹 ${top}（${picked.length} 个文件${truncated ? '，已截断到 500' : ''}${skipped ? `，跳过 node_modules / .git 等 ${skipped} 个` : ''}）`, true);
   };
 
   const pickDir = async () => {
@@ -386,7 +415,6 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   const liveAgent: AgentKind = info?.agent ?? 'claude';
   const liveProvider = info?.providerId && info.providerId !== 'claude' ? info.providerId : 'claude';
   const liveAgentDefault = liveAgent !== 'claude' ? agents.find((a) => a.kind === liveAgent)?.model || undefined : undefined;
-  const agentName = (k: AgentKind) => (k === 'claude' ? 'Claude Code' : agents.find((a) => a.kind === k)?.name ?? k);
   /** false = nothing happened (refused / cancelled / failed): the menu then does not record it as recent */
   const pickLive = async (it: ModelMenuItem): Promise<boolean> => {
     if (!active || swapping) return false;
@@ -397,21 +425,12 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
       try { await ws.request({ kind: 'session.setModel', sessionId: active.sessionId, model: act.model }); toast(switchedNote(it.label, active.conv.items.length > 0), true); return true; } catch (e: any) { toast(e.message); return false; }
     }
     if (act.kind === 'handover') {
-      const name = agentName(act.agent);
-      if (!(await dlg.confirm(`把这个对话交给 ${name}？`, { message: handOverMessage(active.sessionId), okLabel: '交接' }))) return false;
+      // the same hand-over as ··· 「交给其它 Agent 继续」 (same confirm, same refresh), on the picked model
+      const summary = sessions.find((s) => s.sessionId === active.sessionId) ?? { sessionId: active.sessionId, title: '', cwd: active.cwd, lastModified: 0 };
       setSwapping(true);
-      try {
-        const r = await ws.request<{ sessionId: string }>({ kind: 'session.switchAgent', sessionId: active.sessionId, agent: act.agent, model: act.model });
-        toast(`已交接给 ${name}`, true);
-        const st = useStore.getState();
-        await st.refreshSessions().catch(() => {});
-        // an imported session is never swapped in place: the hand-over is a new session — open that one
-        if (r?.sessionId && r.sessionId !== active.sessionId) await st.loadHistory(r.sessionId, { mode: 'tab' });
-        else await st.loadHistory(active.sessionId);
-        return true;
-      } catch (e: any) { toast(e.message); return false; } finally { setSwapping(false); }
+      try { return await handOver(summary, act.agent, act.model); } finally { setSwapping(false); }
     }
-    if (act.confirm && !(await dlg.confirm('切换供应商？', { message: '对话正在运行。换供应商会重启对话进程（历史保留），当前这一轮会被中断。', okLabel: '切换' }))) return false;
+    if (act.confirm && !(await dlg.confirm('切换供应商？', { message: '对话正在运行，当前这一轮会被中断。换供应商会重启对话进程，历史保留。', okLabel: '切换' }))) return false;
     setSwapping(true);
     try {
       await ws.request({ kind: 'session.setProvider', sessionId: active.sessionId, providerId: act.providerId, model: act.model });
@@ -457,20 +476,20 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
 
   // ---- the row's pieces
   const plus = (
-    <PlusMenu claude={claudeHere} live={!welcome} remote={remote} disabled={disabled} features={featDefaults} onFeatures={setFeatures}
-      sessionFeatures={welcome ? undefined : sessionFeatures} selfId={welcome ? undefined : active?.sessionId}
+    <PlusMenu claude={claudeHere} live={!welcome} remote={remote} disabled={disabled}
+      features={welcome ? featDefaults : sessionFeatures} onFeatures={setFeatures} selfId={welcome ? undefined : active?.sessionId}
       onFiles={() => fileInput.current?.click()} onFolder={() => folderInput.current?.click()} onReference={addRef} onGoal={insertGoal} />
   );
   const send_ = busy ? (
-    <button className="send stop" data-id="send" title="中断 (Esc)" onClick={() => active && interrupt(active.sessionId)} aria-label="中断"><Icon name="stop" size={13} /></button>
+    <button className="send stop" data-id={BAR_ID.send} title="中断 (Esc)" onClick={() => active && interrupt(active.sessionId)} aria-label="中断"><Icon name="stop" size={13} /></button>
   ) : (
-    <button className="send" data-id="send" disabled={!canSend} onClick={doSend} title="发送 (Enter)" aria-label="发送">{starting || upload ? <span className="spinner" /> : <Icon name="send" size={16} />}</button>
+    <button className="send" data-id={BAR_ID.send} disabled={!canSend} onClick={doSend} title="发送 (Enter)" aria-label="发送">{starting || upload ? <span className="spinner" /> : <Icon name="send" size={16} />}</button>
   );
   const steer = busy && canSend && active ? (
-    <button className="steer" data-id="steer" title={`${TERMS.steer}：不等这一轮结束，马上把这句话告诉 Claude`} aria-label={TERMS.steer} onClick={async () => { const t = text; setText(''); setDraft(active.sessionId, ''); await send(active.sessionId, t, undefined, true).catch((e) => toast(e.message)); }}>插话 <Icon name="send" size={12} /></button>
+    <button className="steer" data-id={BAR_ID.steer} title={`${TERMS.steer}：不等这一轮结束，马上把这句话告诉 Claude`} aria-label={TERMS.steer} onClick={async () => { const t = text; setText(''); setDraft(active.sessionId, ''); await send(active.sessionId, t, undefined, true).catch((e) => toast(e.message)); }}>插话 <Icon name="send" size={12} /></button>
   ) : null;
   const mic = speechOk && !mobile ? (
-    <button data-id="mic" className={clsx('icon-btn', listening && 'active')} title={listening ? '停止语音输入' : '语音输入（浏览器识别）'} onClick={toggleVoice} aria-label="语音输入"><Icon name="mic" size={15} /></button>
+    <button data-id={BAR_ID.mic} className={clsx('icon-btn', listening && 'active')} title={listening ? '停止语音输入' : '语音输入（浏览器识别）'} onClick={toggleVoice} aria-label="语音输入"><Icon name="mic" size={15} /></button>
   ) : null;
 
   let model: React.ReactNode = null, permission: React.ReactNode = null, meter: React.ReactNode = null, status: React.ReactNode = null;
@@ -543,7 +562,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
           {hasChips && (
             <div className="attach">
               {tags.map((t) => (
-                <span key={`t${t.key}`} className={clsx('cap-tag', !welcome && 'fixed')} data-cap={t.key} title={welcome ? t.title : `${t.title}\n这个对话开始时就开着（在开对话时决定，新对话时生效）`}>
+                <span key={`t${t.key}`} className={clsx('cap-tag', !welcome && 'fixed')} data-cap={t.key} title={welcome ? t.title : `${t.title}\n这个对话开始时就开着`}>
                   <Icon name={t.icon} size={12} /> {t.label}
                   {welcome && <button aria-label={`关闭${t.label}`} onClick={() => setFeatures(withoutTag(featDefaults, t.key))}><Icon name="close" size={10} /></button>}
                 </span>

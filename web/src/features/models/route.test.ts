@@ -15,7 +15,7 @@ describe('routePick (in-session model menu)', () => {
   });
   it('same profile, its default entry → the profile default model; none set → an error, not a guess', () => {
     expect(routePick(item('a', ''), ctx())).toEqual({ kind: 'setModel', model: 'a-default' });
-    expect(routePick(item('b', ''), ctx({ currentProvider: 'b' }))).toMatchObject({ kind: 'error', message: expect.stringContaining('b') });
+    expect(routePick(item('b', ''), ctx({ currentProvider: 'b' }))).toMatchObject({ kind: 'error', message: expect.stringContaining('供应商「b」') });
   });
   it('the Claude login default → `default`', () => {
     expect(routePick(item('claude', ''), ctx({ currentProvider: 'claude' }))).toEqual({ kind: 'setModel', model: 'default' });
@@ -24,8 +24,8 @@ describe('routePick (in-session model menu)', () => {
     expect(routePick(item('claude', ''), ctx({ agent: 'codex', currentProvider: 'claude', agentDefault: 'gpt-5.6-sol' }))).toEqual({ kind: 'setModel', model: 'gpt-5.6-sol' });
     const r = routePick(item('claude', ''), ctx({ agent: 'codex', currentProvider: 'claude' }));
     expect(r).toMatchObject({ kind: 'error' });
-    expect((r as { message: string }).message).toMatch(/agent/);
-    expect((r as { message: string }).message).not.toMatch(/档案/);
+    expect((r as { message: string }).message).toMatch(/Agents 与子代理/);
+    expect((r as { message: string }).message).not.toMatch(/档案|CLI Agents/);
   });
   it('another profile → setProvider with the picked model', () => {
     expect(routePick(item('b', 'x'), ctx())).toEqual({ kind: 'setProvider', providerId: 'b', model: 'x', confirm: false });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionFeatures } from '@shared';
-import { CAPABILITIES, FEATURE_KEYS, capabilityTags, featureCount, parseChannels, plusSections, withFeature, withoutTag } from './capabilities';
+import { CAPABILITIES, FEATURE_KEYS, LIVE_CAPS_NOTE, capabilityTags, featureCount, migrateFeatureDefaults, parseChannels, plusMenuIds, plusSections, withFeature, withoutTag } from './capabilities';
 
 describe('session capabilities (the old 「功能」 menu, now in +)', () => {
   it('every switch of the old menu is here, in the spec order and groups', () => {
@@ -47,24 +47,47 @@ describe('session capabilities (the old 「功能」 menu, now in +)', () => {
 });
 
 describe('+ menu sections', () => {
-  it('Claude on the welcome page: attachments, the capabilities, the goal, the advanced group', () => {
+  it('Claude on the welcome page: attachments, editable capabilities, the goal', () => {
     const s = plusSections({ claude: true, live: false });
     expect(s.attach.map((a) => a.id)).toEqual(['files', 'folder', 'reference']);
     expect(s.capabilities).toBe(true);
+    expect(s.readOnly).toBe(false);
     expect(s.note).toBeUndefined();
     expect(s.goal).toBe(true);
   });
-  it('in a running conversation the capabilities say they apply to the next new one', () => {
-    expect(plusSections({ claude: true, live: true }).note).toBe('新对话时生效');
+  it('in a running conversation: the switches show its own state, read-only, and ONE note says changes go to new ones', () => {
+    const s = plusSections({ claude: true, live: true });
+    expect(s.readOnly).toBe(true);
+    expect(s.note).toBe(LIVE_CAPS_NOTE);
+    expect(LIVE_CAPS_NOTE).toMatch(/新对话生效/);
   });
   it('other agents: no Claude-only capabilities (the old `!foreign` condition), goals still work', () => {
     const s = plusSections({ claude: false, live: false });
     expect(s.capabilities).toBe(false);
     expect(s.goal).toBe(true);
   });
-  it('a session on another machine takes no uploaded files or folders (their paths are on this machine)', () => {
+  it('a conversation on another machine: no uploaded files or folders, no goal (goals run on this machine)', () => {
     const s = plusSections({ claude: true, live: true, remote: true });
     expect(s.attach.find((a) => a.id === 'files')?.note).toMatch(/图片/);
     expect(s.attach.find((a) => a.id === 'folder')?.disabled).toBeTruthy();
+    expect(s.goal).toBe(false);
+  });
+  it('plusMenuIds: every row id the menu can draw', () => {
+    expect(plusMenuIds()).toEqual(['files', 'folder', 'reference', 'chrome', 'computerUse', 'coordinator', 'proactive', 'brief', 'channels', 'goal', 'more']);
+  });
+});
+
+describe('new-conversation capability defaults live in meta.json (ui.featureDefaults)', () => {
+  it('stored value wins; a leftover localStorage key is dropped', () => {
+    expect(migrateFeatureDefaults({ chrome: true }, '{"brief":true}')).toEqual({ value: { chrome: true }, write: false, dropLegacy: true });
+    expect(migrateFeatureDefaults({}, null)).toEqual({ value: {}, write: false, dropLegacy: false });
+  });
+  it('nothing stored yet: the old cw.lastFeatures is taken over once', () => {
+    expect(migrateFeatureDefaults(undefined, '{"chrome":true,"channels":["server:x"]}')).toEqual({ value: { chrome: true, channels: ['server:x'] }, write: true, dropLegacy: true });
+  });
+  it('garbage in localStorage is dropped, not written', () => {
+    expect(migrateFeatureDefaults(undefined, '{oops')).toEqual({ value: {}, write: false, dropLegacy: true });
+    expect(migrateFeatureDefaults(undefined, '[1]')).toEqual({ value: {}, write: false, dropLegacy: true });
+    expect(migrateFeatureDefaults(null, null)).toEqual({ value: {}, write: false, dropLegacy: false });
   });
 });

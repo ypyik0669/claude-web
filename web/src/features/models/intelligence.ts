@@ -23,13 +23,6 @@ export function effortCaption(value?: EffortLevel | null, defaultLevel?: EffortL
   return `${EFFORT_LABEL[cur]}${cur === defaultLevel ? '（默认）' : ''}：${EFFORT_DESC[cur]}`;
 }
 
-/** The level that applies: the chosen one if this model takes it, else the default if it takes that. */
-export function resolvedEffort(levels: EffortLevel[], value?: EffortLevel | null, defaultLevel?: EffortLevel): EffortLevel | undefined {
-  if (value && levels.includes(value)) return value;
-  if (defaultLevel && levels.includes(defaultLevel)) return defaultLevel;
-  return undefined;
-}
-
 export interface ChipTextInput {
   agent: AgentKind;
   agentName?: string;

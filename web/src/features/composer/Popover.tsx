@@ -4,12 +4,14 @@ import { clsx } from '@/util';
 import { placeMenu, samePlacement, type Placement } from '@/features/models/place';
 import { menuKey } from './dir-menu';
 
+const FIELD_KEYS = new Set(['ArrowUp', 'ArrowDown', 'Escape', 'Tab']);
+
 /**
  * A composer menu (the + menu, the permission menu, the branch menu): portalled to <body> with fixed coordinates next
  * to its chip — a pane's `overflow: hidden` would clip it otherwise — on whichever side has more room (placeMenu),
  * following the chip when the composer grows or the pane is resized. Closes on a click outside (the chip's own
- * click toggles it), Esc / Tab (focus back to the chip). ↑ ↓ Home End move between the rows (`[data-mi]`), but not
- * inside a text field.
+ * click toggles it), Esc / Tab (focus back to the chip). ↑ ↓ Home End move between the rows (`[data-mi]`; a text
+ * field can be one of them); inside a text field only ↑ ↓ leave it — Home / End move the caret.
  */
 export function Popover({ anchor, onClose, prefer = 'up', align = 'left', className, label, children, role = 'menu' }: {
   anchor: RefObject<HTMLElement | null>;
@@ -72,10 +74,8 @@ export function Popover({ anchor, onClose, prefer = 'up', align = 'left', classN
   }, [anchor, onClose]);
   const onKey = (e: React.KeyboardEvent) => {
     const t = e.target as HTMLElement;
-    if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(true); }
-      return;
-    }
+    // in a text field only ↑ ↓ (to the rows), Esc and Tab belong to the menu; Home / End / typing stay the field's
+    if ((t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') && (e.nativeEvent.isComposing || !FIELD_KEYS.has(e.key))) return;
     const rows = [...(box.current?.querySelectorAll<HTMLElement>('[data-mi]:not(:disabled)') ?? [])];
     const act = menuKey(e.key, rows.indexOf(document.activeElement as HTMLElement), rows.length);
     if (!act) return;

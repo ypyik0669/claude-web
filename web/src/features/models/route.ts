@@ -1,5 +1,5 @@
 import type { AgentKind, Provider } from '@shared';
-import { OWN_PROVIDER, type ModelMenuItem } from './menu';
+import { AGENTS_SETTING_PATH, OWN_PROVIDER, type ModelMenuItem } from './menu';
 
 /** What picking an entry in a live session's model menu does. */
 export type PickAction =
@@ -47,10 +47,10 @@ export function routePick(it: ModelMenuItem, c: PickContext): PickAction {
     if (!model) {
       if (own && c.agent === 'claude') model = 'default';
       else if (own) {
-        if (!c.agentDefault) return { kind: 'error', message: '这个 agent 没有配置默认模型（设置 → CLI Agents 里可以设），请选一个具体的模型' };
+        if (!c.agentDefault) return { kind: 'error', message: `这个 Agent 没有配置默认模型（${AGENTS_SETTING_PATH} 里可以设），请选一个具体的模型` };
         model = c.agentDefault;
       } else {
-        if (!profile?.defaultModel) return { kind: 'error', message: `档案「${profile?.name ?? it.providerName}」没有设默认模型，请选一个具体的模型` };
+        if (!profile?.defaultModel) return { kind: 'error', message: `供应商「${profile?.name ?? it.providerName}」没有设默认模型，请选一个具体的模型` };
         model = profile.defaultModel;
       }
     }

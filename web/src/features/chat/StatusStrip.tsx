@@ -81,8 +81,9 @@ export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onReca
         </span>
       )}
       {armed && <span className="chip"><span className="spinner" /> {countdown(armed)} 后自动继续 <button className="link" onClick={() => { disarmAutoContinue(sessionId); useStore.setState({}); }}>取消</button></span>}
+      {/* ≥ 80 %: a neutral chip (spec §6.4: yellow is only for 「需要你」), ≥ 95 %: the error colour — same as the ring */}
       {cuWarn && cu && (
-        <span className={clsx('chip', cu.percentage >= 95 ? 'err' : 'warn')} title={`${fmtTok(cu.totalTokens)} / ${fmtTok(cu.maxTokens)}`}>
+        <span className={clsx('chip', cu.percentage >= 95 && 'err')} title={`${fmtTok(cu.totalTokens)} / ${fmtTok(cu.maxTokens)}`}>
           <ContextRing pct={cu.percentage} /> 上下文 {cu.percentage}%{cu.overLimit ? ' · 已超限' : ''}
           <button className="link" onClick={() => st().send(sessionId, '/compact')}>/compact</button>
         </span>

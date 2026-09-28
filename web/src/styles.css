@@ -584,7 +584,6 @@ button.link:hover { text-decoration: underline; }
 .palette .it.sel, .palette .it:hover { background: var(--surface-2); }
 .palette .it .n { font-family: var(--mono); min-width: 200px; color: var(--ink-1); font-size: 12.5px; }
 .palette .it .d { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; font-size: 12.5px; }
-.statusbar { display: flex; gap: 14px; justify-content: center; font-size: 11px; color: var(--ink-4); padding: 6px 0 0; flex-wrap: wrap; }
 .hint { text-align: center; font-size: 11px; color: var(--ink-4); padding: 6px 0 0; }
 
 /* ---------- welcome ---------- */
@@ -1557,8 +1556,9 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:
 .ctx-meter { flex: none; height: 30px; min-width: 30px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; border-radius: var(--r-pill); color: var(--ink-4); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .ctx-meter:hover, .ctx-meter[aria-expanded='true'] { background: var(--layer-hover); color: var(--ink-2); }
 .ctx-meter.note { color: var(--ink-2); }
-.ctx-meter.warn { color: var(--warn); }
-.ctx-meter.err { color: var(--err); }
+/* ≥ 80 %: ink and bold, not yellow (spec §6.4: yellow is only for 「需要你」); ≥ 95 %: the error colour */
+.ctx-meter.strong, .ctx-meter.strong:hover { color: var(--fg-1); font-weight: 600; }
+.ctx-meter.err, .ctx-meter.err:hover { color: var(--err); font-weight: 600; }
 .ctx-card { z-index: 1000; min-width: 210px; padding: var(--sp-2) 10px; border: 1px solid var(--edge-default); border-radius: var(--r-lg); background: var(--surface-elev); box-shadow: var(--elev-2); font-size: var(--fs-sm); }
 .ctx-card-h { margin-bottom: 4px; font-size: 12.5px; font-weight: 600; color: var(--ink-1); }
 .ctx-row { display: flex; justify-content: space-between; gap: var(--sp-4); line-height: 1.75; color: var(--ink-3); }
@@ -1582,7 +1582,12 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:
 .cm-r { flex: none; margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-sm); color: var(--ink-4); white-space: nowrap; }
 .cm-rec { flex: none; padding: 0 6px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink-3); font-size: var(--fs-meta); font-weight: 500; line-height: 17px; }
 .cm-h { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) 10px var(--sp-1); font-size: 11.5px; font-weight: 500; color: var(--ink-4); }
-.cm-note { margin-left: auto; padding: 0 6px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink-2); line-height: 18px; }
+/* the one line under a group heading (a running conversation: its capabilities were fixed when it started) */
+.cm-sub { margin-top: -2px; padding: 0 10px var(--sp-1); font-size: var(--fs-sm); line-height: 1.4; color: var(--ink-3); }
+/* read-only rows keep their state readable (not greyed out like a disabled row), just not clickable */
+.menu.cm .cm-it.ro { cursor: default; }
+.menu.cm .cm-it.ro:hover { background: transparent; }
+.menu.cm .cm-it.ro .toggle { opacity: 0.7; }
 .menu.cm .cm-it.danger .cm-l, .menu.cm .cm-it.danger > .cm-ck, .menu.cm .cm-it.danger .cm-l > svg { color: var(--err); }
 .menu.cm .cm-it.dim .cm-l { color: var(--ink-3); }
 .menu.cm .cm-foot .cm-l { color: var(--ink-2); font-size: 13px; }
@@ -1599,3 +1604,6 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:
 svg.flip { transform: scaleX(-1); }
 .menu.dirmenu button.dirmenu-wt { align-items: center; gap: var(--sp-2); }
 .menu.dirmenu button.dirmenu-wt .grow { flex: 1; }
+/* popovers portalled to <body> can overlap a 52px title row (a short window): a drag region under them would
+   swallow their clicks, so they are explicitly not draggable */
+html.desktop body > .menu, html.desktop .menu.cm, html.desktop .menu.dirmenu, html.desktop .menu.mm, html.desktop .ctx-card { -webkit-app-region: no-drag; }

@@ -1,5 +1,6 @@
 import type { SessionFeatures } from '@shared';
 import type { IconName } from '@/ui/icons';
+import { PLUS_ID } from './ids';
 
 /**
  * The per-conversation capabilities (spec §5.4 「+ 菜单」): what used to be the composer's 「功能」 dropdown —
@@ -70,36 +71,53 @@ export function withoutTag(f: SessionFeatures, key: CapabilityTag['key']): Sessi
   return key === 'channels' ? withChannels(f, []) : withFeature(f, key, false);
 }
 
-export interface AttachItem { id: 'files' | 'folder' | 'reference'; label: string; icon: IconName; note?: string; disabled?: string }
+export interface AttachItem { id: typeof PLUS_ID.files | typeof PLUS_ID.folder | typeof PLUS_ID.reference; label: string; icon: IconName; note?: string; disabled?: string }
+
+/** Under 「这次对话可以…」 in a running conversation: the switches show what it was started with, read-only. */
+export const LIVE_CAPS_NOTE = '开对话时就定下了，改动在新对话生效';
 
 /**
  * What the + menu shows. `claude` = the conversation runs on Claude (the capabilities are Claude Code flags: the old
- * menu only showed them for Claude); `live` = an already running conversation (the capabilities are fixed there);
- * `remote` = a conversation on another machine (uploads land on THIS disk, out of its reach — images still go inline).
+ * menu only showed them for Claude); `live` = an already running conversation (the capabilities are fixed there:
+ * read-only switches + one note); `remote` = a conversation on another machine (uploads land on THIS disk, out of
+ * its reach — images still go inline; goals run on this machine and cannot drive it).
  */
-export function plusSections(o: { claude: boolean; live: boolean; remote?: boolean }): { attach: AttachItem[]; capabilities: boolean; note?: string; goal: boolean } {
+export function plusSections(o: { claude: boolean; live: boolean; remote?: boolean }): { attach: AttachItem[]; capabilities: boolean; readOnly: boolean; note?: string; goal: boolean } {
   const remoteNote = '其它机器上的对话只收图片（文件在本机，那边读不到）';
   return {
     attach: [
-      { id: 'files', label: '添加文件或图片', icon: 'attach', note: o.remote ? remoteNote : '或拖进来' },
-      { id: 'folder', label: '添加文件夹', icon: 'folder', disabled: o.remote ? remoteNote : undefined },
-      { id: 'reference', label: '引用另一个对话', icon: 'quote' },
+      { id: PLUS_ID.files, label: '添加文件或图片', icon: 'attach', note: o.remote ? remoteNote : '或拖进来' },
+      { id: PLUS_ID.folder, label: '添加文件夹', icon: 'folder', disabled: o.remote ? remoteNote : undefined },
+      { id: PLUS_ID.reference, label: '引用另一个对话', icon: 'quote' },
     ],
     capabilities: o.claude,
-    note: o.claude && o.live ? '新对话时生效' : undefined,
-    goal: true,
+    readOnly: o.live,
+    note: o.claude && o.live ? LIVE_CAPS_NOTE : undefined,
+    goal: !o.remote,
   };
 }
 
-/** The same defaults the welcome composer remembers (`cw.lastFeatures`), shared with the + menu of a running conversation. */
-const KEY = 'cw.lastFeatures';
-export const FEATURE_DEFAULTS_EVENT = 'cw:feature-defaults';
-
-export function loadFeatureDefaults(): SessionFeatures {
-  try { const v = JSON.parse(localStorage.getItem(KEY) ?? '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; }
+/** Every data-id the + menu can render (attachments, capability switches, goal, channels, the 「Brief、频道…」 row). */
+export function plusMenuIds(): string[] {
+  const s = plusSections({ claude: true, live: false });
+  return [...s.attach.map((a) => a.id), ...FEATURE_KEYS, PLUS_ID.channels, PLUS_ID.goal, PLUS_ID.more];
 }
 
-export function saveFeatureDefaults(f: SessionFeatures): void {
-  try { localStorage.setItem(KEY, JSON.stringify(f)); } catch { /* private window / blocked storage */ }
-  window.dispatchEvent(new CustomEvent(FEATURE_DEFAULTS_EVENT, { detail: f }));
+/**
+ * The capabilities a new conversation starts with live in meta.json (`ui.featureDefaults`: the desktop app's origin
+ * changes with its port, localStorage does not survive a restart). Older builds kept them in localStorage
+ * `cw.lastFeatures`: taken over once, then that key is dropped.
+ */
+export const FEATURE_DEFAULTS_KEY = 'ui.featureDefaults';
+export const LEGACY_FEATURES_KEY = 'cw.lastFeatures';
+
+const isFeatures = (v: unknown): v is SessionFeatures => !!v && typeof v === 'object' && !Array.isArray(v);
+
+export function migrateFeatureDefaults(stored: unknown, legacy: string | null): { value: SessionFeatures; write: boolean; dropLegacy: boolean } {
+  const dropLegacy = legacy !== null;
+  if (isFeatures(stored)) return { value: stored, write: false, dropLegacy };
+  let parsed: unknown = null;
+  try { parsed = legacy ? JSON.parse(legacy) : null; } catch { /* a broken value is dropped */ }
+  if (isFeatures(parsed)) return { value: parsed, write: true, dropLegacy };
+  return { value: {}, write: false, dropLegacy };
 }

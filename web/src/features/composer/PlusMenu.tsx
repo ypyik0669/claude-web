@@ -1,24 +1,24 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionFeatures } from '@shared';
 import { useStore } from '@/store';
 import { ago, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { CAPABILITIES, CHANNELS, parseChannels, plusSections, withChannels, withFeature, type FeatureKey } from './capabilities';
+import { PLUS_ID } from './ids';
 import { Popover } from './Popover';
 
 export interface PlusMenuProps {
   /** the conversation runs on Claude (the capabilities are Claude Code flags) */
   claude: boolean;
-  /** an already running conversation: the capabilities apply to the next new one */
+  /** an already running conversation: its capabilities were fixed when it started — shown read-only */
   live: boolean;
   remote?: boolean;
   disabled?: boolean;
-  /** the switches as shown: the welcome page's own set, or (live) the defaults for new conversations */
+  /** the switches as shown: the welcome page's set for the new conversation, or (live) what this one started with */
   features: SessionFeatures;
+  /** welcome page only (a live conversation's switches are read-only) */
   onFeatures: (f: SessionFeatures) => void;
-  /** live: what this conversation was started with, shown as 「本对话已开」 */
-  sessionFeatures?: SessionFeatures;
   onFiles: () => void;
   onFolder: () => void;
   onReference: (s: { id: string; title: string }) => void;
@@ -30,7 +30,8 @@ export interface PlusMenuProps {
 /**
  * The composer's `+` (spec §5.4): attachments, a reference to another conversation, and what used to be the 「功能」
  * dropdown — the per-conversation capabilities (browser, computer, goal; coordinator / proactive / Brief / channels
- * under 进阶). One level; 「引用另一个对话」 swaps the menu body for a searchable conversation list.
+ * under 进阶). One level; 「引用另一个对话」 swaps the menu body for a searchable conversation list. Every row renders
+ * its `data-id` from `PLUS_ID` / the capability keys — the reach table and ui-smoke read the same ids.
  */
 export function PlusMenu(p: PlusMenuProps) {
   const [open, setOpen] = useState(false);
@@ -55,17 +56,25 @@ export function PlusMenu(p: PlusMenuProps) {
 function PlusBody(p: PlusMenuProps & { close: (refocus: boolean) => void }) {
   const [view, setView] = useState<'main' | 'reference'>('main');
   const [more, setMore] = useState(() => !!(p.features.brief || p.features.channels?.length));
+  const briefRow = useRef<HTMLButtonElement>(null);
+  const focusBrief = useRef(false);
+  // 「Brief、频道…」 expands in place: the row that was focused is gone, so the focus moves to the first new row
+  useEffect(() => {
+    if (!more || !focusBrief.current) return;
+    focusBrief.current = false;
+    briefRow.current?.focus();
+  }, [more]);
   const s = plusSections({ claude: p.claude, live: p.live, remote: p.remote });
   if (view === 'reference') return <ReferenceList selfId={p.selfId} onBack={() => setView('main')} onPick={(x) => { p.close(true); p.onReference(x); }} />;
-  const toggle = (k: FeatureKey) => p.onFeatures(withFeature(p.features, k, !p.features[k]));
+  const toggle = (k: FeatureKey) => { if (!s.readOnly) p.onFeatures(withFeature(p.features, k, !p.features[k])); };
   const row = (k: FeatureKey) => {
     const c = CAPABILITIES.find((x) => x.key === k)!;
     const on = !!p.features[k];
-    const inSession = p.live ? !!p.sessionFeatures?.[k] : undefined;
     return (
-      <button key={k} type="button" data-mi data-id={k} role="menuitemcheckbox" aria-checked={on} className={clsx('cm-it', on && 'on')} title={c.title} onClick={() => toggle(k)}>
+      <button key={k} ref={k === 'brief' ? briefRow : undefined} type="button" data-mi data-id={k} role="menuitemcheckbox" aria-checked={on} aria-disabled={s.readOnly || undefined}
+        className={clsx('cm-it', on && 'on', s.readOnly && 'ro')} title={s.readOnly ? `${c.title}\n这个对话${on ? '开着' : '没开'}` : c.title} onClick={() => toggle(k)}>
         <span className="cm-ic"><Icon name={c.icon} size={15} /></span>
-        <span className="cm-tx"><span className="cm-l">{c.label}{inSession && <span className="cm-rec" title="这个对话开始时就开着">本对话已开</span>}</span><span className="cm-d">{c.desc}</span></span>
+        <span className="cm-tx"><span className="cm-l">{c.label}</span><span className="cm-d">{c.desc}</span></span>
         <span className={clsx('toggle sm', on && 'on')} aria-hidden />
       </button>
     );
@@ -73,21 +82,22 @@ function PlusBody(p: PlusMenuProps & { close: (refocus: boolean) => void }) {
   return (
     <>
       {s.attach.map((a) => {
-        const act = a.id === 'files' ? () => { p.close(false); p.onFiles(); } : a.id === 'folder' ? () => { p.close(false); p.onFolder(); } : () => setView('reference');
+        const act = a.id === PLUS_ID.files ? () => { p.close(false); p.onFiles(); } : a.id === PLUS_ID.folder ? () => { p.close(false); p.onFolder(); } : () => setView('reference');
         return (
           <button key={a.id} type="button" data-mi data-id={a.id} role="menuitem" className="cm-it one" disabled={!!a.disabled} title={a.disabled} onClick={act}>
             <span className="cm-ic"><Icon name={a.icon} size={15} /></span>
             <span className="cm-tx"><span className="cm-l">{a.label}</span></span>
             {a.note && <span className="cm-r">{a.note}</span>}
-            {a.id === 'reference' && <span className="cm-r"><Icon name="chevronRight" size={12} /></span>}
+            {a.id === PLUS_ID.reference && <span className="cm-r"><Icon name="chevronRight" size={12} /></span>}
           </button>
         );
       })}
       <div className="menu-sep" />
-      <div className="cm-h">这次对话可以…{s.note && <span className="cm-note" title="这些能力在开对话时决定：现在改的是之后新对话的默认，这个对话不变">{s.note}</span>}</div>
+      <div className="cm-h">这次对话可以…</div>
+      {s.note && <div className="cm-sub">{s.note}</div>}
       {s.capabilities && CAPABILITIES.filter((c) => c.group === 'main').map((c) => row(c.key))}
       {s.goal && (
-        <button type="button" data-mi data-id="goal" role="menuitem" className="cm-it" title="在输入框写下目标并发送：Claude 会一轮接一轮做下去，直到完成或卡住（等同于 /goal）" onClick={() => { p.close(false); p.onGoal(); }}>
+        <button type="button" data-mi data-id={PLUS_ID.goal} role="menuitem" className="cm-it" title="在输入框写下目标并发送：Claude 会一轮接一轮做下去，直到完成或卡住（等同于 /goal）" onClick={() => { p.close(false); p.onGoal(); }}>
           <span className="cm-ic"><Icon name="goals" size={15} /></span>
           <span className="cm-tx"><span className="cm-l">设定一个目标</span><span className="cm-d">一轮接一轮做下去，直到完成或卡住</span></span>
           <span className="cm-r"><Icon name="chevronRight" size={12} /></span>
@@ -101,19 +111,10 @@ function PlusBody(p: PlusMenuProps & { close: (refocus: boolean) => void }) {
           {more ? (
             <>
               {row('brief')}
-              <div className="cm-field" data-id="channels" title={CHANNELS.title}>
-                <span className="cm-ic"><Icon name="bell" size={15} /></span>
-                <label className="cm-tx">
-                  <span className="cm-l">{CHANNELS.label}{p.live && p.sessionFeatures?.channels?.length ? <span className="cm-rec">本对话已开</span> : null}</span>
-                  <span className="cm-d">{CHANNELS.desc}</span>
-                  <input className="field" placeholder={CHANNELS.placeholder} defaultValue={(p.features.channels ?? []).join(', ')} aria-label="频道"
-                    onBlur={(e) => p.onFeatures(withChannels(p.features, parseChannels(e.target.value)))}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }} />
-                </label>
-              </div>
+              <ChannelsField features={p.features} readOnly={s.readOnly} onFeatures={p.onFeatures} />
             </>
           ) : (
-            <button type="button" data-mi data-id="more" className="cm-it one dim" aria-expanded={false} onClick={() => setMore(true)}>
+            <button type="button" data-mi data-id={PLUS_ID.more} className="cm-it one dim" aria-expanded={false} onClick={() => { focusBrief.current = true; setMore(true); }}>
               <span className="cm-ic"><Icon name="more" size={15} /></span>
               <span className="cm-tx"><span className="cm-l">Brief、频道…</span></span>
             </button>
@@ -121,6 +122,48 @@ function PlusBody(p: PlusMenuProps & { close: (refocus: boolean) => void }) {
         </>
       )}
     </>
+  );
+}
+
+/**
+ * 频道 (--channels): a controlled field saved as you type (a short debounce, flushed on Enter, blur and when the menu
+ * closes — closing it with a click outside used to drop what was typed). Read-only in a running conversation.
+ */
+function ChannelsField({ features, readOnly, onFeatures }: { features: SessionFeatures; readOnly: boolean; onFeatures: (f: SessionFeatures) => void }) {
+  const [text, setText] = useState(() => (features.channels ?? []).join(', '));
+  const latest = useRef({ features, onFeatures });
+  latest.current = { features, onFeatures };
+  const pending = useRef<string | null>(null);
+  const timer = useRef(0);
+  const flush = () => {
+    window.clearTimeout(timer.current);
+    const v = pending.current;
+    pending.current = null;
+    if (v === null) return;
+    const next = parseChannels(v);
+    const cur = latest.current.features.channels ?? [];
+    if (next.join('\n') !== cur.join('\n')) latest.current.onFeatures(withChannels(latest.current.features, next));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => () => flush(), []);
+  return (
+    <div className="cm-field" data-id={PLUS_ID.channels} title={CHANNELS.title}>
+      <span className="cm-ic"><Icon name="bell" size={15} /></span>
+      <label className="cm-tx">
+        <span className="cm-l">{CHANNELS.label}</span>
+        <span className="cm-d">{CHANNELS.desc}</span>
+        <input className="field" data-mi placeholder={readOnly ? '' : CHANNELS.placeholder} value={text} readOnly={readOnly} aria-label="频道"
+          onChange={(e) => {
+            if (readOnly) return;
+            setText(e.target.value);
+            pending.current = e.target.value;
+            window.clearTimeout(timer.current);
+            timer.current = window.setTimeout(flush, 300);
+          }}
+          onBlur={flush}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); flush(); } }} />
+      </label>
+    </div>
   );
 }
 

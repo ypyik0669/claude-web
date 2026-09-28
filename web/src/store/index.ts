@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { AgentInfo, AgentKind, AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, SourceStatus, Workspace } from '@shared';
+import { withDefaultMode } from './default-mode';
 import { decodeAttachments, findChainUuidBefore, type ContextUsage } from '@/model/conversation';
 import { activeGroup, chatTile, deriveActive, hasLegacyLayout, initialLayout, layoutReducer, migrateLegacy, migrateWorkbench, needsSimplifiedNotice, sanitizeLayout, SIMPLIFIED_NOTICE_KEY, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
 import { PaneContext, winId } from './paneContext';
@@ -436,7 +437,10 @@ export const useStore = create<State>((set, get) => ({
     } else set({ sessions });
   },
 
-  async openSession(p, target) {
+  async openSession(p0, target) {
+    // a brand-new conversation (sidebar 新建 / worktree, Git view, board…) starts in 「新对话默认权限」 unless the
+    // caller chose one — resumes, forks and reopens keep their own (they carry a sessionId)
+    const p = withDefaultMode(p0, get().settings);
     const r = await ws.request<{ sessionId: string; info: SessionInfoSnapshot; history: any[]; pending: PermissionRequestEvent[] }>({ kind: 'session.open', params: p });
     const existing = p.sessionId && !p.fork && !p.resumeAt ? get().open[p.sessionId] : undefined;
     const conv = existing?.conv ?? createConversation();

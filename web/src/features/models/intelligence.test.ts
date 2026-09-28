@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Provider } from '@shared';
-import { effortCaption, effortSegments, modelChipText, resolvedEffort } from './intelligence';
+import { effortCaption, effortSegments, modelChipText } from './intelligence';
 
 describe('智能程度 segmented control (effort → words)', () => {
   it('one segment per level the model supports, in order, with the spec words', () => {
@@ -27,13 +27,6 @@ describe('智能程度 segmented control (effort → words)', () => {
     expect(effortCaption('low', 'high')).toBe('快：最快，适合简单问答和小改动');
     expect(effortCaption(undefined, 'medium')).toBe('均衡（默认）：速度与质量兼顾');
     expect(effortCaption(undefined, undefined)).toBe('');
-  });
-
-  it('resolvedEffort: the chosen level if the model takes it, else the default if it takes that', () => {
-    expect(resolvedEffort(['low', 'high'], 'low', 'high')).toBe('low');
-    expect(resolvedEffort(['low', 'high'], 'xhigh', 'high')).toBe('high'); // a level the new model lacks
-    expect(resolvedEffort(['low', 'high'], null, 'medium')).toBeUndefined();
-    expect(resolvedEffort([], 'high', 'high')).toBeUndefined();
   });
 });
 

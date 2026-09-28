@@ -15,6 +15,8 @@ import { modelsFor, profileFitError, providerTypesFor } from '@catalog';
 
 export const OWN_PROVIDER = 'claude';
 export const RECENT_MAX = 5;
+/** Where the other agents are installed / configured (the settings regroup names it so, redesign phase 6). */
+export const AGENTS_SETTING_PATH = '设置 → Agents 与子代理';
 
 export interface ModelMenuItem {
   key: string;
@@ -91,7 +93,7 @@ export interface AgentSource {
   installed: boolean;
   /** what the agent reported / the registry knows, used when the catalog has no list for it */
   models?: string[];
-  /** its configured default model (settings → CLI Agents) */
+  /** its configured default model (settings → Agents 与子代理) */
   defaultModel?: string;
 }
 
@@ -239,7 +241,7 @@ export function buildModelMenu(i: BuildMenuInput): ModelMenu {
 
   for (const a of i.otherAgents ?? []) {
     if (a.kind === i.agent) continue;
-    const unavailable = a.installed ? undefined : '未安装（设置 → CLI Agents）';
+    const unavailable = a.installed ? undefined : `未安装（${AGENTS_SETTING_PATH}）`;
     const entry = (model: string, display: string, extra: Partial<ModelMenuItem> = {}): ModelMenuItem => ({
       key: modelKey(a.kind, OWN_PROVIDER, model),
       providerId: OWN_PROVIDER,

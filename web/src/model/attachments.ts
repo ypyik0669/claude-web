@@ -1,6 +1,7 @@
 import { authToken } from '@/ws/client';
 // Attachment helpers for the composer: image compression, long-paste → text attachment, folder traversal, upload.
 import type { AttachmentRef } from '@shared';
+import { skipDirName } from './attachment-filter';
 
 export const LONG_PASTE_CHARS = 3000;
 export const LONG_PASTE_LINES = 60;
@@ -71,7 +72,7 @@ export async function expandDataTransfer(dt: DataTransfer, max = 500): Promise<{
       do {
         list = await batch();
         for (const e of list) {
-          if (/^(node_modules|\.git|dist|build|\.next|target)$/.test(e.name)) continue;
+          if (e.isDirectory && skipDirName(e.name)) continue;
           await walk(e, prefix + entry.name + '/');
         }
       } while (list.length && files.length < max);

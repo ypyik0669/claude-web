@@ -9,6 +9,7 @@ import { buildModelMenu, filterMenu, pushRecent, recentKey, type AgentSource, ty
 import { refreshAllModels, useGatewayStatus, useRefreshRun } from './data';
 import { placeMenu, samePlacement, type Placement } from './place';
 import { effortCaption, effortSegments } from './intelligence';
+import { MODEL_MENU_ID } from '@/features/composer/ids';
 import './models.css';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 
@@ -176,7 +177,7 @@ export function ModelMenu(p: ModelMenuProps) {
         {q && <button className="icon-btn xs" aria-label="清除" onClick={() => { setQ(''); input.current?.focus(); }}><Icon name="close" size={11} /></button>}
       </div>
       {!q && p.intelligence && p.intelligence.levels.length > 0 && (
-        <div className="mm-intel" data-id="effort">
+        <div className="mm-intel" data-id={MODEL_MENU_ID.effort}>
           <div className="mm-intel-h" title={`${TERMS.effort}（effort）：想得越久越稳，也越慢、越费额度`}>{TERMS.effort}</div>
           <div className="mm-seg" role="radiogroup" aria-label={TERMS.effort}>
             {effortSegments(p.intelligence.levels, p.intelligence.value, p.intelligence.defaultLevel).map((s) => (
@@ -188,7 +189,7 @@ export function ModelMenu(p: ModelMenuProps) {
         </div>
       )}
       {!q && p.ultracode && (
-        <button type="button" className="mm-ultra" data-id="ultracode" role="switch" aria-checked={p.ultracode.on} title={ULTRACODE.title} disabled={p.ultracode.disabled} onClick={() => p.ultracode!.onChange(!p.ultracode!.on)}>
+        <button type="button" className="mm-ultra" data-id={MODEL_MENU_ID.ultracode} role="switch" aria-checked={p.ultracode.on} title={ULTRACODE.title} disabled={p.ultracode.disabled} onClick={() => p.ultracode!.onChange(!p.ultracode!.on)}>
           <Icon name="bolt" size={15} />
           <span className="mm-ultra-t"><span className="l">{ULTRACODE.label}</span><span className="d">{ULTRACODE.desc}</span></span>
           <span className={clsx('toggle sm', p.ultracode.on && 'on')} aria-hidden />
@@ -240,23 +241,23 @@ export function ModelMenu(p: ModelMenuProps) {
         ))}
         {!flat.length && <div className="mm-empty">{q ? `没有匹配「${q}」的模型` : '没有可选的模型'}</div>}
         {!q && !p.lockProvider && (
-          <button type="button" className="mm-add" data-id="add-provider" onClick={() => { p.onClose(); useStore.getState().openSettings({ section: 'providers' }); }} title="加一个中转 / 自己的 API key（Anthropic、OpenAI、Gemini、Grok 兼容）">
+          <button type="button" className="mm-add" data-id={MODEL_MENU_ID.addProvider} onClick={() => { p.onClose(); useStore.getState().openSettings({ section: 'providers' }); }} title="加一个中转 / 自己的 API key（Anthropic、OpenAI、Gemini、Grok 兼容）">
             <Icon name="plus" size={12} /> 添加供应商…
           </button>
         )}
       </div>
       <div className="mm-foot">
-        <button data-id="refresh" onClick={() => void refreshAllModels()} disabled={refresh.running} title="拉取每个供应商的模型列表（/v1/models，只列模型，不花 token）">
+        <button data-id={MODEL_MENU_ID.refresh} onClick={() => void refreshAllModels()} disabled={refresh.running} title="拉取每个供应商的模型列表（/v1/models，只列模型，不花 token）">
           {refresh.running ? <span className="spinner" /> : <Icon name="refresh" size={13} />}
           {refresh.running ? `刷新中 ${refresh.done}/${refresh.total}` : '刷新全部模型'}
         </button>
         <span className="grow" />
         {p.otherAgents && !p.lockProvider && (
-          <button data-id="agents" onClick={() => { p.onClose(); useStore.getState().openSettings({ section: 'agents' }); }} title="安装、登录、配置 Codex / Gemini CLI 等其它 Agent">
+          <button data-id={MODEL_MENU_ID.agents} onClick={() => { p.onClose(); useStore.getState().openSettings({ section: 'agents' }); }} title="安装、登录、配置 Codex / Gemini CLI 等其它 Agent">
             <Icon name="agent" size={13} /> {TERMS.agents}…
           </button>
         )}
-        <button data-id="manage" onClick={() => { p.onClose(); useStore.getState().openSettings({ section: 'models' }); }}>
+        <button data-id={MODEL_MENU_ID.manage} onClick={() => { p.onClose(); useStore.getState().openSettings({ section: 'models' }); }}>
           <Icon name="settings" size={13} /> 管理模型与供应商…
         </button>
       </div>

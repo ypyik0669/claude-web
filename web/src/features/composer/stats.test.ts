@@ -15,12 +15,15 @@ describe('the old stats bar, now behind the usage ring', () => {
   it('turns, tokens in / out, cache share, cost (unknown counted, not zero)', () => {
     expect(sessionTotals(items)).toEqual({ turns: 2, inp: 150, out: 50, cache: 1850, cost: 0.5, costUnknown: 1 });
   });
-  it('the ring: quiet under 60 %, noted from 60 %, warning from 80 %', () => {
-    expect(ringLevel(undefined)).toBe('quiet');
+  it('the ring: none without an occupancy, quiet under 60 %, noted from 60 %, strong from 80 %, error from 95 % (no yellow level)', () => {
+    expect(ringLevel(undefined)).toBeNull();
+    expect(ringLevel(Number.NaN)).toBeNull();
+    expect(ringLevel(0)).toBe('quiet');
     expect(ringLevel(59)).toBe('quiet');
     expect(ringLevel(60)).toBe('note');
-    expect(ringLevel(80)).toBe('warn');
-    expect(ringLevel(96)).toBe('err');
+    expect(ringLevel(80)).toBe('strong');
+    expect(ringLevel(94)).toBe('strong');
+    expect(ringLevel(95)).toBe('err');
   });
   it('the lines the hover card shows (every field of the old bar)', () => {
     const lines = usageLines(sessionTotals(items), { lastMs: 4200, context: { percentage: 72, totalTokens: 145_000, maxTokens: 200_000 }, tasks: 2 });

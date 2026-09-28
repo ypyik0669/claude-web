@@ -79,22 +79,29 @@ export function handOverMessage(sessionId: string): string {
     : `会话 id、标题和历史都保留。${tail}`;
 }
 
-export async function handOver(s: SessionSummary, agent: AgentKind): Promise<void> {
+/**
+ * Hand a session to another agent (··· and the model menu, which passes the model picked in that agent's section).
+ * false = cancelled or failed.
+ */
+export async function handOver(s: SessionSummary, agent: AgentKind, model?: string): Promise<boolean> {
   const st = useStore.getState();
-  const name = st.agents.find((a) => a.kind === agent)?.name ?? agent;
-  const ok = await dlg.confirm(`把这个会话交给 ${name}？`, {
-    message: handOverMessage(s.sessionId),
+  const name = agent === 'claude' ? 'Claude Code' : st.agents.find((a) => a.kind === agent)?.name ?? agent;
+  const state = st.open[s.sessionId]?.state;
+  const running = state === 'running' || state === 'waiting' || state === 'starting';
+  const ok = await dlg.confirm(`把这个对话交给 ${name}${model ? `（${model}）` : ''}？`, {
+    message: `${running ? '对话正在运行，当前这一轮会被中断。' : ''}${handOverMessage(s.sessionId)}`,
     okLabel: '交接',
   });
-  if (!ok) return;
+  if (!ok) return false;
   try {
-    const r = await ws.request<{ sessionId: string }>({ kind: 'session.switchAgent', sessionId: s.sessionId, agent });
+    const r = await ws.request<{ sessionId: string }>({ kind: 'session.switchAgent', sessionId: s.sessionId, agent, model });
     st.toast(`已交接给 ${name}`, true);
     await st.refreshSessions().catch(() => {});
     // an imported session is never swapped in place: the hand-over is a new session — open that one
     if (r?.sessionId && r.sessionId !== s.sessionId) await st.loadHistory(r.sessionId, { mode: 'tab' });
     else await st.loadHistory(s.sessionId);
-  } catch (e) { st.toast(errText(e)); }
+    return true;
+  } catch (e) { st.toast(errText(e)); return false; }
 }
 
 /**
