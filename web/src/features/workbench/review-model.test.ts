@@ -200,6 +200,16 @@ describe('the 还原 confirmation says what is lost', () => {
     expect(c.message).toMatch(/不能撤销/);
   });
 
+  it('bulk: a consequence is only written when it applies (no staged / no new files → no such line)', () => {
+    const plain = discardConfirm(rows([f('a.ts'), f('b.ts'), f('c.ts')]), 'uncommitted');
+    expect(plain.message).not.toMatch(/已暂存/);
+    expect(plain.message).not.toMatch(/永久删除/);
+    expect(plain.message).toMatch(/不只是这个对话做的改动/);
+    const some = discardConfirm(rows([f('a.ts', { staged: true }), f('n.ts', { status: 'untracked' })]), 'uncommitted');
+    expect(some.message).toMatch(/包括已暂存的改动（1 个文件有）/);
+    expect(some.message).toMatch(/永久删除（不进回收站）：1 个/);
+  });
+
   it('one file: a new file is deleted for good; a staged one loses its staged changes; the conversation scope warns about other changes', () => {
     expect(discardConfirm(rows([f('n.ts', { status: 'untracked' })]), 'uncommitted').message).toMatch(/永久删除（不进回收站）/);
     const staged = discardConfirm(rows([f('s.ts', { staged: true, unstaged: true })]), 'uncommitted');

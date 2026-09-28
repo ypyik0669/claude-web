@@ -217,11 +217,13 @@ export function discardConfirm(rows: ReviewRow[], scope: ReviewScope): ConfirmTe
   const fresh = rows.filter((r) => r.git?.status === 'untracked').length;
   const items = rows.slice(0, CONFIRM_LIST_MAX).map((r) => r.rel);
   if (n > CONFIRM_LIST_MAX) items.push(`…等 ${n} 个文件`);
+  // (each consequence only when it applies: a line about staged changes over files with none reads as a warning
+  // that they have some)
   const message = [
     '这些文件会回到上一次提交时的样子：',
-    `· 包括已暂存的改动${staged ? `（${staged} 个文件有）` : ''}；`,
+    ...(staged ? [`· 包括已暂存的改动（${staged} 个文件有）；`] : []),
     '· 不只是这个对话做的改动：文件里所有未提交的改动都会丢掉；',
-    `· 新建的文件会被永久删除（不进回收站）${fresh ? `：${fresh} 个` : ''}。`,
+    ...(fresh ? [`· 新建的文件会被永久删除（不进回收站）：${fresh} 个；`] : []),
     '这一步不能撤销。',
   ].join('\n');
   return { title: `还原 ${n} 个文件？`, message, items, okLabel: `还原 ${n} 个文件` };
