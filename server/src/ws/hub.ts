@@ -1,6 +1,7 @@
 import type { WebSocket, WebSocketServer } from 'ws';
 import type { ClientRequest, ServerEvent, WireDown, WireUp } from '../protocol.js';
 import { RunnerPool } from '../runtime/pool.js';
+import { cacheParentFor } from '../runtime/cache-key.js';
 import { SessionService } from '../sessions/service.js';
 import { ConfigService } from '../config/service.js';
 import { UsageService } from '../usage/service.js';
@@ -238,12 +239,16 @@ export class Hub {
           params = { ...params, providerId: remembered ?? def };
         }
         if (!params.features && s.meta.settings().defaultFeatures) params = { ...params, features: s.meta.settings().defaultFeatures as any };
+        // prompt-cache route key: a fork keeps its parent's (the prefix is the same), decided before the id changes
+        const cacheParentId = cacheParentFor(params, (id) => s.meta.sessionMeta(id).cacheKey);
+        if (cacheParentId) params = { ...params, cacheParentId };
         // forks: copy the transcript first (SDK forkSession) so the new session has a real id before the process starts
         if (params.sessionId && (params.fork || params.resumeAt)) {
           const newId = await s.sessions.fork(params.sessionId, params.resumeAt);
           params = { ...params, sessionId: newId, fork: false, resumeAt: undefined };
         }
         const r = s.pool.open(params);
+        if (cacheParentId && cacheParentId !== r.sessionId && s.meta.sessionMeta(r.sessionId).cacheKey !== cacheParentId) void s.meta.setSessionMeta(r.sessionId, { cacheKey: cacheParentId }).catch(() => { /* in memory; the next save persists it */ });
         await s.canonical.ensure(r.sessionId, params.cwd);
         if (params.providerId && params.providerId !== 'claude') {
           // remember which provider a session uses so resume / fork keep it (the id is known up front: new sessions get a uuid from us)

@@ -99,6 +99,9 @@ export interface OpenSessionParams {
   /** Transcript entries to resume a Claude session from (SessionStore.load); used when a session
    *  is handed over from another agent and Claude has no native JSONL for this id. */
   resumeEntries?: Record<string, unknown>[];
+  /** Server-set: the prompt-cache route key when it is not this session's id — a fork's root (its prefix is the
+   *  parent's), kept in `SessionMeta.cacheKey` for later reopens (runtime/cache-key.ts). */
+  cacheParentId?: string;
 }
 
 /** The single runtime that drives every session: ccb (claude-code-best, a superset of Claude Code) with the official binary as silent fallback. */
@@ -130,6 +133,21 @@ export interface Provider {
   /** type 'gateway': the local model-gateway group this profile routes through (baseUrl / apiKey are filled per session). */
   gatewayGroupId?: string;
   createdAt: number;
+  // ---- prompt caching (2026-09-28; gateway/cache.ts, gateway/shim.ts) ----
+  /** openai / grok: Claude (ccb) sessions go through the local cache shim (default on; false = straight to the endpoint). */
+  cacheShim?: boolean;
+  /** openai: inside the shim, gpt-* chat/completions → /v1/responses (default on; false = keep chat/completions). */
+  responsesApi?: boolean;
+  /** anthropic: 1-hour cache TTL — ENABLE_PROMPT_CACHING_1H for the official binary, ttl '1h' on gateway-translated requests. */
+  cache1h?: boolean;
+  /** openai: Anthropic-style cache_control markers on gateway-translated requests (Bailian explicit cache, OpenRouter anthropic/*). */
+  cacheControlFormat?: 'anthropic';
+  /** learned: the endpoint rejected `prompt_cache_key` (400) — no longer sent. */
+  noPromptCacheKey?: boolean;
+  /** learned: the endpoint has no /v1/responses (404 / 405 / 501, and chat/completions then worked) — the shim keeps chat/completions. */
+  noResponsesApi?: boolean;
+  /** learned: the endpoint rejected `prompt_cache_retention` by name — no longer sent on /v1/responses. */
+  noCacheRetention?: boolean;
 }
 export const CLAUDE_PROVIDER_ID = 'claude';
 /** One profile's result of `providers.refreshModels` (model list only — no chat request, no tokens). */
@@ -202,7 +220,7 @@ export interface AttachmentRef { kind: 'image' | 'text' | 'file' | 'folder'; nam
 export interface MessageFeedback { rating: 'up' | 'down' | null; note?: string; at: number }
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
-export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string }
+export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string; /** prompt-cache route key when it is not the session's own id (forks keep their root's) */ cacheKey?: string }
 export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; cron?: string; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string; freshSession?: boolean; lastError?: string; runs?: number }
 export interface LimitWindow { label: string; percent: number; resetsAt: string | null; active: boolean; severity?: string }
 // ---- remote access / phones / IM (phase 6) ----
@@ -545,7 +563,7 @@ export interface McpHealth { name: string; status: 'connected' | 'failed' | 'nee
 export interface RegistryServer { name: string; description: string; repo?: string; install?: { transport: 'stdio' | 'http' | 'sse'; command?: string; args?: string[]; url?: string; env?: string[] }; kind: 'npm' | 'pypi' | 'remote' | 'other' }
 export interface SecretsStatus { scheme: 'dpapi' | 'keychain' | 'plain'; total: number; protected: number }
 /** One model call as seen from the runner (per `result` / assistant message). */
-export interface LedgerEntry { ts: number; sessionId: string; model: string; durationMs: number; apiMs?: number; input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number; ok: boolean; error?: string; turns?: number; providerId?: string; kind?: 'gateway'; gateway?: GatewayLedgerInfo }
+export interface LedgerEntry { ts: number; sessionId: string; model: string; durationMs: number; apiMs?: number; input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number; ok: boolean; error?: string; turns?: number; providerId?: string; kind?: 'gateway'; gateway?: GatewayLedgerInfo; /** cost not known (non-Claude model, gateway / shim call): costUsd is 0 but must not read as $0 */ costUnknown?: boolean }
 export interface ScheduleRun { id: string; scheduleId: string; at: number; sessionId?: string; ok: boolean; durationMs?: number; summary?: string; error?: string }
 
 export type WireDown = { type: 'reply'; reply: ReplyEnvelope } | { type: 'event'; event: ServerEvent };

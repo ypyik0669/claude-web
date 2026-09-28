@@ -195,3 +195,24 @@ export function replaceTopLevelString(json: string, key: string, value: string):
   }
   return null;
 }
+
+/** A promise that rejects with Error('timeout') after ms (the late settlement of the original is swallowed). */
+export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  p.catch(() => { /* a late rejection after the timeout must not go unhandled */ });
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timeout')), Math.max(0, ms));
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
+
+/** Resolves once the response can take more data, or at once when nobody is listening any more. */
+export function waitDrain(res: http.ServerResponse, signal: AbortSignal): Promise<void> {
+  // an abort that already happened will never fire its listener again, and a dead socket never drains
+  if (signal.aborted || res.destroyed || res.writableEnded) return Promise.resolve();
+  return new Promise((r) => {
+    const done = () => { res.off('drain', done); res.off('close', done); signal.removeEventListener('abort', done); r(); };
+    res.once('drain', done);
+    res.once('close', done);
+    signal.addEventListener('abort', done, { once: true });
+  });
+}

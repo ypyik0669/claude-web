@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
-import { clsx, fmtTok, fmtUsd, fmtMs, shortModel } from '@/util';
+import { clsx, fmtTok, fmtMs, shortModel } from '@/util';
+import { fmtCost, sumCosts } from '@/model/cost';
 import { parsePeerId, type AgentKind, type AttachmentRef, type EffortLevel, type PermissionMode, type SessionFeatures } from '@shared';
 import { compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachment, uploadAttachment, type DroppedFile, type PendingImage } from '@/model/attachments';
 import { StatusStrip } from '@/features/chat/StatusStrip';
@@ -18,7 +19,7 @@ import { SessionRefChip } from '@/features/chat/ChatView';
 import { REFERENCE_EVENT, type ReferenceDetail } from '@/features/sidebar/session-actions';
 import { ModelChip } from '@/features/models/ModelMenu';
 import { chipLabel, compatibleTypes, usableProfile, type ModelMenuItem } from '@/features/models/menu';
-import { routePick } from '@/features/models/route';
+import { routePick, switchedNote } from '@/features/models/route';
 import { providersLoaded, useGatewayStatus } from '@/features/models/data';
 import { dlg } from '@/ui/dialog';
 import { MODE_LABEL, PERMISSION_MODES, PERMISSION_MODE_ORDER, ULTRACODE, effortLabel, effortTitle } from '@/ui/terms';
@@ -360,13 +361,13 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     if (act.kind === 'none') return true;
     if (act.kind === 'error') { toast(act.message); return false; }
     if (act.kind === 'setModel') {
-      try { await ws.request({ kind: 'session.setModel', sessionId: active.sessionId, model: act.model }); return true; } catch (e: any) { toast(e.message); return false; }
+      try { await ws.request({ kind: 'session.setModel', sessionId: active.sessionId, model: act.model }); toast(switchedNote(it.label, active.conv.items.length > 0), true); return true; } catch (e: any) { toast(e.message); return false; }
     }
     if (act.confirm && !(await dlg.confirm('切换供应商档案？', { message: '会话正在运行。换档案会重启会话进程（历史保留），当前这一轮会被中断。', okLabel: '切换' }))) return false;
     setSwapping(true);
     try {
       await ws.request({ kind: 'session.setProvider', sessionId: active.sessionId, providerId: act.providerId, model: act.model });
-      toast(`已切换到 ${it.label}，会话继续`, true);
+      toast(switchedNote(it.label, active.conv.items.length > 0), true);
       return true;
     } catch (e: any) { toast(e.message); return false; } finally { setSwapping(false); }
   };
@@ -375,13 +376,13 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
 
   const totals = useMemo(() => {
     if (!active) return null;
-    let inp = 0, out = 0, cache = 0, cost = 0, turns = 0;
+    let inp = 0, out = 0, cache = 0, turns = 0;
     for (const it of active.conv.items) {
       if (it.kind === 'assistant' && it.usage) { inp += it.usage.input; out += it.usage.output; cache += it.usage.cacheRead; }
-      if (it.kind === 'result') cost += it.costUsd;
       if (it.kind === 'user' && !it.meta) turns++;
     }
-    return { inp, out, cache, cost, turns };
+    const { cost, unknown: costUnknown } = sumCosts(active.conv.items);
+    return { inp, out, cache, cost, costUnknown, turns };
   }, [active?.version]);
   const last = active?.conv.lastResult;
   const runningTasks = active ? [...active.conv.tasks.values()].filter((t) => t.status === 'running').length : 0;
@@ -552,7 +553,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
             <span>{totals.turns} 轮</span>
             <span>↑{fmtTok(totals.inp + totals.cache)} ↓{fmtTok(totals.out)}</span>
             {totals.cache > 0 && <span>缓存 {Math.round((totals.cache / Math.max(1, totals.inp + totals.cache)) * 100)}%</span>}
-            {totals.cost > 0 && <span>{fmtUsd(totals.cost)}</span>}
+            {(totals.cost > 0 || totals.costUnknown > 0) && <span title={totals.costUnknown ? `${totals.costUnknown} 轮没有可靠价格（非 Claude 模型 / 外部 agent）` : undefined}>{fmtCost(totals.cost, totals.costUnknown)}</span>}
             {last && <span>上轮 {fmtMs(last.durationMs)}</span>}
             {cu && <span title={`${fmtTok(cu.totalTokens)} / ${fmtTok(cu.maxTokens)} · ${cu.model ?? ''}`} style={{ color: cu.percentage >= 80 ? 'var(--yellow)' : undefined }}>上下文 {cu.percentage}%</span>}
             {runningTasks > 0 && <span style={{ color: 'var(--green)' }}>{runningTasks} 个后台任务</span>}

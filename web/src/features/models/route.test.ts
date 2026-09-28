@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Provider } from '@shared';
-import { routePick } from './route';
+import { routePick, switchedNote } from './route';
 import type { ModelMenuItem } from './menu';
 
 const prov = (id: string, o: Partial<Provider> = {}): Provider => ({ id, name: id, type: 'openai', baseUrl: 'https://x', apiKey: '…', createdAt: 0, ...o });
@@ -44,5 +44,12 @@ describe('routePick (in-session model menu)', () => {
   });
   it('an unavailable entry is refused with its reason', () => {
     expect(routePick(item('b', 'x', { unavailable: '网关未启用' }), ctx())).toEqual({ kind: 'error', message: '网关未启用' });
+  });
+});
+
+describe('switchedNote (prompt cache does not follow a model / provider change)', () => {
+  it('says the next turn re-bills the whole context — only when there is context to re-bill', () => {
+    expect(switchedNote('GPT-5', true)).toBe('已切换到 GPT-5（提示缓存不跨模型 / 供应商，下一轮会按全价重新计费全部上下文）');
+    expect(switchedNote('GPT-5', false)).toBe('已切换到 GPT-5');
   });
 });

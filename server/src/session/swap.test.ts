@@ -163,6 +163,13 @@ describe('swapProvider (model with the profile)', () => {
     await swap.swapProvider({ ...deps, pool: pool2 }, 's2', undefined, 'Claude 账号');
     expect(pool2.opened[0].model).toBeUndefined();
   });
+  it('the switch mark records where the session came from (usage attributes earlier turns to it)', async () => {
+    const marks: any[] = [];
+    const canonical = { ...deps.canonical, head: async () => null, mark: (_sid: string, e: any) => marks.push(e) };
+    await swap.swapProvider({ ...deps, canonical, pool: livePool({ s1: { providerId: 'prov-a' } }) }, 's1', 'prov-b', 'B');
+    await swap.swapProvider({ ...deps, canonical, pool: livePool({ s2: {} }) }, 's2', 'prov-b', 'B');
+    expect(marks.map((m) => [m.providerId, m.fromProviderId])).toEqual([['prov-b', 'prov-a'], ['prov-b', 'claude']]);
+  });
   it('the same profile without a model (a plain restart) keeps the current model', async () => {
     const pool = livePool({ s1: { model: 'claude-opus-5', providerId: 'prov-a' } });
     await swap.swapProvider({ ...deps, pool }, 's1', 'prov-a', 'A');

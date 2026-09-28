@@ -25,7 +25,7 @@ export type CanonicalEvent =
   | { t: number; kind: 'tool'; name: string; input: Record<string, unknown>; ok?: boolean; result?: string; id: string }
   | { t: number; kind: 'system'; text: string; level?: 'info' | 'warning' | 'error' }
   | { t: number; kind: 'result'; ms?: number; costUsd?: number; inputTokens?: number; outputTokens?: number; error?: string }
-  | { t: number; kind: 'switch'; agent?: AgentKind; agentName?: string; providerId?: string; providerName?: string; model?: string; note?: string };
+  | { t: number; kind: 'switch'; agent?: AgentKind; agentName?: string; providerId?: string; providerName?: string; model?: string; note?: string; /** provider switches: the profile before ('claude' = the account) */ fromProviderId?: string };
 
 interface Head { type: 'cw.canonical'; sessionId: string; createdAt: number; cwd: string }
 
@@ -205,6 +205,29 @@ export class CanonicalLog {
     }
     return out;
   }
+
+  /**
+   * Provider switches only (usage attribution per turn), cached by file size + mtime — the usage panel asks for
+   * every session at once. Lines are pre-filtered by text so a long log is not JSON-parsed line by line.
+   */
+  async providerSwitches(sessionId: string): Promise<Extract<CanonicalEvent, { kind: 'switch' }>[]> {
+    const st = await fs.stat(this.file(sessionId)).catch(() => null);
+    if (!st) return [];
+    const stamp = `${st.size}:${st.mtimeMs}`;
+    const hit = this.switchCache.get(sessionId);
+    if (hit?.stamp === stamp) return hit.list;
+    const list: Extract<CanonicalEvent, { kind: 'switch' }>[] = [];
+    try {
+      const rl = readline.createInterface({ input: createReadStream(this.file(sessionId), 'utf8'), crlfDelay: Infinity });
+      for await (const line of rl) {
+        if (!line.includes('"switch"') || !line.includes('"providerName"')) continue;
+        try { const e = JSON.parse(line); if (e?.kind === 'switch' && 'providerName' in e) list.push(e); } catch { /* torn line */ }
+      }
+    } catch { /* unreadable: no switches */ }
+    this.switchCache.set(sessionId, { stamp, list });
+    return list;
+  }
+  private switchCache = new Map<string, { stamp: string; list: Extract<CanonicalEvent, { kind: 'switch' }>[] }>();
 
   async head(sessionId: string): Promise<Head | null> {
     try {

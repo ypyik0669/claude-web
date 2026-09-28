@@ -25,6 +25,20 @@ describe('providerEnv (openai)', () => {
   });
 });
 
+describe('providerEnv (anthropic, prompt caching)', () => {
+  const ant = (patch: Partial<Provider> = {}): Provider => ({ id: 'a', name: 'a', type: 'anthropic', baseUrl: 'https://relay.example', apiKey: 'k', createdAt: 0, ...patch });
+  it('1-hour TTL is opt-in per profile (ENABLE_PROMPT_CACHING_1H, read by the official binary)', () => {
+    expect(providerEnv(ant()).ENABLE_PROMPT_CACHING_1H).toBeUndefined();
+    expect(providerEnv(ant({ cache1h: true })).ENABLE_PROMPT_CACHING_1H).toBe('1');
+    // a gateway profile is not an Anthropic profile: its members decide
+    expect(providerEnv({ ...ant({ cache1h: true }), type: 'gateway' }).ENABLE_PROMPT_CACHING_1H).toBeUndefined();
+  });
+  it('the shim never applies to Anthropic-type env even if a shim were attached', () => {
+    const env = providerEnv({ ...ant(), shim: { base: 'http://127.0.0.1:1/gateway/~p/a', key: 'cws-x' } }, 'claude', { sessionKey: 's' });
+    expect(env).toEqual({ CLAUDE_WEB_PLAIN_UA: '1', CLAUDE_CODE_ENTRYPOINT: 'cli', ANTHROPIC_BASE_URL: 'https://relay.example', ANTHROPIC_AUTH_TOKEN: 'k' });
+  });
+});
+
 describe('agentLaunch (gemini profile)', () => {
   it('Gemini CLI gets the profile key / base URL / model and the API-key auth override; other ACP agents get nothing', async () => {
     const fs = await import('node:fs/promises');

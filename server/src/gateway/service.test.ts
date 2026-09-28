@@ -129,6 +129,25 @@ describe('passthrough', () => {
     expect(JSON.stringify(h.rawHeaders)).not.toContain(key);
     expect(ledger[0]).toMatchObject({ kind: 'gateway', ok: true, providerId: 'a', input: 10, output: 2, gateway: { group: 'Main', inbound: 'anthropic', member: 'P-a', switches: 0, stream: false } });
   });
+  it('prompt-cache work never touches the Anthropic passthrough (fingerprint path): same bytes, no added headers', async () => {
+    const raw = '{"model":"claude-opus-4-5","max_tokens":8,"metadata":{"user_id":"user_x_account_y_session_z"},"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.300; cc_entrypoint=cli;"},{"type":"text","text":"You are Claude Code","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}';
+    // exact client headers (not fetch, which adds its own), in this order and casing
+    const sent: [string, string][] = [['X-Api-Key', key], ['anthropic-version', '2023-06-01'], ['User-Agent', 'claude-cli/2.1.300 (external, cli)'], ['X-Claude-Code-Session-Id', 'sess-fp'], ['anthropic-beta', 'claude-code-20250219'], ['x-app', 'cli'], ['Content-Type', 'application/json']];
+    const status = await new Promise<number>((resolve, reject) => {
+      const q = http.request(`${base}/main/v1/messages`, { method: 'POST' }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode ?? 0)); });
+      for (const [n, v] of sent) q.setHeader(n, v);
+      q.setHeader('Content-Length', Buffer.byteLength(raw));
+      q.on('error', reject);
+      q.end(raw);
+    });
+    expect(status).toBe(200);
+    const h = A.hits[0];
+    expect(h.body).toBe(raw);
+    for (const k of ['session_id', 'x-session-affinity', 'x-client-request-id', 'x-grok-conv-id']) expect(h.headers[k]).toBeUndefined();
+    const up: [string, string][] = [];
+    for (let i = 0; i < h.rawHeaders.length; i += 2) up.push([h.rawHeaders[i], h.rawHeaders[i + 1]]);
+    expect(up.filter(([n]) => !/^(host|connection|content-length)$/i.test(n))).toEqual([['X-Api-Key', 'sk-a'], ...sent.slice(1)]);
+  });
   it('streams SSE through and sniffs usage for the ledger', async () => {
     A.handler.fn = anthropicSse();
     const r = await call('/main/v1/messages', { ...msg, stream: true });
@@ -261,6 +280,71 @@ describe('session wiring', () => {
     expect(JSON.parse(A.hits[0].body)).toMatchObject({ model: 'claude-x', stream: true, max_tokens: 8192 });
     expect(ledger[0]).toMatchObject({ ok: true, input: 7, output: 4, gateway: { inbound: 'openai', outbound: 'anthropic', stream: true } });
     await gw.upsertGroup({ id: 'main', members: [{ providerId: 'a' }, { providerId: 'b' }] });
+  });
+});
+
+describe('prompt caching on translated requests', () => {
+  const chatReq = { model: 'claude-x', prompt_cache_key: 'codex-thread-1', messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'hi' }], tools: [{ type: 'function', function: { name: 'ls', parameters: { type: 'object' } } }] };
+  const ccCount = (body: string) => body.match(/"cache_control"/g)?.length ?? 0;
+  it('→ Anthropic member: 3 cache_control breakpoints + metadata.user_id = the client\'s cache key; group 1h option', async () => {
+    await gw.upsertGroup({ id: 'main', members: [{ providerId: 'a' }] });
+    const r = await fetch(`${base}/main/v1/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: JSON.stringify(chatReq) });
+    expect(r.status).toBe(200);
+    const up = JSON.parse(A.hits[0].body);
+    expect(ccCount(A.hits[0].body)).toBe(3);
+    expect(up.metadata).toEqual({ user_id: 'codex-thread-1' });
+    expect(up.system[0].cache_control).toEqual({ type: 'ephemeral' });
+    await gw.upsertGroup({ id: 'main', cache1h: true });
+    expect(gw.group('main')!.cache1h).toBe(true);
+    await fetch(`${base}/main/v1/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json', session_id: 'from-header' }, body: JSON.stringify({ ...chatReq, prompt_cache_key: undefined }) });
+    const up2 = JSON.parse(A.hits[1].body);
+    expect(up2.system[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' });
+    expect(up2.metadata).toEqual({ user_id: 'from-header' });
+    await gw.upsertGroup({ id: 'main', cache1h: false, members: [{ providerId: 'a' }, { providerId: 'b' }] });
+    expect(gw.group('main')!.cache1h).toBeUndefined();
+  });
+  it('→ OpenAI member: prompt_cache_key + affinity headers from the Claude Code session; a 400 about the key → retried without it and remembered', async () => {
+    let rejectKey = true;
+    O.handler.fn = (_q, res, body) => {
+      if (rejectKey && JSON.parse(body).prompt_cache_key) { res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":{"message":"Unrecognized request argument supplied: prompt_cache_key"}}'); return; }
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'c', object: 'chat.completion', model: 'gpt-4.1', choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 1, prompt_cache_hit_tokens: 80 } }));
+    };
+    rejectKey = false;
+    const ok = await call('/mixed/v1/messages', msg, { 'x-claude-code-session-id': 'sess-42' });
+    expect(ok.status).toBe(200);
+    expect(JSON.parse(O.hits[0].body).prompt_cache_key).toBe('sess-42');
+    expect(O.hits[0].headers).toMatchObject({ session_id: 'sess-42', 'x-session-affinity': 'sess-42' });
+    expect(O.hits[0].headers['x-client-request-id']).toBeUndefined();
+    expect(ledger[0]).toMatchObject({ input: 20, cacheRead: 80, sessionId: 'sess-42' });
+    rejectKey = true;
+    O.hits.length = 0;
+    const r = await call('/mixed/v1/messages', msg, { 'x-claude-code-session-id': 'sess-42' });
+    expect(r.status).toBe(200);
+    expect(O.hits).toHaveLength(2);
+    expect(JSON.parse(O.hits[1].body).prompt_cache_key).toBeUndefined();
+    expect(meta.provider('o')!.noPromptCacheKey).toBe(true);
+    O.hits.length = 0;
+    await call('/mixed/v1/messages', msg, { 'x-claude-code-session-id': 'sess-42' });
+    expect(O.hits).toHaveLength(1); // not sent (and not retried) any more
+    expect(JSON.parse(O.hits[0].body).prompt_cache_key).toBeUndefined();
+    delete meta.provider('o')!.noPromptCacheKey;
+  });
+  it('a 400 that does not name prompt_cache_key: this request is retried without it, but nothing is remembered', async () => {
+    O.handler.fn = (_q, res, body) => {
+      if (JSON.parse(body).prompt_cache_key) { res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":{"message":"transient validation hiccup"}}'); return; }
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'c', object: 'chat.completion', model: 'gpt-4.1', choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }));
+    };
+    const r = await call('/mixed/v1/messages', msg, { 'x-claude-code-session-id': 'sess-44' });
+    expect(r.status).toBe(200);
+    expect(O.hits).toHaveLength(2);
+    expect(meta.provider('o')!.noPromptCacheKey).toBeUndefined();
+  });
+  it('a 400 that is not about the key is still returned as is after the one retry', async () => {
+    O.handler.fn = (_q, res) => res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":{"message":"context too long"}}');
+    const r = await call('/mixed/v1/messages', msg, { 'x-claude-code-session-id': 'sess-43' });
+    expect(r.status).toBe(400);
+    expect(JSON.parse(r.text).error.message).toBe('context too long');
+    expect(meta.provider('o')!.noPromptCacheKey).toBeUndefined();
   });
 });
 

@@ -3,7 +3,8 @@ import { createReadStream } from 'node:fs';
 import readline from 'node:readline';
 import path from 'node:path';
 import { dataDir } from '../files/service.js';
-import type { LedgerEntry } from '../protocol.js';
+import type { LedgerEntry, ProviderType } from '../protocol.js';
+import { inputIncludesCacheRead, trustsCliCost } from './pricing.js';
 
 /**
  * Traffic ledger: one line per model turn (`result` message) plus API retries / errors, appended to
@@ -14,6 +15,9 @@ export class LedgerService {
   private file = path.join(dataDir(), 'ledger.jsonl');
   private queue: string[] = [];
   private flushing = false;
+
+  /** providerType: a session's profile type by id (index.ts reads it from meta) — decides usage / cost fix-ups. */
+  constructor(private providerType?: (providerId: string) => ProviderType | undefined) {}
 
   private async flush() {
     if (this.flushing || !this.queue.length) return;
@@ -39,17 +43,24 @@ export class LedgerService {
     if (m.type === 'result') {
       const u = m.usage ?? {};
       const models = m.modelUsage ? Object.keys(m.modelUsage) : [];
+      const model = models[0] ?? '';
+      const type = providerId ? this.providerType?.(providerId) : undefined;
+      const cacheRead = u.cache_read_input_tokens ?? 0;
+      const input = u.input_tokens ?? 0;
+      const unknown = !!m.cost_unknown || !trustsCliCost(type, model);
       this.record({
         ts: Date.now(),
         sessionId,
-        model: models[0] ?? '',
+        model,
         durationMs: m.duration_ms ?? 0,
         apiMs: m.duration_api_ms,
-        input: u.input_tokens ?? 0,
+        input: inputIncludesCacheRead(type) ? Math.max(0, input - cacheRead) : input,
         output: u.output_tokens ?? 0,
-        cacheRead: u.cache_read_input_tokens ?? 0,
+        cacheRead,
         cacheWrite: u.cache_creation_input_tokens ?? 0,
-        costUsd: m.total_cost_usd ?? 0,
+        // ccb prices every model with Claude's table: meaningless for other vendors' models (0 + costUnknown)
+        costUsd: unknown ? 0 : m.total_cost_usd ?? 0,
+        ...(unknown ? { costUnknown: true } : {}),
         ok: !m.is_error,
         error: m.is_error ? (m.subtype ?? m.terminal_reason ?? 'error') : undefined,
         turns: m.num_turns,

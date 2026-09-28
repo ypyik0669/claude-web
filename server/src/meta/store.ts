@@ -9,7 +9,7 @@ import { randomBytes } from 'node:crypto';
 export type { Schedule } from '../protocol.js';
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number }
-export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string }
+export interface SessionMeta { pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string; /** prompt-cache route key when it is not the session's own id (forks keep their root's) */ cacheKey?: string }
 
 interface Data {
   version: 1;
@@ -176,7 +176,7 @@ export class MetaStore extends EventEmitter {
     }
     const { apiKey, id: _id, createdAt: _c, ...rest } = p;
     Object.assign(cur, rest);
-    for (const k of ['runtime', 'defaultModel', 'modelMap', 'models', 'modelsAt', 'modelsError'] as const) if ((cur as any)[k] == null) delete (cur as any)[k]; // null clears (JSON drops undefined)
+    for (const k of ['runtime', 'defaultModel', 'modelMap', 'models', 'modelsAt', 'modelsError', 'cacheShim', 'responsesApi', 'cache1h', 'cacheControlFormat', 'noPromptCacheKey', 'noResponsesApi', 'noCacheRetention'] as const) if ((cur as any)[k] == null) delete (cur as any)[k]; // null clears (JSON drops undefined)
     if (apiKey && !/^\S{0,4}…\S{0,4}$/.test(apiKey) && !apiKey.includes('…')) cur.apiKey = this.secretCodec ? await this.secretCodec.protect(apiKey.trim(), cur.id) : apiKey.trim();
     cur.baseUrl = (cur.baseUrl ?? '').trim().replace(/\/+$/, '');
     await this.queueSave();

@@ -29,6 +29,15 @@ function readInitCount() {
   try { return parseInt(fs.readFileSync(countFile, 'utf8'), 10) || 0; } catch { return 0; }
 }
 
+// Token usage the way Codex reports it: `inputTokens` includes the cached part, `total` is cumulative for the
+// thread, `last` is only the latest model call. Each turn here makes two calls, and the second update is
+// re-sent unchanged (Codex repeats the count with rate-limit refreshes). A resumed thread starts with
+// earlier turns already in `total`. Per turn: input 50 (25 uncached), 23 cached, 2 cache-write, 14 out.
+const bd = (input, cached, write, output) => ({ totalTokens: input + output, inputTokens: input, cachedInputTokens: cached, cacheWriteInputTokens: write, outputTokens: output, reasoningOutputTokens: 0 });
+const sum = (a, b) => bd(a.inputTokens + b.inputTokens, a.cachedInputTokens + b.cachedInputTokens, a.cacheWriteInputTokens + b.cacheWriteInputTokens, a.outputTokens + b.outputTokens);
+let usageTotal = bd(0, 0, 0, 0);
+const TURN_CALLS = [bd(20, 5, 0, 10), bd(30, 18, 2, 4)];
+
 // A page of turns for the long thread, generated rather than written out as a literal.
 function makeTurns(threadId, count) {
   const out = [];
@@ -120,7 +129,7 @@ rl.on('line', async (line) => {
       break;
     }
     case 'thread/start': reply({ thread: { id: 'thr-1', sessionId: 'thr-1', preview: '' }, model: 'gpt-5-codex', modelProvider: 'openai', cwd: m.params.cwd, approvalPolicy: m.params.approvalPolicy ?? 'untrusted', sandbox: {}, reasoningEffort: null }); break;
-    case 'thread/resume': reply({ thread: { id: m.params.threadId }, model: 'gpt-5-codex' }); break;
+    case 'thread/resume': usageTotal = bd(900_000, 800_000, 0, 5_000); reply({ thread: { id: m.params.threadId }, model: 'gpt-5-codex' }); break;
     case 'model/list': reply({ data: [{ id: 'gpt-5-codex', model: 'gpt-5-codex', displayName: 'GPT-5 Codex', description: '', hidden: false, supportedReasoningEfforts: [{ reasoningEffort: 'medium' }], isDefault: true }], nextCursor: null }); break;
     case 'turn/start': {
       const threadId = m.params.threadId;
@@ -136,7 +145,13 @@ rl.on('line', async (line) => {
         notify('item/commandExecution/outputDelta', { threadId, turnId: 'turn-1', itemId: 'cmd-1', delta: ok ? 'hi\n' : '' });
         notify('item/completed', { threadId, turnId: 'turn-1', item: { type: 'commandExecution', id: 'cmd-1', command: 'echo hi', cwd: 'C:/x', status: ok ? 'completed' : 'declined', aggregatedOutput: ok ? 'hi\n' : '', exitCode: ok ? 0 : 1, commandActions: [] } });
       }
-      notify('thread/tokenUsage/updated', { threadId, turnId: 'turn-1', tokenUsage: { total: { totalTokens: 30, inputTokens: 20, cachedInputTokens: 5, outputTokens: 10, reasoningOutputTokens: 0 }, last: { totalTokens: 30, inputTokens: 20, cachedInputTokens: 5, outputTokens: 10, reasoningOutputTokens: 0 }, modelContextWindow: 200000 } });
+      // a sub-agent thread's usage arrives on the same connection: it is not this thread's turn
+      notify('thread/tokenUsage/updated', { threadId: 'thr-subagent', turnId: 'turn-x', tokenUsage: { total: bd(777_000, 1, 0, 5), last: bd(777_000, 1, 0, 5), modelContextWindow: 200000 } });
+      for (const call of TURN_CALLS) {
+        usageTotal = sum(usageTotal, call);
+        notify('thread/tokenUsage/updated', { threadId, turnId: 'turn-1', tokenUsage: { total: usageTotal, last: call, modelContextWindow: 200000 } });
+      }
+      notify('thread/tokenUsage/updated', { threadId, turnId: 'turn-1', tokenUsage: { total: usageTotal, last: TURN_CALLS[1], modelContextWindow: 200000 } });
       notify('item/completed', { threadId, turnId: 'turn-1', item: { type: 'agentMessage', id: 'am-1', text: `Codex says: ${text}` } });
       notify('turn/completed', { threadId, turn: { id: 'turn-1', items: [], status: 'completed', error: null } });
       break;

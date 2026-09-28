@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { SessionRunner } from './session-runner.js';
-import type { OpenSessionParams, RunnerState } from '../protocol.js';
+import type { OpenSessionParams, Provider, RunnerState } from '../protocol.js';
 import type { ProviderService } from '../providers/service.js';
 import type { AgentRegistry, AgentDriver } from '../agents/types.js';
 import type { AgentTranscripts } from '../agents/transcript.js';
@@ -10,9 +10,31 @@ import { CodexDriver } from '../agents/codex-driver.js';
 
 const IDLE_TTL_MS = 30 * 60 * 1000;
 
+/**
+ * How long an idle Claude session keeps its process. Reopening means `--resume`, and ccb rebuilds the first user
+ * message on resume (skills reminder gone) — the cached prompt prefix breaks there and the next turn pays for the
+ * whole context again. That only costs something while the provider's cache would still have been warm:
+ *   openai / grok (OpenAI in-memory 5–60 min + extended 24 h retention, DeepSeek's disk cache lasts hours) → 2 h;
+ *   anthropic with the 1-hour TTL → just past it (65 min); everything else (5-minute Anthropic cache, Gemini's
+ *   short implicit cache, gateway groups of unknown members, the claude.ai login) → the old 30 min.
+ * The long TTL belongs to the cache optimisation: a profile with the shim switched off (cacheShim:false) gets 30 min.
+ */
+export function idleTtlFor(p: Pick<Provider, 'type' | 'cache1h' | 'cacheShim'> | undefined): number {
+  if ((p?.type === 'openai' || p?.type === 'grok') && p.cacheShim !== false) return 2 * 3600_000;
+  if (p?.type === 'anthropic' && p.cache1h) return 65 * 60_000;
+  return IDLE_TTL_MS;
+}
+
+/**
+ * Longer TTLs mean more idle ccb processes (~150–300 MB each): past this many idle Claude sessions the least
+ * recently used one is closed anyway (it resumes on the next message, paying one uncached turn).
+ */
+export const MAX_IDLE_CLAUDE = 12;
+
 /** sessionId -> live runner. Emits everything runners emit, tagged with the session id. */
 export class RunnerPool extends EventEmitter {
   private runners = new Map<string, AgentDriver>();
+  private ttl = new WeakMap<AgentDriver, number>();
 
   constructor(private providers: ProviderService, private agents?: AgentRegistry, private transcripts?: AgentTranscripts) {
     super();
@@ -41,7 +63,16 @@ export class RunnerPool extends EventEmitter {
     }
     const kind = params.agent ?? 'claude';
     let r: AgentDriver;
-    if (kind === 'claude' || !this.agents || !this.transcripts) r = new SessionRunner(params, this.providers.forSession(params.providerId));
+    if (kind === 'claude' || !this.agents || !this.transcripts) {
+      // a fork routes its prompt cache under its root's key; every reopen (goals, IM, schedules, hot switch) keeps it
+      if (params.sessionId && !params.fork && !params.resumeAt && !params.cacheParentId) {
+        const recorded = this.providers.meta?.sessionMeta(params.sessionId).cacheKey;
+        if (recorded) params = { ...params, cacheParentId: recorded };
+      }
+      const sp = this.providers.forSession(params.providerId);
+      r = new SessionRunner(params, sp);
+      this.ttl.set(r, idleTtlFor(sp));
+    }
     else {
       const l = this.agents.launch(kind);
       // a model-gateway profile works for every agent: its endpoint goes into the agent's own env variables
@@ -89,9 +120,15 @@ export class RunnerPool extends EventEmitter {
 
   private reap() {
     const now = Date.now();
+    const idleClaude: [string, AgentDriver][] = [];
     for (const [id, r] of this.runners) {
-      if (r.state === 'idle' && now - r.lastActivity > IDLE_TTL_MS) void this.close(id).catch(() => { /* already gone */ });
+      if (r.state !== 'idle') continue;
+      if (now - r.lastActivity > (this.ttl.get(r) ?? IDLE_TTL_MS)) void this.close(id).catch(() => { /* already gone */ });
+      else if (this.ttl.has(r)) idleClaude.push([id, r]);
     }
+    // cap on idle Claude processes: the least recently used beyond MAX_IDLE_CLAUDE go
+    idleClaude.sort((a, b) => a[1].lastActivity - b[1].lastActivity);
+    for (const [id] of idleClaude.slice(0, Math.max(0, idleClaude.length - MAX_IDLE_CLAUDE))) void this.close(id).catch(() => { /* already gone */ });
   }
 
   async closeAll() {

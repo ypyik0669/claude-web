@@ -2,9 +2,10 @@ import { query, type Query, type SDKMessage, type SDKUserMessage, type Options, 
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { resolveEngine, spawnClaude } from '../claude-exe.js';
-import { providerEnv } from '../providers/service.js';
+import { providerEnv, type SessionProvider } from '../providers/service.js';
 import { effortLevels, modelLabel, modelsFor, supportsUltracode } from '../models/catalog.js';
 import { claudeMcpServer } from '../memory/launcher.js';
+import { markUnknownCost } from '../usage/pricing.js';
 import type { AttachmentRef, EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot } from '../protocol.js';
 
 const esc = (s: string) => s.replace(/"/g, '&quot;');
@@ -73,14 +74,18 @@ export class SessionRunner extends EventEmitter {
   private model?: string;
   private effort?: EffortLevel;
   private permissionMode: PermissionMode;
-  private provider?: Provider; // resolved third-party profile (undefined = claude.ai login)
+  private provider?: SessionProvider; // resolved third-party profile (undefined = claude.ai login)
+  /** prompt-cache route key: this session's id (a fork keeps its parent's, whose prefix it shares) */
+  private cacheKey: string;
+  /** the id the shim's ledger rows go under; unset for an SDK fork, whose id only arrives at init */
+  private ledgerId?: string;
   private features: SessionFeatures;
   lastActivity = Date.now();
   private closed = false;
   /** CLI flags from open (features / worktree), re-applied when the process is respawned */
   private extraArgs: Record<string, string | null> = {};
 
-  constructor(params: OpenSessionParams, provider?: Provider) {
+  constructor(params: OpenSessionParams, provider?: SessionProvider) {
     super();
     this.cwd = params.cwd;
     this.provider = provider;
@@ -90,6 +95,8 @@ export class SessionRunner extends EventEmitter {
     const isFork = !!params.sessionId && (params.fork || !!params.resumeAt);
     this.sessionId = params.sessionId && !isFork ? params.sessionId : randomUUID();
     this.id = this.sessionId;
+    this.cacheKey = params.cacheParentId ?? params.sessionId ?? this.sessionId;
+    this.ledgerId = isFork ? undefined : this.sessionId;
     this.model = params.model || provider?.defaultModel || undefined;
     this.effort = params.effort;
     this.permissionMode = params.permissionMode ?? 'default';
@@ -128,7 +135,7 @@ export class SessionRunner extends EventEmitter {
 
   private featureEnv(): Record<string, string> {
     const f = this.features;
-    const env: Record<string, string> = { ...(this.provider ? providerEnv(this.provider) : {}), ...(f.env ?? {}) };
+    const env: Record<string, string> = { ...(this.provider ? providerEnv(this.provider, 'claude', { sessionKey: this.cacheKey, sessionId: this.ledgerId }) : {}), ...(f.env ?? {}) };
     if (f.coordinator) env.CLAUDE_CODE_COORDINATOR_MODE = '1';
     return env;
   }
@@ -266,7 +273,11 @@ export class SessionRunner extends EventEmitter {
       this.info.slashCommands = m.commands.map((c) => ({ name: c.name, description: c.description, argumentHint: c.argumentHint }));
       this.emit('info', this.info);
     }
-    if (m.type === 'result') this.setState('idle');
+    if (m.type === 'result') {
+      // ccb prices every model with Claude's table: for other vendors' models the number is fiction
+      markUnknownCost(m as any, this.provider?.type);
+      this.setState('idle');
+    }
     // keep history bounded to avoid unbounded memory in very long sessions; partial events are dropped from history
     if (m.type !== 'stream_event') {
       this.history.push(m);

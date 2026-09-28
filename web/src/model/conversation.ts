@@ -65,6 +65,8 @@ export interface ResultItem {
   durationMs: number;
   apiMs: number;
   costUsd: number;
+  /** no real price for this turn (non-Claude model, Codex, ACP): `costUsd` is 0, show 「费用未知」 */
+  costUnknown?: boolean;
   numTurns: number;
   isError: boolean;
   text?: string;
@@ -447,6 +449,7 @@ function applyResult(c: Conversation, m: any) {
     durationMs: m.duration_ms,
     apiMs: m.duration_api_ms,
     costUsd: m.total_cost_usd,
+    ...(m.cost_unknown ? { costUnknown: true } : {}),
     numTurns: m.num_turns,
     isError: !!m.is_error,
     text: errText,

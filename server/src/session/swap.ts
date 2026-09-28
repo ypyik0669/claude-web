@@ -94,7 +94,8 @@ async function swapProviderNow(d: SwapDeps, sessionId: string, providerId: strin
   const cwd = prev?.cwd ?? (await d.canonical.head(sessionId))?.cwd ?? process.cwd();
   // not fire-and-forget: a failed meta save would otherwise be an unhandled rejection that kills the server
   await d.meta.setSessionMeta(sessionId, { providerId }).catch(() => { /* kept in memory; the next save persists it */ });
-  d.canonical.mark(sessionId, { providerId, providerName, note: `已切换到供应商「${providerName}」` });
+  // fromProviderId: usage attribution needs who answered the turns before this switch ('claude' = the account)
+  d.canonical.mark(sessionId, { providerId, providerName, fromProviderId: before ?? 'claude', note: `已切换到供应商「${providerName}」` });
 
   const params: OpenSessionParams = {
     sessionId,

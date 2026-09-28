@@ -1,8 +1,19 @@
 // Anthropic Messages API ⇄ IR. Shapes per docs.anthropic.com (Messages, streaming events).
 import { newId, safeJson, mergeAlternating, type IrEvent, type IrMessage, type IrPart, type IrRequest, type IrResponse, type IrStop, type IrTool, type IrUsage, type StreamParser, type StreamRenderer } from './ir.js';
 import { sse } from './sse.js';
+import { stripBillingHeader } from './cache.js';
 
 const textOf = (c: unknown): string => typeof c === 'string' ? c : Array.isArray(c) ? c.map((b: any) => (b?.type === 'text' ? b.text ?? '' : '')).filter(Boolean).join('\n\n') : '';
+/**
+ * System text for translation: Claude Code's per-request billing line would make every session's prefix differ.
+ * Only that line goes; a block left empty by it is dropped.
+ */
+const noBilling = (t: string) => { const s = stripBillingHeader(t); return s === t ? t : s.trim(); };
+const systemOf = (c: unknown): string => typeof c === 'string'
+  ? noBilling(c)
+  : textOf(Array.isArray(c) ? c.map((b: any) => (b?.type === 'text' ? { ...b, text: noBilling(String(b.text ?? '')) } : b)) : c);
+
+export interface AnthropicRenderOpts { /** `1h` = the extended cache TTL (2× base write price vs 1.25×); default 5 minutes */ cacheTtl?: '1h' }
 
 function imagePart(b: any): IrPart | null {
   const s = b?.source;
@@ -35,7 +46,7 @@ export function parseRequest(body: any): IrRequest {
   const tc = body.tool_choice;
   return {
     model: String(body.model ?? ''),
-    system: textOf(body.system) || undefined,
+    system: systemOf(body.system) || undefined,
     messages,
     tools: tools.length ? tools : undefined,
     toolChoice: !tc ? undefined : tc.type === 'tool' ? { type: 'tool', name: tc.name } : tc.type === 'any' ? { type: 'any' } : tc.type === 'none' ? { type: 'none' } : { type: 'auto' },
@@ -56,16 +67,29 @@ function renderPart(p: IrPart): any {
   return { type: 'tool_result', tool_use_id: p.id, content, ...(p.isError ? { is_error: true } : {}) };
 }
 
-export function renderRequest(r: IrRequest): any {
+/**
+ * IR → Messages request. Prompt caching the way Claude Code does it, since nothing else would: breakpoints on
+ * the system prompt, the last tool and the last block of the last message (3 of the 4 allowed; the next
+ * request's lookback finds the previous turn's entry), plus `metadata.user_id` = the client's session key —
+ * what relays that route caches by session ("claude cli trace" affinity) key on.
+ */
+export function renderRequest(r: IrRequest, opts: AnthropicRenderOpts = {}): any {
+  const cc = opts.cacheTtl === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' };
   const msgs = mergeAlternating(r.messages).map((m) => {
     // tool results must lead the user turn that answers a tool_use turn
     const parts = m.role === 'user' ? [...m.parts.filter((p) => p.type === 'tool_result'), ...m.parts.filter((p) => p.type !== 'tool_result')] : m.parts;
     return { role: m.role, content: parts.map(renderPart) };
   });
   if (msgs[0]?.role === 'assistant') msgs.unshift({ role: 'user', content: [{ type: 'text', text: '(continue)' }] });
+  const lastBlock = msgs.at(-1)?.content.at(-1);
+  if (lastBlock) lastBlock.cache_control = cc;
   const out: any = { model: r.model, max_tokens: r.maxTokens ?? 8192, messages: msgs };
-  if (r.system) out.system = r.system;
-  if (r.tools?.length) out.tools = r.tools.map((t) => ({ name: t.name, ...(t.description ? { description: t.description } : {}), input_schema: t.schema }));
+  if (r.system) out.system = [{ type: 'text', text: r.system, cache_control: cc }];
+  if (r.tools?.length) {
+    out.tools = r.tools.map((t) => ({ name: t.name, ...(t.description ? { description: t.description } : {}), input_schema: t.schema }));
+    out.tools[out.tools.length - 1].cache_control = cc;
+  }
+  if (r.cacheKey) out.metadata = { user_id: r.cacheKey.slice(0, 256) };
   if (r.toolChoice && r.tools?.length) out.tool_choice = r.toolChoice.type === 'tool' ? { type: 'tool', name: r.toolChoice.name } : { type: r.toolChoice.type };
   if (r.temperature !== undefined) out.temperature = r.temperature;
   // newer Claude models reject temperature and top_p together; temperature wins

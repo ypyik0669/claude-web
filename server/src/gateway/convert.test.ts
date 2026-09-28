@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildOutbound, inboundStreamRenderer, joinUrl, outboundStreamParser, parseInbound, parseOutboundResponse, renderInboundResponse, supported } from './convert.js';
+import { buildOutbound, inboundStreamRenderer, joinUrl, outboundStreamParser, parseInbound, parseOutboundResponse, renderInboundResponse, sniffUsage, supported } from './convert.js';
 import { SseParser } from './sse.js';
 import { collect, type IrEvent } from './ir.js';
 import { sanitizeSchema } from './gemini.js';
+import { affinityHeaders, cacheKeyOf } from './cache.js';
 
 // Fixtures follow the documented shapes of each API.
 const anthropicReq = {
@@ -159,10 +160,10 @@ describe('openai in → anthropic out', () => {
     const ir = parseInbound('openai', chatReq, { stream: true });
     const { path, body } = buildOutbound('anthropic', ir);
     expect(path).toBe('/v1/messages');
-    expect(body.system).toBe('Be brief.');
+    expect(body.system).toEqual([{ type: 'text', text: 'Be brief.', cache_control: { type: 'ephemeral' } }]);
     expect(body.messages[0].content[1]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } });
     expect(body.messages[1]).toEqual({ role: 'assistant', content: [{ type: 'tool_use', id: 'call_1', name: 'ls', input: { dir: '.' } }] });
-    expect(body.messages[2]).toEqual({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'a.txt' }] });
+    expect(body.messages[2]).toEqual({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'a.txt', cache_control: { type: 'ephemeral' } }] });
     expect(body.tool_choice).toEqual({ type: 'any' });
     expect(body.stop_sequences).toEqual(['END']);
     expect(body.max_tokens).toBe(50);
@@ -229,7 +230,7 @@ describe('openai (responses) in → anthropic out', () => {
   it('request', () => {
     const ir = parseInbound('responses', respReq, { stream: true });
     const { body } = buildOutbound('anthropic', { ...ir, model: 'claude-sonnet-4-5' });
-    expect(body.system).toBe('You are Codex.\n\nenv: windows');
+    expect(body.system).toEqual([{ type: 'text', text: 'You are Codex.\n\nenv: windows', cache_control: { type: 'ephemeral' } }]);
     expect(body.messages[0]).toEqual({ role: 'user', content: [{ type: 'text', text: 'list files' }] });
     expect(body.messages[1].content[0]).toEqual({ type: 'tool_use', id: 'call_a', name: 'shell', input: { command: ['ls'] } });
     expect(body.messages[2].content[0]).toEqual({ type: 'tool_result', tool_use_id: 'call_a', content: 'a b' });
@@ -299,10 +300,10 @@ describe('gemini in → anthropic out', () => {
     const call = body.messages[1].content[0];
     const result = body.messages[2].content[0];
     expect(call.type).toBe('tool_use');
-    expect(result).toEqual({ type: 'tool_result', tool_use_id: call.id, content: 'content' });
+    expect(result).toEqual({ type: 'tool_result', tool_use_id: call.id, content: 'content', cache_control: { type: 'ephemeral' } }); // last block = cache breakpoint
     expect(body.tools[0].input_schema).toEqual({ type: 'object', properties: { path: { type: 'string' } } });
     expect(body.temperature).toBe(0.2);
-    expect(body.system).toBe('Sys');
+    expect(body.system[0].text).toBe('Sys');
   });
   it('stream: anthropic events → gemini chunks', () => {
     const up = sse([
@@ -356,5 +357,90 @@ describe('stream robustness', () => {
     const a = p.feed('event: x\r');
     const b = p.feed('\ndata: 1\ndata: 2\r\n\r\n');
     expect([...a, ...b]).toEqual([{ event: 'x', data: '1\n2' }]);
+  });
+});
+
+describe('prompt caching on translated requests', () => {
+  const cc = (b: any) => JSON.stringify(b).match(/"cache_control"/g)?.length ?? 0;
+  const chat = { model: 'claude-x', prompt_cache_key: 'cw:sess-1', messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }, { role: 'user', content: 'c' }], tools: [{ type: 'function', function: { name: 't1', parameters: { type: 'object' } } }, { type: 'function', function: { name: 't2', parameters: { type: 'object' } } }] };
+  it('→ Anthropic: three breakpoints (system, last tool, last block of the last message) + metadata.user_id = the cache key', () => {
+    const ir = { ...parseInbound('openai', chat, { stream: false }), cacheKey: 'cw:sess-1' };
+    const { body } = buildOutbound('anthropic', ir);
+    expect(cc(body)).toBe(3);
+    expect(body.system[0].cache_control).toEqual({ type: 'ephemeral' });
+    expect(body.tools[0].cache_control).toBeUndefined();
+    expect(body.tools[1].cache_control).toEqual({ type: 'ephemeral' });
+    expect(body.messages.at(-1).content.at(-1)).toEqual({ type: 'text', text: 'c', cache_control: { type: 'ephemeral' } });
+    expect(body.metadata).toEqual({ user_id: 'cw:sess-1' });
+    // opt-in 1h TTL (group / member profile)
+    const long = buildOutbound('anthropic', ir, { cacheTtl: '1h' }).body;
+    expect(long.system[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' });
+    expect(cc(long)).toBe(3);
+    // no key → breakpoints still, no metadata
+    expect(buildOutbound('anthropic', { ...ir, cacheKey: undefined }).body.metadata).toBeUndefined();
+  });
+  it('the cache key comes from prompt_cache_key → session_id → x-claude-code-session-id → metadata.user_id (never x-client-request-id: that is per request)', () => {
+    expect(cacheKeyOf({ prompt_cache_key: 'k1', metadata: { user_id: 'u' } }, { session_id: 's' })).toBe('k1');
+    expect(cacheKeyOf({ metadata: { user_id: 'u' } }, { session_id: 's', 'x-client-request-id': 'r' })).toBe('s');
+    expect(cacheKeyOf({}, { 'x-client-request-id': 'r', 'x-claude-code-session-id': 'c' })).toBe('c');
+    expect(cacheKeyOf({ metadata: { user_id: 'u' } }, { 'x-claude-code-session-id': 'c' })).toBe('c');
+    expect(cacheKeyOf({ metadata: { user_id: 'u' } }, { 'x-client-request-id': 'r' })).toBe('u');
+    expect(cacheKeyOf({}, { 'x-client-request-id': 'r' })).toBeUndefined();
+  });
+  it('outbound affinity headers: session_id + x-session-affinity (+ x-grok-conv-id), no x-client-request-id', () => {
+    expect(affinityHeaders('k', false)).toEqual({ session_id: 'k', 'x-session-affinity': 'k' });
+    expect(affinityHeaders('k', true)).toEqual({ session_id: 'k', 'x-session-affinity': 'k', 'x-grok-conv-id': 'k' });
+  });
+  it('only the billing-header LINE goes, the rest of its block / string stays', () => {
+    const sys = (system: unknown) => parseInbound('anthropic', { model: 'x', max_tokens: 1, system, messages: [{ role: 'user', content: 'hi' }] }, { stream: false }).system;
+    expect(sys('x-anthropic-billing-header: cc_version=1;\nYou are Claude Code, do X')).toBe('You are Claude Code, do X');
+    expect(sys([{ type: 'text', text: 'x-anthropic-billing-header: v=1;\nYou are Claude Code' }, { type: 'text', text: 'More' }])).toBe('You are Claude Code\n\nMore');
+    expect(sys([{ type: 'text', text: 'x-anthropic-billing-header: v=1;' }, { type: 'text', text: 'Only this' }])).toBe('Only this');
+    expect(sys('Mentions x-anthropic-billing-header: mid-line stays')).toBe('Mentions x-anthropic-billing-header: mid-line stays');
+  });
+  it('anthropic → openai drops the per-request x-anthropic-billing-header block so sessions share one static prefix', () => {
+    const req = { model: 'claude-x', max_tokens: 10, system: [{ type: 'text', text: 'x-anthropic-billing-header: cc_version=2.1.300.a1b; cc_entrypoint=cli; cch=0f3e1;' }, { type: 'text', text: 'You are Claude Code.', cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: 'hi' }] };
+    const { body } = buildOutbound('openai', { ...parseInbound('anthropic', req, { stream: false }), model: 'gpt-4.1' });
+    expect(body.messages[0]).toEqual({ role: 'system', content: 'You are Claude Code.' });
+    expect(JSON.stringify(body)).not.toContain('billing');
+  });
+  it('→ OpenAI: prompt_cache_key from the key (≤ 64 chars); Anthropic-format cache_control only when the profile asks', () => {
+    const ir = { ...parseInbound('openai', chat, { stream: false }), cacheKey: 'x'.repeat(80) };
+    const plain = buildOutbound('openai', ir, { promptCacheKey: true }).body;
+    expect(plain.prompt_cache_key).toBe('x'.repeat(64));
+    expect(cc(plain)).toBe(0);
+    expect(buildOutbound('openai', ir).body.prompt_cache_key).toBeUndefined();
+    const marked = buildOutbound('openai', ir, { cacheControl: true }).body;
+    expect(cc(marked)).toBe(3);
+    expect(marked.messages[0]).toEqual({ role: 'system', content: [{ type: 'text', text: 'sys', cache_control: { type: 'ephemeral' } }] });
+    expect(marked.tools[1].cache_control).toEqual({ type: 'ephemeral' });
+    expect(marked.messages.at(-1)).toEqual({ role: 'user', content: [{ type: 'text', text: 'c', cache_control: { type: 'ephemeral' } }] });
+  });
+});
+
+describe('OpenAI-compatible usage shapes (cached tokens are inside prompt_tokens)', () => {
+  const inOf = (u: any) => ({ input: 0, output: 0, ...sniffUsage('openai', { usage: u }) });
+  it('OpenAI: prompt_tokens_details.cached_tokens', () => {
+    expect(inOf({ prompt_tokens: 20_000, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 15_000 } })).toMatchObject({ input: 5_000, output: 5, cacheRead: 15_000 });
+  });
+  it('DeepSeek: prompt_cache_hit_tokens / prompt_cache_miss_tokens', () => {
+    expect(inOf({ prompt_tokens: 20_000, completion_tokens: 5, prompt_cache_hit_tokens: 15_000, prompt_cache_miss_tokens: 5_000 })).toMatchObject({ input: 5_000, cacheRead: 15_000 });
+  });
+  it('Kimi / Moonshot: top-level cached_tokens', () => {
+    expect(inOf({ prompt_tokens: 20_000, completion_tokens: 5, cached_tokens: 12_000 })).toMatchObject({ input: 8_000, cacheRead: 12_000 });
+  });
+  it('cache writes (OpenRouter cache_write_tokens / Anthropic-style cache_creation_input_tokens) leave input too', () => {
+    expect(inOf({ prompt_tokens: 20_000, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 10_000, cache_write_tokens: 6_000 } })).toMatchObject({ input: 4_000, cacheRead: 10_000, cacheWrite: 6_000 });
+    expect(inOf({ prompt_tokens: 20_000, completion_tokens: 5, prompt_tokens_details: { cache_creation_input_tokens: 3_000 } })).toMatchObject({ input: 17_000, cacheRead: 0, cacheWrite: 3_000 });
+  });
+  it('`??` not `||`: an explicit 0 in prompt_tokens_details wins over the fallbacks; Responses input_tokens_details too', () => {
+    expect(inOf({ prompt_tokens: 100, completion_tokens: 1, prompt_tokens_details: { cached_tokens: 0 }, cached_tokens: 50 })).toMatchObject({ input: 100, cacheRead: 0 });
+    expect({ input: 0, output: 0, ...sniffUsage('responses', { type: 'response.completed', response: { usage: { input_tokens: 900, output_tokens: 3, input_tokens_details: { cached_tokens: 800 } } } }) }).toMatchObject({ input: 100, output: 3, cacheRead: 800 });
+  });
+  it('rendered back out: cache_write_tokens round-trips in prompt_tokens_details', () => {
+    const out = renderInboundResponse('openai', { id: 'x', model: 'm', parts: [{ type: 'text', text: 'hi' }], stop: 'end', usage: { input: 4, output: 1, cacheRead: 10, cacheWrite: 6 } }, 'm', new Set());
+    expect(out.usage).toEqual({ prompt_tokens: 20, completion_tokens: 1, total_tokens: 21, prompt_tokens_details: { cached_tokens: 10, cache_write_tokens: 6 } });
+    const noWrite = renderInboundResponse('openai', { id: 'x', model: 'm', parts: [], stop: 'end', usage: { input: 4, output: 1, cacheRead: 10 } }, 'm', new Set());
+    expect(noWrite.usage.prompt_tokens_details).toEqual({ cached_tokens: 10 });
   });
 });

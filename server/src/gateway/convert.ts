@@ -53,10 +53,13 @@ export function parseInbound(inbound: GatewayProtocol, body: any, ctx: InboundCt
   return G.parseRequest(body, ctx.model ?? '', ctx.stream);
 }
 
+/** Per-member prompt-cache choices for a translated request (see anthropic.ts / openai-chat.ts). */
+export type OutboundOpts = A.AnthropicRenderOpts & C.ChatRenderOpts;
+
 /** Outbound request path (relative to the member base) + JSON body. */
-export function buildOutbound(outbound: Outbound, r: IrRequest): { path: string; body: any } {
-  if (outbound === 'anthropic') return { path: '/v1/messages', body: A.renderRequest(r) };
-  if (outbound === 'openai') return { path: '/v1/chat/completions', body: C.renderRequest(r) };
+export function buildOutbound(outbound: Outbound, r: IrRequest, opts: OutboundOpts = {}): { path: string; body: any } {
+  if (outbound === 'anthropic') return { path: '/v1/messages', body: A.renderRequest(r, opts) };
+  if (outbound === 'openai') return { path: '/v1/chat/completions', body: C.renderRequest(r, opts) };
   return { path: G.upstreamPath(r.model, r.stream), body: G.renderRequest(r) };
 }
 

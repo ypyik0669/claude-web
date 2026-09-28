@@ -252,7 +252,8 @@ export function ProviderProfiles() {
   const setSetting = useStore((s) => s.setSetting);
   const toast = useStore((s) => s.toast);
   const [editing, setEditing] = useState<Draft | null>(null);
-  const [probe, setProbe] = useState<{ ok: boolean; models: string[]; error?: string; ms: number; status?: number; chat?: { ok: boolean; runtime: string; model: string; error?: string; ms: number; switched?: boolean } } | null>(null);
+  type ChatCheck = { ok: boolean; runtime: string; model: string; error?: string; ms: number; switched?: boolean; status?: number };
+  const [probe, setProbe] = useState<{ ok: boolean; models: string[]; error?: string; ms: number; status?: number; chat?: ChatCheck; responses?: ChatCheck } | null>(null);
   const [busy, setBusy] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const def = settings.defaultProviderId as string | undefined;
@@ -271,9 +272,16 @@ export function ProviderProfiles() {
     if (!editing) return;
     setBusy(true);
     try {
-      const r: any = await ws.request({ kind: 'providers.probe', id: editing.id, provider: { type: editing.type, baseUrl: editing.baseUrl, apiKey: editing.apiKey, defaultModel: editing.defaultModel, modelMap: editing.modelMap, runtime: editing.runtime } });
+      const r: any = await ws.request({ kind: 'providers.probe', id: editing.id, provider: { type: editing.type, baseUrl: editing.baseUrl, apiKey: editing.apiKey, defaultModel: editing.defaultModel, modelMap: editing.modelMap, runtime: editing.runtime, cacheShim: editing.cacheShim, responsesApi: editing.responsesApi } });
       setProbe(r);
       if (r.chat?.switched) setEditing((e) => (e ? { ...e, runtime: 'claude' } : e));
+      // the server already recorded what the /v1/responses check proved on the saved profile; keep the draft in step
+      const rs = r.responses;
+      if (rs && editing.id) {
+        const missing = !rs.ok && [404, 405, 501].includes(rs.status ?? 0) && !/model/i.test(rs.error ?? '');
+        if (rs.ok) setEditing((e) => (e ? { ...e, noResponsesApi: null as any } : e));
+        else if (missing && r.chat?.ok) setEditing((e) => (e ? { ...e, noResponsesApi: true } : e));
+      }
     } catch (e: any) { setProbe({ ok: false, models: [], error: e.message, ms: 0 }); }
     setBusy(false);
   };
@@ -363,6 +371,9 @@ export function ProviderProfiles() {
                 ? ` · 对话测试通过（${probe.chat.model} · ${probe.chat.runtime === 'claude' ? '官方二进制' : probe.chat.runtime === 'api' ? '直连接口' : 'ccb'} · ${(probe.chat.ms / 1000).toFixed(1)}s）`
                 : ` · 对话测试失败：${probe.chat.error}`)}
               {probe.chat?.switched && <div style={{ color: 'var(--yellow)' }}>这个端点拒绝 ccb 的请求，已自动改为官方 Claude Code 二进制（ccb 专属功能在该供应商的会话里不可用）</div>}
+              {probe.responses && (probe.responses.ok
+                ? <div style={{ color: 'var(--green)' }}>/v1/responses 通过（{probe.responses.model}，gpt-* 会经垫片走这条路）</div>
+                : <div style={{ color: 'var(--yellow)' }}>/v1/responses 不可用：{probe.responses.error}{[404, 405, 501].includes(probe.responses.status ?? 0) && !/model/i.test(probe.responses.error ?? '') ? '（已记下，gpt-* 改走 chat/completions）' : '（没有记下：可能是模型或临时错误，会话里仍会先试 /v1/responses，失败这一次退回 chat/completions）'}</div>)}
             </div>
           )}
           {modelPick('默认模型', 'defaultModel')}
@@ -373,6 +384,7 @@ export function ProviderProfiles() {
             <input type="checkbox" checked={editing.runtime === 'claude'} onChange={(e) => setEditing({ ...editing, runtime: e.target.checked ? 'claude' : (null as any) })} />
             这个端点只认官方 Claude Code 二进制（被拒时再勾）
           </label>
+          <CacheOptions editing={editing} set={setEditing} />
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn sm primary" disabled={busy} onClick={save}>保存</button>
             <button className="btn sm ghost" onClick={() => setEditing(null)}>取消</button>
@@ -380,6 +392,48 @@ export function ProviderProfiles() {
         </div>
       )}
     </div>
+  );
+}
+
+/** Prompt-cache switches of a profile (server: gateway/shim.ts, gateway/cache.ts). `null` = back to the default. */
+function CacheOptions({ editing, set }: { editing: Draft; set: (d: Draft) => void }) {
+  const row = { display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, color: 'var(--fg-2)', margin: '4px 0' } as const;
+  const oai = editing.type === 'openai' || editing.type === 'grok';
+  const shimOn = editing.cacheShim !== false;
+  const learned = [editing.noPromptCacheKey && '端点不接受 prompt_cache_key，已停发', editing.noResponsesApi && '端点没有 /v1/responses，gpt-* 改走 chat/completions', editing.noCacheRetention && '端点不接受 prompt_cache_retention，已停发'].filter(Boolean);
+  return (
+    <>
+      {oai && (
+        <label style={row} title="Claude 会话经本机缓存垫片访问这个端点：补 prompt_cache_key 与会话亲和头（中转按它把同一会话路由到同一渠道），把只报在顶层的命中数（DeepSeek / Kimi）补到 ccb 读的字段里，每次调用记账本">
+          <input type="checkbox" checked={shimOn} onChange={(e) => set({ ...editing, cacheShim: e.target.checked ? (null as any) : false })} />
+          缓存优化（经本机垫片补缓存键 / 会话亲和、修正命中统计；关掉 = 直连）
+        </label>
+      )}
+      {editing.type === 'openai' && shimOn && (
+        <label style={row} title="new-api 类中转默认只对 /v1/responses + prompt_cache_key 做会话亲和（Codex 规则），chat/completions 每次随机渠道；端点没有这个接口时自动退回并记住">
+          <input type="checkbox" checked={editing.responsesApi !== false} onChange={(e) => set({ ...editing, responsesApi: e.target.checked ? (null as any) : false })} />
+          gpt-* 模型改走 /v1/responses（对 new-api 类中转命中率更高）
+        </label>
+      )}
+      {editing.type === 'openai' && (
+        <label style={row} title="模型网关把 Anthropic 请求转给这个成员时，在 system / 最后一个工具 / 最后一条消息上带 cache_control">
+          <input type="checkbox" checked={editing.cacheControlFormat === 'anthropic'} onChange={(e) => set({ ...editing, cacheControlFormat: e.target.checked ? 'anthropic' : (null as any) })} />
+          经模型网关时带 Anthropic 格式 cache_control（百炼 qwen 显式缓存、OpenRouter anthropic/*）
+        </label>
+      )}
+      {editing.type === 'anthropic' && (
+        <label style={row} title="官方二进制：ENABLE_PROMPT_CACHING_1H=1；模型网关转成 Anthropic 请求给这个成员时：ttl 1h。写入按 2× 基础价（5 分钟是 1.25×），适合经常停下来超过 5 分钟的会话">
+          <input type="checkbox" checked={!!editing.cache1h} onChange={(e) => set({ ...editing, cache1h: e.target.checked ? true : (null as any) })} />
+          1 小时提示缓存（官方二进制 / 经模型网关；写入 2× 基础价）
+        </label>
+      )}
+      {oai && learned.length > 0 && (
+        <div className="sub" style={{ margin: '2px 0 6px' }}>
+          自动记下：{learned.join('；')}{' '}
+          <button className="btn sm ghost" onClick={() => set({ ...editing, noPromptCacheKey: null as any, noResponsesApi: null as any, noCacheRetention: null as any })}>保存后重新检测</button>
+        </div>
+      )}
+    </>
   );
 }
 

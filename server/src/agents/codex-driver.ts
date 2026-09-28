@@ -8,6 +8,7 @@ import { MessageSynth } from './normalize.js';
 import { codexItemMessages, type CodexItemState } from './codex-items.js';
 import type { AgentTranscripts } from './transcript.js';
 import { CODEX_KEY_ENV } from '../gateway/agents.js';
+import { CodexUsageMeter } from './codex-usage.js';
 import type { AgentDriver } from './types.js';
 
 interface PendingPerm { event: PermissionRequestEvent; resolve: (r: any) => void; kind: 'command' | 'file' | 'permissions' }
@@ -40,8 +41,8 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
   private model?: string;
   private effort?: EffortLevel;
   private permissionMode: PermissionMode;
-  private usage: { input: number; output: number; cacheRead: number } = { input: 0, output: 0, cacheRead: 0 };
-  private lastUsageTotal = 0;
+  /** per-turn usage from the cumulative thread totals (cached tokens are inside Codex's inputTokens) */
+  private usage = new CodexUsageMeter();
 
   constructor(private kind: AgentKind, private launch: { command: string; args: string[]; env: Record<string, string>; model?: string; name: string }, params: OpenSessionParams, private transcripts: AgentTranscripts) {
     super();
@@ -154,11 +155,8 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
       case 'item/started': this.onItem(p.item, false); break;
       case 'item/completed': this.onItem(p.item, true); break;
       case 'item/commandExecution/outputDelta': { const it = this.items.get(p.itemId); if (it) it.output += p.delta ?? ''; break; }
-      case 'thread/tokenUsage/updated': {
-        const t = p?.tokenUsage?.last ?? p?.tokenUsage?.total;
-        if (t) this.usage = { input: t.inputTokens ?? 0, output: t.outputTokens ?? 0, cacheRead: t.cachedInputTokens ?? 0 };
-        break;
-      }
+      // only this thread's: sub-agent threads report their own cumulative totals on the same connection
+      case 'thread/tokenUsage/updated': if (!p?.threadId || p.threadId === this.threadId) this.usage.update(p?.tokenUsage); break;
       case 'error': if (!p?.willRetry) this.push(this.synth.systemNote(`Codex 错误：${p?.error?.message ?? ''}`, 'error')); break;
       case 'turn/completed': this.onTurnCompleted(p?.turn); break;
       case 'thread/name/updated': if (p?.name) void this.transcripts.patchHead(this.sessionId, { title: p.name }); break;
@@ -173,7 +171,7 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
   private onTurnCompleted(turn: any) {
     const status = turn?.status;
     const ok = status === 'completed' || status === 'interrupted';
-    this.pushAll(this.synth.endTurn({ ok, error: turn?.error?.message, stopReason: status, usage: { input: this.usage.input, output: this.usage.output, cacheRead: this.usage.cacheRead } }));
+    this.pushAll(this.synth.endTurn({ ok, error: turn?.error?.message, stopReason: status, usage: this.usage.turn() }));
     this.turnActive = false;
     this.turnId = null;
     if (!this.closed && this.state !== 'error') { this.setState('idle'); this.flush(); }
@@ -221,6 +219,7 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
     this.turnActive = true;
     this.setState('running');
     this.synth.beginTurn();
+    this.usage.beginTurn();
     const input: any[] = [{ type: 'text', text: next.text, text_elements: [] }];
     for (const im of next.images ?? []) input.push({ type: 'image', url: `data:${im.mediaType};base64,${im.data}` });
     const pol = this.policy();

@@ -126,8 +126,10 @@ describe('CodexDriver (mock app-server)', () => {
     d.respondPermission(perm.requestId, { behavior: 'allow' });
     await waitFor(() => msgs.some((m) => m.type === 'result'));
     const result = msgs.find((m) => m.type === 'result');
-    expect(result.usage.input_tokens).toBe(20);
-    expect(result.usage.cache_read_input_tokens).toBe(5);
+    // the whole turn (two model calls, one update re-sent), with the cached part taken out of input
+    expect(result.usage).toMatchObject({ input_tokens: 25, cache_read_input_tokens: 23, cache_creation_input_tokens: 2, output_tokens: 14 });
+    // Codex reports no price: unknown, never shown as $0
+    expect(result).toMatchObject({ total_cost_usd: 0, cost_unknown: true });
     const tr = msgs.find((m) => m.type === 'user' && m.message.content[0]?.tool_use_id === 'cmd-1');
     expect(tr.tool_use_result.stdout).toBe('hi\n');
     expect(tr.message.content[0].is_error).toBe(false);
@@ -149,6 +151,30 @@ describe('CodexDriver (mock app-server)', () => {
     const tr = msgs.find((m) => m.type === 'user' && m.message.content[0]?.tool_use_id === 'cmd-1');
     expect(tr.tool_use_result.stdout).toBe('hi\n');
     await d.close();
+  });
+
+  it('usage is per turn: a second turn and a resumed thread report their own turn, not the running total', async () => {
+    const args = [path.join(here, '__mocks__', 'codex-server.mjs')];
+    const d = new CodexDriver('codex', { command: process.execPath, args, env: {}, name: 'Mock' }, { cwd: tmp, permissionMode: 'bypassPermissions' }, transcripts);
+    const msgs = collect(d);
+    await waitFor(() => d.state === 'idle');
+    const results = () => msgs.filter((m) => m.type === 'result');
+    d.send('one');
+    await waitFor(() => results().length === 1);
+    d.send('two');
+    await waitFor(() => results().length === 2);
+    const want = { input_tokens: 25, cache_read_input_tokens: 23, cache_creation_input_tokens: 2, output_tokens: 14 };
+    expect(results()[0].usage).toMatchObject(want);
+    expect(results()[1].usage).toMatchObject(want);
+    const sid = d.sessionId;
+    await d.close();
+    const r = new CodexDriver('codex', { command: process.execPath, args, env: {}, name: 'Mock' }, { cwd: tmp, permissionMode: 'bypassPermissions', sessionId: sid }, transcripts);
+    const msgs2 = collect(r);
+    await waitFor(() => r.state === 'idle');
+    r.send('three');
+    await waitFor(() => msgs2.some((m) => m.type === 'result'));
+    expect(msgs2.find((m) => m.type === 'result').usage).toMatchObject(want);
+    await r.close();
   });
 
   it('a model outside model/list is swapped for the default — except behind the model gateway', async () => {

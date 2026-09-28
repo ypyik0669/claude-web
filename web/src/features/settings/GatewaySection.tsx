@@ -135,6 +135,9 @@ function GroupCard({ group, states, providers, enabled, baseUrl }: { group: Gate
           <option value="failover">按顺序故障转移</option>
           <option value="round-robin">加权轮询</option>
         </select>
+        <label className="muted" style={{ fontSize: 12, display: 'flex', gap: 4, alignItems: 'center' }} title="请求转成 Anthropic 发给成员时，缓存断点用 1 小时 TTL（写入 2× 基础价；默认 5 分钟 1.25×）">
+          <input type="checkbox" checked={!!draft.cache1h} onChange={(e) => edit({ cache1h: e.target.checked })} /> 1 小时缓存
+        </label>
         <code className="muted" title="这个组的入口地址">{baseUrl}/{group.id}</code>
         <span className="grow" />
         <button className="btn sm ghost danger" onClick={remove}>删除</button>

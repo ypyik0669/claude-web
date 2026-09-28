@@ -18,6 +18,8 @@ export interface GatewayGroup {
   strategy: 'failover' | 'round-robin';
   /** Inbound model → outbound model. Keys may use `*` wildcards; exact keys win. */
   modelMap?: Record<string, string>;
+  /** 1-hour prompt-cache TTL on requests translated to Anthropic members (2x base write price vs 1.25x for 5 min). */
+  cache1h?: boolean;
 }
 
 export type GatewayMemberHealth = 'ok' | 'cooling' | 'disabled' | 'unknown';
@@ -60,6 +62,8 @@ export interface GatewayTestResult {
 /** Extra fields on a ledger line written by the gateway (`kind: 'gateway'`). */
 export interface GatewayLedgerInfo {
   group: string;
+  /** 'shim' = a call through a profile's cache shim (/gateway/~p/…), not a gateway group */
+  via?: 'shim';
   inbound: GatewayProtocol;
   member?: string; // provider name that answered (or last tried)
   memberId?: string;
