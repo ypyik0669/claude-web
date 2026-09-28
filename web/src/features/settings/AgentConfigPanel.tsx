@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
-import type { AgentConfigBackup, AgentConfigFile, AgentConfigKind, AgentConfigState, AgentSettingField, ClaudeMcpEntry, McpSpec, McpSyncResult } from '@shared';
-import { EMPTY_FORM, describeSpec, formFromCatalog, formToSpec, type McpForm } from './agent-config-form';
+import type { AgentConfigBackup, AgentConfigFile, AgentConfigKind, AgentConfigState, AgentSettingField, ClaudeMcpEntry, McpSpec, McpSyncResult, McpSyncSource } from '@shared';
+import { EMPTY_FORM, catalogSpec, describeSpec, formFromCatalog, formToSpec, settingToCommit, type McpForm } from './agent-config-form';
 import { MCP_CATALOG } from './McpCatalog';
 
 export const CONFIGURABLE: AgentConfigKind[] = ['codex', 'gemini', 'qwen', 'opencode'];
@@ -36,10 +36,17 @@ function FileRow({ f, onOpen }: { f: AgentConfigFile; onOpen: (f: AgentConfigFil
   );
 }
 
-function SettingRow({ f, onSet }: { f: AgentSettingField; onSet: (v: string | null) => Promise<void> }) {
+function SettingRow({ f, onSet }: { f: AgentSettingField; onSet: (v: string | null) => Promise<boolean> }) {
   const [v, setV] = useState(f.value ?? '');
-  useEffect(() => setV(f.value ?? ''), [f.value]);
-  const commit = (next: string) => { if (next !== (f.value ?? '')) void onSet(next.trim() ? next.trim() : null); };
+  // Enter commits, then the blur that follows would commit the same value again: remember what was sent
+  const lastSent = useRef<string | null | undefined>(undefined);
+  useEffect(() => { setV(f.value ?? ''); lastSent.current = undefined; }, [f.value]);
+  const commit = (input: string) => {
+    const next = settingToCommit(input, f.value, lastSent.current);
+    if (next === undefined) return;
+    lastSent.current = next;
+    void onSet(next).then((ok) => { if (!ok) lastSent.current = undefined; });
+  };
   return (
     <label className="acfg-field">
       <span>{f.label} <span className="mono muted">{f.key}</span></span>
@@ -105,29 +112,58 @@ function McpAddForm({ state, onDone }: { state: AgentConfigState; onDone: () => 
   );
 }
 
-function SyncFromClaude({ state, cwd, onDone }: { state: AgentConfigState; cwd: string; onDone: () => void }) {
+/** One MCP server → several agents. Source: a Claude Code server (secrets read server-side by name) or a catalog entry. */
+function SyncPanel({ state, cwd, onDone }: { state: AgentConfigState; cwd: string; onDone: () => void }) {
   const toast = useStore((s) => s.toast);
+  const [from, setFrom] = useState<'claude' | 'catalog'>('claude');
   const [list, setList] = useState<ClaudeMcpEntry[] | null>(null);
   const [pick, setPick] = useState('');
+  const [catId, setCatId] = useState(MCP_CATALOG[0]?.id ?? '');
+  const [catEnv, setCatEnv] = useState('');
   const [targets, setTargets] = useState<AgentConfigKind[]>([state.kind]);
   const [overwrite, setOverwrite] = useState(false);
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState<McpSyncResult[] | null>(null);
   useEffect(() => { ws.request<ClaudeMcpEntry[]>({ kind: 'agentConfig.claudeMcp', cwd: cwd || undefined }).then((l) => { setList(l); if (l[0]) setPick(l[0].spec.name); }).catch((e) => { toast(e.message); setList([]); }); }, [cwd]);
+  const cat = MCP_CATALOG.find((c) => c.id === catId);
+  useEffect(() => { setCatEnv((cat?.env ?? []).map((k) => `${k}=`).join('\n')); }, [catId]);
   const run = async () => {
+    let source: McpSyncSource;
+    if (from === 'claude') source = { claude: pick, cwd: cwd || undefined };
+    else {
+      if (!cat) return;
+      try { source = { spec: catalogSpec(cat as any, catEnv) }; } catch (e: any) { toast(e.message); return; }
+    }
     setBusy(true);
-    try { setResults(await ws.request<McpSyncResult[]>({ kind: 'agentConfig.mcp.sync', source: { claude: pick, cwd: cwd || undefined }, targets, overwrite })); onDone(); } catch (e: any) { toast(e.message); } finally { setBusy(false); }
+    try { setResults(await ws.request<McpSyncResult[]>({ kind: 'agentConfig.mcp.sync', source, targets, overwrite })); onDone(); } catch (e: any) { toast(e.message); } finally { setBusy(false); }
   };
   const names = [...new Set((list ?? []).map((e) => e.spec.name))];
+  const ready = from === 'claude' ? !!pick && !!list?.length : !!cat;
   return (
     <div className="acfg-form">
-      <label className="wide">Claude 的 MCP 服务器
-        <select className="field" value={pick} onChange={(e) => setPick(e.target.value)} disabled={!list?.length}>
-          {list === null && <option>读取中…</option>}
-          {list?.length === 0 && <option>Claude 里还没有 MCP 服务器</option>}
-          {names.map((n) => { const e = list!.filter((x) => x.spec.name === n); return <option key={n} value={n}>{n} · {e[0].spec.transport} · {e.map((x) => x.scope).join('/')} · {describeSpec(e[0].spec).slice(0, 60)}</option>; })}
-        </select>
-      </label>
+      <div className="wide acfg-actions">
+        <span className="muted">来源</span>
+        <label className="chip"><input type="radio" name={`src-${state.kind}`} checked={from === 'claude'} onChange={() => setFrom('claude')} /> Claude 的 MCP</label>
+        <label className="chip"><input type="radio" name={`src-${state.kind}`} checked={from === 'catalog'} onChange={() => setFrom('catalog')} /> 常用目录</label>
+      </div>
+      {from === 'claude' ? (
+        <label className="wide">Claude 的 MCP 服务器
+          <select className="field" value={pick} onChange={(e) => setPick(e.target.value)} disabled={!list?.length}>
+            {list === null && <option>读取中…</option>}
+            {list?.length === 0 && <option>Claude 里还没有 MCP 服务器</option>}
+            {names.map((n) => { const e = list!.filter((x) => x.spec.name === n); return <option key={n} value={n}>{n} · {e[0].spec.transport} · {e.map((x) => x.scope).join('/')} · {describeSpec(e[0].spec).slice(0, 60)}</option>; })}
+          </select>
+        </label>
+      ) : (
+        <>
+          <label className="wide">目录条目
+            <select className="field" value={catId} onChange={(e) => setCatId(e.target.value)}>
+              {MCP_CATALOG.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.desc}{c.oauth ? ' · 需要 OAuth' : ''}</option>)}
+            </select>
+          </label>
+          {!!cat?.env?.length && <label className="wide">需要的环境变量<textarea className="field" rows={2} value={catEnv} onChange={(e) => setCatEnv(e.target.value)} /></label>}
+        </>
+      )}
       <div className="wide acfg-actions">
         <span className="muted">同步到</span>
         {CONFIGURABLE.map((k) => (
@@ -135,7 +171,7 @@ function SyncFromClaude({ state, cwd, onDone }: { state: AgentConfigState; cwd: 
         ))}
         <label className="chip"><input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} /> 覆盖同名</label>
         <span className="grow" />
-        <button className="btn sm" disabled={busy || !pick || !targets.length || !list?.length} onClick={run}>{busy ? '同步中…' : '同步'}</button>
+        <button className="btn sm" disabled={busy || !ready || !targets.length} onClick={run}>{busy ? '同步中…' : '同步'}</button>
       </div>
       {results && (
         <div className="wide acfg-results">
@@ -144,7 +180,7 @@ function SyncFromClaude({ state, cwd, onDone }: { state: AgentConfigState; cwd: 
           ))}
         </div>
       )}
-      <div className="wide sub">密钥类的值（env / header）由服务端按名字读取原配置直接写入目标，不经过浏览器。</div>
+      <div className="wide sub">{from === 'claude' ? '密钥类的值（env / header）由服务端按名字读取 Claude 的原配置直接写入目标，不经过浏览器。' : '目录条目里的 OAuth 服务器同步后仍需在各 agent 里登录。'}</div>
     </div>
   );
 }
@@ -181,7 +217,8 @@ export function AgentConfigPanel({ kind }: { kind: AgentConfigKind }) {
       const b = await ws.request<AgentConfigBackup | null>({ kind: 'agentConfig.set', agent: kind, key: f.key, value });
       toast(`${f.label} 已${value === null ? '清除' : '保存'}${b ? '（原文件已备份）' : ''}`, true);
       load();
-    } catch (e: any) { toast(e.message); load(); }
+      return true;
+    } catch (e: any) { toast(e.message); load(); return false; }
   };
   const restore = async (b: AgentConfigBackup) => {
     if (!(await dlg.confirm('恢复这个备份？', { message: `${b.path}\n会被 ${new Date(b.at).toLocaleString()} 的版本（${b.reason}）覆盖；当前内容先另存一份备份。`, okLabel: '恢复' }))) return;
@@ -207,11 +244,11 @@ export function AgentConfigPanel({ kind }: { kind: AgentConfigKind }) {
         <h6>MCP 服务器</h6>
         <span className="badge">{state.mcpVia === 'cli' ? `${kind} mcp` : '编辑配置文件'}</span>
         <span className="grow" />
-        <button className="btn sm ghost" onClick={() => setMode(mode === 'sync' ? 'none' : 'sync')}><Icon name="claude" size={12} /> 从 Claude 同步</button>
+        <button className="btn sm ghost" onClick={() => setMode(mode === 'sync' ? 'none' : 'sync')}><Icon name="claude" size={12} /> 同步到多个 agent</button>
         <button className="btn sm ghost" onClick={() => setMode(mode === 'add' ? 'none' : 'add')}><Icon name="plus" size={12} /> 添加</button>
       </div>
       {mode === 'add' && <McpAddForm state={state} onDone={() => { setMode('none'); load(); }} />}
-      {mode === 'sync' && <SyncFromClaude state={state} cwd={cwd} onDone={load} />}
+      {mode === 'sync' && <SyncPanel state={state} cwd={cwd} onDone={load} />}
       {state.mcpError && <div className="acfg-error"><Icon name="alert" size={12} /> {state.mcpError}</div>}
       <div className="list">
         {state.mcp.map((s) => (

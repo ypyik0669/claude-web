@@ -65,6 +65,25 @@ export function formFromCatalog(id: string, json: Record<string, any>, envKeys: 
   };
 }
 
+/** A catalog entry (+ the user's `KEY=value` lines for its required env) as a spec to add / sync. */
+export function catalogSpec(item: { id: string; json: Record<string, any>; env?: string[] }, envText: string): McpSpec {
+  const spec = formToSpec({ ...formFromCatalog(item.id, item.json, item.env), env: envText });
+  const missing = (item.env ?? []).filter((k) => !spec.env?.[k]);
+  if (missing.length) throw new Error(`请填写 ${missing.join('、')}`);
+  return spec;
+}
+
+/**
+ * What a settings field should send on Enter / blur: the trimmed value (null = clear), or undefined when there is
+ * nothing to send — unchanged from the saved value, or the same value that was just sent (Enter followed by blur).
+ */
+export function settingToCommit(input: string, saved: string | undefined, lastSent: string | null | undefined): string | null | undefined {
+  const next = input.trim() ? input.trim() : null;
+  if (next === (saved ?? null)) return undefined;
+  if (lastSent !== undefined && next === lastSent) return undefined;
+  return next;
+}
+
 /** One-line description of a listed server (values are already masked by the server). */
 export function describeSpec(s: McpSpec): string {
   return s.transport === 'stdio' ? [s.command, ...(s.args ?? [])].map((a) => quote(a ?? '')).join(' ') : s.url ?? '';

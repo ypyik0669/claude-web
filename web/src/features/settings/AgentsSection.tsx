@@ -4,7 +4,7 @@ import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { dlg } from '@/ui/dialog';
 import type { AgentConfigKind, AgentInfo, AgentKind } from '@shared';
-import { Icon } from '@/ui/icons';
+import { ICON_NAMES, Icon, type IconName } from '@/ui/icons';
 import { AgentConfigPanel, CONFIGURABLE } from './AgentConfigPanel';
 
 const PROTO_LABEL: Record<AgentInfo['protocol'], string> = { claude: 'Claude Code', acp: 'ACP', codex: 'app-server' };
@@ -49,7 +49,8 @@ function AgentCard({ a, onChange }: { a: AgentInfo; onChange: () => void }) {
     <div className={clsx('row agent-card', !a.enabled && 'muted')} style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span className={clsx('dot', a.installed ? 'idle' : 'error')} />
-        <span style={{ fontSize: 16 }}>{a.icon}</span>
+        {/* AgentInfo.icon is an icon name (custom ACP agents may still carry an old glyph) */}
+        <Icon name={(ICON_NAMES as string[]).includes(a.icon) ? (a.icon as IconName) : 'agent'} size={16} />
         <div className="grow">
           <div>{a.name} <span className="mono muted" style={{ fontSize: 11.5 }}>{a.installed ? a.version : '未安装'}</span> <span className="badge" style={{ marginLeft: 6 }}>{PROTO_LABEL[a.protocol]}</span>{a.label && <span className="badge" style={{ marginLeft: 4, color: 'var(--blue)' }}>{a.label}</span>}</div>
           <div className="sub mono">{a.command} {a.args.join(' ')}</div>

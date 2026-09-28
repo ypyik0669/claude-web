@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeSpec, formFromCatalog, formToSpec, parsePairs, splitArgs } from './agent-config-form';
+import { catalogSpec, describeSpec, formFromCatalog, formToSpec, parsePairs, settingToCommit, splitArgs } from './agent-config-form';
 
 describe('agent config MCP form', () => {
   it('splitArgs keeps quoted groups and glued tokens', () => {
@@ -18,6 +18,23 @@ describe('agent config MCP form', () => {
     expect(formToSpec({ name: 'w', transport: 'http', command: '', url: 'https://x', env: '', headers: 'X-A: 1' })).toEqual({ name: 'w', transport: 'http', url: 'https://x', headers: { 'X-A': '1' } });
     expect(() => formToSpec({ name: '', transport: 'stdio', command: 'x', url: '', env: '', headers: '' })).toThrow(/名称/);
     expect(() => formToSpec({ name: 'a', transport: 'sse', command: '', url: '', env: '', headers: '' })).toThrow(/URL/);
+  });
+
+  it('settingToCommit: Enter then blur sends once; unchanged / already-sent values are skipped; blank clears', () => {
+    expect(settingToCommit(' b ', 'a', undefined)).toBe('b');
+    expect(settingToCommit('b', 'a', 'b')).toBeUndefined(); // blur right after Enter
+    expect(settingToCommit('a', 'a', undefined)).toBeUndefined();
+    expect(settingToCommit('', 'a', undefined)).toBeNull();
+    expect(settingToCommit('  ', undefined, undefined)).toBeUndefined();
+    expect(settingToCommit('', 'a', null)).toBeUndefined();
+    expect(settingToCommit('a', 'b', 'b')).toBe('a'); // changed back after a save
+  });
+
+  it('catalogSpec turns a catalog entry (+ filled env) into a spec; required env must be filled', () => {
+    const item = { id: 'brave-search', json: { type: 'stdio', command: 'npx', args: ['-y', '@x/brave'] }, env: ['BRAVE_API_KEY'] };
+    expect(() => catalogSpec(item, 'BRAVE_API_KEY=')).toThrow(/BRAVE_API_KEY/);
+    expect(catalogSpec(item, 'BRAVE_API_KEY=k')).toEqual({ name: 'brave-search', transport: 'stdio', command: 'npx', args: ['-y', '@x/brave'], env: { BRAVE_API_KEY: 'k' } });
+    expect(catalogSpec({ id: 'exa', json: { type: 'http', url: 'https://mcp.exa.ai/mcp' } }, '')).toEqual({ name: 'exa', transport: 'http', url: 'https://mcp.exa.ai/mcp' });
   });
 
   it('formFromCatalog round-trips through formToSpec', () => {
