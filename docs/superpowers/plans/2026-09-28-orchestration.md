@@ -52,3 +52,15 @@ spec：`docs/superpowers/specs/2026-09-28-orchestration-design.md`
 | 发给 agent 的提示词第一行加 `[编排 <run 名> · <节点名>]` | 会话标题（Claude 从首条提示派生、外部 agent 取首条文本）一眼能认出是编排开的 | 提示词多一行 |
 | 裁判回复最后一行 `WINNER: <agent>` 解析成推荐；解析不到就只展示正文 | 用户最终确认，推荐只是辅助 | — |
 | 前端运行记录用独立的小 store（`features/orchestra/state.ts`）而不是往 `store/index.ts` 里加 | 共享文件只做最小改动 | App 里多一行初始化 |
+
+## 审查后修订（2026-09-28，覆盖上表中冲突的条目：worktree 位置、exclude、清理 / 重试行为）
+
+| 裁决 | 理由 | 代价 |
+| --- | --- | --- |
+| worktree 放 `<dataDir>/worktrees/<仓库名>-<hash8>/…`（M5 选项二），不再写 `.git/info/exclude` | 仓库父目录可能是家目录或 monorepo，往那里写不可控；dataDir 本来就是本应用的地盘 | worktree 与仓库不在一起，路径较长 |
+| 合并前拒绝：进行中的 merge / cherry-pick / revert / rebase、暂存区非空；只 abort 自己造成的 MERGE_HEAD | C1 | 用户要先收拾好工作区才能选胜者 |
+| 任何删除都走 `drop()`：脏 worktree 保留；分支只在已合并（`-d`）或仍停在编排记录的提交（`-D`）时删 | C2 / I1 | 用户手动改过的落选分支会留下，需要手动清理（面板列出来） |
+| 重试 / 续跑换 `-attemptN` 新名字，旧的进 `retained`，不删除旧 worktree | C2 | 多次重试会积累 worktree，删运行记录时可选清理 |
+| 比选合并失败回到 waiting；任务节点合并失败仍是 failed（保留 worktree） | 比选还能重新选；任务节点没有「选择」这一步 | — |
+| IM 审批只接受绑定了该 run 某会话的聊天；没有绑定时不退回默认聊天 | 网关没有「默认聊天」概念，硬造一个会把审批发错地方 | 想在 IM 审批要先绑定 |
+| 用户动作按 run 加锁（审批不加锁，它在第一个 await 之前就切了状态） | I2 | 合并进行中对同一 run 的其它操作会被拒绝，稍候重试 |
