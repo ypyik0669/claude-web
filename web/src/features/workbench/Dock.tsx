@@ -117,8 +117,17 @@ export function Dock() {
   const dispatch = useStore((s) => s.dispatchLayout);
   const reviewCount = useRightPanel((s) => s.reviewCount);
   const drag = useRef<{ x0: number; w0: number; id: number } | null>(null);
+  const list = useRef<HTMLDivElement>(null);
   const view = dockView(dock, { workbench, inspect: !!inspect });
   const { tabs, active, mounted } = view;
+  // many tabs scroll sideways: keep the one in front in view (only the tab list scrolls, never the page)
+  useEffect(() => {
+    const l = list.current;
+    const t = l?.querySelector<HTMLElement>('.tab.active');
+    if (!l || !t) return;
+    if (t.offsetLeft < l.scrollLeft) l.scrollLeft = t.offsetLeft;
+    else if (t.offsetLeft + t.offsetWidth > l.scrollLeft + l.clientWidth) l.scrollLeft = t.offsetLeft + t.offsetWidth - l.clientWidth;
+  }, [active, tabs.length, dock.open, dock.minimized, workbench]);
   // hidden (Ctrl+J / the header's right-panel button) is CSS too: closing the panel must not end the terminal's pty
   if (!mounted.length) return null;
   const min = dock.minimized;
@@ -155,7 +164,7 @@ export function Dock() {
       {!min && <div className="resizer" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onDoubleClick={() => dispatch({ t: 'dock.set', patch: { width: DOCK_DEFAULT_WIDTH } })} title="拖动调整 · 双击复位" />}
       <div className="dock-tabs">
         {/* the tabs scroll sideways on their own: the 「更多」 menu below the row must not be clipped by a scroller */}
-        <div className="dock-tablist" role="tablist" aria-label={TERMS.dock}>
+        <div className="dock-tablist" role="tablist" aria-label={TERMS.dock} ref={list}>
           {tabs.map(({ id, fixed }) => (
             <div
               key={id}

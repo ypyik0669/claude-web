@@ -308,7 +308,7 @@ export function ReviewView({ visible, inPlace }: { visible: boolean; inPlace?: b
   const empty =
     !loaded ? '读取中…'
     : sc === 'uncommitted' ? '没有未提交的改动，工作区是干净的。'
-    : sc === 'staged' ? '还没有暂存的改动。在上面的文件里点「暂存」，或者用「全部暂存」。'
+    : sc === 'staged' ? '还没有暂存的改动。在「未提交的改动」里点文件右边的 ＋，或者用「全部暂存」。'
     : sc === 'session' ? '这个对话还没有改动文件。Claude 改了文件之后会出现在这里。'
     : !rev ? '从左上角的范围菜单里选一次提交。'
     : commitText === null ? '读取中…' : '这次提交没有改动文件。';
@@ -321,7 +321,7 @@ export function ReviewView({ visible, inPlace }: { visible: boolean; inPlace?: b
           <span className="rv-sub-title">Git：分支、拉取推送、stash、worktree、历史</span>
         </div>
         {gitMounted && root && <div className="rv-git-body"><GitView cwd={cwd} /></div>}
-        {gitMounted && !root && <div className="empty">{cwd} 不是 git 仓库。</div>}
+        {gitMounted && !root && <div className="empty">{loaded ? `${cwd} 不是 git 仓库。` : '读取中…'}</div>}
       </div>
       <div className="rv-main" hidden={sub !== 'diff'}>
         <div className="rv-bar">

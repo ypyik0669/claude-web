@@ -77,9 +77,12 @@ export function App() {
   // tab row, the group bar or a tab strip
   const theme = useStore((s) => s.theme);
   const sideSurface = useStore((s) => {
-    const vis = chromeVisibility(s.layout, { workbench: workbenchOn(s.settings) });
+    const workbench = workbenchOn(s.settings);
+    // an open right panel owns the corner: its tab row is --bg-1 only with the workbench tools (the default one is white)
+    if (rpWidth > MIN_RAIL) return workbench;
+    const vis = chromeVisibility(s.layout, { workbench });
     return vis.groupBar || Object.values(vis.tabStrip).some(Boolean);
-  }) || rpWidth > MIN_RAIL;
+  });
   useEffect(() => {
     const d = desktop;
     if (!d) return;

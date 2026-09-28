@@ -1507,7 +1507,7 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:
 /* the default right panel (spec §5.6, mock-session.png): a white sheet, four text tabs, temporary tabs with a × */
 .dock.simple { background: var(--surface-0); }
 /* the tabs scroll inside their own list; the row itself does not (the 「更多」 menu hangs below it) */
-.dock-tablist { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; }
+.dock-tablist { position: relative; display: flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; overflow-x: auto; scrollbar-width: none; }
 .dock-tablist .tab { flex: none; }
 .dock.min .dock-tablist { flex-direction: column; align-items: stretch; gap: 4px; overflow: visible; }
 .dock.simple:not(.min) .dock-tabs { padding: 0 8px 0 12px; overflow: visible; }
@@ -1520,6 +1520,7 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:
 .dock.simple:not(.min) .dock-tabs .tab:not(.fixed) ~ .tab:not(.fixed)::before { display: none; }
 .dock-tabs .tab .n { font-size: var(--fs-meta); color: var(--ink-4); font-weight: 400; font-variant-numeric: tabular-nums; }
 .dock-more { position: relative; display: inline-flex; }
+html.desktop .dock-tabs .menu { -webkit-app-region: no-drag; } /* the 「更多」 menu hangs from the title-bar row */
 .dock-more-menu { top: 34px; right: 0; width: 240px; }
 .dock-more-menu .grow { flex: 1; min-width: 0; }
 .dock-panel[data-panel="files"], .dock-panel[data-panel="explorer"] { overflow: hidden; }
