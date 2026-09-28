@@ -78,8 +78,19 @@ export function Popover({ anchor, onClose, prefer = 'up', align = 'left', classN
       if ((t as Element).closest?.('.modal-bg, .modal')) return;
       onClose(false);
     };
+    // the focused row went away under the focus (an entry removed from the menu): the focus is on <body>, out of the
+    // menu's own key handling — Esc still closes the menu (and hands the focus back to the chip)
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const a = document.activeElement;
+      if (a && a !== document.body && a !== document.documentElement) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose(true);
+    };
     document.addEventListener('mousedown', off);
-    return () => document.removeEventListener('mousedown', off);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', off); document.removeEventListener('keydown', esc); };
   }, [anchor, onClose]);
   // the one anchored menu app-wide (closes the sidebar's, the header ···…); the settings page closes it too
   useMenuClaim(() => onClose(false));

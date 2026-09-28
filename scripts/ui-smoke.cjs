@@ -1047,6 +1047,9 @@ function driver() {
         await sleep(250);
         const inGroup = await js(`[...document.querySelectorAll('.cmdk .it .t')].filter((t) => /^(打开|隐藏|关闭).*面板/.test(t.textContent)).length`);
         check('palette: searching 「面板」 lists every panel', inGroup >= inv.panels.length, `${inGroup} / ${inv.panels.length}`);
+        // each group title once: a group the query names is one block, not split around other hits (re-review M-c)
+        const grpTitles = await js(`[...document.querySelectorAll('.cmdk .grp')].map((g) => g.textContent)`);
+        check('palette: searching 「面板」 shows each group title once', grpTitles.length > 0 && new Set(grpTitles).size === grpTitles.length, JSON.stringify(grpTitles));
         await js('window.__store.setState({ paletteOpen: false })');
         await js(`(() => { const d = JSON.parse(${JSON.stringify(dockBefore)}); window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { tabs: d.tabs, active: d.active, open: false, minimized: false } }); })()`);
         await sleep(300);
@@ -1172,13 +1175,28 @@ function driver() {
           check('the title row’s × closes the temporary panel and lands on 审阅 (the fixed tab in front before); the count and the row go', back, await js(dockState));
           // …and closing one from 「更多」 does the same
           if (!r1440.strip) {
+            // two temporary panels folded into 「更多」, closed from its 「已打开」 list with the keyboard (re-review M-b):
+            // the focus moves to the next open row, ↓ and Esc keep working, Esc hands the focus back to 「更多」
+            await js(`(() => { const d = window.__store.getState().dispatchLayout; d({ t: 'dock.show', panel: 'usage' }); d({ t: 'dock.show', panel: 'goals' }); })()`);
+            await sleep(400);
             await click('.dock button.dock-more');
-            await click('.dock-more-menu [data-panel="usage"]');
-            await sleep(500);
+            await waitFor('!!document.querySelector(".dock-more-menu .dock-more-open")', 2000);
+            // (Enter on the focused × = its click)
+            await js(`(() => { const x = document.querySelector('.dock-more-menu .dock-more-open[data-open="usage"] button.x'); x.focus(); document.activeElement.click(); })()`);
+            await sleep(300);
+            const kb1 = await js(`(() => { const a = document.activeElement; return { menu: !!document.querySelector('.dock-more-menu'), on: a?.closest('.dock-more-open')?.dataset.open ?? a?.tagName, usage: window.__store.getState().layout.dock.tabs.includes('usage') }; })()`);
+            await key('Down');
+            const kb2 = await js(`!!document.activeElement?.closest('.dock-more-menu')`);
+            await key('Escape');
+            await sleep(200);
+            const kb3 = await js(`({ menu: !!document.querySelector('.dock-more-menu'), onMore: !!document.activeElement?.classList.contains('dock-more') })`);
+            check('「更多」: closing an open panel with the keyboard moves the focus to the next open row; ↓ and Esc still work, Esc gives the focus back to 「更多」', !kb1.usage && kb1.menu && kb1.on === 'goals' && kb2 && !kb3.menu && kb3.onMore, JSON.stringify({ kb1, kb2, kb3 }));
+            // the last one: the menu closes and the focus goes back to 「更多」
             await click('.dock button.dock-more');
-            await click('.dock-more-menu .dock-more-open[data-open="usage"] button.x');
-            const back2 = await waitFor(landedOn('usage'), 3000);
-            check('closing the temporary tab from 「更多」 lands on 审阅 too', back2, await js(dockState));
+            await waitFor('!!document.querySelector(".dock-more-menu .dock-more-open")', 2000);
+            await js(`(() => { const x = document.querySelector('.dock-more-menu .dock-more-open[data-open="goals"] button.x'); x.focus(); document.activeElement.click(); })()`);
+            const back2 = await waitFor(`${landedOn('goals')} && !document.querySelector('.dock-more-menu') && !!document.activeElement?.classList.contains('dock-more')`, 3000);
+            check('closing the last one from 「更多」 lands on 审阅, closes the menu and gives the focus back to 「更多」', back2, await js(`JSON.stringify({ dock: ${dockState}, menu: !!document.querySelector('.dock-more-menu'), focus: document.activeElement?.className })`));
           }
           // switching conversation (审阅 reloads: its count goes empty, then back) never moves the row or the panel
           await js(`(() => { const r = document.querySelector('.dock .dock-tabs'); window.__cwFlips = []; window.__cwFlipObs = new MutationObserver(() => window.__cwFlips.push(r.className)); window.__cwFlipObs.observe(r, { attributes: true, attributeFilter: ['class'] }); })()`);
