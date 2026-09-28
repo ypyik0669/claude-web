@@ -27,6 +27,8 @@ export function buildHtml(o: ExportOptions): string {
   // drop interactive leftovers and force collapsed content open
   clone.querySelectorAll('button.link, .hover-actions, .msg-actions, .find-bar').forEach((n) => n.remove());
   clone.querySelectorAll('details').forEach((d) => d.setAttribute('open', ''));
+  // a folded turn keeps its steps in the DOM, hidden: the export shows them (as before the fold existed)
+  clone.querySelectorAll('[data-fold-body][hidden]').forEach((n) => n.removeAttribute('hidden'));
   clone.querySelectorAll('textarea, input').forEach((n) => n.remove());
   const theme = o.theme ?? document.documentElement.dataset.theme ?? 'dark';
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');

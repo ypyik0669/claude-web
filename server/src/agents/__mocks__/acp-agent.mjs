@@ -13,6 +13,7 @@ const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 let nextId = 100;
 let lastMcp = [];
 let sessionCwd = process.cwd();
+let goalPrompts = 0, callSeq = 0, slowSeq = 0;
 const pending = new Map();
 const req = (method, params) => new Promise((res) => { const id = nextId++; pending.set(id, res); send({ jsonrpc: '2.0', id, method, params }); });
 const update = (sessionId, update) => send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update } });
@@ -60,20 +61,25 @@ rl.on('line', async (line) => {
       const text = m.params.prompt.map((p) => p.text ?? '').join('');
       update(sid, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'thinking about it' } });
       update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Echo: ' } });
-      update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+      // a goal's prompt carries 「GOAL_STATUS: complete…」, so the echo finishes a goal in one round; the first
+      // MOCK_GOAL_CONTINUE goal prompts answer 「GOAL_STATUS: continue」 instead (a goal that runs several rounds)
+      const goalContinue = /GOAL_STATUS/.test(text) && ++goalPrompts <= Number(process.env.MOCK_GOAL_CONTINUE ?? 0);
+      update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: goalContinue ? `${text.replace(/GOAL_STATUS/g, 'GOAL-STATUS')}\nGOAL_STATUS: continue` : text } });
+      // one id per call (call-1, call-2 … / slow-1 …): a later prompt reusing an id would update the earlier step
+      const callId = text.includes('tool') ? `call-${++callSeq}` : '', slowId = text.includes('slow') ? `slow-${++slowSeq}` : '';
       if (text.includes('tool')) {
-        update(sid, { sessionUpdate: 'tool_call', toolCallId: 'call-1', title: 'Read package.json', kind: 'read', status: 'pending', locations: [{ path: 'C:/x/package.json' }] });
-        const perm = await req('session/request_permission', { sessionId: sid, toolCall: { toolCallId: 'call-1', title: 'Read package.json', kind: 'read' }, options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }, { optionId: 'deny', name: 'Deny', kind: 'reject_once' }] });
+        update(sid, { sessionUpdate: 'tool_call', toolCallId: callId, title: 'Read package.json', kind: 'read', status: 'pending', locations: [{ path: 'C:/x/package.json' }] });
+        const perm = await req('session/request_permission', { sessionId: sid, toolCall: { toolCallId: callId, title: 'Read package.json', kind: 'read' }, options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }, { optionId: 'deny', name: 'Deny', kind: 'reject_once' }] });
         const allowed = perm?.outcome?.optionId === 'allow';
-        update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'call-1', status: allowed ? 'completed' : 'failed', content: [{ type: 'content', content: { type: 'text', text: allowed ? '{"name":"x"}' : 'denied' } }] });
+        update(sid, { sessionUpdate: 'tool_call_update', toolCallId: callId, status: allowed ? 'completed' : 'failed', content: [{ type: 'content', content: { type: 'text', text: allowed ? '{"name":"x"}' : 'denied' } }] });
         update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: allowed ? ' (read ok)' : ' (denied)' } });
       }
       if (text.includes('mcp')) update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ` [mcp: ${lastMcp.map((s) => s.name).join(',') || 'none'}]` } });
       // 'slow' keeps a tool call running so the UI's mid-turn states can be looked at
       if (text.includes('slow')) {
-        update(sid, { sessionUpdate: 'tool_call', toolCallId: 'slow-1', title: 'npm test -w server', kind: 'execute', status: 'in_progress' });
+        update(sid, { sessionUpdate: 'tool_call', toolCallId: slowId, title: 'npm test -w server', kind: 'execute', status: 'in_progress' });
         await new Promise((r) => setTimeout(r, Number(process.env.MOCK_SLOW_MS ?? 25000)));
-        update(sid, { sessionUpdate: 'tool_call_update', toolCallId: 'slow-1', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: '61 passed' } }] });
+        update(sid, { sessionUpdate: 'tool_call_update', toolCallId: slowId, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: '61 passed' } }] });
       }
       // 'WRITE:<file>' writes <file> in the session cwd (content = MOCK_ACP_TAG) so orchestration e2e has a diff to merge
       for (const w of text.matchAll(/WRITE:([\w.-]+)/g)) fs.writeFileSync(path.join(sessionCwd, w[1]), `${process.env.MOCK_ACP_TAG ?? 'mock'}\n`);

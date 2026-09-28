@@ -1,10 +1,14 @@
 // Screenshot the web UI through Electron (electron.exe is a GUI app on Windows: it prints nothing to a bash pipe,
 // so this writes <out>.log next to the image):
 //   node_modules/electron/dist/electron.exe "<abs path>\scripts\shot.cjs" <url> <out.png> [jsBeforeShot] [delayMs] [width] [height]
+//   (SHOT_JS_FILE=<file.js> instead of jsBeforeShot for a multi-line script; SHOT_URL for the full URL)
 const fs = require('node:fs');
 // NOTE: a bare http(s) URL in argv makes Electron's default app treat the launch as "open URL" and exit 127,
 // so the URL is passed as `host:port/path` (scheme added here) or via env SHOT_URL.
-const [rawUrl, out, js = '', delay = '2500', w = '1360', h = '860'] = process.argv.slice(2);
+const [rawUrl, out, argJs = '', delay = '2500', w = '1360', h = '860'] = process.argv.slice(2);
+// SHOT_JS_FILE: the page script from a file — any number of lines, colons and quotes (argv carries only one line and
+// a token with ':' makes Electron exit); it wins over the argv script
+const js = process.env.SHOT_JS_FILE ? fs.readFileSync(process.env.SHOT_JS_FILE, 'utf8') : argJs;
 const url = process.env.SHOT_URL ?? (/^https?:/.test(rawUrl) ? rawUrl : `http://${rawUrl}`);
 const log = (s) => { try { fs.appendFileSync(`${out}.log`, `${new Date().toISOString()} ${s}\n`); } catch { /* ignore */ } };
 try { fs.writeFileSync(`${out}.log`, ''); } catch { /* ignore */ }

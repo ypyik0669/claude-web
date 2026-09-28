@@ -6,6 +6,7 @@ import { parsePeerId } from '@shared';
 import { useStore } from '@/store';
 import { currentChatTile, type PanelId } from '@/model/layout';
 import { openAutomation } from '@/features/automation/state';
+import { blockRemoteOpen } from '@/features/remote-guard';
 import { viewTarget, type ExplorerMode, type ReviewIntent } from './panel-entries';
 import type { WbView } from './wb-views';
 
@@ -15,8 +16,10 @@ interface RightPanelState {
   explorer: { mode: ExplorerMode; n: number } | null;
   /** how many files the right panel's review lists right now (its tab shows the number, like the mock's 「审阅 3」) */
   reviewCount: number;
+  /** an in-place 改动 view (a conversation whose views stay in place): the file a change card asked for (only that conversation's in-place review takes it) */
+  inPlace: { sessionId: string; path?: string; n: number } | null;
 }
-export const useRightPanel = create<RightPanelState>(() => ({ review: null, explorer: null, reviewCount: 0 }));
+export const useRightPanel = create<RightPanelState>(() => ({ review: null, explorer: null, reviewCount: 0, inPlace: null }));
 let seq = 0;
 
 // The functions below are the right panel's public entry points (the sidebar, the composer, the palette and the
@@ -86,4 +89,22 @@ export function openSessionView(view: WbView, at?: { paneId: string; tileId: str
   if (target.review) openReview(target.review);
   else if (target.explorer) openExplorer(target.explorer);
   else showPanel(target.panel);
+}
+
+/**
+ * A turn's 「改动了 N 个文件」 card (redesign phase 5): 审阅 on this conversation's changes, scrolled to `path` and
+ * opened — where 改动 opens is `viewTarget`'s call: the right panel (on a phone the bottom drawer, redesign phase 7);
+ * a view in place (`at`: its tile) where `viewTarget` says so; a conversation on another machine has its files
+ * there — a note says so.
+ */
+export function openChangedFile(sessionId: string, path?: string, at?: { paneId: string; tileId: string }): void {
+  if (blockRemoteOpen(sessionId, path)) return;
+  // where 改动 opens is `viewTarget`'s call (the same as ··· → 改动), not this card's
+  const target = viewTarget('changes', { mobile: useStore.getState().mobile, remote: false });
+  if (target.to === 'tile') {
+    openSessionView('changes', at);
+    useRightPanel.setState({ inPlace: { sessionId, path, n: ++seq } });
+    return;
+  }
+  openReview({ ...((target.to === 'panel' && target.review) || { scope: 'session' }), path });
 }

@@ -280,7 +280,7 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 
 /* ---------- chat ---------- */
 .chat { flex: 1; overflow: auto; min-height: 0; padding: 8px 0 24px; }
-.chat-inner { max-width: 820px; margin: 0 auto; padding: 0 24px; }
+.chat-inner { max-width: calc(720px + 2 * 24px); margin: 0 auto; padding: 0 24px; } /* a reading column of 620–720px (spec §5.3) */
 .msg { margin: 14px 0; animation: fadein 0.18s ease-out; }
 .msg.user { display: flex; justify-content: flex-end; margin-top: 26px; }
 .msg.user .bubble { background: var(--user-bg); border-radius: var(--r-2xl); padding: 9px 14px; max-width: 80%; white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
@@ -554,7 +554,7 @@ button.link:hover { text-decoration: underline; }
 
 /* ---------- composer ---------- */
 .composer { padding: 6px 24px 10px; }
-.composer-inner { max-width: 820px; margin: 0 auto; position: relative; }
+.composer-inner { max-width: 720px; margin: 0 auto; position: relative; }
 .composer-box { background: var(--surface-elev); border: 1px solid var(--edge-default); border-radius: var(--r-2xl); padding: 10px 12px 8px; box-shadow: var(--elev-1); transition: border-color var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out); }
 .composer-box:focus-within { border-color: var(--ink-3); }
 .composer textarea { width: 100%; background: transparent; border: none; resize: none; max-height: 280px; min-height: 26px; line-height: 1.55; padding: 2px 4px; font-size: 14.5px; }
@@ -727,7 +727,7 @@ input.field:focus { border-color: var(--ink-3); }
 
 /* find bar + jump */
 .chat { position: relative; }
-.find-bar { position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; align-items: center; margin: 0 auto 8px; max-width: 820px; background: var(--surface-elev); border: 1px solid var(--edge-strong); border-radius: var(--r-xl); padding: 6px 8px; box-shadow: var(--elev-1); }
+.find-bar { position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; align-items: center; margin: 0 auto 8px; max-width: 720px; background: var(--surface-elev); border: 1px solid var(--edge-strong); border-radius: var(--r-xl); padding: 6px 8px; box-shadow: var(--elev-1); }
 .find-bar input { flex: 1; background: var(--surface-0); border: 1px solid var(--edge-default); border-radius: var(--r-md); padding: 4px 8px; }
 .find-bar .cnt { color: var(--ink-3); font-size: 12px; min-width: 60px; text-align: center; }
 ::highlight(find) { background: rgba(217, 164, 65, 0.35); }
@@ -2123,7 +2123,8 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .auto-head { padding-left: 
   .app.mobile .rpanel .dock > .resizer { display: none; }
   .app.mobile .sheet-backdrop { position: fixed; inset: 0; z-index: 47; background: var(--scrim); }
   .app.mobile.sheet-covered .rpanel, .app.mobile.sheet-covered .sheet-backdrop { visibility: hidden; }
-  /* permission cards: full width; when the buttons do not fit on one line 允许一次 gets a line of its own */
+  /* Mission Control's permission cards (in the drawer): full width; when the buttons do not fit on one line 允许一次
+     gets a line of its own. A conversation's own cards are phase 5's docked card (.pdock, its own @container). */
   .app.mobile .perm { margin: var(--sp-3) 0; container-type: inline-size; }
   .app.mobile .perm .actions .btn { min-height: 36px; }
   .app.mobile .perm .actions input { min-width: 0; flex: 1 1 100%; order: 3; }
@@ -2147,3 +2148,114 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .auto-head { padding-left: 
 }
 @keyframes sheet-up { from { transform: translateY(24px); opacity: 0.4; } to { transform: none; opacity: 1; } }
 :root[data-reduce-motion='1'] .app.mobile .rpanel, :root[data-reduce-motion='1'] .conn-banner { animation: none; }
+
+/* ---- redesign phase 5: chat rendering (spec §5.3, mock-session.png) ---- */
+/* the reading column (.chat-inner / .composer-inner) is 720px wide — see 「chat」 above */
+.msg.user .bubble { font-size: var(--fs-body); line-height: 1.6; border-radius: 18px; padding: 9px 15px; }
+
+/* a finished turn: its steps folded into one line that opens to the same timeline */
+.turn-sum-row { margin: 8px 0 2px; }
+.turn-sum { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 28px; padding: 0 8px 0 4px; margin-left: -4px; border-radius: var(--r-md); font-size: 13px; color: var(--ink-3); text-align: left; transition: background var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out); }
+.turn-sum:hover { background: var(--layer-hover); color: var(--ink-2); }
+.turn-sum .chev { flex: none; color: var(--ink-4); }
+.turn-sum .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.turn-sum .lbl .err { color: var(--err); }
+.turn.folded.open > .turn-body { border-left: 1.5px solid var(--edge-subtle); padding-left: 12px; margin: 2px 0 6px 5px; animation: fadein var(--dur-2) var(--ease-out); }
+.turn.folded.open > .turn-body > .assistant-wrap:first-child > .msg.assistant > .trail:first-child { margin-top: 4px; }
+:root[data-reduce-motion='1'] .turn.folded.open > .turn-body { animation: none; }
+
+/* a step blocked on you: yellow is 「需要你」 only (spec §6.4) */
+.tl .mark.waiting { color: var(--warn); }
+.tl.waiting .tool-head .name { color: var(--ink-1); }
+.tool-head .st.wait { color: var(--warn); font-weight: 500; }
+
+/* 「改动了 N 个文件 +a −b [审阅]」 at the end of a turn */
+.fcard { border: 1px solid var(--edge-default); border-radius: var(--r-xl); overflow: hidden; margin: 6px 0 4px; background: var(--surface-0); }
+.turn + .turn > .msg.user:first-child { margin-top: 20px; }
+/* a round nobody typed here (a goal's 继续, IM, another window): no user message on top, a little room instead */
+.turn + .turn[data-turn^="cont-"] { margin-top: 12px; }
+.fcard-h { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 0 8px 0 14px; font-size: 13.5px; font-weight: 500; color: var(--ink-1); }
+.fcard-h > svg { flex: none; color: var(--ink-3); }
+.fcard-h .t { white-space: nowrap; }
+.fcard-h .n { font-size: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.fcard-h .btn { margin-left: auto; }
+.fcard .add { color: var(--ok); }
+.fcard .del { color: var(--err); }
+.fcard-f { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 34px; padding: 0 14px; border-top: 1px solid var(--edge-subtle); font-size: 12.5px; text-align: left; transition: background var(--dur-2) var(--ease-out); }
+.fcard-f:hover { background: var(--layer-hover); }
+.fcard-f .p { flex: 1; min-width: 0; font-family: var(--mono); color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fcard-f .p .d { color: var(--ink-4); }
+.fcard-f .n { flex: none; font-size: 12px; font-variant-numeric: tabular-nums; }
+.fcard-f.more { color: var(--ink-3); font-family: inherit; }
+
+/* message actions: icons that show on hover, with the keyboard focus inside the message, and always on touch */
+.msg-actions { gap: 2px; }
+.msg-actions button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--r-md); background: transparent; color: var(--ink-4); cursor: pointer; }
+.msg-actions button:hover { background: var(--layer-hover); color: var(--ink-1); }
+.msg-actions button.on { color: var(--ink-1); background: var(--layer-selected); border: 0; }
+.msg-actions button:disabled { opacity: 0.4; cursor: default; background: transparent; }
+.msg.user .msg-actions { display: inline-flex; top: -26px; opacity: 0; pointer-events: none; transition: opacity var(--dur-2) var(--ease-out); }
+.msg.user .msg-actions button { width: 26px; height: 24px; }
+.msg.user:hover .msg-actions, .msg.user:focus-within .msg-actions { opacity: 1; pointer-events: auto; }
+.assistant-wrap .msg-actions, .turn-answer > .msg-actions { position: static; display: flex; margin: -2px 0 4px -6px; opacity: 0; transition: opacity var(--dur-2) var(--ease-out); }
+.assistant-wrap:hover > .msg-actions, .assistant-wrap:focus-within > .msg-actions, .turn-answer:hover > .msg-actions, .turn-answer:focus-within > .msg-actions { opacity: 1; }
+@media (hover: none) {
+  .msg.user .msg-actions, .assistant-wrap .msg-actions, .turn-answer > .msg-actions { opacity: 1; pointer-events: auto; }
+}
+.app.mobile .msg.user .msg-actions, .app.mobile .assistant-wrap .msg-actions, .app.mobile .turn-answer > .msg-actions { opacity: 1; pointer-events: auto; }
+.app.mobile .msg.user .msg-actions { position: static; justify-content: flex-end; margin: 0 0 2px; }
+.app.mobile .msg.user { flex-direction: column; align-items: flex-end; }
+
+/* the card a permission / question / plan docks above the composer (it takes the run card's place) */
+.pdock { container-type: inline-size; margin: 0 0 10px; padding: 12px 14px 12px 16px; border: 1px solid var(--edge-default); border-radius: 18px; background: var(--surface-elev); box-shadow: var(--elev-2); animation: fadein var(--dur-3) var(--ease-out); }
+:root[data-reduce-motion='1'] .pdock { animation: none; }
+.pd-head { display: flex; align-items: center; gap: 8px; min-height: 24px; font-size: 14px; font-weight: 500; color: var(--ink-1); }
+.pd-head .pd-ic { flex: none; color: var(--warn); }
+.pd-head .grow { flex: 1; }
+.pd-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-more { flex: none; font-size: 12px; font-weight: 400; color: var(--warn); background: var(--warn-soft); border-radius: var(--r-pill); padding: 1px 8px; }
+.pd-where { flex: none; display: inline-flex; align-items: center; gap: 5px; max-width: 40%; font-size: 12.5px; font-weight: 400; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-where svg { flex: none; }
+.pd-body { margin: 10px 0 2px; }
+.pd-cmd { display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px; border: 1px solid var(--edge-subtle); border-radius: var(--r-lg); background: var(--surface-1); font-family: var(--mono); font-size: 13px; color: var(--ink-1); max-height: 160px; overflow: auto; }
+.pd-cmd .ps { color: var(--ink-4); flex: none; user-select: none; }
+.pd-cmd code { white-space: pre-wrap; word-break: break-word; }
+.pd-note { margin-top: 6px; font-size: 12.5px; color: var(--ink-3); }
+.pd-scroll { max-height: min(40vh, 320px); overflow: auto; }
+.pd-scroll .diff, .pd-scroll .code-block { margin: 0; }
+.pd-scroll.jt { padding: 6px; border: 1px solid var(--edge-subtle); border-radius: var(--r-lg); background: var(--surface-1); }
+.pd-plan { padding: 2px 12px; border: 1px solid var(--edge-subtle); border-radius: var(--r-lg); background: var(--surface-1); }
+.pd-q { margin-bottom: 10px; }
+.pd-qt { margin-bottom: 4px; font-size: 13.5px; color: var(--ink-1); }
+.pdock .q-opt { width: 100%; text-align: left; margin: 5px 0; padding: 8px 12px; border-color: var(--edge-default); }
+.pdock .q-opt.sel { border-color: var(--ink-3); background: var(--layer-selected); }
+.pdock .q-opt .opt-mark { flex: none; color: var(--ink-3); margin-top: 2px; }
+.pdock .q-opt.sel .opt-mark { color: var(--ink-1); }
+.pdock .q-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pdock .q-l { color: var(--ink-1); }
+.pd-other { width: 100%; margin-top: 4px; padding: 6px 10px; border: 1px solid var(--edge-default); border-radius: var(--r-md); background: var(--surface-0); font-size: 13px; }
+.pd-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.pd-hint { flex: 1; min-width: 0; font-size: 12px; color: var(--ink-4); }
+/* what Enter does right now when that is not the usual (words from before the card, queued words, attachments) */
+.pd-hint.note { color: var(--ink-2); font-weight: 500; }
+.pd-actions .btn { flex: none; min-height: 30px; white-space: nowrap; }
+.pd-main .pd-kbd { font-family: var(--font); font-size: 11px; line-height: 14px; padding: 0 4px; border: 1px solid color-mix(in oklab, var(--primary-fg) 45%, transparent); border-radius: 4px; opacity: 0.85; }
+/* narrow (a split pane, a phone): the hint gets its own line, 允许一次 its own full-width row (spec §5.11) */
+@container (max-width: 520px) {
+  .pd-actions { flex-wrap: wrap; }
+  .pd-hint { flex-basis: 100%; }
+  .pd-actions .btn { flex: 1 1 0; }
+  .pd-actions .btn.pd-main { flex: 1 0 100%; order: 3; min-height: 34px; }
+  .pd-where { display: none; }
+}
+.app.mobile .pdock { margin: 0 0 8px; padding: 12px; border-radius: var(--r-xl); }
+.cb .steer.deny { color: var(--ink-1); border-color: var(--edge-strong); }
+
+/* 「目标：… · 第 3 轮 · 查看」 on top of a conversation a goal drives */
+.goal-bar { display: flex; align-items: center; gap: 8px; flex: none; min-height: 32px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--edge-subtle); background: var(--surface-1); font-size: 12.5px; color: var(--ink-2); }
+.goal-bar .gb-ic { flex: none; color: var(--ink-3); }
+.goal-bar .gb-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goal-bar .gb-r { flex: none; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.goal-bar .gb-r::before { content: '·'; margin-right: 8px; color: var(--ink-4); }
+.goal-bar .gb-go { flex: none; margin-left: auto; padding: 2px 8px; border-radius: var(--r-md); color: var(--ink-1); font-weight: 500; }
+.goal-bar .gb-go:hover { background: var(--layer-hover); }

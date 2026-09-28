@@ -8,6 +8,8 @@ import { compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachm
 import { pickFolderFiles } from '@/model/attachment-filter';
 import { StatusStrip } from '@/features/chat/StatusStrip';
 import { RunCard } from '@/features/chat/RunCard';
+import { PermissionDock, runDockPrimary } from '@/features/chat/PermissionCards';
+import { denyResponse, dockAction, dockKind, primaryKey, type DockSeen } from '@/features/chat/permission-dock';
 import { attachmentFolderPath } from '@/features/paths';
 import { Icon } from '@/ui/icons';
 import { CATALOG, effortLevels, modelsFor } from '@catalog';
@@ -22,7 +24,7 @@ import { routePick, switchedNote } from '@/features/models/route';
 import { modelChipText } from '@/features/models/intelligence';
 import { providersLoaded, useGatewayStatus } from '@/features/models/data';
 import { dlg } from '@/ui/dialog';
-import { TERMS } from '@/ui/terms';
+import { DOCK_BLOCKED, DOCK_CARRIED, DOCK_PLACEHOLDER, DOCK_REQUEUED, DOCK_SEND, TERMS } from '@/ui/terms';
 import { showGoals } from '@/features/workbench/right-panel';
 import { ComposerBar } from './ComposerBar';
 import { PlusMenu } from './PlusMenu';
@@ -40,6 +42,11 @@ const REMOTE_ATTACH = '附件在本机，远端读不到，请粘贴内容（图
 const REMOTE_GOAL = '其它机器上的对话不能在这里设定目标（目标由本机驱动）。可以到那台机器上设定，或先「交给本机的 Agent 继续」';
 const NO_FEATURES: SessionFeatures = {};
 const isFeatures = (v: unknown): v is SessionFeatures => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** The agent's name in a docked card's words: 「告诉 Claude 换个做法」, 「告诉 Codex …」. */
+function agentWord(info: { agent?: string; agentName?: string } | undefined): string {
+  return info?.agent && info.agent !== 'claude' ? info.agentName ?? info.agent : 'Claude';
+}
 
 /**
  * Once per page, after meta.json arrived: older builds kept the capability defaults in localStorage
@@ -231,6 +238,31 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
 
   const busy = !welcome && !!active && (active.state === 'running' || active.state === 'waiting' || active.state === 'starting');
   const canSend = (text.trim().length > 0 || imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0) && !starting && !upload && !disabled;
+  // a permission / question / plan card docked above the box (redesign phase 5): words typed here are its 拒绝理由 /
+  // 修改意见 — sending them denies with them (the old card's reason field, same response); an empty Enter presses the
+  // card's main button (允许一次 ↵). What exactly Enter does is `dockAction` (review I3: not in a card's first 600 ms,
+  // not on key repeat, words from before the card are queued as before, slash commands are sent, a plan wants
+  // Ctrl+Enter). Attachments without words are still an ordinary message (queued, never an approval).
+  const docked = !welcome && !disabled && active ? active.pending[0] : undefined;
+  const dockAgent = agentWord(active?.info);
+  const hasAttachments = imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0;
+  const dockScope = pane ? `${pane.paneId}|${pane.tileId}` : 'none';
+  // when the card on top came, and whether the box had words then (recorded as it first renders: that is when it shows)
+  const seenRef = useRef<DockSeen | null>(null);
+  const [, setSeenTick] = useState(0);
+  if (docked) {
+    if (seenRef.current?.requestId !== docked.requestId) seenRef.current = { requestId: docked.requestId, shownAt: Date.now(), carried: !!text.trim() };
+  } else if (seenRef.current) seenRef.current = null;
+  const setSeen = (patch: Partial<DockSeen>) => { if (seenRef.current) { seenRef.current = { ...seenRef.current, ...patch }; setSeenTick((n) => n + 1); } };
+  const dockClick = docked ? dockAction(docked, { text, attachments: hasAttachments, seen: seenRef.current, now: Date.now() }) : 'send';
+  // words from before the card that an Enter queued: the card offers a button to answer with them instead, while
+  // that message is still waiting in the queue (sent already → nothing to take back)
+  const queuedOffer = docked && seenRef.current?.queued && active?.queue.some((q) => q.id === seenRef.current?.queued?.id) ? seenRef.current.queued : undefined;
+  const dockNote = !docked ? undefined
+    : dockClick === 'blocked' ? DOCK_BLOCKED
+    : seenRef.current?.carried && text.trim() && !text.trim().startsWith('/') ? DOCK_CARRIED
+    : queuedOffer && !text.trim() ? DOCK_REQUEUED[dockKind(docked)]
+    : undefined;
 
   const addRef = (d: { id: string; title: string }) => {
     setRefs((r) => (r.some((x) => x.id === d.id) ? r : [...r, d]));
@@ -258,6 +290,10 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     setText(v);
     if (active && !welcome) setDraft(active.sessionId, v);
     if (draftKey) saveDraft(draftKey, v);
+    // words from before the card stay 「from before」 while the user keeps writing them; once the box is empty,
+    // whatever is typed next is typed with the card in view (an answer to it)
+    const s = seenRef.current;
+    if (s?.carried && !v.trim()) setSeen({ carried: false });
   };
 
   /** Upload dropped files for `sessionId` and return attachment refs. */
@@ -277,8 +313,30 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     return out;
   };
 
+  /** send the box's words as the docked card's deny reason (拒绝理由 / 修改意见 / 不回答问题) and clear the box */
+  const denyDocked = () => {
+    if (!docked) return;
+    void useStore.getState().respondPermission(docked.requestId, denyResponse(docked, text));
+    onChange('');
+  };
+  /** the card's 「改用排队的这段话拒绝」: take the queued message back and answer the card with its words */
+  const denyQueued = () => {
+    const s = seenRef.current;
+    if (!docked || !active || !s?.queued) return;
+    setSeen({ queued: undefined });
+    const q = useStore.getState().recall(active.sessionId, s.queued.id);
+    if (!q) { toast('那段话已经发出去了'); return; }
+    void useStore.getState().respondPermission(docked.requestId, denyResponse(docked, q.text));
+  };
+
   const doSend = async () => {
     if (!canSend) return;
+    const act = docked ? dockAction(docked, { text, attachments: hasAttachments, seen: seenRef.current, now: Date.now() }) : 'send';
+    if (act === 'deny') { denyDocked(); return; }
+    if (act === 'blocked') { toast(DOCK_BLOCKED); return; }
+    if (act !== 'send') return;
+    // words from before the card go out as an ordinary (queued) message; the card then offers to take them back
+    const requeue = !!docked && !!seenRef.current?.carried && !hasAttachments && !imgs.length && !text.trim().startsWith('/');
     const t = text;
     if (/^\/goal\s+\S/.test(t.trim())) {
       // the text stays: the user may still want to send it as a plain message, or copy it over there
@@ -288,12 +346,17 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
       if (!cwdFor) { toast('先选一个项目文件夹'); return; }
       try {
         const g = await ws.request<{ id: string }>({ kind: 'goals.create', objective, cwd: cwdFor, permissionMode: welcome ? wMode : (active?.info?.permissionMode ?? 'acceptEdits'), agent: welcome ? (foreign ? wAgent : undefined) : (active?.info?.agent && active.info.agent !== 'claude' ? active.info.agent : undefined) });
-        await ws.request({ kind: 'goals.start', id: g.id });
+        const started = await ws.request<{ sessionId?: string }>({ kind: 'goals.start', id: g.id });
         onChange(''); // also clears the persisted draft, or the /goal line comes back on reopen
-        // its progress: the right panel's 目标 (brought to the front even when it is a tab behind another one); on a
-        // phone the automation page's 目标 tab (review 7 M11 — the drawer is too small for the execution graph)
-        showGoals();
-        toast('目标已创建并启动，进度在「目标」里', true);
+        // the goal runs in a conversation of its own (goals.create takes no conversation): open it here, where its bar
+        // (目标 · 第 N 轮 · 查看) shows — otherwise nothing on screen says where it went (review 5 M6)
+        if (started?.sessionId) void useStore.getState().loadHistory(started.sessionId);
+        // its progress: the right panel's 目标 on a desktop (brought to the front even when it is a tab behind another
+        // one). A phone keeps that conversation in front — its bar's 查看 opens the automation page's 目标 tab
+        // (showGoals, review 7 M11); with no conversation to show, the page opens right away
+        const phone = useStore.getState().mobile;
+        if (!phone || !started?.sessionId) showGoals();
+        toast(started?.sessionId ? '目标已创建，在新对话里运行' : '目标已创建并启动，进度在「目标」里', true);
       } catch (e: any) { toast(e.message); }
       return;
     }
@@ -322,6 +385,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     }
     if (!active) return;
     setText('');
+    if (seenRef.current?.carried) setSeen({ carried: false }); // the box is empty now: what comes next is typed with the card in view
     setImgs([]);
     setAtts([]);
     setRefs([]);
@@ -344,7 +408,14 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     }
     try {
       setFiles([]);
-      await send(active.sessionId, full, im, false, [...atts, ...uploaded]);
+      const sid = active.sessionId;
+      const before = useStore.getState().open[sid]?.queue.length ?? 0;
+      await send(sid, full, im, false, [...atts, ...uploaded]);
+      if (requeue && seenRef.current?.requestId === docked?.requestId) {
+        const q = useStore.getState().open[sid]?.queue ?? [];
+        const mine = q.length > before ? q[q.length - 1] : undefined;
+        setSeen({ carried: false, queued: mine && mine.text === full ? { id: mine.id, text: mine.text } : undefined });
+      }
     } catch (e: any) {
       toast(e.message);
       setUpload(null);
@@ -364,6 +435,12 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
     }
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
+      if (docked) {
+        const act = dockAction(docked, { text, attachments: hasAttachments, seen: seenRef.current, now: Date.now(), enter: { repeat: e.repeat, ctrl: e.ctrlKey || e.metaKey } });
+        // an empty box under a docked card: Enter is the card's main button (允许一次 ↵ / 提交回答; a plan: Ctrl+Enter)
+        if (act === 'primary') { runDockPrimary(primaryKey(dockScope, docked.requestId)); return; }
+        if (act === 'ignore') return;
+      }
       void doSend();
     }
     if (e.key === 'Escape' && busy && active) void interrupt(active.sessionId);
@@ -506,7 +583,9 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
   ) : (
     <button className="send" data-id={BAR_ID.send} disabled={!canSend} onClick={doSend} title="发送 (Enter)" aria-label="发送">{starting || upload ? <span className="spinner" /> : <Icon name="send" size={16} />}</button>
   );
-  const steer = busy && canSend && active ? (
+  const steer = docked && (dockClick === 'deny' || dockClick === 'blocked') ? (
+    <button className="steer deny" data-id={BAR_ID.steer} disabled={dockClick === 'blocked'} title={dockClick === 'blocked' ? DOCK_BLOCKED : `拒绝这次请求，并把这段话告诉 ${dockAgent}（Enter）`} onClick={denyDocked}>{DOCK_SEND[dockKind(docked)]} <Icon name="send" size={12} /></button>
+  ) : busy && canSend && active ? (
     <button className="steer" data-id={BAR_ID.steer} title={`${TERMS.steer}：不等这一轮结束，马上把这句话告诉 Claude`} aria-label={TERMS.steer} onClick={async () => { const t = text; setText(''); setDraft(active.sessionId, ''); await send(active.sessionId, t, undefined, true).catch((e) => toast(e.message)); }}>插话 <Icon name="send" size={12} /></button>
   ) : null;
   const mic = speechOk && !mobile ? (
@@ -578,7 +657,10 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
           </div>
         )}
         {active && !welcome && <StatusStrip sessionId={active.sessionId} onRecall={(t) => { setText((cur) => (cur ? `${cur}\n${t}` : t)); ta.current?.focus(); }} />}
-        {active && !welcome && <RunCard sessionId={active.sessionId} />}
+        {/* a docked card takes the run card's place (spec §4.2: 「等确认时被权限卡替代」) */}
+        {active && !welcome && (docked
+          ? <PermissionDock sessionId={active.sessionId} reason={text} onReasonUsed={() => onChange('')} scope={dockScope} note={dockNote} onDenyQueued={queuedOffer ? denyQueued : undefined} />
+          : <RunCard sessionId={active.sessionId} />)}
         <div className="composer-box" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
           {hasChips && (
             <div className="attach">
@@ -617,7 +699,7 @@ export function Composer({ welcome = false, target, disabled = false }: { welcom
             rows={1}
             value={text}
             disabled={disabled}
-            placeholder={disabled ? '对话已被删除，不能继续' : welcome ? '描述一个任务，或者问个问题。输入 / 查看命令，拖入文件作为附件' : active?.state === 'history' ? '发送即可继续这个对话…' : busy ? '运行中，输入会排队 · Esc 中断' : `回复 ${info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude'}… 输入 / 查看命令，拖入文件作为附件`}
+            placeholder={disabled ? '对话已被删除，不能继续' : docked ? DOCK_PLACEHOLDER[dockKind(docked)](dockAgent) : welcome ? '描述一个任务，或者问个问题。输入 / 查看命令，拖入文件作为附件' : active?.state === 'history' ? '发送即可继续这个对话…' : busy ? '运行中，输入会排队 · Esc 中断' : `回复 ${info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude'}… 输入 / 查看命令，拖入文件作为附件`}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKey}
             onPaste={onPaste}

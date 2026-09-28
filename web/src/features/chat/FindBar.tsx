@@ -65,6 +65,13 @@ export function FindBar({ open, onClose, root }: { open: boolean; onClose: () =>
   function scrollTo(i: number) {
     const r = ranges.current[i];
     const el = r?.startContainer.parentElement;
+    // a hit inside a folded turn (its steps are kept, hidden): open that turn first, then scroll once it is laid out
+    const fold = el?.closest('[data-fold-body][hidden]');
+    if (fold) {
+      fold.dispatchEvent(new Event('cw:open-fold'));
+      requestAnimationFrame(() => el?.scrollIntoView({ block: 'center' }));
+      return;
+    }
     el?.scrollIntoView({ block: 'center' });
   }
   const step = (d: number) => { if (!count) return; setIdx((i) => (i + d + count) % count); };

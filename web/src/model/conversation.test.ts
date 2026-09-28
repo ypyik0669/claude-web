@@ -274,6 +274,84 @@ describe('stream lanes', () => {
   });
 });
 
+describe('a turn synthesised from an ACP / Codex agent (server/src/agents/normalize.ts MessageSynth)', () => {
+  // the synth streams text / thinking with its own block counter and sends a tool call as one whole `assistant`
+  // frame of the same message; at the end it restates the turn's text and thinking, concatenated
+  const se = (event: any) => ({ type: 'stream_event', uuid: `e${Math.random()}`, session_id: 's', parent_tool_use_id: null, event });
+  const msgs = [
+    se({ type: 'message_start', message: { id: 'mA', role: 'assistant', content: [] } }),
+    se({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }),
+    se({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'thinking about it' } }),
+    se({ type: 'content_block_stop', index: 0 }),
+    se({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } }),
+    se({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'Echo: please use a tool' } }),
+    se({ type: 'content_block_stop', index: 1 }),
+    { type: 'assistant', uuid: 'a1', session_id: 's', parent_tool_use_id: null, message: { id: 'mA', role: 'assistant', content: [{ type: 'tool_use', id: 'call-1', name: 'Read', input: { file_path: 'C:/x/package.json' } }] } },
+    { type: 'user', uuid: 'u1', session_id: 's', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-1', content: [{ type: 'text', text: '{"name":"x"}' }] }] } },
+    se({ type: 'content_block_start', index: 2, content_block: { type: 'text', text: '' } }),
+    se({ type: 'content_block_delta', index: 2, delta: { type: 'text_delta', text: ' (read ok)' } }),
+    se({ type: 'content_block_stop', index: 2 }),
+    se({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 0 } }),
+    se({ type: 'message_stop' }),
+    { type: 'assistant', uuid: 'a2', session_id: 's', parent_tool_use_id: null, message: { id: 'mA', role: 'assistant', content: [{ type: 'thinking', thinking: 'thinking about it' }, { type: 'text', text: 'Echo: please use a tool (read ok)' }] } },
+    { type: 'result', uuid: 'r1', session_id: 's', subtype: 'success', is_error: false, result: 'x', duration_ms: 46, duration_api_ms: 46, num_turns: 2, total_cost_usd: 0, cost_unknown: true },
+  ];
+
+  it('keeps the tool call where it happened: text streamed after it does not take its slot, and the closing restatement adds nothing', () => {
+    const c = createConversation();
+    for (const m of msgs) applyMessage(c, m);
+    const a = c.items.find((i) => i.kind === 'assistant') as AssistantItem;
+    expect(a.blocks.map((b) => (b.type === 'text' ? `text:${b.text}` : b.type === 'thinking' ? `thinking:${b.thinking}` : `${b.type}:${b.name}`))).toEqual([
+      'thinking:thinking about it', 'text:Echo: please use a tool', 'tool_use:Read', 'text: (read ok)',
+    ]);
+    expect(c.toolIndex.get('call-1')?.status).toBe('done');
+    expect(c.items.filter((i) => i.kind === 'assistant')).toHaveLength(1);
+  });
+
+  it('a Claude stream (tool blocks streamed at their own index) is laid out as before', () => {
+    const c = createConversation();
+    for (const m of loadFixture()) applyMessage(c, m);
+    const a = c.items.find((i) => i.kind === 'assistant') as AssistantItem;
+    expect(a.blocks.map((b) => b.type)).toEqual(['thinking', 'text', 'tool_use']);
+  });
+});
+
+describe('thinking time (「思考了 12 秒」)', () => {
+  const se = (event: any) => ({ type: 'stream_event', uuid: `e${Math.random()}`, session_id: 's', parent_tool_use_id: null, event });
+
+  it('streamed: from the block start to its stop, kept when the final frame arrives', () => {
+    const c = createConversation();
+    applyMessage(c, se({ type: 'message_start', message: { id: 'mT', model: 'x' } }));
+    applyMessage(c, se({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }));
+    now += 4_000;
+    applyMessage(c, se({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'hmm' } }));
+    now += 8_000;
+    applyMessage(c, se({ type: 'content_block_stop', index: 0 }));
+    applyMessage(c, { type: 'assistant', uuid: 'a', session_id: 's', parent_tool_use_id: null, message: { id: 'mT', role: 'assistant', content: [{ type: 'thinking', thinking: 'hmm' }] } });
+    const b = (c.items[0] as AssistantItem).blocks[0] as any;
+    expect(b.type).toBe('thinking');
+    expect(b.ms).toBe(12_000);
+  });
+
+  it('transcript: from the line before it to the thinking line', () => {
+    const c = createConversation();
+    applyTranscript(c, [
+      { type: 'user', uuid: 'u', session_id: 's', timestamp: '2026-09-28T10:00:00.000Z', parent_tool_use_id: null, message: { role: 'user', content: 'go' } },
+      { type: 'assistant', uuid: 'a1', session_id: 's', timestamp: '2026-09-28T10:00:12.400Z', parent_tool_use_id: null, message: { id: 'm1', role: 'assistant', content: [{ type: 'thinking', thinking: 'plan' }] } },
+      { type: 'assistant', uuid: 'a2', session_id: 's', timestamp: '2026-09-28T10:00:13.000Z', parent_tool_use_id: null, message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'ok' }] } },
+    ]);
+    const a = c.items[1] as AssistantItem;
+    expect(a.blocks.map((b) => b.type)).toEqual(['thinking', 'text']);
+    expect((a.blocks[0] as any).ms).toBe(12_400);
+  });
+
+  it('no earlier time to count from → no number (the label falls back to words)', () => {
+    const c = createConversation();
+    applyTranscript(c, [{ type: 'assistant', uuid: 'a1', session_id: 's', timestamp: '2026-09-28T10:00:12.400Z', parent_tool_use_id: null, message: { id: 'm1', role: 'assistant', content: [{ type: 'thinking', thinking: 'plan' }] } }]);
+    expect((c.items[0] as AssistantItem).blocks[0]).toEqual({ type: 'thinking', thinking: 'plan' });
+  });
+});
+
 describe('prependTranscript (older history paging)', () => {
   const user = (uuid: string, text: string) => ({ type: 'user', uuid, parent_tool_use_id: null, message: { role: 'user', content: text } });
   const asst = (uuid: string, id: string, content: any[]) => ({ type: 'assistant', uuid, parent_tool_use_id: null, message: { id, role: 'assistant', content } });
