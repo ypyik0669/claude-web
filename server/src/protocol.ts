@@ -462,7 +462,7 @@ export interface ReplyEnvelope { id: string; ok: boolean; data?: unknown; error?
 
 // ---- events ----
 export type ServerEvent =
-  | { kind: 'hello'; version: string; serverId?: string; name?: string }
+  | { kind: 'hello'; version: string; serverId?: string; name?: string; bootId?: string }
   | { kind: 'session.event'; sessionId: string; message: unknown } // raw SDK message
   | { kind: 'session.state'; sessionId: string; state: RunnerState; error?: string }
   | { kind: 'session.info'; info: SessionInfoSnapshot }

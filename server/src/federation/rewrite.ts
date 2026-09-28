@@ -17,12 +17,14 @@ const FORWARD = new Set<ClientRequest['kind']>([
   'transcript.load', 'transcript.subagents', 'transcript.subagent',
   'library.read', 'library.rename', 'library.fork',
   'session.rename', 'session.delete',
+  // read on the machine that has the transcript / the files
+  'usage.session', 'files.changed', 'files.diff',
 ]);
 /** Batch requests: split per machine (local ids stay here, each peer gets its own), results merged. */
 const SPLIT = new Set<ClientRequest['kind']>(['library.archive', 'library.delete']);
-/** This machine's own UI state keyed by a session id (drafts, ratings, pin / archive meta, usage lookups). */
+/** This machine's own state keyed by a session id (ratings, pin / archive meta, the ledger, the memory store — there a session id is just a scope key). */
 const LOCAL = new Set<ClientRequest['kind']>([
-  'session.setMeta', 'feedback.set', 'feedback.list', 'files.changed', 'files.diff', 'usage.session', 'ledger.list',
+  'session.setMeta', 'feedback.set', 'feedback.list', 'ledger.list', 'memory.search', 'memory.write',
 ]);
 
 export type RoutePlan =

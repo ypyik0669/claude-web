@@ -20,6 +20,29 @@ describe('planRoute', () => {
       { kind: 'library.rename', sessionId: 'peer_b1~s1', title: 't' },
     ] as ClientRequest[]) expect(planRoute(req)).toEqual({ kind: 'forward', peerId: 'b1' });
   });
+  it('the memory store is this machine\'s: a remote session id is only a scope key', () => {
+    expect(planRoute({ kind: 'memory.search', sessionId: 'peer_b1~s1', cwd: '/r' })).toEqual({ kind: 'local' });
+    expect(planRoute({ kind: 'memory.write', text: 'x', sessionId: 'peer_b1~s1' })).toEqual({ kind: 'local' });
+    expect(planRoute({ kind: 'memory.harvest', sessionId: 'peer_b1~s1' }).kind).toBe('reject');
+  });
+  it('per-session reads that live with the session are forwarded (usage, touched files, their diffs)', () => {
+    for (const req of [
+      { kind: 'usage.session', sessionId: 'peer_b1~s1' },
+      { kind: 'files.changed', sessionId: 'peer_b1~s1' },
+      { kind: 'files.diff', sessionId: 'peer_b1~s1', path: '/r/a.ts' },
+    ] as ClientRequest[]) expect(planRoute(req)).toEqual({ kind: 'forward', peerId: 'b1' });
+  });
+  it('every sessionId-carrying request the web client sends is routed somewhere (no surprise "不支持")', () => {
+    // kept in sync with `grep sessionId` over web/src ws.request calls; switchAgent / setProvider / harvest are hidden in the UI
+    const routed: ClientRequest[] = [
+      { kind: 'feedback.list', sessionId: 'peer_b1~s' }, { kind: 'feedback.set', sessionId: 'peer_b1~s', messageId: 'm', rating: 'up' },
+      { kind: 'ledger.list', sessionId: 'peer_b1~s' }, { kind: 'session.setMeta', sessionId: 'peer_b1~s', patch: {} },
+      { kind: 'library.read', sessionId: 'peer_b1~s' }, { kind: 'session.contextUsage', sessionId: 'peer_b1~s' },
+      { kind: 'session.stopTask', sessionId: 'peer_b1~s', taskId: 't' }, { kind: 'transcript.subagent', sessionId: 'peer_b1~s', agentId: 'a' },
+      { kind: 'session.setEffort', sessionId: 'peer_b1~s', effort: 'high' }, { kind: 'session.setUltracode', sessionId: 'peer_b1~s', on: true },
+    ];
+    for (const r of routed) expect(planRoute(r).kind, r.kind).not.toBe('reject');
+  });
   it('splits batches, keeps local UI state here, rejects the rest', () => {
     expect(planRoute({ kind: 'library.delete', sessionIds: ['a', 'peer_b1~s1'] })).toEqual({ kind: 'split' });
     expect(planRoute({ kind: 'session.setMeta', sessionId: 'peer_b1~s1', patch: { pinned: true } })).toEqual({ kind: 'local' });

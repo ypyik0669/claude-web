@@ -113,8 +113,38 @@ try {
   const row = aList?.find((s) => s.sessionId === psid);
   check("A: B's session is in A's list, tagged with the machine", !!row && row.peer?.id === peerId && !row.peer.offline && row.agent === AGENT, row ? JSON.stringify(row.peer) : 'missing');
   check("A: A's own sessions are still there", localBefore.every((s) => aList?.some((x) => x.sessionId === s.sessionId)), `${localBefore.length} local`);
-  const bBack = await B.req({ kind: 'sessions.list' });
-  check("B: B's list does not echo anything back from A", !bBack.some((s) => s.peer || s.sessionId.startsWith('peer_')));
+  // ---- mutual peering: B adds A too. No event echo, no rows bouncing back ----
+  const remoteA = await freePort();
+  const stA = await A.req({ kind: 'remote.set', enabled: true, port: remoteA });
+  check('A: remote listener up (for B to join)', stA.running, stA.error);
+  const pcA = await A.req({ kind: 'remote.pairCode' });
+  const peerA = await B.req({ kind: 'peers.add', url: `http://127.0.0.1:${remoteA}`, code: pcA.code });
+  check('B: adds A as a peer (mutual)', peerA.state === 'online', `${peerA.state} ${peerA.error ?? ''}`);
+  const bLocalIds = new Set(bList.map((s) => s.sessionId));
+  const bBack = await until(async () => { const l = await B.req({ kind: 'sessions.list' }); return l.some((s) => s.peer?.id === peerA.id) ? l : null; });
+  const fromA = (bBack ?? []).filter((s) => s.peer);
+  const remoteIds = fromA.map((s) => s.sessionId.slice(`peer_${peerA.id}~`.length));
+  check("B: sees A's own session through A", remoteIds.includes(oLocal.sessionId), remoteIds.join(' '));
+  check("B: none of B's own sessions come back through A (no multi-hop echo)", fromA.length > 0 && remoteIds.every((id) => !id.startsWith('peer_') && !bLocalIds.has(id)), remoteIds.join(' '));
+  // one change on each side, then count sessions.changed for a few seconds: an echo loop would be hundreds
+  const countFrom = (c) => c.events.length;
+  const a0 = countFrom(A), b0 = countFrom(B);
+  await B.req({ kind: 'library.rename', sessionId: sidB, title: 'renamed on B' });
+  await A.req({ kind: 'library.rename', sessionId: oLocal.sessionId, title: 'renamed on A' });
+  await sleep(4000);
+  const changedA = A.events.slice(a0).filter((e) => e.kind === 'sessions.changed' || e.kind === 'library.changed').length;
+  const changedB = B.events.slice(b0).filter((e) => e.kind === 'sessions.changed' || e.kind === 'library.changed').length;
+  check('mutual peers: list-change events stay bounded (no echo)', changedA > 0 && changedA <= 12 && changedB > 0 && changedB <= 12, `A ${changedA}, B ${changedB} in 4s`);
+  const peersFromPeer = await B.raw({ req: { kind: 'peers.list' }, via: [helloA.serverId + 'x'] }).then(() => null, (e) => e.message);
+  check('peers.* are refused for requests coming from another machine', !!peersFromPeer, peersFromPeer ?? '');
+  // B adding its own address: refused before the code is redeemed (no orphan device on B)
+  const devCount = (await B.req({ kind: 'remote.status' })).devices.length;
+  const pcSelf = await B.req({ kind: 'remote.pairCode' });
+  const selfErr = await B.req({ kind: 'peers.add', url: `http://127.0.0.1:${remotePort}`, code: pcSelf.code }).then(() => null, (e) => e.message);
+  const devAfter = (await B.req({ kind: 'remote.status' })).devices.length;
+  check('adding yourself is refused without leaving a device token behind', !!selfErr && selfErr.includes('本机') && devAfter === devCount, `${selfErr} · devices ${devCount}→${devAfter}`);
+  await B.req({ kind: 'peers.remove', id: peerA.id });
+  await A.req({ kind: 'remote.set', enabled: false });
 
   const hist = await A.req({ kind: 'transcript.load', sessionId: psid });
   check('A: transcript.load of a remote session', Array.isArray(hist) && JSON.stringify(hist).includes('hello from machine B'), `${hist?.length} messages`);
@@ -143,6 +173,12 @@ try {
   check('no multi-hop forwarding', !!hop && hop.includes('多跳'), hop ?? '');
   const nope = await A.req({ kind: 'session.setProvider', sessionId: psid }).then(() => null, (e) => e.message);
   check('unsupported operations on remote sessions are refused', !!nope, nope ?? '');
+  // what the panels send while a remote session has focus: memory is this machine's, touched files are B's
+  const mem = await A.req({ kind: 'memory.search', sessionId: psid, cwd: row?.cwd, limit: 5 }).catch((e) => e.message);
+  const wrote = await A.req({ kind: 'memory.write', text: 'fed e2e note', scope: 'session', sessionId: psid }).then(() => true, (e) => e.message);
+  check('memory panel works with a remote session focused (memory stays local)', Array.isArray(mem) && wrote === true, `${JSON.stringify(mem).slice(0, 60)} ${wrote}`);
+  const touched = await A.req({ kind: 'files.changed', sessionId: psid }).catch((e) => e.message);
+  check('files.changed for a remote session is answered by B', Array.isArray(touched), JSON.stringify(touched).slice(0, 60));
 
   // ---- hand-over to a local agent ----
   const ho = await A.req({ kind: 'peers.handover', sessionId: psid, agent: AGENT, cwd: root });

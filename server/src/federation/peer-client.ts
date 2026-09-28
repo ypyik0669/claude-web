@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 import type { ClientRequest, ServerEvent, WireDown } from '../protocol.js';
-import type { PeerState } from './types.js';
+import { SERVER_ID_CONFLICT, type PeerState } from './types.js';
 
 /** Where to reach the peer right now. SSH peers resolve this by (re)opening their tunnel. */
 export interface PeerEndpoint { url: string; token: string }
@@ -9,6 +9,8 @@ export interface PeerEndpoint { url: string; token: string }
 export interface PeerClientOptions {
   /** This server's id: sent as `?peer=` (the remote then never echoes peer-derived events back) and compared with the remote's hello. */
   selfId: string;
+  /** This process's bootId: same serverId + other bootId in the hello = a copied data dir, not ourselves. */
+  selfBootId?: string;
   resolve: () => Promise<PeerEndpoint>;
   heartbeatMs?: number;
   pongTimeoutMs?: number;
@@ -43,7 +45,7 @@ export class PeerClient extends EventEmitter {
   private pingAt = 0;
   private stopped = true;
   private epoch = 0;
-  private readonly o: Required<Omit<PeerClientOptions, 'fetch'>> & { fetch: typeof fetch };
+  private readonly o: Required<Omit<PeerClientOptions, 'fetch' | 'selfBootId'>> & { fetch: typeof fetch; selfBootId?: string };
 
   constructor(opts: PeerClientOptions) {
     super();
@@ -171,9 +173,11 @@ export class PeerClient extends EventEmitter {
         clearTimeout(helloTimer);
         this.remote = { serverId: e.serverId, name: e.name, version: e.version };
         if (e.serverId && e.serverId === this.o.selfId) {
-          // pairing with ourselves (our own LAN address): every request would loop straight back
+          // pairing with ourselves (our own LAN address): every request would loop straight back —
+          // unless it's a different process with our serverId (a copied ~/.claude-web): say so
+          const conflict = !!e.bootId && !!this.o.selfBootId && e.bootId !== this.o.selfBootId;
           this.stop('offline');
-          this.setState('offline', '这个地址就是本机');
+          this.setState('offline', conflict ? SERVER_ID_CONFLICT : '这个地址就是本机');
           return;
         }
         this.attempt = 0;

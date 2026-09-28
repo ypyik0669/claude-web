@@ -4,7 +4,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { PeerClient } from './peer-client.js';
 
 /** A stand-in for another machine's claude-web: /api/health, token-guarded /api/file and /ws. */
-async function fakeRemote(o: { serverId?: string; port?: number } = {}) {
+async function fakeRemote(o: { serverId?: string; bootId?: string; port?: number } = {}) {
   const seen: any[] = [];
   const sockets = new Set<WebSocket>();
   const server = http.createServer((req, res) => {
@@ -20,7 +20,7 @@ async function fakeRemote(o: { serverId?: string; port?: number } = {}) {
     wss.handleUpgrade(req, socket, head, (ws) => {
       sockets.add(ws);
       seen.push({ peer: url.searchParams.get('peer') });
-      ws.send(JSON.stringify({ type: 'event', event: { kind: 'hello', version: '9.9.9', serverId: o.serverId ?? 'remote1', name: 'Box B' } }));
+      ws.send(JSON.stringify({ type: 'event', event: { kind: 'hello', version: '9.9.9', serverId: o.serverId ?? 'remote1', bootId: o.bootId, name: 'Box B' } }));
       ws.on('message', (raw) => {
         const m = JSON.parse(String(raw));
         seen.push(m.request);
@@ -99,6 +99,19 @@ describe('PeerClient', () => {
     const c = mk(r.url);
     c.start();
     await until(() => c.state === 'offline' && c.error.includes('本机'));
+  });
+
+  it('same serverId from another process (copied data dir) says so instead of "本机"', async () => {
+    const r = await fakeRemote({ serverId: 'me1', bootId: 'other' }); remotes.push(r);
+    const c = new PeerClient({ selfId: 'me1', selfBootId: 'mine', resolve: async () => ({ url: r.url, token: 'good' }), backoffMinMs: 50 });
+    clients.push(c);
+    c.start();
+    await until(() => c.state === 'offline' && c.error.includes('serverId'));
+    const same = await fakeRemote({ serverId: 'me1', bootId: 'mine' }); remotes.push(same);
+    const c2 = new PeerClient({ selfId: 'me1', selfBootId: 'mine', resolve: async () => ({ url: same.url, token: 'good' }), backoffMinMs: 50 });
+    clients.push(c2);
+    c2.start();
+    await until(() => c2.state === 'offline' && c2.error.includes('本机'));
   });
 
   it('an unreachable address is offline with an error, not a crash', async () => {

@@ -78,8 +78,13 @@ export type PeerRequest =
   | { kind: 'peers.add'; url?: string; code?: string; name?: string; hostId?: string }
   | { kind: 'peers.update'; id: string; patch: { name?: string; enabled?: boolean } }
   | { kind: 'peers.repair'; id: string; code: string }
+  /** reconnect now (an ssh peer after its host's token was fixed, or any peer after an error) */
+  | { kind: 'peers.retry'; id: string }
   | { kind: 'peers.remove'; id: string }
   /** 「交给本机 agent 继续」: read the remote transcript, start a NEW local session seeded with a briefing */
   | { kind: 'peers.handover'; sessionId: string; agent: AgentKind; model?: string; cwd: string };
 
 export type PeerEvent = { kind: 'peers.changed' };
+
+/** Two servers answering with one serverId: a claude-web data dir copied to another machine. */
+export const SERVER_ID_CONFLICT = '那台机器的 serverId 和本机相同（多半是把 ~/.claude-web 拷贝了过去）。请在其中一台的 ~/.claude-web/meta.json 里删掉 "serverId" 那一行再重启它，然后重新加入';

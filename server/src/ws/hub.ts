@@ -123,7 +123,7 @@ export class Hub {
     this.clients.add(ws);
     try { if (req && new URL(req.url ?? '/', 'http://x').searchParams.get('peer')) this.peerConns.add(ws); } catch { /* not a peer */ }
     const fed = this.s.federation;
-    this.send(ws, { type: 'event', event: { kind: 'hello', version: this.s.version, ...(fed ? { serverId: fed.serverId, name: fed.name } : {}) } });
+    this.send(ws, { type: 'event', event: { kind: 'hello', version: this.s.version, ...(fed ? { serverId: fed.serverId, name: fed.name, bootId: fed.bootId } : {}) } });
     // startup discovery happens before anyone is connected: tell each new client what's waiting to be joined
     void this.s.library.detect().then((kinds) => { if (kinds.length) this.send(ws, { type: 'event', event: { kind: 'library.discovered', kinds } }); }).catch(() => {});
     ws.on('close', () => this.clients.delete(ws));
@@ -140,7 +140,7 @@ export class Hub {
       if (!up || typeof up !== 'object' || up.type !== 'request' || !up.request || typeof up.request !== 'object' || !up.request.req) return;
       const { id, req } = up.request;
       try {
-        const routed = this.s.federation?.route(req, { via: up.request.via, local: (r = req) => this.handle(r, ws) });
+        const routed = this.s.federation?.route(req, { via: up.request.via, peerConn: this.peerConns.has(ws), local: (r = req) => this.handle(r, ws) });
         const data = await (routed ?? this.handle(req, ws));
         this.send(ws, { type: 'reply', reply: { id, ok: true, data } });
       } catch (e: any) {
@@ -624,6 +624,7 @@ export class Hub {
       case 'remote.hosts.set':
         await s.meta.setRemoteHost(req.host);
         this.broadcast({ kind: 'tunnel.changed' });
+        await s.federation?.hostChanged(req.host.id); // peers riding this host reconnect with the new settings
         return null;
       case 'remote.hosts.remove':
         await s.tunnels.close(req.id);
