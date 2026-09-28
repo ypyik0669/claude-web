@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { guardApi, guardNodeArgs, preloadFile } from './spawn-guard.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { guardApi, guardNodeArgs, preloadFile, resetPreloadWarning } from './spawn-guard.js';
 
 /** A child_process-shaped double: each function records what it was called with. */
 function fakeCp() {
@@ -150,6 +150,39 @@ describe('spawn guard: --require preload in a child node process', () => {
     fs.mkdirSync(a); // something occupies the name: the rename fails
     expect(preloadFile(d)).toBeNull();
     expect(fs.readdirSync(d).filter((n) => n.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('data dir unusable: falls back to the OS temp dir, no warning', () => {
+    const blocker = path.join(dir, 'not-a-dir');
+    fs.writeFileSync(blocker, 'x'); // CLAUDE_WEB_DIR points at a file: <dataDir>/runtime cannot be created
+    process.env.CLAUDE_WEB_DIR = blocker;
+    const tmp = path.join(dir, 'tmp');
+    fs.mkdirSync(tmp);
+    const tmpdir = vi.spyOn(os, 'tmpdir').mockReturnValue(tmp);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      resetPreloadWarning();
+      const args = guardNodeArgs({ platform: 'win32', electron: true });
+      expect(args[0]).toBe('--require');
+      expect(args[1].startsWith(tmp)).toBe(true);
+      expect(fs.existsSync(args[1])).toBe(true);
+      expect(warn).not.toHaveBeenCalled();
+    } finally { tmpdir.mockRestore(); warn.mockRestore(); }
+  });
+
+  it('no usable place at all: children run unguarded and the server log says so once', () => {
+    const blocker = path.join(dir, 'not-a-dir');
+    fs.writeFileSync(blocker, 'x');
+    process.env.CLAUDE_WEB_DIR = blocker;
+    const tmpdir = vi.spyOn(os, 'tmpdir').mockReturnValue(blocker); // the temp dir is unusable too
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      resetPreloadWarning();
+      expect(guardNodeArgs({ platform: 'win32', electron: true })).toEqual([]);
+      expect(guardNodeArgs({ platform: 'win32', electron: true })).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toMatch(/spawn guard/i);
+    } finally { tmpdir.mockRestore(); warn.mockRestore(); }
   });
 
   it('guardNodeArgs: Electron-as-node on Windows always gets the preload; a real node only with spawn logging', () => {

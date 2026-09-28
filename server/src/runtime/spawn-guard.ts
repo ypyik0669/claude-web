@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
@@ -243,6 +244,15 @@ export function preloadFile(dir = path.join(dataDir(), 'runtime')): string | nul
 export function guardNodeArgs(host: { platform: NodeJS.Platform; electron: boolean } = { platform: process.platform, electron: !!process.versions.electron }): string[] {
   const needed = (host.platform === 'win32' && host.electron) || spawnLogEnabled();
   if (!needed) return [];
-  const f = preloadFile();
-  return f ? ['--require', f] : [];
+  // <dataDir>/runtime, else the OS temp dir (a read-only / redirected profile); else unguarded, said once
+  const f = preloadFile() ?? preloadFile(path.join(os.tmpdir(), 'claude-web-runtime'));
+  if (f) return ['--require', f];
+  if (!preloadWarned) {
+    preloadWarned = true;
+    console.warn(`[spawn guard] could not write the preload to ${path.join(dataDir(), 'runtime')} or ${path.join(os.tmpdir(), 'claude-web-runtime')}: agents started from here run without it (their console programs may flash windows on Windows)`);
+  }
+  return [];
 }
+let preloadWarned = false;
+/** Tests: allow the "preload unavailable" warning again. */
+export function resetPreloadWarning() { preloadWarned = false; }
