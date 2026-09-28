@@ -187,7 +187,7 @@ export class ProviderService {
   private revealed = new Map<string, string>(); // stored (possibly encrypted) value -> plaintext
   /** Set by the server once the model gateway is up: group id → local endpoint + gateway key (null = unavailable). */
   gatewayEndpoint: ((groupId: string) => { baseUrl: string; key: string; runtime?: RuntimeKind } | null) | null = null;
-  constructor(private meta: MetaStore, private secrets?: SecretService) {
+  constructor(readonly meta: MetaStore, private secrets?: SecretService) {
     if (secrets) meta.secretCodec = { protect: async (plain, id) => { const enc = await secrets.protect(plain, id); this.revealed.set(enc, plain); return enc; } };
   }
   /** Decrypt every stored key once (startup) so session spawns stay synchronous. */
@@ -250,6 +250,14 @@ export class ProviderService {
       const env: Record<string, string> = { OPENAI_BASE_URL: base, OPENAI_API_KEY: p.apiKey };
       if (p.defaultModel) env.OPENAI_MODEL = p.defaultModel;
       if (agent === 'codex') return { env: { ...env, [CODEX_KEY_ENV]: p.apiKey }, args: codexProviderArgs(base, p.name, p.defaultModel) };
+      return { env, args: [] };
+    }
+    // a Gemini API profile for Gemini CLI: its own key variables, with the API-key auth type forced over a cached Google login
+    if (type === 'gemini' && kind === 'gemini') {
+      const p = this.forSession(id)!;
+      const env: Record<string, string> = { GEMINI_API_KEY: p.apiKey, ...geminiApiKeyEnv() };
+      if (p.baseUrl) env.GOOGLE_GEMINI_BASE_URL = p.baseUrl;
+      if (p.defaultModel) env.GEMINI_MODEL = p.defaultModel;
       return { env, args: [] };
     }
     if (type !== 'gateway') return { env: {}, args: [] };

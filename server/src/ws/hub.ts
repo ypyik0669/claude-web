@@ -214,12 +214,15 @@ export class Hub {
           }
         }
         if (params.agent && params.agent !== 'claude') {
+          // the profile a foreign-agent session was started / switched with survives a resume, like Claude's
+          if (params.providerId === undefined && params.sessionId) params = { ...params, providerId: s.meta.sessionMeta(params.sessionId).providerId };
           const head = params.sessionId ? await s.transcripts.head(params.sessionId) : null;
           const hist = !params.sessionId ? [] : head?.imported
             ? await s.library.read(params.sessionId).then((r) => r.messages).catch(() => [])
             : await s.transcripts.load(params.sessionId).catch(() => []);
           const r = s.pool.open(params, hist);
           await s.canonical.ensure(r.sessionId, params.cwd);
+          if (params.providerId && params.providerId !== 'claude' && s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId }).catch(() => { /* in memory; the next save persists it */ });
           return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
         }
         // provider: explicit → the one the session was created with → user default (new sessions only)
