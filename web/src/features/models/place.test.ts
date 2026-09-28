@@ -30,6 +30,26 @@ describe('placeMenu', () => {
   });
 });
 
+describe('placeMenu with the menu\'s natural height (need)', () => {
+  // a composer in the middle of the page (the welcome screen): 380px above, 500px below
+  const mid = rect(388, 420);
+  const view = { vw: 1400, vh: 934 };
+  it('stays on the preferred side when the menu fits there', () => {
+    expect(placeMenu(mid, view, 'up', 'left', 300).bottom).toBeDefined();
+  });
+  it('flips to the roomier side when the menu does not fit on the preferred one', () => {
+    const p = placeMenu(mid, view, 'up', 'left', 620);
+    expect(p.top).toBe(426);
+    expect(p.maxHeight).toBe(934 - 420 - 6 - 8); // all the room below
+  });
+  it('fits nowhere: the side with more room', () => {
+    expect(placeMenu(rect(700, 730), view, 'down', 'left', 2000).bottom).toBeDefined(); // composer at the bottom: up
+  });
+  it('without a known height: the old rule (the preferred side when it has 260px)', () => {
+    expect(placeMenu(mid, view, 'up', 'left').bottom).toBeDefined();
+  });
+});
+
 describe('samePlacement', () => {
   it('equal coordinates are the same placement (no re-render); any change is not', () => {
     const a = placeMenu(rect(800, 830), { vw: 1400, vh: 900 }, 'up', 'right');

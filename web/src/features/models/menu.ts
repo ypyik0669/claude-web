@@ -35,14 +35,18 @@ export interface ModelMenuItem {
   hint?: string;
   /** shown but not pickable, with the reason (the official engine cannot speak it, gateway off…) */
   unavailable?: string;
+  /** set on another agent's own models (the `agent:<kind>` sections): picking it switches the agent */
+  agent?: AgentKind;
 }
 
 export interface ModelMenuSection {
-  id: string; // 'favorites' | 'recent' | 'builtin' | <providerId>
-  kind: 'favorites' | 'recent' | 'builtin' | 'provider';
+  id: string; // 'favorites' | 'recent' | 'builtin' | <providerId> | 'agent:<kind>'
+  kind: 'favorites' | 'recent' | 'builtin' | 'provider' | 'agent';
   title: string;
   providerId?: string;
   providerType?: ProviderType;
+  /** kind 'agent': which agent */
+  agent?: AgentKind;
   items: ModelMenuItem[];
   count?: number; // models listed for the profile (after hiding)
   modelsAt?: number;
@@ -73,6 +77,28 @@ export interface BuildMenuInput {
   engine?: { runtime: RuntimeKind; fallback?: { runtime: RuntimeKind } } | null;
   /** gateway.status().enabled; undefined = not loaded yet (gateway profiles are not judged) */
   gatewayEnabled?: boolean;
+  /**
+   * The other agents (Codex, Gemini CLI…) as more sections of the same flat list — what used to be the composer's
+   * separate agent picker. Their own logins only: a profile is listed once, under the current agent's rules.
+   */
+  otherAgents?: AgentSource[];
+}
+
+/** Another agent as a source in the model menu (from `agents.list`). */
+export interface AgentSource {
+  kind: AgentKind;
+  name: string;
+  installed: boolean;
+  /** what the agent reported / the registry knows, used when the catalog has no list for it */
+  models?: string[];
+  /** its configured default model (settings → CLI Agents) */
+  defaultModel?: string;
+}
+
+/** An agent's own model list: the catalog, else what it reported. */
+export function agentModels(a: Pick<AgentSource, 'kind' | 'models'>): { value: string; displayName: string; description?: string }[] {
+  const cat = modelsFor(a.kind);
+  return cat.length ? cat.map((m) => ({ value: m.value, displayName: m.displayName, description: m.description })) : (a.models ?? []).map((m) => ({ value: m, displayName: m }));
 }
 
 /** Which profile types can drive an agent — @catalog's table, shared with session.setProvider on the server. */
@@ -211,7 +237,34 @@ export function buildModelMenu(i: BuildMenuInput): ModelMenu {
     });
   }
 
-  const pool = items.filter(pickable);
+  for (const a of i.otherAgents ?? []) {
+    if (a.kind === i.agent) continue;
+    const unavailable = a.installed ? undefined : '未安装（设置 → CLI Agents）';
+    const entry = (model: string, display: string, extra: Partial<ModelMenuItem> = {}): ModelMenuItem => ({
+      key: modelKey(a.kind, OWN_PROVIDER, model),
+      providerId: OWN_PROVIDER,
+      providerName: a.name,
+      model,
+      display,
+      label: `${a.name} · ${display}`,
+      favorite: false,
+      recent: false,
+      compatible: true,
+      current: false,
+      agent: a.kind,
+      unavailable,
+      ...extra,
+    });
+    const list = [entry('', a.defaultModel ? `默认（${a.defaultModel}）` : '默认模型', { isDefault: true })];
+    for (const m of agentModels(a)) if (m.value && m.value !== 'default') list.push(entry(m.value, m.displayName || m.value, { hint: m.description || undefined }));
+    items.push(...list);
+    const shown = list.filter(visible);
+    sections.push({ id: `agent:${a.kind}`, kind: 'agent', title: a.name, agent: a.kind, items: shown, count: shown.filter((x) => !x.isDefault).length, unavailable });
+  }
+
+  // favourites / recents: the current agent's entries only — another agent's model is a switch of agent (in a
+  // running conversation a hand-over), not something to be one click away
+  const pool = items.filter((x) => pickable(x) && !x.agent);
   const byKey = (k: string) => pool.find((x) => !x.isDefault && x.key === k);
   const favs = favorites.map(byKey).filter((x): x is ModelMenuItem => !!x).sort((a, b) => a.label.localeCompare(b.label));
   const rec = recents
