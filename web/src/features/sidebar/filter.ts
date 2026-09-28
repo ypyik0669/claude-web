@@ -95,16 +95,18 @@ export function childrenOf(all: SessionSummary[], parentId: string, o: Pick<Sess
   return all.filter((s) => s.parentId === parentId && (o.showArchived || !isArchived(s, o.meta))).sort((a, b) => b.lastModified - a.lastModified);
 }
 
-/** The active filters as short words (「Codex · Box B · 含已归档 · “login”」); empty = the list is unfiltered. */
+/**
+ * What narrows the list, as short words (「Codex · Box B · “login”」); empty = nothing is hidden by a filter.
+ * 显示已归档 is not in it: it adds conversations, it hides none (empty projects stay, 清除 leaves it alone).
+ */
 export function filterSummary(
-  f: { source: AgentKind | 'all'; machine: string; query: string; showArchived: boolean },
+  f: { source: AgentKind | 'all'; machine: string; query: string },
   sourceName: (kind: string) => string,
   machineName: (id: string) => string,
 ): string[] {
   const out: string[] = [];
   if (f.source !== 'all') out.push(sourceName(f.source));
   if (f.machine !== 'all') out.push(machineName(f.machine));
-  if (f.showArchived) out.push('含已归档');
   const q = f.query.trim();
   if (q) out.push(`“${q}”`);
   return out;

@@ -11,17 +11,15 @@ import { useOrch, waitingOf } from '@/features/orchestra/state';
 import { agentOf, childrenOf, filterSessions, filterSummary, isArchived, machineCounts, renderedRows, sourceCounts } from './filter';
 import { capsIntersection, deleteSessions, setArchived } from './session-actions';
 import { rangeIds } from './status';
-import type { RowCtx, Selection } from './rows';
+import { SessionRow, type RowCtx, type Selection } from './rows';
 import { Group, PAGE_FIRST, ProjectMenu } from './groups';
 import { NeedsYou } from './attention';
 import { FilterMenu, type SourceChip } from './filter-menu';
 import { AccountRow } from './account';
 import { DiscoveryHint } from './hint';
-import { Menu } from './menus';
+import { Menu, closeDrawer } from './menus';
 import { showPanel } from './panels';
 import type { AutomationId, ProjectMenuId, ProjectsHeadId, RowId, SectionId, TopId } from './entries';
-
-const closeDrawer = () => { if (useStore.getState().mobile) useStore.setState({ sidebarOpen: false }); };
 
 /** 自动化 → the schedules, goals and orchestration panels (the full automation page comes with redesign phase 7). */
 function AutomationMenu({ onClose }: { onClose: () => void }) {
@@ -45,6 +43,20 @@ const busyIds = (s: ReturnType<typeof useStore.getState>) =>
   Object.values(s.open).filter((o) => o.state === 'running' || o.state === 'starting' || o.state === 'waiting' || o.pending.length).map((o) => o.sessionId).sort().join('|');
 
 /**
+ * Esc ends multi-select only when it is meant for the sidebar: focus in the sidebar (or nowhere), nothing above it
+ * (command palette, settings, a dialog, the shortcuts sheet, an image viewer, any menu) and nobody handled it yet.
+ * Runs in the capture phase, before those overlays close themselves on the same key.
+ */
+function escForSidebar(e: KeyboardEvent): boolean {
+  if (e.key !== 'Escape' || e.defaultPrevented) return false;
+  const st = useStore.getState();
+  if (st.paletteOpen || st.settingsOpen || st.shortcutsOpen || st.viewer) return false;
+  if (document.querySelector('.modal-bg, .palette-bg, .menu')) return false;
+  const a = document.activeElement;
+  return !a || a === document.body || !!a.closest('.sidebar');
+}
+
+/**
  * The sidebar (spec 2026-09-28 §5.1): 新对话 · 搜索 · 自动化; 「需要你」 while something waits; conversations by
  * project — each row a title and one status at its end; source / machine / archived / multi-select behind the
  * funnel on the 项目 row; the account row (quota ring, settings) at the bottom. Every entry point of the old sidebar
@@ -66,16 +78,16 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const setSourceFilter = useStore((s) => s.setSourceFilter);
   const busy = useStore(busyIds);
   const [q, setQ] = useState('');
+  // the sidebar's one open menu: `auto` · `filter` · `account` · `proj:<id>` · `row:<list|attn>:<id>` (opening one closes the others)
   const [menu, setMenu] = useState<string | null>(null);
-  const [projMenu, setProjMenu] = useState<string | null>(null);
   const [shown, setShown] = useState<Record<string, number | undefined>>({});
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
   const [machine, setMachine] = useState<string>('all');
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [autoOpen, setAutoOpen] = useState(false);
+  const toggleMenu = (k: string) => (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); setMenu((m) => (m === k ? null : k)); };
+  const closeMenu = () => setMenu(null);
 
   const ql = q.trim();
   const visible = useMemo(() => filterSessions(sessions, { source: sourceFilter, query: q, showArchived, meta: sessionMeta, machine }), [sessions, sessionMeta, showArchived, q, sourceFilter, machine]);
@@ -91,9 +103,11 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   if (sourceFilter !== 'all' && !chips.some((x) => x.kind === sourceFilter)) chips.push({ kind: sourceFilter, name: nameOf(sourceFilter) });
   if (!chips.length) chips.push({ kind: 'claude', name: nameOf('claude') });
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
-  const summary = filterSummary({ source: sourceFilter, machine, query: q, showArchived }, nameOf, (m) => machines.find((x) => x.id === m)?.name ?? m);
-  const filtered = summary.length > 0;
-  const clearFilters = () => { setQ(''); setSourceFilter('all'); setMachine('all'); useStore.setState({ showArchived: false }); };
+  // what narrows the list (source / machine / text); 显示已归档 widens it, so it is not a filter: empty projects stay
+  // listed, there is no 「已筛选」 row for it and 清除 leaves it on (it still lights the funnel: a non-default setting)
+  const summary = filterSummary({ source: sourceFilter, machine, query: q }, nameOf, (m) => machines.find((x) => x.id === m)?.name ?? m);
+  const narrowed = summary.length > 0;
+  const clearFilters = () => { setQ(''); setSourceFilter('all'); setMachine('all'); };
   const pending = sources.filter((x) => x.kind !== 'claude' && x.detected && !x.joined && !x.dismissed);
   const pinned = visible.filter((s) => sessionMeta[s.sessionId]?.pinned);
 
@@ -121,14 +135,21 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const busySet = useMemo(() => new Set(busy ? busy.split('|') : []), [busy]);
   const keep = useCallback((s: SessionSummary) => s.sessionId === activeId || busySet.has(s.sessionId) || s.live === 'running' || s.live === 'waiting', [activeId, busySet]);
   const kidsOf = useCallback((s: SessionSummary) => (expanded.has(s.sessionId) ? childrenOf(sessions, s.sessionId, { showArchived, meta: sessionMeta }) : []), [expanded, sessions, showArchived, sessionMeta]);
+  const isBusy = useCallback((s: SessionSummary) => busySet.has(s.sessionId) || s.live === 'running' || s.live === 'waiting', [busySet]);
+  // folded 其它文件夹 still shows what must stay in view (the current conversation, running / waiting ones), like a
+  // group's page cut does; its header spins while something in there runs
+  const otherAll = useMemo(() => grouped.other.flatMap(([, a]) => a), [grouped]);
+  const otherKept = useMemo(() => (otherCollapsed ? otherAll.filter(keep) : []), [otherCollapsed, otherAll, keep]);
+  const otherBusy = otherAll.some(isBusy);
 
   // selection (全选, Shift ranges) only ever covers rows that are on screen: expanded groups, within their page limit
   const rendered = useMemo(() => renderedRows([
     { key: '__pinned', items: pinned, collapsed: !!collapsed.__pinned },
     ...workspaces.map((w) => ({ key: w.id, items: grouped.byWs.get(w.id) ?? [], collapsed: !!collapsed[w.id] })),
     ...grouped.other.map(([cwd, arr]) => ({ key: cwd, items: arr, collapsed: otherCollapsed || !!collapsed[cwd] })),
+    { key: '__other_kept', items: otherKept, collapsed: false },
     ...grouped.peers.map(([id, arr]) => ({ key: `peer:${id}`, items: arr, collapsed: !!collapsed[`peer:${id}`] })),
-  ], shown as Record<string, number>, PAGE_FIRST, { keep, kids: kidsOf }), [pinned, workspaces, grouped, collapsed, otherCollapsed, shown, keep, kidsOf]);
+  ], shown as Record<string, number>, PAGE_FIRST, { keep, kids: kidsOf }), [pinned, workspaces, grouped, collapsed, otherCollapsed, otherKept, shown, keep, kidsOf]);
   const order = useMemo(() => rendered.map((s) => s.sessionId), [rendered]);
   const selected = useMemo(() => rendered.filter((s) => picked.has(s.sessionId)), [rendered, picked]);
   const allOn = rendered.length > 0 && selected.length === rendered.length;
@@ -146,15 +167,15 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   };
   useEffect(() => {
     if (!selecting) return;
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') endSelect(); };
-    window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
+    const k = (e: KeyboardEvent) => { if (escForSidebar(e)) endSelect(); };
+    window.addEventListener('keydown', k, true);
+    return () => window.removeEventListener('keydown', k, true);
   }, [selecting]);
   const selCaps = capsIntersection(selected);
   const allArchived = selected.length > 0 && selected.every((s) => isArchived(s, sessionMeta));
 
   const ctx: RowCtx = {
-    menu, setMenu, sel, expanded,
+    where: 'list', menu, setMenu, sel, expanded,
     toggleKids: (id) => setExpanded((e) => { const n = new Set(e); if (n.has(id)) n.delete(id); else n.add(id); return n; }),
     tagFor: (s) => { const k = agentOf(s); return k === 'claude' ? null : nameOf(k); },
   };
@@ -169,8 +190,8 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     onToggle: () => toggleGroup(k),
     shown: shown[k],
     setShown: (n: number | undefined) => setShown((m) => ({ ...m, [k]: n })),
-    busy: items.some((s) => busySet.has(s.sessionId) || s.live === 'running' || s.live === 'waiting'),
-    emptyText: ql ? '没有匹配的对话' : filtered ? '' : '还没有对话',
+    busy: items.some(isBusy),
+    emptyText: ql ? '没有匹配的对话' : narrowed ? '' : '还没有对话',
   });
   const top = (x: TopId) => x;
   const sec = (x: SectionId) => x;
@@ -188,8 +209,8 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         <button className={clsx('nav', !activeId && 'active')} data-id={top('new')} onClick={() => { onNew(); closeDrawer(); }}><Icon name="edit" size={16} />新对话<span className="k">{desktop ? `${modKey} N` : 'Alt N'}</span></button>
         <button className="nav" data-id={top('search')} title="搜索对话、命令和设置" onClick={() => { useStore.setState({ paletteOpen: true }); closeDrawer(); }}><Icon name="search" size={16} />搜索<span className="k">{modKey} K</span></button>
         <div className="nav-anchor">
-          <button className={clsx('nav', autoOpen && 'on')} data-id={top('automation')} aria-haspopup="menu" aria-expanded={autoOpen} onClick={(e) => { e.stopPropagation(); setAutoOpen(!autoOpen); }}><Icon name="tasks" size={16} />自动化</button>
-          {autoOpen && <AutomationMenu onClose={() => setAutoOpen(false)} />}
+          <button className={clsx('nav', menu === 'auto' && 'on')} data-id={top('automation')} aria-haspopup="menu" aria-expanded={menu === 'auto'} onClick={toggleMenu('auto')}><Icon name="tasks" size={16} />自动化</button>
+          {menu === 'auto' && <AutomationMenu onClose={closeMenu} />}
         </div>
       </nav>
       <NeedsYou ctx={ctx} />
@@ -205,7 +226,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
             {selected.length > 0 && !selCaps.archive && !selCaps.delete && <span className="hint">选中的对话来源不支持批量操作</span>}
           </div>
         )}
-        {filtered && !selecting && (
+        {narrowed && !selecting && (
           <div className="sb-filtered" role="status">
             <Icon name="filter" size={12} />
             <span className="what" title={summary.join(' · ')}>{summary.join(' · ')}</span>
@@ -213,24 +234,24 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
           </div>
         )}
         {pinned.length > 0 && (
-          <Group {...groupProps('__pinned', pinned)} section name="置顶" icon="pin" className="pinned" />
+          <Group {...groupProps('__pinned', pinned)} section dataId={sec('pinned')} name="置顶" icon="pin" className="pinned" />
         )}
         <div className="sb-sec" data-id={sec('projects')}>
           <div className="sb-sec-h">
             <span>项目</span>
             <span className="grow" />
             <span className="anchor">
-              <button className={clsx('icon-btn xs', (filtered || filterOpen) && 'on')} data-id={head('filter')} title="筛选：来源 / 机器 / 已归档 / 选择多个" aria-label="筛选" aria-haspopup="menu" aria-expanded={filterOpen} onClick={(e) => { e.stopPropagation(); setFilterOpen(!filterOpen); }}>
-                <Icon name="filter" size={14} />{filtered && <span className="fdot" />}
+              <button className={clsx('icon-btn xs', (narrowed || showArchived || menu === 'filter') && 'on')} data-id={head('filter')} title="筛选：来源 / 机器 / 已归档 / 选择多个" aria-label="筛选" aria-haspopup="menu" aria-expanded={menu === 'filter'} onClick={toggleMenu('filter')}>
+                <Icon name="filter" size={14} />{(narrowed || showArchived) && <span className="fdot" />}
               </button>
-              {filterOpen && (
+              {menu === 'filter' && (
                 <FilterMenu
-                  onClose={() => setFilterOpen(false)}
+                  onClose={closeMenu}
                   query={q} setQuery={setQ}
                   sources={chips} counts={counts} total={total} source={sourceFilter} setSource={(k: AgentKind | 'all') => setSourceFilter(k)}
                   machines={machines} machine={machine} setMachine={setMachine} showMachines={showMachines}
                   showArchived={showArchived} setShowArchived={(v) => useStore.setState({ showArchived: v })}
-                  onSelect={() => { setSelecting(true); setMenu(null); }}
+                  onSelect={() => { setSelecting(true); closeMenu(); }}
                 />
               )}
             </span>
@@ -244,8 +265,9 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
           )}
           {workspaces.map((w) => {
             const arr = grouped.byWs.get(w.id) ?? [];
-            if (filtered && !arr.length) return null;
-            const openMenu = (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); setProjMenu(projMenu === w.id ? null : w.id); };
+            if (narrowed && !arr.length) return null;
+            const mk = `proj:${w.id}`;
+            const projMenu = toggleMenu(mk);
             return (
               <Group
                 key={w.id}
@@ -253,23 +275,33 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
                 name={w.name}
                 icon="folder"
                 title={w.path}
-                onContextMenu={openMenu}
+                onContextMenu={projMenu}
                 actions={<>
                   <button className="icon-btn xs" data-id={pm('new-here')} title="在这里新建对话" aria-label="在这里新建对话" onClick={() => { void useStore.getState().openSession({ cwd: w.path }).catch((e) => toast(e.message)); closeDrawer(); }}><Icon name="edit" size={13} /></button>
-                  <button className="icon-btn xs" title="更多" aria-label="项目菜单" onClick={openMenu}><Icon name="more" size={14} /></button>
+                  <button className="icon-btn xs" title="更多" aria-label="项目菜单" aria-haspopup="menu" aria-expanded={menu === mk} onClick={projMenu}><Icon name="more" size={14} /></button>
                 </>}
-                menu={projMenu === w.id ? <ProjectMenu w={w} onClose={() => setProjMenu(null)} /> : undefined}
+                menu={menu === mk ? <ProjectMenu w={w} onClose={closeMenu} /> : undefined}
               />
             );
           })}
         </div>
         {grouped.other.length > 0 && (
           <div className="sb-sec" data-id={sec('other')}>
-            <div className="sb-sec-h fold" role="button" tabIndex={0} aria-expanded={!otherCollapsed} onClick={() => toggleGroup('__other', otherCollapsed)} onKeyDown={(e) => { if (e.key === 'Enter') toggleGroup('__other', otherCollapsed); }} title="不在任何项目里的对话，按文件夹">
+            <div className="sb-sec-h fold" role="button" tabIndex={0} aria-expanded={!otherCollapsed} onClick={() => toggleGroup('__other', otherCollapsed)} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleGroup('__other', otherCollapsed); } }} title="不在任何项目里的对话，按文件夹">
               <span>其它文件夹</span>
-              {otherCollapsed && <span className="n">{grouped.other.reduce((n, [, a]) => n + a.length, 0)}</span>}
+              {otherCollapsed && (otherBusy ? <span className="spin" title="有对话在运行" /> : <span className="n">{otherAll.length}</span>)}
               <Icon name={otherCollapsed ? 'chevronRight' : 'chevronDown'} size={12} className="sec-chev" />
             </div>
+            {otherKept.length > 0 && (
+              <div className="sb-rows sb-kept" role="group" aria-label="其它文件夹里当前 / 运行中的对话">
+                {otherKept.map((s) => (
+                  <div key={s.sessionId} className="sb-row-wrap">
+                    <SessionRow s={s} ctx={ctx} flat />
+                    {expanded.has(s.sessionId) && kidsOf(s).map((k) => <SessionRow key={k.sessionId} s={k} ctx={ctx} depth={1} flat />)}
+                  </div>
+                ))}
+              </div>
+            )}
             {!otherCollapsed && grouped.other.map(([cwd, arr]) => (
               <Group
                 key={cwd}
@@ -303,12 +335,12 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
             })}
           </div>
         )}
-        {!visible.length && filtered && (
+        {!visible.length && narrowed && (
           <div className="empty sb-empty">没有匹配的对话<div><button className="btn sm" onClick={clearFilters}>清除筛选</button></div></div>
         )}
       </div>
       {pending.length > 0 && <DiscoveryHint pending={pending} />}
-      <AccountRow />
+      <AccountRow open={menu === 'account'} setOpen={(v) => setMenu(v ? 'account' : null)} />
     </>
   );
 }

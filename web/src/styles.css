@@ -1617,3 +1617,10 @@ html[data-density='compact'] .sb-row.sess { height: 28px; padding: 0 10px 0 var(
 .app.mobile .sb-row.sess { height: 40px; }
 .app.mobile .sb-nav .nav { height: 40px; }
 .app.mobile .sb-nav .nav .k { display: none; }
+
+/* a conversation on another machine: the machine's name in gray before the status (not in that machine's own group) */
+.sb-row .peer-tag { flex: 0 1 auto; min-width: 0; max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--ink-4); }
+.sb-group.peer .sb-row .peer-tag { display: none; }
+/* folded 其它文件夹: a spinner while something in there runs; the current / running rows stay listed under it */
+.sb-sec-h .spin { width: 11px; height: 11px; margin-left: 4px; border-radius: 50%; border: 1.6px solid var(--edge-default); border-top-color: var(--ink-2); animation: spin 0.9s linear infinite; flex: none; }
+.sb-rows.sb-kept { padding-bottom: 2px; }

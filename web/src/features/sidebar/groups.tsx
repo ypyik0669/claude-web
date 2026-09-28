@@ -5,7 +5,7 @@ import { dlg } from '@/ui/dialog';
 import { clsx } from '@/util';
 import { Icon, type IconName } from '@/ui/icons';
 import { TERMS } from '@/ui/terms';
-import { Menu } from './menus';
+import { Menu, closeDrawer } from './menus';
 import { SessionRow, type RowCtx } from './rows';
 import { pageRows } from './status';
 import type { ProjectMenuId, RowId } from './entries';
@@ -13,7 +13,7 @@ import type { ProjectMenuId, RowId } from './entries';
 /** A project's ··· / right-click menu (a project = a workspace folder; the data keeps calling it a workspace). */
 export function ProjectMenu({ w, onClose }: { w: Workspace; onClose: () => void }) {
   const st = useStore();
-  const act = (fn: () => unknown) => () => { onClose(); void fn(); };
+  const act = (fn: () => unknown) => () => { onClose(); closeDrawer(); void fn(); };
   const id = (x: ProjectMenuId) => x;
   return (
     <Menu onClose={onClose} label={`项目 ${w.name}`}>
@@ -57,6 +57,8 @@ export interface GroupProps {
   emptyText?: string;
   /** a section of its own (置顶): the header is a section label, the rows are not indented under a folder */
   section?: boolean;
+  /** entry id (entries.ts) for a group that is itself a sidebar entry (置顶) */
+  dataId?: string;
 }
 
 /**
@@ -69,7 +71,7 @@ export function Group(p: GroupProps) {
   const { rows, hidden } = pageRows(p.items, limit, p.keep);
   const more: RowId = 'more', less: RowId = 'less';
   return (
-    <div className={clsx('sb-group', p.section && 'sb-sec', p.className, p.collapsed && 'collapsed')} data-group={p.k}>
+    <div className={clsx('sb-group', p.section && 'sb-sec', p.className, p.collapsed && 'collapsed')} data-group={p.k} data-id={p.dataId}>
       <div className={clsx(p.section ? 'sb-sec-h fold' : 'ws-head sb-group-head')} onClick={p.onToggle} onContextMenu={p.onContextMenu} title={p.title} role="button" tabIndex={0} aria-expanded={!p.collapsed} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); p.onToggle(); } }}>
         {!p.section && <span className="ic"><Icon name={p.icon} size={15} className="gi" /><Icon name={p.collapsed ? 'chevronRight' : 'chevronDown'} size={13} className="gc" /></span>}
         <span className="name">{p.name}</span>

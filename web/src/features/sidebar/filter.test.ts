@@ -94,10 +94,15 @@ describe('filterSummary: what the funnel is hiding, in words', () => {
   const names = (k: string) => ({ codex: 'Codex', claude: 'Claude Code' })[k] ?? k;
   const machineName = (id: string) => ({ b1: 'Box B', local: '本机' })[id] ?? id;
   it('nothing active → empty', () => {
-    expect(filterSummary({ source: 'all', machine: 'all', query: '  ', showArchived: false }, names, machineName)).toEqual([]);
+    expect(filterSummary({ source: 'all', machine: 'all', query: '  ' }, names, machineName)).toEqual([]);
   });
-  it('source, machine, archived and the text query', () => {
-    expect(filterSummary({ source: 'codex', machine: 'b1', query: ' login ', showArchived: true }, names, machineName)).toEqual(['Codex', 'Box B', '含已归档', '“login”']);
+  it('source, machine and the text query', () => {
+    expect(filterSummary({ source: 'codex', machine: 'b1', query: ' login ' }, names, machineName)).toEqual(['Codex', 'Box B', '“login”']);
+  });
+  it('showing archived conversations is not a filter (it hides nothing)', () => {
+    // the Sidebar passes its whole filter state; the archive toggle must not count as narrowing the list
+    const withArchive = { source: 'all' as const, machine: 'all', query: '', showArchived: true };
+    expect(filterSummary(withArchive, names, machineName)).toEqual([]);
   });
 });
 

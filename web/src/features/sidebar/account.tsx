@@ -1,48 +1,50 @@
 import { useEffect, useState } from 'react';
 import type { LedgerEntry } from '@shared';
-import { useStore } from '@/store';
+import { useStore, type AccountAuth } from '@/store';
 import { ws } from '@/ws/client';
 import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { fmtCost } from '@/model/cost';
 import { modKey } from '@/features/workbench/shortcuts';
-import { Menu } from './menus';
+import { Menu, closeDrawer } from './menus';
 import { QuotaWindows, UsageRing } from './UsageRing';
 import { accountName, planLabel, todayCost } from './status';
 import type { AccountId } from './entries';
 import { showPanel } from './panels';
 
-interface Auth { loggedIn?: boolean; email?: string; orgName?: string; subscriptionType?: string; authMethod?: string }
-
 /**
- * Who is signed in (`config.auth` = `claude auth status`; the server shares one run for 30 s with the welcome page
- * and the onboarding), asked once per connection — never polled: every forced check is an engine start.
+ * Today's spend for the account popover: `ledger.list` parses the whole ledger file on the server, so one answer is
+ * reused for 60 s (opening and closing the popover repeatedly asks once). Module-level: the sidebar unmounts.
  */
-function useAuth(): Auth | null {
-  const connected = useStore((s) => s.connected);
-  const [auth, setAuth] = useState<Auth | null>(null);
-  useEffect(() => {
-    if (!connected) return;
-    let live = true;
-    ws.request<Auth>({ kind: 'config.auth' }).then((a) => { if (live) setAuth(a ?? { loggedIn: false }); }).catch(() => { if (live) setAuth((x) => x ?? { loggedIn: false }); });
-    return () => { live = false; };
-  }, [connected]);
-  return auth;
+const TODAY_TTL_MS = 60_000;
+type Today = ReturnType<typeof todayCost>;
+let todayCache: { at: number; day: string; value: Today } | null = null;
+let todayInflight: Promise<Today> | null = null;
+const dayKey = () => new Date().toDateString();
+/** the cached answer while it is fresh (and still about today) */
+const cachedToday = (): Today | null => (todayCache && Date.now() - todayCache.at < TODAY_TTL_MS && todayCache.day === dayKey() ? todayCache.value : null);
+function loadToday(): Promise<Today> {
+  const hit = cachedToday();
+  if (hit) return Promise.resolve(hit);
+  todayInflight ??= ws.request<LedgerEntry[]>({ kind: 'ledger.list', days: 1 })
+    .then((rows) => { const value = todayCost(rows ?? []); todayCache = { at: Date.now(), day: dayKey(), value }; return value; })
+    .finally(() => { todayInflight = null; });
+  return todayInflight;
 }
 
 /**
  * The account row at the bottom of the sidebar (spec §5.1): avatar · name · 「Max 套餐 · 已用 34%」 · settings gear.
  * The row opens a popover upwards (quota windows, today's spend, usage & ledger, the config panel, appearance,
  * shortcuts, the command palette). The connection shows only when it is lost (red dot on the avatar + the line).
+ * Who is signed in comes from the store (`auth`, asked once per connection); the popover is the sidebar's one menu.
  */
-export function AccountRow() {
-  const auth = useAuth();
+export function AccountRow({ open, setOpen }: { open: boolean; setOpen(v: boolean): void }) {
+  const auth = useStore((s) => s.auth);
   const providers = useStore((s) => s.providers.length);
   const connected = useStore((s) => s.connected);
-  const [open, setOpen] = useState(false);
   const who = accountName(auth, providers);
   const id = (x: AccountId) => x;
-  const settings = () => useStore.getState().openSettings();
+  const settings = () => { useStore.getState().openSettings(); closeDrawer(); };
   return (
     <div className="sb-foot sb-account">
       <button className={clsx('acct', open && 'on')} data-id={id('account')} aria-haspopup="menu" aria-expanded={open} title={auth?.email ?? who.name} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>
@@ -55,7 +57,7 @@ export function AccountRow() {
           <span className="sub">{connected ? <UsageRing tip={false} fallbackPlan={auth?.subscriptionType} /> : <span className="conn-off">连接断开，正在重连…</span>}</span>
         </span>
       </button>
-      <button className="icon-btn" data-id={id('settings')} title={`设置 (${modKey}+,) · 右键：在右侧面板打开配置中心`} aria-label="设置" onClick={settings} onContextMenu={(e) => { e.preventDefault(); showPanel('config'); }}>
+      <button className="icon-btn" data-id={id('settings')} title={`设置 (${modKey}+,) · 右键：在右侧面板打开配置中心`} aria-label="设置" onClick={settings} onContextMenu={(e) => { e.preventDefault(); showPanel('config'); closeDrawer(); }}>
         <Icon name="settings" size={16} />
       </button>
       {open && <AccountMenu auth={auth} name={who.name} onClose={() => setOpen(false)} />}
@@ -63,16 +65,16 @@ export function AccountRow() {
   );
 }
 
-function AccountMenu({ auth, name, onClose }: { auth: Auth | null; name: string; onClose: () => void }) {
+function AccountMenu({ auth, name, onClose }: { auth: AccountAuth | null; name: string; onClose: () => void }) {
   const limits = useStore((s) => s.limits);
-  const [today, setToday] = useState<ReturnType<typeof todayCost> | null>(null);
+  const [today, setToday] = useState(cachedToday);
   useEffect(() => {
     let live = true;
-    ws.request<LedgerEntry[]>({ kind: 'ledger.list', days: 1 }).then((rows) => { if (live) setToday(todayCost(rows ?? [])); }).catch(() => {});
+    loadToday().then((v) => { if (live) setToday(v); }).catch(() => {});
     return () => { live = false; };
   }, []);
   const id = (x: AccountId) => x;
-  const act = (fn: () => void) => () => { onClose(); fn(); };
+  const act = (fn: () => void) => () => { onClose(); closeDrawer(); fn(); };
   const st = useStore.getState;
   const plan = planLabel(limits?.subscriptionType ?? auth?.subscriptionType);
   return (

@@ -7,7 +7,7 @@ import { Icon, AGENT_ICONS } from '@/ui/icons';
 import { isImportedSessionId } from '@/util';
 import { agentOf, isArchived } from './filter';
 import { deleteSummary, deleteTargets, effectiveCaps, nativeCliCommand } from './caps';
-import { useAnchoredMenu } from './menus';
+import { closeDrawer, useAnchoredMenu } from './menus';
 import type { RowMenuId } from './entries';
 import { TERMS } from '@/ui/terms';
 
@@ -154,7 +154,8 @@ export function SessionMenu({ s, onClose, style, extra, handoffInline, deleted }
   const caps = effectiveCaps(s);
   const archived = isArchived(s, meta ? { [s.sessionId]: meta } : {});
   const cli = nativeCliCommand(s);
-  const act = (fn: () => unknown) => () => { onClose(); void fn(); };
+  // an action from the phone drawer (the sidebar's row menu) gets the drawer out of the way; elsewhere closeDrawer is a no-op
+  const act = (fn: () => unknown) => () => { onClose(); closeDrawer(); void fn(); };
   const cur = agentOf(s);
   // a session on another machine can go to ANY local agent (the same kind included: it moves machines);
   // an offline machine can't be read, so there is nothing to hand over

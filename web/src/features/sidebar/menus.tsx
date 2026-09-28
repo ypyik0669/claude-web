@@ -1,21 +1,39 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { placeFixed } from './place';
+
+/** On a phone the sidebar is a drawer over the page: after an action it gets out of the way of what the action did. */
+export const closeDrawer = () => { if (useStore.getState().mobile) useStore.setState({ sidebarOpen: false }); };
 
 /**
  * Position a menu rendered inside its anchor (the parent element) fixed to the viewport, and close it on a click
  * elsewhere, a right-click elsewhere, Escape, or a scroll that moves the anchor. A streaming chat in another pane
- * (auto-scroll) or a scrolling list elsewhere leaves it open.
+ * (auto-scroll) or a scrolling list elsewhere leaves it open. Inside the sidebar the menu follows its anchor when
+ * the list above it changes (the 「已筛选」 row appears while typing in the filter box, a pinned row is filtered out…).
  */
 export function useAnchoredMenu(ref: React.RefObject<HTMLElement | null>, onClose: () => void, o: { align?: 'left' | 'right'; prefer?: 'down' | 'up'; deps?: unknown[] } = {}) {
+  const opts = useRef(o);
+  opts.current = o;
   useLayoutEffect(() => {
     const el = ref.current, anchor = el?.parentElement;
     if (!el || !anchor) return;
-    Object.assign(el.style, { position: 'fixed', right: 'auto', bottom: 'auto', maxHeight: '' });
-    const spot = placeFixed(anchor.getBoundingClientRect(), { w: el.offsetWidth, h: el.scrollHeight }, { vw: window.innerWidth, vh: window.innerHeight }, o);
-    el.style.left = `${spot.left}px`;
-    el.style.top = `${spot.top}px`;
-    if (spot.maxHeight) el.style.maxHeight = `${spot.maxHeight}px`;
+    const place = () => {
+      Object.assign(el.style, { position: 'fixed', right: 'auto', bottom: 'auto', maxHeight: '' });
+      const spot = placeFixed(anchor.getBoundingClientRect(), { w: el.offsetWidth, h: el.scrollHeight }, { vw: window.innerWidth, vh: window.innerHeight }, opts.current);
+      el.style.left = `${spot.left}px`;
+      el.style.top = `${spot.top}px`;
+      if (spot.maxHeight) el.style.maxHeight = `${spot.maxHeight}px`;
+    };
+    place();
+    // rows inserted / removed above the anchor move it without a scroll or a resize of the anchor itself
+    const scope = anchor.closest('.sidebar');
+    let raf = 0;
+    const again = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(place); };
+    const mo = scope ? new MutationObserver(again) : null;
+    mo?.observe(scope!, { childList: true, subtree: true });
+    window.addEventListener('resize', again);
+    return () => { mo?.disconnect(); cancelAnimationFrame(raf); window.removeEventListener('resize', again); };
   }, o.deps ?? []);
   // parents pass a fresh closure every render; the listeners below must not re-subscribe for that
   const closeRef = useRef(onClose);

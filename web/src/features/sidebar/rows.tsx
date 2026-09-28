@@ -9,6 +9,7 @@ import { sessionDiffStat } from '@/model/diffstat';
 import { TERMS } from '@/ui/terms';
 import { isArchived } from './filter';
 import { SessionMenu, effectiveCaps } from './session-actions';
+import { closeDrawer } from './menus';
 import { rowStatus, type RowStatus } from './status';
 import type { RowId, RowMenuId } from './entries';
 
@@ -17,7 +18,7 @@ function SidebarMenuExtra({ s, onClose }: { s: SessionSummary; onClose: () => vo
   const st = useStore();
   const open = st.open[s.sessionId];
   const meta = st.sessionMeta[s.sessionId] ?? {};
-  const act = (fn: () => unknown) => () => { onClose(); void fn(); };
+  const act = (fn: () => unknown) => () => { onClose(); closeDrawer(); void fn(); };
   const openIn = (mode: 'tab' | 'replace') => act(() => (open ? st.openInPane(s.sessionId, mode) : st.loadHistory(s.sessionId, { mode })));
   const id = (x: RowMenuId) => x;
   const split = () => {
@@ -59,7 +60,13 @@ export interface Selection {
   range(id: string): void;
 }
 
+/** No multi-select (the 「需要你」 rows: their conversations are selectable where they are listed). */
+export const NO_SELECTION: Selection = { on: false, ids: new Set(), toggle: () => {}, range: (id) => openFromSidebar(id, 'replace') };
+
 export interface RowCtx {
+  /** which list the rows are in: the same conversation can be in 「需要你」 and in its project at once */
+  where: 'list' | 'attn';
+  /** the sidebar's one open menu (`row:<where>:<id>`, `filter`, `auto`, `account`, `proj:<id>`), or null */
   menu: string | null;
   setMenu(v: string | null): void;
   sel: Selection;
@@ -68,6 +75,9 @@ export interface RowCtx {
   /** gray text instead of the time: a non-Claude agent's name */
   tagFor(s: SessionSummary): string | null;
 }
+
+/** Key of a row's menu in the sidebar's one-menu state. */
+export const rowMenuKey = (where: RowCtx['where'], sessionId: string) => `row:${where}:${sessionId}`;
 
 /** The one status at the end of a row. */
 export function StatusMark({ st }: { st: RowStatus }) {
@@ -106,6 +116,8 @@ function rowTitle(s: SessionSummary, tag: string | null, st: RowStatus, sel: boo
 /**
  * One conversation: title + one status at its end (spec §5.1). Hover shows ··· in the status' place; right-click
  * opens the same menu. A parent of forks / sub-agent threads has an arrow in front that lists them underneath.
+ * A conversation on another machine carries the machine's name in gray before the status (hidden inside that
+ * machine's own group, whose header already says it).
  */
 export function SessionRow({ s, ctx, depth = 0, flat = false, pip = false }: { s: SessionSummary; ctx: RowCtx; depth?: number; flat?: boolean; pip?: boolean }) {
   const activeId = useStore((st) => st.activeId);
@@ -114,9 +126,10 @@ export function SessionRow({ s, ctx, depth = 0, flat = false, pip = false }: { s
   const st = useRowStatus(s, tag);
   const { sel, menu, setMenu } = ctx;
   const id = s.sessionId;
+  const key = rowMenuKey(ctx.where, id);
   const checked = sel.on && sel.ids.has(id);
   const archived = isArchived(s, meta ? { [id]: meta } : {});
-  const kids = !!s.childCount && depth === 0;
+  const kids = !!s.childCount && depth === 0 && ctx.where === 'list';
   const open = ctx.expanded.has(id);
   const kidsId: RowId = 'kids';
   const onClick = (e: React.MouseEvent) => {
@@ -128,20 +141,22 @@ export function SessionRow({ s, ctx, depth = 0, flat = false, pip = false }: { s
     <div
       className={clsx('sess sb-row', flat && 'flat', depth > 0 && 'kid', activeId === id && !sel.on && 'active', checked && 'checked', archived && 'archived', s.peer?.offline && 'offline')}
       data-sid={id}
-      role="button"
+      // in select mode the row is a checkbox (it toggles, it does not open)
+      role={sel.on ? 'checkbox' : 'button'}
+      aria-checked={sel.on ? checked : undefined}
       tabIndex={0}
-      aria-selected={sel.on ? checked : undefined}
       onClick={onClick}
-      onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); /* no text selection on Shift-click */ }}
+      // Shift-click: no text selection, but the row takes the focus (Esc then ends the multi-select from here)
+      onMouseDown={(e) => { if (e.shiftKey) { e.preventDefault(); e.currentTarget.focus({ preventScroll: true }); } }}
       onAuxClick={(e) => { if (e.button !== 1 || sel.on) return; e.preventDefault(); openFromSidebar(id, 'tab'); }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return;
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (sel.on) sel.toggle(id); else openFromSidebar(id, e.ctrlKey || e.metaKey ? 'tab' : 'replace'); }
-        else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) { e.preventDefault(); setMenu(id); }
+        else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) { e.preventDefault(); setMenu(key); }
       }}
       draggable={!sel.on}
       onDragStart={(e) => { e.dataTransfer.setData(MIME_SESSION, id); e.dataTransfer.effectAllowed = 'copyMove'; }}
-      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu(id); }}
+      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu(key); }}
       title={rowTitle(s, tag, st, sel.on)}
     >
       {kids && (
@@ -149,12 +164,13 @@ export function SessionRow({ s, ctx, depth = 0, flat = false, pip = false }: { s
           <Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} />
         </button>
       )}
-      {sel.on && <input type="checkbox" className="sel-box" checked={checked} readOnly tabIndex={-1} aria-label="选择" />}
+      {sel.on && <input type="checkbox" className="sel-box" checked={checked} readOnly tabIndex={-1} aria-hidden />}
       {pip && <span className={clsx('pip', st.kind === 'error' && 'err')} />}
       <span className="t">{s.title}</span>
+      {s.peer && <span className="peer-tag" title={`在机器「${s.peer.name}」上${s.peer.offline ? '（离线）' : ''}`}>{s.peer.name}</span>}
       <StatusMark st={st} />
-      {!sel.on && <button className="more" title="更多" aria-label="更多" onClick={(e) => { e.stopPropagation(); setMenu(menu === id ? null : id); }}><Icon name="more" size={14} /></button>}
-      {menu === id && <SessionMenu s={s} onClose={() => setMenu(null)} extra={<SidebarMenuExtra s={s} onClose={() => setMenu(null)} />} />}
+      {!sel.on && <button className="more" title="更多" aria-label="更多" onClick={(e) => { e.stopPropagation(); setMenu(menu === key ? null : key); }}><Icon name="more" size={14} /></button>}
+      {menu === key && <SessionMenu s={s} onClose={() => setMenu(null)} extra={<SidebarMenuExtra s={s} onClose={() => setMenu(null)} />} />}
     </div>
   );
 }

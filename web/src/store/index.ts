@@ -5,6 +5,9 @@ import { activeGroup, chatTile, deriveActive, hasLegacyLayout, initialLayout, la
 import { PaneContext, winId } from './paneContext';
 import { useContext } from 'react';
 
+/** `config.auth` (`claude auth status`), as far as the sidebar's account row reads it. */
+export interface AccountAuth { loggedIn?: boolean; email?: string; orgName?: string; subscriptionType?: string; authMethod?: string }
+
 export const THEMES = ['dark', 'light', 'dracula', 'nord', 'tokyo-night', 'paper'] as const;
 export type Theme = (typeof THEMES)[number];
 import { ws } from '@/ws/client';
@@ -65,6 +68,13 @@ interface State {
   sessionMeta: Record<string, SessionMeta>;
   schedules: Schedule[];
   limits: Limits | null;
+  /**
+   * Who is signed in (`config.auth` = `claude auth status`), for the sidebar's account row. Asked once per connection
+   * (like `limits`), never polled and never on mount: every forced check is an engine start. null = not answered yet.
+   */
+  auth: AccountAuth | null;
+  /** 「需要你」 errors the user dismissed (`<sessionId>:<error>`); a changed error shows again. Not persisted. */
+  attnDismissed: Record<string, true>;
   paletteOpen: boolean;
   showArchived: boolean;
   shortcutsOpen: boolean;
@@ -254,6 +264,8 @@ export const useStore = create<State>((set, get) => ({
   sessionMeta: {},
   schedules: [],
   limits: null,
+  auth: null,
+  attnDismissed: {},
   paletteOpen: false,
   showArchived: false,
   shortcutsOpen: false,
@@ -362,6 +374,8 @@ export const useStore = create<State>((set, get) => ({
         void get().loadAgents().catch(() => {});
         void get().loadLibrarySources().catch(() => {});
         void ws.request<Limits>({ kind: 'limits.get' }).then((limits) => set({ limits })).catch(() => {});
+        // a failed check keeps the last answer (a reconnect must not turn a signed-in account into 「未登录」)
+        void ws.request<AccountAuth>({ kind: 'config.auth' }).then((a) => set({ auth: a ?? { loggedIn: false } })).catch(() => { if (!get().auth) set({ auth: { loggedIn: false } }); });
         // re-attach open live sessions after reconnect
         void resyncOpenSessions();
       }
