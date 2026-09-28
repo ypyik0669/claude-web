@@ -10,7 +10,7 @@ export function LedgerView({ sessionId }: { sessionId?: string }) {
   const [rows, setRows] = useState<LedgerEntry[] | null>(null);
   const [metric, setMetric] = useState<'calls' | 'cost' | 'latency' | 'tokens'>('calls');
   const [onlyErr, setOnlyErr] = useState(false);
-  const [source, setSource] = useState<'all' | 'session' | 'gateway'>('all'); // gateway rows = one per request through the model gateway
+  const [source, setSource] = useState<'all' | 'session' | 'gateway'>('session'); // gateway rows = one per request through the model gateway; a session through the gateway has both kinds, so totals default to sessions
   const toast = useStore((s) => s.toast);
   const seq = useRef(0); // switching 90 → 1 day: the slow 90-day answer must not overwrite the 1-day one
   const load = () => { const n = ++seq.current; return ws.request<LedgerEntry[]>({ kind: 'ledger.list', days, sessionId }).then((r) => { if (n === seq.current) setRows(r); }).catch((e) => toast(e.message)); };
@@ -41,7 +41,7 @@ export function LedgerView({ sessionId }: { sessionId?: string }) {
       <div className="ledger-bar">
         <select className="field" value={days} onChange={(e) => setDays(Number(e.target.value))}>{[1, 2, 7, 30, 90].map((d) => <option key={d} value={d}>{d} 天</option>)}</select>
         <span className="seg mini">{(['calls', 'cost', 'latency', 'tokens'] as const).map((m) => <button key={m} className={metric === m ? 'active' : ''} onClick={() => setMetric(m)}>{{ calls: '调用', cost: '费用', latency: '延迟', tokens: 'token' }[m]}</button>)}</span>
-        <span className="seg mini" title="来源">{(['all', 'session', 'gateway'] as const).map((k) => <button key={k} className={source === k ? 'active' : ''} onClick={() => setSource(k)}>{{ all: '全部', session: '会话', gateway: '网关' }[k]}</button>)}</span>
+        <span className="seg mini" title="来源">{(['all', 'session', 'gateway'] as const).map((k) => <button key={k} className={source === k ? 'active' : ''} title={k === 'all' ? '经网关的会话会同时有会话行和网关行，调用数与 token 在这里会算两遍' : undefined} onClick={() => setSource(k)}>{{ all: '全部', session: '会话', gateway: '网关' }[k]}</button>)}</span>
         <label className="muted" style={{ fontSize: 12, display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={onlyErr} onChange={(e) => setOnlyErr(e.target.checked)} /> 只看失败</label>
         <span className="grow" />
         <button className="btn sm ghost" onClick={load}>刷新</button>
