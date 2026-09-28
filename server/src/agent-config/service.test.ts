@@ -209,6 +209,9 @@ describe('maskSpec', () => {
     const s = maskSpec({ name: 'a', transport: 'stdio', command: 'x', args: ['--token=abc', '--api-key', 'k1', '--password=p', '--port', '3', '-y', '--auth-token=z', 'plain'] });
     expect(s.args).toEqual([`--token=${MASK}`, '--api-key', MASK, `--password=${MASK}`, '--port', '3', '-y', `--auth-token=${MASK}`, 'plain']);
     expect(maskSpec({ name: 'a', transport: 'http', url: 'https://h/mcp' }).url).toBe('https://h/mcp');
+    // docker-style `-e NAME=value` pairs whose name looks secret
+    const d = maskSpec({ name: 'a', transport: 'stdio', command: 'docker', args: ['run', '-e', 'GITHUB_TOKEN=ghp_x', '-e', 'OPENAI_API_KEY=sk', '-e', 'DB_PASSWORD=p', '-e', 'MODE=dev', 'img'] });
+    expect(d.args).toEqual(['run', '-e', `GITHUB_TOKEN=${MASK}`, '-e', `OPENAI_API_KEY=${MASK}`, '-e', `DB_PASSWORD=${MASK}`, '-e', 'MODE=dev', 'img']);
   });
 });
 

@@ -64,10 +64,12 @@ export function resolveSpawn(command: string, args: string[]): { command: string
   } catch { /* fall through */ }
   // generic .cmd/.bat: run through cmd.exe with proper quoting. cmd.exe expands `%VAR%` even inside quotes
   // and ends the command at a newline — no quoting fixes either, so refuse rather than run something else
-  for (const a of args) {
-    if (a.includes('%')) throw new Error(`参数「${a}」含 %，经 cmd.exe 运行 ${path.basename(found)} 时会被当成环境变量展开；请改用不含 % 的值`);
-    if (/[\r\n]/.test(a)) throw new Error(`参数含换行，经 cmd.exe 运行 ${path.basename(found)} 时会被截断`);
-  }
+  // the message names the argument (position + the `--key` before `=`), never its value — it may be a secret
+  const which = (a: string, i: number) => { const k = /^(-{1,2}[\w.-]+)=/.exec(a)?.[1]; return `第 ${i + 1} 个参数${k ? `（${k}=…）` : ''}`; };
+  args.forEach((a, i) => {
+    if (a.includes('%')) throw new Error(`${which(a, i)}含 %，经 cmd.exe 运行 ${path.basename(found)} 时会被当成环境变量展开；请改用不含 % 的值`);
+    if (/[\r\n]/.test(a)) throw new Error(`${which(a, i)}含换行，经 cmd.exe 运行 ${path.basename(found)} 时会被截断`);
+  });
   const q = (s: string) => (/[\s"&|<>^]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
   return { command: process.env.ComSpec ?? 'cmd.exe', args: ['/d', '/s', '/c', `"${[found, ...args].map(q).join(' ')}"`], env: {}, via: 'cmd' };
 }

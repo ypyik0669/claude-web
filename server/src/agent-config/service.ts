@@ -69,6 +69,8 @@ export function validateSpec(spec: McpSpec, transports: McpSpec['transport'][]):
 
 // `--token`, `--api-key`, `--auth-token`, `--client-secret`, `--password`, `--pat`…
 const SECRET_FLAG = /^--?[\w-]*(?:token|api[-_]?key|apikey|secret|passw(?:or)?d|pass|pat|credential|auth)$/i;
+// `GITHUB_TOKEN=…`, `OPENAI_API_KEY=…`, `DB_PASSWORD=…` (docker `-e NAME=value`, env-style args)
+const SECRET_NAME = /^[A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASS)[A-Z0-9_]*$/i;
 
 /** URL with userinfo and every query value masked (the shape stays readable). */
 export function maskUrl(url: string): string {
@@ -83,7 +85,7 @@ export function maskUrl(url: string): string {
 export function maskArgs(args: string[]): string[] {
   return args.map((a, i) => {
     const eq = a.indexOf('=');
-    if (eq > 0 && SECRET_FLAG.test(a.slice(0, eq))) return `${a.slice(0, eq)}=${MASK}`;
+    if (eq > 0 && (SECRET_FLAG.test(a.slice(0, eq)) || SECRET_NAME.test(a.slice(0, eq)))) return `${a.slice(0, eq)}=${MASK}`;
     if (i > 0 && SECRET_FLAG.test(args[i - 1]) && !args[i - 1].includes('=') && !a.startsWith('-')) return MASK;
     return a;
   });
