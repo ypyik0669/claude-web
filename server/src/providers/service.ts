@@ -1,5 +1,5 @@
 import os from 'node:os';
-import { CLAUDE_PROVIDER_ID, type Provider, type ProviderType, type RuntimeKind } from '../protocol.js';
+import { CLAUDE_PROVIDER_ID, type ModelRefreshResult, type Provider, type ProviderType, type RuntimeKind } from '../protocol.js';
 import type { MetaStore } from '../meta/store.js';
 import { resolveEngine, runClaudeCli } from '../claude-exe.js';
 import type { SecretService } from '../secrets/service.js';
@@ -172,6 +172,17 @@ export async function probeProvider(p: Pick<Provider, 'type' | 'baseUrl' | 'apiK
   }
 }
 
+/** A profile's model list older than this is pulled again in the background at startup. */
+export const MODEL_REFRESH_MAX_AGE = 24 * 3600_000;
+/** How many model-list requests run at once (a user may have many relays behind one slow network). */
+const MODEL_REFRESH_CONCURRENCY = 4;
+
+/** Startup auto refresh: a keyed, non-gateway profile whose list was never pulled or is older than a day. */
+export function needsModelRefresh(p: Provider, now = Date.now(), maxAge = MODEL_REFRESH_MAX_AGE): boolean {
+  if (p.type === 'gateway' || !p.apiKey) return false;
+  return !p.modelsAt || now - p.modelsAt > maxAge;
+}
+
 export class ProviderService {
   private revealed = new Map<string, string>(); // stored (possibly encrypted) value -> plaintext
   /** Set by the server once the model gateway is up: group id → local endpoint + gateway key (null = unavailable). */
@@ -249,6 +260,53 @@ export class ProviderService {
     // the settings override is Gemini CLI's own mechanism; other ACP agents (Qwen Code…) only get the env
     return { env: kind === 'gemini' ? { ...env, ...geminiApiKeyEnv() } : env, args: [] };
   }
+  /**
+   * Pull the model list (`/v1/models` or the type's equivalent) of many profiles at once — the same request
+   * as the probe's first half, never a chat request, so it costs nothing. Success stores `models` + `modelsAt`
+   * and clears `modelsError`; a failure records `modelsError` and keeps the previous list (a relay that is
+   * down for an hour must not empty the picker). Gateway profiles are skipped: their models are the union of
+   * their group's members, computed where they are shown.
+   */
+  async refreshModels(ids?: string[]): Promise<ModelRefreshResult[]> {
+    const all = this.meta.providers();
+    const targets: (Provider | string)[] = ids ? ids.map((id) => all.find((p) => p.id === id) ?? id) : all.filter((p) => p.type !== 'gateway');
+    const out: ModelRefreshResult[] = new Array(targets.length);
+    const one = async (t: Provider | string): Promise<ModelRefreshResult> => {
+      if (typeof t === 'string') return { id: t, name: t, ok: false, count: 0, error: '没有这个供应商档案', ms: 0 };
+      const base = { id: t.id, name: t.name };
+      if (t.type === 'gateway') return { ...base, ok: false, count: 0, error: '模型网关档案的模型来自组成员', ms: 0 };
+      let key = '';
+      try { key = this.plainKey(t); } catch (e) { return { ...base, ok: false, count: 0, error: (e as Error).message, ms: 0 }; }
+      if (!key) return { ...base, ok: false, count: 0, error: '没有 API Key', ms: 0 };
+      const r = await probeProvider({ type: t.type, baseUrl: t.baseUrl, apiKey: key });
+      // null clears the field (upsertProvider drops null-valued optional keys)
+      if (r.ok) await this.meta.upsertProvider({ id: t.id, models: r.models, modelsAt: Date.now(), modelsError: null as unknown as undefined });
+      else await this.meta.upsertProvider({ id: t.id, modelsError: r.error ?? `HTTP ${r.status ?? '?'}` });
+      return { ...base, ok: r.ok, count: r.ok ? r.models.length : 0, error: r.ok ? undefined : r.error ?? `HTTP ${r.status ?? '?'}`, ms: r.ms };
+    };
+    let next = 0;
+    const worker = async () => {
+      while (next < targets.length) {
+        const i = next++;
+        out[i] = await one(targets[i]).catch((e) => ({ id: typeof targets[i] === 'string' ? targets[i] as string : (targets[i] as Provider).id, name: '', ok: false, count: 0, error: (e as Error).message, ms: 0 }));
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(MODEL_REFRESH_CONCURRENCY, targets.length) }, worker));
+    return out;
+  }
+  /**
+   * Background refresh after startup: every profile whose list is missing or older than a day. The timer is
+   * unref'd so it never holds the process open; failures only land in `modelsError`.
+   */
+  autoRefreshModels(delayMs = 5000): Promise<ModelRefreshResult[]> {
+    return new Promise((resolve) => {
+      const t = setTimeout(() => {
+        const due = this.meta.providers().filter((p) => needsModelRefresh(p)).map((p) => p.id);
+        (due.length ? this.refreshModels(due) : Promise.resolve([])).then(resolve, (e) => { console.error('[providers] model refresh failed:', (e as Error).message); resolve([]); });
+      }, delayMs);
+      t.unref?.();
+    });
+  }
   async upsert(p: Partial<Provider> & { id?: string }) {
     return publicProvider(await this.meta.upsertProvider(p));
   }
@@ -263,7 +321,7 @@ export class ProviderService {
     const p = { type: draft?.type ?? saved?.type ?? 'anthropic', baseUrl: (draft?.baseUrl ?? saved?.baseUrl ?? '').trim(), apiKey: key.trim() } as Pick<Provider, 'type' | 'baseUrl' | 'apiKey'>;
     if (!p.apiKey) return { ok: false, models: [], error: '没有 API Key', ms: 0 };
     const r = await probeProvider(p);
-    if (r.ok && saved && r.models.length) await this.meta.upsertProvider({ id: saved.id, models: r.models });
+    if (r.ok && saved && r.models.length) await this.meta.upsertProvider({ id: saved.id, models: r.models, modelsAt: Date.now(), modelsError: null as unknown as undefined });
     if (!r.ok || (p.type !== 'anthropic' && p.type !== 'openai')) return r;
     // Real chat check, with automatic fallback to the official binary when the endpoint rejects ccb.
     const full: Provider = { id: saved?.id ?? 'draft', name: draft?.name ?? saved?.name ?? 'draft', createdAt: 0, ...saved, ...p, defaultModel: draft?.defaultModel ?? saved?.defaultModel, modelMap: draft?.modelMap ?? saved?.modelMap };

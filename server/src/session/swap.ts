@@ -61,7 +61,7 @@ async function stop(pool: RunnerPool, sessionId: string) {
 }
 
 /** Same agent, different provider profile: close, respawn with the new env, resume in place. */
-export async function swapProvider(d: SwapDeps, sessionId: string, providerId: string | undefined, providerName: string): Promise<SwapResult> {
+export async function swapProvider(d: SwapDeps, sessionId: string, providerId: string | undefined, providerName: string, model?: string): Promise<SwapResult> {
   const prev = await stop(d.pool, sessionId);
   const cwd = prev?.cwd ?? (await d.canonical.head(sessionId))?.cwd ?? process.cwd();
   // not fire-and-forget: a failed meta save would otherwise be an unhandled rejection that kills the server
@@ -71,7 +71,8 @@ export async function swapProvider(d: SwapDeps, sessionId: string, providerId: s
   const params: OpenSessionParams = {
     sessionId,
     cwd,
-    model: prev?.model ?? undefined,
+    // a model picked together with the profile (the unified model menu): the old one may not exist there
+    model: model || (prev?.model ?? undefined),
     effort: prev?.effort ?? undefined,
     permissionMode: prev?.permissionMode,
     features: prev?.features,

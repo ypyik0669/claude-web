@@ -302,6 +302,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const orchestra = await createOrchestra({ pool, meta, canonical, transcripts, agents, git: gitSvc, goals, library, im });
   const services = { orchestra, remote, tunnels, im, vcs: new VcsService(gitSvc), goals, android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway };
   new Hub(wss, services);
+  // model lists older than a day (or never pulled) are refreshed in the background — list only, no tokens
+  void providers.autoRefreshModels();
 
   await new Promise<void>((res, rej) => {
     server.once('error', rej);

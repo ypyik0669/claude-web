@@ -120,6 +120,10 @@ export interface Provider {
   baseUrl: string;
   apiKey: string; // masked (sk-…1234) when sent to the client
   models?: string[]; // last probe result
+  /** when `models` was last pulled from the endpoint's model list (providers.refreshModels / probe) */
+  modelsAt?: number;
+  /** the last model-list pull failed (the previous `models` are kept) */
+  modelsError?: string;
   defaultModel?: string;
   modelMap?: { haiku?: string; sonnet?: string; opus?: string };
   runtime?: RuntimeKind; // force a runtime for this provider (some relays only accept the official client)
@@ -128,6 +132,8 @@ export interface Provider {
   createdAt: number;
 }
 export const CLAUDE_PROVIDER_ID = 'claude';
+/** One profile's result of `providers.refreshModels` (model list only — no chat request, no tokens). */
+export interface ModelRefreshResult { id: string; name: string; ok: boolean; count: number; error?: string; ms: number }
 
 /** Multi-agent (phase 5): built-in kinds plus user-defined ACP agents (`acp:<id>`). */
 export type AgentKind = 'claude' | 'codex' | 'opencode' | 'gemini' | 'qwen' | 'kimi' | `acp:${string}`;
@@ -282,7 +288,7 @@ export type ClientRequest =
   | { kind: 'session.setModel'; sessionId: string; model: string }
   | { kind: 'session.setEffort'; sessionId: string; effort: EffortLevel }
   | { kind: 'session.setUltracode'; sessionId: string; on: boolean }
-  | { kind: 'session.setProvider'; sessionId: string; providerId?: string }
+  | { kind: 'session.setProvider'; sessionId: string; providerId?: string; model?: string } // model: the respawned process starts on it
   | { kind: 'session.switchAgent'; sessionId: string; agent: AgentKind; model?: string }
   | { kind: 'session.canonical'; sessionId: string }
   | { kind: 'memory.search'; query?: string; scope?: MemoryScope; cwd?: string; sessionId?: string; kind_?: MemoryKind; limit?: number }
@@ -320,6 +326,7 @@ export type ClientRequest =
   | { kind: 'providers.upsert'; provider: Partial<Provider> & { id?: string } }
   | { kind: 'providers.remove'; id: string }
   | { kind: 'providers.probe'; id?: string; provider?: Partial<Provider> } // saved profile by id, or an unsaved draft
+  | { kind: 'providers.refreshModels'; ids?: string[] } // pull /v1/models for these (default: every non-gateway) profiles
   | { kind: 'settings.get' }
   | { kind: 'settings.set'; key: string; value: unknown }
   | { kind: 'sessions.search'; query: string; limit?: number }

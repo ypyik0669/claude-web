@@ -320,6 +320,8 @@ export class Hub {
         return null;
       case 'providers.probe':
         return s.providers.probe(req.id, req.provider);
+      case 'providers.refreshModels':
+        return s.providers.refreshModels(req.ids);
       case 'settings.get':
         return s.meta.settings();
       case 'settings.set':
@@ -383,7 +385,7 @@ export class Hub {
       case 'session.setProvider': {
         const p = req.providerId ? s.providers.forSession(req.providerId) : undefined;
         if (req.providerId && !p) throw new Error('没有这个供应商档案');
-        const r = await swapProvider({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta }, req.sessionId, req.providerId, p?.name ?? 'Claude 账号');
+        const r = await swapProvider({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta }, req.sessionId, req.providerId, p?.name ?? 'Claude 账号', req.model);
         s.sessions.emit('changed');
         return r;
       }

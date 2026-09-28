@@ -115,4 +115,11 @@ describe('swapAgent / handOver of imported sessions', () => {
     expect(pool.sent[0].sessionId).toBe('own-1');
     expect(pool.sent[0].text).toBe(r.briefing);
   });
+
+  it('swapProvider respawns on the model picked with the profile, else keeps the old one', async () => {
+    await mods.swap.swapProvider(deps, 'own-2', 'prov-a', 'A', 'gpt-6-astra');
+    expect(pool.opened[0]).toMatchObject({ sessionId: 'own-2', providerId: 'prov-a', model: 'gpt-6-astra' });
+    await mods.swap.swapProvider(deps, 'own-2', 'prov-b', 'B');
+    expect(pool.opened[1].model).toBeUndefined(); // fake pool has no live runner → no previous model
+  });
 });
