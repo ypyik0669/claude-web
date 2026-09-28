@@ -7,11 +7,13 @@ import { dlg } from '@/ui/dialog';
 import { desktop } from '@/desktop';
 import type { RemoteHost, RemoteStatus, TunnelInfo } from '@shared';
 import { Icon } from '@/ui/icons';
-import { PeersSection } from './PeersSection';
 
 function ago(t: number) { const s = Math.max(0, Date.now() - t) / 1000; return s < 60 ? '刚刚' : s < 3600 ? `${Math.floor(s / 60)} 分钟前` : s < 86400 ? `${Math.floor(s / 3600)} 小时前` : `${Math.floor(s / 86400)} 天前`; }
 
-/** LAN / phone access: second listener + pairing QR + device table. */
+/**
+ * LAN / phone access: second listener + pairing QR + device table. Settings → 手机与其它电脑 shows it with
+ * `PeersSection` (other computers) and, under 更多选项, `HostsSection` (SSH tunnels).
+ */
 export function RemoteSection() {
   const toast = useStore((s) => s.toast);
   const [st, setSt] = useState<RemoteStatus | null>(null);
@@ -70,14 +72,12 @@ export function RemoteSection() {
         ))}
         {st.devices.length === 0 && <div className="empty">还没有配对的设备</div>}
       </div>
-      <PeersSection />
-      <HostsSection />
     </div>
   );
 }
 
 /** Remote machines running claude-web, reached through ssh port-forwards. */
-function HostsSection() {
+export function HostsSection() {
   const toast = useStore((s) => s.toast);
   const [hosts, setHosts] = useState<RemoteHost[]>([]);
   const [tunnels, setTunnels] = useState<TunnelInfo[]>([]);
@@ -105,8 +105,8 @@ function HostsSection() {
   };
   const tOf = (id: string) => tunnels.find((t) => t.hostId === id);
   return (
-    <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 18, marginBottom: 6 }}>
+    <div className="section">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <h5 style={{ margin: 0 }}>远程主机（SSH 隧道）</h5>
         <span className="grow" />
         <button className="btn sm ghost" onClick={() => setEditing({ id: Math.random().toString(36).slice(2, 10), name: '', target: '', remotePort: 3090, token: '', startCommand: '' })}><Icon name="plus" size={12} /> 添加主机</button>
@@ -144,6 +144,6 @@ function HostsSection() {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

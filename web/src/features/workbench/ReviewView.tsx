@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ws } from '@/ws/client';
 import { useScopedSession, useStore } from '@/store';
 import { ago, clsx } from '@/util';
@@ -10,7 +10,7 @@ import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
 import { TERMS } from '@/ui/terms';
 import { GitView } from './GitView';
-import { Popover } from './Popover';
+import { Popover } from '@/features/composer/Popover';
 import { coalesce, gitEventConcerns } from './git-refresh';
 import { SCOPE_LABEL, bulkTargets, commitPlan, diffRequest, discardConfirm, reviewRows, scopeCounts, splitPath, splitUnifiedByFile, stageAllConfirm, unifiedStat, type DiffResult, type ReviewRow, type ReviewScope } from './review-model';
 import { useRightPanel } from './right-panel';
@@ -308,6 +308,8 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
   const openFile = (r: ReviewRow) => openTile({ id: `d${Date.now().toString(36)}`, kind: 'doc', path: r.abs }, 'tab');
   const pickScope = (s: ReviewScope) => { setScope(s); setScopeMenu(false); setErr(null); };
   const toggleScopeMenu = () => setScopeMenu(!scopeMenu);
+  const closeScope = useCallback((refocus: boolean) => { setScopeMenu(false); if (refocus) scopeBtn.current?.focus(); }, []);
+  const closeMore = useCallback((refocus: boolean) => { setMoreMenu(false); if (refocus) moreBtn.current?.focus(); }, []);
   const setAll = (v: boolean) => setOpen((o) => { const n = { ...o }; for (const r of rows) n[`${sc}|${r.key}`] = v; return n; });
 
   if (!active) return <div className="empty">还没有打开对话。打开一个对话后，它的改动会出现在这里。</div>;
@@ -338,19 +340,19 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
           <button ref={scopeBtn} className={clsx('rv-scope', scopeMenu && 'on')} onClick={toggleScopeMenu} aria-haspopup="menu" aria-expanded={scopeMenu} title="要看哪些改动">
             <span className="t">{scopeLabel}</span><Icon name="chevronDown" size={12} />
           </button>
-          <Popover anchor={scopeBtn} open={scopeMenu} onClose={() => setScopeMenu(false)} width={300} align="left" className="rv-scope-menu" label="审阅范围">
-            {root && <button role="menuitemradio" aria-checked={sc === 'uncommitted'} onClick={() => pickScope('uncommitted')}><span className="grow">{SCOPE_LABEL.uncommitted}</span><span className="n">{counts.uncommitted}</span><span className="ck">{sc === 'uncommitted' && <Icon name="check" size={13} />}</span></button>}
-            {root && <button role="menuitemradio" aria-checked={sc === 'staged'} onClick={() => pickScope('staged')}><span className="grow">{SCOPE_LABEL.staged}</span><span className="n">{counts.staged}</span><span className="ck">{sc === 'staged' && <Icon name="check" size={13} />}</span></button>}
-            <button role="menuitemradio" aria-checked={sc === 'session'} onClick={() => pickScope('session')}><span className="grow">{SCOPE_LABEL.session}</span><span className="n">{counts.session}</span><span className="ck">{sc === 'session' && <Icon name="check" size={13} />}</span></button>
+          {scopeMenu && <Popover anchor={scopeBtn} onClose={closeScope} prefer="down" align="left" className="rv-scope-menu" label="审阅范围">
+            {root && <button role="menuitemradio" data-mi aria-checked={sc === 'uncommitted'} onClick={() => pickScope('uncommitted')}><span className="grow">{SCOPE_LABEL.uncommitted}</span><span className="n">{counts.uncommitted}</span><span className="ck">{sc === 'uncommitted' && <Icon name="check" size={13} />}</span></button>}
+            {root && <button role="menuitemradio" data-mi aria-checked={sc === 'staged'} onClick={() => pickScope('staged')}><span className="grow">{SCOPE_LABEL.staged}</span><span className="n">{counts.staged}</span><span className="ck">{sc === 'staged' && <Icon name="check" size={13} />}</span></button>}
+            <button role="menuitemradio" data-mi aria-checked={sc === 'session'} onClick={() => pickScope('session')}><span className="grow">{SCOPE_LABEL.session}</span><span className="n">{counts.session}</span><span className="ck">{sc === 'session' && <Icon name="check" size={13} />}</span></button>
             {root && <div className="menu-label">某次提交</div>}
             {root && log === null && <div className="rv-menu-note">读取中…</div>}
             {root && log?.map((c) => (
-              <button key={c.hash} role="menuitemradio" aria-checked={sc === 'commit' && rev?.hash === c.hash} className="rv-commit-item" title={`${c.hash}\n${c.author} · ${new Date(c.date).toLocaleString()}`} onClick={() => { setRev(c); pickScope('commit'); }}>
+              <button key={c.hash} role="menuitemradio" data-mi aria-checked={sc === 'commit' && rev?.hash === c.hash} className="rv-commit-item" title={`${c.hash}\n${c.author} · ${new Date(c.date).toLocaleString()}`} onClick={() => { setRev(c); pickScope('commit'); }}>
                 <span className="mono h">{c.short}</span><span className="grow s">{c.subject}</span><span className="n">{ago(c.date)}</span><span className="ck">{sc === 'commit' && rev?.hash === c.hash && <Icon name="check" size={13} />}</span>
               </button>
             ))}
             {root && log?.length === 0 && <div className="rv-menu-note">还没有提交</div>}
-          </Popover>
+          </Popover>}
           <span className="grow" />
           {/* 全部还原 only over the whole working tree: in 本次对话改动 it would also drop changes this conversation did
               not make (a checkout takes the whole file back) — there each file has its own 还原, with its own warning */}
@@ -359,14 +361,16 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
           {root && sc === 'staged' && <button className="btn sm" disabled={!!busy || !targets.unstage.length} onClick={() => unstage(targets.unstage)}>全部取消暂存</button>}
           {root && sc === 'commit' && rev && <button className="btn sm ghost" onClick={() => openTile({ id: `c${Date.now().toString(36)}`, kind: 'diff', sessionId: '', path: rev.hash, rev: rev.hash, cwd: root, title: `${rev.short} ${rev.subject.slice(0, 30)}` }, 'tab')} title="在一个标签页里打开整个提交">在标签页打开</button>}
           <button ref={moreBtn} className={clsx('icon-btn', moreMenu && 'active')} aria-label="更多审阅操作" title="Git 视图（分支、拉取推送、历史…）、展开折叠、diff 显示方式" aria-haspopup="menu" aria-expanded={moreMenu} onClick={() => setMoreMenu(!moreMenu)}><Icon name="more" size={16} /></button>
-          <Popover anchor={moreBtn} open={moreMenu} onClose={() => setMoreMenu(false)} width={280} align="right" className="rv-more-menu" label="更多审阅操作" onClick={() => setMoreMenu(false)}>
-            <button onClick={openGit} disabled={!root} title={GIT_VIEW_TITLE}><Icon name="branch" size={14} /> <span className="grow">{GIT_VIEW_LABEL}</span></button>
-            <div className="menu-sep" />
-            <button onClick={() => setAll(true)} disabled={!rows.length}><Icon name="chevronDown" size={14} /> 全部展开</button>
-            <button onClick={() => setAll(false)} disabled={!rows.length}><Icon name="chevronRight" size={14} /> 全部折叠</button>
-            <button onClick={() => void setSetting('ui.diffMode', diffMode === 'split' ? 'unified' : 'split')}><Icon name="diff" size={14} /> {diffMode === 'split' ? '改成上下对照' : '改成左右并排'}</button>
-            <button onClick={bump}><Icon name="refresh" size={14} /> 刷新</button>
-          </Popover>
+          {moreMenu && <Popover anchor={moreBtn} onClose={closeMore} prefer="down" align="right" className="rv-more-menu" label="更多审阅操作">
+            <div onClick={() => setMoreMenu(false)}>
+              <button role="menuitem" data-mi onClick={openGit} disabled={!root} title={GIT_VIEW_TITLE}><Icon name="branch" size={14} /> <span className="grow">{GIT_VIEW_LABEL}</span></button>
+              <div className="menu-sep" />
+              <button role="menuitem" data-mi onClick={() => setAll(true)} disabled={!rows.length}><Icon name="chevronDown" size={14} /> 全部展开</button>
+              <button role="menuitem" data-mi onClick={() => setAll(false)} disabled={!rows.length}><Icon name="chevronRight" size={14} /> 全部折叠</button>
+              <button role="menuitem" data-mi onClick={() => void setSetting('ui.diffMode', diffMode === 'split' ? 'unified' : 'split')}><Icon name="diff" size={14} /> {diffMode === 'split' ? '改成上下对照' : '改成左右并排'}</button>
+              <button role="menuitem" data-mi onClick={bump}><Icon name="refresh" size={14} /> 刷新</button>
+            </div>
+          </Popover>}
         </div>
         {err && (
           <div className="git-error rv-err">

@@ -104,7 +104,7 @@ export class AcpDriver extends EventEmitter implements AgentDriver {
           if (silent && /auth|api key|login|credential|-32000/i.test(String(e.message))) {
             try { await rpc.request('authenticate', { methodId: silent.id }, 60_000); r = await newSession(); } catch { /* fall through to the hint */ }
           }
-          if (!r) throw new Error(`${e.message}${this.launch.login ? `\n需要先登录：在终端里运行 \`${this.launch.login}\`（设置 → CLI Agents 有「登录」按钮）` : ''}`);
+          if (!r) throw new Error(`${e.message}${this.launch.login ? `\n需要先登录：在终端里运行 \`${this.launch.login}\`（设置 → Agents 与子代理 → 其它 Agent 有「登录」按钮）` : ''}`);
         }
         this.acpSessionId = r.sessionId;
         await this.transcripts.patchHead(this.sessionId, { nativeSessionId: r.sessionId });

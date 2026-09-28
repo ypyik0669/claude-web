@@ -21,7 +21,7 @@ export function SecretsSection() {
           <span className="k">文件</span><span className="mono">~/.claude-web/meta.json（权限 0600）</span>
         </div>
       ) : <div className="empty">读取中…</div>}
-      <div className="sub" style={{ marginTop: 6 }}>密钥只在启动会话进程时解密并注入到那个进程的环境变量里，不会出现在 WebSocket 或日志中。Claude 账号登录仍由 Claude Code 自己保存在 ~/.claude/.credentials.json。</div>
+      <div className="sub" style={{ marginTop: 6 }}>密钥只在启动对话进程时解密并注入到那个进程的环境变量里，不会出现在 WebSocket 或日志中。Claude 账号登录仍由 Claude Code 自己保存在 ~/.claude/.credentials.json。</div>
     </div>
   );
 }

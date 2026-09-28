@@ -114,7 +114,8 @@ export function CommandPalette() {
     else st.open[it.s.sessionId] ? st.setActive(it.s.sessionId) : void st.loadHistory(it.s.sessionId);
   };
   const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') close();
+    // only the palette: the global Esc would also close the settings page it was opened over
+    if (e.key === 'Escape') { e.stopPropagation(); close(); }
     if (e.key === 'ArrowDown') { e.preventDefault(); setIdx((i) => Math.min(items.length - 1, i + 1)); }
     if (e.key === 'ArrowUp') { e.preventDefault(); setIdx((i) => Math.max(0, i - 1)); }
     // Enter that confirms an IME candidate (Chinese / Japanese input) is not "run this item"

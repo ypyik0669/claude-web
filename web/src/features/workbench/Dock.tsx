@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useScopedSession, useStore } from '@/store';
 import { PANELS, PANEL_ICONS, PANEL_TITLES, defaultDockPanel, dockView, workbenchOn, type DockTab, type PanelId } from '@/model/layout';
 import { clsx } from '@/util';
@@ -20,7 +20,7 @@ import { MIME_PANEL } from './dnd';
 import { ReviewView } from './ReviewView';
 import { FilesView } from './FilesView';
 import { MORE_PANELS } from './panel-entries';
-import { Popover } from './Popover';
+import { Popover } from '@/features/composer/Popover';
 import { useRightPanel } from './right-panel';
 import { modKey } from './shortcuts';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
@@ -85,19 +85,22 @@ function MoreMenu({ mounted }: { mounted: PanelId[] }) {
   const dispatch = useStore((s) => s.dispatchLayout);
   const [open, setOpen] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
+  const close = useCallback((refocus: boolean) => { setOpen(false); if (refocus) btn.current?.focus(); }, []);
   return (
     <>
       <button ref={btn} className={clsx('icon-btn dock-more', open && 'active')} title="更多面板：目标、编排、用量、Issue 与 PR…" aria-label="更多面板" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}><Icon name="plus" size={15} /></button>
-      <Popover anchor={btn} open={open} onClose={() => setOpen(false)} width={240} align="right" className="dock-more-menu" label="更多面板">
-        <div className="menu-label">在右侧面板打开</div>
-        {MORE_PANELS.map((p) => (
-          <button key={p.id} role="menuitem" data-panel={p.id} onClick={() => { dispatch({ t: 'dock.show', panel: p.id }); setOpen(false); }}>
-            <Icon name={p.icon} size={14} /><span className="grow">{p.title}</span>{mounted.includes(p.id) && <Icon name="check" size={13} />}
-          </button>
-        ))}
-        <div className="menu-sep" />
-        <div className="menu-note">总览、记忆、配置中心等在命令面板（{modKey}+K）里，或在设置里打开「{TERMS.workbench}」</div>
-      </Popover>
+      {open && (
+        <Popover anchor={btn} onClose={close} prefer="down" align="right" className="dock-more-menu" label="更多面板">
+          <div className="menu-label">在右侧面板打开</div>
+          {MORE_PANELS.map((p) => (
+            <button key={p.id} role="menuitem" data-mi data-panel={p.id} onClick={() => { dispatch({ t: 'dock.show', panel: p.id }); setOpen(false); }}>
+              <Icon name={p.icon} size={14} /><span className="grow">{p.title}</span>{mounted.includes(p.id) && <Icon name="check" size={13} />}
+            </button>
+          ))}
+          <div className="menu-sep" />
+          <div className="menu-note">总览、记忆、配置中心等在命令面板（{modKey}+K）里，或在设置里打开「{TERMS.workbench}」</div>
+        </Popover>
+      )}
     </>
   );
 }

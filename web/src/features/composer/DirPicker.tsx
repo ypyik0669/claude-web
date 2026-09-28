@@ -4,6 +4,8 @@ import { basename, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { dirMenuLayout, menuKey, sameLayout, type DirMenuLayout } from './dir-menu';
+import { PROJECT_MENU_ID } from './ids';
+import { onCloseMenus } from '@/ui/menus';
 
 /**
  * Working-directory chip of the welcome composer. The list of recent directories opens only from this chip,
@@ -13,20 +15,30 @@ import { dirMenuLayout, menuKey, sameLayout, type DirMenuLayout } from './dir-me
  * chip itself was not positioned, so the select stretched over the whole composer and a click meant for the
  * text box opened the native folder list instead.
  */
-export function DirPicker({ cwd, recent, onPick, onBrowse }: { cwd: string; recent: string[]; onPick: (dir: string) => void; onBrowse: () => void }) {
+export function DirPicker({ cwd, recent, onPick, onBrowse, footer, label, title }: {
+  cwd: string;
+  recent: string[];
+  onPick: (dir: string) => void;
+  onBrowse: () => void;
+  /** more rows under 「浏览文件夹…」 (the project chip's 独立副本 switch); `close` closes the menu */
+  footer?: (close: () => void) => React.ReactNode;
+  /** the chip's text (default: the folder name) */
+  label?: string;
+  title?: string;
+}) {
   const [open, setOpen] = useState(false);
   const chip = useRef<HTMLButtonElement>(null);
   const dirs = cwd && !recent.includes(cwd) ? [cwd, ...recent] : recent;
   const click = () => {
-    if (!dirs.length) { onBrowse(); return; } // nothing to choose from yet: straight to the folder dialog
+    if (!dirs.length && !footer) { onBrowse(); return; } // nothing to choose from yet: straight to the folder dialog
     setOpen((o) => !o);
   };
   return (
     <>
-      <button ref={chip} type="button" className={clsx('dirpick', open && 'active')} onClick={click} title={cwd || '选择工作目录'} aria-haspopup="menu" aria-expanded={open}>
-        <span className="dirpick-ic"><Icon name="folder" size={13} /></span>
-        <span className="dirpick-name">{cwd ? basename(cwd) : '选择目录'}</span>
-        {dirs.length > 0 && <span className="caret"><Icon name="chevronDown" size={10} /></span>}
+      <button ref={chip} type="button" className={clsx('dirpick', open && 'active')} onClick={click} title={title ?? (cwd || '选择项目文件夹')} aria-label={`项目：${cwd ? basename(cwd) : '未选择'}`} aria-haspopup="menu" aria-expanded={open}>
+        <span className="dirpick-ic"><Icon name="folder" size={14} /></span>
+        <span className="dirpick-name opt">{label ?? (cwd ? basename(cwd) : '选择项目')}</span>
+        {(dirs.length > 0 || footer) && <span className="caret opt"><Icon name="chevronDown" size={10} /></span>}
       </button>
       {open && (
         <ErrorBoundary area="目录菜单" compact onReset={() => setOpen(false)}>
@@ -37,6 +49,7 @@ export function DirPicker({ cwd, recent, onPick, onBrowse }: { cwd: string; rece
             onPick={(d) => { setOpen(false); onPick(d); chip.current?.focus(); }}
             onBrowse={() => { setOpen(false); onBrowse(); }}
             onClose={(refocus) => { setOpen(false); if (refocus) chip.current?.focus(); }}
+            footer={footer ? footer(() => setOpen(false)) : null}
           />
         </ErrorBoundary>
       )}
@@ -44,7 +57,7 @@ export function DirPicker({ cwd, recent, onPick, onBrowse }: { cwd: string; rece
   );
 }
 
-function DirMenu({ anchor, cwd, dirs, onPick, onBrowse, onClose }: { anchor: React.RefObject<HTMLButtonElement | null>; cwd: string; dirs: string[]; onPick: (d: string) => void; onBrowse: () => void; onClose: (refocus: boolean) => void }) {
+function DirMenu({ anchor, cwd, dirs, onPick, onBrowse, onClose, footer }: { anchor: React.RefObject<HTMLButtonElement | null>; cwd: string; dirs: string[]; onPick: (d: string) => void; onBrowse: () => void; onClose: (refocus: boolean) => void; footer?: React.ReactNode }) {
   const box = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<DirMenuLayout | null>(null);
   useLayoutEffect(() => {
@@ -75,7 +88,8 @@ function DirMenu({ anchor, cwd, dirs, onPick, onBrowse, onClose }: { anchor: Rea
       onClose(false);
     };
     document.addEventListener('mousedown', off);
-    return () => document.removeEventListener('mousedown', off);
+    const offCover = onCloseMenus(() => onClose(false)); // the settings page opening over the app
+    return () => { document.removeEventListener('mousedown', off); offCover(); };
   }, [anchor, onClose]);
   const onKey = (e: React.KeyboardEvent) => {
     const rows = [...(box.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
@@ -88,18 +102,21 @@ function DirMenu({ anchor, cwd, dirs, onPick, onBrowse, onClose }: { anchor: Rea
   };
   if (!pos) return null;
   return createPortal(
-    <div ref={box} className="menu dirmenu" style={pos} role="menu" aria-label="工作目录" onKeyDown={onKey}>
-      <div className="dirmenu-head">最近的目录</div>
-      <div className="dirmenu-list">
-        {dirs.map((d) => (
-          <button key={d} type="button" role="menuitemradio" aria-checked={d === cwd} data-dir={d} className={clsx(d === cwd && 'cur')} onClick={() => onPick(d)} title={d}>
-            <span className="dirmenu-check">{d === cwd && <Icon name="check" size={12} />}</span>
-            <span className="dirmenu-text"><span className="n">{basename(d) || d}</span><span className="p">{d}</span></span>
-          </button>
-        ))}
-      </div>
-      <div className="menu-sep" />
-      <button type="button" role="menuitem" onClick={onBrowse}><Icon name="folder" size={13} /> 浏览文件夹…</button>
+    <div ref={box} className="menu dirmenu" style={pos} role="menu" aria-label="项目" onKeyDown={onKey}>
+      {dirs.length > 0 && <>
+        <div className="dirmenu-head">最近的项目</div>
+        <div className="dirmenu-list">
+          {dirs.map((d) => (
+            <button key={d} type="button" role="menuitemradio" aria-checked={d === cwd} data-dir={d} className={clsx(d === cwd && 'cur')} onClick={() => onPick(d)} title={d}>
+              <span className="dirmenu-check">{d === cwd && <Icon name="check" size={12} />}</span>
+              <span className="dirmenu-text"><span className="n">{basename(d) || d}</span><span className="p">{d}</span></span>
+            </button>
+          ))}
+        </div>
+        <div className="menu-sep" />
+      </>}
+      <button type="button" role="menuitem" data-id={PROJECT_MENU_ID.browse} onClick={onBrowse}><Icon name="folder" size={13} /> 打开文件夹…</button>
+      {footer}
     </div>,
     document.body,
   );

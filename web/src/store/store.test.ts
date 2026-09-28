@@ -326,3 +326,42 @@ describe('workbench chrome (redesign phase 1)', () => {
     expect(useStore.getState().layout.dock.tabs).toContain('terminal');
   });
 });
+
+describe('新对话默认权限 (ui.defaultMode) for new conversations opened anywhere (review 3 #6)', () => {
+  const opened = () => fake.sent.filter((r) => r.kind === 'session.open').map((r) => r.params);
+  beforeEach(() => {
+    fake.handlers.set('session.open', (req: any) => ({ sessionId: req.params.sessionId ?? 'n1', info: { sessionId: req.params.sessionId ?? 'n1', state: 'idle', cwd: req.params.cwd }, history: [], pending: [] }));
+    fake.handlers.set('sessions.list', () => []);
+  });
+  it('a new conversation without a mode gets the setting; an explicit mode and a resume keep theirs', async () => {
+    useStore.setState({ settings: { 'ui.defaultMode': 'plan' } });
+    await useStore.getState().openSession({ cwd: '/w' }, 'none'); // sidebar 新建 / Git view / board
+    await useStore.getState().openSession({ cwd: '/w', worktree: 'wt' }, 'none'); // 新建 worktree 会话
+    await useStore.getState().openSession({ cwd: '/w', permissionMode: 'acceptEdits' }, 'none'); // the welcome chip
+    await useStore.getState().openSession({ sessionId: 's1', cwd: '/w' }, 'none'); // resume
+    expect(opened().map((p: any) => p.permissionMode)).toEqual(['plan', 'plan', 'acceptEdits', undefined]);
+  });
+  it('no setting (or a bogus one): nothing is added', async () => {
+    useStore.setState({ settings: { 'ui.defaultMode': 'yolo' } });
+    await useStore.getState().openSession({ cwd: '/w' }, 'none');
+    useStore.setState({ settings: {} });
+    await useStore.getState().openSession({ cwd: '/w' }, 'none');
+    expect(opened().map((p: any) => p.permissionMode)).toEqual([undefined, undefined]);
+  });
+});
+
+describe('an open session remembers the worktree it was started in (re-review 3 Important 1)', () => {
+  beforeEach(() => {
+    const id = (p: any) => p.sessionId ?? (p.worktree ? 'wt1' : 'n2');
+    fake.handlers.set('session.open', (req: any) => ({ sessionId: id(req.params), info: { sessionId: id(req.params), state: 'starting', cwd: req.params.cwd }, history: [], pending: [] }));
+    fake.handlers.set('sessions.list', () => []);
+  });
+  it('openSession({worktree}) keeps the root as cwd and records the worktree; reopening without it keeps it', async () => {
+    await useStore.getState().openSession({ cwd: '/repo', worktree: 'task-1' }, 'none');
+    expect(useStore.getState().open.wt1).toMatchObject({ cwd: '/repo', worktree: 'task-1' });
+    await useStore.getState().openSession({ sessionId: 'wt1', cwd: '/repo' }, 'none');
+    expect(useStore.getState().open.wt1.worktree).toBe('task-1');
+    await useStore.getState().openSession({ cwd: '/repo' }, 'none'); // an ordinary one: no worktree at all
+    expect('worktree' in useStore.getState().open.n2).toBe(false);
+  });
+});

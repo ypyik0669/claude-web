@@ -420,7 +420,7 @@ export class ProviderService {
   /** Probe a saved profile (by id, keeps the stored key) or an unsaved draft; saves the model list on success. */
   async probe(id?: string, draft?: Partial<Provider>): Promise<ProbeResult> {
     const saved = id ? this.meta.provider(id) : undefined;
-    if ((draft?.type ?? saved?.type) === 'gateway') return { ok: false, models: [], error: '模型网关档案请在「设置 → 模型网关」里用组的「测试」按钮', ms: 0 };
+    if ((draft?.type ?? saved?.type) === 'gateway') return { ok: false, models: [], error: '走模型网关的供应商请在「设置 → 模型网关」里用组的「测试」按钮', ms: 0 };
     const key = draft?.apiKey && !draft.apiKey.includes('…') ? draft.apiKey : saved ? this.plainKey(saved) : '';
     const p = { type: draft?.type ?? saved?.type ?? 'anthropic', baseUrl: (draft?.baseUrl ?? saved?.baseUrl ?? '').trim(), apiKey: key.trim() } as Pick<Provider, 'type' | 'baseUrl' | 'apiKey'>;
     if (!p.apiKey) return { ok: false, models: [], error: '没有 API Key', ms: 0 };

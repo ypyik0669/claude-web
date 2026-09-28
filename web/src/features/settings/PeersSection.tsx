@@ -18,7 +18,8 @@ type Draft = { mode: 'code' | 'ssh'; url: string; code: string; name: string; ho
 
 /**
  * 「其它机器」: other computers running claude-web whose sessions show up in this sidebar. Joining = the
- * other machine's pairing code (this server redeems it for a device token) or one of the SSH hosts below.
+ * other machine's pairing code (this server redeems it for a device token) or one of the SSH hosts (HostsSection,
+ * under 更多选项 on the same settings page).
  */
 export function PeersSection() {
   const toast = useStore((s) => s.toast);
@@ -41,7 +42,7 @@ export function PeersSection() {
     void useStore.getState().refreshSessions().catch(() => {});
   });
   const repair = (p: PeerInfo) => run(p.id, async () => {
-    const code = (await dlg.prompt(`重新配对「${p.name}」`, '', { message: '在那台机器的 设置 → 远程 / 手机 里生成一个新的配对码，填在这里。会话 id 保持不变。', placeholder: '6 位配对码' }))?.trim();
+    const code = (await dlg.prompt(`重新配对「${p.name}」`, '', { message: '在那台机器的 设置 → 手机与其它电脑 里生成一个新的配对码，填在这里。对话 id 保持不变。', placeholder: '6 位配对码' }))?.trim();
     if (!code) return;
     const r = await ws.request<PeerInfo>({ kind: 'peers.repair', id: p.id, code });
     toast(r.state === 'online' ? '已重新配对' : `${STATE[r.state].l}${r.error ? `：${r.error}` : ''}`, r.state === 'online');
@@ -55,7 +56,7 @@ export function PeersSection() {
         <span className="grow" />
         <button className="btn sm ghost" onClick={() => setDraft({ mode: 'code', url: '', code: '', name: '', hostId: freeHosts[0]?.id ?? '' })}><Icon name="plus" size={12} /> 加入一台机器</button>
       </div>
-      <div className="sub">另一台电脑上也跑着 Claude Web 时，把它加进来：它的会话会出现在侧栏（带机器名），可以直接打开、续聊、审批、中断，或「交给本机 agent 继续」。连接是本机主动发起的，本机不对外开放任何新接口。</div>
+      <div className="sub">另一台电脑上也跑着 Claude Web 时，把它加进来：它的对话会出现在侧栏（带机器名），可以直接打开、续聊、审批、中断，或「交给本机 agent 继续」。连接是本机主动发起的，本机不对外开放任何新接口。</div>
       <div className="list" style={{ marginTop: 6 }}>
         {peers?.map((p) => {
           const st = STATE[p.state];
@@ -67,7 +68,7 @@ export function PeersSection() {
                 <div className="sub">
                   <span className={clsx('badge', st.badge)}>{st.l}</span>
                   {p.state === 'online' && p.latencyMs !== undefined && <span className="lat"> · {p.latencyMs} ms</span>}
-                  {p.sessions !== undefined && <> · {p.sessions} 个会话</>}
+                  {p.sessions !== undefined && <> · {p.sessions} 个对话</>}
                   {p.version && <> · v{p.version}</>}
                   {p.error && p.state !== 'online' && <> · {p.error}</>}
                 </div>
@@ -76,7 +77,7 @@ export function PeersSection() {
               {p.enabled && (p.state === 'offline' || (p.via === 'ssh' && p.state === 'unauthorized')) && <button className="btn sm" disabled={busy === p.id} title={p.via === 'ssh' ? '改好 SSH 主机里的令牌后重连（保存主机也会自动重连）' : '立即重连'} onClick={() => run(p.id, () => ws.request({ kind: 'peers.retry', id: p.id }))}>重试</button>}
               <button className="btn sm ghost" onClick={() => run(p.id, async () => { const n = (await dlg.prompt('机器名称', p.name))?.trim(); if (n && n !== p.name) await ws.request({ kind: 'peers.update', id: p.id, patch: { name: n } }); })}>改名</button>
               <button className="btn sm ghost" disabled={busy === p.id} onClick={() => run(p.id, () => ws.request({ kind: 'peers.update', id: p.id, patch: { enabled: !p.enabled } }))}>{p.enabled ? '停用' : '启用'}</button>
-              <button className="btn sm ghost danger" onClick={() => run(p.id, async () => { if (await dlg.confirm(`移除「${p.name}」？`, { message: '它的会话不再出现在这里（那台机器上的会话不受影响）。那台机器的「已配对设备」里本机的记录要在那边吊销。', danger: true, okLabel: '移除' })) await ws.request({ kind: 'peers.remove', id: p.id }); })}>移除</button>
+              <button className="btn sm ghost danger" onClick={() => run(p.id, async () => { if (await dlg.confirm(`移除「${p.name}」？`, { message: '它的对话不再出现在这里（那台机器上的对话不受影响）。那台机器的「已配对设备」里本机的记录要在那边吊销。', danger: true, okLabel: '移除' })) await ws.request({ kind: 'peers.remove', id: p.id }); })}>移除</button>
             </div>
           );
         })}
@@ -87,11 +88,11 @@ export function PeersSection() {
         <div className="peer-add">
           <div className="seg mini" style={{ gridColumn: '1 / -1', justifySelf: 'start' }}>
             <button className={clsx(draft.mode === 'code' && 'active')} onClick={() => setDraft({ ...draft, mode: 'code' })}>地址 + 配对码</button>
-            <button className={clsx(draft.mode === 'ssh' && 'active')} onClick={() => setDraft({ ...draft, mode: 'ssh' })} disabled={!freeHosts.length} title={freeHosts.length ? '' : '先在下面「远程主机（SSH 隧道）」里添加主机'}>SSH 主机</button>
+            <button className={clsx(draft.mode === 'ssh' && 'active')} onClick={() => setDraft({ ...draft, mode: 'ssh' })} disabled={!freeHosts.length} title={freeHosts.length ? '' : '先在下面「更多选项」→「远程主机（SSH 隧道）」里添加主机'}>SSH 主机</button>
           </div>
           {draft.mode === 'code' ? <>
             <label>地址<input className="field" autoFocus value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} placeholder="http://192.168.1.20:3091" /></label>
-            <label>配对码<input className="field mono" inputMode="numeric" maxLength={6} value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value.replace(/\D/g, '') })} placeholder="6 位数字" title="在那台机器的 设置 → 远程 / 手机 里生成" /></label>
+            <label>配对码<input className="field mono" inputMode="numeric" maxLength={6} value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value.replace(/\D/g, '') })} placeholder="6 位数字" title="在那台机器的 设置 → 手机与其它电脑 里生成" /></label>
           </> : (
             <label>SSH 主机
               <select className="field" value={draft.hostId} onChange={(e) => setDraft({ ...draft, hostId: e.target.value })}>

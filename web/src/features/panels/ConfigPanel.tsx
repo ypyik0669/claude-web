@@ -5,6 +5,7 @@ import { clsx } from '@/util';
 import type { GatewayGroup, GatewayStatus, Provider, ProviderType } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
+import { EnvEditor } from '@/features/settings/EnvEditor';
 
 type Tab = 'overview' | 'providers' | 'plugins' | 'mcp' | 'skills' | 'agents' | 'hooks' | 'settings';
 const TABS: { id: Tab; l: string }[] = [
@@ -41,7 +42,11 @@ function Cmd({ r }: { r: { code: number; stdout: string; stderr: string } | null
   return <pre className="mono" style={{ fontSize: 11.5, color: r.code ? 'var(--red)' : 'var(--fg-1)', padding: '6px 12px', whiteSpace: 'pre-wrap' }}>{(r.stdout + '\n' + r.stderr).trim()}</pre>;
 }
 
-export function Overview() {
+/**
+ * Runtime + login overview. `part="engine"` is the 运行内核 half only (settings → 账号与登录 → 更多选项; the login
+ * state is at the top of that page already); the dock's 配置中心 shows both.
+ */
+export function Overview({ part = 'all' }: { part?: 'all' | 'engine' }) {
   const { data, err } = useReq<any>({ kind: 'config.overview' });
   const engine = useStore((s) => s.engine);
   const loadEngine = useStore((s) => s.loadEngine);
@@ -59,13 +64,15 @@ export function Overview() {
   return (
     <>
       <div className="kv">
-        <span className="k">引擎</span>
+        <span className="k">运行内核</span>
         <span>
-          {engine ? <>Claude Web 引擎 v{engine.version ?? '?'} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{engine.runtime === 'ccb' ? 'claude-code-best' : '官方 Claude Code（ccb 不可用时的兜底）'} · {engine.source === 'bundled' ? '内置' : engine.source === 'global' ? '全局 npm' : '环境变量'}{engine.fallback ? ` · 兜底 ${engine.fallback.runtime} v${engine.fallback.version ?? '?'}` : ''}</span></> : '检测中…'}
+          {engine ? <>v{engine.version ?? '?'} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{engine.runtime === 'ccb' ? 'claude-code-best' : '官方 Claude Code（ccb 不可用时的兜底）'} · {engine.source === 'bundled' ? '内置' : engine.source === 'global' ? '全局 npm' : '环境变量'}{engine.fallback ? ` · 兜底 ${engine.fallback.runtime} v${engine.fallback.version ?? '?'}` : ''}</span></> : '检测中…'}
           {' '}<button className="btn sm ghost" disabled={busy} onClick={update} title="npm i -g claude-code-best@latest（全局安装会优先于内置版本）">{busy ? '更新中…' : '更新'}</button>
         </span>
-        <span className="k">登录</span><span>{data.auth.loggedIn ? `已登录 (${data.auth.authMethod}${data.auth.email ? ` · ${data.auth.email}` : ''})` : '未登录 — 在终端面板运行 /login，或在「供应商」里添加第三方端点'}</span>
-        <span className="k">API 提供方</span><span>{data.auth.apiProvider ?? '-'}</span>
+        {part === 'all' && <>
+          <span className="k">登录</span><span>{data.auth.loggedIn ? `已登录 (${data.auth.authMethod}${data.auth.email ? ` · ${data.auth.email}` : ''})` : '未登录 — 在终端面板运行 /login，或在「供应商」里添加第三方端点'}</span>
+          <span className="k">API 提供方</span><span>{data.auth.apiProvider ?? '-'}</span>
+        </>}
         <span className="k">配置目录</span><span className="mono">{data.claudeDir}</span>
         <span className="k">插件</span><span>{data.pluginCount}</span>
         <span className="k">Skills</span><span>{data.skillCount}</span>
@@ -119,29 +126,40 @@ export function Plugins() {
           <input value={mkSrc} onChange={(e) => setMkSrc(e.target.value)} placeholder="owner/repo 或 git URL 或本地路径" style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 4, padding: '4px 8px' }} />
           <button className="btn sm" disabled={busy || !mkSrc} onClick={() => run({ kind: 'config.marketplace.add', source: mkSrc })}>添加市场</button>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 6 }}>启停/安装后需要重启会话进程（会话头的停止再恢复）才会生效</div>
+        <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 6 }}>启停 / 安装后要重启对话进程才生效（对话右上角 ··· →「结束进程」，再发一条消息继续）</div>
       </div>
       <Cmd r={out} />
     </>
   );
 }
 
+/**
+ * The MCP list, the JSON form and the catalog are separate parts (settings → MCP 与插件 puts the form under 更多选项):
+ * whoever adds or removes a server says so, every list on screen reloads.
+ */
+const MCP_CHANGED = 'cw:mcp-changed';
+export function mcpChanged() { window.dispatchEvent(new Event(MCP_CHANGED)); }
+export function useMcpChanged(fn: () => void) {
+  const ref = useRef(fn);
+  ref.current = fn;
+  useEffect(() => { const on = () => ref.current(); window.addEventListener(MCP_CHANGED, on); return () => window.removeEventListener(MCP_CHANGED, on); }, []);
+}
+
+/** Configured MCP servers (and the current session's live ones). */
 export function Mcp() {
   const active = useScopedSession();
   const { data, err, reload } = useReq<{ servers: any[]; userServers: any; projectServers: any; stderr?: string }>({ kind: 'config.mcp' });
-  const [name, setName] = useState('');
-  const [json, setJson] = useState('{"type":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","."]}');
-  const [scope, setScope] = useState<'user' | 'project' | 'local'>('user');
   const [out, setOut] = useState<any>(null);
+  useMcpChanged(reload);
   const live = active?.info?.mcpServers;
-  const run = async (req: any) => { try { setOut(await ws.request(req)); } catch (e: any) { setOut({ code: 1, stdout: '', stderr: e.message }); } reload(); };
+  const run = async (req: any) => { try { setOut(await ws.request(req)); } catch (e: any) { setOut({ code: 1, stdout: '', stderr: e.message }); } mcpChanged(); };
   return (
     <>
       {err && <div className="empty" style={{ color: 'var(--red)' }}>{err}</div>}
       <div className="list">
         {live && (
           <>
-            <h5 style={{ margin: '4px 8px', fontSize: 11.5, color: 'var(--fg-2)' }}>当前会话</h5>
+            <h5 style={{ margin: '4px 8px', fontSize: 11.5, color: 'var(--fg-2)' }}>当前对话</h5>
             {live.map((s) => (
               <div key={s.name} className="row">
                 <span className={clsx('dot', s.status === 'connected' ? 'idle' : s.status === 'failed' ? 'error' : 'waiting')} />
@@ -160,6 +178,21 @@ export function Mcp() {
         ))}
         {data && !data.servers.length && <div className="empty">没有配置 MCP server</div>}
       </div>
+      <Cmd r={out} />
+    </>
+  );
+}
+
+/** Add a server from a JSON config (`claude mcp add-json`). */
+export function McpAddJson() {
+  const active = useScopedSession();
+  const [name, setName] = useState('');
+  const [json, setJson] = useState('{"type":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","."]}');
+  const [scope, setScope] = useState<'user' | 'project' | 'local'>('user');
+  const [out, setOut] = useState<any>(null);
+  const run = async (req: any) => { try { setOut(await ws.request(req)); } catch (e: any) { setOut({ code: 1, stdout: '', stderr: e.message }); } mcpChanged(); };
+  return (
+    <>
       <div className="section">
         <h5>添加 MCP server（JSON）</h5>
         <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
@@ -176,11 +209,11 @@ export function Mcp() {
   );
 }
 
-export function SimpleList({ kind, render }: { kind: 'config.skills' | 'config.agents' | 'config.hooks'; render: (x: any) => React.ReactNode }) {
+export function SimpleList({ kind, render, empty = '空' }: { kind: 'config.skills' | 'config.agents' | 'config.hooks'; render: (x: any) => React.ReactNode; empty?: string }) {
   const { data, err } = useReq<any[]>({ kind });
   if (err) return <div className="empty" style={{ color: 'var(--red)' }}>{err}</div>;
   if (!data) return <div className="empty">加载中…</div>;
-  return <div className="list">{data.map((x, i) => <div key={i} className="row">{render(x)}</div>)}{!data.length && <div className="empty">空</div>}</div>;
+  return <div className="list">{data.map((x, i) => <div key={i} className="row">{render(x)}</div>)}{!data.length && <div className="empty">{empty}</div>}</div>;
 }
 
 /** UI preferences stored in meta.json (survive the desktop's per-launch origin). */
@@ -302,7 +335,7 @@ export function ProviderProfiles() {
     setBusy(false);
   };
   const remove = async (p: Provider) => {
-    if (!(await dlg.confirm(`删除供应商「${p.name}」？`, { message: '已用它创建的会话恢复时会退回 Claude 账号。', danger: true }))) return;
+    if (!(await dlg.confirm(`删除供应商「${p.name}」？`, { message: '用它开的对话恢复时会退回 Claude 账号。', danger: true }))) return;
     await ws.request({ kind: 'providers.remove', id: p.id }).catch((e) => toast(e.message));
     await loadProviders();
   };
@@ -320,8 +353,8 @@ export function ProviderProfiles() {
   };
   return (
     <div className="section">
-      <h5 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>供应商档案 <span className="grow" /><button className="btn sm" onClick={() => startEdit()}><Icon name="plus" size={12} /> 添加</button></h5>
-      <div style={{ fontSize: 12, color: 'var(--fg-2)', marginBottom: 8 }}>每个会话可以选一个档案（首页输入框「Claude 账号」芯片）。密钥只注入到那个会话的进程环境，不写 <code>~/.claude/settings.json</code>，claude.ai 登录照常可用。</div>
+      <h5 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>全部供应商 <span className="grow" /><button className="btn sm" onClick={() => startEdit()}><Icon name="plus" size={12} /> 添加</button></h5>
+      <div className="sub" style={{ marginBottom: 8 }}>每个对话用一个（输入框的模型菜单里换）。密钥只交给用它的那个对话，不写进 <code>~/.claude/settings.json</code>，claude.ai 登录照常可用。</div>
       <div className="list">
         <div className="row">
           <span className="dot idle" />
@@ -332,7 +365,7 @@ export function ProviderProfiles() {
           <div key={p.id} className="row">
             <span className={clsx('dot', p.models?.length ? 'idle' : 'waiting')} title={p.models?.length ? `已测试 · ${p.models.length} 个模型` : '未测试连接'} />
             <div className="grow">
-              <div>{p.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{PROVIDER_TYPES.find((t) => t.v === p.type)?.l}{p.runtime === 'claude' ? ' · 强制官方二进制' : ''}</span></div>
+              <div title={p.runtime === 'claude' ? '这个端点只认官方 Claude Code 二进制（编辑里可以改）' : undefined}>{p.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{PROVIDER_TYPES.find((t) => t.v === p.type)?.l}</span></div>
               <div className="sub mono">{p.type === 'gateway' ? `组：${gwGroups.find((g) => g.id === p.gatewayGroupId)?.name ?? '（组已删除）'}` : <>{p.baseUrl || '（默认端点）'} · {p.apiKey || '无 key'}</>}{p.defaultModel ? ` · ${p.defaultModel}` : ''}</div>
             </div>
             <button className={clsx('btn sm', def === p.id && 'primary')} onClick={() => setSetting('defaultProviderId', p.id)}>{def === p.id ? '默认' : '设为默认'}</button>
@@ -357,7 +390,7 @@ export function ProviderProfiles() {
               </select>
             </div>
           )}
-          {isGw && <div className="sub" style={{ marginBottom: 6 }}>地址与密钥在开会话时由网关填入；Claude / Codex / Gemini 等 agent 都能用这个档案。组里有「只认官方二进制」的 Anthropic 成员时，Claude 会话默认也用官方二进制（下面的勾选优先）。Codex、Gemini CLI 即使登录了自己的账号，也会被强制走网关；Qwen Code 等其它 ACP agent 只注入环境变量，在 OAuth 登录状态下可能不走网关（先退出登录或改用 API Key 模式）。{!gwGroups.length && '还没有组：先去「设置 → 模型网关」建一个。'}</div>}
+          {isGw && <div className="sub" style={{ marginBottom: 6 }}>地址与密钥在对话开始时由网关填入；Claude / Codex / Gemini 等 Agent 都能用这个供应商。组里有「只认官方二进制」的 Anthropic 成员时，Claude 对话默认也用官方二进制（下面的勾选优先）。Codex、Gemini CLI 即使登录了自己的账号，也会被强制走网关；Qwen Code 等其它 Agent 只注入环境变量，在 OAuth 登录状态下可能不走网关（先退出登录或改用 API Key 模式）。{!gwGroups.length && '还没有组：先去「设置 → 模型网关」建一个。'}</div>}
           {!isGw && <input className="field" style={{ width: '100%', marginBottom: 6 }} placeholder={`Base URL · ${PROVIDER_TYPES.find((t) => t.v === editing.type)?.hint}`} value={editing.baseUrl ?? ''} onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })} />}
           {!isGw && <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
             <input className="field" style={{ flex: 1 }} type={showKey ? 'text' : 'password'} placeholder={editing.id ? `API Key（留空保持 ${editing.apiKey || '现有值'}）` : 'API Key'} value={editing.apiKey} onChange={(e) => setEditing({ ...editing, apiKey: e.target.value })} autoComplete="off" />
@@ -370,10 +403,10 @@ export function ProviderProfiles() {
               {probe.chat && (probe.chat.ok
                 ? ` · 对话测试通过（${probe.chat.model} · ${probe.chat.runtime === 'claude' ? '官方二进制' : probe.chat.runtime === 'api' ? '直连接口' : 'ccb'} · ${(probe.chat.ms / 1000).toFixed(1)}s）`
                 : ` · 对话测试失败：${probe.chat.error}`)}
-              {probe.chat?.switched && <div style={{ color: 'var(--yellow)' }}>这个端点拒绝 ccb 的请求，已自动改为官方 Claude Code 二进制（ccb 专属功能在该供应商的会话里不可用）</div>}
+              {probe.chat?.switched && <div style={{ color: 'var(--yellow)' }}>这个端点拒绝 ccb 的请求，已自动改为官方 Claude Code 二进制（ccb 专属功能在该供应商的对话里不可用）</div>}
               {probe.responses && (probe.responses.ok
                 ? <div style={{ color: 'var(--green)' }}>/v1/responses 通过（{probe.responses.model}，gpt-* 会经垫片走这条路）</div>
-                : <div style={{ color: 'var(--yellow)' }}>/v1/responses 不可用：{probe.responses.error}{[404, 405, 501].includes(probe.responses.status ?? 0) && !/model/i.test(probe.responses.error ?? '') ? '（已记下，gpt-* 改走 chat/completions）' : '（没有记下：可能是模型或临时错误，会话里仍会先试 /v1/responses，失败这一次退回 chat/completions）'}</div>)}
+                : <div style={{ color: 'var(--yellow)' }}>/v1/responses 不可用：{probe.responses.error}{[404, 405, 501].includes(probe.responses.status ?? 0) && !/model/i.test(probe.responses.error ?? '') ? '（已记下，gpt-* 改走 chat/completions）' : '（没有记下：可能是模型或临时错误，对话里仍会先试 /v1/responses，失败这一次退回 chat/completions）'}</div>)}
             </div>
           )}
           {modelPick('默认模型', 'defaultModel')}
@@ -437,64 +470,6 @@ function CacheOptions({ editing, set }: { editing: Draft; set: (d: Draft) => voi
   );
 }
 
-const ENV_GROUPS: { title: string; keys: { k: string; hint: string; secret?: boolean }[] }[] = [
-  { title: 'Web Search', keys: [{ k: 'BRAVE_API_KEY', hint: 'Brave Search API key', secret: true }, { k: 'WEB_SEARCH_PROVIDER', hint: 'api | bing | brave' }] },
-  { title: 'Artifacts 上传', keys: [{ k: 'ARTIFACTS_URL', hint: '自托管 Worker 地址，默认官方公共实例' }, { k: 'ARTIFACTS_TOKEN', hint: '上传令牌', secret: true }] },
-  { title: 'Langfuse 监控', keys: [{ k: 'LANGFUSE_PUBLIC_KEY', hint: 'pk-lf-…' }, { k: 'LANGFUSE_SECRET_KEY', hint: 'sk-lf-…', secret: true }, { k: 'LANGFUSE_BASE_URL', hint: 'https://cloud.langfuse.com' }] },
-  { title: 'Sentry', keys: [{ k: 'SENTRY_DSN', hint: 'https://…@sentry.io/…', secret: true }] },
-  { title: '语音（终端 /voice）', keys: [{ k: 'VOICE_PROVIDER', hint: 'doubao …' }, { k: 'VOICE_STREAM_BASE_URL', hint: 'wss://…' }] },
-];
-
-/** Edits the `env` block of ~/.claude/settings.json for non-provider integrations. */
-export function EnvEditor() {
-  const { data, err, reload } = useReq<{ path: string; text: string }>({ kind: 'config.settings.read', scope: 'user' });
-  const [env, setEnv] = useState<Record<string, string>>({});
-  const [msg, setMsg] = useState('');
-  const [show, setShow] = useState<Record<string, boolean>>({});
-  useEffect(() => {
-    try { const j = JSON.parse(data?.text || '{}'); setEnv(j.env ?? {}); } catch { /* keep */ }
-  }, [data]);
-  const save = async () => {
-    if (!data) return;
-    try {
-      // merge into what is on disk NOW: `data` is null before the first load (saving then wrote a
-      // settings.json containing only `env`) and may be stale if the raw editor saved since
-      const fresh = await ws.request<{ path: string; text: string }>({ kind: 'config.settings.read', scope: 'user' });
-      const j = JSON.parse(fresh.text || '{}');
-      const cleaned: Record<string, string> = {};
-      for (const [k, v] of Object.entries(env)) if (v?.trim()) cleaned[k] = v.trim();
-      j.env = { ...(j.env ?? {}), ...cleaned };
-      for (const k of Object.keys(j.env)) if (!(k in cleaned) && ENV_GROUPS.some((g) => g.keys.some((x) => x.k === k))) delete j.env[k];
-      await ws.request({ kind: 'config.settings.write', scope: 'user', json: JSON.stringify(j, null, 2) });
-      setMsg('已保存到 ~/.claude/settings.json，新会话生效');
-      reload();
-    } catch (e: any) { setMsg(e.message); }
-  };
-  if (err) return <div className="empty" style={{ color: 'var(--red)' }}>{err}</div>;
-  return (
-    <div className="section">
-      <h5>其他环境变量</h5>
-      <div style={{ fontSize: 12, color: 'var(--fg-2)', marginBottom: 8 }}>写入 <code>settings.json</code> 的 <code>env</code>，所有会话生效。留空表示不设置。</div>
-      {ENV_GROUPS.map((g) => (
-        <div key={g.title} style={{ marginBottom: 10 }}>
-          <h5>{g.title}</h5>
-          {g.keys.map(({ k, hint, secret }) => (
-            <div key={k} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
-              <code style={{ minWidth: 200, fontSize: 11.5, color: 'var(--fg-1)' }}>{k}</code>
-              <input className="field" style={{ flex: 1 }} type={secret && !show[k] ? 'password' : 'text'} placeholder={hint} value={env[k] ?? ''} onChange={(e) => setEnv({ ...env, [k]: e.target.value })} />
-              {secret && <button className="icon-btn" onClick={() => setShow({ ...show, [k]: !show[k] })} aria-label="显示密钥"><Icon name="eye" size={14} /></button>}
-            </div>
-          ))}
-        </div>
-      ))}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button className="btn sm primary" disabled={!data} onClick={save}>保存</button>
-        <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{msg}</span>
-      </div>
-    </div>
-  );
-}
-
 export function ConfigPanel() {
   const want = useStore((s) => s.configTab);
   const [tab, setTab] = useState<Tab>((want as Tab) ?? 'overview');
@@ -505,7 +480,7 @@ export function ConfigPanel() {
       {tab === 'overview' && <Overview />}
       {tab === 'providers' && <><ProviderProfiles /><EnvEditor /></>}
       {tab === 'plugins' && <Plugins />}
-      {tab === 'mcp' && <Mcp />}
+      {tab === 'mcp' && <><Mcp /><McpAddJson /></>}
       {tab === 'skills' && <SimpleList kind="config.skills" render={(s) => <div className="grow"><div>/{s.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{s.source}</span></div><div className="sub">{s.description}</div></div>} />}
       {tab === 'agents' && <SimpleList kind="config.agents" render={(a) => <div className="grow"><div>{a.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{a.source}{a.model ? ` · ${a.model}` : ''}</span></div><div className="sub">{a.description}</div></div>} />}
       {tab === 'hooks' && <SimpleList kind="config.hooks" render={(h) => <div className="grow"><div>{h.event} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{h.matcher ? `matcher: ${h.matcher}` : ''} · {h.source}</span></div><div className="sub">{(h.hooks ?? []).map((x: any) => x.command ?? x.type).join(' ; ')}</div></div>} />}

@@ -1,5 +1,7 @@
-// UI smoke test: every settings section, every dock panel, the model menu and the welcome composer, driven in a
-// real Chromium (Electron) against a throwaway server — and it FAILS on any console error / warning.
+// UI smoke test: every settings section, every dock panel, the model menu and the welcome composer (its one row at
+// 1440 / 1024 / 760, the + / permission / project menus, every control the old composer had — see
+// web/src/features/composer/reach.ts), driven in a real Chromium (Electron) against a throwaway server — and it
+// FAILS on any console error / warning.
 //
 //   npm run build:all && node scripts/ui-smoke.cjs [--out <dir>] [--show] [--keep]
 //   node scripts/ui-smoke.cjs --idle 180 [--live] [--activity] [--out <dir>]   # spawn-frequency measurement (CW_SPAWN_LOG)
@@ -28,15 +30,41 @@ else runner().catch((e) => { console.error(e.stack || e); process.exit(2); });
 
 /* ------------------------------------------------------------------ orchestration (plain node) */
 
-/** Section ids + labels straight from SettingsModal.tsx (`{ id: 'x', l: '…'`), panels from layout.ts PANELS. */
+/**
+ * Settings pages straight from features/settings/catalog.ts (`id: 'x', l: '…', ic: '…', group: '…'`, their tabs
+ * `{ id: 't', l: …, bodies: […], more: […] }`, the rows of the entry tables, and the old-id aliases of
+ * LEGACY_SECTIONS), panels from layout.ts PANELS. `pages`: every page / tab with its parts and what 更多选项 holds.
+ */
 function uiInventory() {
-  const settings = fs.readFileSync(path.join(ROOT, 'web/src/features/settings/SettingsModal.tsx'), 'utf8');
-  const sections = [...settings.matchAll(/\{ id: '([\w.-]+)', l: '([^']+)', ic: '/g)].map((m) => ({ id: m[1], label: m[2] }));
+  const cat = fs.readFileSync(path.join(ROOT, 'web/src/features/settings/catalog.ts'), 'utf8');
+  const list = cat.slice(cat.indexOf('export const SETTINGS_SECTIONS'), cat.indexOf('export const VISIBLE_SECTIONS'));
+  const ids = (x) => [...String(x || '').matchAll(/'(\w+)'/g)].map((m) => m[1]);
+  // entry tables: `const GENERAL: EntryMeta[] = [ { id: 'x', more: true, … }, … ];`
+  const tables = {};
+  for (const m of cat.matchAll(/const (\w+): EntryMeta\[\] = \[([\s\S]*?)\n\];/g)) {
+    tables[m[1]] = [...m[2].matchAll(/\{ id: '([\w.]+)', (more: true)?/g)].map((e) => ({ id: e[1], more: !!e[2] }));
+  }
+  const sections = [...list.matchAll(/id: '([\w.-]+)', l: '([^']+)', ic: '\w+', group: '(\w+)'(, advanced: true)?/g)].map((m) => ({ id: m[1], label: m[2], group: m[3], advanced: !!m[4], at: m.index, tabs: [], pages: [] }));
+  for (const [i, s] of sections.entries()) {
+    const text = list.slice(s.at, i + 1 < sections.length ? sections[i + 1].at : list.length);
+    const entries = tables[(/entries: (\w+)/.exec(text) || [])[1]] || [];
+    const moreEntries = entries.filter((e) => e.more).map((e) => e.id);
+    const tabs = [...text.matchAll(/\{ id: '(\w+)', l: [^,]+, bodies: \[([^\]]*)\](?:, more: \[([^\]]*)\])?/g)];
+    if (tabs.length) {
+      for (const t of tabs) { s.tabs.push(t[1]); s.pages.push({ tab: t[1], bodies: ids(t[2]), more: ids(t[3]), moreEntries }); }
+    } else {
+      const own = /bodies: \[([^\]]*)\](?:, more: \[([^\]]*)\])?/.exec(text);
+      s.pages.push({ tab: '', bodies: ids(own && own[1]), more: ids(own && own[2]), moreEntries });
+    }
+  }
+  const legacy = cat.slice(cat.indexOf('export const LEGACY_SECTIONS'), cat.indexOf('};', cat.indexOf('export const LEGACY_SECTIONS')));
+  const aliases = [...legacy.matchAll(/(\w+): \{ section: '(\w+)'(?:, tab: '(\w+)')?(, more: true)?(?:, body: '(\w+)')? \}/g)].map((m) => ({ old: m[1], section: m[2], tab: m[3] || '', more: !!m[4], body: m[5] || '' }));
   const layout = fs.readFileSync(path.join(ROOT, 'web/src/model/layout.ts'), 'utf8');
   const block = layout.slice(layout.indexOf('export const PANELS'), layout.indexOf('];', layout.indexOf('export const PANELS')));
   const panels = [...block.matchAll(/\{ id: '(\w+)', title: '([^']+)'/g)].map((m) => ({ id: m[1], title: m[2] }));
-  if (!sections.length || !panels.length) throw new Error('could not read the settings sections / panels from the sources');
-  return { sections, panels };
+  const withMore = sections.flatMap((s) => s.pages.filter((p) => p.more.length || p.moreEntries.length));
+  if (sections.length < 15 || aliases.length < 5 || !panels.length || !sections.some((s) => s.tabs.length) || withMore.length < 5 || !aliases.some((a) => a.more)) throw new Error('could not read the settings pages / 更多选项 / aliases / panels from the sources');
+  return { sections: sections.map(({ at, ...s }) => s), aliases, panels };
 }
 
 function arg(name, def) {
@@ -185,7 +213,7 @@ async function runner() {
   if (srv) {
     // the crash probe must have reached the server log through client.log
     if (r && !external && idle === 0) {
-      const ok = /\[web error\] 设置 · 模型: /.test(srv.log());
+      const ok = /\[web error\] 设置 · 模型与智能程度: /.test(srv.log());
       console.log(`${ok ? 'PASS' : 'FAIL'} boundary error reached the server log (client.log)`);
       if (!ok) failed = true;
     }
@@ -346,11 +374,14 @@ function driver() {
         win.setSize(1360, 860);
         await sleep(700);
         const focused = () => js('(() => { const a = document.activeElement; return a ? (a.dataset.dir ? "row" : a.classList.contains("dirpick") ? "chip" : a.textContent.trim()) : null; })()');
+        // redesign phase 3: the project chip's menu = recent projects · 打开文件夹… · 在独立副本里运行 (worktree)
+        const projRows = await js(`({ browse: !!document.querySelector('.menu.dirmenu [data-id="browse"]'), worktree: !!document.querySelector('.menu.dirmenu [data-id="worktree"]') })`);
+        check('project menu: 打开文件夹… and the 独立副本 (worktree) switch', projRows.browse && projRows.worktree, JSON.stringify(projRows));
         await key('End');
         const atEnd = await focused();
         await key('Home');
         const atHome = await focused();
-        check('Home / End move to the first / last entry', atHome === 'row' && /浏览文件夹/.test(atEnd), `${atHome} / ${atEnd}`);
+        check('Home / End move to the first / last entry', atHome === 'row' && /独立副本/.test(atEnd), `${atHome} / ${atEnd}`);
         await key('Tab');
         check('Tab closes the directory menu and focus returns to the chip', !(await js('!!document.querySelector(".menu.dirmenu")')) && (await focused()) === 'chip');
         await click('.welcome .dirpick');
@@ -360,26 +391,310 @@ function driver() {
 
       // ---- model menu
       phase = 'model-menu';
+      // the other agents are sections of this menu, and agents.list probes every CLI's version first (≈ 13 s on a
+      // cold machine): wait for the list rather than racing it
+      check('agent list arrived (other agents in the model menu)', await waitFor('window.__store.getState().agents.length > 0', 30_000));
       await click('.welcome .mm-anchor > button.chip');
       check('model menu opens', await waitFor('!!document.querySelector(".menu.mm")', 5000));
+      await waitFor('!!document.querySelector(\'.menu.mm [data-sec^="agent:"]\')', 30_000);
       await sleep(600);
       await shot('model-menu');
       check('model menu without error boundary', !(await noBoundary('body')), await noBoundary('body'));
+      // redesign phase 3: 智能程度 + 深度编排 on top, the other agents as sections of the same flat list (no sub-menu)
+      const mm = await js(`(() => { const m = document.querySelector('.menu.mm'); if (!m) return null; return { levels: [...m.querySelectorAll('.mm-intel [data-level]')].map((b) => b.textContent), ultra: !!m.querySelector('[data-id="ultracode"]'), agents: m.querySelectorAll('[data-sec^="agent:"]').length, nested: m.querySelectorAll('.menu').length, ids: ['add-provider', 'agents', 'manage', 'refresh'].filter((i) => !m.querySelector('[data-id="' + i + '"]')), words: /effort|ultracode|档案|引擎/i.test(m.innerText) }; })()`);
+      check('model menu: 智能程度 (快…极限), 深度编排, other agents flat, add / manage / refresh', mm && mm.levels.join('') === '快均衡深入更深极限' && mm.ultra && mm.agents >= 1 && !mm.nested && !mm.ids.length, JSON.stringify(mm));
+      check('model menu shows no implementation words (effort / ultracode / 档案 / 引擎)', mm && !mm.words);
+      await click('.menu.mm .mm-intel [data-level="low"]');
+      const chipLow = await js(`document.querySelector('.welcome .mm-anchor > button.chip').getAttribute('aria-label')`);
+      check('picking 快 keeps the menu open and the chip says 模型 · 快', /· 快$/.test(chipLow) && !!(await js('!!document.querySelector(".menu.mm")')), chipLow);
+      await click('.menu.mm .mm-intel [data-level="high"]');
       await key('Escape');
       await sleep(200);
 
-      // ---- every settings section
+      // ---- redesign phase 3: the composer row, the + menu, the permission menu
+      phase = 'composer';
+      const oneRow = `(() => { const bar = document.querySelector('.welcome .composer-bar'); if (!bar) return null; const b = bar.getBoundingClientRect(); const kids = [...bar.querySelectorAll('.cb-left > *, .cb-right > *')].filter((e) => e.getBoundingClientRect().width > 0); const inside = kids.every((e) => { const r = e.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1 && r.left >= b.left - 8 && r.right <= b.right + 1; }); return { w: Math.round(b.width), h: Math.round(b.height), n: kids.length, inside, overflow: bar.scrollWidth > bar.clientWidth + 1 }; })()`;
+      for (const [w, h] of [[1440, 900], [1024, 800], [760, 860]]) {
+        win.setSize(w, h);
+        await sleep(700);
+        const r = await js(oneRow);
+        check(`composer row stays one line at ${w} wide`, r && r.h <= 36 && r.inside && !r.overflow && r.n >= 5, JSON.stringify(r));
+      }
+      win.setSize(1360, 860);
+      await sleep(600);
+      const bar = await js(`(() => { const b = document.querySelector('.welcome .composer-bar'); return { plus: !!b.querySelector('.plus'), project: !!b.querySelector('.dirpick'), model: !!b.querySelector('.mm-anchor'), perm: !!b.querySelector('.perm-chip'), send: !!b.querySelector('[data-id="send"]'), selects: document.querySelectorAll('.composer select').length }; })()`);
+      check('welcome row: + · project · model · permission · send, no hidden <select>', bar.plus && bar.project && bar.model && bar.perm && bar.send && !bar.selects, JSON.stringify(bar));
+      // every control of the old composer, from the reach table the unit test checks (web/src/features/composer/reach.ts):
+      // open each place (+ / project / model / permission menu, or the row itself) and query every selector in it
+      const reach = await js('window.__cwComposerReach ? JSON.parse(JSON.stringify(window.__cwComposerReach)) : null');
+      check('composer reach table exposed (window.__cwComposerReach)', !!reach && reach.reach.length > 20);
+      const speech = await js('!!(window.SpeechRecognition || window.webkitSpeechRecognition)');
+      const walk = async (place, scope, states = {}) => {
+        const wanted = reach.reach.filter((r) => r.place === place && (!r.when || r.when === 'more' || (r.when === 'speech' && speech && !states.mobile) || states[r.when]));
+        const opener = reach.opener[place];
+        const box = opener ? reach.container[place] : `${scope} ${reach.container[place]}`;
+        if (opener) { await click(`${scope} ${opener}`); await waitFor(`!!document.querySelector(${JSON.stringify(box)})`, 5000); }
+        const missing = (list) => js(`${JSON.stringify(list)}.filter((r) => !document.querySelector(${JSON.stringify(box)} + ' ' + r.sel)).map((r) => r.was + ' → ' + r.sel)`);
+        const miss = await missing(wanted.filter((r) => r.when !== 'more'));
+        const later = wanted.filter((r) => r.when === 'more');
+        if (later.length) { await click(`${box} [data-id="more"]`); miss.push(...(await missing(later))); }
+        if (opener) { await key('Escape'); await sleep(200); }
+        return { n: wanted.length, miss };
+      };
+      for (const place of ['plus', ...(E.SMOKE_REPO ? ['project'] : []), 'model', 'permission', 'bar']) {
+        const w = await walk(place, '.welcome');
+        check(`reach · ${place}: every old control is there (${w.n})`, w.n > 0 && !w.miss.length, w.miss.join(' ; '));
+      }
+      await click('.welcome .cb .plus');
+      await shot('composer-plus');
+      await click('.menu.plus-menu [data-id="chrome"]');
+      const on = await js(`document.querySelector('.menu.plus-menu [data-id="chrome"]').getAttribute('aria-checked')`);
+      await key('Escape');
+      const tag = await waitFor('!!document.querySelector(\'.welcome .cap-tag[data-cap="chrome"]\')', 2000);
+      check('switching on 控制浏览器 shows a removable tag in the text box', on === 'true' && tag, JSON.stringify({ on, tag }));
+      await click('.welcome .cap-tag[data-cap="chrome"] button');
+      check('the tag\'s × turns it off again', await waitFor('!document.querySelector(\'.welcome .cap-tag[data-cap="chrome"]\')', 2000));
+      if (E.SMOKE_READONLY !== '1') {
+        // 频道: clicking 「Brief、频道…」 (the row goes away) moves the focus to Brief, ↓ reaches the field, and what is
+        // typed survives a click outside (it is saved as you type, into meta.json ui.featureDefaults)
+        await click('.welcome .cb .plus');
+        await click('.menu.plus-menu [data-id="more"]');
+        const afterMore = await js('document.activeElement?.dataset?.id ?? document.activeElement?.tagName');
+        await key('Down');
+        const inField = await js('document.activeElement?.closest?.(\'[data-id="channels"]\') ? "channels" : document.activeElement?.tagName');
+        wc.insertText('server:smoke');
+        await sleep(100);
+        await click('.welcome .composer textarea');
+        const saved = await waitFor('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"]?.channels) === \'["server:smoke"]\'', 3000);
+        check('频道: 「Brief、频道…」 hands the focus to Brief, ↓ reaches the field, typing survives a click outside', afterMore === 'brief' && inField === 'channels' && saved && !(await js('!!document.querySelector(".menu.plus-menu")')), JSON.stringify({ afterMore, inField, saved }));
+        check('频道 shows as a removable tag', await waitFor('!!document.querySelector(\'.welcome .cap-tag[data-cap="channels"]\')', 2000));
+        await click('.welcome .cap-tag[data-cap="channels"] button');
+        await waitFor('!document.querySelector(\'.welcome .cap-tag[data-cap="channels"]\')', 2000);
+        check('the capability defaults live in meta.json, not localStorage', await js('localStorage.getItem("cw.lastFeatures") === null && !!window.__store.getState().settings["ui.featureDefaults"]'));
+        await click('.welcome .cb .plus');
+        await click('.menu.plus-menu [data-id="goal"]');
+        check('设定一个目标 puts /goal into the text box', await waitFor('document.querySelector(".welcome .composer textarea").value.startsWith("/goal")', 2000));
+        wc.selectAll(); wc.delete(); await sleep(200);
+        if (E.SMOKE_SID) {
+          await click('.welcome .cb .plus');
+          await click('.menu.plus-menu [data-id="reference"]');
+          const listed = await waitFor('document.querySelectorAll(".menu.plus-menu .cm-ref-list .cm-it").length > 0', 3000);
+          // from the search box ↓ and Tab land on the first result (not the 返回 button, not closing the menu)
+          const where = 'document.activeElement?.closest?.(".cm-ref-list") ? "result" : document.activeElement?.getAttribute?.("aria-label") ?? document.activeElement?.tagName';
+          const inSearch = await js('document.activeElement?.getAttribute?.("aria-label")');
+          await key('Down');
+          const afterDown = await js(where);
+          await js(`document.querySelector('.menu.plus-menu .cm-ref-head input')?.focus()`);
+          await key('Tab');
+          const afterTab = await js(where);
+          check('reference search: ↓ and Tab go to the first result and keep the menu open', inSearch === '搜索对话' && afterDown === 'result' && afterTab === 'result' && !!(await js('!!document.querySelector(".menu.plus-menu")')), JSON.stringify({ inSearch, afterDown, afterTab }));
+          await click('.menu.plus-menu .cm-ref-list .cm-it');
+          const refChip = await waitFor('!!document.querySelector(".welcome .attach .att-chip.ref")', 2000);
+          check('引用另一个对话 lists conversations and adds the reference chip', listed && refChip, JSON.stringify({ listed, refChip }));
+          await js(`document.querySelector('.welcome .attach .att-chip.ref button')?.click()`);
+          await sleep(200);
+        }
+      }
+      await click('.welcome .cb .perm-chip');
+      const perm = await js(`(() => { const m = document.querySelector('.menu.perm-menu'); if (!m) return null; return { modes: [...m.querySelectorAll('[data-mode]')].map((b) => b.dataset.mode), danger: m.querySelector('[data-mode="bypassPermissions"]').classList.contains('danger'), rec: !!m.querySelector('[data-mode="default"] .cm-rec'), foot: /设为新对话的默认/.test(m.innerText), lines: [...m.querySelectorAll('[data-mode] .cm-d')].every((d) => d.textContent.length > 6) }; })()`);
+      check('permission menu: six modes with one line each, 完全放开 in the danger colour, 推荐, 设为新对话的默认…', perm && perm.modes.length === 6 && perm.danger && perm.rec && perm.foot && perm.lines, JSON.stringify(perm));
+      await shot('composer-perm');
+      await click('.menu.perm-menu [data-mode="acceptEdits"]');
+      const permLabel = await js(`document.querySelector('.welcome .cb .perm-chip').getAttribute('aria-label')`);
+      check('picking a mode updates the chip', /自动改文件/.test(permLabel), permLabel);
+      await click('.welcome .cb .perm-chip');
+      await click('.menu.perm-menu [data-mode="default"]');
+      check('composer menus without error boundary', !(await noBoundary('body')), await noBoundary('body'));
+
+      // ---- settings (redesign phase 6): a full-window page, 5 groups + a collapsed 高级, every page and tab, old ids
+      phase = 'settings';
+      const onPage = (id, tab) => `(() => { const r = document.querySelector('.modal.settings.sp'); return !!r && r.dataset.section === ${JSON.stringify(id)}${tab ? ` && r.dataset.tab === ${JSON.stringify(tab)}` : ''}; })()`;
+      await js('window.__store.getState().openSettings()');
+      check('settings open on 通用', await waitFor(onPage('general'), 5000));
+      const frame = await js(`(() => { const r = document.querySelector('.modal.settings.sp').getBoundingClientRect(); return { l: Math.round(r.left), t: Math.round(r.top), w: Math.round(r.width) - innerWidth, h: Math.round(r.height) - innerHeight }; })()`);
+      check('settings fill the window (not a dialog)', frame.l === 0 && frame.t === 0 && frame.w === 0 && frame.h === 0, JSON.stringify(frame));
+      const nav = await js(`({ items: document.querySelectorAll('.sp-nav .sp-si').length, groups: [...document.querySelectorAll('.sp-nav .sp-gh')].map((g) => g.textContent.trim()), adv: document.querySelector('.sp-adv-h')?.getAttribute('aria-expanded') })`);
+      check('settings nav: ≤ 15 pages in 5 groups, 高级 collapsed', nav.items <= 15 && nav.items === inv.sections.filter((s) => !s.advanced).length && nav.groups.join(',') === '常用,模型,扩展,连接,数据,高级' && nav.adv === 'false', JSON.stringify(nav));
+      const wbRow = await js(`!!document.querySelector('.modal.settings [data-entry="ui.workbench"] .toggle')`);
+      check('「显示工作台工具」 is on 通用', wbRow);
+      await shot('settings-general');
       for (const s of inv.sections) {
         phase = `settings:${s.id}`;
         await js(`window.__store.getState().openSettings({ section: ${JSON.stringify(s.id)} })`);
-        const opened = await waitFor(`document.querySelector('.modal.settings .set-head h3')?.textContent === ${JSON.stringify(s.label)}`, 5000);
-        await sleep(1500); // requests the section fires on mount
-        const err = await noBoundary('.modal.settings');
-        check(`settings · ${s.label}`, opened && !err, err || (opened ? '' : 'section did not open'));
+        const opened = await waitFor(`${onPage(s.id)} && document.querySelector('.modal.settings .sp-title')?.textContent === ${JSON.stringify(s.label)}`, 5000);
+        await sleep(1500); // requests the page fires on mount
+        let err = await noBoundary('.modal.settings');
+        if (s.advanced) err = err || ((await js(`document.querySelector('.sp-adv-h')?.getAttribute('aria-expanded')`)) === 'true' ? '' : '高级 did not expand for an advanced page');
+        check(`settings · ${s.label}`, opened && !err, err || (opened ? '' : 'page did not open'));
         await shot(`settings-${s.id}`);
+        for (const t of s.tabs.slice(1)) {
+          await click(`.modal.settings .sp-tabs [data-tab="${t}"]`);
+          const on = await waitFor(onPage(s.id, t), 3000);
+          await sleep(1500);
+          const terr = await noBoundary('.modal.settings');
+          check(`settings · ${s.label} › ${t}`, on && !terr, terr || (on ? '' : 'tab did not open'));
+          await shot(`settings-${s.id}-${t}`);
+        }
       }
-      await js('window.__store.setState({ settingsOpen: null })');
+      // 更多选项 on every page that has one: it opens without an error boundary, and the page lays out the parts the
+      // catalog lists, in and out of 更多选项. `data-body` is written by the page from the catalog, so this says nothing
+      // about which component draws a part — that is wording.test.ts (the BODIES table)
+      const shownParts = `[...document.querySelectorAll('.modal.settings .sp-main [data-body]')].filter((e) => !e.closest('[hidden]')).map((e) => e.dataset.body).sort().join(',')`;
+      const moreRows = `[...document.querySelectorAll('.modal.settings .sp-more-body:not([hidden]) [data-entry]')].map((e) => e.dataset.entry).sort().join(',')`;
+      for (const s of inv.sections) {
+        for (const pg of s.pages) {
+          if (!pg.more.length && !pg.moreEntries.length) continue;
+          const name = `${s.label}${pg.tab ? ` › ${pg.tab}` : ''}`;
+          phase = `settings:more:${s.id}${pg.tab ? `/${pg.tab}` : ''}`;
+          await js(`window.__store.getState().openSettings({ section: ${JSON.stringify(s.id)} })`);
+          await waitFor(onPage(s.id), 3000);
+          if (pg.tab) { await click(`.modal.settings .sp-tabs [data-tab="${pg.tab}"]`); await waitFor(onPage(s.id, pg.tab), 3000); }
+          const before = await js(shownParts);
+          await click('.modal.settings .sp-more-h');
+          const opened = await waitFor(`document.querySelector('.modal.settings .sp-more-h')?.getAttribute('aria-expanded') === 'true'`, 3000);
+          await sleep(1500); // requests the parts fire on first open
+          const after = await js(shownParts);
+          const rows = await js(moreRows);
+          const err = await noBoundary('.modal.settings');
+          const want = { before: [...pg.bodies].sort().join(','), after: [...pg.bodies, ...pg.more].sort().join(','), rows: [...pg.moreEntries].sort().join(',') };
+          check(`settings · ${name} › 更多选项 (parts as in the catalog)`, opened && !err && before === want.before && after === want.after && rows === want.rows, err || JSON.stringify({ opened, before, after, rows, want }));
+          await shot(`settings-${s.id}${pg.tab ? `-${pg.tab}` : ''}-more`);
+        }
+      }
+      // the old flat-window ids still open the page (and tab) that has their content now; 引擎与账号 with 更多选项 open
+      for (const a of inv.aliases) {
+        phase = `settings:alias:${a.old}`;
+        await js(`window.__store.getState().openSettings({ section: ${JSON.stringify(a.old)} })`);
+        const more = a.more ? ` && !!document.querySelector('.modal.settings .sp-more.open [data-body="${a.body}"]')` : '';
+        check(`settings · old id ${a.old} → ${a.section}${a.tab ? `/${a.tab}` : ''}${a.more ? ' › 更多选项' : ''}`, await waitFor(onPage(a.section, a.tab) + more, 3000));
+      }
+      // reveal: an entry under 更多选项 opens it and is highlighted
+      phase = 'settings:reveal';
+      await js('window.__store.getState().openSettings({ reveal: "ui.softwareRender" })');
+      check('reveal opens 更多选项 and highlights the row', await waitFor(`${onPage('general')} && !!document.querySelector('.sp-more.open [data-entry="ui.softwareRender"].reveal')`, 3000));
+      // Ctrl+, again while open (openSettings() without a page): same page, search cleared and focused
+      phase = 'settings:reopen';
+      await js('window.__store.getState().openSettings({ section: "models" })');
+      await waitFor(onPage('models'), 3000);
+      await js(`(() => { const i = document.querySelector('.sp-search input'); i.focus(); })()`);
+      wc.insertText('zz');
+      await sleep(200);
+      await js('window.__store.getState().openSettings()');
       await sleep(300);
+      const reopen = await js(`({ page: document.querySelector('.modal.settings.sp')?.dataset.section, q: document.querySelector('.sp-search input').value, focus: document.activeElement === document.querySelector('.sp-search input') })`);
+      check('openSettings() while open keeps the page, clears and focuses the search', reopen.page === 'models' && reopen.q === '' && reopen.focus, JSON.stringify(reopen));
+      // a short window: the current page stays in view in the navigation (an advanced page at the bottom)
+      phase = 'settings:nav-scroll';
+      win.setContentSize(1360, 420);
+      await sleep(400);
+      await js('window.__store.getState().openSettings({ section: "raw" })');
+      await waitFor(onPage('raw'), 3000);
+      await sleep(400);
+      const navIn = await js(`(() => { const on = document.querySelector('.sp-si.on'), box = document.querySelector('.sp-groups'); if (!on || !box) return null; const a = on.getBoundingClientRect(), b = box.getBoundingClientRect(); return { inside: a.top >= b.top - 1 && a.bottom <= b.bottom + 1, scrolled: box.scrollTop > 0 }; })()`);
+      check('the navigation scrolls the current page into view', navIn && navIn.inside, JSON.stringify(navIn));
+      win.setContentSize(1360, 860);
+      await sleep(400);
+      // search: rows with a 分组 › 分区 crumb; a part under 更多选项 jumps there and opens it
+      phase = 'settings:search';
+      await js('window.__store.getState().openSettings({ section: "general" })');
+      await waitFor(onPage('general'), 3000);
+      wc.focus();
+      await key('/');
+      const searchFocused = await js(`document.activeElement === document.querySelector('.sp-search input')`);
+      if (!searchFocused) await click('.sp-search input');
+      wc.insertText('托盘');
+      const tray = await waitFor(`[...document.querySelectorAll('.sp-hit')].some((h) => h.querySelector('[data-entry="ui.closeToTray"]') && h.querySelector('.sp-crumb')?.textContent === '常用 › 通用')`, 3000);
+      check('search finds a row with its 分组 › 分区 crumb (「/」 focuses the search)', tray && searchFocused, JSON.stringify({ tray, searchFocused }));
+      await shot('settings-search');
+      await js(`(() => { const i = document.querySelector('.sp-search input'); i.select(); })()`);
+      wc.insertText('ssh');
+      const hostHit = await waitFor(`!!document.querySelector('.sp-jump[data-target="remote#hosts"]')`, 3000);
+      await click('.sp-jump[data-target="remote#hosts"]');
+      const hosts = await waitFor(`${onPage('remote')} && !!document.querySelector('.sp-more.open [data-body="hosts"]') && !document.querySelector('.sp-hits')`, 3000);
+      check('search finds a part under 更多选项 and opens it there', hostHit && hosts, JSON.stringify({ hostHit, hosts }));
+      // Esc in the page closes it; the app underneath was never unmounted
+      await click('.modal.settings .sp-title');
+      await key('Escape');
+      check('Esc closes the settings page', await waitFor('!document.querySelector(".modal.settings") && !!document.querySelector(".sidebar") && !!document.querySelector(".pane")', 3000));
+      await sleep(300);
+
+      // keyboard: the page takes the focus from the composer and gives it back; nothing typed or pressed while it is
+      // open reaches the covered app (typing there would be lost, Esc would interrupt a running turn)
+      if (E.SMOKE_READONLY !== '1') {
+        phase = 'settings:keyboard';
+        const ta = '.welcome .composer textarea';
+        await click(ta);
+        wc.insertText('abc');
+        await sleep(200);
+        wc.sendInputEvent({ type: 'keyDown', keyCode: ',', modifiers: ['control'] });
+        wc.sendInputEvent({ type: 'keyUp', keyCode: ',', modifiers: ['control'] });
+        const kbOpen = await waitFor('!!document.querySelector(".modal.settings.sp")', 3000);
+        await sleep(200);
+        const cover = await js(`(() => { const r = document.querySelector('.modal.settings.sp'); const t = document.querySelector(${JSON.stringify(ta)}); return { search: document.activeElement === document.querySelector('.sp-search input'), composerInert: !!t && !!t.closest('[inert]'), pageInert: !!r && !!r.closest('[inert]'), inert: document.querySelectorAll('.app > [inert]').length }; })()`);
+        check('Ctrl+, from the composer: focus moves to the settings search, the app underneath is inert', kbOpen && cover.search && cover.composerInert && !cover.pageInert && cover.inert > 0, JSON.stringify({ kbOpen, ...cover }));
+        wc.insertText('托盘');
+        await sleep(300);
+        const typed = await js(`({ q: document.querySelector('.sp-search input').value, ta: document.querySelector(${JSON.stringify(ta)}).value })`);
+        check('typing after Ctrl+, goes into the search; the composer is unchanged', typed.q === '托盘' && typed.ta === 'abc', JSON.stringify(typed));
+        await js(`(() => { window.__cwKd = 0; window.__cwKdFn = () => { window.__cwKd++; }; document.querySelector(${JSON.stringify(ta)}).addEventListener('keydown', window.__cwKdFn, true); })()`);
+        await click('.modal.settings .sp-lead'); // focus off the search box: Esc still only clears the search
+        await key('Escape');
+        const cleared = await js(`({ open: !!document.querySelector('.modal.settings.sp'), q: document.querySelector('.sp-search input')?.value })`);
+        check('Esc with a search typed only clears the search (wherever the focus is)', cleared.open && cleared.q === '', JSON.stringify(cleared));
+        await key('A');
+        await key('Escape');
+        const back = await js(`({ open: !!document.querySelector('.modal.settings'), kd: window.__cwKd, focus: document.activeElement === document.querySelector(${JSON.stringify(ta)}), inert: document.querySelectorAll('.app [inert]').length, ta: document.querySelector(${JSON.stringify(ta)}).value })`);
+        check('Esc closes the settings: no key reached the composer, focus is back in it, nothing left inert', !back.open && back.kd === 0 && back.focus && back.inert === 0 && back.ta === 'abc', JSON.stringify(back));
+        await js(`document.querySelector(${JSON.stringify(ta)}).removeEventListener('keydown', window.__cwKdFn, true)`);
+        wc.selectAll(); wc.delete(); await sleep(300);
+
+        // a menu left open when the page opens is closed (portalled to <body>, it would float over the page)
+        phase = 'settings:menus';
+        const ctrl = async (k) => { wc.sendInputEvent({ type: 'keyDown', keyCode: k, modifiers: ['control'] }); wc.sendInputEvent({ type: 'keyUp', keyCode: k, modifiers: ['control'] }); await sleep(300); };
+        const menusLeft = [];
+        for (const [chip, menu] of [['.welcome .dirpick', '.menu.dirmenu'], ['.welcome .mm-anchor > button.chip', '.menu.mm']]) {
+          await click(chip);
+          const opened = await waitFor(`!!document.querySelector(${JSON.stringify(menu)})`, 3000);
+          await ctrl(',');
+          await waitFor('!!document.querySelector(".modal.settings.sp")', 3000);
+          const still = await js(`!!document.querySelector(${JSON.stringify(menu)})`);
+          if (!opened || still) menusLeft.push(`${menu} ${opened ? 'still open' : 'did not open'}`);
+          await js('window.__store.setState({ settingsOpen: null })');
+          await sleep(300);
+        }
+        check('opening settings closes a menu left open (directory menu, model menu)', !menusLeft.length, menusLeft.join(' ; '));
+        // Esc with a search typed and the focus nowhere (<body>) still only clears the search
+        phase = 'settings:esc-body';
+        await ctrl(',');
+        await waitFor('!!document.querySelector(".modal.settings.sp")', 3000);
+        wc.insertText('托盘');
+        await sleep(300);
+        await js('document.activeElement && document.activeElement.blur()');
+        const onBody = await js('document.activeElement === document.body');
+        await key('Escape');
+        const bodyEsc = await js(`({ open: !!document.querySelector('.modal.settings.sp'), q: document.querySelector('.sp-search input')?.value })`);
+        check('Esc with a search typed and the focus on <body> only clears the search', onBody && bodyEsc.open && bodyEsc.q === '', JSON.stringify({ onBody, ...bodyEsc }));
+        // the command palette over the page: Esc closes the palette only
+        phase = 'settings:palette';
+        await ctrl('K');
+        const pal = await waitFor('!!document.querySelector(".palette-bg")', 3000);
+        await key('Escape');
+        const afterPal = await js(`({ palette: !!document.querySelector('.palette-bg'), open: !!document.querySelector('.modal.settings.sp') })`);
+        check('the command palette opened over settings: Esc closes only the palette', pal && !afterPal.palette && afterPal.open, JSON.stringify({ pal, ...afterPal }));
+        // nodes inserted while the page is open are covered too: Ctrl+B twice swaps the sidebar for a placeholder and back
+        phase = 'settings:swap';
+        const sbState = `({ open: window.__store.getState().sidebarOpen, sb: [...document.querySelectorAll('.app > .sidebar')].map((e) => (e.classList.contains('has-resizer') ? 'column' : 'placeholder') + (e.hasAttribute('inert') ? ':inert' : '')) })`;
+        const swap0 = await js(sbState);
+        await ctrl('B');
+        const swap1 = await js(sbState);
+        await ctrl('B');
+        const swap2 = await js(sbState);
+        const swapped = swap1.open !== swap0.open && swap2.open === swap0.open && [swap1, swap2].every((x) => x.sb.length === 1 && x.sb[0].endsWith(':inert')) && swap1.sb[0] !== swap2.sb[0];
+        check('while settings are open, the sidebar node swapped in by Ctrl+B (twice) is inert both times', swapped, JSON.stringify({ swap0, swap1, swap2 }));
+        await key('Escape');
+        const clean = await js(`({ open: !!document.querySelector('.modal.settings'), inert: document.querySelectorAll('.app [inert]').length })`);
+        check('closing settings after that leaves nothing inert', !clean.open && clean.inert === 0, JSON.stringify(clean));
+      }
 
       // ---- every dock panel
       for (const p of inv.panels) {
@@ -414,6 +729,50 @@ function driver() {
         check('session tile without error boundary', !err, err);
         await shot('session');
 
+        // ---- redesign phase 3: the stats bar is behind the context ring; + says the capabilities apply to new conversations
+        phase = 'session-composer';
+        check('no stats bar under the composer', !(await js('!!document.querySelector(".pane .composer .statusbar")')));
+        const sidJs = JSON.stringify(E.SMOKE_SID);
+        // no occupancy reported (a conversation opened from history, ACP…) → no ring (an empty circle reads as a
+        // radio button / a spinner), but with a turn behind it a plain stats icon keeps the numbers one click away
+        const noCu = await js(`(() => { const o = window.__store.getState().open[${sidJs}]; return !!o && !(o.contextUsage ?? o.conv.contextUsage); })()`);
+        if (noCu) {
+          const plain = await js(`(() => { const m = document.querySelector('.pane .composer .ctx-meter'); return m ? { cls: m.className, circles: m.querySelectorAll('circle').length } : null; })()`);
+          await click('.pane .composer .ctx-meter');
+          const plainCard = await js(`document.querySelector('.ctx-card')?.innerText ?? null`);
+          await click('.pane .composer .ctx-meter');
+          check('no occupancy: no ring, a plain stats icon whose card still has 轮数 / 输入 (no 上下文 line)', plain && /plain/.test(plain.cls) && !plain.circles && !!plainCard && /轮数/.test(plainCard) && !/上下文/.test(plainCard), JSON.stringify({ plain, plainCard }));
+        }
+        const setCu = (cu) => js(`(() => { const st = window.__store; const o = st.getState().open[${sidJs}]; st.setState({ open: { ...st.getState().open, [${sidJs}]: { ...o, contextUsage: ${JSON.stringify(cu)}, version: o.version + 1 } } }); })()`);
+        await setCu({ percentage: 83, totalTokens: 166_000, maxTokens: 200_000 });
+        const ring = await waitFor('!!document.querySelector(".pane .composer .ctx-meter circle")', 2000);
+        const ringLook = await js(`(() => { const m = document.querySelector('.pane .composer .ctx-meter'); if (!m) return null; const cs = getComputedStyle(m); return { cls: m.className, pct: m.textContent, weight: cs.fontWeight, chip: !!document.querySelector('.pane .status-strip .ctx-full') }; })()`);
+        check('83 %: the ring shows the percentage in ink, bold, not yellow; no second 83 % above the composer', ring && ringLook && /strong/.test(ringLook.cls) && ringLook.pct === '83%' && Number(ringLook.weight) >= 600 && !ringLook.chip, JSON.stringify(ringLook));
+        // the rest of the row is in the reach table too (the ring = the old stats bar)
+        for (const place of ['meter', 'bar']) {
+          const w = await walk(place, '.pane .composer', { usage: true });
+          check(`reach · ${place} in a conversation (${w.n})`, w.n > 0 && !w.miss.length, w.miss.join(' ; '));
+        }
+        await click('.pane .composer .ctx-meter');
+        const card = await js(`document.querySelector('.ctx-card')?.innerText ?? null`);
+        check('the context ring shows the old stats (轮数 / 输入 / 输出 / 上下文) on click', !!card && /轮数/.test(card) && /输入/.test(card) && /上下文/.test(card), JSON.stringify(card));
+        await click('.pane .composer .ctx-meter');
+        await setCu({ percentage: 97, totalTokens: 194_000, maxTokens: 200_000 });
+        const full = await waitFor('!!document.querySelector(".pane .status-strip .ctx-full")', 2000);
+        const fullText = await js(`document.querySelector('.pane .status-strip .ctx-full')?.textContent ?? null`);
+        check('≥ 95 %: the strip offers /compact once, without repeating the percentage', full && /compact/.test(fullText ?? '') && !/%/.test(fullText ?? ''), JSON.stringify(fullText));
+        await setCu(undefined);
+        await sleep(200);
+        // + in a running conversation: the switches show THIS conversation's state, read-only; one note says where to change them
+        await click('.pane .composer .cb .plus');
+        const live = await js(`(() => { const m = document.querySelector('.menu.plus-menu'); if (!m) return null; const rows = [...m.querySelectorAll('[role="menuitemcheckbox"]')]; return { sub: m.querySelector('.cm-sub')?.textContent ?? null, mentions: (m.innerText.match(/新对话/g) || []).length, rows: rows.length, ro: rows.every((r) => r.getAttribute('aria-disabled') === 'true'), checked: rows.filter((r) => r.getAttribute('aria-checked') === 'true').map((r) => r.dataset.id) }; })()`);
+        const before = await js('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"] ?? null)');
+        await click('.menu.plus-menu [data-id="chrome"]');
+        const after = await js('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"] ?? null)');
+        const stillOff = await js(`document.querySelector('.menu.plus-menu [data-id="chrome"]')?.getAttribute('aria-checked')`);
+        check('in a conversation the + capabilities show its own state, read-only, 「要改请在新对话的 + 里设置」 said once', live && /要改请在新对话的 \+ 里设置/.test(live.sub ?? '') && live.mentions === 1 && live.rows >= 4 && live.ro && !live.checked.length && before === after && stillOff === 'false', JSON.stringify({ live, before, after, stillOff }));
+        await key('Escape');
+
         // ---- redesign phase 1: one ≤ 52px row above the conversation; the workbench tabs live in ···
         phase = 'session-chrome';
         const head = await js(`(() => { const p = document.querySelector('.pane.focused') || document.querySelector('.pane'); const h = p && p.querySelector('.sess-head'); const c = p && p.querySelector('.chat'); if (!h || !c) return null; const pr = p.getBoundingClientRect(); return { h: Math.round(h.getBoundingClientRect().height), above: Math.round(c.getBoundingClientRect().top - pr.top), strips: p.querySelectorAll('.tabstrip').length, wbTabs: !!document.querySelector('.wb-tabs') }; })()`);
@@ -445,6 +804,8 @@ function driver() {
         const split = await waitFor('document.querySelectorAll(".pane").length === 2 && document.querySelectorAll(".pane .tabstrip").length === 2', 4000);
         check('Ctrl+D splits and both panes get a tab strip', split, `strips ${await strips()}`);
         await shot('split');
+        const splitBars = await js(`[...document.querySelectorAll('.pane .composer-bar')].map((bar) => ({ w: Math.round(bar.getBoundingClientRect().width), h: Math.round(bar.getBoundingClientRect().height), overflow: bar.scrollWidth > bar.clientWidth + 1 }))`);
+        check('split panes: each composer row is still one line', splitBars.length === 2 && splitBars.every((b) => b.h <= 36 && !b.overflow), JSON.stringify(splitBars));
         await click('.pane.focused .tabstrip button[aria-label="关闭这个分屏"]');
         const merged = await waitFor('document.querySelectorAll(".pane").length === 1 && document.querySelectorAll(".pane .tabstrip").length === 0', 4000);
         check('closing the split hides the tab strip again', merged, `strips ${await strips()}`);
@@ -499,13 +860,34 @@ function driver() {
           const phoneHead = await js(`(() => { const h = document.querySelector('.pane .sess-head'); if (!h) return null; return { reveal: !!h.querySelector('.sb-reveal'), diff: !!h.querySelector('.sh-diff'), term: !!h.querySelector('button[aria-label="终端"]'), panel: !!h.querySelector('button[aria-label="右侧面板"], button[aria-label="展开右侧面板"]'), more: !!h.querySelector('.sh-more > button') }; })()`);
           check('phone + workbench tools: no group bar / tab strip; header has 展开侧栏 and ··· but no 改动 / 终端 / 右侧面板', phone && phoneHead && phoneHead.reveal && phoneHead.more && !phoneHead.diff && !phoneHead.term && !phoneHead.panel, JSON.stringify({ phone, phoneHead }));
           await shot('phone-workbench');
+          const phoneBar = await js(`(() => { const bar = document.querySelector('.pane .composer-bar'); if (!bar) return null; const b = bar.getBoundingClientRect(); return { h: Math.round(b.height), overflow: bar.scrollWidth > bar.clientWidth + 1, mic: !!bar.querySelector('[data-id="mic"]') }; })()`);
+          check('phone: the composer row is one line, no mic (spec §5.11)', phoneBar && phoneBar.h <= 36 && !phoneBar.overflow && !phoneBar.mic, JSON.stringify(phoneBar));
           await click('.pane .sess-head .sb-reveal');
           const drawer = await waitFor('document.querySelector(".app").classList.contains("drawer-open") && !!document.querySelector(".sidebar.has-resizer")', 3000);
           check('phone: 展开侧栏 opens the sidebar drawer', drawer);
           await shot('phone-drawer');
           await click('.sidebar .nav[title^="设置"]');
           const settings = await waitFor('!!document.querySelector(".modal.settings")', 3000);
-          check('phone: settings open from the sidebar', settings);
+          await sleep(200);
+          const phoneFocus = await js('document.activeElement === document.querySelector(".modal.settings.sp")');
+          check('phone: settings open from the sidebar, the page itself takes the focus (no keyboard pops up)', settings && phoneFocus, JSON.stringify({ settings, phoneFocus }));
+          wc.sendInputEvent({ type: 'keyDown', keyCode: 'B', modifiers: ['control'] });
+          wc.sendInputEvent({ type: 'keyUp', keyCode: 'B', modifiers: ['control'] });
+          await sleep(400);
+          const noDrawer = await js(`({ open: window.__store.getState().sidebarOpen, drawer: document.querySelector('.app').classList.contains('drawer-open') })`);
+          check('phone: Ctrl+B with settings open does not bring the drawer over the page', !noDrawer.open && !noDrawer.drawer, JSON.stringify(noDrawer));
+          // settings at phone width (≤ 600px): the page list first, a page replaces it, 全部设置 brings the list back
+          win.setContentSize(480, 860);
+          await sleep(600);
+          const spVis = `(() => { const d = (s) => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== 'none'; }; return { nav: d('.sp-nav'), main: d('.sp-main'), drawer: document.querySelector('.app').classList.contains('drawer-open') }; })()`;
+          const listFirst = await js(spVis);
+          await click('.sp-nav .sp-si[data-section="appearance"]');
+          const pageNow = await js(spVis);
+          await click('.sp-phone-back');
+          const listAgain = await js(spVis);
+          check('phone settings: the list first (drawer closed), a page replaces it, 全部设置 returns', listFirst.nav && !listFirst.main && !listFirst.drawer && !pageNow.nav && pageNow.main && listAgain.nav && !listAgain.main, JSON.stringify({ listFirst, pageNow, listAgain }));
+          win.setContentSize(740, 860);
+          await sleep(400);
           await js('window.__store.setState({ settingsOpen: null, sidebarOpen: false })');
           const before = await js('JSON.stringify(window.__store.getState().layout.dock)');
           await js(`window.__store.getState().togglePanel('terminal')`);
@@ -746,12 +1128,12 @@ function driver() {
         await js('window.__store.getState().openSettings({ section: "models" })');
         await sleep(800);
         expectErrors = true;
-        await js('window.__cwCrash("设置 · 模型")');
-        const caught = await waitFor('!!document.querySelector(\'.modal.settings .err-boundary[data-area="设置 · 模型"]\')', 5000);
-        const rest = await js('!!document.querySelector(".modal.settings .set-nav") && !!document.querySelector(".sidebar")');
+        await js('window.__cwCrash("设置 · 模型与智能程度")');
+        const caught = await waitFor('!!document.querySelector(\'.modal.settings .err-boundary[data-area="设置 · 模型与智能程度"]\')', 5000);
+        const rest = await js('!!document.querySelector(".modal.settings .sp-nav") && !!document.querySelector(".sidebar")');
         check('boundary catches a crash in its own section only', caught && rest);
         await shot('crash-boundary');
-        await js('document.querySelector(\'.modal.settings .err-boundary[data-area="设置 · 模型"] .eb-actions .btn\').click()');
+        await js('document.querySelector(\'.modal.settings .err-boundary[data-area="设置 · 模型与智能程度"] .eb-actions .btn\').click()');
         await sleep(600);
         expectErrors = false;
         check('重试 remounts the section', !(await js('!!document.querySelector(".modal.settings .err-boundary")')));

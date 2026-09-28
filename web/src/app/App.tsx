@@ -75,15 +75,17 @@ export function App() {
 
   // desktop caption buttons (Windows / Linux overlay) are painted in one colour: match whatever row is under them —
   // the page (--bg) when the session header / empty page is there, the side surface (--bg-1) for the right panel's
-  // tab row, the group bar or a tab strip
+  // tab row, the group bar or a tab strip; the settings page covers the whole window with its page (--bg) there
   const theme = useStore((s) => s.theme);
-  const sideSurface = useStore((s) => {
-    const workbench = workbenchOn(s.settings);
-    // an open right panel owns the corner: its tab row is --bg-1 only with the workbench tools (the default one is white)
-    if (rpWidth > MIN_RAIL) return workbench;
-    const vis = chromeVisibility(s.layout, { workbench });
+  const settingsOpen = useStore((s) => !!s.settingsOpen);
+  const workbench = useStore((s) => workbenchOn(s.settings));
+  const chromeRow = useStore((s) => {
+    const vis = chromeVisibility(s.layout, { workbench: workbenchOn(s.settings) });
     return vis.groupBar || Object.values(vis.tabStrip).some(Boolean);
   });
+  // the settings page covers everything with --bg; an open right panel owns the corner — its tab row is --bg-1 only
+  // with the workbench tools (the default one is white)
+  const sideSurface = !settingsOpen && (rpWidth > MIN_RAIL ? workbench : chromeRow);
   useEffect(() => {
     const d = desktop;
     if (!d) return;

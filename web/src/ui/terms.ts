@@ -67,10 +67,10 @@ export const ULTRACODE = {
 } as const;
 
 /**
- * Where 「显示工作台工具」 lives in the settings window. It is the 界面 section today; the settings regroup (redesign
- * phase 6) moves it to 通用 — change it here, the one-time notice below follows.
+ * Where 「显示工作台工具」 lives in the settings window (the 通用 page since the settings regroup, redesign phase 6;
+ * features/settings/catalog.test.ts checks it against the settings map). The one-time notice below follows.
  */
-export const WORKBENCH_SETTING_PATH = '设置 → 界面';
+export const WORKBENCH_SETTING_PATH = '设置 → 通用';
 /** One-time toast for people who knew the old screen and land on the simplified one (ui.simplifiedNotice). */
 export const SIMPLIFIED_NOTICE = `界面已简化；需要分屏 / 标签 / 面板图标栏可在 ${WORKBENCH_SETTING_PATH} 打开「${TERMS.workbench}」`;
 

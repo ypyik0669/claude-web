@@ -73,7 +73,29 @@
 .models-table .mm-star { opacity: 1; }
 /* unavailable profiles: listed with the reason, not selectable */
 .mm-row.off { cursor: default; opacity: 0.5; }
-.mm-head .err.off { color: var(--warn); }
+.mm-head .err.off { color: var(--ink-3); } /* yellow is for 「需要你」 only (spec §6.4) */
+
+/* redesign phase 3: 智能程度 + 深度编排 at the top, other agents as sections, the chip's dimmer 档位 */
+.mm-chip-suffix { color: var(--ink-4); }
+.mm-intel { padding: var(--sp-2) var(--sp-3) 10px; border-bottom: 1px solid var(--edge-subtle); }
+.mm-intel-h { font-size: 12.5px; color: var(--ink-2); margin-bottom: 7px; }
+.mm-seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; padding: 2px; border-radius: var(--r-lg); background: var(--layer-selected); }
+.menu.mm .mm-seg button { width: auto; height: 26px; justify-content: center; padding: 0 var(--sp-2); border-radius: var(--r-md); font-size: 12.5px; color: var(--ink-3); white-space: nowrap; }
+.menu.mm .mm-seg button:hover { background: transparent; color: var(--ink-1); }
+.menu.mm .mm-seg button.on { background: var(--surface-elev); color: var(--ink-1); font-weight: 500; box-shadow: var(--elev-1), 0 0 0 1px var(--edge-default); }
+.menu.mm .mm-seg button:focus-visible { outline-offset: -2px; }
+.mm-intel-d { margin-top: 7px; font-size: var(--fs-sm); color: var(--ink-3); }
+.menu.mm .mm-ultra { align-items: center; gap: 10px; padding: var(--sp-2) var(--sp-3); border-radius: 0; border-bottom: 1px solid var(--edge-subtle); }
+.menu.mm .mm-ultra > svg { color: var(--ink-3); }
+.mm-ultra-t { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.mm-ultra-t .l { color: var(--ink-1); }
+.mm-ultra-t .d { font-size: var(--fs-sm); color: var(--ink-3); white-space: normal; }
+.mm-group { padding: 6px 8px 0; font-size: var(--fs-meta); font-weight: 600; color: var(--ink-4); }
+.menu.mm .mm-add { width: auto; margin: 4px 0 2px; padding: 5px 8px 5px 24px; font-size: var(--fs-sm); color: var(--ink-3); }
+.menu.mm .mm-add:hover { color: var(--ink-1); }
+.menu.mm .toggle.sm, .menu.cm .toggle.sm, .menu.dirmenu .toggle.sm { width: 28px; height: 16px; cursor: inherit; }
+.menu.mm .toggle.sm::after, .menu.cm .toggle.sm::after, .menu.dirmenu .toggle.sm::after { width: 10px; height: 10px; }
+.menu.mm .toggle.sm.on::after, .menu.cm .toggle.sm.on::after, .menu.dirmenu .toggle.sm.on::after { transform: translateX(12px); }
 /* the Claude login in the by-model table: a label, not a button */
 .prov-chip.static { cursor: default; border-style: dashed; }
 .prov-chip.static:hover { background: var(--surface-1); color: var(--ink-2); }
