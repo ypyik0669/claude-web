@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { activeGroup, activeTile, chatTile, deriveActive, initialLayout, layoutRects, layoutReducer, migrateLegacy, MAX_PANES, paneOrder, presetTree, resetIds, sanitizeLayout, type LayoutState } from './layout';
+import { activeGroup, activeTile, chatTile, chromeVisibility, deriveActive, hasLegacyLayout, initialLayout, layoutRects, layoutReducer, migrateLegacy, migrateWorkbench, MAX_PANES, paneOrder, presetTree, resetIds, sanitizeLayout, workbenchOn, type LayoutState } from './layout';
 
 beforeEach(() => resetIds());
 
@@ -255,5 +255,126 @@ describe('persistence', () => {
     const ok = sanitizeLayout(JSON.parse(JSON.stringify(s)))!;
     expect(ok.groups[0].panes[p0].tiles).toHaveLength(1);
     expect(ok.groups[0].focusedPaneId).toBe(p0);
+  });
+});
+
+describe('chrome visibility (spec §5.10)', () => {
+  const off = { workbench: false }, on = { workbench: true };
+  const vis = (s: LayoutState, o = off) => chromeVisibility(s, o);
+
+  it('one session in one pane: no group bar, no tab strip, no dock rail', () => {
+    const s = initialLayout();
+    expect(vis(s)).toEqual({ groupBar: false, dockRail: false, tabStrip: { [focused(s)]: false } });
+  });
+
+  it('workbench mode shows all of it', () => {
+    const s = initialLayout();
+    expect(vis(s, on)).toEqual({ groupBar: true, dockRail: true, tabStrip: { [focused(s)]: true } });
+  });
+
+  it('Ctrl+D (split) brings the tab strips; closing the split takes them away again', () => {
+    const s0 = initialLayout();
+    const p0 = focused(s0);
+    const s1 = layoutReducer(s0, { t: 'pane.split', paneId: p0, dir: 'row' });
+    const v1 = vis(s1);
+    expect(Object.values(v1.tabStrip)).toEqual([true, true]);
+    expect(v1.groupBar).toBe(false);
+    const s2 = layoutReducer(s1, { t: 'pane.close', paneId: focused(s1) });
+    expect(vis(s2).tabStrip).toEqual({ [p0]: false });
+  });
+
+  it('a second tab brings the strip; closing it hides the strip', () => {
+    let s = layoutReducer(initialLayout(), { t: 'tile.open', paneId: '', tile: chatTile('a'), mode: 'replace' });
+    const p = focused(s);
+    s = layoutReducer(s, { t: 'tile.open', paneId: p, tile: chatTile('a'), mode: 'replace' });
+    expect(vis(s).tabStrip[p]).toBe(false);
+    s = layoutReducer(s, { t: 'tile.open', paneId: p, tile: chatTile('b'), mode: 'tab' });
+    expect(vis(s).tabStrip[p]).toBe(true);
+    const second = activeGroup(s).panes[p].tiles[1].id;
+    s = layoutReducer(s, { t: 'tile.close', paneId: p, tileId: second });
+    expect(vis(s).tabStrip[p]).toBe(false);
+  });
+
+  it('a lone document / terminal keeps its strip (it has no session header to name or close it)', () => {
+    let s = initialLayout();
+    const p = focused(s);
+    s = layoutReducer(s, { t: 'tile.open', paneId: p, tile: { id: 'd1', kind: 'doc', path: '/x/a.ts' }, mode: 'replace' });
+    expect(activeGroup(s).panes[p].tiles).toHaveLength(1);
+    expect(vis(s).tabStrip[p]).toBe(true);
+  });
+
+  it('a second group brings the group bar', () => {
+    const s = layoutReducer(initialLayout(), { t: 'group.new' });
+    expect(vis(s).groupBar).toBe(true);
+    expect(vis(layoutReducer(s, { t: 'group.close', id: s.activeGroupId })).groupBar).toBe(false);
+  });
+
+  it('workbenchOn only accepts true', () => {
+    expect(workbenchOn({})).toBe(false);
+    expect(workbenchOn({ 'ui.workbench': 'yes' })).toBe(false);
+    expect(workbenchOn({ 'ui.workbench': true })).toBe(true);
+  });
+});
+
+describe('ui.singleWindow → ui.workbench migration', () => {
+  const split = () => layoutReducer(initialLayout(), { t: 'pane.split', paneId: focused(initialLayout()), dir: 'row' });
+
+  it('leaves an existing setting alone', () => {
+    expect(migrateWorkbench({ 'ui.workbench': false }, split())).toBeUndefined();
+    expect(migrateWorkbench({ 'ui.workbench': true }, null)).toBeUndefined();
+  });
+
+  it('a fresh install (no saved layout) gets the quiet default', () => {
+    expect(migrateWorkbench({}, null)).toBe(false);
+  });
+
+  it('single-window users keep a single window', () => {
+    expect(migrateWorkbench({ 'ui.singleWindow': true }, split())).toBe(false);
+  });
+
+  it('someone already using splits, groups or the dock keeps the workbench', () => {
+    let s = initialLayout();
+    s = layoutReducer(s, { t: 'pane.split', paneId: focused(s), dir: 'row' });
+    expect(migrateWorkbench({}, s)).toBe(true);
+    expect(migrateWorkbench({}, layoutReducer(initialLayout(), { t: 'group.new' }))).toBe(true);
+    expect(migrateWorkbench({}, layoutReducer(initialLayout(), { t: 'dock.show', panel: 'files' }))).toBe(true);
+    expect(migrateWorkbench({ 'ui.singleWindow': false }, layoutReducer(initialLayout(), { t: 'dock.show', panel: 'files' }))).toBe(true);
+  });
+
+  it('a saved single pane with the dock closed is not a workbench user', () => {
+    expect(migrateWorkbench({}, initialLayout())).toBe(false);
+  });
+
+  it('a fresh layout starts with the dock closed', () => {
+    expect(initialLayout().dock.open).toBe(false);
+    expect(migrateLegacy({ getItem: () => null }).dock.open).toBe(false);
+    expect(hasLegacyLayout({ getItem: () => null })).toBe(false);
+    expect(hasLegacyLayout({ getItem: (k) => (k === 'cw.rp' ? '400' : null) })).toBe(true);
+  });
+
+  it('a cw.layout.v2 save from before the redesign still loads (wb tabs, trajectory view, dock tabs)', () => {
+    // shape written by the pre-redesign app: two panes, a chat tile on the 文件 tab in trajectory view, the dock open
+    const saved = {
+      version: 2,
+      groups: [{
+        id: 'g1', name: '主工作区', focusedPaneId: 'p2', zoomedPaneId: null,
+        root: { type: 'split', id: 's1', dir: 'row', ratio: 0.5, a: { type: 'leaf', paneId: 'p1' }, b: { type: 'leaf', paneId: 'p2' } },
+        panes: {
+          p1: { id: 'p1', activeTileId: 't1', tiles: [{ id: 't1', kind: 'chat', sessionId: 'a', view: 'trajectory', wb: 'files' }] },
+          p2: { id: 'p2', activeTileId: 't2', tiles: [{ id: 't2', kind: 'chat', sessionId: 'b', view: 'chat', wb: 'live' }, { id: 't3', kind: 'term', cwd: '/w' }] },
+        },
+      }],
+      activeGroupId: 'g1',
+      sidebar: { width: 300, sections: { __pinned: true } },
+      dock: { open: true, minimized: false, width: 480, tabs: ['tasks', 'files'], active: 'files' },
+    };
+    const s = sanitizeLayout(JSON.parse(JSON.stringify(saved)))!;
+    expect(s).not.toBeNull();
+    expect(panes(s)).toEqual(['p1', 'p2']);
+    const t1 = activeGroup(s).panes.p1.tiles[0];
+    expect(t1.kind === 'chat' && t1.wb === 'files' && t1.view === 'trajectory').toBe(true);
+    expect(deriveActive(s)).toBe('b');
+    expect(chromeVisibility(s, { workbench: false }).tabStrip).toEqual({ p1: true, p2: true });
+    expect(migrateWorkbench({}, s)).toBe(true);
   });
 });

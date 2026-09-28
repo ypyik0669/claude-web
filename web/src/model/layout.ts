@@ -108,9 +108,49 @@ export function newGroup(name = '工作区', tile?: Tile): Group {
   return { id: uid('g'), name, root: { type: 'leaf', paneId: p.id }, panes: { [p.id]: p }, focusedPaneId: p.id, zoomedPaneId: null };
 }
 
+/** A fresh window: one pane, one empty chat, the dock closed (it opens from the session header / Ctrl+J). */
 export function initialLayout(): LayoutState {
   const g = newGroup('主工作区');
-  return { version: 2, groups: [g], activeGroupId: g.id, sidebar: { width: 264, sections: {} }, dock: { open: true, minimized: false, width: 440, tabs: ['tasks'], active: 'tasks' } };
+  return { version: 2, groups: [g], activeGroupId: g.id, sidebar: { width: 264, sections: {} }, dock: { open: false, minimized: false, width: 440, tabs: ['tasks'], active: 'tasks' } };
+}
+
+/**
+ * Which workbench chrome is drawn (spec §5.10). Chrome shows up when it is in use, or always with the
+ * 「显示工作台工具」 setting (`ui.workbench`):
+ *  - group bar: more than one group;
+ *  - a pane's tab strip: more than one tab, more than one pane in the group, or a lone non-chat tile
+ *    (a document / terminal has no session header, the strip is where it is named and closed);
+ *  - the dock's icon rail: only in workbench mode.
+ * Only the chrome — pane contents are never unmounted by this.
+ */
+export interface ChromeVisibility { groupBar: boolean; dockRail: boolean; tabStrip: Record<string, boolean> }
+export function chromeVisibility(s: LayoutState, o: { workbench: boolean }): ChromeVisibility {
+  const g = activeGroup(s);
+  const order = paneOrder(g.root);
+  const multi = order.length > 1;
+  const tabStrip: Record<string, boolean> = {};
+  for (const id of order) {
+    const p = g.panes[id];
+    tabStrip[id] = o.workbench || multi || (p?.tiles.length ?? 0) > 1 || (!!p?.tiles[0] && p.tiles[0].kind !== 'chat');
+  }
+  return { groupBar: o.workbench || s.groups.length > 1, dockRail: o.workbench, tabStrip };
+}
+
+/** `ui.workbench` as a boolean (unset = off). */
+export const workbenchOn = (settings: Record<string, unknown>) => settings['ui.workbench'] === true;
+
+/**
+ * One-time move from `ui.singleWindow` to `ui.workbench` (the value to store, or undefined when it is already set).
+ * People already using the workbench — more than one group or pane, or the dock open — keep seeing all of it;
+ * single-window users and fresh installs (no saved layout) get the quiet default.
+ */
+export function migrateWorkbench(settings: Record<string, unknown>, saved: LayoutState | null): boolean | undefined {
+  if (typeof settings['ui.workbench'] === 'boolean') return undefined;
+  if (settings['ui.singleWindow'] === true) return false;
+  if (!saved) return false;
+  const panes = saved.groups.some((g) => paneOrder(g.root).length > 1);
+  const dock = saved.dock.open && saved.dock.tabs.length > 0;
+  return saved.groups.length > 1 || panes || dock;
 }
 
 /** Leaf pane ids in DFS order (a before b) — this is the Alt+1..6 / cycle order. */
@@ -484,9 +524,15 @@ export function layoutReducer(s: LayoutState, a: LayoutAction): LayoutState {
   }
 }
 
-/** Build a v2 layout from the pre-workbench localStorage keys (cw.panels / cw.rp / cw.collapsed). */
+/** Any of the pre-workbench localStorage keys present (= this browser has used the app before). */
+export function hasLegacyLayout(ls: Pick<Storage, 'getItem'>): boolean {
+  return ['cw.panels', 'cw.rp', 'cw.collapsed'].some((k) => ls.getItem(k) !== null);
+}
+
+/** Build a v2 layout from the pre-workbench localStorage keys (cw.panels / cw.rp / cw.collapsed); none → a fresh layout. */
 export function migrateLegacy(ls: Pick<Storage, 'getItem'>): LayoutState {
   const base = initialLayout();
+  if (!hasLegacyLayout(ls)) return base;
   let tabs: PanelId[] = ['tasks'];
   try {
     const p = JSON.parse(ls.getItem('cw.panels') ?? '["tasks"]');
