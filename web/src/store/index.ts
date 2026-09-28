@@ -11,6 +11,7 @@ import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { applyMessage, applyTranscript, createConversation, prependTranscript, walkTools, type Conversation } from '@/model/conversation';
 import { isImportedSessionId } from '@/util';
+import { reopenSettings } from './reopen';
 import { parseLibraryId } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { applyUiSettings, resolveTheme } from '@/features/settings/ui-settings';
@@ -629,7 +630,9 @@ export const useStore = create<State>((set, get) => ({
     const o = get().open[sessionId];
     if (!o) return;
     if (o.state === 'history' || o.state === 'closed' || o.state === 'error') {
-      await get().openSession({ sessionId, cwd: o.cwd }, 'none');
+      // A reaped / crashed session reopens with what the user last had (model chip, effort, permission mode,
+      // deep orchestration, features); without them the resume silently fell back to the defaults.
+      await get().openSession({ sessionId, cwd: o.cwd, ...reopenSettings(o.info) }, 'none');
     }
     const cur = get().open[sessionId];
     if ((cur.state === 'running' || cur.state === 'waiting') && !steer) {
