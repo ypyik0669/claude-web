@@ -68,7 +68,8 @@ export function renderRequest(r: IrRequest): any {
   if (r.tools?.length) out.tools = r.tools.map((t) => ({ name: t.name, ...(t.description ? { description: t.description } : {}), input_schema: t.schema }));
   if (r.toolChoice && r.tools?.length) out.tool_choice = r.toolChoice.type === 'tool' ? { type: 'tool', name: r.toolChoice.name } : { type: r.toolChoice.type };
   if (r.temperature !== undefined) out.temperature = r.temperature;
-  if (r.topP !== undefined) out.top_p = r.topP;
+  // newer Claude models reject temperature and top_p together; temperature wins
+  if (r.topP !== undefined && r.temperature === undefined) out.top_p = r.topP;
   if (r.topK !== undefined) out.top_k = r.topK;
   if (r.stop?.length) out.stop_sequences = r.stop;
   if (r.stream) out.stream = true;

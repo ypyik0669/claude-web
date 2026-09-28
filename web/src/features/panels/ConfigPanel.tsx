@@ -349,7 +349,7 @@ export function ProviderProfiles() {
               </select>
             </div>
           )}
-          {isGw && <div className="sub" style={{ marginBottom: 6 }}>地址与密钥在开会话时由网关填入；Claude / Codex / Gemini 等 agent 都能用这个档案。{!gwGroups.length && '还没有组：先去「设置 → 模型网关」建一个。'}</div>}
+          {isGw && <div className="sub" style={{ marginBottom: 6 }}>地址与密钥在开会话时由网关填入；Claude / Codex / Gemini 等 agent 都能用这个档案。组里有「只认官方二进制」的 Anthropic 成员时，Claude 会话默认也用官方二进制（下面的勾选优先）。Codex / Gemini CLI 即使登录了自己的账号，也会被强制走网关。{!gwGroups.length && '还没有组：先去「设置 → 模型网关」建一个。'}</div>}
           {!isGw && <input className="field" style={{ width: '100%', marginBottom: 6 }} placeholder={`Base URL · ${PROVIDER_TYPES.find((t) => t.v === editing.type)?.hint}`} value={editing.baseUrl ?? ''} onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })} />}
           {!isGw && <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
             <input className="field" style={{ flex: 1 }} type={showKey ? 'text' : 'password'} placeholder={editing.id ? `API Key（留空保持 ${editing.apiKey || '现有值'}）` : 'API Key'} value={editing.apiKey} onChange={(e) => setEditing({ ...editing, apiKey: e.target.value })} autoComplete="off" />

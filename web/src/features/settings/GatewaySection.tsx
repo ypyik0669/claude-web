@@ -44,7 +44,7 @@ export function GatewaySection() {
   const copyKey = async () => { try { const k = await ws.request<string>({ kind: 'gateway.revealKey' }); await navigator.clipboard.writeText(k); toast('已复制网关密钥', true); } catch (e: any) { toast(e.message); } };
   const regen = async () => {
     if (!(await dlg.confirm('重新生成网关密钥？', { message: '旧密钥立即失效。已经在跑的会话要重开才会拿到新密钥；手动配置过的外部工具需要换成新的。', danger: true, okLabel: '重新生成' }))) return;
-    try { setSt(await ws.request<GatewayStatus>({ kind: 'gateway.regenerateKey' })); toast('已生成新密钥', true); } catch (e: any) { toast(e.message); }
+    try { setSt(await ws.request<GatewayStatus>({ kind: 'gateway.regenerateKey' })); toast('已生成新密钥。运行中的会话还拿着旧密钥，需要重开才能继续走网关', true); } catch (e: any) { toast(e.message); }
   };
   const addGroup = async () => {
     const name = await dlg.prompt('组名称', '默认组');
@@ -196,6 +196,7 @@ function GroupCard({ group, states, providers, enabled, baseUrl }: { group: Gate
       {test && test !== 'running' && (
         <div className={clsx('gw-test', test.ok ? 'ok' : 'err')}>
           {test.ok ? `通过 · 走了「${test.member}」${test.switches ? `（切换 ${test.switches} 次）` : ''} · ${(test.ms / 1000).toFixed(1)}s · 回复：${test.text}` : `失败${test.status ? ` HTTP ${test.status}` : ''}：${test.error}${test.member ? `（最后尝试「${test.member}」）` : ''}`}
+          {test.note && <div className="sub" style={{ marginTop: 4 }}>{test.note}</div>}
         </div>
       )}
     </div>

@@ -3,6 +3,7 @@ import { CLAUDE_PROVIDER_ID, type Provider, type ProviderType, type RuntimeKind 
 import type { MetaStore } from '../meta/store.js';
 import { resolveEngine, runClaudeCli } from '../claude-exe.js';
 import type { SecretService } from '../secrets/service.js';
+import { CODEX_KEY_ENV, codexGatewayArgs, geminiApiKeyEnv } from '../gateway/agents.js';
 
 /** Mask an API key for the wire: keep prefix + last 4 chars. */
 export function maskKey(k: string | undefined): string {
@@ -71,6 +72,7 @@ export function providerEnv(p: Provider, agent: 'claude' | 'codex' | 'acp' = 'cl
  */
 function gatewayAgentEnv(p: Provider, agent: 'codex' | 'acp'): Record<string, string> {
   const env: Record<string, string> = { OPENAI_BASE_URL: `${p.baseUrl}/v1`, OPENAI_API_KEY: p.apiKey };
+  if (agent === 'codex') env[CODEX_KEY_ENV] = p.apiKey; // read by the -c provider override (agentLaunch)
   if (agent === 'acp') { env.GOOGLE_GEMINI_BASE_URL = p.baseUrl; env.GEMINI_API_KEY = p.apiKey; }
   if (p.defaultModel) { env.OPENAI_MODEL = p.defaultModel; if (agent === 'acp') env.GEMINI_MODEL = p.defaultModel; }
   return env;
@@ -140,7 +142,7 @@ export async function probeProvider(p: Pick<Provider, 'type' | 'baseUrl' | 'apiK
 export class ProviderService {
   private revealed = new Map<string, string>(); // stored (possibly encrypted) value -> plaintext
   /** Set by the server once the model gateway is up: group id → local endpoint + gateway key (null = unavailable). */
-  gatewayEndpoint: ((groupId: string) => { baseUrl: string; key: string } | null) | null = null;
+  gatewayEndpoint: ((groupId: string) => { baseUrl: string; key: string; runtime?: RuntimeKind } | null) | null = null;
   constructor(private meta: MetaStore, private secrets?: SecretService) {
     if (secrets) meta.secretCodec = { protect: async (plain, id) => { const enc = await secrets.protect(plain, id); this.revealed.set(enc, plain); return enc; } };
   }
@@ -179,7 +181,8 @@ export class ProviderService {
     if (p.type === 'gateway') {
       const ep = this.gatewayEndpoint?.(p.gatewayGroupId ?? '');
       if (!ep) throw new Error(`供应商「${p.name}」走模型网关，但网关没有启用或组不存在（设置 → 模型网关）`);
-      return { ...p, baseUrl: ep.baseUrl, apiKey: ep.key };
+      // runtime: the profile's explicit choice, else what the group's relays need (GatewayService.needsOfficialClient)
+      return { ...p, baseUrl: ep.baseUrl, apiKey: ep.key, runtime: p.runtime ?? ep.runtime };
     }
     if (!p.baseUrl && (p.type === 'anthropic' || p.type === 'openai')) throw new Error(`供应商「${p.name}」没有 Base URL`);
     if (!p.apiKey) throw new Error(`供应商「${p.name}」没有 API Key`);
@@ -191,10 +194,14 @@ export class ProviderService {
     if (!p || p.type === 'gateway') return null;
     try { return { ...p, apiKey: this.plainKey(p) }; } catch { return null; }
   }
-  /** Extra env for a non-Claude agent session that picked a gateway profile ({} for any other profile type). */
-  agentEnv(id: string | undefined, agent: 'codex' | 'acp'): Record<string, string> {
-    if (!id || id === CLAUDE_PROVIDER_ID || this.meta.provider(id)?.type !== 'gateway') return {};
-    return providerEnv(this.forSession(id)!, agent);
+  /** Extra env + global args for a non-Claude agent session that picked a gateway profile (nothing for any other type). */
+  agentLaunch(id: string | undefined, agent: 'codex' | 'acp'): { env: Record<string, string>; args: string[] } {
+    if (!id || id === CLAUDE_PROVIDER_ID || this.meta.provider(id)?.type !== 'gateway') return { env: {}, args: [] };
+    const p = this.forSession(id)!;
+    const env = providerEnv(p, agent);
+    // account logins must not win over the gateway: Codex gets its own provider, Gemini CLI a forced auth type
+    if (agent === 'codex') return { env, args: codexGatewayArgs(p.baseUrl) };
+    return { env: { ...env, ...geminiApiKeyEnv() }, args: [] };
   }
   async upsert(p: Partial<Provider> & { id?: string }) {
     return publicProvider(await this.meta.upsertProvider(p));

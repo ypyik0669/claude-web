@@ -79,11 +79,11 @@ describe('passthrough helpers', () => {
   it('headers keep order / case / fingerprint, swap the credential in the client\'s style', () => {
     const raw = ['Host', '127.0.0.1:3090', 'User-Agent', 'claude-cli/2.1.300 (external, cli)', 'X-Api-Key', 'cwg-local', 'anthropic-version', '2023-06-01', 'anthropic-beta', 'claude-code-20250219,oauth-2025-04-20', 'Content-Length', '12', 'Connection', 'keep-alive', 'Cookie', 'cw_token=secret', 'x-app', 'cli'];
     const h = passthroughHeaders(raw, 'anthropic', 'sk-member');
-    expect(Object.keys(h)).toEqual(['User-Agent', 'anthropic-version', 'anthropic-beta', 'x-app', 'x-api-key']);
+    expect(Object.keys(h)).toEqual(['User-Agent', 'X-Api-Key', 'anthropic-version', 'anthropic-beta', 'x-app']); // credential stays where the client put it
     expect(h['User-Agent']).toBe('claude-cli/2.1.300 (external, cli)');
-    expect(h['x-api-key']).toBe('sk-member');
+    expect(h['X-Api-Key']).toBe('sk-member');
     const bearer = passthroughHeaders(['authorization', 'Bearer cwg-local', 'user-agent', 'ua'], 'anthropic', 'sk-member');
-    expect(bearer).toEqual({ 'user-agent': 'ua', authorization: 'Bearer sk-member' });
+    expect(Object.entries(bearer)).toEqual([['authorization', 'Bearer sk-member'], ['user-agent', 'ua']]);
     expect(passthroughHeaders(['x-goog-api-key', 'cwg'], 'gemini', 'AIza')).toEqual({ 'x-goog-api-key': 'AIza' });
   });
 });

@@ -16,6 +16,7 @@ export interface MemberRuntime {
   lastStatus?: number;
   lastOkAt?: number;
   lastUsedAt?: number;
+  lastFailAt?: number; // when the latest failure was recorded (orders concurrent outcomes)
 }
 
 export type Verdict =
@@ -127,20 +128,31 @@ export class MemberStates {
     return [best!, ...avail.filter((m) => m !== best)];
   }
 
-  /** Record a failed attempt and apply the verdict (cooldown / disable). */
-  fail(groupId: string, providerId: string, v: Verdict | { action: 'switch'; kind: 'transient' }, status: number | undefined, error: string, now = Date.now()): void {
+  /**
+   * Record a failed attempt and apply the verdict (cooldown / disable). `sentAt` is when that attempt was
+   * sent: if the member was already put on cooldown after it went out, a concurrent request got there
+   * first — this one only refreshes the error text, it must not add a backoff strike on top.
+   */
+  fail(groupId: string, providerId: string, v: Verdict | { action: 'switch'; kind: 'transient' }, status: number | undefined, error: string, now = Date.now(), sentAt = now): void {
     const s = this.get(groupId, providerId);
     s.lastStatus = status;
     s.lastError = error.slice(0, 300);
     s.lastUsedAt = now;
     if (v.action !== 'switch') return;
-    if (v.kind === 'rate') { s.cooldownUntil = now + v.cooldownMs; s.cooldownKind = 'rate'; s.strikes++; }
-    else if (v.kind === 'transient') { s.cooldownUntil = now + TRANSIENT_COOLDOWN_MS; s.cooldownKind = 'transient'; }
+    const already = s.cooldownUntil > sentAt;
+    s.lastFailAt = now;
+    if (v.kind === 'rate') {
+      if (already) { s.cooldownUntil = Math.max(s.cooldownUntil, now + v.cooldownMs); if (s.cooldownKind !== 'rate') s.cooldownKind = 'rate'; return; }
+      s.cooldownUntil = now + v.cooldownMs; s.cooldownKind = 'rate'; s.strikes++;
+    }
+    else if (v.kind === 'transient') { if (!already) { s.cooldownUntil = now + TRANSIENT_COOLDOWN_MS; s.cooldownKind = 'transient'; } }
     else s.disabled = true;
   }
 
-  ok(groupId: string, providerId: string, now = Date.now()) {
+  /** A success from an attempt sent at `sentAt`; an older request finishing late must not clear a newer cooldown. */
+  ok(groupId: string, providerId: string, now = Date.now(), sentAt = now) {
     const s = this.get(groupId, providerId);
+    if (s.lastFailAt !== undefined && s.lastFailAt > sentAt) { s.lastOkAt = now; s.lastUsedAt = now; return false; }
     const changed = s.strikes > 0 || s.cooldownUntil > 0 || !!s.lastError || !s.lastOkAt;
     s.strikes = 0;
     s.cooldownUntil = 0;

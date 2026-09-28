@@ -74,12 +74,18 @@ export function renderRequest(r: IrRequest): any {
       messages.push({ role: 'assistant', content: text || null, ...(calls.length ? { tool_calls: calls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } })) } : {}) });
       continue;
     }
-    // tool results become their own `tool` messages, ahead of whatever the user said in the same turn
+    // tool results become their own `tool` messages, ahead of whatever the user said in the same turn.
+    // A tool message's content is text only (string | text parts), so images a tool returned ride in a
+    // user message right after the tool messages.
+    const toolImages: any[] = [];
     for (const p of m.parts) if (p.type === 'tool_result') {
-      const c = typeof p.content === 'string' ? p.content : p.content.map(partOut).filter(Boolean);
-      const text = typeof c === 'string' ? c : c.every((x: any) => x.type === 'text') ? c.map((x: any) => x.text).join('\n') : c;
-      messages.push({ role: 'tool', tool_call_id: p.id, content: p.isError && typeof text === 'string' ? `[error] ${text}` : text });
+      const parts = typeof p.content === 'string' ? [{ type: 'text', text: p.content } as IrPart] : p.content;
+      const text = parts.filter((x) => x.type === 'text').map((x) => (x as any).text).join('\n');
+      const imgs = parts.filter((x) => x.type === 'image');
+      messages.push({ role: 'tool', tool_call_id: p.id, content: `${p.isError ? '[error] ' : ''}${text || (imgs.length ? '[image]' : '')}` });
+      if (imgs.length) toolImages.push({ type: 'text', text: `[tool result image for ${p.id}]` }, ...imgs.map(partOut));
     }
+    if (toolImages.length) messages.push({ role: 'user', content: toolImages });
     const rest = m.parts.filter((p) => p.type === 'text' || p.type === 'image');
     if (!rest.length) continue;
     const content = rest.every((p) => p.type === 'text') ? rest.map((p) => (p as any).text).join('\n') : rest.map(partOut);

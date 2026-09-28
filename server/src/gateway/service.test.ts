@@ -64,7 +64,7 @@ beforeAll(async () => {
   await mk('a', 'anthropic', A.url);
   await mk('b', 'anthropic', B.url);
   await mk('o', 'openai', `${O.url}/v1`);
-  gw = new GatewayService({ meta, member: (id) => meta.provider(id) ?? null, ledger: { record: (e) => ledger.push(e) }, firstByteMs: 400 });
+  gw = new GatewayService({ meta, member: (id) => meta.provider(id) ?? null, ledger: { record: (e) => ledger.push(e) }, firstByteMs: 400, nonStreamMs: 3000 });
   const handler = (req: http.IncomingMessage, res: http.ServerResponse) => { if (!gw.handle(req, res, new URL(req.url ?? '/', 'http://127.0.0.1'))) res.writeHead(418).end(); };
   gwSrv = http.createServer(handler);
   remoteSrv = http.createServer(handler);
@@ -247,7 +247,7 @@ describe('session wiring', () => {
     const { providerEnv } = await import('../providers/service.js');
     const p: Provider = { id: 'gw', name: 'GW', type: 'gateway', gatewayGroupId: 'main', baseUrl: `${base}/main`, apiKey: key, createdAt: 0 };
     expect(providerEnv(p)).toMatchObject({ ANTHROPIC_BASE_URL: `${base}/main`, ANTHROPIC_AUTH_TOKEN: key, CLAUDE_WEB_PLAIN_UA: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' });
-    expect(providerEnv(p, 'codex')).toEqual({ OPENAI_BASE_URL: `${base}/main/v1`, OPENAI_API_KEY: key });
+    expect(providerEnv(p, 'codex')).toEqual({ OPENAI_BASE_URL: `${base}/main/v1`, OPENAI_API_KEY: key, CW_GATEWAY_KEY: key });
     expect(providerEnv(p, 'acp')).toMatchObject({ GOOGLE_GEMINI_BASE_URL: `${base}/main`, GEMINI_API_KEY: key, OPENAI_BASE_URL: `${base}/main/v1` });
   });
   it('translated stream end to end: openai in → anthropic member', async () => {
@@ -261,5 +261,100 @@ describe('session wiring', () => {
     expect(JSON.parse(A.hits[0].body)).toMatchObject({ model: 'claude-x', stream: true, max_tokens: 8192 });
     expect(ledger[0]).toMatchObject({ ok: true, input: 7, output: 4, gateway: { inbound: 'openai', outbound: 'anthropic', stream: true } });
     await gw.upsertGroup({ id: 'main', members: [{ providerId: 'a' }, { providerId: 'b' }] });
+  });
+});
+
+// ---- review regressions ----
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Raw http client that hangs up after `cutMs` from the first response byte (or from sending, when no response comes). */
+function hangUp(p: string, body: unknown, cutMs: number, headers: Record<string, string> = {}) {
+  const r = http.request(`${base}${p}`, { method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json', ...headers } }, (res) => { res.once('data', () => setTimeout(() => r.destroy(), cutMs)); });
+  r.on('error', () => { /* we hung up */ });
+  r.end(JSON.stringify(body));
+  return r;
+}
+const slowSse: Handler = (_q, res) => {
+  res.writeHead(200, { 'content-type': 'text/event-stream' });
+  const ev = (o: any) => `event: ${o.type}\ndata: ${JSON.stringify(o)}\n\n`;
+  res.write(ev({ type: 'message_start', message: { id: 'm', model: 'up', usage: { input_tokens: 1 } } }));
+  res.write(ev({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }));
+  let i = 0;
+  const t = setInterval(() => { if (res.destroyed) return clearInterval(t); res.write(ev({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: `tok${i++}` } })); }, 30);
+  res.on('close', () => clearInterval(t));
+};
+
+describe('review regressions', () => {
+  beforeEach(async () => { await gw.upsertGroup({ id: 'main', members: [{ providerId: 'a' }, { providerId: 'b' }] }); });
+
+  it('translated stream: a client hanging up ends the request (ledger 499, not ok) instead of hanging', async () => {
+    await gw.upsertGroup({ id: 'main', members: [{ providerId: 'a' }] });
+    A.handler.fn = slowSse;
+    hangUp('/main/v1/chat/completions', { model: 'x', stream: true, messages: [{ role: 'user', content: 'hi' }] }, 100);
+    for (let i = 0; i < 40 && !ledger.length; i++) await sleep(50);
+    expect(ledger[0]).toMatchObject({ ok: false, gateway: { upstreamStatus: 499 } });
+    expect(gw.status().states.main[0].health).toBe('ok');
+  });
+  it('passthrough stream: same', async () => {
+    A.handler.fn = slowSse;
+    hangUp('/main/v1/messages', { ...msg, stream: true }, 100, { 'x-api-key': key });
+    for (let i = 0; i < 40 && !ledger.length; i++) await sleep(50);
+    expect(ledger[0]).toMatchObject({ ok: false, gateway: { upstreamStatus: 499 } });
+  });
+  it('translated non-stream: a client hanging up mid-answer does not cool the member', async () => {
+    await gw.upsertGroup({ id: 'main', members: [{ providerId: 'a' }] });
+    A.handler.fn = (_q, res) => {
+      const full = JSON.stringify({ id: 'm', type: 'message', role: 'assistant', content: [{ type: 'text', text: 'x' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write(full.slice(0, 10));
+      setTimeout(() => { if (!res.destroyed) res.end(full.slice(10)); }, 400);
+    };
+    const r = http.request(`${base}/main/v1/chat/completions`, { method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' } });
+    r.on('error', () => {});
+    r.end(JSON.stringify({ model: 'x', messages: [{ role: 'user', content: 'hi' }] }));
+    setTimeout(() => r.destroy(), 150);
+    await sleep(700);
+    const st = gw.status().states.main[0];
+    expect(st.health).not.toBe('cooling');
+    expect(ledger[0]).toMatchObject({ ok: false, gateway: { upstreamStatus: 499 } });
+  });
+  it('non-streaming requests are not held to the streaming first-byte timeout', async () => {
+    A.handler.fn = (q, res, body) => setTimeout(() => anthropicOk('slow but fine')(q, res, body), 800); // > firstByteMs (400)
+    const r = await call('/main/v1/messages', msg);
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.text).content[0].text).toBe('slow but fine');
+    expect(B.hits).toHaveLength(0);
+  });
+  it('a stale x-api-key next to a good Bearer is accepted; a foreign token gets a hint', async () => {
+    expect((await call('/main/v1/messages', msg, { 'x-api-key': 'stale', authorization: `Bearer ${key}` })).status).toBe(200);
+    const bad = await call('/main/v1/messages', msg, { 'x-api-key': '', authorization: 'Bearer sk-ant-oat01-xyz' });
+    expect(bad.status).toBe(401);
+    expect(JSON.parse(bad.text).error.message).toContain('登录方式');
+  });
+  it('an error passed back as is keeps retry-after / request-id / rate-limit headers', async () => {
+    A.handler.fn = (_q, res) => res.writeHead(400, { 'content-type': 'application/json', 'request-id': 'req_9', 'anthropic-ratelimit-tokens-remaining': '5' }).end('{"type":"error","error":{"type":"invalid_request_error","message":"bad"}}');
+    const r = await call('/main/v1/messages', msg);
+    expect(r.status).toBe(400);
+    expect(r.headers.get('request-id')).toBe('req_9');
+    expect(r.headers.get('anthropic-ratelimit-tokens-remaining')).toBe('5');
+    B.handler.fn = (_q, res) => res.writeHead(429, { 'retry-after': '77' }).end('{}');
+    A.handler.fn = B.handler.fn;
+    const all = await call('/main/v1/messages', msg);
+    expect(all.status).toBe(429);
+    expect(all.headers.get('retry-after')).toBe('77');
+  });
+  it('count_tokens failures leave member state alone (and fall back to an estimate)', async () => {
+    A.handler.fn = (_q, res) => res.writeHead(401).end('{"error":{"message":"nope"}}');
+    B.handler.fn = (_q, res) => res.writeHead(529).end('{}');
+    const r = await call('/main/v1/messages/count_tokens', msg);
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.text).input_tokens).toBeGreaterThan(0);
+    expect(gw.status().states.main.map((s) => s.health)).toEqual(['unknown', 'unknown']);
+    expect(ledger).toHaveLength(0);
+  });
+  it('a group behind an official-client-only relay makes gateway profiles default to the official binary', async () => {
+    expect(gw.endpoint('main')?.runtime).toBeUndefined();
+    meta.provider('a')!.runtime = 'claude';
+    expect(gw.endpoint('main')?.runtime).toBe('claude');
+    delete meta.provider('a')!.runtime;
   });
 });

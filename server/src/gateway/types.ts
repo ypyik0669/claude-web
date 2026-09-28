@@ -53,6 +53,8 @@ export interface GatewayTestResult {
   switches?: number;
   text?: string;
   error?: string;
+  /** Caveat to show next to the result (e.g. the test request carries no Claude Code fingerprint). */
+  note?: string;
 }
 
 /** Extra fields on a ledger line written by the gateway (`kind: 'gateway'`). */

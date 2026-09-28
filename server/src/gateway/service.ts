@@ -2,7 +2,6 @@
 // (Chat Completions + Responses) and Gemini to agents, routes each request through a failover group of
 // provider profiles, passes same-protocol traffic through byte for byte, and translates across protocols.
 import crypto from 'node:crypto';
-import zlib from 'node:zlib';
 import http from 'node:http';
 import { EventEmitter } from 'node:events';
 import { StringDecoder } from 'node:string_decoder';
@@ -17,10 +16,12 @@ import {
   DEFAULT_BASE, PROTOCOL_LABEL, buildOutbound, inboundStreamRenderer, isPassthrough, joinUrl, outboundOf, outboundStreamParser, parseInbound,
   parseOutboundResponse, renderInboundError, renderInboundResponse, sniffUsage, supported, upstreamErrorMessage, type Outbound,
 } from './convert.js';
-import { UpstreamError, decoded, passthroughHeaders, readText, replaceTopLevelString, responseHeaders, sendUpstream, translatedHeaders, type UpstreamResponse } from './upstream.js';
+import { UpstreamError, decoded, decoder, errorHeaders, passthroughHeaders, readText, replaceTopLevelString, responseHeaders, sendUpstream, translatedHeaders, type UpstreamResponse } from './upstream.js';
 
-/** Time from sending a request to the first body byte before the member counts as failed. */
+/** Streaming: time from sending a request to the first body byte before the member counts as failed. */
 export const FIRST_BYTE_MS = 60_000;
+/** Non-streaming: the whole answer comes at once, so a long generation legitimately takes minutes. */
+export const NONSTREAM_MS = 10 * 60_000;
 /** After the response started: silence this long ends the stream with an error. */
 const IDLE_MS = 5 * 60_000;
 const BODY_LIMIT = 64 * 1024 * 1024;
@@ -32,6 +33,7 @@ export interface GatewayDeps {
   member(providerId: string): Provider | null;
   ledger?: { record(e: LedgerEntry): void };
   firstByteMs?: number; // tests
+  nonStreamMs?: number; // tests
 }
 
 type Op = 'generate' | 'count' | 'models';
@@ -57,7 +59,8 @@ type Attempt =
   | { kind: 'done'; status: number; usage: IrUsage | null; firstByteMs: number; model: string }
   | { kind: 'final'; status: number; text: string; headers: http.IncomingHttpHeaders; passthrough: boolean; model: string }
   | { kind: 'switch'; status: number; message: string; text?: string; headers?: http.IncomingHttpHeaders; passthrough: boolean; model: string }
-  | { kind: 'broken'; status: number; message: string; firstByteMs: number; model: string }; // failed after committing
+  | { kind: 'broken'; status: number; message: string; firstByteMs: number; model: string } // failed after committing
+  | { kind: 'aborted'; status: 499; message: string; firstByteMs?: number; model: string }; // the client went away
 
 const isLoopback = (a: string | undefined) => !!a && (a === '::1' || a.startsWith('127.') || a.startsWith('::ffff:127.'));
 const newKey = () => `cwg-${crypto.randomBytes(24).toString('hex')}`;
@@ -87,10 +90,12 @@ export class GatewayService extends EventEmitter {
   readonly states = new MemberStates();
   private key = '';
   private firstByteMs: number;
+  private nonStreamMs: number;
 
   constructor(private deps: GatewayDeps) {
     super();
     this.firstByteMs = deps.firstByteMs ?? FIRST_BYTE_MS;
+    this.nonStreamMs = deps.nonStreamMs ?? NONSTREAM_MS;
   }
 
   /** Decrypt the stored key (startup). */
@@ -106,9 +111,19 @@ export class GatewayService extends EventEmitter {
   group(id: string) { return this.groups().find((g) => g.id === id); }
 
   /** Endpoint + credential a gateway provider profile resolves to, or null (disabled / unknown group). */
-  endpoint(groupId: string): { baseUrl: string; key: string } | null {
-    if (!this.enabled() || !this.port || !this.group(groupId)) return null;
-    return { baseUrl: `${this.baseUrl()}/${groupId}`, key: this.key };
+  endpoint(groupId: string): { baseUrl: string; key: string; runtime?: 'claude' } | null {
+    const g = this.group(groupId);
+    if (!this.enabled() || !this.port || !g) return null;
+    return { baseUrl: `${this.baseUrl()}/${groupId}`, key: this.key, runtime: this.needsOfficialClient(g) ? 'claude' : undefined };
+  }
+
+  /**
+   * A group that passes Claude Code through to a relay which only accepts the official client (an
+   * Anthropic member marked runtime:'claude') must be fed by the official binary too — ccb's request
+   * shape is rejected by that relay's fingerprint check just the same through the gateway.
+   */
+  needsOfficialClient(g: GatewayGroup): boolean {
+    return g.members.some((m) => { const p = this.deps.meta.provider(m.providerId); return p?.type === 'anthropic' && p.runtime === 'claude'; });
   }
 
   status(): GatewayStatus {
@@ -189,10 +204,16 @@ export class GatewayService extends EventEmitter {
     return true;
   }
 
-  private presentedKey(req: http.IncomingMessage, url: URL): string {
+  /** Every credential the client presented (a client may send an empty / stale x-api-key next to a good Bearer). */
+  private presentedKeys(req: http.IncomingMessage, url: URL): string[] {
     const h = req.headers;
     const bearer = /^Bearer\s+(.+)$/i.exec(String(h.authorization ?? ''))?.[1];
-    return String(h['x-api-key'] || bearer || h['x-goog-api-key'] || url.searchParams.get('key') || '').trim();
+    return [h['x-api-key'], bearer, h['x-goog-api-key'], url.searchParams.get('key')].map((v) => String(v ?? '').trim()).filter(Boolean);
+  }
+  private keyOk(k: string): boolean {
+    const a = Buffer.from(k);
+    const b = Buffer.from(this.key);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
   }
 
   private sendError(res: http.ServerResponse, inbound: GatewayProtocol, status: number, message: string, extra: Record<string, string> = {}) {
@@ -207,10 +228,12 @@ export class GatewayService extends EventEmitter {
     const route = routeOf(req.method ?? 'GET', rest, req.headers);
     const inbound = route?.inbound ?? (rest.startsWith('/v1beta') ? 'gemini' : req.headers['anthropic-version'] ? 'anthropic' : 'openai');
     if (!this.enabled()) return this.sendError(res, inbound, 503, '模型网关未启用（设置 → 模型网关）');
-    const presented = this.presentedKey(req, url);
-    const a = Buffer.from(presented);
-    const b = Buffer.from(this.key);
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return this.sendError(res, inbound, 401, '网关密钥无效');
+    const presented = this.presentedKeys(req, url);
+    if (!presented.some((k) => this.keyOk(k))) {
+      // an agent logged in with its own account (ChatGPT / Google / claude.ai) sends that token, not ours
+      const foreign = presented.length > 0 && !presented.some((k) => k.startsWith('cwg-'));
+      return this.sendError(res, inbound, 401, foreign ? '网关密钥无效：agent 没有用网关密钥（发来的不是 cwg- 开头的密钥），检查它的登录方式是否被账号登录覆盖了' : '网关密钥无效');
+    }
     const group = m ? this.group(decodeURIComponent(m[1])) : undefined;
     if (!group) return this.sendError(res, inbound, 404, `没有这个网关组：${m?.[1] ?? ''}`);
     if (!route) return this.sendError(res, inbound, 404, `网关不支持这个接口：${req.method} ${rest}`);
@@ -267,36 +290,38 @@ export class GatewayService extends EventEmitter {
   private async run(ctx: Ctx) {
     const { group, route, res } = ctx;
     const inbound = route.inbound;
+    const counting = route.op === 'count';
     const order = this.states.order(group);
     const unsupported: string[] = [];
     let tried = 0;
     let last: Attempt | null = null;
     let lastMember: { p: Provider; outbound: Outbound } | null = null;
+    const estimate = () => {
+      let n = 0;
+      try { n = estimateTokens(this.irOf(ctx)); } catch { /* malformed: 0 */ }
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(inbound === 'gemini' ? { totalTokens: n } : { input_tokens: n }));
+    };
     for (const m of order) {
       const p = this.deps.member(m.providerId);
       if (!p) continue;
       const outbound = outboundOf(p.type);
       if (!outbound) continue;
-      if (route.op === 'count' ? !isPassthrough(inbound, outbound) : !supported(inbound, outbound)) { unsupported.push(`${p.name}（${PROTOCOL_LABEL[outbound === 'openai' ? 'openai' : outbound]}）`); continue; }
+      if (counting ? !isPassthrough(inbound, outbound) : !supported(inbound, outbound)) { unsupported.push(`${p.name}（${PROTOCOL_LABEL[outbound === 'openai' ? 'openai' : outbound]}）`); continue; }
       tried++;
       lastMember = { p, outbound };
       const a = await this.attempt(ctx, m, p, outbound, tried - 1);
       last = a;
-      if (a.kind === 'switch') { if (ctx.signal.aborted) return; continue; }
-      if (route.op === 'generate') this.record(ctx, p, outbound, a, tried - 1);
+      if (a.kind === 'switch') continue;
+      if (!counting) this.record(ctx, p, outbound, a, tried - 1);
       if (a.kind === 'final') {
-        if (a.passthrough) { res.writeHead(a.status, { 'content-type': String(a.headers['content-type'] ?? 'application/json') }).end(a.text); }
-        else this.sendError(res, inbound, a.status, upstreamErrorMessage(a.text));
+        if (a.passthrough) res.writeHead(a.status, { ...errorHeaders(a.headers), 'content-type': String(a.headers['content-type'] ?? 'application/json') }).end(a.text);
+        else this.sendError(res, inbound, a.status, upstreamErrorMessage(a.text), errorHeaders(a.headers));
       }
       return;
     }
-    if (route.op === 'count' && !tried) {
-      // nobody in the group speaks the client's protocol: estimate instead of failing a pre-flight count
-      let n = 0;
-      try { n = estimateTokens(this.irOf(ctx)); } catch { /* malformed: 0 */ }
-      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(inbound === 'gemini' ? { totalTokens: n } : { input_tokens: n }));
-      return;
-    }
+    // nobody in the group speaks the client's protocol, or every member failed: a pre-flight count
+    // gets an estimate rather than an error (and never changes any member's state)
+    if (counting) return estimate();
     if (!tried) {
       if (unsupported.length) return this.sendError(res, inbound, 400, `组「${group.name}」里没有能接 ${PROTOCOL_LABEL[inbound]} 入口的成员：${unsupported.join('、')} 需要的转换方向暂不支持`);
       const next = this.states.nextAvailable(group);
@@ -306,15 +331,15 @@ export class GatewayService extends EventEmitter {
     }
     // every member failed with a switchable error: report the last one as is
     if (last?.kind === 'switch') {
-      if (route.op === 'generate' && lastMember) this.record(ctx, lastMember.p, lastMember.outbound, last, tried - 1);
-      if (last.text !== undefined && last.passthrough) res.writeHead(last.status, { 'content-type': String(last.headers?.['content-type'] ?? 'application/json') }).end(last.text);
-      else this.sendError(res, inbound, last.status, `${tried > 1 ? `组内 ${tried} 个成员都失败了，最后一个：` : ''}${last.message}`);
+      if (lastMember) this.record(ctx, lastMember.p, lastMember.outbound, last, tried - 1);
+      if (last.text !== undefined && last.passthrough) res.writeHead(last.status, { ...errorHeaders(last.headers), 'content-type': String(last.headers?.['content-type'] ?? 'application/json') }).end(last.text);
+      else this.sendError(res, inbound, last.status, `${tried > 1 ? `组内 ${tried} 个成员都失败了，最后一个：` : ''}${last.message}`, errorHeaders(last.headers));
     }
   }
 
   private record(ctx: Ctx, p: Provider, outbound: Outbound, a: Attempt, switches: number) {
     const usage = a.kind === 'done' ? a.usage : null;
-    const fb = a.kind === 'done' || a.kind === 'broken' ? a.firstByteMs : undefined;
+    const fb = a.kind === 'done' || a.kind === 'broken' || a.kind === 'aborted' ? a.firstByteMs : undefined;
     this.deps.ledger?.record({
       ts: Date.now(),
       sessionId: String(ctx.req.headers['x-claude-code-session-id'] ?? ''),
@@ -336,6 +361,8 @@ export class GatewayService extends EventEmitter {
 
   private async attempt(ctx: Ctx, m: GatewayMember, p: Provider, outbound: Outbound, switches: number): Promise<Attempt> {
     const { group, route } = ctx;
+    // count_tokens is a side request: its failures say nothing about the member's ability to answer
+    const track = route.op !== 'count';
     const pass = isPassthrough(route.inbound, outbound);
     const model = mapModel(group, m, ctx.model);
     const base = p.baseUrl?.trim() || DEFAULT_BASE[p.type];
@@ -364,27 +391,32 @@ export class GatewayService extends EventEmitter {
     }
     const url = joinUrl(base, path);
     const sent = Date.now();
-    const deadline = sent + this.firstByteMs;
-    const switchOn = (status: number, message: string, extra: Partial<Extract<Attempt, { kind: 'switch' }>> = {}): Attempt => {
-      this.states.fail(group.id, p.id, { action: 'switch', kind: 'transient' }, status, message);
-      this.emit('changed');
-      return { kind: 'switch', status, message: `${p.name}：${message}`, passthrough: pass, model, ...extra };
+    // streaming: the first byte must come quickly; non-streaming: nothing arrives until the whole answer is done
+    const waitMs = route.stream ? this.firstByteMs : this.nonStreamMs;
+    const deadline = sent + waitMs;
+    const aborted = (firstByteMs?: number): Attempt => ({ kind: 'aborted', status: 499, message: '客户端已断开', firstByteMs, model });
+    const switchOn = (status: number, message: string): Attempt => {
+      if (track) { this.states.fail(group.id, p.id, { action: 'switch', kind: 'transient' }, status, message, Date.now(), sent); this.emit('changed'); }
+      return { kind: 'switch', status, message: `${p.name}：${message}`, passthrough: pass, model };
     };
     let up: UpstreamResponse;
     try {
-      up = await sendUpstream(url, { method: 'POST', headers, body, signal: ctx.signal, headerTimeoutMs: this.firstByteMs });
+      up = await sendUpstream(url, { method: 'POST', headers, body, signal: ctx.signal, headerTimeoutMs: waitMs });
     } catch (e: any) {
-      if (ctx.signal.aborted) return { kind: 'switch', status: 499, message: '客户端已断开', passthrough: pass, model };
+      if (ctx.signal.aborted) return aborted();
       return switchOn(e instanceof UpstreamError && e.timeout ? 504 : 502, e?.message ?? String(e));
     }
     if (up.status < 200 || up.status >= 300) {
       let text = '';
       try { text = await readText(up.body, 4 * 1024 * 1024); } catch { /* keep empty */ }
+      if (ctx.signal.aborted) return aborted();
       const st = this.states.get(group.id, p.id);
       const v = classify(up.status, up.headers, text, st.strikes);
       const msg = `HTTP ${up.status} ${upstreamErrorMessage(text)}`.trim();
-      this.states.fail(group.id, p.id, v, up.status, v.action === 'switch' && v.kind === 'auth' ? `${msg}（鉴权失败，已停用，检查密钥后点「恢复」）` : msg);
-      this.emit('changed');
+      if (track) {
+        this.states.fail(group.id, p.id, v, up.status, v.action === 'switch' && v.kind === 'auth' ? `${msg}（鉴权失败，已停用，检查密钥后点「恢复」）` : msg, Date.now(), sent);
+        this.emit('changed');
+      }
       if (v.action === 'final') return { kind: 'final', status: up.status, text, headers: up.headers, passthrough: pass, model };
       return { kind: 'switch', status: up.status, message: `${p.name}：${msg}`, text, headers: up.headers, passthrough: pass, model };
     }
@@ -397,17 +429,20 @@ export class GatewayService extends EventEmitter {
       first = await withTimeout(it.next(), deadline - Date.now());
     } catch (e: any) {
       up.body.destroy();
-      if (ctx.signal.aborted) return { kind: 'switch', status: 499, message: '客户端已断开', passthrough: pass, model };
-      return switchOn(504, e?.message === 'timeout' ? `${Math.round(this.firstByteMs / 1000)}s 内没有返回内容` : e?.message ?? String(e));
+      if (ctx.signal.aborted) return aborted();
+      return switchOn(504, e?.message === 'timeout' ? `${Math.round(waitMs / 1000)}s 内没有返回内容` : e?.message ?? String(e));
     }
     const firstByteMs = Date.now() - sent;
-    if (this.states.ok(group.id, p.id)) this.emit('changed'); // recovered / first success — not on every request
+    if (track && this.states.ok(group.id, p.id, Date.now(), sent)) this.emit('changed'); // recovered / first success — not on every request
 
     const memberHeader = { 'x-cw-gateway-member': encodeURIComponent(p.name), 'x-cw-gateway-switches': String(switches) };
     try {
       if (pass) return await this.pipePassthrough(ctx, up, it, first, memberHeader, firstByteMs, model);
       return await this.pipeTranslated(ctx, up, it, first, outbound, memberHeader, firstByteMs, model);
     } catch (e: any) {
+      up.body.destroy();
+      // the client hanging up mid-answer is not the member's fault: no cooldown
+      if (ctx.signal.aborted) return aborted(firstByteMs);
       if (!ctx.res.headersSent) return switchOn(502, e?.message ?? String(e));
       ctx.res.destroy();
       return { kind: 'broken', status: 502, message: e?.message ?? String(e), firstByteMs, model };
@@ -422,12 +457,13 @@ export class GatewayService extends EventEmitter {
     const sniff = new UsageSniffer(ctx.route.inbound, isSse, String(up.headers['content-encoding'] ?? ''));
     let r = first;
     let broken = '';
-    while (!r.done) {
+    while (!r.done && !ctx.signal.aborted) {
       sniff.push(r.value);
       if (!res.write(r.value)) await waitDrain(res, ctx.signal);
       if (ctx.signal.aborted) break;
       try { r = await withTimeout(it.next(), IDLE_MS); } catch (e: any) { broken = e?.message === 'timeout' ? '上游超过 5 分钟没有数据' : e?.message ?? String(e); up.body.destroy(); break; }
     }
+    if (ctx.signal.aborted) { up.body.destroy(); res.destroy(); sniff.abort(); return { kind: 'aborted', status: 499, message: '客户端已断开', firstByteMs, model }; }
     res.end();
     const usage = await sniff.end();
     if (broken) return { kind: 'broken', status: 502, message: broken, firstByteMs, model };
@@ -446,6 +482,7 @@ export class GatewayService extends EventEmitter {
       let j: any;
       try { j = JSON.parse(text); } catch { throw new Error(`上游返回的不是 JSON：${text.slice(0, 120)}`); }
       const ir = parseOutboundResponse(outbound, j, model);
+      if (ctx.signal.aborted) return { kind: 'aborted', status: 499, message: '客户端已断开', firstByteMs, model };
       res.writeHead(200, { 'content-type': 'application/json', ...extra }).end(JSON.stringify(renderInboundResponse(route.inbound, ir, clientModel, ctx.customTools)));
       return { kind: 'done', status: up.status, usage: ir.usage, firstByteMs, model };
     }
@@ -456,17 +493,19 @@ export class GatewayService extends EventEmitter {
     const dec = new StringDecoder('utf8');
     res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive', ...extra });
     const emit = async (evs: IrEvent[]) => {
+      if (ctx.signal.aborted) return; // nobody to write to: never wait for a drain that cannot come
       let out = '';
       for (const e of evs) { if (e.t === 'usage') Object.assign(usage, e.usage); out += renderer.push(e); }
       if (out && !res.write(out)) await waitDrain(res, ctx.signal);
     };
     let r = first;
     let broken = '';
-    while (!r.done) {
+    while (!r.done && !ctx.signal.aborted) {
       for (const ev of sse.feed(dec.write(r.value))) await emit(parser.feed(ev));
       if (ctx.signal.aborted) break;
       try { r = await withTimeout(it.next(), IDLE_MS); } catch (e: any) { broken = e?.message === 'timeout' ? '上游超过 5 分钟没有数据' : e?.message ?? String(e); up.body.destroy(); break; }
     }
+    if (ctx.signal.aborted) { up.body.destroy(); res.destroy(); return { kind: 'aborted', status: 499, message: '客户端已断开', firstByteMs, model }; }
     if (broken) await emit([{ t: 'error', message: broken }]);
     else { for (const ev of sse.feed(dec.end())) await emit(parser.feed(ev)); for (const ev of sse.end()) await emit(parser.feed(ev)); await emit(parser.end()); }
     const tail = renderer.end();
@@ -498,6 +537,7 @@ export class GatewayService extends EventEmitter {
       const text = await r.text();
       const member = r.headers.get('x-cw-gateway-member');
       const out: GatewayTestResult = { ok: r.ok, status: r.status, ms: Date.now() - t0, member: member ? decodeURIComponent(member) : undefined, switches: Number(r.headers.get('x-cw-gateway-switches') ?? 0) };
+      if (g.members.some((m) => this.deps.meta.provider(m.providerId)?.type === 'anthropic')) out.note = '测试请求不带 Claude Code 指纹（系统提示 / UA），只认官方客户端的中转可能拒绝这条测试，但真实的 Claude 会话经网关透传能通过。';
       let j: any = null;
       try { j = JSON.parse(text); } catch { /* not json */ }
       if (r.ok) out.text = (j?.content?.[0]?.text ?? j?.choices?.[0]?.message?.content ?? j?.output?.[0]?.content?.[0]?.text ?? j?.candidates?.[0]?.content?.parts?.[0]?.text ?? text).toString().slice(0, 200);
@@ -518,6 +558,8 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 function waitDrain(res: http.ServerResponse, signal: AbortSignal): Promise<void> {
+  // an abort that already happened will never fire its listener again, and a dead socket never drains
+  if (signal.aborted || res.destroyed || res.writableEnded) return Promise.resolve();
   return new Promise((r) => {
     const done = () => { res.off('drain', done); res.off('close', done); signal.removeEventListener('abort', done); r(); };
     res.once('drain', done);
@@ -533,19 +575,22 @@ class UsageSniffer {
   private sse = new SseParser();
   private dec = new StringDecoder('utf8');
   private json = '';
-  private z: zlib.Gunzip | zlib.Inflate | zlib.BrotliDecompress | null = null;
+  private z: import('node:stream').Transform | null = null;
   private zDone: Promise<void> | null = null;
+  private off = false; // an encoding we cannot decode: no usage, bytes still pass through
   constructor(private protocol: GatewayProtocol, private isSse: boolean, encoding: string) {
     const enc = encoding.toLowerCase().trim();
-    if (enc) {
-      this.z = enc.includes('gzip') ? zlib.createGunzip() : enc === 'deflate' ? zlib.createInflate() : enc === 'br' ? zlib.createBrotliDecompress() : null;
-      if (this.z) {
+    if (enc && enc !== 'identity') {
+      this.z = decoder(enc);
+      if (!this.z) this.off = true;
+      else {
         this.z.on('data', (c: Buffer) => this.text(this.dec.write(c)));
         this.zDone = new Promise((r) => { this.z!.on('end', () => r()); this.z!.on('error', () => r()); });
       }
     }
   }
   push(b: Buffer) {
+    if (this.off) return;
     if (this.z) this.z.write(b);
     else this.text(this.dec.write(b));
   }
@@ -560,7 +605,10 @@ class UsageSniffer {
     const u = sniffUsage(this.protocol, j);
     if (u) { Object.assign(this.usage, Object.fromEntries(Object.entries(u).filter(([, v]) => v !== undefined))); this.seen = true; }
   }
+  /** Client went away: drop the decompressor without waiting for it. */
+  abort() { this.off = true; this.z?.destroy(); }
   async end(): Promise<IrUsage | null> {
+    if (this.off) return null;
     if (this.z) { this.z.end(); await this.zDone; }
     this.text(this.dec.end());
     if (this.isSse) for (const e of this.sse.end()) this.event(e.data);

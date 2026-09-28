@@ -50,10 +50,20 @@ export function sendUpstream(url: string, opts: { method: string; headers: Recor
   });
 }
 
+/** A zlib decompressor for a content-encoding, or null (identity / unknown). */
+export function decoder(encoding: string): import('node:stream').Transform | null {
+  const enc = encoding.toLowerCase().trim();
+  if (enc === 'gzip' || enc === 'x-gzip') return zlib.createGunzip();
+  if (enc === 'deflate') return zlib.createInflate();
+  if (enc === 'br') return zlib.createBrotliDecompress();
+  if (enc === 'zstd' && HAS_ZSTD) return (zlib as any).createZstdDecompress();
+  return null;
+}
+
 /** A decompressing view of a response body (for reading / sniffing — passthrough pipes the raw bytes). */
 export function decoded(res: http.IncomingMessage): Readable {
   const enc = String(res.headers['content-encoding'] ?? '').toLowerCase().trim();
-  const z = enc === 'gzip' || enc === 'x-gzip' ? zlib.createGunzip() : enc === 'deflate' ? zlib.createInflate() : enc === 'br' ? zlib.createBrotliDecompress() : null;
+  const z = decoder(enc);
   if (!z) return res;
   z.on('error', () => { /* truncated / bogus encoding: the reader just sees the stream end */ });
   return res.pipe(z);
@@ -80,20 +90,51 @@ const AUTH = new Set(['authorization', 'x-api-key', 'x-goog-api-key', 'api-key',
  * style the client used (x-api-key vs Bearer), so the upstream sees what a direct call would send.
  */
 export function passthroughHeaders(raw: string[], outbound: 'anthropic' | 'openai' | 'gemini', key: string): Record<string, string> {
+  const pairs: [string, string][] = [];
+  for (let i = 0; i + 1 < raw.length; i += 2) pairs.push([raw[i], raw[i + 1]]);
+  // RFC 9110 §7.6.1: fields named in Connection are hop-by-hop too
+  const hop = new Set(HOP);
+  for (const [n, v] of pairs) if (n.toLowerCase() === 'connection') for (const t of v.split(',')) if (t.trim()) hop.add(t.trim().toLowerCase());
+  const has = (h: string) => pairs.some(([n, v]) => n.toLowerCase() === h && v.trim());
+  // the credential the member gets, named the way the client named its own
+  const cred: [string, string] = outbound === 'gemini' ? ['x-goog-api-key', key]
+    : outbound === 'anthropic' && has('x-api-key') ? ['x-api-key', key]
+    : ['authorization', `Bearer ${key}`];
   const out: Record<string, string> = {};
-  let usedXApiKey = false;
-  for (let i = 0; i + 1 < raw.length; i += 2) {
-    const name = raw[i];
+  let placed = false;
+  for (const [name, value] of pairs) {
     const lower = name.toLowerCase();
-    if (lower === 'x-api-key' && raw[i + 1]) usedXApiKey = true;
-    if (HOP.has(lower) || AUTH.has(lower) || lower.startsWith('x-cw-')) continue;
+    if (AUTH.has(lower) && lower !== 'cookie' && !placed && (value.trim() || lower === cred[0])) {
+      // swap the value in place: header order is part of what a fingerprinting relay sees
+      out[lower === cred[0] ? name : cred[0]] = cred[1];
+      placed = true;
+      continue;
+    }
+    if (hop.has(lower) || AUTH.has(lower) || lower.startsWith('x-cw-')) continue;
+    const v = lower === 'accept-encoding' ? acceptEncoding(value) : value;
     const prev = Object.keys(out).find((k) => k.toLowerCase() === lower);
-    if (prev) out[prev] += `, ${raw[i + 1]}`;
-    else out[name] = raw[i + 1];
+    if (prev) out[prev] += `, ${v}`;
+    else out[name] = v;
   }
-  if (outbound === 'anthropic') { if (usedXApiKey) out['x-api-key'] = key; else out.authorization = `Bearer ${key}`; }
-  else if (outbound === 'gemini') out['x-goog-api-key'] = key;
-  else out.authorization = `Bearer ${key}`;
+  if (!placed) out[cred[0]] = cred[1];
+  return out;
+}
+
+/** Codings we can decode for usage sniffing; zstd only where this Node / Electron has it. */
+const HAS_ZSTD = typeof (zlib as any).createZstdDecompress === 'function';
+export function acceptEncoding(v: string): string {
+  if (HAS_ZSTD) return v;
+  const kept = v.split(',').map((s) => s.trim()).filter((s) => s && !/^zstd\b/i.test(s));
+  return kept.length ? kept.join(', ') : 'gzip, deflate, br';
+}
+
+/** Rate-limit / request-id headers worth handing back with an upstream error. */
+export function errorHeaders(h: http.IncomingHttpHeaders | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(h ?? {})) {
+    if (v === undefined) continue;
+    if (k === 'retry-after' || k === 'request-id' || k === 'x-request-id' || k.startsWith('anthropic-ratelimit-') || k.startsWith('x-ratelimit-')) out[k] = Array.isArray(v) ? v.join(', ') : v;
+  }
   return out;
 }
 
