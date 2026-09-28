@@ -397,6 +397,8 @@ export type ClientRequest =
   | { kind: 'skills.restore'; file: string }
   | { kind: 'tools.detect' }
   | { kind: 'diag.bundle' }
+  /** a renderer error an ErrorBoundary caught: written to the server log (server.log in the desktop build) */
+  | { kind: 'client.log'; level: 'error' | 'warn'; area: string; message: string; stack?: string; componentStack?: string; url?: string }
   | { kind: 'mcp.registry'; query: string; limit?: number }
   | { kind: 'mcp.health'; cwd?: string }
   | { kind: 'secrets.status' }

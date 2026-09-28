@@ -1,7 +1,5 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '@/store';
-
-const NONE: string[] = [];
 import { ws } from '@/ws/client';
 import { clsx } from '@/util';
 import { Icon, AGENT_ICONS } from '@/ui/icons';
@@ -11,6 +9,9 @@ import { modelTable, profileModels, type ModelRow } from '@/features/models/menu
 import { refreshAllModels, useGatewayGroups, useRefreshRun } from '@/features/models/data';
 import { agoText } from '@/features/models/ModelMenu';
 import '@/features/models/models.css';
+
+/** stable fallback for the selectors below (a fresh `[]` per call re-renders forever: React #185) */
+const NONE: string[] = [];
 
 const AGENTS: { kind: AgentKind; name: string }[] = [
   { kind: 'claude', name: 'Claude Code' },

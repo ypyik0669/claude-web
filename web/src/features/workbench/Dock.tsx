@@ -15,11 +15,21 @@ import { AndroidPanel } from '@/features/android/AndroidPanel';
 import { MemoryPanel } from '@/features/memory/MemoryPanel';
 import { OrchestraPanel } from '@/features/orchestra/OrchestraPanel';
 import { MIME_PANEL } from './dnd';
+import { ErrorBoundary } from '@/ui/ErrorBoundary';
 
 export { PANELS, PANEL_ICONS, PANEL_TITLES };
 export const DOCK_DEFAULT_WIDTH = 440;
 
+/** A panel with its own error boundary: one broken panel does not blank the dock (or the tile it sits in). */
 export function PanelBody({ id, visible }: { id: PanelId; visible: boolean }) {
+  return (
+    <ErrorBoundary area={`停靠面板 · ${PANEL_TITLES[id] ?? id}`}>
+      <PanelContent id={id} visible={visible} />
+    </ErrorBoundary>
+  );
+}
+
+function PanelContent({ id, visible }: { id: PanelId; visible: boolean }) {
   switch (id) {
     case 'tasks': return <TasksPanel />;
     case 'files': return <FilesPanel />;

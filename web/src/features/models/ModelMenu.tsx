@@ -8,6 +8,7 @@ import { buildModelMenu, filterMenu, pushRecent, recentKey, type ModelMenuItem, 
 import { refreshAllModels, useGatewayStatus, useRefreshRun } from './data';
 import { placeMenu, samePlacement, type Placement } from './place';
 import './models.css';
+import { ErrorBoundary } from '@/ui/ErrorBoundary';
 
 /** `5 分钟前` / `刚刚` / a date */
 export function agoText(t: number): string {
@@ -227,7 +228,11 @@ export function ModelChip(p: Omit<ModelMenuProps, 'onClose'> & { label: string; 
         <span className="mm-chip-label">{label}</span>
         <span className="caret"><Icon name="chevronDown" size={10} /></span>
       </button>
-      {open && <ModelMenu {...menu} anchor={anchor} onClose={() => setOpen(false)} />}
+      {open && (
+        <ErrorBoundary area="模型菜单" compact onReset={() => setOpen(false)}>
+          <ModelMenu {...menu} anchor={anchor} onClose={() => setOpen(false)} />
+        </ErrorBoundary>
+      )}
     </span>
   );
 }
