@@ -94,5 +94,9 @@ export function cronText(expr: string): string | null {
 /** A schedule's period in words, and the raw expression for a tooltip (none for an interval). */
 export function scheduleText(s: Pick<Schedule, 'cron' | 'everyMinutes'>): { text: string; title?: string } {
   if (s.cron) return { text: cronText(s.cron) ?? s.cron, title: `cron：${s.cron}` };
-  return { text: `每 ${s.everyMinutes} 分钟` };
+  const m = s.everyMinutes;
+  // an interval: whole hours / days read as such (每 4 小时, 每天), the rest in minutes
+  if (m > 0 && m % 1440 === 0) return { text: m === 1440 ? '每天' : `每 ${m / 1440} 天` };
+  if (m > 0 && m % 60 === 0) return { text: m === 60 ? '每小时' : `每 ${m / 60} 小时` };
+  return { text: `每 ${m} 分钟` };
 }

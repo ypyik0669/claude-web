@@ -62,5 +62,9 @@ describe('scheduleText', () => {
     expect(scheduleText({ cron: '0 9 * * 1-5', everyMinutes: 60 })).toEqual({ text: '工作日 09:00', title: 'cron：0 9 * * 1-5' });
     expect(scheduleText({ cron: '0 9,18 * * *', everyMinutes: 60 })).toEqual({ text: '0 9,18 * * *', title: 'cron：0 9,18 * * *' });
     expect(scheduleText({ cron: '', everyMinutes: 45 })).toEqual({ text: '每 45 分钟' });
+    expect(scheduleText({ cron: '', everyMinutes: 240 })).toEqual({ text: '每 4 小时' });
+    expect(scheduleText({ cron: '', everyMinutes: 60 })).toEqual({ text: '每小时' });
+    expect(scheduleText({ cron: '', everyMinutes: 90 })).toEqual({ text: '每 90 分钟' });
+    expect(scheduleText({ cron: '', everyMinutes: 2880 })).toEqual({ text: '每 2 天' });
   });
 });

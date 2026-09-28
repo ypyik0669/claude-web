@@ -112,7 +112,7 @@ describe('the start page lists (最近任务 / 定时任务 / 已归档)', () =>
       ] as never,
     });
     // the period in words, the expression in the tooltip; the next run as nextRunText says it (schedule-text.test.ts)
-    expect(r.rows.map((x) => [x.title, x.where, x.when])).toEqual([['每日 CI', 'app', '工作日 09:00'], ['整理', 'app', '每 240 分钟'], ['坏的', 'app', '每 60 分钟']]);
+    expect(r.rows.map((x) => [x.title, x.where, x.when])).toEqual([['每日 CI', 'app', '工作日 09:00'], ['整理', 'app', '每 4 小时'], ['坏的', 'app', '每小时']]);
     expect(r.rows[0].whenTitle).toBe('cron：0 9 * * 1-5');
     expect(r.rows[1].whenTitle).toBeUndefined();
     expect(r.rows[0].status).toMatchObject({ kind: 'time', label: nextRunText(NOW + 5 * hour, NOW) });
