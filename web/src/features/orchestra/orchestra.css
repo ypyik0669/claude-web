@@ -132,6 +132,10 @@
 .mcard.orch-wait .t { display: flex; align-items: center; gap: 6px; }
 .mcard .orch-wait-acts { display: flex; gap: 6px; margin-top: 6px; }
 
+/* orphan worktrees (bottom of the side column) */
+.orch-orphans { border-top: 1px solid var(--edge-default); max-height: 30%; overflow: auto; flex: none; padding-bottom: 4px; }
+.orch-orphans .orch-row { margin: 0 4px; }
+
 /* merge / cleanup notes, kept worktrees */
 .orch-note { font-size: var(--fs-meta); color: var(--ink-2); background: var(--warn-soft); border-radius: var(--r-md); padding: 4px 8px; white-space: pre-wrap; }
 .orch-wts { font-size: var(--fs-micro); color: var(--ink-3); }

@@ -44,6 +44,8 @@ function Candidate({ run, nodeId, c, winner, recommended, canPick }: { run: Orch
     setOpen(!open);
   };
   const busy = useOrchBusy((s) => !!s.keys[run.id]);
+  // the user may have kept talking to a candidate: merging it mid-turn would merge a moving target
+  const live = useStore((s) => { const st = c.sessionId ? s.open[c.sessionId]?.state : undefined; return st === 'running' || st === 'starting' || st === 'waiting'; });
   const pick = async () => {
     const message = [
       `1. 先把 ${c.worktree?.path} 里还没提交的改动提交到 ${c.worktree?.branch}；`,
@@ -71,7 +73,8 @@ function Candidate({ run, nodeId, c, winner, recommended, canPick }: { run: Orch
         {c.sessionId && <button className="btn xs ghost" onClick={() => void loadHistory(c.sessionId!)}><Icon name="chat" size={11} /> 会话</button>}
         {c.state === 'done' && c.worktree && !winner && <button className="btn xs ghost" onClick={() => void toggleDiff()}><Icon name="eye" size={11} /> {open ? '收起 diff' : '完整 diff'}</button>}
         <span className="grow" />
-        {canPick && c.state === 'done' && <button className="btn xs primary" disabled={busy} onClick={() => void pick()}><Icon name="check" size={11} /> 选它合并</button>}
+        {canPick && c.state === 'done' && live && <span className="muted sm">胜者会话还在运行，先停止或等它结束</span>}
+        {canPick && c.state === 'done' && <button className="btn xs primary" disabled={busy || live} title={live ? '胜者会话还在运行，先停止或等它结束' : undefined} onClick={() => void pick()}><Icon name="check" size={11} /> 选它合并</button>}
       </div>
       {open && diff !== null && (diff ? <DiffText text={diff} /> : <div className="muted sm">没有改动</div>)}
     </div>
@@ -103,10 +106,17 @@ function NodeDetail({ run, node, nr, selected }: { run: OrchRun; node: OrchNode;
   const retry = async () => {
     const lines = [
       node.kind === 'compare' ? '所有候选会在新的会话、新的 worktree（名字带 -attempt 后缀）里重新跑一遍，已经跑完的结果不再能选。' : '这个节点会在新的会话里重新跑，还没完成的下游节点也会重新排队。',
+      nr.mergePending ? '这个节点的活已经做完、只是没合并进去：处理冲突后点「重新合并」就够了（或手动 git merge 它的分支），不必整个重跑。' : '',
       wts.length ? `现有的 worktree 与分支都保留，不会删除：\n${wts.map((w) => `· ${w.path}（${w.branch}）`).join('\n')}` : '',
     ].filter(Boolean).join('\n\n');
     if (nr.state === 'waiting' || wts.length) { if (!(await dlg.confirm(`重试「${node.title || node.id}」？`, { message: lines, okLabel: '重试' }))) return; }
     await orchAct(run.id, { kind: 'orchestra.node.retry', runId: run.id, nodeId: node.id }, '已重新开始');
+  };
+  const remerge = async () => {
+    const wt = nr.worktrees?.[nr.worktrees.length - 1];
+    const message = `把 ${wt?.branch} 再合并一次到 ${run.baseBranch}：先提交 ${wt?.path} 里新的改动，然后同样检查（你有进行中的 merge / rebase 或暂存区有改动就拒绝，冲突只撤销它自己的这次合并）。成功后下游节点继续跑。`;
+    if (!(await dlg.confirm(`重新合并「${node.title || node.id}」？`, { message, okLabel: '重新合并' }))) return;
+    await orchAct(run.id, { kind: 'orchestra.node.remerge', runId: run.id, nodeId: node.id }, '已处理');
   };
   return (
     <div className={clsx('orch-detail', `st-${nr.state}`, selected && 'sel')} id={`orch-node-${run.id}-${node.id}`}>
@@ -117,6 +127,7 @@ function NodeDetail({ run, node, nr, selected }: { run: OrchRun; node: OrchNode;
         <span className="muted">{node.kind === 'task' ? agentLabel(node.agent) : node.kind === 'compare' ? node.agents.map(agentLabel).join(' / ') : ''}{secs && nr.state !== 'pending' ? ` · ${fmtMs(secs)}` : ''}{nr.costUsd ? ` · $${nr.costUsd.toFixed(3)}` : ''}{(nr.attempts ?? 0) > 1 ? ` · 第 ${nr.attempts} 次` : ''}</span>
         <span className="grow" />
         {node.kind !== 'compare' && <SessionLinks ids={nr.sessionIds} />}
+        {nr.mergePending && nr.state === 'failed' && <button className="btn xs" disabled={busy} onClick={() => void remerge()}><Icon name="branch" size={11} /> 重新合并</button>}
         {canRetry && <button className="btn xs ghost" disabled={busy} onClick={() => void retry()}><Icon name="refresh" size={11} /> 重试</button>}
       </div>
       {nr.error && <div className="orch-errline">{nr.error}</div>}

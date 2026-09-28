@@ -8,6 +8,7 @@ import type { OrchRun, Workflow, WorkflowTemplate } from '@shared';
 import { WorkflowEditor, type WorkflowDraft } from './WorkflowEditor';
 import { RunView, RUN_L } from './RunView';
 import { useOrch } from './state';
+import { Orphans } from './Orphans';
 import './orchestra.css';
 
 type View = { kind: 'none' } | { kind: 'edit'; draft: WorkflowDraft; key: number } | { kind: 'run'; runId: string };
@@ -87,6 +88,7 @@ export function OrchestraPanel() {
           ))}
           {!runs.length && <div className="orch-empty sm">还没有运行过</div>}
         </div>
+        <Orphans />
       </div>
       <div className="orch-main">
         {view.kind === 'none' && (
