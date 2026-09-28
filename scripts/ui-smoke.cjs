@@ -422,7 +422,7 @@ function driver() {
         const views = await js(`[...document.querySelectorAll('.menu.sess-menu [data-view]')].map((b) => b.dataset.view)`);
         check('··· lists every workbench view', ['changes', 'git', 'files', 'search', 'schedules', 'artifacts', 'board'].every((v) => views.includes(v)), JSON.stringify(views));
         await shot('session-menu');
-        await click('.menu.sess-menu [data-view="files"]');
+        await click('.menu.sess-menu [data-view="schedules"]'); // still an in-place view (文件 / 改动… open the right panel since phase 2)
         const inView = await waitFor('!!document.querySelector(".pane.focused .wb-body") && !!document.querySelector(".pane.focused .sh-view")', 4000);
         await click('.pane.focused .sh-view');
         const back = await waitFor('!!document.querySelector(".pane.focused .chat") && !document.querySelector(".pane.focused .sh-view")', 4000);
@@ -518,6 +518,77 @@ function driver() {
         }
         const err2 = await noBoundary('body');
         check('session chrome checks without error boundary', !err2, err2);
+
+        // ---- redesign phase 2: the right panel — 审阅 · 文件 · 终端 · 任务 + temporary tabs, nothing unmounts
+        phase = 'right-panel';
+        const dockState = 'JSON.stringify(window.__store.getState().layout.dock)';
+        // the header ··· toggles: an earlier step may have left it open (a synthetic body click does not close it)
+        const openHeaderMenu = async () => { if (!(await js('!!document.querySelector(".menu.sess-menu")'))) await click('.sess-head .sh-more > button'); await waitFor('!!document.querySelector(".menu.sess-menu [data-view]")', 3000); await sleep(250); };
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false, minimized: false } })`);
+        await sleep(300);
+        await click('.sess-head button[aria-label="右侧面板"]');
+        // (the columns animate for --dur-3: let them settle, or the next clicks land where the buttons were)
+        const rp = await waitFor('!!document.querySelector(".dock.simple:not([hidden])") && document.querySelector(".rpanel").offsetWidth >= 430', 4000);
+        await sleep(400);
+        const fixedTabs = await js(`[...document.querySelectorAll('.dock .dock-tabs .tab.fixed')].map((t) => t.dataset.panel + (t.querySelector('.x') ? '×' : '')).join(',')`);
+        check('right panel: the four fixed tabs 审阅 · 文件 · 终端 · 任务, none closable', rp && fixedTabs === 'files,explorer,terminal,tasks', `${rp} ${fixedTabs}`);
+        // ··· 改动 → 审阅 on this conversation's files; the scope menu lists the scopes and recent commits
+        await openHeaderMenu();
+        await click('.menu.sess-menu [data-view="changes"]');
+        const review = await waitFor('document.querySelector(".dock .dock-tabs .tab.active")?.dataset.panel === "files" && document.querySelector(".dock .rv-scope .t")?.textContent === "本次对话改动"', 5000);
+        check('··· 改动 opens 审阅 on 本次对话改动 (the conversation stays in place)', review && !(await js('!!document.querySelector(".pane.focused .sh-view")')), await js(`JSON.stringify({ dock: window.__store.getState().layout.dock.active, tab: document.querySelector(".dock .dock-tabs .tab.active")?.dataset.panel, scope: document.querySelector(".dock .rv-scope .t")?.textContent, menu: !!document.querySelector(".menu.sess-menu"), toasts: [...document.querySelectorAll(".toast")].map((t) => t.textContent) })`));
+        await click('.dock .rv-scope');
+        const scopes = await waitFor('document.querySelectorAll(".rv-scope-menu .rv-commit-item").length > 0', 5000);
+        const scopeItems = await js(`[...document.querySelectorAll('.rv-scope-menu [role=menuitemradio]')].map((b) => b.textContent)`);
+        check('审阅 scope menu: 未提交 / 已暂存 / 本次对话 + commits', scopes && ['未提交的改动', '已暂存', '本次对话改动'].every((l) => scopeItems.some((t) => t.includes(l))), JSON.stringify(scopeItems));
+        await js(`[...document.querySelectorAll('.rv-scope-menu button')].find((b) => b.textContent.includes('未提交'))?.click()`);
+        const readme = await waitFor('[...document.querySelectorAll(".dock .rv-file")].some((f) => f.textContent.includes("README.md") && f.querySelector(".rv-body .diff"))', 8000);
+        check('未提交的改动 lists the modified README.md with its diff; 提交 box at the bottom', readme && (await js('!!document.querySelector(".dock .rv-foot input")')));
+        await shot('right-panel-review');
+        await js('document.querySelector(".dock .rv-bar .rv-anchor .icon-btn")?.click()');
+        await sleep(300);
+        await js(`[...document.querySelectorAll('.rv-more-menu button')].find((b) => b.textContent.includes('Git'))?.click()`);
+        const gitView = await waitFor('!!document.querySelector(".dock .rv-git:not([hidden]) .git-view .git-head")', 6000);
+        check('审阅 ··· → Git: the full Git view (branches, pull / push, stash, worktrees, history)', gitView);
+        await js('document.querySelector(".dock .rv-git .rv-bar .btn")?.click()');
+        await sleep(300);
+        // ··· 搜索 → 文件 in search mode
+        await openHeaderMenu();
+        await click('.menu.sess-menu [data-view="search"]');
+        const search = await waitFor('document.querySelector(".dock .dock-tabs .tab.active")?.dataset.panel === "explorer" && !!document.querySelector(".dock .files-view .fv-body:not([hidden]) .search-view")', 5000);
+        check('··· 搜索 opens 文件 in search mode', search);
+        // 「更多」: the extra tier as temporary tabs with a ×
+        await click('.dock .dock-more > .icon-btn');
+        const more = await js(`[...document.querySelectorAll('.dock-more-menu [data-panel]')].map((b) => b.dataset.panel)`);
+        check('「更多」 lists the extra panels (目标 / 编排 / 用量 / 详情 / Issue 与 PR)', ['goals', 'orchestra', 'usage', 'inspector', 'board'].every((p) => more.includes(p)) && !more.includes('files'), JSON.stringify(more));
+        await js(`document.querySelector('.dock-more-menu [data-panel="goals"]')?.click()`);
+        const temp = await waitFor('!!document.querySelector(".dock .dock-tabs .tab.active:not(.fixed)[data-panel=goals] .x")', 3000);
+        await click('.dock .dock-tabs .tab[data-panel="goals"] .x');
+        const closed = await waitFor('!document.querySelector(".dock .dock-tabs .tab[data-panel=goals]")', 3000);
+        check('a temporary tab opens from 「更多」 and its × closes it', temp && closed);
+        if (E.SMOKE_READONLY !== '1') {
+          // the terminal is never remounted: switching tabs, hiding the panel, flipping the workbench tools
+          await click('.dock .dock-tabs .tab[data-panel="terminal"]');
+          const xt = await waitFor('!!document.querySelector(".dock .xterm")', 8000);
+          await js('document.querySelector(".dock .xterm").dataset.smokeMark = "1"');
+          await click('.dock .dock-tabs .tab[data-panel="files"]');
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+          await sleep(300);
+          await js('window.__store.getState().setSetting("ui.workbench", true)');
+          await sleep(500);
+          await js('window.__store.getState().setSetting("ui.workbench", false)');
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: true } })`);
+          await sleep(500);
+          const kept = await js('document.querySelector(".dock .xterm")?.dataset.smokeMark === "1" && document.querySelector(".dock .rv-scope .t")?.textContent === "未提交的改动"');
+          check('switching tabs / hiding / the workbench setting keep the terminal (same xterm) and the review’s scope', xt && kept, await js(dockState));
+          // default mode: toggling a fixed tab hides the panel, the tab stays mounted
+          await js(`window.__store.getState().togglePanel('files')`);
+          await sleep(300);
+          const hid = await js('(() => { const d = window.__store.getState().layout.dock; return !d.open && d.tabs.includes("files"); })()');
+          check('toggling 审阅 in view hides the right panel and keeps its tab', hid, await js(dockState));
+        }
+        const err3 = await noBoundary('.dock');
+        check('right panel checks without error boundary', !err3, err3);
       }
 
       // ---- error boundary probe: a crash in one settings section stays in that section, 重试 recovers it
