@@ -1351,3 +1351,29 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
 .cmdk .it .dir { flex: none; max-width: 22%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font-size: 12px; padding: 0 6px; border-radius: var(--r-sm); background: var(--surface-2); }
 .deleted-banner { display: flex; align-items: center; gap: 6px; margin: 6px 12px 0; padding: 6px 10px; border: 1px solid color-mix(in oklab, var(--err) 40%, transparent); background: var(--err-soft); border-radius: var(--r-lg); color: var(--ink-1); font-size: var(--fs-sm); }
 .deleted-banner svg { color: var(--err); flex: none; }
+
+/* ---- model gateway (settings → 模型网关) ---- */
+.gw-endpoint { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--edge-subtle); border-radius: var(--r-lg); background: var(--surface-1); display: flex; flex-direction: column; gap: 6px; }
+.gw-kv { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gw-kv > .muted { min-width: 36px; font-size: 12px; }
+.gw-kv code, .gw-group-head code { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.gw-group { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--edge-default); border-radius: var(--r-xl); background: var(--surface-1); display: flex; flex-direction: column; gap: 10px; }
+.gw-group-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gw-members { display: flex; flex-direction: column; gap: 4px; }
+.gw-member { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--edge-subtle); border-radius: var(--r-lg); background: var(--surface-0); }
+.gw-member.dragging { opacity: .45; }
+.gw-member:hover { background: var(--layer-hover); }
+.gw-member .grow, .gw-group-head .grow, .gw-actions .grow { flex: 1; min-width: 0; }
+.gw-member .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gw-grip { color: var(--ink-4); cursor: grab; display: inline-flex; }
+.gw-order { font-family: var(--mono); font-size: 11px; color: var(--ink-3); width: 14px; text-align: right; }
+.gw-add { align-self: flex-start; margin-top: 2px; width: auto !important; }
+.gw-group-head select.field, .gw-actions select.field { width: auto !important; flex: none; }
+.gw-group-head input.field { flex: none; }
+.gw-map { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.gw-map-row { display: flex; align-items: center; gap: 6px; color: var(--ink-3); }
+.gw-map-row .field { width: 190px; font-family: var(--mono); font-size: 12px; }
+.gw-actions { display: flex; align-items: center; gap: 8px; }
+.gw-test { font-size: 12px; padding: 6px 10px; border-radius: var(--r-md); background: var(--surface-2); overflow-wrap: anywhere; }
+.gw-test.ok { color: var(--ok); }
+.gw-test.err { color: var(--err); }

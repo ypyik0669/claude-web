@@ -150,4 +150,16 @@ describe('CodexDriver (mock app-server)', () => {
     expect(tr.tool_use_result.stdout).toBe('hi\n');
     await d.close();
   });
+
+  it('a model outside model/list is swapped for the default — except behind the model gateway', async () => {
+    const args = [path.join(here, '__mocks__', 'codex-server.mjs')];
+    const plain = new CodexDriver('codex', { command: process.execPath, args, env: {}, name: 'Mock' }, { cwd: tmp, permissionMode: 'default', model: 'claude-sonnet-4-5' }, transcripts);
+    await waitFor(() => plain.state === 'idle');
+    expect(plain.info.model).toBe('gpt-5-codex');
+    await plain.close();
+    const viaGw = new CodexDriver('codex', { command: process.execPath, args, env: { CW_GATEWAY_KEY: 'cwg-x' }, name: 'Mock' }, { cwd: tmp, permissionMode: 'default', model: 'claude-sonnet-4-5' }, transcripts);
+    await waitFor(() => viaGw.state === 'idle');
+    expect(viaGw.info.model).toBe('claude-sonnet-4-5');
+    await viaGw.close();
+  });
 });

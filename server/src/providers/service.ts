@@ -3,6 +3,7 @@ import { CLAUDE_PROVIDER_ID, type Provider, type ProviderType, type RuntimeKind 
 import type { MetaStore } from '../meta/store.js';
 import { resolveEngine, runClaudeCli } from '../claude-exe.js';
 import type { SecretService } from '../secrets/service.js';
+import { CODEX_KEY_ENV, codexGatewayArgs, geminiApiKeyEnv } from '../gateway/agents.js';
 
 /** Mask an API key for the wire: keep prefix + last 4 chars. */
 export function maskKey(k: string | undefined): string {
@@ -19,13 +20,17 @@ export function publicProvider(p: Provider): Provider {
  * Map a provider profile to the env the runtime reads. Only what the CLI needs — the profile itself never
  * touches ~/.claude/settings.json, so the claude.ai login keeps working for sessions without a provider.
  */
-export function providerEnv(p: Provider): Record<string, string> {
+export function providerEnv(p: Provider, agent: 'claude' | 'codex' | 'acp' = 'claude'): Record<string, string> {
+  if (p.type === 'gateway' && agent !== 'claude') return gatewayAgentEnv(p, agent);
   // Relays that fingerprint Claude Code (super-nb & co.) reject the `agent-sdk/x.y.z` User-Agent suffix the SDK
   // makes the CLI add. spawnClaude() strips that env when this marker is present, so the request looks like `claude -p`.
   // Same for the entrypoint tag: such relays accept the CLI's own default (`cli`) and reject `sdk-ts`.
   const env: Record<string, string> = { CLAUDE_WEB_PLAIN_UA: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' };
   const m = p.modelMap ?? {};
   switch (p.type) {
+    // the gateway speaks Anthropic to Claude Code and passes it through to Anthropic-type members unchanged,
+    // so the same fingerprint env (plain UA, entrypoint cli) matters here too
+    case 'gateway':
     case 'anthropic':
       env.ANTHROPIC_BASE_URL = p.baseUrl;
       env.ANTHROPIC_AUTH_TOKEN = p.apiKey; // Bearer — what relays like super-nb expect; official API keys work through it too
@@ -57,6 +62,19 @@ export function providerEnv(p: Provider): Record<string, string> {
       if (p.defaultModel) env.GROK_MODEL = p.defaultModel;
       break;
   }
+  return env;
+}
+
+/**
+ * A gateway profile for a non-Claude agent (baseUrl / apiKey already resolved by forSession): Codex talks the
+ * Responses API under `<group>/v1`; ACP agents get both the Gemini variables (Gemini CLI) and the OpenAI ones
+ * (Qwen Code and other OpenAI-compatible CLIs).
+ */
+function gatewayAgentEnv(p: Provider, agent: 'codex' | 'acp'): Record<string, string> {
+  const env: Record<string, string> = { OPENAI_BASE_URL: `${p.baseUrl}/v1`, OPENAI_API_KEY: p.apiKey };
+  if (agent === 'codex') env[CODEX_KEY_ENV] = p.apiKey; // read by the -c provider override (agentLaunch)
+  if (agent === 'acp') { env.GOOGLE_GEMINI_BASE_URL = p.baseUrl; env.GEMINI_API_KEY = p.apiKey; }
+  if (p.defaultModel) { env.OPENAI_MODEL = p.defaultModel; if (agent === 'acp') env.GEMINI_MODEL = p.defaultModel; }
   return env;
 }
 
@@ -123,6 +141,8 @@ export async function probeProvider(p: Pick<Provider, 'type' | 'baseUrl' | 'apiK
 
 export class ProviderService {
   private revealed = new Map<string, string>(); // stored (possibly encrypted) value -> plaintext
+  /** Set by the server once the model gateway is up: group id → local endpoint + gateway key (null = unavailable). */
+  gatewayEndpoint: ((groupId: string) => { baseUrl: string; key: string; runtime?: RuntimeKind } | null) | null = null;
   constructor(private meta: MetaStore, private secrets?: SecretService) {
     if (secrets) meta.secretCodec = { protect: async (plain, id) => { const enc = await secrets.protect(plain, id); this.revealed.set(enc, plain); return enc; } };
   }
@@ -158,9 +178,31 @@ export class ProviderService {
     if (!id || id === CLAUDE_PROVIDER_ID) return undefined;
     const p = this.meta.provider(id);
     if (!p) throw new Error(`供应商档案不存在：${id}`);
+    if (p.type === 'gateway') {
+      const ep = this.gatewayEndpoint?.(p.gatewayGroupId ?? '');
+      if (!ep) throw new Error(`供应商「${p.name}」走模型网关，但网关没有启用或组不存在（设置 → 模型网关）`);
+      // runtime: the profile's explicit choice, else what the group's relays need (GatewayService.needsOfficialClient)
+      return { ...p, baseUrl: ep.baseUrl, apiKey: ep.key, runtime: p.runtime ?? ep.runtime };
+    }
     if (!p.baseUrl && (p.type === 'anthropic' || p.type === 'openai')) throw new Error(`供应商「${p.name}」没有 Base URL`);
     if (!p.apiKey) throw new Error(`供应商「${p.name}」没有 API Key`);
     return { ...p, apiKey: this.plainKey(p) };
+  }
+  /** A gateway member: the profile with its plaintext key, or null when missing / undecryptable / itself a gateway. */
+  member(id: string): Provider | null {
+    const p = this.meta.provider(id);
+    if (!p || p.type === 'gateway') return null;
+    try { return { ...p, apiKey: this.plainKey(p) }; } catch { return null; }
+  }
+  /** Extra env + global args for a non-Claude agent session that picked a gateway profile (nothing for any other type). */
+  agentLaunch(id: string | undefined, agent: 'codex' | 'acp', kind?: string): { env: Record<string, string>; args: string[] } {
+    if (!id || id === CLAUDE_PROVIDER_ID || this.meta.provider(id)?.type !== 'gateway') return { env: {}, args: [] };
+    const p = this.forSession(id)!;
+    const env = providerEnv(p, agent);
+    // account logins must not win over the gateway: Codex gets its own provider, Gemini CLI a forced auth type
+    if (agent === 'codex') return { env, args: codexGatewayArgs(p.baseUrl, p.defaultModel) };
+    // the settings override is Gemini CLI's own mechanism; other ACP agents (Qwen Code…) only get the env
+    return { env: kind === 'gemini' ? { ...env, ...geminiApiKeyEnv() } : env, args: [] };
   }
   async upsert(p: Partial<Provider> & { id?: string }) {
     return publicProvider(await this.meta.upsertProvider(p));
@@ -171,6 +213,7 @@ export class ProviderService {
   /** Probe a saved profile (by id, keeps the stored key) or an unsaved draft; saves the model list on success. */
   async probe(id?: string, draft?: Partial<Provider>): Promise<ProbeResult> {
     const saved = id ? this.meta.provider(id) : undefined;
+    if ((draft?.type ?? saved?.type) === 'gateway') return { ok: false, models: [], error: '模型网关档案请在「设置 → 模型网关」里用组的「测试」按钮', ms: 0 };
     const key = draft?.apiKey && !draft.apiKey.includes('…') ? draft.apiKey : saved ? this.plainKey(saved) : '';
     const p = { type: draft?.type ?? saved?.type ?? 'anthropic', baseUrl: (draft?.baseUrl ?? saved?.baseUrl ?? '').trim(), apiKey: key.trim() } as Pick<Provider, 'type' | 'baseUrl' | 'apiKey'>;
     if (!p.apiKey) return { ok: false, models: [], error: '没有 API Key', ms: 0 };
