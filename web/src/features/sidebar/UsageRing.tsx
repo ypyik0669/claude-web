@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
 import type { LimitWindow } from '@shared';
@@ -23,23 +24,29 @@ export function Ring({ percent, size = 14 }: { percent: number; size?: number })
 
 /**
  * Account quota in the sidebar's bottom row (spec §4.2: the top bar's ring moved here). One ring for the window
- * closest to its limit + 「已用 N%」; the full 5h / 7d breakdown opens upwards on hover.
+ * closest to its limit + 「已用 N%」; the full 5h / 7d breakdown opens upwards on hover — in a portal, fixed to the
+ * viewport: the sidebar column clips its overflow (and is narrower than the tip).
  * The usage endpoint 429s readily and the server backs off for 15 minutes — no reading is not an alarm.
  */
 export function UsageRing() {
   const limits = useStore((s) => s.limits);
-  const [open, setOpen] = useState(false);
+  const [at, setAt] = useState<{ left: number; bottom: number } | null>(null);
+  const ref = useRef<HTMLSpanElement>(null);
+  const show = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setAt({ left: Math.max(8, Math.min(r.left, window.innerWidth - 300)), bottom: window.innerHeight - r.top + 6 });
+  };
   if (!limits) return null;
   if (!limits.ok) return <span className="quota unknown" title={limits.error ?? '暂时读不到账号额度'}>额度 –</span>;
   const worst = limits.windows.reduce<LimitWindow | null>((a, w) => (!a || w.percent > a.percent ? w : a), null);
   if (!worst) return null;
   const tone = worst.percent >= 90 ? 'crit' : worst.percent >= 70 ? 'hot' : '';
   return (
-    <span className={clsx('quota', tone)} onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} title={`${worst.label}: 已用 ${worst.percent}%`}>
+    <span ref={ref} className={clsx('quota', tone)} onMouseEnter={show} onMouseLeave={() => setAt(null)} title={`${worst.label}: 已用 ${worst.percent}%`}>
       <Ring percent={worst.percent} />
       <span className="pct">{limits.subscriptionType ? `${limits.subscriptionType} · ` : ''}已用 {worst.percent}%</span>
-      {open && (
-        <div className="tip up">
+      {at && createPortal(
+        <div className="tip up quota-tip" style={{ position: 'fixed', left: at.left, bottom: at.bottom, top: 'auto', right: 'auto', margin: 0 }}>
           <div className="label" style={{ marginBottom: 6 }}>账号额度{limits.subscriptionType ? ` · ${limits.subscriptionType}` : ''}</div>
           {limits.windows.map((w) => (
             <div key={w.label} className="row" style={{ justifyContent: 'space-between', gap: 12, padding: '3px 0' }}>
@@ -48,7 +55,8 @@ export function UsageRing() {
             </div>
           ))}
           <div style={{ color: 'var(--ink-4)', fontSize: 'var(--fs-meta)', marginTop: 6 }}>每 90 秒刷新 · 来源 api.anthropic.com/api/oauth/usage</div>
-        </div>
+        </div>,
+        document.body,
       )}
     </span>
   );

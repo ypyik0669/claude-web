@@ -79,7 +79,7 @@ function SessionRow({ s, menu, setMenu, sel }: { s: SessionSummary; menu: string
       className={clsx('sess', activeId === s.sessionId && !sel.on && 'active', checked && 'checked', archived && 'archived', s.peer?.offline && 'offline')}
       {...handlers}
       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu(s.sessionId); }}
-      onClickCapture={() => { if (!sel.on && window.matchMedia('(max-width: 760px)').matches) setTimeout(() => useStore.setState({ sidebarOpen: false }), 50); }}
+      onClickCapture={() => { if (!sel.on && useStore.getState().mobile) setTimeout(() => useStore.setState({ sidebarOpen: false }), 50); }}
       title={sel.on ? s.title : `${s.firstPrompt ?? s.title}${s.peer ? `\n在机器「${s.peer.name}」上${s.peer.offline ? '（离线，只读）' : ''}` : ''}\n点击打开 · Ctrl/中键新标签 · 右键菜单 · 可拖到窗格`}
     >
       {sel.on ? (
@@ -264,7 +264,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
       <div className="sb-nav">
         <button className={clsx('nav', !activeId && 'active')} onClick={onNew}><span className="ic"><Icon name="plus" size={15} /></span>新会话<span className="k kbd">{desktop ? `${modKey} N` : 'Alt N'}</span></button>
         <button className="nav" onClick={() => useStore.setState({ paletteOpen: true })}><span className="ic"><Icon name="command" size={15} /></span>命令 / 搜索<span className="k kbd">{modKey} K</span></button>
-        <button className={clsx('nav', panelOn('config') && 'active')} onClick={() => useStore.getState().openSettings()} onContextMenu={(e) => { e.preventDefault(); togglePanel('config'); }} title={`设置 (${modKey}+,) · 右键：停靠面板`}><span className="ic"><Icon name="settings" size={15} /></span>设置<span className="k kbd">{modKey} ,</span></button>
+        <button className={clsx('nav', panelOn('config') && 'active')} onClick={() => useStore.getState().openSettings()} onContextMenu={(e) => { e.preventDefault(); togglePanel('config'); }} title={`设置 (${modKey}+,) · 右键：在右侧面板打开`}><span className="ic"><Icon name="settings" size={15} /></span>设置<span className="k kbd">{modKey} ,</span></button>
         <button className={clsx('nav', panelOn('usage') && 'active')} onClick={() => togglePanel('usage')}><span className="ic"><Icon name="usage" size={15} /></span>用量</button>
       </div>
       {pending.length > 0 && <DiscoveryBanner pending={pending} />}

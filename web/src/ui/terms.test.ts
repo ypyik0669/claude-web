@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EffortLevel, PermissionMode } from '@shared';
-import { EFFORT_DESC, EFFORT_LABEL, MODE_LABEL, PERMISSION_MODES, PERMISSION_MODE_ORDER, ULTRACODE, WORKBENCH_VIEW_LABEL, effortLabel, effortTitle } from './terms';
+import { EFFORT_DESC, EFFORT_LABEL, MODE_LABEL, PERMISSION_MODES, PERMISSION_MODE_ORDER, PHONE_NO_PANEL, ULTRACODE, WORKBENCH_VIEW_LABEL, effortLabel, effortTitle, panelToggleLabel } from './terms';
 import { WORKBENCH_TABS } from '@/model/layout';
 
 const EFFORTS: EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
@@ -62,5 +62,14 @@ describe('workbench views', () => {
   it('every workbench tab has a user-facing name', () => {
     for (const t of WORKBENCH_TABS) expect(WORKBENCH_VIEW_LABEL[t]).toBeTruthy();
     expect(WORKBENCH_VIEW_LABEL.artifacts).toBe('生成的文件');
+  });
+});
+
+describe('right-panel toggle labels say what the toggle does (I6)', () => {
+  it('open / hide (terminal keeps running) / close', () => {
+    expect(panelToggleLabel('show', '终端')).toBe('打开终端面板');
+    expect(panelToggleLabel('hide', '终端')).toMatch(/^隐藏终端面板/);
+    expect(panelToggleLabel('remove', '文件改动')).toBe('关闭文件改动面板');
+    expect(PHONE_NO_PANEL).not.toMatch(IMPL);
   });
 });

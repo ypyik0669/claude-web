@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useStore } from '@/store';
 import { Sidebar } from '@/features/sidebar/Sidebar';
 import { Workbench } from '@/features/workbench/Workbench';
@@ -18,6 +18,10 @@ import { Icon } from '@/ui/icons';
 import { installOrchestra } from '@/features/orchestra/state';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { chromeVisibility, workbenchOn } from '@/model/layout';
+import { MOBILE_QUERY } from '@/ui/viewport';
+
+/** Width of the right panel minimized to its icon rail. */
+const MIN_RAIL = 36;
 
 function Toasts() {
   const toasts = useStore((s) => s.toasts);
@@ -52,12 +56,13 @@ function SidebarColumn() {
   );
 }
 
-const MOBILE = window.matchMedia('(max-width: 760px)');
+const MOBILE = window.matchMedia(MOBILE_QUERY);
 
 export function App() {
   const sidebarOpen = useStore((s) => s.sidebarOpen);
-  const [mobile, setMobile] = useState(MOBILE.matches);
-  useEffect(() => { const on = () => setMobile(MOBILE.matches); MOBILE.addEventListener('change', on); return () => MOBILE.removeEventListener('change', on); }, []);
+  // phone width lives in the store: the workbench chrome, the session header and the panel commands all follow it
+  const mobile = useStore((s) => s.mobile);
+  useEffect(() => { const on = () => useStore.setState({ mobile: MOBILE.matches }); on(); MOBILE.addEventListener('change', on); return () => MOBILE.removeEventListener('change', on); }, []);
   useEffect(() => { if (mobile) useStore.setState({ sidebarOpen: false }); }, [mobile]);
   useEffect(() => installOrchestra(), []);
   const sbWidth = useStore((s) => s.layout.sidebar.width);
@@ -65,7 +70,7 @@ export function App() {
   const inspect = useStore((s) => s.inspect);
   const dispatchLayout = useStore((s) => s.dispatchLayout);
   const dockShown = dock.open && (dock.tabs.length > 0 || !!inspect);
-  const rpWidth = !dockShown ? 0 : dock.minimized ? 36 : dock.width;
+  const rpWidth = !dockShown ? 0 : dock.minimized ? MIN_RAIL : dock.width;
 
   // desktop caption buttons (Windows / Linux overlay) are painted in one colour: match whatever row is under them —
   // the page (--bg) when the session header / empty page is there, the side surface (--bg-1) for the right panel's
@@ -74,7 +79,7 @@ export function App() {
   const sideSurface = useStore((s) => {
     const vis = chromeVisibility(s.layout, { workbench: workbenchOn(s.settings) });
     return vis.groupBar || Object.values(vis.tabStrip).some(Boolean);
-  }) || rpWidth > 0;
+  }) || rpWidth > MIN_RAIL;
   useEffect(() => {
     const d = desktop;
     if (!d) return;
@@ -121,13 +126,14 @@ export function App() {
   }, []);
 
   return (
-    // `dock-open`: the right panel owns the window's top-right corner (desktop caption buttons sit over its tab row)
-    <div className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', mobile && sidebarOpen && 'drawer-open', rpWidth > 0 && !mobile && 'dock-open')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px` }}>
+    // `dock-open`: the right panel owns the window's top-right corner (desktop caption buttons sit over its tab row).
+    // Not when it is minimized to its 36px icon rail: the buttons then cover the workbench's top-right row as well.
+    <div className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', mobile && sidebarOpen && 'drawer-open', rpWidth > MIN_RAIL && !mobile && 'dock-open')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px` }}>
       {mobile && sidebarOpen && <div className="drawer-backdrop" onClick={() => useStore.setState({ sidebarOpen: false })} />}
       {sidebarOpen ? <SidebarColumn /> : <div className="sidebar" style={{ display: 'none' }} />}
       <ErrorBoundary area="工作台"><Workbench /></ErrorBoundary>
       <div className="rpanel" style={{ display: rpWidth ? 'flex' : 'none' }}>
-        <ErrorBoundary area="停靠面板"><Dock /></ErrorBoundary>
+        <ErrorBoundary area="右侧面板"><Dock /></ErrorBoundary>
       </div>
       <ErrorBoundary area="通知" floating><Toasts /></ErrorBoundary>
       <ErrorBoundary area="命令面板" floating><CommandPalette /></ErrorBoundary>

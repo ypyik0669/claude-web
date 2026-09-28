@@ -118,6 +118,22 @@ export function TabStrip({ pane, groupId, index, zoomed, single, lead, workbench
   );
 }
 
+/** Phone only: the one row above a non-conversation tile (the tab strip never shows on a phone). */
+export function MobileTileBar({ paneId, tile }: { paneId: string; tile: Tile }) {
+  const sessions = useStore((s) => s.sessions);
+  const dirty = useStore((s) => !!s.dirtyDocs[tile.id]);
+  const closeTile = useStore((s) => s.closeTile);
+  const { icon, text } = tileTitle(tile, sessions);
+  return (
+    <div className="mobile-tilebar">
+      <SidebarReveal />
+      <span className="ic"><Icon name={icon} size={14} /></span>
+      <span className="t" title={text}>{text}{dirty ? ' •' : ''}</span>
+      <button className="icon-btn" title="关闭" aria-label="关闭" onClick={() => closeTile(paneId, tile.id)}><Icon name="close" size={16} /></button>
+    </div>
+  );
+}
+
 function currentCwd(pane: PaneModel, open: Record<string, { cwd: string }>): string {
   const t = pane.tiles.find((x) => x.id === pane.activeTileId) ?? pane.tiles[0];
   if (t?.kind === 'chat' && t.sessionId) return open[t.sessionId]?.cwd ?? '';

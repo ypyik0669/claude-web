@@ -15,7 +15,8 @@ import { reopenSettings } from './reopen';
 import { parseLibraryId } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { DEFAULT_THEME, applyUiSettings, resolveTheme, setSystemThemeHandler } from '@/features/settings/ui-settings';
-import { SIMPLIFIED_NOTICE } from '@/ui/terms';
+import { PHONE_NO_PANEL, SIMPLIFIED_NOTICE } from '@/ui/terms';
+import { MOBILE_QUERY } from '@/ui/viewport';
 
 export type PanelId = import('@/model/layout').PanelId;
 
@@ -54,6 +55,8 @@ interface State {
   tab: 'chat' | 'trajectory';
   panels: PanelId[];
   sidebarOpen: boolean;
+  /** Phone-width window (≤ 760px, spec §5.11): no workbench chrome, no right panel. Set by App from a media query. */
+  mobile: boolean;
   inspect: { sessionId: string; toolUseId?: string; file?: { path: string; line?: number } } | null;
   theme: Theme;
   toasts: { id: number; text: string; ok?: boolean }[];
@@ -242,6 +245,7 @@ export const useStore = create<State>((set, get) => ({
     });
   },
   sidebarOpen: true,
+  mobile: typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia(MOBILE_QUERY).matches,
   inspect: null,
   // cached resolved theme until meta.json arrives; a first run follows the system (spec §6: default = 跟随系统)
   theme: (localStorage.getItem('cw.theme') as Theme) || resolveTheme(DEFAULT_THEME),
@@ -720,6 +724,8 @@ export const useStore = create<State>((set, get) => ({
     get().openInPane(id, 'replace');
   },
   togglePanel(p) {
+    // the right panel is not drawn on a phone: opening a tab there would start things (a terminal pty) nobody sees
+    if (get().mobile) { get().toast(PHONE_NO_PANEL); return; }
     get().dispatchLayout({ t: 'dock.toggle', panel: p });
   },
   setTab(tab) {

@@ -1,9 +1,9 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useStore } from '@/store';
 import { PaneContext } from '@/store/paneContext';
 import { chatTile, type Pane as PaneModel, type Rect } from '@/model/layout';
 import { clsx } from '@/util';
-import { TabStrip } from './TabStrip';
+import { MobileTileBar, TabStrip } from './TabStrip';
 import { Tile } from './Tile';
 import { MIME_PANEL, MIME_SESSION, MIME_TILE, hasType, tilePayload, zoneAt, type DropZone } from './dnd';
 import { PaneEdgeContext } from './pane-edge';
@@ -54,11 +54,14 @@ export function Pane({ pane, groupId, index, rect, edges, strip, workbench, pane
       else dispatch({ t: 'pane.split', paneId: pane.id, dir, tile, before });
     }
   };
+  const mobile = useStore((s) => s.mobile);
   const style: React.CSSProperties = { left: rect.x, top: rect.y, width: rect.w, height: rect.h, visibility: hidden ? 'hidden' : undefined };
   const lead = edges.top && edges.left;
+  // one object per (lead, strip): every tile header below reads it, a fresh literal would re-render them all
+  const edge = useMemo(() => ({ lead, strip }), [lead, strip]);
   return (
     <PaneContext.Provider value={{ paneId: pane.id, tileId: active?.id ?? '', sessionId }}>
-      <PaneEdgeContext.Provider value={{ lead, strip }}>
+      <PaneEdgeContext.Provider value={edge}>
       <div
         className={clsx('pane', focused && 'focused', zoomed && 'zoomed', strip && 'tabs')}
         data-top={edges.top || undefined}
@@ -75,6 +78,9 @@ export function Pane({ pane, groupId, index, rect, edges, strip, workbench, pane
       >
         {/* the strip is chrome: it comes and goes (chromeVisibility); the tiles below never unmount for it */}
         {strip && <TabStrip pane={pane} groupId={groupId} index={index} zoomed={zoomed} single={single} lead={lead} workbench={workbench} paneCount={paneCount} />}
+        {/* phone: no tab strip ever (spec §5.11); a document / terminal / browser in front still gets one row with
+            ☰ · its name · close, since it has no conversation header of its own */}
+        {mobile && !strip && active && active.kind !== 'chat' && <MobileTileBar paneId={pane.id} tile={active} />}
         <div className="pane-content">
           {pane.tiles.map((t) => (
             <div key={t.id} className="tile-slot" style={{ display: t.id === active?.id ? undefined : 'none' }}>

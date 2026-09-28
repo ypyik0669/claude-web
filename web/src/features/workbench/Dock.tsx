@@ -23,7 +23,7 @@ export const DOCK_DEFAULT_WIDTH = 440;
 /** A panel with its own error boundary: one broken panel does not blank the dock (or the tile it sits in). */
 export function PanelBody({ id, visible }: { id: PanelId; visible: boolean }) {
   return (
-    <ErrorBoundary area={`停靠面板 · ${PANEL_TITLES[id] ?? id}`}>
+    <ErrorBoundary area={`右侧面板 · ${PANEL_TITLES[id] ?? id}`}>
       <PanelContent id={id} visible={visible} />
     </ErrorBoundary>
   );
@@ -108,10 +108,10 @@ export function Dock() {
           </div>
         ))}
         <span className="grow" />
-        <button className="icon-btn" title={min ? '还原停靠面板 (Ctrl+Shift+J)' : '最小化 (Ctrl+Shift+J)'} onClick={() => dispatch({ t: 'dock.set', patch: { minimized: !min } })}>
+        <button className="icon-btn" title={min ? '还原右侧面板 (Ctrl+Shift+J)' : '最小化 (Ctrl+Shift+J)'} onClick={() => dispatch({ t: 'dock.set', patch: { minimized: !min } })}>
           <Icon name={min ? 'restore' : 'minimize'} size={16} />
         </button>
-        {!min && <button className="icon-btn" title="隐藏停靠面板 (Ctrl+J)" onClick={() => dispatch({ t: 'dock.set', patch: { open: false } })}><Icon name="close" size={15} /></button>}
+        {!min && <button className="icon-btn" title="隐藏右侧面板 (Ctrl+J)" onClick={() => dispatch({ t: 'dock.set', patch: { open: false } })}><Icon name="close" size={15} /></button>}
       </div>
       <div className="dock-body">
         {tabs.map((id) => (

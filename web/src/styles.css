@@ -17,8 +17,8 @@
   --line-1: #3a3a37;
   --fg: #ececea;
   --fg-1: #b9b9b4;
-  --fg-2: #8a8a84;
-  --fg-3: #6b6b66;       /* 3.2:1 on --bg: placeholders, timestamps, key hints */
+  --fg-2: #8e8e88;
+  --fg-3: #767671;       /* ≥ 3:1 on every surface incl. menus: placeholders, timestamps, key hints */
   --accent: #d97757;     /* brand mark, focus ring, selection indicator — not buttons */
   --accent-fg: #fff;
   --accent-soft: rgba(217, 119, 87, 0.14);
@@ -34,7 +34,7 @@
   color-scheme: dark;
 }
 :root[data-theme='light'] {
-  /* paper-white page + neutral light-grey sidebar; state colours re-tuned for white (≥ 4.5:1 on --bg and --bg-1) */
+  /* paper-white page + neutral light-grey sidebar; state colours re-tuned for white (≥ 4.5:1 on --bg, --bg-1 and --bg-2) */
   --bg: #ffffff;
   --bg-1: #f8f8f7;
   --bg-2: #f1f1ef;
@@ -45,24 +45,24 @@
   --fg: #1b1b1a;
   --fg-1: #474744;
   --fg-2: #6b6b66;
-  --fg-3: #8e8e88;
+  --fg-3: #85857f;
   --accent-soft: rgba(217, 119, 87, 0.12);
   --primary: #1b1b1a;
   --primary-fg: #ffffff;
   --user-bg: #f2f2f0;
-  --green: #187a42;
-  --red: #c63d33;
-  --yellow: #9a6412;
-  --blue: #2b68e0;
+  --green: #177540;
+  --red: #c23a30;
+  --yellow: #8f5c0e;
+  --blue: #2862d6;
   --shade: 60, 60, 56;
   --shade-a: 0.3;
   color-scheme: light;
 }
 /* the other themes keep their own accent as the primary colour */
-:root[data-theme='dracula'] { --bg: #282a36; --bg-1: #2c2e3b; --bg-2: #343746; --bg-3: #44475a; --bg-elev: #3b3e50; --line: #3a3d4d; --line-1: #4b4f63; --fg: #f8f8f2; --fg-1: #c9cbd6; --fg-2: #8b8fa3; --fg-3: #6272a4; --accent: #bd93f9; --accent-soft: rgba(189,147,249,.16); --primary: var(--accent); --primary-fg: #282a36; --user-bg: #343746; --green: #50fa7b; --red: #ff5555; --yellow: #f1fa8c; --blue: #8be9fd; }
-:root[data-theme='nord'] { --bg: #2e3440; --bg-1: #333a48; --bg-2: #3b4252; --bg-3: #434c5e; --bg-elev: #414a5b; --line: #3b4252; --line-1: #4c566a; --fg: #eceff4; --fg-1: #d8dee9; --fg-2: #9aa5b8; --fg-3: #6d778a; --accent: #88c0d0; --accent-fg: #2e3440; --accent-soft: rgba(136,192,208,.16); --primary: var(--accent); --primary-fg: var(--accent-fg); --user-bg: #3b4252; --green: #a3be8c; --red: #bf616a; --yellow: #ebcb8b; --blue: #81a1c1; }
-:root[data-theme='tokyo-night'] { --bg: #1a1b26; --bg-1: #1f2030; --bg-2: #24283b; --bg-3: #2f3349; --bg-elev: #2b2f45; --line: #262a3d; --line-1: #363b54; --fg: #c0caf5; --fg-1: #a9b1d6; --fg-2: #737aa2; --fg-3: #565f89; --accent: #7aa2f7; --accent-fg: #1a1b26; --accent-soft: rgba(122,162,247,.16); --primary: var(--accent); --primary-fg: var(--accent-fg); --user-bg: #24283b; --green: #9ece6a; --red: #f7768e; --yellow: #e0af68; --blue: #7dcfff; }
-:root[data-theme='paper'] { --bg: #f7f3ea; --bg-1: #f1ece1; --bg-2: #e9e3d6; --bg-3: #ddd6c6; --bg-elev: #fffdf6; --line: #e2dccd; --line-1: #cfc7b4; --fg: #2b2620; --fg-1: #574f44; --fg-2: #8a8172; --fg-3: #b3aa9a; --accent: #b5563a; --accent-soft: rgba(181,86,58,.12); --primary: var(--accent); --primary-fg: #fff; --user-bg: #ece5d5; --shade: 92, 78, 56; --shade-a: 0.3; color-scheme: light; }
+:root[data-theme='dracula'] { --bg: #282a36; --bg-1: #2c2e3b; --bg-2: #343746; --bg-3: #44475a; --bg-elev: #3b3e50; --line: #3a3d4d; --line-1: #4b4f63; --fg: #f8f8f2; --fg-1: #c9cbd6; --fg-2: #a0a4ba; --fg-3: #7d88b0; --accent: #bd93f9; --accent-soft: rgba(189,147,249,.16); --primary: var(--accent); --primary-fg: #282a36; --user-bg: #343746; --green: #50fa7b; --red: #ff7b7b; --yellow: #f1fa8c; --blue: #8be9fd; }
+:root[data-theme='nord'] { --bg: #2e3440; --bg-1: #333a48; --bg-2: #3b4252; --bg-3: #434c5e; --bg-elev: #414a5b; --line: #3b4252; --line-1: #4c566a; --fg: #eceff4; --fg-1: #d8dee9; --fg-2: #a7b1c2; --fg-3: #8e98ab; --accent: #88c0d0; --accent-fg: #2e3440; --accent-soft: rgba(136,192,208,.16); --primary: var(--accent); --primary-fg: var(--accent-fg); --user-bg: #3b4252; --green: #a3be8c; --red: #ee969d; --yellow: #ebcb8b; --blue: #81a1c1; }
+:root[data-theme='tokyo-night'] { --bg: #1a1b26; --bg-1: #1f2030; --bg-2: #24283b; --bg-3: #2f3349; --bg-elev: #2b2f45; --line: #262a3d; --line-1: #363b54; --fg: #c0caf5; --fg-1: #a9b1d6; --fg-2: #8f96bd; --fg-3: #7780a8; --accent: #7aa2f7; --accent-fg: #1a1b26; --accent-soft: rgba(122,162,247,.16); --primary: var(--accent); --primary-fg: var(--accent-fg); --user-bg: #24283b; --green: #9ece6a; --red: #f7768e; --yellow: #e0af68; --blue: #7dcfff; }
+:root[data-theme='paper'] { --bg: #f7f3ea; --bg-1: #f1ece1; --bg-2: #e9e3d6; --bg-3: #ddd6c6; --bg-elev: #fffdf6; --line: #e2dccd; --line-1: #cfc7b4; --fg: #2b2620; --fg-1: #574f44; --fg-2: #6f6758; --fg-3: #877e6e; --accent: #b5563a; --accent-soft: rgba(181,86,58,.12); --primary: var(--accent); --primary-fg: #fff; --user-bg: #ece5d5; --green: #2e6b33; --red: #a83a28; --yellow: #80560d; --blue: #2c5aa8; --shade: 92, 78, 56; --shade-a: 0.3; color-scheme: light; }
 
 /* ---- derived (theme-independent; reads the primitives above) ---- */
 :root {
@@ -678,6 +678,11 @@ input.field:focus { border-color: var(--ink-3); }
 .quota.crit { color: var(--err); }
 .quota .tip { left: auto; right: 0; }
 .tip.up { top: auto; bottom: 100%; margin: 0 0 6px; }
+.quota-tip { z-index: 1000; pointer-events: none; }
+/* phone: the one row above a document / terminal / browser (the tab strip never shows there) */
+.mobile-tilebar { display: flex; align-items: center; gap: var(--sp-1); height: var(--h-head); padding: 0 var(--sp-2); border-bottom: 1px solid var(--edge-subtle); flex: none; background: var(--surface-0); }
+.mobile-tilebar .ic { display: inline-flex; color: var(--ink-4); }
+.mobile-tilebar .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--ink-1); }
 .sb-foot .quota .tip { left: 0; right: auto; }
 .tip { position: absolute; top: 100%; right: 0; margin-top: 6px; background: var(--surface-elev); border: 1px solid var(--edge-strong); border-radius: var(--r-xl); padding: 10px 12px; box-shadow: var(--elev-2); z-index: 40; min-width: 260px; font-size: 12.5px; }
 .tip .row { padding: 4px 0; }
@@ -1476,11 +1481,18 @@ html.desktop .dock-tabs .tab, html.desktop .dock-tabs button,
 html.desktop .tabstrip .tab, html.desktop .tabstrip button, html.desktop .tabstrip .menu,
 html.desktop .sess-head button, html.desktop .sess-head input, html.desktop .sess-head .menu,
 html.desktop .welcome-top button { -webkit-app-region: no-drag; }
+/* a drag region swallows the mouse: the title (double-click renames) and anything carrying a tooltip must not drag */
+html.desktop .sess-head .sh-title, html.desktop .sess-head .sh-meta > *, html.desktop .sess-head [title],
+html.desktop .tabstrip [title], html.desktop .groupbar [title], html.desktop .dock-tabs [title],
+html.desktop .mobile-tilebar [title] { -webkit-app-region: no-drag; }
 html.desktop:not(.mac) .app:not(.dock-open) .groupbar,
 html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .pane[data-top][data-right] > .tabstrip,
 html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .pane[data-top][data-right]:not(.tabs) .sess-head,
 html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .pane[data-top][data-right]:not(.tabs) .welcome-top,
-html.desktop:not(.mac) .app.dock-open .dock-tabs { padding-right: 150px; }
+html.desktop:not(.mac) .app.dock-open .dock:not(.min) .dock-tabs { padding-right: 150px; }
+/* minimized to its 36px icon strip, the right panel is under the caption buttons: its icons start below them
+   (and the workbench's top-right row makes room, since the app is not `.dock-open` then) */
+html.desktop:not(.mac) .dock.min .dock-tabs { padding-top: 40px; }
 html.desktop.mac .sb-top { padding-left: 84px; }
 html.desktop.mac .app.no-sidebar .groupbar,
 html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left] > .tabstrip,

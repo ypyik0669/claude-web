@@ -74,6 +74,17 @@ export const WORKBENCH_SETTING_PATH = '设置 → 界面';
 /** One-time toast for people who knew the old screen and land on the simplified one (ui.simplifiedNotice). */
 export const SIMPLIFIED_NOTICE = `界面已简化；需要分屏 / 标签 / 面板图标栏可在 ${WORKBENCH_SETTING_PATH} 打开「${TERMS.workbench}」`;
 
+/** A panel toggle on a phone, where the right panel is not drawn (spec §5.11; the bottom drawer comes in phase 7). */
+export const PHONE_NO_PANEL = `手机上没有${TERMS.dock}：改动 / Git / 文件在对话右上角的 ··· 里`;
+
+/**
+ * Palette / rail label for toggling a right-panel tab, from what the toggle will do (`panelToggleEffect`): the
+ * terminal is only hidden (its process keeps running), other panels close their tab.
+ */
+export function panelToggleLabel(effect: 'show' | 'hide' | 'remove', title: string): string {
+  return effect === 'show' ? `打开${title}面板` : effect === 'hide' ? `隐藏${title}面板（继续在后台运行）` : `关闭${title}面板`;
+}
+
 /** The per-session views that used to be the 8 workbench tabs (spec §4.2). */
 export const WORKBENCH_VIEW_LABEL: Record<WorkbenchTab, string> = {
   live: '对话',

@@ -459,6 +459,63 @@ function driver() {
           const off = await waitFor('!document.querySelector(".groupbar") && !document.querySelector(".dock-rail") && !document.querySelector(".pane .tabstrip")', 4000);
           check('workbench tools off: back to one row', off);
         }
+
+        // ---- review fixes (phase 0–1)
+        phase = 'session-review';
+        const paneTiles = `(() => { const st = window.__store.getState(); const g = st.layout.groups.find((x) => x.id === st.layout.activeGroupId); const p = g.panes[g.focusedPaneId]; return p.tiles.map((t) => t.kind === 'chat' ? 'chat:' + (t.sessionId || 'new') : t.kind + ':' + t.id).join(',') + '|' + p.activeTileId; })()`;
+        // header ··· hands over straight away: the agents (or the note that there are none) are in the menu itself
+        await click('.sess-head .sh-more > button');
+        const handoff = await js(`(() => { const m = document.querySelector('.menu.sess-menu'); if (!m) return null; return { label: [...m.querySelectorAll('.menu-label')].some((l) => l.textContent.includes('交给')), nested: !!m.querySelector('button[aria-expanded]') }; })()`);
+        check('header ··· lists the hand-over agents directly (no sub-menu)', handoff && handoff.label && !handoff.nested, JSON.stringify(handoff));
+        await js('document.body.click()');
+        await sleep(200);
+        // right panel minimized to its icon strip: the header button brings it back
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'tasks' }); window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { minimized: true } })`);
+        await sleep(300);
+        const expandBtn = await js(`!!document.querySelector('.sess-head button[aria-label="展开右侧面板"]')`);
+        await click('.sess-head button[aria-label="展开右侧面板"]');
+        const expanded = await waitFor('window.__store.getState().layout.dock.open && !window.__store.getState().layout.dock.minimized', 3000);
+        check('minimized right panel: the header button says 展开 and expands it', expandBtn && expanded, JSON.stringify({ expandBtn, expanded }));
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+        if (E.SMOKE_READONLY !== '1') {
+          // 新对话 (Alt+N) with a terminal in front: a new tab next to it, the terminal tile is untouched
+          await js(`window.__store.getState().openTile({ id: 'smoke-term', kind: 'term', cwd: ${JSON.stringify(E.SMOKE_REPO || '')} }, 'tab')`);
+          await waitFor('!!document.querySelector(".pane.focused .xterm")', 8000);
+          wc.focus();
+          wc.sendInputEvent({ type: 'keyDown', keyCode: 'N', modifiers: ['alt'] });
+          wc.sendInputEvent({ type: 'keyUp', keyCode: 'N', modifiers: ['alt'] });
+          await sleep(500);
+          const tiles = await js(paneTiles);
+          check('新对话 with a terminal in front opens a tab beside it (the terminal is not replaced)', /^chat:[^,]+,term:smoke-term,chat:new\|/.test(tiles), tiles);
+          await js(`(() => { const st = window.__store.getState(); const g = st.layout.groups.find((x) => x.id === st.layout.activeGroupId); const p = g.panes[g.focusedPaneId]; for (const t of p.tiles.slice(1)) st.dispatchLayout({ t: 'tile.close', paneId: p.id, tileId: t.id }); })()`);
+          await sleep(300);
+          check('back to the conversation alone', /^chat:[^,]+\|/.test(await js(paneTiles)), await js(paneTiles));
+
+          // phone width with the workbench tools on: still one row, 展开侧栏 opens the drawer, settings are reachable
+          phase = 'phone';
+          await js('window.__store.getState().setSetting("ui.workbench", true)');
+          win.setContentSize(740, 860);
+          const phone = await waitFor('document.querySelector(".app").classList.contains("mobile") && !document.querySelector(".groupbar") && !document.querySelector(".pane .tabstrip")', 4000);
+          const phoneHead = await js(`(() => { const h = document.querySelector('.pane .sess-head'); if (!h) return null; return { reveal: !!h.querySelector('.sb-reveal'), diff: !!h.querySelector('.sh-diff'), term: !!h.querySelector('button[aria-label="终端"]'), panel: !!h.querySelector('button[aria-label="右侧面板"], button[aria-label="展开右侧面板"]'), more: !!h.querySelector('.sh-more > button') }; })()`);
+          check('phone + workbench tools: no group bar / tab strip; header has 展开侧栏 and ··· but no 改动 / 终端 / 右侧面板', phone && phoneHead && phoneHead.reveal && phoneHead.more && !phoneHead.diff && !phoneHead.term && !phoneHead.panel, JSON.stringify({ phone, phoneHead }));
+          await shot('phone-workbench');
+          await click('.pane .sess-head .sb-reveal');
+          const drawer = await waitFor('document.querySelector(".app").classList.contains("drawer-open") && !!document.querySelector(".sidebar.has-resizer")', 3000);
+          check('phone: 展开侧栏 opens the sidebar drawer', drawer);
+          await shot('phone-drawer');
+          await click('.sidebar .nav[title^="设置"]');
+          const settings = await waitFor('!!document.querySelector(".modal.settings")', 3000);
+          check('phone: settings open from the sidebar', settings);
+          await js('window.__store.setState({ settingsOpen: null, sidebarOpen: false })');
+          const before = await js('JSON.stringify(window.__store.getState().layout.dock)');
+          await js(`window.__store.getState().togglePanel('terminal')`);
+          const after = await js('JSON.stringify(window.__store.getState().layout.dock)');
+          check('phone: a panel toggle opens nothing behind the screen', before === after, after);
+          win.setContentSize(1360, 860);
+          await js('window.__store.getState().setSetting("ui.workbench", false)');
+          await waitFor('!document.querySelector(".app").classList.contains("mobile") && !document.querySelector(".groupbar")', 4000);
+          await sleep(300);
+        }
         const err2 = await noBoundary('body');
         check('session chrome checks without error boundary', !err2, err2);
       }

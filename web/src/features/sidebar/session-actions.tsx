@@ -138,8 +138,10 @@ export function referenceSession(s: SessionSummary): void {
 /**
  * The session menu: the sidebar row's "…" / right-click, and the session header's "…".
  * `extra` lets the sidebar keep its own entries (open in tab / split, pin, explorer…).
+ * `handoffInline` lists the agents right in the menu instead of behind a sub-menu (the header's ···).
+ * `deleted`: the session is gone from its source — only `extra` (what works on the screen) and the id remain.
  */
-export function SessionMenu({ s, onClose, style, extra }: { s: SessionSummary; onClose: () => void; style?: React.CSSProperties; extra?: React.ReactNode }) {
+export function SessionMenu({ s, onClose, style, extra, handoffInline, deleted }: { s: SessionSummary; onClose: () => void; style?: React.CSSProperties; extra?: React.ReactNode; handoffInline?: boolean; deleted?: boolean }) {
   const meta = useStore((st) => st.sessionMeta[s.sessionId]) as SessionMeta | undefined;
   const agents = useStore((st) => st.agents);
   const [handoff, setHandoff] = useState(false);
@@ -184,25 +186,39 @@ export function SessionMenu({ s, onClose, style, extra }: { s: SessionSummary; o
   // an offline machine can't be read, so there is nothing to hand over
   const remote = !!s.peer;
   const targets = remote && s.peer?.offline ? [] : agents.filter((a) => a.installed !== false && a.enabled !== false && (remote || a.kind !== cur));
+  const handoffLabel = remote ? '交给本机的 Agent 继续' : TERMS.handoff;
+  const agentButtons = targets.map((a) => (
+    <button key={a.kind} onClick={act(() => (remote ? handOverToLocal(s, a.kind) : handOver(s, a.kind)))}><Icon name={AGENT_ICONS[a.kind] ?? 'agent'} size={13} /> {a.name}</button>
+  ));
   return (
     <div ref={ref} className="menu sess-menu" style={style ?? { right: 8, top: 28 }} onClick={(e) => e.stopPropagation()} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}>
       {extra}
+      {!deleted && <>
       <button onClick={act(() => referenceSession(s))}><Icon name="quote" size={14} /> 引用到输入框</button>
       {caps.rename && <button onClick={act(() => renameSession(s))}><Icon name="edit" size={14} /> 重命名</button>}
       {caps.fork && <button onClick={act(() => forkSession(s))}><Icon name="branch" size={14} /> 分叉</button>}
       {caps.archive && <button onClick={act(() => setArchived([s], !archived))}><Icon name="archive" size={14} /> {archived ? '取消归档' : '归档'}</button>}
-      <button onClick={() => setHandoff(!handoff)} aria-expanded={handoff}><Icon name="agent" size={14} /> <span style={{ flex: 1 }}>{remote ? '交给本机的 Agent 继续' : TERMS.handoff}</span><Icon name={handoff ? 'chevronDown' : 'chevronRight'} size={12} /></button>
-      {handoff && (
-        <div className="sub-menu">
-          {targets.map((a) => (
-            <button key={a.kind} onClick={act(() => (remote ? handOverToLocal(s, a.kind) : handOver(s, a.kind)))}><Icon name={AGENT_ICONS[a.kind] ?? 'agent'} size={13} /> {a.name}</button>
-          ))}
+      {handoffInline ? (
+        <>
+          <div className="menu-label">{handoffLabel}</div>
+          {agentButtons}
           {!targets.length && <div className="menu-note">没有其它可用的 agent</div>}
-        </div>
+        </>
+      ) : (
+        <>
+          <button onClick={() => setHandoff(!handoff)} aria-expanded={handoff}><Icon name="agent" size={14} /> <span style={{ flex: 1 }}>{handoffLabel}</span><Icon name={handoff ? 'chevronDown' : 'chevronRight'} size={12} /></button>
+          {handoff && (
+            <div className="sub-menu">
+              {agentButtons}
+              {!targets.length && <div className="menu-note">没有其它可用的 agent</div>}
+            </div>
+          )}
+        </>
       )}
       {cli && <button onClick={act(() => openNativeCli(s))} title={cli}><Icon name="terminal" size={14} /> 在原生 CLI 打开</button>}
+      </>}
       <button onClick={act(() => { void navigator.clipboard.writeText(s.sessionId); useStore.getState().toast('已复制 session id', true); })}><Icon name="copy" size={14} /> 复制 ID</button>
-      {caps.delete && <button className="danger" onClick={act(() => deleteSessions([s]))}><Icon name="trash" size={14} /> 删除…</button>}
+      {!deleted && caps.delete && <button className="danger" onClick={act(() => deleteSessions([s]))}><Icon name="trash" size={14} /> 删除…</button>}
     </div>
   );
 }

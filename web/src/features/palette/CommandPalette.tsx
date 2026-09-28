@@ -9,9 +9,9 @@ import { useOrch } from '@/features/orchestra/state';
 import { SHORTCUTS, keyLabel } from '@/features/workbench/shortcuts';
 import { runCommand } from '@/features/workbench/commands';
 import { viewCommands } from '@/features/workbench/wb-views';
-import { activeGroup } from '@/model/layout';
+import { currentChatTile, panelToggleEffect } from '@/model/layout';
 import { shareConversation } from '@/features/chat/MessageActions';
-import { TERMS } from '@/ui/terms';
+import { TERMS, panelToggleLabel } from '@/ui/terms';
 
 interface Cmd { id: string; label: string; sub?: string; ic?: IconName; group: string; run: () => void }
 
@@ -50,16 +50,18 @@ export function CommandPalette() {
     return () => { live = false; clearTimeout(t); };
   }, [q, open]);
 
-  // a view of the focused pane's conversation tile (the old workbench tabs)
+  // a view of the current conversation (the old workbench tabs): with a document / terminal in front, the
+  // conversation next to it is brought forward first — otherwise the command would do nothing visible
   const showView = (view: string) => {
     const s = useStore.getState();
-    const g = activeGroup(s.layout);
-    const p = g.panes[g.focusedPaneId];
-    const t = p?.tiles.find((x) => x.id === p.activeTileId) ?? p?.tiles.find((x) => x.kind === 'chat' && x.sessionId === s.activeId);
-    if (p && t?.kind === 'chat') s.dispatchLayout({ t: 'tile.patch', paneId: p.id, tileId: t.id, patch: { wb: view as never } });
+    const at = currentChatTile(s.layout);
+    if (!at) { s.toast('先打开一个对话'); return; }
+    s.dispatchLayout({ t: 'tile.activate', paneId: at.paneId, tileId: at.tileId });
+    s.dispatchLayout({ t: 'tile.patch', paneId: at.paneId, tileId: at.tileId, patch: { wb: view as never } });
   };
   const commands = useMemo<Cmd[]>(() => {
-    const panel = (p: (typeof PANELS)[number]): Cmd => ({ id: `panel.${p.id}`, label: `${st.panels.includes(p.id) ? '关闭' : '打开'}${p.title}面板`, ic: p.icon, group: '面板', run: () => st.togglePanel(p.id) });
+    // the label says what the toggle will do right now (a hidden or minimized panel is opened; the terminal is hidden, not closed)
+    const panel = (p: (typeof PANELS)[number]): Cmd => ({ id: `panel.${p.id}`, label: panelToggleLabel(panelToggleEffect(st.layout.dock, p.id), p.title), ic: p.icon, group: '面板', run: () => st.togglePanel(p.id) });
     const c: Cmd[] = [
       { id: 'new', label: '新对话', sub: keyLabel(SHORTCUTS[0]), ic: 'plus', group: '对话', run: () => runCommand('new') },
       { id: 'ws.add', label: '打开项目文件夹…', ic: 'folder', group: '对话', run: async () => { const p = await ws.request<string | null>({ kind: 'fs.pickDir' }); if (p) await st.addWorkspace(p); } },
@@ -95,7 +97,7 @@ export function CommandPalette() {
       );
     }
     return c;
-  }, [st.panels, st.theme, st.sidebarOpen, st.showArchived, st.settings, st.sessionMeta, active?.sessionId, active?.state]);
+  }, [st.layout.dock, st.theme, st.sidebarOpen, st.showArchived, st.settings, st.sessionMeta, active?.sessionId, active?.state]);
 
   const ql = q.replace(/^>/, '').trim().toLowerCase();
   const cmdHits = pf.filtered ? [] : commands.filter((c) => !ql || c.label.toLowerCase().includes(ql) || c.group.toLowerCase().includes(ql));

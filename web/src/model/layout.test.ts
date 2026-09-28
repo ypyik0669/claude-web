@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { activeGroup, activeTile, chatTile, chromeVisibility, deriveActive, hasLegacyLayout, initialLayout, layoutRects, layoutReducer, migrateLegacy, migrateWorkbench, needsSimplifiedNotice, SIMPLIFIED_NOTICE_KEY, MAX_PANES, paneOrder, presetTree, resetIds, sanitizeLayout, workbenchOn, type LayoutState } from './layout';
+import { activeGroup, activeTile, chatTile, chromeVisibility, currentChatTile, deriveActive, hasLegacyLayout, initialLayout, layoutRects, layoutReducer, migrateLegacy, migrateWorkbench, needsSimplifiedNotice, SIMPLIFIED_NOTICE_KEY, MAX_PANES, paneOrder, panelToggleEffect, presetTree, resetIds, sanitizeLayout, workbenchOn, type LayoutState, type Tile } from './layout';
 
 beforeEach(() => resetIds());
 
@@ -121,6 +121,73 @@ describe('tiles', () => {
     expect(p.tiles.map((t) => t.id)).toEqual([ta.id, tb.id]);
   });
 
+  // 「新对话」 / a sidebar click without the workbench setting (spec decision I3): only a conversation is swapped out;
+  // a terminal, document, diff or browser in front gets a new tab next to it — never replaced, so a running
+  // terminal keeps its process and a document with unsaved changes never skips its prompt
+  describe('replace mode only ever replaces a conversation', () => {
+    const withFront = (tile: Tile) => {
+      let s = initialLayout();
+      const p = focused(s);
+      s = layoutReducer(s, { t: 'tile.open', paneId: p, tile: chatTile('a'), mode: 'replace' });
+      s = layoutReducer(s, { t: 'tile.open', paneId: p, tile, mode: 'tab' });
+      return { s, p };
+    };
+    const kinds = (s: LayoutState, p: string) => activeGroup(s).panes[p].tiles.map((t) => (t.kind === 'chat' ? `chat:${t.sessionId}` : `${t.kind}:${t.id}`));
+    const front = (s: LayoutState, p: string) => activeTile(activeGroup(s).panes[p]);
+
+    it('a conversation in front is replaced in place (it stays in the sidebar; its process is not touched)', () => {
+      const { s: s0, p } = withFront(chatTile('b'));
+      const s = layoutReducer(s0, { t: 'tile.open', paneId: p, tile: chatTile(null), mode: 'replace' });
+      expect(kinds(s, p)).toEqual(['chat:a', 'chat:null']);
+    });
+
+    it('a terminal in front: the new conversation opens as a new tab, the terminal tile is kept as it was', () => {
+      const term: Tile = { id: 'term1', kind: 'term', cwd: '/w' };
+      const { s: s0, p } = withFront(term);
+      const s = layoutReducer(s0, { t: 'tile.open', paneId: p, tile: chatTile(null), mode: 'replace' });
+      expect(kinds(s, p)).toEqual(['chat:a', 'term:term1', 'chat:null']);
+      expect(activeGroup(s).panes[p].tiles[1]).toBe(activeGroup(s0).panes[p].tiles[1]);
+      expect(front(s, p)).toMatchObject({ kind: 'chat', sessionId: null });
+    });
+
+    it('a document (possibly with unsaved changes) in front is never replaced — by a new chat or a sidebar click', () => {
+      const doc: Tile = { id: 'doc1', kind: 'doc', path: '/w/a.ts' };
+      const { s: s0, p } = withFront(doc);
+      let s = layoutReducer(s0, { t: 'tile.open', paneId: p, tile: chatTile(null), mode: 'replace' });
+      expect(kinds(s, p)).toEqual(['chat:a', 'doc:doc1', 'chat:null']);
+      // sidebar click on another session (setActive / openInPane → replace) with the document in front
+      s = layoutReducer(layoutReducer(s0, { t: 'tile.activate', paneId: p, tileId: 'doc1' }), { t: 'tile.open', paneId: p, tile: chatTile('c'), mode: 'replace' });
+      expect(kinds(s, p)).toEqual(['chat:a', 'doc:doc1', 'chat:c']);
+      // a session that is already a tab is just brought to the front
+      s = layoutReducer(layoutReducer(s0, { t: 'tile.activate', paneId: p, tileId: 'doc1' }), { t: 'tile.open', paneId: p, tile: chatTile('a'), mode: 'replace' });
+      expect(kinds(s, p)).toEqual(['chat:a', 'doc:doc1']);
+      expect(front(s, p)).toMatchObject({ kind: 'chat', sessionId: 'a' });
+    });
+
+    it('diff and browser tabs are not replaced either', () => {
+      for (const t of [{ id: 'df1', kind: 'diff', sessionId: 'a', path: '/w/a.ts' }, { id: 'b1', kind: 'browser', url: 'http://localhost:3000' }] as Tile[]) {
+        const { s: s0, p } = withFront(t);
+        const s = layoutReducer(s0, { t: 'tile.open', paneId: p, tile: chatTile('z'), mode: 'replace' });
+        expect(kinds(s, p)).toEqual(['chat:a', `${t.kind}:${t.id}`, 'chat:z']);
+      }
+    });
+  });
+
+  it('currentChatTile: the conversation the 「当前对话」 commands act on, looking past a document / terminal in front', () => {
+    let s = initialLayout();
+    const p = focused(s);
+    expect(currentChatTile(s)).toBeNull(); // only the empty page
+    s = layoutReducer(s, { t: 'tile.open', paneId: p, tile: chatTile('a'), mode: 'replace' });
+    const chat = activeTile(activeGroup(s).panes[p])!;
+    expect(currentChatTile(s)).toEqual({ paneId: p, tileId: chat.id });
+    s = layoutReducer(s, { t: 'tile.open', paneId: p, tile: { id: 'doc1', kind: 'doc', path: '/w/a.ts' }, mode: 'tab' });
+    expect(currentChatTile(s)).toEqual({ paneId: p, tileId: chat.id });
+    // focus moved to a new split whose only tile is a terminal: the conversation next door is still "current"
+    s = layoutReducer(s, { t: 'pane.split', paneId: p, dir: 'row', tile: { id: 't1', kind: 'term', cwd: '/w' } });
+    expect(focused(s)).not.toBe(p);
+    expect(currentChatTile(s)).toEqual({ paneId: p, tileId: chat.id });
+  });
+
   it('close removes the tile and picks a neighbour; last tile closes the pane', () => {
     let s = initialLayout();
     const p0 = focused(s);
@@ -178,6 +245,37 @@ describe('tiles', () => {
     // …and past a pane that holds no session at all
     s = layoutReducer(s, { t: 'pane.split', paneId: p0, dir: 'row', tile: { kind: 'term' } as any });
     expect(deriveActive(s)).toBe('x');
+  });
+});
+
+describe('right panel (dock) toggles', () => {
+  it('toggling the shown terminal only hides the panel: the tab — and the terminal process — stay (I6)', () => {
+    let s = layoutReducer(initialLayout(), { t: 'dock.show', panel: 'terminal' });
+    expect(panelToggleEffect(s.dock, 'terminal')).toBe('hide');
+    s = layoutReducer(s, { t: 'dock.toggle', panel: 'terminal' });
+    expect(s.dock.open).toBe(false);
+    expect(s.dock.tabs).toContain('terminal');
+    expect(s.dock.active).toBe('terminal');
+    expect(panelToggleEffect(s.dock, 'terminal')).toBe('show');
+    s = layoutReducer(s, { t: 'dock.toggle', panel: 'terminal' });
+    expect(s.dock).toMatchObject({ open: true, minimized: false, active: 'terminal' });
+  });
+
+  it('other panels hold nothing alive: toggling the shown one closes its tab, as before', () => {
+    let s = layoutReducer(initialLayout(), { t: 'dock.show', panel: 'files' });
+    expect(panelToggleEffect(s.dock, 'files')).toBe('remove');
+    s = layoutReducer(s, { t: 'dock.toggle', panel: 'files' });
+    expect(s.dock.tabs).not.toContain('files');
+  });
+
+  it('a panel that is a tab but not in view (behind another tab, minimized, hidden) is shown', () => {
+    let s = layoutReducer(initialLayout(), { t: 'dock.show', panel: 'terminal' });
+    s = layoutReducer(s, { t: 'dock.show', panel: 'files' });
+    expect(panelToggleEffect(s.dock, 'terminal')).toBe('show');
+    s = layoutReducer(s, { t: 'dock.set', patch: { active: 'terminal', minimized: true } });
+    expect(panelToggleEffect(s.dock, 'terminal')).toBe('show');
+    s = layoutReducer(s, { t: 'dock.toggle', panel: 'terminal' });
+    expect(s.dock).toMatchObject({ open: true, minimized: false, active: 'terminal' });
   });
 });
 
@@ -309,6 +407,22 @@ describe('chrome visibility (spec §5.10)', () => {
     expect(vis(layoutReducer(s, { t: 'group.close', id: s.activeGroupId })).groupBar).toBe(false);
   });
 
+  it('a phone never shows the group bar, tab strips or the rail — workbench setting, splits and groups or not (spec §5.11)', () => {
+    let s = layoutReducer(initialLayout(), { t: 'pane.split', paneId: focused(initialLayout()), dir: 'row' });
+    s = layoutReducer(s, { t: 'tile.open', paneId: focused(s), tile: chatTile('b'), mode: 'tab' });
+    s = layoutReducer(s, { t: 'tile.open', paneId: focused(s), tile: { id: 'd1', kind: 'doc', path: '/x/a.ts' }, mode: 'tab' });
+    s = layoutReducer(s, { t: 'group.new' });
+    for (const workbench of [false, true]) {
+      for (const g of [s, layoutReducer(s, { t: 'group.next', dir: 1 })]) {
+        const v = chromeVisibility(g, { workbench, mobile: true });
+        expect(v.groupBar).toBe(false);
+        expect(v.dockRail).toBe(false);
+        expect(Object.values(v.tabStrip).every((x) => x === false)).toBe(true);
+      }
+    }
+    expect(chromeVisibility(s, { workbench: false, mobile: false }).groupBar).toBe(true);
+  });
+
   it('workbenchOn only accepts true', () => {
     expect(workbenchOn({})).toBe(false);
     expect(workbenchOn({ 'ui.workbench': 'yes' })).toBe(false);
@@ -343,6 +457,10 @@ describe('ui.singleWindow → ui.workbench migration', () => {
     const docked = layoutReducer(initialLayout(), { t: 'dock.show', panel: 'files' });
     expect(migrateWorkbench({}, docked)).toBe(false);
     expect(migrateWorkbench({ 'ui.singleWindow': false }, docked)).toBe(false);
+    // the exact shape every pre-redesign layout was saved with: dock open on the tasks tab
+    const oldDefault: LayoutState = { ...initialLayout(), dock: { open: true, minimized: false, width: 440, tabs: ['tasks'], active: 'tasks' } };
+    expect(migrateWorkbench({}, oldDefault)).toBe(false);
+    expect(migrateWorkbench({ 'ui.singleWindow': false }, oldDefault)).toBe(false);
   });
 
   it('the one-time 「界面已简化」 notice: old users landing on the quiet UI, once, never fresh installs', () => {

@@ -27,8 +27,10 @@ export function contrast(a: string, b: string): number {
  * `:root[data-theme='light']`). Only literal values are returned; `var(…)` / `color-mix(…)` are skipped.
  */
 export function themeBlock(css: string, selector: string): Record<string, string> {
+  // comments first: a commented-out declaration must not count, and a `}` inside one must not end the block
+  const src = css.replace(/\/\*[\s\S]*?\*\//g, '');
   const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const m = new RegExp(`(^|\\n)${esc}\\s*\\{([^}]*)\\}`).exec(css);
+  const m = new RegExp(`(^|\\n)${esc}\\s*\\{([^}]*)\\}`).exec(src);
   if (!m) throw new Error(`no rule for ${selector}`);
   const out: Record<string, string> = {};
   for (const d of m[2].matchAll(/--([\w-]+)\s*:\s*([^;]+);/g)) {

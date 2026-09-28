@@ -297,4 +297,32 @@ describe('workbench chrome (redesign phase 1)', () => {
     useStore.getState().dispatchLayout({ t: 'tile.close', paneId: pane().id, tileId: 'doc-x' });
     expect(pane().tiles).toHaveLength(1);
   });
+
+  it('setActive (sidebar / palette / notification) with a document in front opens the conversation next to it', () => {
+    const pane = () => { const l = useStore.getState().layout; const g = l.groups.find((x) => x.id === l.activeGroupId)!; return g.panes[g.focusedPaneId]; };
+    const ids = () => pane().tiles.map((t) => (t.kind === 'chat' ? `chat:${t.sessionId}` : t.id));
+    useStore.getState().openInPane('s1', 'replace');
+    useStore.getState().openTile({ id: 'doc-y', kind: 'doc', path: '/w/b.ts' }, 'tab');
+    useStore.getState().setDocDirty('doc-y', true);
+    useStore.getState().setActive('s2');
+    expect(ids()).toEqual(['chat:s1', 'doc-y', 'chat:s2']);
+    expect(useStore.getState().dirtyDocs['doc-y']).toBe(true);
+    useStore.getState().setDocDirty('doc-y', false);
+    useStore.getState().dispatchLayout({ t: 'tile.close', paneId: pane().id, tileId: 'doc-y' });
+    useStore.getState().dispatchLayout({ t: 'tile.close', paneId: pane().id, tileId: pane().tiles[1].id });
+  });
+
+  it('on a phone there is no right panel: a panel toggle says so and opens nothing (no terminal behind the screen)', () => {
+    const before = useStore.getState().layout.dock;
+    useStore.setState({ mobile: true });
+    useStore.getState().togglePanel('terminal');
+    expect(useStore.getState().layout.dock).toBe(before);
+    expect(useStore.getState().toasts).toHaveLength(1);
+    useStore.setState({ mobile: false, toasts: [] });
+    useStore.getState().togglePanel('terminal');
+    expect(useStore.getState().layout.dock.tabs).toContain('terminal');
+    useStore.getState().togglePanel('terminal'); // shown → hidden, the tab (and its process) stays
+    expect(useStore.getState().layout.dock).toMatchObject({ open: false, active: 'terminal' });
+    expect(useStore.getState().layout.dock.tabs).toContain('terminal');
+  });
 });

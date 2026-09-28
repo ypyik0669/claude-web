@@ -1,6 +1,7 @@
 // Command dispatcher shared by browser keydown, Electron menu accelerators and the command palette.
 import { useStore, type PanelId } from '@/store';
-import { activeGroup, chatTile, workbenchOn } from '@/model/layout';
+import { activeGroup, chatTile, currentChatTile, workbenchOn } from '@/model/layout';
+import { PHONE_NO_PANEL } from '@/ui/terms';
 import { offerGroupToNewWindow } from './windows';
 
 export function runCommand(id: string): boolean {
@@ -9,9 +10,12 @@ export function runCommand(id: string): boolean {
   const g = activeGroup(st.layout);
   const pane = g.panes[g.focusedPaneId];
   const a = st.activeId ? st.open[st.activeId] : undefined;
-  // without the workbench setting a new conversation takes the pane's place (the old one stays in the sidebar);
-  // splits / groups / tabs still work from the keyboard and bring their own chrome with them (chromeVisibility)
+  // without the workbench setting a new conversation takes the place of the conversation in front (the old one
+  // stays in the sidebar, a running one keeps running); a terminal / document in front is never replaced — the
+  // reducer opens a tab next to it. Splits / groups / tabs still work from the keyboard and bring their own chrome.
   const workbench = workbenchOn(st.settings);
+  // a phone draws no right panel: opening it would only start things (a terminal) nobody can see
+  if (st.mobile && (id === 'dock.toggle' || id === 'dock.minimize')) { st.toast(PHONE_NO_PANEL); return true; }
   const m = /^(group\.jump|pane\.jump)\.(\d)$/.exec(id);
   if (m) {
     if (m[1] === 'group.jump') { const t = st.layout.groups[Number(m[2])]; if (t) d({ t: 'group.activate', id: t.id }); }
@@ -25,8 +29,12 @@ export function runCommand(id: string): boolean {
     case 'shortcuts': useStore.setState({ shortcutsOpen: true }); return true;
     case 'settings': st.openSettings(); return true;
     case 'tab': {
-      const t = pane?.tiles.find((x) => x.id === pane.activeTileId);
-      if (t?.kind === 'chat') d({ t: 'tile.patch', paneId: pane.id, tileId: t.id, patch: { view: t.view === 'chat' ? 'trajectory' : 'chat' } });
+      // the conversation next to a document / terminal in front counts too (it is what the palette calls 当前对话)
+      const at = currentChatTile(st.layout);
+      const t = at && activeGroup(st.layout).panes[at.paneId]?.tiles.find((x) => x.id === at.tileId);
+      if (!at || t?.kind !== 'chat') return true;
+      d({ t: 'tile.activate', paneId: at.paneId, tileId: at.tileId });
+      d({ t: 'tile.patch', paneId: at.paneId, tileId: at.tileId, patch: t.wb !== 'live' ? { wb: 'live', view: 'trajectory' } : { view: t.view === 'chat' ? 'trajectory' : 'chat' } });
       return true;
     }
     case 'group.new': d({ t: 'group.new' }); return true;

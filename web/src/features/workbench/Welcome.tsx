@@ -59,6 +59,7 @@ export function Welcome({ paneId, tileId }: { paneId: string; tileId: string }) 
   const dispatch = useStore((s) => s.dispatchLayout);
   const recent = useMemo(() => sessions.slice(0, 6), [sessions]);
   const edge = usePaneEdge();
+  const mobile = useStore((s) => s.mobile);
   const pick = (sid: string) => {
     if (open[sid]) dispatch({ t: 'session.assign', paneId, tileId, sessionId: sid });
     else { dispatch({ t: 'session.assign', paneId, tileId, sessionId: sid }); void loadHistory(sid, { focus: false }); }
@@ -66,7 +67,7 @@ export function Welcome({ paneId, tileId }: { paneId: string; tileId: string }) 
   return (
     <div className="welcome-tile">
       {/* the empty page's top row: nothing but the sidebar reveal; on the desktop it is also the title bar (drag) */}
-      <div className="welcome-top">{edge.lead && !edge.strip && <SidebarReveal />}</div>
+      <div className="welcome-top">{((edge.lead && !edge.strip) || mobile) && <SidebarReveal />}</div>
       <div className="welcome">
         <h1 className="greet"><span className="spark"><Icon name="claude" size={26} /></span>{greeting()}</h1>
         <Composer welcome target={{ paneId, tileId }} />

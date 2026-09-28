@@ -12,11 +12,13 @@ import { PaneLayer } from './PaneLayer';
 export function Workbench() {
   const layout = useStore((s) => s.layout);
   const workbench = useStore((s) => workbenchOn(s.settings));
-  const vis = chromeVisibility(layout, { workbench });
+  const mobile = useStore((s) => s.mobile);
+  // a phone never gets the group bar / tab strips / rail (spec §5.11): its one row is the conversation header
+  const vis = chromeVisibility(layout, { workbench, mobile });
   return (
     <div className={clsx('center workbench', vis.groupBar && 'gb')}>
       {vis.groupBar && <GroupBar rail={vis.dockRail} />}
-      <PaneLayer tabStrips={vis.tabStrip} underGroupBar={vis.groupBar} workbench={workbench} />
+      <PaneLayer tabStrips={vis.tabStrip} underGroupBar={vis.groupBar} workbench={workbench && !mobile} />
     </div>
   );
 }

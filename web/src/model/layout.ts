@@ -13,7 +13,7 @@ export type WorkbenchTab = (typeof WORKBENCH_TABS)[number];
  * tile titles all read it — adding a panel means adding a row here and a case in `PanelBody`.
  * `rail` marks the panels the top bar surfaces directly; the rest live in menus.
  */
-export const PANELS: { id: PanelId; title: string; icon: IconName; rail?: boolean }[] = [
+export const PANELS: { id: PanelId; title: string; icon: IconName; rail?: boolean; keepAlive?: boolean }[] = [
   { id: 'mission', title: '总览', icon: 'mission', rail: true },
   { id: 'goals', title: '目标', icon: 'goals', rail: true },
   { id: 'orchestra', title: '编排', icon: 'orchestra', rail: true },
@@ -22,7 +22,8 @@ export const PANELS: { id: PanelId; title: string; icon: IconName; rail?: boolea
   { id: 'files', title: '文件改动', icon: 'files', rail: true },
   { id: 'usage', title: '用量', icon: 'usage' },
   { id: 'config', title: '配置中心', icon: 'config' },
-  { id: 'terminal', title: '终端', icon: 'terminal', rail: true },
+  // keepAlive: the tab holds a live process (a pty) — toggling it off hides the panel instead of closing the tab
+  { id: 'terminal', title: '终端', icon: 'terminal', rail: true, keepAlive: true },
   { id: 'inspector', title: '详情', icon: 'inspector' },
   { id: 'android', title: 'Android', icon: 'android' },
 ];
@@ -121,19 +122,33 @@ export function initialLayout(): LayoutState {
  *  - a pane's tab strip: more than one tab, more than one pane in the group, or a lone non-chat tile
  *    (a document / terminal has no session header, the strip is where it is named and closed);
  *  - the dock's icon rail: only in workbench mode.
+ * A phone (≤ 760px, spec §5.11) never shows any of the three, whatever the setting or the layout: its one row is
+ * the conversation's own header.
  * Only the chrome — pane contents are never unmounted by this.
  */
 export interface ChromeVisibility { groupBar: boolean; dockRail: boolean; tabStrip: Record<string, boolean> }
-export function chromeVisibility(s: LayoutState, o: { workbench: boolean }): ChromeVisibility {
+export function chromeVisibility(s: LayoutState, o: { workbench: boolean; mobile?: boolean }): ChromeVisibility {
   const g = activeGroup(s);
   const order = paneOrder(g.root);
   const multi = order.length > 1;
   const tabStrip: Record<string, boolean> = {};
   for (const id of order) {
     const p = g.panes[id];
-    tabStrip[id] = o.workbench || multi || (p?.tiles.length ?? 0) > 1 || (!!p?.tiles[0] && p.tiles[0].kind !== 'chat');
+    tabStrip[id] = !o.mobile && (o.workbench || multi || (p?.tiles.length ?? 0) > 1 || (!!p?.tiles[0] && p.tiles[0].kind !== 'chat'));
   }
+  if (o.mobile) return { groupBar: false, dockRail: false, tabStrip };
   return { groupBar: o.workbench || s.groups.length > 1, dockRail: o.workbench, tabStrip };
+}
+
+/**
+ * What toggling a right-panel tab does (Ctrl+`, the rail icons, the palette): `show` it when it is not in view;
+ * when it is, `hide` the panel for a tab that holds a live process (the terminal: closing the tab would kill it),
+ * otherwise `remove` the tab. Labels are built from this so they say what will happen.
+ */
+export function panelToggleEffect(dock: Dock, panel: PanelId): 'show' | 'hide' | 'remove' {
+  const inView = dock.open && !dock.minimized && dock.active === panel && dock.tabs.includes(panel);
+  if (!inView) return 'show';
+  return PANELS.find((p) => p.id === panel)?.keepAlive ? 'hide' : 'remove';
 }
 
 /** `ui.workbench` as a boolean (unset = off). */
@@ -208,6 +223,24 @@ export function deriveActive(s: LayoutState): string | null {
   const held = (t: Tile | undefined) => (t?.kind === 'chat' || t?.kind === 'diff' ? t.sessionId : null);
   const inPane = (p: Pane | undefined) => (p ? held(activeTile(p)) ?? held(p.tiles.find((t) => held(t))) : null);
   return inPane(g.panes[g.focusedPaneId]) ?? paneOrder(g.root).map((id) => inPane(g.panes[id])).find(Boolean) ?? null;
+}
+
+/**
+ * The conversation tile that 「当前对话」 commands (views, 步骤视图) act on: the focused pane's front tile when it
+ * is a conversation; otherwise the tab of the active session (`deriveActive` looks past a document / terminal in
+ * front), in the focused pane first, then anywhere in the group. Null when there is no conversation at all.
+ */
+export function currentChatTile(s: LayoutState): { paneId: string; tileId: string } | null {
+  const g = activeGroup(s);
+  const front = activeTile(g.panes[g.focusedPaneId]);
+  if (front?.kind === 'chat' && front.sessionId) return { paneId: g.focusedPaneId, tileId: front.id };
+  const sid = deriveActive(s);
+  if (!sid) return null;
+  for (const id of [g.focusedPaneId, ...paneOrder(g.root)]) {
+    const t = g.panes[id]?.tiles.find((x) => x.kind === 'chat' && x.sessionId === sid);
+    if (t) return { paneId: id, tileId: t.id };
+  }
+  return null;
 }
 
 export interface Rect { x: number; y: number; w: number; h: number }
@@ -421,8 +454,10 @@ export function layoutReducer(s: LayoutState, a: LayoutAction): LayoutState {
       if (!g) return s;
       return withGroup(s, g.id, (gg) => updatePane(gg, a.paneId, (p) => {
         const cur = p.tiles.find((t) => t.id === p.activeTileId) ?? p.tiles[0];
-        // an empty chat tile is always replaced; otherwise honour mode
-        const replace = a.mode === 'replace' || (cur?.kind === 'chat' && cur.sessionId === null);
+        // an empty chat tile is always replaced; otherwise honour mode — but only a conversation is ever swapped out:
+        // a terminal / document / diff / browser in front keeps its place (its process, its unsaved changes) and the
+        // new tile becomes a tab next to it
+        const replace = cur?.kind === 'chat' && (a.mode === 'replace' || cur.sessionId === null);
         // same session / document / diff already open as a tab → just activate it (docs also take the new line).
         // Checked before replacing too: replacing would put a second tab of the same thing in the pane, or (when it
         // is the current tab) swap in a new tile id, which remounts the tile and throws away scroll / composer state.
@@ -517,12 +552,13 @@ export function layoutReducer(s: LayoutState, a: LayoutAction): LayoutState {
     case 'dock.set':
       return { ...s, dock: { ...s.dock, ...a.patch } };
     case 'dock.toggle': {
-      const has = s.dock.tabs.includes(a.panel);
-      if (has && s.dock.active === a.panel && s.dock.open && !s.dock.minimized) {
+      const effect = panelToggleEffect(s.dock, a.panel);
+      if (effect === 'hide') return { ...s, dock: { ...s.dock, open: false } };
+      if (effect === 'remove') {
         const tabs = s.dock.tabs.filter((t) => t !== a.panel);
         return { ...s, dock: { ...s.dock, tabs, active: tabs[0] ?? null, open: tabs.length > 0 } };
       }
-      const tabs = has ? s.dock.tabs : [...s.dock.tabs, a.panel];
+      const tabs = s.dock.tabs.includes(a.panel) ? s.dock.tabs : [...s.dock.tabs, a.panel];
       return { ...s, dock: { ...s.dock, tabs, active: a.panel, open: true, minimized: false } };
     }
     case 'dock.show': {

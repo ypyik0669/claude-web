@@ -55,14 +55,16 @@ type ChatTileModel = Extract<Tile, { kind: 'chat' }>;
 /**
  * The ··· menu's own part (what used to be header buttons and the 8 workbench tabs): export, the steps view, the
  * per-session views, pin, open the folder, stop / resume. The shared SessionMenu adds rename, fork, archive,
- * hand-over, native CLI, copy id and delete below it.
+ * hand-over, native CLI, copy id and delete below it. A deleted conversation keeps what still works on what is on
+ * screen (export, the views, the folder); pin / stop / resume go.
+ * Subscribes only to what it shows — actions read the store when clicked.
  */
-function HeaderMenu({ tile, paneId, s, live, remote, onClose }: { tile: ChatTileModel; paneId: string; s: SessionSummary; live: boolean; remote: boolean; onClose: () => void }) {
-  const st = useStore();
-  const pinned = !!st.sessionMeta[s.sessionId]?.pinned;
+function HeaderMenu({ tile, paneId, s, live, remote, gone, onClose }: { tile: ChatTileModel; paneId: string; s: SessionSummary; live: boolean; remote: boolean; gone: boolean; onClose: () => void }) {
+  const pinned = useStore((st) => !!st.sessionMeta[s.sessionId]?.pinned);
   const caps = effectiveCaps(s);
   const act = (fn: () => unknown) => () => { onClose(); void fn(); };
-  const patch = (p: Partial<ChatTileModel>) => st.dispatchLayout({ t: 'tile.patch', paneId, tileId: tile.id, patch: p });
+  const st = () => useStore.getState();
+  const patch = (p: Partial<ChatTileModel>) => st().dispatchLayout({ t: 'tile.patch', paneId, tileId: tile.id, patch: p });
   return (
     <>
       <button onClick={act(() => shareConversation(s.sessionId))}><Icon name="share" size={14} /> 导出为 HTML</button>
@@ -78,12 +80,12 @@ function HeaderMenu({ tile, paneId, s, live, remote, onClose }: { tile: ChatTile
         ))}
       </div>
       <div className="menu-sep" />
-      <button onClick={act(() => st.setSessionMeta(s.sessionId, { pinned: !pinned }))}><Icon name="pin" size={14} /> {pinned ? '取消置顶' : '置顶'}</button>
+      {!gone && <button onClick={act(() => st().setSessionMeta(s.sessionId, { pinned: !pinned }))}><Icon name="pin" size={14} /> {pinned ? '取消置顶' : '置顶'}</button>}
       {!remote && <button onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd }))}><Icon name="folder" size={14} /> 在资源管理器打开</button>}
       {!remote && <button onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd, app: 'code' }))}><Icon name="keyboard" size={14} /> 在 VS Code 打开</button>}
-      {live
-        ? <button onClick={act(() => st.closeSession(s.sessionId))} title="进程会退出，对话留着，发消息即可继续"><Icon name="stop" size={14} /> 结束进程</button>
-        : caps.resume && <button onClick={act(() => st.openSession({ sessionId: s.sessionId, cwd: s.cwd }, 'none').catch((e) => st.toast(e.message)))}><Icon name="play" size={14} /> 恢复运行</button>}
+      {!gone && (live
+        ? <button onClick={act(() => st().closeSession(s.sessionId))} title="进程会退出，对话留着，发消息即可继续"><Icon name="stop" size={14} /> 结束进程</button>
+        : caps.resume && <button onClick={act(() => st().openSession({ sessionId: s.sessionId, cwd: s.cwd }, 'none').catch((e) => st().toast(e.message)))}><Icon name="play" size={14} /> 恢复运行</button>)}
       <div className="menu-sep" />
     </>
   );
@@ -104,6 +106,7 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
   const dock = useStore((s) => s.layout.dock);
   const inspect = useStore((s) => !!s.inspect);
   const edge = usePaneEdge();
+  const mobile = useStore((s) => s.mobile);
   const [editing, setEditing] = useState<string | null>(null);
   const [menu, setMenu] = useState(false);
   const title = meta?.title ?? sid.slice(0, 8);
@@ -129,13 +132,16 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
   const caps = gone ? { ...effectiveCaps(summary), fork: false, resume: false, rename: false } : effectiveCaps(summary);
   const patch = (p: Partial<ChatTileModel>) => dispatch({ t: 'tile.patch', paneId, tileId: tile.id, patch: p });
   const dockShown = dock.open && (dock.tabs.length > 0 || inspect);
-  const toggleDock = () => (dockShown ? dispatch({ t: 'dock.set', patch: { open: false } }) : dock.tabs.length ? runCommand('dock.toggle') : dispatch({ t: 'dock.show', panel: 'tasks' }));
+  // minimized to its icon rail, the panel is there but not open: the button brings it back instead of hiding it
+  const dockMin = dockShown && dock.minimized;
+  const toggleDock = () => (dockMin ? dispatch({ t: 'dock.set', patch: { minimized: false } }) : dockShown ? dispatch({ t: 'dock.set', patch: { open: false } }) : dock.tabs.length ? runCommand('dock.toggle') : dispatch({ t: 'dock.show', panel: 'tasks' }));
   const terminalOn = dockShown && dock.active === 'terminal' && !dock.minimized;
   const viewDef = tile.wb !== 'live' ? WB_VIEWS.find((v) => v.id === tile.wb) : undefined;
   const dirty = git?.files.length ?? 0;
   return (
     <div className="sess-head">
-      {edge.lead && !edge.strip && <SidebarReveal />}
+      {/* the window's top-left row; on a phone every conversation header, the drawer has no other handle */}
+      {((edge.lead && !edge.strip) || mobile) && <SidebarReveal />}
       <div className="sh-main">
         {editing !== null ? (
           <input className="sh-rename" autoFocus value={editing} onChange={(e) => setEditing(e.target.value)} onBlur={rename} onKeyDown={(e) => (e.key === 'Enter' ? rename() : e.key === 'Escape' ? setEditing(null) : null)} aria-label="对话标题" />
@@ -163,17 +169,18 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
         )}
       </div>
       <span className="sh-actions">
-        {stat && stat.files > 0 && (
+        {/* phone: no right panel to show them in (spec §5.11) — 改动 / Git / 文件 are views in ··· */}
+        {!mobile && stat && stat.files > 0 && (
           <button className="sh-diff" title={`这个对话改了 ${stat.files} 个文件：+${stat.added} 行 −${stat.removed} 行\n点击查看改动`} onClick={() => dispatch({ t: 'dock.show', panel: 'files' })}>
             <span className="add">+{stat.added}</span><span className="del">−{stat.removed}</span>
           </button>
         )}
-        {!peer && <button className={clsx('icon-btn', terminalOn && 'active')} title={`终端 (${modKey}+\`)`} aria-label="终端" onClick={() => (terminalOn ? dispatch({ t: 'dock.set', patch: { open: false } }) : dispatch({ t: 'dock.show', panel: 'terminal' }))}><Icon name="terminal" size={16} /></button>}
-        <button className={clsx('icon-btn', dockShown && 'active')} title={`${TERMS.dock} (${modKey}+J)`} aria-label={TERMS.dock} aria-pressed={dockShown} onClick={toggleDock}><Icon name="inspector" size={16} /></button>
-        {!gone && <span className="sh-more">
+        {!peer && !mobile && <button className={clsx('icon-btn', terminalOn && 'active')} title={`终端 (${modKey}+\`)`} aria-label="终端" onClick={() => (terminalOn ? dispatch({ t: 'dock.set', patch: { open: false } }) : dispatch({ t: 'dock.show', panel: 'terminal' }))}><Icon name="terminal" size={16} /></button>}
+        {!mobile && <button className={clsx('icon-btn', dockShown && !dockMin && 'active')} title={dockMin ? `展开${TERMS.dock} (${modKey}+J)` : `${TERMS.dock} (${modKey}+J)`} aria-label={dockMin ? `展开${TERMS.dock}` : TERMS.dock} aria-pressed={dockShown && !dockMin} onClick={toggleDock}><Icon name="inspector" size={16} /></button>}
+        <span className="sh-more">
           <button className={clsx('icon-btn', menu && 'active')} title="这个对话的更多操作：导出、步骤视图、改动 / Git / 文件…、重命名、分叉、归档、交给其它 Agent、删除" aria-label="更多操作" aria-expanded={menu} aria-haspopup="menu" onClick={(e) => { e.stopPropagation(); setMenu(!menu); }}><Icon name="more" size={16} /></button>
-          {menu && <SessionMenu s={summary} onClose={() => setMenu(false)} style={{ right: 0, top: 34 }} extra={<HeaderMenu tile={tile} paneId={paneId} s={summary} live={live} remote={!!peer} onClose={() => setMenu(false)} />} />}
-        </span>}
+          {menu && <SessionMenu s={summary} deleted={gone} handoffInline onClose={() => setMenu(false)} style={{ right: 0, top: 34 }} extra={<HeaderMenu tile={tile} paneId={paneId} s={summary} live={live} remote={!!peer} gone={gone} onClose={() => setMenu(false)} />} />}
+        </span>
       </span>
     </div>
   );
