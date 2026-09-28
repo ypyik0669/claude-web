@@ -1,83 +1,116 @@
-import { modKey } from '@/features/workbench/shortcuts';
-import { useEffect, useState } from 'react';
-import { THEMES, useStore } from '@/store';
+import { useEffect, useMemo, useState } from 'react';
+import { useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
-import { clsx } from '@/util';
+import { basename, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
+import { fillComposer } from '@/features/composer/fill';
+import { currentStep, onboardingSteps, recentFolders } from './steps';
 
-/** First-run wizard: engine & login → workspace → theme → optional provider. Sets `onboarded` when done. */
+const STEP_LABEL = { login: '登录', project: '选一个项目文件夹' } as const;
+
+/**
+ * First-run wizard (spec §5.8), two steps: ① log in — skipped when already logged in or when a provider is set up
+ * (logging in in a terminal moves it on by itself); ② pick a project folder — one click on a folder the CLI already
+ * worked in, or any folder. Picking one ends the wizard with the start page's composer on that folder and focused,
+ * so the first message is one Enter away. Appearance follows the system; the shortcuts are in the 入门清单.
+ * Sets `onboarded`; shown only to a first run (no project yet).
+ */
 export function Onboarding() {
   const settings = useStore((s) => s.settings);
   const metaLoaded = useStore((s) => s.metaLoaded);
-  const engine = useStore((s) => s.engine);
   const workspaces = useStore((s) => s.workspaces);
   const providers = useStore((s) => s.providers);
+  const sessions = useStore((s) => s.sessions);
+  const auth = useStore((s) => s.auth);
   const addWorkspace = useStore((s) => s.addWorkspace);
   const setSetting = useStore((s) => s.setSetting);
-  const setTheme = useStore((s) => s.setTheme);
-  const theme = useStore((s) => s.theme);
-  const openSettings = useStore((s) => s.openSettings);
   const toast = useStore((s) => s.toast);
-  const [step, setStep] = useState(0);
-  const [auth, setAuth] = useState<any>(null);
+  const [skipped, setSkipped] = useState(false);
   const [checking, setChecking] = useState(false);
-  // first run only: existing installs (already have a workspace) skip the wizard
+  const [busy, setBusy] = useState(false);
+  // first run only: existing installs (already have a project) skip the wizard
   const show = metaLoaded && !settings.onboarded && workspaces.length === 0;
-  const checkAuth = (force = false) => { setChecking(true); useStore.getState().checkAuth(force).then(setAuth).catch(() => setAuth({ loggedIn: false })).finally(() => setChecking(false)); };
-  useEffect(() => { if (show) checkAuth(); }, [show]);
+  const check = (force = false) => { setChecking(true); void useStore.getState().checkAuth(force).catch(() => null).finally(() => setChecking(false)); };
+  useEffect(() => { if (show) check(); }, [show]);
+  // back from a terminal where /login was run: ask again (the server shares one answer for 30 s; this one is fresh)
+  useEffect(() => {
+    if (!show) return;
+    const on = () => { if (document.visibilityState === 'visible' && useStore.getState().auth?.loggedIn === false) check(true); };
+    window.addEventListener('focus', on);
+    return () => window.removeEventListener('focus', on);
+  }, [show]);
+  const steps = onboardingSteps({ auth, providers: providers.length });
+  const step = currentStep(steps, skipped);
+  const folders = useMemo(() => recentFolders(sessions, workspaces.map((w) => w.path)), [sessions, workspaces]);
   if (!show) return null;
+
   const finish = () => void setSetting('onboarded', true);
-  const pick = async () => {
-    const p = desktop ? await desktop.pickDir() : await ws.request<string | null>({ kind: 'fs.pickDir' });
-    if (p) await addWorkspace(p).catch((e) => toast(e.message));
+  const use = async (p: string) => {
+    setBusy(true);
+    try {
+      await addWorkspace(p);
+      try { localStorage.setItem('cw.lastCwd', p); } catch { /* ignore */ }
+      finish();
+      // the start page's composer: on that folder, ready to type
+      setTimeout(() => fillComposer({ cwd: p, focus: true }), 50);
+    } catch (e) { toast((e as Error).message); }
+    setBusy(false);
   };
-  const steps = ['引擎与登录', '工作区', '外观', '完成'];
+  const browse = async () => {
+    const p = desktop ? await desktop.pickDir() : await ws.request<string | null>({ kind: 'fs.pickDir' });
+    if (p) await use(p);
+  };
+  // the terminal would open behind the wizard: the wizard steps aside (picking the project waits in the start page's
+  // 入门清单, and the composer's project chip)
+  const login = () => {
+    useStore.getState().openTile({ id: `t${Date.now()}`, kind: 'term', cwd: '', title: '登录 Claude' }, 'tab');
+    toast('在终端里运行 claude，再输入 /login；登录好了回到这里就能用', true, 10_000);
+    finish();
+  };
+  const allSteps: ('login' | 'project')[] = ['login', 'project'];
   return (
     <div className="modal-bg" style={{ zIndex: 150 }}>
-      <div className="modal onboarding">
-        <div className="ob-steps">{steps.map((s, i) => <span key={s} className={clsx(i === step && 'cur', i < step && 'done')}>{i + 1}. {s}</span>)}</div>
-        {step === 0 && (
+      <div className="modal onboarding" role="dialog" aria-label="开始使用" data-step={step}>
+        <ol className="ob-steps">
+          {allSteps.map((s, i) => {
+            // the login step is done (logged in, or a provider to use) or was skipped
+            const done = s === 'login' && !steps.includes('login');
+            const skippedHere = s === 'login' && steps.includes('login') && step === 'project';
+            return <li key={s} className={clsx(s === step && 'cur', done && 'done', skippedHere && 'skipped')}>{done ? <Icon name="check" size={12} /> : <span className="num">{i + 1}</span>}{STEP_LABEL[s]}{skippedHere ? '（已跳过）' : ''}</li>;
+          })}
+        </ol>
+        {step === 'login' && (
           <>
             <h3>欢迎使用 Claude Web</h3>
-            <p>本机的 Claude Code 工作台。先确认引擎和登录状态。</p>
-            <div className="kv">
-              <span className="k">引擎</span><span>{engine ? `${engine.runtime === 'ccb' ? 'claude-code-best' : 'Claude Code'} v${engine.version ?? '?'}` : '检测中…'}</span>
-              <span className="k">登录</span>
-              <span>{checking ? '检查中…' : auth?.loggedIn ? `已登录 ${auth.email ?? auth.authMethod ?? ''}` : <>未登录 — <button className="link" onClick={() => useStore.getState().openTile({ id: `t${Date.now()}`, kind: 'term', cwd: '' }, 'tab')}>打开终端运行 /login</button>，或下一步添加第三方供应商</>}</span>
+            <p>{auth === null ? '正在检查登录…' : '先登录 Claude 账号。没有账号也行：添加一个第三方接口（供应商），用它来跑。'}</p>
+            <div className="ob-actions">
+              <button className="btn primary" disabled={auth === null} onClick={login}><Icon name="terminal" size={14} /> 在终端登录</button>
+              <button className="btn" onClick={() => { finish(); useStore.getState().openSettings({ section: 'providers' }); }}>添加供应商</button>
+              <button className="link" disabled={checking} onClick={() => check(true)}>{checking ? '检查中…' : '我已经登录了，重新检查'}</button>
+              <span className="grow" />
+              <button className="btn ghost" data-ob="skip" onClick={() => setSkipped(true)}>先跳过</button>
             </div>
-            <div className="sub" style={{ marginTop: 8 }}>{providers.length ? `已有 ${providers.length} 个供应商档案。` : '没有 Claude 账号也可以：在「设置 → 供应商」里填一个兼容 Anthropic / OpenAI 的接口。'}</div>
-            <div className="actions"><button className="btn ghost" onClick={() => checkAuth(true)}>重新检查</button><button className="btn ghost" onClick={() => { finish(); openSettings({ section: 'providers' }); }}>去添加供应商</button><button className="btn primary" onClick={() => setStep(1)}>下一步</button></div>
           </>
         )}
-        {step === 1 && (
+        {step === 'project' && (
           <>
-            <h3>添加工作区</h3>
-            <p>工作区就是一个项目文件夹，会话在里面运行。可以稍后在侧栏添加更多。</p>
-            <div className="list">{workspaces.map((w) => <div key={w.id} className="row"><span><Icon name="folder" size={14} /></span><div className="grow"><div>{w.name}</div><div className="sub">{w.path}</div></div></div>)}</div>
-            <div className="actions"><button className="btn" onClick={pick}><Icon name="plus" size={13} /> 选择文件夹</button><span className="grow" /><button className="btn ghost" onClick={() => setStep(0)}>上一步</button><button className="btn primary" onClick={() => setStep(2)}>{workspaces.length ? '下一步' : '跳过'}</button></div>
-          </>
-        )}
-        {step === 2 && (
-          <>
-            <h3>外观</h3>
-            <div className="theme-grid">
-              {THEMES.map((t) => <button key={t} className={clsx('theme-card', theme === t && 'active')} data-theme={t} onClick={() => setTheme(t)}><span className="sw" /><span>{t}</span></button>)}
-              <button className={clsx('theme-card', settings['ui.theme'] === 'system' && 'active')} onClick={() => void setSetting('ui.theme', 'system')}><span className="sw sys" /><span>跟随系统</span></button>
+            <h3>选一个项目文件夹</h3>
+            <p>Claude 在这个文件夹里读代码、改文件。以后可以在侧栏添加更多项目。</p>
+            {folders.length > 0 && (
+              <div className="ob-folders" role="list" aria-label="最近用过的文件夹">
+                {folders.map((p) => (
+                  <button key={p} role="listitem" className="ob-folder" data-ob="folder" disabled={busy} onClick={() => void use(p)} title={p}>
+                    <Icon name="folder" size={15} /><span className="grow"><span className="nm">{basename(p)}</span><span className="path">{p}</span></span><Icon name="arrowRight" size={13} />
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="ob-actions">
+              <button className={clsx('btn', !folders.length && 'primary')} disabled={busy} data-ob="browse" onClick={() => void browse()}><Icon name="folder" size={14} /> {folders.length ? '其它文件夹…' : '选择文件夹…'}</button>
+              <span className="grow" />
+              <button className="btn ghost" onClick={finish}>以后再说</button>
             </div>
-            <div className="actions"><button className="btn ghost" onClick={() => setStep(1)}>上一步</button><span className="grow" /><button className="btn primary" onClick={() => setStep(3)}>下一步</button></div>
-          </>
-        )}
-        {step === 3 && (
-          <>
-            <h3>就绪</h3>
-            <ul className="ob-tips">
-              <li>输入框直接聊；<b>{modKey}+K</b> 命令面板；<b>{modKey}+,</b> 设置；<b>?</b> 快捷键表。</li>
-              <li>会话标签上方有「改动 / Git / 文件 / 搜索 / 定时」工作台标签。</li>
-              <li>拖侧栏的会话到窗格边缘可以分屏；<b>Ctrl+D</b> 向右分屏。</li>
-              <li>右侧面板里的「任务」看子代理和后台命令，「用量」看 token 与账本。</li>
-            </ul>
-            <div className="actions"><button className="btn ghost" onClick={() => setStep(2)}>上一步</button><span className="grow" /><button className="btn primary" onClick={finish}>开始使用</button></div>
           </>
         )}
       </div>
