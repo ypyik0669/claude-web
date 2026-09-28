@@ -66,10 +66,56 @@ describe('BackupStore', () => {
   it('backs up and rolls back bytes exactly (BOM, CRLF, invalid UTF-8 in a comment)', async () => {
     const orig = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('# caf'), Buffer.from([0xe9]), Buffer.from('\r\nmodel = "a"\r\n')]);
     fs.writeFileSync(cfg, orig);
-    await expect(store.writeChecked('codex', cfg, () => 'model = ', 'broken')).rejects.toThrow(/回滚/);
+    // a CLI that leaves a broken file: rolled back to the exact original bytes
+    await expect(store.guard('codex', cfg, 'cli', async () => fs.writeFileSync(cfg, 'model = '))).rejects.toThrow(/回滚/);
     expect(fs.readFileSync(cfg).equals(orig)).toBe(true);
     const [b] = await store.list('codex');
     expect(fs.readFileSync(path.join(dir, 'config-backups', b.id)).equals(orig)).toBe(true);
+  });
+
+  it('refuses a targeted edit of a file that is not UTF-8 (decoding would change bytes elsewhere)', async () => {
+    const orig = Buffer.concat([Buffer.from('# caf'), Buffer.from([0xe9]), Buffer.from('\nmodel = "a"\n')]);
+    fs.writeFileSync(cfg, orig);
+    await expect(store.writeChecked('codex', cfg, (t) => setTomlTopLevel(t, 'model', 'b'), 'm')).rejects.toThrow('文件不是 UTF-8 编码，未修改');
+    expect(fs.readFileSync(cfg).equals(orig)).toBe(true);
+    expect(await store.list('codex')).toEqual([]);
+    // the fix-up path after a CLI run refuses too, and puts the original back
+    await expect(store.guard('codex', cfg, 'cli', async () => fs.appendFileSync(cfg, 'x = 1\n'), (t) => t)).rejects.toThrow(/UTF-8/);
+    expect(fs.readFileSync(cfg).equals(orig)).toBe(true);
+  });
+
+  it('keeps a symlinked config a symlink and (POSIX) keeps the file mode', async (ctx) => {
+    const posix = process.platform !== 'win32';
+    const real = path.join(dir, 'dotfiles', 'config.toml');
+    fs.mkdirSync(path.dirname(real), { recursive: true });
+    fs.writeFileSync(real, 'model = "a"\n', { mode: 0o640 });
+    fs.chmodSync(real, 0o640);
+    fs.rmSync(cfg);
+    // Windows needs Developer Mode / admin for file symlinks
+    try { fs.symlinkSync(real, cfg, 'file'); } catch (e: any) { if (e?.code === 'EPERM') return ctx.skip(); throw e; }
+    await store.writeChecked('codex', cfg, (t) => setTomlTopLevel(t, 'model', 'b'), 'm');
+    expect(fs.lstatSync(cfg).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(real, 'utf8')).toBe('model = "b"\n');
+    if (posix) expect(fs.statSync(real).mode & 0o777).toBe(0o640);
+    // rollback goes through the same path
+    await expect(store.guard('codex', cfg, 'cli', async () => fs.writeFileSync(real, '[[['))).rejects.toThrow(/回滚/);
+    expect(fs.lstatSync(cfg).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(real, 'utf8')).toBe('model = "b"\n');
+    if (posix) expect(fs.statSync(real).mode & 0o777).toBe(0o640);
+  });
+
+  it.skipIf(process.platform === 'win32')('a new file is created 0600', async () => {
+    const fresh = path.join(dir, 'gemini', 'settings.json');
+    await store.writeChecked('gemini', fresh, () => '{}\n', 'new');
+    expect(fs.statSync(fresh).mode & 0o777).toBe(0o600);
+  });
+
+  it('a busy target: clear message, and no backup entry left for a write that never happened', async () => {
+    const busy = new BackupStore(path.join(dir, 'busy'), { rename: async () => { throw Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' }); }, retryDelayMs: 1 });
+    await expect(busy.writeChecked('codex', cfg, (t) => setTomlTopLevel(t, 'model', 'b'), 'm')).rejects.toThrow('文件被占用（可能有 agent 正在运行），请关闭后重试');
+    expect(fs.readFileSync(cfg, 'utf8')).toBe('# keep me\nmodel = "a"\n');
+    expect(await busy.list('codex')).toEqual([]);
+    expect(fs.readdirSync(path.dirname(cfg)).filter((f) => f.endsWith('.tmp'))).toEqual([]);
   });
 
   it('keeps each file\'s first backup forever when pruning', async () => {

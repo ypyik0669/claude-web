@@ -27,20 +27,58 @@ function stamp(): string {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+export interface WriteOptions {
+  /** file mode when the target doesn't exist yet (an existing file keeps its own permission bits) */
+  mode?: number;
+  /** test seam: the rename that commits the write */
+  rename?: (from: string, to: string) => Promise<void>;
+  retryDelayMs?: number;
+}
+
+export const BUSY_MESSAGE = '文件被占用（可能有 agent 正在运行），请关闭后重试';
+
+/** Where a write to `file` must land: through symlinks (a dotfiles-managed config stays a link). */
+async function realTarget(file: string): Promise<string> {
+  try { return await fs.realpath(file); } catch (e: any) {
+    if (e?.code !== 'ENOENT') throw e;
+    // a dangling link: write where it points, not over the link itself
+    const link = await fs.readlink(file).catch(() => null);
+    return link ? path.resolve(path.dirname(file), link) : file;
+  }
+}
+
 /**
- * Write via a temp file in the same directory + rename, so a reader (or a crash) never sees half a file.
- * Windows refuses the rename while another process has the target open (EPERM / EBUSY / EACCES): retry a bit.
+ * Write via a temp file next to the real target + rename, so a reader (or a crash) never sees half a file.
+ * Symlinks are followed (the link stays a link) and the target's permission bits are kept (new files: 0600).
+ * Windows refuses the rename while another process has the target open (EPERM / EBUSY / EACCES): retry a
+ * bit, then fail with BUSY_MESSAGE.
  */
-export async function atomicWrite(file: string, data: Buffer | string, mode?: number): Promise<void> {
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.cw-${process.pid}-${Math.random().toString(36).slice(2, 8)}.tmp`);
-  await fs.writeFile(tmp, data, mode === undefined ? undefined : { mode });
+export async function atomicWrite(file: string, data: Buffer | string, opts: WriteOptions = {}): Promise<void> {
+  const target = await realTarget(file);
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  const mode = await fs.stat(target).then((s) => s.mode & 0o7777, () => opts.mode ?? 0o600);
+  const tmp = path.join(path.dirname(target), `.${path.basename(target)}.cw-${process.pid}-${Math.random().toString(36).slice(2, 8)}.tmp`);
+  await fs.writeFile(tmp, data, { mode });
+  if (POSIX) await fs.chmod(tmp, mode).catch(() => {}); // the umask may have narrowed it
+  const rename = opts.rename ?? fs.rename;
   for (let i = 0; ; i++) {
-    try { await fs.rename(tmp, file); return; } catch (e: any) {
-      if (i >= 8 || !['EPERM', 'EBUSY', 'EACCES'].includes(e?.code)) { await fs.rm(tmp, { force: true }); throw e; }
-      await sleep(25 * (i + 1));
+    try { await rename(tmp, target); return; } catch (e: any) {
+      const busy = ['EPERM', 'EBUSY', 'EACCES'].includes(e?.code);
+      if (i >= 8 || !busy) {
+        await fs.rm(tmp, { force: true });
+        throw busy ? Object.assign(new Error(BUSY_MESSAGE), { code: e.code }) : e;
+      }
+      await sleep((opts.retryDelayMs ?? 25) * (i + 1));
     }
   }
+}
+
+/** Text of a file for a targeted edit — refused unless it round-trips as UTF-8 (else the edit would rewrite other bytes). */
+function utf8Text(buf: Buffer | null): string {
+  if (!buf) return '';
+  const text = buf.toString('utf8');
+  if (!Buffer.from(text, 'utf8').equals(buf)) throw new Error('文件不是 UTF-8 编码，未修改');
+  return text;
 }
 
 /** Parse check that tolerates a missing file and invalid UTF-8 (decoded lossily — only structure matters here). */
@@ -52,9 +90,14 @@ export class BackupStore {
   private locks = new Map<string, Promise<unknown>>();
   private readonly keep: number;
 
-  constructor(private readonly root: string, opts: { keep?: number } = {}) {
+  private readonly writeOpts: WriteOptions;
+
+  constructor(private readonly root: string, opts: { keep?: number; rename?: WriteOptions['rename']; retryDelayMs?: number } = {}) {
     this.keep = opts.keep ?? DEFAULT_KEEP;
+    this.writeOpts = { rename: opts.rename, retryDelayMs: opts.retryDelayMs };
   }
+
+  private write(file: string, data: Buffer | string) { return atomicWrite(file, data, this.writeOpts); }
 
   private dir(agent: AgentConfigKind) { return path.join(this.root, agent); }
 
@@ -103,12 +146,23 @@ export class BackupStore {
   writeChecked(agent: AgentConfigKind, file: string, edit: (current: string) => string, reason: string): Promise<AgentConfigBackup | null> {
     return this.locked(file, async () => {
       const original = await readOrNull(file);
-      const next = edit(original?.toString('utf8') ?? '');
+      const next = edit(utf8Text(original));
       const entry = await this.backupUnlocked(agent, file, reason, original);
-      await atomicWrite(file, next);
+      try { await this.write(file, next); } catch (e) {
+        await this.discard(entry); // nothing was written: don't list a backup for it
+        throw e;
+      }
       await this.verify(file, original);
       return entry;
     });
+  }
+
+  /** Drop a backup taken for a write that never happened (file + index line). */
+  private async discard(entry: AgentConfigBackup | null) {
+    if (!entry) return;
+    await fs.rm(path.join(this.root, entry.id), { force: true });
+    const kept = (await this.list(entry.agent)).filter((e) => e.id !== entry.id).reverse();
+    await atomicWrite(path.join(this.dir(entry.agent), 'index.jsonl'), kept.map((e) => JSON.stringify(e)).join('\n') + (kept.length ? '\n' : ''), { mode: 0o600 });
   }
 
   /**
@@ -128,18 +182,18 @@ export class BackupStore {
       await this.verify(file, original);
       if (fix) {
         let next: string | null;
-        try { next = fix((await readOrNull(file))?.toString('utf8') ?? ''); } catch (e: any) {
+        try { next = fix(utf8Text(await readOrNull(file))); } catch (e: any) {
           await this.rollback(file, original);
           throw new Error(`${path.basename(file)} 纠正失败，已回滚：${e?.message ?? e}`);
         }
-        if (next !== null) { await atomicWrite(file, next); await this.verify(file, original); }
+        if (next !== null) { await this.write(file, next); await this.verify(file, original); }
       }
       return { result, backup };
     });
   }
 
   private async rollback(file: string, original: Buffer | null) {
-    if (original === null) await fs.rm(file, { force: true }); else await atomicWrite(file, original);
+    if (original === null) await fs.rm(await realTarget(file), { force: true }); else await this.write(file, original);
   }
 
   private async verify(file: string, original: Buffer | null) {
@@ -176,8 +230,8 @@ export class BackupStore {
     checkParses(bytes, entry.path); // never restore something that doesn't parse
     await this.locked(entry.path, async () => {
       const original = await readOrNull(entry.path);
-      await this.backupUnlocked(entry.agent, entry.path, `恢复 ${path.basename(id)} 之前`, original);
-      await atomicWrite(entry.path, bytes);
+      const before = await this.backupUnlocked(entry.agent, entry.path, `恢复 ${path.basename(id)} 之前`, original);
+      try { await this.write(entry.path, bytes); } catch (e) { await this.discard(before); throw e; }
       await this.verify(entry.path, original);
     });
     return entry;
@@ -191,6 +245,6 @@ export class BackupStore {
     const drop = new Set(rest.slice(this.keep).map((e) => e.id));
     for (const id of drop) await fs.rm(path.join(this.root, id), { force: true });
     const kept = all.filter((e) => !drop.has(e.id)).reverse();
-    await atomicWrite(path.join(this.dir(agent), 'index.jsonl'), kept.map((e) => JSON.stringify(e)).join('\n') + '\n', 0o600);
+    await atomicWrite(path.join(this.dir(agent), 'index.jsonl'), kept.map((e) => JSON.stringify(e)).join('\n') + '\n', { mode: 0o600 });
   }
 }
