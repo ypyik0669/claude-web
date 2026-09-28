@@ -1,12 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { guardNodeArgs } from '../runtime/spawn-guard.js';
 
 const isWin = process.platform === 'win32';
 
-/** Node binary to run JS entries with (Electron has no `node` on PATH; the shell itself runs in Node mode). */
-export function nodeRuntime(): { command: string; env: Record<string, string> } {
-  if (process.versions.electron) return { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' } };
-  return { command: process.execPath || 'node', env: {} };
+/**
+ * Node binary to run JS entries with (Electron has no `node` on PATH; the shell itself runs in Node mode).
+ * `args` go before the script: the spawn-guard preload, so an Electron-as-node child (no console of its
+ * own on Windows) does not pop a console window for every git / reg / cmd it starts.
+ */
+export function nodeRuntime(): { command: string; env: Record<string, string>; args: string[] } {
+  if (process.versions.electron) return { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' }, args: guardNodeArgs() };
+  return { command: process.execPath || 'node', env: {}, args: guardNodeArgs() };
 }
 
 /** Find `cmd` on PATH honouring PATHEXT on Windows. Returns the absolute file or null. */
@@ -42,7 +47,7 @@ export function resolveSpawn(command: string, args: string[]): { command: string
     // npm bins are `#!/usr/bin/env node` scripts. A Finder-launched macOS app gets a minimal PATH without node, so
     // the shebang fails with exit 127 even when the script itself was found — run it with our own Node instead.
     const found = findOnPath(command);
-    if (found && isNodeScript(found) && !findOnPath('node')) { const n = nodeRuntime(); return { command: n.command, args: [found, ...args], env: n.env, via: 'node-shim' }; }
+    if (found && isNodeScript(found) && !findOnPath('node')) { const n = nodeRuntime(); return { command: n.command, args: [...n.args, found, ...args], env: n.env, via: 'node-shim' }; }
     return { command, args, env: {}, via: 'direct' };
   }
   const found = findOnPath(command) ?? command;
@@ -58,7 +63,7 @@ export function resolveSpawn(command: string, args: string[]): { command: string
       if (!fs.existsSync(entry)) continue;
       if (/\.(?:m?js|cjs)$/i.test(rel) || (!path.extname(rel) && isNodeScript(entry))) {
         const n = nodeRuntime();
-        return { command: n.command, args: [entry, ...args], env: n.env, via: 'node-shim' };
+        return { command: n.command, args: [...n.args, entry, ...args], env: n.env, via: 'node-shim' };
       }
     }
   } catch { /* fall through */ }

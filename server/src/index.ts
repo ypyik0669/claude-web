@@ -1,3 +1,4 @@
+import './runtime/spawn-guard-install.js'; // first: child_process defaults to windowsHide before anything else loads
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';

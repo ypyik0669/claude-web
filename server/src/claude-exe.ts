@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { nodeRuntime } from './agents/resolve.js';
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -105,13 +106,6 @@ export function engineInfo(): EngineInfo {
   return info;
 }
 
-/** Node binary to run JS engines with. Inside Electron there is no `node` on PATH — use the shell itself in Node mode. */
-function nodeCommand(): { command: string; env: Record<string, string> } {
-  const isElectron = !!process.versions.electron;
-  if (isElectron) return { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' } };
-  return { command: process.execPath || 'node', env: {} };
-}
-
 /**
  * Custom spawn for the SDK. The SDK's built-in spawn fails with ENOENT on Windows for the
  * native binary; a plain child_process.spawn with the same args works. Also maps `node` to the
@@ -126,21 +120,24 @@ export function spawnClaude(o: { command: string; args: string[]; cwd?: string; 
     delete env.CLAUDE_AGENT_SDK_VERSION;
     delete env.CLAUDE_AGENT_SDK_CLIENT_APP;
   }
+  let args = o.args;
   if (command === 'node') {
-    const n = nodeCommand();
+    // JS engine (ccb): Electron-as-node inside the desktop app, with the spawn-guard preload before the script
+    const n = nodeRuntime();
     command = n.command;
     env = { ...env, ...n.env };
+    args = [...n.args, ...args];
   }
-  return spawn(command, o.args, { cwd: o.cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, signal: o.signal });
+  return spawn(command, args, { cwd: o.cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, signal: o.signal });
 }
 
 /** Run a `claude <subcommand>` with the runtime and return stdout/stderr. Used by the config center. */
 export async function runClaudeCli(args: string[], opts: { cwd?: string; timeoutMs?: number; runtime?: RuntimeKind; env?: Record<string, string> } = {}): Promise<{ code: number; stdout: string; stderr: string }> {
   const { file } = resolveEngine(opts.runtime);
   const isJs = file.endsWith('.js');
-  const n = isJs ? nodeCommand() : null;
+  const n = isJs ? nodeRuntime() : null;
   try {
-    const p = execFileAsync(isJs ? n!.command : file, isJs ? [file, ...args] : args, {
+    const p = execFileAsync(isJs ? n!.command : file, isJs ? [...n!.args, file, ...args] : args, {
       cwd: opts.cwd,
       timeout: opts.timeoutMs ?? 60_000,
       maxBuffer: 16 * 1024 * 1024,
