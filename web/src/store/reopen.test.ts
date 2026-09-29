@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionInfoSnapshot } from '@shared';
-import { lastAssistantModel, reopenSettings, resumeParams, resumeView } from './reopen';
+import { forkParams, lastAssistantModel, reopenSettings, resumeParams, resumeView } from './reopen';
 
 describe('reopenSettings', () => {
   it('carries model, effort, permission mode, ultracode and features', () => {
@@ -53,5 +53,19 @@ describe('what a conversation that is not running will continue with (final revi
     // a reaped conversation comes back as it was (review of 6a481ac): model, effort, mode, 深度编排, features
     const i = info({ model: 'claude-opus-5', effort: 'high', permissionMode: 'plan', ultracode: true, features: { chrome: true } });
     expect(resumeParams({ conv, info: i })).toEqual(reopenSettings(i));
+  });
+});
+
+describe('what an edit-and-resend / rerun copy starts with (re-review M-1)', () => {
+  const conv = { items: items('claude-sonnet-5') };
+  it('a conversation not running: its chips — the picks (provider included: the fork has a new id) over the last live info', () => {
+    expect(forkParams({ state: 'history', conv, resume: { providerId: 'p2', model: 'm2', permissionMode: 'plan' } }, { providerId: 'p1' })).toEqual({ providerId: 'p2', model: 'm2', permissionMode: 'plan' });
+    expect(forkParams({ state: 'closed', conv, info: info({ model: 'claude-opus-5', permissionMode: 'acceptEdits' }), resume: { permissionMode: 'plan' } })).toEqual({ model: 'claude-opus-5', permissionMode: 'plan' });
+    // nothing picked, no live info: nothing — the server keeps the original's recorded provider for the fork
+    expect(forkParams({ state: 'history', conv }, { providerId: 'p1' })).toEqual({});
+  });
+  it('a running conversation: what it runs on, its provider explicitly', () => {
+    expect(forkParams({ state: 'idle', conv, info: info({ model: 'm1', permissionMode: 'plan', providerId: 'p1', effort: 'low' }) })).toEqual({ model: 'm1', permissionMode: 'plan', providerId: 'p1', effort: 'low' });
+    expect(forkParams({ state: 'running', conv, info: info({ model: 'claude-opus-5' }) }).providerId).toBeUndefined();
   });
 });

@@ -14,8 +14,8 @@ import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { applyMessage, applyTranscript, createConversation, prependTranscript, walkTools, type Conversation } from '@/model/conversation';
 import { isImportedSessionId } from '@/util';
-import { resumeParams, type ResumeChoice } from './reopen';
-import { parseLibraryId } from '@shared';
+import { forkParams, resumeParams, resumeView, type ResumeChoice } from './reopen';
+import { parseLibraryId, parsePeerId } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { DEFAULT_THEME, applyUiSettings, resolveTheme, setSystemThemeHandler } from '@/features/settings/ui-settings';
 import { SIMPLIFIED_NOTICE } from '@/ui/terms';
@@ -616,13 +616,16 @@ export const useStore = create<State>((set, get) => ({
     if (anchor === undefined) throw new Error('找不到这条消息');
     const orig = o.conv.items.find((i) => i.id === userItemId);
     const atts = orig?.kind === 'user' ? orig.attachments?.filter((a) => a.path).map((a) => ({ kind: a.kind, name: a.name, path: a.path, size: a.size })) : undefined;
+    // the copy starts as the conversation would go on (re-review M-1): its live settings, or its chips' picks
+    const meta = get().sessionMeta[sessionId];
+    const carry = forkParams(o, meta);
     if (anchor === null) {
-      // first message: brand-new session in the same directory with the same settings
-      const id = await get().openSession({ cwd: o.cwd, model: o.info?.model, permissionMode: o.info?.permissionMode, providerId: o.info?.providerId, features: o.info?.features });
+      // first message: brand-new session in the same directory with the same settings (and the provider its chip shows)
+      const id = await get().openSession({ cwd: o.cwd, ...carry, providerId: carry.providerId ?? (parsePeerId(sessionId) ? undefined : resumeView(o, meta).providerId) });
       await get().send(id, text, undefined, false, atts as AttachmentRef[] | undefined);
       return;
     }
-    const id = await get().openSession({ sessionId, cwd: o.cwd, resumeAt: anchor });
+    const id = await get().openSession({ sessionId, cwd: o.cwd, resumeAt: anchor, ...carry });
     await get().send(id, text, undefined, false, atts as AttachmentRef[] | undefined);
   },
 

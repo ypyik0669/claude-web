@@ -78,3 +78,17 @@ export function resumeParams(o: ResumeSource, meta?: { providerId?: string }): P
   if (r.ultracode !== undefined) { if (r.ultracode) out.ultracode = true; else delete out.ultracode; }
   return out;
 }
+
+/**
+ * What the copy an edit-and-resend / rerun forks off starts with (re-review M-1): as the conversation would go on —
+ * a running one with what it runs on (its live info and provider), one not running with its chips (resumeParams:
+ * the picks over what it last had live). A provider goes explicitly when known: the fork gets a new id, and the
+ * server would otherwise take the original's recorded one.
+ */
+export function forkParams(o: ResumeSource & { state: string }, meta?: { providerId?: string }): ReturnType<typeof resumeParams> {
+  const running = o.state !== 'history' && o.state !== 'closed' && o.state !== 'error';
+  if (!running) return resumeParams(o, meta);
+  const out: ReturnType<typeof resumeParams> = { ...reopenSettings(o.info) };
+  if (o.info?.providerId) out.providerId = o.info.providerId;
+  return out;
+}
