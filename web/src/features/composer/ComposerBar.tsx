@@ -10,7 +10,7 @@ export function ComposerBar({ plus, project, branch, status, meter, model, permi
   plus?: ReactNode;
   project?: ReactNode;
   branch?: ReactNode;
-  /** a conversation that is not running: 「未运行 · 发送即恢复」 in place of the chips */
+  /** a conversation that is not running: 「发送后继续」 before its chips (what the send resumes it with) */
   status?: ReactNode;
   meter?: ReactNode;
   model?: ReactNode;

@@ -14,7 +14,7 @@ import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { applyMessage, applyTranscript, createConversation, prependTranscript, walkTools, type Conversation } from '@/model/conversation';
 import { isImportedSessionId } from '@/util';
-import { reopenSettings } from './reopen';
+import { lastPermissionMode, resumeParams, type ResumeChoice } from './reopen';
 import { parseLibraryId } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { DEFAULT_THEME, applyUiSettings, resolveTheme, setSystemThemeHandler } from '@/features/settings/ui-settings';
@@ -49,6 +49,13 @@ export interface OpenSession {
   historyCursor?: string;
   /** the last transcript.load / library.read failed — the chat shows this with a retry button */
   loadError?: string;
+  /**
+   * not running: what the user picked on its model / permission chips for the next send (final review §9 #1);
+   * the send resumes it with `resumeParams()`, and the fresh OpenSession of the resumed one drops it
+   */
+  resume?: ResumeChoice;
+  /** the permission mode its transcript last recorded (not 完全放开), for the chips of a conversation not running */
+  lastMode?: PermissionMode;
 }
 
 export type LibraryOp = 'rename' | 'archive' | 'delete' | 'fork';
@@ -161,6 +168,8 @@ interface State {
   togglePanel(p: PanelId): void;
   setTab(t: 'chat' | 'trajectory'): void;
   setDraft(sessionId: string, d: string): void;
+  /** a conversation that is not running: remember a pick on its chips for the send that resumes it */
+  setResume(sessionId: string, patch: ResumeChoice): void;
   closeSession(sessionId: string): Promise<void>;
   setTheme(t: Theme, fromSettings?: boolean): void;
   forkAt(sessionId: string, messageUuid: string): Promise<void>;
@@ -687,6 +696,7 @@ export const useStore = create<State>((set, get) => ({
         applyTranscript(conv, msgs, { live: meta?.live === 'running' || meta?.live === 'waiting' });
         // re-apply live messages that arrived after spawn (they are also in transcript; duplicates are merged by id)
         o.conv = conv;
+        o.lastMode = lastPermissionMode(msgs);
         o.loading = false;
       }));
       // a runner may already be alive for this session (e.g. page reload): re-attach so controls go live
@@ -742,9 +752,10 @@ export const useStore = create<State>((set, get) => ({
     const o = get().open[sessionId];
     if (!o) return;
     if (o.state === 'history' || o.state === 'closed' || o.state === 'error') {
-      // A reaped / crashed session reopens with what the user last had (model chip, effort, permission mode,
-      // deep orchestration, features); without them the resume silently fell back to the defaults.
-      await get().openSession({ sessionId, cwd: o.cwd, ...reopenSettings(o.info) }, 'none');
+      // A reaped / crashed / history session reopens with what its chips show (final review §9 #1): the user's pick
+      // there, else what it last had live (model, effort, permission mode, deep orchestration, features — without
+      // them the resume silently fell back to the defaults), else its transcript's model and mode.
+      await get().openSession({ sessionId, cwd: o.cwd, ...resumeParams(o, get().sessionMeta[sessionId]) }, 'none');
     }
     const cur = get().open[sessionId];
     if ((cur.state === 'running' || cur.state === 'waiting') && !steer) {
@@ -829,6 +840,10 @@ export const useStore = create<State>((set, get) => ({
   setTab(tab) {
     set({ tab });
   },
+  setResume(sessionId, patch) {
+    set((s) => bump(s, sessionId, (o) => { o.resume = { ...o.resume, ...patch }; }));
+  },
+
   setDraft(sessionId, draft) {
     // never create a half-formed entry (no conv / state) for a session that is not open
     set((s) => (s.open[sessionId] ? { open: { ...s.open, [sessionId]: { ...s.open[sessionId], draft } } } : {}));

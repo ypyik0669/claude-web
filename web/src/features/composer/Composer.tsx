@@ -19,7 +19,8 @@ import { sessionRefMarker } from '@/model/conversation';
 import { SessionRefChip } from '@/features/chat/ChatView';
 import { REFERENCE_EVENT, handOver, type ReferenceDetail } from '@/features/sidebar/session-actions';
 import { ModelChip } from '@/features/models/ModelMenu';
-import { usableProfile, type AgentSource, type ModelMenuItem } from '@/features/models/menu';
+import { OWN_PROVIDER, usableProfile, type AgentSource, type ModelMenuItem } from '@/features/models/menu';
+import { resumeView } from '@/store/reopen';
 import { routePick, switchedNote } from '@/features/models/route';
 import { modelChipText } from '@/features/models/intelligence';
 import { useAccountDefault } from '@/features/models/account-default';
@@ -82,6 +83,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   const send = useStore((s) => s.send);
   const interrupt = useStore((s) => s.interrupt);
   const setDraft = useStore((s) => s.setDraft);
+  const setResume = useStore((s) => s.setResume);
   const saveDraft = useStore((s) => s.saveDraft);
   const openSession = useStore((s) => s.openSession);
   const sessions = useStore((s) => s.sessions);
@@ -544,6 +546,8 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // restart of session.setProvider, started directly on the picked model; another agent → the hand-over
   const [swapping, setSwapping] = useState(false);
   const liveAgent: AgentKind = info?.agent ?? 'claude';
+  // a conversation not running yet has no info: its agent comes from the list
+  const sessionAgent: AgentKind = info?.agent ?? sessions.find((s) => s.sessionId === active?.sessionId)?.agent ?? 'claude';
   const liveProvider = info?.providerId && info.providerId !== 'claude' ? info.providerId : 'claude';
   const liveAgentDefault = liveAgent !== 'claude' ? agents.find((a) => a.kind === liveAgent)?.model || undefined : undefined;
   // the account's default model by name for a chip with no model (final review §9 #2): this conversation's CLI says
@@ -571,6 +575,25 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
       toast(switchedNote(it.label, active.conv.items.length > 0), true);
       return true;
     } catch (e: any) { toast(e.message); return false; } finally { setSwapping(false); }
+  };
+  // a conversation that is not running: a pick only changes what the next send resumes it with. The menu lists the
+  // profiles this agent can use and greys the ones it cannot right now (the same fit check `session.open` runs —
+  // `profileFitError`), and routePick refuses those; another agent's model is the same hand-over as a live one
+  const resumeAgentDefault = sessionAgent !== 'claude' ? agents.find((a) => a.kind === sessionAgent)?.model || undefined : undefined;
+  const pickResume = async (it: ModelMenuItem, v: { providerId: string; model?: string }): Promise<boolean> => {
+    if (!active || swapping) return false;
+    const act = routePick(it, { agent: sessionAgent, currentProvider: remote ? 'claude' : v.providerId, currentModel: v.model, remote, busy: false, providers, agentDefault: resumeAgentDefault });
+    if (act.kind === 'none') return true;
+    if (act.kind === 'error') { toast(act.message); return false; }
+    if (act.kind === 'handover') {
+      const summary = sessions.find((s) => s.sessionId === active.sessionId) ?? { sessionId: active.sessionId, title: '', cwd: active.cwd, lastModified: 0 };
+      setSwapping(true);
+      try { return await handOver(summary, act.agent, act.model, it.display); } finally { setSwapping(false); }
+    }
+    // '' = the default (the account's `default` alias, or the profile's own): the resume then sends no model
+    if (act.kind === 'setModel') setResume(active.sessionId, { model: act.model === 'default' ? '' : act.model });
+    else setResume(active.sessionId, { providerId: act.providerId ?? OWN_PROVIDER, model: act.model ?? '' });
+    return true;
   };
   const pickWelcome = (it: ModelMenuItem) => {
     if (it.agent && it.agent !== wKind) {
@@ -600,8 +623,6 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
 
   // the capabilities: on the welcome page the ones the new conversation will get (removable); in a running one
   // what it was started with (fixed — a launch parameter)
-  // a conversation not running yet has no info: its agent comes from the list
-  const sessionAgent = info?.agent ?? sessions.find((s) => s.sessionId === active?.sessionId)?.agent ?? 'claude';
   const claudeHere = welcome ? !foreign : sessionAgent === 'claude';
   const sessionFeatures = info?.features ?? NO_FEATURES;
   const tags = welcome ? (claudeHere ? capabilityTags(featDefaults) : []) : capabilityTags(sessionFeatures);
@@ -674,8 +695,39 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
       />
     );
     permission = <PermissionChip mode={info.permissionMode ?? 'default'} compact={mobile} onPick={setMode} />;
+  } else if (active && !disabled && active.state !== 'starting') {
+    // not running (history, reaped, crashed — every conversation after a restart): the chips show what the next
+    // send resumes it with, and a pick there changes that (final review §9 #1)
+    const v = resumeView(active, sessionMeta[active.sessionId]);
+    const rAgent = sessionAgent;
+    const rProvider = remote ? 'claude' : v.providerId;
+    const rEfforts = effortLevels(rAgent, v.model);
+    const rUltraOk = !remote && !!CATALOG[rAgent]?.supportsUltracode;
+    const t = modelChipText({ agent: rAgent, agentName: agents.find((a) => a.kind === rAgent)?.name, providers, providerId: rProvider, model: v.model, agentDefault: resumeAgentDefault, efforts: rEfforts, effort: v.effort, defaultEffort: CATALOG[rAgent]?.defaultEffort, ultracode: rUltraOk && v.ultracode, accountDefault });
+    const sid = active.sessionId;
+    model = (
+      <ModelChip
+        agent={rAgent}
+        current={{ providerId: rProvider, model: v.model }}
+        label={t.main}
+        suffix={t.suffix}
+        title={`${t.main}${t.isDefault ? '（默认）' : ''}${t.suffix ? ` · ${t.suffix}` : ''}\n对话没在运行：发送后用这里选的模型继续${remote ? '' : '；选其它 Agent 的模型 = 交给它继续'}`}
+        builtinTitle={rAgent === 'claude' ? 'Claude 账号' : `${agents.find((a) => a.kind === rAgent)?.name ?? rAgent} 账号`}
+        agentDefault={resumeAgentDefault}
+        lockProvider={remote ? 'claude' : undefined}
+        lockNote="其它机器上的对话：只能换模型，换供应商请在那台机器上操作"
+        otherAgents={remote ? undefined : otherAgents}
+        intelligence={{ levels: rEfforts, value: v.effort, defaultLevel: CATALOG[rAgent]?.defaultEffort, onChange: (effort) => setResume(sid, { effort }) }}
+        ultracode={rUltraOk ? { on: v.ultracode, onChange: (on) => setResume(sid, { ultracode: on }) } : undefined}
+        busy={swapping}
+        disabled={swapping}
+        onPick={(it) => pickResume(it, v)}
+      />
+    );
+    permission = <PermissionChip mode={v.permissionMode} compact={mobile} onPick={(m) => setResume(sid, { permissionMode: m })} />;
+    status = <span className="cb-status opt" title="对话没在运行，发送后按这里选的模型和权限继续">发送后继续</span>;
   } else if (active) {
-    status = <span className="cb-status">{disabled ? '对话已删除' : active.state === 'starting' ? '启动中…' : '未运行 · 发送即恢复'}</span>;
+    status = <span className="cb-status">{disabled ? '对话已删除' : '启动中…'}</span>;
   }
   if (!welcome && active) meter = <ContextMeter sessionId={active.sessionId} />;
 

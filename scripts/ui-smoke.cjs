@@ -934,6 +934,33 @@ function driver() {
         check('session tile without error boundary', !err, err);
         await shot('session');
 
+        // final review §9 #1: a conversation that is not running (every one after a restart) still shows its model and
+        // permission chips — the transcript's model, 每步询问 — with 「发送后继续」; a pick there is what the send resumes with
+        {
+          phase = 'session-resume-chips';
+          const sidR = JSON.stringify(E.SMOKE_SID);
+          const bar = '.pane.focused .composer .composer-bar';
+          const look = () => js(`(() => { const b = document.querySelector('${bar}'); if (!b) return null; return { state: window.__store.getState().open[${sidR}]?.state, model: b.querySelector('.mm-anchor > button.chip')?.textContent ?? null, perm: b.querySelector('.perm-chip')?.textContent ?? null, status: b.querySelector('.cb-status')?.textContent ?? null, resume: window.__store.getState().open[${sidR}]?.resume ?? null }; })()`);
+          const r0 = await look();
+          check('a conversation not running shows its model (from the transcript) and permission chips with 「发送后继续」', !!r0 && r0.state === 'history' && /claude-smoke/.test(r0.model ?? '') && /每步询问/.test(r0.perm ?? '') && r0.status === '发送后继续', JSON.stringify(r0));
+          await click(`${bar} .perm-chip`);
+          await waitFor(`!!document.querySelector('.menu.perm-menu [data-mode="plan"]')`, 3000);
+          await click('.menu.perm-menu [data-mode="plan"]');
+          await sleep(200);
+          const r1 = await look();
+          await click(`${bar} .mm-anchor > button.chip`);
+          const rowSel = `.menu.mm [data-sec="builtin"] .mm-row:not(.cur):not(.off)`;
+          await waitFor(`[...document.querySelectorAll('${rowSel}')].length > 1`, 5000);
+          const picked = await js(`(() => { const rows = [...document.querySelectorAll('${rowSel}')]; const r = rows[rows.length - 1]; r.scrollIntoView({ block: 'nearest' }); r.dataset.smokePick = '1'; return r.textContent; })()`);
+          await click('.menu.mm [data-smoke-pick="1"]');
+          await sleep(300);
+          const r2 = await look();
+          const menuClosed = await js(`!document.querySelector('.menu.mm')`);
+          if (!menuClosed) await key('Escape');
+          check('picking 只做计划 and another model there changes the chips and what the send resumes with — nothing is sent, it stays not running', !!r1 && /只做计划/.test(r1.perm ?? '') && r1.resume?.permissionMode === 'plan' && !!r2 && r2.state === 'history' && !!r2.resume?.model && r2.resume.model !== 'claude-smoke' && !/claude-smoke/.test(r2.model ?? '') && r2.status === '发送后继续', JSON.stringify({ r1, picked, r2 }));
+          await js(`window.__store.setState((s) => { const o = s.open[${sidR}]; if (!o) return {}; const { resume, ...rest } = o; return { open: { ...s.open, [${sidR}]: { ...rest, version: o.version + 1 } } }; })`);
+        }
+
         // ---- redesign phase 3: the stats bar is behind the context ring; + says the capabilities apply to new conversations
         phase = 'session-composer';
         check('no stats bar under the composer', !(await js('!!document.querySelector(".pane .composer .statusbar")')));
