@@ -49,9 +49,12 @@ export const CATALOG: Partial<Record<AgentKind, AgentCatalog>> = {
   claude: {
     models: [
       { id: 'claude-fable-5-1', label: 'Fable 5.1', hint: '最强，慢、贵', effort: FIVE },
+      { id: 'claude-opus-5-5', label: 'Opus 5.5', hint: '复杂任务', effort: FIVE },
+      { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: '日常编码', effort: FIVE },
+      { id: 'claude-sonnet-5', label: 'Sonnet 5', hint: '日常编码（官方 sonnet 别名）', effort: FIVE },
       { id: 'claude-opus-5', label: 'Opus 5', hint: '复杂任务', effort: FIVE },
-      { id: 'claude-sonnet-5', label: 'Sonnet 5', hint: '日常编码', effort: FIVE },
       { id: 'claude-haiku-4-5', label: 'Haiku 4.5', hint: '快、便宜', effort: FIVE },
+      { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', effort: FIVE, legacy: true },
       { id: 'claude-fable-5', label: 'Fable 5', effort: FIVE, legacy: true },
       { id: 'claude-opus-4-8', label: 'Opus 4.8', effort: FIVE, legacy: true },
       { id: 'claude-opus-4-7', label: 'Opus 4.7', effort: FIVE, legacy: true },
@@ -59,11 +62,11 @@ export const CATALOG: Partial<Record<AgentKind, AgentCatalog>> = {
       { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', effort: NO_XHIGH, legacy: true },
       { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5', effort: NO_XHIGH, legacy: true },
     ],
-    // the CLI's own alias list, read out of claude.exe
+    // what the official Claude Code resolves each alias to (OFFICIAL_ALIAS_TARGETS, measured); ccb is aligned to it
     aliases: {
-      fable: 'claude-fable-5-1', opus: 'claude-opus-5', sonnet: 'claude-sonnet-5', haiku: 'claude-haiku-4-5',
-      best: 'claude-fable-5-1', opusplan: 'claude-opus-5',
-      'fable[1m]': 'claude-fable-5-1', 'opus[1m]': 'claude-opus-5', 'sonnet[1m]': 'claude-sonnet-5',
+      fable: 'claude-fable-5-1', opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5', haiku: 'claude-haiku-4-5',
+      best: 'claude-fable-5-1', opusplan: 'claude-opus-5-5', default: 'claude-opus-5-5',
+      'fable[1m]': 'claude-fable-5-1', 'opus[1m]': 'claude-opus-5-5', 'sonnet[1m]': 'claude-sonnet-5',
     },
     effort: FIVE,
     defaultEffort: 'high',
@@ -109,6 +112,34 @@ export const CATALOG: Partial<Record<AgentKind, AgentCatalog>> = {
     note: 'Kimi CLI 的模型表与智能程度开关未能核实，请以 `kimi --help` / 官方文档为准。',
   },
 };
+
+/**
+ * What the official Claude Code (2.1.283, the Agent SDK's bundled binary) resolves the claude.ai login's aliases to —
+ * read off its system/init line with `--model <alias>` (2026-09-29): no model / default → claude-opus-5-5[1m] (Max),
+ * opus → claude-opus-5-5, sonnet → claude-sonnet-5, haiku → claude-haiku-4-5-20251001, fable / best → claude-fable-5-1.
+ * The bundled ccb 2.8.4 predates the Claude 5 family (default / opus → claude-opus-4-7, sonnet → claude-sonnet-4-6,
+ * `fable` passed through literally), so a claude.ai-login session on ccb gets these targets through the CLI's own
+ * ANTHROPIC_DEFAULT_*_MODEL variables (ccbAccountEnv — its default follows the opus one) and the aliases ccb lacks are
+ * rewritten (ccbModel). Re-measure when the SDK's claude binary is upgraded.
+ */
+export const OFFICIAL_ALIAS_TARGETS = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5', haiku: 'claude-haiku-4-5-20251001', fable: 'claude-fable-5-1' } as const;
+
+/** Env for a claude.ai-login session on ccb: its aliases (and its default, which is the opus one) resolve like the official CLI. */
+export function ccbAccountEnv(): Record<string, string> {
+  return {
+    ANTHROPIC_DEFAULT_OPUS_MODEL: OFFICIAL_ALIAS_TARGETS.opus,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: OFFICIAL_ALIAS_TARGETS.sonnet,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: OFFICIAL_ALIAS_TARGETS.haiku,
+  };
+}
+
+/** A model for ccb: the aliases it doesn't know (`fable`, `best`, with or without `[1m]`) become the official target; the rest pass. */
+export function ccbModel(model: string | undefined): string | undefined {
+  if (!model) return model;
+  const long = model.endsWith('[1m]');
+  const base = long ? model.slice(0, -4) : model;
+  return base === 'fable' || base === 'best' ? `${OFFICIAL_ALIAS_TARGETS.fable}${long ? '[1m]' : ''}` : model;
+}
 
 /** Display name for a model id or alias — falls back to the raw id so unknown models still render. */
 export function modelLabel(agent: AgentKind, id: string): string {

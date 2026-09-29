@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { resolveEngine, spawnClaude } from '../claude-exe.js';
 import { providerEnv, type SessionProvider } from '../providers/service.js';
-import { effortLevels, modelLabel, modelsFor, supportsUltracode } from '../models/catalog.js';
+import { ccbAccountEnv, ccbModel, effortLevels, modelLabel, modelsFor, supportsUltracode } from '../models/catalog.js';
 import { claudeMcpServer } from '../memory/launcher.js';
 import { markUnknownCost } from '../usage/pricing.js';
 import type { AttachmentRef, EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot } from '../protocol.js';
@@ -159,6 +159,9 @@ export class SessionRunner extends EventEmitter {
     const exe = engine.file;
     this.info.runtime = engine.kind;
     const fenv = this.featureEnv();
+    // a claude.ai-login session on the bundled ccb: its alias table predates the Claude 5 family (see
+    // OFFICIAL_ALIAS_TARGETS) — the CLI's own variables align it with the official one; the user's env / settings win
+    if (engine.kind === 'ccb' && !this.provider) for (const [k, v] of Object.entries(ccbAccountEnv())) if (!(k in fenv) && !process.env[k]) fenv[k] = v;
     // a provider session must not inherit provider-ish env from this process (e.g. a global ANTHROPIC_API_KEY)
     const base = { ...process.env };
     // …including a stray CLAUDE_CODE_USE_* switch, which would route the profile to another ccb provider
@@ -166,7 +169,7 @@ export class SessionRunner extends EventEmitter {
     const options: Options = {
       cwd: this.cwd,
       env: Object.keys(fenv).length ? { ...base, ...fenv } : undefined,
-      model: this.model,
+      model: engine.kind === 'ccb' ? ccbModel(this.model) : this.model,
       // `ultra` is Codex-only; the Claude SDK's ladder tops out at max
       effort: this.effort === 'ultra' ? 'max' : this.effort,
       permissionMode: this.permissionMode,
@@ -362,7 +365,7 @@ export class SessionRunner extends EventEmitter {
 
   async setModel(model: string) {
     try {
-      await this.q?.setModel(model);
+      await this.q?.setModel(this.info.runtime === 'ccb' ? ccbModel(model) : model);
       this.model = model;
       this.info.model = model;
       this.emit('info', this.info);

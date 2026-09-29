@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { profileFitError, providerTypesFor } from './catalog.js';
+import { OFFICIAL_ALIAS_TARGETS, ccbAccountEnv, ccbModel, modelLabel, profileFitError, providerTypesFor } from './catalog.js';
 
 describe('which profile types can drive an agent', () => {
   it('per agent', () => {
@@ -21,5 +21,22 @@ describe('which profile types can drive an agent', () => {
     expect(profileFitError('claude', 'anthropic', 'claude')).toBeNull();
     expect(profileFitError('claude', 'gateway', 'claude')).toBeNull();
     expect(profileFitError('codex', 'openai', 'claude')).toBeNull(); // runtime only matters for Claude sessions
+  });
+});
+
+describe('Claude aliases follow the official Claude Code', () => {
+  it('labels name what the alias runs, and ccb is aligned to it', () => {
+    expect(modelLabel('claude', 'opus')).toBe('Opus 5.5');
+    expect(modelLabel('claude', 'sonnet')).toBe('Sonnet 5');
+    expect(modelLabel('claude', 'fable')).toBe('Fable 5.1');
+    expect(modelLabel('claude', 'claude-sonnet-5-5')).toBe('Sonnet 5.5');
+    expect(modelLabel('claude', 'claude-haiku-4-5-20251001')).toBe('Haiku 4.5');
+    expect(ccbAccountEnv()).toEqual({ ANTHROPIC_DEFAULT_OPUS_MODEL: OFFICIAL_ALIAS_TARGETS.opus, ANTHROPIC_DEFAULT_SONNET_MODEL: OFFICIAL_ALIAS_TARGETS.sonnet, ANTHROPIC_DEFAULT_HAIKU_MODEL: OFFICIAL_ALIAS_TARGETS.haiku });
+    expect(ccbModel('fable')).toBe('claude-fable-5-1');
+    expect(ccbModel('best')).toBe('claude-fable-5-1');
+    expect(ccbModel('fable[1m]')).toBe('claude-fable-5-1[1m]');
+    expect(ccbModel('opus')).toBe('opus');
+    expect(ccbModel('claude-opus-5-5')).toBe('claude-opus-5-5');
+    expect(ccbModel(undefined)).toBeUndefined();
   });
 });

@@ -23,13 +23,60 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
     return q;
   },
 }));
-vi.mock('../claude-exe.js', () => ({ resolveEngine: () => ({ file: 'claude', kind: 'claude' }), spawnClaude: () => null }));
+const eng = vi.hoisted(() => ({ kind: 'claude' as 'claude' | 'ccb' }));
+vi.mock('../claude-exe.js', () => ({ resolveEngine: () => ({ file: 'claude', kind: eng.kind }), spawnClaude: () => null }));
 vi.mock('../memory/launcher.js', () => ({ claudeMcpServer: () => ({}) }));
 
 const { SessionRunner } = await import('./session-runner.js');
 const tick = () => new Promise((r) => setTimeout(r, 10));
 
 describe('SessionRunner', () => {
+  it('a claude.ai-login session on ccb resolves models like the official Claude Code; other sessions are untouched', async () => {
+    eng.kind = 'ccb';
+    try {
+      queries.length = 0;
+      const a = new SessionRunner({ sessionId: 'm1', cwd: '/x', model: 'fable' } as any);
+      await tick();
+      expect(queries[0].options.model).toBe('claude-fable-5-1'); // ccb has no fable alias
+      expect(queries[0].options.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-5-5');
+      expect(queries[0].options.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-5');
+      expect(queries[0].options.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-4-5-20251001');
+      expect(a.info.model).toBe('fable'); // the chip keeps what the user picked
+      await a.close();
+      // no model: nothing passed — ccb's default follows the opus variable
+      const b = new SessionRunner({ sessionId: 'm2', cwd: '/x' } as any);
+      await tick();
+      expect(queries[1].options.model).toBeUndefined();
+      expect(queries[1].options.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-5-5');
+      await b.close();
+      // the user's own variable wins
+      process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'claude-opus-4-8';
+      try {
+        const c = new SessionRunner({ sessionId: 'm3', cwd: '/x', model: 'opus' } as any);
+        await tick();
+        expect(queries[2].options.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-8');
+        expect(queries[2].options.model).toBe('opus');
+        await c.close();
+      } finally {
+        delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+      }
+      // a provider session keeps its provider's mapping
+      const d = new SessionRunner({ sessionId: 'm4', cwd: '/x' } as any, { id: 'p1', name: 'relay', type: 'anthropic', baseUrl: 'https://relay.invalid', apiKey: 'k', models: [] } as any);
+      await tick();
+      expect(queries[3].options.env.ANTHROPIC_DEFAULT_OPUS_MODEL).not.toBe('claude-opus-5-5');
+      await d.close();
+      // the official binary resolves its own aliases
+      eng.kind = 'claude';
+      const e = new SessionRunner({ sessionId: 'm5', cwd: '/x', model: 'fable' } as any);
+      await tick();
+      expect(queries[4].options.model).toBe('fable');
+      expect(queries[4].options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+      await e.close();
+    } finally {
+      eng.kind = 'claude';
+    }
+  });
+
   it('respawn keeps the session alive and re-applies feature flags / worktree', async () => {
     queries.length = 0;
     const r = new SessionRunner({ sessionId: 'a', cwd: '/x', features: { chrome: true }, worktree: 'wt' } as any);
