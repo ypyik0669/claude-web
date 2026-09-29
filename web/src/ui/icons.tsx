@@ -102,6 +102,8 @@ const PATHS = {
   filter: ['M3.5 5.5h17l-6.6 7.6v5.6l-3.8 2v-7.6z'],
   sun: ['M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', 'M12 2.8v2M12 19.2v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.8 12h2M19.2 12h2M4.6 19.4L6 18M18 6l1.4-1.4'],
   moon: ['M20 14.2A8.5 8.5 0 1 1 9.8 4a6.8 6.8 0 0 0 10.2 10.2z'],
+  // 跟随系统 (the theme follows the operating system): a screen
+  monitor: ['M4.8 4.8h14.4a1.4 1.4 0 0 1 1.4 1.4v9a1.4 1.4 0 0 1-1.4 1.4H4.8a1.4 1.4 0 0 1-1.4-1.4v-9a1.4 1.4 0 0 1 1.4-1.4z', 'M8.8 20h6.4M12 16.6V20'],
   lock: ['M6 10.5h12v9H6z', 'M8.8 10.5V7.8a3.2 3.2 0 0 1 6.4 0v2.7'],
   // a permission asked of the user (the docked card, a step's 「等你确认」 node) — the approval shield without its check
   shield: ['M12 3.5l7 2.8v5.2c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9V6.3z'],

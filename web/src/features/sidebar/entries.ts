@@ -24,7 +24,7 @@ export const ROW_MENU = ['open-tab', 'open-split', 'resume', 'pin', 'explorer', 
 /** On the rows themselves. */
 export const ROW = ['status', 'kids', 'more', 'less', 'select-bar'] as const;
 /** The account row at the bottom and its popover. */
-export const ACCOUNT = ['account', 'quota', 'connection', 'today', 'usage', 'settings', 'config', 'appearance', 'shortcuts', 'palette'] as const;
+export const ACCOUNT = ['account', 'quota', 'connection', 'today', 'theme', 'usage', 'settings', 'config', 'appearance', 'shortcuts', 'palette'] as const;
 /** The light, dismissable hint. */
 export const HINT = ['library-join', 'library-later'] as const;
 
@@ -65,7 +65,7 @@ export const LEGACY: { old: string; now: `${Place}:${string}`[] }[] = [
   { old: '额度环 + 明细', now: ['account:quota'] },
   { old: '连接状态点 / 重连中…', now: ['account:connection'] },
   { old: '显示已归档（底部开关）', now: ['filter:archived'] },
-  { old: '主题 / 设置（底部月亮 → 命令面板）', now: ['account:appearance', 'account:palette'] },
+  { old: '主题 / 设置（底部月亮 → 命令面板）', now: ['account:theme', 'account:appearance', 'account:palette'] },
   { old: '会话库发现横幅：加入 X', now: ['hint:library-join'] },
   { old: '会话库发现横幅：以后再说', now: ['hint:library-later'] },
   { old: '来源 chip 行', now: ['filter:source'] },

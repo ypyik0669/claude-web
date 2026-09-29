@@ -1858,6 +1858,27 @@ function driver() {
           check('account popover: 今日费用, 用量与账本, 配置中心, 外观, 快捷键, 命令面板', has(acc, ['today', 'usage', 'config', 'appearance', 'shortcuts', 'palette']), JSON.stringify(acc));
           await harvest();
           await shot('sidebar-account');
+          // final review §9 #3: dark mode within two clicks — account → 深色 (the popover stays open to show it), and 设置 →
+          // 外观 has the themes as swatches, not a dropdown
+          if (E.SMOKE_READONLY !== '1') {
+            const themeBefore = await js('JSON.stringify(window.__store.getState().settings["ui.theme"] ?? null)');
+            const quick = await js(`[...document.querySelectorAll('.menu.sb-acct-menu [data-id="theme"] [role="radio"]')].map((b) => b.textContent)`);
+            await click('.menu.sb-acct-menu [data-id="theme"] [data-theme-pick="dark"]');
+            const dark = await waitFor(`document.documentElement.dataset.theme === 'dark' && window.__store.getState().settings['ui.theme'] === 'dark' && document.querySelector('.menu.sb-acct-menu [data-theme-pick="dark"]')?.getAttribute('aria-checked') === 'true'`, 2000);
+            await click('.menu.sb-acct-menu [data-id="theme"] [data-theme-pick="light"]');
+            const light = await waitFor(`document.documentElement.dataset.theme === 'light' && !!document.querySelector('.menu.sb-acct-menu')`, 2000);
+            check('account → 深色 / 浅色: the theme in two clicks (浅色 / 深色 / 跟随系统), the popover stays open', JSON.stringify(quick) === JSON.stringify(['浅色', '深色', '跟随系统']) && dark && light, JSON.stringify({ quick, dark, light }));
+            await closeMenus();
+            await js(`window.__store.getState().openSettings({ section: 'appearance' })`);
+            await waitFor(`!!document.querySelector('.sp [data-entry="ui.theme"] .theme-sw')`, 4000);
+            const sw = await js(`(() => { const row = document.querySelector('.sp [data-entry="ui.theme"]'); return { select: !!row.querySelector('select'), picks: [...row.querySelectorAll('.theme-sw [role="radio"]')].map((b) => b.dataset.themePick), on: row.querySelector('.theme-sw [aria-checked="true"]')?.dataset.themePick ?? null }; })()`);
+            await click('.sp [data-entry="ui.theme"] [data-theme-pick="nord"]');
+            const nord = await waitFor(`document.documentElement.dataset.theme === 'nord' && document.querySelector('.sp [data-entry="ui.theme"] [data-theme-pick="nord"]')?.getAttribute('aria-checked') === 'true'`, 2000);
+            await shot('settings-appearance-themes');
+            check('设置 → 外观: every theme is a swatch (跟随系统 first), no dropdown; a click applies it', !sw.select && sw.picks.length >= 7 && sw.picks[0] === 'system' && sw.on === 'light' && nord, JSON.stringify({ sw, nord }));
+            await js(`(() => { const st = window.__store.getState(); void st.setSetting('ui.theme', ${themeBefore}); window.__store.setState({ settingsOpen: null }); })()`);
+            await sleep(300);
+          }
           await closeMenus();
           // 账户 → 用量与账本 / 配置中心: two clicks to that right-panel tab
           for (const [item, label] of [['usage', '用量与账本'], ['config', '配置中心']]) {

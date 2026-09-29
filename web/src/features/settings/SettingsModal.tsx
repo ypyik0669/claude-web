@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { THEMES, useStore } from '@/store';
+import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { Mcp, McpAddJson, Overview, Plugins, ProviderProfiles, Settings, SimpleList } from '@/features/panels/ConfigPanel';
-import { CJK_FONTS, DEFAULT_THEME, DENSITIES, FONT_SIZES } from './ui-settings';
+import { CJK_FONTS, DENSITIES, FONT_SIZES } from './ui-settings';
+import { ThemeSwatches } from './ThemePicker';
 import { SkillsBackup, SkillsSection } from './SkillsSection';
 import { ToolsSection } from './ToolsSection';
 import { AgentsSection } from './AgentsSection';
@@ -37,7 +38,6 @@ export { Row } from './controls';
 
 /** Modes offered as the default for new sessions (dontAsk is a per-session choice, not a default). */
 const DEFAULT_MODES: PermissionMode[] = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'];
-const THEME_NAME: Record<string, string> = { system: '跟随系统', dark: '深色', light: '浅色' };
 
 /** The control of every row in the settings map (catalog.ts); typed on EntryId, so a row without one does not compile. */
 const CONTROLS: Record<EntryId, (e: EntryMeta) => ReactNode> = {
@@ -53,7 +53,7 @@ const CONTROLS: Record<EntryId, (e: EntryMeta) => ReactNode> = {
   'ui.confirmExit': (e) => <Toggle k={e.id} def label={e.label} />,
   'ui.softwareRender': (e) => <Toggle k={e.id} label={e.label} />,
   'orchestra.maxParallel': (e) => <NumberSelect k={e.id} def={3} label={e.label} options={[1, 2, 3, 4, 6, 8]} />,
-  'ui.theme': (e) => <Select k={e.id} def={DEFAULT_THEME} label={e.label} options={[{ id: 'system', l: THEME_NAME.system }, ...THEMES.map((t) => ({ id: t, l: THEME_NAME[t] ?? t }))]} />,
+  'ui.theme': (e) => <ThemeSwatches label={e.label} />,
   'ui.fontSize': (e) => <NumberSelect k={e.id} def={14} label={e.label} options={FONT_SIZES} />,
   'ui.density': (e) => <Select k={e.id} def="comfortable" label={e.label} options={DENSITIES as any} />,
   'ui.cjkFont': (e) => <Select k={e.id} def="" label={e.label} options={CJK_FONTS} />,

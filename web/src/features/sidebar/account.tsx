@@ -11,6 +11,7 @@ import { QuotaWindows, UsageRing } from './UsageRing';
 import { accountName, planLabel, todayCost } from './status';
 import { ACCOUNT_PANELS, type AccountId } from './entries';
 import { showPanel } from '@/features/workbench/right-panel';
+import { ThemeQuick } from '@/features/settings/ThemePicker';
 
 /**
  * Today's spend for the account popover: `ledger.list` parses the whole ledger file on the server, so one answer is
@@ -34,8 +35,8 @@ function loadToday(): Promise<Today> {
 
 /**
  * The account row at the bottom of the sidebar (spec §5.1): avatar · name · 「Max 套餐 · 已用 34%」 · settings gear.
- * The row opens a popover upwards (quota windows, today's spend, usage & ledger, the config panel, appearance,
- * shortcuts, the command palette). The connection shows only when it is lost (red dot on the avatar + the line).
+ * The row opens a popover upwards (quota windows, today's spend, 浅色 / 深色 / 跟随系统, usage & ledger, the config
+ * panel, appearance, shortcuts, the command palette). The connection shows only when it is lost (red dot on the avatar + the line).
  * Who is signed in comes from the store (`auth`: asked once per connection, and updated by every `checkAuth` — the
  * welcome page's 重新检查 / focus re-check, onboarding, settings); the popover is the sidebar's one menu.
  */
@@ -96,6 +97,7 @@ function AccountMenu({ auth, name, onClose }: { auth: AccountAuth | null; name: 
         <span className="v">{today ? fmtCost(today.cost, today.unknown) : '…'}</span>
       </div>
       <div className="menu-sep" />
+      <ThemeQuick dataId={id('theme')} />
       <button data-id={id('usage')} onClick={act(() => showPanel(ACCOUNT_PANELS.usage))}><Icon name="usage" size={14} /> 用量与账本</button>
       <button data-id={id('config')} onClick={act(() => showPanel(ACCOUNT_PANELS.config))}><Icon name="config" size={14} /> 配置中心（右侧面板）</button>
       <button data-id={id('appearance')} onClick={act(() => st().openSettings({ section: 'appearance' }))}><Icon name="sun" size={14} /> 外观与主题…</button>
