@@ -2310,28 +2310,33 @@ function driver() {
         await sleep(300);
         // a card that docks while a page covers the conversation (final review I1): closing the page gives the focus
         // back to the box, and the Enter right after that answers nothing — the card's first moments start when the
-        // page goes. The automation page (from the sidebar) and the settings page (opened from the box) alike
-        for (const cover of ['automation', 'settings']) {
+        // page goes. The automation page (from the sidebar) and the settings page (opened from the box) alike, and the
+        // shortcut sheet (re-review M-4: F1 over the box on the desktop — closing it gives the focus back to the box)
+        const coverName = { automation: 'automation page', settings: 'settings page', shortcuts: 'shortcut sheet' };
+        for (const cover of ['automation', 'settings', 'shortcuts']) {
           const id = `smoke-covered-${cover}`;
           await click('.pane.focused .composer textarea');
           if (cover === 'automation') {
             if (!(await js(`!!document.querySelector('.sidebar [data-id="automation"]')`)) && await js(`!!document.querySelector('.pane.focused .sess-head > .sb-reveal')`)) await click('.pane.focused .sess-head > .sb-reveal');
             await click('.sidebar [data-id="automation"]');
             await waitFor(`(() => { const p = document.querySelector('.auto-page'); return !!p && !p.hidden; })()`, 3000);
-          } else {
+          } else if (cover === 'settings') {
             await js('window.__store.getState().openSettings()');
             await waitFor(`!!document.querySelector('.modal.settings.sp')`, 3000);
+          } else {
+            await js('window.__store.setState({ shortcutsOpen: true })');
+            await waitFor(`!!document.querySelector('.shortcuts-bg')`, 3000);
           }
           await setOpen(`pending: [${stageReq(id)}], state: 'waiting'`);
           await sleep(1500);
           const under = await js(`(() => { const d = document.querySelector('.pane.focused .composer .pdock'); if (!d) return null; const r = d.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { docked: d.dataset.request, hidden: !d.contains(hit) }; })()`);
           wc.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); wc.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
-          const closed = await waitFor(cover === 'automation' ? 'document.querySelector(".auto-page")?.hidden === true' : '!document.querySelector(".modal.settings.sp")', 2000);
+          const closed = await waitFor(cover === 'automation' ? 'document.querySelector(".auto-page")?.hidden === true' : cover === 'settings' ? '!document.querySelector(".modal.settings.sp")' : '!document.querySelector(".shortcuts-bg")', 2000);
           const inBox = await waitFor(`!!document.activeElement?.matches('.pane.focused .composer textarea')`, 2000);
           wc.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); wc.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
           await sleep(250);
           const right = { sent: await sentFor(id), note: await js(`document.querySelector('.pane.focused .composer .pdock .pd-hint.note')?.textContent ?? null`), docked: await js(`document.querySelector('.pane.focused .composer .pdock')?.dataset.request ?? null`) };
-          check(`a card that docked under the ${cover === 'automation' ? 'automation' : 'settings'} page: Esc (the focus back in the box) then Enter at once answers nothing (final review I1)`,
+          check(`a card that docked under the ${coverName[cover]}: Esc (the focus back in the box) then Enter at once answers nothing (final review I1, re-review M-4)`,
             !!under && under.docked === id && under.hidden && closed && inBox && right.sent === '[]' && right.docked === id && /刚出现/.test(right.note ?? ''), JSON.stringify({ under, closed, inBox, right }));
           // …and once it has been on screen for a moment, an empty Enter is 允许一次 again
           await sleep(700);

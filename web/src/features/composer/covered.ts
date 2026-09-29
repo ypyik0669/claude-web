@@ -1,12 +1,20 @@
 // Whether something lies over a conversation's composer (review I1). A card docked above the box that came while
 // it was covered was never seen: its first moments (the 600 ms in which an empty Enter answers nothing) start when
-// the cover goes — like a tab coming to the front. Pure: the component reads the stores and passes the values in.
+// the cover goes — like a tab coming to the front. The shortcut sheet, the command palette and an in-app dialog
+// count too (re-review M-4): closing one gives the focus back to this box (F1 over a composer on the desktop), and
+// the card was behind a backdrop meanwhile. Pure: the component reads the stores and passes the values in.
 
 export interface CoverState {
   /** the settings page (full window) */
   settingsOpen: boolean;
   /** the automation page (over the main area) */
   automationOpen: boolean;
+  /** the shortcut sheet (? / F1) */
+  shortcutsOpen?: boolean;
+  /** the command palette (Ctrl+K) */
+  paletteOpen?: boolean;
+  /** an in-app dialog (`dlg.confirm / prompt / alert`) */
+  dialogOpen?: boolean;
   mobile: boolean;
   /** store `sheetAt`: when a phone's bottom drawer came up (0 = down) */
   sheetAt: number;
@@ -22,5 +30,5 @@ export function sheetUp(s: Pick<CoverState, 'mobile' | 'sheetAt' | 'dockOpen' | 
 }
 
 export function composerCovered(s: CoverState): boolean {
-  return s.settingsOpen || s.automationOpen || sheetUp(s);
+  return s.settingsOpen || s.automationOpen || !!s.shortcutsOpen || !!s.paletteOpen || !!s.dialogOpen || sheetUp(s);
 }

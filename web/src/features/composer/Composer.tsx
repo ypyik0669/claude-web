@@ -25,7 +25,7 @@ import { routePick, switchedNote } from '@/features/models/route';
 import { modelChipText } from '@/features/models/intelligence';
 import { useAccountDefault } from '@/features/models/account-default';
 import { providersLoaded, useGatewayStatus } from '@/features/models/data';
-import { dlg } from '@/ui/dialog';
+import { dlg, useDialogStore } from '@/ui/dialog';
 import { DOCK_BLOCKED, DOCK_CARRIED, DOCK_ENTER_IGNORED, DOCK_PLACEHOLDER, DOCK_REQUEUED, DOCK_SEND, TERMS } from '@/ui/terms';
 import { showGoals } from '@/features/workbench/right-panel';
 import { ComposerBar } from './ComposerBar';
@@ -265,10 +265,12 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   const setSeen = (patch: Partial<DockSeen>) => { if (seenRef.current) { seenRef.current = { ...seenRef.current, ...patch }; setSeenTick((n) => n + 1); } };
   // a card that came while this conversation was out of sight (another tab / pane / window in front) shows when it
   // comes into view: its first moments start then (review M-9). Something lying over the conversation counts as out
-  // of sight too (review I1): the settings page, the automation page, a phone's bottom drawer — closing one gives the
+  // of sight too (review I1): the settings page, the automation page, a phone's bottom drawer, the shortcut sheet, the
+  // command palette, an in-app dialog (re-review M-4) — closing one gives the
   // focus back to this box, and the Enter right after it must not answer a card the user never saw
   const autoOver = useAutomation((s) => s.open);
-  const covered = useStore((s) => composerCovered({ settingsOpen: !!s.settingsOpen, automationOpen: autoOver, mobile: s.mobile, sheetAt: s.sheetAt, dockOpen: s.layout.dock.open, dockTabs: s.layout.dock.tabs.length, inspect: !!s.inspect }));
+  const dialogOpen = useDialogStore((s) => s.queue.length > 0);
+  const covered = useStore((s) => composerCovered({ settingsOpen: !!s.settingsOpen, automationOpen: autoOver, shortcutsOpen: s.shortcutsOpen, paletteOpen: s.paletteOpen, dialogOpen, mobile: s.mobile, sheetAt: s.sheetAt, dockOpen: s.layout.dock.open, dockTabs: s.layout.dock.tabs.length, inspect: !!s.inspect }));
   const inView = visible && !covered;
   useEffect(() => { if (inView && seenRef.current) setSeen({ shownAt: Date.now() }); }, [inView]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
