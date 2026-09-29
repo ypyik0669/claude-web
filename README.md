@@ -2,7 +2,9 @@
 
 **Claude Code CLI 的可视化工作台。** 把命令行里的 Claude Code 搬进一个图形界面：对话、每一轮折叠成一行的工具调用、代码 diff 审阅、权限审批、文件 / Git / 编辑器、分屏、手机远程访问，全部在一个窗口里。
 
-同一套程序有两种用法：**桌面应用**（Windows / macOS 安装包）和**浏览器网页**（本机起一个服务，用浏览器打开）。功能完全一样，数据互通。
+同一套程序有两种用法：**桌面应用**（Windows / macOS）和**浏览器网页**（本机起一个服务，用浏览器打开）。功能完全一样，数据互通。除了 Claude Code，也能用同一个界面驱动 Codex、Gemini CLI、Qwen Code、Kimi、OpenCode 等 CLI agent。
+
+> **非官方项目。** Claude Web 是社区开发的开源工具，与 Anthropic 没有任何关联，也没有得到 Anthropic 的认可。「Claude」「Claude Code」是 Anthropic 的商标。使用它需要你自己的 Claude Code 登录（Claude 订阅）或第三方 API / 中转的密钥，费用和用量按你自己的账号计算。
 
 ![对话界面：左边侧栏，中间对话（完成的一轮折成一行摘要，末尾是改动文件卡），右边是审阅面板里的 diff](docs/images/chat.png)
 
@@ -31,7 +33,11 @@
 - [快捷键](#快捷键)
 - [数据存在哪里](#数据存在哪里)
 - [常见问题](#常见问题)
+- [工作原理](#工作原理)
+- [安全与隐私](#安全与隐私)
 - [从源码运行与开发](#从源码运行与开发)
+- [参与贡献](#参与贡献)
+- [许可证与致谢](#许可证与致谢)
 
 ---
 
@@ -59,7 +65,7 @@
 | | 桌面版 | 网页版 |
 | --- | --- | --- |
 | 怎么开 | 安装包，双击打开 | `npm start` 后浏览器打开 `http://127.0.0.1:3090` |
-| 需要 Node.js | 不需要（已内置） | 需要 Node.js 22+ |
+| 需要 Node.js | 不需要（已内置） | 需要 Node.js 22.13+ |
 | 托盘 / 系统通知 / 开机自启 | ✅ | 浏览器通知 |
 | 多窗口 | ✅ | 多个浏览器标签 |
 | 快捷键 | Ctrl（macOS 为 ⌘）系列 | 部分改用 Alt，避开浏览器占用的组合 |
@@ -69,28 +75,11 @@
 
 ## 安装
 
-### Windows
-
-1. 下载 `ClaudeWeb-<版本>-win-x64.exe`（安装版）或 `ClaudeWeb-<版本>-portable.exe`（免安装）。
-2. 双击安装。安装包没有代码签名，SmartScreen 提示「已保护你的电脑」时点 **更多信息 → 仍要运行**。
-
-### macOS
-
-1. 按芯片下载：Apple Silicon（M1 及以后）选 `ClaudeWeb-<版本>-mac-arm64.dmg`，Intel 选 `ClaudeWeb-<版本>-mac-x64.dmg`。
-   不确定的话：左上角  → 关于本机，看「芯片」一栏。
-2. 打开 dmg，把 **Claude Web** 拖进「应用程序」。
-3. 安装包没有 Apple 签名，**第一次打开**需要在「应用程序」里对它 **右键 → 打开 → 打开**。
-   如果提示「已损坏，无法打开」，在终端执行一次：
-
-   ```bash
-   xattr -cr "/Applications/Claude Web.app"
-   ```
-
-> 安装包在 GitHub 仓库的 **Releases** 页面；也可以在 **Actions → Release** 的构建记录里下载 Artifacts。
+预编译的安装包会发布在 GitHub 仓库的 **Releases** 页面。还没有发布版本时，按下面「从源码」的步骤运行网页版，或者自己打桌面安装包。
 
 ### 网页版（从源码）
 
-需要 [Node.js 22+](https://nodejs.org/) 和 Git：
+需要 [Node.js 22.13+](https://nodejs.org/)（用到内置的 `node:sqlite`）和 Git：
 
 ```bash
 git clone https://github.com/ypyik0669/claude-web.git
@@ -101,6 +90,24 @@ npm start
 ```
 
 然后浏览器打开 <http://127.0.0.1:3090>。Windows 上也可以直接双击仓库里的 `启动.cmd`。
+
+### 桌面版（自己打包）
+
+```bash
+npm install
+npm run build:desktop        # Windows：dist-desktop/ClaudeWeb-<版本>-win-x64.exe（安装版）和 -portable.exe（免安装）
+npm run build:desktop:mac    # macOS：只能在 Mac 上打，arm64 / x64 各在对应芯片的机器上打
+npm run build:desktop:linux  # Linux
+```
+
+### 安装包的提示
+
+- **Windows**：安装包没有代码签名，SmartScreen 提示「已保护你的电脑」时点 **更多信息 → 仍要运行**。
+- **macOS**：按芯片选包，Apple Silicon（M1 及以后）是 `mac-arm64.dmg`，Intel 是 `mac-x64.dmg`（左上角  → 关于本机，看「芯片」一栏）。打开 dmg，把 **Claude Web** 拖进「应用程序」。安装包没有 Apple 签名，**第一次打开**需要在「应用程序」里对它 **右键 → 打开 → 打开**；如果提示「已损坏，无法打开」，在终端执行一次：
+
+  ```bash
+  xattr -cr "/Applications/Claude Web.app"
+  ```
 
 ## 上手教程
 
@@ -221,9 +228,9 @@ Claude 要执行命令或改文件时，输入框上方会停一张卡片（消�
 
 如果你在这台电脑上也用过 Codex、OpenCode 等 CLI（或它们的桌面版 / 插件），Claude Web 可以把它们自己的对话记录也放进侧栏，和 Claude 的对话一起浏览、搜索、续聊。
 
-**加入是可选的。** 启动时只做轻量检测（是否安装、数据目录是否存在），不会启动任何进程，也不会读你的记录。检测到后侧栏底部会出一行「发现 Codex、OpenCode 的对话 · 加入…」：
+**加入是可选的。** 启动时只做轻量检测（是否安装、数据目录是否存在），不会启动任何进程，也不会读你的记录。检测到后侧栏底部会出一行「把 Codex 里的对话也列在这里？」（首页的入门清单做完或关掉之后才出现，最多等 3 天）：
 
-- 点**加入**：才开始读取这个 agent 的对话列表、建立全文索引；
+- 点**列出来**：才开始读取这个 agent 的对话列表、建立全文索引；
 - 点 **×**（以后再说）：不再提示；
 - 随时可以在 **设置 → 对话库** 里加入或移出。**移出**只是不在这里显示，不会删除 agent 自己的任何记录。
 
@@ -378,7 +385,24 @@ worktree 放在仓库外面的 `~/.claude-web/worktrees/<仓库名>-<hash>/`（�
 显卡驱动问题。**设置 → 通用 → 更多选项 → 软件渲染** 打开后重启；连续崩溃两次时应用也会自动切换。
 
 **自动更新**
-仓库是私有的，应用内「检查更新」拿不到新版本，请到 Releases 页面下载新安装包覆盖安装，数据不会丢。
+桌面版会到本仓库的 GitHub Releases 检查新版本（**设置 → 高级 → 更新**）。自己从源码打的包，`git pull` 之后重新 `npm install && npm run build:desktop` 覆盖安装即可，数据不会丢。
+
+## 工作原理
+
+- 一个 Node 进程（`server/`）用 [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript) 驱动本机的 Claude Code，通过一条 WebSocket 把所有消息推给 React 前端（`web/`）；桌面版（`desktop/`）只是 Electron 外壳，里面跑的是同一个 server 和网页。
+- **运行内核**默认用 npm 包 [claude-code-best](https://github.com/claude-code-best/claude-code)（ccb，Claude Code 的社区构建，额外支持 OpenAI / Gemini / Grok 接口）；找不到时自动退回 Agent SDK 自带的官方 Claude Code。只放行官方客户端的中转会被自动识别，对应的供应商改用官方 Claude Code 运行。
+- Codex 走 `codex app-server`（JSON-RPC），Gemini / Qwen / Kimi 等走 [ACP](https://agentclientprotocol.com/)，它们的事件都被归一成同一种消息格式，所以界面、工具卡片、权限审批、账本对所有 agent 都一样。
+- 对话记录仍然是各个 CLI 自己的（`~/.claude/projects`、`~/.codex/sessions` …），命令行和 Claude Web 可以交替使用同一个对话。
+
+更细的架构、协议和踩过的坑见 [CLAUDE.md](CLAUDE.md)。
+
+## 安全与隐私
+
+- 服务**默认只监听 `127.0.0.1`**。局域网 / 手机访问要在设置里手动打开，而且每台设备都要用一次性配对码换取设备令牌，可以随时吊销。
+- 供应商密钥、IM 机器人令牌、设备令牌都**加密保存**（Windows 用 DPAPI，macOS 用钥匙串），界面和日志里一律打码；密钥只注入到用它的那个对话的进程，不写进 `~/.claude/settings.json` 等 CLI 自己的配置。
+- 模型网关只接受本机回环连接。
+- **Claude Web 自己不收集、不上报任何数据**。模型请求直接从你的机器发往你选的供应商；各个 CLI（Claude Code、Codex …）自身的遥测行为以它们的设置为准。
+- 发现安全问题请用 GitHub 的 **Security → Report a vulnerability** 私下报告，不要公开开 issue。
 
 ## 从源码运行与开发
 
@@ -396,4 +420,38 @@ npm run build:desktop:mac  # 打 macOS 安装包（只能在 macOS 上）
 
 每次推送，GitHub Actions 会在 Windows、macOS、Linux 上跑类型检查、单元测试、构建和端到端检查。推送 `v*` 标签（如 `git tag v0.2.0 && git push origin v0.2.0`）会构建 Windows、macOS arm64 与 x64 安装包，**真实启动一次安装包做冒烟测试**，然后发布到 Releases。
 
-架构、协议和踩过的坑见 [CLAUDE.md](CLAUDE.md)。
+还有一个界面冒烟测试：`npm run build:all && node scripts/ui-smoke.cjs`。它用 Electron 在临时目录里把几乎所有入口点一遍，任何 console 错误都算失败。
+
+架构、协议和踩过的坑见 [CLAUDE.md](CLAUDE.md)（给用 AI agent 写代码的人：`AGENTS.md` 指向同一份说明）。
+
+```
+server/   Node 服务：会话驱动、对话库、供应商 / 模型网关、文件 / Git、远程、IM、编排…
+web/      React 前端（Vite + zustand），对话渲染的核心是纯函数 reducer：web/src/model/conversation.ts
+desktop/  Electron 外壳
+scripts/  e2e、界面冒烟测试、截图、打包辅助
+docs/     设计文档与实施计划（docs/superpowers/）、README 截图
+```
+
+## 参与贡献
+
+欢迎提 issue 和 PR。提交前请跑一遍：
+
+```bash
+npm run typecheck && npm test && npm run e2e
+```
+
+- 改界面文案请先看 `web/src/ui/terms.ts`（术语表）和 `wording.test.ts`（默认界面里不出现「档案 / 引擎 / 窗格」这类实现词）；
+- 改对话渲染先跑 `npm test -w web`，`conversation.test.ts` 会回放录下来的真实消息流；
+- 不要在测试、fixture 或文档里放真实密钥。
+
+## 许可证与致谢
+
+本项目的代码以 [MIT 许可证](LICENSE) 开源。
+
+它依赖的一些组件有自己的许可条款，使用和再分发（尤其是打包后的安装包，里面包含它们）时请分别遵守：
+
+- [@anthropic-ai/claude-agent-sdk](https://github.com/anthropics/claude-agent-sdk-typescript) 及其自带的 Claude Code：Anthropic 的条款（见该包的 README）；
+- [claude-code-best](https://github.com/claude-code-best/claude-code)：以该项目的说明为准；
+- 其余依赖（Electron、React、Monaco、node-pty、xterm.js …）是 MIT 等常见开源许可证。
+
+感谢这些项目，以及 Codex、Gemini CLI、Qwen Code、OpenCode、Agent Client Protocol 等开放的 agent 生态。

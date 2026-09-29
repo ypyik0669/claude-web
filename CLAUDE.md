@@ -463,7 +463,7 @@ npm run build:desktop   # electron-builder → dist-desktop/ClaudeWeb-<ver>-win-
 
 ## macOS / CI（2026-09-27）
 
-- **mac 包只能在 mac 上打**：`.github/workflows/release.yml` 用 `macos-latest`（arm64）+ `macos-15-intel`（x64）分别构建。不能在 arm 机器上交叉打 x64：npm 只装本机 CPU 的 SDK 二进制，ccb 的 ripgrep 也是 postinstall 按 `process.arch` 下载的。推 `v*` tag 才发布到 Releases，`workflow_dispatch` 只产出 artifact。仓库是私有的，electron-updater 在未带 token 的客户端上拿不到更新。
+- **mac 包只能在 mac 上打**：`.github/workflows/release.yml` 用 `macos-latest`（arm64）+ `macos-15-intel`（x64）分别构建。不能在 arm 机器上交叉打 x64：npm 只装本机 CPU 的 SDK 二进制，ccb 的 ripgrep 也是 postinstall 按 `process.arch` 下载的。推 `v*` tag 才发布到 Releases，`workflow_dispatch` 只产出 artifact。仓库 2026-09-30 起公开（MIT），electron-updater 直接读公开的 Releases；安装包里带着 Agent SDK 的官方 Claude Code（Anthropic 条款）和 ccb（没有声明许可证），发布安装包前先想清楚这两样能不能再分发（README「许可证与致谢」）。提交身份：本仓库的 `.git/config` 固定为 `ypyik0669 <112962935+ypyik0669@users.noreply.github.com>`（全局 git 配置是另一个账号），历史里的提交已经全部改写成这个身份。
 - 未签名（`identity: null`）：用户首次要右键打开或 `xattr -cr`。`scripts/after-pack.cjs` 给 unpacked 里的 `spawn-helper` / SDK `claude` / `rg` 补 +x；`TerminalService` 运行时也会补 `spawn-helper`。
 - **Finder 启动的 app 只有 `/usr/bin:/bin:/usr/sbin:/sbin`**：`desktop/src/main.ts` 的 `fixPosixPath()` 在 fork server 之前用 `$SHELL -ilc` 取 PATH 并补 Homebrew / `~/.local/bin`。
 - mac 标题栏：`titleBarOverlay` 只在非 mac 用；mac 用系统红绿灯 + `trafficLightPosition`，preload 给 `<html>` 加 `mac/win/linux` 类，`styles.css` 的 `html.desktop.mac` 规则把左上角那一行（侧栏顶部；侧栏收起时是分组栏 / 左上窗格的第一行）让出 84px，红绿灯 `y: 19` 居中在 52px 的顶行里。mac 菜单 Cmd+Tab 被系统占用，分组切换用 Ctrl+Tab。

@@ -2,6 +2,8 @@
   "name": "claude-web",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
+  "repository": "github:ypyik0669/claude-web",
   "type": "module",
   "main": "desktop/dist/main.js",
   "workspaces": [
