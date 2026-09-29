@@ -100,10 +100,10 @@ export function plusSections(o: { claude: boolean; live: boolean; remote?: boole
   };
 }
 
-/** Every data-id the + menu can render (attachments, capability switches, goal, channels, the 「Brief、频道…」 row). */
+/** Every data-id the + menu can render (attachments, capability switches, goal, channels). */
 export function plusMenuIds(): string[] {
   const s = plusSections({ claude: true, live: false });
-  return [...s.attach.map((a) => a.id), ...FEATURE_KEYS, PLUS_ID.channels, PLUS_ID.goal, PLUS_ID.more];
+  return [...s.attach.map((a) => a.id), ...FEATURE_KEYS, PLUS_ID.channels, PLUS_ID.goal];
 }
 
 /**

@@ -602,14 +602,12 @@ function driver() {
       check('composer reach table exposed (window.__cwComposerReach)', !!reach && reach.reach.length > 20);
       const speech = await js('!!(window.SpeechRecognition || window.webkitSpeechRecognition)');
       const walk = async (place, scope, states = {}) => {
-        const wanted = reach.reach.filter((r) => r.place === place && (!r.when || r.when === 'more' || (r.when === 'speech' && speech && !states.mobile) || states[r.when]));
+        const wanted = reach.reach.filter((r) => r.place === place && (!r.when || (r.when === 'speech' && speech && !states.mobile) || states[r.when]));
         const opener = reach.opener[place];
         const box = opener ? reach.container[place] : `${scope} ${reach.container[place]}`;
         if (opener) { await click(`${scope} ${opener}`); await waitFor(`!!document.querySelector(${JSON.stringify(box)})`, 5000); }
         const missing = (list) => js(`${JSON.stringify(list)}.filter((r) => !document.querySelector(${JSON.stringify(box)} + ' ' + r.sel)).map((r) => r.was + ' → ' + r.sel)`);
-        const miss = await missing(wanted.filter((r) => r.when !== 'more'));
-        const later = wanted.filter((r) => r.when === 'more');
-        if (later.length) { await click(`${box} [data-id="more"]`); miss.push(...(await missing(later))); }
+        const miss = await missing(wanted);
         if (opener) { await key('Escape'); await sleep(200); }
         return { n: wanted.length, miss };
       };
@@ -627,18 +625,19 @@ function driver() {
       await click('.welcome .cap-tag[data-cap="chrome"] button');
       check('the tag\'s × turns it off again', await waitFor('!document.querySelector(\'.welcome .cap-tag[data-cap="chrome"]\')', 2000));
       if (E.SMOKE_READONLY !== '1') {
-        // 频道: clicking 「Brief、频道…」 (the row goes away) moves the focus to Brief, ↓ reaches the field, and what is
-        // typed survives a click outside (it is saved as you type, into meta.json ui.featureDefaults)
+        // Brief and 频道: rows of their own under 进阶 (final review M3: 2 clicks, as 功能 → Brief was) — Brief right
+        // after 主动, ↓ from Brief reaches the 频道 field, and what is typed there survives a click outside (it is saved
+        // as you type, into meta.json ui.featureDefaults)
         await click('.welcome .cb .plus');
-        await click('.menu.plus-menu [data-id="more"]');
-        const afterMore = await js('document.activeElement?.dataset?.id ?? document.activeElement?.tagName');
+        const rows = await js(`[...document.querySelectorAll('.menu.plus-menu [data-id]')].map((e) => e.dataset.id)`);
+        await js(`document.querySelector('.menu.plus-menu [data-id="brief"]').focus()`);
         await key('Down');
         const inField = await js('document.activeElement?.closest?.(\'[data-id="channels"]\') ? "channels" : document.activeElement?.tagName');
         wc.insertText('server:smoke');
         await sleep(100);
         await click('.welcome .composer textarea');
         const saved = await waitFor('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"]?.channels) === \'["server:smoke"]\'', 3000);
-        check('频道: 「Brief、频道…」 hands the focus to Brief, ↓ reaches the field, typing survives a click outside', afterMore === 'brief' && inField === 'channels' && saved && !(await js('!!document.querySelector(".menu.plus-menu")')), JSON.stringify({ afterMore, inField, saved }));
+        check('+ → Brief / 频道 in 2 clicks (rows under 进阶, no 「Brief、频道…」 expander); ↓ from Brief reaches the field; typing survives a click outside', rows.join() === 'files,folder,reference,chrome,computerUse,goal,coordinator,proactive,brief,channels' && inField === 'channels' && saved && !(await js('!!document.querySelector(".menu.plus-menu")')), JSON.stringify({ rows, inField, saved }));
         check('频道 shows as a removable tag', await waitFor('!!document.querySelector(\'.welcome .cap-tag[data-cap="channels"]\')', 2000));
         await click('.welcome .cap-tag[data-cap="channels"] button');
         await waitFor('!document.querySelector(\'.welcome .cap-tag[data-cap="channels"]\')', 2000);

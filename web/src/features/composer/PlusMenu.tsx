@@ -55,15 +55,6 @@ export function PlusMenu(p: PlusMenuProps) {
 
 function PlusBody(p: PlusMenuProps & { close: (refocus: boolean) => void }) {
   const [view, setView] = useState<'main' | 'reference'>('main');
-  const [more, setMore] = useState(() => !!(p.features.brief || p.features.channels?.length));
-  const briefRow = useRef<HTMLButtonElement>(null);
-  const focusBrief = useRef(false);
-  // 「Brief、频道…」 expands in place: the row that was focused is gone, so the focus moves to the first new row
-  useEffect(() => {
-    if (!more || !focusBrief.current) return;
-    focusBrief.current = false;
-    briefRow.current?.focus();
-  }, [more]);
   const s = plusSections({ claude: p.claude, live: p.live, remote: p.remote });
   if (view === 'reference') return <ReferenceList selfId={p.selfId} onBack={() => setView('main')} onPick={(x) => { p.close(true); p.onReference(x); }} />;
   const toggle = (k: FeatureKey) => { if (!s.readOnly) p.onFeatures(withFeature(p.features, k, !p.features[k])); };
@@ -71,7 +62,7 @@ function PlusBody(p: PlusMenuProps & { close: (refocus: boolean) => void }) {
     const c = CAPABILITIES.find((x) => x.key === k)!;
     const on = !!p.features[k];
     return (
-      <button key={k} ref={k === 'brief' ? briefRow : undefined} type="button" data-mi data-id={k} role="menuitemcheckbox" aria-checked={on} aria-disabled={s.readOnly || undefined}
+      <button key={k} type="button" data-mi data-id={k} role="menuitemcheckbox" aria-checked={on} aria-disabled={s.readOnly || undefined}
         className={clsx('cm-it', on && 'on', s.readOnly && 'ro')} title={s.readOnly ? `${c.title}\n这个对话${on ? '开着' : '没开'}` : c.title} onClick={() => toggle(k)}>
         <span className="cm-ic"><Icon name={c.icon} size={15} /></span>
         <span className="cm-tx"><span className="cm-l">{c.label}</span><span className="cm-d">{c.desc}</span></span>
@@ -107,18 +98,9 @@ function PlusBody(p: PlusMenuProps & { close: (refocus: boolean) => void }) {
         <>
           <div className="menu-sep" />
           <div className="cm-h">进阶</div>
-          {CAPABILITIES.filter((c) => c.group === 'advanced' && c.key !== 'brief').map((c) => row(c.key))}
-          {more ? (
-            <>
-              {row('brief')}
-              <ChannelsField features={p.features} readOnly={s.readOnly} onFeatures={p.onFeatures} />
-            </>
-          ) : (
-            <button type="button" data-mi data-id={PLUS_ID.more} className="cm-it one dim" aria-expanded={false} onClick={() => { focusBrief.current = true; setMore(true); }}>
-              <span className="cm-ic"><Icon name="more" size={15} /></span>
-              <span className="cm-tx"><span className="cm-l">Brief、频道…</span></span>
-            </button>
-          )}
+          {/* Brief and 频道 are rows of their own (final review M3: 功能 → Brief was 2 clicks, so is + → Brief) */}
+          {CAPABILITIES.filter((c) => c.group === 'advanced').map((c) => row(c.key))}
+          <ChannelsField features={p.features} readOnly={s.readOnly} onFeatures={p.onFeatures} />
         </>
       )}
     </>

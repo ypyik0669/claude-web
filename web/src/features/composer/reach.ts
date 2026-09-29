@@ -16,9 +16,9 @@ export interface ReachEntry {
   sel: string;
   /**
    * only present in some states: a running turn (插话), a browser with speech recognition (mic), a conversation with
-   * something to count — a turn or a reported occupancy (the ring / stats icon), the + menu's 「Brief、频道…」 expanded
+   * something to count — a turn or a reported occupancy (the ring / stats icon)
    */
-  when?: 'running' | 'speech' | 'usage' | 'more';
+  when?: 'running' | 'speech' | 'usage';
 }
 
 /** The element each place lives in (after its chip is clicked). */
@@ -46,9 +46,8 @@ export const COMPOSER_REACH: ReachEntry[] = [
   { was: '添加图片 / 文件', place: 'plus', sel: idSel(PLUS_ID.files) },
   { was: '拖入文件夹（现在也能点）', place: 'plus', sel: idSel(PLUS_ID.folder) },
   { was: '引用到输入框（会话菜单）', place: 'plus', sel: idSel(PLUS_ID.reference) },
-  ...CAPABILITIES.map((c): ReachEntry => ({ was: `功能 · ${OLD_FEATURE_NAME[c.key] ?? c.key}`, place: 'plus', sel: idSel(c.key), when: c.key === 'brief' ? 'more' : undefined })),
-  { was: '功能 · 频道', place: 'plus', sel: idSel(PLUS_ID.channels), when: 'more' },
-  { was: '（展开 Brief、频道）', place: 'plus', sel: idSel(PLUS_ID.more) },
+  ...CAPABILITIES.map((c): ReachEntry => ({ was: `功能 · ${OLD_FEATURE_NAME[c.key] ?? c.key}`, place: 'plus', sel: idSel(c.key) })),
+  { was: '功能 · 频道', place: 'plus', sel: idSel(PLUS_ID.channels) },
   { was: '/goal 目标', place: 'plus', sel: idSel(PLUS_ID.goal) },
   // the welcome page's directory chip and its 「…」
   { was: '选择目录（最近的目录）', place: 'project', sel: '[data-dir]' },

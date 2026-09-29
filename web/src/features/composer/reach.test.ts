@@ -37,9 +37,10 @@ describe('every control of the old composer is reachable (spec §4.2, phase 3 ac
     const keys = COMPOSER_REACH.map((r) => `${r.place} ${r.sel}`);
     expect(new Set(keys).size).toBe(keys.length);
   });
-  it('Brief and 频道 need 「Brief、频道…」 expanded; the row that expands them is listed too', () => {
-    expect(COMPOSER_REACH.filter((r) => r.when === 'more').map((r) => r.sel)).toEqual([idSel('brief'), idSel(PLUS_ID.channels)]);
-    expect(at('plus')).toContain(idSel(PLUS_ID.more));
+  // final review M3: 功能 → Brief was 2 clicks before the redesign; so is + → Brief / 频道, rows of their own under 进阶
+  it('Brief and 频道 are plain rows of the + menu (2 clicks), not behind an expander', () => {
+    expect(COMPOSER_REACH.filter((r) => r.sel === idSel('brief') || r.sel === idSel(PLUS_ID.channels)).map((r) => [r.place, r.when])).toEqual([['plus', undefined], ['plus', undefined]]);
+    expect(Object.keys(PLUS_ID)).not.toContain('more');
   });
 });
 
