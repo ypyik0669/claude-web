@@ -53,7 +53,9 @@ type InfoLike = { agent?: string; providerId?: string; models?: readonly { value
  * What to write after an `open` change, if anything: the default named by a Claude conversation on the account's own
  * login whose info just changed (not every open conversation — reaped ones keep old info, and two CLIs started at
  * different times can name different defaults, which used to write A, B, A… on every event), when it differs from
- * what is stored for this account. Never while signed out.
+ * what is stored for this account. Only once the account is known (re-review n-5): a name written before the login
+ * check answers would carry no account and show for whoever signs in next — the subscription tries again when `auth`
+ * arrives (`accountModelPending`).
  */
 export function accountModelUpdate(
   open: Record<string, { info?: InfoLike }>,
@@ -61,8 +63,8 @@ export function accountModelUpdate(
   stored: unknown,
   auth: AccountAuth | null | undefined,
 ): AccountModel | undefined {
-  if (auth?.loggedIn === false) return undefined;
   const account = accountKey(auth);
+  if (!account) return undefined;
   const cur = readAccountModel(stored);
   for (const [id, o] of Object.entries(open)) {
     const i = o.info;
@@ -71,7 +73,19 @@ export function accountModelUpdate(
     const name = accountDefaultName(i.models);
     if (!name) continue;
     if (cur && !cur.legacy && cur.name === name && cur.account === account) return undefined;
-    return account ? { name, account } : { name };
+    return { name, account };
   }
   return undefined;
+}
+
+/**
+ * When the account becomes known (the login check answered) after a conversation already named the default: the
+ * name its CLI reports now, for this account — what `accountModelUpdate` skipped while the account was unknown.
+ */
+export function accountModelPending(
+  open: Record<string, { info?: InfoLike }>,
+  stored: unknown,
+  auth: AccountAuth | null | undefined,
+): AccountModel | undefined {
+  return accountModelUpdate(open, {}, stored, auth);
 }

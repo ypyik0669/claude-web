@@ -5,7 +5,7 @@
 // with the account it was seen on (account-model.ts, re-review M-3).
 import { useStore } from '@/store';
 import { accountDefaultName } from './intelligence';
-import { ACCOUNT_MODEL_KEY, accountModelUpdate, rememberedAccountModel } from './account-model';
+import { ACCOUNT_MODEL_KEY, accountKey, accountModelPending, accountModelUpdate, rememberedAccountModel } from './account-model';
 
 export { ACCOUNT_MODEL_KEY } from './account-model';
 
@@ -19,8 +19,14 @@ export function useAccountDefault(models?: readonly { value?: string | null; dis
 export function installAccountDefault(): () => void {
   let pending: string | null = null;
   return useStore.subscribe((s, prev) => {
-    if (s.open === prev.open || !s.metaLoaded) return;
-    const next = accountModelUpdate(s.open, prev.open, s.settings[ACCOUNT_MODEL_KEY], s.auth);
+    if (!s.metaLoaded) return;
+    const stored = s.settings[ACCOUNT_MODEL_KEY];
+    // nothing is written while the account is unknown (re-review n-5), so when it becomes known — the login check
+    // answering, or meta.json arriving — after a conversation already named the default, that name is written then
+    const caughtUp = (!accountKey(prev.auth) && !!accountKey(s.auth)) || !prev.metaLoaded;
+    const next = s.open !== prev.open ? accountModelUpdate(s.open, prev.open, stored, s.auth)
+      : caughtUp ? accountModelPending(s.open, stored, s.auth)
+      : undefined;
     if (!next) return;
     const k = JSON.stringify(next);
     if (k === pending) return;
