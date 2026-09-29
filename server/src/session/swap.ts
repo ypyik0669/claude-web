@@ -75,7 +75,49 @@ export function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Pro
   return next;
 }
 
-const normProvider = (id: string | undefined) => (id && id !== 'claude' ? id : undefined);
+export const normProvider = (id: string | undefined) => (id && id !== 'claude' ? id : undefined);
+
+/**
+ * What a provider change leaves behind — for a live swap (swapProvider) and for a conversation that is not running
+ * reopened on another provider (the hub's `session.open` with an explicit providerId, which is how a pick on the
+ * chips of a history conversation, IM, schedules and other windows reach it): the recorded profile
+ * (SessionMeta.providerId; the account clears it, or a restart would bring the old relay back) and the canonical
+ * `switch` line the hand-over briefing and usage attribution read (fromProviderId: who answered the turns before it;
+ * 'claude' = the account). Callers hold the session's lock.
+ */
+export async function recordProviderSwitch(d: Pick<SwapDeps, 'meta' | 'canonical'>, sessionId: string, from: string | undefined, providerId: string | undefined, providerName: string): Promise<void> {
+  // not fire-and-forget: a failed meta save would otherwise be an unhandled rejection that kills the server
+  await d.meta.setSessionMeta(sessionId, { providerId: normProvider(providerId) }).catch(() => { /* kept in memory; the next save persists it */ });
+  d.canonical.mark(sessionId, { providerId: normProvider(providerId), providerName, fromProviderId: normProvider(from) ?? 'claude', note: `已切换到供应商「${providerName}」` });
+}
+
+/**
+ * `session.open` of an existing conversation that is not running, with an explicit providerId other than the one it
+ * recorded (none recorded = the account): the same bookkeeping as swapProvider before `open` runs, under the same
+ * session lock (checked again inside it, so a second open racing this one sees the first one's record). Forks and
+ * rewinds get a new id and keep their own record; a running conversation changes provider through swapProvider.
+ */
+export function openOnProvider<T>(
+  d: Pick<SwapDeps, 'pool' | 'meta' | 'canonical'>,
+  params: OpenSessionParams,
+  nameOf: (providerId: string) => string,
+  open: (p: OpenSessionParams) => Promise<T>,
+  onRecorded?: () => void,
+): Promise<T> {
+  const sid = params.sessionId && !params.fork && !params.resumeAt ? params.sessionId : undefined;
+  const to = params.providerId;
+  const idle = (id: string) => { const r = d.pool.get(id); return !r || r.state === 'closed' || r.state === 'error'; };
+  const differs = (id: string) => to !== undefined && normProvider(to) !== normProvider(d.meta.sessionMeta(id).providerId);
+  if (!sid || to === undefined || !idle(sid) || !differs(sid)) return open(params);
+  return withSessionLock(sid, async () => {
+    if (idle(sid) && differs(sid)) {
+      await d.canonical.ensure(sid, params.cwd); // a CLI conversation that never ran here has no mirror yet
+      await recordProviderSwitch(d, sid, d.meta.sessionMeta(sid).providerId, to, nameOf(to));
+      onRecorded?.();
+    }
+    return open(params);
+  });
+}
 
 /**
  * Same agent, different provider profile: close, respawn with the new env, resume in place.
@@ -92,10 +134,7 @@ async function swapProviderNow(d: SwapDeps, sessionId: string, providerId: strin
   const changed = before !== normProvider(providerId);
   const prev = await stop(d.pool, sessionId);
   const cwd = prev?.cwd ?? (await d.canonical.head(sessionId))?.cwd ?? process.cwd();
-  // not fire-and-forget: a failed meta save would otherwise be an unhandled rejection that kills the server
-  await d.meta.setSessionMeta(sessionId, { providerId }).catch(() => { /* kept in memory; the next save persists it */ });
-  // fromProviderId: usage attribution needs who answered the turns before this switch ('claude' = the account)
-  d.canonical.mark(sessionId, { providerId, providerName, fromProviderId: before ?? 'claude', note: `已切换到供应商「${providerName}」` });
+  await recordProviderSwitch(d, sessionId, before, providerId, providerName);
 
   const params: OpenSessionParams = {
     sessionId,

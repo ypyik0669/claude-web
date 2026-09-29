@@ -188,6 +188,84 @@ describe('swapProvider (model with the profile)', () => {
   });
 });
 
+describe('openOnProvider (a conversation not running, reopened on another provider)', () => {
+  let dir: string;
+  let prevDir: string | undefined;
+  let swap: any;
+  let meta: any;
+  let canonical: any;
+  const nameOf = (id: string) => (id === 'claude' ? 'Claude 账号' : `name-${id}`);
+  const switches = async (sid: string) => (await canonical.load(sid)).filter((e: any) => e.kind === 'switch');
+  beforeEach(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-openp-'));
+    prevDir = process.env.CLAUDE_WEB_DIR;
+    process.env.CLAUDE_WEB_DIR = dir; // the canonical mirror lives under the data dir: never the real ~/.claude-web
+    const [{ MetaStore }, { CanonicalLog }] = await Promise.all([import('../meta/store.js'), import('./canonical.js')]);
+    swap = await import('./swap.js');
+    meta = new MetaStore(path.join(dir, 'meta.json'));
+    await meta.load();
+    canonical = new CanonicalLog();
+  });
+  afterEach(() => {
+    if (prevDir === undefined) delete process.env.CLAUDE_WEB_DIR; else process.env.CLAUDE_WEB_DIR = prevDir;
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  });
+
+  it('A: the account picked on a conversation recorded on p1 → SessionMeta cleared, one switch line from p1', async () => {
+    await meta.setSessionMeta('h1', { providerId: 'p1' });
+    const pool = livePool({});
+    const opened: any[] = [];
+    let recorded = 0;
+    const r = await swap.openOnProvider({ pool, meta, canonical }, { sessionId: 'h1', cwd: '/proj', providerId: 'claude' }, nameOf, async (p: any) => { opened.push(p); return 'ok'; }, () => recorded++);
+    expect(r).toBe('ok');
+    expect(opened).toEqual([{ sessionId: 'h1', cwd: '/proj', providerId: 'claude' }]);
+    expect(meta.sessionMeta('h1').providerId).toBeUndefined();
+    const sw = await switches('h1');
+    expect(sw).toHaveLength(1);
+    expect(sw[0]).toMatchObject({ fromProviderId: 'p1', providerName: 'Claude 账号' });
+    expect(sw[0].providerId).toBeUndefined();
+    expect(recorded).toBe(1);
+  });
+  it('B: p1 → p2 → SessionMeta p2 and a switch line p1 → p2 (the usage timeline reads it)', async () => {
+    await meta.setSessionMeta('h2', { providerId: 'p1' });
+    await swap.openOnProvider({ pool: livePool({}), meta, canonical }, { sessionId: 'h2', cwd: '/proj', providerId: 'p2' }, nameOf, async () => 'ok');
+    expect(meta.sessionMeta('h2').providerId).toBe('p2');
+    const sw = await switches('h2');
+    expect(sw.map((e: any) => [e.providerId, e.fromProviderId, e.providerName])).toEqual([['p2', 'p1', 'name-p2']]);
+  });
+  it('nothing recorded = the account: picking a provider records a switch from claude', async () => {
+    await swap.openOnProvider({ pool: livePool({}), meta, canonical }, { sessionId: 'h3', cwd: '/proj', providerId: 'p2' }, nameOf, async () => 'ok');
+    expect(meta.sessionMeta('h3').providerId).toBe('p2');
+    expect((await switches('h3')).map((e: any) => e.fromProviderId)).toEqual(['claude']);
+  });
+  it('no record: the same provider, no explicit provider, a running conversation, a fork / rewind, a new conversation', async () => {
+    await meta.setSessionMeta('same', { providerId: 'p1' });
+    await meta.setSessionMeta('live', { providerId: 'p1' });
+    await meta.setSessionMeta('fork', { providerId: 'p1' });
+    const pool = livePool({ live: { providerId: 'p1' } });
+    const open = async () => 'ok';
+    const d = { pool, meta, canonical };
+    await swap.openOnProvider(d, { sessionId: 'same', cwd: '/proj', providerId: 'p1' }, nameOf, open);
+    await swap.openOnProvider(d, { sessionId: 'same', cwd: '/proj' }, nameOf, open);
+    await swap.openOnProvider(d, { sessionId: 'live', cwd: '/proj', providerId: 'p2' }, nameOf, open);
+    await swap.openOnProvider(d, { sessionId: 'fork', cwd: '/proj', providerId: 'p2', fork: true }, nameOf, open);
+    await swap.openOnProvider(d, { sessionId: 'fork', cwd: '/proj', providerId: 'p2', resumeAt: 'u1' }, nameOf, open);
+    await swap.openOnProvider(d, { cwd: '/proj', providerId: 'p2' }, nameOf, open);
+    expect([meta.sessionMeta('same').providerId, meta.sessionMeta('live').providerId, meta.sessionMeta('fork').providerId]).toEqual(['p1', 'p1', 'p1']);
+    for (const id of ['same', 'live', 'fork']) expect(await switches(id)).toEqual([]);
+  });
+  it('two opens racing on one conversation record one switch (checked again under the lock)', async () => {
+    await meta.setSessionMeta('h4', { providerId: 'p1' });
+    const d = { pool: livePool({}), meta, canonical };
+    const slow = async () => { await new Promise((r) => setTimeout(r, 20)); return 'ok'; };
+    await Promise.all([
+      swap.openOnProvider(d, { sessionId: 'h4', cwd: '/proj', providerId: 'p2' }, nameOf, slow),
+      swap.openOnProvider(d, { sessionId: 'h4', cwd: '/proj', providerId: 'p2' }, nameOf, slow),
+    ]);
+    expect(await switches('h4')).toHaveLength(1);
+  });
+});
+
 describe('per-session swap lock', () => {
   it('two swaps of one session run one after the other; other sessions are not held up', async () => {
     const { withSessionLock } = await import('./swap.js');

@@ -1,5 +1,5 @@
 import type { WebSocket, WebSocketServer } from 'ws';
-import type { ClientRequest, ServerEvent, WireDown, WireUp } from '../protocol.js';
+import type { ClientRequest, OpenSessionParams, ServerEvent, WireDown, WireUp } from '../protocol.js';
 import { RunnerPool } from '../runtime/pool.js';
 import { cacheParentFor } from '../runtime/cache-key.js';
 import { SessionService } from '../sessions/service.js';
@@ -35,7 +35,7 @@ import type { CanonicalLog } from '../session/canonical.js';
 import type { MemoryService } from '../memory/service.js';
 import { harvest } from '../memory/extract.js';
 import { setMemoryMcpEnabled } from '../memory/launcher.js';
-import { swapAgent, swapProvider } from '../session/swap.js';
+import { normProvider, openOnProvider, swapAgent, swapProvider } from '../session/swap.js';
 import { expandSessionRefs } from '../library/briefing.js';
 import type { LibraryService } from '../library/service.js';
 import type { GatewayService } from '../gateway/service.js';
@@ -180,6 +180,46 @@ export class Hub {
     return r;
   }
 
+  /** `session.open` after the agent is known and the profile checked: foreign agents resume from their transcript, Claude forks / resumes / starts. */
+  private async openSession(params: OpenSessionParams) {
+    const s = this.s;
+    if (params.agent && params.agent !== 'claude') {
+      // the profile a foreign-agent session was started / switched with survives a resume, like Claude's
+      if (params.providerId === undefined && params.sessionId) params = { ...params, providerId: s.meta.sessionMeta(params.sessionId).providerId };
+      const head = params.sessionId ? await s.transcripts.head(params.sessionId) : null;
+      const hist = !params.sessionId ? [] : head?.imported
+        ? await s.library.read(params.sessionId).then((r) => r.messages).catch(() => [])
+        : await s.transcripts.load(params.sessionId).catch(() => []);
+      const r = s.pool.open(params, hist);
+      await s.canonical.ensure(r.sessionId, params.cwd);
+      if (params.providerId && params.providerId !== 'claude' && s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId }).catch(() => { /* in memory; the next save persists it */ });
+      return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
+    }
+    // provider: explicit → the one the session was created with → user default (new sessions only)
+    if (params.providerId === undefined) {
+      const remembered = params.sessionId ? s.meta.sessionMeta(params.sessionId).providerId : undefined;
+      const def = params.sessionId ? undefined : (s.meta.settings().defaultProviderId as string | undefined);
+      params = { ...params, providerId: remembered ?? def };
+    }
+    if (!params.features && s.meta.settings().defaultFeatures) params = { ...params, features: s.meta.settings().defaultFeatures as any };
+    // prompt-cache route key: a fork keeps its parent's (the prefix is the same), decided before the id changes
+    const cacheParentId = cacheParentFor(params, (id) => s.meta.sessionMeta(id).cacheKey);
+    if (cacheParentId) params = { ...params, cacheParentId };
+    // forks: copy the transcript first (SDK forkSession) so the new session has a real id before the process starts
+    if (params.sessionId && (params.fork || params.resumeAt)) {
+      const newId = await s.sessions.fork(params.sessionId, params.resumeAt);
+      params = { ...params, sessionId: newId, fork: false, resumeAt: undefined };
+    }
+    const r = s.pool.open(params);
+    if (cacheParentId && cacheParentId !== r.sessionId && s.meta.sessionMeta(r.sessionId).cacheKey !== cacheParentId) void s.meta.setSessionMeta(r.sessionId, { cacheKey: cacheParentId }).catch(() => { /* in memory; the next save persists it */ });
+    await s.canonical.ensure(r.sessionId, params.cwd);
+    if (params.providerId && params.providerId !== 'claude') {
+      // remember which provider a session uses so resume / fork keep it (the id is known up front: new sessions get a uuid from us)
+      if (s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId }).catch(() => { /* in memory; the next save persists it */ });
+    }
+    return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
+  }
+
   private async handle(req: ClientRequest, ws: WebSocket): Promise<unknown> {
     const s = this.s;
     if (isAgentConfigRequest(req)) return handleAgentConfig(s.agentConfig, req);
@@ -220,41 +260,11 @@ export class Hub {
         // an explicitly chosen profile must fit the agent / engine (welcome page, schedules, IM, orchestration all land here)
         const unfitOpen = s.providers.fitError(req.params.providerId, params.agent ?? 'claude');
         if (unfitOpen) throw new Error(unfitOpen);
-        if (params.agent && params.agent !== 'claude') {
-          // the profile a foreign-agent session was started / switched with survives a resume, like Claude's
-          if (params.providerId === undefined && params.sessionId) params = { ...params, providerId: s.meta.sessionMeta(params.sessionId).providerId };
-          const head = params.sessionId ? await s.transcripts.head(params.sessionId) : null;
-          const hist = !params.sessionId ? [] : head?.imported
-            ? await s.library.read(params.sessionId).then((r) => r.messages).catch(() => [])
-            : await s.transcripts.load(params.sessionId).catch(() => []);
-          const r = s.pool.open(params, hist);
-          await s.canonical.ensure(r.sessionId, params.cwd);
-          if (params.providerId && params.providerId !== 'claude' && s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId }).catch(() => { /* in memory; the next save persists it */ });
-          return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
-        }
-        // provider: explicit → the one the session was created with → user default (new sessions only)
-        if (params.providerId === undefined) {
-          const remembered = params.sessionId ? s.meta.sessionMeta(params.sessionId).providerId : undefined;
-          const def = params.sessionId ? undefined : (s.meta.settings().defaultProviderId as string | undefined);
-          params = { ...params, providerId: remembered ?? def };
-        }
-        if (!params.features && s.meta.settings().defaultFeatures) params = { ...params, features: s.meta.settings().defaultFeatures as any };
-        // prompt-cache route key: a fork keeps its parent's (the prefix is the same), decided before the id changes
-        const cacheParentId = cacheParentFor(params, (id) => s.meta.sessionMeta(id).cacheKey);
-        if (cacheParentId) params = { ...params, cacheParentId };
-        // forks: copy the transcript first (SDK forkSession) so the new session has a real id before the process starts
-        if (params.sessionId && (params.fork || params.resumeAt)) {
-          const newId = await s.sessions.fork(params.sessionId, params.resumeAt);
-          params = { ...params, sessionId: newId, fork: false, resumeAt: undefined };
-        }
-        const r = s.pool.open(params);
-        if (cacheParentId && cacheParentId !== r.sessionId && s.meta.sessionMeta(r.sessionId).cacheKey !== cacheParentId) void s.meta.setSessionMeta(r.sessionId, { cacheKey: cacheParentId }).catch(() => { /* in memory; the next save persists it */ });
-        await s.canonical.ensure(r.sessionId, params.cwd);
-        if (params.providerId && params.providerId !== 'claude') {
-          // remember which provider a session uses so resume / fork keep it (the id is known up front: new sessions get a uuid from us)
-          if (s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId }).catch(() => { /* in memory; the next save persists it */ });
-        }
-        return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
+        // an existing conversation that is not running, reopened on another provider than the one it recorded (a pick
+        // on a history conversation's chips; IM, schedules and other windows open the same way): the same bookkeeping
+        // as session.setProvider — SessionMeta (the account clears it) and the canonical switch line — under its lock
+        const nameOf = (id: string) => (normProvider(id) ? s.providers.forSession(id)?.name ?? id : 'Claude 账号');
+        return openOnProvider({ pool: s.pool, meta: s.meta, canonical: s.canonical }, params, nameOf, (p) => this.openSession(p), () => s.sessions.emit('changed'));
       }
       case 'session.info': {
         const r = this.runner(req.sessionId);

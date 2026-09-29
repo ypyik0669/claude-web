@@ -212,6 +212,8 @@ async function runner() {
     SMOKE_REPO: seed?.repo ?? '',
     SMOKE_SID: seed?.sid ?? '',
     SMOKE_TOOLS_SID: seed?.toolsSid ?? '',
+    // the server's data dir (the temp HOME's): checks that read what the server wrote (the canonical mirror)
+    SMOKE_DATA: home ? path.join(home, '.claude-web') : '',
     // the mock ACP agent (phase 5: a real permission request) runs under this node, not Electron
     SMOKE_NODE: process.execPath,
     SMOKE_SHOW: arg('--show', false) ? '1' : '',
@@ -2361,6 +2363,36 @@ function driver() {
         await waitFor('innerWidth === 1360', 4000);
         await click('.pane.focused .composer .pdock [data-act="deny"]');
         await waitFor(`!document.querySelector('.pane.focused .composer .pdock')`, 6000);
+
+        // ---- re-review I-2: a provider picked on the chips of a conversation that is not running is recorded like
+        // session.setProvider when the send reopens it — SessionMeta.providerId and the canonical 「switch」 line (usage
+        // attribution, the hand-over briefing). The mock agent's conversation: the provider's endpoint is never called.
+        if (E.SMOKE_DATA) {
+          phase = 'chat-resume-provider';
+          const prov = await serverRequest({ kind: 'providers.upsert', provider: { name: 'Smoke 供应商', type: 'openai', baseUrl: 'http://127.0.0.1:9', apiKey: 'smoke-placeholder-not-a-key', models: ['smoke-m1'], defaultModel: 'smoke-m1' } });
+          const provJ = JSON.stringify(prov.id);
+          await js(`window.__store.getState().closeSession(${pj})`);
+          await js(`window.__store.getState().loadHistory(${pj})`);
+          const ready = await waitFor(`window.__store.getState().open[${pj}]?.state === 'history' && !window.__store.getState().open[${pj}]?.loading && window.__store.getState().providers.some((p) => p.id === ${provJ}) && !!document.querySelector('.pane.focused .composer .cb-status')`, 10_000);
+          await click('.pane.focused .composer .composer-bar .mm-anchor > button.chip');
+          const rowSel = `.menu.mm [data-sec=${provJ}] .mm-row:not(.off)`;
+          const listed = await waitFor(`!!document.querySelector('${rowSel}')`, 5000);
+          if (listed) await click(rowSel);
+          await sleep(300);
+          if (await js(`!!document.querySelector('.menu.mm')`)) await key('Escape');
+          const picked = await js(`JSON.stringify(window.__store.getState().open[${pj}]?.resume ?? null)`);
+          await js(`window.__store.getState().send(${pj}, 'smoke: resume on the picked one')`);
+          const metaOk = await waitFor(`window.__store.getState().sessionMeta[${pj}]?.providerId === ${provJ}`, 15_000);
+          const canonFile = path.join(E.SMOKE_DATA, 'canonical', `${psid}.jsonl`);
+          let sw = [];
+          for (let i = 0; i < 30 && !sw.length; i++) {
+            try { sw = fs.readFileSync(canonFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((e) => e.kind === 'switch'); } catch { /* not written yet */ }
+            if (!sw.length) await sleep(200);
+          }
+          check('a provider picked on the chips of a conversation not running → the send records it like 换供应商: SessionMeta and one canonical switch line (from the account)', ready && listed && JSON.parse(picked)?.providerId === prov.id && metaOk && sw.length === 1 && sw[0].providerId === prov.id && sw[0].fromProviderId === 'claude' && /Smoke 供应商/.test(sw[0].note ?? ''), JSON.stringify({ ready, listed, picked, metaOk, sw }));
+          await waitFor(`window.__store.getState().open[${pj}]?.state === 'idle'`, 20_000);
+          await serverRequest({ kind: 'providers.remove', id: prov.id });
+        }
 
         // ---- the goal bar, and a goal that runs two rounds (review I1): GoalService sends round 2 (「继续」) itself, so
         // it follows round 1's result with no user message in this window. The mock answers its first goal prompt
