@@ -618,7 +618,7 @@ export const useStore = create<State>((set, get) => ({
     const atts = orig?.kind === 'user' ? orig.attachments?.filter((a) => a.path).map((a) => ({ kind: a.kind, name: a.name, path: a.path, size: a.size })) : undefined;
     // the copy starts as the conversation would go on (re-review M-1): its live settings, or its chips' picks
     const meta = get().sessionMeta[sessionId];
-    const carry = forkParams(o, meta);
+    const carry = forkCarry(sessionId);
     if (anchor === null) {
       // first message: brand-new session in the same directory with the same settings (and the provider its chip shows)
       const id = await get().openSession({ cwd: o.cwd, ...carry, providerId: carry.providerId ?? (parsePeerId(sessionId) ? undefined : resumeView(o, meta).providerId) });
@@ -863,9 +863,21 @@ export const useStore = create<State>((set, get) => ({
   async forkAt(sessionId: string, messageUuid: string) {
     const o = get().open[sessionId];
     if (!o) return;
-    await get().openSession({ sessionId, cwd: o.cwd, resumeAt: messageUuid });
+    await get().openSession({ sessionId, cwd: o.cwd, resumeAt: messageUuid, ...forkCarry(sessionId) });
   },
 }));
+
+/**
+ * What a fork of this conversation starts with, from whichever entry (a message's 分叉, the palette's
+ * 「从这里分叉当前对话」, the sidebar's 分叉 — re-review m-4 — and edit-and-resend / rerun): `forkParams` of it as this
+ * window has it (its live settings, or its chips' picks); nothing when it is not open here (the server takes the
+ * original's record).
+ */
+export function forkCarry(sessionId: string): ReturnType<typeof forkParams> {
+  const st = useStore.getState();
+  const o = st.open[sessionId];
+  return o ? forkParams(o, st.sessionMeta[sessionId]) : {};
+}
 
 // following the system: an OS light / dark switch also updates the cached theme and the desktop title bar colours
 setSystemThemeHandler((t) => useStore.getState().setTheme(t, true));

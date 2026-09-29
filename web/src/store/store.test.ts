@@ -377,6 +377,29 @@ describe('新对话默认权限 (ui.defaultMode) for new conversations opened an
   });
 });
 
+describe('every fork starts as the conversation would go on (re-review M-1 / m-4)', () => {
+  const opened = () => fake.sent.filter((r) => r.kind === 'session.open').map((r) => r.params);
+  beforeEach(() => {
+    fake.handlers.set('session.open', (req: any) => ({ sessionId: 'f1', info: { sessionId: 'f1', state: 'idle', cwd: req.params.cwd }, history: [], pending: [] }));
+    fake.handlers.set('sessions.list', () => []);
+  });
+  it('a message\'s 分叉 (forkAt) on a conversation not running carries its chips\' picks, the provider explicitly', async () => {
+    useStore.setState((s) => ({ open: { ...s.open, s1: { ...s.open.s1, state: 'history', resume: { providerId: 'p2', model: 'm2', permissionMode: 'plan' } } } }));
+    await useStore.getState().forkAt('s1', 'u1');
+    expect(opened()).toEqual([expect.objectContaining({ sessionId: 's1', resumeAt: 'u1', providerId: 'p2', model: 'm2', permissionMode: 'plan' })]);
+  });
+  it('a running conversation\'s fork carries its live model / mode / effort and provider; on the account over an older record, the account', async () => {
+    const { forkCarry } = await import('./index');
+    useStore.setState((s) => ({ open: { ...s.open, s1: { ...s.open.s1, state: 'idle', info: { sessionId: 's1', state: 'idle', cwd: '/w', model: 'm1', permissionMode: 'acceptEdits', effort: 'low', providerId: 'p1' } as any } } }));
+    expect(forkCarry('s1')).toEqual({ model: 'm1', permissionMode: 'acceptEdits', effort: 'low', providerId: 'p1' });
+    useStore.setState((s) => ({ sessionMeta: { s1: { providerId: 'p9' } }, open: { ...s.open, s1: { ...s.open.s1, info: { sessionId: 's1', state: 'idle', cwd: '/w', model: 'm1' } as any } } }));
+    expect(forkCarry('s1')).toEqual({ model: 'm1', providerId: 'claude' });
+    // not open in this window: nothing — the server takes the original's record
+    expect(forkCarry('elsewhere')).toEqual({});
+    useStore.setState({ sessionMeta: {} });
+  });
+});
+
 describe('an open session remembers the worktree it was started in (re-review 3 Important 1)', () => {
   beforeEach(() => {
     const id = (p: any) => p.sessionId ?? (p.worktree ? 'wt1' : 'n2');

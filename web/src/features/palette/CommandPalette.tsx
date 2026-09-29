@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { THEMES, useActive, useStore, type PanelId } from '@/store';
+import { THEMES, forkCarry, useActive, useStore, type PanelId } from '@/store';
 import { ws } from '@/ws/client';
 import { ago, basename } from '@/util';
 import { Icon, AGENT_ICONS, type IconName } from '@/ui/icons';
@@ -80,7 +80,7 @@ export function CommandPalette() {
     if (active) {
       const live = active.state !== 'history' && active.state !== 'closed' && active.state !== 'error';
       c.unshift(
-        { id: 's.fork', label: '从这里分叉当前对话', ic: 'branch', group: '当前对话', run: () => void st.openSession({ sessionId: active.sessionId, cwd: active.cwd, fork: true }) },
+        { id: 's.fork', label: '从这里分叉当前对话', ic: 'branch', group: '当前对话', run: () => void st.openSession({ sessionId: active.sessionId, cwd: active.cwd, fork: true, ...forkCarry(active.sessionId) }) },
         { id: 's.pin', label: st.sessionMeta[active.sessionId]?.pinned ? '取消置顶' : '置顶当前对话', ic: 'pin', group: '当前对话', run: () => void st.setSessionMeta(active.sessionId, { pinned: !st.sessionMeta[active.sessionId]?.pinned }) },
         { id: 's.archive', label: st.sessionMeta[active.sessionId]?.archived ? '取消归档' : '归档当前对话', ic: 'archive', group: '当前对话', run: () => void st.setSessionMeta(active.sessionId, { archived: !st.sessionMeta[active.sessionId]?.archived }) },
         { id: 's.traj', label: `对话 / ${TERMS.trajectory}`, sub: 'Alt+J', ic: 'workflow', group: '当前对话', run: () => runCommand('tab') },

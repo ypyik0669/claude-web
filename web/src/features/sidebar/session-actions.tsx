@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import type { AgentKind, SessionMeta, SessionSummary } from '@shared';
-import { useStore } from '@/store';
+import { forkCarry, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { dlg } from '@/ui/dialog';
 import { Icon, AGENT_ICONS } from '@/ui/icons';
@@ -70,7 +70,7 @@ export async function forkSession(s: SessionSummary): Promise<void> {
       const r = await st.libraryOp('fork', { sessionId: s.sessionId });
       await st.refreshSessions().catch(() => {});
       if (r?.sessionId) await st.loadHistory(r.sessionId, { mode: 'tab' });
-    } else await st.openSession({ sessionId: s.sessionId, cwd: s.cwd, fork: true });
+    } else await st.openSession({ sessionId: s.sessionId, cwd: s.cwd, fork: true, ...forkCarry(s.sessionId) });
   } catch (e) { st.toast(errText(e)); }
 }
 
