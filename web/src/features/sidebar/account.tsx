@@ -91,7 +91,9 @@ function AccountMenu({ auth, name, onClose }: { auth: AccountAuth | null; name: 
           <QuotaWindows limits={limits} />
         </div>
       )}
-      {limits && !limits.ok && <div className="menu-note">暂时读不到账号额度{limits.error ? `：${limits.error}` : ''}</div>}
+      {/* not signed in to a Claude account: there is no quota to read (the raw error is a missing credentials path);
+          otherwise one plain line, the raw error only in the tooltip */}
+      {limits && !limits.ok && auth?.loggedIn !== false && <div className="menu-note" title={limits.error ?? undefined}>暂时读不到账号额度，稍后会自动重试</div>}
       <div className="acct-today" data-id={id('today')} title="今天（本地时间）各对话的费用合计，来自账本">
         <span>今日费用</span>
         <span className="v">{today ? fmtCost(today.cost, today.unknown) : '…'}</span>
