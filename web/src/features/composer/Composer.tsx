@@ -35,6 +35,8 @@ import { BAR_ID } from './ids';
 import { FEATURE_DEFAULTS_KEY, LEGACY_FEATURES_KEY, capabilityTags, migrateFeatureDefaults, withoutTag } from './capabilities';
 import { FILL_EVENT, type FillDetail } from './fill';
 import { applyStarter, initialCwd } from '@/features/home/model';
+import { useAutomation } from '@/features/automation/state';
+import { composerCovered } from './covered';
 
 // sessions on another machine: uploads land on this machine's disk, out of the remote agent's reach
 const REMOTE_ATTACH = '附件在本机，远端读不到，请粘贴内容（图片可以直接发）';
@@ -259,8 +261,13 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   } else if (seenRef.current) seenRef.current = null;
   const setSeen = (patch: Partial<DockSeen>) => { if (seenRef.current) { seenRef.current = { ...seenRef.current, ...patch }; setSeenTick((n) => n + 1); } };
   // a card that came while this conversation was out of sight (another tab / pane / window in front) shows when it
-  // comes into view: its first moments start then (review M-9)
-  useEffect(() => { if (visible && seenRef.current) setSeen({ shownAt: Date.now() }); }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
+  // comes into view: its first moments start then (review M-9). Something lying over the conversation counts as out
+  // of sight too (review I1): the settings page, the automation page, a phone's bottom drawer — closing one gives the
+  // focus back to this box, and the Enter right after it must not answer a card the user never saw
+  const autoOver = useAutomation((s) => s.open);
+  const covered = useStore((s) => composerCovered({ settingsOpen: !!s.settingsOpen, automationOpen: autoOver, mobile: s.mobile, sheetAt: s.sheetAt, dockOpen: s.layout.dock.open, dockTabs: s.layout.dock.tabs.length, inspect: !!s.inspect }));
+  const inView = visible && !covered;
+  useEffect(() => { if (inView && seenRef.current) setSeen({ shownAt: Date.now() }); }, [inView]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const on = () => { if (document.visibilityState === 'visible' && seenRef.current) setSeen({ shownAt: Date.now() }); };
     document.addEventListener('visibilitychange', on);
@@ -459,7 +466,9 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       if (docked) {
-        const { act, why } = dockDecide(docked, { text, attachments: hasAttachments, seen: seenRef.current, now: Date.now(), enter: { repeat: e.repeat, ctrl: e.ctrlKey || e.metaKey } });
+        // (an Enter reaching the box while something covers it: the card is not on screen, so it is in its first moments)
+        const seen = inView || !seenRef.current ? seenRef.current : { ...seenRef.current, shownAt: Date.now() };
+        const { act, why } = dockDecide(docked, { text, attachments: hasAttachments, seen, now: Date.now(), enter: { repeat: e.repeat, ctrl: e.ctrlKey || e.metaKey } });
         // an empty box under a docked card: Enter is the card's main button (允许一次 ↵ / 提交回答; a plan: Ctrl+Enter)
         if (act === 'primary') { runDockPrimary(primaryKey(dockScope, docked.requestId)); return; }
         if (act === 'ignore') { if (why) setEnterNote({ requestId: docked.requestId, why }); return; }

@@ -3,8 +3,10 @@ import { hideSheet, useStore, type PanelId } from '@/store';
 import { TERMS } from '@/ui/terms';
 import { closeAutomation, useAutomation } from '@/features/automation/state';
 import { markChecklist } from '@/features/home/checklist-sync';
+import { sheetUp } from '@/features/composer/covered';
 import { activeGroup, chatTile, currentChatTile, defaultDockPanel, workbenchOn } from '@/model/layout';
 import { offerGroupToNewWindow } from './windows';
+import { underCovers } from './cover-commands';
 
 export function runCommand(id: string): boolean {
   const st = useStore.getState();
@@ -19,18 +21,20 @@ export function runCommand(id: string): boolean {
   // a phone's right panel is the bottom drawer (no icon rail to minimise to): both keys bring it up / put it away,
   // and putting it away does not write the desktop's open / closed (store `sheetAt`)
   if (st.mobile && (id === 'dock.toggle' || id === 'dock.minimize')) {
-    const up = st.sheetAt > 0 && st.layout.dock.open && (st.layout.dock.tabs.length > 0 || !!st.inspect);
-    if (up) hideSheet();
+    if (sheetUp({ mobile: true, sheetAt: st.sheetAt, dockOpen: st.layout.dock.open, dockTabs: st.layout.dock.tabs.length, inspect: !!st.inspect })) hideSheet();
     else if (!st.layout.dock.tabs.length && !st.inspect) d({ t: 'dock.show', panel: defaultDockPanel(workbench) });
     else d({ t: 'dock.set', patch: { open: true } });
     return true;
   }
-  // the automation page lies over the main area: a key meant for what is under it does not act on the unseen
-  // (review 7 I3) — 关闭标签 closes the page itself; switching tabs / panes first gets the page out of the way
-  if (useAutomation.getState().open) {
-    if (id === 'tile.close') { closeAutomation(); return true; }
-    if (/^(tile\.(next|prev|new)|pane\.|group\.|tab$|new$|interrupt$|close$)/.test(id)) closeAutomation();
+  // the settings page (the whole window) and the automation page (the main area) lie over the workbench: a key meant
+  // for what is under them does not act on the unseen (review 7 I3, final review I2) — 关闭标签 closes the page on
+  // top; switching / opening tabs, panes, groups first gets the pages out of the way (`underCovers`)
+  const cover = underCovers(id, { settings: !!st.settingsOpen, automation: useAutomation.getState().open });
+  for (const c of cover.close) {
+    if (c === 'settings') useStore.setState({ settingsOpen: null });
+    else closeAutomation();
   }
+  if (cover.done) return true;
   const m = /^(group\.jump|pane\.jump)\.(\d)$/.exec(id);
   if (m) {
     if (m[1] === 'group.jump') { const t = st.layout.groups[Number(m[2])]; if (t) d({ t: 'group.activate', id: t.id }); }

@@ -1745,6 +1745,29 @@ function driver() {
             const tileIds = `(() => { const st = window.__store.getState(); const g = st.layout.groups.find((x) => x.id === st.layout.activeGroupId); return Object.values(g.panes).flatMap((p) => p.tiles.map((t) => t.id)); })()`;
             const altW = { page: await js('document.querySelector(".auto-page")?.hidden === true'), tiles: await js(tileIds) };
             check('Alt+W with the automation page over a terminal closes the page, not the terminal (review 7 I3)', altW.page && altW.tiles.includes('smoke-altw'), JSON.stringify(altW));
+            // final review I2: the settings page covers the workbench the same way — Alt+W closes the settings page
+            // (like a tab), the terminal under it stays; Alt+N first puts the page away, then opens the new conversation
+            const settingsUp = '!!document.querySelector(".modal.settings.sp")';
+            await js('window.__store.getState().openSettings()');
+            await waitFor(settingsUp, 3000);
+            wc.focus();
+            wc.sendInputEvent({ type: 'keyDown', keyCode: 'W', modifiers: ['alt'] });
+            wc.sendInputEvent({ type: 'keyUp', keyCode: 'W', modifiers: ['alt'] });
+            await sleep(500);
+            const altWs = { settings: await js(settingsUp), tiles: await js(tileIds) };
+            check('Alt+W with the settings page over a terminal closes the settings page, not the terminal (final review I2)', !altWs.settings && altWs.tiles.includes('smoke-altw'), JSON.stringify(altWs));
+            const beforeN = await js(tileIds);
+            await js('window.__store.getState().openSettings()');
+            await waitFor(settingsUp, 3000);
+            wc.sendInputEvent({ type: 'keyDown', keyCode: 'N', modifiers: ['alt'] });
+            wc.sendInputEvent({ type: 'keyUp', keyCode: 'N', modifiers: ['alt'] });
+            await sleep(500);
+            const afterN = await js(tileIds);
+            const fresh = afterN.filter((x) => !beforeN.includes(x));
+            const altN = { settings: await js(settingsUp), fresh, front: await js(`(() => { const st = window.__store.getState(); const g = st.layout.groups.find((x) => x.id === st.layout.activeGroupId); const p = g.panes[g.focusedPaneId]; const t = p.tiles.find((x) => x.id === p.activeTileId); return t ? t.kind + ':' + (t.sessionId ?? 'new') : null; })()`) };
+            check('Alt+N with the settings page open: the page goes first, the new conversation is what shows (final review I2)', !altN.settings && fresh.length === 1 && altN.front === 'chat:new', JSON.stringify(altN));
+            await js(`(() => { const st = window.__store.getState(); const g = st.layout.groups.find((x) => x.id === st.layout.activeGroupId); for (const p of Object.values(g.panes)) for (const t of p.tiles) if (${JSON.stringify(fresh)}.includes(t.id)) st.dispatchLayout({ t: 'tile.close', paneId: p.id, tileId: t.id }); })()`);
+            await sleep(300);
             await js(`(() => { const st = window.__store.getState(); const g = st.layout.groups.find((x) => x.id === st.layout.activeGroupId); for (const p of Object.values(g.panes)) { const t = p.tiles.find((x) => x.id === 'smoke-altw'); if (t) st.dispatchLayout({ t: 'tile.close', paneId: p.id, tileId: t.id }); } })()`);
             await sleep(300);
             await js(`window.__store.getState().openInPane(${SID}, 'replace')`);
@@ -2164,6 +2187,39 @@ function driver() {
         check('…and the empty Enter on a plan says 「批准请按 Ctrl+Enter」 (on the card and in its status line, review M-6)', /批准请按 Ctrl\+Enter/.test(planNote.note ?? '') && /批准请按 Ctrl\+Enter/.test(planNote.live ?? ''), JSON.stringify(planNote));
         await setOpen(`pending: []`);
         await sleep(300);
+        // a card that docks while a page covers the conversation (final review I1): closing the page gives the focus
+        // back to the box, and the Enter right after that answers nothing — the card's first moments start when the
+        // page goes. The automation page (from the sidebar) and the settings page (opened from the box) alike
+        for (const cover of ['automation', 'settings']) {
+          const id = `smoke-covered-${cover}`;
+          await click('.pane.focused .composer textarea');
+          if (cover === 'automation') {
+            if (!(await js(`!!document.querySelector('.sidebar [data-id="automation"]')`)) && await js(`!!document.querySelector('.pane.focused .sess-head > .sb-reveal')`)) await click('.pane.focused .sess-head > .sb-reveal');
+            await click('.sidebar [data-id="automation"]');
+            await waitFor(`(() => { const p = document.querySelector('.auto-page'); return !!p && !p.hidden; })()`, 3000);
+          } else {
+            await js('window.__store.getState().openSettings()');
+            await waitFor(`!!document.querySelector('.modal.settings.sp')`, 3000);
+          }
+          await setOpen(`pending: [${stageReq(id)}], state: 'waiting'`);
+          await sleep(1500);
+          const under = await js(`(() => { const d = document.querySelector('.pane.focused .composer .pdock'); if (!d) return null; const r = d.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { docked: d.dataset.request, hidden: !d.contains(hit) }; })()`);
+          wc.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); wc.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+          const closed = await waitFor(cover === 'automation' ? 'document.querySelector(".auto-page")?.hidden === true' : '!document.querySelector(".modal.settings.sp")', 2000);
+          const inBox = await waitFor(`!!document.activeElement?.matches('.pane.focused .composer textarea')`, 2000);
+          wc.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); wc.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+          await sleep(250);
+          const right = { sent: await sentFor(id), note: await js(`document.querySelector('.pane.focused .composer .pdock .pd-hint.note')?.textContent ?? null`), docked: await js(`document.querySelector('.pane.focused .composer .pdock')?.dataset.request ?? null`) };
+          check(`a card that docked under the ${cover === 'automation' ? 'automation' : 'settings'} page: Esc (the focus back in the box) then Enter at once answers nothing (final review I1)`,
+            !!under && under.docked === id && under.hidden && closed && inBox && right.sent === '[]' && right.docked === id && /刚出现/.test(right.note ?? ''), JSON.stringify({ under, closed, inBox, right }));
+          // …and once it has been on screen for a moment, an empty Enter is 允许一次 again
+          await sleep(700);
+          await key('Return');
+          await waitFor(`window.__permSent.some((r) => r.requestId === ${JSON.stringify(id)})`, 3000);
+          check(`…then, after its first moments, an empty Enter answers it (${cover})`, (await sentFor(id)) === '[{"behavior":"allow"}]', await sentFor(id));
+          await setOpen(`pending: [], state: 'idle'`);
+          await sleep(300);
+        }
         // 5. 总是允许 and 「还有 N 条」: two staged requests with a suggestion (the mock agent sends none)
         const stage = (n) => `{ requestId: 'smoke-always-${n}', sessionId: ${pj}, toolName: 'Bash', input: { command: 'npm test' }, suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test:*' }], behavior: 'allow', destination: 'localSettings' }] }`;
         await js(`(() => { const st = window.__store; const o = st.getState().open[${pj}]; st.setState({ open: { ...st.getState().open, [${pj}]: { ...o, pending: [${stage(1)}, ${stage(2)}], version: o.version + 1 } } }); })()`);
