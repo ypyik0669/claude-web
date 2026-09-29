@@ -67,5 +67,8 @@ describe('what an edit-and-resend / rerun copy starts with (re-review M-1)', () 
   it('a running conversation: what it runs on, its provider explicitly', () => {
     expect(forkParams({ state: 'idle', conv, info: info({ model: 'm1', permissionMode: 'plan', providerId: 'p1', effort: 'low' }) })).toEqual({ model: 'm1', permissionMode: 'plan', providerId: 'p1', effort: 'low' });
     expect(forkParams({ state: 'running', conv, info: info({ model: 'claude-opus-5' }) }).providerId).toBeUndefined();
+    // running on the account while the server still records a relay (older data): the account, like resumeParams (re-review n-2)
+    expect(forkParams({ state: 'idle', conv, info: info({ model: 'm1' }) }, { providerId: 'p1' })).toEqual({ model: 'm1', providerId: 'claude' });
+    expect(forkParams({ state: 'idle', conv, info: info({ model: 'm1' }) }, { providerId: 'claude' }).providerId).toBeUndefined();
   });
 });

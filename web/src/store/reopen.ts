@@ -90,5 +90,8 @@ export function forkParams(o: ResumeSource & { state: string }, meta?: { provide
   if (!running) return resumeParams(o, meta);
   const out: ReturnType<typeof resumeParams> = { ...reopenSettings(o.info) };
   if (o.info?.providerId) out.providerId = o.info.providerId;
+  // running on the account while the server still records a profile (older data): say so, as resumeParams does
+  // (re-review n-2) — the fork would otherwise land on the recorded relay
+  else if (o.info && meta?.providerId && meta.providerId !== 'claude') out.providerId = 'claude';
   return out;
 }
