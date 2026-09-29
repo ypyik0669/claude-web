@@ -12,6 +12,7 @@ import { PermissionDock, runDockPrimary } from '@/features/chat/PermissionCards'
 import { denyResponse, dockAction, dockDecide, dockKind, isSlashCommand, primaryKey, type DockSeen, type DockWhy } from '@/features/chat/permission-dock';
 import { attachmentFolderPath } from '@/features/paths';
 import { Icon } from '@/ui/icons';
+import { imeComposing } from '@/ui/ime';
 import { CATALOG, effortLevels, modelsFor } from '@catalog';
 import { usePaneCtx } from '@/store/paneContext';
 import { activeGroup } from '@/model/layout';
@@ -463,12 +464,12 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   };
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (matches.length && slashQuery !== null && !e.nativeEvent.isComposing) {
+    if (matches.length && slashQuery !== null && !imeComposing(e.nativeEvent)) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setPalIdx((i) => (i + 1) % matches.length); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); setPalIdx((i) => (i - 1 + matches.length) % matches.length); return; }
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && text !== `/${matches[palIdx].name}`)) { e.preventDefault(); pickCmd(matches[palIdx].name); return; }
     }
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    if (e.key === 'Enter' && !e.shiftKey && !imeComposing(e.nativeEvent)) {
       e.preventDefault();
       if (docked) {
         // (an Enter reaching the box while something covers it: the card is not on screen, so it is in its first moments)

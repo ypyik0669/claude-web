@@ -8,6 +8,7 @@ import { Markdown } from '@/features/chat/Markdown';
 import type { Goal, GoalEvidence } from '@shared';
 import { EMPTY, MODE_LABEL } from '@/ui/terms';
 import { EmptyState } from '@/ui/EmptyState';
+import { imeComposing } from '@/ui/ime';
 
 /** The permission modes a goal can run in: it runs unattended, so only these three (as before, in interface words). */
 const GOAL_MODES = ['default', 'acceptEdits', 'bypassPermissions'] as const;
@@ -111,7 +112,7 @@ function GoalCard({ g, open, onOpen, page }: { g: Goal; open: boolean; onOpen: (
               ))}
               {g.evidence.length === 0 && <div className="empty">还没有证据</div>}
               <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                <input className="field" placeholder="加一条人工备注…" onKeyDown={async (e) => { const v = (e.target as HTMLInputElement).value.trim(); if (e.key === 'Enter' && !e.nativeEvent.isComposing && v) { await req({ kind: 'goals.note', id: g.id, text: v }); (e.target as HTMLInputElement).value = ''; } }} />
+                <input className="field" placeholder="加一条人工备注…" onKeyDown={async (e) => { const v = (e.target as HTMLInputElement).value.trim(); if (e.key === 'Enter' && !imeComposing(e.nativeEvent) && v) { await req({ kind: 'goals.note', id: g.id, text: v }); (e.target as HTMLInputElement).value = ''; } }} />
               </div>
             </div>
           )}

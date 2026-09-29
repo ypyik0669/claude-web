@@ -5,6 +5,7 @@ import { buildHtml, downloadHtml } from '@/model/export';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
+import { imeComposing } from '@/ui/ime';
 
 function useSession(sessionId: string) {
   return useStore((s) => s.open[sessionId]);
@@ -111,7 +112,7 @@ export function UserEditor({ it, sessionId, onDone }: { it: UserItem; sessionId:
   };
   return (
     <div className="user-editor">
-      <textarea autoFocus value={text} onChange={(e) => setText(e.target.value)} rows={Math.min(12, text.split('\n').length + 1)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void submit(); } if (e.key === 'Escape') onDone(); }} />
+      <textarea autoFocus value={text} onChange={(e) => setText(e.target.value)} rows={Math.min(12, text.split('\n').length + 1)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !imeComposing(e.nativeEvent)) { e.preventDefault(); void submit(); } if (e.key === 'Escape') onDone(); }} />
       <div className="actions">
         <span className="tool-meta">会从这条消息之前分叉出一个新对话，原对话保持不变</span>
         <span className="grow" />

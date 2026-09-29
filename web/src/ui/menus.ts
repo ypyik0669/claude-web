@@ -13,6 +13,7 @@
 // While a menu is claimed, `anchoredMenuOpen()` is true: one Esc does one thing — with a menu open it only closes the
 // menu (the sidebar's multi-select, the automation page, a running turn don't take that Esc; polish P1).
 import { useEffect, useRef, type RefObject } from 'react';
+import { imeComposing } from './ime';
 
 export const CLOSE_MENUS = 'cw:close-menus';
 
@@ -66,7 +67,7 @@ export function useDropdown(open: boolean, close: () => void, box: RefObject<HTM
     const shut = () => ref.current();
     const down = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) shut(); };
     const esc = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.isComposing) return;
+      if (e.key !== 'Escape' || imeComposing(e)) return;
       e.preventDefault();
       // immediate: a window capture listener added after this one (the sidebar's multi-select) must not see the key
       // after React has already released this menu's claim
