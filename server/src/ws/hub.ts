@@ -190,9 +190,12 @@ export class Hub {
       const hist = !params.sessionId ? [] : head?.imported
         ? await s.library.read(params.sessionId).then((r) => r.messages).catch(() => [])
         : await s.transcripts.load(params.sessionId).catch(() => []);
+      const before = params.sessionId ? s.pool.get(params.sessionId) : undefined;
       const r = s.pool.open(params, hist);
       await s.canonical.ensure(r.sessionId, params.cwd);
-      if (params.providerId && params.providerId !== 'claude' && s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId }).catch(() => { /* in memory; the next save persists it */ });
+      // recorded only when this open started the process (re-review m-3): a runner handed back as it was runs on its
+      // own provider, whatever this request asked for (openOnProvider swaps those)
+      if (r !== before && params.providerId && params.providerId !== 'claude' && s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId }).catch(() => { /* in memory; the next save persists it */ });
       return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
     }
     // provider: explicit → the one the session was created with → user default (new sessions only)
@@ -210,11 +213,13 @@ export class Hub {
       const newId = await s.sessions.fork(params.sessionId, params.resumeAt);
       params = { ...params, sessionId: newId, fork: false, resumeAt: undefined };
     }
+    const before = params.sessionId ? s.pool.get(params.sessionId) : undefined;
     const r = s.pool.open(params);
     if (cacheParentId && cacheParentId !== r.sessionId && s.meta.sessionMeta(r.sessionId).cacheKey !== cacheParentId) void s.meta.setSessionMeta(r.sessionId, { cacheKey: cacheParentId }).catch(() => { /* in memory; the next save persists it */ });
     await s.canonical.ensure(r.sessionId, params.cwd);
-    if (params.providerId && params.providerId !== 'claude') {
-      // remember which provider a session uses so resume / fork keep it (the id is known up front: new sessions get a uuid from us)
+    if (r !== before && params.providerId && params.providerId !== 'claude') {
+      // remember which provider a session uses so resume / fork keep it (the id is known up front: new sessions get a
+      // uuid from us) — only when this open started the process (re-review m-3: a live runner keeps its own provider)
       if (s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId }).catch(() => { /* in memory; the next save persists it */ });
     }
     return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
@@ -260,11 +265,18 @@ export class Hub {
         // an explicitly chosen profile must fit the agent / engine (welcome page, schedules, IM, orchestration all land here)
         const unfitOpen = s.providers.fitError(req.params.providerId, params.agent ?? 'claude');
         if (unfitOpen) throw new Error(unfitOpen);
-        // an existing conversation that is not running, reopened on another provider than the one it recorded (a pick
-        // on a history conversation's chips; IM, schedules and other windows open the same way): the same bookkeeping
-        // as session.setProvider — SessionMeta (the account clears it) and the canonical switch line — under its lock
+        // an existing conversation opened with an explicit provider (a pick on a history conversation's chips, another
+        // window, a client whose state is stale — IM, schedules and orchestration open through the pool, not here):
+        // not running on the recorded one → open, then the same bookkeeping as session.setProvider (SessionMeta, the
+        // account clears it; the canonical switch line); running on another one → session.setProvider's swap. Under
+        // the conversation's lock (openOnProvider)
         const nameOf = (id: string) => (normProvider(id) ? s.providers.forSession(id)?.name ?? id : 'Claude 账号');
-        return openOnProvider({ pool: s.pool, meta: s.meta, canonical: s.canonical }, params, nameOf, (p) => this.openSession(p), () => s.sessions.emit('changed'));
+        return openOnProvider({ pool: s.pool, meta: s.meta, canonical: s.canonical }, params, nameOf, {
+          open: (p) => this.openSession(p),
+          // running on another provider: the same as session.setProvider (re-review m-3)
+          swapped: (r) => ({ ...r, pending: s.pool.get(r.sessionId)?.getPendingPermissions() ?? [] }),
+          onRecorded: () => s.sessions.emit('changed'),
+        });
       }
       case 'session.info': {
         const r = this.runner(req.sessionId);

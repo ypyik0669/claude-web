@@ -188,7 +188,7 @@ describe('swapProvider (model with the profile)', () => {
   });
 });
 
-describe('openOnProvider (a conversation not running, reopened on another provider)', () => {
+describe('openOnProvider (session.open of an existing conversation with an explicit provider)', () => {
   let dir: string;
   let prevDir: string | undefined;
   let swap: any;
@@ -196,6 +196,12 @@ describe('openOnProvider (a conversation not running, reopened on another provid
   let canonical: any;
   const nameOf = (id: string) => (id === 'claude' ? 'Claude 账号' : `name-${id}`);
   const switches = async (sid: string) => (await canonical.load(sid)).filter((e: any) => e.kind === 'switch');
+  /** the hub's open: pool.open (hands back a live runner as it is) */
+  const hooksFor = (pool: ReturnType<typeof livePool>, extra: { onRecorded?: () => void; before?: () => Promise<void> } = {}) => ({
+    open: async (p: any) => { await extra.before?.(); const r = pool.open(p); return { opened: r.info.providerId ?? 'claude' }; },
+    swapped: (r: any) => ({ swapped: r.info.providerId ?? 'claude' }),
+    onRecorded: extra.onRecorded,
+  });
   beforeEach(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-openp-'));
     prevDir = process.env.CLAUDE_WEB_DIR;
@@ -211,14 +217,13 @@ describe('openOnProvider (a conversation not running, reopened on another provid
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
 
-  it('A: the account picked on a conversation recorded on p1 → SessionMeta cleared, one switch line from p1', async () => {
+  it('A: the account picked on a conversation recorded on p1, not running → SessionMeta cleared, one switch line from p1', async () => {
     await meta.setSessionMeta('h1', { providerId: 'p1' });
     const pool = livePool({});
-    const opened: any[] = [];
     let recorded = 0;
-    const r = await swap.openOnProvider({ pool, meta, canonical }, { sessionId: 'h1', cwd: '/proj', providerId: 'claude' }, nameOf, async (p: any) => { opened.push(p); return 'ok'; }, () => recorded++);
-    expect(r).toBe('ok');
-    expect(opened).toEqual([{ sessionId: 'h1', cwd: '/proj', providerId: 'claude' }]);
+    const r = await swap.openOnProvider({ pool, meta, canonical }, { sessionId: 'h1', cwd: '/proj', providerId: 'claude' }, nameOf, hooksFor(pool, { onRecorded: () => recorded++ }));
+    expect(r).toEqual({ opened: 'claude' });
+    expect(pool.opened.map((p: any) => p.providerId)).toEqual(['claude']);
     expect(meta.sessionMeta('h1').providerId).toBeUndefined();
     const sw = await switches('h1');
     expect(sw).toHaveLength(1);
@@ -226,43 +231,86 @@ describe('openOnProvider (a conversation not running, reopened on another provid
     expect(sw[0].providerId).toBeUndefined();
     expect(recorded).toBe(1);
   });
-  it('B: p1 → p2 → SessionMeta p2 and a switch line p1 → p2 (the usage timeline reads it)', async () => {
+  it('B: p1 → p2, not running → SessionMeta p2 and a switch line p1 → p2 (the usage timeline reads it)', async () => {
     await meta.setSessionMeta('h2', { providerId: 'p1' });
-    await swap.openOnProvider({ pool: livePool({}), meta, canonical }, { sessionId: 'h2', cwd: '/proj', providerId: 'p2' }, nameOf, async () => 'ok');
+    const pool = livePool({});
+    await swap.openOnProvider({ pool, meta, canonical }, { sessionId: 'h2', cwd: '/proj', providerId: 'p2' }, nameOf, hooksFor(pool));
     expect(meta.sessionMeta('h2').providerId).toBe('p2');
     const sw = await switches('h2');
     expect(sw.map((e: any) => [e.providerId, e.fromProviderId, e.providerName])).toEqual([['p2', 'p1', 'name-p2']]);
   });
   it('nothing recorded = the account: picking a provider records a switch from claude', async () => {
-    await swap.openOnProvider({ pool: livePool({}), meta, canonical }, { sessionId: 'h3', cwd: '/proj', providerId: 'p2' }, nameOf, async () => 'ok');
+    const pool = livePool({});
+    await swap.openOnProvider({ pool, meta, canonical }, { sessionId: 'h3', cwd: '/proj', providerId: 'p2' }, nameOf, hooksFor(pool));
     expect(meta.sessionMeta('h3').providerId).toBe('p2');
     expect((await switches('h3')).map((e: any) => e.fromProviderId)).toEqual(['claude']);
   });
-  it('no record: the same provider, no explicit provider, a running conversation, a fork / rewind, a new conversation', async () => {
-    await meta.setSessionMeta('same', { providerId: 'p1' });
+  it('running on another provider → the same as session.setProvider: swapped (closed, reopened on it), recorded (re-review m-3)', async () => {
     await meta.setSessionMeta('live', { providerId: 'p1' });
-    await meta.setSessionMeta('fork', { providerId: 'p1' });
-    const pool = livePool({ live: { providerId: 'p1' } });
-    const open = async () => 'ok';
-    const d = { pool, meta, canonical };
-    await swap.openOnProvider(d, { sessionId: 'same', cwd: '/proj', providerId: 'p1' }, nameOf, open);
-    await swap.openOnProvider(d, { sessionId: 'same', cwd: '/proj' }, nameOf, open);
-    await swap.openOnProvider(d, { sessionId: 'live', cwd: '/proj', providerId: 'p2' }, nameOf, open);
-    await swap.openOnProvider(d, { sessionId: 'fork', cwd: '/proj', providerId: 'p2', fork: true }, nameOf, open);
-    await swap.openOnProvider(d, { sessionId: 'fork', cwd: '/proj', providerId: 'p2', resumeAt: 'u1' }, nameOf, open);
-    await swap.openOnProvider(d, { cwd: '/proj', providerId: 'p2' }, nameOf, open);
-    expect([meta.sessionMeta('same').providerId, meta.sessionMeta('live').providerId, meta.sessionMeta('fork').providerId]).toEqual(['p1', 'p1', 'p1']);
-    for (const id of ['same', 'live', 'fork']) expect(await switches(id)).toEqual([]);
+    await canonical.ensure('live', '/proj'); // it ran here: it has a mirror
+    const pool = livePool({ live: { providerId: 'p1', model: 'm1' } });
+    let recorded = 0;
+    const r = await swap.openOnProvider({ pool, meta, canonical }, { sessionId: 'live', cwd: '/proj', providerId: 'p3' }, nameOf, hooksFor(pool, { onRecorded: () => recorded++ }));
+    expect(r).toEqual({ swapped: 'p3' });
+    expect(pool.events).toEqual(['close:live', 'open:live:p3']);
+    expect(pool.opened[0].model).toBeUndefined(); // another profile: its default, not the old profile's model
+    expect(meta.sessionMeta('live').providerId).toBe('p3');
+    expect((await switches('live')).map((e: any) => [e.providerId, e.fromProviderId])).toEqual([['p3', 'p1']]);
+    expect(recorded).toBe(1);
   });
-  it('two opens racing on one conversation record one switch (checked again under the lock)', async () => {
+  it('running on the account, the meta still naming a relay (older data), the account asked → a plain reattach, nothing recorded', async () => {
+    await meta.setSessionMeta('acct', { providerId: 'p1' });
+    const pool = livePool({ acct: {} });
+    const r = await swap.openOnProvider({ pool, meta, canonical }, { sessionId: 'acct', cwd: '/proj', providerId: 'claude' }, nameOf, hooksFor(pool));
+    expect(r).toEqual({ opened: 'claude' });
+    expect(pool.events).toEqual(['open:acct:claude']); // the live pool hands its runner back in the hub
+    expect(await switches('acct')).toEqual([]);
+  });
+  it('two opens racing on one idle conversation end with SessionMeta = the provider its process runs on (re-review m-3)', async () => {
     await meta.setSessionMeta('h4', { providerId: 'p1' });
-    const d = { pool: livePool({}), meta, canonical };
-    const slow = async () => { await new Promise((r) => setTimeout(r, 20)); return 'ok'; };
-    await Promise.all([
-      swap.openOnProvider(d, { sessionId: 'h4', cwd: '/proj', providerId: 'p2' }, nameOf, slow),
-      swap.openOnProvider(d, { sessionId: 'h4', cwd: '/proj', providerId: 'p2' }, nameOf, slow),
+    const pool = livePool({});
+    const d = { pool, meta, canonical };
+    const slow = { before: () => new Promise<void>((r) => setTimeout(r, 20)) };
+    const [a, b] = await Promise.all([
+      swap.openOnProvider(d, { sessionId: 'h4', cwd: '/proj', providerId: 'p2' }, nameOf, hooksFor(pool, slow)),
+      swap.openOnProvider(d, { sessionId: 'h4', cwd: '/proj', providerId: 'p3' }, nameOf, hooksFor(pool, slow)),
     ]);
-    expect(await switches('h4')).toHaveLength(1);
+    expect([a, b]).toEqual([{ opened: 'p2' }, { swapped: 'p3' }]);
+    expect(pool.get('h4').info.providerId).toBe('p3');
+    expect(meta.sessionMeta('h4').providerId).toBe('p3');
+    expect((await switches('h4')).map((e: any) => [e.providerId, e.fromProviderId])).toEqual([['p2', 'p1'], ['p3', 'p2']]);
+  });
+  it('the same provider twice at once: one open records, the second finds it running on it and just reattaches', async () => {
+    await meta.setSessionMeta('h5', { providerId: 'p1' });
+    const pool = livePool({});
+    const d = { pool, meta, canonical };
+    await Promise.all([
+      swap.openOnProvider(d, { sessionId: 'h5', cwd: '/proj', providerId: 'p2' }, nameOf, hooksFor(pool)),
+      swap.openOnProvider(d, { sessionId: 'h5', cwd: '/proj', providerId: 'p2' }, nameOf, hooksFor(pool)),
+    ]);
+    expect(meta.sessionMeta('h5').providerId).toBe('p2');
+    expect(await switches('h5')).toHaveLength(1);
+  });
+  it('an open that throws records nothing: SessionMeta and the canonical log keep the old provider (re-review n-3)', async () => {
+    await meta.setSessionMeta('h6', { providerId: 'p1' });
+    const pool = livePool({});
+    const hooks = { open: async () => { throw new Error('密钥解不开'); }, swapped: (r: any) => r };
+    await expect(swap.openOnProvider({ pool, meta, canonical }, { sessionId: 'h6', cwd: '/proj', providerId: 'p2' }, nameOf, hooks)).rejects.toThrow('密钥解不开');
+    expect(meta.sessionMeta('h6').providerId).toBe('p1');
+    expect(await switches('h6')).toEqual([]);
+  });
+  it('no record: the same provider, no explicit provider, a fork / rewind, a new conversation', async () => {
+    await meta.setSessionMeta('same', { providerId: 'p1' });
+    await meta.setSessionMeta('fork', { providerId: 'p1' });
+    const pool = livePool({});
+    const d = { pool, meta, canonical };
+    await swap.openOnProvider(d, { sessionId: 'same', cwd: '/proj', providerId: 'p1' }, nameOf, hooksFor(pool));
+    await swap.openOnProvider(d, { sessionId: 'same', cwd: '/proj' }, nameOf, hooksFor(pool));
+    await swap.openOnProvider(d, { sessionId: 'fork', cwd: '/proj', providerId: 'p2', fork: true }, nameOf, hooksFor(pool));
+    await swap.openOnProvider(d, { sessionId: 'fork', cwd: '/proj', providerId: 'p2', resumeAt: 'u1' }, nameOf, hooksFor(pool));
+    await swap.openOnProvider(d, { cwd: '/proj', providerId: 'p2' }, nameOf, hooksFor(pool));
+    expect([meta.sessionMeta('same').providerId, meta.sessionMeta('fork').providerId]).toEqual(['p1', 'p1']);
+    for (const id of ['same', 'fork']) expect(await switches(id)).toEqual([]);
   });
 });
 

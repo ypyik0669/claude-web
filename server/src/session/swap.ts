@@ -78,12 +78,12 @@ export function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Pro
 export const normProvider = (id: string | undefined) => (id && id !== 'claude' ? id : undefined);
 
 /**
- * What a provider change leaves behind — for a live swap (swapProvider) and for a conversation that is not running
- * reopened on another provider (the hub's `session.open` with an explicit providerId, which is how a pick on the
- * chips of a history conversation, IM, schedules and other windows reach it): the recorded profile
- * (SessionMeta.providerId; the account clears it, or a restart would bring the old relay back) and the canonical
- * `switch` line the hand-over briefing and usage attribution read (fromProviderId: who answered the turns before it;
- * 'claude' = the account). Callers hold the session's lock.
+ * What a provider change leaves behind — for a live swap (swapProvider) and for a conversation reopened on another
+ * provider through the hub's `session.open` with an explicit providerId (a pick on the chips of a history
+ * conversation, another window, a client whose state is stale; IM, schedules and orchestration open through the pool
+ * and do not come this way): the recorded profile (SessionMeta.providerId; the account clears it, or a restart would
+ * bring the old relay back) and the canonical `switch` line the hand-over briefing and usage attribution read
+ * (fromProviderId: who answered the turns before it; 'claude' = the account). Callers hold the session's lock.
  */
 export async function recordProviderSwitch(d: Pick<SwapDeps, 'meta' | 'canonical'>, sessionId: string, from: string | undefined, providerId: string | undefined, providerName: string): Promise<void> {
   // not fire-and-forget: a failed meta save would otherwise be an unhandled rejection that kills the server
@@ -92,30 +92,41 @@ export async function recordProviderSwitch(d: Pick<SwapDeps, 'meta' | 'canonical
 }
 
 /**
- * `session.open` of an existing conversation that is not running, with an explicit providerId other than the one it
- * recorded (none recorded = the account): the same bookkeeping as swapProvider before `open` runs, under the same
- * session lock (checked again inside it, so a second open racing this one sees the first one's record). Forks and
- * rewinds get a new id and keep their own record; a running conversation changes provider through swapProvider.
+ * `session.open` of an existing conversation with an explicit providerId (none = the recorded one, nothing to decide),
+ * under the session's lock so two opens (two windows, a double send) are decided one after the other:
+ * - running on another provider → the same as `session.setProvider`: swapProvider (close, respawn on the new env,
+ *   record it) — `pool.open` would hand back the old runner and the pick would silently not happen (re-review m-3);
+ * - running on that provider → a plain reattach;
+ * - not running and the recorded provider differs (none recorded = the account) → open, then — only once it opened —
+ *   the same bookkeeping as swapProvider (re-review n-3: a failed open leaves no record of a switch that never ran);
+ * - otherwise a plain open.
+ * So two opens racing on one idle conversation end with SessionMeta = the provider its process runs on: the first
+ * opens and records, the second finds it running and swaps. Forks and rewinds get a new id and keep their own record.
  */
 export function openOnProvider<T>(
   d: Pick<SwapDeps, 'pool' | 'meta' | 'canonical'>,
   params: OpenSessionParams,
   nameOf: (providerId: string) => string,
-  open: (p: OpenSessionParams) => Promise<T>,
-  onRecorded?: () => void,
+  hooks: { open: (p: OpenSessionParams) => Promise<T>; swapped: (r: SwapResult) => T; onRecorded?: () => void },
 ): Promise<T> {
   const sid = params.sessionId && !params.fork && !params.resumeAt ? params.sessionId : undefined;
   const to = params.providerId;
-  const idle = (id: string) => { const r = d.pool.get(id); return !r || r.state === 'closed' || r.state === 'error'; };
-  const differs = (id: string) => to !== undefined && normProvider(to) !== normProvider(d.meta.sessionMeta(id).providerId);
-  if (!sid || to === undefined || !idle(sid) || !differs(sid)) return open(params);
+  if (!sid || to === undefined) return hooks.open(params);
   return withSessionLock(sid, async () => {
-    if (idle(sid) && differs(sid)) {
-      await d.canonical.ensure(sid, params.cwd); // a CLI conversation that never ran here has no mirror yet
-      await recordProviderSwitch(d, sid, d.meta.sessionMeta(sid).providerId, to, nameOf(to));
-      onRecorded?.();
+    const live = d.pool.get(sid);
+    if (live && live.state !== 'closed' && live.state !== 'error') {
+      if (normProvider(live.info.providerId) === normProvider(to)) return hooks.open(params);
+      const r = await swapProviderNow(d, sid, to, nameOf(to), params.model);
+      hooks.onRecorded?.();
+      return hooks.swapped(r);
     }
-    return open(params);
+    const from = d.meta.sessionMeta(sid).providerId;
+    if (normProvider(to) === normProvider(from)) return hooks.open(params);
+    const out = await hooks.open(params);
+    await d.canonical.ensure(sid, params.cwd); // a CLI conversation that never ran here has no mirror yet
+    await recordProviderSwitch(d, sid, from, to, nameOf(to));
+    hooks.onRecorded?.();
+    return out;
   });
 }
 
@@ -128,13 +139,12 @@ export function swapProvider(d: SwapDeps, sessionId: string, providerId: string 
   // the lock lives here, not in the hub: federation hand-overs, orchestration and IM reach these without the hub
   return withSessionLock(sessionId, () => swapProviderNow(d, sessionId, providerId, providerName, model));
 }
-async function swapProviderNow(d: SwapDeps, sessionId: string, providerId: string | undefined, providerName: string, model?: string): Promise<SwapResult> {
+async function swapProviderNow(d: Pick<SwapDeps, 'pool' | 'meta' | 'canonical'>, sessionId: string, providerId: string | undefined, providerName: string, model?: string): Promise<SwapResult> {
   const live = d.pool.get(sessionId);
   const before = normProvider(live ? live.info.providerId : d.meta.sessionMeta(sessionId).providerId);
   const changed = before !== normProvider(providerId);
   const prev = await stop(d.pool, sessionId);
   const cwd = prev?.cwd ?? (await d.canonical.head(sessionId))?.cwd ?? process.cwd();
-  await recordProviderSwitch(d, sessionId, before, providerId, providerName);
 
   const params: OpenSessionParams = {
     sessionId,
@@ -147,6 +157,9 @@ async function swapProviderNow(d: SwapDeps, sessionId: string, providerId: strin
     agent: prev?.agent ?? 'claude',
   };
   const r = d.pool.open(params);
+  // recorded once the new process exists (re-review n-3): an open that throws (a key that no longer decrypts) leaves
+  // the old provider on record, which is what the next open should use
+  await recordProviderSwitch(d, sessionId, before, providerId, providerName);
   return { sessionId: r.sessionId, info: r.info, history: r.getHistory() };
 }
 
