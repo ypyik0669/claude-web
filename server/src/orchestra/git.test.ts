@@ -204,8 +204,9 @@ describe('worktrees are never deleted behind the user’s back (C2 / I1)', SLOW,
     await g.worktreeAdd(repo, dir, 'cw/r/orph', 'main');
     const o = await g.orphan(dir);
     expect(o).toMatchObject({ broken: false, dirty: false, branch: 'cw/r/orph' });
-    // git reports the repo resolved (macOS: /private/var/folders/… for a /var/folders/… temp dir)
-    expect(path.resolve(o.root!).toLowerCase()).toBe(fs.realpathSync(repo).toLowerCase());
+    // git reports the repo resolved (macOS: /private/var/folders/… for a /var/folders/… temp dir; Windows: an 8.3
+    // short name like RUNNER~1 expanded — only the native realpath does that, the JS fs.realpathSync keeps it)
+    expect(path.resolve(o.root!).toLowerCase()).toBe(fs.realpathSync.native(repo).toLowerCase());
     write(path.join(dir, 'x.txt'), 'x\n');
     expect((await g.orphan(dir)).dirty).toBe(true);
     const stray = path.join(tmp, 'wt', 'stray');
@@ -236,7 +237,7 @@ describe('worktrees are never deleted behind the user’s back (C2 / I1)', SLOW,
     const link = path.join(os.tmpdir(), `cw-orch-canon-${process.pid}-${Date.now()}`);
     fs.symlinkSync(tmp, link, 'junction');
     try {
-      const real = fs.realpathSync(tmp);
+      const real = fs.realpathSync.native(tmp); // what canonicalPath's fs.promises.realpath gives (8.3 names expanded)
       expect((await canonicalPath(path.join(link, 'repo'))).toLowerCase()).toBe(path.join(real, 'repo').toLowerCase());
       expect((await canonicalPath(path.join(link, 'no', 'such'))).toLowerCase()).toBe(path.join(real, 'no', 'such').toLowerCase());
     } finally {
