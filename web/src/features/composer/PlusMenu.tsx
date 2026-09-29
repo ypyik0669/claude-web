@@ -4,6 +4,7 @@ import { useStore } from '@/store';
 import { ago, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
+import { imeComposing } from '@/ui/ime';
 import { CAPABILITIES, CHANNELS, parseChannels, plusSections, withChannels, withFeature, type FeatureKey } from './capabilities';
 import { PLUS_ID } from './ids';
 import { Popover } from './Popover';
@@ -143,7 +144,7 @@ function ChannelsField({ features, readOnly, onFeatures }: { features: SessionFe
             timer.current = window.setTimeout(flush, 300);
           }}
           onBlur={flush}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); flush(); } }} />
+          onKeyDown={(e) => { if (e.key === 'Enter' && !imeComposing(e.nativeEvent)) { e.preventDefault(); flush(); } }} />
       </label>
     </div>
   );
@@ -162,7 +163,7 @@ function ReferenceList({ selfId, onBack, onPick }: { selfId?: string; onBack: ()
       <div className="cm-ref-head">
         <button type="button" data-mi className="icon-btn xs" aria-label="返回" onClick={onBack}><Icon name="chevronRight" size={12} className="flip" /></button>
         <input className="field" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索对话…" aria-label="搜索对话"
-          onKeyDown={(e) => { if (e.key === 'Enter' && list[0]) { e.preventDefault(); onPick({ id: list[0].sessionId, title: list[0].title }); } }} />
+          onKeyDown={(e) => { if (e.key === 'Enter' && !imeComposing(e.nativeEvent) && list[0]) { e.preventDefault(); onPick({ id: list[0].sessionId, title: list[0].title }); } }} />
       </div>
       <div className="cm-ref-list">
         {list.map((s) => (

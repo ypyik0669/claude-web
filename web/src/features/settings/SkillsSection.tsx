@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ws } from '@/ws/client';
 import { useScopedSession, useStore } from '@/store';
 import { dlg } from '@/ui/dialog';
+import { imeComposing } from '@/ui/ime';
 import type { SkillInfo } from '@shared';
 import { Icon } from '@/ui/icons';
 import { joinPath } from '@/features/paths';
@@ -58,7 +59,7 @@ export function SkillsSection() {
       <div className="section">
         <h5>安装</h5>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input className="field" style={{ flex: 1 }} placeholder="owner/repo、owner/repo/子目录、GitHub 链接或本地路径" value={src} onChange={(e) => setSrc(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && src && install()} />
+          <input className="field" style={{ flex: 1 }} placeholder="owner/repo、owner/repo/子目录、GitHub 链接或本地路径" value={src} onChange={(e) => setSrc(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !imeComposing(e.nativeEvent) && src && install()} />
           <select className="field" value={scope} onChange={(e) => setScope(e.target.value as any)}>
             <option value="user">用户级 ~/.claude/skills</option>
             <option value="project" disabled={!cwd}>项目级 .claude/skills</option>

@@ -5,6 +5,7 @@ import { usePaneCtx } from '@/store/paneContext';
 import { desktop } from '@/desktop';
 import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
+import { imeComposing } from '@/ui/ime';
 
 /**
  * In-app browser.
@@ -103,7 +104,7 @@ export function BrowserTile({ tile }: { tile: Extract<Tile, { kind: 'browser' }>
           spellCheck={false}
           placeholder="输入网址或 localhost:3000"
           onChange={(e) => setAddr(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') go(addr); if (e.key === 'Escape') setAddr(url); }}
+          onKeyDown={(e) => { if (imeComposing(e.nativeEvent)) return; if (e.key === 'Enter') go(addr); if (e.key === 'Escape') setAddr(url); }}
         />
         <button className="icon-btn xs" title="把页面地址和控制台错误放进输入框" aria-label="发给对话" onClick={toComposer}><Icon name="send" size={14} /></button>
         <button className="icon-btn xs" title="在系统浏览器打开" aria-label="外部打开" onClick={() => (desktop ? desktop.openExternal(url) : window.open(url, '_blank', 'noopener,noreferrer'))}><Icon name="external" size={14} /></button>

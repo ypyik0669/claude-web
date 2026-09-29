@@ -4,6 +4,7 @@ import { useStore, useScopedSession } from '@/store';
 import { clsx, ago } from '@/util';
 import { dlg } from '@/ui/dialog';
 import { Icon, type IconName } from '@/ui/icons';
+import { imeComposing } from '@/ui/ime';
 import { parsePeerId, type MemoryItem, type MemoryKind, type MemoryScope } from '@shared';
 
 const KINDS: { id: MemoryKind; l: string; ic: IconName }[] = [
@@ -105,7 +106,7 @@ export function MemoryPanel() {
       </div>
 
       <div className="memory-new">
-        <textarea placeholder="记一条：写清楚「是什么」和「为什么」，几个月后还看得懂。" value={draft} rows={2} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void add(); }} />
+        <textarea placeholder="记一条：写清楚「是什么」和「为什么」，几个月后还看得懂。" value={draft} rows={2} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !imeComposing(e.nativeEvent)) void add(); }} />
         <div className="row-inline">
           <select className="field sm" value={draftKind} onChange={(e) => setDraftKind(e.target.value as MemoryKind)}>{KINDS.map((k) => <option key={k.id} value={k.id}>{k.l}</option>)}</select>
           <select className="field sm" value={draftScope} onChange={(e) => setDraftScope(e.target.value as MemoryScope)} title={SCOPES.find((s) => s.id === draftScope)?.hint}>{SCOPES.map((s) => <option key={s.id} value={s.id}>{s.l}</option>)}</select>
@@ -150,7 +151,7 @@ function Row({ m }: { m: MemoryItem }) {
       <span className={clsx('mem-kind', m.kind)} title={k.l}><Icon name={k.ic} size={13} /></span>
       <div className="grow">
         {editing !== null ? (
-          <textarea autoFocus value={editing} rows={3} onChange={(e) => setEditing(e.target.value)} onBlur={save} onKeyDown={(e) => { if (e.key === 'Escape') setEditing(null); if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void save(); }} />
+          <textarea autoFocus value={editing} rows={3} onChange={(e) => setEditing(e.target.value)} onBlur={save} onKeyDown={(e) => { if (imeComposing(e.nativeEvent)) return; if (e.key === 'Escape') setEditing(null); if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void save(); }} />
         ) : (
           <div className="t" onDoubleClick={() => setEditing(m.text)} title="双击编辑">{m.text}</div>
         )}

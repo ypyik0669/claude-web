@@ -3,6 +3,7 @@ import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { dlg } from '@/ui/dialog';
+import { imeComposing } from '@/ui/ime';
 import { Markdown } from '@/features/chat/Markdown';
 import type { VcsDetail, VcsItem, VcsRepo } from '@shared';
 import { Icon, type IconName } from '@/ui/icons';
@@ -117,7 +118,7 @@ export function BoardView({ cwd, sid }: { cwd: string; sid: string | null }) {
         <select className="field sm" value={state} onChange={(e) => setState(e.target.value as any)}>
           <option value="open">开放</option>{mode === 'pulls' && <option value="merged">已合并</option>}<option value="closed">已关闭</option><option value="all">全部</option>
         </select>
-        {mode === 'issues' && <><input className="field sm" placeholder="搜索…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} style={{ width: 160 }} /><label className="chip"><input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} /> 指派给我</label></>}
+        {mode === 'issues' && <><input className="field sm" placeholder="搜索…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !imeComposing(e.nativeEvent) && load()} style={{ width: 160 }} /><label className="chip"><input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} /> 指派给我</label></>}
         <span className="grow" />
         {repo && <button className="btn sm ghost" title={repo.url} onClick={changeRepo}><Icon name="branch" size={12} /> {repo.owner}/{repo.repo}{repo.user ? ` · @${repo.user}` : ''}</button>}
         {!repo && <button className="btn sm ghost" onClick={changeRepo}>选择仓库…</button>}

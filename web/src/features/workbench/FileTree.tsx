@@ -7,6 +7,7 @@ import { MIME_SESSION } from './dnd';
 import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
 import { useDropdown } from '@/ui/menus';
+import { imeComposing } from '@/ui/ime';
 
 function join(dir: string, name: string) {
   const sep = dir.includes('\\') ? '\\' : '/';
@@ -36,7 +37,7 @@ function InlineInput({ initial, onDone }: { initial: string; onDone: (v: string 
   const [v, setV] = useState(initial);
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { ref.current?.focus(); const dot = initial.lastIndexOf('.'); ref.current?.setSelectionRange(0, dot > 0 ? dot : initial.length); }, []);
-  return <input ref={ref} className="ft-input" value={v} onChange={(e) => setV(e.target.value)} onBlur={() => onDone(v.trim() || null)} onKeyDown={(e) => { if (e.key === 'Enter') onDone(v.trim() || null); if (e.key === 'Escape') onDone(null); }} onClick={(e) => e.stopPropagation()} />;
+  return <input ref={ref} className="ft-input" value={v} onChange={(e) => setV(e.target.value)} onBlur={() => onDone(v.trim() || null)} onKeyDown={(e) => { if (imeComposing(e.nativeEvent)) return; if (e.key === 'Enter') onDone(v.trim() || null); if (e.key === 'Escape') onDone(null); }} onClick={(e) => e.stopPropagation()} />;
 }
 
 function Node({ path, name, depth, ctx, forceOpen }: { path: string; name: string; depth: number; ctx: Ctx; forceOpen?: boolean }) {

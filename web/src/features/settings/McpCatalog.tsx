@@ -4,6 +4,7 @@ import { useScopedSession, useStore } from '@/store';
 import { clsx } from '@/util';
 import type { McpHealth, RegistryServer } from '@shared';
 import { dlg } from '@/ui/dialog';
+import { imeComposing } from '@/ui/ime';
 import { mcpChanged, useMcpChanged } from '@/features/panels/ConfigPanel';
 
 interface CatalogItem { id: string; name: string; desc: string; cat: string; json: Record<string, unknown>; env?: string[]; oauth?: boolean }
@@ -85,7 +86,7 @@ export function McpCatalog() {
     <>
       <div className="section">
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
-          <input className="field" style={{ flex: 1 }} placeholder="筛选目录，或搜索官方注册表…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && searchRegistry()} />
+          <input className="field" style={{ flex: 1 }} placeholder="筛选目录，或搜索官方注册表…" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !imeComposing(e.nativeEvent) && searchRegistry()} />
           <select className="field" value={scope} onChange={(e) => setScope(e.target.value as any)} title="安装到哪个范围">
             <option value="user">用户级</option>
             <option value="project" disabled={!cwd}>项目 .mcp.json</option>

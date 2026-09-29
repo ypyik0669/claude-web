@@ -29,6 +29,7 @@ import { viewsFor, WB_VIEWS } from '../wb-views';
 import { runCommand } from '../commands';
 import { modKey } from '../shortcuts';
 import { TERMS } from '@/ui/terms';
+import { imeComposing } from '@/ui/ime';
 import { showUsageCard } from '@/features/composer/ContextMeter';
 
 type ChatTileModel = Extract<Tile, { kind: 'chat' }>;
@@ -132,7 +133,7 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
       {((edge.lead && !edge.strip) || mobile) && <SidebarReveal />}
       <div className="sh-main">
         {editing !== null ? (
-          <input className="sh-rename" autoFocus value={editing} onChange={(e) => setEditing(e.target.value)} onBlur={rename} onKeyDown={(e) => (e.key === 'Enter' ? rename() : e.key === 'Escape' ? setEditing(null) : null)} aria-label="对话标题" />
+          <input className="sh-rename" autoFocus value={editing} onChange={(e) => setEditing(e.target.value)} onBlur={rename} onKeyDown={(e) => (imeComposing(e.nativeEvent) ? null : e.key === 'Enter' ? rename() : e.key === 'Escape' ? setEditing(null) : null)} aria-label="对话标题" />
         ) : (
           <span className="sh-title" onDoubleClick={() => { if (caps.rename) setEditing(title); }} title={caps.rename ? `${title}\n双击重命名` : title}>{title}</span>
         )}

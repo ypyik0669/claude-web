@@ -6,6 +6,7 @@ import type { GitBranch, GitError, GitFileStatus, GitLogEntry, GitStatus, GitWor
 import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
 import { useDropdown } from '@/ui/menus';
+import { imeComposing } from '@/ui/ime';
 
 const STATUS_LABEL: Record<GitFileStatus['status'], string> = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', copied: 'C', untracked: 'U', conflict: '!', typechange: 'T' };
 
@@ -163,7 +164,7 @@ export function GitView({ cwd, visible = true }: { cwd: string; visible?: boolea
           </button>
           {branchMenu && (
             <div className="menu branch-menu" onMouseLeave={() => setBranchMenu(false)}>
-              <input className="field" autoFocus placeholder="筛选或新建分支名…" value={bq} onChange={(e) => setBq(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && bq.trim() && !branches.some((b) => b.name === bq.trim())) { setBranchMenu(false); void run('checkout', { kind: 'git.checkout', cwd, name: bq.trim(), create: true }); } }} />
+              <input className="field" autoFocus placeholder="筛选或新建分支名…" value={bq} onChange={(e) => setBq(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !imeComposing(e.nativeEvent) && bq.trim() && !branches.some((b) => b.name === bq.trim())) { setBranchMenu(false); void run('checkout', { kind: 'git.checkout', cwd, name: bq.trim(), create: true }); } }} />
               {bq.trim() && !branches.some((b) => b.name === bq.trim()) && <button onClick={() => { setBranchMenu(false); void run('checkout', { kind: 'git.checkout', cwd, name: bq.trim(), create: true }); }}><Icon name="plus" size={12} /> 新建分支「{bq.trim()}」</button>}
               <div className="list">
                 {filteredBranches.slice(0, 60).map((b) => (
@@ -195,7 +196,7 @@ export function GitView({ cwd, visible = true }: { cwd: string; visible?: boolea
       {tab === 'changes' && (
         <div className="git-body">
           <div className="commit-box">
-            <textarea className="field" placeholder={amend ? '修改上一次提交（留空沿用原信息）' : '提交信息（Ctrl+Enter 提交）'} value={msg} onChange={(e) => setMsg(e.target.value)} onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') void commit(); }} rows={3} />
+            <textarea className="field" placeholder={amend ? '修改上一次提交（留空沿用原信息）' : '提交信息（Ctrl+Enter 提交）'} value={msg} onChange={(e) => setMsg(e.target.value)} onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !imeComposing(e.nativeEvent)) void commit(); }} rows={3} />
             <div className="row">
               <label className="muted" style={{ display: 'flex', alignItems: 'center', gap: 4 }}><input type="checkbox" checked={amend} onChange={(e) => setAmend(e.target.checked)} /> amend</label>
               <span className="grow" />
