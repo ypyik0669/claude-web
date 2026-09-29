@@ -7,8 +7,8 @@ import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import chokidar from 'chokidar';
 import type { AgentKind, SessionSummary, SourceStatus } from '../protocol.js';
+import { watchTree, type TreeWatcher } from '../runtime/watch-tree.js';
 import type { AgentTranscripts, Head } from '../agents/transcript.js';
 import type { MetaStore } from '../meta/store.js';
 import { dataDir } from '../files/service.js';
@@ -109,8 +109,8 @@ export class LibraryService extends EventEmitter {
   private indexing: Promise<void> | null = null;
   private indexAgain = false;
   private timers: NodeJS.Timeout[] = [];
-  /** chokidar watchers, one per joined source that has watch dirs (claude always; others while joined). */
-  private watchers = new Map<AgentKind, ReturnType<typeof chokidar.watch>>();
+  /** Tree watchers, one per joined source that has watch dirs (claude always; others while joined). */
+  private watchers = new Map<AgentKind, TreeWatcher>();
   private watchDirs: Partial<Record<AgentKind, string[]>> | null = null;
   private indexTimer: NodeJS.Timeout | null = null;
   private indexDue = 0;
@@ -727,21 +727,20 @@ export class LibraryService extends EventEmitter {
     if (!this.watchDirs || this.watchers.has(kind)) return;
     const dirs = (this.watchDirs[kind] ?? []).filter((d) => existsSync(d));
     if (!dirs.length) return;
-    const w = chokidar.watch(dirs, { ignoreInitial: true, depth: 4 });
-    w.on('all', () => {
+    // one recursive handle per tree (watchTree): chokidar's watch per file was ~18 s of blocking at startup
+    const ws = dirs.map((d) => watchTree(d, () => {
       // Claude's list comes from SessionService (its own watcher keeps it fresh); others revalidate
       if (kind !== 'claude') this.invalidate(kind, { soft: true });
       this.scheduleIndex();
-    });
-    w.on('error', () => {});
-    this.watchers.set(kind, w);
+    }));
+    this.watchers.set(kind, { close: () => { for (const w of ws) w.close(); } });
   }
 
   private unwatch(kind: AgentKind) {
     const w = this.watchers.get(kind);
     if (!w) return;
     this.watchers.delete(kind);
-    void w.close();
+    w.close();
   }
 
   /** Stop timers / watchers (no source processes). */

@@ -1,10 +1,10 @@
 import { listSessions, getSessionMessages, getSubagentMessages, listSubagents, renameSession, deleteSession, getSessionInfo, forkSession, type SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
-import chokidar from 'chokidar';
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import type { SessionSummary } from '../protocol.js';
+import { watchTree, type TreeWatcher } from '../runtime/watch-tree.js';
 
 export const claudeDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
 export const projectsDir = path.join(claudeDir, 'projects');
@@ -29,8 +29,17 @@ function toSummary(s: SDKSessionInfo): SessionSummary {
 }
 
 /** Session index over ~/.claude/projects. Emits 'changed' (debounced) on any jsonl write. */
+/** A change under ~/.claude/projects that can change the session list: `<project>`, `<project>/<id>.jsonl`, `<project>/<id>`. */
+export function transcriptEvent(rel: string): boolean {
+  const parts = rel.split(/[\\/]/).filter(Boolean);
+  if (!parts.length || parts.includes('memory')) return false;
+  if (parts.length === 1) return true;
+  return parts.length === 2 && (parts[1].endsWith('.jsonl') || path.extname(parts[1]) === '');
+}
+
 export class SessionService extends EventEmitter {
   private timer: NodeJS.Timeout | null = null;
+  private watcher: TreeWatcher;
   private cache: SessionSummary[] | null = null;
   // How many the cache was fetched with (the `limit` passed to the SDK's listSessions, not
   // cache.length) — a later list() asking for more than this must re-scan, since the cache may be
@@ -40,10 +49,9 @@ export class SessionService extends EventEmitter {
 
   constructor() {
     super();
-    const w = chokidar.watch(projectsDir, { ignoreInitial: true, depth: 1, ignored: (p: string) => p.includes(`${path.sep}memory`) || (!p.endsWith('.jsonl') && path.extname(p) !== '') });
-    w.on('all', () => this.bump());
-    // chokidar re-emits watcher failures (EPERM when a project dir is removed on Windows); unhandled, that is a crash
-    w.on('error', () => {});
+    // one recursive handle for the whole tree (see watchTree) — only a project dir, a transcript or a session dir
+    // directly in it counts (not sub-agent logs, tool results, memory)
+    this.watcher = watchTree(projectsDir, (rel) => { if (rel === null || transcriptEvent(rel)) this.bump(); });
   }
 
   private bump() {
