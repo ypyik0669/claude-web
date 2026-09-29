@@ -194,6 +194,7 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
   - **Codex `thread/list` 默认只返回当前 provider 的线程**：真机上 690 个里只列出 399 个；要传 `modelProviders: []`。而且带 `[]` 时子代理线程的 `parentThreadId` 是 null，父线程只在 `source.subAgent.thread_spawn.parent_thread_id` 里（`parentOf()` 兜底，否则 277 个子线程平铺在顶层）。
   - **OpenCode 的 `/doc` 只写了 2 个路径**（`/auth`、`/log`），能力没法从 OpenAPI 探测，改为解析 `opencode session --help`（Windows 冷启动约 10 秒，超时 60 秒、失败下次重试）。**`GET /session` 只返回 serve 自己 cwd 所在项目的会话**（从 claude-web 仓库起是 0 条），要先 `GET /project` 再逐个带 `x-opencode-directory`（URI 编码）头去取。
   - **Windows 上 Python 文本模式写文件会把 LF 变成 CRLF**：仓库有 `.gitattributes`（`eol=lf`），改文件用 Edit/Write 或二进制写；提交前 `git diff -w --ignore-cr-at-eol --stat` 应该和 `git diff --stat` 一样。
+  - **大目录树别用 chokidar 监听**（2026-09-29 实测，桌面版从开始菜单点开后一分多钟没有窗口的根因）：chokidar 在 Windows 上对**每个文件**单独 `fs.watch`，库对 `~/.claude/projects` 深度 4 的监听是 4468 个文件 + 168 个目录（Codex 再加 720 个），server 开始监听后事件循环整整堵了 ~18 s（CPU profile 里 `createFsWatchInstance` → 原生 `start`），打包版里连着 Codex 列表一起是 ~65 s，而桌面窗口要等页面画出来才显示。现在 `SessionService` 和库的监听都走 `runtime/watch-tree.ts` 的 `watchTree(dir, onChange)`：一个 `fs.watch(dir, {recursive:true})` 句柄（Windows ReadDirectoryChangesW / macOS FSEvents / Linux 按目录 inotify，Node ≥ 20），回调拿到相对路径；目录还不存在就每 30 s 找一次、出现后再挂；句柄出错（整棵树被删，Windows 上是 EPERM）回到寻找。`SessionService` 只认 `transcriptEvent(rel)`：项目目录、项目下的 `<id>.jsonl` / `<id>` 目录（子代理日志、tool-results、memory 不算）。同样条件下 profile 里 55 s 内零卡顿。chokidar 只留给小目标（git 的 HEAD / index / refs、编辑器里打开的单个文件）。
 - `server/ws-phase13.mjs`：mock Codex（`agents/__mocks__/codex-server.mjs`，`CW_MOCK_RPC_LOG` 记录收到的请求）+ `MOCK_ACP_LIST=1` 的 mock ACP，端到端验证加入前不列、加入后列出并折叠子线程、分页读、搜索、改名、删除备份、`codex-` 会话续聊走 `thread/resume`、`library.sources` 状态。
 - 真机验证（2026-09-27，只读 + 一个自建的测试线程）：Codex 717 条（`~/.codex/sessions` 721 个 jsonl + archived 42，部分没有线程记录）、OpenCode 11 条、Claude 119 条；首轮全量索引约 150 秒（约 850 个会话），之后中文搜索 ~150 ms。测真机时用临时 `CLAUDE_WEB_DIR` 起一个独立 server，别碰用户自己的 `~/.claude-web`。
 
@@ -450,6 +451,7 @@ npm run desktop         # 编译 server/web/desktop 后用源码起 Electron
 npm run build:desktop   # electron-builder → dist-desktop/ClaudeWeb-<ver>-win-x64.exe (NSIS) + ClaudeWeb-<ver>-portable.exe
 ```
 
+- **窗口先开，server 后起**（2026-09-29）：`whenReady` 里先 `createWindow(null, 'main')` 显示一个 data: URL 的启动页（`splashUrl()`：主题色底 + 「正在启动…」，整页可拖动），`host.start()` 回来再 `loadURL` 真页面。以前窗口要等 server 起来（打包版 ~15 s）+ 页面 `ready-to-show` 才出现，这段时间再从开始菜单点一次，`second-instance` 找不到任何窗口可显示——用户看到的就是「打不开」。`--hidden`（开机自启）只作用于启动时建的那几个窗口（`createWindow` 的 `hidden` 参数；以前是建完再 `hide()`，但 `ready-to-show` 晚到又把它显示出来了）。
 - 壳只做四件事：`utilityProcess.fork(server/dist/index.js)`（PORT=0 自选端口 + 随机 token）、BrowserWindow 加载 `http://127.0.0.1:<port>/?token=…`、托盘/菜单/通知、`window.desktop` 桥（preload）。
 - **utilityProcess 里 `process.send` 不存在**，server 用 `process.parentPort.postMessage({type:'ready'})` 报告端口；别给它设 `ELECTRON_RUN_AS_NODE`（会让它拒绝 Chromium 参数直接退出）。
 - 前端通过 `web/src/desktop.ts` 判断是否在桌面壳里：选目录 / 打开路径 / 通知 / 菜单快捷键都走桥，浏览器模式退回原逻辑。`html.desktop` 类让每一栏的第一行成为可拖动标题栏（没有全局顶栏了，规则见「界面改版 阶段 0–1」），右上角那一行留 150px 给系统窗口按钮。

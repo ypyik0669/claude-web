@@ -109,7 +109,28 @@ function windowUrl(base: string, winId: string) {
   return u.toString();
 }
 
-function createWindow(url: string, winId = 'main', bounds?: Bounds): BrowserWindow {
+/**
+ * What the main window shows while the server starts: a cold start is seconds (the packaged server, the first
+ * scan of ~/.claude), and a window that only appears once the page has rendered reads as「打不开」— a second launch
+ * from the Start menu in that time found no window to show either.
+ */
+function splashUrl(dark: boolean): string {
+  const [bg, fg, mut] = dark ? ['#1a1a19', '#b9b9b4', '#767671'] : ['#ffffff', '#474744', '#8a8a86'];
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${APP_NAME}</title><style>`
+    + `html,body{height:100%;margin:0;background:${bg};color:${fg};font:14px "Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",system-ui,sans-serif;-webkit-app-region:drag;user-select:none;cursor:default}`
+    + `body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}`
+    + `.n{font-size:17px;font-weight:600}.s{color:${mut}}`
+    + `.d{width:18px;height:18px;border:2px solid ${mut};border-top-color:transparent;border-radius:50%;animation:r .9s linear infinite}`
+    + `@keyframes r{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){.d{animation:none}}`
+    + `</style></head><body><div class="d"></div><div class="n">${APP_NAME}</div><div class="s">正在启动…</div></body></html>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+/**
+ * `url` null: the window opens at once on the splash; the caller loads the app into it once the server is up.
+ * `hidden`: not shown when ready (the startup windows of a --hidden launch — the login item; tray / a second launch shows them).
+ */
+function createWindow(url: string | null, winId = 'main', bounds?: Bounds, hidden = false): BrowserWindow {
   const st = bounds ?? loadState().windows[winId] ?? {};
   const dark = nativeTheme.shouldUseDarkColors;
   const win = new BrowserWindow({
@@ -133,7 +154,7 @@ function createWindow(url: string, winId = 'main', bounds?: Bounds): BrowserWind
   });
   wins.set(winId, win);
   if (st.maximized) win.maximize();
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => { if (!hidden) win.show(); });
   win.on('resize', saveState);
   win.on('move', saveState);
   win.on('close', (e) => {
@@ -177,7 +198,7 @@ function createWindow(url: string, winId = 'main', bounds?: Bounds): BrowserWind
     });
   });
   win.on('focus', () => { pendingCount = 0; updateBadge(); });
-  void win.loadURL(windowUrl(url, winId));
+  void win.loadURL(url ? windowUrl(url, winId) : splashUrl(dark));
   return win;
 }
 
@@ -417,15 +438,18 @@ if (process.platform === 'win32') app.setAppUserModelId('com.claude-web.desktop'
 process.env.CLAUDE_WEB_VERSION = app.getVersion();
 
 if (gotLock) app.whenReady().then(async () => {
+  // the window first (on the splash), then the server: see splashUrl
+  const hidden = process.argv.includes('--hidden');
+  const main = createWindow(null, 'main', undefined, hidden);
   try {
     const info = await host.start();
     buildMenu();
     buildTray();
     setupUpdater();
     const st = loadState();
-    createWindow(info.url, 'main');
-    for (const id of Object.keys(st.windows)) if (id !== 'main') createWindow(info.url, id);
-    if (process.argv.includes('--hidden')) for (const [, w] of liveWins()) w.hide();
+    if (main.isDestroyed()) createWindow(info.url, 'main', undefined, hidden);
+    else void main.loadURL(windowUrl(info.url, 'main'));
+    for (const id of Object.keys(st.windows)) if (id !== 'main') createWindow(info.url, id, undefined, hidden);
     host.on('crash', (code) => new Notification({ title: APP_NAME, body: `后台服务退出（${code}），正在重启…` }).show());
     host.on('ready', (i) => { if (i.url !== info.url) for (const [id, w] of liveWins()) void w.loadURL(windowUrl(i.url, id)); });
   } catch (e: any) {
