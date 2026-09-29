@@ -22,6 +22,7 @@ import { chromeVisibility, workbenchOn } from '@/model/layout';
 import { MOBILE_QUERY, drawerYields } from '@/ui/viewport';
 import { installAutomation } from '@/features/automation/state';
 import { installChecklist } from '@/features/home/checklist-sync';
+import { installAccountDefault } from '@/features/models/account-default';
 
 /** Width of the right panel minimized to its icon rail. */
 const MIN_RAIL = 36;
@@ -72,6 +73,7 @@ export function App() {
   useEffect(() => installOrchestra(), []);
   useEffect(() => installAutomation(), []);
   useEffect(() => installChecklist(), []);
+  useEffect(() => installAccountDefault(), []);
   const sbWidth = useStore((s) => s.layout.sidebar.width);
   const dock = useStore((s) => s.layout.dock);
   const inspect = useStore((s) => s.inspect);

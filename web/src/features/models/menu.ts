@@ -294,18 +294,27 @@ export function filterMenu(menu: ModelMenu, query: string): ModelMenu {
   return { sections, items: menu.items };
 }
 
-/** What the model chip says: `<profile> / <model>`, or the built-in display name on the agent's own login. */
-export function chipLabel(o: { agent: AgentKind; providers: Provider[]; providerId?: string; providerName?: string; model?: string | null; builtin?: { value: string; displayName: string }[]; agentDefault?: string }): string {
+/**
+ * What the model chip says: `<profile> / <model>`, or the built-in display name on the agent's own login. Never
+ * 「默认模型」 (final review §9 #2: a newcomer cannot tell what that is): no model chosen = the model the default
+ * stands for — the agent's configured default, the account's default by name (`accountDefault`, read from the
+ * CLI's own list), a profile's default model; 「默认」 is left to the tooltip and the menu's tick. When even that is
+ * unknown (a fresh start with no conversation run yet) it is the agent's name.
+ */
+export function chipLabel(o: { agent: AgentKind; agentName?: string; providers: Provider[]; providerId?: string; providerName?: string; model?: string | null; builtin?: { value: string; displayName: string }[]; agentDefault?: string; accountDefault?: string }): string {
   const pid = o.providerId || OWN_PROVIDER;
-  const model = o.model ?? '';
+  const model = o.model && o.model !== 'default' ? o.model : '';
+  const list = o.builtin ?? modelsFor(o.agent);
+  const named = (id: string) => list.find((m) => m.value === id)?.displayName ?? modelsFor(o.agent, [{ id }])[0].displayName; // legacy ids keep their label
   if (pid === OWN_PROVIDER) {
-    if (!model) return o.agentDefault ? `默认（${o.agentDefault}）` : '默认模型';
-    const list = o.builtin ?? modelsFor(o.agent);
-    return list.find((m) => m.value === model)?.displayName ?? modelsFor(o.agent, [{ id: model }])[0].displayName; // legacy ids keep their label
+    if (model) return named(model);
+    if (o.agentDefault) return named(o.agentDefault);
+    return o.accountDefault ?? (o.agent === 'claude' ? 'Claude' : o.agentName ?? o.agent);
   }
   const p = o.providers.find((x) => x.id === pid);
   const name = p?.name ?? o.providerName ?? pid;
-  return `${name} / ${model || p?.defaultModel || '默认模型'}`;
+  const m = model || p?.defaultModel || '';
+  return m ? `${name} / ${m}` : name;
 }
 
 export interface ModelRow {

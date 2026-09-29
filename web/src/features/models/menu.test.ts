@@ -120,9 +120,13 @@ describe('search and chip label', () => {
   it('chip label: profile / model, or the built-in display name', () => {
     expect(chipLabel({ agent: 'claude', providers: PROVIDERS, providerId: 'gkey', model: 'gpt-6-astra' })).toBe('gkey / gpt-6-astra');
     expect(chipLabel({ agent: 'claude', providers: PROVIDERS, providerId: 'claude', model: 'claude-fable-5-1' })).toBe('Fable 5.1');
-    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, model: '' })).toBe('默认模型');
+    // final review §9 #2: never 「默认模型」 on the chip — the model it stands for, by name
+    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, model: '' })).toBe('Claude');
+    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, model: '', accountDefault: 'Sonnet 5' })).toBe('Sonnet 5');
+    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, model: 'default', accountDefault: 'Opus 5' })).toBe('Opus 5');
+    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, model: '', agentDefault: 'claude-haiku-4-5', accountDefault: 'Opus 5' })).toBe('Haiku 4.5');
     expect(chipLabel({ agent: 'claude', providers: PROVIDERS, providerId: 'snbchr', model: '' })).toBe('snbchr / claude-sonnet-5');
-    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, providerId: 'empty' })).toBe('empty / 默认模型');
+    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, providerId: 'empty' })).toBe('empty');
     expect(chipLabel({ agent: 'claude', providers: PROVIDERS, providerId: 'gone', providerName: '旧档案', model: 'm' })).toBe('旧档案 / m');
   });
 });

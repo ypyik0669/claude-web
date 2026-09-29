@@ -22,6 +22,7 @@ import { ModelChip } from '@/features/models/ModelMenu';
 import { usableProfile, type AgentSource, type ModelMenuItem } from '@/features/models/menu';
 import { routePick, switchedNote } from '@/features/models/route';
 import { modelChipText } from '@/features/models/intelligence';
+import { useAccountDefault } from '@/features/models/account-default';
 import { providersLoaded, useGatewayStatus } from '@/features/models/data';
 import { dlg } from '@/ui/dialog';
 import { DOCK_BLOCKED, DOCK_CARRIED, DOCK_ENTER_IGNORED, DOCK_PLACEHOLDER, DOCK_REQUEUED, DOCK_SEND, TERMS } from '@/ui/terms';
@@ -545,6 +546,9 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   const liveAgent: AgentKind = info?.agent ?? 'claude';
   const liveProvider = info?.providerId && info.providerId !== 'claude' ? info.providerId : 'claude';
   const liveAgentDefault = liveAgent !== 'claude' ? agents.find((a) => a.kind === liveAgent)?.model || undefined : undefined;
+  // the account's default model by name for a chip with no model (final review §9 #2): this conversation's CLI says
+  // it (its own login only), else the one remembered from the last conversation that did
+  const accountDefault = useAccountDefault(liveAgent === 'claude' && liveProvider === 'claude' ? info?.models : undefined);
   /** false = nothing happened (refused / cancelled / failed): the menu then does not record it as recent */
   const pickLive = async (it: ModelMenuItem): Promise<boolean> => {
     if (!active || swapping) return false;
@@ -626,14 +630,14 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
 
   let model: React.ReactNode = null, permission: React.ReactNode = null, meter: React.ReactNode = null, status: React.ReactNode = null;
   if (welcome) {
-    const t = modelChipText({ agent: wKind, agentName: agent?.name, providers, providerId: provider?.id, model: wModel, builtin: wBuiltin, agentDefault: agent?.model || undefined, efforts: wEfforts, effort: wEffortOk, defaultEffort: CATALOG[wKind]?.defaultEffort, ultracode: wUltracode && wUltra });
+    const t = modelChipText({ agent: wKind, agentName: agent?.name, providers, providerId: provider?.id, model: wModel, builtin: wBuiltin, agentDefault: agent?.model || undefined, efforts: wEfforts, effort: wEffortOk, defaultEffort: CATALOG[wKind]?.defaultEffort, ultracode: wUltracode && wUltra, accountDefault });
     model = (
       <ModelChip
         agent={wKind}
         current={{ providerId: provider ? provider.id : 'claude', model: wModel }}
         label={t.main}
         suffix={t.suffix}
-        title={`${t.main}${t.suffix ? ` · ${t.suffix}` : ''}\n用哪个模型、想多深：Agent、供应商、模型、${TERMS.effort}、${TERMS.ultracode}都在这里`}
+        title={`${t.main}${t.isDefault ? '（默认）' : ''}${t.suffix ? ` · ${t.suffix}` : ''}\n用哪个模型、想多深：Agent、供应商、模型、${TERMS.effort}、${TERMS.ultracode}都在这里`}
         builtin={wBuiltin}
         builtinTitle={agent ? `${agent.name} 账号` : 'Claude 账号'}
         agentDefault={agent?.model || undefined}
@@ -647,7 +651,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   } else if (liveOk) {
     const ultraOk = info.supportsUltracode !== false && !!CATALOG[liveAgent]?.supportsUltracode;
     const defaultEffort = CATALOG[liveAgent]?.defaultEffort;
-    const t = modelChipText({ agent: liveAgent, agentName: info.agentName, providers, providerId: remote ? 'claude' : liveProvider, providerName: info.providerName, model: info.model, builtin: liveProvider === 'claude' && info.models?.length ? info.models : undefined, agentDefault: liveAgentDefault, efforts: liveEfforts, effort: info.effort, defaultEffort, ultracode: ultraOk && !!info.ultracode });
+    const t = modelChipText({ agent: liveAgent, agentName: info.agentName, providers, providerId: remote ? 'claude' : liveProvider, providerName: info.providerName, model: info.model, builtin: liveProvider === 'claude' && info.models?.length ? info.models : undefined, agentDefault: liveAgentDefault, efforts: liveEfforts, effort: info.effort, defaultEffort, ultracode: ultraOk && !!info.ultracode, accountDefault });
     const remoteLabel = `${info.providerName ? `${info.providerName} / ` : ''}${info.models?.find((m) => m.value === info.model)?.displayName ?? (shortModel(info.model) || '模型')}`;
     model = (
       <ModelChip
@@ -655,7 +659,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         current={{ providerId: remote ? 'claude' : liveProvider, model: info.model }}
         label={remote ? remoteLabel : t.main}
         suffix={t.suffix}
-        title={remote ? '模型（其它机器上的对话：换供应商请在那台机器上操作）' : `${t.main}${t.suffix ? ` · ${t.suffix}` : ''}\n同一供应商直接换模型；换供应商会无感重启对话；选其它 Agent 的模型 = 交给它继续`}
+        title={remote ? '模型（其它机器上的对话：换供应商请在那台机器上操作）' : `${t.main}${t.isDefault ? '（默认）' : ''}${t.suffix ? ` · ${t.suffix}` : ''}\n同一供应商直接换模型；换供应商会无感重启对话；选其它 Agent 的模型 = 交给它继续`}
         builtin={(remote || liveProvider === 'claude') && info.models?.length ? info.models : undefined}
         builtinTitle={remote ? info.providerName ?? info.agentName ?? '模型' : liveAgent === 'claude' ? 'Claude 账号' : `${info.agentName ?? liveAgent} 账号`}
         agentDefault={liveAgentDefault}
