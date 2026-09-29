@@ -551,26 +551,72 @@ describe('LibraryService', () => {
     expect(codex.list.mock.calls.length).toBeGreaterThan(after);
   });
 
-  it('a Claude session whose indexed text is already full is updated without re-reading it', async () => {
-    claude.read.mockImplementation(async (id: string) => ({ messages: [{ type: 'user', message: { role: 'user', content: `${id} ${'y'.repeat(25_000)}` } }] }));
-    await lib.refreshIndex();
-    expect(claude.read).toHaveBeenCalledTimes(2);
-    claude.read.mockClear();
-    claude.items = [item('c1', 'claude', 150, { title: 'renamed' }), item('c2', 'claude', 300)];
-    lib.invalidate();
-    await lib.refreshIndex();
-    expect(claude.read).not.toHaveBeenCalled();
-    expect(index.indexedAt('c1')).toBe(150);
-    expect(index.textLength('c1')).toBe(20_000);
-    // a Codex session is read again (its index text is the newest pages)
-    codex.read.mockImplementation(async () => ({ messages: [{ type: 'user', message: { role: 'user', content: 'z'.repeat(25_000) } }] }));
-    await lib.join('codex', true);
-    await lib.refreshIndex();
-    codex.read.mockClear();
-    codex.items = [item('codex-t1', 'codex', 201)];
-    lib.invalidate();
-    await lib.refreshIndex();
-    expect(codex.read).toHaveBeenCalledTimes(1);
+  it('a Claude session with a full index text: only its summary follows while it is written, the text is re-read once quiet', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const t0 = 1_800_000_000_000;
+      vi.setSystemTime(t0);
+      let head = 'EARLY';
+      claude.read.mockImplementation(async () => ({ messages: [{ type: 'user', message: { role: 'user', content: `${head} ${'y'.repeat(25_000)}` } }] }));
+      claude.items = [item('c1', 'claude', t0 - 10 * 60_000)];
+      await lib.refreshIndex();
+      expect(claude.read).toHaveBeenCalledTimes(1);
+      expect(index.textLength('c1')).toBe(20_000);
+      claude.read.mockClear();
+      const retry = vi.spyOn(lib, 'scheduleIndex');
+      // being written (and compacted: the chain now starts elsewhere)
+      head = 'LATE';
+      vi.setSystemTime(t0 + 5_000);
+      claude.items = [item('c1', 'claude', t0 + 4_000, { title: 'renamed' })];
+      lib.invalidate();
+      await lib.refreshIndex();
+      expect(claude.read).not.toHaveBeenCalled();
+      expect(index.indexedAt('c1')).toBe(t0 - 10 * 60_000); // touch keeps the old stamp
+      expect(index.search('renamed', { limit: 5 }).map((h) => h.id)).toEqual(['c1']);
+      expect(retry.mock.calls.at(-1)?.[1]).toEqual({ unlessSooner: true });
+      expect(retry.mock.calls.at(-1)?.[0]).toBeGreaterThan(170_000);
+      // quiet for 3 min: read once, the new start replaces the old
+      vi.setSystemTime(t0 + 4_000 + 3 * 60_000 + 1);
+      await lib.refreshIndex();
+      expect(claude.read).toHaveBeenCalledTimes(1);
+      expect(index.indexedAt('c1')).toBe(t0 + 4_000);
+      expect(index.search('LATE', { limit: 5 }).map((h) => h.id)).toEqual(['c1']);
+      expect(index.search('EARLY', { limit: 5 })).toEqual([]);
+      await lib.refreshIndex();
+      expect(claude.read).toHaveBeenCalledTimes(1); // and not again
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('an index text with characters outside the BMP still counts as full', () => {
+    index.upsert(item('c9', 'claude', 1), `😀${'x'.repeat(25_000)}`);
+    expect(index.textLength('c9')).toBe(20_000);
+  });
+
+  it("a pass's retry for a live session does not push back a pass that is already due sooner", async () => {
+    const run = vi.spyOn(lib, 'refreshIndex').mockResolvedValue();
+    vi.useFakeTimers();
+    try {
+      lib.scheduleIndex(5_000);
+      lib.scheduleIndex(171_000, { unlessSooner: true });
+      await vi.advanceTimersByTimeAsync(5_100);
+      expect(run).toHaveBeenCalledTimes(1);
+      // …but it does replace a later one, and a plain request still debounces
+      lib.scheduleIndex(60_000);
+      lib.scheduleIndex(10_000, { unlessSooner: true });
+      await vi.advanceTimersByTimeAsync(10_100);
+      expect(run).toHaveBeenCalledTimes(2);
+      lib.scheduleIndex(5_000);
+      await vi.advanceTimersByTimeAsync(4_000);
+      lib.scheduleIndex(5_000);
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(run).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1_100);
+      expect(run).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a session still being written is re-read at most every 3 minutes', async () => {
@@ -588,7 +634,7 @@ describe('LibraryService', () => {
       await lib.refreshIndex();
       expect(claude.read).toHaveBeenCalledTimes(1); // skipped: indexed 10 s ago and still changing
       expect(index.indexedAt('c1')).toBe(t0 - 1_000);
-      expect(retry).toHaveBeenCalledWith(expect.any(Number));
+      expect(retry).toHaveBeenCalledWith(expect.any(Number), { unlessSooner: true });
       expect(retry.mock.calls[0][0]).toBeGreaterThan(160_000);
       vi.setSystemTime(t0 + 3 * 60_000 + 1);
       await lib.refreshIndex();

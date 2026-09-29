@@ -113,6 +113,7 @@ export class LibraryService extends EventEmitter {
   private watchers = new Map<AgentKind, ReturnType<typeof chokidar.watch>>();
   private watchDirs: Partial<Record<AgentKind, string[]>> | null = null;
   private indexTimer: NodeJS.Timeout | null = null;
+  private indexDue = 0;
   /** When each session was last (re-)indexed by this process — see INDEX_LIVE_MS. */
   private indexedWall = new Map<string, number>();
   /** Kinds passed to the constructor (Codex / OpenCode); ACP sources are built on join and dropped on leave. */
@@ -636,18 +637,24 @@ export class LibraryService extends EventEmitter {
           const at = this.index.indexedAt(s.sessionId);
           if (at === s.lastModified) continue;
           if (at !== undefined) {
-            // a Claude transcript only grows (appends; compaction and rewinds append too), and the index
-            // keeps its first INDEX_TEXT_MAX chars: once those are in, a change is summary-only (title, time)
-            if (kind === 'claude' && (this.index.textLength(s.sessionId) ?? 0) >= INDEX_TEXT_MAX) {
-              this.index.touch({ ...s, agent: kind });
-              continue;
-            }
             const now = Date.now();
-            const last = this.indexedWall.get(s.sessionId);
-            if (last !== undefined && now - (s.lastModified ?? 0) < INDEX_LIVE_MS && now - last < INDEX_LIVE_MS) {
-              const wait = INDEX_LIVE_MS - (now - last);
-              retryIn = retryIn ? Math.min(retryIn, wait) : wait;
-              continue;
+            const quietIn = INDEX_LIVE_MS - (now - (s.lastModified ?? 0)); // > 0: still being written
+            const retry = (ms: number) => { retryIn = retryIn ? Math.min(retryIn, ms) : ms; };
+            if (quietIn > 0) {
+              // while a Claude conversation is being written its indexed start rarely moves (appends), so
+              // only the summary follows (title) — and the text is re-read once it has gone quiet: what the
+              // index reads is the chain getSessionMessages walks, which a compaction or a rewind does change
+              // (touch keeps the old lastModified, so that quiet pass sees it as changed)
+              if (kind === 'claude' && (this.index.textLength(s.sessionId) ?? 0) >= INDEX_TEXT_MAX) {
+                this.index.touch({ ...s, agent: kind });
+                retry(quietIn);
+                continue;
+              }
+              const last = this.indexedWall.get(s.sessionId);
+              if (last !== undefined && now - last < INDEX_LIVE_MS) {
+                retry(INDEX_LIVE_MS - (now - last));
+                continue;
+              }
             }
           }
           try {
@@ -657,7 +664,7 @@ export class LibraryService extends EventEmitter {
           } catch { /* retried on the next pass */ }
           await new Promise((r) => setImmediate(r));
         }
-        if (retryIn) this.scheduleIndex(retryIn + 1_000);
+        if (retryIn) this.scheduleIndex(retryIn + 1_000, { unlessSooner: true });
         // sessions deleted / left since the last pass
         // …but only for sources that listed successfully: a failed fetch looks like "no sessions"
         if (!this.localFailed) {
@@ -675,9 +682,15 @@ export class LibraryService extends EventEmitter {
     return this.indexing;
   }
 
-  /** Debounced refresh (join, 'changed', file watchers). */
-  scheduleIndex(delayMs = 5_000) {
+  /**
+   * Debounced refresh (join, 'changed', file watchers). `unlessSooner` (a pass's own retry for a live
+   * session): don't push back a pass that is already due earlier (a watcher's 5 s one).
+   */
+  scheduleIndex(delayMs = 5_000, o: { unlessSooner?: boolean } = {}) {
+    const due = Date.now() + delayMs;
+    if (o.unlessSooner && this.indexTimer && this.indexDue <= due) return;
     if (this.indexTimer) clearTimeout(this.indexTimer);
+    this.indexDue = due;
     this.indexTimer = setTimeout(() => { this.indexTimer = null; void this.refreshIndex().catch(() => {}); }, delayMs);
     this.indexTimer.unref?.();
   }

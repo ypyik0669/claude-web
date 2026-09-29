@@ -109,17 +109,23 @@ export class LibraryIndex {
       .run(s.sessionId, agent, s.source ?? null, s.cwd ?? '', s.title ?? '', s.firstPrompt ?? null, s.lastModified ?? 0, clipped);
   }
 
-  /** Update a session's summary fields only, keeping its indexed text (no-op when it isn't indexed). */
+  /**
+   * Update a session's summary fields only (no-op when it isn't indexed). Its text and lastModified stay:
+   * the stale lastModified is what makes a later pass re-read the text.
+   */
   touch(s: SessionSummary): void {
     this.db
-      .prepare('UPDATE sessions SET agent = ?, source = ?, cwd = ?, title = ?, firstPrompt = ?, lastModified = ? WHERE id = ?')
-      .run(s.agent ?? 'claude', s.source ?? null, s.cwd ?? '', s.title ?? '', s.firstPrompt ?? null, s.lastModified ?? 0, s.sessionId);
+      .prepare('UPDATE sessions SET agent = ?, source = ?, cwd = ?, title = ?, firstPrompt = ? WHERE id = ?')
+      .run(s.agent ?? 'claude', s.source ?? null, s.cwd ?? '', s.title ?? '', s.firstPrompt ?? null, s.sessionId);
   }
 
-  /** Length of a session's indexed text, or undefined if it isn't in the index. */
+  /**
+   * Length of a session's indexed text in UTF-16 units — the unit `upsert` clips at (SQLite's LENGTH counts
+   * code points, so an emoji would keep a full text below TEXT_MAX) — or undefined if it isn't indexed.
+   */
   textLength(id: string): number | undefined {
-    const row = this.db.prepare('SELECT LENGTH(text) AS n FROM sessions WHERE id = ?').get(id) as { n: number | null } | undefined;
-    return row ? Number(row.n ?? 0) : undefined;
+    const row = this.db.prepare('SELECT text FROM sessions WHERE id = ?').get(id) as { text: string | null } | undefined;
+    return row ? (row.text ?? '').length : undefined;
   }
 
   /** How many sessions are indexed (0 → the library falls back to the old transcript scan). */
