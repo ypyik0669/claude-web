@@ -642,6 +642,9 @@ textarea.code { width: 100%; min-height: 240px; background: var(--surface-0); bo
 input.field { background: var(--surface-0); border: 1px solid var(--edge-strong); border-radius: var(--r-md); padding: 5px 9px; font-size: 13px; }
 input.field:focus { border-color: var(--ink-3); }
 .modal-bg { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; z-index: 50; animation: fadein 0.15s; }
+/* the shortcut sheet opens over the settings page too (z 50; final review M1) — still under the palette (55) */
+.modal-bg.shortcuts-bg { z-index: 52; }
+.shortcuts-bg > .modal:focus-visible { outline: none; }
 .modal { background: var(--surface-elev); border: 1px solid var(--edge-strong); border-radius: var(--r-2xl); width: 540px; max-width: 92vw; padding: 20px 22px; box-shadow: var(--elev-3); }
 .modal h3 { margin: 0 0 12px; font-size: 16px; font-weight: 600; }
 .modal label { display: block; font-size: 12px; color: var(--ink-3); margin: 12px 0 5px; }
@@ -1433,6 +1436,10 @@ html.desktop.mac .app.no-sidebar .groupbar,
 html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left] > .tabstrip,
 html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:not(.tabs) .sess-head,
 html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:not(.tabs) .welcome-top { padding-left: 84px; }
+/* …where 展开侧栏 starts at 84px like the sidebar's own top row — not pulled 8px back into the traffic lights' room
+   by the -8px it has elsewhere (final review M5) */
+html.desktop.mac .app.no-sidebar .sess-head > .sb-reveal,
+html.desktop.mac .app.no-sidebar .auto-head .sb-reveal { margin-left: 0; }
 
 /* ---- redesign phase 4: sidebar ---- */
 /* spec 2026-09-28 §5.1 / mock-home.png: brand row · 新对话 / 搜索 / 自动化 · 需要你 · projects (title + one status per

@@ -64,11 +64,13 @@ ws.on('open', async () => {
     fs.rmSync(tmp, { recursive: true, force: true });
     // ---- git (read-only on this repo)
     const gs = await req({ kind: 'git.status', cwd: REPO });
-    check('git.status', !!gs.root && typeof gs.branch === 'string' && Array.isArray(gs.files), `${gs.branch} ${gs.files.length} files ahead ${gs.ahead} behind ${gs.behind}`);
+    // a detached HEAD (CI's pull_request checkout of the merge commit, a detached worktree) has no branch: null then
+    check('git.status', !!gs.root && (gs.detached ? gs.branch === null && gs.state === 'detached' : typeof gs.branch === 'string') && Array.isArray(gs.files), `${gs.branch ?? '(detached)'} ${gs.files.length} files ahead ${gs.ahead} behind ${gs.behind}`);
     const lg = await req({ kind: 'git.log', cwd: REPO, n: 5 });
     check('git.log', lg.length === 5 && lg[0].hash.length === 40 && lg[0].subject.length > 0);
     const br = await req({ kind: 'git.branches', cwd: REPO });
-    check('git.branches', br.some((b) => b.current));
+    // …and no current branch either (a CI checkout may have no local branch at all)
+    check('git.branches', gs.detached ? Array.isArray(br) && !br.some((b) => b.current) : br.some((b) => b.current), `${br.length} branches${gs.detached ? ', detached HEAD' : ''}`);
     const wt = await req({ kind: 'git.worktrees', cwd: REPO });
     check('git.worktrees', wt.length >= 1 && wt[0].main);
     const sh = await req({ kind: 'git.show', cwd: REPO, rev: lg[0].hash });

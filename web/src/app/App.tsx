@@ -19,7 +19,7 @@ import { Icon } from '@/ui/icons';
 import { installOrchestra } from '@/features/orchestra/state';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { chromeVisibility, workbenchOn } from '@/model/layout';
-import { MOBILE_QUERY } from '@/ui/viewport';
+import { MOBILE_QUERY, drawerYields } from '@/ui/viewport';
 import { installAutomation } from '@/features/automation/state';
 import { installChecklist } from '@/features/home/checklist-sync';
 
@@ -67,6 +67,8 @@ export function App() {
   const mobile = useStore((s) => s.mobile);
   useEffect(() => { const on = () => useStore.setState({ mobile: MOBILE.matches }); on(); MOBILE.addEventListener('change', on); return () => MOBILE.removeEventListener('change', on); }, []);
   useEffect(() => { if (mobile) useStore.setState({ sidebarOpen: false }); }, [mobile]);
+  // the palette / the shortcut sheet opened from the keyboard on a phone: the drawer (z 60) makes way (final review M4)
+  useEffect(() => useStore.subscribe((s, p) => { if (drawerYields(p, s)) useStore.setState({ sidebarOpen: false }); }), []);
   useEffect(() => installOrchestra(), []);
   useEffect(() => installAutomation(), []);
   useEffect(() => installChecklist(), []);

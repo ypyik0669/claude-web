@@ -876,6 +876,17 @@ function driver() {
         await key('Escape');
         const afterPal = await js(`({ palette: !!document.querySelector('.palette-bg'), open: !!document.querySelector('.modal.settings.sp') })`);
         check('the command palette opened over settings: Esc closes only the palette', pal && !afterPal.palette && afterPal.open, JSON.stringify({ pal, ...afterPal }));
+        // the shortcut sheet over the page (final review M1): `?` with the focus on the page (not in a field) opens it
+        // above the page — it used to open underneath and show up only after the page closed — and Esc closes the sheet only
+        phase = 'settings:shortcuts';
+        await js(`document.querySelector('.modal.settings.sp').focus()`);
+        await js(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true, cancelable: true }))`);
+        await waitFor('!!document.querySelector(".shortcuts-bg")', 2000);
+        await sleep(200);
+        const sheetOver = await js(`(() => { const bg = document.querySelector('.shortcuts-bg'); if (!bg) return null; const m = bg.querySelector('.modal').getBoundingClientRect(); const e = document.elementFromPoint(m.left + m.width / 2, m.top + 20); return { hit: e ? (e.closest('.shortcuts-bg') ? 'sheet' : e.closest('.modal.settings') ? 'settings' : e.className) : null, inert: bg.hasAttribute('inert'), focus: !!document.activeElement?.closest('.shortcuts-bg') }; })()`);
+        await key('Escape');
+        const afterSheet = await js(`({ sheet: !!document.querySelector('.shortcuts-bg'), open: !!document.querySelector('.modal.settings.sp'), back: !!document.activeElement?.closest('.modal.settings.sp') })`);
+        check('`?` on the settings page opens the shortcut sheet above it (not inert, focused); Esc closes only the sheet, the page gets the focus back', !!sheetOver && sheetOver.hit === 'sheet' && !sheetOver.inert && sheetOver.focus && !afterSheet.sheet && afterSheet.open && afterSheet.back, JSON.stringify({ sheetOver, afterSheet }));
         // nodes inserted while the page is open are covered too: Ctrl+B twice swaps the sidebar for a placeholder and back
         phase = 'settings:swap';
         const sbState = `({ open: window.__store.getState().sidebarOpen, sb: [...document.querySelectorAll('.app > .sidebar')].map((e) => (e.classList.contains('has-resizer') ? 'column' : 'placeholder') + (e.hasAttribute('inert') ? ':inert' : '')) })`;
@@ -1079,6 +1090,24 @@ function driver() {
           await shot('phone-drawer');
           const drawerParts = await js(`({ nav: [...document.querySelectorAll('.sidebar .sb-nav [data-id]')].map((e) => e.dataset.id), account: !!document.querySelector('.sidebar .sb-account [data-id="account"]') })`);
           check('phone: the drawer is the same sidebar (新对话 / 搜索 / 自动化, account row)', ['new', 'search', 'automation'].every((x) => drawerParts.nav.includes(x)) && drawerParts.account, JSON.stringify(drawerParts));
+          // final review M4: Ctrl+K / `?` from the keyboard with the drawer open — the drawer (z 60) makes way, the
+          // palette / the shortcut sheet is what a tap where the drawer was reaches
+          const overDrawer = async (open, sel) => {
+            await open();
+            await waitFor(`!!document.querySelector(${JSON.stringify(sel)})`, 2000);
+            await sleep(300);
+            const r = await js(`(() => { const e = document.elementFromPoint(Math.round(innerWidth * 0.15), Math.round(innerHeight * 0.5)); return { drawer: document.querySelector('.app').classList.contains('drawer-open'), hit: e ? (e.closest(${JSON.stringify(sel)}) ? 'layer' : e.closest('.sidebar') ? 'drawer' : e.className || e.tagName) : null }; })()`);
+            await key('Escape');
+            await sleep(200);
+            return r;
+          };
+          const palOver = await overDrawer(async () => { wc.sendInputEvent({ type: 'keyDown', keyCode: 'K', modifiers: ['control'] }); wc.sendInputEvent({ type: 'keyUp', keyCode: 'K', modifiers: ['control'] }); }, '.palette-bg');
+          await click('.pane .sess-head .sb-reveal');
+          await waitFor('document.querySelector(".app").classList.contains("drawer-open")', 3000);
+          const sheetOverDrawer = await overDrawer(() => js(`document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true, cancelable: true }))`), '.shortcuts-bg');
+          check('phone: Ctrl+K and `?` with the drawer open — the drawer makes way, the palette / shortcut sheet takes the tap (final review M4)', !palOver.drawer && palOver.hit === 'layer' && !sheetOverDrawer.drawer && sheetOverDrawer.hit === 'layer', JSON.stringify({ palOver, sheetOverDrawer }));
+          await click('.pane .sess-head .sb-reveal');
+          await waitFor('document.querySelector(".app").classList.contains("drawer-open")', 3000);
           await click('.sidebar .sb-account [data-id="settings"]');
           const settings = await waitFor('!!document.querySelector(".modal.settings")', 3000);
           await sleep(200);

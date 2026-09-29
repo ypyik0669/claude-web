@@ -6,11 +6,12 @@ import { closeAnchoredMenus } from '@/ui/menus';
 
 /**
  * Layers drawn above the page that stay usable while it covers the app: dialogs (asked for from inside the page),
- * the command palette, toasts, the image viewer, crash cards and first-run onboarding. An allow-list rather than
+ * the command palette, the shortcut sheet (`?` / F1 from the page, final review M1: it used to open under the page and
+ * show up only after it closed), toasts, the image viewer, crash cards and first-run onboarding. An allow-list rather than
  * "fixed with a higher z-index": the phone's sidebar drawer is fixed at z-index 60 too, and must not float over the
  * page as a live layer (review round 2).
  */
-export const ABOVE_COVER = '.dialog-bg, .palette-bg, .toast-wrap, .viewer, .err-boundary.floating';
+export const ABOVE_COVER = '.dialog-bg, .palette-bg, .shortcuts-bg, .toast-wrap, .viewer, .err-boundary.floating';
 
 /** Is this sibling one of the layers above the page? */
 export function aboveCover(el: Element): boolean {

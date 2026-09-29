@@ -49,8 +49,8 @@ beforeEach(() => {
 afterEach(() => { g.MutationObserver = saved.MutationObserver; g.document = saved.document; g.window = saved.window; });
 
 describe('coverApp: the settings page takes the app underneath out of reach, and gives it back', () => {
-  it('layers above the page stay usable: dialogs, palette, toasts, viewer, crash cards, onboarding — the phone drawer does not', () => {
-    for (const cls of [['modal-bg', 'dialog-bg'], ['palette-bg'], ['toast-wrap'], ['viewer'], ['err-boundary', 'floating']]) expect(aboveCover(new El(cls) as any), cls.join('.')).toBe(true);
+  it('layers above the page stay usable: dialogs, palette, the shortcut sheet, toasts, viewer, crash cards, onboarding — the phone drawer does not', () => {
+    for (const cls of [['modal-bg', 'dialog-bg'], ['palette-bg'], ['modal-bg', 'shortcuts-bg'], ['toast-wrap'], ['viewer'], ['err-boundary', 'floating']]) expect(aboveCover(new El(cls) as any), cls.join('.')).toBe(true);
     expect(aboveCover(new El(['modal-bg']).add(new El(['modal', 'onboarding'])) as any)).toBe(true);
     // fixed at z-index 60 on phones, but a live layer over the page is exactly what must not happen
     for (const cls of [['sidebar', 'has-resizer'], ['drawer-backdrop'], ['modal-bg'], ['center'], ['rpanel'], ['err-boundary']]) expect(aboveCover(new El(cls) as any), cls.join('.')).toBe(false);
