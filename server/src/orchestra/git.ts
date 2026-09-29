@@ -44,6 +44,23 @@ const IN_PROGRESS: [string, string][] = [['MERGE_HEAD', 'merge'], ['CHERRY_PICK_
 const exists = (p: string) => fs.stat(p).then(() => true, () => false);
 const errText = (e: any) => String(e?.info?.message ?? e?.message ?? e).split('\n').filter(Boolean).slice(0, 6).join('\n');
 
+/**
+ * `p` with symlinks resolved as far as it exists (a missing tail is kept as written). git prints worktree
+ * paths resolved — on macOS a `/var/folders/…` or `/tmp/…` directory is listed as `/private/var/folders/…`
+ * — so a path we hold is only comparable to git's after this. Exported for tests.
+ */
+export async function canonicalPath(p: string): Promise<string> {
+  let head = path.resolve(p);
+  const tail: string[] = [];
+  for (;;) {
+    try { return path.join(await fs.realpath(head), ...tail); } catch { /* missing: resolve the parent */ }
+    const up = path.dirname(head);
+    if (up === head) return path.resolve(p);
+    tail.unshift(path.basename(head));
+    head = up;
+  }
+}
+
 export function gitAdapter(git: GitService): OrchGit {
   const identityRetry = async <T>(fn: (pre: string[]) => Promise<T>): Promise<T> => {
     try { return await fn([]); } catch (e: any) {
@@ -58,7 +75,13 @@ export function gitAdapter(git: GitService): OrchGit {
     return null;
   };
   const branchExists = (root: string, branch: string) => git.run(root, ['rev-parse', '-q', '--verify', `refs/heads/${branch}`]).then((r) => r.stdout.trim() || undefined, () => undefined);
-  const registered = async (root: string, dir: string) => (await git.worktrees(root).catch(() => [])).some((w) => path.resolve(w.path).toLowerCase() === path.resolve(dir).toLowerCase());
+  // compared resolved: with a symlinked prefix (macOS /var → /private/var) every worktree would otherwise read
+  // as "not linked" — inspect() never looks at its dirty state and cleanup keeps it as a broken git link
+  const registered = async (root: string, dir: string) => {
+    const want = (await canonicalPath(dir)).toLowerCase();
+    for (const w of await git.worktrees(root).catch(() => [])) if ((await canonicalPath(w.path)).toLowerCase() === want) return true;
+    return false;
+  };
 
   return {
     root: (cwd) => git.root(cwd),
