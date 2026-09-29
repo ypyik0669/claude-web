@@ -109,6 +109,19 @@ export class LibraryIndex {
       .run(s.sessionId, agent, s.source ?? null, s.cwd ?? '', s.title ?? '', s.firstPrompt ?? null, s.lastModified ?? 0, clipped);
   }
 
+  /** Update a session's summary fields only, keeping its indexed text (no-op when it isn't indexed). */
+  touch(s: SessionSummary): void {
+    this.db
+      .prepare('UPDATE sessions SET agent = ?, source = ?, cwd = ?, title = ?, firstPrompt = ?, lastModified = ? WHERE id = ?')
+      .run(s.agent ?? 'claude', s.source ?? null, s.cwd ?? '', s.title ?? '', s.firstPrompt ?? null, s.lastModified ?? 0, s.sessionId);
+  }
+
+  /** Length of a session's indexed text, or undefined if it isn't in the index. */
+  textLength(id: string): number | undefined {
+    const row = this.db.prepare('SELECT LENGTH(text) AS n FROM sessions WHERE id = ?').get(id) as { n: number | null } | undefined;
+    return row ? Number(row.n ?? 0) : undefined;
+  }
+
   /** How many sessions are indexed (0 → the library falls back to the old transcript scan). */
   count(): number {
     return Number((this.db.prepare('SELECT COUNT(*) AS n FROM sessions').get() as { n: number }).n);

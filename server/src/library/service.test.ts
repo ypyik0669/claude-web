@@ -527,6 +527,87 @@ describe('LibraryService', () => {
     expect(await lib.readAll('c1')).toHaveLength(10);
   });
 
+  it('the index pass does not re-list a source only because its TTL ran out (a watcher event does)', async () => {
+    lib.dispose();
+    lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents(['codex']), dataDirs: {}, trashDir: path.join(dir, 'library-trash'), listTtlMs: 0 });
+    await lib.join('codex', true);
+    await lib.list();
+    const before = codex.list.mock.calls.length;
+    await lib.refreshIndex();
+    await lib.refreshIndex();
+    expect(codex.list.mock.calls.length).toBe(before);
+    // a watcher saw Codex's data change: the next pass revalidates it (behind the cache)
+    const changed = new Promise<void>((r) => lib.once('changed', () => r()));
+    lib.invalidate('codex', { soft: true });
+    await lib.refreshIndex();
+    await changed;
+    expect(codex.list.mock.calls.length).toBeGreaterThan(before);
+    // …and once refetched, age alone doesn't refetch again
+    const after = codex.list.mock.calls.length;
+    await lib.refreshIndex();
+    expect(codex.list.mock.calls.length).toBe(after);
+    // a client's list() still revalidates on the TTL
+    await lib.list();
+    expect(codex.list.mock.calls.length).toBeGreaterThan(after);
+  });
+
+  it('a Claude session whose indexed text is already full is updated without re-reading it', async () => {
+    claude.read.mockImplementation(async (id: string) => ({ messages: [{ type: 'user', message: { role: 'user', content: `${id} ${'y'.repeat(25_000)}` } }] }));
+    await lib.refreshIndex();
+    expect(claude.read).toHaveBeenCalledTimes(2);
+    claude.read.mockClear();
+    claude.items = [item('c1', 'claude', 150, { title: 'renamed' }), item('c2', 'claude', 300)];
+    lib.invalidate();
+    await lib.refreshIndex();
+    expect(claude.read).not.toHaveBeenCalled();
+    expect(index.indexedAt('c1')).toBe(150);
+    expect(index.textLength('c1')).toBe(20_000);
+    // a Codex session is read again (its index text is the newest pages)
+    codex.read.mockImplementation(async () => ({ messages: [{ type: 'user', message: { role: 'user', content: 'z'.repeat(25_000) } }] }));
+    await lib.join('codex', true);
+    await lib.refreshIndex();
+    codex.read.mockClear();
+    codex.items = [item('codex-t1', 'codex', 201)];
+    lib.invalidate();
+    await lib.refreshIndex();
+    expect(codex.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('a session still being written is re-read at most every 3 minutes', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const t0 = 1_800_000_000_000;
+      vi.setSystemTime(t0);
+      claude.items = [item('c1', 'claude', t0 - 1_000)];
+      await lib.refreshIndex();
+      expect(claude.read).toHaveBeenCalledTimes(1);
+      const retry = vi.spyOn(lib, 'scheduleIndex');
+      vi.setSystemTime(t0 + 10_000);
+      claude.items = [item('c1', 'claude', t0 + 9_000)];
+      lib.invalidate();
+      await lib.refreshIndex();
+      expect(claude.read).toHaveBeenCalledTimes(1); // skipped: indexed 10 s ago and still changing
+      expect(index.indexedAt('c1')).toBe(t0 - 1_000);
+      expect(retry).toHaveBeenCalledWith(expect.any(Number));
+      expect(retry.mock.calls[0][0]).toBeGreaterThan(160_000);
+      vi.setSystemTime(t0 + 3 * 60_000 + 1);
+      await lib.refreshIndex();
+      expect(claude.read).toHaveBeenCalledTimes(2);
+      expect(index.indexedAt('c1')).toBe(t0 + 9_000);
+      // changed again 2 s after that read: skipped while it is live, read once it has been quiet for 3 min
+      claude.items = [item('c1', 'claude', t0 + 9_500)];
+      vi.setSystemTime(t0 + 3 * 60_000 + 2_000);
+      lib.invalidate();
+      await lib.refreshIndex();
+      expect(claude.read).toHaveBeenCalledTimes(2);
+      vi.setSystemTime(t0 + 20 * 60_000);
+      await lib.refreshIndex();
+      expect(claude.read).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('search uses the index and fills in summaries', async () => {
     await lib.refreshIndex();
     const hits = await lib.search('hello', 10);

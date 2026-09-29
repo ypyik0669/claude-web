@@ -17,6 +17,14 @@ import { libraryId, parseLibraryId } from './ids.js';
 import type { SessionSource } from './types.js';
 
 const LIST_TTL_MS = 60_000;
+/** A source with a file watcher (Codex) learns about changes from it; the TTL is only a backstop. */
+const WATCHED_LIST_TTL_MS = 10 * 60_000;
+/**
+ * A session still being written (changed within this window) is re-indexed at most this often: every
+ * pass re-reads it whole (a live Claude transcript can be tens of MB), and while a conversation runs
+ * its file changes every few seconds.
+ */
+const INDEX_LIVE_MS = 3 * 60_000;
 const LIST_TIMEOUT_MS = 20_000; // per source, per list() — see bounded()
 const PAGE = 100; // Codex thread/list page size (and everyone else's)
 const MAX_PAGES = 500;
@@ -41,7 +49,7 @@ export interface LibraryOptions {
   trashDir?: string;
   /** Per-source list timeout (default 20 s); tests shorten it. */
   listTimeoutMs?: number;
-  /** How long a source's list stays fresh (default 60 s); past it the cache is served and refreshed behind. */
+  /** How long a source's list stays fresh (default 60 s, 10 min with a file watcher); past it the cache is served and refreshed behind. */
   listTtlMs?: number;
 }
 
@@ -73,8 +81,11 @@ export function messagesText(msgs: any[]): string {
 
 export class LibraryService extends EventEmitter {
   private srcs = new Map<AgentKind, SessionSource>();
-  /** Last good list per source. `dirty`: invalidated (a mutation / watcher) — the next list() waits (bounded) for a refetch. */
-  private perKind = new Map<AgentKind, { at: number; items: SessionSummary[]; dirty?: boolean }>();
+  /**
+   * Last good list per source. `dirty`: invalidated by our own mutation — the next list() waits (bounded)
+   * for a refetch. `stale`: a file watcher saw the source's data change — the next list() revalidates.
+   */
+  private perKind = new Map<AgentKind, { at: number; items: SessionSummary[]; dirty?: boolean; stale?: boolean }>();
   private errors = new Map<AgentKind, string>();
   /** Kinds whose current `errors` entry is a list timeout (cleared by the next successful fetch). */
   private timeoutErr = new Set<AgentKind>();
@@ -102,6 +113,8 @@ export class LibraryService extends EventEmitter {
   private watchers = new Map<AgentKind, ReturnType<typeof chokidar.watch>>();
   private watchDirs: Partial<Record<AgentKind, string[]>> | null = null;
   private indexTimer: NodeJS.Timeout | null = null;
+  /** When each session was last (re-)indexed by this process — see INDEX_LIVE_MS. */
+  private indexedWall = new Map<string, number>();
   /** Kinds passed to the constructor (Codex / OpenCode); ACP sources are built on join and dropped on leave. */
   private builtin = new Set<AgentKind>();
   private readonly trashDir: string;
@@ -153,7 +166,7 @@ export class LibraryService extends EventEmitter {
    */
   invalidate(kind?: AgentKind, o: { soft?: boolean } = {}) {
     // stale, not forgotten: a source that fails on the next fetch still serves its last good list
-    for (const [k, v] of this.perKind) if (!kind || k === kind) { v.at = 0; if (!o.soft) v.dirty = true; }
+    for (const [k, v] of this.perKind) if (!kind || k === kind) { v.at = 0; if (o.soft) v.stale = true; else v.dirty = true; }
     if (o.soft) return;
     if (kind) this.gens.set(kind, (this.gens.get(kind) ?? 0) + 1);
     else this.allGen++;
@@ -179,10 +192,13 @@ export class LibraryService extends EventEmitter {
    * Stale-while-revalidate: a cached list that merely aged past the TTL is returned at once and
    * refreshed in the background ('changed' when the refresh lands). Only a first load, or a list
    * explicitly invalidated (our own mutation, a watcher event), waits — and that wait is bounded.
+   * `revalidate: false` (the index pass): age alone doesn't refetch — only a watcher / mutation does.
+   * Otherwise every index pass (a Claude transcript being written triggers one every few seconds)
+   * would re-list every other source once its TTL ran out (Codex: ~700 threads through app-server).
    */
-  private listSource(src: SessionSource): Promise<SessionSummary[]> {
+  private listSource(src: SessionSource, revalidate = true): Promise<SessionSummary[]> {
     const hit = this.perKind.get(src.kind);
-    if (hit && !hit.dirty && Date.now() - hit.at < (this.opts.listTtlMs ?? LIST_TTL_MS)) return Promise.resolve(hit.items);
+    if (hit && !hit.dirty && (Date.now() - hit.at < this.ttlOf(src.kind) || (!revalidate && !hit.stale))) return Promise.resolve(hit.items);
     const gen = this.genOf(src.kind);
     const running = this.fetching.get(src.kind);
     const p = running && running.gen === gen ? running.p : this.startFetch(src, gen);
@@ -240,6 +256,8 @@ export class LibraryService extends EventEmitter {
 
   private genOf(kind: AgentKind) { return this.allGen * 1_000_000 + (this.gens.get(kind) ?? 0); }
 
+  private ttlOf(kind: AgentKind) { return this.opts.listTtlMs ?? (this.watchers.has(kind) ? WATCHED_LIST_TTL_MS : LIST_TTL_MS); }
+
   private async fetchSource(src: SessionSource, gen: number): Promise<SessionSummary[]> {
     const hit = this.perKind.get(src.kind);
     const epoch = this.leaves.get(src.kind) ?? 0;
@@ -263,9 +281,9 @@ export class LibraryService extends EventEmitter {
     }
   }
 
-  async list(): Promise<SessionSummary[]> {
+  async list(o: { revalidate?: boolean } = {}): Promise<SessionSummary[]> {
     const joined = this.joinedSources();
-    const [lists, local] = await Promise.all([Promise.all(joined.map((s) => this.listSource(s))), this.transcripts.entries().then((r) => { this.localFailed = false; return r; }, () => { this.localFailed = true; return []; })]);
+    const [lists, local] = await Promise.all([Promise.all(joined.map((s) => this.listSource(s, o.revalidate ?? true))), this.transcripts.entries().then((r) => { this.localFailed = false; return r; }, () => { this.localFailed = true; return []; })]);
     const byId = new Map<string, SessionSummary>();
     joined.forEach((src, i) => {
       for (const it of lists[i]) {
@@ -606,21 +624,40 @@ export class LibraryService extends EventEmitter {
     this.indexing = (async () => {
       do {
         this.indexAgain = false;
-        await this.list();
+        await this.list({ revalidate: false });
         const all = [...this.byId.values()]; // children too
+        let retryIn = 0; // a live session skipped this pass: come back when it may be re-read
         // every joined source that listed cleanly counts as indexed — including one with no sessions
         // (otherwise an empty source reads「尚未索引」forever)
         const done = new Set<AgentKind>(this.joinedSources().map((s) => s.kind).filter((k) => !this.errors.has(k) && !this.loading.has(k)));
         for (const s of all) {
           const kind = s.agent ?? 'claude';
           done.add(kind);
-          if (this.index.indexedAt(s.sessionId) === s.lastModified) continue;
+          const at = this.index.indexedAt(s.sessionId);
+          if (at === s.lastModified) continue;
+          if (at !== undefined) {
+            // a Claude transcript only grows (appends; compaction and rewinds append too), and the index
+            // keeps its first INDEX_TEXT_MAX chars: once those are in, a change is summary-only (title, time)
+            if (kind === 'claude' && (this.index.textLength(s.sessionId) ?? 0) >= INDEX_TEXT_MAX) {
+              this.index.touch({ ...s, agent: kind });
+              continue;
+            }
+            const now = Date.now();
+            const last = this.indexedWall.get(s.sessionId);
+            if (last !== undefined && now - (s.lastModified ?? 0) < INDEX_LIVE_MS && now - last < INDEX_LIVE_MS) {
+              const wait = INDEX_LIVE_MS - (now - last);
+              retryIn = retryIn ? Math.min(retryIn, wait) : wait;
+              continue;
+            }
+          }
           try {
             const msgs = await this.readAll(s.sessionId, { maxChars: INDEX_TEXT_MAX });
             this.index.upsert({ ...s, agent: kind }, messagesText(msgs));
+            this.indexedWall.set(s.sessionId, Date.now());
           } catch { /* retried on the next pass */ }
           await new Promise((r) => setImmediate(r));
         }
+        if (retryIn) this.scheduleIndex(retryIn + 1_000);
         // sessions deleted / left since the last pass
         // …but only for sources that listed successfully: a failed fetch looks like "no sessions"
         if (!this.localFailed) {
