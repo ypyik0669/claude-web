@@ -45,6 +45,16 @@ describe('入门清单 (settings[onboarding.checklist])', () => {
     expect(reconcileChecklist({ done: [], dismissed: true }, { projects: 1, event: 'review' })).toBeNull();
     expect(reconcileChecklist({ done: ['project', 'send', 'review', 'palette'] }, { projects: 0 })).toBeNull();
   });
+  it('the first read stamps since (older stores too), once; dismissed / finished lists are left alone (re-review M-7)', () => {
+    expect(readChecklist({ done: ['project'], since: 123 })).toEqual({ done: ['project'], since: 123 });
+    expect(readChecklist({ done: [], since: 'x' })).toEqual({ done: [] });
+    expect(reconcileChecklist({ done: [] }, { projects: 0, now: 500 })).toEqual({ done: [], since: 500 });
+    expect(reconcileChecklist({ done: ['project'] }, { projects: 1, now: 500 })).toEqual({ done: ['project'], since: 500 });
+    expect(reconcileChecklist({ done: ['project'], since: 100 }, { projects: 1, now: 500 })).toBeNull();
+    expect(reconcileChecklist({ done: ['project'], since: 100 }, { projects: 1, event: 'send', now: 500 })).toEqual({ done: ['project', 'send'], since: 100 });
+    expect(reconcileChecklist({ done: [], dismissed: true }, { projects: 0, now: 500 })).toBeNull();
+    expect(reconcileChecklist({ done: ['project', 'send', 'review', 'palette'] }, { projects: 0, now: 500 })).toBeNull();
+  });
   it('once recorded a step stays done (removing the last project does not bring the card back)', () => {
     const v = checklistView({ done: ['project', 'send', 'review', 'palette'] });
     expect(v.visible).toBe(false);

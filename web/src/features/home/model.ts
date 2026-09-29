@@ -36,12 +36,15 @@ export type ChecklistId = 'project' | 'send' | 'review' | 'palette';
 export const CHECKLIST: { id: ChecklistId }[] = [{ id: 'project' }, { id: 'send' }, { id: 'review' }, { id: 'palette' }];
 const IDS = CHECKLIST.map((c) => c.id);
 
-export interface ChecklistStore { done: ChecklistId[]; dismissed?: boolean }
+/** `since`: when this app first showed the list (written the first time it is read — older stores get it then). */
+export interface ChecklistStore { done: ChecklistId[]; dismissed?: boolean; since?: number }
 
 export function readChecklist(raw: unknown): ChecklistStore {
-  const r = raw && typeof raw === 'object' ? (raw as { done?: unknown; dismissed?: unknown }) : {};
+  const r = raw && typeof raw === 'object' ? (raw as { done?: unknown; dismissed?: unknown; since?: unknown }) : {};
   const done = Array.isArray(r.done) ? IDS.filter((id) => (r.done as unknown[]).includes(id)) : [];
-  return r.dismissed === true ? { done, dismissed: true } : { done };
+  const out: ChecklistStore = r.dismissed === true ? { done, dismissed: true } : { done };
+  if (typeof r.since === 'number' && Number.isFinite(r.since)) out.since = r.since;
+  return out;
 }
 
 export interface ChecklistFacts {
@@ -51,6 +54,8 @@ export interface ChecklistFacts {
    * palette opened with its shortcut. Conversations that merely exist (the CLI's history) do not count.
    */
   event?: ChecklistId;
+  /** the time now: a list read for the first time gets its `since` */
+  now?: number;
 }
 
 /**
@@ -63,8 +68,9 @@ export function reconcileChecklist(stored: ChecklistStore, f: ChecklistFacts): C
   const add = new Set(stored.done);
   if (f.projects > 0) add.add('project');
   if (f.event) add.add(f.event);
-  if (add.size === stored.done.length) return null;
-  return { ...stored, done: IDS.filter((id) => add.has(id)) };
+  const stamp = stored.since === undefined && f.now !== undefined;
+  if (add.size === stored.done.length && !stamp) return null;
+  return { ...stored, done: IDS.filter((id) => add.has(id)), ...(stamp ? { since: f.now } : {}) };
 }
 
 export function checklistView(stored: ChecklistStore): { items: { id: ChecklistId; done: boolean }[]; done: number; total: number; next: ChecklistId | null; visible: boolean } {

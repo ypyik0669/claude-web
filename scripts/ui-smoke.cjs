@@ -2058,6 +2058,13 @@ function driver() {
             await sleep(400);
             // final review §9 #5: the discovery hint waits while the newcomer checklist is still on the home page…
             const hintEarly = await exists('.sidebar .sb-hint');
+            // …but not forever (re-review M-7): 3 days after the list first showed (`since`) it comes anyway
+            await js(`(() => { window.__cwSmokeChecklist = { done: ['project'], since: Date.now() - 86400e3 }; window.__cwSmokeFakesApply(); })()`);
+            await sleep(300);
+            const hintDay = await exists('.sidebar .sb-hint');
+            await js(`(() => { window.__cwSmokeChecklist = { done: ['project'], since: Date.now() - 4 * 86400e3 }; window.__cwSmokeFakesApply(); })()`);
+            const hintAged = await waitFor(`!!document.querySelector('.sidebar .sb-hint')`, 2000);
+            check('library hint: an unfinished checklist shown a day ago still holds it back; one shown 4 days ago no longer does (re-review M-7)', !hintDay && hintAged, JSON.stringify({ hintDay, hintAged }));
             await js(`(() => { window.__cwSmokeChecklist = { done: ['project'], dismissed: true }; window.__cwSmokeFakesApply(); })()`);
             await sleep(300);
             await harvest();

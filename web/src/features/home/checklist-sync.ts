@@ -1,5 +1,6 @@
 // The 入门清单's bookkeeping (redesign phase 7): written to meta.json `settings['onboarding.checklist']`
-// (`{ done: ChecklistId[], dismissed? }`) as things happen in this app. A project that exists counts by itself; the
+// (`{ done: ChecklistId[], dismissed?, since? }`) as things happen in this app; `since` is stamped the first time it is
+// read (the sidebar's library hint stops waiting for the list 3 days after that, re-review M-7). A project that exists counts by itself; the
 // other three only when done here (review 7 M8): a message sent from a composer, a changed file looked at in 审阅,
 // the command palette opened with its shortcut (or the list's own 试试) — the sidebar's 搜索 does not count.
 import { useStore } from '@/store';
@@ -10,7 +11,7 @@ let last = '';
 function write(event?: ChecklistId): void {
   const st = useStore.getState();
   if (!st.metaLoaded) return;
-  const next = reconcileChecklist(readChecklist(st.settings[CHECKLIST_KEY]), { projects: st.workspaces.length, event });
+  const next = reconcileChecklist(readChecklist(st.settings[CHECKLIST_KEY]), { projects: st.workspaces.length, event, now: Date.now() });
   if (!next) return;
   const key = JSON.stringify(next);
   if (key === last) return; // the same write is on its way

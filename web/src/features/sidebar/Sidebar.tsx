@@ -143,7 +143,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   // is written out; the library's discovery hint waits until the newcomer checklist is finished or closed
   const empty = projectsEmpty({ projects: workspaces.length, otherFolders: grouped.other.length });
   const spellMake = makeProjectSpelled(workspaces.length);
-  const hintOk = useStore((s) => hintReady(s.settings[CHECKLIST_KEY]));
+  const hintOk = useStore((s) => hintReady(s.settings[CHECKLIST_KEY], Date.now()));
 
   // selection (全选, Shift ranges) only ever covers rows that are on screen: expanded groups, within their page limit
   const rendered = useMemo(() => renderedRows([
