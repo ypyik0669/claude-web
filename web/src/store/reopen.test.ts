@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionInfoSnapshot } from '@shared';
-import { lastAssistantModel, lastPermissionMode, reopenSettings, resumeParams, resumeView } from './reopen';
+import { lastAssistantModel, reopenSettings, resumeParams, resumeView } from './reopen';
 
 describe('reopenSettings', () => {
   it('carries model, effort, permission mode, ultracode and features', () => {
@@ -16,41 +16,40 @@ describe('reopenSettings', () => {
 const info = (o: Partial<SessionInfoSnapshot>): SessionInfoSnapshot => ({ sessionId: 's', state: 'closed', cwd: '/r', ...o }) as SessionInfoSnapshot;
 const items = (...models: (string | undefined)[]) => models.map((model, i) => ({ kind: 'assistant', id: `a${i}`, model, parentToolUseId: null }));
 
-describe('what a conversation that is not running will continue with (final review §9 #1)', () => {
-  it('the model: the last top-level answer\'s, skipping synthetic error lines and subagents', () => {
+describe('what a conversation that is not running will continue with (final review §9 #1, re-review I-1 / M-2)', () => {
+  it('the last answer\'s model (a hint only): the last top-level answer\'s, skipping synthetic error lines and subagents', () => {
     expect(lastAssistantModel(items('claude-opus-5', 'claude-sonnet-5'))).toBe('claude-sonnet-5');
     expect(lastAssistantModel([...items('claude-sonnet-5'), { kind: 'assistant', id: 'x', model: '<synthetic>', parentToolUseId: null }])).toBe('claude-sonnet-5');
     expect(lastAssistantModel([...items('claude-sonnet-5'), { kind: 'assistant', id: 'y', model: 'claude-haiku-4-5', parentToolUseId: 'toolu_1' }])).toBe('claude-sonnet-5');
     expect(lastAssistantModel([{ kind: 'user', id: 'u' }])).toBeUndefined();
   });
-  it('the permission mode of the transcript\'s last line that has one — never 完全放开 (that one is chosen, not restored)', () => {
-    expect(lastPermissionMode([{ type: 'user', permissionMode: 'plan' }, { type: 'user', permissionMode: 'acceptEdits' }, { type: 'assistant' }])).toBe('acceptEdits');
-    expect(lastPermissionMode([{ type: 'user', permissionMode: 'bypassPermissions' }])).toBeUndefined();
-    expect(lastPermissionMode([{ type: 'user', permissionMode: 'nonsense' }])).toBeUndefined();
-    expect(lastPermissionMode([])).toBeUndefined();
-  });
-  it('what the chips show: the user\'s pick > the last live info > the transcript > the defaults', () => {
+  it('what the chips show: the user\'s pick > the last live info > what the resume really gets (no model = the default, 每步询问); the transcript\'s model is only lastModel', () => {
     const conv = { items: items('claude-sonnet-5') };
-    expect(resumeView({ conv }, undefined)).toEqual({ providerId: 'claude', model: 'claude-sonnet-5', permissionMode: 'default', effort: undefined, ultracode: false });
-    expect(resumeView({ conv, lastMode: 'plan' }, { providerId: 'p1' })).toMatchObject({ providerId: 'p1', permissionMode: 'plan' });
+    expect(resumeView({ conv }, undefined)).toEqual({ providerId: 'claude', model: undefined, permissionMode: 'default', effort: undefined, ultracode: false, lastModel: 'claude-sonnet-5' });
+    expect(resumeView({ conv }, { providerId: 'p1' })).toMatchObject({ providerId: 'p1', model: undefined, permissionMode: 'default' });
     expect(resumeView({ conv, info: info({ model: 'claude-opus-5', permissionMode: 'acceptEdits', effort: 'low', providerId: 'p2', ultracode: true }) }, { providerId: 'p1' }))
-      .toEqual({ providerId: 'p2', model: 'claude-opus-5', permissionMode: 'acceptEdits', effort: 'low', ultracode: true });
+      .toEqual({ providerId: 'p2', model: 'claude-opus-5', permissionMode: 'acceptEdits', effort: 'low', ultracode: true, lastModel: 'claude-sonnet-5' });
     expect(resumeView({ conv, info: info({ model: 'claude-opus-5' }), resume: { model: 'claude-haiku-4-5', providerId: 'claude', permissionMode: 'plan', effort: 'max' } }, { providerId: 'p1' }))
-      .toEqual({ providerId: 'claude', model: 'claude-haiku-4-5', permissionMode: 'plan', effort: 'max', ultracode: false });
+      .toMatchObject({ providerId: 'claude', model: 'claude-haiku-4-5', permissionMode: 'plan', effort: 'max', ultracode: false });
+    expect(resumeView({ conv, info: info({ model: 'claude-opus-5' }), resume: { model: '' } }, undefined).model).toBeUndefined();
   });
-  it('the resume params: exactly what the chips show; the provider only when the user picked one (else the server keeps the recorded one)', () => {
+  it('nothing picked and no live info: the resume params are exactly reopenSettings(undefined) — the server / CLI choose', () => {
     const conv = { items: items('claude-sonnet-5') };
-    expect(resumeParams({ conv })).toEqual({ model: 'claude-sonnet-5' });
-    expect(resumeParams({ conv, lastMode: 'plan' })).toEqual({ model: 'claude-sonnet-5', permissionMode: 'plan' });
+    expect(resumeParams({ conv })).toEqual({});
+    expect(resumeParams({ conv })).toEqual(reopenSettings(undefined));
+    expect(resumeParams({ conv }, { providerId: 'p1' })).toEqual(reopenSettings(undefined));
+  });
+  it('the resume params: the pick over the live info; the provider only when the user picked one (else the server keeps the recorded one)', () => {
+    const conv = { items: items('claude-sonnet-5') };
     expect(resumeParams({ conv, resume: { providerId: 'p9', model: 'm9', permissionMode: 'acceptEdits', effort: 'low', ultracode: false } })).toEqual({ providerId: 'p9', model: 'm9', permissionMode: 'acceptEdits', effort: 'low' });
-    // a picked default ('' — the account's / the profile's) sends no model, even over the transcript's and live info's
+    // only the mode picked: no model goes (not the transcript's)
+    expect(resumeParams({ conv, resume: { permissionMode: 'plan' } })).toEqual({ permissionMode: 'plan' });
+    // a picked default ('' — the account's / the profile's) sends no model, even over live info
     expect(resumeParams({ conv, info: info({ model: 'claude-opus-5' }), resume: { providerId: 'claude', model: '' } })).toEqual({ providerId: 'claude' });
-    expect(resumeView({ conv, resume: { model: '' } }, undefined).model).toBeUndefined();
     // it last ran on the account while the server still records a profile (it only records profiles): say so
     expect(resumeParams({ conv, info: info({}) }, { providerId: 'p1' })).toMatchObject({ providerId: 'claude' });
     expect(resumeView({ conv, info: info({}) }, { providerId: 'p1' }).providerId).toBe('claude');
     expect(resumeParams({ conv, info: info({ providerId: 'p1' }) }, { providerId: 'p1' }).providerId).toBeUndefined();
-    expect(resumeParams({ conv }, { providerId: 'p1' }).providerId).toBeUndefined();
     // a reaped conversation comes back as it was (review of 6a481ac): model, effort, mode, 深度编排, features
     const i = info({ model: 'claude-opus-5', effort: 'high', permissionMode: 'plan', ultracode: true, features: { chrome: true } });
     expect(resumeParams({ conv, info: i })).toEqual(reopenSettings(i));

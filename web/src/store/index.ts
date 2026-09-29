@@ -14,7 +14,7 @@ import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { applyMessage, applyTranscript, createConversation, prependTranscript, walkTools, type Conversation } from '@/model/conversation';
 import { isImportedSessionId } from '@/util';
-import { lastPermissionMode, resumeParams, type ResumeChoice } from './reopen';
+import { resumeParams, type ResumeChoice } from './reopen';
 import { parseLibraryId } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { DEFAULT_THEME, applyUiSettings, resolveTheme, setSystemThemeHandler } from '@/features/settings/ui-settings';
@@ -54,8 +54,6 @@ export interface OpenSession {
    * the send resumes it with `resumeParams()`, and the fresh OpenSession of the resumed one drops it
    */
   resume?: ResumeChoice;
-  /** the permission mode its transcript last recorded (not 完全放开), for the chips of a conversation not running */
-  lastMode?: PermissionMode;
 }
 
 export type LibraryOp = 'rename' | 'archive' | 'delete' | 'fork';
@@ -696,7 +694,6 @@ export const useStore = create<State>((set, get) => ({
         applyTranscript(conv, msgs, { live: meta?.live === 'running' || meta?.live === 'waiting' });
         // re-apply live messages that arrived after spawn (they are also in transcript; duplicates are merged by id)
         o.conv = conv;
-        o.lastMode = lastPermissionMode(msgs);
         o.loading = false;
       }));
       // a runner may already be alive for this session (e.g. page reload): re-attach so controls go live

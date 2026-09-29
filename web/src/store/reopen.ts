@@ -1,5 +1,4 @@
 import type { EffortLevel, OpenSessionParams, PermissionMode, SessionInfoSnapshot } from '@shared';
-import { PERMISSION_MODES } from '@/ui/terms';
 
 /**
  * What a session that is transparently reopened (reaped after idling, crashed, opened from history) should
@@ -23,17 +22,9 @@ export function reopenSettings(info: SessionInfoSnapshot | undefined | null): Pi
  */
 export interface ResumeChoice { providerId?: string; model?: string; permissionMode?: PermissionMode; effort?: EffortLevel; ultracode?: boolean }
 
-/** The model the chips show: the pick ('' = the default, shown by name elsewhere), else live info, else the transcript's. */
-function pickedModel(o: ResumeSource): string | undefined {
-  if (o.resume?.model !== undefined) return o.resume.model || undefined;
-  return o.info?.model ?? lastAssistantModel(o.conv.items);
-}
-
 interface ResumeSource {
   info?: SessionInfoSnapshot;
   resume?: ResumeChoice;
-  /** the permission mode the transcript last recorded (loadHistory) */
-  lastMode?: PermissionMode;
   conv: { items: readonly unknown[] };
 }
 
@@ -47,52 +38,42 @@ export function lastAssistantModel(items: readonly unknown[]): string | undefine
 }
 
 /**
- * The permission mode the transcript's last line carrying one had. Never 完全放开 (`danger`): resuming a
- * conversation in it is something to choose on its chip, not something a transcript turns on by itself.
- */
-export function lastPermissionMode(msgs: readonly unknown[]): PermissionMode | undefined {
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const m = (msgs[i] as { permissionMode?: unknown })?.permissionMode;
-    if (typeof m !== 'string') continue;
-    const mode = PERMISSION_MODES[m as PermissionMode];
-    return mode && !mode.danger ? (m as PermissionMode) : undefined;
-  }
-  return undefined;
-}
-
-/**
  * What the model / permission chips of a conversation that is not running show — and so what a send will resume
- * it with (final review §9 #1: every conversation after a restart is one of these). The user's pick on the chips,
- * else what it last had live in this window, else its transcript (the last answer's model, the last recorded
- * mode), else the defaults: its recorded provider (SessionMeta.providerId) or the account, 每步询问.
+ * it with (final review §9 #1: every conversation after a restart is one of these): the user's pick on the chips,
+ * else what it last had live in this window, else what the resume will really get — no model (the provider's /
+ * account's / agent's default, which the chip names) and 每步询问. The transcript's last model is only a hint
+ * (`lastModel`, the chip's tooltip): the answer names what the API ran (`claude-sonnet-5` for a `sonnet[1m]` pick,
+ * a relay's upstream name), and resuming on it would pin the conversation to it (re-review I-1). The permission
+ * mode is not read from the transcript at all: the SDK does not return it (re-review M-2).
  */
-export function resumeView(o: ResumeSource, meta: { providerId?: string } | undefined): { providerId: string; model?: string; permissionMode: PermissionMode; effort?: EffortLevel; ultracode: boolean } {
+export function resumeView(o: ResumeSource, meta: { providerId?: string } | undefined): { providerId: string; model?: string; permissionMode: PermissionMode; effort?: EffortLevel; ultracode: boolean; lastModel?: string } {
   const r = o.resume ?? {};
   return {
     // live info knows the provider it ran on (none = the agent's own login); before that, the recorded one
     providerId: r.providerId ?? (o.info ? o.info.providerId || 'claude' : meta?.providerId ?? 'claude'),
-    model: pickedModel(o),
-    permissionMode: r.permissionMode ?? o.info?.permissionMode ?? o.lastMode ?? 'default',
+    // '' = a picked default: shown by name like no model
+    model: r.model !== undefined ? r.model || undefined : o.info?.model ?? undefined,
+    permissionMode: r.permissionMode ?? o.info?.permissionMode ?? 'default',
     effort: r.effort ?? o.info?.effort ?? undefined,
     ultracode: r.ultracode ?? !!o.info?.ultracode,
+    lastModel: lastAssistantModel(o.conv.items),
   };
 }
 
 /**
- * The params a send resumes a conversation that is not running with: exactly what its chips show. The provider
- * goes when the user picked one there, or when it last ran on the account while the server's record (SessionMeta,
- * which only ever records a profile) still names one — otherwise the server restores the recorded one.
+ * The params a send resumes a conversation that is not running with: what it last had live in this window
+ * (`reopenSettings`), overridden by what the user picked on its chips. Nothing picked and no live info = exactly
+ * `reopenSettings(undefined)` — the server and the CLI choose, as before the chips existed (re-review I-1). The
+ * provider goes when the user picked one there, or when it last ran on the account while the server's record
+ * (SessionMeta, which only ever records a profile) still names one — otherwise the server restores the recorded one.
  */
 export function resumeParams(o: ResumeSource, meta?: { providerId?: string }): Pick<OpenSessionParams, 'providerId' | 'model' | 'effort' | 'permissionMode' | 'ultracode' | 'features'> {
   const out: Pick<OpenSessionParams, 'providerId' | 'model' | 'effort' | 'permissionMode' | 'ultracode' | 'features'> = { ...reopenSettings(o.info) };
   const r = o.resume ?? {};
   if (r.providerId) out.providerId = r.providerId;
   else if (o.info && !o.info.providerId && meta?.providerId && meta.providerId !== 'claude') out.providerId = 'claude';
-  const model = pickedModel(o);
-  if (model) out.model = model;
-  else delete out.model;
-  const mode = r.permissionMode ?? o.info?.permissionMode ?? o.lastMode;
-  if (mode) out.permissionMode = mode;
+  if (r.model !== undefined) { if (r.model) out.model = r.model; else delete out.model; }
+  if (r.permissionMode) out.permissionMode = r.permissionMode;
   if (r.effort) out.effort = r.effort;
   if (r.ultracode !== undefined) { if (r.ultracode) out.ultracode = true; else delete out.ultracode; }
   return out;

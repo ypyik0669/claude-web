@@ -705,13 +705,15 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     const rUltraOk = !remote && !!CATALOG[rAgent]?.supportsUltracode;
     const t = modelChipText({ agent: rAgent, agentName: agents.find((a) => a.kind === rAgent)?.name, providers, providerId: rProvider, model: v.model, agentDefault: resumeAgentDefault, efforts: rEfforts, effort: v.effort, defaultEffort: CATALOG[rAgent]?.defaultEffort, ultracode: rUltraOk && v.ultracode, accountDefault });
     const sid = active.sessionId;
+    // nothing picked: the chip names the default the resume will really get; the transcript's last model is a hint
+    const lastHint = !v.model && v.lastModel ? `\n上次回答用的是 ${modelsFor(rAgent, [{ id: v.lastModel }])[0]?.displayName ?? v.lastModel}` : '';
     model = (
       <ModelChip
         agent={rAgent}
         current={{ providerId: rProvider, model: v.model }}
         label={t.main}
         suffix={t.suffix}
-        title={`${t.main}${t.isDefault ? '（默认）' : ''}${t.suffix ? ` · ${t.suffix}` : ''}\n对话没在运行：发送后用这里选的模型继续${remote ? '' : '；选其它 Agent 的模型 = 交给它继续'}`}
+        title={`${t.main}${t.isDefault ? '（默认）' : ''}${t.suffix ? ` · ${t.suffix}` : ''}${lastHint}\n对话没在运行：发送后用这里选的模型继续${remote ? '' : '；选其它 Agent 的模型 = 交给它继续'}`}
         builtinTitle={rAgent === 'claude' ? 'Claude 账号' : `${agents.find((a) => a.kind === rAgent)?.name ?? rAgent} 账号`}
         agentDefault={resumeAgentDefault}
         lockProvider={remote ? 'claude' : undefined}

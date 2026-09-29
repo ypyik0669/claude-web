@@ -937,14 +937,16 @@ function driver() {
         await shot('session');
 
         // final review §9 #1: a conversation that is not running (every one after a restart) still shows its model and
-        // permission chips — the transcript's model, 每步询问 — with 「发送后继续」; a pick there is what the send resumes with
+        // permission chips with 「发送后继续」; a pick there is what the send resumes with. Nothing picked (re-review I-1 /
+        // M-2): the chips show what the resume really gets — the default model by name, 每步询问 — and the transcript's
+        // model is only the tooltip's 「上次回答用的是 …」
         {
           phase = 'session-resume-chips';
           const sidR = JSON.stringify(E.SMOKE_SID);
           const bar = '.pane.focused .composer .composer-bar';
-          const look = () => js(`(() => { const b = document.querySelector('${bar}'); if (!b) return null; return { state: window.__store.getState().open[${sidR}]?.state, model: b.querySelector('.mm-anchor > button.chip')?.textContent ?? null, perm: b.querySelector('.perm-chip')?.textContent ?? null, status: b.querySelector('.cb-status')?.textContent ?? null, resume: window.__store.getState().open[${sidR}]?.resume ?? null }; })()`);
+          const look = () => js(`(() => { const b = document.querySelector('${bar}'); if (!b) return null; const c = b.querySelector('.mm-anchor > button.chip'); return { state: window.__store.getState().open[${sidR}]?.state, model: c?.textContent ?? null, title: c?.title ?? null, perm: b.querySelector('.perm-chip')?.textContent ?? null, status: b.querySelector('.cb-status')?.textContent ?? null, resume: window.__store.getState().open[${sidR}]?.resume ?? null }; })()`);
           const r0 = await look();
-          check('a conversation not running shows its model (from the transcript) and permission chips with 「发送后继续」', !!r0 && r0.state === 'history' && /claude-smoke/.test(r0.model ?? '') && /每步询问/.test(r0.perm ?? '') && r0.status === '发送后继续', JSON.stringify(r0));
+          check('a conversation not running shows the default it will resume on (not the transcript\'s claude-smoke, which is in the tooltip) and 每步询问, with 「发送后继续」', !!r0 && r0.state === 'history' && !!r0.model && !/claude-smoke|默认模型/.test(r0.model) && /（默认）/.test(r0.title ?? '') && /上次回答用的是 claude-smoke/.test(r0.title ?? '') && /每步询问/.test(r0.perm ?? '') && r0.status === '发送后继续', JSON.stringify(r0));
           await click(`${bar} .perm-chip`);
           await waitFor(`!!document.querySelector('.menu.perm-menu [data-mode="plan"]')`, 3000);
           await click('.menu.perm-menu [data-mode="plan"]');
