@@ -16,7 +16,7 @@ export interface ReachEntry {
   sel: string;
   /**
    * only present in some states: a running turn (插话), a browser with speech recognition (mic), a conversation with
-   * something to count — a turn or a reported occupancy (the ring / stats icon)
+   * a context filling up (≥ 60 %: the ring — its card is also the header ··· 「本对话用量」, final review I3)
    */
   when?: 'running' | 'speech' | 'usage';
 }

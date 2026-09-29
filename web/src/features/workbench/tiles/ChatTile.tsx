@@ -29,6 +29,7 @@ import { viewsFor, WB_VIEWS } from '../wb-views';
 import { runCommand } from '../commands';
 import { modKey } from '../shortcuts';
 import { TERMS } from '@/ui/terms';
+import { showUsageCard } from '@/features/composer/ContextMeter';
 
 type ChatTileModel = Extract<Tile, { kind: 'chat' }>;
 
@@ -52,6 +53,8 @@ function HeaderMenu({ tile, paneId, s, live, remote, gone, onClose }: { tile: Ch
       <button onClick={act(() => patch({ wb: 'live', view: tile.view === 'trajectory' && tile.wb === 'live' ? 'chat' : 'trajectory' }))} title={`对话 ⇄ ${TERMS.trajectory}（Alt+J）`}>
         <Icon name="workflow" size={14} /> <span style={{ flex: 1 }}>{TERMS.trajectory}</span>{tile.wb === 'live' && tile.view === 'trajectory' && <Icon name="check" size={13} />}
       </button>
+      {/* the old stats bar: the composer's card (the ring in its corner shows up only from 60 %; final review I3) */}
+      <button data-act="usage" onClick={act(() => { if (tile.wb !== 'live') patch({ wb: 'live' }); requestAnimationFrame(() => showUsageCard(tile.id)); })}><Icon name="usage" size={14} /> 本对话用量</button>
       <div className="menu-label">查看这个对话的</div>
       <div className="menu-grid" role="group" aria-label="查看这个对话的">
         {viewsFor(remote).map((v) => (
@@ -136,11 +139,13 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
         <span className="sh-meta">
           {peer
             ? <span className="it" title={`${cwd}（在机器「${peer.name}」上）`}><Icon name="machine" size={12} /><span className="nm">{peer.name} · {basename(cwd)}</span></span>
-            : cwd && <button className="it" title={`${cwd}\n点击在资源管理器打开`} onClick={() => ws.request({ kind: 'shell.open', path: cwd })}><Icon name="folder" size={12} /><span className="nm">{wsOf?.name ?? basename(cwd)}</span></button>}
+            : cwd && <span className="it" title={`${cwd}\n（在资源管理器打开：··· 菜单）`}><Icon name="folder" size={12} /><span className="nm">{wsOf?.name ?? basename(cwd)}</span></span>}
+          {/* grey words, not buttons (spec §5.2; final review I3): the folder opens from ···, the uncommitted changes
+              from +N −M / the right panel's 审阅 / ··· 改动 */}
           {branch && !peer && (
-            <button className={clsx('it branch', git && git.state !== 'clean' && 'dirty')} title={`${branch}${git?.upstream ? ` → ${git.upstream}` : git ? ' · 无上游' : ''}${git ? (dirty ? ` · ${dirty} 处未提交的改动` : ' · 干净') : ''}${git?.ahead ? ` · 领先 ${git.ahead}` : ''}${git?.behind ? ` · 落后 ${git.behind}` : ''}\n点击审阅未提交的改动`} onClick={() => openReview({ scope: 'uncommitted' })}>
+            <span className={clsx('it branch', git && git.state !== 'clean' && 'dirty')} title={`${branch}${git?.upstream ? ` → ${git.upstream}` : git ? ' · 无上游' : ''}${git ? (dirty ? ` · ${dirty} 处未提交的改动` : ' · 干净') : ''}${git?.ahead ? ` · 领先 ${git.ahead}` : ''}${git?.behind ? ` · 落后 ${git.behind}` : ''}`}>
               <Icon name="branch" size={12} /><span className="nm bn">{branch}</span>
-            </button>
+            </span>
           )}
           {worktree && <span className="tag" title="这个对话在仓库的一个独立副本（git worktree）里运行，不是主检出">独立副本</span>}
           {agentKind && agentKind !== 'claude' && <span className="tag" title={`这个对话由 ${agentName} 运行`}>{agentName}</span>}

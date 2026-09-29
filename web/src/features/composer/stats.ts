@@ -35,15 +35,14 @@ export function ringLevel(pct: number | undefined): RingLevel | null {
 }
 
 /**
- * What sits in the composer's corner: the ring when the agent reports an occupancy; without one, a plain stats icon
- * once the conversation has a turn (the old stats bar must stay reachable); nothing for an empty conversation.
+ * What sits in the composer's corner: the ring, only once the context is filling up (≥ 60 %, spec §5.4) — on a
+ * desktop as on a phone (final review I3: the always-on ring / unlabelled stats icon was one control too many on the
+ * default page). The numbers of the old stats bar are always reachable: the header's ··· 「本对话用量」 opens the
+ * same card here.
  */
-export function meterMode(pct: number | undefined, turns: number, o: { phone?: boolean } = {}): 'ring' | 'plain' | null {
+export function meterMode(pct: number | undefined): 'ring' | null {
   const level = ringLevel(pct);
-  // a phone's composer is + · model · send (spec §5.11): the ring shows up only when the context is filling up
-  if (o.phone) return level !== null && level !== 'quiet' ? 'ring' : null;
-  if (level !== null) return 'ring';
-  return turns > 0 ? 'plain' : null;
+  return level !== null && level !== 'quiet' ? 'ring' : null;
 }
 
 export function usageLines(t: Totals, o: { lastMs?: number; context?: { percentage: number; totalTokens: number; maxTokens: number; model?: string }; tasks?: number }): [string, string][] {

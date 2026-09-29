@@ -938,17 +938,21 @@ function driver() {
         phase = 'session-composer';
         check('no stats bar under the composer', !(await js('!!document.querySelector(".pane .composer .statusbar")')));
         const sidJs = JSON.stringify(E.SMOKE_SID);
-        // no occupancy reported (a conversation opened from history, ACP…) → no ring (an empty circle reads as a
-        // radio button / a spinner), but with a turn behind it a plain stats icon keeps the numbers one click away
-        const noCu = await js(`(() => { const o = window.__store.getState().open[${sidJs}]; return !!o && !(o.contextUsage ?? o.conv.contextUsage); })()`);
-        if (noCu) {
-          const plain = await js(`(() => { const m = document.querySelector('.pane .composer .ctx-meter'); return m ? { cls: m.className, circles: m.querySelectorAll('circle').length } : null; })()`);
-          await click('.pane .composer .ctx-meter');
-          const plainCard = await js(`document.querySelector('.ctx-card')?.innerText ?? null`);
-          await click('.pane .composer .ctx-meter');
-          check('no occupancy: no ring, a plain stats icon whose card still has 轮数 / 输入 (no 上下文 line)', plain && /plain/.test(plain.cls) && !plain.circles && !!plainCard && /轮数/.test(plainCard) && !/上下文/.test(plainCard), JSON.stringify({ plain, plainCard }));
-        }
+        // final review I3: nothing in the corner until the context is filling up (≥ 60 %, spec §5.4) — no ring without an
+        // occupancy, none at 40 % — and the numbers of the old stats bar are one menu away: ··· 本对话用量
         const setCu = (cu) => js(`(() => { const st = window.__store; const o = st.getState().open[${sidJs}]; st.setState({ open: { ...st.getState().open, [${sidJs}]: { ...o, contextUsage: ${JSON.stringify(cu)}, version: o.version + 1 } } }); })()`);
+        const noMeter = await js(`!document.querySelector('.pane .composer .ctx-meter')`);
+        await setCu({ percentage: 40, totalTokens: 80_000, maxTokens: 200_000 });
+        await sleep(200);
+        const noMeter40 = await js(`!document.querySelector('.pane .composer .ctx-meter')`);
+        await click('.pane.focused .sess-head .sh-more > button');
+        await waitFor(`!!document.querySelector('.menu.sess-menu [data-act="usage"]')`, 3000);
+        await click('.menu.sess-menu [data-act="usage"]');
+        await waitFor(`!!document.querySelector('.ctx-card')`, 3000);
+        const usageCard = await js(`(() => { const c = document.querySelector('.ctx-card'); if (!c) return null; const r = c.getBoundingClientRect(); const bar = document.querySelector('.pane.focused .composer .composer-bar').getBoundingClientRect(); return { text: c.innerText, above: r.bottom <= bar.top + 1, right: Math.abs(r.right - bar.right) < 60 }; })()`);
+        await key('Escape');
+        const cardGone = await waitFor(`!document.querySelector('.ctx-card')`, 2000);
+        check('below 60 % the corner is empty; ··· 本对话用量 opens the old stats (轮数 / 输入 / 上下文) above the composer, Esc closes it', noMeter40 && !!usageCard && /轮数/.test(usageCard.text) && /输入/.test(usageCard.text) && /40%/.test(usageCard.text) && usageCard.above && usageCard.right && cardGone, JSON.stringify({ noMeter, noMeter40, usageCard, cardGone }));
         await setCu({ percentage: 83, totalTokens: 166_000, maxTokens: 200_000 });
         const ring = await waitFor('!!document.querySelector(".pane .composer .ctx-meter circle")', 2000);
         const ringLook = await js(`(() => { const m = document.querySelector('.pane .composer .ctx-meter'); if (!m) return null; const cs = getComputedStyle(m); return { cls: m.className, pct: m.textContent, weight: cs.fontWeight, chip: !!document.querySelector('.pane .status-strip .ctx-full') }; })()`);
@@ -1665,6 +1669,17 @@ function driver() {
           const sb = await js(`({ chipRows: !!document.querySelector('.sidebar .sb-sources, .sidebar .src-chip, .sidebar .sb-search, .sidebar .lib-banner'), top: [...document.querySelectorAll('.sidebar .sb-top [data-id], .sidebar .sb-nav [data-id]')].map((e) => e.dataset.id), head: [...document.querySelectorAll('.sidebar [data-id="projects"] > .sb-sec-h [data-id]')].map((e) => e.dataset.id), account: [...document.querySelectorAll('.sidebar .sb-account [data-id]')].map((e) => e.dataset.id), row: !!document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + '] [data-id="status"]') })`);
           check('sidebar: no chip / filter-box rows; 新对话 · 搜索 · 自动化; funnel + 打开文件夹 on 项目; account row (connection, settings); the row ends in one status',
             !sb.chipRows && has(sb.top, ['collapse', 'new', 'search', 'automation']) && has(sb.head, ['filter', 'add-project']) && has(sb.account, ['account', 'connection', 'settings']) && sb.row, JSON.stringify(sb));
+          // final review I3: 收起侧栏 shows with the pointer over the sidebar or the key focus on it, not at rest
+          const collapseOp = () => js(`getComputedStyle(document.querySelector('.sidebar .sb-top [data-id="collapse"]')).opacity`);
+          wc.sendInputEvent({ type: 'mouseMove', x: 900, y: 400 });
+          await sleep(400);
+          const opRest = await collapseOp();
+          wc.sendInputEvent({ type: 'mouseMove', x: 120, y: 300 });
+          await sleep(400);
+          const opHover = await collapseOp();
+          wc.sendInputEvent({ type: 'mouseMove', x: 900, y: 400 });
+          await sleep(400);
+          check('收起侧栏 at rest is invisible (still there for Tab and the pointer), shown with the pointer over the sidebar', opRest === '0' && opHover === '1', JSON.stringify({ opRest, opHover }));
           await harvest();
           await shot('sidebar');
           // the funnel: sources, machines (when there are other machines), archived, multi-select, the filter box
@@ -2291,7 +2306,7 @@ function driver() {
         const bar = await waitFor(`/目标：smoke slow goal/.test(${barText}) && /第 1 轮/.test(${barText})`, 10_000);
         check('`/goal` typed in a conversation opens the goal\'s own conversation here; its bar says 「目标：… · 第 1 轮 · 查看」', !!goalSid && bar, await js(`document.querySelector('.pane.focused .goal-bar')?.textContent ?? null`));
         const norm = (p) => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-        const goalHead = await js(`(() => { const it = document.querySelector('.pane.focused .sess-head .sh-meta button.it:not(.branch)'); return { cwd: window.__store.getState().open[${JSON.stringify(goalSid)}]?.cwd ?? null, folder: it ? it.title.split('\\n')[0] : null, name: it?.querySelector('.nm')?.textContent ?? null }; })()`);
+        const goalHead = await js(`(() => { const it = document.querySelector('.pane.focused .sess-head .sh-meta .it:not(.branch)'); return { cwd: window.__store.getState().open[${JSON.stringify(goalSid)}]?.cwd ?? null, folder: it ? it.title.split('\\n')[0] : null, name: it?.querySelector('.nm')?.textContent ?? null }; })()`);
         check('…with its project in the header (the conversation knows its folder)', goalHead && norm(goalHead.cwd) === norm(E.SMOKE_REPO) && norm(goalHead.folder) === norm(E.SMOKE_REPO) && !!goalHead.name, JSON.stringify(goalHead));
         await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
         await sleep(300);

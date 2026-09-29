@@ -1447,6 +1447,11 @@ html.desktop.mac .app.no-sidebar .auto-head .sb-reveal { margin-left: 0; }
 .sb-top { gap: var(--sp-2); padding: 0 var(--sp-3) 0 var(--sp-4); }
 .sb-top .brand { font-size: 14px; letter-spacing: -0.01em; }
 .sb-top .brand .logo { width: auto; height: auto; background: none; border-radius: 0; color: var(--accent); }
+/* 收起侧栏 shows while the pointer is over the sidebar or the key focus is on it (final review I3: one control less at
+   rest); still in the layout and the tab order, always shown on touch screens and in the phone drawer */
+.sb-top [data-id="collapse"] { opacity: 0; transition: opacity var(--dur-2) var(--ease-out); }
+.sidebar:hover .sb-top [data-id="collapse"], .sb-top [data-id="collapse"]:focus-visible, .app.mobile .sb-top [data-id="collapse"] { opacity: 1; }
+@media (hover: none) { .sb-top [data-id="collapse"] { opacity: 1; } }
 .sb-nav { padding: 2px var(--sp-2) 6px; flex: none; }
 .sb-nav .nav { height: 34px; padding: 0 10px; gap: 10px; }
 .sb-nav .nav > svg { color: var(--ink-3); flex: none; }
@@ -1821,7 +1826,8 @@ html.desktop:not(.mac) .dock.simple:not(.min) .dock-tabs .tab.fixed { padding: 0
 .composer .run-card.waiting { border-color: color-mix(in oklab, var(--warn) 45%, transparent); }
 .run-card .grow { flex: 1; } /* the clock and 停止 sit at the right end */
 
-/* the context ring (the old stats bar lives in its hover card) */
+/* the context ring (the old stats bar lives in its hover card), only from 60 %; the card is also ··· 本对话用量 */
+.ctx-anchor { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; }
 .ctx-meter { flex: none; height: 30px; min-width: 30px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; border-radius: var(--r-pill); color: var(--ink-4); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .ctx-meter:hover, .ctx-meter[aria-expanded='true'] { background: var(--layer-hover); color: var(--ink-2); }
 .ctx-meter.note { color: var(--ink-2); }

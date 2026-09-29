@@ -25,16 +25,13 @@ describe('the old stats bar, now behind the usage ring', () => {
     expect(ringLevel(94)).toBe('strong');
     expect(ringLevel(95)).toBe('err');
   });
-  it('the corner: a ring with an occupancy, else a plain stats icon once there is a turn, else nothing (re-review 3 Minor 1)', () => {
-    expect(meterMode(40, 0)).toBe('ring');
-    expect(meterMode(undefined, 3)).toBe('plain');
-    expect(meterMode(undefined, 0)).toBeNull();
-  });
-  it('a phone keeps its composer to + · model · send (spec §5.11): the ring only once the context is filling up', () => {
-    expect(meterMode(40, 3, { phone: true })).toBeNull();
-    expect(meterMode(undefined, 3, { phone: true })).toBeNull();
-    expect(meterMode(60, 3, { phone: true })).toBe('ring');
-    expect(meterMode(97, 0, { phone: true })).toBe('ring');
+  it('the corner: the ring only once the context is filling up (≥ 60 %, spec §5.4; final review I3) — desktop and phone alike', () => {
+    expect(meterMode(undefined)).toBeNull(); // no occupancy reported (ACP, history): nothing — the card is ··· 本对话用量
+    expect(meterMode(0)).toBeNull();
+    expect(meterMode(40)).toBeNull();
+    expect(meterMode(59)).toBeNull();
+    expect(meterMode(60)).toBe('ring');
+    expect(meterMode(97)).toBe('ring');
   });
   it('the lines the hover card shows (every field of the old bar)', () => {
     const lines = usageLines(sessionTotals(items), { lastMs: 4200, context: { percentage: 72, totalTokens: 145_000, maxTokens: 200_000 }, tasks: 2 });
