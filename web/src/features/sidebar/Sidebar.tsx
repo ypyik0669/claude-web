@@ -16,6 +16,8 @@ import { NeedsYou } from './attention';
 import { FilterMenu, type SourceChip } from './filter-menu';
 import { AccountRow } from './account';
 import { DiscoveryHint } from './hint';
+import { hintReady, makeProjectSpelled, projectsEmpty } from './newcomer';
+import { CHECKLIST_KEY } from '@/features/home/model';
 import { closeDrawer } from './menus';
 import { anchoredMenuOpen } from '@/ui/menus';
 import { openAutomation, useAutomation } from '@/features/automation/state';
@@ -124,8 +126,10 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     return { byWs, other: [...other.entries()].sort((a, b) => b[1][0].lastModified - a[1][0].lastModified), peers: [...byPeer.entries()] };
   }, [visible, workspaces, sessionMeta]);
 
-  // 其它文件夹 starts folded when there are projects (with none, it is all there is)
-  const otherCollapsed = collapsed.__other ?? workspaces.length > 0;
+  // 其它文件夹 starts folded when there are projects; with none it is all there is — always open, its header a plain
+  // label (nothing to fold it away from)
+  const otherFoldable = workspaces.length > 0;
+  const otherCollapsed = otherFoldable && (collapsed.__other ?? true);
   const busySet = useMemo(() => new Set(busy ? busy.split('|') : []), [busy]);
   const keep = useCallback((s: SessionSummary) => s.sessionId === activeId || busySet.has(s.sessionId) || s.live === 'running' || s.live === 'waiting', [activeId, busySet]);
   const kidsOf = useCallback((s: SessionSummary) => (expanded.has(s.sessionId) ? childrenOf(sessions, s.sessionId, { showArchived, meta: sessionMeta }) : []), [expanded, sessions, showArchived, sessionMeta]);
@@ -135,6 +139,11 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const otherAll = useMemo(() => grouped.other.flatMap(([, a]) => a), [grouped]);
   const otherKept = useMemo(() => (otherCollapsed ? otherAll.filter(keep) : []), [otherCollapsed, otherAll, keep]);
   const otherBusy = otherAll.some(isBusy);
+  // someone new (final review §9 #5): no project yet → the empty state points at 其它文件夹's folders, whose 设为项目
+  // is written out; the library's discovery hint waits until the newcomer checklist is finished or closed
+  const empty = projectsEmpty({ projects: workspaces.length, otherFolders: grouped.other.length });
+  const spellMake = makeProjectSpelled(workspaces.length);
+  const hintOk = useStore((s) => hintReady(s.settings[CHECKLIST_KEY]));
 
   // selection (全选, Shift ranges) only ever covers rows that are on screen: expanded groups, within their page limit
   const rendered = useMemo(() => renderedRows([
@@ -249,10 +258,10 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
             </span>
             <button className="icon-btn xs" data-id={head('add-project')} title="打开文件夹（添加项目）" aria-label="打开文件夹" onClick={pickWorkspace}><Icon name="plus" size={15} /></button>
           </div>
-          {!workspaces.length && (
-            <div className="ws-empty sb-empty">
-              还没有项目。打开一个文件夹，Claude 就在里面工作。
-              <div><button className="btn sm primary" onClick={pickWorkspace}><Icon name="folder" size={13} /> 打开文件夹</button></div>
+          {empty && (
+            <div className="ws-empty sb-empty" data-empty={empty.openButton ? 'open' : 'make-project'}>
+              {empty.text}
+              {empty.openButton && <div><button className="btn sm primary" onClick={pickWorkspace}><Icon name="folder" size={13} /> 打开文件夹</button></div>}
             </div>
           )}
           {workspaces.map((w) => {
@@ -279,11 +288,15 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         </div>
         {grouped.other.length > 0 && (
           <div className="sb-sec" data-id={sec('other')}>
-            <div className="sb-sec-h fold" role="button" tabIndex={0} aria-expanded={!otherCollapsed} onClick={() => toggleGroup('__other', otherCollapsed)} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleGroup('__other', otherCollapsed); } }} title="不在任何项目里的对话，按文件夹">
-              <span>其它文件夹</span>
-              {otherCollapsed && (otherBusy ? <span className="spin" title="有对话在运行" /> : <span className="n">{otherAll.length}</span>)}
-              <Icon name={otherCollapsed ? 'chevronRight' : 'chevronDown'} size={12} className="sec-chev" />
-            </div>
+            {otherFoldable ? (
+              <div className="sb-sec-h fold" role="button" tabIndex={0} aria-expanded={!otherCollapsed} onClick={() => toggleGroup('__other', otherCollapsed)} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleGroup('__other', otherCollapsed); } }} title="不在任何项目里的对话，按文件夹">
+                <span>其它文件夹</span>
+                {otherCollapsed && (otherBusy ? <span className="spin" title="有对话在运行" /> : <span className="n">{otherAll.length}</span>)}
+                <Icon name={otherCollapsed ? 'chevronRight' : 'chevronDown'} size={12} className="sec-chev" />
+              </div>
+            ) : (
+              <div className="sb-sec-h" title="不在任何项目里的对话，按文件夹"><span>其它文件夹</span></div>
+            )}
             {otherKept.length > 0 && (
               <div className="sb-rows sb-kept" role="group" aria-label="其它文件夹里当前 / 运行中的对话">
                 {otherKept.map((s) => (
@@ -301,8 +314,10 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
                 name={basename(cwd) || cwd}
                 icon="folder"
                 title={cwd}
-                className="other"
-                actions={<button className="icon-btn xs" data-id={pm('make-project')} title="设为项目" aria-label="设为项目" onClick={() => void addWorkspace(cwd).catch((e) => toast(e.message))}><Icon name="plus" size={13} /></button>}
+                className={clsx('other', spellMake && 'spelled')}
+                actions={spellMake
+                  ? <button className="mk-proj" data-id={pm('make-project')} title={`设为项目：${cwd} 里的对话归到「项目」下`} onClick={() => void addWorkspace(cwd).catch((e) => toast(e.message))}>设为项目</button>
+                  : <button className="icon-btn xs" data-id={pm('make-project')} title="设为项目" aria-label="设为项目" onClick={() => void addWorkspace(cwd).catch((e) => toast(e.message))}><Icon name="plus" size={13} /></button>}
               />
             ))}
           </div>
@@ -331,7 +346,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
           <div className="empty sb-empty">没有匹配的对话<div><button className="btn sm" onClick={clearFilters}>清除筛选</button></div></div>
         )}
       </div>
-      {pending.length > 0 && <DiscoveryHint pending={pending} />}
+      {pending.length > 0 && hintOk && <DiscoveryHint pending={pending} />}
       <AccountRow open={menu === 'account'} setOpen={(v) => (v ? setMenu('account') : closeMenu('account'))} />
     </>
   );

@@ -1697,7 +1697,8 @@ function driver() {
           check('sidebar: no chip / filter-box rows; 新对话 · 搜索 · 自动化; funnel + 打开文件夹 on 项目; account row (connection, settings); the row ends in one status',
             !sb.chipRows && has(sb.top, ['collapse', 'new', 'search', 'automation']) && has(sb.head, ['filter', 'add-project']) && has(sb.account, ['account', 'connection', 'settings']) && sb.row, JSON.stringify(sb));
           // final review I3: 收起侧栏 shows with the pointer over the sidebar or the key focus on it, not at rest
-          const collapseOp = () => js(`getComputedStyle(document.querySelector('.sidebar .sb-top [data-id="collapse"]')).opacity`);
+          // (and the 项目 header's funnel and +, the same way)
+          const collapseOp = () => js(`['.sb-top [data-id="collapse"]', '.sb-sec-h [data-id="filter"]', '.sb-sec-h [data-id="add-project"]'].map((s) => getComputedStyle(document.querySelector('.sidebar ' + s)).opacity).join(',')`);
           wc.sendInputEvent({ type: 'mouseMove', x: 900, y: 400 });
           await sleep(400);
           const opRest = await collapseOp();
@@ -1706,7 +1707,21 @@ function driver() {
           const opHover = await collapseOp();
           wc.sendInputEvent({ type: 'mouseMove', x: 900, y: 400 });
           await sleep(400);
-          check('收起侧栏 at rest is invisible (still there for Tab and the pointer), shown with the pointer over the sidebar', opRest === '0' && opHover === '1', JSON.stringify({ opRest, opHover }));
+          check('收起侧栏, the funnel and + (打开文件夹) at rest are invisible (still there for Tab and the pointer), shown with the pointer over the sidebar', opRest === '0,0,0' && opHover === '1,1,1', JSON.stringify({ opRest, opHover }));
+          // final review §9 #5: no project yet but conversations in 其它文件夹 → the empty state points at their folders,
+          // whose 「设为项目」 is written out at rest (no second 打开文件夹 button); with a project it is the hover icon again
+          {
+            const wsSaved = await js('JSON.stringify(window.__store.getState().workspaces)');
+            const secSaved = await js('JSON.stringify(window.__store.getState().layout.sidebar?.sections ?? {})');
+            await js(`window.__store.setState({ workspaces: [] })`);
+            await js(`(() => { const st = window.__store.getState(); st.dispatchLayout({ t: 'sidebar.set', patch: { sections: { ...(st.layout.sidebar?.sections ?? {}), __other: false } } }); })()`);
+            await sleep(400);
+            const nc = await js(`(() => { const e = document.querySelector('.sidebar [data-id="projects"] .ws-empty'); const mk = document.querySelector('.sidebar [data-id="other"] .sb-group-head [data-id="make-project"]'); return { text: e?.textContent ?? null, button: !!e?.querySelector('button'), mk: mk?.textContent ?? null, mkShown: !!mk && mk.getBoundingClientRect().width > 20 }; })()`);
+            await shot('sidebar-newcomer');
+            await js(`(() => { const st = window.__store.getState(); window.__store.setState({ workspaces: JSON.parse(${JSON.stringify(wsSaved)}) }); st.dispatchLayout({ t: 'sidebar.set', patch: { sections: JSON.parse(${JSON.stringify(secSaved)}) } }); })()`);
+            await sleep(300);
+            check('no project, folders in 其它文件夹: 「把常用的文件夹设为项目」 with no button, the folder says 「设为项目」 at rest', !!nc.text && /把常用的文件夹设为项目/.test(nc.text) && !nc.button && nc.mk === '设为项目' && nc.mkShown, JSON.stringify(nc));
+          }
           await harvest();
           await shot('sidebar');
           // the funnel: sources, machines (when there are other machines), archived, multi-select, the filter box
@@ -1988,11 +2003,13 @@ function driver() {
               { sessionId: 'smoke-child', title: 'the fork', cwd: E.SMOKE_REPO, lastModified: now - 400, parentId: 'smoke-parent' },
               { sessionId: 'smoke-elsewhere', title: 'running outside the projects', cwd: elsewhere, lastModified: now - 300, live: 'running' },
             ];
-            const saved = await js('JSON.stringify({ limits: window.__store.getState().limits, sources: window.__store.getState().librarySources })');
+            const saved = await js('JSON.stringify({ limits: window.__store.getState().limits, sources: window.__store.getState().librarySources, checklist: window.__store.getState().settings["onboarding.checklist"] ?? null })');
             const limits = { ok: true, capturedAt: new Date(now).toISOString(), subscriptionType: 'max', windows: [{ label: '5 小时', percent: 34, resetsAt: new Date(now + 3600e3).toISOString(), active: true }] };
             const codex = { kind: 'codex', name: 'Codex', installed: true, detected: true, joined: false, dismissed: false, enabled: false };
             const installed = await js(`(() => {
               const st = window.__store, F = ${JSON.stringify(fakes)}, L = ${JSON.stringify(limits)}, C = ${JSON.stringify(codex)};
+              // the newcomer checklist (the discovery hint waits for it): window.__cwSmokeChecklist, kept like the fakes
+              window.__cwSmokeChecklist = { done: ['project'] };
               const apply = () => {
                 const s = st.getState(), patch = {};
                 const have = new Set(s.sessions.map((x) => x.sessionId));
@@ -2000,12 +2017,14 @@ function driver() {
                 if (add.length) patch.sessions = [...s.sessions, ...add];
                 if (s.limits !== L) patch.limits = L;
                 if (!s.librarySources.includes(C)) patch.librarySources = [...s.librarySources.filter((x) => x.kind !== C.kind), C];
+                if (s.settings['onboarding.checklist'] !== window.__cwSmokeChecklist) patch.settings = { ...s.settings, 'onboarding.checklist': window.__cwSmokeChecklist };
                 if (Object.keys(patch).length) st.setState(patch);
               };
+              window.__cwSmokeFakesApply = apply;
               if (window.__cwSmokeFakesOff) window.__cwSmokeFakesOff();
               let busy = false;
               const off = st.subscribe((s, prev) => {
-                if (busy || (s.sessions === prev.sessions && s.limits === prev.limits && s.librarySources === prev.librarySources)) return;
+                if (busy || (s.sessions === prev.sessions && s.limits === prev.limits && s.librarySources === prev.librarySources && s.settings === prev.settings)) return;
                 busy = true;
                 try { apply(); } finally { busy = false; }
               });
@@ -2015,13 +2034,20 @@ function driver() {
             })()`);
             check('sidebar scenarios: fakes installed (kept by a store subscription while they run)', installed);
             await sleep(400);
+            // final review §9 #5: the discovery hint waits while the newcomer checklist is still on the home page…
+            const hintEarly = await exists('.sidebar .sb-hint');
+            await js(`(() => { window.__cwSmokeChecklist = { done: ['project'], dismissed: true }; window.__cwSmokeFakesApply(); })()`);
+            await sleep(300);
             await harvest();
-            check('library hint: a detected source that was not joined shows the one-line hint (加入 / 以后再说)', await exists('.sidebar .sb-hint [data-id="library-join"]') && await exists('.sidebar .sb-hint [data-id="library-later"]'));
+            // (this machine may have its own detected tools too — e.g. OpenCode's data folder — so the words follow the list)
+            const hintNow = await js(`(() => { const m = document.querySelector('.sidebar .sb-hint .msg'); const names = window.__store.getState().librarySources.filter((x) => x.kind !== 'claude' && x.detected && !x.joined && !x.dismissed).map((x) => x.name); return { msg: m?.textContent ?? null, title: m?.title ?? '', names }; })()`);
+            const hintWant = hintNow.names.length === 1 ? `把 ${hintNow.names[0]} 里的对话也列在这里？` : `把 ${hintNow.names[0]} 等工具里的对话也列在这里？`;
+            check('library hint: not while the newcomer checklist is on; once it is closed, one plain question (把 Codex 里的对话也列在这里？ · 列出来 / 以后再说)', !hintEarly && hintNow.msg === hintWant && hintNow.title.includes('Codex') && await exists('.sidebar .sb-hint [data-id="library-join"]') && await exists('.sidebar .sb-hint [data-id="library-later"]'), JSON.stringify({ hintEarly, hintNow, hintWant }));
             // several agents' names wrap onto a second line instead of being cut off; the full text is the tooltip
             await js(`(() => { const names = { opencode: 'OpenCode', gemini: 'Gemini CLI', qwen: 'Qwen Code' }; const extra = Object.keys(names).map((k) => ({ kind: k, name: names[k], installed: true, detected: true, joined: false, dismissed: false, enabled: false })); const st = window.__store.getState(); window.__store.setState({ librarySources: [...st.librarySources.filter((x) => !names[x.kind]), ...extra] }); })()`);
             await sleep(300);
             const hintFit = await js(`(() => { const m = document.querySelector('.sidebar .sb-hint .msg'); if (!m) return null; const lh = parseFloat(getComputedStyle(m).lineHeight); const j = document.querySelector('.sidebar .sb-hint [data-id="library-join"]').getBoundingClientRect(); const h = document.querySelector('.sidebar .sb-hint').getBoundingClientRect(); return { text: m.textContent, lines: Math.round(m.clientHeight / lh), clipped: m.scrollHeight > m.clientHeight + 1, title: m.title.includes('Qwen Code'), joinInside: j.right <= h.right && j.width > 10 }; })()`);
-            check('library hint: four agents’ names wrap onto two lines instead of one cut-off line; what still does not fit is in the tooltip; 加入 stays whole', !!hintFit && hintFit.lines === 2 && hintFit.title && hintFit.joinInside, JSON.stringify(hintFit));
+            check('library hint: four agents → 「把 Codex 等工具里的对话也列在这里？」, not cut off, every name in the tooltip; 选择… stays whole', !!hintFit && hintFit.text === '把 Codex 等工具里的对话也列在这里？' && !hintFit.clipped && hintFit.lines <= 2 && hintFit.title && hintFit.joinInside, JSON.stringify(hintFit));
             await shot('sidebar-hint-wrap');
             // 其它文件夹 starts folded when there are projects: its running conversation stays in view, the header spins
             const other = { spin: await exists('.sidebar [data-id="other"] > .sb-sec-h .spin'), row: await exists('.sidebar [data-id="other"] .sb-kept [data-sid="smoke-elsewhere"] .st.run') };
@@ -2071,7 +2097,7 @@ function driver() {
             await js(`window.__store.setState((s) => { const o = s.open[${SID}]; return o ? { open: { ...s.open, [${SID}]: { ...o, state: 'history' } } } : {}; })`);
             // back to the real list: stop re-applying first
             await js('window.__cwSmokeFakesOff && window.__cwSmokeFakesOff()');
-            await js(`(() => { const ids = new Set(${JSON.stringify(fakes.map((f) => f.sessionId))}); const r = JSON.parse(${JSON.stringify(saved)}); window.__store.setState((s) => ({ sessions: s.sessions.filter((x) => !ids.has(x.sessionId)), limits: r.limits, librarySources: r.sources })); })()`);
+            await js(`(() => { const ids = new Set(${JSON.stringify(fakes.map((f) => f.sessionId))}); const r = JSON.parse(${JSON.stringify(saved)}); window.__store.setState((s) => { const settings = { ...s.settings }; if (r.checklist === null) delete settings['onboarding.checklist']; else settings['onboarding.checklist'] = r.checklist; return { sessions: s.sessions.filter((x) => !ids.has(x.sessionId)), limits: r.limits, librarySources: r.sources, settings }; }); window.__cwSmokeFakesApply = null; })()`);
             // nothing is reachable only in the table: every id of every place was on screen
             const missing = [];
             for (const p of Object.keys(PLACES)) for (const id of PLACES[p]) if (!(seen[p] && seen[p].has(id))) missing.push(p + ':' + id);

@@ -1452,6 +1452,13 @@ html.desktop.mac .app.no-sidebar .auto-head .sb-reveal { margin-left: 0; }
 .sb-top [data-id="collapse"] { opacity: 0; transition: opacity var(--dur-2) var(--ease-out); }
 .sidebar:hover .sb-top [data-id="collapse"], .sb-top [data-id="collapse"]:focus-visible, .app.mobile .sb-top [data-id="collapse"] { opacity: 1; }
 @media (hover: none) { .sb-top [data-id="collapse"] { opacity: 1; } }
+/* the same for the 项目 header's funnel and + (打开文件夹): shown with the pointer over the sidebar, on key focus, and
+   the funnel whenever it has something to say (a filter on, 显示已归档, its menu open → .on) */
+.sb-sec-h [data-id="filter"]:not(.on), .sb-sec-h [data-id="add-project"] { opacity: 0; transition: opacity var(--dur-2) var(--ease-out); }
+.sidebar:hover .sb-sec-h [data-id="filter"], .sidebar:hover .sb-sec-h [data-id="add-project"],
+.sb-sec-h [data-id="filter"]:focus-visible, .sb-sec-h [data-id="add-project"]:focus-visible,
+.app.mobile .sb-sec-h [data-id="filter"], .app.mobile .sb-sec-h [data-id="add-project"] { opacity: 1; }
+@media (hover: none) { .sb-sec-h [data-id="filter"], .sb-sec-h [data-id="add-project"] { opacity: 1; } }
 .sb-nav { padding: 2px var(--sp-2) 6px; flex: none; }
 .sb-nav .nav { height: 34px; padding: 0 10px; gap: 10px; }
 .sb-nav .nav > svg { color: var(--ink-3); flex: none; }
@@ -1490,6 +1497,10 @@ html.desktop.mac .app.no-sidebar .auto-head .sb-reveal { margin-left: 0; }
 .sb-group-head .badge { font-size: 10.5px; line-height: 16px; }
 .sb-group-head .acts { display: none; margin-right: -2px; }
 .sb-group-head:hover .acts, .sb-group-head:focus-within .acts { display: inline-flex; }
+/* no project yet (final review §9 #5): a folder of 其它文件夹 says 「设为项目」 at rest */
+.sb-group.spelled > .sb-group-head .acts { display: inline-flex; }
+.sb-group-head .acts .mk-proj { flex: none; height: 22px; padding: 0 8px; border-radius: var(--r-md); font-size: 12px; color: var(--ink-2); background: var(--surface-2); white-space: nowrap; }
+.sb-group-head .acts .mk-proj:hover { background: var(--layer-hover); color: var(--ink-1); }
 .sb-group-head:hover > .cnt, .sb-group-head:hover > .spin { display: none; }
 .sb-group.other .sb-group-head { font-weight: 400; }
 
