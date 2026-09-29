@@ -126,10 +126,10 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     return { byWs, other: [...other.entries()].sort((a, b) => b[1][0].lastModified - a[1][0].lastModified), peers: [...byPeer.entries()] };
   }, [visible, workspaces, sessionMeta]);
 
-  // 其它文件夹 starts folded when there are projects; with none it is all there is — always open, its header a plain
-  // label (nothing to fold it away from)
-  const otherFoldable = workspaces.length > 0;
-  const otherCollapsed = otherFoldable && (collapsed.__other ?? true);
+  // 其它文件夹 starts folded when there are projects; with none it is all there is, so it starts open — still foldable
+  // (re-review M-6: dozens of CLI folders or hundreds of joined Codex conversations sit above 其它电脑), and a fold
+  // the user made before (`sections.__other`) keeps
+  const otherCollapsed = collapsed.__other ?? workspaces.length > 0;
   const busySet = useMemo(() => new Set(busy ? busy.split('|') : []), [busy]);
   const keep = useCallback((s: SessionSummary) => s.sessionId === activeId || busySet.has(s.sessionId) || s.live === 'running' || s.live === 'waiting', [activeId, busySet]);
   const kidsOf = useCallback((s: SessionSummary) => (expanded.has(s.sessionId) ? childrenOf(sessions, s.sessionId, { showArchived, meta: sessionMeta }) : []), [expanded, sessions, showArchived, sessionMeta]);
@@ -288,15 +288,11 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         </div>
         {grouped.other.length > 0 && (
           <div className="sb-sec" data-id={sec('other')}>
-            {otherFoldable ? (
-              <div className="sb-sec-h fold" role="button" tabIndex={0} aria-expanded={!otherCollapsed} onClick={() => toggleGroup('__other', otherCollapsed)} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleGroup('__other', otherCollapsed); } }} title="不在任何项目里的对话，按文件夹">
-                <span>其它文件夹</span>
-                {otherCollapsed && (otherBusy ? <span className="spin" title="有对话在运行" /> : <span className="n">{otherAll.length}</span>)}
-                <Icon name={otherCollapsed ? 'chevronRight' : 'chevronDown'} size={12} className="sec-chev" />
-              </div>
-            ) : (
-              <div className="sb-sec-h" title="不在任何项目里的对话，按文件夹"><span>其它文件夹</span></div>
-            )}
+            <div className="sb-sec-h fold" role="button" tabIndex={0} aria-expanded={!otherCollapsed} onClick={() => toggleGroup('__other', otherCollapsed)} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleGroup('__other', otherCollapsed); } }} title="不在任何项目里的对话，按文件夹">
+              <span>其它文件夹</span>
+              {otherCollapsed && (otherBusy ? <span className="spin" title="有对话在运行" /> : <span className="n">{otherAll.length}</span>)}
+              <Icon name={otherCollapsed ? 'chevronRight' : 'chevronDown'} size={12} className="sec-chev" />
+            </div>
             {otherKept.length > 0 && (
               <div className="sb-rows sb-kept" role="group" aria-label="其它文件夹里当前 / 运行中的对话">
                 {otherKept.map((s) => (

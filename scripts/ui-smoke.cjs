@@ -1732,10 +1732,14 @@ function driver() {
             const wsSaved = await js('JSON.stringify(window.__store.getState().workspaces)');
             const secSaved = await js('JSON.stringify(window.__store.getState().layout.sidebar?.sections ?? {})');
             await js(`window.__store.setState({ workspaces: [] })`);
-            await js(`(() => { const st = window.__store.getState(); st.dispatchLayout({ t: 'sidebar.set', patch: { sections: { ...(st.layout.sidebar?.sections ?? {}), __other: false } } }); })()`);
+            // no fold recorded (re-review M-6: without projects 其它文件夹 starts open, and is still foldable)
+            await js(`(() => { const st = window.__store.getState(); const { __other, ...rest } = st.layout.sidebar?.sections ?? {}; st.dispatchLayout({ t: 'sidebar.set', patch: { sections: rest } }); })()`);
             await sleep(400);
-            const nc = await js(`(() => { const e = document.querySelector('.sidebar [data-id="projects"] .ws-empty'); const mk = document.querySelector('.sidebar [data-id="other"] .sb-group-head [data-id="make-project"]'); return { text: e?.textContent ?? null, button: !!e?.querySelector('button'), mk: mk?.textContent ?? null, mkShown: !!mk && mk.getBoundingClientRect().width > 20 }; })()`);
+            const nc = await js(`(() => { const e = document.querySelector('.sidebar [data-id="projects"] .ws-empty'); const mk = document.querySelector('.sidebar [data-id="other"] .sb-group-head [data-id="make-project"]'); const h = document.querySelector('.sidebar [data-id="other"] > .sb-sec-h'); return { text: e?.textContent ?? null, button: !!e?.querySelector('button'), mk: mk?.textContent ?? null, mkShown: !!mk && mk.getBoundingClientRect().width > 20, head: h ? { role: h.getAttribute('role'), expanded: h.getAttribute('aria-expanded') } : null }; })()`);
             await shot('sidebar-newcomer');
+            await click('.sidebar [data-id="other"] > .sb-sec-h');
+            const folded = await waitFor(`document.querySelector('.sidebar [data-id="other"] > .sb-sec-h')?.getAttribute('aria-expanded') === 'false' && !document.querySelector('.sidebar [data-id="other"] .sb-group-head')`, 2000);
+            check('no project: 其它文件夹 starts open and still folds (re-review M-6)', !!nc.head && nc.head.role === 'button' && nc.head.expanded === 'true' && folded, JSON.stringify({ head: nc.head, folded }));
             await js(`(() => { const st = window.__store.getState(); window.__store.setState({ workspaces: JSON.parse(${JSON.stringify(wsSaved)}) }); st.dispatchLayout({ t: 'sidebar.set', patch: { sections: JSON.parse(${JSON.stringify(secSaved)}) } }); })()`);
             await sleep(300);
             check('no project, folders in 其它文件夹: 「把常用的文件夹设为项目」 with no button, the folder says 「设为项目」 at rest', !!nc.text && /把常用的文件夹设为项目/.test(nc.text) && !nc.button && nc.mk === '设为项目' && nc.mkShown, JSON.stringify(nc));
