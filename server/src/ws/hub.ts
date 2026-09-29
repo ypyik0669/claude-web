@@ -10,7 +10,7 @@ import { TerminalService } from '../terminal/service.js';
 import { MetaStore } from '../meta/store.js';
 import { LimitsService } from '../usage/limits.js';
 import { ScheduleService } from '../schedules/service.js';
-import { execFile } from 'node:child_process';
+import { openPath } from '../runtime/open-path.js';
 import { engineInfo, installCcb, runClaudeCli } from '../claude-exe.js';
 import type { ProviderService } from '../providers/service.js';
 import type { GitService } from '../git/service.js';
@@ -392,12 +392,9 @@ export class Hub {
       case 'library.dismiss':
         await s.library.dismiss(req.kind_);
         return s.library.sources();
-      case 'shell.open': {
-        const app = req.app ?? 'explorer';
-        const cmd = app === 'explorer' ? (process.platform === 'win32' ? 'explorer' : process.platform === 'darwin' ? 'open' : 'xdg-open') : app;
-        execFile(cmd, [req.path], { windowsHide: true }, () => {});
+      case 'shell.open':
+        openPath(req.path, req.app);
         return null;
-      }
       case 'session.interrupt':
         await this.runner(req.sessionId).interrupt();
         return null;

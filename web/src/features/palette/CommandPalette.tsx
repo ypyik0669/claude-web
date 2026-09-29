@@ -13,6 +13,7 @@ import { openSessionView } from '@/features/workbench/right-panel';
 import { panelCommandLabel } from '@/features/workbench/panel-entries';
 import { shareConversation } from '@/features/chat/MessageActions';
 import { TERMS } from '@/ui/terms';
+import { imeComposing } from '@/ui/ime';
 import { commandHits } from './filter';
 
 interface Cmd { id: string; label: string; sub?: string; ic?: IconName; group: string; run: () => void }
@@ -121,7 +122,7 @@ export function CommandPalette() {
     if (e.key === 'ArrowDown') { e.preventDefault(); setIdx((i) => Math.min(items.length - 1, i + 1)); }
     if (e.key === 'ArrowUp') { e.preventDefault(); setIdx((i) => Math.max(0, i - 1)); }
     // Enter that confirms an IME candidate (Chinese / Japanese input) is not "run this item"
-    if (e.key === 'Enter' && !e.nativeEvent.isComposing && items[idx]) run(items[idx]);
+    if (e.key === 'Enter' && !imeComposing(e.nativeEvent) && items[idx]) run(items[idx]);
   };
   let lastGroup = '';
   return (

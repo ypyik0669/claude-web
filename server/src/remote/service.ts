@@ -4,6 +4,7 @@ import dgram from 'node:dgram';
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage } from 'node:http';
+import type { Socket } from 'node:net';
 import type { MetaStore } from '../meta/store.js';
 import type { DeviceInfo, RemoteStatus } from '../protocol.js';
 
@@ -18,12 +19,14 @@ export interface DeviceRecord { id: string; name: string; tokenHash: string; cre
  */
 export class RemoteService extends EventEmitter {
   private server: http.Server | null = null;
+  /** every socket the listener accepted, upgraded (WebSocket) ones included: closeAllConnections() skips those */
+  private sockets = new Set<Socket>();
   private pair: { code: string; expiresAt: number; tries: number } | null = null;
   private tokenCache = new Map<string, string>(); // token → device id (avoids hashing per request)
   port = 0;
   error = '';
   private primaryIp = '';
-  constructor(private meta: MetaStore, private makeServer: () => http.Server) { super(); }
+  constructor(private meta: MetaStore, private makeServer: () => http.Server, private host = '0.0.0.0') { super(); }
 
   /** The interface that carries the default route (a UDP connect sends nothing but picks the source address). */
   refreshPrimary(): Promise<string> {
@@ -60,19 +63,37 @@ export class RemoteService extends EventEmitter {
     const port = this.configuredPort();
     await this.refreshPrimary();
     const srv = this.makeServer();
-    srv.on('connection', (sock) => { (sock as any).cwRemote = true; });
+    const sockets = this.sockets;
+    srv.on('connection', (sock) => {
+      (sock as any).cwRemote = true;
+      sockets.add(sock);
+      sock.once('close', () => sockets.delete(sock));
+    });
     await new Promise<void>((res) => {
       srv.once('error', (e: any) => { this.error = e.code === 'EADDRINUSE' ? `端口 ${port} 被占用` : e.message; this.server = null; res(); });
-      srv.listen(port, '0.0.0.0', () => { this.server = srv; this.port = (srv.address() as { port: number }).port; this.error = ''; res(); });
+      srv.listen(port, this.host, () => { this.server = srv; this.port = (srv.address() as { port: number }).port; this.error = ''; res(); });
     });
     this.emit('changed');
   }
 
+  /**
+   * server.close() waits for every open socket; closeAllConnections() only closes HTTP ones — a connected
+   * phone's or other machine's WebSocket (upgraded, so no longer the HTTP server's) would hold stop() — and a
+   * Ctrl+C / SIGTERM shutdown, or turning remote access off — until that client went away by itself.
+   */
   async stop() {
     const s = this.server;
     this.server = null;
     this.port = 0;
-    if (s) { await new Promise<void>((r) => { s.close(() => r()); s.closeAllConnections(); }); }
+    const sockets = this.sockets;
+    this.sockets = new Set();
+    if (s) {
+      await new Promise<void>((r) => {
+        s.close(() => r());
+        s.closeAllConnections();
+        for (const sock of sockets) sock.destroy();
+      });
+    }
     this.emit('changed');
   }
 

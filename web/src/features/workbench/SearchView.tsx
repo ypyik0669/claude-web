@@ -4,6 +4,7 @@ import { useStore } from '@/store';
 import { basename, clsx } from '@/util';
 import type { SearchOptions, SearchResult } from '@shared';
 import { dlg } from '@/ui/dialog';
+import { imeComposing } from '@/ui/ime';
 import { Icon } from '@/ui/icons';
 
 /** Cross-file search & replace (ripgrep on the server). Results grouped per file; click → editor at that line. */
@@ -68,7 +69,7 @@ export function SearchView({ root }: { root: string }) {
       <div className="search-form">
         <div className="row">
           <button className={clsx('icon-btn', showRep && 'active')} title="替换" onClick={() => setShowRep(!showRep)} aria-label="替换"><Icon name={showRep ? 'chevronDown' : 'chevronRight'} size={13} /></button>
-          <input className="field grow" placeholder="搜索（Enter 立即搜索）" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && run()} autoFocus />
+          <input className="field grow" placeholder="搜索（Enter 立即搜索）" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !imeComposing(e.nativeEvent) && run()} autoFocus />
           <button className={clsx('tog', opt.caseSensitive && 'on')} title="区分大小写" onClick={() => setOpt({ ...opt, caseSensitive: !opt.caseSensitive })}>Aa</button>
           <button className={clsx('tog', opt.wholeWord && 'on')} title="全词匹配" onClick={() => setOpt({ ...opt, wholeWord: !opt.wholeWord })}>ab</button>
           <button className={clsx('tog', opt.regex && 'on')} title="正则表达式" onClick={() => setOpt({ ...opt, regex: !opt.regex })}>.*</button>

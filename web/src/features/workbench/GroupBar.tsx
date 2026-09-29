@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useStore } from '@/store';
 import { useDropdown } from '@/ui/menus';
+import { imeComposing } from '@/ui/ime';
 import { paneOrder, type LayoutPreset } from '@/model/layout';
 import { clsx } from '@/util';
 import { desktop } from '@/desktop';
@@ -74,7 +75,7 @@ export function GroupBar({ rail = false }: { rail?: boolean }) {
         >
           {busy(g.id) && <span className="dot running" />}
           {renaming === g.id ? (
-            <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setRenaming(null); }} onClick={(e) => e.stopPropagation()} />
+            <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (imeComposing(e.nativeEvent)) return; if (e.key === 'Enter') commit(); if (e.key === 'Escape') setRenaming(null); }} onClick={(e) => e.stopPropagation()} />
           ) : (
             <span className="t">{g.name}</span>
           )}

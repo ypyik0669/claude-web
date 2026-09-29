@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
+import { imeComposing } from './ime';
 
 // Promise-based replacements for window.confirm / prompt / alert, rendered in-app (Electron's native dialogs
 // steal focus and look foreign; browsers may block them). One dialog at a time, queued.
@@ -54,15 +55,15 @@ export function DialogHost() {
   const cancel = () => done(spec.kind === 'confirm' ? false : spec.kind === 'prompt' ? null : undefined);
   const ok = () => done(spec.kind === 'confirm' ? true : spec.kind === 'prompt' ? value : undefined);
   return (
-    <div key={cur.id} className="modal-bg dialog-bg" onMouseDown={(e) => e.target === e.currentTarget && cancel()} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); cancel(); } }}>
+    <div key={cur.id} className="modal-bg dialog-bg" onMouseDown={(e) => e.target === e.currentTarget && cancel()} onKeyDown={(e) => { if (e.key === 'Escape' && !imeComposing(e.nativeEvent)) { e.stopPropagation(); cancel(); } }}>
       <div className="modal dialog" role="dialog" aria-modal="true">
         <h3>{spec.title}</h3>
         {spec.message && <div className="dialog-msg">{spec.message}</div>}
         {!!spec.items?.length && <ul className="dialog-items">{spec.items.map((it, i) => <li key={i}>{it}</li>)}</ul>}
         {spec.kind === 'prompt' && (spec.multiline ? (
-          <textarea ref={inp as any} className="field" rows={4} value={value} placeholder={spec.placeholder} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') ok(); }} />
+          <textarea ref={inp as any} className="field" rows={4} value={value} placeholder={spec.placeholder} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !imeComposing(e.nativeEvent)) ok(); }} />
         ) : (
-          <input ref={inp as any} className="field" value={value} placeholder={spec.placeholder} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') ok(); }} />
+          <input ref={inp as any} className="field" value={value} placeholder={spec.placeholder} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !imeComposing(e.nativeEvent)) ok(); }} />
         ))}
         <div className="actions">
           {spec.kind !== 'alert' && <button className="btn" autoFocus={!!spec.focusCancel && spec.kind === 'confirm'} onClick={cancel}>{spec.cancelLabel}</button>}

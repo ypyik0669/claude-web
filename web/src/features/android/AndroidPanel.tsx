@@ -5,6 +5,7 @@ import { clsx } from '@/util';
 import { dlg } from '@/ui/dialog';
 import type { AndroidStatus } from '@shared';
 import { Icon } from '@/ui/icons';
+import { imeComposing } from '@/ui/ime';
 
 const KEYS: [string, string][] = [['BACK', '4'], ['HOME', '3'], ['RECENTS', '187'], ['POWER', '26'], ['VOL+', '24'], ['VOL−', '25'], ['ENTER', '66']];
 
@@ -70,7 +71,7 @@ export function AndroidPanel({ visible = true }: { visible?: boolean }) {
           <div className="android-side">
             <div className="keys">{KEYS.map(([l, c]) => <button key={c} className="btn sm ghost" onClick={() => input({ kind: 'key', code: c })}>{l}</button>)}</div>
             <div style={{ display: 'flex', gap: 4 }}>
-              <input className="field" placeholder="输入文字…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && text) { void input({ kind: 'text', text }); setText(''); } }} />
+              <input className="field" placeholder="输入文字…" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !imeComposing(e.nativeEvent) && text) { void input({ kind: 'text', text }); setText(''); } }} />
               <button className="btn sm" disabled={!text} onClick={() => { void input({ kind: 'text', text }); setText(''); }}>发送</button>
             </div>
             <div className="sub">{shot ? `${shot.width}×${shot.height}` : ''} · 点击 = tap，拖动 = swipe</div>

@@ -8,7 +8,11 @@ import { libraryId } from './ids.js';
 import { OpenCodeSource } from './opencode-source.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const fakeCli = path.join(here, '__mocks__', 'opencode-cli.cmd');
+const isWin = process.platform === 'win32';
+// the shapes a real `opencode` has: an npm shim resolveSpawn unwraps to node (Windows `.cmd`; elsewhere the
+// `#!/usr/bin/env node` script itself, mode 755 in git), and a launcher that stays the parent of node
+const fakeCli = path.join(here, '__mocks__', isWin ? 'opencode-cli.cmd' : 'opencode-cli.mjs');
+const wrappedCli = path.join(here, '__mocks__', isWin ? 'opencode-cli-wrapped.cmd' : 'opencode-cli-wrapped.sh');
 
 const SESSIONS = [
   { id: 'ses-a', slug: 'a', projectID: 'p', directory: '/work/demo', path: 'work/demo', title: 'Session A', version: '1.14.33', time: { created: 100, updated: 300 } },
@@ -57,7 +61,7 @@ function startMock() {
   });
 }
 
-// these tests spawn the .cmd fake CLI (cmd.exe → node), slow under a loaded full-suite run
+// these tests spawn the fake CLI (on Windows through cmd.exe → node), slow under a loaded full-suite run
 describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', { timeout: 45_000 }, () => {
   let sources: OpenCodeSource[] = [];
   let mocks: { close: () => Promise<void> }[] = [];
@@ -201,11 +205,11 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', { timeout: 
     return false;
   };
 
-  // the real tree on Windows is cmd.exe -> node -> opencode.exe: killing the top pid alone leaves
-  // `opencode serve` (an unsecured HTTP server) running
+  // the real tree on Windows is cmd.exe -> node -> opencode.exe (elsewhere a sh / node launcher -> the
+  // binary): killing the top pid alone leaves `opencode serve` (an unsecured HTTP server) running
   it.each([
     ['node-shim launcher', fakeCli],
-    ['cmd.exe launcher', path.join(here, '__mocks__', 'opencode-cli-wrapped.cmd')],
+    [isWin ? 'cmd.exe launcher' : 'sh launcher', wrappedCli],
   ])('close() kills the whole `opencode serve` tree (%s)', async (_name, command) => {
     const gcFile = path.join(os.tmpdir(), `cw-opencode-gc-${process.pid}-${Date.now()}.txt`);
     tmpFiles.push(gcFile);
@@ -223,7 +227,7 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', { timeout: 
   it('a `session delete` that hangs past its timeout is killed with its whole tree', async () => {
     const gcFile = path.join(os.tmpdir(), `cw-opencode-delgc-${process.pid}-${Date.now()}.txt`);
     tmpFiles.push(gcFile);
-    const src = new OpenCodeSource(() => ({ command: path.join(here, '__mocks__', 'opencode-cli-wrapped.cmd'), env: { FAKE_DELETE_HANG_MS: '30000', FAKE_GRANDCHILD_PID_FILE: gcFile } }), { deleteTimeoutMs: 8000 });
+    const src = new OpenCodeSource(() => ({ command: wrappedCli, env: { FAKE_DELETE_HANG_MS: '30000', FAKE_GRANDCHILD_PID_FILE: gcFile } }), { deleteTimeoutMs: 8000 });
     sources.push(src);
     await expect(src.remove('ses-a')).rejects.toThrow(/超时/);
     const gc = await waitPid(gcFile);
@@ -275,9 +279,11 @@ describe('OpenCodeSource (mock opencode serve + fake opencode CLI)', { timeout: 
     sources.push(src);
     await src.list({ limit: 10 });
     await src.remove('ses-a');
-    const got = await fs.readFile(cwdFile, 'utf8');
+    // compared as real paths: on macOS the temp dir is /var/folders/… and the child's cwd reads /private/var/folders/…
+    const got = await fs.realpath(await fs.readFile(cwdFile, 'utf8'));
+    const want = await fs.realpath(work);
     await fs.rm(work, { recursive: true, force: true });
-    expect(path.resolve(got).toLowerCase()).toBe(path.resolve(work).toLowerCase());
+    expect(path.resolve(got).toLowerCase()).toBe(path.resolve(want).toLowerCase());
   });
 
   it('remove() throws with the stderr tail when the CLI exits non-zero', async () => {

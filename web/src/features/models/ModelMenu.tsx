@@ -13,6 +13,7 @@ import { MODEL_MENU_ID } from '@/features/composer/ids';
 import './models.css';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { useMenuClaim } from '@/ui/menus';
+import { imeComposing } from '@/ui/ime';
 
 /** `5 分钟前` / `刚刚` / a date */
 export function agoText(t: number): string {
@@ -160,7 +161,7 @@ export function ModelMenu(p: ModelMenuProps) {
     void setSetting('ui.favoriteModels', favs.includes(it.key) ? favs.filter((k) => k !== it.key) : [...favs, it.key]);
   };
   const onKey = (e: React.KeyboardEvent) => {
-    if (e.nativeEvent.isComposing) return;
+    if (imeComposing(e.nativeEvent)) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') keyNav.current = true;
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => (flat.length ? (i + 1) % flat.length : 0)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => (flat.length ? (i - 1 + flat.length) % flat.length : 0)); }

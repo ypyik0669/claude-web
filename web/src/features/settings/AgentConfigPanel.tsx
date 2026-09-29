@@ -4,6 +4,7 @@ import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
+import { imeComposing } from '@/ui/ime';
 import type { AgentConfigBackup, AgentConfigFile, AgentConfigKind, AgentConfigState, AgentSettingField, ClaudeMcpEntry, McpSpec, McpSyncResult, McpSyncSource } from '@shared';
 import { EMPTY_FORM, catalogSpec, describeSpec, formFromCatalog, formToSpec, settingToCommit, type McpForm } from './agent-config-form';
 import { MCP_CATALOG } from './McpCatalog';
@@ -57,7 +58,7 @@ function SettingRow({ f, onSet }: { f: AgentSettingField; onSet: (v: string | nu
         </select>
       ) : (
         <>
-          <input className="field" value={v} list={f.suggestions?.length ? `acfg-${f.key}` : undefined} placeholder="（未设置，用默认）" onChange={(e) => setV(e.target.value)} onBlur={() => commit(v)} onKeyDown={(e) => { if (e.key === 'Enter') commit(v); }} />
+          <input className="field" value={v} list={f.suggestions?.length ? `acfg-${f.key}` : undefined} placeholder="（未设置，用默认）" onChange={(e) => setV(e.target.value)} onBlur={() => commit(v)} onKeyDown={(e) => { if (e.key === 'Enter' && !imeComposing(e.nativeEvent)) commit(v); }} />
           {!!f.suggestions?.length && <datalist id={`acfg-${f.key}`}>{f.suggestions.map((m) => <option key={m} value={m} />)}</datalist>}
         </>
       )}

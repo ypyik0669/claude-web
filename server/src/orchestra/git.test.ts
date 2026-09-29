@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { GitService } from '../git/service.js';
-import { gitAdapter } from './git.js';
+import { canonicalPath, gitAdapter } from './git.js';
 
 let tmp: string;
 let repo: string;
@@ -204,13 +204,44 @@ describe('worktrees are never deleted behind the user’s back (C2 / I1)', SLOW,
     await g.worktreeAdd(repo, dir, 'cw/r/orph', 'main');
     const o = await g.orphan(dir);
     expect(o).toMatchObject({ broken: false, dirty: false, branch: 'cw/r/orph' });
-    expect(path.resolve(o.root!).toLowerCase()).toBe(path.resolve(repo).toLowerCase());
+    // git reports the repo resolved (macOS: /private/var/folders/… for a /var/folders/… temp dir)
+    expect(path.resolve(o.root!).toLowerCase()).toBe(fs.realpathSync(repo).toLowerCase());
     write(path.join(dir, 'x.txt'), 'x\n');
     expect((await g.orphan(dir)).dirty).toBe(true);
     const stray = path.join(tmp, 'wt', 'stray');
     fs.mkdirSync(stray, { recursive: true });
     write(path.join(stray, '.git'), 'gitdir: /nowhere/.git/worktrees/stray\n');
     expect((await g.orphan(stray)).broken).toBe(true);
+  });
+
+  // macOS: os.tmpdir() is /var/folders/…, a symlink to /private/var/folders/…, and git lists worktrees resolved
+  it('a worktree reached through a symlinked path is still linked, and its dirty state is seen', async () => {
+    const link = path.join(os.tmpdir(), `cw-orch-link-${process.pid}-${Date.now()}`);
+    fs.symlinkSync(tmp, link, 'junction');
+    try {
+      const viaRepo = path.join(link, 'repo');
+      const dir = path.join(link, 'wt', 'one');
+      expect(await g.free(viaRepo, dir, 'cw/r/one')).toBe(true);
+      await g.worktreeAdd(viaRepo, dir, 'cw/r/one', 'main');
+      expect(await g.free(viaRepo, dir, 'cw/r/one')).toBe(false);
+      expect(await g.inspect(viaRepo, dir, 'cw/r/one', 'main')).toMatchObject({ exists: true, linked: true, dirty: false });
+      write(path.join(dir, 'new.txt'), 'x\n');
+      expect(await g.inspect(viaRepo, dir, 'cw/r/one', 'main')).toMatchObject({ linked: true, dirty: true });
+    } finally {
+      fs.rmSync(link, { force: true });
+    }
+  });
+
+  it('canonicalPath resolves the existing part of a path and keeps a missing tail', async () => {
+    const link = path.join(os.tmpdir(), `cw-orch-canon-${process.pid}-${Date.now()}`);
+    fs.symlinkSync(tmp, link, 'junction');
+    try {
+      const real = fs.realpathSync(tmp);
+      expect((await canonicalPath(path.join(link, 'repo'))).toLowerCase()).toBe(path.join(real, 'repo').toLowerCase());
+      expect((await canonicalPath(path.join(link, 'no', 'such'))).toLowerCase()).toBe(path.join(real, 'no', 'such').toLowerCase());
+    } finally {
+      fs.rmSync(link, { force: true });
+    }
   });
 
   it('diffStat / diff compare the branch with the base (three-dot)', async () => {

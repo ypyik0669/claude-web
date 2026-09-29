@@ -10,6 +10,7 @@ import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
 import { EMPTY, TERMS, emptyText } from '@/ui/terms';
 import { EmptyState } from '@/ui/EmptyState';
+import { imeComposing } from '@/ui/ime';
 import { GitView } from './GitView';
 import { Popover } from '@/features/composer/Popover';
 import { coalesce, gitEventConcerns } from './git-refresh';
@@ -461,7 +462,7 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
               placeholder={plan.kind === 'none' ? '没有可以提交的改动' : plan.kind === 'conflicts' ? '有冲突的文件解决之后才能提交' : `提交说明…（${modKey}+Enter 提交）`}
               value={msg}
               onChange={(e) => setMsg(e.target.value)}
-              onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); void commit(); } }}
+              onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !imeComposing(e.nativeEvent)) { e.preventDefault(); void commit(); } }}
               disabled={plan.kind === 'none'}
               aria-label="提交说明"
             />

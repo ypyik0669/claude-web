@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useStore } from '@/store';
 import { useDropdown } from '@/ui/menus';
+import { imeComposing } from '@/ui/ime';
 import { chatTile, MAX_PANES, PANELS, PANEL_ICONS, PANEL_TITLES, TILE_ICONS, type Pane as PaneModel, type Tile } from '@/model/layout';
 import { clsx, basename } from '@/util';
 import { Icon, type IconName } from '@/ui/icons';
@@ -91,7 +92,7 @@ export function TabStrip({ pane, groupId, index, zoomed, single, lead, workbench
               {live && live !== 'history' && live !== 'closed' && <span className={clsx('dot', live)} />}
               {!live && <span className="ic"><Icon name={icon} size={14} /></span>}
               {renaming === t.id ? (
-                <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commitRename} onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenaming(null); }} onClick={(e) => e.stopPropagation()} />
+                <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commitRename} onKeyDown={(e) => { if (imeComposing(e.nativeEvent)) return; if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenaming(null); }} onClick={(e) => e.stopPropagation()} />
               ) : (
                 <span className="t">{text}{dirty[t.id] ? ' •' : ''}</span>
               )}

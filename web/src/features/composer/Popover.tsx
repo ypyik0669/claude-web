@@ -4,6 +4,7 @@ import { clsx } from '@/util';
 import { placeMenu, samePlacement, type Placement } from '@/features/models/place';
 import { fieldStep, menuKey } from './dir-menu';
 import { useMenuClaim } from '@/ui/menus';
+import { imeComposing } from '@/ui/ime';
 
 const FIELD_KEYS = new Set(['ArrowUp', 'ArrowDown', 'Escape', 'Tab']);
 
@@ -98,7 +99,7 @@ export function Popover({ anchor, onClose, prefer = 'up', align = 'left', classN
     const t = e.target as HTMLElement;
     const field = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA';
     // in a text field only ↑ ↓ Tab (on to the rows) and Esc belong to the menu; Home / End / typing stay the field's
-    if (field && (e.nativeEvent.isComposing || !FIELD_KEYS.has(e.key))) return;
+    if (field && (imeComposing(e.nativeEvent) || !FIELD_KEYS.has(e.key))) return;
     const rows = [...(box.current?.querySelectorAll<HTMLElement>('[data-mi]:not(:disabled)') ?? [])];
     // Tab in a text field moves on like ↓ (Shift+Tab like ↑) instead of closing the menu mid-search
     const key = field && e.key === 'Tab' ? (e.shiftKey ? 'ArrowUp' : 'ArrowDown') : e.key;
