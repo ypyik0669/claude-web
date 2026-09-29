@@ -928,6 +928,20 @@ function driver() {
 
       // ---- a seeded session in a pane (chat tile, session header, git badges)
       if (E.SMOKE_SID) {
+        // re-review M-5: a conversation picked in the command palette over the settings page — the page closes and
+        // the conversation is what shows (it used to open underneath, unseen)
+        phase = 'settings:palette-pick';
+        const ctrlKey = async (k) => { wc.sendInputEvent({ type: 'keyDown', keyCode: k, modifiers: ['control'] }); wc.sendInputEvent({ type: 'keyUp', keyCode: k, modifiers: ['control'] }); await sleep(300); };
+        await ctrlKey(',');
+        await waitFor('!!document.querySelector(".modal.settings.sp")', 3000);
+        await ctrlKey('K');
+        await waitFor('!!document.querySelector(".palette-bg")', 3000);
+        wc.insertText('seeded session');
+        const palRow = await waitFor(`(() => { const r = [...document.querySelectorAll('.cmdk .it')].find((x) => /seeded session/.test(x.querySelector('.t')?.textContent ?? '')); if (r) r.dataset.smokePick = '1'; return !!r; })()`, 8000);
+        if (palRow) await click('.cmdk .it[data-smoke-pick="1"]');
+        const picked = await waitFor(`!document.querySelector('.modal.settings.sp') && !document.querySelector('.palette-bg') && window.__store.getState().activeId === ${JSON.stringify(E.SMOKE_SID)} && !!document.querySelector('.pane.focused .composer textarea') && !document.querySelector('.pane.focused .welcome')`, 10_000);
+        check('a conversation picked in the command palette over the settings page: the page closes and the conversation shows (re-review M-5)', palRow && picked, JSON.stringify({ palRow, picked, settings: await js('!!document.querySelector(".modal.settings.sp")'), active: await js('window.__store.getState().activeId') }));
+        if (!picked) { await js('window.__store.setState({ settingsOpen: null, paletteOpen: false })'); await sleep(300); }
         phase = 'session';
         await js(`window.__store.getState().loadHistory(${JSON.stringify(E.SMOKE_SID)})`);
         check('seeded session renders', await waitFor('!!document.querySelector(".composer textarea") && !document.querySelector(".welcome")', 10_000));

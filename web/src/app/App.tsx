@@ -23,6 +23,7 @@ import { MOBILE_QUERY, drawerYields } from '@/ui/viewport';
 import { installAutomation } from '@/features/automation/state';
 import { installChecklist } from '@/features/home/checklist-sync';
 import { installAccountDefault } from '@/features/models/account-default';
+import { installSettingsClose } from '@/features/settings/close-on-nav';
 
 /** Width of the right panel minimized to its icon rail. */
 const MIN_RAIL = 36;
@@ -74,6 +75,7 @@ export function App() {
   useEffect(() => installAutomation(), []);
   useEffect(() => installChecklist(), []);
   useEffect(() => installAccountDefault(), []);
+  useEffect(() => installSettingsClose(), []);
   const sbWidth = useStore((s) => s.layout.sidebar.width);
   const dock = useStore((s) => s.layout.dock);
   const inspect = useStore((s) => s.inspect);

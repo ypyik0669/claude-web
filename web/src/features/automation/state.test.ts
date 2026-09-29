@@ -23,6 +23,7 @@ beforeAll(async () => {
   auto = await import('./state');
   ({ runCommand } = await import('@/features/workbench/commands'));
   auto.installAutomation();
+  (await import('@/features/settings/close-on-nav')).installSettingsClose();
 });
 
 const tiles = () => {
@@ -90,6 +91,19 @@ describe('the automation page', () => {
     store.getState().openInPane('s3', 'replace');
     expect(store.getState().sheetAt).toBe(0);
     store.setState({ mobile: false, sidebarOpen: true });
+  });
+
+  it('the settings page gets out of the way the same way (re-review M-5): a conversation picked under it (the command palette) — not the right panel, not a late answer', () => {
+    store.getState().openSettings();
+    store.getState().dispatchLayout({ t: 'dock.show', panel: 'tasks' });
+    expect(store.getState().settingsOpen).not.toBeNull();
+    store.getState().openInPane('s4', 'replace');
+    expect(store.getState().settingsOpen).toBeNull();
+    const sent = Date.now() - 5000;
+    store.getState().openSettings(); // opened after the request was sent
+    answering(sent, () => store.getState().dispatchLayout({ t: 'session.assign', paneId: store.getState().layout.groups[0].focusedPaneId, tileId: 'x', sessionId: 's9' }));
+    expect(store.getState().settingsOpen).not.toBeNull();
+    store.setState({ settingsOpen: null });
   });
 
   it('新建 is one signal per click, per tab', () => {
