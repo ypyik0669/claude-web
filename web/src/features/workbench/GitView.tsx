@@ -190,7 +190,7 @@ export function GitView({ cwd, visible = true }: { cwd: string; visible?: boolea
       <div className="subtabs">
         <button className={tab === 'changes' ? 'active' : ''} onClick={() => setTab('changes')}>改动 {st.files.length ? <span className="badge">{st.files.length}</span> : null}</button>
         <button className={tab === 'log' ? 'active' : ''} onClick={() => setTab('log')}>历史</button>
-        <button className={tab === 'worktrees' ? 'active' : ''} onClick={() => setTab('worktrees')}>Worktree {wts.length > 1 ? <span className="badge">{wts.length}</span> : null}</button>
+        <button className={tab === 'worktrees' ? 'active' : ''} onClick={() => setTab('worktrees')} title="git worktree">独立副本 {wts.length > 1 ? <span className="badge">{wts.length}</span> : null}</button>
       </div>
       {tab === 'changes' && (
         <div className="git-body">
@@ -250,7 +250,7 @@ export function GitView({ cwd, visible = true }: { cwd: string; visible?: boolea
               </div>
               <button className="btn sm ghost" onClick={() => useStore.getState().openSession({ cwd: w.path })}><Icon name="plus" size={12} /> 对话</button>
               <button className="btn sm ghost" onClick={() => ws.request({ kind: 'shell.open', path: w.path, app: 'code' })}>VS Code</button>
-              {!w.main && <button className="btn sm ghost danger" onClick={async () => { if (await dlg.confirm(`删除 worktree ${w.path}？`, { message: '分支保留，目录会被删除。', danger: true })) void run('wt', { kind: 'git.worktreeRemove', cwd, dir: w.path, force: true }); }} aria-label="删除 worktree"><Icon name="trash" size={12} /></button>}
+              {!w.main && <button className="btn sm ghost danger" onClick={async () => { if (await dlg.confirm(`删除独立副本 ${w.path}？`, { message: '分支保留，目录会被删除。', danger: true })) void run('wt', { kind: 'git.worktreeRemove', cwd, dir: w.path, force: true }); }} aria-label="删除独立副本" title="git worktree remove"><Icon name="trash" size={12} /></button>}
             </div>
           ))}
           {newWt ? (
@@ -261,7 +261,7 @@ export function GitView({ cwd, visible = true }: { cwd: string; visible?: boolea
               <button className="btn sm" onClick={() => setNewWt(null)}>取消</button>
             </div>
           ) : (
-            <div className="row"><button className="btn sm" onClick={() => setNewWt({ name: '', from: '' })}><Icon name="plus" size={12} /> 新建 worktree</button><span className="muted" style={{ fontSize: 11.5 }}>放在 .claude/worktrees/&lt;名称&gt;，和 Claude Code 的 --worktree 一致</span></div>
+            <div className="row"><button className="btn sm" onClick={() => setNewWt({ name: '', from: '' })} title="放在 .claude/worktrees/<名称>，和 Claude Code 的 --worktree 一致"><Icon name="plus" size={12} /> 新建独立副本</button><span className="muted" style={{ fontSize: 11.5 }}>仓库的另一份检出，在自己的分支上改，不动当前目录</span></div>
           )}
         </div>
       )}

@@ -8,7 +8,7 @@ import { agentLabel } from './labels';
 export const KIND_ICON: Record<OrchNode['kind'], IconName> = { task: 'agent', compare: 'compare', approval: 'approval' };
 
 function sub(n: OrchNode) {
-  if (n.kind === 'task') return `${agentLabel(n.agent)}${n.workspace === 'worktree' ? ' · worktree' : ''}${n.untilDone ? ' · 直到完成' : ''}`;
+  if (n.kind === 'task') return `${agentLabel(n.agent)}${n.workspace === 'worktree' ? ' · 独立副本' : ''}${n.untilDone ? ' · 直到完成' : ''}`;
   if (n.kind === 'compare') return `${n.agents.map(agentLabel).join(' / ')}${n.judge ? ' · 裁判' : ''}`;
   return '人工审批';
 }

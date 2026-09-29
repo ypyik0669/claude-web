@@ -35,7 +35,7 @@ export function ProjectChip({ cwd, recent, onPick, onBrowse, worktree, onWorktre
   const toggle = async (close: () => void) => {
     close();
     if (worktree) { onWorktree(''); return; }
-    const n = (await dlg.prompt('在独立副本里运行', worktreeName(), { message: '新对话会在这个项目的一个 git worktree 里工作，不动你当前的检出。给这个副本起个名字：', okLabel: '开启' }))?.trim();
+    const n = (await dlg.prompt('在独立副本里运行', worktreeName(), { message: '新对话会在这个项目的一个独立副本（worktree）里工作，不动你当前的检出。给这个副本起个名字：', okLabel: '开启' }))?.trim();
     if (n) onWorktree(n);
   };
   return (

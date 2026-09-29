@@ -108,7 +108,7 @@ export const EMPTY = {
   workflows: { what: '工作流', when: '新建一个或从模板开始' },
   workflowOpen: { what: '打开的工作流', when: '在左边选一个工作流或新建一个' },
   orchestraRuns: { what: '运行记录', when: '运行一个工作流' },
-  orphans: { what: '遗留的 worktree', when: '删除运行记录时没清理它的 worktree' },
+  orphans: { what: '遗留的独立副本', when: '删除运行记录时没清理它的独立副本' },
   // the start page
   recent: { what: '对话', when: '发出第一个任务' },
   archived: { what: '归档的对话', when: '归档一个对话' },

@@ -382,6 +382,29 @@ describe('the whole interface: 对话 not 会话, no implementation words by def
     expect(bad).toEqual([]);
   });
 
+  // final review M2: git's word stays next to ours — 「独立副本（worktree）」 (spec §5.12) — or out of the default
+  // screens (tooltips, the advanced pages, ids, code); a bare 「worktree」 in text is the implementation word
+  /** Values, not text (the scanner cannot tell): [file, the whole literal, why]. A new one fails until listed here. */
+  const WORKTREE_CODE: [string, string, string][] = [
+    ['features/composer/branch-guard.ts', '/.claude/worktrees/', 'a path matched against folders'],
+    ['features/orchestra/Graph.tsx', 'worktree', "compared: n.workspace === 'worktree'"],
+    ['features/orchestra/WorkflowEditor.tsx', 'worktree', 'the <option> value and its type'],
+    ['features/sidebar/entries.ts', 'worktree', 'an entry id (PROJECT_MENU)'],
+    ['features/sidebar/entries.ts', 'project:worktree', 'an entry id (LEGACY)'],
+    ['features/workbench/GitView.tsx', 'worktrees', 'the sub-tab state of the Git view'],
+  ];
+  it('says worktree only as 「独立副本（worktree）」 on the default screens', () => {
+    const bad: string[] = [];
+    for (const f of ALL) {
+      if (NOT_DEFAULT.includes(f)) continue;
+      for (const t of textsOf(f, read(f), { skipKeys: SKIP_KEYS })) {
+        if (PROTOCOL_KIND.test(t) || WORKTREE_CODE.some(([cf, lit]) => cf === f && t === lit)) continue;
+        if (/worktree/i.test(t.replace(/独立副本（worktree）/g, ''))) bad.push(`${f} — ${t.trim().slice(0, 80)}`);
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
   it('the scanner reads tooltips only when asked, and skips keywords / old-entry tables', () => {
     const f = 'x.tsx';
     const src = `const a = <div title="会话" aria-label="会话" className="会话">ok</div>; const k = { keywords: '会话', old: '会话', label: '对话' };`;

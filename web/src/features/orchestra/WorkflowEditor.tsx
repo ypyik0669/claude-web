@@ -52,7 +52,7 @@ function NodeCard({ n, all, agents, index, count, onChange, onMove, onRemove }: 
         <label>类型<select className="field" value={n.kind} onChange={(e) => onChange(withKind(n, e.target.value as OrchNode['kind'], agents))}>{(['task', 'compare', 'approval'] as const).map((k) => <option key={k} value={k}>{KIND_L[k]}</option>)}</select></label>
         {n.kind === 'task' && <>
           <label>Agent<select className="field" value={n.agent} onChange={(e) => onChange({ ...n, agent: e.target.value as AgentKind })}>{agentOpts(n.agent).map((a) => <option key={a} value={a}>{agentLabel(a)}{agents.includes(a) ? '' : '（不可用）'}</option>)}</select></label>
-          <label>工作区<select className="field" value={n.workspace} onChange={(e) => onChange({ ...n, workspace: e.target.value as 'shared' | 'worktree' })}><option value="shared">共享工作目录</option><option value="worktree">独立 worktree（完成后合并）</option></select></label>
+          <label>工作区<select className="field" value={n.workspace} onChange={(e) => onChange({ ...n, workspace: e.target.value as 'shared' | 'worktree' })}><option value="shared">共享工作目录</option><option value="worktree">独立副本（worktree），完成后合并</option></select></label>
           <label>权限<select className="field" value={n.permissionMode ?? 'default'} onChange={(e) => onChange({ ...n, permissionMode: e.target.value as PermissionMode })}>{PERM.map((p) => <option key={p.v} value={p.v}>{p.l}</option>)}</select></label>
           <label>模型（空 = 默认）<input className="field" value={n.model ?? ''} onChange={(e) => onChange({ ...n, model: e.target.value || undefined })} /></label>
           <label className="check"><input type="checkbox" checked={!!n.untilDone} onChange={(e) => onChange({ ...n, untilDone: e.target.checked || undefined })} /> 一直做到完成（目标协议）</label>

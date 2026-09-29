@@ -50,8 +50,8 @@ function Candidate({ run, nodeId, c, winner, recommended, canPick }: { run: Orch
     const message = [
       `1. 先把 ${c.worktree?.path} 里还没提交的改动提交到 ${c.worktree?.branch}；`,
       `2. 用 merge --no-ff 合并到 ${run.baseBranch}（你手上有进行中的 merge / rebase 或暂存区有改动时会拒绝，什么都不动）；`,
-      '3. 合并成功后：各候选的 worktree 目录在没有未提交改动时删除；落选分支只有在没被人动过（仍是跑完时的提交）时才删除；胜者分支保留。有改动的一律保留并列出来。',
-      '合并失败时节点回到「等你选」，所有 worktree 和分支都不动。',
+      '3. 合并成功后：各候选的独立副本目录在没有未提交改动时删除；落选分支只有在没被人动过（仍是跑完时的提交）时才删除；胜者分支保留。有改动的一律保留并列出来。',
+      '合并失败时节点回到「等你选」，所有独立副本和分支都不动。',
     ].join('\n');
     if (!(await dlg.confirm(`选 ${agentLabel(c.agent)} 的实现？`, { message, okLabel: '合并' }))) return;
     await orchAct(run.id, { kind: 'orchestra.node.pick', runId: run.id, nodeId, winner: c.agent }, '已处理');
@@ -105,9 +105,9 @@ function NodeDetail({ run, node, nr, selected }: { run: OrchRun; node: OrchNode;
   const wts = [...(nr.worktrees ?? []), ...(nr.retained ?? [])];
   const retry = async () => {
     const lines = [
-      node.kind === 'compare' ? '所有候选会在新的对话、新的 worktree（名字带 -attempt 后缀）里重新跑一遍，已经跑完的结果不再能选。' : '这个节点会在新的对话里重新跑，还没完成的下游节点也会重新排队。',
+      node.kind === 'compare' ? '所有候选会在新的对话、新的独立副本（名字带 -attempt 后缀）里重新跑一遍，已经跑完的结果不再能选。' : '这个节点会在新的对话里重新跑，还没完成的下游节点也会重新排队。',
       nr.mergePending ? '这个节点的活已经做完、只是没合并进去：处理冲突后点「重新合并」就够了（或手动 git merge 它的分支），不必整个重跑。' : '',
-      wts.length ? `现有的 worktree 与分支都保留，不会删除：\n${wts.map((w) => `· ${w.path}（${w.branch}）`).join('\n')}` : '',
+      wts.length ? `现有的独立副本与分支都保留，不会删除：\n${wts.map((w) => `· ${w.path}（${w.branch}）`).join('\n')}` : '',
     ].filter(Boolean).join('\n\n');
     if (nr.state === 'waiting' || wts.length) { if (!(await dlg.confirm(`重试「${node.title || node.id}」？`, { message: lines, okLabel: '重试' }))) return; }
     await orchAct(run.id, { kind: 'orchestra.node.retry', runId: run.id, nodeId: node.id }, '已重新开始');
@@ -148,7 +148,7 @@ function NodeDetail({ run, node, nr, selected }: { run: OrchRun; node: OrchNode;
         </>
       )}
       {wts.length > 0 && nr.state !== 'done' && (
-        <details className="orch-wts"><summary>worktree {wts.length} 个（保留着，不会自动删除）</summary>{wts.map((w) => <div key={w.path} className="mono">{w.path} · {w.branch}</div>)}</details>
+        <details className="orch-wts"><summary>独立副本 {wts.length} 个（保留着，不会自动删除）</summary>{wts.map((w) => <div key={w.path} className="mono">{w.path} · {w.branch}</div>)}</details>
       )}
       {nr.output && node.kind !== 'approval' && (
         <details className="orch-out" open={selected && node.kind === 'task'}>
@@ -173,7 +173,7 @@ export function RunView({ runId, onClose }: { runId: string; onClose: () => void
   const removeRun = async () => {
     if (!(await dlg.confirm('删除这条运行记录？', { message: '对话本身不会被删除。', danger: true, okLabel: '删除' }))) return;
     const hasWts = Object.values(run.nodes).some((n) => n.worktrees?.length || n.retained?.length || n.candidates?.some((c) => c.worktree));
-    const cleanup = hasWts && (await dlg.confirm('同时清理这次运行的 worktree 与 cw/ 分支？', { message: '只删除干净、已合并（或仍是编排自己提交的）的 worktree 与分支；有未提交改动或未合并提交的只列出来，不删。', okLabel: '清理', cancelLabel: '只删记录' }));
+    const cleanup = hasWts && (await dlg.confirm('同时清理这次运行的独立副本与 cw/ 分支？', { message: '只删除干净、已合并（或仍是编排自己提交的）的独立副本与分支；有未提交改动或未合并提交的只列出来，不删。', okLabel: '清理', cancelLabel: '只删记录' }));
     const r = await orchAct<OrchCleanup>(runId, { kind: 'orchestra.run.remove', runId, cleanup });
     if (!r) return;
     onClose();
@@ -187,7 +187,7 @@ export function RunView({ runId, onClose }: { runId: string; onClose: () => void
         <b className="name">{run.name}</b>
         <span className="muted">{basename(run.cwd)}{run.baseBranch ? ` · ${run.baseBranch}` : ''} · {live ? fmtMs(Date.now() - run.startedAt) : `${ago(run.startedAt)}${run.finishedAt ? ` · 用时 ${fmtMs(run.finishedAt - run.startedAt)}` : ''}`}</span>
         <span className="grow" />
-        {live && <button className="btn xs ghost" disabled={busy} onClick={async () => { if (await dlg.confirm('取消这次运行？', { message: '会中断正在运行的对话；已经建的 worktree 与分支都保留。正在合并时不能取消。', danger: true, okLabel: '取消运行' })) await orchAct(runId, { kind: 'orchestra.run.cancel', runId }); }}><Icon name="stop" size={11} /> 取消</button>}
+        {live && <button className="btn xs ghost" disabled={busy} onClick={async () => { if (await dlg.confirm('取消这次运行？', { message: '会中断正在运行的对话；已经建的独立副本与分支都保留。正在合并时不能取消。', danger: true, okLabel: '取消运行' })) await orchAct(runId, { kind: 'orchestra.run.cancel', runId }); }}><Icon name="stop" size={11} /> 取消</button>}
         {(run.state === 'failed' || run.state === 'cancelled') && <button className="btn xs" disabled={busy} onClick={() => void orchAct(runId, { kind: 'orchestra.run.resume', runId }, '从未完成的节点续跑')}><Icon name="play" size={11} /> 续跑</button>}
         {!live && <button className="btn xs ghost" disabled={busy} title="删除运行记录" aria-label="删除运行记录" onClick={() => void removeRun()}><Icon name="trash" size={11} /></button>}
       </div>

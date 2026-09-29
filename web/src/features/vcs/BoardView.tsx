@@ -83,7 +83,7 @@ export function BoardView({ cwd, sid }: { cwd: string; sid: string | null }) {
     try { if (sid) await send(sid, text); else { const id = await openSession({ cwd }); await send(id, text); } } catch (e: any) { toast(e.message); }
   };
   const checkoutAndSession = async (d: VcsDetail) => {
-    const wt = await dlg.confirm(`检出 PR #${d.number} 到独立 worktree？`, { message: '选「取消」则直接在当前目录切换分支。', okLabel: 'worktree', cancelLabel: '当前目录' });
+    const wt = await dlg.confirm(`检出 PR #${d.number} 到独立副本（worktree）？`, { message: '选「当前目录」则直接在当前目录切换分支。', okLabel: '独立副本', cancelLabel: '当前目录' });
     await act(async () => {
       const res = await ws.request<{ branch: string; path: string }>({ kind: 'vcs.checkout', cwd, repo: r, number: d.number, worktree: wt });
       const id = await openSession({ cwd: res.path });
