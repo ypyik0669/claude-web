@@ -75,7 +75,17 @@
 
 ## 安装
 
-预编译的安装包会发布在 GitHub 仓库的 **Releases** 页面。还没有发布版本时，按下面「从源码」的步骤运行网页版，或者自己打桌面安装包。
+### 桌面版（下载安装包）
+
+到 [Releases](https://github.com/ypyik0669/claude-web/releases/latest) 下载：
+
+| 系统 | 文件 |
+| --- | --- |
+| Windows 10 / 11（x64） | `ClaudeWeb-<版本>-win-x64.exe`（安装版）或 `ClaudeWeb-<版本>-portable.exe`（免安装） |
+| macOS，Apple Silicon（M1 及以后） | `ClaudeWeb-<版本>-mac-arm64.dmg` |
+| macOS，Intel | `ClaudeWeb-<版本>-mac-x64.dmg` |
+
+`.zip`、`.yml`、`.blockmap` 是自动更新用的，不用下载。第一次打开的提示见下面「安装包的提示」。
 
 ### 网页版（从源码）
 
@@ -385,7 +395,7 @@ worktree 放在仓库外面的 `~/.claude-web/worktrees/<仓库名>-<hash>/`（�
 显卡驱动问题。**设置 → 通用 → 更多选项 → 软件渲染** 打开后重启；连续崩溃两次时应用也会自动切换。
 
 **自动更新**
-桌面版会到本仓库的 GitHub Releases 检查新版本（**设置 → 高级 → 更新**）。自己从源码打的包，`git pull` 之后重新 `npm install && npm run build:desktop` 覆盖安装即可，数据不会丢。
+Windows 版会到本仓库的 GitHub Releases 检查新版本（**设置 → 高级 → 更新**）。macOS 版没有 Apple 签名，系统不允许应用内更新，请到 [Releases](https://github.com/ypyik0669/claude-web/releases/latest) 下载新的 dmg 覆盖安装。自己从源码打的包，`git pull` 之后重新 `npm install && npm run build:desktop` 覆盖安装即可。数据都不会丢。
 
 ## 工作原理
 
