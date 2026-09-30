@@ -127,13 +127,15 @@ describe('AcpListSource (mock ACP agent)', () => {
       expect(status.enabled).toBe(false);
 
       // JsonRpcProcess.kill() gives the child a 1.5s grace period (stdin.end() first) before force-
-      // killing it, and that kill only fires once the delayed initialize reply lands (~300ms) and the
-      // stale-generation check calls it — so the process isn't reliably dead until well past both.
-      await new Promise((r) => setTimeout(r, 2000));
+      // killing it (on Windows through a spawned `taskkill /t`), and that kill only fires once the delayed
+      // initialize reply lands (~300ms) and the stale-generation check calls it. A fixed 2 s wait was flaky
+      // on GitHub's Windows runners: poll until the process is gone, up to 10 s.
       const pidText = await fs.readFile(pidFile, 'utf8');
       const pid = Number(pidText);
       expect(Number.isFinite(pid)).toBe(true);
-      expect(() => process.kill(pid, 0)).toThrow();
-    });
+      const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+      for (let t = Date.now(); alive() && Date.now() - t < 10_000; ) await new Promise((r) => setTimeout(r, 100));
+      expect(alive()).toBe(false);
+    }, 20_000);
   });
 });
