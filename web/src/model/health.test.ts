@@ -51,6 +51,19 @@ describe('deriveStall', () => {
     const r = deriveStall({ state: 'running', now: t0 + STALL_NO_MODEL_MS, lastEventAt: t0 + STALL_NO_MODEL_MS - 1000, lastModelCallAt: t0 });
     expect(r).toEqual({ kind: 'no_model', minutes: 3, seconds: 180 });
   });
+  it('a turn the model never answered: counted from the turn start (an upstream that never replies used to show only a timer)', () => {
+    expect(deriveStall({ state: 'running', now: t0 + STALL_NO_MODEL_MS - 1, turnStartedAt: t0, lastEventAt: t0 + STALL_NO_MODEL_MS - 1 })).toBeNull();
+    expect(deriveStall({ state: 'running', now: t0 + STALL_NO_MODEL_MS, turnStartedAt: t0, lastEventAt: t0 + 5000 })).toEqual({ kind: 'no_reply', minutes: 3, seconds: 180 });
+  });
+  it("a previous turn's model call does not count against a new turn, nor for it", () => {
+    const start = t0 + 10 * 60_000;
+    // the last model call was 10 minutes ago, in the previous turn: a fresh turn is not "stuck"
+    expect(deriveStall({ state: 'running', now: start + 5000, turnStartedAt: start, lastEventAt: start + 4000, lastModelCallAt: t0 })).toBeNull();
+    // …and it does not hide a new turn that never got a reply either
+    expect(deriveStall({ state: 'running', now: start + STALL_NO_MODEL_MS, turnStartedAt: start, lastEventAt: start + 1000, lastModelCallAt: t0 })).toMatchObject({ kind: 'no_reply', minutes: 3 });
+    // once the model answered in this turn, the usual rule
+    expect(deriveStall({ state: 'running', now: start + 60_000 + STALL_NO_MODEL_MS, turnStartedAt: start, lastEventAt: start + 60_000 + STALL_NO_MODEL_MS - 1000, lastModelCallAt: start + 60_000 })).toMatchObject({ kind: 'no_model', minutes: 3 });
+  });
 });
 
 describe('compactionNotice', () => {

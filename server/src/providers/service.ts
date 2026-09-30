@@ -32,6 +32,24 @@ export type SessionProvider = Provider & { shim?: { base: string; key: string } 
 export const shimBaseUrl = (s: { base: string }, sessionKey?: string, sessionId?: string) =>
   `${s.base}${sessionKey ? `/k/${encodeURIComponent(sessionKey)}` : ''}${sessionKey && sessionId && sessionId !== sessionKey ? `/s/${encodeURIComponent(sessionId)}` : ''}/v1`;
 
+const LOOPBACK = ['127.0.0.1', 'localhost', '::1'];
+
+/**
+ * NO_PROXY / no_proxy with the loopback hosts added, when a base URL in `env` is local (the cache shim, the model
+ * gateway). The CLI honours HTTP(S)_PROXY for every API call; a proxy from the user's environment (common where
+ * the relay needs one) would otherwise get our 127.0.0.1 requests — a remote proxy cannot reach them and the turn
+ * hangs. What the user already listed is kept. Nothing to add → `{}`.
+ */
+export function loopbackNoProxy(env: Record<string, string | undefined>): Record<string, string> {
+  const local = ['ANTHROPIC_BASE_URL', 'OPENAI_BASE_URL', 'GROK_BASE_URL', 'GEMINI_BASE_URL'].some((k) => {
+    try { return LOOPBACK.includes(new URL(env[k] ?? '').hostname.replace(/^\[|\]$/g, '')); } catch { return false; }
+  });
+  if (!local) return {};
+  const have = [env.NO_PROXY, env.no_proxy].flatMap((v) => (v ?? '').split(',')).map((s) => s.trim()).filter(Boolean);
+  const all = [...new Set([...have, ...LOOPBACK])].join(',');
+  return { NO_PROXY: all, no_proxy: all };
+}
+
 /**
  * Map a provider profile to the env the runtime reads. Only what the CLI needs — the profile itself never
  * touches ~/.claude/settings.json, so the claude.ai login keeps working for sessions without a provider.
@@ -64,10 +82,16 @@ export function providerEnv(p: SessionProvider, agent: 'claude' | 'codex' | 'acp
       env.OPENAI_BASE_URL = p.shim ? shimBaseUrl(p.shim, opts.sessionKey, opts.sessionId) : openaiBase(p.baseUrl);
       env.OPENAI_API_KEY = p.shim ? p.shim.key : p.apiKey;
       env.CLAUDE_CODE_USE_OPENAI = '1';
-      if (p.defaultModel) env.OPENAI_MODEL = p.defaultModel;
-      if (m.haiku) { env.OPENAI_DEFAULT_HAIKU_MODEL = m.haiku; env.OPENAI_SMALL_FAST_MODEL = m.haiku; }
-      if (m.sonnet) env.OPENAI_DEFAULT_SONNET_MODEL = m.sonnet;
-      if (m.opus) env.OPENAI_DEFAULT_OPUS_MODEL = m.opus;
+      // NOT OPENAI_MODEL: ccb's OpenAI client returns it for every request (dist `ge()`), so the session's model
+      // (the menu pick, else the profile default — SessionRunner) and the family map below would be ignored.
+      // Without it a model id passes through unchanged and a haiku / sonnet / opus one (ccb's own background
+      // calls) is mapped here; every family gets a value, otherwise ccb falls back to its claude → gpt-4o / o3 table.
+      {
+        const fallback = p.defaultModel || p.models?.[0];
+        const fam = { HAIKU: m.haiku || fallback, SONNET: m.sonnet || fallback, OPUS: m.opus || fallback };
+        for (const [k, v] of Object.entries(fam)) if (v) env[`OPENAI_DEFAULT_${k}_MODEL`] = v;
+        if (fam.HAIKU) env.OPENAI_SMALL_FAST_MODEL = fam.HAIKU;
+      }
       break;
     // ccb (claude-code-best) picks its API provider in `getAPIProvider()`: settings `modelType`, then
     // CLAUDE_CODE_USE_BEDROCK / VERTEX / FOUNDRY / OPENAI / GEMINI / GROK, else first-party Anthropic. Without the

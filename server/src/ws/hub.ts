@@ -395,9 +395,14 @@ export class Hub {
       case 'shell.open':
         openPath(req.path, req.app);
         return null;
-      case 'session.interrupt':
-        await this.runner(req.sessionId).interrupt();
-        return null;
+      case 'session.interrupt': {
+        // no process (closed, crashed, the server restarted): nothing is running here — the client says so and ends
+        // the turn it still shows, instead of a Stop button that errors in silence
+        const r = s.pool.get(req.sessionId);
+        if (!r) return { running: false };
+        await r.interrupt();
+        return { running: true };
+      }
       case 'session.close':
         await s.pool.close(req.sessionId);
         return null;

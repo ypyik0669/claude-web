@@ -1,25 +1,34 @@
 import { describe, expect, it, vi } from 'vitest';
 
-/** Every query() the runner starts, with a handle to end its message stream. */
-const queries: { options: any; end: () => void; fail: (e: Error) => void }[] = [];
+/** Every query() the runner starts: end / fail its message stream, push a message into it, react to interrupt(). */
+interface FakeQuery { options: any; end: () => void; fail: (e: Error) => void; push: (m: any) => void; onInterrupt?: () => void }
+const queries: FakeQuery[] = [];
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: ({ options }: { options: any }) => {
-    let finish: (r: IteratorResult<any>) => void = () => {};
-    let reject: (e: Error) => void = () => {};
-    const done = new Promise<IteratorResult<any>>((res, rej) => { finish = res; reject = rej; });
+    const buf: any[] = [];
+    let ended = false;
+    let err: Error | null = null;
+    let waiter: { res: (r: IteratorResult<any>) => void; rej: (e: Error) => void } | null = null;
+    const settle = () => {
+      if (!waiter) return;
+      const w = waiter;
+      if (err) { waiter = null; w.rej(err); } else if (buf.length) { waiter = null; w.res({ value: buf.shift(), done: false }); } else if (ended) { waiter = null; w.res({ value: undefined, done: true }); }
+    };
+    const next = () => new Promise<IteratorResult<any>>((res, rej) => { waiter = { res, rej }; settle(); });
+    const h: FakeQuery = { options, end: () => { ended = true; settle(); }, fail: (e) => { err = e; settle(); }, push: (m) => { buf.push(m); settle(); } };
     const q: any = {
       initializationResult: async () => ({}),
       supportedCommands: async () => [],
       supportedModels: async () => [],
       supportedAgents: async () => [],
       mcpServerStatus: async () => [],
-      [Symbol.asyncIterator]: () => ({ next: () => done }),
-      return: async () => { finish({ value: undefined, done: true }); return { value: undefined, done: true }; },
+      [Symbol.asyncIterator]: () => ({ next }),
+      return: async () => { h.end(); return { value: undefined, done: true }; },
       setModel: async () => { throw new Error('unsupported'); },
-      interrupt: async () => {},
+      interrupt: async () => { h.onInterrupt?.(); },
     };
-    queries.push({ options, end: () => finish({ value: undefined, done: true }), fail: (e) => reject(e) });
+    queries.push(h);
     return q;
   },
 }));
@@ -143,5 +152,84 @@ describe('SessionRunner prompt-cache routing (cache shim)', () => {
     await tick();
     expect(baseOf(0)).toBe('http://127.0.0.1:9/gateway/~p/ds/k/parent-2/v1');
     await r.close();
+  });
+});
+
+describe('SessionRunner Stop (interrupt)', () => {
+  const result = (extra: any = {}) => ({ type: 'result', subtype: 'error_during_execution', is_error: true, result: '', session_id: 's', uuid: 'r1', ...extra });
+  const collect = (r: any) => { const msgs: any[] = []; r.on('message', (m: any) => msgs.push(m)); return msgs; };
+
+  it('a CLI that ends the turn itself is not touched', async () => {
+    queries.length = 0;
+    const r = new SessionRunner({ sessionId: 'stop-1', cwd: '/x' } as any);
+    await tick();
+    const msgs = collect(r);
+    r.send('hi');
+    queries[0].onInterrupt = () => queries[0].push(result());
+    await r.interrupt();
+    expect(msgs.filter((m) => m.type === 'result')).toHaveLength(1);
+    expect(msgs[0].terminal_reason).toBeUndefined(); // the CLI's own result, not ours
+    expect(queries).toHaveLength(1); // no respawn
+    expect(r.state).toBe('idle');
+    await r.close();
+  });
+
+  it('a CLI that does not unwind: the turn is ended here and the process restarted on the same conversation', async () => {
+    queries.length = 0;
+    const grace = SessionRunner.STOP_GRACE_MS;
+    SessionRunner.STOP_GRACE_MS = 40;
+    try {
+      const r = new SessionRunner({ sessionId: 'stop-2', cwd: '/x' } as any);
+      await tick();
+      const msgs = collect(r);
+      r.send('hi'); // the fake never answers, and interrupt() changes nothing
+      await r.interrupt();
+      const results = msgs.filter((m) => m.type === 'result');
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({ is_error: true, subtype: 'error_during_execution', terminal_reason: 'aborted_forced', session_id: 'stop-2' });
+      expect(String(results[0].result)).toMatch(/强制/);
+      expect(queries).toHaveLength(2);
+      expect(queries[1].options.resume).toBe('stop-2');
+      // the old process's late output no longer reaches the conversation
+      queries[0].push(result({ uuid: 'late' }));
+      await tick();
+      expect(msgs.some((m) => m.uuid === 'late')).toBe(false);
+      await r.close();
+    } finally {
+      SessionRunner.STOP_GRACE_MS = grace;
+    }
+  });
+
+  it('Stop on an idle conversation neither waits nor restarts anything', async () => {
+    queries.length = 0;
+    const r = new SessionRunner({ sessionId: 'stop-3', cwd: '/x' } as any);
+    await tick();
+    const t = Date.now();
+    await r.interrupt();
+    expect(Date.now() - t).toBeLessThan(500);
+    expect(queries).toHaveLength(1);
+    await r.close();
+  });
+});
+
+describe('SessionRunner env: a local endpoint bypasses the system proxy', () => {
+  it('NO_PROXY / no_proxy get the loopback hosts when the base URL is local, keeping what the user had', async () => {
+    queries.length = 0;
+    const prov = { id: 'ds', name: 'DS', type: 'openai', baseUrl: 'https://relay/v1', apiKey: 'sk', createdAt: 0, shim: { base: 'http://127.0.0.1:9/gateway/~p/ds', key: 'cws-x' } } as any;
+    process.env.HTTPS_PROXY = 'http://proxy.invalid:7890';
+    process.env.NO_PROXY = 'corp.example';
+    try {
+      const r = new SessionRunner({ cwd: '/x' } as any, prov);
+      await tick();
+      const env = queries[0].options.env;
+      for (const k of ['NO_PROXY', 'no_proxy']) {
+        const hosts = String(env[k]).split(',');
+        expect(hosts).toEqual(expect.arrayContaining(['corp.example', '127.0.0.1', 'localhost', '::1']));
+      }
+      await r.close();
+    } finally {
+      delete process.env.HTTPS_PROXY;
+      delete process.env.NO_PROXY;
+    }
   });
 });

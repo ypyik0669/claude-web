@@ -13,6 +13,7 @@ export type Theme = (typeof THEMES)[number];
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { applyMessage, applyTranscript, createConversation, prependTranscript, walkTools, type Conversation } from '@/model/conversation';
+import { staleStopResult, stopFoundNothing } from './stop';
 import { isImportedSessionId } from '@/util';
 import { forkParams, resumeParams, resumeView, type ResumeChoice } from './reopen';
 import { parseLibraryId, parsePeerId } from '@shared';
@@ -806,7 +807,15 @@ export const useStore = create<State>((set, get) => ({
 
   async interrupt(sessionId) {
     set((s) => bump(s, sessionId, (x) => { x.queue = []; }));
-    await ws.request({ kind: 'session.interrupt', sessionId });
+    let reply: unknown;
+    try {
+      reply = await ws.request({ kind: 'session.interrupt', sessionId });
+    } catch (e: any) {
+      get().toast(`停止失败：${e?.message ?? e}`);
+      return;
+    }
+    // nothing runs on the server for it any more: end the turn this window still shows (store/stop.ts)
+    if (stopFoundNothing(reply)) set((s) => bump(s, sessionId, (x) => { applyMessage(x.conv, staleStopResult(sessionId)); x.state = 'idle'; }));
   },
 
   async respondPermission(requestId, response) {

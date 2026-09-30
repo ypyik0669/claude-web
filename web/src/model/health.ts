@@ -67,6 +67,8 @@ export interface StallInput {
   now: number;
   lastEventAt?: number;
   lastModelCallAt?: number;
+  /** when this turn started (the user message landed); unset for turns this window did not start */
+  turnStartedAt?: number;
   runningTool?: { name: string; since: number; elapsed?: number } | null;
   compacting?: boolean;
 }
@@ -77,6 +79,8 @@ export type Stall =
   | { kind: 'tool'; tool: string; seconds: number }
   | { kind: 'quiet'; seconds: number }
   | { kind: 'no_model'; minutes: number; seconds: number }
+  /** the turn has not had a single model reply yet (an upstream that never answers) */
+  | { kind: 'no_reply'; minutes: number; seconds: number }
   | null;
 
 export const STALL_QUIET_MS = 15_000;
@@ -88,9 +92,17 @@ export function deriveStall(i: StallInput): Stall {
   if (i.state !== 'running') return null;
   if (i.compacting) return { kind: 'compacting' };
   const now = i.now;
-  const sinceModel = i.lastModelCallAt ? now - i.lastModelCallAt : 0;
-  if (i.lastModelCallAt && sinceModel >= STALL_NO_MODEL_MS && !i.runningTool) {
-    return { kind: 'no_model', minutes: Math.floor(sinceModel / 60_000), seconds: Math.floor(sinceModel / 1000) };
+  // a model call from an earlier turn says nothing about this one (lastModelCallAt is conversation-wide)
+  const modelAt = i.lastModelCallAt && (!i.turnStartedAt || i.lastModelCallAt >= i.turnStartedAt) ? i.lastModelCallAt : undefined;
+  if (!i.runningTool) {
+    if (modelAt && now - modelAt >= STALL_NO_MODEL_MS) {
+      const since = now - modelAt;
+      return { kind: 'no_model', minutes: Math.floor(since / 60_000), seconds: Math.floor(since / 1000) };
+    }
+    if (!modelAt && i.turnStartedAt && now - i.turnStartedAt >= STALL_NO_MODEL_MS) {
+      const since = now - i.turnStartedAt;
+      return { kind: 'no_reply', minutes: Math.floor(since / 60_000), seconds: Math.floor(since / 1000) };
+    }
   }
   if (i.runningTool) {
     const s = i.runningTool.elapsed ?? Math.floor((now - i.runningTool.since) / 1000);

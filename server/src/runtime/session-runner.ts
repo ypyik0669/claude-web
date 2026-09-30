@@ -2,7 +2,7 @@ import { query, type Query, type SDKMessage, type SDKUserMessage, type Options, 
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { resolveEngine, spawnClaude } from '../claude-exe.js';
-import { providerEnv, type SessionProvider } from '../providers/service.js';
+import { loopbackNoProxy, providerEnv, type SessionProvider } from '../providers/service.js';
 import { ccbAccountEnv, ccbModel, effortLevels, modelLabel, modelsFor, supportsUltracode } from '../models/catalog.js';
 import { claudeMcpServer } from '../memory/launcher.js';
 import { markUnknownCost } from '../usage/pricing.js';
@@ -166,9 +166,13 @@ export class SessionRunner extends EventEmitter {
     const base = { ...process.env };
     // …including a stray CLAUDE_CODE_USE_* switch, which would route the profile to another ccb provider
     if (this.provider) for (const k of Object.keys(base)) if (/^((ANTHROPIC|OPENAI|GEMINI|GROK|XAI)_|CLAUDE_CODE_USE_)/.test(k) && !(k in fenv)) delete base[k];
+    const env = Object.keys(fenv).length ? { ...base, ...fenv } : undefined;
+    // the cache shim / model gateway live on 127.0.0.1: an HTTP(S)_PROXY from the user's environment must not carry
+    // those requests off to a proxy (a remote one cannot reach our loopback, and the turn just hangs)
+    if (env) Object.assign(env, loopbackNoProxy(env));
     const options: Options = {
       cwd: this.cwd,
-      env: Object.keys(fenv).length ? { ...base, ...fenv } : undefined,
+      env,
       model: engine.kind === 'ccb' ? ccbModel(this.model) : this.model,
       // `ultra` is Codex-only; the Claude SDK's ladder tops out at max
       effort: this.effort === 'ultra' ? 'max' : this.effort,
@@ -236,6 +240,8 @@ export class SessionRunner extends EventEmitter {
         }
       }
       for await (const m of q) {
+        // replaced (respawn / a forced stop): a late message from the old process is not this conversation's any more
+        if (this.q !== q) break;
         this.lastActivity = Date.now();
         this.ingest(m);
       }
@@ -346,6 +352,14 @@ export class SessionRunner extends EventEmitter {
     this.input.push(msg);
   }
 
+  /** After Stop the CLI gets this long to end the turn itself; then its process is killed and the turn ended here. */
+  static STOP_GRACE_MS = 8_000;
+
+  /**
+   * Stop always stops. The CLI normally answers the interrupt with a `result`; one stuck on a request that never
+   * returns (or anywhere it no longer reads its control channel) would leave the conversation "thinking" for good —
+   * after the grace period the turn is ended here and the process restarted on the same conversation.
+   */
   async interrupt() {
     // deny any pending permission first so the turn can unwind
     for (const [id, p] of this.pending) {
@@ -353,7 +367,41 @@ export class SessionRunner extends EventEmitter {
       p.resolve({ behavior: 'deny', message: 'interrupted by user', interrupt: true });
       this.emit('permissionResolved', id);
     }
-    await this.q?.interrupt();
+    const q = this.q;
+    if (!q || !this.busy()) { await q?.interrupt().catch(() => {}); return; }
+    const grace = SessionRunner.STOP_GRACE_MS;
+    await Promise.race([q.interrupt().catch(() => {}), new Promise((r) => setTimeout(r, grace))]);
+    if (await this.settles(q, grace)) return;
+    await this.forceStop(q);
+  }
+
+  private busy() {
+    return this.state === 'running' || this.state === 'waiting';
+  }
+
+  /** Resolves true once the turn is over (a result put the state back to idle) or the process was replaced / closed. */
+  private settles(q: Query, ms: number): Promise<boolean> {
+    const over = () => this.closed || this.q !== q || !this.busy();
+    if (over()) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const done = (v: boolean) => { clearTimeout(t); this.off('state', onState); resolve(v); };
+      const onState = () => { if (over()) done(true); };
+      const t = setTimeout(() => done(over()), ms);
+      this.on('state', onState);
+    });
+  }
+
+  /** End the turn with a result of our own (the reducer, the ledger and the UI finish it like any other), then restart. */
+  private async forceStop(q: Query) {
+    if (this.closed || this.q !== q) return;
+    const reason = '已强制停止：运行内核没有响应中断，已结束它的进程并重新接上这个对话';
+    this.ingest({
+      type: 'result', subtype: 'error_during_execution', is_error: true, result: reason, errors: [reason], terminal_reason: 'aborted_forced',
+      duration_ms: 0, duration_api_ms: 0, num_turns: 0, total_cost_usd: 0,
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      modelUsage: {}, permission_denials: [], session_id: this.sessionId, uuid: randomUUID(),
+    } as unknown as SDKMessage);
+    await this.respawn();
   }
 
   async setPermissionMode(mode: PermissionMode) {

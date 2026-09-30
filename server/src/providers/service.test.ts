@@ -119,6 +119,19 @@ describe('providerEnv (gemini / grok through ccb)', () => {
     expect(env.GROK_MODEL).toBeUndefined();
     expect(providerEnv(p({ type: 'grok' })).GROK_BASE_URL).toBeUndefined();
   });
+  it('openai: no OPENAI_MODEL (ccb sends it for every request: the model menu and the family map would do nothing); families default to the default model', () => {
+    const env = providerEnv(p({ type: 'openai', baseUrl: 'https://relay.example', defaultModel: 'deepseek-v4.1-flash', modelMap: { haiku: 'glm-5.3-flash' } }));
+    expect(env.CLAUDE_CODE_USE_OPENAI).toBe('1');
+    expect(env.OPENAI_MODEL).toBeUndefined();
+    expect(env).toMatchObject({
+      OPENAI_DEFAULT_HAIKU_MODEL: 'glm-5.3-flash', OPENAI_SMALL_FAST_MODEL: 'glm-5.3-flash',
+      OPENAI_DEFAULT_SONNET_MODEL: 'deepseek-v4.1-flash', OPENAI_DEFAULT_OPUS_MODEL: 'deepseek-v4.1-flash',
+    });
+    // no default and no map: the first listed model rather than ccb's built-in claude → gpt-4o / o3 table
+    const bare = providerEnv(p({ type: 'openai', baseUrl: 'https://relay.example', models: ['qwen3.8-max', 'kimi-k3'] }));
+    expect(bare).toMatchObject({ OPENAI_DEFAULT_HAIKU_MODEL: 'qwen3.8-max', OPENAI_DEFAULT_SONNET_MODEL: 'qwen3.8-max', OPENAI_DEFAULT_OPUS_MODEL: 'qwen3.8-max' });
+    expect(bare.OPENAI_MODEL).toBeUndefined();
+  });
   it('only one ccb provider switch per type', () => {
     const flags = (t: Provider['type']) => Object.keys(providerEnv(p({ type: t, baseUrl: 'https://x' }))).filter((k) => /^CLAUDE_CODE_USE_/.test(k));
     expect(flags('openai')).toEqual(['CLAUDE_CODE_USE_OPENAI']);

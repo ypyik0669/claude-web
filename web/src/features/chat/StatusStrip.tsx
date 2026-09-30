@@ -34,7 +34,7 @@ export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onReca
   const rlActive = rl?.status === 'rejected' && (!rl.resetsAt || rl.resetsAt * (rl.resetsAt < 1e12 ? 1000 : 1) > Date.now());
   useTick(running || !!armed || rlActive);
   if (!o) return null;
-  const stall = deriveStall({ state: o.state, now: Date.now(), lastEventAt: o.conv.lastEventAt, lastModelCallAt: o.conv.lastModelCallAt, runningTool: o.conv.runningTool, compacting: o.conv.compacting });
+  const stall = deriveStall({ state: o.state, now: Date.now(), lastEventAt: o.conv.lastEventAt, lastModelCallAt: o.conv.lastModelCallAt, turnStartedAt: o.conv.turnStartedAt, runningTool: o.conv.runningTool, compacting: o.conv.compacting });
   const res = o.conv.lastResult;
   const showErr = !running && res?.isError && res.errorKind && o.conv.items[o.conv.items.length - 1]?.kind === 'result';
   const cu = o.contextUsage ?? o.conv.contextUsage;
@@ -42,7 +42,8 @@ export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onReca
   const cuWarn = cu && cu.percentage >= 95;
   // the ordinary running states (tool / quiet / compacting) are the run card's job now; what is left
   // here is only what the run card cannot say: it is stuck, it failed, it is throttled, it is queued
-  const alarm = stall?.kind === 'no_model' ? stall : null;
+  const alarm = stall?.kind === 'no_model' || stall?.kind === 'no_reply' ? stall : null;
+  const upstream = o.info?.providerName ? `「${o.info.providerName}」` : '';
   const nothing = !alarm && !showErr && !rlActive && !armed && !o.queue.length && !cuWarn;
   if (nothing) return null;
   const resetAt = rl?.resetsAt ? rl.resetsAt * (rl.resetsAt < 1e12 ? 1000 : 1) : undefined;
@@ -50,8 +51,10 @@ export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onReca
     <div className="status-strip">
       {alarm && (
         <span className="chip warn">
-          {alarm.minutes} 分钟没有模型调用了，可能卡住
-          <button className="link" onClick={() => st().interrupt(sessionId)}>中断</button>
+          {alarm.kind === 'no_reply'
+            ? `${alarm.minutes} 分钟还没收到模型的任何回复，供应商${upstream}可能没有响应`
+            : `${alarm.minutes} 分钟没有模型调用了，可能卡住`}
+          <button className="link" onClick={() => void st().interrupt(sessionId)}>中断</button>
         </span>
       )}
       {showErr && res && (
