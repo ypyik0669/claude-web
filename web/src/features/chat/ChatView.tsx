@@ -21,6 +21,7 @@ import { blockRemoteOpen } from '@/features/remote-guard';
 import { openChangedFile } from '@/features/workbench/right-panel';
 import { waitingToolIds } from './permission-dock';
 import { TurnTouchCtx, WaitingCtx } from './turn-context';
+import { externalLive } from '@/store/external';
 
 const EDIT_STEPS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const NO_PENDING: PermissionRequestEvent[] = [];
@@ -465,7 +466,8 @@ export function ChatView() {
     stick.current = b;
     if (b !== atBottom) setAtBottom(b);
   };
-  const live = active.state === 'running' || active.state === 'waiting';
+  // a turn a CLI / Codex is writing from outside counts as running too (its last tool keeps its spinner)
+  const live = active.state === 'running' || active.state === 'waiting' || externalLive(active);
   const sid = active.sessionId;
   /** prepend the next older page and keep the message the user was looking at in place */
   const loadOlder = async () => {

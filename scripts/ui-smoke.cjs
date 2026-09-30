@@ -2107,6 +2107,8 @@ function driver() {
             await sleep(400);
             // final review §9 #5: the discovery hint waits while the newcomer checklist is still on the home page…
             const hintEarly = await exists('.sidebar .sb-hint');
+            // …while the home page shows it under the checklist (user report: a newcomer who came for Codex found no way to it)
+            const homeEarly = await js(`(() => ({ home: !!document.querySelector('.welcome'), hint: !!document.querySelector('.welcome .home-hint .msg'), ids: document.querySelectorAll('.welcome .home-hint [data-id]').length }))()`);
             // …but not forever (re-review M-7): 3 days after the list first showed (`since`) it comes anyway
             await js(`(() => { window.__cwSmokeChecklist = { done: ['project'], since: Date.now() - 86400e3 }; window.__cwSmokeFakesApply(); })()`);
             await sleep(300);
@@ -2120,6 +2122,8 @@ function driver() {
             // (this machine may have its own detected tools too — e.g. OpenCode's data folder — so the words follow the list)
             const hintNow = await js(`(() => { const m = document.querySelector('.sidebar .sb-hint .msg'); const names = window.__store.getState().librarySources.filter((x) => x.kind !== 'claude' && x.detected && !x.joined && !x.dismissed).map((x) => x.name); return { msg: m?.textContent ?? null, title: m?.title ?? '', names }; })()`);
             const hintWant = hintNow.names.length === 1 ? `把 ${hintNow.names[0]} 里的对话也列在这里？` : `把 ${hintNow.names[0]} 等工具里的对话也列在这里？`;
+            const homeLate = await exists('.welcome .home-hint');
+            check('library hint on the home page: there while the checklist holds the sidebar one back (no sidebar ids), gone once the sidebar has it', !homeEarly.home || (homeEarly.hint && homeEarly.ids === 0 && !homeLate), JSON.stringify({ homeEarly, homeLate }));
             check('library hint: not while the newcomer checklist is on; once it is closed, one plain question (把 Codex 里的对话也列在这里？ · 列出来 / 以后再说)', !hintEarly && hintNow.msg === hintWant && hintNow.title.includes('Codex') && await exists('.sidebar .sb-hint [data-id="library-join"]') && await exists('.sidebar .sb-hint [data-id="library-later"]'), JSON.stringify({ hintEarly, hintNow, hintWant }));
             // several agents' names wrap onto a second line instead of being cut off; the full text is the tooltip
             await js(`(() => { const names = { opencode: 'OpenCode', gemini: 'Gemini CLI', qwen: 'Qwen Code' }; const extra = Object.keys(names).map((k) => ({ kind: k, name: names[k], installed: true, detected: true, joined: false, dismissed: false, enabled: false })); const st = window.__store.getState(); window.__store.setState({ librarySources: [...st.librarySources.filter((x) => !names[x.kind]), ...extra] }); })()`);

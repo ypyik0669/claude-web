@@ -83,17 +83,24 @@ export function uniqueName(name: string, taken: string[]): string {
 
 export interface ProbeLike { ok: boolean; status?: number; error?: string; models?: string[]; chat?: { ok: boolean; model: string; error?: string } }
 
+/** A provider refusing this machine's region (user report: 403 "Access from this region requires trusted account access"). */
+export const REGION_RE = /\bregion\b|country|territory|location is not supported|unsupported_country|地区|国家/i;
+/** Where the proxy is set (catalog: the `proxy` part of the 供应商 page). */
+export const PROXY_SETTING_PATH = '设置 → 供应商 → 网络代理';
+export const REGION_BLOCKED = `这个服务不接受你所在地区的直连请求。开着梯子的话，看 ${PROXY_SETTING_PATH} 是否显示在用它；没开就先开梯子再试。`;
+
 /** A failed check in words a first-time user can act on (the raw error stays in the tooltip). */
 export function explainProbe(r: ProbeLike, stage: 'list' | 'chat'): string {
   const raw = `${r.chat && !r.chat.ok ? r.chat.error ?? '' : ''} ${r.error ?? ''}`.trim();
   const st = r.status ?? Number(/HTTP (\d{3})/.exec(raw)?.[1] ?? 0);
+  if (REGION_RE.test(raw)) return REGION_BLOCKED;
   if (st === 401 || st === 403 || /unauthori|invalid[_ ]?(api[_ ]?)?key|incorrect api key|无效的令牌|令牌|认证失败|api key/i.test(raw)) return 'API Key 不对，或者这个 Key 没有权限。检查是否复制完整（前后没有空格）。';
   if (st === 402 || /insufficient|quota|balance|余额|额度|欠费|billing/i.test(raw)) return '接通了，但账户余额不足或额度用完了。充值后再试。';
   if (st === 429 || /rate limit|too many/i.test(raw)) return '接通了，但被限流了。稍等一会儿再试。';
   if (stage === 'list' && (st === 404 || st === 405)) return '地址不对：这个地址下没有模型列表。中转站的地址一般形如 https://example.com 或 https://example.com/v1。';
-  if (/超时|timeout|timed out|aborted/i.test(raw)) return '连接超时：检查地址，或者这台电脑访问它是否需要代理。';
+  if (/超时|timeout|timed out|aborted/i.test(raw)) return `连接超时：检查地址；这台电脑访问它要走梯子的话，看 ${PROXY_SETTING_PATH}。`;
   if (/SSL routines|wrong version number|packet length too long|EPROTO|certificate|self[- ]signed|CERT_/i.test(raw)) return '加密连接没建立起来：这个地址可能不是 https（试试把开头改成 http://），或者证书有问题。';
-  if (/fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|getaddrinfo|network|socket/i.test(raw)) return '连不上这个地址：检查网址，或者这台电脑访问它是否需要代理。';
+  if (/fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|getaddrinfo|network|socket/i.test(raw)) return `连不上这个地址：检查网址；这台电脑访问它要走梯子的话，看 ${PROXY_SETTING_PATH}。`;
   if (stage === 'list' && r.ok && !r.models?.length) return '接通了，但没有读到任何模型。检查 Key 所属的分组或权限。';
   if (stage === 'chat' && r.chat && !r.chat.ok && /model|模型/i.test(raw)) return `接通了，但模型 ${r.chat.model} 用不了：${raw.slice(0, 160)}`;
   return raw ? `没接通：${raw.slice(0, 200)}` : '没接通。';

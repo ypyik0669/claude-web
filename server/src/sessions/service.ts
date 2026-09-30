@@ -37,6 +37,12 @@ export function transcriptEvent(rel: string): boolean {
   return parts.length === 2 && (parts[1].endsWith('.jsonl') || path.extname(parts[1]) === '');
 }
 
+/** The conversation a change under ~/.claude/projects wrote to: `<project>/<id>.jsonl` → id (anything else: none). */
+export function transcriptIdOf(rel: string): string | null {
+  const parts = rel.split(/[\\/]/).filter(Boolean);
+  return parts.length === 2 && parts[1].endsWith('.jsonl') ? parts[1].slice(0, -'.jsonl'.length) : null;
+}
+
 export class SessionService extends EventEmitter {
   private timer: NodeJS.Timeout | null = null;
   private watcher: TreeWatcher;
@@ -51,15 +57,26 @@ export class SessionService extends EventEmitter {
     super();
     // one recursive handle for the whole tree (see watchTree) — only a project dir, a transcript or a session dir
     // directly in it counts (not sub-agent logs, tool results, memory)
-    this.watcher = watchTree(projectsDir, (rel) => { if (rel === null || transcriptEvent(rel)) this.bump(); });
+    this.watcher = watchTree(projectsDir, (rel) => {
+      if (rel !== null && !transcriptEvent(rel)) return;
+      const id = rel === null ? null : transcriptIdOf(rel);
+      if (id) this.written.add(id);
+      this.bump();
+    });
   }
+
+  /** Conversations written since the last 'changed' (a CLI in a terminal, ourselves): 'transcripts' names them. */
+  private written = new Set<string>();
 
   private bump() {
     this.cache = null;
     this.cacheLimit = 0;
     this.gen++;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.emit('changed'), 800);
+    this.timer = setTimeout(() => {
+      this.emit('changed');
+      if (this.written.size) { const ids = [...this.written]; this.written.clear(); this.emit('transcripts', ids); }
+    }, 800);
   }
 
   async list(limit = 500): Promise<SessionSummary[]> {

@@ -311,6 +311,24 @@ describe('LibraryService', () => {
     expect(watched()).toEqual(['claude']);
   });
 
+  it('Codex writing a rollout (its CLI / desktop app) names that thread in one batched transcripts event (user report: an open view froze)', async () => {
+    const codexDir = path.join(dir, 'codex-sessions');
+    const day = path.join(codexDir, '2026', '09', '30');
+    fs.mkdirSync(day, { recursive: true });
+    await lib.join('codex', true);
+    lib.start({ codex: [codexDir] });
+    const got: string[][] = [];
+    lib.on('transcripts', (ids: string[]) => got.push(ids));
+    await new Promise((r) => setTimeout(r, 300)); // the recursive handle is up
+    const file = path.join(day, 'rollout-2026-09-30T10-00-00-01A0F133-D017-7E81-829D-FA7A91FD3158.jsonl');
+    fs.writeFileSync(file, '{"type":"session_meta"}\n');
+    fs.appendFileSync(file, '{"type":"response_item"}\n');
+    fs.writeFileSync(path.join(codexDir, 'notes.txt'), 'not a rollout');
+    const ids = await new Promise<string[] | null>((r) => { const end = Date.now() + 5000; const t = setInterval(() => { if (got.length || Date.now() > end) { clearInterval(t); r(got[0] ?? null); } }, 50); });
+    expect(ids).toEqual(['codex-01a0f133-d017-7e81-829d-fa7a91fd3158']);
+    expect(got.length).toBe(1);
+  });
+
   it('a parent cycle folds nothing: every member stays visible', async () => {
     codex.items = [
       item('codex-a', 'codex', 200, { parentId: 'codex-b' }),

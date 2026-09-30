@@ -47,6 +47,7 @@ import { handleAgentConfig, isAgentConfigRequest } from '../agent-config/handler
 import type { FederationService } from '../federation/service.js';
 import type { IncomingMessage } from 'node:http';
 import type { OrchestraService } from '../orchestra/service.js';
+import { parseProxySetting, proxy } from '../net/proxy.js';
 import { handleOrchestra, isOrchestraRequest } from '../orchestra/handlers.js';
 
 export interface Services {
@@ -90,6 +91,9 @@ export interface Services {
   gateway: GatewayService;
 }
 
+/** Requests after which something connects out: they wait for a fresh look at the proxy. */
+const GOES_OUT = new Set<string>(['session.open', 'session.send', 'session.setProvider', 'session.switchAgent', 'providers.probe', 'providers.refreshModels', 'terminal.open', 'im.set', 'im.test', 'mcp.registry']);
+
 export class Hub {
   private clients = new Set<WebSocket>();
   /** Connections from another machine's FederationService (`?peer=<serverId>`): never sent what we got from our own peers. */
@@ -124,6 +128,8 @@ export class Hub {
     s.goals.on('changed', () => this.broadcast({ kind: 'goals.changed' }));
     s.memory.on('changed', () => this.broadcast({ kind: 'memory.changed' }));
     s.library.on('changed', () => this.broadcast({ kind: 'library.changed' }));
+    s.library.on('transcripts', (ids: string[]) => this.broadcast({ kind: 'transcripts.changed', sessionIds: ids }));
+    s.sessions.on('transcripts', (ids: string[]) => this.broadcast({ kind: 'transcripts.changed', sessionIds: ids }));
     s.library.on('discovered', (kinds) => this.broadcast({ kind: 'library.discovered', kinds }));
     s.gateway.on('changed', () => this.broadcast({ kind: 'gateway.changed' }));
 
@@ -227,6 +233,9 @@ export class Hub {
 
   private async handle(req: ClientRequest, ws: WebSocket): Promise<unknown> {
     const s = this.s;
+    // about to go out (a CLI starts, a provider is asked): the system proxy may have changed since the last look —
+    // resolves at once when that look is under a minute old (net/proxy.ts)
+    if (GOES_OUT.has(req.kind)) await proxy.refresh();
     if (isAgentConfigRequest(req)) return handleAgentConfig(s.agentConfig, req);
     if (isOrchestraRequest(req)) return handleOrchestra(s.orchestra, req);
     switch (req.kind) {
@@ -360,7 +369,14 @@ export class Hub {
         return s.providers.refreshModels(req.ids);
       case 'settings.get':
         return s.meta.settings();
+      case 'network.proxy':
+        return proxy.refresh(!!req.refresh);
       case 'settings.set':
+        if (req.key === 'network.proxy') {
+          const p = parseProxySetting(req.value); // throws a sentence on SOCKS / junk
+          await s.meta.setSetting(req.key, p.mode === 'custom' ? p.url : p.mode === 'off' ? 'off' : undefined);
+          return proxy.refresh(true);
+        }
         await s.meta.setSetting(req.key, req.value);
         // takes effect on the next session start — running children keep the servers they were given
         if (req.key === 'memory.mcp') setMemoryMcpEnabled(req.value !== false);

@@ -14,6 +14,7 @@ import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { applyMessage, applyTranscript, createConversation, prependTranscript, walkTools, type Conversation } from '@/model/conversation';
 import { staleStopResult, stopFoundNothing } from './stop';
+import { EXTERNAL_LIVE_MS, externalLive, nextReadAt, readsFromOutside, shownSessions } from './external';
 import { isImportedSessionId } from '@/util';
 import { forkParams, resumeParams, resumeView, type ResumeChoice } from './reopen';
 import { parseLibraryId, parsePeerId } from '@shared';
@@ -55,6 +56,10 @@ export interface OpenSession {
    * the send resumes it with `resumeParams()`, and the fresh OpenSession of the resumed one drops it
    */
   resume?: ResumeChoice;
+  /** not running here and its record changed from outside (a CLI in a terminal, Codex): when (store/external.ts) */
+  externalAt?: number;
+  /** …while it was not on screen: re-read when it is shown */
+  staleHistory?: boolean;
 }
 
 export type LibraryOp = 'rename' | 'archive' | 'delete' | 'fork';
@@ -136,6 +141,10 @@ interface State {
   loadHistory(sessionId: string, opts?: { focus?: boolean; mode?: 'replace' | 'tab'; cwd?: string }): Promise<void>;
   /** prepend the next older page of an imported session's history; true while there is still more */
   loadOlder(sessionId: string): Promise<boolean>;
+  /** `transcripts.changed`: open conversations that are not running here re-read what the CLI / Codex wrote */
+  externalChanged(sessionIds: string[]): void;
+  /** re-read one such conversation now (throttled callers: externalChanged; the chat tile when a stale one is shown) */
+  refreshExternal(sessionId: string): Promise<void>;
   // unified session library
   librarySources: SourceStatus[];
   sourceFilter: AgentKind | 'all';
@@ -176,6 +185,12 @@ interface State {
 }
 
 const olderInflight = new Map<string, Promise<boolean>>();
+// outside writes (store/external.ts): pending re-read, in flight, asked again while in flight, last read, settle timer
+const extTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const extInflight = new Set<string>();
+const extAgain = new Set<string>();
+const extLast = new Map<string, { start: number; ms: number }>();
+const extSettle = new Map<string, ReturnType<typeof setTimeout>>();
 const draftTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const autoTimers = new Map<string, ReturnType<typeof setTimeout>>();
 export const autoContinueAt = new Map<string, number>(); // sessionId -> epoch ms (for the status strip countdown)
@@ -477,6 +492,9 @@ export const useStore = create<State>((set, get) => ({
         case 'sessions.changed':
           void get().refreshSessions();
           break;
+        case 'transcripts.changed':
+          get().externalChanged(e.sessionIds);
+          break;
         case 'library.changed': {
           // an open session that was listed before and is gone afterwards was deleted (here or elsewhere)
           const before = new Set(get().sessions.map((s) => s.sessionId));
@@ -704,6 +722,68 @@ export const useStore = create<State>((set, get) => ({
       if (meta?.live && meta.live !== 'closed' && meta.live !== 'error') await get().openSession({ sessionId, cwd: meta.cwd }, 'none');
     } catch (e: any) {
       set((s) => bump(s, sessionId, (o) => { o.loading = false; o.loadError = e?.message ?? String(e); }));
+    }
+  },
+
+  externalChanged(sessionIds) {
+    const shown = shownSessions(get().layout);
+    const now = Date.now();
+    const schedule = (id: string) => {
+      if (extTimers.has(id)) return;
+      const last = extLast.get(id);
+      const wait = last ? Math.max(0, nextReadAt(last.start, last.ms) - Date.now()) : 0;
+      extTimers.set(id, setTimeout(() => { extTimers.delete(id); void get().refreshExternal(id); }, wait));
+    };
+    for (const id of sessionIds) {
+      const o = get().open[id];
+      if (!o || !readsFromOutside(o)) continue;
+      const on = shown.has(id);
+      set((s) => bump(s, id, (x) => { x.externalAt = now; if (!on) x.staleHistory = true; }));
+      if (on) schedule(id);
+      // once it has been quiet for the live window: one more read, so a finished turn stops looking like it runs
+      const t = extSettle.get(id);
+      if (t) clearTimeout(t);
+      extSettle.set(id, setTimeout(() => {
+        extSettle.delete(id);
+        const cur = get().open[id];
+        if (!cur || !readsFromOutside(cur)) return;
+        if (shownSessions(get().layout).has(id)) schedule(id);
+        else set((s) => bump(s, id, (x) => { x.staleHistory = true; }));
+      }, EXTERNAL_LIVE_MS + 500));
+    }
+  },
+
+  async refreshExternal(sessionId) {
+    const o = get().open[sessionId];
+    if (!o || !readsFromOutside(o) || o.loading) return;
+    if (extInflight.has(sessionId)) { extAgain.add(sessionId); return; }
+    extInflight.add(sessionId);
+    const start = Date.now();
+    try {
+      let msgs: any[];
+      let cursor: string | undefined;
+      if (isImportedSessionId(sessionId)) {
+        const r = await ws.request<{ messages: any[]; next?: string }>({ kind: 'library.read', sessionId });
+        msgs = r?.messages ?? [];
+        cursor = r?.next || undefined;
+      } else msgs = await ws.request<any[]>({ kind: 'transcript.load', sessionId });
+      // started here meanwhile: its own events own the view now
+      const cur = get().open[sessionId];
+      if (!cur || !readsFromOutside(cur) || cur.loading) return;
+      set((s) => bump(s, sessionId, (x) => {
+        const conv = createConversation();
+        applyTranscript(conv, msgs, { live: externalLive(x) });
+        x.conv = conv;
+        x.historyCursor = cursor;
+        x.staleHistory = false;
+        x.loadError = undefined;
+      }));
+    } catch {
+      /* keep what is shown: the next write tries again (a thread that is gone leaves the list on its own) */
+    } finally {
+      extInflight.delete(sessionId);
+      extLast.set(sessionId, { start, ms: Date.now() - start });
+      if (extAgain.delete(sessionId)) get().externalChanged([sessionId]);
     }
   },
 

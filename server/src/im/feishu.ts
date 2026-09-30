@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { chunk, type AdapterState, type ImAdapter, type OutboundOptions } from './types.js';
+import { proxyAgentFor } from '../net/proxy.js';
 
 /** Feishu / Lark bot over the SDK's long connection (no public URL). Buttons are interactive cards → card.action.trigger. */
 export class FeishuAdapter extends EventEmitter implements ImAdapter {
@@ -22,6 +23,11 @@ export class FeishuAdapter extends EventEmitter implements ImAdapter {
     try {
       const Lark: any = await import('@larksuiteoapi/node-sdk');
       const domain = this.lark ? Lark.Domain.Lark : Lark.Domain.Feishu;
+      // the SDK's axios would pick HTTP(S)_PROXY up by itself and send https to the proxy as a plain absolute URL, which
+      // most ladders refuse: no env proxy for it, our CONNECT tunnel instead (net/proxy.ts; undefined = direct)
+      const agent = proxyAgentFor(this.lark ? 'https://open.larksuite.com' : 'https://open.feishu.cn'); // Lark.Domain.* are enum numbers
+      const ax = Lark.defaultHttpInstance;
+      if (ax?.defaults) { ax.defaults.proxy = false; ax.defaults.httpsAgent = agent; }
       this.client = new Lark.Client({ appId: this.appId, appSecret: this.appSecret, appType: Lark.AppType.SelfBuild, domain, loggerLevel: Lark.LoggerLevel.error });
       const dispatcher = new Lark.EventDispatcher({}).register({
         'im.message.receive_v1': async (data: any) => {
@@ -41,7 +47,7 @@ export class FeishuAdapter extends EventEmitter implements ImAdapter {
           return { toast: { type: 'success', content: '已收到' } };
         },
       });
-      this.wsClient = new Lark.WSClient({ appId: this.appId, appSecret: this.appSecret, domain, loggerLevel: Lark.LoggerLevel.error });
+      this.wsClient = new Lark.WSClient({ appId: this.appId, appSecret: this.appSecret, domain, agent, loggerLevel: Lark.LoggerLevel.error });
       await this.wsClient.start({ eventDispatcher: dispatcher });
       try { const info = await this.client.request({ method: 'GET', url: '/open-apis/bot/v3/info' }); this.botName = info?.bot?.app_name ?? this.botName; } catch { /* optional */ }
       this.setState('running');

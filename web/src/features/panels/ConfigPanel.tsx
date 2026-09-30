@@ -7,6 +7,7 @@ import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
 import { EnvEditor } from '@/features/settings/EnvEditor';
 import { connectModel } from '@/features/providers/ConnectModel';
+import { REGION_BLOCKED, REGION_RE } from '@/features/providers/quick';
 
 type Tab = 'overview' | 'providers' | 'plugins' | 'mcp' | 'skills' | 'agents' | 'hooks' | 'settings';
 const TABS: { id: Tab; l: string }[] = [
@@ -328,7 +329,10 @@ export function ProviderProfiles() {
     setBusy(true);
     try {
       const models = probe?.ok && probe.models.length ? probe.models : editing.models;
-      const saved = await ws.request<Provider>({ kind: 'providers.upsert', provider: { ...editing, models } });
+      // only Anthropic-format endpoints can be pinned to the official binary (it has no other format): a pin left from
+      // before a format change goes (user report: it greyed out every GPT model)
+      const pinOk = editing.type === 'anthropic' || editing.type === 'gateway';
+      const saved = await ws.request<Provider>({ kind: 'providers.upsert', provider: { ...editing, models, ...(pinOk ? {} : { runtime: null as any }) } });
       // the first provider of someone without a Claude login is what they will send with: the default for new
       // conversations (a default already set, or a logged-in account, stays)
       const st = useStore.getState();
@@ -409,6 +413,7 @@ export function ProviderProfiles() {
               {probe.chat && (probe.chat.ok
                 ? ` · 对话测试通过（${probe.chat.model} · ${probe.chat.runtime === 'claude' ? '官方二进制' : probe.chat.runtime === 'api' ? '直连接口' : 'ccb'} · ${(probe.chat.ms / 1000).toFixed(1)}s）`
                 : ` · 对话测试失败：${probe.chat.error}`)}
+              {REGION_RE.test(`${probe.ok ? '' : probe.error ?? ''} ${probe.chat?.ok ? '' : probe.chat?.error ?? ''}`) && <div style={{ color: 'var(--fg-1)' }}>{REGION_BLOCKED}</div>}
               {probe.chat?.switched && <div style={{ color: 'var(--yellow)' }}>这个端点拒绝 ccb 的请求，已自动改为官方 Claude Code 二进制（ccb 专属功能在该供应商的对话里不可用）</div>}
               {probe.responses && (probe.responses.ok
                 ? <div style={{ color: 'var(--green)' }}>/v1/responses 通过（{probe.responses.model}，gpt-* 会经垫片走这条路）</div>
@@ -419,10 +424,12 @@ export function ProviderProfiles() {
           {modelPick('haiku →', 'haiku')}
           {modelPick('sonnet →', 'sonnet')}
           {modelPick('opus →', 'opus')}
-          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, color: 'var(--fg-2)', margin: '6px 0' }}>
-            <input type="checkbox" checked={editing.runtime === 'claude'} onChange={(e) => setEditing({ ...editing, runtime: e.target.checked ? 'claude' : (null as any) })} />
-            这个端点只认官方 Claude Code 二进制（被拒时再勾）
-          </label>
+          {(editing.type === 'anthropic' || editing.type === 'gateway') && (
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, color: 'var(--fg-2)', margin: '6px 0' }}>
+              <input type="checkbox" checked={editing.runtime === 'claude'} onChange={(e) => setEditing({ ...editing, runtime: e.target.checked ? 'claude' : (null as any) })} />
+              这个端点只认官方 Claude Code 二进制（被拒时再勾）
+            </label>
+          )}
           <CacheOptions editing={editing} set={setEditing} />
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn sm primary" disabled={busy} onClick={save}>保存</button>

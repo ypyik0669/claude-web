@@ -114,6 +114,38 @@ describe('CodexSource (mock app-server)', () => {
     }
   });
 
+  it('a thread Codex has no history for ("thread not loaded"): a clear error, not the raw one; a deleted file is not listed', async () => {
+    const src = new CodexSource(() => ({ ...launch(), env: { MOCK_CODEX_DELETED: '1' } }));
+    try {
+      // listed by Codex's index, but its file is gone (user report: deleted conversations were listed)
+      const all = (await src.list({ limit: 50 })).items.map((x) => x.sessionId);
+      expect(all).toContain(libraryId('codex', 'thr-a'));
+      expect(all).not.toContain(libraryId('codex', 'thr-x'));
+      // reading one anyway (a list from before, an id from elsewhere): what that means, in words
+      const err = await src.read('thr-x', { limit: 20 }).catch((e) => e);
+      expect(err).toMatchObject({ code: 'THREAD_GONE' });
+      expect(err.message).toMatch(/删除|还没保存第一条消息/);
+      expect(err.message).not.toMatch(/thread not loaded/);
+      await expect(src.read('never-existed', { limit: 20 })).rejects.toMatchObject({ code: 'THREAD_GONE' });
+    } finally {
+      await src.close();
+    }
+  });
+
+  it('an app-server without the paged read (codex 0.130: "requires experimentalApi"): the whole thread from thread/read', async () => {
+    const src = new CodexSource(() => ({ ...launch(), env: { MOCK_CODEX_OLD: '1' } }));
+    try {
+      const r = await src.read('thr-b', { limit: 20 });
+      expect(r.next).toBeUndefined();
+      const text = JSON.stringify(r.messages);
+      expect(text).toContain('reply 249');
+      expect(text).toContain('reply 0');
+      expect(((await src.exportAll('thr-b')) as unknown[]).length).toBe(250); // the backup before a delete still works
+    } finally {
+      await src.close();
+    }
+  });
+
   it('installed but the process crashes: list() rejects', async () => {
     const src = new CodexSource(() => ({ command: process.execPath, args: ['-e', 'process.exit(3)'], env: {} }));
     try {

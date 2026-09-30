@@ -8,6 +8,7 @@ import { CJK_FONTS, DENSITIES, FONT_SIZES } from './ui-settings';
 import { ThemeSwatches } from './ThemePicker';
 import { SkillsBackup, SkillsSection } from './SkillsSection';
 import { ToolsSection } from './ToolsSection';
+import { ProxySection } from './ProxySection';
 import { AgentsSection } from './AgentsSection';
 import { LibrarySection } from './LibrarySection';
 import { HostsSection, RemoteSection } from './RemoteSection';
@@ -67,6 +68,7 @@ const BODIES: Record<BodyId, () => ReactNode> = {
   engine: () => <Overview part="engine" />,
   models: () => <ModelsSection />,
   providers: () => <ProviderProfiles />,
+  proxy: () => <ProxySection />,
   gateway: () => <GatewaySection />,
   mcp: () => <Mcp />,
   mcpCatalog: () => <McpCatalog />,

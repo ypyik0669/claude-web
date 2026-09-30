@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
+import { proxyAgentFor } from '../net/proxy.js';
 import { chunk, jsonFetch, type AdapterState, type ImAdapter, type OutboundOptions } from './types.js';
 
 const API = 'https://discord.com/api/v10';
@@ -45,7 +46,7 @@ export class DiscordAdapter extends EventEmitter implements ImAdapter {
   }
 
   private connect(url: string) {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, { agent: proxyAgentFor(url) });
     this.ws = ws;
     ws.on('message', (raw) => {
       let p: any;

@@ -47,6 +47,7 @@ import { AgentConfigService } from './agent-config/service.js';
 import { FederationService } from './federation/service.js';
 import { swapAgent } from './session/swap.js';
 import { createOrchestra } from './orchestra/handlers.js';
+import { proxy } from './net/proxy.js';
 
 const FILE_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.html': 'text/html; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.json': 'application/json' };
 
@@ -135,6 +136,10 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
 
   const meta = new MetaStore();
   await meta.load();
+  // the user's proxy (a ladder's system proxy, HTTP(S)_PROXY, or 设置 → 供应商 → 网络代理) for this process's own
+  // requests and every CLI it starts; requests that go out wait for this first look (net/proxy.ts)
+  proxy.configure(() => meta.settings()['network.proxy']);
+  void proxy.refresh().catch(() => {});
   // eslint-disable-next-line prefer-const
   let remote: RemoteService;
   let fedHealth: ((nonce: string | null, authed: boolean) => object) | null = null;

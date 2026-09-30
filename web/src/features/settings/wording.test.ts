@@ -25,6 +25,7 @@ const BODY_SOURCE: Record<BodyId, { comp: string; file: string; props?: string }
   engine: { comp: 'Overview', file: CONFIG, props: 'part="engine"' },
   models: { comp: 'ModelsSection', file: S('ModelsSection.tsx') },
   providers: { comp: 'ProviderProfiles', file: CONFIG },
+  proxy: { comp: 'ProxySection', file: S('ProxySection.tsx') },
   gateway: { comp: 'GatewaySection', file: S('GatewaySection.tsx') },
   mcp: { comp: 'Mcp', file: CONFIG },
   mcpCatalog: { comp: 'McpCatalog', file: S('McpCatalog.tsx') },

@@ -12,6 +12,7 @@ import { DingTalkAdapter } from './dingtalk.js';
 import { FeishuAdapter } from './feishu.js';
 import { WecomAdapter } from './wecom.js';
 import type { ImAdapter } from './types.js';
+import { proxy } from '../net/proxy.js';
 
 export const IM_KINDS: { kind: ImKind; name: string; icon: string; inbound: boolean; fields: { key: string; label: string; secret?: boolean; hint?: string }[]; help: string }[] = [
   { kind: 'telegram', name: 'Telegram', icon: '✈️', inbound: true, fields: [{ key: 'botToken', label: 'Bot Token', secret: true, hint: '@BotFather 创建机器人后得到' }], help: '和 @BotFather 聊 /newbot 拿 token；私聊机器人或把它拉进群。长轮询，不需要公网。' },
@@ -54,6 +55,7 @@ export class ImService extends EventEmitter {
 
   async start(g: ImGatewayConfig) {
     await this.stop(g.id);
+    await proxy.refresh(); // Telegram / Discord / Slack sit behind the ladder in mainland China (net/proxy.ts)
     const a = await this.make(g);
     a.on('state', () => this.emit('changed'));
     this.adapters.set(g.id, a);

@@ -201,6 +201,15 @@ const AGENT_LABEL: Partial<Record<string, string>> = { claude: 'Claude Code', co
  * run on: only ccb speaks OpenAI / Gemini / Grok; the official Claude Code binary (forced per profile, or the
  * silent fallback when ccb is missing) only talks Anthropic — to a relay or through the local gateway.
  */
+/**
+ * The runtime a Claude session on a provider asks for. OpenAI / Gemini / Grok formats exist only in ccb, so a pin to
+ * the official binary on one of those is ignored — it is left over from an Anthropic-format past (the probe pins a
+ * relay like super-nb to the official binary; switching that provider's format to OpenAI kept the pin, and every
+ * model of it then showed greyed out: user report, 「GPT 选不了模型」).
+ */
+export const preferredRuntime = (p: { type: ProviderType; runtime?: RuntimeKind }): RuntimeKind | undefined =>
+  p.type === 'openai' || p.type === 'gemini' || p.type === 'grok' ? 'ccb' : p.runtime;
+
 export function profileFitError(agent: AgentKind, type: ProviderType, runtime?: RuntimeKind): string | null {
   const types = providerTypesFor(agent);
   if (!types.includes(type)) return `${AGENT_LABEL[agent] ?? agent} 不能用 ${type} 类型的供应商（只支持 ${types.join(' / ')}）`;

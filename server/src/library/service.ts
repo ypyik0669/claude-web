@@ -32,6 +32,11 @@ const READ_PAGE = 50;
 const TRASH_KEEP_MS = 30 * 86_400_000;
 const UNSUPPORTED = '该来源不支持此操作';
 
+/** The thread a Codex rollout file belongs to: `…/rollout-<date>T<time>-<thread uuid>.jsonl` (name per codex-rs). */
+export function codexRolloutId(rel: string): string | null {
+  return /rollout-[^\\/]*?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(rel)?.[1]?.toLowerCase() ?? null;
+}
+
 /** The slice of AgentRegistry the library needs (cheap defs + the 60 s-cached version probe). */
 export interface LibraryAgents {
   defs(): { kind: AgentKind; name: string; protocol: string }[];
@@ -363,7 +368,17 @@ export class LibraryService extends EventEmitter {
     const r = await this.resolve(id);
     if (r.head && !r.head.imported) return { messages: await this.transcripts.load(id) };
     if (!r.source || !r.nativeId) throw new Error('这个对话的来源没有加入对话库');
-    return r.source.read(r.nativeId, { cursor, limit });
+    try {
+      return await r.source.read(r.nativeId, { cursor, limit });
+    } catch (e: any) {
+      // the source has nothing stored for it (deleted there, or never saved): it leaves the list too
+      if (e?.code === 'THREAD_GONE') {
+        const kind = r.source.kind;
+        this.invalidate(kind);
+        void this.list().then(() => this.emit('changed'), () => { /* the next list shows it */ });
+      }
+      throw e;
+    }
   }
 
   /**
@@ -728,12 +743,30 @@ export class LibraryService extends EventEmitter {
     const dirs = (this.watchDirs[kind] ?? []).filter((d) => existsSync(d));
     if (!dirs.length) return;
     // one recursive handle per tree (watchTree): chokidar's watch per file was ~18 s of blocking at startup
-    const ws = dirs.map((d) => watchTree(d, () => {
+    const ws = dirs.map((d) => watchTree(d, (rel) => {
       // Claude's list comes from SessionService (its own watcher keeps it fresh); others revalidate
       if (kind !== 'claude') this.invalidate(kind, { soft: true });
       this.scheduleIndex();
+      // a Codex thread written by Codex itself (CLI / desktop): an open view of it re-reads (user report: it froze)
+      const id = rel && kind === 'codex' ? codexRolloutId(rel) : null;
+      if (id) this.noteWritten(libraryId('codex', id));
     }));
     this.watchers.set(kind, { close: () => { for (const w of ws) w.close(); } });
+  }
+
+  private written = new Set<string>();
+  private writtenTimer: NodeJS.Timeout | null = null;
+  /** Batched like the list's own events: one 'transcripts' per quiet 800 ms, naming every thread written. */
+  private noteWritten(id: string) {
+    this.written.add(id);
+    if (this.writtenTimer) clearTimeout(this.writtenTimer);
+    this.writtenTimer = setTimeout(() => {
+      this.writtenTimer = null;
+      const ids = [...this.written];
+      this.written.clear();
+      if (ids.length) this.emit('transcripts', ids);
+    }, 800);
+    this.writtenTimer.unref?.();
   }
 
   private unwatch(kind: AgentKind) {

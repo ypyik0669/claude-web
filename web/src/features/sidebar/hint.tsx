@@ -8,11 +8,13 @@ import { hintText } from './newcomer';
 
 /**
  * 「把 Codex 等工具里的对话也列在这里？」 as one quiet line above the account row (it used to be a card over the list),
- * shown only once the newcomer checklist is finished or closed (`hintReady`, Sidebar). 列出来 joins (one source
+ * shown only once the newcomer checklist is finished or closed (`hintReady`, Sidebar) — until then the home page shows
+ * it, under the checklist (`home`; user report: someone who came for their Codex conversations found no way to them).
+ * 列出来 joins (one source
  * directly; several → 选择… which), × is 以后再说. Joining is opt-in; ignoring it changes nothing; settings → 对话库
  * manages the sources later.
  */
-export function DiscoveryHint({ pending }: { pending: SourceStatus[] }) {
+export function DiscoveryHint({ pending, home }: { pending: SourceStatus[]; home?: boolean }) {
   const toast = useStore((s) => s.toast);
   const [busy, setBusy] = useState<string | null>(null);
   const [pick, setPick] = useState(false);
@@ -25,10 +27,11 @@ export function DiscoveryHint({ pending }: { pending: SourceStatus[] }) {
     setBusy('later');
     try { for (const p of pending) apply(await ws.request<SourceStatus[]>({ kind: 'library.dismiss', kind_: p.kind })); } catch (e: any) { toast(e.message); } finally { setBusy(null); }
   };
-  const id = (x: HintId) => x;
+  // the home page's copy has no ids: the sidebar entry table (entries.ts) is about the sidebar
+  const id = (x: HintId) => (home ? undefined : x);
   const t = hintText(pending.map((p) => p.name));
   return (
-    <div className="sb-hint" role="status">
+    <div className={home ? 'sb-hint home-hint' : 'sb-hint'} role="status">
       <div className="line">
         <Icon name="info" size={13} />
         <span className="msg" title={t.title}>{t.text}</span>

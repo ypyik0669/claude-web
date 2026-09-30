@@ -4,7 +4,7 @@ import type { MetaStore } from '../meta/store.js';
 import { resolveEngine, runClaudeCli } from '../claude-exe.js';
 import type { SecretService } from '../secrets/service.js';
 import { CODEX_KEY_ENV, codexGatewayArgs, codexProviderArgs, geminiApiKeyEnv } from '../gateway/agents.js';
-import { claudeFamilyMap, isChatModel, pickChatModel, profileFitError } from '../models/catalog.js';
+import { claudeFamilyMap, isChatModel, pickChatModel, preferredRuntime, profileFitError } from '../models/catalog.js';
 import { wantsResponses } from '../gateway/shim.js';
 
 /** Mask an API key for the wire: keep prefix + last 4 chars. */
@@ -438,7 +438,7 @@ export class ProviderService {
     if (!id || id === CLAUDE_PROVIDER_ID) return null;
     const p = this.meta.provider(id);
     if (!p) return `供应商不存在：${id}`;
-    return profileFitError(agent, p.type, agent === 'claude' && p.type !== 'gateway' ? resolveEngine(p.runtime).kind : undefined);
+    return profileFitError(agent, p.type, agent === 'claude' && p.type !== 'gateway' ? resolveEngine(preferredRuntime(p)).kind : undefined);
   }
   async upsert(p: Partial<Provider> & { id?: string }) {
     return publicProvider(await this.meta.upsertProvider(p));

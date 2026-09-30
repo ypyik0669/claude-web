@@ -160,12 +160,18 @@ describe('unavailable profiles (engine / gateway)', () => {
     expect(m.sections.find((s) => s.id === 'snbchr')!.unavailable).toBeUndefined();
     expect(m.sections.find((s) => s.id === 'gw')!.unavailable).toBeUndefined();
   });
-  it('a profile forced to the official binary is disabled for its non-Anthropic type even on ccb', () => {
-    const provs = [...PROVIDERS, prov('forced', { type: 'openai', runtime: 'claude', models: ['x'] }), prov('forcedA', { type: 'anthropic', runtime: 'claude', models: ['y'] })];
+  it('a pin to the official binary on an OpenAI-format profile is ignored: it runs on ccb (user report: every GPT model greyed out)', () => {
+    // how it happens: the probe pins an Anthropic-format relay (super-nb) to the official binary, then its format is
+    // changed to OpenAI for the GPT models — the pin stayed and nothing of it could be picked
+    const provs = [...PROVIDERS, prov('forced', { type: 'openai', runtime: 'claude', models: ['gpt-5.5'] }), prov('forcedA', { type: 'anthropic', runtime: 'claude', models: ['y'] })];
     const m = buildModelMenu({ agent: 'claude', providers: provs, gatewayGroups: GROUPS, settings: {}, engine: ccb });
-    expect(m.sections.find((s) => s.id === 'forced')!.unavailable).toMatch(/官方/);
+    expect(m.sections.find((s) => s.id === 'forced')!.unavailable).toBeUndefined();
+    expect(m.sections.find((s) => s.id === 'forced')!.items.every((i) => !i.unavailable)).toBe(true);
     expect(m.sections.find((s) => s.id === 'forcedA')!.unavailable).toBeUndefined();
-    expect(m.sections.find((s) => s.id === 'gkey')!.unavailable).toBeUndefined();
+    // the official binary as the engine with ccb installed as the fallback: still ccb for it
+    expect(buildModelMenu({ agent: 'claude', providers: provs, settings: {}, engine: { runtime: 'claude', fallback: { runtime: 'ccb' } } }).sections.find((s) => s.id === 'forced')!.unavailable).toBeUndefined();
+    // no ccb at all: then it really cannot run, and says why
+    expect(buildModelMenu({ agent: 'claude', providers: provs, settings: {}, engine: official }).sections.find((s) => s.id === 'forced')!.unavailable).toMatch(/官方/);
   });
   it('asking for ccb helps only when ccb is installed', () => {
     const provs = [prov('wantccb', { type: 'openai', runtime: 'ccb', models: ['x'] })];

@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
+import { proxyAgentFor } from '../net/proxy.js';
 import { chunk, jsonFetch, type AdapterState, type ImAdapter, type OutboundOptions } from './types.js';
 
 /** Slack app in Socket Mode (app-level token xapp- for the socket, bot token xoxb- for posting). */
@@ -43,7 +44,7 @@ export class SlackAdapter extends EventEmitter implements ImAdapter {
   }
 
   private connect(url: string) {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, { agent: proxyAgentFor(url) });
     this.ws = ws;
     ws.on('message', (raw) => {
       let m: any;

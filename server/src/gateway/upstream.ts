@@ -5,6 +5,7 @@ import http from 'node:http';
 import https from 'node:https';
 import zlib from 'node:zlib';
 import type { Readable } from 'node:stream';
+import { proxyAgentFor } from '../net/proxy.js';
 
 export interface UpstreamResponse {
   status: number;
@@ -30,7 +31,9 @@ export function sendUpstream(url: string, opts: { method: string; headers: Recor
     if (!mod) { reject(new UpstreamError(`不支持的协议：${u.protocol}`)); return; }
     const headers = { ...opts.headers };
     if (opts.body) headers['content-length'] = String(opts.body.length);
-    const req = mod.request(u, { method: opts.method, headers, agent: u.protocol === 'https:' ? agents.https : agents.http });
+    // through the user's proxy when there is one (net/proxy.ts): a CONNECT tunnel, so the request bytes stay the client's
+    const agent = proxyAgentFor(u) ?? (u.protocol === 'https:' ? agents.https : agents.http);
+    const req = mod.request(u, { method: opts.method, headers, agent });
     let settled = false;
     const fail = (e: Error) => { if (settled) return; settled = true; clearTimeout(timer); req.destroy(); reject(e); };
     const timer = setTimeout(() => fail(new UpstreamError(`上游 ${Math.round(opts.headerTimeoutMs / 1000)}s 内没有响应`, true)), opts.headerTimeoutMs);

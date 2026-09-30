@@ -24,7 +24,7 @@ export type EntryId =
 
 /** One part of a page: a component with its own requests (a list, a form, a status block). */
 export type BodyId =
-  | 'account' | 'engine' | 'models' | 'providers' | 'gateway'
+  | 'account' | 'engine' | 'models' | 'providers' | 'proxy' | 'gateway'
   | 'mcp' | 'mcpCatalog' | 'mcpJson' | 'plugins' | 'skills' | 'skillsBackup' | 'agents' | 'subagents' | 'memory'
   | 'remote' | 'peers' | 'hosts' | 'im' | 'library' | 'secrets'
   | 'hooks' | 'env' | 'tools' | 'diagnostics' | 'update' | 'raw';
@@ -68,6 +68,7 @@ export const BODY_INFO: Record<BodyId, { l: string; keywords: string }> = {
   engine: { l: '运行内核', keywords: 'engine ccb claude-code-best 官方 二进制 版本 更新 doctor 配置目录 引擎 插件数' },
   models: { l: '模型列表', keywords: 'model 模型 启用 隐藏 收藏 星标 opus sonnet haiku effort 智能程度 刷新 按档案' },
   providers: { l: '供应商列表', keywords: 'provider api key base url 中转 openai gemini grok anthropic 缓存 cache 默认 档案 测试连接' },
+  proxy: { l: '网络代理', keywords: 'proxy 代理 梯子 vpn clash v2ray http_proxy https_proxy 系统代理 pac 地区 region 403 连不上 超时' },
   gateway: { l: '网关与分组', keywords: 'gateway 网关 故障转移 failover 转换 多账号 额度 轮询 round robin 成员' },
   mcp: { l: '已配置的 MCP', keywords: 'mcp server 当前会话 已配置 移除 连接状态' },
   mcpCatalog: { l: 'MCP 目录', keywords: 'mcp 目录 catalog registry 注册表 健康检查 health 安装' },
@@ -98,7 +99,7 @@ const GENERAL: EntryMeta[] = [
   { id: 'ui.showThinking', block: '对话显示', label: '显示思考过程', hint: '展开模型回答之前的推理内容。关掉更清爽。', keywords: 'thinking reasoning 思考' },
   { id: 'ui.diffMode', block: '对话显示', label: '改动的显示方式', hint: '审阅改动时 diff 的默认样式。', keywords: 'diff split unified 并排 内联 默认 diff 视图 上下对照 左右并排' },
   { id: 'ui.inlineDiffs', block: '对话显示', label: INLINE_DIFFS_LABEL, hint: '每一步改了什么直接在对话里展开。关着时（默认）点那一步，或回合末尾的「改动了 N 个文件」查看。', keywords: 'diff inline expand edit 展开 改动 大 diff 内联 默认展开' },
-  { id: 'ui.workbench', block: '工作台', label: TERMS.workbench, tag: '进阶', hint: '一直显示分屏标签条、分组栏和右侧面板图标栏。关着时它们只在用到时出现（Ctrl+D 分屏、开第二个标签页），快捷键和 Ctrl K 照常可用。', keywords: 'workbench 工作台 分屏 分组 标签 停靠 图标栏 single pane layout 单窗格模式 界面' },
+  { id: 'ui.workbench', block: '工作台', label: TERMS.workbench, tag: '进阶', hint: '一直显示分屏标签条、分组栏和右侧面板图标栏。关着时它们只在用到时出现（Ctrl+D 分屏、开第二个标签页），快捷键和 Ctrl K 照常可用。添加供应商、在模型菜单里换模型都不需要打开它。', keywords: 'workbench 工作台 分屏 分组 标签 停靠 图标栏 single pane layout 单窗格模式 界面' },
   { id: 'ui.autoSave', block: '工作台', label: '编辑器自动保存', hint: '停止输入 0.8 秒后写回磁盘；关掉后用 Ctrl+S 保存。', keywords: 'editor autosave monaco 保存' },
   { id: 'ui.notifications', block: '提醒与窗口', label: '桌面通知', hint: '对话需要你确认，或者任务完成时提醒你。', keywords: 'notification 通知' },
   { id: 'ui.closeToTray', block: '提醒与窗口', label: '关闭窗口时留在托盘', hint: '桌面版：关掉最后一个窗口不退出，任务在后台继续跑，从托盘图标回来。', keywords: 'tray minimize close 托盘 最小化' },
@@ -122,7 +123,7 @@ export const SETTINGS_SECTIONS: SectionMeta[] = [
   { id: 'account', l: '账号与登录', ic: 'user', group: 'common', desc: 'Claude 账号的登录状态。用第三方接口或中转站请去「供应商」。', keywords: '引擎与账号 engine account login 登录 账号', bodies: ['account'], more: ['engine'] },
   // 模型
   { id: 'models', l: '模型与智能程度', ic: 'artifact', group: 'model', desc: '模型菜单里出现哪些模型、哪些置顶，以及每个模型能调的智能程度。', keywords: 'model 模型 effort', bodies: ['models'] },
-  { id: 'providers', l: '供应商', ic: 'cloud', group: 'model', desc: '第三方接口或中转站：地址、密钥和默认模型。每个对话可以在模型菜单里换用。', keywords: '供应商 / 环境 provider 中转 api key', bodies: ['providers'] },
+  { id: 'providers', l: '供应商', ic: 'cloud', group: 'model', desc: '第三方接口或中转站：地址、密钥和默认模型。每个对话可以在模型菜单里换用。', keywords: '供应商 / 环境 provider 中转 api key', bodies: ['providers', 'proxy'] },
   { id: 'gateway', l: '模型网关', ic: 'gateway', group: 'model', desc: '把几个供应商组成一个本机入口：一个额度用完自动换下一个，不同协议之间自动转换。', keywords: 'gateway 网关', bodies: ['gateway'] },
   // 扩展
   {

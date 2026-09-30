@@ -8,6 +8,7 @@ import type { AgentTranscripts } from '../agents/transcript.js';
 import { AcpDriver } from '../agents/acp-driver.js';
 import { beforeAppServer } from '../gateway/agents.js';
 import { CodexDriver } from '../agents/codex-driver.js';
+import { proxy } from '../net/proxy.js';
 
 const IDLE_TTL_MS = 30 * 60 * 1000;
 
@@ -53,6 +54,7 @@ export class RunnerPool extends EventEmitter {
   }
 
   open(params: OpenSessionParams, resumeHistory: unknown[] | null = null): AgentDriver {
+    void proxy.refresh(); // IM / schedules / goals come straight here: a stale look is redone for the next start (net/proxy.ts)
     if (params.sessionId && !params.fork && !params.resumeAt) {
       const existing = this.runners.get(params.sessionId);
       if (existing && existing.state !== 'closed' && existing.state !== 'error') return existing;

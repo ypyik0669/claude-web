@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { resolveEngine, spawnClaude } from '../claude-exe.js';
 import { loopbackNoProxy, providerEnv, type SessionProvider } from '../providers/service.js';
-import { ccbAccountEnv, ccbModel, effortLevels, modelLabel, modelsFor, supportsUltracode } from '../models/catalog.js';
+import { ccbAccountEnv, ccbModel, effortLevels, modelLabel, modelsFor, preferredRuntime, supportsUltracode } from '../models/catalog.js';
 import { claudeMcpServer } from '../memory/launcher.js';
 import { markUnknownCost } from '../usage/pricing.js';
 import type { AttachmentRef, EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot } from '../protocol.js';
@@ -155,7 +155,7 @@ export class SessionRunner extends EventEmitter {
   }
 
   private start(extra: Partial<Options>) {
-    const engine = resolveEngine(this.provider?.runtime);
+    const engine = resolveEngine(this.provider ? preferredRuntime(this.provider) : undefined);
     const exe = engine.file;
     this.info.runtime = engine.kind;
     const fenv = this.featureEnv();

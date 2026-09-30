@@ -2358,3 +2358,8 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .auto-head { padding-left: 
   .qc-l { width: auto; }
   .qc-hint { margin-left: 0; }
 }
+
+/* the 对话库 discovery line on the home page (sidebar/hint.tsx `home`): under the checklist, the home column's type size */
+.sb-hint.home-hint { margin: 14px 0 0; padding: 8px 8px 8px 12px; font-size: 13px; }
+.sb-hint.home-hint .msg, .sb-hint.home-hint .link { font-size: 13px; }
+.sb-hint .msg { margin: 0; animation: none; } /* not a chat message: the global .msg margin made both copies ~28px taller */

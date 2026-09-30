@@ -1,5 +1,6 @@
 // Codex session source: lists/reads/manages `codex app-server` threads over its official JSON-RPC
 // API (no direct file access — constraints.md). See task-3-brief.md for the wire shapes.
+import { existsSync } from 'node:fs';
 import { codexTurnsToMessages } from '../agents/codex-items.js';
 import { JsonRpcProcess } from '../agents/jsonrpc.js';
 import type { AgentKind, SessionSummary, SourceCaps, SourceStatus } from '../protocol.js';
@@ -14,6 +15,19 @@ const SOURCE_KINDS = ['cli', 'vscode', 'exec', 'appServer', 'subAgent', 'subAgen
 const LIST_PARAMS = { sortKey: 'updated_at', sortDirection: 'desc', sourceKinds: SOURCE_KINDS, modelProviders: [] as string[] };
 
 const CAPS: SourceCaps = { resume: true, rename: true, archive: true, delete: true, fork: true };
+
+/**
+ * What the app-server answers for a thread it has no stored history for (codex 0.158, reproduced: an unknown id,
+ * and a thread started in another process that has not had its first user message yet): nothing to show. Also the
+ * paged read's own "before first user message" and "ephemeral threads" refusals.
+ */
+const GONE = /thread not loaded|before first user message|ephemeral thread/i;
+/** Older app-servers page nothing (0.130: `thread/turns/list requires experimentalApi capability`); thread/read has it all. */
+const NO_PAGING = /experimentalApi|not supported|unknown method|method not found/i;
+/** How long a thread that could not be read stays out of the list (a thread that was about to get its first message comes back). */
+export const GONE_HIDE_MS = 10 * 60_000;
+export const THREAD_GONE = 'THREAD_GONE';
+const goneError = () => Object.assign(new Error('Codex 里读不到这个对话：它可能已经在 Codex 里删除了，或者刚创建、还没保存第一条消息。'), { code: THREAD_GONE });
 
 // Thread.source (per `codex app-server generate-ts`) is `"cli"|"vscode"|"exec"|"appServer"|
 // {custom:string}|{subAgent:SubAgentSource}|"unknown"` — a bare string for the built-in surfaces,
@@ -93,8 +107,11 @@ export class CodexSource implements SessionSource {
   async list(o: { cursor?: string; limit: number; archived?: boolean }): Promise<{ items: SessionSummary[]; next?: string }> {
     try {
       const r = await this.rpc.request<any>('thread/list', { ...LIST_PARAMS, limit: o.limit, cursor: o.cursor, archived: o.archived ?? false }, 30_000);
-      // ThreadListResponse / ThreadTurnsListResponse (generate-ts) are `{ data, nextCursor, backwardsCursor }`
-      const items = (r?.data ?? []).map(mapThread);
+      // ThreadListResponse / ThreadTurnsListResponse (generate-ts) are `{ data, nextCursor, backwardsCursor }`.
+      // Left out: a thread whose file on disk is gone (deleted, while Codex's index still lists it — user report:
+      // deleted conversations were listed), and one that just failed to read as gone (see read)
+      const now = Date.now();
+      const items = (r?.data ?? []).filter((t: any) => !(typeof t.path === 'string' && t.path && !existsSync(t.path)) && !((this.gone.get(t.id) ?? 0) > now - GONE_HIDE_MS)).map(mapThread);
       return { items, next: r?.nextCursor ?? undefined };
     } catch (e: any) {
       // not installed / too old for thread/list (status() reports both as disabled): nothing to list
@@ -104,16 +121,36 @@ export class CodexSource implements SessionSource {
   }
 
   async read(nativeId: string, o: { cursor?: string; limit: number }): Promise<{ messages: any[]; next?: string }> {
+    const id = libraryId('codex', nativeId);
     try {
       const limit = o.limit ?? 20;
       const r = await this.rpc.request<any>('thread/turns/list', { threadId: nativeId, itemsView: 'full', sortDirection: 'desc', limit, cursor: o.cursor }, 30_000);
       const turns = (r?.data ?? []).slice().reverse();
-      const messages = codexTurnsToMessages(libraryId('codex', nativeId), turns);
-      return { messages, next: r?.nextCursor ?? undefined };
+      return { messages: codexTurnsToMessages(id, turns), next: r?.nextCursor ?? undefined };
     } catch (e: any) {
-      if (isNotInstalled(e) || e?.code === -32601) return { messages: [] };
+      if (isNotInstalled(e)) return { messages: [] };
+      const msg = String(e?.message ?? e);
+      // the first page: the whole thread in one read when the paged one is unavailable or says "not loaded"
+      if (!o.cursor && (e?.code === -32601 || NO_PAGING.test(msg) || GONE.test(msg))) {
+        try {
+          const r = await this.rpc.request<any>('thread/read', { threadId: nativeId, includeTurns: true }, 60_000);
+          return { messages: codexTurnsToMessages(id, r?.thread?.turns ?? []) };
+        } catch (e2: any) {
+          if (GONE.test(msg) || GONE.test(String(e2?.message ?? ''))) throw this.markGone(nativeId);
+          if (e?.code === -32601 && e2?.code === -32601) return { messages: [] }; // too old for either: nothing to show
+          throw e2;
+        }
+      }
+      if (GONE.test(msg)) throw this.markGone(nativeId);
       throw e;
     }
+  }
+
+  /** Threads that failed to read as gone, and when (list() leaves them out for GONE_HIDE_MS). */
+  private gone = new Map<string, number>();
+  private markGone(nativeId: string): Error {
+    this.gone.set(nativeId, Date.now());
+    return goneError();
   }
 
   async rename(nativeId: string, title: string): Promise<void> {
@@ -137,11 +174,17 @@ export class CodexSource implements SessionSource {
   async exportAll(nativeId: string): Promise<unknown> {
     const out: any[] = [];
     let cursor: string | undefined;
-    do {
-      const r = await this.rpc.request<any>('thread/turns/list', { threadId: nativeId, itemsView: 'full', sortDirection: 'desc', limit: 100, cursor }, 30_000);
-      out.push(...(r?.data ?? []));
-      cursor = r?.nextCursor ?? undefined;
-    } while (cursor);
+    try {
+      do {
+        const r = await this.rpc.request<any>('thread/turns/list', { threadId: nativeId, itemsView: 'full', sortDirection: 'desc', limit: 100, cursor }, 30_000);
+        out.push(...(r?.data ?? []));
+        cursor = r?.nextCursor ?? undefined;
+      } while (cursor);
+    } catch (e: any) {
+      // an app-server without the paged read: the whole thread (a failure here keeps the delete from happening)
+      if (cursor || !(e?.code === -32601 || NO_PAGING.test(String(e?.message ?? '')))) throw e;
+      return (await this.rpc.request<any>('thread/read', { threadId: nativeId, includeTurns: true }, 60_000))?.thread?.turns ?? [];
+    }
     return out.reverse();
   }
 

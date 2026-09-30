@@ -1,5 +1,5 @@
 import type { AgentKind, GatewayGroup, Provider, ProviderType, RuntimeKind } from '@shared';
-import { modelsFor, profileFitError, providerTypesFor } from '@catalog';
+import { modelsFor, preferredRuntime, profileFitError, providerTypesFor } from '@catalog';
 
 /**
  * The unified model picker (AiMaMi-style): every provider profile's models flattened into one list of
@@ -116,11 +116,13 @@ export const compatibleTypes = (agent: AgentKind): ProviderType[] => providerTyp
  * a profile forcing the official binary gets it; otherwise ccb when it is the engine, or when the profile asks
  * for it and it is installed (the fallback); else the official binary (ccb missing, or env-forced).
  */
-export function effectiveRuntime(p: Pick<Provider, 'runtime'>, engine: BuildMenuInput['engine']): RuntimeKind | undefined {
-  if (p.runtime === 'claude') return 'claude';
+export function effectiveRuntime(p: Pick<Provider, 'runtime'> & { type?: Provider['type'] }, engine: BuildMenuInput['engine']): RuntimeKind | undefined {
+  // OpenAI / Gemini / Grok ask for ccb whatever the profile was pinned to (@catalog preferredRuntime, as the server)
+  const want = p.type ? preferredRuntime({ type: p.type, runtime: p.runtime }) : p.runtime;
+  if (want === 'claude') return 'claude';
   if (!engine) return undefined;
   if (engine.runtime === 'ccb') return 'ccb';
-  return p.runtime === 'ccb' && engine.fallback?.runtime === 'ccb' ? 'ccb' : 'claude';
+  return want === 'ccb' && engine.fallback?.runtime === 'ccb' ? 'ccb' : 'claude';
 }
 
 /** Why profile `p` cannot be picked right now although the agent takes its type (null = it can). */

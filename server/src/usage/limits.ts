@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { claudeDir } from '../sessions/service.js';
+import { proxy } from '../net/proxy.js';
 
 export interface LimitWindow {
   label: string; // "5h", "7d", "7d Fable"
@@ -56,6 +57,7 @@ export class LimitsService {
       const cred = JSON.parse(await readCredentials());
       const o = cred.claudeAiOauth;
       if (!o?.accessToken) return { ok: false, capturedAt: now, windows: [], error: 'no OAuth token (API-key login?)' };
+      await proxy.refresh(); // api.anthropic.com: behind the ladder in mainland China
       const r = await fetch('https://api.anthropic.com/api/oauth/usage', {
         headers: { Authorization: `Bearer ${o.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'claude-web' },
         signal: AbortSignal.timeout(15_000),

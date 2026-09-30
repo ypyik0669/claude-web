@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import WebSocket from 'ws';
+import { proxyAgentFor } from '../net/proxy.js';
 import { chunk, jsonFetch, type AdapterState, type ImAdapter, type OutboundOptions } from './types.js';
 
 /** The open-platform API; `CW_DINGTALK_API` points it at a stand-in for end-to-end checks (server/ws-phase19.mjs). */
@@ -43,7 +44,7 @@ export class DingTalkAdapter extends EventEmitter implements ImAdapter {
   }
 
   private connect(url: string) {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, { agent: proxyAgentFor(url) });
     this.ws = ws;
     ws.on('open', () => { this.connected = true; this.setState('running'); });
     ws.on('message', (raw) => {

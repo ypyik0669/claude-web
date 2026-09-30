@@ -67,10 +67,13 @@ const threads = new Map([
   ['thr-c', { id: 'thr-c', name: null, preview: 'sub agent thread', cwd: 'C:/proj', createdAt: nowSec - 90, updatedAt: nowSec - 10, source: { subAgent: { thread_spawn: { parent_thread_id: 'thr-a', depth: 1, agent_path: null, agent_nickname: 'Mock', agent_role: 'worker' } } }, parentThreadId: null, gitInfo: {}, archived: false, turns: makeTurns('thr-c', 1) }],
   ['thr-d', { id: 'thr-d', name: null, preview: 'custom tool thread', cwd: 'C:/proj', createdAt: nowSec - 400, updatedAt: nowSec - 150, source: { custom: 'my-tool' }, parentThreadId: null, gitInfo: {}, archived: false, modelProvider: 'other-relay', turns: makeTurns('thr-d', 1) }],
 ]);
+// MOCK_CODEX_DELETED=1: one more thread whose file on disk is gone (Codex's index still lists it) — like the real
+// app-server, it reads as "thread not loaded"
+if (process.env.MOCK_CODEX_DELETED === '1') threads.set('thr-x', { id: 'thr-x', name: '删掉的对话', preview: 'deleted', cwd: 'C:/proj', createdAt: nowSec - 30, updatedAt: nowSec - 5, source: 'cli', parentThreadId: null, gitInfo: {}, archived: false, path: 'C:/definitely/not/here/rollout-thr-x.jsonl', gone: true, turns: [] });
 let forkSeq = 0;
 
 function threadSummary(t) {
-  return { id: t.id, name: t.name, preview: t.preview, cwd: t.cwd, createdAt: t.createdAt, updatedAt: t.updatedAt, source: t.source, parentThreadId: t.parentThreadId, gitInfo: t.gitInfo };
+  return { id: t.id, name: t.name, preview: t.preview, cwd: t.cwd, createdAt: t.createdAt, updatedAt: t.updatedAt, source: t.source, parentThreadId: t.parentThreadId, gitInfo: t.gitInfo, path: t.path ?? null };
 }
 
 /** `-c key=value` overrides from argv (values are TOML: JSON-quoted strings) → the cwgw provider, when selected. */
@@ -129,15 +132,24 @@ rl.on('line', async (line) => {
     }
     case 'thread/turns/list': {
       if (process.env.CW_FAIL_LIST === '1') { fail(-32000, 'mock thread/turns/list failure'); break; }
+      // MOCK_CODEX_OLD=1: an app-server from before the paged read (0.130 answers exactly this)
+      if (process.env.MOCK_CODEX_OLD === '1') { fail(-32600, 'thread/turns/list requires experimentalApi capability'); break; }
       const { threadId, limit = 20, cursor, sortDirection = 'desc' } = m.params ?? {};
       const t = threads.get(threadId);
-      if (!t) { fail(-32000, `unknown thread ${threadId}`); break; }
+      // the real app-server's answer for an id it has no stored history for (codex 0.158)
+      if (!t || t.gone) { fail(-32600, `thread not loaded: ${threadId}`); break; }
       let list = sortDirection === 'desc' ? t.turns.slice().reverse() : t.turns.slice();
       let start = 0;
       if (cursor) { const idx = list.findIndex((tn) => tn.id === cursor); start = idx >= 0 ? idx + 1 : 0; }
       const page = list.slice(start, start + limit);
       const nextCursor = start + limit < list.length ? page[page.length - 1].id : null;
       reply({ data: page, nextCursor, backwardsCursor: null });
+      break;
+    }
+    case 'thread/read': {
+      const t = threads.get(m.params?.threadId);
+      if (!t || t.gone) { fail(-32600, `thread not loaded: ${m.params?.threadId}`); break; }
+      reply({ thread: { ...threadSummary(t), ...(m.params?.includeTurns ? { turns: t.turns } : {}) } });
       break;
     }
     case 'thread/name/set': { const t = threads.get(m.params?.threadId); if (!t) { fail(-32000, 'not found'); break; } t.name = m.params.name; reply({}); break; }

@@ -57,6 +57,14 @@ describe('quick connect: a failed check in plain words', () => {
     expect(explainProbe({ ok: true, models: [] }, 'list')).toMatch(/没有读到任何模型/);
     expect(explainProbe({ ok: false, chat: { ok: false, model: 'x-1', error: 'HTTP 400 model x-1 does not exist' } }, 'chat')).toMatch(/模型 x-1 用不了/);
   });
+  it('a region block (user report: 403 while the ladder was on in rule mode) points at the proxy, not at the key', () => {
+    for (const error of ['Access from this region requires trusted account access', 'Country, region, or territory not supported', 'User location is not supported for the API use.']) {
+      const t = explainProbe({ ok: false, status: 403, error }, 'list');
+      expect(t, error).toMatch(/所在地区/);
+      expect(t).toContain('设置 → 供应商 → 网络代理');
+    }
+    expect(explainProbe({ ok: false, status: 403, error: 'forbidden: regional_endpoint_key mismatch' }, 'list')).toMatch(/API Key 不对/);
+  });
   it('every preset has a name; vendors have a fixed endpoint or their own type', () => {
     for (const p of PRESETS) {
       expect(p.name).toBeTruthy();

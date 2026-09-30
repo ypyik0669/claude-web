@@ -69,3 +69,28 @@ describe('SessionService.list() fetch limit', () => {
     expect(calls[1].limit).toBe(5_000);
   });
 });
+
+describe('which conversation a write under ~/.claude/projects belongs to', () => {
+  it('a transcript names its conversation; project dirs, sub-agent logs and memory do not', async () => {
+    const { transcriptIdOf } = await import('./service.js');
+    expect(transcriptIdOf('C--work-demo/11111111-1111-1111-1111-111111111111.jsonl')).toBe('11111111-1111-1111-1111-111111111111');
+    expect(transcriptIdOf('C--work-demo\\11111111-1111-1111-1111-111111111111.jsonl')).toBe('11111111-1111-1111-1111-111111111111');
+    expect(transcriptIdOf('C--work-demo')).toBeNull();
+    expect(transcriptIdOf('C--work-demo/1111/subagents/agent-x.jsonl')).toBeNull();
+    expect(transcriptIdOf('C--work-demo/memory/notes.md')).toBeNull();
+  });
+
+  it('a CLI writing a transcript: one "transcripts" event names it (an open view re-reads it)', async () => {
+    const svc = new SessionService();
+    try {
+      const got = new Promise<string[]>((res) => svc.once('transcripts', res));
+      await new Promise((r) => setTimeout(r, 300)); // the recursive watch is up
+      const sid = '22222222-2222-2222-2222-222222222222';
+      await fs.appendFile(path.join(process.env.CLAUDE_CONFIG_DIR!, 'projects', 'demo', `${sid}.jsonl`), '{"type":"user"}\n', 'utf8');
+      const ids = await Promise.race([got, new Promise<string[]>((_, rej) => setTimeout(() => rej(new Error('no transcripts event')), 5000))]);
+      expect(ids).toContain(sid);
+    } finally {
+      svc.close?.();
+    }
+  });
+});

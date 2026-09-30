@@ -193,6 +193,11 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
   useEffect(() => {
     if (sid && !has && visible) void loadHistory(sid, { focus: false });
   }, [sid, has, visible]);
+  // written from outside (a CLI in a terminal, Codex) while it was not on screen: catch up when it is shown
+  const stale = useStore((s) => (sid ? !!s.open[sid]?.staleHistory : false));
+  useEffect(() => {
+    if (sid && stale && visible) void useStore.getState().refreshExternal(sid);
+  }, [sid, stale, visible]);
   if (!sid) return <Welcome paneId={paneId} tileId={tile.id} />;
   if (!active) return <div className="empty">加载对话…</div>;
   return (

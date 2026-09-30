@@ -173,6 +173,17 @@ export function parseLibraryId(id: string): { kind: AgentKind; nativeId: string 
   }
   return { kind: 'claude', nativeId: id };
 }
+/** What `network.proxy` answers (net/proxy.ts). URLs have their password masked. */
+export interface ProxyStatus {
+  setting: 'system' | 'off' | 'custom';
+  custom?: string;
+  active: string | null;
+  source?: 'setting' | 'env' | 'system' | 'pac';
+  detected?: string | null;
+  note?: string;
+  checkedAt: number;
+}
+
 export interface AgentInfo {
   kind: AgentKind;
   name: string;
@@ -357,6 +368,8 @@ export type ClientRequest =
   | { kind: 'providers.refreshModels'; ids?: string[] } // pull /v1/models for these (default: every non-gateway) profiles
   | { kind: 'settings.get' }
   | { kind: 'settings.set'; key: string; value: unknown }
+  /** The outbound proxy in use (net/proxy.ts); `refresh` looks at the system again. Set it with settings.set 'network.proxy'. */
+  | { kind: 'network.proxy'; refresh?: boolean }
   | { kind: 'sessions.search'; query: string; limit?: number }
   | { kind: 'shell.open'; path: string; app?: 'explorer' | 'code' | 'cursor' }
   | { kind: 'config.overview' }
@@ -519,6 +532,8 @@ export type ServerEvent =
   | { kind: 'permission.request'; request: PermissionRequestEvent }
   | { kind: 'permission.resolved'; requestId: string }
   | { kind: 'sessions.changed' }
+  /** conversations whose record changed on disk (a CLI in a terminal, Codex): an open one that is not running here re-reads it */
+  | { kind: 'transcripts.changed'; sessionIds: string[] }
   | { kind: 'meta.changed' }
   | { kind: 'remote.changed' }
   | { kind: 'im.changed' }

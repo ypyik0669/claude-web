@@ -81,7 +81,11 @@ describe('fitError (session.setProvider guard)', () => {
       expect(svc.fitError(anth.id, 'codex')).toMatch(/Codex/);
       expect(svc.fitError(oai.id, 'codex')).toBeNull();
       expect(svc.fitError(anth.id, 'claude')).toBeNull();
-      expect(svc.fitError(oaiOfficial.id, 'claude')).toMatch(/官方/);
+      // a pin to the official binary means nothing on an OpenAI-format profile (user report: every model on it greyed
+      // out): ccb runs it; only when ccb is not there at all is it refused
+      const { resolveEngine } = await import('../claude-exe.js');
+      if (resolveEngine('ccb').kind === 'ccb') expect(svc.fitError(oaiOfficial.id, 'claude')).toBeNull();
+      else expect(svc.fitError(oaiOfficial.id, 'claude')).toMatch(/官方/);
       expect(svc.fitError(undefined, 'codex')).toBeNull();
       expect(svc.fitError('claude', 'claude')).toBeNull();
       expect(svc.fitError('nope', 'claude')).toMatch(/不存在/);

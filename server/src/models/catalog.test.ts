@@ -64,3 +64,16 @@ describe('picking a default model from an endpoint list', () => {
     expect(claudeFamilyMap(['deepseek-chat'])).toEqual({});
   });
 });
+
+describe('the runtime a Claude session on a provider asks for', () => {
+  it('OpenAI / Gemini / Grok: ccb, whatever the provider was pinned to (the official binary has no such format)', async () => {
+    const { preferredRuntime } = await import('./catalog.js');
+    for (const type of ['openai', 'gemini', 'grok'] as const) {
+      expect(preferredRuntime({ type, runtime: 'claude' })).toBe('ccb');
+      expect(preferredRuntime({ type })).toBe('ccb');
+    }
+    expect(preferredRuntime({ type: 'anthropic', runtime: 'claude' })).toBe('claude'); // super-nb: its pin stands
+    expect(preferredRuntime({ type: 'anthropic' })).toBeUndefined();
+    expect(preferredRuntime({ type: 'gateway', runtime: 'claude' })).toBe('claude');
+  });
+});
