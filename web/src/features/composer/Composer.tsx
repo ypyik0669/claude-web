@@ -636,9 +636,10 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   const pickWelcome = (it: ModelMenuItem) => {
     providerPicked.current = true;
     if (it.agent && it.agent !== wKind) {
-      // another agent's own login: switch agent (the old agent picker), its default effort
+      // another agent: switch agent (the old agent picker), its default effort — on the provider its section lists
+      // (settings → Agents 「新对话用」), else its own login
       setWAgent(it.agent);
-      setWProvider('claude');
+      setWProvider(it.providerId || 'claude');
       setWModel(it.model);
       setWEffort('');
       return true;
@@ -652,10 +653,15 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
 
   // the other agents as sources in the model menu (Claude Code included when another agent is current)
   const otherAgents = useMemo<AgentSource[]>(() => {
-    const list: AgentSource[] = agents.filter((a) => a.enabled !== false).map((a) => ({ kind: a.kind, name: a.name, installed: a.installed !== false, models: a.models, defaultModel: a.model || undefined }));
+    const list: AgentSource[] = agents.filter((a) => a.enabled !== false).map((a) => {
+      // Claude's is the new-conversation default (settings → 供应商), the others' their own 「新对话用」
+      const pid = a.kind === 'claude' ? (settings.defaultProviderId as string | undefined) : a.providerId;
+      const via = usableProfile(providers, pid, { agent: a.kind, engine, gatewayGroups: gatewayView.groups, gatewayEnabled: gatewayView.enabled });
+      return { kind: a.kind, name: a.name, installed: a.installed !== false, models: a.models, defaultModel: a.model || undefined, ...(via ? { provider: via } : {}) };
+    });
     if (!list.some((a) => a.kind === 'claude')) list.unshift({ kind: 'claude', name: 'Claude Code', installed: true });
     return list;
-  }, [agents]);
+  }, [agents, providers, engine, gatewayView.groups, gatewayView.enabled, settings.defaultProviderId]);
 
   const recentDirs = useMemo(() => [...new Set(sessions.map((s) => s.cwd).filter(Boolean))].slice(0, 8), [sessions]);
   const folderChips = useMemo(() => { const m = new Map<string, number>(); for (const f of files) { const top = f.rel.includes('/') ? f.rel.split('/')[0] : null; if (top) m.set(top, (m.get(top) ?? 0) + 1); } return m; }, [files]);

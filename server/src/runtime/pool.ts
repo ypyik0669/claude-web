@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { SessionRunner } from './session-runner.js';
-import type { OpenSessionParams, Provider, RunnerState } from '../protocol.js';
-import type { ProviderService } from '../providers/service.js';
+import type { AgentKind, OpenSessionParams, Provider, RunnerState } from '../protocol.js';
+import { loopbackNoProxy, type ProviderService } from '../providers/service.js';
 import type { AgentRegistry, AgentDriver } from '../agents/types.js';
 import type { AgentTranscripts } from '../agents/transcript.js';
 import { AcpDriver } from '../agents/acp-driver.js';
@@ -62,6 +63,10 @@ export class RunnerPool extends EventEmitter {
       }
     }
     const kind = params.agent ?? 'claude';
+    // the provider, when the caller did not say: IM, scheduled tasks, goals and hand-overs open sessions here
+    // without going through the hub, and used to start on the account whatever the user had set up
+    const chosen = this.resolveProvider(params);
+    if (chosen.byPool) params = { ...params, providerId: chosen.providerId };
     let r: AgentDriver;
     if (kind === 'claude' || !this.agents || !this.transcripts) {
       // a fork routes its prompt cache under its root's key; every reopen (goals, IM, schedules, hot switch) keeps it
@@ -75,13 +80,25 @@ export class RunnerPool extends EventEmitter {
     }
     else {
       const l = this.agents.launch(kind);
+      // on a provider the id is fixed before the process starts: the cache shim's route (and ledger rows) carry it.
+      // The drivers resume only a session whose transcript already names a native thread, so this is still new.
+      if (!params.sessionId && params.providerId && params.providerId !== 'claude') params = { ...params, sessionId: randomUUID() };
       // a model-gateway profile works for every agent: its endpoint goes into the agent's own env variables
-      const gw = this.providers.agentLaunch?.(params.providerId, l.def.protocol === 'codex' ? 'codex' : 'acp', kind) ?? { env: {}, args: [] };
-      const launch = { command: l.command, args: beforeAppServer(l.args, gw.args), env: { ...l.env, ...gw.env }, model: l.model, name: l.def.name, login: l.def.login };
+      const gw = this.providers.agentLaunch?.(params.providerId, l.def.protocol === 'codex' ? 'codex' : 'acp', kind, params.sessionId) ?? { env: {}, args: [] };
+      const env = { ...l.env, ...gw.env };
+      // the shim / gateway are on this machine: a system HTTP(S)_PROXY must not get those requests (Codex honours it)
+      const local = Object.values(gw.env).find((v) => /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])[:/]/i.test(v));
+      if (local) Object.assign(env, loopbackNoProxy({ OPENAI_BASE_URL: local, NO_PROXY: env.NO_PROXY ?? process.env.NO_PROXY, no_proxy: env.no_proxy ?? process.env.no_proxy }));
+      const launch = { command: l.command, args: beforeAppServer(l.args, gw.args), env, model: l.model, name: l.def.name, login: l.def.login };
       r = l.def.protocol === 'codex' ? new CodexDriver(kind, launch, params, this.transcripts) : new AcpDriver(kind, launch, params, this.transcripts, resumeHistory);
       // the composer's model chip reads the profile off the info (`档案 / 模型`); Claude's runner sets it itself
       const name = params.providerId && params.providerId !== 'claude' ? this.providers.meta?.provider(params.providerId)?.name : undefined;
       if (name) Object.assign(r.info, { providerId: params.providerId, providerName: name });
+    }
+    // what the pool chose is remembered like a choice made in the window (resume / fork keep it)
+    const meta = this.providers.meta;
+    if (chosen.byPool && chosen.providerId && meta && meta.sessionMeta(r.sessionId).providerId !== chosen.providerId) {
+      void meta.setSessionMeta(r.sessionId, { providerId: chosen.providerId }).catch(() => { /* in memory; the next save persists it */ });
     }
     this.runners.set(r.id, r);
     r.on('message', (m) => this.emit('message', r.sessionId, m));
@@ -104,6 +121,43 @@ export class RunnerPool extends EventEmitter {
     r.on('permission', (e) => this.emit('permission', e));
     r.on('permissionResolved', (id) => this.emit('permissionResolved', r.sessionId, id));
     return r;
+  }
+
+  /**
+   * The provider a session runs on when `params.providerId` is not given (an explicit one — `'claude'` = the
+   * account / the agent's own login — always wins): a resume keeps the one it was recorded with; a new session,
+   * or a resume whose recorded provider this agent cannot use (handed over from Claude to Codex), gets its
+   * agent's default — settings → 供应商 「设为默认」 for Claude, the agent card's 「新对话用」 (settings →
+   * Agents) for the others. A resume with nothing recorded stays on the account / own login, as before.
+   */
+  private resolveProvider(params: OpenSessionParams): { providerId?: string; byPool: boolean } {
+    if (params.providerId !== undefined) return { providerId: params.providerId, byPool: false };
+    const meta = this.providers.meta;
+    if (!meta) return { byPool: false };
+    const agent = params.agent ?? 'claude';
+    if (params.sessionId) {
+      const recorded = meta.sessionMeta(params.sessionId).providerId;
+      if (this.fits(recorded, agent)) return { providerId: recorded, byPool: true };
+      return recorded ? { providerId: this.defaultProviderFor(agent), byPool: true } : { byPool: false };
+    }
+    return { providerId: this.defaultProviderFor(agent), byPool: true };
+  }
+
+  /** The provider a new session of `agent` gets (undefined = the account / the agent's own login). */
+  defaultProviderFor(agent: AgentKind): string | undefined {
+    const meta = this.providers.meta;
+    if (!meta) return undefined;
+    const def = agent === 'claude' ? meta.settings().defaultProviderId : this.agents?.config(agent).providerId;
+    return this.fits(def, agent) ? def : undefined;
+  }
+
+  private fits(id: unknown, agent: AgentKind): id is string {
+    return typeof id === 'string' && !!id && id !== 'claude' && !!this.providers.meta?.provider(id) && !this.providers.fitError(id, agent);
+  }
+
+  /** Why `providerId` cannot drive `agent` (null = it can) — IM checks its configured provider with this. */
+  providerFitError(providerId: string | undefined, agent: string | undefined): string | null {
+    return this.providers.fitError(providerId, (agent || 'claude') as AgentKind);
   }
 
   async close(sessionId: string) {

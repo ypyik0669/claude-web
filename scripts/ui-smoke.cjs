@@ -735,6 +735,29 @@ function driver() {
           await shot(`settings-${s.id}-${t}`);
         }
       }
+      // 2026-09-30 user reports: settings → Agents gives every other agent 「新对话用」 (its own login, the providers it
+      // can use, 添加供应商…); an IM bot has 「用哪个供应商」 (跟新对话一样 / the account / the providers)
+      if (E.SMOKE_READONLY !== '1') {
+        phase = 'settings:agent-provider';
+        const tmpProv = await srvReq({ kind: 'providers.upsert', provider: { name: 'Smoke 中转', type: 'openai', baseUrl: 'http://127.0.0.1:9', apiKey: 'smoke-placeholder-not-a-key', models: ['smoke-m1'], defaultModel: 'smoke-m1' } }).catch(() => null);
+        await js('window.__store.getState().loadProviders()');
+        await js(`window.__store.getState().openSettings({ section: 'agents' })`);
+        const optsOf = (sel) => js(`[...(document.querySelector(${JSON.stringify(sel)})?.options ?? [])].map((o) => o.textContent)`);
+        const apSel = '.modal.settings .agent-provider [data-provider-select]';
+        await waitFor(`!!document.querySelector(${JSON.stringify(apSel)})`, 8000);
+        const apOpts = await optsOf(apSel);
+        check('settings · Agents: another agent picks the provider its new conversations use (自己的登录 · providers · 添加供应商…)', apOpts[0] === '自己的登录' && apOpts.some((t) => t.startsWith('Smoke 中转')) && apOpts.at(-1) === '添加供应商…', JSON.stringify(apOpts));
+        await srvReq({ kind: 'im.set', id: 'smoke-dd', patch: { kind: 'dingtalk', name: 'Smoke 钉钉', enabled: false } }).catch(() => {});
+        await js(`window.__store.getState().openSettings({ section: 'im' })`);
+        const imSel = '.modal.settings [data-provider-select]';
+        await waitFor(`!!document.querySelector(${JSON.stringify(imSel)})`, 8000);
+        const imOpts = await optsOf(imSel);
+        check('settings · IM 机器人: a bot picks its provider (跟新对话一样 · Claude 账号 · providers)', /^跟新对话一样/.test(imOpts[0] ?? '') && imOpts[1] === 'Claude 账号' && imOpts.some((t) => t.startsWith('Smoke 中转')), JSON.stringify(imOpts));
+        await shot('settings-im-provider');
+        await srvReq({ kind: 'im.set', id: 'smoke-dd', patch: null }).catch(() => {});
+        if (tmpProv) await srvReq({ kind: 'providers.remove', id: tmpProv.id }).catch(() => {});
+        await js('window.__store.getState().loadProviders()');
+      }
       // the click helper itself (polish P5): the page moves down 44px between the measurement and the click (what a late
       // answer to the page's own request does), so the row above 更多选项 sits under the point; the mouse-down that lands
       // there is swallowed — no switch of that page flips — and the helper measures and clicks again. A transform, not

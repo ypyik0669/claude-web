@@ -341,14 +341,19 @@ export class ProviderService {
    * Extra env + global args for a non-Claude agent session that picked a gateway or OpenAI-compatible profile
    * (nothing for any other type). Without this Codex ignores the profile and talks to api.openai.com.
    */
-  agentLaunch(id: string | undefined, agent: 'codex' | 'acp', kind?: string): { env: Record<string, string>; args: string[] } {
+  agentLaunch(id: string | undefined, agent: 'codex' | 'acp', kind?: string, sessionId?: string): { env: Record<string, string>; args: string[] } {
     const type = id && id !== CLAUDE_PROVIDER_ID ? this.meta.provider(id)?.type : undefined;
     if (type === 'openai') {
       const p = this.forSession(id)!;
-      const base = openaiBase(p.baseUrl);
-      const env: Record<string, string> = { OPENAI_BASE_URL: base, OPENAI_API_KEY: p.apiKey };
+      if (agent === 'codex') {
+        // Codex only speaks /v1/responses: through the cache shim (when on), which forwards that as it is and turns
+        // it into chat/completions for relays without the Responses API (most of them) — direct, those 404
+        const base = p.shim ? shimBaseUrl(p.shim, sessionId) : openaiBase(p.baseUrl);
+        const key = p.shim ? p.shim.key : p.apiKey;
+        return { env: { OPENAI_BASE_URL: base, OPENAI_API_KEY: key, [CODEX_KEY_ENV]: key }, args: codexProviderArgs(base, p.name, p.defaultModel) };
+      }
+      const env: Record<string, string> = { OPENAI_BASE_URL: openaiBase(p.baseUrl), OPENAI_API_KEY: p.apiKey };
       if (p.defaultModel) env.OPENAI_MODEL = p.defaultModel;
-      if (agent === 'codex') return { env: { ...env, [CODEX_KEY_ENV]: p.apiKey }, args: codexProviderArgs(base, p.name, p.defaultModel) };
       return { env, args: [] };
     }
     // a Gemini API profile for Gemini CLI: its own key variables, with the API-key auth type forced over a cached Google login

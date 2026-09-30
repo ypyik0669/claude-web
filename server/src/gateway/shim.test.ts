@@ -329,3 +329,129 @@ describe('session wiring', () => {
     expect(providerEnv(p, 'claude', { sessionKey: 'abc' })).toEqual({ CLAUDE_WEB_PLAIN_UA: '1', CLAUDE_CODE_ENTRYPOINT: 'cli', ANTHROPIC_BASE_URL: U.url, ANTHROPIC_AUTH_TOKEN: 'sk-ant' });
   });
 });
+
+describe('cache shim: Codex (/v1/responses in) on an openai profile', () => {
+  // what Codex sends (shape per codex-rs): instructions, developer + user items, a function tool and the freeform apply_patch
+  const codexBody = (extra: Record<string, unknown> = {}) => JSON.stringify({
+    model: 'deepseek-chat',
+    instructions: 'You are Codex.',
+    input: [
+      { type: 'message', role: 'developer', content: [{ type: 'input_text', text: '<permissions>…</permissions>' }] },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'fix the bug' }] },
+      { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'opaque' },
+      { type: 'function_call', call_id: 'call_1', name: 'shell', arguments: '{"command":["ls"]}' },
+      { type: 'function_call_output', call_id: 'call_1', output: 'a.ts' },
+    ],
+    tools: [
+      { type: 'function', name: 'shell', description: 'Run a command', parameters: { type: 'object', properties: { command: { type: 'array', items: { type: 'string' } } } }, strict: false },
+      { type: 'custom', name: 'apply_patch', description: 'Edit files', format: { type: 'grammar', syntax: 'lark', definition: 'start: patch' } },
+    ],
+    tool_choice: 'auto', parallel_tool_calls: false, reasoning: { effort: 'medium' }, store: false, stream: true,
+    include: ['reasoning.encrypted_content'], prompt_cache_key: 'thread-1', ...extra,
+  });
+  const postR = (pid: string, body: string, sid = 'cx-sess') => fetch(`${root}/gateway/~p/${pid}/k/${sid}/v1/responses`, { method: 'POST', headers: { authorization: `Bearer ${gw.shim.keyFor(pid)}`, 'content-type': 'application/json' }, body }).then(async (r) => ({ status: r.status, text: await r.text() }));
+  const events = (text: string) => text.split('\n\n').filter((b) => b.includes('data: ')).map((b) => JSON.parse(b.slice(b.indexOf('data: ') + 6)));
+  const noResponses: Handler = (q, res, body) => {
+    if (q.url?.includes('/responses')) { res.writeHead(404, { 'content-type': 'application/json' }).end('{"error":{"message":"Invalid URL (POST /v1/responses)"}}'); return; }
+    dsStream(q, res, body);
+  };
+
+  it('a relay with the Responses API: forwarded as it is (Codex keeps its own prompt_cache_key), the stream passes through, usage in the ledger', async () => {
+    U.handler.fn = responsesStream;
+    const r = await postR('ds', codexBody());
+    expect(r.status).toBe(200);
+    expect(U.hits.map((h) => h.url)).toEqual(['/v1/responses']);
+    expect(U.hits[0].body).toBe(codexBody()); // byte for byte
+    expect(U.hits[0].headers.authorization).toBe('Bearer sk-ds');
+    expect(events(r.text).at(-1)).toMatchObject({ type: 'response.completed' });
+    expect(ledger.at(-1)).toMatchObject({ ok: true, input: 3_000, cacheRead: 27_000, output: 7, sessionId: 'cx-sess', gateway: { via: 'shim', inbound: 'responses', outbound: 'responses' } });
+    expect(meta.provider('ds')!.noResponsesApi).toBeUndefined();
+  });
+
+  it('a chat-only relay (404 on /v1/responses): translated to chat/completions, answered as Responses events; remembered, the next request goes straight to chat', async () => {
+    U.handler.fn = noResponses;
+    const r = await postR('ds', codexBody());
+    expect(r.status).toBe(200);
+    expect(U.hits.map((h) => h.url)).toEqual(['/v1/responses', '/v1/chat/completions']);
+    const chat = JSON.parse(U.hits[1].body);
+    expect(chat).toMatchObject({ model: 'deepseek-chat', stream: true, stream_options: { include_usage: true }, prompt_cache_key: 'thread-1' });
+    expect(chat.reasoning_effort).toBeUndefined(); // not an o-series / gpt-5 model: chat relays may reject it
+    expect(chat.messages).toEqual([
+      { role: 'system', content: 'You are Codex.\n\n<permissions>…</permissions>' },
+      { role: 'user', content: 'fix the bug' },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'shell', arguments: '{"command":["ls"]}' } }] },
+      { role: 'tool', tool_call_id: 'call_1', content: 'a.ts' },
+    ]);
+    expect(chat.tools.map((t: any) => t.function.name)).toEqual(['shell', 'apply_patch']);
+    expect(chat.tools[1].function.parameters).toMatchObject({ properties: { input: { type: 'string' } } });
+    const ev = events(r.text);
+    expect(ev[0].type).toBe('response.created');
+    expect(ev.filter((e) => e.type === 'response.output_text.delta').map((e) => e.delta).join('')).toBe('done');
+    expect(ev.at(-1)).toMatchObject({ type: 'response.completed', response: { status: 'completed', usage: { input_tokens: 20_000, input_tokens_details: { cached_tokens: 15_000 }, output_tokens: 5 } } });
+    expect(ledger.at(-1)).toMatchObject({ ok: true, cacheRead: 15_000, gateway: { inbound: 'responses', outbound: 'openai' } });
+    expect(meta.provider('ds')!.noResponsesApi).toBe(true);
+    U.hits.length = 0;
+    expect((await postR('ds', codexBody())).status).toBe(200);
+    expect(U.hits.map((h) => h.url)).toEqual(['/v1/chat/completions']);
+  });
+
+  it('tool calls come back as Codex items: a function as function_call, the freeform apply_patch as custom_tool_call with its raw input', async () => {
+    meta.provider('ds')!.noResponsesApi = true;
+    const patch = '*** Begin Patch\n*** End Patch';
+    U.handler.fn = (_q, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end(chunk({ choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'call_a', type: 'function', function: { name: 'shell', arguments: '{"command":' } }] }, finish_reason: null }] })
+        + chunk({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '["pwd"]}' } }] }, finish_reason: null }] })
+        + chunk({ choices: [{ index: 0, delta: { tool_calls: [{ index: 1, id: 'call_b', type: 'function', function: { name: 'apply_patch', arguments: JSON.stringify({ input: patch }) } }] }, finish_reason: null }] })
+        + chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })
+        + 'data: [DONE]\n\n');
+    };
+    const r = await postR('ds', codexBody());
+    const items = events(r.text).filter((e) => e.type === 'response.output_item.done').map((e) => e.item);
+    expect(items).toEqual([
+      expect.objectContaining({ type: 'function_call', call_id: 'call_a', name: 'shell', arguments: '{"command":["pwd"]}' }),
+      expect.objectContaining({ type: 'custom_tool_call', call_id: 'call_b', name: 'apply_patch', input: patch }),
+    ]);
+  });
+
+  it('gpt-5 on a chat-only relay keeps the effort Codex asked for; both endpoints failing shows the Responses error', async () => {
+    meta.provider('ds')!.noResponsesApi = true;
+    await postR('ds', codexBody({ model: 'gpt-5.2' }));
+    expect(JSON.parse(U.hits[0].body)).toMatchObject({ model: 'gpt-5.2', reasoning_effort: 'medium' });
+    delete meta.provider('ds')!.noResponsesApi;
+    U.hits.length = 0;
+    U.handler.fn = (q, res) => {
+      if (q.url?.includes('/responses')) { res.writeHead(404, { 'content-type': 'application/json' }).end('{"error":{"message":"Invalid URL (POST /v1/responses)"}}'); return; }
+      res.writeHead(401, { 'content-type': 'application/json' }).end('{"error":{"message":"bad key"}}');
+    };
+    const r = await postR('ds', codexBody());
+    expect(r.status).toBe(404);
+    expect(meta.provider('ds')!.noResponsesApi).toBeUndefined(); // chat did not work: nothing proven
+  });
+
+  it('errors from a relay that has the Responses API pass back as they are (429 with its headers)', async () => {
+    U.handler.fn = (_q, res) => res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '7' }).end('{"error":{"message":"slow down"}}');
+    const r = await fetch(`${root}/gateway/~p/ds/k/s/v1/responses`, { method: 'POST', headers: { authorization: `Bearer ${gw.shim.keyFor('ds')}` }, body: codexBody() });
+    expect(r.status).toBe(429);
+    expect(r.headers.get('retry-after')).toBe('7');
+    expect(U.hits.map((h) => h.url)).toEqual(['/v1/responses']);
+  });
+
+  it('only openai profiles take /v1/responses (grok: 404, nothing sent)', async () => {
+    expect((await postR('grok', codexBody())).status).toBe(404);
+    expect(U.hits).toHaveLength(0);
+  });
+
+  it('agentLaunch: Codex on an openai profile goes through the shim (its key, never the real one); cacheShim:false = straight to the relay', () => {
+    const s = new ProviderService(meta);
+    s.shimEndpoint = (id) => gw.shimEndpoint(id);
+    const l = s.agentLaunch('ds', 'codex', 'codex', 'sess-x');
+    const base = `${root}/gateway/~p/ds/k/sess-x/v1`;
+    expect(l.env).toEqual({ OPENAI_BASE_URL: base, OPENAI_API_KEY: gw.shim.keyFor('ds'), CW_GATEWAY_KEY: gw.shim.keyFor('ds') });
+    expect(l.args).toContain(`model_providers.cwgw.base_url=${JSON.stringify(base)}`);
+    expect(JSON.stringify(l)).not.toContain('sk-ds');
+    meta.provider('ds')!.cacheShim = false;
+    expect(s.agentLaunch('ds', 'codex', 'codex', 'sess-x').env).toMatchObject({ OPENAI_BASE_URL: `${U.url}/v1`, CW_GATEWAY_KEY: 'sk-ds' });
+    delete meta.provider('ds')!.cacheShim;
+  });
+});

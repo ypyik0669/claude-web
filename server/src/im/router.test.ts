@@ -137,3 +137,64 @@ describe('chunk', () => {
     expect(chunk('x'.repeat(100), 40).map((p) => p.length)).toEqual([40, 40, 20]);
   });
 });
+
+describe('ImRouter: agent and provider of the sessions a bot opens', () => {
+  let pool: FakePool & { providerFitError?: (id: string | undefined, agent?: string) => string | null }, meta: FakeMeta, a: FakeAdapter, router: ImRouter, cfg: ImGatewayConfig;
+  const list = [{ sessionId: 'cx1', title: 'codex one', cwd: 'C:/proj', agent: 'codex' }, { sessionId: 's9', title: 'claude one', cwd: 'C:/proj' }];
+  beforeEach(() => {
+    pool = new FakePool() as any; meta = new FakeMeta(); a = new FakeAdapter();
+    pool.providerFitError = (id, agent) => (id === 'claudeOnly' && agent === 'codex' ? 'unfit' : null);
+    router = new ImRouter({ pool: pool as any, meta: meta as any, sessions: { list: async () => list } as any });
+    cfg = { id: 'g1', kind: 'dingtalk', name: 'dd', enabled: true, config: {}, allowUsers: ['u1'], allowNames: {}, openAccess: false, defaultCwd: '', permissionMode: 'default', agent: '', verbose: false };
+    meta.gws.push(cfg);
+    router.attach(cfg, a as any);
+  });
+
+  it('the provider picked for the bot (a relay) is what its new sessions run on; none = the pool\'s default', async () => {
+    router.updateConfig({ ...cfg, providerId: 'relay' });
+    a.inbound_({ text: 'hi' }); await tick();
+    expect(pool.opened[0]).toMatchObject({ cwd: 'C:/proj', providerId: 'relay' });
+    router.updateConfig({ ...cfg, providerId: '' });
+    a.inbound_({ text: '/new C:/p2' }); await tick();
+    expect(pool.opened[1].providerId).toBeUndefined(); // RunnerPool.open then applies the new-conversation default
+    router.updateConfig({ ...cfg, providerId: 'claude' });
+    a.inbound_({ text: '/new C:/p3' }); await tick();
+    expect(pool.opened[2].providerId).toBe('claude'); // explicitly the account
+  });
+
+  it('a picked provider the bot\'s agent cannot use falls back to the default instead of failing', async () => {
+    router.updateConfig({ ...cfg, agent: 'codex', providerId: 'claudeOnly' });
+    a.inbound_({ text: '/new C:/p' }); await tick();
+    expect(pool.opened[0]).toMatchObject({ agent: 'codex', providerId: undefined });
+  });
+
+  it('replies name the provider (so people can check which channel the bot uses)', async () => {
+    router.updateConfig({ ...cfg, providerId: 'relay' });
+    const open = pool.open.bind(pool);
+    pool.open = (p: any) => { const r = open(p); r.info = { model: 'deepseek-chat', providerId: 'relay', providerName: '我的中转' }; return r; };
+    a.inbound_({ text: '/new C:/p' }); await tick();
+    expect(a.sent.at(-1)!.text).toContain('供应商 我的中转');
+    a.inbound_({ text: '/status' }); await tick();
+    expect(a.sent.at(-1)!.text).toContain('供应商 我的中转');
+  });
+
+  it('reopening a bound session keeps its agent (a Codex session is not restarted as Claude on that id)', async () => {
+    router.updateConfig({ ...cfg, agent: 'codex' });
+    a.inbound_({ text: 'first' }); await tick();
+    const sid = meta.binds[0].sessionId;
+    expect(meta.binds[0].agent).toBe('codex');
+    pool.runners.delete(sid); // reaped while idle
+    router.updateConfig({ ...cfg, agent: '' }); // the bot's agent changed since: the bound session is still Codex
+    a.inbound_({ text: 'second' }); await tick();
+    expect(pool.opened.at(-1)).toMatchObject({ sessionId: sid, agent: 'codex' });
+    expect(pool.opened.at(-1).providerId).toBeUndefined(); // the pool keeps the recorded one
+  });
+
+  it('/use on a Codex conversation opens it as Codex and remembers that', async () => {
+    a.inbound_({ text: '/use 1' }); await tick();
+    expect(pool.opened.at(-1)).toMatchObject({ sessionId: 'cx1', agent: 'codex' });
+    expect(meta.binds[0]).toMatchObject({ sessionId: 'cx1', agent: 'codex' });
+    a.inbound_({ text: '/use 2' }); await tick();
+    expect(pool.opened.at(-1).agent).toBeUndefined();
+  });
+});

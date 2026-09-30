@@ -95,7 +95,7 @@ export class ImService extends EventEmitter {
       if (f?.secret) { if (v && !/^•+$/.test(String(v))) config[k] = await this.secrets.protect(String(v).trim(), `im:${id}:${k}`); }
       else config[k] = String(v ?? '').trim();
     }
-    const next: ImGatewayConfig = { id, kind, name: patch.name ?? prev?.name ?? def.name, enabled: patch.enabled ?? prev?.enabled ?? true, config, allowUsers: patch.allowUsers ?? prev?.allowUsers ?? [], allowNames: patch.allowNames ?? prev?.allowNames ?? {}, openAccess: patch.openAccess ?? prev?.openAccess ?? false, defaultCwd: patch.defaultCwd ?? prev?.defaultCwd ?? '', permissionMode: patch.permissionMode ?? prev?.permissionMode ?? 'default', agent: patch.agent ?? prev?.agent ?? '', verbose: patch.verbose ?? prev?.verbose ?? false };
+    const next: ImGatewayConfig = { id, kind, name: patch.name ?? prev?.name ?? def.name, enabled: patch.enabled ?? prev?.enabled ?? true, config, allowUsers: patch.allowUsers ?? prev?.allowUsers ?? [], allowNames: patch.allowNames ?? prev?.allowNames ?? {}, openAccess: patch.openAccess ?? prev?.openAccess ?? false, defaultCwd: patch.defaultCwd ?? prev?.defaultCwd ?? '', permissionMode: patch.permissionMode ?? prev?.permissionMode ?? 'default', agent: patch.agent ?? prev?.agent ?? '', verbose: patch.verbose ?? prev?.verbose ?? false, providerId: patch.providerId ?? prev?.providerId ?? '' };
     await this.meta.setImGateway(next);
     this.router.updateConfig(next);
     if (next.enabled) await this.start(next).catch(() => {}); else await this.stop(id);

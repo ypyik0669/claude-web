@@ -73,6 +73,31 @@ function threadSummary(t) {
   return { id: t.id, name: t.name, preview: t.preview, cwd: t.cwd, createdAt: t.createdAt, updatedAt: t.updatedAt, source: t.source, parentThreadId: t.parentThreadId, gitInfo: t.gitInfo };
 }
 
+/** `-c key=value` overrides from argv (values are TOML: JSON-quoted strings) → the cwgw provider, when selected. */
+function providerOverride() {
+  const kv = {};
+  const argv = process.argv.slice(2);
+  for (let i = 0; i < argv.length - 1; i++) if (argv[i] === '-c') { const m = /^([^=]+)=(.*)$/.exec(argv[i + 1]); if (m) { try { kv[m[1]] = JSON.parse(m[2]); } catch { kv[m[1]] = m[2]; } } }
+  if (kv.model_provider !== 'cwgw' || !kv['model_providers.cwgw.base_url']) return null;
+  return { base: kv['model_providers.cwgw.base_url'], key: process.env[kv['model_providers.cwgw.env_key']] ?? '', model: kv.model ?? 'gpt-5-codex' };
+}
+async function askProvider(p, text) {
+  const r = await fetch(`${p.base.replace(/\/+$/, '')}/responses`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${p.key}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: p.model, instructions: 'You are Codex.', input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }], tools: [{ type: 'custom', name: 'apply_patch', description: 'Edit files' }], stream: true, store: false, prompt_cache_key: 'mock-thread' }),
+  });
+  const body = await r.text();
+  if (!r.ok) throw new Error(`HTTP ${r.status} ${body.slice(0, 200)}`);
+  let out = '';
+  for (const block of body.split('\n\n')) {
+    const data = block.split('\n').find((l) => l.startsWith('data: '));
+    if (!data) continue;
+    try { const e = JSON.parse(data.slice(6)); if (e.type === 'response.output_text.delta') out += e.delta; } catch { /* skip */ }
+  }
+  return out;
+}
+
 rl.on('line', async (line) => {
   let m;
   try { m = JSON.parse(line); } catch { return; }
@@ -137,6 +162,16 @@ rl.on('line', async (line) => {
       reply({ turn: { id: 'turn-1', items: [], status: 'inProgress' } });
       notify('turn/started', { threadId, turn: { id: 'turn-1' } });
       notify('item/started', { threadId, turnId: 'turn-1', item: { type: 'agentMessage', id: 'am-1', text: '' } });
+      // started with a `-c model_providers.cwgw…` override (a provider picked in claude-web): ask it, like the real
+      // Codex does — POST <base_url>/responses with the key from env_key — and answer with what it streamed back
+      const provider = providerOverride();
+      if (provider && text.includes('relay')) {
+        const said = await askProvider(provider, text).catch((e) => `provider error: ${e.message}`);
+        notify('item/agentMessage/delta', { threadId, turnId: 'turn-1', itemId: 'am-1', delta: said });
+        notify('item/completed', { threadId, turnId: 'turn-1', item: { type: 'agentMessage', id: 'am-1', text: said } });
+        notify('turn/completed', { threadId, turn: { id: 'turn-1', items: [], status: 'completed', error: null } });
+        break;
+      }
       notify('item/agentMessage/delta', { threadId, turnId: 'turn-1', itemId: 'am-1', delta: `Codex says: ${text}` });
       if (text.includes('run')) {
         notify('item/started', { threadId, turnId: 'turn-1', item: { type: 'commandExecution', id: 'cmd-1', command: 'echo hi', cwd: 'C:/x', status: 'inProgress', commandActions: [] } });

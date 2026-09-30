@@ -3,7 +3,8 @@ import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { dlg } from '@/ui/dialog';
-import type { ImGatewayInfo, ImKind, ImKindDef } from '@shared';
+import type { AgentKind, ImGatewayInfo, ImKind, ImKindDef } from '@shared';
+import { ProviderSelect } from '@/features/providers/ProviderSelect';
 import { Icon } from '@/ui/icons';
 import { MODE_LABEL } from '@/ui/terms';
 
@@ -29,6 +30,13 @@ function GatewayCard({ g, def, onChange }: { g: ImGatewayInfo; def: ImKindDef; o
   const save = () => patch({ name, config: f });
   const test = async () => { setBusy(true); try { toast(await ws.request<string>({ kind: 'im.test', id: g.id }), true); } catch (e: any) { toast(e.message); } finally { setBusy(false); } };
   const left = pair ? Math.max(0, Math.round((pair.expiresAt - Date.now()) / 1000)) : 0;
+  // what 「跟新对话一样」 resolves to right now (the server's RunnerPool.defaultProviderFor)
+  const providers = useStore((s) => s.providers);
+  const settings = useStore((s) => s.settings);
+  const agentInfo = g.agent ? agents.find((a) => a.kind === g.agent) : undefined;
+  const agentName = agentInfo?.name ?? g.agent;
+  const defId = g.agent ? agentInfo?.providerId : (settings.defaultProviderId as string | undefined);
+  const sameAsNew = providers.find((p) => p.id === defId)?.name ?? (g.agent ? `${agentName} 自己的登录` : 'Claude 账号');
   return (
     <div className={clsx('row agent-card', !g.enabled && 'muted')} style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -49,6 +57,8 @@ function GatewayCard({ g, def, onChange }: { g: ImGatewayInfo; def: ImKindDef; o
           <label>默认项目<select className="field" value={g.defaultCwd} onChange={(e) => patch({ defaultCwd: e.target.value })}><option value="">第一个项目</option>{workspaces.map((w) => <option key={w.id} value={w.path}>{w.name} · {w.path}</option>)}</select></label>
           <label>权限模式<select className="field" value={g.permissionMode} onChange={(e) => patch({ permissionMode: e.target.value })}>{MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
           <label>用哪个 Agent<select className="field" value={g.agent} onChange={(e) => patch({ agent: e.target.value })}><option value="">Claude Code</option>{agents.filter((a) => a.kind !== 'claude' && a.installed && a.enabled).map((a) => <option key={a.kind} value={a.kind}>{a.name}</option>)}</select></label>
+          {/* the bot's new conversations: a relay, the account, or whatever a new conversation in the window gets */}
+          <label>用哪个供应商<ProviderSelect agent={(g.agent || 'claude') as AgentKind} value={g.providerId ?? ''} onChange={(v) => patch({ providerId: v })} first={{ label: `跟新对话一样（${sameAsNew}）`, title: '和在窗口里开新对话时用的一样' }} own={g.agent ? `${agentName} 自己的登录` : 'Claude 账号'} /></label>
           <label className="chip" style={{ alignSelf: 'end' }}><input type="checkbox" checked={g.verbose} onChange={(e) => patch({ verbose: e.target.checked })} /> 推送工具调用过程</label>
           <div style={{ gridColumn: '1 / -1' }} className="sub">{def.help}</div>
           <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', gridColumn: '1 / -1' }}>

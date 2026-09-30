@@ -193,6 +193,10 @@ async function swapAgentNow(d: SwapDeps, sessionId: string, agent: AgentKind, mo
     model,
     permissionMode: prev?.permissionMode,
     agent,
+    // the provider the old agent ran on belongs to it: the new one starts on its own default (settings → 供应商 for
+    // Claude, settings → Agents for the others) — explicit, or the pool would keep a recorded one the new agent
+    // happens to accept too
+    providerId: d.pool.defaultProviderFor?.(agent) ?? 'claude',
     // Claude resumes from synthesized entries; the others get the briefing as their first message
     resumeEntries: agent === 'claude' ? toClaudeEntries(events, { cwd, sessionId, briefing }) : undefined,
   } as OpenSessionParams;
@@ -204,6 +208,7 @@ async function swapAgentNow(d: SwapDeps, sessionId: string, agent: AgentKind, mo
   }
 
   const r = d.pool.open(params);
+  await d.meta.setSessionMeta(sessionId, { providerId: normProvider(params.providerId) }).catch(() => { /* kept in memory; the next save persists it */ });
   if (agent !== 'claude') deliverBriefing(r, briefing);
   return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), briefing: agent === 'claude' ? undefined : briefing };
 }

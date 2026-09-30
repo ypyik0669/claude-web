@@ -16,7 +16,10 @@
 //     there sends this request to chat/completions instead; only "no such endpoint" (404 / 405 / 501, not a
 //     model error) followed by a working chat call is remembered (`noResponsesApi`);
 //   · logs every call in the ledger (kind 'gateway', via 'shim', under the session's own id `/s/…`).
-// Forwards only what ccb needs: POST /v1/chat/completions and GET /v1/models[/<id>].
+//   · Codex on an openai profile (providers.agentLaunch) speaks /v1/responses: forwarded as it is, except to a
+//     relay without that endpoint (404 / 405 / 501 not about the model — most relays and Chinese vendors): there
+//     it goes as chat/completions and comes back as `response.*` events (remembered, like `noResponsesApi` above).
+// Forwards only what these need: POST /v1/chat/completions, POST /v1/responses (openai), GET /v1/models[/<id>].
 // Independent of the gateway's on/off switch, but like it: loopback only (GatewayService.handle), and the key
 // is per profile — HMAC(per-process secret, providerId): minted per process, never stored, one profile's
 // session cannot use another profile's credentials through it.
@@ -108,7 +111,9 @@ export class CacheShim {
     if (!/^\/v\d/.test(rest)) rest = `/v1${rest === '/' ? '' : rest}`;
     const method = (req.method ?? 'GET').toUpperCase();
     const isChat = method === 'POST' && rest === '/v1/chat/completions';
-    if (!isChat && !(method === 'GET' && /^\/v1\/models(\/[^/]+)?$/.test(rest))) return this.fail(res, 404, `缓存垫片不转发这个接口：${method} ${rest}`);
+    // Codex on an openai profile speaks the Responses API (wire_api "responses")
+    const isResponses = method === 'POST' && rest === '/v1/responses' && p.type === 'openai';
+    if (!isChat && !isResponses && !(method === 'GET' && /^\/v1\/models(\/[^/]+)?$/.test(rest))) return this.fail(res, 404, `缓存垫片不转发这个接口：${method} ${rest}`);
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const c of req) {
@@ -123,8 +128,9 @@ export class CacheShim {
     res.on('close', () => { if (!res.writableFinished) ac.abort(); });
     const ctx: Ctx = { req, res, p, base: openaiBase(p.baseUrl || DEFAULT_BASE[p.type]), rest, search: url.search, raw: Buffer.concat(chunks), headers, sessionId, cacheKey: key, signal: ac.signal, t0: Date.now() };
     let json: any;
-    if (isChat) { try { json = JSON.parse(ctx.raw.toString('utf8')); } catch { /* not ours to fix */ } }
+    if (isChat || isResponses) { try { json = JSON.parse(ctx.raw.toString('utf8')); } catch { /* not ours to fix */ } }
     if (!json || typeof json !== 'object' || Array.isArray(json)) return this.forward(ctx);
+    if (isResponses) return p.noResponsesApi ? this.responsesViaChat(ctx, json) : this.responses(ctx, json);
     if (p.type === 'openai' && p.responsesApi !== false && !p.noResponsesApi && wantsResponses(String(json.model ?? ''))) return this.viaResponses(ctx, json);
     return this.chat(ctx, json);
   }
@@ -328,9 +334,145 @@ export class CacheShim {
     this.record(ctx, { ok: !broken && !failed, status: broken ? 502 : up.status, model, usage, error: broken || failed || undefined, outbound: 'responses', stream, firstByteMs });
   }
 
-  private brokenBeforeStart(ctx: Ctx, model: string, message: string, stream: boolean, firstByteMs: number) {
+  /**
+   * Codex's /v1/responses, forwarded as it is (+ prompt_cache_key when it sent none). A relay without the Responses
+   * API (404 / 405 / 501 that is not about the model — most Chinese relays and vendors only have chat/completions)
+   * gets this request as chat/completions instead, and once that works the profile remembers it (`noResponsesApi`):
+   * later requests are translated straight away.
+   */
+  private async responses(ctx: Ctx, json: any) {
+    const model = String(json.model ?? '');
+    const stream = !!json.stream;
+    let body = ctx.raw;
+    let bare: Buffer | null = null;
+    ctx.keyed = false;
+    if (ctx.cacheKey && !ctx.p.noPromptCacheKey && json.prompt_cache_key === undefined) {
+      const s = insertTopLevelField(ctx.raw.toString('utf8'), 'prompt_cache_key', ctx.cacheKey);
+      if (s) { bare = ctx.raw; body = Buffer.from(s); ctx.keyed = true; }
+    } else ctx.keyed = json.prompt_cache_key !== undefined;
+    const up = await this.send(ctx, joinUrl(ctx.base, '/v1/responses') + ctx.search, body, bare, stream);
+    if (!up) return;
+    if (up.status < 200 || up.status >= 300) {
+      let text = '';
+      try { text = await readText(up.body, 4 * 1024 * 1024); } catch { /* keep empty */ }
+      if (endpointMissing(up.status, text)) return this.responsesViaChat(ctx, json, () => this.remember(ctx.p, { noResponsesApi: true }), { status: up.status, headers: up.headers, text });
+      if (!ctx.res.headersSent) ctx.res.writeHead(up.status, { ...errorHeaders(up.headers), 'content-type': String(up.headers['content-type'] ?? 'application/json') }).end(text);
+      return this.record(ctx, { ok: false, status: up.status, model, error: `HTTP ${up.status} ${upstreamErrorMessage(text)}`.slice(0, 200), outbound: 'responses', stream });
+    }
+    const firstByteMs = Date.now() - ctx.t0;
+    const { res } = ctx;
+    const headers = responseHeaders(up.headers);
+    delete headers['content-encoding'];
+    delete headers['content-length'];
+    res.writeHead(up.status, headers);
+    const src = decoded(up.body);
+    let usage: Partial<IrUsage> | null = null;
+    // the usage for the ledger: the `response` of response.completed (stream) or the object itself
+    const usageOf = (r: any) => { if (r?.usage) usage = C.usageIn(r.usage); };
+    const sniff = new SseParser();
+    const dec = new StringDecoder('utf8');
+    const it = src[Symbol.asyncIterator]() as AsyncIterator<Buffer>;
+    let whole = '';
+    let broken = '';
+    for (;;) {
+      if (ctx.signal.aborted) break;
+      let r: IteratorResult<Buffer>;
+      try { r = await withTimeout(it.next(), IDLE_MS); } catch (e: any) { broken = e?.message === 'timeout' ? '上游超过 5 分钟没有数据' : e?.message ?? String(e); up.body.destroy(); break; }
+      if (r.done) break;
+      if (stream) for (const e of sniff.feed(dec.write(r.value))) { if (e.data.includes('"usage"')) { try { usageOf(JSON.parse(e.data)?.response); } catch { /* skip */ } } }
+      else if (whole.length < 8 * 1024 * 1024) whole += dec.write(r.value);
+      if (!res.write(r.value)) await waitDrain(res, ctx.signal);
+    }
+    if (ctx.signal.aborted) { up.body.destroy(); res.destroy(); return this.record(ctx, { ok: false, status: 499, model, usage, error: '客户端已断开', outbound: 'responses', stream, firstByteMs }); }
+    if (!stream) { try { usageOf(JSON.parse(whole + dec.end())); } catch { /* not JSON */ } }
+    if (broken) { res.destroy(); return this.record(ctx, { ok: false, status: 502, model, usage, error: broken, outbound: 'responses', stream, firstByteMs }); }
+    res.end();
+    this.record(ctx, { ok: true, status: up.status, model, usage, outbound: 'responses', stream, firstByteMs });
+  }
+
+  /**
+   * A Responses request (Codex) as chat/completions for a relay that only has that, the answer back in Responses
+   * shape — streamed as `response.*` events. Reasoning items (encrypted, provider-bound) are dropped; Codex's
+   * freeform tools (apply_patch) go as a function with one `input` string and come back as custom_tool_call.
+   * `onOk` runs once chat answered 2xx; `original`: the Responses error this is a fallback for — when chat fails
+   * too, that is what Codex sees.
+   */
+  private async responsesViaChat(ctx: Ctx, json: any, onOk?: () => Promise<void>, original?: { status: number; headers: http.IncomingHttpHeaders; text: string }) {
+    const model = String(json.model ?? '');
+    const stream = !!json.stream;
+    const ir = R.parseRequest(json);
+    const customTools = new Set((ir.tools ?? []).filter((t) => t.custom).map((t) => t.name));
+    const key = typeof json.prompt_cache_key === 'string' && json.prompt_cache_key ? json.prompt_cache_key : ctx.cacheKey;
+    const build = (decorate: boolean) => {
+      const b = C.renderRequest({ ...ir, model, stream, cacheKey: key }, { promptCacheKey: decorate && !!key });
+      // o-series / gpt-5 on a chat-only relay: the effort Codex asked for, in chat's field
+      const effort = json.reasoning?.effort;
+      if (typeof effort === 'string' && C.wantsCompletionTokens(model)) b.reasoning_effort = effort;
+      return Buffer.from(JSON.stringify(b));
+    };
+    ctx.keyed = !!key && !ctx.p.noPromptCacheKey;
+    const up = await this.send(ctx, joinUrl(ctx.base, '/v1/chat/completions') + ctx.search, build(ctx.keyed), ctx.keyed ? build(false) : null, stream);
+    if (!up) return;
+    if (up.status < 200 || up.status >= 300) {
+      if (original) {
+        up.body.resume();
+        if (!ctx.res.headersSent) ctx.res.writeHead(original.status, { ...errorHeaders(original.headers), 'content-type': String(original.headers['content-type'] ?? 'application/json') }).end(original.text);
+        return this.record(ctx, { ok: false, status: original.status, model, error: `HTTP ${original.status} ${upstreamErrorMessage(original.text)}（chat/completions 退回也失败：HTTP ${up.status}）`.slice(0, 240), outbound: 'openai', stream });
+      }
+      return this.passError(ctx, up, model, 'openai', stream);
+    }
+    await onOk?.();
+    const firstByteMs = Date.now() - ctx.t0;
+    const { res } = ctx;
+    const renderer = new R.ResponsesStreamRenderer(model, customTools);
+    // the request decides; a relay answering a stream request with one JSON object is replayed as a stream
+    if (!stream || /application\/json/i.test(String(up.headers['content-type'] ?? ''))) {
+      let text = '';
+      try { text = await readText(up.body); } catch (e: any) { return this.brokenBeforeStart(ctx, model, e?.message ?? String(e), stream, firstByteMs, 'openai'); }
+      let resp;
+      try { resp = C.parseResponse(JSON.parse(text)); } catch { return this.brokenBeforeStart(ctx, model, `上游返回的不是 JSON：${text.slice(0, 120)}`, stream, firstByteMs, 'openai'); }
+      if (!stream) res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(R.renderResponse(resp, model, customTools)));
+      else {
+        res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache' });
+        res.end(R.irEvents(resp).map((e) => renderer.push(e)).join('') + renderer.end());
+      }
+      return this.record(ctx, { ok: true, status: up.status, model, usage: resp.usage, outbound: 'openai', stream, firstByteMs });
+    }
+    const parser = new C.ChatStreamParser();
+    const sse = new SseParser();
+    const dec = new StringDecoder('utf8');
+    const usage: Partial<IrUsage> = {};
+    let failed = '';
+    res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive' });
+    const emit = async (evs: IrEvent[]) => {
+      if (ctx.signal.aborted) return;
+      let out = '';
+      for (const e of evs) {
+        if (e.t === 'usage') Object.assign(usage, e.usage);
+        else if (e.t === 'error') failed ||= e.message;
+        out += renderer.push(e);
+      }
+      if (out && !res.write(out)) await waitDrain(res, ctx.signal);
+    };
+    const it = decoded(up.body)[Symbol.asyncIterator]() as AsyncIterator<Buffer>;
+    let broken = '';
+    for (;;) {
+      if (ctx.signal.aborted) break;
+      let r: IteratorResult<Buffer>;
+      try { r = await withTimeout(it.next(), IDLE_MS); } catch (e: any) { broken = e?.message === 'timeout' ? '上游超过 5 分钟没有数据' : e?.message ?? String(e); up.body.destroy(); break; }
+      if (r.done) break;
+      for (const ev of sse.feed(dec.write(r.value))) await emit(parser.feed(ev));
+    }
+    if (ctx.signal.aborted) { up.body.destroy(); res.destroy(); return this.record(ctx, { ok: false, status: 499, model, usage, error: '客户端已断开', outbound: 'openai', stream, firstByteMs }); }
+    if (broken) await emit([{ t: 'error', message: broken }]);
+    else { for (const ev of sse.feed(dec.end())) await emit(parser.feed(ev)); for (const ev of sse.end()) await emit(parser.feed(ev)); await emit(parser.end()); }
+    res.end(renderer.end() || undefined);
+    this.record(ctx, { ok: !broken && !failed, status: broken ? 502 : up.status, model, usage, error: broken || failed || undefined, outbound: 'openai', stream, firstByteMs });
+  }
+
+  private brokenBeforeStart(ctx: Ctx, model: string, message: string, stream: boolean, firstByteMs: number, outbound: Outcome['outbound'] = 'responses') {
     this.fail(ctx.res, 502, message);
-    this.record(ctx, { ok: false, status: 502, model, error: message, outbound: 'responses', stream, firstByteMs });
+    this.record(ctx, { ok: false, status: 502, model, error: message, outbound, stream, firstByteMs });
   }
 
   private record(ctx: Ctx, o: Outcome) {
@@ -356,7 +498,7 @@ export class CacheShim {
       error: o.error,
       providerId: ctx.p.id,
       kind: 'gateway',
-      gateway: { group: '缓存垫片', via: 'shim', inbound: 'openai', member: ctx.p.name, memberId: ctx.p.id, outbound: o.outbound, upstreamStatus: o.status, switches: 0, firstByteMs: o.firstByteMs, stream: o.stream },
+      gateway: { group: '缓存垫片', via: 'shim', inbound: ctx.rest === '/v1/responses' ? 'responses' : 'openai', member: ctx.p.name, memberId: ctx.p.id, outbound: o.outbound, upstreamStatus: o.status, switches: 0, firstByteMs: o.firstByteMs, stream: o.stream },
     });
   }
 }

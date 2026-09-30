@@ -243,4 +243,13 @@ describe('other agents as sources in the same flat list (the old agent picker, s
   it('search finds an agent by name', () => {
     expect(filterMenu(withAgents(), 'codex sol').sections.map((s) => s.id)).toEqual(['agent:codex']);
   });
+  it('an agent set to run on a provider (settings → Agents 「新对话用」): its section lists that provider\'s models, picked on it', () => {
+    const m = menu({ otherAgents: [{ kind: 'codex', name: 'Codex', installed: true, provider: { id: 'relay', name: '我的中转', models: ['deepseek-chat', 'gpt-5.2'], defaultModel: 'gpt-5.2' } }] });
+    const cx = m.sections.find((s) => s.id === 'agent:codex')!;
+    expect(cx.title).toBe('Codex · 我的中转');
+    expect(cx.items.map((i) => i.model)).toEqual(['', 'gpt-5.2', 'deepseek-chat']);
+    expect(cx.items[0]).toMatchObject({ providerId: 'relay', agent: 'codex', display: '默认（gpt-5.2）' });
+    expect(cx.items[1]).toMatchObject({ providerId: 'relay', key: 'relay:gpt-5.2' });
+    expect(cx.items.some((i) => i.model === 'gpt-5.6-sol')).toBe(false); // not the ChatGPT account's models
+  });
 });

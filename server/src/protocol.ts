@@ -191,6 +191,8 @@ export interface AgentInfo {
   label: string; // user note e.g. account name
   enabled: boolean;
   builtin: boolean;
+  /** the provider new sessions of this agent run on ('' = its own login); settings → Agents 「用哪个供应商」 */
+  providerId?: string;
   /** the executable that was found (absolute) */
   path?: string;
   /** set when `path` is a copy shipped inside another app (「Codex 桌面版」「Codex IDE 扩展」), not a CLI on PATH */
@@ -238,8 +240,8 @@ export interface RemoteStatus { enabled: boolean; running: boolean; port: number
 export interface RemoteHost { id: string; name: string; target: string; sshPort?: number; identityFile?: string; remotePort: number; token?: string; startCommand?: string }
 export interface TunnelInfo { hostId: string; localPort: number; url: string; state: 'connecting' | 'up' | 'down'; error: string; since: number }
 export type ImKind = 'telegram' | 'discord' | 'slack' | 'feishu' | 'dingtalk' | 'wecom';
-export interface ImGatewayConfig { id: string; kind: ImKind; name: string; enabled: boolean; config: Record<string, string>; allowUsers: string[]; allowNames: Record<string, string>; openAccess: boolean; defaultCwd: string; permissionMode: string; agent: string; verbose: boolean }
-export interface ImBinding { gatewayId: string; chatId: string; sessionId: string; cwd: string; since: number }
+export interface ImGatewayConfig { id: string; kind: ImKind; name: string; enabled: boolean; config: Record<string, string>; allowUsers: string[]; allowNames: Record<string, string>; openAccess: boolean; defaultCwd: string; permissionMode: string; agent: string; verbose: boolean; /** '' / absent = the new-conversation default, 'claude' = the account (or the agent's own login), else a provider id */ providerId?: string }
+export interface ImBinding { gatewayId: string; chatId: string; sessionId: string; cwd: string; since: number; /** the agent the session runs (reopening it must not start Claude on a Codex session id) */ agent?: string }
 export interface ImGatewayInfo extends ImGatewayConfig { state: 'stopped' | 'starting' | 'running' | 'error'; error: string; botName: string; inbound: boolean; pairCode: string; pairExpiresAt: number; bindings: ImBinding[] }
 export interface ImKindDef { kind: ImKind; name: string; icon: string; inbound: boolean; fields: { key: string; label: string; secret?: boolean; hint?: string }[]; help: string }
 
@@ -480,7 +482,7 @@ export type ClientRequest =
   | { kind: 'android.packages'; serial: string }
   | { kind: 'android.launchApp'; serial: string; pkg: string }
   | { kind: 'android.startEmulator'; avd: string }
-  | { kind: 'agents.set'; agent: AgentKind; patch: { command?: string; args?: string[]; env?: Record<string, string>; model?: string; label?: string; enabled?: boolean; name?: string; protocol?: 'acp' | 'codex' } | null }
+  | { kind: 'agents.set'; agent: AgentKind; patch: { command?: string; args?: string[]; env?: Record<string, string>; model?: string; label?: string; enabled?: boolean; name?: string; protocol?: 'acp' | 'codex'; providerId?: string } | null }
   | { kind: 'terminal.open'; cwd: string; cols: number; rows: number }
   | { kind: 'terminal.input'; termId: string; data: string }
   | { kind: 'terminal.resize'; termId: string; cols: number; rows: number }

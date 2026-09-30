@@ -95,6 +95,11 @@ export interface AgentSource {
   models?: string[];
   /** its configured default model (settings → Agents 与子代理) */
   defaultModel?: string;
+  /**
+   * the provider its new conversations run on (settings → Agents 与子代理 「新对话用」), when it has one it can use:
+   * the section then lists that provider's models (a relay's ids, not the agent's own account models)
+   */
+  provider?: Pick<Provider, 'id' | 'name' | 'models' | 'defaultModel'>;
 }
 
 /** An agent's own model list: the catalog, else what it reported. */
@@ -242,10 +247,11 @@ export function buildModelMenu(i: BuildMenuInput): ModelMenu {
   for (const a of i.otherAgents ?? []) {
     if (a.kind === i.agent) continue;
     const unavailable = a.installed ? undefined : `未安装（${AGENTS_SETTING_PATH}）`;
+    const via = a.provider;
     const entry = (model: string, display: string, extra: Partial<ModelMenuItem> = {}): ModelMenuItem => ({
-      key: modelKey(a.kind, OWN_PROVIDER, model),
-      providerId: OWN_PROVIDER,
-      providerName: a.name,
+      key: modelKey(a.kind, via?.id ?? OWN_PROVIDER, model),
+      providerId: via?.id ?? OWN_PROVIDER,
+      providerName: via?.name ?? a.name,
       model,
       display,
       label: `${a.name} · ${display}`,
@@ -257,11 +263,13 @@ export function buildModelMenu(i: BuildMenuInput): ModelMenu {
       unavailable,
       ...extra,
     });
-    const list = [entry('', a.defaultModel ? `默认（${a.defaultModel}）` : '默认模型', { isDefault: true })];
-    for (const m of agentModels(a)) if (m.value && m.value !== 'default') list.push(entry(m.value, m.displayName || m.value, { hint: m.description || undefined }));
+    const def = via ? via.defaultModel : a.defaultModel;
+    const list = [entry('', def ? `默认（${def}）` : '默认模型', { isDefault: true })];
+    const own = via ? [...new Set([...(via.defaultModel ? [via.defaultModel] : []), ...(via.models ?? [])])].map((m) => ({ value: m, displayName: m, description: undefined as string | undefined })) : agentModels(a);
+    for (const m of own) if (m.value && m.value !== 'default') list.push(entry(m.value, m.displayName || m.value, { hint: m.description || undefined }));
     items.push(...list);
     const shown = list.filter(visible);
-    sections.push({ id: `agent:${a.kind}`, kind: 'agent', title: a.name, agent: a.kind, items: shown, count: shown.filter((x) => !x.isDefault).length, unavailable });
+    sections.push({ id: `agent:${a.kind}`, kind: 'agent', title: via ? `${a.name} · ${via.name}` : a.name, agent: a.kind, items: shown, count: shown.filter((x) => !x.isDefault).length, unavailable });
   }
 
   // favourites / recents: the current agent's entries only — another agent's model is a switch of agent (in a

@@ -3,7 +3,7 @@ import type { RunnerPool } from '../runtime/pool.js';
 import type { MetaStore } from '../meta/store.js';
 import type { SessionService } from '../sessions/service.js';
 import type { ImAdapter, InboundMessage } from './types.js';
-import type { ImBinding, ImGatewayConfig, PermissionRequestEvent } from '../protocol.js';
+import type { AgentKind, ImBinding, ImGatewayConfig, PermissionRequestEvent } from '../protocol.js';
 
 const HELP = `Claude Web 命令：
 /new [目录] — 新会话（默认第一个工作区）
@@ -17,6 +17,9 @@ const HELP = `Claude Web 命令：
 /verbose on|off — 是否推送工具调用过程
 /help — 这份说明
 其它文字 = 直接发给当前会话`;
+
+/** ` · 供应商 X` in replies that name the session (people check which channel the bot uses); nothing on the account */
+const channel = (i: { providerId?: string; providerName?: string }) => (i.providerName && i.providerId && i.providerId !== 'claude' ? ` · 供应商 ${i.providerName}` : '');
 
 export interface RouterDeps { pool: RunnerPool; meta: MetaStore; sessions: SessionService }
 
@@ -123,9 +126,9 @@ export class ImRouter {
       case '/new': {
         const cwd = arg || cfg.defaultCwd || this.d.meta.workspaces()[0]?.path;
         if (!cwd) return reply('没有工作区：/new <目录> 指定一个绝对路径。');
-        const r = this.d.pool.open({ cwd, permissionMode: (cfg.permissionMode as any) ?? 'default', agent: (cfg.agent as any) || undefined });
-        await this.d.meta.setImBinding({ gatewayId: gw, chatId: m.chatId, sessionId: r.sessionId, cwd, since: Date.now() });
-        return reply(`🆕 新会话 ${r.sessionId.slice(0, 8)} · ${cwd}\n直接发消息即可。`);
+        const r = this.openNew(cfg, cwd);
+        await this.d.meta.setImBinding({ gatewayId: gw, chatId: m.chatId, sessionId: r.sessionId, cwd, since: Date.now(), ...(cfg.agent ? { agent: cfg.agent } : {}) });
+        return reply(`🆕 新会话 ${r.sessionId.slice(0, 8)} · ${cwd}${channel(r.info)}\n直接发消息即可。`);
       }
       case '/sessions': {
         const list = (await this.d.sessions.list(15));
@@ -139,15 +142,18 @@ export class ImRouter {
         const target = /^\d+$/.test(arg) ? list[Number(arg) - 1] : list.find((s) => s.sessionId.startsWith(arg));
         if (!target) return reply('没找到');
         let r = this.d.pool.get(target.sessionId);
-        if (!r) r = this.d.pool.open({ sessionId: target.sessionId, cwd: target.cwd, permissionMode: (cfg.permissionMode as any) ?? 'default' });
-        await this.d.meta.setImBinding({ gatewayId: gw, chatId: m.chatId, sessionId: r.sessionId, cwd: target.cwd, since: Date.now() });
+        // on the session's own agent (a Codex session reopened without it would start Claude on that id); the pool
+        // keeps the provider it was recorded with
+        const agent = target.agent && target.agent !== 'claude' ? target.agent : undefined;
+        if (!r) r = this.d.pool.open({ sessionId: target.sessionId, cwd: target.cwd, permissionMode: (cfg.permissionMode as any) ?? 'default', agent });
+        await this.d.meta.setImBinding({ gatewayId: gw, chatId: m.chatId, sessionId: r.sessionId, cwd: target.cwd, since: Date.now(), ...(agent ? { agent } : {}) });
         return reply(`已切换到 ${target.title.slice(0, 40)} (${r.sessionId.slice(0, 8)})`);
       }
       case '/status': {
         if (!b) return reply('这个聊天还没绑定会话：/new 或 /use');
         const st = runner?.state ?? 'closed';
         const p = this.lastPermission.get(b.sessionId);
-        return reply(`会话 ${b.sessionId.slice(0, 8)} · ${st}${runner?.info.model ? ` · ${runner.info.model}` : ''}\n目录 ${b.cwd}${p ? `\n待处理权限：${p.toolName}` : ''}`);
+        return reply(`会话 ${b.sessionId.slice(0, 8)} · ${st}${runner?.info.model ? ` · ${runner.info.model}` : ''}${runner ? channel(runner.info) : ''}\n目录 ${b.cwd}${p ? `\n待处理权限：${p.toolName}` : ''}`);
       }
       case '/stop': if (!runner) return reply('没有运行中的会话'); await runner.interrupt(); return reply('⏹ 已中断');
       case '/allow': case '/deny': {
@@ -169,17 +175,30 @@ export class ImRouter {
     }
   }
 
+  /**
+   * A new session for this gateway: its agent, and its provider — the one picked in settings → IM 机器人, else (the
+   * pool decides) the new-conversation default, the same one a new conversation in the window gets. A picked
+   * provider the agent cannot use (the agent was changed afterwards) falls back to that default.
+   */
+  private openNew(cfg: ImGatewayConfig, cwd: string) {
+    const agent = (cfg.agent as AgentKind) || undefined;
+    const picked = cfg.providerId || undefined;
+    const providerId = picked && !this.d.pool.providerFitError?.(picked, agent) ? picked : undefined;
+    return this.d.pool.open({ cwd, permissionMode: (cfg.permissionMode as any) ?? 'default', agent, providerId });
+  }
+
   private async ensureSession(gw: string, chatId: string, cfg: ImGatewayConfig): Promise<ImBinding> {
     const b = this.bindingFor(gw, chatId);
     if (b && this.d.pool.get(b.sessionId)) return b;
     if (b) {
       // re-open the previous session so context continues
-      try { this.d.pool.open({ sessionId: b.sessionId, cwd: b.cwd, permissionMode: (cfg.permissionMode as any) ?? 'default' }); return b; } catch { /* fall through to a new one */ }
+      // on its own agent; the pool keeps the provider it was recorded with
+      try { this.d.pool.open({ sessionId: b.sessionId, cwd: b.cwd, permissionMode: (cfg.permissionMode as any) ?? 'default', agent: (b.agent as AgentKind) || undefined }); return b; } catch { /* fall through to a new one */ }
     }
     const cwd = cfg.defaultCwd || this.d.meta.workspaces()[0]?.path;
     if (!cwd) throw new Error('没有工作区，先 /new <目录>');
-    const r = this.d.pool.open({ cwd, permissionMode: (cfg.permissionMode as any) ?? 'default', agent: (cfg.agent as any) || undefined });
-    const nb = { gatewayId: gw, chatId, sessionId: r.sessionId, cwd, since: Date.now() };
+    const r = this.openNew(cfg, cwd);
+    const nb: ImBinding = { gatewayId: gw, chatId, sessionId: r.sessionId, cwd, since: Date.now(), ...(cfg.agent ? { agent: cfg.agent } : {}) };
     await this.d.meta.setImBinding(nb);
     return nb;
   }

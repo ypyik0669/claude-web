@@ -61,7 +61,7 @@ export const AGENT_DEFS: AgentDef[] = [
   { kind: 'opencode', name: 'OpenCode', icon: 'opencode', protocol: 'acp', command: 'opencode', args: ['acp'], versionArgs: ['--version'], install: 'npm i -g opencode-ai', login: 'opencode auth login', models: [], docs: 'https://opencode.ai' },
 ];
 
-export interface AgentConfig { command?: string; args?: string[]; env?: Record<string, string>; model?: string; label?: string; enabled?: boolean; name?: string; protocol?: 'acp' | 'codex' }
+export interface AgentConfig { command?: string; args?: string[]; env?: Record<string, string>; model?: string; label?: string; enabled?: boolean; name?: string; protocol?: 'acp' | 'codex'; /** the provider new sessions of this agent run on when none is picked ('' / absent = its own login) */ providerId?: string }
 
 /** How the registry finds executables — injectable so tests do not depend on what this machine has installed. */
 export interface AgentLocator {
@@ -201,7 +201,7 @@ export class AgentRegistry {
       const tool = !r.ok && d.install ? installTool(d.install) : null;
       const installNeeds = tool && !this.loc.onPath(tool.tool) ? { name: tool.name, url: tool.url } : undefined;
       return {
-        kind: d.kind, name: d.name, icon: d.icon, protocol: d.protocol, installed: r.ok, version: r.version, command, args: c.args ?? d.args, env: c.env ?? {}, model: c.model ?? '', models: d.models, install: d.install, login, docs: d.docs, label: c.label ?? '', enabled: c.enabled !== false, builtin: !!d.builtin,
+        kind: d.kind, name: d.name, icon: d.icon, protocol: d.protocol, installed: r.ok, version: r.version, command, args: c.args ?? d.args, env: c.env ?? {}, model: c.model ?? '', models: d.models, install: d.install, login, docs: d.docs, label: c.label ?? '', enabled: c.enabled !== false, builtin: !!d.builtin, providerId: c.providerId ?? '',
         ...(r.path ? { path: r.path } : {}), ...(r.from ? { from: r.from } : {}), ...(r.error ? { probeError: r.error } : {}), ...(installNeeds ? { installNeeds } : {}),
       };
     }));

@@ -7,6 +7,7 @@ import type { AgentConfigKind, AgentInfo, AgentKind } from '@shared';
 import { ICON_NAMES, Icon, type IconName } from '@/ui/icons';
 import { AgentConfigPanel, CONFIGURABLE } from './AgentConfigPanel';
 import { TERMS } from '@/ui/terms';
+import { ProviderSelect } from '@/features/providers/ProviderSelect';
 
 const PROTO_LABEL: Record<AgentInfo['protocol'], string> = { claude: 'Claude Code', acp: 'ACP', codex: 'app-server' };
 
@@ -19,6 +20,28 @@ function runInTerminal(cmd: string) {
   const cwd = st.workspaces[0]?.path ?? st.sessions[0]?.cwd ?? '';
   st.dispatchLayout({ t: 'tile.open', paneId, tile: { id: `t${Date.now()}`, kind: 'term', cwd, cmd, title: cmd.split(' ').slice(0, 2).join(' ') }, mode: 'tab' });
   st.openSettings(null as any);
+}
+
+/**
+ * 「新对话用」: the provider this agent's new conversations run on (a relay's key instead of the agent's own
+ * account) — also for IM bots, scheduled tasks, goals and hand-overs to it. What reaches the agent differs:
+ * Codex gets its own provider override (through the local cache shim, which also serves relays that only have
+ * chat/completions), Gemini CLI its API-key login, the others the OPENAI_* variables.
+ */
+function AgentProvider({ a, save }: { a: AgentInfo; save: (patch: Record<string, unknown>) => Promise<void> }) {
+  const providers = useStore((s) => s.providers);
+  const picked = a.providerId ? providers.find((p) => p.id === a.providerId) : undefined;
+  const hint = !picked ? `用 ${a.name} 自己登录的账号${a.login ? `（${a.login}）` : ''}`
+    : a.kind === 'codex' ? `Codex 连到「${picked.name}」：只有 chat/completions 的中转也能用（本机自动转换）`
+    : a.kind === 'gemini' ? `Gemini CLI 用「${picked.name}」的 API Key 登录`
+    : `把「${picked.name}」的地址和 Key 作为 OPENAI_BASE_URL / OPENAI_API_KEY 传给 ${a.name}；用不用由它自己决定`;
+  return (
+    <div className="agent-provider">
+      <span className="sub">新对话用</span>
+      <ProviderSelect agent={a.kind} value={a.providerId ?? ''} onChange={(v) => void save({ providerId: v })} first={{ label: '自己的登录', title: hint }} className="field" />
+      <span className="sub" title={hint}>{hint}</span>
+    </div>
+  );
 }
 
 function AgentCard({ a, onChange }: { a: AgentInfo; onChange: () => void }) {
@@ -67,6 +90,7 @@ function AgentCard({ a, onChange }: { a: AgentInfo; onChange: () => void }) {
         {configurable && <button className={clsx('btn sm ghost', cfgOpen && 'on')} onClick={() => setCfgOpen(!cfgOpen)} title="说明文件 / MCP / 模型等设置 / 备份">配置中心</button>}
         <button className="btn sm ghost" onClick={() => setOpen(!open)}>{open ? '收起' : '启动参数'}</button>
       </div>
+      {a.kind !== 'claude' && <AgentProvider a={a} save={save} />}
       {cfgOpen && configurable && <AgentConfigPanel kind={a.kind as AgentConfigKind} />}
       {open && (
         <div className="agent-form">

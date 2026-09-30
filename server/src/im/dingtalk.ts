@@ -3,6 +3,9 @@ import os from 'node:os';
 import WebSocket from 'ws';
 import { chunk, jsonFetch, type AdapterState, type ImAdapter, type OutboundOptions } from './types.js';
 
+/** The open-platform API; `CW_DINGTALK_API` points it at a stand-in for end-to-end checks (server/ws-phase19.mjs). */
+const api = () => (process.env.CW_DINGTALK_API || 'https://api.dingtalk.com').replace(/\/+$/, '');
+
 /** DingTalk robot in Stream mode (websocket, no public callback URL). Replies go through the per-conversation sessionWebhook. */
 export class DingTalkAdapter extends EventEmitter implements ImAdapter {
   readonly kind = 'dingtalk' as const;
@@ -27,7 +30,7 @@ export class DingTalkAdapter extends EventEmitter implements ImAdapter {
     this.wanted = true;
     this.setState('starting');
     try {
-      const r = await jsonFetch<any>('https://api.dingtalk.com/v1.0/gateway/connections/open', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientId: this.clientId, clientSecret: this.clientSecret, subscriptions: [{ type: 'CALLBACK', topic: '/v1.0/im/bot/messages/get' }], ua: 'claude-web/0.1', localIp: firstIp() }) });
+      const r = await jsonFetch<any>(`${api()}/v1.0/gateway/connections/open`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ clientId: this.clientId, clientSecret: this.clientSecret, subscriptions: [{ type: 'CALLBACK', topic: '/v1.0/im/bot/messages/get' }], ua: 'claude-web/0.1', localIp: firstIp() }) });
       if (!r.endpoint || !r.ticket) throw new Error(`gateway: ${JSON.stringify(r).slice(0, 200)}`);
       this.connect(`${r.endpoint}?ticket=${encodeURIComponent(r.ticket)}`);
     } catch (e: any) { this.setState('error', e.message); this.running = false; if (this.connected) this.scheduleReconnect(30_000); }
@@ -68,7 +71,7 @@ export class DingTalkAdapter extends EventEmitter implements ImAdapter {
 
   private async token() {
     if (this.accessToken && this.accessToken.expiresAt > Date.now()) return this.accessToken.token;
-    const r = await jsonFetch<any>('https://api.dingtalk.com/v1.0/oauth2/accessToken', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ appKey: this.clientId, appSecret: this.clientSecret }) });
+    const r = await jsonFetch<any>(`${api()}/v1.0/oauth2/accessToken`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ appKey: this.clientId, appSecret: this.clientSecret }) });
     this.accessToken = { token: r.accessToken, expiresAt: Date.now() + (r.expireIn ?? 7000) * 1000 - 60_000 };
     return r.accessToken as string;
   }
@@ -82,7 +85,7 @@ export class DingTalkAdapter extends EventEmitter implements ImAdapter {
       } else {
         // webhook expired: proactive group message via the robot API (needs the app's robotCode = clientId)
         const tk = await this.token();
-        await jsonFetch('https://api.dingtalk.com/v1.0/robot/groupMessages/send', { method: 'POST', headers: { 'content-type': 'application/json', 'x-acs-dingtalk-access-token': tk }, body: JSON.stringify({ robotCode: this.clientId, openConversationId: chatId, msgKey: 'sampleText', msgParam: JSON.stringify({ content: part }) }) });
+        await jsonFetch(`${api()}/v1.0/robot/groupMessages/send`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-acs-dingtalk-access-token': tk }, body: JSON.stringify({ robotCode: this.clientId, openConversationId: chatId, msgKey: 'sampleText', msgParam: JSON.stringify({ content: part }) }) });
       }
     }
   }
