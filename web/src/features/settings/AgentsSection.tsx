@@ -49,15 +49,19 @@ function AgentCard({ a, onChange }: { a: AgentInfo; onChange: () => void }) {
   return (
     <div className={clsx('row agent-card', !a.enabled && 'muted')} style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span className={clsx('dot', a.installed ? 'idle' : 'error')} />
+        <span className={clsx('dot', !a.installed ? 'error' : a.probeError ? 'waiting' : 'idle')} />
         {/* AgentInfo.icon is an icon name (custom ACP agents may still carry an old glyph) */}
         <Icon name={(ICON_NAMES as string[]).includes(a.icon) ? (a.icon as IconName) : 'agent'} size={16} />
         <div className="grow">
-          <div title={`接入方式：${PROTO_LABEL[a.protocol]}`}>{a.name} <span className="mono muted" style={{ fontSize: 11.5 }}>{a.installed ? a.version : '未安装'}</span>{a.label && <span className="badge" style={{ marginLeft: 6, color: 'var(--blue)' }}>{a.label}</span>}</div>
-          <div className="sub mono">{a.command} {a.args.join(' ')}</div>
+          <div title={`接入方式：${PROTO_LABEL[a.protocol]}`}>{a.name} <span className="mono muted" style={{ fontSize: 11.5 }}>{a.installed ? a.version || '已找到' : '未安装'}</span>{a.label && <span className="badge" style={{ marginLeft: 6, color: 'var(--blue)' }}>{a.label}</span>}</div>
+          {/* where it was found: a copy inside the Codex desktop app / IDE extension is not on PATH, so say whose it is */}
+          <div className="sub mono" title={a.path}>{a.from ? `用的是${a.from}自带的 ${a.command}` : `${a.command} ${a.args.join(' ')}`}{a.path && a.from ? ` · ${a.path}` : ''}</div>
+          {a.probeError && <div className="sub agent-probe-err" data-probe-error title={a.probeError}>{a.probeError}</div>}
+          {!a.installed && a.installNeeds && <div className="sub agent-probe-err">安装命令要用 {a.installNeeds.name}：先装好它，点「重新检测」，再点「安装」。</div>}
         </div>
         {a.kind !== 'claude' && <label className="chip" title="关掉后新对话的选择器里不再出现"><input type="checkbox" checked={a.enabled} onChange={(e) => save({ enabled: e.target.checked })} /> 启用</label>}
-        {!a.installed && a.install && <button className="btn sm" onClick={() => runInTerminal(a.install)} title={a.install}>安装</button>}
+        {!a.installed && a.installNeeds && <a className="btn sm" href={a.installNeeds.url} target="_blank" rel="noreferrer" title={a.installNeeds.url}>下载 {a.installNeeds.name}</a>}
+        {!a.installed && a.install && <button className={clsx('btn sm', a.installNeeds && 'ghost')} onClick={() => runInTerminal(a.install)} title={a.install}>安装</button>}
         {a.installed && a.login && <button className="btn sm ghost" onClick={() => runInTerminal(a.login)} title={a.login}>登录</button>}
         {a.docs && <a className="btn sm ghost" href={a.docs} target="_blank" rel="noreferrer">文档</a>}
         {configurable && <button className={clsx('btn sm ghost', cfgOpen && 'on')} onClick={() => setCfgOpen(!cfgOpen)} title="说明文件 / MCP / 模型等设置 / 备份">配置中心</button>}
@@ -116,7 +120,7 @@ export function AgentsSection() {
         {agents.length === 0 && <div className="empty">检测中…</div>}
       </div>
       <div className="sub" style={{ marginTop: 8 }} title="Codex 走 codex app-server（JSON-RPC），Gemini / Qwen / Kimi 和自定义 agent 走 ACP（--acp / --experimental-acp）">
-        权限确认、工具卡片、总览、账本对所有 Agent 一致；它们的对话记录存在 <code>~/.claude-web/agents/</code>。
+        权限确认、工具卡片、总览、账本对所有 Agent 一致；它们的对话记录存在 <code>~/.claude-web/agents/</code>。装好之后没检测到？点「重新检测」：会重新读取系统 PATH，也会找 Codex 桌面版 / IDE 扩展自带的 codex。
       </div>
     </div>
   );

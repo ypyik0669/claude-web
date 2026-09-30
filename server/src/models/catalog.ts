@@ -207,3 +207,55 @@ export function profileFitError(agent: AgentKind, type: ProviderType, runtime?: 
   if (agent === 'claude' && runtime === 'claude' && (type === 'openai' || type === 'gemini' || type === 'grok')) return `官方 Claude Code 只支持 Anthropic 兼容 / 模型网关类型的供应商，${type} 类型要换成 ccb 运行内核（设置 → 账号与登录 → 更多选项）`;
   return null;
 }
+
+/** Ids in an endpoint's model list that are not chat models (embeddings, images, speech, moderation, rerank…). */
+const NOT_CHAT = /embed|whisper|tts|dall-?e|image|moderation|rerank|audio|speech|realtime|transcri|ocr|sora|veo|imagen|midjourney|mj[-_]|flux|suno|kling/i;
+export const isChatModel = (id: string) => !!id && !NOT_CHAT.test(id);
+
+/**
+ * An id's version as the 1–2 digit numbers in it, in order; dates and sizes (3+ digits) are left out, so
+ * `claude-sonnet-4-5-20250929` → [4, 5], `claude-3-5-haiku-20241022` → [3, 5], `glm-4.6` → [4, 6].
+ */
+export function modelVersion(id: string): number[] {
+  return (id.match(/\d+/g) ?? []).filter((n) => n.length <= 2).map(Number);
+}
+
+function newer(a: string, b: string): number {
+  const x = modelVersion(a), y = modelVersion(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? -1) !== (y[i] ?? -1)) return (y[i] ?? -1) - (x[i] ?? -1);
+  return a.length - b.length; // same version: the plain id before its -thinking / -latest variants
+}
+
+/** The newest chat model in `models` matching `re`, or undefined. */
+export function newestMatch(models: string[], re: RegExp): string | undefined {
+  return models.filter((m) => isChatModel(m) && re.test(m)).sort(newer)[0];
+}
+
+type Family = 'haiku' | 'sonnet' | 'opus';
+/**
+ * haiku / sonnet / opus → the newest model of that Claude family an endpoint lists; a family it lacks borrows a
+ * neighbour (the CLI calls all three: background work on haiku, the main loop on the default). {} without Claude.
+ */
+export function claudeFamilyMap(models: string[]): Partial<Record<Family, string>> {
+  const pick = (f: Family) => newestMatch(models, new RegExp(`claude.*${f}|${f}.*claude`, 'i'));
+  const opus = pick('opus'), sonnet = pick('sonnet'), haiku = pick('haiku');
+  const any = sonnet ?? opus ?? haiku;
+  if (!any) return {};
+  return { opus: opus ?? sonnet ?? any, sonnet: sonnet ?? opus ?? any, haiku: haiku ?? sonnet ?? any };
+}
+
+/** What a coding agent should default to, first match wins (then the newest id within it). */
+export const CHAT_MODEL_PREFERENCE: RegExp[] = [
+  /claude.*sonnet|sonnet.*claude/i, /claude.*opus|opus.*claude/i,
+  /^gpt-5(?!.*(nano|mini|chat|image|audio))/i, /deepseek-(chat|v\d)/i, /kimi-k2/i, /glm-[4-9]\.\d|glm-[5-9]/i,
+  /qwen3?-coder/i, /qwen3|qwen-(max|plus)/i, /gemini-[\d.]+-pro/i, /grok-[\d]/i, /deepseek/i, /^gpt-4\.1|^gpt-4o/i,
+];
+
+/**
+ * A sensible default chat model from an endpoint's list: by `prefer` (Claude first — this is a Claude Code front
+ * end — then the known coding-capable families), else the first id that looks like a chat model.
+ */
+export function pickChatModel(models: string[], prefer: RegExp[] = CHAT_MODEL_PREFERENCE): string | undefined {
+  for (const re of prefer) { const m = newestMatch(models, re); if (m) return m; }
+  return models.find(isChatModel);
+}

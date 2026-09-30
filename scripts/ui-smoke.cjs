@@ -381,6 +381,15 @@ function driver() {
       return { ...r, missed: true, misses };
     };
     const key = async (keyCode) => { wc.sendInputEvent({ type: 'keyDown', keyCode }); wc.sendInputEvent({ type: 'keyUp', keyCode }); await sleep(200); };
+    // one request to the server over its own socket (the page's is not reachable)
+    const srvReq = (req) => new Promise((res, rej) => {
+      const WS = require(path.join(ROOT, 'node_modules', 'ws'));
+      const u = new URL(E.SMOKE_URL);
+      const s = new WS(`ws://${u.host}/ws?token=${u.searchParams.get('token')}`);
+      s.on('error', rej);
+      s.on('open', () => s.send(JSON.stringify({ type: 'request', request: { id: '1', req } })));
+      s.on('message', (raw) => { const m = JSON.parse(String(raw)); if (m.type === 'reply' && m.reply.id === '1') { s.close(); m.reply.ok ? res(m.reply.data) : rej(new Error(m.reply.error)); } });
+    });
     const noBoundary = (scope) => js(`[...document.querySelectorAll(${JSON.stringify(`${scope} .err-boundary`)})].map((e) => e.dataset.area + ': ' + e.querySelector('.eb-msg')?.textContent).join(' | ')`);
 
     try {
@@ -394,10 +403,11 @@ function driver() {
           if (E.SMOKE_READONLY !== '1') await js('window.__store.getState().setSetting("onboarded", true)');
           else await js('document.querySelector(".modal-bg")?.remove()');
         } else {
-          // redesign phase 7 (spec §5.8 / §7 row 7): two steps — ① 登录 (skippable) ② a project folder — and the
-          // first message is one Enter away: 先跳过 · the folder · Enter = 3 steps from a cold start
+          // redesign phase 7 (spec §5.8 / §7 row 7): two steps — ① 接一个模型 (skippable) ② a project folder — and the
+          // first message is one Enter away: 接一个模型 · the folder · Enter = 3 steps from a cold start. This HOME has no
+          // key: it skips ① and the send asks for a model (one more click, on a provider added from here)
           const steps = await js(`[...document.querySelectorAll('.modal.onboarding .ob-steps li')].map((l) => l.textContent)`);
-          check('onboarding: two steps (登录 · 选一个项目文件夹)', steps.length === 2 && /登录/.test(steps[0]) && /项目文件夹/.test(steps[1]), JSON.stringify(steps));
+          check('onboarding: two steps (接一个模型 · 选一个项目文件夹)', steps.length === 2 && /接一个模型/.test(steps[0]) && /项目文件夹/.test(steps[1]), JSON.stringify(steps));
           let taken = 0;
           // before the login check answers, a neutral 正在检查登录… (review 7 M9) — not a step to act on
           const checking = await js(`document.querySelector('.modal.onboarding')?.dataset.step === 'checking' ? (document.querySelector('.modal.onboarding .ob-checking')?.textContent ?? '') : null`);
@@ -405,7 +415,9 @@ function driver() {
           await waitFor(`document.querySelector('.modal.onboarding')?.dataset.step !== 'checking'`, 30_000);
           if (await js(`document.querySelector('.modal.onboarding')?.dataset.step === 'login'`)) {
             const loginRow = await js(`[...document.querySelectorAll('.modal.onboarding .ob-actions button')].map((b) => b.textContent.trim())`);
-            check('onboarding ①: 在终端登录 / 添加供应商 / 先跳过', ['在终端登录', '添加供应商', '先跳过'].every((t) => loginRow.some((x) => x.includes(t))), JSON.stringify(loginRow));
+            const presets = await js(`[...document.querySelectorAll('.modal.onboarding .qc .qc-preset')].map((b) => b.textContent.trim())`);
+            // no key needed to look: the quick connect is the step itself (presets, the key field, 连接); the Claude login is secondary
+            check('onboarding ①: 接一个模型 in place (中转站 / DeepSeek / Kimi… · API Key · 连接), then 用 Claude 账号登录 / 先跳过', presets[0] === '中转站' && presets.length >= 6 && await js(`!!document.querySelector('.modal.onboarding .qc [data-qc="key"]') && !!document.querySelector('.modal.onboarding .qc [data-qc="connect"]')`) && ['用 Claude 账号登录', '先跳过'].every((t) => loginRow.some((x) => x.includes(t))) && !loginRow.some((x) => /添加供应商|在终端登录/.test(x)), JSON.stringify({ presets, loginRow }));
             await click('.modal.onboarding [data-ob="skip"]');
             taken++;
           }
@@ -423,14 +435,28 @@ function driver() {
           // step 3 for real (review 7 M14): Enter sends — the tile becomes that conversation and holds the message
           await key('Enter');
           taken++;
+          // no login and no model here: the send asks for one first (it would only come back 「Not logged in」), keeps
+          // the text, and goes out once one is picked — a provider added from here (its endpoint is never reached)
+          let smokeProv = null;
+          if (await waitFor(`document.querySelector('.modal.connect-model')?.dataset.reason === 'send'`, 4000)) {
+            const held = await js(`({ text: document.querySelector('.welcome .composer textarea')?.value ?? '', open: Object.keys(window.__store.getState().open).length })`);
+            check('send with no login and no model: 「先接一个模型」 opens, the text stays, nothing is started', held.text.includes('smoke：第一条') && held.open === 0, JSON.stringify(held));
+            smokeProv = await srvReq({ kind: 'providers.upsert', provider: { name: 'Smoke 首发', type: 'openai', baseUrl: 'http://127.0.0.1:9', apiKey: 'smoke-placeholder-not-a-key', models: ['smoke-m1'], defaultModel: 'smoke-m1' } });
+            await js('window.__store.getState().loadProviders()');
+            const pickSel = '.modal.connect-model [data-qc="existing"]';
+            if (await waitFor(`!!document.querySelector('${pickSel}')`, 5000)) await click(pickSel);
+            taken++;
+          }
           const sentExpr = `(() => { const st = window.__store.getState(); const o = Object.values(st.open).find((x) => x.conv.items.some((i) => i.kind === 'user' && String(i.text).includes('smoke：第一条'))); return o ? { sid: o.sessionId, cwd: o.cwd, lastSent: !!o.lastSent, inPane: st.layout.groups.some((g) => Object.values(g.panes).some((p) => p.tiles.some((t) => t.kind === 'chat' && t.sessionId === o.sessionId))) } : null; })()`;
           await waitFor(`!!${sentExpr}`, 30_000);
           const sent = await js(sentExpr);
-          check('cold start → first message in 3 steps (先跳过 · the folder · Enter): Enter sent it from that folder into this tile', done && ready && sendable && taken <= 3 && !!sent && sent.lastSent && sent.inPane && sent.cwd === E.SMOKE_REPO, JSON.stringify({ done, ready, sendable, steps: taken, sent }));
+          check('cold start → first message (先跳过 · the folder · Enter [· a model, when there is none]): sent from that folder into this tile', done && ready && sendable && taken <= (smokeProv ? 4 : 3) && !!sent && sent.lastSent && sent.inPane && sent.cwd === E.SMOKE_REPO, JSON.stringify({ done, ready, sendable, steps: taken, sent }));
           // the first message also ticks 发出第一个任务 in the 入门清单 (only a message sent from here does)
           check('入门清单: the message sent from here marks 发出第一个任务', await waitFor(`(window.__store.getState().settings['onboarding.checklist']?.done || []).includes('send')`, 5000));
           // leave its process (no login in this HOME) and come back to an empty start page for the checks below
           if (sent) await js(`window.__store.getState().closeSession(${JSON.stringify(sent.sid)})`).catch(() => {});
+          // the provider goes again: the checks below expect the account on the chips
+          if (smokeProv) { await srvReq({ kind: 'providers.remove', id: smokeProv.id }).catch(() => {}); await js('window.__store.getState().loadProviders()'); }
           await js(`window.__store.getState().openInPane(null, 'replace')`);
           await waitFor('!!document.querySelector(".welcome .composer textarea")', 5000);
           await sleep(300);
@@ -507,7 +533,7 @@ function driver() {
         await waitFor('window.__store.getState().auth !== null', 20_000);
         const notice = await js(`({ auth: window.__store.getState().auth?.loggedIn ?? null, providers: window.__store.getState().providers.length, text: document.querySelector('.welcome .home-notice')?.textContent ?? null })`);
         const wantNotice = notice.auth === false && notice.providers === 0;
-        check('home: 「还没登录 Claude。[在终端登录] [添加供应商]」 only when not logged in (nothing when fine)', wantNotice ? /还没登录 Claude。/.test(notice.text ?? '') && /在终端登录/.test(notice.text) && /添加供应商/.test(notice.text) : notice.text === null || !/登录/.test(notice.text), JSON.stringify(notice));
+        check('home: 「还没接模型…[接一个模型] [用 Claude 账号登录]」 only when not logged in with no provider (nothing when fine)', wantNotice ? /还没接模型/.test(notice.text ?? '') && /接一个模型/.test(notice.text) && /用 Claude 账号登录/.test(notice.text) : notice.text === null || !/登录/.test(notice.text), JSON.stringify(notice));
       }
       // redesign phase 1: one pane, one tab, no workbench setting → no global top bar, no group bar, no tab strip, no panel rail
       if (E.SMOKE_READONLY !== '1') {

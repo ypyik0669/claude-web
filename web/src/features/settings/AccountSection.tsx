@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { Row } from './controls';
+import { connectModel, loginInTerminal } from '@/features/providers/ConnectModel';
 
 /** `claude auth status` (the server shares one run for 30 s; 重新检查 forces a fresh one). */
 interface AuthStatus { loggedIn?: boolean; authMethod?: string; email?: string; orgName?: string; apiProvider?: string; error?: boolean }
@@ -30,17 +31,19 @@ export function AccountSection() {
       <div className="sp-card">
         <Row
           label="登录状态"
-          hint={auth === null ? '检查中…' : auth.loggedIn ? (who || '已登录 claude.ai') : auth.error ? '没检查成功：运行内核没有回答，稍后再点「重新检查」。' : '还没登录。在终端里运行 claude auth login；或者用第三方接口：添加一个供应商。'}
+          hint={auth === null ? '检查中…' : auth.loggedIn ? (who || '已登录 claude.ai') : auth.error ? '没检查成功：运行内核没有回答，稍后再点「重新检查」。' : '还没登录。有 Claude Pro / Max 订阅就登录；没有的话用下面的「接一个模型」填 API Key。'}
         >
           {auth && <span className={clsx('sp-state', auth.loggedIn ? 'ok' : 'off')}>{auth.loggedIn ? '已登录' : '未登录'}</span>}
+          {auth && !auth.loggedIn && !auth.error && <button className="btn sm ghost" onClick={loginInTerminal}>登录</button>}
           <button className="btn sm ghost" disabled={busy} onClick={() => check(true)}>{busy ? '检查中…' : '重新检查'}</button>
         </Row>
         {auth?.apiProvider && <Row label="API 提供方" hint="Claude 账号的请求发往哪里。">{auth.apiProvider}</Row>}
       </div>
       <div className="sp-blk-h">第三方接口</div>
       <div className="sp-card">
-        <Row label="供应商" hint={providers ? `已添加 ${providers} 个。每个对话可以在模型菜单里换用。` : '还没有。用中转站或其它模型厂商的接口时，在这里添加。'}>
-          <button className="btn sm" onClick={() => go('providers')}>{providers ? '管理供应商' : '添加供应商'}</button>
+        <Row label="供应商" hint={providers ? `已添加 ${providers} 个。每个对话可以在模型菜单里换用。` : '还没有。用中转站、DeepSeek、Kimi 等的 API Key 时，在这里接。'}>
+          <button className={clsx('btn sm', !providers && auth?.loggedIn === false && 'primary')} onClick={() => void connectModel({ reason: 'settings' })}>接一个模型</button>
+          {providers > 0 && <button className="btn sm ghost" onClick={() => go('providers')}>管理供应商</button>}
         </Row>
       </div>
     </>

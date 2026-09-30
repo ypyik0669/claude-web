@@ -25,6 +25,7 @@ import { McpService } from './mcp/service.js';
 import { DiagService } from './diag/service.js';
 import { LedgerService } from './usage/ledger.js';
 import { AgentRegistry } from './agents/types.js';
+import { refreshProcessPath } from './agents/locate.js';
 import { AgentTranscripts } from './agents/transcript.js';
 import { CanonicalLog } from './session/canonical.js';
 import { MemoryService } from './memory/service.js';
@@ -252,6 +253,9 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   await providers.warm();
   const files = new FilesService();
   const agents = new AgentRegistry(meta);
+  // agent CLIs installed where a GUI-started app's PATH does not look (npm -g after login, fnm, uv tool…): added before
+  // the first probe / session / terminal needs them (agents/locate.ts)
+  void refreshProcessPath().catch(() => {});
   const transcripts = new AgentTranscripts();
   const canonical = new CanonicalLog();
   const memory = new MemoryService();

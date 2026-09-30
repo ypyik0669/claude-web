@@ -78,10 +78,10 @@ export const SIMPLIFIED_NOTICE = `界面已简化；需要分屏 / 标签 / 面�
 export const DISCONNECTED = '连接断开，正在重连…';
 
 /**
- * 「在终端登录」 (first-run wizard, the start page's notice): the terminal tile runs Claude Code itself, not a shell —
- * typing `claude` there would be sent as a prompt (review 7 I5).
+ * 「用 Claude 账号登录」 (the first-run wizard, the start page's notice, the 接一个模型 dialog): a terminal tab runs
+ * `claude auth login` — the subscription route; everyone else connects a model with an API key instead.
  */
-export const LOGIN_IN_TERMINAL = '终端里在运行 claude auth login：按提示登录 Claude 账号，登录好回到这里。没有 Claude 账号（或所在地区连不上 Anthropic）就用「添加供应商」接中转';
+export const LOGIN_IN_TERMINAL = '终端里在运行 claude auth login：按提示登录 Claude 账号，登录好回到这里。没有 Claude 订阅（或所在地区连不上 Anthropic）就用「接一个模型」填中转站或其它厂商的 API Key';
 /** the command the 「在终端登录」 buttons run in a terminal tab (the terminal is a shell) */
 export const CLAUDE_LOGIN_CMD = 'claude auth login';
 

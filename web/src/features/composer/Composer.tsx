@@ -26,6 +26,8 @@ import { routePick, switchedNote } from '@/features/models/route';
 import { modelChipText } from '@/features/models/intelligence';
 import { useAccountDefault } from '@/features/models/account-default';
 import { providersLoaded, useGatewayStatus } from '@/features/models/data';
+import { needsModel, welcomeProvider } from './welcome-provider';
+import { connectModel, useConnect } from '@/features/providers/ConnectModel';
 import { dlg, useDialogStore } from '@/ui/dialog';
 import { DOCK_BLOCKED, DOCK_CARRIED, DOCK_ENTER_IGNORED, DOCK_PLACEHOLDER, DOCK_REQUEUED, DOCK_SEND, TERMS } from '@/ui/terms';
 import { showGoals } from '@/features/workbench/right-panel';
@@ -118,7 +120,11 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   const [wWorktree, setWWorktree] = useState('');
   const [starting, setStarting] = useState(false);
   const providers = useStore((s) => s.providers);
-  const [wProvider, setWProvider] = useState<string>(localStorage.getItem('cw.lastProvider') || (settings.defaultProviderId as string) || 'claude');
+  const lastProvider = useRef(localStorage.getItem('cw.lastProvider'));
+  const [wProvider, setWProvider] = useState<string>(lastProvider.current || (settings.defaultProviderId as string) || 'claude');
+  // picked in the model menu (or connected on send): from then on the choice is the user's, not welcomeProvider's
+  const providerPicked = useRef(false);
+  const loggedIn = useStore((s) => s.auth?.loggedIn);
   const agents = useStore((s) => s.agents);
   const [wAgent, setWAgent] = useState<AgentKind>((localStorage.getItem('cw.lastAgent') as AgentKind) || 'claude');
   const agent = wAgent !== 'claude' ? agents.find((a) => a.kind === wAgent) : undefined;
@@ -131,15 +137,26 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   const provider = usableProfile(providers, wProvider, { agent: wKind, engine, gatewayGroups: gatewayView.groups, gatewayEnabled: gatewayView.enabled });
   // the agent's own model list: the catalog, or what the agent registry probed when the catalog has none
   const wBuiltin = agent && !modelsFor(agent.kind).length ? agent.models.map((m) => ({ value: m, displayName: m })) : undefined;
-  // the remembered profile is gone (deleted, or unusable by this agent): its model goes with it, or a relay's
-  // model id would be sent to the agent's own login
+  // providers a Claude conversation could use right now (the model menu's own check)
+  const usableIds = useMemo(() => providers.filter((p) => usableProfile(providers, p.id, { agent: 'claude', engine, gatewayGroups: gatewayView.groups, gatewayEnabled: gatewayView.enabled })).map((p) => p.id), [providers, engine, gatewayView.groups, gatewayView.enabled]);
+  const usableKey = usableIds.join(',');
+  // nothing picked yet: follow welcomeProvider — the settings, the login check and the list arrive after the first
+  // render, and a provider connected on first run (or 设为默认 in settings) has to be in the chip without a reload;
+  // a logged-out account is never the default when there is a provider. Picked: kept, unless it became unusable
+  // (deleted, or not for this agent) — then its model goes with it, or a relay's model id would be sent to the
+  // agent's own login
   useEffect(() => {
-    if (!welcome || wProvider === 'claude' || provider || !providersLoaded(providers)) return;
-    setWProvider('claude');
+    if (!welcome || !providersLoaded(providers)) return;
+    const keep = wProvider === 'claude' || !!provider;
+    const want = foreign ? (keep ? wProvider : 'claude')
+      : providerPicked.current && keep ? wProvider
+      : welcomeProvider({ last: providerPicked.current ? null : lastProvider.current, def: settings.defaultProviderId as string | undefined, loggedIn, usable: usableIds });
+    if (want === wProvider) return;
+    setWProvider(want);
     setWModel('');
-    localStorage.removeItem('cw.lastProvider');
-    localStorage.removeItem('cw.lastModel');
-  }, [welcome, wProvider, provider, providers]);
+    if (want === 'claude') { localStorage.removeItem('cw.lastProvider'); localStorage.removeItem('cw.lastModel'); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [welcome, foreign, wProvider, provider, providers, usableKey, settings.defaultProviderId, loggedIn]);
   // effort is per agent AND per model: Gemini has none, Codex alone has `ultra`, Opus/Sonnet 4.6 have no `xhigh`
   const wEfforts = effortLevels(wKind, wModel || undefined);
   // a level picked for another model that this one lacks falls back to the default (not sent, not shown)
@@ -270,7 +287,10 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // command palette, an in-app dialog (re-review M-4) — closing one gives the
   // focus back to this box, and the Enter right after it must not answer a card the user never saw
   const autoOver = useAutomation((s) => s.open);
-  const dialogOpen = useDialogStore((s) => s.queue.length > 0);
+  // the 接一个模型 dialog is a dialog too: an Enter meant for it must not answer a docked card underneath
+  const dlgOpen = useDialogStore((s) => s.queue.length > 0);
+  const connectOpen = useConnect((s) => !!s.req);
+  const dialogOpen = dlgOpen || connectOpen;
   const covered = useStore((s) => composerCovered({ settingsOpen: !!s.settingsOpen, automationOpen: autoOver, shortcutsOpen: s.shortcutsOpen, paletteOpen: s.paletteOpen, dialogOpen, mobile: s.mobile, sheetAt: s.sheetAt, dockOpen: s.layout.dock.open, dockTabs: s.layout.dock.tabs.length, inspect: !!s.inspect }));
   const inView = visible && !covered;
   useEffect(() => { if (inView && seenRef.current) setSeen({ shownAt: Date.now() }); }, [inView]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -397,15 +417,30 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     const im = imgs.map(({ mediaType, data }) => ({ mediaType, data }));
     if (welcome) {
       if (!cwd.trim()) return toast('请先选择项目文件夹');
+      let providerId = provider ? provider.id : 'claude';
+      let model = wModel || undefined;
+      let effort = wEffortOk;
+      // the Claude account is logged out: this would only come back as 「Not logged in」 — connect a model (or pick
+      // one already added) and the message goes out on it; closing the dialog keeps the text
+      if (needsModel({ provider: providerId, foreignAgent: foreign, loggedIn: useStore.getState().auth?.loggedIn })) {
+        const p = await connectModel({ reason: 'send' });
+        if (!p) return;
+        providerPicked.current = true;
+        setWProvider(p.id);
+        setWModel('');
+        providerId = p.id;
+        model = undefined;
+        effort = undefined;
+      }
       setStarting(true);
       try {
         localStorage.setItem('cw.lastCwd', cwd);
-        localStorage.setItem('cw.lastModel', wModel);
+        localStorage.setItem('cw.lastModel', model ?? '');
         localStorage.setItem('cw.lastMode', wMode);
-        localStorage.setItem('cw.lastProvider', wProvider);
+        localStorage.setItem('cw.lastProvider', providerId);
         localStorage.setItem('cw.lastAgent', wAgent);
         if (wAgent !== 'claude' && !agent) throw new Error('选中的 agent 已不可用');
-        const id = await openSession({ cwd: cwd.trim(), model: wModel || undefined, permissionMode: wMode, effort: wEffortOk, ultracode: wUltracode && wUltra ? true : undefined, worktree: wWorktree || undefined, providerId: provider ? provider.id : 'claude', features: foreign ? {} : featDefaults, agent: foreign ? wAgent : undefined }, target);
+        const id = await openSession({ cwd: cwd.trim(), model, permissionMode: wMode, effort, ultracode: wUltracode && wUltra ? true : undefined, worktree: wWorktree || undefined, providerId, features: foreign ? {} : featDefaults, agent: foreign ? wAgent : undefined }, target);
         const uploaded = files.length ? await uploadAll(id) : [];
         await send(id, withRefs(t), im, false, [...atts, ...uploaded]);
         setRefs([]);
@@ -599,6 +634,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     return true;
   };
   const pickWelcome = (it: ModelMenuItem) => {
+    providerPicked.current = true;
     if (it.agent && it.agent !== wKind) {
       // another agent's own login: switch agent (the old agent picker), its default effort
       setWAgent(it.agent);

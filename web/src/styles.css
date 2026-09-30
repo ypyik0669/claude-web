@@ -2324,3 +2324,34 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .auto-head { padding-left: 
 .theme-sw .pv .ln.short { width: 60%; opacity: 0.45; }
 .theme-sw .pv .dot { width: 8px; height: 8px; margin-top: auto; border-radius: 50%; background: var(--sw-accent); }
 .theme-sw .pv.split::after { content: ''; position: absolute; inset: 0; background: var(--sw-bg2); clip-path: polygon(100% 0, 100% 100%, 0 100%); }
+
+/* ---- 接一个模型: quick connect (first run, the dialog, settings) ---- */
+.qc { display: flex; flex-direction: column; gap: var(--sp-3); margin-top: var(--sp-2); }
+.qc-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.qc-preset { height: 28px; padding: 0 12px; border-radius: var(--r-pill); border: 1px solid var(--edge-default); background: var(--surface-0); color: var(--ink-2); font-size: var(--fs-sm); cursor: pointer; }
+.qc-preset:hover:not(.on):not(:disabled) { color: var(--ink-1); border-color: var(--edge-strong); }
+.qc-preset.on { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+.qc-preset:disabled:not(.on) { opacity: 0.5; cursor: default; }
+.qc-f, .modal label.qc-f { display: flex; align-items: center; gap: var(--sp-3); margin: 0; font-size: var(--fs-base); color: var(--ink-2); }
+.qc-l { flex: none; width: 64px; color: var(--ink-3); font-size: var(--fs-sm); }
+.qc-f .field, .modal .qc-f input { flex: 1; min-width: 0; width: auto; }
+.qc-hint { margin-left: calc(64px + var(--sp-3)); font-size: var(--fs-sm); color: var(--ink-3); line-height: 1.5; }
+.qc-hint a { color: var(--info); display: inline-flex; align-items: center; gap: 3px; text-decoration: none; }
+.qc-hint a:hover { text-decoration: underline; }
+.qc-status { min-height: 20px; display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--ink-3); }
+.qc-status .spin { width: 12px; height: 12px; border-radius: 50%; border: 1.6px solid var(--edge-default); border-top-color: var(--ink-2); animation: spin 0.9s linear infinite; flex: none; }
+.qc-err { color: var(--err); line-height: 1.5; }
+.qc-actions { display: flex; gap: var(--sp-2); }
+.qc-existing { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: var(--sp-2) 0; }
+.qc-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-4); }
+.qc-foot .grow { flex: 1; }
+.modal.connect-model { width: min(600px, 94vw); max-height: 92vh; overflow-y: auto; }
+.modal.connect-model > .sub { color: var(--ink-2); font-size: var(--fs-base); line-height: var(--lh-base); margin: 0 0 var(--sp-2); }
+.modal.onboarding .qc { margin-bottom: var(--sp-2); }
+.ob-actions button.link { display: inline-flex; align-items: center; gap: 4px; }
+.row .sub.agent-probe-err, .agent-probe-err { color: var(--warn); white-space: normal; overflow: visible; text-overflow: clip; word-break: break-all; }
+@media (max-width: 520px) {
+  .qc-f, .modal label.qc-f { flex-direction: column; align-items: stretch; gap: 4px; }
+  .qc-l { width: auto; }
+  .qc-hint { margin-left: 0; }
+}

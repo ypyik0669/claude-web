@@ -5,16 +5,19 @@ import { desktop } from '@/desktop';
 import { basename, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { fillComposer } from '@/features/composer/fill';
-import { CLAUDE_LOGIN_CMD, LOGIN_IN_TERMINAL } from '@/ui/terms';
+import { QuickConnect } from '@/features/providers/QuickConnect';
+import { loginInTerminal } from '@/features/providers/ConnectModel';
 import { currentStep, onboardingSteps, recentFolders } from './steps';
 
-const STEP_LABEL = { login: '登录', project: '选一个项目文件夹' } as const;
+const STEP_LABEL = { login: '接一个模型', project: '选一个项目文件夹' } as const;
 
 /**
- * First-run wizard (spec §5.8), two steps: ① log in — skipped when already logged in or when a provider is set up
- * (logging in in a terminal moves it on by itself); ② pick a project folder — one click on a folder the CLI already
- * worked in, or any folder. Picking one ends the wizard with the start page's composer on that folder and focused,
- * so the first message is one Enter away. Appearance follows the system; the shortcuts are in the 入门清单.
+ * First-run wizard (spec §5.8), two steps: ① connect a model — skipped when the Claude account is logged in or a
+ * provider is set up. Most people starting here have an API key, not a Claude subscription: the quick connect (pick
+ * where the key is from, paste it) is the step itself, and the Claude login is the secondary link (logging in in a
+ * terminal moves it on by itself); ② pick a project folder — one click on a folder the CLI already worked in, or any
+ * folder. Picking one ends the wizard with the start page's composer on that folder and focused, so the first
+ * message is one Enter away. Appearance follows the system; the shortcuts are in the 入门清单.
  * Sets `onboarded`; shown only to a first run (no project yet).
  */
 export function Onboarding() {
@@ -69,8 +72,7 @@ export function Onboarding() {
   // the terminal would open behind the wizard: the wizard steps aside (picking the project waits in the start page's
   // 入门清单, and the composer's project chip)
   const login = () => {
-    useStore.getState().openTile({ id: `t${Date.now()}`, kind: 'term', cwd: '', cmd: CLAUDE_LOGIN_CMD, title: '登录 Claude' }, 'tab');
-    toast(LOGIN_IN_TERMINAL, true, 12_000);
+    loginInTerminal();
     finish();
   };
   const allSteps: ('login' | 'project')[] = ['login', 'project'];
@@ -94,11 +96,12 @@ export function Onboarding() {
         {step === 'login' && (
           <>
             <h3>欢迎使用 Claude Web</h3>
-            <p>先登录 Claude 账号。没有账号也行：添加一个第三方接口（供应商），用它来跑。</p>
+            <p>先接一个模型：有 API Key（中转站、DeepSeek、Kimi、智谱……）就在下面填，测试通过就能用。有 Claude Pro / Max 订阅的，也可以直接用 Claude 账号。</p>
+            {/* saved → a provider exists → this step drops out of `steps` and the folder step shows */}
+            <QuickConnect makeDefault onDone={() => {}} />
             <div className="ob-actions">
-              <button className="btn primary" onClick={login}><Icon name="terminal" size={14} /> 在终端登录</button>
-              <button className="btn" onClick={() => { finish(); useStore.getState().openSettings({ section: 'providers' }); }}>添加供应商</button>
-              <button className="link" disabled={checking} onClick={() => check(true)}>{checking ? '检查中…' : '我已经登录了，重新检查'}</button>
+              <button className="link" data-ob="login" onClick={login}><Icon name="terminal" size={13} /> 用 Claude 账号登录</button>
+              <button className="link" disabled={checking} onClick={() => check(true)}>{checking ? '检查中…' : '已经登录了？重新检查'}</button>
               <span className="grow" />
               <button className="btn ghost" data-ob="skip" onClick={() => setSkipped(true)}>先跳过</button>
             </div>

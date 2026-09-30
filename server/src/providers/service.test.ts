@@ -104,11 +104,13 @@ describe('providerEnv (gemini / grok through ccb)', () => {
     expect(env.GEMINI_MODEL).toBeUndefined();
     expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
   });
-  it('gemini: a versioned base URL is kept, an empty one left to the default; no default model → first listed model', () => {
+  it('gemini: a versioned base URL is kept, an empty one left to the default; no default model → the best listed chat model', () => {
     expect(providerEnv(p({ baseUrl: 'https://relay.example/v1beta/' })).GEMINI_BASE_URL).toBe('https://relay.example/v1beta');
-    const env = providerEnv(p({ models: ['gemini-3-flash', 'gemini-3-pro'] }));
+    const env = providerEnv(p({ models: ['gemini-3-flash', 'gemini-3-pro', 'imagen-4'] }));
     expect(env.GEMINI_BASE_URL).toBeUndefined();
-    expect(env.GEMINI_DEFAULT_SONNET_MODEL).toBe('gemini-3-flash');
+    expect(env.GEMINI_DEFAULT_SONNET_MODEL).toBe('gemini-3-pro');
+    // nothing it recognises: the first chat model, never an embedding
+    expect(providerEnv(p({ models: ['text-embedding-004', 'learnlm-2'] })).GEMINI_DEFAULT_SONNET_MODEL).toBe('learnlm-2');
   });
   it('grok: switches ccb to its Grok provider (OpenAI-style base with /v1, GROK_API_KEY, family defaults)', () => {
     const env = providerEnv(p({ type: 'grok', baseUrl: 'https://api.x.ai', apiKey: 'xai-k', defaultModel: 'grok-5', modelMap: { haiku: 'grok-5-mini' } }));

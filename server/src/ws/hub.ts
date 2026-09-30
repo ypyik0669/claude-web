@@ -355,7 +355,7 @@ export class Hub {
         await s.providers.remove(req.id);
         return null;
       case 'providers.probe':
-        return s.providers.probe(req.id, req.provider);
+        return s.providers.probe(req.id, req.provider, { listOnly: req.listOnly });
       case 'providers.refreshModels':
         return s.providers.refreshModels(req.ids);
       case 'settings.get':

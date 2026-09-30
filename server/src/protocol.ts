@@ -191,6 +191,14 @@ export interface AgentInfo {
   label: string; // user note e.g. account name
   enabled: boolean;
   builtin: boolean;
+  /** the executable that was found (absolute) */
+  path?: string;
+  /** set when `path` is a copy shipped inside another app (「Codex 桌面版」「Codex IDE 扩展」), not a CLI on PATH */
+  from?: string;
+  /** why it is not installed / why `--version` failed — shown on the card instead of a bare 「未安装」 */
+  probeError?: string;
+  /** not installed and the install command's tool (npm / uv) is missing too: what to get first */
+  installNeeds?: { name: string; url: string };
 }
 
 /** Optional per-session switches. Each maps to a CLI flag or env var; unknown to the engine = ignored/error. */
@@ -343,7 +351,7 @@ export type ClientRequest =
   | { kind: 'providers.list' }
   | { kind: 'providers.upsert'; provider: Partial<Provider> & { id?: string } }
   | { kind: 'providers.remove'; id: string }
-  | { kind: 'providers.probe'; id?: string; provider?: Partial<Provider> } // saved profile by id, or an unsaved draft
+  | { kind: 'providers.probe'; id?: string; provider?: Partial<Provider>; listOnly?: boolean } // saved profile by id, or an unsaved draft; listOnly: the model list, no chat check
   | { kind: 'providers.refreshModels'; ids?: string[] } // pull /v1/models for these (default: every non-gateway) profiles
   | { kind: 'settings.get' }
   | { kind: 'settings.set'; key: string; value: unknown }

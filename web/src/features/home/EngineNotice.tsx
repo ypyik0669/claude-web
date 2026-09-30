@@ -3,22 +3,19 @@ import { useStore } from '@/store';
 import { Icon } from '@/ui/icons';
 import { authChecker } from '@/features/workbench/auth-check';
 import { engineNotice, type NoticeAction } from './model';
-import { CLAUDE_LOGIN_CMD, LOGIN_IN_TERMINAL } from '@/ui/terms';
+import { connectModel, loginInTerminal } from '@/features/providers/ConnectModel';
 
-const ACTION_LABEL: Record<NoticeAction, string> = { login: '在终端登录', provider: '添加供应商', runtime: '查看运行内核' };
+const ACTION_LABEL: Record<NoticeAction, string> = { login: '用 Claude 账号登录', provider: '接一个模型', runtime: '查看运行内核' };
 
 function act(a: NoticeAction) {
-  const st = useStore.getState();
-  if (a === 'login') {
-    st.openTile({ id: `t${Date.now()}`, kind: 'term', cwd: '', cmd: CLAUDE_LOGIN_CMD, title: '登录 Claude' }, 'tab');
-    st.toast(LOGIN_IN_TERMINAL, true, 12_000);
-  } else if (a === 'provider') st.openSettings({ section: 'providers' });
-  else st.openSettings({ section: 'engine' });
+  if (a === 'login') loginInTerminal();
+  else if (a === 'provider') void connectModel({ reason: 'start' });
+  else useStore.getState().openSettings({ section: 'engine' });
 }
 
 /**
  * The start page's login / runtime line (spec §5.8): nothing while all is well. Not logged in to Claude with no
- * provider → 「还没登录 Claude。[在终端登录] [添加供应商]」; no runtime found → where to look. Login state is the
+ * provider → 「还没接模型…[接一个模型] [用 Claude 账号登录]」; no runtime found → where to look. Login state is the
  * store's (`checkAuth`): asked on mount, and again when the window comes back while it still says 「未登录」 with
  * no provider (someone just ran /login in a terminal).
  */
@@ -54,7 +51,7 @@ export function EngineNotice() {
     <div className="home-notice" role="status" data-kind={n.kind}>
       <Icon name="alert" size={14} />
       <span className="t">{n.text}</span>
-      {n.actions.map((a) => <button key={a} className="btn sm" onClick={() => act(a)}>{ACTION_LABEL[a]}</button>)}
+      {n.actions.map((a, i) => <button key={a} className={i === 0 ? 'btn sm primary' : 'btn sm'} data-act={a} onClick={() => act(a)}>{ACTION_LABEL[a]}</button>)}
       {n.kind === 'login' && <button className="link" disabled={checking} onClick={() => void checker.check(true).catch(() => {})}>{checking ? '检查中…' : '重新检查'}</button>}
     </div>
   );

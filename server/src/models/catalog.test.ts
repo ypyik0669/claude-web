@@ -40,3 +40,27 @@ describe('Claude aliases follow the official Claude Code', () => {
     expect(ccbModel(undefined)).toBeUndefined();
   });
 });
+
+describe('picking a default model from an endpoint list', () => {
+  it('versions leave dates and sizes out', async () => {
+    const { modelVersion } = await import('./catalog.js');
+    expect(modelVersion('claude-sonnet-4-5-20250929')).toEqual([4, 5]);
+    expect(modelVersion('claude-3-5-haiku-20241022')).toEqual([3, 5]);
+    expect(modelVersion('glm-4.6')).toEqual([4, 6]);
+  });
+  it('Claude first, the newest of the family; then the coding families; never an embedding / image model', async () => {
+    const { pickChatModel } = await import('./catalog.js');
+    expect(pickChatModel(['claude-3-7-sonnet-20250219', 'claude-haiku-4-5-20251001', 'claude-sonnet-4-5-20250929', 'deepseek-chat', 'gpt-4o'])).toBe('claude-sonnet-4-5-20250929');
+    expect(pickChatModel(['dall-e-3', 'deepseek-chat', 'deepseek-reasoner', 'text-embedding-3-small'])).toBe('deepseek-chat');
+    expect(pickChatModel(['glm-4.5', 'glm-4.5-air', 'glm-4.6', 'glm-4v'])).toBe('glm-4.6');
+    expect(pickChatModel(['babbage-002', 'text-embedding-ada-002'])).toBe('babbage-002');
+    expect(pickChatModel(['text-embedding-ada-002', 'whisper-1'])).toBeUndefined();
+    expect(pickChatModel([])).toBeUndefined();
+  });
+  it('haiku / sonnet / opus from a list; a family the endpoint lacks borrows a neighbour', async () => {
+    const { claudeFamilyMap } = await import('./catalog.js');
+    expect(claudeFamilyMap(['claude-opus-4-1-20250805', 'claude-opus-4-5-20251101', 'claude-sonnet-4-5-20250929', 'claude-3-5-haiku-20241022', 'claude-haiku-4-5-20251001'])).toEqual({ opus: 'claude-opus-4-5-20251101', sonnet: 'claude-sonnet-4-5-20250929', haiku: 'claude-haiku-4-5-20251001' });
+    expect(claudeFamilyMap(['claude-sonnet-4-5-20250929'])).toEqual({ opus: 'claude-sonnet-4-5-20250929', sonnet: 'claude-sonnet-4-5-20250929', haiku: 'claude-sonnet-4-5-20250929' });
+    expect(claudeFamilyMap(['deepseek-chat'])).toEqual({});
+  });
+});

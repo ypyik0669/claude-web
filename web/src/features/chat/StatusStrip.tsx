@@ -5,6 +5,7 @@ import { ERROR_HINT, ERROR_LABEL } from '@/model/health';
 import { clsx, fmtTok } from '@/util';
 import { ws } from '@/ws/client';
 import { Icon } from '@/ui/icons';
+import { connectModel, loginInTerminal } from '@/features/providers/ConnectModel';
 
 function useTick(active: boolean, ms = 1000) {
   const [, setN] = useState(0);
@@ -44,6 +45,17 @@ export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onReca
   // here is only what the run card cannot say: it is stuck, it failed, it is throttled, it is queued
   const alarm = stall?.kind === 'no_model' || stall?.kind === 'no_reply' ? stall : null;
   const upstream = o.info?.providerName ? `「${o.info.providerName}」` : '';
+  // the Claude account was never logged in (「Not logged in · Please run /login」 — there is no /login here): a retry
+  // fails the same way; switch this conversation to a model instead, or log in
+  const noLogin = !!showErr && res?.errorKind === 'credential' && /not logged in|run \/login/i.test(res.text ?? '');
+  const useModel = async () => {
+    const p = await connectModel({ reason: 'session' });
+    if (!p) return;
+    try {
+      await ws.request({ kind: 'session.setProvider', sessionId, providerId: p.id });
+      await st().retryLast(sessionId);
+    } catch (e: any) { st().toast(e?.message ?? String(e)); }
+  };
   const nothing = !alarm && !showErr && !rlActive && !armed && !o.queue.length && !cuWarn;
   if (nothing) return null;
   const resetAt = rl?.resetsAt ? rl.resetsAt * (rl.resetsAt < 1e12 ? 1000 : 1) : undefined;
@@ -57,7 +69,14 @@ export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onReca
           <button className="link" onClick={() => void st().interrupt(sessionId)}>中断</button>
         </span>
       )}
-      {showErr && res && (
+      {showErr && res && noLogin && (
+        <span className="chip err" title={res.text} data-err="no-login">
+          Claude 账号还没登录 · 接一个模型（API Key）继续这个对话，或者登录 Claude 账号
+          <button className="link" data-act="connect" onClick={() => void useModel()}>接一个模型</button>
+          <button className="link" data-act="login" onClick={loginInTerminal}>用 Claude 账号登录</button>
+        </span>
+      )}
+      {showErr && res && !noLogin && (
         <span className={clsx('chip', res.errorKind === 'aborted' ? 'muted' : 'err')} title={res.text}>
           {ERROR_LABEL[res.errorKind!]}{res.apiStatus ? ` HTTP ${res.apiStatus}` : ''} · {ERROR_HINT[res.errorKind!]}
           {res.errorKind !== 'aborted' && res.errorKind !== 'context' && o.lastSent && <button className="link" onClick={() => st().retryLast(sessionId)}>重试</button>}

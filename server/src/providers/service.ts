@@ -4,7 +4,7 @@ import type { MetaStore } from '../meta/store.js';
 import { resolveEngine, runClaudeCli } from '../claude-exe.js';
 import type { SecretService } from '../secrets/service.js';
 import { CODEX_KEY_ENV, codexGatewayArgs, codexProviderArgs, geminiApiKeyEnv } from '../gateway/agents.js';
-import { profileFitError } from '../models/catalog.js';
+import { claudeFamilyMap, isChatModel, pickChatModel, profileFitError } from '../models/catalog.js';
 import { wantsResponses } from '../gateway/shim.js';
 
 /** Mask an API key for the wire: keep prefix + last 4 chars. */
@@ -87,7 +87,7 @@ export function providerEnv(p: SessionProvider, agent: 'claude' | 'codex' | 'acp
       // Without it a model id passes through unchanged and a haiku / sonnet / opus one (ccb's own background
       // calls) is mapped here; every family gets a value, otherwise ccb falls back to its claude → gpt-4o / o3 table.
       {
-        const fallback = p.defaultModel || p.models?.[0];
+        const fallback = p.defaultModel || pickChatModel(p.models ?? []) || p.models?.[0];
         const fam = { HAIKU: m.haiku || fallback, SONNET: m.sonnet || fallback, OPUS: m.opus || fallback };
         for (const [k, v] of Object.entries(fam)) if (v) env[`OPENAI_DEFAULT_${k}_MODEL`] = v;
         if (fam.HAIKU) env.OPENAI_SMALL_FAST_MODEL = fam.HAIKU;
@@ -104,7 +104,7 @@ export function providerEnv(p: SessionProvider, agent: 'claude' | 'codex' | 'acp
       env.GEMINI_API_KEY = p.apiKey;
       if (p.baseUrl) env.GEMINI_BASE_URL = geminiBase(p.baseUrl); // requests go to `<base>/models/<id>:streamGenerateContent`
       // the Gemini client throws for a family model it cannot map, so all three get a value
-      const fallback = p.defaultModel || p.models?.[0];
+      const fallback = p.defaultModel || pickChatModel(p.models ?? []) || p.models?.[0];
       const fam = { HAIKU: m.haiku || fallback, SONNET: m.sonnet || fallback, OPUS: m.opus || fallback };
       for (const [k, v] of Object.entries(fam)) if (v) env[`GEMINI_DEFAULT_${k}_MODEL`] = v;
       break;
@@ -441,8 +441,12 @@ export class ProviderService {
   async remove(id: string) {
     await this.meta.removeProvider(id);
   }
-  /** Probe a saved profile (by id, keeps the stored key) or an unsaved draft; saves the model list on success. */
-  async probe(id?: string, draft?: Partial<Provider>): Promise<ProbeResult> {
+  /**
+   * Probe a saved profile (by id, keeps the stored key) or an unsaved draft; saves the model list on success.
+   * `listOnly`: the model list and nothing else (no chat request, no tokens) — the quick connect uses it to decide the
+   * format and the model before the real check.
+   */
+  async probe(id?: string, draft?: Partial<Provider>, opts: { listOnly?: boolean } = {}): Promise<ProbeResult> {
     const saved = id ? this.meta.provider(id) : undefined;
     if ((draft?.type ?? saved?.type) === 'gateway') return { ok: false, models: [], error: '走模型网关的供应商请在「设置 → 模型网关」里用组的「测试」按钮', ms: 0 };
     const key = draft?.apiKey && !draft.apiKey.includes('…') ? draft.apiKey : saved ? this.plainKey(saved) : '';
@@ -450,10 +454,12 @@ export class ProviderService {
     if (!p.apiKey) return { ok: false, models: [], error: '没有 API Key', ms: 0 };
     const r = await probeProvider(p);
     if (r.ok && saved && r.models.length) await this.meta.upsertProvider({ id: saved.id, models: r.models, modelsAt: Date.now(), modelsError: null as unknown as undefined }, { mustExist: true });
-    if (!r.ok || (p.type !== 'anthropic' && p.type !== 'openai')) return r;
+    if (opts.listOnly || !r.ok || (p.type !== 'anthropic' && p.type !== 'openai')) return r;
     // Real chat check, with automatic fallback to the official binary when the endpoint rejects ccb.
     const full: Provider = { id: saved?.id ?? 'draft', name: draft?.name ?? saved?.name ?? 'draft', createdAt: 0, ...saved, ...p, defaultModel: draft?.defaultModel ?? saved?.defaultModel, modelMap: draft?.modelMap ?? saved?.modelMap };
-    const model = full.defaultModel || r.models.find((m) => /haiku/i.test(m)) || r.models[0] || 'haiku';
+    // Anthropic endpoints: a haiku (the check runs a whole CLI turn); OpenAI-compatible ones: a real chat model — the
+    // list is sorted by name, and its first entry is as often an embedding or image model as anything
+    const model = full.defaultModel || (p.type === 'anthropic' ? claudeFamilyMap(r.models).haiku ?? r.models.find(isChatModel) : pickChatModel(r.models)) || r.models[0] || 'haiku';
     // OpenAI-compatible relays don't fingerprint the client, so one tiny chat request proves the key; a CLI
     // round would cost a whole Claude Code system prompt (~50k tokens) per click.
     if (p.type === 'openai') {

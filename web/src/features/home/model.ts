@@ -227,10 +227,12 @@ export interface EngineNotice { kind: 'login' | 'engine'; text: string; actions:
 
 /**
  * The start page says something about login / the runtime only when it is a problem (spec §5.8): no runtime at
- * all, or not logged in to Claude with no provider to use instead. Unknown yet (`auth` null) = nothing.
+ * all, or not logged in to Claude with no provider to use instead. Unknown yet (`auth` null) = nothing. Nothing to
+ * send with: connecting a model (an API key) comes first — most people here have no Claude subscription — the
+ * Claude login second.
  */
 export function engineNotice(o: { auth: { loggedIn?: boolean } | null; providers: number; engine: 'ok' | 'missing' | 'unknown' }): EngineNotice | null {
   if (o.engine === 'missing') return { kind: 'engine', text: '没找到 Claude Code 的运行内核，对话开不起来。', actions: ['runtime'] };
-  if (o.auth && o.auth.loggedIn === false && o.providers === 0) return { kind: 'login', text: '还没登录 Claude。', actions: ['login', 'provider'] };
+  if (o.auth && o.auth.loggedIn === false && o.providers === 0) return { kind: 'login', text: '还没接模型：填一个 API Key，或者用 Claude 账号登录。', actions: ['provider', 'login'] };
   return null;
 }

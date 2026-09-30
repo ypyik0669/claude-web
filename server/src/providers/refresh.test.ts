@@ -169,3 +169,14 @@ describe('needsModelRefresh (startup auto refresh)', () => {
     expect(meta.provider(fresh.id)!.models).toEqual(['x']);
   });
 });
+
+describe('providers.probe listOnly', () => {
+  it('the model list alone: no chat request (the quick connect decides format and model from it first)', async () => {
+    const { svc } = await service();
+    const r = await svc.probe(undefined, { type: 'openai', baseUrl: base, apiKey: 'k-3' }, { listOnly: true });
+    expect(r).toMatchObject({ ok: true, models: ['m-k-3-0', 'm-k-3-1', 'm-k-3-2'] });
+    expect(hits).toEqual(['k-3 /v1/models']);
+    const bad = await svc.probe(undefined, { type: 'openai', baseUrl: base, apiKey: 'k-bad' }, { listOnly: true });
+    expect(bad).toMatchObject({ ok: false, status: 401 });
+  });
+});

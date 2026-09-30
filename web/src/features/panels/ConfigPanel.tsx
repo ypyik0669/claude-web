@@ -6,6 +6,7 @@ import type { GatewayGroup, GatewayStatus, Provider, ProviderType } from '@share
 import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
 import { EnvEditor } from '@/features/settings/EnvEditor';
+import { connectModel } from '@/features/providers/ConnectModel';
 
 type Tab = 'overview' | 'providers' | 'plugins' | 'mcp' | 'skills' | 'agents' | 'hooks' | 'settings';
 const TABS: { id: Tab; l: string }[] = [
@@ -328,6 +329,11 @@ export function ProviderProfiles() {
     try {
       const models = probe?.ok && probe.models.length ? probe.models : editing.models;
       const saved = await ws.request<Provider>({ kind: 'providers.upsert', provider: { ...editing, models } });
+      // the first provider of someone without a Claude login is what they will send with: the default for new
+      // conversations (a default already set, or a logged-in account, stays)
+      const st = useStore.getState();
+      const hasDefault = !!def && st.providers.some((x) => x.id === def);
+      if (!editing.id && !hasDefault && st.auth?.loggedIn === false) await setSetting('defaultProviderId', saved.id);
       await loadProviders();
       toast(`已保存供应商「${saved.name}」`, true);
       setEditing(null);
@@ -353,7 +359,7 @@ export function ProviderProfiles() {
   };
   return (
     <div className="section">
-      <h5 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>全部供应商 <span className="grow" /><button className="btn sm" onClick={() => startEdit()}><Icon name="plus" size={12} /> 添加</button></h5>
+      <h5 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>全部供应商 <span className="grow" /><button className="btn sm" data-act="quick" onClick={() => void connectModel({ reason: 'settings' })} title="选来源、粘贴 Key：模型列表和接口格式自动读取">快速添加</button><button className="btn sm ghost" onClick={() => startEdit()} title="所有选项：类型、地址、模型映射、缓存…"><Icon name="plus" size={12} /> 添加</button></h5>
       <div className="sub" style={{ marginBottom: 8 }}>每个对话用一个（输入框的模型菜单里换）。密钥只交给用它的那个对话，不写进 <code>~/.claude/settings.json</code>，claude.ai 登录照常可用。</div>
       <div className="list">
         <div className="row">

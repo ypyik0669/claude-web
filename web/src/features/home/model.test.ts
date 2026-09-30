@@ -176,8 +176,8 @@ describe('the login / runtime notice: only when something is wrong (spec §5.8)'
     expect(engineNotice({ auth: { loggedIn: true }, providers: 0, engine: 'ok' })).toBeNull();
     expect(engineNotice({ auth: { loggedIn: false }, providers: 2, engine: 'ok' })).toBeNull();
   });
-  it('not logged in with no provider: log in, or add one', () => {
-    expect(engineNotice({ auth: { loggedIn: false }, providers: 0, engine: 'ok' })).toEqual({ kind: 'login', text: '还没登录 Claude。', actions: ['login', 'provider'] });
+  it('not logged in with no provider: connect a model first, the Claude login second', () => {
+    expect(engineNotice({ auth: { loggedIn: false }, providers: 0, engine: 'ok' })).toEqual({ kind: 'login', text: '还没接模型：填一个 API Key，或者用 Claude 账号登录。', actions: ['provider', 'login'] });
   });
   it('no runtime found: says so, and where to look (settings) — before any login question', () => {
     expect(engineNotice({ auth: null, providers: 0, engine: 'missing' })).toMatchObject({ kind: 'engine', actions: ['runtime'] });
