@@ -70,7 +70,7 @@ export function Overview({ part = 'all' }: { part?: 'all' | 'engine' }) {
           {' '}<button className="btn sm ghost" disabled={busy} onClick={update} title="npm i -g claude-code-best@latest（全局安装会优先于内置版本）">{busy ? '更新中…' : '更新'}</button>
         </span>
         {part === 'all' && <>
-          <span className="k">登录</span><span>{data.auth.loggedIn ? `已登录 (${data.auth.authMethod}${data.auth.email ? ` · ${data.auth.email}` : ''})` : '未登录 — 在终端面板运行 /login，或在「供应商」里添加第三方端点'}</span>
+          <span className="k">登录</span><span>{data.auth.loggedIn ? `已登录 (${data.auth.authMethod}${data.auth.email ? ` · ${data.auth.email}` : ''})` : '未登录 — 在终端里运行 claude auth login，或在「供应商」里添加第三方端点'}</span>
           <span className="k">API 提供方</span><span>{data.auth.apiProvider ?? '-'}</span>
         </>}
         <span className="k">配置目录</span><span className="mono">{data.claudeDir}</span>
@@ -358,7 +358,7 @@ export function ProviderProfiles() {
       <div className="list">
         <div className="row">
           <span className="dot idle" />
-          <div className="grow"><div>Claude 账号</div><div className="sub">claude.ai 登录（终端面板 /login）· 订阅额度</div></div>
+          <div className="grow"><div>Claude 账号</div><div className="sub">claude.ai 登录（终端里运行 claude auth login）· 订阅额度</div></div>
           <button className={clsx('btn sm', !def && 'primary')} onClick={() => setSetting('defaultProviderId', undefined)}>{!def ? '默认' : '设为默认'}</button>
         </div>
         {providers.map((p) => (

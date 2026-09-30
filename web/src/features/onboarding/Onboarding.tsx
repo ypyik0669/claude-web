@@ -5,7 +5,7 @@ import { desktop } from '@/desktop';
 import { basename, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { fillComposer } from '@/features/composer/fill';
-import { LOGIN_IN_TERMINAL } from '@/ui/terms';
+import { CLAUDE_LOGIN_CMD, LOGIN_IN_TERMINAL } from '@/ui/terms';
 import { currentStep, onboardingSteps, recentFolders } from './steps';
 
 const STEP_LABEL = { login: '登录', project: '选一个项目文件夹' } as const;
@@ -69,7 +69,7 @@ export function Onboarding() {
   // the terminal would open behind the wizard: the wizard steps aside (picking the project waits in the start page's
   // 入门清单, and the composer's project chip)
   const login = () => {
-    useStore.getState().openTile({ id: `t${Date.now()}`, kind: 'term', cwd: '', title: '登录 Claude' }, 'tab');
+    useStore.getState().openTile({ id: `t${Date.now()}`, kind: 'term', cwd: '', cmd: CLAUDE_LOGIN_CMD, title: '登录 Claude' }, 'tab');
     toast(LOGIN_IN_TERMINAL, true, 12_000);
     finish();
   };

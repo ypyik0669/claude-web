@@ -52,7 +52,7 @@ export interface AgentDef {
 // `icon` is a name in web/src/ui/icons.tsx, not a glyph. `models` comes from the shared catalog so
 // there is one place that knows Fable 5.1 is `claude-fable-5-1`.
 export const AGENT_DEFS: AgentDef[] = [
-  { kind: 'claude', name: 'Claude Code', icon: 'claude', protocol: 'claude', command: 'claude', args: [], versionArgs: ['--version'], install: 'npm i -g @anthropic-ai/claude-code', login: 'claude /login', models: catalogIds('claude'), docs: 'https://docs.anthropic.com/claude-code', builtin: true },
+  { kind: 'claude', name: 'Claude Code', icon: 'claude', protocol: 'claude', command: 'claude', args: [], versionArgs: ['--version'], install: 'npm i -g @anthropic-ai/claude-code', login: 'claude auth login', models: catalogIds('claude'), docs: 'https://docs.anthropic.com/claude-code', builtin: true },
   { kind: 'codex', name: 'Codex', icon: 'codex', protocol: 'codex', command: 'codex', args: ['app-server'], versionArgs: ['--version'], install: 'npm i -g @openai/codex', login: 'codex login', models: catalogIds('codex'), docs: 'https://github.com/openai/codex' },
   { kind: 'gemini', name: 'Gemini CLI', icon: 'gemini', protocol: 'acp', command: 'gemini', args: ['--acp'], versionArgs: ['--version'], install: 'npm i -g @google/gemini-cli', login: 'gemini', models: catalogIds('gemini'), docs: 'https://github.com/google-gemini/gemini-cli' },
   { kind: 'qwen', name: 'Qwen Code', icon: 'qwen', protocol: 'acp', command: 'qwen', args: ['--acp'], versionArgs: ['--version'], install: 'npm i -g @qwen-code/qwen-code', login: 'qwen', models: catalogIds('qwen'), docs: 'https://github.com/QwenLM/qwen-code' },

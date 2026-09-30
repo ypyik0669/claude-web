@@ -30,7 +30,7 @@ export function AccountSection() {
       <div className="sp-card">
         <Row
           label="登录状态"
-          hint={auth === null ? '检查中…' : auth.loggedIn ? (who || '已登录 claude.ai') : auth.error ? '没检查成功：运行内核没有回答，稍后再点「重新检查」。' : '还没登录。在终端里运行 claude 再输入 /login；或者用第三方接口：添加一个供应商。'}
+          hint={auth === null ? '检查中…' : auth.loggedIn ? (who || '已登录 claude.ai') : auth.error ? '没检查成功：运行内核没有回答，稍后再点「重新检查」。' : '还没登录。在终端里运行 claude auth login；或者用第三方接口：添加一个供应商。'}
         >
           {auth && <span className={clsx('sp-state', auth.loggedIn ? 'ok' : 'off')}>{auth.loggedIn ? '已登录' : '未登录'}</span>}
           <button className="btn sm ghost" disabled={busy} onClick={() => check(true)}>{busy ? '检查中…' : '重新检查'}</button>

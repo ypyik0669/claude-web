@@ -53,7 +53,7 @@ export const ERROR_HINT: Record<ErrorKind, string> = {
   throttled: '等待片刻后重试；订阅额度看顶栏的环。',
   quota: '本窗口额度已用完，等重置或换供应商 / 模型。',
   network: '检查网络或 Base URL；中转站可能暂时不可达。',
-  credential: '在终端面板 /login 重新登录，或检查供应商的 API Key。',
+  credential: '在终端里运行 claude auth login 重新登录，或检查供应商的 API Key。',
   context: '对话太长了：/compact 压缩，或从某条消息分叉一个新对话。',
   output_cap: '单次输出超过上限，让模型分段继续。',
   server: '上游 5xx / 过载，稍后重试通常就好。',

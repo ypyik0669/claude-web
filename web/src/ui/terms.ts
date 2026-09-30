@@ -81,7 +81,9 @@ export const DISCONNECTED = '连接断开，正在重连…';
  * 「在终端登录」 (first-run wizard, the start page's notice): the terminal tile runs Claude Code itself, not a shell —
  * typing `claude` there would be sent as a prompt (review 7 I5).
  */
-export const LOGIN_IN_TERMINAL = '终端里就是 Claude Code：按提示选择登录方式（或输入 /login），登录好回到这里';
+export const LOGIN_IN_TERMINAL = '终端里在运行 claude auth login：按提示登录 Claude 账号，登录好回到这里。没有 Claude 账号（或所在地区连不上 Anthropic）就用「添加供应商」接中转';
+/** the command the 「在终端登录」 buttons run in a terminal tab (the terminal is a shell) */
+export const CLAUDE_LOGIN_CMD = 'claude auth login';
 
 /**
  * Empty states say one thing the same way (spec §5.8): 「还没有 X。Y 之后会出现在这里。」 — with at most one button next

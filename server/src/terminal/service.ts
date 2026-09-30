@@ -11,7 +11,31 @@ import { resolveClaudeExe } from '../claude-exe.js';
 type Pty = { write(d: string): void; resize(c: number, r: number): void; kill(): void; onData(cb: (d: string) => void): void; onExit(cb: (e: { exitCode: number }) => void): void };
 
 /**
- * Optional embedded terminal running the real `claude` CLI. Requires node-pty, which needs
+ * The terminal panel's program: a real shell. It used to be the bundled `claude` TUI itself, which (a) checks
+ * api.anthropic.com on start and exits where that answers 403 (mainland China without a proxy — people who only
+ * use a relay), and (b) took every command the app types into a terminal (`npm i -g @openai/codex`, `codex login`,
+ * `git init`…) as a chat prompt. Windows: cmd.exe (`ComSpec`) — PowerShell's default execution policy refuses
+ * npm.ps1, so `npm i -g` would fail there; macOS / Linux: the user's `$SHELL` as a login shell. The bundled
+ * claude's directory is appended to PATH so `claude` / `claude auth login` work; a claude of the user's own wins.
+ */
+export function terminalShell(platform: NodeJS.Platform, env: Record<string, string | undefined>, claudeExe: string | null): { file: string; args: string[]; env: Record<string, string> } {
+  const win = platform === 'win32';
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) if (v !== undefined) out[k] = v;
+  const pathKey = Object.keys(out).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
+  const sep = win ? ';' : ':';
+  if (claudeExe) {
+    const dir = win ? path.win32.dirname(claudeExe) : path.posix.dirname(claudeExe);
+    const parts = (out[pathKey] ?? '').split(sep).filter(Boolean);
+    if (!parts.some((p) => (win ? p.toLowerCase() === dir.toLowerCase() : p === dir))) parts.push(dir);
+    out[pathKey] = parts.join(sep);
+  }
+  if (win) return { file: out.ComSpec || out.COMSPEC || 'cmd.exe', args: [], env: out };
+  return { file: out.SHELL || (platform === 'darwin' ? '/bin/zsh' : '/bin/bash'), args: ['-l'], env: out };
+}
+
+/**
+ * Optional embedded terminal (a shell, see terminalShell). Requires node-pty, which needs
  * native build tools; when it is missing, open() throws and the UI hides the panel.
  */
 export class TerminalService extends EventEmitter {
@@ -45,7 +69,10 @@ export class TerminalService extends EventEmitter {
   async open(cwd: string, cols: number, rows: number) {
     if (!(await this.available())) throw new Error('node-pty is not installed; run `npm i -w server node-pty` to enable the terminal panel');
     const termId = randomUUID();
-    const p: Pty = this.ptyMod.spawn(resolveClaudeExe(), [], { name: 'xterm-256color', cols, rows, cwd: cwd || os.homedir(), env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: 'claude-web-terminal' } });
+    let exe: string | null = null;
+    try { exe = resolveClaudeExe(); } catch { /* no bundled claude: the shell still works */ }
+    const sh = terminalShell(process.platform, { ...process.env, CLAUDE_CODE_ENTRYPOINT: 'claude-web-terminal' }, exe);
+    const p: Pty = this.ptyMod.spawn(sh.file, sh.args, { name: 'xterm-256color', cols, rows, cwd: cwd || os.homedir(), env: sh.env });
     this.terms.set(termId, p);
     p.onData((d) => this.emit('data', termId, d));
     p.onExit((e) => {

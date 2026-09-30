@@ -3,7 +3,7 @@ import { useScopedSession } from '@/store';
 import { ws } from '@/ws/client';
 import { parsePeerId } from '@shared';
 
-/** Embedded real `claude` CLI via node-pty + xterm.js. Escape hatch for interactive-only commands (/login, /theme…). */
+/** Embedded terminal (a shell — server terminalShell(); the bundled `claude` is on its PATH) via node-pty + xterm.js. `cmd` is typed in once it starts. */
 export function TerminalPanel({ cwd, cmd, visible = true }: { cwd?: string; cmd?: string; visible?: boolean }) {
   const active = useScopedSession();
   // a session on another machine: its cwd doesn't exist here — the terminal opens in the default directory
