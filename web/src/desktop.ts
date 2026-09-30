@@ -21,7 +21,8 @@ export interface DesktopBridge {
   updateState?(): Promise<any>;
   checkUpdate?(): Promise<void>;
   downloadUpdate?(): Promise<void>;
-  installUpdate?(): Promise<void>;
+  /** false: nothing downloaded to install (the prompt says so) */
+  installUpdate?(): Promise<boolean | void>;
   onUpdate?(cb: (s: any) => void): () => void;
   setFlags?(f: Record<string, unknown>): Promise<void>;
   getFlags?(): Promise<Record<string, unknown>>;

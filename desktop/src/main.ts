@@ -3,6 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { ServerHost } from './server-host';
 import { autoUpdater } from 'electron-updater';
+import { CHECK_EVERY_MS, FIRST_CHECK_MS, firstLine, isRequired, manualDownloadUrl, notesText, releasePage, updateMode, type UpdateMode } from './update-policy';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 
@@ -30,7 +31,7 @@ fixPosixPath();
 
 // ---------- launch flags (read before `ready`): software rendering fallback ----------
 const flagsFile = () => path.join(app.getPath('userData'), 'flags.json');
-function readFlags(): { softwareRender?: boolean; gpuCrashes?: number } {
+function readFlags(): { softwareRender?: boolean; gpuCrashes?: number; autoUpdate?: boolean } {
   try { return JSON.parse(fs.readFileSync(flagsFile(), 'utf8')); } catch { return {}; }
 }
 function writeFlags(f: Record<string, unknown>) {
@@ -48,8 +49,10 @@ let pendingCount = 0;
 let quitting = false;
 let titleBar = { bg: '', fg: '' };
 let gpuCrashes = 0;
-type UpdateState = { status: string; version?: string; percent?: number; error?: string; notes?: string };
-let updateState: UpdateState = { status: 'idle' };
+/** What the renderer's update prompt and settings page show (web: features/update/model.ts). */
+type UpdateState = { status: string; mode: UpdateMode; version?: string; percent?: number; error?: string; notes?: string; required?: boolean; url?: string; page?: string };
+const UPDATE_REPO = 'ypyik0669/claude-web'; // electron-builder.yml `publish`
+let updateState: UpdateState = { status: 'idle', mode: updateMode(process.platform, process.env) };
 const host = new ServerHost();
 const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
 
@@ -365,21 +368,67 @@ async function requestQuit() {
   app.quit();
 }
 
-// ---------- auto-update (electron-updater → GitHub Releases; no-op in dev) ----------
-function setUpdate(s: UpdateState) {
-  updateState = s;
-  broadcast('desktop:update', s);
+// ---------- auto-update (electron-updater → GitHub Releases; see update-policy.ts) ----------
+function mainLog(line: string) {
+  try { fs.appendFileSync(path.join(app.getPath('userData'), 'main.log'), `[${new Date().toISOString()}] ${line}\n`); } catch { /* ignore */ }
 }
+/** Merge into the state (a new version replaces what was known about the old one) and tell every window. */
+function setUpdate(patch: Partial<UpdateState>) {
+  const prev = updateState;
+  const fresh = patch.version !== undefined && patch.version !== prev.version;
+  updateState = fresh ? { status: prev.status, mode: prev.mode, ...patch } : { ...prev, ...patch };
+  if (patch.status !== 'downloading') delete updateState.percent;
+  if (patch.status !== 'error') delete updateState.error;
+  if (updateState.status !== prev.status || fresh) mainLog(`[update] ${updateState.status}${updateState.version ? ` ${updateState.version}` : ''}${updateState.error ? ` ${updateState.error}` : ''}`);
+  broadcast('desktop:update', updateState);
+}
+/** A generic feed instead of GitHub (end-to-end checks: scripts/smoke-packaged.mjs serves one). */
+const updateFeed = () => process.env.CW_UPDATE_FEED || undefined;
 function setupUpdater() {
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  const mode = updateState.mode;
+  autoUpdater.autoDownload = mode === 'auto';
+  // 稍后 on a downloaded update: the installer runs when the app quits
+  autoUpdater.autoInstallOnAppQuit = mode === 'auto';
+  autoUpdater.allowPrerelease = false;
   (autoUpdater as any).logger = null;
+  const feed = updateFeed();
+  if (feed) {
+    autoUpdater.setFeedURL({ provider: 'generic', url: feed });
+    autoUpdater.forceDevUpdateConfig = true;
+  } else if (process.env.PORTABLE_EXECUTABLE_FILE) {
+    // the portable exe ships no app-update.yml; it only ever checks (manual mode never downloads)
+    const [owner, repo] = UPDATE_REPO.split('/');
+    autoUpdater.setFeedURL({ provider: 'github', owner, repo });
+  }
   autoUpdater.on('checking-for-update', () => setUpdate({ status: 'checking' }));
-  autoUpdater.on('update-available', (i) => setUpdate({ status: 'available', version: i.version, notes: typeof i.releaseNotes === 'string' ? i.releaseNotes.replace(/<[^>]+>/g, '') : undefined }));
+  autoUpdater.on('update-available', (i) => {
+    const notes = notesText(i.releaseNotes);
+    setUpdate({
+      status: 'available',
+      version: i.version,
+      notes,
+      required: isRequired(notes),
+      page: releasePage(UPDATE_REPO, i.version),
+      url: manualDownloadUrl({ repo: UPDATE_REPO, version: i.version, platform: process.platform, arch: process.arch, arm64Translated: app.runningUnderARM64Translation, portable: !!process.env.PORTABLE_EXECUTABLE_FILE, feed }),
+    });
+  });
   autoUpdater.on('update-not-available', () => setUpdate({ status: 'none' }));
   autoUpdater.on('download-progress', (p) => setUpdate({ status: 'downloading', percent: p.percent }));
   autoUpdater.on('update-downloaded', (i) => setUpdate({ status: 'downloaded', version: i.version }));
-  autoUpdater.on('error', (e) => setUpdate({ status: 'error', error: String(e.message).split('\n')[0] }));
+  // a failed download keeps what was found (the prompt's 手动下载 link still works)
+  autoUpdater.on('error', (e) => setUpdate({ status: 'error', error: firstLine(e) }));
+}
+/** Look for a new version. `manual`: the button in settings (reports why it could not look). */
+function checkForUpdate(manual = false) {
+  if (!app.isPackaged && !updateFeed()) { if (manual) setUpdate({ status: 'error', error: '开发模式不检查更新' }); return; }
+  if (updateState.status === 'checking' || updateState.status === 'downloading' || updateState.status === 'downloaded') return;
+  autoUpdater.checkForUpdates().catch((e) => setUpdate({ status: 'error', error: firstLine(e) }));
+}
+/** Automatic checks: shortly after start, then every few hours — unless turned off in settings (flags.json). */
+function scheduleUpdateChecks() {
+  const tick = () => { if (readFlags().autoUpdate !== false) checkForUpdate(); };
+  setTimeout(tick, Number(process.env.CW_UPDATE_FIRST_MS) || FIRST_CHECK_MS).unref?.();
+  setInterval(tick, CHECK_EVERY_MS).unref?.();
 }
 
 // ---------- IPC ----------
@@ -422,12 +471,20 @@ ipcMain.handle('desktop:window:new', () => {
 ipcMain.handle('desktop:window:focus', (_e, id: string) => { const w = wins.get(id); if (w && !w.isDestroyed()) showWindow(w); });
 ipcMain.handle('desktop:window:list', () => liveWins().map(([id]) => id));
 ipcMain.handle('desktop:update:state', () => updateState);
-ipcMain.handle('desktop:update:check', () => {
-  if (!app.isPackaged) { setUpdate({ status: 'error', error: '开发模式不检查更新' }); return; }
-  autoUpdater.checkForUpdates().catch((e) => setUpdate({ status: 'error', error: e.message }));
+ipcMain.handle('desktop:update:check', () => checkForUpdate(true));
+ipcMain.handle('desktop:update:download', () => {
+  if (updateState.mode !== 'auto') { if (updateState.url) void shell.openExternal(updateState.url); return; }
+  autoUpdater.downloadUpdate().catch((e) => setUpdate({ status: 'error', error: firstLine(e) }));
 });
-ipcMain.handle('desktop:update:download', () => autoUpdater.downloadUpdate().catch((e) => setUpdate({ status: 'error', error: e.message })));
-ipcMain.handle('desktop:update:install', () => { quitting = true; autoUpdater.quitAndInstall(); });
+/** 立即重启更新: the installer runs silently and starts the new version (only once it is downloaded). */
+ipcMain.handle('desktop:update:install', () => {
+  if (updateState.mode !== 'auto' || updateState.status !== 'downloaded') return false;
+  quitting = true;
+  saveState();
+  mainLog(`[update] installing ${updateState.version}`);
+  autoUpdater.quitAndInstall(true, true);
+  return true;
+});
 ipcMain.handle('desktop:flags:set', (_e, f: Record<string, unknown>) => { writeFlags(f); });
 ipcMain.handle('desktop:flags:get', () => readFlags());
 ipcMain.handle('desktop:relaunch', () => { quitting = true; app.relaunch(); app.exit(0); });
@@ -446,6 +503,7 @@ if (gotLock) app.whenReady().then(async () => {
     buildMenu();
     buildTray();
     setupUpdater();
+    scheduleUpdateChecks();
     const st = loadState();
     if (main.isDestroyed()) createWindow(info.url, 'main', undefined, hidden);
     else void main.loadURL(windowUrl(info.url, 'main'));

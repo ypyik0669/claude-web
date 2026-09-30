@@ -13,6 +13,7 @@ import { CommandPalette } from '@/features/palette/CommandPalette';
 import { ImageViewer } from '@/features/chat/ImageViewer';
 import { DialogHost } from '@/ui/dialog';
 import { ConnectModelHost } from '@/features/providers/ConnectModel';
+import { UpdatePrompt } from '@/features/update/UpdatePrompt';
 import { SettingsModal } from '@/features/settings/SettingsModal';
 import { Onboarding } from '@/features/onboarding/Onboarding';
 import { desktop } from '@/desktop';
@@ -185,6 +186,7 @@ export function App() {
       <ErrorBoundary area="首次引导" floating><Onboarding /></ErrorBoundary>
       <ErrorBoundary area="图片查看" floating><ImageViewer /></ErrorBoundary>
       <ErrorBoundary area="接一个模型" floating><ConnectModelHost /></ErrorBoundary>
+      <ErrorBoundary area="应用更新" floating><UpdatePrompt /></ErrorBoundary>
       <ErrorBoundary area="对话框" floating><DialogHost /></ErrorBoundary>
     </div>
   );

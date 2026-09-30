@@ -85,7 +85,7 @@
 | macOS，Apple Silicon（M1 及以后） | `ClaudeWeb-<版本>-mac-arm64.dmg` |
 | macOS，Intel | `ClaudeWeb-<版本>-mac-x64.dmg` |
 
-`.zip`、`.yml`、`.blockmap` 是自动更新用的，不用下载。第一次打开的提示见下面「安装包的提示」。
+`.zip`、`.yml`、`.blockmap` 是自动更新用的，不用下载。第一次打开的提示见下面「安装包的提示」。每个版本改了什么见 [更新日志](CHANGELOG.md)。
 
 ### 网页版（从源码）
 
@@ -395,7 +395,7 @@ worktree 放在仓库外面的 `~/.claude-web/worktrees/<仓库名>-<hash>/`（�
 显卡驱动问题。**设置 → 通用 → 更多选项 → 软件渲染** 打开后重启；连续崩溃两次时应用也会自动切换。
 
 **自动更新**
-Windows 版会到本仓库的 GitHub Releases 检查新版本（**设置 → 高级 → 更新**）。macOS 版没有 Apple 签名，系统不允许应用内更新，请到 [Releases](https://github.com/ypyik0669/claude-web/releases/latest) 下载新的 dmg 覆盖安装。自己从源码打的包，`git pull` 之后重新 `npm install && npm run build:desktop` 覆盖安装即可。数据都不会丢。
+桌面版启动后和每 4 小时会到本仓库的 GitHub Releases 检查一次新版本（在 **设置 → 高级 → 更新** 里可以手动检查，也可以关掉自动检查）。Windows 安装版会在后台下载好，然后弹窗问你要不要重启更新；选「稍后」就在下次退出时自动装好。macOS 版没有 Apple 签名、Windows 免安装版不能自己更新，有新版本时弹窗给出下载链接：macOS 下载新的 dmg 把应用拖进「应用程序」替换，免安装版换成新的 exe。标成「必须更新」的版本不能跳过。自己从源码打的包，`git pull` 之后重新 `npm install && npm run build:desktop` 覆盖安装即可。数据都不会丢。每个版本的变化见 [更新日志](CHANGELOG.md)。
 
 ## 工作原理
 

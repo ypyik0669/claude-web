@@ -2363,3 +2363,13 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .auto-head { padding-left: 
 .sb-hint.home-hint { margin: 14px 0 0; padding: 8px 8px 8px 12px; font-size: 13px; }
 .sb-hint.home-hint .msg, .sb-hint.home-hint .link { font-size: 13px; }
 .sb-hint .msg { margin: 0; animation: none; } /* not a chat message: the global .msg margin made both copies ~28px taller */
+
+/* ---- the app's own update prompt (features/update/UpdatePrompt.tsx) ---- */
+.update-prompt { width: min(480px, calc(100vw - 32px)); }
+.update-prompt h3 { margin: 0 0 6px; font-size: var(--fs-lg, 16px); }
+.update-prompt .sub { margin: 0 0 10px; line-height: 1.6; }
+.update-prompt .up-notes { max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; line-height: 1.6; color: var(--ink-2); background: var(--surface-1); border: 1px solid var(--edge-subtle); border-radius: var(--r-md); padding: 8px 10px; margin-bottom: 10px; }
+.update-prompt .up-warn { margin: 0 0 10px; font-size: 12.5px; color: var(--warn); line-height: 1.5; }
+.update-prompt .up-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.update-prompt .up-foot .grow { flex: 1 1 auto; }
+.update-prompt .up-later { margin: 8px 0 0; font-size: 12px; color: var(--ink-3); text-align: right; }

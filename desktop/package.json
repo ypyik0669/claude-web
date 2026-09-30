@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "electron .",
-    "dev": "tsc -p tsconfig.json && electron ."
+    "dev": "tsc -p tsconfig.json && electron .",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",

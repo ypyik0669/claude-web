@@ -1,19 +1,47 @@
 // Cold-starts a PACKAGED desktop build and checks it really works on this OS:
 // server boots inside the app, the page is served, both engines resolve from app.asar.unpacked and run,
-// and the terminal (node-pty + spawn-helper + the SDK's native claude binary) produces output.
+// the terminal (node-pty + spawn-helper + the SDK's native claude binary) produces output, and the app finds a new
+// version by itself (a local update feed advertising 99.0.0): the Windows installer build downloads it, macOS only
+// reports it (unsigned: the prompt offers the download instead).
 //   node scripts/smoke-packaged.mjs "<path to app executable>" [screenshot.png]
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import WebSocket from 'ws';
 
 const [exe, shot] = process.argv.slice(2);
 if (!exe || !existsSync(exe)) { console.error(`app executable not found: ${exe}`); process.exit(2); }
 const ud = mkdtempSync(path.join(os.tmpdir(), 'cw-smoke-'));
 const token = randomBytes(12).toString('hex');
-const env = { ...process.env, CLAUDE_WEB_TOKEN: token };
+
+// a generic update feed (desktop/src/main.ts CW_UPDATE_FEED): 99.0.0 with a 1 MB stand-in file
+const upPayload = Buffer.alloc(1 << 20, 7);
+const upSha = createHash('sha512').update(upPayload).digest('base64');
+const upFile = process.platform === 'darwin' ? `ClaudeWeb-99.0.0-mac-${process.arch}.zip` : 'ClaudeWeb-99.0.0-win-x64.exe';
+const upYml = [
+  'version: 99.0.0',
+  'files:',
+  `  - url: ${upFile}`,
+  `    sha512: ${upSha}`,
+  `    size: ${upPayload.length}`,
+  `path: ${upFile}`,
+  `sha512: ${upSha}`,
+  "releaseDate: '2026-01-01T00:00:00.000Z'",
+  'releaseNotes: smoke',
+  '',
+].join('\n');
+const feedHits = [];
+const feed = http.createServer((q, s) => {
+  feedHits.push(q.url);
+  if (q.url.startsWith('/latest.yml') || q.url.startsWith('/latest-mac.yml')) { s.writeHead(200, { 'content-type': 'text/yaml' }).end(upYml); return; }
+  if (q.url.startsWith(`/${upFile}`) && !q.url.includes('.blockmap')) { s.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': upPayload.length }).end(upPayload); return; }
+  s.writeHead(404).end();
+});
+await new Promise((r) => feed.listen(0, '127.0.0.1', r));
+const env = { ...process.env, CLAUDE_WEB_TOKEN: token, CW_UPDATE_FEED: `http://127.0.0.1:${feed.address().port}/`, CW_UPDATE_FIRST_MS: '2000' };
 for (const k of Object.keys(env)) if (/^(ANTHROPIC_|CLAUDE_CODE_|ELECTRON_RUN_AS_NODE)/.test(k)) delete env[k];
 const app = spawn(exe, [`--user-data-dir=${ud}`], { env, stdio: 'ignore', detached: process.platform !== 'win32' });
 
@@ -62,6 +90,17 @@ async function run() {
 }
 
 try { await run(); } catch (e) { check('smoke run', false, e.stack ?? String(e)); }
+
+// the app's own update check (desktop/src/main.ts): main.log records each step
+{
+  const mainLog = () => { try { return readFileSync(path.join(ud, 'main.log'), 'utf8'); } catch { return ''; } };
+  const want = process.platform === 'win32' ? '[update] downloaded 99.0.0' : '[update] available 99.0.0';
+  for (let i = 0; i < 120 && !mainLog().includes(want); i++) await sleep(500);
+  const steps = mainLog().split('\n').filter((l) => l.includes('[update]')).map((l) => l.slice(l.indexOf('[update]'))).join(' | ');
+  check(process.platform === 'win32' ? 'finds and downloads a new version by itself (installer build)' : 'finds a new version by itself (unsigned build: offers the download)', mainLog().includes(want), `${steps || 'no [update] lines'} · feed: ${feedHits.join(', ')}`);
+  if (process.platform !== 'win32') check('… and downloads nothing itself', !feedHits.some((u) => u.startsWith(`/${upFile}`)));
+}
+feed.close();
 if (shot && process.platform === 'darwin') { try { await sleep(1500); execFileSync('screencapture', ['-x', shot]); console.log(`screenshot: ${shot}`); } catch (e) { console.log(`screenshot failed: ${e.message}`); } }
 
 try { if (process.platform === 'win32') execFileSync('taskkill', ['/pid', String(app.pid), '/t', '/f'], { stdio: 'ignore' }); else process.kill(-app.pid, 'SIGTERM'); } catch { /* already gone */ }

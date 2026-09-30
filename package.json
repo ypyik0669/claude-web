@@ -15,7 +15,7 @@
     "dev": "concurrently -k \"npm run dev -w server\" \"npm run dev -w web\"",
     "build": "npm run build -w web",
     "start": "npm run start -w server",
-    "test": "npm test -w server && npm test -w web",
+    "test": "npm test -w server && npm test -w web && npm test -w desktop",
     "build:all": "npm run build -w server && npm run build -w web && npm run build -w desktop",
     "desktop": "npm run build:all && electron .",
     "build:desktop": "npm run build:all && electron-builder --config electron-builder.yml --win",
