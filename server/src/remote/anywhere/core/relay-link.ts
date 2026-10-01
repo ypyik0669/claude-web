@@ -11,12 +11,22 @@
 //   plaintext = seq u32 (the low half of the IV's sequence) ‖ ack u32 ‖ kind u8 ‖ data
 // One key serves both directions, so the direction byte is what keeps their IVs apart. Within a direction every
 // sequence is sealed once: a resend publishes the very same bytes (its ack is stale, which is harmless, acks only
-// ever grow), so no IV ever covers two plaintexts.
+// ever grow), so no IV ever covers two plaintexts. ack = the number of data packets received in order (the next
+// seq expected).
 //
-// ack = the number of data packets received in order (the next seq expected). Kinds: 0 the last (or only) piece
-// of a frame, 3 a piece the frame goes on from in the next seq, 1 ack only (data = a bitmap of the packets held
-// past `ack`: bit i, LSB first, is seq ack + 1 + i), 2 close. A data-range kind this version does not know uses
-// up its seq and delivers nothing; a control kind it does not know is ignored.
+// Kinds, protocol v1. This is a protocol across versions: the phone shell (served from GitHub Pages, cached by its
+// service worker) and the PC app run different copies of this file, so this table is the reference for both and a
+// change to it is a new version.
+//   data range (sequence 0 … 2^32 − 1; resent until confirmed, handed over in seq order):
+//     0  END    the last (or only) piece of one frame
+//     3  MORE   a piece of a frame that goes on in the next seq; only MORE or END may follow it
+//     4  BATCH  several whole frames, each as length (u16, big-endian) ‖ bytes; packed by the sender so that small
+//               frames do not take a packet (and a 50 ms slot) each
+//     any other kind ends the link ("protocol: unknown kind N"): skipping it would lose whatever frame it carried
+//   control range (sequence 2^32 + counter; unordered, never resent):
+//     1  ACK    data = a bitmap of the packets held past `ack`: bit i (LSB first) is seq ack + 1 + i
+//     2  CLOSE
+//     any other kind is ignored (it carries no frame)
 import type { Side } from './envelope.js';
 import type { Room } from './keys.js';
 import type { Link } from './link.js';
@@ -30,10 +40,14 @@ const TAG_BYTES = 16;
 const MIN_PACKET = IV_BYTES + HEAD_BYTES + TAG_BYTES;
 /** Largest MQTT payload the link sends; anything longer arriving is junk. */
 export const RELAY_MAX_PACKET = MIN_PACKET + RELAY_MAX_DATA;
-/** Largest frame (channel frames are at most 16 389 bytes); a peer's frame growing past it ends the link. */
+/** Largest frame (the 1 MiB of the Link contract); a frame from the other side growing past it ends the link. */
 export const MAX_FRAME_BYTES = 1_048_576;
 /** Bytes send() takes before the other side confirms them; past it the link ends (callers pause on buffered()). */
 export const MAX_QUEUED_BYTES = 8 * MAX_FRAME_BYTES;
+/** Frames waiting for a packet; past it the link ends too (empty frames count no bytes, but each is an object). */
+export const MAX_QUEUED_FRAMES = 65_536;
+/** Length prefix of each frame in a BATCH. */
+const BATCH_LEN = 2;
 /** Packets waiting to be decrypted; a flood past it is dropped instead of queueing without bound. */
 export const MAX_INBOX = 256;
 /** The receiver holds up to max(window, MIN_REORDER) packets past a gap (≈ 0.8 MB at the default window). */
@@ -55,7 +69,8 @@ const EARLY_MS = 1;
 const MAX_U32 = 0xffff_ffff;
 
 export const RELAY_DIR = { up: 1, down: 2 } as const;
-export const RELAY_KIND = { data: 0, ack: 1, close: 2, more: 3 } as const;
+/** `data` is END in the table above. */
+export const RELAY_KIND = { data: 0, ack: 1, close: 2, more: 3, batch: 4 } as const;
 const DATA_RANGE = 0;
 const CTRL_RANGE = 1;
 
@@ -73,7 +88,12 @@ export interface RelayLinkOptions {
   /** The session id from signaling; it becomes part of the topics, so letters, digits, - and _ only (≤ 64). */
   session: string;
   side: Side;
-  /** relayKey(room, phone nonce, PC nonce). */
+  /**
+   * relayKey(room, phone nonce, PC nonce), derived once per session from fresh nonces (Task 7's hello / ack). The IV
+   * depends only on key, direction and sequence, so a key may carry one link per direction, ever: opening a second
+   * one with the same CryptoKey is refused, but a second relayKey() call on the same nonces gives another object
+   * the guard cannot recognise, and must never happen.
+   */
   key: CryptoKey;
   /** Packets this side publishes per second, acks, resends and keepalives included (20). */
   maxPerSec?: number;
@@ -114,6 +134,8 @@ async function seal(
   key: CryptoKey, aad: Uint8Array<ArrayBuffer>, dir: number, hi: number, lo: number, ack: number, kind: number, data: Uint8Array,
 ): Promise<Uint8Array<ArrayBuffer>> {
   const iv = relayIv(dir, hi, lo);
+  // the ack wraps silently just like the sequence (it reaches 2^32 after the other side's last data seq)
+  checkU32(ack, 'ack');
   const pt = new Uint8Array(HEAD_BYTES + data.length);
   const v = new DataView(pt.buffer);
   v.setUint32(0, lo);
@@ -192,11 +214,12 @@ type Job = 'close' | 'data' | 'ack' | Sent;
 /** Inbound topics with an open link, per pool: a pool keeps one callback per topic, a second link would take it. */
 const inUse = new WeakMap<RelayBrokers, Set<string>>();
 /**
- * Outbound topics each key has sealed for, for as long as the key lives. A second link on the same session and
- * direction would number from 0 again under the same key: the same IVs over other plaintexts, which gives away both
- * plaintexts' XOR and GCM's authentication key. A new session (new hello / ack) derives a new key.
+ * Directions each key has sealed for, for as long as the key lives. The IV is direction ‖ sequence only (the topic
+ * is just the AAD), so a second link sealing with the same key in the same direction, whatever its session, would
+ * number from 0 again: the same IVs over other plaintexts, which gives away both plaintexts' XOR and GCM's
+ * authentication key. A new session (new hello / ack) derives a new key.
  */
-const sealedFor = new WeakMap<CryptoKey, Set<string>>();
+const sealedFor = new WeakMap<CryptoKey, Set<number>>();
 
 class RelayLink implements Link {
   readonly kind = 'relay' as const;
@@ -307,8 +330,12 @@ class RelayLink implements Link {
   send(frame: Uint8Array): void {
     if (this.state !== 'open') return;
     if (frame.length > MAX_FRAME_BYTES) throw new RangeError(`relay frame of ${frame.length} bytes is over ${MAX_FRAME_BYTES}`);
+    // onclose later, never from inside the caller's own send()
     if (this.pending + frame.length > MAX_QUEUED_BYTES) {
-      return this.shutdown(`more than ${MAX_QUEUED_BYTES} bytes waiting to be sent`, true);
+      return this.shutdown(`more than ${MAX_QUEUED_BYTES} bytes waiting to be sent`, true, true);
+    }
+    if (this.queue.length - this.qHead >= MAX_QUEUED_FRAMES) {
+      return this.shutdown(`more than ${MAX_QUEUED_FRAMES} frames waiting to be sent`, true, true);
     }
     // a copy, never a view (Buffer#slice would be one): the caller may reuse its bytes
     this.queue.push(new Uint8Array(frame));
@@ -446,10 +473,15 @@ class RelayLink implements Link {
     this.arm(t);
   }
 
+  /** One data packet, in seq order. */
   private take(kind: number, data: Uint8Array): void {
-    // a kind this version does not know: its slot is used up, there is nothing to deliver
-    if (kind !== RELAY_KIND.data && kind !== RELAY_KIND.more) return;
-    if (kind === RELAY_KIND.data && this.parts.length === 0) return this.emit(data);
+    const split = this.parts.length > 0;
+    if (kind === RELAY_KIND.batch && !split) return this.unbatch(data);
+    if (kind !== RELAY_KIND.data && kind !== RELAY_KIND.more) {
+      // a newer peer, or a broken one: going on would deliver a stream with a frame missing (or one with a hole)
+      return this.protocol(split ? `kind ${kind} inside a split frame` : `unknown kind ${kind}`);
+    }
+    if (kind === RELAY_KIND.data && !split) return this.emit(data);
     this.partsBytes += data.length;
     if (this.partsBytes > MAX_FRAME_BYTES) {
       return this.shutdown(`the other side sent a frame over ${MAX_FRAME_BYTES} bytes`, true);
@@ -460,6 +492,25 @@ class RelayLink implements Link {
     this.parts = [];
     this.partsBytes = 0;
     this.emit(f);
+  }
+
+  /** Checked whole before any of it is handed over: a batch cut short delivers nothing and ends the link. */
+  private unbatch(data: Uint8Array): void {
+    const frames: Uint8Array[] = [];
+    for (let o = 0; o < data.length; ) {
+      if (o + BATCH_LEN > data.length) return this.protocol('a batch cut short');
+      const n = (data[o] << 8) | data[o + 1];
+      o += BATCH_LEN;
+      if (o + n > data.length) return this.protocol('a batch cut short');
+      // copies: frames of one packet must not share a buffer (each is the receiver's own)
+      frames.push(data.slice(o, o + n));
+      o += n;
+    }
+    for (const f of frames) this.emit(f);
+  }
+
+  private protocol(what: string): void {
+    this.shutdown(`protocol: ${what}`, true);
   }
 
   private emit(f: Uint8Array): void {
@@ -606,24 +657,57 @@ class RelayLink implements Link {
     this.lastOut = this.lastAckAt = t;
   }
 
-  private nextSegment(): Held {
+  /**
+   * What the next data packet carries, from the head of the queue, in order: the next piece of a frame too big for
+   * one packet; else as many whole frames as fit, as a BATCH (or just END when only one does).
+   */
+  private nextPacket(): Held & { bytes: number } {
     const f = this.queue[this.qHead];
-    const n = Math.min(RELAY_MAX_DATA, f.length - this.qOff);
-    const data = f.subarray(this.qOff, this.qOff + n);
-    this.qOff += n;
-    if (this.qOff < f.length) return { kind: RELAY_KIND.more, data };
-    // let go of the frame (the segment's view keeps it until it is sealed)
+    if (this.qOff > 0 || f.length > RELAY_MAX_DATA) {
+      const n = Math.min(RELAY_MAX_DATA, f.length - this.qOff);
+      const data = f.subarray(this.qOff, this.qOff + n);
+      this.qOff += n;
+      if (this.qOff < f.length) return { kind: RELAY_KIND.more, data, bytes: n };
+      this.shift();
+      return { kind: RELAY_KIND.data, data, bytes: n };
+    }
+    let n = 1;
+    let size = BATCH_LEN + f.length;
+    for (let i = this.qHead + 1; i < this.queue.length; i++) {
+      const g = this.queue[i];
+      if (size + BATCH_LEN + g.length > RELAY_MAX_DATA) break;
+      size += BATCH_LEN + g.length;
+      n++;
+    }
+    if (n === 1) {
+      this.shift();
+      return { kind: RELAY_KIND.data, data: f, bytes: f.length };
+    }
+    const data = new Uint8Array(size);
+    let o = 0;
+    for (let i = 0; i < n; i++) {
+      const g = this.queue[this.qHead];
+      data[o] = g.length >> 8;
+      data[o + 1] = g.length & 0xff;
+      data.set(g, o + BATCH_LEN);
+      o += BATCH_LEN + g.length;
+      this.shift();
+    }
+    return { kind: RELAY_KIND.batch, data, bytes: size - n * BATCH_LEN };
+  }
+
+  /** Lets go of the head frame (a view of it in the packet being built keeps it until sealed). */
+  private shift(): void {
     this.queue[this.qHead++] = EMPTY;
     this.qOff = 0;
     if (this.qHead >= 64 && this.qHead * 2 >= this.queue.length) {
       this.queue = this.queue.slice(this.qHead);
       this.qHead = 0;
     }
-    return { kind: RELAY_KIND.data, data };
   }
 
   private async sendData(): Promise<void> {
-    const seg = this.nextSegment();
+    const seg = this.nextPacket();
     // taken now, before sealing: whatever happens next, this seq is never sealed again
     const seq = this.nextSeq++;
     const ack = this.recvNext;
@@ -632,7 +716,7 @@ class RelayLink implements Link {
     const wire = await seal(this.key, this.outAad, this.outDir, DATA_RANGE, seq, ack, seg.kind, seg.data);
     // closed while sealing: dropped unsent, and the seq stays used
     if (this.state !== 'open') return;
-    const e: Sent = { seq, wire, bytes: seg.data.length, sentAt: 0, sacked: false };
+    const e: Sent = { seq, wire, bytes: seg.bytes, sentAt: 0, sacked: false };
     this.out.push(e);
     this.fresh((e.sentAt = this.publish(wire)));
   }
@@ -678,15 +762,22 @@ class RelayLink implements Link {
 
   // ---- ending ----
 
-  /** Ends for a reason of its own (not close()): tells the caller once, and the other side if it may still listen. */
-  private shutdown(why: string, tellPeer: boolean): void {
+  /**
+   * Ends for a reason of its own (not close()): tells the caller once, and the other side if it may still listen.
+   * `later`: from inside the caller's own send(), onclose waits for a microtask instead of running re-entrantly.
+   */
+  private shutdown(why: string, tellPeer: boolean, later = false): void {
     if (this.state !== 'open') return;
     this.stop(tellPeer);
-    try {
-      this.onclose(why);
-    } catch (e) {
-      report('close handler', e);
-    }
+    const call = () => {
+      try {
+        this.onclose(why);
+      } catch (e) {
+        report('close handler', e);
+      }
+    };
+    if (later) queueMicrotask(call);
+    else call();
   }
 
   /** Stops receiving and drops every buffer at once; the close packets, if any, still leave paced. */
@@ -744,15 +835,16 @@ export async function openRelayLink(opts: RelayLinkOptions): Promise<Link> {
   let topics = inUse.get(opts.brokers);
   if (!topics) inUse.set(opts.brokers, (topics = new Set()));
   if (topics.has(inTopic)) throw new Error(`relay session ${opts.session} is already open on the ${opts.side} side of this pool`);
+  const outDir = opts.side === 'phone' ? RELAY_DIR.up : RELAY_DIR.down;
   let sealed = sealedFor.get(opts.key);
   if (!sealed) sealedFor.set(opts.key, (sealed = new Set()));
-  if (sealed.has(outTopic)) {
-    throw new Error(`relay key already used for session ${opts.session} from the ${opts.side} side: reopening would repeat IVs, derive a new key`);
+  if (sealed.has(outDir)) {
+    throw new Error(`relay key already used from the ${opts.side} side (session ${opts.session} or another): a second link would repeat its IVs, derive a new key`);
   }
   // before anything can fail half-way: option errors throw here, with nothing subscribed or reserved yet
   const link = new RelayLink(opts, inTopic, outTopic);
   topics.add(inTopic);
-  sealed.add(outTopic);
+  sealed.add(outDir);
   try {
     await opts.brokers.subscribe(inTopic, link.deliver);
   } catch (e) {

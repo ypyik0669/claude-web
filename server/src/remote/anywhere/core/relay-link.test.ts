@@ -8,6 +8,7 @@ import {
   MAX_FRAME_BYTES,
   MAX_INBOX,
   MAX_QUEUED_BYTES,
+  MAX_QUEUED_FRAMES,
   MIN_REORDER,
   RELAY_DIR,
   RELAY_KIND,
@@ -135,8 +136,8 @@ async function pair(defs: BrokerDef[], extra: Extra = {}, o: { pcKey?: 'wrong' }
   return { ...k, topics, phone, pc, sniff, captured, P, C };
 }
 
-/** Deterministic sizes (so a failure reproduces), random content. */
-function frames(n: number, seed: number, max = 30_000): Uint8Array[] {
+/** Deterministic sizes in min..max (so a failure reproduces), random content. */
+function frames(n: number, seed: number, max = 30_000, min = 1): Uint8Array[] {
   let s = seed;
   const rnd = () => {
     // mulberry32
@@ -145,7 +146,7 @@ function frames(n: number, seed: number, max = 30_000): Uint8Array[] {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-  return Array.from({ length: n }, () => crypto.getRandomValues(new Uint8Array(1 + Math.floor(rnd() * max))));
+  return Array.from({ length: n }, () => crypto.getRandomValues(new Uint8Array(min + Math.floor(rnd() * (max - min + 1)))));
 }
 
 function same(a: Uint8Array, b: Uint8Array): boolean {
@@ -265,36 +266,98 @@ describe('relay link', () => {
     await settle();
     expect(firstDiff(t.C.got, up)).toBe(-1);
     expect(firstDiff(t.P.got, down)).toBe(-1);
-    // a copy of every data packet through each relay broker
-    expect(t.pc.raw(t.topics.up)).toBeGreaterThanOrEqual(2 * up.length);
-    expect(t.phone.raw(t.topics.down)).toBeGreaterThanOrEqual(2 * down.length);
+    // a copy of every packet through each relay broker (the sniffer saw each one twice too)
+    const ivs = new Set(t.captured.up.map((w) => hex(w.subarray(0, 12))));
+    expect(ivs.size).toBeGreaterThan(1);
+    expect(t.pc.raw(t.topics.up)).toBeGreaterThanOrEqual(2 * ivs.size);
+    expect(t.captured.up.length).toBeGreaterThanOrEqual(2 * ivs.size);
     expect(a.published).toBeGreaterThan(0);
     expect(b.published).toBe(a.published);
     expect(c.published).toBe(0);
   });
 
+  it('one relay broker dropping, both delivering copies: every frame arrives in order, exactly once', async () => {
+    const [a, b] = [await broker({ dropEvery: 3 }), await broker()];
+    const t = await pair([def(a, 'A'), def(b, 'B')], FAST);
+    const up = frames(80, 15, 20_000);
+    const down = frames(80, 16, 20_000);
+    for (const f of up) t.P.link.send(f);
+    for (const f of down) t.C.link.send(f);
+    await until(() => t.C.got.length >= 80 && t.P.got.length >= 80, 'every frame', 15_000);
+    await until(() => t.P.link.buffered() === 0 && t.C.link.buffered() === 0, 'everything confirmed', 5000);
+    await settle();
+    expect(firstDiff(t.C.got, up)).toBe(-1);
+    expect(firstDiff(t.P.got, down)).toBe(-1);
+    // copies did come in: more deliveries than distinct packets
+    const ivs = new Set(t.captured.up.map((w) => hex(w.subarray(0, 12))));
+    expect(t.pc.raw(t.topics.up)).toBeGreaterThan(ivs.size);
+  });
+
+  it('small frames are packed: 500 frames of 10–200 bytes sent at once arrive in order in at most 60 MQTT packets', async () => {
+    const a = await broker();
+    const t = await pair([def(a, 'A')]);
+    const before = a.published;
+    const sent = frames(500, 17, 200, 10);
+    for (const f of sent) t.P.link.send(f);
+    await until(() => t.C.got.length >= 500, 'every frame', 10_000);
+    await until(() => t.P.link.buffered() === 0, 'everything confirmed');
+    await settle();
+    expect(firstDiff(t.C.got, sent)).toBe(-1);
+    // both sides, data and acks: one packet per frame would have been 500 (25 s at 20 packets/s)
+    expect(a.published - before).toBeLessThanOrEqual(60);
+    // and the data went in batches
+    const kinds = await Promise.all(t.captured.up.map(async (w) => (await unseal(t.key, t.topics.up, w))?.kind));
+    expect(kinds).toContain(RELAY_KIND.batch);
+  });
+
+  it('batched and split frames mixed stay in order, both ways', async () => {
+    const a = await broker();
+    const t = await pair([def(a, 'A')], FAST);
+    // runs of small frames between frames of two or three packets, and frames just under / over one packet
+    const mix = (seed: number) => {
+      const out: Uint8Array[] = [];
+      for (let i = 0; i < 12; i++) {
+        out.push(...frames(1 + (i % 5) * 7, seed + i, 300, 1));
+        out.push(...frames(1, seed + 100 + i, i % 2 ? 30_000 : RELAY_MAX_DATA + 1, i % 2 ? 12_289 : RELAY_MAX_DATA - 1));
+      }
+      out.push(new Uint8Array(0), ...frames(3, seed + 200, 50, 1));
+      return out;
+    };
+    const up = mix(1000);
+    const down = mix(2000);
+    for (const f of up) t.P.link.send(f);
+    for (const f of down) t.C.link.send(f);
+    await until(() => t.C.got.length >= up.length && t.P.got.length >= down.length, 'every frame', 15_000);
+    await settle();
+    expect(firstDiff(t.C.got, up)).toBe(-1);
+    expect(firstDiff(t.P.got, down)).toBe(-1);
+    const kinds = new Set(await Promise.all(t.captured.up.map(async (w) => (await unseal(t.key, t.topics.up, w))?.kind)));
+    for (const k of [RELAY_KIND.batch, RELAY_KIND.more, RELAY_KIND.data]) expect(kinds).toContain(k);
+  });
+
   it('rate limit: neither side publishes more than 41 MQTT packets in 2 s at the default 20/s, acks included', async () => {
-    // the phone is on X and Y, the PC only on Y: X counts the phone's packets alone, Y both sides'
-    const [x, y] = [await broker(), await broker()];
+    // the phone is on X and Y, the PC on Y and Z: they meet on Y, X counts the phone's packets alone, Z the PC's
+    const [x, y, z] = [await broker(), await broker(), await broker()];
     const k = await keys();
     const phone = pool([def(x, 'X'), def(y, 'Y')]);
-    const pc = pool([def(y, 'Y')]);
+    const pc = pool([def(y, 'Y'), def(z, 'Z')]);
     phone.p.start();
     pc.p.start();
     await upAll(phone.p, pc.p);
     const P = await end(phone.p, k.room, 'phone', k.key);
     const C = await end(pc.p, k.room, 'pc', k.key);
-    // both ways at once: every packet also carries an ack for the other direction
-    const up = frames(70, 7, 6000);
-    const down = frames(70, 8, 6000);
+    // both ways at once, every packet also carrying an ack for the other direction; frames too big to share a
+    // packet, so each side has a packet to send in every slot
+    const up = frames(70, 7, 12_000, 10_000);
+    const down = frames(70, 8, 12_000, 10_000);
     for (const f of up) P.link.send(f);
     for (const f of down) C.link.send(f);
     await sleep(400);
-    const [x0, y0, t0] = [x.published, y.published, performance.now()];
+    const [x0, z0, t0] = [x.published, z.published, performance.now()];
     await sleep(2000);
-    const [x1, y1, el] = [x.published, y.published, performance.now() - t0];
+    const [x1, z1, el] = [x.published, z.published, performance.now() - t0];
     const phoneSent = x1 - x0;
-    const pcSent = y1 - y0 - phoneSent;
+    const pcSent = z1 - z0;
     // one packet per 50 ms, a timer up to 26 ms late being made up for: at most 41 in any 2 s window (the cap only
     // grows if this test's own timer came back more than 24 ms late)
     const cap = 1 + Math.floor(((el + 26) * 20) / 1000);
@@ -321,7 +384,8 @@ describe('relay link', () => {
     // window 256: 2 s worth of packets without anyone acking
     const link = await openRelayLink({ brokers: fake, room: k.room, session: 'pace', side: 'phone', key: k.key, window: 256 });
     cleanup.push(() => link.close());
-    for (let i = 0; i < 100; i++) link.send(new Uint8Array(100));
+    // too big to share a packet: one packet per frame
+    for (let i = 0; i < 100; i++) link.send(new Uint8Array(12_000));
     await sleep(2300);
     link.close();
     let most = 0;
@@ -544,11 +608,12 @@ describe('relay link', () => {
     expect(t.sniff.p.publish(t.topics.up, evil)).toBe(1);
     await until(() => t.pc.raw(t.topics.up) === 1, 'the far-ahead packet on the PC');
     await settle();
-    const sent = Array.from({ length: MIN_REORDER + 5 }, (_, i) => `frame ${i}`);
-    for (const s of sent) t.P.link.send(enc.encode(s));
+    // too big to share a packet, so the real stream does reach that sequence
+    const sent = frames(MIN_REORDER + 5, 18, 8000, 7000);
+    for (const f of sent) t.P.link.send(f);
     await until(() => t.C.got.length >= sent.length, 'every frame', 10_000);
     // had it been kept, the real packet at that sequence would have been dropped as a copy
-    expect(t.C.got.map((f) => dec.decode(f))).toEqual(sent);
+    expect(firstDiff(t.C.got, sent)).toBe(-1);
   });
 
   it('a flood past MAX_INBOX packets waiting to be opened is dropped, and the link recovers', async () => {
@@ -590,9 +655,13 @@ describe('relay link', () => {
     // closing frees the slot, but never for the same key: the new link would number from 0 again, under IVs the
     // first one already used (on another pool just the same)
     P.link.close();
-    await expect(openRelayLink({ ...base, session: 'sess-1', side: 'phone' })).rejects.toThrow(/repeat IVs/);
+    await expect(openRelayLink({ ...base, session: 'sess-1', side: 'phone' })).rejects.toThrow(/repeat its IVs/);
     const elsewhere = pool([def(a, 'A')]);
-    await expect(openRelayLink({ ...base, brokers: elsewhere.p, session: 'sess-1', side: 'phone' })).rejects.toThrow(/repeat IVs/);
+    await expect(openRelayLink({ ...base, brokers: elsewhere.p, session: 'sess-1', side: 'phone' })).rejects.toThrow(/repeat its IVs/);
+    // the IV does not contain the session (the topic is only the AAD): another session, same key and direction,
+    // would repeat them just the same, even while the first link is still open
+    await expect(openRelayLink({ ...base, session: 'sess-2', side: 'phone' })).rejects.toThrow(/repeat its IVs/);
+    await expect(openRelayLink({ ...base, session: 'sess-3', side: 'pc' })).rejects.toThrow(/repeat its IVs/);
     const fresh = await keys();
     const again = await end(one.p, fresh.room, 'phone', fresh.key, FAST);
     expect(again.link.kind).toBe('relay');
@@ -663,11 +732,28 @@ describe('relay link', () => {
     expect(P.closed).toEqual([]);
     expect(P.link.buffered()).toBe(MAX_QUEUED_BYTES);
     P.link.send(new Uint8Array(1));
-    expect(P.closed).toHaveLength(1);
-    expect(P.closed[0]).toMatch(/waiting to be sent/);
+    // ended at once, but onclose is not run from inside the caller's send()
     expect(P.link.buffered()).toBe(0);
+    expect(P.closed).toEqual([]);
+    await Promise.resolve();
+    expect(P.closed).toHaveLength(1);
+    expect(P.closed[0]).toMatch(/bytes waiting to be sent/);
     P.link.send(big);
     expect(P.link.buffered()).toBe(0);
+  });
+
+  it('more than MAX_QUEUED_FRAMES frames waiting ends the link too (empty frames count no bytes)', async () => {
+    const k = await keys();
+    const phone = pool([def(await broker(), 'A')]);
+    const P = await end(phone.p, k.room, 'phone', k.key);
+    const empty = new Uint8Array(0);
+    for (let i = 0; i < MAX_QUEUED_FRAMES; i++) P.link.send(empty);
+    // nothing has been taken off the queue yet (the pacer runs from a timer, this loop never yields)
+    expect(P.closed).toEqual([]);
+    P.link.send(empty);
+    await Promise.resolve();
+    expect(P.closed).toHaveLength(1);
+    expect(P.closed[0]).toMatch(new RegExp(`${MAX_QUEUED_FRAMES} frames waiting to be sent`));
   });
 
   it('a frame from the other side growing past MAX_FRAME_BYTES ends the link, and the other side is told', async () => {
@@ -690,17 +776,58 @@ describe('relay link', () => {
     expect(t.P.closed[0]).toMatch(/closed/);
   });
 
-  it('kinds this version does not know are skipped: in the data range their slot is used up, in the control range they are ignored', async () => {
+  it('protocol v1: an unknown control kind is ignored; an unknown data kind ends the link, the frames before it delivered', async () => {
     const a = await broker();
     const t = await pair([def(a, 'A')], FAST);
     const { up } = t.topics;
     // packets sealed by hand play a newer phone (the real phone link stays quiet)
-    t.sniff.p.publish(up, await forge(t.key, up, RELAY_DIR.up, 0, 0, 0, 9, enc.encode('future kind')));
+    t.sniff.p.publish(up, await forge(t.key, up, RELAY_DIR.up, 0, 0, 0, RELAY_KIND.data, enc.encode('known')));
     t.sniff.p.publish(up, await forge(t.key, up, RELAY_DIR.up, 1, 0, 0, 7, enc.encode('future control')));
-    t.sniff.p.publish(up, await forge(t.key, up, RELAY_DIR.up, 0, 1, 0, RELAY_KIND.data, enc.encode('hi')));
     await until(() => t.C.got.length === 1, 'the known frame');
     await settle();
-    expect(t.C.got.map((f) => dec.decode(f))).toEqual(['hi']);
     expect(t.C.closed).toEqual([]);
+    // a data kind this version does not know may carry a frame: skipping it would lose that frame unnoticed
+    t.sniff.p.publish(up, await forge(t.key, up, RELAY_DIR.up, 0, 1, 0, 9, enc.encode('future frame')));
+    t.sniff.p.publish(up, await forge(t.key, up, RELAY_DIR.up, 0, 2, 0, RELAY_KIND.data, enc.encode('after it')));
+    await until(() => t.C.closed.length === 1, 'the link to end');
+    expect(t.C.closed[0]).toBe('protocol: unknown kind 9');
+    await settle();
+    expect(t.C.got.map((f) => dec.decode(f))).toEqual(['known']);
+    // and the phone is told
+    await until(() => t.P.closed.length === 1, 'the phone to be told');
+  });
+
+  it('protocol v1: anything but MORE or END inside a split frame ends the link, and the frame with the hole is not delivered', async () => {
+    const a = await broker();
+    const t = await pair([def(a, 'A')], FAST);
+    const { up } = t.topics;
+    const piece = new Uint8Array(100).fill(7);
+    const batch = new Uint8Array([0, 1, 42]);
+    t.sniff.p.publish(up, await forge(t.key, up, RELAY_DIR.up, 0, 0, 0, RELAY_KIND.more, piece));
+    t.sniff.p.publish(up, await forge(t.key, up, RELAY_DIR.up, 0, 1, 0, RELAY_KIND.batch, batch));
+    t.sniff.p.publish(up, await forge(t.key, up, RELAY_DIR.up, 0, 2, 0, RELAY_KIND.data, piece));
+    await until(() => t.C.closed.length === 1, 'the link to end');
+    expect(t.C.closed[0]).toBe(`protocol: kind ${RELAY_KIND.batch} inside a split frame`);
+    await settle();
+    expect(t.C.got).toEqual([]);
+  });
+
+  it('protocol v1: a batch cut short ends the link and delivers none of it', async () => {
+    const a = await broker();
+    const t = await pair([def(a, 'A')], FAST);
+    const { up } = t.topics;
+    // two good frames ([1] and [2, 3]), then a length of 9 with only one byte behind it
+    const batch = new Uint8Array([0, 1, 1, 0, 2, 2, 3, 0, 9, 4]);
+    t.sniff.p.publish(up, await forge(t.key, up, RELAY_DIR.up, 0, 0, 0, RELAY_KIND.batch, batch));
+    await until(() => t.C.closed.length === 1, 'the link to end');
+    expect(t.C.closed[0]).toBe('protocol: a batch cut short');
+    expect(t.C.got).toEqual([]);
+    // a well-formed one, for contrast, on a fresh pair
+    const u = await pair([def(a, 'A')], FAST);
+    u.sniff.p.publish(u.topics.up, await forge(u.key, u.topics.up, RELAY_DIR.up, 0, 0, 0, RELAY_KIND.batch, batch.subarray(0, 7)));
+    await until(() => u.C.got.length === 2, 'both frames of the good batch');
+    expect(u.C.got.map((f) => [...f])).toEqual([[1], [2, 3]]);
+    // each frame of a batch is its own buffer
+    expect(u.C.got[0].buffer).not.toBe(u.C.got[1].buffer);
   });
 });
