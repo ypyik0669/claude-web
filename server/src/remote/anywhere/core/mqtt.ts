@@ -41,9 +41,13 @@ export interface MqttOptions {
 const KEEPALIVE_S = 60;
 const PING_MS = 30_000;
 const SUBACK_TIMEOUT_MS = 10_000;
-const MAX_REMAINING = 268_435_455;
-/** A single incoming packet is refused past this, on its header alone, before any of it is buffered. */
-export const MAX_PACKET_BYTES = 1_048_576;
+/** The most a 4-byte remaining length can say (MQTT 2.2.3). */
+const PROTOCOL_MAX_REMAINING = 268_435_455;
+/**
+ * Our cap on one incoming packet's remaining length (the packet minus its 2..5-byte fixed header), checked on
+ * the header alone, before any of the body is buffered.
+ */
+export const MAX_REMAINING_BYTES = 1_048_576;
 /** Past this much unsent data publish() refuses: the relay retransmits later instead of queueing without bound. */
 const MAX_BUFFERED = 1_048_576;
 const OPEN = 1;
@@ -64,7 +68,7 @@ const strictDec = new TextDecoder('utf-8', { fatal: true });
 class ProtocolError extends Error {}
 
 export function encodeRemainingLength(n: number): number[] {
-  if (!Number.isInteger(n) || n < 0 || n > MAX_REMAINING) throw new Error(`remaining length out of range: ${n}`);
+  if (!Number.isInteger(n) || n < 0 || n > PROTOCOL_MAX_REMAINING) throw new Error(`remaining length out of range: ${n}`);
   const out: number[] = [];
   do {
     let d = n % 128;
@@ -151,7 +155,7 @@ export class PacketReader {
   private end = 0;
   private stopped = false;
 
-  constructor(private readonly max = MAX_PACKET_BYTES) {}
+  constructor(private readonly max = MAX_REMAINING_BYTES) {}
 
   /** Calls `onPacket` for each complete packet; `body` is a view that is only valid during the call. */
   push(chunk: Uint8Array, onPacket: (first: number, body: Uint8Array) => void): void {
@@ -318,16 +322,31 @@ export class MqttClient {
   unsubscribe(topic: string): void {
     if (this.state !== 'open') return;
     const id = nextPacketId(this.lastId, (n) => this.subWait.has(n));
+    let pkt: Uint8Array<ArrayBuffer>;
+    try {
+      pkt = encodePacket((UNSUBSCRIBE << 4) | 0x02, [u16(id), topic]);
+    } catch {
+      return; // a topic that cannot be encoded was never subscribed either
+    }
     this.lastId = id;
-    this.send(encodePacket((UNSUBSCRIBE << 4) | 0x02, [u16(id), topic]));
+    this.send(pkt);
   }
 
-  /** QoS 0: true means handed to the socket, not delivered. False when not connected or the socket is backed up. */
+  /**
+   * QoS 0: true means handed to the socket, not delivered. False when not connected, the socket is backed up,
+   * or the packet cannot be encoded (topic over 65 535 bytes, packet over 256 MiB). Never throws.
+   */
   publish(topic: string, payload: string | Uint8Array): boolean {
     const ws = this.ws;
     if (this.state !== 'open' || !ws || ws.readyState !== OPEN) return false;
     if ((ws.bufferedAmount ?? 0) > MAX_BUFFERED) return false;
-    return this.send(encodePublish(topic, payload));
+    let pkt: Uint8Array<ArrayBuffer>;
+    try {
+      pkt = encodePublish(topic, payload);
+    } catch {
+      return false;
+    }
+    return this.send(pkt);
   }
 
   close(): void {
@@ -431,7 +450,10 @@ export class MqttClient {
     this.reader.stop();
     const ws = this.ws;
     if (ws) {
-      ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
+      ws.onopen = ws.onmessage = ws.onclose = null;
+      // not null: the `ws` package emits 'error' when a still-connecting socket is closed (and may for a late
+      // socket error), and an EventEmitter 'error' with no listener is an uncaught exception
+      ws.onerror = () => {};
       try {
         ws.close();
       } catch {
@@ -573,7 +595,7 @@ export class Brokers {
     for (const w of [...this.waiters]) if (w.topic === topic) w.done();
   }
 
-  /** Returns how many brokers took it (QoS 0: handed over, not delivered). */
+  /** Returns how many brokers took it (QoS 0: handed over, not delivered); 0 for a topic that cannot be encoded. */
   publish(topic: string, payload: string | Uint8Array, opts: { relayOnly?: boolean } = {}): number {
     const bytes = typeof payload === 'string' ? enc.encode(payload) : payload;
     let n = 0;

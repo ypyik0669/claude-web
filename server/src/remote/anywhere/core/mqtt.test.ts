@@ -1,7 +1,9 @@
+import net from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import WsPackage from 'ws';
 import { startBroker } from '../__mocks__/mqtt-broker.mjs';
 import {
-  Brokers, MAX_PACKET_BYTES, MqttClient, PacketReader, encodePublish, encodeRemainingLength, nextPacketId,
+  Brokers, MAX_REMAINING_BYTES, MqttClient, PacketReader, encodePublish, encodeRemainingLength, nextPacketId,
   type BrokerDef,
 } from './mqtt.js';
 
@@ -43,6 +45,21 @@ async function broker(opts?: Parameters<typeof startBroker>[0]): Promise<Broker>
   const b = await startBroker(opts);
   cleanup.push(() => b.close());
   return b;
+}
+
+/** A TCP listener that accepts and then never answers the WebSocket upgrade; resolves to its ws:// url. */
+async function stuckUpgrade(): Promise<{ url: string; accepted: () => number }> {
+  const socks: net.Socket[] = [];
+  const srv = net.createServer((s) => {
+    s.on('error', () => {});
+    socks.push(s);
+  });
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  cleanup.push(() => {
+    for (const s of socks) s.destroy();
+    return new Promise((r) => srv.close(r));
+  });
+  return { url: `ws://127.0.0.1:${(srv.address() as net.AddressInfo).port}/mqtt`, accepted: () => socks.length };
 }
 
 /** A port nothing listens on any more. */
@@ -117,14 +134,14 @@ describe('packet codec', () => {
     }
   });
 
-  it('the reader refuses an oversized packet from its header alone, and a 5-byte remaining length', () => {
+  it('the reader refuses a remaining length over the cap from the header alone, and a 5-byte remaining length', () => {
     const r = new PacketReader();
-    expect(() => r.push(new Uint8Array([0x30, ...encodeRemainingLength(MAX_PACKET_BYTES + 1)]), () => {})).toThrow(/exceeds/);
+    expect(() => r.push(new Uint8Array([0x30, ...encodeRemainingLength(MAX_REMAINING_BYTES + 1)]), () => {})).toThrow(/exceeds/);
     expect(() => new PacketReader().push(new Uint8Array([0x30, 0x80, 0x80, 0x80, 0x80, 0x01]), () => {})).toThrow(/4 bytes/);
-    // a packet of exactly the cap is fine
+    // a remaining length of exactly the cap is fine (the fixed header comes on top)
     const seen: number[] = [];
-    new PacketReader().push(concat(new Uint8Array([0x30, ...encodeRemainingLength(MAX_PACKET_BYTES)]), new Uint8Array(MAX_PACKET_BYTES)), (_f, body) => seen.push(body.length));
-    expect(seen).toEqual([MAX_PACKET_BYTES]);
+    new PacketReader().push(concat(new Uint8Array([0x30, ...encodeRemainingLength(MAX_REMAINING_BYTES)]), new Uint8Array(MAX_REMAINING_BYTES)), (_f, body) => seen.push(body.length));
+    expect(seen).toEqual([MAX_REMAINING_BYTES]);
   });
 });
 
@@ -187,20 +204,20 @@ describe('MqttClient', () => {
     expect(got[1].topic).toBe('t/after');
   });
 
-  it('accepts a packet of exactly 1 MiB', async () => {
+  it('accepts a remaining length of exactly 1 MiB', async () => {
     const b = await broker();
     const c = await client(b);
     const got = inbox(c);
-    const payload = bytes(MAX_PACKET_BYTES - 2 - 3, 9);
+    const payload = bytes(MAX_REMAINING_BYTES - 2 - 3, 9);
     const p = encodePublish('t/1', payload);
-    expect(p.length).toBe(1 + 3 + MAX_PACKET_BYTES);
+    expect(p.length).toBe(1 + 3 + MAX_REMAINING_BYTES);
     b.sendRaw(p);
     await until(() => got.length === 1, 'the 1 MiB message');
     expect(Buffer.from(got[0].payload).equals(Buffer.from(payload))).toBe(true);
   });
 
   const malformed: [string, Uint8Array | string][] = [
-    ['a remaining length over 1 MiB (header only)', new Uint8Array([0x30, ...encodeRemainingLength(MAX_PACKET_BYTES + 1)])],
+    ['a remaining length over 1 MiB (header only)', new Uint8Array([0x30, ...encodeRemainingLength(MAX_REMAINING_BYTES + 1)])],
     ['a 5-byte remaining length', new Uint8Array([0x30, 0xff, 0xff, 0xff, 0xff, 0x01])],
     ['a topic length running past the packet', new Uint8Array([0x30, 3, 0x00, 0x09, 0x61])],
     ['PUBLISH with QoS 3', new Uint8Array([0x36, 5, 0x00, 0x01, 0x61, 0x00, 0x01])],
@@ -276,9 +293,9 @@ describe('MqttClient', () => {
 
   it('pings on its interval and stays up while the broker answers', async () => {
     const b = await broker();
-    const c = await client(b, {}, { pingMs: 40 });
+    const c = await client(b, {}, { pingMs: 120 });
     const why = closes(c);
-    await sleep(300);
+    await sleep(700);
     expect(b.pings).toBeGreaterThanOrEqual(3);
     expect(why).toEqual([]);
     expect(c.publish('t', 'x')).toBe(true);
@@ -286,10 +303,37 @@ describe('MqttClient', () => {
 
   it('drops a connection that stops answering pings', async () => {
     const b = await broker({ ignorePing: true });
-    const c = await client(b, {}, { pingMs: 40 });
+    const c = await client(b, {}, { pingMs: 120 });
     const why = closes(c);
-    await until(() => why.length === 1, 'the drop', 1000);
+    await until(() => why.length === 1, 'the drop', 3000);
     expect(why[0]).toMatch(/ping/);
+  });
+
+  it('publish never throws: a topic too long to encode just returns false', async () => {
+    const b = await broker();
+    const c = await client(b);
+    expect(c.publish('t/'.repeat(40_000), 'x')).toBe(false);
+    expect(c.publish('t', 'still fine')).toBe(true);
+  });
+
+  // the `ws` package emits 'error' when a connecting socket is closed; with no listener left that is an
+  // uncaught exception (a crashed server), so end() must keep a no-op error handler on the socket
+  it('connect timing out against a listener that never answers the upgrade does not crash (ws package)', async () => {
+    const stuck = await stuckUpgrade();
+    const c = newClient(stuck.url, {}, { WebSocket: WsPackage });
+    await expect(c.connect(200)).rejects.toThrow(/200 ms/);
+    expect(stuck.accepted()).toBe(1);
+    await sleep(100); // the error is emitted on a later tick
+  });
+
+  it('close() during connect does not crash (ws package)', async () => {
+    const stuck = await stuckUpgrade();
+    const c = newClient(stuck.url, {}, { WebSocket: WsPackage });
+    const p = c.connect(5000);
+    await until(() => stuck.accepted() === 1, 'the TCP connection');
+    c.close();
+    await expect(p).rejects.toThrow();
+    await sleep(100);
   });
 
   it('connect times out when the broker never answers CONNECT', async () => {
@@ -520,5 +564,37 @@ describe('Brokers', () => {
     await expect(p.subscribe('cw1/+', () => {})).rejects.toThrow();
     await expect(p.subscribe('cw1/#', () => {})).rejects.toThrow();
     await expect(p.subscribe('', () => {})).rejects.toThrow();
+  });
+
+  it('publish never throws: a topic too long to encode goes to 0 brokers', async () => {
+    const a = await broker();
+    const p = pool([{ name: 'A', url: a.url }]);
+    p.start();
+    await until(() => allUp(p), 'A up');
+    expect(p.publish('t/'.repeat(40_000), 'x')).toBe(0);
+    expect(p.publish('cw1/ok', 'x')).toBe(1);
+  });
+
+  it('stop() while a broker is still dialing does not crash (ws package)', async () => {
+    const stuck = await stuckUpgrade();
+    const p = pool([{ name: 'stuck', url: stuck.url }], { WebSocket: WsPackage, redialMs: 60_000 });
+    p.start();
+    await until(() => stuck.accepted() === 1, 'the TCP connection');
+    p.stop();
+    await sleep(100); // the error is emitted on a later tick
+    expect(p.status()).toEqual([{ name: 'stuck', ok: false }]);
+  });
+});
+
+describe('mock broker', () => {
+  it('dropEvery: n drops every n-th forward, counted over all deliveries', async () => {
+    const b = await broker({ dropEvery: 3 });
+    const c = await client(b);
+    const got = inbox(c);
+    await c.subscribe('t');
+    for (const s of ['1', '2', '3', '4']) c.publish('t', s);
+    await until(() => got.some((g) => new TextDecoder().decode(g.payload) === '4'), 'the 4th message');
+    expect(got.map((g) => new TextDecoder().decode(g.payload))).toEqual(['1', '2', '4']);
+    expect(b.published).toBe(4);
   });
 });
