@@ -852,6 +852,7 @@ export const useStore = create<State>((set, get) => ({
     set((s) => bump(s, sessionId, (x) => {
       x.conv.items.push({ kind: 'user', id: uuid, ts: new Date().toISOString(), text: shown.text, images: (images ?? []).map((im) => `data:${im.mediaType};base64,${im.data}`), attachments: echoAttachments, meta: false });
       x.state = 'running';
+      x.error = undefined; // an earlier failure's reason, from before this send reopened the conversation
       x.lastSent = { id: uuid, text, images, attachments };
       x.conv.lastEventAt = Date.now();
       // the SDK never echoes the user message, so applyUser never stamps the turn start for a live send —
@@ -860,7 +861,15 @@ export const useStore = create<State>((set, get) => ({
     }));
     disarmAutoContinue(sessionId);
     get().saveDraft(sessionId, '');
-    await ws.request({ kind: 'session.send', params: { sessionId, text, images, steer, uuid, attachments } });
+    try {
+      await ws.request({ kind: 'session.send', params: { sessionId, text, images, steer, uuid, attachments } });
+    } catch (e: any) {
+      // not taken (its process died before this window heard about it): end the turn shown as running and say why;
+      // the 'error' state makes the next send reopen the conversation (above)
+      const why = String(e?.message ?? e);
+      set((s) => bump(s, sessionId, (x) => { x.state = 'error'; x.error = why; x.conv.turnStartedAt = undefined; }));
+      throw e;
+    }
   },
 
   async loadSubagent(sessionId, toolUseId) {

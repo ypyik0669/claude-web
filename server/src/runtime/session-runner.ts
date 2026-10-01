@@ -10,6 +10,12 @@ import type { AttachmentRef, EffortLevel, OpenSessionParams, PermissionMode, Per
 
 const esc = (s: string) => s.replace(/"/g, '&quot;');
 
+/** Why a message was not taken (shown as the window's toast and on the conversation): the reason the process died, and what to do. */
+export function sendRefused(failed: boolean, reason?: string): string {
+  if (!failed) return '这个对话的进程已经关闭。再发一次会重新打开它。';
+  return `这个对话的进程出错退出了${reason ? `：${reason}` : ''}。再发一次会重新打开它；还是不行的话，到 设置 → 供应商 点「测试连接」看看。`;
+}
+
 /** Unbounded async queue used as the SDK's streaming-input prompt. */
 class InputQueue implements AsyncIterable<SDKUserMessage> {
   private items: SDKUserMessage[] = [];
@@ -151,6 +157,8 @@ export class SessionRunner extends EventEmitter {
     this.state = s;
     this.info.state = s;
     if (error) this.info.error = error;
+    // the reason a conversation's process died is otherwise only in the event (a window that missed it shows nothing, server.log nothing)
+    if (s === 'error') console.error(`[session ${this.sessionId.slice(0, 8)}] process failed: ${error ?? '(no message)'}`);
     this.emit('state', s, error);
   }
 
@@ -324,7 +332,7 @@ export class SessionRunner extends EventEmitter {
 
   send(text: string, images?: { mediaType: string; data: string }[], steer = false, uuid?: string, attachments?: AttachmentRef[]) {
     // the query loop is gone: queueing would flip the UI to "running" with nothing ever answering
-    if (this.closed || this.state === 'closed' || this.state === 'error') throw new Error(`session ${this.sessionId} is ${this.closed ? 'closed' : this.state}; reopen it to continue`);
+    if (this.closed || this.state === 'closed' || this.state === 'error') throw new Error(sendRefused(this.state === 'error' && !this.closed, this.info.error));
     const content: any[] = [];
     for (const im of images ?? []) content.push({ type: 'image', source: { type: 'base64', media_type: im.mediaType, data: im.data } });
     // attachments: markers the model can act on (Read the path) and the web UI decodes back into chips

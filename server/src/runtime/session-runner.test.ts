@@ -106,10 +106,18 @@ describe('SessionRunner', () => {
     queries.length = 0;
     const r = new SessionRunner({ sessionId: 'b', cwd: '/x' } as any);
     await tick();
-    queries[0].fail(new Error('process exited with code 1'));
-    await tick();
-    expect(r.state).toBe('error');
-    expect(() => r.send('hi')).toThrow(/error/);
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      queries[0].fail(new Error('process exited with code 1'));
+      await tick();
+      expect(r.state).toBe('error');
+      // the reason reaches server.log (a window that missed the state event used to leave no trace anywhere)
+      expect(logged.mock.calls.flat().join(' ')).toMatch(/\[session b\] process failed: process exited with code 1/);
+    } finally {
+      logged.mockRestore();
+    }
+    // the refusal says why, in the user's words, and what to do
+    expect(() => r.send('hi')).toThrow(/出错退出了：process exited with code 1。再发一次会重新打开它/);
     expect(r.state).toBe('error');
     await r.close();
   });
