@@ -1,11 +1,12 @@
 // Cold-starts a PACKAGED desktop build and checks it really works on this OS:
 // server boots inside the app, the page is served, both engines resolve from app.asar.unpacked and run,
-// the terminal (node-pty + spawn-helper + the SDK's native claude binary) produces output, and the app finds a new
+// the terminal (node-pty + spawn-helper + the SDK's native claude binary) produces output, the WebRTC addon
+// (node-datachannel) loads from app.asar.unpacked, and the app finds a new
 // version by itself (a local update feed advertising 99.0.0): the Windows installer build downloads it, macOS only
 // reports it (unsigned: the prompt offers the download instead).
 //   node scripts/smoke-packaged.mjs "<path to app executable>" [screenshot.png]
-import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -90,6 +91,31 @@ async function run() {
 }
 
 try { await run(); } catch (e) { check('smoke run', false, e.stack ?? String(e)); }
+
+// the WebRTC addon (phone reaches the PC from anywhere): its prebuilt .node must be unpacked and load under Electron.
+// Required through app.asar the way the server's import resolves it (its JS dependency detect-libc stays inside the
+// asar; Electron redirects the unpacked files), then the loaded binary must be the one in app.asar.unpacked.
+{
+  const dir = path.dirname(path.resolve(exe)); // absolute: a bare relative path would be looked up as a package name
+  const resources = process.platform === 'darwin' ? path.join(dir, '..', 'Resources') : path.join(dir, 'resources');
+  const mod = path.join(resources, 'app.asar', 'node_modules', 'node-datachannel');
+  const script = path.join(ud, 'rtc-smoke.cjs');
+  writeFileSync(script, [
+    'const ndc = require(process.argv[2]);',
+    "const pc = new ndc.PeerConnection('smoke', { iceServers: [] });",
+    'pc.close();',
+    'ndc.cleanup();',
+    "const bin = Object.keys(require.cache).find((k) => k.endsWith('node_datachannel.node')) || 'no .node loaded';",
+    "console.log('rtc ok ' + ndc.getLibraryVersion() + ' ' + bin);",
+    '',
+  ].join('\n'));
+  const r = spawnSync(exe, [script, mod], { env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, encoding: 'utf8', timeout: 30_000, windowsHide: true });
+  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
+  // require.cache names the binary by its virtual app.asar path; the real file must sit in app.asar.unpacked
+  const bin = /rtc ok \S+ (.+node_datachannel\.node)/.exec(out)?.[1] ?? '';
+  const ok = r.status === 0 && !!bin && existsSync(bin.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`));
+  check('WebRTC addon loads from app.asar.unpacked (Electron as node)', ok, r.error ? r.error.message : `exit ${r.status}: ${out.slice(0, 300)}`);
+}
 
 // the app's own update check (desktop/src/main.ts): main.log records each step
 {

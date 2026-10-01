@@ -45,6 +45,9 @@ asarUnpack:
   - "**/node_modules/claude-code-best/**"
   - "**/node_modules/@claude-code-best/**"
   - "**/node_modules/@vscode/ripgrep/**"
+  # WebRTC (phone reaches the PC from anywhere): the JS package plus its per-platform prebuilt .node
+  - "**/node_modules/node-datachannel/**"
+  - "**/node_modules/@node-datachannel/**"
 extraResources:
   - from: desktop/build/icon.png
     to: icon.png
