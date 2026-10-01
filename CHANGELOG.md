@@ -2,6 +2,20 @@
 
 每个版本的变化都记在这里；安装包在 [Releases](https://github.com/ypyik0669/claude-web/releases) 下载。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.1.4] — 2026-10-01
+
+### 修复
+
+- **对话进程出错时，现在会说清楚是什么错。** 以前对话背后的进程一启动就出错退出时，界面一直显示「思考中」，只弹一句英文「session … is error; reopen it to continue」，日志里也没有记录。现在：
+  - 对话里用红字写出出错原因，这一轮直接结束，不再一直转；
+  - 弹窗改成中文，写明原因和该怎么做；
+  - 原因写进日志（`server.log` 里的 `process failed:` 一行），反馈问题时把日志发过来就能看到；
+  - 在出错的对话里再发一次，会自动重新打开它。
+
+### 文档
+
+- README 的「接入第三方 API / 中转」一节加了快速添加供应商和模型菜单的截图。
+
 ## [0.1.3] — 2026-09-30
 
 ### 新增
@@ -62,6 +76,7 @@
 - **自动化**：定时任务、目标（让它一轮轮推进直到完成）、多 agent 编排（并行、独立副本、审批节点、比选）。
 - **远程**：手机扫码配对访问、SSH 隧道、其它电脑上的对话、Telegram / Discord / Slack / 钉钉 / 飞书机器人。
 
+[0.1.4]: https://github.com/ypyik0669/claude-web/releases/tag/v0.1.4
 [0.1.3]: https://github.com/ypyik0669/claude-web/releases/tag/v0.1.3
 [0.1.2]: https://github.com/ypyik0669/claude-web/releases/tag/v0.1.2
 [0.1.1]: https://github.com/ypyik0669/claude-web/releases/tag/v0.1.1
