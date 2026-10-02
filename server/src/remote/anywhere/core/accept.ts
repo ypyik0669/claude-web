@@ -4,7 +4,7 @@
 // nothing throws out of a callback; hellos are answered at most maxHellosPerMin a minute per room, and sessions that
 // have not become a link are bounded per room and expire. Shared code (no node:*), though only the PC runs it.
 import type { SignalMsg } from './envelope.js';
-import { MAX_HELD_CANDIDATES, isSessionId, newNonce, readNonce, report as reportAs } from './handshake.js';
+import { MAX_HELD_CANDIDATES, errText, isSessionId, newNonce, readNonce, report as reportAs } from './handshake.js';
 import { b64u, relayKey, type Room } from './keys.js';
 import type { Link, LinkKind } from './link.js';
 import type { Brokers } from './mqtt.js';
@@ -49,11 +49,26 @@ export interface AcceptorOptions {
   /** A session that has not become a link this long after its hello is dropped (60 000 ms). */
   halfOpenMs?: number;
   /**
+   * A session in a room ended without becoming a link, with why (one of ACCEPT_FAILURE; the relay one is followed by
+   * ": " and the relay link's own words). Never for removeRoom() / retireRoom() / close(), which end them on purpose.
+   */
+  onFailure?: (roomId: string, why: string) => void;
+  /**
    * Test only: ICE cannot connect. Our candidates are not sent and the phone's are not used (with only one of the
    * two cut, ICE still connects through peer-reflexive candidates). Never set by the defaults.
    */
   dropCandidates?: boolean;
 }
+
+/** Why a session ended without a link (AcceptorOptions.onFailure). */
+export const ACCEPT_FAILURE = {
+  /** The phone said hello and got the ack, and no link came of it within halfOpenMs. */
+  halfOpen: 'no link within the half-open time after the hello',
+  /** More than ACCEPT_MAX_HALF_OPEN attempts at once in the room: the oldest went. */
+  evicted: 'dropped for a newer attempt (too many at once)',
+  /** The phone asked for the slow relay and it could not be opened on this side. */
+  relay: 'the slow relay could not be opened',
+} as const;
 
 type SessionState = 'acked' | 'ice' | 'relay' | 'link' | 'gone';
 
@@ -171,6 +186,8 @@ function withoutCandidates(sdp: string): string {
 
 export class Acceptor {
   private readonly rooms = new Map<string, RoomState>();
+  /** Rooms no longer answered (retireRoom) whose links go on; each leaves once its last link ends. */
+  private readonly retired = new Set<RoomState>();
   private readonly maxHellos: number;
   private readonly halfOpenMs: number;
   private closed = false;
@@ -213,23 +230,49 @@ export class Acceptor {
     }
   }
 
-  /** Unsubscribes the room, drops its half-open sessions and ends its links (their onclose: 'room removed'). */
+  /**
+   * Unsubscribes the room, drops its half-open sessions and ends its links (their onclose: 'room removed'), the links
+   * of an earlier retireRoom() under the same id included.
+   */
   removeRoom(id: string): void {
     this.remove(id, 'room removed');
+  }
+
+  /**
+   * Stops answering in the room: unsubscribed, its half-open sessions dropped, but the links already made through it
+   * go on until they end, removeRoom() of the same id, or close(). (A pairing code that was just used: the link
+   * carrying the reply must not be cut.)
+   */
+  retireRoom(id: string): void {
+    const r = this.rooms.get(id);
+    if (!r) return;
+    this.rooms.delete(id);
+    r.gone = true;
+    r.ch.close();
+    for (const ses of [...r.sessions.values()]) if (ses.state !== 'link') this.drop(r, ses);
+    if (r.links.size > 0) this.retired.add(r);
   }
 
   /** Every room, as removeRoom() (onclose: 'acceptor closed'); addRoom() rejects afterwards. */
   close(): void {
     this.closed = true;
     for (const id of [...this.rooms.keys()]) this.remove(id, 'acceptor closed');
+    for (const r of [...this.retired]) this.endRetired(r, 'acceptor closed');
   }
 
   private remove(id: string, why: string): void {
+    for (const old of [...this.retired]) if (old.id === id) this.endRetired(old, why);
     const r = this.rooms.get(id);
     if (!r) return;
     this.rooms.delete(id);
     r.gone = true;
     r.ch.close();
+    for (const t of [...r.links]) t.end(why);
+    for (const ses of [...r.sessions.values()]) this.drop(r, ses);
+  }
+
+  private endRetired(r: RoomState, why: string): void {
+    this.retired.delete(r);
     for (const t of [...r.links]) t.end(why);
     for (const ses of [...r.sessions.values()]) this.drop(r, ses);
   }
@@ -282,7 +325,7 @@ export class Acceptor {
       remoteSet: false,
       held: [],
     };
-    ses.timer = setTimeout(() => this.drop(r, ses), this.halfOpenMs);
+    ses.timer = setTimeout(() => this.drop(r, ses, ACCEPT_FAILURE.halfOpen), this.halfOpenMs);
     r.sessions.set(ses.s, ses);
     // fire and forget: a lost ack is the phone's pc-silent, and it dials again
     r.ch.send({ t: 'ack', s: ses.s, pn: ses.pnText, cn: ses.cnText, pc: this.o.pcName }).catch(() => {});
@@ -297,7 +340,7 @@ export class Acceptor {
       oldest ??= ses;
       n++;
     }
-    if (oldest && n >= ACCEPT_MAX_HALF_OPEN) this.drop(r, oldest);
+    if (oldest && n >= ACCEPT_MAX_HALF_OPEN) this.drop(r, oldest, ACCEPT_FAILURE.evicted);
   }
 
   private onOffer(r: RoomState, m: SignalMsg): void {
@@ -423,7 +466,7 @@ export class Acceptor {
       this.handOut(r, ses, link);
     } catch (e) {
       report('relay link', e);
-      this.drop(r, ses);
+      this.drop(r, ses, `${ACCEPT_FAILURE.relay}: ${errText(e) || String(e)}`);
     }
   }
 
@@ -433,6 +476,7 @@ export class Acceptor {
     ses.state = 'link';
     const t: TrackedLink = new TrackedLink(inner, () => {
       r.links.delete(t);
+      if (r.links.size === 0) this.retired.delete(r);
       if (ses.link !== t) return;
       ses.link = undefined;
       // a link that ended for good (not one replaced by the relay): the session is over
@@ -461,13 +505,22 @@ export class Acceptor {
     else if (pc) closeRtc(pc);
   }
 
-  /** Forgets a session that is not a link (expired, evicted, its relay link failed to open, its room removed). */
-  private drop(r: RoomState, ses: Session): void {
+  /**
+   * Forgets a session that is not a link (expired, evicted, its relay link failed to open, its room removed). With
+   * `why` it failed, and onFailure hears it (unless its room is gone, which is on purpose).
+   */
+  private drop(r: RoomState, ses: Session, why?: string): void {
     if (ses.state === 'gone') return;
     ses.state = 'gone';
     clearTimeout(ses.timer);
     ses.timer = undefined;
     this.dropDirect(ses);
     if (r.sessions.get(ses.s) === ses) r.sessions.delete(ses.s);
+    if (why === undefined || r.gone || !this.o.onFailure) return;
+    try {
+      this.o.onFailure(r.id, why);
+    } catch (e) {
+      report('failure handler', e);
+    }
   }
 }

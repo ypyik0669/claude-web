@@ -5,10 +5,26 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import http from 'node:http';
+import { createHash } from 'node:crypto';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { startBroker } from './__mocks__/mqtt-broker.mjs';
 import { loadRtc } from './rtc.js';
-import { Brokers, DialError, Mux, deviceRoom, dial, pairRoom, unb64u, type Link, type LinkKind, type MuxWs, type RtcCtor } from './core/index.js';
+import {
+  Brokers,
+  DialError,
+  Mux,
+  SignalChannel,
+  b64u,
+  deviceRoom,
+  dial,
+  pairRoom,
+  unb64u,
+  type Link,
+  type LinkKind,
+  type MuxWs,
+  type RtcCtor,
+} from './core/index.js';
 
 // before anything reads the home folder: the server's modules are imported below, after this
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-anywhere-'));
@@ -30,6 +46,35 @@ async function until(cond: () => boolean, what: string, ms = 10_000): Promise<vo
     if (Date.now() - t0 > ms) throw new Error(`timed out waiting for ${what}`);
     await sleep(10);
   }
+}
+
+/** One keep-alive connection to a listener: each get() is one more request on the same socket. */
+function keepAlive(port: number) {
+  const sock = net.connect(port, '127.0.0.1');
+  let buf = '';
+  let closed = false;
+  sock.on('data', (d) => {
+    buf += d.toString('latin1');
+  });
+  sock.on('close', () => {
+    closed = true;
+  });
+  sock.on('error', () => {});
+  const replies = () => (buf.match(/HTTP\/1\.1 200 /g) ?? []).length;
+  return {
+    get closed() {
+      return closed;
+    },
+    replies,
+    async get(): Promise<void> {
+      const n = replies();
+      sock.write('GET /api/health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n');
+      await until(() => replies() > n || closed, 'a reply on the kept connection');
+    },
+    end() {
+      sock.destroy();
+    },
+  };
 }
 
 /** A port nothing listens on right now (RemoteService.set does not take 0). */
@@ -54,6 +99,10 @@ let maskSecrets: (t: string) => string;
 const pending = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void }>();
 let nextId = 0;
 const opened: Link[] = [];
+const cleanup: (() => unknown)[] = [];
+afterEach(async () => {
+  while (cleanup.length) await cleanup.pop()!();
+});
 
 /** A request to the server over its local (main) WebSocket, as the settings page sends it. */
 function req<T = any>(kind: string, extra: Record<string, unknown> = {}): Promise<T> {
@@ -213,14 +262,26 @@ describe('AnywhereService', () => {
     expect(typeof j.token).toBe('string');
     expect(j.device.name).toBe('测试手机');
     token = j.token;
+    // the code is used: its room no longer answers, but the link that carried the reply is not cut
+    const again = await dial({ brokers: phone, room: await pairRoom(ps), stun: [], rtc, helloTimeoutMs: 2000 }).then(
+      (r) => {
+        r.link.close();
+        return null;
+      },
+      (x: unknown) => x,
+    );
+    expect((again as DialError).code).toBe('pc-silent');
+    expect((await p.mux.request({ method: 'GET', path: '/' })).status).toBe(403);
     p.mux.close();
 
     device = await dialRoom(await deviceRoom(token));
     expect(['p2p-v4', 'p2p-v6']).toContain(device.link.kind);
     expect(device.pcName).toBe(q.pc);
     const a = await anywhere();
-    expect(a.sessions).toEqual([expect.objectContaining({ deviceId: j.device.id, kind: device.link.kind })]);
-    expect(a.recent[0]).toEqual(expect.objectContaining({ deviceId: j.device.id, ok: true, kind: device.link.kind }));
+    // each side reads its own selected pair (a getStats() past 2 s says IPv4): the PC's kind need not be the phone's
+    const direct = expect.stringMatching(/^p2p-v[46]$/);
+    expect(a.sessions).toEqual([expect.objectContaining({ deviceId: j.device.id, kind: direct })]);
+    expect(a.recent[0]).toEqual(expect.objectContaining({ deviceId: j.device.id, ok: true, kind: direct }));
   });
 
   it('a tunneled WebSocket reaches the hub: sessions.list gets its reply', async () => {
@@ -325,11 +386,28 @@ describe('AnywhereService', () => {
     expect((old as DialError).code).toBe('pc-silent');
     const now = await dialRoom(await pairRoom(secret(second.anywhereUrl)));
     expect((await now.mux.request({ method: 'GET', path: '/api/health' })).status).toBe(403);
+    // its tries run out: the room stops answering too
+    for (let i = 0; i < 5; i++) {
+      const wrong = await now.mux.request({ method: 'POST', path: '/api/pair', body: enc.encode(JSON.stringify({ code: 'nope', name: 'x' })) });
+      expect(wrong.status).toBe(400);
+    }
+    const spent = await dial({ brokers: phone, room: await pairRoom(secret(second.anywhereUrl)), stun: [], rtc, helloTimeoutMs: 2000 }).then(
+      (r) => {
+        r.link.close();
+        return null;
+      },
+      (x: unknown) => x,
+    );
+    expect((spent as DialError).code).toBe('pc-silent');
     now.mux.close();
   });
 
   it('remote.set turns 在外面也能用 and keep-awake off and on without restarting the listener', async () => {
     const before = await req('remote.status');
+    // a restart closes every connection to the listener (RemoteService.stop): this one must live through both calls
+    const kept = keepAlive(before.port);
+    cleanup.push(() => kept.end());
+    await kept.get();
     const off = await req('remote.set', { anywhere: false, keepAwake: false });
     expect(off.port).toBe(before.port);
     expect(off.running).toBe(true);
@@ -338,6 +416,9 @@ describe('AnywhereService', () => {
     const on = await req('remote.set', { anywhere: true, keepAwake: true });
     expect(on.anywhere.on).toBe(true);
     expect(on.anywhere.keepAwake).toBe(true);
+    await kept.get();
+    expect(kept.replies()).toBe(2);
+    expect(kept.closed).toBe(false);
     let a: any;
     const t0 = Date.now();
     do {
@@ -374,5 +455,56 @@ describe('AnywhereService', () => {
     const out = maskSecrets('{"tokenHash":"abcdef1234"}');
     expect(out).not.toContain('abcdef1234');
     expect(out).toContain('"tokenHash"');
+  });
+});
+
+describe('AnywhereService: attempts that fail', () => {
+  it('a dial that gives up half-way is one ok:false entry for that device, in Chinese', async () => {
+    const { AnywhereService } = await import('./service.js');
+    const { RemoteService } = await import('../service.js');
+    const port = await freePort();
+    const token = b64u(crypto.getRandomValues(new Uint8Array(32)));
+    const settings: Record<string, unknown> = {
+      'remote.enabled': true,
+      'remote.port': port,
+      'remote.anywhere.brokers': [{ name: 'mock', url: broker.url, relay: true }],
+      'remote.anywhere.stun': [],
+    };
+    const devices = [{ id: 'aaaaaaaaaaaa', name: 'x', tokenHash: createHash('sha256').update(token).digest('hex'), createdAt: 0, lastSeenAt: 0 }];
+    const meta = { settings: () => settings, devices: () => devices } as any;
+    const remote = new RemoteService(meta, () => http.createServer((_q, s) => s.end('ok')), '127.0.0.1');
+    await remote.start();
+    cleanup.push(() => remote.stop());
+    // a short half-open time, so that the attempt counts as failed within the test
+    const svc = new AnywhereService(meta, remote, { halfOpenMs: 300 });
+    await svc.start();
+    cleanup.push(() => svc.stop());
+    await until(() => svc.status().brokers[0]?.ok === true, 'its broker up');
+    const ch = new SignalChannel(phone, await deviceRoom(token), 'phone');
+    cleanup.push(() => ch.close());
+    let acked = false;
+    ch.on((m) => {
+      if (m.t === 'ack' && m.s === 'gave-up') acked = true;
+    });
+    await ch.open();
+    // hello until the device room answers (it is added a moment after start), then nothing: the phone gave up
+    const pn = b64u(crypto.getRandomValues(new Uint8Array(16)));
+    const t0 = Date.now();
+    while (!acked) {
+      if (Date.now() - t0 > 5000) throw new Error('no ack');
+      await ch.send({ t: 'hello', s: 'gave-up', pn });
+      await sleep(100);
+    }
+    await until(() => svc.status().recent.length > 0, 'the failure');
+    await sleep(400);
+    expect(svc.status().recent).toEqual([{ at: expect.any(Number), deviceId: 'aaaaaaaaaaaa', ok: false, error: '手机打了招呼，但通道没有建立起来' }]);
+  });
+
+  it('failure texts: ours in Chinese, the relay link\'s own words kept in parentheses', async () => {
+    const { failureText } = await import('./service.js');
+    const { ACCEPT_FAILURE } = await import('./core/index.js');
+    expect(failureText(ACCEPT_FAILURE.halfOpen)).toBe('手机打了招呼，但通道没有建立起来');
+    expect(failureText(ACCEPT_FAILURE.evicted)).toBe('同时连进来的太多，较早的一次被放弃了');
+    expect(failureText(`${ACCEPT_FAILURE.relay}: subscribe failed`)).toBe('慢速转发没能建立（subscribe failed）');
   });
 });

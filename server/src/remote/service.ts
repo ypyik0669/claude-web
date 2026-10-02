@@ -21,7 +21,8 @@ export interface DeviceRecord { id: string; name: string; tokenHash: string; cre
  * LAN / phone access: a second HTTP listener on 0.0.0.0 whose clients authenticate with per-device tokens
  * handed out through a short-lived pairing code (shown as a QR in settings). Device tokens are stored hashed.
  * Events: `changed`; `paired(deviceId)` once a device is added; `revoked(deviceId)` once one is removed (the
- * 在外面也能用 service subscribes / drops that device's room and ends its links).
+ * 在外面也能用 service subscribes / drops that device's room and ends its links); `pairEnded(code)` once a pairing code
+ * can no longer pair (used, or its tries ran out; expiry is not an event): its pairing room stops answering.
  */
 export class RemoteService extends EventEmitter {
   /** The 在外面也能用 QR address for a new pairing code (AnywhereService sets it); without it there is none. */
@@ -135,10 +136,10 @@ export class RemoteService extends EventEmitter {
     return { code, expiresAt, url, anywhereUrl };
   }
 
-  /** The pairing code in force, if any. */
+  /** The pairing code that can still pair, if any (not expired, tries left). */
   currentPair(): { code: string; expiresAt: number } | null {
     const p = this.pair;
-    return p && p.expiresAt > Date.now() ? { code: p.code, expiresAt: p.expiresAt } : null;
+    return p && p.expiresAt > Date.now() && p.tries < MAX_TRIES ? { code: p.code, expiresAt: p.expiresAt } : null;
   }
 
   /** Exchange a pairing code for a device token. */
@@ -146,8 +147,14 @@ export class RemoteService extends EventEmitter {
     const p = this.pair;
     if (!p || p.expiresAt < Date.now()) return { error: '配对码已过期，请在电脑上重新生成' };
     if (p.tries >= MAX_TRIES) { this.pair = null; return { error: '尝试次数过多，请重新生成配对码' }; }
-    if (code.trim() !== p.code) { p.tries++; return { error: '配对码不对' }; }
+    if (code.trim() !== p.code) {
+      p.tries++;
+      // no try left: the code can no longer pair (the next attempt says 尝试次数过多)
+      if (p.tries >= MAX_TRIES) this.emit('pairEnded', p.code);
+      return { error: '配对码不对' };
+    }
     this.pair = null;
+    this.emit('pairEnded', p.code);
     const token = randomBytes(32).toString('base64url');
     const rec: DeviceRecord = { id: randomBytes(6).toString('hex'), name: (name || '').trim().slice(0, 60) || guessName(req.headers['user-agent'] ?? ''), tokenHash: hash(token), createdAt: Date.now(), lastSeenAt: Date.now(), ip: clientIp(req), ua: (req.headers['user-agent'] ?? '').slice(0, 200) };
     await this.meta.addDevice(rec);

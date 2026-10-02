@@ -65,6 +65,7 @@ interface Pieces {
   at: number;
   piece: F;
   last?: F;
+  sent?: () => void;
 }
 
 type Entry = Uint8Array | Pieces;
@@ -107,15 +108,17 @@ export class Outbox {
   /**
    * `data` as CHUNK_BYTES pieces of type `piece`, the last one of type `last` when given (an empty `data` is then one
    * empty `last` frame, and nothing without `last`). The pieces are views on `data`, framed as they go out: the
-   * caller must not change it meanwhile.
+   * caller must not change it meanwhile. `sent` runs (a microtask later) once the last piece went to the link; not if
+   * the stream is dropped or the outbox closed first.
    */
-  pieces(stream: number, data: Uint8Array, piece: F, last?: F): void {
+  pieces(stream: number, data: Uint8Array, piece: F, last?: F, sent?: () => void): void {
     if (this.closed) return;
     if (data.length === 0) {
       if (last !== undefined) this.frame(stream, last);
+      if (sent) queueMicrotask(() => this.call(sent, 'sent handler'));
       return;
     }
-    this.enqueue(stream, { stream, data, at: 0, piece, last });
+    this.enqueue(stream, { stream, data, at: 0, piece, last, sent });
   }
 
   /** True when what was handed over has to wait: the caller pauses its source until ondrain. */
@@ -193,8 +196,21 @@ export class Outbox {
     const done = end >= head.data.length;
     const f = encodeFrame(done && head.last !== undefined ? head.last : head.piece, head.stream, head.data.subarray(head.at, end));
     head.at = end;
-    if (done) q.shift();
+    if (done) {
+      q.shift();
+      // later: flush() is in the middle of its bookkeeping, and the callback may hand over more
+      const sent = head.sent;
+      if (sent) queueMicrotask(() => this.call(sent, 'sent handler'));
+    }
     return f;
+  }
+
+  private call(fn: () => void, what: string): void {
+    try {
+      fn();
+    } catch (e) {
+      report(what, e);
+    }
   }
 }
 

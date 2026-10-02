@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startBroker } from '../__mocks__/mqtt-broker.mjs';
 import { loadRtc } from '../rtc.js';
 import {
+  ACCEPT_FAILURE,
   ACCEPT_MAX_HALF_OPEN,
   Acceptor,
   Brokers,
@@ -733,6 +734,60 @@ describe('dial and Acceptor', () => {
     await sleep(300);
     expect(e.links).toHaveLength(1);
     expect(e.links[0].link.kind).toBe('relay');
+  });
+
+  it('onFailure: a session that expires half-open is reported once; sessions dropped by removeRoom are not', async () => {
+    const fails: [string, string][] = [];
+    const e = await env({ halfOpenMs: 300, onFailure: (id, why) => fails.push([id, why]) });
+    const ch = new SignalChannel(e.phone, e.room, 'phone');
+    cleanup.push(() => ch.close());
+    const acks = new Set<string>();
+    ch.on((m) => {
+      if (m.t === 'ack') acks.add(m.s);
+    });
+    await ch.open();
+    // a phone that says hello and then gives up
+    await ch.send({ t: 'hello', s: 'gave-up', pn: b64u(rand(16)) });
+    await until(() => acks.has('gave-up'), 'the ack');
+    await until(() => fails.length === 1, 'the failure');
+    expect(fails).toEqual([['dev1', ACCEPT_FAILURE.halfOpen]]);
+    await ch.send({ t: 'hello', s: 'cut-short', pn: b64u(rand(16)) });
+    await until(() => acks.has('cut-short'), 'the second ack');
+    e.acc.removeRoom('dev1');
+    await sleep(500);
+    expect(fails).toHaveLength(1);
+  });
+
+  it('onFailure: the oldest of too many half-open sessions is evicted, and says so', async () => {
+    const fails: [string, string][] = [];
+    const e = await env({ onFailure: (id, why) => fails.push([id, why]) });
+    const ch = new SignalChannel(e.phone, e.room, 'phone');
+    cleanup.push(() => ch.close());
+    const acks = new Set<string>();
+    ch.on((m) => {
+      if (m.t === 'ack') acks.add(m.s);
+    });
+    await ch.open();
+    const ss = Array.from({ length: ACCEPT_MAX_HALF_OPEN + 1 }, (_, i) => `ev-${i}`);
+    for (const s of ss) await ch.send({ t: 'hello', s, pn: b64u(rand(16)) });
+    await until(() => ss.every((s) => acks.has(s)), 'all acks');
+    expect(fails).toEqual([['dev1', ACCEPT_FAILURE.evicted]]);
+  });
+
+  it('retireRoom: no more answers in the room, but its link goes on until removeRoom', async () => {
+    const e = await env();
+    const r = await e.dialNow();
+    await until(() => e.links.length === 1, 'the PC side link');
+    e.acc.retireRoom('dev1');
+    r.link.send(enc.encode('still here'));
+    await until(() => e.links[0].got.length === 1, 'a frame after retireRoom');
+    expect(dec.decode(e.links[0].got[0])).toBe('still here');
+    const err = await dial({ brokers: e.phone, room: e.room, stun: [], rtc: e.phoneRtc.Ctor, helloTimeoutMs: 1500 }).catch((x: unknown) => x);
+    expect((err as DialError).code).toBe('pc-silent');
+    expect(r.end.closed).toEqual([]);
+    e.acc.removeRoom('dev1');
+    await until(() => r.end.closed.length === 1 && e.links[0].closed.length === 1, 'both sides hear the end');
+    expect(e.links[0].closed).toEqual(['room removed']);
   });
 
   it('a throwing onLink or onstate does not break anything', async () => {

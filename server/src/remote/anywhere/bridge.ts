@@ -20,6 +20,11 @@ import {
 export const RELAY_REFUSED = '慢速转发时不能预览 / 上传文件';
 /** Largest response sent over the slow relay; anything longer is a 413. */
 export const RELAY_MAX_RESPONSE_BYTES = 2_097_152;
+/**
+ * Relay responses held whole at once per link (so at most 8 MB in memory); a response past it is not read until one
+ * of them is done (it waits, it is not refused).
+ */
+export const RELAY_MAX_HELD = 4;
 export const RELAY_TOO_LARGE = '慢速转发时单个响应不能超过 2 MB';
 export const PAIRING_ONLY = '还没配对，只能先配对';
 /** Streams open at once on one link; past it a new one is refused. */
@@ -48,6 +53,8 @@ export interface BridgeOptions {
   tokenOk?: (token: string) => boolean;
   /** The link ended by itself or from the other side (not by the returned stop()); every stream is gone by then. */
   onclose?: (why: string) => void;
+  /** How many relay responses are held right now, each time it changes (tests, diagnostics). */
+  onHeld?: (n: number) => void;
 }
 
 function report(what: string, e: unknown): void {
@@ -85,6 +92,9 @@ class Bridge {
   readonly out: Outbox;
   private readonly streams = new Map<number, Stream>();
   private done = false;
+  /** Relay responses held right now, and the ones waiting for a turn (each says whether it still wants it). */
+  private holding = 0;
+  private waiting: (() => boolean)[] = [];
 
   constructor(private readonly link: Link, readonly opts: BridgeOptions) {
     this.out = new Outbox(link);
@@ -119,11 +129,44 @@ class Bridge {
     if (this.streams.get(id) === s) this.streams.delete(id);
   }
 
+  /**
+   * A turn to hold a relay response, at most RELAY_MAX_HELD at once (each up to 2 MB): `take` runs now or when one is
+   * let go, and returns false if its stream ended while it waited. Every taken turn is given back with release().
+   */
+  hold(take: () => boolean): void {
+    this.waiting.push(take);
+    this.pump();
+  }
+
+  release(): void {
+    this.holding--;
+    this.held();
+    this.pump();
+  }
+
+  private pump(): void {
+    while (!this.done && this.holding < RELAY_MAX_HELD && this.waiting.length > 0) {
+      const take = this.waiting.shift()!;
+      this.holding++;
+      if (!take()) this.holding--;
+      else this.held();
+    }
+  }
+
+  private held(): void {
+    try {
+      this.opts.onHeld?.(this.holding);
+    } catch (e) {
+      report('held handler', e);
+    }
+  }
+
   private teardown(): void {
     if (this.done) return;
     this.done = true;
     const all = [...this.streams.values()];
     this.streams.clear();
+    this.waiting = [];
     this.out.close();
     for (const s of all) s.kill();
   }
@@ -195,14 +238,15 @@ class WsStream implements Stream {
   }
 
   fromPhone(type: F, payload: Uint8Array): void {
-    if (this.done || !this.open) return;
+    if (this.done) return;
+    // a close counts in any state: before the ack it ends the local socket still connecting (else it would open and
+    // stream every hub broadcast to a stream the phone has forgotten)
+    if (type === F.WS_CLOSE || type === F.ERR) return this.close(false);
+    if (!this.open) return;
     switch (type) {
       case F.BODY:
         this.partsBytes += payload.length;
-        if (this.partsBytes > MUX_MAX_MESSAGE_BYTES) {
-          this.b.out.frame(this.id, F.WS_CLOSE);
-          return this.close();
-        }
+        if (this.partsBytes > MUX_MAX_MESSAGE_BYTES) return this.close(true);
         this.parts.push(payload);
         return;
       case F.WS_MSG: {
@@ -213,9 +257,6 @@ class WsStream implements Stream {
         this.ws.send(msg, { binary: false });
         return;
       }
-      case F.WS_CLOSE:
-      case F.ERR:
-        return this.close();
       default:
         return;
     }
@@ -231,10 +272,16 @@ class WsStream implements Stream {
     this.ws.terminate();
   }
 
-  /** Closed from the phone's side: nothing goes back. terminate(): a close() would wait up to 30 s for the hub's close frame. */
-  private close(): void {
+  /**
+   * Ended here: the local socket goes (terminate(): a close() would wait up to 30 s for the hub's close frame), and
+   * whatever the hub sent that is still queued for the stream is not sent. `tell`: the phone did not ask for it, so
+   * it gets a WS_CLOSE.
+   */
+  private close(tell: boolean): void {
     this.kill();
     this.b.forget(this.id, this);
+    this.b.out.drop(this.id);
+    if (tell) this.b.out.frame(this.id, F.WS_CLOSE);
   }
 }
 
@@ -247,6 +294,8 @@ class HttpStream implements Stream {
   /** Over the relay the response is held whole (≤ 2 MB) before anything goes out. */
   private held: Buffer[] | null = null;
   private heldBytes = 0;
+  /** Holding one of the link's RELAY_MAX_HELD turns: from the first byte read until the last piece left the outbox. */
+  private slot = false;
 
   constructor(private readonly b: Bridge, private readonly id: number) {}
 
@@ -285,10 +334,17 @@ class HttpStream implements Stream {
   }
 
   kill(): void {
+    this.letGo();
     if (this.done) return;
     this.done = true;
     this.req?.destroy();
     this.res?.destroy();
+  }
+
+  private letGo(): void {
+    if (!this.slot) return;
+    this.slot = false;
+    this.b.release();
   }
 
   private readHead(payload: Uint8Array): { method: string; path: string; headers: Record<string, string> } | null {
@@ -332,19 +388,25 @@ class HttpStream implements Stream {
     if (this.b.opts.relay) {
       const declared = Number(headers['content-length']);
       if (Number.isFinite(declared) && declared > RELAY_MAX_RESPONSE_BYTES) return this.refuseLarge();
-      this.held = [];
-      res.on('data', (c: Buffer) => {
-        if (this.done || !this.held) return;
-        this.heldBytes += c.length;
-        if (this.heldBytes > RELAY_MAX_RESPONSE_BYTES) return this.refuseLarge();
-        this.held.push(c);
-      });
-      res.on('end', () => {
-        ended = true;
-        if (this.done || !this.held) return;
-        const body = Buffer.concat(this.held);
-        this.held = null;
-        this.send(status, headers, body);
+      // not read until it has a turn: the listener's socket (and the listener) wait meanwhile
+      this.b.hold(() => {
+        if (this.done) return false;
+        this.slot = true;
+        this.held = [];
+        res.on('data', (c: Buffer) => {
+          if (this.done || !this.held) return;
+          this.heldBytes += c.length;
+          if (this.heldBytes > RELAY_MAX_RESPONSE_BYTES) return this.refuseLarge();
+          this.held.push(c);
+        });
+        res.on('end', () => {
+          ended = true;
+          if (this.done || !this.held) return;
+          const body = Buffer.concat(this.held);
+          this.held = null;
+          this.send(status, headers, body);
+        });
+        return true;
       });
       return;
     }
@@ -363,12 +425,12 @@ class HttpStream implements Stream {
     });
   }
 
-  /** A whole response at once: refused here, or held over the relay. */
+  /** A whole response at once: refused here, or held over the relay (its turn ends once the body left the outbox). */
   private send(status: number, headers: Record<string, string>, body: Uint8Array): void {
     if (this.done) return;
     const { out } = this.b;
     out.frame(this.id, F.HTTP_RES, JSON.stringify({ status, headers: { ...headers, 'content-length': String(body.length) } }));
-    out.pieces(this.id, body, F.BODY);
+    out.pieces(this.id, body, F.BODY, undefined, () => this.letGo());
     out.frame(this.id, F.END);
     this.finish();
   }
@@ -385,6 +447,7 @@ class HttpStream implements Stream {
 
   private fail(why: string): void {
     if (this.done) return;
+    this.letGo();
     this.b.out.frame(this.id, F.ERR, why);
     this.finish();
   }

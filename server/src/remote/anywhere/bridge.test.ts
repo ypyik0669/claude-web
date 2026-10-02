@@ -4,8 +4,8 @@ import http from 'node:http';
 import net from 'node:net';
 import { WebSocketServer } from 'ws';
 import { afterEach, describe, expect, it } from 'vitest';
-import { PAIRING_ONLY, RELAY_MAX_RESPONSE_BYTES, RELAY_REFUSED, RELAY_TOO_LARGE, serveBridge, type BridgeOptions } from './bridge.js';
-import { MUX_PAUSE_BYTES, Mux, type Link, type LinkKind, type MuxWs } from './core/index.js';
+import { PAIRING_ONLY, RELAY_MAX_HELD, RELAY_MAX_RESPONSE_BYTES, RELAY_REFUSED, RELAY_TOO_LARGE, serveBridge, type BridgeOptions } from './bridge.js';
+import { F, MUX_PAUSE_BYTES, Mux, decodeFrame, encodeFrame, type Link, type LinkKind, type MuxWs } from './core/index.js';
 
 const cleanup: (() => unknown)[] = [];
 afterEach(async () => {
@@ -24,7 +24,10 @@ async function until(cond: () => boolean, what: string, ms = 5000): Promise<void
   }
 }
 
-/** One end of an in-memory link: frames go over a tick later, buffered() is what is still on the way. */
+/**
+ * One end of an in-memory link: frames go over a tick later, buffered() is what is still on the way. stall() holds
+ * what is sent until release(). `sent` is every frame handed to send(), `got` every frame delivered to this end.
+ */
 class MemLink implements Link {
   onframe: (f: Uint8Array) => void = () => {};
   onclose: (why: string) => void = () => {};
@@ -32,17 +35,34 @@ class MemLink implements Link {
   inflight = 0;
   maxInflight = 0;
   ended = false;
+  sent: Uint8Array[] = [];
+  got: Uint8Array[] = [];
+  private stalled: (() => void)[] | null = null;
   constructor(public kind: LinkKind) {}
   send(f: Uint8Array): void {
     if (this.ended) return;
     if (f.length > 1_048_576) throw new RangeError('frame over 1 MiB');
     const c = f.slice();
+    this.sent.push(c);
     this.inflight += c.length;
     this.maxInflight = Math.max(this.maxInflight, this.inflight);
-    setImmediate(() => {
-      this.inflight -= c.length;
-      if (!this.ended && !this.peer.ended) this.peer.onframe(c);
-    });
+    const go = () =>
+      setImmediate(() => {
+        this.inflight -= c.length;
+        if (this.ended || this.peer.ended) return;
+        this.peer.got.push(c);
+        this.peer.onframe(c);
+      });
+    if (this.stalled) this.stalled.push(go);
+    else go();
+  }
+  stall(): void {
+    this.stalled ??= [];
+  }
+  release(): void {
+    const q = this.stalled ?? [];
+    this.stalled = null;
+    for (const go of q) go();
   }
   buffered(): number {
     return this.ended ? 0 : this.inflight;
@@ -67,9 +87,12 @@ function linkPair(kind: LinkKind): [MemLink, MemLink] {
   return [a, b];
 }
 
-/** Stands in for the remote-access listener: /ws (token "good", echoes), /echo, /big?n=&cl=1, /api/file, /api/pair. */
+/**
+ * Stands in for the remote-access listener: /ws (token "good" echoes, and answers "flood" with 30 × 100 KB; token
+ * "slow" is upgraded 300 ms late), /echo, /big?n=&cl=1&slow=1, anything else "ok <method> <path>".
+ */
 async function listener() {
-  const seen = { upgrades: 0, open: 0, closed: 0, paths: [] as string[], headers: [] as http.IncomingHttpHeaders[] };
+  const seen = { upgrades: 0, open: 0, closed: 0, aborted: 0, flooded: 0, paths: [] as string[], headers: [] as http.IncomingHttpHeaders[] };
   const srv = http.createServer((req, res) => {
     seen.paths.push(`${req.method} ${req.url}`);
     seen.headers.push(req.headers);
@@ -88,6 +111,17 @@ async function listener() {
       const body = Buffer.alloc(n);
       for (let i = 0; i < n; i++) body[i] = i & 0xff;
       res.writeHead(200, url.searchParams.get('cl') ? { 'content-length': String(n) } : {});
+      if (url.searchParams.get('slow')) {
+        // 100 KB every 10 ms, so that several responses are in flight at once
+        let i = 0;
+        const step = () => {
+          if (i >= n) return res.end();
+          res.write(body.subarray(i, i + 100_000));
+          i += 100_000;
+          setTimeout(step, 10);
+        };
+        return step();
+      }
       // in several writes, no content-length: chunked
       for (let i = 0; i < n; i += 65_536) res.write(body.subarray(i, i + 65_536));
       res.end();
@@ -100,12 +134,27 @@ async function listener() {
   srv.on('upgrade', (req, socket, head) => {
     seen.upgrades++;
     const url = new URL(req.url ?? '/', 'http://x');
-    if (url.pathname !== '/ws' || url.searchParams.get('token') !== 'good' || req.headers.origin) return socket.destroy();
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      seen.open++;
-      ws.on('message', (data, isBinary) => ws.send(data, { binary: isBinary }));
-      ws.on('close', () => seen.closed++);
+    const token = url.searchParams.get('token');
+    if (url.pathname !== '/ws' || (token !== 'good' && token !== 'slow') || req.headers.origin) return socket.destroy();
+    let upgraded = false;
+    socket.once('close', () => {
+      if (!upgraded) seen.aborted++;
     });
+    const upgrade = () => {
+      if (socket.destroyed) return;
+      // handleUpgrade destroys a socket the client already left, and then never calls back
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        upgraded = true;
+        seen.open++;
+        ws.on('message', (data, isBinary) => {
+          if (String(data) !== 'flood') return ws.send(data, { binary: isBinary });
+          for (let i = 0; i < 30; i++) ws.send('x'.repeat(100_000), () => seen.flooded++);
+        });
+        ws.on('close', () => seen.closed++);
+      });
+    };
+    if (token === 'slow') setTimeout(upgrade, 300);
+    else upgrade();
   });
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
   const port = (srv.address() as net.AddressInfo).port;
@@ -258,6 +307,67 @@ describe('serveBridge', () => {
     await until(() => f.closed && b.seen.closed === 1, 'both sides closed');
     expect(muxEnd).toBe('the other side closed the link');
     expect(b.ends).toEqual([]);
+  });
+
+  it('a phone close before the ack ends the local socket still connecting; the stream id is free again', async () => {
+    const s = await setup('p2p-v4');
+    const [phone, pc] = linkPair('p2p-v4');
+    serveBridge(pc, { port: s.port, relay: false });
+    cleanup.push(() => phone.close());
+    phone.send(encodeFrame(F.WS_OPEN, 5, 'slow'));
+    // the listener has the upgrade request and takes its time: the phone gives up meanwhile
+    await until(() => s.seen.upgrades === 1, 'the upgrade request');
+    phone.send(encodeFrame(F.WS_CLOSE, 5));
+    // gone either before the late upgrade, or right after it (its first write meets a closed connection)
+    await until(() => s.seen.aborted + s.seen.closed === 1, 'the listener sees the socket go');
+    await sleep(300);
+    expect(s.seen.open).toBe(s.seen.closed);
+    // nothing came back for stream 5: no ack, no hub message
+    expect(phone.got).toEqual([]);
+    // the bridge holds nothing for 5 any more: the same id opens anew
+    phone.send(encodeFrame(F.WS_OPEN, 5, 'good'));
+    await until(() => phone.got.length === 1, 'the ack');
+    expect(decodeFrame(phone.got[0])).toEqual(expect.objectContaining({ type: F.WS_OPEN, stream: 5 }));
+  });
+
+  it('a phone close drops what the hub sent that is still queued for the stream', async () => {
+    const s = await setup('p2p-v4');
+    const e = open(s.mux, 'good');
+    await until(() => e.open, 'open');
+    const id = decodeFrame(s.phone.sent[0]).stream;
+    // the PC's side of the link stops delivering: what the bridge sends piles up (1 MiB on the link, the rest queued)
+    s.pc.stall();
+    e.ws.send('flood');
+    await until(() => s.seen.flooded > 10, 'the hub sends');
+    await sleep(200);
+    const handed = s.pc.sent.filter((f) => decodeFrame(f).stream === id).length;
+    expect(handed * 16_389).toBeLessThan(30 * 100_000);
+    e.ws.close();
+    await until(() => s.seen.closed === 1, 'the local socket closed');
+    s.pc.release();
+    await sleep(300);
+    // only what was on the link already arrives; nothing queued in the outbox follows the close
+    expect(s.pc.sent.filter((f) => decodeFrame(f).stream === id).length).toBe(handed);
+    expect(s.phone.got.filter((f) => decodeFrame(f).stream === id).length).toBe(handed);
+  });
+
+  it(`over the relay at most ${RELAY_MAX_HELD} responses are held at once; the others wait and all complete`, async () => {
+    let held = 0;
+    let most = 0;
+    const s = await setup('relay', {
+      onHeld: (n) => {
+        held = n;
+        most = Math.max(most, n);
+      },
+    });
+    const n = 1_000_000;
+    const all = await Promise.all(Array.from({ length: 6 }, () => s.mux.request({ method: 'GET', path: `/big?n=${n}&slow=1` })));
+    for (const r of all) {
+      expect(r.status).toBe(200);
+      expect(r.body.length).toBe(n);
+    }
+    expect(most).toBe(RELAY_MAX_HELD);
+    await until(() => held === 0, 'every turn given back');
   });
 
   it('answers PING with PONG', async () => {

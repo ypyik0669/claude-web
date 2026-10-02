@@ -12,6 +12,7 @@ import { proxy, proxyAgentFor } from '../../net/proxy.js';
 import type { RemoteService } from '../service.js';
 import { serveBridge } from './bridge.js';
 import {
+  ACCEPT_FAILURE,
   Acceptor,
   Brokers,
   DEFAULT_BROKERS,
@@ -77,6 +78,20 @@ export function linkError(why: string): string | undefined {
 }
 
 /**
+ * What `recent` says about an attempt that ended without a link (Acceptor onFailure). The settings page puts it after
+ * 「没连上：」; a reason from the relay link itself stays, in parentheses.
+ */
+export function failureText(why: string): string {
+  if (why === ACCEPT_FAILURE.halfOpen) return '手机打了招呼，但通道没有建立起来';
+  if (why === ACCEPT_FAILURE.evicted) return '同时连进来的太多，较早的一次被放弃了';
+  if (why.startsWith(ACCEPT_FAILURE.relay)) {
+    const raw = why.slice(ACCEPT_FAILURE.relay.length).replace(/^:\s*/, '');
+    return raw ? `慢速转发没能建立（${raw}）` : '慢速转发没能建立';
+  }
+  return `没有建立起通道（${why}）`;
+}
+
+/**
  * The brokers' sockets: the `ws` package through the user's proxy (net/proxy.ts) when one applies to the broker.
  * A close waits at most 2 s for the broker's close frame (the default 30 s timer would hold stop()).
  */
@@ -106,7 +121,14 @@ interface Run {
   port: number;
   brokers: Brokers;
   acceptor: Acceptor;
+  /** The pairing code whose room is answered, and when that room goes. */
+  pairCode?: string;
   pairTimer?: ReturnType<typeof setTimeout>;
+}
+
+export interface AnywhereOptions {
+  /** The Acceptor's halfOpenMs (tests: an attempt given up half-way fails sooner). */
+  halfOpenMs?: number;
 }
 
 export class AnywhereService extends EventEmitter {
@@ -117,10 +139,11 @@ export class AnywhereService extends EventEmitter {
   private gen = 0;
   private pairGen = 0;
 
-  constructor(private readonly meta: MetaStore, private readonly remote: RemoteService) {
+  constructor(private readonly meta: MetaStore, private readonly remote: RemoteService, private readonly opts: AnywhereOptions = {}) {
     super();
     remote.on('paired', (id: string) => void this.addDevice(id));
     remote.on('revoked', (id: string) => this.dropDevice(id));
+    remote.on('pairEnded', (code: string) => this.pairEnded(code));
     remote.pairUrlHook = (code) => this.pairUrl(code);
   }
 
@@ -170,16 +193,19 @@ export class AnywhereService extends EventEmitter {
     const mine = ++this.pairGen;
     const ps = crypto.getRandomValues(new Uint8Array(PAIR_SECRET_BYTES));
     const room = await pairRoom(ps);
-    // stopped, or a newer code came meanwhile (its own call returns the address)
-    if (this.run !== r || mine !== this.pairGen) return null;
+    // stopped, a newer code came meanwhile (its own call returns the address), or this one was used up already
+    if (this.run !== r || mine !== this.pairGen || this.remote.currentPair()?.code !== code) return null;
     clearTimeout(r.pairTimer);
+    // at expiry the room goes, with any pairing link still open through it
     const timer = setTimeout(() => {
       if (this.run !== r || r.pairTimer !== timer) return;
       r.pairTimer = undefined;
+      r.pairCode = undefined;
       r.acceptor.removeRoom(PAIR_ROOM);
     }, Math.max(0, p.expiresAt - Date.now()));
     timer.unref?.();
     r.pairTimer = timer;
+    r.pairCode = code;
     const added = r.acceptor.addRoom(PAIR_ROOM, room).catch((e) => {
       if (this.run === r) report('pairing room', e);
     });
@@ -187,7 +213,7 @@ export class AnywhereService extends EventEmitter {
     let wait: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([added, new Promise<void>((res) => (wait = setTimeout(res, PAIR_SUBSCRIBE_WAIT_MS)))]);
     clearTimeout(wait);
-    if (this.run !== r || mine !== this.pairGen) return null;
+    if (this.run !== r || mine !== this.pairGen || r.pairCode !== code) return null;
     const qr = { v: 1, ps: b64u(ps), code, pc: os.hostname() };
     return `${shellUrlOf(this.meta.settings()['remote.anywhere.shellUrl'])}#p=${b64u(enc.encode(JSON.stringify(qr)))}`;
   }
@@ -227,6 +253,8 @@ export class AnywhereService extends EventEmitter {
       stun: cfg.stun,
       pcName: os.hostname(),
       onLink: (link, roomId) => this.onLink(link, roomId),
+      onFailure: (roomId, why) => this.failed(roomId, why),
+      ...(this.opts.halfOpenMs !== undefined ? { halfOpenMs: this.opts.halfOpenMs } : {}),
     });
     const r: Run = { key: cfg.key, port: cfg.port, brokers, acceptor };
     this.run = r;
@@ -276,6 +304,22 @@ export class AnywhereService extends EventEmitter {
   /** Revoked: its room is unsubscribed and every link through it ends now (the bridges close their streams). */
   private dropDevice(id: string): void {
     this.run?.acceptor.removeRoom(id);
+  }
+
+  /**
+   * The code was used (or its tries ran out): its room stops answering at once. The pairing link that carried the
+   * reply is not cut (the phone closes it once it has the token; at expiry it goes anyway).
+   */
+  private pairEnded(code: string): void {
+    const r = this.run;
+    if (!r || r.pairCode !== code) return;
+    r.pairCode = undefined;
+    r.acceptor.retireRoom(PAIR_ROOM);
+  }
+
+  private failed(roomId: string, why: string): void {
+    const deviceId = roomId === PAIR_ROOM ? undefined : roomId;
+    this.record({ at: Date.now(), ...(deviceId ? { deviceId } : {}), ok: false, error: failureText(why) });
   }
 
   private onLink(link: Link, roomId: string): void {

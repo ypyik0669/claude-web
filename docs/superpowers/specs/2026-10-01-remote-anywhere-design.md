@@ -66,7 +66,8 @@
 | 类型 | 方向 | 内容 |
 | --- | --- | --- |
 | `WS_OPEN` | 手机→电脑 | 设备令牌；电脑据此连 `ws://127.0.0.1:<远程端口>/ws?token=` |
-| `WS_MSG` / `WS_CLOSE` | 双向 | WebSocket 文本帧原样 / 关闭 |
+| `WS_OPEN` | 电脑→手机 | 空；本机 WebSocket 已连上（令牌被接受），手机这时才算 `onopen`，之前要发的消息在手机上排队 |
+| `WS_MSG` / `WS_CLOSE` | 双向 | WebSocket 文本帧原样（超过 16 KB 的先发 `HTTP_BODY` 分片，最后一片用 `WS_MSG`）/ 关闭（连不上、令牌不对也是它） |
 | `HTTP_REQ` / `HTTP_BODY` / `HTTP_END` | 手机→电脑 | 方法、路径、头（JSON）/ 分片 / 结束 |
 | `HTTP_RES` / `HTTP_BODY` / `HTTP_END` | 电脑→手机 | 状态码、头 / 分片 / 结束 |
 | `PING` / `PONG` | 双向 | 保活与测延迟 |
