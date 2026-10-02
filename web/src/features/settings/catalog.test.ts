@@ -162,10 +162,21 @@ describe('settings map (spec §5.7)', () => {
     expect(moreHint(findSection('general')!)).toBe('软件渲染（桌面版）、编排并发上限');
     expect(moreHint(findSection('appearance')!)).toBe('中文字体');
     expect(moreHint(findSection('account')!)).toBe('运行内核');
-    expect(moreHint(findSection('remote')!)).toBe('SSH 隧道');
+    expect(moreHint(findSection('remote')!)).toBe('牵线服务器与最近连接、SSH 隧道');
     expect(moreHint(findSection('mcp')!, 'servers')).toBe('手动添加（JSON）');
     expect(moreHint(findSection('mcp')!, 'plugins')).toBe('');
     expect(moreHint(findSection('secrets')!)).toBe('');
+  });
+
+  it('在外面也能用: the switch on 手机与其它电脑 itself; its brokers / STUN / phone page / recent connections behind 更多选项', () => {
+    const where = allBodies().filter((b) => b.body === 'anywhere');
+    expect(where.map((b) => [b.section.id, b.more])).toEqual([['remote', true]]);
+    expect(findSection('remote')!.bodies).toContain('remote');
+    for (const q of ['在外面也能用', '不让电脑睡眠', '配对链接']) expect(ids(searchSettings(q)), q).toContain('page:remote#remote');
+    for (const q of ['stun', 'mqtt', '牵线', '最近连接']) {
+      const hit = searchSettings(q).find((h) => h.kind === 'page' && h.body === 'anywhere');
+      expect(hit && hit.kind === 'page' && hit.more, q).toBe(true);
+    }
   });
 
   it('退出前确认 and 减少动画 are on their pages, not behind 更多选项', () => {

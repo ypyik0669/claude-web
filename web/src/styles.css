@@ -2373,3 +2373,28 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .auto-head { padding-left: 
 .update-prompt .up-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .update-prompt .up-foot .grow { flex: 1 1 auto; }
 .update-prompt .up-later { margin: 8px 0 0; font-size: 12px; color: var(--ink-3); text-align: right; }
+
+/* ---- 设置 → 手机与其它电脑 → 在外面也能用 (RemoteSection.tsx / AnywhereMore.tsx) ---- */
+.aw-card { margin-top: 10px; }
+.aw-card .sp-row + .sp-row { border-top: 1px solid var(--edge-subtle); }
+.aw-line { display: block; margin-top: 4px; color: var(--ink-2); }
+.aw-line[data-tone="ok"] { color: var(--ok); }
+.aw-line[data-tone="err"] { color: var(--err); }
+.aw-line[data-tone="wait"], .aw-line[data-tone="off"] { color: var(--ink-3); }
+.pair-side { flex: 1 1 auto; min-width: 0; }
+.pair-switch { margin-bottom: 8px; flex-wrap: wrap; }
+.pair-qr { background: #fff; width: 180px; height: 180px; }
+.aw-more .aw-def { margin-left: 6px; font-weight: 400; font-size: 11.5px; }
+.aw-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; }
+.aw-row .field { min-width: 0; }
+.modal .aw-row .aw-name { width: 96px; flex: none; }
+.modal .aw-row .aw-url { flex: 1 1 auto; width: auto; }
+.aw-row .aw-st { flex: none; min-width: 44px; text-align: center; }
+.modal .aw-row label.aw-relay { display: flex; align-items: center; gap: 4px; flex: none; margin: 0; font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.modal .aw-row input[type=checkbox] { width: auto; }
+.aw-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; }
+.aw-err { margin-top: 6px; font-size: 12.5px; color: var(--err); }
+@media (max-width: 600px) {
+  .aw-row { flex-wrap: wrap; }
+  .modal .aw-row .aw-url { flex-basis: 100%; order: 3; }
+}

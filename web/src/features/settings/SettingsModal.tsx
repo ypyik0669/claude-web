@@ -12,6 +12,7 @@ import { ProxySection } from './ProxySection';
 import { AgentsSection } from './AgentsSection';
 import { LibrarySection } from './LibrarySection';
 import { HostsSection, RemoteSection } from './RemoteSection';
+import { AnywhereMore } from './AnywhereMore';
 import { PeersSection } from './PeersSection';
 import { ImSection } from './ImSection';
 import { SecretsSection } from './SecretsSection';
@@ -80,6 +81,7 @@ const BODIES: Record<BodyId, () => ReactNode> = {
   subagents: () => <SimpleList kind="config.agents" empty="还没有子代理。~/.claude/agents 里的 .md 文件和插件带的子代理会出现在这里。" render={(a) => <div className="grow"><div>{a.name} <span style={muted}>{a.source}{a.model ? ` · ${a.model}` : ''}</span></div><div className="sub">{a.description}</div></div>} />,
   memory: () => <MemorySettings />,
   remote: () => <RemoteSection />,
+  anywhere: () => <AnywhereMore />,
   peers: () => <PeersSection />,
   hosts: () => <HostsSection />,
   im: () => <ImSection />,

@@ -37,6 +37,7 @@ const BODY_SOURCE: Record<BodyId, { comp: string; file: string; props?: string }
   subagents: { comp: 'SimpleList', file: CONFIG, props: 'kind="config.agents"' },
   memory: { comp: 'MemorySettings', file: 'features/memory/MemorySettings.tsx' },
   remote: { comp: 'RemoteSection', file: S('RemoteSection.tsx') },
+  anywhere: { comp: 'AnywhereMore', file: S('AnywhereMore.tsx') },
   peers: { comp: 'PeersSection', file: S('PeersSection.tsx') },
   hosts: { comp: 'HostsSection', file: S('RemoteSection.tsx') },
   im: { comp: 'ImSection', file: S('ImSection.tsx') },
@@ -404,6 +405,34 @@ describe('the whole interface: 对话 not 会话, no implementation words by def
       }
     }
     expect(bad).toEqual([]);
+  });
+
+  // 在外面也能用 (spec 2026-10-01 §10): the network words — MQTT / WebRTC / STUN / ICE — only under 更多选项 and in
+  // tooltips. A file may use them when every part it draws sits under 更多选项 only (AnywhereMore.tsx: the brokers, STUN,
+  // the phone page); a file that also draws a part in plain view (RemoteSection.tsx: 在外面也能用 itself) may not
+  const NETWORK_WORDS: [string, RegExp][] = [['MQTT', /\bMQTT\b/], ['WebRTC', /webrtc/i], ['STUN', /\bSTUN\b/], ['ICE', /\bICE\b/]];
+  const networkWords = (t: string) => NETWORK_WORDS.filter(([, re]) => re.test(t)).map(([w]) => w);
+  const placements = allBodies();
+  const moreOnlyFiles = new Set(Object.entries(BODY_SOURCE).filter(([b]) => placements.some((p) => p.body === b)).map(([, s]) => s.file));
+  for (const p of placements) if (!p.more) moreOnlyFiles.delete(BODY_SOURCE[p.body].file);
+
+  it('says MQTT / WebRTC / STUN / ICE only under 更多选项 and in tooltips (spec 2026-10-01 §10)', () => {
+    expect([...moreOnlyFiles]).toEqual([S('AnywhereMore.tsx')]);
+    const bad: string[] = [];
+    for (const f of ALL) {
+      if (NOT_DEFAULT.includes(f) || moreOnlyFiles.has(f)) continue;
+      for (const t of textsOf(f, read(f), { skipKeys: SKIP_KEYS })) for (const w of networkWords(t)) bad.push(`${f} — ${w}: ${t.trim().slice(0, 80)}`);
+    }
+    // what the pages say in plain view: names, lead lines, rows, and the part names 更多选项 lists beside itself
+    for (const s of VISIBLE_SECTIONS) {
+      for (const t of [s.l, s.desc, ...(s.entries ?? []).flatMap((e) => [e.label, e.hint ?? '', e.block ?? ''])]) for (const w of networkWords(t)) bad.push(`${s.id} — ${w}: ${t}`);
+    }
+    for (const p of placements) if (!p.section.advanced) for (const w of networkWords(BODY_INFO[p.body].l)) bad.push(`BODY_INFO.${p.body} — ${w}`);
+    expect(bad).toEqual([]);
+    // the scanner: text, not tooltips, not identifiers or lowercase addresses
+    expect(textsOf('x.tsx', `const a = <b title="经 MQTT 牵线">在外面也能用</b>;`).flatMap(networkWords)).toEqual([]);
+    expect(textsOf('x.tsx', `const a = <b>经 MQTT 牵线，STUN 打洞</b>;`).flatMap(networkWords)).toEqual(['MQTT', 'STUN']);
+    expect(networkWords('stun:stun.cloudflare.com:3478 · wss://broker.emqx.io:8084/mqtt · device · service')).toEqual([]);
   });
 
   it('the scanner reads tooltips only when asked, and skips keywords / old-entry tables', () => {

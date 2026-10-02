@@ -757,6 +757,72 @@ function driver() {
         await srvReq({ kind: 'im.set', id: 'smoke-dd', patch: null }).catch(() => {});
         if (tmpProv) await srvReq({ kind: 'providers.remove', id: tmpProv.id }).catch(() => {});
         await js('window.__store.getState().loadProviders()');
+
+        // 在外面也能用 (remote-anywhere task 13): the switch (disabled until remote access is on) and its status line, the
+        // QR for anywhere with the LAN switch and 「复制配对链接」, keep-awake (the browser build: only the sentence), a
+        // phone paired from this machine shows no 127.0.0.1, no MQTT / WebRTC / STUN / ICE in what the page shows by
+        // default, and 更多选项 lists the brokers and refuses a bad one. The one broker is a closed local port: the smoke
+        // never reaches a public broker (CW_NO_PUBLIC_BROKERS leaves the defaults out as well)
+        phase = 'settings:anywhere';
+        const remotePort = await new Promise((res, rej) => { const s = require('node:net').createServer(); s.once('error', rej); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
+        await js(`window.__store.getState().setSetting('remote.anywhere.brokers', [{ name: 'smoke', url: 'wss://127.0.0.1:9/mqtt', relay: true }])`);
+        await srvReq({ kind: 'remote.set', port: remotePort });
+        await js(`window.__store.getState().openSettings({ section: 'remote' })`);
+        const RS = '.modal.settings [data-body="remote"]';
+        const awOff = await waitFor(`(() => { const t = document.querySelector('${RS} [data-id="anywhere"]'); return !!t && t.disabled && /允许其它设备访问/.test(document.querySelector('${RS} [data-id="anywhere-note"]')?.textContent ?? ''); })()`, 8000);
+        check('手机与其它电脑: 「在外面也能用」 is there; with remote access off it is disabled and says to turn that on first', awOff, await js(`document.querySelector('${RS}')?.innerText.slice(0, 400)`));
+        await click(`${RS} [data-id="remote-enabled"]`);
+        const awFailing = await waitFor(`(document.querySelector('${RS} [data-id="anywhere-status"]')?.textContent ?? '').includes('连不上牵线服务器，检查网络') && !document.querySelector('${RS} [data-id="anywhere"]').disabled`, 15_000);
+        check('remote access on, its only broker unreachable: the status line says 连不上牵线服务器，检查网络', awFailing, await js(`document.querySelector('${RS} [data-id="anywhere-status"]')?.textContent ?? 'no status line'`));
+        const keep = await js(`({ note: document.querySelector('${RS} [data-id="keep-awake-note"]')?.textContent ?? '', toggle: !!document.querySelector('${RS} [data-id="keep-awake"]') })`);
+        check('不让电脑睡眠 in the browser build: the sentence, no switch', keep.note.includes('网页版做不到，去系统电源设置里关掉睡眠') && !keep.toggle, JSON.stringify(keep));
+        await click(`${RS} [data-id="pair-new"]`);
+        const qrAnywhere = await waitFor(`!!document.querySelector('${RS} img.pair-qr[data-kind="anywhere"]') && document.querySelectorAll('${RS} [data-id="pair-switch"] button').length === 2 && !!document.querySelector('${RS} [data-id="pair-copy"]')`, 10_000);
+        const switchText = await js(`[...document.querySelectorAll('${RS} [data-id="pair-switch"] button')].map((b) => b.textContent.trim())`);
+        check('a pairing code: the QR is the 在哪都能用 one, with the switch (在哪都能用 / 只在局域网（不用联网）) and 复制配对链接', qrAnywhere && JSON.stringify(switchText) === JSON.stringify(['在哪都能用', '只在局域网（不用联网）']), JSON.stringify({ qrAnywhere, switchText }));
+        await shot('settings-remote-anywhere');
+        await js(`(() => { window.__cwCopied = null; Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: async (t) => { window.__cwCopied = t; } }); })()`);
+        await click(`${RS} [data-id="pair-copy"]`);
+        const copied = await waitFor(`/^https:\\/\\/ypyik0669\\.github\\.io\\/claude-web\\/#p=[A-Za-z0-9_-]+$/.test(window.__cwCopied ?? '') && [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('配对链接已复制')) && !location.href.includes('#p=')`, 3000);
+        check('复制配对链接 copies the 在哪都能用 link (never into the page address) and says so', copied, await js('String(window.__cwCopied).slice(0, 60)'));
+        await click(`${RS} [data-id="pair-switch"] [data-kind="lan"]`);
+        const qrLan = await waitFor(`!!document.querySelector('${RS} img.pair-qr[data-kind="lan"]') && !document.querySelector('${RS} [data-id="pair-copy"]')`, 3000);
+        check('只在局域网（不用联网）: the LAN QR, no 复制配对链接', qrLan);
+        await click(`${RS} [data-id="pair-switch"] [data-kind="anywhere"]`);
+        // a phone paired over the listener on this machine (as the bridge does): its row shows no 127.0.0.1
+        const lanPair = await srvReq({ kind: 'remote.pairCode' });
+        const paired = await new Promise((res) => {
+          const body = JSON.stringify({ code: lanPair.code, name: 'smoke 手机' });
+          const rq = require('node:http').request({ host: '127.0.0.1', port: remotePort, method: 'POST', path: '/api/pair', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } }, (r) => { let t = ''; r.on('data', (c) => (t += c)); r.on('end', () => { try { res(JSON.parse(t)); } catch { res(null); } }); });
+          rq.on('error', () => res(null));
+          rq.end(body);
+        });
+        const devRow = paired?.device?.id ? `${RS} [data-device="${paired.device.id}"]` : '';
+        const noFakeIp = !!devRow && (await waitFor(`!!document.querySelector('${devRow}')`, 5000)) && !(await js(`document.querySelector('${devRow}').textContent`)).includes('127.0.0.1');
+        check('a phone paired through this machine (the way the bridge does): its row shows no 127.0.0.1', noFakeIp, devRow ? await js(`document.querySelector('${devRow}')?.textContent ?? 'no row'`) : JSON.stringify(paired));
+        // what the page shows by default (更多选项 still closed) has none of the network words
+        await js(`window.__store.getState().openSettings({ section: 'general' })`);
+        await waitFor(onPage('general'), 3000);
+        await js(`window.__store.getState().openSettings({ section: 'remote' })`);
+        await waitFor(`${onPage('remote')} && !!document.querySelector('${RS} [data-id="anywhere-status"]')`, 8000);
+        const shownText = await js(`document.querySelector('.modal.settings .sp-inner').innerText`);
+        const netWords = shownText.match(/MQTT|WebRTC|STUN|\bICE\b/gi) ?? [];
+        check('手机与其它电脑 by default: no MQTT / WebRTC / STUN / ICE on screen', !netWords.length && !(await js(`!!document.querySelector('.modal.settings .sp-more-body:not([hidden])')`)), JSON.stringify(netWords));
+        await click('.modal.settings .sp-more-h');
+        const brokers = await waitFor(`(() => { const l = document.querySelector('.modal.settings [data-id="anywhere-brokers"]'); if (!l) return false; const rows = [...l.querySelectorAll('.aw-row')]; return rows.length === 1 && rows[0].querySelector('input[data-f="name"]')?.value === 'smoke' && /不通/.test(rows[0].textContent) && !!rows[0].querySelector('input[type=checkbox][data-f="relay"]')?.checked; })()`, 8000);
+        const moreParts = await js(`['anywhere-stun', 'anywhere-shell', 'anywhere-recent'].filter((id) => !document.querySelector('.modal.settings [data-id="' + id + '"]'))`);
+        check('更多选项: the broker list (名称 · 地址 · 通 / 不通 · 用于转发), STUN, the phone page address, recent connections', brokers && !moreParts.length, JSON.stringify({ brokers, missing: moreParts }));
+        await click('.modal.settings [data-id="broker-add"]');
+        await click('.modal.settings [data-id="anywhere-brokers"] .aw-row:last-child input[data-f="name"]');
+        wc.insertText('bad');
+        await click('.modal.settings [data-id="anywhere-brokers"] .aw-row:last-child input[data-f="url"]');
+        wc.insertText('http://bad.example/mqtt');
+        await click('.modal.settings [data-id="broker-save"]');
+        const refused = await waitFor(`/wss:\\/\\//.test(document.querySelector('.modal.settings [data-id="broker-error"]')?.textContent ?? '') && (window.__store.getState().settings['remote.anywhere.brokers'] ?? []).length === 1`, 3000);
+        check('更多选项: a broker address that is not wss:// is refused with a sentence, nothing saved', refused, await js(`document.querySelector('.modal.settings [data-id="broker-error"]')?.textContent ?? 'no sentence'`));
+        await shot('settings-remote-anywhere-more');
+        if (paired?.device?.id) await srvReq({ kind: 'remote.devices.revoke', id: paired.device.id }).catch(() => {});
+        await srvReq({ kind: 'remote.set', enabled: false }).catch(() => {});
       }
       // the click helper itself (polish P5): the page moves down 44px between the measurement and the click (what a late
       // answer to the page's own request does), so the row above 更多选项 sits under the point; the mouse-down that lands
