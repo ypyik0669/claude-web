@@ -217,10 +217,11 @@ function view(s: Session, v: SessionView, title: string, note: Explained | null)
 /** The service worker's requests for the app frame: answered here, over this window's link (forward.ts). */
 function onWorkerMessage(ev: MessageEvent): void {
   const port = ev.ports[0];
+  if (!port) return;
   const m = readShellRequest(ev.data);
-  if (!port || !m) return;
   const s = session;
-  if (!s || !s.isOpen || (m.owner && m.owner !== owner)) return port.postMessage({ skip: true });
+  // one this page cannot read (a newer service worker's) is a skip too: the worker is not left waiting 60 s
+  if (!m || !s || !s.isOpen || (m.owner && m.owner !== owner)) return port.postMessage({ skip: true });
   s.serve(m).then(
     (r) => port.postMessage(r, r.body ? [r.body] : []),
     (e) => port.postMessage(replyFromError(e)),
