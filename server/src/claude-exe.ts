@@ -196,7 +196,7 @@ export function spawnClaude(o: { command: string; args: string[]; cwd?: string; 
 }
 
 /** Run a `claude <subcommand>` with the runtime and return stdout/stderr. Used by the config center. */
-export async function runClaudeCli(args: string[], opts: { cwd?: string; timeoutMs?: number; runtime?: RuntimeKind; env?: Record<string, string> } = {}): Promise<{ code: number; stdout: string; stderr: string }> {
+export async function runClaudeCli(args: string[], opts: { cwd?: string; timeoutMs?: number; runtime?: RuntimeKind; env?: Record<string, string> } = {}): Promise<{ code: number; stdout: string; stderr: string; timedOut?: boolean }> {
   const { file } = resolveEngine(opts.runtime);
   const isJs = file.endsWith('.js');
   const n = isJs ? nodeRuntime() : null;
@@ -212,7 +212,9 @@ export async function runClaudeCli(args: string[], opts: { cwd?: string; timeout
     const { stdout, stderr } = await p;
     return { code: 0, stdout, stderr };
   } catch (e: any) {
-    return { code: typeof e.code === 'number' ? e.code : 1, stdout: e.stdout ?? '', stderr: e.stderr ?? String(e.message ?? e) };
+    // killed at the timeout: no code, often no output — say so instead of a bare "exit 1"
+    const timedOut = !!e.killed && typeof e.code !== 'number';
+    return { code: typeof e.code === 'number' ? e.code : 1, stdout: e.stdout ?? '', stderr: e.stderr || String(e.message ?? e), ...(timedOut ? { timedOut } : {}) };
   }
 }
 

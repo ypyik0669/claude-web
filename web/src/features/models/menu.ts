@@ -1,5 +1,5 @@
 import type { AgentKind, GatewayGroup, Provider, ProviderType, RuntimeKind } from '@shared';
-import { modelsFor, preferredRuntime, profileFitError, providerTypesFor } from '@catalog';
+import { isChatModel, modelsFor, preferredRuntime, profileFitError, providerTypesFor } from '@catalog';
 
 /**
  * The unified model picker (AiMaMi-style): every provider profile's models flattened into one list of
@@ -125,6 +125,15 @@ export function effectiveRuntime(p: Pick<Provider, 'runtime'> & { type?: Provide
   return want === 'ccb' && engine.fallback?.runtime === 'ccb' ? 'ccb' : 'claude';
 }
 
+/**
+ * A Claude conversation on an OpenAI / Gemini / Grok format provider: ccb's clients for those never send the effort
+ * (a capture of gpt-5.6 through ccb had no reasoning field), so there is no 智能程度 control to offer.
+ */
+export function effortStaysHome(providers: Pick<Provider, 'id' | 'type'>[], providerId: string | undefined): boolean {
+  const t = providerId && providerId !== OWN_PROVIDER ? providers.find((p) => p.id === providerId)?.type : undefined;
+  return t === 'openai' || t === 'gemini' || t === 'grok';
+}
+
 /** Why profile `p` cannot be picked right now although the agent takes its type (null = it can). */
 export function profileUnavailable(p: Provider, i: Pick<BuildMenuInput, 'agent' | 'engine' | 'gatewayGroups' | 'gatewayEnabled'>): string | null {
   if (p.type === 'gateway') {
@@ -169,7 +178,8 @@ export function gatewayModels(p: Provider, groups: GatewayGroup[] | undefined, p
 /** The models a profile offers, in list order, with its default model included. */
 export function profileModels(p: Provider, groups: GatewayGroup[] | undefined, providers: Provider[]): string[] {
   if (p.type === 'gateway') return gatewayModels(p, groups, providers);
-  const list = [...(p.models ?? [])];
+  // an image / embedding / speech model is not something to hold a conversation with (an image-only key listed 3)
+  const list = (p.models ?? []).filter(isChatModel);
   if (p.defaultModel && !list.includes(p.defaultModel)) list.unshift(p.defaultModel);
   return list;
 }

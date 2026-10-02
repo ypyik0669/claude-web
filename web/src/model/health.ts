@@ -1,6 +1,6 @@
 // Pure helpers that turn SDK error / timing signals into UI-facing health state. No DOM, no store.
 
-export type ErrorKind = 'throttled' | 'quota' | 'network' | 'credential' | 'context' | 'output_cap' | 'server' | 'refusal' | 'aborted' | 'unknown';
+export type ErrorKind = 'throttled' | 'quota' | 'balance' | 'network' | 'credential' | 'context' | 'output_cap' | 'server' | 'refusal' | 'aborted' | 'unknown';
 
 export interface ErrorSignal {
   /** SDKAssistantMessageError / api_retry.error */
@@ -23,6 +23,8 @@ export function classifyError(s: ErrorSignal): ErrorKind {
   const text = (s.text ?? '').toLowerCase();
   const st = s.status ?? undefined;
   if (s.rateLimitStatus === 'rejected' || s.rateLimitErrorCode === 'credits_required') return 'quota';
+  // A provider account out of money is not a usage window that resets: say so, and point at topping up.
+  if (/insufficient[_ ](?:\w+[_ ])?(?:balance|funds|credit)|credit balance is too low|余额不足|余额已用完/.test(text)) return 'balance';
   if (tr === 'blocking_limit' || err === 'billing_error' || err === 'account_on_hold' || /credit|billing|quota exceeded|insufficient/.test(text)) return 'quota';
   if (err === 'rate_limit' || st === 429 || /rate limit|too many requests|throttl/.test(text)) return 'throttled';
   if (err === 'authentication_failed' || err === 'oauth_org_not_allowed' || st === 401 || st === 403 || /unauthori|invalid api key|authentication|not logged in|expired token/.test(text)) return 'credential';
@@ -39,6 +41,7 @@ export function classifyError(s: ErrorSignal): ErrorKind {
 export const ERROR_LABEL: Record<ErrorKind, string> = {
   throttled: '被限流',
   quota: '额度用尽',
+  balance: '余额不足',
   network: '网络错误',
   credential: '凭证失效',
   context: '上下文过长',
@@ -52,6 +55,7 @@ export const ERROR_LABEL: Record<ErrorKind, string> = {
 export const ERROR_HINT: Record<ErrorKind, string> = {
   throttled: '等待片刻后重试；订阅额度看顶栏的环。',
   quota: '本窗口额度已用完，等重置或换供应商 / 模型。',
+  balance: '供应商账户的余额不够了：去供应商那里充值，或在模型菜单里换一个供应商。',
   network: '检查网络或 Base URL；中转站可能暂时不可达。',
   credential: '供应商的 API Key 不对或过期（设置 → 供应商），或 Claude 账号登录失效（终端里运行 claude auth login）。',
   context: '对话太长了：/compact 压缩，或从某条消息分叉一个新对话。',

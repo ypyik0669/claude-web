@@ -37,6 +37,39 @@ export function codexRolloutId(rel: string): string | null {
   return /rollout-[^\\/]*?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(rel)?.[1]?.toLowerCase() ?? null;
 }
 
+/** How many of the mirror's last prompts must line up with the thread's before its later turns are taken (one repeated
+ *  「继续」 must not match the wrong turn). */
+const ANCHOR_PROMPTS = 3;
+/** How far back into a thread the mirror sync looks for its last prompts (pages of READ_PAGE turns). */
+const SYNC_PAGES = 4;
+
+/** A prompt someone typed: a user message with text and no tool results (those are user messages too). */
+function promptOf(m: any): string | null {
+  if (m?.type !== 'user') return null;
+  const ct = m.message?.content;
+  if (typeof ct === 'string') return ct.trim() || null;
+  if (!Array.isArray(ct) || ct.some((b: any) => b?.type === 'tool_result')) return null;
+  const t = ct.filter((b: any) => b?.type === 'text').map((b: any) => b.text ?? '').join('').trim();
+  return t || null;
+}
+
+/**
+ * The messages of `thread` (chronological) that come after the last turn `mirror` already has, from the thread's next
+ * prompt on — or [] when they line up to the end, or null when the mirror's last prompts are not found in it (do not
+ * guess). The anchor is the mirror's last ANCHOR_PROMPTS prompts, consecutive in the thread.
+ */
+export function turnsAfter(mirror: any[], thread: any[]): any[] | null {
+  const anchor = mirror.map(promptOf).filter((t): t is string => !!t).slice(-ANCHOR_PROMPTS);
+  if (!anchor.length) return null;
+  const at = thread.map((m, i) => [promptOf(m), i] as const).filter(([t]) => !!t);
+  for (let j = at.length - 1; j >= anchor.length - 1; j--) {
+    if (!anchor.every((t, k) => at[j - anchor.length + 1 + k][0] === t)) continue;
+    const next = at[j + 1];
+    return next ? thread.slice(next[1]) : [];
+  }
+  return null;
+}
+
 /** The slice of AgentRegistry the library needs (cheap defs + the 60 s-cached version probe). */
 export interface LibraryAgents {
   defs(): { kind: AgentKind; name: string; protocol: string }[];
@@ -52,6 +85,8 @@ export interface LibraryOptions {
   /** Data dirs whose existence counts as "detected". Defaults: codex ~/.codex/sessions, opencode ~/.local/share/opencode. */
   dataDirs?: Partial<Record<AgentKind, string[]>>;
   trashDir?: string;
+  /** Whether a driver here is running this conversation (its own writes keep the mirror current). */
+  isLive?: (id: string) => boolean;
   /** Per-source list timeout (default 20 s); tests shorten it. */
   listTimeoutMs?: number;
   /** How long a source's list stays fresh (default 60 s, 10 min with a file watcher); past it the cache is served and refreshed behind. */
@@ -110,6 +145,8 @@ export class LibraryService extends EventEmitter {
   /** Until the first refreshIndex pass completes, search uses the old transcript scan (a half-built index misses things). */
   private indexReady = false;
   private byId = new Map<string, SessionSummary>();
+  /** A source's library id → the conversation here it was merged into (a Codex conversation started in this app). */
+  private merged = new Map<string, string>();
   private resuming = new Map<string, Promise<{ agent: AgentKind; cwd: string }>>();
   private indexing: Promise<void> | null = null;
   private indexAgain = false;
@@ -315,6 +352,7 @@ export class LibraryService extends EventEmitter {
       }
     }
     this.byId = new Map(out);
+    this.merged = alias;
     // forks / resumed children / sub-agents fold under their top-level ancestor, transitively (a
     // sub-agent spawned by a sub-agent folds under the root, and childCount counts every descendant);
     // an orphan — its parent isn't listed — stays visible; a chain that runs into a parent cycle
@@ -366,7 +404,11 @@ export class LibraryService extends EventEmitter {
   // ---------- read ----------
   async read(id: string, cursor?: string, limit = 20): Promise<{ messages: any[]; next?: string }> {
     const r = await this.resolve(id);
-    if (r.head && !r.head.imported) return { messages: await this.transcripts.load(id) };
+    if (r.head && !r.head.imported) {
+      // nothing here drives it: turns written from the agent's own CLI since are only in the agent's store
+      if (!this.opts.isLive?.(id)) await this.syncMirror(id).catch(() => 0);
+      return { messages: await this.transcripts.load(id) };
+    }
     if (!r.source || !r.nativeId) throw new Error('这个对话的来源没有加入对话库');
     try {
       return await r.source.read(r.nativeId, { cursor, limit });
@@ -379,6 +421,46 @@ export class LibraryService extends EventEmitter {
       }
       throw e;
     }
+  }
+
+  private syncing = new Map<string, Promise<number>>();
+  /**
+   * A Codex conversation started here and continued in the Codex CLI (`codex resume <thread>`): those turns are only in
+   * Codex's thread — the mirror this app reads (agents/<id>.jsonl) has the turns that went through here, so they never
+   * showed (2026-10-01, real Codex). Appends the thread's turns that came after the mirror's last one to the mirror.
+   * Called on every read when nothing here drives the conversation (a live driver is the thread's only writer), and by
+   * the driver right before it resumes the thread, so its own next prompt cannot land in front of them. Concurrent
+   * calls for one conversation share one run (no double append). Returns how many messages it appended.
+   */
+  syncMirror(id: string): Promise<number> {
+    const running = this.syncing.get(id);
+    if (running) return running;
+    const p = this.syncMirrorNow(id).finally(() => this.syncing.delete(id));
+    this.syncing.set(id, p);
+    return p;
+  }
+
+  private async syncMirrorNow(id: string): Promise<number> {
+    const head = await this.transcripts.head(id);
+    if (!head || head.imported || head.agent !== 'codex' || !head.nativeSessionId) return 0;
+    // the built-in Codex source exists joined or not; reading its own thread back is not a library join
+    const src = this.source('codex');
+    if (!src?.read) return 0;
+    const mirror = await this.transcripts.load(id);
+    let thread: any[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < SYNC_PAGES; i++) {
+      const page = await src.read(head.nativeSessionId, { cursor, limit: READ_PAGE });
+      thread = [...page.messages, ...thread]; // each page is chronological; a later page is older
+      const extra = turnsAfter(mirror, thread);
+      if (extra) {
+        for (const m of extra) this.transcripts.append(id, { ...m, session_id: id });
+        return extra.length;
+      }
+      if (!page.next) return 0;
+      cursor = page.next;
+    }
+    return 0;
   }
 
   /**
@@ -666,7 +748,10 @@ export class LibraryService extends EventEmitter {
                 continue;
               }
               const last = this.indexedWall.get(s.sessionId);
-              if (last !== undefined && now - last < INDEX_LIVE_MS) {
+              // a conversation indexed while still empty — a new one, indexed before its first turn landed — is
+              // re-read now: otherwise it stayed unsearchable for 3 minutes
+              const thin = !this.index.textLength(s.sessionId);
+              if (last !== undefined && now - last < INDEX_LIVE_MS && !thin) {
                 retry(INDEX_LIVE_MS - (now - last));
                 continue;
               }
@@ -740,7 +825,9 @@ export class LibraryService extends EventEmitter {
 
   private watch(kind: AgentKind) {
     if (!this.watchDirs || this.watchers.has(kind)) return;
-    const dirs = (this.watchDirs[kind] ?? []).filter((d) => existsSync(d));
+    // every configured tree, existing or not: watchTree looks for a missing one every 30 s and hooks on when it appears
+    // (Codex joined before its first run had no watcher at all, so its threads never showed up; 2026-10-01)
+    const dirs = this.watchDirs[kind] ?? [];
     if (!dirs.length) return;
     // one recursive handle per tree (watchTree): chokidar's watch per file was ~18 s of blocking at startup
     const ws = dirs.map((d) => watchTree(d, (rel) => {
@@ -749,9 +836,31 @@ export class LibraryService extends EventEmitter {
       this.scheduleIndex();
       // a Codex thread written by Codex itself (CLI / desktop): an open view of it re-reads (user report: it froze)
       const id = rel && kind === 'codex' ? codexRolloutId(rel) : null;
-      if (id) this.noteWritten(libraryId('codex', id));
+      if (id) {
+        const lid = libraryId('codex', id);
+        this.noteWritten(lid);
+        // a conversation started here: the window has it open under this app's id, not the thread's. The list's merge
+        // knows it — unless the list is older than the thread (cached up to 10 min with a watcher): then our heads.
+        const here = this.merged.get(lid);
+        if (here) this.noteWritten(here);
+        else void this.startedHereFor(id).then((h) => { if (h) this.noteWritten(h); }, () => {});
+      }
     }));
     this.watchers.set(kind, { close: () => { for (const w of ws) w.close(); } });
+  }
+
+  /** Codex thread id → the conversation here that started it, from our own heads; re-read on a miss, at most every 10 s. */
+  private startedHere = new Map<string, string>();
+  private startedHereAt = 0;
+  private async startedHereFor(thread: string): Promise<string | undefined> {
+    const hit = this.startedHere.get(thread);
+    if (hit || Date.now() - this.startedHereAt < 10_000) return hit;
+    this.startedHereAt = Date.now();
+    const m = new Map<string, string>();
+    // rollout names come lower-cased (codexRolloutId)
+    for (const { head } of await this.transcripts.entries()) if (head.agent === 'codex' && head.nativeSessionId && !head.imported) m.set(head.nativeSessionId.toLowerCase(), head.sessionId);
+    this.startedHere = m;
+    return m.get(thread);
   }
 
   private written = new Set<string>();

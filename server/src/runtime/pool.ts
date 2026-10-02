@@ -9,8 +9,11 @@ import { AcpDriver } from '../agents/acp-driver.js';
 import { beforeAppServer } from '../gateway/agents.js';
 import { CodexDriver } from '../agents/codex-driver.js';
 import { proxy } from '../net/proxy.js';
+import { withExplanation } from '../errors/explain.js';
 
 const IDLE_TTL_MS = 30 * 60 * 1000;
+/** an idle Codex conversation lets go of its thread after this (the Codex CLI cannot resume it while we hold it) */
+export const CODEX_IDLE_TTL_MS = 2 * 60 * 1000;
 
 /**
  * How long an idle Claude session keeps its process. Reopening means `--resume`, and ccb rebuilds the first user
@@ -92,7 +95,12 @@ export class RunnerPool extends EventEmitter {
       const local = Object.values(gw.env).find((v) => /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])[:/]/i.test(v));
       if (local) Object.assign(env, loopbackNoProxy({ OPENAI_BASE_URL: local, NO_PROXY: env.NO_PROXY ?? process.env.NO_PROXY, no_proxy: env.no_proxy ?? process.env.no_proxy }));
       const launch = { command: l.command, args: beforeAppServer(l.args, gw.args), env, model: l.model, name: l.def.name, login: l.def.login };
-      r = l.def.protocol === 'codex' ? new CodexDriver(kind, launch, params, this.transcripts) : new AcpDriver(kind, launch, params, this.transcripts, resumeHistory);
+      // before Codex resumes a thread, turns the Codex CLI added to it go into the mirror (library.syncMirror)
+      const sid = params.sessionId;
+      const beforeResume = sid && this.syncMirror ? () => this.syncMirror!(sid) : undefined;
+      r = l.def.protocol === 'codex' ? new CodexDriver(kind, launch, params, this.transcripts, { beforeResume }) : new AcpDriver(kind, launch, params, this.transcripts, resumeHistory);
+      // an idle Codex holds its thread: `codex exec resume` in a terminal fails "already has an active writer" until it goes
+      if (l.def.protocol === 'codex') this.ttl.set(r, CODEX_IDLE_TTL_MS);
       // the composer's model chip reads the profile off the info (`档案 / 模型`); Claude's runner sets it itself
       const name = params.providerId && params.providerId !== 'claude' ? this.providers.meta?.provider(params.providerId)?.name : undefined;
       if (name) Object.assign(r.info, { providerId: params.providerId, providerName: name });
@@ -108,7 +116,8 @@ export class RunnerPool extends EventEmitter {
       // a replaced runner (reopened after an error) must not report its shutdown as the new one's state
       const holder = this.runners.get(r.sessionId);
       if (holder && holder !== r) return;
-      this.emit('state', r.sessionId, s, err);
+      // every agent's failure in the user's words, the original kept under it (Claude's runner explains its own already)
+      this.emit('state', r.sessionId, s, s === 'error' && err ? withExplanation(err) : err);
       // after init the map may be keyed by sessionId rather than id; only drop entries that still point at this runner
       if (s === 'closed') for (const k of [r.id, r.sessionId]) if (this.runners.get(k) === r) this.runners.delete(k);
     });
@@ -140,10 +149,18 @@ export class RunnerPool extends EventEmitter {
     if (params.sessionId) {
       const recorded = meta.sessionMeta(params.sessionId).providerId;
       if (this.fits(recorded, agent)) return { providerId: recorded, byPool: true };
-      return recorded ? { providerId: this.defaultProviderFor(agent), byPool: true } : { byPool: false };
+      if (recorded) return { providerId: this.defaultProviderFor(agent), byPool: true };
+      // nothing recorded (a conversation made in the CLI) = the account — unless the account is known to be logged
+      // out: then the default provider, like a new conversation (it failed "Not logged in" with a provider set up)
+      return agent === 'claude' && this.accountLoggedOut?.() ? { providerId: this.defaultProviderFor(agent), byPool: true } : { byPool: false };
     }
     return { providerId: this.defaultProviderFor(agent), byPool: true };
   }
+
+  /** Set by the server: the last `claude auth status` said logged out (unknown = false). */
+  accountLoggedOut?: () => boolean;
+  /** Set by the server: bring turns another writer added to an agent's thread into the mirror (library.syncMirror). */
+  syncMirror?: (sessionId: string) => Promise<unknown>;
 
   /** The provider a new session of `agent` gets (undefined = the account / the agent's own login). */
   defaultProviderFor(agent: AgentKind): string | undefined {
@@ -169,6 +186,18 @@ export class RunnerPool extends EventEmitter {
     await r.close();
   }
 
+  /**
+   * The transcript of a conversation changed. An idle Claude process whose conversation got a turn from somewhere else
+   * (the CLI in a terminal) has a stale context: its next turn answered without that turn and branched it off for good.
+   * Close it; the window re-reads the transcript and the next message resumes from disk.
+   */
+  transcriptChanged(sessionId: string) {
+    const r = this.runners.get(sessionId);
+    if (!(r instanceof SessionRunner) || !r.wroteElsewhere()) return;
+    this.runners.delete(sessionId);
+    void r.yieldToOutside().catch(() => { /* already gone */ });
+  }
+
   findPermission(requestId: string) {
     for (const r of this.runners.values()) if (r.getPendingPermissions().some((p) => p.requestId === requestId)) return r;
     return undefined;
@@ -180,7 +209,7 @@ export class RunnerPool extends EventEmitter {
     for (const [id, r] of this.runners) {
       if (r.state !== 'idle') continue;
       if (now - r.lastActivity > (this.ttl.get(r) ?? IDLE_TTL_MS)) void this.close(id).catch(() => { /* already gone */ });
-      else if (this.ttl.has(r)) idleClaude.push([id, r]);
+      else if (r instanceof SessionRunner) idleClaude.push([id, r]);
     }
     // cap on idle Claude processes: the least recently used beyond MAX_IDLE_CLAUDE go
     idleClaude.sort((a, b) => a[1].lastActivity - b[1].lastActivity);

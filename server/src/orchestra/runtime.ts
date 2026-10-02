@@ -28,7 +28,8 @@ const SWAP_GRACE_MS = 3000;
 export function poolWatch(pool: Pick<RunnerPool, 'on' | 'off' | 'get'>, sessionId: string, on: SessionHandlers, graceMs = SWAP_GRACE_MS): () => void {
   let active = true;
   let swapping = false;
-  const onMsg = (sid: string, m: unknown) => { if (active && sid === sessionId) on.message?.(m); };
+  // the turn a provider switch cut off ends with a result of its own (session/swap.ts): the hand-over below decides the node
+  const onMsg = (sid: string, m: unknown) => { if (active && sid === sessionId && (m as any)?.terminal_reason !== 'aborted_swap') on.message?.(m); };
   const onSwap = (sid: string) => { if (sid === sessionId) swapping = true; };
   const onState = (sid: string, state: string, err?: string) => {
     if (!active || sid !== sessionId) return;

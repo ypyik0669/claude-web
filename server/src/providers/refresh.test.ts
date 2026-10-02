@@ -18,6 +18,9 @@ beforeAll(async () => {
   srv = http.createServer((q, s) => {
     const key = String(q.headers.authorization ?? '').replace(/^Bearer /, '');
     hits.push(`${key} ${q.url}`);
+    // a flaky route: the first request of this key loses its connection, the next one is answered
+    if (key === 'k-flaky' && hits.filter((h) => h.startsWith('k-flaky ')).length === 1) { q.socket.destroy(); return; }
+    if (key === 'k-dead') { q.socket.destroy(); return; }
     inFlight++;
     maxInFlight = Math.max(maxInFlight, inFlight);
     setTimeout(() => {
@@ -178,5 +181,20 @@ describe('providers.probe listOnly', () => {
     expect(hits).toEqual(['k-3 /v1/models']);
     const bad = await svc.probe(undefined, { type: 'openai', baseUrl: base, apiKey: 'k-bad' }, { listOnly: true });
     expect(bad).toMatchObject({ ok: false, status: 401 });
+  });
+});
+
+describe('the model list on a flaky route', () => {
+  it('a request that loses its connection is tried once more; an HTTP error is not', async () => {
+    const { probeProvider } = await import('./service.js');
+    const ok = await probeProvider({ type: 'openai', baseUrl: base, apiKey: 'k-flaky' }, 10);
+    expect(ok.ok).toBe(true);
+    expect(hits.filter((h) => h.startsWith('k-flaky '))).toHaveLength(2);
+    const dead = await probeProvider({ type: 'openai', baseUrl: base, apiKey: 'k-dead' }, 10);
+    expect(dead.ok).toBe(false);
+    expect(hits.filter((h) => h.startsWith('k-dead '))).toHaveLength(2); // twice, then the error
+    const bad = await probeProvider({ type: 'openai', baseUrl: base, apiKey: 'k-bad' }, 10);
+    expect(bad).toMatchObject({ ok: false, status: 401 });
+    expect(hits.filter((h) => h.startsWith('k-bad '))).toHaveLength(1);
   });
 });

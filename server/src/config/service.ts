@@ -117,9 +117,14 @@ export class ConfigService {
   auth(force = false): Promise<any> {
     return this.authMemo.get('auth', async () => {
       const r = await runClaudeCli(['auth', 'status']);
-      return { ...tryJson<any>(r.stdout, { raw: r.stdout }), stderr: r.code ? r.stderr : undefined };
+      const a = { ...tryJson<any>(r.stdout, { raw: r.stdout }), stderr: r.code ? r.stderr : undefined };
+      if (typeof a.loggedIn === 'boolean') this.lastLoggedIn = a.loggedIn;
+      return a;
     }, force);
   }
+  private lastLoggedIn: boolean | undefined;
+  /** The last answer said logged out (never asked yet = false). */
+  knownLoggedOut() { return this.lastLoggedIn === false; }
 
   async doctor() {
     const r = await runClaudeCli(['doctor'], { timeoutMs: 120_000 });

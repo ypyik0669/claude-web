@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { RunnerPool } from '../runtime/pool.js';
 import type { AgentTranscripts } from '../agents/transcript.js';
 import type { MetaStore } from '../meta/store.js';
-import type { AgentKind, OpenSessionParams, SessionInfoSnapshot } from '../protocol.js';
+import { CLAUDE_PROVIDER_ID, type AgentKind, type OpenSessionParams, type SessionInfoSnapshot } from '../protocol.js';
 import type { CanonicalLog } from './canonical.js';
 import { renderBriefing, toClaudeEntries } from './handoff.js';
 import { seedCanonical } from '../library/briefing.js';
@@ -54,10 +54,32 @@ async function stop(pool: RunnerPool, sessionId: string) {
   const r = pool.get(sessionId);
   if (!r) return null;
   const info = r.info;
+  const midTurn = r.state === 'running' || r.state === 'waiting';
   // tell session watchers (orchestration) that the coming 'closed' is a handover to a new runner
   pool.emit('swapping', sessionId);
   await pool.close(sessionId).catch(() => { /* already gone */ });
+  // a turn cut off by the switch never gets its result: windows kept it open (timer running, tool cards spinning)
+  if (midTurn) {
+    const text = '已切换，这一轮被中断了。需要的话把刚才的消息再发一次。';
+    pool.emit('message', sessionId, {
+      type: 'result', subtype: 'error_during_execution', is_error: true, result: text, errors: [text], terminal_reason: 'aborted_swap',
+      duration_ms: 0, duration_api_ms: 0, num_turns: 0, total_cost_usd: 0,
+      usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      modelUsage: {}, permission_denials: [], session_id: sessionId, uuid: randomUUID(),
+    });
+  }
   return info;
+}
+
+/**
+ * Tell every window about the new process the moment it exists. The old one's 「closed」 has just gone out, and the
+ * new runner speaks up only once its CLI has started — ccb on an OpenAI-format provider can take 15–30 s — so until
+ * then a window showed 「已关闭」 under the OLD model, and a send in that gap reopened the conversation on the old
+ * provider (real-relay test 2026-10-01).
+ */
+function announce(pool: RunnerPool, r: { sessionId: string; info: unknown; state?: string }) {
+  pool.emit('info', r.info);
+  pool.emit('state', r.sessionId, r.state ?? 'starting');
 }
 
 /**
@@ -73,6 +95,15 @@ export function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Pro
   swapLocks.set(sessionId, tail);
   void tail.then(() => { if (swapLocks.get(sessionId) === tail) swapLocks.delete(sessionId); });
   return next;
+}
+
+/**
+ * Resolves once nothing holds this conversation's lock: a message sent while its provider is being switched (the old
+ * process closed, the new one not open yet) was refused "session … is not open" and lost — it waits instead.
+ */
+export function afterSwitch(sessionId: string): Promise<void> {
+  const busy = swapLocks.get(sessionId);
+  return busy ? busy.then(() => afterSwitch(sessionId)) : Promise.resolve();
 }
 
 export const normProvider = (id: string | undefined) => (id && id !== 'claude' ? id : undefined);
@@ -111,7 +142,11 @@ export function openOnProvider<T>(
 ): Promise<T> {
   const sid = params.sessionId && !params.fork && !params.resumeAt ? params.sessionId : undefined;
   const to = params.providerId;
-  if (!sid || to === undefined) return hooks.open(params);
+  if (!sid) return hooks.open(params);
+  // a plain open waits for a switch in progress too: during one the old runner is gone and the new one not there yet,
+  // so the open started a process on the provider still on record — and the switch then got that process back and
+  // recorded a provider it was not running on (2026-10-01, real relays)
+  if (to === undefined) return withSessionLock(sid, () => hooks.open(params));
   return withSessionLock(sid, async () => {
     const live = d.pool.get(sid);
     if (live && live.state !== 'closed' && live.state !== 'error') {
@@ -153,10 +188,20 @@ async function swapProviderNow(d: Pick<SwapDeps, 'pool' | 'meta' | 'canonical'>,
     effort: prev?.effort ?? undefined,
     permissionMode: prev?.permissionMode,
     features: prev?.features,
-    providerId,
-    agent: prev?.agent ?? 'claude',
+    // the account is a choice too: "not given" would let the pool resume on the provider still on record — the window
+    // said 「Claude 账号」 while the provider kept answering (and billing; 2026-10-01, real relays)
+    providerId: providerId ?? CLAUDE_PROVIDER_ID,
+    // not running: the conversation's own agent (a closed Codex conversation reopened as Claude before)
+    agent: prev?.agent ?? (await (d as Partial<SwapDeps>).transcripts?.head(sessionId).catch(() => null))?.agent ?? 'claude',
   };
-  const r = d.pool.open(params);
+  let r = d.pool.open(params);
+  // something reopened it in the gap on the provider still on record (IM / schedules / goals open through the pool, not
+  // under this lock): that process is not the switch — replace it, so the record below is what really runs
+  if (normProvider(r.info.providerId) !== normProvider(params.providerId)) {
+    await d.pool.close(sessionId).catch(() => { /* already gone */ });
+    r = d.pool.open(params);
+  }
+  announce(d.pool, r);
   // recorded once the new process exists (re-review n-3): an open that throws (a key that no longer decrypts) leaves
   // the old provider on record, which is what the next open should use
   await recordProviderSwitch(d, sessionId, before, providerId, providerName);
@@ -199,15 +244,20 @@ async function swapAgentNow(d: SwapDeps, sessionId: string, agent: AgentKind, mo
     providerId: d.pool.defaultProviderFor?.(agent) ?? 'claude',
     // Claude resumes from synthesized entries; the others get the briefing as their first message
     resumeEntries: agent === 'claude' ? toClaudeEntries(events, { cwd, sessionId, briefing }) : undefined,
+    briefing: agent === 'claude' ? briefing : undefined,
   } as OpenSessionParams;
 
-  // the foreign-agent transcript has to exist (and name the new agent) before the driver appends
-  if (agent !== 'claude') {
+  // the foreign-agent transcript has to exist (and name the new agent) before the driver appends; back to Claude it
+  // steps aside (kept for a later hand-over to that agent, which picks its own thread up again)
+  if (agent === 'claude') await d.transcripts.park(sessionId);
+  else {
+    await d.transcripts.unpark(sessionId, agent);
     if (await d.transcripts.exists(sessionId)) await d.transcripts.patchHead(sessionId, { agent, model });
     else await d.transcripts.create({ agent, cwd, title: objective ?? '交接的对话', createdAt: Date.now(), sessionId, model });
   }
 
   const r = d.pool.open(params);
+  announce(d.pool, r);
   await d.meta.setSessionMeta(sessionId, { providerId: normProvider(params.providerId) }).catch(() => { /* kept in memory; the next save persists it */ });
   if (agent !== 'claude') deliverBriefing(r, briefing);
   return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), briefing: agent === 'claude' ? undefined : briefing };
@@ -241,6 +291,7 @@ async function handOverImported(d: SwapDeps, fromId: string, src: { agent: Agent
     model,
     agent,
     resumeEntries: agent === 'claude' ? toClaudeEntries(events, { cwd, sessionId, briefing }) : undefined,
+    briefing: agent === 'claude' ? briefing : undefined,
   } as OpenSessionParams;
   const r = d.pool.open(params);
   if (agent !== 'claude') deliverBriefing(r, briefing);

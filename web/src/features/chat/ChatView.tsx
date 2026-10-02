@@ -22,6 +22,7 @@ import { openChangedFile } from '@/features/workbench/right-panel';
 import { waitingToolIds } from './permission-dock';
 import { TurnTouchCtx, WaitingCtx } from './turn-context';
 import { externalLive } from '@/store/external';
+import { withExplanation } from '@errors';
 
 const EDIT_STEPS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const NO_PENDING: PermissionRequestEvent[] = [];
@@ -511,7 +512,7 @@ export function ChatView() {
         <WaitingCtx.Provider value={waiting}>
           <TurnList items={active.conv.items} version={version} live={live} sessionId={sid} cwd={active.cwd || listCwd || ''} />
         </WaitingCtx.Provider>
-        {active.error && <div className="sysline" style={{ color: 'var(--red)' }}>{active.error}</div>}
+        {active.error && <div className="sysline" role="alert" style={{ color: 'var(--red)', whiteSpace: 'pre-line', userSelect: 'text' }}>{withExplanation(active.error)}</div>}
         {active.state === 'running' && !active.conv.streaming.size && (
           <div className="working">
             <span className="spinner" /> 处理中

@@ -44,3 +44,19 @@ describe('SseLines', () => {
     expect(s.push(line) + s.end()).toBe(line);
   });
 });
+
+describe('dropEmptyReasoning (qwen3.8: ccb took "" for "thinking starts" and the answer went into a thinking block)', () => {
+  it('drops an empty reasoning_content from stream deltas and whole messages; leaves real reasoning alone', async () => {
+    const { dropEmptyReasoning } = await import('./cache.js');
+    const lines = new SseLines((j) => dropEmptyReasoning(j));
+    const out = lines.push('data: {"choices":[{"index":0,"delta":{"content":"alpha","reasoning_content":""}}]}\n\ndata: {"choices":[{"delta":{"reasoning_content":"real thought"}}]}\n\ndata: [DONE]\n\n');
+    const datas = out.split('\n').filter((l) => l.startsWith('data: {')).map((l) => JSON.parse(l.slice(6)));
+    expect(datas[0].choices[0].delta).toEqual({ content: 'alpha' });
+    expect(datas[1].choices[0].delta).toEqual({ reasoning_content: 'real thought' });
+    expect(out).toContain('data: [DONE]');
+    const whole = { choices: [{ message: { role: 'assistant', content: 'x', reasoning_content: '' } }] };
+    expect(dropEmptyReasoning(whole)).toBe(true);
+    expect(whole.choices[0].message).toEqual({ role: 'assistant', content: 'x' });
+    expect(dropEmptyReasoning({ choices: [{ delta: { content: 'y' } }] })).toBe(false);
+  });
+});

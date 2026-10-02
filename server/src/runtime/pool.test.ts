@@ -197,6 +197,14 @@ describe('RunnerPool: the provider when the caller does not name one (IM, schedu
     expect(seen).toEqual([undefined]);
   });
 
+  it('…unless the account is known to be logged out: then the default provider, recorded (it failed "Not logged in")', () => {
+    const { p, seen, writes } = setup({ settings: { defaultProviderId: 'claudeRelay' } });
+    p.accountLoggedOut = () => true;
+    p.open({ sessionId: 'cli-made', cwd: 'C:/x' });
+    expect(seen).toEqual(['claudeRelay']);
+    expect(writes).toEqual([['cli-made', { providerId: 'claudeRelay' }]]);
+  });
+
   it('an explicit provider always wins — the account included', () => {
     const { p, seen, writes } = setup({ settings: { defaultProviderId: 'relay' }, recorded: { s1: { providerId: 'relay' } } });
     p.open({ cwd: 'C:/x', providerId: 'claude' });

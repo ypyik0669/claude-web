@@ -1,6 +1,7 @@
 import type { WebSocket, WebSocketServer } from 'ws';
-import type { ClientRequest, OpenSessionParams, ServerEvent, WireDown, WireUp } from '../protocol.js';
+import { CLAUDE_PROVIDER_ID, type ClientRequest, type OpenSessionParams, type ServerEvent, type WireDown, type WireUp } from '../protocol.js';
 import { RunnerPool } from '../runtime/pool.js';
+import { SessionRunner } from '../runtime/session-runner.js';
 import { cacheParentFor } from '../runtime/cache-key.js';
 import { SessionService } from '../sessions/service.js';
 import { ConfigService } from '../config/service.js';
@@ -35,7 +36,7 @@ import type { CanonicalLog } from '../session/canonical.js';
 import type { MemoryService } from '../memory/service.js';
 import { harvest } from '../memory/extract.js';
 import { setMemoryMcpEnabled } from '../memory/launcher.js';
-import { normProvider, openOnProvider, swapAgent, swapProvider } from '../session/swap.js';
+import { afterSwitch, normProvider, openOnProvider, swapAgent, swapProvider } from '../session/swap.js';
 import { expandSessionRefs } from '../library/briefing.js';
 import type { LibraryService } from '../library/service.js';
 import type { GatewayService } from '../gateway/service.js';
@@ -129,7 +130,10 @@ export class Hub {
     s.memory.on('changed', () => this.broadcast({ kind: 'memory.changed' }));
     s.library.on('changed', () => this.broadcast({ kind: 'library.changed' }));
     s.library.on('transcripts', (ids: string[]) => this.broadcast({ kind: 'transcripts.changed', sessionIds: ids }));
-    s.sessions.on('transcripts', (ids: string[]) => this.broadcast({ kind: 'transcripts.changed', sessionIds: ids }));
+    s.sessions.on('transcripts', (ids: string[]) => {
+      for (const id of ids) s.pool.transcriptChanged(id); // a turn from a terminal on a conversation held open here
+      this.broadcast({ kind: 'transcripts.changed', sessionIds: ids });
+    });
     s.library.on('discovered', (kinds) => this.broadcast({ kind: 'library.discovered', kinds }));
     s.gateway.on('changed', () => this.broadcast({ kind: 'gateway.changed' }));
 
@@ -216,6 +220,9 @@ export class Hub {
     if (cacheParentId) params = { ...params, cacheParentId };
     // forks: copy the transcript first (SDK forkSession) so the new session has a real id before the process starts
     if (params.sessionId && (params.fork || params.resumeAt)) {
+      // right after a turn the CLI is still writing its last answer (~2 s after the result): a copy taken now lost it
+      const src = s.pool.get(params.sessionId);
+      if (src instanceof SessionRunner) await src.flushed();
       const newId = await s.sessions.fork(params.sessionId, params.resumeAt);
       params = { ...params, sessionId: newId, fork: false, resumeAt: undefined };
     }
@@ -249,7 +256,8 @@ export class Hub {
       case 'transcript.load': {
         // imported sessions (and anything a joined foreign source lists) are read from the agent itself
         const head = await s.transcripts.head(req.sessionId);
-        if (head && !head.imported) return s.transcripts.load(req.sessionId);
+        // ours (the mirror) — the library first brings in turns the agent's own CLI added since (Codex)
+        if (head && !head.imported) return (await s.library.read(req.sessionId)).messages;
         if (head?.imported || (await s.library.kindOf(req.sessionId)) !== 'claude') return (await s.library.read(req.sessionId)).messages;
         return s.sessions.transcript(req.sessionId);
       }
@@ -299,6 +307,7 @@ export class Hub {
         if (outgoing.includes('<session-ref ')) {
           outgoing = await expandSessionRefs(outgoing, (id) => s.library.readAll(id));
         }
+        await afterSwitch(req.params.sessionId); // a switch in progress: the new process takes it
         this.runner(req.params.sessionId).send(outgoing, req.params.images, req.params.steer, req.params.uuid, req.params.attachments);
         // Neither path echoes the user's own message back through the pool (the SDK doesn't, and the
         // foreign drivers `record()` it without emitting), so the canonical mirror has to be told here
@@ -423,22 +432,33 @@ export class Hub {
         await s.pool.close(req.sessionId);
         return null;
       case 'session.setPermissionMode':
+        await afterSwitch(req.sessionId);
         await this.runner(req.sessionId).setPermissionMode(req.mode);
         return null;
-      case 'session.setModel':
-        await this.runner(req.sessionId).setModel(req.model);
+      case 'session.setModel': {
+        await afterSwitch(req.sessionId);
+        const r = this.runner(req.sessionId);
+        // picked for the provider this window saw: another window switched in the meantime → the model may not even
+        // exist there (it was applied anyway and every turn failed "issue with the selected model")
+        if (req.providerId !== undefined && normProvider(req.providerId) !== normProvider(r.info.providerId)) throw new Error('这个对话刚刚换了供应商，这次选的模型没有用上，请在模型菜单里重新选');
+        await r.setModel(req.model);
         return null;
+      }
       case 'session.setEffort':
+        await afterSwitch(req.sessionId);
         await this.runner(req.sessionId).setEffort?.(req.effort);
         return null;
       case 'session.setUltracode':
+        await afterSwitch(req.sessionId);
         await this.runner(req.sessionId).setUltracode?.(req.on);
         return null;
       // Swapping the provider or the agent behind a live session. Both are an invisible restart:
       // the CLI's env is fixed at spawn, so "no restart" can only mean the user never sees one.
       case 'session.setProvider': {
-        const p = req.providerId ? s.providers.forSession(req.providerId) : undefined;
-        if (req.providerId && !p) throw new Error('没有这个供应商档案');
+        // 'claude' = back to the account, like no provider at all (the window sends either)
+        const own = !req.providerId || req.providerId === CLAUDE_PROVIDER_ID;
+        const p = own ? undefined : s.providers.forSession(req.providerId);
+        if (!own && !p) throw new Error('没有这个供应商');
         // the agent behind the session must be able to use this profile type (Codex cannot talk to an Anthropic relay…)
         const agent = s.pool.get(req.sessionId)?.info.agent ?? (await s.transcripts.head(req.sessionId).catch(() => null))?.agent ?? 'claude';
         const unfit = s.providers.fitError(req.providerId, agent);

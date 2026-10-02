@@ -6,6 +6,7 @@ import { activeGroup, chatTile, deriveActive, hasLegacyLayout, initialLayout, la
 import { PaneContext, winId } from './paneContext';
 import { useContext } from 'react';
 import { isAuthAnswer, type AccountAuth } from './auth';
+import { withExplanation } from '@errors';
 export type { AccountAuth } from './auth';
 
 export const THEMES = ['dark', 'light', 'dracula', 'nord', 'tokyo-night', 'paper'] as const;
@@ -415,6 +416,11 @@ export const useStore = create<State>((set, get) => ({
   },
   toast(text, ok, ms = 5000) {
     const id = Date.now() + Math.random();
+    // a failure we recognise gets its Chinese explanation on top, the original underneath (@errors) — and time to read it
+    if (!ok) {
+      const told = withExplanation(text);
+      if (told !== text) { text = told; ms = Math.max(ms, 10_000); }
+    }
     set((s) => ({ toasts: [...s.toasts, { id, text, ok }] }));
     setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), ms);
   },
@@ -866,7 +872,7 @@ export const useStore = create<State>((set, get) => ({
     } catch (e: any) {
       // not taken (its process died before this window heard about it): end the turn shown as running and say why;
       // the 'error' state makes the next send reopen the conversation (above)
-      const why = String(e?.message ?? e);
+      const why = withExplanation(String(e?.message ?? e));
       set((s) => bump(s, sessionId, (x) => { x.state = 'error'; x.error = why; x.conv.turnStartedAt = undefined; }));
       throw e;
     }

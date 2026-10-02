@@ -39,6 +39,13 @@ describe('LedgerService.observe', () => {
     l.observe('s', { ...result('gpt-5-codex', { input_tokens: 1, output_tokens: 1 }, 0), cost_unknown: true });
     expect(rows[0]).toMatchObject({ costUsd: 0, costUnknown: true });
   });
+  it('the end-of-turn marker a provider switch emits is not a call: no row', () => {
+    const { l, rows } = ledger();
+    l.observe('s', { type: 'result', subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_swap', total_cost_usd: 0, usage: {}, modelUsage: {} });
+    l.observe('s', { type: 'result', subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_streaming', total_cost_usd: 0.1, usage: { input_tokens: 5 }, modelUsage: { 'claude-opus-4-5': {} } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ ok: false, model: 'claude-opus-4-5' });
+  });
   it('cache writes are recorded', () => {
     const { l, rows } = ledger();
     l.observe('s', result('claude-opus-4-5', { input_tokens: 3, output_tokens: 1, cache_read_input_tokens: 10, cache_creation_input_tokens: 7 }));

@@ -99,6 +99,9 @@ export interface OpenSessionParams {
   /** Transcript entries to resume a Claude session from (SessionStore.load); used when a session
    *  is handed over from another agent and Claude has no native JSONL for this id. */
   resumeEntries?: Record<string, unknown>[];
+  /** Server-set with `resumeEntries`: the hand-over briefing as text, sent as the first message by an engine that
+   *  cannot resume from entries (ccb has no session mirror). */
+  briefing?: string;
   /** Server-set: the prompt-cache route key when it is not this session's id — a fork's root (its prefix is the
    *  parent's), kept in `SessionMeta.cacheKey` for later reopens (runtime/cache-key.ts). */
   cacheParentId?: string;
@@ -324,7 +327,8 @@ export type ClientRequest =
   | { kind: 'session.interrupt'; sessionId: string }
   | { kind: 'session.close'; sessionId: string }
   | { kind: 'session.setPermissionMode'; sessionId: string; mode: PermissionMode }
-  | { kind: 'session.setModel'; sessionId: string; model: string }
+  /** `providerId`: the provider the pick was made for ('claude' = the account); a switch in between drops the pick */
+  | { kind: 'session.setModel'; sessionId: string; model: string; providerId?: string }
   | { kind: 'session.setEffort'; sessionId: string; effort: EffortLevel }
   | { kind: 'session.setUltracode'; sessionId: string; on: boolean }
   | { kind: 'session.setProvider'; sessionId: string; providerId?: string; model?: string } // model: the respawned process starts on it

@@ -197,19 +197,42 @@ export function providerTypesFor(agent: AgentKind): ProviderType[] {
 const AGENT_LABEL: Partial<Record<string, string>> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI', qwen: 'Qwen Code', kimi: 'Kimi CLI', opencode: 'OpenCode' };
 
 /**
- * Why a profile of `type` cannot drive `agent` (null = it can). `runtime` is the engine a Claude session would
- * run on: only ccb speaks OpenAI / Gemini / Grok; the official Claude Code binary (forced per profile, or the
- * silent fallback when ccb is missing) only talks Anthropic — to a relay or through the local gateway.
+ * ccb 2.8.4 decides thinking by the model's name: adaptive for the opus-4-6 / opus-4-7 / sonnet-4-6 it knows, a fixed
+ * `budget_tokens` for every other opus / sonnet / haiku. The Claude 5 models came after it, and claude-opus-5-5
+ * refuses a budget — 400 "requires adaptive thinking" (aizhongzhuan, 2026-10-01; the official binary sends adaptive
+ * and the same key answers). True for the ids ccb would send a budget to that are Claude 5 or later.
  */
+export function ccbMisthinks(model: string | undefined): boolean {
+  const m = /(?:^|[^a-z])(opus|sonnet|haiku)[-_.]?(\d{1,2})(?!\d)/i.exec(model ?? '');
+  return !!m && Number(m[2]) >= 5;
+}
+
+/** The model id a provider session actually sends: an alias goes through the profile's family map; ccb's default follows the opus one. */
+export function providerModelId(p: { defaultModel?: string; modelMap?: { haiku?: string; sonnet?: string; opus?: string } }, model: string | undefined): string {
+  const m = (model || p.defaultModel || '').replace(/\[1m\]$/i, '');
+  const map = p.modelMap ?? {};
+  if (!m || m === 'default') return map.opus ?? '';
+  return (m === 'opus' || m === 'sonnet' || m === 'haiku' ? map[m] : undefined) ?? m;
+}
+
 /**
  * The runtime a Claude session on a provider asks for. OpenAI / Gemini / Grok formats exist only in ccb, so a pin to
  * the official binary on one of those is ignored — it is left over from an Anthropic-format past (the probe pins a
  * relay like super-nb to the official binary; switching that provider's format to OpenAI kept the pin, and every
- * model of it then showed greyed out: user report, 「GPT 选不了模型」).
+ * model of it then showed greyed out: user report, 「GPT 选不了模型」). With `model` given, an Anthropic-format
+ * provider left on automatic runs a model ccb gets wrong (`ccbMisthinks`) on the official binary.
  */
-export const preferredRuntime = (p: { type: ProviderType; runtime?: RuntimeKind }): RuntimeKind | undefined =>
-  p.type === 'openai' || p.type === 'gemini' || p.type === 'grok' ? 'ccb' : p.runtime;
+export const preferredRuntime = (p: { type: ProviderType; runtime?: RuntimeKind; defaultModel?: string; modelMap?: { haiku?: string; sonnet?: string; opus?: string } }, model?: string): RuntimeKind | undefined => {
+  if (p.type === 'openai' || p.type === 'gemini' || p.type === 'grok') return 'ccb';
+  if (p.runtime || model === undefined) return p.runtime;
+  return ccbMisthinks(providerModelId(p, model)) ? 'claude' : undefined;
+};
 
+/**
+ * Why a profile of `type` cannot drive `agent` (null = it can). `runtime` is the engine a Claude session would
+ * run on: only ccb speaks OpenAI / Gemini / Grok; the official Claude Code binary (forced per profile, or the
+ * silent fallback when ccb is missing) only talks Anthropic — to a relay or through the local gateway.
+ */
 export function profileFitError(agent: AgentKind, type: ProviderType, runtime?: RuntimeKind): string | null {
   const types = providerTypesFor(agent);
   if (!types.includes(type)) return `${AGENT_LABEL[agent] ?? agent} 不能用 ${type} 类型的供应商（只支持 ${types.join(' / ')}）`;
@@ -232,7 +255,8 @@ export function modelVersion(id: string): number[] {
 function newer(a: string, b: string): number {
   const x = modelVersion(a), y = modelVersion(b);
   for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? -1) !== (y[i] ?? -1)) return (y[i] ?? -1) - (x[i] ?? -1);
-  return a.length - b.length; // same version: the plain id before its -thinking / -latest variants
+  // same version: the plain id before its -thinking / -latest variants, and a lower-case id before an upper-case duplicate
+  return a.length - b.length || Number(a !== a.toLowerCase()) - Number(b !== b.toLowerCase());
 }
 
 /** The newest chat model in `models` matching `re`, or undefined. */
@@ -256,7 +280,7 @@ export function claudeFamilyMap(models: string[]): Partial<Record<Family, string
 /** What a coding agent should default to, first match wins (then the newest id within it). */
 export const CHAT_MODEL_PREFERENCE: RegExp[] = [
   /claude.*sonnet|sonnet.*claude/i, /claude.*opus|opus.*claude/i,
-  /^gpt-5(?!.*(nano|mini|chat|image|audio))/i, /deepseek-(chat|v\d)/i, /kimi-k2/i, /glm-[4-9]\.\d|glm-[5-9]/i,
+  /^gpt-(?:[5-9]|\d{2})(?!.*(nano|mini|chat|image|audio))/i, /deepseek-(chat|v\d)/i, /kimi-k2/i, /glm-[4-9]\.\d|glm-[5-9]/i,
   /qwen3?-coder/i, /qwen3|qwen-(max|plus)/i, /gemini-[\d.]+-pro/i, /grok-[\d]/i, /deepseek/i, /^gpt-4\.1|^gpt-4o/i,
 ];
 

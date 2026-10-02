@@ -455,3 +455,14 @@ describe('cache shim: Codex (/v1/responses in) on an openai profile', () => {
     delete meta.provider('ds')!.cacheShim;
   });
 });
+
+describe('clientErrorBody: an upstream error the OpenAI SDKs can read', () => {
+  it('wraps a {code, message} body and plain text; leaves an {error} body alone', async () => {
+    const { clientErrorBody } = await import('./shim.js');
+    expect(JSON.parse(clientErrorBody('{"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance"}')!)).toEqual({ error: { message: 'Insufficient account balance', type: 'upstream_error', code: 'INSUFFICIENT_BALANCE' } });
+    expect(JSON.parse(clientErrorBody('Bad Gateway')!).error.message).toBe('Bad Gateway');
+    expect(JSON.parse(clientErrorBody('')!).error.message).toMatch(/empty body/);
+    expect(clientErrorBody('{"error":{"message":"model not found","type":"invalid_request_error"}}')).toBeNull();
+    expect(clientErrorBody('{"error":"nope"}')).toBeNull();
+  });
+});

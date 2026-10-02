@@ -15,6 +15,8 @@ interface PendingPerm { event: PermissionRequestEvent; resolve: (r: any) => void
 
 // Codex's own ladder, verbatim: low | medium | high | xhigh | max | ultra. `max` and `ultra` are real
 // members here (unlike Claude, where the top rung is a separate ultracode flag).
+/** How long a resume waits for the mirror to take in the Codex CLI's turns before going ahead anyway. */
+const MIRROR_SYNC_MS = 20_000;
 const EFFORT_MAP: Record<EffortLevel, string> = { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max', ultra: 'ultra' };
 
 /**
@@ -43,9 +45,18 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
   private permissionMode: PermissionMode;
   /** per-turn usage from the cumulative thread totals (cached tokens are inside Codex's inputTokens) */
   private usage = new CodexUsageMeter();
+  /** Resolves once the mirror is up to date for this start (`hooks.beforeResume` ran): prompts are recorded after it. */
+  private mirrorReady: Promise<void>;
+  private mirrorIsReady = false;
+  private markMirrorReady!: () => void;
 
-  constructor(private kind: AgentKind, private launch: { command: string; args: string[]; env: Record<string, string>; model?: string; name: string }, params: OpenSessionParams, private transcripts: AgentTranscripts) {
+  /**
+   * `hooks.beforeResume`: runs before a thread is resumed — the library brings the turns the Codex CLI added to the
+   * thread into the mirror, so the prompt this driver records next lands after them, not in front.
+   */
+  constructor(private kind: AgentKind, private launch: { command: string; args: string[]; env: Record<string, string>; model?: string; name: string }, params: OpenSessionParams, private transcripts: AgentTranscripts, private hooks: { beforeResume?: () => Promise<unknown> } = {}) {
     super();
+    this.mirrorReady = new Promise<void>((res) => { this.markMirrorReady = () => { this.mirrorIsReady = true; res(); }; });
     this.cwd = params.cwd;
     this.sessionId = params.sessionId ?? randomUUID();
     this.id = this.sessionId;
@@ -80,6 +91,13 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
   }
 
   private async start(params: OpenSessionParams) {
+    // a thread to resume: the mirror first takes in what the Codex CLI wrote to it meanwhile (alongside the app-server
+    // starting; bounded, a slow read must not hold the conversation up)
+    const prior = params.sessionId ? await this.transcripts.head(this.sessionId).catch(() => null) : null;
+    const synced = prior?.nativeSessionId && this.hooks.beforeResume
+      ? Promise.race([this.hooks.beforeResume().catch(() => {}), new Promise((r) => setTimeout(r, MIRROR_SYNC_MS).unref?.())])
+      : Promise.resolve();
+    void synced.then(() => this.markMirrorReady());
     try {
       // the shared memory store, injected as `-c` overrides so ~/.codex/config.toml is never touched
       const args = insertCodexConfig(this.launch.args, { cwd: this.cwd, sessionId: this.sessionId, agent: this.kind });
@@ -99,8 +117,15 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
       const head = await this.transcripts.head(this.sessionId);
       let thread: any = null;
       if (params.sessionId && head?.nativeSessionId) {
-        try { thread = (await rpc.request('thread/resume', { threadId: head.nativeSessionId, cwd: this.cwd, model: this.model ?? null, approvalPolicy: pol.approvalPolicy, sandbox: pol.sandbox }, 120_000)).thread; } catch { thread = null; }
+        await synced;
+        let resumed: any = null;
+        try { resumed = await rpc.request('thread/resume', { threadId: head.nativeSessionId, cwd: this.cwd, model: this.model ?? null, approvalPolicy: pol.approvalPolicy, sandbox: pol.sandbox }, 120_000); thread = resumed.thread; } catch { thread = null; }
         if (!thread) this.push(this.synth.systemNote('Codex 线程无法恢复，已新开线程；上面的历史仅供查看。', 'warning'));
+        // reopened without a model: the one the thread runs on (the chip and the ledger had none — model "")
+        else if (!this.model) {
+          const m = resumed?.model ?? head.model;
+          if (m) { this.model = m; this.synth.setModel(m); this.info.model = m; }
+        }
       }
       if (!thread) {
         const r = await rpc.request('thread/start', { cwd: this.cwd, model: this.model ?? null, approvalPolicy: pol.approvalPolicy, sandbox: pol.sandbox, sessionStartSource: null }, 120_000);
@@ -203,7 +228,11 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
   send(text: string, images?: { mediaType: string; data: string }[], steer = false, uuid?: string, attachments?: AttachmentRef[]) {
     let body = text;
     for (const a of attachments ?? []) body += a.kind === 'text' && a.text ? `\n\n<attached name="${a.name}">\n${a.text}\n</attached>` : `\n\n<attached kind="${a.kind}" name="${a.name}" path="${a.path ?? ''}" />`;
-    this.record(this.synth.user(body, uuid, images)); // the web client already echoed it locally; keep it for transcripts / resume only
+    // the web client already echoed it locally; keep it for transcripts / resume only — after the turns the mirror is
+    // still taking in from the Codex CLI (a resume), never in front of them
+    const user = this.synth.user(body, uuid, images);
+    if (this.mirrorIsReady) this.record(user);
+    else void this.mirrorReady.then(() => this.record(user));
     if (steer && this.turnActive && this.rpc && this.threadId) {
       this.rpc.request('turn/steer', { threadId: this.threadId, turnId: this.turnId, input: [{ type: 'text', text: body, text_elements: [] }] }, 30_000).catch(() => this.queue.push({ text: body, images }));
       return;

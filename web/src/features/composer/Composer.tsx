@@ -20,7 +20,7 @@ import { sessionRefMarker } from '@/model/conversation';
 import { SessionRefChip } from '@/features/chat/ChatView';
 import { REFERENCE_EVENT, handOver, type ReferenceDetail } from '@/features/sidebar/session-actions';
 import { ModelChip } from '@/features/models/ModelMenu';
-import { OWN_PROVIDER, usableProfile, type AgentSource, type ModelMenuItem } from '@/features/models/menu';
+import { OWN_PROVIDER, effortStaysHome, usableProfile, type AgentSource, type ModelMenuItem } from '@/features/models/menu';
 import { resumeView } from '@/store/reopen';
 import { routePick, switchedNote } from '@/features/models/route';
 import { modelChipText } from '@/features/models/intelligence';
@@ -158,7 +158,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [welcome, foreign, wProvider, provider, providers, usableKey, settings.defaultProviderId, loggedIn]);
   // effort is per agent AND per model: Gemini has none, Codex alone has `ultra`, Opus/Sonnet 4.6 have no `xhigh`
-  const wEfforts = effortLevels(wKind, wModel || undefined);
+  const wEfforts = wKind === 'claude' && effortStaysHome(providers, wProvider) ? [] : effortLevels(wKind, wModel || undefined);
   // a level picked for another model that this one lacks falls back to the default (not sent, not shown)
   const wEffortOk = wEffort && wEfforts.includes(wEffort) ? wEffort : undefined;
   const wUltracode = !!CATALOG[wKind]?.supportsUltracode;
@@ -598,7 +598,8 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     if (act.kind === 'none') return true;
     if (act.kind === 'error') { toast(act.message); return false; }
     if (act.kind === 'setModel') {
-      try { await ws.request({ kind: 'session.setModel', sessionId: active.sessionId, model: act.model }); toast(switchedNote(it.label, active.conv.items.length > 0), true); return true; } catch (e: any) { toast(e.message); return false; }
+      // with the provider this pick was for: a switch from another window in between drops it (server-side check)
+      try { await ws.request({ kind: 'session.setModel', sessionId: active.sessionId, model: act.model, providerId: remote ? undefined : liveProvider }); toast(switchedNote(it.label, active.conv.items.length > 0), true); return true; } catch (e: any) { toast(e.message); return false; }
     }
     if (act.kind === 'handover') {
       // the same hand-over as ··· 「交给其它 Agent 继续」 (same confirm, same refresh), on the picked model
@@ -746,7 +747,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     const v = resumeView(active, sessionMeta[active.sessionId]);
     const rAgent = sessionAgent;
     const rProvider = remote ? 'claude' : v.providerId;
-    const rEfforts = effortLevels(rAgent, v.model);
+    const rEfforts = rAgent === 'claude' && effortStaysHome(providers, rProvider) ? [] : effortLevels(rAgent, v.model);
     const rUltraOk = !remote && !!CATALOG[rAgent]?.supportsUltracode;
     const t = modelChipText({ agent: rAgent, agentName: agents.find((a) => a.kind === rAgent)?.name, providers, providerId: rProvider, model: v.model, agentDefault: resumeAgentDefault, efforts: rEfforts, effort: v.effort, defaultEffort: CATALOG[rAgent]?.defaultEffort, ultracode: rUltraOk && v.ultracode, accountDefault });
     const sid = active.sessionId;
