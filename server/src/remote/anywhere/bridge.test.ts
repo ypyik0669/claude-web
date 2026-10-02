@@ -106,6 +106,12 @@ async function listener() {
       });
       return;
     }
+    if (url.pathname === '/stall') {
+      // a few bytes, then nothing more, ever (the test closes the connection)
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.write('partial');
+      return;
+    }
     if (url.pathname === '/big') {
       const n = Number(url.searchParams.get('n'));
       const body = Buffer.alloc(n);
@@ -351,7 +357,7 @@ describe('serveBridge', () => {
     expect(s.phone.got.filter((f) => decodeFrame(f).stream === id).length).toBe(handed);
   });
 
-  it(`over the relay at most ${RELAY_MAX_HELD} responses are held at once; the others wait and all complete`, async () => {
+  it(`over the relay at most ${RELAY_MAX_HELD} responses are held at once; the others wait, untouched by a busy WebSocket on the link, and arrive whole`, async () => {
     let held = 0;
     let most = 0;
     const s = await setup('relay', {
@@ -360,14 +366,91 @@ describe('serveBridge', () => {
         most = Math.max(most, n);
       },
     });
+    const e = open(s.mux, 'good');
+    await until(() => e.open, 'open');
+    // the link to the phone stalls: the hub's flood backs the outbox up (busy now, ondrain once it moves again, which
+    // resumes the streams that paused; the two waiting for a turn must not be among them)
+    s.pc.stall();
+    e.ws.send('flood');
     const n = 1_000_000;
-    const all = await Promise.all(Array.from({ length: 6 }, () => s.mux.request({ method: 'GET', path: `/big?n=${n}&slow=1` })));
+    const pending = Promise.all(Array.from({ length: 6 }, () => s.mux.request({ method: 'GET', path: `/big?n=${n}&slow=1` })));
+    await until(() => s.seen.paths.filter((p) => p.startsWith('GET /big')).length === 6 && most === RELAY_MAX_HELD, 'six requests, four turns');
+    // the four with a turn are read whole meanwhile (1 MB at 100 KB / 10 ms); the other two wait, unread
+    await sleep(400);
+    expect(held).toBe(RELAY_MAX_HELD);
+    s.pc.release();
+    const all = await pending;
     for (const r of all) {
       expect(r.status).toBe(200);
       expect(r.body.length).toBe(n);
+      expect(r.body.every((b, i) => b === (i & 0xff))).toBe(true);
     }
     expect(most).toBe(RELAY_MAX_HELD);
     await until(() => held === 0, 'every turn given back');
+    await until(() => e.got.length === 30, 'the flood arrives too', 10_000);
+    expect(e.got.every((m) => m.length === 100_000)).toBe(true);
+  });
+
+  it('a reused stream id cannot cost the link a turn: pieces dropped from the outbox still give theirs back', async () => {
+    let held = 0;
+    const l = await listener();
+    // a raw phone end (no Mux), so that one id can be used twice
+    const [phone, pc] = linkPair('relay');
+    serveBridge(pc, { port: l.port, relay: true, onHeld: (n) => (held = n) });
+    cleanup.push(() => phone.close());
+    pc.stall();
+    const head = JSON.stringify({ method: 'GET', path: `/big?n=${RELAY_MAX_RESPONSE_BYTES}`, headers: {} });
+    phone.send(encodeFrame(F.HTTP_REQ, 7, head));
+    phone.send(encodeFrame(F.END, 7));
+    // read whole and handed over: about 1 MiB on the stalled link, the rest still in the outbox, the turn still held
+    await until(() => pc.sent.some((f) => decodeFrame(f).type === F.HTTP_RES), 'the response head');
+    await sleep(100);
+    expect(held).toBe(1);
+    expect(pc.sent.filter((f) => decodeFrame(f).type === F.END)).toEqual([]);
+    // the stream is over on the bridge's side; the same id again, as a WebSocket closed at once: its drop discards
+    // the old body's remaining pieces
+    phone.send(encodeFrame(F.WS_OPEN, 7, 'good'));
+    phone.send(encodeFrame(F.WS_CLOSE, 7));
+    await until(() => held === 0, 'the turn given back');
+    pc.release();
+    // every turn is free: four slow responses are held at once and all arrive
+    const mux = new Mux(phone);
+    let most = 0;
+    const watch = setInterval(() => (most = Math.max(most, held)), 5);
+    cleanup.push(() => clearInterval(watch));
+    const all = await Promise.all(Array.from({ length: RELAY_MAX_HELD }, () => mux.request({ method: 'GET', path: '/big?n=500000&slow=1' })));
+    expect(all.every((r) => r.status === 200 && r.body.length === 500_000)).toBe(true);
+    expect(most).toBe(RELAY_MAX_HELD);
+    await until(() => held === 0, 'all turns given back');
+  });
+
+  it('a held relay response that makes no progress fails after heldIdleMs and frees its turn for the next', async () => {
+    let held = 0;
+    const s = await setup('relay', { heldIdleMs: 300, onHeld: (n) => (held = n) });
+    let failedAt = 0;
+    const stalls = Array.from({ length: RELAY_MAX_HELD }, () =>
+      s.mux.request({ method: 'GET', path: '/stall' }).then(
+        () => 'answered',
+        (e: Error) => {
+          failedAt = Math.max(failedAt, Date.now());
+          return e.message;
+        },
+      ),
+    );
+    await until(() => held === RELAY_MAX_HELD, 'every turn taken by a stalled response');
+    let doneAt = 0;
+    const next = s.mux.request({ method: 'GET', path: '/big?n=1000' }).then((r) => {
+      doneAt = Date.now();
+      return r;
+    });
+    const why = await Promise.all(stalls);
+    expect(why).toEqual(Array(RELAY_MAX_HELD).fill('no data from the listener for 300 ms'));
+    const r = await next;
+    expect(r.status).toBe(200);
+    expect(r.body.length).toBe(1000);
+    // it had to wait for a turn the stalled ones gave back
+    expect(doneAt).toBeGreaterThanOrEqual(failedAt);
+    await until(() => held === 0, 'turns given back');
   });
 
   it('answers PING with PONG', async () => {

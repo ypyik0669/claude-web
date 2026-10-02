@@ -98,6 +98,26 @@ describe('Outbox', () => {
     ]);
   });
 
+  it('pieces: `sent` runs once when the last piece went out, or when the rest was dropped or the outbox closed', async () => {
+    vi.useFakeTimers();
+    const link = new FakeLink();
+    const out = new Outbox(link);
+    const calls: string[] = [];
+    out.pieces(1, new Uint8Array(10), F.BODY, undefined, () => calls.push('sent'));
+    link.held = MUX_PAUSE_BYTES;
+    out.pieces(2, new Uint8Array(CHUNK_BYTES * 3), F.BODY, undefined, () => calls.push('dropped'));
+    out.pieces(3, new Uint8Array(CHUNK_BYTES * 3), F.BODY, undefined, () => calls.push('closed'));
+    out.pieces(4, new Uint8Array(0), F.BODY, undefined, () => calls.push('empty'));
+    await Promise.resolve();
+    expect(calls).toEqual(['sent', 'empty']);
+    out.drop(2);
+    await Promise.resolve();
+    expect(calls).toEqual(['sent', 'empty', 'dropped']);
+    out.close();
+    await Promise.resolve();
+    expect(calls).toEqual(['sent', 'empty', 'dropped', 'closed']);
+  });
+
   it('drop() forgets a stream, close() sends nothing more and leaves no timer', () => {
     vi.useFakeTimers();
     const link = new FakeLink();

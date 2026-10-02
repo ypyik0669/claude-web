@@ -25,6 +25,8 @@ export const RELAY_MAX_RESPONSE_BYTES = 2_097_152;
  * of them is done (it waits, it is not refused).
  */
 export const RELAY_MAX_HELD = 4;
+/** A held relay response that gets no data from the listener this long fails (ERR) and frees its turn. */
+export const RELAY_HELD_IDLE_MS = 60_000;
 export const RELAY_TOO_LARGE = '慢速转发时单个响应不能超过 2 MB';
 export const PAIRING_ONLY = '还没配对，只能先配对';
 /** Streams open at once on one link; past it a new one is refused. */
@@ -55,6 +57,8 @@ export interface BridgeOptions {
   onclose?: (why: string) => void;
   /** How many relay responses are held right now, each time it changes (tests, diagnostics). */
   onHeld?: (n: number) => void;
+  /** No data for this long while a held relay response is read: it fails and frees its turn (RELAY_HELD_IDLE_MS). */
+  heldIdleMs?: number;
 }
 
 function report(what: string, e: unknown): void {
@@ -296,6 +300,10 @@ class HttpStream implements Stream {
   private heldBytes = 0;
   /** Holding one of the link's RELAY_MAX_HELD turns: from the first byte read until the last piece left the outbox. */
   private slot = false;
+  /** Paused by us because the outbox was busy (streamed responses only): the one case resume() undoes. */
+  private paused = false;
+  /** While a held response is being read: no data for heldIdleMs fails it and frees its turn. */
+  private idle: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly b: Bridge, private readonly id: number) {}
 
@@ -329,8 +337,14 @@ class HttpStream implements Stream {
     }
   }
 
+  /**
+   * Only a streamed response this stream paused itself goes on. Never one waiting for a relay turn: that one is not
+   * read until take() gives it the turn (resumed with no data listener, its bytes would be thrown away).
+   */
   resume(): void {
-    if (!this.done && !this.held) this.res?.resume();
+    if (this.done || !this.paused) return;
+    this.paused = false;
+    this.res?.resume();
   }
 
   kill(): void {
@@ -342,9 +356,19 @@ class HttpStream implements Stream {
   }
 
   private letGo(): void {
+    clearTimeout(this.idle);
+    this.idle = undefined;
     if (!this.slot) return;
     this.slot = false;
     this.b.release();
+  }
+
+  /** (Re)starts the no-progress timer of a held response. */
+  private watchIdle(): void {
+    clearTimeout(this.idle);
+    const ms = this.b.opts.heldIdleMs ?? RELAY_HELD_IDLE_MS;
+    this.idle = setTimeout(() => this.fail(`no data from the listener for ${ms} ms`), ms);
+    this.idle.unref?.();
   }
 
   private readHead(payload: Uint8Array): { method: string; path: string; headers: Record<string, string> } | null {
@@ -393,15 +417,19 @@ class HttpStream implements Stream {
         if (this.done) return false;
         this.slot = true;
         this.held = [];
+        this.watchIdle();
         res.on('data', (c: Buffer) => {
           if (this.done || !this.held) return;
           this.heldBytes += c.length;
           if (this.heldBytes > RELAY_MAX_RESPONSE_BYTES) return this.refuseLarge();
           this.held.push(c);
+          this.watchIdle();
         });
         res.on('end', () => {
           ended = true;
           if (this.done || !this.held) return;
+          clearTimeout(this.idle);
+          this.idle = undefined;
           const body = Buffer.concat(this.held);
           this.held = null;
           this.send(status, headers, body);
@@ -415,7 +443,10 @@ class HttpStream implements Stream {
     res.on('data', (c: Buffer) => {
       if (this.done) return;
       out.pieces(this.id, c, F.BODY);
-      if (out.busy()) res.pause();
+      if (out.busy()) {
+        this.paused = true;
+        res.pause();
+      }
     });
     res.on('end', () => {
       ended = true;
@@ -454,6 +485,8 @@ class HttpStream implements Stream {
 
   /** Answered (or failed): the stream is over; a request body the listener did not wait for is not sent on. */
   private finish(): void {
+    clearTimeout(this.idle);
+    this.idle = undefined;
     this.done = true;
     this.b.forget(this.id, this);
     if (!this.sentEnd) this.req?.destroy();

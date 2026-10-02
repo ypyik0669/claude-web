@@ -108,8 +108,8 @@ export class Outbox {
   /**
    * `data` as CHUNK_BYTES pieces of type `piece`, the last one of type `last` when given (an empty `data` is then one
    * empty `last` frame, and nothing without `last`). The pieces are views on `data`, framed as they go out: the
-   * caller must not change it meanwhile. `sent` runs (a microtask later) once the last piece went to the link; not if
-   * the stream is dropped or the outbox closed first.
+   * caller must not change it meanwhile. `sent` runs once (a microtask later) when the outbox is done with `data`: its
+   * last piece went to the link, or what was left of it was discarded by drop() / close().
    */
   pieces(stream: number, data: Uint8Array, piece: F, last?: F, sent?: () => void): void {
     if (this.closed) return;
@@ -130,17 +130,28 @@ export class Outbox {
     return true;
   }
 
-  /** Whatever of `stream` has not gone out yet is not sent. */
+  /** Whatever of `stream` has not gone out yet is not sent (its pieces' `sent` still run). */
   drop(stream: number): void {
+    const q = this.queues.get(stream);
     this.queues.delete(stream);
+    if (q) this.discarded(q);
   }
 
-  /** For good: nothing more goes out, the timer is gone. */
+  /** For good: nothing more goes out, the timer is gone (the `sent` of pieces not sent still run). */
   close(): void {
     this.closed = true;
+    const all = [...this.queues.values()];
     this.queues.clear();
     clearTimeout(this.timer);
     this.timer = undefined;
+    for (const q of all) this.discarded(q);
+  }
+
+  private discarded(q: Entry[]): void {
+    for (const e of q) {
+      const sent = e instanceof Uint8Array ? undefined : e.sent;
+      if (sent) queueMicrotask(() => this.call(sent, 'sent handler'));
+    }
   }
 
   private enqueue(stream: number, e: Entry): void {
