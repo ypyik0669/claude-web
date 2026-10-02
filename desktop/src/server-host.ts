@@ -60,7 +60,9 @@ export class ServerHost extends EventEmitter {
         if (!ready) reject(new Error(`server exited early (code ${code}); see ${path.join(app.getPath('userData'), 'server.log')}`));
         else if (!this.stopping) {
           this.emit('crash', code);
-          setTimeout(() => void this.start().catch((e) => this.log(String(e))), 1500);
+          // the restart giving up leaves no server to reach: drop the keep-awake blocker (not on every exit — the
+          // 1.5 s gap would let an idle PC sleep right away)
+          setTimeout(() => void this.start().catch((e) => { this.log(String(e)); this.emit('keepAwake', false); }), 1500);
         }
       });
       setTimeout(() => { if (!ready) reject(new Error('server did not become ready in 30s')); }, 30_000);

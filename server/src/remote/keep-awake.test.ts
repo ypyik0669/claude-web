@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { keepAwakeWanted as desktopRule } from '../../../desktop/src/keep-awake.js';
 import { keepAwakeWanted, reportKeepAwake } from './keep-awake.js';
 
 /** The two things reportKeepAwake reads from MetaStore: settings, and 'changed' after every (non-quiet) save. */
@@ -16,6 +17,12 @@ describe('keepAwakeWanted (same rule as desktop/src/keep-awake.ts)', () => {
     expect(keepAwakeWanted({ remoteEnabled: true, keepAwake: true })).toBe(true);
     expect(keepAwakeWanted({ remoteEnabled: true, keepAwake: false })).toBe(false);
     expect(keepAwakeWanted({ remoteEnabled: false, keepAwake: undefined })).toBe(false);
+  });
+
+  it('agrees with the desktop copy on every input', () => {
+    for (const remoteEnabled of [true, false])
+      for (const keepAwake of [true, false, undefined])
+        expect(keepAwakeWanted({ remoteEnabled, keepAwake })).toBe(desktopRule({ remoteEnabled, keepAwake }));
   });
 });
 
@@ -43,5 +50,26 @@ describe('reportKeepAwake', () => {
     stop();
     meta.set('remote.enabled', true);
     expect(sent).toEqual([false]);
+  });
+
+  it('a post that throws does not fail the save, and the answer is sent again on the next save', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const meta = fakeMeta({});
+      const sent: boolean[] = [];
+      let broken = false;
+      reportKeepAwake(meta, (on) => {
+        if (broken) throw new Error('channel closed');
+        sent.push(on);
+      });
+      broken = true;
+      expect(() => meta.set('remote.enabled', true)).not.toThrow();
+      expect(warn).toHaveBeenCalledTimes(1);
+      broken = false;
+      meta.set('drafts.x', 'hi');
+      expect(sent).toEqual([false, true]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

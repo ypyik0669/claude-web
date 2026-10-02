@@ -24,8 +24,13 @@ export function reportKeepAwake(meta: SettingsSource, post: (on: boolean) => voi
     const s = meta.settings();
     const on = keepAwakeWanted({ remoteEnabled: !!s['remote.enabled'], keepAwake: s['remote.keepAwake'] as boolean | undefined });
     if (on === last) return;
-    last = on;
-    post(on);
+    // runs inside MetaStore's emit('changed'): a throw here would fail the save that triggered it
+    try {
+      post(on);
+      last = on;
+    } catch (e) {
+      console.warn(`[keep-awake] cannot tell the desktop shell: ${(e as Error)?.message ?? e}`);
+    }
   };
   check();
   meta.on('changed', check);
