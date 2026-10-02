@@ -1,7 +1,7 @@
 name: Phone page
 
 # Builds the phone page (web/src/shell → web/dist-shell) at each release tag and keeps it as a build artifact. It is
-# not deployed from here: it is served from a site of its own, <org>.github.io, whose repo builds it from this one at
+# not deployed from here: it is served from a site of its own, claude-web-shell.github.io, whose repo builds it from this one at
 # the same tag (deploy/shell-site/ has that workflow and the one-time steps). Its origin is used by nothing else, and
 # this repo needs no token for another repo's Pages. This run checks that the page builds at the tag.
 

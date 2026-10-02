@@ -84,7 +84,7 @@
 
 ## 6. 手机端
 
-- **壳**：`web/src/shell/`，Vite 第二个入口，产物 `web/dist-shell/`，放在一个专门的 GitHub 组织的 Pages 站点根目录：`https://<组织>.github.io/`（2026-10-02 用户决定，R12d：一个账号的所有 Pages 共用一个 origin，壳的存储不能和别的页面混在一起）。那个组织的站点仓库按本仓库的发布 tag 构建并部署（`deploy/shell-site/`），本仓库的 `pages.yml` 只构建、不部署。地址在设置「更多选项」里可改，给 fork / 镜像用。壳很小，只有：电脑列表、配对、连接状态与报错、通道、Service Worker。不加载任何第三方脚本，CSP 只允许同源 + 牵线 broker 的 WSS。
+- **壳**：`web/src/shell/`，Vite 第二个入口，产物 `web/dist-shell/`，放在一个专门的 GitHub 组织的 Pages 站点根目录：`https://claude-web-shell.github.io/`（组织 `claude-web-shell`，2026-10-02 用户决定，R12d：一个账号的所有 Pages 共用一个 origin，壳的存储不能和别的页面混在一起）。那个组织的站点仓库按本仓库的发布 tag 构建并部署（`deploy/shell-site/`），本仓库的 `pages.yml` 只构建、不部署。地址在设置「更多选项」里可改，给 fork / 镜像用。壳很小，只有：电脑列表、配对、连接状态与报错、通道、Service Worker。不加载任何第三方脚本，CSP 只允许同源 + 牵线 broker 的 WSS。
 - **界面放在 iframe 里**：壳连上电脑后，在全屏 iframe 里打开 `app/index.html`；iframe 同源，界面的 `ws/client.ts` 看到 `parent.__cwTunnel` 就用通道代替 WebSocket（同一个接口：send / onmessage / onopen / onclose），一条通道整个会话共用。
 - **界面文件来自电脑**：壳经通道取电脑上的 `index.html` 和首屏文件，存进 Cache Storage（按电脑 + 版本分），之后按需取（编辑器这类大文件用到才取）。手机上的界面永远和电脑版本一致，每次发版不用把界面发布到别处。
 - **Service Worker**：`app/` 下的文件从缓存给，缓存里没有就请壳经通道去取；`app/api/file`、`app/api/attachments` 这类请求同样转给壳走通道。界面代码不用知道自己在通道里。
@@ -103,7 +103,7 @@
 - 牵线服务器只看到哈希过的频道名、密文的大小和时间、双方 IP；STUN 服务器看到双方 IP。写进设置页的说明。
 - 设备令牌只在加密通道里传；电脑端照旧用它鉴权，吊销立刻生效（退订 + 断开）。
 - `sha256(令牌)` 现在也是通道密钥的来源：诊断包的 `maskSecrets` 要把 `tokenHash` 打码（现在没有）。
-- **剩下的风险**：壳被换掉，就能偷到手机上的设备令牌。能换它的有两处：`<组织>` 的成员（站点仓库），和本仓库的发布权限 + 构建依赖（站点每天自动构建发布 `releases/latest`，中间没有人看）。对策：壳尽量小、不引第三方脚本、Service Worker 缓存后只在新版本时更新；组织只放这一个站点；风险写进 README（自己部署的人可以去掉每天的自动运行，手动发 tag）。
+- **剩下的风险**：壳被换掉，就能偷到手机上的设备令牌。能换它的有两处：组织 `claude-web-shell` 的成员（站点仓库），和本仓库的发布权限 + 构建依赖（站点每天自动构建发布 `releases/latest`，中间没有人看）。对策：壳尽量小、不引第三方脚本、Service Worker 缓存后只在新版本时更新；组织只放这一个站点；风险写进 README（自己部署的人可以去掉每天的自动运行，手动发 tag）。
 
 ## 9. 不让电脑睡眠
 

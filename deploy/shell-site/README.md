@@ -1,6 +1,6 @@
 # 手机页面的站点
 
-手机扫「在哪都能用」二维码打开的页面（源码 `web/src/shell/`，构建产物 `web/dist-shell/`）放在一个只给它用的 GitHub 组织的网站上：`https://<组织>.github.io/`，在网站根目录。
+手机扫「在哪都能用」二维码打开的页面（源码 `web/src/shell/`，构建产物 `web/dist-shell/`）放在一个只给它用的 GitHub 组织的网站上：`https://<组织>.github.io/`，在网站根目录。Claude Web 自己的是组织 `claude-web-shell`、仓库 [`claude-web-shell/claude-web-shell.github.io`](https://github.com/claude-web-shell/claude-web-shell.github.io)、地址 `https://claude-web-shell.github.io/`（2026-10-02 建好）；下面的步骤是给想自己部署一份的人看的。
 
 为什么单独一个组织：一个账号（或组织）的所有 GitHub Pages 共用 `<名字>.github.io` 这一个网站源（origin）。手机页面在浏览器里存着设备令牌（IndexedDB）、界面缓存和 Service Worker，和别的页面放在一个源下就会混在一起。专门的组织只有这一个站点，没有别的页面和它共用。
 
@@ -29,11 +29,11 @@
 3. 把这里的 `.github/workflows/deploy.yml` 原样复制到那个仓库的 `.github/workflows/deploy.yml`，提交。
 4. 那个仓库的 **Settings → Pages → Build and deployment → Source** 选 **GitHub Actions**。
 5. **Actions → Deploy the phone page → Run workflow** 运行一次（tag 留空 = 最新的正式发布）。
-6. 打开 `https://<组织>.github.io/`，能看到「你的电脑」页面就好了。然后把 `server/src/remote/anywhere/service.ts` 的 `DEFAULT_SHELL_URL` 改成这个地址（标着 `TODO(org)` 的那一行），跟下一个版本发布。在那之前，用户可以在 **设置 → 手机与其它电脑 → 更多选项 → 手机页面地址** 里手动填。
+6. 打开 `https://<组织>.github.io/`，能看到「你的电脑」页面就好了。自己部署的话，在 **设置 → 手机与其它电脑 → 更多选项 → 手机页面地址** 里填这个地址（缺省是 `server/src/remote/anywhere/service.ts` 的 `DEFAULT_SHELL_URL`）。
 
 已经配对的手机继续用它们配对时的那个页面地址；改了缺省地址之后，新配对的手机才用新的。
 
 ## 要知道的
 
-- **在源仓库有带 `build:shell` 的发布之前，每次运行都会失败**（手机页面是在那之后加的，更早的发布在构建这一步就失败）。每天的自动运行也一样会失败，直到第一个这样的发布出来。
+- **在源仓库有带 `build:shell` 的发布之前，每次运行都什么也不发布**（手机页面是在那之后加的）：检查那一步看到 `web/package.json` 里没有 `build:shell` 就跳过，不报错。
 - **GitHub 会暂停每天的自动运行**：公开仓库 60 天没有任何活动，定时触发就被停掉。这个站点仓库平时没有提交，所以大约两个月后就会停。到 **Actions → Deploy the phone page** 里点 **Enable workflow** 重新打开，或者每次发版后手动运行一次。不加自动保活：那要给流程写权限去提交，得不偿失。

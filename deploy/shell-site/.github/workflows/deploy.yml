@@ -7,7 +7,7 @@ name: Deploy the phone page
 # The daily run deploys a new release of the source repo on its own, with nobody looking: whoever can publish a release
 # there, or a compromised build dependency, changes this page within a day. To decide by hand instead, remove the
 # `schedule` trigger and run it with a tag. GitHub pauses the schedule after 60 days without activity in this repo
-# (re-enable it under Actions), and every run fails until the source repo has a release with `build:shell`.
+# (re-enable it under Actions). A release without `build:shell` (older than the phone page) is skipped, not built.
 # Actions are pinned to commit SHAs (the comment names the release each one is).
 
 on:
@@ -60,7 +60,12 @@ jobs:
           fi
           live="$(curl -fsSL --max-time 20 "${SITE}version.txt" 2>/dev/null | head -n 1 || true)"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          if [ "$live" = "$tag" ] && [ "${FORCE:-false}" != "true" ]; then
+          # releases before the phone page have no build:shell: skip them quietly instead of failing every day
+          pkg="$(gh api "repos/$SOURCE_REPO/contents/web/package.json?ref=$tag" --jq .content | base64 -d)"
+          if ! printf '%s' "$pkg" | grep -q '"build:shell"'; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "$tag has no phone page yet (no build:shell): nothing to deploy"
+          elif [ "$live" = "$tag" ] && [ "${FORCE:-false}" != "true" ]; then
             echo "deploy=false" >> "$GITHUB_OUTPUT"
             echo "$tag is already live: nothing to deploy"
           else
