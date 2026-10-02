@@ -9,6 +9,7 @@ export interface ServerInfo { port: number; host: string; token: string; url: st
 /**
  * Runs server/dist/index.js in an Electron utility process (Node runtime, same ABI as the
  * shell so node-pty just works). Restarts it if it dies.
+ * Events: 'ready' (ServerInfo), 'crash' (exit code), 'keepAwake' (boolean: the server wants the PC kept awake).
  */
 export class ServerHost extends EventEmitter {
   private proc: UtilityProcess | null = null;
@@ -44,6 +45,8 @@ export class ServerHost extends EventEmitter {
       proc.stderr?.on('data', (d) => this.log('[err] ' + String(d).trimEnd()));
       let ready = false;
       proc.on('message', (m: any) => {
+        // remote access on → keep the PC awake (keep-awake.ts); sent at the server's startup and on every change
+        if (m?.type === 'keepAwake') this.emit('keepAwake', !!m.on);
         if (m?.type === 'ready' && !ready) {
           ready = true;
           this.info = { port: m.port, host: m.host, token: this.token, url: `http://${m.host}:${m.port}/?token=${this.token}` };

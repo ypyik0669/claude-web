@@ -32,6 +32,7 @@ import { MemoryService } from './memory/service.js';
 import { setMemoryMcpEnabled } from './memory/launcher.js';
 import { RemoteService, pairPage } from './remote/service.js';
 import { AnywhereService } from './remote/anywhere/service.js';
+import { reportKeepAwake } from './remote/keep-awake.js';
 import { TunnelManager } from './remote/tunnel.js';
 import { ImService } from './im/service.js';
 import { VcsService } from './vcs/service.js';
@@ -54,6 +55,8 @@ const FILE_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIME: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.woff2': 'font/woff2', '.png': 'image/png', '.ico': 'image/x-icon' };
+// the desktop shell: Electron utilityProcess talks over process.parentPort (undefined outside Electron)
+const parentPort = (process as any).parentPort as { postMessage(m: unknown): void; on(ev: 'message', cb: (e: { data: any }) => void): void } | undefined;
 
 export interface StartOptions {
   port?: number; // 0 = pick a free port
@@ -328,6 +331,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   gateway.port = port;
   await remote.start();
   if (remote.status().running) console.log(`remote access on http://0.0.0.0:${remote.port}  (${remote.addresses().join(', ')})`);
+  // 不让电脑睡眠: the shell holds a powerSaveBlocker while remote access is on — told now and on every change
+  const stopKeepAwake = reportKeepAwake(meta, (on) => parentPort?.postMessage({ type: 'keepAwake', on }));
   await anywhere.start();
   await im.startAll();
   const eng = await engineInfo();
@@ -338,6 +343,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     host: HOST,
     token,
     async close() {
+      stopKeepAwake(); // no keepAwake reports while shutting down (the shell releases its blocker on quit)
       await im.stopAll();
       await federation.close();
       await tunnels.closeAll();
@@ -362,7 +368,6 @@ if (isMain || process.env.CLAUDE_WEB_STANDALONE === '1') {
   const running = await startServer();
   const ready = { type: 'ready', port: running.port, host: running.host };
   // Electron utilityProcess talks over process.parentPort; plain child_process.fork over process.send
-  const parentPort = (process as any).parentPort as { postMessage(m: unknown): void; on(ev: 'message', cb: (e: { data: any }) => void): void } | undefined;
   if (parentPort) parentPort.postMessage(ready);
   else if (process.send) process.send(ready);
   let stopping = false;

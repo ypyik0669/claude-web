@@ -1,7 +1,8 @@
-import { app, BrowserWindow, Menu, Tray, Notification, dialog, shell, ipcMain, nativeImage, nativeTheme } from 'electron';
+import { app, BrowserWindow, Menu, Tray, Notification, dialog, shell, ipcMain, nativeImage, nativeTheme, powerSaveBlocker } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { ServerHost } from './server-host';
+import { KeepAwake } from './keep-awake';
 import { autoUpdater } from 'electron-updater';
 import { CHECK_EVERY_MS, FIRST_CHECK_MS, firstLine, isRequired, manualDownloadUrl, notesText, releasePage, updateMode, type UpdateMode } from './update-policy';
 import { execFileSync } from 'node:child_process';
@@ -494,6 +495,11 @@ ipcMain.handle('desktop:quit', () => void requestQuit());
 if (process.platform === 'win32') app.setAppUserModelId('com.claude-web.desktop');
 process.env.CLAUDE_WEB_VERSION = app.getVersion();
 
+// 不让电脑睡眠 while remote access is on (keep-awake.ts). The server reports before it says 'ready' — at its startup,
+// again after every restart, and on every change — so this listens before host.start().
+const keepAwake = new KeepAwake(powerSaveBlocker);
+host.on('keepAwake', (on: boolean) => { mainLog(`[keep-awake] ${on ? 'on' : 'off'}`); keepAwake.set(on); });
+
 if (gotLock) app.whenReady().then(async () => {
   // the window first (on the splash), then the server: see splashUrl
   const hidden = process.argv.includes('--hidden');
@@ -535,6 +541,7 @@ app.on('child-process-gone', (_e, d) => {
 });
 app.on('before-quit', () => { quitting = true; saveState(); });
 app.on('will-quit', (e) => {
+  keepAwake.set(false);
   if (host.info) {
     e.preventDefault();
     host.info = null;
