@@ -6,7 +6,15 @@ export default defineConfig({
   // relative asset URLs (./assets/…): the phone shell runs the same build below a folder (app/index.html)
   base: './',
   plugins: [react()],
-  resolve: { alias: { '@shared': path.resolve(__dirname, '../server/src/protocol.ts'), '@catalog': path.resolve(__dirname, '../server/src/models/catalog.ts'), '@': path.resolve(__dirname, 'src') } },
+  resolve: {
+    alias: {
+      '@shared': path.resolve(__dirname, '../server/src/protocol.ts'),
+      '@catalog': path.resolve(__dirname, '../server/src/models/catalog.ts'),
+      // the phone shell's channel code (web-standard APIs only); index.ts, never the core's tests (they use node:*)
+      '@anywhere': path.resolve(__dirname, '../server/src/remote/anywhere/core/index.ts'),
+      '@': path.resolve(__dirname, 'src'),
+    },
+  },
   server: {
     port: 5173,
     strictPort: true,

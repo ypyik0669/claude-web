@@ -1,0 +1,76 @@
+/* The phone shell: the app's dark palette, phone first. Classes only (the page's CSP has no 'unsafe-inline'). */
+:root {
+  color-scheme: dark;
+  --bg: #1f1e1a;
+  --card: #2a2925;
+  --edge: #3a3934;
+  --fg: #ece9e2;
+  --fg-2: #a8a49b;
+  --accent: #d97757;
+  --warn: #e5b45a;
+  --err: #e0655c;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
+body { font: 15px/1.55 system-ui, -apple-system, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif; -webkit-text-size-adjust: 100%; }
+button { font: inherit; color: inherit; cursor: pointer; }
+[hidden] { display: none !important; }
+
+.shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: calc(env(safe-area-inset-top) + 12px) calc(env(safe-area-inset-right) + 16px) calc(env(safe-area-inset-bottom) + 24px) calc(env(safe-area-inset-left) + 16px);
+  max-width: 560px;
+  margin: 0 auto;
+}
+.top { display: flex; align-items: center; gap: 8px; height: 44px; font-weight: 600; }
+.logo { color: var(--accent); font-size: 20px; }
+h1 { font-size: 18px; margin: 18px 0 10px; }
+
+.devices { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.devices li { display: flex; align-items: stretch; background: var(--card); border: 1px solid var(--edge); border-radius: 14px; overflow: hidden; }
+.device { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 14px 16px; background: none; border: 0; text-align: left; }
+.device:active { background: #34332e; }
+.pc { font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.when { font-size: 13px; color: var(--fg-2); }
+.del { border: 0; border-left: 1px solid var(--edge); background: none; color: var(--fg-2); padding: 0 14px; font-size: 13px; }
+.del.armed { color: var(--err); }
+.empty, .line { color: var(--fg-2); }
+
+.notice, .hint { background: var(--card); border: 1px solid var(--edge); border-radius: 12px; padding: 10px 14px; margin: 8px 0; font-size: 14px; }
+.hint p { margin: 0 0 6px; }
+.why-text { margin: 0; }
+.why-raw { margin: 6px 0 0; font-size: 12px; color: var(--fg-2); word-break: break-word; user-select: text; }
+
+.busy, .failed { margin-top: 18vh; text-align: center; }
+.busy .why, .failed .why { text-align: left; margin: 14px 0; }
+.spin { width: 28px; height: 28px; margin: 0 auto; border-radius: 50%; border: 3px solid var(--edge); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
+.spin.small { width: 14px; height: 14px; border-width: 2px; margin: 0; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
+.progress { height: 4px; border-radius: 2px; background: var(--edge); margin: 14px auto; max-width: 260px; overflow: hidden; }
+.fill { height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
+.actions { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
+.primary, .ghost { border-radius: 10px; padding: 10px 20px; border: 1px solid var(--edge); }
+.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.ghost { background: none; margin-top: 16px; }
+.actions .ghost { margin-top: 0; }
+.link { background: none; border: 0; padding: 0; color: var(--accent); }
+
+/* the app: a full-screen frame inside the safe area (env() is 0 inside an iframe), a thin bar above when needed */
+.app {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  background: var(--bg);
+}
+.frame { flex: 1; width: 100%; border: 0; background: var(--bg); }
+.bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 13px; background: var(--card); border-bottom: 1px solid var(--edge); }
+.bar.warn { color: var(--warn); }
+.bar.err { color: var(--err); }
+.bar-text { flex: 1; min-width: 0; }
+.bar-raw { color: var(--fg-2); margin-left: 4px; word-break: break-word; }
+.bar-act { background: none; border: 1px solid var(--edge); border-radius: 8px; padding: 3px 10px; color: var(--fg); flex: none; }
+.bar-x { background: none; border: 0; color: var(--fg-2); font-size: 18px; line-height: 1; padding: 0 4px; flex: none; }
