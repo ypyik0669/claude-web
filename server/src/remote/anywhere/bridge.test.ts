@@ -427,12 +427,13 @@ describe('serveBridge', () => {
   it('a held relay response that makes no progress fails after heldIdleMs and frees its turn for the next', async () => {
     let held = 0;
     const s = await setup('relay', { heldIdleMs: 300, onHeld: (n) => (held = n) });
-    let failedAt = 0;
+    // the next request takes the turn the first failed stall gives back, so it may finish before the others fail
+    let firstFailedAt = 0;
     const stalls = Array.from({ length: RELAY_MAX_HELD }, () =>
       s.mux.request({ method: 'GET', path: '/stall' }).then(
         () => 'answered',
         (e: Error) => {
-          failedAt = Math.max(failedAt, Date.now());
+          firstFailedAt ||= Date.now();
           return e.message;
         },
       ),
@@ -449,7 +450,7 @@ describe('serveBridge', () => {
     expect(r.status).toBe(200);
     expect(r.body.length).toBe(1000);
     // it had to wait for a turn the stalled ones gave back
-    expect(doneAt).toBeGreaterThanOrEqual(failedAt);
+    expect(doneAt).toBeGreaterThanOrEqual(firstFailedAt);
     await until(() => held === 0, 'turns given back');
   });
 
