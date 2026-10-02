@@ -4,13 +4,16 @@ import { brokerOverride, stunOverride } from './override';
 const j = (v: unknown) => JSON.stringify(v);
 
 describe('brokerOverride', () => {
-  it('nothing stored, or nothing that reads: null (the defaults)', () => {
+  it('nothing stored, or not a list: null (the defaults)', () => {
     expect(brokerOverride(null)).toBeNull();
     expect(brokerOverride('')).toBeNull();
     expect(brokerOverride('not json')).toBeNull();
     expect(brokerOverride(j({ name: 'a', url: 'ws://a' }))).toBeNull();
-    expect(brokerOverride(j([]))).toBeNull();
-    expect(brokerOverride(j([{ name: 'a', url: 'https://a/mqtt' }, 7, null]))).toBeNull();
+  });
+
+  it('a list with no valid entry is an empty list, never the defaults (a test never reaches the public brokers)', () => {
+    expect(brokerOverride(j([]))).toEqual([]);
+    expect(brokerOverride(j([{ name: 'a', url: 'https://a/mqtt' }, 7, null]))).toEqual([]);
   });
 
   it('keeps the valid entries with their fields, drops the rest', () => {

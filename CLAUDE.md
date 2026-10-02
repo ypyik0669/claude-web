@@ -145,7 +145,7 @@ spec：`docs/superpowers/specs/2026-10-01-remote-anywhere-design.md`（含实测
   - `node server/ws-phase21.mjs`（e2e 默认列表里，自己起 server）：两个本地 broker（一个只牵线、一个 `dropEvery: 7` 并承担转发），手机由 `server/dist/remote/anywhere/core` + node-datachannel 扮演：配对、`sessions.list`、`/api/file` Range、附件上传、强制转发（丢包下每个回答都完整，413）、吊销后 2 s 内断开。server 的代理是一个记录器，见到任何请求都算失败。只用一个丢包 broker 不行：hello / offer / answer 只发一次，丢了拨号就失败。
   - `node scripts/shell-smoke.cjs [--show] [--keep]`（先 `npm run build:all`，约 30 s）：本地静态服务把 `web/dist-shell` 放在根目录（CSP 临时加上 `ws://127.0.0.1:*`，构建产物不改），Electron 里真跑壳：扫码链接配对、iframe 里的界面经通道连上（`sessions.list` 有种下的对话）、`app/api/file` 的图片能显示；然后用 preload 让 ICE 失败（`localStorage['smoke.noDirect']` → `iceTransportPolicy: 'relay'` 且没有 TURN），壳改走慢速转发、界面照样连上、图片被拒且顶上的条显示 413 正文。任何 console 错误 / 警告都算失败；Electron 和 server 的代理都指向记录器，页面建的每个 RTCPeerConnection 都没有 ICE 服务器。Electron 的 `console-message` 对同源子 frame 报的是主 frame，分辨靠脚本 URL。
   - mock broker `server/src/remote/anywhere/__mocks__/mqtt-broker.mjs`（纯 JS，脚本直接 import）：`dropEvery`、`frameBytes`、`auth`、`denyTopics`、`ignorePing`、`silent`，`droppedTopics` 看丢的是哪条。
-  - 壳的 localStorage 覆盖（`web/src/shell/override.ts`，只给测试和懂的人）：`cw.shell.brokers`（BrokerDef 的 JSON 列表，只认 `ws:` / `wss:`）、`cw.shell.stun`（JSON 字符串列表，只认 `stun:` / `stuns:`，空列表 = 不用 STUN），读不出来就用默认。正式的 CSP 只放行 `wss:`，`ws://` 的 broker 只在 CSP 放行它的地方能用。
+  - 壳的 localStorage 覆盖（`web/src/shell/override.ts`，只给测试和懂的人）：`cw.shell.brokers`（BrokerDef 的 JSON 列表，只认 `ws:` / `wss:`）、`cw.shell.stun`（JSON 字符串列表，只认 `stun:` / `stuns:`，空列表 = 不用 STUN）。不是 JSON 列表就用默认；是列表就只用其中合法的条目，一条不剩也不退回默认（测试写错了也不会连到公共 broker）。正式的 CSP 只放行 `wss:`，`ws://` 的 broker 只在 CSP 放行它的地方能用。
 
 ## 看板 / 目标 / Android（阶段 7，2026-09-03）
 

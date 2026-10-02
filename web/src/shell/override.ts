@@ -1,7 +1,9 @@
 // For tests and power users only: a signaling broker list and a STUN list kept in this origin's localStorage replace
 // the built-in ones (the shell smoke points the shell at a local test broker this way). Pure: main.ts reads the two
-// keys once, at load. Anything that does not read is ignored (the defaults are used). The shipped page's CSP only
-// connects to wss: brokers, so a ws:// one only works where the page is served with a CSP that allows it.
+// keys once, at load. A value that is not a JSON list is ignored (the defaults are used); a list is used with its
+// valid entries only, even when none is left: a test that points the shell somewhere never falls back to the public
+// brokers. The shipped page's CSP only connects to wss: brokers, so a ws:// one only works where the page is served
+// with a CSP that allows it.
 import type { BrokerDef } from '@anywhere';
 
 export const BROKERS_KEY = 'cw.shell.brokers';
@@ -18,10 +20,12 @@ function list(raw: string | null): unknown[] | null {
   }
 }
 
-/** The stored broker list's valid entries (a name, a ws: / wss: URL); null when there is none (the defaults then). */
+/** The stored broker list's valid entries (a name, a ws: / wss: URL); null when the value is not a list. */
 export function brokerOverride(raw: string | null): BrokerDef[] | null {
+  const v = list(raw);
+  if (!v) return null;
   const out: BrokerDef[] = [];
-  for (const d of list(raw) ?? []) {
+  for (const d of v) {
     if (!d || typeof d !== 'object') continue;
     const { name, url, username, password, relay } = d as Record<string, unknown>;
     if (typeof name !== 'string' || !name || typeof url !== 'string' || !/^wss?:\/\/\S+$/i.test(url)) continue;
@@ -31,8 +35,7 @@ export function brokerOverride(raw: string | null): BrokerDef[] | null {
     if (relay === true) def.relay = true;
     out.push(def);
   }
-  // no broker at all is never what was meant: the shell could not find any PC
-  return out.length ? out : null;
+  return out;
 }
 
 /**
