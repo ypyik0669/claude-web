@@ -18,8 +18,10 @@ import {
   DEFAULT_BROKERS,
   DEFAULT_STUN,
   b64u,
+  brokerEntries,
   deviceRoomFromHash,
   pairRoom,
+  stunEntries,
   type BrokerDef,
   type Link,
   type LinkKind,
@@ -48,29 +50,17 @@ function report(what: string, e: unknown): void {
 }
 
 /**
- * Settings' broker list (validated), or the defaults when there is none. CW_NO_PUBLIC_BROKERS=1 (the e2e and ui-smoke
- * runs) leaves the defaults out: tests only ever reach a local test broker they configure themselves.
+ * Settings' broker list (its usable entries, by core's rule: lists.ts, the same as the shell's), or the defaults when
+ * there is none. CW_NO_PUBLIC_BROKERS=1 (the e2e and ui-smoke runs) leaves the defaults out: tests only ever reach a
+ * local test broker they configure themselves.
  */
 export function brokerDefs(v: unknown, env: Record<string, string | undefined> = process.env): BrokerDef[] {
-  if (!Array.isArray(v)) return env.CW_NO_PUBLIC_BROKERS === '1' ? [] : DEFAULT_BROKERS;
-  const out: BrokerDef[] = [];
-  for (const d of v) {
-    if (!d || typeof d !== 'object') continue;
-    const { name, url, username, password, relay } = d as Record<string, unknown>;
-    if (typeof name !== 'string' || !name || typeof url !== 'string' || !/^wss?:\/\/\S+$/i.test(url)) continue;
-    const def: BrokerDef = { name, url };
-    if (typeof username === 'string') def.username = username;
-    if (typeof password === 'string') def.password = password;
-    if (relay === true) def.relay = true;
-    out.push(def);
-  }
-  return out;
+  return brokerEntries(v) ?? (env.CW_NO_PUBLIC_BROKERS === '1' ? [] : DEFAULT_BROKERS);
 }
 
-/** Settings' STUN list (validated), or the defaults when there is none. */
+/** Settings' STUN list (its usable entries, by core's rule), or the defaults when there is none. */
 export function stunList(v: unknown): string[] {
-  if (!Array.isArray(v)) return DEFAULT_STUN;
-  return v.filter((s): s is string => typeof s === 'string' && /^stuns?:\S+$/i.test(s));
+  return stunEntries(v) ?? DEFAULT_STUN;
 }
 
 export function shellUrlOf(v: unknown): string {

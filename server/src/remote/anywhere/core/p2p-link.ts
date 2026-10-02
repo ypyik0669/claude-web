@@ -14,6 +14,7 @@
 import { CHUNK_BYTES, HEADER_BYTES } from './frames.js';
 import { errText, report as reportAs } from './handshake.js';
 import type { Link, LinkKind } from './link.js';
+import { isStunUrl } from './lists.js';
 import { MAX_FRAME_BYTES, MAX_QUEUED_BYTES, MAX_QUEUED_FRAMES } from './relay-link.js';
 
 /** The data channel's label; any other channel on the connection is closed. */
@@ -107,7 +108,7 @@ export type RtcCtor = new (config: RtcConfig) => RtcPeerConnectionLike;
 
 /** STUN entries that are not stun: / stuns: URLs are dropped (a bad entry in the settings must not stop ICE). */
 export function rtcConfig(stun: readonly string[]): RtcConfig {
-  const urls = stun.filter((u) => typeof u === 'string' && /^stuns?:\S+$/i.test(u));
+  const urls = stun.filter(isStunUrl);
   return { iceServers: urls.length ? [{ urls }] : [] };
 }
 

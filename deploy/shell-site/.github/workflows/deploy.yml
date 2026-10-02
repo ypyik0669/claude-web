@@ -2,8 +2,13 @@ name: Deploy the phone page
 
 # For the site repo <org>/<org>.github.io, not for claude-web itself (copy this file there, see the README next to the
 # .github folder in claude-web's deploy/shell-site/). It builds the phone page of Claude Web from the public repo
-# ypyik0669/claude-web at a release tag and serves it at the root of this site. Daily it looks for a newer release;
-# a tag that is already live (the site's version.txt) is not deployed again. No token or secret is needed.
+# ypyik0669/claude-web at a release tag and serves it at the root of this site. No token or secret is needed.
+#
+# The daily run deploys a new release of the source repo on its own, with nobody looking: whoever can publish a release
+# there, or a compromised build dependency, changes this page within a day. To decide by hand instead, remove the
+# `schedule` trigger and run it with a tag. GitHub pauses the schedule after 60 days without activity in this repo
+# (re-enable it under Actions), and every run fails until the source repo has a release with `build:shell`.
+# Actions are pinned to commit SHAs (the comment names the release each one is).
 
 on:
   workflow_dispatch:
@@ -21,8 +26,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -50,7 +53,8 @@ jobs:
           set -euo pipefail
           tag="${INPUT_TAG:-}"
           if [ -z "$tag" ]; then tag="$(gh api "repos/$SOURCE_REPO/releases/latest" --jq .tag_name)"; fi
-          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+          re='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+          if ! [[ "$tag" =~ $re ]]; then
             echo "::error::not a release tag: $tag"
             exit 1
           fi
@@ -69,14 +73,15 @@ jobs:
     if: needs.check.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.SOURCE_REPO }}
           ref: ${{ needs.check.outputs.tag }}
-      - uses: actions/setup-node@v4
+          persist-credentials: false
+      # no npm cache: a cache restored into a run that deploys is one more thing to trust
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: npm
       # the page needs the web workspace's build tools and the server's sources only: no install scripts
       - run: npm ci --ignore-scripts
       # a release older than the phone page has no build:shell, and this step fails
@@ -85,16 +90,20 @@ jobs:
         env:
           TAG: ${{ needs.check.outputs.tag }}
         run: printf '%s\n' "$TAG" > web/dist-shell/version.txt
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: web/dist-shell
 
   deploy:
     needs: [check, build]
     runs-on: ubuntu-latest
+    # only this job can publish the site
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

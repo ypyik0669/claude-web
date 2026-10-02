@@ -26,11 +26,6 @@ jobs:
       # Electron download, no node-pty build, no ripgrep download)
       - run: npm ci --ignore-scripts
       - run: npm run build:shell -w web
-      - name: version.txt (what the site's deploy compares with the live page)
-        shell: bash
-        env:
-          REF: ${{ github.ref_name }}
-        run: printf '%s\n' "$REF" > web/dist-shell/version.txt
       - uses: actions/upload-artifact@v4
         with:
           name: phone-page

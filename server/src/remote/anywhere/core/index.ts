@@ -7,6 +7,7 @@ export * from './keys.js';
 export * from './envelope.js';
 export * from './frames.js';
 export * from './mqtt.js';
+export * from './lists.js';
 export * from './signal.js';
 export * from './link.js';
 export * from './relay-link.js';

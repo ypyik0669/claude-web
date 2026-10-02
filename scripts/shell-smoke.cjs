@@ -8,7 +8,8 @@
 //   · opened again with ICE made to fail (a preload gives the page's RTCPeerConnection a relay-only policy and no TURN
 //     server: no candidate at all), the shell falls back to the slow relay: the app opens from its cached files,
 //     sessions.list answers, and the image's api/file is refused — the shell's bar shows the PC's 413 sentence;
-//   · any console error or warning in the shell page, the app frame or the service worker fails the run;
+//   · any console error or warning in the shell page, the app frame or the service worker fails the run (the shell's
+//     info line saying the override is in use is checked for, and is not one);
 //   · nothing goes out: Electron's proxy and the server's are a recorder that must see no request, and every
 //     RTCPeerConnection the page made had no ICE server.
 // The shipped CSP only connects to wss: brokers; the static server adds ws://127.0.0.1:* for the test broker (the
@@ -258,7 +259,7 @@ function driver() {
   const logFile = `${E.SHELL_RESULT}.log`;
   const log = (s) => { try { fs.appendFileSync(logFile, `${new Date().toISOString()} ${s}\n`); } catch { /* ignore */ } };
   try { fs.writeFileSync(logFile, ''); } catch { /* ignore */ }
-  const res = { checks: [], console: [], shots: [], startedAt: Date.now(), seconds: 0 };
+  const res = { checks: [], console: [], infos: [], shots: [], startedAt: Date.now(), seconds: 0 };
   let expect413 = false;
   let expectProbe = false;
   const check = (name, ok, detail) => { res.checks.push({ name, ok: !!ok, detail: detail || undefined }); log(`${ok ? 'PASS' : 'FAIL'} ${name} ${detail || ''}`); };
@@ -291,6 +292,7 @@ function driver() {
       try { url = (typeof a === 'object' && a && (a.sourceId || (a.frame && a.frame.url))) || ''; } catch { /* the frame is gone */ }
       const where = url.includes('/app/') ? 'app frame' : 'shell page';
       if (level === 'error' || level === 'warning' || Number(level) >= 2) record(where, level, message);
+      else if (String(message).includes('[shell] ')) res.infos.push(String(message).slice(0, 300));
     });
     wc.on('render-process-gone', (_e, d) => check('renderer alive', false, d.reason));
     wc.on('did-fail-load', (_e, code, desc, url, isMain) => { if (isMain) check('page load', false, `${code} ${desc} ${url}`); });
@@ -328,6 +330,8 @@ function driver() {
       check('the QR link pairs and the app frame opens, its WebSocket open through the tunnel', opened, opened ? '' : await js(`document.querySelector('main.page')?.innerText ?? ''`).catch(() => ''));
       if (!opened) { await shot('pair-failed'); return finish(1); }
       check('the pairing link is cleared from the address', (await js('location.hash')) === '');
+      const OVERRIDE_INFO = '[shell] 使用 localStorage 里的自定义列表：cw.shell.brokers（1 个）、cw.shell.stun（0 个）';
+      check('the shell says in its console (info, not a warning) that the override is in use', res.infos.includes(OVERRIDE_INFO), res.infos.join(' | ') || '(no info line)');
       const ctl = await js(`!!(${appWin}.navigator.serviceWorker && ${appWin}.navigator.serviceWorker.controller)`);
       check('the app frame is served by the shell\'s service worker', ctl);
       check('a direct link: no slow-relay bar', !(await js(barText)).includes(RELAY_BAR), await js(barText));

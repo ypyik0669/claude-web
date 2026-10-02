@@ -1,7 +1,7 @@
 // 设置 → 手机与其它电脑 → 在外面也能用 (spec 2026-10-01 §10): the words for a link and for the brokers' state, the
 // recent connections, and the checks of the lists edited under 更多选项. Pure; RemoteSection.tsx / AnywhereMore.tsx draw it.
 import type { AnywhereRecent, AnywhereStatus, DeviceInfo, LinkKind } from '@shared';
-import type { BrokerDef } from '@anywhere';
+import { MAX_LIST_ENTRIES, isStunUrl, type BrokerDef } from '@anywhere';
 import { agoText } from '@/features/home/model';
 
 const KIND_TEXT: Record<LinkKind, string> = { 'p2p-v6': '直连 · IPv6', 'p2p-v4': '直连', relay: '慢速转发' };
@@ -87,6 +87,8 @@ export function brokerProblem(rows: readonly BrokerDraft[]): string | null {
     if (seen.has(name)) return `名称「${name}」重复了`;
     seen.add(name);
   }
+  // the PC reads at most this many (core's lists.ts): the rest would be kept here and never used
+  if (n > MAX_LIST_ENTRIES) return `最多填 ${MAX_LIST_ENTRIES} 行`;
   return n ? null : '至少要留一个牵线服务器';
 }
 
@@ -103,11 +105,14 @@ export function cleanBrokers(rows: readonly BrokerDraft[]): BrokerDef[] {
 
 /** STUN rows: stun: / stuns: only (the PC drops anything else, and has no TURN sign-in); empty rows are not counted. */
 export function stunProblem(rows: readonly string[]): string | null {
+  let n = 0;
   for (const [i, r] of rows.entries()) {
     const s = r.trim();
-    if (s && !/^stuns?:\S+$/i.test(s)) return `第 ${i + 1} 行要以 stun: 开头（比如 stun:stun.cloudflare.com:3478）`;
+    if (!s) continue;
+    n++;
+    if (!isStunUrl(s)) return `第 ${i + 1} 行要以 stun: 开头（比如 stun:stun.cloudflare.com:3478）`;
   }
-  return null;
+  return n > MAX_LIST_ENTRIES ? `最多填 ${MAX_LIST_ENTRIES} 行` : null;
 }
 
 export function cleanStun(rows: readonly string[]): string[] {

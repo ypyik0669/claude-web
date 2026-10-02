@@ -36,6 +36,9 @@ process.env.CW_NO_MODEL_REFRESH = '1';
 process.env.CW_NO_PUBLIC_BROKERS = '1';
 delete process.env.CLAUDE_WEB_TOKEN;
 
+// one import for the whole file, after the env above (a static import would be hoisted above it)
+const { AnywhereService, DEFAULT_SHELL_URL, brokerDefs, failureText, linkError, shellUrlOf, stunList } = await import('./service.js');
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -221,7 +224,6 @@ describe('AnywhereService', () => {
   let relay: Awaited<ReturnType<typeof dialRoom>>;
 
   it('status: on, the broker, the shell address, keep-awake on by default', async () => {
-    const { DEFAULT_SHELL_URL } = await import('./service.js');
     const a = await anywhere();
     expect(a.on).toBe(true);
     expect(a.brokers).toEqual([{ name: 'mock', ok: true }]);
@@ -236,7 +238,7 @@ describe('AnywhereService', () => {
     expect(pc.url).toMatch(/\/pair#\d{6}$/);
     expect(typeof pc.anywhereUrl).toBe('string');
     const u = new URL(pc.anywhereUrl);
-    expect(`${u.origin}${u.pathname}`).toBe((await import('./service.js')).DEFAULT_SHELL_URL);
+    expect(`${u.origin}${u.pathname}`).toBe(DEFAULT_SHELL_URL);
     expect(u.hash.startsWith('#p=')).toBe(true);
     const q = JSON.parse(dec.decode(unb64u(u.hash.slice(3))));
     expect(q.v).toBe(1);
@@ -460,15 +462,13 @@ describe('AnywhereService', () => {
     expect(typeof (await req('remote.pairCode')).anywhereUrl).toBe('string');
   });
 
-  it('a link that ends on a protocol error is recorded as a version mismatch', async () => {
-    const { linkError } = await import('./service.js');
+  it('a link that ends on a protocol error is recorded as a version mismatch', () => {
     expect(linkError('protocol: unknown kind 9')).toMatch(/^手机上的页面和电脑上的 Claude Web 版本不一致.*（protocol: unknown kind 9）$/);
     expect(linkError('the other side closed the link')).toBeUndefined();
   });
 
-  it('settings: broker and STUN lists are validated; without one the defaults, none of them under CW_NO_PUBLIC_BROKERS', async () => {
-    const { brokerDefs, stunList, shellUrlOf, DEFAULT_SHELL_URL } = await import('./service.js');
-    const { DEFAULT_BROKERS, DEFAULT_STUN } = await import('./core/index.js');
+  it('settings: broker and STUN lists are validated (core\'s rule, at most 16 entries); without one the defaults, none of them under CW_NO_PUBLIC_BROKERS', async () => {
+    const { DEFAULT_BROKERS, DEFAULT_STUN, MAX_LIST_ENTRIES } = await import('./core/index.js');
     expect(brokerDefs(undefined, {})).toEqual(DEFAULT_BROKERS);
     expect(brokerDefs(undefined, { CW_NO_PUBLIC_BROKERS: '1' })).toEqual([]);
     expect(brokerDefs([{ name: 'a', url: 'wss://a/mqtt', relay: true, username: 'u', password: 'p' }, { name: '', url: 'wss://b' }, { name: 'c', url: 'http://c' }, 7], {})).toEqual([
@@ -476,6 +476,8 @@ describe('AnywhereService', () => {
     ]);
     expect(stunList(undefined)).toEqual(DEFAULT_STUN);
     expect(stunList(['stun:a:3478', 'nope', 5])).toEqual(['stun:a:3478']);
+    expect(brokerDefs(Array.from({ length: 20 }, (_, i) => ({ name: `b${i}`, url: `wss://b${i}/mqtt` })), {})).toHaveLength(MAX_LIST_ENTRIES);
+    expect(stunList(Array.from({ length: 20 }, (_, i) => `stun:s${i}:3478`))).toHaveLength(MAX_LIST_ENTRIES);
     expect(shellUrlOf(undefined)).toBe(DEFAULT_SHELL_URL);
     expect(shellUrlOf('https://me.example/shell/#old')).toBe('https://me.example/shell/');
     expect(shellUrlOf('javascript:alert(1)')).toBe(DEFAULT_SHELL_URL);
@@ -490,7 +492,6 @@ describe('AnywhereService', () => {
 
 describe('AnywhereService: attempts that fail', () => {
   it('a dial that gives up half-way is one ok:false entry for that device, in Chinese', async () => {
-    const { AnywhereService } = await import('./service.js');
     const { RemoteService } = await import('../service.js');
     const port = await freePort();
     const token = b64u(crypto.getRandomValues(new Uint8Array(32)));
@@ -531,7 +532,6 @@ describe('AnywhereService: attempts that fail', () => {
   });
 
   it('failure texts: ours in Chinese, the relay link\'s own words kept in parentheses', async () => {
-    const { failureText } = await import('./service.js');
     const { ACCEPT_FAILURE } = await import('./core/index.js');
     expect(failureText(ACCEPT_FAILURE.halfOpen)).toBe('手机打了招呼，但通道没有建立起来');
     expect(failureText(ACCEPT_FAILURE.evicted)).toBe('同时连进来的太多，较早的一次被放弃了');

@@ -22,7 +22,7 @@
 - 时限：`hello` 无 `ack` 15 000 ms；ICE 20 000 ms 后改走转发；电脑每频道每分钟最多回 30 次 `hello`。
 - 帧：1 字节类型 + 4 字节流 id（大端）+ 负载；分片 16 384 字节；`bufferedAmount` > 1 048 576 暂停。
 - 转发限制：每条有效载荷 ≤ 12 288 字节、每秒 ≤ 20 条、窗口 32 条、1 500 ms 未确认重传；单个 HTTP 响应 ≤ 2 097 152 字节；`/api/file`、`/api/attachments` 在转发下由电脑拒绝（413，正文 `慢速转发时不能预览 / 上传文件`）。
-- 设置键（meta.json `settings`）：`remote.anywhere`（缺省 = 开）、`remote.keepAwake`（缺省 = 开）、`remote.anywhere.brokers`、`remote.anywhere.stun`、`remote.anywhere.shellUrl`（缺省 `https://ypyik0669.github.io/claude-web/`）。
+- 设置键（meta.json `settings`）：`remote.anywhere`（缺省 = 开）、`remote.keepAwake`（缺省 = 开）、`remote.anywhere.brokers`、`remote.anywhere.stun`、`remote.anywhere.shellUrl`（缺省 `https://<组织>.github.io/`：专门的 GitHub 组织的站点根目录，由那个站点仓库的流程按本仓库的发布 tag 构建（R12d，2026-10-02）；组织建好前代码里仍是 `https://ypyik0669.github.io/claude-web/`，标着 `TODO(org)`）。
 - 文案：默认界面不出现 MQTT / WebRTC / STUN / ICE（`wording.test.ts` 的闸）；报错走 `@errors` 的「中文说明 + 原文」。
 - 二维码：`<shellUrl>#p=<base64url(JSON {v:1, ps:base64url(P), code, pc:电脑名})>`。
 - 测试只用临时 HOME + `CLAUDE_WEB_DIR`；单测和 e2e 用本机 mock broker，不连公共 broker。

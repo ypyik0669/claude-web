@@ -136,6 +136,15 @@ describe('editing the lists in 更多选项: a bad value is a sentence, not save
     expect(stunProblem(['stun:a b'])).toMatch(/第 1 行/);
   });
 
+  it('at most 16 rows each: the PC reads no more (blank rows do not count)', () => {
+    const brokers = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `b${i}`, url: `wss://b${i}/mqtt`, relay: false }));
+    expect(brokerProblem([...brokers(16), { name: '', url: '', relay: false }])).toBeNull();
+    expect(brokerProblem(brokers(17))).toMatch(/最多填 16 行/);
+    const stun = (n: number) => Array.from({ length: n }, (_, i) => `stun:s${i}:3478`);
+    expect(stunProblem([...stun(16), ''])).toBeNull();
+    expect(stunProblem(stun(17))).toMatch(/最多填 16 行/);
+  });
+
   it('the phone page: https://, ending in /', () => {
     expect(shellUrlProblem('https://ypyik0669.github.io/claude-web/')).toBeNull();
     expect(shellUrlProblem(' https://me.example/shell/ ')).toBeNull();

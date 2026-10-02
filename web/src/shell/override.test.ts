@@ -1,56 +1,43 @@
 import { describe, expect, it } from 'vitest';
-import { brokerOverride, stunOverride } from './override';
+import { brokerOverride, overrideNote, stunOverride } from './override';
 
 const j = (v: unknown) => JSON.stringify(v);
 
 describe('brokerOverride', () => {
-  it('nothing stored, or not a list: null (the defaults)', () => {
+  it('the key absent: null (the defaults)', () => {
     expect(brokerOverride(null)).toBeNull();
-    expect(brokerOverride('')).toBeNull();
-    expect(brokerOverride('not json')).toBeNull();
-    expect(brokerOverride(j({ name: 'a', url: 'ws://a' }))).toBeNull();
   });
 
-  it('a list with no valid entry is an empty list, never the defaults (a test never reaches the public brokers)', () => {
-    expect(brokerOverride(j([]))).toEqual([]);
-    expect(brokerOverride(j([{ name: 'a', url: 'https://a/mqtt' }, 7, null]))).toEqual([]);
+  it('present but unusable (not JSON, not a list, nothing usable): an empty list, never the defaults', () => {
+    for (const raw of ['', 'not json', j({ name: 'a', url: 'ws://a' }), j('wss://a'), j([]), j([{ name: 'a', url: 'https://a/mqtt' }, 7, null])]) {
+      expect(brokerOverride(raw)).toEqual([]);
+    }
   });
 
-  it('keeps the valid entries with their fields, drops the rest', () => {
-    const got = brokerOverride(
-      j([
-        { name: 'local', url: 'ws://127.0.0.1:1234/mqtt', relay: true },
-        { name: 'auth', url: 'wss://b.example:8084/mqtt', username: 'u', password: 'p', relay: 'yes', extra: 1 },
-        { name: '', url: 'wss://c' },
-        { name: 'd', url: 'wss://' },
-        { name: 'e', url: 'javascript:alert(1)' },
-        { name: 'f', url: 'wss://has space' },
-      ]),
-    );
-    expect(got).toEqual([
+  it('keeps the usable entries with their fields (core\'s rule), at most 16', () => {
+    expect(brokerOverride(j([{ name: 'local', url: 'ws://127.0.0.1:1234/mqtt', relay: true }, { name: 'e', url: 'javascript:alert(1)' }]))).toEqual([
       { name: 'local', url: 'ws://127.0.0.1:1234/mqtt', relay: true },
-      { name: 'auth', url: 'wss://b.example:8084/mqtt', username: 'u', password: 'p' },
     ]);
-  });
-
-  it('reads at most 16 entries', () => {
     const many = Array.from({ length: 40 }, (_, i) => ({ name: `b${i}`, url: `wss://b${i}.example/mqtt` }));
     expect(brokerOverride(j(many))).toHaveLength(16);
   });
 });
 
 describe('stunOverride', () => {
-  it('not a list: null (the defaults)', () => {
+  it('the key absent: null; present but unusable: an empty list (no STUN server)', () => {
     expect(stunOverride(null)).toBeNull();
-    expect(stunOverride('stun:a:3478')).toBeNull();
-    expect(stunOverride(j('stun:a:3478'))).toBeNull();
+    for (const raw of ['', 'stun:a:3478', j('stun:a:3478'), j([])]) expect(stunOverride(raw)).toEqual([]);
   });
 
-  it('an empty list stays empty: no STUN server at all', () => {
-    expect(stunOverride(j([]))).toEqual([]);
+  it('stun: and stuns: entries only', () => {
+    expect(stunOverride(j(['stun:127.0.0.1:3478', 'turn:t.example:3478', 'STUNS:x.example:5349']))).toEqual(['stun:127.0.0.1:3478', 'STUNS:x.example:5349']);
   });
+});
 
-  it('stun: and stuns: entries only (core uses nothing else)', () => {
-    expect(stunOverride(j(['stun:127.0.0.1:3478', 'STUNS:x.example:5349', 'turn:t.example:3478', 'http://x', 5, 'stun: a']))).toEqual(['stun:127.0.0.1:3478', 'STUNS:x.example:5349']);
+describe('overrideNote', () => {
+  it('names the keys in use and their sizes; nothing when no override is in use', () => {
+    expect(overrideNote(null, null)).toBeNull();
+    expect(overrideNote([{ name: 'a', url: 'ws://a' }], [])).toBe('[shell] 使用 localStorage 里的自定义列表：cw.shell.brokers（1 个）、cw.shell.stun（0 个）');
+    expect(overrideNote(null, ['stun:a:1'])).toBe('[shell] 使用 localStorage 里的自定义列表：cw.shell.stun（1 个）');
   });
 });
