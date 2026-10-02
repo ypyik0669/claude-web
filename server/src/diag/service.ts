@@ -13,6 +13,8 @@ const execFileAsync = promisify(execFile);
 export function maskSecrets(text: string): string {
   return text
     .replace(/(sk-[A-Za-z0-9_-]{6})[A-Za-z0-9_-]{8,}/g, '$1…')
+    // a device token's sha256 is the key material of its 在外面也能用 room: none of it is kept
+    .replace(/("tokenHash"\s*:\s*")[^"]*(")/gi, '$1…$2')
     .replace(/("(?:apiKey|api_key|key|token|authToken|password|secret)"\s*:\s*")([^"]{4})[^"]*(")/gi, '$1$2…$3')
     .replace(/(enc:(?:dpapi|keychain|plain):)[^"\s]+/g, '$1…');
 }

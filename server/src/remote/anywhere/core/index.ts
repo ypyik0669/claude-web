@@ -27,6 +27,7 @@ export {
 } from './p2p-link.js';
 export * from './dial.js';
 export * from './accept.js';
+export * from './mux.js';
 
 /**
  * Signaling brokers, in order of preference (the settings' "more options" can replace the list). Only the ones marked

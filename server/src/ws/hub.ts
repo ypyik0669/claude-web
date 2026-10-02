@@ -1,5 +1,5 @@
 import type { WebSocket, WebSocketServer } from 'ws';
-import type { ClientRequest, OpenSessionParams, ServerEvent, WireDown, WireUp } from '../protocol.js';
+import type { ClientRequest, OpenSessionParams, RemoteStatus, ServerEvent, WireDown, WireUp } from '../protocol.js';
 import { RunnerPool } from '../runtime/pool.js';
 import { cacheParentFor } from '../runtime/cache-key.js';
 import { SessionService } from '../sessions/service.js';
@@ -21,6 +21,7 @@ import type { DiagService } from '../diag/service.js';
 import { detectTools } from '../tools/detect.js';
 import { ClientLogGate } from '../diag/client-log.js';
 import type { RemoteService } from '../remote/service.js';
+import type { AnywhereService } from '../remote/anywhere/service.js';
 import type { TunnelManager } from '../remote/tunnel.js';
 import { IM_KINDS, type ImService } from '../im/service.js';
 import type { VcsService } from '../vcs/service.js';
@@ -71,6 +72,8 @@ export interface Services {
   canonical: CanonicalLog;
   memory: MemoryService;
   remote: RemoteService;
+  /** 在外面也能用: phones reaching the remote-access listener through the signaling brokers; optional (tests). */
+  anywhere?: AnywhereService;
   tunnels: TunnelManager;
   im: ImService;
   vcs: VcsService;
@@ -123,6 +126,7 @@ export class Hub {
     s.files.on('changed', (e: { path: string; type: any }) => this.broadcast({ kind: 'fs.changed', path: e.path, type: e.type }));
     s.git.on('changed', (cwd: string) => this.broadcast({ kind: 'git.changed', cwd }));
     s.remote.on('changed', () => this.broadcast({ kind: 'remote.changed' }));
+    s.anywhere?.on('changed', () => this.broadcast({ kind: 'remote.changed' }));
     s.im.on('changed', () => this.broadcast({ kind: 'im.changed' }));
     s.tunnels.on('changed', () => this.broadcast({ kind: 'tunnel.changed' }));
     s.goals.on('changed', () => this.broadcast({ kind: 'goals.changed' }));
@@ -178,6 +182,12 @@ export class Hub {
         this.send(ws, { type: 'reply', reply: { id, ok: false, error } });
       }
     });
+  }
+
+  /** Remote access, with 在外面也能用 in it when that service exists. */
+  private remoteStatus(): RemoteStatus {
+    const st = this.s.remote.status();
+    return this.s.anywhere ? { ...st, anywhere: this.s.anywhere.status() } : st;
   }
 
   private runner(sessionId: string) {
@@ -380,6 +390,8 @@ export class Hub {
         await s.meta.setSetting(req.key, req.value);
         // takes effect on the next session start — running children keep the servers they were given
         if (req.key === 'memory.mcp') setMemoryMcpEnabled(req.value !== false);
+        // 在外面也能用: brokers / STUN / the shell address / on-off / keep-awake (restarts only when it has to)
+        if (req.key === 'remote.anywhere' || req.key.startsWith('remote.anywhere.') || req.key === 'remote.keepAwake') await s.anywhere?.refresh();
         return null;
       case 'sessions.search':
         return s.library.search(req.query, req.limit ?? 30);
@@ -693,10 +705,17 @@ export class Hub {
         return list;
       }
       case 'remote.status':
-        return s.remote.status();
-      case 'remote.set':
-        await s.remote.set({ enabled: req.enabled, port: req.port });
-        return s.remote.status();
+        return this.remoteStatus();
+      case 'remote.set': {
+        if (req.anywhere !== undefined) await s.meta.setSetting('remote.anywhere', !!req.anywhere);
+        if (req.keepAwake !== undefined) await s.meta.setSetting('remote.keepAwake', !!req.keepAwake);
+        // the listener restarts for enabled / port (or a bare remote.set, as before); not for the two settings alone
+        if (req.enabled !== undefined || req.port !== undefined || (req.anywhere === undefined && req.keepAwake === undefined)) {
+          await s.remote.set({ enabled: req.enabled, port: req.port });
+        }
+        await s.anywhere?.refresh();
+        return this.remoteStatus();
+      }
       case 'remote.pairCode':
         return s.remote.newPairCode();
       case 'remote.devices.revoke':

@@ -31,6 +31,7 @@ import { CanonicalLog } from './session/canonical.js';
 import { MemoryService } from './memory/service.js';
 import { setMemoryMcpEnabled } from './memory/launcher.js';
 import { RemoteService, pairPage } from './remote/service.js';
+import { AnywhereService } from './remote/anywhere/service.js';
 import { TunnelManager } from './remote/tunnel.js';
 import { ImService } from './im/service.js';
 import { VcsService } from './vcs/service.js';
@@ -273,6 +274,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   providers.gatewayEndpoint = (groupId) => gateway.endpoint(groupId);
   providers.shimEndpoint = (providerId) => gateway.shimEndpoint(providerId);
   remote = new RemoteService(meta, () => { const s = http.createServer(handler); s.on('upgrade', upgrade); return s; });
+  // 在外面也能用: bridges phones' links to the remote-access listener above (never to this main one)
+  const anywhere = new AnywhereService(meta, remote);
   const tunnels = new TunnelManager();
   const sessionsSvc = new SessionService();
   const im = new ImService(meta, secrets, pool, sessionsSvc);
@@ -312,7 +315,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   fedHealth = (nonce, authed) => federation.healthInfo(nonce, authed);
   const goals = new GoalService(meta, pool);
   const orchestra = await createOrchestra({ pool, meta, canonical, transcripts, agents, git: gitSvc, goals, library, im });
-  const services = { orchestra, remote, tunnels, im, vcs: new VcsService(gitSvc), goals, android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(async (sid) => providerTimeline(await canonical.providerSwitches(sid), meta.sessionMeta(sid).providerId, (id) => { const p = meta.provider(id); return p ? { type: p.type, name: p.name } : undefined; })), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway };
+  const services = { orchestra, remote, anywhere, tunnels, im, vcs: new VcsService(gitSvc), goals, android: new AndroidService(), pool, sessions: sessionsSvc, config: new ConfigService(), usage: new UsageService(async (sid) => providerTimeline(await canonical.providerSwitches(sid), meta.sessionMeta(sid).providerId, (id) => { const p = meta.provider(id); return p ? { type: p.type, name: p.name } : undefined; })), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway };
   new Hub(wss, services);
   // model lists older than a day (or never pulled) are refreshed in the background — list only, no tokens
   void providers.autoRefreshModels();
@@ -325,6 +328,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   gateway.port = port;
   await remote.start();
   if (remote.status().running) console.log(`remote access on http://0.0.0.0:${remote.port}  (${remote.addresses().join(', ')})`);
+  await anywhere.start();
   await im.startAll();
   const eng = await engineInfo();
   console.log(`claude-web ${version} listening on http://${HOST}:${port}  (runtime: ${eng.runtime} ${eng.version ?? ''} ${eng.path})`);
@@ -337,6 +341,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       await im.stopAll();
       await federation.close();
       await tunnels.closeAll();
+      await anywhere.stop(); // the phones' links and the broker connections, before the listener they bridge to
       await remote.stop();
       await orchestra.shutdown(); // before the pool: session closes must not fail / advance runs
       await pool.closeAll();

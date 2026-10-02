@@ -128,7 +128,7 @@ function seedHome(home) {
 async function startServer(home, out, extraEnv) {
   const { spawn } = require('node:child_process');
   const token = require('node:crypto').randomBytes(12).toString('hex');
-  const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: path.join(home, '.claude-web'), CW_NO_MODEL_REFRESH: '1', ...extraEnv };
+  const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: path.join(home, '.claude-web'), CW_NO_MODEL_REFRESH: '1', CW_NO_PUBLIC_BROKERS: '1', ...extraEnv };
   for (const k of Object.keys(env)) if (/^(ANTHROPIC_|CLAUDE_CODE_)/.test(k)) delete env[k];
   const logFile = path.join(out, 'server.log');
   fs.writeFileSync(logFile, '');
