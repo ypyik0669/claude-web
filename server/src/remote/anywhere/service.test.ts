@@ -300,6 +300,34 @@ describe('AnywhereService', () => {
     expect(e.open).toBe(false);
   });
 
+  it("another paired device's token over this device's link: HTTP is 403 and the WebSocket never opens", async () => {
+    // a second phone, paired on the LAN (straight to the listener)
+    const pc = await req('remote.pairCode');
+    const st = await req('remote.status');
+    const other = await new Promise<string>((resolve, reject) => {
+      const body = JSON.stringify({ code: pc.code, name: '另一台手机' });
+      const r = http.request({ host: '127.0.0.1', port: st.port, method: 'POST', path: '/api/pair', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } }, (res) => {
+        let t = '';
+        res.on('data', (c) => (t += c));
+        res.on('end', () => (res.statusCode === 200 ? resolve(JSON.parse(t).token) : reject(new Error(t))));
+      });
+      r.on('error', reject);
+      r.end(body);
+    });
+    const file = path.join(home, 'range.txt');
+    fs.writeFileSync(file, 'abcdefghij');
+    const theirs = await device.mux.request({ method: 'GET', path: `/api/file?path=${encodeURIComponent(file)}&token=${encodeURIComponent(other)}` });
+    expect(theirs.status).toBe(403);
+    expect(dec.decode(theirs.body)).toBe('这个令牌不是这台设备的');
+    const mine = await device.mux.request({ method: 'GET', path: `/api/file?path=${encodeURIComponent(file)}&token=${encodeURIComponent(token)}` });
+    expect(mine.status).toBe(200);
+    const e = openWs(device.mux, other);
+    await until(() => e.closedAt > 0, 'a WebSocket with the other device\'s token refused', 3000);
+    expect(e.open).toBe(false);
+    // the other phone itself is fine on the LAN
+    expect((await req('remote.status')).devices.length).toBe(2);
+  });
+
   it('GET /api/file with a range: 206 and those four bytes', async () => {
     const file = path.join(home, 'range.txt');
     fs.writeFileSync(file, 'abcdefghij');

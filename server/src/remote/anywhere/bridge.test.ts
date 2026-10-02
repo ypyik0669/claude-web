@@ -4,7 +4,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { WebSocketServer } from 'ws';
 import { afterEach, describe, expect, it } from 'vitest';
-import { PAIRING_ONLY, RELAY_MAX_HELD, RELAY_MAX_RESPONSE_BYTES, RELAY_REFUSED, RELAY_TOO_LARGE, serveBridge, type BridgeOptions } from './bridge.js';
+import { NOT_THIS_DEVICE, PAIRING_ONLY, RELAY_MAX_HELD, RELAY_MAX_RESPONSE_BYTES, RELAY_REFUSED, RELAY_TOO_LARGE, serveBridge, type BridgeOptions } from './bridge.js';
 import { F, MUX_PAUSE_BYTES, Mux, decodeFrame, encodeFrame, type Link, type LinkKind, type MuxWs } from './core/index.js';
 
 const cleanup: (() => unknown)[] = [];
@@ -219,6 +219,27 @@ describe('serveBridge', () => {
     const other = open(s.mux, 'other-device');
     await until(() => other.closed, 'refused by tokenOk');
     expect(s.seen.upgrades).toBe(1);
+  });
+
+  it("a device link: an HTTP request with another device's token is 403 and never reaches the listener (query or cookie)", async () => {
+    const s = await setup('p2p-v4', { tokenOk: (t) => t === 'good' });
+    for (const [path, headers] of [
+      ['/api/file?path=x&token=other-device', {}],
+      ['/api/health?token=good&token=other-device', {}],
+      ['/api/health', { cookie: 'a=1; cw_token=other-device' }],
+      ['/api/health', { cookie: 'cw_token=%E0' }],
+      ['/api/health?token=', {}],
+    ] as [string, Record<string, string>][]) {
+      const r = await s.mux.request({ method: 'GET', path, headers });
+      expect(r.status, path + JSON.stringify(headers)).toBe(403);
+      expect(dec.decode(r.body)).toBe(NOT_THIS_DEVICE);
+    }
+    expect(s.seen.paths).toEqual([]);
+    // its own token, in either place, and no token at all (the app's files): through
+    expect((await s.mux.request({ method: 'GET', path: '/api/health?token=good' })).status).toBe(200);
+    expect((await s.mux.request({ method: 'GET', path: '/api/health', headers: { cookie: 'cw_token=good' } })).status).toBe(200);
+    expect((await s.mux.request({ method: 'GET', path: '/assets/app.js' })).status).toBe(200);
+    expect(s.seen.paths).toEqual(['GET /api/health?token=good', 'GET /api/health', 'GET /assets/app.js']);
   });
 
   it('HTTP: method, path, headers and body through; hop-by-hop and set-cookie stay out', async () => {

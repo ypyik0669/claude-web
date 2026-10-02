@@ -1,7 +1,8 @@
 // The PC's side of the streams (the table is in core/mux.ts): every WebSocket and HTTP request that comes over a link
 // is made, as it is, to this machine's remote-access listener on 127.0.0.1, whose sockets are marked cwRemote and
 // must present a device token. Never the main listener (3090), which trusts loopback without a token. A pairing link
-// may only pair; over the slow relay file previews and uploads are refused, and so is any response over 2 MB.
+// may only pair, and a device's link only carries that device's token; over the slow relay file previews and uploads
+// are refused, and so is any response over 2 MB.
 import http from 'node:http';
 import WebSocket from 'ws';
 import {
@@ -29,6 +30,8 @@ export const RELAY_MAX_HELD = 4;
 export const RELAY_HELD_IDLE_MS = 60_000;
 export const RELAY_TOO_LARGE = '慢速转发时单个响应不能超过 2 MB';
 export const PAIRING_ONLY = '还没配对，只能先配对';
+/** The 403 body for a request on a device's link that presents a token of someone else (another device, the main one). */
+export const NOT_THIS_DEVICE = '这个令牌不是这台设备的';
 /** Streams open at once on one link; past it a new one is refused. */
 export const BRIDGE_MAX_STREAMS = 256;
 const MAX_TOKEN_BYTES = 1024;
@@ -51,7 +54,10 @@ export interface BridgeOptions {
   deviceId?: string;
   /** A pairing link: only POST /api/pair goes through, everything else is 403 (a WebSocket is refused). */
   pairing?: boolean;
-  /** A device link: a WebSocket only opens with a token this says is that device's. */
+  /**
+   * A device link: a WebSocket only opens with a token this says is that device's, and an HTTP request that presents
+   * a token (where the listener reads one: `token=` in the query, the cw_token cookie) only goes on with that device's.
+   */
   tokenOk?: (token: string) => boolean;
   /** The link ended by itself or from the other side (not by the returned stop()); every stream is gone by then. */
   onclose?: (why: string) => void;
@@ -67,6 +73,20 @@ function report(what: string, e: unknown): void {
 
 function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * Every token a request presents to the listener (index.ts authOk): each `token=` of the query, each cw_token cookie.
+ * Null when one cannot be read (the listener would read it differently, or throw).
+ */
+function presentedTokens(path: string, headers: Record<string, string>): string[] | null {
+  try {
+    const query = new URL(path, 'http://127.0.0.1').searchParams.getAll('token');
+    const cookies = [...(headers.cookie ?? '').matchAll(/(?:^|;\s*)cw_token=([^;]*)/g)].map((m) => decodeURIComponent(m[1]));
+    return [...query, ...cookies];
+  } catch {
+    return null;
+  }
 }
 
 function bytes(data: WebSocket.RawData): Uint8Array {
@@ -314,6 +334,13 @@ class HttpStream implements Stream {
     const { opts } = this.b;
     const pathname = new URL(path, 'http://127.0.0.1').pathname;
     if (opts.pairing && !(method === 'POST' && pathname === '/api/pair')) return this.reply(403, PAIRING_ONLY);
+    // a device's link is that device's: no request on it may use another one's token (a request with none — the app's
+    // files — goes on, the listener decides what it may have)
+    if (opts.tokenOk) {
+      const tokens = presentedTokens(path, headers);
+      const tokenOk = opts.tokenOk;
+      if (!tokens || !tokens.every((t) => tokenOk(t))) return this.reply(403, NOT_THIS_DEVICE);
+    }
     if (opts.relay && RELAY_REFUSED_PATHS.has(pathname)) return this.reply(413, RELAY_REFUSED);
     let req: http.ClientRequest;
     try {
