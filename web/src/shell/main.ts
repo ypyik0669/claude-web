@@ -3,7 +3,7 @@
 // WebSockets (window.__cwTunnel) and requests (the service worker, sw.ts) go over the link.
 import './shell.css';
 import { Brokers, b64u, dial, type BrokerDef, type DialState, type RtcCtor } from '@anywhere';
-import { deviceCaches, type CachesLike } from './assets';
+import { appCaches, type CachesLike } from './assets';
 import { idbDevices, memoryDevices, type DeviceRec, type DeviceStore } from './devices';
 import { SAY, type Explained } from './explain';
 import { readShellRequest, replyFromError } from './forward';
@@ -138,12 +138,15 @@ async function keep(d: DeviceRec): Promise<void> {
   }
 }
 
-/** A device removed: its record and the app caches of its PC. */
+/**
+ * A device removed: its record and every PC's app caches (assets.appCaches: a removed PC may have rewritten the
+ * others' cached app files; each PC's app comes over its link again on the next connect).
+ */
 async function forget(d: DeviceRec): Promise<void> {
   await store.remove(d.id).catch((e) => console.error('[shell] remove device:', e));
   const caches = cacheStorage();
   if (!caches) return;
-  for (const k of deviceCaches(await caches.keys().catch(() => []), d.id)) await caches.delete(k).catch(() => false);
+  for (const k of appCaches(await caches.keys().catch(() => []))) await caches.delete(k).catch(() => false);
 }
 
 async function showList(notice: Explained | null = null): Promise<void> {
@@ -386,10 +389,10 @@ function takePairLink(): boolean {
 }
 
 // a phone that changed networks, or came back to this page: a relay link's brokers start over at once, a link that
-// has dropped is dialed again (Session.networkChanged)
+// has dropped is dialed again (Session.networkChanged / pageShown: only the first counts as a network change)
 window.addEventListener('online', () => void session?.networkChanged());
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') void session?.networkChanged();
+  if (document.visibilityState === 'visible') void session?.pageShown();
 });
 // a QR scanned while the shell is already open in this tab only changes the fragment
 window.addEventListener('hashchange', () => void takePairLink());

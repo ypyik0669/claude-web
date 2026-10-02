@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { MuxResponse } from '@anywhere';
 import {
-  MAX_ENTRY_BYTES, appVersion, cacheName, deviceCaches, ensureAppCache, entryAssets, healthVersion, oversizedEntries, staleCaches, PcStatusError,
+  MAX_ENTRY_BYTES, appCaches, appVersion, cacheName, deviceCaches, ensureAppCache, entryAssets, healthVersion, oversizedEntries, staleCaches, PcStatusError,
   type CacheLike, type CachesLike,
 } from './assets';
 
@@ -100,8 +100,11 @@ describe('staleCaches / deviceCaches', () => {
   it("only this device's other versions", () => {
     expect(staleCaches(keys, D1, `cw-app-${D1}-0.1.5+bbbbbbbb`)).toEqual([`cw-app-${D1}-0.1.4+aaaaaaaa`]);
   });
-  it('a removed device: all of its caches, nobody else’s', () => {
+  it('a device: all of its caches, nobody else’s', () => {
     expect(deviceCaches(keys, D1)).toEqual([`cw-app-${D1}-0.1.4+aaaaaaaa`, `cw-app-${D1}-0.1.5+bbbbbbbb`]);
+  });
+  it('a removed device: every PC’s app caches (a tampered PC could have rewritten the others’), never the shell’s', () => {
+    expect(appCaches(keys)).toEqual([`cw-app-${D1}-0.1.4+aaaaaaaa`, `cw-app-${D1}-0.1.5+bbbbbbbb`, `cw-app-${D2}-0.1.4+cccccccc`]);
   });
   it('an id that is not the PC’s shape (12 lowercase hex) matches nothing', () => {
     expect(deviceCaches(['cw-app-d1-0.1.5', 'cw-app-d10-0.1.5'], 'd1')).toEqual([]);

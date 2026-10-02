@@ -72,8 +72,10 @@ export interface SessionOptions {
 
 const REDIAL_DELAYS = [0, 2_000, 5_000];
 /**
- * A network change (online, the page shown again) counts this long: a link that drops within it is redialed with the
- * full ICE window (direct may work on the new network), not the short one after a relay link.
+ * A network change (the phone came online) counts this long: a link that drops within it is redialed with the full
+ * ICE window (direct may work on the new network), not the short one after a relay link. The page shown again is not
+ * a network change: a phone put down for more than 30 s comes back to a relay link that is about to be declared dead,
+ * and its redial must get the short window to be back within seconds.
  */
 export const NETWORK_CHANGE_MS = 60_000;
 /** How long a frame's request waits for a redial (the service worker gives up at 60 s). */
@@ -155,14 +157,29 @@ export class Session {
   }
 
   /**
-   * The phone's network may have changed (it came online, or the page was shown again). Over the slow relay the
-   * broker connections start over at once: the link itself lives on (it resends what was lost), where waiting for it
-   * to notice would take its 30 s of silence and then a redial. A dropped link is dialed again, and a drop soon after
-   * gets the full ICE window (direct may work on the new network).
+   * The phone's network may have changed (it came online). Over the slow relay the broker connections start over at
+   * once: the link itself lives on (it resends what was lost), where waiting for it to notice would take its 30 s of
+   * silence and then a redial. A dropped link is dialed again, and a drop soon after gets the full ICE window (direct
+   * may work on the new network).
    */
   networkChanged(): Promise<void> {
     if (this.closed) return Promise.resolve();
     this.netAt = Date.now();
+    return this.revive();
+  }
+
+  /**
+   * The page was shown again. The same as networkChanged, except that it says nothing about the network: a relay
+   * link that drops right after (its 30 s of silence ran out while the phone was put down) is redialed with the short
+   * ICE window, so it is back over the relay within seconds.
+   */
+  pageShown(): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    return this.revive();
+  }
+
+  /** The relay's brokers start over at once; a dropped link is dialed again. */
+  private revive(): Promise<void> {
     if (this.mux?.kind === 'relay') this.o.dialer.restart();
     return this.redial();
   }

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import WsPackage from 'ws';
 import { startBroker } from '../__mocks__/mqtt-broker.mjs';
 import {
-  Brokers, MAX_REMAINING_BYTES, MqttClient, PacketReader, REDIAL_MAX_MS, REDIAL_MS, encodePublish, encodeRemainingLength,
+  Brokers, MAX_REMAINING_BYTES, MqttClient, PacketReader, REDIAL_MAX_MS, REDIAL_MS, REDIAL_STABLE_MS, encodePublish, encodeRemainingLength,
   nextPacketId, redialDelay, type BrokerDef,
 } from './mqtt.js';
 
@@ -612,8 +612,9 @@ describe('Brokers: redial backoff (F5)', () => {
         });
       }
       send(b: Uint8Array) {
-        // CONNECT: accepted
+        // CONNECT: accepted; PINGREQ: PINGRESP (a connection that stays up)
         if (b[0] >> 4 === 1) queueMicrotask(() => this.onmessage?.({ data: new Uint8Array([0x20, 2, 0, 0]).buffer }));
+        if (b[0] >> 4 === 12) queueMicrotask(() => this.onmessage?.({ data: new Uint8Array([0xd0, 0]).buffer }));
       }
       close() {
         this.readyState = 3;
@@ -634,7 +635,29 @@ describe('Brokers: redial backoff (F5)', () => {
     expect(redialDelay(3, 1000, 10)).toBe(1000);
   });
 
-  it('a broker that keeps failing is dialed after 15 s, 30 s, 60 s … then every 5 minutes; a connect starts it over', async () => {
+  it('a broker that accepts and drops the connection at once (a rate limit that kicks) keeps the backoff going', async () => {
+    vi.useFakeTimers();
+    const { o, Ws } = fakeWs();
+    const p = new Brokers([{ name: 'kicks', url: 'wss://kicks.example/mqtt' }], { WebSocket: Ws as never });
+    cleanup.push(() => p.stop());
+    o.refuse = false;
+    p.start();
+    await vi.advanceTimersByTimeAsync(0);
+    // up, kicked a moment later, every time
+    for (const wait of [15_000, 30_000, 60_000, 120_000]) {
+      expect(p.status()).toEqual([{ name: 'kicks', ok: true }]);
+      const n = o.dials;
+      await vi.advanceTimersByTimeAsync(1_000);
+      o.last!.onclose?.({ code: 1008 });
+      await vi.advanceTimersByTimeAsync(wait - 1);
+      expect(o.dials, `before the ${wait} ms wait is over`).toBe(n);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(o.dials, `after ${wait} ms`).toBe(n + 1);
+    }
+    expect(REDIAL_STABLE_MS).toBe(60_000);
+  });
+
+  it('a broker that keeps failing is dialed after 15 s, 30 s, 60 s … then every 5 minutes; a connection that stays up a minute starts it over', async () => {
     vi.useFakeTimers();
     const { o, Ws } = fakeWs();
     const p = new Brokers([{ name: 'blocked', url: 'wss://blocked.example/mqtt' }], { WebSocket: Ws as never });
@@ -655,9 +678,11 @@ describe('Brokers: redial backoff (F5)', () => {
     await vi.advanceTimersByTimeAsync(3_600_000);
     expect(o.dials - before).toBe(12);
 
-    // it answers at last: up, then the connection drops: the next dial is 15 s away again
+    // it answers at last: up for a minute, then the connection drops: the next dial is 15 s away again
     o.refuse = false;
     await vi.advanceTimersByTimeAsync(300_000);
+    expect(p.status()).toEqual([{ name: 'blocked', ok: true }]);
+    await vi.advanceTimersByTimeAsync(REDIAL_STABLE_MS);
     expect(p.status()).toEqual([{ name: 'blocked', ok: true }]);
     const up = o.dials;
     o.refuse = true;

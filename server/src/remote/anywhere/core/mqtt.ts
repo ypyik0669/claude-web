@@ -481,6 +481,11 @@ export interface BrokersOptions extends MqttOptions {
 
 export const REDIAL_MS = 15_000;
 export const REDIAL_MAX_MS = 300_000;
+/**
+ * How long a connection has to stay up before its loss starts the backoff over. A broker that accepts and then
+ * drops the connection at once (a rate limit that kicks) keeps doubling the wait like one that refuses.
+ */
+export const REDIAL_STABLE_MS = 60_000;
 
 /** The wait before the next dial of a broker whose last `failures` dials failed in a row (the first loss counts 0). */
 export function redialDelay(failures: number, base = REDIAL_MS, max = REDIAL_MAX_MS): number {
@@ -502,8 +507,10 @@ interface Entry {
   state: 'idle' | 'connecting' | 'up' | 'down';
   error?: string;
   timer?: ReturnType<typeof setTimeout>;
-  /** Dials since the last one that connected (each failed one doubles the wait before the next). */
+  /** Losses since the last connection that stayed up REDIAL_STABLE_MS (each one doubles the wait before the next). */
   failures: number;
+  /** When the current connection came up. */
+  upAt?: number;
   /** Topics this connection has confirmed, and topics with a SUBSCRIBE in flight on it. */
   acked: Set<string>;
   inflight: Set<string>;
@@ -556,6 +563,7 @@ export class Brokers {
       clearTimeout(e.timer);
       e.timer = undefined;
       e.failures = 0;
+      e.upAt = undefined;
       const c = e.client;
       e.client = undefined;
       e.state = 'idle';
@@ -638,7 +646,7 @@ export class Brokers {
         if (e.client !== c) return; // stopped meanwhile
         e.state = 'up';
         e.error = undefined;
-        e.failures = 0;
+        e.upAt = Date.now();
         this.changed();
         for (const t of this.topics.keys()) this.subscribeOn(e, t);
       },
@@ -653,6 +661,8 @@ export class Brokers {
     e.error = reason;
     e.acked.clear();
     e.inflight.clear();
+    if (e.upAt !== undefined && Date.now() - e.upAt >= REDIAL_STABLE_MS) e.failures = 0;
+    e.upAt = undefined;
     for (const w of [...this.waiters]) this.giveUp(w, e);
     // a PC left on behind a network that blocks some brokers must not dial each of them 4 times a minute forever
     if (this.running) e.timer = setTimeout(() => this.dial(e), redialDelay(e.failures++, this.redialMs, this.redialMaxMs));

@@ -520,6 +520,36 @@ describe('Session: the network changed (F4)', () => {
     expect(u.calls[1].iceMs).toBeUndefined();
   });
 
+  it('the page shown again over the relay: the brokers start over, and a drop right after (the 30 s of silence ran out while the phone was put down) still gets the short window', async () => {
+    const first = new FakePc('relay', pcFiles('0.1.5'));
+    const second = new FakePc('relay', pcFiles('0.1.5'));
+    const t = session([first, second]);
+    await t.s.start();
+    await t.s.pageShown();
+    expect(t.restarts()).toBe(1);
+    expect(t.calls.length).toBe(1);
+    first.drop('nothing heard from the other side for 30000 ms');
+    await until(() => last(t.views).k === 'linked', 'relinked');
+    expect(t.calls[1]).toMatchObject({ fresh: true, iceMs: RELAY_AGAIN_ICE_MS });
+  });
+
+  it('the page shown again with the link down dials again; over a direct link it does nothing', async () => {
+    const first = new FakePc('relay', pcFiles('0.1.5'));
+    const t = session([first]);
+    await t.s.start();
+    first.drop();
+    await until(() => last(t.views).k === 'down', 'gave up');
+    const n = t.calls.length;
+    void t.s.pageShown();
+    await until(() => t.calls.length === n + 1, 'dialed again');
+
+    const u = session([new FakePc('p2p-v6', pcFiles('0.1.5'))]);
+    await u.s.start();
+    await u.s.pageShown();
+    expect(u.restarts()).toBe(0);
+    expect(u.calls.length).toBe(1);
+  });
+
   it('with the link down (every redial failed), a network change dials again', async () => {
     const first = new FakePc('relay', pcFiles('0.1.5'));
     const t = session([first]);

@@ -57,6 +57,14 @@ export function deviceCaches(keys: string[], deviceId: string): string[] {
   return keys.filter((k) => k.startsWith(mine));
 }
 
+/**
+ * Every PC's app caches. All of them go when a device is removed: the caches share the shell's origin, so a PC that
+ * was tampered with could have rewritten the other PCs' cached app files, and removing it must not leave them behind.
+ */
+export function appCaches(keys: string[]): string[] {
+  return keys.filter((k) => k.startsWith(APP_PREFIX));
+}
+
 /** This device's caches of other builds. */
 export function staleCaches(keys: string[], deviceId: string, keep: string): string[] {
   return deviceCaches(keys, deviceId).filter((k) => k !== keep);
