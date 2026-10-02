@@ -828,6 +828,14 @@ function driver() {
         const refused = await waitFor(`/wss:\\/\\//.test(document.querySelector('.modal.settings [data-id="broker-error"]')?.textContent ?? '') && (window.__store.getState().settings['remote.anywhere.brokers'] ?? []).length === 1`, 3000);
         check('更多选项: a broker address that is not wss:// is refused with a sentence, nothing saved', refused, await js(`document.querySelector('.modal.settings [data-id="broker-error"]')?.textContent ?? 'no sentence'`));
         await shot('settings-remote-anywhere-more');
+        // the broker list changes (here: as another window would save it): the PC listens anew, the pairing room of the
+        // code on screen is gone, so its QR goes too (F2)
+        await click(`${RS} [data-id="pair-new"]`);
+        const qrBefore = await waitFor(`!!document.querySelector('${RS} img.pair-qr')`, 10_000);
+        await js(`window.__store.getState().setSetting('remote.anywhere.brokers', [{ name: 'smoke2', url: 'wss://127.0.0.1:9/mqtt', relay: true }])`);
+        const qrGone = await waitFor(`!document.querySelector('${RS} img.pair-qr') && !document.querySelector('${RS} [data-id="pair-copy"]')`, 5000);
+        check('a changed broker list clears the QR and the pairing link on screen (they were for the old pairing room)', qrBefore && qrGone, JSON.stringify({ qrBefore, qrGone }));
+        await js(`window.__store.getState().setSetting('remote.anywhere.brokers', [{ name: 'smoke', url: 'wss://127.0.0.1:9/mqtt', relay: true }])`);
         if (paired?.device?.id) await srvReq({ kind: 'remote.devices.revoke', id: paired.device.id }).catch(() => {});
         await srvReq({ kind: 'remote.set', enabled: false }).catch(() => {});
       }
