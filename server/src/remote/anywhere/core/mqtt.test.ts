@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import WsPackage from 'ws';
 import { startBroker } from '../__mocks__/mqtt-broker.mjs';
 import {
-  Brokers, MAX_REMAINING_BYTES, MqttClient, PacketReader, encodePublish, encodeRemainingLength, nextPacketId,
-  type BrokerDef,
+  Brokers, MAX_REMAINING_BYTES, MqttClient, PacketReader, REDIAL_MAX_MS, REDIAL_MS, encodePublish, encodeRemainingLength,
+  nextPacketId, redialDelay, type BrokerDef,
 } from './mqtt.js';
 
 type Broker = Awaited<ReturnType<typeof startBroker>>;
@@ -583,6 +583,107 @@ describe('Brokers', () => {
     p.stop();
     await sleep(100); // the error is emitted on a later tick
     expect(p.status()).toEqual([{ name: 'stuck', ok: false }]);
+  });
+});
+
+describe('Brokers: redial backoff (F5)', () => {
+  /**
+   * A WebSocket that never reaches a broker while `refuse` is on (an error on the next microtask), and that answers
+   * CONNECT with a CONNACK otherwise; `last` is the newest one, so a test can drop an established connection.
+   */
+  function fakeWs() {
+    const o = { dials: 0, refuse: true, last: null as null | { onclose: ((ev: unknown) => void) | null } };
+    class Ws {
+      binaryType = 'arraybuffer';
+      readyState = 0;
+      bufferedAmount = 0;
+      onopen: ((ev: unknown) => void) | null = null;
+      onmessage: ((ev: unknown) => void) | null = null;
+      onerror: ((ev: unknown) => void) | null = null;
+      onclose: ((ev: unknown) => void) | null = null;
+      constructor() {
+        o.dials++;
+        o.last = this;
+        const refuse = o.refuse;
+        queueMicrotask(() => {
+          if (refuse) return this.onerror?.(new Error('refused'));
+          this.readyState = 1;
+          this.onopen?.({});
+        });
+      }
+      send(b: Uint8Array) {
+        // CONNECT: accepted
+        if (b[0] >> 4 === 1) queueMicrotask(() => this.onmessage?.({ data: new Uint8Array([0x20, 2, 0, 0]).buffer }));
+      }
+      close() {
+        this.readyState = 3;
+      }
+    }
+    return { o, Ws };
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('redialDelay: doubles from the base, at most 5 minutes', () => {
+    expect([0, 1, 2, 3, 4, 5, 6, 40].map((n) => redialDelay(n))).toEqual([15_000, 30_000, 60_000, 120_000, 240_000, 300_000, 300_000, 300_000]);
+    expect(REDIAL_MS).toBe(15_000);
+    expect(REDIAL_MAX_MS).toBe(300_000);
+    // a cap under the base is the base
+    expect(redialDelay(3, 1000, 10)).toBe(1000);
+  });
+
+  it('a broker that keeps failing is dialed after 15 s, 30 s, 60 s … then every 5 minutes; a connect starts it over', async () => {
+    vi.useFakeTimers();
+    const { o, Ws } = fakeWs();
+    const p = new Brokers([{ name: 'blocked', url: 'wss://blocked.example/mqtt' }], { WebSocket: Ws as never });
+    cleanup.push(() => p.stop());
+    p.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(o.dials).toBe(1);
+    // the dial right after each wait, and none a moment before it
+    for (const wait of [15_000, 30_000, 60_000, 120_000, 240_000, 300_000, 300_000]) {
+      const n = o.dials;
+      await vi.advanceTimersByTimeAsync(wait - 1);
+      expect(o.dials, `before the ${wait} ms wait is over`).toBe(n);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(o.dials, `after ${wait} ms`).toBe(n + 1);
+    }
+    // an hour of a blocked broker: 12 dials, not 240
+    const before = o.dials;
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(o.dials - before).toBe(12);
+
+    // it answers at last: up, then the connection drops: the next dial is 15 s away again
+    o.refuse = false;
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(p.status()).toEqual([{ name: 'blocked', ok: true }]);
+    const up = o.dials;
+    o.refuse = true;
+    o.last!.onclose?.({ code: 1006 });
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(o.dials).toBe(up);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(o.dials).toBe(up + 1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(o.dials).toBe(up + 2);
+  });
+
+  it('stop() and start() (a network change) dial at once and start the backoff over', async () => {
+    vi.useFakeTimers();
+    const { o, Ws } = fakeWs();
+    const p = new Brokers([{ name: 'blocked', url: 'wss://blocked.example/mqtt' }], { WebSocket: Ws as never });
+    cleanup.push(() => p.stop());
+    p.start();
+    await vi.advanceTimersByTimeAsync(15_000 + 30_000 + 60_000);
+    expect(o.dials).toBe(4);
+    p.stop();
+    p.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(o.dials).toBe(5);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(o.dials).toBe(6);
   });
 });
 

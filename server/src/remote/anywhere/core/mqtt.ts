@@ -469,9 +469,24 @@ export class MqttClient {
 }
 
 export interface BrokersOptions extends MqttOptions {
-  /** Wait between a lost or failed connection and the next dial (15 s). */
+  /**
+   * Wait between a lost or failed connection and the next dial (15 s), doubled after each dial that fails in a row
+   * up to redialMaxMs, and back to it once a dial connects (or the pool is restarted).
+   */
   redialMs?: number;
+  /** The longest wait between dials of a broker that keeps failing (5 minutes; never under redialMs). */
+  redialMaxMs?: number;
   connectTimeoutMs?: number;
+}
+
+export const REDIAL_MS = 15_000;
+export const REDIAL_MAX_MS = 300_000;
+
+/** The wait before the next dial of a broker whose last `failures` dials failed in a row (the first loss counts 0). */
+export function redialDelay(failures: number, base = REDIAL_MS, max = REDIAL_MAX_MS): number {
+  const cap = Math.max(base, max);
+  // 2^n overflows to Infinity long after the cap: min() keeps it finite
+  return Math.min(cap, base * 2 ** Math.max(0, failures));
 }
 
 export interface BrokerStatus {
@@ -487,6 +502,8 @@ interface Entry {
   state: 'idle' | 'connecting' | 'up' | 'down';
   error?: string;
   timer?: ReturnType<typeof setTimeout>;
+  /** Dials since the last one that connected (each failed one doubles the wait before the next). */
+  failures: number;
   /** Topics this connection has confirmed, and topics with a SUBSCRIBE in flight on it. */
   acked: Set<string>;
   inflight: Set<string>;
@@ -511,12 +528,14 @@ export class Brokers {
   private readonly topics = new Map<string, (payload: Uint8Array, broker: string) => void>();
   private readonly waiters = new Set<Waiter>();
   private readonly redialMs: number;
+  private readonly redialMaxMs: number;
   private running = false;
   private last = '';
 
   constructor(defs: BrokerDef[], private readonly opts: BrokersOptions = {}) {
-    this.entries = defs.map((def) => ({ def, state: 'idle', acked: new Set(), inflight: new Set() }));
-    this.redialMs = opts.redialMs ?? 15_000;
+    this.entries = defs.map((def) => ({ def, state: 'idle', failures: 0, acked: new Set(), inflight: new Set() }));
+    this.redialMs = opts.redialMs ?? REDIAL_MS;
+    this.redialMaxMs = opts.redialMaxMs ?? REDIAL_MAX_MS;
     this.last = JSON.stringify(this.status());
   }
 
@@ -529,12 +548,14 @@ export class Brokers {
   /**
    * Closes every connection and cancels redials. Subscriptions are kept: start() again dials everything right
    * away and resubscribes (also the way to redial at once after a network change instead of waiting redialMs).
+   * The backoff starts over: on a new network the brokers that failed before may well answer.
    */
   stop(): void {
     this.running = false;
     for (const e of this.entries) {
       clearTimeout(e.timer);
       e.timer = undefined;
+      e.failures = 0;
       const c = e.client;
       e.client = undefined;
       e.state = 'idle';
@@ -617,6 +638,7 @@ export class Brokers {
         if (e.client !== c) return; // stopped meanwhile
         e.state = 'up';
         e.error = undefined;
+        e.failures = 0;
         this.changed();
         for (const t of this.topics.keys()) this.subscribeOn(e, t);
       },
@@ -632,7 +654,8 @@ export class Brokers {
     e.acked.clear();
     e.inflight.clear();
     for (const w of [...this.waiters]) this.giveUp(w, e);
-    if (this.running) e.timer = setTimeout(() => this.dial(e), this.redialMs);
+    // a PC left on behind a network that blocks some brokers must not dial each of them 4 times a minute forever
+    if (this.running) e.timer = setTimeout(() => this.dial(e), redialDelay(e.failures++, this.redialMs, this.redialMaxMs));
     this.changed();
   }
 
