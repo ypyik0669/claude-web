@@ -34,6 +34,8 @@ export class WsClient {
   constructor(private readonly open: () => WebSocketLike = openWebSocket) {}
 
   connect() {
+    // one socket at a time: a second connect() would orphan the current one (its close would no longer count)
+    if (this.ws) return;
     let ws: WebSocketLike;
     try {
       ws = this.open();
@@ -43,15 +45,17 @@ export class WsClient {
       return;
     }
     this.ws = ws;
-    ws.onopen = () => {
-      if (this.ws !== ws) return;
+    let opened = false;
+    const onOpen = () => {
+      // once per socket, and only while it is the current one
+      if (opened || this.ws !== ws) return;
+      opened = true;
       this.connected = true;
       this.backoff = 500;
       this.onStatus?.(true);
-      for (const q of this.queue) ws.send(q.raw);
-      this.queue = [];
+      this.flush(ws);
     };
-    ws.onclose = () => {
+    const onClose = () => {
       // once per socket: a second close report must not start a second connection next to the new one
       if (this.ws !== ws) return;
       this.ws = null;
@@ -67,7 +71,10 @@ export class WsClient {
       }
       this.retry();
     };
+    ws.onopen = onOpen;
+    ws.onclose = onClose;
     ws.onmessage = (ev) => {
+      if (this.ws !== ws) return; // a socket that is no longer current: its replies and events are stale
       const d: WireDown = JSON.parse(ev.data);
       if (d.type === 'reply') {
         const p = this.pending.get(d.reply.id);
@@ -78,11 +85,32 @@ export class WsClient {
         for (const l of this.listeners) l(d.event);
       }
     };
+    // a socket must report its open / close asynchronously (tunnel.ts); one that did so from inside open(),
+    // before the handlers above existed, would otherwise sit here dead: never connected, or never reconnected
+    if (ws.readyState === OPEN) onOpen();
+    else if (ws.readyState > OPEN) onClose();
   }
 
   private retry() {
     setTimeout(() => this.connect(), this.backoff);
     this.backoff = Math.min(this.backoff * 2, 8000);
+  }
+
+  /**
+   * Sends the queue in order on `ws` while it is the current, open socket. Each request leaves the queue before
+   * its send(), so a close reported from inside send() treats it as sent and keeps the rest queued. A send() that
+   * throws puts its request back at the front (unless that close has failed it already) and stops.
+   */
+  private flush(ws: WebSocketLike) {
+    while (this.queue.length && this.ws === ws && ws.readyState === OPEN) {
+      const item = this.queue.shift()!;
+      try {
+        ws.send(item.raw);
+      } catch {
+        if (this.pending.has(item.id)) this.queue.unshift(item);
+        return;
+      }
+    }
   }
 
   request<T = unknown>(req: ClientRequest): Promise<T> {
@@ -91,8 +119,9 @@ export class WsClient {
     const raw = JSON.stringify(up);
     return new Promise<T>((res, rej) => {
       this.pending.set(id, { res: res as (v: unknown) => void, rej });
-      if (this.ws && this.ws.readyState === OPEN) this.ws.send(raw);
-      else this.queue.push({ id, raw });
+      // through the queue even when open: behind anything a failed send left there, never ahead of it
+      this.queue.push({ id, raw });
+      if (this.connected && this.ws) this.flush(this.ws);
     });
   }
 

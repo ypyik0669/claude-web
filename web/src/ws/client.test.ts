@@ -168,6 +168,162 @@ describe('WsClient on an injected socket', () => {
     vi.advanceTimersByTime(1000);
     expect(sockets).toHaveLength(1);
   });
+
+  // a TunnelSocket must dispatch its events asynchronously, like a WebSocket; one that fires them from inside
+  // connect() (before the client has assigned its handlers) must not leave a dead socket behind
+  it('a socket that is already open when connect() returns (onopen fired synchronously) flushes the queue and reports connected', async () => {
+    const status: boolean[] = [];
+    const c = new WsClient(() => {
+      const s = new FakeSocket(); sockets.push(s);
+      s.open(); // nobody listens yet: onopen is still null
+      return s;
+    });
+    c.onStatus = (v) => status.push(v);
+    const early = track(c.request(LIST));
+    c.connect();
+    expect(c.connected).toBe(true);
+    expect(status).toEqual([true]);
+    expect(sockets[0].ids()).toEqual(['1']);
+
+    sockets[0].onopen?.(); // the socket reporting its open again later: the open path runs once
+    expect(status).toEqual([true]);
+    expect(sockets[0].ids()).toEqual(['1']);
+
+    sockets[0].down({ type: 'reply', reply: { id: '1', ok: true, data: 'ok' } });
+    await flush();
+    expect(early).toEqual({ state: 'resolved', value: 'ok' });
+  });
+
+  it('a socket that is already closed when connect() returns (onclose fired synchronously) schedules the reconnect with backoff', async () => {
+    vi.useFakeTimers();
+    const status: boolean[] = [];
+    let first = true;
+    const c = new WsClient(() => {
+      const s = new FakeSocket(); sockets.push(s);
+      if (first) { first = false; s.drop(); } // the shell already knows the link is down
+      return s;
+    });
+    c.onStatus = (v) => status.push(v);
+    const queued = track(c.request(LIST));
+    c.connect();
+    expect(c.connected).toBe(false);
+    expect(status).toEqual([false]);
+    await flush();
+    expect(queued.state).toBe('pending');
+
+    sockets[0].onclose?.(); // the late, asynchronous report of the same close: no second reconnect
+    vi.advanceTimersByTime(499);
+    expect(sockets).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(sockets).toHaveLength(2);
+    vi.advanceTimersByTime(8000);
+    expect(sockets).toHaveLength(2);
+
+    sockets[1].open();
+    expect(sockets[1].ids()).toEqual(['1']);
+  });
+
+  it('a send that throws while flushing keeps that request and the ones after it queued; the ones before are not resent', async () => {
+    vi.useFakeTimers();
+    let n = 0;
+    const c = new WsClient(() => {
+      const s = new FakeSocket(); sockets.push(s);
+      if (sockets.length === 1) {
+        const send = s.send.bind(s);
+        s.send = (text: string) => { if (++n === 2) throw new Error('tunnel buffer full'); send(text); };
+      }
+      return s;
+    });
+    const r = [track(c.request(LIST)), track(c.request(INFO)), track(c.request(LIST))];
+    c.connect();
+    sockets[0].open();
+    expect(sockets[0].ids()).toEqual(['1']); // the 2nd failed, the flush stopped there
+
+    sockets[0].drop();
+    await flush();
+    expect(r.map((t) => t.state)).toEqual(['rejected', 'pending', 'pending']); // only the 1st went out
+
+    vi.advanceTimersByTime(500);
+    sockets[1].open();
+    expect(sockets[1].ids()).toEqual(['2', '3']);
+  });
+
+  it('after a failed send, a new request on the same socket goes out behind the ones still queued, not ahead', () => {
+    let n = 0;
+    const c = new WsClient(() => {
+      const s = new FakeSocket(); sockets.push(s);
+      const send = s.send.bind(s);
+      s.send = (text: string) => { if (++n === 2) throw new Error('tunnel buffer full'); send(text); };
+      return s;
+    });
+    c.request(LIST); c.request(INFO); c.request(LIST);
+    c.connect();
+    sockets[0].open();
+    expect(sockets[0].ids()).toEqual(['1']);
+    c.request(INFO);
+    expect(sockets[0].ids()).toEqual(['1', '2', '3', '4']);
+  });
+
+  it('a close reported from inside send() fails only what went out; the rest stays queued for the next socket', async () => {
+    vi.useFakeTimers();
+    let n = 0;
+    const c = new WsClient(() => {
+      const s = new FakeSocket(); sockets.push(s);
+      if (sockets.length === 1) {
+        const send = s.send.bind(s);
+        s.send = (text: string) => {
+          if (++n === 2) { s.drop(); throw new Error('link lost'); } // re-entrant close, then the throw
+          send(text);
+        };
+      }
+      return s;
+    });
+    const r = [track(c.request(LIST)), track(c.request(INFO)), track(c.request(LIST))];
+    c.connect();
+    sockets[0].open();
+    await flush();
+    // the 1st went out and the 2nd was being sent when the socket closed: both failed, neither is retried;
+    // the 3rd never went out and is not dropped
+    expect(r.map((t) => t.state)).toEqual(['rejected', 'rejected', 'pending']);
+
+    vi.advanceTimersByTime(500);
+    sockets[1].open();
+    expect(sockets[1].ids()).toEqual(['3']);
+  });
+
+  it('a second connect() while a socket is current does not open another one', () => {
+    const c = client();
+    c.connect();
+    c.connect();
+    expect(sockets).toHaveLength(1);
+    sockets[0].open();
+    c.connect();
+    expect(sockets).toHaveLength(1);
+  });
+
+  it('messages from a socket that is no longer current are ignored', async () => {
+    vi.useFakeTimers();
+    const c = client();
+    const events: ServerEvent[] = [];
+    c.on((ev) => events.push(ev));
+    c.connect();
+    sockets[0].open();
+    sockets[0].drop();
+    const queued = track(c.request(LIST)); // id 1, queued while down
+    vi.advanceTimersByTime(500);
+    expect(sockets).toHaveLength(2);
+
+    sockets[0].down({ type: 'event', event: { kind: 'sessions.changed' } });
+    sockets[0].down({ type: 'reply', reply: { id: '1', ok: true, data: 'stale' } });
+    await flush();
+    expect(events).toEqual([]);
+    expect(queued.state).toBe('pending');
+
+    sockets[1].open();
+    sockets[1].down({ type: 'reply', reply: { id: '1', ok: true, data: 'fresh' } });
+    await flush();
+    expect(queued).toEqual({ state: 'resolved', value: 'fresh' });
+  });
 });
 
 describe('tunnelHost', () => {
@@ -179,6 +335,7 @@ describe('tunnelHost', () => {
   };
 
   it('no window (node, workers) → null', () => {
+    vi.stubGlobal('window', undefined); // explicit, so the test does not lean on vitest's environment: 'node'
     expect(tunnelHost()).toBeNull();
   });
 

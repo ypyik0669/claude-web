@@ -2,8 +2,15 @@ import type { LinkKind } from '@shared';
 
 /**
  * One WebSocket stream over the phone shell's tunnel to the computer: the part of a WebSocket the app uses.
- * `readyState` takes the WebSocket values (0 connecting, 1 open, 3 closed); `onopen` fires once the computer's
- * /ws has accepted the stream, `onclose` once when it ends (or never opened: computer unreachable, token refused).
+ * - `readyState` takes the WebSocket values: 0 connecting, 1 open, 2 closing, 3 closed. It starts at 0.
+ * - Events are dispatched asynchronously, like a WebSocket's, and never from inside `CwTunnel.connect()`:
+ *   the client assigns its handlers after `connect()` returns. (It copes with a violation by checking
+ *   `readyState` right after, but a stream should not rely on that.)
+ * - `onopen` runs once the computer's /ws has accepted the stream, with `readyState` already 1.
+ * - `onclose` runs once when the stream ends, or when it never opened (computer unreachable, token refused),
+ *   with `readyState` already 3.
+ * - `send()` is only called while `readyState` is 1. If it throws, the message was not sent: the client keeps it
+ *   queued and tries again with the next request, or on the next stream.
  */
 export interface TunnelSocket {
   readyState: number;
