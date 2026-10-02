@@ -649,8 +649,8 @@ describe('relay link', () => {
     const junk = Array.from({ length: MAX_INBOX + 100 }, (_, i) => shaped(RELAY_DIR.up, 1, i));
     // one WS message: every one of them reaches the link before the first is opened
     a.sendRaw(glue(t.topics.up, junk));
-    await until(() => t.pc.raw(t.topics.up) === junk.length, 'the whole flood on the PC pool');
-    await until(() => decrypt.mock.calls.length >= MAX_INBOX, 'the queued part to be tried');
+    await until(() => t.pc.raw(t.topics.up) === junk.length, 'the whole flood on the PC pool', 15_000);
+    await until(() => decrypt.mock.calls.length >= MAX_INBOX, 'the queued part to be tried', 15_000);
     await settle();
     expect(decrypt.mock.calls.length).toBe(MAX_INBOX);
     t.P.link.send(enc.encode('after'));
@@ -791,13 +791,13 @@ describe('relay link', () => {
     // in two halves, so the second half is inside the receiver's reorder window when it arrives
     const half = Math.ceil(n / 2);
     for (const p of packets.slice(0, half)) t.sniff.p.publish(t.topics.up, p);
-    await until(() => t.pc.raw(t.topics.up) >= half, 'the first half on the PC');
+    await until(() => t.pc.raw(t.topics.up) >= half, 'the first half on the PC', 15_000);
     await settle();
     for (const p of packets.slice(half)) t.sniff.p.publish(t.topics.up, p);
-    await until(() => t.C.closed.length === 1, 'the PC link to end', 5000);
+    await until(() => t.C.closed.length === 1, 'the PC link to end', 15_000);
     expect(t.C.closed[0]).toMatch(new RegExp(`over ${MAX_FRAME_BYTES} bytes`));
     expect(t.C.got).toEqual([]);
-    await until(() => t.P.closed.length === 1, 'the phone to be told', 3000);
+    await until(() => t.P.closed.length === 1, 'the phone to be told', 10_000);
     expect(t.P.closed[0]).toMatch(/closed/);
   });
 

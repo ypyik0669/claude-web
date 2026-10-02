@@ -122,6 +122,7 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - `ImRouter`：每个 (网关, 聊天) 绑定一个会话（`meta.imBindings`）；未授权用户只回一次提示（1 小时），`/pair <配对码>` 加入 `allowUsers`；命令 `/new /sessions /use /status /stop /allow /deny /mode /model /verbose /help`，其它 `/xxx` 原样转给会话；`result` → 回最后一段 assistant 文本 + 用时 / 费用；权限请求 → 带 允许 / 拒绝 按钮（`perm:<requestId>:allow`），AskUserQuestion → 选项按钮（`ask:<id>:<i>`），ExitPlanMode → 开始执行 / 继续讨论。密钥字段用 `SecretService.protect` 存成 `enc:`，wire 上打码 `••••••`，回传打码值不覆盖。
 - `server/src/im/router.test.ts` 用假 adapter / pool 覆盖路由逻辑；`server/ws-phase6.mjs` 端到端跑远程监听 + 配对 + 设备令牌 + 隧道失败路径 + IM 配置。
 - vitest 只认 `src/**/*.test.ts`；server 的 `tsconfig` 现在排除测试与 `__mocks__`，不然 `npm run build` 会把测试编译进 `dist/` 然后 vitest 连 dist 里的副本一起跑（mock 路径不存在 → 超时）。
+- **按真实时间计时的测试单独一组、最后跑**（`server/vitest.config.ts` 的 `REAL_TIME`：`relay-link` / `signal` / `p2p` 三个文件，`projects` + `sequence.groupOrder: 1`）：转发每秒 20 包的节奏、几秒内处理完的洪泛、有上限的连接用时，和整套并行跑在一起时被抢 CPU，每次全量都挂 4 个，单独跑次次通过。新写的这类测试放进这张表，别放宽断言。
 
 ## 手机在外面也能连（2026-10-01）
 

@@ -467,8 +467,8 @@ describe('SignalChannel', () => {
     const junk = Array.from({ length: MAX_PENDING + 100 }, () => b64u(crypto.getRandomValues(new Uint8Array(64))));
     // one WS message: every one of them is handed to the channel before the first is opened
     t.a.sendRaw(glue(t.room.topic, junk));
-    await until(() => t.phone.raw(t.room.topic) === junk.length, 'the whole flood on the phone pool');
-    await until(() => decrypts() === MAX_PENDING, 'the queued part to be tried');
+    await until(() => t.phone.raw(t.room.topic) === junk.length, 'the whole flood on the phone pool', 15_000);
+    await until(() => decrypts() === MAX_PENDING, 'the queued part to be tried', 15_000);
     await settle();
     expect(decrypts()).toBe(MAX_PENDING);
     expect(t.sniff.p.publish(t.room.topic, await seal(t.room, { t: 'ack', s: 'after', from: 'pc' }))).toBe(2);
