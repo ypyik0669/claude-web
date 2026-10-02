@@ -2,6 +2,7 @@ import { authToken } from '@/ws/client';
 // Attachment helpers for the composer: image compression, long-paste → text attachment, folder traversal, upload.
 import type { AttachmentRef } from '@shared';
 import { skipDirName } from './attachment-filter';
+import { appUrl } from '@/util/app-url';
 
 export const LONG_PASTE_CHARS = 3000;
 export const LONG_PASTE_LINES = 60;
@@ -89,7 +90,7 @@ export function apiToken(): string | null {
 /** Upload one file for a session; returns the absolute path the CLI can Read. */
 export async function uploadAttachment(sessionId: string, file: Blob, rel: string, onProgress?: (p: number) => void): Promise<{ path: string; size: number }> {
   const tok = apiToken();
-  const url = `/api/attachments?sessionId=${encodeURIComponent(sessionId)}&rel=${encodeURIComponent(rel)}${tok ? `&token=${encodeURIComponent(tok)}` : ''}`;
+  const url = appUrl(`api/attachments?sessionId=${encodeURIComponent(sessionId)}&rel=${encodeURIComponent(rel)}${tok ? `&token=${encodeURIComponent(tok)}` : ''}`);
   return new Promise((res, rej) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);

@@ -1,4 +1,5 @@
 import { authToken } from '@/ws/client';
+import { appUrl } from '@/util/app-url';
 export type PreviewKind = 'text' | 'image' | 'pdf' | 'video' | 'audio' | 'binary';
 
 const IMG = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i;
@@ -21,5 +22,5 @@ export function fileUrl(p: string): string {
   const token = authToken();
   const q = new URLSearchParams({ path: p });
   if (token) q.set('token', token);
-  return `/api/file?${q}`;
+  return appUrl(`api/file?${q}`);
 }

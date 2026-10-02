@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 import path from 'node:path';
 
 export default defineConfig({
+  // relative asset URLs (./assets/…): the phone shell runs the same build below a folder (app/index.html)
+  base: './',
   plugins: [react()],
   resolve: { alias: { '@shared': path.resolve(__dirname, '../server/src/protocol.ts'), '@catalog': path.resolve(__dirname, '../server/src/models/catalog.ts'), '@': path.resolve(__dirname, 'src') } },
   server: {

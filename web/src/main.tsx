@@ -13,7 +13,7 @@ useStore.getState().init();
 // where every control of the old composer went (the table reach.test.ts checks): ui-smoke opens each place
 (window as any).__cwComposerReach = { reach: COMPOSER_REACH, container: PLACE_CONTAINER, opener: PLACE_OPENER };
 // installable on phones (LAN access); the desktop shell and dev server skip it
-if ('serviceWorker' in navigator && !(window as any).desktop && location.protocol !== 'file:' && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) navigator.serviceWorker.register('/sw.js').catch(() => {});
+if ('serviceWorker' in navigator && !(window as any).desktop && location.protocol !== 'file:' && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) navigator.serviceWorker.register('sw.js').catch(() => {});
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary area="应用" full>
