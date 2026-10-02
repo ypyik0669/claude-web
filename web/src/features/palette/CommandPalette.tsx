@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { THEMES, forkCarry, useActive, useStore, type PanelId } from '@/store';
 import { ws } from '@/ws/client';
+import { canOpenWindow } from '@/ws/tunnel';
 import { ago, basename } from '@/util';
 import { Icon, AGENT_ICONS, type IconName } from '@/ui/icons';
 import { parsePeerId, type SessionSummary } from '@shared';
@@ -74,7 +75,8 @@ export function CommandPalette() {
       ...(['single', 'cols2', 'cols3', 'grid2x2', 'mainSide'] as const).map<Cmd>((p) => ({ id: `preset.${p}`, label: `布局预设: ${{ single: '不分屏', cols2: '左右两栏', cols3: '三栏', grid2x2: '四宫格', mainSide: '主 + 侧' }[p]}`, ic: 'zoom', group: '工作台', run: () => st.dispatchLayout({ t: 'pane.preset', preset: p }) })),
       { id: 'orch.new', label: '新建编排', sub: '多 agent 工作流', ic: 'orchestra', group: '编排', run: () => useOrch.getState().ask('new') },
       { id: 'orch.run', label: '运行编排…', ic: 'play', group: '编排', run: () => useOrch.getState().ask('run') },
-      { id: 'window.new', label: '在新窗口打开当前分组', ic: 'copy', group: '工作台', run: () => runCommand('window.new') },
+      // not inside the phone shell: a new window there would have no tunnel to the computer
+      ...(canOpenWindow() ? [{ id: 'window.new', label: '在新窗口打开当前分组', ic: 'copy' as const, group: '工作台', run: () => runCommand('window.new') }] : []),
       ...PANELS.map(panel),
       ...THEMES.map<Cmd>((t) => ({ id: `theme.${t}`, label: `主题: ${t}${st.theme === t ? '（当前）' : ''}`, ic: 'moon', group: '主题', run: () => st.setTheme(t) })),
     ];

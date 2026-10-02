@@ -1,8 +1,10 @@
 // WsClient on an injected socket (the phone shell's tunnel socket has the same shape), and tunnelHost().
+import fs from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClientRequest, ServerEvent } from '@shared';
 import { WsClient } from './client';
-import { tunnelHost, type CwTunnel, type TunnelSocket } from './tunnel';
+import { canOpenWindow, tunnelHost, type CwTunnel, type TunnelSocket } from './tunnel';
 
 /** A socket the test opens and drops by hand. readyState uses the WebSocket values: 0 connecting, 1 open, 3 closed. */
 class FakeSocket implements TunnelSocket {
@@ -366,5 +368,21 @@ describe('tunnelHost', () => {
   it("a same-origin parent with __cwTunnel → the parent's tunnel", () => {
     page({ location: { origin: 'https://ypy.github.io' }, __cwTunnel: tunnel });
     expect(tunnelHost()).toBe(tunnel);
+  });
+
+  it('canOpenWindow (F11): not inside the phone shell (a new window there would have no tunnel), anywhere else yes', () => {
+    page({ location: { origin: 'https://ypy.github.io' }, __cwTunnel: tunnel });
+    expect(canOpenWindow()).toBe(false);
+    page('self');
+    expect(canOpenWindow()).toBe(true);
+    vi.stubGlobal('window', undefined);
+    expect(canOpenWindow()).toBe(true);
+  });
+
+  it('the palette, the command and the function behind them all ask canOpenWindow', () => {
+    const src = (f: string) => fs.readFileSync(path.resolve(__dirname, '..', f), 'utf8');
+    expect(src('features/palette/CommandPalette.tsx')).toMatch(/canOpenWindow\(\)\s*\?\s*\[\{ id: 'window\.new'/);
+    expect(src('features/workbench/commands.ts')).toMatch(/case 'window\.new': if \(canOpenWindow\(\)\)/);
+    expect(src('features/workbench/windows.ts')).toMatch(/if \(!canOpenWindow\(\)\) return;/);
   });
 });

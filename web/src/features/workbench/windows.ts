@@ -2,6 +2,7 @@
 import { useStore } from '@/store';
 import { winId } from '@/store/paneContext';
 import { desktop } from '@/desktop';
+import { canOpenWindow } from '@/ws/tunnel';
 import type { Group } from '@/model/layout';
 
 type Msg =
@@ -54,8 +55,12 @@ export function sendGroupTo(groupId: string, to: string): Promise<void> {
   });
 }
 
-/** Desktop: open a new window and hand it the group once it says hello. */
+/**
+ * Desktop: open a new window and hand it the group once it says hello (a browser: a new tab of the app). Never inside
+ * the phone shell: the new page would be a top-level app/index.html with no tunnel to the computer.
+ */
 export async function offerGroupToNewWindow(groupId: string) {
+  if (!canOpenWindow()) return;
   const st = useStore.getState();
   if (st.layout.groups.length < 2) { st.toast('至少保留一个分组在当前窗口；先新建一个分组再迁移'); return; }
   if (!desktop?.newWindow) { window.open(`${location.pathname}?${new URLSearchParams({ ...Object.fromEntries(new URLSearchParams(location.search)), win: `w${Date.now().toString(36)}` })}`, '_blank'); return; }

@@ -37,6 +37,14 @@ export interface CwTunnel {
  * same origin and has `__cwTunnel`. Anything else — a top-level page, a cross-origin parent (reading its
  * location or properties throws), no window at all (node tests) — is null.
  */
+/**
+ * Whether this page may open another window of the app (在新窗口打开当前分组): not inside the phone shell, where it
+ * would be a top-level app/index.html with no tunnel — nothing in it would reach the computer.
+ */
+export function canOpenWindow(): boolean {
+  return tunnelHost() === null;
+}
+
 export function tunnelHost(): CwTunnel | null {
   try {
     if (typeof window === 'undefined') return null;
