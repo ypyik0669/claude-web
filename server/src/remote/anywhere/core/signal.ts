@@ -3,6 +3,7 @@
 // sure each one is handed to the listeners once. Shared by the Node server and the phone shell, so Web-standard
 // APIs only (no node:*, no Buffer).
 import { ReplayGuard, openEnvelope, seal, type Side, type SignalMsg, type SignalType } from './envelope.js';
+import { report as reportAs } from './handshake.js';
 import type { Room } from './keys.js';
 import type { Brokers } from './mqtt.js';
 
@@ -66,7 +67,7 @@ const shared = new WeakMap<SignalBrokers, Map<string, Shared>>();
 
 /** A listener bug must not stop the other listeners or later messages, nor escape into the pool's callback. */
 function report(what: string, e: unknown): void {
-  console.error(`[signal] ${what} threw`, e);
+  reportAs('signal', what, e);
 }
 
 /**

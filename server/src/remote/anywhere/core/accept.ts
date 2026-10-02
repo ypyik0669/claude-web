@@ -4,10 +4,10 @@
 // nothing throws out of a callback; hellos are answered at most maxHellosPerMin a minute per room, and sessions that
 // have not become a link are bounded per room and expire. Shared code (no node:*), though only the PC runs it.
 import type { SignalMsg } from './envelope.js';
+import { MAX_HELD_CANDIDATES, isSessionId, newNonce, readNonce, report as reportAs } from './handshake.js';
 import { b64u, relayKey, type Room } from './keys.js';
 import type { Link, LinkKind } from './link.js';
 import type { Brokers } from './mqtt.js';
-import { isSessionId, newNonce, readNonce, MAX_HELD_CANDIDATES } from './dial.js';
 import {
   P2P_CHANNEL,
   P2pLink,
@@ -86,7 +86,7 @@ interface RoomState {
 }
 
 function report(what: string, e: unknown): void {
-  console.error(`[accept] ${what} threw`, e);
+  reportAs('accept', what, e);
 }
 
 /**
@@ -154,6 +154,14 @@ class TrackedLink implements Link {
     } catch (e) {
       report('close handler', e);
     }
+  }
+}
+
+function closeChannel(dc: unknown): void {
+  try {
+    (dc as RtcDataChannelLike | undefined)?.close();
+  } catch {
+    // already closing, or not a channel at all
   }
 }
 
@@ -239,10 +247,8 @@ export class Acceptor {
           return this.onCandidate(r, m);
         case 'relay':
           return this.onRelay(r, m);
-        case 'bye':
-          return this.onBye(r, m);
         default:
-          // ack / answer only ever go the other way
+          // ack / answer / nodirect only ever go the other way; bye is reserved in v1 (not sent, nothing to do)
           return;
       }
     } catch (e) {
@@ -302,16 +308,27 @@ export class Acceptor {
     try {
       pc = new this.o.rtc(rtcConfig(this.o.stun));
     } catch (e) {
-      // no direct link from this side: the phone's ICE times out and it asks for the relay
-      report('RTCPeerConnection', e);
-      return;
+      return this.noDirect(r, ses, 'RTCPeerConnection', e);
     }
     ses.pc = pc;
+    // RTC callbacks: nothing may throw out of them (into the polyfill's native dispatch, or the browser's)
     pc.onicecandidate = (ev: { candidate?: unknown } | undefined) => {
-      const c = iceCandidate(ev?.candidate);
-      if (c && !this.o.dropCandidates) r.ch.send({ t: 'cand', s: ses.s, pn: ses.pnText, c }).catch(() => {});
+      try {
+        const c = iceCandidate(ev?.candidate);
+        if (c && !this.o.dropCandidates) r.ch.send({ t: 'cand', s: ses.s, pn: ses.pnText, c }).catch(() => {});
+      } catch (e) {
+        report('candidate', e);
+      }
     };
-    pc.ondatachannel = (ev: { channel?: unknown } | undefined) => this.onChannel(r, ses, pc, ev?.channel);
+    pc.ondatachannel = (ev: { channel?: unknown } | undefined) => {
+      try {
+        this.onChannel(r, ses, pc, ev?.channel);
+      } catch (e) {
+        // whatever state the channel is in, this direct attempt is over; the relay still works for the session
+        closeChannel(ev?.channel);
+        if (ses.pc === pc || ses.p2p) this.noDirect(r, ses, 'data channel', e);
+      }
+    };
     const sdp = m.sdp;
     void (async () => {
       await pc.setRemoteDescription({ type: 'offer', sdp });
@@ -323,23 +340,27 @@ export class Acceptor {
       if (ses.pc !== pc) return;
       if (typeof answer.sdp !== 'string' || !answer.sdp) throw new Error('the answer has no SDP');
       await r.ch.send({ t: 'answer', s: ses.s, pn: ses.pnText, sdp: this.o.dropCandidates ? withoutCandidates(answer.sdp) : answer.sdp });
-    })().catch(() => {
-      // an offer we cannot answer: the phone falls back to the relay on its own
-      if (ses.pc === pc) this.dropDirect(ses);
+    })().catch((e) => {
+      if (ses.pc === pc) this.noDirect(r, ses, 'answering the offer', e);
     });
+  }
+
+  /**
+   * No direct link from this side for this session (no RTCPeerConnection, an offer we cannot answer, a channel we
+   * cannot take): close what there is and say so, so that the phone asks for the relay now instead of waiting out
+   * its ICE timeout. The session stays, for that relay request.
+   */
+  private noDirect(r: RoomState, ses: Session, what: string, e: unknown): void {
+    report(what, e);
+    this.dropDirect(ses);
+    if (r.gone || ses.state !== 'ice') return;
+    r.ch.send({ t: 'nodirect', s: ses.s, pn: ses.pnText }).catch(() => {});
   }
 
   private onChannel(r: RoomState, ses: Session, pc: RtcPeerConnectionLike, channel: unknown): void {
     const dc = channel as RtcDataChannelLike | undefined;
     if (!dc) return;
-    if (ses.pc !== pc || ses.p2p || ses.state !== 'ice' || dc.label !== P2P_CHANNEL) {
-      try {
-        dc.close();
-      } catch {
-        // already closing
-      }
-      return;
-    }
+    if (ses.pc !== pc || ses.p2p || ses.state !== 'ice' || dc.label !== P2P_CHANNEL) return closeChannel(dc);
     const link = new P2pLink(pc, dc);
     ses.p2p = link;
     // ended before it was handed out: the session waits for the phone's relay request (or expires)
@@ -373,7 +394,10 @@ export class Acceptor {
     const ses = this.bound(r, m);
     if (!ses || ses.state === 'relay' || ses.state === 'gone') return;
     if (ses.state === 'link') {
-      // the phone gave up on ICE just as our end of the channel opened: it is waiting on the relay now
+      // Only one race lands here: our end of the channel opened (and went to onLink) just as the phone's ICE timer
+      // fired on its side; the phone has closed its connection and is waiting on the relay for this same session, so
+      // the direct link handed out is about to die anyway. A direct link that drops later is not this case: the
+      // phone dials again (a fresh session), it does not ask for the relay on the old one.
       const old = ses.link;
       if (!old || old.kind === 'relay') return;
       ses.state = 'relay';
@@ -392,18 +416,14 @@ export class Acceptor {
       if (r.gone || ses.state !== 'relay') return;
       const link = await openRelayLink({ brokers: this.o.brokers, room: r.room, session: ses.s, side: 'pc', key });
       if (r.gone || ses.state !== 'relay') return link.close();
-      // subscribed: the phone may send now (fire and forget: without it the phone gives up, and dials again)
+      // subscribed: the phone may send now. Fire and forget: it is a fast path, the phone goes ahead after one
+      // resend interval without it
       r.ch.send({ t: 'relay', s: ses.s, pn: ses.pnText }).catch(() => {});
       this.handOut(r, ses, link);
     } catch (e) {
       report('relay link', e);
       this.drop(r, ses);
     }
-  }
-
-  private onBye(r: RoomState, m: SignalMsg): void {
-    const ses = this.bound(r, m);
-    if (ses && (ses.state === 'acked' || ses.state === 'ice')) this.drop(r, ses);
   }
 
   private handOut(r: RoomState, ses: Session, inner: Link): void {

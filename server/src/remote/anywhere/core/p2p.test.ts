@@ -12,18 +12,27 @@ import {
   P2P_DISCONNECT_GRACE_MS,
   P2P_FLAG,
   P2P_PIECE_BYTES,
-  P2pLink,
+  PAIR_KIND_TIMEOUT_MS,
+  RELAY_CONFIRM_MS,
+  ReplayGuard,
   SignalChannel,
   b64u,
   deviceRoom,
   dial,
+  openEnvelope,
+  openRelayLink,
+  relayKey,
+  unb64u,
   type AcceptorOptions,
   type BrokerDef,
   type DialOptions,
   type Link,
   type Room,
   type RtcCtor,
+  type Side,
 } from './index.js';
+// internal, not part of index.ts
+import { P2pLink, pairKind } from './p2p-link.js';
 
 type Broker = Awaited<ReturnType<typeof startBroker>>;
 
@@ -35,6 +44,7 @@ afterEach(async () => {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const enc = new TextEncoder();
+const dec = new TextDecoder();
 
 async function until(cond: () => boolean, what: string, ms = 5000): Promise<void> {
   const t0 = Date.now();
@@ -192,6 +202,103 @@ async function exchange(phone: End, pc: End, sizes = [0, 1, 300, P2P_PIECE_BYTES
   expect(phone.got.slice(g1).every((f, i) => same(f, down[i]))).toBe(true);
 }
 
+/**
+ * Holds one signal type back on its way out of a pool for `ms` (everything else goes out as soon as it is read), so
+ * what is sent after it overtakes it. Counts the candidates that went out while one was held.
+ */
+function holdBack(p: Brokers, room: Room, from: Side, type: string, ms: number) {
+  const pub = p.publish.bind(p);
+  const seen = { held: 0, overtook: 0 };
+  let holding = 0;
+  vi.spyOn(p, 'publish').mockImplementation((topic, payload, opts) => {
+    if (topic !== room.topic) return pub(topic, payload, opts);
+    const raw = typeof payload === 'string' ? payload : dec.decode(payload);
+    // opened as the other side would: our own messages are the ones with from === `from`
+    void openEnvelope(room, raw, from === 'phone' ? 'pc' : 'phone', new ReplayGuard()).then((m) => {
+      if (m?.t === type) {
+        seen.held++;
+        holding++;
+        setTimeout(() => {
+          holding--;
+          pub(topic, payload, opts);
+        }, ms);
+        return;
+      }
+      if (holding > 0 && m?.t === 'cand') seen.overtook++;
+      pub(topic, payload, opts);
+    });
+    return 1;
+  });
+  return seen;
+}
+
+/** Drops the n-th (1-based) publish to `topic` from a pool, as if every broker lost it. */
+function dropNth(p: Brokers, topic: string, n: number) {
+  const pub = p.publish.bind(p);
+  const seen = { dropped: 0 };
+  let count = 0;
+  vi.spyOn(p, 'publish').mockImplementation((t, payload, opts) => {
+    if (t === topic && ++count === n) {
+      seen.dropped++;
+      return 1;
+    }
+    return pub(t, payload, opts);
+  });
+  return seen;
+}
+
+/** An answering RTCPeerConnection that does nothing real, so a test can drive its callbacks itself. */
+function fakeAnswerers() {
+  const made: any[] = [];
+  class Answerer {
+    onicecandidate: unknown = null;
+    ondatachannel: ((ev: unknown) => void) | null = null;
+    onconnectionstatechange: unknown = null;
+    oniceconnectionstatechange: unknown = null;
+    connectionState = 'new';
+    iceConnectionState = 'new';
+    closed = 0;
+    constructor() {
+      made.push(this);
+    }
+    createDataChannel(): never {
+      throw new Error('not used on the answering side');
+    }
+    async createOffer() {
+      return { type: 'offer', sdp: 'v=0' };
+    }
+    async createAnswer() {
+      return { type: 'answer', sdp: 'v=0 (a fake answer)' };
+    }
+    async setLocalDescription() {}
+    async setRemoteDescription() {}
+    async addIceCandidate() {}
+    async getStats() {
+      return new Map();
+    }
+    close() {
+      this.closed++;
+    }
+  }
+  return { Ctor: Answerer as unknown as RtcCtor, made };
+}
+
+/** A raw phone end on the room's channel, recording every message the PC sends. */
+async function rawPhone(e: { phone: Brokers; room: Room }) {
+  const ch = new SignalChannel(e.phone, e.room, 'phone');
+  cleanup.push(() => ch.close());
+  const got: { t: string; s: string; cn?: unknown; pn?: unknown }[] = [];
+  ch.on((m) => got.push(m as never));
+  await ch.open();
+  const hello = async (s: string) => {
+    const pn = b64u(rand(16));
+    await ch.send({ t: 'hello', s, pn });
+    await until(() => got.some((m) => m.t === 'ack' && m.s === s), `the ack for ${s}`);
+    return got.find((m) => m.t === 'ack' && m.s === s)!.cn as string;
+  };
+  return { ch, got, hello };
+}
+
 describe('defaults', () => {
   it('lists the brokers and STUN servers of the plan, in order', () => {
     expect(DEFAULT_BROKERS).toEqual([
@@ -270,24 +377,86 @@ describe('dial and Acceptor', () => {
     expect(e.pcRtc.pcs).toHaveLength(0);
   });
 
-  it('waits for the PC to confirm the relay; no confirmation: unreachable, nothing left subscribed', async () => {
+  it('relay: a link that ends before it is handed over makes dial fail, never a dead link handed out', async () => {
     const e = await env();
     e.acc.removeRoom('dev1');
-    // a PC that acks but never takes the relay up (its relay subscription failing, say)
+    // a PC that takes the relay up and closes it at once, never confirming
     const fake = new SignalChannel(e.pc, e.room, 'pc');
     cleanup.push(() => fake.close());
+    const cn = rand(16);
     fake.on((m) => {
-      if (m.t === 'hello') void fake.send({ t: 'ack', s: m.s, pn: m.pn, cn: b64u(rand(16)), pc: 'Fake PC' });
+      if (m.t === 'hello') {
+        const pn = m.pn as string;
+        void fake.send({ t: 'ack', s: m.s, pn, cn: b64u(cn), pc: 'Fake PC' });
+        fake.on(async (r) => {
+          if (r.t !== 'relay' || r.s !== m.s) return;
+          const key = await relayKey(e.room, unb64u(pn), cn);
+          const link = await openRelayLink({ brokers: e.pc, room: e.room, session: m.s, side: 'pc', key });
+          link.close();
+        });
+      }
     });
     await fake.open();
     const t0 = Date.now();
-    const err = await dial({ brokers: e.phone, room: e.room, stun: [], rtc: e.phoneRtc.Ctor, forceRelay: true, helloTimeoutMs: 400 })
-      .catch((x) => x);
+    const out = await dial({ brokers: e.phone, room: e.room, stun: [], rtc: e.phoneRtc.Ctor, forceRelay: true }).then(
+      (r) => ({ resolved: r }),
+      (x) => ({ rejected: x }),
+    );
+    expect('rejected' in out).toBe(true);
+    const err = (out as { rejected: DialError }).rejected;
     expect(err).toBeInstanceOf(DialError);
     expect(err.code).toBe('unreachable');
-    expect(Date.now() - t0).toBeGreaterThanOrEqual(390);
-    // its relay link was closed again (the room topic is the fake PC's, on the other pool)
+    expect(err.message).toMatch(/other side closed/);
+    // heard at once, not after the confirm wait
+    expect(Date.now() - t0).toBeLessThan(RELAY_CONFIRM_MS);
+    // its relay link was closed (the room topic is the fake PC's, on the other pool)
     expect([...e.phoneTopics]).toEqual([]);
+  });
+
+  it('relay: the confirm lost, dial goes ahead after one resend interval; frames sent meanwhile are handed over', async () => {
+    const b = await broker();
+    const defs: BrokerDef[] = [{ name: 'local', url: b.url, relay: true }];
+    const phone = pool(defs);
+    const pc = pool(defs);
+    await until(() => [phone, pc].every((p) => p.status().every((s) => s.ok)), 'both pools up');
+    const room = await deviceRoom('device-token');
+    const rtc = await tracked();
+    // the PC's second message on the room topic is its relay confirm (the first is the ack)
+    const lost = dropNth(pc, room.topic, 2);
+    const ends: End[] = [];
+    const acc = new Acceptor({
+      brokers: pc,
+      rtc: rtc.Ctor,
+      stun: [],
+      pcName: 'Test PC',
+      onLink: (link) => {
+        ends.push(watch(link));
+        // the PC talks first, while the phone's dial is still waiting for the (lost) confirm
+        for (const n of [1, 2, 3]) link.send(new Uint8Array([n]));
+      },
+    });
+    cleanup.push(() => acc.close());
+    await acc.addRoom('dev1', room);
+    const t0 = Date.now();
+    const r = await dial({ brokers: phone, room, stun: [], rtc: rtc.Ctor, forceRelay: true });
+    const took = Date.now() - t0;
+    const mine = watch(r.link);
+    cleanup.push(() => r.link.close());
+    expect(lost.dropped).toBe(1);
+    expect(r.link.kind).toBe('relay');
+    expect(took).toBeGreaterThanOrEqual(RELAY_CONFIRM_MS - 50);
+    expect(took).toBeLessThan(RELAY_CONFIRM_MS + 2500);
+    // what came while dial waited, handed to the first onframe at once, in order
+    expect(mine.got.map((f) => f[0])).toEqual([1, 2, 3]);
+    await exchange(mine, ends[0], [0, 300]);
+    expect(mine.closed).toEqual([]);
+  });
+
+  it('relay: with the confirm, dial does not wait out the resend interval', async () => {
+    const e = await env();
+    const t0 = Date.now();
+    await e.dialNow({ forceRelay: true });
+    expect(Date.now() - t0).toBeLessThan(RELAY_CONFIRM_MS);
   });
 
   it('relay: the first frames from the phone are not lost to a resend', async () => {
@@ -315,6 +484,88 @@ describe('dial and Acceptor', () => {
     await until(() => [...e.phoneRtc.pcs, ...e.pcRtc.pcs].every((p) => p.connectionState === 'closed'), 'attempts closed');
     expect(e.phoneRtc.pcs).toHaveLength(1);
     expect(e.pcRtc.pcs).toHaveLength(1);
+  });
+
+  it('a PC that cannot make an RTCPeerConnection says nodirect: the phone goes to the relay at once', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    class NoRtc {
+      constructor() {
+        throw new Error('no WebRTC here');
+      }
+    }
+    const e = await env({ rtc: NoRtc as unknown as RtcCtor });
+    const states: string[] = [];
+    const t0 = Date.now();
+    const r = await e.dialNow({ iceTimeoutMs: 10_000, onstate: (s) => states.push(s) });
+    expect(r.link.kind).toBe('relay');
+    expect(states).toEqual(['finding', 'connecting', 'relay']);
+    // nowhere near the ICE timeout
+    expect(Date.now() - t0).toBeLessThan(3000);
+    await until(() => e.links.length === 1, 'the PC side link');
+    await exchange(r.end, e.links[0], [0, 300]);
+    // the phone's abandoned attempt was closed
+    await until(() => e.phoneRtc.pcs.every((p) => p.connectionState === 'closed'), 'the phone attempt closed');
+  });
+
+  it('a throw while taking the data channel ends that direct attempt cleanly; the relay still works', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fake = fakeAnswerers();
+    const e = await env({ rtc: fake.Ctor });
+    const ph = await rawPhone(e);
+    const cn = await ph.hello('hostile');
+    await ph.ch.send({ t: 'offer', s: 'hostile', cn, sdp: 'v=0' });
+    await until(() => ph.got.some((m) => m.t === 'answer'), 'the answer');
+    expect(fake.made).toHaveLength(1);
+    let closedHostile = 0;
+    const hostile = {
+      get label(): string {
+        throw new Error('a hostile channel');
+      },
+      close() {
+        closedHostile++;
+      },
+    };
+    // as the RTC stack would call it: nothing may come back out
+    expect(() => fake.made[0].ondatachannel({ channel: hostile })).not.toThrow();
+    expect(errors).toHaveBeenCalled();
+    expect(fake.made[0].closed).toBeGreaterThanOrEqual(1);
+    expect(closedHostile).toBeGreaterThanOrEqual(1);
+    await until(() => ph.got.some((m) => m.t === 'nodirect' && m.s === 'hostile'), 'nodirect');
+    // the session itself is still there for the relay
+    await ph.ch.send({ t: 'relay', s: 'hostile', cn });
+    await until(() => e.links.length === 1, 'the relay link');
+    expect(e.links[0].link.kind).toBe('relay');
+  });
+
+  it('bye is reserved: the PC ignores it, the session goes on', async () => {
+    const e = await env();
+    const ph = await rawPhone(e);
+    const cn = await ph.hello('byebye');
+    await ph.ch.send({ t: 'bye', s: 'byebye', cn });
+    await sleep(200);
+    await ph.ch.send({ t: 'relay', s: 'byebye', cn });
+    await until(() => e.links.length === 1, 'the relay link');
+  });
+
+  it('candidates that overtake the offer and the answer are held, and the connection still goes direct', async () => {
+    const e = await env();
+    const offers = holdBack(e.phone, e.room, 'phone', 'offer', 400);
+    const answers = holdBack(e.pc, e.room, 'pc', 'answer', 400);
+    const r = await e.dialNow();
+    expect(offers.held).toBe(1);
+    expect(answers.held).toBe(1);
+    // the PC got phone candidates before the offer, and the phone got PC candidates before the answer
+    expect(offers.overtook).toBeGreaterThanOrEqual(1);
+    expect(answers.overtook).toBeGreaterThanOrEqual(1);
+    expect(['p2p-v4', 'p2p-v6']).toContain(r.link.kind);
+    await until(() => e.links.length === 1, 'the PC side link');
+    await exchange(r.end, e.links[0], [0, 300]);
+  });
+
+  it('addRoom() after close() rejects', async () => {
+    const e = await env();
+    e.acc.close();
+    await expect(e.acc.addRoom('later', e.room)).rejects.toThrow(/closed/);
   });
 
   it('removeRoom: established links end on both sides, the next dial gets pc-silent', async () => {
@@ -705,6 +956,31 @@ describe('direct link contract', () => {
       ['an empty message', (dc) => dc.receive(new Uint8Array(0))],
       ['an empty piece', (dc) => dc.receive(new Uint8Array([P2P_FLAG.more]))],
       [
+        // a whole frame in one message, one byte over a piece: no second piece needed to break the bound
+        `a piece of ${P2P_PIECE_BYTES + 1} bytes`,
+        (dc) => {
+          const m = new Uint8Array(2 + P2P_PIECE_BYTES);
+          m[0] = P2P_FLAG.end;
+          dc.receive(m);
+        },
+      ],
+      [
+        `a piece of ${MAX_FRAME_BYTES + 1} bytes`,
+        (dc) => {
+          const m = new Uint8Array(2 + MAX_FRAME_BYTES);
+          m[0] = P2P_FLAG.end;
+          dc.receive(m);
+        },
+      ],
+      [
+        'over',
+        (dc) => {
+          const m = new Uint8Array(2 + P2P_PIECE_BYTES);
+          m[0] = P2P_FLAG.more;
+          dc.receive(m);
+        },
+      ],
+      [
         'over',
         (dc) => {
           const piece = new Uint8Array(1 + P2P_PIECE_BYTES);
@@ -721,6 +997,33 @@ describe('direct link contract', () => {
       expect(b.closed[0]).toContain(what);
       expect(b.got).toEqual([]);
       expect(b.dc.closed).toBe(1);
+    }
+  });
+
+  it('pairKind: IPv6 or IPv4 by the selected pair, falls back to the polyfill, gives up on getStats() after 2 s', async () => {
+    const stats = (addr: string) =>
+      new Map<string, unknown>([
+        ['T', { id: 'T', type: 'transport', selectedCandidatePairId: 'P' }],
+        ['P', { id: 'P', type: 'candidate-pair', localCandidateId: 'L' }],
+        ['L', { id: 'L', type: 'local-candidate', address: addr }],
+      ]);
+    expect(await pairKind({ getStats: async () => stats('2001:db8::1') } as never)).toBe('p2p-v6');
+    expect(await pairKind({ getStats: async () => stats('192.0.2.1') } as never)).toBe('p2p-v4');
+    expect(await pairKind({ getStats: async () => stats('::ffff:192.0.2.1') } as never)).toBe('p2p-v4');
+    const noStats = { getStats: async () => new Map(), selectedCandidatePair: () => ({ local: { address: 'fe80::1' } }) };
+    expect(await pairKind(noStats as never)).toBe('p2p-v6');
+    expect(PAIR_KIND_TIMEOUT_MS).toBe(2000);
+    vi.useFakeTimers();
+    try {
+      let kind: string | undefined;
+      void pairKind({ getStats: () => new Promise(() => {}) } as never).then((k) => (kind = k));
+      await vi.advanceTimersByTimeAsync(PAIR_KIND_TIMEOUT_MS - 1);
+      expect(kind).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(kind).toBe('p2p-v4');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
     }
   });
 

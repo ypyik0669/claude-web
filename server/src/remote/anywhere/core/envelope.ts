@@ -4,7 +4,8 @@ import { b64u, unb64u, type Room } from './keys.js';
 
 export type Side = 'phone' | 'pc';
 
-export type SignalType = 'hello' | 'ack' | 'offer' | 'answer' | 'cand' | 'relay' | 'bye';
+/** What each one carries is in dial.ts; a type not listed here is dropped on arrival. */
+export type SignalType = 'hello' | 'ack' | 'offer' | 'answer' | 'cand' | 'nodirect' | 'relay' | 'bye';
 
 export interface SignalMsg {
   v: 1;
@@ -29,7 +30,7 @@ export interface SignalDraft {
   [k: string]: unknown;
 }
 
-const TYPES: ReadonlySet<string> = new Set<SignalType>(['hello', 'ack', 'offer', 'answer', 'cand', 'relay', 'bye']);
+const TYPES: ReadonlySet<string> = new Set<SignalType>(['hello', 'ack', 'offer', 'answer', 'cand', 'nodirect', 'relay', 'bye']);
 const MAX_SKEW_MS = 300_000;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;

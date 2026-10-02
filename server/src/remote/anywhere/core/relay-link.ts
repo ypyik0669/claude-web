@@ -28,6 +28,7 @@
 //     2  CLOSE
 //     any other kind is ignored (it carries no frame)
 import type { Side } from './envelope.js';
+import { report as reportAs } from './handshake.js';
 import type { Room } from './keys.js';
 import type { Link } from './link.js';
 import type { Brokers } from './mqtt.js';
@@ -182,7 +183,7 @@ function concat(parts: Uint8Array[], n: number): Uint8Array {
 
 /** A bug in a callback must not tear the link down, nor escape into the pool's callback or a timer. */
 function report(what: string, e: unknown): void {
-  console.error(`[relay] ${what} threw`, e);
+  reportAs('relay', what, e);
 }
 
 function option(v: number | undefined, def: number, min: number, max: number, what: string, int = false): number {

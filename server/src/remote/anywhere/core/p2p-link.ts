@@ -8,10 +8,11 @@
 //   message = flag (1 byte) ‖ piece
 //   flag    0  END   the last (or only) piece of a frame
 //           1  MORE  a piece of a frame that goes on in the next message; never empty
-//   any other flag, an empty or text message, or a frame growing past 1 MiB ends the link
+//   any other flag, an empty or text message, a piece over P2P_PIECE_BYTES, or a frame growing past 1 MiB ends the link
 // A piece is at most P2P_PIECE_BYTES, one chunked channel frame (frames.ts): the usual frame is one message, and
 // every message stays far under any browser's max-message-size. The channel is ordered and reliable (SCTP).
 import { CHUNK_BYTES, HEADER_BYTES } from './frames.js';
+import { errText, report as reportAs } from './handshake.js';
 import type { Link, LinkKind } from './link.js';
 import { MAX_FRAME_BYTES, MAX_QUEUED_BYTES, MAX_QUEUED_FRAMES } from './relay-link.js';
 
@@ -27,6 +28,8 @@ const LOW_WATER = 262_144;
  * so a phone that changed networks redials within seconds instead of waiting for "failed" (~30 s in browsers).
  */
 export const P2P_DISCONNECT_GRACE_MS = 4_000;
+/** How long pairKind() waits for getStats() before calling the link IPv4. */
+export const PAIR_KIND_TIMEOUT_MS = 2_000;
 /** Frames held while no onframe is set yet. */
 const MAX_EARLY_BYTES = MAX_FRAME_BYTES;
 const MAX_EARLY_FRAMES = 1024;
@@ -155,11 +158,17 @@ function family(addr: unknown): LinkKind | null {
 /**
  * IPv6 or IPv4, by the local address of the candidate pair ICE selected: the transport's selectedCandidatePairId
  * (Chrome, Safari, the polyfill), else the pair marked selected (Firefox) or nominated and succeeded; then the
- * polyfill's own selectedCandidatePair(). IPv4 when nothing says (a hostname, stats not ready). Never rejects.
+ * polyfill's own selectedCandidatePair(). IPv4 when nothing says (a hostname, stats not ready, or getStats() not
+ * settling within `timeoutMs`: the link is open and must not wait on a label). Never rejects.
  */
-export async function pairKind(pc: RtcPeerConnectionLike): Promise<LinkKind> {
+export async function pairKind(pc: RtcPeerConnectionLike, timeoutMs = PAIR_KIND_TIMEOUT_MS): Promise<LinkKind> {
   try {
-    const stats = await pc.getStats();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), timeoutMs);
+    });
+    const stats = await Promise.race([pc.getStats(), late]).finally(() => clearTimeout(timer));
+    if (!stats) throw new Error('getStats() did not settle');
     const byId = new Map<string, any>();
     stats.forEach((v) => {
       if (v && typeof v.id === 'string') byId.set(v.id, v);
@@ -191,21 +200,8 @@ export async function pairKind(pc: RtcPeerConnectionLike): Promise<LinkKind> {
   return 'p2p-v4';
 }
 
-function errText(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  if (typeof e === 'string') return e;
-  if (e && typeof e === 'object') {
-    // RTCErrorEvent carries an RTCError in `error`
-    const o = e as { message?: unknown; error?: unknown };
-    if (typeof o.message === 'string' && o.message) return o.message;
-    if (o.error instanceof Error) return o.error.message;
-  }
-  return '';
-}
-
-/** A bug in a callback must not tear the link down, nor escape into the channel's event dispatch. */
 function report(what: string, e: unknown): void {
-  console.error(`[p2p] ${what} threw`, e);
+  reportAs('p2p', what, e);
 }
 
 /**
@@ -379,6 +375,8 @@ export class P2pLink implements Link {
     const flag = b[0];
     const piece = b.subarray(1);
     if (flag !== P2P_FLAG.end && flag !== P2P_FLAG.more) return this.protocol(`unknown flag ${flag}`);
+    // checked for every piece, the single-message frame included: it is what bounds a frame without a second piece
+    if (piece.length > P2P_PIECE_BYTES) return this.protocol(`a piece of ${piece.length} bytes, over ${P2P_PIECE_BYTES}`);
     // a copy: the frame is the receiver's own, not a view sharing the message's buffer
     if (flag === P2P_FLAG.end && this.accLen === 0) return this.emit(piece.slice());
     if (flag === P2P_FLAG.more && piece.length === 0) return this.protocol('an empty piece');

@@ -2,6 +2,7 @@
 // once; signaling and the slow relay ride on it. Shared by the Node server and the phone shell, so Web-standard
 // APIs only (no node:*, no Buffer). Brokers are public and anyone can publish to them: everything that comes in
 // is untrusted, a malformed or oversized packet drops that connection and never throws out of a handler.
+import { errText, report as reportAs } from './handshake.js';
 
 export interface BrokerDef {
   name: string;
@@ -225,22 +226,9 @@ export class PacketReader {
   }
 }
 
-/** '' when there is nothing to say (the browser's WebSocket error event carries no detail at all). */
-function errText(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  if (typeof e === 'string') return e;
-  if (e && typeof e === 'object') {
-    // undici's ErrorEvent has message / error
-    const o = e as { message?: unknown; error?: unknown };
-    if (typeof o.message === 'string' && o.message) return o.message;
-    if (o.error instanceof Error) return o.error.message;
-  }
-  return '';
-}
-
 /** Bugs in callbacks must not tear down the stream, and must not escape into the WebSocket's event dispatch. */
 function report(what: string, e: unknown): void {
-  console.error(`[mqtt] ${what} threw`, e);
+  reportAs('mqtt', what, e);
 }
 
 function randomClientId(): string {

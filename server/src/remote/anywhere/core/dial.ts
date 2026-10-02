@@ -6,19 +6,23 @@
 // phone's and the PC's 16-byte nonces (b64u), which also salt the relay key. Every message after the hello carries
 // the nonce of the other side's opening message, so an envelope replayed from an older session never matches: the
 // replay guard lives only as long as one channel, and a new dial opens a new one.
-//   phone → PC   hello  {s, pn}
-//   PC → phone   ack    {s, pn, cn, pc: the PC's name}
-//   phone → PC   offer  {s, cn, sdp}
-//   PC → phone   answer {s, pn, sdp}
-//   both         cand   {s, cn (from the phone) | pn (from the PC), c: {candidate, sdpMid, sdpMLineIndex}}
-//   phone → PC   relay  {s, cn}   ICE gave up (or was never tried); the phone's relay link for s is already open
-//   PC → phone   relay  {s, pn}   the PC's relay link is subscribed: frames sent from now on are not lost to a resend
-//   phone → PC   bye    {s, cn}   the PC may drop the half-open session
+//   phone → PC   hello    {s, pn}
+//   PC → phone   ack      {s, pn, cn, pc: the PC's name}
+//   phone → PC   offer    {s, cn, sdp}
+//   PC → phone   answer   {s, pn, sdp}
+//   both         cand     {s, cn (from the phone) | pn (from the PC), c: {candidate, sdpMid, sdpMLineIndex}}
+//   PC → phone   nodirect {s, pn}   the PC cannot take the offer (no RTCPeerConnection, no answer): go to the relay
+//                                   now instead of waiting out the ICE timeout
+//   phone → PC   relay    {s, cn}   ICE gave up (or was never tried); the phone's relay link for s is already open
+//   PC → phone   relay    {s, pn}   the PC's relay link is subscribed. Only a fast path: the phone waits for it at most
+//                                   one relay resend interval, then goes ahead (anything lost meanwhile is resent)
+//   bye          reserved, not sent in v1; ignored on arrival
 // The brokers do not keep order across each other: a cand can come before its offer or answer (it is held until the
 // remote description is set), or never come (ICE just does not try that path).
-import { b64u, relayKey, unb64u, type Room } from './keys.js';
 import type { SignalMsg } from './envelope.js';
-import type { Link } from './link.js';
+import { MAX_HELD_CANDIDATES, errText, newNonce, readNonce, report as reportAs } from './handshake.js';
+import { b64u, relayKey, type Room } from './keys.js';
+import type { Link, LinkKind } from './link.js';
 import type { Brokers } from './mqtt.js';
 import {
   P2P_CHANNEL,
@@ -31,16 +35,13 @@ import {
   type RtcCtor,
   type RtcPeerConnectionLike,
 } from './p2p-link.js';
-import { openRelayLink } from './relay-link.js';
+import { MAX_FRAME_BYTES, MAX_QUEUED_FRAMES, openRelayLink } from './relay-link.js';
 import { SignalChannel } from './signal.js';
 
 export const HELLO_TIMEOUT_MS = 15_000;
 export const ICE_TIMEOUT_MS = 20_000;
-const NONCE_BYTES = 16;
-/** Session ids become part of relay topics (relay-link.ts checks the same shape). */
-const SESSION_RE = /^[A-Za-z0-9_-]{1,64}$/;
-/** Remote candidates held until the remote description is set; a flood past it is dropped. */
-export const MAX_HELD_CANDIDATES = 64;
+/** The relay link's resend interval (its retransmitMs default): past it, waiting for the PC's confirm gains nothing. */
+export const RELAY_CONFIRM_MS = 1_500;
 const MAX_PC_NAME = 256;
 
 export type DialState = 'finding' | 'connecting' | 'relay';
@@ -80,31 +81,12 @@ export interface DialResult {
   pcName: string;
 }
 
-export function newNonce(): Uint8Array {
-  return crypto.getRandomValues(new Uint8Array(NONCE_BYTES));
-}
-
-/** The 16 bytes of a b64u nonce from the other side, or null. */
-export function readNonce(v: unknown): Uint8Array | null {
-  if (typeof v !== 'string' || v.length > 32) return null;
-  try {
-    const b = unb64u(v);
-    return b.length === NONCE_BYTES ? b : null;
-  } catch {
-    return null;
-  }
-}
-
-export function isSessionId(v: unknown): v is string {
-  return typeof v === 'string' && SESSION_RE.test(v);
-}
-
-function errText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+function why(e: unknown): string {
+  return errText(e) || String(e);
 }
 
 function report(what: string, e: unknown): void {
-  console.error(`[dial] ${what} threw`, e);
+  reportAs('dial', what, e);
 }
 
 function timeout(v: number | undefined, def: number, what: string): number {
@@ -128,6 +110,108 @@ interface Ack {
   cn: Uint8Array;
   cnText: string;
   pc: string;
+}
+
+/**
+ * The relay link as dial() hands it out. dial() takes the link's onframe and onclose the moment it opens (the PC
+ * may already be sending, and an end while dial still waits must make dial fail, not hand out a dead link): frames
+ * that arrive before the caller sets onframe are held here and given to its first onframe in order, before anything
+ * newer, the same way the links' own early buffers work. While dial waits, an end goes to `waiting` instead of
+ * onclose; after release() it goes to onclose as usual.
+ */
+class HandedRelay implements Link {
+  onclose: (why: string) => void = () => {};
+  private handler: ((f: Uint8Array) => void) | null = null;
+  private held: Uint8Array[] = [];
+  private heldBytes = 0;
+  private endedWhy: string | undefined;
+  private waiting: (() => void) | undefined;
+
+  constructor(private readonly inner: Link, waiting: () => void) {
+    this.waiting = waiting;
+    inner.onframe = (f) => this.frame(f);
+    inner.onclose = (why) => this.end(why);
+  }
+
+  get kind(): LinkKind {
+    return this.inner.kind;
+  }
+
+  get onframe(): (f: Uint8Array) => void {
+    return this.handler ?? (() => {});
+  }
+
+  set onframe(fn: (f: Uint8Array) => void) {
+    this.handler = fn;
+    const q = this.held;
+    this.held = [];
+    this.heldBytes = 0;
+    for (const f of q) this.deliver(f);
+  }
+
+  /** Why it ended while dial() still held it, if it did. */
+  ended(): string | undefined {
+    return this.endedWhy;
+  }
+
+  /** dial() is done with it: from now on an end is the caller's onclose. */
+  release(): void {
+    this.waiting = undefined;
+  }
+
+  send(frame: Uint8Array): void {
+    this.inner.send(frame);
+  }
+
+  buffered(): number {
+    return this.inner.buffered();
+  }
+
+  close(): void {
+    this.endedWhy ??= 'closed';
+    this.waiting = undefined;
+    this.held = [];
+    this.heldBytes = 0;
+    this.inner.close();
+  }
+
+  private frame(f: Uint8Array): void {
+    if (this.handler) return this.deliver(f);
+    if (this.endedWhy !== undefined) return;
+    this.held.push(f);
+    this.heldBytes += f.length;
+    // the same bounds as the links' queues: a flood while nobody takes frames ends the link
+    if (this.heldBytes > MAX_FRAME_BYTES || this.held.length > MAX_QUEUED_FRAMES) {
+      this.held = [];
+      this.heldBytes = 0;
+      this.inner.close();
+      this.end('frames arrived and nothing took them (onframe was never set)');
+    }
+  }
+
+  private deliver(f: Uint8Array): void {
+    try {
+      this.handler!(f);
+    } catch (e) {
+      report('frame handler', e);
+    }
+  }
+
+  private end(why: string): void {
+    if (this.endedWhy !== undefined) return;
+    this.endedWhy = why;
+    const waiting = this.waiting;
+    if (waiting) {
+      // never handed out: dial() rejects, nobody else is told
+      this.waiting = undefined;
+      return waiting();
+    }
+    try {
+      this.onclose(why);
+    } catch (e) {
+      report('close handler', e);
+    }
+  }
 }
 
 /**
@@ -189,7 +273,7 @@ class Dialer {
     try {
       await this.ch.open();
     } catch (e) {
-      throw new DialError('no-broker', `signaling could not start: ${errText(e)}`);
+      throw new DialError('no-broker', `signaling could not start: ${why(e)}`);
     }
     if (!o.brokers.status().some((b) => b.ok)) throw new DialError('no-broker', 'no signaling broker could be reached');
     const acked = new Promise<Ack>((resolve) => {
@@ -198,7 +282,7 @@ class Dialer {
     try {
       await this.ch.send({ t: 'hello', s: this.s, pn: this.pnText });
     } catch (e) {
-      throw new DialError('no-broker', `the hello was not sent: ${errText(e)}`);
+      throw new DialError('no-broker', `the hello was not sent: ${why(e)}`);
     }
     const ack = await within(acked, this.helloMs);
     this.onAck = undefined;
@@ -223,6 +307,9 @@ class Dialer {
       this.onAnswer(m.sdp);
     } else if (m.t === 'cand') {
       this.onCandidate(m.c);
+    } else if (m.t === 'nodirect') {
+      // only does something while the direct attempt is still on
+      this.giveUp?.();
     } else if (m.t === 'relay') {
       this.onRelayOk?.();
     }
@@ -318,33 +405,44 @@ class Dialer {
   private async relay(ack: Ack): Promise<Link> {
     const { o } = this;
     this.state('relay');
-    // once per session (fresh nonces): the relay link refuses a key it already sealed with
-    const key = await relayKey(o.room, this.pn, ack.cn);
+    let key: CryptoKey;
+    try {
+      // once per session (fresh nonces): the relay link refuses a key it already sealed with
+      key = await relayKey(o.room, this.pn, ack.cn);
+    } catch (e) {
+      throw new DialError('unreachable', `the slow relay key could not be derived: ${why(e)}`);
+    }
     let link: Link;
     try {
       // subscribed before the PC is asked, so what it sends first is not lost to a resend
       link = await openRelayLink({ brokers: o.brokers, room: o.room, session: this.s, side: 'phone', key });
     } catch (e) {
-      throw new DialError('unreachable', `the slow relay could not be opened: ${errText(e)}`);
+      throw new DialError('unreachable', `the slow relay could not be opened: ${why(e)}`);
     }
-    const confirmed = new Promise<true>((resolve) => {
-      this.onRelayOk = () => resolve(true);
+    let wake: () => void = () => {};
+    const woken = new Promise<void>((resolve) => {
+      wake = resolve;
     });
+    // synchronously after the open, as the Link contract asks: from here dial holds its frames and hears its end
+    const handed = new HandedRelay(link, () => wake());
+    this.onRelayOk = () => wake();
     try {
       await this.ch.send({ t: 'relay', s: this.s, cn: ack.cnText });
     } catch (e) {
-      link.close();
-      throw new DialError('unreachable', `the PC could not be asked for the slow relay: ${errText(e)}`);
+      handed.close();
+      throw new DialError('unreachable', `the PC could not be asked for the slow relay: ${why(e)}`);
     }
-    // Until the PC has subscribed its side, what the phone sends is lost to the broker and only comes through on the
-    // 1 500 ms resend. What the PC sends meanwhile waits in the link (capped while no onframe is set; the PC only
-    // answers what the phone asks, so little does).
-    const ok = await within(confirmed, this.helloMs);
+    // The confirm is a fast path, not a gate: until the PC has subscribed its side, what the phone sends is lost to
+    // the broker and only comes through on the resend, so waiting one resend interval for it saves that much. Past
+    // that the link goes to the caller anyway (a PC that never takes it up shows as the link's own end, later).
+    await within(woken, RELAY_CONFIRM_MS);
     this.onRelayOk = undefined;
-    if (!ok) {
-      link.close();
-      throw new DialError('unreachable', `the PC did not take up the slow relay within ${this.helloMs} ms`);
+    const ended = handed.ended();
+    if (ended !== undefined) {
+      handed.close();
+      throw new DialError('unreachable', `the slow relay ended before it was handed over: ${ended}`);
     }
-    return link;
+    handed.release();
+    return handed;
   }
 }
