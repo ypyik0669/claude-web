@@ -115,6 +115,31 @@ try { await run(); } catch (e) { check('smoke run', false, e.stack ?? String(e))
   const bin = /rtc ok \S+ (.+node_datachannel\.node)/.exec(out)?.[1] ?? '';
   const ok = r.status === 0 && !!bin && existsSync(bin.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`));
   check('WebRTC addon loads from app.asar.unpacked (Electron as node)', ok, r.error ? r.error.message : `exit ${r.status}: ${out.slice(0, 300)}`);
+
+  // …and the way the server really loads it: an ESM import() of node-datachannel/polyfill, through the server's own
+  // loader (server/dist/remote/anywhere/rtc.js in app.asar). The package's "import" export is another file than the
+  // CJS one above: this is the desktop's only direct-connection load path.
+  const rtcJs = path.join(resources, 'app.asar', 'server', 'dist', 'remote', 'anywhere', 'rtc.js');
+  const esm = path.join(ud, 'rtc-smoke.mjs');
+  writeFileSync(esm, [
+    "import { createRequire } from 'node:module';",
+    "import { pathToFileURL } from 'node:url';",
+    'const { loadRtc } = await import(pathToFileURL(process.argv[2]).href);',
+    'const m = await loadRtc();',
+    "if ('error' in m) { console.log('rtc esm failed ' + m.error); process.exit(1); }",
+    'const pc = new m.RTCPeerConnection({ iceServers: [] });',
+    'pc.close();',
+    // the binary the ESM build loaded: its own createRequire shares the CJS module cache
+    "const bin = Object.keys(createRequire(import.meta.url).cache).find((k) => k.endsWith('node_datachannel.node')) || 'no .node loaded';",
+    "console.log('rtc esm ok ' + bin);",
+    'process.exit(0);',
+    '',
+  ].join('\n'));
+  const e2 = spawnSync(exe, [esm, rtcJs], { env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, encoding: 'utf8', timeout: 30_000, windowsHide: true });
+  const out2 = `${e2.stdout ?? ''}${e2.stderr ?? ''}`.trim();
+  const bin2 = /rtc esm ok (.+node_datachannel\.node)/.exec(out2)?.[1] ?? '';
+  const ok2 = e2.status === 0 && !!bin2 && existsSync(bin2.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`));
+  check('WebRTC polyfill loads through an ESM import() the way the server does (Electron as node)', ok2, e2.error ? e2.error.message : `exit ${e2.status}: ${out2.slice(0, 300)}`);
 }
 
 // the app's own update check (desktop/src/main.ts): main.log records each step
