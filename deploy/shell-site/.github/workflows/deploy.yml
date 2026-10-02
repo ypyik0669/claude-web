@@ -1,0 +1,100 @@
+name: Deploy the phone page
+
+# For the site repo <org>/<org>.github.io, not for claude-web itself (copy this file there, see the README next to the
+# .github folder in claude-web's deploy/shell-site/). It builds the phone page of Claude Web from the public repo
+# ypyik0669/claude-web at a release tag and serves it at the root of this site. Daily it looks for a newer release;
+# a tag that is already live (the site's version.txt) is not deployed again. No token or secret is needed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag of ypyik0669/claude-web, e.g. v0.1.6 (empty = the latest release)'
+        required: false
+        default: ''
+      force:
+        description: 'Deploy even when this tag is already live'
+        type: boolean
+        default: false
+  schedule:
+    - cron: '17 3 * * *'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  # where the page is built from (a fork that hosts its own page changes this line)
+  SOURCE_REPO: ypyik0669/claude-web
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+      deploy: ${{ steps.pick.outputs.deploy }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          FORCE: ${{ inputs.force }}
+          SITE: https://${{ github.repository_owner }}.github.io/
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-}"
+          if [ -z "$tag" ]; then tag="$(gh api "repos/$SOURCE_REPO/releases/latest" --jq .tag_name)"; fi
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "::error::not a release tag: $tag"
+            exit 1
+          fi
+          live="$(curl -fsSL --max-time 20 "${SITE}version.txt" 2>/dev/null | head -n 1 || true)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ "$live" = "$tag" ] && [ "${FORCE:-false}" != "true" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "$tag is already live: nothing to deploy"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "deploying $tag (live: ${live:-none})"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ needs.check.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # the page needs the web workspace's build tools and the server's sources only: no install scripts
+      - run: npm ci --ignore-scripts
+      # a release older than the phone page has no build:shell, and this step fails
+      - run: npm run build:shell -w web
+      - shell: bash
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
+        run: printf '%s\n' "$TAG" > web/dist-shell/version.txt
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist-shell
+
+  deploy:
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

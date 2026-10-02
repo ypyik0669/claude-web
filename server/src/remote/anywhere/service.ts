@@ -27,6 +27,12 @@ import {
 } from './core/index.js';
 import { loadRtc } from './rtc.js';
 
+// TODO(org): set to https://<org>.github.io/ once the org exists
+/**
+ * The phone page the QR opens while `remote.anywhere.shellUrl` is not set (the settings page shows it from status()):
+ * the only place the default is written. deploy/shell-site/ puts that page on a site of its own, an organization's
+ * <org>.github.io, served at its root.
+ */
 export const DEFAULT_SHELL_URL = 'https://ypyik0669.github.io/claude-web/';
 export const RECENT_MAX = 20;
 /** The Acceptor's room id for the pairing code's room (device ids are 12 hex characters). */

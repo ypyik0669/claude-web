@@ -221,10 +221,12 @@ describe('AnywhereService', () => {
   let relay: Awaited<ReturnType<typeof dialRoom>>;
 
   it('status: on, the broker, the shell address, keep-awake on by default', async () => {
+    const { DEFAULT_SHELL_URL } = await import('./service.js');
     const a = await anywhere();
     expect(a.on).toBe(true);
     expect(a.brokers).toEqual([{ name: 'mock', ok: true }]);
-    expect(a.shellUrl).toBe('https://ypyik0669.github.io/claude-web/');
+    expect(DEFAULT_SHELL_URL).toMatch(/^https:\/\/\S+\/$/);
+    expect(a.shellUrl).toBe(DEFAULT_SHELL_URL);
     expect(a.keepAwake).toBe(true);
     expect(a.sessions).toEqual([]);
   });
@@ -234,7 +236,7 @@ describe('AnywhereService', () => {
     expect(pc.url).toMatch(/\/pair#\d{6}$/);
     expect(typeof pc.anywhereUrl).toBe('string');
     const u = new URL(pc.anywhereUrl);
-    expect(`${u.origin}${u.pathname}`).toBe('https://ypyik0669.github.io/claude-web/');
+    expect(`${u.origin}${u.pathname}`).toBe((await import('./service.js')).DEFAULT_SHELL_URL);
     expect(u.hash.startsWith('#p=')).toBe(true);
     const q = JSON.parse(dec.decode(unb64u(u.hash.slice(3))));
     expect(q.v).toBe(1);

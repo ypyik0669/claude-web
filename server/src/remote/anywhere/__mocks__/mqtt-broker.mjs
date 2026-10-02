@@ -99,6 +99,7 @@ export async function startBroker(opts = {}) {
   const conns = new Set();
   let published = 0;
   let forwarded = 0;
+  const droppedTopics = [];
 
   function send(c, bytes) {
     if (c.ws.readyState !== 1) return;
@@ -143,7 +144,10 @@ export async function startBroker(opts = {}) {
         for (const other of conns) {
           if (!other.subs.has(topic)) continue;
           forwarded++;
-          if (dropEvery > 0 && forwarded % dropEvery === 0) continue;
+          if (dropEvery > 0 && forwarded % dropEvery === 0) {
+            droppedTopics.push(topic);
+            continue;
+          }
           send(other, out);
         }
         return;
@@ -233,6 +237,10 @@ export async function startBroker(opts = {}) {
     /** PUBLISH packets received from clients. */
     get published() {
       return published;
+    },
+    /** The topic of every message `dropEvery` threw away, in order (which traffic the loss hit). */
+    get droppedTopics() {
+      return droppedTopics.slice();
     },
     /** Clients past CONNACK. */
     get clients() {

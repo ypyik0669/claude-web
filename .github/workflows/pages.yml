@@ -1,0 +1,38 @@
+name: Phone page
+
+# Builds the phone page (web/src/shell → web/dist-shell) at each release tag and keeps it as a build artifact. It is
+# not deployed from here: it is served from a site of its own, <org>.github.io, whose repo builds it from this one at
+# the same tag (deploy/shell-site/ has that workflow and the one-time steps). Its origin is used by nothing else, and
+# this repo needs no token for another repo's Pages. This run checks that the page builds at the tag.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # the page needs the web workspace's build tools and the server's sources only: no install scripts (no
+      # Electron download, no node-pty build, no ripgrep download)
+      - run: npm ci --ignore-scripts
+      - run: npm run build:shell -w web
+      - name: version.txt (what the site's deploy compares with the live page)
+        shell: bash
+        env:
+          REF: ${{ github.ref_name }}
+        run: printf '%s\n' "$REF" > web/dist-shell/version.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phone-page
+          path: web/dist-shell
+          if-no-files-found: error
