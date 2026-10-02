@@ -39,6 +39,27 @@ describe('route (scope /claude-web/)', () => {
   });
 });
 
+describe('route (scope /: the shell at the root of its own site, e.g. an organization\'s <org>.github.io)', () => {
+  const site = (p: string) => new URL(p, 'https://cw-shell.github.io');
+
+  it('app/ and app/api/ under the root, the rest is the shell', () => {
+    expect(route(site('/app/api/file?path=x&w=1'), '/')).toEqual({ kind: 'api', path: '/api/file?path=x&w=1' });
+    expect(route(site('/app/assets/index-abc.js'), 'https://cw-shell.github.io/')).toEqual({ kind: 'asset', path: '/assets/index-abc.js' });
+    expect(route(site('/app/index.html?cwshell=w1&cwcache=cw-app-d1-0.1.6'), '/')).toEqual({ kind: 'asset', path: '/index.html' });
+    expect(route(site('/'), '/')).toEqual({ kind: 'shell' });
+    expect(route(site('/sw.js'), '/')).toEqual({ kind: 'shell' });
+    expect(route(site('/version.txt'), '/')).toEqual({ kind: 'shell' });
+    expect(route(new URL('https://other.github.io/app/api/x'), 'https://cw-shell.github.io/')).toEqual({ kind: 'pass' });
+  });
+
+  it('the frame address and cache keys under the root', () => {
+    const scope = 'https://cw-shell.github.io/';
+    expect(appEntry(scope, 'w1', 'cw-app-d1-0.1.6').startsWith(`${scope}app/index.html?`)).toBe(true);
+    expect(appKey(scope, '/assets/a.js')).toBe(`${scope}app/assets/a.js`);
+    expect(assetLookup(scope, '/index.html?win=w2')).toEqual({ key: `${scope}app/index.html`, ignoreSearch: true });
+  });
+});
+
 describe('the app frame address', () => {
   const scope = 'https://ypyik0669.github.io/claude-web/';
 

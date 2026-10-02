@@ -7,6 +7,7 @@ import { deviceCaches, type CachesLike } from './assets';
 import { idbDevices, memoryDevices, type DeviceRec, type DeviceStore } from './devices';
 import { SAY, type Explained } from './explain';
 import { readShellRequest, replyFromError } from './forward';
+import { BROKERS_KEY, STUN_KEY, brokerOverride, stunOverride } from './override';
 import { linkKey, linkState, pairPlan, parsePairLink, rememberLink, type LinkMemory, type PairLink } from './pair-link';
 import { Session, ShellError, explain, pairWith, type Dialer, type SessionView } from './session';
 import { Ui, type BarState } from './ui';
@@ -18,7 +19,9 @@ const owner = b64u(crypto.getRandomValues(new Uint8Array(9)));
 const ui = new Ui(document.getElementById('root')!);
 const rtc = (globalThis as unknown as { RTCPeerConnection?: RtcCtor }).RTCPeerConnection ?? null;
 const rtcMissing = !rtc;
-const brokers = new Brokers(DEFAULT_BROKERS);
+// tests and power users can replace both lists in localStorage (override.ts); read once, here
+const brokers = new Brokers(brokerOverride(local(BROKERS_KEY)) ?? DEFAULT_BROKERS);
+const stun = stunOverride(local(STUN_KEY)) ?? DEFAULT_STUN;
 const HINT_KEY = 'cw.shell.iosHint';
 const LINKS_KEY = 'cw.shell.pairLinks';
 const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -42,7 +45,7 @@ const dialer: Dialer = {
     // after a network change the old broker connections are likely dead: start them again at once
     if (fresh) brokers.stop();
     brokers.start();
-    return dial({ brokers, room, stun: DEFAULT_STUN, rtc: rtc ?? NoRtc, forceRelay: rtcMissing, onstate });
+    return dial({ brokers, room, stun, rtc: rtc ?? NoRtc, forceRelay: rtcMissing, onstate });
   },
   idle() {
     brokers.stop();

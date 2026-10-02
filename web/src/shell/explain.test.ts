@@ -103,9 +103,11 @@ describe('shell wording', () => {
   it('no implementation word in any string of the shell', () => {
     const files = fs.readdirSync(DIR).filter((f) => /\.ts$/.test(f) && !/\.test\.ts$/.test(f));
     expect(files).toContain('ui.ts');
+    // a dotted key (a localStorage name such as cw.shell.stun) is never shown, like the app gate's protocol kinds
+    const KEY = /^[\w-]+(\.[\w-]+)+$/;
     const bad: string[] = [];
     for (const f of files) {
-      for (const t of texts(fs.readFileSync(path.join(DIR, f), 'utf8'), f)) if (/\b(MQTT|WebRTC|STUN|ICE)\b/i.test(t)) bad.push(`${f}: ${t}`);
+      for (const t of texts(fs.readFileSync(path.join(DIR, f), 'utf8'), f)) if (!KEY.test(t) && /\b(MQTT|WebRTC|STUN|ICE)\b/i.test(t)) bad.push(`${f}: ${t}`);
     }
     expect(bad).toEqual([]);
   });
