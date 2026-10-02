@@ -1,19 +1,24 @@
 // Phone shell smoke (spec「测试」: 壳页面在 Electron 里打开界面 iframe), as a real run: the built shell (web/dist-shell),
 // served at the root of a local static server, in a real Chromium (Electron: a real RTCPeerConnection, a real service
-// worker), pointed at a local test broker through its localStorage override (cw.shell.brokers / cw.shell.stun), pairs
-// with a throwaway server (temp HOME, remote access on a random port) through the QR link and runs the app in its frame:
+// worker), pairs with a throwaway server (temp HOME, remote access on a random port, a local test broker and no STUN
+// server as its lists) through the QR link and runs the app in its frame:
+//   · the link names the PC's own lists (not the defaults): the shell pairs and dials over them, with no override of
+//     its own; the device record keeps them, and the reconnects after a reload use them (F2);
 //   · paired and opened over a direct link: the app frame loads through the service worker;
 //   · the app's WebSocket goes through the tunnel: sessions.list answers (the seeded conversation is in the store);
 //   · an image (app/api/file) loads through the service worker and the link;
 //   · opened again with ICE made to fail (a preload gives the page's RTCPeerConnection a relay-only policy and no TURN
 //     server: no candidate at all), the shell falls back to the slow relay: the app opens from its cached files,
 //     sessions.list answers, and the image's api/file is refused — the shell's bar shows the PC's 413 sentence;
-//   · any console error or warning in the shell page, the app frame or the service worker fails the run (the shell's
-//     info line saying the override is in use is checked for, and is not one);
+//   · offline, the shell opens from its precache (each file checked against the sha256 table in sw.js); a shell file
+//     rewritten in Cache Storage (what a tampered PC's app could do on this origin) is not served: the real one comes
+//     from the network and the copy is dropped (F3);
+//   · the localStorage override (cw.shell.brokers / cw.shell.stun) is said in the console, as an info line;
+//   · any console error or warning in the shell page, the app frame or the service worker fails the run;
 //   · nothing goes out: Electron's proxy and the server's are a recorder that must see no request, and every
 //     RTCPeerConnection the page made had no ICE server.
-// The shipped CSP only connects to wss: brokers; the static server adds ws://127.0.0.1:* for the test broker (the
-// built file is not changed).
+// The shipped CSP only connects to wss: brokers; the static server adds ws://127.0.0.1:* for the test broker, and
+// serves sw.js with the widened page's sha256 in place of the built one (the built files are not changed).
 //
 //   npm run build:all && node scripts/shell-smoke.cjs [--out <dir>] [--show] [--keep]
 //
@@ -74,20 +79,31 @@ function seed(home, proj) {
   return sid;
 }
 
-/** dist-shell at the root of 127.0.0.1:<port>, its CSP widened for the ws:// test broker; `/__smoke` is a blank page. */
+/**
+ * dist-shell at the root of 127.0.0.1:<port>, its CSP widened for the ws:// test broker, and sw.js's hash of the page
+ * swapped for the widened page's (else the worker would rightly refuse its cached copy); `/__smoke` is a blank page.
+ */
 async function shellServer() {
   const http = require('node:http');
+  const { createHash } = require('node:crypto');
   const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
   const index = fs.readFileSync(path.join(SHELL_DIR, 'index.html'), 'utf8');
   const CSP = "connect-src 'self' wss:;";
   if (!index.includes(CSP)) throw new Error(`web/dist-shell/index.html has no ${CSP} to widen (rebuild the shell?)`);
   const widened = index.replace(CSP, "connect-src 'self' wss: ws://127.0.0.1:*;");
+  const sha = (s) => createHash('sha256').update(s).digest('hex');
+  const swBuilt = fs.readFileSync(path.join(SHELL_DIR, 'sw.js'), 'utf8');
+  if (!swBuilt.includes(sha(index))) throw new Error('web/dist-shell/sw.js has no sha256 of index.html (rebuild the shell?)');
+  const swServed = swBuilt.split(sha(index)).join(sha(widened));
   const hits = [];
   const srv = http.createServer((q, s) => {
     const p = decodeURIComponent(new URL(q.url, 'http://x').pathname);
     hits.push(p);
     if (p === '/__smoke') return void s.writeHead(200, { 'content-type': MIME['.html'] }).end('<!doctype html><title>shell smoke</title>');
+    // what this server was asked for so far (the driver tells a load from the precache from one over the network)
+    if (p === '/__hits') return void s.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(hits));
     if (p === '/' || p === '/index.html') return void s.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-cache' }).end(widened);
+    if (p === '/sw.js') return void s.writeHead(200, { 'content-type': MIME['.js'], 'cache-control': 'no-cache' }).end(swServed);
     const f = path.join(SHELL_DIR, p);
     if (!f.startsWith(SHELL_DIR + path.sep) || !fs.existsSync(f) || !fs.statSync(f).isFile()) return void s.writeHead(404, { 'content-type': 'text/plain' }).end('not here');
     s.writeHead(200, { 'content-type': MIME[path.extname(f)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
@@ -164,6 +180,10 @@ async function runner() {
   if (!on) throw new Error('在外面也能用 did not come up on the test broker');
   const pc = await req({ kind: 'remote.pairCode' });
   const hash = new URL(pc.anywhereUrl).hash;
+  // the PC is not on the default lists: its link names them (the shell is given no override for the pairing)
+  let qr = null;
+  try { qr = JSON.parse(Buffer.from(hash.slice(3), 'base64url').toString('utf8')); } catch { /* checked below */ }
+  const linkLists = { ok: JSON.stringify(qr?.b) === JSON.stringify(brokers) && JSON.stringify(qr?.st) === '[]', detail: JSON.stringify({ b: qr?.b, st: qr?.st }) };
   console.log(`server :${port}, broker ${broker.url}, shell ${shell.url} (HOME=${home})`);
 
   const result = path.join(out, 'shell-smoke.json');
@@ -183,6 +203,7 @@ async function runner() {
   let r = null;
   try { r = JSON.parse(fs.readFileSync(result, 'utf8')); } catch { /* electron died */ }
   const checks = r ? r.checks : [];
+  checks.unshift({ name: 'the QR link names the PC\'s own lists (its broker, no STUN server): they are not the defaults', ok: linkLists.ok, detail: linkLists.detail });
   // what the PC saw: one direct and one relay connection of the paired device
   const st = await req({ kind: 'remote.status' }).catch(() => null);
   const recent = st?.anywhere?.recent ?? [];
@@ -320,18 +341,17 @@ function driver() {
     const rtcConfigs = `(window.__smokeRtc || []).map((c) => (c && c.iceServers ? c.iceServers.length : 0))`;
 
     try {
-      // ---- the override, set on the shell's origin before the shell runs ----
+      // ---- pair through the QR link, open the app over a direct link: no override, the link's own lists only ----
       await win.loadURL(`${E.SHELL_URL}__smoke`);
-      await js(`localStorage.setItem('cw.shell.brokers', ${S(E.SHELL_BROKERS)}); localStorage.setItem('cw.shell.stun', '[]'); true`);
-
-      // ---- pair through the QR link, open the app over a direct link ----
+      check('the shell origin starts with no localStorage override', await js(`localStorage.getItem('cw.shell.brokers') === null && localStorage.getItem('cw.shell.stun') === null`));
       await win.loadURL(`${E.SHELL_URL}${E.SHELL_PAIR}`);
       const opened = await waitFor(appUp, 90_000);
-      check('the QR link pairs and the app frame opens, its WebSocket open through the tunnel', opened, opened ? '' : await js(`document.querySelector('main.page')?.innerText ?? ''`).catch(() => ''));
+      check('the QR link pairs (over the brokers it names) and the app frame opens, its WebSocket open through the tunnel', opened, opened ? '' : await js(`document.querySelector('main.page')?.innerText ?? ''`).catch(() => ''));
       if (!opened) { await shot('pair-failed'); return finish(1); }
       check('the pairing link is cleared from the address', (await js('location.hash')) === '');
-      const OVERRIDE_INFO = '[shell] 使用 localStorage 里的自定义列表：cw.shell.brokers（1 个）、cw.shell.stun（0 个）';
-      check('the shell says in its console (info, not a warning) that the override is in use', res.infos.includes(OVERRIDE_INFO), res.infos.join(' | ') || '(no info line)');
+      check('no override was in use (no info line about one)', !res.infos.some((m) => m.includes('自定义列表')), res.infos.join(' | '));
+      const rec = await js(`new Promise((res) => { const q = indexedDB.open('cw-shell'); q.onsuccess = () => { const g = q.result.transaction('devices').objectStore('devices').getAll(); g.onsuccess = () => res(g.result.map((d) => ({ brokers: d.brokers, stun: d.stun }))); g.onerror = () => res(null); }; q.onerror = () => res(null); })`);
+      check('the device record keeps the PC\'s lists from the link', JSON.stringify(rec) === JSON.stringify([{ brokers: JSON.parse(E.SHELL_BROKERS), stun: [] }]), JSON.stringify(rec));
       const ctl = await js(`!!(${appWin}.navigator.serviceWorker && ${appWin}.navigator.serviceWorker.controller)`);
       check('the app frame is served by the shell\'s service worker', ctl);
       check('a direct link: no slow-relay bar', !(await js(barText)).includes(RELAY_BAR), await js(barText));
@@ -346,7 +366,7 @@ function driver() {
       const im = await js(loadImage);
       check('an image through app/api/file loads over the link (3×2)', im.ok && im.w === 3 && im.h === 2, JSON.stringify(im));
       const cfg1 = await js(rtcConfigs);
-      check('the direct dial used no ICE server (the STUN override is empty)', cfg1.length >= 1 && cfg1.every((n) => n === 0), JSON.stringify(cfg1));
+      check('the direct dial used no ICE server (the link\'s STUN list is empty)', cfg1.length >= 1 && cfg1.every((n) => n === 0), JSON.stringify(cfg1));
       await shot('direct');
 
       // ---- open it again with ICE failing: the slow relay ----
@@ -366,8 +386,46 @@ function driver() {
       expect413 = false;
       check('over the relay the image is refused and the shell\'s bar shows the 413 sentence', !im2.ok && !!said, `${JSON.stringify(im2)} ${said || (await js(barText))}`);
       const cfg2 = await js(rtcConfigs);
-      check('the relay dial\'s attempt used no ICE server either', cfg2.every((n) => n === 0), JSON.stringify(cfg2));
+      check('the relay dial\'s attempt used no ICE server either (the record\'s STUN list)', cfg2.every((n) => n === 0), JSON.stringify(cfg2));
       await shot('relay');
+
+      // ---- offline: the shell from its precache, every file checked against the hashes in sw.js (F3) ----
+      await js(`localStorage.removeItem('smoke.noDirect'); true`);
+      const hitsNow = () => js(`fetch('/__hits', { cache: 'no-store' }).then((r) => r.json())`);
+      const before = (await hitsNow()).length;
+      wc.session.enableNetworkEmulation({ offline: true });
+      await win.loadURL(E.SHELL_URL);
+      const offline = await waitFor(`[...document.querySelectorAll('button.device .pc')].map((e) => e.textContent).join('|') || null`, 15_000);
+      wc.session.disableNetworkEmulation();
+      // nothing of that load reached the static server: the page and its files came from the cache, and they matched
+      const during = (await hitsNow()).slice(before).filter((h) => h !== '/__hits');
+      check('offline, the shell opens from its precache (its files match the sha256 table in sw.js), none of it from the server', offline && offline.split('|').includes(E.SHELL_PC) && during.length === 0, `${offline} · asked meanwhile: ${JSON.stringify(during)}`);
+      const beforeTamper = (await hitsNow()).length;
+
+      // ---- a shell file rewritten in Cache Storage (any script on this origin can): not served, dropped (F3) ----
+      const tamper = await js(`(async () => {
+        const name = (await caches.keys()).find((k) => k.startsWith('cw-shell-'));
+        if (!name) return null;
+        const c = await caches.open(name);
+        const url = (await c.keys()).map((r) => r.url).find((u) => /\\/assets\\/shell-[^/]+\\.js$/.test(u));
+        if (!url) return null;
+        await c.put(url, new Response('window.__smokeTampered = true;', { headers: { 'content-type': 'text/javascript' } }));
+        return { name, url };
+      })()`);
+      await win.loadURL(E.SHELL_URL);
+      const listedAgain = await waitFor(`[...document.querySelectorAll('button.device .pc')].map((e) => e.textContent).join('|') || null`, 15_000);
+      const ran = await js('window.__smokeTampered === true');
+      const kept = tamper ? await js(`(async () => { const r = await (await caches.open(${S(tamper.name)})).match(${S(tamper.url)}); return r ? (await r.text()).includes('__smokeTampered') : false; })()`) : null;
+      // …and the real one came from the network (the static server was asked for it)
+      const refetched = tamper ? (await hitsNow()).slice(beforeTamper).includes(new URL(tamper.url).pathname) : false;
+      check('a shell file rewritten in Cache Storage is not served: the page runs the real one from the network and the copy is dropped', !!tamper && !!listedAgain && !ran && kept === false && refetched, JSON.stringify({ tamper, listedAgain, ran, kept, refetched }));
+
+      // ---- the localStorage override: said in the console as an info line (not a warning) ----
+      await js(`localStorage.setItem('cw.shell.brokers', ${S(E.SHELL_BROKERS)}); localStorage.setItem('cw.shell.stun', '[]'); true`);
+      await win.loadURL(E.SHELL_URL);
+      await waitFor(`!!document.querySelector('button.device')`, 15_000);
+      const OVERRIDE_INFO = '[shell] 使用 localStorage 里的自定义列表：cw.shell.brokers（1 个）、cw.shell.stun（0 个）';
+      check('with an override set, the shell says so in its console (info, not a warning)', res.infos.includes(OVERRIDE_INFO), res.infos.join(' | ') || '(no info line)');
       clearTimeout(hardStop);
       finish(0);
     } catch (e) {

@@ -1,16 +1,21 @@
 // The shell's service worker (scope: the shell's folder). Three kinds of request (route.ts):
 //  - the shell's own files: from its precache (taken at install), else the network — the shell only changes with a
-//    new sw.js (a deploy changes its file list), so a flaky GitHub Pages matters only on the first visit;
+//    new sw.js (a deploy changes its file list), so a flaky GitHub Pages matters only on the first visit. A cached
+//    copy is served only when its sha256 is the one the build wrote into this script (integrity.ts: every paired PC's
+//    app runs on this origin and could rewrite Cache Storage); one that differs is dropped, the network answers;
 //  - app/…: the app frame's files, from the cache of the PC version the frame runs (its address names it); a miss,
 //  - and app/api/…, go to the shell window that owns the frame (also on its address), which makes the request over
 //    its link to the PC and answers (forward.ts has the messages). No window to ask: 503; none answering within
 //    60 s: 504. An app/api/… address opened as a page of its own (no frame marks) is refused: 403.
 // Built on its own as one classic script (vite.shell.config.ts), so it imports nothing it shares at run time.
 import { MSG_FETCH, MSG_VERSION, readShellReply, replyForbidden, replyNoWindow, replyTimeout, responseParts, type ShellReply } from './forward';
+import { shellKey, verifiedShellFile, type ShellHashes } from './integrity';
 import { assetLookup, frameParams, refusedApi, route } from './route';
 
 declare const __SHELL_FILES__: string[];
 declare const __SHELL_BUILD__: string;
+/** sha256 of each precached file (vite.shell.config.ts); `./` is the page. */
+declare const __SHELL_HASHES__: ShellHashes;
 
 /** The service-worker globals used here (the web tsconfig has the DOM lib, not WebWorker). */
 interface SwClient {
@@ -73,11 +78,18 @@ async function dropOldShells(): Promise<void> {
 
 async function shellFile(req: Request): Promise<Response> {
   const scope = sw.registration.scope;
-  const path = new URL(req.url).pathname;
+  const url = new URL(req.url);
+  const path = url.pathname;
   // the shell is one page: its folder and index.html are the same file
   const page = req.mode === 'navigate' && (path === new URL(scope).pathname || path === new URL('index.html', scope).pathname);
-  const hit = await caches.match(page ? scope : req, { cacheName: SHELL_CACHE, ignoreSearch: page });
-  return hit ?? fetch(req);
+  const key = page ? scope : req;
+  return verifiedShellFile({
+    key: shellKey(url, scope, page),
+    hashes: __SHELL_HASHES__,
+    cached: () => caches.match(key, { cacheName: SHELL_CACHE, ignoreSearch: page }),
+    drop: async () => (await caches.open(SHELL_CACHE)).delete(key, { ignoreSearch: page }),
+    network: () => fetch(req),
+  });
 }
 
 async function marksOf(e: FetchEventLike): Promise<{ owner: string | null; cache: string | null }> {

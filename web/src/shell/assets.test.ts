@@ -2,7 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { MuxResponse } from '@anywhere';
-import { appVersion, cacheName, deviceCaches, ensureAppCache, entryAssets, healthVersion, staleCaches, PcStatusError, type CacheLike, type CachesLike } from './assets';
+import {
+  MAX_ENTRY_BYTES, appVersion, cacheName, deviceCaches, ensureAppCache, entryAssets, healthVersion, oversizedEntries, staleCaches, PcStatusError,
+  type CacheLike, type CachesLike,
+} from './assets';
 
 const enc = new TextEncoder();
 const DIST = path.resolve(__dirname, '../../dist');
@@ -39,11 +42,21 @@ describe('entryAssets', () => {
     expect(list.some((p) => p.endsWith('.css'))).toBe(true);
   });
 
-  // over the slow relay the PC refuses any response over 2 MiB: an entry file past it could never open the app there
+  // over the slow relay the PC refuses any response over 2 MiB: an entry file past it could never open the app there.
+  // A local check only (CI tests before it builds): the shell build itself fails past the limit (vite.shell.config.ts)
   it.skipIf(!fs.existsSync(DIST_INDEX))('every first-screen file of the built app stays under 1 900 000 bytes (the relay caps a response at 2 MiB)', () => {
+    expect(MAX_ENTRY_BYTES).toBe(1_900_000);
     for (const p of entryAssets(fs.readFileSync(DIST_INDEX, 'utf8'))) {
-      expect(fs.statSync(path.join(DIST, p)).size, p).toBeLessThan(1_900_000);
+      expect(fs.statSync(path.join(DIST, p)).size, p).toBeLessThan(MAX_ENTRY_BYTES);
     }
+  });
+
+  it('the shell build fails when a first-screen file passes the limit', () => {
+    const big = oversizedEntries('<script type="module" src="./assets/a.js"></script><link rel="stylesheet" href="./assets/b.css">', (p) => (p === './assets/a.js' ? MAX_ENTRY_BYTES : 10));
+    expect(big).toEqual([{ path: './assets/a.js', bytes: MAX_ENTRY_BYTES }]);
+    expect(oversizedEntries('<script type="module" src="./assets/a.js"></script>', () => MAX_ENTRY_BYTES - 1)).toEqual([]);
+    const src = fs.readFileSync(path.resolve(__dirname, '../../vite.shell.config.ts'), 'utf8');
+    expect(src).toMatch(/oversizedEntries\(/);
   });
 
   it('the module script, module preloads and stylesheets under ./assets/, once each, in page order', () => {
@@ -125,7 +138,7 @@ function memoryCaches() {
   return { caches, store, order };
 }
 
-const SCOPE = 'https://ypyik0669.github.io/claude-web/';
+const SCOPE = 'https://claude-web-shell.github.io/';
 const INDEX = `<script type="module" src="./assets/index-A1.js"></script><link rel="stylesheet" href="./assets/index-C3.css">`;
 const INDEX_RES: MuxResponse = { status: 200, headers: { 'content-type': 'text/html' }, body: enc.encode(INDEX) };
 

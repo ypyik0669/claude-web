@@ -28,6 +28,12 @@ export class PcStatusError extends Error {
   }
 }
 
+/**
+ * Every first-screen file of the app must stay under this (the PC refuses a response over 2 MiB on the slow relay,
+ * and a new version reached only over it would never open). The shell build fails past it (vite.shell.config.ts).
+ */
+export const MAX_ENTRY_BYTES = 1_900_000;
+
 const APP_PREFIX = 'cw-app-';
 const VERSION_RE = /^[\w.+-]{1,64}$/;
 /** `./assets/<file>`: no `..`, no `//`, nothing that could leave the folder. */
@@ -75,6 +81,13 @@ export function entryAssets(indexHtml: string): string[] {
     if (url && ENTRY_RE.test(url) && !out.includes(url)) out.push(url);
   }
   return out;
+}
+
+/** The first-screen files of a built index.html that are MAX_ENTRY_BYTES or more (`size`: a file's bytes by its path). */
+export function oversizedEntries(indexHtml: string, size: (path: string) => number): { path: string; bytes: number }[] {
+  return entryAssets(indexHtml)
+    .map((p) => ({ path: p, bytes: size(p) }))
+    .filter((e) => e.bytes >= MAX_ENTRY_BYTES);
 }
 
 /** The app version from the PC's api/health answer; throws for anything that is not one. */
