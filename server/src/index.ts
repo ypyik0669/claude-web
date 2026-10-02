@@ -231,6 +231,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       res.writeHead(403).end();
       return;
     }
+    // the app is built with base './': it only works when loaded from a directory URL (/, /?token=…), never from a
+    // nested path like /a/b, where ./assets/… would resolve to /a/assets/… and come back as this index.html
     if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(root, 'index.html');
     if (!fs.existsSync(file)) {
       res.writeHead(200, { 'content-type': 'text/html' });

@@ -32,4 +32,18 @@ describe('no root-absolute /api/ URL in the web app', () => {
     }
     expect(bad).toEqual([]);
   });
+
+  // the same for the other server paths the app loads (spec §6), and in index.html / public/*.js too
+  it('no root-absolute api, ws, sw.js, manifest or icon path in the sources, index.html or public scripts', () => {
+    const ROOT_PATH = /['"`(]\/(?:api\b|ws\b|sw\.js|manifest\.webmanifest|icon[-.])/;
+    const web = path.resolve(SRC, '..');
+    const files = [...sources(), path.join(web, 'index.html'), ...fs.readdirSync(path.join(web, 'public')).filter((n) => n.endsWith('.js')).map((n) => path.join(web, 'public', n))];
+    const bad: string[] = [];
+    for (const p of files) {
+      fs.readFileSync(p, 'utf8').split('\n').forEach((line, i) => {
+        if (ROOT_PATH.test(line)) bad.push(`${path.relative(SRC, p)}:${i + 1}`);
+      });
+    }
+    expect(bad).toEqual([]);
+  });
 });
