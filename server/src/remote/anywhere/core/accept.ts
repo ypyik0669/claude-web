@@ -394,10 +394,11 @@ export class Acceptor {
     const ses = this.bound(r, m);
     if (!ses || ses.state === 'relay' || ses.state === 'gone') return;
     if (ses.state === 'link') {
-      // Only one race lands here: our end of the channel opened (and went to onLink) just as the phone's ICE timer
-      // fired on its side; the phone has closed its connection and is waiting on the relay for this same session, so
-      // the direct link handed out is about to die anyway. A direct link that drops later is not this case: the
-      // phone dials again (a fresh session), it does not ask for the relay on the old one.
+      // One race family lands here: our end of the channel opened (and went to onLink), but the phone gave up on the
+      // direct link for this same session before it was its: its ICE timer fired first, or its channel opened and
+      // closed again before pairKind() resolved. Either way the phone has closed its connection and is waiting on
+      // the relay, so the direct link handed out is about to die anyway. A direct link that drops later is not this
+      // case: the phone dials again (a fresh session), it does not ask for the relay on the old one.
       const old = ses.link;
       if (!old || old.kind === 'relay') return;
       ses.state = 'relay';
@@ -460,7 +461,7 @@ export class Acceptor {
     else if (pc) closeRtc(pc);
   }
 
-  /** Forgets a session that is not a link (expired, evicted, bye, its room removed). */
+  /** Forgets a session that is not a link (expired, evicted, its relay link failed to open, its room removed). */
   private drop(r: RoomState, ses: Session): void {
     if (ses.state === 'gone') return;
     ses.state = 'gone';

@@ -163,11 +163,13 @@ function family(addr: unknown): LinkKind | null {
  */
 export async function pairKind(pc: RtcPeerConnectionLike, timeoutMs = PAIR_KIND_TIMEOUT_MS): Promise<LinkKind> {
   try {
+    // first: a getStats() that throws at once (or is missing) falls back without a timer ever being set
+    const pending = pc.getStats();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<null>((resolve) => {
       timer = setTimeout(() => resolve(null), timeoutMs);
     });
-    const stats = await Promise.race([pc.getStats(), late]).finally(() => clearTimeout(timer));
+    const stats = await Promise.race([pending, late]).finally(() => clearTimeout(timer));
     if (!stats) throw new Error('getStats() did not settle');
     const byId = new Map<string, any>();
     stats.forEach((v) => {

@@ -11,8 +11,9 @@
 //   phone → PC   offer    {s, cn, sdp}
 //   PC → phone   answer   {s, pn, sdp}
 //   both         cand     {s, cn (from the phone) | pn (from the PC), c: {candidate, sdpMid, sdpMLineIndex}}
-//   PC → phone   nodirect {s, pn}   the PC cannot take the offer (no RTCPeerConnection, no answer): go to the relay
-//                                   now instead of waiting out the ICE timeout
+//   PC → phone   nodirect {s, pn}   no direct link from the PC for this session (no RTCPeerConnection, no answer, or
+//                                   a failure taking the data channel): go to the relay now instead of waiting out the
+//                                   ICE timeout
 //   phone → PC   relay    {s, cn}   ICE gave up (or was never tried); the phone's relay link for s is already open
 //   PC → phone   relay    {s, pn}   the PC's relay link is subscribed. Only a fast path: the phone waits for it at most
 //                                   one relay resend interval, then goes ahead (anything lost meanwhile is resent)
@@ -35,7 +36,7 @@ import {
   type RtcCtor,
   type RtcPeerConnectionLike,
 } from './p2p-link.js';
-import { MAX_FRAME_BYTES, MAX_QUEUED_FRAMES, openRelayLink } from './relay-link.js';
+import { MAX_EARLY_BYTES, MAX_EARLY_FRAMES, openRelayLink } from './relay-link.js';
 import { SignalChannel } from './signal.js';
 
 export const HELLO_TIMEOUT_MS = 15_000;
@@ -116,8 +117,9 @@ interface Ack {
  * The relay link as dial() hands it out. dial() takes the link's onframe and onclose the moment it opens (the PC
  * may already be sending, and an end while dial still waits must make dial fail, not hand out a dead link): frames
  * that arrive before the caller sets onframe are held here and given to its first onframe in order, before anything
- * newer, the same way the links' own early buffers work. While dial waits, an end goes to `waiting` instead of
- * onclose; after release() it goes to onclose as usual.
+ * newer, under the relay link's own early-buffer bounds. Nothing is delivered once the link has ended or been closed
+ * (a caller that closes from inside its first onframe gets none of the rest). While dial waits, an end goes to
+ * `waiting` instead of onclose; after release() it goes to onclose as usual.
  */
 class HandedRelay implements Link {
   onclose: (why: string) => void = () => {};
@@ -149,6 +151,10 @@ class HandedRelay implements Link {
     for (const f of q) this.deliver(f);
   }
 
+  private get live(): boolean {
+    return this.endedWhy === undefined;
+  }
+
   /** Why it ended while dial() still held it, if it did. */
   ended(): string | undefined {
     return this.endedWhy;
@@ -176,12 +182,12 @@ class HandedRelay implements Link {
   }
 
   private frame(f: Uint8Array): void {
+    if (!this.live) return;
     if (this.handler) return this.deliver(f);
-    if (this.endedWhy !== undefined) return;
     this.held.push(f);
     this.heldBytes += f.length;
-    // the same bounds as the links' queues: a flood while nobody takes frames ends the link
-    if (this.heldBytes > MAX_FRAME_BYTES || this.held.length > MAX_QUEUED_FRAMES) {
+    // the relay link's early-buffer bounds, and its way of ending: tell the other side, then the same reason
+    if (this.heldBytes > MAX_EARLY_BYTES || this.held.length > MAX_EARLY_FRAMES) {
       this.held = [];
       this.heldBytes = 0;
       this.inner.close();
@@ -190,6 +196,8 @@ class HandedRelay implements Link {
   }
 
   private deliver(f: Uint8Array): void {
+    // checked per frame: the handler may have closed the link (or the link ended) since the last one
+    if (!this.live) return;
     try {
       this.handler!(f);
     } catch (e) {

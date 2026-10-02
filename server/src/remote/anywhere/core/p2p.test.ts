@@ -8,6 +8,7 @@ import {
   DEFAULT_BROKERS,
   DEFAULT_STUN,
   DialError,
+  MAX_EARLY_FRAMES,
   MAX_FRAME_BYTES,
   P2P_DISCONNECT_GRACE_MS,
   P2P_FLAG,
@@ -413,7 +414,11 @@ describe('dial and Acceptor', () => {
     expect([...e.phoneTopics]).toEqual([]);
   });
 
-  it('relay: the confirm lost, dial goes ahead after one resend interval; frames sent meanwhile are handed over', async () => {
+  /**
+   * A relay dial whose confirm is lost (the PC's second message on the room topic; the first is the ack), with a PC
+   * that sends `frames` from onLink, while the phone's dial is still waiting.
+   */
+  async function lostConfirm(frames: number) {
     const b = await broker();
     const defs: BrokerDef[] = [{ name: 'local', url: b.url, relay: true }];
     const phone = pool(defs);
@@ -421,7 +426,6 @@ describe('dial and Acceptor', () => {
     await until(() => [phone, pc].every((p) => p.status().every((s) => s.ok)), 'both pools up');
     const room = await deviceRoom('device-token');
     const rtc = await tracked();
-    // the PC's second message on the room topic is its relay confirm (the first is the ack)
     const lost = dropNth(pc, room.topic, 2);
     const ends: End[] = [];
     const acc = new Acceptor({
@@ -431,17 +435,26 @@ describe('dial and Acceptor', () => {
       pcName: 'Test PC',
       onLink: (link) => {
         ends.push(watch(link));
-        // the PC talks first, while the phone's dial is still waiting for the (lost) confirm
-        for (const n of [1, 2, 3]) link.send(new Uint8Array([n]));
+        for (let n = 1; n <= frames; n++) link.send(new Uint8Array([n & 0xff]));
       },
     });
     cleanup.push(() => acc.close());
     await acc.addRoom('dev1', room);
     const t0 = Date.now();
-    const r = await dial({ brokers: phone, room, stun: [], rtc: rtc.Ctor, forceRelay: true });
-    const took = Date.now() - t0;
+    const out = await dial({ brokers: phone, room, stun: [], rtc: rtc.Ctor, forceRelay: true }).then(
+      (r) => {
+        cleanup.push(() => r.link.close());
+        return { r, err: undefined };
+      },
+      (err: unknown) => ({ r: undefined, err }),
+    );
+    return { ...out, took: Date.now() - t0, lost, ends };
+  }
+
+  it('relay: the confirm lost, dial goes ahead after one resend interval; frames sent meanwhile are handed over', async () => {
+    const { r: dialed, took, lost, ends } = await lostConfirm(3);
+    const r = dialed!;
     const mine = watch(r.link);
-    cleanup.push(() => r.link.close());
     expect(lost.dropped).toBe(1);
     expect(r.link.kind).toBe('relay');
     expect(took).toBeGreaterThanOrEqual(RELAY_CONFIRM_MS - 50);
@@ -450,6 +463,36 @@ describe('dial and Acceptor', () => {
     expect(mine.got.map((f) => f[0])).toEqual([1, 2, 3]);
     await exchange(mine, ends[0], [0, 300]);
     expect(mine.closed).toEqual([]);
+  });
+
+  it('relay: a caller that closes from inside its first onframe gets none of the other held frames', async () => {
+    const { r: dialed, ends } = await lostConfirm(3);
+    const r = dialed!;
+    const got: number[] = [];
+    r.link.onframe = (f) => {
+      got.push(f[0]);
+      r.link.close();
+    };
+    expect(got).toEqual([1]);
+    await sleep(200);
+    expect(got).toEqual([1]);
+    // and the close reached the PC
+    await until(() => ends[0].closed.length === 1, 'the PC side hears it');
+  });
+
+  it('relay: more than 1 024 frames held while dial waits end the link the way the relay link overflows', async () => {
+    const { r, err, ends } = await lostConfirm(MAX_EARLY_FRAMES + 1);
+    expect(r).toBeUndefined();
+    expect(err).toBeInstanceOf(DialError);
+    expect((err as DialError).code).toBe('unreachable');
+    expect((err as DialError).message).toMatch(/frames arrived and nothing took them/);
+    // ended the relay link's way: the other side is told
+    await until(() => ends[0].closed.length === 1, 'the PC side hears it');
+    // exactly at the bound is still fine
+    const ok = await lostConfirm(MAX_EARLY_FRAMES);
+    expect(ok.err).toBeUndefined();
+    const mine = watch(ok.r!.link);
+    expect(mine.got).toHaveLength(MAX_EARLY_FRAMES);
   });
 
   it('relay: with the confirm, dial does not wait out the resend interval', async () => {
@@ -1021,6 +1064,24 @@ describe('direct link contract', () => {
       expect(kind).toBeUndefined();
       await vi.advanceTimersByTimeAsync(1);
       expect(kind).toBe('p2p-v4');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('pairKind: a getStats() that throws at once (or is missing) falls back at once, with no timer set', async () => {
+    vi.useFakeTimers();
+    try {
+      const throws = {
+        getStats() {
+          throw new Error('not here');
+        },
+        selectedCandidatePair: () => ({ local: { address: '2001:db8::2' } }),
+      };
+      expect(await pairKind(throws as never)).toBe('p2p-v6');
+      expect(vi.getTimerCount()).toBe(0);
+      expect(await pairKind({} as never)).toBe('p2p-v4');
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();

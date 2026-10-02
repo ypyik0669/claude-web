@@ -54,9 +54,9 @@ export const MAX_INBOX = 256;
 /** The receiver holds up to max(window, MIN_REORDER) packets past a gap (≈ 0.8 MB at the default window). */
 export const MIN_REORDER = 64;
 const MAX_WINDOW = 256;
-/** Frames held while no onframe is set yet. */
-const MAX_EARLY_BYTES = MAX_FRAME_BYTES;
-const MAX_EARLY_FRAMES = 1024;
+/** Frames held while no onframe is set yet (dial() holds frames for its caller under the same bounds). */
+export const MAX_EARLY_BYTES = MAX_FRAME_BYTES;
+export const MAX_EARLY_FRAMES = 1024;
 /** The close packet goes out this many times (paced like the rest), so one lost copy does not lose it. */
 const CLOSE_COPIES = 2;
 const ACK_DELAY_MAX_MS = 200;
