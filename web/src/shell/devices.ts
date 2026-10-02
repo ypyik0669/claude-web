@@ -1,6 +1,9 @@
 // The PCs this phone has paired with. The device token lives only here (IndexedDB, keyed by the PC's id for this
 // device): it never goes into a URL the shell navigates to, only into the requests it sends over the link.
 
+/** The PC's ids for paired devices: 12 lowercase hex (RemoteService, randomBytes(6).toString('hex')). */
+export const DEVICE_ID_RE = /^[0-9a-f]{12}$/;
+
 export interface DeviceRec {
   /** The PC's id for this phone (from api/pair); also part of the app cache's name. */
   id: string;

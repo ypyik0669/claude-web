@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appEntry, appKey, frameParams, pcPath, route } from './route';
+import { appEntry, appKey, assetLookup, frameParams, pcPath, refusedApi, route } from './route';
 
 const SCOPE = '/claude-web/';
 const at = (p: string) => new URL(p, 'https://ypyik0669.github.io');
@@ -60,6 +60,21 @@ describe('the app frame address', () => {
   it('cache keys are the URLs the frame asks for', () => {
     expect(appKey(scope, '/assets/index-abc.js')).toBe(`${scope}app/assets/index-abc.js`);
     expect(appKey(scope, '/index.html')).toBe(`${scope}app/index.html`);
+  });
+
+  it('an app/api/… address opened as a page of its own, without the frame marks, is refused (a link from anywhere must not reach the PC)', () => {
+    expect(refusedApi('api', 'document', null)).toBe(true);
+    // the app's own PDF preview is a frame inside the app frame: a nested navigation, allowed
+    expect(refusedApi('api', 'iframe', null)).toBe(false);
+    expect(refusedApi('api', '', null)).toBe(false);
+    expect(refusedApi('api', 'document', 'w1')).toBe(false);
+    expect(refusedApi('asset', 'document', null)).toBe(false);
+  });
+
+  it('index.html is looked up without its query (?win=… for another window), nothing else is', () => {
+    expect(assetLookup(scope, '/index.html?win=w2')).toEqual({ key: `${scope}app/index.html`, ignoreSearch: true });
+    expect(assetLookup(scope, '/')).toEqual({ key: `${scope}app/index.html`, ignoreSearch: true });
+    expect(assetLookup(scope, '/assets/a.js?v=1')).toEqual({ key: `${scope}app/assets/a.js?v=1`, ignoreSearch: false });
   });
 
   it('PC paths get their one leading slash', () => {

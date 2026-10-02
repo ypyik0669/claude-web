@@ -1,6 +1,7 @@
 // The shell's screens, in plain DOM (no framework: the shell must stay small): the PC list, a busy screen while
 // pairing or connecting, a failure screen, and the app in a full-screen frame with a thin bar above it for the
 // connection's state. Text only, no innerHTML: nothing from a PC name or an error can become markup.
+import { imeComposing } from '../ui/ime';
 import type { DeviceRec } from './devices';
 import type { Explained } from './explain';
 
@@ -26,6 +27,14 @@ export interface ListOptions {
   notice?: Explained | null;
   /** iOS Safari outside the home screen. */
   iosHint?: (() => void) | null;
+  /** A pasted pairing link (the 「粘贴配对链接」 field); returns an error to show under it, or null when taken. */
+  paste: (text: string) => string | null;
+}
+
+export interface AskOptions {
+  /** 就在 Safari 里用: pair here, now. */
+  here: () => void;
+  back: () => void;
 }
 
 type Child = Node | string | null | undefined | false;
@@ -57,8 +66,10 @@ function why(x: Explained): HTMLElement {
   return h('div', 'why', h('p', 'why-text', x.text), x.raw ? h('p', 'why-raw', `原文：${x.raw}`) : null);
 }
 
-export const IOS_HINT = '在 Safari 里点「分享」→「添加到主屏幕」，以后从主屏幕打开：不然 7 天没打开这个页面，Safari 会清掉这里的配对，要重新扫码。';
+export const IOS_HINT = '在 Safari 里配对的电脑只留在 Safari 里，主屏幕图标打开的是另一份。想从主屏幕用：先点「分享」→「添加到主屏幕」，再从主屏幕图标打开这个页面配对。只在 Safari 里用的话，7 天没打开这个页面 Safari 会清掉配对，要重新扫码。';
 export const EMPTY_LIST = '还没有配对的电脑。在电脑上打开 Claude Web → 设置 → 手机与其它电脑，用手机扫那里的二维码。';
+export const ASK_WHY = '在 Safari 里配对的电脑只能在 Safari 里用：主屏幕图标打开的是另一份，要在那里配对。';
+export const HOME_STEPS = '点分享 → 添加到主屏幕 → 从主屏幕图标打开，会接着配对（10 分钟内）';
 
 export class Ui {
   private readonly page: HTMLElement;
@@ -83,15 +94,37 @@ export class Ui {
       o.iosHint ? h('div', 'hint', h('p', '', IOS_HINT), button('知道了', 'link', o.iosHint)) : null,
       h('h1', '', '你的电脑'),
       rows.length ? h('ul', 'devices', ...rows) : h('p', 'empty', EMPTY_LIST),
+      // open on an empty list: a home-screen bookmark may have lost the #p= the QR gave
+      this.pasteBox(o.paste, rows.length === 0),
     );
   }
 
-  busy(title: string, line: string, o: { progress?: number | null; note?: Explained | null; cancel?: (() => void) | null } = {}): void {
+  /** iOS Safari opened with a pairing link (ruling R12b): add to the home screen first, or pair here. */
+  askPair(pc: string, o: AskOptions): void {
+    const steps = h('p', 'steps', HOME_STEPS);
+    steps.hidden = true;
+    const home = button('先添加到主屏幕（推荐）', 'primary wide', () => {
+      steps.hidden = false;
+      home.disabled = true;
+    });
+    this.show(
+      h(
+        'div',
+        'ask',
+        h('h1', '', `和 ${pc || '电脑'} 配对`),
+        h('p', 'line', ASK_WHY),
+        home,
+        steps,
+        button('就在 Safari 里用', 'ghost wide', o.here),
+        button('返回', 'link', o.back),
+      ),
+    );
+  }
+
+  busy(title: string, line: string, o: { progress?: number | null; cancel?: (() => void) | null } = {}): void {
     const bar = o.progress == null ? null : h('div', 'progress', h('div', 'fill'));
     if (bar) (bar.firstChild as HTMLElement).style.width = `${Math.round(Math.min(1, Math.max(0, o.progress!)) * 100)}%`;
-    this.show(
-      h('div', 'busy', h('div', 'spin'), h('h1', '', title), h('p', 'line', line), bar, o.note ? why(o.note) : null, o.cancel ? button('取消', 'ghost', o.cancel) : null),
-    );
+    this.show(h('div', 'busy', h('div', 'spin'), h('h1', '', title), h('p', 'line', line), bar, o.cancel ? button('取消', 'ghost', o.cancel) : null));
   }
 
   failed(title: string, x: Explained, o: { retry?: (() => void) | null; back: () => void }): void {
@@ -138,6 +171,36 @@ export class Ui {
       close.setAttribute('aria-label', '关闭');
       this.bar.append(close);
     }
+  }
+
+  private pasteBox(paste: (text: string) => string | null, open: boolean): HTMLElement {
+    const input = h('input', 'paste-in');
+    input.type = 'url';
+    input.placeholder = '粘贴电脑上的配对链接';
+    input.autocomplete = 'off';
+    input.setAttribute('autocapitalize', 'off');
+    input.spellcheck = false;
+    const err = h('p', 'paste-err');
+    err.hidden = true;
+    const submit = () => {
+      const said = paste(input.value);
+      err.textContent = said ?? '';
+      err.hidden = !said;
+    };
+    input.addEventListener('keydown', (e) => {
+      // the Enter that commits pinyin (macOS / Safari) belongs to the input method
+      if (e.key === 'Enter' && !imeComposing(e)) {
+        e.preventDefault();
+        submit();
+      }
+    });
+    const form = h('div', 'paste', h('div', 'paste-row', input, button('配对', 'primary', submit)), err);
+    form.hidden = !open;
+    const toggle = button('粘贴配对链接', 'link paste-toggle', () => {
+      form.hidden = !form.hidden;
+      if (!form.hidden) input.focus();
+    });
+    return h('div', 'paste-box', open ? h('h2', '', '粘贴配对链接') : toggle, form);
   }
 
   private row(d: DeviceRec, o: ListOptions): HTMLElement {

@@ -2,16 +2,31 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { MuxResponse } from '@anywhere';
-import { cacheName, ensureAppCache, entryAssets, healthVersion, staleCaches, type CacheLike, type CachesLike } from './assets';
+import { appVersion, cacheName, deviceCaches, ensureAppCache, entryAssets, healthVersion, staleCaches, PcStatusError, type CacheLike, type CachesLike } from './assets';
 
 const enc = new TextEncoder();
-const DIST_INDEX = path.resolve(__dirname, '../../dist/index.html');
+const DIST = path.resolve(__dirname, '../../dist');
+const DIST_INDEX = path.join(DIST, 'index.html');
+const D1 = 'a1b2c3d4e5f6';
+const D2 = '0123456789ab';
 
 describe('cacheName', () => {
   it('is per device and per version (review focus 5: a new PC version never reads the old files)', () => {
     expect(cacheName('d1', '0.1.5')).toBe('cw-app-d1-0.1.5');
     expect(cacheName('d1', '0.1.5')).not.toBe(cacheName('d1', '0.1.6'));
     expect(cacheName('d1', '0.1.5')).not.toBe(cacheName('d2', '0.1.5'));
+  });
+});
+
+describe('appVersion: the version and a hash of index.html (a rebuild at the same version is a new one)', () => {
+  it('is <version>+<8 hex of sha256(index.html)>', async () => {
+    // sha256('abc') = ba7816bf…
+    expect(await appVersion('0.1.5', enc.encode('abc'))).toBe('0.1.5+ba7816bf');
+  });
+  it('the same version with another index.html gives another cache', async () => {
+    const a = cacheName(D1, await appVersion('0.1.5', enc.encode('<script src="./assets/index-A.js">')));
+    const b = cacheName(D1, await appVersion('0.1.5', enc.encode('<script src="./assets/index-B.js">')));
+    expect(a).not.toBe(b);
   });
 });
 
@@ -22,6 +37,13 @@ describe('entryAssets', () => {
     for (const p of list) expect(p.startsWith('./assets/')).toBe(true);
     expect(list.some((p) => p.endsWith('.js'))).toBe(true);
     expect(list.some((p) => p.endsWith('.css'))).toBe(true);
+  });
+
+  // over the slow relay the PC refuses any response over 2 MiB: an entry file past it could never open the app there
+  it.skipIf(!fs.existsSync(DIST_INDEX))('every first-screen file of the built app stays under 1 900 000 bytes (the relay caps a response at 2 MiB)', () => {
+    for (const p of entryAssets(fs.readFileSync(DIST_INDEX, 'utf8'))) {
+      expect(fs.statSync(path.join(DIST, p)).size, p).toBeLessThan(1_900_000);
+    }
   });
 
   it('the module script, module preloads and stylesheets under ./assets/, once each, in page order', () => {
@@ -60,10 +82,17 @@ describe('healthVersion', () => {
   });
 });
 
-describe('staleCaches', () => {
+describe('staleCaches / deviceCaches', () => {
+  const keys = [`cw-app-${D1}-0.1.4+aaaaaaaa`, `cw-app-${D1}-0.1.5+bbbbbbbb`, `cw-app-${D2}-0.1.4+cccccccc`, 'cw-shell-abc', 'other'];
   it("only this device's other versions", () => {
-    const keys = ['cw-app-d1-0.1.4', 'cw-app-d1-0.1.5', 'cw-app-d10-0.1.4', 'cw-app-d2-0.1.4', 'cw-shell-abc', 'other'];
-    expect(staleCaches(keys, 'd1', 'cw-app-d1-0.1.5')).toEqual(['cw-app-d1-0.1.4']);
+    expect(staleCaches(keys, D1, `cw-app-${D1}-0.1.5+bbbbbbbb`)).toEqual([`cw-app-${D1}-0.1.4+aaaaaaaa`]);
+  });
+  it('a removed device: all of its caches, nobody else’s', () => {
+    expect(deviceCaches(keys, D1)).toEqual([`cw-app-${D1}-0.1.4+aaaaaaaa`, `cw-app-${D1}-0.1.5+bbbbbbbb`]);
+  });
+  it('an id that is not the PC’s shape (12 lowercase hex) matches nothing', () => {
+    expect(deviceCaches(['cw-app-d1-0.1.5', 'cw-app-d10-0.1.5'], 'd1')).toEqual([]);
+    expect(staleCaches([`cw-app-${D1}-x`], 'cw-app', '')).toEqual([]);
   });
 });
 
@@ -98,6 +127,7 @@ function memoryCaches() {
 
 const SCOPE = 'https://ypyik0669.github.io/claude-web/';
 const INDEX = `<script type="module" src="./assets/index-A1.js"></script><link rel="stylesheet" href="./assets/index-C3.css">`;
+const INDEX_RES: MuxResponse = { status: 200, headers: { 'content-type': 'text/html' }, body: enc.encode(INDEX) };
 
 function pcFiles(files: Record<string, { status?: number; type: string; body: string }>) {
   const asked: string[] = [];
@@ -112,48 +142,62 @@ function pcFiles(files: Record<string, { status?: number; type: string; body: st
 
 describe('ensureAppCache', () => {
   const FILES = {
-    ['/index.html']: { type: 'text/html', body: INDEX },
     ['/assets/index-A1.js']: { type: 'text/javascript', body: 'console.log(1)' },
     ['/assets/index-C3.css']: { type: 'text/css', body: 'body{}' },
   };
+  const opts = (caches: CachesLike, get: (p: string) => Promise<MuxResponse>, version = '0.1.5+bbbbbbbb', index = INDEX_RES) => ({ caches, scope: SCOPE, deviceId: D1, version, index, get });
 
-  it('takes index.html and its entry files, stores index.html last, and drops this device’s older versions', async () => {
+  it('takes the entry files of index.html, stores index.html last, and drops this device’s older versions', async () => {
     const { caches, store, order } = memoryCaches();
-    await caches.open('cw-app-d1-0.1.4');
-    await caches.open('cw-app-d2-0.1.4');
+    await caches.open(`cw-app-${D1}-0.1.4+aaaaaaaa`);
+    await caches.open(`cw-app-${D2}-0.1.4+aaaaaaaa`);
     const pc = pcFiles(FILES);
     const progress: string[] = [];
-    const name = await ensureAppCache({ caches, scope: SCOPE, deviceId: 'd1', version: '0.1.5', get: pc.get, onProgress: (d, t) => progress.push(`${d}/${t}`) });
-    expect(name).toBe('cw-app-d1-0.1.5');
-    expect(pc.asked.sort()).toEqual(['/assets/index-A1.js', '/assets/index-C3.css', '/index.html']);
+    const name = await ensureAppCache({ ...opts(caches, pc.get), onProgress: (d, t) => progress.push(`${d}/${t}`) });
+    expect(name).toBe(`cw-app-${D1}-0.1.5+bbbbbbbb`);
+    expect(pc.asked.sort()).toEqual(['/assets/index-A1.js', '/assets/index-C3.css']);
     // the index is the mark that the cache is whole
-    expect(order[order.length - 1]).toBe(`cw-app-d1-0.1.5 ${SCOPE}app/index.html`);
-    const c = store.get('cw-app-d1-0.1.5')!;
+    expect(order[order.length - 1]).toBe(`${name} ${SCOPE}app/index.html`);
+    const c = store.get(name)!;
     expect(await c.get(`${SCOPE}app/assets/index-A1.js`)!.clone().text()).toBe('console.log(1)');
     expect(c.get(`${SCOPE}app/assets/index-C3.css`)!.headers.get('content-type')).toBe('text/css');
-    expect([...store.keys()].sort()).toEqual(['cw-app-d1-0.1.5', 'cw-app-d2-0.1.4']);
+    expect([...store.keys()].sort()).toEqual([name, `cw-app-${D2}-0.1.4+aaaaaaaa`].sort());
     expect(progress[progress.length - 1]).toBe('3/3');
   });
 
   it('a whole cache is used as it is: nothing is fetched again', async () => {
     const { caches } = memoryCaches();
-    await ensureAppCache({ caches, scope: SCOPE, deviceId: 'd1', version: '0.1.5', get: pcFiles(FILES).get });
+    await ensureAppCache(opts(caches, pcFiles(FILES).get));
     const again = pcFiles(FILES);
-    await ensureAppCache({ caches, scope: SCOPE, deviceId: 'd1', version: '0.1.5', get: again.get });
+    await ensureAppCache(opts(caches, again.get));
     expect(again.asked).toEqual([]);
+  });
+
+  it('a rebuild at the same version (another index.html, another hash) is taken whole, the old build’s cache dropped', async () => {
+    const { caches, store } = memoryCaches();
+    const first = await ensureAppCache(opts(caches, pcFiles(FILES).get));
+    const rebuilt = `<script type="module" src="./assets/index-Z9.js"></script>`;
+    const pc = pcFiles({ ['/assets/index-Z9.js']: { type: 'text/javascript', body: 'z' } });
+    const second = await ensureAppCache(opts(caches, pc.get, await appVersion('0.1.5', enc.encode(rebuilt)), { ...INDEX_RES, body: enc.encode(rebuilt) }));
+    expect(second).not.toBe(first);
+    expect(pc.asked).toEqual(['/assets/index-Z9.js']);
+    expect([...store.keys()]).toEqual([second]);
   });
 
   it('a missing or refused file fails the whole thing, and leaves no index.html behind (the next try starts over)', async () => {
     const { caches, store } = memoryCaches();
     const refused = { ...FILES, ['/assets/index-C3.css']: { status: 413, type: 'text/plain', body: '慢速转发时单个响应不能超过 2 MB' } };
-    await expect(ensureAppCache({ caches, scope: SCOPE, deviceId: 'd1', version: '0.1.5', get: pcFiles(refused).get })).rejects.toThrow(/413/);
-    expect(store.get('cw-app-d1-0.1.5')?.has(`${SCOPE}app/index.html`) ?? false).toBe(false);
-    await expect(ensureAppCache({ caches, scope: SCOPE, deviceId: 'd1', version: '0.1.5', get: pcFiles({ ['/index.html']: FILES['/index.html'] }).get })).rejects.toThrow(/cut off/);
+    const err = await ensureAppCache(opts(caches, pcFiles(refused).get)).catch((e) => e);
+    expect(err).toBeInstanceOf(PcStatusError);
+    expect(err.status).toBe(413);
+    expect(String(err.message)).toMatch(/413/);
+    expect(store.get(`cw-app-${D1}-0.1.5+bbbbbbbb`)?.has(`${SCOPE}app/index.html`) ?? false).toBe(false);
+    await expect(ensureAppCache(opts(caches, pcFiles({}).get))).rejects.toThrow(/cut off/);
   });
 
   it('an index.html with no entry files is not the app', async () => {
     const { caches } = memoryCaches();
-    const pc = pcFiles({ ['/index.html']: { type: 'text/html', body: '<h3>web/dist not built</h3>' } });
-    await expect(ensureAppCache({ caches, scope: SCOPE, deviceId: 'd1', version: '0.1.5', get: pc.get })).rejects.toThrow();
+    const bare = { ...INDEX_RES, body: enc.encode('<h3>web/dist not built</h3>') };
+    await expect(ensureAppCache(opts(caches, pcFiles({}).get, '0.1.5+cccccccc', bare))).rejects.toThrow();
   });
 });

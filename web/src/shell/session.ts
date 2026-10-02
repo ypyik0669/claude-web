@@ -1,11 +1,11 @@
-// One connection to a paired PC: dial, the app's files for the PC's version, the app's tunnel, and a redial when the
+// One connection to a paired PC: dial, the app's files for the PC's build, the app's tunnel, and a redial when the
 // link drops (先直连，不行转发: dial() tries the direct link first, the slow relay after it). Also answers the app
 // frame's requests that the service worker hands to this window (serve). Pairing is pairWith(). No DOM: main.ts
 // shows the views, and the tests drive it with a fake PC.
-import { Mux, deviceRoom, pairRoom, type DialResult, type DialState, type LinkKind, type Room } from '@anywhere';
-import { cacheName, ensureAppCache, healthVersion, toCached, type CachesLike } from './assets';
+import { Mux, deviceRoom, pairRoom, type DialResult, type DialState, type LinkKind, type MuxResponse, type Room } from '@anywhere';
+import { appVersion, ensureAppCache, fetchOk, healthVersion, toCached, type CachesLike } from './assets';
 import type { DeviceRec } from './devices';
-import { explainDial, explainFiles, explainLinkEnd, explainPcError, errText, type Explained } from './explain';
+import { explainDial, explainFiles, explainLinkEnd, explainPairDial, explainPcError, errText, type DialContext, type Explained } from './explain';
 import { replyFromError, replyFromPc, spaFallback, withToken, type ShellReply, type ShellRequest } from './forward';
 import { readPairAnswer, type PairLink } from './pair-link';
 import { appEntry, appKey, pcPath } from './route';
@@ -22,11 +22,12 @@ export interface Dialer {
 export type SessionView =
   | { k: 'dialing'; step: DialState }
   | { k: 'files'; done: number; total: number }
-  /** Show the app at `url` (again, `reload`, when the PC's version changed). */
+  /** Show the app at `url` (again, `reload`, when the PC's build changed). */
   | { k: 'open'; url: string; kind: LinkKind; reload: boolean }
+  /** The link dropped: dialing again (before the app opened too). */
   | { k: 'relinking' }
   | { k: 'linked'; kind: LinkKind }
-  /** The PC's version changed while the app was open: its files are being taken. */
+  /** The PC's build changed while the app was open: its files are being taken. */
   | { k: 'updating' }
   /** The PC refused a request with 413 (a preview or an upload over the slow relay): its words, for the bar. */
   | { k: 'refused'; text: string }
@@ -49,6 +50,8 @@ export interface SessionOptions {
   wait?: (ms: number) => Promise<void>;
   /** The first dial right after pairing: once more on pc-silent (the PC may still be subscribing the new room). */
   justPaired?: boolean;
+  /** No RTCPeerConnection here: the dials are the slow relay only, and a failure's 原文 says why (C4). */
+  rtcMissing?: boolean;
 }
 
 const REDIAL_DELAYS = [0, 2_000, 5_000];
@@ -57,9 +60,9 @@ const SERVE_WAIT_MS = 55_000;
 const VERSION_CHECK_EVERY_MS = 10_000;
 const enc = new TextEncoder();
 
-/** A failure that already says what the user reads. */
+/** A failure that already says what the user reads; `pcAnswered`: the PC gave a final answer (a pairing refused). */
 export class ShellError extends Error {
-  constructor(readonly explained: Explained) {
+  constructor(readonly explained: Explained, readonly pcAnswered = false) {
     super(explained.raw || explained.text);
     this.name = 'ShellError';
   }
@@ -67,12 +70,21 @@ export class ShellError extends Error {
 
 class Stale extends Error {}
 
+/** The link ended while the files came over it: a dropped link (dialed again), not a files failure. */
+class LinkLost extends Error {}
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+interface Build {
+  /** appVersion(): the PC's version + a hash of its index.html. */
+  build: string;
+  cache: string;
+}
 
 export class Session {
   readonly tunnel: ShellTunnel;
   private mux: Mux | null = null;
-  private version = '';
+  private build = '';
   private cache = '';
   private opened = false;
   private closed = false;
@@ -97,17 +109,9 @@ export class Session {
   /** The first connection; ends on an 'open' or a 'failed' view. */
   async start(): Promise<void> {
     try {
-      let mux: Mux;
-      try {
-        mux = await this.link(false);
-      } catch (e) {
-        if (!this.o.justPaired || (e as { code?: string }).code !== 'pc-silent' || this.closed) throw e;
-        mux = await this.link(false);
-      }
-      const version = await this.files(mux);
-      if (mux !== this.mux) throw new Error('the link to the PC has ended');
-      this.version = version.version;
-      this.cache = version.cache;
+      const { mux, got } = await this.firstLink();
+      this.build = got.build;
+      this.cache = got.cache;
       this.opened = true;
       this.tunnel.setLink(mux, 'up');
       this.o.onopened?.();
@@ -116,7 +120,7 @@ export class Session {
       if (e instanceof Stale || this.closed) return;
       this.mux?.close();
       this.mux = null;
-      this.view({ k: 'failed', why: explain(e) });
+      this.view({ k: 'failed', why: this.explain(e) });
     }
   }
 
@@ -144,7 +148,7 @@ export class Session {
     if (!mux) return replyFromError(new Error('the link to the PC has ended'));
     const body = m.body ? new Uint8Array(m.body) : undefined;
     const path = m.kind === 'api' ? withToken(m.path, this.o.device.token) : m.path;
-    let res;
+    let res: MuxResponse;
     try {
       res = await mux.request({ method: m.method, path, headers: m.headers, body });
     } catch (e) {
@@ -157,16 +161,29 @@ export class Session {
     }
     if (m.kind === 'asset') {
       if (spaFallback(m.path, res)) {
-        // the PC has no such file: an old frame asking for its version's file after an upgrade
+        // the PC has no such file: an old frame asking for its build's file after an upgrade or a rebuild
         this.checkVersion();
         return { status: 404, headers: {}, body: null };
       }
-      // index.html is only ever stored by ensureAppCache, last: it is the mark that a cache is whole
+      // the answer first; keeping it is extra (and index.html is only ever stored by ensureAppCache, last: it marks
+      // a cache whole)
       if (res.status === 200 && m.method === 'GET' && m.cache && m.cache === this.cache && m.path.split('?')[0] !== pcPath('index.html')) {
-        await (await this.o.caches.open(this.cache)).put(appKey(this.o.scope, m.path), toCached(res)).catch(() => {});
+        void this.keep(this.cache, m.path, res);
       }
     }
     return replyFromPc(res);
+  }
+
+  private async keep(cache: string, path: string, res: MuxResponse): Promise<void> {
+    try {
+      await (await this.o.caches.open(cache)).put(appKey(this.o.scope, path), toCached(res));
+    } catch (e) {
+      console.error('[shell] keeping an app file:', errText(e));
+    }
+  }
+
+  private explain(e: unknown): Explained {
+    return explain(e, { rtcMissing: this.o.rtcMissing });
   }
 
   private view(v: SessionView): void {
@@ -198,21 +215,60 @@ export class Session {
     return mux;
   }
 
-  /** The PC's version, and its files in the cache (taken now if new). */
-  private async files(mux: Mux): Promise<{ version: string; cache: string }> {
-    let version: string;
+  /**
+   * The first link and the app's files over it. A dial that fails ends it (once more on pc-silent right after
+   * pairing); a link that drops while the files come is dialed again, like a redial.
+   */
+  private async firstLink(): Promise<{ mux: Mux; got: Build }> {
+    const delays = this.o.redialDelays ?? REDIAL_DELAYS;
+    const wait = this.o.wait ?? sleep;
+    let silentRetry = !!this.o.justPaired;
+    let again = 0;
+    let fresh = false;
+    for (;;) {
+      let mux: Mux;
+      try {
+        mux = await this.link(fresh);
+      } catch (e) {
+        if (silentRetry && (e as { code?: string }).code === 'pc-silent' && !this.closed) {
+          silentRetry = false;
+          continue;
+        }
+        throw e;
+      }
+      try {
+        return { mux, got: await this.files(mux) };
+      } catch (e) {
+        if (!(e instanceof LinkLost) || ++again >= delays.length) throw e;
+        this.view({ k: 'relinking' });
+        if (delays[again]) await wait(delays[again]);
+        if (this.closed) throw new Stale();
+        fresh = true;
+      }
+    }
+  }
+
+  /** The PC's build (version + index.html), and its files in the cache (taken now if new). */
+  private async files(mux: Mux): Promise<Build> {
     try {
-      version = healthVersion(await mux.request({ method: 'GET', path: pcPath('api/health') }));
+      const version = healthVersion(await mux.request({ method: 'GET', path: pcPath('api/health') }));
+      const get = (path: string) => mux.request({ method: 'GET', path });
+      // index.html first, every time: it names the build (a rebuild at the same version is another one)
+      const index = await fetchOk(get, pcPath('index.html'));
+      const build = await appVersion(version, index.body);
       const cache = await ensureAppCache({
         caches: this.o.caches,
         scope: this.o.scope,
         deviceId: this.o.device.id,
-        version,
-        get: (path) => mux.request({ method: 'GET', path }),
+        version: build,
+        index,
+        get,
         onProgress: (done, total) => this.view({ k: 'files', done, total }),
       });
-      return { version, cache };
+      if (mux !== this.mux) throw new LinkLost('the link to the PC has ended');
+      return { build, cache };
     } catch (e) {
+      if (e instanceof LinkLost || mux !== this.mux) throw new LinkLost(errText(e));
       throw new ShellError(explainFiles(e));
     }
   }
@@ -220,7 +276,7 @@ export class Session {
   private lost(mux: Mux, why: string): void {
     if (mux !== this.mux || this.closed) return;
     this.mux = null;
-    // before the app opened, start() sees the link gone and fails
+    // before the app opened, firstLink() sees the link gone and dials again
     if (!this.opened) return;
     const end = explainLinkEnd(why);
     if (end) return this.down(end);
@@ -237,9 +293,9 @@ export class Session {
       if (this.closed) return;
       try {
         const mux = await this.link(true);
-        const { version, cache } = await this.files(mux);
-        if (mux !== this.mux) throw new Error('the link to the PC has ended');
-        if (version !== this.version) this.switchTo(mux, version, cache);
+        const got = await this.files(mux);
+        if (mux !== this.mux) throw new LinkLost('the link to the PC has ended');
+        if (got.build !== this.build) this.switchTo(mux, got);
         else {
           this.tunnel.setLink(mux, 'up');
           this.view({ k: 'linked', kind: mux.kind });
@@ -254,19 +310,19 @@ export class Session {
         m?.close();
       }
     }
-    this.down(explain(last));
+    this.down(this.explain(last));
   }
 
-  /** The PC runs another version now: the app's streams end and it is opened again on that version's files. */
-  private switchTo(mux: Mux, version: string, cache: string): void {
+  /** The PC runs another build now: the app's streams end and it is opened again on that build's files. */
+  private switchTo(mux: Mux, got: Build): void {
     this.tunnel.closeAll();
-    this.version = version;
-    this.cache = cache;
+    this.build = got.build;
+    this.cache = got.cache;
     this.tunnel.setLink(mux, 'up');
     this.view({ k: 'open', url: this.entry(), kind: mux.kind, reload: true });
   }
 
-  /** An old frame asked for a file the PC no longer has: has the PC been upgraded? (at most every 10 s) */
+  /** An old frame asked for a file the PC no longer has: another build on the PC? (at most every 10 s) */
   private checkVersion(): void {
     const mux = this.mux;
     const now = Date.now();
@@ -274,11 +330,12 @@ export class Session {
     this.checking = true;
     this.lastCheck = now;
     void (async () => {
-      const v = healthVersion(await mux.request({ method: 'GET', path: pcPath('api/health') }));
-      if (v === this.version || mux !== this.mux) return;
+      const version = healthVersion(await mux.request({ method: 'GET', path: pcPath('api/health') }));
+      const index = await fetchOk((path) => mux.request({ method: 'GET', path }), pcPath('index.html'));
+      if ((await appVersion(version, index.body)) === this.build || mux !== this.mux) return;
       this.view({ k: 'updating' });
-      const { version, cache } = await this.files(mux);
-      if (mux === this.mux) this.switchTo(mux, version, cache);
+      const got = await this.files(mux);
+      if (mux === this.mux) this.switchTo(mux, got);
     })()
       .catch((e) => console.error('[shell] version check:', errText(e)))
       .finally(() => (this.checking = false));
@@ -315,25 +372,44 @@ export class Session {
 }
 
 /** What the user reads for a failure anywhere in a connection. */
-export function explain(e: unknown): Explained {
+export function explain(e: unknown, c: DialContext = {}): Explained {
   if (e instanceof ShellError) return e.explained;
-  return explainDial(e);
+  return explainDial(e, c);
+}
+
+function aborted(): Error {
+  const e = new Error('the pairing was cancelled');
+  e.name = 'AbortError';
+  return e;
 }
 
 /**
  * Pairs over the pairing room of `link` (the QR): dial, POST api/pair {code, name} (the PC names the phone from the
- * user agent), the pairing link closed after. Returns the device to keep; throws a ShellError.
+ * user agent), the pairing link closed after. Returns the device to keep; throws a ShellError, or an AbortError once
+ * `signal` fires (its link is closed then, and its result dropped).
  */
-export async function pairWith(link: PairLink, dialer: Dialer, onstate: (s: DialState) => void, userAgent: string, now: () => number = Date.now): Promise<DeviceRec> {
+export async function pairWith(
+  link: PairLink,
+  dialer: Dialer,
+  onstate: (s: DialState) => void,
+  userAgent: string,
+  o: { signal?: AbortSignal; now?: () => number; rtcMissing?: boolean } = {},
+): Promise<DeviceRec> {
+  const ctx = { rtcMissing: o.rtcMissing };
+  if (o.signal?.aborted) throw aborted();
   let r: DialResult;
   try {
-    r = await dialer.dial(await pairRoom(link.ps), onstate, false);
+    r = await dialer.dial(await pairRoom(link.ps), (s) => o.signal?.aborted || onstate(s), false);
   } catch (e) {
-    throw new ShellError(explainDial(e));
+    if (o.signal?.aborted) throw aborted();
+    throw new ShellError(explainPairDial(e, ctx));
   }
   const mux = new Mux(r.link);
+  const stop = () => mux.close();
+  o.signal?.addEventListener('abort', stop, { once: true });
   try {
-    let res;
+    if (o.signal?.aborted) throw aborted();
+    let res: MuxResponse;
     try {
       res = await mux.request({
         method: 'POST',
@@ -342,12 +418,15 @@ export async function pairWith(link: PairLink, dialer: Dialer, onstate: (s: Dial
         body: enc.encode(JSON.stringify({ code: link.code, name: '' })),
       });
     } catch (e) {
+      if (o.signal?.aborted) throw aborted();
       throw new ShellError(explainPcError(errText(e)));
     }
+    if (o.signal?.aborted) throw aborted();
     const a = readPairAnswer(res);
-    if ('error' in a) throw new ShellError({ text: a.error, raw: '' });
-    return { id: a.id, pcName: r.pcName || link.pc || '电脑', token: a.token, pairedAt: now() };
+    if ('error' in a) throw new ShellError({ text: a.error, raw: '' }, true);
+    return { id: a.id, pcName: r.pcName || link.pc || '电脑', token: a.token, pairedAt: (o.now ?? Date.now)() };
   } finally {
+    o.signal?.removeEventListener('abort', stop);
     mux.close();
   }
 }

@@ -1,7 +1,9 @@
-// The app's files on the phone: Cache Storage, one cache per PC (device) and PC version, so the phone always runs
-// the files of the version it talks to and never mixes two (review focus 5). The first screen's files are taken
-// whole when a version is new to the phone; everything else is fetched when the app asks (and kept, see main.ts).
+// The app's files on the phone: Cache Storage, one cache per PC (device) and app build — the PC's version plus a hash
+// of its index.html, so a rebuild at the same version is a new build too — and the phone always runs the files of
+// the build it talks to and never mixes two (review focus 5). The first screen's files are taken whole when a build
+// is new to the phone; everything else is fetched when the app asks (and kept, see session.ts).
 import type { MuxResponse } from '@anywhere';
+import { DEVICE_ID_RE } from './devices';
 import { appKey, pcPath } from './route';
 
 /** The parts of Cache Storage used here (window and service worker both have it; tests pass a map). */
@@ -18,6 +20,14 @@ export interface CachesLike {
 /** GET of a path on the PC (over the link). */
 export type PcGet = (path: string) => Promise<MuxResponse>;
 
+/** A PC answer that was not the 200 asked for (a 413 over the slow relay, a 404…). */
+export class PcStatusError extends Error {
+  constructor(readonly path: string, readonly status: number, readonly said: string) {
+    super(`${path}: ${status}${said ? ` ${said}` : ''}`);
+    this.name = 'PcStatusError';
+  }
+}
+
 const APP_PREFIX = 'cw-app-';
 const VERSION_RE = /^[\w.+-]{1,64}$/;
 /** `./assets/<file>`: no `..`, no `//`, nothing that could leave the folder. */
@@ -28,10 +38,22 @@ export function cacheName(deviceId: string, version: string): string {
   return `${APP_PREFIX}${deviceId}-${version}`;
 }
 
-/** Caches of this device's other versions (device ids have no `-`, so `d1-` never matches `d10-`). */
-export function staleCaches(keys: string[], deviceId: string, keep: string): string[] {
+/** The build a cache is for: `<version>+<first 8 hex of sha256(index.html)>`. */
+export async function appVersion(version: string, indexHtml: Uint8Array): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(indexHtml)));
+  return `${version}+${Array.from(d.subarray(0, 4), (x) => x.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** All of this device's caches; none for an id that is not the PC's shape (so `d1-` can never match `d10-`). */
+export function deviceCaches(keys: string[], deviceId: string): string[] {
+  if (!DEVICE_ID_RE.test(deviceId)) return [];
   const mine = `${APP_PREFIX}${deviceId}-`;
-  return keys.filter((k) => k.startsWith(mine) && k !== keep);
+  return keys.filter((k) => k.startsWith(mine));
+}
+
+/** This device's caches of other builds. */
+export function staleCaches(keys: string[], deviceId: string, keep: string): string[] {
+  return deviceCaches(keys, deviceId).filter((k) => k !== keep);
 }
 
 function attr(tag: string, name: string): string | null {
@@ -57,7 +79,7 @@ export function entryAssets(indexHtml: string): string[] {
 
 /** The app version from the PC's api/health answer; throws for anything that is not one. */
 export function healthVersion(res: MuxResponse): string {
-  if (res.status !== 200) throw new Error(`api/health answered ${res.status}`);
+  if (res.status !== 200) throw new PcStatusError(pcPath('api/health'), res.status, '');
   let v: unknown;
   try {
     v = (JSON.parse(new TextDecoder().decode(res.body)) as { version?: unknown }).version;
@@ -75,12 +97,10 @@ export function toCached(res: MuxResponse): Response {
   return new Response(res.body.slice(), { status: 200, headers });
 }
 
-async function fetchOk(get: PcGet, path: string): Promise<MuxResponse> {
+/** GET `path`, which must answer 200 (else a PcStatusError with the start of what the PC said). */
+export async function fetchOk(get: PcGet, path: string): Promise<MuxResponse> {
   const res = await get(path);
-  if (res.status !== 200) {
-    const said = new TextDecoder().decode(res.body.subarray(0, 300)).trim();
-    throw new Error(`${path}: ${res.status}${said ? ` ${said}` : ''}`);
-  }
+  if (res.status !== 200) throw new PcStatusError(path, res.status, new TextDecoder().decode(res.body.subarray(0, 300)).trim());
   return res;
 }
 
@@ -90,21 +110,22 @@ export async function cacheComplete(caches: CachesLike, scope: string, name: str
 }
 
 /**
- * The cache of `version` for `deviceId`, whole: if it is not yet, index.html and its entry files are taken from the
- * PC (all of them or none: any failure rejects and index.html is not stored), then the device's older versions go.
+ * The cache of build `version` (appVersion()) for `deviceId`, whole: if it is not yet, the entry files of `index`
+ * (the PC's index.html, already fetched) are taken from the PC — all of them or none: any failure rejects and
+ * index.html is not stored — then the device's other builds go.
  */
 export async function ensureAppCache(o: {
   caches: CachesLike;
   scope: string;
   deviceId: string;
   version: string;
+  index: MuxResponse;
   get: PcGet;
   onProgress?: (done: number, total: number) => void;
 }): Promise<string> {
   const name = cacheName(o.deviceId, o.version);
   if (!(await cacheComplete(o.caches, o.scope, name))) {
-    const index = await fetchOk(o.get, pcPath(INDEX));
-    const entries = entryAssets(new TextDecoder().decode(index.body));
+    const entries = entryAssets(new TextDecoder().decode(o.index.body));
     if (entries.length === 0) throw new Error('index.html loads no ./assets/ files: not the built app');
     const total = entries.length + 1;
     let done = 0;
@@ -121,7 +142,7 @@ export async function ensureAppCache(o: {
     );
     const cache = await o.caches.open(name);
     for (const [e, res] of files) await cache.put(appKey(o.scope, e.slice(2)), toCached(res));
-    await cache.put(appKey(o.scope, INDEX), toCached(index));
+    await cache.put(appKey(o.scope, INDEX), toCached(o.index));
     done++;
     tell();
   }

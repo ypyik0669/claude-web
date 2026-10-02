@@ -3,10 +3,11 @@
 //    new sw.js (a deploy changes its file list), so a flaky GitHub Pages matters only on the first visit;
 //  - app/…: the app frame's files, from the cache of the PC version the frame runs (its address names it); a miss,
 //  - and app/api/…, go to the shell window that owns the frame (also on its address), which makes the request over
-//    its link to the PC and answers (forward.ts has the messages). No window answering within 60 s: 503.
+//    its link to the PC and answers (forward.ts has the messages). No window to ask: 503; none answering within
+//    60 s: 504. An app/api/… address opened as a page of its own (no frame marks) is refused: 403.
 // Built on its own as one classic script (vite.shell.config.ts), so it imports nothing it shares at run time.
-import { MSG_FETCH, MSG_VERSION, readShellReply, replyNoWindow, responseParts, type ShellReply } from './forward';
-import { appKey, frameParams, route } from './route';
+import { MSG_FETCH, MSG_VERSION, readShellReply, replyForbidden, replyNoWindow, replyTimeout, responseParts, type ShellReply } from './forward';
+import { assetLookup, frameParams, refusedApi, route } from './route';
 
 declare const __SHELL_FILES__: string[];
 declare const __SHELL_BUILD__: string;
@@ -86,18 +87,7 @@ async function marksOf(e: FetchEventLike): Promise<{ owner: string | null; cache
   return c ? frameParams(c.url) : NONE;
 }
 
-async function appRequest(e: FetchEventLike, kind: 'asset' | 'api', path: string): Promise<Response> {
-  const req = e.request;
-  const { owner, cache } = await marksOf(e);
-  const read = req.method === 'GET' || req.method === 'HEAD';
-  if (kind === 'asset' && cache && read) {
-    const hit = await caches.match(appKey(sw.registration.scope, path), { cacheName: cache });
-    if (hit) return hit;
-  }
-  const headers: Record<string, string> = {};
-  req.headers.forEach((v, k) => (headers[k] = v));
-  const body = read ? null : await req.arrayBuffer();
-  const reply = await ask({ cw: MSG_FETCH, v: MSG_VERSION, owner, cache, kind, method: req.method, path, headers, body });
+function respond(reply: ShellReply): Response {
   const p = responseParts(reply);
   try {
     return new Response(p.body, p.init);
@@ -105,6 +95,23 @@ async function appRequest(e: FetchEventLike, kind: 'asset' | 'api', path: string
     // a header value the browser will not take (node's http is more lenient): the answer without its headers
     return new Response(p.body, { status: p.init.status });
   }
+}
+
+async function appRequest(e: FetchEventLike, kind: 'asset' | 'api', path: string): Promise<Response> {
+  const req = e.request;
+  const { owner, cache } = await marksOf(e);
+  // an app/api/… address opened as a page of its own (a link from anywhere): never forwarded with the token
+  if (refusedApi(kind, req.destination, owner)) return respond(replyForbidden());
+  const read = req.method === 'GET' || req.method === 'HEAD';
+  if (kind === 'asset' && cache && read) {
+    const { key, ignoreSearch } = assetLookup(sw.registration.scope, path);
+    const hit = await caches.match(key, { cacheName: cache, ignoreSearch });
+    if (hit) return hit;
+  }
+  const headers: Record<string, string> = {};
+  req.headers.forEach((v, k) => (headers[k] = v));
+  const body = read ? null : await req.arrayBuffer();
+  return respond(await ask({ cw: MSG_FETCH, v: MSG_VERSION, owner, cache, kind, method: req.method, path, headers, body }));
 }
 
 /** Every shell window is asked (each says skip unless the frame is its own); the first real answer wins. */
@@ -127,7 +134,7 @@ async function ask(msg: object): Promise<ShellReply> {
     const passed = () => {
       if (--left === 0) finish(replyNoWindow());
     };
-    const timer = setTimeout(() => finish(replyNoWindow()), ASK_MS);
+    const timer = setTimeout(() => finish(replyTimeout()), ASK_MS);
     for (const w of wins) {
       const ch = new MessageChannel();
       ports.push(ch.port1);

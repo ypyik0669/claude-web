@@ -3,7 +3,8 @@ import path from 'node:path';
 import { parseAst } from 'vite';
 import { describe, expect, it } from 'vitest';
 import { DialError } from '@anywhere';
-import { explainDial, explainLinkEnd, explainPcError, noRtc, relayStatus, SAY, withRaw } from './explain';
+import { explainDial, explainFiles, explainLinkEnd, explainPairDial, explainPcError, relayStatus, SAY, withRaw } from './explain';
+import { PcStatusError } from './assets';
 
 // spec §10, verbatim
 const PC_SILENT = '电脑没有回应：电脑可能关机、睡眠，或 Claude Web 没在运行。';
@@ -31,8 +32,34 @@ describe('explain: the spec §10 sentences, with the raw text kept as 原文', (
     expect(SAY.relay).toBe(RELAY);
   });
 
-  it('a browser without RTCPeerConnection: the unreachable sentence, 原文 says why', () => {
-    expect(noRtc()).toEqual({ text: UNREACHABLE, raw: 'RTCPeerConnection missing' });
+  it('a browser without RTCPeerConnection: said only when its slow-relay dial fails, 原文 says why', () => {
+    expect(explainDial(new DialError('unreachable', 'the slow relay could not be opened: x'), { rtcMissing: true })).toEqual({
+      text: UNREACHABLE,
+      raw: 'RTCPeerConnection missing; the slow relay could not be opened: x',
+    });
+    // a PC that does not answer, or no broker, is still said as that (the missing RTC did not cause it)
+    expect(explainDial(new DialError('pc-silent', 'no answer'), { rtcMissing: true })).toEqual({ text: PC_SILENT, raw: 'RTCPeerConnection missing; no answer' });
+  });
+
+  it('a pairing QR the PC does not answer: expired, used or replaced — not "the PC may be off"', () => {
+    const pairSilent = '电脑没有回应这个二维码：二维码可能已过期（10 分钟有效）、已经用过，或电脑上又生成了新的。在电脑上重新生成二维码再扫一次。';
+    expect(explainPairDial(new DialError('pc-silent', 'no answer from the PC within 15000 ms'))).toEqual({ text: pairSilent, raw: 'no answer from the PC within 15000 ms' });
+    expect(explainPairDial(new DialError('no-broker', 'x')).text).toBe(NO_BROKER);
+    expect(explainPairDial(new DialError('unreachable', 'x')).text).toBe(UNREACHABLE);
+    expect(explainPairDial(new DialError('unreachable', 'x'), { rtcMissing: true }).raw).toBe('RTCPeerConnection missing; x');
+  });
+
+  it("the app's files: the slow relay's size limit is said as that, anything else as a files failure", () => {
+    const tooBig = explainFiles(new PcStatusError('/assets/index-A.js', 413, '慢速转发时单个响应不能超过 2 MB'));
+    expect(tooBig.text).toBe(SAY.relayLimit);
+    expect(tooBig.text).not.toMatch(/重启/);
+    expect(tooBig.raw).toMatch(/413/);
+    expect(explainFiles(new PcStatusError('/x', 413, '慢速转发时不能预览 / 上传文件')).text).toBe(SAY.relayLimit);
+    expect(explainFiles(new Error('the response was cut off')).text).toBe(SAY.files);
+  });
+
+  it('the service worker giving up after 60 s has its own sentence', () => {
+    expect(SAY.timeout).toBe('电脑那边太久没有回应（60 秒）。');
   });
 
   it('withRaw puts the original after the sentence (none when there is nothing to add)', () => {

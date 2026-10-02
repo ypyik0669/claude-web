@@ -56,6 +56,25 @@ h1 { font-size: 18px; margin: 18px 0 10px; }
 .ghost { background: none; margin-top: 16px; }
 .actions .ghost { margin-top: 0; }
 .link { background: none; border: 0; padding: 0; color: var(--accent); }
+h2 { font-size: 15px; margin: 22px 0 8px; }
+
+/* iOS Safari with a pairing link: add to the home screen first, or pair here */
+.ask { margin-top: 12vh; display: flex; flex-direction: column; gap: 10px; }
+.ask .line { margin: 0 0 8px; }
+.wide { width: 100%; }
+.ask .ghost { margin-top: 0; }
+.ask .link { align-self: center; margin-top: 6px; }
+.steps { margin: 0 0 6px; padding: 10px 14px; border-radius: 10px; background: var(--card); border: 1px solid var(--edge); }
+.primary:disabled { opacity: 0.6; }
+
+/* 粘贴配对链接 */
+.paste-box { margin-top: 14px; }
+.paste-toggle { font-size: 14px; }
+.paste { margin-top: 8px; }
+.paste-row { display: flex; gap: 8px; }
+.paste-in { flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--edge); background: var(--card); color: var(--fg); }
+.paste-row .primary { padding: 10px 16px; flex: none; }
+.paste-err { margin: 6px 0 0; font-size: 13px; color: var(--err); }
 
 /* the app: a full-screen frame inside the safe area (env() is 0 inside an iframe), a thin bar above when needed */
 .app {

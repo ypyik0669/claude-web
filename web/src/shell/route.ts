@@ -9,6 +9,7 @@ export const APP_DIR = 'app/';
 /** On the app frame's address: the shell window that owns the frame, and the app cache it reads. */
 export const OWNER_PARAM = 'cwshell';
 export const CACHE_PARAM = 'cwcache';
+const INDEX_FILE = 'index.html';
 const APP_CACHE_RE = /^cw-app-[\w.+-]{1,200}$/;
 
 /** A path on the PC's remote-access listener: one leading slash (call sites write it without, see app-url.test.ts). */
@@ -63,4 +64,23 @@ export function frameParams(url: string): { owner: string | null; cache: string 
 /** The cache key of a PC path: the URL the app frame asks for it at. */
 export function appKey(scope: string, path: string): string {
   return new URL(`${APP_DIR}${path.replace(/^\/+/, '')}`, scope).href;
+}
+
+/**
+ * How the service worker looks an app file up: index.html (or the folder) by its key alone, whatever its query
+ * (`?win=…` opens another window of the app); every other file by its full address.
+ */
+export function assetLookup(scope: string, path: string): { key: string; ignoreSearch: boolean } {
+  const p = path.split('?')[0];
+  const index = p === '/' || p === `/${INDEX_FILE}`;
+  return { key: appKey(scope, index ? INDEX_FILE : path), ignoreSearch: index };
+}
+
+/**
+ * An app/api/… address opened as a top-level page (destination 'document') without the frame marks: a link from
+ * anywhere would otherwise reach the PC with the device token added. The app's own frames (its PDF preview is an
+ * iframe on api/file) are nested navigations, and its fetches carry the marks of their frame.
+ */
+export function refusedApi(kind: Route['kind'], destination: string, owner: string | null): boolean {
+  return kind === 'api' && destination === 'document' && !owner;
 }

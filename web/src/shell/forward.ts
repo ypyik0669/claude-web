@@ -59,6 +59,16 @@ export function replyNoWindow(): ShellReply {
   return textReply(503, SAY.noWindow);
 }
 
+/** The shell window took longer than the service worker waits (60 s). */
+export function replyTimeout(): ShellReply {
+  return textReply(504, SAY.timeout);
+}
+
+/** An app/api/… address opened as a page of its own: refused, never forwarded (route.ts refusedApi). */
+export function replyForbidden(): ShellReply {
+  return textReply(403, SAY.forbidden);
+}
+
 /** A file the PC does not have: its static server answers with index.html instead (the app's SPA fallback). */
 export function spaFallback(path: string, res: MuxResponse): boolean {
   const p = path.split('?')[0];

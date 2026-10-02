@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readShellReply, readShellRequest, replyFromError, replyFromPc, replyNoWindow, responseParts, spaFallback, withToken } from './forward';
+import { readShellReply, readShellRequest, replyForbidden, replyFromError, replyFromPc, replyNoWindow, replyTimeout, responseParts, spaFallback, withToken } from './forward';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -38,6 +38,18 @@ describe('what the shell window answers the service worker', () => {
   it('no shell window to ask is a 503 in Chinese', () => {
     const r = replyNoWindow();
     expect(r.status).toBe(503);
+    expect(bodyText(r.body)).toMatch(/[一-鿿]/);
+  });
+
+  it('no answer within the 60 s is its own 504 sentence', () => {
+    const r = replyTimeout();
+    expect(r.status).toBe(504);
+    expect(bodyText(r.body)).toBe('电脑那边太久没有回应（60 秒）。');
+  });
+
+  it('an api address opened as a page of its own (not from the app frame) is refused, never forwarded', () => {
+    const r = replyForbidden();
+    expect(r.status).toBe(403);
     expect(bodyText(r.body)).toMatch(/[一-鿿]/);
   });
 });
