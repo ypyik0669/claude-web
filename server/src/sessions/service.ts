@@ -5,6 +5,8 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import type { SessionSummary } from '../protocol.js';
 import { watchTree, type TreeWatcher } from '../runtime/watch-tree.js';
+import { hasClaudeTranscript } from '../runtime/transcript-file.js';
+import { BRIEFING_HEAD } from '../session/handoff.js';
 
 export const claudeDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
 export const projectsDir = path.join(claudeDir, 'projects');
@@ -15,10 +17,22 @@ export function cleanTitle(t: string | undefined): string {
   return t.replace(/<attached\b[^>]*>[\s\S]*?<\/attached>/g, '').replace(/<attached\b[^>]*\/?>/g, '').replace(/\s+/g, ' ').trim().slice(0, 200);
 }
 
+/**
+ * The SDK's `summary` is the conversation's LAST prompt when nothing better exists, so right after a hand-over back to
+ * Claude on ccb (the briefing goes in as a message) the list said 「# 会话交接 这个会话之前由 Codex 在跑…」 (real relay
+ * retest, 2026-10-02). A briefing is never the title: the first prompt that is not one, else 「交接的对话」.
+ */
+export function listTitle(s: Pick<SDKSessionInfo, 'sessionId' | 'customTitle' | 'summary' | 'firstPrompt'>): string {
+  if (s.customTitle) return s.customTitle;
+  const said = [s.summary, s.firstPrompt].map(cleanTitle).filter(Boolean);
+  const real = said.find((t) => !t.startsWith(BRIEFING_HEAD));
+  return real || (said.length ? '交接的对话' : s.sessionId.slice(0, 8));
+}
+
 function toSummary(s: SDKSessionInfo): SessionSummary {
   return {
     sessionId: s.sessionId,
-    title: s.customTitle || cleanTitle(s.summary) || cleanTitle(s.firstPrompt) || s.sessionId.slice(0, 8),
+    title: listTitle(s),
     cwd: s.cwd ?? '',
     lastModified: s.lastModified,
     createdAt: s.createdAt,
@@ -41,6 +55,11 @@ export function transcriptEvent(rel: string): boolean {
 export function transcriptIdOf(rel: string): string | null {
   const parts = rel.split(/[\\/]/).filter(Boolean);
   return parts.length === 2 && parts[1].endsWith('.jsonl') ? parts[1].slice(0, -'.jsonl'.length) : null;
+}
+
+/** A fork's title: one (分叉) mark however deep the fork of a fork goes (it stacked: 「… (分叉) (分叉)」). */
+export function forkTitle(title: string): string {
+  return `${title.replace(/(?:\s*\(分叉\))+\s*$/, '').trim()} (分叉)`.trim();
 }
 
 export class SessionService extends EventEmitter {
@@ -130,13 +149,15 @@ export class SessionService extends EventEmitter {
   /** Copy a transcript into a new session (optionally only up to a message), returning the new id. */
   async fork(sessionId: string, upToMessageId?: string): Promise<string> {
     const info = await getSessionInfo(sessionId);
-    const r = await forkSession(sessionId, { dir: info?.cwd, upToMessageId, title: info ? `${info.customTitle || info.summary || info.firstPrompt || ''} (分叉)`.trim() : undefined });
+    const r = await forkSession(sessionId, { dir: info?.cwd, upToMessageId, title: info ? forkTitle(listTitle(info)) : undefined });
     this.bump();
     return r.sessionId;
   }
 
   async rename(sessionId: string, title: string) {
     const info = await getSessionInfo(sessionId);
+    // the title lives in the CLI's transcript, which only exists once the first message went out
+    if (!info && !hasClaudeTranscript(sessionId)) throw new Error('这个对话还没发过消息，发出第一条消息之后才能改名');
     await renameSession(sessionId, title, { dir: info?.cwd });
     this.bump();
   }

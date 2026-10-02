@@ -771,7 +771,7 @@ input.field:focus { border-color: var(--ink-3); }
 .shortcuts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; font-size: 13px; }
 .shortcuts div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--edge-default); }
 .toast-wrap { position: fixed; bottom: 18px; right: 18px; display: flex; flex-direction: column; gap: 8px; z-index: 60; }
-.toast { background: var(--surface-elev); border: 1px solid var(--edge-strong); border-left: 3px solid var(--err); border-radius: var(--r-xl); padding: 10px 14px; font-size: 13px; box-shadow: var(--elev-2); max-width: 380px; animation: fadein 0.2s; }
+.toast { background: var(--surface-elev); border: 1px solid var(--edge-strong); border-left: 3px solid var(--err); border-radius: var(--r-xl); padding: 10px 14px; font-size: 13px; box-shadow: var(--elev-2); max-width: 420px; white-space: pre-line; overflow-wrap: anywhere; user-select: text; animation: fadein 0.2s; }
 .toast.ok { border-left-color: var(--ok); }
 
 /* ===== 工作台（阶段 2）：分组 → 窗格 → 标签 ===== */

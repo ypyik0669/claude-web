@@ -76,4 +76,29 @@ describe('the runtime a Claude session on a provider asks for', () => {
     expect(preferredRuntime({ type: 'anthropic' })).toBeUndefined();
     expect(preferredRuntime({ type: 'gateway', runtime: 'claude' })).toBe('claude');
   });
+
+  it('a Claude 5 model ccb would send a thinking budget to runs on the official binary (claude-opus-5-5 400s on ccb)', async () => {
+    const { preferredRuntime, ccbMisthinks } = await import('./catalog.js');
+    for (const id of ['claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-sonnet-5-5[1m]', 'anthropic/claude-opus-5.5', 'claude-haiku-5-20261001']) expect(ccbMisthinks(id)).toBe(true);
+    for (const id of ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-3-5-haiku-20241022', 'claude-fable-5-1', 'deepseek-v4', 'gpt-5.6', '', undefined]) expect(ccbMisthinks(id)).toBe(false);
+    const xy = { type: 'anthropic' as const, defaultModel: 'claude-sonnet-4-6', modelMap: { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-4-6', haiku: 'claude-sonnet-4-6' } };
+    expect(preferredRuntime(xy, 'claude-opus-5-5')).toBe('claude');
+    expect(preferredRuntime(xy, 'opus')).toBe('claude'); // the alias goes through the family map
+    expect(preferredRuntime(xy, 'claude-sonnet-4-6')).toBeUndefined();
+    expect(preferredRuntime(xy, '')).toBeUndefined(); // no model: the profile's default (sonnet-4-6)
+    expect(preferredRuntime({ ...xy, defaultModel: undefined }, '')).toBe('claude'); // ccb's default follows the opus map
+    expect(preferredRuntime({ ...xy, runtime: 'ccb' }, 'claude-opus-5-5')).toBe('ccb'); // an explicit pin stands
+    expect(preferredRuntime({ type: 'gateway' }, 'claude-opus-5-5')).toBe('claude');
+    expect(preferredRuntime({ type: 'openai' }, 'claude-opus-5-5')).toBe('ccb'); // the official binary has no OpenAI format
+    expect(preferredRuntime(xy)).toBeUndefined(); // no model asked: the profile's own pin (fit checks, menus)
+  });
+});
+
+describe('pickChatModel: the newest GPT, and the lower-case id of a duplicate', () => {
+  it('gpt-6.x over gpt-5.x; deepseek before gpt-4o; DeepSeek-V4.1-Flash loses to deepseek-v4.1-flash', async () => {
+    const { pickChatModel } = await import('./catalog.js');
+    expect(pickChatModel(['gpt-5.6-sol', 'gpt-6.1-sol', 'gpt-image-2', 'gpt-6.1-mini'])).toBe('gpt-6.1-sol');
+    expect(pickChatModel(['gpt-4o', 'deepseek-v4'])).toBe('deepseek-v4');
+    expect(pickChatModel(['DeepSeek-V4.1-Flash', 'deepseek-v4.1-flash'])).toBe('deepseek-v4.1-flash');
+  });
 });

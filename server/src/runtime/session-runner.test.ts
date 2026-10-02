@@ -33,7 +33,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   },
 }));
 const eng = vi.hoisted(() => ({ kind: 'claude' as 'claude' | 'ccb' }));
-vi.mock('../claude-exe.js', () => ({ resolveEngine: () => ({ file: 'claude', kind: eng.kind }), spawnClaude: () => null }));
+vi.mock('../claude-exe.js', () => ({ resolveEngine: (rt?: 'claude' | 'ccb') => ({ file: 'claude', kind: rt ?? eng.kind }), spawnClaude: () => null }));
 vi.mock('../memory/launcher.js', () => ({ claudeMcpServer: () => ({}) }));
 
 const { SessionRunner } = await import('./session-runner.js');
@@ -104,7 +104,7 @@ describe('SessionRunner', () => {
 
   it('refuses to send into a dead query instead of hanging in "running"', async () => {
     queries.length = 0;
-    const r = new SessionRunner({ sessionId: 'b', cwd: '/x' } as any);
+    const r = new SessionRunner({ sessionId: 'b', cwd: process.cwd() } as any);
     await tick();
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
@@ -112,13 +112,31 @@ describe('SessionRunner', () => {
       await tick();
       expect(r.state).toBe('error');
       // the reason reaches server.log (a window that missed the state event used to leave no trace anywhere)
-      expect(logged.mock.calls.flat().join(' ')).toMatch(/\[session b\] process failed: process exited with code 1/);
+      expect(logged.mock.calls.flat().join(' ')).toMatch(/\[session b\] process failed: 对话进程退出了（退出码 1）[\s\S]*原文：process exited with code 1/);
     } finally {
       logged.mockRestore();
     }
-    // the refusal says why, in the user's words, and what to do
-    expect(() => r.send('hi')).toThrow(/出错退出了：process exited with code 1。再发一次会重新打开它/);
+    // the refusal says why, in the user's words (the original kept under it), and what to do
+    expect(() => r.send('hi')).toThrow(/出错退出了：对话进程退出了（退出码 1）[^\n]*\n原文：process exited with code 1\n再发一次会重新打开它/);
     expect(r.state).toBe('error');
+    await r.close();
+  });
+
+  it('a conversation whose folder is gone says so, not the SDK\'s "executable … failed to launch"', async () => {
+    queries.length = 0;
+    const gone = (await import('node:path')).join((await import('node:os')).tmpdir(), `cw-gone-${Date.now()}`);
+    const r = new SessionRunner({ sessionId: 'g', cwd: gone } as any);
+    await tick();
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      queries[0].fail(new Error('Claude Code executable at D:\\Claude Web\\cli-node.js exists but failed to launch.'));
+      await tick();
+    } finally {
+      logged.mockRestore();
+    }
+    expect(r.info.error).toContain(`找不到这个对话的项目文件夹：${gone}`);
+    expect(() => r.send('hi')).toThrow(/没能启动：找不到这个对话的项目文件夹/);
+    expect(() => r.send('hi')).not.toThrow(/测试连接/); // the provider is not the problem
     await r.close();
   });
 
@@ -239,5 +257,338 @@ describe('SessionRunner env: a local endpoint bypasses the system proxy', () => 
       delete process.env.HTTPS_PROXY;
       delete process.env.NO_PROXY;
     }
+  });
+});
+
+describe('SessionRunner on a conversation that never ran a turn (user report: switching provider before the first message)', () => {
+  // Claude Code writes the transcript with the first message: an id with no JSONL cannot be --resume'd
+  // ("No conversation found with session ID"), it has to be started anew on the same id
+  const withConfigDir = async (fn: (dir: string) => Promise<void>) => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const os = await import('node:os');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-claude-cfg-'));
+    const prev = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    try { await fn(dir); } finally {
+      if (prev === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prev;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  it('reopening an id with no transcript starts a new conversation on that id instead of resuming', async () => {
+    await withConfigDir(async () => {
+      queries.length = 0;
+      const r = new SessionRunner({ sessionId: 'fresh-1', cwd: '/x' } as any);
+      await tick();
+      expect(queries[0].options.resume).toBeUndefined();
+      expect(queries[0].options.sessionId).toBe('fresh-1');
+      expect(r.sessionId).toBe('fresh-1');
+      await r.close();
+    });
+  });
+
+  it('an id whose transcript exists (in any project folder) is resumed', async () => {
+    await withConfigDir(async (dir) => {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      fs.mkdirSync(path.join(dir, 'projects', 'C--work-app'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'projects', 'C--work-app', 'fresh-2.jsonl'), '{}\n');
+      queries.length = 0;
+      const r = new SessionRunner({ sessionId: 'fresh-2', cwd: '/x' } as any);
+      await tick();
+      expect(queries[0].options.resume).toBe('fresh-2');
+      expect(queries[0].options.sessionId).toBeUndefined();
+      await r.close();
+    });
+  });
+
+  it('a restart before the first message starts anew on the same id; after a message it resumes', async () => {
+    await withConfigDir(async () => {
+      queries.length = 0;
+      const r = new SessionRunner({ cwd: '/x' } as any); // a new conversation from the welcome page
+      await tick();
+      const id = r.sessionId;
+      await r.setModel('opus'); // the fake rejects setModel → the runner restarts its process
+      await tick();
+      expect(queries).toHaveLength(2);
+      expect(queries[1].options.resume).toBeUndefined();
+      expect(queries[1].options.sessionId).toBe(id);
+      r.send('hi'); // the CLI now writes the transcript
+      await r.setModel('sonnet');
+      await tick();
+      expect(queries).toHaveLength(2); // mid-turn: the restart waits for the turn's result
+      queries[1].push({ type: 'result', subtype: 'success', is_error: false, result: 'ok', total_cost_usd: 0, modelUsage: {}, usage: {}, session_id: id, uuid: 'u1' });
+      await tick();
+      expect(queries).toHaveLength(3);
+      expect(queries[2].options.resume).toBe(id);
+      await r.close();
+    });
+  });
+});
+
+describe('SessionRunner: the engine follows the model, effort on ccb, per-turn cost', () => {
+  const xy = { id: 'xy', name: 'XY', type: 'anthropic', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['claude-sonnet-4-6', 'claude-opus-5-5', 'gpt-image-2'], modelMap: { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-4-6', haiku: 'claude-sonnet-4-6' } } as any;
+  const result = (cost: number, models: Record<string, number>) => ({ type: 'result', subtype: 'success', is_error: false, result: 'ok', total_cost_usd: cost, modelUsage: Object.fromEntries(Object.entries(models).map(([k, v]) => [k, { inputTokens: 1, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, webSearchRequests: 0, costUSD: v, contextWindow: 1, maxOutputTokens: 1 }])), usage: {}, session_id: 'e1', uuid: 'u' });
+
+  it('claude-opus-5-5 on an Anthropic-format relay starts on the official binary; switching to it from ccb restarts the process', async () => {
+    eng.kind = 'ccb';
+    try {
+      queries.length = 0;
+      const a = new SessionRunner({ sessionId: 'e1', cwd: '/x', model: 'claude-opus-5-5' } as any, xy);
+      await tick();
+      expect(a.info.runtime).toBe('claude');
+      expect(queries[0].options.env.CLAUDE_CODE_DISABLE_THINKING).toBeUndefined();
+      await a.close();
+      const b = new SessionRunner({ sessionId: 'e2', cwd: '/x', model: 'claude-sonnet-4-6' } as any, xy);
+      await tick();
+      expect(b.info.runtime).toBe('ccb');
+      await b.setModel('claude-opus-5-5');
+      await tick();
+      expect(queries).toHaveLength(3); // a restart, not the in-process setModel
+      expect(b.info.runtime).toBe('claude');
+      expect(b.info.model).toBe('claude-opus-5-5');
+      await b.close();
+    } finally {
+      eng.kind = 'claude';
+    }
+  });
+
+  it('a conversation with a ccb-only flag stays on ccb, with thinking off for that model', async () => {
+    eng.kind = 'ccb';
+    try {
+      queries.length = 0;
+      const a = new SessionRunner({ sessionId: 'e3', cwd: '/x', model: 'opus', features: { proactive: true } } as any, xy);
+      await tick();
+      expect(a.info.runtime).toBe('ccb');
+      expect(queries[0].options.env.CLAUDE_CODE_DISABLE_THINKING).toBe('1');
+      await a.close();
+    } finally {
+      eng.kind = 'claude';
+    }
+  });
+
+  it('effort on ccb restarts the process with it — after the running turn ends', async () => {
+    eng.kind = 'ccb';
+    try {
+      queries.length = 0;
+      const a = new SessionRunner({ sessionId: 'e4', cwd: '/x', model: 'claude-sonnet-4-6', effort: 'low' } as any, xy);
+      await tick();
+      expect(queries[0].options.effort).toBe('low');
+      a.send('hi');
+      await a.setEffort('high');
+      await tick();
+      expect(queries).toHaveLength(1); // mid-turn: not cut off
+      expect(a.info.effort).toBe('high');
+      queries[0].push(result(0.1, { 'claude-sonnet-4-6': 0.1 }));
+      await tick();
+      expect(queries).toHaveLength(2);
+      expect(queries[1].options.effort).toBe('high');
+      expect(a.info.supportsUltracode).toBe(false); // `/effort ultracode` doesn't exist on ccb
+      expect(a.info.models?.map((m) => m.value)).toEqual(['claude-sonnet-4-6', 'claude-opus-5-5']); // no image model
+      await a.close();
+    } finally {
+      eng.kind = 'claude';
+    }
+  });
+
+  it('each result carries its own turn’s cost (the CLI reports running totals)', async () => {
+    queries.length = 0;
+    const a = new SessionRunner({ sessionId: 'e5', cwd: '/x' } as any);
+    const seen: any[] = [];
+    a.on('message', (m) => { if (m.type === 'result') seen.push({ cost: m.total_cost_usd, models: Object.keys(m.modelUsage) }); });
+    await tick();
+    queries[0].push(result(0.4, { 'claude-opus-5-5': 0.4 }));
+    queries[0].push(result(0.9, { 'claude-opus-5-5': 0.4, 'claude-haiku-4-5-20251001': 0.5 }));
+    await tick();
+    expect(seen.map((s) => +s.cost.toFixed(6))).toEqual([0.4, 0.5]);
+    expect(seen[1].models).toEqual(['claude-haiku-4-5-20251001']);
+    await a.close();
+  });
+});
+
+describe('SessionRunner: the account through a relay of the user’s own (settings.json env)', () => {
+  it('runs on the official binary (a client-checking relay refuses ccb); with a ccb-only flag on ccb, without the claude.ai alias table', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-relay-'));
+    fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://relay.invalid', ANTHROPIC_AUTH_TOKEN: 'x' } }));
+    const was = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    eng.kind = 'ccb';
+    try {
+      queries.length = 0;
+      const a = new SessionRunner({ sessionId: 'r1', cwd: '/x' } as any);
+      await tick();
+      expect(a.info.runtime).toBe('claude');
+      await a.close();
+      const b = new SessionRunner({ sessionId: 'r2', cwd: '/x', features: { proactive: true } } as any);
+      await tick();
+      expect(b.info.runtime).toBe('ccb');
+      expect(queries[1].options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined(); // claude-sonnet-5 isn't on that relay
+      await b.close();
+      const c = new SessionRunner({ sessionId: 'r3', cwd: '/x', model: 'claude-opus-5-5', features: { proactive: true } } as any);
+      await tick();
+      expect(c.info.runtime).toBe('ccb');
+      expect(queries[2].options.env?.CLAUDE_CODE_DISABLE_THINKING).toBe('1');
+      await c.close();
+    } finally {
+      eng.kind = 'claude';
+      if (was === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = was;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('cliSaid: what the CLI wrote to stderr, for the error message', () => {
+  it('the last lines, warnings left out', async () => {
+    const { cliSaid } = await import('./session-runner.js');
+    expect(cliSaid("Warning: no stdin data received in 3s\nerror: unknown option '--session-mirror'\n")).toBe("error: unknown option '--session-mirror'");
+    expect(cliSaid('a\r\nb\r\nc\r\nd\r\n')).toBe('b · c · d');
+    expect(cliSaid('')).toBe('');
+  });
+});
+
+describe('SessionRunner: a hand-over to Claude on ccb (no session mirror)', () => {
+  it('ccb gets no sessionStore (the SDK would pass --session-mirror, unknown to ccb) and the briefing as its first message; the official binary keeps the entries', async () => {
+    eng.kind = 'ccb';
+    try {
+      queries.length = 0;
+      const a = new SessionRunner({ sessionId: 'h-ccb-1', cwd: '/x', resumeEntries: [{ type: 'user' }], briefing: 'BRIEFING' } as any);
+      await tick();
+      expect(queries[0].options.sessionStore).toBeUndefined();
+      expect(queries[0].options.resume).toBeUndefined();
+      expect(queries[0].options.sessionId).toBe('h-ccb-1');
+      expect(a.state).toBe('running'); // the briefing went in
+      await a.close();
+      eng.kind = 'claude';
+      const b = new SessionRunner({ sessionId: 'h-off-1', cwd: '/x', resumeEntries: [{ type: 'user' }], briefing: 'BRIEFING' } as any);
+      await tick();
+      expect(queries[1].options.sessionStore).toBeDefined();
+      expect(queries[1].options.resume).toBe('h-off-1');
+      await b.close();
+    } finally {
+      eng.kind = 'claude';
+    }
+  });
+});
+
+describe('SessionRunner: a turn written from a terminal while the conversation sits idle here', () => {
+  it('wroteElsewhere: its own prompts and the last one on disk at start are known; another one is not', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-ext-'));
+    const was = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    const proj = path.join(dir, 'projects', 'C--x');
+    fs.mkdirSync(proj, { recursive: true });
+    const f = path.join(proj, 'ext-1.jsonl');
+    const line = (uuid: string, text: string) => JSON.stringify({ type: 'user', uuid, parentUuid: null, message: { role: 'user', content: text } }) + '\n';
+    fs.writeFileSync(f, line('old', 'from before'));
+    try {
+      queries.length = 0;
+      const r = new SessionRunner({ sessionId: 'ext-1', cwd: '/x' } as any);
+      await tick();
+      r.lastActivity = 0; // long quiet
+      expect(r.wroteElsewhere()).toBe(false); // what was on disk when it started
+      r.send('mine', undefined, false, 'u-mine');
+      queries[0].push({ type: 'result', subtype: 'success', is_error: false, result: 'ok', total_cost_usd: 0, modelUsage: {}, usage: {}, session_id: 'ext-1', uuid: 'r' });
+      await tick();
+      fs.appendFileSync(f, line('u-mine', 'mine'));
+      r.lastActivity = 0;
+      expect(r.wroteElsewhere()).toBe(false); // its own prompt
+      fs.appendFileSync(f, line('cli-1', 'typed in a terminal'));
+      expect(r.wroteElsewhere()).toBe(true);
+      r.lastActivity = Date.now();
+      expect(r.wroteElsewhere()).toBe(false); // not while its own lines may still be landing
+      await r.close();
+    } finally {
+      if (was === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = was;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // the official binary writes its own idea of the leaf when it exits; closed because a terminal took the conversation
+  // over, that line (the web's last answer) landed after the terminal's turn and the next resume branched it off
+  it("yieldToOutside: the leaf the exiting process writes does not bury the terminal's turn", async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-ext-'));
+    const was = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    const proj = path.join(dir, 'projects', 'C--x');
+    fs.mkdirSync(proj, { recursive: true });
+    const f = path.join(proj, 'ext-2.jsonl');
+    const put = (...rows: object[]) => fs.appendFileSync(f, rows.map((x) => JSON.stringify(x) + '\n').join(''));
+    const leaf = (uuid: string) => ({ type: 'last-prompt', lastPrompt: 'q', leafUuid: uuid, sessionId: 'ext-2' });
+    put({ type: 'user', uuid: 'w1', parentUuid: null, message: { role: 'user', content: 'web question' } }, { type: 'assistant', uuid: 'w2', parentUuid: 'w1' }, leaf('w2'));
+    try {
+      queries.length = 0;
+      const r = new SessionRunner({ sessionId: 'ext-2', cwd: '/x' } as any);
+      await tick();
+      put({ type: 'user', uuid: 't1', parentUuid: 'w2', message: { role: 'user', content: 'terminal question' } }, leaf('w2'), { type: 'assistant', uuid: 't2', parentUuid: 't1' });
+      const close = r.close.bind(r);
+      r.close = async () => { put(leaf('w2'), { type: 'cost-state', sessionId: 'ext-2' }); await close(); }; // the exit flush
+      await r.yieldToOutside();
+      const rows = fs.readFileSync(f, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+      expect(rows.at(-1)).toMatchObject({ type: 'last-prompt', leafUuid: 't2' });
+      expect(r.state).toBe('closed');
+    } finally {
+      if (was === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = was;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('after a turn on the official binary the file points at that turn while the process sits idle', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-ext-'));
+    const was = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    const proj = path.join(dir, 'projects', 'C--x');
+    fs.mkdirSync(proj, { recursive: true });
+    const f = path.join(proj, 'ext-3.jsonl');
+    const put = (...rows: object[]) => fs.appendFileSync(f, rows.map((x) => JSON.stringify(x) + '\n').join(''));
+    put({ type: 'user', uuid: 'u1', parentUuid: null, message: { role: 'user', content: 'one' } }, { type: 'assistant', uuid: 'a1', parentUuid: 'u1' }, { type: 'last-prompt', lastPrompt: 'one', leafUuid: 'a1', sessionId: 'ext-3' });
+    try {
+      queries.length = 0;
+      const r = new SessionRunner({ sessionId: 'ext-3', cwd: '/x' } as any);
+      await tick();
+      r.send('two', undefined, false, 'u2');
+      // what the official binary writes for that turn: the leaf at submit (the entry before the answer), then the answer
+      put({ type: 'user', uuid: 'u2', parentUuid: 'a1', message: { role: 'user', content: 'two' } }, { type: 'last-prompt', lastPrompt: 'two', leafUuid: 'u2', sessionId: 'ext-3' }, { type: 'assistant', uuid: 'a2', parentUuid: 'u2' });
+      queries[0].push({ type: 'assistant', uuid: 'a2', message: { id: 'm2', role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, parent_tool_use_id: null, session_id: 'ext-3' });
+      queries[0].push({ type: 'result', subtype: 'success', is_error: false, result: 'ok', total_cost_usd: 0, modelUsage: {}, usage: {}, session_id: 'ext-3', uuid: 'r2' });
+      await tick();
+      await new Promise((res) => setTimeout(res, 1800));
+      const rows = fs.readFileSync(f, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+      expect(rows.at(-1)).toMatchObject({ type: 'last-prompt', leafUuid: 'a2' });
+      await r.close();
+    } finally {
+      if (was === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = was;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('SessionRunner: init during the first turn after a resume', () => {
+  it('stays running (the CLI says init as that turn starts)', async () => {
+    queries.length = 0;
+    const r = new SessionRunner({ cwd: '/x' } as any);
+    await tick();
+    expect(r.state).toBe('idle');
+    r.send('hi');
+    queries[0].push({ type: 'system', subtype: 'init', session_id: r.sessionId, model: 'm', tools: [], mcp_servers: [] });
+    await tick();
+    expect(r.state).toBe('running');
+    expect(r.info.state).toBe('running');
+    queries[0].push({ type: 'result', subtype: 'success', is_error: false, result: 'ok', total_cost_usd: 0, modelUsage: {}, usage: {}, session_id: r.sessionId, uuid: 'x' });
+    await tick();
+    expect(r.state).toBe('idle');
+    await r.close();
   });
 });

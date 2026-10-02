@@ -94,3 +94,25 @@ describe('which conversation a write under ~/.claude/projects belongs to', () =>
     }
   });
 });
+
+describe('forkTitle', () => {
+  it('one (分叉) mark, however deep', async () => {
+    const { forkTitle } = await import('./service.js');
+    expect(forkTitle('修 bug')).toBe('修 bug (分叉)');
+    expect(forkTitle('修 bug (分叉)')).toBe('修 bug (分叉)');
+    expect(forkTitle('修 bug (分叉) (分叉)')).toBe('修 bug (分叉)');
+    expect(forkTitle('')).toBe('(分叉)');
+  });
+});
+
+describe('listTitle', () => {
+  it('a hand-over briefing is never a conversation title', async () => {
+    const { listTitle } = await import('./service.js');
+    const brief = '# 会话交接 这个会话之前由 **Codex** 在跑，现在交给你（Claude Code）继续。';
+    expect(listTitle({ sessionId: 's1', summary: brief, firstPrompt: '修一下登录页' })).toBe('修一下登录页');
+    expect(listTitle({ sessionId: 's1', summary: brief, firstPrompt: brief })).toBe('交接的对话');
+    expect(listTitle({ sessionId: 's1', customTitle: '我起的名字', summary: brief })).toBe('我起的名字');
+    expect(listTitle({ sessionId: 's1', summary: '最后一句', firstPrompt: '第一句' })).toBe('最后一句');
+    expect(listTitle({ sessionId: '24f2b165-07d7' })).toBe('24f2b165');
+  });
+});

@@ -34,7 +34,7 @@ import * as R from './openai-responses.js';
 import { DEFAULT_BASE, joinUrl, upstreamErrorMessage } from './convert.js';
 import { SseParser } from './sse.js';
 import type { IrEvent, IrUsage } from './ir.js';
-import { CACHE_KEY_MAX, SseLines, addMissing, affinityHeaders, fixChatUsage, insertTopLevelField, isParamRejection, mentionsCacheKey } from './cache.js';
+import { CACHE_KEY_MAX, SseLines, addMissing, affinityHeaders, dropEmptyReasoning, fixChatUsage, insertTopLevelField, isParamRejection, mentionsCacheKey } from './cache.js';
 import { UpstreamError, decoded, errorHeaders, passthroughHeaders, readText, responseHeaders, sendUpstream, waitDrain, withTimeout, type UpstreamResponse } from './upstream.js';
 
 export const SHIM_PREFIX = '/gateway/~p/';
@@ -50,6 +50,27 @@ const mentionsRetention = (text: string) => /prompt_cache_retention/i.test(text)
 const fallsBack = (s: number) => s === 404 || s === 405 || s === 501 || s === 400 || s === 422 || s >= 500;
 /** …and the ones that may mean "this endpoint has no Responses API" (remembered only once chat then works). */
 const endpointMissing = (s: number, text: string) => (s === 404 || s === 405 || s === 501) && !/model/i.test(text);
+
+/**
+ * An upstream error to the client. OpenAI's SDKs (ccb, Codex) read `error.message`: a relay that answers
+ * `{"code":"INSUFFICIENT_BALANCE","message":"…"}` or plain text showed up as "403 status code (no body)" — that body is
+ * wrapped as `{error:{message, code}}`; one that already has `error` goes out as it came.
+ */
+export function clientErrorBody(text: string): string | null {
+  let j: any;
+  try { j = JSON.parse(text); } catch { /* not JSON */ }
+  const e = Array.isArray(j) ? j[0]?.error : j?.error;
+  if (e && (typeof e === 'string' || e.message)) return null;
+  const message = upstreamErrorMessage(text) || 'upstream error (empty body)';
+  const code = j && typeof j === 'object' && !Array.isArray(j) && (typeof j.code === 'string' || typeof j.code === 'number') ? String(j.code) : undefined;
+  return JSON.stringify({ error: { message, type: 'upstream_error', ...(code ? { code } : {}) } });
+}
+
+function sendError(ctx: Ctx, status: number, headers: UpstreamResponse['headers'], text: string) {
+  if (ctx.res.headersSent) return;
+  const wrapped = clientErrorBody(text);
+  ctx.res.writeHead(status, { ...errorHeaders(headers), 'content-type': wrapped !== null ? 'application/json' : String(headers['content-type'] ?? 'application/json') }).end(wrapped ?? text);
+}
 
 export interface ShimDeps {
   meta: MetaStore;
@@ -170,7 +191,9 @@ export class CacheShim {
       if (ctx.signal.aborted) return null;
       const status = e instanceof UpstreamError && e.timeout ? 504 : 502;
       this.fail(ctx.res, status, e?.message ?? String(e));
-      this.record(ctx, { ok: false, status, model: '', error: e?.message ?? String(e), outbound: url.endsWith('/responses') ? 'responses' : 'openai', stream });
+      let model = ''; // the ledger row names the model like every other row (only parsed on this path)
+      try { model = String(JSON.parse(body.toString('utf8'))?.model ?? ''); } catch { /* not JSON */ }
+      this.record(ctx, { ok: false, status, model, error: e?.message ?? String(e), outbound: url.endsWith('/responses') ? 'responses' : 'openai', stream });
       return null;
     }
   }
@@ -183,7 +206,7 @@ export class CacheShim {
   private async passError(ctx: Ctx, up: UpstreamResponse, model: string, outbound: Outcome['outbound'], stream: boolean) {
     let text = '';
     try { text = await readText(up.body, 4 * 1024 * 1024); } catch { /* keep empty */ }
-    if (!ctx.res.headersSent) ctx.res.writeHead(up.status, { ...errorHeaders(up.headers), 'content-type': String(up.headers['content-type'] ?? 'application/json') }).end(text);
+    sendError(ctx, up.status, up.headers, text);
     this.record(ctx, { ok: false, status: up.status, model, error: `HTTP ${up.status} ${upstreamErrorMessage(text)}`.slice(0, 200), outbound, stream });
   }
 
@@ -208,7 +231,7 @@ export class CacheShim {
     if (!up) return;
     if ((up.status < 200 || up.status >= 300) && original) {
       up.body.resume();
-      if (!ctx.res.headersSent) ctx.res.writeHead(original.status, { ...errorHeaders(original.headers), 'content-type': String(original.headers['content-type'] ?? 'application/json') }).end(original.text);
+      sendError(ctx, original.status, original.headers, original.text);
       return this.record(ctx, { ok: false, status: original.status, model, error: `HTTP ${original.status} ${upstreamErrorMessage(original.text)}（chat/completions 退回也失败：HTTP ${up.status}）`.slice(0, 240), outbound: 'responses', stream });
     }
     if (up.status < 200 || up.status >= 300) return this.passError(ctx, up, model, 'openai', stream);
@@ -229,13 +252,13 @@ export class CacheShim {
         for await (const c of src) bufs.push(c as Buffer);
         text = Buffer.concat(bufs).toString('utf8');
         const j = JSON.parse(text);
-        if (fixChatUsage(j?.usage)) text = JSON.stringify(j);
+        if (Number(fixChatUsage(j?.usage)) | Number(dropEmptyReasoning(j))) text = JSON.stringify(j);
         usage = C.usageIn(j?.usage);
       } catch { /* not JSON: as is */ }
       res.end(text);
       return this.record(ctx, { ok: true, status: up.status, model, usage, outbound: 'openai', stream, firstByteMs });
     }
-    const lines = new SseLines((j) => fixChatUsage(j?.usage));
+    const lines = new SseLines((j) => (Number(fixChatUsage(j?.usage)) | Number(dropEmptyReasoning(j))) !== 0);
     const sniff = new SseParser();
     const dec = new StringDecoder('utf8');
     const take = (text: string) => { for (const e of sniff.feed(text)) if (e.data.includes('"usage"')) { try { const j = JSON.parse(e.data); if (j?.usage) usage = C.usageIn(j.usage); } catch { /* skip */ } } };
@@ -356,7 +379,7 @@ export class CacheShim {
       let text = '';
       try { text = await readText(up.body, 4 * 1024 * 1024); } catch { /* keep empty */ }
       if (endpointMissing(up.status, text)) return this.responsesViaChat(ctx, json, () => this.remember(ctx.p, { noResponsesApi: true }), { status: up.status, headers: up.headers, text });
-      if (!ctx.res.headersSent) ctx.res.writeHead(up.status, { ...errorHeaders(up.headers), 'content-type': String(up.headers['content-type'] ?? 'application/json') }).end(text);
+      sendError(ctx, up.status, up.headers, text);
       return this.record(ctx, { ok: false, status: up.status, model, error: `HTTP ${up.status} ${upstreamErrorMessage(text)}`.slice(0, 200), outbound: 'responses', stream });
     }
     const firstByteMs = Date.now() - ctx.t0;
@@ -416,7 +439,7 @@ export class CacheShim {
     if (up.status < 200 || up.status >= 300) {
       if (original) {
         up.body.resume();
-        if (!ctx.res.headersSent) ctx.res.writeHead(original.status, { ...errorHeaders(original.headers), 'content-type': String(original.headers['content-type'] ?? 'application/json') }).end(original.text);
+        sendError(ctx, original.status, original.headers, original.text);
         return this.record(ctx, { ok: false, status: original.status, model, error: `HTTP ${original.status} ${upstreamErrorMessage(original.text)}（chat/completions 退回也失败：HTTP ${up.status}）`.slice(0, 240), outbound: 'openai', stream });
       }
       return this.passError(ctx, up, model, 'openai', stream);

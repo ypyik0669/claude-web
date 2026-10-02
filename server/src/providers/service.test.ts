@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { Provider } from '../protocol.js';
-import { openaiBase, providerEnv } from './service.js';
+import { chatProbeArgs, openaiBase, providerEnv } from './service.js';
 
 const prov = (baseUrl: string): Provider => ({ id: 'p', name: 'p', type: 'openai', baseUrl, apiKey: 'k', createdAt: 0 });
+
+describe('chatProbeArgs (测试连接)', () => {
+  it('runs one turn that leaves no conversation behind', () => {
+    const args = chatProbeArgs('claude-sonnet-5');
+    expect(args).toContain('--no-session-persistence');
+    expect(args.slice(0, 2)).toEqual(['-p', 'Reply with exactly: ok']);
+    expect(args[args.indexOf('--model') + 1]).toBe('claude-sonnet-5');
+  });
+});
 
 describe('openaiBase', () => {
   it('appends /v1 to a bare relay host (what users paste)', () => {
@@ -144,5 +153,19 @@ describe('providerEnv (gemini / grok through ccb)', () => {
     expect(flags('gemini')).toEqual(['CLAUDE_CODE_USE_GEMINI']);
     expect(flags('grok')).toEqual(['CLAUDE_CODE_USE_GROK']);
     expect(flags('anthropic')).toEqual([]);
+  });
+});
+
+describe('worthOfficialRetry (测试连接 after ccb failed)', () => {
+  it('a 4xx (a relay fingerprinting the client) → try the official binary; down / out of balance / timed out → don’t', async () => {
+    const { worthOfficialRetry } = await import('./service.js');
+    expect(worthOfficialRetry('API Error: 400 请求可能被第三方中转改写')).toBe(true);
+    expect(worthOfficialRetry('API Error: 403 Forbidden')).toBe(true);
+    expect(worthOfficialRetry(undefined)).toBe(true);
+    expect(worthOfficialRetry('API Error: 503 No available accounts: no available accounts.')).toBe(false);
+    expect(worthOfficialRetry('API Error: 502 Upstream request failed')).toBe(false);
+    expect(worthOfficialRetry('API Error: 429 All available accounts are currently rate-limited')).toBe(false);
+    expect(worthOfficialRetry('API Error: 403 {"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance"}')).toBe(false);
+    expect(worthOfficialRetry('超时：120 秒内没有收到回答')).toBe(false);
   });
 });

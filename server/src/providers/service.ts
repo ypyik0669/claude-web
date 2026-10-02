@@ -166,6 +166,28 @@ export interface ChatProbe { ok: boolean; runtime: RuntimeKind | 'api'; model: s
 export interface ProbeResult { ok: boolean; status?: number; models: string[]; error?: string; ms: number; chat?: ChatProbe; responses?: ChatProbe }
 
 /**
+ * `--no-session-persistence`: without it every 测试连接 left a "Reply with exactly: ok" conversation in the CLI's
+ * transcripts (cwd = the temp folder), which then filled the sidebar's 其它文件夹 › Temp and made the temp folder the
+ * welcome page's default project (2026-10-01, both engines support the flag).
+ */
+const PROBE_TIMEOUT_MS = 120_000;
+
+/**
+ * Whether the official binary is worth a second try after ccb failed the chat check. A relay that fingerprints the
+ * client refuses ccb's request with a 4xx; a relay that is down, out of accounts or out of balance (5xx, 429, 余额) or
+ * that never answered fails the official binary just the same — and the retry doubled the wait (242 s on a relay
+ * returning 503 "No available accounts", 2026-10-01).
+ */
+export function worthOfficialRetry(error: string | undefined): boolean {
+  const e = error ?? '';
+  return !/超时|API Error: (?:5\d\d|429)\b|\b(?:5\d\d|429) (?:status code|Too Many|Service|Bad Gateway|Gateway|Internal)|insufficient(?:[_ ]\w+)?[_ ](?:balance|quota|funds|credit)|no available accounts|余额|额度/i.test(e);
+}
+
+export function chatProbeArgs(model: string): string[] {
+  return ['-p', 'Reply with exactly: ok', '--no-session-persistence', '--model', model, '--output-format', 'json', '--max-turns', '1'];
+}
+
+/**
  * One real one-shot turn through the CLI (`-p`), exactly the way a session will talk to the endpoint. The model list
  * alone cannot tell whether a relay accepts this client: some (super-nb) fingerprint the official Claude Code build
  * and reject ccb's request shape. Cheap (a few tokens) and definitive.
@@ -173,13 +195,15 @@ export interface ProbeResult { ok: boolean; status?: number; models: string[]; e
 export async function chatProbe(p: Provider, runtime: RuntimeKind | undefined, model: string): Promise<ChatProbe> {
   const t0 = Date.now();
   const kind = resolveEngine(runtime).kind;
-  const env = { ...providerEnv(p) };
+  // one retry, not the CLI's ten: a relay answering 5xx kept 测试连接 spinning for 4 minutes, then said "exit 1"
+  const env: Record<string, string> = { ...providerEnv(p), CLAUDE_CODE_MAX_RETRIES: '1' };
   delete env.CLAUDE_WEB_PLAIN_UA; // not spawned through the SDK: the CLI already sends its plain User-Agent
-  const r = await runClaudeCli(['-p', 'Reply with exactly: ok', '--model', model, '--output-format', 'json', '--max-turns', '1'], { cwd: os.tmpdir(), timeoutMs: 120_000, runtime, env });
+  const r = await runClaudeCli(chatProbeArgs(model), { cwd: os.tmpdir(), timeoutMs: PROBE_TIMEOUT_MS, runtime, env });
   const ms = Date.now() - t0;
   let out: any = null;
   try { out = JSON.parse(r.stdout.trim().split('\n').filter((l) => l.startsWith('{')).pop() ?? ''); } catch { /* not json */ }
   if (out && out.type === 'result' && !out.is_error) return { ok: true, runtime: kind, model, ms };
+  if (r.timedOut && !out) return { ok: false, runtime: kind, model, error: `超时：${PROBE_TIMEOUT_MS / 1000} 秒内没有收到回答（中转没有回应，或一直在报错重试）`, ms };
   // an error result carries `errors` / `subtype` rather than `result`; stderr is often just a warning line
   const stderr = r.stderr.split('\n').filter((l) => l.trim() && !/^Warning: no stdin data/.test(l)).join(' ');
   const err = (out?.result ?? (Array.isArray(out?.errors) && out.errors.length ? out.errors.join('; ') : undefined) ?? out?.error ?? (out?.is_error ? out.subtype : undefined) ?? (stderr || r.stdout)).toString().replace(/\s+/g, ' ').trim().slice(0, 300) || `exit ${r.code}`;
@@ -235,7 +259,19 @@ export async function openaiResponsesProbe(p: Pick<Provider, 'baseUrl' | 'apiKey
  * Connectivity + auth check via the model list endpoint. We deliberately do not send a /messages request:
  * relays that only accept Claude Code clients reject anything else, and the list is enough to verify the key.
  */
-export async function probeProvider(p: Pick<Provider, 'type' | 'baseUrl' | 'apiKey'>): Promise<ProbeResult> {
+export async function probeProvider(p: Pick<Provider, 'type' | 'baseUrl' | 'apiKey'>, retryMs = 1000): Promise<ProbeResult> {
+  const r = await listModels(p);
+  // the request never got an answer (connection reset, connect timeout on a flaky route — seen on real relays): once
+  // more before telling the user the address is wrong. An HTTP answer, or our own 20 s timeout, is final.
+  if (r.ok || r.status !== undefined || r.error === LIST_TIMEOUT) return r;
+  await new Promise((res) => setTimeout(res, retryMs));
+  const again = await listModels(p);
+  return { ...again, ms: (again.ms ?? 0) + (r.ms ?? 0) + retryMs };
+}
+
+const LIST_TIMEOUT = '连接超时（20s）';
+
+async function listModels(p: Pick<Provider, 'type' | 'baseUrl' | 'apiKey'>): Promise<ProbeResult> {
   const t0 = Date.now();
   const url = modelsUrl(p.type, p.baseUrl);
   const headers: Record<string, string> = { accept: 'application/json' };
@@ -259,7 +295,7 @@ export async function probeProvider(p: Pick<Provider, 'type' | 'baseUrl' | 'apiK
     if (!models.length && !j) return { ok: false, status: r.status, models: [], error: '返回不是 JSON 模型列表', ms: Date.now() - t0 };
     return { ok: true, status: r.status, models, ms: Date.now() - t0 };
   } catch (e: any) {
-    return { ok: false, models: [], error: e?.name === 'AbortError' ? '连接超时（20s）' : e?.cause?.message ?? e?.message ?? String(e), ms: Date.now() - t0 };
+    return { ok: false, models: [], error: e?.name === 'AbortError' ? LIST_TIMEOUT : e?.cause?.message ?? e?.message ?? String(e), ms: Date.now() - t0 };
   }
 }
 
@@ -464,6 +500,8 @@ export class ProviderService {
     const full: Provider = { id: saved?.id ?? 'draft', name: draft?.name ?? saved?.name ?? 'draft', createdAt: 0, ...saved, ...p, defaultModel: draft?.defaultModel ?? saved?.defaultModel, modelMap: draft?.modelMap ?? saved?.modelMap };
     // Anthropic endpoints: a haiku (the check runs a whole CLI turn); OpenAI-compatible ones: a real chat model — the
     // list is sorted by name, and its first entry is as often an embedding or image model as anything
+    // a key whose list has nothing to talk to (an image-only key: gpt-image-2 …) says so, instead of a chat check on an image model
+    if (!full.defaultModel && r.models.length && !r.models.some(isChatModel)) return { ...r, ok: false, error: `列表里没有聊天模型（只有 ${r.models.slice(0, 3).join('、')}${r.models.length > 3 ? ' 等' : ''}）：这个 Key 不能用来对话` };
     const model = full.defaultModel || (p.type === 'anthropic' ? claudeFamilyMap(r.models).haiku ?? r.models.find(isChatModel) : pickChatModel(r.models)) || r.models[0] || 'haiku';
     // OpenAI-compatible relays don't fingerprint the client, so one tiny chat request proves the key; a CLI
     // round would cost a whole Claude Code system prompt (~50k tokens) per click.
@@ -482,7 +520,7 @@ export class ProviderService {
     }
     const explicit = (draft?.runtime ?? saved?.runtime) as RuntimeKind | undefined;
     let chat = await chatProbe(full, explicit, model);
-    if (!chat.ok && chat.runtime === 'ccb' && !explicit) {
+    if (!chat.ok && chat.runtime === 'ccb' && !explicit && worthOfficialRetry(chat.error)) {
       const again = await chatProbe(full, 'claude', model);
       if (again.ok) {
         chat = { ...again, switched: true };

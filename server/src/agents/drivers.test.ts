@@ -177,6 +177,32 @@ describe('CodexDriver (mock app-server)', () => {
     await r.close();
   });
 
+  it('resuming: the turns the Codex CLI added come into the mirror first, the next prompt lands after them', async () => {
+    const args = [path.join(here, '__mocks__', 'codex-server.mjs')];
+    const d = new CodexDriver('codex', { command: process.execPath, args, env: {}, name: 'Mock' }, { cwd: tmp, permissionMode: 'bypassPermissions' }, transcripts);
+    const msgs = collect(d);
+    await waitFor(() => d.state === 'idle');
+    d.send('web one');
+    await waitFor(() => msgs.some((m) => m.type === 'result'));
+    const sid = d.sessionId;
+    await d.close();
+    // the library's sync: slow, and appends the CLI's turn to the mirror
+    let hookRan = false;
+    const beforeResume = async () => {
+      await new Promise((r) => setTimeout(r, 300));
+      transcripts.append(sid, { type: 'user', uuid: 'cli-1', message: { role: 'user', content: [{ type: 'text', text: 'typed in the codex cli' }] } });
+      hookRan = true;
+    };
+    const r = new CodexDriver('codex', { command: process.execPath, args, env: {}, name: 'Mock' }, { cwd: tmp, permissionMode: 'bypassPermissions', sessionId: sid }, transcripts, { beforeResume });
+    r.send('web two'); // straight away, as the window does on reopen
+    const msgs2 = collect(r);
+    await waitFor(() => msgs2.some((m) => m.type === 'result'));
+    expect(hookRan).toBe(true);
+    const said = (await transcripts.load(sid)).filter((m) => m.type === 'user' && m.message.content[0]?.type === 'text').map((m) => m.message.content[0].text);
+    expect(said).toEqual(['web one', 'typed in the codex cli', 'web two']);
+    await r.close();
+  });
+
   it('a model outside model/list is swapped for the default — except behind the model gateway', async () => {
     const args = [path.join(here, '__mocks__', 'codex-server.mjs')];
     const plain = new CodexDriver('codex', { command: process.execPath, args, env: {}, name: 'Mock' }, { cwd: tmp, permissionMode: 'default', model: 'claude-sonnet-4-5' }, transcripts);

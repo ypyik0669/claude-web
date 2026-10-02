@@ -204,6 +204,20 @@ describe('user messages', () => {
     applyMessage(c, { type: 'user', uuid: 'u3', session_id: 's', parent_tool_use_id: null, message: { role: 'user', content: '<system-reminder>x</system-reminder>' } });
     expect((c.items[0] as UserItem).meta).toBe(true);
   });
+
+  it("hides the CLI's synthetic answer to its own resume nudge, keeps synthetic API errors (real transcript after a provider switch)", () => {
+    const c = createConversation();
+    applyTranscript(c, [
+      { type: 'user', uuid: 'u1', parent_tool_use_id: null, message: { role: 'user', content: '你是什么模型' } },
+      { type: 'assistant', uuid: 'a1', parent_tool_use_id: null, message: { id: 'm1', role: 'assistant', model: 'claude-opus-4-6', content: [{ type: 'text', text: '我是 Claude Opus 4.6' }] } },
+      { type: 'user', uuid: 'u2', isMeta: true, parent_tool_use_id: null, message: { role: 'user', content: 'Continue from where you left off.' } },
+      { type: 'assistant', uuid: 'a2', parent_tool_use_id: null, message: { id: 'm2', role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'No response requested.' }] } },
+      { type: 'user', uuid: 'u3', parent_tool_use_id: null, message: { role: 'user', content: '再问一次' } },
+      { type: 'assistant', uuid: 'a3', parent_tool_use_id: null, message: { id: 'm3', role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'API Error: 429 Too Many Requests' }] } },
+    ] as any[]);
+    const texts = c.items.filter((i) => i.kind === 'assistant').map((i) => (i as AssistantItem).blocks.map((b: any) => b.text).join(''));
+    expect(texts).toEqual(['我是 Claude Opus 4.6', 'API Error: 429 Too Many Requests']);
+  });
 });
 
 describe('a turn still in flight', () => {

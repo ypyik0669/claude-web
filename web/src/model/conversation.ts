@@ -347,6 +347,10 @@ function applyAssistant(c: Conversation, m: any) {
   const parent = m.parent_tool_use_id ?? null;
   const k = key(parent);
   const content: any[] = Array.isArray(msg.content) ? msg.content : typeof msg.content === 'string' ? [{ type: 'text', text: msg.content }] : [];
+  // Resuming a conversation (a provider switch respawns the CLI) the CLI may nudge itself with a meta "Continue from
+  // where you left off." and answer it with a synthetic "No response requested." — bookkeeping, not a reply. Other
+  // synthetic messages (API errors) stay visible.
+  if (msg.model === '<synthetic>' && content.length && content.every((b) => b?.type === 'text' && String(b.text).trim() === 'No response requested.')) return;
   // Find the item this belongs to: streaming item, or an earlier final item with the same API id.
   let item = c.streaming.get(k);
   if (item && msg.id && item.id !== msg.id) item = undefined;

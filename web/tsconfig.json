@@ -9,7 +9,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "resolveJsonModule": true,
-    "paths": { "@shared": ["../server/src/protocol.ts"], "@catalog": ["../server/src/models/catalog.ts"], "@anywhere": ["../server/src/remote/anywhere/core/index.ts"], "@/*": ["./src/*"] }
+    "paths": { "@shared": ["../server/src/protocol.ts"], "@catalog": ["../server/src/models/catalog.ts"], "@errors": ["../server/src/errors/explain.ts"], "@anywhere": ["../server/src/remote/anywhere/core/index.ts"], "@/*": ["./src/*"] }
   },
   "include": ["src", "vite.config.ts", "vite.shell.config.ts"]
 }

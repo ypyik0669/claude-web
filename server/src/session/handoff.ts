@@ -19,6 +19,9 @@ import type { AgentKind } from '../protocol.js';
  * reasoning items are encrypted, and both are rejected outside their origin provider.
  */
 
+/** The briefing's first line. A conversation list that titles a conversation by a prompt skips a prompt that starts with it. */
+export const BRIEFING_HEAD = '# 会话交接';
+
 const AGENT_LABEL: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI', qwen: 'Qwen Code', kimi: 'Kimi CLI' };
 
 const shortPath = (p: unknown) => (typeof p === 'string' ? p.replace(/\\/g, '/').split('/').slice(-2).join('/') : '');
@@ -54,7 +57,7 @@ export function renderBriefing(events: CanonicalEvent[], opts: { objective?: str
   }
 
   const lines: string[] = [];
-  lines.push('# 会话交接');
+  lines.push(BRIEFING_HEAD);
   lines.push('');
   lines.push(
     `这个会话之前由 **${AGENT_LABEL[opts.fromAgent ?? ''] ?? opts.fromAgent ?? '另一个 agent'}** 在跑，现在交给你（${AGENT_LABEL[opts.toAgent ?? ''] ?? opts.toAgent ?? '你'}）继续。` +

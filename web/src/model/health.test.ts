@@ -9,6 +9,11 @@ describe('classifyError', () => {
     [{ rateLimitStatus: 'rejected' }, 'quota'],
     [{ terminalReason: 'blocking_limit' }, 'quota'],
     [{ error: 'billing_error' }, 'quota'],
+    // a relay account out of money (seen on real relays): not a window that resets
+    [{ status: 403, text: 'API Error: 403 {"error":{"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance"}}' }, 'balance'],
+    [{ status: 402, text: '402 {"error":{"message":"Insufficient balance"}}' }, 'balance'],
+    [{ text: '用户余额不足' }, 'balance'],
+    [{ text: 'Your credit balance is too low to access the Anthropic API' }, 'balance'],
     [{ error: 'authentication_failed' }, 'credential'],
     [{ status: 401, text: 'API Error: 401' }, 'credential'],
     [{ terminalReason: 'prompt_too_long' }, 'context'],

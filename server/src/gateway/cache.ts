@@ -66,6 +66,8 @@ export function insertTopLevelField(json: string, key: string, value: unknown): 
  * Line-level SSE pass-through that may rewrite single `data:` lines (a usage chunk) and leaves every other
  * byte — line endings included — as received. A trailing lone `\r` waits for the next chunk (half a CRLF).
  */
+const EMPTY_REASONING = /"reasoning_content"\s*:\s*""/;
+
 export class SseLines {
   private buf = '';
   constructor(private rewrite: (data: any) => boolean) {}
@@ -97,7 +99,7 @@ export class SseLines {
     return -1;
   }
   private line(l: string): string {
-    if (!l.startsWith('data:') || !l.includes('"usage"')) return l;
+    if (!l.startsWith('data:') || !(l.includes('"usage"') || EMPTY_REASONING.test(l))) return l;
     let j: any;
     try { j = JSON.parse(l.slice(5)); } catch { return l; }
     return this.rewrite(j) ? `data: ${JSON.stringify(j)}` : l;
@@ -112,4 +114,20 @@ export function fixChatUsage(u: any): boolean {
   if (hit === undefined) return false;
   u.prompt_tokens_details = { ...(d && typeof d === 'object' ? d : {}), cached_tokens: hit };
   return true;
+}
+
+/**
+ * `"reasoning_content": ""` next to a chunk's content (qwen3.8 on aizhongzhuan, 2026-10-02): ccb's OpenAI stream reader
+ * takes an empty string for "thinking starts" (it only checks != null), opens a thinking block, and every later text
+ * delta lands in it — the answer showed as its first word. An empty field says nothing: drop it (the deltas of a
+ * stream, the message of a whole response). False when nothing had to change.
+ */
+export function dropEmptyReasoning(j: any): boolean {
+  let changed = false;
+  for (const c of Array.isArray(j?.choices) ? j.choices : []) {
+    for (const part of [c?.delta, c?.message]) {
+      if (part && typeof part === 'object' && part.reasoning_content === '') { delete part.reasoning_content; changed = true; }
+    }
+  }
+  return changed;
 }

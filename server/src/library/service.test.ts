@@ -142,6 +142,103 @@ describe('LibraryService', () => {
     expect((await lib.list()).find((s) => s.sessionId === 'uuid-1')?.lastModified).toBe(future);
   });
 
+  // a Codex conversation started here, continued with `codex resume <thread>` in a terminal (interop F4)
+  describe('syncMirror: turns the Codex CLI added to a thread started here', () => {
+    const say = (text: string, uuid = `u-${text}`) => ({ type: 'user', uuid, message: { role: 'user', content: [{ type: 'text', text }] } });
+    const answer = (text: string) => ({ type: 'assistant', uuid: `a-${text}`, message: { role: 'assistant', content: [{ type: 'text', text }] } });
+    const toolResult = () => ({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'out' }] } });
+    const mine = async () => {
+      await transcripts.create({ sessionId: 'uuid-x', agent: 'codex', cwd: '/w', title: 'mine', createdAt: 1, nativeSessionId: 't1' });
+      for (const m of [say('one'), answer('1'), say('two'), toolResult(), answer('2')]) transcripts.append('uuid-x', m);
+    };
+    const prompts = (msgs: any[]) => msgs.filter((m) => m.type === 'user' && Array.isArray(m.message.content) && m.message.content[0].type === 'text').map((m) => m.message.content[0].text);
+
+    it("appends the thread's later turns once, and reads show them", async () => {
+      await mine();
+      codex.read.mockImplementation(async () => ({ messages: [say('one', 'n1'), answer('1'), say('two', 'n2'), toolResult(), answer('2'), say('three from cli', 'n3'), answer('3')] }));
+      expect(await lib.syncMirror('uuid-x')).toBe(2);
+      expect(await lib.syncMirror('uuid-x')).toBe(0); // already in
+      const r = await lib.read('uuid-x');
+      expect(prompts(r.messages)).toEqual(['one', 'two', 'three from cli']);
+      expect(r.messages.at(-1)).toMatchObject({ type: 'assistant', session_id: 'uuid-x' }); // our id, not the thread's
+    });
+
+    it('works without joining Codex (it is our own conversation), and not while a driver here runs it', async () => {
+      await mine();
+      codex.read.mockImplementation(async () => ({ messages: [say('one'), answer('1'), say('two'), answer('2'), say('three'), answer('3')] }));
+      let live = true;
+      lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents(['codex']), dataDirs: {}, trashDir: path.join(dir, 'library-trash'), isLive: () => live });
+      expect(prompts((await lib.read('uuid-x')).messages)).toEqual(['one', 'two']); // live: the driver writes the mirror
+      expect(codex.read).not.toHaveBeenCalled();
+      live = false;
+      expect(prompts((await lib.read('uuid-x')).messages)).toEqual(['one', 'two', 'three']);
+    });
+
+    it('concurrent calls append once', async () => {
+      await mine();
+      codex.read.mockImplementation(async () => ({ messages: [say('one'), answer('1'), say('two'), answer('2'), say('three'), answer('3')] }));
+      const n = await Promise.all([lib.syncMirror('uuid-x'), lib.syncMirror('uuid-x'), lib.syncMirror('uuid-x')]);
+      expect(n).toEqual([2, 2, 2]);
+      expect(prompts(await transcripts.load('uuid-x'))).toEqual(['one', 'two', 'three']);
+    });
+
+    it("leaves the mirror alone when its last prompts are not in the thread (don't guess), or for other agents / imported heads", async () => {
+      await mine();
+      codex.read.mockImplementation(async () => ({ messages: [say('something else'), answer('x')] }));
+      expect(await lib.syncMirror('uuid-x')).toBe(0);
+      await transcripts.create({ sessionId: 'uuid-g', agent: 'gemini', cwd: '/w', title: 'g', createdAt: 1, nativeSessionId: 'g1' });
+      await transcripts.create({ sessionId: 'uuid-i', agent: 'codex', cwd: '/w', title: 'i', createdAt: 1, nativeSessionId: 't2', imported: true });
+      expect(await lib.syncMirror('uuid-g')).toBe(0);
+      expect(await lib.syncMirror('uuid-i')).toBe(0);
+      expect(codex.read).toHaveBeenCalledTimes(1);
+    });
+
+    it('looks further back a page at a time until the last prompts show up', async () => {
+      await mine();
+      codex.read.mockImplementation(async (_id: string, o: { cursor?: string }) => (o.cursor
+        ? { messages: [say('one'), answer('1'), say('two'), answer('2')] }
+        : { messages: [say('three'), answer('3'), say('four'), answer('4')], next: 'older' }));
+      expect(await lib.syncMirror('uuid-x')).toBe(4);
+      expect(prompts(await transcripts.load('uuid-x'))).toEqual(['one', 'two', 'three', 'four']);
+    });
+
+    it("the Codex CLI writing the thread's rollout also names the conversation here it was merged into", async () => {
+      const T = '01a0f133-d017-7e81-829d-fa7a91fd3158';
+      codex.items = [item(`codex-${T}`, 'codex', 200)];
+      await lib.join('codex', true);
+      await transcripts.create({ sessionId: 'uuid-w', agent: 'codex', cwd: '/w', title: 'mine', createdAt: 1, nativeSessionId: T });
+      await lib.list(); // codex-<T> merges into uuid-w
+      const codexDir = path.join(dir, 'codex-sessions');
+      const day = path.join(codexDir, '2026', '10', '02');
+      fs.mkdirSync(day, { recursive: true });
+      lib.start({ codex: [codexDir] });
+      const got: string[][] = [];
+      lib.on('transcripts', (ids: string[]) => got.push(ids));
+      await new Promise((r) => setTimeout(r, 300)); // the recursive handle is up
+      fs.writeFileSync(path.join(day, `rollout-2026-10-02T10-00-00-${T}.jsonl`), '{"type":"response_item"}\n');
+      const ids = await new Promise<string[] | null>((r) => { const end = Date.now() + 5000; const t = setInterval(() => { if (got.length || Date.now() > end) { clearInterval(t); r(got[0] ?? null); } }, 50); });
+      expect(ids?.sort()).toEqual([`codex-${T}`, 'uuid-w']);
+    });
+
+    it('…and so does a thread the cached list has not seen yet (started here after the last list)', async () => {
+      const T = '01a0f133-d017-7e81-829d-fa7a91fd3159';
+      await lib.join('codex', true);
+      await lib.list(); // cached without the thread
+      await transcripts.create({ sessionId: 'uuid-new', agent: 'codex', cwd: '/w', title: 'mine', createdAt: 1, nativeSessionId: T.toUpperCase() });
+      const codexDir = path.join(dir, 'codex-sessions');
+      const day = path.join(codexDir, '2026', '10', '02');
+      fs.mkdirSync(day, { recursive: true });
+      lib.start({ codex: [codexDir] });
+      const got: string[] = [];
+      lib.on('transcripts', (ids: string[]) => got.push(...ids));
+      await new Promise((r) => setTimeout(r, 300));
+      fs.writeFileSync(path.join(day, `rollout-2026-10-02T10-00-00-${T}.jsonl`), '{"type":"response_item"}\n');
+      await new Promise<void>((r) => { const end = Date.now() + 5000; const t = setInterval(() => { if (got.includes('uuid-new') || Date.now() > end) { clearInterval(t); r(); } }, 50); });
+      expect(got).toContain('uuid-new');
+      expect(got).toContain(`codex-${T}`);
+    });
+  });
+
   it('lists archived sessions of archive-capable sources, flagged archived', async () => {
     codex.list.mockImplementation(async (o: { archived?: boolean }) => ({ items: o.archived ? [item('codex-old', 'codex', 50)] : codex.items }));
     await lib.join('codex', true);
@@ -672,6 +769,25 @@ describe('LibraryService', () => {
     }
   });
 
+  it('…but one indexed while still empty (a new conversation before its first turn) is re-read right away', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const t0 = 1_800_000_000_000;
+      vi.setSystemTime(t0);
+      claude.read.mockImplementationOnce(async () => ({ messages: [] }));
+      claude.items = [item('c1', 'claude', t0 - 1_000)];
+      await lib.refreshIndex();
+      vi.setSystemTime(t0 + 10_000);
+      claude.items = [item('c1', 'claude', t0 + 9_000)];
+      lib.invalidate();
+      await lib.refreshIndex();
+      expect(claude.read).toHaveBeenCalledTimes(2); // not 3 minutes later
+      expect((await lib.search('hello', 10)).map((h) => h.session.sessionId)).toContain('c1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('search uses the index and fills in summaries', async () => {
     await lib.refreshIndex();
     const hits = await lib.search('hello', 10);
@@ -686,5 +802,22 @@ describe('LibraryService', () => {
     await lib.join('codex', true);
     await lib.list();
     await expect(lib.rename('codex-t1', 'x')).rejects.toThrow('该来源不支持此操作');
+  });
+});
+
+describe('turnsAfter: where a thread goes on past the mirror', () => {
+  const say = (text: string) => ({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+  const answer = (text: string) => ({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } });
+  const tool = () => ({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'x' }] } });
+  it('the turns after the last three prompts, not after a repeated one', async () => {
+    const { turnsAfter } = await import('./service.js');
+    const mirror = [say('a'), answer('1'), say('继续'), answer('2'), say('继续'), answer('3')];
+    // the CLI also typed 「继续」: matching only the last prompt would take its turn as ours
+    const thread = [say('a'), answer('1'), say('继续'), tool(), answer('2'), say('继续'), answer('3'), say('继续'), answer('4')];
+    expect(turnsAfter(mirror, thread)).toEqual([say('继续'), answer('4')]);
+    expect(turnsAfter(mirror, thread.slice(0, 7))).toEqual([]); // lined up to the end
+    expect(turnsAfter(mirror, [say('x'), answer('y')])).toBeNull(); // not found: do not guess
+    expect(turnsAfter([answer('only')], thread)).toBeNull(); // no prompt to anchor on
+    expect(turnsAfter([say('a')], [say('a'), answer('1'), say('b')])).toEqual([say('b')]);
   });
 });

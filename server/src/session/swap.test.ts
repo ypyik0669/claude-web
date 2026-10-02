@@ -29,6 +29,7 @@ function fakePool() {
   return {
     opened,
     sent,
+    emit: () => true,
     get: () => undefined,
     close: vi.fn(async () => {}),
     open: vi.fn((p: any) => {
@@ -115,6 +116,17 @@ describe('swapAgent / handOver of imported sessions', () => {
     expect(pool.sent[0].sessionId).toBe('own-1');
     expect(pool.sent[0].text).toBe(r.briefing);
   });
+
+  it('Claude → Codex → Claude: back on Claude the Codex mirror steps aside (it reopened as Codex before); Codex again picks its thread up', async () => {
+    await mods.transcripts.create({ sessionId: 'own-2', agent: 'codex', cwd: '/proj/own', title: 'own', createdAt: 1, nativeSessionId: 'thr-9' });
+    const back = await mods.swap.swapAgent(deps, 'own-2', 'claude', undefined);
+    expect(back.sessionId).toBe('own-2');
+    expect(await mods.transcripts.head('own-2')).toBeNull(); // session.open / transcript.load now see a Claude conversation
+    expect(pool.opened.at(-1)).toMatchObject({ agent: 'claude', briefing: expect.any(String) }); // ccb takes it as the first message
+    expect((await lib.list()).find((s: SessionSummary) => s.sessionId === 'own-2')?.agent).not.toBe('codex');
+    await mods.swap.swapAgent(deps, 'own-2', 'codex', undefined);
+    expect(await mods.transcripts.head('own-2')).toMatchObject({ agent: 'codex', nativeSessionId: 'thr-9' });
+  });
 });
 
 // A pool that holds live runners (info with model / provider), so swapProvider sees what it is replacing.
@@ -162,6 +174,8 @@ describe('swapProvider (model with the profile)', () => {
     const pool2 = livePool({ s2: { model: 'gpt-6-astra', providerId: 'prov-b' } });
     await swap.swapProvider({ ...deps, pool: pool2 }, 's2', undefined, 'Claude 账号');
     expect(pool2.opened[0].model).toBeUndefined();
+    // back to the account is said out loud: "not given" let the pool resume on the provider still on record
+    expect(pool2.opened[0].providerId).toBe('claude');
   });
   it('the switch mark records where the session came from (usage attributes earlier turns to it)', async () => {
     const marks: any[] = [];
@@ -180,11 +194,76 @@ describe('swapProvider (model with the profile)', () => {
     await Promise.all([swap.swapProvider({ ...deps, pool }, 's1', 'prov-b', 'B'), swap.swapProvider({ ...deps, pool }, 's1', 'prov-c', 'C')]);
     expect(pool.events).toEqual(['close:s1', 'open:s1:prov-b', 'close:s1', 'open:s1:prov-c']);
   });
+  it('every window learns the new provider / model as soon as the new process exists, not when the CLI is done starting (real-relay test: 30 s of 「已关闭」 under the old chip)', async () => {
+    const pool = livePool({ s1: { model: 'gpt-5.5', providerId: 'prov-a' } });
+    const emitted: any[][] = [];
+    (pool as any).emit = (...a: any[]) => { emitted.push(a); return true; };
+    await swap.swapProvider({ ...deps, pool }, 's1', 'prov-b', 'B', 'glm-5.3');
+    const at = (pred: (e: any[]) => boolean) => emitted.findIndex(pred);
+    const info = at((e) => e[0] === 'info');
+    expect(emitted[info]?.[1]).toMatchObject({ sessionId: 's1', providerId: 'prov-b', model: 'glm-5.3' });
+    const starting = at((e) => e[0] === 'state' && e[1] === 's1' && e[2] === 'starting');
+    expect(starting).toBeGreaterThan(-1);
+    // after the old process went away (its 「closed」 must not be the last word)
+    expect(at((e) => e[0] === 'swapping')).toBeLessThan(info);
+  });
   it('without a live runner the remembered profile decides whether it changed', async () => {
     const pool = livePool({});
     await deps.meta.setSessionMeta('s3', { providerId: 'prov-a' });
     await swap.swapProvider({ ...deps, pool }, 's3', 'prov-b', 'B');
     expect(pool.opened[0].model).toBeUndefined();
+  });
+
+  it('a turn cut off by the switch gets a result (windows kept it open with the timer running)', async () => {
+    const pool = livePool({ s1: { providerId: 'prov-a' } });
+    pool.get('s1').state = 'running';
+    const emitted: any[][] = [];
+    (pool as any).emit = (...a: any[]) => { emitted.push(a); return true; };
+    await swap.swapProvider({ ...deps, pool }, 's1', 'prov-b', 'B');
+    const res = emitted.find((e) => e[0] === 'message' && e[2]?.type === 'result');
+    expect(res?.[1]).toBe('s1');
+    expect(res?.[2]).toMatchObject({ is_error: true, terminal_reason: 'aborted_swap', total_cost_usd: 0 });
+    // an idle conversation: no such result
+    const idle = livePool({ s2: { providerId: 'prov-a' } });
+    const seen: any[][] = [];
+    (idle as any).emit = (...a: any[]) => { seen.push(a); return true; };
+    await swap.swapProvider({ ...deps, pool: idle }, 's2', 'prov-b', 'B');
+    expect(seen.some((e) => e[0] === 'message')).toBe(false);
+  });
+
+  it('a send and a plain open during a switch wait for it (refused "is not open" / reopened on the old provider before)', async () => {
+    const pool = livePool({ s1: { providerId: 'prov-a' } });
+    const switching = swap.swapProvider({ ...deps, pool }, 's1', 'prov-b', 'B');
+    const order: string[] = [];
+    const send = swap.afterSwitch('s1').then(() => order.push(`send:${pool.get('s1')?.info.providerId}`));
+    const open = swap.openOnProvider({ ...deps, pool }, { sessionId: 's1', cwd: '/proj' } as any, (id: string) => id, {
+      open: async () => { order.push(`open:${pool.get('s1')?.info.providerId}`); return null; },
+      swapped: () => null,
+    });
+    await Promise.all([switching, send, open]);
+    expect(order.sort()).toEqual(['open:prov-b', 'send:prov-b']); // both after the switch, both see the new process
+    await swap.afterSwitch('nothing-running'); // no switch: resolves at once
+  });
+
+  it('a process reopened in the gap on the old provider (IM / schedules go through the pool) is replaced, so the record is what runs', async () => {
+    const runners = new Map<string, any>([['s1', { info: { sessionId: 's1', cwd: '/proj', agent: 'claude', providerId: 'prov-a' } }]]);
+    const pool = {
+      emit: () => true,
+      get: (id: string) => runners.get(id),
+      // closing: and in the gap somebody's pool.open brings it back on the recorded provider
+      close: vi.fn(async (id: string) => { runners.delete(id); if (pool.close.mock.calls.length === 1) runners.set(id, { sessionId: id, info: { sessionId: id, agent: 'claude', providerId: 'prov-a' }, getHistory: () => [] }); }),
+      open: vi.fn((p: any) => {
+        const live = runners.get(p.sessionId);
+        if (live) return live; // the real pool hands back a live runner
+        const r = { sessionId: p.sessionId, info: { sessionId: p.sessionId, agent: 'claude', providerId: p.providerId }, getHistory: () => [] };
+        runners.set(p.sessionId, r);
+        return r;
+      }),
+    };
+    const r = await swap.swapProvider({ ...deps, pool }, 's1', 'prov-b', 'B');
+    expect(r.info.providerId).toBe('prov-b');
+    expect(runners.get('s1').info.providerId).toBe('prov-b');
+    expect(deps.meta.sessionMeta('s1').providerId).toBe('prov-b');
   });
 });
 

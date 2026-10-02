@@ -1,7 +1,7 @@
 {
   "name": "claude-web",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "license": "MIT",
   "repository": "github:ypyik0669/claude-web",
   "type": "module",

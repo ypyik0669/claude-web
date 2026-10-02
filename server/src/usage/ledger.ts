@@ -41,6 +41,9 @@ export class LedgerService {
   observe(sessionId: string, m: any, providerId?: string) {
     if (!m || typeof m !== 'object') return;
     if (m.type === 'result') {
+      // our own end-of-turn marker for a turn a provider / agent switch cut off (session/swap.ts): it carries no usage,
+      // no model and no call — the turn's real cost, if any, was in the process that was stopped
+      if (m.terminal_reason === 'aborted_swap') return;
       const u = m.usage ?? {};
       const models = m.modelUsage ? Object.keys(m.modelUsage) : [];
       const model = models[0] ?? '';

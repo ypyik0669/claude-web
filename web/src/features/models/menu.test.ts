@@ -259,3 +259,21 @@ describe('other agents as sources in the same flat list (the old agent picker, s
     expect(cx.items.some((i) => i.model === 'gpt-5.6-sol')).toBe(false); // not the ChatGPT account's models
   });
 });
+
+describe('provider models that are not for chatting, and the effort that never leaves', () => {
+  it('an image-only key lists no chat models; image models drop out of a mixed list', async () => {
+    const { profileModels } = await import('./menu');
+    expect(profileModels(prov('img', { type: 'openai', models: ['gpt-image-2', 'gpt-image-2.5-flare'] }), [], [])).toEqual([]);
+    expect(profileModels(prov('mix', { type: 'openai', models: ['dall-e-3', 'gpt-5.6-sol', 'text-embedding-3-large'] }), [], [])).toEqual(['gpt-5.6-sol']);
+  });
+  it('no 智能程度 on OpenAI / Gemini / Grok format providers (ccb never sends it); Anthropic format and the account keep it', async () => {
+    const { effortStaysHome } = await import('./menu');
+    expect(effortStaysHome(PROVIDERS, 'gkey')).toBe(true);
+    expect(effortStaysHome(PROVIDERS, 'gem')).toBe(true);
+    expect(effortStaysHome(PROVIDERS, 'xai')).toBe(true);
+    expect(effortStaysHome(PROVIDERS, 'snbchr')).toBe(false);
+    expect(effortStaysHome(PROVIDERS, 'gw')).toBe(false);
+    expect(effortStaysHome(PROVIDERS, 'claude')).toBe(false);
+    expect(effortStaysHome(PROVIDERS, undefined)).toBe(false);
+  });
+});

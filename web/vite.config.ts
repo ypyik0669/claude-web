@@ -10,6 +10,7 @@ export default defineConfig({
     alias: {
       '@shared': path.resolve(__dirname, '../server/src/protocol.ts'),
       '@catalog': path.resolve(__dirname, '../server/src/models/catalog.ts'),
+      '@errors': path.resolve(__dirname, '../server/src/errors/explain.ts'),
       // the phone shell's channel code (web-standard APIs only); index.ts, never the core's tests (they use node:*)
       '@anywhere': path.resolve(__dirname, '../server/src/remote/anywhere/core/index.ts'),
       '@': path.resolve(__dirname, 'src'),
