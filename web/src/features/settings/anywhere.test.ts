@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_BROKERS, DEFAULT_STUN } from '@anywhere';
 import type { AnywhereRecent, AnywhereStatus } from '@shared';
 import {
-  anywhereLine, brokerProblem, cleanBrokers, deviceLastLink, lastLinkText, linkKindText, recentRows, shellUrlProblem,
-  shownIp, stunProblem,
+  anywhereLine, brokerProblem, cleanBrokers, deviceLastLink, lastLinkText, linkKindText, pairLinkProblem, recentRows,
+  shellUrlProblem, shownIp, stunProblem,
 } from './anywhere';
 
 const NOW = Date.UTC(2026, 9, 2, 12, 0, 0);
 const min = 60_000;
 
 function st(brokers: AnywhereStatus['brokers'], on = true): AnywhereStatus {
-  return { on, brokers, sessions: [], recent: [], shellUrl: 'https://ypyik0669.github.io/claude-web/', keepAwake: true };
+  return { on, brokers, sessions: [], recent: [], shellUrl: 'https://claude-web-shell.github.io/', keepAwake: true };
 }
 
 describe('the last link of a device, in words', () => {
@@ -105,7 +106,7 @@ describe('recent connections (更多选项)', () => {
 
 describe('editing the lists in 更多选项: a bad value is a sentence, not saved', () => {
   it('brokers: wss:// only, a name each, no name twice, at least one; blank rows are dropped', () => {
-    const good = { name: 'emqx', url: 'wss://broker.emqx.io:8084/mqtt', relay: false };
+    const good = { name: 'emqx', url: 'wss://broker.emqx.io:8084/mqtt', relay: true };
     expect(brokerProblem([good])).toBeNull();
     expect(brokerProblem([good, { name: '', url: '', relay: false }])).toBeNull();
     expect(brokerProblem([])).toMatch(/至少/);
@@ -115,6 +116,23 @@ describe('editing the lists in 更多选项: a bad value is a sentence, not save
     expect(brokerProblem([good, { name: 'x', url: 'wss://a b', relay: false }])).toMatch(/第 2 行/);
     expect(brokerProblem([good, { name: '', url: 'wss://a/mqtt', relay: false }])).toMatch(/第 2 行.*名称/);
     expect(brokerProblem([good, { ...good, url: 'wss://other/mqtt' }])).toMatch(/emqx.*重复/);
+  });
+
+  it('brokers: at least one ticked 用于转发 (the phone dials this very list; the relay needs one on both sides)', () => {
+    const plain = { name: 'emqx', url: 'wss://broker.emqx.io:8084/mqtt', relay: false };
+    expect(brokerProblem([plain])).toMatch(/至少要勾一行「用于转发」/);
+    expect(brokerProblem([plain, { name: 'cn', url: 'wss://cn.example/mqtt', relay: true }])).toBeNull();
+    // a ticked row left blank does not count
+    expect(brokerProblem([plain, { name: '', url: '', relay: true }])).toMatch(/用于转发/);
+  });
+
+  it('the lists must fit the pairing QR (they go into it when they are not the defaults)', () => {
+    const shell = 'https://claude-web-shell.github.io/';
+    expect(pairLinkProblem(shell, DEFAULT_BROKERS, DEFAULT_STUN)).toBeNull();
+    const ordinary = Array.from({ length: 16 }, (_, i) => ({ name: `broker-${i}`, url: `wss://broker-${i}.example.com:8084/mqtt`, relay: true }));
+    expect(pairLinkProblem(shell, ordinary, Array.from({ length: 16 }, (_, i) => `stun:stun${i}.example.com:3478`))).toBeNull();
+    const long = Array.from({ length: 16 }, (_, i) => ({ name: `broker-${i}`, url: `wss://${'x'.repeat(150)}${i}.example.com:8084/mqtt`, relay: true }));
+    expect(pairLinkProblem(shell, long, [])).toMatch(/二维码装不下/);
   });
 
   it('cleanBrokers: trimmed, blank rows out, relay only when ticked, the sign-in kept', () => {
@@ -137,7 +155,7 @@ describe('editing the lists in 更多选项: a bad value is a sentence, not save
   });
 
   it('at most 16 rows each: the PC reads no more (blank rows do not count)', () => {
-    const brokers = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `b${i}`, url: `wss://b${i}/mqtt`, relay: false }));
+    const brokers = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `b${i}`, url: `wss://b${i}/mqtt`, relay: true }));
     expect(brokerProblem([...brokers(16), { name: '', url: '', relay: false }])).toBeNull();
     expect(brokerProblem(brokers(17))).toMatch(/最多填 16 行/);
     const stun = (n: number) => Array.from({ length: n }, (_, i) => `stun:s${i}:3478`);
@@ -146,7 +164,8 @@ describe('editing the lists in 更多选项: a bad value is a sentence, not save
   });
 
   it('the phone page: https://, ending in /', () => {
-    expect(shellUrlProblem('https://ypyik0669.github.io/claude-web/')).toBeNull();
+    expect(shellUrlProblem('https://claude-web-shell.github.io/')).toBeNull();
+    expect(shellUrlProblem('https://me.github.io/claude-web/')).toBeNull();
     expect(shellUrlProblem(' https://me.example/shell/ ')).toBeNull();
     expect(shellUrlProblem('http://me.example/shell/')).toMatch(/https:\/\//);
     expect(shellUrlProblem('https://me.example/shell')).toMatch(/\/ 结尾/);

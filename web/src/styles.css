@@ -2383,7 +2383,9 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .auto-head { padding-left: 
 .aw-line[data-tone="wait"], .aw-line[data-tone="off"] { color: var(--ink-3); }
 .pair-side { flex: 1 1 auto; min-width: 0; }
 .pair-switch { margin-bottom: 8px; flex-wrap: wrap; }
-.pair-qr { background: #fff; width: 180px; height: 180px; }
+/* a link that carries the PC's own lists makes a denser code: shown larger (pair-qr.ts), never wider than the box */
+.pair-qr { background: #fff; width: 180px; height: auto; aspect-ratio: 1 / 1; max-width: 100%; image-rendering: pixelated; }
+.pair-box { flex-wrap: wrap; }
 .aw-more .aw-def { margin-left: 6px; font-weight: 400; font-size: 11.5px; }
 .aw-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; }
 .aw-row .field { min-width: 0; }

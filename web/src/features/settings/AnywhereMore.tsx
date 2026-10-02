@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
-import { DEFAULT_BROKERS, DEFAULT_STUN, type BrokerDef } from '@anywhere';
+import { DEFAULT_BROKERS, DEFAULT_STUN, brokerEntries, stunEntries, type BrokerDef } from '@anywhere';
 import type { AnywhereStatus } from '@shared';
 import { useRemoteStatus } from './RemoteSection';
 import {
-  brokerProblem, cleanBrokers, cleanStun, recentRows, shellUrlProblem, stunProblem, type BrokerDraft,
+  RESCAN_NOTE, brokerProblem, cleanBrokers, cleanStun, pairLinkProblem, recentRows, shellUrlProblem, stunProblem, type BrokerDraft,
 } from './anywhere';
 
 // 设置 → 手机与其它电脑 → 更多选项: what 在外面也能用 runs on — the signaling brokers, the STUN servers, the phone page
@@ -49,20 +49,41 @@ export function AnywhereMore() {
   const shellNow = st?.anywhere?.shellUrl ?? (typeof storedShell === 'string' ? storedShell : '');
   useEffect(() => setShell(shellNow), [shellNow]);
 
+  // a changed broker or STUN list goes into the QR: phones paired before keep dialing the old one until they scan again
   const save = async (key: string, value: unknown, which: keyof typeof err) => {
     setErr((e) => ({ ...e, [which]: undefined }));
-    try { await setSetting(key, value); toast(value === undefined ? '已恢复默认' : '已保存', true); } catch (e: any) { toast(e.message); }
+    const lists = which !== 'shell';
+    try {
+      await setSetting(key, value);
+      const done = value === undefined ? '已恢复默认' : '已保存';
+      toast(lists ? `${done}。${RESCAN_NOTE}` : done, true);
+    } catch (e: any) { toast(e.message); }
   };
-  const saveBrokers = () => { const why = brokerProblem(brokers); if (why) return setErr((e) => ({ ...e, brokers: why })); void save(BROKERS, cleanBrokers(brokers), 'brokers'); };
-  const saveStun = () => { const why = stunProblem(stun); if (why) return setErr((e) => ({ ...e, stun: why })); void save(STUN, cleanStun(stun), 'stun'); };
-  const saveShell = () => { const why = shellUrlProblem(shell); if (why) return setErr((e) => ({ ...e, shell: why })); void save(SHELL, shell.trim(), 'shell'); };
+  // what the PC runs with once this is saved, for the QR's size: the other list as stored (or its default)
+  const storedBrokerList = (): BrokerDef[] => (Array.isArray(storedBrokers) ? brokerEntries(storedBrokers) ?? [] : DEFAULT_BROKERS);
+  const storedStunList = (): string[] => (Array.isArray(storedStun) ? stunEntries(storedStun) ?? [] : DEFAULT_STUN);
+  const saveBrokers = () => {
+    const why = brokerProblem(brokers) ?? pairLinkProblem(shellNow, cleanBrokers(brokers), storedStunList());
+    if (why) return setErr((e) => ({ ...e, brokers: why }));
+    void save(BROKERS, cleanBrokers(brokers), 'brokers');
+  };
+  const saveStun = () => {
+    const why = stunProblem(stun) ?? pairLinkProblem(shellNow, storedBrokerList(), cleanStun(stun));
+    if (why) return setErr((e) => ({ ...e, stun: why }));
+    void save(STUN, cleanStun(stun), 'stun');
+  };
+  const saveShell = () => {
+    const why = shellUrlProblem(shell) ?? pairLinkProblem(shell.trim(), storedBrokerList(), storedStunList());
+    if (why) return setErr((e) => ({ ...e, shell: why }));
+    void save(SHELL, shell.trim(), 'shell');
+  };
   const editBroker = (i: number, patch: Partial<BrokerDraft>) => setBrokers((rows) => rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const recent = recentRows(st?.anywhere?.recent, st?.devices ?? []);
 
   return (
     <div className="section aw-more">
       <h5>牵线服务器（MQTT）{!Array.isArray(storedBrokers) && <span className="faint aw-def">默认</span>}</h5>
-      <div className="sub">手机和电脑都连这些公共服务器来找到对方（MQTT over WSS），按顺序优先。它们只看到哈希过的频道名、加密后数据的大小和时间，以及双方的 IP。直连打不通时，慢速转发只走勾了「用于转发」的那几个。</div>
+      <div className="sub">电脑连这些公共服务器等手机来找它（MQTT over WSS），按顺序优先；手机扫码时从二维码里拿到这份列表，之后都用它。改了之后，已经配对的手机要重新扫码。它们只看到哈希过的频道名、加密后数据的大小和时间，以及双方的 IP。直连打不通时，慢速转发只走勾了「用于转发」的那几个（至少勾一个）。</div>
       <div className="list" data-id="anywhere-brokers">
         {brokers.map((r, i) => {
           const s = brokerState(st?.anywhere, r.name);
@@ -85,7 +106,7 @@ export function AnywhereMore() {
       </div>
 
       <h5>STUN 服务器{!Array.isArray(storedStun) && <span className="faint aw-def">默认</span>}</h5>
-      <div className="sub">直连（WebRTC）时用它们查出两边在公网上的地址，好让 ICE 打洞。STUN 服务器看得到双方的 IP。只能填 stun: 开头的地址。</div>
+      <div className="sub">直连（WebRTC）时用它们查出两边在公网上的地址，好让 ICE 打洞。STUN 服务器看得到双方的 IP。只能填 stun: 开头的地址。手机也是扫码时拿到这份列表：改了之后，已经配对的手机要重新扫码。</div>
       <div className="list" data-id="anywhere-stun">
         {stun.map((s, i) => (
           <div key={i} className="aw-row">

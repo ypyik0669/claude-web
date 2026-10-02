@@ -1,20 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { DialError, F, decodeFrame, type DialResult, type DialState, type Link, type LinkKind } from '@anywhere';
+import { DialError, F, RELAY_AGAIN_ICE_MS, decodeFrame, type BrokerDef, type DialResult, type DialState, type Link, type LinkKind } from '@anywhere';
 import { appVersion, cacheName, type CacheLike, type CachesLike } from './assets';
 import type { DeviceRec } from './devices';
 import { readShellRequest } from './forward';
 import { frameParams } from './route';
 import { Session, pairWith, type Dialer, type SessionView } from './session';
-import type { PairLink } from './pair-link';
+import type { PairLink, PcLists } from './pair-link';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 const tick = (ms = 0) => new Promise<void>((r) => setTimeout(r, ms));
-const SCOPE = 'https://ypyik0669.github.io/claude-web/';
+const SCOPE = 'https://claude-web-shell.github.io/';
 const ID = 'a1b2c3d4e5f6';
 const DEVICE: DeviceRec = { id: ID, pcName: 'my-pc', token: 'tok', pairedAt: 1 };
 const INDEX = '<script type="module" src="./assets/index-A1.js"></script><link rel="stylesheet" href="./assets/index-C3.css">';
-const PC_SILENT = '电脑没有回应：电脑可能关机、睡眠，或 Claude Web 没在运行。';
+/** A paired PC's room silent (F8: a revoked phone is told it has to pair again). */
+const PC_SILENT = '电脑没有回应：电脑可能关机、睡眠，或 Claude Web 没在运行。如果在电脑上吊销了这台手机，需要重新扫码配对。';
 /** The cache the shell uses for this version and index.html. */
 const cacheOf = async (version: string, index = INDEX) => cacheName(ID, await appVersion(version, enc.encode(index)));
 
@@ -125,11 +126,12 @@ function memoryCaches(opts: { failOpen?: boolean } = {}) {
 
 /** Dials hand out the next link of `plan`, or throw the next error. */
 function fakeDialer(plan: (FakePc | DialError)[]) {
-  const calls: { topic: string; fresh: boolean }[] = [];
+  const calls: { topic: string; fresh: boolean; iceMs?: number; lists: PcLists }[] = [];
   let idled = 0;
+  let restarts = 0;
   const dialer: Dialer = {
-    async dial(room, onstate: (s: DialState) => void, fresh) {
-      calls.push({ topic: room.topic, fresh });
+    async dial(room, onstate: (s: DialState) => void, p) {
+      calls.push({ topic: room.topic, fresh: p.fresh, iceMs: p.iceMs, lists: p.lists });
       onstate('finding');
       await tick();
       const next = plan.shift();
@@ -141,16 +143,19 @@ function fakeDialer(plan: (FakePc | DialError)[]) {
     idle() {
       idled++;
     },
+    restart() {
+      restarts++;
+    },
   };
-  return { dialer, calls, idled: () => idled };
+  return { dialer, calls, idled: () => idled, restarts: () => restarts };
 }
 
-function session(plan: (FakePc | DialError)[], o: { caches?: ReturnType<typeof memoryCaches>; rtcMissing?: boolean } = {}) {
+function session(plan: (FakePc | DialError)[], o: { caches?: ReturnType<typeof memoryCaches>; rtcMissing?: boolean; device?: DeviceRec } = {}) {
   const views: SessionView[] = [];
   const caches = o.caches ?? memoryCaches();
   const d = fakeDialer(plan);
   const s = new Session({
-    device: DEVICE,
+    device: o.device ?? DEVICE,
     dialer: d.dialer,
     caches: caches.caches,
     scope: SCOPE,
@@ -425,5 +430,106 @@ describe('pairWith', () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe('AbortError');
     expect(pc.closed).toBe(true);
+  });
+
+  it("a link with the PC's own lists (F2): the pairing dial uses them, and the record keeps them", async () => {
+    const lists = { brokers: [{ name: 'cn', url: 'wss://mqtt.example.cn:8084/mqtt', relay: true }], stun: [] };
+    const d = fakeDialer([paired()]);
+    const rec = await pairWith({ ...LINK, ...lists }, d.dialer, () => {}, 'x', { now: () => 42 });
+    expect(d.calls[0].lists).toEqual(lists);
+    expect(rec).toEqual({ id: ID, pcName: 'my-pc', token: 'T', pairedAt: 42, ...lists });
+    // a link without lists (a PC on the defaults): none on the dial, none on the record
+    const e = fakeDialer([paired()]);
+    const plain = await pairWith(LINK, e.dialer, () => {}, 'x', { now: () => 42 });
+    expect(e.calls[0].lists).toEqual({});
+    expect('brokers' in plain || 'stun' in plain).toBe(false);
+  });
+});
+
+describe("Session: the PC's own lists (F2)", () => {
+  it('every dial of a device uses the lists on its record: the first one and each redial', async () => {
+    const brokers: BrokerDef[] = [{ name: 'cn', url: 'wss://mqtt.example.cn:8084/mqtt', relay: true }];
+    const first = new FakePc('p2p-v4', pcFiles('0.1.5'));
+    const second = new FakePc('p2p-v4', pcFiles('0.1.5'));
+    const t = session([first, second], { device: { ...DEVICE, brokers, stun: ['stun:stun.example.cn:3478'] } });
+    await t.s.start();
+    first.drop();
+    await until(() => last(t.views).k === 'linked', 'relinked');
+    expect(t.calls.map((c) => c.lists)).toEqual([
+      { brokers, stun: ['stun:stun.example.cn:3478'] },
+      { brokers, stun: ['stun:stun.example.cn:3478'] },
+    ]);
+  });
+
+  it('a record without lists dials with none (main.ts uses the defaults then)', async () => {
+    const t = session([new FakePc('p2p-v4', pcFiles('0.1.5'))]);
+    await t.s.start();
+    expect(t.calls[0].lists).toEqual({});
+  });
+});
+
+describe('Session: the network changed (F4)', () => {
+  it('over the slow relay the brokers start over at once and the link is kept (no redial); a direct link is left alone', async () => {
+    const relay = new FakePc('relay', pcFiles('0.1.5'));
+    const t = session([relay]);
+    await t.s.start();
+    expect(t.s.linkKind).toBe('relay');
+    await t.s.networkChanged();
+    expect(t.restarts()).toBe(1);
+    expect(t.calls.length).toBe(1);
+    expect(relay.closed).toBe(false);
+    expect(last(t.views).k).toBe('open');
+
+    const direct = new FakePc('p2p-v6', pcFiles('0.1.5'));
+    const u = session([direct]);
+    await u.s.start();
+    await u.s.networkChanged();
+    expect(u.restarts()).toBe(0);
+    expect(u.calls.length).toBe(1);
+  });
+
+  it('a relay link that drops with no sign of a network change: the redial gives ICE only the short window', async () => {
+    const first = new FakePc('relay', pcFiles('0.1.5'));
+    const second = new FakePc('relay', pcFiles('0.1.5'));
+    const t = session([first, second]);
+    await t.s.start();
+    // the first dial of a session: the full window
+    expect(t.calls[0].iceMs).toBeUndefined();
+    first.drop('nothing heard from the other side for 30000 ms');
+    await until(() => last(t.views).k === 'linked', 'relinked');
+    expect(t.calls[1]).toMatchObject({ fresh: true, iceMs: RELAY_AGAIN_ICE_MS });
+    expect(RELAY_AGAIN_ICE_MS).toBeLessThanOrEqual(5_000);
+  });
+
+  it('a drop soon after a network change, or after a direct link: the full window (direct may work now)', async () => {
+    const a1 = new FakePc('relay', pcFiles('0.1.5'));
+    const a2 = new FakePc('p2p-v4', pcFiles('0.1.5'));
+    const t = session([a1, a2]);
+    await t.s.start();
+    await t.s.networkChanged();
+    a1.drop();
+    await until(() => last(t.views).k === 'linked', 'relinked');
+    expect(t.calls[1].iceMs).toBeUndefined();
+
+    const b1 = new FakePc('p2p-v6', pcFiles('0.1.5'));
+    const b2 = new FakePc('p2p-v6', pcFiles('0.1.5'));
+    const u = session([b1, b2]);
+    await u.s.start();
+    b1.drop();
+    await until(() => last(u.views).k === 'linked', 'relinked');
+    expect(u.calls[1].iceMs).toBeUndefined();
+  });
+
+  it('with the link down (every redial failed), a network change dials again', async () => {
+    const first = new FakePc('relay', pcFiles('0.1.5'));
+    const t = session([first]);
+    await t.s.start();
+    first.drop();
+    await until(() => last(t.views).k === 'down', 'gave up');
+    const n = t.calls.length;
+    void t.s.networkChanged();
+    await until(() => t.calls.length === n + 1, 'dialed again');
+    // nothing to restart: there was no link
+    expect(t.restarts()).toBe(0);
   });
 });

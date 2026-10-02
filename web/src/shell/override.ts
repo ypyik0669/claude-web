@@ -1,14 +1,27 @@
 // For tests and power users only: a signaling broker list and a STUN list kept in this origin's localStorage replace
-// the built-in ones (the shell smoke points the shell at a local test broker this way). Pure: main.ts reads the two
+// the built-in ones and every PC's own (the ones its pairing link named) for every dial. Pure: main.ts reads the two
 // keys once, at load, and logs one info line when either is in use. The entries are read by core's rule (lists.ts,
 // the same as the PC's settings). Fails closed: only a key that is absent means the defaults; a key that is present
 // but does not read (not JSON, not a list, nothing usable in it) is an empty list, so a test that meant to point the
 // shell somewhere never reaches the public brokers. The shipped page's CSP only connects to wss: brokers, so a ws://
 // one only works where the page is served with a CSP that allows it.
-import { brokerEntries, stunEntries, type BrokerDef } from '@anywhere';
+import { DEFAULT_BROKERS, DEFAULT_STUN, brokerEntries, stunEntries, type BrokerDef } from '@anywhere';
+import type { PcLists } from './pair-link';
 
 export const BROKERS_KEY = 'cw.shell.brokers';
 export const STUN_KEY = 'cw.shell.stun';
+
+/**
+ * The lists one dial uses, each on its own: the localStorage override; else the PC's own (from its pairing link, kept
+ * on its device record), read again by core's rules (a stored list that no longer reads is empty: fail closed, as for
+ * the override); else the defaults.
+ */
+export function dialLists(override: { brokers: BrokerDef[] | null; stun: string[] | null }, pc: PcLists = {}): { brokers: BrokerDef[]; stun: string[] } {
+  return {
+    brokers: override.brokers ?? (pc.brokers !== undefined ? brokerEntries(pc.brokers) ?? [] : DEFAULT_BROKERS),
+    stun: override.stun ?? (pc.stun !== undefined ? stunEntries(pc.stun) ?? [] : DEFAULT_STUN),
+  };
+}
 
 function parsed(raw: string): unknown {
   try {

@@ -41,6 +41,15 @@ describe('explain: the spec §10 sentences, with the raw text kept as 原文', (
     expect(explainDial(new DialError('pc-silent', 'no answer'), { rtcMissing: true })).toEqual({ text: PC_SILENT, raw: 'RTCPeerConnection missing; no answer' });
   });
 
+  it('a paired PC that does not answer: also says a phone revoked on the PC has to pair again (F8)', () => {
+    const said = explainDial(new DialError('pc-silent', 'no answer from the PC within 15000 ms'), { device: true });
+    expect(said.text.startsWith(PC_SILENT)).toBe(true);
+    expect(said.text).toMatch(/吊销.*重新扫码配对/);
+    expect(said.raw).toBe('no answer from the PC within 15000 ms');
+    // the other reasons are not about revocation
+    expect(explainDial(new DialError('no-broker', 'x'), { device: true }).text).toBe(NO_BROKER);
+  });
+
   it('a pairing QR the PC does not answer: expired, used or replaced — not "the PC may be off"', () => {
     const pairSilent = '电脑没有回应这个二维码：二维码可能已过期（10 分钟有效）、已经用过，或电脑上又生成了新的。在电脑上重新生成二维码再扫一次。';
     expect(explainPairDial(new DialError('pc-silent', 'no answer from the PC within 15000 ms'))).toEqual({ text: pairSilent, raw: 'no answer from the PC within 15000 ms' });
@@ -73,6 +82,10 @@ describe('explain: the spec §10 sentences, with the raw text kept as 原文', (
     expect(explainPcError('the link to the PC has ended: closed').text).toMatch(/连接断了/);
     expect(explainPcError('something new').raw).toBe('something new');
     expect(explainPcError('something new').text).toMatch(/[一-鿿]/);
+    // the bridge reached the PC but not its remote-access listener (F10)
+    const refused = explainPcError('connect ECONNREFUSED 127.0.0.1:3091');
+    expect(refused.text).toMatch(/^电脑上的远程访问没在运行/);
+    expect(refused.raw).toBe('connect ECONNREFUSED 127.0.0.1:3091');
   });
 
   it('a link that ended on a protocol error says the two versions differ', () => {

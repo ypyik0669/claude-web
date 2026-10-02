@@ -41,6 +41,13 @@ import { SignalChannel } from './signal.js';
 
 export const HELLO_TIMEOUT_MS = 15_000;
 export const ICE_TIMEOUT_MS = 20_000;
+/**
+ * The ICE window of a redial whose last working link was the slow relay, when nothing says the network changed (the
+ * shell's Session): direct did not get through on this network a moment ago, so the relay is not kept waiting 20 s
+ * (on mobile data, where direct never works, that was the whole wait). A few seconds still let a direct link that
+ * comes up fast win.
+ */
+export const RELAY_AGAIN_ICE_MS = 4_000;
 /** The relay link's resend interval (its retransmitMs default): past it, waiting for the PC's confirm gains nothing. */
 export const RELAY_CONFIRM_MS = 1_500;
 const MAX_PC_NAME = 256;

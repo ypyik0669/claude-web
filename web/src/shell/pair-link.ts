@@ -1,10 +1,16 @@
-// The pairing QR: `<shell>#p=<base64url(JSON {v:1, ps: base64url(P), code, pc})>` (the fragment never reaches a
-// server), the PC's answer to POST api/pair over the pairing link, what to do with a link on iOS (ruling R12b), and
-// the memory of links already tried. Pure.
-import { unb64u, type MuxResponse } from '@anywhere';
+// The pairing QR: `<shell>#p=<base64url(JSON {v:1, ps: base64url(P), code, pc, b?, st?})>` (the fragment never
+// reaches a server; core's pairLink() writes it), the PC's answer to POST api/pair over the pairing link, what to do
+// with a link on iOS (ruling R12b), and the memory of links already tried. Pure.
+import { brokerEntries, stunEntries, unb64u, type BrokerDef, type MuxResponse } from '@anywhere';
 import { DEVICE_ID_RE } from './devices';
 
-export interface PairLink {
+/** A PC's signaling brokers and STUN servers, when they are not the defaults (from its pairing link). */
+export interface PcLists {
+  brokers?: BrokerDef[];
+  stun?: string[];
+}
+
+export interface PairLink extends PcLists {
   /** The one-time 16-byte pairing secret: the pairing room is derived from it. */
   ps: Uint8Array;
   /** The 6-digit pairing code the PC checks (its own tries limit applies). */
@@ -13,6 +19,13 @@ export interface PairLink {
   pc: string;
 }
 
+/**
+ * A link that reads but names a server list with nothing usable in it (`b` or `st` present and broken): refused,
+ * never tried with the default lists instead (the PC does not listen on them, and the phone would only say "the PC
+ * does not answer").
+ */
+export const BAD_LISTS = 'bad-lists';
+
 const PAIR_SECRET_BYTES = 16;
 const MAX_LINK_CHARS = 4096;
 const MAX_PC_NAME = 256;
@@ -20,15 +33,17 @@ const strictDec = new TextDecoder('utf-8', { fatal: true });
 
 /**
  * A pairing link: a URL fragment (`#p=…`, with or without the `#`), or a whole pasted address (the part after its
- * `#`); null for anything else.
+ * `#`); null for anything else, BAD_LISTS for a link whose lists do not read. The lists are read with core's rules
+ * (lists.ts, the same as the PC's settings): `b` must give at least one broker; `st` may be empty (no STUN server), but
+ * not a list, or entries none of which is usable, refuses the link. Fields this page does not know are ignored.
  */
-export function parsePairLink(input: string): PairLink | null {
+export function parsePairLink(input: string): PairLink | typeof BAD_LISTS | null {
   if (typeof input !== 'string' || input.length > MAX_LINK_CHARS) return null;
   const s = input.trim();
   const at = s.indexOf('#');
   const p = new URLSearchParams(at >= 0 ? s.slice(at + 1) : s).get('p');
   if (!p) return null;
-  let o: { v?: unknown; ps?: unknown; code?: unknown; pc?: unknown };
+  let o: { v?: unknown; ps?: unknown; code?: unknown; pc?: unknown; b?: unknown; st?: unknown };
   try {
     o = JSON.parse(strictDec.decode(unb64u(p)));
   } catch {
@@ -42,7 +57,18 @@ export function parsePairLink(input: string): PairLink | null {
     return null;
   }
   if (ps.length !== PAIR_SECRET_BYTES) return null;
-  return { ps, code: o.code, pc: typeof o.pc === 'string' ? o.pc.slice(0, MAX_PC_NAME) : '' };
+  const link: PairLink = { ps, code: o.code, pc: typeof o.pc === 'string' ? o.pc.slice(0, MAX_PC_NAME) : '' };
+  if (o.b !== undefined) {
+    const b = brokerEntries(o.b);
+    if (!b?.length) return BAD_LISTS;
+    link.brokers = b;
+  }
+  if (o.st !== undefined) {
+    const st = stunEntries(o.st);
+    if (!st || (st.length === 0 && (o.st as unknown[]).length > 0)) return BAD_LISTS;
+    link.stun = st;
+  }
+  return link;
 }
 
 /** What POST api/pair answered: the device token and the PC's id for this device, or the PC's own (Chinese) refusal. */

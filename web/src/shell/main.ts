@@ -2,13 +2,13 @@
 // relay when that does not get through), and runs the app — fetched from that PC — in a same-origin frame whose
 // WebSockets (window.__cwTunnel) and requests (the service worker, sw.ts) go over the link.
 import './shell.css';
-import { Brokers, DEFAULT_BROKERS, DEFAULT_STUN, b64u, dial, type DialState, type RtcCtor } from '@anywhere';
+import { Brokers, b64u, dial, type BrokerDef, type DialState, type RtcCtor } from '@anywhere';
 import { deviceCaches, type CachesLike } from './assets';
 import { idbDevices, memoryDevices, type DeviceRec, type DeviceStore } from './devices';
 import { SAY, type Explained } from './explain';
 import { readShellRequest, replyFromError } from './forward';
-import { BROKERS_KEY, STUN_KEY, brokerOverride, overrideNote, stunOverride } from './override';
-import { linkKey, linkState, pairPlan, parsePairLink, rememberLink, type LinkMemory, type PairLink } from './pair-link';
+import { BROKERS_KEY, STUN_KEY, brokerOverride, dialLists, overrideNote, stunOverride } from './override';
+import { BAD_LISTS, linkKey, linkState, pairPlan, parsePairLink, rememberLink, type LinkMemory, type PairLink } from './pair-link';
 import { Session, ShellError, explain, pairWith, type Dialer, type SessionView } from './session';
 import { Ui, type BarState } from './ui';
 
@@ -20,11 +20,8 @@ const ui = new Ui(document.getElementById('root')!);
 const rtc = (globalThis as unknown as { RTCPeerConnection?: RtcCtor }).RTCPeerConnection ?? null;
 const rtcMissing = !rtc;
 // tests and power users can replace both lists in localStorage (override.ts); read once, here, and said in the console
-const brokerList = brokerOverride(local(BROKERS_KEY));
-const stunList = stunOverride(local(STUN_KEY));
-const brokers = new Brokers(brokerList ?? DEFAULT_BROKERS);
-const stun = stunList ?? DEFAULT_STUN;
-const note = overrideNote(brokerList, stunList);
+const override = { brokers: brokerOverride(local(BROKERS_KEY)), stun: stunOverride(local(STUN_KEY)) };
+const note = overrideNote(override.brokers, override.stun);
 if (note) console.info(note);
 const HINT_KEY = 'cw.shell.iosHint';
 const LINKS_KEY = 'cw.shell.pairLinks';
@@ -44,15 +41,37 @@ const NoRtc = class {
   }
 } as unknown as RtcCtor;
 
+/**
+ * The broker pool of the PC being dialed: one PC at a time, so one pool, made again when a dial names other brokers
+ * (another PC's lists; the pairing and the first connection after it share theirs).
+ */
+let pool: { key: string; brokers: Brokers } | null = null;
+
+function brokersFor(list: BrokerDef[]): Brokers {
+  const key = JSON.stringify(list);
+  if (pool?.key !== key) {
+    pool?.brokers.stop();
+    pool = { key, brokers: new Brokers(list) };
+  }
+  return pool.brokers;
+}
+
 const dialer: Dialer = {
-  dial(room, onstate, fresh) {
+  dial(room, onstate, plan) {
+    // the override, else the PC's own lists (its pairing link, its device record), else the defaults
+    const lists = dialLists(override, plan.lists);
+    const brokers = brokersFor(lists.brokers);
     // after a network change the old broker connections are likely dead: start them again at once
-    if (fresh) brokers.stop();
+    if (plan.fresh) brokers.stop();
     brokers.start();
-    return dial({ brokers, room, stun, rtc: rtc ?? NoRtc, forceRelay: rtcMissing, onstate });
+    return dial({ brokers, room, stun: lists.stun, rtc: rtc ?? NoRtc, forceRelay: rtcMissing, onstate, iceTimeoutMs: plan.iceMs });
   },
   idle() {
-    brokers.stop();
+    pool?.brokers.stop();
+  },
+  restart() {
+    pool?.brokers.stop();
+    pool?.brokers.start();
   },
 };
 
@@ -145,6 +164,7 @@ async function showList(notice: Explained | null = null): Promise<void> {
     paste: (text) => {
       const p = parsePairLink(text);
       if (!p) return SAY.badLink;
+      if (p === BAD_LISTS) return SAY.badLists;
       // pasted here on purpose: pair here, whatever browser this is
       void takeLink(p, 'pair', true);
       return null;
@@ -159,7 +179,7 @@ function leave(rest = false): void {
   session?.close();
   session = null;
   setTunnel(null);
-  if (rest) brokers.stop();
+  if (rest) dialer.idle();
 }
 
 function back(): void {
@@ -358,17 +378,18 @@ function takePairLink(): boolean {
   const plan = pairPlan({ ios, standalone, hasPairLink: /^#p=/.test(hash) });
   if (plan === 'list') return false;
   const p = parsePairLink(hash);
-  if (!p) {
+  if (!p || p === BAD_LISTS) {
     clearHash();
-    void showList({ text: SAY.badLink, raw: 'unreadable #p= link' });
+    void showList(p ? { text: SAY.badLists, raw: 'the link names a server list with nothing usable in it' } : { text: SAY.badLink, raw: 'unreadable #p= link' });
   } else void takeLink(p, plan);
   return true;
 }
 
-// a phone that changed networks, or came back to this page: a link that has dropped is dialed again
-window.addEventListener('online', () => void session?.redial());
+// a phone that changed networks, or came back to this page: a relay link's brokers start over at once, a link that
+// has dropped is dialed again (Session.networkChanged)
+window.addEventListener('online', () => void session?.networkChanged());
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') void session?.redial();
+  if (document.visibilityState === 'visible') void session?.networkChanged();
 });
 // a QR scanned while the shell is already open in this tab only changes the fragment
 window.addEventListener('hashchange', () => void takePairLink());

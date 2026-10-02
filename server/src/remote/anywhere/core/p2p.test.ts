@@ -9,12 +9,14 @@ import {
   DEFAULT_BROKERS,
   DEFAULT_STUN,
   DialError,
+  ICE_TIMEOUT_MS,
   MAX_EARLY_FRAMES,
   MAX_FRAME_BYTES,
   P2P_DISCONNECT_GRACE_MS,
   P2P_FLAG,
   P2P_PIECE_BYTES,
   PAIR_KIND_TIMEOUT_MS,
+  RELAY_AGAIN_ICE_MS,
   RELAY_CONFIRM_MS,
   ReplayGuard,
   SignalChannel,
@@ -528,6 +530,20 @@ describe('dial and Acceptor', () => {
     await until(() => [...e.phoneRtc.pcs, ...e.pcRtc.pcs].every((p) => p.connectionState === 'closed'), 'attempts closed');
     expect(e.phoneRtc.pcs).toHaveLength(1);
     expect(e.pcRtc.pcs).toHaveLength(1);
+  });
+
+  it('a redial after a relay link (F4: RELAY_AGAIN_ICE_MS) reaches the relay within that short window, not 20 s', async () => {
+    const e = await env({ dropCandidates: true });
+    const t0 = Date.now();
+    const r = await e.dialNow({ iceTimeoutMs: RELAY_AGAIN_ICE_MS });
+    const took = Date.now() - t0;
+    expect(r.link.kind).toBe('relay');
+    expect(took).toBeGreaterThanOrEqual(RELAY_AGAIN_ICE_MS - 10);
+    // the window, then the relay's own setup (one confirm interval at most): well before the 20 s of a first dial
+    expect(took).toBeLessThan(RELAY_AGAIN_ICE_MS + RELAY_CONFIRM_MS + 3_000);
+    expect(RELAY_AGAIN_ICE_MS).toBeLessThan(ICE_TIMEOUT_MS / 2);
+    await until(() => e.links.length === 1, 'the PC side link');
+    await exchange(r.end, e.links[0], [0, 300]);
   });
 
   it('a PC that cannot make an RTCPeerConnection says nodirect: the phone goes to the relay at once', async () => {

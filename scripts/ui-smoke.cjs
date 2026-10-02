@@ -783,8 +783,15 @@ function driver() {
         await shot('settings-remote-anywhere');
         await js(`(() => { window.__cwCopied = null; Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: async (t) => { window.__cwCopied = t; } }); })()`);
         await click(`${RS} [data-id="pair-copy"]`);
-        const copied = await waitFor(`/^https:\\/\\/ypyik0669\\.github\\.io\\/claude-web\\/#p=[A-Za-z0-9_-]+$/.test(window.__cwCopied ?? '') && [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('配对链接已复制')) && !location.href.includes('#p=')`, 3000);
-        check('复制配对链接 copies the 在哪都能用 link (never into the page address) and says so', copied, await js('String(window.__cwCopied).slice(0, 60)'));
+        // the phone page's address as the server reports it (DEFAULT_SHELL_URL lives in one place only)
+        const shellUrl = (await srvReq({ kind: 'remote.status' }))?.anywhere?.shellUrl ?? '';
+        const linkRe = `^${shellUrl.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}#p=[A-Za-z0-9_-]+$`;
+        const copied = !!shellUrl && await waitFor(`new RegExp(${JSON.stringify(linkRe)}).test(window.__cwCopied ?? '') && [...document.querySelectorAll('.toast')].some((t) => t.textContent.includes('配对链接已复制')) && !location.href.includes('#p=')`, 3000);
+        check('复制配对链接 copies the 在哪都能用 link (never into the page address) and says so', copied, `${shellUrl} · ${await js('String(window.__cwCopied).slice(0, 60)')}`);
+        // this PC is not on the default lists: the link names its broker list for the phone to dial (F2)
+        let named = null;
+        try { named = JSON.parse(Buffer.from(String(await js('window.__cwCopied')).split('#p=')[1], 'base64url').toString('utf8')); } catch { /* checked below */ }
+        check('… and the link carries this PC\'s own broker list (it is not the default one)', named?.v === 1 && JSON.stringify(named?.b) === JSON.stringify([{ name: 'smoke', url: 'wss://127.0.0.1:9/mqtt', relay: true }]), JSON.stringify(named));
         await click(`${RS} [data-id="pair-switch"] [data-kind="lan"]`);
         const qrLan = await waitFor(`!!document.querySelector('${RS} img.pair-qr[data-kind="lan"]') && !document.querySelector('${RS} [data-id="pair-copy"]')`, 3000);
         check('只在局域网（不用联网）: the LAN QR, no 复制配对链接', qrLan);

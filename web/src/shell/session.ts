@@ -2,21 +2,37 @@
 // link drops (先直连，不行转发: dial() tries the direct link first, the slow relay after it). Also answers the app
 // frame's requests that the service worker hands to this window (serve). Pairing is pairWith(). No DOM: main.ts
 // shows the views, and the tests drive it with a fake PC.
-import { Mux, deviceRoom, pairRoom, type DialResult, type DialState, type LinkKind, type MuxResponse, type Room } from '@anywhere';
+import {
+  Mux, RELAY_AGAIN_ICE_MS, deviceRoom, pairRoom, type DialResult, type DialState, type LinkKind, type MuxResponse, type Room,
+} from '@anywhere';
 import { appVersion, ensureAppCache, fetchOk, healthVersion, toCached, type CachesLike } from './assets';
-import type { DeviceRec } from './devices';
+import { listsOf, type DeviceRec } from './devices';
 import { explainDial, explainFiles, explainLinkEnd, explainPairDial, explainPcError, errText, type DialContext, type Explained } from './explain';
 import { replyFromError, replyFromPc, spaFallback, withToken, type ShellReply, type ShellRequest } from './forward';
-import { readPairAnswer, type PairLink } from './pair-link';
+import { readPairAnswer, type PairLink, type PcLists } from './pair-link';
 import { appEntry, appKey, pcPath } from './route';
 import { ShellTunnel } from './tunnel';
 
-/** The shell's way to reach a room: dial() with its brokers, STUN list and RTC (main.ts). */
+/** How one dial goes. */
+export interface DialPlan {
+  /** Restart the broker connections first (a redial: the old ones may have died with the network). */
+  fresh: boolean;
+  /** ICE gets this long before the slow relay; absent: dial()'s own window (20 s). */
+  iceMs?: number;
+  /** The PC's lists (from its pairing link, kept on its device record); none: the defaults. */
+  lists: PcLists;
+}
+
+/** The shell's way to reach a room: dial() with the PC's brokers, STUN list and RTC (main.ts). */
 export interface Dialer {
-  /** `fresh`: restart the broker connections first (a redial after the network changed). */
-  dial(room: Room, onstate: (s: DialState) => void, fresh: boolean): Promise<DialResult>;
+  dial(room: Room, onstate: (s: DialState) => void, plan: DialPlan): Promise<DialResult>;
   /** A direct link is up: the broker connections can close until the next dial (the relay needs them). */
   idle(): void;
+  /**
+   * The broker connections closed and opened again now (the network changed under a relay link: the old ones are
+   * likely dead; the subscriptions are kept, and the relay goes on by resending what was lost meanwhile).
+   */
+  restart(): void;
 }
 
 export type SessionView =
@@ -55,6 +71,11 @@ export interface SessionOptions {
 }
 
 const REDIAL_DELAYS = [0, 2_000, 5_000];
+/**
+ * A network change (online, the page shown again) counts this long: a link that drops within it is redialed with the
+ * full ICE window (direct may work on the new network), not the short one after a relay link.
+ */
+export const NETWORK_CHANGE_MS = 60_000;
 /** How long a frame's request waits for a redial (the service worker gives up at 60 s). */
 const SERVE_WAIT_MS = 55_000;
 const VERSION_CHECK_EVERY_MS = 10_000;
@@ -92,6 +113,9 @@ export class Session {
   private waiters: ((m: Mux | null) => void)[] = [];
   private checking = false;
   private lastCheck = 0;
+  /** The kind of the last link a dial gave, and when the network last may have changed. */
+  private lastKind: LinkKind | null = null;
+  private netAt = -Infinity;
 
   constructor(private readonly o: SessionOptions) {
     this.tunnel = new ShellTunnel(o.device.token);
@@ -128,6 +152,24 @@ export class Session {
   redial(): Promise<void> {
     if (this.closed || !this.opened || this.mux) return this.redialing ?? Promise.resolve();
     return (this.redialing ??= this.relink().finally(() => (this.redialing = null)));
+  }
+
+  /**
+   * The phone's network may have changed (it came online, or the page was shown again). Over the slow relay the
+   * broker connections start over at once: the link itself lives on (it resends what was lost), where waiting for it
+   * to notice would take its 30 s of silence and then a redial. A dropped link is dialed again, and a drop soon after
+   * gets the full ICE window (direct may work on the new network).
+   */
+  networkChanged(): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    this.netAt = Date.now();
+    if (this.mux?.kind === 'relay') this.o.dialer.restart();
+    return this.redial();
+  }
+
+  /** The link that is up right now: its kind, or null while there is none. */
+  get linkKind(): LinkKind | null {
+    return this.mux?.kind ?? null;
   }
 
   /** For good: the app's streams, the link, any redial. */
@@ -183,7 +225,8 @@ export class Session {
   }
 
   private explain(e: unknown): Explained {
-    return explain(e, { rtcMissing: this.o.rtcMissing });
+    // the device room: silence there may also be a phone revoked on the PC
+    return explain(e, { rtcMissing: this.o.rtcMissing, device: true });
   }
 
   private view(v: SessionView): void {
@@ -199,15 +242,21 @@ export class Session {
     return appEntry(this.o.scope, this.o.owner, this.cache);
   }
 
-  /** A dial to the device room, its Mux made at once (the link's frames may already be waiting). */
+  /**
+   * A dial to the device room, its Mux made at once (the link's frames may already be waiting). After a relay link,
+   * with no sign of a network change since, ICE gets only a short window: direct did not get through here just now.
+   */
   private async link(fresh: boolean): Promise<Mux> {
     const room = await deviceRoom(this.o.device.token);
     if (this.closed) throw new Stale();
-    const r = await this.o.dialer.dial(room, (step) => this.view({ k: 'dialing', step }), fresh);
+    const short = this.lastKind === 'relay' && Date.now() - this.netAt >= NETWORK_CHANGE_MS;
+    const plan: DialPlan = { fresh, lists: listsOf(this.o.device), ...(short ? { iceMs: RELAY_AGAIN_ICE_MS } : {}) };
+    const r = await this.o.dialer.dial(room, (step) => this.view({ k: 'dialing', step }), plan);
     if (this.closed) {
       r.link.close();
       throw new Stale();
     }
+    this.lastKind = r.link.kind;
     const mux = new Mux(r.link);
     mux.onclose = (why) => this.lost(mux, why);
     this.mux = mux;
@@ -398,8 +447,10 @@ export async function pairWith(
   const ctx = { rtcMissing: o.rtcMissing };
   if (o.signal?.aborted) throw aborted();
   let r: DialResult;
+  // the link's own lists (a PC on the defaults names none): the PC listens on them
+  const lists: PcLists = { ...(link.brokers ? { brokers: link.brokers } : {}), ...(link.stun ? { stun: link.stun } : {}) };
   try {
-    r = await dialer.dial(await pairRoom(link.ps), (s) => o.signal?.aborted || onstate(s), false);
+    r = await dialer.dial(await pairRoom(link.ps), (s) => o.signal?.aborted || onstate(s), { fresh: false, lists });
   } catch (e) {
     if (o.signal?.aborted) throw aborted();
     throw new ShellError(explainPairDial(e, ctx));
@@ -424,7 +475,8 @@ export async function pairWith(
     if (o.signal?.aborted) throw aborted();
     const a = readPairAnswer(res);
     if ('error' in a) throw new ShellError({ text: a.error, raw: '' }, true);
-    return { id: a.id, pcName: r.pcName || link.pc || '电脑', token: a.token, pairedAt: (o.now ?? Date.now)() };
+    // the lists go on the record: every later dial of this PC uses them
+    return { id: a.id, pcName: r.pcName || link.pc || '电脑', token: a.token, pairedAt: (o.now ?? Date.now)(), ...lists };
   } finally {
     o.signal?.removeEventListener('abort', stop);
     mux.close();

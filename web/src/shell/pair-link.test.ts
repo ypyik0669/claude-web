@@ -1,27 +1,58 @@
 import { describe, expect, it } from 'vitest';
-import { b64u } from '@anywhere';
-import { LINK_FRESH_MS, linkState, pairPlan, parsePairLink, readPairAnswer, rememberLink } from './pair-link';
+import { DEFAULT_BROKERS, DEFAULT_STUN, b64u, pairLink } from '@anywhere';
+import { BAD_LISTS, LINK_FRESH_MS, linkState, pairPlan, parsePairLink, readPairAnswer, rememberLink, type PairLink } from './pair-link';
 
 const enc = new TextEncoder();
 const P = Uint8Array.from({ length: 16 }, (_, i) => i + 1);
+const SHELL = 'https://claude-web-shell.github.io/';
 /** The QR address's fragment, as the PC writes it (AnywhereService.pairUrl). */
 const link = (o: unknown) => `#p=${b64u(enc.encode(JSON.stringify(o)))}`;
 const GOOD = link({ v: 1, ps: b64u(P), code: '123456', pc: 'my-pc' });
+/** A link that read as one (not null, not BAD_LISTS), else null. */
+const parsed = (s: string): PairLink | null => {
+  const p = parsePairLink(s);
+  return p && p !== BAD_LISTS ? p : null;
+};
 
 describe('parsePairLink', () => {
   it('reads the pairing secret, the code and the PC name', () => {
-    const r = parsePairLink(GOOD);
+    const r = parsed(GOOD);
     expect(r).not.toBeNull();
     expect([...r!.ps]).toEqual([...P]);
     expect(r!.code).toBe('123456');
     expect(r!.pc).toBe('my-pc');
+    // a PC on the default lists names none
+    expect('brokers' in r! || 'stun' in r!).toBe(false);
   });
 
   it('a pasted link reads the same: the whole address, the part after #, or just p=…', () => {
-    expect(parsePairLink(`https://ypyik0669.github.io/claude-web/${GOOD}`)?.code).toBe('123456');
-    expect(parsePairLink(`  https://ypyik0669.github.io/claude-web/?x=1${GOOD}  `)?.code).toBe('123456');
-    expect(parsePairLink(GOOD.slice(1))?.code).toBe('123456');
-    expect(parsePairLink('https://ypyik0669.github.io/claude-web/')).toBeNull();
+    expect(parsed(`${SHELL}${GOOD}`)?.code).toBe('123456');
+    expect(parsed(`  ${SHELL}?x=1${GOOD}  `)?.code).toBe('123456');
+    expect(parsed(GOOD.slice(1))?.code).toBe('123456');
+    expect(parsePairLink(SHELL)).toBeNull();
+  });
+
+  it("the PC's own lists (F2): read with core's rules, as the PC wrote them", () => {
+    const brokers = [{ name: 'cn', url: 'wss://mqtt.example.cn:8084/mqtt', username: 'u', password: 'p', relay: true }];
+    const r = parsed(pairLink(SHELL, { ps: b64u(P), code: '123456', pc: 'my-pc', brokers, stun: ['stun:stun.example.cn:3478'] }));
+    expect(r?.brokers).toEqual(brokers);
+    expect(r?.stun).toEqual(['stun:stun.example.cn:3478']);
+    // unusable entries next to usable ones are dropped, as on the PC
+    const mixed = parsed(link({ v: 1, ps: b64u(P), code: '123456', pc: 'x', b: [{ name: 'bad', url: 'http://x' }, ...brokers], st: ['turn:t', 'stun:s:3478'] }));
+    expect(mixed?.brokers).toEqual(brokers);
+    expect(mixed?.stun).toEqual(['stun:s:3478']);
+    // an empty STUN list is a list: no STUN server (the PC was set so)
+    expect(parsed(pairLink(SHELL, { ps: b64u(P), code: '123456', pc: 'x', brokers: DEFAULT_BROKERS, stun: [] }))?.stun).toEqual([]);
+    // the defaults written by the PC are not named, so a link stays as it was
+    expect(parsed(pairLink(SHELL, { ps: b64u(P), code: '123456', pc: 'x', brokers: DEFAULT_BROKERS, stun: DEFAULT_STUN }))?.brokers).toBeUndefined();
+  });
+
+  it('a list present but with nothing usable in it refuses the link (never the defaults instead)', () => {
+    const base = { v: 1, ps: b64u(P), code: '123456', pc: 'x' };
+    for (const b of [[], 'wss://a', [{ name: 'a', url: 'http://a' }], {}, null, 3]) expect(parsePairLink(link({ ...base, b }))).toBe(BAD_LISTS);
+    for (const st of ['stun:a', [5, 'turn:t'], {}, null]) expect(parsePairLink(link({ ...base, st }))).toBe(BAD_LISTS);
+    // fields this page does not know are ignored (spec §11)
+    expect(parsed(link({ ...base, zz: [1, 2] }))?.code).toBe('123456');
   });
 
   it('bad base64 is null, and so is base64 that is not the JSON', () => {
@@ -48,8 +79,8 @@ describe('parsePairLink', () => {
   });
 
   it('a missing PC name is empty, a long one is cut', () => {
-    expect(parsePairLink(link({ v: 1, ps: b64u(P), code: '123456' }))?.pc).toBe('');
-    expect(parsePairLink(link({ v: 1, ps: b64u(P), code: '123456', pc: 'x'.repeat(1000) }))?.pc.length).toBe(256);
+    expect(parsed(link({ v: 1, ps: b64u(P), code: '123456' }))?.pc).toBe('');
+    expect(parsed(link({ v: 1, ps: b64u(P), code: '123456', pc: 'x'.repeat(1000) }))?.pc.length).toBe(256);
   });
 });
 

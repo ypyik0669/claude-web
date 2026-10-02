@@ -1,5 +1,8 @@
 // The PCs this phone has paired with. The device token lives only here (IndexedDB, keyed by the PC's id for this
 // device): it never goes into a URL the shell navigates to, only into the requests it sends over the link.
+// (Type-only imports here: vite.shell.config.ts loads assets.ts, which imports this file, without the aliases.)
+import type { BrokerDef } from '@anywhere';
+import type { PcLists } from './pair-link';
 
 /** The PC's ids for paired devices: 12 lowercase hex (RemoteService, randomBytes(6).toString('hex')). */
 export const DEVICE_ID_RE = /^[0-9a-f]{12}$/;
@@ -12,6 +15,17 @@ export interface DeviceRec {
   pairedAt: number;
   /** Last time a connection to it opened the app. */
   lastAt?: number;
+  /**
+   * The PC's signaling brokers and STUN servers, from its pairing link: present only when the PC was not on the
+   * defaults when it paired. Every dial of this PC uses them (a record without them: the defaults).
+   */
+  brokers?: BrokerDef[];
+  stun?: string[];
+}
+
+/** The lists a dial of this PC uses (the localStorage override still wins over them, main.ts). */
+export function listsOf(d: DeviceRec): PcLists {
+  return { ...(d.brokers !== undefined ? { brokers: d.brokers } : {}), ...(d.stun !== undefined ? { stun: d.stun } : {}) };
 }
 
 export interface DeviceStore {

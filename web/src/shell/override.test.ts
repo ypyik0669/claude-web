@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { brokerOverride, overrideNote, stunOverride } from './override';
+import { DEFAULT_BROKERS, DEFAULT_STUN } from '@anywhere';
+import { brokerOverride, dialLists, overrideNote, stunOverride } from './override';
 
 const j = (v: unknown) => JSON.stringify(v);
 
@@ -31,6 +32,29 @@ describe('stunOverride', () => {
 
   it('stun: and stuns: entries only', () => {
     expect(stunOverride(j(['stun:127.0.0.1:3478', 'turn:t.example:3478', 'STUNS:x.example:5349']))).toEqual(['stun:127.0.0.1:3478', 'STUNS:x.example:5349']);
+  });
+});
+
+describe('dialLists: which lists a dial uses (F2)', () => {
+  const pc = { brokers: [{ name: 'cn', url: 'wss://mqtt.example.cn:8084/mqtt', relay: true }], stun: ['stun:stun.example.cn:3478'] };
+  const none = { brokers: null, stun: null };
+
+  it('the PC’s own lists (its pairing link, its device record); none: the defaults', () => {
+    expect(dialLists(none, pc)).toEqual(pc);
+    expect(dialLists(none, {})).toEqual({ brokers: DEFAULT_BROKERS, stun: DEFAULT_STUN });
+    expect(dialLists(none)).toEqual({ brokers: DEFAULT_BROKERS, stun: DEFAULT_STUN });
+    // each list on its own
+    expect(dialLists(none, { stun: [] })).toEqual({ brokers: DEFAULT_BROKERS, stun: [] });
+  });
+
+  it('the localStorage override wins over both', () => {
+    const local = [{ name: 'local', url: 'ws://127.0.0.1:1/mqtt', relay: true }];
+    expect(dialLists({ brokers: local, stun: [] }, pc)).toEqual({ brokers: local, stun: [] });
+    expect(dialLists({ brokers: local, stun: null }, pc)).toEqual({ brokers: local, stun: pc.stun });
+  });
+
+  it('a stored list that no longer reads is empty, never the defaults', () => {
+    expect(dialLists(none, { brokers: 'x' as never, stun: [5] as never })).toEqual({ brokers: [], stun: [] });
   });
 });
 

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_LIST_ENTRIES, brokerEntries, isBrokerUrl, isStunUrl, stunEntries } from './lists.js';
+import { unb64u } from './keys.js';
+import {
+  DEFAULT_BROKERS, DEFAULT_STUN, MAX_LIST_ENTRIES, MAX_PAIR_LINK_BYTES, MAX_PAIR_PC_NAME, brokerEntries, isBrokerUrl, isStunUrl,
+  pairLink, pairLinkBytes, pairLists, stunEntries,
+} from './lists.js';
+import type { BrokerDef } from './mqtt.js';
 import { rtcConfig } from './p2p-link.js';
 
 describe('broker lists', () => {
@@ -70,5 +75,47 @@ describe('STUN lists', () => {
     const list = ['stun:a.example:3478', 'turn:t.example:3478', 'stuns:b.example:5349', 'x'];
     expect(rtcConfig(list)).toEqual({ iceServers: [{ urls: list.filter(isStunUrl) }] });
     expect(rtcConfig(['turn:t.example'])).toEqual({ iceServers: [] });
+  });
+});
+
+describe('the pairing link (F2: the phone learns the PC’s lists when it scans)', () => {
+  const SHELL = 'https://claude-web-shell.github.io/';
+  const read = (link: string) => JSON.parse(new TextDecoder().decode(unb64u(link.slice(link.indexOf('#p=') + 3))));
+  const mine: BrokerDef[] = [{ name: 'cn', url: 'wss://mqtt.example.cn:8084/mqtt', username: 'u', password: 'p', relay: true }];
+
+  it('names the lists only when they are not the defaults; v stays 1', () => {
+    expect(pairLists(DEFAULT_BROKERS, DEFAULT_STUN)).toEqual({});
+    // the same entries written again (another key order, relay: false spelled out) are still the defaults
+    const again = DEFAULT_BROKERS.map((d) => ({ relay: false, ...d, name: d.name }));
+    expect(pairLists(brokerEntries(again)!, [...DEFAULT_STUN])).toEqual({});
+    expect(pairLists(mine, DEFAULT_STUN)).toEqual({ b: mine });
+    expect(pairLists(DEFAULT_BROKERS, [])).toEqual({ st: [] });
+    expect(pairLists(DEFAULT_BROKERS, ['stun:stun.example.cn:3478'])).toEqual({ st: ['stun:stun.example.cn:3478'] });
+    // the defaults in another order are another list (the order is the preference)
+    expect(pairLists([...DEFAULT_BROKERS].reverse(), DEFAULT_STUN).b).toHaveLength(DEFAULT_BROKERS.length);
+    // nothing to dial: left out
+    expect(pairLists([], DEFAULT_STUN)).toEqual({});
+
+    const def = read(pairLink(SHELL, { ps: 'P'.repeat(22), code: '123456', pc: 'my-pc', brokers: DEFAULT_BROKERS, stun: DEFAULT_STUN }));
+    expect(def).toEqual({ v: 1, ps: 'P'.repeat(22), code: '123456', pc: 'my-pc' });
+    const custom = read(pairLink(SHELL, { ps: 'P'.repeat(22), code: '123456', pc: 'my-pc', brokers: mine, stun: [] }));
+    expect(custom).toEqual({ v: 1, ps: 'P'.repeat(22), code: '123456', pc: 'my-pc', b: mine, st: [] });
+    // what the shell reads back with the same rules is the list itself
+    expect(brokerEntries(custom.b)).toEqual(mine);
+  });
+
+  it(`cuts the PC's name at ${MAX_PAIR_PC_NAME} characters; pairLinkBytes counts the worst case`, () => {
+    const link = pairLink(SHELL, { ps: 'P'.repeat(22), code: '123456', pc: 'x'.repeat(300), brokers: DEFAULT_BROKERS, stun: DEFAULT_STUN });
+    expect(read(link).pc).toBe('x'.repeat(MAX_PAIR_PC_NAME));
+    const named = pairLink(SHELL, { ps: 'P'.repeat(22), code: '999999', pc: '电'.repeat(500), brokers: mine, stun: [] });
+    expect(new TextEncoder().encode(named).length).toBeLessThanOrEqual(pairLinkBytes(SHELL, mine, []));
+    // a PC on the defaults: as short as before the lists were added
+    expect(pairLinkBytes(SHELL, DEFAULT_BROKERS, DEFAULT_STUN)).toBeLessThan(400);
+  });
+
+  it(`a full list of ${MAX_LIST_ENTRIES} brokers and ${MAX_LIST_ENTRIES} STUN servers of ordinary length fits the limit`, () => {
+    const b = Array.from({ length: MAX_LIST_ENTRIES }, (_, i) => ({ name: `broker-${i}`, url: `wss://broker-${i}.example.com:8084/mqtt`, relay: true }));
+    const s = Array.from({ length: MAX_LIST_ENTRIES }, (_, i) => `stun:stun${i}.example.com:3478`);
+    expect(pairLinkBytes(SHELL, b, s)).toBeLessThanOrEqual(MAX_PAIR_LINK_BYTES);
   });
 });

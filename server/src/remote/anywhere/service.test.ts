@@ -244,6 +244,9 @@ describe('AnywhereService', () => {
     expect(q.v).toBe(1);
     expect(q.code).toBe(pc.code);
     expect(typeof q.pc).toBe('string');
+    // this PC is not on the default lists: the link names its own, for the phone to dial (F2)
+    expect(q.b).toEqual([{ name: 'mock', url: broker.url, relay: true }]);
+    expect(q.st).toEqual([]);
     const ps = unb64u(q.ps);
     expect(ps.length).toBe(16);
 

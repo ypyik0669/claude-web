@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react';
-import QRCode from 'qrcode';
+import { useEffect, useRef, useState } from 'react';
 import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
@@ -10,6 +9,7 @@ import { Icon } from '@/ui/icons';
 import { agoText } from '@/features/home/model';
 import { Row } from './controls';
 import { anywhereLine, deviceLastLink, lastLinkText, shownIp } from './anywhere';
+import { pairQr, type PairQr } from './pair-qr';
 
 type QrKind = 'anywhere' | 'lan';
 
@@ -37,25 +37,45 @@ export function useRemoteStatus(): [RemoteStatus | null, (s: RemoteStatus) => vo
 export function RemoteSection() {
   const toast = useStore((s) => s.toast);
   const anywhereOn = useStore((s) => s.settings['remote.anywhere'] !== false);
+  // what the pairing room is made from: a change retires the room, and the QR on screen with it
+  const listsKey = useStore((s) => JSON.stringify([s.settings['remote.anywhere.brokers'] ?? null, s.settings['remote.anywhere.stun'] ?? null]));
   const [st, setSt] = useRemoteStatus();
   const [port, setPort] = useState('');
   const [pair, setPair] = useState<RemotePairCode | null>(null);
   const [qrKind, setQrKind] = useState<QrKind>('anywhere');
-  const [qr, setQr] = useState('');
+  const [qr, setQr] = useState<PairQr | null>(null);
+  const [qrFailed, setQrFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pairing, setPairing] = useState(false);
   useEffect(() => { if (st) setPort(String(st.port)); }, [st?.port]); // eslint-disable-line react-hooks/exhaustive-deps
+  // the broker / STUN lists or the port changed (here, under 更多选项, or in another window): the PC listens anew, the
+  // pairing room of the code on screen is gone, so its QR and link are dead — cleared like a switch of 在外面也能用
+  const runsOn = st ? `${listsKey}|${st.port}` : '';
+  const ranOn = useRef('');
+  useEffect(() => {
+    if (!runsOn) return;
+    if (ranOn.current && ranOn.current !== runsOn) setPair(null);
+    ranOn.current = runsOn;
+  }, [runsOn]);
   // the 在哪都能用 QR when there is one (在外面也能用 on and its pairing room up), else the LAN one
   const shown: QrKind = pair?.anywhereUrl && qrKind === 'anywhere' ? 'anywhere' : 'lan';
   const qrUrl = pair ? (shown === 'anywhere' ? pair.anywhereUrl! : pair.url) : '';
-  // dark on white: what every phone camera reads (the anywhere address is long, so the code is dense)
-  useEffect(() => { if (!qrUrl) { setQr(''); return; } QRCode.toDataURL(qrUrl, { margin: 1, width: 240, color: { dark: '#1f1e1a', light: '#ffffff' } }).then(setQr).catch(() => setQr('')); }, [qrUrl]);
+  // dark on white (pair-qr.ts): the anywhere address is long, longer still with the PC's own lists in it
+  useEffect(() => {
+    let live = true;
+    setQr(null);
+    setQrFailed(false);
+    if (qrUrl) pairQr(qrUrl).then((q) => live && setQr(q), () => live && setQrFailed(true));
+    return () => { live = false; };
+  }, [qrUrl]);
   const [, tickState] = useState(0);
   useEffect(() => { if (!pair) return; const i = setInterval(() => tickState((x) => x + 1), 1000); return () => clearInterval(i); }, [pair]);
   const set = async (patch: { enabled?: boolean; port?: number; anywhere?: boolean; keepAwake?: boolean }) => {
     setBusy(true);
     try {
       setSt(await ws.request<RemoteStatus>({ kind: 'remote.set', ...patch }));
+      // a LAN-paired phone keeps its token at the old address (port and all): it has to pair again
+      if (patch.port !== undefined) toast('端口已改：在同一个 Wi-Fi 里配对过的手机要重新扫码（在外面用的不受影响）', true);
       if (patch.anywhere !== undefined) {
         useStore.setState((x) => ({ settings: { ...x.settings, 'remote.anywhere': patch.anywhere } }));
         setPair(null); // its QR was made for the other setting (no pairing room, or one that is gone now)
@@ -131,8 +151,9 @@ export function RemoteSection() {
               </div>
             )}
             {pair && left <= 0 && <div className="sub" style={{ marginTop: 8 }}>配对码已过期</div>}
+            {pair && left > 0 && qrFailed && <div className="aw-err" data-id="pair-qr-error">二维码装不下这么长的服务器列表：用「复制配对链接」，或在「更多选项」里删掉几行</div>}
           </div>
-          {qr && left > 0 && <img className="pair-qr" data-kind={shown} src={qr} alt={shown === 'anywhere' ? '配对二维码（在哪都能用）' : '配对二维码（只在局域网）'} />}
+          {qr && left > 0 && <img className="pair-qr" data-kind={shown} src={qr.src} style={{ width: qr.size }} alt={shown === 'anywhere' ? '配对二维码（在哪都能用）' : '配对二维码（只在局域网）'} />}
         </div>
       )}
       <h5 style={{ marginTop: 16 }}>已配对设备</h5>

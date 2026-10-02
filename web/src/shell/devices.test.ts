@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { memoryDevices, type DeviceRec } from './devices';
+import { listsOf, memoryDevices, type DeviceRec } from './devices';
 
 const rec = (id: string, at: number, lastAt?: number): DeviceRec => ({ id, pcName: `pc-${id}`, token: `tok-${id}`, pairedAt: at, ...(lastAt ? { lastAt } : {}) });
+
+describe("a PC's lists on its record (F2)", () => {
+  it('are kept with the record (a later connect, lastAt and all, keeps them) and are what its dials use', async () => {
+    const s = memoryDevices();
+    const brokers = [{ name: 'cn', url: 'wss://mqtt.example.cn:8084/mqtt', relay: true }];
+    await s.put({ ...rec('a', 1), brokers, stun: [] });
+    const [got] = await s.list();
+    await s.put({ ...got, lastAt: 5 });
+    const [again] = await s.list();
+    expect(listsOf(again)).toEqual({ brokers, stun: [] });
+    // a record from before lists existed, or of a PC on the defaults: none (the defaults)
+    expect(listsOf(rec('b', 1))).toEqual({});
+  });
+});
 
 describe('memoryDevices', () => {
   it('puts, lists (most recently used first), replaces by id and removes', async () => {

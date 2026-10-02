@@ -20,6 +20,7 @@ import {
   b64u,
   brokerEntries,
   deviceRoomFromHash,
+  pairLink,
   pairRoom,
   stunEntries,
   type BrokerDef,
@@ -42,7 +43,6 @@ const PAIR_SECRET_BYTES = 16;
 /** pairUrl() waits this long at most for the pairing room's subscription before handing out the QR address. */
 const PAIR_SUBSCRIBE_WAIT_MS = 3_000;
 const BROKER_CLOSE_MS = 2_000;
-const enc = new TextEncoder();
 
 function report(what: string, e: unknown): void {
   console.error(`[anywhere] ${what}:`, e instanceof Error ? e.message : e);
@@ -115,6 +115,9 @@ interface Run {
   key: string;
   port: number;
   brokers: Brokers;
+  /** The broker and STUN lists it runs with (the pairing link names them when they are not the defaults). */
+  defs: BrokerDef[];
+  stun: string[];
   acceptor: Acceptor;
   /** The pairing code whose room is answered, and when that room goes. */
   pairCode?: string;
@@ -209,8 +212,8 @@ export class AnywhereService extends EventEmitter {
     await Promise.race([added, new Promise<void>((res) => (wait = setTimeout(res, PAIR_SUBSCRIBE_WAIT_MS)))]);
     clearTimeout(wait);
     if (this.run !== r || mine !== this.pairGen || r.pairCode !== code) return null;
-    const qr = { v: 1, ps: b64u(ps), code, pc: os.hostname() };
-    return `${shellUrlOf(this.meta.settings()['remote.anywhere.shellUrl'])}#p=${b64u(enc.encode(JSON.stringify(qr)))}`;
+    // the lists this run listens on, in the link when they are not the defaults: the phone learns them by scanning
+    return pairLink(shellUrlOf(this.meta.settings()['remote.anywhere.shellUrl']), { ps: b64u(ps), code, pc: os.hostname(), brokers: r.defs, stun: r.stun });
   }
 
   private serial(fn: () => Promise<void>): Promise<void> {
@@ -251,7 +254,7 @@ export class AnywhereService extends EventEmitter {
       onFailure: (roomId, why) => this.failed(roomId, why),
       ...(this.opts.halfOpenMs !== undefined ? { halfOpenMs: this.opts.halfOpenMs } : {}),
     });
-    const r: Run = { key: cfg.key, port: cfg.port, brokers, acceptor };
+    const r: Run = { key: cfg.key, port: cfg.port, brokers, defs: cfg.brokers, stun: cfg.stun, acceptor };
     this.run = r;
     brokers.onchange = () => {
       if (this.run === r) this.emit('changed');

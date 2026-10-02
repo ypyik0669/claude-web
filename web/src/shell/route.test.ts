@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { appEntry, appKey, assetLookup, frameParams, pcPath, refusedApi, route } from './route';
 
+// a shell deployed in a folder of someone's own Pages site (the shipped one is at the root: the root-scope cases)
 const SCOPE = '/claude-web/';
-const at = (p: string) => new URL(p, 'https://ypyik0669.github.io');
+const at = (p: string) => new URL(p, 'https://me.github.io');
 
 describe('route (scope /claude-web/)', () => {
   it('app/api/… goes to the PC as an api request, query and all', () => {
@@ -31,11 +32,11 @@ describe('route (scope /claude-web/)', () => {
   it('outside the scope, or another origin, is left alone', () => {
     expect(route(at('/other/app/api/x'), SCOPE)).toEqual({ kind: 'pass' });
     expect(route(at('/claude-web'), SCOPE)).toEqual({ kind: 'pass' });
-    expect(route(new URL('https://evil.example/claude-web/app/api/x'), 'https://ypyik0669.github.io/claude-web/')).toEqual({ kind: 'pass' });
+    expect(route(new URL('https://evil.example/claude-web/app/api/x'), 'https://me.github.io/claude-web/')).toEqual({ kind: 'pass' });
   });
 
   it('a full scope URL works the same as a path', () => {
-    expect(route(at('/claude-web/app/api/health'), 'https://ypyik0669.github.io/claude-web/')).toEqual({ kind: 'api', path: '/api/health' });
+    expect(route(at('/claude-web/app/api/health'), 'https://me.github.io/claude-web/')).toEqual({ kind: 'api', path: '/api/health' });
   });
 });
 
@@ -61,7 +62,7 @@ describe('route (scope /: the shell at the root of its own site, e.g. an organiz
 });
 
 describe('the app frame address', () => {
-  const scope = 'https://ypyik0669.github.io/claude-web/';
+  const scope = 'https://me.github.io/claude-web/';
 
   it('names the shell window that owns it and the cache it reads', () => {
     const u = appEntry(scope, 'w1', 'cw-app-d1-0.1.5');

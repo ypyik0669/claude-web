@@ -544,6 +544,31 @@ describe('relay link', () => {
     await until(() => P.link.buffered() === 0, 'everything confirmed');
   });
 
+  it('the phone restarts its brokers (F4: a network change under the relay): the link goes on, nothing is lost, it does not wait out deadMs', async () => {
+    const a = await broker();
+    // deadMs short, so that "it would have died" shows within the test: the restart must not cost the link
+    const t = await pair([def(a, 'A')], { ...FAST, deadMs: 2_000 });
+    t.P.link.send(enc.encode('before'));
+    await until(() => t.C.got.length === 1, 'the frame before');
+    // what the shell does on online / visibilitychange: every broker connection closed and opened again at once
+    t.phone.p.stop();
+    const ups = frames(6, 31, 4_000);
+    const downs = frames(6, 32, 4_000);
+    for (const f of ups) t.P.link.send(f);
+    for (const f of downs) t.C.link.send(f);
+    t.phone.p.start();
+    await until(() => t.C.got.length === 1 + ups.length && t.P.got.length === downs.length, 'both directions after the restart', 10_000);
+    expect(firstDiff(t.C.got.slice(1), ups)).toBe(-1);
+    expect(firstDiff(t.P.got, downs)).toBe(-1);
+    // past deadMs since the restart: both ends still up (they kept hearing each other), and it still carries frames
+    await sleep(2_500);
+    expect(t.P.closed).toEqual([]);
+    expect(t.C.closed).toEqual([]);
+    t.C.link.send(enc.encode('after'));
+    await until(() => t.P.got.length === downs.length + 1, 'a frame after');
+    expect(dec.decode(t.P.got.at(-1)!)).toBe('after');
+  });
+
   it('garbage and replays from an untrusted broker are dropped without a throw or a log, and the link keeps working', async () => {
     const a = await broker();
     const t = await pair([def(a, 'A')], FAST);

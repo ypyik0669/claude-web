@@ -1,7 +1,7 @@
 // 设置 → 手机与其它电脑 → 在外面也能用 (spec 2026-10-01 §10): the words for a link and for the brokers' state, the
 // recent connections, and the checks of the lists edited under 更多选项. Pure; RemoteSection.tsx / AnywhereMore.tsx draw it.
 import type { AnywhereRecent, AnywhereStatus, DeviceInfo, LinkKind } from '@shared';
-import { MAX_LIST_ENTRIES, isStunUrl, type BrokerDef } from '@anywhere';
+import { MAX_LIST_ENTRIES, MAX_PAIR_LINK_BYTES, isStunUrl, pairLinkBytes, type BrokerDef } from '@anywhere';
 import { agoText } from '@/features/home/model';
 
 const KIND_TEXT: Record<LinkKind, string> = { 'p2p-v6': '直连 · IPv6', 'p2p-v4': '直连', relay: '慢速转发' };
@@ -72,7 +72,11 @@ export interface BrokerDraft { name: string; url: string; relay: boolean; userna
 
 const isBlank = (r: BrokerDraft) => !r.name.trim() && !r.url.trim();
 
-/** A sentence for the first bad row, or null. Rows left wholly empty are not counted (an added row never filled in). */
+/**
+ * A sentence for the first bad row, or null. Rows left wholly empty are not counted (an added row never filled in).
+ * At least one row must carry the slow relay: the phone takes this very list from the QR, and the relay only runs
+ * over brokers ticked 用于转发 on both sides.
+ */
 export function brokerProblem(rows: readonly BrokerDraft[]): string | null {
   const seen = new Set<string>();
   let n = 0;
@@ -89,8 +93,22 @@ export function brokerProblem(rows: readonly BrokerDraft[]): string | null {
   }
   // the PC reads at most this many (core's lists.ts): the rest would be kept here and never used
   if (n > MAX_LIST_ENTRIES) return `最多填 ${MAX_LIST_ENTRIES} 行`;
-  return n ? null : '至少要留一个牵线服务器';
+  if (!n) return '至少要留一个牵线服务器';
+  if (!rows.some((r) => !isBlank(r) && r.relay)) return '至少要勾一行「用于转发」：直连打不通时，慢速转发只走勾了的服务器';
+  return null;
 }
+
+/**
+ * The pairing link the PC would make with these lists (they go into its QR when they are not the defaults, core's
+ * pairLink) does not fit one QR code: a sentence, or null. `shellUrl`: the phone page's address now.
+ */
+export function pairLinkProblem(shellUrl: string, brokers: readonly BrokerDef[], stun: readonly string[]): string | null {
+  if (pairLinkBytes(shellUrl, brokers, stun) <= MAX_PAIR_LINK_BYTES) return null;
+  return '列表太长，配对二维码装不下了：删掉几行，或换短一点的地址';
+}
+
+/** Said when a broker or STUN list is saved or restored: phones that paired before keep the old lists until they scan again. */
+export const RESCAN_NOTE = '已经配对的手机要重新扫码，才会用新的列表';
 
 /** What is saved: trimmed, empty rows out, `relay` only when ticked. */
 export function cleanBrokers(rows: readonly BrokerDraft[]): BrokerDef[] {
