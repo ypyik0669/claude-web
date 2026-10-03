@@ -2,7 +2,7 @@
 
 每个版本的变化都记在这里；安装包在 [Releases](https://github.com/ypyik0669/claude-web/releases) 下载。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## 未发布
+## [0.1.6] — 2026-10-03
 
 ### 新增
 
@@ -125,6 +125,7 @@
 - **自动化**：定时任务、目标（让它一轮轮推进直到完成）、多 agent 编排（并行、独立副本、审批节点、比选）。
 - **远程**：手机扫码配对访问、SSH 隧道、其它电脑上的对话、Telegram / Discord / Slack / 钉钉 / 飞书机器人。
 
+[0.1.6]: https://github.com/ypyik0669/claude-web/releases/tag/v0.1.6
 [0.1.5]: https://github.com/ypyik0669/claude-web/releases/tag/v0.1.5
 [0.1.4]: https://github.com/ypyik0669/claude-web/releases/tag/v0.1.4
 [0.1.3]: https://github.com/ypyik0669/claude-web/releases/tag/v0.1.3
