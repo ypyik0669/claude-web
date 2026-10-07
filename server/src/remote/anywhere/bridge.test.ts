@@ -365,7 +365,11 @@ describe('serveBridge', () => {
     // the PC's side of the link stops delivering: what the bridge sends piles up (1 MiB on the link, the rest queued)
     s.pc.stall();
     e.ws.send('flood');
-    await until(() => s.seen.flooded > 10, 'the hub sends');
+    // the link full: the bridge has paused the local socket, the rest of the message it was reading is queued. (Not
+    // "the hub flushed > 10 of its 100 kB messages": 1 MiB is 10.5 of them, and how many more the paused socket's
+    // kernel buffers take differs — macOS's small loopback buffers stopped it at 10 on CI.)
+    const onLink = () => s.pc.sent.filter((f) => decodeFrame(f).stream === id).reduce((n, f) => n + f.byteLength, 0);
+    await until(() => onLink() >= MUX_PAUSE_BYTES, 'the link to fill up');
     await sleep(200);
     const handed = s.pc.sent.filter((f) => decodeFrame(f).stream === id).length;
     expect(handed * 16_389).toBeLessThan(30 * 100_000);

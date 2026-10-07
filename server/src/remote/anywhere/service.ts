@@ -17,6 +17,7 @@ import {
   Brokers,
   DEFAULT_BROKERS,
   DEFAULT_STUN,
+  MAX_PAIR_PC_NAME,
   b64u,
   brokerEntries,
   deviceRoomFromHash,
@@ -249,7 +250,8 @@ export class AnywhereService extends EventEmitter {
       brokers,
       rtc,
       stun: cfg.stun,
-      pcName: os.hostname(),
+      // the name the pairing link carries (cut there to fit the QR): the phone shows one name, before and after it connects
+      pcName: os.hostname().slice(0, MAX_PAIR_PC_NAME),
       onLink: (link, roomId) => this.onLink(link, roomId),
       onFailure: (roomId, why) => this.failed(roomId, why),
       ...(this.opts.halfOpenMs !== undefined ? { halfOpenMs: this.opts.halfOpenMs } : {}),

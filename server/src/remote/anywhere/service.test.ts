@@ -7,7 +7,7 @@ import path from 'node:path';
 import WebSocket from 'ws';
 import http from 'node:http';
 import { createHash } from 'node:crypto';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { startBroker } from './__mocks__/mqtt-broker.mjs';
 import { loadRtc } from './rtc.js';
 import {
@@ -15,6 +15,7 @@ import {
   DialError,
   Mux,
   SignalChannel,
+  MAX_PAIR_PC_NAME,
   b64u,
   deviceRoom,
   dial,
@@ -163,7 +164,14 @@ async function listOver(e: WsEnd, id: string): Promise<any> {
   return reply;
 }
 
+/**
+ * A computer name longer than the pairing link carries (GitHub's macOS runners are named like this, 68 characters):
+ * the phone has to see the same name before and after it connects.
+ */
+const LONG_HOST = 'sat12-bq167-428c9a26-c926-4913-ad82-a3b2cb82f635-42614FF456B6.local';
+
 beforeAll(async () => {
+  vi.spyOn(os, 'hostname').mockReturnValue(LONG_HOST);
   broker = await startBroker();
   maskSecrets = (await import('../../diag/service.js')).maskSecrets;
   const { startServer } = await import('../../index.js');
@@ -243,7 +251,7 @@ describe('AnywhereService', () => {
     const q = JSON.parse(dec.decode(unb64u(u.hash.slice(3))));
     expect(q.v).toBe(1);
     expect(q.code).toBe(pc.code);
-    expect(typeof q.pc).toBe('string');
+    expect(q.pc).toBe(LONG_HOST.slice(0, MAX_PAIR_PC_NAME));
     // this PC is not on the default lists: the link names its own, for the phone to dial (F2)
     expect(q.b).toEqual([{ name: 'mock', url: broker.url, relay: true }]);
     expect(q.st).toEqual([]);
