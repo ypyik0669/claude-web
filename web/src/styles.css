@@ -738,6 +738,7 @@ input.field:focus { border-color: var(--ink-3); }
 .jump-bottom { position: sticky; top: calc(100% - 44px); float: right; margin-right: 16px; width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--edge-strong); background: var(--surface-elev); color: var(--ink-2); cursor: pointer; box-shadow: var(--elev-1); z-index: 4; }
 .jump-bottom:hover { background: var(--surface-2); }
 .sysline.warn { color: var(--warn); }
+.sysline .sys-hint { margin-top: 2px; color: var(--ink-3); }
 .sysline.err { color: var(--err); }
 .sysline.compact { display: flex; gap: 6px; align-items: center; justify-content: center; }
 .sysline.compact::before, .sysline.compact::after { content: ''; flex: 1; height: 1px; background: var(--edge-default); }

@@ -6,6 +6,8 @@ import type { SecretService } from '../secrets/service.js';
 import { CODEX_KEY_ENV, codexGatewayArgs, codexProviderArgs, geminiApiKeyEnv } from '../gateway/agents.js';
 import { claudeFamilyMap, isChatModel, pickChatModel, preferredRuntime, profileFitError } from '../models/catalog.js';
 import { wantsResponses } from '../gateway/shim.js';
+import { settingsOverride } from '../runtime/user-env.js';
+import { writeFlagSettings, type FlagSettings } from '../runtime/flag-settings.js';
 
 /** Mask an API key for the wire: keep prefix + last 4 chars. */
 export function maskKey(k: string | undefined): string {
@@ -198,7 +200,11 @@ export async function chatProbe(p: Provider, runtime: RuntimeKind | undefined, m
   // one retry, not the CLI's ten: a relay answering 5xx kept 测试连接 spinning for 4 minutes, then said "exit 1"
   const env: Record<string, string> = { ...providerEnv(p), CLAUDE_CODE_MAX_RETRIES: '1' };
   delete env.CLAUDE_WEB_PLAIN_UA; // not spawned through the SDK: the CLI already sends its plain User-Agent
-  const r = await runClaudeCli(chatProbeArgs(model), { cwd: os.tmpdir(), timeoutMs: PROBE_TIMEOUT_MS, runtime, env });
+  // a token / base URL in the user's settings.json would otherwise be tested instead of this provider's (user-env)
+  const override = settingsOverride(env, os.tmpdir());
+  let flag: FlagSettings | null = null;
+  try { flag = override ? writeFlagSettings(override) : null; } catch { /* tested as the session would run without it */ }
+  const r = await runClaudeCli([...chatProbeArgs(model), ...(flag ? ['--settings', flag.file] : [])], { cwd: os.tmpdir(), timeoutMs: PROBE_TIMEOUT_MS, runtime, env }).finally(() => flag?.dispose());
   const ms = Date.now() - t0;
   let out: any = null;
   try { out = JSON.parse(r.stdout.trim().split('\n').filter((l) => l.startsWith('{')).pop() ?? ''); } catch { /* not json */ }

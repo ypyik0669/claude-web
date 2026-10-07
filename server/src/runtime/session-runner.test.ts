@@ -592,3 +592,37 @@ describe('SessionRunner: init during the first turn after a resume', () => {
     await r.close();
   });
 });
+
+describe('SessionRunner: the user\'s settings files under a provider conversation', () => {
+  it('puts the provider\'s token back on top through a --settings file, removed when the conversation closes', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-flag-'));
+    const was = { cfg: process.env.CLAUDE_CONFIG_DIR, data: process.env.CLAUDE_WEB_DIR };
+    process.env.CLAUDE_CONFIG_DIR = path.join(dir, 'cfg');
+    process.env.CLAUDE_WEB_DIR = path.join(dir, 'data');
+    fs.mkdirSync(process.env.CLAUDE_CONFIG_DIR, { recursive: true });
+    fs.writeFileSync(path.join(process.env.CLAUDE_CONFIG_DIR, 'settings.json'), JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'old-token', ANTHROPIC_API_KEY: 'old-key' } }));
+    try {
+      queries.length = 0;
+      const provider = { id: 'p1', name: 'relay', type: 'anthropic', baseUrl: 'https://relay.invalid', apiKey: 'provider-token', models: [] } as any;
+      const r = new SessionRunner({ sessionId: 'f1', cwd: dir } as any, provider);
+      await tick();
+      const file = queries[0].options.settings;
+      expect(typeof file).toBe('string'); // a path: the inline JSON would put the key on the command line
+      expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({ env: { ANTHROPIC_AUTH_TOKEN: 'provider-token', ANTHROPIC_API_KEY: '' } });
+      await r.close();
+      expect(fs.existsSync(file)).toBe(false);
+      // an account conversation keeps the user's own relay config: nothing on top
+      const a = new SessionRunner({ sessionId: 'f2', cwd: dir } as any);
+      await tick();
+      expect(queries[1].options.settings).toBeUndefined();
+      await a.close();
+    } finally {
+      if (was.cfg === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = was.cfg;
+      if (was.data === undefined) delete process.env.CLAUDE_WEB_DIR; else process.env.CLAUDE_WEB_DIR = was.data;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

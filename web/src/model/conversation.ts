@@ -1,6 +1,6 @@
 // Pure reducer: SDK messages (live or from transcript) -> renderable conversation tree.
 // Kept framework-free so it can be unit tested against captured message streams (see __fixtures__).
-import { classifyError, type ErrorKind } from './health';
+import { classifyError, ERROR_HINT, type ErrorKind } from './health';
 
 export interface TextBlock { type: 'text'; text: string }
 export interface ThinkingBlock {
@@ -596,7 +596,10 @@ function applySystem(c: Conversation, m: any) {
       return;
     case 'api_retry': {
       const kind = classifyError({ error: m.error, status: m.error_status });
-      c.items.push({ kind: 'system', id: m.uuid, subtype: 'retry', level: 'warn', text: `API 重试 ${m.attempt ?? ''}/${m.max_retries ?? ''}（${m.error ?? ''}${m.error_status ? ` HTTP ${m.error_status}` : ''}）${m.retry_delay_ms ? ` · ${Math.round(m.retry_delay_ms / 1000)}s 后` : ''}`, data: { kind, error: m.error, status: m.error_status, delayMs: m.retry_delay_ms } });
+      // a rejected key does not get better by retrying (the CLI tries ten times over minutes): say what to check at
+      // once, under the first such line, instead of only in its tooltip
+      const hint = kind === 'credential' && (m.attempt ?? 1) <= 1 ? ERROR_HINT.credential : undefined;
+      c.items.push({ kind: 'system', id: m.uuid, subtype: 'retry', level: 'warn', text: `API 重试 ${m.attempt ?? ''}/${m.max_retries ?? ''}（${m.error ?? ''}${m.error_status ? ` HTTP ${m.error_status}` : ''}）${m.retry_delay_ms ? ` · ${Math.round(m.retry_delay_ms / 1000)}s 后` : ''}`, data: { kind, error: m.error, status: m.error_status, delayMs: m.retry_delay_ms, ...(hint ? { hint } : {}) } });
       return;
     }
     case 'model_refusal_fallback':

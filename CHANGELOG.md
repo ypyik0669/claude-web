@@ -2,6 +2,13 @@
 
 每个版本的变化都记在这里；安装包在 [Releases](https://github.com/ypyik0669/claude-web/releases) 下载。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+
+- **用供应商（中转）开的对话不再被 `~/.claude/settings.json` 里的旧配置顶掉。** 以前用 cc-switch 之类的工具、或者手动在 `settings.json` 的 `env` 里写过中转地址和 Key 的人，在这里添加了新的供应商以后：模型列表能拉到（那是这里用新 Key 拉的），可是一发消息就「API 重试 1/10（authentication_failed HTTP 401）」，要等好几分钟才失败。原因是 Claude Code 会用 `settings.json` 里的旧 Key（甚至旧地址）盖掉这里给它的。现在对话和「测试连接」都以供应商里填的为准；`settings.json` 里别的设置照常生效，用 Claude 账号开的对话也照旧读它。
+- Key 被拒（401）时，第一次重试下面就直接写明该检查什么，不用等十次重试走完。
+
 ## [0.1.6] — 2026-10-03
 
 ### 新增

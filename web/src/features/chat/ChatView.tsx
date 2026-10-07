@@ -304,6 +304,7 @@ export function ItemList({ items, version, actions = 'all' }: { items: Item[]; v
               <div key={it.id} className={clsx('sysline', it.subtype === 'command' && 'cmd', it.level === 'warn' && 'warn', it.level === 'error' && 'err', it.subtype === 'compact' && 'compact')} data-item-id={it.id} title={it.data && typeof it.data === 'object' && (it.data as any).kind ? ERROR_HINT[(it.data as any).kind as keyof typeof ERROR_HINT] : undefined}>
                 {it.subtype === 'compact' && <span className="ic"><Icon name="refresh" size={12} /></span>}
                 {it.text}
+                {typeof (it.data as any)?.hint === 'string' && <div className="sys-hint">{(it.data as any).hint}</div>}
               </div>
             );
         }

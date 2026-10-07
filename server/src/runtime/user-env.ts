@@ -25,3 +25,40 @@ export function userAnthropicEnv(): { env: Partial<Record<(typeof KEYS)[number],
   const relay = !!(env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY || (base && !/^https:\/\/api\.anthropic\.com\/?$/i.test(base)));
   return { env, relay };
 }
+
+/** Variables that pick the endpoint, the credentials or the models — the ones a provider conversation must not inherit. */
+export const ROUTING_ENV = /^((ANTHROPIC|OPENAI|GEMINI|GROK|XAI)_|CLAUDE_CODE_USE_)/;
+
+/** The `env` of each settings file the CLI reads for a conversation in `cwd` (settingSources user, project, local). */
+export function settingsEnvs(cwd?: string): Record<string, unknown>[] {
+  const files = [path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude'), 'settings.json')];
+  if (cwd) files.push(path.join(cwd, '.claude', 'settings.json'), path.join(cwd, '.claude', 'settings.local.json'));
+  const out: Record<string, unknown>[] = [];
+  for (const f of files) {
+    try {
+      const env = JSON.parse(readFileSync(f, 'utf8'))?.env;
+      if (env && typeof env === 'object' && !Array.isArray(env)) out.push(env);
+    } catch { /* none, or not JSON: the CLI ignores it too */ }
+  }
+  return out;
+}
+
+/**
+ * What a provider conversation's CLI has to be given through `--settings` (the flag tier, above user / project /
+ * local). Both engines apply those files' `env` over the environment they were started with, so a relay's token or
+ * base URL left in ~/.claude/settings.json (cc-switch and the like write it there) replaced the provider's: the model
+ * list, fetched by us with the provider's key, worked; every turn went out with the old token and got 401, retried ten
+ * times (2026-10-07, a user's friend on super-nb; reproduced against fake relays on both engines). For each key a file
+ * sets, ours wins; a routing key a file sets and ours does not is blanked ('' counts as unset for the CLI: no stray
+ * x-api-key, the CLI's own default model). Null: no file sets anything that matters.
+ */
+export function settingsOverride(ours: Record<string, string>, cwd?: string): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  for (const env of settingsEnvs(cwd)) {
+    for (const k of Object.keys(env)) {
+      if (k in ours) out[k] = ours[k];
+      else if (ROUTING_ENV.test(k)) out[k] = '';
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}

@@ -5,7 +5,8 @@ import { EventEmitter } from 'node:events';
 import { statSync } from 'node:fs';
 import { withExplanation } from '../errors/explain.js';
 import { findClaudeTranscript, hasClaudeTranscript, hasEntry, lastCostState, lastHumanPrompt, repairLeaf } from './transcript-file.js';
-import { userAnthropicEnv } from './user-env.js';
+import { settingsOverride, userAnthropicEnv } from './user-env.js';
+import { writeFlagSettings, type FlagSettings } from './flag-settings.js';
 import { resolveEngine, spawnClaude } from '../claude-exe.js';
 import { loopbackNoProxy, providerEnv, type SessionProvider } from '../providers/service.js';
 import { ccbAccountEnv, ccbMisthinks, ccbModel, effortLevels, isChatModel, modelLabel, modelsFor, preferredRuntime, providerModelId, supportsUltracode } from '../models/catalog.js';
@@ -139,6 +140,8 @@ export class SessionRunner extends EventEmitter {
   /** the prompts this conversation's processes were given (and the last one on disk when one started): any other is a turn from elsewhere */
   private known = new Set<string>();
   private stderrTail = '';
+  /** the `--settings` file of the process about to be spawned (removed when that process ends) */
+  private nextFlag: FlagSettings | null = null;
 
   constructor(params: OpenSessionParams, provider?: SessionProvider) {
     super();
@@ -269,6 +272,18 @@ export class SessionRunner extends EventEmitter {
     // the cache shim / model gateway live on 127.0.0.1: an HTTP(S)_PROXY from the user's environment must not carry
     // those requests off to a proxy (a remote one cannot reach our loopback, and the turn just hangs)
     if (env) Object.assign(env, loopbackNoProxy(env));
+    // a provider conversation: what the user's settings files would lay over the provider's env goes back on top
+    // through the flag tier (`settingsOverride`)
+    this.nextFlag?.dispose();
+    this.nextFlag = null;
+    const override = this.provider ? settingsOverride(fenv, this.cwd) : null;
+    if (override) {
+      try {
+        this.nextFlag = writeFlagSettings(override);
+      } catch (e) {
+        console.warn(`[session ${this.sessionId.slice(0, 8)}] could not write the --settings file (the user's settings.json env stays on top): ${(e as Error).message}`);
+      }
+    }
     const options: Options = {
       cwd: this.cwd,
       env,
@@ -287,6 +302,7 @@ export class SessionRunner extends EventEmitter {
       forwardSubagentText: true,
       agentProgressSummaries: true,
       settingSources: ['user', 'project', 'local'],
+      ...(this.nextFlag ? { settings: this.nextFlag.file } : {}),
       pathToClaudeCodeExecutable: exe,
       spawnClaudeCodeProcess: ((o: Parameters<typeof spawnClaude>[0]) => this.spawnProcess(o)) as Options['spawnClaudeCodeProcess'],
       abortController: this.abort,
@@ -307,6 +323,12 @@ export class SessionRunner extends EventEmitter {
     const child = spawnClaude(o);
     this.child = child;
     this.stderrTail = '';
+    const flag = this.nextFlag;
+    this.nextFlag = null;
+    if (flag) {
+      if (!child) flag.dispose();
+      else { child.once('exit', () => flag.dispose()); child.once('error', () => flag.dispose()); }
+    }
     const tag = `[claude ${this.sessionId.slice(0, 8)}] `;
     child.stderr?.setEncoding('utf8');
     child.stderr?.on('data', (s: string) => {
@@ -710,6 +732,8 @@ export class SessionRunner extends EventEmitter {
       /* ignore */
     }
     await this.endProcess(child);
+    this.nextFlag?.dispose(); // never spawned
+    this.nextFlag = null;
     this.setState('closed');
     this.removeAllListeners();
   }
