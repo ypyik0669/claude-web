@@ -17,7 +17,7 @@ import { applyMessage, applyTranscript, createConversation, prependTranscript, w
 import { staleStopResult, stopFoundNothing } from './stop';
 import { EXTERNAL_LIVE_MS, externalLive, nextReadAt, readsFromOutside, shownSessions } from './external';
 import { isImportedSessionId } from '@/util';
-import { forkParams, resumeParams, resumeView, type ResumeChoice } from './reopen';
+import { forkParams, mergeResume, resumeParams, resumeView, type ResumeChoice } from './reopen';
 import { parseLibraryId, parsePeerId } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { DEFAULT_THEME, applyUiSettings, resolveTheme, setSystemThemeHandler } from '@/features/settings/ui-settings';
@@ -945,7 +945,7 @@ export const useStore = create<State>((set, get) => ({
     set({ tab });
   },
   setResume(sessionId, patch) {
-    set((s) => bump(s, sessionId, (o) => { o.resume = { ...o.resume, ...patch }; }));
+    set((s) => bump(s, sessionId, (o) => { o.resume = mergeResume(o.resume, patch); }));
   },
 
   setDraft(sessionId, draft) {

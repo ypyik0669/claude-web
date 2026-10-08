@@ -141,6 +141,38 @@ describe('what each model can do (same rules as the engine: claude-web-engine ef
     expect(modelCaps({ type: 'anthropic', modelEfforts: { 'glm-4.6': { levels: ['low', 'high'] } } }, 'glm-4.6').native).toBe(true);
   });
 
+  it('a reasoning model on a Claude-format relay gets the budget (native); through the model gateway only Claude does', () => {
+    expect(modelCaps({ type: 'anthropic' }, 'deepseek-chat')).toMatchObject({ reasoning: true, native: true });
+    expect(modelCaps({ type: 'gateway' }, 'gpt-5')).toMatchObject({ native: false });
+    expect(modelCaps({ type: 'gateway' }, 'deepseek-chat')).toMatchObject({ native: false });
+    expect(modelCaps({ type: 'gateway' }, 'claude-sonnet-4-6')).toMatchObject({ native: true });
+  });
+
+  it('Fable is Claude; Opus / Sonnet 4.6 and Sonnet 4.5 have no xhigh (the catalog)', () => {
+    expect(modelCaps({ type: 'anthropic' }, 'claude-fable-5-1')).toMatchObject({ native: true, levels: ['low', 'medium', 'high', 'xhigh', 'max'] });
+    expect(modelCaps({ type: 'anthropic' }, 'claude-sonnet-4-6').levels).toEqual(['low', 'medium', 'high', 'max']);
+    expect(modelCaps({ type: 'anthropic' }, 'claude-opus-4-6-20260101').levels).toEqual(['low', 'medium', 'high', 'max']);
+    expect(modelCaps({ type: 'anthropic' }, 'claude-sonnet-4-5').levels).toEqual(['low', 'medium', 'high', 'max']);
+    expect(modelCaps({ type: 'anthropic' }, 'claude-opus-4-7').levels).toContain('xhigh');
+  });
+
+  it('the account\'s aliases are the models they stand for', () => {
+    for (const alias of ['default', 'opus', 'sonnet', 'haiku', 'fable', 'best', 'opus[1m]']) {
+      expect(modelCaps(undefined, alias), alias).toMatchObject({ native: true, reasoning: true });
+    }
+  });
+
+  it('the engine variable: a model of another format gets {native:false} — no levels, no "reasons" (no DeepSeek-style switches)', () => {
+    const relay = { type: 'openai' as const };
+    const env = JSON.parse(webCapsEnv(relay, ['claude-sonnet-4-6', 'gemini-3-pro', 'deepseek-flash', 'gpt-4o']));
+    expect(env['claude-sonnet-4-6']).toEqual({ native: false });
+    expect(env['gemini-3-pro']).toEqual({ native: false });
+    expect(env['deepseek-flash']).toMatchObject({ reasoning: true });
+    expect(env['gpt-4o']).toBeUndefined();
+    expect(JSON.parse(webCapsEnv({ type: 'gateway' }, ['gpt-5']))['gpt-5']).toEqual({ native: false });
+    expect(JSON.parse(webCapsEnv({ type: 'anthropic' }, ['claude-sonnet-4-6']))['claude-sonnet-4-6']).toEqual({ levels: ['low', 'medium', 'high', 'max'], reasoning: true });
+  });
+
   it('the engine variable: only what we know (an unknown model keeps the engine on its own name rules)', () => {
     const env = JSON.parse(webCapsEnv({ ...ds, promptEffortModels: ['gpt-x'] }, ['deepseek-flash', 'gpt-4o', 'gpt-x']));
     expect(env['deepseek-flash']).toEqual({ levels: ['low', 'high', 'max'], default: 'high', reasoning: true });

@@ -12,6 +12,11 @@
 //   · gpt-4o (no parameter) + high → no effort field, the turn's user message carries "Reasoning depth: high.";
 //   · a relay that refuses reasoning_effort (400 naming it) → the turn is answered anyway, the provider remembers the
 //     model as prompt-only, the next turn goes the prompt way;
+//   · the Claude path refusing output_config.effort: an unnamed 400 → answered, not recorded, and after two of them
+//     this process goes the prompt way; one naming it → answered, recorded, the next turn the prompt way;
+//   · a Gemini model on an OpenAI-format relay → the prompt way, no reasoning_effort / thinking switches (a Claude-named
+//     id there is mapped to the provider's haiku / sonnet / opus model, so it is not a cross-format case);
+//   · the prompt-way reminder goes with the user's message once, not again after each tool call;
 //   · a Gemini-format provider, gemini-3-pro + high → generationConfig.thinkingConfig.thinkingLevel "high";
 //   · 自动判断 + deepseek-flash running a Bash command → the classifier request goes with thinking off and tool_choice
 //     naming classify_result, the command runs without a permission prompt.
@@ -84,8 +89,11 @@ function openai(q, s, j, h) {
   s.end(body + chunk({ choices: [], usage }) + 'data: [DONE]\n\n');
 }
 
-function anthropic(q, s, j) {
+function anthropic(q, s, j, h) {
   if (q.url.includes('/count_tokens')) return json(s, 200, { input_tokens: 10 });
+  // the Claude path's refusals of output_config.effort: an unnamed 400 (*-bad), one naming it (*-named)
+  const refuse = j.stream && j.output_config?.effort && (/-bad$/.test(j.model) ? 'invalid request' : /-named$/.test(j.model) ? 'output_config: Extra inputs are not permitted' : '');
+  if (refuse) { h.status = 400; return json(s, 400, { type: 'error', error: { type: 'invalid_request_error', message: refuse } }); }
   const msg = { id: `msg_${++n}`, type: 'message', role: 'assistant', model: j.model, stop_sequence: null };
   if (!j.stream) return json(s, 200, { ...msg, content: [{ type: 'text', text: 'side:ok' }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 2 } });
   const ev = (type, o) => `event: ${type}\ndata: ${JSON.stringify({ type, ...o })}\n\n`;
@@ -114,7 +122,7 @@ const upstream = http.createServer((q, s) => {
     const h = { fmt, method: q.method, url, auth: String(q.headers.authorization ?? ''), body: j, status: 200 };
     hits.push(h);
     if (fmt === 'gemini') return gemini(q, s);
-    if (fmt === 'anthropic') return anthropic(q, s, j);
+    if (fmt === 'anthropic') return anthropic(q, s, j, h);
     openai(q, s, j, h);
   });
 });
@@ -171,8 +179,8 @@ const providerNow = async (id) => (await req({ kind: 'providers.list' })).find((
 async function main() {
   await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
   await req({ kind: 'settings.set', key: 'network.proxy', value: 'off' });
-  const O = await req({ kind: 'providers.upsert', provider: { name: '中转O', type: 'openai', baseUrl: `${up}/v1`, apiKey: RELAY_KEY, defaultModel: 'deepseek-flash', models: ['deepseek-flash', 'qwen-e2e', 'gpt-4o'], responsesApi: false } });
-  const A = await req({ kind: 'providers.upsert', provider: { name: '中转A', type: 'anthropic', baseUrl: up, apiKey: RELAY_KEY, defaultModel: 'claude-opus-5-5', models: ['claude-opus-5-5', 'claude-sonnet-4-6'], runtime: 'ccb' } });
+  const O = await req({ kind: 'providers.upsert', provider: { name: '中转O', type: 'openai', baseUrl: `${up}/v1`, apiKey: RELAY_KEY, defaultModel: 'deepseek-flash', models: ['deepseek-flash', 'qwen-e2e', 'gpt-4o', 'gemini-3-pro'], responsesApi: false } });
+  const A = await req({ kind: 'providers.upsert', provider: { name: '中转A', type: 'anthropic', baseUrl: up, apiKey: RELAY_KEY, defaultModel: 'claude-opus-5-5', models: ['claude-opus-5-5', 'claude-sonnet-4-6', 'claude-sonnet-4-6-bad', 'claude-sonnet-4-6-named'], runtime: 'ccb' } });
   const G = await req({ kind: 'providers.upsert', provider: { name: 'GemG', type: 'gemini', baseUrl: up, apiKey: 'gem-key-e2e', defaultModel: 'gemini-3-pro', models: ['gemini-3-pro'] } });
 
   // ---- the model list declares the levels ----
@@ -233,6 +241,34 @@ async function main() {
   await turn(qw.sessionId, 'QW-TWO 再来');
   const q2 = mainOf('openai', 'QW-TWO');
   check('… and the next turn goes the prompt way (no parameter, "Reasoning depth: high.")', q2.length > 0 && q2.every((h) => !('reasoning_effort' in h.body) && turnText(h).includes('Reasoning depth: high.')), q2.map((h) => `${h.status}${'reasoning_effort' in h.body ? '+effort' : ''}`).join(','));
+
+  // ---- the Claude path refusing output_config.effort ----
+  const cb = await openOn(A.id, 'claude-sonnet-4-6-bad', { effort: 'high' });
+  const cbr = await turn(cb.sessionId, 'CB-ONE 你好');
+  const cb1 = mainOf('anthropic', 'CB-ONE');
+  check('Claude path, an unnamed 400 on output_config.effort: the turn is answered (sent again without it), nothing recorded', /anthropic:ok/.test(cbr.result?.result ?? '') && cb1.some((h) => h.status === 400) && cb1.at(-1)?.status === 200 && !cb1.at(-1)?.body.output_config?.effort && !(await providerNow(A.id))?.promptEffortModels?.includes('claude-sonnet-4-6-bad'), `${String(cbr.result?.result ?? '(no result)').slice(0, 40)} · ${cb1.map((h) => `${h.status}${h.body.output_config?.effort ? '+effort' : ''}`).join(',')}`);
+  await turn(cb.sessionId, 'CB-TWO 再来');
+  await turn(cb.sessionId, 'CB-THREE 再来');
+  const cb3 = mainOf('anthropic', 'CB-THREE');
+  check('… refused like that twice, this process stops sending it (the prompt way), still not recorded', cb3.length > 0 && cb3.every((h) => h.status === 200 && !h.body.output_config?.effort && turnText(h).includes('Reasoning depth: high.')) && !(await providerNow(A.id))?.promptEffortModels?.includes('claude-sonnet-4-6-bad'), cb3.map((h) => `${h.status}${h.body.output_config?.effort ? '+effort' : ''}`).join(','));
+  const cn = await openOn(A.id, 'claude-sonnet-4-6-named', { effort: 'high' });
+  const cnr = await turn(cn.sessionId, 'CN-ONE 你好');
+  const cnRemembered = await until(async () => (await providerNow(A.id))?.promptEffortModels?.includes('claude-sonnet-4-6-named'), 10_000);
+  check('Claude path, a 400 naming output_config: answered, and the provider remembers the model as prompt-only', /anthropic:ok/.test(cnr.result?.result ?? '') && !!cnRemembered, String(cnr.result?.result ?? '(no result)').slice(0, 60));
+  await turn(cn.sessionId, 'CN-TWO 再来');
+  const cn2 = mainOf('anthropic', 'CN-TWO');
+  check('… and the next turn goes the prompt way', cn2.length > 0 && cn2.every((h) => h.status === 200 && !h.body.output_config?.effort && turnText(h).includes('Reasoning depth: high.')), cn2.map((h) => `${h.status}${h.body.output_config?.effort ? '+effort' : ''}`).join(','));
+
+  // ---- a model of another format on an OpenAI-format relay; the reminder once per turn ----
+  const oc = await openOn(O.id, 'gemini-3-pro', { effort: 'xhigh' });
+  await turn(oc.sessionId, 'OC-ONE 你好');
+  const ocm = mainOf('openai', 'OC-ONE');
+  check('gemini-3-pro on an OpenAI-format relay (a model of another format): no reasoning_effort, no thinking switches, the prompt way', ocm.length > 0 && ocm.every((h) => !('reasoning_effort' in h.body) && !('thinking' in h.body) && !('enable_thinking' in h.body) && turnText(h).includes('Reasoning depth: very high.')), ocm.map((h) => Object.keys(h.body).join('/')).join(' | ').slice(0, 200));
+  const gt = await openOn(O.id, 'gpt-4o', { effort: 'high', permissionMode: 'bypassPermissions' });
+  const gtr = await turn(gt.sessionId, 'AUTO-BASH GPT-TOOLS 运行一条命令');
+  const gtLast = hits.filter((h) => h.fmt === 'openai' && h.body.model === 'gpt-4o' && h.body.stream === true && JSON.stringify(h.body.messages ?? []).includes('GPT-TOOLS')).at(-1);
+  const reminders = (JSON.stringify(gtLast?.body.messages ?? []).match(/Reasoning depth: high\./g) ?? []).length;
+  check('the reminder goes with the user\'s message once, not again after the tool call', /auto:done/.test(gtr.result?.result ?? '') && (gtLast?.body.messages ?? []).at(-1)?.role === 'tool' && reminders === 1, `reminders=${reminders} · ${String(gtr.result?.result ?? '(no result)').slice(0, 40)}`);
 
   // ---- Gemini format ----
   const gg = await openOn(G.id, 'gemini-3-pro', { effort: 'high' });

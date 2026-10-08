@@ -142,6 +142,8 @@ export class SessionRunner extends EventEmitter {
   private stderrTail = '';
   /** the `--settings` file of the process about to be spawned (removed when that process ends) */
   private nextFlag: FlagSettings | null = null;
+  /** official binary, 深度编排 picked before the start: `/effort ultracode` goes before the first message */
+  private ultracodeFirst = false;
 
   constructor(params: OpenSessionParams, provider?: SessionProvider) {
     super();
@@ -159,9 +161,13 @@ export class SessionRunner extends EventEmitter {
     this.effort = params.effort;
     this.permissionMode = params.permissionMode ?? 'default';
     this.info = { sessionId: this.sessionId, state: 'starting', cwd: this.cwd, model: this.model, effort: this.effort, permissionMode: this.permissionMode, providerId: provider?.id, providerName: provider?.name, features: this.features, agent: 'claude' };
-    // 深度编排 picked before the conversation started (welcome page, a reopen): our engine starts with --ultracode
-    // (the official binary only has `/effort ultracode` inside the conversation — setUltracode)
-    if (params.ultracode && this.plan().engine.kind === 'ccb') this.info.ultracode = true;
+    // 深度编排 picked before the conversation started (welcome page, a reopen): our engine starts with --ultracode; the
+    // official binary only has `/effort ultracode` inside the conversation — sent just before the first message (at
+    // open it would make a conversation of its own, titled after the command, even if nothing is ever sent)
+    if (params.ultracode) {
+      this.info.ultracode = true;
+      if (this.plan().engine.kind !== 'ccb') this.ultracodeFirst = true;
+    }
     // Handover from another agent: Claude has no JSONL for this id, so feed it synthesized entries
     // through the documented SessionStore hook — the SDK materializes them to a temp transcript the
     // subprocess resumes from natively. `persistSession: false` is incompatible with sessionStore.
@@ -225,21 +231,27 @@ export class SessionRunner extends EventEmitter {
     this.emit('state', s, error);
   }
 
+  /** One model of the picker: its thinking-strength levels and whether they go out natively or through the prompt. */
+  private modelEntry(value: string, displayName: string, description: string, reported?: { supportsEffort?: boolean; levels?: EffortLevel[] }): ModelInfo {
+    const c = modelCaps(this.provider, value);
+    const onOurs = this.info.runtime === 'ccb';
+    // the official binary on the account: its own answer (it has no prompt way), as before the engine change
+    if (!this.provider && reported && !onOurs) {
+      const own = reported.levels?.length ? reported.levels : c.levels;
+      const supportsEffort = reported.supportsEffort ?? own.length > 0;
+      return { value, displayName, description, supportsEffort, supportedEffortLevels: supportsEffort ? own : [], effortMode: 'native' };
+    }
+    const levels: EffortLevel[] = reported?.levels?.length && !this.provider ? reported.levels : c.levels;
+    const supportsEffort = onOurs || c.native;
+    return { value, displayName, description, supportsEffort, supportedEffortLevels: supportsEffort ? levels : [], effortMode: c.native ? 'native' : 'prompt' };
+  }
+
   /**
    * The engine a process for `model` runs on. A provider's Anthropic-format endpoint and a Claude 5 model ccb gets the
    * thinking wrong for (`ccbMisthinks`) → the official binary — unless this conversation uses a flag only ccb has
    * (the official one refuses `--proactive` / `--computer-use-mcp` as unknown options); then ccb, with thinking off
    * for that model (`omit thinking` is what the API asks for).
    */
-  /** One model of the picker: its thinking-strength levels and whether they go out natively or through the prompt. */
-  private modelEntry(value: string, displayName: string, description: string, reported?: EffortLevel[]): ModelInfo {
-    const c = modelCaps(this.provider, value);
-    const onOurs = this.info.runtime === 'ccb';
-    const levels: EffortLevel[] = reported?.length && !this.provider ? reported : c.levels;
-    const supportsEffort = onOurs || c.native;
-    return { value, displayName, description, supportsEffort, supportedEffortLevels: supportsEffort ? levels : [], effortMode: c.native ? 'native' : 'prompt' };
-  }
-
   private plan(model = this.model) {
     const ccbOnly = !!(this.features.proactive || this.features.computerUse || this.features.devChannels);
     // the account through a relay of the user's own (settings.json / environment) is an Anthropic-format relay too;
@@ -402,7 +414,7 @@ export class SessionRunner extends EventEmitter {
           this.info.models = this.provider?.models?.length
             ? this.provider.models.filter(isChatModel).map((v) => this.modelEntry(v, modelLabel('claude', v), this.provider!.name))
             : modelSrc.length
-              ? modelSrc.map((m) => this.modelEntry(m.value, m.displayName && m.displayName !== m.value ? m.displayName : modelLabel('claude', m.value), m.description ?? '', m.supportedEffortLevels))
+              ? modelSrc.map((m) => this.modelEntry(m.value, m.displayName && m.displayName !== m.value ? m.displayName : modelLabel('claude', m.value), m.description ?? '', { supportsEffort: m.supportsEffort, levels: m.supportedEffortLevels }))
               : modelsFor('claude');
           // claude-web-engine: --ultracode / the `ultracode` setting on every model; the official binary: `/effort ultracode`
           this.info.supportsUltracode = supportsUltracode('claude');
@@ -543,6 +555,10 @@ export class SessionRunner extends EventEmitter {
   send(text: string, images?: { mediaType: string; data: string }[], steer = false, uuid?: string, attachments?: AttachmentRef[]) {
     // the query loop is gone: queueing would flip the UI to "running" with nothing ever answering
     if (this.closed || this.state === 'closed' || this.state === 'error') throw new Error(sendRefused(this.state === 'error' && !this.closed, this.info.error));
+    if (this.ultracodeFirst) {
+      this.ultracodeFirst = false;
+      this.send('/effort ultracode');
+    }
     this.hasTranscript = true; // the CLI writes the JSONL with this message
     uuid ??= randomUUID(); // becomes the transcript uuid: how this conversation's own prompts are told from others
     this.known.add(uuid);
@@ -694,6 +710,7 @@ export class SessionRunner extends EventEmitter {
     this.effort = effort;
     this.info.effort = effort;
     if (this.info.ultracode) this.info.ultracode = false; // picking a rung leaves ultracode
+    this.ultracodeFirst = false;
     if (this.info.runtime === 'ccb') {
       this.emit('info', this.info);
       // claude-web-engine: the level (and leaving ultracode, in the same call) is a flag setting of the running
@@ -716,6 +733,7 @@ export class SessionRunner extends EventEmitter {
    */
   async setUltracode(on: boolean) {
     this.info.ultracode = on;
+    this.ultracodeFirst = false; // the command below says it now
     this.emit('info', this.info);
     if (this.info.runtime === 'ccb') {
       try {

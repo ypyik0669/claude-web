@@ -20,7 +20,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
     const q: any = {
       initializationResult: async () => ({}),
       supportedCommands: async () => [],
-      supportedModels: async () => [],
+      supportedModels: async () => cli.models,
       supportedAgents: async () => [],
       mcpServerStatus: async () => [],
       [Symbol.asyncIterator]: () => ({ next }),
@@ -34,6 +34,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   },
 }));
 const eng = vi.hoisted(() => ({ kind: 'claude' as 'claude' | 'ccb' }));
+/** what the CLI answers to supportedModels() (the account's list) */
+const cli = vi.hoisted(() => ({ models: [] as any[] }));
 vi.mock('../claude-exe.js', () => ({ resolveEngine: (rt?: 'claude' | 'ccb') => ({ file: 'claude', kind: rt ?? eng.kind }), spawnClaude: () => null }));
 vi.mock('../memory/launcher.js', () => ({ claudeMcpServer: () => ({}) }));
 
@@ -434,6 +436,29 @@ describe('SessionRunner: the engine follows the model, effort on ccb, per-turn c
     }
   });
 
+  it('深度编排 picked before the start on the official binary: `/effort ultracode` goes just before the first message (not at open)', async () => {
+    queries.length = 0;
+    const a = new SessionRunner({ sessionId: 'o2', cwd: '/x', model: 'claude-opus-5-5', ultracode: true } as any);
+    await tick();
+    expect(a.info.ultracode).toBe(true);
+    expect('ultracode' in queries[0].options.extraArgs).toBe(false); // the official binary has no --ultracode
+    const sent = vi.spyOn(a, 'send');
+    expect(sent).not.toHaveBeenCalled();
+    a.send('hi');
+    expect(sent.mock.calls.map((c) => c[0])).toEqual(['hi', '/effort ultracode']); // the outer call, then the command it sends first
+    a.send('again');
+    expect(sent.mock.calls.map((c) => c[0])).toEqual(['hi', '/effort ultracode', 'again']);
+    await a.close();
+    // picking a level before the first message leaves it (and sends that level instead)
+    const b = new SessionRunner({ sessionId: 'o3', cwd: '/x', model: 'claude-opus-5-5', ultracode: true } as any);
+    await tick();
+    await b.setEffort('low');
+    const sentB = vi.spyOn(b, 'send');
+    b.send('hi');
+    expect(sentB.mock.calls.map((c) => c[0])).toEqual(['hi']);
+    await b.close();
+  });
+
   it('the official binary still changes effort with /effort', async () => {
     queries.length = 0;
     const a = new SessionRunner({ sessionId: 'o1', cwd: '/x', model: 'claude-opus-5-5' } as any);
@@ -487,6 +512,34 @@ describe('SessionRunner: the engine follows the model, effort on ccb, per-turn c
       expect(a.info.supportsUltracode).toBe(true);
       await a.close();
     } finally {
+      eng.kind = 'claude';
+    }
+  });
+
+  it('the account\'s list (aliases): the official binary keeps the CLI\'s own answer; our engine reads each alias as its model', async () => {
+    const five = ['low', 'medium', 'high', 'xhigh', 'max'];
+    cli.models = [
+      { value: 'default', displayName: 'Default', description: '', supportsEffort: true, supportedEffortLevels: five },
+      { value: 'opus', displayName: 'Opus', description: '', supportsEffort: true, supportedEffortLevels: five },
+      { value: 'haiku', displayName: 'Haiku', description: '', supportsEffort: false },
+    ];
+    try {
+      queries.length = 0;
+      const byId = (r: SessionRunner) => Object.fromEntries((r.info.models ?? []).map((m) => [m.value, m]));
+      const off = new SessionRunner({ sessionId: 'al1', cwd: '/x' } as any);
+      await tick();
+      expect(byId(off).opus).toMatchObject({ supportsEffort: true, supportedEffortLevels: five, effortMode: 'native' });
+      expect(byId(off).default).toMatchObject({ supportsEffort: true, effortMode: 'native' });
+      expect(byId(off).haiku).toMatchObject({ supportsEffort: false });
+      await off.close();
+      eng.kind = 'ccb';
+      const ours = new SessionRunner({ sessionId: 'al2', cwd: '/x' } as any);
+      await tick();
+      expect(byId(ours).opus).toMatchObject({ supportsEffort: true, effortMode: 'native' });
+      expect(byId(ours).default).toMatchObject({ supportsEffort: true, effortMode: 'native' });
+      await ours.close();
+    } finally {
+      cli.models = [];
       eng.kind = 'claude';
     }
   });

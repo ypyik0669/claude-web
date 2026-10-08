@@ -263,8 +263,15 @@ export function nearestLevel(level: ClaudeEffort, available: readonly ClaudeEffo
 export function claudeVersion(model: string): number | undefined {
   const m = model.toLowerCase();
   if (!m.includes('claude')) return undefined;
-  const hit = /claude[-_.](\d)(?:[-.](\d))?[-_.](?:opus|sonnet|haiku)/.exec(m) ?? /(?:opus|sonnet|haiku)[-_.]?(\d{1,2})(?!\d)(?:[-.](\d{1,2})(?!\d))?/.exec(m);
+  const hit = /claude[-_.](\d)(?:[-.](\d))?[-_.](?:opus|sonnet|haiku|fable)/.exec(m) ?? /(?:opus|sonnet|haiku|fable)[-_.]?(\d{1,2})(?!\d)(?:[-.](\d{1,2})(?!\d))?/.exec(m);
   return hit ? Number(`${hit[1]}.${hit[2] ?? 0}`) : undefined;
+}
+
+/** A Claude model's levels: the catalog's (Opus / Sonnet 4.6 and Sonnet 4.5 have no xhigh); an id it lacks, by version. */
+function claudeLevels(model: string, v: number): ClaudeEffort[] {
+  const known = CATALOG.claude?.models.find((x) => x.id === baseName(model))?.effort;
+  if (known) return known.filter((l): l is ClaudeEffort => l !== 'ultra');
+  return v >= 4.6 && v < 4.7 ? CLAUDE_ORDER.filter((l) => l !== 'xhigh') : CLAUDE_ORDER;
 }
 
 type CapsProvider = { type: ProviderType; modelEfforts?: Record<string, { levels: ClaudeEffort[]; default?: ClaudeEffort }>; promptEffortModels?: string[] };
@@ -276,7 +283,8 @@ const openAIReasons = (model: string) => { const b = baseName(model); return /^(
 /** What the table knows about a model by name (nothing = undefined). */
 function tableCaps(model: string): { levels: ClaudeEffort[]; default?: ClaudeEffort } | undefined {
   const m = model.toLowerCase();
-  if (claudeVersion(model) !== undefined) return { levels: CLAUDE_ORDER };
+  const v = claudeVersion(model);
+  if (v !== undefined) return { levels: claudeLevels(model, v) };
   if (m.includes('deepseek')) return { levels: ['low', 'high', 'max'], default: 'high' };
   if (/^(o[134]|gpt-5)/.test(baseName(model))) return { levels: ['low', 'medium', 'high'] };
   if (m.includes('qwq') || m.includes('reasoner')) return { levels: ['low', 'medium', 'high'] };
@@ -294,7 +302,9 @@ const plainId = (model: string) => model.replace(/\[1m\]$/i, '');
  * strength in the prompt. `p` undefined = the Claude account. Same target rules as the engine's effortPlan.ts.
  */
 export function modelCaps(p: CapsProvider | undefined, model: string): ModelCaps {
-  const id = plainId(model);
+  // the account's list holds aliases (default / opus / sonnet …): the model each stands for
+  const aliases = p ? undefined : CATALOG.claude?.aliases;
+  const id = aliases?.[model] ?? aliases?.[plainId(model)] ?? plainId(model);
   const declared = p?.modelEfforts?.[model] ?? p?.modelEfforts?.[id];
   const table = tableCaps(id);
   const levels = declared?.levels?.length ? declared.levels : table?.levels ?? CLAUDE_ORDER;
@@ -304,7 +314,10 @@ export function modelCaps(p: CapsProvider | undefined, model: string): ModelCaps
   const type = p?.type ?? 'anthropic';
   const lower = id.toLowerCase();
   let native: boolean;
-  if (type === 'anthropic' || type === 'gateway') native = isClaude || !!declared?.levels?.length;
+  // a Claude-format endpoint: Claude by version, another model that reasons gets a thinking budget (DeepSeek /anthropic…);
+  // the model gateway turns other models' requests into another format and drops the parameter
+  if (type === 'anthropic') native = isClaude || reasoning;
+  else if (type === 'gateway') native = isClaude;
   else if (type === 'openai') native = !!declared?.levels?.length || openAIReasons(id);
   else if (type === 'gemini') native = lower.includes('gemini-3') || lower.includes('gemini-2.5');
   else native = lower.includes('grok-3-mini');
@@ -313,24 +326,20 @@ export function modelCaps(p: CapsProvider | undefined, model: string): ModelCaps
 }
 
 /**
- * `CLAUDE_WEB_MODEL_CAPS` for a session: only what we know — a model the table and the list say nothing about is left
- * out, so the engine keeps its own name rules for it (sending `reasoning:false` would switch off its MiMo detection;
- * sending five levels would read as "the list declares levels" on a Claude-format relay).
+ * `CLAUDE_WEB_MODEL_CAPS` for a session: our `modelCaps` verdict for every model the list or the table knows — the
+ * ones this format sends natively get their levels and "reasons"; the others (a Claude or Gemini model on an
+ * OpenAI-format relay, a non-Claude model through the gateway, one recorded as refusing) get `{native:false}`: the
+ * prompt way, and no DeepSeek-style thinking switches. A model neither knows is left out (the engine's own name rules
+ * cover the same names as the table; `reasoning:false` would switch off its MiMo detection).
  */
 export function webCapsEnv(p: CapsProvider | undefined, models: string[]): string {
   const out: Record<string, { levels?: ClaudeEffort[]; default?: ClaudeEffort; reasoning?: boolean; native?: boolean }> = {};
   for (const model of new Set(models.filter(Boolean))) {
     const declared = p?.modelEfforts?.[model];
-    const table = tableCaps(plainId(model));
+    const known = !!declared?.levels?.length || !!tableCaps(plainId(model)) || !!p?.promptEffortModels?.includes(model);
+    if (!known) continue;
     const c = modelCaps(p, model);
-    const entry: (typeof out)[string] = {};
-    if (declared?.levels?.length || table) {
-      entry.levels = c.levels;
-      if (c.default) entry.default = c.default;
-      entry.reasoning = true;
-    }
-    if (p?.promptEffortModels?.includes(model)) entry.native = false;
-    if (Object.keys(entry).length) out[model] = entry;
+    out[model] = c.native ? { levels: c.levels, ...(c.default ? { default: c.default } : {}), reasoning: true } : { native: false };
   }
   return JSON.stringify(out);
 }

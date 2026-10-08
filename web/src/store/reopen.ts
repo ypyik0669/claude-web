@@ -22,6 +22,16 @@ export function reopenSettings(info: SessionInfoSnapshot | undefined | null): Pi
  */
 export interface ResumeChoice { providerId?: string; model?: string; permissionMode?: PermissionMode; effort?: EffortLevel; ultracode?: boolean }
 
+/**
+ * A chip choice on top of the earlier ones. Picking a level leaves 深度编排, as it does in a running conversation
+ * (the runner's setEffort) — otherwise both go out and the engine runs xhigh under a lit 「快」.
+ */
+export function mergeResume(prev: ResumeChoice | undefined, patch: ResumeChoice): ResumeChoice {
+  const next = { ...prev, ...patch };
+  if (patch.effort !== undefined && patch.ultracode === undefined && next.ultracode) next.ultracode = false;
+  return next;
+}
+
 interface ResumeSource {
   info?: SessionInfoSnapshot;
   resume?: ResumeChoice;

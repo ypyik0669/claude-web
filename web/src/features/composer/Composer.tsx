@@ -21,7 +21,7 @@ import { SessionRefChip } from '@/features/chat/ChatView';
 import { REFERENCE_EVENT, handOver, type ReferenceDetail } from '@/features/sidebar/session-actions';
 import { ModelChip } from '@/features/models/ModelMenu';
 import { OWN_PROVIDER, effectiveRuntime, usableProfile, type AgentSource, type ModelMenuItem } from '@/features/models/menu';
-import { resumeView } from '@/store/reopen';
+import { mergeResume, resumeView } from '@/store/reopen';
 import { routePick, switchedNote } from '@/features/models/route';
 import { claudeEffortView, modelChipText } from '@/features/models/intelligence';
 import { useAccountDefault } from '@/features/models/account-default';
@@ -711,7 +711,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         builtinTitle={agent ? `${agent.name} 账号` : 'Claude 账号'}
         agentDefault={agent?.model || undefined}
         otherAgents={otherAgents}
-        intelligence={{ levels: wEfforts, value: wEffortOk, defaultLevel: wView.defaultLevel, mode: wView.mode, onChange: setWEffort }}
+        intelligence={{ levels: wEfforts, value: wEffortOk, defaultLevel: wView.defaultLevel, mode: wView.mode, onChange: (effort) => { const next = mergeResume({ effort: wEffort || undefined, ultracode: wUltra }, { effort }); setWEffort(effort); setWUltra(!!next.ultracode); } }}
         ultracode={wUltracode ? { on: wUltra, onChange: setWUltra } : undefined}
         onPick={pickWelcome}
       />

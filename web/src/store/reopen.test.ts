@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionInfoSnapshot } from '@shared';
-import { forkParams, lastAssistantModel, reopenSettings, resumeParams, resumeView } from './reopen';
+import { forkParams, lastAssistantModel, mergeResume, reopenSettings, resumeParams, resumeView } from './reopen';
+
+describe('mergeResume', () => {
+  it('picking a level leaves 深度编排 (the rule of a running conversation)', () => {
+    expect(mergeResume({ ultracode: true }, { effort: 'low' })).toEqual({ ultracode: false, effort: 'low' });
+    expect(mergeResume({ effort: 'low' }, { ultracode: true })).toEqual({ effort: 'low', ultracode: true });
+    expect(mergeResume({ ultracode: true }, { model: 'x' })).toEqual({ ultracode: true, model: 'x' });
+    expect(mergeResume(undefined, { effort: 'high', ultracode: true })).toEqual({ effort: 'high', ultracode: true });
+  });
+});
 
 describe('reopenSettings', () => {
   it('carries model, effort, permission mode, ultracode and features', () => {
