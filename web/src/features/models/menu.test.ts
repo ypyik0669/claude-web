@@ -55,6 +55,19 @@ describe('items and labels', () => {
     expect(modelKey('codex', 'claude', 'gpt-6')).toBe('codex:gpt-6');
     expect(modelKey('codex', 'gkey', 'gpt-6')).toBe('gkey:gpt-6');
   });
+  it('a provider whose model list names its models shows the name (official DeepSeek: deepseek-flash is 「DeepSeek-V4.1-Flash」), the id as the hint', () => {
+    const ds = prov('ds', { name: 'DeepSeek', type: 'openai', models: ['deepseek-flash', 'deepseek-v4-pro'], modelNames: { 'deepseek-flash': 'DeepSeek-V4.1-Flash' }, defaultModel: 'deepseek-flash' });
+    const m = menu({ providers: [ds] });
+    const flash = m.items.find((i) => i.providerId === 'ds' && i.model === 'deepseek-flash')!;
+    expect(flash).toMatchObject({ display: 'DeepSeek-V4.1-Flash', label: 'DeepSeek / DeepSeek-V4.1-Flash', hint: 'deepseek-flash' });
+    const pro = m.items.find((i) => i.providerId === 'ds' && i.model === 'deepseek-v4-pro')!;
+    expect(pro.display).toBe('deepseek-v4-pro');
+    expect(pro.hint).toBeUndefined();
+    expect(filterMenu(m, 'v4.1').items.length).toBeGreaterThan(0);
+    expect(filterMenu(m, 'v4.1').sections.flatMap((s) => s.items).map((i) => i.model)).toEqual(['deepseek-flash']);
+    expect(chipLabel({ agent: 'claude', providers: [ds], providerId: 'ds', model: 'deepseek-flash' })).toBe('DeepSeek / DeepSeek-V4.1-Flash');
+    expect(chipLabel({ agent: 'claude', providers: [ds], providerId: 'ds' })).toBe('DeepSeek / DeepSeek-V4.1-Flash'); // the default model, by name
+  });
   it('the current selection is marked', () => {
     const m = menu({ current: { providerId: 'gkey', model: 'gpt-5.6-sol' } });
     expect(m.items.filter((i) => i.current).map((i) => i.key)).toEqual(['gkey:gpt-5.6-sol']);

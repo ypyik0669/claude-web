@@ -1,10 +1,8 @@
 import type { LedgerEntry } from '@shared';
+import { hitRate } from '@/model/tokens';
 
 /** Share of the prompt served from cache: cacheRead / (uncached input + cacheRead + cacheWrite). */
-export const hitRate = (b: { input: number; cacheRead: number; cacheWrite: number }) => {
-  const all = b.input + b.cacheRead + b.cacheWrite;
-  return all ? b.cacheRead / all : 0;
-};
+export { hitRate };
 
 export type LedgerSource = 'all' | 'session' | 'gateway';
 

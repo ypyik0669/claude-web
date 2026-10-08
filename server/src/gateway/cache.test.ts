@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SseLines, fixChatUsage, insertTopLevelField } from './cache.js';
+import { SseLines, fixChatUsage, forcesTool, insertTopLevelField, refusesForcedTool, thinkingOff } from './cache.js';
 
 describe('insertTopLevelField', () => {
   it('adds the field and leaves every other byte alone', () => {
@@ -58,5 +58,26 @@ describe('dropEmptyReasoning (qwen3.8: ccb took "" for "thinking starts" and the
     expect(dropEmptyReasoning(whole)).toBe(true);
     expect(whole.choices[0].message).toEqual({ role: 'assistant', content: 'x' });
     expect(dropEmptyReasoning({ choices: [{ delta: { content: 'y' } }] })).toBe(false);
+  });
+});
+
+describe('forced tool calls to a thinking model (自动判断 on official DeepSeek)', () => {
+  it('forcesTool: a named tool or "required"; auto / none / absent are not forced', () => {
+    expect(forcesTool({ tool_choice: { type: 'function', function: { name: 'classify_result' } } })).toBe(true);
+    expect(forcesTool({ tool_choice: 'required' })).toBe(true);
+    expect(forcesTool({ tool_choice: 'auto' })).toBe(false);
+    expect(forcesTool({ tool_choice: 'none' })).toBe(false);
+    expect(forcesTool({})).toBe(false);
+  });
+  it('refusesForcedTool: DeepSeek\'s wording; other tool_choice errors are not it', () => {
+    expect(refusesForcedTool('{"error":{"message":"Thinking mode does not support this tool_choice (request_id: x)"}}')).toBe(true);
+    expect(refusesForcedTool('tool_choice is not supported by this model')).toBe(false);
+  });
+  it('thinkingOff: added first with every other byte kept; existing switches are turned off', () => {
+    expect(thinkingOff('{"model":"m","tool_choice":"required"}')).toBe('{"thinking":{"type":"disabled"},"model":"m","tool_choice":"required"}');
+    expect(JSON.parse(thinkingOff('{"model":"m","thinking":{"type":"enabled"},"enable_thinking":true,"chat_template_kwargs":{"enable_thinking":true,"x":1}}')!))
+      .toEqual({ model: 'm', thinking: { type: 'disabled' }, enable_thinking: false, chat_template_kwargs: { enable_thinking: false, x: 1 } });
+    expect(thinkingOff('not json')).toBeNull();
+    expect(thinkingOff('[1]')).toBeNull();
   });
 });

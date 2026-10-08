@@ -99,7 +99,7 @@ export interface AgentSource {
    * the provider its new conversations run on (settings → Agents 与子代理 「新对话用」), when it has one it can use:
    * the section then lists that provider's models (a relay's ids, not the agent's own account models)
    */
-  provider?: Pick<Provider, 'id' | 'name' | 'models' | 'defaultModel'>;
+  provider?: Pick<Provider, 'id' | 'name' | 'models' | 'modelNames' | 'defaultModel'>;
 }
 
 /** An agent's own model list: the catalog, else what it reported. */
@@ -184,6 +184,9 @@ export function profileModels(p: Provider, groups: GatewayGroup[] | undefined, p
   return list;
 }
 
+/** How a provider's model shows: the name its model list gave (「DeepSeek-V4.1-Flash」 for `deepseek-flash`), else the id. */
+export const providerModelName = (p: Pick<Provider, 'modelNames'> | undefined, model: string): string => p?.modelNames?.[model] || model;
+
 const strList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
 function builtinList(i: BuildMenuInput) {
@@ -236,7 +239,7 @@ export function buildModelMenu(i: BuildMenuInput): ModelMenu {
     const unavailable = compatible ? profileUnavailable(p, i) ?? undefined : undefined;
     const models = profileModels(p, i.gatewayGroups, i.providers);
     const list = models.length
-      ? models.map((m) => make(p.id, p.name, m, m, compatible, { profileDefault: m === p.defaultModel, unavailable }))
+      ? models.map((m) => make(p.id, p.name, m, providerModelName(p, m), compatible, { profileDefault: m === p.defaultModel, unavailable, ...(providerModelName(p, m) !== m ? { hint: m } : {}) }))
       : [make(p.id, p.name, '', '默认模型', compatible, { isDefault: true, unavailable })];
     items.push(...list);
     if (!compatible) continue;
@@ -277,7 +280,7 @@ export function buildModelMenu(i: BuildMenuInput): ModelMenu {
     });
     const def = via ? via.defaultModel : a.defaultModel;
     const list = [entry('', def ? `默认（${def}）` : '默认模型', { isDefault: true })];
-    const own = via ? [...new Set([...(via.defaultModel ? [via.defaultModel] : []), ...(via.models ?? [])])].map((m) => ({ value: m, displayName: m, description: undefined as string | undefined })) : agentModels(a);
+    const own = via ? [...new Set([...(via.defaultModel ? [via.defaultModel] : []), ...(via.models ?? [])])].map((m) => ({ value: m, displayName: providerModelName(via, m), description: (providerModelName(via, m) !== m ? m : undefined) as string | undefined })) : agentModels(a);
     for (const m of own) if (m.value && m.value !== 'default') list.push(entry(m.value, m.displayName || m.value, { hint: m.description || undefined }));
     items.push(...list);
     const shown = list.filter(visible);
@@ -334,7 +337,7 @@ export function chipLabel(o: { agent: AgentKind; agentName?: string; providers: 
   const p = o.providers.find((x) => x.id === pid);
   const name = p?.name ?? o.providerName ?? pid;
   const m = model || p?.defaultModel || '';
-  return m ? `${name} / ${m}` : name;
+  return m ? `${name} / ${providerModelName(p, m)}` : name;
 }
 
 export interface ModelRow {

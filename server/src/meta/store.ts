@@ -176,7 +176,7 @@ export class MetaStore extends EventEmitter {
     }
     const { apiKey, id: _id, createdAt: _c, ...rest } = p;
     Object.assign(cur, rest);
-    for (const k of ['runtime', 'defaultModel', 'modelMap', 'models', 'modelsAt', 'modelsError', 'cacheShim', 'responsesApi', 'cache1h', 'cacheControlFormat', 'noPromptCacheKey', 'noResponsesApi', 'noCacheRetention'] as const) if ((cur as any)[k] == null) delete (cur as any)[k]; // null clears (JSON drops undefined)
+    for (const k of ['runtime', 'defaultModel', 'modelMap', 'models', 'modelNames', 'modelsAt', 'modelsError', 'cacheShim', 'responsesApi', 'cache1h', 'cacheControlFormat', 'noPromptCacheKey', 'noResponsesApi', 'noCacheRetention'] as const) if ((cur as any)[k] == null) delete (cur as any)[k]; // null clears (JSON drops undefined)
     if (apiKey && !/^\S{0,4}…\S{0,4}$/.test(apiKey) && !apiKey.includes('…')) cur.apiKey = this.secretCodec ? await this.secretCodec.protect(apiKey.trim(), cur.id) : apiKey.trim();
     cur.baseUrl = (cur.baseUrl ?? '').trim().replace(/\/+$/, '');
     await this.queueSave();

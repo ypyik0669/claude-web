@@ -10,6 +10,7 @@ import { usePaneCtx } from '@/store/paneContext';
 import { activeGroup } from '@/model/layout';
 import { clsx, fmtMs, fmtTok } from '@/util';
 import { fmtCost } from '@/model/cost';
+import { usageParts } from '@/model/tokens';
 import { AssistantActions, UserActions, UserEditor } from './MessageActions';
 import { FindBar } from './FindBar';
 import { Markdown } from './Markdown';
@@ -260,11 +261,17 @@ function UserRow({ it, version }: { it: UserItem; version: number }) {
   );
 }
 
-/** A turn's stats line (duration · steps · cost · tokens): its own row after an unfolded turn, the tooltip of a folded one. */
-function resultStats(r: ResultItem): string[] {
-  const out = [fmtMs(r.durationMs), `${r.numTurns} 步`, fmtCost(r.costUsd, r.costUnknown)];
-  if (r.usage) out.push(`↑${fmtTok((r.usage as any).input_tokens + (r.usage as any).cache_read_input_tokens)} ↓${fmtTok((r.usage as any).output_tokens)}`);
-  return out;
+/**
+ * A turn's stats line (duration · steps · cost · tokens · cache hit rate): its own row after an unfolded turn, the
+ * tooltip of a folded one.
+ */
+function resultStats(r: ResultItem): { text: string; title?: string }[] {
+  return [
+    { text: fmtMs(r.durationMs) },
+    { text: `${r.numTurns} 步` },
+    { text: fmtCost(r.costUsd, r.costUnknown), title: r.costUnknown ? '这个模型 / agent 没有可靠的价格（ccb 按 Claude 价表估的数不作数）' : undefined },
+    ...usageParts(r.usage, fmtTok),
+  ];
 }
 
 /**
@@ -305,7 +312,7 @@ export function ItemList({ items, version, actions = 'all' }: { items: Item[]; v
             return (
               <div key={it.id} className={clsx('result-line', it.isError && 'err')} data-item-id={it.id}>
                 {it.isError && <span title={it.text}>{it.errorKind ? ERROR_LABEL[it.errorKind] : '错误'}: {(it.text ?? '').slice(0, 200)}</span>}
-                {resultStats(it).map((x, i) => <span key={i} title={i === 2 && it.costUnknown ? '这个模型 / agent 没有可靠的价格（ccb 按 Claude 价表估的数不作数）' : undefined}>{x}</span>)}
+                {resultStats(it).map((x, i) => <span key={i} title={x.title}>{x.text}</span>)}
               </div>
             );
           case 'system':
@@ -398,7 +405,7 @@ function TurnView({ turn, last, live, version, sessionId, cwd }: { turn: Turn; l
       {turn.user && <UserRow it={turn.user} version={version} />}
       {fold && summary && (
         <div className="turn-sum-row" data-item-id={parts.process[0]?.id}>
-          <button className="turn-sum" aria-expanded={open} onClick={() => setOpen(!open)} title={`${open ? '收起' : '展开'}这一轮的步骤${turn.result ? `\n${resultStats(turn.result).join(' · ')}` : ''}`}>
+          <button className="turn-sum" aria-expanded={open} onClick={() => setOpen(!open)} title={`${open ? '收起' : '展开'}这一轮的步骤${turn.result ? `\n${resultStats(turn.result).map((x) => x.text).join(' · ')}` : ''}`}>
             <Icon name={open ? 'chevronDown' : 'chevronRight'} size={13} className="chev" />
             <span className="lbl">{turnSummaryParts(summary).map((p, i) => <span key={i} className={clsx(p.err && 'err')}>{i > 0 && ' · '}{p.text}</span>)}</span>
           </button>

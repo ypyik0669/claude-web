@@ -13,7 +13,14 @@ const items = [
 
 describe('the old stats bar, now behind the usage ring', () => {
   it('turns, tokens in / out, cache share, cost (unknown counted, not zero)', () => {
-    expect(sessionTotals(items)).toEqual({ turns: 2, inp: 150, out: 50, cache: 1850, cost: 0.5, costUnknown: 1 });
+    expect(sessionTotals(items)).toEqual({ turns: 2, inp: 150, out: 50, cache: 1850, write: 0, cost: 0.5, costUnknown: 1 });
+  });
+  it('cache writes count as input — the same hit rate as the ledger and the line under each answer', () => {
+    const t = sessionTotals([{ kind: 'user' }, { kind: 'assistant', usage: { input: 100, output: 10, cacheRead: 600, cacheWrite: 300 } }]);
+    expect(t.write).toBe(300);
+    const lines = usageLines(t, {});
+    expect(lines.find((l) => l[0] === '输入 / 输出')?.[1]).toBe('↑1.0K ↓10');
+    expect(lines.find((l) => l[0] === '缓存命中')?.[1]).toBe('60%'); // 600 of 1000, not 600 of 700
   });
   it('the ring: none without an occupancy, quiet under 60 %, noted from 60 %, strong from 80 %, error from 95 % (no yellow level)', () => {
     expect(ringLevel(undefined)).toBeNull();
@@ -42,6 +49,6 @@ describe('the old stats bar, now behind the usage ring', () => {
     expect(lines.find((l) => l[0] === '上下文')?.[1]).toMatch(/^72% · 145/);
   });
   it('fields without data are left out', () => {
-    expect(usageLines({ turns: 0, inp: 0, out: 0, cache: 0, cost: 0, costUnknown: 0 }, {}).map((l) => l[0])).toEqual(['轮数', '输入 / 输出']);
+    expect(usageLines({ turns: 0, inp: 0, out: 0, cache: 0, write: 0, cost: 0, costUnknown: 0 }, {}).map((l) => l[0])).toEqual(['轮数', '输入 / 输出']);
   });
 });

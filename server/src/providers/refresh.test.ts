@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Provider } from '../protocol.js';
 import { MetaStore } from '../meta/store.js';
-import { ProviderService, needsModelRefresh, MODEL_REFRESH_MAX_AGE } from './service.js';
+import { ProviderService, needsModelRefresh, MODEL_REFRESH_MAX_AGE, parseModelList } from './service.js';
 
 // A fake `/v1/models`: the bearer key picks the behaviour; every request is held 40 ms so overlapping
 // requests can be counted (the concurrency cap).
@@ -27,6 +27,7 @@ beforeAll(async () => {
       inFlight--;
       if (key === 'k-500') { s.writeHead(500).end(); return; }
       if (key === 'k-empty') { s.writeHead(200, { 'content-type': 'application/json' }).end('{"object":"list","data":[]}'); return; }
+      if (key === 'k-named') { s.writeHead(200, { 'content-type': 'application/json' }).end('{"object":"list","data":[{"id":"deepseek-flash","name":"DeepSeek-V4.1-Flash"},{"id":"deepseek-v4-pro","name":"DeepSeek-V4-Pro"}]}'); return; }
       if (key === 'k-bad') { s.writeHead(401, { 'content-type': 'application/json' }).end('{"error":{"message":"invalid key"}}'); return; }
       const n = Number(/k-(\d+)/.exec(key)?.[1] ?? 1);
       s.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ object: 'list', data: Array.from({ length: n }, (_, i) => ({ id: `m-${key}-${i}` })) }));
@@ -196,5 +197,31 @@ describe('the model list on a flaky route', () => {
     const bad = await probeProvider({ type: 'openai', baseUrl: base, apiKey: 'k-bad' }, 10);
     expect(bad).toMatchObject({ ok: false, status: 401 });
     expect(hits.filter((h) => h.startsWith('k-bad '))).toHaveLength(1);
+  });
+});
+
+describe('model display names from the list', () => {
+  it('a refresh stores the names with the list; a list without names clears old ones', async () => {
+    const { meta, svc } = await service();
+    const p = await meta.upsertProvider({ name: 'DeepSeek', type: 'openai', baseUrl: base, apiKey: 'k-named' });
+    await svc.refreshModels([p.id]);
+    expect(meta.provider(p.id)).toMatchObject({ models: ['deepseek-flash', 'deepseek-v4-pro'], modelNames: { 'deepseek-flash': 'DeepSeek-V4.1-Flash', 'deepseek-v4-pro': 'DeepSeek-V4-Pro' } });
+    await meta.upsertProvider({ id: p.id, apiKey: 'k-2' });
+    await svc.refreshModels([p.id]);
+    expect(meta.provider(p.id)!.modelNames).toBeUndefined();
+  });
+  it('DeepSeek / OpenRouter `name`, Anthropic `display_name`, Gemini `displayName`; a name equal to the id is not one', () => {
+    expect(parseModelList([
+      { id: 'deepseek-flash', object: 'model', name: 'DeepSeek-V4.1-Flash' },
+      { id: 'deepseek-v4-pro', name: 'deepseek-v4-pro' },
+      { id: 'claude-sonnet-5', display_name: 'Claude Sonnet 5' },
+      { name: 'models/gemini-3-pro', displayName: 'Gemini 3 Pro' },
+      { id: 'plain' },
+      'bare-string',
+    ])).toEqual({
+      models: ['bare-string', 'claude-sonnet-5', 'deepseek-flash', 'deepseek-v4-pro', 'gemini-3-pro', 'plain'],
+      modelNames: { 'deepseek-flash': 'DeepSeek-V4.1-Flash', 'claude-sonnet-5': 'Claude Sonnet 5', 'gemini-3-pro': 'Gemini 3 Pro' },
+    });
+    expect(parseModelList([{ id: 'a' }, { id: 'b' }])).toEqual({ models: ['a', 'b'] });
   });
 });

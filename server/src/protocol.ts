@@ -128,6 +128,11 @@ export interface Provider {
   baseUrl: string;
   apiKey: string; // masked (sk-…1234) when sent to the client
   models?: string[]; // last probe result
+  /**
+   * Display names the model list gave, where they differ from the id (DeepSeek's `deepseek-flash` is named
+   * 「DeepSeek-V4.1-Flash」; Anthropic `display_name`, Gemini `displayName`, OpenRouter `name`). Only for showing.
+   */
+  modelNames?: Record<string, string>;
   /** when `models` was last pulled from the endpoint's model list (providers.refreshModels / probe) */
   modelsAt?: number;
   /** the last model-list pull failed (the previous `models` are kept) */

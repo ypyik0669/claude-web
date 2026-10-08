@@ -16,7 +16,7 @@ import {
   DEFAULT_BASE, PROTOCOL_LABEL, buildOutbound, inboundStreamRenderer, isPassthrough, joinUrl, outboundOf, outboundStreamParser, parseInbound,
   parseOutboundResponse, renderInboundError, renderInboundResponse, sniffUsage, supported, upstreamErrorMessage, type Outbound, type OutboundOpts,
 } from './convert.js';
-import { CACHE_KEY_MAX, addMissing, affinityHeaders, cacheKeyOf, isParamRejection, mentionsCacheKey } from './cache.js';
+import { CACHE_KEY_MAX, addMissing, affinityHeaders, cacheKeyOf, forcesTool, isParamRejection, mentionsCacheKey, refusesForcedTool, thinkingOff } from './cache.js';
 import { CacheShim, SHIM_PREFIX } from './shim.js';
 import { UpstreamError, decoded, decoder, errorHeaders, passthroughHeaders, readText, replaceTopLevelString, responseHeaders, sendUpstream, translatedHeaders, waitDrain, withTimeout, type UpstreamResponse } from './upstream.js';
 
@@ -392,6 +392,8 @@ export class GatewayService extends EventEmitter {
     let headers: Record<string, string>;
     // translated requests carry prompt caching the client could not have put there (cache.ts)
     let retryBody: Buffer | null = null; // the same request without prompt_cache_key, for an upstream that rejects it
+    let noThinkingBody: Buffer | null = null; // the same request with thinking off, for a model that refuses a forced tool call
+    let errText: string | undefined; // an error body already read
     try {
       if (pass) {
         if (route.inbound === 'gemini') {
@@ -415,6 +417,11 @@ export class GatewayService extends EventEmitter {
           addMissing(headers, affinityHeaders(ir.cacheKey.slice(0, CACHE_KEY_MAX), p.type === 'grok'));
           if (out.body.prompt_cache_key) retryBody = Buffer.from(JSON.stringify(buildOutbound(outbound, ir, { ...opts, promptCacheKey: false }).body));
         }
+        // a forced tool call (自动判断's safety check): a thinking model that refuses it gets it with thinking off
+        if (outbound === 'openai' && forcesTool(out.body) && out.body.thinking?.type !== 'disabled') {
+          const s = thinkingOff(body.toString('utf8'));
+          if (s) noThinkingBody = Buffer.from(s);
+        }
       }
     } catch (e: any) {
       return { kind: 'final', status: 400, text: JSON.stringify(renderInboundError(route.inbound, 400, `请求转换失败：${e?.message ?? e}`)), headers: {}, passthrough: true, model };
@@ -434,19 +441,25 @@ export class GatewayService extends EventEmitter {
       up = await sendUpstream(url, { method: 'POST', headers, body, signal: ctx.signal, headerTimeoutMs: waitMs });
       // an upstream that may not know prompt_cache_key: this request once more without it; the profile only
       // remembers when the error named the field (a retry that happens to work proves nothing about the key)
-      if (retryBody && isParamRejection(up.status)) {
+      if ((retryBody || noThinkingBody) && isParamRejection(up.status)) {
         let text = '';
         try { text = await readText(up.body, 1024 * 1024); } catch { /* keep empty */ }
-        if (mentionsCacheKey(text)) void this.deps.meta.upsertProvider({ id: p.id, noPromptCacheKey: true }, { mustExist: true }).catch(() => { /* next request tries again */ });
-        up = await sendUpstream(url, { method: 'POST', headers, body: retryBody, signal: ctx.signal, headerTimeoutMs: waitMs });
+        if (noThinkingBody && refusesForcedTool(text)) {
+          up = await sendUpstream(url, { method: 'POST', headers, body: noThinkingBody, signal: ctx.signal, headerTimeoutMs: waitMs });
+        } else if (retryBody) {
+          if (mentionsCacheKey(text)) void this.deps.meta.upsertProvider({ id: p.id, noPromptCacheKey: true }, { mustExist: true }).catch(() => { /* next request tries again */ });
+          up = await sendUpstream(url, { method: 'POST', headers, body: retryBody, signal: ctx.signal, headerTimeoutMs: waitMs });
+        } else {
+          errText = text;
+        }
       }
     } catch (e: any) {
       if (ctx.signal.aborted) return aborted();
       return switchOn(e instanceof UpstreamError && e.timeout ? 504 : 502, e?.message ?? String(e));
     }
     if (up.status < 200 || up.status >= 300) {
-      let text = '';
-      try { text = await readText(up.body, 4 * 1024 * 1024); } catch { /* keep empty */ }
+      let text = errText ?? '';
+      if (errText === undefined) { try { text = await readText(up.body, 4 * 1024 * 1024); } catch { /* keep empty */ } }
       if (ctx.signal.aborted) return aborted();
       const st = this.states.get(group.id, p.id);
       const v = classify(up.status, up.headers, text, st.strikes);

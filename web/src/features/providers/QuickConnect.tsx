@@ -7,7 +7,9 @@ import { Icon } from '@/ui/icons';
 import { imeComposing } from '@/ui/ime';
 import { PRESETS, anthropicBase, cleanBase, explainProbe, quickPlan, relayName, uniqueName, type ProbeLike, type QuickFormat, type QuickPlan } from './quick';
 
-interface Probe extends ProbeLike { models: string[]; chat?: { ok: boolean; model: string; error?: string; switched?: boolean } }
+/** A model list as the probe returned it: the ids and the display names it gave. */
+type Listed = { models: string[]; modelNames?: Record<string, string> };
+interface Probe extends ProbeLike { models: string[]; modelNames?: Record<string, string>; chat?: { ok: boolean; model: string; error?: string; switched?: boolean } }
 type Phase = 'idle' | 'list' | 'chat' | 'save';
 
 const FORMATS: { v: QuickFormat; l: string; t: string }[] = [
@@ -37,7 +39,7 @@ export function QuickConnect({ onDone, makeDefault, autoFocus = true }: { onDone
   const [plan, setPlan] = useState<QuickPlan | null>(null);
   const [err, setErr] = useState<{ text: string; raw?: string } | null>(null);
   // a failed chat check: the list worked, so 仍然保存 can keep the profile (the model can be changed later)
-  const [fallback, setFallback] = useState<{ plan: QuickPlan; models: string[]; runtime?: 'claude' } | null>(null);
+  const [fallback, setFallback] = useState<{ plan: QuickPlan; list: Listed; runtime?: 'claude' } | null>(null);
   const [started, setStarted] = useState(0);
   const [, tick] = useState(0);
   const busy = phase !== 'idle';
@@ -51,11 +53,11 @@ export function QuickConnect({ onDone, makeDefault, autoFocus = true }: { onDone
 
   const pick = (id: string) => { if (busy) return; setPresetId(id); setErr(null); setFallback(null); };
 
-  const save = async (p: QuickPlan, models: string[], runtime?: 'claude') => {
+  const save = async (p: QuickPlan, { models, modelNames }: Listed, runtime?: 'claude') => {
     setPhase('save');
     const st = useStore.getState();
     const name = uniqueName(relay ? relayName(base) : preset.name, st.providers.map((x) => x.name));
-    const draft: Partial<Provider> = { name, type: p.type as ProviderType, baseUrl: p.baseUrl, apiKey: key.trim(), models, ...(models.length ? { modelsAt: Date.now() } : {}) };
+    const draft: Partial<Provider> = { name, type: p.type as ProviderType, baseUrl: p.baseUrl, apiKey: key.trim(), models, ...(modelNames ? { modelNames } : {}), ...(models.length ? { modelsAt: Date.now() } : {}) };
     if (p.defaultModel) draft.defaultModel = p.defaultModel;
     if (p.modelMap) draft.modelMap = p.modelMap;
     if (runtime) draft.runtime = runtime;
@@ -88,13 +90,13 @@ export function QuickConnect({ onDone, makeDefault, autoFocus = true }: { onDone
       const p = quickPlan(preset, used, b, list.models);
       setPlan(p);
       // no chat check for Gemini (the probe has none either): the key already listed the models
-      if (p.type !== 'anthropic' && p.type !== 'openai') { await save(p, list.models); return; }
+      if (p.type !== 'anthropic' && p.type !== 'openai') { await save(p, list); return; }
       setPhase('chat');
       setStarted(Date.now());
       const r = await probe({ type: p.type, baseUrl: p.baseUrl, apiKey: k, defaultModel: p.defaultModel, modelMap: p.modelMap }, false);
       const runtime = r.chat?.switched ? 'claude' as const : undefined;
-      if (!r.ok) { setErr({ text: explainProbe(r, 'chat'), raw: r.chat?.error ?? r.error }); setFallback({ plan: p, models: list.models, runtime }); return; }
-      await save(p, r.models.length ? r.models : list.models, runtime);
+      if (!r.ok) { setErr({ text: explainProbe(r, 'chat'), raw: r.chat?.error ?? r.error }); setFallback({ plan: p, list, runtime }); return; }
+      await save(p, r.models.length ? r : list, runtime);
     } catch (e: any) {
       setErr({ text: e?.message ?? String(e) });
     } finally {
@@ -104,7 +106,7 @@ export function QuickConnect({ onDone, makeDefault, autoFocus = true }: { onDone
 
   const forceSave = async () => {
     if (!fallback || busy) return;
-    try { await save(fallback.plan, fallback.models, fallback.runtime); } catch (e: any) { setErr({ text: e?.message ?? String(e) }); } finally { setPhase('idle'); }
+    try { await save(fallback.plan, fallback.list, fallback.runtime); } catch (e: any) { setErr({ text: e?.message ?? String(e) }); } finally { setPhase('idle'); }
   };
 
   const secs = started ? Math.max(0, Math.round((Date.now() - started) / 1000)) : 0;

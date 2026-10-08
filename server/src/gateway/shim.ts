@@ -15,6 +15,9 @@
 //     routes on the key) and streams the answer back as chat.completion.chunk. A 404 / 405 / 501 / 400 / 5xx
 //     there sends this request to chat/completions instead; only "no such endpoint" (404 / 405 / 501, not a
 //     model error) followed by a working chat call is remembered (`noResponsesApi`);
+//   · a forced tool call (tool_choice naming a tool / "required" — 自动判断's safety check) that a thinking model
+//     refuses (official DeepSeek: 400 「Thinking mode does not support this tool_choice」) goes again with
+//     `thinking: {type: "disabled"}`; from then on that profile's forced calls go that way (in memory);
 //   · logs every call in the ledger (kind 'gateway', via 'shim', under the session's own id `/s/…`).
 //   · Codex on an openai profile (providers.agentLaunch) speaks /v1/responses: forwarded as it is, except to a
 //     relay without that endpoint (404 / 405 / 501 not about the model — most relays and Chinese vendors): there
@@ -34,7 +37,7 @@ import * as R from './openai-responses.js';
 import { DEFAULT_BASE, joinUrl, upstreamErrorMessage } from './convert.js';
 import { SseParser } from './sse.js';
 import type { IrEvent, IrUsage } from './ir.js';
-import { CACHE_KEY_MAX, SseLines, addMissing, affinityHeaders, dropEmptyReasoning, fixChatUsage, insertTopLevelField, isParamRejection, mentionsCacheKey } from './cache.js';
+import { CACHE_KEY_MAX, SseLines, addMissing, affinityHeaders, dropEmptyReasoning, fixChatUsage, forcesTool, insertTopLevelField, isParamRejection, mentionsCacheKey, refusesForcedTool, thinkingOff } from './cache.js';
 import { UpstreamError, decoded, errorHeaders, passthroughHeaders, readText, responseHeaders, sendUpstream, waitDrain, withTimeout, type UpstreamResponse } from './upstream.js';
 
 export const SHIM_PREFIX = '/gateway/~p/';
@@ -101,6 +104,8 @@ interface Outcome { ok: boolean; status: number; model: string; usage?: Partial<
 
 export class CacheShim {
   private secret = crypto.randomBytes(32);
+  /** Profiles whose model refused a forced tool call while thinking: those requests now go with thinking off. */
+  private forcedToolsNoThinking = new Set<string>();
   constructor(private deps: ShimDeps) {}
 
   /** The credential a session of this profile gets in OPENAI_API_KEY / GROK_API_KEY. */
@@ -202,10 +207,10 @@ export class CacheShim {
     await this.deps.meta.upsertProvider({ id: p.id, ...patch }, { mustExist: true }).catch(() => { /* next request tries again */ });
   }
 
-  /** Upstream error: status, rate-limit headers and body back to the client (and a ledger line). */
-  private async passError(ctx: Ctx, up: UpstreamResponse, model: string, outbound: Outcome['outbound'], stream: boolean) {
-    let text = '';
-    try { text = await readText(up.body, 4 * 1024 * 1024); } catch { /* keep empty */ }
+  /** Upstream error: status, rate-limit headers and body back to the client (and a ledger line). `read`: the body, already read. */
+  private async passError(ctx: Ctx, up: UpstreamResponse, model: string, outbound: Outcome['outbound'], stream: boolean, read?: string) {
+    let text = read ?? '';
+    if (read === undefined) { try { text = await readText(up.body, 4 * 1024 * 1024); } catch { /* keep empty */ } }
     sendError(ctx, up.status, up.headers, text);
     this.record(ctx, { ok: false, status: up.status, model, error: `HTTP ${up.status} ${upstreamErrorMessage(text)}`.slice(0, 200), outbound, stream });
   }
@@ -227,14 +232,30 @@ export class CacheShim {
       const s = insertTopLevelField(ctx.raw.toString('utf8'), 'prompt_cache_key', ctx.cacheKey);
       if (s) { bare = ctx.raw; body = Buffer.from(s); ctx.keyed = true; }
     }
-    const up = await this.send(ctx, joinUrl(ctx.base, '/v1/chat/completions') + ctx.search, body, bare, stream);
+    // a forced tool call (自动判断's safety check) to a model that only takes one with thinking off
+    const forced = forcesTool(json) && json.thinking?.type !== 'disabled';
+    const off = (b: Buffer) => { const s = thinkingOff(b.toString('utf8')); return s ? Buffer.from(s) : b; };
+    if (forced && this.forcedToolsNoThinking.has(ctx.p.id)) { body = off(body); if (bare) bare = off(bare); }
+    const url = joinUrl(ctx.base, '/v1/chat/completions') + ctx.search;
+    let up = await this.send(ctx, url, body, bare, stream);
     if (!up) return;
+    let read: string | undefined;
+    if (forced && !this.forcedToolsNoThinking.has(ctx.p.id) && isParamRejection(up.status)) {
+      read = '';
+      try { read = await readText(up.body, 1024 * 1024); } catch { /* keep empty */ }
+      if (refusesForcedTool(read)) {
+        this.forcedToolsNoThinking.add(ctx.p.id);
+        read = undefined;
+        up = await this.send(ctx, url, off(body), bare && off(bare), stream);
+        if (!up) return;
+      }
+    }
     if ((up.status < 200 || up.status >= 300) && original) {
       up.body.resume();
       sendError(ctx, original.status, original.headers, original.text);
       return this.record(ctx, { ok: false, status: original.status, model, error: `HTTP ${original.status} ${upstreamErrorMessage(original.text)}（chat/completions 退回也失败：HTTP ${up.status}）`.slice(0, 240), outbound: 'responses', stream });
     }
-    if (up.status < 200 || up.status >= 300) return this.passError(ctx, up, model, 'openai', stream);
+    if (up.status < 200 || up.status >= 300) return this.passError(ctx, up, model, 'openai', stream, read);
     await onOk?.();
     const firstByteMs = Date.now() - ctx.t0;
     const { res } = ctx;

@@ -40,6 +40,33 @@ export const mentionsCacheKey = (text: string) => /prompt_cache_key/i.test(text)
 export const isParamRejection = (status: number) => status === 400 || status === 422;
 
 /**
+ * A chat/completions request that makes the model call a tool (`tool_choice` naming one, or "required") — what
+ * Claude Code's 自动判断 safety check sends (`classify_result`), and its other structured side calls.
+ */
+export const forcesTool = (j: any) => j?.tool_choice === 'required' || (!!j?.tool_choice && typeof j.tool_choice === 'object');
+/**
+ * A thinking model that refuses a forced tool call. Official DeepSeek (deepseek-flash, deepseek-v4-pro) thinks by
+ * default and answers 400 「Thinking mode does not support this tool_choice」, so every 自动判断 check failed and
+ * Claude Code asked about every command (2026-10-08, a user's report, measured against the real API).
+ */
+export const refusesForcedTool = (text: string) => /thinking/i.test(text) && /tool_choice/i.test(text);
+/**
+ * The same request with thinking switched off (DeepSeek's `thinking: {type: "disabled"}`, and the Qwen-style
+ * `enable_thinking` switches when the body has them). A body without any of them keeps every byte and gets the
+ * field first; null when the text is not a JSON object.
+ */
+export function thinkingOff(raw: string): string | null {
+  let j: any;
+  try { j = JSON.parse(raw); } catch { return null; }
+  if (!j || typeof j !== 'object' || Array.isArray(j)) return null;
+  if (j.thinking === undefined && j.enable_thinking === undefined && j.chat_template_kwargs?.enable_thinking === undefined) return insertTopLevelField(raw, 'thinking', { type: 'disabled' });
+  j.thinking = { type: 'disabled' };
+  if (j.enable_thinking !== undefined) j.enable_thinking = false;
+  if (j.chat_template_kwargs?.enable_thinking !== undefined) j.chat_template_kwargs = { ...j.chat_template_kwargs, enable_thinking: false };
+  return JSON.stringify(j);
+}
+
+/**
  * Claude Code puts a per-build / per-request billing line first in `system`: useless (and prefix-breaking)
  * for any other vendor. Removes just the lines that start with it; the rest of the text stays.
  */

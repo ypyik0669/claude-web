@@ -288,7 +288,7 @@ export function ProviderProfiles() {
   const toast = useStore((s) => s.toast);
   const [editing, setEditing] = useState<Draft | null>(null);
   type ChatCheck = { ok: boolean; runtime: string; model: string; error?: string; ms: number; switched?: boolean; status?: number };
-  const [probe, setProbe] = useState<{ ok: boolean; models: string[]; error?: string; ms: number; status?: number; chat?: ChatCheck; responses?: ChatCheck } | null>(null);
+  const [probe, setProbe] = useState<{ ok: boolean; models: string[]; modelNames?: Record<string, string>; error?: string; ms: number; status?: number; chat?: ChatCheck; responses?: ChatCheck } | null>(null);
   const [busy, setBusy] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const def = settings.defaultProviderId as string | undefined;
@@ -302,7 +302,7 @@ export function ProviderProfiles() {
   }, []);
   const isGw = editing?.type === 'gateway';
 
-  const startEdit = (p?: Provider) => { setEditing(p ? { ...p, modelMap: { ...(p.modelMap ?? {}) } } : emptyDraft()); setProbe(p?.models?.length ? { ok: true, models: p.models, ms: 0 } : null); setShowKey(false); };
+  const startEdit = (p?: Provider) => { setEditing(p ? { ...p, modelMap: { ...(p.modelMap ?? {}) } } : emptyDraft()); setProbe(p?.models?.length ? { ok: true, models: p.models, modelNames: p.modelNames, ms: 0 } : null); setShowKey(false); };
   const test = async () => {
     if (!editing) return;
     setBusy(true);
@@ -328,11 +328,14 @@ export function ProviderProfiles() {
     if (!editing.id && editing.type !== 'gateway' && !editing.apiKey.trim()) return toast('请填 API Key');
     setBusy(true);
     try {
-      const models = probe?.ok && probe.models.length ? probe.models : editing.models;
+      const fresh = !!(probe?.ok && probe.models.length);
+      const models = fresh ? probe!.models : editing.models;
+      // the display names come with the list they were read from (none in this list = none kept)
+      const modelNames = fresh ? probe!.modelNames ?? (null as any) : editing.modelNames;
       // only Anthropic-format endpoints can be pinned to the official binary (it has no other format): a pin left from
       // before a format change goes (user report: it greyed out every GPT model)
       const pinOk = editing.type === 'anthropic' || editing.type === 'gateway';
-      const saved = await ws.request<Provider>({ kind: 'providers.upsert', provider: { ...editing, models, ...(pinOk ? {} : { runtime: null as any }) } });
+      const saved = await ws.request<Provider>({ kind: 'providers.upsert', provider: { ...editing, models, modelNames, ...(pinOk ? {} : { runtime: null as any }) } });
       // the first provider of someone without a Claude login is what they will send with: the default for new
       // conversations (a default already set, or a logged-in account, stays)
       const st = useStore.getState();

@@ -329,6 +329,26 @@ describe('prompt caching on translated requests', () => {
     expect(JSON.parse(O.hits[0].body).prompt_cache_key).toBeUndefined();
     delete meta.provider('o')!.noPromptCacheKey;
   });
+  it('→ OpenAI member: a forced tool call (自动判断) refused in thinking mode goes again with thinking off', async () => {
+    O.handler.fn = (_q, res, body) => {
+      const j = JSON.parse(body);
+      if (j.tool_choice && typeof j.tool_choice === 'object' && j.thinking?.type !== 'disabled') { res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":{"message":"Thinking mode does not support this tool_choice"}}'); return; }
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'c', object: 'chat.completion', model: 'gpt-4.1', choices: [{ index: 0, finish_reason: 'tool_calls', message: { role: 'assistant', content: null, tool_calls: [{ id: 't1', type: 'function', function: { name: 'classify_result', arguments: '{"shouldBlock":false}' } }] } }], usage: { prompt_tokens: 10, completion_tokens: 2 } }));
+    };
+    const classify = { ...msg, tools: [{ name: 'classify_result', description: 'classify', input_schema: { type: 'object', properties: { shouldBlock: { type: 'boolean' } } } }], tool_choice: { type: 'tool', name: 'classify_result' } };
+    const r = await call('/mixed/v1/messages', classify);
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.text).content[0]).toMatchObject({ type: 'tool_use', name: 'classify_result', input: { shouldBlock: false } });
+    expect(O.hits).toHaveLength(2);
+    expect(JSON.parse(O.hits[0].body).thinking).toBeUndefined();
+    expect(JSON.parse(O.hits[1].body)).toMatchObject({ thinking: { type: 'disabled' }, tool_choice: { type: 'function', function: { name: 'classify_result' } } });
+    // a request that does not force a tool is never retried or changed
+    O.hits.length = 0;
+    O.handler.fn = (_q, res) => res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":{"message":"Thinking mode does not support this tool_choice"}}');
+    const plain = await call('/mixed/v1/messages', msg);
+    expect(plain.status).toBe(400);
+    expect(O.hits.every((h) => JSON.parse(h.body).thinking === undefined)).toBe(true);
+  });
   it('a 400 that does not name prompt_cache_key: this request is retried without it, but nothing is remembered', async () => {
     O.handler.fn = (_q, res, body) => {
       if (JSON.parse(body).prompt_cache_key) { res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":{"message":"transient validation hiccup"}}'); return; }

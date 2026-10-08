@@ -169,6 +169,49 @@ describe('cache shim: chat/completions passthrough', () => {
     expect((await m.json()).data[0].id).toBe('deepseek-v4');
     expect(U.hits.at(-1)).toMatchObject({ method: 'GET', url: '/v1/models' });
   });
+  it('自动判断 on official DeepSeek: a forced tool call refused in thinking mode goes again with thinking off, and the next one goes that way at once', async () => {
+    const p = await meta.upsertProvider({ name: 'P-dsthink', type: 'openai', baseUrl: `${U.url}/v1`, apiKey: 'sk-dsthink' });
+    // what the real API does (measured 2026-10-08): thinking is on by default, a forced tool_choice is refused
+    U.handler.fn = (_q, res, body) => {
+      const j = JSON.parse(body);
+      if (j.tool_choice && typeof j.tool_choice === 'object' && j.thinking?.type !== 'disabled') {
+        res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":{"message":"Thinking mode does not support this tool_choice (request_id: x)","type":"invalid_request_error"}}');
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'c', object: 'chat.completion', model: j.model, choices: [{ index: 0, finish_reason: 'tool_calls', message: { role: 'assistant', content: null, tool_calls: [{ id: 't1', type: 'function', function: { name: 'classify_result', arguments: '{"shouldBlock":false,"reason":"harmless"}' } }] } }], usage: { prompt_tokens: 900, completion_tokens: 20 } }));
+    };
+    // ccb's safety check: one tool, forced, no stream, no thinking field
+    const classify = '{"model":"deepseek-flash","messages":[{"role":"system","content":"classify"},{"role":"user","content":"python -c print(1)"}],"max_tokens":4096,"temperature":0,"tools":[{"type":"function","function":{"name":"classify_result","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"classify_result"}}}';
+    const r = await post(p.id, 'sess-cls', classify);
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.text).choices[0].message.tool_calls[0].function.name).toBe('classify_result');
+    const last = U.hits.at(-1)!.body;
+    expect(last).toBe(classify.replace('{', '{"thinking":{"type":"disabled"},"prompt_cache_key":"cw:sess-cls",')); // every other byte as sent
+    expect(ledger.at(-1)).toMatchObject({ ok: true, model: 'deepseek-flash' });
+    expect(meta.provider(p.id)!.noPromptCacheKey).toBeUndefined(); // the 400 was not about the cache key
+    U.hits.length = 0;
+    await post(p.id, 'sess-cls', classify);
+    expect(U.hits).toHaveLength(1);
+    expect(JSON.parse(U.hits[0].body).thinking).toEqual({ type: 'disabled' });
+    // the conversation itself (no forced tool) is never touched
+    U.hits.length = 0;
+    U.handler.fn = dsStream;
+    await post(p.id, 'sess-cls', chatBody('deepseek-flash'));
+    expect(U.hits).toHaveLength(1);
+    expect(JSON.parse(U.hits[0].body).thinking).toBeUndefined();
+  });
+  it('a forced tool call refused for another reason: the error reaches the client as it came, nothing is remembered', async () => {
+    const p = await meta.upsertProvider({ name: 'P-dsother', type: 'openai', baseUrl: `${U.url}/v1`, apiKey: 'sk-dsother' });
+    U.handler.fn = (_q, res) => res.writeHead(400, { 'content-type': 'application/json' }).end('{"error":{"message":"tool_choice is not supported by this model"}}');
+    const forced = chatBody('m', { tool_choice: 'required', stream: false });
+    const r = await post(p.id, 'sess-x', forced);
+    expect(r.status).toBe(400);
+    expect(JSON.parse(r.text).error.message).toBe('tool_choice is not supported by this model');
+    expect(ledger.at(-1)).toMatchObject({ ok: false, gateway: { upstreamStatus: 400 } });
+    U.hits.length = 0;
+    await post(p.id, 'sess-x', forced);
+    expect(U.hits.every((h) => JSON.parse(h.body).thinking === undefined)).toBe(true);
+  });
   it('grok profiles also get x-grok-conv-id (base without /v1 still lands on /v1)', async () => {
     await post('grok', 'sess-4', chatBody('grok-4'));
     expect(U.hits[0].url).toBe('/v1/chat/completions');
