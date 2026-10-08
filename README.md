@@ -415,7 +415,7 @@ worktree 放在仓库外面的 `~/.claude-web/worktrees/<仓库名>-<hash>/`（�
 ## 工作原理
 
 - 一个 Node 进程（`server/`）用 [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript) 驱动本机的 Claude Code，通过一条 WebSocket 把所有消息推给 React 前端（`web/`）；桌面版（`desktop/`）只是 Electron 外壳，里面跑的是同一个 server 和网页。
-- **运行内核**默认用 npm 包 [claude-code-best](https://github.com/claude-code-best/claude-code)（ccb，Claude Code 的社区构建，额外支持 OpenAI / Gemini / Grok 接口）；找不到时自动退回 Agent SDK 自带的官方 Claude Code。只放行官方客户端的中转会被自动识别，对应的供应商改用官方 Claude Code 运行。
+- **运行内核**默认用 npm 包 claude-web-engine：在 [claude-code-best](https://github.com/claude-code-best/claude-code)（ccb，Claude Code 的社区构建，额外支持 OpenAI / Gemini / Grok 接口）2.8.4 上改的，让「智能程度」「深度编排」「自动判断」在每种接口、每个模型上都生效；找不到时自动退回 Agent SDK 自带的官方 Claude Code。只放行官方客户端的中转会被自动识别，对应的供应商改用官方 Claude Code 运行。
 - Codex 走 `codex app-server`（JSON-RPC），Gemini / Qwen / Kimi 等走 [ACP](https://agentclientprotocol.com/)，它们的事件都被归一成同一种消息格式，所以界面、工具卡片、权限审批、账本对所有 agent 都一样。
 - 对话记录仍然是各个 CLI 自己的（`~/.claude/projects`、`~/.codex/sessions` …），命令行和 Claude Web 可以交替使用同一个对话。
 
@@ -485,7 +485,7 @@ npm run typecheck && npm test && npm run e2e
 它依赖的一些组件有自己的许可条款，使用和再分发（尤其是打包后的安装包，里面包含它们）时请分别遵守：
 
 - [@anthropic-ai/claude-agent-sdk](https://github.com/anthropics/claude-agent-sdk-typescript) 及其自带的 Claude Code：Anthropic 的条款（见该包的 README）；
-- [claude-code-best](https://github.com/claude-code-best/claude-code)：以该项目的说明为准；
+- [claude-code-best](https://github.com/claude-code-best/claude-code)（以及在它上面改的 claude-web-engine）：以该项目的说明为准；
 - 其余依赖（Electron、React、Monaco、node-pty、xterm.js …）是 MIT 等常见开源许可证。
 
 感谢这些项目，以及 Codex、Gemini CLI、Qwen Code、OpenCode、Agent Client Protocol 等开放的 agent 生态。
