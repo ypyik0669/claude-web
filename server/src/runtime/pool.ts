@@ -81,6 +81,7 @@ export class RunnerPool extends EventEmitter {
       }
       const sp = this.providers.forSession(params.providerId);
       r = new SessionRunner(params, sp);
+      (r as SessionRunner).onPromptOnly = (providerId, model) => void this.recordPromptOnly(providerId, model);
       this.ttl.set(r, idleTtlFor(sp));
     }
     else {
@@ -180,6 +181,17 @@ export class RunnerPool extends EventEmitter {
   /** Why `providerId` cannot drive `agent` (null = it can) — IM checks its configured provider with this. */
   providerFitError(providerId: string | undefined, agent: string | undefined): string | null {
     return this.providers.fitError(providerId, (agent || 'claude') as AgentKind);
+  }
+
+  /**
+   * The engine said a provider model refused its native thinking-strength parameter (`cw_capability`): its next
+   * conversations open in prompt mode. 保存后重新检测 clears the list.
+   */
+  private async recordPromptOnly(providerId: string, model: string) {
+    const meta = this.providers.meta;
+    const p = meta?.provider(providerId);
+    if (!meta || !p || p.promptEffortModels?.includes(model)) return;
+    await meta.upsertProvider({ id: providerId, promptEffortModels: [...(p.promptEffortModels ?? []), model] }, { mustExist: true }).catch(() => { /* gone */ });
   }
 
   async close(sessionId: string) {

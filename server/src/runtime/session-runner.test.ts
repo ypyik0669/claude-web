@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 /** Every query() the runner starts: end / fail its message stream, push a message into it, react to interrupt(). */
-interface FakeQuery { options: any; end: () => void; fail: (e: Error) => void; push: (m: any) => void; onInterrupt?: () => void }
+interface FakeQuery { options: any; end: () => void; fail: (e: Error) => void; push: (m: any) => void; onInterrupt?: () => void; flags: any[] }
 const queries: FakeQuery[] = [];
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
@@ -16,7 +16,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       if (err) { waiter = null; w.rej(err); } else if (buf.length) { waiter = null; w.res({ value: buf.shift(), done: false }); } else if (ended) { waiter = null; w.res({ value: undefined, done: true }); }
     };
     const next = () => new Promise<IteratorResult<any>>((res, rej) => { waiter = { res, rej }; settle(); });
-    const h: FakeQuery = { options, end: () => { ended = true; settle(); }, fail: (e) => { err = e; settle(); }, push: (m) => { buf.push(m); settle(); } };
+    const h: FakeQuery = { options, end: () => { ended = true; settle(); }, fail: (e) => { err = e; settle(); }, push: (m) => { buf.push(m); settle(); }, flags: [] };
     const q: any = {
       initializationResult: async () => ({}),
       supportedCommands: async () => [],
@@ -27,6 +27,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       return: async () => { h.end(); return { value: undefined, done: true }; },
       setModel: async () => { throw new Error('unsupported'); },
       interrupt: async () => { h.onInterrupt?.(); },
+      applyFlagSettings: async (f: any) => { h.flags.push(f); },
     };
     queries.push(h);
     return q;
@@ -368,7 +369,7 @@ describe('SessionRunner: the engine follows the model, effort on ccb, per-turn c
     }
   });
 
-  it('effort on ccb restarts the process with it — after the running turn ends', async () => {
+  it('effort on our engine changes in the running process (applyFlagSettings), no restart, even mid-turn', async () => {
     eng.kind = 'ccb';
     try {
       queries.length = 0;
@@ -376,16 +377,80 @@ describe('SessionRunner: the engine follows the model, effort on ccb, per-turn c
       await tick();
       expect(queries[0].options.effort).toBe('low');
       a.send('hi');
-      await a.setEffort('high');
+      await a.setEffort('max');
       await tick();
-      expect(queries).toHaveLength(1); // mid-turn: not cut off
-      expect(a.info.effort).toBe('high');
+      expect(queries).toHaveLength(1);
+      expect(queries[0].flags).toEqual([{ effortLevel: 'max', ultracode: false }]);
+      expect(a.info.effort).toBe('max');
       queries[0].push(result(0.1, { 'claude-sonnet-4-6': 0.1 }));
       await tick();
-      expect(queries).toHaveLength(2);
-      expect(queries[1].options.effort).toBe('high');
+      expect(queries).toHaveLength(1); // the turn ending does not restart it either
       expect(a.info.supportsUltracode).toBe(true); // claude-web-engine: --ultracode / the ultracode setting
       expect(a.info.models?.map((m) => m.value)).toEqual(['claude-sonnet-4-6', 'claude-opus-5-5']); // no image model
+      await a.setEffort('ultra'); // Codex's own rung: max on Claude
+      expect(queries[0].flags.at(-1)).toEqual({ effortLevel: 'max', ultracode: false });
+      await a.close();
+    } finally {
+      eng.kind = 'claude';
+    }
+  });
+
+  it('深度编排 on our engine: a setting, no restart; picking a level while it is on leaves it in the same call; a restart keeps it (--ultracode)', async () => {
+    eng.kind = 'ccb';
+    try {
+      queries.length = 0;
+      const a = new SessionRunner({ sessionId: 'u1', cwd: '/x', model: 'claude-sonnet-4-6' } as any, xy);
+      await tick();
+      await a.setUltracode(true);
+      expect(queries[0].flags).toEqual([{ ultracode: true }]);
+      expect(a.info.ultracode).toBe(true);
+      await (a as any).respawn();
+      await tick();
+      expect(queries).toHaveLength(2);
+      expect(queries[1].options.extraArgs.ultracode).toBeNull(); // → --ultracode
+      await a.setEffort('low');
+      expect(queries[1].flags).toEqual([{ effortLevel: 'low', ultracode: false }]);
+      expect(a.info.ultracode).toBe(false);
+      await (a as any).respawn();
+      await tick();
+      expect('ultracode' in queries[2].options.extraArgs).toBe(false);
+      await a.close();
+    } finally {
+      eng.kind = 'claude';
+    }
+  });
+
+  it('the official binary still changes effort with /effort', async () => {
+    queries.length = 0;
+    const a = new SessionRunner({ sessionId: 'o1', cwd: '/x', model: 'claude-opus-5-5' } as any);
+    await tick();
+    const sent = vi.spyOn(a, 'send');
+    await a.setEffort('high');
+    expect(sent).toHaveBeenCalledWith('/effort high');
+    expect(queries[0].flags).toEqual([]);
+    await a.close();
+  });
+
+  it('a model whose native parameter was refused: recorded on the provider, shown as the prompt way, the message not passed on', async () => {
+    eng.kind = 'ccb';
+    try {
+      queries.length = 0;
+      const p = { id: 'ox', name: 'OX', type: 'openai', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['gpt-x', 'o3-mini'] } as any;
+      const a = new SessionRunner({ sessionId: 'cap1', cwd: '/x', model: 'o3-mini' } as any, p);
+      const recorded: [string, string][] = [];
+      a.onPromptOnly = (pid, model) => recorded.push([pid, model]);
+      const seen: any[] = [];
+      a.on('message', (m) => seen.push(m));
+      await tick();
+      expect(a.info.models?.find((m) => m.value === 'o3-mini')?.effortMode).toBe('native');
+      queries[0].push({ type: 'system', subtype: 'cw_capability', model: 'o3-mini', capability: 'native_effort', supported: false, param: 'reasoning_effort', status: 400, session_id: 'cap1', uuid: 'u' });
+      await tick();
+      expect(recorded).toEqual([['ox', 'o3-mini']]);
+      expect(a.info.models?.find((m) => m.value === 'o3-mini')?.effortMode).toBe('prompt');
+      expect(seen.some((m) => m.subtype === 'cw_capability')).toBe(false);
+      await (a as any).respawn();
+      await tick();
+      expect(JSON.parse(queries[1].options.env.CLAUDE_WEB_MODEL_CAPS)['o3-mini']).toMatchObject({ native: false });
       await a.close();
     } finally {
       eng.kind = 'claude';

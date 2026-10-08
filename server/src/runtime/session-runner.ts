@@ -254,6 +254,11 @@ export class SessionRunner extends EventEmitter {
   private start(extra: Partial<Options>) {
     const { engine, noThinking, key } = this.plan();
     this.planKey = key;
+    // ultracode on: a restarted claude-web-engine process starts with it (`--ultracode`)
+    const args = { ...(extra.extraArgs ?? {}) };
+    if (engine.kind === 'ccb' && this.info.ultracode) args.ultracode = null;
+    else delete args.ultracode;
+    extra = { ...extra, extraArgs: args };
     // the transcript both engines share: the official binary resumes at its last recorded leaf (repair it after turns
     // on ccb) and continues the cost totals it saved; ccb starts every process from zero
     const resumeId = typeof extra.resume === 'string' ? extra.resume : undefined;
@@ -432,6 +437,12 @@ export class SessionRunner extends EventEmitter {
   }
 
   private ingest(m: SDKMessage) {
+    // claude-web-engine: a model refused its native thinking-strength parameter — ours to record, not the window's
+    if (m.type === 'system' && (m as { subtype?: string }).subtype === 'cw_capability') {
+      const model = (m as { model?: unknown }).model;
+      if (typeof model === 'string' && model) this.promptOnly(model);
+      return;
+    }
     if (m.type === 'system' && m.subtype === 'init') {
       // resumed: the CLI says init as the first turn STARTS — that turn is running, not idle (a switch mid-turn missed
       // it and never ended the turn; Stop took the no-turn path)
@@ -680,25 +691,51 @@ export class SessionRunner extends EventEmitter {
     this.effort = effort;
     this.info.effort = effort;
     if (this.info.ultracode) this.info.ultracode = false; // picking a rung leaves ultracode
-    // ccb has no /effort command headless ("Unknown skill: effort", not even an error — the chip changed and the
-    // requests kept the old effort): the effort is an option of the process, so start one with it
     if (this.info.runtime === 'ccb') {
       this.emit('info', this.info);
-      await this.respawnWhenIdle();
+      // claude-web-engine: the level (and leaving ultracode, in the same call) is a flag setting of the running
+      // process — the next request has it, no restart, not even mid-turn. `ultra` is Codex's own: max here.
+      try {
+        await this.q?.applyFlagSettings({ effortLevel: effort === 'ultra' ? 'max' : effort, ultracode: false } as any);
+      } catch {
+        await this.respawnWhenIdle(); // an engine without it: the level is an option of the process
+      }
       return;
     }
-    // No runtime control for effort: send the slash command through the conversation.
+    // The official binary has no runtime control for effort: send the slash command through the conversation.
     this.send(`/effort ${effort}`);
   }
 
   /**
-   * ultracode = xhigh + dynamic workflow orchestration, session-scoped. It is NOT an effort value:
-   * `CLAUDE_CODE_EFFORT_LEVEL` rejects it and settings.json carries it as its own boolean, so it can
-   * only be reached through `/effort ultracode` in the conversation. Turning it off restores the rung.
+   * ultracode = xhigh + workflow orchestration, session-scoped; NOT an effort value. claude-web-engine: the
+   * `ultracode` flag setting (every model; `--ultracode` when the process restarts). The official binary: only
+   * `/effort ultracode` in the conversation. Turning it off restores the rung.
    */
   async setUltracode(on: boolean) {
     this.info.ultracode = on;
+    this.emit('info', this.info);
+    if (this.info.runtime === 'ccb') {
+      try {
+        await this.q?.applyFlagSettings({ ultracode: on } as any);
+      } catch {
+        await this.respawnWhenIdle();
+      }
+      return;
+    }
     this.send(`/effort ${on ? 'ultracode' : this.effort ?? 'high'}`);
+  }
+
+  /** Set by the pool: a model of this conversation's provider refused its native thinking-strength parameter. */
+  onPromptOnly?: (providerId: string, model: string) => void;
+
+  /** The engine's `cw_capability`: the model gets the strength through the prompt from now on (and next time). */
+  private promptOnly(model: string) {
+    if (this.provider) {
+      const list = this.provider.promptEffortModels ?? [];
+      if (!list.includes(model)) this.provider = { ...this.provider, promptEffortModels: [...list, model] };
+      this.onPromptOnly?.(this.provider.id, model);
+    }
+    if (this.info.models) this.info.models = this.info.models.map((e) => (e.value === model ? { ...e, effortMode: 'prompt' } : e));
     this.emit('info', this.info);
   }
 
