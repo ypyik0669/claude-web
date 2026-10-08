@@ -28,6 +28,7 @@ beforeAll(async () => {
       if (key === 'k-500') { s.writeHead(500).end(); return; }
       if (key === 'k-empty') { s.writeHead(200, { 'content-type': 'application/json' }).end('{"object":"list","data":[]}'); return; }
       if (key === 'k-named') { s.writeHead(200, { 'content-type': 'application/json' }).end('{"object":"list","data":[{"id":"deepseek-flash","name":"DeepSeek-V4.1-Flash"},{"id":"deepseek-v4-pro","name":"DeepSeek-V4-Pro"}]}'); return; }
+      if (key === 'k-effort') { s.writeHead(200, { 'content-type': 'application/json' }).end('{"object":"list","data":[{"id":"deepseek-flash","name":"DeepSeek-V4.1-Flash","effort":{"supported_levels":["low","high","max"],"default_level":"high"}},{"id":"deepseek-chat"}]}'); return; }
       if (key === 'k-bad') { s.writeHead(401, { 'content-type': 'application/json' }).end('{"error":{"message":"invalid key"}}'); return; }
       const n = Number(/k-(\d+)/.exec(key)?.[1] ?? 1);
       s.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ object: 'list', data: Array.from({ length: n }, (_, i) => ({ id: `m-${key}-${i}` })) }));
@@ -223,5 +224,42 @@ describe('model display names from the list', () => {
       modelNames: { 'deepseek-flash': 'DeepSeek-V4.1-Flash', 'claude-sonnet-5': 'Claude Sonnet 5', 'gemini-3-pro': 'Gemini 3 Pro' },
     });
     expect(parseModelList([{ id: 'a' }, { id: 'b' }])).toEqual({ models: ['a', 'b'] });
+  });
+});
+
+describe('thinking-strength levels from the list, and models that only take the prompt way', () => {
+  it('DeepSeek shape: effort.supported_levels / default_level, only the five levels we know, in order', () => {
+    expect(parseModelList([
+      { id: 'deepseek-flash', effort: { supported_levels: ['max', 'low', 'high'], default_level: 'high' } },
+      { id: 'turbo-only', effort: { supported_levels: ['turbo'], default_level: 'turbo' } },
+      { id: 'no-default', effort: { supported_levels: ['low', 'medium'] } },
+      { id: 'bad-default', effort: { supported_levels: ['low', 'high'], default_level: 'ultra' } },
+      { id: 'plain' },
+    ])).toEqual({
+      models: ['bad-default', 'deepseek-flash', 'no-default', 'plain', 'turbo-only'],
+      modelEfforts: {
+        'deepseek-flash': { levels: ['low', 'high', 'max'], default: 'high' },
+        'no-default': { levels: ['low', 'medium'] },
+        'bad-default': { levels: ['low', 'high'] },
+      },
+    });
+  });
+
+  it('a refresh stores the levels with the list; a list without them clears old ones', async () => {
+    const { meta, svc } = await service();
+    const p = await meta.upsertProvider({ name: 'DeepSeek', type: 'openai', baseUrl: base, apiKey: 'k-effort' });
+    await svc.refreshModels([p.id]);
+    expect(meta.provider(p.id)!.modelEfforts).toEqual({ 'deepseek-flash': { levels: ['low', 'high', 'max'], default: 'high' } });
+    await meta.upsertProvider({ id: p.id, apiKey: 'k-2' });
+    await svc.refreshModels([p.id]);
+    expect(meta.provider(p.id)!.modelEfforts).toBeUndefined();
+  });
+
+  it('保存后重新检测: promptEffortModels: null removes the record', async () => {
+    const { meta } = await service();
+    const p = await meta.upsertProvider({ name: 'X', type: 'openai', baseUrl: base, apiKey: 'k-1', promptEffortModels: ['gpt-x'] });
+    expect(meta.provider(p.id)!.promptEffortModels).toEqual(['gpt-x']);
+    await meta.upsertProvider({ id: p.id, promptEffortModels: null as unknown as undefined });
+    expect('promptEffortModels' in meta.provider(p.id)!).toBe(false);
   });
 });

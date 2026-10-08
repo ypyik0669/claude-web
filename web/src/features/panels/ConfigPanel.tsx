@@ -277,7 +277,7 @@ export function ProviderProfiles() {
   const toast = useStore((s) => s.toast);
   const [editing, setEditing] = useState<Draft | null>(null);
   type ChatCheck = { ok: boolean; runtime: string; model: string; error?: string; ms: number; switched?: boolean; status?: number };
-  const [probe, setProbe] = useState<{ ok: boolean; models: string[]; modelNames?: Record<string, string>; error?: string; ms: number; status?: number; chat?: ChatCheck; responses?: ChatCheck } | null>(null);
+  const [probe, setProbe] = useState<{ ok: boolean; models: string[]; modelNames?: Record<string, string>; modelEfforts?: Provider['modelEfforts']; error?: string; ms: number; status?: number; chat?: ChatCheck; responses?: ChatCheck } | null>(null);
   const [busy, setBusy] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const def = settings.defaultProviderId as string | undefined;
@@ -291,7 +291,7 @@ export function ProviderProfiles() {
   }, []);
   const isGw = editing?.type === 'gateway';
 
-  const startEdit = (p?: Provider) => { setEditing(p ? { ...p, modelMap: { ...(p.modelMap ?? {}) } } : emptyDraft()); setProbe(p?.models?.length ? { ok: true, models: p.models, modelNames: p.modelNames, ms: 0 } : null); setShowKey(false); };
+  const startEdit = (p?: Provider) => { setEditing(p ? { ...p, modelMap: { ...(p.modelMap ?? {}) } } : emptyDraft()); setProbe(p?.models?.length ? { ok: true, models: p.models, modelNames: p.modelNames, modelEfforts: p.modelEfforts, ms: 0 } : null); setShowKey(false); };
   const test = async () => {
     if (!editing) return;
     setBusy(true);
@@ -321,10 +321,11 @@ export function ProviderProfiles() {
       const models = fresh ? probe!.models : editing.models;
       // the display names come with the list they were read from (none in this list = none kept)
       const modelNames = fresh ? probe!.modelNames ?? (null as any) : editing.modelNames;
+      const modelEfforts = fresh ? probe!.modelEfforts ?? (null as any) : editing.modelEfforts;
       // only Anthropic-format endpoints can be pinned to the official binary (it has no other format): a pin left from
       // before a format change goes (user report: it greyed out every GPT model)
       const pinOk = editing.type === 'anthropic' || editing.type === 'gateway';
-      const saved = await ws.request<Provider>({ kind: 'providers.upsert', provider: { ...editing, models, modelNames, ...(pinOk ? {} : { runtime: null as any }) } });
+      const saved = await ws.request<Provider>({ kind: 'providers.upsert', provider: { ...editing, models, modelNames, modelEfforts, ...(pinOk ? {} : { runtime: null as any }) } });
       // the first provider of someone without a Claude login is what they will send with: the default for new
       // conversations (a default already set, or a logged-in account, stays)
       const st = useStore.getState();
@@ -438,7 +439,13 @@ function CacheOptions({ editing, set }: { editing: Draft; set: (d: Draft) => voi
   const row = { display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, color: 'var(--fg-2)', margin: '4px 0' } as const;
   const oai = editing.type === 'openai' || editing.type === 'grok';
   const shimOn = editing.cacheShim !== false;
-  const learned = [editing.noPromptCacheKey && '端点不接受 prompt_cache_key，已停发', editing.noResponsesApi && '端点没有 /v1/responses，gpt-* 改走 chat/completions', editing.noCacheRetention && '端点不接受 prompt_cache_retention，已停发'].filter(Boolean);
+  const promptOnly = editing.promptEffortModels ?? [];
+  const learned = [
+    editing.noPromptCacheKey && '端点不接受 prompt_cache_key，已停发',
+    editing.noResponsesApi && '端点没有 /v1/responses，gpt-* 改走 chat/completions',
+    editing.noCacheRetention && '端点不接受 prompt_cache_retention，已停发',
+    promptOnly.length > 0 && `${promptOnly.length} 个模型不接受智能程度参数，改用提示词（${promptOnly.slice(0, 3).join('、')}${promptOnly.length > 3 ? ' 等' : ''}）`,
+  ].filter(Boolean);
   return (
     <>
       {oai && (
@@ -465,10 +472,10 @@ function CacheOptions({ editing, set }: { editing: Draft; set: (d: Draft) => voi
           1 小时提示缓存（官方二进制 / 经模型网关；写入 2× 基础价）
         </label>
       )}
-      {oai && learned.length > 0 && (
+      {learned.length > 0 && (
         <div className="sub" style={{ margin: '2px 0 6px' }}>
           自动记下：{learned.join('；')}{' '}
-          <button className="btn sm ghost" onClick={() => set({ ...editing, noPromptCacheKey: null as any, noResponsesApi: null as any, noCacheRetention: null as any })}>保存后重新检测</button>
+          <button className="btn sm ghost" onClick={() => set({ ...editing, noPromptCacheKey: null as any, noResponsesApi: null as any, noCacheRetention: null as any, promptEffortModels: null as any })}>保存后重新检测</button>
         </div>
       )}
     </>

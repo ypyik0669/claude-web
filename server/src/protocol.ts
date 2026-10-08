@@ -133,6 +133,16 @@ export interface Provider {
    * 「DeepSeek-V4.1-Flash」; Anthropic `display_name`, Gemini `displayName`, OpenRouter `name`). Only for showing.
    */
   modelNames?: Record<string, string>;
+  /**
+   * Thinking-strength levels the model list declares (official DeepSeek: `effort.supported_levels` /
+   * `default_level`), only the five we know, in order. Pulled with the list, replaced with it.
+   */
+  modelEfforts?: Record<string, { levels: Exclude<EffortLevel, 'ultra'>[]; default?: Exclude<EffortLevel, 'ultra'> }>;
+  /**
+   * learned: models whose native thinking-strength parameter this endpoint refused (the engine's `cw_capability`):
+   * their next conversations get the strength through the prompt. 保存后重新检测 clears it.
+   */
+  promptEffortModels?: string[];
   /** when `models` was last pulled from the endpoint's model list (providers.refreshModels / probe) */
   modelsAt?: number;
   /** the last model-list pull failed (the previous `models` are kept) */
