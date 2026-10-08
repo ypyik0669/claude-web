@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { OFFICIAL_ALIAS_TARGETS, ccbAccountEnv, ccbModel, modelLabel, profileFitError, providerTypesFor } from './catalog.js';
+import { OFFICIAL_ALIAS_TARGETS, ccbAccountEnv, ccbModel, modelCaps, modelLabel, nearestLevel, profileFitError, providerTypesFor, webCapsEnv } from './catalog.js';
 
 describe('which profile types can drive an agent', () => {
   it('per agent', () => {
@@ -100,5 +100,51 @@ describe('pickChatModel: the newest GPT, and the lower-case id of a duplicate', 
     expect(pickChatModel(['gpt-5.6-sol', 'gpt-6.1-sol', 'gpt-image-2', 'gpt-6.1-mini'])).toBe('gpt-6.1-sol');
     expect(pickChatModel(['gpt-4o', 'deepseek-v4'])).toBe('deepseek-v4');
     expect(pickChatModel(['DeepSeek-V4.1-Flash', 'deepseek-v4.1-flash'])).toBe('deepseek-v4.1-flash');
+  });
+});
+
+describe('what each model can do (same rules as the engine: claude-web-engine effortPlan)', () => {
+  const ds = {
+    type: 'openai' as const,
+    modelEfforts: { 'deepseek-flash': { levels: ['low', 'high', 'max'] as ('low' | 'high' | 'max')[], default: 'high' as const } },
+  };
+
+  it('nearestLevel: closest, a tie goes up', () => {
+    expect(nearestLevel('medium', ['low', 'high', 'max'])).toBe('high');
+    expect(nearestLevel('xhigh', ['low', 'high', 'max'])).toBe('max');
+    expect(nearestLevel('low', ['high'])).toBe('high');
+    expect(nearestLevel('high', ['low', 'high'])).toBe('high');
+  });
+
+  it('levels declared by the list win; native while not recorded as refused', () => {
+    expect(modelCaps(ds, 'deepseek-flash')).toEqual({ levels: ['low', 'high', 'max'], default: 'high', reasoning: true, native: true });
+    expect(modelCaps({ ...ds, promptEffortModels: ['deepseek-flash'] }, 'deepseek-flash').native).toBe(false);
+  });
+
+  it('a model without the parameter: five levels through the prompt', () => {
+    expect(modelCaps({ type: 'openai' }, 'gpt-4o')).toEqual({ levels: ['low', 'medium', 'high', 'xhigh', 'max'], reasoning: false, native: false });
+  });
+
+  it('the table: Claude, OpenAI reasoning models, DeepSeek, Gemini, grok-3-mini', () => {
+    expect(modelCaps(undefined, 'claude-opus-5-5')).toMatchObject({ levels: ['low', 'medium', 'high', 'xhigh', 'max'], reasoning: true, native: true });
+    expect(modelCaps({ type: 'anthropic' }, 'claude-3-7-sonnet')).toMatchObject({ reasoning: true, native: true });
+    expect(modelCaps({ type: 'openai' }, 'o3-mini')).toMatchObject({ levels: ['low', 'medium', 'high'], native: true });
+    expect(modelCaps({ type: 'openai' }, 'deepseek-v4-pro')).toMatchObject({ levels: ['low', 'high', 'max'], default: 'high', native: true });
+    expect(modelCaps({ type: 'gemini' }, 'gemini-3-pro')).toMatchObject({ levels: ['low', 'high'], native: true });
+    expect(modelCaps({ type: 'gemini' }, 'gemini-2.5-flash')).toMatchObject({ levels: ['low', 'medium', 'high', 'xhigh', 'max'], native: true });
+    expect(modelCaps({ type: 'grok' }, 'grok-3-mini')).toMatchObject({ levels: ['low', 'high'], native: true });
+    expect(modelCaps({ type: 'grok' }, 'grok-4')).toMatchObject({ native: false });
+  });
+
+  it('a non-Claude model on a Claude-format relay: native only when the list declares levels', () => {
+    expect(modelCaps({ type: 'anthropic' }, 'glm-4.6').native).toBe(false);
+    expect(modelCaps({ type: 'anthropic', modelEfforts: { 'glm-4.6': { levels: ['low', 'high'] } } }, 'glm-4.6').native).toBe(true);
+  });
+
+  it('the engine variable: only what we know (an unknown model keeps the engine on its own name rules)', () => {
+    const env = JSON.parse(webCapsEnv({ ...ds, promptEffortModels: ['gpt-x'] }, ['deepseek-flash', 'gpt-4o', 'gpt-x']));
+    expect(env['deepseek-flash']).toEqual({ levels: ['low', 'high', 'max'], default: 'high', reasoning: true });
+    expect(env['gpt-4o']).toBeUndefined();
+    expect(env['gpt-x']).toEqual({ native: false });
   });
 });

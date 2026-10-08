@@ -31,6 +31,8 @@ export interface ModelInfo {
   description: string;
   supportsEffort?: boolean;
   supportedEffortLevels?: EffortLevel[];
+  /** claude-web-engine: the strength goes out as the provider's own parameter, or through the prompt (no such parameter). */
+  effortMode?: 'native' | 'prompt';
 }
 export type RunnerState = 'starting' | 'idle' | 'running' | 'waiting' | 'error' | 'closed';
 

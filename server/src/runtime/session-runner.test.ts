@@ -384,8 +384,28 @@ describe('SessionRunner: the engine follows the model, effort on ccb, per-turn c
       await tick();
       expect(queries).toHaveLength(2);
       expect(queries[1].options.effort).toBe('high');
-      expect(a.info.supportsUltracode).toBe(false); // `/effort ultracode` doesn't exist on ccb
+      expect(a.info.supportsUltracode).toBe(true); // claude-web-engine: --ultracode / the ultracode setting
       expect(a.info.models?.map((m) => m.value)).toEqual(['claude-sonnet-4-6', 'claude-opus-5-5']); // no image model
+      await a.close();
+    } finally {
+      eng.kind = 'claude';
+    }
+  });
+
+  it('tells the engine what each model can do; every model offers 智能程度 (native or through the prompt) and 深度编排', async () => {
+    eng.kind = 'ccb';
+    try {
+      queries.length = 0;
+      const ds = { id: 'ds', name: 'DeepSeek', type: 'openai', baseUrl: 'https://api.deepseek.invalid', apiKey: 'k', models: ['deepseek-flash', 'gpt-4o', 'gpt-image-2'], modelEfforts: { 'deepseek-flash': { levels: ['low', 'high', 'max'], default: 'high' } } } as any;
+      const a = new SessionRunner({ sessionId: 'caps1', cwd: '/x', model: 'deepseek-flash' } as any, ds);
+      await tick();
+      const caps = JSON.parse(queries[0].options.env.CLAUDE_WEB_MODEL_CAPS);
+      expect(caps['deepseek-flash']).toEqual({ levels: ['low', 'high', 'max'], default: 'high', reasoning: true });
+      expect(caps['gpt-4o']).toBeUndefined();
+      const byId = Object.fromEntries((a.info.models ?? []).map((m) => [m.value, m]));
+      expect(byId['deepseek-flash']).toMatchObject({ supportsEffort: true, supportedEffortLevels: ['low', 'high', 'max'], effortMode: 'native' });
+      expect(byId['gpt-4o']).toMatchObject({ supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'], effortMode: 'prompt' });
+      expect(a.info.supportsUltracode).toBe(true);
       await a.close();
     } finally {
       eng.kind = 'claude';

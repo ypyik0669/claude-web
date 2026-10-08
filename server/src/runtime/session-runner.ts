@@ -9,11 +9,11 @@ import { settingsOverride, userAnthropicEnv } from './user-env.js';
 import { writeFlagSettings, type FlagSettings } from './flag-settings.js';
 import { resolveEngine, spawnClaude } from '../claude-exe.js';
 import { loopbackNoProxy, providerEnv, type SessionProvider } from '../providers/service.js';
-import { ccbAccountEnv, ccbMisthinks, ccbModel, effortLevels, isChatModel, modelLabel, modelsFor, preferredRuntime, providerModelId, supportsUltracode } from '../models/catalog.js';
+import { ccbAccountEnv, ccbMisthinks, ccbModel, isChatModel, modelCaps, modelLabel, modelsFor, preferredRuntime, providerModelId, supportsUltracode, webCapsEnv } from '../models/catalog.js';
 import { turnShare, type RunningTotals } from '../usage/turn-cost.js';
 import { claudeMcpServer } from '../memory/launcher.js';
 import { markUnknownCost } from '../usage/pricing.js';
-import type { AttachmentRef, EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot } from '../protocol.js';
+import type { AttachmentRef, EffortLevel, ModelInfo, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot } from '../protocol.js';
 
 const esc = (s: string) => s.replace(/"/g, '&quot;');
 
@@ -228,6 +228,15 @@ export class SessionRunner extends EventEmitter {
    * (the official one refuses `--proactive` / `--computer-use-mcp` as unknown options); then ccb, with thinking off
    * for that model (`omit thinking` is what the API asks for).
    */
+  /** One model of the picker: its thinking-strength levels and whether they go out natively or through the prompt. */
+  private modelEntry(value: string, displayName: string, description: string, reported?: EffortLevel[]): ModelInfo {
+    const c = modelCaps(this.provider, value);
+    const onOurs = this.info.runtime === 'ccb';
+    const levels: EffortLevel[] = reported?.length && !this.provider ? reported : c.levels;
+    const supportsEffort = onOurs || c.native;
+    return { value, displayName, description, supportsEffort, supportedEffortLevels: supportsEffort ? levels : [], effortMode: c.native ? 'native' : 'prompt' };
+  }
+
   private plan(model = this.model) {
     const ccbOnly = !!(this.features.proactive || this.features.computerUse || this.features.devChannels);
     // the account through a relay of the user's own (settings.json / environment) is an Anthropic-format relay too;
@@ -258,6 +267,11 @@ export class SessionRunner extends EventEmitter {
     this.info.runtime = engine.kind;
     const fenv = this.featureEnv();
     if (noThinking && !('CLAUDE_CODE_DISABLE_THINKING' in fenv)) fenv.CLAUDE_CODE_DISABLE_THINKING = '1';
+    // what each of the provider's models can do with thinking strength (claude-web-engine reads it: levels, whether it
+    // reasons, models recorded as refusing the native parameter); the official binary ignores it
+    if (engine.kind === 'ccb' && this.provider) {
+      fenv.CLAUDE_WEB_MODEL_CAPS = webCapsEnv(this.provider, [...(this.provider.models ?? []), providerModelId(this.provider, this.model)]);
+    }
     // a claude.ai-login session on the bundled ccb: its alias table predates the Claude 5 family (see
     // OFFICIAL_ALIAS_TARGETS) — the CLI's own variables align it with the official one; the user's env / settings win.
     // Not for a relay the user set up in settings.json / the environment: its model list is its own (the injected
@@ -373,18 +387,17 @@ export class SessionRunner extends EventEmitter {
           const cmdSrc: any[] = cmds.length ? cmds : im.commands ?? [];
           const modelSrc: any[] = models.length ? models : im.models ?? [];
           this.info.slashCommands = cmdSrc.map((c) => ({ name: c.name, description: c.description ?? '', argumentHint: c.argumentHint ?? c.argument_hint ?? '' }));
-          // The CLI's own list wins; the catalog only supplies the versioned display name
-          // ("Fable 5.1", not "Fable") and the per-model effort range when the CLI omits them.
-          // ccb's OpenAI / Gemini / Grok clients never send the effort (no reasoning field in a capture): no control for it;
-          // image / embedding models of a provider are not something to chat with
-          const effortGoesOut = this.provider?.type === 'anthropic' || this.provider?.type === 'gateway';
+          // The CLI's own list wins; the catalog only supplies the versioned display name ("Fable 5.1", not "Fable").
+          // Thinking strength on our engine: every model has it — the provider's own parameter, or through the prompt
+          // (`effortMode`, levels from the model list > our table > five; modelCaps). The official binary has no prompt
+          // way, so there only the models with the parameter offer it. Image / embedding models are not for chatting.
           this.info.models = this.provider?.models?.length
-            ? this.provider.models.filter(isChatModel).map((v) => ({ value: v, displayName: modelLabel('claude', v), description: this.provider!.name, supportsEffort: effortGoesOut, supportedEffortLevels: effortGoesOut ? effortLevels('claude', v) : [] }))
+            ? this.provider.models.filter(isChatModel).map((v) => this.modelEntry(v, modelLabel('claude', v), this.provider!.name))
             : modelSrc.length
-              ? modelSrc.map((m) => ({ value: m.value, displayName: m.displayName && m.displayName !== m.value ? m.displayName : modelLabel('claude', m.value), description: m.description ?? '', supportsEffort: m.supportsEffort ?? true, supportedEffortLevels: m.supportedEffortLevels?.length ? m.supportedEffortLevels : effortLevels('claude', m.value) }))
+              ? modelSrc.map((m) => this.modelEntry(m.value, m.displayName && m.displayName !== m.value ? m.displayName : modelLabel('claude', m.value), m.description ?? '', m.supportedEffortLevels))
               : modelsFor('claude');
-          // ultracode is reached through `/effort ultracode`, which ccb doesn't have
-          this.info.supportsUltracode = supportsUltracode('claude') && this.info.runtime !== 'ccb';
+          // claude-web-engine: --ultracode / the `ultracode` setting on every model; the official binary: `/effort ultracode`
+          this.info.supportsUltracode = supportsUltracode('claude');
           this.info.agents = agents.map((a) => ({ name: a.name, description: a.description, model: a.model }));
           this.info.mcpServers = mcp.map((m) => ({ name: m.name, status: m.status, error: m.error, tools: m.tools }));
           this.emit('info', this.info);
