@@ -6,6 +6,8 @@ import { clsx, fmtTok } from '@/util';
 import { ws } from '@/ws/client';
 import { Icon } from '@/ui/icons';
 import { connectModel, loginInTerminal } from '@/features/providers/ConnectModel';
+import type { Provider } from '@shared';
+import { accountFailed } from './account-fail';
 
 function useTick(active: boolean, ms = 1000) {
   const [, setN] = useState(0);
@@ -26,6 +28,8 @@ function countdown(at: number) {
 /** Chips between the transcript and the composer: stall / compaction / error taxonomy / rate limit / context / queue. */
 export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onRecall: (text: string) => void }) {
   const o = useStore((s) => s.open[sessionId]);
+  const meta = useStore((s) => s.sessionMeta[sessionId]);
+  const providers = useStore((s) => s.providers);
   const settings = useStore((s) => s.settings);
   const setSetting = useStore((s) => s.setSetting);
   const st = useStore.getState;
@@ -48,14 +52,19 @@ export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onReca
   // the Claude account was never logged in (「Not logged in · Please run /login」 — there is no /login here): a retry
   // fails the same way; switch this conversation to a model instead, or log in
   const noLogin = !!showErr && res?.errorKind === 'credential' && /not logged in|run \/login/i.test(res.text ?? '');
-  const useModel = async () => {
-    const p = await connectModel({ reason: 'session' });
-    if (!p) return;
+  const switchTo = async (p: Provider) => {
     try {
       await ws.request({ kind: 'session.setProvider', sessionId, providerId: p.id });
-      await st().retryLast(sessionId);
+      if (st().open[sessionId]?.lastSent) await st().retryLast(sessionId);
+      else st().toast(`这个对话已改用「${p.name}」，再发一次消息就行`);
     } catch (e: any) { st().toast(e?.message ?? String(e)); }
   };
+  const useModel = async () => {
+    const p = await connectModel({ reason: 'session' });
+    if (p) await switchTo(p);
+  };
+  // on the Claude account, not on the providers the user added: say so, one click over (account-fail.ts)
+  const accountFail = !!showErr && !noLogin && accountFailed({ sessionId, errorKind: res?.errorKind, agent: o.info?.agent, hasInfo: !!o.info, live: o.info?.providerId, recorded: meta?.providerId, providers: providers.length });
   const nothing = !alarm && !showErr && !rlActive && !armed && !o.queue.length && !cuWarn;
   if (nothing) return null;
   const resetAt = rl?.resetsAt ? rl.resetsAt * (rl.resetsAt < 1e12 ? 1000 : 1) : undefined;
@@ -76,7 +85,16 @@ export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onReca
           <button className="link" data-act="login" onClick={loginInTerminal}>用 Claude 账号登录</button>
         </span>
       )}
-      {showErr && res && !noLogin && (
+      {showErr && res && accountFail && (
+        <span className="chip err" title={res.text} data-err="account-not-provider">
+          {ERROR_LABEL[res.errorKind!]} · 这个对话用的是「Claude 账号」，没有经过你添加的{providers.length === 1 ? `「${providers[0].name}」` : '供应商'}
+          {providers.length === 1
+            ? <button className="link" data-act="use-provider" onClick={() => void switchTo(providers[0])}>改用「{providers[0].name}」重试</button>
+            : <button className="link" data-act="use-provider" onClick={() => void useModel()}>改用供应商重试</button>}
+          {o.lastSent && <button className="link" onClick={() => st().retryLast(sessionId)}>重试</button>}
+        </span>
+      )}
+      {showErr && res && !noLogin && !accountFail && (
         <span className={clsx('chip', res.errorKind === 'aborted' ? 'muted' : 'err')} title={res.text}>
           {ERROR_LABEL[res.errorKind!]}{res.apiStatus ? ` HTTP ${res.apiStatus}` : ''} · {ERROR_HINT[res.errorKind!]}
           {res.errorKind !== 'aborted' && res.errorKind !== 'context' && o.lastSent && <button className="link" onClick={() => st().retryLast(sessionId)}>重试</button>}

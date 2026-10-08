@@ -1,7 +1,7 @@
 import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { PermissionRequestEvent } from '@shared';
 import type { AssistantItem, Attachment, Block, Item, ResultItem, ThinkingBlock, ToolUseBlock, UserItem } from '@/model/conversation';
-import { ERROR_HINT, ERROR_LABEL, noResponseHint } from '@/model/health';
+import { credentialHint, ERROR_HINT, ERROR_LABEL, noResponseHint } from '@/model/health';
 import { fmtSize } from '@/model/attachments';
 import type { FileChange } from '@/model/diffstat';
 import { displayPath, fmtDuration, groupTurns, turnDone, turnMemo, turnStamp, turnSummaryParts, type Turn, type TurnMemo } from '@/model/turn';
@@ -315,6 +315,7 @@ export function ItemList({ items, version, actions = 'all' }: { items: Item[]; v
                 {it.text}
                 {typeof (it.data as any)?.hint === 'string' && <div className="sys-hint">{(it.data as any).hint}</div>}
                 {(it.data as any)?.hintKey === 'no_response' && <div className="sys-hint">{noResponseHint(providerName)}</div>}
+                {(it.data as any)?.hintKey === 'credential' && <div className="sys-hint">{credentialHint(providerName)}</div>}
               </div>
             );
         }

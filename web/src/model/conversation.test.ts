@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { applyMessage, applyTranscript, createConversation, decodeAttachments, sessionRefMarker, findChainUuidBefore, prependTranscript, setConversationClock, turnItems, walkTools, type AssistantItem, type Conversation, type UserItem } from './conversation';
-import { ERROR_HINT, noResponseHint } from './health';
+import { credentialHint, noResponseHint } from './health';
 
 const FIXTURE = path.join(__dirname, '__fixtures__', 'tools.jsonl');
 const USER_UUID = '11111111-2222-4333-8444-555555555555';
@@ -116,7 +116,9 @@ describe('health signals', () => {
     applyMessage(c, { ...base, uuid: 'r401a', type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, retry_delay_ms: 600, error_status: 401, error: 'authentication_failed' });
     applyMessage(c, { ...base, uuid: 'r401b', type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10, retry_delay_ms: 1200, error_status: 401, error: 'authentication_failed' });
     const r401 = c.items.filter((i) => i.kind === 'system' && i.subtype === 'retry' && (i as any).data.status === 401) as any[];
-    expect(r401.map((i) => i.data.hint)).toEqual([ERROR_HINT.credential, undefined]);
+    expect(r401.map((i) => i.data.hintKey)).toEqual(['credential', undefined]);
+    expect(credentialHint('super-nb.me')).toContain('「super-nb.me」里的 Key');
+    expect(credentialHint()).toContain('~/.claude/settings.json'); // the account reads that file's key, not the provider's
     // no response at all (a dead proxy port, a name that does not resolve…): the CLI says only `unknown`
     applyMessage(c, { ...base, uuid: 'rnc1', type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, retry_delay_ms: 600, error_status: null, error: 'unknown' });
     applyMessage(c, { ...base, uuid: 'rnc2', type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10, retry_delay_ms: 1200, error_status: null, error: 'unknown' });

@@ -1,6 +1,6 @@
 // Pure reducer: SDK messages (live or from transcript) -> renderable conversation tree.
 // Kept framework-free so it can be unit tested against captured message streams (see __fixtures__).
-import { classifyError, ERROR_HINT, type ErrorKind } from './health';
+import { classifyError, type ErrorKind } from './health';
 
 export interface TextBlock { type: 'text'; text: string }
 export interface ThinkingBlock {
@@ -596,13 +596,13 @@ function applySystem(c: Conversation, m: any) {
       return;
     case 'api_retry': {
       const kind = classifyError({ error: m.error, status: m.error_status });
-      // a rejected key does not get better by retrying (the CLI tries ten times over minutes): say what to check at
-      // once, under the first such line, instead of only in its tooltip
-      // no response at all: the CLI says only `unknown` (health `noResponseHint`, worded at display time for the
-      // conversation's provider — the reducer does not know it); a first-byte timeout says how long it waited
+      // a rejected key does not get better by retrying (the CLI tries ten times over minutes), and no response at all
+      // shows only `unknown`: say what to check at once, under the first such line. Worded at display time for what
+      // the conversation talks to — its provider or the Claude account (health `credentialHint` / `noResponseHint`);
+      // the reducer does not know it. A first-byte timeout says how long it waited.
       const noReply = m.error_status == null && !m.no_response && (!m.error || m.error === 'unknown');
       const first = (m.attempt ?? 1) <= 1;
-      const hint = first && kind === 'credential' ? { hint: ERROR_HINT.credential } : first && noReply ? { hintKey: 'no_response' } : {};
+      const hint = first && kind === 'credential' ? { hintKey: 'credential' } : first && noReply ? { hintKey: 'no_response' } : {};
       const why = m.no_response ? `${Math.round((m.no_response.waited_ms ?? 0) / 1000)} 秒没有收到回应` : noReply ? '连不上服务器' : `${m.error ?? ''}${m.error_status ? ` HTTP ${m.error_status}` : ''}`;
       c.items.push({ kind: 'system', id: m.uuid, subtype: 'retry', level: 'warn', text: `API 重试 ${m.attempt ?? ''}/${m.max_retries ?? ''}（${why}）${m.retry_delay_ms ? ` · ${Math.round(m.retry_delay_ms / 1000)}s 后` : ''}`, data: { kind, error: m.error, status: m.error_status, delayMs: m.retry_delay_ms, ...hint } });
       return;
