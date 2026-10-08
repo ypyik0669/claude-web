@@ -70,9 +70,15 @@ export const ERROR_HINT: Record<ErrorKind, string> = {
  * Under the first retry that got no response at all (`error_status` null): every connection-level failure (a proxy
  * port nobody listens on, a name that does not resolve, a TLS handshake that fails, a reset) looks the same while
  * the CLI retries — `unknown`, a second or two apart — and its reason is only in the error after the tenth retry,
- * minutes later. 测试连接 runs the same CLI with one retry: the reason in seconds.
+ * minutes later. 测试连接 runs the same CLI with one retry: the reason in seconds. Which one the conversation talks to
+ * matters: a user whose provider tested fine was looking at a conversation on the Claude account, which goes to
+ * api.anthropic.com (2026-10-08) — so the hint names it. `provider`: the conversation's provider name; none = the account.
  */
-export const NO_RESPONSE_HINT = '连不上服务器，具体原因要等十次重试走完才会显示。想马上知道：设置 → 供应商 → 这个供应商的「测试连接」。常见原因：代理（梯子）的端口没开，或者域名解析不了。';
+export function noResponseHint(provider?: string): string {
+  const why = '具体原因要等十次重试走完才会显示；常见原因：代理（梯子）没开或端口不对，或者域名解析不了。';
+  if (provider) return `连不上「${provider}」。${why}想马上知道：设置 → 供应商 →「${provider}」的「测试连接」。`;
+  return `这个对话用的是「Claude 账号」，没有经过你添加的供应商（中转）。要用供应商：点输入框右下角的模型按钮，在供应商那一节选一个模型。${why}`;
+}
 
 export interface StallInput {
   state: 'starting' | 'idle' | 'running' | 'waiting' | 'error' | 'closed' | 'history';

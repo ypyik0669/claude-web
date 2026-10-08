@@ -1,7 +1,7 @@
 import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { PermissionRequestEvent } from '@shared';
 import type { AssistantItem, Attachment, Block, Item, ResultItem, ThinkingBlock, ToolUseBlock, UserItem } from '@/model/conversation';
-import { ERROR_HINT, ERROR_LABEL } from '@/model/health';
+import { ERROR_HINT, ERROR_LABEL, noResponseHint } from '@/model/health';
 import { fmtSize } from '@/model/attachments';
 import type { FileChange } from '@/model/diffstat';
 import { displayPath, fmtDuration, groupTurns, turnDone, turnMemo, turnStamp, turnSummaryParts, type Turn, type TurnMemo } from '@/model/turn';
@@ -276,6 +276,15 @@ function resultStats(r: ResultItem): string[] {
 export function ItemList({ items, version, actions = 'all' }: { items: Item[]; version: number; live?: boolean; actions?: 'all' | 'last' | 'none' }) {
   const merged = useMemo(() => coalesce(items), [items, version]);
   const sessionId = useScopedSessionId();
+  // which endpoint a "连不上" hint names: the conversation's provider (the running process's, else the recorded one),
+  // none = the Claude account
+  const providerName = useStore((s) => {
+    if (!sessionId) return undefined;
+    const info = s.open[sessionId]?.info;
+    if (info) return info.providerName;
+    const id = s.sessionMeta[sessionId]?.providerId;
+    return id && id !== 'claude' ? s.providers.find((p) => p.id === id)?.name : undefined;
+  });
   let lastReply = '';
   if (actions === 'last') for (const it of merged) if (it.kind === 'assistant' && it.blocks.some((b) => b.type === 'text' && b.text.trim())) lastReply = it.id;
   const withActions = (it: AssistantItem) => actions === 'all' || (actions === 'last' && it.id === lastReply);
@@ -305,6 +314,7 @@ export function ItemList({ items, version, actions = 'all' }: { items: Item[]; v
                 {it.subtype === 'compact' && <span className="ic"><Icon name="refresh" size={12} /></span>}
                 {it.text}
                 {typeof (it.data as any)?.hint === 'string' && <div className="sys-hint">{(it.data as any).hint}</div>}
+                {(it.data as any)?.hintKey === 'no_response' && <div className="sys-hint">{noResponseHint(providerName)}</div>}
               </div>
             );
         }
