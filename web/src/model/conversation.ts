@@ -1,6 +1,6 @@
 // Pure reducer: SDK messages (live or from transcript) -> renderable conversation tree.
 // Kept framework-free so it can be unit tested against captured message streams (see __fixtures__).
-import { classifyError, ERROR_HINT, type ErrorKind } from './health';
+import { classifyError, ERROR_HINT, NO_RESPONSE_HINT, type ErrorKind } from './health';
 
 export interface TextBlock { type: 'text'; text: string }
 export interface ThinkingBlock {
@@ -598,8 +598,12 @@ function applySystem(c: Conversation, m: any) {
       const kind = classifyError({ error: m.error, status: m.error_status });
       // a rejected key does not get better by retrying (the CLI tries ten times over minutes): say what to check at
       // once, under the first such line, instead of only in its tooltip
-      const hint = kind === 'credential' && (m.attempt ?? 1) <= 1 ? ERROR_HINT.credential : undefined;
-      c.items.push({ kind: 'system', id: m.uuid, subtype: 'retry', level: 'warn', text: `API 重试 ${m.attempt ?? ''}/${m.max_retries ?? ''}（${m.error ?? ''}${m.error_status ? ` HTTP ${m.error_status}` : ''}）${m.retry_delay_ms ? ` · ${Math.round(m.retry_delay_ms / 1000)}s 后` : ''}`, data: { kind, error: m.error, status: m.error_status, delayMs: m.retry_delay_ms, ...(hint ? { hint } : {}) } });
+      // no response at all: the CLI says only `unknown` (NO_RESPONSE_HINT); a first-byte timeout says how long it waited
+      const noReply = m.error_status == null && !m.no_response && (!m.error || m.error === 'unknown');
+      const first = (m.attempt ?? 1) <= 1;
+      const hint = !first ? undefined : kind === 'credential' ? ERROR_HINT.credential : noReply ? NO_RESPONSE_HINT : undefined;
+      const why = m.no_response ? `${Math.round((m.no_response.waited_ms ?? 0) / 1000)} 秒没有收到回应` : noReply ? '连不上服务器' : `${m.error ?? ''}${m.error_status ? ` HTTP ${m.error_status}` : ''}`;
+      c.items.push({ kind: 'system', id: m.uuid, subtype: 'retry', level: 'warn', text: `API 重试 ${m.attempt ?? ''}/${m.max_retries ?? ''}（${why}）${m.retry_delay_ms ? ` · ${Math.round(m.retry_delay_ms / 1000)}s 后` : ''}`, data: { kind, error: m.error, status: m.error_status, delayMs: m.retry_delay_ms, ...(hint ? { hint } : {}) } });
       return;
     }
     case 'model_refusal_fallback':

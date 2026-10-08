@@ -66,6 +66,14 @@ export const ERROR_HINT: Record<ErrorKind, string> = {
   unknown: '看结果行里的原始错误文本。',
 };
 
+/**
+ * Under the first retry that got no response at all (`error_status` null): every connection-level failure (a proxy
+ * port nobody listens on, a name that does not resolve, a TLS handshake that fails, a reset) looks the same while
+ * the CLI retries — `unknown`, a second or two apart — and its reason is only in the error after the tenth retry,
+ * minutes later. 测试连接 runs the same CLI with one retry: the reason in seconds.
+ */
+export const NO_RESPONSE_HINT = '连不上服务器，具体原因要等十次重试走完才会显示。想马上知道：设置 → 供应商 → 这个供应商的「测试连接」。常见原因：代理（梯子）的端口没开，或者域名解析不了。';
+
 export interface StallInput {
   state: 'starting' | 'idle' | 'running' | 'waiting' | 'error' | 'closed' | 'history';
   now: number;

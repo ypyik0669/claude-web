@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { applyMessage, applyTranscript, createConversation, decodeAttachments, sessionRefMarker, findChainUuidBefore, prependTranscript, setConversationClock, turnItems, walkTools, type AssistantItem, type Conversation, type UserItem } from './conversation';
-import { ERROR_HINT } from './health';
+import { ERROR_HINT, NO_RESPONSE_HINT } from './health';
 
 const FIXTURE = path.join(__dirname, '__fixtures__', 'tools.jsonl');
 const USER_UUID = '11111111-2222-4333-8444-555555555555';
@@ -117,6 +117,18 @@ describe('health signals', () => {
     applyMessage(c, { ...base, uuid: 'r401b', type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10, retry_delay_ms: 1200, error_status: 401, error: 'authentication_failed' });
     const r401 = c.items.filter((i) => i.kind === 'system' && i.subtype === 'retry' && (i as any).data.status === 401) as any[];
     expect(r401.map((i) => i.data.hint)).toEqual([ERROR_HINT.credential, undefined]);
+    // no response at all (a dead proxy port, a name that does not resolve…): the CLI says only `unknown`
+    applyMessage(c, { ...base, uuid: 'rnc1', type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, retry_delay_ms: 600, error_status: null, error: 'unknown' });
+    applyMessage(c, { ...base, uuid: 'rnc2', type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10, retry_delay_ms: 1200, error_status: null, error: 'unknown' });
+    // a first-byte timeout: connected, no headers in time
+    applyMessage(c, { ...base, uuid: 'rnr', type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 1, retry_delay_ms: 0, error_status: null, error: 'unknown', no_response: { waited_ms: 60_000, retry_wait_ms: 120_000 } });
+    const nc = (id: string) => c.items.find((i) => i.id === id) as any;
+    expect(nc('rnc1').text).toBe('API 重试 1/10（连不上服务器） · 1s 后');
+    expect(nc('rnc1').data.hint).toBe(NO_RESPONSE_HINT);
+    expect(nc('rnc1').data.kind).toBe('network');
+    expect(nc('rnc2').data.hint).toBeUndefined();
+    expect(nc('rnr').text).toBe('API 重试 1/1（60 秒没有收到回应）');
+    expect(nc('rnr').data.hint).toBeUndefined();
     applyMessage(c, { ...base, type: 'result', subtype: 'success', is_error: true, api_error_status: 401, result: 'API Error: 401 authentication_error', duration_ms: 1, duration_api_ms: 1, num_turns: 1, total_cost_usd: 0 });
     expect(c.lastResult?.errorKind).toBe('credential');
     applyMessage(c, { ...base, type: 'result', subtype: 'error_during_execution', is_error: true, terminal_reason: 'prompt_too_long', errors: ['prompt is too long'], duration_ms: 1, duration_api_ms: 1, num_turns: 1, total_cost_usd: 0 });
