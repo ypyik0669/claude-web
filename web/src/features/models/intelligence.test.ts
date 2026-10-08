@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Provider } from '@shared';
-import { accountDefaultName, effortCaption, effortSegments, modelChipText } from './intelligence';
+import { EFFORT_PROMPT_TITLE, accountDefaultName, claudeEffortView, effortCaption, effortSegments, modelChipText } from './intelligence';
 
 describe('智能程度 segmented control (effort → words)', () => {
   it('one segment per level the model supports, in order, with the spec words', () => {
@@ -65,5 +65,49 @@ describe('model chip text: `模型 · 档位`', () => {
   it('no implementation words on the chip', () => {
     const t = modelChipText({ ...base, efforts: [...base.efforts], agent: 'claude', model: 'claude-opus-5', effort: 'xhigh', ultracode: false });
     expect(`${t.main} ${t.suffix}`).not.toMatch(/effort|ultracode|档案|引擎/i);
+  });
+});
+
+describe('智能程度 on every provider and model (claude-web-engine)', () => {
+  const ds = { id: 'ds', name: 'DeepSeek', type: 'openai', baseUrl: '', apiKey: '', createdAt: 0, models: ['deepseek-flash', 'gpt-4o'], modelEfforts: { 'deepseek-flash': { levels: ['low', 'high', 'max'], default: 'high' } } } as Provider;
+  const gem = { id: 'gem', name: 'Gemini', type: 'gemini', baseUrl: '', apiKey: '', createdAt: 0, models: ['gemini-3-pro', 'gemini-1.5-pro'] } as Provider;
+  const view = (providerId: string, model: string, runtime?: 'ccb' | 'claude') => claudeEffortView({ agent: 'claude', providers: [ds, gem], providerId, model, runtime });
+
+  it('the list says DeepSeek has low / high / max: three segments, 深入 lit by default, native', () => {
+    const v = view('ds', 'deepseek-flash');
+    expect(v.levels).toEqual(['low', 'high', 'max']);
+    expect(v.defaultLevel).toBe('high');
+    expect(v.mode).toBe('native');
+    expect(effortSegments(v.levels, null, v.defaultLevel).filter((x) => x.on).map((x) => x.label)).toEqual(['深入']);
+    expect(effortCaption(null, v.defaultLevel, v.mode)).toContain('（原生）');
+  });
+
+  it('gpt-4o has no parameter: five segments, through the prompt', () => {
+    const v = view('ds', 'gpt-4o');
+    expect(v.levels).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    expect(v.mode).toBe('prompt');
+    expect(effortCaption('high', v.defaultLevel, v.mode)).toContain('（通过提示词）');
+    expect(EFFORT_PROMPT_TITLE).toBe('这个模型没有思考强度参数，通过提示词告诉它想多深');
+  });
+
+  it('Gemini provider models have the control too (they used to have none)', () => {
+    expect(view('gem', 'gemini-3-pro').levels).toEqual(['low', 'high']);
+    expect(view('gem', 'gemini-1.5-pro')).toMatchObject({ levels: ['low', 'medium', 'high', 'xhigh', 'max'], mode: 'prompt' });
+  });
+
+  it('深度编排 is offered for an OpenAI-format provider model', () => {
+    expect(view('ds', 'gpt-4o').ultracode).toBe(true);
+  });
+
+  it('on the official binary only models with the parameter offer it (it has no prompt way)', () => {
+    const relay = { ...ds, id: 'relay', type: 'anthropic' } as Provider;
+    const v = claudeEffortView({ agent: 'claude', providers: [relay], providerId: 'relay', model: 'glm-4.6', runtime: 'claude' });
+    expect(v.levels).toEqual([]);
+    expect(claudeEffortView({ agent: 'claude', providers: [relay], providerId: 'relay', model: 'claude-opus-5-5', runtime: 'claude' }).levels.length).toBe(5);
+  });
+
+  it('the account keeps the catalog levels per Claude model; other agents keep theirs', () => {
+    expect(claudeEffortView({ agent: 'claude', providers: [], providerId: 'claude', model: 'claude-opus-4-6' }).levels).toEqual(['low', 'medium', 'high', 'max']);
+    expect(claudeEffortView({ agent: 'gemini', providers: [], providerId: 'claude', model: 'gemini-3-pro' }).levels).toEqual([]);
   });
 });

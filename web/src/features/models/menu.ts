@@ -125,15 +125,6 @@ export function effectiveRuntime(p: Pick<Provider, 'runtime'> & { type?: Provide
   return want === 'ccb' && engine.fallback?.runtime === 'ccb' ? 'ccb' : 'claude';
 }
 
-/**
- * A Claude conversation on an OpenAI / Gemini / Grok format provider: ccb's clients for those never send the effort
- * (a capture of gpt-5.6 through ccb had no reasoning field), so there is no 智能程度 control to offer.
- */
-export function effortStaysHome(providers: Pick<Provider, 'id' | 'type'>[], providerId: string | undefined): boolean {
-  const t = providerId && providerId !== OWN_PROVIDER ? providers.find((p) => p.id === providerId)?.type : undefined;
-  return t === 'openai' || t === 'gemini' || t === 'grok';
-}
-
 /** Why profile `p` cannot be picked right now although the agent takes its type (null = it can). */
 export function profileUnavailable(p: Provider, i: Pick<BuildMenuInput, 'agent' | 'engine' | 'gatewayGroups' | 'gatewayEnabled'>): string | null {
   if (p.type === 'gateway') {

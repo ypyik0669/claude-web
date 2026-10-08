@@ -1,6 +1,6 @@
-import type { AgentKind, EffortLevel, Provider } from '@shared';
-import { CATALOG, modelsFor } from '@catalog';
-import { EFFORT_DESC, EFFORT_LABEL, ULTRACODE, effortTitle } from '@/ui/terms';
+import type { AgentKind, EffortLevel, Provider, RuntimeKind } from '@shared';
+import { CATALOG, effortLevels, modelCaps, modelsFor, nearestLevel, providerModelId, type ClaudeEffort } from '@catalog';
+import { EFFORT_DESC, EFFORT_LABEL, EFFORT_MODE_NOTE, EFFORT_PROMPT_TITLE, ULTRACODE, effortTitle } from '@/ui/terms';
 import { OWN_PROVIDER, chipLabel } from './menu';
 
 /**
@@ -16,11 +16,44 @@ export function effortSegments(levels: EffortLevel[], value?: EffortLevel | null
   return levels.map((level) => ({ level, label: EFFORT_LABEL[level], title: effortTitle(level), on: level === cur }));
 }
 
-/** 「深入（默认）：复杂改动更稳，速度适中」 — the line under the control. */
-export function effortCaption(value?: EffortLevel | null, defaultLevel?: EffortLevel): string {
+/**
+ * 「深入（默认）：复杂改动更稳，速度适中」 — the line under the control; on our engine followed by how it goes out:
+ * 「（原生）」 the model's own parameter, 「（通过提示词）」 a reminder each turn (models without one).
+ */
+export function effortCaption(value?: EffortLevel | null, defaultLevel?: EffortLevel, mode?: 'native' | 'prompt'): string {
   const cur = value ?? defaultLevel;
   if (!cur) return '';
-  return `${EFFORT_LABEL[cur]}${cur === defaultLevel ? '（默认）' : ''}：${EFFORT_DESC[cur]}`;
+  return `${EFFORT_LABEL[cur]}${cur === defaultLevel ? '（默认）' : ''}：${EFFORT_DESC[cur]}${mode ? EFFORT_MODE_NOTE[mode] : ''}`;
+}
+
+export { EFFORT_PROMPT_TITLE };
+
+export interface EffortView {
+  levels: EffortLevel[];
+  defaultLevel?: EffortLevel;
+  /** Claude on a provider: the model's own parameter, or through the prompt */
+  mode?: 'native' | 'prompt';
+  /** the 深度编排 switch */
+  ultracode: boolean;
+}
+
+/**
+ * 智能程度 and 深度编排 for a conversation that has no live model info (welcome page, not running) — and the default
+ * level / mode for one that has. Claude on a provider, on our engine: every model (levels from the provider's model
+ * list > our table > all five; native or through the prompt, @catalog modelCaps — the rules the server and the
+ * engine use). On the official binary (`runtime: 'claude'`) only models with the parameter: it has no prompt way.
+ * The Claude account and other agents: the catalog.
+ */
+export function claudeEffortView(i: { agent: AgentKind; providers: Provider[]; providerId?: string; model?: string | null; runtime?: RuntimeKind }): EffortView {
+  const ultracode = !!CATALOG[i.agent]?.supportsUltracode;
+  const catalogDefault = CATALOG[i.agent]?.defaultEffort;
+  const provider = i.agent === 'claude' && i.providerId && i.providerId !== OWN_PROVIDER ? i.providers.find((p) => p.id === i.providerId) : undefined;
+  if (!provider) return { levels: effortLevels(i.agent, i.model || undefined), defaultLevel: catalogDefault, ultracode };
+  const model = providerModelId(provider, i.model || undefined);
+  const caps = modelCaps(provider, model);
+  const levels: EffortLevel[] = i.runtime === 'claude' && !caps.native ? [] : caps.levels;
+  const fallback = catalogDefault && catalogDefault !== 'ultra' && levels.length ? nearestLevel(catalogDefault as ClaudeEffort, levels as ClaudeEffort[]) : undefined;
+  return { levels, defaultLevel: caps.default ?? fallback, mode: caps.native ? 'native' : 'prompt', ultracode };
 }
 
 export interface ChipTextInput {

@@ -8,7 +8,7 @@ import { TERMS, ULTRACODE } from '@/ui/terms';
 import { buildModelMenu, filterMenu, pushRecent, recentKey, type AgentSource, type ModelMenuItem, type ModelMenuSection } from './menu';
 import { refreshAllModels, useGatewayStatus, useRefreshRun } from './data';
 import { placeMenu, samePlacement, type Placement } from './place';
-import { effortCaption, effortSegments } from './intelligence';
+import { EFFORT_PROMPT_TITLE, effortCaption, effortSegments } from './intelligence';
 import { MODEL_MENU_ID } from '@/features/composer/ids';
 import './models.css';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
@@ -40,7 +40,7 @@ export interface ModelMenuProps {
    *  pane's `overflow: hidden` cannot clip it, and it opens on whichever side has more room */
   anchor?: RefObject<HTMLElement | null>;
   /** 智能程度 at the top (spec §5.5): the levels the current model takes; none → no control (Gemini) */
-  intelligence?: { levels: EffortLevel[]; value?: EffortLevel | null; defaultLevel?: EffortLevel; onChange: (l: EffortLevel) => void; disabled?: boolean };
+  intelligence?: { levels: EffortLevel[]; value?: EffortLevel | null; defaultLevel?: EffortLevel; mode?: 'native' | 'prompt'; onChange: (l: EffortLevel) => void; disabled?: boolean };
   /** 深度编排 switch — only for models that support it */
   ultracode?: { on: boolean; onChange: (on: boolean) => void; disabled?: boolean };
   /** the other agents as more sections of the flat list (picking one switches agent / hands over) */
@@ -189,7 +189,7 @@ export function ModelMenu(p: ModelMenuProps) {
                 onClick={() => { if (!s.on || p.intelligence!.value !== s.level) p.intelligence!.onChange(s.level); }}>{s.label}</button>
             ))}
           </div>
-          <div className="mm-intel-d">{effortCaption(p.intelligence.value, p.intelligence.defaultLevel)}</div>
+          <div className="mm-intel-d" title={p.intelligence.mode === 'prompt' ? EFFORT_PROMPT_TITLE : undefined}>{effortCaption(p.intelligence.value, p.intelligence.defaultLevel, p.intelligence.mode)}</div>
         </div>
       )}
       {!q && p.ultracode && (

@@ -279,14 +279,12 @@ describe('provider models that are not for chatting, and the effort that never l
     expect(profileModels(prov('img', { type: 'openai', models: ['gpt-image-2', 'gpt-image-2.5-flare'] }), [], [])).toEqual([]);
     expect(profileModels(prov('mix', { type: 'openai', models: ['dall-e-3', 'gpt-5.6-sol', 'text-embedding-3-large'] }), [], [])).toEqual(['gpt-5.6-sol']);
   });
-  it('no 智能程度 on OpenAI / Gemini / Grok format providers (ccb never sends it); Anthropic format and the account keep it', async () => {
-    const { effortStaysHome } = await import('./menu');
-    expect(effortStaysHome(PROVIDERS, 'gkey')).toBe(true);
-    expect(effortStaysHome(PROVIDERS, 'gem')).toBe(true);
-    expect(effortStaysHome(PROVIDERS, 'xai')).toBe(true);
-    expect(effortStaysHome(PROVIDERS, 'snbchr')).toBe(false);
-    expect(effortStaysHome(PROVIDERS, 'gw')).toBe(false);
-    expect(effortStaysHome(PROVIDERS, 'claude')).toBe(false);
-    expect(effortStaysHome(PROVIDERS, undefined)).toBe(false);
+  it('智能程度 on every provider format now (our engine sends it natively or through the prompt); the old no-control rule is gone', async () => {
+    const m = await import('./menu');
+    expect('effortStaysHome' in m).toBe(false);
+    const { claudeEffortView } = await import('./intelligence');
+    for (const id of ['gkey', 'gem', 'xai', 'snbchr', 'gw']) {
+      expect(claudeEffortView({ agent: 'claude', providers: PROVIDERS, providerId: id, model: 'some-model' }).levels.length).toBeGreaterThan(0);
+    }
   });
 });

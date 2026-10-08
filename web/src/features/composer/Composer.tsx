@@ -20,10 +20,10 @@ import { sessionRefMarker } from '@/model/conversation';
 import { SessionRefChip } from '@/features/chat/ChatView';
 import { REFERENCE_EVENT, handOver, type ReferenceDetail } from '@/features/sidebar/session-actions';
 import { ModelChip } from '@/features/models/ModelMenu';
-import { OWN_PROVIDER, effortStaysHome, usableProfile, type AgentSource, type ModelMenuItem } from '@/features/models/menu';
+import { OWN_PROVIDER, effectiveRuntime, usableProfile, type AgentSource, type ModelMenuItem } from '@/features/models/menu';
 import { resumeView } from '@/store/reopen';
 import { routePick, switchedNote } from '@/features/models/route';
-import { modelChipText } from '@/features/models/intelligence';
+import { claudeEffortView, modelChipText } from '@/features/models/intelligence';
 import { useAccountDefault } from '@/features/models/account-default';
 import { providersLoaded, useGatewayStatus } from '@/features/models/data';
 import { needsModel, welcomeProvider } from './welcome-provider';
@@ -157,11 +157,13 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     if (want === 'claude') { localStorage.removeItem('cw.lastProvider'); localStorage.removeItem('cw.lastModel'); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [welcome, foreign, wProvider, provider, providers, usableKey, settings.defaultProviderId, loggedIn]);
-  // effort is per agent AND per model: Gemini has none, Codex alone has `ultra`, Opus/Sonnet 4.6 have no `xhigh`
-  const wEfforts = wKind === 'claude' && effortStaysHome(providers, wProvider) ? [] : effortLevels(wKind, wModel || undefined);
+  // effort is per agent AND per model (Codex alone has `ultra`, Opus/Sonnet 4.6 have no `xhigh`); Claude on a provider,
+  // on our engine: every model, native or through the prompt (claudeEffortView)
+  const wView = claudeEffortView({ agent: wKind, providers, providerId: wProvider, model: wModel, runtime: provider ? effectiveRuntime(provider, engine) : undefined });
+  const wEfforts = wView.levels;
   // a level picked for another model that this one lacks falls back to the default (not sent, not shown)
   const wEffortOk = wEffort && wEfforts.includes(wEffort) ? wEffort : undefined;
-  const wUltracode = !!CATALOG[wKind]?.supportsUltracode;
+  const wUltracode = wView.ultracode;
   // the capabilities (+ menu): one set of defaults for new conversations in meta.json, so every composer on screen
   // (and the next start of the desktop app) sees the same
   const storedFeatures = settings[FEATURE_DEFAULTS_KEY];
@@ -697,7 +699,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
 
   let model: React.ReactNode = null, permission: React.ReactNode = null, meter: React.ReactNode = null, status: React.ReactNode = null;
   if (welcome) {
-    const t = modelChipText({ agent: wKind, agentName: agent?.name, providers, providerId: provider?.id, model: wModel, builtin: wBuiltin, agentDefault: agent?.model || undefined, efforts: wEfforts, effort: wEffortOk, defaultEffort: CATALOG[wKind]?.defaultEffort, ultracode: wUltracode && wUltra, accountDefault });
+    const t = modelChipText({ agent: wKind, agentName: agent?.name, providers, providerId: provider?.id, model: wModel, builtin: wBuiltin, agentDefault: agent?.model || undefined, efforts: wEfforts, effort: wEffortOk, defaultEffort: wView.defaultLevel, ultracode: wUltracode && wUltra, accountDefault });
     model = (
       <ModelChip
         agent={wKind}
@@ -709,7 +711,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         builtinTitle={agent ? `${agent.name} 账号` : 'Claude 账号'}
         agentDefault={agent?.model || undefined}
         otherAgents={otherAgents}
-        intelligence={{ levels: wEfforts, value: wEffortOk, defaultLevel: CATALOG[wKind]?.defaultEffort, onChange: setWEffort }}
+        intelligence={{ levels: wEfforts, value: wEffortOk, defaultLevel: wView.defaultLevel, mode: wView.mode, onChange: setWEffort }}
         ultracode={wUltracode ? { on: wUltra, onChange: setWUltra } : undefined}
         onPick={pickWelcome}
       />
@@ -717,7 +719,8 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     permission = <PermissionChip mode={wMode} compact={mobile} onPick={(m) => { modeTouched.current = true; setWMode(m); }} />;
   } else if (liveOk) {
     const ultraOk = info.supportsUltracode !== false && !!CATALOG[liveAgent]?.supportsUltracode;
-    const defaultEffort = CATALOG[liveAgent]?.defaultEffort;
+    const liveView = claudeEffortView({ agent: liveAgent, providers, providerId: remote ? 'claude' : liveProvider, model: info.model, runtime: info.runtime });
+    const defaultEffort = liveView.defaultLevel;
     const t = modelChipText({ agent: liveAgent, agentName: info.agentName, providers, providerId: remote ? 'claude' : liveProvider, providerName: info.providerName, model: info.model, builtin: liveProvider === 'claude' && info.models?.length ? info.models : undefined, agentDefault: liveAgentDefault, efforts: liveEfforts, effort: info.effort, defaultEffort, ultracode: ultraOk && !!info.ultracode, accountDefault });
     const remoteLabel = `${info.providerName ? `${info.providerName} / ` : ''}${info.models?.find((m) => m.value === info.model)?.displayName ?? (shortModel(info.model) || '模型')}`;
     model = (
@@ -733,7 +736,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         lockProvider={remote ? 'claude' : undefined}
         lockNote="其它机器上的对话：只能换模型，换供应商请在那台机器上操作"
         otherAgents={remote ? undefined : otherAgents}
-        intelligence={{ levels: liveEfforts, value: info.effort, defaultLevel: defaultEffort, onChange: setEffort }}
+        intelligence={{ levels: liveEfforts, value: info.effort, defaultLevel: defaultEffort, mode: liveModel?.effortMode ?? liveView.mode, onChange: setEffort }}
         ultracode={ultraOk ? { on: !!info.ultracode, onChange: setUltracode } : undefined}
         busy={swapping}
         disabled={swapping}
@@ -747,9 +750,11 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     const v = resumeView(active, sessionMeta[active.sessionId]);
     const rAgent = sessionAgent;
     const rProvider = remote ? 'claude' : v.providerId;
-    const rEfforts = rAgent === 'claude' && effortStaysHome(providers, rProvider) ? [] : effortLevels(rAgent, v.model);
-    const rUltraOk = !remote && !!CATALOG[rAgent]?.supportsUltracode;
-    const t = modelChipText({ agent: rAgent, agentName: agents.find((a) => a.kind === rAgent)?.name, providers, providerId: rProvider, model: v.model, agentDefault: resumeAgentDefault, efforts: rEfforts, effort: v.effort, defaultEffort: CATALOG[rAgent]?.defaultEffort, ultracode: rUltraOk && v.ultracode, accountDefault });
+    const rP = providers.find((p) => p.id === rProvider);
+    const rView = claudeEffortView({ agent: rAgent, providers, providerId: rProvider, model: v.model, runtime: rP ? effectiveRuntime(rP, engine) : undefined });
+    const rEfforts = rView.levels;
+    const rUltraOk = !remote && rView.ultracode;
+    const t = modelChipText({ agent: rAgent, agentName: agents.find((a) => a.kind === rAgent)?.name, providers, providerId: rProvider, model: v.model, agentDefault: resumeAgentDefault, efforts: rEfforts, effort: v.effort, defaultEffort: rView.defaultLevel, ultracode: rUltraOk && v.ultracode, accountDefault });
     const sid = active.sessionId;
     // nothing picked: the chip names the default the resume will really get; the transcript's last model is a hint
     const lastHint = !v.model && v.lastModel ? `\n上次回答用的是 ${modelsFor(rAgent, [{ id: v.lastModel }])[0]?.displayName ?? v.lastModel}` : '';
@@ -765,7 +770,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         lockProvider={remote ? 'claude' : undefined}
         lockNote="其它机器上的对话：只能换模型，换供应商请在那台机器上操作"
         otherAgents={remote ? undefined : otherAgents}
-        intelligence={{ levels: rEfforts, value: v.effort, defaultLevel: CATALOG[rAgent]?.defaultEffort, onChange: (effort) => setResume(sid, { effort }) }}
+        intelligence={{ levels: rEfforts, value: v.effort, defaultLevel: rView.defaultLevel, mode: rView.mode, onChange: (effort) => setResume(sid, { effort }) }}
         ultracode={rUltraOk ? { on: v.ultracode, onChange: (on) => setResume(sid, { ultracode: on }) } : undefined}
         busy={swapping}
         disabled={swapping}

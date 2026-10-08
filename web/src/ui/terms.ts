@@ -50,6 +50,10 @@ export const EFFORT_DESC: Record<EffortLevel, string> = {
   max: '最长的思考，慢、费额度',
   ultra: '最深推理，最慢',
 };
+/** After the 智能程度 caption: the strength goes out as the model's own parameter, or through the prompt. */
+export const EFFORT_MODE_NOTE = { native: '（原生）', prompt: '（通过提示词）' } as const;
+/** Tooltip of the prompt way. */
+export const EFFORT_PROMPT_TITLE = '这个模型没有思考强度参数，通过提示词告诉它想多深';
 /** Label for an effort value; unknown / empty values fall back to the scale's name. */
 export function effortLabel(level: string | null | undefined): string {
   return level && level in EFFORT_LABEL ? EFFORT_LABEL[level as EffortLevel] : TERMS.effort;
@@ -62,7 +66,7 @@ export function effortTitle(level: string | null | undefined, note?: string): st
 
 export const ULTRACODE = {
   label: TERMS.ultracode,
-  desc: '最深思考 + 自动拆成并行子任务，更慢、更费额度',
+  desc: '最深思考 + 自动拆成并行子任务，更慢、更费额度；会开很多个子任务，费 token',
   title: `${TERMS.ultracode}（ultracode）：最深思考 + 自动拆成并行子任务，更慢、更费额度。对整个对话生效`,
 } as const;
 
