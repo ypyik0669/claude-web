@@ -7,7 +7,8 @@
 //     claude-sonnet-4-6 + high → adaptive thinking with output_config.effort "high";
 //   · an OpenAI-format provider, deepseek-flash + 更深 (xhigh) → reasoning_effort "max" (DeepSeek has low/high/max);
 //   · the same conversation changed to low → the next request says "low", and the process was not restarted;
-//   · 深度编排 turned on → the next request carries the ultracode reminder;
+//   · 深度编排 turned on → the next request carries the ultracode reminder; picked before the conversation starts
+//     (the welcome page) → its first request does;
 //   · gpt-4o (no parameter) + high → no effort field, the turn's user message carries "Reasoning depth: high.";
 //   · a relay that refuses reasoning_effort (400 naming it) → the turn is answered anyway, the provider remembers the
 //     model as prompt-only, the next turn goes the prompt way;
@@ -210,6 +211,10 @@ async function main() {
   const d3 = mainOf('openai', 'DS-THREE');
   check('深度编排 on → the next request carries the ultracode reminder', d3.length > 0 && d3.every((h) => turnText(h).includes('Ultracode is on for this session')), d3.map((h) => turnText(h).slice(0, 80)).join(' | '));
   check('… still without a restart', engineSpawns() === spawnsBefore && starts(d.sessionId) === startsBefore);
+  const du = await openOn(O.id, 'deepseek-flash', { effort: 'high', ultracode: true });
+  await turn(du.sessionId, 'DS-FOUR 做个小任务');
+  const d4 = mainOf('openai', 'DS-FOUR');
+  check('深度编排 picked before the conversation starts (welcome page) → its first request carries the reminder', d4.length > 0 && d4.every((h) => turnText(h).includes('Ultracode is on for this session') && h.body.reasoning_effort === 'max'), d4.map((h) => `${h.body.reasoning_effort} ${turnText(h).includes('Ultracode is on')}`).join(' | '));
 
   // ---- a model without the parameter: the prompt way ----
   const g4 = await openOn(O.id, 'gpt-4o', { effort: 'high' });

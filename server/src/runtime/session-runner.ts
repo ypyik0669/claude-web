@@ -159,6 +159,9 @@ export class SessionRunner extends EventEmitter {
     this.effort = params.effort;
     this.permissionMode = params.permissionMode ?? 'default';
     this.info = { sessionId: this.sessionId, state: 'starting', cwd: this.cwd, model: this.model, effort: this.effort, permissionMode: this.permissionMode, providerId: provider?.id, providerName: provider?.name, features: this.features, agent: 'claude' };
+    // 深度编排 picked before the conversation started (welcome page, a reopen): our engine starts with --ultracode
+    // (the official binary only has `/effort ultracode` inside the conversation — setUltracode)
+    if (params.ultracode && this.plan().engine.kind === 'ccb') this.info.ultracode = true;
     // Handover from another agent: Claude has no JSONL for this id, so feed it synthesized entries
     // through the documented SessionStore hook — the SDK materializes them to a temp transcript the
     // subprocess resumes from natively. `persistSession: false` is incompatible with sessionStore.

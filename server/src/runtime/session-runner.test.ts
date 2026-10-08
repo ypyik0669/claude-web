@@ -420,6 +420,20 @@ describe('SessionRunner: the engine follows the model, effort on ccb, per-turn c
     }
   });
 
+  it('深度编排 picked before the conversation starts (welcome page, a reopen) starts the engine with --ultracode', async () => {
+    eng.kind = 'ccb';
+    try {
+      queries.length = 0;
+      const a = new SessionRunner({ sessionId: 'u2', cwd: '/x', model: 'claude-sonnet-4-6', ultracode: true } as any, xy);
+      await tick();
+      expect(queries[0].options.extraArgs.ultracode).toBeNull(); // → --ultracode
+      expect(a.info.ultracode).toBe(true);
+      await a.close();
+    } finally {
+      eng.kind = 'claude';
+    }
+  });
+
   it('the official binary still changes effort with /effort', async () => {
     queries.length = 0;
     const a = new SessionRunner({ sessionId: 'o1', cwd: '/x', model: 'claude-opus-5-5' } as any);
