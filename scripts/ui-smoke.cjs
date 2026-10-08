@@ -2560,8 +2560,8 @@ function driver() {
           await serverRequest({ kind: 'providers.remove', id: prov.id });
         }
 
-        // ---- the goal bar, and a goal that runs two rounds (review I1): GoalService sends round 2 (「继续」) itself, so
-        // it follows round 1's result with no user message in this window. The mock answers its first goal prompt
+        // ---- the goal bar, and a goal that runs two rounds (review I1): GoalService sends round 2 (「继续」) itself — the
+        // window shows it from the server's copy of what was sent (hub `cw_echo`), a turn of its own. The mock answers its first goal prompt
         // with 「GOAL_STATUS: continue」 (MOCK_GOAL_CONTINUE); the objective has 「slow」, so each round runs a command
         // and answers after it (MOCK_SLOW_ANSWER: the answer, with its 分享本轮, sits below the folded steps).
         phase = 'chat-goal';
@@ -2606,13 +2606,13 @@ function driver() {
           const turnsNow = `(() => { const turns = [...document.querySelectorAll('.pane.focused .chat .turn')]; const last = turns[turns.length - 1], prev = turns[turns.length - 2]; return { n: turns.length, lastId: last?.dataset.turn ?? null, prevFolded: !!prev && prev.classList.contains('folded') && !prev.classList.contains('open'), prevSum: prev?.querySelector('.turn-sum')?.textContent ?? null, lastOpen: !!last && !last.classList.contains('folded'), running: !!last && [...last.querySelectorAll('.tl.active, .tl.pending')].some((el) => el.offsetParent !== null) }; })()`;
           const round2 = await waitFor(`/第 2 轮/.test(${barText}) && (${turnsNow}).running`, 30_000);
           const r2 = await js(turnsNow);
-          check('a goal\'s second round: round 1 folded with its own line, round 2 (no user message here) open with its running step in view', round2 && r2.n >= 2 && r2.prevFolded && /^已处理/.test(r2.prevSum ?? '') && r2.lastOpen && r2.running, JSON.stringify(r2));
+          check('a goal\'s second round: round 1 folded with its own line, round 2 (sent by the goal, not this window) open with its running step in view', round2 && r2.n >= 2 && r2.prevFolded && /^已处理/.test(r2.prevSum ?? '') && r2.lastOpen && r2.running, JSON.stringify(r2));
           await sleep(400);
           await shot('chat-goal-round2');
           check('the bar goes once the goal is done', await waitFor(`!document.querySelector('.pane.focused .goal-bar')`, 30_000));
           const folded = await waitFor(`(() => { const turns = [...document.querySelectorAll('.pane.focused .chat .turn')].slice(-2); return turns.length === 2 && turns.every((t) => t.classList.contains('folded') && /^已处理/.test(t.querySelector('.turn-sum')?.textContent ?? '')); })()`, 8000);
           check('…then both rounds are folded, each with its own summary line', folded, await js(`JSON.stringify([...document.querySelectorAll('.pane.focused .chat .turn')].map((t) => [t.dataset.turn, t.className, t.querySelector('.turn-sum')?.textContent ?? null]))`));
-          // 分享本轮 under round 2's answer exports round 2 — its own `cont-…` turn, not round 1 (review M-4). The
+          // 分享本轮 under round 2's answer exports round 2 — its own turn, not round 1 (review M-4). The
           // download is caught in the page: the blob's HTML is read back, the anchor's click does nothing
           const shared = await js(`(async () => {
             const turns = [...document.querySelectorAll('.pane.focused .chat .turn')];
@@ -2626,9 +2626,9 @@ function driver() {
             try { btn.click(); } finally { URL.createObjectURL = oc; HTMLAnchorElement.prototype.click = ac; }
             for (let i = 0; i < 40 && html === null; i++) await new Promise((r) => setTimeout(r, 50));
             const doc = new DOMParser().parseFromString(html ?? '', 'text/html');
-            return { id: last.dataset.turn, exported: [...doc.querySelectorAll('.turn')].map((t) => t.dataset.turn) };
+            return { id: last.dataset.turn, prev: turns[turns.length - 2]?.dataset.turn ?? null, exported: [...doc.querySelectorAll('.turn')].map((t) => t.dataset.turn) };
           })()`);
-          check('分享本轮 under a round this window did not start exports that round (its cont- turn), not the one before', !!shared && /^cont-/.test(shared.id ?? '') && Array.isArray(shared.exported) && shared.exported.length === 1 && shared.exported[0] === shared.id, JSON.stringify(shared));
+          check('分享本轮 under a round this window did not start exports that round, not the one before', !!shared && !!shared.id && shared.id !== shared.prev && Array.isArray(shared.exported) && shared.exported.length === 1 && shared.exported[0] === shared.id, JSON.stringify(shared));
           // the step view's 「轮」 counts the rounds as the chat draws them: the goal's second round is 2 (review M-11)
           const setView = (v) => js(`(() => { const st = window.__store.getState(); const g = st.layout.groups.find((x) => x.id === st.layout.activeGroupId); const p = g.panes[g.focusedPaneId]; const t = p.tiles.find((x) => x.id === p.activeTileId) ?? p.tiles[0]; st.dispatchLayout({ t: 'tile.patch', paneId: p.id, tileId: t.id, patch: { view: ${JSON.stringify(v)} } }); })()`);
           await setView('trajectory');

@@ -16,7 +16,7 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 
 - **SDK 自带 spawn 在 Windows 上 ENOENT**：`@anthropic-ai/claude-agent-sdk-win32-x64/claude.exe` 直接 `child_process.spawn` 没问题，
   但 SDK 内部的 spawn 报 ENOENT。解决：`options.spawnClaudeCodeProcess` 自定义 spawn（见 `server/src/claude-exe.ts`）。
-- **SDK 不回显用户消息**：前端发送时自己往对话里 push 一条 user item。
+- **SDK 不回显用户消息**：前端发送时自己往对话里 push 一条 user item（id = 客户端铸的 uuid）。别的窗口（手机、另一个窗口）、IM、定时任务、目标的「继续」发的那条以前只在重开对话后才看得到（2026-10-08 用户报告：手机上问的，电脑上只显示回答）：现在每个驱动的 `send()` 发一个 `sent` 事件（SDK 形状的 user 消息，带 uuid），pool 转发、hub 作为 `session.event` 广播并加 `cw_echo: true`；reducer 的 `applyUser` 遇到 `cw_echo` 且已有同 uuid 的条目（发送的那个窗口）就跳过，插话（`priority:'now'`）不重置回合计时。`sent` 不走 `message` 流：canonical 在 hub 里自己记用户消息，账本 / IM / 目标只读 agent 的流。
 - **一条 API 消息会拆成多条 `assistant` 事件**（同一个 `message.id`，每个 content block 一条），reducer 按 id 合并（`web/src/model/conversation.ts`）。
 - **子代理对话不在主 jsonl 里**：`<session-id>/subagents/agent-<id>.jsonl`，用 SDK `getSubagentMessages` 按需加载；agentId 从 Agent 工具的 result 文本里正则取。
 - **AskUserQuestion / ExitPlanMode 都走 `canUseTool`**：回答 = `{behavior:'allow', updatedInput:{...input, answers}}`。
@@ -188,7 +188,7 @@ spec：`docs/superpowers/specs/2026-10-01-remote-anywhere-design.md`（含实测
 ## 会话内核：canonical / 热切换 / 交接（阶段 11，2026-09-04）
 
 - **`server/src/session/canonical.ts`**：所有 agent（含 Claude）的规范时间线，写 `~/.claude-web/canonical/<sid>.jsonl`。只留能跨 provider 的东西：用户消息、助手正文、工具调用（归一名 + 输入 + 结果摘要）、系统提示、用量。**thinking 一律丢弃** —— Claude 的 thinking 带 `signature`、Codex 的 reasoning 带 `encrypted_content`，跨 provider 必然失效（OpenAI 自己的 `/import` 也是降级成纯文本）。
-- **用户消息谁都不回显**：SDK 和外部驱动都不会把用户那条发回来，所以在 hub 的 `session.send` 里直接记进 canonical，别指望从消息流里捞。
+- **用户消息谁都不回显**：SDK 和外部驱动都不会把用户那条发回来，所以在 hub 的 `session.send` 里直接记进 canonical，别指望从消息流里捞（给窗口看的回显是单独的 `sent` 事件，不进 canonical，见「已踩的坑」第二条）。
 - **供应商热切换 = 用户看不见的重启**：CLI 进程的 env 在 spawn 后不可变，`session.setProvider` 是停子进程 → 用新 env 重开 → 从最后一个 uuid 原生 resume。会话 id、标题、历史、面板全不变，只插一条系统行。
 - **交接到 Claude 走 Agent SDK 的 `SessionStore.load()`**（受支持的 API，返回的 entries 会被物化成临时 JSONL 让子进程 resume），不要去伪造 `~/.claude/projects` 的文件。`handoff.ts` 的 `renderBriefing()` 是给所有 agent 的通用地板（已决定什么 / 磁盘现状 / 试过失败的方案 / 当前目标，并明说推理过程没带过来），`toClaudeEntries()` 额外保证 parentUuid 链不断。
 - 明确不做：不写 Codex 的 rollout 文件与 `state_5.sqlite`（无官方 API，升级即碎）；不尝试携带任何 reasoning。

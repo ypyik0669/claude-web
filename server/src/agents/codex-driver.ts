@@ -233,6 +233,7 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
     const user = this.synth.user(body, uuid, images);
     if (this.mirrorIsReady) this.record(user);
     else void this.mirrorReady.then(() => this.record(user));
+    this.emit('sent', user);
     if (steer && this.turnActive && this.rpc && this.threadId) {
       this.rpc.request('turn/steer', { threadId: this.threadId, turnId: this.turnId, input: [{ type: 'text', text: body, text_elements: [] }] }, 30_000).catch(() => this.queue.push({ text: body, images }));
       return;

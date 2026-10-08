@@ -222,7 +222,9 @@ export class AcpDriver extends EventEmitter implements AgentDriver {
   send(text: string, images?: { mediaType: string; data: string }[], _steer = false, uuid?: string, attachments?: AttachmentRef[]) {
     let body = text;
     for (const a of attachments ?? []) body += a.kind === 'text' && a.text ? `\n\n<attached name="${a.name}">\n${a.text}\n</attached>` : `\n\n<attached kind="${a.kind}" name="${a.name}" path="${a.path ?? ''}" />`;
-    this.record(this.synth.user(body, uuid, images)); // the web client already echoed it locally; keep it for transcripts / resume only
+    const user = this.synth.user(body, uuid, images);
+    this.record(user); // the web client already echoed it locally; keep it for transcripts / resume only
+    this.emit('sent', user);
     this.queue.push({ text: body, images });
     this.flush();
   }

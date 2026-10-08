@@ -626,3 +626,19 @@ describe('SessionRunner: the user\'s settings files under a provider conversatio
     }
   });
 });
+
+describe('SessionRunner: what a send accepted', () => {
+  it('is emitted as sent — the same user message the CLI is given, with its uuid and attachment markers', async () => {
+    queries.length = 0;
+    const r = new SessionRunner({ sessionId: 's1', cwd: '/x' } as any);
+    await tick();
+    const sent: any[] = [];
+    r.on('sent', (m) => sent.push(m));
+    r.send('手机上问的', undefined, false, 'u-phone', [{ kind: 'file', name: 'a.txt', path: '/x/a.txt' } as any]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ type: 'user', uuid: 'u-phone', session_id: 's1' });
+    expect(sent[0].message.content).toContain('手机上问的');
+    expect(sent[0].message.content).toContain('<attached kind="file" name="a.txt" path="/x/a.txt" />');
+    await r.close();
+  });
+});

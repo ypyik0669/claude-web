@@ -33,7 +33,13 @@ describe('AcpDriver (mock agent)', () => {
     expect(d.info.slashCommands?.[0]?.name).toBe('help');
     let perm: any;
     d.on('permission', (e) => { perm = e; });
-    d.send('please use a tool');
+    const sent: any[] = [];
+    d.on('sent', (m: any) => sent.push(m));
+    d.send('please use a tool', undefined, false, 'u-acp');
+    // what was asked, for the windows that did not send it
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ type: 'user', uuid: 'u-acp' });
+    expect(JSON.stringify(sent[0].message.content)).toContain('please use a tool');
     await waitFor(() => !!perm);
     expect(perm.toolName).toBe('Read');
     expect(perm.input.file_path).toBe('C:/x/package.json');
@@ -119,7 +125,10 @@ describe('CodexDriver (mock app-server)', () => {
     expect(d.info.models?.[0]?.value).toBe('gpt-5-codex');
     let perm: any;
     d.on('permission', (e) => { perm = e; });
-    d.send('run it');
+    const sent: any[] = [];
+    d.on('sent', (m: any) => sent.push(m));
+    d.send('run it', undefined, false, 'u-codex');
+    expect(sent.map((m) => m.uuid)).toEqual(['u-codex']);
     await waitFor(() => !!perm);
     expect(perm.toolName).toBe('Bash');
     expect(perm.input.command).toBe('echo hi');

@@ -11,7 +11,11 @@ const catalogIds = (k: AgentKind) => modelsFor(k).map((m) => m.value);
 
 const execFileAsync = promisify(execFile);
 
-/** What the pool / hub need from any live session, whatever agent is behind it. SessionRunner already fits. */
+/**
+ * What the pool / hub need from any live session, whatever agent is behind it. SessionRunner already fits.
+ * Events: 'message' (the agent's stream), 'state', … and 'sent' (the user message a send() accepted, SDK-shaped, with
+ * the uuid it was given): no agent echoes it, so the windows other than the sender's would show only the answer.
+ */
 export interface AgentDriver extends EventEmitter {
   readonly id: string;
   sessionId: string;

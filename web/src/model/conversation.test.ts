@@ -106,6 +106,25 @@ describe('health signals', () => {
     expect(c.items.some((i) => i.kind === 'system' && i.subtype === 'compact_failed' && /boom/.test(i.text))).toBe(true);
   });
 
+  it('the server copy of a sent message: shown in the windows that did not send it, once in the one that did', () => {
+    const c = createConversation();
+    // this window sent it: the store pushed the local copy under the client-minted uuid
+    c.items.push({ kind: 'user', id: 'mine', ts: '', text: '本窗口发的', images: [], meta: false });
+    applyMessage(c, { type: 'user', uuid: 'mine', session_id: 's', message: { role: 'user', content: '本窗口发的' }, cw_echo: true });
+    expect(c.items.filter((i) => i.kind === 'user')).toHaveLength(1);
+    // sent from the phone: the computer's window shows the question, attachments as chips
+    applyMessage(c, { type: 'user', uuid: 'phone', session_id: 's', message: { role: 'user', content: '手机上问的\n\n<attached kind="file" name="a.txt" path="/x/a.txt" />' }, cw_echo: true });
+    const q = c.items.find((i) => i.id === 'phone') as UserItem;
+    expect(q.text).toBe('手机上问的');
+    expect(q.attachments?.[0]).toMatchObject({ name: 'a.txt' });
+    expect(q.meta).toBe(false);
+    // a steer joins the running turn: its clock keeps going
+    c.turnStartedAt = 1000;
+    applyMessage(c, { type: 'user', uuid: 'steer', session_id: 's', priority: 'now', message: { role: 'user', content: '插话' }, cw_echo: true });
+    expect(c.items.some((i) => i.id === 'steer')).toBe(true);
+    expect(c.turnStartedAt).toBe(1000);
+  });
+
   it('api_retry and error results are classified', () => {
     const c = createConversation();
     applyMessage(c, { ...base, type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 3, retry_delay_ms: 2000, error_status: 429, error: 'rate_limit' });

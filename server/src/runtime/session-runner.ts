@@ -544,6 +544,7 @@ export class SessionRunner extends EventEmitter {
     this.lastActivity = Date.now();
     this.setState('running');
     this.input.push(msg);
+    this.emit('sent', msg);
   }
 
   /** After Stop the CLI gets this long to end the turn itself; then its process is killed and the turn ended here. */

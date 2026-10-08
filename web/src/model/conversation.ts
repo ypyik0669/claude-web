@@ -468,6 +468,18 @@ export function decodeAttachments(text: string): { text: string; attachments: At
 
 function applyUser(c: Conversation, m: any) {
   if (m.uuid && c.retracted.has(m.uuid)) return;
+  // the server's copy of a message sent from wherever (hub `cw_echo`): the window that sent it already shows it under
+  // the same uuid (store `send`); every other window — the phone's, the computer's — shows it now instead of only the
+  // answer. A steer joins the turn already running: it does not restart its clock.
+  if (m.cw_echo) {
+    if (m.uuid && c.items.some((i) => i.id === m.uuid)) return;
+    if (m.priority === 'now' && c.turnStartedAt) {
+      const at = c.turnStartedAt;
+      applyUser(c, { ...m, cw_echo: undefined });
+      c.turnStartedAt = at;
+      return;
+    }
+  }
   const msg = m.message ?? {};
   const parent = m.parent_tool_use_id ?? null;
   const content: any[] = Array.isArray(msg.content) ? msg.content : typeof msg.content === 'string' ? [{ type: 'text', text: msg.content }] : [];

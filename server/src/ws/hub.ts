@@ -110,6 +110,10 @@ export class Hub {
     // every session is mirrored into the provider-neutral timeline, whichever agent is behind it
     s.pool.on('message', (sessionId, message) => s.canonical.observe(sessionId, message));
     s.pool.on('message', (sessionId, message) => this.broadcast({ kind: 'session.event', sessionId, message }));
+    // what was asked, from wherever (a phone, another window, IM, a schedule, a goal's 继续): no agent echoes it, and the
+    // other windows showed only the answer (2026-10-08, a user's phone). `cw_echo`: the sender's window already has it
+    // under the same uuid and skips it
+    s.pool.on('sent', (sessionId, message) => this.broadcast({ kind: 'session.event', sessionId, message: { ...message, cw_echo: true } }));
     s.pool.on('state', (sessionId, state, error) => this.broadcast({ kind: 'session.state', sessionId, state, error }));
     s.pool.on('info', (info) => this.broadcast({ kind: 'session.info', info }));
     s.pool.on('permission', (request) => this.broadcast({ kind: 'permission.request', request }));

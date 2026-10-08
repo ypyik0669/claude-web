@@ -112,6 +112,9 @@ export class RunnerPool extends EventEmitter {
     }
     this.runners.set(r.id, r);
     r.on('message', (m) => this.emit('message', r.sessionId, m));
+    // the user message a send accepted, from whichever window, IM, schedule or goal sent it (AgentDriver 'sent'). Its
+    // own event, not 'message': the canonical mirror records sends itself, the ledger / IM / goals read the agent's stream
+    r.on('sent', (m) => this.emit('sent', r.sessionId, m));
     r.on('state', (s, err) => {
       // a replaced runner (reopened after an error) must not report its shutdown as the new one's state
       const holder = this.runners.get(r.sessionId);
