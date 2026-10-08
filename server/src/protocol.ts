@@ -109,7 +109,7 @@ export interface OpenSessionParams {
   cacheParentId?: string;
 }
 
-/** The single runtime that drives every session: ccb (claude-code-best, a superset of Claude Code) with the official binary as silent fallback. */
+/** The single runtime that drives every session: our engine claude-web-engine (runtime 'ccb': a fork of claude-code-best, a superset of Claude Code) with the official binary as silent fallback. */
 export type RuntimeKind = 'ccb' | 'claude';
 export interface EngineInfo {
   runtime: RuntimeKind;
@@ -384,7 +384,6 @@ export type ClientRequest =
   | { kind: 'schedules.runNow'; id: string }
   | { kind: 'limits.get'; force?: boolean }
   | { kind: 'engine.info' }
-  | { kind: 'engine.update' } // npm i -g claude-code-best@latest
   | { kind: 'engine.cli'; args: string[]; cwd?: string }
   | { kind: 'providers.list' }
   | { kind: 'providers.upsert'; provider: Partial<Provider> & { id?: string } }

@@ -51,16 +51,7 @@ function Cmd({ r }: { r: { code: number; stdout: string; stderr: string } | null
 export function Overview({ part = 'all' }: { part?: 'all' | 'engine' }) {
   const { data, err } = useReq<any>({ kind: 'config.overview' });
   const engine = useStore((s) => s.engine);
-  const loadEngine = useStore((s) => s.loadEngine);
-  const toast = useStore((s) => s.toast);
   const [doctor, setDoctor] = useState<string | null>(null);
-  const [upd, setUpd] = useState<any>(null);
-  const [busy, setBusy] = useState(false);
-  const update = async () => {
-    setBusy(true);
-    try { setUpd(await ws.request({ kind: 'engine.update' })); await loadEngine(); } catch (e: any) { toast(e.message); }
-    setBusy(false);
-  };
   if (err) return <div className="empty" style={{ color: 'var(--red)' }}>{err}</div>;
   if (!data) return <div className="empty">加载中…</div>;
   return (
@@ -68,8 +59,7 @@ export function Overview({ part = 'all' }: { part?: 'all' | 'engine' }) {
       <div className="kv">
         <span className="k">运行内核</span>
         <span>
-          {engine ? <>v{engine.version ?? '?'} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{engine.runtime === 'ccb' ? 'claude-code-best' : '官方 Claude Code（ccb 不可用时的兜底）'} · {engine.source === 'bundled' ? '内置' : engine.source === 'global' ? '全局 npm' : '环境变量'}{engine.fallback ? ` · 兜底 ${engine.fallback.runtime} v${engine.fallback.version ?? '?'}` : ''}</span></> : '检测中…'}
-          {' '}<button className="btn sm ghost" disabled={busy} onClick={update} title="npm i -g claude-code-best@latest（全局安装会优先于内置版本）">{busy ? '更新中…' : '更新'}</button>
+          {engine ? <>v{engine.version ?? '?'} <span style={{ color: 'var(--fg-2)', fontSize: 11 }} title="运行内核随应用一起更新">{engine.runtime === 'ccb' ? 'claude-web-engine（基于 ccb 2.8.4）' : '官方 Claude Code（内置内核不可用时的兜底）'} · {engine.source === 'bundled' ? '内置' : engine.source === 'global' ? '全局 npm' : '环境变量'}{engine.fallback ? ` · 兜底 ${engine.fallback.runtime === 'ccb' ? 'claude-web-engine' : '官方 Claude Code'} v${engine.fallback.version ?? '?'}` : ''}</span></> : '检测中…'}
         </span>
         {part === 'all' && <>
           <span className="k">登录</span><span>{data.auth.loggedIn ? `已登录 (${data.auth.authMethod}${data.auth.email ? ` · ${data.auth.email}` : ''})` : '未登录 — 在终端里运行 claude auth login，或在「供应商」里添加第三方端点'}</span>
@@ -85,7 +75,6 @@ export function Overview({ part = 'all' }: { part?: 'all' | 'engine' }) {
         <button className="btn sm" onClick={() => { setDoctor('运行 claude doctor…'); ws.request<any>({ kind: 'config.doctor' }).then((r) => setDoctor(r.output)).catch((e) => setDoctor(e.message)); }}>运行 doctor</button>
         {doctor && <pre className="mono" style={{ fontSize: 11.5, marginTop: 8, whiteSpace: 'pre-wrap' }}>{doctor}</pre>}
       </div>
-      <Cmd r={upd} />
     </>
   );
 }

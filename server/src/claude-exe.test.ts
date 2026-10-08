@@ -20,7 +20,7 @@ vi.mock('node:child_process', async (orig) => {
     spawn: (cmd: string, args: string[], opts: any) => { spawns.push({ cmd, args, opts }); return { pid: 1 } as any; },
   };
 });
-const { globalRoot, globalRootAsync, versionOf, engineInfo, spawnClaude, resetLookups, LOOKUP_FAIL_TTL_MS } = await import('./claude-exe.js');
+const { globalRoot, globalRootAsync, versionOf, engineInfo, spawnClaude, resetLookups, resolveCcbEntry, LOOKUP_FAIL_TTL_MS } = await import('./claude-exe.js');
 
 describe('claude-exe lookups: successes kept, failures kept only LOOKUP_FAIL_TTL_MS', () => {
   let now = 0;
@@ -77,9 +77,37 @@ describe('claude-exe lookups: successes kept, failures kept only LOOKUP_FAIL_TTL
     const info = await p;
     expect(syncCalls).toEqual([]);
     expect(info.path).toBeTruthy();
-    // the repo bundles both engines: ccb (version from its package.json) and the SDK's claude binary
+    // the repo bundles both engines: ours (version from its package.json) and the SDK's claude binary
+    expect(info.runtime).toBe('ccb');
+    expect(info.path).toContain(path.join('node_modules', 'claude-web-engine', 'dist', 'cli-node.js'));
+    expect(info.version).toBe('2.8.4-cw.1');
     const claude = info.runtime === 'claude' ? info : info.fallback;
     if (claude?.path && !claude.path.endsWith('.js')) expect(claude.version).toBe('2.1.281');
+  });
+});
+
+describe('the engine is our own claude-web-engine, never a global claude-code-best', () => {
+  it('a global npm claude-code-best is not picked; the bundled claude-web-engine is', () => {
+    const g = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-global-'));
+    const globalCcb = path.join(g, 'claude-code-best', 'dist', 'cli-node.js');
+    fs.mkdirSync(path.dirname(globalCcb), { recursive: true });
+    fs.writeFileSync(globalCcb, '');
+    try {
+      const found = resolveCcbEntry(() => g);
+      expect(found).not.toBe(globalCcb);
+      expect(found).toContain(path.join('claude-web-engine', 'dist', 'cli-node.js'));
+    } finally { fs.rmSync(g, { recursive: true, force: true }); }
+  });
+
+  it('its version comes from the package next to the entry: 2.8.4-cw.1', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-engine-'));
+    const entry = path.join(dir, 'claude-web-engine', 'dist', 'cli-node.js');
+    fs.mkdirSync(path.dirname(entry), { recursive: true });
+    fs.writeFileSync(entry, '');
+    fs.writeFileSync(path.join(dir, 'claude-web-engine', 'package.json'), JSON.stringify({ name: 'claude-web-engine', version: '2.8.4-cw.1' }));
+    try {
+      expect(await versionOf(entry)).toBe('2.8.4-cw.1');
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 });
 
@@ -87,7 +115,7 @@ describe('spawnClaude runs a JS engine with the spawn guard in front', () => {
   it('command "node" → our node runtime, `--require <preload>` before the engine entry, windowsHide', () => {
     const saved = { log: process.env.CW_SPAWN_LOG, dir: process.env.CLAUDE_WEB_DIR };
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-spawnclaude-'));
-    const entry = path.join(dir, 'ccb', 'cli-node.js');
+    const entry = path.join(dir, 'claude-web-engine', 'dist', 'cli-node.js');
     try {
       process.env.CW_SPAWN_LOG = '1'; // a plain node gets the guard only with spawn logging on (Electron always)
       process.env.CLAUDE_WEB_DIR = dir;

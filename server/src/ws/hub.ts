@@ -12,7 +12,7 @@ import { MetaStore } from '../meta/store.js';
 import { LimitsService } from '../usage/limits.js';
 import { ScheduleService } from '../schedules/service.js';
 import { openPath } from '../runtime/open-path.js';
-import { engineInfo, installCcb, runClaudeCli } from '../claude-exe.js';
+import { engineInfo, runClaudeCli } from '../claude-exe.js';
 import type { ProviderService } from '../providers/service.js';
 import type { GitService } from '../git/service.js';
 import type { SearchService } from '../search/service.js';
@@ -375,8 +375,6 @@ export class Hub {
         return s.limits.get(req.force);
       case 'engine.info':
         return engineInfo();
-      case 'engine.update':
-        return installCcb();
       case 'engine.cli':
         return runClaudeCli(req.args, { cwd: req.cwd, timeoutMs: 120_000 });
       case 'providers.list':

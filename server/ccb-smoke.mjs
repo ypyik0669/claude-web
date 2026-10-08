@@ -1,6 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { spawn } from 'node:child_process';
-const exe = process.argv[2] ?? 'C:\\nvm4w\\nodejs\\node_modules\\claude-code-best\\dist\\cli-node.js';
+import { fileURLToPath } from 'node:url';
+const exe = process.argv[2] ?? fileURLToPath(new URL('../node_modules/claude-web-engine/dist/cli-node.js', import.meta.url));
 const t0 = Date.now();
 const log = (...a) => console.log(((Date.now() - t0) / 1000).toFixed(1) + 's', ...a);
 const q = query({

@@ -81,22 +81,23 @@ export function resolveClaudeExe(root: () => string | null = globalRoot): string
   return found;
 }
 
-/** claude-code-best (ccb): bundled npm dependency → global npm install. Entry is a JS file run by node. */
-export function resolveCcbEntry(root: () => string | null = globalRoot): string | null {
+/**
+ * Our engine, claude-web-engine (a fork of claude-code-best, "ccb"): the bundled npm dependency, or
+ * CLAUDE_WEB_CCB. Entry is a JS file run by node. A global claude-code-best is never used: it has neither
+ * the thinking-strength / ultracode / auto-mode work nor the inlined classifier prompt.
+ * `_root` stays for callers that still pass the npm-prefix lookup; nothing global is looked at.
+ */
+export function resolveCcbEntry(_root?: () => string | null): string | null {
   const candidates: string[] = [];
   if (process.env.CLAUDE_WEB_CCB) candidates.push(process.env.CLAUDE_WEB_CCB);
   try {
-    candidates.push(unpack(path.join(path.dirname(require.resolve('claude-code-best/package.json')), 'dist', 'cli-node.js')));
+    candidates.push(unpack(path.join(path.dirname(require.resolve('claude-web-engine/package.json')), 'dist', 'cli-node.js')));
   } catch {
     /* not bundled */
   }
   const rp = (process as any).resourcesPath as string | undefined;
-  if (rp) candidates.push(path.join(rp, 'app.asar.unpacked', 'node_modules', 'claude-code-best', 'dist', 'cli-node.js'));
-  const found = candidates.find((c) => existsSync(c));
-  if (found) return found;
-  const g = root(); // only when nothing bundled exists (see globalRoot)
-  const global = g ? path.join(g, 'claude-code-best', 'dist', 'cli-node.js') : null;
-  return global && existsSync(global) ? global : null;
+  if (rp) candidates.push(path.join(rp, 'app.asar.unpacked', 'node_modules', 'claude-web-engine', 'dist', 'cli-node.js'));
+  return candidates.find((c) => existsSync(c)) ?? null;
 }
 
 /**
@@ -125,13 +126,13 @@ export async function versionOf(file: string): Promise<string | undefined> {
 
 function sourceOf(file: string): EngineInfo['source'] {
   if (file === process.env.CLAUDE_WEB_EXE || file === process.env.CLAUDE_WEB_CCB) return 'env';
-  return file.includes('app.asar') || file.includes('claude-agent-sdk') || file.includes(path.join('claude-web', 'node_modules')) ? 'bundled' : 'global';
+  return file.includes('app.asar') || file.includes('claude-agent-sdk') || file.includes(path.join('node_modules', 'claude-web-engine')) || file.includes(path.join('claude-web', 'node_modules')) ? 'bundled' : 'global';
 }
 
 let cached: { file: string; kind: RuntimeKind } | null = null;
 /**
- * The one runtime every session uses. ccb (claude-code-best) is a superset of Claude Code with the same
- * protocol and the same ~/.claude, so it is preferred; the official binary is the silent fallback.
+ * The one runtime every session uses. Our engine (claude-web-engine, a superset of Claude Code with the same
+ * protocol and the same ~/.claude) is preferred; the official binary is the silent fallback.
  * `CLAUDE_WEB_RUNTIME=claude` or `prefer: 'claude'` picks the official binary explicitly.
  */
 export function resolveEngine(prefer?: RuntimeKind): { file: string; kind: RuntimeKind } {
@@ -150,14 +151,12 @@ export function resolveEngine(prefer?: RuntimeKind): { file: string; kind: Runti
  */
 export async function engineInfo(): Promise<EngineInfo> {
   const bundledOnly = () => null;
-  let ccb = resolveCcbEntry(bundledOnly);
+  const ccb = resolveCcbEntry();
   let claude: string | null = null;
   try { claude = resolveClaudeExe(bundledOnly); } catch { /* not bundled */ }
-  if (!ccb || !claude) {
+  if (!claude) {
     const g = await globalRootAsync();
-    const fromNpm = () => g;
-    ccb ??= resolveCcbEntry(fromNpm);
-    if (!claude) try { claude = resolveClaudeExe(fromNpm); } catch { /* not installed */ }
+    try { claude = resolveClaudeExe(() => g); } catch { /* not installed */ }
   }
   const wantClaude = process.env.CLAUDE_WEB_RUNTIME === 'claude';
   const main: { file: string; kind: RuntimeKind } | null = wantClaude ? (claude ? { file: claude, kind: 'claude' } : null) : ccb ? { file: ccb, kind: 'ccb' } : claude ? { file: claude, kind: 'claude' } : null;
@@ -215,16 +214,5 @@ export async function runClaudeCli(args: string[], opts: { cwd?: string; timeout
     // killed at the timeout: no code, often no output — say so instead of a bare "exit 1"
     const timedOut = !!e.killed && typeof e.code !== 'number';
     return { code: typeof e.code === 'number' ? e.code : 1, stdout: e.stdout ?? '', stderr: e.stderr || String(e.message ?? e), ...(timedOut ? { timedOut } : {}) };
-  }
-}
-
-/** Install / update ccb globally through npm. Streams nothing; returns the final result. */
-export async function installCcb(): Promise<{ code: number; stdout: string; stderr: string }> {
-  try {
-    const { stdout, stderr } = await execFileAsync(isWin ? 'npm.cmd' : 'npm', ['i', '-g', 'claude-code-best@latest'], { timeout: 10 * 60_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024, shell: isWin });
-    cached = null;
-    return { code: 0, stdout, stderr };
-  } catch (e: any) {
-    return { code: typeof e.code === 'number' ? e.code : 1, stdout: e.stdout ?? '', stderr: e.stderr ?? String(e.message ?? e) };
   }
 }

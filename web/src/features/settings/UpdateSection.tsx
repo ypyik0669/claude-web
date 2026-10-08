@@ -27,7 +27,7 @@ export function UpdateSection() {
     return (
       <div className="section">
         <h5>更新</h5>
-        <div className="sub">浏览器模式：在 claude-web 目录 <code>git pull && npm install && npm run build</code> 后重启服务。运行内核（claude-code-best）在「账号与登录 › 更多选项」里单独更新。</div>
+        <div className="sub">浏览器模式：在 claude-web 目录 <code>git pull && npm install && npm run build</code> 后重启服务。运行内核（claude-web-engine）随应用一起更新。</div>
         <div className="kv" style={{ marginTop: 6 }}><span className="k">运行内核</span><span>v{engine?.version ?? '?'}</span></div>
       </div>
     );
