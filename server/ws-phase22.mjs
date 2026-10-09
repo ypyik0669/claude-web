@@ -231,6 +231,13 @@ async function main() {
   check('gpt-4o + high → no effort field in the body', gm.length > 0 && gm.every((h) => !('reasoning_effort' in h.body) && !('reasoning' in h.body)), gm.map((h) => Object.keys(h.body).join('/')).join(' | ').slice(0, 200));
   check('… and the turn\'s user message carries "Reasoning depth: high."', gm.length > 0 && gm.every((h) => turnText(h).includes('Reasoning depth: high.')));
 
+  // ---- an OpenAI-format relay that serves a Claude model: the picked id goes out, not the sonnet family's mapping ----
+  const C = await req({ kind: 'providers.upsert', provider: { name: '中转C', type: 'openai', baseUrl: `${up}/v1`, apiKey: RELAY_KEY, defaultModel: 'deepseek-flash', models: ['deepseek-flash', 'claude-sonnet-5'], responsesApi: false } });
+  const cs = await openOn(C.id, 'claude-sonnet-5', { effort: 'high' });
+  const csr = await turn(cs.sessionId, 'CS5-ONE 你好');
+  const csm = mainOf('openai', 'CS5-ONE');
+  check('claude-sonnet-5 on an OpenAI-format relay that lists it → the request says model "claude-sonnet-5" (not the default deepseek-flash)', csm.length > 0 && csm.every((h) => h.body.model === 'claude-sonnet-5') && /relay:claude-sonnet-5/.test(csr.result?.result ?? ''), `${csm.map((h) => h.body.model).join(',')} · ${String(csr.result?.result ?? '(no result)').slice(0, 60)}`);
+
   // ---- a relay that refuses the parameter ----
   const qw = await openOn(O.id, 'qwen-e2e', { effort: 'high' });
   const qr = await turn(qw.sessionId, 'QW-ONE 你好');

@@ -87,6 +87,8 @@ export interface DialResult {
   /** Set its onframe synchronously after dial() resolves: frames may already be waiting (and are capped until then). */
   link: Link;
   pcName: string;
+  /** Why a direct attempt was given up for the slow relay (logs, tests); absent when direct worked or was not tried. */
+  directWhy?: string;
 }
 
 function why(e: unknown): string {
@@ -254,7 +256,8 @@ class Dialer {
   private answered = false;
   private remoteSet = false;
   private held: RtcCandidate[] = [];
-  private giveUp: (() => void) | undefined;
+  private giveUp: ((why: string) => void) | undefined;
+  private directWhy: string | undefined;
 
   constructor(private readonly o: DialOptions) {
     this.helloMs = timeout(o.helloTimeoutMs, HELLO_TIMEOUT_MS, 'helloTimeoutMs');
@@ -268,7 +271,7 @@ class Dialer {
     } finally {
       // signaling is only for setting up: the link (if any) lives on its own
       this.ch.close();
-      this.giveUp?.();
+      this.giveUp?.('the dial ended');
       this.p2p?.close();
     }
   }
@@ -307,7 +310,7 @@ class Dialer {
       const link = await this.direct(ack);
       if (link) return { link, pcName: ack.pc };
     }
-    return { link: await this.relay(ack), pcName: ack.pc };
+    return { link: await this.relay(ack), pcName: ack.pc, ...(this.directWhy ? { directWhy: this.directWhy } : {}) };
   }
 
   /** Our session's messages only, bound to our hello: the room's channel also carries other dials' (and old copies). */
@@ -324,7 +327,7 @@ class Dialer {
       this.onCandidate(m.c);
     } else if (m.t === 'nodirect') {
       // only does something while the direct attempt is still on
-      this.giveUp?.();
+      this.giveUp?.('the PC has no direct link for this session (nodirect)');
     } else if (m.t === 'relay') {
       this.onRelayOk?.();
     }
@@ -341,8 +344,8 @@ class Dialer {
         for (const c of this.held.splice(0)) pc.addIceCandidate(c).catch(() => {});
       },
       // an answer we cannot use: no point waiting for ICE
-      () => {
-        if (this.pc === pc) this.giveUp?.();
+      (e) => {
+        if (this.pc === pc) this.giveUp?.(`the PC's answer could not be used: ${why(e)}`);
       },
     );
   }
@@ -362,24 +365,25 @@ class Dialer {
     return new Promise((resolve) => {
       let done = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
-      const finish = (link: P2pLink | null) => {
+      const finish = (link: P2pLink | null, reason = '') => {
         if (done) return;
         done = true;
         clearTimeout(timer);
         this.giveUp = undefined;
+        if (!link) this.directWhy = reason;
         // given up: the channel and the connection are closed (and their handlers off) before the relay is asked for
         if (!link) this.p2p?.close();
         this.p2p = undefined;
         this.pc = undefined;
         resolve(link);
       };
-      this.giveUp = () => finish(null);
-      timer = setTimeout(() => finish(null), this.iceMs);
+      this.giveUp = (w) => finish(null, w);
+      timer = setTimeout(() => finish(null, `ICE did not connect within ${this.iceMs} ms`), this.iceMs);
       let pc: RtcPeerConnectionLike;
       try {
         pc = new o.rtc(rtcConfig(o.stun));
-      } catch {
-        return finish(null);
+      } catch (e) {
+        return finish(null, `no RTCPeerConnection: ${why(e)}`);
       }
       this.pc = pc;
       pc.onicecandidate = (ev: { candidate?: unknown } | undefined) => {
@@ -390,18 +394,18 @@ class Dialer {
       let link: P2pLink;
       try {
         link = new P2pLink(pc, pc.createDataChannel(P2P_CHANNEL, { ordered: true }));
-      } catch {
+      } catch (e) {
         closeRtc(pc);
-        return finish(null);
+        return finish(null, `no data channel: ${why(e)}`);
       }
       this.p2p = link;
       // failed, or closed, before it was ours
-      link.onclose = () => finish(null);
+      link.onclose = (w) => finish(null, `before it opened: ${w}`);
       link.onopen = () => {
         clearTimeout(timer);
         void pairKind(pc).then((kind) => {
           if (done) return;
-          if (!link.isOpen()) return finish(null);
+          if (!link.isOpen()) return finish(null, 'it closed while its kind was read');
           link.kind = kind;
           link.onclose = () => {};
           finish(link);
@@ -413,7 +417,7 @@ class Dialer {
         if (done) return;
         if (typeof offer.sdp !== 'string' || !offer.sdp) throw new Error('the offer has no SDP');
         await this.ch.send({ t: 'offer', s: this.s, cn: ack.cnText, sdp: offer.sdp });
-      })().catch(() => finish(null));
+      })().catch((e) => finish(null, `the offer: ${why(e)}`));
     });
   }
 

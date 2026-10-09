@@ -327,7 +327,9 @@ describe('dial and Acceptor', () => {
     const e = await env();
     const states: string[] = [];
     const r = await e.dialNow({ onstate: (s) => states.push(s) });
-    expect(['p2p-v4', 'p2p-v6']).toContain(r.link.kind);
+    // failed once on the Ubuntu runner (2026-10-09, 139 ms, not reproduced since): the reason is in the message
+    expect(['p2p-v4', 'p2p-v6'], `went to the relay: ${r.directWhy}`).toContain(r.link.kind);
+    expect(r.directWhy).toBeUndefined();
     expect(r.pcName).toBe('Test PC');
     expect(states).toEqual(['finding', 'connecting']);
     await until(() => e.links.length === 1, 'the PC side link');
@@ -372,6 +374,7 @@ describe('dial and Acceptor', () => {
     const states: string[] = [];
     const r = await e.dialNow({ forceRelay: true, onstate: (s) => states.push(s) });
     expect(r.link.kind).toBe('relay');
+    expect(r.directWhy).toBeUndefined(); // nothing was given up: direct was never tried
     expect(r.pcName).toBe('Test PC');
     expect(states).toEqual(['finding', 'relay']);
     await until(() => e.links.length === 1, 'the PC side link');
@@ -522,6 +525,7 @@ describe('dial and Acceptor', () => {
     const r = await e.dialNow({ iceTimeoutMs: 1500, onstate: (s) => states.push(s) });
     expect(Date.now() - t0).toBeGreaterThanOrEqual(1490);
     expect(r.link.kind).toBe('relay');
+    expect(r.directWhy).toBe('ICE did not connect within 1500 ms');
     expect(states).toEqual(['finding', 'connecting', 'relay']);
     await until(() => e.links.length === 1, 'the PC side link');
     expect(e.links[0].link.kind).toBe('relay');
@@ -558,6 +562,7 @@ describe('dial and Acceptor', () => {
     const t0 = Date.now();
     const r = await e.dialNow({ iceTimeoutMs: 10_000, onstate: (s) => states.push(s) });
     expect(r.link.kind).toBe('relay');
+    expect(r.directWhy).toMatch(/nodirect/);
     expect(states).toEqual(['finding', 'connecting', 'relay']);
     // nowhere near the ICE timeout
     expect(Date.now() - t0).toBeLessThan(3000);

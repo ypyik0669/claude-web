@@ -88,11 +88,15 @@ export function providerEnv(p: SessionProvider, agent: 'claude' | 'codex' | 'acp
       // (the menu pick, else the profile default — SessionRunner) and the family map below would be ignored.
       // Without it a model id passes through unchanged and a haiku / sonnet / opus one (ccb's own background
       // calls) is mapped here; every family gets a value, otherwise ccb falls back to its claude → gpt-4o / o3 table.
+      // Such ids the relay lists itself (a relay that serves claude-sonnet-5 in OpenAI format) go out unchanged:
+      // our engine (claude-web-engine cw.2+) skips the family mapping for CLAUDE_WEB_SERVED_MODELS.
       {
         const fallback = p.defaultModel || pickChatModel(p.models ?? []) || p.models?.[0];
         const fam = { HAIKU: m.haiku || fallback, SONNET: m.sonnet || fallback, OPUS: m.opus || fallback };
         for (const [k, v] of Object.entries(fam)) if (v) env[`OPENAI_DEFAULT_${k}_MODEL`] = v;
         if (fam.HAIKU) env.OPENAI_SMALL_FAST_MODEL = fam.HAIKU;
+        const served = (p.models ?? []).filter((id) => /haiku|sonnet|opus/i.test(id));
+        if (served.length) env.CLAUDE_WEB_SERVED_MODELS = JSON.stringify(served);
       }
       break;
     // ccb (claude-code-best) picks its API provider in `getAPIProvider()`: settings `modelType`, then

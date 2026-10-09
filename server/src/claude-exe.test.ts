@@ -80,7 +80,10 @@ describe('claude-exe lookups: successes kept, failures kept only LOOKUP_FAIL_TTL
     // the repo bundles both engines: ours (version from its package.json) and the SDK's claude binary
     expect(info.runtime).toBe('ccb');
     expect(info.path).toContain(path.join('node_modules', 'claude-web-engine', 'dist', 'cli-node.js'));
-    expect(info.version).toBe('2.8.4-cw.1');
+    // the installed engine's own version (it moves with each cw.N; a literal here broke at cw.2)
+    const installed = JSON.parse(fs.readFileSync(new URL('../../node_modules/claude-web-engine/package.json', import.meta.url), 'utf8')).version;
+    expect(installed).toMatch(/^2\.8\.4-cw\.\d+$/);
+    expect(info.version).toBe(installed);
     const claude = info.runtime === 'claude' ? info : info.fallback;
     if (claude?.path && !claude.path.endsWith('.js')) expect(claude.version).toBe('2.1.281');
   });

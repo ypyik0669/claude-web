@@ -1,9 +1,65 @@
-import { lazy, memo, Suspense, useMemo, useState } from 'react';
+import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from '@/util';
 import { highlight, normalizeLang } from './highlight';
 import { Icon } from '@/ui/icons';
+import { ws } from '@/ws/client';
+import { desktop } from '@/desktop';
+import { BLANK_CHECK_MS, BLANK_REPORTS_MAX, blankMessage, blankProblem, browserOf, nextStep, type BlankFix, type BlankInfo, type BlankProblem, type CodeProbe } from './code-blank';
 
 const MermaidBlock = lazy(() => import('./MermaidBlock'));
+
+// ---- blank-block guard (see code-blank.ts) ----
+const OWN_TAGS = new Set(['CODE', 'SPAN', 'TABLE', 'TBODY', 'TR', 'TD']);
+let blankReports = 0;
+
+/** first background behind the block that is (nearly) opaque: the text colour is judged against it */
+function backgroundOf(el: Element | null): string {
+  for (let e = el; e; e = e.parentElement) {
+    const bg = getComputedStyle(e).backgroundColor;
+    const a = /rgba\([^)]*[,/]\s*([\d.]+)\s*\)/.exec(bg);
+    if (bg !== 'transparent' && (!a || parseFloat(a[1]) >= 0.95)) return bg;
+  }
+  return 'transparent';
+}
+
+function probe(pre: HTMLPreElement): CodeProbe {
+  const box = (pre.firstElementChild as HTMLElement | null) ?? pre;
+  const ps = getComputedStyle(pre);
+  const lh = parseFloat(ps.lineHeight);
+  return {
+    textLen: (pre.textContent ?? '').replace(/\s+/g, '').length,
+    rendered: pre.getClientRects().length > 0,
+    height: box.getBoundingClientRect().height,
+    lineHeight: Number.isFinite(lh) ? lh : parseFloat(ps.fontSize) * 1.2,
+    color: getComputedStyle(box).color,
+    background: backgroundOf(pre),
+  };
+}
+
+/** what else has been in the block's DOM: read before the redraw replaces it */
+function intruders(pre: HTMLPreElement): Pick<BlankInfo, 'translated' | 'foreignTags' | 'foreignAttrs'> {
+  const tags = new Set<string>();
+  const attrs = new Set<string>();
+  const els = [pre, ...Array.from(pre.querySelectorAll('*')).slice(0, 2000)];
+  for (const el of els) {
+    if (el !== pre && !OWN_TAGS.has(el.tagName)) tags.add(el.tagName.toLowerCase());
+    for (const a of Array.from(el.attributes)) if (a.name !== 'class') attrs.add(a.name);
+  }
+  const html = document.documentElement;
+  const translated = /\btranslated-(?:ltr|rtl)\b/.test(html.className) ? 'Google 翻译'
+    : html.hasAttribute('_msthash') || attrs.has('_msthash') || attrs.has('_msttexthash') ? '微软翻译'
+    : null;
+  return { translated, foreignTags: [...tags], foreignAttrs: [...attrs] };
+}
+
+function reportBlank(info: BlankInfo) {
+  if (blankReports >= BLANK_REPORTS_MAX) return;
+  blankReports++;
+  const message = blankMessage(info);
+  // eslint-disable-next-line no-console
+  console.warn(`[code block] ${message}`);
+  ws.request({ kind: 'client.log', level: 'warn', area: '代码块', message, url: location.pathname }).catch(() => {});
+}
 
 export interface CodeBlockProps {
   code: string;
@@ -46,6 +102,36 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, title, startLine 
   const body = useMemo(() => highlight(shown, l), [shown, l]);
   const isMermaid = lang === 'mermaid';
   const label = title ?? (l && l !== 'plaintext' ? l : lang || '');
+  // a block with text that shows none: redraw once, then plain text, then say so in server.log (code-blank.ts)
+  const preRef = useRef<HTMLPreElement>(null);
+  const [fix, setFix] = useState<BlankFix>(0);
+  const seen = useRef<(Pick<BlankInfo, 'translated' | 'foreignTags' | 'foreignAttrs'> & { problem: BlankProblem }) | null>(null);
+  const settled = useRef(false);
+  const guarded = !(isMermaid && !streaming);
+  const shownLines = truncated ? maxLines : lines.length;
+  useEffect(() => {
+    const pre = preRef.current;
+    if (!guarded || settled.current || !pre) return;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const check = () => {
+      const problem = blankProblem(shown, probe(pre), shownLines);
+      if (problem && !seen.current) seen.current = { problem, ...intruders(pre) };
+      const step = nextStep(fix, problem);
+      if (!step) return;
+      if ('fix' in step) { setFix(step.fix); return; }
+      settled.current = true;
+      reportBlank({
+        ...seen.current!, outcome: step.report, lang, lines: lines.length, chars: text.length, streaming: !!streaming,
+        forcedColors: matchMedia('(forced-colors: active)').matches, desktop: !!desktop, browser: browserOf(navigator.userAgent),
+      });
+    };
+    const schedule = () => { clearTimeout(t); t = setTimeout(check, BLANK_CHECK_MS); };
+    schedule();
+    // something outside React (a page translator, an extension) can empty the block long after it was drawn
+    const watch = new MutationObserver(schedule);
+    watch.observe(pre, { childList: true, subtree: true, characterData: true, attributes: true });
+    return () => { clearTimeout(t); watch.disconnect(); };
+  }, [guarded, shown, shownLines, l, lineNumbers, wrap, fix, streaming, lang, lines.length, text.length]);
   return (
     <div className={clsx('code', wrap && 'wrap', className)}>
       <div className="code-head">
@@ -60,8 +146,10 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, title, startLine 
           <MermaidBlock source={text} />
         </Suspense>
       ) : (
-        <pre className="code-body">
-          {lineNumbers ? (
+        <pre className="code-body" key={fix} ref={preRef}>
+          {fix === 2 ? (
+            <code className="code-plain">{shown}</code>
+          ) : lineNumbers ? (
             <table className="code-table">
               <tbody>
                 {shown.split('\n').map((ln, i) => (

@@ -449,6 +449,8 @@ details.structured summary { cursor: pointer; color: var(--ink-3); }
 .code-btn.on { color: var(--accent); }
 .code-body { margin: 0; padding: 10px 12px; overflow: auto; max-height: 520px; white-space: pre; line-height: 1.55; font-family: var(--mono); tab-size: 4; }
 .code.wrap .code-body { white-space: pre-wrap; word-break: break-word; }
+/* the blank-block fallback (code-blank.ts): no highlighting, nothing that could hide it */
+.code-body .code-plain { color: var(--ink-1); display: inline; visibility: visible; opacity: 1; font-size: inherit; }
 .code-table { border-collapse: collapse; }
 .code-table td { padding: 0; vertical-align: top; }
 .code-table .ln { color: var(--ink-4); text-align: right; padding-right: 12px; user-select: none; width: 1%; white-space: nowrap; }

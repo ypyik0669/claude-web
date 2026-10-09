@@ -32,6 +32,14 @@ describe('providerEnv (openai)', () => {
   it('sessions get the versioned base URL, not the bare host', () => {
     expect(providerEnv(prov('https://www.aizhongzhuan.cc/')).OPENAI_BASE_URL).toBe('https://www.aizhongzhuan.cc/v1');
   });
+
+  it('tells the engine which haiku / sonnet / opus ids the relay itself serves, so a picked one is sent unchanged', () => {
+    const env = providerEnv({ ...prov('https://relay.example'), defaultModel: 'gpt-5', models: ['gpt-5', 'claude-sonnet-5', 'claude-haiku-4-5', 'claude-opus-5-5'] });
+    expect(JSON.parse(env.CLAUDE_WEB_SERVED_MODELS)).toEqual(['claude-sonnet-5', 'claude-haiku-4-5', 'claude-opus-5-5']);
+    // still a value per family: ccb's own background calls use ids the relay may not have
+    expect(env.OPENAI_DEFAULT_SONNET_MODEL).toBe('gpt-5');
+    expect(providerEnv({ ...prov('https://relay.example'), models: ['gpt-5', 'deepseek-v4'] }).CLAUDE_WEB_SERVED_MODELS).toBeUndefined();
+  });
 });
 
 describe('providerEnv (anthropic, prompt caching)', () => {

@@ -120,7 +120,7 @@ function seedHome(home) {
     tr('toolu_t_edit', 'updated', 31),
     am([{ type: 'tool_use', id: 'toolu_t_bash', name: 'Bash', input: { command: 'git status --short' } }], 40, 'msg_t3'),
     tr('toolu_t_bash', ' M README.md', 41),
-    am([{ type: 'text', text: 'smoke: the readme is tidy now.' }], 45, 'msg_t4'),
+    am([{ type: 'text', text: 'smoke: the readme is tidy now.\n\n```\nline one\nline two\n```' }], 45, 'msg_t4'),
   ].map((x) => JSON.stringify(x)).join('\n') + '\n');
   return { repo, sid, toolsSid, transcript: path.join(proj, `${sid}.jsonl`) };
 }
@@ -248,6 +248,10 @@ async function runner() {
       const ok = /\[web error\] 设置 · 模型与智能程度: /.test(srv.log());
       console.log(`${ok ? 'PASS' : 'FAIL'} boundary error reached the server log (client.log)`);
       if (!ok) failed = true;
+      // the emptied code block (chat-turns) reported what it saw: the translator's mark, the attribute it left
+      const blank = /\[web warn\] 代码块: 代码块有内容却显示为空，重画一次后恢复 · 语言 自动识别 · 2 行 · \d+ 字 · 已完成 · 页面被 微软翻译 改过 · 外来属性 _msthash · Electron \d+ · 浏览器/.test(srv.log());
+      console.log(`${blank ? 'PASS' : 'FAIL'} an emptied code block reached the server log with what was there`);
+      if (!blank) failed = true;
     }
     srv.server.kill();
     await new Promise((res) => setTimeout(res, 800));
@@ -2292,6 +2296,17 @@ function driver() {
         check('「在对话里直接展开改动」 opens the edit step\'s diff; off closes it again', inline && await waitFor(`document.querySelectorAll('.pane.focused .turn.folded .turn-body .diff').length === 0`, 3000));
         await click('.pane.focused .turn-sum');
         check('clicking it again folds the turn', await js(`document.querySelector('.pane.focused .turn.folded .turn-body').hidden`));
+        // a code block that something outside React empties (a page translator, an extension — reported 2026-10-09:
+        // 「12 行」 and nothing under it) is drawn again, and server.log says what was there (code-blank.ts)
+        const codeSel = `.pane.focused .turn-answer .code pre.code-body`;
+        const codeBefore = await js(`document.querySelector(${JSON.stringify(codeSel)})?.textContent ?? null`);
+        expectErrors = true;
+        await js(`(() => { const c = document.querySelector(${JSON.stringify(codeSel)}).firstElementChild; c.textContent = ''; c.setAttribute('_msthash', '1'); })()`);
+        const codeBack = await waitFor(`/line one/.test(document.querySelector(${JSON.stringify(codeSel)})?.textContent ?? '')`, 4000);
+        for (let i = 0; i < 30 && !res.console.some((m) => /\[code block\]/.test(m.message)); i++) await sleep(100);
+        expectErrors = false;
+        const codeWarn = res.console.find((m) => /\[code block\]/.test(m.message))?.message ?? null;
+        check('a code block emptied from outside React is drawn again and says so (a warning, its text never in it)', /line one/.test(codeBefore ?? '') && codeBack && /重画一次后恢复/.test(codeWarn ?? '') && !/line one/.test(codeWarn ?? ''), JSON.stringify({ codeBefore, codeBack, codeWarn }));
         // the message actions: hidden until hover / keyboard focus inside the message
         const actOpacity = () => js(`(() => { const a = document.querySelector('.pane.focused .turn-answer > .msg-actions'); return a ? getComputedStyle(a).opacity : null; })()`);
         wc.sendInputEvent({ type: 'mouseMove', x: 4, y: 400 });

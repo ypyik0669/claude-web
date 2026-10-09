@@ -142,8 +142,10 @@ ws.on('open', async () => {
     const aUp = JSON.parse(A.hits.at(-1).body);
     check('translated request reached the Anthropic member in Messages shape', aUp.messages?.[0]?.role === 'user' && aUp.max_tokens > 0 && aUp.stream === true);
 
-    // 5) ledger rows
-    const rows = (await req({ kind: 'ledger.list', days: 1 })).filter((r) => r.kind === 'gateway');
+    // 5) ledger rows — a streamed reply's row is written just after its last byte reaches us: wait for it (5 s at most)
+    const gatewayRows = async () => (await req({ kind: 'ledger.list', days: 1 })).filter((r) => r.kind === 'gateway');
+    let rows = await gatewayRows();
+    for (let i = 0; i < 25 && rows.length < 8; i++) { await new Promise((r) => setTimeout(r, 200)); rows = await gatewayRows(); }
     const sw = rows.find((r) => r.gateway?.switches === 1);
     check('ledger has gateway rows (group / inbound / member / switches / tokens)', rows.length >= 8 && sw?.gateway.group === 'e2e-main' && sw?.gateway.inbound === 'anthropic' && sw?.gateway.member === 'e2e-openai' && sw?.input + sw?.output > 0, `${rows.length} rows`);
     check('passthrough stream usage sniffed into the ledger', rows.some((r) => r.gateway.member === 'e2e-anthropic' && r.gateway.stream && r.output === 3 && r.input === 9));
