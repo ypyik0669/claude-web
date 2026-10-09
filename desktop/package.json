@@ -1,7 +1,7 @@
 {
   "name": "@claude-web/desktop",
   "private": true,
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Claude Web desktop shell",
   "main": "dist/main.js",
   "scripts": {
