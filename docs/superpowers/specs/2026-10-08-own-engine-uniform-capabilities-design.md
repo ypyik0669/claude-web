@@ -53,6 +53,9 @@ ACP 协议没有这种接口。
 - **发布**：fork 加 `.github/workflows/publish.yml`：推 `v*-cw.*` tag → bun ≥ 1.3 → `bun install --frozen-lockfile` →
   本设计新增的测试 → `bun run build:vite` → 构建后检查（第 3 节）→ `npm publish --access public`（`NODE_AUTH_TOKEN` =
   仓库 secret `NPM_TOKEN`，用户加一次）。第一次发布由用户登录 npm 手动执行（我准备好产物和命令）。
+  **2026-10-09 改了**（用户决定）：不发 npm（发布要 npm 账号）。fork 是私有的，它的 Release 别人下载不了，所以构建好的 tgz
+  挂在 claude-web 仓库的预发布 Release `engine-v<版本>` 上，claude-web 的依赖写这个下载地址；fork 的 `publish.yml` 删掉。
+  步骤和注意事项在 CLAUDE.md「引擎 = ccb 2.8.4 的 fork」一条。
 - **claude-web**：
   - 根 `package.json`：去掉 `claude-code-best`，加 `"claude-web-engine": "2.8.4-cw.1"`（精确版本）。
   - `server/src/claude-exe.ts` 的 `resolveEngine()`：内置的 `claude-web-engine` 优先；**不再认全局的 claude-code-best**
