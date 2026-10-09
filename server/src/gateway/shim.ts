@@ -148,13 +148,17 @@ export class CacheShim {
       chunks.push(c as Buffer);
     }
     const key = cacheKey ? `cw:${cacheKey}`.slice(0, CACHE_KEY_MAX) : undefined;
+    const raw = Buffer.concat(chunks);
+    let json: any;
+    if (isChat || isResponses) { try { json = JSON.parse(raw.toString('utf8')); } catch { /* not ours to fix */ } }
+    // the affinity headers name the conversation the way its body does: Codex sends its own prompt_cache_key (the
+    // thread id), and a relay should not get two ids for one conversation
+    const own = typeof json?.prompt_cache_key === 'string' && json.prompt_cache_key ? json.prompt_cache_key.slice(0, CACHE_KEY_MAX) : undefined;
     const headers = passthroughHeaders(req.rawHeaders, 'openai', p.apiKey);
-    if (key) addMissing(headers, affinityHeaders(key, p.type === 'grok'));
+    if (own ?? key) addMissing(headers, affinityHeaders((own ?? key)!, p.type === 'grok'));
     const ac = new AbortController();
     res.on('close', () => { if (!res.writableFinished) ac.abort(); });
-    const ctx: Ctx = { req, res, p, base: openaiBase(p.baseUrl || DEFAULT_BASE[p.type]), rest, search: url.search, raw: Buffer.concat(chunks), headers, sessionId, cacheKey: key, signal: ac.signal, t0: Date.now() };
-    let json: any;
-    if (isChat || isResponses) { try { json = JSON.parse(ctx.raw.toString('utf8')); } catch { /* not ours to fix */ } }
+    const ctx: Ctx = { req, res, p, base: openaiBase(p.baseUrl || DEFAULT_BASE[p.type]), rest, search: url.search, raw, headers, sessionId, cacheKey: key, signal: ac.signal, t0: Date.now() };
     if (!json || typeof json !== 'object' || Array.isArray(json)) return this.forward(ctx);
     if (isResponses) return p.noResponsesApi ? this.responsesViaChat(ctx, json) : this.responses(ctx, json);
     if (p.type === 'openai' && p.responsesApi !== false && !p.noResponsesApi && wantsResponses(String(json.model ?? ''))) return this.viaResponses(ctx, json);
@@ -418,16 +422,26 @@ export class CacheShim {
     const it = src[Symbol.asyncIterator]() as AsyncIterator<Buffer>;
     let whole = '';
     let broken = '';
+    // Codex hangs up once it has response.completed; a relay that keeps the stream open a moment longer must not
+    // turn that answered call into a 499 in the ledger
+    let answered = false;
     for (;;) {
       if (ctx.signal.aborted) break;
       let r: IteratorResult<Buffer>;
       try { r = await withTimeout(it.next(), IDLE_MS); } catch (e: any) { broken = e?.message === 'timeout' ? '上游超过 5 分钟没有数据' : e?.message ?? String(e); up.body.destroy(); break; }
       if (r.done) break;
-      if (stream) for (const e of sniff.feed(dec.write(r.value))) { if (e.data.includes('"usage"')) { try { usageOf(JSON.parse(e.data)?.response); } catch { /* skip */ } } }
-      else if (whole.length < 8 * 1024 * 1024) whole += dec.write(r.value);
+      if (stream) {
+        for (const e of sniff.feed(dec.write(r.value))) {
+          if (/"type"\s*:\s*"response\.(completed|incomplete)"/.test(e.data)) answered = true;
+          if (e.data.includes('"usage"')) { try { usageOf(JSON.parse(e.data)?.response); } catch { /* skip */ } }
+        }
+      } else if (whole.length < 8 * 1024 * 1024) whole += dec.write(r.value);
       if (!res.write(r.value)) await waitDrain(res, ctx.signal);
     }
-    if (ctx.signal.aborted) { up.body.destroy(); res.destroy(); return this.record(ctx, { ok: false, status: 499, model, usage, error: '客户端已断开', outbound: 'responses', stream, firstByteMs }); }
+    if (ctx.signal.aborted) {
+      up.body.destroy(); res.destroy();
+      return this.record(ctx, answered ? { ok: true, status: up.status, model, usage, outbound: 'responses', stream, firstByteMs } : { ok: false, status: 499, model, usage, error: '客户端已断开', outbound: 'responses', stream, firstByteMs });
+    }
     if (!stream) { try { usageOf(JSON.parse(whole + dec.end())); } catch { /* not JSON */ } }
     if (broken) { res.destroy(); return this.record(ctx, { ok: false, status: 502, model, usage, error: broken, outbound: 'responses', stream, firstByteMs }); }
     res.end();
@@ -487,6 +501,8 @@ export class CacheShim {
     const dec = new StringDecoder('utf8');
     const usage: Partial<IrUsage> = {};
     let failed = '';
+    // response.completed went out (on the chat stream's end); Codex hanging up after it is not a 499
+    let answered = false;
     res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache', connection: 'keep-alive' });
     const emit = async (evs: IrEvent[]) => {
       if (ctx.signal.aborted) return;
@@ -494,6 +510,7 @@ export class CacheShim {
       for (const e of evs) {
         if (e.t === 'usage') Object.assign(usage, e.usage);
         else if (e.t === 'error') failed ||= e.message;
+        else if (e.t === 'end') answered = true;
         out += renderer.push(e);
       }
       if (out && !res.write(out)) await waitDrain(res, ctx.signal);
@@ -507,7 +524,10 @@ export class CacheShim {
       if (r.done) break;
       for (const ev of sse.feed(dec.write(r.value))) await emit(parser.feed(ev));
     }
-    if (ctx.signal.aborted) { up.body.destroy(); res.destroy(); return this.record(ctx, { ok: false, status: 499, model, usage, error: '客户端已断开', outbound: 'openai', stream, firstByteMs }); }
+    if (ctx.signal.aborted) {
+      up.body.destroy(); res.destroy();
+      return this.record(ctx, answered && !failed ? { ok: true, status: up.status, model, usage, outbound: 'openai', stream, firstByteMs } : { ok: false, status: 499, model, usage, error: '客户端已断开', outbound: 'openai', stream, firstByteMs });
+    }
     if (broken) await emit([{ t: 'error', message: broken }]);
     else { for (const ev of sse.feed(dec.end())) await emit(parser.feed(ev)); for (const ev of sse.end()) await emit(parser.feed(ev)); await emit(parser.end()); }
     res.end(renderer.end() || undefined);

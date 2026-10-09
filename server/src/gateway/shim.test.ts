@@ -411,6 +411,66 @@ describe('cache shim: Codex (/v1/responses in) on an openai profile', () => {
     expect(meta.provider('ds')!.noResponsesApi).toBeUndefined();
   });
 
+  it('the session-affinity headers carry Codex\'s own prompt_cache_key (its thread id), not a second id for the same conversation', async () => {
+    U.handler.fn = responsesStream;
+    await postR('ds', codexBody());
+    expect(U.hits[0].headers.session_id).toBe('thread-1');
+    expect(U.hits[0].headers['x-session-affinity']).toBe('thread-1');
+  });
+
+  it('Codex hanging up after response.completed (the relay keeps the stream open a little longer) is a success in the ledger, not 499', async () => {
+    U.handler.fn = (_q, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(rsse({ type: 'response.created', response: { id: 'resp_1', status: 'in_progress' } }));
+      res.write(rsse({ type: 'response.completed', response: { id: 'resp_1', status: 'completed', usage: { input_tokens: 30_000, input_tokens_details: { cached_tokens: 27_000 }, output_tokens: 7 } } }));
+      setTimeout(() => res.end(), 1500);
+    };
+    const ac = new AbortController();
+    const r = await fetch(`${root}/gateway/~p/ds/k/cx-sess/v1/responses`, { method: 'POST', headers: { authorization: `Bearer ${gw.shim.keyFor('ds')}`, 'content-type': 'application/json' }, body: codexBody(), signal: ac.signal });
+    const reader = r.body!.getReader();
+    let seen = '';
+    while (!seen.includes('response.completed')) { const { value, done } = await reader.read(); if (done) break; seen += Buffer.from(value).toString('utf8'); }
+    ac.abort();
+    for (let i = 0; i < 40 && !ledger.length; i++) await new Promise((x) => setTimeout(x, 50));
+    expect(ledger.at(-1)).toMatchObject({ ok: true, cacheRead: 27_000, gateway: { upstreamStatus: 200 } });
+    expect(ledger.at(-1)!.error).toBeUndefined();
+  });
+
+  it('the same on a chat-only relay: Codex hanging up after the translated response.completed is a success', async () => {
+    meta.provider('ds')!.noResponsesApi = true;
+    U.handler.fn = (_q, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(chunk({ choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: null }] }));
+      res.write(chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 20_000, completion_tokens: 5, prompt_cache_hit_tokens: 15_000 } }));
+      res.write('data: [DONE]\n\n');
+      setTimeout(() => res.end(), 1500);
+    };
+    const ac = new AbortController();
+    const r = await fetch(`${root}/gateway/~p/ds/k/cx-sess/v1/responses`, { method: 'POST', headers: { authorization: `Bearer ${gw.shim.keyFor('ds')}`, 'content-type': 'application/json' }, body: codexBody(), signal: ac.signal });
+    const reader = r.body!.getReader();
+    let seen = '';
+    while (!seen.includes('response.completed')) { const { value, done } = await reader.read(); if (done) break; seen += Buffer.from(value).toString('utf8'); }
+    expect(seen).toContain('response.completed');
+    ac.abort();
+    for (let i = 0; i < 40 && !ledger.length; i++) await new Promise((x) => setTimeout(x, 50));
+    expect(ledger.at(-1)).toMatchObject({ ok: true, cacheRead: 15_000 });
+  });
+
+  it('hanging up before response.completed is still 499', async () => {
+    U.handler.fn = (_q, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(rsse({ type: 'response.created', response: { id: 'resp_1', status: 'in_progress' } }));
+      setTimeout(() => res.end(), 1500);
+    };
+    const ac = new AbortController();
+    const r = await fetch(`${root}/gateway/~p/ds/k/cx-sess/v1/responses`, { method: 'POST', headers: { authorization: `Bearer ${gw.shim.keyFor('ds')}`, 'content-type': 'application/json' }, body: codexBody(), signal: ac.signal });
+    const reader = r.body!.getReader();
+    await reader.read();
+    ac.abort();
+    for (let i = 0; i < 40 && !ledger.length; i++) await new Promise((x) => setTimeout(x, 50));
+    expect(ledger.at(-1)).toMatchObject({ ok: false, error: '客户端已断开', gateway: { upstreamStatus: 499 } });
+  });
+
   it('a chat-only relay (404 on /v1/responses): translated to chat/completions, answered as Responses events; remembered, the next request goes straight to chat', async () => {
     U.handler.fn = noResponses;
     const r = await postR('ds', codexBody());
