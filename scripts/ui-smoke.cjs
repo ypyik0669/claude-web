@@ -2317,6 +2317,26 @@ function driver() {
         const focused = await actOpacity();
         await js('document.activeElement.blur()');
         check('message actions: invisible at rest, shown when the keyboard focus is inside the message', idle === '0' && focused === '1', JSON.stringify({ idle, focused }));
+        // issue #1 (「一直点不到」): the user message's buttons are under it now, like the reply's; a real mouse from its
+        // text to 编辑 keeps them clickable all the way, and the click opens the editor
+        const ug = await js(`(async () => { const m = document.querySelector('.pane.focused .msg.user:not(.meta)'); if (!m) return null; m.scrollIntoView({ block: 'center' }); await new Promise((r) => setTimeout(r, 300)); const b = m.querySelector('.bubble').getBoundingClientRect(); const e = m.querySelector('.msg-actions button[aria-label="编辑"]').getBoundingClientRect(); return { below: e.top >= b.bottom, from: { x: Math.round(b.left + 10), y: Math.round(b.top + b.height / 2) }, to: { x: Math.round(e.left + e.width / 2), y: Math.round(e.top + e.height / 2) } }; })()`);
+        const lost = [];
+        if (ug) {
+          wc.sendInputEvent({ type: 'mouseMove', x: ug.from.x, y: ug.from.y });
+          await sleep(250);
+          for (let i = 1; i <= 20; i++) {
+            const x = Math.round(ug.from.x + ((ug.to.x - ug.from.x) * i) / 20), y = Math.round(ug.from.y + ((ug.to.y - ug.from.y) * i) / 20);
+            wc.sendInputEvent({ type: 'mouseMove', x, y });
+            await sleep(16);
+            if (await js(`getComputedStyle(document.querySelector('.pane.focused .msg.user:not(.meta) .msg-actions')).pointerEvents`) === 'none') lost.push(`${x},${y}`);
+          }
+          await sleep(200);
+          wc.sendInputEvent({ type: 'mouseDown', x: ug.to.x, y: ug.to.y, button: 'left', clickCount: 1 });
+          wc.sendInputEvent({ type: 'mouseUp', x: ug.to.x, y: ug.to.y, button: 'left', clickCount: 1 });
+        }
+        const editorOpen = !!ug && await waitFor(`!!document.querySelector('.pane.focused .msg.user textarea')`, 3000);
+        if (editorOpen) { await js(`document.querySelector('.pane.focused .msg.user textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`); await waitFor(`!document.querySelector('.pane.focused .msg.user textarea')`, 3000); }
+        check('the user message\'s buttons sit under it; moving from its text to 编辑 they never vanish, and the click opens the editor (issue #1)', !!ug?.below && !lost.length && editorOpen, JSON.stringify({ ug, lost, editorOpen }));
         // a file row of the change card: 审阅 on this conversation's changes, scrolled to that file and open
         await click('.pane.focused .fcard .fcard-f[data-path]');
         const reviewed = await waitFor(`!!document.querySelector('.dock-panel[data-panel="files"]:not([hidden]) .review') && /本次对话/.test(document.querySelector('.dock-panel[data-panel="files"] .rv-scope')?.textContent ?? '')`, 6000);

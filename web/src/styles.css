@@ -282,9 +282,9 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .chat { flex: 1; overflow: auto; min-height: 0; padding: 8px 0 24px; }
 .chat-inner { max-width: calc(720px + 2 * 24px); margin: 0 auto; padding: 0 24px; } /* a reading column of 620–720px (spec §5.3) */
 .msg { margin: 14px 0; animation: fadein 0.18s ease-out; }
-.msg.user { display: flex; justify-content: flex-end; margin-top: 26px; }
+.msg.user { display: flex; flex-direction: column; align-items: flex-end; margin-top: 18px; margin-bottom: 4px; }
 .msg.user .bubble { background: var(--user-bg); border-radius: var(--r-2xl); padding: 9px 14px; max-width: 80%; white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
-.msg.user.meta { justify-content: flex-start; margin-top: 8px; }
+.msg.user.meta { align-items: flex-start; margin-top: 8px; }
 .msg.user.meta .bubble { background: transparent; border: 1px dashed var(--edge-strong); color: var(--ink-3); font-size: 12px; max-height: 96px; overflow: auto; max-width: 100%; }
 .msg.user img { max-width: 260px; border-radius: var(--r-xl); display: block; margin-top: 6px; }
 .msg.assistant { padding: 0; }
@@ -2238,7 +2238,9 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .auto-head { padding-left: 
 .msg-actions button:hover { background: var(--layer-hover); color: var(--ink-1); }
 .msg-actions button.on { color: var(--ink-1); background: var(--layer-selected); border: 0; }
 .msg-actions button:disabled { opacity: 0.4; cursor: default; background: transparent; }
-.msg.user .msg-actions { display: inline-flex; top: -26px; opacity: 0; pointer-events: none; transition: opacity var(--dur-2) var(--ease-out); }
+/* under the bubble, in the message's own box (issue #1: floating 26px above it, the strip between them belonged to
+   neither, the hover was lost on the way up and the buttons vanished before the pointer got there) */
+.msg.user .msg-actions { position: static; display: inline-flex; margin-top: 2px; opacity: 0; pointer-events: none; transition: opacity var(--dur-2) var(--ease-out); }
 .msg.user .msg-actions button { width: 26px; height: 24px; }
 .msg.user:hover .msg-actions, .msg.user:focus-within .msg-actions { opacity: 1; pointer-events: auto; }
 .assistant-wrap .msg-actions, .turn-answer > .msg-actions { position: static; display: flex; margin: -2px 0 4px -6px; opacity: 0; transition: opacity var(--dur-2) var(--ease-out); }
@@ -2247,7 +2249,7 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .auto-head { padding-left: 
   .msg.user .msg-actions, .assistant-wrap .msg-actions, .turn-answer > .msg-actions { opacity: 1; pointer-events: auto; }
 }
 .app.mobile .msg.user .msg-actions, .app.mobile .assistant-wrap .msg-actions, .app.mobile .turn-answer > .msg-actions { opacity: 1; pointer-events: auto; }
-.app.mobile .msg.user .msg-actions { position: static; justify-content: flex-end; margin: 0 0 2px; }
+.app.mobile .msg.user .msg-actions { margin: 2px 0 0; }
 .app.mobile .msg.user { flex-direction: column; align-items: flex-end; }
 
 /* the card a permission / question / plan docks above the composer (it takes the run card's place) */

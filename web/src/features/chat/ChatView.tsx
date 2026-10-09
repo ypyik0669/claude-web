@@ -247,7 +247,6 @@ function UserRow({ it, version }: { it: UserItem; version: number }) {
   void version;
   return (
     <div className={clsx('msg user', it.meta && 'meta')} data-item-id={it.id}>
-      {!it.meta && sessionId && !editing && <UserActions it={it} sessionId={sessionId} onEdit={() => setEditing(true)} />}
       {editing && sessionId ? (
         <UserEditor it={it} sessionId={sessionId} onDone={() => setEditing(false)} />
       ) : (
@@ -257,6 +256,8 @@ function UserRow({ it, version }: { it: UserItem; version: number }) {
           {it.attachments?.length ? <AttachmentChips atts={it.attachments} /> : null}
         </div>
       )}
+      {/* under the message, like the reply's (issue #1: floating above it, they could not be reached) */}
+      {!it.meta && sessionId && !editing && <UserActions it={it} sessionId={sessionId} onEdit={() => setEditing(true)} />}
     </div>
   );
 }
