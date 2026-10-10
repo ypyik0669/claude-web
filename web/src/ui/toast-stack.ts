@@ -10,16 +10,19 @@ export const MAX_TOASTS = 3;
 
 /**
  * The list on screen after the store changed: its toasts in its order, new ones at the end; one that is gone from
- * the store stays where it was, marked `out`. The same list object when nothing changed (no re-render).
+ * the store stays where it was, marked `out`; one whose text the store rewrote (a keyed toast, `toast(…, key)`) shows
+ * the new text where it is. The same list object when nothing changed (no re-render).
  */
 export function mergeToasts(prev: readonly ToastEntry[], live: readonly ToastItem[]): ToastEntry[] {
-  const alive = new Set(live.map((t) => t.id));
+  const alive = new Map(live.map((t) => [t.id, t]));
   const seen = new Set(prev.map((t) => t.id));
   let changed = false;
   const next: ToastEntry[] = prev.map((t) => {
-    if (t.out || alive.has(t.id)) return t;
+    if (t.out) return t;
+    const now = alive.get(t.id);
+    if (now && now.text === t.text && now.ok === t.ok) return t;
     changed = true;
-    return { ...t, out: true as const };
+    return now ? { ...t, text: now.text, ok: now.ok } : { ...t, out: true as const };
   });
   for (const t of live) if (!seen.has(t.id)) { next.push({ ...t }); changed = true; }
   return changed ? next : (prev as ToastEntry[]);

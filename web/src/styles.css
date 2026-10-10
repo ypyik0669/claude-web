@@ -1273,6 +1273,8 @@ html.desktop .tabstrip .tab, html.desktop .tabstrip button, html.desktop .tabstr
 html.desktop .sess-head button, html.desktop .sess-head input, html.desktop .sess-head .menu,
 html.desktop .welcome-top button { -webkit-app-region: no-drag; }
 /* a drag region swallows the mouse: the title (double-click renames) and anything carrying a tooltip must not drag */
+/* 界面缩放 (ui/zoom.ts sets --zoom, the page's zoom factor): the caption buttons and the traffic lights are the
+   system's, as big as ever in the window's pixels — so the room kept for them below is divided by the factor */
 html.desktop .sess-head .sh-title, html.desktop .sess-head .sh-meta > *, html.desktop .sess-head [title],
 html.desktop .tabstrip [title], html.desktop .groupbar [title], html.desktop .dock-tabs [title],
 html.desktop .mobile-tilebar [title] { -webkit-app-region: no-drag; }
@@ -1280,18 +1282,18 @@ html.desktop:not(.mac) .app:not(.dock-open) .groupbar,
 html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .pane[data-top][data-right] > .tabstrip,
 html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .pane[data-top][data-right]:not(.tabs) .sess-head,
 html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .pane[data-top][data-right]:not(.tabs) .welcome-top,
-html.desktop:not(.mac) .app.dock-open .dock:not(.min) .dock-tabs { padding-right: 142px; }
+html.desktop:not(.mac) .app.dock-open .dock:not(.min) .dock-tabs { padding-right: calc(142px / var(--zoom, 1)); }
 /* minimized to its 36px icon strip, the right panel is under the caption buttons: its icons start below them
    (and the workbench's top-right row makes room, since the app is not `.dock-open` then) */
 html.desktop:not(.mac) .dock.min .dock-tabs { padding-top: var(--h-head); }
 /* the image viewer covers the window: its bar keeps clear of the caption buttons / the traffic lights */
-html.desktop:not(.mac) .viewer-bar { padding-right: 150px; }
-html.desktop.mac .viewer-bar { padding-left: 84px; }
-html.desktop.mac .sb-top { padding-left: 84px; }
+html.desktop:not(.mac) .viewer-bar { padding-right: calc(150px / var(--zoom, 1)); }
+html.desktop.mac .viewer-bar { padding-left: calc(84px / var(--zoom, 1)); }
+html.desktop.mac .sb-top { padding-left: calc(84px / var(--zoom, 1)); }
 html.desktop.mac .app.no-sidebar .groupbar,
 html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left] > .tabstrip,
 html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:not(.tabs) .sess-head,
-html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:not(.tabs) .welcome-top { padding-left: 84px; }
+html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:not(.tabs) .welcome-top { padding-left: calc(84px / var(--zoom, 1)); }
 /* …where 展开侧栏 starts at 84px like the sidebar's own top row — not pulled 8px back into the traffic lights' room
    by the -8px it has elsewhere (final review M5) */
 html.desktop.mac .app.no-sidebar .sess-head > .sb-reveal,
@@ -1819,6 +1821,12 @@ html.desktop body > .menu, html.desktop .menu.cm, html.desktop .menu.dirmenu, ht
 .sp-row .l { font-size: 14px; color: var(--ink-1); }
 .sp-row .sub { margin-top: 2px; font-size: 13px; line-height: 1.5; color: var(--ink-3); }
 .sp-row .ctl { flex: none; display: flex; align-items: center; gap: var(--sp-2); color: var(--ink-2); font-size: 14px; }
+/* 界面缩放: − · the factor (a select of every step) · + */
+.zoomer { display: flex; align-items: center; gap: 4px; }
+.zoomer .icon-btn { width: 32px; height: 32px; border-radius: var(--r-row); background: var(--fill-subtle); color: var(--ink-1); }
+.zoomer .icon-btn:hover:not(:disabled) { background: var(--layer-hover); }
+.zoomer .icon-btn:disabled { opacity: 0.4; cursor: default; }
+.modal.settings .sp-row .ctl .zoomer select.field { min-width: 0; width: 84px; text-align: center; text-align-last: center; font-variant-numeric: tabular-nums; }
 .modal.settings .sp-row .ctl select.field { width: auto; min-width: 150px; height: 32px; padding: 0 8px; border: 1px solid transparent; border-radius: var(--r-row); background: var(--fill-subtle); font-size: 14px; color: var(--ink-1); }
 .sp-tag { display: inline-flex; align-items: center; height: 18px; margin-left: 6px; padding: 0 6px; border-radius: var(--r-xs); background: var(--surface-2); font-size: 12px; font-weight: 400; color: var(--ink-3); vertical-align: 1px; }
 /* a setting's two / three-way choice is ui/Segmented (floating.css `.segmented`): as wide as its words need */
@@ -1900,7 +1908,7 @@ html.desktop .sp-drag { display: block; height: 40px; }
 /* Windows / Linux: the caption buttons' area is as tall as a head row (tab-row.ts captionHeight) — the page starts under it */
 html.desktop:not(.mac) .sp-drag { height: var(--h-head); }
 html.desktop .sp-inner { padding-top: 6px; }
-html.desktop.mac .sp-nav-top { min-height: 40px; padding-left: 76px; }
+html.desktop.mac .sp-nav-top { min-height: 40px; padding-left: calc(76px / var(--zoom, 1)); }
 
 /* ---- redesign phase 7: start page / automation page / phone ---- */
 /* spec §5.8 / §5.9 / §5.11, mock-home.png. The start page is one 720px column: title · composer · starters · notice ·
@@ -2011,8 +2019,8 @@ html.desktop.mac .sp-nav-top { min-height: 40px; padding-left: 76px; }
 .auto-body[data-body='orchestra'] .orch { border: 1px solid var(--edge-subtle); border-radius: var(--r-lg); overflow: hidden; }
 html.desktop .workbench:not(.gb) .auto-head { -webkit-app-region: drag; }
 html.desktop .auto-head button, html.desktop .auto-head [title] { -webkit-app-region: no-drag; }
-html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .auto-head { padding-right: 142px; }
-html.desktop.mac .app.no-sidebar .workbench:not(.gb) .auto-head { padding-left: 84px; }
+html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .auto-head { padding-right: calc(142px / var(--zoom, 1)); }
+html.desktop.mac .app.no-sidebar .workbench:not(.gb) .auto-head { padding-left: calc(84px / var(--zoom, 1)); }
 
 /* 「连接断开，正在重连…」 at the top of the main area */
 /* a thin full-width strip under the main area's first row (review 7 M7): it takes no clicks, and while the settings

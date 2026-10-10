@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, Notification, dialog, shell, ipcMain, nativeImage, nativeTheme, powerSaveBlocker } from 'electron';
+import { app, BrowserWindow, Menu, Tray, Notification, dialog, shell, ipcMain, nativeImage, nativeTheme, powerSaveBlocker, screen } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { ServerHost } from './server-host';
@@ -7,6 +7,7 @@ import { autoUpdater } from 'electron-updater';
 import { CHECK_EVERY_MS, FIRST_CHECK_MS, firstLine, isRequired, manualDownloadUrl, notesText, releasePage, updateMode, type UpdateMode } from './update-policy';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
+import { ZOOM_STEPS, cleanZoom, fitWindow, minWindow, nextZoom, scaleCaption, trafficLightY, zoomAsk, zoomLimit, type ZoomAsk } from './zoom';
 
 const isMac = process.platform === 'darwin';
 
@@ -32,7 +33,7 @@ fixPosixPath();
 
 // ---------- launch flags (read before `ready`): software rendering fallback ----------
 const flagsFile = () => path.join(app.getPath('userData'), 'flags.json');
-function readFlags(): { softwareRender?: boolean; gpuCrashes?: number; autoUpdate?: boolean } {
+function readFlags(): { softwareRender?: boolean; gpuCrashes?: number; autoUpdate?: boolean; zoom?: number } {
   try { return JSON.parse(fs.readFileSync(flagsFile(), 'utf8')); } catch { return {}; }
 }
 function writeFlags(f: Record<string, unknown>) {
@@ -57,8 +58,10 @@ let quitting = false;
  * with that row's own icons. The page keeps its right end clear (styles.css, 142px).
  */
 const CAPTION_H = process.platform === 'linux' ? 52 : 60;
-const captionH = (h: unknown) => (typeof h === 'number' && Number.isFinite(h) ? Math.min(80, Math.max(32, Math.round(h))) : CAPTION_H);
-let titleBar = { bg: '', fg: '', overlay: '', height: CAPTION_H };
+// the page reports the height in the window's pixels (its row × the zoom factor): 50% of a bar … 300% of a head row
+const captionH = (h: unknown) => (typeof h === 'number' && Number.isFinite(h) ? Math.min(260, Math.max(20, Math.round(h))) : 0);
+/** `height` 0: no page has reported yet — the default row at the current zoom (`captionNow`). */
+let titleBar = { bg: '', fg: '', overlay: '', height: 0 };
 const overlayDefault = (dark: boolean) => (process.platform === 'win32' ? '#00000000' : dark ? '#1b1a18' : '#fefdfc');
 let gpuCrashes = 0;
 /** What the renderer's update prompt and settings page show (web: features/update/model.ts). */
@@ -148,26 +151,32 @@ function splashUrl(dark: boolean): string {
 function createWindow(url: string | null, winId = 'main', bounds?: Bounds, hidden = false): BrowserWindow {
   const st = bounds ?? loadState().windows[winId] ?? {};
   const dark = nativeTheme.shouldUseDarkColors;
+  // 界面缩放: the page is drawn this many times as big; the smallest window grows with it (zoom.ts)
+  const z = currentZoom();
+  const min = minWindow(z);
   const win = new BrowserWindow({
-    width: st.width ?? 1400,
-    height: st.height ?? 900,
+    width: Math.max(st.width ?? 1400, min.width),
+    height: Math.max(st.height ?? 900, min.height),
     x: st.x,
     y: st.y,
-    minWidth: 900,
-    minHeight: 600,
+    minWidth: min.width,
+    minHeight: min.height,
     title: APP_NAME,
     icon: iconPath(),
     backgroundColor: titleBar.bg || (dark ? '#12110f' : '#f7f6f2'),
     titleBarStyle: 'hidden',
     // macOS keeps its own traffic lights (left, see `html.mac` in styles.css; y centres them in the 52px top rows); elsewhere we draw the overlay buttons
     ...(isMac
-      ? { trafficLightPosition: { x: 14, y: 27 } } // centred in the sidebar's 52px top row, which starts under the 8px shell gap
-      : { titleBarOverlay: { color: titleBar.overlay || overlayDefault(dark), symbolColor: titleBar.fg || (dark ? '#c4c2be' : '#47433f'), height: titleBar.height } }),
+      ? { trafficLightPosition: { x: 14, y: trafficLightY(z) } } // centred in the sidebar's 52px top row, which starts under the 8px shell gap
+      : { titleBarOverlay: { color: titleBar.overlay || overlayDefault(dark), symbolColor: titleBar.fg || (dark ? '#c4c2be' : '#47433f'), height: captionNow() } }),
     show: false,
-    // webviewTag powers the in-app browser tile; each <webview> declares its own partition and denies popups
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false, webviewTag: true, additionalArguments: [`--cw-win=${winId}`] },
+    // webviewTag powers the in-app browser tile; each <webview> declares its own partition and denies popups (and keeps
+    // its own zoom: only our pages are zoomed)
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false, webviewTag: true, zoomFactor: z, additionalArguments: [`--cw-win=${winId}`] },
   });
   wins.set(winId, win);
+  // the factor is kept per host by Chromium, and the splash has none: say it again once a page is in
+  win.webContents.on('dom-ready', () => applyZoom(win));
   if (st.maximized) win.maximize();
   win.once('ready-to-show', () => { if (!hidden) win.show(); });
   win.on('resize', saveState);
@@ -243,6 +252,65 @@ function broadcast(channel: string, arg: unknown) {
   for (const [, w] of liveWins()) w.webContents.send(channel, arg);
 }
 
+// ---------- 界面缩放 (zoom.ts): one factor for every window, remembered in flags.json ----------
+// Electron's own zoomIn / zoomOut roles would do the zooming, but they forget it at the next start, want Ctrl+Shift+=
+// for "in", and leave the caption buttons, the traffic lights and the smallest window where they were.
+let zoom = 1;
+let zoomRead = false;
+/** The work area of the screen a window is on (the primary screen without one). Only after `ready`. */
+function workAreaOf(w?: BrowserWindow | null) {
+  return (w && !w.isDestroyed() ? screen.getDisplayMatching(w.getBounds()) : screen.getPrimaryDisplay()).workArea;
+}
+/** The factor in use. Read once, when the first window is made: what the screen can take is only known after `ready`. */
+function currentZoom(): number {
+  if (!zoomRead) {
+    zoomRead = true;
+    zoom = cleanZoom(readFlags().zoom, zoomLimit(workAreaOf(null)));
+  }
+  return zoom;
+}
+/** The caption buttons' height: what the page reported, or the default row at this zoom until one has. */
+const captionNow = () => titleBar.height || Math.round(CAPTION_H * currentZoom());
+const zoomInfo = (w?: BrowserWindow | null) => ({ zoom: currentZoom(), max: zoomLimit(workAreaOf(w)), min: ZOOM_STEPS[0] as number, steps: [...ZOOM_STEPS] as number[] });
+/** Everything of one window that follows the factor: the page, the smallest size (and the size, if now under it), the traffic lights. */
+function applyZoom(w: BrowserWindow) {
+  const z = currentZoom();
+  try {
+    if (Math.abs(w.webContents.getZoomFactor() - z) > 0.001) w.webContents.setZoomFactor(z);
+    const min = minWindow(z);
+    w.setMinimumSize(min.width, min.height);
+    if (!w.isMaximized() && !w.isFullScreen()) {
+      const to = fitWindow(w.getBounds(), min, workAreaOf(w));
+      if (to) w.setBounds(to);
+    }
+    if (isMac) w.setWindowButtonPosition({ x: 14, y: trafficLightY(z) });
+  } catch { /* a window on its way out */ }
+}
+/**
+ * A request from the menu (its accelerators) or from a page (设置 → 外观, the command palette). Every window is told
+ * the outcome, changed or not — the focused one says it (「界面缩放 125%」, or that this is as far as it goes).
+ */
+function setZoom(ask: ZoomAsk, from: BrowserWindow | null = focusedWin()) {
+  const prev = currentZoom();
+  const max = zoomLimit(workAreaOf(from));
+  const next = nextZoom(prev, ask, max);
+  const changed = next !== prev;
+  if (changed) {
+    zoom = next;
+    writeFlags({ zoom });
+    // until the pages report their rows again (they do, on the change): the same row, as big as it is now drawn
+    if (titleBar.height) titleBar.height = captionH(scaleCaption(titleBar.height, prev, next));
+    for (const [, w] of liveWins()) {
+      applyZoom(w);
+      if (!isMac && titleBar.fg) { try { w.setTitleBarOverlay({ color: titleBar.overlay, symbolColor: titleBar.fg, height: captionNow() }); } catch { /* not supported */ } }
+    }
+    mainLog(`[zoom] ${Math.round(next * 100)}%`);
+  }
+  const info = { zoom, max, min: ZOOM_STEPS[0] as number, steps: [...ZOOM_STEPS] as number[] };
+  broadcast('desktop:zoom', { ...info, changed, ask: typeof ask === 'number' ? 'set' : ask });
+  return info;
+}
+
 // Accelerators mirror web/src/features/workbench/shortcuts.ts (desktop column); labels use the same user words as
 // its `label`s and web/src/ui/terms.ts (对话 / 分屏 / 标签页 / 右侧面板 / 步骤视图 — never 会话 / 窗格 / 停靠 / 轨迹).
 function buildMenu() {
@@ -314,7 +382,14 @@ function buildMenu() {
         { type: 'separator' },
         cmd('键盘快捷键', 'F1', 'shortcuts'),
         { role: 'togglefullscreen' },
-        { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'resetZoom' },
+        { type: 'separator' },
+        // 界面缩放 — ours, not the zoomIn / zoomOut roles (see setZoom). `=` is the key itself; `Plus` is it with Shift,
+        // and the keypad has its own names
+        { label: '放大界面', accelerator: 'CmdOrCtrl+=', click: () => void setZoom('in') },
+        { label: '缩小界面', accelerator: 'CmdOrCtrl+-', click: () => void setZoom('out') },
+        { label: '还原界面大小', accelerator: 'CmdOrCtrl+0', click: () => void setZoom('reset') },
+        ...([['CmdOrCtrl+Plus', 'in'], ['CmdOrCtrl+numadd', 'in'], ['CmdOrCtrl+numsub', 'out'], ['CmdOrCtrl+num0', 'reset']] as const)
+          .map(([accelerator, ask]): Electron.MenuItemConstructorOptions => ({ label: `界面缩放（${accelerator}）`, accelerator, visible: false, click: () => void setZoom(ask) })),
         { type: 'separator' },
         { role: 'reload' }, { role: 'toggleDevTools' },
       ],
@@ -468,7 +543,13 @@ ipcMain.on('desktop:notify', (e, { title, body, sessionId }: { title: string; bo
 ipcMain.on('desktop:badge', (_e, n: number) => { pendingCount = n; updateBadge(); });
 ipcMain.on('desktop:titlebar', (_e, { bg, fg, overlay, height }: { bg: string; fg: string; overlay?: string; height?: number }) => {
   titleBar = { bg, fg, overlay: overlay || bg, height: captionH(height) };
-  if (!isMac) for (const [, w] of liveWins()) { try { w.setTitleBarOverlay({ color: titleBar.overlay, symbolColor: fg, height: titleBar.height }); } catch { /* not supported */ } }
+  if (!isMac) for (const [, w] of liveWins()) { try { w.setTitleBarOverlay({ color: titleBar.overlay, symbolColor: fg, height: captionNow() }); } catch { /* not supported */ } }
+});
+ipcMain.handle('desktop:zoom:get', (e) => zoomInfo(BrowserWindow.fromWebContents(e.sender)));
+ipcMain.handle('desktop:zoom:set', (e, v: unknown) => {
+  const from = BrowserWindow.fromWebContents(e.sender);
+  const ask = zoomAsk(v);
+  return ask === null ? zoomInfo(from) : setZoom(ask, from);
 });
 ipcMain.handle('desktop:loginItem:get', () => app.getLoginItemSettings().openAtLogin);
 ipcMain.handle('desktop:loginItem:set', (_e, on: boolean) => app.setLoginItemSettings({ openAtLogin: on, args: ['--hidden'] }));

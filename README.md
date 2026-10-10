@@ -377,6 +377,7 @@ worktree 放在仓库外面的 `~/.claude-web/worktrees/<仓库名>-<hash>/`（�
 | 新分组 | Ctrl+T | Alt+T |
 | 切换分组 | Ctrl+Tab | Alt+PageDown |
 | 放大 / 还原分屏 | Ctrl+Shift+Enter | 同左 |
+| 放大 / 缩小 / 还原整个界面 | Ctrl+= / Ctrl+- / Ctrl+0（会记住；设置 → 外观 → 界面缩放） | 浏览器自己的缩放 |
 | 终端 | Ctrl+` | Ctrl+` |
 | 右侧面板 | Ctrl+J | Ctrl+J |
 | 对话 / 步骤视图 | Alt+J | Alt+J |

@@ -16,9 +16,15 @@
 /** tokens.css `--shell-gap`: the right panel is a card, one gap narrower than its grid column (4px in compact density —
  *  the 4px this over-counts there only makes the row move down a little earlier). */
 export const SHELL_GAP = 8;
-/** styles.css: `html.desktop:not(.mac) .app.dock-open .dock:not(.min) .dock-tabs { padding-right: 142px }` — the three
- *  caption buttons are 46px each (138), plus 4px of air. */
+/** styles.css: `html.desktop:not(.mac) .app.dock-open .dock:not(.min) .dock-tabs { padding-right: calc(142px / var(--zoom, 1)) }`
+ *  — the three caption buttons are 46px each (138), plus 4px of air, at 100%. */
 export const CAPTION_W = 142;
+/**
+ * The room the caption buttons take in the page's pixels at a 界面缩放 factor (ui/zoom.ts): they are drawn by the
+ * system, as big as ever in the window's pixels, while the page's pixels are `zoom` of those — zoomed in they take
+ * less of the row, zoomed out more. The same division as styles.css's.
+ */
+export const captionWidth = (zoom = 1) => CAPTION_W / (zoom > 0 ? zoom : 1);
 /** styles.css: the default row's right padding (`.dock.simple:not(.min) .dock-tabs`, and `.stacked`). */
 export const SIDE_PAD = 8;
 /** Moved down, the row moves back up only when it fits with this much to spare (no flip-flop on a pixel). */
@@ -44,11 +50,17 @@ export function captionRow(o: { settings: boolean; dockOpen: boolean; workbench:
  * How tall the caption buttons' area is: from the window's top edge to the bottom of the row they sit over — so the
  * glyphs are centred half a shell gap above the row's own icons (a fixed 40px left them 14px above), and the area
  * never reaches below the row: only the row itself has to keep its right end clear (`CAPTION_W`). `gap` is the shell
- * gap above the row (0 on Linux, where the card touches the window's edge).
+ * gap above the row (0 on Linux, where the card touches the window's edge). In the page's pixels: the shell wants it
+ * in the window's, so the caller multiplies by the 界面缩放 factor (`captionHeightAt`).
  */
 export function captionHeight(row: CaptionRow, o: { gap: number; head: number; bar: number }): number {
   const h = Math.round(o.gap + (row === 'bar' ? o.bar : o.head));
   return Number.isFinite(h) ? Math.min(80, Math.max(32, h)) : 60;
+}
+
+/** …as the shell is told: in the window's pixels, where the row is `zoom` times as tall. */
+export function captionHeightAt(zoom: number, row: CaptionRow, o: { gap: number; head: number; bar: number }): number {
+  return Math.round(captionHeight(row, o) * (zoom > 0 ? zoom : 1));
 }
 
 /** The right panel's column width: the same clamp as `.app:not(.mobile)`'s grid in styles.css. */
@@ -69,17 +81,17 @@ export interface RowMeasure {
   gaps: number;
 }
 
-/** Whether the row moves below the caption buttons (`caption`: desktop app on Windows / Linux). */
-export function rowStacked(prev: boolean, m: RowMeasure, caption: boolean): boolean {
+/** Whether the row moves below the caption buttons (`caption`: desktop app on Windows / Linux; `zoom`: 界面缩放). */
+export function rowStacked(prev: boolean, m: RowMeasure, caption: boolean, zoom = 1): boolean {
   if (!caption) return false;
-  const room = m.row - m.padLeft - CAPTION_W;
+  const room = m.row - m.padLeft - captionWidth(zoom);
   const need = m.fixed + m.controls + m.gaps;
   return prev ? need > room - STACK_HYSTERESIS : need > room;
 }
 
 /** Whether the temporary tabs are folded into 「更多」, given where the row is. */
-export function tempsFolded(m: RowMeasure, o: { stacked: boolean; caption: boolean }): boolean {
-  const padRight = o.caption && !o.stacked ? CAPTION_W : SIDE_PAD;
+export function tempsFolded(m: RowMeasure, o: { stacked: boolean; caption: boolean; zoom?: number }): boolean {
+  const padRight = o.caption && !o.stacked ? captionWidth(o.zoom) : SIDE_PAD;
   return m.row - m.padLeft - padRight - m.fixed - m.controls - m.gaps - SEP_W < MIN_STRIP;
 }
 

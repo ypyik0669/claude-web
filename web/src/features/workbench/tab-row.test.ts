@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CAPTION_W, MIN_STRIP, SEP_W, SHELL_GAP, SIDE_PAD, STACK_HYSTERESIS, captionHeight, captionRow, countText, panelColumnWidth, rowStacked, tempsFolded, type RowMeasure } from './tab-row';
+import { CAPTION_W, MIN_STRIP, SEP_W, SHELL_GAP, SIDE_PAD, STACK_HYSTERESIS, captionHeight, captionHeightAt, captionRow, captionWidth, countText, panelColumnWidth, rowStacked, tempsFolded, type RowMeasure } from './tab-row';
 
 // the default right panel's numbers on the desktop app (ui-smoke measures the real ones): four 13px text tabs with 8px
 // sides and the count's two-digit room ≈ 201, 更多 + hide = 62, two 2px gaps, 12px left padding
@@ -93,5 +93,31 @@ describe('right panel tab row', () => {
     expect(captionHeight('head', { gap: NaN, head: NaN, bar: NaN })).toBe(60);
     expect(captionHeight('head', { gap: 8, head: 400, bar: 40 })).toBe(80);
     expect(captionHeight('bar', { gap: 0, head: 52, bar: 10 })).toBe(32);
+  });
+
+  it('界面缩放: the caption buttons keep their size in the window, so in the page they take 1 / zoom of the row', () => {
+    expect(captionWidth()).toBe(CAPTION_W);
+    expect(captionWidth(1)).toBe(CAPTION_W);
+    expect(captionWidth(2)).toBe(CAPTION_W / 2);
+    expect(captionWidth(0.5)).toBe(CAPTION_W * 2);
+    expect(captionWidth(0)).toBe(CAPTION_W); // an unreadable factor is 100%
+    // the area's height goes to the shell in the window's pixels: the row is `zoom` times as tall there
+    const px = { gap: SHELL_GAP, head: 52, bar: 40 };
+    expect(captionHeightAt(1, 'head', px)).toBe(60);
+    expect(captionHeightAt(1.5, 'head', px)).toBe(90);
+    expect(captionHeightAt(2, 'bar', px)).toBe(96);
+    expect(captionHeightAt(0.5, 'head', px)).toBe(30);
+    // a row that fits beside the buttons at 100% fits with room to spare zoomed in (the same window is fewer page
+    // pixels wide, but that is the caller's `row`), and may have to move down zoomed out
+    const m: RowMeasure = { row: 420, padLeft: 12, fixed: 201, controls: 62, gaps: 4 };
+    expect(rowStacked(false, m, true, 1)).toBe(true); // 420 − 12 − 142 = 266 < 267
+    expect(rowStacked(false, m, true, 1.25)).toBe(false); // 420 − 12 − 113.6 = 294.4
+    expect(rowStacked(false, { ...m, row: 480 }, true, 1)).toBe(false);
+    expect(rowStacked(false, { ...m, row: 480 }, true, 0.67)).toBe(true); // 480 − 12 − 211.9 = 256.1
+    expect(rowStacked(false, m, false, 0.5)).toBe(false); // no caption buttons (a browser, macOS): never
+    // the temporary strip gets what the buttons do not take
+    const wide: RowMeasure = { ...m, row: 480 };
+    expect(tempsFolded(wide, { stacked: false, caption: true, zoom: 1 })).toBe(true); // 480 − 12 − 142 − 267 − 13 = 46 < 56
+    expect(tempsFolded(wide, { stacked: false, caption: true, zoom: 2 })).toBe(false); // 71 more
   });
 });

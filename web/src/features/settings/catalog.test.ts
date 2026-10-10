@@ -92,7 +92,8 @@ describe('settings map (spec §5.7)', () => {
   it('every entry of the old window is still there, exactly once (plus the rows added since, named here)', () => {
     const legacy = Object.values(LEGACY).flatMap((x) => x.entries ?? []);
     // redesign phase 5: 「在对话里直接展开改动」 — the per-step diffs no longer start open (spec §5.3: 设置里可以改回)
-    const added = ['ui.inlineDiffs', 'ui.haptics'];
+    // 界面缩放 (ui.zoom): the desktop app's whole-window zoom, next to 字号
+    const added = ['ui.inlineDiffs', 'ui.haptics', 'ui.zoom'];
     const now = allEntries().map(({ entry }) => entry.id);
     expect(new Set(now).size).toBe(now.length);
     for (const id of legacy) expect(now, id).toContain(id);

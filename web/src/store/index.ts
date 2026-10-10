@@ -91,8 +91,9 @@ interface State {
   sheetDetent: SheetDetent;
   inspect: { sessionId: string; toolUseId?: string; file?: { path: string; line?: number } } | null;
   theme: Theme;
-  toasts: { id: number; text: string; ok?: boolean }[];
-  toast(text: string, ok?: boolean, ms?: number): void;
+  toasts: { id: number; text: string; ok?: boolean; key?: string }[];
+  /** `key`: a toast with the same key that is still up is rewritten in place (and stays its `ms` from now) instead of stacking another */
+  toast(text: string, ok?: boolean, ms?: number, key?: string): void;
   workspaces: Workspace[];
   sessionMeta: Record<string, SessionMeta>;
   schedules: Schedule[];
@@ -289,6 +290,9 @@ export function answering<T>(since: number, fn: () => T): T {
 /** Phone: put the bottom drawer away (the panels stay mounted; the desktop's open / closed is not touched). */
 export const hideSheet = (): void => { if (useStore.getState().sheetAt) useStore.setState({ sheetAt: 0, sheetDetent: 'half' }); };
 
+/** When each toast goes: a keyed one that is rewritten starts its time again. */
+const toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
 export const useStore = create<State>((set, get) => ({
   connected: false,
   sessions: [],
@@ -422,15 +426,17 @@ export const useStore = create<State>((set, get) => ({
     set((s) => ({ sessionMeta: { ...s.sessionMeta, [sessionId]: { ...s.sessionMeta[sessionId], ...patch } } }));
     await ws.request({ kind: 'session.setMeta', sessionId, patch });
   },
-  toast(text, ok, ms = 5000) {
-    const id = Date.now() + Math.random();
+  toast(text, ok, ms = 5000, key) {
+    const up = key ? get().toasts.find((t) => t.key === key) : undefined;
+    const id = up?.id ?? Date.now() + Math.random();
     // a failure we recognise gets its Chinese explanation on top, the original underneath (@errors) — and time to read it
     if (!ok) {
       const told = withExplanation(text);
       if (told !== text) { text = told; ms = Math.max(ms, 10_000); }
     }
-    set((s) => ({ toasts: [...s.toasts, { id, text, ok }] }));
-    setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), ms);
+    set((s) => ({ toasts: up ? s.toasts.map((t) => (t.id === id ? { ...t, text, ok } : t)) : [...s.toasts, { id, text, ok, key }] }));
+    clearTimeout(toastTimers.get(id));
+    toastTimers.set(id, setTimeout(() => { toastTimers.delete(id); set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })); }, ms));
   },
 
   init() {

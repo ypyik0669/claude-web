@@ -15,6 +15,8 @@ import { panelCommandLabel } from '@/features/workbench/panel-entries';
 import { shareConversation } from '@/features/chat/MessageActions';
 import { TERMS } from '@/ui/terms';
 import { imeComposing } from '@/ui/ime';
+import { canZoom, useZoom } from '@/ui/zoom';
+import { zoomPercent } from '@/ui/zoom-math';
 import { commandHits } from './filter';
 
 interface Cmd { id: string; label: string; sub?: string; ic?: IconName; group: string; run: () => void }
@@ -34,6 +36,7 @@ export function CommandPalette() {
   const open = useStore((s) => s.paletteOpen);
   const st = useStore();
   const active = useActive();
+  const zoom = useZoom();
   const [q, setQ] = useState('');
   const [idx, setIdx] = useState(0);
   const [hits, setHits] = useState<{ session: SessionSummary; snippet?: string }[]>([]);
@@ -68,6 +71,8 @@ export function CommandPalette() {
       { id: 'archived', label: st.showArchived ? '隐藏已归档的对话' : '显示已归档的对话', ic: 'archive', group: '视图', run: () => useStore.setState((s) => ({ showArchived: !s.showArchived })) },
       { id: 'keys', label: '键盘快捷键', sub: '?', ic: 'keyboard', group: '视图', run: () => useStore.setState({ shortcutsOpen: true }) },
       { id: 'settings', label: '设置…', sub: 'Ctrl+,', ic: 'settings', group: '视图', run: () => st.openSettings() },
+      // 界面缩放: the desktop app's whole-window zoom (a browser has its own)
+      ...(canZoom ? SHORTCUTS.filter((x) => x.id.startsWith('zoom.')).map<Cmd>((x) => ({ id: x.id, label: x.id === 'zoom.reset' ? `${x.label}（现在 ${zoomPercent(zoom)}）` : x.label, sub: keyLabel(x), ic: x.id === 'zoom.in' ? 'zoomIn' : x.id === 'zoom.out' ? 'zoomOut' : 'zoom', group: '视图', run: () => runCommand(x.id) })) : []),
       // workbench verbs come straight from the shortcut table so labels / keys never drift
       ...SHORTCUTS.filter((x) => ['group.new', 'group.close', 'group.next', 'pane.splitRight', 'pane.splitDown', 'tile.close', 'pane.zoom', 'pane.next', 'tile.new', 'dock.toggle', 'dock.minimize'].includes(x.id))
         .map<Cmd>((x) => ({ id: `wb.${x.id}`, label: x.label, sub: keyLabel(x), ic: x.group === '分组' ? 'board' : x.group === '分屏' ? 'splitRight' : 'inspector', group: '工作台', run: () => runCommand(x.id) })),
@@ -97,7 +102,7 @@ export function CommandPalette() {
       );
     }
     return c;
-  }, [st.layout.dock, st.theme, st.sidebarOpen, st.showArchived, st.settings, st.sessionMeta, active?.sessionId, active?.state]);
+  }, [st.layout.dock, st.theme, st.sidebarOpen, st.showArchived, st.settings, st.sessionMeta, active?.sessionId, active?.state, zoom]);
 
   const ql = q.replace(/^>/, '').trim().toLowerCase();
   // name hits first, then the conversations, then (in one block each) every group the query names (「面板」 → every panel)

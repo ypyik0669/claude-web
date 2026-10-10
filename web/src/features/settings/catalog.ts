@@ -20,7 +20,7 @@ export const SETTINGS_GROUPS: { id: SettingsGroupId; l: string }[] = [
 export type EntryId =
   | 'ui.defaultMode' | 'autoContinueOnReset' | 'ui.showThinking' | 'ui.diffMode' | 'ui.inlineDiffs' | 'ui.workbench' | 'ui.autoSave'
   | 'ui.notifications' | 'ui.closeToTray' | 'ui.confirmExit' | 'ui.softwareRender' | 'orchestra.maxParallel'
-  | 'ui.theme' | 'ui.fontSize' | 'ui.density' | 'ui.cjkFont' | 'ui.reduceMotion' | 'ui.haptics';
+  | 'ui.theme' | 'ui.zoom' | 'ui.fontSize' | 'ui.density' | 'ui.cjkFont' | 'ui.reduceMotion' | 'ui.haptics';
 
 /** One part of a page: a component with its own requests (a list, a form, a status block). */
 export type BodyId =
@@ -111,6 +111,8 @@ const GENERAL: EntryMeta[] = [
 
 const APPEARANCE: EntryMeta[] = [
   { id: 'ui.theme', block: '显示', label: '主题', hint: '跟随系统会按操作系统的深浅色切换。', keywords: 'theme dark light 深色 浅色 暗色 亮色 system 跟随系统' },
+  // not a meta.json key: the desktop shell keeps it (flags.json) — it has to be known before a window's first paint
+  { id: 'ui.zoom', block: '显示', label: '界面缩放', hint: '把整个界面一起放大或缩小：屏幕分辨率高、东西看着小的时候调大。桌面版会记住；网页版请用浏览器自己的缩放。', keywords: 'zoom scale dpi 4k hidpi 缩放 放大 缩小 分辨率 高分屏 太小 看不清 大小 比例' },
   { id: 'ui.fontSize', block: '显示', label: '字号', hint: '整个界面的字号（像素）。', keywords: 'font size 字体大小' },
   { id: 'ui.density', block: '显示', label: '密度', hint: '紧凑模式减少行高与内边距。', keywords: 'density compact 紧凑 宽松' },
   { id: 'ui.cjkFont', more: true, label: '中文字体', hint: '优先用于中日韩文字的字体。', keywords: 'cjk font 中文 字体 雅黑 苹方' },

@@ -22,7 +22,8 @@ import { installOrchestra } from '@/features/orchestra/state';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { Toasts } from '@/ui/Toasts';
 import { chromeVisibility, workbenchOn } from '@/model/layout';
-import { captionHeight, captionRow } from '@/features/workbench/tab-row';
+import { captionHeightAt, captionRow } from '@/features/workbench/tab-row';
+import { installZoom, useZoom } from '@/ui/zoom';
 import { MOBILE_QUERY, drawerYields } from '@/ui/viewport';
 import { installAutomation } from '@/features/automation/state';
 import { installChecklist } from '@/features/home/checklist-sync';
@@ -72,6 +73,7 @@ export function App() {
   useEffect(() => useStore.subscribe((s, p) => { if (drawerYields(p, s)) useStore.setState({ sidebarOpen: false }); }), []);
   useEffect(() => installOrchestra(), []);
   useEffect(() => installAutomation(), []);
+  useEffect(() => installZoom(), []);
   useEffect(() => installChecklist(), []);
   useEffect(() => installAccountDefault(), []);
   useEffect(() => installSettingsClose(), []);
@@ -155,6 +157,7 @@ export function App() {
   const groupBar = useStore((s) => chromeVisibility(s.layout, { workbench: workbenchOn(s.settings) }).groupBar);
   const capRow = captionRow({ settings: settingsOpen, dockOpen: rpWidth > MIN_RAIL, workbench, groupBar, chromeRow });
   const density = useStore((s) => s.settings['ui.density']);
+  const zoom = useZoom();
   useEffect(() => {
     const d = desktop;
     if (!d) return;
@@ -162,11 +165,11 @@ export function App() {
       const cs = getComputedStyle(document.documentElement);
       const linux = document.documentElement.classList.contains('linux');
       const px = (name: string) => parseFloat(cs.getPropertyValue(name));
-      const height = captionHeight(capRow, { gap: linux ? 0 : px('--shell-gap'), head: px('--h-head'), bar: px('--h-bar') });
+      const height = captionHeightAt(zoom, capRow, { gap: linux ? 0 : px('--shell-gap'), head: px('--h-head'), bar: px('--h-bar') });
       d.setTitleBarColors(cs.getPropertyValue('--bg-1').trim(), cs.getPropertyValue('--fg-1').trim(), linux ? cs.getPropertyValue(sideSurface ? '--bg-1' : '--bg').trim() : '#00000000', height);
     }, 0);
     return () => clearTimeout(t);
-  }, [theme, sideSurface, capRow, density]);
+  }, [theme, sideSurface, capRow, density, zoom]);
   // a browser's own chrome (Android's toolbar, an installed page's status bar) takes the colour of what is at the top
   // of the page: the shell's ground, or on a phone the conversation's sheet. index.html has the two defaults by the
   // system's light / dark; the theme chosen here may be neither

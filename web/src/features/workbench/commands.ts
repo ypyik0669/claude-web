@@ -8,6 +8,7 @@ import { activeGroup, chatTile, currentChatTile, defaultDockPanel, workbenchOn }
 import { canOpenWindow } from '@/ws/tunnel';
 import { offerGroupToNewWindow } from './windows';
 import { underCovers } from './cover-commands';
+import { changeZoom } from '@/ui/zoom';
 
 export function runCommand(id: string): boolean {
   const st = useStore.getState();
@@ -51,6 +52,10 @@ export function runCommand(id: string): boolean {
       return true;
     case 'sidebar': useStore.setState((s) => ({ sidebarOpen: !s.sidebarOpen })); return true;
     case 'shortcuts': useStore.setState({ shortcutsOpen: true }); return true;
+    // 界面缩放 (desktop app; a browser's own zoom keys never get here)
+    case 'zoom.in': changeZoom('in'); return true;
+    case 'zoom.out': changeZoom('out'); return true;
+    case 'zoom.reset': changeZoom('reset'); return true;
     case 'settings': st.openSettings(); return true;
     case 'tab': {
       // the conversation next to a document / terminal in front counts too (it is what the palette calls 当前对话)

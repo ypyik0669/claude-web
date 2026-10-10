@@ -30,7 +30,17 @@ export interface DesktopBridge {
   getFlags?(): Promise<Record<string, unknown>>;
   relaunch?(): Promise<void>;
   quit?(): Promise<void>;
+  // 界面缩放 (desktop/src/zoom.ts): the shell owns the factor, for every window, and remembers it
+  /** the factor this page is drawn at right now */
+  getZoom?(): number;
+  zoomInfo?(): Promise<ZoomInfo>;
+  /** one step in / out, back to 100%, or a factor; answers with what it is now */
+  setZoom?(ask: 'in' | 'out' | 'reset' | number): Promise<ZoomInfo>;
+  onZoom?(cb: (e: ZoomInfo & { changed: boolean; ask: 'in' | 'out' | 'reset' | 'set' }) => void): () => void;
 }
+
+/** `max`: the largest factor this window's screen can take (the smallest window must still fit it). */
+export interface ZoomInfo { zoom: number; max: number; min: number; /** every factor there is, smallest first */ steps?: number[] }
 
 export const desktop: DesktopBridge | undefined = (window as any).desktop;
 export const isDesktop = !!desktop;

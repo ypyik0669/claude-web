@@ -3,6 +3,7 @@ import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
+import { ZoomControl } from './ZoomControl';
 import { Mcp, McpAddJson, Overview, Plugins, ProviderProfiles, Settings, SimpleList } from '@/features/panels/ConfigPanel';
 import { CJK_FONTS, DENSITIES, FONT_SIZES } from './ui-settings';
 import { ThemeSwatches } from './ThemePicker';
@@ -56,6 +57,7 @@ const CONTROLS: Record<EntryId, (e: EntryMeta) => ReactNode> = {
   'ui.softwareRender': (e) => <Toggle k={e.id} label={e.label} />,
   'orchestra.maxParallel': (e) => <NumberSelect k={e.id} def={3} label={e.label} options={[1, 2, 3, 4, 6, 8]} />,
   'ui.theme': (e) => <ThemeSwatches label={e.label} />,
+  'ui.zoom': (e) => <ZoomControl label={e.label} />,
   'ui.fontSize': (e) => <NumberSelect k={e.id} def={14} label={e.label} options={FONT_SIZES} />,
   'ui.density': (e) => <Select k={e.id} def="comfortable" label={e.label} options={DENSITIES as any} />,
   'ui.cjkFont': (e) => <Select k={e.id} def="" label={e.label} options={CJK_FONTS} />,

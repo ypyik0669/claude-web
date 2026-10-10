@@ -20,6 +20,16 @@ describe('mergeToasts: what is on screen = the store\'s toasts + the ones still 
     const prev: ToastEntry[] = [t(1), { ...t(2), out: true }];
     expect(mergeToasts(prev, [t(1)])).toBe(prev);
   });
+  it('a toast the store rewrote (same id — a keyed one: 界面缩放 110% → 125%) shows the new text where it is', () => {
+    const prev: ToastEntry[] = [t(1), t(2, '界面缩放 110%', true), t(3)];
+    const next = mergeToasts(prev, [t(1), t(2, '界面缩放 125%', true), t(3)]);
+    expect(next).toEqual([t(1), t(2, '界面缩放 125%', true), t(3)]);
+    expect(next).not.toBe(prev);
+    expect(next[0]).toBe(prev[0]); // the others are the same objects
+    // …and one that is already leaving keeps what it said
+    const leaving: ToastEntry[] = [{ ...t(2, '界面缩放 110%'), out: true }];
+    expect(mergeToasts(leaving, [])).toBe(leaving);
+  });
 });
 
 describe('stackToasts: at most three on screen, older ones higher and smaller', () => {

@@ -2048,6 +2048,10 @@ function driver() {
             const nord = await waitFor(`document.documentElement.dataset.theme === 'nord' && document.querySelector('.sp [data-entry="ui.theme"] [data-theme-pick="nord"]')?.getAttribute('aria-checked') === 'true'`, 2000);
             await shot('settings-appearance-themes');
             check('设置 → 外观: every theme is a swatch (跟随系统 first), no dropdown; a click applies it', !sw.select && sw.picks.length >= 7 && sw.picks[0] === 'system' && sw.on === 'light' && nord, JSON.stringify({ sw, nord }));
+            // 界面缩放 is the desktop shell's (desktop/src/zoom.ts; checked against the real shell by hand): this page is a
+            // browser's, with no shell to keep the factor — the row is there and says so, with no control, and the factor is 1
+            const zoomRow = await js(`(() => { const row = document.querySelector('.sp [data-entry="ui.zoom"]'); if (!row) return null; return { label: row.querySelector('.l')?.textContent ?? '', hint: row.querySelector('.sub')?.textContent ?? '', ctl: !!row.querySelector('.zoomer'), factor: getComputedStyle(document.documentElement).getPropertyValue('--zoom').trim() }; })()`);
+            check('设置 → 外观 → 界面缩放: the row is there; in a browser it has no control (the hint says to use the browser zoom) and the factor is 1', !!zoomRow && zoomRow.label === '界面缩放' && /浏览器自己的缩放/.test(zoomRow.hint) && !zoomRow.ctl && zoomRow.factor === '1', JSON.stringify(zoomRow));
             await js(`(() => { const st = window.__store.getState(); void st.setSetting('ui.theme', ${themeBefore}); window.__store.setState({ settingsOpen: null }); })()`);
             await sleep(300);
           }

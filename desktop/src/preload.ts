@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webFrame } from 'electron';
 
 const on = (channel: string) => (cb: (arg: any) => void) => {
   const h = (_e: unknown, arg: any) => cb(arg);
@@ -31,6 +31,12 @@ contextBridge.exposeInMainWorld('desktop', {
   downloadUpdate: () => ipcRenderer.invoke('desktop:update:download'),
   installUpdate: () => ipcRenderer.invoke('desktop:update:install'),
   onUpdate: on('desktop:update'),
+  // 界面缩放: the factor this page is drawn at right now (no round trip: the first paint needs it), and asking the
+  // shell — which owns it, for every window — to change it
+  getZoom: () => webFrame.getZoomFactor(),
+  zoomInfo: () => ipcRenderer.invoke('desktop:zoom:get'),
+  setZoom: (ask: 'in' | 'out' | 'reset' | number) => ipcRenderer.invoke('desktop:zoom:set', ask),
+  onZoom: on('desktop:zoom'),
   setFlags: (f: Record<string, unknown>) => ipcRenderer.invoke('desktop:flags:set', f),
   getFlags: () => ipcRenderer.invoke('desktop:flags:get'),
   relaunch: () => ipcRenderer.invoke('desktop:relaunch'),

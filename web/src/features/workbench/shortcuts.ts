@@ -10,6 +10,11 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'sidebar', label: '收起 / 展开侧栏', desktop: 'Ctrl+B', browser: 'Ctrl+B', group: '全局' },
   { id: 'find', label: '在对话中查找', desktop: 'Ctrl+F', browser: 'Ctrl+F', group: '全局' },
   { id: 'shortcuts', label: '快捷键速查', desktop: 'F1', browser: '?', group: '全局' },
+  // 界面缩放: the desktop shell's own (remembered, every window — desktop/src/zoom.ts); in a browser these keys are the
+  // browser's zoom, which `matchBrowserKey` leaves alone
+  { id: 'zoom.in', label: '放大界面', desktop: 'Ctrl+=', browser: 'Ctrl+=', group: '全局' },
+  { id: 'zoom.out', label: '缩小界面', desktop: 'Ctrl+-', browser: 'Ctrl+-', group: '全局' },
+  { id: 'zoom.reset', label: '还原界面大小', desktop: 'Ctrl+0', browser: 'Ctrl+0', group: '全局' },
   { id: 'group.new', label: '新分组', desktop: 'Ctrl+T', browser: 'Alt+T', group: '分组' },
   { id: 'group.close', label: '关闭分组', desktop: 'Ctrl+Shift+W', browser: 'Alt+Shift+W', group: '分组' },
   { id: 'group.rename', label: '重命名分组 / 标签页', desktop: 'F2', browser: 'F2', group: '分组' },

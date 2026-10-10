@@ -27,13 +27,14 @@ describe('keys while a page covers the workbench (review 7 I3, final review I2)'
     }
   });
   it('the palette, the settings key, the sidebar, the right panel and its panels act as before (they show over or beside the page)', () => {
-    for (const id of ['palette', 'settings', 'sidebar', 'shortcuts', 'dock.toggle', 'dock.minimize', 'panel.files', 'panel.terminal', 'panel.mission']) {
+    // …and 界面缩放 is the whole window's, the page on top included
+    for (const id of ['palette', 'settings', 'sidebar', 'shortcuts', 'dock.toggle', 'dock.minimize', 'panel.files', 'panel.terminal', 'panel.mission', 'zoom.in', 'zoom.out', 'zoom.reset']) {
       expect(underCovers(id, { settings: true, automation: true }), id).toEqual({ close: [], done: false });
     }
   });
   it('every shortcut is decided (none left to act unseen by accident): each one is either kept or listed above', () => {
     // (find / send / slash / paste are not commands: the focused element handles them, and the covered area is inert)
-    const kept = /^(palette|settings|sidebar|shortcuts|dock\.|panel\.|find$|send$|slash$|paste$)/;
+    const kept = /^(palette|settings|sidebar|shortcuts|dock\.|panel\.|zoom\.|find$|send$|slash$|paste$)/;
     for (const s of SHORTCUTS) {
       const r = underCovers(s.id, { settings: true, automation: false });
       expect(kept.test(s.id) || r.close.length > 0, s.id).toBe(true);

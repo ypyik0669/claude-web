@@ -39,6 +39,8 @@
   "splitRight": "square-split-horizontal",
   "splitDown": "square-split-vertical",
   "zoom": "maximize",
+  "zoomIn": "zoom-in",
+  "zoomOut": "zoom-out",
   "close": "x",
   "minimize": "arrow-right-from-line",
   "restore": "arrow-left-from-line",

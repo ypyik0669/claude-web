@@ -23,6 +23,7 @@ import { MORE_PANELS } from './panel-entries';
 import { Popover } from '@/features/composer/Popover';
 import { useRightPanel } from './right-panel';
 import { SHELL_GAP, countText, panelColumnWidth, rowStacked, tempsFolded, type RowMeasure } from './tab-row';
+import { getZoom } from '@/ui/zoom';
 import { modKey } from './shortcuts';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { reducedMotion } from '@/ui/input-intent';
@@ -234,8 +235,9 @@ export function Dock() {
         gaps: 2 * (parseFloat(cs.columnGap) || 0),
       };
       setPlace((cur) => {
-        const s = rowStacked(cur.stacked, m, caption);
-        const f = tempsFolded(m, { stacked: s, caption });
+        const zoom = getZoom();
+        const s = rowStacked(cur.stacked, m, caption, zoom);
+        const f = tempsFolded(m, { stacked: s, caption, zoom });
         return cur.stacked === s && cur.folded === f ? cur : { stacked: s, folded: f };
       });
       updateFade();
