@@ -3,7 +3,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { BrowserCommand } from '../protocol.js';
 import { MASK, MAX_IMAGE_CHARS, NEEDS_DESKTOP, WebService, decodeBody, maskWebSettings, type WebDeps } from './service.js';
-import { CONTENT_END, CONTENT_START } from './format.js';
+import { CONTENT_END, CONTENT_START, SEARCH_FAILED_HINT } from './format.js';
 
 /** SecretService's shape, without the platform keystore. */
 const secrets = {
@@ -419,6 +419,12 @@ describe('WebService.tool: what the MCP server answers', () => {
     const failed = await down.web.tool('s', 'web_search', { query: 'q' });
     expect(failed.isError).toBe(true);
     expect(textOf(failed)).toContain('搜索没有成功。Bing：ECONNREFUSED；DuckDuckGo：ECONNREFUSED');
+    // …and the model is told what else there is (a search tool of its own; a key in the settings)
+    expect(textOf(failed).endsWith(SEARCH_FAILED_HINT)).toBe(true);
+    // the settings page's 试一下 gets the engines' own words only
+    const said = await down.web.search('q').then(() => '', (e: Error) => e.message);
+    expect(said.startsWith('搜索没有成功。')).toBe(true);
+    expect(said).not.toContain(SEARCH_FAILED_HINT);
   });
 
   it('without a window: browser_open reads through this server; an action answers that it needs the desktop app', async () => {

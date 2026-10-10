@@ -57,7 +57,7 @@ export function WebSettings() {
         <Row label="让 Agent 能搜索和打开网页" hint="每个对话里的 Agent 多出「搜索」和「浏览器」两类工具，Claude、Codex、Gemini 都一样。改动对之后新开的对话生效。">
           <button className={clsx('toggle', st?.enabled && 'on')} role="switch" aria-checked={!!st?.enabled} aria-label="让 Agent 能搜索和打开网页" disabled={!st} data-id="web-on" onClick={() => void set('web.mcp', !st?.enabled)} />
         </Row>
-        <Row label="用什么搜索" hint="自动：先用 Bing，不行换 DuckDuckGo，都不用密钥。Tavily 和 Brave 的结果更稳，要各自网站上申请的密钥。">
+        <Row label="用什么搜索" hint="自动：先用 Bing，不行换 DuckDuckGo，都不用密钥——但它们在不少网络下会被限流，或者给出不相干的结果，用下面的「试一下」看看你这里行不行。要稳就选 Tavily 或 Brave，密钥在各自网站上申请。Claude 自带的搜索不走这里。">
           <select className="field" aria-label="用什么搜索" data-id="web-search" disabled={!st} value={st?.engine ?? 'auto'} onChange={(e) => void set('web.search.engine', e.target.value)}>
             {(st?.engines ?? []).map((e) => <option key={e.id} value={e.id}>{e.label}{e.needsKey ? (e.hasKey ? '' : '（要密钥）') : ''}</option>)}
           </select>

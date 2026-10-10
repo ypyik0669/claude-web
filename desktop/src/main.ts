@@ -210,11 +210,15 @@ function createWindow(url: string | null, winId = 'main', bounds?: Bounds, hidde
   win.webContents.on('will-navigate', (e, target) => {
     if (!target.startsWith(`http://${host.info?.host}:${host.info?.port}`)) { e.preventDefault(); void shell.openExternal(target); }
   });
-  // in-app browser tiles: strip our preload off the guest page and keep every popup out of process
+  // the built-in browser's pages: strip our preload off the guest page. A <webview> blocks window.open in the page
+  // itself unless popups are allowed (its `allowpopups` attribute) — a link that opens a new window then does
+  // nothing at all, and the handler below is never asked (found in the packaged app, 2026-10-10). So they are
+  // allowed here for every guest, and the handler turns each one into a tab: no window is ever created.
   win.webContents.on('will-attach-webview', (_e, prefs) => {
     delete (prefs as { preload?: string }).preload;
     prefs.nodeIntegration = false;
     prefs.contextIsolation = true;
+    (prefs as { disablePopups?: boolean }).disablePopups = false;
   });
   win.webContents.on('did-attach-webview', (_e, guest) => {
     // a page's new window is a new tab of this window's built-in browser (features/browser/BrowserPanel.tsx)

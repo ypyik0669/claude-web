@@ -30,7 +30,7 @@ export const TOOLS = [
     name: 'web_search',
     title: 'Web search',
     description:
-      'Search the web. Returns a numbered list of results: title, URL, and a short snippet. Use it for anything that may have changed since your training data, or that you are not sure about: current events, versions, documentation, error messages. Snippets are short and can be wrong — open the page with browser_open before relying on a detail. No API key is needed.',
+      'Search the web. Returns a numbered list of results: title, URL, and a short snippet. Use it for anything that may have changed since your training data, or that you are not sure about: current events, versions, documentation, error messages. Snippets are short and can be wrong — open the page with browser_open before relying on a detail. Unless the user has set a search key in the app, this reads public result pages, which are often rate-limited or answer with unrelated pages: if you have a web search tool of your own, prefer it, and never use results this tool marks as doubtful.',
     inputSchema: {
       type: 'object',
       properties: {

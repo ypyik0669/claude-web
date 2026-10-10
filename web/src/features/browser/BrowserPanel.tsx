@@ -41,6 +41,14 @@ function recordVisit(url: string, title: string) {
 }
 
 /**
+ * `allowpopups` on the <webview>: without it the page's own window.open (and every link that opens a new window) is
+ * blocked inside the page and nothing happens; with it the desktop shell is asked, which opens no window and hands
+ * the address back as a new tab (desktop/src/main.ts). Written as a string: the attribute only has to be present,
+ * and React drops a boolean on an attribute it does not know.
+ */
+const ALLOW_POPUPS = { allowpopups: 'true' } as unknown as { allowpopups?: boolean };
+
+/**
  * One tab's page. Desktop: a real `<webview>` in the tab's browser profile, created with the tab's first address and
  * never given another `src` (it would reload) — it moves on by being told to load. Elsewhere: an `<iframe>`, which
  * only shows sites that allow being embedded.
@@ -99,7 +107,7 @@ function TabView({ tab, front }: { tab: BrowserTab; front: boolean }) {
       {webview ? (
         // No `allowpopups`: the tag reads the attribute's PRESENCE, so `allowpopups="false"` would turn popups ON.
         // A page's new windows arrive as new tabs here (desktop/src/main.ts → `desktop.onBrowserPopup`).
-        <webview ref={ref as unknown as React.Ref<HTMLWebViewElement>} src={tab.src} partition={tab.partition} />
+        <webview ref={ref as unknown as React.Ref<HTMLWebViewElement>} src={tab.src} partition={tab.partition} {...ALLOW_POPUPS} />
       ) : (
         <>
           <iframe src={tab.frameUrl ?? tab.src} title={tabName(tab)} sandbox={frameSandbox(tab.frameUrl ?? tab.src, location.origin)} />

@@ -77,6 +77,10 @@ async function run() {
   const v = await req({ kind: 'engine.cli', args: ['--version'] }).catch((e) => ({ code: -1, stderr: e.message }));
   check('engine runs (Electron as node)', v.code === 0 && /\d+\.\d+\.\d+/.test(v.stdout), (v.stdout || v.stderr).trim().slice(0, 200));
 
+  // 联网: agents are handed the `web` MCP server (web search + the built-in browser) unless it is switched off
+  const web = await req({ kind: 'web.status' }).catch((e) => ({ error: e.message }));
+  check('web search and the browser are on for agents', web.enabled === true && Array.isArray(web.engines) && web.engines.length >= 3, web.error ?? `engine ${web.engine}, ${web.engines?.length} engines`);
+
   // the terminal tile runs the official native binary through node-pty
   let term = null;
   try { term = await req({ kind: 'terminal.open', cwd: os.homedir(), cols: 100, rows: 30 }); } catch (e) { check('terminal opens (node-pty)', false, e.message); }
@@ -140,6 +144,21 @@ try { await run(); } catch (e) { check('smoke run', false, e.stack ?? String(e))
   const bin2 = /rtc esm ok (.+node_datachannel\.node)/.exec(out2)?.[1] ?? '';
   const ok2 = e2.status === 0 && !!bin2 && existsSync(bin2.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`));
   check('WebRTC polyfill loads through an ESM import() the way the server does (Electron as node)', ok2, e2.error ? e2.error.message : `exit ${e2.status}: ${out2.slice(0, 300)}`);
+}
+
+// the `web` MCP server: its entry is inside app.asar and is started with the app's own binary as node (web/launcher.ts)
+{
+  const dir = path.dirname(path.resolve(exe));
+  const resources = process.platform === 'darwin' ? path.join(dir, '..', 'Resources') : path.join(dir, 'resources');
+  const entry = path.join(resources, 'app.asar', 'server', 'dist', 'web', 'mcp.js');
+  const say = (id, method, params) => JSON.stringify({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) });
+  const input = [say(1, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'smoke', version: '0' } }), say(2, 'tools/list')].join('\n') + '\n';
+  const r = spawnSync(exe, [entry], { env: { ...env, ELECTRON_RUN_AS_NODE: '1', CW_WEB_URL: `http://127.0.0.1:${port ?? 9}`, CW_SESSION_ID: 'smoke' }, input, encoding: 'utf8', timeout: 30_000, windowsHide: true });
+  const answers = String(r.stdout ?? '').split('\n').map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  const init = answers.find((a) => a.id === 1)?.result;
+  const tools = answers.find((a) => a.id === 2)?.result?.tools ?? [];
+  const names = tools.map((t) => t.name);
+  check('the web MCP server starts from inside the app (Electron as node)', init?.serverInfo?.name === 'claude-web-web' && names.includes('web_search') && names.includes('browser_open') && names.includes('browser_screenshot'), r.error ? r.error.message : `exit ${r.status}: ${init?.serverInfo?.name ?? 'no handshake'}, ${names.length} tools ${String(r.stderr ?? '').trim().slice(0, 200)}`);
 }
 
 // the app's own update check (desktop/src/main.ts): main.log records each step

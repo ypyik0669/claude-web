@@ -74,6 +74,16 @@ export function formatPage(page: BrowserPage, w: PageWindow, note?: string): str
   return lines.join('\n');
 }
 
+/** Under results that know little of the query: said to the model, which may have a search tool of its own. */
+export const SEARCH_WEAK_NOTE = '注意：这些结果和搜索词只对上了一小部分，很可能不是你要找的——不要当成答案用。你如果有自带的网页搜索工具，用它再搜一次；没有的话换一种说法再搜（更短、更常见的词）。';
+
+/**
+ * Added to a failed search for the model (not for the settings page's 试一下, which shows the engines' own words):
+ * without a key the search reads public result pages, and from many networks those are rate-limited or answer with
+ * something else (measured 2026-10-10) — so it says what else there is.
+ */
+export const SEARCH_FAILED_HINT = '你如果有自带的网页搜索工具，改用它。没有的话告诉用户：不用密钥的搜索在不少网络下会被限流，在 设置 → 联网 里选 Tavily 或 Brave 并填上密钥之后就稳了。';
+
 export function formatSearch(query: string, r: SearchOutcome): string {
   if (!r.results.length) return `用 ${engineLabel(r.engine)} 搜索「${oneLine(query, 200)}」没有找到结果。换几个词再试。`;
   const lines = [
@@ -86,7 +96,7 @@ export function formatSearch(query: string, r: SearchOutcome): string {
   });
   lines.push(CONTENT_END);
   // the engine matched little of the query (relevance.ts) and nothing better was to be had
-  if (r.weak) lines.push('注意：这些结果和搜索词只对上了一小部分，很可能不是你要找的。换一种说法再搜一次（更短、更常见的词），或者先核对再用。');
+  if (r.weak) lines.push(SEARCH_WEAK_NOTE);
   lines.push('要读某一条的全文：browser_open {"url": "…"}。');
   return lines.join('\n');
 }

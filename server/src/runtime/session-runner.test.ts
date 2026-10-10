@@ -826,38 +826,23 @@ describe('SessionRunner: 联网', () => {
   };
   const openaiProvider = { id: 'ds', name: 'DS', type: 'openai', baseUrl: 'https://relay/v1', apiKey: 'sk', createdAt: 0, shim: { base: 'http://127.0.0.1:9/gateway/~p/ds', key: 'cws-x' } };
 
-  it('our engine\'s own WebSearch gets a backend that works without a key: the API\'s search on claude.ai, Bing on a provider', async () => {
+  it('our engine\'s own WebSearch keeps the backend it picks itself: nothing is set for it, on the account or on a provider', async () => {
     await withConfig({}, async (dir) => {
       eng.kind = 'ccb';
-      expect(await adapterOf({ sessionId: 'w1', cwd: dir })).toBe('api');
-      expect(await adapterOf({ sessionId: 'w2', cwd: dir }, openaiProvider)).toBe('bing');
-      // the official binary has one way of its own: nothing is set
+      expect(await adapterOf({ sessionId: 'w1', cwd: dir })).toBeUndefined();
+      expect(await adapterOf({ sessionId: 'w2', cwd: dir }, openaiProvider)).toBeUndefined();
       eng.kind = 'claude';
       expect(await adapterOf({ sessionId: 'w3', cwd: dir })).toBeUndefined();
     });
-    // the account that is really a relay from settings.json (kept on our engine by a flag only it has): Bing
-    await withConfig({ env: { ANTHROPIC_BASE_URL: 'https://relay.invalid', ANTHROPIC_AUTH_TOKEN: 'relay-token' } }, async (dir) => {
-      eng.kind = 'ccb';
-      expect(await adapterOf({ sessionId: 'w4', cwd: dir, features: { proactive: true } })).toBe('bing');
-    });
   });
 
-  it('…unless the user chose one: their environment, a settings file, the engine\'s own setting, the conversation\'s env', async () => {
+  it('…and what the user chose reaches it as it is: their environment, the conversation\'s env', async () => {
     await withConfig({}, async (dir) => {
       eng.kind = 'ccb';
       process.env.WEB_SEARCH_ADAPTER = 'exa';
-      expect(await adapterOf({ sessionId: 'u1', cwd: dir })).toBe('exa'); // inherited as it is
+      expect(await adapterOf({ sessionId: 'u1', cwd: dir })).toBe('exa');
       delete process.env.WEB_SEARCH_ADAPTER;
       expect(await adapterOf({ sessionId: 'u2', cwd: dir, features: { env: { WEB_SEARCH_ADAPTER: 'brave' } } })).toBe('brave');
-    });
-    await withConfig({ webSearchAdapter: 'tavily' }, async (dir) => {
-      eng.kind = 'ccb';
-      expect(await adapterOf({ sessionId: 'u3', cwd: dir })).toBeUndefined(); // the engine reads its setting
-      expect(await adapterOf({ sessionId: 'u4', cwd: dir }, openaiProvider)).toBeUndefined();
-    });
-    await withConfig({ env: { WEB_SEARCH_ADAPTER: 'brave' } }, async (dir) => {
-      eng.kind = 'ccb';
-      expect(await adapterOf({ sessionId: 'u5', cwd: dir })).toBeUndefined(); // the CLI lays the file's env over ours anyway
     });
   });
 

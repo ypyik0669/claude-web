@@ -6,7 +6,7 @@ import type { BrowserAnswer, BrowserCommand, BrowserElement, BrowserOp, BrowserP
 import { ENGINES, engineSetting, search, type Cooldown, type EngineSetting, type SearchOutcome } from './search.js';
 import { htmlToText } from './html-text.js';
 import { resolvedRefusal, urlRefusal } from './url-guard.js';
-import { ACTION_CHARS, DEFAULT_CHARS, clampChars, errorResult, formatFind, formatPage, formatSearch, textResult, type ToolResult } from './format.js';
+import { ACTION_CHARS, DEFAULT_CHARS, SEARCH_FAILED_HINT, clampChars, errorResult, formatFind, formatPage, formatSearch, textResult, type ToolResult } from './format.js';
 
 /**
  * 联网 for every agent (spec 2026-10-10-ui-structure §5): search runs here; the browser tools are carried out by ONE
@@ -335,7 +335,9 @@ export class WebService extends EventEmitter {
     switch (tool) {
       case 'web_search': {
         const query = str('query');
-        return textResult(formatSearch(query, await this.search(query, { count: num('count') })));
+        let found;
+        try { found = await this.search(query, { count: num('count') }); } catch (e) { throw new Error(`${(e as Error).message}\n${SEARCH_FAILED_HINT}`); }
+        return textResult(formatSearch(query, found));
       }
       case 'browser_open': {
         const url = str('url').trim();

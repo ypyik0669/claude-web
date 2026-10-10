@@ -13,7 +13,6 @@ import { ccbAccountEnv, ccbMisthinks, ccbModel, isChatModel, modelCaps, modelLab
 import { turnShare, type RunningTotals } from '../usage/turn-cost.js';
 import { claudeMcpServer } from '../memory/launcher.js';
 import { webAllowedTools, webClaudeMcpServer } from '../web/launcher.js';
-import { engineSearchAdapter, userPickedSearchAdapter } from '../web/engine-search.js';
 import { markUnknownCost } from '../usage/pricing.js';
 import type { AttachmentRef, EffortLevel, ModelInfo, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot } from '../protocol.js';
 
@@ -302,13 +301,10 @@ export class SessionRunner extends EventEmitter {
     // claude-sonnet-5 default hung 220 s on model_not_found, 2026-10-01)
     const own = userAnthropicEnv();
     if (engine.kind === 'ccb' && !this.provider && !own.relay) for (const [k, v] of Object.entries(ccbAccountEnv())) if (!(k in fenv) && !(own.env as Record<string, string | undefined>)[k]) fenv[k] = v;
-    // the engine's own WebSearch tool: a backend that works here without a key (Bing's result page; on claude.ai the
-    // API's server-side search) instead of its default, a hosted Tavily proxy — unless the user picked one themselves
-    // (web/engine-search.ts). The official binary has no such choice.
-    if (engine.kind === 'ccb' && !('WEB_SEARCH_ADAPTER' in fenv)) {
-      const adapter = engineSearchAdapter({ engine: engine.kind, provider: !!this.provider, relay: own.relay, userChoice: userPickedSearchAdapter(this.cwd) });
-      if (adapter) fenv.WEB_SEARCH_ADAPTER = adapter;
-    }
+    // (The engine's own WebSearch tool is left on the backend it picks itself — WEB_SEARCH_ADAPTER is not set here.
+    // Measured 2026-10-10 from a real network: its default answered every query with fitting results; its `bing`
+    // backend, which we had set for provider conversations, returned a page about something else for one query in
+    // four. The `web` MCP server's search is there beside it, not instead of it.)
     // a provider session must not inherit provider-ish env from this process (e.g. a global ANTHROPIC_API_KEY)
     const base = { ...process.env };
     // …including a stray CLAUDE_CODE_USE_* switch, which would route the profile to another ccb provider
