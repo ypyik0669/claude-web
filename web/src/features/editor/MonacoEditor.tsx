@@ -54,7 +54,7 @@ export function MonacoEditor({ path, value, version, language, readOnly, line, o
         readOnly: !!readOnly,
         automaticLayout: false,
         fontFamily: 'Cascadia Code, JetBrains Mono, Consolas, monospace',
-        fontSize: 13,
+        fontSize: 14,
         lineHeight: 20,
         minimap: { enabled: false },
         scrollBeyondLastLine: false,

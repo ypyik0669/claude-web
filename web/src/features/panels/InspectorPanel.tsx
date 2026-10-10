@@ -30,11 +30,11 @@ function FileView({ path, line }: { path: string; line?: number }) {
     <div className="inspector-file" style={{ padding: '8px 12px' }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
         <b>{basename(path)}</b>
-        <span className="mono" style={{ color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, fontSize: 11.5 }} title={path}>{path}</span>
+        <span className="mono" style={{ color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, fontSize: 12 }} title={path}>{path}</span>
         <button className="btn sm ghost" onClick={() => ws.request({ kind: 'shell.open', path, app: 'code' }).catch(() => {})}>VS Code</button>
         <button className="icon-btn" aria-label="关闭" onClick={() => useStore.setState({ inspect: null })}><Icon name="close" size={14} /></button>
       </div>
-      {err && <div style={{ color: 'var(--red)', fontSize: 12 }}>{err}</div>}
+      {err && <div style={{ color: 'var(--red)', fontSize: 13 }}>{err}</div>}
       {text === null && !err && <div className="empty">读取中…</div>}
       {text !== null && <CodeBlock code={text} lang={langFromPath(path)} title={path} lineNumbers className="tall" />}
     </div>
@@ -56,7 +56,7 @@ export function InspectorPanel() {
   if (!o || !t) return <div className="empty">找不到该工具调用</div>;
   const Body = getToolDef(t.name).Body;
   return (
-    <div className="inspector" style={{ padding: '8px 12px', fontSize: 12.5 }}>
+    <div className="inspector" style={{ padding: '8px 12px', fontSize: 13 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
         <div style={{ flex: 1, minWidth: 0 }}><ToolHead t={t} /></div>
         <button className="icon-btn" aria-label="关闭" onClick={() => useStore.setState({ inspect: null })}><Icon name="close" size={14} /></button>
@@ -74,7 +74,7 @@ export function InspectorPanel() {
       )}
       {t.children.length > 0 && (
         <>
-          <div style={{ color: 'var(--fg-2)', fontSize: 11, margin: '10px 0 3px' }}>子代理对话 ({t.children.length})</div>
+          <div style={{ color: 'var(--fg-2)', fontSize: 12, margin: '10px 0 3px' }}>子代理对话 ({t.children.length})</div>
           <div style={{ borderLeft: '3px solid var(--accent-soft)', paddingLeft: 8 }}>
             <ItemList items={t.children} version={o.version} />
           </div>

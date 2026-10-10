@@ -4,7 +4,7 @@ import type { AssistantItem, Attachment, Block, Item, ResultItem, ThinkingBlock,
 import { credentialHint, ERROR_HINT, ERROR_LABEL, noResponseHint } from '@/model/health';
 import { fmtSize } from '@/model/attachments';
 import type { FileChange } from '@/model/diffstat';
-import { displayPath, fmtDuration, groupTurns, turnDone, turnMemo, turnStamp, turnSummaryParts, type Turn, type TurnMemo } from '@/model/turn';
+import { displayPath, fmtDuration, groupSteps, groupTurns, stepStarts, turnDone, turnMemo, turnStamp, turnSummaryParts, type Turn, type TurnMemo } from '@/model/turn';
 import { useScopedSession, useScopedSessionId, useStore } from '@/store';
 import { usePaneCtx } from '@/store/paneContext';
 import { activeGroup } from '@/model/layout';
@@ -14,21 +14,26 @@ import { usageParts } from '@/model/tokens';
 import { AssistantActions, UserActions, UserEditor } from './MessageActions';
 import { FindBar } from './FindBar';
 import { Markdown } from './Markdown';
-import { ToolCard } from './ToolCard';
+import { GroupHead, ToolCard, ToolHead, type ToggleBy } from './ToolCard';
 import { getToolDef, isStandalone } from './tools/registry';
 import { Icon } from '@/ui/icons';
-import { ToolHead } from './ToolCard';
 import { blockRemoteOpen } from '@/features/remote-guard';
 import { openChangedFile } from '@/features/workbench/right-panel';
 import { waitingToolIds } from './permission-dock';
-import { TurnTouchCtx, WaitingCtx } from './turn-context';
+import { ArrivalCtx, LiveCtx, StepStartCtx, TurnTouchCtx, WaitingCtx } from './turn-context';
 import { externalLive } from '@/store/external';
 import { withExplanation } from '@errors';
+import { Fold, onScreen, reducedMotion, useEntrance, useFold } from './Fold';
+import { stepBusy, stepState } from './step-view';
+import { COUNT_UP_MS, countAt, splitNumbers } from './count-up';
 
 const EDIT_STEPS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
 const NO_PENDING: PermissionRequestEvent[] = [];
 /** Change-card rows shown before 「还有 N 个文件」. */
 const CARD_ROWS = 8;
+/** A new step's entrance (chat.css `step-in`) and the user message's rise (`bubble-rise`), each with a margin: the class goes once it has played. */
+const STEP_IN_MS = 380 + 60;
+const BUBBLE_IN_MS = 420 + 60;
 
 /** Human summary for a run of consecutive tool calls, Claude-Code-on-web style: "读取 2 个文件 · 运行 1 条命令". */
 function stepLabel(tools: ToolUseBlock[]): string {
@@ -74,10 +79,41 @@ function segment(blocks: Block[]): Seg[] {
 }
 
 /**
- * One run of tool calls as a vertical timeline. Four states, four distinct marks — done = hollow check, running =
- * breathing square + elapsed, pending = grey ring, waiting on you = a yellow shield and 「等你确认」 — so the collapsed
- * form already tells you where the turn got to. Clicking a node expands that step's card; with
- * 「在对话里直接展开改动」 (`ui.inlineDiffs`) the finished edits start open.
+ * Whether the change of what is open that is being rendered moves (its height animates): a pointer's click sets it,
+ * and it is off again once that render is on screen — so a setting, the keyboard, a find-in-page hit open and shut
+ * things at once (spec §4.5: what the keyboard triggers has no entrance).
+ */
+function useMoves(): { current: boolean } {
+  const moves = useRef(false);
+  useEffect(() => { moves.current = false; });
+  return moves;
+}
+
+/**
+ * One step: its row (`ToolHead`), and under it — when it is open — the call's detail, sliding open. A step that
+ * arrives while the conversation runs in view fades up into place (`enter`); one that is there when the list is
+ * drawn (history, a conversation switched back to, a merged row opened) does not.
+ */
+function StepRow({ t, version, open, moves, onToggle }: { t: ToolUseBlock; version: number; open: boolean; moves: boolean; onToggle: (by: ToggleBy) => void }) {
+  const st = stepState(t, useContext(WaitingCtx));
+  const arrival = useContext(ArrivalCtx);
+  const enter = useEntrance(() => arrival.current && stepBusy(st) && !reducedMotion(), STEP_IN_MS);
+  return (
+    <div className={clsx('tl', st, open && 'open', enter && 'enter')} data-step={t.id}>
+      <ToolHead t={t} open={open} onToggle={onToggle} />
+      <Fold open={open} animate={moves}><ToolCard t={t} version={version} bare /></Fold>
+      {!open && t.children.length > 0 && <button className="tl-sub" onClick={() => onToggle('pointer')}>子代理 {t.children.length} 条消息</button>}
+    </div>
+  );
+}
+
+/**
+ * One run of tool calls: a row per step, 30px each, a dashed line between them (UI refresh §6). The row's first slot
+ * says where the step is — a spinner while it runs, its tool's icon once it is done, a yellow shield and 「等你确认」
+ * while it waits on you, red when it failed — so the list already tells you where the turn got to. Steps next to
+ * each other of the same tool that all worked are one row, 「读取 ×3 · a.ts 等」 (`groupSteps`), that opens to them.
+ * Clicking a row opens that step's detail under it; with 「在对话里直接展开改动」 (`ui.inlineDiffs`) the finished
+ * edits start open (and so does a merged row of them).
  */
 function Steps({ tools, version }: { tools: ToolUseBlock[]; version: number }) {
   const waiting = useContext(WaitingCtx);
@@ -85,90 +121,74 @@ function Steps({ tools, version }: { tools: ToolUseBlock[]; version: number }) {
   const inlineDiffs = useStore((s) => s.settings['ui.inlineDiffs'] === true);
   const running = tools.some((t) => t.status === 'running' || t.status === 'pending' || t.status === 'streaming');
   const failed = tools.some((t) => t.status === 'error');
+  // by step id; a merged row is `g:<its first step's id>`
   const [opened, setOpened] = useState<Record<string, boolean>>({});
   const [all, setAll] = useState(false);
+  const moves = useMoves();
   const isOpen = (t: ToolUseBlock) => all || (opened[t.id] ?? (inlineDiffs && EDIT_STEPS.has(t.name) && t.status === 'done'));
-  const toggle = (t: ToolUseBlock, open: boolean) => {
+  const toggle = (id: string, open: boolean, by: ToggleBy) => {
+    moves.current = by === 'pointer';
     setAll(false);
-    setOpened((o) => ({ ...o, [t.id]: !open }));
+    setOpened((o) => ({ ...o, [id]: !open }));
     if (!open) touch?.();
+  };
+  const row = (t: ToolUseBlock) => {
+    const open = isOpen(t);
+    return <StepRow key={t.id} t={t} version={version} open={open} moves={moves.current} onToggle={(by) => toggle(t.id, open, by)} />;
   };
   return (
     <div className={clsx('trail', running && 'running')}>
-      {tools.map((t, i) => {
-        const open = isOpen(t);
-        return (
-          <div key={t.id} className={clsx('tl', stepState(t, waiting), open && 'open')}>
-            {i < tools.length - 1 && <span className="edge" />}
-            <StepMark t={t} />
-            <div className="tl-main">
-              <ToolHead t={t} open={open} onToggle={() => toggle(t, open)} />
-              {open && <ToolCard t={t} version={version} bare />}
-              {!open && t.children.length > 0 && <button className="tl-sub" onClick={() => toggle(t, false)}>子代理 {t.children.length} 条消息</button>}
+      <div className="tl-rows">
+        {groupSteps(tools, waiting).map((g) => {
+          if (g.steps.length === 1) return row(g.steps[0]);
+          const id = `g:${g.key}`;
+          // a step of it that is open (opened before it joined, or an edit under 「在对话里直接展开改动」) keeps the row open
+          const open = all || (opened[id] ?? g.steps.some(isOpen));
+          return (
+            <div key={id} className={clsx('tl group done', open && 'open')} data-steps={g.steps.length}>
+              <GroupHead steps={g.steps} open={open} onToggle={(by) => toggle(id, open, by)} />
+              <Fold open={open} animate={moves.current}><div className="tl-rows">{g.steps.map(row)}</div></Fold>
             </div>
-          </div>
-        );
-      })}
-      <div className="tl-foot">
-        <span className="lbl">{stepLabel(tools)}</span>
-        {failed && <span className="badge err">失败</span>}
-        {tools.length > 1 && <button className="tl-all" onClick={() => { setAll(!all); setOpened({}); if (!all) touch?.(); }}>{all ? '全部收起' : '全部展开'}</button>}
+          );
+        })}
       </div>
+      {tools.length > 1 && (
+        <div className="tl-foot">
+          <span className="lbl">{stepLabel(tools)}</span>
+          {failed && <span className="badge err">失败</span>}
+          <button className="tl-all" onClick={(e) => { moves.current = e.detail > 0; setAll(!all); setOpened({}); if (!all) touch?.(); }}>{all ? '全部收起' : '全部展开'}</button>
+        </div>
+      )}
     </div>
   );
 }
 
-function stepState(t: ToolUseBlock, waiting?: ReadonlySet<string>) {
-  if (t.status === 'error') return 'failed';
-  if (t.status !== 'done' && waiting?.has(t.id)) return 'waiting';
-  if (t.status === 'running' || t.status === 'streaming') return 'active';
-  if (t.status === 'pending') return 'pending';
-  return 'done';
-}
-
-/** The one visual that must never be ambiguous: which step is finished, which is live, which is queued, which waits on you. */
-function StepMark({ t }: { t: ToolUseBlock }) {
-  const st = stepState(t, useContext(WaitingCtx));
-  return (
-    <span className={clsx('mark', st)} aria-hidden>
-      {st === 'done' && <Icon name="checkCircle" size={16} />}
-      {st === 'failed' && <Icon name="close" size={13} />}
-      {st === 'active' && <span className="pip" />}
-      {st === 'pending' && <Icon name="circle" size={13} />}
-      {st === 'waiting' && <Icon name="shield" size={14} />}
-    </span>
-  );
-}
-
 /**
- * A thinking block, folded to 「思考了 12 秒 ›」 (spec §5.3). 显示思考过程 (`ui.showThinking`: true, or the older
- * 'expanded') opens them; 'hidden' drops the finished ones.
+ * A thinking block, folded to 「思考了 12 秒 ›」 (spec §5.3) — a row like a step's. 显示思考过程 (`ui.showThinking`:
+ * true, or the older 'expanded') opens them; 'hidden' drops the finished ones.
  */
 function Thinking({ b, streaming }: { b: ThinkingBlock; streaming: boolean }) {
   const pref = useStore((s) => s.settings['ui.showThinking']);
   const mode = pref === true || pref === 'expanded' ? 'expanded' : pref === 'hidden' ? 'hidden' : 'collapsed';
   const touch = useContext(TurnTouchCtx);
   const [open, setOpen] = useState<boolean | null>(null);
+  const moves = useMoves();
   const text = b.thinking;
   if (mode === 'hidden' && !streaming) return null;
   if (!text && !streaming && !b.redacted) return null;
   const show = open ?? (mode === 'expanded');
-  const toggle = () => { setOpen(!show); if (!show) touch?.(); };
+  const toggle = (by: ToggleBy) => { moves.current = by === 'pointer'; setOpen(!show); if (!show) touch?.(); };
   const label = b.redacted ? '思考内容已隐藏（redacted）' : streaming ? '思考中' : b.ms !== undefined ? `思考了 ${fmtDuration(b.ms)}` : text.length > 1200 ? '深入思考了一会儿' : '思考了一下';
   const size = text ? (text.length > 1000 ? `${(text.length / 1000).toFixed(1)}K 字` : `${text.length} 字`) : '';
   return (
     <div className={clsx('trail thinking', streaming && 'running')}>
       <div className={clsx('tl', streaming ? 'active' : 'done', show && 'open')}>
-        <span className={clsx('mark', streaming ? 'active' : 'done')} aria-hidden>
-          {streaming ? <span className="pip" /> : <Icon name="checkCircle" size={16} />}
-        </span>
-        <div className="tl-main">
-          <div className="tl-head" onClick={toggle} role="button" tabIndex={0} aria-expanded={show} title={size ? `思考内容 ${size}` : undefined} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } }}>
-            <span className={clsx('lbl', streaming && 'shimmer')}>{label}</span>
-            {!b.redacted && <Icon name={show ? 'chevronDown' : 'chevronRight'} size={13} className="chev" />}
-          </div>
-          {show && !b.redacted && <div className="thinking-body"><Markdown text={text} streaming={streaming} /></div>}
+        <div className="tl-head" onClick={(e) => toggle(e.detail === 0 ? 'key' : 'pointer')} role="button" tabIndex={0} aria-expanded={show} title={size ? `思考内容 ${size}` : undefined} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle('key'); } }}>
+          <span className={clsx('sgw', streaming ? 'active' : 'done')} aria-hidden>{streaming ? <span className="spin" /> : <Icon name="memory" size={16} />}</span>
+          <span className={clsx('lbl', streaming && 'shimmer')}>{label}</span>
+          {!b.redacted && <Icon name="chevronRight" size={13} className="chev" />}
         </div>
+        <Fold open={show && !b.redacted} animate={moves.current}><div className="thinking-body"><Markdown text={text} streaming={streaming} /></div></Fold>
       </div>
     </div>
   );
@@ -186,7 +206,7 @@ const Assistant = memo(function Assistant({ it, version }: { it: AssistantItem; 
         // blocks arrive, which would shift indices and remount the trail (losing which step was expanded)
         return <Steps key={`steps-${s.tools[0].id}`} tools={s.tools} version={version} />;
       })}
-      {it.error && <div style={{ color: 'var(--red)', fontSize: 12.5 }}>{it.error}</div>}
+      {it.error && <div style={{ color: 'var(--red)', fontSize: 13 }}>{it.error}</div>}
     </div>
   );
 });
@@ -245,8 +265,12 @@ function UserRow({ it, version }: { it: UserItem; version: number }) {
   const open = useStore((s) => (sessionId ? s.open[sessionId] : undefined));
   const images = it.images.filter(Boolean);
   void version;
+  // the message this window just sent rises into place (the store's `lastSent` is the one it echoed itself); one that
+  // is there when the list is drawn, or that came from another window, does not
+  const arrival = useContext(ArrivalCtx);
+  const enter = useEntrance(() => arrival.current && !it.meta && !!sessionId && useStore.getState().open[sessionId]?.lastSent?.id === it.id && !reducedMotion(), BUBBLE_IN_MS);
   return (
-    <div className={clsx('msg user', it.meta && 'meta')} data-item-id={it.id}>
+    <div className={clsx('msg user', it.meta && 'meta', enter && 'enter')} data-item-id={it.id}>
       {editing && sessionId ? (
         <UserEditor it={it} sessionId={sessionId} onDone={() => setEditing(false)} />
       ) : (
@@ -283,6 +307,8 @@ function resultStats(r: ResultItem): { text: string; title?: string }[] {
  */
 export function ItemList({ items, version, actions = 'all' }: { items: Item[]; version: number; live?: boolean; actions?: 'all' | 'last' | 'none' }) {
   const merged = useMemo(() => coalesce(items), [items, version]);
+  // when each call was made (from the items as they are, before runs of them are merged): a finished step's time
+  const starts = useMemo(() => stepStarts(items), [items, version]);
   const sessionId = useScopedSessionId();
   // which endpoint a "连不上" hint names: the conversation's provider (the running process's, else the recorded one),
   // none = the Claude account
@@ -297,7 +323,7 @@ export function ItemList({ items, version, actions = 'all' }: { items: Item[]; v
   if (actions === 'last') for (const it of merged) if (it.kind === 'assistant' && it.blocks.some((b) => b.type === 'text' && b.text.trim())) lastReply = it.id;
   const withActions = (it: AssistantItem) => actions === 'all' || (actions === 'last' && it.id === lastReply);
   return (
-    <>
+    <StepStartCtx.Provider value={starts}>
       {merged.map((it) => {
         switch (it.kind) {
           case 'user':
@@ -328,7 +354,7 @@ export function ItemList({ items, version, actions = 'all' }: { items: Item[]; v
             );
         }
       })}
-    </>
+    </StepStartCtx.Provider>
   );
 }
 
@@ -349,7 +375,7 @@ function ChangesCard({ rows, sessionId, cwd }: { rows: FileChange[]; sessionId: 
         <Icon name="diff" size={14} />
         <span className="t">改动了 {rows.length} 个文件</span>
         <span className="n"><span className="add">+{added}</span> <span className="del">−{removed}</span></span>
-        <button className="btn sm" onClick={() => open()} title="在右侧审阅这个对话改过的文件">审阅</button>
+        <button className="btn sm primary" onClick={() => open()} title="在右侧审阅这个对话改过的文件">审阅</button>
       </div>
       {rows.slice(0, CARD_ROWS).map((r) => {
         const p = displayPath(r.path, cwd);
@@ -369,12 +395,51 @@ function ChangesCard({ rows, sessionId, cwd }: { rows: FileChange[]; sessionId: 
 const foldMemory = new Map<string, boolean>();
 
 /**
+ * A folded turn's line. At rest it is the summary's own text, part by part. `play` (the turn just ended in view):
+ * its numbers count up from 0 once, 520 ms — each in a box as wide as the number it ends on, so nothing shifts.
+ */
+function SumLine({ parts, play }: { parts: { text: string; err?: boolean }[]; play: boolean }) {
+  const [p, setP] = useState(play ? 0 : 1);
+  useEffect(() => {
+    if (!play) return;
+    const t0 = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const v = Math.min(1, Math.max(0, (now - t0) / COUNT_UP_MS));
+      setP(v);
+      if (v < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    // frames can stall (the window went to the back): the numbers still end on the real ones
+    const end = setTimeout(() => setP(1), COUNT_UP_MS + 120);
+    return () => { cancelAnimationFrame(raf); clearTimeout(end); };
+  }, [play]);
+  return (
+    <span className="lbl">
+      {parts.map((part, i) => (
+        <span key={i} className={clsx(part.err && 'err')}>
+          {i > 0 && ' · '}
+          {p < 1 ? splitNumbers(part.text).map((x, j) => ('text' in x ? x.text : <span key={j} className="num" style={{ minWidth: `${x.s.length}ch` }}>{countAt(x, p)}</span>)) : part.text}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/**
  * One turn (spec §5.3). While it runs, everything shows in order, as before. Once it is done and it called tools,
  * the work folds into one line — 「› 已处理 1 分 42 秒 · 读了 4 个文件 · 改了 2 个 · 运行 2 条命令」 — that opens to the
- * same timeline; below it the answer, the 「改动了 N 个文件」 card and the message actions; errors stay visible. It
+ * same steps; below it the answer, the 「改动了 N 个文件」 card and the message actions; errors stay visible. It
  * folds by itself when it finishes, unless the user opened something in it (or opened it) — then it stays open.
  * The fold is `hidden`, not unmounted: an expanded step keeps its state, Ctrl+F opens a fold with a hit in it, and an
  * export un-hides it.
+ *
+ * How it moves (UI refresh §6). A turn that ends while it is on screen: the steps fold away (a grid row 1fr → 0fr,
+ * 340 ms) and the line fades in with its numbers counting up — once, for a turn that was seen running; a turn drawn
+ * already finished (history, a conversation switched back to, a background tab) just shows the result. A pointer's
+ * click on the line folds and unfolds with the same motion; the keyboard and a find-in-page hit do it at once.
+ * `hidden` is set the moment the turn is folded (it is what FindBar, the export and ui-smoke read); while the steps
+ * are still sliding shut the class `moving` keeps them in the page.
  */
 function TurnView({ turn, last, live, version, sessionId, cwd }: { turn: Turn; last: boolean; live: boolean; version: number; sessionId: string; cwd: string }) {
   const done = turnDone(turn, { last, live });
@@ -386,10 +451,28 @@ function TurnView({ turn, last, live, version, sessionId, cwd }: { turn: Turn; l
   const fold = done && parts.work;
   const key = `${sessionId}|${turn.id}`;
   const [choice, setChoice] = useState<boolean | undefined>(() => foldMemory.get(key));
-  const setOpen = (v: boolean) => { foldMemory.set(key, v); setChoice(v); };
+  const moves = useMoves();
+  const setOpen = (v: boolean, move = false) => { moves.current = move; foldMemory.set(key, v); setChoice(v); };
   const touch = useCallback(() => { if (!foldMemory.has(key)) { foldMemory.set(key, true); setChoice(true); } }, [key]);
   const open = fold ? choice ?? false : true;
   const body = useRef<HTMLDivElement>(null);
+  // The first time this turn is seen folded. Drawn folded from the start: nothing plays. Folded later, in view: the
+  // end of a turn the user watched — `ended` for a moment (the line's fade and count-up), and the fold below moves.
+  // Only once: a turn that unfolds and folds again later (the conversation resumed for a moment) does not replay it.
+  const [seenFolded, setSeenFolded] = useState(fold);
+  const [ended, setEnded] = useState(false);
+  let endsNow = false;
+  if (fold && !seenFolded) {
+    setSeenFolded(true);
+    endsNow = !reducedMotion() && onScreen(body.current);
+    if (endsNow) setEnded(true);
+  }
+  useEffect(() => {
+    if (!ended) return;
+    const t = setTimeout(() => setEnded(false), COUNT_UP_MS + 400);
+    return () => clearTimeout(t);
+  }, [ended]);
+  const { phase } = useFold(open, endsNow || moves.current, body);
   useEffect(() => {
     // Ctrl+F landed on a hit inside the fold (FindBar dispatches this on the hidden container)
     const el = body.current;
@@ -405,16 +488,19 @@ function TurnView({ turn, last, live, version, sessionId, cwd }: { turn: Turn; l
     <div className={clsx('turn', fold && 'folded', fold && open && 'open')} data-turn={turn.id}>
       {turn.user && <UserRow it={turn.user} version={version} />}
       {fold && summary && (
-        <div className="turn-sum-row" data-item-id={parts.process[0]?.id}>
-          <button className="turn-sum" aria-expanded={open} onClick={() => setOpen(!open)} title={`${open ? '收起' : '展开'}这一轮的步骤${turn.result ? `\n${resultStats(turn.result).map((x) => x.text).join(' · ')}` : ''}`}>
-            <Icon name={open ? 'chevronDown' : 'chevronRight'} size={13} className="chev" />
-            <span className="lbl">{turnSummaryParts(summary).map((p, i) => <span key={i} className={clsx(p.err && 'err')}>{i > 0 && ' · '}{p.text}</span>)}</span>
+        <div className={clsx('turn-sum-row', ended && 'just')} data-item-id={parts.process[0]?.id}>
+          {/* a click made by the keyboard (detail 0) folds at once */}
+          <button className="turn-sum" aria-expanded={open} onClick={(e) => setOpen(!open, e.detail > 0)} title={`${open ? '收起' : '展开'}这一轮的步骤${turn.result ? `\n${resultStats(turn.result).map((x) => x.text).join(' · ')}` : ''}`}>
+            <Icon name="chevronRight" size={13} className="chev" />
+            <SumLine parts={turnSummaryParts(summary)} play={ended} />
           </button>
         </div>
       )}
       <TurnTouchCtx.Provider value={touch}>
-        <div className="turn-body" data-fold-body="" hidden={!open} ref={body}>
-          <ItemList items={fold ? parts.process : turn.body} version={version} actions={fold ? 'none' : 'last'} />
+        <div className={clsx('turn-body', phase === 'pre' && 'pre', (phase === 'pre' || phase === 'opening' || phase === 'closing') && 'moving')} data-fold-body="" hidden={!open} ref={body}>
+          <div className="turn-body-in">
+            <ItemList items={fold ? parts.process : turn.body} version={version} actions={fold ? 'none' : 'last'} />
+          </div>
         </div>
       </TurnTouchCtx.Provider>
       {fold && (finals.length > 0 || changes.length > 0) && (
@@ -437,7 +523,9 @@ function TurnView({ turn, last, live, version, sessionId, cwd }: { turn: Turn; l
 /** The conversation as turns (top level only — a subagent's messages and the detail panel use `ItemList`). */
 function TurnList({ items, version, live, sessionId, cwd }: { items: Item[]; version: number; live: boolean; sessionId: string; cwd: string }) {
   const turns = useMemo(() => groupTurns(items), [items, version]);
-  return <>{turns.map((t, i) => <TurnView key={t.id} turn={t} last={i === turns.length - 1} live={live} version={version} sessionId={sessionId} cwd={cwd} />)}</>;
+  // keyed by the conversation too: a fork has its parent's message ids, and a turn's view (what it saw of its end,
+  // whether the user opened it) belongs to one conversation
+  return <>{turns.map((t, i) => <TurnView key={`${sessionId}|${t.id}`} turn={t} last={i === turns.length - 1} live={live} version={version} sessionId={sessionId} cwd={cwd} />)}</>;
 }
 
 export function ChatView() {
@@ -457,6 +545,19 @@ export function ChatView() {
   // the change cards' paths read relative to the conversation's folder — the list's when the open conversation has
   // none yet (like the header)
   const listCwd = useStore((s) => (active && !active.cwd ? s.sessions.find((x) => x.sessionId === active.sessionId)?.cwd : undefined));
+  // a turn a CLI / Codex is writing from outside counts as running too (its last tool keeps its spinner)
+  const live = !!active && (active.state === 'running' || active.state === 'waiting' || externalLive(active));
+  // What arrives live (ArrivalCtx): this render shows an event of a conversation that runs — its version moved while
+  // the list is the same array as at the last commit (history loading, a reload and another conversation are new
+  // arrays) with the same first item (an older page prepended is not an arrival). True for this render only.
+  const items = active?.conv.items;
+  const drawn = useRef<{ items: Item[]; first: Item | undefined; version: number } | null>(null);
+  const arrival = useRef(false);
+  arrival.current = live && !!items && !!drawn.current && drawn.current.items === items && (drawn.current.first === undefined || drawn.current.first === items[0]) && drawn.current.version !== version;
+  useEffect(() => {
+    drawn.current = items ? { items, first: items[0], version } : null;
+    arrival.current = false;
+  });
 
   useEffect(() => {
     const el = ref.current;
@@ -487,8 +588,6 @@ export function ChatView() {
     stick.current = b;
     if (b !== atBottom) setAtBottom(b);
   };
-  // a turn a CLI / Codex is writing from outside counts as running too (its last tool keeps its spinner)
-  const live = active.state === 'running' || active.state === 'waiting' || externalLive(active);
   const sid = active.sessionId;
   /** prepend the next older page and keep the message the user was looking at in place */
   const loadOlder = async () => {
@@ -530,7 +629,11 @@ export function ChatView() {
           </div>
         )}
         <WaitingCtx.Provider value={waiting}>
-          <TurnList items={active.conv.items} version={version} live={live} sessionId={sid} cwd={active.cwd || listCwd || ''} />
+          <LiveCtx.Provider value={live}>
+            <ArrivalCtx.Provider value={arrival}>
+              <TurnList items={active.conv.items} version={version} live={live} sessionId={sid} cwd={active.cwd || listCwd || ''} />
+            </ArrivalCtx.Provider>
+          </LiveCtx.Provider>
         </WaitingCtx.Provider>
         {active.error && <div className="sysline" role="alert" style={{ color: 'var(--red)', whiteSpace: 'pre-line', userSelect: 'text' }}>{withExplanation(active.error)}</div>}
         {active.state === 'running' && !active.conv.streaming.size && (

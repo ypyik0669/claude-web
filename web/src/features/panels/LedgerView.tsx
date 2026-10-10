@@ -46,7 +46,7 @@ export function LedgerView({ sessionId }: { sessionId?: string }) {
         <select className="field" value={days} onChange={(e) => setDays(Number(e.target.value))}>{[1, 2, 7, 30, 90].map((d) => <option key={d} value={d}>{d} 天</option>)}</select>
         <span className="seg mini">{(['calls', 'cost', 'latency', 'tokens'] as const).map((m) => <button key={m} className={metric === m ? 'active' : ''} onClick={() => setMetric(m)}>{{ calls: '调用', cost: '费用', latency: '延迟', tokens: 'token' }[m]}</button>)}</span>
         <span className="seg mini" title="来源">{(['all', 'session', 'gateway'] as const).map((k) => <button key={k} className={source === k ? 'active' : ''} title={k === 'all' ? '经网关 / 缓存垫片的对话同时有对话行（每轮）和网关行（每次调用）；这里只算对话行，其它客户端的网关行照算' : k === 'gateway' ? '每次经模型网关 / 缓存垫片的调用一行' : undefined} onClick={() => setSource(k)}>{{ all: '全部', session: '对话', gateway: '网关' }[k]}</button>)}</span>
-        <label className="muted" style={{ fontSize: 12, display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={onlyErr} onChange={(e) => setOnlyErr(e.target.checked)} /> 只看失败</label>
+        <label className="muted" style={{ fontSize: 13, display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={onlyErr} onChange={(e) => setOnlyErr(e.target.checked)} /> 只看失败</label>
         <span className="grow" />
         <button className="btn sm ghost" onClick={load}>刷新</button>
         <button className="btn sm ghost" onClick={async () => { try { const f = await ws.request<string>({ kind: 'ledger.export', days: Math.max(days, 30) }); toast(`已导出 ${f}`, true); void ws.request({ kind: 'shell.open', path: f.replace(/[\\/][^\\/]+$/, '') }); } catch (e: any) { toast(e.message); } }}>导出 CSV</button>
@@ -60,7 +60,7 @@ export function LedgerView({ sessionId }: { sessionId?: string }) {
         {dropped > 0 && <span className="muted" title="这些对话自己的行已经在列表里，同一份流量不算两遍；切到「网关」看逐次调用">已合并 {dropped} 条网关 / 垫片行</span>}
       </div>
       {byProvider.length > 0 && (
-        <details style={{ fontSize: 12, margin: '2px 0 6px' }}>
+        <details style={{ fontSize: 13, margin: '2px 0 6px' }}>
           <summary className="muted" style={{ cursor: 'pointer' }}>缓存命中 · 按供应商 × 模型</summary>
           {byProvider.map((h) => (
             <div key={`${h.provider}|${h.model}`} style={{ display: 'flex', gap: 8, padding: '1px 0' }} title={`输入 ${fmtTok(h.input)} · 缓存读 ${fmtTok(h.cacheRead)} · 缓存写 ${fmtTok(h.cacheWrite)}`}>

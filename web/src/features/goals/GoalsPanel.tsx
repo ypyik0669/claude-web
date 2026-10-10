@@ -144,7 +144,7 @@ export function GoalsPanel({ page = false, newSignal = 0 }: { page?: boolean; ne
     <div className={clsx('goals', page && 'page')}>
       <div className="goals-head">
         <div className="seg mini"><button className={clsx(filter === 'active' && 'active')} onClick={() => setFilter('active')}>未完成</button><button className={clsx(filter === 'all' && 'active')} onClick={() => setFilter('all')}>全部</button></div>
-        <span className="muted" style={{ fontSize: 12 }}>{counts.active} 进行中{counts.blocked ? ` · ${counts.blocked} 需要你` : ''}</span>
+        <span className="muted" style={{ fontSize: 13 }}>{counts.active} 进行中{counts.blocked ? ` · ${counts.blocked} 需要你` : ''}</span>
         <span className="grow" />
         {(!page || creating) && <button className="btn sm" onClick={() => setCreating(!creating)}>{creating ? '收起' : <><Icon name="plus" size={12} /> 新目标</>}</button>}
       </div>

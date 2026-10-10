@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { applyMessage, applyTranscript, createConversation, setConversationClock, type AssistantItem, type Item, type ResultItem, type ToolUseBlock, type UserItem } from './conversation';
 import { fileChanges, sessionDiffStat } from './diffstat';
-import { displayPath, fmtDuration, groupTurns, splitTurnBody, turnDone, turnMemo, turnStamp, turnSummary, turnSummaryParts, turnSummaryText, type TurnMemo } from './turn';
+import { displayPath, fmtDuration, groupSteps, groupTurns, splitTurnBody, stepStarts, turnDone, turnMemo, turnStamp, turnSummary, turnSummaryParts, turnSummaryText, type TurnMemo } from './turn';
 
 const FIXTURE = path.join(__dirname, '__fixtures__', 'tools.jsonl');
 const loadFixture = (): any[] => fs.readFileSync(FIXTURE, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
@@ -334,6 +334,128 @@ describe('fileChanges', () => {
     ]);
     const total = sessionDiffStat(items);
     expect(total).toEqual({ files: 2, added: rows.reduce((a, r) => a + r.added, 0), removed: rows.reduce((a, r) => a + r.removed, 0) });
+  });
+});
+
+describe('groupSteps (UI refresh §6: 「读取 ×3 · a.ts 等」)', () => {
+  // What merges: steps next to each other, the same tool, every one of them finished and worked. Whatever still
+  // runs, failed, was refused, waits on the user or carries a subagent's messages stays a row of its own.
+  const read = (p: string, extra: Partial<ToolUseBlock> = {}) => tool('Read', { file_path: p }, undefined, extra);
+  const shape = (steps: ToolUseBlock[], waiting?: ReadonlySet<string>) => groupSteps(steps, waiting).map((g) => g.steps.map((s) => s.id));
+
+  it('no steps → no rows; one step → one row of one', () => {
+    expect(groupSteps([])).toEqual([]);
+    const a = read('/w/a.ts');
+    const rows = groupSteps([a]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].steps).toEqual([a]);
+    expect(rows[0].steps[0]).toBe(a); // the same objects Steps renders, not copies
+  });
+
+  it('two in a row merge, and so do many; the row is keyed by its first step, so it stays the same row as it grows', () => {
+    const a = read('/w/a.ts'), b = read('/w/b.ts'), c = read('/w/c.ts'), d = read('/w/d.ts'), e = read('/w/e.ts');
+    expect(shape([a, b])).toEqual([[a.id, b.id]]);
+    expect(shape([a, b, c, d, e])).toEqual([[a.id, b.id, c.id, d.id, e.id]]);
+    expect(groupSteps([a, b])[0].key).toBe(a.id);
+    expect(groupSteps([a, b, c, d, e])[0].key).toBe(a.id);
+  });
+
+  it('different tools never merge, and the same tool only when adjacent', () => {
+    const r1 = read('/w/a.ts'), e1 = tool('Edit', { file_path: '/w/a.ts', old_string: 'a', new_string: 'b' }), b1 = tool('Bash', { command: 'npm test' });
+    expect(shape([r1, e1, b1])).toEqual([[r1.id], [e1.id], [b1.id]]);
+    const r2 = read('/w/b.ts'), r3 = read('/w/c.ts');
+    // Read · Bash · Read: two rows of 读取, not one
+    expect(shape([r1, b1, r2])).toEqual([[r1.id], [b1.id], [r2.id]]);
+    // Read Read · Bash · Read: only the run merges
+    expect(shape([r1, r2, b1, r3])).toEqual([[r1.id, r2.id], [b1.id], [r3.id]]);
+    // Edit and MultiEdit read alike but are two tools
+    const m1 = tool('MultiEdit', { file_path: '/w/a.ts', edits: [] });
+    expect(shape([e1, m1])).toEqual([[e1.id], [m1.id]]);
+  });
+
+  it('a failed step in the middle splits the run and stays alone', () => {
+    const a = read('/w/a.ts'), b = read('/w/b.ts'), c = read('/w/c.ts'), d = read('/w/d.ts');
+    const bad = read('/w/nope.ts', { status: 'error', result: { content: 'File does not exist.', isError: true } });
+    expect(shape([a, b, bad, c, d])).toEqual([[a.id, b.id], [bad.id], [c.id, d.id]]);
+    // one on each side of it: three single rows
+    expect(shape([a, bad, c])).toEqual([[a.id], [bad.id], [c.id]]);
+  });
+
+  it('a refused step (an error result on a step marked done) is never merged', () => {
+    const a = read('/w/a.ts');
+    const refused = read('/w/b.ts', { status: 'done', result: { content: "The user doesn't want to proceed with this tool use.", isError: true } });
+    const c = read('/w/c.ts');
+    expect(shape([a, refused, c])).toEqual([[a.id], [refused.id], [c.id]]);
+  });
+
+  it('a step still running, queued or streaming is never merged — it joins the row before it once it is done', () => {
+    const a = read('/w/a.ts'), b = read('/w/b.ts');
+    for (const status of ['running', 'pending', 'streaming'] as const) {
+      const live = read('/w/c.ts', { status, result: undefined });
+      expect(shape([a, b, live])).toEqual([[a.id, b.id], [live.id]]);
+      live.status = 'done';
+      live.result = { content: 'ok', isError: false };
+      expect(shape([a, b, live])).toEqual([[a.id, b.id, live.id]]);
+    }
+  });
+
+  it('a step waiting on the user is never merged', () => {
+    const a = read('/w/a.ts'), c = read('/w/c.ts');
+    const asked = read('/w/b.ts', { status: 'pending', result: undefined });
+    expect(shape([a, asked, c], new Set([asked.id]))).toEqual([[a.id], [asked.id], [c.id]]);
+    // …also when its status says nothing (an agent that reports the call as done before it asked)
+    const odd = read('/w/d.ts');
+    expect(shape([a, odd, c], new Set([odd.id]))).toEqual([[a.id], [odd.id], [c.id]]);
+    // the set names other steps: nothing changes
+    expect(shape([a, odd, c], new Set(['someone-else']))).toEqual([[a.id, odd.id, c.id]]);
+  });
+
+  it('a step that carries messages of its own (a subagent) is never merged', () => {
+    const child = asst({ type: 'text', text: 'sub' });
+    const a = tool('mcp__x__run', { q: '1' }), withKids = tool('mcp__x__run', { q: '2' }, undefined, { children: [child] }), c = tool('mcp__x__run', { q: '3' });
+    expect(shape([a, withKids, c])).toEqual([[a.id], [withKids.id], [c.id]]);
+  });
+
+  it('a step done without a result yet (a transcript cut short) still merges: nothing says it failed', () => {
+    const a = read('/w/a.ts', { result: undefined }), b = read('/w/b.ts');
+    expect(shape([a, b])).toEqual([[a.id, b.id]]);
+  });
+
+  it('merging does not change what the turn summary counts', () => {
+    const steps = [read('/w/a.ts'), read('/w/b.ts'), read('/w/b.ts'), tool('Bash', { command: 'ls' }), tool('Bash', { command: 'pwd' })];
+    const [t] = groupTurns([user('go'), asst(...steps)]);
+    expect(groupSteps(steps).map((g) => g.steps.length)).toEqual([3, 2]);
+    expect(turnSummary(t)).toMatchObject({ reads: 2, commands: 2, tools: 5 });
+  });
+});
+
+describe('stepStarts (a step row’s time in a transcript: from the call to its result)', () => {
+  it('a call that is the first block of its message was made when the message was written', () => {
+    const e = tool('Edit', { file_path: '/w/a.ts', old_string: 'a', new_string: 'b' }), b = tool('Bash', { command: 'ls' });
+    const items: Item[] = [
+      user('go', '2026-10-10T10:00:00.000Z'),
+      { ...asst(e), ts: '2026-10-10T10:00:09.500Z' },
+      { ...asst(b), ts: '2026-10-10T10:00:12.000Z' },
+    ];
+    const starts = stepStarts(items);
+    expect(starts.get(e.id)).toBe(Date.parse('2026-10-10T10:00:09.500Z'));
+    expect(starts.get(b.id)).toBe(Date.parse('2026-10-10T10:00:12.000Z'));
+  });
+
+  it('a call after text or thinking, or a second call of the same message, has no start: the message’s time is its first block’s', () => {
+    const r = tool('Read', { file_path: '/w/a.ts' }), b = tool('Bash', { command: 'ls' }), g = tool('Grep', { pattern: 'x' });
+    const starts = stepStarts([
+      { ...asst({ type: 'text', text: 'looking' }, r), ts: '2026-10-10T10:00:02.000Z' },
+      { ...asst({ type: 'thinking', thinking: 'hm' }, b), ts: '2026-10-10T10:00:05.000Z' },
+      { ...asst(g, tool('Glob', { pattern: '*.ts' })), ts: '2026-10-10T10:00:08.000Z' },
+    ]);
+    expect([...starts.keys()]).toEqual([g.id]);
+  });
+
+  it('a message without a time (or with one that does not parse) gives its call no start', () => {
+    const r = tool('Read', { file_path: '/w/a.ts' }), b = tool('Bash', { command: 'ls' });
+    const starts = stepStarts([asst(r), { ...asst(b), ts: 'not a date' }, user('x')]);
+    expect(starts.size).toBe(0);
   });
 });
 

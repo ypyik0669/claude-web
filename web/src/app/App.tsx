@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { hideSheet, useStore } from '@/store';
 import { Sidebar } from '@/features/sidebar/Sidebar';
 import { Workbench } from '@/features/workbench/Workbench';
@@ -20,37 +20,33 @@ import { desktop } from '@/desktop';
 import { Icon } from '@/ui/icons';
 import { installOrchestra } from '@/features/orchestra/state';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
+import { Toasts } from '@/ui/Toasts';
 import { chromeVisibility, workbenchOn } from '@/model/layout';
+import { captionHeight, captionRow } from '@/features/workbench/tab-row';
 import { MOBILE_QUERY, drawerYields } from '@/ui/viewport';
 import { installAutomation } from '@/features/automation/state';
 import { installChecklist } from '@/features/home/checklist-sync';
 import { installAccountDefault } from '@/features/models/account-default';
 import { installSettingsClose } from '@/features/settings/close-on-nav';
+import { pushBackLayer } from '@/ui/back-layer';
+import { installPhoneSheet, sheetEnter, sheetTakesEscape, toggleSheetDetent, useSheetLeaving } from '@/ui/phone-sheet';
+import { drawerEnter, installPhoneDrawer, usePhoneDrawer } from '@/ui/phone-drawer';
 
 /** Width of the right panel minimized to its icon rail. */
 const MIN_RAIL = 36;
-
-function Toasts() {
-  const toasts = useStore((s) => s.toasts);
-  if (!toasts.length) return null;
-  return (
-    <div className="toast-wrap">
-      {toasts.map((t) => (
-        <div key={t.id} className={clsx('toast', t.ok && 'ok')}>{t.text}</div>
-      ))}
-    </div>
-  );
-}
 
 /** Sidebar column with a drag handle on its right edge (width lives in the layout state). */
 function SidebarColumn() {
   const width = useStore((s) => s.layout.sidebar.width);
   const dispatch = useStore((s) => s.dispatchLayout);
   const drag = useRef<{ x0: number; w0: number } | null>(null);
+  const el = useRef<HTMLDivElement>(null);
+  // phone: the drawer a tap opened slides in (nothing happens anywhere else — ui/phone-drawer.ts)
+  useLayoutEffect(() => { if (el.current) drawerEnter(el.current); }, []);
   // NOTE: no inline `position` here — an inline style beats `.app.mobile .sidebar { position: fixed }`
   // regardless of specificity, which would leave the drawer in the grid flow and squash the workbench to 0px.
   return (
-    <div className="sidebar has-resizer">
+    <div className="sidebar has-resizer" ref={el}>
       <ErrorBoundary area="侧栏"><Sidebar onNew={() => runCommand('new')} /></ErrorBoundary>
       <div
         className="resizer right"
@@ -70,7 +66,8 @@ export function App() {
   // phone width lives in the store: the workbench chrome, the session header and the panel commands all follow it
   const mobile = useStore((s) => s.mobile);
   useEffect(() => { const on = () => useStore.setState({ mobile: MOBILE.matches }); on(); MOBILE.addEventListener('change', on); return () => MOBILE.removeEventListener('change', on); }, []);
-  useEffect(() => { if (mobile) useStore.setState({ sidebarOpen: false }); }, [mobile]);
+  // (before the paint: a phone never shows the drawer — or its scrim, which would fade — open for a frame on the way)
+  useLayoutEffect(() => { if (mobile) useStore.setState({ sidebarOpen: false }); }, [mobile]);
   // the palette / the shortcut sheet opened from the keyboard on a phone: the drawer (z 60) makes way (final review M4)
   useEffect(() => useStore.subscribe((s, p) => { if (drawerYields(p, s)) useStore.setState({ sidebarOpen: false }); }), []);
   useEffect(() => installOrchestra(), []);
@@ -87,9 +84,47 @@ export function App() {
   const sheetUp = useStore((s) => s.sheetAt > 0);
   const rpWidth = !dockShown ? 0 : mobile ? (sheetUp ? dock.width : 0) : dock.minimized ? MIN_RAIL : dock.width;
   // going narrow (or wide) never brings the drawer up by itself: a desktop's open panel stays where it is
-  useEffect(() => { useStore.setState({ sheetAt: 0 }); }, [mobile]);
+  useEffect(() => { useStore.setState({ sheetAt: 0, sheetDetent: 'half' }); }, [mobile]);
   // the settings page, the palette and the shortcut sheet cover the drawer while they are open (review 7 I1)
   const covered = useStore((s) => !!s.settingsOpen || s.paletteOpen || s.shortcutsOpen);
+
+  // ---- phone: the two sliding surfaces (UI refresh §8; ui/phone-sheet.ts, ui/phone-drawer.ts, styles/phone-sheet.css)
+  const app = useRef<HTMLDivElement>(null);
+  const rpanel = useRef<HTMLDivElement>(null);
+  const sheetBackdrop = useRef<HTMLDivElement>(null);
+  const sheetOn = mobile && rpWidth > 0;
+  // put away, the bottom sheet stays displayed until it has slid out; so does the sidebar drawer (and a finger
+  // pulling the drawer in mounts it before `sidebarOpen` says so)
+  const sheetLeaving = useSheetLeaving((s) => s.leaving);
+  const drawerHeld = usePhoneDrawer((s) => s.held);
+  // the sheet's height (半 / 全). The store is back at 半 the moment the sheet is put away; the element keeps the
+  // size it had while it slides out
+  const detent = useStore((s) => s.sheetDetent);
+  const [shownDetent, setShownDetent] = useState(detent);
+  if (sheetOn && shownDetent !== detent) setShownDetent(detent);
+  // (after the effect above: crossing into phone width closes the sidebar before the drawer is there to slide out)
+  useEffect(() => (mobile && app.current ? installPhoneDrawer(app.current) : undefined), [mobile]);
+  useEffect(() => (mobile && rpanel.current ? installPhoneSheet(rpanel.current, () => sheetBackdrop.current) : undefined), [mobile]);
+  // shown this very commit: it starts below the screen and slides up (before the first paint)
+  useLayoutEffect(() => { if (sheetOn && rpanel.current) sheetEnter(rpanel.current); }, [sheetOn]);
+  // the system's back gesture closes what is on top — the drawer, the sheet — instead of leaving the page; with the
+  // sheet up Esc does the same and nothing else (not when the settings page / the palette covers it: Esc is theirs)
+  useEffect(() => {
+    if (!mobile || !sidebarOpen) return;
+    return pushBackLayer(() => useStore.setState({ sidebarOpen: false }));
+  }, [mobile, sidebarOpen]);
+  useEffect(() => {
+    if (!sheetOn || covered) return;
+    const release = pushBackLayer(hideSheet);
+    const onKey = (e: KeyboardEvent) => {
+      if (!sheetTakesEscape(e)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation(); // capture, on the window: the composer under the sheet never sees it
+      hideSheet();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => { window.removeEventListener('keydown', onKey, true); release(); };
+  }, [sheetOn, covered]);
   // phone: a soft keyboard shrinks the visual viewport; the drawer's bottom rides above it (review 7 M6)
   useEffect(() => {
     const vv = window.visualViewport;
@@ -102,9 +137,10 @@ export function App() {
     return () => { vv.removeEventListener('resize', on); vv.removeEventListener('scroll', on); root.style.removeProperty('--kb'); };
   }, [mobile]);
 
-  // desktop caption buttons (Windows / Linux overlay) are painted in one colour: match whatever row is under them —
-  // the page (--bg) when the session header / empty page is there, the side surface (--bg-1) for the right panel's
-  // tab row, the group bar or a tab strip; the settings page covers the whole window with its page (--bg) there
+  // desktop caption buttons (Windows / Linux overlay). Windows: painted on nothing — they float over the top-right
+  // card and the shell gap above it (a transparent overlay; the card's corner shows behind them). Linux, where that is
+  // unverified, keeps one colour: the card (--bg) when a session header / the right panel is under them, the shell
+  // (--bg-1) for the group bar or a tab strip
   const theme = useStore((s) => s.theme);
   const settingsOpen = useStore((s) => !!s.settingsOpen);
   const workbench = useStore((s) => workbenchOn(s.settings));
@@ -115,15 +151,33 @@ export function App() {
   // the settings page covers everything with --bg; an open right panel owns the corner — its tab row is --bg-1 only
   // with the workbench tools (the default one is white)
   const sideSurface = !settingsOpen && (rpWidth > MIN_RAIL ? workbench : chromeRow);
+  // …and as tall as the row they sit over (tab-row.ts `captionHeight`): their glyphs line up with the row's own icons
+  const groupBar = useStore((s) => chromeVisibility(s.layout, { workbench: workbenchOn(s.settings) }).groupBar);
+  const capRow = captionRow({ settings: settingsOpen, dockOpen: rpWidth > MIN_RAIL, workbench, groupBar, chromeRow });
+  const density = useStore((s) => s.settings['ui.density']);
   useEffect(() => {
     const d = desktop;
     if (!d) return;
     const t = setTimeout(() => {
       const cs = getComputedStyle(document.documentElement);
-      d.setTitleBarColors(cs.getPropertyValue(sideSurface ? '--bg-1' : '--bg').trim(), cs.getPropertyValue('--fg-1').trim());
+      const linux = document.documentElement.classList.contains('linux');
+      const px = (name: string) => parseFloat(cs.getPropertyValue(name));
+      const height = captionHeight(capRow, { gap: linux ? 0 : px('--shell-gap'), head: px('--h-head'), bar: px('--h-bar') });
+      d.setTitleBarColors(cs.getPropertyValue('--bg-1').trim(), cs.getPropertyValue('--fg-1').trim(), linux ? cs.getPropertyValue(sideSurface ? '--bg-1' : '--bg').trim() : '#00000000', height);
     }, 0);
     return () => clearTimeout(t);
-  }, [theme, sideSurface]);
+  }, [theme, sideSurface, capRow, density]);
+  // a browser's own chrome (Android's toolbar, an installed page's status bar) takes the colour of what is at the top
+  // of the page: the shell's ground, or on a phone the conversation's sheet. index.html has the two defaults by the
+  // system's light / dark; the theme chosen here may be neither
+  useEffect(() => {
+    if (desktop) return;
+    const t = setTimeout(() => {
+      const c = getComputedStyle(document.documentElement).getPropertyValue(mobile ? '--bg' : '--bg-1').trim();
+      if (c) for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.setAttribute('content', c);
+    }, 0);
+    return () => clearTimeout(t);
+  }, [theme, mobile]);
 
   // asking to inspect a tool call must bring 详情 to the front of the right panel — also when it is already a tab
   // behind another one (otherwise the detail button on a tool row does nothing visible). On a phone the right panel is
@@ -169,14 +223,18 @@ export function App() {
   return (
     // `dock-open`: the right panel owns the window's top-right corner (desktop caption buttons sit over its tab row).
     // Not when it is minimized to its 36px icon rail: the buttons then cover the workbench's top-right row as well.
-    <div className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', mobile && sidebarOpen && 'drawer-open', rpWidth > MIN_RAIL && !mobile && 'dock-open', mobile && rpWidth > 0 && 'sheet-open', mobile && rpWidth > 0 && covered && 'sheet-covered')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px` }}>
-      {mobile && sidebarOpen && <div className="drawer-backdrop" onClick={() => useStore.setState({ sidebarOpen: false })} />}
-      {/* phone: the right panel is a bottom drawer over the conversation; a tap above it puts it away (hidden, not
-          closed — the desktop's open / closed is not written) */}
-      {mobile && rpWidth > 0 && <div className="sheet-backdrop" onClick={hideSheet} />}
-      {sidebarOpen ? <SidebarColumn /> : <div className="sidebar" style={{ display: 'none' }} />}
+    <div ref={app} className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', mobile && sidebarOpen && 'drawer-open', rpWidth > MIN_RAIL && !mobile && 'dock-open', sheetOn && 'sheet-open', sheetOn && covered && 'sheet-covered')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px` }}>
+      {/* phone: both scrims are in the document the whole time — transparent and taking no taps until their surface
+          is up (the style sheet) — so they fade with it and follow a drag. A tap on one puts its surface away */}
+      {mobile && <div className="drawer-backdrop" onClick={() => useStore.setState({ sidebarOpen: false })} />}
+      {/* the right panel is a bottom sheet over the conversation; putting it away hides it — the desktop's open /
+          closed is not written */}
+      {mobile && <div className="sheet-backdrop" ref={sheetBackdrop} onClick={hideSheet} />}
+      {sidebarOpen || (mobile && drawerHeld) ? <SidebarColumn /> : <div className="sidebar" style={{ display: 'none' }} />}
       <ErrorBoundary area="工作台"><Workbench /></ErrorBoundary>
-      <div className="rpanel" style={{ display: rpWidth ? 'flex' : 'none' }}>
+      <div className="rpanel" ref={rpanel} data-detent={mobile ? shownDetent : undefined} style={{ display: rpWidth || (mobile && sheetLeaving) ? 'flex' : 'none' }}>
+        {/* phone: the sheet's handle — drag it (or the tab row under it) to move the sheet, tap it for 半 ⇄ 全 */}
+        {mobile && <button type="button" className="sheet-grip" title="拖动调整高度；点一下在半高和全高之间切换" aria-label={shownDetent === 'full' ? '缩到半高' : '展开到全高'} onClick={() => { if (rpanel.current) toggleSheetDetent(rpanel.current); }} />}
         <ErrorBoundary area="右侧面板"><Dock /></ErrorBoundary>
       </div>
       <ErrorBoundary area="通知" floating><Toasts /></ErrorBoundary>

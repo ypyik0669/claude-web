@@ -5,6 +5,16 @@ import type { SessionSummary } from '@shared';
 
 export type ObStep = 'login' | 'project';
 
+/**
+ * The title over each step, and over the neutral line shown until the login check has answered (`checking`). They
+ * are set in the heading face, so ui/heading-text.ts lists them.
+ */
+export const STEP_TITLE: Record<ObStep | 'checking', string> = {
+  checking: '欢迎使用 Claude Web',
+  login: '欢迎使用 Claude Web',
+  project: '选一个项目文件夹',
+};
+
 export function onboardingSteps(o: { auth: { loggedIn?: boolean } | null; providers: number }): ObStep[] {
   return o.auth?.loggedIn || o.providers > 0 ? ['project'] : ['login', 'project'];
 }

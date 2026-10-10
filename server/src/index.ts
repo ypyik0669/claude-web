@@ -177,7 +177,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       return;
     }
     // start_url / icons resolve against the manifest's own URL: relative, like everything the page loads
-    if (url.pathname === '/manifest.webmanifest') { res.writeHead(200, { 'content-type': 'application/manifest+json' }); res.end(JSON.stringify({ name: 'Claude Web', short_name: 'Claude Web', start_url: './', display: 'standalone', background_color: '#1f1e1a', theme_color: '#1f1e1a', icons: [{ src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }, { src: 'icon-192.png', sizes: '192x192', type: 'image/png' }, { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }] })); return; }
+    if (url.pathname === '/manifest.webmanifest') { res.writeHead(200, { 'content-type': 'application/manifest+json' }); res.end(JSON.stringify({ name: 'Claude Web', short_name: 'Claude Web', start_url: './', display: 'standalone', background_color: '#f7f6f2', theme_color: '#f7f6f2', icons: [{ src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }, { src: 'icon-192.png', sizes: '192x192', type: 'image/png' }, { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }] })); return; }
     if (url.pathname === '/api/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
       // federation: a hash of the serverId (+ a nonce proof) for anyone; the ids themselves only with a valid token

@@ -1,0 +1,96 @@
+/* phase 4 · the queued-message card (all widths) and the terminal key row (phones). Loaded after styles.css.
+
+   What is drawn here (design.md §8 rows 排队的消息 · 终端):
+     .composer-inner > [.status-strip] [.queue-cards] [.run-card | .pdock] .composer-box
+     .queue-cards[data-count] > .queue-card[data-queue-id][data-pos]* [.qc-more > button.queue-more[data-act=more]]
+     .queue-card > .qc-body (.qc-label · [.qc-text] · [.qc-extras]) · .qc-acts > button.qc-act[data-act=edit|now|remove] (svg · .qc-word)
+     .term-wrap > .term (xterm mounts in it) [.term-keys > button.term-key[data-key][aria-pressed]*]
+   What a card says is chat/queue-card.ts; what a key sends is panels/term-keys.ts. */
+
+/* ---- queued messages: a dashed card each, between the status chips and the tab on the box's top edge ---- */
+.queue-cards { container-type: inline-size; display: flex; flex-direction: column; gap: var(--sp-1); margin: 0 0 var(--sp-2); }
+.queue-card {
+  display: flex; align-items: center; gap: var(--sp-2);
+  min-width: 0; padding: 6px 6px 6px var(--sp-3);
+  border: 1px dashed var(--edge-strong); border-radius: var(--r-lg);
+  background: none;
+}
+/* a card that was just queued (QueueCards sets .enter once, and takes it off when this has played) */
+.queue-card.enter { animation: qc-in var(--dur-base) var(--ease-out); }
+@keyframes qc-in { from { opacity: 0; transform: translateY(6px); } }
+
+.qc-body { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.qc-label { font-size: var(--fs-meta); line-height: 16px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+/* the message: two lines at most; the whole of it is the tooltip */
+.qc-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: var(--fs-sm); line-height: 18px; color: var(--ink-2); }
+.qc-extras { font-size: var(--fs-meta); line-height: 16px; color: var(--ink-4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 编辑 · 立即发送 · 删除: words while the card is wide (pills, like the tab's 停止), icons when it is narrow */
+.qc-acts { flex: none; display: flex; align-items: center; gap: 2px; }
+.qc-act, .queue-more {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  height: 28px; padding: 0 10px; border-radius: var(--r-pill);
+  font-size: var(--fs-meta); color: var(--ink-3); white-space: nowrap;
+  transition: background-color var(--cmp-hover-out, var(--dur-fast)), color var(--cmp-hover-out, var(--dur-fast)), transform var(--dur-instant) var(--ease-out);
+}
+.qc-act:hover, .queue-more:hover { background-color: var(--layer-hover); color: var(--ink-1); transition-duration: 0s, 0s, var(--dur-instant); }
+.qc-act:active, .queue-more:active { background-color: var(--layer-active); transform: var(--cmp-press, none); }
+.qc-act[data-act='remove']:hover { background-color: var(--err-soft); color: var(--err); }
+.qc-act > svg { display: none; }
+@container (max-width: 520px) {
+  .qc-act { width: 28px; padding: 0; border-radius: var(--r-md); }
+  .qc-act > svg { display: block; }
+  .qc-word { display: none; } /* the button's aria-label and title still say it */
+}
+
+/* 「还有 N 条排队…」 / 收起 */
+.qc-more { display: flex; padding-left: 2px; }
+
+/* a phone: the buttons are icons whatever the width, with a finger-sized box each */
+.app.mobile .queue-card { padding: 2px 2px 2px var(--sp-3); }
+.app.mobile .qc-act { width: 44px; height: 44px; padding: 0; border-radius: var(--r-md); }
+.app.mobile .qc-act > svg { display: block; }
+.app.mobile .qc-word { display: none; }
+.app.mobile .queue-more { height: 44px; padding: 0 var(--sp-3); font-size: var(--fs-sm); }
+@media (hover: none) {
+  .qc-act:hover, .queue-more:hover { background-color: transparent; color: var(--ink-3); }
+  .qc-act:active, .queue-more:active { background-color: var(--layer-active); color: var(--ink-1); }
+}
+
+/* ---- the terminal's box: the terminal, and on a phone the row of keys under it. The wrapper takes the place the
+   terminal's own element had (it fills its panel or tile); the terminal takes what the row leaves ---- */
+.term-wrap { flex: 1; min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; }
+.term-wrap > .term { flex: 1 1 0; min-height: 0; }
+
+/* Esc · Tab · Ctrl · Alt · ↑ ↓ ← → · Ctrl+C · 粘贴: one row that scrolls sideways; the panel it is in already rides
+   above the keyboard (--kb), so the row sits right on top of it */
+.term-keys {
+  flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 6px var(--sp-2);
+  overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none;
+  touch-action: pan-x; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  background: var(--surface-0);
+}
+.term-keys::-webkit-scrollbar { display: none; }
+/* the terminal as a tab of its own has nothing under it: keep the row off the home indicator */
+.app.mobile .pane .term-keys { padding-bottom: max(6px, env(safe-area-inset-bottom, 0px)); }
+.term-key {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 44px; height: 44px; padding: 0 var(--sp-3);
+  border-radius: var(--r-row); background: var(--fill-subtle);
+  font-family: var(--mono); font-size: var(--fs-sm); font-weight: var(--fw-regular); color: var(--ink-2); white-space: nowrap;
+  touch-action: pan-x; -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--dur-fast), color var(--dur-fast), transform var(--dur-instant) var(--ease-out);
+}
+.term-key:active { background: var(--layer-active); color: var(--ink-1); transform: scale(0.98); transition-duration: 0s, 0s, var(--dur-instant); }
+/* Ctrl / Alt armed for the next key: ink, like a switch that is on */
+.term-key[aria-pressed='true'] { background: var(--ctl-on); color: var(--primary-fg); }
+
+/* 减少动态效果 (the setting, then the system's): the card just appears (tokens.css ends the animation at once),
+   and a pressed key does not shrink */
+:root[data-reduce-motion='1'] .queue-card.enter { animation: none; }
+:root[data-reduce-motion='1'] .term-key:active { transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .queue-card.enter { animation: none; }
+  .term-key:active { transform: none; }
+}

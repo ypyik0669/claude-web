@@ -1,0 +1,59 @@
+/* phase 4 · 审阅 on a phone: wrap / scroll, spelled-out file actions, the folded commit area. Loaded after styles.css. */
+/* (UI refresh §8, features/workbench/ReviewView.tsx. Everything here is under `.app.mobile`, and the elements these
+   rules are for — `.rv-wrap`, `[data-lines]`, `.rv-acts-row`, `.rv-foot.folded` — are only drawn on a phone: a
+   desktop's 审阅 is untouched. The review lives in the right panel, which on a phone is the bottom sheet.) */
+
+/* ---- the bar: scope · 换行 / 横滚 · ··· on one row; the bulk buttons (全部还原 / 全部暂存 …) share a row of their own
+   below it — the toggle takes the room they had. The zero-height ::after is the line break; with no bulk button it
+   adds nothing (the rows have no gap, the buttons carry their own top margin). ---- */
+.app.mobile .rv-main > .rv-bar { flex-wrap: wrap; row-gap: 0; }
+.app.mobile .rv-main > .rv-bar::after { content: ''; order: 1; flex: 0 0 100%; height: 0; }
+.app.mobile .rv-main > .rv-bar > .btn { order: 2; flex: 1 1 0; min-width: 0; min-height: 40px; margin-top: var(--sp-2); font-size: var(--fs-base); }
+.app.mobile .rv-main > .rv-bar > .icon-btn { width: 36px; height: 36px; }
+/* the scope button: 36px drawn, a 44px target (the bar's own padding is the room) */
+.app.mobile .rv-main > .rv-bar > .rv-scope { position: relative; height: 36px; padding: 0 var(--sp-3); border-radius: var(--r-md); }
+.app.mobile .rv-main > .rv-bar > .rv-scope::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 44px; transform: translateY(-50%); }
+/* 换行 / 横滚 (ui/Segmented.tsx, styles/floating.css): never squeezed — the scope's label gives way first. The track
+   is 36px like the scope button; each option is a 44px target that reaches past the track (its own overflow clips a
+   pseudo-element, so the button itself is taller and pulled back in by its margin) */
+.app.mobile .rv-wrap { flex: none; }
+.app.mobile .rv-wrap > button { height: 44px; margin-block: -7px; padding: 0 var(--sp-3); }
+
+/* ---- long lines ---- */
+/* 换行 (the default on a phone): a line breaks inside the card, nothing scrolls sideways */
+.app.mobile .rv-main[data-lines='wrap'] .rv-body .diff-lines { grid-template-columns: minmax(0, 1fr); }
+.app.mobile .rv-main[data-lines='wrap'] .rv-body .diff-lines .dl { white-space: pre-wrap; word-break: break-all; }
+/* (the code breaks, a line number never does: 「1226」 is not 「122」 over 「6」) */
+.app.mobile .rv-main[data-lines='wrap'] .rv-body .diff-lines .dl .ln { white-space: pre; word-break: normal; }
+/* 横滚: the desktop's way (styles.css — no wrapping, the card scrolls sideways, the line numbers stay put), with
+   two things a phone cannot do without, since here every line is longer than the card: each row is as wide as the
+   widest (`minmax(100%, max-content)` never grows a track in a container of a set width — the rows stayed one card
+   wide and their red / green stopped where the card ends), and the numbers that stay put are opaque — the surface
+   with the row's own tint over it — so the code passes under them, not through them. A swipe past the end stays in
+   the card instead of becoming the browser's back gesture. */
+.app.mobile .rv-main[data-lines='scroll'] .rv-body .diff-lines { grid-template-columns: minmax(max-content, 1fr); overscroll-behavior-x: contain; }
+.app.mobile .rv-main[data-lines='scroll'] .rv-body .diff-lines .dl .ln { background: var(--surface-0); }
+.app.mobile .rv-main[data-lines='scroll'] .rv-body .diff-lines .dl.add .ln { background: linear-gradient(var(--diff-add), var(--diff-add)), var(--surface-0); }
+.app.mobile .rv-main[data-lines='scroll'] .rv-body .diff-lines .dl.del .ln { background: linear-gradient(var(--diff-del), var(--diff-del)), var(--surface-0); }
+/* 左右并排 (ui.diffMode) wraps inside its two halves at every width, so 换行 is what it already does; 横滚 gives each
+   half the card's full width and the pair scrolls sideways */
+.app.mobile .rv-main[data-lines='scroll'] .rv-body .diff-grid { overflow-x: auto; overscroll-behavior-x: contain; }
+.app.mobile .rv-main[data-lines='scroll'] .rv-body .diff-grid > * { min-width: 200%; }
+
+/* ---- a file: the header is one line (path · numbers · tag), 44px to tap; an open file's actions are spelled out
+   in a row under it — one two-row header, so the line that closes it sits under the actions ---- */
+.app.mobile .rv-fh { min-height: 44px; padding-right: var(--sp-3); }
+.app.mobile .rv-fh .rv-tag { max-width: 30%; } /* 「重命名自 …」 must not take the line from the path */
+.app.mobile .rv-file.open .rv-fh:has(+ .rv-acts-row) { box-shadow: none; }
+.app.mobile .rv-acts-row { display: flex; gap: var(--sp-1); padding: 0 var(--sp-1) var(--sp-1); background: var(--fill-subtle); box-shadow: inset 0 -1px 0 var(--edge-subtle); }
+.app.mobile .rv-act { flex: 1 1 0; min-width: 0; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2); padding: 0 var(--sp-2); border-radius: var(--r-row); font-size: var(--fs-base); color: var(--ink-2); white-space: nowrap; transition: background var(--dur-fast) var(--ease-out), transform var(--dur-instant) var(--ease-out); }
+.app.mobile .rv-act svg { flex: none; color: var(--ink-3); }
+.app.mobile .rv-act:active { background: var(--layer-active); transform: scale(0.98); }
+.app.mobile .rv-act:disabled { opacity: 0.4; cursor: default; }
+.app.mobile .rv-act:disabled:active { background: none; transform: none; }
+
+/* ---- the commit area: one button, 「提交 N 个文件」, until it is tapped; then the desktop's box at phone sizes —
+   the message at 16px (iOS zooms the page into anything smaller) and 44px controls ---- */
+.app.mobile .rv-foot.folded .rv-commit-open { flex: 1 1 auto; min-width: 0; min-height: 46px; padding: 0 var(--sp-5); font-size: var(--fs-base); }
+.app.mobile .rv-foot:not(.folded) textarea.field { min-height: 44px; padding: 10px 14px; font-size: var(--fs-lg); }
+.app.mobile .rv-foot:not(.folded) .btn { min-height: 44px; padding: 0 var(--sp-4); font-size: var(--fs-base); }

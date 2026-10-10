@@ -64,7 +64,7 @@ export function PeersSection() {
             <div key={p.id} className="row peer-row">
               <span className={clsx('dot', st.dot)} />
               <div className="grow">
-                <div>{p.name} <span className="mono muted" style={{ fontSize: 11.5 }}>{p.url}</span></div>
+                <div>{p.name} <span className="mono muted" style={{ fontSize: 12 }}>{p.url}</span></div>
                 <div className="sub">
                   <span className={clsx('badge', st.badge)}>{st.l}</span>
                   {p.state === 'online' && p.latencyMs !== undefined && <span className="lat"> · {p.latencyMs} ms</span>}

@@ -7,7 +7,7 @@ import { Icon } from '@/ui/icons';
 import { fillComposer } from '@/features/composer/fill';
 import { QuickConnect } from '@/features/providers/QuickConnect';
 import { loginInTerminal } from '@/features/providers/ConnectModel';
-import { currentStep, onboardingSteps, recentFolders } from './steps';
+import { STEP_TITLE, currentStep, onboardingSteps, recentFolders } from './steps';
 
 const STEP_LABEL = { login: '接一个模型', project: '选一个项目文件夹' } as const;
 
@@ -89,13 +89,13 @@ export function Onboarding() {
         </ol>
         {pending && (
           <>
-            <h3>欢迎使用 Claude Web</h3>
+            <h3>{STEP_TITLE.checking}</h3>
             <p className="ob-checking" role="status"><span className="spin" aria-hidden />正在检查登录…</p>
           </>
         )}
         {step === 'login' && (
           <>
-            <h3>欢迎使用 Claude Web</h3>
+            <h3>{STEP_TITLE.login}</h3>
             <p>先接一个模型：有 API Key（中转站、DeepSeek、Kimi、智谱……）就在下面填，测试通过就能用。有 Claude Pro / Max 订阅的，也可以直接用 Claude 账号。</p>
             {/* saved → a provider exists → this step drops out of `steps` and the folder step shows */}
             <QuickConnect makeDefault onDone={() => {}} />
@@ -109,7 +109,7 @@ export function Onboarding() {
         )}
         {step === 'project' && (
           <>
-            <h3>选一个项目文件夹</h3>
+            <h3>{STEP_TITLE.project}</h3>
             <p>Claude 在这个文件夹里读代码、改文件。以后可以在侧栏添加更多项目。</p>
             {folders.length > 0 && (
               <div className="ob-folders" role="list" aria-label="最近用过的文件夹">

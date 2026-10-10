@@ -1,22 +1,49 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store';
 import { getToolDef } from './tools/registry';
-import { basename, clsx } from '@/util';
-import { Icon } from '@/ui/icons';
+import { clsx } from '@/util';
+import { RUN_TAB_IN_MS, RUN_TAB_OUT_MS, elapsedText, lingerPhase, runStatus, swapCount, type LingerPhase, type RunStatus, type StepLabeler } from './run-status';
 
-function dur(ms: number) {
-  const s = Math.max(0, Math.round(ms / 1000));
-  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
+const stepLabel: StepLabeler = (name, input) => {
+  const def = getToolDef(name);
+  return { ...def.label(input), category: def.category };
+};
+
+/**
+ * Keeps the tab in the page for as long as its leaving takes, and says whether it came while the page was up (then it
+ * slides in) or was simply there when the conversation was drawn (then it does not) — see `lingerPhase`.
+ */
+function useLinger(on: boolean): LingerPhase {
+  const [shown, setShown] = useState(on);
+  const [entering, setEntering] = useState(false);
+  // derived while rendering, not in an effect: the render in which `on` turns true already draws it entering
+  if (on && !shown) { setShown(true); setEntering(true); }
+  useEffect(() => {
+    if (!entering) return;
+    // a little longer than the slide, so the class never goes before the animation's last frame
+    const t = setTimeout(() => setEntering(false), RUN_TAB_IN_MS + 60);
+    return () => clearTimeout(t);
+  }, [entering]);
+  useEffect(() => {
+    if (on || !shown) return;
+    const t = setTimeout(() => setShown(false), RUN_TAB_OUT_MS);
+    return () => clearTimeout(t);
+  }, [on, shown]);
+  return lingerPhase({ on, shown, entering });
 }
 
 /**
- * Pinned above the composer for the whole time a turn is in flight: what is happening right now,
- * how long it has been going, and one button to stop it.
+ * The status tab on the composer's top edge for the whole time a turn is in flight: what is happening right now,
+ * how long it has been going, how far along it is, and one button to stop it (UI refresh §6 「状态页签」).
  *
  * The transcript scrolls; this does not. Without it you have to scroll back to find out whether the
  * run is alive, which is the single most common thing a person wants to know mid-turn (same reason
  * Cursor and Manus pin theirs). The exceptional states — stalls, rate limits, errors — stay in
- * `StatusStrip`; this card is only the ordinary "it is working" case.
+ * `StatusStrip`; this is only the ordinary "it is working" case.
+ *
+ * It slides up from behind the composer when a turn starts and drops back when it ends (styles/composer.css:
+ * `.run-card.enter` / `.run-card.out`); new words come in with a short blur and rise (`.what.swap`, re-triggered by
+ * keying the node on the words).
  */
 export function RunCard({ sessionId }: { sessionId: string }) {
   const o = useStore((s) => s.open[sessionId]);
@@ -28,38 +55,34 @@ export function RunCard({ sessionId }: { sessionId: string }) {
     const t = setInterval(() => tick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, [running]);
-  if (!o || !running) return null;
-
-  const c = o.conv;
-  const rt = c.runningTool ? c.toolIndex.get(c.runningTool.id) : undefined;
-  const def = rt ? getToolDef(rt.name) : null;
-  const label = rt && def ? def.label(rt.input as any) : null;
-  const target = label?.arg ? (def!.category === 'read' || def!.category === 'edit' ? basename(label.arg) : label.arg) : '';
-
-  // how much of this turn is behind us, counted the way the timeline counts it
-  let done = 0, total = 0;
-  for (const it of c.items) {
-    if (it.kind === 'user' && !it.meta) { done = 0; total = 0; continue; }
-    if (it.kind !== 'assistant') continue;
-    for (const b of it.blocks) if (b.type === 'tool_use') { total++; if (b.status === 'done' || b.status === 'error') done++; }
+  const phase = useLinger(running);
+  // while it leaves, the tab keeps the turn's last words and time: the conversation itself has moved on (no step, no
+  // turn start), and words changing on the way out would play the swap animation on a tab that is going
+  const last = useRef<{ st: RunStatus; clock: string; waiting: boolean } | null>(null);
+  const words = useRef<{ key: string; n: number } | undefined>(undefined);
+  if (o && running) {
+    const st = runStatus(o.conv, o.state, stepLabel);
+    last.current = { st, clock: st.since ? elapsedText(Date.now() - st.since) : '', waiting: o.state === 'waiting' };
+    words.current = swapCount(words.current, st.key);
   }
-  const tasks = [...c.tasks.values()].filter((t) => t.status === 'running').length;
-  const since = c.turnStartedAt ?? c.runningTool?.since ?? c.lastEventAt;
+  const v = last.current;
+  if (phase === 'gone' || !v) return null;
+  const { st } = v;
+  const leaving = phase === 'out';
+  // the first words come with the tab (animated only when the tab itself slides in); every later change is animated
+  const swap = phase === 'enter' || (words.current?.n ?? 0) > 0;
 
   return (
-    <div className={clsx('run-card', o.state === 'waiting' && 'waiting')}>
-      <span className="pip" />
-      <span className="what">
-        {c.compacting ? '压缩上下文'
-          : o.state === 'waiting' ? '等待你的确认'
-            : rt ? <>{label?.verb || rt.name}{target && <span className="tgt">{target}</span>}</>
-              : '思考中'}
+    <div className={clsx('run-card', v.waiting && 'waiting', phase === 'enter' && 'enter', leaving && 'out')} data-kind={st.kind} aria-hidden={leaving || undefined}>
+      <span className="pip" aria-hidden />
+      <span key={st.key} className={clsx('what', swap && 'swap')}>
+        <span className="rc-words">{st.text}{st.target && <span className="tgt">{st.target}</span>}</span>
       </span>
-      {total > 0 && <span className="meta">{done}/{total} 步</span>}
-      {tasks > 0 && <span className="meta">{tasks} 个子代理</span>}
+      {st.total > 0 && <span className="meta">{st.done}/{st.total} 步</span>}
+      {st.tasks > 0 && <span className="meta">{st.tasks} 个子代理</span>}
       <span className="grow" />
-      {since && <span className="clock">{dur(Date.now() - since)}</span>}
-      <button className="btn xs ghost" title="中断这一轮 (Esc)" onClick={() => interrupt(sessionId)}><Icon name="stop" size={11} /> 停止</button>
+      {v.clock && <span className="clock">{v.clock}</span>}
+      <button type="button" className="rc-stop" title="中断这一轮 (Esc)" tabIndex={leaving ? -1 : undefined} onClick={() => { if (!leaving) void interrupt(sessionId); }}>停止</button>
     </div>
   );
 }

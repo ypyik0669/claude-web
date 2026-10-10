@@ -33,7 +33,7 @@ export function TrajectoryView() {
       <div className="traj">
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
           <input className="mono" placeholder="搜索工具调用…" value={q} onChange={(e) => setQ(e.target.value)} style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 4, padding: '4px 8px', width: 260 }} />
-          <span style={{ color: 'var(--fg-2)', fontSize: 12 }}>{rows.length} 次调用</span>
+          <span style={{ color: 'var(--fg-2)', fontSize: 13 }}>{rows.length} 次调用</span>
           {Object.entries(counts)
             .sort((a, b) => b[1] - a[1])
             .map(([n, c]) => (
@@ -62,7 +62,7 @@ export function TrajectoryView() {
                 </td>
                 <td>
                   <span className="mono" title={r.summary}>{r.summary}</span>
-                  {r.error && <div style={{ color: 'var(--red)', fontSize: 11.5 }}>{r.error}</div>}
+                  {r.error && <div style={{ color: 'var(--red)', fontSize: 12 }}>{r.error}</div>}
                 </td>
                 <td>
                   <span className={`badge ${r.status === 'done' ? 'ok' : r.status === 'error' ? 'err' : 'run'}`}>{r.status}</span>

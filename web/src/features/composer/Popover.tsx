@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { clsx } from '@/util';
-import { placeMenu, samePlacement, type Placement } from '@/features/models/place';
+import { placeMenu, samePlacement, withOrigin, type Placement } from '@/features/models/place';
 import { fieldStep, menuKey } from './dir-menu';
 import { useMenuClaim } from '@/ui/menus';
 import { imeComposing } from '@/ui/ime';
+import { useMenuMotion } from '@/ui/menu-motion';
+import { ActionSheet, useSheetMenu } from '@/ui/ActionSheet';
 
 const FIELD_KEYS = new Set(['ArrowUp', 'ArrowDown', 'Escape', 'Tab']);
 
@@ -16,6 +18,13 @@ const FIELD_KEYS = new Set(['ArrowUp', 'ArrowDown', 'Escape', 'Tab']);
  * click toggles it), Esc / Tab (focus back to the chip). ↑ ↓ Home End move between the rows (`[data-mi]`; a text
  * field can be one of them); inside a text field ↑ ↓ and Tab / Shift+Tab move on to the rows (a search box goes to
  * the first result after it) — Home / End move the caret.
+ *
+ * It scales in from its chip (`--menu-origin`, from the placement) and fades out when the pointer closes it; opened
+ * or closed from the keyboard it is simply there / gone (`useMenuMotion`, UI refresh §4.5).
+ *
+ * On a phone it is an action sheet from the bottom instead (UI refresh §8, ui/ActionSheet.tsx): the same root element
+ * with the same rows and the same keys, not placed — the sheet has the scrim, the handle and 取消, and the focus goes
+ * to the menu itself, not to a row or a field.
  */
 export function Popover({ anchor, onClose, prefer = 'up', align = 'left', className, label, children, role = 'menu' }: {
   anchor: RefObject<HTMLElement | null>;
@@ -35,14 +44,16 @@ export function Popover({ anchor, onClose, prefer = 'up', align = 'left', classN
   const placeRef = useRef<(() => void) | null>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  const sheet = useSheetMenu();
   useLayoutEffect(() => {
     const a = anchor.current;
-    if (!a) return;
+    if (!a || sheet) return; // a sheet is not placed
     const place = () => {
       const r = a.getBoundingClientRect();
       // the chip went away under the menu (the right panel hidden with Ctrl+J, its tab switched, the chip unmounted):
-      // close instead of floating at the window's corner
-      if (!a.isConnected || (r.width === 0 && r.height === 0)) { closeRef.current(false); return; }
+      // close instead of floating at the window's corner. A hidden right panel is still drawn while it fades out
+      // (floating.css), so `hidden` on an ancestor counts as gone too
+      if (!a.isConnected || (r.width === 0 && r.height === 0) || a.closest('[hidden]')) { closeRef.current(false); return; }
       const next = placeMenu(r, { vw: window.innerWidth, vh: window.innerHeight }, prefer, align, need.current);
       setPos((cur) => (samePlacement(cur, next) ? cur : next));
     };
@@ -51,22 +62,29 @@ export function Popover({ anchor, onClose, prefer = 'up', align = 'left', classN
     const onScroll = (e: Event) => { if (!box.current?.contains(e.target as Node)) place(); };
     const ro = new ResizeObserver(place); // moves the menu, never resizes what it observes
     for (const el of [a, a.closest('.composer'), a.closest('.pane'), a.closest('.dock'), document.body]) if (el) ro.observe(el);
+    // the right panel being hidden: its box keeps its size until it has faded out, the attribute changes at once
+    const dock = a.closest('.dock');
+    const mo = dock ? new MutationObserver(place) : null;
+    mo?.observe(dock!, { attributes: true, attributeFilter: ['hidden'] });
     window.addEventListener('resize', place);
     window.addEventListener('scroll', onScroll, true);
-    return () => { ro.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', onScroll, true); };
-  }, [anchor, prefer, align]);
+    return () => { ro.disconnect(); mo?.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', onScroll, true); };
+  }, [anchor, prefer, align, sheet]);
   // keep it inside the window horizontally (a right-aligned menu wider than the room to its left)
   useLayoutEffect(() => {
     const el = box.current;
     if (!pos || !el) return;
     if (need.current === undefined) { need.current = el.scrollHeight; placeRef.current?.(); return; }
-    const r = el.getBoundingClientRect();
-    if (r.left < 8 && pos.right !== undefined) setPos({ ...pos, right: undefined, left: 8 });
-    else if (r.right > window.innerWidth - 8 && pos.left !== undefined) setPos({ ...pos, left: undefined, right: 8 });
+    // layout numbers, not the bounding box: while it scales in, the box on screen is smaller than the menu
+    const left = el.offsetLeft, right = left + el.offsetWidth, vw = window.innerWidth;
+    const a = anchor.current?.getBoundingClientRect();
+    const moved = left < 8 && pos.right !== undefined ? { ...pos, right: undefined, left: 8 } : right > vw - 8 && pos.left !== undefined ? { ...pos, left: undefined, right: 8 } : null;
+    if (moved) setPos(a ? withOrigin(moved, a, vw) : moved);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pos]);
   // first paint: focus the checked row, else the first one (keyboard users land inside the menu)
   useLayoutEffect(() => {
-    if (!pos) return;
+    if (!pos) return; // (a sheet never has a position: it takes the focus itself)
     const rows = [...(box.current?.querySelectorAll<HTMLElement>('[data-mi]') ?? [])];
     (rows.find((b) => b.getAttribute('aria-checked') === 'true') ?? rows[0])?.focus({ preventScroll: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -95,6 +113,7 @@ export function Popover({ anchor, onClose, prefer = 'up', align = 'left', classN
   }, [anchor, onClose]);
   // the one anchored menu app-wide (closes the sidebar's, the header ···…); the settings page closes it too
   useMenuClaim(() => onClose(false));
+  const motion = useMenuMotion(() => box.current, [!!pos], sheet);
   const onKey = (e: React.KeyboardEvent) => {
     const t = e.target as HTMLElement;
     const field = t.tagName === 'INPUT' || t.tagName === 'TEXTAREA';
@@ -120,9 +139,18 @@ export function Popover({ anchor, onClose, prefer = 'up', align = 'left', classN
     if ('focus' in act) rows[act.focus]?.focus();
     else onClose(act.refocus);
   };
+  if (sheet) {
+    return (
+      <ActionSheet onClose={onClose}>
+        <div ref={box} className={clsx('menu cm', className)} role={role} aria-label={label} onKeyDown={onKey}>
+          {children}
+        </div>
+      </ActionSheet>
+    );
+  }
   if (!pos) return null;
   return createPortal(
-    <div ref={box} className={clsx('menu cm', className)} style={pos} role={role} aria-label={label} onKeyDown={onKey}>
+    <div ref={box} className={clsx('menu cm', className)} style={pos} role={role} aria-label={label} onKeyDown={onKey} {...motion}>
       {children}
     </div>,
     document.body,

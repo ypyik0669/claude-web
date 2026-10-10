@@ -76,7 +76,7 @@ function AgentCard({ a, onChange }: { a: AgentInfo; onChange: () => void }) {
         {/* AgentInfo.icon is an icon name (custom ACP agents may still carry an old glyph) */}
         <Icon name={(ICON_NAMES as string[]).includes(a.icon) ? (a.icon as IconName) : 'agent'} size={16} />
         <div className="grow">
-          <div title={`接入方式：${PROTO_LABEL[a.protocol]}`}>{a.name} <span className="mono muted" style={{ fontSize: 11.5 }}>{a.installed ? a.version || '已找到' : '未安装'}</span>{a.label && <span className="badge" style={{ marginLeft: 6, color: 'var(--blue)' }}>{a.label}</span>}</div>
+          <div title={`接入方式：${PROTO_LABEL[a.protocol]}`}>{a.name} <span className="mono muted" style={{ fontSize: 12 }}>{a.installed ? a.version || '已找到' : '未安装'}</span>{a.label && <span className="badge" style={{ marginLeft: 6, color: 'var(--blue)' }}>{a.label}</span>}</div>
           {/* where it was found: a copy inside the Codex desktop app / IDE extension is not on PATH, so say whose it is */}
           <div className="sub mono" title={a.path}>{a.from ? `用的是${a.from}自带的 ${a.command}` : `${a.command} ${a.args.join(' ')}`}{a.path && a.from ? ` · ${a.path}` : ''}</div>
           {a.probeError && <div className="sub agent-probe-err" data-probe-error title={a.probeError}>{a.probeError}</div>}
@@ -134,7 +134,7 @@ export function AgentsSection() {
     <div className="section">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <h5 style={{ margin: 0 }}>{TERMS.agents}</h5>
-        <span className="muted" style={{ fontSize: 12 }}>新对话在输入框的模型菜单里选；已有对话在右上角菜单里「{TERMS.handoff}」</span>
+        <span className="muted" style={{ fontSize: 13 }}>新对话在输入框的模型菜单里选；已有对话在右上角菜单里「{TERMS.handoff}」</span>
         <span className="grow" />
         <button className="btn sm ghost" onClick={addCustom} title="任何实现 Agent Client Protocol（ACP）的命令行 agent"><Icon name="plus" size={12} /> 自定义 Agent</button>
         <button className="btn sm ghost" disabled={busy} onClick={() => reload(true)}>{busy ? '检测中…' : '重新检测'}</button>

@@ -205,12 +205,18 @@ function guessName(ua: string) {
 
 /** The /pair page: reads the code from the URL fragment, asks for a device name, stores the token and opens the app. */
 export function pairPage() {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>配对 · Claude Web</title>
-<style>body{margin:0;font:16px system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:#1f1e1a;color:#ece9e2;display:flex;min-height:100vh;align-items:center;justify-content:center}
-.card{width:min(420px,92vw);background:#2a2925;border:1px solid #3a3934;border-radius:16px;padding:26px 22px}h1{font-size:20px;margin:0 0 6px}p{color:#a8a49b;margin:0 0 18px;font-size:14px}
-label{display:block;font-size:13px;color:#a8a49b;margin:12px 0 6px}input{width:100%;box-sizing:border-box;font:inherit;padding:12px;border-radius:10px;border:1px solid #3a3934;background:#1f1e1a;color:#ece9e2}
-input.code{font-size:26px;letter-spacing:8px;text-align:center;font-family:ui-monospace,Menlo,monospace}button{margin-top:18px;width:100%;font:inherit;font-weight:600;padding:13px;border:0;border-radius:10px;background:#d97757;color:#fff}
-.err{color:#e0655c;font-size:13px;margin-top:10px;min-height:18px}</style></head><body><div class="card"><h1>✱ 配对这台设备</h1><p>输入电脑上 Claude Web「远程访问」里显示的 6 位配对码。</p>
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#f7f6f2" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#12110f" media="(prefers-color-scheme: dark)"><title>配对 · Claude Web</title>
+<style>:root{--g:#f7f6f2;--c:#fefdfc;--f:#1c1917;--f2:#67625f;--e:#be2a27;--r:#a94900;--pf:#fefdfc}
+@media (prefers-color-scheme:dark){:root{--g:#12110f;--c:#1b1a18;--f:#eeedea;--f2:#a5a39e;--e:#ff8179;--r:#f9a56e;--pf:#1b1a18}}
+body{margin:0;font:16px Inter,system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei UI","Microsoft YaHei",sans-serif;background:var(--g);color:var(--f);display:flex;min-height:100vh;min-height:100dvh;align-items:center;justify-content:center;padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom);box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+.card{width:min(420px,100%);background:var(--c);border-radius:24px;padding:28px 24px;box-shadow:0 0 0 1px color-mix(in oklab,var(--f) 7%,transparent),0 12px 32px -16px rgba(40,30,20,.25)}
+h1{font:600 24px/32px "Songti SC","Noto Serif SC",SimSun,serif;margin:0 0 6px}h1 i{font-style:normal;color:#eb7f3b;margin-right:8px}p{color:var(--f2);margin:0 0 20px;font-size:14px;line-height:1.6}
+label{display:block;font-size:13px;color:var(--f2);margin:14px 0 6px}
+input{width:100%;box-sizing:border-box;font:inherit;height:48px;padding:0 14px;border-radius:10px;border:0;background:color-mix(in oklab,var(--f) 5%,transparent);color:var(--f);outline:none}input:focus{box-shadow:0 0 0 1.5px var(--r);background:var(--c)}
+input.code{height:60px;font-size:26px;letter-spacing:8px;text-align:center;font-family:ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace}
+button{margin-top:22px;width:100%;font:inherit;font-weight:600;height:48px;border:0;border-radius:999px;background:var(--f);color:var(--pf);touch-action:manipulation;transition:transform .12s cubic-bezier(.23,1,.32,1)}button:active{transform:scale(.98)}
+.err{color:var(--e);font-size:13px;margin-top:12px;min-height:18px}
+@media (prefers-reduced-motion:reduce){button{transition:none}button:active{transform:none}}</style></head><body><div class="card"><h1><i>✱</i>配对这台设备</h1><p>输入电脑上 Claude Web「远程访问」里显示的 6 位配对码。</p>
 <form id="f"><label>配对码</label><input class="code" id="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required><label>设备名称</label><input id="name" placeholder="例如 我的手机"><button>配对并打开</button><div class="err" id="err"></div></form></div>
 <script>const c=location.hash.slice(1);if(/^\\d{6}$/.test(c))document.getElementById('code').value=c;
 document.getElementById('f').onsubmit=async(e)=>{e.preventDefault();const err=document.getElementById('err');err.textContent='';

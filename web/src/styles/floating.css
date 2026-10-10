@@ -1,0 +1,159 @@
+/* UI refresh, phase 2 (docs/superpowers/specs/2026-10-10-ui-refresh/design.md §6): floating. Loaded after styles.css, so a rule here wins over the
+   older rule with the same selector there.
+
+   What floats: anchored menus, the segmented control, toasts, the card a permission / question / plan docks above the
+   composer, and the right panel coming and going. Motion (§4.5): only transform / opacity / colour move; a hover is
+   there at once and fades out in 150ms; a press scales to 0.96; what the keyboard triggers is not animated. */
+
+/* ============================================================ menus ============================================================
+   Every `.menu` (the composer's + / permission / branch menus and the right panel's 更多 / 审阅 menus — Popover; the
+   model menu; the project menu; the sidebar's and the session header's — useAnchoredMenu; the workbench's dropdowns):
+   radius 16, the --elev-2 ring instead of a border, 6px inside, rows 34px high with an 8px radius.
+   In: opacity + scale 0.96 → 1 from the anchor in 180ms. The code that places a menu also says where its anchor is
+   (`--menu-origin`: models/place.ts `menuOrigin`, sidebar/place.ts `spotOrigin`); a menu opened from the keyboard
+   carries `data-kb` and is simply there (ui/menu-motion.ts).
+   Out: the menu is unmounted at once, as always; when the pointer closed it an inert copy (`.leaving`, ui/ghost.ts)
+   fades out in its place for 120ms. */
+@keyframes fl-menu-in { from { opacity: 0; transform: scale(0.96); } }
+@keyframes fl-menu-out { to { opacity: 0; transform: scale(0.97); } }
+.menu { transform-origin: var(--menu-origin, 50% 0%); animation: fl-menu-in 180ms var(--ease-out); }
+.menu.ft-menu { --menu-origin: 0% 0%; } /* a right-click menu grows from the pointer, its top-left corner */
+.menu[data-kb] { animation: none; }
+.menu.leaving { animation: fl-menu-out 120ms var(--ease-in) forwards; pointer-events: none; }
+
+/* rows: the plain buttons of a menu (the sidebar's, the header's, the workbench's) and the composer menus' rows */
+.menu > button, .menu .sub-menu > button, .menu .menu-grid button, .menu.cm button[data-mi], .menu.dirmenu .dirmenu-list button { min-height: 34px; }
+.menu > button, .menu .sub-menu > button { padding: 5px 10px; }
+.menu.cm .cm-it.one { min-height: 34px; }
+.menu.cm .dock-more-open > button.x { min-height: 28px; align-self: center; border-radius: var(--r-sm); }
+/* hover: there at once, gone in 150ms */
+.menu button { transition: background-color 150ms linear, color 150ms linear; }
+.menu button:hover { transition-duration: 0s; }
+.menu .menu-label { padding: 8px 10px 4px; line-height: 16px; }
+.dirmenu-head { padding: 8px 10px 4px; font-size: var(--fs-meta); line-height: 16px; font-weight: 400; }
+.cm-h { padding: 8px 10px 4px; line-height: 16px; }
+/* the tick of the chosen row is the accent (§4.1: a selected tick is one of the few orange things) */
+.cm-ck, .dirmenu-check { color: var(--accent-text); }
+.menu.sb-filter button.on > svg.ck { color: var(--accent-text); }
+.menu.dirmenu .dirmenu-check { width: 16px; justify-content: center; }
+/* the usage card over the composer (a hover card, not a menu): the same shell, growing from its lower right corner */
+.ctx-card { border-radius: var(--r-xl); padding: 10px 12px; transform-origin: 100% 100%; animation: fl-menu-in 180ms var(--ease-out); }
+
+/* ============================================================ segmented control ============================================================
+   ui/Segmented.tsx: a pill-shaped track, equal-width options, and a shadowed thumb (::before) one option wide that
+   slides under the chosen one — `--seg-n` options, the `--seg-i`-th chosen (seg-math.ts). `.none`: nothing chosen,
+   no thumb. First used for 智能程度 in the model menu; settings and the right panel's tabs follow in phase 3. */
+.segmented { --seg-pad: 3px; position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); padding: var(--seg-pad); border-radius: var(--r-pill); background: var(--layer-selected); }
+.segmented::before { content: ''; position: absolute; top: var(--seg-pad); bottom: var(--seg-pad); left: var(--seg-pad); width: calc((100% - 2 * var(--seg-pad)) / var(--seg-n, 1)); border-radius: var(--r-pill); background: var(--surface-elev); box-shadow: var(--elev-1); transform: translateX(calc(var(--seg-i, 0) * 100%)); transition: transform 260ms var(--ease-sheet), opacity 150ms linear; pointer-events: none; }
+.segmented.none::before { opacity: 0; }
+/* (`.segmented > button` also out-ranks the generic `.menu button` when the control sits in a menu) */
+.segmented > button { position: relative; display: block; width: auto; min-width: 0; height: 28px; min-height: 0; padding: 0 6px; border-radius: var(--r-pill); background: none; font-size: var(--fs-sm); line-height: 18px; color: var(--ink-3); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color 150ms linear; }
+.segmented > button:hover, .segmented > button:active { background: none; color: var(--ink-1); transition-duration: 0s; }
+.segmented > button[aria-checked='true'] { color: var(--ink-1); }
+.segmented > button:disabled { opacity: 0.5; cursor: default; }
+.segmented > button:disabled:hover { color: var(--ink-3); }
+.segmented > button[aria-checked='true']:disabled:hover { color: var(--ink-1); }
+.segmented > button:focus-visible { outline-offset: -2px; }
+
+/* ============================================================ toasts ============================================================
+   ui/Toasts.tsx: ink pills at the top of the main column (just under its header), centred on it (the sidebar and the right panel are not
+   what a toast is about), the newest lowest and in front; up to three, each older one (`--depth`) above it, a little smaller
+   and fainter; `.over` waits behind them. In: down from under the header + scale with a little overshoot, 360ms. Out (`.out`): 200ms.
+   The radius is 20px (--r-bubble): one line is 36px tall, so that is a full pill; text that wraps (a failure with its
+   explanation and the original underneath) comes out a rounded card without anything measuring it. They are at the
+   top because the bottom belongs to the input box, its status tab and a docked approval card: a toast there covered
+   the card's buttons. They never take a click. `ok` shows a tick, anything else the alert mark: the shape is the
+   cue, in the pill's own ink, so it reads in every theme (four of them fill --primary with their accent). */
+@keyframes fl-toast-in { from { opacity: 0; transform: translateY(-14px) scale(0.92); } }
+@keyframes fl-toast-out { to { opacity: 0; transform: translateY(-8px) scale(0.96); } }
+.toast-wrap { position: fixed; z-index: 60; left: calc(var(--sb, 264px) + (100vw - var(--sb, 264px) - var(--rp, 0px)) / 2); right: auto; top: calc(var(--shell-gap) + var(--h-head) + 4px); bottom: auto; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; width: max-content; max-width: calc(100vw - 32px); pointer-events: none; }
+.app.no-sidebar .toast-wrap { left: calc((100vw - var(--rp, 0px)) / 2); }
+/* a phone: under the floating header and the 重新连接中 pill's place */
+.app.mobile .toast-wrap { left: 50%; top: calc(var(--h-head) + env(safe-area-inset-top, 0px) + 36px); }
+.toast { --depth: 0; display: flex; align-items: flex-start; gap: 8px; max-width: min(520px, 100%); padding: 8px 16px 8px 12px; border: 0; border-radius: var(--r-bubble); background: var(--primary); color: var(--primary-fg); box-shadow: var(--elev-2); font-size: var(--fs-sm); line-height: 20px; white-space: pre-line; overflow-wrap: anywhere; user-select: none; pointer-events: none; transform-origin: 50% 0; transform: scale(calc(1 - var(--depth) * 0.04)); opacity: calc(1 - var(--depth) * 0.14); transition: transform 260ms var(--ease-sheet), opacity 200ms linear; animation: fl-toast-in 360ms var(--ease-pop); }
+.toast.ok { border: 0; }
+.toast.over { display: none; }
+.toast.out { animation: fl-toast-out 200ms var(--ease-in) forwards; }
+.toast .toast-ic { flex: none; margin-top: 3px; opacity: 0.85; }
+.toast .toast-t { min-width: 0; }
+
+/* ============================================================ the docked card ============================================================
+   features/chat/PermissionCards.tsx (a permission, a question, a plan): radius 24, the --elev-2 ring, a tinted round
+   icon and one sentence on top, the command on a borderless fill, pill buttons with the main one in ink.
+   In: rises 14px and fades in, 380ms. Out: an inert copy (`.pdock-out`, ui/ghost.ts — never `.pdock`, so nothing that
+   looks the card up finds it) floats where the card was and drops away in 180ms, over whatever took its place.
+   The narrow layout (允许一次 on its own row) is styles.css's container query; both classes are containers. */
+@keyframes fl-card-in { from { opacity: 0; transform: translateY(14px) scale(0.985); } }
+@keyframes fl-card-out { to { opacity: 0; transform: translateY(10px) scale(0.98); } }
+@keyframes fl-fade-in { from { opacity: 0; } }
+.pdock, .pdock-out { container-type: inline-size; margin: 0 0 10px; padding: 14px; border-radius: var(--r-2xl); background: var(--surface-elev); box-shadow: var(--elev-2); }
+.pdock { animation: fl-card-in 380ms var(--ease-sheet); }
+.pdock-out { z-index: 2; pointer-events: none; animation: fl-card-out 180ms var(--ease-in) forwards; }
+.app.mobile .pdock, .app.mobile .pdock-out { margin: 0 0 8px; padding: 12px; border-radius: var(--r-2xl); }
+/* the next request taking the place of an answered one: the card stays, its content fades in under the leaving copy */
+.pdock > .pd-head, .pdock > .pd-body, .pdock > .pd-actions { animation: fl-fade-in 200ms linear; }
+.pd-head { gap: 10px; min-height: 28px; font-size: var(--fs-base); line-height: 20px; }
+.pd-head .pd-ic { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--warn-soft); color: var(--warn); }
+.pd-where { font-size: var(--fs-meta); color: var(--ink-4); }
+.pd-body { margin: 10px 0 0; }
+.pd-cmd { gap: 10px; padding: 10px 12px; border: 0; border-radius: var(--r-md); background: var(--fill-subtle); font-size: var(--fs-code); line-height: 20px; }
+.pd-scroll { border-radius: var(--r-md); }
+.pd-scroll.jt { padding: 8px; border: 0; border-radius: var(--r-md); background: var(--fill-subtle); }
+.pd-plan { padding: 4px 14px; border: 0; border-radius: var(--r-md); background: var(--fill-subtle); }
+.pd-note { font-size: var(--fs-meta); line-height: 16px; }
+/* a question's options: borderless rows on a fill; the chosen one is ringed and its mark is the accent */
+.pdock .q-opt, .pdock-out .q-opt { width: 100%; text-align: left; margin: 6px 0; padding: 8px 12px; border: 0; border-radius: var(--r-md); background: var(--fill-subtle); transition: background-color 150ms linear, box-shadow 150ms linear; }
+.pdock .q-opt:hover { background: var(--layer-selected); transition-duration: 0s; }
+.pdock .q-opt.sel, .pdock-out .q-opt.sel { background: var(--layer-selected); box-shadow: inset 0 0 0 1px var(--edge-strong); }
+.pdock .q-opt .opt-mark, .pdock-out .q-opt .opt-mark { flex: none; margin-top: 2px; color: var(--ink-4); }
+.pdock .q-opt.sel .opt-mark, .pdock-out .q-opt.sel .opt-mark { color: var(--accent-text); }
+.pdock-out .q-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pdock-out .q-l { color: var(--ink-1); }
+.pd-other { height: 34px; margin-top: 2px; padding: 0 12px; border: 0; border-radius: var(--r-md); background: var(--layer-hover); font-size: var(--fs-base); }
+.pd-actions { gap: 8px; margin-top: 12px; }
+.pd-hint { font-size: var(--fs-meta); line-height: 16px; }
+/* pills: 拒绝 plain, 总是允许 ringed, the main one in ink; a press scales */
+.pd-actions .btn { min-height: 32px; padding: 0 14px; border: 0; box-shadow: inset 0 0 0 1px var(--edge-strong); font-size: var(--fs-sm); transition: background-color 150ms linear, color 150ms linear, transform 80ms var(--ease-out); }
+.pd-actions .btn:hover { transition-duration: 0s, 0s, 80ms; }
+.pd-actions .btn:active { transform: scale(0.96); }
+.pd-actions .btn:disabled:active { transform: none; }
+.pd-actions .btn[data-act='deny'], .pd-actions .btn.ghost { box-shadow: none; color: var(--ink-2); }
+.pd-actions .btn[data-act='deny']:hover, .pd-actions .btn.ghost:hover { color: var(--ink-1); }
+.pd-actions .btn.primary { box-shadow: none; }
+.pd-main .pd-kbd { padding: 0 5px; border: 0; border-radius: var(--r-xs); background: color-mix(in oklab, var(--primary-fg) 22%, transparent); font-size: var(--fs-micro); line-height: 16px; opacity: 1; }
+
+/* ============================================================ the right panel coming and going ============================================================
+   The columns never animate: a column is its new width in one step (styles.css used to ease grid-template-columns).
+   Opening: the column is there at once and the panel card slides in from 24px to the right and fades in, 260ms —
+   when it becomes visible, and when it is restored from its icon rail.
+   Closing: the store hides the panel and gives up its column at once; the Dock marks the app `data-rp-closing` and
+   keeps the width the column had in `--rp-was` (Dock.tsx, dock-closing.ts). While the mark is there the column keeps
+   that width (the same clamp as styles.css) and the panel stays on screen, exactly the size it was — a terminal in
+   it is never resized on the way out — fading for 150ms; when `fl-rp-out` ends the Dock takes the mark away and the
+   column and the panel go in the same frame. The panel is only ever hidden, never unmounted.
+   The phone's bottom sheet (styles/phone-sheet.css) has its own motion. */
+.app { transition: none; }
+@keyframes fl-rp-in { from { opacity: 0; transform: translateX(24px); } }
+@keyframes fl-rp-out { to { opacity: 0; } }
+.app:not(.mobile) > .rpanel:has(> .dock:not(.min)) { animation: fl-rp-in 260ms var(--ease-sheet); }
+.app[data-rp-closing]:not(.mobile) { grid-template-columns: var(--sb, 264px) 1fr min(var(--rp-was, 0px), max(300px, calc(100vw - var(--sb, 264px) - 360px))); }
+.app[data-rp-closing].no-sidebar:not(.mobile) { grid-template-columns: 1fr min(var(--rp-was, 0px), max(300px, calc(100vw - 360px))); }
+/* (`display` is inline on the element — App — hence !important; the selector out-ranks the opening rule above.
+   Dock.tsx waits for this animation by name) */
+.app[data-rp-closing]:not(.mobile) > .rpanel:has(> .dock:not(.min)) { display: flex !important; pointer-events: none; animation: fl-rp-out 150ms var(--ease-in) forwards; }
+.app[data-rp-closing]:not(.mobile) > .rpanel > .dock[hidden] { display: flex; }
+/* the desktop app (Windows / Linux): rows make room for the caption buttons depending on whether the right panel is
+   open (`.dock-open`, off the moment it closes). While the panel fades they keep the padding (and corner) they had:
+   a step with a delay as long as the fade, on the same clock — it lands in the frame the column goes */
+html.desktop:not(.mac) .app[data-rp-closing] :is(.groupbar, .tabstrip, .sess-head, .welcome-top, .auto-head, .dock-tabs, .pane, .rpanel) { transition: padding 0s linear 150ms, border-radius 0s linear 150ms; }
+
+/* ============================================================ 减少动态效果 ============================================================
+   tokens.css already ends every animation at once; what is left here are the transitions that move things. */
+:root[data-reduce-motion='1'] .segmented::before { transition: opacity 80ms linear; }
+:root[data-reduce-motion='1'] .toast { transition: opacity 80ms linear; }
+:root[data-reduce-motion='1'] .pd-actions .btn:active { transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .segmented::before { transition: opacity 80ms linear; }
+  .toast { transition: opacity 80ms linear; }
+  .pd-actions .btn:active { transform: none; }
+}

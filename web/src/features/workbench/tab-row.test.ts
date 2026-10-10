@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { CAPTION_W, MIN_STRIP, SEP_W, SIDE_PAD, STACK_HYSTERESIS, countText, panelColumnWidth, rowStacked, tempsFolded, type RowMeasure } from './tab-row';
+import { CAPTION_W, MIN_STRIP, SEP_W, SHELL_GAP, SIDE_PAD, STACK_HYSTERESIS, captionHeight, captionRow, countText, panelColumnWidth, rowStacked, tempsFolded, type RowMeasure } from './tab-row';
 
-// the default right panel's numbers on the desktop app (ui-smoke measures the real ones): four text tabs with 8px
-// sides and the count's two-digit room ≈ 200, 更多 + hide = 58, two 2px gaps, 12px left padding
+// the default right panel's numbers on the desktop app (ui-smoke measures the real ones): four 13px text tabs with 8px
+// sides and the count's two-digit room ≈ 201, 更多 + hide = 62, two 2px gaps, 12px left padding
 const at = (viewport: number, sidebar = 264, dock = 440): RowMeasure => ({
-  row: panelColumnWidth({ dock, viewport, sidebar }) - 1,
+  row: panelColumnWidth({ dock, viewport, sidebar }) - SHELL_GAP,
   padLeft: 12,
-  fixed: 200,
-  controls: 58,
+  fixed: 201,
+  controls: 62,
   gaps: 4,
 });
 
@@ -21,7 +21,7 @@ describe('right panel tab row', () => {
 
   it('1440 wide, default panel: the row stays beside the caption buttons (the reported 280 > 277 is gone)', () => {
     const m = at(1440);
-    expect(m.row - m.padLeft - CAPTION_W).toBe(277);
+    expect(m.row - m.padLeft - CAPTION_W).toBe(278); // 440 − 8 (the card's gap) − 12 − 142
     expect(rowStacked(false, m, true)).toBe(false);
     // and a row that was down (a narrower window a moment ago) comes back up: it fits with the hysteresis to spare
     expect(rowStacked(true, m, true)).toBe(false);
@@ -62,5 +62,36 @@ describe('right panel tab row', () => {
     expect(countText(42)).toBe('42');
     expect(countText(99)).toBe('99');
     expect(countText(1400)).toBe('99+');
+  });
+
+  it('the caption buttons sit over a head row in the default interface, a bar with the workbench tools', () => {
+    const base = { settings: false, dockOpen: false, workbench: false, groupBar: false, chromeRow: false };
+    expect(captionRow(base)).toBe('head'); // a session header, the home page, the automation page
+    expect(captionRow({ ...base, dockOpen: true })).toBe('head'); // the default right panel's tab row
+    expect(captionRow({ ...base, chromeRow: true })).toBe('bar'); // a tab strip (split view, a document in front)
+    expect(captionRow({ ...base, workbench: true, groupBar: true, chromeRow: true })).toBe('bar'); // the group bar
+    expect(captionRow({ ...base, workbench: true, groupBar: true, chromeRow: true, dockOpen: true })).toBe('bar'); // the panel's row under a group bar
+    expect(captionRow({ ...base, workbench: true, chromeRow: true, dockOpen: true })).toBe('head'); // …without one it is a head row
+    // the default panel's row stays a head row beside a group bar (two groups, the tools off)
+    expect(captionRow({ ...base, groupBar: true, chromeRow: true, dockOpen: true })).toBe('head');
+    // the settings page covers all of it: its drag strip is a head row whatever is under the page
+    expect(captionRow({ ...base, settings: true, workbench: true, groupBar: true, chromeRow: true, dockOpen: true })).toBe('head');
+  });
+
+  it('their area ends where that row ends: never below it, the glyphs half a gap above the icons of the row', () => {
+    const px = { gap: SHELL_GAP, head: 52, bar: 40 };
+    expect(captionHeight('head', px)).toBe(60);
+    expect(captionHeight('bar', px)).toBe(48);
+    for (const row of ['head', 'bar'] as const) {
+      const h = captionHeight(row, px), rowH = row === 'head' ? px.head : px.bar;
+      expect(h).toBeLessThanOrEqual(px.gap + rowH); // what is under the row is never covered
+      expect(px.gap + rowH / 2 - h / 2).toBe(px.gap / 2); // glyph centre vs the row's centre
+    }
+    expect(captionHeight('head', { ...px, gap: 4 })).toBe(56); // compact density
+    expect(captionHeight('head', { ...px, gap: 0 })).toBe(52); // Linux: the card touches the window's edge
+    // a stylesheet that has not loaded (NaN from parseFloat('')) gives the default, and a wild value is clamped
+    expect(captionHeight('head', { gap: NaN, head: NaN, bar: NaN })).toBe(60);
+    expect(captionHeight('head', { gap: 8, head: 400, bar: 40 })).toBe(80);
+    expect(captionHeight('bar', { gap: 0, head: 52, bar: 10 })).toBe(32);
   });
 });

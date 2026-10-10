@@ -135,7 +135,7 @@ function GroupCard({ group, states, providers, enabled, baseUrl }: { group: Gate
           <option value="failover">按顺序故障转移</option>
           <option value="round-robin">加权轮询</option>
         </select>
-        <label className="muted" style={{ fontSize: 12, display: 'flex', gap: 4, alignItems: 'center' }} title="请求转成 Anthropic 发给成员时，缓存断点用 1 小时 TTL（写入 2× 基础价；默认 5 分钟 1.25×）">
+        <label className="muted" style={{ fontSize: 13, display: 'flex', gap: 4, alignItems: 'center' }} title="请求转成 Anthropic 发给成员时，缓存断点用 1 小时 TTL（写入 2× 基础价；默认 5 分钟 1.25×）">
           <input type="checkbox" checked={!!draft.cache1h} onChange={(e) => edit({ cache1h: e.target.checked })} /> 1 小时缓存
         </label>
         <code className="muted" title="这个组的入口地址">{baseUrl}/{group.id}</code>
@@ -154,7 +154,7 @@ function GroupCard({ group, states, providers, enabled, baseUrl }: { group: Gate
               <span className="gw-order">{i + 1}</span>
               <span className={clsx('dot', health === 'ok' ? 'running' : health === 'cooling' ? 'waiting' : health === 'disabled' ? 'error' : 'idle')} />
               <div className="grow">
-                <div>{p?.name ?? '（供应商已删除）'} <span className="muted" style={{ fontSize: 11 }}>{p ? TYPE_LABEL[p.type] ?? p.type : ''}</span></div>
+                <div>{p?.name ?? '（供应商已删除）'} <span className="muted" style={{ fontSize: 12 }}>{p ? TYPE_LABEL[p.type] ?? p.type : ''}</span></div>
                 <div className="sub">
                   {health === 'cooling' ? `冷却中 · 还剩 ${left(s?.cooldownUntil)}` : health === 'disabled' ? '已停用' : health === 'ok' ? `正常${s?.lastOkAt ? ` · ${since(s.lastOkAt)}` : ''}` : '未使用'}
                   {s?.lastError ? ` · ${s.lastError}` : ''}
@@ -178,7 +178,7 @@ function GroupCard({ group, states, providers, enabled, baseUrl }: { group: Gate
       </div>
 
       <div className="gw-map">
-        <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>模型映射（入口模型 → 出口模型，支持 <code>*</code> 通配；成员的「固定模型」优先）</div>
+        <div className="muted" style={{ fontSize: 13, marginBottom: 4 }}>模型映射（入口模型 → 出口模型，支持 <code>*</code> 通配；成员的「固定模型」优先）</div>
         {mapRows.map(([k, v], i) => (
           <div key={i} className="gw-map-row">
             <input className="field" value={k} placeholder="claude-*sonnet*" onChange={(e) => { setMapRows(mapRows.map((r, j) => (j === i ? [e.target.value, r[1]] : r))); setDirty(true); }} aria-label="入口模型" />

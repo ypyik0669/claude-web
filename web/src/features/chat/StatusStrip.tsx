@@ -25,8 +25,11 @@ function countdown(at: number) {
   return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
 }
 
-/** Chips between the transcript and the composer: stall / compaction / error taxonomy / rate limit / context / queue. */
-export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onRecall: (text: string) => void }) {
+/**
+ * Chips between the transcript and the composer: stall / error taxonomy / rate limit / auto-continue / context.
+ * The queued messages are not here any more: they are cards of their own under this strip (QueueCards.tsx).
+ */
+export function StatusStrip({ sessionId }: { sessionId: string }) {
   const o = useStore((s) => s.open[sessionId]);
   const meta = useStore((s) => s.sessionMeta[sessionId]);
   const providers = useStore((s) => s.providers);
@@ -46,7 +49,7 @@ export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onReca
   // the percentage itself is the composer ring's job; here only the action, and only when it is nearly full
   const cuWarn = cu && cu.percentage >= 95;
   // the ordinary running states (tool / quiet / compacting) are the run card's job now; what is left
-  // here is only what the run card cannot say: it is stuck, it failed, it is throttled, it is queued
+  // here is only what the run card cannot say: it is stuck, it failed, it is throttled
   const alarm = stall?.kind === 'no_model' || stall?.kind === 'no_reply' ? stall : null;
   const upstream = o.info?.providerName ? `「${o.info.providerName}」` : '';
   // the Claude account was never logged in (「Not logged in · Please run /login」 — there is no /login here): a retry
@@ -65,7 +68,7 @@ export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onReca
   };
   // on the Claude account, not on the providers the user added: say so, one click over (account-fail.ts)
   const accountFail = !!showErr && !noLogin && accountFailed({ sessionId, errorKind: res?.errorKind, agent: o.info?.agent, hasInfo: !!o.info, live: o.info?.providerId, recorded: meta?.providerId, providers: providers.length });
-  const nothing = !alarm && !showErr && !rlActive && !armed && !o.queue.length && !cuWarn;
+  const nothing = !alarm && !showErr && !rlActive && !armed && !cuWarn;
   if (nothing) return null;
   const resetAt = rl?.resetsAt ? rl.resetsAt * (rl.resetsAt < 1e12 ? 1000 : 1) : undefined;
   return (
@@ -117,19 +120,6 @@ export function StatusStrip({ sessionId, onRecall }: { sessionId: string; onReca
           {cu.overLimit ? '上下文已超限' : '上下文快满了'}
           <button className="link" onClick={() => st().send(sessionId, '/compact')}>/compact 压缩</button>
         </span>
-      )}
-      {o.queue.length > 0 && (
-        <div className="queue-list">
-          {o.queue.map((q, i) => (
-            <div key={q.id} className="queue-item">
-              <span className="pos">#{i + 1}</span>
-              <span className="tx" title={q.text}>{q.text.slice(0, 120)}{q.text.length > 120 ? '…' : ''}{q.attachments?.length ? ` · ${q.attachments.length} 个附件` : ''}{q.images?.length ? ` · ${q.images.length} 张图` : ''}</span>
-              <button className="link" title="撤回到输入框" onClick={() => { const m = st().recall(sessionId, q.id); if (m) onRecall(m.text); }}>撤回</button>
-              <button className="link" title="中断当前轮，立刻发送这条" onClick={() => st().stopAndRun(sessionId, q.id)}>停止并发送</button>
-            </div>
-          ))}
-          <div className="tool-meta">排队消息在当前轮结束后按顺序发送 · 用「插话」可以不中断地传递指令</div>
-        </div>
       )}
       {/* keep the strip subscribed to the ws so the compact request resolves */}
       <span hidden>{String(!!ws)}</span>

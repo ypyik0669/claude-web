@@ -262,7 +262,7 @@ export function GitView({ cwd, visible = true }: { cwd: string; visible?: boolea
               <button className="btn sm" onClick={() => setNewWt(null)}>取消</button>
             </div>
           ) : (
-            <div className="row"><button className="btn sm" onClick={() => setNewWt({ name: '', from: '' })} title="放在 .claude/worktrees/<名称>，和 Claude Code 的 --worktree 一致"><Icon name="plus" size={12} /> 新建独立副本</button><span className="muted" style={{ fontSize: 11.5 }}>仓库的另一份检出，在自己的分支上改，不动当前目录</span></div>
+            <div className="row"><button className="btn sm" onClick={() => setNewWt({ name: '', from: '' })} title="放在 .claude/worktrees/<名称>，和 Claude Code 的 --worktree 一致"><Icon name="plus" size={12} /> 新建独立副本</button><span className="muted" style={{ fontSize: 12 }}>仓库的另一份检出，在自己的分支上改，不动当前目录</span></div>
           )}
         </div>
       )}

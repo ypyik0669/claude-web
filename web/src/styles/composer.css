@@ -1,0 +1,222 @@
+/* UI refresh, phase 2 (docs/superpowers/specs/2026-10-10-ui-refresh/design.md §6): composer. Loaded after styles.css, so a rule here wins over the
+   older rule with the same selector there.
+
+   What is drawn here (§6 rows 输入框 · 发送键 · 运行中的输入框 · 状态页签):
+     .composer > .composer-inner > [.status-strip] [.run-card | .pdock] .composer-box
+     .composer-box[data-state] > [.composer-glow > i] [.attach] textarea .composer-bar.cb
+     .cb > .cb-left (.plus · .dirpick · .branch-chip) · .grow · .cb-right (.cb-status · .ctx-meter · model chip · .perm-chip · mic · .steer · .send)
+   States come from the components: .send[data-state=empty|ready|working|running] (composer/send-state.ts),
+   .composer-glow only while the conversation runs, .run-card.enter / .out (chat/run-status.ts), .composer[data-paused]
+   while something lies over the conversation.
+
+   Motion (§4.5): a hover fill comes at once and leaves in 150ms; a press is scale(0.96); only transform, opacity,
+   filter and colour move. The numbers that are not tokens are the variables on .composer below — one place to change
+   them, and the two 减少动态效果 blocks at the end switch them off. */
+
+.composer {
+  --cmp-hover-out: 150ms;                        /* a hover fill's way out */
+  --cmp-press: scale(0.96);
+  --cmp-up-off: scale(0.3) translateY(-8px);     /* the send arrow when it is not the button's face */
+  --cmp-sq-off: scale(0.3) rotate(-90deg);       /* the stop square when it is not */
+  --cmp-tab-in: 300ms;                           /* = RUN_TAB_IN_MS (chat/run-status.ts) */
+  --cmp-tab-out: 160ms;                          /* = RUN_TAB_OUT_MS: the tab is unmounted after it */
+  --cmp-swap: 300ms;                             /* new words on the tab */
+  --cmp-sweep: 2.2s;                             /* the sweep across the tab's words */
+  --cmp-pulse: 1.4s;                             /* the tab's dot */
+  --cmp-glow: 3.2s;                              /* the light's turn around the box */
+  padding: 6px var(--sp-6) var(--sp-4);
+}
+.app.mobile .composer { --cmp-press: scale(0.98); }
+
+/* ---- the box: no border, a shadow ring; in use the ring deepens and a 4px halo of the accent comes around it.
+   Both shadow lists have the same four layers, so only their colours change (the halo's goes from nothing) ---- */
+.composer-box {
+  position: relative;
+  padding: 10px 10px 10px 12px;
+  border: 0;
+  border-radius: var(--r-2xl);
+  background: var(--surface-elev);
+  box-shadow: var(--elev-composer), 0 0 0 4px transparent;
+  transition: box-shadow var(--dur-base) var(--ease-out);
+}
+.composer-box:focus-within {
+  box-shadow: 0 0 0 1px var(--edge-strong), 0 2px 4px rgba(var(--shade), calc(0.04 * var(--shade-a))), 0 12px 28px -12px rgba(var(--shade), calc(0.16 * var(--shade-a))), 0 0 0 4px color-mix(in oklab, var(--accent) 14%, transparent);
+}
+.composer-box > .attach { padding: 2px 4px 0; }
+
+.composer textarea { display: block; width: 100%; min-height: 36px; max-height: 280px; padding: 4px 6px 8px; border: 0; background: transparent; resize: none; font-size: var(--fs-body); line-height: 24px; color: var(--ink-1); }
+.composer textarea::placeholder { color: var(--ink-4); }
+.composer textarea:focus-visible { outline: none; }
+.welcome .composer textarea { min-height: 60px; }
+
+/* ---- the row under the text: never wraps; a size container that drops the chips' words when narrow ---- */
+.composer-bar.cb { container-type: inline-size; display: flex; align-items: center; flex-wrap: nowrap; gap: 2px; margin: 0; min-width: 0; }
+.cb-left, .cb-right { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; }
+.cb-right { justify-content: flex-end; }
+.cb > .grow { flex: 1 1 0; min-width: var(--sp-2); }
+
+/* everything in the row that fills on hover: at once in, --cmp-hover-out out, and a press shrinks it a little */
+.cb .icon-btn, .cb .ctx-meter, .cb .steer {
+  transition: background-color var(--cmp-hover-out), color var(--cmp-hover-out), transform var(--dur-instant) var(--ease-out);
+}
+.cb .icon-btn:hover, .cb .ctx-meter:hover, .cb .steer:hover { transition-duration: 0s, 0s, var(--dur-instant); }
+/* the ones a menu hangs from (+, project, branch, model, permission) shrink the same way but let go at once: their
+   menu is placed from the chip's box the moment the click opens it, and a chip still at 96% would put it a few px off */
+.cb .plus, .cb .cchip, .cb .dirpick, .cb .mm-anchor > .chip {
+  transition: background-color var(--cmp-hover-out), color var(--cmp-hover-out), transform 0s;
+}
+.cb .plus:hover, .cb .plus.open, .cb .cchip:hover, .cb .cchip.open, .cb .dirpick:hover, .cb .dirpick.active, .cb .mm-anchor > .chip:hover, .cb .mm-anchor > .chip.active {
+  transition-duration: 0s;
+}
+.cb .plus:active, .cb .cchip:active, .cb .dirpick:active, .cb .mm-anchor > .chip:active {
+  transition: background-color 0s, color 0s, transform var(--dur-instant) var(--ease-out);
+}
+.cb .plus:active:not(:disabled), .cb .cchip:active:not(:disabled), .cb .dirpick:active, .cb .mm-anchor > .chip:active:not(:disabled), .cb .icon-btn:active:not(:disabled), .cb .steer:active:not(:disabled) {
+  transform: var(--cmp-press);
+}
+
+/* `+`: a circle with a hairline ring */
+.cb .plus { flex: none; width: 32px; height: 32px; margin-right: var(--sp-1); display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--edge-default); color: var(--ink-2); }
+.cb .plus:hover, .cb .plus.open { background-color: var(--layer-hover); color: var(--ink-1); }
+.cb .plus:disabled { opacity: 0.4; }
+
+/* chips (project, branch, model, permission): no outline, a fill on hover / while their menu is open */
+.cb .cchip, .cb .dirpick, .cb .mm-anchor > .chip { height: 32px; min-height: 32px; min-width: 0; max-width: 100%; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border: 0; border-radius: var(--r-pill); background-color: transparent; font-size: var(--fs-sm); color: var(--ink-2); white-space: nowrap; }
+.cb .cchip:hover, .cb .cchip.open, .cb .dirpick:hover, .cb .dirpick.active, .cb .mm-anchor > .chip:hover, .cb .mm-anchor > .chip.active { background-color: var(--layer-hover); color: var(--ink-1); }
+.cb .cchip:disabled, .cb .mm-anchor > .chip:disabled { opacity: 0.5; }
+.cb .cchip > svg, .cb .dirpick .dirpick-ic { color: var(--ink-3); flex: none; transition: color var(--cmp-hover-out); }
+.cb .cchip:hover > svg, .cb .cchip.open > svg, .cb .dirpick:hover .dirpick-ic, .cb .dirpick.active .dirpick-ic { color: var(--ink-1); transition-duration: 0s; }
+.cb .caret { display: inline-flex; flex: none; color: var(--ink-4); opacity: 1; }
+.cb .cc-l, .cb .dirpick-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cb .dirpick { max-width: 200px; flex: 0 1 auto; }
+.cb .branch-chip { max-width: 180px; flex: 0 1 auto; }
+.cb .perm-chip { flex: none; }
+.cb .perm-chip.danger, .cb .perm-chip.danger > svg { color: var(--err); }
+.cb .perm-chip.compact .opt { display: none; }
+.cb .mm-anchor { flex: 0 1 auto; min-width: 0; }
+.cb .mm-chip-label { max-width: 300px; }
+.cb .icon-btn { width: 32px; height: 32px; }
+.cb .ctx-meter { height: 32px; min-width: 32px; }
+.cb-status { padding: 0 var(--sp-2); font-size: var(--fs-sm); color: var(--ink-4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* 插话 / 拒绝并发送: a pill with a ring, beside the round button */
+.cb .steer { flex: none; height: 32px; display: inline-flex; align-items: center; gap: 4px; padding: 0 12px; border: 0; border-radius: var(--r-pill); box-shadow: inset 0 0 0 1px var(--edge-default); font-size: var(--fs-sm); color: var(--ink-2); white-space: nowrap; }
+.cb .steer:hover { background-color: var(--layer-hover); color: var(--ink-1); }
+.cb .steer.deny { color: var(--ink-1); box-shadow: inset 0 0 0 1px var(--edge-strong); }
+.cb .steer:disabled { opacity: 0.4; cursor: default; background-color: transparent; }
+
+@container (max-width: 560px) {
+  .cb .opt { display: none; }
+  .cb .cchip, .cb .dirpick { padding: 0 8px; }
+  .cb .mm-chip-label { max-width: 220px; }
+}
+@container (max-width: 400px) {
+  .cb .mm-chip-suffix { display: none; }
+  .cb .mm-anchor > .chip .caret { display: none; }
+}
+.app.mobile .cb .mm-anchor > .chip, .app.mobile .cb .cchip, .app.mobile .cb .dirpick { padding: 0 8px; }
+
+/* ---- send: one circle that changes in place. Nothing to send: ink at 15%. Something: ink. A turn in flight: the
+   same circle is the stop square. The arrow and the square are both always there; the one that is not the face is
+   small, turned away and transparent, so a change is a cross-fade with a pop (240ms). ---- */
+.cb .send {
+  position: relative; flex: none; width: 34px; height: 34px; margin-left: var(--sp-1);
+  display: inline-block; border-radius: 50%;
+  background-color: var(--primary); color: var(--primary-fg);
+  transition: background-color var(--dur-base) var(--ease-out), transform var(--dur-instant) var(--ease-out);
+}
+.cb .send:hover { transform: none; background-color: color-mix(in oklab, var(--primary) 86%, var(--surface-elev)); transition-duration: 0s, var(--dur-instant); }
+.cb .send:active { transform: var(--cmp-press); }
+.cb .send:disabled { background-color: color-mix(in oklab, var(--fg) 15%, transparent); color: var(--surface-elev); cursor: default; transform: none; }
+.cb .send.stop { background-color: var(--primary); color: var(--primary-fg); }
+.cb .send.stop:hover { background-color: color-mix(in oklab, var(--primary) 86%, var(--surface-elev)); }
+.send .send-ic { position: absolute; inset: 0; display: grid; place-items: center; transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-slow) var(--ease-pop); }
+.send .send-ic.sq { opacity: 0; transform: var(--cmp-sq-off); }
+.send .send-ic.sq::before { content: ''; width: 12px; height: 12px; border-radius: var(--r-xs); background: currentColor; }
+.send[data-state='running'] .send-ic.up { opacity: 0; transform: var(--cmp-up-off); }
+.send[data-state='running'] .send-ic.sq { opacity: 1; transform: none; }
+.send[data-state='working'] .send-ic { opacity: 0; }
+.send .spinner { position: absolute; inset: 0; margin: auto; }
+
+/* ---- running: a light travels around the box's edge, one turn in 3.2s. The ring is a mask (the 1.5px between the
+   border box and the content box) over a conic gradient that turns behind it — a transform, so nothing is repainted.
+   The gradient is a square 1.5 × the box's longer side (cqmax), enough to cover the box at any angle. ---- */
+.composer-glow {
+  position: absolute; inset: 0; padding: 1.5px; border-radius: inherit; overflow: hidden; pointer-events: none;
+  container-type: size;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: cmp-glow-in var(--dur-slow) var(--ease-out);
+}
+.composer-glow > i {
+  position: absolute; left: 50%; top: 50%; width: 150cqmax; height: 150cqmax; margin: -75cqmax 0 0 -75cqmax;
+  background: conic-gradient(transparent 0 62%, var(--accent) 80%, transparent 96%);
+  animation: cmp-glow-turn var(--cmp-glow) linear infinite;
+}
+@keyframes cmp-glow-in { from { opacity: 0; } }
+@keyframes cmp-glow-turn { to { transform: rotate(360deg); } }
+
+/* ---- the status tab (RunCard): on the box's top edge, 16px in from both sides, 36px high. Its last 8px are tucked
+   under the box (which is drawn over it: later in the page, positioned), so no gap shows where the box's corner
+   curves away — and it is from behind the box that the tab slides up when a turn starts. ---- */
+.composer .run-card {
+  position: relative; top: 0;
+  display: flex; align-items: center; gap: 10px;
+  height: 44px; margin: 0 var(--sp-4) -8px; padding: 0 6px 8px 14px;
+  border: 0; border-radius: var(--r-lg) var(--r-lg) 0 0;
+  background: var(--surface-2);
+  font-size: var(--fs-sm); color: var(--ink-2);
+}
+.composer .run-card.enter { animation: cmp-tab-in var(--cmp-tab-in) var(--ease-sheet); }
+.composer .run-card.out { animation: cmp-tab-out var(--cmp-tab-out) var(--ease-in) forwards; pointer-events: none; }
+@keyframes cmp-tab-in { from { opacity: 0; transform: translateY(100%); } }
+@keyframes cmp-tab-out { to { opacity: 0; transform: translateY(100%); } }
+
+.run-card .pip { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: none; animation: cmp-pulse var(--cmp-pulse) var(--ease-in-out) infinite; }
+@keyframes cmp-pulse { 50% { opacity: 0.35; transform: scale(0.8); } }
+
+/* the words: .what clips them (its colour is the ellipsis'), .rc-words carries the sweep. New words = a new .what
+   (keyed in RunCard), which comes in blurred from 6px below */
+.run-card .what { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); }
+.run-card .what.swap { animation: cmp-swap var(--cmp-swap) var(--ease-out); }
+@keyframes cmp-swap { from { opacity: 0; filter: blur(4px); transform: translateY(6px); } }
+.run-card .rc-words {
+  color: transparent;
+  background: linear-gradient(90deg, var(--ink-3) 0 38%, var(--ink-1) 50%, var(--ink-3) 62% 100%) 0 0 / 200% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  animation: cmp-sweep var(--cmp-sweep) linear infinite;
+}
+@keyframes cmp-sweep { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.run-card .what .tgt { margin-left: 6px; font-family: var(--mono); font-size: var(--fs-meta); color: inherit; }
+
+.run-card .meta { flex: none; font-size: var(--fs-meta); color: var(--ink-4); white-space: nowrap; }
+.run-card .grow { flex: 1 1 0; min-width: 0; } /* the clock and 停止 sit at the right end */
+.run-card .clock { flex: none; font-family: inherit; font-size: var(--fs-meta); color: var(--ink-4); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.run-card .rc-stop { flex: none; height: 28px; padding: 0 10px; border-radius: var(--r-pill); font-size: var(--fs-meta); color: var(--ink-2); transition: background-color var(--cmp-hover-out), color var(--cmp-hover-out), transform var(--dur-instant) var(--ease-out); }
+.run-card .rc-stop:hover { background-color: var(--layer-hover); color: var(--ink-1); transition-duration: 0s, 0s, var(--dur-instant); }
+.run-card .rc-stop:active { transform: var(--cmp-press); }
+
+/* it waits for you (no card docked in this window): yellow, and nothing loops — nothing is running */
+.composer .run-card.waiting { color: var(--warn); }
+.run-card.waiting .pip { background: var(--warn); animation: none; }
+.run-card.waiting .what { color: var(--warn); }
+.run-card.waiting .rc-words { color: inherit; background: none; animation: none; }
+
+/* something lies over the conversation (the settings page, a dialog, a phone's drawer…): the loops hold still */
+.composer[data-paused] .composer-glow > i, .composer[data-paused] .run-card .pip, .composer[data-paused] .run-card .rc-words { animation-play-state: paused; }
+
+/* ---- 减少动态效果 (the setting, then the system's): colours still ease, briefly; nothing moves, scales, blurs or
+   loops. No light around the box; the tab's words are plain --ink-2; the tab and its words just appear. ---- */
+:root[data-reduce-motion='1'] .composer { --cmp-hover-out: 80ms; --cmp-press: none; --cmp-up-off: none; --cmp-sq-off: none; }
+:root[data-reduce-motion='1'] .composer-glow { display: none; }
+:root[data-reduce-motion='1'] .composer .run-card.enter, :root[data-reduce-motion='1'] .composer .run-card.out, :root[data-reduce-motion='1'] .run-card .what.swap, :root[data-reduce-motion='1'] .run-card .pip { animation: none; }
+:root[data-reduce-motion='1'] .run-card:not(.waiting) .what { color: var(--ink-2); }
+:root[data-reduce-motion='1'] .run-card .rc-words { color: inherit; background: none; animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .composer, .app.mobile .composer { --cmp-hover-out: 80ms; --cmp-press: none; --cmp-up-off: none; --cmp-sq-off: none; }
+  .composer-glow { display: none; }
+  .composer .run-card.enter, .composer .run-card.out, .run-card .what.swap, .run-card .pip { animation: none; }
+  .run-card:not(.waiting) .what { color: var(--ink-2); }
+  .run-card .rc-words { color: inherit; background: none; animation: none; }
+}

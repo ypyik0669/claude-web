@@ -7,13 +7,16 @@ import { AGENT_ICONS, Icon } from '@/ui/icons';
 import { TERMS, ULTRACODE } from '@/ui/terms';
 import { buildModelMenu, filterMenu, pushRecent, recentKey, type AgentSource, type ModelMenuItem, type ModelMenuSection } from './menu';
 import { refreshAllModels, useGatewayStatus, useRefreshRun } from './data';
-import { placeMenu, samePlacement, type Placement } from './place';
+import { placeMenu, samePlacement, withOrigin, type Placement } from './place';
 import { EFFORT_PROMPT_TITLE, effortCaption, effortSegments } from './intelligence';
 import { MODEL_MENU_ID } from '@/features/composer/ids';
 import './models.css';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { useMenuClaim } from '@/ui/menus';
 import { imeComposing } from '@/ui/ime';
+import { useMenuMotion } from '@/ui/menu-motion';
+import { Segmented } from '@/ui/Segmented';
+import { ActionSheet, useSheetMenu } from '@/ui/ActionSheet';
 
 /** `5 分钟前` / `刚刚` / a date */
 export function agoText(t: number): string {
@@ -51,6 +54,9 @@ export interface ModelMenuProps {
  * The flattened `<profile> / <model>` picker. Search box (profile or model name), sections for
  * favourites, recents and each profile (model count, last pull, pull error), a star per row, and at
  * the bottom "refresh every profile's model list" + a link to Settings → Models. Keyboard: ↑ ↓ Enter Esc.
+ *
+ * On a phone it is an action sheet from the bottom (UI refresh §8, ui/ActionSheet.tsx): the same element and rows,
+ * not placed, and the search box does not take the focus (no keyboard coming up over the list).
  */
 export function ModelMenu(p: ModelMenuProps) {
   const providers = useStore((s) => s.providers);
@@ -71,11 +77,12 @@ export function ModelMenu(p: ModelMenuProps) {
   // roomier one — below a composer in the middle of the welcome page, above one at the bottom of a conversation
   const need = useRef<number | undefined>(undefined);
   const placeRef = useRef<(() => void) | null>(null);
+  const sheet = useSheetMenu();
   // portalled: follow the anchor — window resizes, scrolling, and layout changes that move it without resizing
   // it (a splitter drag resizes the pane, a growing composer pushes the chip up): observe those boxes too
   useLayoutEffect(() => {
     const a = p.anchor?.current;
-    if (!a) return;
+    if (!a || sheet) return; // a sheet is not placed
     const place = () => {
       const next = placeMenu(a.getBoundingClientRect(), { vw: window.innerWidth, vh: window.innerHeight }, p.placement ?? 'up', p.align ?? 'right', need.current);
       setPos((cur) => (samePlacement(cur, next) ? cur : next)); // unchanged coordinates: no re-render
@@ -89,7 +96,7 @@ export function ModelMenu(p: ModelMenuProps) {
     window.addEventListener('resize', place);
     window.addEventListener('scroll', onScroll, true);
     return () => { ro.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', onScroll, true); };
-  }, [p.anchor, p.placement, p.align]);
+  }, [p.anchor, p.placement, p.align, sheet]);
   useLayoutEffect(() => {
     const el = box.current;
     if (!pos || !el) return;
@@ -99,9 +106,12 @@ export function ModelMenu(p: ModelMenuProps) {
       placeRef.current?.();
       return;
     }
-    const r = el.getBoundingClientRect();
-    if (r.left < 8 && pos.right !== undefined) setPos({ ...pos, right: undefined, left: 8 });
-    else if (r.right > window.innerWidth - 8 && pos.left !== undefined) setPos({ ...pos, left: undefined, right: 8 });
+    // layout numbers, not the bounding box: while it scales in, the box on screen is smaller than the menu
+    const left = el.offsetLeft, right = left + el.offsetWidth, vw = window.innerWidth;
+    const a = p.anchor?.current?.getBoundingClientRect();
+    const moved = left < 8 && pos.right !== undefined ? { ...pos, right: undefined, left: 8 } : right > vw - 8 && pos.left !== undefined ? { ...pos, left: undefined, right: 8 } : null;
+    if (moved) setPos(a ? withOrigin(moved, a, vw) : moved);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pos]);
 
   const menu = useMemo(() => {
@@ -120,9 +130,10 @@ export function ModelMenu(p: ModelMenuProps) {
     setActive(i >= 0 ? i : 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // a portalled menu renders on the second pass (after it is measured): focus the search box then
-  const mounted = !p.anchor || !!pos;
-  useLayoutEffect(() => { if (mounted) input.current?.focus(); }, [mounted]);
+  // a portalled menu renders on the second pass (after it is measured): focus the search box then — not in a sheet
+  // (a phone: the keyboard would come up over the list; the sheet takes the focus itself)
+  const mounted = sheet || !p.anchor || !!pos;
+  useLayoutEffect(() => { if (mounted && !sheet) input.current?.focus(); }, [mounted]);
   // every change of the query (clearing it too) starts over at the top; not on mount (the current entry is active)
   const typed = useRef(false);
   useEffect(() => {
@@ -146,6 +157,8 @@ export function ModelMenu(p: ModelMenuProps) {
   }, [p.onClose, p.anchor]);
   // the one anchored menu app-wide; the settings page opening over the app closes it too
   useMenuClaim(() => p.onClose());
+  // scales in from the chip, fades out when the pointer closes it (not from the keyboard: UI refresh §4.5)
+  const motion = useMenuMotion(() => box.current, [mounted], sheet);
 
   const pick = async (it: ModelMenuItem) => {
     if (it.unavailable) return;
@@ -170,11 +183,16 @@ export function ModelMenu(p: ModelMenuProps) {
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); p.onClose(); }
   };
 
+  // 智能程度: one segment per level the model takes; nothing chosen → the default level is the lit one
+  const intel = p.intelligence ? effortSegments(p.intelligence.levels, p.intelligence.value, p.intelligence.defaultLevel) : [];
+  // the lit default is not a choice yet: clicking it makes it one; clicking the chosen level again does nothing
+  const pickLevel = (level: EffortLevel) => { if (p.intelligence && p.intelligence.value !== level) p.intelligence.onChange(level); };
+
   let idx = -1;
   const portal = !!p.anchor;
-  if (portal && !pos) return null; // measured in the layout effect before the first paint
+  if (portal && !pos && !sheet) return null; // measured in the layout effect before the first paint
   const body = (
-    <div ref={box} className={clsx('menu mm', portal ? 'fixed' : [p.placement === 'down' ? 'down' : 'up', p.align === 'left' ? 'left' : 'right'].join(' '))} style={pos ?? undefined} role="dialog" aria-label="选择模型" onKeyDown={onKey}>
+    <div ref={box} className={clsx('menu mm', portal ? 'fixed' : [p.placement === 'down' ? 'down' : 'up', p.align === 'left' ? 'left' : 'right'].join(' '))} style={pos ?? undefined} role="dialog" aria-label="选择模型" onKeyDown={onKey} {...motion}>
       <div className="mm-search">
         <Icon name="search" size={13} />
         <input ref={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索模型或供应商…" aria-label="搜索模型" role="combobox" aria-expanded aria-controls="mm-list" aria-activedescendant={flat[active] ? `mm-opt-${active}` : undefined} />
@@ -183,12 +201,14 @@ export function ModelMenu(p: ModelMenuProps) {
       {!q && p.intelligence && p.intelligence.levels.length > 0 && (
         <div className="mm-intel" data-id={MODEL_MENU_ID.effort}>
           <div className="mm-intel-h" title={`${TERMS.effort}（effort）：想得越久越稳，也越慢、越费额度`}>{TERMS.effort}</div>
-          <div className="mm-seg" role="radiogroup" aria-label={TERMS.effort}>
-            {effortSegments(p.intelligence.levels, p.intelligence.value, p.intelligence.defaultLevel).map((s) => (
-              <button key={s.level} type="button" role="radio" aria-checked={s.on} data-level={s.level} className={clsx(s.on && 'on')} title={s.title} disabled={p.intelligence!.disabled}
-                onClick={() => { if (!s.on || p.intelligence!.value !== s.level) p.intelligence!.onChange(s.level); }}>{s.label}</button>
-            ))}
-          </div>
+          <Segmented
+            className="mm-seg"
+            label={TERMS.effort}
+            options={intel.map((s) => ({ value: s.level, label: s.label, title: s.title, data: { 'data-level': s.level } }))}
+            value={intel.find((s) => s.on)?.level}
+            disabled={p.intelligence.disabled}
+            onChange={pickLevel}
+          />
           <div className="mm-intel-d" title={p.intelligence.mode === 'prompt' ? EFFORT_PROMPT_TITLE : undefined}>{effortCaption(p.intelligence.value, p.intelligence.defaultLevel, p.intelligence.mode)}</div>
         </div>
       )}
@@ -267,6 +287,7 @@ export function ModelMenu(p: ModelMenuProps) {
       </div>
     </div>
   );
+  if (sheet) return <ActionSheet onClose={() => p.onClose()} tall>{body}</ActionSheet>;
   return portal ? createPortal(body, document.body) : body;
 }
 

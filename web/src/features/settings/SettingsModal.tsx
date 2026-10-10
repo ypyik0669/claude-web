@@ -60,9 +60,10 @@ const CONTROLS: Record<EntryId, (e: EntryMeta) => ReactNode> = {
   'ui.density': (e) => <Select k={e.id} def="comfortable" label={e.label} options={DENSITIES as any} />,
   'ui.cjkFont': (e) => <Select k={e.id} def="" label={e.label} options={CJK_FONTS} />,
   'ui.reduceMotion': (e) => <Toggle k={e.id} label={e.label} />,
+  'ui.haptics': (e) => <Toggle k={e.id} def label={e.label} />,
 };
 
-const muted = { color: 'var(--ink-3)', fontSize: 11 } as const;
+const muted = { color: 'var(--ink-3)', fontSize: 12 } as const;
 /** Every page part (catalog.ts BodyId); the components keep their own requests and state. */
 const BODIES: Record<BodyId, () => ReactNode> = {
   account: () => <AccountSection />,
@@ -367,7 +368,7 @@ function Page({ sec, tab, reveal, moreOpen, setMoreOpen, setTab }: { sec: Sectio
 function SearchResults({ q, hits, pick }: { q: string; hits: SettingsHit[]; pick: (t: SettingsTarget) => void }) {
   return (
     <>
-      <h1 className="sp-title">搜索「{q.trim()}」</h1>
+      <h1 className="sp-title q">搜索「{q.trim()}」</h1>
       <div className="sp-lead">{hits.length ? `${hits.length} 条结果` : '没有匹配的设置。试试别的说法，或者换成英文 / 旧名称。'}</div>
       <div className="sp-hits">
         {hits.map((h) => h.kind === 'entry' ? (

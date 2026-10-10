@@ -486,6 +486,8 @@ npm run typecheck && npm test && npm run e2e
 
 - [@anthropic-ai/claude-agent-sdk](https://github.com/anthropics/claude-agent-sdk-typescript) 及其自带的 Claude Code：Anthropic 的条款（见该包的 README）；
 - [claude-code-best](https://github.com/claude-code-best/claude-code)（以及在它上面改的 claude-web-engine）：以该项目的说明为准；
+- 界面里的字体随应用一起分发，都是 [SIL Open Font License 1.1](https://openfontlicense.org/)：[Inter](https://github.com/rsms/inter)（界面文字）、[JetBrains Mono](https://github.com/JetBrains/JetBrainsMono)（代码）、[思源宋体 / Noto Serif SC](https://github.com/notofonts/noto-cjk)（只取了标题用到的几十个字）。许可证全文在 `web/public/licenses/`；
+- 图标的形状来自 [Lucide](https://lucide.dev)（ISC 许可证；其中一部分源自 Feather，MIT）；
 - 其余依赖（Electron、React、Monaco、node-pty、xterm.js …）是 MIT 等常见开源许可证。
 
 感谢这些项目，以及 Codex、Gemini CLI、Qwen Code、OpenCode、Agent Client Protocol 等开放的 agent 生态。

@@ -60,7 +60,7 @@ export function UpdateSection() {
       <Row label="自动检查更新" hint="启动后和每 4 小时一次；有新版本时弹窗提醒。">
         <button className={clsx('toggle', auto && 'on')} role="switch" aria-checked={auto} aria-label="自动检查更新" onClick={toggleAuto} />
       </Row>
-      {st.notes && <pre className="mono" style={{ fontSize: 11.5, whiteSpace: 'pre-wrap', marginTop: 8 }}>{st.notes}</pre>}
+      {st.notes && <pre className="mono" style={{ fontSize: 12, whiteSpace: 'pre-wrap', marginTop: 8 }}>{st.notes}</pre>}
       <div className="sub" style={{ marginTop: 6 }}>
         {manual
           ? d.platform === 'darwin'

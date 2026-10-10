@@ -43,7 +43,7 @@ function GatewayCard({ g, def, onChange }: { g: ImGatewayInfo; def: ImKindDef; o
         <span className={clsx('dot', g.state === 'running' ? 'running' : g.state === 'error' ? 'error' : g.state === 'starting' ? 'waiting' : 'idle')} />
         <span style={{ fontSize: 16 }}>{def.icon}</span>
         <div className="grow">
-          <div>{g.name} <span className="muted" style={{ fontSize: 11.5 }}>{def.name}{g.botName ? ` · ${g.botName}` : ''}</span> {!def.inbound && <span className="badge" style={{ marginLeft: 4 }}>仅通知</span>}</div>
+          <div>{g.name} <span className="muted" style={{ fontSize: 12 }}>{def.name}{g.botName ? ` · ${g.botName}` : ''}</span> {!def.inbound && <span className="badge" style={{ marginLeft: 4 }}>仅通知</span>}</div>
           <div className={clsx('sub', g.state === 'error' && 'err')}>{g.state === 'running' ? `已连接 · ${g.allowUsers.length} 个授权用户 · ${g.bindings.length} 个聊天` : g.state === 'error' ? g.error : g.state === 'starting' ? '连接中…' : '已停止'}</div>
         </div>
         <label className="chip"><input type="checkbox" checked={g.enabled} onChange={(e) => patch({ enabled: e.target.checked })} /> 启用</label>
@@ -69,7 +69,7 @@ function GatewayCard({ g, def, onChange }: { g: ImGatewayInfo; def: ImKindDef; o
           {def.inbound && (
             <div style={{ gridColumn: '1 / -1', borderTop: '1px solid var(--line)', paddingTop: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <b style={{ fontSize: 12.5 }}>授权用户</b>
+                <b style={{ fontSize: 13 }}>授权用户</b>
                 <span className="sub">在 IM 里给机器人发 <code>/pair 配对码</code> 即可加入</span>
                 <span className="grow" />
                 <label className="chip" title="危险：任何能和机器人说话的人都能操作"><input type="checkbox" checked={g.openAccess} onChange={(e) => patch({ openAccess: e.target.checked })} /> 不限制用户</label>
@@ -105,7 +105,7 @@ export function ImSection() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
         <h5 style={{ margin: 0 }}>机器人</h5>
         <span className="grow" />
-        <span className="muted" style={{ fontSize: 12 }}>添加</span>
+        <span className="muted" style={{ fontSize: 13 }}>添加</span>
         {kinds.map((k) => <button key={k.kind} className="btn sm ghost" onClick={() => add(k.kind)} title={k.help}><Icon name="plus" size={12} /> {k.name}</button>)}
       </div>
       <div className="list">

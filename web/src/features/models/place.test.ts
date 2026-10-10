@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { placeMenu, samePlacement } from './place';
+import { MENU_ORIGIN, menuOrigin, placeMenu, samePlacement, withOrigin } from './place';
 
 const rect = (top: number, bottom: number, left = 600, right = 700) => ({ top, bottom, left, right });
 
@@ -56,5 +56,40 @@ describe('samePlacement', () => {
     expect(samePlacement(a, placeMenu(rect(800, 830), { vw: 1400, vh: 900 }, 'up', 'right'))).toBe(true);
     expect(samePlacement(a, placeMenu(rect(790, 820), { vw: 1400, vh: 900 }, 'up', 'right'))).toBe(false);
     expect(samePlacement(null, a)).toBe(false);
+  });
+});
+
+describe('menuOrigin: the menu scales in from its anchor (UI refresh §4.5)', () => {
+  const view = { vw: 1400, vh: 900 };
+  it('a menu above its chip grows from its bottom edge, one below from its top edge', () => {
+    expect(menuOrigin(rect(800, 830), { bottom: 106, left: 600 }, 1400)).toMatch(/ 100%$/);
+    expect(menuOrigin(rect(100, 130), { top: 136, left: 600 }, 1400)).toMatch(/ 0%$/);
+  });
+  it('left-anchored: the chip\'s centre, in px from the menu\'s left edge', () => {
+    // chip 600–700 (centre 650), menu's left edge at 600
+    expect(menuOrigin(rect(100, 130), { top: 136, left: 600 }, 1400)).toBe('50px 0%');
+    // the menu was pushed in from the window's edge: the chip's centre is left of it — never a negative offset
+    expect(menuOrigin(rect(100, 130, 0, 10), { top: 136, left: 8 }, 1400)).toBe('0px 0%');
+  });
+  it('right-anchored: the chip\'s centre, in px from the menu\'s right edge (its width is not known here)', () => {
+    // chip 600–700, menu's right edge at 1400 − 700 = the chip's right edge: the centre is 50px in from it
+    expect(menuOrigin(rect(800, 830), { bottom: 106, right: 700 }, 1400)).toBe('calc(100% - 50px) 100%');
+    expect(menuOrigin(rect(800, 830, 1390, 1398), { bottom: 106, right: 8 }, 1400)).toBe('calc(100% - 0px) 100%');
+  });
+  it('placeMenu carries it as the --menu-origin variable, next to the coordinates', () => {
+    const up = placeMenu(rect(800, 830), view, 'up', 'right');
+    expect(up[MENU_ORIGIN]).toBe('calc(100% - 50px) 100%');
+    const down = placeMenu(rect(100, 130), view, 'up', 'left');
+    expect(down[MENU_ORIGIN]).toBe('50px 0%');
+  });
+  it('withOrigin recomputes it after a placement was moved to the other edge', () => {
+    const p = placeMenu(rect(800, 830, 20, 60), view, 'up', 'right'); // right-anchored, would stick out on the left
+    const moved = withOrigin({ ...p, right: undefined, left: 8 }, rect(800, 830, 20, 60), 1400);
+    expect(moved[MENU_ORIGIN]).toBe('32px 100%'); // centre 40 − left 8
+    expect(moved.left).toBe(8);
+  });
+  it('the origin is not part of "the same placement": only coordinates re-render', () => {
+    const a = placeMenu(rect(800, 830), view, 'up', 'right');
+    expect(samePlacement(a, { ...a, [MENU_ORIGIN]: '0px 0%' })).toBe(true);
   });
 });

@@ -7,12 +7,14 @@ import { parsePeerId, type AgentKind, type AttachmentRef, type EffortLevel, type
 import { compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachment, uploadAttachment, type DroppedFile, type PendingImage } from '@/model/attachments';
 import { pickFolderFiles } from '@/model/attachment-filter';
 import { StatusStrip } from '@/features/chat/StatusStrip';
+import { QueueCards } from '@/features/chat/QueueCards';
 import { RunCard } from '@/features/chat/RunCard';
 import { PermissionDock, runDockPrimary } from '@/features/chat/PermissionCards';
 import { denyResponse, dockAction, dockDecide, dockKind, isSlashCommand, primaryKey, type DockSeen, type DockWhy } from '@/features/chat/permission-dock';
 import { attachmentFolderPath } from '@/features/paths';
 import { Icon } from '@/ui/icons';
 import { imeComposing } from '@/ui/ime';
+import { haptic } from '@/ui/haptics';
 import { CATALOG, effortLevels, modelsFor } from '@catalog';
 import { usePaneCtx } from '@/store/paneContext';
 import { activeGroup } from '@/model/layout';
@@ -42,6 +44,7 @@ import { FILL_EVENT, type FillDetail } from './fill';
 import { applyStarter, initialCwd } from '@/features/home/model';
 import { useAutomation } from '@/features/automation/state';
 import { composerCovered } from './covered';
+import { glowing, sendFace } from './send-state';
 
 // sessions on another machine: uploads land on this machine's disk, out of the remote agent's reach
 const REMOTE_ATTACH = '附件在本机，远端读不到，请粘贴内容（图片可以直接发）';
@@ -384,6 +387,9 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     void useStore.getState().respondPermission(docked.requestId, denyResponse(docked, q.text));
   };
 
+  /** a phone: a tick under the finger as a message leaves the box (UI refresh §8 触感) */
+  const sendTick = () => { if (useStore.getState().mobile) haptic('tap'); };
+
   const doSend = async () => {
     if (!canSend) return;
     const act = docked ? dockAction(docked, { text, attachments: hasAttachments, seen: seenRef.current, now: Date.now() }) : 'send';
@@ -434,6 +440,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         model = undefined;
         effort = undefined;
       }
+      sendTick();
       setStarting(true);
       try {
         localStorage.setItem('cw.lastCwd', cwd);
@@ -455,6 +462,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
       return;
     }
     if (!active) return;
+    sendTick();
     setText('');
     // the box is empty now: what comes next is typed with the card in view — and its first moments start again, so
     // an Enter right after this one (a double press) does not answer the card (review M-3)
@@ -683,10 +691,17 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
       features={welcome ? featDefaults : sessionFeatures} onFeatures={setFeatures} selfId={welcome ? undefined : active?.sessionId}
       onFiles={() => fileInput.current?.click()} onFolder={() => folderInput.current?.click()} onReference={addRef} onGoal={insertGoal} />
   );
-  const send_ = busy ? (
-    <button className="send stop" data-id={BAR_ID.send} title="中断 (Esc)" onClick={() => active && interrupt(active.sessionId)} aria-label="中断"><Icon name="stop" size={13} /></button>
-  ) : (
-    <button className="send" data-id={BAR_ID.send} disabled={!canSend} onClick={doSend} title="发送 (Enter)" aria-label="发送">{starting || upload ? <span className="spinner" /> : <Icon name="send" size={16} />}</button>
+  // one round button that changes in place (UI refresh §6 「发送键」): faint with nothing to send, ink with something,
+  // the stop square while a turn is in flight. Both glyphs are always there and cross-fade on `data-state`
+  // (styles/composer.css); `.send.stop`, the labels and the titles are what they were as two buttons
+  const face = sendFace({ busy, canSend, working: starting || !!upload });
+  const send_ = (
+    <button type="button" className={clsx('send', busy && 'stop')} data-id={BAR_ID.send} data-state={face} disabled={!busy && !canSend}
+      onClick={busy ? () => { if (active) void interrupt(active.sessionId); } : () => void doSend()} title={busy ? '中断 (Esc)' : '发送 (Enter)'} aria-label={busy ? '中断' : '发送'}>
+      <span className="send-ic up" aria-hidden><Icon name="send" size={18} /></span>
+      <span className="send-ic sq" aria-hidden />
+      {face === 'working' && <span className="spinner" />}
+    </button>
   );
   const steer = docked && (dockClick === 'deny' || dockClick === 'blocked') ? (
     <button className="steer deny" data-id={BAR_ID.steer} disabled={dockClick === 'blocked'} title={dockClick === 'blocked' ? DOCK_BLOCKED : `拒绝这次请求，并把这段话告诉 ${dockAgent}（Enter）`} onClick={denyDocked}>{DOCK_SEND[dockKind(docked)]} <Icon name="send" size={12} /></button>
@@ -784,8 +799,13 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   }
   if (!welcome && active) meter = <ContextMeter sessionId={active.sessionId} />;
 
+  // the light around the box while this conversation runs (the stop button also shows while it waits or starts)
+  const glow = glowing({ welcome, state: active?.state, visible });
+
   return (
-    <div className="composer">
+    // data-paused: something lies over the conversation — the looping animations in here (the light, the tab's dot
+    // and sweep) hold still until it is back in view (UI refresh §4.5)
+    <div className="composer" data-paused={inView ? undefined : ''}>
       <div className="composer-inner">
         {matches.length > 0 && (
           <div className="palette">
@@ -797,12 +817,15 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
             ))}
           </div>
         )}
-        {active && !welcome && <StatusStrip sessionId={active.sessionId} onRecall={(t) => { setText((cur) => (cur ? `${cur}\n${t}` : t)); ta.current?.focus(); }} />}
+        {active && !welcome && <StatusStrip sessionId={active.sessionId} />}
+        {/* what was sent while the turn runs waits here, a card each; 编辑 puts one back into the box */}
+        {active && !welcome && <QueueCards key={active.sessionId} sessionId={active.sessionId} queue={active.queue} onEdit={(t) => { setText((cur) => (cur ? `${cur}\n${t}` : t)); ta.current?.focus(); }} />}
         {/* a docked card takes the run card's place (spec §4.2: 「等确认时被权限卡替代」) */}
         {active && !welcome && (docked
           ? <PermissionDock sessionId={active.sessionId} reason={text} onReasonUsed={() => onChange('')} scope={dockScope} note={dockNote} onDenyQueued={queuedOffer ? denyQueued : undefined} />
           : <RunCard sessionId={active.sessionId} />)}
-        <div className="composer-box" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
+        <div className="composer-box" data-state={face} onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
+          {glow && <span className="composer-glow" aria-hidden><i /></span>}
           {hasChips && (
             <div className="attach">
               {tags.map((t) => (
@@ -844,6 +867,8 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKey}
             onPaste={onPaste}
+            // a phone's soft keyboard labels its return key 发送: Enter sends here (Shift+Enter is a new line)
+            enterKeyHint={mobile ? 'send' : undefined}
           />
           <input ref={fileInput} type="file" multiple hidden onChange={(e) => { const fl = Array.from(e.target.files ?? []); void addImages(fl.filter((f) => f.type.startsWith('image/'))); if (remote && fl.some((f) => !f.type.startsWith('image/'))) { toast(REMOTE_ATTACH); e.target.value = ''; return; } setFiles((s) => [...s, ...fl.filter((f) => !f.type.startsWith('image/')).map((f) => ({ file: f, rel: f.name }))]); e.target.value = ''; }} />
           <input ref={folderInput} type="file" multiple hidden {...{ webkitdirectory: '' }} onChange={(e) => { onFolderPicked(e.target.files); e.target.value = ''; }} />

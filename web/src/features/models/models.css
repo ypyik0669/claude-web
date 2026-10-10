@@ -3,30 +3,33 @@
 .mm-anchor > .chip { max-width: 100%; }
 .mm-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
 
-.menu.mm { display: flex; flex-direction: column; padding: 0; width: max-content; min-width: 320px; max-width: min(560px, calc(100vw - 16px)); max-height: min(560px, 70vh); overflow: hidden; z-index: 40; }
+.menu.mm { display: flex; flex-direction: column; padding: 6px; width: max-content; min-width: 320px; max-width: min(560px, calc(100vw - 16px)); max-height: min(560px, 70vh); overflow: hidden; z-index: 40; }
 .menu.mm.fixed { position: fixed; z-index: 1000; }
 .menu.mm.up { bottom: calc(100% + 6px); }
 .menu.mm.down { top: calc(100% + 6px); }
 .menu.mm.right { right: 0; }
 .menu.mm.left { left: 0; }
 
-.mm-search { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--edge-subtle); color: var(--ink-4); }
+/* UI refresh §6: the menu's parts are set apart by space and a fill, not by lines to its edges — the search box is a
+   borderless field, 智能程度 a label over a segmented control (ui/Segmented.tsx), the rows 34px with an 8px radius */
+.mm-search { flex: none; display: flex; align-items: center; gap: 8px; height: 34px; margin-bottom: 4px; padding: 0 6px 0 10px; border-radius: var(--r-md); background: var(--fill-subtle); color: var(--ink-4); }
 .mm-search input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none; color: var(--ink-1); font-size: var(--fs-base); }
 .mm-search input::placeholder { color: var(--ink-4); }
-.mm-note { padding: 6px 12px; font-size: var(--fs-sm); color: var(--ink-3); background: var(--surface-2); border-bottom: 1px solid var(--edge-subtle); }
+.mm-note { flex: none; margin-bottom: 4px; padding: 6px 10px; border-radius: var(--r-md); font-size: var(--fs-sm); color: var(--ink-3); background: var(--fill-subtle); }
 
-.mm-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px; overscroll-behavior: contain; }
-.mm-sec + .mm-sec { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--edge-subtle); }
-.mm-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px 3px; font-size: var(--fs-micro); color: var(--ink-4); min-width: 0; }
+.mm-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0; overscroll-behavior: contain; }
+.mm-sec + .mm-sec { margin-top: 4px; }
+.mm-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px 4px; font-size: var(--fs-meta); line-height: 16px; color: var(--ink-4); min-width: 0; }
 .mm-head .t { color: var(--ink-3); font-weight: 600; white-space: nowrap; }
 .mm-head .ty { font-size: 10px; padding: 0 5px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink-4); }
 .mm-head .meta { margin-left: auto; white-space: nowrap; }
 .mm-head .err { margin-left: auto; color: var(--err); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 60%; }
 
-.mm-row { display: flex; align-items: center; gap: 6px; padding: 5px 6px 5px 4px; border-radius: var(--r-md); cursor: pointer; font-size: var(--fs-base); color: var(--ink-1); min-width: 0; }
-.mm-row.active { background: var(--layer-hover); }
+/* the active row follows the pointer (and the arrow keys): lit at once, fading out in 150ms (§4.5) */
+.mm-row { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 6px 0 8px; border-radius: var(--r-row); cursor: pointer; font-size: var(--fs-base); color: var(--ink-1); min-width: 0; transition: background-color 150ms linear; }
+.mm-row.active { background: var(--layer-hover); transition-duration: 0s; }
 .mm-row.cur .m { font-weight: 600; }
-.mm-check { width: 14px; flex: none; display: inline-flex; color: var(--accent); }
+.mm-check { width: 16px; flex: none; display: inline-flex; justify-content: center; color: var(--accent-text); }
 /* flex-basis auto, not 0: Chromium sizes a max-content container from the items' flex bases */
 .mm-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mm-label .p { color: var(--ink-4); }
@@ -42,9 +45,10 @@
 .mm-star.on svg path { fill: currentColor; }
 .mm-empty { padding: 18px 12px; text-align: center; color: var(--ink-4); font-size: var(--fs-sm); }
 
-.mm-foot { display: flex; align-items: center; gap: 4px; padding: 4px; border-top: 1px solid var(--edge-subtle); }
+/* the one line left: it stops 6px short of the menu's edges (the menu's own padding) */
+.mm-foot { flex: none; display: flex; align-items: center; gap: 4px; margin-top: 6px; padding: 6px 0 0; border-top: 1px solid var(--edge-subtle); }
 .mm-foot .grow { flex: 1; }
-.menu .mm-foot button { width: auto; font-size: var(--fs-sm); color: var(--ink-2); padding: 5px 8px; }
+.menu .mm-foot button { width: auto; min-height: 30px; font-size: var(--fs-sm); color: var(--ink-2); padding: 0 10px; }
 .menu .mm-foot button:disabled { opacity: 0.7; cursor: default; }
 
 /* Settings → Models */
@@ -77,21 +81,18 @@
 
 /* redesign phase 3: 智能程度 + 深度编排 at the top, other agents as sections, the chip's dimmer 档位 */
 .mm-chip-suffix { color: var(--ink-4); }
-.mm-intel { padding: var(--sp-2) var(--sp-3) 10px; border-bottom: 1px solid var(--edge-subtle); }
-.mm-intel-h { font-size: 12.5px; color: var(--ink-2); margin-bottom: 7px; }
-.mm-seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; padding: 2px; border-radius: var(--r-lg); background: var(--layer-selected); }
-.menu.mm .mm-seg button { width: auto; height: 26px; justify-content: center; padding: 0 var(--sp-2); border-radius: var(--r-md); font-size: 12.5px; color: var(--ink-3); white-space: nowrap; }
-.menu.mm .mm-seg button:hover { background: transparent; color: var(--ink-1); }
-.menu.mm .mm-seg button.on { background: var(--surface-elev); color: var(--ink-1); font-weight: 500; box-shadow: var(--elev-1), 0 0 0 1px var(--edge-default); }
-.menu.mm .mm-seg button:focus-visible { outline-offset: -2px; }
-.mm-intel-d { margin-top: 7px; font-size: var(--fs-sm); color: var(--ink-3); }
-.menu.mm .mm-ultra { align-items: center; gap: 10px; padding: var(--sp-2) var(--sp-3); border-radius: 0; border-bottom: 1px solid var(--edge-subtle); }
+.mm-intel { flex: none; padding: 0 0 4px; }
+.mm-intel-h { padding: 6px 10px; font-size: var(--fs-meta); line-height: 16px; color: var(--ink-4); }
+/* the levels: a segmented control (.segmented, styles/floating.css) as wide as the menu */
+.mm-seg { margin: 0 4px; }
+.mm-intel-d { padding: 8px 10px 2px; font-size: var(--fs-meta); line-height: 16px; color: var(--ink-3); }
+.menu.mm .mm-ultra { flex: none; align-items: center; gap: 10px; padding: 6px 10px; border-radius: var(--r-row); }
 .menu.mm .mm-ultra > svg { color: var(--ink-3); }
 .mm-ultra-t { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .mm-ultra-t .l { color: var(--ink-1); }
 .mm-ultra-t .d { font-size: var(--fs-sm); color: var(--ink-3); white-space: normal; }
-.mm-group { padding: 6px 8px 0; font-size: var(--fs-meta); font-weight: 600; color: var(--ink-4); }
-.menu.mm .mm-add { width: auto; margin: 4px 0 2px; padding: 5px 8px 5px 24px; font-size: var(--fs-sm); color: var(--ink-3); }
+.mm-group { padding: 8px 10px 0; font-size: var(--fs-meta); font-weight: 600; color: var(--ink-4); }
+.menu.mm .mm-add { width: auto; min-height: 30px; margin: 4px 0 0; padding: 0 10px 0 32px; font-size: var(--fs-sm); color: var(--ink-3); }
 .menu.mm .mm-add:hover { color: var(--ink-1); }
 .menu.mm .toggle.sm, .menu.cm .toggle.sm, .menu.dirmenu .toggle.sm { width: 28px; height: 16px; cursor: inherit; }
 .menu.mm .toggle.sm::after, .menu.cm .toggle.sm::after, .menu.dirmenu .toggle.sm::after { width: 10px; height: 10px; }

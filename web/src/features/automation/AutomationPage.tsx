@@ -8,7 +8,7 @@ import { GoalsPanel } from '@/features/goals/GoalsPanel';
 import { OrchestraPanel } from '@/features/orchestra/OrchestraPanel';
 import { useOrch, waitingOf } from '@/features/orchestra/state';
 import { SidebarReveal } from '@/features/workbench/pane-edge';
-import { AUTOMATION_TABS, AUTOMATION_TAB_INFO, type AutomationTab } from './page';
+import { AUTOMATION_TABS, AUTOMATION_TAB_INFO, AUTOMATION_TITLE, type AutomationTab } from './page';
 import { closeAutomation, newInAutomation, showAutomationTab, useAutomation } from './state';
 import { SchedulesView } from './SchedulesView';
 import type { AutomationId } from '@/features/sidebar/entries';
@@ -110,7 +110,7 @@ export function AutomationPage() {
         <SidebarReveal />
         {/* the title and 新建 span the content's width (新建 lines up with the list's right edge, review 7 M13) */}
         <div className="auto-head-in">
-          <h2>自动化</h2>
+          <h2>{AUTOMATION_TITLE}</h2>
           <span className="grow" />
           <button className="btn sm primary auto-new" onClick={() => newInAutomation(tab)} data-new={tab}><Icon name="plus" size={13} />{info.newLabel}</button>
         </div>

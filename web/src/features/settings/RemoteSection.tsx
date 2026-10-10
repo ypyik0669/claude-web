@@ -10,6 +10,7 @@ import { agoText } from '@/features/home/model';
 import { Row } from './controls';
 import { anywhereLine, deviceLastLink, lastLinkText, shownIp } from './anywhere';
 import { pairQr, type PairQr } from './pair-qr';
+import { Segmented } from '@/ui/Segmented';
 
 type QrKind = 'anywhere' | 'lan';
 
@@ -135,10 +136,9 @@ export function RemoteSection() {
             {pair && left > 0 && (
               <div style={{ marginTop: 10 }}>
                 {pair.anywhereUrl && (
-                  <div className="sp-seg pair-switch" role="radiogroup" aria-label="二维码" data-id="pair-switch">
-                    {([['anywhere', '在哪都能用'], ['lan', '只在局域网（不用联网）']] as const).map(([k, l]) => (
-                      <button key={k} role="radio" data-kind={k} aria-checked={shown === k} className={clsx(shown === k && 'on')} onClick={() => setQrKind(k)}>{l}</button>
-                    ))}
+                  <div className="pair-switch" data-id="pair-switch">
+                    <Segmented className="sp-seg" label="二维码" arrows value={shown} onChange={(k) => setQrKind(k)}
+                      options={([['anywhere', '在哪都能用'], ['lan', '只在局域网（不用联网）']] as const).map(([k, l]) => ({ value: k, label: l, data: { 'data-kind': k } }))} />
                   </div>
                 )}
                 <div className="pair-code">{pair.code}</div>
@@ -167,7 +167,7 @@ export function RemoteSection() {
           <div key={d.id} className="row" data-device={d.id}>
             <span className={clsx('dot', live || Date.now() - d.lastSeenAt < 120_000 ? 'running' : 'idle')} />
             <div className="grow">
-              <div>{d.name} {last ? <span className="muted dev-link" style={{ fontSize: 11.5 }}>{lastLinkText(last)}</span> : ip && <span className="muted" style={{ fontSize: 11.5 }}>{ip}</span>}</div>
+              <div>{d.name} {last ? <span className="muted dev-link" style={{ fontSize: 12 }}>{lastLinkText(last)}</span> : ip && <span className="muted" style={{ fontSize: 12 }}>{ip}</span>}</div>
               <div className="sub">最近 {agoText(d.lastSeenAt)} · 配对于 {new Date(d.createdAt).toLocaleDateString()} · {d.ua?.slice(0, 60)}</div>
             </div>
             <button className="btn sm ghost" onClick={async () => { const n = await dlg.prompt('设备名称', d.name); if (n && n !== d.name) await ws.request({ kind: 'remote.devices.rename', id: d.id, name: n }); }}>改名</button>
@@ -222,7 +222,7 @@ export function HostsSection() {
           <div key={h.id} className="row">
             <span className={clsx('dot', t?.state === 'up' ? 'running' : t?.state === 'connecting' ? 'waiting' : t?.state === 'down' ? 'error' : 'idle')} />
             <div className="grow">
-              <div>{h.name} <span className="mono muted" style={{ fontSize: 11.5 }}>{h.target}{h.sshPort ? `:${h.sshPort}` : ''} → :{h.remotePort}</span></div>
+              <div>{h.name} <span className="mono muted" style={{ fontSize: 12 }}>{h.target}{h.sshPort ? `:${h.sshPort}` : ''} → :{h.remotePort}</span></div>
               <div className="sub">{t?.state === 'up' ? <>已连接 <code>{t.url.split('?')[0]}</code></> : t?.error || '未连接'}</div>
             </div>
             {t?.state === 'up' ? <>

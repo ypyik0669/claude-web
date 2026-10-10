@@ -1,0 +1,99 @@
+/* phase 4 · the phone: the right panel as a real bottom sheet (handle, two detents, drag) and the sidebar drawer that follows the finger. Loaded after phone.css. */
+
+/* docs/superpowers/specs/2026-10-10-ui-refresh/design.md §8 抽屉 / 侧栏抽屉. Everything here is under `.app.mobile`
+   (≤ 760px); a desktop is untouched. The rules replace the phone rules of styles.css for the same elements
+   (`.app.mobile .rpanel`, `.sheet-backdrop`, `.sidebar`, `.drawer-backdrop`, and the `sheet-up` animation).
+
+   How the two surfaces move (ui/phone-sheet.ts, ui/phone-drawer.ts, ui/touch-dom.ts): this sheet gives each one its
+   resting places — in view, and out of it — and the transition between them. While a finger has one, its element
+   carries `data-drag` (no transition) and an inline transform set straight from the pointer; letting go removes both
+   and the transition takes it from where the finger left it to where it rests. Only transform and opacity move.
+   In place, a surface has no transform at all (`none`): what is `position: fixed` inside it stays fixed to the window.
+
+   Layers: sheet 48 over its scrim 47; drawer 60 over its scrim 55; both under the menus' action sheets (150). */
+
+@media (max-width: 760px) {
+  /* ============================================================ the bottom sheet ============================================================
+     `.app > .rpanel` — the same element as the desktop's right panel, with the Dock in it (never remounted: one
+     terminal, one pty). App displays it while it is up (`.app.sheet-open`) and while it slides out; the settings page,
+     the palette and the shortcut sheet still hide it (`.sheet-covered`, styles.css).
+     Two heights (`data-detent`, from store.sheetDetent): 62% and 92% of the room above the keyboard (`--kb`, App from
+     visualViewport), never taller than that room minus the status bar. vh first for browsers without dvh.
+     The first shadow is the sheet's own surface continued half a screen below it: pulled up past its height (半 on
+     its way to 全) nothing shows through under it (first = painted over the elevation's shadows down there). */
+  .app.mobile .rpanel {
+    --sheet-room: calc(100vh - var(--kb, 0px));
+    --sheet-share: 0.62;
+    position: fixed; left: 0; right: 0; bottom: var(--kb, 0px); z-index: 48;
+    height: min(calc(var(--sheet-room) * var(--sheet-share)), calc(var(--sheet-room) - env(safe-area-inset-top, 0px)));
+    margin: 0; padding-bottom: max(0px, calc(env(safe-area-inset-bottom, 0px) - var(--kb, 0px))); /* the home indicator — not with the keyboard up */
+    border: 0; border-radius: var(--r-2xl) var(--r-2xl) 0 0; background: var(--surface-0);
+    box-shadow: 0 50vh 0 0 var(--surface-0), var(--elev-3);
+    transform: translateY(100%); transition: transform var(--dur-base) var(--ease-in); animation: none;
+    pointer-events: none;
+  }
+  @supports (height: 100dvh) {
+    .app.mobile .rpanel { --sheet-room: calc(100dvh - var(--kb, 0px)); }
+  }
+  .app.mobile .rpanel[data-detent='full'] { --sheet-share: 0.92; }
+  .app.mobile.sheet-open .rpanel { transform: none; transition: transform var(--dur-slower) var(--ease-sheet); pointer-events: auto; }
+  .app.mobile .rpanel[data-drag] { transition: none; will-change: transform; }
+  .app.mobile .rpanel .dock { flex: 1 1 0; width: 100%; height: auto; min-height: 0; }
+
+  /* the handle: a 38 × 5 pill in a strip that is all grip. A drag on it or on the tab row moves the sheet — up-and-down
+     moves there are the page's; the row still scrolls sideways when it is longer than the sheet is wide */
+  .app.mobile .rpanel > .sheet-grip {
+    position: relative; flex: none; display: block; width: 100%; height: 24px; min-height: 0; margin: 0; padding: 0;
+    border: 0; background: none; cursor: grab; touch-action: none; -webkit-tap-highlight-color: transparent;
+  }
+  .app.mobile .rpanel > .sheet-grip::before {
+    content: ''; position: absolute; left: 50%; top: 9px; width: 38px; height: 5px; margin-left: -19px;
+    border-radius: var(--r-pill); background: var(--edge-strong);
+  }
+  .app.mobile .rpanel > .sheet-grip:focus-visible { outline-offset: -3px; border-radius: var(--r-2xl) var(--r-2xl) 0 0; }
+  .app.mobile .rpanel[data-drag] > .sheet-grip { cursor: grabbing; }
+  .app.mobile .rpanel :is(.dock-tabs, .dock-tablist) { touch-action: pan-x; -webkit-user-select: none; user-select: none; }
+  .app.mobile .rpanel .dock-tabs { min-height: 48px; }
+
+  /* its scrim: in the document the whole time; shows, and takes the tap that puts the sheet away, only while it is up */
+  .app.mobile .sheet-backdrop {
+    position: fixed; inset: 0; z-index: 47; background: var(--scrim); opacity: 0; pointer-events: none;
+    touch-action: none; -webkit-tap-highlight-color: transparent; transition: opacity var(--dur-base) var(--ease-out);
+  }
+  .app.mobile.sheet-open .sheet-backdrop { opacity: 1; pointer-events: auto; transition-duration: var(--dur-slower); }
+  .app.mobile .sheet-backdrop[data-drag] { transition: none; }
+
+  /* ============================================================ the sidebar drawer ============================================================
+     `.app > .sidebar` — 86% of the window, 380px at most (ui/drawer-gesture.ts has the same numbers). In the document
+     while it is open, while a finger pulls it in, and while it slides shut; resting out of sight unless
+     `.app.drawer-open`. Sideways moves on it are the page's (a swipe to the left closes it); its lists still scroll. */
+  .app.mobile .sidebar {
+    width: min(86vw, 380px);
+    transform: translateX(-100%); transition: transform var(--dur-base) var(--ease-in);
+    pointer-events: none; touch-action: pan-y;
+  }
+  .app.mobile.drawer-open .sidebar { transform: none; transition: transform var(--dur-slower) var(--ease-sheet); pointer-events: auto; }
+  .app.mobile .sidebar[data-drag] { transition: none; will-change: transform; }
+  .app.mobile .sidebar :is(.sb-list, .sb-attn-list) { touch-action: pan-y; }
+
+  .app.mobile .drawer-backdrop {
+    position: fixed; inset: 0; z-index: 55; background: var(--scrim); opacity: 0; pointer-events: none;
+    touch-action: none; -webkit-tap-highlight-color: transparent; transition: opacity var(--dur-base) var(--ease-out);
+  }
+  .app.mobile.drawer-open .drawer-backdrop { opacity: 1; pointer-events: auto; transition-duration: var(--dur-slower); }
+  .app.mobile .drawer-backdrop[data-drag] { transition: none; }
+
+  /* a swipe to the right on the conversation pulls the drawer in: sideways moves there come to the page, up-and-down
+     ones still scroll (and pinch still zooms). A scroller resets this for what is inside it, so each one is named;
+     anything that scrolls sideways itself — a code block, a diff, the starters — keeps the browser's own panning.
+     (A conversation wider than the window — an unwrapped table — is panned by the same swipe: ui/phone-drawer.ts.) */
+  .app.mobile :is(.pane, .chat, .welcome) { touch-action: pan-y pinch-zoom; }
+}
+
+/* ============================================================ 减少动态效果 ============================================================
+   (the setting, then the system's) nothing slides: a surface is where it rests at once. The scrims keep their fade —
+   the duration tokens are already short. A drag still follows the finger. */
+:root[data-reduce-motion='1'] .app.mobile .rpanel, :root[data-reduce-motion='1'] .app.mobile .sidebar { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .app.mobile .rpanel, .app.mobile.sheet-open .rpanel, .app.mobile .sidebar, .app.mobile.drawer-open .sidebar { transition: none; }
+}

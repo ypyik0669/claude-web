@@ -23,6 +23,8 @@ import { dlg } from '@/ui/dialog';
 import { DEFAULT_THEME, applyUiSettings, resolveTheme, setSystemThemeHandler } from '@/features/settings/ui-settings';
 import { SIMPLIFIED_NOTICE } from '@/ui/terms';
 import { MOBILE_QUERY } from '@/ui/viewport';
+import type { SheetDetent } from '@/ui/sheet-snap';
+import { haptic } from '@/ui/haptics';
 
 export type PanelId = import('@/model/layout').PanelId;
 
@@ -82,6 +84,11 @@ interface State {
    * is only whether it is on screen — not persisted, and putting it away never writes the desktop's `dock.open`.
    */
   sheetAt: number;
+  /**
+   * Phone: how tall that drawer stands — 半 (62% of the room above the keyboard) or 全 (92%); a drag or a tap on its
+   * handle changes it (`ui/phone-sheet.ts`). Not persisted; 半 again whenever the drawer is put away.
+   */
+  sheetDetent: SheetDetent;
   inspect: { sessionId: string; toolUseId?: string; file?: { path: string; line?: number } } | null;
   theme: Theme;
   toasts: { id: number; text: string; ok?: boolean }[];
@@ -280,7 +287,7 @@ export function answering<T>(since: number, fn: () => T): T {
   try { return fn(); } finally { actionSince = prev; }
 }
 /** Phone: put the bottom drawer away (the panels stay mounted; the desktop's open / closed is not touched). */
-export const hideSheet = (): void => { if (useStore.getState().sheetAt) useStore.setState({ sheetAt: 0 }); };
+export const hideSheet = (): void => { if (useStore.getState().sheetAt) useStore.setState({ sheetAt: 0, sheetDetent: 'half' }); };
 
 export const useStore = create<State>((set, get) => ({
   connected: false,
@@ -333,6 +340,7 @@ export const useStore = create<State>((set, get) => ({
   sidebarOpen: true,
   mobile: typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia(MOBILE_QUERY).matches,
   sheetAt: 0,
+  sheetDetent: 'half',
   inspect: null,
   // cached resolved theme until meta.json arrives; a first run follows the system (spec §6: default = 跟随系统)
   theme: (localStorage.getItem('cw.theme') as Theme) || resolveTheme(DEFAULT_THEME),
@@ -914,6 +922,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async respondPermission(requestId, response) {
+    // a phone: approving gives a tick under the finger (UI refresh §8 触感) — every caller is a tap or a key press here
+    if (get().mobile && response?.behavior === 'allow') haptic('confirm');
     try {
       await ws.request({ kind: 'permission.respond', requestId, response });
     } catch (e: any) {

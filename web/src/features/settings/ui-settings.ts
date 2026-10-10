@@ -46,4 +46,6 @@ export function applyUiSettings(settings: Record<string, unknown>) {
   const cjk = (settings['ui.cjkFont'] as string) || '';
   root.style.setProperty('--cjk-font', cjk ? `${cjk},` : '');
   root.dataset.reduceMotion = settings['ui.reduceMotion'] ? '1' : '';
+  // ui/haptics.ts reads it: on unless switched off
+  root.dataset.haptics = settings['ui.haptics'] === false ? 'off' : '';
 }

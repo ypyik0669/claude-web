@@ -1,0 +1,170 @@
+/* phase 4 · the phone: every anchored menu as an action sheet from the bottom. Loaded after phone.css.
+
+   docs/superpowers/specs/2026-10-10-ui-refresh/design.md §8 菜单. ui/ActionSheet.tsx draws the sheet around a menu's
+   own root element — the composer's + / permission / branch menus and the right panel's 更多 / 审阅 menus
+   (composer/Popover.tsx), the model menu, the project menu, the sidebar's menus and the session header's ···
+   (sidebar/menus.tsx `MenuHost`). The menu's element, its classes and everything in it are the desktop's; the rules
+   here re-dress them inside `.as-sheet` and touch nothing outside it (a menu opened on a wide window keeps its
+   anchored look even if the window is then narrowed).
+
+     <body>
+       <div class="as-layer [as-in]">      no box (display: contents); `data-drag` while the handle is held
+         <div class="as-scrim">            z 149
+         <div class="as-sheet [tall]">     z 150
+           <div class="as-grab"><i>
+           <div class="as-body"> .menu …   the scroller (`tall`: the menu scrolls inside itself)
+           <div class="as-foot"><button class="as-cancel">
+
+   Above the sidebar drawer (60), settings (50), the palette (55) and toasts (60); below dialogs (200), which rows open.
+   Motion (§4.5): only transform and opacity. In: the sheet slides up in --dur-slower on the sheet curve and the scrim
+   fades in — unless the keyboard opened it (no `as-in`). Out: the real sheet is unmounted at once like every menu; an
+   inert copy (`.as-leaving`, ui/ghost.ts) slides down in --dur-slow where it was, from wherever a drag left it. */
+
+@keyframes as-up { from { transform: translateY(100%); } }
+@keyframes as-down { to { transform: translateY(100%); } }
+@keyframes as-scrim-in { from { opacity: 0; } }
+@keyframes as-scrim-out { to { opacity: 0; } }
+
+.as-layer { display: contents; }
+.as-scrim { position: fixed; inset: 0; z-index: 149; background: var(--scrim); touch-action: none; -webkit-tap-highlight-color: transparent; transition: opacity var(--dur-slow) var(--ease-sheet); }
+.as-sheet {
+  position: fixed; left: 0; right: 0; bottom: var(--kb, 0px); z-index: 150; display: flex; flex-direction: column;
+  max-height: 82vh; max-height: calc((100dvh - var(--kb, 0px)) * 0.82); padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-radius: var(--r-2xl) var(--r-2xl) 0 0; background: var(--surface-elev); box-shadow: var(--elev-3);
+  color: var(--ink-1); font-size: var(--fs-lg); touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  transition: transform var(--dur-slow) var(--ease-sheet); /* springing back after a drag that did not close it */
+}
+.as-sheet.tall { max-height: 92vh; max-height: calc((100dvh - var(--kb, 0px)) * 0.92); }
+/* the desktop app in a narrow window: a tall sheet reaches the title row, whose drag region would take its clicks */
+html.desktop .as-sheet { -webkit-app-region: no-drag; }
+.as-layer.as-in > .as-sheet { animation: as-up var(--dur-slower) var(--ease-sheet); }
+.as-layer.as-in > .as-scrim { animation: as-scrim-in var(--dur-slow) linear; }
+.as-layer[data-drag] > .as-sheet, .as-layer[data-drag] > .as-scrim { transition: none; }
+.as-layer.as-leaving > .as-sheet { animation: as-down var(--dur-slow) var(--ease-in) forwards; }
+.as-layer.as-leaving > .as-scrim { animation: as-scrim-out var(--dur-slow) var(--ease-in) forwards; }
+
+/* the handle: 38 × 5, and the strip it sits in (plus 12px above the sheet's edge) is what a finger drags */
+.as-grab { position: relative; flex: none; display: flex; align-items: center; justify-content: center; height: 26px; touch-action: none; cursor: grab; }
+.as-grab::before { content: ''; position: absolute; left: 0; right: 0; top: -12px; bottom: 0; }
+.as-grab > i { display: block; width: 38px; height: 5px; border-radius: var(--r-pill); background: var(--edge-strong); }
+
+.as-body { flex: 1 1 auto; min-height: 0; padding: 0 8px 4px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+/* the last row: 取消, on its own under a gap, always in reach */
+.as-foot { flex: none; padding: 8px; }
+.as-cancel { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 48px; border-radius: var(--r-xl); background: var(--layer-selected); color: var(--ink-1); font-size: var(--fs-lg); font-weight: 600; transition: background-color var(--dur-fast) var(--ease-out); }
+.as-cancel:active { background: var(--layer-active); transition-duration: 0s; }
+
+/* ---- the menu's root: no longer a floating box — the sheet is. (Four classes: out-ranks every `.menu.x.y` rule.) ---- */
+.as-layer > .as-sheet > .as-body > .menu {
+  position: static; width: auto; min-width: 0; max-width: none; max-height: none; margin: 0; padding: 0; z-index: auto;
+  border-radius: 0; background: none; box-shadow: none; overflow: visible; transform: none; animation: none; outline: none;
+}
+/* the model menu and the project menu keep their own layout: a fixed top and bottom, the list scrolling between */
+.as-layer > .as-sheet.tall > .as-body { display: flex; flex-direction: column; overflow: hidden; }
+.as-layer > .as-sheet.tall > .as-body > .menu { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+
+/* ---- rows: 48px, 16px text, 20px icons ---- */
+.as-sheet :is(.menu > button, .menu .sub-menu > button, .menu .menu-grid button, .menu [role='group'] > button, .menu.cm button[data-mi], .menu.dirmenu .dirmenu-list button) {
+  min-height: 48px; padding: 6px 12px; gap: 12px; border-radius: var(--r-lg); font-size: var(--fs-lg); line-height: 22px;
+}
+.as-sheet :is(.menu > button, .menu .sub-menu > button, .menu .menu-grid button, .menu [role='group'] > button, .menu.cm button[data-mi], .menu.dirmenu .dirmenu-list button) > svg { width: 20px; height: 20px; stroke-width: 1.8; }
+/* what trails a row (a tick, a chevron) is a size smaller */
+.as-sheet :is(.menu > button, .menu .sub-menu > button, .menu .menu-grid button, .menu [role='group'] > button, .menu.cm button[data-mi]) > svg:last-child:not(:first-child) { width: 18px; height: 18px; stroke-width: 2; }
+.as-sheet .menu button.danger, .as-sheet .menu button.danger > svg { color: var(--err); }
+.as-sheet .menu button:focus-visible { outline-offset: -2px; }
+.as-sheet .menu :is(.menu-label, .cm-h, .dirmenu-head, .mm-group) { padding: 14px 12px 6px; font-size: var(--fs-sm); line-height: 18px; }
+.as-sheet .menu .menu-sep { margin: 6px 12px; }
+.as-sheet .menu :is(.menu-note, .rv-menu-note) { padding: 8px 12px; font-size: var(--fs-sm); line-height: 18px; color: var(--ink-4); }
+.as-sheet .menu .menu-grid { gap: 2px 4px; }
+/* 「交给其它 Agent 继续」 in a row's menu: its agents open under it, inside the sheet */
+.as-sheet .menu .sub-menu { margin: 0 0 4px 22px; padding-left: 6px; }
+/* every field 16px: iOS zooms the page into anything smaller */
+.as-sheet .menu :is(input, textarea) { font-size: var(--fs-lg); }
+.as-sheet .menu .field { min-height: 40px; }
+.as-sheet .menu .icon-btn.xs { width: 36px; height: 36px; }
+.as-sheet .menu .icon-btn.xs > svg { width: 16px; height: 16px; stroke-width: 2.25; }
+/* the switch at a row's end, full size */
+.as-sheet .menu .toggle.sm { width: 36px; height: 20px; }
+.as-sheet .menu .toggle.sm::after { width: 16px; height: 16px; }
+.as-sheet .menu .toggle.sm.on::after { transform: translateX(16px); }
+.as-sheet .segmented > button { height: 40px; font-size: var(--fs-base); }
+
+/* ---- the composer's and the right panel's menus (Popover: `.menu.cm`) ---- */
+.as-sheet .cm-ic, .as-sheet .cm-ck { width: 22px; }
+.as-sheet .cm-ic > svg { width: 20px; height: 20px; stroke-width: 1.8; }
+.as-sheet .cm-ck > svg { width: 18px; height: 18px; stroke-width: 2; }
+.as-sheet .cm-d { font-size: var(--fs-sm); line-height: 18px; }
+.as-sheet .cm-r, .as-sheet .cm-sub { font-size: var(--fs-sm); }
+.as-sheet .cm-sub { padding: 0 12px 6px; }
+.as-sheet .cm-l.mono { font-size: var(--fs-base); }
+.as-sheet .menu.cm .cm-foot .cm-l { font-size: var(--fs-lg); }
+.as-sheet .cm-field { gap: 12px; padding: 8px 12px; }
+/* 引用另一个对话 / 分支: the sheet scrolls, the search box stays on top of it */
+.as-sheet .cm-ref-list, .as-sheet .cm-scroll { max-height: none; overflow: visible; }
+.as-sheet .cm-ref-head, .as-sheet .cm-search { position: sticky; top: 0; z-index: 1; gap: 8px; padding: 2px 0 8px; background: var(--surface-elev); }
+.as-sheet .menu.cm .cm-ref-head > button.icon-btn { flex: none; width: 44px; min-height: 44px; height: 44px; padding: 0; justify-content: center; }
+.as-sheet .menu.cm .cm-ref-head > button.icon-btn > svg { width: 18px; height: 18px; stroke-width: 2; }
+/* 更多 → 已打开: the panel's row and its × side by side */
+.as-sheet .dock-more-open { gap: 4px; }
+.as-sheet .menu.cm .dock-more-open > button.x { flex: none; width: 48px; min-height: 48px; padding: 0; justify-content: center; border-radius: var(--r-lg); }
+.as-sheet .menu.cm .dock-more-open > button.x > svg { width: 18px; height: 18px; stroke-width: 2; }
+.as-sheet .rv-scope-menu .n, .as-sheet .rv-scope-menu .rv-commit-item .h { font-size: var(--fs-sm); }
+.as-sheet .rv-scope-menu .ck { width: 20px; }
+.as-sheet .rv-scope-menu .ck > svg { width: 18px; height: 18px; stroke-width: 2; }
+
+/* ---- the sidebar's menus and the session header's ··· ---- */
+.as-sheet .menu.sb-menu button :is(.n, .k) { font-size: var(--fs-sm); }
+.as-sheet .sb-filter-q { height: 44px; gap: 8px; margin: 0 0 6px; padding: 0 6px 0 12px; border-radius: var(--r-lg); }
+.as-sheet .sb-filter-q > svg { width: 18px; height: 18px; stroke-width: 2; }
+.as-sheet .sb-acct-menu .acct-head { padding: 4px 12px 10px; }
+.as-sheet .sb-acct-menu .acct-head .sub { font-size: var(--fs-sm); }
+.as-sheet .sb-acct-menu .acct-quota { padding: 2px 12px 6px; }
+.as-sheet .sb-acct-menu .acct-today { padding: 6px 12px 10px; font-size: var(--fs-base); }
+.as-sheet .menu .theme-quick { margin: 4px 4px 8px; padding: 3px; border-radius: var(--r-lg); }
+.as-sheet .menu .theme-quick button { height: 40px; border-radius: var(--r-md); font-size: var(--fs-base); }
+.as-sheet .menu .theme-quick button > svg { width: 16px; height: 16px; stroke-width: 2.25; }
+
+/* ---- the model menu ---- */
+.as-sheet .mm-search { height: 44px; margin: 0 0 6px; padding: 0 6px 0 12px; border-radius: var(--r-lg); }
+.as-sheet .mm-search > svg { width: 18px; height: 18px; stroke-width: 2; }
+.as-sheet .mm-note { padding: 8px 12px; font-size: var(--fs-sm); }
+.as-sheet .mm-intel { padding: 0 0 6px; }
+.as-sheet .mm-intel-h { padding: 8px 12px 6px; font-size: var(--fs-sm); line-height: 18px; }
+.as-sheet .mm-intel-d { padding: 8px 12px 2px; font-size: var(--fs-sm); line-height: 18px; }
+.as-sheet .menu.mm .mm-ultra { min-height: 56px; padding: 8px 12px; gap: 12px; border-radius: var(--r-lg); font-size: var(--fs-lg); }
+.as-sheet .menu.mm .mm-ultra > svg { width: 20px; height: 20px; stroke-width: 1.8; }
+.as-sheet .mm-ultra-t .d { font-size: var(--fs-sm); line-height: 18px; }
+.as-sheet .mm-head { padding: 12px 12px 6px; font-size: var(--fs-sm); line-height: 18px; }
+.as-sheet .mm-head > svg { width: 14px; height: 14px; stroke-width: 2.4; }
+.as-sheet .mm-row { min-height: 48px; padding: 0 2px 0 12px; gap: 10px; border-radius: var(--r-lg); font-size: var(--fs-lg); }
+.as-sheet .mm-check { width: 20px; }
+.as-sheet .mm-check > svg { width: 18px; height: 18px; stroke-width: 2; }
+/* the real model id beside a display name: it gives way to the name on a narrow screen */
+.as-sheet .mm-hint { flex: 0 1 auto; min-width: 0; max-width: 36%; overflow: hidden; text-overflow: ellipsis; }
+/* no hover on a phone: the star is always there, on a 44px target */
+.as-sheet .menu.mm .mm-star { width: 44px; height: 44px; border-radius: var(--r-md); opacity: 1; }
+.as-sheet .menu.mm .mm-star > svg { width: 20px; height: 20px; stroke-width: 1.8; }
+.as-sheet .menu.mm .mm-add { width: 100%; min-height: 48px; margin: 4px 0 0; padding: 0 12px; gap: 10px; border-radius: var(--r-lg); font-size: var(--fs-lg); }
+.as-sheet .menu.mm .mm-add > svg { width: 20px; height: 20px; stroke-width: 1.8; }
+.as-sheet .mm-empty { padding: 28px 12px; font-size: var(--fs-base); }
+/* three buttons: one row from about 410px up, wrapping to two on a narrower phone — each a full target */
+.as-sheet .mm-foot { flex-wrap: wrap; gap: 4px; margin-top: 6px; padding: 6px 0 0; }
+.as-sheet .mm-foot .grow { display: none; }
+.as-sheet .menu .mm-foot button { flex: 1 1 auto; justify-content: center; min-height: 44px; padding: 0 8px; gap: 6px; border-radius: var(--r-lg); font-size: var(--fs-sm); white-space: nowrap; }
+.as-sheet .menu .mm-foot button > svg { width: 16px; height: 16px; stroke-width: 2.25; }
+
+/* ---- the project menu ---- */
+.as-sheet .menu.dirmenu > button { min-height: 48px; padding: 6px 12px; gap: 12px; border-radius: var(--r-lg); font-size: var(--fs-lg); line-height: 22px; }
+.as-sheet .menu.dirmenu > button > svg { width: 20px; height: 20px; stroke-width: 1.8; }
+.as-sheet .menu.dirmenu .dirmenu-check { width: 20px; padding-top: 2px; }
+.as-sheet .menu.dirmenu .dirmenu-check > svg { width: 18px; height: 18px; stroke-width: 2; }
+.as-sheet .dirmenu-text .p { font-size: var(--fs-meta); line-height: 16px; }
+
+/* ---- holding a conversation row opens its menu: the hold is not a text selection or the browser's own callout ---- */
+.app.mobile .sb-row.sess { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+
+/* ---- 减少动态效果: nothing slides (tokens.css already ends the animations at once; the copy is not made at all) ---- */
+:root[data-reduce-motion='1'] .as-sheet, :root[data-reduce-motion='1'] .as-scrim { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .as-sheet, .as-scrim { transition: none; }
+}

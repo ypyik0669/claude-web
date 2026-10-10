@@ -213,6 +213,61 @@ export function splitTurnBody(body: Item[]): TurnParts {
   return { work: true, process, final, tail };
 }
 
+/** A row of the step list: one step, or a run of steps merged into 「读取 ×3 · a.ts 等」 that opens to each of them. */
+export interface StepGroup<T> {
+  /** the first step's id — the same row while the run grows at its end */
+  key: string;
+  steps: T[];
+}
+
+/** What `groupSteps` reads of a step (a `ToolUseBlock` has all of it). */
+export interface StepLike {
+  id: string;
+  name: string;
+  status: 'streaming' | 'pending' | 'running' | 'done' | 'error';
+  result?: { isError: boolean };
+  children: readonly unknown[];
+}
+
+/**
+ * The rows of a run of steps (UI refresh §6): steps next to each other, of the same tool, that all finished and worked
+ * are one row. A step that still runs (streaming / queued / running), failed or was refused, waits on the user
+ * (`waiting`: the ids a permission card is asking about), or carries messages of its own (a subagent's) is never
+ * merged: it is a row by itself, and so splits the run around it. Same tool = same name (Edit and MultiEdit are two).
+ * The steps come back as the objects that went in, in order. What the turn summary counts is not touched by this.
+ */
+export function groupSteps<T extends StepLike>(steps: readonly T[], waiting?: ReadonlySet<string>): StepGroup<T>[] {
+  const merges = (s: T) => s.status === 'done' && !s.result?.isError && s.children.length === 0 && !waiting?.has(s.id);
+  const out: StepGroup<T>[] = [];
+  let open: StepGroup<T> | null = null; // the row the next step may still join
+  for (const s of steps) {
+    if (!merges(s)) { out.push({ key: s.id, steps: [s] }); open = null; continue; }
+    if (open && open.steps[0].name === s.name) { open.steps.push(s); continue; }
+    open = { key: s.id, steps: [s] };
+    out.push(open);
+  }
+  return out;
+}
+
+/**
+ * When a tool call of these items was made, where a transcript says so exactly: a message's time is the time its
+ * FIRST block was written, so only a call that is the first block of its message has one (a call after some text or
+ * thinking, or a second call of the same message, was written later by an amount nothing records — a time counted
+ * from the message would include the model still writing). With the result's own time that is how long the step
+ * took, from the call to its result; see `stepDurationMs` in features/chat/step-view.ts.
+ */
+export function stepStarts(items: readonly Item[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const it of items) {
+    if (it.kind !== 'assistant' || !it.ts) continue;
+    const first = it.blocks[0];
+    if (first?.type !== 'tool_use') continue;
+    const at = Date.parse(it.ts);
+    if (!Number.isNaN(at)) out.set(first.id, at);
+  }
+  return out;
+}
+
 /** A changed file's row: its folder (relative to the project, forward slashes) in grey, then its name. */
 export function displayPath(path: string, cwd: string): { dir: string; name: string } {
   const p = path.replace(/\\/g, '/');

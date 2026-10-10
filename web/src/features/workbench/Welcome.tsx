@@ -3,7 +3,7 @@ import { useStore } from '@/store';
 import { Composer } from '@/features/composer/Composer';
 import { fillComposer } from '@/features/composer/fill';
 import { Icon } from '@/ui/icons';
-import { CHECKLIST_KEY, STARTERS } from '@/features/home/model';
+import { CHECKLIST_KEY, GREETING, STARTERS } from '@/features/home/model';
 import { Checklist } from '@/features/home/Checklist';
 import { EngineNotice } from '@/features/home/EngineNotice';
 import { HomeLists } from '@/features/home/HomeLists';
@@ -32,7 +32,7 @@ export function Welcome({ paneId, tileId }: { paneId: string; tileId: string }) 
       <div className="welcome-top">{((edge.lead && !edge.strip) || mobile) && <SidebarReveal />}</div>
       <div className="welcome">
         <div className="home-col">
-          <h1 className="greet"><span className="spark"><Icon name="claude" size={26} /></span>今天想做点什么？</h1>
+          <h1 className="greet"><span className="spark"><Icon name="claude" size={26} /></span>{GREETING}</h1>
           <Composer welcome target={{ paneId, tileId }} />
           <div className="starters" role="group" aria-label="起手建议">
             {STARTERS.map((s) => (

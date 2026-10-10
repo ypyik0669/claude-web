@@ -8,6 +8,7 @@ import { langFromPath } from './highlight';
 import { JsonTree } from './tools/McpTool';
 import { Icon } from '@/ui/icons';
 import { DOCK_DENY_QUEUED, DOCK_HINT, DOCK_STATUS } from '@/ui/terms';
+import { useLeaveGhost, type GhostOpts } from '@/ui/ghost';
 import { alwaysDetails, alwaysLabel, denyResponse, dockKind, permissionTitle, primaryKey } from './permission-dock';
 
 // The card a permission request, an AskUserQuestion or an ExitPlanMode docks above the composer (redesign phase 5,
@@ -80,7 +81,7 @@ function Head({ p, agent, more, where }: { p: PermissionRequestEvent; agent: str
   const kind = dockKind(p);
   return (
     <div className="pd-head">
-      <Icon name={kind === 'ask' ? 'question' : kind === 'plan' ? 'plan' : 'shield'} size={15} className="pd-ic" />
+      <span className="pd-ic" aria-hidden><Icon name={kind === 'ask' ? 'question' : kind === 'plan' ? 'plan' : 'shield'} size={15} /></span>
       <span className="pd-title">{permissionTitle(p, agent)}</span>
       {more > 0 && <span className="pd-more" title="其它请求排在这一条后面，一次处理一条">还有 {more} 条</span>}
       <span className="grow" />
@@ -210,6 +211,19 @@ function AskQuestion({ p, agent, more, reason, onReasonUsed, scope, note, onDeny
 }
 
 /**
+ * The card as it leaves (UI refresh §6: out in 180ms): answered here, in Mission Control or from IM, or followed by
+ * the next request — an inert copy of it fades out where it was (ui/ghost.ts), under another class (`pdock-out`, the
+ * same look in floating.css) so nothing that looks the docked card up by `.pdock` ever finds the copy, without its
+ * status line (it would be read out again), floating over what takes its place (the next card, the run card).
+ * One instance per request (keyed): its cleanup runs while the card it belonged to is still whole.
+ */
+const CARD_GHOST: GhostOpts = { ms: 180, className: 'leaving', rename: ['pdock', 'pdock-out'], strip: '.pd-live', float: true };
+function CardLeave({ dock }: { dock: HTMLElement | null }) {
+  useLeaveGhost(() => dock, () => CARD_GHOST, [dock]);
+  return null;
+}
+
+/**
  * The first pending request of this conversation, docked above its composer (it replaces the run card while it is
  * there). `reason`: what is typed in the composer — 拒绝 / 要求修改 / 跳过 send it as the reason, then `onReasonUsed`
  * clears the box. `scope`: the composer's pane + tile (the main button is registered per pane). `note`: what Enter
@@ -218,6 +232,9 @@ function AskQuestion({ p, agent, more, reason, onReasonUsed, scope, note, onDeny
  */
 export function PermissionDock({ sessionId, reason, onReasonUsed, scope, note, onDenyQueued }: { sessionId: string; reason: string; onReasonUsed: () => void; scope: string; note?: string; onDenyQueued?: () => void }) {
   const o = useStore((s) => s.open[sessionId]);
+  // the card's element as state (a callback ref): the leaving copy is taken from it by a child's cleanup, when a
+  // plain ref is already detached
+  const [dock, setDock] = useState<HTMLElement | null>(null);
   const p = o?.pending[0];
   if (!o || !p) return null;
   const agent = o.info?.agent && o.info.agent !== 'claude' ? o.info.agentName ?? o.info.agent : 'Claude';
@@ -225,8 +242,10 @@ export function PermissionDock({ sessionId, reason, onReasonUsed, scope, note, o
   const kind = dockKind(p);
   const title = permissionTitle(p, agent);
   return (
-    <div className={clsx('pdock', kind)} role="region" aria-label={title} data-request={p.requestId} data-kind={kind}>
+    <div ref={setDock} className={clsx('pdock', kind)} role="region" aria-label={title} data-request={p.requestId} data-kind={kind}>
       <DockLive text={note ?? `${title}。${DOCK_STATUS[kind]}`} />
+      {/* before the card: its cleanup must run first, while the card's own nodes are still there */}
+      <CardLeave key={`leave:${p.requestId}`} dock={dock} />
       {kind === 'ask' ? <AskQuestion key={p.requestId} {...props} /> : kind === 'plan' ? <PlanApproval key={p.requestId} {...props} /> : <ToolPermission key={p.requestId} {...props} />}
     </div>
   );

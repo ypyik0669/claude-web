@@ -3,6 +3,9 @@
 import type { LayoutAction } from '@/model/layout';
 import type { IconName } from '@/ui/icons';
 
+/** The page's title. It is set in the heading face, so ui/heading-text.ts lists it. */
+export const AUTOMATION_TITLE = '自动化';
+
 export const AUTOMATION_TABS = ['schedules', 'goals', 'orchestra'] as const;
 export type AutomationTab = (typeof AUTOMATION_TABS)[number];
 

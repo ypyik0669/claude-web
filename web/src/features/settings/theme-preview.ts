@@ -10,15 +10,15 @@ export interface ThemeSwatch { bg: string; side: string; fg: string; accent: str
 
 /**
  * Each theme's primitives, for the swatches only (the swatch shows another theme than the one applied, so it cannot
- * read the live CSS variables). theme-preview.test.ts checks every value against the theme blocks of styles.css.
+ * read the live CSS variables). theme-preview.test.ts checks every value against the theme blocks of tokens.css.
  */
 export const THEME_PREVIEW: Record<Theme, ThemeSwatch> = {
-  dark: { bg: '#1a1a19', side: '#151514', fg: '#ececea', accent: '#d97757' },
-  light: { bg: '#ffffff', side: '#f8f8f7', fg: '#1b1b1a', accent: '#d97757' },
+  dark: { bg: '#1b1a18', side: '#12110f', fg: '#eeedea', accent: '#f5914f' },
+  light: { bg: '#fefdfc', side: '#f7f6f2', fg: '#1c1917', accent: '#eb7f3b' },
   paper: { bg: '#f7f3ea', side: '#f1ece1', fg: '#2b2620', accent: '#b5563a' },
-  dracula: { bg: '#282a36', side: '#2c2e3b', fg: '#f8f8f2', accent: '#bd93f9' },
-  nord: { bg: '#2e3440', side: '#333a48', fg: '#eceff4', accent: '#88c0d0' },
-  'tokyo-night': { bg: '#1a1b26', side: '#1f2030', fg: '#c0caf5', accent: '#7aa2f7' },
+  dracula: { bg: '#282a36', side: '#21222c', fg: '#f8f8f2', accent: '#bd93f9' },
+  nord: { bg: '#2e3440', side: '#272c36', fg: '#eceff4', accent: '#88c0d0' },
+  'tokyo-night': { bg: '#1a1b26', side: '#16161e', fg: '#c0caf5', accent: '#7aa2f7' },
 };
 
 export const THEME_LABEL: Record<ThemeChoice, string> = {

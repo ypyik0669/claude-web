@@ -1,95 +1,181 @@
-/* The phone shell: the app's dark palette, phone first. Classes only (the page's CSP has no 'unsafe-inline'). */
+/* The phone shell's own pages, in the app's look (docs/superpowers/specs/2026-10-10-ui-refresh/design.md §4, §8):
+   warm paper, ink buttons, pills, cards that draw their edge as a shadow ring. The primitives below mirror
+   web/src/tokens.css — light is its [data-theme='light'] block, dark its :root block — copied by hand because the
+   shell cannot import that file and stay small: a change there is repeated here. System fonts only, no font files.
+   Classes only (the page's CSP has no 'unsafe-inline'). */
 :root {
-  color-scheme: dark;
-  --bg: #1f1e1a;
-  --card: #2a2925;
-  --edge: #3a3934;
-  --fg: #ece9e2;
-  --fg-2: #a8a49b;
-  --accent: #d97757;
-  --warn: #e5b45a;
-  --err: #e0655c;
+  color-scheme: light;
+  --ground: #f7f6f2; /* tokens.css --bg-1: what the pages sit on */
+  --card: #fefdfc; /* --bg: cards, and the app's own surface on a phone */
+  --fg: #1c1917;
+  --fg-1: #47433f;
+  --fg-2: #67625f;
+  --fg-3: #7f7b77;
+  --accent: #eb7f3b; /* a mark or a fill (the logo, the spinner, the progress), never text */
+  --accent-text: #a94900; /* orange text, focus rings */
+  --primary: #1c1917; /* the primary button is ink, not orange */
+  --primary-fg: #fefdfc;
+  --red: #be2a27;
+  --yellow: #8a5d0b;
+  --e1: 6%;
+  --e2: 10%;
+  /* derived, as tokens.css derives them: every line and soft fill is the text colour at a few percent, never a grey */
+  --edge: color-mix(in oklab, var(--fg) var(--e1), transparent);
+  --edge-2: color-mix(in oklab, var(--fg) var(--e2), transparent);
+  --fill: color-mix(in oklab, var(--fg) 5%, transparent);
+  --fill-2: color-mix(in oklab, var(--fg) 10%, transparent);
+  --ring: 0 0 0 1px var(--edge), 0 1px 2px rgba(0, 0, 0, 0.05);
+  --ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --font: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans SC', sans-serif;
 }
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --ground: #12110f;
+    --card: #1b1a18;
+    --fg: #eeedea;
+    --fg-1: #c4c2be;
+    --fg-2: #a5a39e;
+    --fg-3: #868480;
+    --accent: #f5914f;
+    --accent-text: #f9a56e;
+    --primary: #eeedea;
+    --primary-fg: #1b1a18;
+    --red: #ff8179;
+    --yellow: #f0c464;
+    --e1: 7%;
+    --e2: 11%;
+  }
+}
+/* a browser from before color-mix() (Safari < 16.2, Chrome < 111): a translucent grey, so a field is still a field */
+@supports not (color: color-mix(in oklab, red, red)) {
+  :root { --edge: rgba(128, 128, 128, 0.16); --edge-2: rgba(128, 128, 128, 0.24); --fill: rgba(128, 128, 128, 0.1); --fill-2: rgba(128, 128, 128, 0.2); }
+}
+
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
-body { font: 15px/1.55 system-ui, -apple-system, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif; -webkit-text-size-adjust: 100%; }
-button { font: inherit; color: inherit; cursor: pointer; }
+html, body { margin: 0; height: 100%; background: var(--ground); color: var(--fg); }
+/* phone basics: no double-tap zoom, no tap flash, no pull-to-refresh in the middle of a pairing */
+html { -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; touch-action: manipulation; overscroll-behavior-y: contain; }
+body { font: 16px/24px var(--font); }
+p { margin: 0; }
+button { margin: 0; padding: 0; border: 0; background: none; font: inherit; color: inherit; cursor: pointer; -webkit-user-select: none; user-select: none; transition: transform 120ms var(--ease), background-color 180ms var(--ease); }
+button:not(:disabled):active { transform: scale(0.97); }
+:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 [hidden] { display: none !important; }
 
 .shell {
   min-height: 100vh;
   min-height: 100dvh;
-  padding: calc(env(safe-area-inset-top) + 12px) calc(env(safe-area-inset-right) + 16px) calc(env(safe-area-inset-bottom) + 24px) calc(env(safe-area-inset-left) + 16px);
   max-width: 560px;
   margin: 0 auto;
+  padding: 8px calc(env(safe-area-inset-right) + 20px) calc(env(safe-area-inset-bottom) + 32px) calc(env(safe-area-inset-left) + 20px);
 }
-.top { display: flex; align-items: center; gap: 8px; height: 44px; font-weight: 600; }
-.logo { color: var(--accent); font-size: 20px; }
-h1 { font-size: 18px; margin: 18px 0 10px; }
-
-.devices { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.devices li { display: flex; align-items: stretch; background: var(--card); border: 1px solid var(--edge); border-radius: 14px; overflow: hidden; }
-.device { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 14px 16px; background: none; border: 0; text-align: left; }
-.device:active { background: #34332e; }
-.pc { font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.when { font-size: 13px; color: var(--fg-2); }
-.del { border: 0; border-left: 1px solid var(--edge); background: none; color: var(--fg-2); padding: 0 14px; font-size: 13px; }
-.del.armed { color: var(--err); }
+.top { display: flex; align-items: center; gap: 8px; height: 44px; margin-top: env(safe-area-inset-top); font-size: 14px; font-weight: 600; }
+.logo { color: var(--accent); font-size: 20px; line-height: 1; }
+/* the one page name (你的电脑) is set in Songti, like the app's page names; a title with a PC's name in it is not */
+h1 { margin: 20px 0 12px; font: 600 24px/32px 'Songti SC', 'Noto Serif SC', SimSun, serif; overflow-wrap: anywhere; text-wrap: balance; }
+.busy h1, .failed h1, .ask h1 { font: 600 20px/28px var(--font); }
+h2 { margin: 28px 0 8px; font-size: 14px; line-height: 20px; font-weight: 600; color: var(--fg-1); }
+.empty, .line, .notice, .hint, .steps, .why { font-size: 14px; line-height: 22px; }
 .empty, .line { color: var(--fg-2); }
 
-.notice, .hint { background: var(--card); border: 1px solid var(--edge); border-radius: 12px; padding: 10px 14px; margin: 8px 0; font-size: 14px; }
-.hint p { margin: 0 0 6px; }
-.why-text { margin: 0; }
-.why-raw { margin: 6px 0 0; font-size: 12px; color: var(--fg-2); word-break: break-word; user-select: text; }
+/* the paired PCs: one card, a row each (the row's radius = the card's − its padding) */
+.devices, .empty, .ask { background: var(--card); box-shadow: var(--ring); }
+.devices { list-style: none; margin: 0; padding: 6px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; border-radius: 16px; }
+.devices li { display: flex; align-items: center; gap: 4px; }
+.device { flex: 1; min-width: 0; min-height: 56px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; padding: 6px 12px; border-radius: 10px; text-align: left; }
+.device:not(:disabled):active { transform: none; background: var(--fill); }
+.pc { max-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.when { font-size: 13px; line-height: 18px; color: var(--fg-2); }
+.del { flex: none; min-width: 44px; min-height: 44px; padding: 0 14px; border-radius: 999px; font-size: 13px; color: var(--fg-2); }
+.del:active { background: var(--fill); }
+.del.armed { background: color-mix(in oklab, var(--red) 12%, transparent); color: var(--red); font-weight: 600; }
+.empty { padding: 16px; border-radius: 16px; }
 
-.busy, .failed { margin-top: 18vh; text-align: center; }
-.busy .why, .failed .why { text-align: left; margin: 14px 0; }
-.spin { width: 28px; height: 28px; margin: 0 auto; border-radius: 50%; border: 3px solid var(--edge); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
-.spin.small { width: 14px; height: 14px; border-width: 2px; margin: 0; flex: none; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
-.progress { height: 4px; border-radius: 2px; background: var(--edge); margin: 14px auto; max-width: 260px; overflow: hidden; }
-.fill { height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
-.actions { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
-.primary, .ghost { border-radius: 10px; padding: 10px 20px; border: 1px solid var(--edge); }
-.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-.ghost { background: none; margin-top: 16px; }
-.actions .ghost { margin-top: 0; }
-.link { background: none; border: 0; padding: 0; color: var(--accent); }
-h2 { font-size: 15px; margin: 22px 0 8px; }
+/* notices: a soft fill, no line */
+.notice, .hint, .steps, .failed .why { padding: 12px 16px; border-radius: 16px; background: var(--fill); }
+.notice, .hint { margin: 8px 0; }
+.hint .link { margin-bottom: -8px; }
+.why-raw { margin-top: 6px; font-size: 12px; line-height: 18px; color: var(--fg-3); overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
 
-/* iOS Safari with a pairing link: add to the home screen first, or pair here */
-.ask { margin-top: 12vh; display: flex; flex-direction: column; gap: 10px; }
-.ask .line { margin: 0 0 8px; }
+/* buttons: pills, 44px to tap. Primary is ink; the second one a soft fill with no outline; a link is orange text */
+.primary, .ghost { min-height: 44px; padding: 0 22px; border-radius: 999px; }
+.primary { background: var(--primary); color: var(--primary-fg); font-weight: 600; }
+.primary:disabled { opacity: 0.4; cursor: default; }
+.ghost { background: var(--fill); }
+.ghost:active { background: var(--fill-2); }
+.link { min-height: 44px; margin: 0 -12px; padding: 0 12px; border-radius: 999px; font-size: 14px; color: var(--accent-text); }
+.link:active { background: var(--fill); }
 .wide { width: 100%; }
-.ask .ghost { margin-top: 0; }
-.ask .link { align-self: center; margin-top: 6px; }
-.steps { margin: 0 0 6px; padding: 10px 14px; border-radius: 10px; background: var(--card); border: 1px solid var(--edge); }
-.primary:disabled { opacity: 0.6; }
+
+/* pairing, connecting, failed */
+.busy, .failed { margin-top: 16vh; text-align: center; }
+.busy h1, .failed h1 { margin: 20px 0 8px; }
+.failed .why { margin-top: 16px; text-align: left; }
+.spin { width: 28px; height: 28px; margin: 0 auto; border-radius: 50%; border: 3px solid var(--edge-2); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
+.spin.small { width: 14px; height: 14px; margin: 0; border-width: 2px; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.progress { height: 4px; max-width: 240px; margin: 20px auto 0; border-radius: 999px; background: var(--edge-2); overflow: hidden; }
+.fill { height: 100%; width: 0; border-radius: inherit; background: var(--accent); }
+.actions { display: flex; gap: 10px; justify-content: center; margin-top: 24px; }
+.actions > * { flex: 1 1 0; max-width: 220px; }
+.busy .ghost { min-width: 132px; margin-top: 28px; }
+
+/* iOS Safari with a pairing link: add to the home screen first, or pair here — a question, so a dialog's card */
+.ask { display: flex; flex-direction: column; gap: 10px; margin-top: 6vh; padding: 24px 20px 8px; border-radius: 24px; }
+.ask h1 { margin: 0; }
+.ask .line { margin-bottom: 10px; }
+.ask .link { align-self: center; }
+.steps { border-radius: 12px; color: var(--fg-1); }
 
 /* 粘贴配对链接 */
-.paste-box { margin-top: 14px; }
-.paste-toggle { font-size: 14px; }
-.paste { margin-top: 8px; }
+.paste-box { margin-top: 12px; }
 .paste-row { display: flex; gap: 8px; }
-.paste-in { flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--edge); background: var(--card); color: var(--fg); }
-.paste-row .primary { padding: 10px 16px; flex: none; }
-.paste-err { margin: 6px 0 0; font-size: 13px; color: var(--err); }
+.paste-in { flex: 1; min-width: 0; height: 44px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--fill); color: var(--fg); font: inherit; -webkit-appearance: none; appearance: none; }
+.paste-in::placeholder { color: var(--fg-3); }
+.paste-in:focus { outline: 1.5px solid var(--accent-text); outline-offset: 0; }
+.paste-row .primary { flex: none; padding: 0 20px; }
+.paste-err { margin: 8px 2px 0; font-size: 13px; line-height: 18px; color: var(--red); }
 
-/* the app: a full-screen frame inside the safe area (env() is 0 inside an iframe), a thin bar above when needed */
+/* the app: a full-screen frame inside the safe area (env() is 0 inside an iframe), on the app's own surface colour */
 .app {
   position: fixed;
   inset: 0;
   display: flex;
   flex-direction: column;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-  background: var(--bg);
+  background: var(--card);
 }
-.frame { flex: 1; width: 100%; border: 0; background: var(--bg); }
-.bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 13px; background: var(--card); border-bottom: 1px solid var(--edge); }
-.bar.warn { color: var(--warn); }
-.bar.err { color: var(--err); }
-.bar-text { flex: 1; min-width: 0; }
-.bar-raw { color: var(--fg-2); margin-left: 4px; word-break: break-word; }
-.bar-act { background: none; border: 1px solid var(--edge); border-radius: 8px; padding: 3px 10px; color: var(--fg); flex: none; }
-.bar-x { background: none; border: 0; color: var(--fg-2); font-size: 18px; line-height: 1; padding: 0 4px; flex: none; }
+.frame { flex: 1; width: 100%; border: 0; background: var(--card); }
+/* from the home screen on iOS the page draws under the status bar, whose text is white whatever is behind it
+   (shell.html: black-translucent): on paper it gets ink behind it. Nothing where the inset is 0 (everywhere else) */
+@media (display-mode: standalone) and (prefers-color-scheme: light) {
+  body::before { content: ''; position: fixed; z-index: 1; inset: 0 0 auto; height: env(safe-area-inset-top); background: var(--fg); }
+}
+/* the connection's state: a pill above the frame, in the flow (it pushes the app down and covers none of it) */
+.bar { display: flex; align-items: center; gap: 8px; margin: 4px 8px; padding: 4px 12px; border-radius: 18px; background: var(--fill); color: var(--fg-1); font-size: 13px; line-height: 18px; animation: bar-in 180ms var(--ease); }
+.bar.warn { background: color-mix(in oklab, var(--yellow) 16%, transparent); color: var(--fg); }
+.bar.warn .spin { border-top-color: var(--yellow); }
+/* the link is down: the sentence on its own line, 重新连接 / 返回 under it */
+.bar.err { flex-wrap: wrap; justify-content: flex-end; padding: 8px 12px; background: color-mix(in oklab, var(--red) 14%, transparent); color: var(--fg); }
+.bar.err .bar-text { flex-basis: 100%; }
+.bar-text { flex: 1; min-width: 0; padding: 5px 0; }
+.bar-raw { margin-left: 4px; font-size: 12px; color: var(--fg-2); overflow-wrap: anywhere; }
+.bar-act, .bar-x { position: relative; flex: none; }
+.bar-act { min-height: 32px; padding: 0 14px; border-radius: 999px; background: var(--fill-2); color: var(--fg); }
+.bar-act:first-of-type { background: var(--primary); color: var(--primary-fg); font-weight: 600; }
+.bar-x { width: 28px; height: 28px; margin-right: -6px; border-radius: 50%; color: var(--fg-2); font-size: 20px; line-height: 1; }
+.bar-x:active { background: var(--fill-2); }
+/* 44px to tap, drawn smaller: the extra reach stays inside the bar's own padding and margin, off the app below */
+.bar-act::after, .bar-x::after { content: ''; position: absolute; inset: -6px 0; }
+.bar-x::after { inset: -8px; }
+@keyframes bar-in { from { opacity: 0; transform: translateY(-4px); } }
+
+/* 减少动态效果: nothing moves or scales, colours change in 80ms. The spinner still turns, as in the app (tokens.css):
+   one that stands still reads as stuck */
+@media (prefers-reduced-motion: reduce) {
+  button { transition-duration: 80ms; }
+  button:not(:disabled):active { transform: none; }
+  .bar { animation: none; }
+  .spin { animation-duration: 1.2s; }
+}

@@ -1,4 +1,4 @@
-// Text contrast of the themes, read straight from styles.css (spec §6, §8):
+// Text contrast of the themes, read straight from tokens.css (spec 2026-09-28 §6, §8; 2026-10-10 §4.1):
 // the default light / dark themes: body text ≥ 7:1, secondary text and status colours ≥ 4.5:1, auxiliary text
 // (placeholders, timestamps, key hints) ≥ 3:1 — on the page (--bg), the sidebar / card surface (--bg-1), the inset /
 // hover / chip surface (--bg-2, where the header's +N −M sits) and floating surfaces (--bg-elev: menus, the composer).
@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { contrast, themeBlock } from './contrast';
 
-const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+const css = readFileSync(new URL('../tokens.css', import.meta.url), 'utf8');
 const dark = themeBlock(css, ':root');
 // the other blocks only override; anything they leave out cascades from the dark defaults
 const theme = (t: string) => ({ ...dark, ...themeBlock(css, `:root[data-theme='${t}']`) });
@@ -23,6 +23,7 @@ const RULES: { ink: string; min: number; what: string }[] = [
   { ink: 'red', min: 4.5, what: 'status / diff −' },
   { ink: 'yellow', min: 4.5, what: 'needs-you' },
   { ink: 'blue', min: 4.5, what: 'info' },
+  { ink: 'accent-text', min: 4.5, what: 'orange text / focus ring' },
   { ink: 'fg-3', min: 3, what: 'auxiliary text' },
 ];
 
@@ -41,6 +42,7 @@ describe('default themes: full contrast table (WCAG)', () => {
         }
       }
       it('user bubble text ≥ 7:1', () => expect(pair(t, 'fg', 'user-bg')).toBeGreaterThanOrEqual(7));
+      it('text on an accent fill ≥ 4.5:1 (ink, not white)', () => expect(pair(t, 'accent-fg', 'accent')).toBeGreaterThanOrEqual(4.5));
       it('primary button label ≥ 4.5:1', () => {
         expect(t.primary, '--primary must be a literal colour in the default themes').toBeTruthy();
         expect(contrast(t['primary-fg'], t.primary)).toBeGreaterThanOrEqual(4.5);
@@ -59,6 +61,9 @@ describe('every theme: diff numbers and auxiliary text', () => {
       }
       for (const g of GROUNDS) {
         it(`--fg-3 on --${g} ≥ 3:1`, () => expect(pair(t, 'fg-3', g)).toBeGreaterThanOrEqual(3));
+      }
+      for (const g of GROUNDS) {
+        it(`--accent-text on --${g} ≥ 4.5:1`, () => expect(pair(t, 'accent-text', g)).toBeGreaterThanOrEqual(4.5));
       }
       it('ink keeps its order: --fg-1 > --fg-2 > --fg-3 on --bg', () => {
         expect(pair(t, 'fg-1', 'bg')).toBeGreaterThan(pair(t, 'fg-2', 'bg'));

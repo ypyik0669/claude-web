@@ -41,7 +41,7 @@ function useReq<T>(req: any, deps: any[] = []) {
 
 function Cmd({ r }: { r: { code: number; stdout: string; stderr: string } | null }) {
   if (!r) return null;
-  return <pre className="mono" style={{ fontSize: 11.5, color: r.code ? 'var(--red)' : 'var(--fg-1)', padding: '6px 12px', whiteSpace: 'pre-wrap' }}>{(r.stdout + '\n' + r.stderr).trim()}</pre>;
+  return <pre className="mono" style={{ fontSize: 12, color: r.code ? 'var(--red)' : 'var(--fg-1)', padding: '6px 12px', whiteSpace: 'pre-wrap' }}>{(r.stdout + '\n' + r.stderr).trim()}</pre>;
 }
 
 /**
@@ -59,7 +59,7 @@ export function Overview({ part = 'all' }: { part?: 'all' | 'engine' }) {
       <div className="kv">
         <span className="k">运行内核</span>
         <span>
-          {engine ? <>v{engine.version ?? '?'} <span style={{ color: 'var(--fg-2)', fontSize: 11 }} title="运行内核随应用一起更新">{engine.runtime === 'ccb' ? 'claude-web-engine（基于 ccb 2.8.4）' : '官方 Claude Code（内置内核不可用时的兜底）'} · {engine.source === 'bundled' ? '内置' : engine.source === 'global' ? '全局 npm' : '环境变量'}{engine.fallback ? ` · 兜底 ${engine.fallback.runtime === 'ccb' ? 'claude-web-engine' : '官方 Claude Code'} v${engine.fallback.version ?? '?'}` : ''}</span></> : '检测中…'}
+          {engine ? <>v{engine.version ?? '?'} <span style={{ color: 'var(--fg-2)', fontSize: 12 }} title="运行内核随应用一起更新">{engine.runtime === 'ccb' ? 'claude-web-engine（基于 ccb 2.8.4）' : '官方 Claude Code（内置内核不可用时的兜底）'} · {engine.source === 'bundled' ? '内置' : engine.source === 'global' ? '全局 npm' : '环境变量'}{engine.fallback ? ` · 兜底 ${engine.fallback.runtime === 'ccb' ? 'claude-web-engine' : '官方 Claude Code'} v${engine.fallback.version ?? '?'}` : ''}</span></> : '检测中…'}
         </span>
         {part === 'all' && <>
           <span className="k">登录</span><span>{data.auth.loggedIn ? `已登录 (${data.auth.authMethod}${data.auth.email ? ` · ${data.auth.email}` : ''})` : '未登录 — 在终端里运行 claude auth login，或在「供应商」里添加第三方端点'}</span>
@@ -73,7 +73,7 @@ export function Overview({ part = 'all' }: { part?: 'all' | 'engine' }) {
       </div>
       <div className="section">
         <button className="btn sm" onClick={() => { setDoctor('运行 claude doctor…'); ws.request<any>({ kind: 'config.doctor' }).then((r) => setDoctor(r.output)).catch((e) => setDoctor(e.message)); }}>运行 doctor</button>
-        {doctor && <pre className="mono" style={{ fontSize: 11.5, marginTop: 8, whiteSpace: 'pre-wrap' }}>{doctor}</pre>}
+        {doctor && <pre className="mono" style={{ fontSize: 12, marginTop: 8, whiteSpace: 'pre-wrap' }}>{doctor}</pre>}
       </div>
     </>
   );
@@ -96,7 +96,7 @@ export function Plugins() {
         {(data?.plugins ?? []).map((p) => (
           <div key={p.id} className="row">
             <div className="grow">
-              <div>{p.manifest?.name ?? p.id.split('@')[0]} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>v{p.version} · {p.id.split('@')[1]} · {p.scope}</span></div>
+              <div>{p.manifest?.name ?? p.id.split('@')[0]} <span style={{ color: 'var(--fg-2)', fontSize: 12 }}>v{p.version} · {p.id.split('@')[1]} · {p.scope}</span></div>
               <div className="sub">{p.manifest?.description ?? ''} {p.components ? `· skills ${p.components.skills} / commands ${p.components.commands} / agents ${p.components.agents}${p.components.hooks ? ' / hooks' : ''}${p.components.mcp ? ' / mcp' : ''}` : ''}</div>
             </div>
             <button className={clsx('toggle', p.enabled && 'on')} title={p.enabled ? '禁用' : '启用'} disabled={busy} onClick={() => run({ kind: 'config.plugin.toggle', name: p.id, enable: !p.enabled })} />
@@ -117,7 +117,7 @@ export function Plugins() {
           <input value={mkSrc} onChange={(e) => setMkSrc(e.target.value)} placeholder="owner/repo 或 git URL 或本地路径" style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 4, padding: '4px 8px' }} />
           <button className="btn sm" disabled={busy || !mkSrc} onClick={() => run({ kind: 'config.marketplace.add', source: mkSrc })}>添加市场</button>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--fg-2)', marginTop: 6 }}>启停 / 安装后要重启对话进程才生效（对话右上角 ··· →「结束进程」，再发一条消息继续）</div>
+        <div style={{ fontSize: 12, color: 'var(--fg-2)', marginTop: 6 }}>启停 / 安装后要重启对话进程才生效（对话右上角 ··· →「结束进程」，再发一条消息继续）</div>
       </div>
       <Cmd r={out} />
     </>
@@ -150,7 +150,7 @@ export function Mcp() {
       <div className="list">
         {live && (
           <>
-            <h5 style={{ margin: '4px 8px', fontSize: 11.5, color: 'var(--fg-2)' }}>当前对话</h5>
+            <h5 style={{ margin: '4px 8px', fontSize: 12, color: 'var(--fg-2)' }}>当前对话</h5>
             {live.map((s) => (
               <div key={s.name} className="row">
                 <span className={clsx('dot', s.status === 'connected' ? 'idle' : s.status === 'failed' ? 'error' : 'waiting')} />
@@ -159,7 +159,7 @@ export function Mcp() {
             ))}
           </>
         )}
-        <h5 style={{ margin: '8px 8px 4px', fontSize: 11.5, color: 'var(--fg-2)' }}>已配置</h5>
+        <h5 style={{ margin: '8px 8px 4px', fontSize: 12, color: 'var(--fg-2)' }}>已配置</h5>
         {(data?.servers ?? []).map((s) => (
           <div key={s.name} className="row">
             <span className={clsx('dot', /Connected/.test(s.status) ? 'idle' : 'error')} />
@@ -246,12 +246,12 @@ export function Settings() {
       <div className="subtabs" style={{ padding: 0, border: 'none', marginBottom: 6 }}>
         {(['user', 'project', 'local'] as const).map((s) => <button key={s} className={scope === s ? 'active' : ''} onClick={() => setScope(s)} disabled={s !== 'user' && !active}>{s}</button>)}
       </div>
-      <div className="mono" style={{ fontSize: 11, color: 'var(--fg-2)', marginBottom: 4 }}>{data?.path}</div>
-      {err && <div style={{ color: 'var(--red)', fontSize: 12 }}>{err}</div>}
+      <div className="mono" style={{ fontSize: 12, color: 'var(--fg-2)', marginBottom: 4 }}>{data?.path}</div>
+      {err && <div style={{ color: 'var(--red)', fontSize: 13 }}>{err}</div>}
       <textarea className="code" value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
         <button className="btn sm primary" disabled={!data} onClick={save}>保存</button>
-        <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>{msg}</span>
+        <span style={{ fontSize: 13, color: 'var(--fg-2)' }}>{msg}</span>
       </div>
     </div>
   );
@@ -348,7 +348,7 @@ export function ProviderProfiles() {
     const set = (v: string) => setEditing(key === 'defaultModel' ? { ...editing!, defaultModel: v } : { ...editing!, modelMap: { ...(editing!.modelMap ?? {}), [key]: v } });
     return (
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4 }}>
-        <span style={{ minWidth: 110, fontSize: 12, color: 'var(--fg-2)' }}>{label}</span>
+        <span style={{ minWidth: 110, fontSize: 13, color: 'var(--fg-2)' }}>{label}</span>
         <input className="field" style={{ flex: 1 }} list={`models-${key}`} value={val} onChange={(e) => set(e.target.value)} placeholder={key === 'defaultModel' ? '不填 = 端点默认 / 输入框里再选' : `别名 ${key} 映射到的模型`} />
         <datalist id={`models-${key}`}>{models.map((m) => <option key={m} value={m} />)}</datalist>
       </div>
@@ -368,7 +368,7 @@ export function ProviderProfiles() {
           <div key={p.id} className="row">
             <span className={clsx('dot', p.models?.length ? 'idle' : 'waiting')} title={p.models?.length ? `已测试 · ${p.models.length} 个模型` : '未测试连接'} />
             <div className="grow">
-              <div title={p.runtime === 'claude' ? '这个端点只认官方 Claude Code 二进制（编辑里可以改）' : undefined}>{p.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{PROVIDER_TYPES.find((t) => t.v === p.type)?.l}</span></div>
+              <div title={p.runtime === 'claude' ? '这个端点只认官方 Claude Code 二进制（编辑里可以改）' : undefined}>{p.name} <span style={{ color: 'var(--fg-2)', fontSize: 12 }}>{PROVIDER_TYPES.find((t) => t.v === p.type)?.l}</span></div>
               <div className="sub mono">{p.type === 'gateway' ? `组：${gwGroups.find((g) => g.id === p.gatewayGroupId)?.name ?? '（组已删除）'}` : <>{p.baseUrl || '（默认端点）'} · {p.apiKey || '无 key'}</>}{p.defaultModel ? ` · ${p.defaultModel}` : ''}</div>
             </div>
             <button className={clsx('btn sm', def === p.id && 'primary')} onClick={() => setSetting('defaultProviderId', p.id)}>{def === p.id ? '默认' : '设为默认'}</button>
@@ -386,7 +386,7 @@ export function ProviderProfiles() {
           </div>
           {isGw && (
             <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
-              <span style={{ minWidth: 110, fontSize: 12, color: 'var(--fg-2)' }}>网关组</span>
+              <span style={{ minWidth: 110, fontSize: 13, color: 'var(--fg-2)' }}>网关组</span>
               <select className="field" style={{ flex: 1 }} value={editing.gatewayGroupId ?? ''} onChange={(e) => setEditing({ ...editing, gatewayGroupId: e.target.value })}>
                 <option value="">选择组…</option>
                 {gwGroups.map((g) => <option key={g.id} value={g.id}>{g.name}（{g.members.length} 个成员）</option>)}
@@ -401,7 +401,7 @@ export function ProviderProfiles() {
             <button className="btn sm" disabled={busy} onClick={test}>{busy ? '测试中…' : '测试连接'}</button>
           </div>}
           {probe && (
-            <div style={{ fontSize: 12, marginBottom: 6, color: probe.ok ? 'var(--green)' : 'var(--red)' }}>
+            <div style={{ fontSize: 13, marginBottom: 6, color: probe.ok ? 'var(--green)' : 'var(--red)' }}>
               {probe.models.length > 0 ? `模型列表 ${probe.models.length} 个` : probe.ok ? '连接正常' : `失败${probe.status ? ` HTTP ${probe.status}` : ''}：${probe.error}`}
               {probe.chat && (probe.chat.ok
                 ? ` · 对话测试通过（${probe.chat.model} · ${probe.chat.runtime === 'claude' ? '官方二进制' : probe.chat.runtime === 'api' ? '直连接口' : 'ccb'} · ${(probe.chat.ms / 1000).toFixed(1)}s）`
@@ -418,7 +418,7 @@ export function ProviderProfiles() {
           {modelPick('sonnet →', 'sonnet')}
           {modelPick('opus →', 'opus')}
           {(editing.type === 'anthropic' || editing.type === 'gateway') && (
-            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, color: 'var(--fg-2)', margin: '6px 0' }}>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, color: 'var(--fg-2)', margin: '6px 0' }}>
               <input type="checkbox" checked={editing.runtime === 'claude'} onChange={(e) => setEditing({ ...editing, runtime: e.target.checked ? 'claude' : (null as any) })} />
               这个端点只认官方 Claude Code 二进制（被拒时再勾）
             </label>
@@ -436,7 +436,7 @@ export function ProviderProfiles() {
 
 /** Prompt-cache switches of a profile (server: gateway/shim.ts, gateway/cache.ts). `null` = back to the default. */
 function CacheOptions({ editing, set }: { editing: Draft; set: (d: Draft) => void }) {
-  const row = { display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, color: 'var(--fg-2)', margin: '4px 0' } as const;
+  const row = { display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, color: 'var(--fg-2)', margin: '4px 0' } as const;
   const oai = editing.type === 'openai' || editing.type === 'grok';
   const shimOn = editing.cacheShim !== false;
   const promptOnly = editing.promptEffortModels ?? [];
@@ -493,9 +493,9 @@ export function ConfigPanel() {
       {tab === 'providers' && <><ProviderProfiles /><EnvEditor /></>}
       {tab === 'plugins' && <Plugins />}
       {tab === 'mcp' && <><Mcp /><McpAddJson /></>}
-      {tab === 'skills' && <SimpleList kind="config.skills" render={(s) => <div className="grow"><div>/{s.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{s.source}</span></div><div className="sub">{s.description}</div></div>} />}
-      {tab === 'agents' && <SimpleList kind="config.agents" render={(a) => <div className="grow"><div>{a.name} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{a.source}{a.model ? ` · ${a.model}` : ''}</span></div><div className="sub">{a.description}</div></div>} />}
-      {tab === 'hooks' && <SimpleList kind="config.hooks" render={(h) => <div className="grow"><div>{h.event} <span style={{ color: 'var(--fg-2)', fontSize: 11 }}>{h.matcher ? `matcher: ${h.matcher}` : ''} · {h.source}</span></div><div className="sub">{(h.hooks ?? []).map((x: any) => x.command ?? x.type).join(' ; ')}</div></div>} />}
+      {tab === 'skills' && <SimpleList kind="config.skills" render={(s) => <div className="grow"><div>/{s.name} <span style={{ color: 'var(--fg-2)', fontSize: 12 }}>{s.source}</span></div><div className="sub">{s.description}</div></div>} />}
+      {tab === 'agents' && <SimpleList kind="config.agents" render={(a) => <div className="grow"><div>{a.name} <span style={{ color: 'var(--fg-2)', fontSize: 12 }}>{a.source}{a.model ? ` · ${a.model}` : ''}</span></div><div className="sub">{a.description}</div></div>} />}
+      {tab === 'hooks' && <SimpleList kind="config.hooks" render={(h) => <div className="grow"><div>{h.event} <span style={{ color: 'var(--fg-2)', fontSize: 12 }}>{h.matcher ? `matcher: ${h.matcher}` : ''} · {h.source}</span></div><div className="sub">{(h.hooks ?? []).map((x: any) => x.command ?? x.type).join(' ; ')}</div></div>} />}
       {tab === 'settings' && <><UiSettings /><Settings /></>}
     </div>
   );

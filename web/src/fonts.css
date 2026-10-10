@@ -1,0 +1,11 @@
+/* The Songti cut for the greeting and page names: Noto Serif SC 600, subset to the strings in ui/heading-text.ts
+   (scripts/subset-heading-font.ts cuts it; heading-text.test.ts fails when a string outgrows it). Inter and JetBrains Mono
+   come from their packages (main.tsx). Kept out of tokens.css: that file is inlined raw into exported conversations,
+   where a relative font URL would point nowhere. */
+@font-face {
+  font-family: 'CW Heading';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./assets/fonts/cw-heading.woff2') format('woff2');
+}

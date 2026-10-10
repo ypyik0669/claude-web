@@ -5,7 +5,7 @@ import { Pane } from './Pane';
 import { Splitter } from './Splitter';
 import { clsx } from '@/util';
 
-const GAP = 6;
+const GAP = 8; // the shell gap (tokens.css --shell-gap): the space between two pane cards is the divider
 
 /** Parent rects for each split (so the splitter can convert pointer position → ratio). */
 function splitParents(root: PaneNode, rect: Rect, out: Record<string, Rect> = {}): Record<string, Rect> {

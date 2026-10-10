@@ -5,6 +5,7 @@ import { clsx } from '@/util';
 import type { ProxyStatus } from '@shared';
 import { imeComposing } from '@/ui/ime';
 import { Row } from './controls';
+import { Segmented } from '@/ui/Segmented';
 
 // 设置 → 供应商 → 网络代理 (server net/proxy.ts). A ladder in rule / PAC mode only sets the system proxy, which Node
 // never looks at (user report: 403「所在地区」with the ladder on); the server reads it — or HTTP(S)_PROXY — and hands it
@@ -57,9 +58,7 @@ export function ProxySection() {
     <div className="section" data-id="proxy">
       <h5>网络代理</h5>
       <Row label="代理" hint="跟随系统：先看启动时的 HTTPS_PROXY 环境变量，再看系统代理（梯子的「系统代理」开关）。用在所有 Agent 和本机发出的请求上；改动对新开的对话生效，已经在跑的对话重开后才用上。">
-        <div className="sp-seg" role="radiogroup" aria-label="代理">
-          {MODES.map((o) => <button key={o.id} role="radio" aria-checked={picked === o.id} className={clsx(picked === o.id && 'on')} disabled={busy} onClick={() => pick(o.id)}>{o.l}</button>)}
-        </div>
+        <Segmented className="sp-seg" label="代理" arrows disabled={busy} value={picked} options={MODES.map((o) => ({ value: o.id, label: o.l }))} onChange={(id) => pick(id)} />
       </Row>
       {picked === 'custom' && (
         <Row label="代理地址" hint="梯子的 HTTP 代理端口，比如 Clash 的 http://127.0.0.1:7890（SOCKS 端口不行）。">

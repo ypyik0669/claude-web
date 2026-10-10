@@ -1,0 +1,103 @@
+/* UI refresh, phase 4 (docs/superpowers/specs/2026-10-10-ui-refresh/design.md §8): the phone (≤ 760px, `.app.mobile`).
+   Loaded after every other sheet, so a rule here wins over the same selector elsewhere. The bottom sheet and the
+   drawer's gestures are in phone-sheet.css; the menus as action sheets in phone-menus.css. */
+
+/* ---- ground rules ---- */
+@media (max-width: 760px) {
+  html, body { overscroll-behavior-y: none; } /* no pull-to-refresh under a conversation */
+}
+.app.mobile { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.app.mobile :is(.chat, .sb-list, .dock-panel, .welcome, .sp-scroll, .auto-body, .rv-list, .menu) { overscroll-behavior: contain; }
+
+/* ---- a tap lands on anything within 44px: the drawing stays its size, the target grows around it ---- */
+/* (zero specificity: anything already placed — an absolute ··· on a row — keeps its own position) */
+:where(.app.mobile) :where(.icon-btn, .sh-diff, .cb .plus, .cb .cchip, .cb .mm-anchor > .chip, .msg-actions button, .link, .sp-more-h, .turn-sum) { position: relative; }
+.app.mobile :is(.icon-btn, .sh-diff, .cb .plus, .cb .cchip, .cb .mm-anchor > .chip, .msg-actions button, .sp-more-h)::after {
+  content: ''; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%);
+}
+.app.mobile :is(.link, .turn-sum)::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: max(100%, 44px); transform: translateY(-50%); }
+
+/* ---- the header floats: round buttons over the conversation, no bar and no rule; the text scrolls under a fade.
+   The status bar's safe area is the header's top. ---- */
+.app.mobile .sess-head, .app.mobile .welcome-top, .app.mobile .mobile-tilebar, .app.mobile .auto-head {
+  height: calc(var(--h-head) + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) var(--sp-2) 0; gap: var(--sp-2); border-bottom: 0;
+}
+.app.mobile .sess-head > .sb-reveal, .app.mobile .welcome-top > .sb-reveal, .app.mobile .mobile-tilebar > .icon-btn, .app.mobile .auto-head .sb-reveal,
+.app.mobile .sess-head .sh-more > .icon-btn {
+  width: 40px; height: 40px; margin: 0; border-radius: 50%; background: var(--surface-elev); box-shadow: var(--elev-1); color: var(--ink-1);
+}
+.app.mobile .sess-head .sh-more > .icon-btn.active { background: var(--surface-2); }
+.app.mobile .sess-head .sh-main { flex: 1 1 0; min-width: 0; justify-content: center; }
+.app.mobile .sh-title { min-width: 0; font-size: var(--fs-body); text-align: center; }
+.app.mobile .sh-diff { height: 32px; padding: 0 12px; margin: 0; border-radius: var(--r-pill); background: var(--surface-elev); box-shadow: var(--elev-1); font-family: var(--mono); font-size: var(--fs-meta); letter-spacing: -0.02em; }
+.app.mobile .sh-actions { gap: var(--sp-2); }
+/* directly over the conversation: the header's lower edge is a fade the text scrolls under */
+.app.mobile .chat-tile > .sess-head:has(+ .chat) {
+  position: relative; z-index: 6; margin-bottom: -22px; padding-bottom: 22px; height: calc(var(--h-head) + 22px + env(safe-area-inset-top, 0px));
+  background: linear-gradient(to bottom, var(--surface-0) calc(100% - 26px), transparent); pointer-events: none;
+}
+.app.mobile .chat-tile > .sess-head:has(+ .chat) > * { pointer-events: auto; }
+.app.mobile .chat-tile > .sess-head + .chat { padding-top: 26px; }
+
+/* ---- the conversation ---- */
+.app.mobile .chat-inner { padding: 0 var(--sp-4); }
+.app.mobile .msg.user .bubble { max-width: 88%; }
+
+/* ---- the input card: 24px corners, two rows; + 36 · model (its name only) · permission (icon) · send 40 ---- */
+.app.mobile .composer { padding: 4px var(--sp-2) max(var(--sp-2), env(safe-area-inset-bottom, 0px)); }
+.app.mobile .composer-box { padding: 10px 10px 8px 12px; }
+.app.mobile .composer textarea { font-size: 16px; line-height: 24px; min-height: 32px; } /* 16px: iOS zooms the page into anything smaller */
+.app.mobile .cb .plus { width: 36px; height: 36px; }
+.app.mobile .cb .cchip, .app.mobile .cb .dirpick, .app.mobile .cb .mm-anchor > .chip { height: 36px; min-height: 36px; padding: 0 10px; font-size: var(--fs-base); }
+.app.mobile .cb .mm-chip-suffix { display: none; }
+.app.mobile .cb .icon-btn { width: 36px; height: 36px; }
+.app.mobile .cb .send { width: 40px; height: 40px; }
+.app.mobile .cb .steer { height: 36px; }
+.app.mobile .composer .run-card { margin: 0 var(--sp-3) -8px; }
+.app.mobile .run-card .rc-stop { height: 32px; padding: 0 12px; font-size: var(--fs-sm); }
+
+/* ---- the approval / question / plan card: every button a row of its own, 46px, the main one on top (under the
+   thumb's reach comes 总是允许…, then 拒绝); the hint is the last line. Enter's meaning and the cooldown are the card's. ---- */
+.app.mobile .pdock .pd-actions { flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: var(--sp-2); }
+.app.mobile .pdock .pd-actions .btn { order: 2; flex: none; width: 100%; min-height: 46px; justify-content: center; font-size: var(--fs-base); }
+.app.mobile .pdock .pd-actions .btn.pd-main { order: 1; flex: none; min-height: 46px; }
+.app.mobile .pdock .pd-actions .btn[data-act='deny'] { order: 3; }
+.app.mobile .pdock .pd-actions .pd-hint { order: 4; flex: none; text-align: center; }
+.app.mobile .pdock .pd-kbd { display: none; }
+
+/* ---- the sidebar drawer's rows: 44px ---- */
+.app.mobile .sb-row.sess, .app.mobile .sb-nav .nav, .app.mobile .ws-head.sb-group-head { height: 44px; font-size: var(--fs-base); }
+.app.mobile .sb-sec-h { height: 32px; }
+.app.mobile .sb-top { height: calc(var(--h-head) + env(safe-area-inset-top, 0px)); padding-top: env(safe-area-inset-top, 0px); }
+.app.mobile .sb-foot.sb-account { height: auto; min-height: 58px; padding-bottom: env(safe-area-inset-bottom, 0px); }
+/* no hover on a touch screen: the row's ··· is always there, after its status (a long press opens the same sheet) */
+.app.mobile .sb-row.sess { padding-right: 4px; }
+.app.mobile .sb-row .more { position: static; transform: none; visibility: visible; flex: none; width: 36px; height: 36px; margin-left: -4px; color: var(--ink-4); }
+.app.mobile .sb-row:has(> .more):hover .st, .app.mobile .sb-row:has(> .more):focus-visible .st { visibility: visible; }
+
+/* ---- 连接断开: a small amber pill under the title, not a strip across the page ---- */
+.app.mobile .conn-banner:not(.over-settings) {
+  left: 50%; right: auto; width: max-content; max-width: calc(100% - 2 * var(--sp-4)); height: 28px; margin-top: 2px; padding: 0 12px 0 10px;
+  transform: translateX(-50%); border: 0; border-radius: var(--r-pill); background: var(--surface-elev); box-shadow: var(--elev-2); color: var(--warn); font-size: var(--fs-meta);
+}
+.app.mobile .conn-banner .spin { border-top-color: var(--warn); }
+
+/* ---- pages ---- */
+.app.mobile .welcome { padding: var(--sp-4) var(--sp-4) var(--sp-7); }
+.app.mobile .welcome .greet { font-size: var(--fs-title); line-height: 32px; margin-bottom: var(--sp-5); }
+.app.mobile .home-row { min-height: 56px; }
+.app.mobile .utabs .ht, .app.mobile .home-tabs .ht { height: 36px; padding: 0 14px; font-size: var(--fs-base); }
+.app.mobile .chip.starter { min-height: 40px; padding: 0 16px; font-size: var(--fs-base); }
+.app.mobile .btn { min-height: 36px; }
+.app.mobile .modal .actions .btn { min-height: 44px; padding-left: 18px; padding-right: 18px; }
+@media (max-width: 600px) {
+  /* a dialog on a phone: nearly full width, its buttons a row of two equal halves (the main one on the right) */
+  .modal-bg > .modal:not(.settings) { width: calc(100vw - 2 * var(--sp-4)); max-width: none; padding: 20px; }
+  .modal-bg > .modal:not(.settings) .actions { gap: var(--sp-2); }
+  .modal-bg > .modal:not(.settings) .actions .btn { flex: 1 1 0; min-height: 46px; justify-content: center; }
+  .sp-si, .sp-back { height: 44px; font-size: var(--fs-body); }
+  .sp-row { min-height: 60px; }
+  .modal.settings .sp-search { height: 40px; }
+  .sp-nav { padding-top: calc(10px + env(safe-area-inset-top, 0px)); padding-bottom: calc(var(--sp-3) + env(safe-area-inset-bottom, 0px)); }
+  .sp-inner { padding-top: calc(12px + env(safe-area-inset-top, 0px)); padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px)); }
+}

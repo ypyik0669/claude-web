@@ -138,7 +138,7 @@ export function AnywhereMore() {
           <div key={r.key} className="row aw-recent">
             <span className={clsx('dot', r.why ? 'error' : 'idle')} />
             <div className="grow">
-              <div>{r.who} <span className="muted" style={{ fontSize: 11.5 }}>{r.link} · {r.time}</span></div>
+              <div>{r.who} <span className="muted" style={{ fontSize: 12 }}>{r.link} · {r.time}</span></div>
               {r.why && <div className="sub">{r.why}</div>}
             </div>
           </div>

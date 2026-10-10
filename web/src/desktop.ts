@@ -7,7 +7,9 @@ export interface DesktopBridge {
   openExternal(url: string): Promise<void>;
   notify(title: string, body: string, sessionId?: string): void;
   setBadge(n: number): void;
-  setTitleBarColors(bg: string, fg: string): void;
+  /** bg: the shell ground (new windows start on it); overlay: what the caption buttons are painted on (default bg);
+   *  height: how tall the caption buttons' area is — the row they sit over, from the window's top edge */
+  setTitleBarColors(bg: string, fg: string, overlay?: string, height?: number): void;
   getLoginItem(): Promise<boolean>;
   setLoginItem(on: boolean): Promise<void>;
   onCommand(cb: (id: string) => void): () => void;

@@ -22,9 +22,11 @@ import { FilesView } from './FilesView';
 import { MORE_PANELS } from './panel-entries';
 import { Popover } from '@/features/composer/Popover';
 import { useRightPanel } from './right-panel';
-import { countText, panelColumnWidth, rowStacked, tempsFolded, type RowMeasure } from './tab-row';
+import { SHELL_GAP, countText, panelColumnWidth, rowStacked, tempsFolded, type RowMeasure } from './tab-row';
 import { modKey } from './shortcuts';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
+import { reducedMotion } from '@/ui/input-intent';
+import { RP_OUT_MS, panelFadesOut, type DockSeen } from './dock-closing';
 
 export { PANELS, PANEL_ICONS, PANEL_TITLES };
 export const DOCK_DEFAULT_WIDTH = 440;
@@ -194,7 +196,8 @@ export function Dock() {
   // the temporary strip's edges fade (and get an arrow) while there is more to scroll to on that side
   const updateFade = () => {
     const l = list.current;
-    const next = l && !min ? { l: l.scrollLeft > 1, r: l.scrollLeft + l.clientWidth < l.scrollWidth - 1 } : { l: false, r: false };
+    // 2px of slack: tab widths are fractional (13px text), the scroll offsets whole pixels
+    const next = l && !min ? { l: l.scrollLeft > 1, r: l.scrollLeft + l.clientWidth < l.scrollWidth - 2 } : { l: false, r: false };
     setFade((cur) => (cur.l === next.l && cur.r === next.r ? cur : next));
   };
   // keep the temporary tab in front in view (only the strip scrolls, never the page)
@@ -202,8 +205,12 @@ export function Dock() {
     const l = list.current;
     const t = l?.querySelector<HTMLElement>('.tab.active');
     if (l && t) {
-      if (t.offsetLeft < l.scrollLeft) l.scrollLeft = t.offsetLeft;
-      else if (t.offsetLeft + t.offsetWidth > l.scrollLeft + l.clientWidth) l.scrollLeft = t.offsetLeft + t.offsetWidth - l.clientWidth;
+      // an arrow sits over each edge that has more to scroll to: the tab in front (and its ×) stays clear of it
+      const ARROW = 22;
+      const lo = t.offsetLeft - (t.previousElementSibling ? ARROW : 0);
+      const hi = t.offsetLeft + t.offsetWidth + (t.nextElementSibling ? ARROW : 0);
+      if (lo < l.scrollLeft) l.scrollLeft = Math.max(0, lo);
+      else if (hi > l.scrollLeft + l.clientWidth) l.scrollLeft = Math.ceil(hi - l.clientWidth);
     }
     updateFade();
   }, [active, temps.length, dock.open, dock.minimized, workbench, stacked, folded]);
@@ -220,7 +227,7 @@ export function Dock() {
       const caption = root.classList.contains('desktop') && !root.classList.contains('mac');
       const cs = getComputedStyle(r);
       const m: RowMeasure = {
-        row: panelColumnWidth({ dock: dock.width, viewport: window.innerWidth, sidebar: sidebarOpen ? sbWidth : 0 }) - 1,
+        row: panelColumnWidth({ dock: dock.width, viewport: window.innerWidth, sidebar: sidebarOpen ? sbWidth : 0 }) - SHELL_GAP,
         padLeft: parseFloat(cs.paddingLeft) || 0,
         fixed: fixedRef.current?.getBoundingClientRect().width ?? 0,
         controls: ctlRef.current?.getBoundingClientRect().width ?? 0,
@@ -243,6 +250,36 @@ export function Dock() {
     window.addEventListener('resize', again);
     return () => { cancelAnimationFrame(raf); ro.disconnect(); window.removeEventListener('resize', again); };
   }, [simple, shown, !!mounted.length, temps.length > 0, folded, dock.width, sidebarOpen, sbWidth]);
+
+  // Closing (UI refresh §6): the panel fades out for RP_OUT_MS, then its column collapses — the opposite order of
+  // what the store says, which hides the panel and gives up its column in one step (App). So for that long the app
+  // element is marked `data-rp-closing` and carries the width the column had (`--rp-was`): floating.css keeps the
+  // column and the panel exactly as they were while the mark is there — the panel fading — and lets both go when it
+  // is taken away. A terminal in the panel is never shown at another size on the way (it would resize its pty).
+  // The mark is set from the store itself, before React has touched the DOM: the rows around the caption buttons
+  // (desktop app) delay their change with a transition, which only starts if the mark is already there when they
+  // change. It is taken away when the fade's animation ends — the same clock as those delays, so everything lands in
+  // one frame; a timer covers a window that is not being drawn. Reopening takes it away at once.
+  // Opening needs none of this (the column is there at once, the panel slides in: CSS). Nothing is unmounted.
+  useEffect(() => {
+    const seen = (s: ReturnType<typeof useStore.getState>): DockSeen => ({ open: s.layout.dock.open, minimized: s.layout.dock.minimized, mounted: s.layout.dock.tabs.length > 0 || !!s.inspect, mobile: s.mobile });
+    const app = () => document.querySelector<HTMLElement>('.app');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const clear = () => { clearTimeout(timer); timer = undefined; const a = app(); if (a) delete a.dataset.rpClosing; };
+    const faded = (e: AnimationEvent) => { if (timer !== undefined && e.animationName === 'fl-rp-out' && (e.target as Element).classList?.contains('rpanel')) clear(); };
+    document.addEventListener('animationend', faded);
+    const off = useStore.subscribe((s, p) => {
+      if (s.layout.dock === p.layout.dock && s.inspect === p.inspect && s.mobile === p.mobile) return;
+      const a = app();
+      if (a && panelFadesOut(seen(p), seen(s)) && !reducedMotion()) {
+        clearTimeout(timer);
+        a.style.setProperty('--rp-was', `${p.layout.dock.width}px`);
+        a.dataset.rpClosing = '';
+        timer = setTimeout(clear, RP_OUT_MS + 120);
+      } else if (timer !== undefined && (s.layout.dock.open || s.mobile || !seen(s).mounted)) clear();
+    });
+    return () => { off(); document.removeEventListener('animationend', faded); clear(); };
+  }, []);
 
   // hidden (Ctrl+J / the header's right-panel button) is CSS too: closing the panel must not end the terminal's pty
   if (!mounted.length) return null;

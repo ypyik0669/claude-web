@@ -1,4 +1,4 @@
-// WCAG 2.x contrast helpers + a tiny reader for the theme primitive blocks in styles.css. Used by the
+// WCAG 2.x contrast helpers + a tiny reader for the theme primitive blocks in tokens.css. Used by the
 // contrast unit test so the token values in the stylesheet are what gets checked (no second copy to drift).
 
 /** `#rgb` / `#rrggbb` → [r, g, b] in 0..1. */

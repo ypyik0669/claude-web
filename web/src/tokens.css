@@ -1,0 +1,213 @@
+/* ============================================================
+   Design tokens (docs/superpowers/specs/2026-10-10-ui-refresh/design.md §4)
+   Each theme supplies only *primitives* (surfaces, ink, accent, state colours).
+   Everything semantic — edges, overlay layers, elevation, radii, motion, type —
+   is derived once in the `derived` block below, so a new theme is ~16 values.
+   Body styles must use the semantic names (--surface-*, --edge-*, --ink-*, …);
+   the primitives are inputs, not a palette to reach for.
+
+   Surfaces: --bg is the main panel (a card), --bg-1 the shell it floats on (and the sidebar, which has no
+   surface of its own), --bg-2 / --bg-3 insets, --bg-elev whatever floats (menus, the composer).
+   Orange: --accent is a mark (brand, the running dot and glow, a selected tick) and never text — on white it is 2.7:1.
+   Orange text and the focus ring use --accent-text; text on an orange fill uses --accent-fg (ink, not white).
+   ============================================================ */
+:root {
+  /* dark (default block): the shell (--bg-1) sits darker than the panel, so the panel reads as a lit card */
+  --bg: #1b1a18;
+  --bg-1: #12110f;
+  --bg-2: #252321;
+  --bg-3: #302f2c;
+  --bg-elev: #272623;
+  --line: #2c2b28;
+  --line-1: #3b3a36;
+  --fg: #eeedea;
+  --fg-1: #c4c2be;
+  --fg-2: #a5a39e;
+  --fg-3: #868480;       /* ≥ 3:1 on every surface incl. menus: placeholders, timestamps, key hints */
+  --accent: #f5914f;
+  --accent-text: #f9a56e;
+  --accent-fg: #1b1a18;
+  --primary: #eeedea;    /* primary button, send, switch "on": ink, not orange */
+  --primary-fg: #1b1a18;
+  --user-bg: #252321;
+  --green: #69d98d;
+  --red: #ff8179;
+  --yellow: #f0c464;
+  --blue: #80b6fb;
+  --shade: 0, 0, 0;      /* colour that shadows are cast in */
+  --shade-a: 3;          /* shadow strength multiplier for this theme */
+  --e1: 7%; --e2: 11%; --e3: 18%;   /* edge strengths (ink mixed into transparent): subtle / default / strong */
+  color-scheme: dark;
+}
+:root[data-theme='light'] {
+  /* warm paper: a tinted shell, a near-white panel; state colours ≥ 4.5:1 on --bg, --bg-1, --bg-2 and --bg-elev */
+  --bg: #fefdfc;
+  --bg-1: #f7f6f2;
+  --bg-2: #f0eeea;
+  --bg-3: #e6e4df;
+  --bg-elev: #ffffff;
+  --line: #ebe9e4;
+  --line-1: #dbd8d2;
+  --fg: #1c1917;
+  --fg-1: #47433f;
+  --fg-2: #67625f;
+  --fg-3: #7f7b77;
+  --accent: #eb7f3b;
+  --accent-text: #a94900;
+  --accent-fg: #1c1917;
+  --primary: #1c1917;
+  --primary-fg: #fefdfc;
+  --user-bg: #f0eeea;
+  --green: #12773d;
+  --red: #be2a27;
+  --yellow: #8a5d0b;
+  --blue: #1c63bf;
+  --shade: 40, 30, 20;
+  --shade-a: 1;
+  --e1: 6%; --e2: 10%; --e3: 16%;
+  color-scheme: light;
+}
+/* the other themes keep their own colours and their accent as the primary colour */
+:root[data-theme='dracula'] { --bg: #282a36; --bg-1: #21222c; --bg-2: #343746; --bg-3: #44475a; --bg-elev: #3b3e50; --line: #3a3d4d; --line-1: #4b4f63; --fg: #f8f8f2; --fg-1: #c9cbd6; --fg-2: #a0a4ba; --fg-3: #7d88b0; --accent: #bd93f9; --accent-text: #caa8fa; --accent-fg: #282a36; --primary: var(--accent); --primary-fg: #282a36; --user-bg: #343746; --green: #50fa7b; --red: #ff7b7b; --yellow: #f1fa8c; --blue: #8be9fd; --shade-a: 2; }
+:root[data-theme='nord'] { --bg: #2e3440; --bg-1: #272c36; --bg-2: #3b4252; --bg-3: #434c5e; --bg-elev: #414a5b; --line: #3b4252; --line-1: #4c566a; --fg: #eceff4; --fg-1: #d8dee9; --fg-2: #a7b1c2; --fg-3: #8e98ab; --accent: #88c0d0; --accent-text: #97cad9; --accent-fg: #2e3440; --primary: var(--accent); --primary-fg: var(--accent-fg); --user-bg: #3b4252; --green: #a3be8c; --red: #ee969d; --yellow: #ebcb8b; --blue: #81a1c1; --shade-a: 2; }
+:root[data-theme='tokyo-night'] { --bg: #1a1b26; --bg-1: #16161e; --bg-2: #24283b; --bg-3: #2f3349; --bg-elev: #2b2f45; --line: #262a3d; --line-1: #363b54; --fg: #c0caf5; --fg-1: #a9b1d6; --fg-2: #8f96bd; --fg-3: #7780a8; --accent: #7aa2f7; --accent-text: #7aa2f7; --accent-fg: #1a1b26; --primary: var(--accent); --primary-fg: var(--accent-fg); --user-bg: #24283b; --green: #9ece6a; --red: #f7768e; --yellow: #e0af68; --blue: #7dcfff; --shade-a: 2; }
+:root[data-theme='paper'] { --bg: #f7f3ea; --bg-1: #f1ece1; --bg-2: #e9e3d6; --bg-3: #ddd6c6; --bg-elev: #fffdf6; --line: #e2dccd; --line-1: #cfc7b4; --fg: #2b2620; --fg-1: #574f44; --fg-2: #6f6758; --fg-3: #877e6e; --accent: #b5563a; --accent-text: #9c4529; --accent-fg: #fff; --primary: var(--accent); --primary-fg: #fff; --user-bg: #ece5d5; --green: #2e6b33; --red: #a83a28; --yellow: #80560d; --blue: #2c5aa8; --shade: 92, 78, 56; --shade-a: 1; --e1: 6%; --e2: 10%; --e3: 16%; color-scheme: light; }
+
+/* ---- derived (theme-independent; reads the primitives above) ---- */
+:root {
+  /* surfaces — 0 is the panel, 1 the shell, 3 the deepest inset, elev floats above all of them */
+  --surface-0: var(--bg);
+  --surface-1: var(--bg-1);
+  --surface-2: var(--bg-2);
+  --surface-3: var(--bg-3);
+  --surface-elev: var(--bg-elev);
+
+  /* edges — translucent so one value reads correctly on every surface. Few lines: a separator is subtle,
+     an input or a secondary button default; whatever floats draws its edge as a shadow ring (the --elev-* below) */
+  --edge-subtle: color-mix(in oklab, var(--fg) var(--e1), transparent);
+  --edge-default: color-mix(in oklab, var(--fg) var(--e2), transparent);
+  --edge-strong: color-mix(in oklab, var(--fg) var(--e3), transparent);
+
+  /* interaction layers — stack on whatever surface they land on */
+  --layer-hover: color-mix(in oklab, var(--fg) 5%, transparent);
+  --layer-selected: color-mix(in oklab, var(--fg) 8%, transparent);
+  --layer-active: color-mix(in oklab, var(--fg) 12%, transparent);
+  --fill-subtle: color-mix(in oklab, var(--fg) 4%, transparent);   /* borderless fields, code, notice cards */
+
+  /* ink — 1 is body text, 5 is the faintest legible label */
+  --ink-1: var(--fg);
+  --ink-2: var(--fg-1);
+  --ink-3: var(--fg-2);
+  --ink-4: var(--fg-3);
+  --ink-5: color-mix(in oklab, var(--fg-3) 72%, transparent);
+  --ink-faint: color-mix(in oklab, var(--fg-3) 45%, transparent);
+
+  /* status — semantic aliases so "on" is not the same token as "git added" */
+  --ok: var(--green);
+  --warn: var(--yellow);
+  --err: var(--red);
+  --info: var(--blue);
+  --ctl-on: var(--primary, var(--accent));
+  --ok-soft: color-mix(in oklab, var(--green) 16%, transparent);
+  --err-soft: color-mix(in oklab, var(--red) 14%, transparent);
+  --warn-soft: color-mix(in oklab, var(--yellow) 16%, transparent);
+  --accent-soft: color-mix(in oklab, var(--accent) 16%, transparent);
+  --focus-ring: var(--accent-text);
+  --diff-add: color-mix(in oklab, var(--green) 13%, transparent);
+  --diff-del: color-mix(in oklab, var(--red) 11%, transparent);
+
+  /* radius scale — element size decides the step, never taste. Nested: inner = outer − padding, never under 4 */
+  --r-xs: 4px;      /* inline marks, key caps */
+  --r-sm: 6px;      /* small badges, checkboxes, inline code */
+  --r-row: 8px;     /* sidebar rows, menu items, list rows */
+  --r-md: 10px;     /* icon buttons, fields, rows inside small cards */
+  --r-lg: 12px;     /* code blocks, file cards, groups inside a menu */
+  --r-xl: 16px;     /* cards, the main panel, the right panel, menus */
+  --r-bubble: 20px; /* the user's message bubble (its own-side lower corner is --r-sm) */
+  --r-2xl: 24px;    /* the composer, permission cards, dialogs, a sheet's top edge */
+  --r-pill: 999px;  /* chips, segmented controls, text buttons, round buttons */
+
+  /* spacing scale — use these instead of one-off px */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 40px;
+
+  /* the shell: the gap between its edge and the cards that float on it (0 on a phone, 4px in compact density) */
+  --shell-gap: 8px;
+  --r-card: var(--r-xl);
+
+  /* chrome heights: the session header / sidebar top row, and the rows that only appear in the workbench */
+  --h-head: 52px;
+  --h-bar: 40px;
+
+  /* elevation — 1 attached (a card on the shell), 2 floating (menus), 3 modal. Each draws its own edge as a ring:
+     an element that uses one of these has no border */
+  --elev-1: 0 0 0 1px var(--edge-subtle), 0 1px 2px rgba(var(--shade), calc(0.05 * var(--shade-a)));
+  --elev-2: 0 0 0 1px var(--edge-default), 0 4px 12px -2px rgba(var(--shade), calc(0.09 * var(--shade-a))), 0 14px 36px -10px rgba(var(--shade), calc(0.14 * var(--shade-a)));
+  --elev-3: 0 0 0 1px var(--edge-default), 0 8px 20px -4px rgba(var(--shade), calc(0.1 * var(--shade-a))), 0 28px 72px -16px rgba(var(--shade), calc(0.22 * var(--shade-a)));
+  --elev-composer: 0 0 0 1px var(--edge-default), 0 2px 4px rgba(var(--shade), calc(0.04 * var(--shade-a))), 0 12px 28px -12px rgba(var(--shade), calc(0.16 * var(--shade-a)));
+  --scrim: rgba(var(--shade), calc(0.38 * min(var(--shade-a), 1.4)));
+
+  /* motion (§4.5): hover is instant in and 150ms out, a press scales, things that float scale in from their anchor.
+     Only transform / opacity / filter / colour move; height animates as a grid row */
+  --dur-instant: 80ms;
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 240ms;
+  --dur-slower: 320ms;
+  --dur-page: 480ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-pop: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  /* type (§4.2): Latin and digits from Inter, code from JetBrains Mono, Chinese from the system; the Latin face
+     comes first so it wins for the glyphs both have. --display is the Songti cut for the greeting and page names
+     (ui/heading-text.ts lists the strings; anything else falls back) */
+  --font-cjk: 'PingFang SC', 'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans SC', 'Noto Sans CJK SC', 'Source Han Sans SC';
+  --font: 'Inter Variable', -apple-system, 'Segoe UI Variable Text', 'Segoe UI', var(--font-cjk), system-ui, sans-serif;
+  --mono: 'JetBrains Mono Variable', 'Cascadia Code', 'SF Mono', Menlo, Consolas, var(--font-cjk), monospace;
+  --display: 'CW Heading', 'Songti SC', 'SimSun', var(--font);
+  --serif: 'Source Serif 4', 'Georgia', 'Songti SC', 'SimSun', serif;
+  --fs-micro: 11px;   /* Latin and digits only: counters inside badges */
+  --fs-meta: 12px;    /* timestamps, section labels; the floor for Chinese */
+  --fs-sm: 13px;      /* chips, step rows, sidebar conversation rows */
+  --fs-base: 14px;    /* lists, panels, controls */
+  --fs-body: 15px;    /* conversation prose (16 on a phone) */
+  --fs-lg: 16px;      /* card titles */
+  --fs-xl: 20px;      /* panel and dialog titles */
+  --fs-title: 24px;   /* page names (settings, automation, first run) — set in --display */
+  --fs-display: 31px; /* the home greeting — set in --display */
+  --fs-code: 13px;
+  --lh-tight: 1.35;
+  --lh-base: 1.45;
+  --lh-body: 1.73;    /* 15 / 26 */
+  --fw-regular: 400;
+  --fw-strong: 600;   /* the only two weights for text that can hold Chinese: Microsoft YaHei has no 500 */
+
+  /* legacy aliases — kept so un-migrated rules keep rendering; removed when phase 3 of the refresh is done */
+  --radius: var(--r-lg);
+  --shadow: var(--elev-2);
+  --dur-1: var(--dur-fast);
+  --dur-2: var(--dur-base);
+  --dur-3: var(--dur-slow);
+  --dur-4: var(--dur-slower);
+}
+:root[data-density='compact'] { --shell-gap: 4px; --r-card: var(--r-lg); }
+
+/* 减少动态效果 (the setting, or the system's): colour and opacity still ease, briefly; nothing moves, blurs or loops */
+:root[data-reduce-motion='1'] { --dur-instant: 0s; --dur-fast: 80ms; --dur-base: 80ms; --dur-slow: 80ms; --dur-slower: 80ms; --dur-page: 80ms; }
+:root[data-reduce-motion='1'] *, :root[data-reduce-motion='1'] *::before, :root[data-reduce-motion='1'] *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+/* …except what says 「still working」: a spinner that stands still reads as stuck */
+:root[data-reduce-motion='1'] :is(.spinner, .spin) { animation-duration: 1.2s !important; animation-iteration-count: infinite !important; }
+@media (prefers-reduced-motion: reduce) {
+  :is(.spinner, .spin) { animation-duration: 1.2s !important; animation-iteration-count: infinite !important; }
+  :root { --dur-instant: 0s; --dur-fast: 80ms; --dur-base: 80ms; --dur-slow: 80ms; --dur-slower: 80ms; --dur-page: 80ms; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+}

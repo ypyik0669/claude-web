@@ -48,7 +48,18 @@ const wins = new Map<string, BrowserWindow>(); // winId -> window ("main" is the
 let tray: Tray | null = null;
 let pendingCount = 0;
 let quitting = false;
-let titleBar = { bg: '', fg: '' };
+// bg: the shell ground (a new window's background before its page paints); overlay: what the caption buttons are painted
+// on — transparent on Windows, so they float over the top-right card and its rounded corner (verified on Windows 11,
+// Electron 44); Linux has not been verified and gets the card's own colour
+/**
+ * The caption buttons' area is as tall as the row under them, from the window's top edge: the 8px shell gap + a 52px
+ * head row until the page says otherwise (a 40px bar with the workbench tools; no gap on Linux) — so the glyphs line up
+ * with that row's own icons. The page keeps its right end clear (styles.css, 142px).
+ */
+const CAPTION_H = process.platform === 'linux' ? 52 : 60;
+const captionH = (h: unknown) => (typeof h === 'number' && Number.isFinite(h) ? Math.min(80, Math.max(32, Math.round(h))) : CAPTION_H);
+let titleBar = { bg: '', fg: '', overlay: '', height: CAPTION_H };
+const overlayDefault = (dark: boolean) => (process.platform === 'win32' ? '#00000000' : dark ? '#1b1a18' : '#fefdfc');
 let gpuCrashes = 0;
 /** What the renderer's update prompt and settings page show (web: features/update/model.ts). */
 type UpdateState = { status: string; mode: UpdateMode; version?: string; percent?: number; error?: string; notes?: string; required?: boolean; url?: string; page?: string };
@@ -119,7 +130,7 @@ function windowUrl(base: string, winId: string) {
  * from the Start menu in that time found no window to show either.
  */
 function splashUrl(dark: boolean): string {
-  const [bg, fg, mut] = dark ? ['#1a1a19', '#b9b9b4', '#767671'] : ['#ffffff', '#474744', '#8a8a86'];
+  const [bg, fg, mut] = dark ? ['#12110f', '#c4c2be', '#868480'] : ['#f7f6f2', '#47433f', '#7f7b77'];
   const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${APP_NAME}</title><style>`
     + `html,body{height:100%;margin:0;background:${bg};color:${fg};font:14px "Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",system-ui,sans-serif;-webkit-app-region:drag;user-select:none;cursor:default}`
     + `body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}`
@@ -146,12 +157,12 @@ function createWindow(url: string | null, winId = 'main', bounds?: Bounds, hidde
     minHeight: 600,
     title: APP_NAME,
     icon: iconPath(),
-    backgroundColor: titleBar.bg || (dark ? '#1a1a19' : '#ffffff'),
+    backgroundColor: titleBar.bg || (dark ? '#12110f' : '#f7f6f2'),
     titleBarStyle: 'hidden',
     // macOS keeps its own traffic lights (left, see `html.mac` in styles.css; y centres them in the 52px top rows); elsewhere we draw the overlay buttons
     ...(isMac
-      ? { trafficLightPosition: { x: 14, y: 19 } }
-      : { titleBarOverlay: { color: titleBar.bg || (dark ? '#1a1a19' : '#ffffff'), symbolColor: titleBar.fg || (dark ? '#b9b9b4' : '#474744'), height: 40 } }),
+      ? { trafficLightPosition: { x: 14, y: 27 } } // centred in the sidebar's 52px top row, which starts under the 8px shell gap
+      : { titleBarOverlay: { color: titleBar.overlay || overlayDefault(dark), symbolColor: titleBar.fg || (dark ? '#c4c2be' : '#47433f'), height: titleBar.height } }),
     show: false,
     // webviewTag powers the in-app browser tile; each <webview> declares its own partition and denies popups
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false, webviewTag: true, additionalArguments: [`--cw-win=${winId}`] },
@@ -219,7 +230,7 @@ function updateBadge() {
 }
 
 function badgeImage(n: number) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="15" fill="#d97757"/><text x="16" y="22" font-size="18" font-family="Segoe UI,Arial" font-weight="700" fill="#fff" text-anchor="middle">${n > 9 ? '9+' : n}</text></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><circle cx="16" cy="16" r="15" fill="#eb7f3b"/><text x="16" y="22" font-size="18" font-family="Segoe UI,Arial" font-weight="700" fill="#fff" text-anchor="middle">${n > 9 ? '9+' : n}</text></svg>`;
   return nativeImage.createFromDataURL('data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64'));
 }
 
@@ -455,9 +466,9 @@ ipcMain.on('desktop:notify', (e, { title, body, sessionId }: { title: string; bo
   src?.flashFrame(true);
 });
 ipcMain.on('desktop:badge', (_e, n: number) => { pendingCount = n; updateBadge(); });
-ipcMain.on('desktop:titlebar', (_e, { bg, fg }: { bg: string; fg: string }) => {
-  titleBar = { bg, fg };
-  if (!isMac) for (const [, w] of liveWins()) { try { w.setTitleBarOverlay({ color: bg, symbolColor: fg, height: 40 }); } catch { /* not supported */ } }
+ipcMain.on('desktop:titlebar', (_e, { bg, fg, overlay, height }: { bg: string; fg: string; overlay?: string; height?: number }) => {
+  titleBar = { bg, fg, overlay: overlay || bg, height: captionH(height) };
+  if (!isMac) for (const [, w] of liveWins()) { try { w.setTitleBarOverlay({ color: titleBar.overlay, symbolColor: fg, height: titleBar.height }); } catch { /* not supported */ } }
 });
 ipcMain.handle('desktop:loginItem:get', () => app.getLoginItemSettings().openAtLogin);
 ipcMain.handle('desktop:loginItem:set', (_e, on: boolean) => app.setLoginItemSettings({ openAtLogin: on, args: ['--hidden'] }));

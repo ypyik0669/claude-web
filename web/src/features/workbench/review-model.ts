@@ -1,5 +1,6 @@
 // The 审阅 tab's pure half (redesign phase 2, spec §5.6): which files each scope lists, how a file's diff is fetched,
-// what the bulk buttons act on, what 提交 does, and a commit's patch split per file. No DOM, no store — unit tested.
+// what the bulk buttons act on, which buttons one file has, what 提交 does (and a phone's folded commit button), and
+// a commit's patch split per file. No DOM, no store — unit tested.
 import type { GitFileStatus, GitStatus } from '@shared';
 
 export type ReviewScope = 'uncommitted' | 'staged' | 'session' | 'commit';
@@ -160,6 +161,35 @@ export function bulkTargets(rows: ReviewRow[]): { stage: string[]; discard: stri
   return { stage, discard, unstage };
 }
 
+/** A button one file has: icons in its header on a desktop, a row of words under it on a phone. */
+export type FileAction = 'stage' | 'unstage' | 'discard' | 'open';
+export const FILE_ACTION_LABEL: Record<FileAction, string> = { stage: '暂存', unstage: '取消暂存', discard: '还原', open: '打开' };
+/** …and what each one does, as its tooltip. */
+export const FILE_ACTION_TITLE: Record<FileAction, string> = { stage: '暂存（加入下一次提交）', unstage: '取消暂存', discard: '还原（丢弃这个文件的改动）', open: '在编辑器打开' };
+
+/**
+ * The buttons one file gets, in the order they are drawn — one rule for the desktop's icons and the phone's
+ * spelled-out row, so the phone can never offer more. 暂存 while there is something left to stage, else 取消暂存;
+ * 还原 where `bulkTargets` says a checkout can put the file back (never in 已暂存: there it is 取消暂存's job); none of
+ * the three in 某次提交 or outside a repo; 打开 unless the file is gone.
+ */
+export function fileActions(row: ReviewRow, scope: ReviewScope, inRepo: boolean): FileAction[] {
+  const out: FileAction[] = [];
+  if (inRepo && scope !== 'commit') {
+    const one = bulkTargets([row]);
+    if (one.stage.length) out.push('stage');
+    else if (one.unstage.length) out.push('unstage');
+    if (scope !== 'staged' && one.discard.length) out.push('discard');
+  }
+  if (!(row.patch?.status === 'deleted' || row.git?.status === 'deleted')) out.push('open');
+  return out;
+}
+
+/** A phone's review (UI refresh §8): long diff lines wrap, or the card scrolls sideways as on a desktop. */
+export type LineMode = 'wrap' | 'scroll';
+export const LINE_MODES: readonly { value: LineMode; label: string }[] = [{ value: 'wrap', label: '换行' }, { value: 'scroll', label: '横滚' }];
+export const DEFAULT_LINE_MODE: LineMode = 'wrap';
+
 /** What 提交 does. */
 export interface CommitPlan {
   /** commit the index · stage `stage` first (asked) · resolve the conflicts first (in the Git view) · nothing to commit */
@@ -189,6 +219,18 @@ export function commitPlan(status: GitStatus | null): CommitPlan {
   const stage = bulkTargets(files.map((g) => ({ key: g.path, rel: g.path, abs: g.path, git: g }))).stage;
   if (!stage.length) return none;
   return { ...none, kind: 'stageAll', stage, untracked: files.filter((g) => g.status === 'untracked' && stage.includes(g.path)).length };
+}
+
+/**
+ * A phone's commit area (UI refresh §8) starts folded into one button, 「提交 N 个文件」 — N is what 提交 would take:
+ * the staged files, or with nothing staged the files it offers to stage first. This is that button's text, or null
+ * when the area is drawn in full (the message box + 提交): always on a desktop; on a phone once it was opened, and
+ * with nothing to commit or a conflict around (the same disabled box / note the desktop shows).
+ */
+export function commitFold(plan: CommitPlan, o: { phone: boolean; open: boolean }): string | null {
+  if (!o.phone || o.open) return null;
+  const n = plan.kind === 'commit' ? plan.staged : plan.kind === 'stageAll' ? plan.stage.length : 0;
+  return n ? `提交 ${n} 个文件` : null;
 }
 
 /** Text of a confirmation dialog (`dlg.confirm`). */

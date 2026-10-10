@@ -20,7 +20,7 @@ export const SETTINGS_GROUPS: { id: SettingsGroupId; l: string }[] = [
 export type EntryId =
   | 'ui.defaultMode' | 'autoContinueOnReset' | 'ui.showThinking' | 'ui.diffMode' | 'ui.inlineDiffs' | 'ui.workbench' | 'ui.autoSave'
   | 'ui.notifications' | 'ui.closeToTray' | 'ui.confirmExit' | 'ui.softwareRender' | 'orchestra.maxParallel'
-  | 'ui.theme' | 'ui.fontSize' | 'ui.density' | 'ui.cjkFont' | 'ui.reduceMotion';
+  | 'ui.theme' | 'ui.fontSize' | 'ui.density' | 'ui.cjkFont' | 'ui.reduceMotion' | 'ui.haptics';
 
 /** One part of a page: a component with its own requests (a list, a form, a status block). */
 export type BodyId =
@@ -115,6 +115,7 @@ const APPEARANCE: EntryMeta[] = [
   { id: 'ui.density', block: '显示', label: '密度', hint: '紧凑模式减少行高与内边距。', keywords: 'density compact 紧凑 宽松' },
   { id: 'ui.cjkFont', more: true, label: '中文字体', hint: '优先用于中日韩文字的字体。', keywords: 'cjk font 中文 字体 雅黑 苹方' },
   { id: 'ui.reduceMotion', block: '显示', label: '减少动画', hint: '关掉界面里的过渡与动画。', keywords: 'motion animation 动画 过渡' },
+  { id: 'ui.haptics', block: '显示', label: '触感反馈', hint: '在支持的手机上，发送、批准、长按出菜单时轻震一下。打开「减少动画」时不震。', keywords: 'haptic vibrate 震动 振动 触感 手机' },
 ];
 
 export const SETTINGS_SECTIONS: SectionMeta[] = [

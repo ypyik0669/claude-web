@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld('desktop', {
   openExternal: (url: string) => ipcRenderer.invoke('desktop:openExternal', url),
   notify: (title: string, body: string, sessionId?: string) => ipcRenderer.send('desktop:notify', { title, body, sessionId }),
   setBadge: (n: number) => ipcRenderer.send('desktop:badge', n),
-  setTitleBarColors: (bg: string, fg: string) => ipcRenderer.send('desktop:titlebar', { bg, fg }),
+  setTitleBarColors: (bg: string, fg: string, overlay?: string, height?: number) => ipcRenderer.send('desktop:titlebar', { bg, fg, overlay, height }),
   getLoginItem: () => ipcRenderer.invoke('desktop:loginItem:get'),
   setLoginItem: (on: boolean) => ipcRenderer.invoke('desktop:loginItem:set', on),
   onCommand: on('desktop:command'),

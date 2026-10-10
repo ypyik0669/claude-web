@@ -1184,7 +1184,8 @@ function driver() {
         await js('window.__store.setState({ sidebarOpen: false })');
         await sleep(500);
         const collapsed = await js(`(() => { const c = document.querySelector('.center').getBoundingClientRect(); return { left: Math.round(c.left), reveal: !!document.querySelector('.pane .sess-head > .sb-reveal') }; })()`);
-        check('collapsed sidebar: the centre starts at the window edge, the header shows 展开侧栏', collapsed.left === 0 && collapsed.reveal, JSON.stringify(collapsed));
+        // (the centre is a card on the shell: one shell gap — 8px — from the window edge, not flush with it)
+        check('collapsed sidebar: the centre starts one shell gap from the window edge, the header shows 展开侧栏', collapsed.left === 8 && collapsed.reveal, JSON.stringify(collapsed));
         // review M10: 「连接断开，正在重连…」 at the top of the main area — seen with the sidebar (and its account row) away
         const banner = `(() => { const b = document.querySelector('.center .conn-banner'); if (!b) return null; const r = b.getBoundingClientRect(), c = document.querySelector('.center').getBoundingClientRect(); return { text: b.textContent, inCenter: r.left >= c.left && r.right <= c.right + 1, top: Math.round(r.top), visible: r.width > 0 && r.height > 0 && getComputedStyle(b).visibility !== 'hidden' }; })()`;
         if (E.SMOKE_READONLY !== '1') {
@@ -1262,10 +1263,10 @@ function driver() {
           win.setContentSize(740, 860);
           const phone = await waitFor('document.querySelector(".app").classList.contains("mobile") && !document.querySelector(".groupbar") && !document.querySelector(".pane .tabstrip")', 4000);
           const phoneHead = await js(`(() => { const h = document.querySelector('.pane .sess-head'); if (!h) return null; return { reveal: !!h.querySelector('.sb-reveal'), diff: !!h.querySelector('.sh-diff'), term: !!h.querySelector('button[aria-label="终端"]'), panel: !!h.querySelector('button[aria-label="右侧面板"], button[aria-label="展开右侧面板"]'), more: !!h.querySelector('.sh-more > button') }; })()`);
-          check('phone + workbench tools: no group bar / tab strip; header has 展开侧栏 and ··· but no 改动 / 终端 / 右侧面板', phone && phoneHead && phoneHead.reveal && phoneHead.more && !phoneHead.diff && !phoneHead.term && !phoneHead.panel, JSON.stringify({ phone, phoneHead }));
+          check('phone + workbench tools: no group bar / tab strip; header has 展开侧栏 and ··· (and +N −M when there are changes) but no 终端 / 右侧面板', phone && phoneHead && phoneHead.reveal && phoneHead.more && !phoneHead.term && !phoneHead.panel, JSON.stringify({ phone, phoneHead }));
           await shot('phone-workbench');
           const phoneBar = await js(`(() => { const bar = document.querySelector('.pane .composer-bar'); if (!bar) return null; const b = bar.getBoundingClientRect(); return { h: Math.round(b.height), overflow: bar.scrollWidth > bar.clientWidth + 1, mic: !!bar.querySelector('[data-id="mic"]') }; })()`);
-          check('phone: the composer row is one line, no mic (spec §5.11)', phoneBar && phoneBar.h <= 36 && !phoneBar.overflow && !phoneBar.mic, JSON.stringify(phoneBar));
+          check('phone: the composer row is one line (the 40px send button high), no mic (spec §5.11, UI refresh §8)', phoneBar && phoneBar.h <= 40 && !phoneBar.overflow && !phoneBar.mic, JSON.stringify(phoneBar));
           await click('.pane .sess-head .sb-reveal');
           const drawer = await waitFor('document.querySelector(".app").classList.contains("drawer-open") && !!document.querySelector(".sidebar.has-resizer")', 3000);
           check('phone: 展开侧栏 opens the sidebar drawer', drawer);
@@ -1657,7 +1658,7 @@ function driver() {
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'files' })`);
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'goals' })`);
           await sleep(900);
-          const fit = await js(`(() => { const vw = innerWidth; const rp = document.querySelector('.rpanel').getBoundingClientRect(); const tabs = [...document.querySelectorAll('.dock .dock-tabs .tab.fixed')].map((t) => { const r = t.getBoundingClientRect(); const whole = r.width > 0 && r.left >= rp.left - 0.5 && r.right <= Math.min(rp.right, vw) + 0.5; const underCaption = r.top < 40 && r.right > vw - 150; return { id: t.dataset.panel, ok: whole && !underCaption }; }); return { vw, rp: Math.round(rp.width), stacked: !!document.querySelector('.dock-tabs.stacked'), tabs }; })()`);
+          const fit = await js(`(() => { const vw = innerWidth; const rp = document.querySelector('.rpanel').getBoundingClientRect(); const tabs = [...document.querySelectorAll('.dock .dock-tabs .tab.fixed')].map((t) => { const r = t.getBoundingClientRect(); const whole = r.width > 0 && r.left >= rp.left - 0.5 && r.right <= Math.min(rp.right, vw) + 0.5; const underCaption = r.top < 60 && r.right > vw - 150; return { id: t.dataset.panel, ok: whole && !underCaption }; }); return { vw, rp: Math.round(rp.width), stacked: !!document.querySelector('.dock-tabs.stacked'), tabs }; })()`);
           check('desktop · Windows, 1024 wide, a temporary tab open: the four fixed tabs are fully visible', fit.tabs.length === 4 && fit.tabs.every((x) => x.ok), JSON.stringify(fit));
           // the temporary tab has its own tab here (the strip): no title row on top of the panel as well
           const noHead = await js(`!document.querySelector('.dock .dock-foldhead') && !!document.querySelector('.dock .dock-tablist .tab.active[data-panel="goals"]')`);
@@ -1683,9 +1684,9 @@ function driver() {
           const counted = await waitFor(`${countSel} !== ''`, 8000);
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'goals' })`);
           await sleep(700);
-          const rowProbe = `(() => { const vw = innerWidth; const rp = document.querySelector('.rpanel').getBoundingClientRect(); const fixed = [...document.querySelectorAll('.dock .dock-tabs .tab.fixed')].map((t) => { const r = t.getBoundingClientRect(); return r.width > 0 && r.right <= Math.min(rp.right, vw) + 0.5 && !(r.top < 40 && r.right > vw - 150); }); const strip = document.querySelector('.dock .dock-tablist .tab[data-panel="goals"]'); return { vw, rp: Math.round(rp.width), stacked: !!document.querySelector('.dock-tabs.stacked'), fixedOk: fixed.length === 4 && fixed.every(Boolean), count: ${countSel}, badge: document.querySelector('.dock .dock-more-n')?.textContent ?? null, strip: !!strip && strip.getBoundingClientRect().width > 0, moreActive: !!document.querySelector('.dock button.dock-more.active'), fixedW: Math.round(document.querySelector('.dock .dock-fixed').getBoundingClientRect().width), ctlW: Math.round(document.querySelector('.dock .dock-ctl').getBoundingClientRect().width), bodyTop: Math.round(document.querySelector('.dock .dock-body').getBoundingClientRect().top) }; })()`;
+          const rowProbe = `(() => { const vw = innerWidth; const rp = document.querySelector('.rpanel').getBoundingClientRect(); const fixed = [...document.querySelectorAll('.dock .dock-tabs .tab.fixed')].map((t) => { const r = t.getBoundingClientRect(); return r.width > 0 && r.right <= Math.min(rp.right, vw) + 0.5 && !(r.top < 60 && r.right > vw - 150); }); const strip = document.querySelector('.dock .dock-tablist .tab[data-panel="goals"]'); return { vw, rp: Math.round(rp.width), stacked: !!document.querySelector('.dock-tabs.stacked'), fixedOk: fixed.length === 4 && fixed.every(Boolean), count: ${countSel}, badge: document.querySelector('.dock .dock-more-n')?.textContent ?? null, strip: !!strip && strip.getBoundingClientRect().width > 0, moreActive: !!document.querySelector('.dock button.dock-more.active'), fixedW: Math.round(document.querySelector('.dock .dock-fixed').getBoundingClientRect().width), ctlW: Math.round(document.querySelector('.dock .dock-ctl').getBoundingClientRect().width), bodyTop: Math.round(document.querySelector('.dock .dock-body').getBoundingClientRect().top) }; })()`;
           const r1440 = await js(rowProbe);
-          check('desktop · Windows, 1440 wide, default panel, 审阅 with files, a temporary tab open: the row is not moved below the caption buttons', counted && r1440.rp === 440 && !r1440.stacked && r1440.fixedOk && r1440.bodyTop <= 53, JSON.stringify(r1440));
+          check('desktop · Windows, 1440 wide, default panel, 审阅 with files, a temporary tab open: the row is not moved below the caption buttons', counted && r1440.rp === 432 /* the 440 column less the shell gap */ && !r1440.stacked && r1440.fixedOk && r1440.bodyTop <= 61 /* 8 gap + the 52px row */, JSON.stringify(r1440));
           check('…and the temporary tab is reachable: its own tab, or 「更多」 counting it (and marked while it is in front)', r1440.strip || (r1440.badge === '1' && r1440.moreActive), JSON.stringify(r1440));
           // folded into 「更多」 and in front: the panel says what it is (目标) and has its ×; no fixed tab is lit
           const headProbe = `(() => { const h = document.querySelector('.dock .dock-foldhead'); const p = document.querySelector('.dock .dock-panel[data-panel="goals"]'); if (!h) return null; const hr = h.getBoundingClientRect(); return { text: h.querySelector('.t')?.textContent, x: !!h.querySelector('button[aria-label="关闭目标"]'), h: Math.round(hr.height), headTop: Math.round(hr.top), panelTop: p ? Math.round(p.getBoundingClientRect().top) : null, lit: document.querySelectorAll('.dock .dock-tabs .tab.fixed.active').length }; })()`;
@@ -2381,6 +2382,7 @@ function driver() {
           return waitFor(`!!document.querySelector('.pane.focused .composer .pdock[data-kind="tool"]')`, 15_000);
         };
         const docked = await askTool('smoke: please use a tool');
+        await sleep(450); // the card's entrance (it rises into place): measure where it rests
         const dock = await js(`(() => { const c = document.querySelector('.pane.focused .composer'); const d = c.querySelector('.pdock'); if (!d) return null; return { title: d.querySelector('.pd-title')?.textContent, runCard: !!c.querySelector('.run-card'), inStream: !!document.querySelector('.pane.focused .chat .pdock, .pane.focused .chat .perm'), aboveBox: d.getBoundingClientRect().bottom <= c.querySelector('.composer-box').getBoundingClientRect().top + 1, allow: d.querySelector('[data-act="allow"]')?.textContent, always: !!d.querySelector('[data-act="always"]'), hint: d.querySelector('.pd-hint')?.textContent, placeholder: c.querySelector('textarea').placeholder, waitingStep: document.querySelector('.pane.focused .tl.waiting .tool-head .st.wait')?.textContent ?? null }; })()`);
         check('a permission request docks above the composer (not in the conversation), replacing the run card; the step says 等你确认', docked && dock && /想读取/.test(dock.title) && !dock.runCard && !dock.inStream && dock.aboveBox && /允许一次/.test(dock.allow) && !dock.always && /也可以直接在下面输入/.test(dock.hint) && /允许一次/.test(dock.placeholder) && dock.waitingStep === '等你确认', JSON.stringify(dock));
         // its status line (aria-live, not shown) reads out the title and what an empty Enter does (review M-6)
@@ -2459,7 +2461,7 @@ function driver() {
           await sleep(800);
           const note = await js(`document.querySelector('.pane.focused .composer .pdock .pd-hint.note')?.textContent ?? null`);
           await key('Return');
-          await sleep(300);
+          await waitFor(`!!document.querySelector('.pane.focused .composer .pdock [data-act="deny-queued"]')`, 3000);
           return { note, after: await js(`({ queue: ${queueTexts}, box: document.querySelector('.pane.focused .composer textarea').value, note: document.querySelector('.pane.focused .composer .pdock .pd-hint.note')?.textContent ?? null, button: document.querySelector('.pane.focused .composer .pdock [data-act="deny-queued"]')?.textContent ?? null })`), sent: await sentFor(id) };
         };
         // (a) queued, then an empty Enter: 允许一次 — the queued message stays queued
@@ -2552,12 +2554,12 @@ function driver() {
         const alwaysSent = await js(`JSON.stringify(window.__permSent.find((r) => r.requestId === 'smoke-always-1') ?? null)`);
         const next = await waitFor(`document.querySelector('.pane.focused .composer .pdock')?.dataset.request === 'smoke-always-2' && !document.querySelector('.pane.focused .composer .pdock .pd-more')`, 6000);
         check('总是允许 (only with suggestions) sends {allow, updatedPermissions}; 「还有 1 条」 then the next request', /想运行一条命令$/.test(staged.title ?? '') && staged.more === '还有 1 条' && staged.always === '总是允许 npm test' && staged.cmd === 'npm test' && /"behavior":"allow"/.test(alwaysSent) && /"updatedPermissions":\[\{"type":"addRules"/.test(alwaysSent) && next, JSON.stringify({ staged, alwaysSent, next }));
-        // phone width: 允许一次 takes a row of its own when the buttons do not fit
+        // phone width: every button a row of its own, 允许一次 on top (UI refresh §8)
         win.setContentSize(480, 860);
         await waitFor('innerWidth === 480', 4000);
         await sleep(500);
-        const narrow = await js(`(() => { const d = document.querySelector('.pane .composer .pdock'); if (!d) return null; const a = d.querySelector('[data-act="allow"]').getBoundingClientRect(), r = d.querySelector('[data-act="deny"]').getBoundingClientRect(), box = d.getBoundingClientRect(); return { own: a.top >= r.bottom - 1, wide: a.width >= box.width - 40, inside: box.left >= 0 && box.right <= innerWidth }; })()`);
-        check('phone width: the card is full width and 允许一次 gets its own row', narrow && narrow.own && narrow.wide && narrow.inside, JSON.stringify(narrow));
+        const narrow = await js(`(() => { const d = document.querySelector('.pane .composer .pdock'); if (!d) return null; const a = d.querySelector('[data-act="allow"]').getBoundingClientRect(), r = d.querySelector('[data-act="deny"]').getBoundingClientRect(), box = d.getBoundingClientRect(); return { own: a.bottom <= r.top + 1, wide: a.width >= box.width - 40, inside: box.left >= 0 && box.right <= innerWidth }; })()`);
+        check('phone width: the card is full width and 允许一次 has a row of its own, above 拒绝', narrow && narrow.own && narrow.wide && narrow.inside, JSON.stringify(narrow));
         await sleep(400);
         await shot('chat-permission-phone');
         win.setContentSize(1360, 860);

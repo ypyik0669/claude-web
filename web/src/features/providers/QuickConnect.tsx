@@ -6,6 +6,7 @@ import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { imeComposing } from '@/ui/ime';
 import { PRESETS, anthropicBase, cleanBase, explainProbe, quickPlan, relayName, uniqueName, type ProbeLike, type QuickFormat, type QuickPlan } from './quick';
+import { Segmented } from '@/ui/Segmented';
 
 /** A model list as the probe returned it: the ids and the display names it gave. */
 type Listed = { models: string[]; modelNames?: Record<string, string>; modelEfforts?: Provider['modelEfforts'] };
@@ -136,9 +137,7 @@ export function QuickConnect({ onDone, makeDefault, autoFocus = true }: { onDone
       {relay && (
         <div className="qc-f qc-fmt">
           <span className="qc-l">接口格式</span>
-          <div className="sp-seg" role="radiogroup" aria-label="接口格式">
-            {FORMATS.map((f) => <button key={f.v} type="button" role="radio" aria-checked={fmt === f.v} className={clsx(fmt === f.v && 'on')} title={f.t} disabled={busy} onClick={() => setFmt(f.v)}>{f.l}</button>)}
-          </div>
+          <Segmented className="sp-seg" label="接口格式" arrows disabled={busy} value={fmt} options={FORMATS.map((f) => ({ value: f.v, label: f.l, title: f.t }))} onChange={setFmt} />
         </div>
       )}
       {preset.note && <div className="qc-hint sub">{preset.note}</div>}

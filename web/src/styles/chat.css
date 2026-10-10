@@ -1,0 +1,222 @@
+/* UI refresh, phase 2 (docs/superpowers/specs/2026-10-10-ui-refresh/design.md §6): chat. Loaded after styles.css, so a rule here wins over the
+   older rule with the same selector there.
+
+   What is in here: the conversation's rhythm, the user's bubble, a finished turn's line and its fold, step rows,
+   the thinking row, text fading in while it streams, the code block, the 「改动了 N 个文件」 card.
+   Motion (§4.5): hover is instant in and 150 ms out; a press scales to 0.96; only transform / opacity / filter /
+   colour move, and height as a grid row; nothing uses `transition: all`. An entrance is a keyframe animation with
+   only a `from` — its end is the element as it is, so with animations off (「减少动态效果」) nothing is left half way —
+   and its class is taken off again by the component once it has played: a class left on would replay whenever
+   something around it is hidden and shown. The lengths that are not tokens (150 / 220 / 340 / 380 / 420 ms) are
+   §4.5's table. */
+
+/* ---------- rhythm ---------- */
+/* Spacing is set by what contains a thing, not by the thing: a reply is a column with a 10px gap, a turn's parts
+   are 10px apart, turns 20px. (The old margins collapsed through each other; a turn's steps now sit in a grid row
+   that folds, and margins do not collapse across that.) */
+.msg { animation: none; }
+.msg.assistant { display: flex; flex-direction: column; gap: 10px; margin: 0; min-width: 0; }
+.msg.assistant > * { margin-block: 0; min-width: 0; }
+/* the thinking row and the steps after it read as one list */
+.msg.assistant > .trail + .trail { margin-top: -6px; }
+html[data-density='compact'] .msg.assistant { margin: 0; }
+.assistant-wrap { margin: 10px 0; }
+.assistant-wrap > .msg-actions { margin: 6px 0 0 -6px; }
+
+.turn + .turn { margin-top: 20px; }
+/* a round nobody typed here (a goal's 继续, IM, another window): no user message on top, a little room instead */
+.turn + .turn[data-turn^='cont-'] { margin-top: 12px; }
+.chat-inner > .turn:first-of-type { margin-top: 8px; }
+.turn > .msg.user, .turn + .turn > .msg.user:first-child { margin: 0; }
+.turn-sum-row { margin: 10px 0 0; }
+.turn > .turn-sum-row:first-child { margin-top: 0; }
+/* the room above a turn's steps is inside what folds (a spacer, not padding or a margin: the folding row can only
+   close to nothing when the box in it has no padding of its own, and a margin outside it would be left over) */
+.turn-body-in::before { content: ''; display: block; height: 10px; }
+.turn > .turn-body:first-child > .turn-body-in::before { content: none; }
+/* under the user's message its (hidden until hover) buttons already leave room */
+.turn > .msg.user + .turn-sum-row { margin-top: 4px; }
+.turn > .msg.user + .turn-body > .turn-body-in::before { height: 4px; }
+.turn-answer { margin-top: 10px; }
+.turn-body-in > *, .turn-answer > * { margin-block: 0; }
+.turn-body-in > * + *, .turn-answer > * + * { margin-top: 10px; }
+.turn-body-in > .msg.user.meta { margin: 10px 0 0; }
+.turn-body-in > .msg.user.meta:first-child { margin-top: 0; }
+.turn-answer > .msg-actions { margin: 6px 0 0 -6px; }
+/* what stays in view after a folded turn: an error result, an error notice */
+.turn > .assistant-wrap, .turn > .result-line, .turn > .sysline { margin: 10px 0 0; }
+.md code:not(pre code) { background: var(--fill-subtle); border-radius: var(--r-sm); }
+
+/* ---------- the user's message ---------- */
+.msg.user .bubble { background: var(--user-bg); border: 0; border-radius: var(--r-bubble) var(--r-bubble) var(--r-sm) var(--r-bubble); padding: 10px 16px; font-size: var(--fs-body); line-height: 24px; }
+/* a note in the user's place (a reminder, a command's output): a quiet box on the reply's side, not a bubble */
+.msg.user.meta .bubble { background: var(--fill-subtle); border: 0; border-radius: var(--r-lg); padding: 8px 12px; font-size: var(--fs-sm); line-height: 18px; }
+/* the message this window just sent rises into place; history does not (ChatView adds `enter` for its length) */
+.msg.user.enter > .bubble { transform-origin: 100% 100%; animation: bubble-rise 420ms var(--ease-sheet) backwards; }
+@keyframes bubble-rise { from { opacity: 0; transform: translateY(14px) scale(0.985); } }
+
+/* ---------- a finished turn: one line, and the steps folded under it ---------- */
+.turn-sum { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 28px; min-height: 0; padding: 0 10px 0 6px; margin-left: -6px; border-radius: var(--r-row); font-size: var(--fs-sm); line-height: 18px; color: var(--ink-3); font-variant-numeric: tabular-nums; text-align: left; transition: background-color 150ms, color 150ms; }
+.turn-sum:hover { background: var(--layer-hover); color: var(--ink-1); transition-duration: 0s; }
+.turn-sum .chev { flex: none; color: var(--ink-4); transition: transform 220ms var(--ease-sheet); }
+.turn-sum[aria-expanded='true'] .chev { transform: rotate(90deg); }
+.turn-sum .lbl .err { color: var(--err); }
+/* a number while it counts up: a box as wide as what it ends on */
+.turn-sum .num { display: inline-block; text-align: right; }
+/* the turn ended in view: the line fades in (its numbers count up — ChatView `SumLine`) */
+.turn-sum-row.just { animation: sum-in 300ms var(--ease-out) backwards; }
+@keyframes sum-in { from { opacity: 0; } }
+
+/* The fold. Open is how the element is; `hidden` = folded (FindBar, the export and ui-smoke read the attribute),
+   and without `moving` not in the page at all. Folding: `hidden` + `moving` — still laid out, the row going to 0fr.
+   Unfolding: one frame of `pre` (laid out, collapsed) so the row has a height to grow from. */
+.turn-body { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 1fr; margin: 0; transition: grid-template-rows 340ms var(--ease-sheet), opacity 220ms var(--ease-out); }
+.turn-body[hidden], .turn-body.pre { grid-template-rows: 0fr; opacity: 0; }
+.turn-body[hidden]:not(.moving) { display: none; }
+.turn-body-in { min-width: 0; min-height: 0; }
+.turn-body.moving > .turn-body-in { overflow: hidden; }
+/* the opened steps are plain rows under the line: no rail, no indent (was a bordered, indented block that faded in) */
+.turn.folded.open > .turn-body { border-left: 0; padding-left: 0; margin: 0; animation: none; }
+
+/* the same motion for anything else that opens under its row (a step's detail, a merged row's steps, the thinking
+   text) — Fold.tsx; its content is only in the page while it is open or moving */
+.fold { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 1fr; transition: grid-template-rows 340ms var(--ease-sheet), opacity 220ms var(--ease-out); }
+.fold.shut { grid-template-rows: 0fr; opacity: 0; }
+.fold > .fold-in { min-width: 0; min-height: 0; }
+.fold.moving > .fold-in { overflow: hidden; }
+
+/* ---------- step rows ---------- */
+/* One row per step, 30px: a 16px slot that says where the step is, the verb, the target in a small mono chip, and
+   at the end how long it took. No card, no round node; a dashed line from each row's slot to the next one's. */
+.trail { margin: 0; font-size: var(--fs-sm); line-height: 18px; color: var(--ink-3); }
+.tl { position: relative; display: block; padding: 0; animation: none; }
+.tl-rows > .tl:not(:last-child)::after { content: ''; position: absolute; left: 9.5px; top: 23px; bottom: -7px; border-left: 1px dashed var(--edge-strong); pointer-events: none; }
+/* a step that arrives while the conversation runs in view (ChatView adds `enter` for its length) */
+.tl.enter { animation: step-in 380ms var(--ease-out) backwards; }
+@keyframes step-in { from { opacity: 0; filter: blur(5px); transform: translateY(8px); } }
+
+.tool-head, .tl-head { display: flex; align-items: center; gap: 10px; height: 30px; min-height: 0; padding: 0 6px 0 8px; margin: 0 -6px; border-radius: var(--r-row); font-size: var(--fs-sm); line-height: 18px; color: var(--ink-3); cursor: default; user-select: none; transition: background-color 150ms; }
+.tool-head[role='button'], .tl-head { cursor: pointer; }
+.tool-head:hover { background: transparent; }
+.tool-head[role='button']:hover, .tl-head:hover { background: var(--layer-hover); transition-duration: 0s; }
+html[data-density='compact'] .tool-head, html[data-density='compact'] .tl-head { height: 26px; padding: 0 6px 0 8px; }
+html[data-density='compact'] .tl-rows > .tl:not(:last-child)::after { top: 21px; bottom: -5px; }
+
+/* the slot: a spinner while the step runs, its tool's icon once it is done, the shield while it waits on you */
+.sgw { flex: none; display: grid; place-items: center; width: 16px; height: 16px; color: var(--ink-4); }
+.sgw.pending { color: var(--ink-5); }
+.sgw.waiting { color: var(--warn); }
+.sgw.failed { color: var(--err); }
+.sgw .spin { display: block; width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid var(--edge-strong); border-top-color: var(--ink-2); animation: step-spin 0.7s linear infinite; }
+@keyframes step-spin { to { transform: rotate(360deg); } }
+/* the step finished in view: its icon takes the spinner's place with a little bounce */
+.sgw .pop, .code-btn .pop { animation: step-pop var(--dur-slower) var(--ease-pop) backwards; }
+@keyframes step-pop { from { opacity: 0; transform: scale(0.4); } }
+
+.tool-head .name { flex: none; font-weight: 400; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.tl.done .tool-head .name, .tl.active .tool-head .name { color: var(--ink-2); }
+.tl.waiting .tool-head .name { color: var(--ink-1); }
+.tl.failed .tool-head .name { color: var(--err); }
+.tool-head .verb { flex: none; color: var(--ink-3); font-size: var(--fs-sm); }
+.tool-head .summary { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 7px; border-radius: var(--r-sm); background: var(--fill-subtle); color: var(--ink-2); font-family: var(--mono); font-size: var(--fs-meta); line-height: 18px; }
+/* the row's end, after a spacer: the time (or 失败 / 等你确认). The 详情 button sits before it and shows on hover, so
+   the times stay in a column */
+.tool-head > .grow { flex: 1 1 0; min-width: 0; }
+.tool-head .st { flex: none; font-size: var(--fs-meta); color: var(--ink-4); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tool-head .st.err { color: var(--err); }
+.tool-head .st.wait { color: var(--warn); font-weight: 400; }
+.tool-head .icon-btn { flex: none; opacity: 0; transition: opacity 150ms, background-color 150ms, color 150ms; }
+.tool-head:hover .icon-btn, .tool-head:focus-within .icon-btn, .tool:hover .tool-head .icon-btn { opacity: 1; transition-duration: 0s; }
+@media (hover: none) { .tool-head .icon-btn { opacity: 1; } }
+/* a merged row (「读取 ×3 · a.ts 等」) and the thinking row open to more: a chevron that turns */
+.tool-head .chev, .tl-head .chev { flex: none; color: var(--ink-4); transition: transform 220ms var(--ease-sheet); }
+.tool-head.grp.open > .chev, .tl.open > .tl-head .chev { transform: rotate(90deg); }
+
+/* what opens under a row sits under the verb; the dashed line runs past it on the left */
+.tl > .fold .tool-out { margin: 2px 0 8px 26px; }
+.tool-out > .tool-body { border: 0; margin: 0; padding: 0; }
+.tool-out > .tool-children { border: 0; margin: 8px 0 0; padding: 0; background: transparent; }
+.tl.group > .fold > .fold-in > .tl-rows { margin-left: 26px; }
+.tl-sub { margin: 0 0 4px 26px; padding: 2px 8px; border-radius: var(--r-sm); font-size: var(--fs-meta); color: var(--ink-3); transition: background-color 150ms, color 150ms; }
+.tl-sub:hover { background: var(--layer-hover); color: var(--ink-1); transition-duration: 0s; }
+
+/* under a run of steps: what it did in a few words, and 全部展开 */
+.tl-foot { display: flex; align-items: center; gap: 8px; min-height: 22px; padding: 0 0 0 26px; font-size: var(--fs-meta); line-height: 16px; color: var(--ink-4); }
+.tl-foot .tl-all { margin-left: auto; padding: 2px 8px; border-radius: var(--r-pill); font-size: var(--fs-meta); color: var(--ink-3); opacity: 0; transition: opacity 150ms, background-color 150ms, color 150ms; }
+.trail:hover .tl-foot .tl-all, .tl-foot .tl-all:focus-visible { opacity: 1; transition-duration: 0s; }
+.tl-foot .tl-all:hover { background: var(--layer-hover); color: var(--ink-1); }
+@media (hover: none) { .tl-foot .tl-all { opacity: 1; } }
+
+/* ---------- the thinking row ---------- */
+.tl-head .lbl { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl.done .tl-head .lbl, .tl.active .tl-head .lbl { color: var(--ink-3); }
+.thinking-body { margin: 2px 0 8px 26px; padding: 0; border: 0; max-height: 360px; overflow: auto; color: var(--ink-3); font-size: var(--fs-base); line-height: 22px; }
+
+/* ---------- a standalone tool (a subagent, a plan, a question): the same row as the head of a quiet card ---------- */
+.tool { margin: 0; border: 0; border-radius: var(--r-lg); background: var(--surface-0); box-shadow: var(--elev-1); overflow: hidden; }
+.tool.error { box-shadow: 0 0 0 1px color-mix(in oklab, var(--err) 45%, transparent); }
+.tool > .tool-head { height: 36px; margin: 0; padding: 0 8px 0 12px; border-radius: 0; }
+html[data-density='compact'] .tool > .tool-head { height: 32px; padding: 0 8px 0 12px; }
+/* the slot's spinner says it runs (was a green dot after the name) */
+.tool.running .name::after { content: none; }
+.tool > .tool-body { border-top: 0; padding: 2px 12px 12px; }
+.tool > .tool-children { border: 0; padding: 0 12px 12px; background: transparent; }
+
+/* ---------- text that streams ---------- */
+/* what just arrived fades in — Markdown wraps the new end of the last block in .w for the length of the fade
+   (stream-fade.ts); the fading text is the sign that it streams, so the block caret is gone */
+.md .w { animation: text-in var(--dur-slow) var(--ease-out) backwards; }
+@keyframes text-in { from { opacity: 0; filter: blur(3px); } }
+.cursor::after { content: none; }
+
+/* ---------- code ---------- */
+/* Fill = 4% ink over the panel colour, drawn as a layer over a plain `background-color`: CodeBlock's blank check
+   (code-blank.ts) reads the computed background behind the code, and a colour made with color-mix() comes back in a
+   form it does not read. An inset ring instead of a border; the header has no line under it.
+   (`div.code`: a settings page has a `textarea.code` that is not this.) */
+div.code { border: 0; border-radius: var(--r-lg); background-color: var(--surface-0); background-image: linear-gradient(var(--fill-subtle), var(--fill-subtle)); box-shadow: inset 0 0 0 1px var(--edge-subtle); overflow: hidden; font-size: var(--fs-code); }
+.code-head { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 6px 0 14px; background: transparent; border-bottom: 0; font-family: var(--mono); font-size: var(--fs-meta); line-height: 16px; color: var(--ink-4); }
+.code-head .grow { flex: 1 1 auto; }
+.code-lang { color: var(--ink-3); }
+.code-meta { color: var(--ink-4); white-space: nowrap; }
+.code.err .code-head, .code.err .code-lang { color: var(--err); }
+.code-btn { flex: none; display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border-radius: var(--r-row); color: var(--ink-3); transition: background-color 150ms, color 150ms, transform var(--dur-instant) var(--ease-out); }
+.code-btn:hover { background: var(--layer-hover); color: var(--ink-1); transition-duration: 0s, 0s, var(--dur-instant); }
+.code-btn:active { transform: scale(0.96); }
+.code-btn.on { background: var(--layer-selected); color: var(--ink-1); }
+.code-btn.ok { color: var(--ink-1); }
+/* the text itself: no box of its own inside the block (a markdown fence and a tool's output both gave it one) */
+.code .code-body, .md .code .code-body, .tool-body .code .code-body { margin: 0; padding: 4px 14px 12px; background: transparent; border: 0; border-radius: 0; font-size: var(--fs-code); line-height: 20px; }
+.code-foot { padding: 0 14px 10px; background: transparent; border-top: 0; font-size: var(--fs-meta); color: var(--ink-3); }
+
+/* ---------- 「改动了 N 个文件」 ---------- */
+.fcard { margin: 0; padding: 4px; border: 0; border-radius: var(--r-xl); background: var(--surface-elev); box-shadow: var(--elev-1); overflow: hidden; }
+.fcard-h { display: flex; align-items: center; gap: 8px; min-height: 0; padding: 8px 8px 8px 12px; font-size: var(--fs-base); line-height: 20px; font-weight: 600; color: var(--ink-1); }
+.fcard-h > svg { flex: none; color: var(--ink-3); }
+.fcard-h .n { font-size: var(--fs-meta); font-weight: 400; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 审阅: a pill, ink (the one thing to do with the card) */
+.fcard-h .btn { margin-left: auto; min-height: 28px; padding: 0 13px; font-weight: 400; }
+.fcard-h .btn:active { transform: scale(0.96); }
+.fcard-f { display: flex; align-items: center; gap: 8px; width: 100%; height: 34px; min-height: 0; padding: 0 12px; border-top: 0; border-radius: var(--r-md); font-family: var(--mono); font-size: var(--fs-sm); line-height: 18px; text-align: left; transition: background-color 150ms; }
+.fcard-f:hover { background: var(--layer-hover); transition-duration: 0s; }
+.fcard-f .p { color: var(--ink-1); }
+.fcard-f .p .d { color: var(--ink-4); }
+.fcard-f .n { flex: none; font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
+.fcard-f.more { font-family: var(--font); color: var(--ink-3); }
+
+/* ---------- message actions ---------- */
+.msg-actions button { transition: background-color 150ms, color 150ms, transform var(--dur-instant) var(--ease-out); }
+.msg-actions button:hover { transition-duration: 0s, 0s, var(--dur-instant); }
+.msg-actions button:active:not(:disabled) { transform: scale(0.96); }
+
+/* ---------- 「减少动态效果」 ---------- */
+/* The setting turns every animation and transition off app-wide (styles.css), and tokens.css ends every animation at
+   once under the system's preference; what is left for here is the system's preference and what neither covers:
+   the transitions written with their own length, a press that scales, and the spinner (a loop). */
+@media (prefers-reduced-motion: reduce) {
+  .turn-body, .fold, .turn-sum .chev, .tool-head .chev, .tl-head .chev { transition-duration: 0s; }
+  .sgw .spin { animation: none; }
+}
+:root[data-reduce-motion='1'] .sgw .spin { animation: none; }
+:root[data-reduce-motion='1'] :is(.code-btn, .msg-actions button, .fcard-h .btn):active { transform: none; }
+@media (prefers-reduced-motion: reduce) { :is(.code-btn, .msg-actions button, .fcard-h .btn):active { transform: none; } }

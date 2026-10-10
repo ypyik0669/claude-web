@@ -160,10 +160,10 @@ function SessionHeader({ tile, paneId }: { tile: ChatTileModel; paneId: string }
         )}
       </div>
       <span className="sh-actions">
-        {/* phone (spec §5.11): ☰ · title · ··· only — 改动 / 终端 / 任务 and the other views are in ··· and open the
-            bottom drawer (whose own tabs switch between 审阅 · 文件 · 终端 · 任务) */}
-        {!mobile && stat && stat.files > 0 && (
-          <button className="sh-diff" title={`这个对话改了 ${stat.files} 个文件：+${stat.added} 行 −${stat.removed} 行\n点击在右侧审阅这些改动`} onClick={() => openReview({ scope: 'session' })}>
+        {/* phone (UI refresh §8): ☰ · title · +N −M (when there are changes) · ··· — 终端 / 任务 and the other views
+            are in ··· and open the bottom drawer (whose own tabs switch between 审阅 · 文件 · 终端 · 任务) */}
+        {stat && stat.files > 0 && (
+          <button className="sh-diff" title={`这个对话改了 ${stat.files} 个文件：+${stat.added} 行 −${stat.removed} 行\n点击${mobile ? '' : '在右侧'}审阅这些改动`} onClick={() => openReview({ scope: 'session' })}>
             <span className="add">+{stat.added}</span><span className="del">−{stat.removed}</span>
           </button>
         )}

@@ -2,7 +2,7 @@
 // button, and splitting a commit's patch per file.
 import { describe, expect, it } from 'vitest';
 import type { GitFileStatus, GitStatus } from '@shared';
-import { bulkTargets, commitPlan, diffRequest, discardConfirm, joinPath, relToRoot, reviewRows, scopeCounts, splitPath, splitUnifiedByFile, stageAllConfirm, unifiedStat } from './review-model';
+import { DEFAULT_LINE_MODE, FILE_ACTION_LABEL, FILE_ACTION_TITLE, LINE_MODES, bulkTargets, commitFold, commitPlan, diffRequest, discardConfirm, fileActions, joinPath, relToRoot, reviewRows, scopeCounts, splitPath, splitUnifiedByFile, stageAllConfirm, unifiedStat } from './review-model';
 
 const f = (path: string, patch: Partial<GitFileStatus> = {}): GitFileStatus => ({ path, status: 'modified', staged: false, unstaged: true, ...patch });
 const status = (files: GitFileStatus[], root: string | null = 'C:\\w\\repo'): GitStatus => ({ root, branch: 'main', upstream: null, ahead: 0, behind: 0, detached: false, files, stashes: 0, state: 'clean' });
@@ -201,6 +201,85 @@ describe('bulk actions and the commit button', () => {
     expect(plan).toMatchObject({ kind: 'conflicts', conflicts: 1, stage: [] });
     // staged files alongside a conflict: still not committable (git refuses unmerged files)
     expect(commitPlan(st)).toMatchObject({ kind: 'conflicts', conflicts: 1, staged: 2 });
+  });
+});
+
+describe('one file’s actions (the header’s icons; spelled out on a phone)', () => {
+  const row = (g: GitFileStatus, scope: 'uncommitted' | 'staged' = 'uncommitted') => reviewRows(scope, { status: status([g]) })[0];
+
+  it('暂存 or 取消暂存 (never both), 还原 where a checkout can put the file back, 打开 unless it is deleted', () => {
+    expect(fileActions(row(f('m.ts')), 'uncommitted', true)).toEqual(['stage', 'discard', 'open']);
+    expect(fileActions(row(f('n.ts', { status: 'untracked' })), 'uncommitted', true)).toEqual(['stage', 'discard', 'open']);
+    expect(fileActions(row(f('s.ts', { staged: true, unstaged: false })), 'uncommitted', true)).toEqual(['unstage', 'discard', 'open']);
+    // staged and changed again: what is left to stage comes first
+    expect(fileActions(row(f('b.ts', { staged: true, unstaged: true })), 'uncommitted', true)).toEqual(['stage', 'discard', 'open']);
+    // a deleted file has nothing to open
+    expect(fileActions(row(f('gone.ts', { status: 'deleted' })), 'uncommitted', true)).toEqual(['stage', 'discard']);
+  });
+
+  it('nothing is loosened: a conflict is only opened; a new file in the index and a staged rename are never 还原d', () => {
+    expect(fileActions(row(f('c.ts', { status: 'conflict' })), 'uncommitted', true)).toEqual(['open']);
+    expect(fileActions(row(f('add.ts', { status: 'added', staged: true, unstaged: false })), 'uncommitted', true)).toEqual(['unstage', 'open']);
+    expect(fileActions(row(f('new.ts', { status: 'renamed', from: 'old.ts', staged: true, unstaged: false })), 'uncommitted', true)).toEqual(['unstage', 'open']);
+  });
+
+  it('已暂存 has no 还原; 某次提交 and files outside a repo are only opened', () => {
+    expect(fileActions(row(f('s.ts', { staged: true, unstaged: false }), 'staged'), 'staged', true)).toEqual(['unstage', 'open']);
+    const patches = reviewRows('commit', { status: status([]), patches: splitUnifiedByFile(COMMIT) });
+    expect(fileActions(patches[0], 'commit', true)).toEqual(['open']);
+    expect(fileActions(patches[4], 'commit', true)).toEqual([]); // deleted by the commit
+    // 本次对话改动: a file committed since (no git state) and a folder that is not a repo
+    const clean = reviewRows('session', { status: status([]), changed: ['C:\\w\\repo\\done.ts'] })[0];
+    expect(fileActions(clean, 'session', true)).toEqual(['open']);
+    const loose = reviewRows('session', { status: status([], null), changed: ['/tmp/x.txt'] })[0];
+    expect(fileActions(loose, 'session', false)).toEqual(['open']);
+  });
+
+  it('every action is one the bulk buttons would take for that file (the same lists)', () => {
+    const files = [f('m.ts'), f('s.ts', { staged: true, unstaged: false }), f('u.ts', { status: 'untracked' }), f('add.ts', { status: 'added', staged: true, unstaged: false }), f('c.ts', { status: 'conflict' }), f('r.ts', { status: 'renamed', staged: true, unstaged: false })];
+    for (const r of reviewRows('uncommitted', { status: status(files) })) {
+      const acts = fileActions(r, 'uncommitted', true);
+      const one = bulkTargets([r]);
+      expect(acts.includes('stage')).toBe(one.stage.length > 0);
+      expect(acts.includes('unstage')).toBe(!one.stage.length && one.unstage.length > 0);
+      expect(acts.includes('discard')).toBe(one.discard.length > 0);
+    }
+  });
+
+  it('the words a phone writes on them, and the tooltip that says what each does', () => {
+    expect(FILE_ACTION_LABEL).toEqual({ stage: '暂存', unstage: '取消暂存', discard: '还原', open: '打开' });
+    // (the desktop icons' tooltips, word for word)
+    expect(FILE_ACTION_TITLE).toEqual({ stage: '暂存（加入下一次提交）', unstage: '取消暂存', discard: '还原（丢弃这个文件的改动）', open: '在编辑器打开' });
+  });
+});
+
+describe('on a phone (UI refresh §8)', () => {
+  it('long lines: 换行 / 横滚, wrapping by default', () => {
+    expect(LINE_MODES.map((m) => [m.value, m.label])).toEqual([['wrap', '换行'], ['scroll', '横滚']]);
+    expect(DEFAULT_LINE_MODE).toBe('wrap');
+  });
+
+  it('the commit area folds into 「提交 N 个文件」: what 提交 would take', () => {
+    const phone = { phone: true, open: false };
+    // 2 files staged (a third only changed): the commit takes the index
+    expect(commitFold(commitPlan(status([f('a.ts', { staged: true, unstaged: false }), f('b.ts', { staged: true, unstaged: true }), f('m.ts')])), phone)).toBe('提交 2 个文件');
+    // nothing staged: 提交 offers to stage 全部暂存's files first — those are the N
+    expect(commitFold(commitPlan(status([f('m.ts'), f('new.ts', { status: 'untracked' }), f('x.ts')])), phone)).toBe('提交 3 个文件');
+    expect(commitFold(commitPlan(status([f('m.ts')])), phone)).toBe('提交 1 个文件');
+  });
+
+  it('nothing to commit, or a conflict: not folded — the phone shows what the desktop shows', () => {
+    const phone = { phone: true, open: false };
+    expect(commitFold(commitPlan(status([])), phone)).toBeNull();
+    expect(commitFold(commitPlan(null), phone)).toBeNull();
+    expect(commitFold(commitPlan(status([f('c.ts', { status: 'conflict' }), f('s.ts', { staged: true, unstaged: false })])), phone)).toBeNull();
+  });
+
+  it('opened (tapped) it stays the full box; a desktop never folds', () => {
+    const plan = commitPlan(status([f('s.ts', { staged: true, unstaged: false })]));
+    expect(commitFold(plan, { phone: true, open: true })).toBeNull();
+    expect(commitFold(plan, { phone: false, open: false })).toBeNull();
+    expect(commitFold(plan, { phone: false, open: true })).toBeNull();
   });
 });
 

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
+import { Segmented } from '@/ui/Segmented';
 
 // The controls of one settings row (a meta.json key through `settings.set`) and the row itself: 标题 + 一句后果 +
 // 右侧控件 (spec §5.7). Every row of the settings window uses these; section components may use `Row` too.
@@ -38,9 +39,7 @@ export function Seg({ k, def, options, label }: { k: string; def: string; option
   const set = useStore((s) => s.setSetting);
   const cur = String(v ?? def);
   return (
-    <div className="sp-seg" role="radiogroup" aria-label={label}>
-      {options.map((o) => <button key={o.id} role="radio" aria-checked={cur === o.id} className={clsx(cur === o.id && 'on')} onClick={() => void set(k, o.id)}>{o.l}</button>)}
-    </div>
+    <Segmented className="sp-seg" label={label ?? ''} arrows value={cur} options={options.map((o) => ({ value: o.id, label: o.l }))} onChange={(id) => { if (id !== cur) void set(k, id); }} />
   );
 }
 

@@ -6,6 +6,8 @@ import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { dirMenuLayout, menuKey, sameLayout, type DirMenuLayout } from './dir-menu';
 import { PROJECT_MENU_ID } from './ids';
 import { useMenuClaim } from '@/ui/menus';
+import { useMenuMotion } from '@/ui/menu-motion';
+import { ActionSheet, useSheetMenu } from '@/ui/ActionSheet';
 
 /**
  * Working-directory chip of the welcome composer. The list of recent directories opens only from this chip,
@@ -60,9 +62,12 @@ export function DirPicker({ cwd, recent, onPick, onBrowse, footer, label, title 
 function DirMenu({ anchor, cwd, dirs, onPick, onBrowse, onClose, footer }: { anchor: React.RefObject<HTMLButtonElement | null>; cwd: string; dirs: string[]; onPick: (d: string) => void; onBrowse: () => void; onClose: (refocus: boolean) => void; footer?: React.ReactNode }) {
   const box = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<DirMenuLayout | null>(null);
+  // a phone: an action sheet from the bottom (UI refresh §8, ui/ActionSheet.tsx) — the same element and rows, not
+  // placed; the sheet takes the focus itself
+  const sheet = useSheetMenu();
   useLayoutEffect(() => {
     const a = anchor.current;
-    if (!a) return;
+    if (!a || sheet) return;
     const place = () => {
       // position AND width: a resize can shrink the room without moving the chip
       const next = dirMenuLayout(a.getBoundingClientRect(), { vw: window.innerWidth, vh: window.innerHeight });
@@ -73,7 +78,7 @@ function DirMenu({ anchor, cwd, dirs, onPick, onBrowse, onClose, footer }: { anc
     window.addEventListener('resize', place);
     window.addEventListener('scroll', onScroll, true);
     return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', onScroll, true); };
-  }, [anchor]);
+  }, [anchor, sheet]);
   // focus the current directory (or the first row) once the menu is placed
   useLayoutEffect(() => {
     if (!pos) return;
@@ -92,6 +97,8 @@ function DirMenu({ anchor, cwd, dirs, onPick, onBrowse, onClose, footer }: { anc
   }, [anchor, onClose]);
   // the one anchored menu app-wide; the settings page opening over the app closes it too
   useMenuClaim(() => onClose(false));
+  // scales in from the chip (`--menu-origin` comes with the layout), fades out when the pointer closes it
+  const motion = useMenuMotion(() => box.current, [!!pos], sheet);
   const onKey = (e: React.KeyboardEvent) => {
     const rows = [...(box.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
     const act = menuKey(e.key, rows.indexOf(document.activeElement as HTMLButtonElement), rows.length);
@@ -101,9 +108,9 @@ function DirMenu({ anchor, cwd, dirs, onPick, onBrowse, onClose, footer }: { anc
     if ('focus' in act) rows[act.focus]?.focus();
     else onClose(act.refocus);
   };
-  if (!pos) return null;
-  return createPortal(
-    <div ref={box} className="menu dirmenu" style={pos} role="menu" aria-label="项目" onKeyDown={onKey}>
+  if (!pos && !sheet) return null;
+  const menu = (
+    <div ref={box} className="menu dirmenu" style={pos ?? undefined} role="menu" aria-label="项目" onKeyDown={onKey} {...motion}>
       {dirs.length > 0 && <>
         <div className="dirmenu-head">最近的项目</div>
         <div className="dirmenu-list">
@@ -118,7 +125,7 @@ function DirMenu({ anchor, cwd, dirs, onPick, onBrowse, onClose, footer }: { anc
       </>}
       <button type="button" role="menuitem" data-id={PROJECT_MENU_ID.browse} onClick={onBrowse}><Icon name="folder" size={13} /> 打开文件夹…</button>
       {footer}
-    </div>,
-    document.body,
+    </div>
   );
+  return sheet ? <ActionSheet onClose={onClose} tall>{menu}</ActionSheet> : createPortal(menu, document.body);
 }

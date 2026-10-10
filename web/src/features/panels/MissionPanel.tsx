@@ -54,7 +54,7 @@ export function MissionPanel() {
       <div className="mission-head">
         <span>{total} 个活动对话 · {cards.filter((c) => c.lane === 'attention').length + orchWait.length + remote.filter((s) => s.live === 'waiting').length} 需要你 · {cards.filter((c) => c.lane === 'running').length + remote.filter((s) => s.live !== 'waiting').length} 运行中</span>
         <span className="grow" />
-        <label className="muted" style={{ fontSize: 12, display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={showIdle} onChange={(e) => setShowIdle(e.target.checked)} /> 显示空闲</label>
+        <label className="muted" style={{ fontSize: 13, display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={showIdle} onChange={(e) => setShowIdle(e.target.checked)} /> 显示空闲</label>
       </div>
       {!total && !remote.length && !orchWait.length && <div className="empty">没有活动的对话。侧栏点开一个，或用「恢复」继续。</div>}
       <div className="mission-lanes">

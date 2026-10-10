@@ -1,5 +1,12 @@
 // Self-contained HTML export of a conversation (or one turn): clone the rendered DOM, inline our CSS, embed nothing external.
-import cssText from '../styles.css?raw';
+import tokensText from '../tokens.css?raw';
+import stylesText from '../styles.css?raw';
+import chatText from '../styles/chat.css?raw';
+import composerText from '../styles/composer.css?raw';
+import floatingText from '../styles/floating.css?raw';
+
+// the stylesheet pulls the tokens in with an @import; a self-contained file gets them inlined instead
+const cssText = tokensText + stylesText.replace("@import './tokens.css';", '') + chatText + composerText + floatingText;
 
 export interface ExportOptions {
   title: string;

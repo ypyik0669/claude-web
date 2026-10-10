@@ -8,7 +8,7 @@ import { isImportedSessionId } from '@/util';
 import { handOverConfirmText, turnRunning } from './handover-text';
 import { agentOf, isArchived } from './filter';
 import { deleteSummary, deleteTargets, effectiveCaps, nativeCliCommand } from './caps';
-import { closeDrawer, useAnchoredMenu } from './menus';
+import { MenuHost, closeDrawer, useAnchoredMenu } from './menus';
 import type { RowMenuId } from './entries';
 import { TERMS } from '@/ui/terms';
 
@@ -164,6 +164,8 @@ export function SessionMenu({ s, onClose, style, extra, handoffInline, deleted }
   ));
   const id = (x: RowMenuId) => x;
   return (
+    // (a phone: MenuHost draws this same element in an action sheet instead — UI refresh §8)
+    <MenuHost onClose={onClose}>
     <div ref={ref} className="menu sess-menu" role="menu" title="" style={style ?? { right: 8, top: 28 }} onClick={(e) => e.stopPropagation()} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}>
       {extra}
       {!deleted && <>
@@ -193,5 +195,6 @@ export function SessionMenu({ s, onClose, style, extra, handoffInline, deleted }
       <button data-id={id('copy-id')} onClick={act(() => { void navigator.clipboard.writeText(s.sessionId); useStore.getState().toast('已复制 session id', true); })}><Icon name="copy" size={14} /> 复制 ID</button>
       {!deleted && caps.delete && <button data-id={id('delete')} className="danger" onClick={act(() => deleteSessions([s]))}><Icon name="trash" size={14} /> 删除…</button>}
     </div>
+    </MenuHost>
   );
 }

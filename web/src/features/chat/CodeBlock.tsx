@@ -79,12 +79,21 @@ export interface CodeBlockProps {
   footer?: React.ReactNode;
 }
 
+/** How long the copy button shows its check (UI refresh §6). */
+const COPIED_MS = 1400;
+
 function useCopy() {
   const [ok, setOk] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
   return {
     ok,
     copy(text: string) {
-      void navigator.clipboard.writeText(text).then(() => { setOk(true); setTimeout(() => setOk(false), 1200); });
+      void navigator.clipboard.writeText(text).then(() => {
+        setOk(true);
+        clearTimeout(timer.current); // copied again while the check shows: it stays for its full time
+        timer.current = setTimeout(() => setOk(false), COPIED_MS);
+      });
     },
   };
 }
@@ -138,8 +147,9 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, title, startLine 
         <span className="code-lang" title={title}>{label}</span>
         <span className="code-meta">{lines.length} 行{text.length > 2000 ? ` · ${(text.length / 1024).toFixed(1)} KB` : ''}</span>
         <span className="grow" />
-        {!isMermaid && <button className={clsx('code-btn', wrap && 'on')} title="自动换行" onClick={() => setWrap(!wrap)} aria-label="自动换行"><Icon name="refresh" size={12} /></button>}
-        <button className="code-btn" title="复制" onClick={() => copy(text)}>{ok ? <><Icon name="check" size={12} /> 已复制</> : <><Icon name="copy" size={12} /> 复制</>}</button>
+        {!isMermaid && <button className={clsx('code-btn', wrap && 'on')} title="自动换行" onClick={() => setWrap(!wrap)} aria-label="自动换行" aria-pressed={wrap}><Icon name="refresh" size={14} /></button>}
+        {/* the icon turns into a check for a moment (keyed: the check is a new node, so it pops in) */}
+        <button className={clsx('code-btn', ok && 'ok')} title={ok ? '已复制' : '复制'} aria-label={ok ? '已复制' : '复制'} onClick={() => copy(text)}><Icon key={ok ? 'ok' : 'copy'} name={ok ? 'check' : 'copy'} size={14} className={ok ? 'pop' : undefined} /></button>
       </div>
       {isMermaid && !streaming ? (
         <Suspense fallback={<pre className="code-body">{text}</pre>}>

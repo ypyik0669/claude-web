@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ws } from '@/ws/client';
 import { useScopedSession, useStore } from '@/store';
 import { ago, clsx } from '@/util';
@@ -7,14 +7,15 @@ import { walkTools } from '@/model/conversation';
 import { DiffView } from '@/features/chat/DiffView';
 import { sessionPeer } from '@/features/peers';
 import { dlg } from '@/ui/dialog';
-import { Icon } from '@/ui/icons';
+import { Icon, type IconName } from '@/ui/icons';
 import { EMPTY, TERMS, emptyText } from '@/ui/terms';
 import { EmptyState } from '@/ui/EmptyState';
 import { imeComposing } from '@/ui/ime';
+import { Segmented } from '@/ui/Segmented';
 import { GitView } from './GitView';
 import { Popover } from '@/features/composer/Popover';
 import { coalesce, gitEventConcerns } from './git-refresh';
-import { SCOPE_LABEL, bulkTargets, commitPlan, diffRequest, discardConfirm, reviewRows, scopeCounts, splitPath, splitUnifiedByFile, stageAllConfirm, unifiedStat, type DiffResult, type ReviewRow, type ReviewScope } from './review-model';
+import { DEFAULT_LINE_MODE, FILE_ACTION_LABEL, FILE_ACTION_TITLE, LINE_MODES, SCOPE_LABEL, bulkTargets, commitFold, commitPlan, diffRequest, discardConfirm, fileActions, reviewRows, scopeCounts, splitPath, splitUnifiedByFile, stageAllConfirm, unifiedStat, type DiffResult, type FileAction, type LineMode, type ReviewRow, type ReviewScope } from './review-model';
 import { useRightPanel } from './right-panel';
 import { modKey } from './shortcuts';
 import { markChecklist } from '@/features/home/checklist-sync';
@@ -37,6 +38,10 @@ let appliedPlace = 0;
 /** Git 视图 in words the default UI uses (TERMS.worktree); the git words stay in the tooltip. */
 const GIT_VIEW_LABEL = 'Git：分支、拉取推送、历史…';
 const GIT_VIEW_TITLE = `完整的 Git 视图：分支、拉取 / 推送、提交历史、修改上一次提交、暂存区快照（stash）、${TERMS.worktree}`;
+/** A phone (UI refresh §8): the 换行 / 横滚 toggle's options, and the icon beside each spelled-out file action
+ *  (the desktop header's own icons). */
+const LINE_OPTIONS = LINE_MODES.map((m) => ({ ...m, data: { 'data-mode': m.value } as const }));
+const FILE_ACTION_ICON: Record<FileAction, IconName> = { stage: 'plus', unstage: 'minus', discard: 'undo', open: 'external' };
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const lines = (t: string) => (t ? t.split('\n').length - (t.endsWith('\n') ? 1 : 0) : 0);
@@ -101,6 +106,10 @@ function FileBody({ row, diff }: { row: ReviewRow; diff: DiffResult | undefined 
  * `inDock`: the right panel's own copy — it takes the open requests (`right-panel.ts`) and publishes the tab's count.
  * `inPlace`: the conversation's own 改动 view in place of the chat, starting on this conversation's changes (where
  * `viewTarget` says so — since phase 7 a phone uses the bottom drawer; a layout saved with the view open still has it).
+ * On a phone (`store.mobile`, UI refresh §8) and only there: a 换行 / 横滚 toggle beside the scope (long lines wrap by
+ * default; `data-lines` on `.rv-main`, styles/review-phone.css), each open file's actions as a row of words under its
+ * header instead of the header's icons (`fileActions` — the same rules), and the commit area folded into one
+ * 「提交 N 个文件」 button until it is tapped (`commitFold`). A desktop's DOM is what it was.
  */
 export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inPlace?: boolean; inDock?: boolean }) {
   const active = useScopedSession();
@@ -109,6 +118,7 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
   const openTile = useStore((s) => s.openTile);
   const diffMode = useStore((s) => s.settings['ui.diffMode']);
   const setSetting = useStore((s) => s.setSetting);
+  const mobile = useStore((s) => s.mobile);
   const sid = active?.sessionId ?? '';
   const cwd = active?.cwd ?? '';
   const peer = sessionPeer(sid || null, sessions);
@@ -131,6 +141,11 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
   const [err, setErr] = useState<GitError | null>(null);
   const [gen, setGen] = useState(0);
   const [msg, setMsgState] = useState('');
+  // a phone's two choices — this window's, not persisted: how long lines are shown, and the folded commit area opened
+  const [lineMode, setLineMode] = useState<LineMode>(DEFAULT_LINE_MODE);
+  const [commitOpen, setCommitOpen] = useState(false);
+  const msgBox = useRef<HTMLTextAreaElement>(null);
+  const committed = useRef(false);
   const stale = useRef(false);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
@@ -152,9 +167,16 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
     setStatus(null); setLoaded(false); setChanged([]); setScope(inPlace ? 'session' : null); setRev(null); setCommitText(null); setLog(null);
     // (the Git view is another repo's now: dropped, not remounted hidden — it would run its git and watch the repo)
     setOpen({}); setDiffs({}); setErr(null); setSub('diff'); setGitMounted(false);
+    setCommitOpen(false);
     fetched.current.clear();
     bump();
   }, [sid, cwd]);
+  // a phone's commit area: opened, it stays open until the scope changes or a commit went through — then it folds
+  // with the status that follows the commit (not before: for a moment the old status would still read 「提交 N 个文件」)
+  useEffect(() => { setCommitOpen(false); }, [sc]);
+  useEffect(() => { if (committed.current) { committed.current = false; setCommitOpen(false); } }, [status]);
+  // (focused in the same tap that opened it: a phone only raises its keyboard for a focus inside the gesture)
+  useLayoutEffect(() => { if (commitOpen) msgBox.current?.focus(); }, [commitOpen]);
 
   // a request from the 改动 button / header ··· / palette (each one once)
   const intent = useRightPanel((s) => s.review);
@@ -303,6 +325,7 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
   const counts = scopeCounts(status, changed.length);
   const targets = bulkTargets(rows);
   const plan = commitPlan(status);
+  const fold = commitFold(plan, { phone: mobile, open: commitOpen });
 
   const act = async (label: string, fn: () => Promise<unknown>) => {
     setBusy(label); setErr(null);
@@ -331,8 +354,16 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
       if (plan.kind === 'stageAll') await ws.request({ kind: 'git.stage', cwd: root, files: plan.stage });
       await ws.request({ kind: 'git.commit', cwd: root, message: msg });
       setMsg('');
+      committed.current = true;
       toast('已提交', true);
     });
+  };
+  const runFileAction = (a: FileAction, r: ReviewRow) => {
+    const one = bulkTargets([r]);
+    if (a === 'stage') void stage(one.stage);
+    else if (a === 'unstage') void unstage(one.unstage);
+    else if (a === 'discard') void discard(one.discard);
+    else openFile(r);
   };
   const openGit = () => { setSub('git'); setGitMounted(true); };
   const openFile = (r: ReviewRow) => openTile({ id: `d${Date.now().toString(36)}`, kind: 'doc', path: r.abs }, 'tab');
@@ -365,7 +396,7 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
         {gitMounted && root && <div className="rv-git-body"><GitView cwd={cwd} visible={visible && sub === 'git'} /></div>}
         {gitMounted && !root && <div className="empty">{loaded ? `${cwd} 不是 git 仓库。` : '读取中…'}</div>}
       </div>
-      <div className="rv-main" hidden={sub !== 'diff'}>
+      <div className="rv-main" hidden={sub !== 'diff'} data-lines={mobile ? lineMode : undefined}>
         <div className="rv-bar">
           <button ref={scopeBtn} className={clsx('rv-scope', scopeMenu && 'on')} onClick={toggleScopeMenu} aria-haspopup="menu" aria-expanded={scopeMenu} title="要看哪些改动">
             <span className="t">{scopeLabel}</span><Icon name="chevronDown" size={12} />
@@ -383,6 +414,8 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
             ))}
             {root && log?.length === 0 && <div className="rv-menu-note">还没有提交</div>}
           </Popover>}
+          {/* a phone: long lines wrap (the default there) or the diff scrolls sideways as on a desktop */}
+          {mobile && <Segmented className="rv-wrap" label="长行的显示方式" options={LINE_OPTIONS} value={lineMode} onChange={setLineMode} arrows />}
           <span className="grow" />
           {/* 全部还原 only over the whole working tree: in 本次对话改动 it would also drop changes this conversation did
               not make (a checkout takes the whole file back) — there each file has its own 还原, with its own warning */}
@@ -424,6 +457,7 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
             const tag = tagOf(r, sc, !!root);
             const { dir, name } = splitPath(r.rel);
             const one = bulkTargets([r]);
+            const acts = fileActions(r, sc, !!root);
             return (
               <div key={k} className={clsx('rv-file', on && 'open')} data-key={r.key}>
                 <div className="rv-fh" role="button" tabIndex={0} aria-expanded={on} onClick={() => setOpen((o) => ({ ...o, [k]: !on }))} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen((o) => ({ ...o, [k]: !on })); } }} title={r.abs}>
@@ -432,13 +466,24 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
                   {stat && (stat.added > 0 || stat.removed > 0) && <span className="rv-stat"><span className="add">+{stat.added}</span> <span className="del">−{stat.removed}</span></span>}
                   {tag && <span className={clsx('rv-tag', tag === '冲突' && 'warn')}>{tag}</span>}
                   <span className="grow" />
-                  <span className="rv-acts" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-                    {root && sc !== 'commit' && one.stage.length > 0 && <button className="icon-btn xs" title="暂存（加入下一次提交）" aria-label={`暂存 ${r.rel}`} disabled={!!busy} onClick={() => stage(one.stage)}><Icon name="plus" size={13} /></button>}
-                    {root && sc !== 'commit' && !one.stage.length && one.unstage.length > 0 && <button className="icon-btn xs" title="取消暂存" aria-label={`取消暂存 ${r.rel}`} disabled={!!busy} onClick={() => unstage(one.unstage)}><Icon name="minus" size={13} /></button>}
-                    {root && sc !== 'commit' && sc !== 'staged' && one.discard.length > 0 && <button className="icon-btn xs" title="还原（丢弃这个文件的改动）" aria-label={`还原 ${r.rel}`} disabled={!!busy} onClick={() => discard(one.discard)}><Icon name="undo" size={13} /></button>}
-                    {!(r.patch?.status === 'deleted' || r.git?.status === 'deleted') && <button className="icon-btn xs" title="在编辑器打开" aria-label={`打开 ${r.rel}`} onClick={() => openFile(r)}><Icon name="external" size={13} /></button>}
-                  </span>
+                  {/* (which buttons: `fileActions` — one rule for these icons and the phone's row below) */}
+                  {!mobile && <span className="rv-acts" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                    {acts.includes('stage') && <button className="icon-btn xs" title={FILE_ACTION_TITLE.stage} aria-label={`暂存 ${r.rel}`} disabled={!!busy} onClick={() => stage(one.stage)}><Icon name="plus" size={13} /></button>}
+                    {acts.includes('unstage') && <button className="icon-btn xs" title={FILE_ACTION_TITLE.unstage} aria-label={`取消暂存 ${r.rel}`} disabled={!!busy} onClick={() => unstage(one.unstage)}><Icon name="minus" size={13} /></button>}
+                    {acts.includes('discard') && <button className="icon-btn xs" title={FILE_ACTION_TITLE.discard} aria-label={`还原 ${r.rel}`} disabled={!!busy} onClick={() => discard(one.discard)}><Icon name="undo" size={13} /></button>}
+                    {acts.includes('open') && <button className="icon-btn xs" title={FILE_ACTION_TITLE.open} aria-label={`打开 ${r.rel}`} onClick={() => openFile(r)}><Icon name="external" size={13} /></button>}
+                  </span>}
                 </div>
+                {/* a phone: the header is one line of path and numbers; an open file's actions are spelled out under it */}
+                {mobile && on && acts.length > 0 && (
+                  <div className="rv-acts-row" role="group" aria-label={`${r.rel} 的操作`}>
+                    {acts.map((a) => (
+                      <button key={a} className="rv-act" data-act={a} title={FILE_ACTION_TITLE[a]} aria-label={`${FILE_ACTION_LABEL[a]} ${r.rel}`} disabled={a !== 'open' && !!busy} onClick={() => runFileAction(a, r)}>
+                        <Icon name={FILE_ACTION_ICON[a]} size={18} /><span>{FILE_ACTION_LABEL[a]}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {on && <div className="rv-body"><FileBody row={r} diff={d} /></div>}
               </div>
             );
@@ -453,13 +498,20 @@ export function ReviewView({ visible, inPlace, inDock }: { visible: boolean; inP
             <button className="btn sm ghost" onClick={openGit}>打开 Git 视图</button>
           </div>
         )}
-        {root && sc !== 'commit' && (
+        {/* a phone: the commit area starts as one button; a tap opens the box below with the message focused */}
+        {root && sc !== 'commit' && fold && (
+          <div className="rv-foot folded">
+            <button className="btn primary rv-commit-open" onClick={() => setCommitOpen(true)}>{fold}</button>
+          </div>
+        )}
+        {root && sc !== 'commit' && !fold && (
           <div className="rv-foot">
             {/* several lines like the Git view's box: Enter is a new line, Ctrl+Enter commits */}
             <textarea
+              ref={msgBox}
               className="field"
               rows={1}
-              placeholder={plan.kind === 'none' ? '没有可以提交的改动' : plan.kind === 'conflicts' ? '有冲突的文件解决之后才能提交' : `提交说明…（${modKey}+Enter 提交）`}
+              placeholder={plan.kind === 'none' ? '没有可以提交的改动' : plan.kind === 'conflicts' ? '有冲突的文件解决之后才能提交' : mobile ? '提交说明…' : `提交说明…（${modKey}+Enter 提交）`}
               value={msg}
               onChange={(e) => setMsg(e.target.value)}
               onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !imeComposing(e.nativeEvent)) { e.preventDefault(); void commit(); } }}

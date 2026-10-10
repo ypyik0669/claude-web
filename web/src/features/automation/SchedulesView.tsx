@@ -182,12 +182,12 @@ export function SchedulesView({ compact = false, page = false, newSignal = 0 }: 
       {!page && tab === 'templates' && <div className="list">{templateRows}</div>}
       {tab === 'history' && (
         <div className="list">
-          {!page && showRuns && <div className="row muted" style={{ fontSize: 12 }}>只看「{byId.get(showRuns)?.name ?? showRuns}」 <button className="link" onClick={() => setShowRuns(null)}>全部</button></div>}
+          {!page && showRuns && <div className="row muted" style={{ fontSize: 13 }}>只看「{byId.get(showRuns)?.name ?? showRuns}」 <button className="link" onClick={() => setShowRuns(null)}>全部</button></div>}
           {runs.map((r) => (
             <div key={r.id} className="row">
               <span className={clsx('dot', r.ok ? 'idle' : 'error')} />
               <div className="grow" style={{ minWidth: 0 }}>
-                <div>{byId.get(r.scheduleId)?.name ?? r.scheduleId} <span className="muted" style={{ fontSize: 11.5 }}>{agoText(r.at)}{r.durationMs ? ` · ${fmtMs(r.durationMs)}` : ''}</span></div>
+                <div>{byId.get(r.scheduleId)?.name ?? r.scheduleId} <span className="muted" style={{ fontSize: 12 }}>{agoText(r.at)}{r.durationMs ? ` · ${fmtMs(r.durationMs)}` : ''}</span></div>
                 <div className="sub" style={{ whiteSpace: 'pre-wrap' }}>{r.error ?? r.summary ?? ''}</div>
               </div>
               {r.sessionId && <button className="btn sm ghost" title="打开这次运行的对话" onClick={() => loadHistory(r.sessionId!)}>对话</button>}

@@ -23,7 +23,7 @@ export function ToolsSection() {
           <div key={t.id} className="row" title={t.path}>
             <span className={clsx('dot', t.ok ? 'idle' : 'error')} />
             <div className="grow">
-              <div>{t.label} {t.ok && <span className="mono muted" style={{ fontSize: 11.5 }}>{t.version}</span>}</div>
+              <div>{t.label} {t.ok && <span className="mono muted" style={{ fontSize: 12 }}>{t.version}</span>}</div>
               <div className="sub">{t.ok ? t.path || '在 PATH 中' : `未安装 · ${t.hint}`}</div>
             </div>
             {!t.ok && <a className="btn sm ghost" href={t.url} target="_blank" rel="noreferrer">下载</a>}

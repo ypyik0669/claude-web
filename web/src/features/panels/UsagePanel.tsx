@@ -12,7 +12,7 @@ interface Bucket { input: number; output: number; cacheRead: number; cacheWrite:
 function Row({ k, b, max }: { k: string; b: Bucket; max: number }) {
   return (
     <div style={{ padding: '3px 0' }}>
-      <div style={{ display: 'flex', fontSize: 12 }}>
+      <div style={{ display: 'flex', fontSize: 13 }}>
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={k}>{k}</span>
         <span style={{ color: 'var(--fg-2)' }}>{fmtCost(b.costUsd, b.costUnknown)} · {fmtTok(tokensOf(b))} · 命中 {Math.round(hitRate(b) * 100)}%</span>
       </div>
@@ -74,7 +74,7 @@ export function UsagePanel() {
         <button className={tab === 'global' ? 'active' : ''} onClick={() => setTab('global')}>全局</button>
         <button className={tab === 'ledger' ? 'active' : ''} onClick={() => setTab('ledger')}>账本</button>
         {tab === 'global' && (
-          <select value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ marginLeft: 'auto', background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 4, fontSize: 12 }}>
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ marginLeft: 'auto', background: 'var(--bg-2)', border: '1px solid var(--line)', borderRadius: 4, fontSize: 13 }}>
             {[7, 30, 90, 365].map((d) => <option key={d} value={d}>{d} 天</option>)}
           </select>
         )}
@@ -103,7 +103,7 @@ export function UsagePanel() {
             <h5>按项目</h5>
             {sorted(glob.byProject).slice(0, 20).map(([k, b]) => <Row key={k} k={basename(k.replace(/^C--/, 'C:/').replace(/-/g, '/'))} b={b} max={maxOf(glob.byProject)} />)}
           </div>
-          <div className="empty" style={{ fontSize: 11 }}>成本按 Claude 公开定价估算，其它厂商的模型显示「费用未知」；各组按用量（token）排序。订阅用户仅供参考</div>
+          <div className="empty" style={{ fontSize: 12 }}>成本按 Claude 公开定价估算，其它厂商的模型显示「费用未知」；各组按用量（token）排序。订阅用户仅供参考</div>
         </>
       ) : <div className="empty">扫描 ~/.claude/projects…</div>)}
     </div>

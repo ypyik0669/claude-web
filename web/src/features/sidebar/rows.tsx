@@ -12,6 +12,8 @@ import { SessionMenu, effectiveCaps } from './session-actions';
 import { closeDrawer } from './menus';
 import { rowStatus, type RowStatus } from './status';
 import type { RowId, RowMenuId } from './entries';
+import { useLongPress } from '@/ui/long-press';
+import { haptic } from '@/ui/haptics';
 
 /** Sidebar-only entries of the session menu (where to open it, pin, folder); the rest is the shared SessionMenu. */
 function SidebarMenuExtra({ s, onClose }: { s: SessionSummary; onClose: () => void }) {
@@ -120,9 +122,12 @@ function rowTitle(s: SessionSummary, tag: string | null, st: RowStatus, sel: boo
  * opens the same menu. A parent of forks / sub-agent threads has an arrow in front that lists them underneath.
  * A conversation on another machine carries the machine's name in gray before the status (hidden inside that
  * machine's own group, whose header already says it).
+ * On a phone holding the row for 500ms opens the same menu (an action sheet there) with a tick under the finger; the
+ * row is not draggable there — a touch browser starts a drag from the same hold, and there is no pane to drop it on.
  */
 export function SessionRow({ s, ctx, depth = 0, flat = false, pip = false }: { s: SessionSummary; ctx: RowCtx; depth?: number; flat?: boolean; pip?: boolean }) {
   const activeId = useStore((st) => st.activeId);
+  const mobile = useStore((st) => st.mobile);
   const meta = useStore((st) => st.sessionMeta[s.sessionId]);
   const tag = ctx.tagFor(s);
   const st = useRowStatus(s, tag);
@@ -139,10 +144,13 @@ export function SessionRow({ s, ctx, depth = 0, flat = false, pip = false }: { s
     if (e.shiftKey) { e.preventDefault(); sel.range(id); return; }
     openFromSidebar(id, e.ctrlKey || e.metaKey ? 'tab' : 'replace');
   };
+  // not while selecting: the rows are checkboxes then, and have no ··· either
+  const press = useLongPress(() => { haptic('menu'); setMenu(key); }, mobile && !sel.on);
   return (
     <div
       className={clsx('sess sb-row', flat && 'flat', depth > 0 && 'kid', activeId === id && !sel.on && 'active', checked && 'checked', archived && 'archived', s.peer?.offline && 'offline')}
       data-sid={id}
+      {...press.handlers}
       // in select mode the row is a checkbox (it toggles, it does not open)
       role={sel.on ? 'checkbox' : 'button'}
       aria-checked={sel.on ? checked : undefined}
@@ -156,9 +164,10 @@ export function SessionRow({ s, ctx, depth = 0, flat = false, pip = false }: { s
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (sel.on) sel.toggle(id); else openFromSidebar(id, e.ctrlKey || e.metaKey ? 'tab' : 'replace'); }
         else if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) { e.preventDefault(); setMenu(key); }
       }}
-      draggable={!sel.on}
+      draggable={!sel.on && !mobile}
       onDragStart={(e) => { e.dataTransfer.setData(MIME_SESSION, id); e.dataTransfer.effectAllowed = 'copyMove'; }}
-      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setMenu(key); }}
+      // (a phone's browser may report the hold itself, as a contextmenu, before the 500ms are up: the same long press)
+      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); if (!press.trigger()) setMenu(key); }}
       title={rowTitle(s, tag, st, sel.on)}
     >
       {kids && (

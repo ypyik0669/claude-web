@@ -9,6 +9,11 @@ import { basename } from '@/util';
 import { isWithin } from '@/features/paths';
 import { nextRunText, scheduleText } from '@/features/automation/schedule-text';
 
+// ---------------------------------------------------------------------------------------------------- greeting
+
+/** The one line over the composer. It is set in the heading face, so ui/heading-text.ts lists it. */
+export const GREETING = '今天想做点什么？';
+
 // ---------------------------------------------------------------------------------------------------- starters
 
 export interface Starter { id: string; icon: IconName; label: string; text: string }
