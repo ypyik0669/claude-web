@@ -136,8 +136,8 @@
 @keyframes fl-rp-in { from { opacity: 0; transform: translateX(24px); } }
 @keyframes fl-rp-out { to { opacity: 0; } }
 .app:not(.mobile) > .rpanel:has(> .dock:not(.min)) { animation: fl-rp-in 260ms var(--ease-sheet); }
-.app[data-rp-closing]:not(.mobile) { grid-template-columns: var(--sb, 264px) 1fr min(var(--rp-was, 0px), max(300px, calc(100vw - var(--sb, 264px) - 360px))); }
-.app[data-rp-closing].no-sidebar:not(.mobile) { grid-template-columns: 1fr min(var(--rp-was, 0px), max(300px, calc(100vw - 360px))); }
+.app[data-rp-closing]:not(.mobile) { grid-template-columns: var(--sb, 264px) 1fr min(var(--rp-was, 0px), max(300px, calc(100vw - var(--rail, 0px) - var(--sb, 264px) - 360px))); }
+.app[data-rp-closing].no-sidebar:not(.mobile) { grid-template-columns: 1fr min(var(--rp-was, 0px), max(300px, calc(100vw - var(--rail, 0px) - 360px))); }
 /* (`display` is inline on the element — App — hence !important; the selector out-ranks the opening rule above.
    Dock.tsx waits for this animation by name) */
 .app[data-rp-closing]:not(.mobile) > .rpanel:has(> .dock:not(.min)) { display: flex !important; pointer-events: none; animation: fl-rp-out 150ms var(--ease-in) forwards; }
@@ -145,7 +145,7 @@
 /* the desktop app (Windows / Linux): rows make room for the caption buttons depending on whether the right panel is
    open (`.dock-open`, off the moment it closes). While the panel fades they keep the padding (and corner) they had:
    a step with a delay as long as the fade, on the same clock — it lands in the frame the column goes */
-html.desktop:not(.mac) .app[data-rp-closing] :is(.groupbar, .tabstrip, .sess-head, .welcome-top, .auto-head, .dock-tabs, .pane, .rpanel) { transition: padding 0s linear 150ms, border-radius 0s linear 150ms; }
+html.desktop:not(.mac) .app[data-rp-closing] :is(.groupbar, .tabstrip, .sess-head, .welcome-top, .over-head, .dock-tabs, .pane, .rpanel) { transition: padding 0s linear 150ms, border-radius 0s linear 150ms; }
 
 /* ============================================================ 减少动态效果 ============================================================
    tokens.css already ends every animation at once; what is left here are the transitions that move things. */

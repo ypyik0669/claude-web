@@ -61,6 +61,7 @@ function shownBy(t: SettingsTarget): { direct: string[]; behindMore: string[] } 
 const ids = (hits: SettingsHit[]) => hits.map((h) => (h.kind === 'entry' ? `entry:${h.entry.id}` : `page:${h.section.id}${h.tab ? `/${h.tab.id}` : ''}${h.body ? `#${h.body}` : ''}`));
 
 describe('settings map (spec §5.7)', () => {
+  // (联网 was added with the built-in browser — structure round 2, spec 2026-10-10-ui-structure §5: the fifteenth and last visible section)
   it('five groups of visible sections plus a collapsed 高级, exactly as the spec table', () => {
     expect(SETTINGS_GROUPS.map((g) => g.l)).toEqual(['常用', '模型', '扩展', '连接', '数据', '高级']);
     const byGroup = Object.fromEntries(SETTINGS_GROUPS.map((g) => [g.l, SETTINGS_SECTIONS.filter((s) => s.group === g.id).map((s) => s.l)]));
@@ -68,12 +69,12 @@ describe('settings map (spec §5.7)', () => {
       常用: ['通用', '外观', '账号与登录'],
       模型: ['模型与智能程度', '供应商', '模型网关'],
       扩展: ['MCP 与插件', 'Skills', 'Agents 与子代理', '共享记忆'],
-      连接: ['手机与其它电脑', 'IM 机器人'],
+      连接: ['手机与其它电脑', 'IM 机器人', '联网'],
       数据: ['对话库', '密钥'],
       高级: ['Hooks', '环境变量', 'CLI 工具', '诊断', '更新', 'settings.json'],
     });
     expect(VISIBLE_SECTIONS.length).toBeLessThanOrEqual(15);
-    expect(VISIBLE_SECTIONS.length).toBe(14);
+    expect(VISIBLE_SECTIONS.length).toBe(15);
     expect(ADVANCED_SECTIONS.every((s) => s.advanced && s.group === 'advanced')).toBe(true);
     expect(VISIBLE_SECTIONS.some((s) => s.advanced)).toBe(false);
   });
@@ -134,7 +135,9 @@ describe('settings map (spec §5.7)', () => {
       for (const x of xs) expect(was, `BEHIND_MORE.${old}: ${x} was on that page`).toContain(x);
     }
     // the ones that changed name are explicit aliases
-    expect(Object.keys(LEGACY_SECTIONS).sort()).toEqual(['engine', 'interface', 'plugins', 'session', 'subagents']);
+    // (`mcp-json` is not an old id: the connector directory's 「用配置手动添加…」 opens the MCP page's 更多选项 by it)
+    expect(Object.keys(LEGACY_SECTIONS).sort()).toEqual(['engine', 'interface', 'mcp-json', 'plugins', 'session', 'subagents']);
+    expect(resolveSettingsTarget({ section: 'mcp-json' })).toEqual({ section: 'mcp', more: true, body: 'mcpJson' });
     expect(resolveSettingsTarget({ section: 'plugins' })).toEqual({ section: 'mcp', tab: 'plugins' });
     expect(resolveSettingsTarget({ section: 'subagents' })).toEqual({ section: 'agents', tab: 'subagents' });
     // 引擎与账号 → 账号与登录 with 更多选项 open, scrolled to 运行内核 (both old parts in view)

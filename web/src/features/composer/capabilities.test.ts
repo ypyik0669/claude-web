@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionFeatures } from '@shared';
-import { CAPABILITIES, FEATURE_KEYS, LIVE_CAPS_NOTE, capabilityTags, featureCount, migrateFeatureDefaults, parseChannels, plusMenuIds, plusSections, withFeature, withoutTag } from './capabilities';
+import { CAPABILITIES, FEATURE_KEYS, LIVE_CAPS_NOTE, capabilityTags, featureCount, migrateFeatureDefaults, parseChannels, plusMenuIds, plusSections, withFeature, withoutTag, UNAVAILABLE_KEYS, usable } from './capabilities';
 
 describe('session capabilities (the old 「功能」 menu, now in +)', () => {
   it('every switch of the old menu is here, in the spec order and groups', () => {
@@ -17,7 +17,7 @@ describe('session capabilities (the old 「功能」 menu, now in +)', () => {
 
   it('uses the spec wording', () => {
     const by = Object.fromEntries(CAPABILITIES.map((c) => [c.key, c.label]));
-    expect(by).toMatchObject({ chrome: '控制浏览器', computerUse: '操控电脑', coordinator: '协调者模式', proactive: '主动模式' });
+    expect(by).toMatchObject({ chrome: '控制 Chrome', computerUse: '操控电脑', coordinator: '协调者模式', proactive: '主动模式' });
   });
 
   it('toggles and counts', () => {
@@ -31,13 +31,31 @@ describe('session capabilities (the old 「功能」 menu, now in +)', () => {
   });
 
   it('open capabilities become removable tags (channels included)', () => {
-    const f: SessionFeatures = { computerUse: true, chrome: true, channels: ['plugin:a@m', 'server:b'] };
+    const f: SessionFeatures = { brief: true, chrome: true, channels: ['plugin:a@m', 'server:b'] };
     const tags = capabilityTags(f);
-    expect(tags.map((t) => t.key)).toEqual(['chrome', 'computerUse', 'channels']); // menu order, not object order
+    expect(tags.map((t) => t.key)).toEqual(['chrome', 'brief', 'channels']); // menu order, not object order
     expect(tags.find((t) => t.key === 'channels')?.label).toBe('频道 2');
     expect(withoutTag(f, 'channels').channels).toBeUndefined();
-    expect(withoutTag(f, 'chrome')).toEqual({ computerUse: true, channels: ['plugin:a@m', 'server:b'] });
+    expect(withoutTag(f, 'chrome')).toEqual({ brief: true, channels: ['plugin:a@m', 'server:b'] });
     expect(capabilityTags({})).toEqual([]);
+  });
+
+  // 操控电脑: the engine has it only in its own terminal interface (a conversation started from here with its flag
+  // exits at once) — the row stays in the menu to say so, and nothing can turn it on
+  it('a capability that cannot be turned on from here: no tag, not counted, not switched on, dropped from stored defaults', () => {
+    const cu = CAPABILITIES.find((c) => c.key === 'computerUse')!;
+    expect(cu.unavailable).toMatch(/用不了/);
+    expect(cu.unavailable).toMatch(/浏览器/);
+    expect(UNAVAILABLE_KEYS).toEqual(['computerUse']);
+    expect(withFeature({}, 'computerUse', true)).toEqual({});
+    const stored: SessionFeatures = { computerUse: true, chrome: true };
+    expect(capabilityTags(stored).map((t) => t.key)).toEqual(['chrome']);
+    expect(featureCount(stored)).toBe(1);
+    expect(usable(stored)).toEqual({ chrome: true });
+    const same: SessionFeatures = { chrome: true };
+    expect(usable(same)).toBe(same); // nothing to drop: the same object (no new value for a selector)
+    expect(migrateFeatureDefaults(stored, null).value).toEqual({ chrome: true });
+    expect(migrateFeatureDefaults(undefined, JSON.stringify(stored)).value).toEqual({ chrome: true });
   });
 
   it('channels: a comma / whitespace list, empty entries dropped', () => {

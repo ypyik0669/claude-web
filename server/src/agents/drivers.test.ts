@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { AcpDriver } from './acp-driver.js';
 import { CodexDriver } from './codex-driver.js';
 import { AgentTranscripts } from './transcript.js';
+import { configureWebMcp } from '../web/launcher.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 let tmp: string;
@@ -107,6 +108,29 @@ describe('AcpDriver (mock agent)', () => {
     await waitFor(() => msgs2.some((m) => m.type === 'result'));
     expect(textOf(msgs2)).toContain('[mcp: none]');
     await d2.close();
+  });
+
+  it('hands 联网 (the `web` server) over next to the memory store once the server is listening; a refusal names both', async () => {
+    const mock = path.join(here, '__mocks__', 'acp-agent.mjs');
+    const textOf = (msgs: any[]) => msgs.filter((m) => m.type === 'stream_event' && m.event.delta?.type === 'text_delta').map((m) => m.event.delta.text).join('');
+    configureWebMcp({ url: 'http://127.0.0.1:45678', token: 'y'.repeat(64) }, path.join(tmp, 'web-mcp'));
+    try {
+      const d = new AcpDriver('gemini', { command: process.execPath, args: [mock], env: {}, name: 'Mock ACP' }, { cwd: tmp }, transcripts, null);
+      const msgs = collect(d);
+      await waitFor(() => d.state === 'idle');
+      d.send('what mcp servers do you have');
+      await waitFor(() => msgs.some((m) => m.type === 'result'));
+      expect(textOf(msgs)).toContain('[mcp: memory,web]');
+      await d.close();
+
+      const d2 = new AcpDriver('qwen', { command: process.execPath, args: [mock], env: { MOCK_REJECT_MCP: '1' }, name: 'Picky' }, { cwd: tmp }, transcripts, null);
+      const msgs2 = collect(d2);
+      await waitFor(() => d2.state === 'idle');
+      expect(msgs2.some((m) => m.type === 'system' && String(m.note ?? '').includes('共享记忆 / 联网 MCP'))).toBe(true);
+      await d2.close();
+    } finally {
+      configureWebMcp(null, path.join(tmp, 'web-mcp'));
+    }
   });
 
   it('reports a launch failure as error state', async () => {

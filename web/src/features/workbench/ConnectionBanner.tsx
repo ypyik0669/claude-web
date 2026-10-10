@@ -10,7 +10,7 @@ import { DISCONNECTED } from '@/ui/terms';
 export const bannerDelay = (everConnected: boolean) => (everConnected ? 1200 : 5000);
 
 /** The first row of the main area, whose bottom the strip hangs from: the automation page's head, else the top pane's. */
-const HEAD = ['.auto-page:not([hidden]) .auto-head', '.pane[data-top] .tabstrip', '.pane[data-top] .sess-head', '.pane[data-top] .welcome-top', '.pane[data-top] .mobile-tilebar'];
+const HEAD = ['.over-page:not([hidden]) .over-head', '.pane[data-top] .tabstrip', '.pane[data-top] .sess-head', '.pane[data-top] .welcome-top', '.pane[data-top] .mobile-tilebar'];
 
 /**
  * 「连接断开，正在重连…」 (review M10 / 7 M7): a thin strip hanging from the bottom of the main area's first row, the
@@ -40,7 +40,7 @@ export function ConnectionBanner() {
       let bottom = 0;
       for (const sel of HEAD) {
         const h = center.querySelector(sel)?.getBoundingClientRect();
-        if (h && h.height) { bottom = Math.max(bottom, h.bottom); if (sel.startsWith('.auto-page')) break; }
+        if (h && h.height) { bottom = Math.max(bottom, h.bottom); if (sel.startsWith('.over-page')) break; }
       }
       setTop(Math.round((bottom || c.top + 52) - c.top));
     };

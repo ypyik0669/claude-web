@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { AgentKind, AttachmentRef, EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, RunnerState, SessionInfoSnapshot } from '../protocol.js';
 import { JsonRpcProcess } from './jsonrpc.js';
 import { insertCodexConfig } from '../memory/launcher.js';
+import { insertWebCodexConfig } from '../web/launcher.js';
 import { MessageSynth } from './normalize.js';
 import { codexItemMessages, type CodexItemState } from './codex-items.js';
 import type { AgentTranscripts } from './transcript.js';
@@ -99,8 +100,9 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
       : Promise.resolve();
     void synced.then(() => this.markMirrorReady());
     try {
-      // the shared memory store, injected as `-c` overrides so ~/.codex/config.toml is never touched
-      const args = insertCodexConfig(this.launch.args, { cwd: this.cwd, sessionId: this.sessionId, agent: this.kind });
+      // the shared memory store and 联网 (web search + the built-in browser), injected as `-c` overrides so
+      // ~/.codex/config.toml is never touched
+      const args = insertWebCodexConfig(insertCodexConfig(this.launch.args, { cwd: this.cwd, sessionId: this.sessionId, agent: this.kind }), { sessionId: this.sessionId });
       const rpc = new JsonRpcProcess(this.launch.command, args, { cwd: this.cwd, env: this.launch.env });
       this.rpc = rpc;
       rpc.on('exit', (code, err) => { if (!this.closed) this.setState('error', `Codex 退出（${code}）${err ? ` ${err}` : ''}\n${rpc.stderrTail.slice(-800)}`); });

@@ -29,16 +29,26 @@ export function userAnthropicEnv(): { env: Partial<Record<(typeof KEYS)[number],
 /** Variables that pick the endpoint, the credentials or the models — the ones a provider conversation must not inherit. */
 export const ROUTING_ENV = /^((ANTHROPIC|OPENAI|GEMINI|GROK|XAI)_|CLAUDE_CODE_USE_)/;
 
-/** The `env` of each settings file the CLI reads for a conversation in `cwd` (settingSources user, project, local). */
-export function settingsEnvs(cwd?: string): Record<string, unknown>[] {
+/** Each settings file the CLI reads for a conversation in `cwd` (settingSources user, project, local), parsed. */
+export function settingsDocs(cwd?: string): Record<string, unknown>[] {
   const files = [path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude'), 'settings.json')];
   if (cwd) files.push(path.join(cwd, '.claude', 'settings.json'), path.join(cwd, '.claude', 'settings.local.json'));
   const out: Record<string, unknown>[] = [];
   for (const f of files) {
     try {
-      const env = JSON.parse(readFileSync(f, 'utf8'))?.env;
-      if (env && typeof env === 'object' && !Array.isArray(env)) out.push(env);
+      const doc = JSON.parse(readFileSync(f, 'utf8'));
+      if (doc && typeof doc === 'object' && !Array.isArray(doc)) out.push(doc);
     } catch { /* none, or not JSON: the CLI ignores it too */ }
+  }
+  return out;
+}
+
+/** The `env` of each of those files. */
+export function settingsEnvs(cwd?: string): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  for (const doc of settingsDocs(cwd)) {
+    const env = doc.env;
+    if (env && typeof env === 'object' && !Array.isArray(env)) out.push(env as Record<string, unknown>);
   }
   return out;
 }

@@ -6,7 +6,10 @@
 export const PLUS_ID = { files: 'files', folder: 'folder', reference: 'reference', goal: 'goal', channels: 'channels' } as const;
 
 /** Model menu controls (the model rows are `.mm-row`, the other agents' sections `data-sec="agent:<kind>"`). */
-export const MODEL_MENU_ID = { effort: 'effort', ultracode: 'ultracode', addProvider: 'add-provider', agents: 'agents', refresh: 'refresh', manage: 'manage' } as const;
+export const MODEL_MENU_ID = { addProvider: 'add-provider', agents: 'agents', refresh: 'refresh', manage: 'manage' } as const;
+
+/** The menu of the chip next to the model's (models/EffortChip.tsx): the levels' group, and 深度编排's row. */
+export const EFFORT_MENU_ID = { effort: 'effort', ultracode: 'ultracode' } as const;
 
 /** Project chip menu rows (recent projects are `[data-dir]`). */
 export const PROJECT_MENU_ID = { browse: 'browse', worktree: 'worktree' } as const;

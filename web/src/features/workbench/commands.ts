@@ -1,7 +1,7 @@
 // Command dispatcher shared by browser keydown, Electron menu accelerators and the command palette.
 import { hideSheet, useStore, type PanelId } from '@/store';
 import { TERMS } from '@/ui/terms';
-import { closeAutomation, useAutomation } from '@/features/automation/state';
+import { closePages, openPage } from '@/features/sections';
 import { markChecklist } from '@/features/home/checklist-sync';
 import { sheetUp } from '@/features/composer/covered';
 import { activeGroup, chatTile, currentChatTile, defaultDockPanel, workbenchOn } from '@/model/layout';
@@ -31,10 +31,10 @@ export function runCommand(id: string): boolean {
   // the settings page (the whole window) and the automation page (the main area) lie over the workbench: a key meant
   // for what is under them does not act on the unseen (review 7 I3, final review I2) — 关闭标签 closes the page on
   // top; switching / opening tabs, panes, groups first gets the pages out of the way (`underCovers`)
-  const cover = underCovers(id, { settings: !!st.settingsOpen, automation: useAutomation.getState().open });
+  const cover = underCovers(id, { settings: !!st.settingsOpen, automation: !!openPage() });
   for (const c of cover.close) {
     if (c === 'settings') useStore.setState({ settingsOpen: null });
-    else closeAutomation();
+    else closePages();
   }
   if (cover.done) return true;
   const m = /^(group\.jump|pane\.jump)\.(\d)$/.exec(id);

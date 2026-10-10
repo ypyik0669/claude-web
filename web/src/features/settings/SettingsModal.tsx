@@ -36,6 +36,7 @@ import {
 } from './catalog';
 import { NumberSelect, Row, Seg, Select, Toggle } from './controls';
 import { coverApp } from './cover';
+import { WebSettings } from '@/features/browser/WebSettings';
 
 export { Row } from './controls';
 
@@ -88,6 +89,7 @@ const BODIES: Record<BodyId, () => ReactNode> = {
   peers: () => <PeersSection />,
   hosts: () => <HostsSection />,
   im: () => <ImSection />,
+  web: () => <WebSettings />,
   library: () => <LibrarySection />,
   secrets: () => <SecretsSection />,
   hooks: () => <SimpleList kind="config.hooks" empty="还没有 Hooks。settings.json 或插件里配置的会出现在这里。" render={(h) => <div className="grow"><div>{h.event} <span style={muted}>{h.matcher ? `matcher: ${h.matcher}` : ''} · {h.source}</span></div><div className="sub">{(h.hooks ?? []).map((x: any) => x.command ?? x.type).join(' ; ')}</div></div>} />,

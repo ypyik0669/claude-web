@@ -12,10 +12,14 @@ export interface PaneEdge { lead: boolean; strip: boolean }
 export const PaneEdgeContext = createContext<PaneEdge>({ lead: false, strip: false });
 export const usePaneEdge = () => useContext(PaneEdgeContext);
 
-/** 「展开侧栏」 in the top-left row, only while the sidebar is collapsed (spec §5.2). */
+/**
+ * 「展开侧栏」 in the top-left row, only while the sidebar is collapsed (spec §5.2) — on a phone, where it is the
+ * drawer's handle. At desktop width the icon rail has the sidebar's switch (structure round 2), open or collapsed.
+ */
 export function SidebarReveal() {
   const open = useStore((s) => s.sidebarOpen);
-  if (open) return null;
+  const mobile = useStore((s) => s.mobile);
+  if (open || !mobile) return null;
   return (
     <button className="icon-btn sb-reveal" title={`展开侧栏 (${modKey}+B)`} aria-label="展开侧栏" onClick={() => useStore.setState({ sidebarOpen: true })}>
       <Icon name="sidebar" size={16} />

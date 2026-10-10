@@ -235,6 +235,21 @@ describe('FederationService', () => {
     await expect(fed.route({ kind: 'session.interrupt', sessionId: 'peer_b1~s' }, { via: ['srvC'], local: local([]) })).rejects.toThrow('多跳');
   });
 
+  it('联网 is each machine\'s own: a local window\'s requests go to the hub, another machine cannot host or answer for the built-in browser', async () => {
+    const { fed } = setup({ peers: [] });
+    await fed.start(); await settle();
+    // a window on this machine: not federation's business
+    for (const req of [{ kind: 'web.status' }, { kind: 'web.search', query: 'q' }, { kind: 'browser.host', on: true }, { kind: 'browser.result', id: 'c1', ok: true }] as ClientRequest[]) {
+      expect(fed.route(req, { local: local([]) }), req.kind).toBeUndefined();
+    }
+    // another machine, by its connection or by a request that came through one
+    await expect(fed.route({ kind: 'browser.host', on: true }, { peerConn: true, local: local([]) })).rejects.toThrow('内置浏览器');
+    await expect(fed.route({ kind: 'browser.result', id: 'c1', ok: true }, { via: ['srvB'], local: local([]) })).rejects.toThrow('内置浏览器');
+    // reading the status or searching through this machine is no more than a paired device may do
+    expect(fed.route({ kind: 'web.status' }, { peerConn: true, local: local([]) })).toBeUndefined();
+    expect(fed.route({ kind: 'web.search', query: 'q' }, { via: ['srvB'], local: local([]) })).toBeUndefined();
+  });
+
   it('sessions.search: ours first, then each online peer\'s hits (prefixed); a peer asking gets only ours', async () => {
     const { fed, fakes } = setup({ peers: [{ id: 'b1', name: 'B', url: 'http://b', via: 'direct', token: 'x', enabled: true, addedAt: 1 }] });
     await fed.start(); await settle();

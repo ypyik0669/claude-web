@@ -362,12 +362,12 @@ describe('chrome visibility (spec §5.10)', () => {
 
   it('one session in one pane: no group bar, no tab strip, no dock rail', () => {
     const s = initialLayout();
-    expect(vis(s)).toEqual({ groupBar: false, dockRail: false, tabStrip: { [focused(s)]: false } });
+    expect(vis(s)).toEqual({ groupBar: false, tabStrip: { [focused(s)]: false } });
   });
 
   it('workbench mode shows all of it', () => {
     const s = initialLayout();
-    expect(vis(s, on)).toEqual({ groupBar: true, dockRail: true, tabStrip: { [focused(s)]: true } });
+    expect(vis(s, on)).toEqual({ groupBar: true, tabStrip: { [focused(s)]: true } });
   });
 
   it('Ctrl+D (split) brings the tab strips; closing the split takes them away again', () => {
@@ -416,7 +416,6 @@ describe('chrome visibility (spec §5.10)', () => {
       for (const g of [s, layoutReducer(s, { t: 'group.next', dir: 1 })]) {
         const v = chromeVisibility(g, { workbench, mobile: true });
         expect(v.groupBar).toBe(false);
-        expect(v.dockRail).toBe(false);
         expect(Object.values(v.tabStrip).every((x) => x === false)).toBe(true);
       }
     }

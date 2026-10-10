@@ -37,6 +37,10 @@ export interface DesktopBridge {
   /** one step in / out, back to 100%, or a factor; answers with what it is now */
   setZoom?(ask: 'in' | 'out' | 'reset' | number): Promise<ZoomInfo>;
   onZoom?(cb: (e: ZoomInfo & { changed: boolean; ask: 'in' | 'out' | 'reset' | 'set' }) => void): () => void;
+  // the built-in browser (features/browser): a page of it wants a new window → a new tab here; a picture of a page
+  onBrowserPopup?(cb: (p: { url: string }) => void): () => void;
+  /** `id`: the <webview>'s `getWebContentsId()`. Null: nothing could be drawn. */
+  captureGuest?(id: number): Promise<{ mime: 'image/jpeg' | 'image/png'; data: string } | null>;
 }
 
 /** `max`: the largest factor this window's screen can take (the smallest window must still fit it). */

@@ -1,6 +1,6 @@
 import { PERMISSION_MODE_ORDER, PERMISSION_MODES } from '@/ui/terms';
 import { CAPABILITIES } from './capabilities';
-import { BAR_ID, MODEL_MENU_ID, PLUS_ID, PROJECT_MENU_ID, idSel } from './ids';
+import { BAR_ID, EFFORT_MENU_ID, MODEL_MENU_ID, PLUS_ID, PROJECT_MENU_ID, idSel } from './ids';
 
 /**
  * Where every control of the old composer went (spec §4.2, the 「输入框：…」 rows; phase 3 acceptance: 原「功能」6
@@ -8,7 +8,7 @@ import { BAR_ID, MODEL_MENU_ID, PLUS_ID, PROJECT_MENU_ID, idSel } from './ids';
  * same id tables the components render with (ids.ts, CAPABILITIES, PERMISSION_MODE_ORDER). reach.test.ts checks the
  * table against those tables; ui-smoke opens every place and queries every selector (window.__cwComposerReach).
  */
-export type ComposerPlace = 'plus' | 'project' | 'model' | 'permission' | 'bar' | 'meter';
+export type ComposerPlace = 'plus' | 'project' | 'model' | 'depth' | 'permission' | 'bar' | 'meter';
 
 export interface ReachEntry {
   was: string;
@@ -26,6 +26,7 @@ export const PLACE_CONTAINER: Record<ComposerPlace, string> = {
   plus: '.menu.plus-menu',
   project: '.menu.dirmenu',
   model: '.menu.mm',
+  depth: '.menu.depth-menu',
   permission: '.menu.perm-menu',
   bar: '.composer-bar',
   meter: '.composer-bar',
@@ -35,6 +36,7 @@ export const PLACE_OPENER: Partial<Record<ComposerPlace, string>> = {
   plus: '.cb .plus',
   project: '.dirpick',
   model: '.mm-anchor > button.chip',
+  depth: '.cb .depth-chip',
   permission: '.cb .perm-chip',
 };
 
@@ -53,13 +55,13 @@ export const COMPOSER_REACH: ReachEntry[] = [
   { was: '选择目录（最近的目录）', place: 'project', sel: '[data-dir]' },
   { was: '… 浏览文件夹', place: 'project', sel: idSel(PROJECT_MENU_ID.browse) },
   { was: 'worktree 会话（侧栏菜单）', place: 'project', sel: idSel(PROJECT_MENU_ID.worktree) },
-  // the model menu: agent, profile, model, effort, ultracode, refresh, manage
+  // the model menu: agent, profile, model, refresh, manage — and the chip next to it (place `depth`): effort, ultracode
   { was: 'Claude Code / 其它 agent 选择', place: 'model', sel: '[data-sec^="agent:"]' },
   { was: '供应商档案 / 模型', place: 'model', sel: '[data-sec="builtin"] .mm-row' },
   { was: '+ 添加供应商档案…', place: 'model', sel: idSel(MODEL_MENU_ID.addProvider) },
   { was: '管理 agent…', place: 'model', sel: idSel(MODEL_MENU_ID.agents) },
-  { was: 'effort', place: 'model', sel: idSel(MODEL_MENU_ID.effort) },
-  { was: 'ultracode', place: 'model', sel: idSel(MODEL_MENU_ID.ultracode) },
+  { was: 'effort', place: 'depth', sel: idSel(EFFORT_MENU_ID.effort) },
+  { was: 'ultracode', place: 'depth', sel: idSel(EFFORT_MENU_ID.ultracode) },
   { was: '刷新全部模型', place: 'model', sel: idSel(MODEL_MENU_ID.refresh) },
   { was: '管理模型…', place: 'model', sel: idSel(MODEL_MENU_ID.manage) },
   // permission: all six modes

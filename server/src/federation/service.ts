@@ -3,7 +3,7 @@ import os from 'node:os';
 import { createHash, randomBytes } from 'node:crypto';
 import type { AgentKind, ClientRequest, RemoteHost, ServerEvent, SessionSummary, TunnelInfo } from '../protocol.js';
 import { PeerClient, type PeerClientOptions, type PeerEndpoint } from './peer-client.js';
-import { inbound, outbound, planRoute, importList, rewriteEvent, type PeerRef } from './rewrite.js';
+import { inbound, outbound, planRoute, importList, refusedFromPeer, rewriteEvent, type PeerRef } from './rewrite.js';
 import { SELF_PEER, SERVER_ID_CONFLICT, parsePeerId, type PeerInfo, type PeerRecord, type PeerRequest, type PeerState } from './types.js';
 
 /** What the service needs from MetaStore (peers + serverId + ssh hosts). */
@@ -331,8 +331,9 @@ export class FederationService extends EventEmitter {
     const via = Array.isArray(ctx.via) ? ctx.via.filter((x): x is string => typeof x === 'string') : [];
     if (this.serverId && via.includes(this.serverId)) return Promise.reject(new Error('检测到跨机器转发环路，已拒绝'));
     const fromPeer = via.length > 0 || !!ctx.peerConn;
-    // another machine must not manage (or even read) this machine's list of machines
-    if (fromPeer && req.kind.startsWith('peers.')) return Promise.reject(new Error('其它机器不能管理本机的机器列表'));
+    // another machine must not manage (or even read) this machine's list of machines, nor speak for its built-in browser
+    const refused = fromPeer ? refusedFromPeer(req) : null;
+    if (refused) return Promise.reject(new Error(refused));
     switch (req.kind) {
       case 'peers.list': return Promise.resolve(this.list());
       case 'peers.add': return this.add(req);

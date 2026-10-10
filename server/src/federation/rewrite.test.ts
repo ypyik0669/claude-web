@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ClientRequest, ServerEvent, SessionSummary } from '../protocol.js';
-import { importList, inbound, outbound, planRoute, rewriteEvent } from './rewrite.js';
+import { importList, inbound, outbound, planRoute, refusedFromPeer, rewriteEvent } from './rewrite.js';
 
 const P = { id: 'b1', name: 'Box B' };
 const sum = (id: string, extra: Partial<SessionSummary> = {}): SessionSummary => ({ sessionId: id, title: id, cwd: '/r', lastModified: 1, ...extra });
@@ -42,6 +42,21 @@ describe('planRoute', () => {
       { kind: 'session.setEffort', sessionId: 'peer_b1~s', effort: 'high' }, { kind: 'session.setUltracode', sessionId: 'peer_b1~s', on: true },
     ];
     for (const r of routed) expect(planRoute(r).kind, r.kind).not.toBe('reject');
+  });
+  it('联网 requests name no session: never forwarded, whatever a command was about', () => {
+    // (the BrowserCommand a window answers may be about a remote conversation; the answer still goes to this machine)
+    for (const req of [
+      { kind: 'web.status' }, { kind: 'web.search', query: 'q', count: 3 },
+      { kind: 'browser.host', on: true }, { kind: 'browser.result', id: 'peer_b1~c1', ok: true, answer: { page: { url: 'https://x', title: '', text: '' } } },
+    ] as ClientRequest[]) expect(planRoute(req), req.kind).toEqual({ kind: 'none' });
+  });
+  it('another machine cannot manage this one\'s machines, nor host / answer for its built-in browser', () => {
+    expect(refusedFromPeer({ kind: 'peers.list' })).toContain('机器列表');
+    expect(refusedFromPeer({ kind: 'browser.host', on: true })).toContain('内置浏览器');
+    expect(refusedFromPeer({ kind: 'browser.result', id: 'c1', ok: false, error: 'x' })).toContain('内置浏览器');
+    for (const req of [{ kind: 'web.status' }, { kind: 'web.search', query: 'q' }, { kind: 'sessions.list' }, { kind: 'session.send', params: { sessionId: 's', text: 'x' } }] as ClientRequest[]) {
+      expect(refusedFromPeer(req), req.kind).toBeNull();
+    }
   });
   it('splits batches, keeps local UI state here, rejects the rest', () => {
     expect(planRoute({ kind: 'library.delete', sessionIds: ['a', 'peer_b1~s1'] })).toEqual({ kind: 'split' });
@@ -101,6 +116,8 @@ describe('rewriteEvent', () => {
   it('drops machine-local events and anything already about a peer (no echo, no multi-hop)', () => {
     for (const e of [
       { kind: 'meta.changed' }, { kind: 'fs.changed', path: '/x', type: 'change' }, { kind: 'terminal.data', termId: 't', data: 'x' }, { kind: 'hello', version: '1' }, { kind: 'peers.changed' },
+      // another machine's 联网 state and browser commands are its own
+      { kind: 'web.changed' }, { kind: 'browser.command', command: { id: 'c', sessionId: 's', op: 'read', args: {} } },
       { kind: 'session.state', sessionId: 'peer_a1~s', state: 'idle' },
       { kind: 'permission.resolved', requestId: 'peer_a1~r' },
     ] as ServerEvent[]) expect(rewriteEvent(e, P)).toBeNull();

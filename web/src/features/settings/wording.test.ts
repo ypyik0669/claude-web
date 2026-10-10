@@ -41,6 +41,7 @@ const BODY_SOURCE: Record<BodyId, { comp: string; file: string; props?: string }
   peers: { comp: 'PeersSection', file: S('PeersSection.tsx') },
   hosts: { comp: 'HostsSection', file: S('RemoteSection.tsx') },
   im: { comp: 'ImSection', file: S('ImSection.tsx') },
+  web: { comp: 'WebSettings', file: 'features/browser/WebSettings.tsx' },
   library: { comp: 'LibrarySection', file: S('LibrarySection.tsx') },
   secrets: { comp: 'SecretsSection', file: S('SecretsSection.tsx') },
   hooks: { comp: 'SimpleList', file: CONFIG, props: 'kind="config.hooks"' },

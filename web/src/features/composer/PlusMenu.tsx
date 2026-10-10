@@ -61,13 +61,13 @@ function PlusBody(p: PlusMenuProps & { close: (refocus: boolean) => void }) {
   const toggle = (k: FeatureKey) => { if (!s.readOnly) p.onFeatures(withFeature(p.features, k, !p.features[k])); };
   const row = (k: FeatureKey) => {
     const c = CAPABILITIES.find((x) => x.key === k)!;
-    const on = !!p.features[k];
+    const on = !!p.features[k] && !c.unavailable;
     return (
-      <button key={k} type="button" data-mi data-id={k} role="menuitemcheckbox" aria-checked={on} aria-disabled={s.readOnly || undefined}
-        className={clsx('cm-it', on && 'on', s.readOnly && 'ro')} title={s.readOnly ? `${c.title}\n这个对话${on ? '开着' : '没开'}` : c.title} onClick={() => toggle(k)}>
+      <button key={k} type="button" data-mi data-id={k} role="menuitemcheckbox" aria-checked={on} aria-disabled={s.readOnly || !!c.unavailable || undefined}
+        className={clsx('cm-it', on && 'on', (s.readOnly || c.unavailable) && 'ro', c.unavailable && 'na')} title={c.unavailable ? c.title : s.readOnly ? `${c.title}\n这个对话${on ? '开着' : '没开'}` : c.title} onClick={() => { if (!c.unavailable) toggle(k); }}>
         <span className="cm-ic"><Icon name={c.icon} size={15} /></span>
-        <span className="cm-tx"><span className="cm-l">{c.label}</span><span className="cm-d">{c.desc}</span></span>
-        <span className={clsx('toggle sm', on && 'on')} aria-hidden />
+        <span className="cm-tx"><span className="cm-l">{c.label}</span><span className="cm-d">{c.unavailable ?? c.desc}</span></span>
+        {c.unavailable ? <span className="cm-na">暂不可用</span> : <span className={clsx('toggle sm', on && 'on')} aria-hidden />}
       </button>
     );
   };

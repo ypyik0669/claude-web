@@ -25,7 +25,7 @@ export const closeDrawer = () => { if (useStore.getState().mobile) useStore.setS
  * click that reaches the window and another menu's claim are left here; the scrim, 取消, the handle and the system's
  * back are the sheet's.
  */
-export function useAnchoredMenu(ref: React.RefObject<HTMLElement | null>, onClose: () => void, o: { align?: 'left' | 'right'; prefer?: 'down' | 'up'; deps?: unknown[] } = {}) {
+export function useAnchoredMenu(ref: React.RefObject<HTMLElement | null>, onClose: () => void, o: { align?: 'left' | 'right'; prefer?: 'down' | 'up'; side?: 'right'; deps?: unknown[] } = {}) {
   const opts = useRef(o);
   opts.current = o;
   const sheet = useSheetMenu();
@@ -94,9 +94,9 @@ export function MenuHost({ onClose, children }: { onClose: () => void; children:
 }
 
 /** A sidebar popover menu (filter / automation / project / account): `.menu` fixed next to its parent element. */
-export function Menu({ onClose, className, align, prefer, label, children }: { onClose: () => void; className?: string; align?: 'left' | 'right'; prefer?: 'down' | 'up'; label: string; children: React.ReactNode }) {
+export function Menu({ onClose, className, align, prefer, side, label, children }: { onClose: () => void; className?: string; align?: 'left' | 'right'; prefer?: 'down' | 'up'; side?: 'right'; label: string; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
-  useAnchoredMenu(ref, onClose, { align, prefer });
+  useAnchoredMenu(ref, onClose, { align, prefer, side });
   const sheet = useSheetMenu();
   // (a phone: a long press in the filter box is its paste menu — the only way to paste there)
   const onContextMenu = (e: React.MouseEvent) => { if (!(sheet && (e.target as Element).tagName === 'INPUT')) e.preventDefault(); e.stopPropagation(); };

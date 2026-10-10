@@ -7,7 +7,7 @@
   html, body { overscroll-behavior-y: none; } /* no pull-to-refresh under a conversation */
 }
 .app.mobile { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
-.app.mobile :is(.chat, .sb-list, .dock-panel, .welcome, .sp-scroll, .auto-body, .rv-list, .menu) { overscroll-behavior: contain; }
+.app.mobile :is(.chat, .sb-list, .dock-panel, .welcome, .sp-scroll, .over-body, .rv-list, .menu) { overscroll-behavior: contain; }
 
 /* ---- a tap lands on anything within 44px: the drawing stays its size, the target grows around it ---- */
 /* (zero specificity: anything already placed — an absolute ··· on a row — keeps its own position) */
@@ -19,10 +19,10 @@
 
 /* ---- the header floats: round buttons over the conversation, no bar and no rule; the text scrolls under a fade.
    The status bar's safe area is the header's top. ---- */
-.app.mobile .sess-head, .app.mobile .welcome-top, .app.mobile .mobile-tilebar, .app.mobile .auto-head {
+.app.mobile .sess-head, .app.mobile .welcome-top, .app.mobile .mobile-tilebar, .app.mobile .over-head {
   height: calc(var(--h-head) + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) var(--sp-2) 0; gap: var(--sp-2); border-bottom: 0;
 }
-.app.mobile .sess-head > .sb-reveal, .app.mobile .welcome-top > .sb-reveal, .app.mobile .mobile-tilebar > .icon-btn, .app.mobile .auto-head .sb-reveal,
+.app.mobile .sess-head > .sb-reveal, .app.mobile .welcome-top > .sb-reveal, .app.mobile .mobile-tilebar > .icon-btn, .app.mobile .over-head .sb-reveal,
 .app.mobile .sess-head .sh-more > .icon-btn {
   width: 40px; height: 40px; margin: 0; border-radius: 50%; background: var(--surface-elev); box-shadow: var(--elev-1); color: var(--ink-1);
 }

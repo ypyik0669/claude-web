@@ -4,6 +4,7 @@
 import type { PermissionRequestEvent, PermissionResponse } from '@shared';
 import { walkTools, type Item, type ToolUseBlock } from '@/model/conversation';
 import { basename } from '@/util';
+import { webToolAsk, webToolOf } from '@/features/browser/web-tools';
 
 export type DockKind = 'tool' | 'ask' | 'plan';
 
@@ -92,6 +93,8 @@ export function permissionTitle(p: Pick<PermissionRequestEvent, 'toolName' | 'in
     }
     case 'WebSearch': return `${agent} 想搜索网页`;
   }
+  const web = webToolOf(p.toolName);
+  if (web) return webToolAsk(web, inp, agent);
   const mcp = /^mcp__(.+?)__(.+)$/.exec(p.toolName);
   if (mcp) return `${agent} 想使用 ${mcp[1]} 的 ${mcp[2]}`;
   return `${agent} 想使用 ${p.toolName}`;

@@ -51,6 +51,8 @@ import type { IncomingMessage } from 'node:http';
 import type { OrchestraService } from '../orchestra/service.js';
 import { parseProxySetting, proxy } from '../net/proxy.js';
 import { handleOrchestra, isOrchestraRequest } from '../orchestra/handlers.js';
+import { isWebKeySetting, maskWebSettings, type WebService } from '../web/service.js';
+import { setWebMcpEnabled } from '../web/launcher.js';
 
 export interface Services {
   /** Unified session library: every joined source's sessions (sessions.list / search / library.*). */
@@ -93,15 +95,22 @@ export interface Services {
   version: string;
   /** Local model gateway (/gateway/<group>/…). */
   gateway: GatewayService;
+  /** 联网: web search, and the browser tools carried out by the window hosting the built-in browser (web.* / browser.*). */
+  web: WebService;
 }
 
-/** Requests after which something connects out: they wait for a fresh look at the proxy. */
+/** Requests after which something connects out: they wait for a fresh look at the proxy. (`web.search` waits inside WebService, like the agents' searches.) */
 const GOES_OUT = new Set<string>(['session.open', 'session.send', 'session.setProvider', 'session.switchAgent', 'providers.probe', 'providers.refreshModels', 'terminal.open', 'im.set', 'im.test', 'mcp.registry']);
 
 export class Hub {
   private clients = new Set<WebSocket>();
   /** Connections from another machine's FederationService (`?peer=<serverId>`): never sent what we got from our own peers. */
   private peerConns = new WeakSet<WebSocket>();
+  /**
+   * Connections that are not a window on this machine: through the remote-access listener (a phone, 在外面也能用) or
+   * with a paired device's token. They may use everything else, but not host the built-in browser.
+   */
+  private remoteConns = new WeakSet<WebSocket>();
   /** renderer error reports (`client.log`): 20 per connection, 60 in all per minute, duplicates counted */
   private clientLogs = new ClientLogGate<WebSocket>();
 
@@ -144,6 +153,7 @@ export class Hub {
     });
     s.library.on('discovered', (kinds) => this.broadcast({ kind: 'library.discovered', kinds }));
     s.gateway.on('changed', () => this.broadcast({ kind: 'gateway.changed' }));
+    s.web.on('changed', () => this.broadcast({ kind: 'web.changed' }));
 
     s.federation?.on('event', (e: ServerEvent) => this.broadcast(e, true));
     s.orchestra.on('changed', (run, removed) => this.broadcast({ kind: 'orchestra.changed', run, removed }));
@@ -163,11 +173,13 @@ export class Hub {
   private onConnect(ws: WebSocket, req?: IncomingMessage) {
     this.clients.add(ws);
     try { if (req && new URL(req.url ?? '/', 'http://x').searchParams.get('peer')) this.peerConns.add(ws); } catch { /* not a peer */ }
+    if (req && ((req.socket as any)?.cwRemote || (req as any).cwDevice)) this.remoteConns.add(ws);
     const fed = this.s.federation;
     this.send(ws, { type: 'event', event: { kind: 'hello', version: this.s.version, ...(fed ? { serverId: fed.serverId, name: fed.name, bootId: fed.bootId } : {}) } });
     // startup discovery happens before anyone is connected: tell each new client what's waiting to be joined
     void this.s.library.detect().then((kinds) => { if (kinds.length) this.send(ws, { type: 'event', event: { kind: 'library.discovered', kinds } }); }).catch(() => {});
-    ws.on('close', () => this.clients.delete(ws));
+    // a window that hosted the built-in browser is gone with its connection: what it was asked fails now, not in 30 s
+    ws.on('close', () => { this.clients.delete(ws); this.s.web.dropConnection(ws); });
     // without a listener, a malformed frame / oversized payload makes ws emit an 'error' that crashes the server
     ws.on('error', () => this.clients.delete(ws));
     ws.on('message', async (raw) => {
@@ -196,6 +208,11 @@ export class Hub {
   private remoteStatus(): RemoteStatus {
     const st = this.s.remote.status();
     return this.s.anywhere ? { ...st, anywhere: this.s.anywhere.status() } : st;
+  }
+
+  /** For what only a window on this machine may do: refuses another machine's connection and a remote-access / paired-device one. */
+  private localWindowOnly(ws: WebSocket, what: string) {
+    if (this.peerConns.has(ws) || this.remoteConns.has(ws)) throw new Error(`只有本机的桌面窗口才能提供${what}`);
   }
 
   private runner(sessionId: string) {
@@ -389,18 +406,24 @@ export class Hub {
       case 'providers.refreshModels':
         return s.providers.refreshModels(req.ids);
       case 'settings.get':
-        return s.meta.settings();
+        // the search engines' keys are stored protected and read as a mask here (web/service.ts)
+        return maskWebSettings(s.meta.settings());
       case 'network.proxy':
         return proxy.refresh(!!req.refresh);
       case 'settings.set':
         if (req.key === 'network.proxy') {
           const p = parseProxySetting(req.value); // throws a sentence on SOCKS / junk
           await s.meta.setSetting(req.key, p.mode === 'custom' ? p.url : p.mode === 'off' ? 'off' : undefined);
+          s.web.networkChanged(); // a search engine that could not be reached is tried again
           return proxy.refresh(true);
         }
+        // a search engine's API key: protected at rest, the mask sent back keeps what is stored, '' removes it
+        if (isWebKeySetting(req.key)) { await s.web.setKey(req.key, req.value); return null; }
         await s.meta.setSetting(req.key, req.value);
         // takes effect on the next session start — running children keep the servers they were given
         if (req.key === 'memory.mcp') setMemoryMcpEnabled(req.value !== false);
+        if (req.key === 'web.mcp') setWebMcpEnabled(req.value !== false);
+        if (req.key.startsWith('web.')) s.web.settingsChanged(); // web.status reads differently now
         // 在外面也能用: brokers / STUN / the shell address / on-off / keep-awake (restarts only when it has to)
         if (req.key === 'remote.anywhere' || req.key.startsWith('remote.anywhere.') || req.key === 'remote.keepAwake') await s.anywhere?.refresh();
         return null;
@@ -510,6 +533,21 @@ export class Hub {
         if (!cwd) throw new Error('这个对话没有可用的目录');
         return harvest(s.memory, events, { cwd, sessionId: req.sessionId, agent: s.pool.get(req.sessionId)?.info.agent });
       }
+      // ---- 联网: search + the built-in browser (every agent reaches them over MCP; see web/mcp.ts) ----
+      case 'web.status':
+        return s.web.status();
+      case 'web.search':
+        return s.web.search(req.query, { count: req.count });
+      case 'browser.host':
+        // the built-in browser is a desktop window's on this machine: a phone or another machine cannot be it
+        this.localWindowOnly(ws, '内置浏览器');
+        s.web.setHost(ws, !!req.on, (command) => this.send(ws, { type: 'event', event: { kind: 'browser.command', command } }));
+        return s.web.status();
+      case 'browser.result':
+        this.localWindowOnly(ws, '内置浏览器');
+        // false: nothing was waiting for it any more (it came after the 30 s, or the command was another window's)
+        return { taken: s.web.result(ws, String(req.id), !!req.ok, req.answer, req.error) };
+
       // legacy shapes, same routing as library.rename / library.delete — so every delete path backs up first
       case 'session.rename':
         await s.library.rename(req.sessionId, req.title);

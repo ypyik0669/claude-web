@@ -4,8 +4,12 @@
 // scripts/ui-smoke.cjs proves the ids are rendered: it parses PLACES and must find every id in its place in the DOM.
 import type { PanelId } from '@/model/layout';
 
-/** Top: brand row + three navigation rows. */
-export const TOP = ['collapse', 'new', 'search', 'automation'] as const;
+/**
+ * Top: the brand row and the navigation. At desktop width the icon rail (features/rail/) has the sidebar's switch,
+ * the sections (对话 · 自动化 · 扩展) and ···; the sidebar keeps 新对话 and 搜索. A phone has them all in its drawer
+ * (no 对话 / ··· there: the drawer is the conversation list, the panels are in each header's ···).
+ */
+export const TOP = ['collapse', 'new', 'search', 'chat', 'automation', 'extensions', 'more'] as const;
 /**
  * 自动化 opens the automation page (redesign phase 7, `features/automation/`): these are its tabs (定时任务 · 目标 ·
  * 编排), the same ids as `AUTOMATION_TABS` there. The phase-4 menu they used to be in is gone.
@@ -104,7 +108,7 @@ export const LEGACY: { old: string; now: `${Place}:${string}`[] }[] = [
 ];
 
 /** Where the spec's new L0 / L1 entries live (§4.2 / §5.1), beyond the old ones. */
-export const ADDED: `${Place}:${string}`[] = ['top:automation', 'automation:schedules', 'automation:goals', 'automation:orchestra', 'section:attention', 'section:projects', 'head:filter', 'account:account', 'account:today', 'account:shortcuts', 'filter:library', 'row:less'];
+export const ADDED: `${Place}:${string}`[] = ['top:chat', 'top:extensions', 'top:more', 'top:automation', 'automation:schedules', 'automation:goals', 'automation:orchestra', 'section:attention', 'section:projects', 'head:filter', 'account:account', 'account:today', 'account:shortcuts', 'filter:library', 'row:less'];
 
 export function resolves(ref: `${Place}:${string}`): boolean {
   const [place, id] = ref.split(':') as [Place, string];

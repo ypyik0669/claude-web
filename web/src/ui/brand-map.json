@@ -1,0 +1,22 @@
+{
+  "$comment": "Connector id (features/settings/McpCatalog.tsx MCP_CATALOG) → simple-icons slug. Read by scripts/gen-brand-icons.mjs, which writes brand-icons.generated.ts — run it after editing. A slug simple-icons does not have (any more) is skipped with a warning: that connector falls back to one of our own icons (features/extensions/brands.ts).",
+  "github": "github",
+  "gitlab": "gitlab",
+  "sentry": "sentry",
+  "linear": "linear",
+  "notion": "notion",
+  "atlassian": "atlassian",
+  "slack": "slack",
+  "figma": "figma",
+  "postgres": "postgresql",
+  "sqlite": "sqlite",
+  "supabase": "supabase",
+  "stripe": "stripe",
+  "cloudflare": "cloudflare",
+  "vercel": "vercel",
+  "docker": "docker",
+  "brave-search": "brave",
+  "puppeteer": "puppeteer",
+  "playwright": "playwright",
+  "aws-docs": "amazonwebservices"
+}

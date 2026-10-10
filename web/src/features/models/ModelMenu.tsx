@@ -1,21 +1,19 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import type { AgentKind, EffortLevel } from '@shared';
+import type { AgentKind } from '@shared';
 import { useStore } from '@/store';
 import { ago, clsx } from '@/util';
 import { AGENT_ICONS, Icon } from '@/ui/icons';
-import { TERMS, ULTRACODE } from '@/ui/terms';
+import { TERMS } from '@/ui/terms';
 import { buildModelMenu, filterMenu, pushRecent, recentKey, type AgentSource, type ModelMenuItem, type ModelMenuSection } from './menu';
 import { refreshAllModels, useGatewayStatus, useRefreshRun } from './data';
 import { placeMenu, samePlacement, withOrigin, type Placement } from './place';
-import { EFFORT_PROMPT_TITLE, effortCaption, effortSegments } from './intelligence';
 import { MODEL_MENU_ID } from '@/features/composer/ids';
 import './models.css';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { useMenuClaim } from '@/ui/menus';
 import { imeComposing } from '@/ui/ime';
 import { useMenuMotion } from '@/ui/menu-motion';
-import { Segmented } from '@/ui/Segmented';
 import { ActionSheet, useSheetMenu } from '@/ui/ActionSheet';
 
 /** `5 分钟前` / `刚刚` / a date */
@@ -42,10 +40,6 @@ export interface ModelMenuProps {
   /** the element the menu hangs off: the menu is then portalled to <body> with fixed coordinates, so a
    *  pane's `overflow: hidden` cannot clip it, and it opens on whichever side has more room */
   anchor?: RefObject<HTMLElement | null>;
-  /** 智能程度 at the top (spec §5.5): the levels the current model takes; none → no control (Gemini) */
-  intelligence?: { levels: EffortLevel[]; value?: EffortLevel | null; defaultLevel?: EffortLevel; mode?: 'native' | 'prompt'; onChange: (l: EffortLevel) => void; disabled?: boolean };
-  /** 深度编排 switch — only for models that support it */
-  ultracode?: { on: boolean; onChange: (on: boolean) => void; disabled?: boolean };
   /** the other agents as more sections of the flat list (picking one switches agent / hands over) */
   otherAgents?: AgentSource[];
 }
@@ -183,11 +177,6 @@ export function ModelMenu(p: ModelMenuProps) {
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); p.onClose(); }
   };
 
-  // 智能程度: one segment per level the model takes; nothing chosen → the default level is the lit one
-  const intel = p.intelligence ? effortSegments(p.intelligence.levels, p.intelligence.value, p.intelligence.defaultLevel) : [];
-  // the lit default is not a choice yet: clicking it makes it one; clicking the chosen level again does nothing
-  const pickLevel = (level: EffortLevel) => { if (p.intelligence && p.intelligence.value !== level) p.intelligence.onChange(level); };
-
   let idx = -1;
   const portal = !!p.anchor;
   if (portal && !pos && !sheet) return null; // measured in the layout effect before the first paint
@@ -198,27 +187,6 @@ export function ModelMenu(p: ModelMenuProps) {
         <input ref={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索模型或供应商…" aria-label="搜索模型" role="combobox" aria-expanded aria-controls="mm-list" aria-activedescendant={flat[active] ? `mm-opt-${active}` : undefined} />
         {q && <button className="icon-btn xs" aria-label="清除" onClick={() => { setQ(''); input.current?.focus(); }}><Icon name="close" size={11} /></button>}
       </div>
-      {!q && p.intelligence && p.intelligence.levels.length > 0 && (
-        <div className="mm-intel" data-id={MODEL_MENU_ID.effort}>
-          <div className="mm-intel-h" title={`${TERMS.effort}（effort）：想得越久越稳，也越慢、越费额度`}>{TERMS.effort}</div>
-          <Segmented
-            className="mm-seg"
-            label={TERMS.effort}
-            options={intel.map((s) => ({ value: s.level, label: s.label, title: s.title, data: { 'data-level': s.level } }))}
-            value={intel.find((s) => s.on)?.level}
-            disabled={p.intelligence.disabled}
-            onChange={pickLevel}
-          />
-          <div className="mm-intel-d" title={p.intelligence.mode === 'prompt' ? EFFORT_PROMPT_TITLE : undefined}>{effortCaption(p.intelligence.value, p.intelligence.defaultLevel, p.intelligence.mode)}</div>
-        </div>
-      )}
-      {!q && p.ultracode && (
-        <button type="button" className="mm-ultra" data-id={MODEL_MENU_ID.ultracode} role="switch" aria-checked={p.ultracode.on} title={ULTRACODE.title} disabled={p.ultracode.disabled} onClick={() => p.ultracode!.onChange(!p.ultracode!.on)}>
-          <Icon name="bolt" size={15} />
-          <span className="mm-ultra-t"><span className="l">{ULTRACODE.label}</span><span className="d">{ULTRACODE.desc}</span></span>
-          <span className={clsx('toggle sm', p.ultracode.on && 'on')} aria-hidden />
-        </button>
-      )}
       {p.lockProvider && p.lockNote && <div className="mm-note">{p.lockNote}</div>}
       <div ref={list} className="mm-list" id="mm-list" role="listbox">
         {shown.sections.map((s, si) => (
@@ -292,18 +260,18 @@ export function ModelMenu(p: ModelMenuProps) {
 }
 
 /**
- * A composer chip that opens the menu: `模型 · 档位` (`suffix` is the dimmer 档位 / 深度编排 part). `busy` shows a
- * spinner while a profile switch restarts the session.
+ * A composer chip that opens the menu, named after the model (想多深 is the chip next to it, EffortChip). `busy`
+ * shows a spinner while a profile switch restarts the session.
  */
-export function ModelChip(p: Omit<ModelMenuProps, 'onClose'> & { label: string; suffix?: string; title?: string; busy?: boolean; disabled?: boolean }) {
+export function ModelChip(p: Omit<ModelMenuProps, 'onClose'> & { label: string; title?: string; busy?: boolean; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLSpanElement>(null);
-  const { label, suffix, title, busy, disabled, ...menu } = p;
+  const { label, title, busy, disabled, ...menu } = p;
   return (
     <span ref={anchor} className="mm-anchor">
-      <button type="button" className={clsx('chip', open && 'active')} title={title ?? label} disabled={disabled} aria-label={`模型：${label}${suffix ? ` · ${suffix}` : ''}`} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <button type="button" className={clsx('chip', open && 'active')} title={title ?? label} disabled={disabled} aria-label={`模型：${label}`} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         {busy && <span className="spinner" />}
-        <span className="mm-chip-label">{label}{suffix && <span className="mm-chip-suffix"> · {suffix}</span>}</span>
+        <span className="mm-chip-label">{label}</span>
         <span className="caret"><Icon name="chevronDown" size={10} /></span>
       </button>
       {open && (

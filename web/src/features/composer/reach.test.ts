@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { PERMISSION_MODE_ORDER } from '@/ui/terms';
 import { buildModelMenu } from '@/features/models/menu';
 import { FEATURE_KEYS, plusMenuIds } from './capabilities';
-import { BAR_ID, MODEL_MENU_ID, PLUS_ID, PROJECT_MENU_ID, idSel } from './ids';
+import { BAR_ID, EFFORT_MENU_ID, MODEL_MENU_ID, PLUS_ID, PROJECT_MENU_ID, idSel } from './ids';
 import { COMPOSER_REACH, PLACE_CONTAINER, PLACE_OPENER } from './reach';
 
 const at = (place: string) => COMPOSER_REACH.filter((r) => r.place === place).map((r) => r.sel);
@@ -17,8 +17,9 @@ describe('every control of the old composer is reachable (spec §4.2, phase 3 ac
   it('permission: all six modes', () => {
     expect(at('permission')).toEqual(PERMISSION_MODE_ORDER.map((m) => `[data-mode="${m}"]`));
   });
-  it('effort, 深度编排, add / manage / refresh are the model menu\'s own ids; every one of them is listed', () => {
+  it('add / manage / refresh are the model menu\'s own ids, effort and 深度编排 the chip\'s next to it; every one of them is listed', () => {
     expect(ids('model').sort()).toEqual(Object.values(MODEL_MENU_ID).sort());
+    expect(ids('depth').sort()).toEqual(Object.values(EFFORT_MENU_ID).sort());
   });
   it('the agent choice really is a section of the flat menu (data-sec="agent:<kind>")', () => {
     const m = buildModelMenu({ agent: 'claude', providers: [], settings: {}, otherAgents: [{ kind: 'codex', name: 'Codex', installed: true }] });
@@ -33,7 +34,7 @@ describe('every control of the old composer is reachable (spec §4.2, phase 3 ac
   });
   it('every place has a container, every menu an opener; no selector twice', () => {
     for (const r of COMPOSER_REACH) expect(PLACE_CONTAINER[r.place]).toBeTruthy();
-    for (const p of ['plus', 'project', 'model', 'permission'] as const) expect(PLACE_OPENER[p]).toBeTruthy();
+    for (const p of ['plus', 'project', 'model', 'depth', 'permission'] as const) expect(PLACE_OPENER[p]).toBeTruthy();
     const keys = COMPOSER_REACH.map((r) => `${r.place} ${r.sel}`);
     expect(new Set(keys).size).toBe(keys.length);
   });
@@ -51,6 +52,7 @@ describe('the menus render their data-id from the id tables (review 3 #11)', () 
   const OWNERS: [string, string, Record<string, string>][] = [
     ['./PlusMenu.tsx', 'PLUS_ID', PLUS_ID],
     ['../models/ModelMenu.tsx', 'MODEL_MENU_ID', MODEL_MENU_ID],
+    ['../models/EffortChip.tsx', 'EFFORT_MENU_ID', EFFORT_MENU_ID],
     ['./Composer.tsx', 'BAR_ID', { mic: BAR_ID.mic, steer: BAR_ID.steer, send: BAR_ID.send }],
     ['./ContextMeter.tsx', 'BAR_ID', { meter: BAR_ID.meter }],
   ];

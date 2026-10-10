@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld('desktop', {
   zoomInfo: () => ipcRenderer.invoke('desktop:zoom:get'),
   setZoom: (ask: 'in' | 'out' | 'reset' | number) => ipcRenderer.invoke('desktop:zoom:set', ask),
   onZoom: on('desktop:zoom'),
+  // the built-in browser: a page's new window arrives as a new tab; a picture of one of its pages
+  onBrowserPopup: on('desktop:browserPopup'),
+  captureGuest: (id: number) => ipcRenderer.invoke('desktop:browser:capture', id),
   setFlags: (f: Record<string, unknown>) => ipcRenderer.invoke('desktop:flags:set', f),
   getFlags: () => ipcRenderer.invoke('desktop:flags:get'),
   relaunch: () => ipcRenderer.invoke('desktop:relaunch'),

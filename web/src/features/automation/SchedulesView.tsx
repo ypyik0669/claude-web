@@ -11,6 +11,7 @@ import { isWithin } from '@/features/paths';
 import { desktop } from '@/desktop';
 import { Icon } from '@/ui/icons';
 import { cronText, nextRunText, scheduleText } from './schedule-text';
+import { SCHEDULES_HERO, templateLook } from './templates';
 
 interface Template { id: string; name: string; cron: string; prompt: string; permissionMode: PermissionMode; freshSession?: boolean }
 
@@ -123,11 +124,29 @@ export function SchedulesView({ compact = false, page = false, newSignal = 0 }: 
     </div>
   ));
 
+  const templateCards = templates.map((t) => {
+    const look = templateLook(t);
+    return (
+      <button key={t.id} type="button" className="tpl-card" data-tpl={t.id} title={`用这个模板新建：${t.prompt}`} onClick={() => fromTemplate(t)}>
+        <span className={clsx('tile-ic', `tint-${look.tint}`)}><Icon name={look.icon} size={18} /></span>
+        <span className="tpl-tx">
+          <span className="tpl-n">{t.name}</span>
+          <span className="tpl-d">{look.desc}</span>
+          <span className="tpl-when" title={`cron：${t.cron}`}>{cronText(t.cron) ?? t.cron}</span>
+        </span>
+      </button>
+    );
+  });
+  // nothing scheduled yet (and no form open): the page says what this is, then the templates
+  const blank = page && tab === 'list' && !schedules.length && !editing;
+  // the records of past runs: always one click away (a deleted task's runs are still there)
+  const runsLink = <button className="link" data-id="sched-runs" title="每次运行的结果和它的对话" onClick={() => { setShowRuns(null); setTab('history'); }}><Icon name="refresh" size={13} />运行记录</button>;
+
   return (
-    <div className={clsx('sched-view', compact && 'compact', page && 'page')} data-view={tab}>
+    <div className={clsx('sched-view', compact && 'compact', page && 'page', blank && 'blank')} data-view={tab}>
       {/* the automation page's own 定时任务 tab is the title: no second tab row under it (polish: 定时任务 › 全部 read
           twice) — the list, then 从模板开始 below it; 运行记录 is a link, and the records say how to get back */}
-      {page ? (
+      {page ? !blank && (
         <div className="sv-bar">
           {tab === 'history' ? (
             <>
@@ -139,7 +158,7 @@ export function SchedulesView({ compact = false, page = false, newSignal = 0 }: 
           ) : (
             <>
               <span className="grow" />
-              <button className="link" data-id="sched-runs" title="每次运行的结果和它的对话" onClick={() => { setShowRuns(null); setTab('history'); }}>运行记录</button>
+              {runsLink}
             </>
           )}
         </div>
@@ -152,7 +171,16 @@ export function SchedulesView({ compact = false, page = false, newSignal = 0 }: 
           <button className="icon-btn" title="新建定时任务" aria-label="新建定时任务" onClick={startNew}><Icon name="plus" size={15} /></button>
         </div>
       )}
-      {tab === 'list' && (
+      {blank && (
+        <div className="page-hero" data-id="sched-hero">
+          <span className="hero-ic tint-accent"><Icon name="calendar" size={26} /></span>
+          <h3>{SCHEDULES_HERO.title}</h3>
+          <p>{SCHEDULES_HERO.text}</p>
+          <button className="btn primary" onClick={startNew}><Icon name="plus" size={14} />新建定时任务</button>
+          {!templates.length && runsLink}
+        </div>
+      )}
+      {tab === 'list' && !blank && (
         <div className="list">
           {form}
           {schedules.map((sc) => (
@@ -170,13 +198,13 @@ export function SchedulesView({ compact = false, page = false, newSignal = 0 }: 
             </div>
           ))}
           {/* on the page the templates are right below: no button needed to reach them */}
-          {!schedules.length && !editing && <EmptyState e={EMPTY.schedules} action={page ? undefined : <button className="btn sm" onClick={() => setTab('templates')}>从模板开始</button>} />}
+          {!schedules.length && !editing && <EmptyState e={EMPTY.schedules} action={<button className="btn sm" onClick={() => setTab('templates')}>从模板开始</button>} />}
         </div>
       )}
       {page && tab === 'list' && templates.length > 0 && (
-        <div className="list sv-templates" data-id="sched-templates">
-          <div className="sv-h">从模板开始</div>
-          {templateRows}
+        <div className="sv-templates" data-id="sched-templates">
+          <div className="sv-h"><span>从模板开始</span><span className="grow" />{blank && runsLink}</div>
+          <div className="tpl-grid">{templateCards}</div>
         </div>
       )}
       {!page && tab === 'templates' && <div className="list">{templateRows}</div>}

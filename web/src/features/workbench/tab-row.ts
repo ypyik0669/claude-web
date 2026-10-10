@@ -2,9 +2,11 @@
  * The default right panel's tab row on the desktop app: where the row goes and whether the temporary tabs get a strip.
  * Pure, so the numbers behind 「整行挪到系统按钮下面」 are tested (tab-row.test.ts) and not tuned by eye.
  *
- * Two decisions, both from widths that do not change with what the panel shows:
- *  - `stacked`: the row moves below the Windows / Linux caption buttons only when the four fixed tabs and the buttons
- *    at the end do not fit beside them. The temporary tabs never count (they only scroll), the 审阅 count has a fixed
+ * Three decisions, all from widths that do not change with what the panel shows:
+ *  - `short`: when the fixed tabs do not fit with their names, only the one in front keeps its name and the others
+ *    are their icons (the name is the tooltip). Judged with the widest name in front, so switching tabs changes nothing.
+ *  - `stacked`: the row moves below the Windows / Linux caption buttons only when even the short fixed tabs and the
+ *    buttons at the end do not fit beside them. The temporary tabs never count (they only scroll), the 审阅 count has a fixed
  *    width whatever it says (0, 3, 12), and the row width is the column's final width (`panelColumnWidth`), not the
  *    one measured while the panel is still sliding in — so opening the panel, switching conversation, committing
  *    (count → 0) and opening a temporary tab leave it where it is. Once moved down it moves back up only with
@@ -33,6 +35,8 @@ export const STACK_HYSTERESIS = 8;
 export const SEP_W = 13;
 /** Narrower than this the strip is folded into 「更多」: one short tab with its × is about this wide. */
 export const MIN_STRIP = 56;
+/** styles.css `.dock-fixed.short .tab:not(.active)`: a fixed tab that is only its icon. */
+export const ICON_TAB_W = 30;
 
 /**
  * The row the Windows / Linux caption buttons sit over, at the window's top-right corner: a 52px head row (a session
@@ -73,26 +77,66 @@ export interface RowMeasure {
   /** the row's width (the column less the shell gap: the panel is a card) */
   row: number;
   padLeft: number;
-  /** the four fixed tabs, count included */
+  /** the fixed tabs with their names, count included */
   fixed: number;
+  /** …in their short form with the widest name in front (`shortFixedWidth`); absent: there is no short form */
+  fixedShort?: number;
   /** the buttons at the end (更多, hide) */
   controls: number;
   /** the flex gaps between the tab groups, the spacer and the buttons */
   gaps: number;
 }
 
+/**
+ * The fixed tabs' width in their short form, from their widths with names: the widest name stays (whichever tab is in
+ * front, the row needs no more than this), every other tab is `ICON_TAB_W`. `total` is the group's own width (its
+ * padding and gaps are kept).
+ */
+export function shortFixedWidth(total: number, tabs: number[]): number {
+  if (tabs.length < 2) return total;
+  const sum = tabs.reduce((a, b) => a + b, 0);
+  return total - sum + Math.max(...tabs) + (tabs.length - 1) * ICON_TAB_W;
+}
+
 /** Whether the row moves below the caption buttons (`caption`: desktop app on Windows / Linux; `zoom`: 界面缩放). */
 export function rowStacked(prev: boolean, m: RowMeasure, caption: boolean, zoom = 1): boolean {
   if (!caption) return false;
   const room = m.row - m.padLeft - captionWidth(zoom);
+  const need = (m.fixedShort ?? m.fixed) + m.controls + m.gaps;
+  return prev ? need > room - STACK_HYSTERESIS : need > room;
+}
+
+/** Whether the fixed tabs take their short form, given where the row is. */
+export function fixedShort(prev: boolean, m: RowMeasure, o: { stacked: boolean; caption: boolean; zoom?: number }): boolean {
+  if (m.fixedShort === undefined) return false;
+  const room = m.row - m.padLeft - (o.caption && !o.stacked ? captionWidth(o.zoom) : SIDE_PAD);
   const need = m.fixed + m.controls + m.gaps;
   return prev ? need > room - STACK_HYSTERESIS : need > room;
 }
 
-/** Whether the temporary tabs are folded into 「更多」, given where the row is. */
-export function tempsFolded(m: RowMeasure, o: { stacked: boolean; caption: boolean; zoom?: number }): boolean {
+/** styles.css: what a temporary tab has around its name in the default look — 10 + 6 padding, the 6px gap, the ×. */
+export const TEMP_TAB_CHROME = 38;
+
+/**
+ * How wide a temporary tab is, from its name: a full-width character is one em of the tab's font, any other a little
+ * over half. An estimate on purpose — the tabs are not in the DOM while they are folded away, and a rule that could
+ * measure them only while they are shown would flip between the two.
+ */
+export function tempTabWidth(title: string, em = 13): number {
+  let w = 0;
+  for (const ch of title) w += (ch.codePointAt(0) ?? 0) > 0x2e7f ? em : em * 0.6;
+  return Math.ceil(w) + TEMP_TAB_CHROME;
+}
+
+/**
+ * Whether the temporary tabs are folded into 「更多」, given where the row is. `need` is the widest of them
+ * (`tempTabWidth`): a strip too narrow to show one tab whole would show it cut off at the left, under the fade that
+ * means "more this way" — 「配置中心」 read as half a character and 「中心」 — so it folds instead.
+ */
+export function tempsFolded(m: RowMeasure, o: { stacked: boolean; caption: boolean; zoom?: number; short?: boolean; need?: number }): boolean {
   const padRight = o.caption && !o.stacked ? captionWidth(o.zoom) : SIDE_PAD;
-  return m.row - m.padLeft - padRight - m.fixed - m.controls - m.gaps - SEP_W < MIN_STRIP;
+  const fixed = o.short ? m.fixedShort ?? m.fixed : m.fixed;
+  return m.row - m.padLeft - padRight - fixed - m.controls - m.gaps - SEP_W < Math.max(MIN_STRIP, o.need ?? 0);
 }
 
 /** The 审阅 count as shown: it has room for two digits; more than 99 says 99+ (the tooltip has the number). */

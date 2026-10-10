@@ -66,7 +66,7 @@ export function effortTitle(level: string | null | undefined, note?: string): st
 
 export const ULTRACODE = {
   label: TERMS.ultracode,
-  desc: '最深思考 + 自动拆成并行子任务，更慢、更费额度；会开很多个子任务，费 token',
+  desc: '最深的思考，并把任务拆给多个子任务同时做；更慢，更费额度',
   title: `${TERMS.ultracode}（ultracode）：最深思考 + 自动拆成并行子任务，更慢、更费额度。对整个对话生效`,
 } as const;
 

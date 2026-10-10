@@ -22,7 +22,9 @@ import { FilesView } from './FilesView';
 import { MORE_PANELS } from './panel-entries';
 import { Popover } from '@/features/composer/Popover';
 import { useRightPanel } from './right-panel';
-import { SHELL_GAP, countText, panelColumnWidth, rowStacked, tempsFolded, type RowMeasure } from './tab-row';
+import { RAIL_WIDTH } from '@/features/rail/rail-model';
+import { SHELL_GAP, countText, fixedShort, panelColumnWidth, rowStacked, shortFixedWidth, tempTabWidth, tempsFolded, type RowMeasure } from './tab-row';
+import { BrowserPanel } from '@/features/browser/BrowserPanel';
 import { getZoom } from '@/ui/zoom';
 import { modKey } from './shortcuts';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
@@ -81,10 +83,26 @@ function PanelContent({ id, visible, host }: { id: PanelId; visible: boolean; ho
     case 'memory': return <MemoryPanel />;
     case 'orchestra': return <OrchestraPanel />;
     case 'board': return <BoardPanel visible={visible} />;
+    // one browser per window: its pages live in the right panel's copy (a second set of webviews would be other pages)
+    case 'browser': return host === 'dock' ? <BrowserPanel visible={visible} /> : <div className="empty">浏览器在右侧面板里。</div>;
   }
 }
 
 const NONE: PanelId[] = [];
+
+/**
+ * The fixed tabs' widths with their names, and in their short form — whichever the group is drawn in right now: the
+ * class is taken off for the reading and put back before anything is painted.
+ */
+function fixedWidths(group: HTMLElement | null): { fixed: number; fixedShort?: number } {
+  if (!group) return { fixed: 0 };
+  const was = group.classList.contains('short');
+  if (was) group.classList.remove('short');
+  const fixed = group.getBoundingClientRect().width;
+  const tabs = [...group.children].map((c) => c.getBoundingClientRect().width);
+  if (was) group.classList.add('short');
+  return { fixed, fixedShort: shortFixedWidth(fixed, tabs) };
+}
 
 /**
  * The default right panel's 「更多」 menu: the extra-tier panels, opened as temporary tabs (spec §5.6). When the row has
@@ -148,8 +166,8 @@ function MoreMenu({ mounted, open: temps, active, onPick, onClose }: { mounted: 
 /**
  * Right-hand dock (the 右侧面板): one tab row, one visible panel.
  *
- * Two looks over the same state (`dockView`): by default the four fixed tabs 审阅 · 文件 · 终端 · 任务 (text only, no
- * ×) plus any other open panel as a temporary tab with a ×, a 「更多」 menu and a close button (spec §5.6, the
+ * Two looks over the same state (`dockView`): by default the fixed tabs 审阅 · 文件 · 终端 · 浏览器 · 任务 (their names,
+ * no ×; with no room for five names only the one in front keeps its name — `tab-row.ts`) plus any other open panel as a temporary tab with a ×, a 「更多」 menu and a close button (spec §5.6, the
  * mock's inspector); with 「显示工作台工具」 the pre-redesign dock — every panel an icon tab that can be closed,
  * dragged into a pane, and a minimise-to-rail button.
  *
@@ -177,18 +195,21 @@ export function Dock() {
   const fixedRef = useRef<HTMLDivElement>(null);
   const ctlRef = useRef<HTMLSpanElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  const [place, setPlace] = useState({ stacked: false, folded: false });
+  const [place, setPlace] = useState({ stacked: false, folded: false, short: false });
   const [fade, setFade] = useState({ l: false, r: false });
   const view = dockView(dock, { workbench, inspect: !!inspect });
   const { tabs, active, mounted } = view;
   const fixed = tabs.filter((t) => t.fixed);
   const temps = tabs.filter((t) => !t.fixed);
+  const tempIds = temps.map((t) => t.id).join(',');
   // a phone's right panel is the bottom drawer: never an icon rail (derived here, the desktop's state is kept)
   const mobile = useStore((s) => s.mobile);
   const min = dock.minimized && !mobile;
   const shown = dock.open;
   const simple = !workbench && !min;
   const stacked = simple && place.stacked;
+  // no room for every fixed tab's name: only the one in front keeps it
+  const short = simple && place.short;
   // no room for a strip: the temporary tabs are listed in 「更多」 (default look only; workbench tabs are icons)
   const folded = simple && place.folded && temps.length > 0;
   // …and one of them is in front: nothing in the row names it, so the panel gets a title row with its ×
@@ -228,17 +249,22 @@ export function Dock() {
       const caption = root.classList.contains('desktop') && !root.classList.contains('mac');
       const cs = getComputedStyle(r);
       const m: RowMeasure = {
-        row: panelColumnWidth({ dock: dock.width, viewport: window.innerWidth, sidebar: sidebarOpen ? sbWidth : 0 }) - SHELL_GAP,
+        row: panelColumnWidth({ dock: dock.width, viewport: window.innerWidth, sidebar: (sidebarOpen ? sbWidth : 0) + RAIL_WIDTH }) - SHELL_GAP,
         padLeft: parseFloat(cs.paddingLeft) || 0,
-        fixed: fixedRef.current?.getBoundingClientRect().width ?? 0,
+        ...fixedWidths(fixedRef.current),
         controls: ctlRef.current?.getBoundingClientRect().width ?? 0,
         gaps: 2 * (parseFloat(cs.columnGap) || 0),
       };
+      // the widest temporary tab, from its name and the tabs' font size (they are not in the DOM while folded away)
+      const tabEl = fixedRef.current?.querySelector('.tab');
+      const em = (tabEl && parseFloat(getComputedStyle(tabEl).fontSize)) || 13;
+      const need = Math.max(0, ...tempIds.split(',').filter(Boolean).map((id) => tempTabWidth(PANEL_TITLES[id as PanelId] ?? id, em)));
       setPlace((cur) => {
         const zoom = getZoom();
         const s = rowStacked(cur.stacked, m, caption, zoom);
-        const f = tempsFolded(m, { stacked: s, caption, zoom });
-        return cur.stacked === s && cur.folded === f ? cur : { stacked: s, folded: f };
+        const sh = fixedShort(cur.short, m, { stacked: s, caption, zoom });
+        const f = tempsFolded(m, { stacked: s, caption, zoom, short: sh, need });
+        return cur.stacked === s && cur.folded === f && cur.short === sh ? cur : { stacked: s, folded: f, short: sh };
       });
       updateFade();
     };
@@ -251,7 +277,7 @@ export function Dock() {
     if (list.current) ro.observe(list.current);
     window.addEventListener('resize', again);
     return () => { cancelAnimationFrame(raf); ro.disconnect(); window.removeEventListener('resize', again); };
-  }, [simple, shown, !!mounted.length, temps.length > 0, folded, dock.width, sidebarOpen, sbWidth]);
+  }, [simple, shown, !!mounted.length, tempIds, folded, dock.width, sidebarOpen, sbWidth]);
 
   // Closing (UI refresh §6): the panel fades out for RP_OUT_MS, then its column collapses — the opposite order of
   // what the store says, which hides the panel and gives up its column in one step (App). So for that long the app
@@ -328,8 +354,8 @@ export function Dock() {
   const tab = ({ id, fixed: isFixed }: DockTab) => (
     <div
       key={id}
-      className={clsx('tab', active === id && 'active', isFixed && 'fixed')}
-      draggable={workbench && id !== 'inspector'}
+      className={clsx('tab', active === id && 'active', isFixed && 'fixed', id === 'files' && reviewCount > 0 && 'has-n')}
+      draggable={workbench && id !== 'inspector' && id !== 'browser'}
       tabIndex={0}
       role="tab"
       aria-selected={active === id}
@@ -353,7 +379,7 @@ export function Dock() {
       {!min && <div className="resizer" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onDoubleClick={() => dispatch({ t: 'dock.set', patch: { width: DOCK_DEFAULT_WIDTH } })} title="拖动调整 · 双击复位" />}
       <div className={clsx('dock-tabs', stacked && 'stacked')} ref={row}>
         <div className="dock-tabgroups" role="tablist" aria-label={TERMS.dock}>
-          {fixed.length > 0 && <div className="dock-fixed" ref={fixedRef}>{fixed.map(tab)}</div>}
+          {fixed.length > 0 && <div className={clsx('dock-fixed', short && 'short')} ref={fixedRef}>{fixed.map(tab)}</div>}
           {fixed.length > 0 && temps.length > 0 && !folded && <span className="dock-sep" aria-hidden />}
           {/* only the temporary tabs scroll; the menus hang in <body>, so nothing here clips them */}
           {!folded && (

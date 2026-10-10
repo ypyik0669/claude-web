@@ -7,6 +7,7 @@ import { ShellBody } from './ShellTool';
 import { WebFetchBody, WebSearchBody, SkillBody } from './WebTools';
 import { AgentBody, TodoBody, PlanBody, AskUserBody, ArtifactBody, GoalBody, WorkflowBody } from './AgentTool';
 import { GenericBody } from './McpTool';
+import { WEB_TOOLS, webToolLabel, webToolOf, type WebTool } from '@/features/browser/web-tools';
 
 export type ToolCategory = 'read' | 'edit' | 'cmd' | 'web' | 'skill' | 'mcp' | 'agent' | 'plan' | 'other';
 
@@ -63,12 +64,22 @@ const MCP: ToolDef = {
 };
 const OTHER: ToolDef = { icon: 'settings', category: 'other', label: MCP.label, Body: GenericBody };
 
+/** 联网: the `web` server's tools (search, the built-in browser) read as steps of their own, not as 「web · browser_open」. */
+const WEB = Object.fromEntries(WEB_TOOLS.map((t) => [t, {
+  icon: webToolLabel(t, {}).icon,
+  category: 'web',
+  label: (i) => { const l = webToolLabel(t, i); return { verb: l.verb, arg: l.arg }; },
+  Body: GenericBody,
+} satisfies ToolDef])) as Record<WebTool, ToolDef>;
+
 export function getToolDef(name: string): ToolDef {
-  return DEFS[name] ?? (name.startsWith('mcp__') ? MCP : OTHER);
+  const web = DEFS[name] ? null : webToolOf(name);
+  return DEFS[name] ?? (web ? WEB[web] : name.startsWith('mcp__') ? MCP : OTHER);
 }
 
 /** "mcp__server__tool" → { server, tool } */
 export function splitMcp(name: string): { server: string; tool: string } | null {
+  if (webToolOf(name)) return null; // drawn with its own words
   const m = /^mcp__([^_]+(?:_[^_]+)*?)__(.+)$/.exec(name);
   return m ? { server: m[1], tool: m[2] } : null;
 }

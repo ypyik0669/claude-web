@@ -187,7 +187,7 @@ describe('a swipe to the right on the conversation', () => {
     none(new FakeEl(['textarea'], pane)); // typing
     none(new FakeEl(['.xterm'], pane));
     none(new FakeEl(['.starters'], pane));
-    none(new FakeEl(['.auto-page'], layer));
+    none(new FakeEl(['.over-page'], layer));
     none(new FakeEl(['.rpanel'], app)); // not the conversation
     for (const over of [{ settingsOpen: { section: 'general' } as never }, { paletteOpen: true }, { shortcutsOpen: true }, { sheetAt: 5 }]) {
       store.setState(over);

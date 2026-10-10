@@ -27,6 +27,20 @@ const LOCAL = new Set<ClientRequest['kind']>([
   'session.setMeta', 'feedback.set', 'feedback.list', 'ledger.list', 'memory.search', 'memory.write',
 ]);
 
+/**
+ * 联网 (web.* / browser.*) is each machine's own: none of these requests names a session, so none is ever forwarded.
+ * The two below are more: they speak for this machine's built-in browser, which only a window on this machine has —
+ * another machine (a peer connection, a request that came through one) is refused outright.
+ */
+const OWN_WINDOW_ONLY = new Set<ClientRequest['kind']>(['browser.host', 'browser.result']);
+
+/** Why a request from another machine is refused whatever it is about; null = judged like any other. */
+export function refusedFromPeer(req: ClientRequest): string | null {
+  if (req.kind.startsWith('peers.')) return '其它机器不能管理本机的机器列表';
+  if (OWN_WINDOW_ONLY.has(req.kind)) return '只有本机的桌面窗口才能提供内置浏览器';
+  return null;
+}
+
 export type RoutePlan =
   | { kind: 'none' } // no peer id in it: not federation's business
   | { kind: 'local' }

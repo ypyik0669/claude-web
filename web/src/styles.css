@@ -630,7 +630,7 @@ input.field:focus-visible, select.field:focus-visible, textarea.field:focus-visi
 .sidebar .resizer.right:hover { background: var(--accent); opacity: 0.35; }
 
 .groupbar { display: flex; align-items: flex-end; gap: 2px; padding: 0 8px; height: var(--h-bar); flex: none; }
-.groupbar > .icon-btn, .groupbar > span, .groupbar > .dock-rail { align-self: center; }
+.groupbar > .icon-btn, .groupbar > span { align-self: center; }
 .groupbar .gtabs { display: flex; align-items: flex-end; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; height: 100%; padding-top: 6px; }
 .groupbar .gtabs > .icon-btn { align-self: center; }
 .dock-rail { display: inline-flex; align-items: center; gap: 2px; flex: none; }
@@ -692,8 +692,10 @@ input.field:focus-visible, select.field:focus-visible, textarea.field:focus-visi
 .sh-main { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; flex: 1 1 auto; overflow: hidden; }
 .sh-title { font-weight: 600; font-size: var(--fs-base); color: var(--ink-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 4em; flex: 0 1 auto; cursor: default; }
 .sh-rename { background: var(--surface-0); box-shadow: 0 0 0 1.5px var(--focus-ring); outline: none; border-radius: var(--r-md); padding: 3px 8px; width: min(320px, 40vw); font-weight: 600; }
-.sh-meta { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; max-width: 50%; flex: 0 1 auto; overflow: hidden; color: var(--ink-3); font-size: var(--fs-sm); }
-.sh-meta .it { display: inline-flex; align-items: center; gap: 5px; padding: 2px 6px; border-radius: var(--r-md); color: inherit; white-space: nowrap; min-width: 3.5em; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+/* one line, whole items only: what does not fit after the project wraps to a second line that is cut off — a branch
+   squeezed to 「m…」 says nothing; the project itself is the only one that shortens */
+.sh-meta { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: var(--sp-3) var(--sp-1); height: 24px; min-width: 0; max-width: 50%; flex: 0 1 auto; overflow: hidden; color: var(--ink-3); font-size: var(--fs-sm); }
+.sh-meta .it { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 6px; border-radius: var(--r-md); color: inherit; white-space: nowrap; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
 .sh-meta .it > .nm { overflow: hidden; text-overflow: ellipsis; }
 .sh-meta .it > svg { flex: none; color: var(--ink-4); }
 .sh-meta button.it:hover { background: var(--layer-hover); color: var(--ink-1); }
@@ -1009,7 +1011,7 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
 /* phones: single column, sidebar as a drawer, dock hidden, touch-sized controls */
 @media (max-width: 760px) {
   .app.mobile { grid-template-columns: 1fr 0px 0px; padding: 0; --shell-gap: 0px; background: var(--surface-0); }
-  .app.mobile .pane, .app.mobile .auto-page { border-radius: 0; box-shadow: none; }
+  .app.mobile .pane, .app.mobile .over-page { border-radius: 0; box-shadow: none; }
   .app.mobile .sidebar { background: var(--surface-1); }
   .app.mobile .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: min(84vw, 320px); z-index: 60; transform: translateX(-100%); transition: transform var(--dur-4) var(--ease-out); box-shadow: var(--elev-3); }
   .app.mobile.drawer-open .sidebar { transform: none; }
@@ -1289,15 +1291,15 @@ html.desktop:not(.mac) .dock.min .dock-tabs { padding-top: var(--h-head); }
 /* the image viewer covers the window: its bar keeps clear of the caption buttons / the traffic lights */
 html.desktop:not(.mac) .viewer-bar { padding-right: calc(150px / var(--zoom, 1)); }
 html.desktop.mac .viewer-bar { padding-left: calc(84px / var(--zoom, 1)); }
-html.desktop.mac .sb-top { padding-left: calc(84px / var(--zoom, 1)); }
+html.desktop.mac .sb-top { padding-left: max(0px, calc(84px / var(--zoom, 1) - var(--rail, 0px))); }
 html.desktop.mac .app.no-sidebar .groupbar,
 html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left] > .tabstrip,
 html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:not(.tabs) .sess-head,
-html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:not(.tabs) .welcome-top { padding-left: calc(84px / var(--zoom, 1)); }
+html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:not(.tabs) .welcome-top { padding-left: max(0px, calc(84px / var(--zoom, 1) - var(--rail, 0px))); }
 /* …where 展开侧栏 starts at 84px like the sidebar's own top row — not pulled 8px back into the traffic lights' room
    by the -8px it has elsewhere (final review M5) */
 html.desktop.mac .app.no-sidebar .sess-head > .sb-reveal,
-html.desktop.mac .app.no-sidebar .auto-head .sb-reveal { margin-left: 0; }
+html.desktop.mac .app.no-sidebar .over-head .sb-reveal { margin-left: 0; }
 
 /* ---- redesign phase 4: sidebar ---- */
 /* spec 2026-09-28 §5.1 / mock-home.png: brand row · 新对话 / 搜索 / 自动化 · 需要你 · projects (title + one status per
@@ -1482,8 +1484,8 @@ html[data-density='compact'] .sb-row.sess { height: 28px; padding: 0 10px 0 var(
 /* ---- redesign phase 2: right panel ---- */
 /* a narrow window: the right panel gives way so the conversation keeps ≥ 360px (it never goes below 300px itself);
    hidden (0) and the 36px icon strip stay as they are */
-.app:not(.mobile) { grid-template-columns: var(--sb, 264px) 1fr min(var(--rp, 0px), max(300px, calc(100vw - var(--sb, 264px) - 360px))); }
-.app.no-sidebar:not(.mobile) { grid-template-columns: 1fr min(var(--rp, 0px), max(300px, calc(100vw - 360px))); }
+.app:not(.mobile) { grid-template-columns: var(--sb, 264px) 1fr min(var(--rp, 0px), max(300px, calc(100vw - var(--rail, 0px) - var(--sb, 264px) - 360px))); }
+.app.no-sidebar:not(.mobile) { grid-template-columns: 1fr min(var(--rp, 0px), max(300px, calc(100vw - var(--rail, 0px) - 360px))); }
 /* the default right panel (spec §5.6, mock-session.png): a white sheet, four text tabs, temporary tabs with a × */
 .dock.simple { background: var(--surface-0); }
 /* the tab row: the fixed tabs never scroll; only the temporary tabs do, in their own strip, whose edges fade and get
@@ -1981,46 +1983,46 @@ html.desktop.mac .sp-nav-top { min-height: 40px; padding-left: calc(76px / var(-
 
 /* the automation page: over the panes (not the group bar), mounted once and then only hidden */
 .main-stack { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.auto-page { position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column; min-height: 0; background: var(--surface-0); border-radius: var(--r-card); box-shadow: var(--elev-1); overflow: hidden; }
-.auto-page[hidden] { display: none; }
-.auto-page:focus { outline: none; }
-.auto-head { height: var(--h-head); flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: 0 var(--sp-3) 0 var(--sp-5); }
+.over-page { position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column; min-height: 0; background: var(--surface-0); border-radius: var(--r-card); box-shadow: var(--elev-1); overflow: hidden; }
+.over-page[hidden] { display: none; }
+.over-page:focus { outline: none; }
+.over-head { height: var(--h-head); flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: 0 var(--sp-3) 0 var(--sp-5); }
 /* the title and 新建 span the content below: on the narrow tabs 新建 ends where the list ends (review 7 M13) */
-.auto-head-in { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: var(--sp-2); }
-.auto-head.narrow .auto-head-in { max-width: 860px; }
-.auto-head-in > .grow { flex: 1 1 auto; }
-.auto-head > .icon-btn { margin-left: auto; flex: none; }
-.auto-head h2 { margin: 0; font-family: var(--display); font-size: 20px; font-weight: 600; letter-spacing: 0.01em; color: var(--ink-1); }
-.auto-head .sb-reveal { margin-left: calc(-1 * var(--sp-2)); }
+.over-head-in { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: var(--sp-2); }
+.over-head.narrow .over-head-in { max-width: 860px; }
+.over-head-in > .grow { flex: 1 1 auto; }
+.over-head > .icon-btn { margin-left: auto; flex: none; }
+.over-head h2 { margin: 0; font-family: var(--display); font-size: 20px; font-weight: 600; letter-spacing: 0.01em; color: var(--ink-1); }
+.over-head .sb-reveal { margin-left: calc(-1 * var(--sp-2)); }
 .auto-new { gap: 5px; }
-.auto-tabs { flex: none; padding: 0 var(--sp-5); }
-.auto-desc { flex: none; padding: var(--sp-3) var(--sp-5) var(--sp-1); color: var(--ink-3); font-size: var(--fs-base); }
-.auto-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
-.auto-body[hidden] { display: none; }
-.auto-body.narrow { padding: 0 var(--sp-5) var(--sp-6); }
-.auto-body.narrow > * { width: 100%; max-width: 860px; flex: 1 0 auto; }
+.over-tabs { flex: none; padding: 0 var(--sp-5); }
+.over-desc { flex: none; padding: var(--sp-3) var(--sp-5) var(--sp-1); color: var(--ink-3); font-size: var(--fs-base); }
+.over-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+.over-body[hidden] { display: none; }
+.over-body.narrow { padding: 0 var(--sp-5) var(--sp-6); }
+.over-body.narrow > * { width: 100%; max-width: 860px; flex: 1 0 auto; }
 /* the page's 定时任务: no inner tab row — a thin bar (运行记录 › / ‹ 定时任务 / 运行记录), the list, 从模板开始 */
-.auto-body .sched-view.page .sv-bar { display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; border-bottom: 1px solid var(--edge-subtle); font-size: var(--fs-base); color: var(--ink-3); }
-.auto-body .sched-view.page .sv-bar .grow { flex: 1 1 auto; }
-.auto-body .sched-view.page .sv-bar .link { color: var(--ink-2); font-size: var(--fs-base); }
-.auto-body .sched-view.page .sv-bar .link:hover { color: var(--ink-1); }
-.auto-body .sched-view.page .sv-back { display: inline-flex; align-items: center; gap: 2px; margin-left: -3px; }
-.auto-body .sched-view.page .sv-sep { color: var(--ink-4); }
-.auto-body .sched-view.page .sv-cur { color: var(--ink-1); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.auto-body .sched-view.page .list { padding: var(--sp-2) 0; }
-.auto-body .sched-view.page .sv-templates { border-top: 1px solid var(--edge-subtle); margin-top: var(--sp-2); }
-.auto-body .sched-view.page .sv-h { padding: var(--sp-2) 0 var(--sp-1); font-size: var(--fs-sm); font-weight: 600; color: var(--ink-3); }
-.auto-body .goals.page { height: auto; }
-.auto-body .goals.page .goals-head { border-bottom: 1px solid var(--edge-subtle); padding: var(--sp-2) 0; }
-.auto-body .goals.page .goals-list { padding: var(--sp-3) 0; overflow: visible; }
+.over-body .sched-view.page .sv-bar { display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; border-bottom: 1px solid var(--edge-subtle); font-size: var(--fs-base); color: var(--ink-3); }
+.over-body .sched-view.page .sv-bar .grow { flex: 1 1 auto; }
+.over-body .sched-view.page .sv-bar .link { color: var(--ink-2); font-size: var(--fs-base); }
+.over-body .sched-view.page .sv-bar .link:hover { color: var(--ink-1); }
+.over-body .sched-view.page .sv-back { display: inline-flex; align-items: center; gap: 2px; margin-left: -3px; }
+.over-body .sched-view.page .sv-sep { color: var(--ink-4); }
+.over-body .sched-view.page .sv-cur { color: var(--ink-1); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.over-body .sched-view.page .list { padding: var(--sp-2) 0; }
+.over-body .sched-view.page .sv-templates { border-top: 1px solid var(--edge-subtle); margin-top: var(--sp-2); }
+.over-body .sched-view.page .sv-h { padding: var(--sp-2) 0 var(--sp-1); font-size: var(--fs-sm); font-weight: 600; color: var(--ink-3); }
+.over-body .goals.page { height: auto; }
+.over-body .goals.page .goals-head { border-bottom: 1px solid var(--edge-subtle); padding: var(--sp-2) 0; }
+.over-body .goals.page .goals-list { padding: var(--sp-3) 0; overflow: visible; }
 .goal-go { flex: none; }
-.auto-body[data-body='orchestra'] { padding: var(--sp-2) var(--sp-5) var(--sp-4); }
-.auto-body[data-body='orchestra'] > * { flex: 1; min-height: 0; }
-.auto-body[data-body='orchestra'] .orch { border: 1px solid var(--edge-subtle); border-radius: var(--r-lg); overflow: hidden; }
-html.desktop .workbench:not(.gb) .auto-head { -webkit-app-region: drag; }
-html.desktop .auto-head button, html.desktop .auto-head [title] { -webkit-app-region: no-drag; }
-html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .auto-head { padding-right: calc(142px / var(--zoom, 1)); }
-html.desktop.mac .app.no-sidebar .workbench:not(.gb) .auto-head { padding-left: calc(84px / var(--zoom, 1)); }
+.over-body[data-body='orchestra'] { padding: var(--sp-2) var(--sp-5) var(--sp-4); }
+.over-body[data-body='orchestra'] > * { flex: 1; min-height: 0; }
+.over-body[data-body='orchestra'] .orch { border: 1px solid var(--edge-subtle); border-radius: var(--r-lg); overflow: hidden; }
+html.desktop .workbench:not(.gb) .over-head { -webkit-app-region: drag; }
+html.desktop .over-head button, html.desktop .over-head [title] { -webkit-app-region: no-drag; }
+html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .over-head { padding-right: calc(142px / var(--zoom, 1)); }
+html.desktop.mac .app.no-sidebar .workbench:not(.gb) .over-head { padding-left: max(0px, calc(84px / var(--zoom, 1) - var(--rail, 0px))); }
 
 /* 「连接断开，正在重连…」 at the top of the main area */
 /* a thin full-width strip under the main area's first row (review 7 M7): it takes no clicks, and while the settings
@@ -2055,13 +2057,13 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .auto-head { padding-left: 
   .app.mobile .guide-row .prog { display: none; }
   .app.mobile .home-row { min-height: 54px; }
   /* the automation page on a phone */
-  .app.mobile .auto-head { padding: 0 var(--sp-2); }
-  .app.mobile .auto-tabs, .app.mobile .auto-desc { padding-left: var(--sp-3); padding-right: var(--sp-3); }
-  .app.mobile .auto-body.narrow { padding: 0 var(--sp-3) var(--sp-5); }
+  .app.mobile .over-head { padding: 0 var(--sp-2); }
+  .app.mobile .over-tabs, .app.mobile .over-desc { padding-left: var(--sp-3); padding-right: var(--sp-3); }
+  .app.mobile .over-body.narrow { padding: 0 var(--sp-3) var(--sp-5); }
   /* 编排: the workflow list above the graph (side by side leaves the graph a sliver) */
-  .app.mobile .auto-page .orch { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  .app.mobile .auto-page .orch-side { border-right: 0; border-bottom: 1px solid var(--edge-default); max-height: 38%; }
-  .app.mobile .auto-page .orch-list { flex-basis: auto; max-height: 120px; }
+  .app.mobile .over-page .orch { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .app.mobile .over-page .orch-side { border-right: 0; border-bottom: 1px solid var(--edge-default); max-height: 38%; }
+  .app.mobile .over-page .orch-list { flex-basis: auto; max-height: 120px; }
 }
 @container (max-width: 420px) {
   .perm .actions .btn.primary { flex: 1 1 100%; }

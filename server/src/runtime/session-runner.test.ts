@@ -794,3 +794,94 @@ describe('SessionRunner: what a send accepted', () => {
     await r.close();
   });
 });
+
+describe('SessionRunner: 联网', () => {
+  /** A config folder of our own: the developer's ~/.claude/settings.json must not decide these. */
+  const withConfig = async (settings: Record<string, unknown>, fn: (dir: string) => Promise<void>) => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-websearch-'));
+    const was = { cfg: process.env.CLAUDE_CONFIG_DIR, adapter: process.env.WEB_SEARCH_ADAPTER, kind: eng.kind };
+    process.env.CLAUDE_CONFIG_DIR = path.join(dir, 'cfg');
+    delete process.env.WEB_SEARCH_ADAPTER;
+    fs.mkdirSync(process.env.CLAUDE_CONFIG_DIR, { recursive: true });
+    fs.writeFileSync(path.join(process.env.CLAUDE_CONFIG_DIR, 'settings.json'), JSON.stringify(settings));
+    try {
+      queries.length = 0;
+      await fn(dir);
+    } finally {
+      eng.kind = was.kind;
+      if (was.cfg === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = was.cfg;
+      if (was.adapter === undefined) delete process.env.WEB_SEARCH_ADAPTER; else process.env.WEB_SEARCH_ADAPTER = was.adapter;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const adapterOf = async (params: any, provider?: any) => {
+    const r = new SessionRunner(params, provider);
+    await tick();
+    const env = queries[queries.length - 1].options.env;
+    await r.close();
+    return env?.WEB_SEARCH_ADAPTER;
+  };
+  const openaiProvider = { id: 'ds', name: 'DS', type: 'openai', baseUrl: 'https://relay/v1', apiKey: 'sk', createdAt: 0, shim: { base: 'http://127.0.0.1:9/gateway/~p/ds', key: 'cws-x' } };
+
+  it('our engine\'s own WebSearch gets a backend that works without a key: the API\'s search on claude.ai, Bing on a provider', async () => {
+    await withConfig({}, async (dir) => {
+      eng.kind = 'ccb';
+      expect(await adapterOf({ sessionId: 'w1', cwd: dir })).toBe('api');
+      expect(await adapterOf({ sessionId: 'w2', cwd: dir }, openaiProvider)).toBe('bing');
+      // the official binary has one way of its own: nothing is set
+      eng.kind = 'claude';
+      expect(await adapterOf({ sessionId: 'w3', cwd: dir })).toBeUndefined();
+    });
+    // the account that is really a relay from settings.json (kept on our engine by a flag only it has): Bing
+    await withConfig({ env: { ANTHROPIC_BASE_URL: 'https://relay.invalid', ANTHROPIC_AUTH_TOKEN: 'relay-token' } }, async (dir) => {
+      eng.kind = 'ccb';
+      expect(await adapterOf({ sessionId: 'w4', cwd: dir, features: { proactive: true } })).toBe('bing');
+    });
+  });
+
+  it('…unless the user chose one: their environment, a settings file, the engine\'s own setting, the conversation\'s env', async () => {
+    await withConfig({}, async (dir) => {
+      eng.kind = 'ccb';
+      process.env.WEB_SEARCH_ADAPTER = 'exa';
+      expect(await adapterOf({ sessionId: 'u1', cwd: dir })).toBe('exa'); // inherited as it is
+      delete process.env.WEB_SEARCH_ADAPTER;
+      expect(await adapterOf({ sessionId: 'u2', cwd: dir, features: { env: { WEB_SEARCH_ADAPTER: 'brave' } } })).toBe('brave');
+    });
+    await withConfig({ webSearchAdapter: 'tavily' }, async (dir) => {
+      eng.kind = 'ccb';
+      expect(await adapterOf({ sessionId: 'u3', cwd: dir })).toBeUndefined(); // the engine reads its setting
+      expect(await adapterOf({ sessionId: 'u4', cwd: dir }, openaiProvider)).toBeUndefined();
+    });
+    await withConfig({ env: { WEB_SEARCH_ADAPTER: 'brave' } }, async (dir) => {
+      eng.kind = 'ccb';
+      expect(await adapterOf({ sessionId: 'u5', cwd: dir })).toBeUndefined(); // the CLI lays the file's env over ours anyway
+    });
+  });
+
+  it('the `web` MCP server goes to the CLI next to the memory one, with the search pre-allowed — once the server is listening', async () => {
+    const { configureWebMcp } = await import('../web/launcher.js');
+    await withConfig({}, async (dir) => {
+      const before = new SessionRunner({ sessionId: 'm1', cwd: dir } as any);
+      await tick();
+      expect(queries[0].options.mcpServers).toEqual({}); // (the memory launcher is mocked away in this file)
+      expect(queries[0].options.allowedTools).toBeUndefined();
+      await before.close();
+      configureWebMcp({ url: 'http://127.0.0.1:45678', token: 'x'.repeat(64) }, dir);
+      try {
+        const r = new SessionRunner({ sessionId: 'm2', cwd: dir } as any);
+        await tick();
+        const o = queries[1].options;
+        expect(Object.keys(o.mcpServers)).toEqual(['web']);
+        expect(o.mcpServers.web.env).toMatchObject({ CW_WEB_URL: 'http://127.0.0.1:45678', CW_SESSION_ID: 'm2' });
+        expect(JSON.stringify(o.mcpServers)).not.toContain('x'.repeat(64)); // this object ends up on the CLI's command line
+        expect(o.allowedTools).toEqual(['mcp__web__web_search']);
+        await r.close();
+      } finally {
+        configureWebMcp(null, dir);
+      }
+    });
+  });
+});

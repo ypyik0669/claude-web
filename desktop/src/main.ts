@@ -6,6 +6,7 @@ import { KeepAwake } from './keep-awake';
 import { autoUpdater } from 'electron-updater';
 import { CHECK_EVERY_MS, FIRST_CHECK_MS, firstLine, isRequired, manualDownloadUrl, notesText, releasePage, updateMode, type UpdateMode } from './update-policy';
 import { execFileSync } from 'node:child_process';
+import { captureGuest } from './browser-capture';
 import os from 'node:os';
 import { ZOOM_STEPS, cleanZoom, fitWindow, minWindow, nextZoom, scaleCaption, trafficLightY, zoomAsk, zoomLimit, type ZoomAsk } from './zoom';
 
@@ -216,8 +217,9 @@ function createWindow(url: string | null, winId = 'main', bounds?: Bounds, hidde
     prefs.contextIsolation = true;
   });
   win.webContents.on('did-attach-webview', (_e, guest) => {
+    // a page's new window is a new tab of this window's built-in browser (features/browser/BrowserPanel.tsx)
     guest.setWindowOpenHandler(({ url: target }) => {
-      if (/^https?:/.test(target)) void shell.openExternal(target);
+      if (/^https?:/.test(target) && !win.isDestroyed()) win.webContents.send('desktop:browserPopup', { url: target });
       return { action: 'deny' };
     });
   });
@@ -551,6 +553,8 @@ ipcMain.handle('desktop:zoom:set', (e, v: unknown) => {
   const ask = zoomAsk(v);
   return ask === null ? zoomInfo(from) : setZoom(ask, from);
 });
+// a picture of a page of the built-in browser, for an Agent's browser_screenshot (browser-capture.ts)
+ipcMain.handle('desktop:browser:capture', (e, id: unknown) => captureGuest(e.sender, id));
 ipcMain.handle('desktop:loginItem:get', () => app.getLoginItemSettings().openAtLogin);
 ipcMain.handle('desktop:loginItem:set', (_e, on: boolean) => app.setLoginItemSettings({ openAtLogin: on, args: ['--hidden'] }));
 ipcMain.handle('desktop:window:new', () => {

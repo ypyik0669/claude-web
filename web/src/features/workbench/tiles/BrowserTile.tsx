@@ -6,6 +6,7 @@ import { desktop } from '@/desktop';
 import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { imeComposing } from '@/ui/ime';
+import { frameSandbox } from '@/features/browser/url';
 
 /**
  * In-app browser.
@@ -118,7 +119,7 @@ export function BrowserTile({ tile }: { tile: Extract<Tile, { kind: 'browser' }>
           <webview ref={ref} src={tile.url} partition="persist:cw-browser" style={{ width: '100%', height: '100%' }} />
         ) : (
           <>
-            <iframe ref={ref} src={url} title="in-app browser" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" />
+            <iframe ref={ref} src={url} title="in-app browser" sandbox={frameSandbox(url, location.origin)} />
             <div className="browser-hint">浏览器里只能用受限 iframe：拒绝被嵌入的站点会是空白，用右上角「在系统浏览器打开」。桌面版是完整的内嵌浏览器。</div>
           </>
         )}

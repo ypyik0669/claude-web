@@ -22,22 +22,37 @@ export interface Capability {
   icon: IconName;
   /** 'main' = 这次对话可以…, 'advanced' = 进阶 */
   group: 'main' | 'advanced';
+  /** it cannot be turned on from here, and why (the row is shown off, with this under its name) */
+  unavailable?: string;
 }
 
 export const CAPABILITIES: Capability[] = [
-  { key: 'chrome', label: '控制浏览器', desc: '打开网页、点击、填表', title: 'Claude in Chrome（--chrome）', icon: 'browser', group: 'main' },
-  { key: 'computerUse', label: '操控电脑', desc: '截图、键盘鼠标', title: 'Computer Use（--computer-use-mcp）', icon: 'machine', group: 'main' },
+  // (the built-in browser needs no switch — every conversation has it; this one is the user's own Chrome)
+  { key: 'chrome', label: '控制 Chrome', desc: '用你自己的 Chrome（要装 Claude 扩展）', title: 'Claude in Chrome（--chrome）：在你自己的 Chrome 里打开网页、点击、填表，用的是那里登录着的账号。内置浏览器不用开这个', icon: 'browser', group: 'main' },
+  // the engine sets this up only in its own terminal interface (probed 2026-10-10: a conversation started from here
+  // with its flag exits at once), so the row is there to say so — and where the web part of it is
+  { key: 'computerUse', label: '操控电脑', desc: '截图、键盘鼠标', title: 'Computer Use：键盘、鼠标和截图操作整台电脑', icon: 'machine', group: 'main', unavailable: '现在用不了：运行内核只在它自己的终端界面里支持。上网不用它——搜索、打开网页、点击、截图都在右侧的「浏览器」里' },
   { key: 'coordinator', label: '协调者模式', desc: '自己不动手，只派活给子代理', title: '协调者模式（CLAUDE_CODE_COORDINATOR_MODE）', icon: 'orchestra', group: 'advanced' },
   { key: 'proactive', label: '主动模式', desc: '空闲时继续推进', title: '主动模式（--proactive）', icon: 'play', group: 'advanced' },
   { key: 'brief', label: 'Brief', desc: '让 Claude 用简报工具随时告诉你进展', title: 'Brief（--brief，SendUserMessage 工具）', icon: 'chat', group: 'advanced' },
 ];
 export const FEATURE_KEYS = CAPABILITIES.map((c) => c.key);
+/** The ones that can be on: a stored default for one that cannot is dropped (it would start nothing). */
+export const UNAVAILABLE_KEYS = CAPABILITIES.filter((c) => c.unavailable).map((c) => c.key);
+
+/** Features as they are sent and shown: without what cannot be turned on from here. */
+export function usable(f: SessionFeatures): SessionFeatures {
+  if (!UNAVAILABLE_KEYS.some((k) => f[k])) return f;
+  const next = { ...f };
+  for (const k of UNAVAILABLE_KEYS) delete next[k];
+  return next;
+}
 
 export const CHANNELS = { label: '频道', desc: '让插件 / MCP 服务器往对话里推消息', title: '频道（--channels），格式 plugin:name@marketplace 或 server:name，逗号分隔', placeholder: 'plugin:name@marketplace, server:name' } as const;
 
 export function withFeature(f: SessionFeatures, key: FeatureKey, on: boolean): SessionFeatures {
   const next = { ...f };
-  if (on) next[key] = true;
+  if (on && !UNAVAILABLE_KEYS.includes(key)) next[key] = true;
   else delete next[key];
   return next;
 }
@@ -55,14 +70,14 @@ export function withChannels(f: SessionFeatures, list: string[]): SessionFeature
 
 /** How many capabilities are on (env is plumbing, not a capability). */
 export function featureCount(f: SessionFeatures): number {
-  return FEATURE_KEYS.filter((k) => !!f[k]).length + (f.channels?.length ? 1 : 0);
+  return FEATURE_KEYS.filter((k) => !!f[k] && !UNAVAILABLE_KEYS.includes(k)).length + (f.channels?.length ? 1 : 0);
 }
 
 export interface CapabilityTag { key: FeatureKey | 'channels'; label: string; icon: IconName; title: string }
 
 /** The small removable tags in the text box, in menu order. */
 export function capabilityTags(f: SessionFeatures): CapabilityTag[] {
-  const tags: CapabilityTag[] = CAPABILITIES.filter((c) => !!f[c.key]).map((c) => ({ key: c.key, label: c.label, icon: c.icon, title: `${c.label}：${c.desc}（${c.title}）` }));
+  const tags: CapabilityTag[] = CAPABILITIES.filter((c) => !!f[c.key] && !c.unavailable).map((c) => ({ key: c.key, label: c.label, icon: c.icon, title: `${c.label}：${c.desc}（${c.title}）` }));
   if (f.channels?.length) tags.push({ key: 'channels', label: `${CHANNELS.label} ${f.channels.length}`, icon: 'bell', title: `${CHANNELS.label}：${f.channels.join(', ')}` });
   return tags;
 }
@@ -118,9 +133,9 @@ const isFeatures = (v: unknown): v is SessionFeatures => !!v && typeof v === 'ob
 
 export function migrateFeatureDefaults(stored: unknown, legacy: string | null): { value: SessionFeatures; write: boolean; dropLegacy: boolean } {
   const dropLegacy = legacy !== null;
-  if (isFeatures(stored)) return { value: stored, write: false, dropLegacy };
+  if (isFeatures(stored)) return { value: usable(stored), write: false, dropLegacy };
   let parsed: unknown = null;
   try { parsed = legacy ? JSON.parse(legacy) : null; } catch { /* a broken value is dropped */ }
-  if (isFeatures(parsed)) return { value: parsed, write: true, dropLegacy };
+  if (isFeatures(parsed)) return { value: usable(parsed), write: true, dropLegacy };
   return { value: {}, write: false, dropLegacy };
 }

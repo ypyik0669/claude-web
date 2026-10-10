@@ -3,14 +3,14 @@
 
 import type { IconName } from '@/ui/icons';
 
-export type PanelId = 'tasks' | 'files' | 'explorer' | 'usage' | 'config' | 'terminal' | 'inspector' | 'mission' | 'goals' | 'android' | 'memory' | 'orchestra' | 'board';
+export type PanelId = 'tasks' | 'files' | 'explorer' | 'usage' | 'config' | 'terminal' | 'inspector' | 'mission' | 'goals' | 'android' | 'memory' | 'orchestra' | 'board' | 'browser';
 /** A chat tile's view: the conversation (`live`) or one of the per-session workbench views. */
 export const WORKBENCH_TABS = ['live', 'changes', 'git', 'files', 'search', 'schedules', 'artifacts', 'board'] as const;
 export type WorkbenchTab = (typeof WORKBENCH_TABS)[number];
 
 /**
  * Where a panel sits in the right panel of the default (quiet) UI — spec §5.6:
- *  - `core`: one of the four fixed tabs 审阅 · 文件 · 终端 · 任务 (never closed, only hidden);
+ *  - `core`: one of the fixed tabs 审阅 · 文件 · 终端 · 浏览器 · 任务 (never closed, only hidden);
  *  - `extra`: in the right panel's 「更多」 menu, opens as a temporary tab with a ×;
  *  - `workbench`: only from the command palette / its shortcut (also a temporary tab), and on the icon rail once
  *    「显示工作台工具」 is on.
@@ -36,12 +36,14 @@ export const PANELS: { id: PanelId; title: string; icon: IconName; tier: PanelTi
   { id: 'config', title: '配置中心', icon: 'config', tier: 'workbench' },
   // keepAlive: the tab holds a live process (a pty) — toggling it off hides the panel instead of closing the tab
   { id: 'terminal', title: '终端', icon: 'terminal', tier: 'core', rail: true, keepAlive: true },
+  // keepAlive: its pages are live (a webview each) — and an Agent may be working in one of them
+  { id: 'browser', title: '浏览器', icon: 'web', tier: 'core', keepAlive: true },
   { id: 'inspector', title: '详情', icon: 'inspector', tier: 'extra' },
   { id: 'board', title: 'Issue 与 PR', icon: 'board', tier: 'extra' },
   { id: 'android', title: 'Android', icon: 'android', tier: 'workbench' },
 ];
-/** The fixed tabs of the default right panel, in row order (审阅 · 文件 · 终端 · 任务). */
-export const CORE_PANELS: PanelId[] = ['files', 'explorer', 'terminal', 'tasks'];
+/** The fixed tabs of the default right panel, in row order (审阅 · 文件 · 终端 · 浏览器 · 任务). */
+export const CORE_PANELS: PanelId[] = ['files', 'explorer', 'terminal', 'browser', 'tasks'];
 export const PANEL_IDS = PANELS.map((p) => p.id);
 export const PANEL_TITLES = Object.fromEntries(PANELS.map((p) => [p.id, p.title])) as Record<PanelId, string>;
 export const PANEL_ICONS = Object.fromEntries(PANELS.map((p) => [p.id, p.icon])) as Record<PanelId, IconName>;
@@ -173,13 +175,13 @@ export function dockView(dock: Dock, o: { workbench: boolean; inspect: boolean }
  * 「显示工作台工具」 setting (`ui.workbench`):
  *  - group bar: more than one group;
  *  - a pane's tab strip: more than one tab, more than one pane in the group, or a lone non-chat tile
- *    (a document / terminal has no session header, the strip is where it is named and closed);
- *  - the dock's icon rail: only in workbench mode.
- * A phone (≤ 760px, spec §5.11) never shows any of the three, whatever the setting or the layout: its one row is
+ *    (a document / terminal has no session header, the strip is where it is named and closed).
+ * (The dock's own icon rail is gone: its panels are in the window's icon rail, features/rail.)
+ * A phone (≤ 760px, spec §5.11) never shows either, whatever the setting or the layout: its one row is
  * the conversation's own header.
  * Only the chrome — pane contents are never unmounted by this.
  */
-export interface ChromeVisibility { groupBar: boolean; dockRail: boolean; tabStrip: Record<string, boolean> }
+export interface ChromeVisibility { groupBar: boolean; tabStrip: Record<string, boolean> }
 export function chromeVisibility(s: LayoutState, o: { workbench: boolean; mobile?: boolean }): ChromeVisibility {
   const g = activeGroup(s);
   const order = paneOrder(g.root);
@@ -189,8 +191,8 @@ export function chromeVisibility(s: LayoutState, o: { workbench: boolean; mobile
     const p = g.panes[id];
     tabStrip[id] = !o.mobile && (o.workbench || multi || (p?.tiles.length ?? 0) > 1 || (!!p?.tiles[0] && p.tiles[0].kind !== 'chat'));
   }
-  if (o.mobile) return { groupBar: false, dockRail: false, tabStrip };
-  return { groupBar: o.workbench || s.groups.length > 1, dockRail: o.workbench, tabStrip };
+  if (o.mobile) return { groupBar: false, tabStrip };
+  return { groupBar: o.workbench || s.groups.length > 1, tabStrip };
 }
 
 /**

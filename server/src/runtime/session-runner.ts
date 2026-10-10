@@ -12,6 +12,8 @@ import { loopbackNoProxy, providerEnv, type SessionProvider } from '../providers
 import { ccbAccountEnv, ccbMisthinks, ccbModel, isChatModel, modelCaps, modelLabel, modelsFor, preferredRuntime, providerModelId, supportsUltracode, webCapsEnv } from '../models/catalog.js';
 import { turnShare, type RunningTotals } from '../usage/turn-cost.js';
 import { claudeMcpServer } from '../memory/launcher.js';
+import { webAllowedTools, webClaudeMcpServer } from '../web/launcher.js';
+import { engineSearchAdapter, userPickedSearchAdapter } from '../web/engine-search.js';
 import { markUnknownCost } from '../usage/pricing.js';
 import type { AttachmentRef, EffortLevel, ModelInfo, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot } from '../protocol.js';
 
@@ -200,7 +202,9 @@ export class SessionRunner extends EventEmitter {
     const f = this.features;
     const a: Record<string, string | null> = {};
     if (f.chrome) a.chrome = null;
-    if (f.computerUse) a['computer-use-mcp'] = null;
+    // (`computerUse` is not a flag: the engine's `--computer-use-mcp` only starts its stand-alone MCP mode, and a
+    // conversation given it exits before its first message — probed 2026-10-10. The engine sets computer use up only
+    // in its own terminal interface; from here the web is reached through the `web` MCP server instead.)
     if (f.proactive) a.proactive = null;
     if (f.brief) a.brief = null;
     if (f.channels?.length) a.channels = f.channels.join(',');
@@ -249,11 +253,11 @@ export class SessionRunner extends EventEmitter {
   /**
    * The engine a process for `model` runs on. A provider's Anthropic-format endpoint and a Claude 5 model ccb gets the
    * thinking wrong for (`ccbMisthinks`) → the official binary — unless this conversation uses a flag only ccb has
-   * (the official one refuses `--proactive` / `--computer-use-mcp` as unknown options); then ccb, with thinking off
+   * (the official one refuses `--proactive` as an unknown option); then ccb, with thinking off
    * for that model (`omit thinking` is what the API asks for).
    */
   private plan(model = this.model) {
-    const ccbOnly = !!(this.features.proactive || this.features.computerUse || this.features.devChannels);
+    const ccbOnly = !!(this.features.proactive || this.features.devChannels);
     // the account through a relay of the user's own (settings.json / environment) is an Anthropic-format relay too;
     // claude.ai itself takes the budget ccb sends (the ledger has Opus 5.5 turns on ccb)
     const own = this.provider ? null : userAnthropicEnv();
@@ -298,6 +302,13 @@ export class SessionRunner extends EventEmitter {
     // claude-sonnet-5 default hung 220 s on model_not_found, 2026-10-01)
     const own = userAnthropicEnv();
     if (engine.kind === 'ccb' && !this.provider && !own.relay) for (const [k, v] of Object.entries(ccbAccountEnv())) if (!(k in fenv) && !(own.env as Record<string, string | undefined>)[k]) fenv[k] = v;
+    // the engine's own WebSearch tool: a backend that works here without a key (Bing's result page; on claude.ai the
+    // API's server-side search) instead of its default, a hosted Tavily proxy — unless the user picked one themselves
+    // (web/engine-search.ts). The official binary has no such choice.
+    if (engine.kind === 'ccb' && !('WEB_SEARCH_ADAPTER' in fenv)) {
+      const adapter = engineSearchAdapter({ engine: engine.kind, provider: !!this.provider, relay: own.relay, userChoice: userPickedSearchAdapter(this.cwd) });
+      if (adapter) fenv.WEB_SEARCH_ADAPTER = adapter;
+    }
     // a provider session must not inherit provider-ish env from this process (e.g. a global ANTHROPIC_API_KEY)
     const base = { ...process.env };
     // …including a stray CLAUDE_CODE_USE_* switch, which would route the profile to another ccb provider
@@ -330,7 +341,10 @@ export class SessionRunner extends EventEmitter {
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       // Shared cross-agent memory, injected per session rather than written into ~/.claude —
       // uninstalling claude-web must not leave an MCP entry behind in the user's own config.
-      mcpServers: claudeMcpServer({ cwd: this.cwd, sessionId: this.sessionId, agent: 'claude' }),
+      // 联网 (`web`: search + the built-in browser) goes in the same way (web/launcher.ts).
+      mcpServers: { ...claudeMcpServer({ cwd: this.cwd, sessionId: this.sessionId, agent: 'claude' }), ...webClaudeMcpServer({ sessionId: this.sessionId }) },
+      // searching only reads: 每步询问 does not ask for every search (the browser tools follow the permission mode)
+      ...(webAllowedTools().length ? { allowedTools: webAllowedTools() } : {}),
       includePartialMessages: true,
       includeHookEvents: true,
       forwardSubagentText: true,

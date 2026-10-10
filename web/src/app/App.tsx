@@ -26,6 +26,12 @@ import { captionHeightAt, captionRow } from '@/features/workbench/tab-row';
 import { installZoom, useZoom } from '@/ui/zoom';
 import { MOBILE_QUERY, drawerYields } from '@/ui/viewport';
 import { installAutomation } from '@/features/automation/state';
+import { installBrowserHost } from '@/features/browser/host';
+import { useSection } from '@/features/sections';
+import { Rail } from '@/features/rail/Rail';
+import { RAIL_WIDTH } from '@/features/rail/rail-model';
+import { AutomationSide } from '@/features/automation/AutomationSide';
+import { ExtensionsSide } from '@/features/extensions/ExtensionsSide';
 import { installChecklist } from '@/features/home/checklist-sync';
 import { installAccountDefault } from '@/features/models/account-default';
 import { installSettingsClose } from '@/features/settings/close-on-nav';
@@ -44,11 +50,21 @@ function SidebarColumn() {
   const el = useRef<HTMLDivElement>(null);
   // phone: the drawer a tap opened slides in (nothing happens anywhere else — ui/phone-drawer.ts)
   useLayoutEffect(() => { if (el.current) drawerEnter(el.current); }, []);
+  // which section's sidebar: the conversations, or a page section's own (structure round 2). A phone's drawer is
+  // always the conversations — the pages draw their parts as tabs there. Each is mounted when first shown and only
+  // hidden after that (the list's filter, what was unfolded, a multi-select all survive a visit to 自动化)
+  const mobile = useStore((s) => s.mobile);
+  const current = useSection();
+  const section = mobile ? 'chat' : current;
+  const [seen, setSeen] = useState<string[]>([section]);
+  if (!seen.includes(section)) setSeen([...seen, section]);
   // NOTE: no inline `position` here — an inline style beats `.app.mobile .sidebar { position: fixed }`
   // regardless of specificity, which would leave the drawer in the grid flow and squash the workbench to 0px.
   return (
     <div className="sidebar has-resizer" ref={el}>
-      <ErrorBoundary area="侧栏"><Sidebar onNew={() => runCommand('new')} /></ErrorBoundary>
+      <div className="sb-sect" data-section="chat" hidden={section !== 'chat'}><ErrorBoundary area="侧栏"><Sidebar onNew={() => runCommand('new')} /></ErrorBoundary></div>
+      {seen.includes('automation') && <div className="sb-sect" data-section="automation" hidden={section !== 'automation'}><ErrorBoundary area="侧栏 · 自动化"><AutomationSide /></ErrorBoundary></div>}
+      {seen.includes('extensions') && <div className="sb-sect" data-section="extensions" hidden={section !== 'extensions'}><ErrorBoundary area="侧栏 · 扩展"><ExtensionsSide /></ErrorBoundary></div>}
       <div
         className="resizer right"
         onPointerDown={(e) => { drag.current = { x0: e.clientX, w0: width }; (e.target as HTMLElement).setPointerCapture(e.pointerId); }}
@@ -73,6 +89,8 @@ export function App() {
   useEffect(() => useStore.subscribe((s, p) => { if (drawerYields(p, s)) useStore.setState({ sidebarOpen: false }); }), []);
   useEffect(() => installOrchestra(), []);
   useEffect(() => installAutomation(), []);
+  // this window as the browser an Agent's web tools work in (the desktop app only)
+  useEffect(() => installBrowserHost(), []);
   useEffect(() => installZoom(), []);
   useEffect(() => installChecklist(), []);
   useEffect(() => installAccountDefault(), []);
@@ -226,7 +244,9 @@ export function App() {
   return (
     // `dock-open`: the right panel owns the window's top-right corner (desktop caption buttons sit over its tab row).
     // Not when it is minimized to its 36px icon rail: the buttons then cover the workbench's top-right row as well.
-    <div ref={app} className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', mobile && sidebarOpen && 'drawer-open', rpWidth > MIN_RAIL && !mobile && 'dock-open', sheetOn && 'sheet-open', sheetOn && covered && 'sheet-covered')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px` }}>
+    <div ref={app} className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', !mobile && 'has-rail', mobile && sidebarOpen && 'drawer-open', rpWidth > MIN_RAIL && !mobile && 'dock-open', sheetOn && 'sheet-open', sheetOn && covered && 'sheet-covered')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px`, ['--rail' as any]: `${mobile ? 0 : RAIL_WIDTH}px` }}>
+      {/* desktop width: the icon rail, the window's first column (fixed to the left edge; the grid starts after it) */}
+      {!mobile && <ErrorBoundary area="图标栏"><Rail /></ErrorBoundary>}
       {/* phone: both scrims are in the document the whole time — transparent and taking no taps until their surface
           is up (the style sheet) — so they fade with it and follow a drag. A tap on one puts its surface away */}
       {mobile && <div className="drawer-backdrop" onClick={() => useStore.setState({ sidebarOpen: false })} />}

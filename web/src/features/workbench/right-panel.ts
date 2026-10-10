@@ -9,6 +9,7 @@ import { openAutomation } from '@/features/automation/state';
 import { blockRemoteOpen } from '@/features/remote-guard';
 import { viewTarget, type ExplorerMode, type ReviewIntent } from './panel-entries';
 import type { WbView } from './wb-views';
+import { openUrl } from '@/features/browser/state';
 
 interface RightPanelState {
   /** the last request for the review; `n` grows so asking for the same thing twice still applies */
@@ -32,6 +33,12 @@ let seq = 0;
 export function showPanel(panel: PanelId): boolean {
   useStore.getState().dispatchLayout({ t: 'dock.show', panel });
   return true;
+}
+
+/** Open an address in the right panel's 浏览器 (a new tab unless the one in front is still empty). */
+export function openInBrowser(url: string): void {
+  openUrl(url);
+  showPanel('browser');
 }
 
 /** 审阅 on a scope / commit / file, or its full Git view. */

@@ -2,6 +2,7 @@
 // right panel's — nothing here goes into store/index.ts. The page is per window and not persisted.
 import { create } from 'zustand';
 import { hideSheet, onLayoutAction, useStore } from '@/store';
+import { closeOtherPages, closePages, openPage, registerPage } from '@/features/sections/pages';
 import { AUTOMATION_TABS, closesAutomation, type AutomationTab } from './page';
 
 interface AutomationState {
@@ -20,8 +21,10 @@ export const useAutomation = create<AutomationState>(() => ({
   newAt: { schedules: 0, goals: 0, orchestra: 0 },
 }));
 
-/** When the page was last opened (it stays open for a late answer to a request sent before that). */
+/** When a page over the main area was last opened (it stays open for a late answer to a request sent before that). */
 let openedAt = 0;
+/** 扩展 opens through here too: the same "a late answer does not close what was opened after it" rule. */
+export function markPageOpened(): void { openedAt = Date.now(); }
 
 const withSeen = (seen: AutomationTab[], t: AutomationTab) => (seen.includes(t) ? seen : AUTOMATION_TABS.filter((x) => x === t || seen.includes(x)));
 
@@ -31,7 +34,8 @@ const withSeen = (seen: AutomationTab[], t: AutomationTab) => (seen.includes(t) 
  * page is on screen.
  */
 export function openAutomation(tab?: AutomationTab): boolean {
-  if (!useAutomation.getState().open) openedAt = Date.now();
+  closeOtherPages('automation');
+  if (!useAutomation.getState().open) markPageOpened();
   useAutomation.setState((s) => {
     const t = tab ?? s.tab;
     return { open: true, tab: t, seen: withSeen(s.seen, t) };
@@ -59,11 +63,13 @@ export function newInAutomation(tab: AutomationTab): void {
  * the answer to an earlier request (`meta.since`: a new conversation put in its tile when `session.open` came back)
  * leaves alone what the user opened after sending it (review 7 M2).
  */
+registerPage('automation', { isOpen: () => useAutomation.getState().open, close: closeAutomation, subscribe: (fn) => useAutomation.subscribe(fn) });
+
 export function installAutomation(): () => void {
   return onLayoutAction((a, meta) => {
     if (!closesAutomation(a)) return;
     const late = (at: number) => meta.since !== undefined && at >= meta.since;
-    if (useAutomation.getState().open && !late(openedAt)) closeAutomation();
+    if (openPage() && !late(openedAt)) closePages();
     const st = useStore.getState();
     if (st.mobile && st.sheetAt && !late(st.sheetAt)) hideSheet();
   });

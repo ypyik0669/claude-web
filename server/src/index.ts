@@ -50,6 +50,9 @@ import { FederationService } from './federation/service.js';
 import { swapAgent } from './session/swap.js';
 import { createOrchestra } from './orchestra/handlers.js';
 import { proxy } from './net/proxy.js';
+import { WebService } from './web/service.js';
+import { handleWebTool } from './web/http.js';
+import { configureWebMcp, setWebMcpEnabled } from './web/launcher.js';
 
 const FILE_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.html': 'text/html; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.json': 'application/json' };
 
@@ -157,10 +160,16 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   };
   // eslint-disable-next-line prefer-const
   let gateway: GatewayService;
+  // eslint-disable-next-line prefer-const
+  let web: WebService;
+  /** the main listener's port once it is listening (PORT=0 in the desktop app: a new one every start) */
+  let listenPort = 0;
   const handler = (req: http.IncomingMessage, res: http.ServerResponse) => {
     const url = requestUrl(req, HOST);
     // model gateway: its own key auth, loopback only (404 on the LAN listener)
     if (gateway?.handle(req, res, url)) return;
+    // 联网: the `web` MCP processes' tool calls — this start's secret, loopback only (404 on the LAN listener)
+    if (web && handleWebTool(web, req, res, url)) return;
     if (url.pathname === '/pair' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(pairPage()); return; }
     if (url.pathname === '/api/pair' && req.method === 'POST') {
       let body = '';
@@ -272,6 +281,17 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const canonical = new CanonicalLog();
   const memory = new MemoryService();
   setMemoryMcpEnabled(meta.settings()['memory.mcp'] !== false);
+  // 联网: web search here, the browser tools in whichever desktop window hosts the built-in browser (web/service.ts).
+  // Its own fetches wait for the proxy's look like every other request that goes out, and never reach this server.
+  web = new WebService({
+    settings: () => meta.settings(),
+    setSetting: (k, v) => meta.setSetting(k, v),
+    secrets,
+    goingOut: () => proxy.refresh(),
+    ownPorts: () => [listenPort, remote?.port ?? 0].filter((p) => p > 0),
+  });
+  await web.warm();
+  setWebMcpEnabled(meta.settings()['web.mcp'] !== false);
   const pool = new RunnerPool(providers, agents, transcripts);
   const config = new ConfigService();
   pool.accountLoggedOut = () => config.knownLoggedOut();
@@ -325,7 +345,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   fedHealth = (nonce, authed) => federation.healthInfo(nonce, authed);
   const goals = new GoalService(meta, pool);
   const orchestra = await createOrchestra({ pool, meta, canonical, transcripts, agents, git: gitSvc, goals, library, im });
-  const services = { orchestra, remote, anywhere, tunnels, im, vcs: new VcsService(gitSvc), goals, android: new AndroidService(), pool, sessions: sessionsSvc, config, usage: new UsageService(async (sid) => providerTimeline(await canonical.providerSwitches(sid), meta.sessionMeta(sid).providerId, (id) => { const p = meta.provider(id); return p ? { type: p.type, name: p.name } : undefined; })), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway };
+  const services = { orchestra, remote, anywhere, tunnels, im, vcs: new VcsService(gitSvc), goals, android: new AndroidService(), pool, sessions: sessionsSvc, config, usage: new UsageService(async (sid) => providerTimeline(await canonical.providerSwitches(sid), meta.sessionMeta(sid).providerId, (id) => { const p = meta.provider(id); return p ? { type: p.type, name: p.name } : undefined; })), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway, web };
   new Hub(wss, services);
   // model lists older than a day (or never pulled) are refreshed in the background — list only, no tokens
   void providers.autoRefreshModels();
@@ -336,6 +356,9 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   });
   const port = (server.address() as { port: number }).port;
   gateway.port = port;
+  listenPort = port;
+  // from here on new conversations are told about the `web` MCP server: it calls back to this port
+  configureWebMcp({ url: `http://127.0.0.1:${port}`, token: web.token });
   await remote.start();
   if (remote.status().running) console.log(`remote access on http://0.0.0.0:${remote.port}  (${remote.addresses().join(', ')})`);
   // 不让电脑睡眠: the shell holds a powerSaveBlocker while remote access is on — told now and on every change
@@ -351,6 +374,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     token,
     async close() {
       stopKeepAwake(); // no keepAwake reports while shutting down (the shell releases its blocker on quit)
+      configureWebMcp(null); // the MCP secret file goes with this server
       await im.stopAll();
       await federation.close();
       await tunnels.closeAll();

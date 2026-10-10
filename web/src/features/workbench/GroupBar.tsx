@@ -8,7 +8,6 @@ import { desktop } from '@/desktop';
 import { MIME_SESSION, MIME_TILE, hasType, tilePayload } from './dnd';
 import { offerGroupToNewWindow } from './windows';
 import { Icon, type IconName } from '@/ui/icons';
-import { DockRail } from './DockRail';
 import { SidebarReveal } from './pane-edge';
 
 const PRESETS: { id: LayoutPreset; l: string; ic: IconName }[] = [
@@ -22,9 +21,10 @@ const PRESETS: { id: LayoutPreset; l: string; ic: IconName }[] = [
 /**
  * Group tabs (Mirasim's "分组"): each group is an independent pane tree; drag a tile or session onto a tab to move it
  * there. Shown only with more than one group or in workbench mode (`chromeVisibility`); it is then the window's top
- * row, so it also carries the sidebar reveal and, in workbench mode, the panel rail.
+ * row. (The row of panel icons it carried in workbench mode is gone — structure round 2: the panels are behind the
+ * icon rail's ··· and the right panel's own 更多.)
  */
-export function GroupBar({ rail = false }: { rail?: boolean }) {
+export function GroupBar() {
   const layout = useStore((s) => s.layout);
   const dispatch = useStore((s) => s.dispatchLayout);
   const open = useStore((s) => s.open);
@@ -95,7 +95,6 @@ export function GroupBar({ rail = false }: { rail?: boolean }) {
         )}
       </span>
       {desktop && <button className="icon-btn" title="在新窗口打开当前分组 (Ctrl+Shift+N)" onClick={() => void offerGroupToNewWindow(layout.activeGroupId)} aria-label="新窗口打开分组"><Icon name="external" size={15} /></button>}
-      {rail && <><span className="rail-sep" /><DockRail /></>}
     </div>
   );
 }

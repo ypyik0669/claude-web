@@ -67,7 +67,7 @@ export function AccountRow({ open, setOpen }: { open: boolean; setOpen(v: boolea
   );
 }
 
-function AccountMenu({ auth, name, onClose }: { auth: AccountAuth | null; name: string; onClose: () => void }) {
+export function AccountMenu({ auth, name, onClose, side }: { auth: AccountAuth | null; name: string; onClose: () => void; side?: 'right' }) {
   const limits = useStore((s) => s.limits);
   const [today, setToday] = useState(cachedToday);
   useEffect(() => {
@@ -81,7 +81,7 @@ function AccountMenu({ auth, name, onClose }: { auth: AccountAuth | null; name: 
   const st = useStore.getState;
   const plan = planLabel(limits?.subscriptionType ?? auth?.subscriptionType);
   return (
-    <Menu onClose={onClose} className="sb-acct-menu" align="left" prefer="up" label="账户">
+    <Menu onClose={onClose} className="sb-acct-menu" align="left" prefer="up" side={side} label="账户">
       <div className="acct-head">
         <div className="nm">{name}</div>
         <div className="sub">{[auth?.email, plan].filter(Boolean).join(' · ') || (auth?.loggedIn === false ? '没有登录 Claude 账号' : '')}</div>

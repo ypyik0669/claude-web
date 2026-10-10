@@ -29,7 +29,7 @@ export const usePhoneDrawer = create<{ held: boolean }>(() => ({ held: false }))
 type AppState = ReturnType<typeof useStore.getState>;
 
 /** Where an opening swipe may not start (besides text fields and whatever takes a touch itself). */
-const NO_SWIPE = `${OWN_TOUCH}, .starters, .auto-page, [data-no-swipe]`;
+const NO_SWIPE = `${OWN_TOUCH}, .starters, .over-page, [data-no-swipe]`;
 /** The scrollers whose sideways moves are ours (the style sheet's `touch-action: pan-y`): a wide one is panned by hand. */
 const OURS = '.chat, .welcome';
 /** Something modal lies over the conversation. */

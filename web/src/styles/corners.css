@@ -3,7 +3,7 @@
    size. Loaded last: these are the same single-class selectors as the surfaces' own rules, so anything more specific
    (a phone's edge-to-edge pane, the settings page, the icon rail) still wins. */
 @supports (corner-shape: superellipse(1.3)) {
-  .pane, .rpanel, .sp-main, .auto-page { corner-shape: superellipse(1.3); border-radius: calc(var(--r-card) * 1.15); }
+  .pane, .rpanel, .sp-main, .over-page { corner-shape: superellipse(1.3); border-radius: calc(var(--r-card) * 1.15); }
   .composer-box, .modal, .cmdk, .pdock { corner-shape: superellipse(1.3); border-radius: calc(var(--r-2xl) * 1.15); }
   .menu, .sp-card, .rv-file, .fcard { corner-shape: superellipse(1.3); }
 }

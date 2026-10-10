@@ -206,6 +206,23 @@ export interface ProxyStatus {
   checkedAt: number;
 }
 
+// ---- 联网: web search + the built-in browser, for every agent (server/src/web) ----
+/** One operation on the built-in browser. Args: open `{url}`, read `{offset?, maxChars?}`, find `{query}`, click `{ref}`,
+ *  type `{ref, text, submit?}`, key `{key}`, scroll `{direction: 'up' | 'down', amount?}`, back `{}`, screenshot `{}`. */
+export type BrowserOp = 'open' | 'read' | 'find' | 'click' | 'type' | 'key' | 'scroll' | 'back' | 'screenshot';
+/** Something on the page the agent can act on (`ref` goes back in click / type). */
+export interface BrowserElement { ref: string; role: string; name: string; value?: string; href?: string }
+/** A page as text. `text` starts at the offset that was asked for (0 for open); `nextOffset` is where the rest begins. */
+export interface BrowserPage { url: string; title: string; text: string; truncated?: boolean; nextOffset?: number; elements?: BrowserElement[] }
+/** Sent to the ONE window hosting the browser (`browser.command`); it answers with the request `browser.result` and the same id. */
+export interface BrowserCommand { id: string; sessionId: string; op: BrowserOp; args: Record<string, unknown> }
+export interface BrowserAnswer { page?: BrowserPage; elements?: BrowserElement[]; image?: { mime: 'image/jpeg' | 'image/png'; data: string }; note?: string }
+/** `web.status`: the switch (`web.mcp`), the search engine, whether a desktop window is hosting the browser. Keys never leave the server. */
+export interface WebStatus { enabled: boolean; engine: string; engines: { id: string; label: string; needsKey: boolean; hasKey?: boolean }[]; host: boolean; isolated: boolean }
+export interface WebSearchResult { title: string; url: string; snippet: string }
+/** What `web.search` answers (the settings page's 「试一下」). `weak`: the results match little of the query (Bing answering a program) and nothing better was to be had. */
+export interface WebSearchAnswer { engine: string; results: WebSearchResult[]; weak?: boolean }
+
 export interface AgentInfo {
   kind: AgentKind;
   name: string;
@@ -239,7 +256,8 @@ export interface AgentInfo {
 /** Optional per-session switches. Each maps to a CLI flag or env var; unknown to the engine = ignored/error. */
 export interface SessionFeatures {
   chrome?: boolean; // --chrome (Claude in Chrome MCP)
-  computerUse?: boolean; // --computer-use-mcp (ccb)
+  /** kept for stored defaults; ignored — the engine has computer use only in its own terminal interface (session-runner featureArgs) */
+  computerUse?: boolean;
   coordinator?: boolean; // CLAUDE_CODE_COORDINATOR_MODE=1 (ccb)
   proactive?: boolean; // --proactive (ccb)
   brief?: boolean; // --brief (SendUserMessage tool)
@@ -547,6 +565,15 @@ export type ClientRequest =
   | { kind: 'library.reindex' }
   | { kind: 'library.join'; kind_: AgentKind; joined: boolean }
   | { kind: 'library.dismiss'; kind_: AgentKind }
+  // ---- 联网 (server/src/web): the settings live in settings.set `web.mcp` / `web.search.engine` / `web.search.tavilyKey` /
+  // `web.search.braveKey` (keys come back masked) / `web.browser.isolated` ----
+  /** This window hosts the built-in browser (a desktop window only: refused from a phone or another machine). The most recent one gets the commands. */
+  | { kind: 'browser.host'; on: boolean }
+  /** The answer to a `browser.command` event, from the window it was sent to. */
+  | { kind: 'browser.result'; id: string; ok: boolean; answer?: BrowserAnswer; error?: string }
+  | { kind: 'web.status' }
+  /** One search with the configured engine → WebSearchAnswer. */
+  | { kind: 'web.search'; query: string; count?: number }
   | GatewayRequest
   // ---- other agents' configuration center (phase 17) ----
   | AgentConfigRequest
@@ -586,6 +613,10 @@ export type ServerEvent =
   | { kind: 'library.discovered'; kinds: AgentKind[] }
   // a library mutation (join / leave / rename / archive / delete / fork) — refetch sessions.list
   | { kind: 'library.changed' }
+  /** Sent to one connection only: the window that announced `browser.host`. */
+  | { kind: 'browser.command'; command: BrowserCommand }
+  /** `web.status` would answer differently now (a host came or went, a setting changed). */
+  | { kind: 'web.changed' }
   | GatewayEvent
   | PeerEvent
   | OrchestraEvent;

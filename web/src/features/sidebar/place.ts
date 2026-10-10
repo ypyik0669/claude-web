@@ -6,14 +6,23 @@ export interface MenuSpot { left: number; top: number; maxHeight?: number }
 
 const EDGE = 8;
 const GAP = 2;
+const SIDE_GAP = 8;
 
 /**
  * Below the anchor (or above with `prefer: 'up'`) when it fits, else the other side, else pinned to the top
  * with a max height. Right-aligned to the anchor's right edge (6px in, clear of the row's ··· button) by
  * default, left-aligned on request; always inside the window.
+ *
+ * `side: 'right'`: beside the anchor instead (the icon rail's menus) — its top edge level with the anchor's, or its
+ * bottom edge with `prefer: 'up'` (a menu at the foot of the rail).
  */
-export function placeFixed(a: AnchorRect, size: { w: number; h: number }, view: { vw: number; vh: number }, o: { align?: 'left' | 'right'; prefer?: 'down' | 'up' } = {}): MenuSpot {
+export function placeFixed(a: AnchorRect, size: { w: number; h: number }, view: { vw: number; vh: number }, o: { align?: 'left' | 'right'; prefer?: 'down' | 'up'; side?: 'right' } = {}): MenuSpot {
   const { w, h } = size, { vw, vh } = view;
+  if (o.side === 'right') {
+    const sx = Math.max(EDGE, Math.min(a.right + SIDE_GAP, vw - w - EDGE));
+    if (h > vh - 2 * EDGE) return { left: sx, top: EDGE, maxHeight: vh - 2 * EDGE };
+    return { left: sx, top: Math.max(EDGE, Math.min(o.prefer === 'up' ? a.bottom - h : a.top, vh - h - EDGE)) };
+  }
   const x = o.align === 'left' ? a.left : a.right - w - 6;
   const left = Math.max(EDGE, Math.min(x, vw - w - EDGE));
   const below = h <= vh - a.bottom - EDGE, above = h <= a.top - EDGE;

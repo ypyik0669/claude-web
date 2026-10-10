@@ -20,7 +20,9 @@ import { hintReady, makeProjectSpelled, projectsEmpty } from './newcomer';
 import { CHECKLIST_KEY } from '@/features/home/model';
 import { closeDrawer } from './menus';
 import { anchoredMenuOpen } from '@/ui/menus';
-import { openAutomation, useAutomation } from '@/features/automation/state';
+import { openAutomation } from '@/features/automation/state';
+import { openExtensions } from '@/features/extensions/state';
+import { useSection } from '@/features/sections';
 import type { ProjectMenuId, ProjectsHeadId, RowId, SectionId, TopId } from './entries';
 
 /** Ids of conversations that must stay in view past a group's cut: running / waiting ones (a stable string, not the `open` map). */
@@ -51,7 +53,8 @@ function escForSidebar(e: KeyboardEvent): boolean {
 }
 
 /**
- * The sidebar (spec 2026-09-28 §5.1): 新对话 · 搜索 · 自动化; 「需要你」 while something waits; conversations by
+ * The sidebar (spec 2026-09-28 §5.1; structure round 2: at desktop width this is the 对话 section's sidebar, next to
+ * the icon rail): 新对话 · 搜索 (· 自动化 · 扩展 on a phone); 「需要你」 while something waits; conversations by
  * project — each row a title and one status at its end; source / machine / archived / multi-select behind the
  * funnel on the 项目 row; the account row (quota ring, settings) at the bottom. Every entry point of the old sidebar
  * is listed in entries.ts (and asserted there and by ui-smoke).
@@ -71,7 +74,10 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const sourceFilter = useStore((s) => s.sourceFilter);
   const setSourceFilter = useStore((s) => s.setSourceFilter);
   const busy = useStore(busyIds);
-  const autoOpen = useAutomation((s) => s.open);
+  const section = useSection();
+  // at desktop width the icon rail has 搜索's neighbours (自动化 · 扩展), the sidebar's switch, 设置 and the account
+  // (structure round 2); a phone has no rail: they stay in its drawer
+  const mobile = useStore((s) => s.mobile);
   const [q, setQ] = useState('');
   // the sidebar's one open menu: `filter` · `account` · `proj:<id>` · `row:<list|attn>:<id>` (opening one closes the others)
   const [menu, setMenu] = useState<string | null>(null);
@@ -206,13 +212,18 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     <>
       <div className="sb-top">
         <span className="brand"><span className="logo"><Icon name="claude" size={18} /></span>Claude Web</span>
-        <button className="icon-btn" data-id={top('collapse')} title={`收起侧栏 (${modKey}+B)`} aria-label="收起侧栏" onClick={() => useStore.setState({ sidebarOpen: false })}><Icon name="sidebar" size={16} /></button>
+        {mobile
+          ? <button className="icon-btn" data-id={top('collapse')} title={`收起侧栏 (${modKey}+B)`} aria-label="收起侧栏" onClick={() => useStore.setState({ sidebarOpen: false })}><Icon name="sidebar" size={16} /></button>
+          : <button className="icon-btn sb-find" data-id={top('search')} title={`搜索对话、命令和设置 (${modKey}+K)`} aria-label="搜索" onClick={() => useStore.setState({ paletteOpen: true })}><Icon name="search" size={16} /></button>}
       </div>
       <nav className="sb-nav" aria-label="导航">
-        <button className={clsx('nav', !activeId && !autoOpen && 'active')} data-id={top('new')} onClick={() => { onNew(); closeDrawer(); }}><Icon name="edit" size={16} />新对话<span className="k">{desktop ? `${modKey} N` : 'Alt N'}</span></button>
-        <button className="nav" data-id={top('search')} title="搜索对话、命令和设置" onClick={() => { useStore.setState({ paletteOpen: true }); closeDrawer(); }}><Icon name="search" size={16} />搜索<span className="k">{modKey} K</span></button>
-        {/* 自动化 → the automation page (定时任务 · 目标 · 编排, spec §5.9) over the main area, on the tab shown last */}
-        <button className={clsx('nav', autoOpen && 'active')} data-id={top('automation')} title="定时任务、目标、编排" aria-pressed={autoOpen} onClick={() => { setMenu(null); openAutomation(); }}><Icon name="tasks" size={16} />自动化</button>
+        <button className={clsx('nav', !activeId && section === 'chat' && 'active')} data-id={top('new')} onClick={() => { onNew(); closeDrawer(); }}><Icon name="edit" size={16} />新对话<span className="k">{desktop ? `${modKey} N` : 'Alt N'}</span></button>
+        {mobile && <>
+          <button className="nav" data-id={top('search')} title="搜索对话、命令和设置" onClick={() => { useStore.setState({ paletteOpen: true }); closeDrawer(); }}><Icon name="search" size={16} />搜索<span className="k">{modKey} K</span></button>
+          {/* 自动化 → the automation page (定时任务 · 目标 · 编排, spec §5.9) over the main area, on the tab shown last */}
+          <button className={clsx('nav', section === 'automation' && 'active')} data-id={top('automation')} title="定时任务、目标、编排" aria-pressed={section === 'automation'} onClick={() => { setMenu(null); openAutomation(); }}><Icon name="tasks" size={16} />自动化</button>
+          <button className={clsx('nav', section === 'extensions' && 'active')} data-id={top('extensions')} title="连接器、Skills、插件" aria-pressed={section === 'extensions'} onClick={() => { setMenu(null); openExtensions(); }}><Icon name="extensions" size={16} />扩展</button>
+        </>}
       </nav>
       <NeedsYou ctx={ctx} />
       <div className={clsx('sb-list', selecting && 'selecting')}>
@@ -343,7 +354,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         )}
       </div>
       {pending.length > 0 && hintOk && <DiscoveryHint pending={pending} />}
-      <AccountRow open={menu === 'account'} setOpen={(v) => (v ? setMenu('account') : closeMenu('account'))} />
+      {mobile && <AccountRow open={menu === 'account'} setOpen={(v) => (v ? setMenu('account') : closeMenu('account'))} />}
     </>
   );
 }

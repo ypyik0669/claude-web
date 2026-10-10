@@ -22,6 +22,7 @@ import { sessionRefMarker } from '@/model/conversation';
 import { SessionRefChip } from '@/features/chat/ChatView';
 import { REFERENCE_EVENT, handOver, type ReferenceDetail } from '@/features/sidebar/session-actions';
 import { ModelChip } from '@/features/models/ModelMenu';
+import { EffortChip } from '@/features/models/EffortChip';
 import { OWN_PROVIDER, effectiveRuntime, usableProfile, type AgentSource, type ModelMenuItem } from '@/features/models/menu';
 import { mergeResume, resumeView } from '@/store/reopen';
 import { routePick, switchedNote } from '@/features/models/route';
@@ -39,10 +40,10 @@ import { PermissionChip } from './PermissionChip';
 import { BranchChip, ProjectChip } from './ProjectChip';
 import { ContextMeter } from './ContextMeter';
 import { BAR_ID } from './ids';
-import { FEATURE_DEFAULTS_KEY, LEGACY_FEATURES_KEY, capabilityTags, migrateFeatureDefaults, withoutTag } from './capabilities';
+import { FEATURE_DEFAULTS_KEY, LEGACY_FEATURES_KEY, capabilityTags, migrateFeatureDefaults, usable, withoutTag } from './capabilities';
 import { FILL_EVENT, type FillDetail } from './fill';
 import { applyStarter, initialCwd } from '@/features/home/model';
-import { useAutomation } from '@/features/automation/state';
+import { usePageOpen } from '@/features/sections';
 import { composerCovered } from './covered';
 import { glowing, sendFace } from './send-state';
 
@@ -170,7 +171,8 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // the capabilities (+ menu): one set of defaults for new conversations in meta.json, so every composer on screen
   // (and the next start of the desktop app) sees the same
   const storedFeatures = settings[FEATURE_DEFAULTS_KEY];
-  const featDefaults: SessionFeatures = isFeatures(storedFeatures) ? storedFeatures : NO_FEATURES;
+  // (a stored default for something that cannot be turned on from here — 操控电脑 — is left out)
+  const featDefaults: SessionFeatures = useMemo(() => (isFeatures(storedFeatures) ? usable(storedFeatures) : NO_FEATURES), [storedFeatures]);
   const metaLoaded = useStore((s) => s.metaLoaded);
   useEffect(() => { if (metaLoaded) migrateFeaturesOnce(); }, [metaLoaded]);
   const setFeatures = (f: SessionFeatures) => { void useStore.getState().setSetting(FEATURE_DEFAULTS_KEY, f).catch((e) => toast(e.message)); };
@@ -291,7 +293,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // of sight too (review I1): the settings page, the automation page, a phone's bottom drawer, the shortcut sheet, the
   // command palette, an in-app dialog (re-review M-4) — closing one gives the
   // focus back to this box, and the Enter right after it must not answer a card the user never saw
-  const autoOver = useAutomation((s) => s.open);
+  const autoOver = usePageOpen();
   // the 接一个模型 dialog is a dialog too: an Enter meant for it must not answer a docked card underneath
   const dlgOpen = useDialogStore((s) => s.queue.length > 0);
   const connectOpen = useConnect((s) => !!s.req);
@@ -712,7 +714,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     <button data-id={BAR_ID.mic} className={clsx('icon-btn', listening && 'active')} title={listening ? '停止语音输入' : '语音输入（浏览器识别）'} onClick={toggleVoice} aria-label="语音输入"><Icon name="mic" size={15} /></button>
   ) : null;
 
-  let model: React.ReactNode = null, permission: React.ReactNode = null, meter: React.ReactNode = null, status: React.ReactNode = null;
+  let model: React.ReactNode = null, effort: React.ReactNode = null, permission: React.ReactNode = null, meter: React.ReactNode = null, status: React.ReactNode = null;
   if (welcome) {
     const t = modelChipText({ agent: wKind, agentName: agent?.name, providers, providerId: provider?.id, model: wModel, builtin: wBuiltin, agentDefault: agent?.model || undefined, efforts: wEfforts, effort: wEffortOk, defaultEffort: wView.defaultLevel, ultracode: wUltracode && wUltra, accountDefault });
     model = (
@@ -720,15 +722,19 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         agent={wKind}
         current={{ providerId: provider ? provider.id : 'claude', model: wModel }}
         label={t.main}
-        suffix={t.suffix}
-        title={`${t.main}${t.isDefault ? '（默认）' : ''}${t.suffix ? ` · ${t.suffix}` : ''}\n用哪个模型、想多深：Agent、供应商、模型、${TERMS.effort}、${TERMS.ultracode}都在这里`}
+        title={`${t.main}${t.isDefault ? '（默认）' : ''}\n用哪个模型：Agent、供应商、模型都在这里`}
         builtin={wBuiltin}
         builtinTitle={agent ? `${agent.name} 账号` : 'Claude 账号'}
         agentDefault={agent?.model || undefined}
         otherAgents={otherAgents}
+        onPick={pickWelcome}
+      />
+    );
+    effort = (
+      <EffortChip
+        compact={mobile}
         intelligence={{ levels: wEfforts, value: wEffortOk, defaultLevel: wView.defaultLevel, mode: wView.mode, onChange: (effort) => { const next = mergeResume({ effort: wEffort || undefined, ultracode: wUltra }, { effort }); setWEffort(effort); setWUltra(!!next.ultracode); } }}
         ultracode={wUltracode ? { on: wUltra, onChange: setWUltra } : undefined}
-        onPick={pickWelcome}
       />
     );
     permission = <PermissionChip mode={wMode} compact={mobile} onPick={(m) => { modeTouched.current = true; setWMode(m); }} />;
@@ -743,19 +749,24 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         agent={liveAgent}
         current={{ providerId: remote ? 'claude' : liveProvider, model: info.model }}
         label={remote ? remoteLabel : t.main}
-        suffix={t.suffix}
-        title={remote ? '模型（其它机器上的对话：换供应商请在那台机器上操作）' : `${t.main}${t.isDefault ? '（默认）' : ''}${t.suffix ? ` · ${t.suffix}` : ''}\n同一供应商直接换模型；换供应商会无感重启对话；选其它 Agent 的模型 = 交给它继续`}
+        title={remote ? '模型（其它机器上的对话：换供应商请在那台机器上操作）' : `${t.main}${t.isDefault ? '（默认）' : ''}\n同一供应商直接换模型；换供应商会无感重启对话；选其它 Agent 的模型 = 交给它继续`}
         builtin={(remote || liveProvider === 'claude') && info.models?.length ? info.models : undefined}
         builtinTitle={remote ? info.providerName ?? info.agentName ?? '模型' : liveAgent === 'claude' ? 'Claude 账号' : `${info.agentName ?? liveAgent} 账号`}
         agentDefault={liveAgentDefault}
         lockProvider={remote ? 'claude' : undefined}
         lockNote="其它机器上的对话：只能换模型，换供应商请在那台机器上操作"
         otherAgents={remote ? undefined : otherAgents}
-        intelligence={{ levels: liveEfforts, value: info.effort, defaultLevel: defaultEffort, mode: liveModel?.effortMode ?? liveView.mode, onChange: setEffort }}
-        ultracode={ultraOk ? { on: !!info.ultracode, onChange: setUltracode } : undefined}
         busy={swapping}
         disabled={swapping}
         onPick={pickLive}
+      />
+    );
+    effort = (
+      <EffortChip
+        compact={mobile}
+        disabled={swapping}
+        intelligence={{ levels: liveEfforts, value: info.effort, defaultLevel: defaultEffort, mode: liveModel?.effortMode ?? liveView.mode, onChange: setEffort }}
+        ultracode={ultraOk ? { on: !!info.ultracode, onChange: setUltracode } : undefined}
       />
     );
     permission = <PermissionChip mode={info.permissionMode ?? 'default'} compact={mobile} onPick={setMode} />;
@@ -778,18 +789,23 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         agent={rAgent}
         current={{ providerId: rProvider, model: v.model }}
         label={t.main}
-        suffix={t.suffix}
-        title={`${t.main}${t.isDefault ? '（默认）' : ''}${t.suffix ? ` · ${t.suffix}` : ''}${lastHint}\n对话没在运行：发送后用这里选的模型继续${remote ? '' : '；选其它 Agent 的模型 = 交给它继续'}`}
+        title={`${t.main}${t.isDefault ? '（默认）' : ''}${lastHint}\n对话没在运行：发送后用这里选的模型继续${remote ? '' : '；选其它 Agent 的模型 = 交给它继续'}`}
         builtinTitle={rAgent === 'claude' ? 'Claude 账号' : `${agents.find((a) => a.kind === rAgent)?.name ?? rAgent} 账号`}
         agentDefault={resumeAgentDefault}
         lockProvider={remote ? 'claude' : undefined}
         lockNote="其它机器上的对话：只能换模型，换供应商请在那台机器上操作"
         otherAgents={remote ? undefined : otherAgents}
-        intelligence={{ levels: rEfforts, value: v.effort, defaultLevel: rView.defaultLevel, mode: rView.mode, onChange: (effort) => setResume(sid, { effort }) }}
-        ultracode={rUltraOk ? { on: v.ultracode, onChange: (on) => setResume(sid, { ultracode: on }) } : undefined}
         busy={swapping}
         disabled={swapping}
         onPick={(it) => pickResume(it, v)}
+      />
+    );
+    effort = (
+      <EffortChip
+        compact={mobile}
+        disabled={swapping}
+        intelligence={{ levels: rEfforts, value: v.effort, defaultLevel: rView.defaultLevel, mode: rView.mode, onChange: (effort) => setResume(sid, { effort }) }}
+        ultracode={rUltraOk ? { on: v.ultracode, onChange: (on) => setResume(sid, { ultracode: on }) } : undefined}
       />
     );
     permission = <PermissionChip mode={v.permissionMode} compact={mobile} onPick={(m) => setResume(sid, { permissionMode: m })} />;
@@ -879,6 +895,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
             status={status}
             meter={meter}
             model={model}
+            effort={effort}
             permission={permission}
             mic={mic}
             steer={steer}

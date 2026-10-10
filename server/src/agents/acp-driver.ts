@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import type { AgentKind, AttachmentRef, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, RunnerState, SessionInfoSnapshot } from '../protocol.js';
 import { JsonRpcProcess } from './jsonrpc.js';
 import { acpMcpServers } from '../memory/launcher.js';
+import { webAcpMcpServers } from '../web/launcher.js';
 import { MessageSynth, mapToolName } from './normalize.js';
 import type { AgentTranscripts } from './transcript.js';
 import type { AgentDriver } from './types.js';
@@ -81,8 +82,9 @@ export class AcpDriver extends EventEmitter implements AgentDriver {
       if (!(await this.transcripts.exists(this.sessionId))) await this.transcripts.create({ agent: this.kind, cwd: this.cwd, title: '', createdAt: Date.now(), sessionId: this.sessionId, model: this.model });
       const head = await this.transcripts.head(this.sessionId);
       let loaded = false;
-      // the shared memory store, handed to the agent inline — we never touch its own settings file
-      const mcpServers = acpMcpServers({ cwd: this.cwd, sessionId: this.sessionId, agent: this.kind });
+      // the shared memory store and 联网 (web search + the built-in browser), handed to the agent inline — we never
+      // touch its own settings file
+      const mcpServers = [...acpMcpServers({ cwd: this.cwd, sessionId: this.sessionId, agent: this.kind }), ...webAcpMcpServers({ sessionId: this.sessionId })];
       if (params.sessionId && head?.nativeSessionId && this.caps.loadSession) {
         try { await rpc.request('session/load', { sessionId: head.nativeSessionId, cwd: this.cwd, mcpServers }, 120_000); this.acpSessionId = head.nativeSessionId; loaded = true; } catch { /* fall back to a fresh session */ }
       }
@@ -92,7 +94,7 @@ export class AcpDriver extends EventEmitter implements AgentDriver {
           try { return await rpc.request('session/new', { cwd: this.cwd, mcpServers }, 120_000); } catch (e) {
             if (!mcpServers.length) throw e;
             const r = await rpc.request('session/new', { cwd: this.cwd, mcpServers: [] }, 120_000);
-            this.push(this.synth.systemNote(`${this.launch.name} 不接受共享记忆 MCP，已改为不带它启动。`, 'warning'));
+            this.push(this.synth.systemNote(`${this.launch.name} 不接受${mcpServers.map((s) => (s.name === 'web' ? '联网' : '共享记忆')).join(' / ')} MCP，已改为不带它启动。`, 'warning'));
             return r;
           }
         };
