@@ -79,7 +79,7 @@ export const BODY_INFO: Record<BodyId, { l: string; keywords: string }> = {
   agents: { l: '其它 Agent 列表', keywords: 'agent codex gemini qwen kimi opencode acp 安装 登录 启动参数 配置中心 自定义' },
   subagents: { l: 'Claude 子代理列表', keywords: 'subagent 子代理 agents md' },
   memory: { l: '记忆开关与注入', keywords: 'memory 记忆 跨 agent mcp sqlite 遗忘 清空 注入' },
-  web: { l: '搜索与内置浏览器', keywords: 'web search browser 搜索 浏览器 联网 上网 网页 bing duckduckgo tavily brave 密钥 截图 登录状态' },
+  web: { l: '搜索与内置浏览器', keywords: 'web search browser 搜索 浏览器 联网 上网 网页 bing duckduckgo google yahoo baidu 百度 brave 密钥 截图 登录状态' },
   remote: { l: '手机访问', keywords: 'remote lan phone mobile 手机 局域网 配对 配对码 二维码 qr 设备 吊销 端口 在外面也能用 外网 anywhere 在哪都能用 配对链接 不让电脑睡眠 睡眠 休眠 keep awake 直连 慢速转发' },
   anywhere: { l: '牵线服务器与最近连接', keywords: 'anywhere 在外面也能用 牵线 broker mqtt stun ice webrtc 打洞 转发 relay 手机页面 壳 shell github pages 最近连接 连接记录' },
   peers: { l: '其它电脑', keywords: '其它机器 其它电脑 跨机器 联邦 peer federation 加入 重新配对' },

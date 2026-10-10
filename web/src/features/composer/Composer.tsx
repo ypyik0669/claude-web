@@ -40,7 +40,7 @@ import { PermissionChip } from './PermissionChip';
 import { BranchChip, ProjectChip } from './ProjectChip';
 import { ContextMeter } from './ContextMeter';
 import { BAR_ID } from './ids';
-import { FEATURE_DEFAULTS_KEY, LEGACY_FEATURES_KEY, capabilityTags, migrateFeatureDefaults, usable, withoutTag } from './capabilities';
+import { FEATURE_DEFAULTS_KEY, LEGACY_FEATURES_KEY, afterStart, capabilityTags, migrateFeatureDefaults, usable, withoutTag } from './capabilities';
 import { FILL_EVENT, type FillDetail } from './fill';
 import { applyStarter, initialCwd } from '@/features/home/model';
 import { usePageOpen } from '@/features/sections';
@@ -171,8 +171,10 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // the capabilities (+ menu): one set of defaults for new conversations in meta.json, so every composer on screen
   // (and the next start of the desktop app) sees the same
   const storedFeatures = settings[FEATURE_DEFAULTS_KEY];
-  // (a stored default for something that cannot be turned on from here — 操控电脑 — is left out)
-  const featDefaults: SessionFeatures = useMemo(() => (isFeatures(storedFeatures) ? usable(storedFeatures) : NO_FEATURES), [storedFeatures]);
+  // (a stored default for something this machine cannot do — 操控电脑 off Windows — is left out)
+  const canComputer = useStore((s) => s.engine?.computerUse === true);
+  const capEnv = useMemo(() => ({ computer: canComputer }), [canComputer]);
+  const featDefaults: SessionFeatures = useMemo(() => (isFeatures(storedFeatures) ? usable(storedFeatures, capEnv) : NO_FEATURES), [storedFeatures, capEnv]);
   const metaLoaded = useStore((s) => s.metaLoaded);
   useEffect(() => { if (metaLoaded) migrateFeaturesOnce(); }, [metaLoaded]);
   const setFeatures = (f: SessionFeatures) => { void useStore.getState().setSetting(FEATURE_DEFAULTS_KEY, f).catch((e) => toast(e.message)); };
@@ -452,6 +454,8 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         localStorage.setItem('cw.lastAgent', wAgent);
         if (wAgent !== 'claude' && !agent) throw new Error('选中的 agent 已不可用');
         const id = await openSession({ cwd: cwd.trim(), model, permissionMode: wMode, effort, ultracode: wUltracode && wUltra ? true : undefined, worktree: wWorktree || undefined, providerId, features: foreign ? {} : featDefaults, agent: foreign ? wAgent : undefined }, target);
+        // what is asked for anew for every conversation (操控电脑) is off again for the next one
+        if (!foreign && isFeatures(storedFeatures) && afterStart(storedFeatures) !== storedFeatures) setFeatures(afterStart(storedFeatures));
         const uploaded = files.length ? await uploadAll(id) : [];
         await send(id, withRefs(t), im, false, [...atts, ...uploaded]);
         setRefs([]);
@@ -683,7 +687,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // what it was started with (fixed — a launch parameter)
   const claudeHere = welcome ? !foreign : sessionAgent === 'claude';
   const sessionFeatures = info?.features ?? NO_FEATURES;
-  const tags = welcome ? (claudeHere ? capabilityTags(featDefaults) : []) : capabilityTags(sessionFeatures);
+  const tags = welcome ? (claudeHere ? capabilityTags(featDefaults, capEnv) : []) : capabilityTags(sessionFeatures, capEnv);
   const hasChips = imgs.length > 0 || atts.length > 0 || files.length > 0 || refs.length > 0 || !!upload || tags.length > 0 || (welcome && !!wWorktree);
   const insertGoal = () => { const v = text.trim() ? `/goal ${text.trim()}` : '/goal '; onChange(v); requestAnimationFrame(() => { const el = ta.current; if (el) { el.focus(); el.setSelectionRange(v.length, v.length); } }); };
 

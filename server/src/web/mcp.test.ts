@@ -84,7 +84,7 @@ function start(env: Record<string, string>) {
 }
 
 describe('the web MCP server over stdio', () => {
-  it('handshakes, lists the ten tools, and carries each call to the server with the secret and the conversation id', async () => {
+  it('handshakes, lists the eleven tools, and carries each call to the server with the secret and the conversation id', async () => {
     const tokenFile = path.join(dir, 'secret.token');
     fs.writeFileSync(tokenFile, `${SECRET}\n`);
     hits.length = 0;
@@ -97,7 +97,7 @@ describe('the web MCP server over stdio', () => {
       m.notify('notifications/initialized');
       expect((await m.rpc('ping')).result).toEqual({});
       const tools = (await m.rpc('tools/list')).result.tools;
-      expect(tools.map((t: any) => t.name)).toEqual(['web_search', 'browser_open', 'browser_read', 'browser_find', 'browser_click', 'browser_type', 'browser_press_key', 'browser_scroll', 'browser_back', 'browser_screenshot']);
+      expect(tools.map((t: any) => t.name)).toEqual(['web_search', 'browser_open', 'browser_read', 'browser_find', 'browser_click', 'browser_type', 'browser_press_key', 'browser_scroll', 'browser_back', 'browser_screenshot', 'browser_computer']);
       expect(hits).toHaveLength(0); // nothing so far needed the server
 
       const search = (await m.rpc('tools/call', { name: 'web_search', arguments: { query: 'node streams', count: 3 } })).result;

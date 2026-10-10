@@ -3,7 +3,7 @@
 // server reads pages itself.
 import { desktop } from '@/desktop';
 import agentSrc from './page-agent.js?raw';
-import { parseKey, type PageHandle } from './ops';
+import { parseKey, type MouseAct, type PageHandle, type Picture } from './ops';
 import { guestOf, patchTab, tabOf, waitGuest, type WebviewEl } from './state';
 import { loadable } from './url';
 
@@ -25,7 +25,26 @@ async function idle(el: WebviewEl, ms: number): Promise<boolean> {
   }
 }
 
-async function capture(el: WebviewEl): Promise<{ mime: 'image/jpeg' | 'image/png'; data: string }> {
+/** How much longer a page that is still loading is waited for when something has to be asked of it. */
+export const ASK_WAIT_MS = 3_000;
+
+/**
+ * A script runs in a page only once its main frame has stopped loading (Electron holds it until then). A page that
+ * never does — a picture that does not arrive, a connection kept open — would leave every read waiting until the
+ * server gives up on it: it is given a little longer, then its loading is stopped and it is read as it is.
+ */
+async function askable(el: WebviewEl): Promise<void> {
+  const loading = () => { try { return el.isLoadingMainFrame ? el.isLoadingMainFrame() : el.isLoading(); } catch { return false; } };
+  for (const end = Date.now() + ASK_WAIT_MS; loading() && Date.now() < end;) await sleep(100);
+  if (!loading()) return;
+  try { el.stop(); } catch { /* being re-attached */ }
+  await sleep(80);
+}
+
+/** The size of the last picture taken of each tab's page: the frame an Agent's positions are given in. */
+const pictures = new Map<string, { width: number; height: number }>();
+
+async function capture(el: WebviewEl): Promise<Picture> {
   // the shell does it (it can scale and re-encode); a window without the shell's bridge falls back to the tag's own
   if (desktop?.captureGuest) {
     const img = await desktop.captureGuest(el.getWebContentsId());
@@ -37,7 +56,8 @@ async function capture(el: WebviewEl): Promise<{ mime: 'image/jpeg' | 'image/png
   const url = shot && !shot.isEmpty?.() ? shot.toDataURL() : '';
   const m = /^data:(image\/(?:png|jpeg));base64,(.+)$/.exec(url);
   if (!m) throw new Error('这个页面现在截不了图。');
-  return { mime: m[1] as 'image/png' | 'image/jpeg', data: m[2] };
+  const size = shot?.getSize?.();
+  return { mime: m[1] as 'image/png' | 'image/jpeg', data: m[2], ...(size?.width && size.height ? { width: size.width, height: size.height } : {}) };
 }
 
 /**
@@ -52,6 +72,7 @@ export function pageOf(tabId: string): PageHandle {
   };
   const call = async <T>(fn: string, arg: Record<string, unknown>): Promise<T> => {
     const el = await need();
+    await askable(el);
     // the agent script answers {ok, value} | {ok: false, error}: a throw inside the page would otherwise arrive as
     // Electron's own wording
     const r = await el.executeJavaScript<{ ok: boolean; value?: T; error?: string }>(
@@ -103,7 +124,25 @@ export function pageOf(tabId: string): PageHandle {
       await el.sendInputEvent({ type: 'keyUp', keyCode: k.keyCode, ...mods });
     },
     async capture() {
-      return capture(await need());
+      const p = await capture(await need());
+      if (p.width && p.height) pictures.set(tabId, { width: p.width, height: p.height }); else pictures.delete(tabId);
+      return p;
+    },
+    async frame() {
+      const view = await call<{ width: number; height: number }>('view', {});
+      return { picture: pictures.get(tabId) ?? null, view };
+    },
+    async mouse(e: MouseAct) {
+      const el = await need();
+      const mods = e.modifiers?.length ? e.modifiers : [];
+      if (e.type === 'move') await el.sendInputEvent({ type: 'mouseMove', x: e.x, y: e.y, ...(e.held ? { button: e.held, modifiers: [...mods, `${e.held}ButtonDown`] } : mods.length ? { modifiers: mods } : {}) });
+      else if (e.type === 'wheel') await el.sendInputEvent({ type: 'mouseWheel', x: e.x, y: e.y, deltaX: e.dx, deltaY: e.dy, canScroll: true, ...(mods.length ? { modifiers: mods } : {}) });
+      else await el.sendInputEvent({ type: e.type === 'down' ? 'mouseDown' : 'mouseUp', x: e.x, y: e.y, button: e.button, clickCount: e.count, ...(mods.length ? { modifiers: mods } : {}) });
+    },
+    async insertText(text: string) {
+      const el = await need();
+      if (!el.insertText) throw new Error('这个页面现在不能输入文字。');
+      await el.insertText(text);
     },
     url() {
       try { return guestOf(tabId)?.getURL() || tabOf(tabId)?.url || ''; } catch { return tabOf(tabId)?.url ?? ''; }

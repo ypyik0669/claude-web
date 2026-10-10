@@ -7,6 +7,7 @@ import { autoUpdater } from 'electron-updater';
 import { CHECK_EVERY_MS, FIRST_CHECK_MS, firstLine, isRequired, manualDownloadUrl, notesText, releasePage, updateMode, type UpdateMode } from './update-policy';
 import { execFileSync } from 'node:child_process';
 import { captureGuest } from './browser-capture';
+import { cleanUserAgent } from './user-agent';
 import os from 'node:os';
 import { ZOOM_STEPS, cleanZoom, fitWindow, minWindow, nextZoom, scaleCaption, trafficLightY, zoomAsk, zoomLimit, type ZoomAsk } from './zoom';
 
@@ -73,6 +74,9 @@ const host = new ServerHost();
 const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
 
 // ---------- single instance ----------
+// every page this app loads (the built-in browser above all) says it is the Chrome it is built from: see user-agent.ts
+app.userAgentFallback = cleanUserAgent(app.userAgentFallback);
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();

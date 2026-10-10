@@ -1,4 +1,5 @@
 import { webContents, type WebContents } from 'electron';
+import { jpegSize } from './jpeg-size';
 
 /** Wider than this a picture of a page is scaled down (a 4K page as it is would be tens of megabytes for a model to read). */
 export const MAX_WIDTH = 1280;
@@ -10,7 +11,7 @@ export const DRAW_MS = 5000;
  * `desktop.captureGuest`). `id` is the <webview>'s `getWebContentsId()`. Only a page that the asking window itself
  * hosts is drawn; null when there is no such page or nothing could be drawn (in time).
  */
-export async function captureGuest(asker: WebContents, id: unknown): Promise<{ mime: 'image/jpeg'; data: string } | null> {
+export async function captureGuest(asker: WebContents, id: unknown): Promise<{ mime: 'image/jpeg'; data: string; width?: number; height?: number } | null> {
   const guest = typeof id === 'number' ? webContents.fromId(id) : undefined;
   if (!guest || guest.isDestroyed() || guest.hostWebContents !== asker) return null;
   let timer: NodeJS.Timeout | undefined;
@@ -18,5 +19,8 @@ export async function captureGuest(asker: WebContents, id: unknown): Promise<{ m
   const img = await Promise.race([guest.capturePage().catch(() => null), late]).finally(() => clearTimeout(timer));
   if (!img || img.isEmpty()) return null;
   const out = img.getSize().width > MAX_WIDTH ? img.resize({ width: MAX_WIDTH, quality: 'good' }) : img;
-  return { mime: 'image/jpeg', data: out.toJPEG(72).toString('base64') };
+  const jpeg = out.toJPEG(72);
+  // the picture's own size (on a scaled screen it is not the page's): positions an Agent gives are in this frame
+  const size = jpegSize(jpeg);
+  return { mime: 'image/jpeg', data: jpeg.toString('base64'), ...(size ?? {}) };
 }

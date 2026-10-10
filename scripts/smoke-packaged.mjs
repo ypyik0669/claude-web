@@ -161,6 +161,20 @@ try { await run(); } catch (e) { check('smoke run', false, e.stack ?? String(e))
   check('the web MCP server starts from inside the app (Electron as node)', init?.serverInfo?.name === 'claude-web-web' && names.includes('web_search') && names.includes('browser_open') && names.includes('browser_screenshot'), r.error ? r.error.message : `exit ${r.status}: ${init?.serverInfo?.name ?? 'no handshake'}, ${names.length} tools ${String(r.stderr ?? '').trim().slice(0, 200)}`);
 }
 
+// 操控电脑's `computer` MCP server (Windows): the same way — its entry inside app.asar, the app's binary as node
+// (computer/launcher.ts). Only the handshake and the tool list: nothing is looked at or sent.
+if (process.platform === 'win32') {
+  const dir = path.dirname(path.resolve(exe));
+  const entry = path.join(dir, 'resources', 'app.asar', 'server', 'dist', 'computer', 'mcp.js');
+  const say = (id, method, params) => JSON.stringify({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) });
+  const input = [say(1, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'smoke', version: '0' } }), say(2, 'tools/list')].join('\n') + '\n';
+  const r = spawnSync(exe, [entry], { env: { ...env, ELECTRON_RUN_AS_NODE: '1', CW_COMPUTER_ASK_URL: `http://127.0.0.1:${port ?? 9}`, CW_SESSION_ID: 'smoke', CW_COMPUTER_SELF_EXE: path.resolve(exe) }, input, encoding: 'utf8', timeout: 30_000, windowsHide: true });
+  const answers = String(r.stdout ?? '').split('\n').map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  const init = answers.find((a) => a.id === 1)?.result;
+  const names = (answers.find((a) => a.id === 2)?.result?.tools ?? []).map((t) => t.name);
+  check('the computer MCP server starts from inside the app (Electron as node)', init?.serverInfo?.name === 'claude-web-computer' && names.length === 23 && names.includes('request_access') && names.includes('screenshot'), r.error ? r.error.message : `exit ${r.status}: ${init?.serverInfo?.name ?? 'no handshake'}, ${names.length} tools ${String(r.stderr ?? '').trim().slice(0, 200)}`);
+}
+
 // the app's own update check (desktop/src/main.ts): main.log records each step
 {
   const mainLog = () => { try { return readFileSync(path.join(ud, 'main.log'), 'utf8'); } catch { return ''; } };

@@ -5,6 +5,7 @@ import { walkTools } from '@/model/conversation';
 import { Icon } from '@/ui/icons';
 import { sessionPeer } from '@/features/peers';
 import { orchAct, useOrch, useOrchBusy, waitingOf } from '@/features/orchestra/state';
+import { accessAsk, isAccessRequest } from '@/features/computer/computer-tools';
 
 type Lane = 'attention' | 'running' | 'idle' | 'error';
 
@@ -82,6 +83,9 @@ export function MissionPanel() {
                   <div className="t"><span className={clsx('dot', c.o.state)} />{c.title}</div>
                   <div className="sub">{c.peer && <><Icon name="machine" size={11} /> {c.peer.name} · </>}{basename(c.cwd)}{c.meta?.gitBranch ? ` · ${c.meta.gitBranch}` : ''}{c.sched ? ` · ${c.sched.name}` : ''}</div>
                   {c.lane === 'attention' && c.o.pending.map((p) => (
+                    // 操控电脑 asking for applications: which ones and why is on the conversation's own card, and that is
+                    // where it is answered (a click on this card opens it) — no 允许 here, where neither can be read
+                    isAccessRequest(p.toolName) ? <div key={p.requestId} className="perm" data-kind="access" title="打开对话，看它要操控哪些应用再决定">想操控这台电脑上的应用：{accessAsk(p.input as Record<string, unknown>).apps.join('、')}（打开对话再决定）</div> :
                     <div key={p.requestId} className="perm">
                       <span className="mono">{p.toolName}</span> {String((p.input as any).command ?? (p.input as any).file_path ?? (p.input as any).question ?? '').slice(0, 60)}
                       {p.toolName !== 'AskUserQuestion' && p.toolName !== 'ExitPlanMode' && (

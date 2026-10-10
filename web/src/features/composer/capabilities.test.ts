@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionFeatures } from '@shared';
-import { CAPABILITIES, FEATURE_KEYS, LIVE_CAPS_NOTE, capabilityTags, featureCount, migrateFeatureDefaults, parseChannels, plusMenuIds, plusSections, withFeature, withoutTag, UNAVAILABLE_KEYS, usable } from './capabilities';
+import { CAPABILITIES, FEATURE_KEYS, LIVE_CAPS_NOTE, ONE_TIME_KEYS, afterStart, capabilitiesFor, capabilityTags, featureCount, migrateFeatureDefaults, parseChannels, plusMenuIds, plusSections, unavailableKeys, withFeature, withoutTag, usable } from './capabilities';
 
 describe('session capabilities (the old 「功能」 menu, now in +)', () => {
   it('every switch of the old menu is here, in the spec order and groups', () => {
@@ -40,22 +40,51 @@ describe('session capabilities (the old 「功能」 menu, now in +)', () => {
     expect(capabilityTags({})).toEqual([]);
   });
 
-  // 操控电脑: the engine has it only in its own terminal interface (a conversation started from here with its flag
-  // exits at once) — the row stays in the menu to say so, and nothing can turn it on
-  it('a capability that cannot be turned on from here: no tag, not counted, not switched on, dropped from stored defaults', () => {
-    const cu = CAPABILITIES.find((c) => c.key === 'computerUse')!;
-    expect(cu.unavailable).toMatch(/用不了/);
-    expect(cu.unavailable).toMatch(/浏览器/);
-    expect(UNAVAILABLE_KEYS).toEqual(['computerUse']);
-    expect(withFeature({}, 'computerUse', true)).toEqual({});
-    const stored: SessionFeatures = { computerUse: true, chrome: true };
-    expect(capabilityTags(stored).map((t) => t.key)).toEqual(['chrome']);
-    expect(featureCount(stored)).toBe(1);
-    expect(usable(stored)).toEqual({ chrome: true });
+  // 操控电脑 is our own `computer` MCP server, Windows only for now: where the server's machine is not Windows the
+  // row stays in the menu to say so, and nothing can turn it on
+  it('操控电脑 where the machine the server runs on cannot do it: the row says why, no tag, not counted, not switched on, left out of the defaults', () => {
+    for (const env of [undefined, {}, { computer: false }]) {
+      const cu = capabilitiesFor(env).find((c) => c.key === 'computerUse')!;
+      expect(cu.unavailable).toMatch(/只支持 Windows/);
+      expect(cu.unavailable).toMatch(/浏览器/); // where the web part is done instead
+      expect(unavailableKeys(env)).toEqual(['computerUse']);
+      expect(withFeature({}, 'computerUse', true, env)).toEqual({});
+      const stored: SessionFeatures = { computerUse: true, chrome: true };
+      expect(capabilityTags(stored, env).map((t) => t.key)).toEqual(['chrome']);
+      expect(featureCount(stored, env)).toBe(1);
+      expect(usable(stored, env)).toEqual({ chrome: true });
+    }
     const same: SessionFeatures = { chrome: true };
     expect(usable(same)).toBe(same); // nothing to drop: the same object (no new value for a selector)
-    expect(migrateFeatureDefaults(stored, null).value).toEqual({ chrome: true });
-    expect(migrateFeatureDefaults(undefined, JSON.stringify(stored)).value).toEqual({ chrome: true });
+    // the other rows never depend on the machine
+    expect(capabilitiesFor({}).filter((c) => c.unavailable).map((c) => c.key)).toEqual(['computerUse']);
+  });
+
+  it('操控电脑 on Windows: a switch like the others — and its description says the user is asked first', () => {
+    const env = { computer: true };
+    const cu = capabilitiesFor(env).find((c) => c.key === 'computerUse')!;
+    expect(cu.unavailable).toBeUndefined();
+    expect(cu.desc).toMatch(/先问你/);
+    expect(cu.title).toMatch(/只对这一个对话开/);
+    expect(unavailableKeys(env)).toEqual([]);
+    const on = withFeature({ chrome: true }, 'computerUse', true, env);
+    expect(on).toEqual({ chrome: true, computerUse: true });
+    expect(usable(on, env)).toBe(on);
+    expect(capabilityTags(on, env).map((t) => t.label)).toEqual(['控制 Chrome', '操控电脑']);
+    expect(featureCount(on, env)).toBe(2);
+    expect(withFeature(on, 'computerUse', false, env)).toEqual({ chrome: true });
+    expect(withoutTag(on, 'computerUse')).toEqual({ chrome: true });
+  });
+
+  it('…asked for anew for every conversation: after one was started with it, the next starts without', () => {
+    expect(ONE_TIME_KEYS).toEqual(['computerUse']);
+    expect(afterStart({ computerUse: true, chrome: true, channels: ['server:x'] })).toEqual({ chrome: true, channels: ['server:x'] });
+    const kept: SessionFeatures = { chrome: true, brief: true };
+    expect(afterStart(kept)).toBe(kept);
+    // what an older build left in localStorage is taken over without it; what is in meta.json is read as it is
+    // (the machine is not known yet there: `usable` leaves out what it cannot do when the defaults are read)
+    expect(migrateFeatureDefaults(undefined, JSON.stringify({ computerUse: true, chrome: true }))).toEqual({ value: { chrome: true }, write: true, dropLegacy: true });
+    expect(migrateFeatureDefaults({ computerUse: true, chrome: true }, null).value).toEqual({ computerUse: true, chrome: true });
   });
 
   it('channels: a comma / whitespace list, empty entries dropped', () => {

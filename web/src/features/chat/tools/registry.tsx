@@ -8,6 +8,7 @@ import { WebFetchBody, WebSearchBody, SkillBody } from './WebTools';
 import { AgentBody, TodoBody, PlanBody, AskUserBody, ArtifactBody, GoalBody, WorkflowBody } from './AgentTool';
 import { GenericBody } from './McpTool';
 import { WEB_TOOLS, webToolLabel, webToolOf, type WebTool } from '@/features/browser/web-tools';
+import { COMPUTER_TOOLS, computerToolLabel, computerToolOf, type ComputerTool } from '@/features/computer/computer-tools';
 
 export type ToolCategory = 'read' | 'edit' | 'cmd' | 'web' | 'skill' | 'mcp' | 'agent' | 'plan' | 'other';
 
@@ -72,14 +73,26 @@ const WEB = Object.fromEntries(WEB_TOOLS.map((t) => [t, {
   Body: GenericBody,
 } satisfies ToolDef])) as Record<WebTool, ToolDef>;
 
+/** 操控电脑: the `computer` server's tools read as what was done on the desktop, not as 「computer · left_click」. */
+const COMPUTER = Object.fromEntries(COMPUTER_TOOLS.map((t) => [t, {
+  icon: computerToolLabel(t, {}).icon,
+  category: 'other',
+  label: (i) => { const l = computerToolLabel(t, i); return { verb: l.verb, arg: l.arg }; },
+  Body: GenericBody,
+} satisfies ToolDef])) as Record<ComputerTool, ToolDef>;
+
 export function getToolDef(name: string): ToolDef {
-  const web = DEFS[name] ? null : webToolOf(name);
-  return DEFS[name] ?? (web ? WEB[web] : name.startsWith('mcp__') ? MCP : OTHER);
+  if (DEFS[name]) return DEFS[name];
+  const web = webToolOf(name);
+  if (web) return WEB[web];
+  const computer = computerToolOf(name);
+  if (computer) return COMPUTER[computer];
+  return name.startsWith('mcp__') ? MCP : OTHER;
 }
 
 /** "mcp__server__tool" → { server, tool } */
 export function splitMcp(name: string): { server: string; tool: string } | null {
-  if (webToolOf(name)) return null; // drawn with its own words
+  if (webToolOf(name) || computerToolOf(name)) return null; // drawn with their own words
   const m = /^mcp__([^_]+(?:_[^_]+)*?)__(.+)$/.exec(name);
   return m ? { server: m[1], tool: m[2] } : null;
 }

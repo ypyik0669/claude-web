@@ -8,6 +8,7 @@ import { useStore } from '@/store';
 import { showPanel } from '@/features/workbench/right-panel';
 import { runOp } from './ops';
 import { pageOf } from './guest';
+import { searchPage } from './search-page';
 import { AGENT_PARTITION, USER_PARTITION, agentTab, frontTab, guestElOf, hasWebview, newTab, patchTab, tabOf, useBrowser } from './state';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -36,10 +37,12 @@ async function inFront(tabId: string): Promise<void> {
 
 /** One operation, in the tab this conversation's Agent works in (its first `open` makes the tab and shows the browser). */
 export async function carryOut(c: BrowserCommand): Promise<BrowserAnswer> {
+  const isolated = useStore.getState().settings['web.browser.isolated'] === true;
+  // a search has a page of its own, off screen: it must not replace what the conversation has open
+  if (c.op === 'search') return { search: await searchPage(String(c.args?.url ?? ''), isolated ? AGENT_PARTITION : USER_PARTITION) };
   let tab = agentTab(c.sessionId);
   if (!tab) {
     if (c.op !== 'open') throw new Error('这个对话还没有打开网页：先用 browser_open 打开一个网址。');
-    const isolated = useStore.getState().settings['web.browser.isolated'] === true;
     const id = newTab({ agent: c.sessionId, partition: isolated ? AGENT_PARTITION : USER_PARTITION });
     // the Agent's own tab is new: the browser comes to the front once, so what it does is seen
     showPanel('browser');
@@ -47,7 +50,8 @@ export async function carryOut(c: BrowserCommand): Promise<BrowserAnswer> {
   }
   const id = tab.id;
   await onScreen(id);
-  if (c.op === 'screenshot') await inFront(id);
+  // mouse and keyboard by position go by what is drawn, and answer with a picture of it
+  if (c.op === 'screenshot' || c.op === 'computer') await inFront(id);
   patchTab(id, { busy: true });
   try {
     return await runOp(pageOf(id), c.op, c.args ?? {});
@@ -70,6 +74,8 @@ function take(c: BrowserCommand): void {
     // the server may have given up on it (30 s) or the connection may be gone: nothing more to do then
     await ws.request({ kind: 'browser.result', id: c.id, ...msg }).catch(() => {});
   };
+  // searches belong to no conversation and have pages of their own (search-page.ts reads several at once)
+  if (c.op === 'search') { void run(); return; }
   const next = (queues.get(c.sessionId) ?? Promise.resolve()).then(run, run);
   queues.set(c.sessionId, next);
   void next.finally(() => { if (queues.get(c.sessionId) === next) queues.delete(c.sessionId); });

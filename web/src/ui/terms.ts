@@ -148,19 +148,21 @@ export const DOCK_HINT = {
   tool: (agent: string) => `也可以直接在下面输入，告诉 ${agent} 换个做法`,
   plan: () => '也可以直接在下面输入修改意见',
   ask: (agent: string) => `也可以直接在下面输入，不回答这些问题，直接告诉 ${agent}`,
+  access: (agent: string) => `也可以直接在下面输入，不允许，并告诉 ${agent} 为什么`,
 } as const;
 /** The composer's placeholder while a card is docked above it (a plan is approved by a click or Ctrl+Enter only). */
 export const DOCK_PLACEHOLDER = {
   tool: (agent: string) => `告诉 ${agent} 换个做法（发送 = 拒绝并说明）· 空着按 Enter = 允许一次`,
   plan: () => '写下修改意见后按 Enter 发出 · 批准请点「批准并开始」或按 Ctrl+Enter',
   ask: (agent: string) => `直接回复 ${agent}（发送 = 不回答这些问题）`,
+  access: (agent: string) => `告诉 ${agent} 为什么不行（发送 = 不允许并说明）· 允许请点卡片上的按钮`,
 } as const;
 /** The send slot while a card is docked and the box has words. */
-export const DOCK_SEND = { tool: '拒绝并发送', plan: '要求修改', ask: '跳过并发送' } as const;
+export const DOCK_SEND = { tool: '拒绝并发送', plan: '要求修改', ask: '跳过并发送', access: '不允许并发送' } as const;
 /** On the card, when the box already had words before it came: Enter queues them as before (review I3). */
 export const DOCK_CARRIED = '输入框里的话是这张卡出现前写的：按 Enter 照常排队发送，不会当成回答';
 /** The card's secondary button after words were queued: take the queued message back and answer with it. */
-export const DOCK_DENY_QUEUED = { tool: '改用排队的这段话拒绝', plan: '改用排队的这段话要求修改', ask: '改用排队的这段话回复' } as const;
+export const DOCK_DENY_QUEUED = { tool: '改用排队的这段话拒绝', plan: '改用排队的这段话要求修改', ask: '改用排队的这段话回复', access: '改用排队的这段话拒绝' } as const;
 /**
  * On the card, once those words were queued: its secondary button takes them back as the answer (Enter keeps its
  * usual meaning). The button by name — in a narrow card it is not to the right of anything (review M-8).
@@ -169,11 +171,12 @@ export const DOCK_REQUEUED = {
   tool: `那段话已排队发送；想用它拒绝这次操作，点卡片上的「${DOCK_DENY_QUEUED.tool}」`,
   plan: `那段话已排队发送；想把它当修改意见，点卡片上的「${DOCK_DENY_QUEUED.plan}」`,
   ask: `那段话已排队发送；想跳过提问、改发这段话，点卡片上的「${DOCK_DENY_QUEUED.ask}」`,
+  access: `那段话已排队发送；想用它拒绝这次请求，点卡片上的「${DOCK_DENY_QUEUED.access}」`,
 } as const;
 /** The card's status line (`aria-live`, announced after its title): what an empty Enter does on it (review M-6). */
-export const DOCK_STATUS = { tool: '空着按 Enter 允许一次', ask: '选好后空着按 Enter 提交回答', plan: '批准请按 Ctrl+Enter' } as const;
+export const DOCK_STATUS = { tool: '空着按 Enter 允许一次', ask: '选好后空着按 Enter 提交回答', plan: '批准请按 Ctrl+Enter', access: '允许请点卡片上的「允许操控」，按键不会允许' } as const;
 /** An Enter the card did not take (review M-6): in its first moments (`DOCK_COOLDOWN_MS`), or an empty Enter on a plan. */
-export const DOCK_ENTER_IGNORED = { soon: '卡片刚出现，这次 Enter 没有生效：看清楚后再按', plan: '批准请按 Ctrl+Enter' } as const;
+export const DOCK_ENTER_IGNORED = { soon: '卡片刚出现，这次 Enter 没有生效：看清楚后再按', plan: '批准请按 Ctrl+Enter', access: '允许操控电脑要点卡片上的「允许操控」：按键不会允许' } as const;
 /** Words and attachments while a card is docked: a deny carries words only (review M2). */
 export const DOCK_BLOCKED = '附件不能随拒绝一起发出：先处理上面的卡片，或者移除附件';
 /** The setting that opens every change in the conversation again (`ui.inlineDiffs`; off by default since phase 5). */

@@ -663,12 +663,28 @@ function driver() {
       }
       await click('.welcome .cb .plus');
       await shot('composer-plus');
-      // 操控电脑 cannot be turned on from here (the engine has it only in its own terminal interface): the row says so
-      const cuBefore = await js(`(() => { const r = document.querySelector('.menu.plus-menu [data-id="computerUse"]'); return r && { disabled: r.getAttribute('aria-disabled'), text: r.textContent, toggle: !!r.querySelector('.toggle') }; })()`);
-      await js(`document.querySelector('.menu.plus-menu [data-id="computerUse"]').click()`);
-      await sleep(150);
-      const cuAfter = await js(`({ checked: document.querySelector('.menu.plus-menu [data-id="computerUse"]')?.getAttribute('aria-checked'), stored: !!(window.__store.getState().settings['ui.featureDefaults'] || {}).computerUse })`);
-      check('+ → 操控电脑: shown as 暂不可用 with the reason (and where the web is reached instead), no switch, a click changes nothing', !!cuBefore && cuBefore.disabled === 'true' && cuBefore.text.includes('暂不可用') && cuBefore.text.includes('浏览器') && !cuBefore.toggle && cuAfter.checked === 'false' && !cuAfter.stored, JSON.stringify({ cuBefore, cuAfter }));
+      // 操控电脑 (our own `computer` MCP server): a switch where the machine the server runs on can do it (Windows),
+      // a row that says why not elsewhere. engine.info says which
+      await waitFor('!!window.__store.getState().engine', 20_000);
+      const canComputer = await js('window.__store.getState().engine?.computerUse === true');
+      const cuRow = `(() => { const r = document.querySelector('.menu.plus-menu [data-id="computerUse"]'); return r && { disabled: r.getAttribute('aria-disabled'), checked: r.getAttribute('aria-checked'), text: r.textContent, toggle: !!r.querySelector('.toggle'), stored: !!(window.__store.getState().settings['ui.featureDefaults'] || {}).computerUse }; })()`;
+      const cuBefore = await js(cuRow);
+      if (canComputer) {
+        await click('.menu.plus-menu [data-id="computerUse"]');
+        await waitFor(`document.querySelector('.menu.plus-menu [data-id="computerUse"]')?.getAttribute('aria-checked') === 'true'`, 2000);
+        const cuOn = await js(cuRow);
+        const cuTag = await waitFor('!!document.querySelector(\'.welcome .cap-tag[data-cap="computerUse"]\')', 2000);
+        check('+ → 操控电脑 on this machine: a switch that says the user is asked first; on → a removable tag in the text box', !!cuBefore && cuBefore.disabled !== 'true' && cuBefore.toggle && cuBefore.checked === 'false' && /先问你/.test(cuBefore.text) && !cuBefore.text.includes('暂不可用') && cuOn.checked === 'true' && cuOn.stored && cuTag, JSON.stringify({ cuBefore, cuOn, cuTag }));
+        await click('.menu.plus-menu [data-id="computerUse"]');
+        await waitFor(`document.querySelector('.menu.plus-menu [data-id="computerUse"]')?.getAttribute('aria-checked') === 'false'`, 2000);
+        const cuOff = await js(cuRow);
+        check('… and off again: no tag, nothing left in the defaults', cuOff.checked === 'false' && !cuOff.stored && !(await js('!!document.querySelector(\'.welcome .cap-tag[data-cap="computerUse"]\')')), JSON.stringify(cuOff));
+      } else {
+        await js(`document.querySelector('.menu.plus-menu [data-id="computerUse"]').click()`);
+        await sleep(150);
+        const cuAfter = await js(cuRow);
+        check('+ → 操控电脑 where this machine cannot do it: shown as 暂不可用 with the reason (and where the web is reached instead), no switch, a click changes nothing', !!cuBefore && cuBefore.disabled === 'true' && cuBefore.text.includes('暂不可用') && cuBefore.text.includes('Windows') && cuBefore.text.includes('浏览器') && !cuBefore.toggle && cuAfter.checked === 'false' && !cuAfter.stored, JSON.stringify({ cuBefore, cuAfter }));
+      }
       await click('.menu.plus-menu [data-id="chrome"]');
       const on = await js(`document.querySelector('.menu.plus-menu [data-id="chrome"]').getAttribute('aria-checked')`);
       await key('Escape');
@@ -2637,6 +2653,51 @@ function driver() {
         const planCtrl = await sentFor('smoke-plan');
         check('a plan: an empty Enter does nothing, Ctrl+Enter approves (the placeholder says so)', planEnter === '[]' && /^\[\{"behavior":"allow"/.test(planCtrl) && /Ctrl\+Enter/.test(planPh), JSON.stringify({ planEnter, planCtrl, planPh }));
         check('…and the empty Enter on a plan says 「批准请按 Ctrl+Enter」 (on the card and in its status line, review M-6)', /批准请按 Ctrl\+Enter/.test(planNote.note ?? '') && /批准请按 Ctrl\+Enter/.test(planNote.live ?? ''), JSON.stringify(planNote));
+        await setOpen(`pending: []`);
+        await sleep(300);
+        // 操控电脑 asking which applications it may control: its own card (the reason, the applications, what a yes
+        // means). The whole desktop is behind that yes: no key gives it — Enter and Ctrl+Enter do nothing and say so —
+        // only the card's button
+        await setOpen(`pending: [${stageReq('smoke-access', 'mcp__computer__request_access', "{ apps: ['记事本', 'Paint'], reason: '把这段话写进记事本', clipboardWrite: true }")}], state: 'idle'`);
+        await click('.pane.focused .composer textarea');
+        await sleep(800);
+        const acc = await js(`(() => { const c = document.querySelector('.pane.focused .composer'); const d = c.querySelector('.pdock'); if (!d) return null; const r = (el) => { const b = el?.getBoundingClientRect(); return b ? { w: Math.round(b.width), h: Math.round(b.height) } : null; }; return { kind: d.dataset.kind, title: d.querySelector('.pd-title')?.textContent, why: d.querySelector('.pd-why')?.textContent, apps: [...d.querySelectorAll('.pd-apps .pd-app')].map((a) => a.textContent), notes: [...d.querySelectorAll('.pd-access .pd-note')].map((n) => n.textContent), allow: d.querySelector('[data-act="allow"]')?.textContent, deny: d.querySelector('[data-act="deny"]')?.textContent, always: !!d.querySelector('[data-act="always"]'), chip: r(d.querySelector('.pd-app')), list: getComputedStyle(d.querySelector('.pd-apps')).listStyleType, placeholder: c.querySelector('textarea').placeholder, live: d.querySelector('.pd-live')?.textContent ?? null }; })()`);
+        check('操控电脑\'s access request has its own card: the title, the reason, the applications as chips, what else it asked for, what a yes means',
+          !!acc && acc.kind === 'access' && /想操控这台电脑上的 2 个应用/.test(acc.title ?? '') && /把这段话写进记事本/.test(acc.why ?? '') && acc.apps.join('|') === '记事本|Paint' && acc.notes.some((n) => /写剪贴板/.test(n)) && acc.notes.some((n) => /只对这一个对话有效/.test(n)) && acc.chip && acc.chip.h >= 24 && acc.chip.h <= 40 && acc.list === 'none', JSON.stringify(acc));
+        check('… its buttons are 不允许 and 允许操控 (no 总是允许), and the box and the status line say a key will not allow it',
+          !!acc && acc.allow === '允许操控' && acc.deny === '不允许' && !acc.always && /允许请点卡片上的按钮/.test(acc.placeholder) && /按键不会允许/.test(acc.live ?? ''), JSON.stringify(acc));
+        await sleep(400);
+        await shot('chat-access');
+        // 总览 lists it — in words, and without an 允许: there neither the applications' card nor the reason can be read
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'mission' })`);
+        const mcAccess = await waitFor(`!!document.querySelector('.dock-panel[data-panel="mission"]:not([hidden]) .mcard .perm[data-kind="access"]')`, 4000);
+        const mcLine = await js(`(() => { const l = document.querySelector('.dock-panel[data-panel="mission"] .mcard .perm[data-kind="access"]'); return l && { text: l.textContent, buttons: l.querySelectorAll('button').length }; })()`);
+        check('总览 lists the access request in words, with no 允许 there (it is answered on the conversation\'s card)', mcAccess && !!mcLine && mcLine.buttons === 0 && /记事本、Paint/.test(mcLine.text) && !/mcp__/.test(mcLine.text), JSON.stringify(mcLine));
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+        await sleep(300);
+        await click('.pane.focused .composer textarea');
+        await sleep(700); // (the panel going away is not a cover: the card's cooldown is long past either way)
+        await key('Return');
+        await sleep(300);
+        const accNote = await js(`({ note: document.querySelector('.pane.focused .composer .pdock .pd-hint.note')?.textContent ?? null, live: document.querySelector('.pane.focused .composer .pdock .pd-live')?.textContent ?? null })`);
+        wc.sendInputEvent({ type: 'keyDown', keyCode: 'Return', modifiers: ['control'] }); wc.sendInputEvent({ type: 'keyUp', keyCode: 'Return', modifiers: ['control'] });
+        await sleep(500);
+        const accKeys = { sent: await sentFor('smoke-access'), docked: await js(`document.querySelector('.pane.focused .composer .pdock')?.dataset.request ?? null`) };
+        check('… Enter and Ctrl+Enter answer nothing, however long the card has been there — and the card says a click is needed', accKeys.sent === '[]' && accKeys.docked === 'smoke-access' && /按键不会允许/.test(accNote.note ?? '') && /按键不会允许/.test(accNote.live ?? ''), JSON.stringify({ accKeys, accNote }));
+        await click('.pane.focused .composer .pdock [data-act="allow"]');
+        await waitFor(`window.__permSent.some((r) => r.requestId === 'smoke-access')`, 3000);
+        check('… a click on 允许操控 is the yes', (await sentFor('smoke-access')) === '[{"behavior":"allow"}]', await sentFor('smoke-access'));
+        // …and words in the box are a no with them, like on every card
+        await setOpen(`pending: [${stageReq('smoke-access-no', 'mcp__computer__request_access', "{ apps: ['记事本'], reason: 'again' }")}], state: 'idle'`);
+        await click('.pane.focused .composer textarea');
+        await sleep(800);
+        wc.insertText('smoke: 别动记事本');
+        await sleep(200);
+        const accSendLabel = await js(`document.querySelector('.pane.focused .composer .steer.deny')?.textContent ?? null`);
+        await key('Return');
+        await waitFor(`window.__permSent.some((r) => r.requestId === 'smoke-access-no')`, 3000);
+        const accNo = await sentFor('smoke-access-no');
+        check('… words in the box + Enter = 不允许 with them (the send slot says 不允许并发送)', accNo === '[{"behavior":"deny","message":"smoke: 别动记事本"}]' && /不允许并发送/.test(accSendLabel ?? ''), JSON.stringify({ accNo, accSendLabel }));
         await setOpen(`pending: []`);
         await sleep(300);
         // a card that docks while a page covers the conversation (final review I1): closing the page gives the focus

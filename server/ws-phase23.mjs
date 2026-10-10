@@ -4,14 +4,18 @@
 // engines are fakes on this machine (CW_BING_URL / CW_DDG_URL), the desktop window hosting the browser is this
 // script's own WebSocket. No model, no token, nothing leaves the machine. Checks:
 //   · web.status; the per-start secret is in a file under the data folder, not in any reply;
-//   · the MCP server handshakes and lists its ten tools; web_search returns the fake results; when Bing answers with a
-//     challenge page, auto goes on to DuckDuckGo and leaves Bing out until a 联网 setting is saved; a Bing list that
-//     has nothing to do with the query goes on to DuckDuckGo as well;
+//   · the MCP server handshakes and lists its eleven tools; with no window hosting the browser web_search fetches the
+//     fake result pages itself: when Bing answers with a challenge page, auto goes on to DuckDuckGo and leaves Bing out
+//     until a 联网 setting is saved; a Bing list that has nothing to do with the query goes on to DuckDuckGo as well;
+//     an engine that is only read in the browser says it needs the desktop app;
 //   · no window hosting the browser: browser_open on a local page returns its text and links, browser_read continues
 //     it, browser_click says it needs the desktop app, the server refuses to open itself and the LAN;
 //   · a window announces browser.host: browser_open arrives there as browser.command (and only there), the script
-//     answers with browser.result, the tool result is the answered page; a screenshot comes back as an image; the
-//     window closing fails a pending command at once;
+//     answers with browser.result, the tool result is the answered page; a screenshot comes back as an image;
+//     browser_computer carries a position over and comes back with a picture and its size; web_search is now done in
+//     that window (a `search` command per result page, answered here the way a hidden page of the browser would):
+//     DuckDuckGo first, a challenge → the next engine, and the server fetches nothing; the window closing fails a
+//     pending command at once and searching goes back to the server;
 //   · POST /api/web/tool refuses a wrong secret, and does not exist on the remote-access listener; a paired device
 //     cannot become the browser host;
 //   · a search engine's key is stored protected and read back as a mask; a CLI agent (mock ACP) is handed both the
@@ -61,7 +65,7 @@ const site = http.createServer((q, s) => {
   }
   if (u.pathname === '/ddg/html/') {
     engineHits.push(`ddg ${u.searchParams.get('q')}`);
-    return html(`<div id="links"><div class="result"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=${encodeURIComponent('https://duck.example/answer')}&amp;rut=0">From the duck</a><a class="result__snippet" href="#">DuckDuckGo's fake result.</a></div></div>`);
+    return html(`<div id="links"><div class="result"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=${encodeURIComponent('https://duck.example/answer')}&amp;rut=0">The duck on ${u.searchParams.get('q')}</a><a class="result__snippet" href="#">DuckDuckGo's fake result.</a></div></div>`);
   }
   if (u.pathname === '/page') return html(`<html><head><title>Phase 23 page</title><script>var x = "<p>not text</p>";</script></head><body><nav><a href="/nav">Nav</a></nav><h1>It works</h1><p>Served by the dev server. <a href="/more">Read more</a></p><p>${'filler '.repeat(3000)}THE-END</p></body></html>`);
   if (u.pathname === '/to-lan') { s.writeHead(302, { location: 'http://192.168.77.1/admin' }); return s.end(); }
@@ -83,23 +87,52 @@ const port = await new Promise((res, rej) => {
   server.on('exit', (c) => rej(new Error(`server exited (${c})\n${slog}`)));
 });
 
-/** A window on the server's WebSocket: requests, and every event it is sent. */
+/** The result pages the hosting window "loaded": `<engine> <query>`. */
+const pageHits = [];
+
+/**
+ * What the built-in browser reads off a search engine's result page (page-agent.js `results`), from a fake web:
+ * DuckDuckGo shows its "bots" page for a query with "wall" in it and a list about something else for one with
+ * "unrelated"; Bing always lists; Google asks for a CAPTCHA; the others cannot be reached.
+ */
+function resultPage(args) {
+  const u = new URL(args.url);
+  const q = u.searchParams.get('q') ?? u.searchParams.get('p') ?? u.searchParams.get('wd') ?? '';
+  pageHits.push(`${args.engine} ${q}`);
+  const page = (title, text, candidates = []) => ({ url: args.url, title, text, candidates });
+  if (args.engine === 'duckduckgo') {
+    if (q.includes('wall')) return page('DuckDuckGo', 'Unfortunately, bots use DuckDuckGo too.');
+    const title = q.includes('unrelated') ? 'Manage your storage' : `Ducks for ${q}`;
+    return page(`${q} at DuckDuckGo`, title, [{ title, href: `https://duckduckgo.com/l/?uddg=${encodeURIComponent('https://duck.example/in-the-browser')}&rut=0`, snippet: `${title} Read in the browser.` }]);
+  }
+  if (args.engine === 'bing') return page(`${q} - Search`, `Streams for ${q}`, [{ title: `Streams for ${q}`, href: `https://www.bing.com/ck/a?!&&p=0&u=a1${Buffer.from('https://docs.example/in-the-browser').toString('base64url')}&ntb=1`, snippet: 'Bing, read in the browser.' }]);
+  if (args.engine === 'google') return { ...page('Sorry', 'Our systems have detected unusual traffic from your computer network.'), url: 'https://www.google.com/sorry/index' };
+  return { ...page('', ''), failed: 'ERR_NAME_NOT_RESOLVED' };
+}
+
+/** A window on the server's WebSocket: requests, and every event it is sent. A `search` it is sent is answered at once, the way a real window's hidden page would. */
 function client(url) {
   const ws = new WebSocket(url);
   let seq = 0;
   const pending = new Map();
   const events = [];
+  const req = (r) => new Promise((res, rej) => { const id = String(++seq); pending.set(id, { res, rej }); ws.send(JSON.stringify({ type: 'request', request: { id, req: r } })); });
   ws.on('message', (raw) => {
     const m = JSON.parse(String(raw));
     if (m.type === 'reply') { const p = pending.get(m.reply.id); pending.delete(m.reply.id); m.reply.ok ? p.res(m.reply.data) : p.rej(new Error(m.reply.error)); return; }
-    if (m.type === 'event') events.push(m.event);
+    if (m.type !== 'event') return;
+    events.push(m.event);
+    const c = m.event.kind === 'browser.command' ? m.event.command : null;
+    if (c?.op === 'search') req({ kind: 'browser.result', id: c.id, ok: true, answer: { search: resultPage(c.args) } }).catch(() => {});
   });
   return {
     ws,
     events,
     open: new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); }),
-    req: (r) => new Promise((res, rej) => { const id = String(++seq); pending.set(id, { res, rej }); ws.send(JSON.stringify({ type: 'request', request: { id, req: r } })); }),
-    commands: () => events.filter((e) => e.kind === 'browser.command').map((e) => e.command),
+    req,
+    // the commands this script answers by hand: everything but the searches
+    commands: () => events.filter((e) => e.kind === 'browser.command' && e.command.op !== 'search').map((e) => e.command),
+    searches: () => events.filter((e) => e.kind === 'browser.command' && e.command.op === 'search').map((e) => e.command),
   };
 }
 
@@ -147,7 +180,7 @@ async function main() {
 
   // ---- (e) the status, and where the secret lives ----
   const st0 = await a.req({ kind: 'web.status' });
-  check('web.status: on, engine auto, five engines, no window hosting the browser', st0.enabled === true && st0.engine === 'auto' && st0.engines.map((e) => e.id).join(',') === 'auto,bing,duckduckgo,tavily,brave' && st0.host === false && st0.isolated === false, JSON.stringify(st0));
+  check('web.status: on, engine auto, the engines (no Tavily; Google / Yahoo / Baidu only in the browser), no window hosting the browser', st0.enabled === true && st0.engine === 'auto' && st0.engines.map((e) => e.id).join(',') === 'auto,duckduckgo,bing,google,yahoo,baidu,brave' && st0.engines.filter((e) => e.browser).map((e) => e.id).join(',') === 'google,yahoo,baidu' && st0.host === false && st0.isolated === false, JSON.stringify(st0));
   const tokenFile = path.join(dataDir, 'runtime', 'web-mcp', `${server.pid}.token`);
   const secret = await until(() => { try { return fs.readFileSync(tokenFile, 'utf8').trim(); } catch { return null; } }, 5000);
   check('the per-start secret is in a file under the data folder (the MCP processes are pointed at it)', /^[0-9a-f]{64}$/.test(secret ?? ''), tokenFile);
@@ -163,7 +196,7 @@ async function main() {
   const init = await mcp.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'phase23', version: '0' } });
   check('mcp initialize handshakes', init.result?.serverInfo?.name === 'claude-web-web' && !!init.result?.capabilities?.tools, JSON.stringify(init.result?.serverInfo ?? init.error));
   const tools = (await mcp.rpc('tools/list')).result?.tools ?? [];
-  check('mcp lists the ten tools', tools.map((t) => t.name).join(',') === 'web_search,browser_open,browser_read,browser_find,browser_click,browser_type,browser_press_key,browser_scroll,browser_back,browser_screenshot', tools.map((t) => t.name).join(','));
+  check('mcp lists the eleven tools', tools.map((t) => t.name).join(',') === 'web_search,browser_open,browser_read,browser_find,browser_click,browser_type,browser_press_key,browser_scroll,browser_back,browser_screenshot,browser_computer', tools.map((t) => t.name).join(','));
   check('… only searching and reading what is open are marked read-only', tools.filter((t) => t.annotations?.readOnlyHint).map((t) => t.name).join(',') === 'web_search,browser_read,browser_find,browser_screenshot');
 
   const s1 = await mcp.call('web_search', { query: 'node backpressure', count: 5 });
@@ -182,6 +215,12 @@ async function main() {
   // Bing answering with a list that has nothing to do with the query (it does, to programs) is not handed to the model
   const s2d = await mcp.call('web_search', { query: 'unrelated zzz' });
   check('auto: Bing\'s results do not fit the query → DuckDuckGo is asked', !s2d.isError && textOf(s2d).includes('用 DuckDuckGo 搜索') && engineHits.includes('bing unrelated zzz') && engineHits.includes('ddg unrelated zzz'), textOf(s2d).slice(0, 200));
+  // an engine whose page cannot be fetched by a program needs the built-in browser, and says so
+  await a.req({ kind: 'settings.set', key: 'web.search.engine', value: 'baidu' });
+  const s2e = await mcp.call('web_search', { query: 'node' });
+  check('no window: an engine that is only read in the browser says it needs the desktop app', s2e.isError === true && textOf(s2e).includes('百度：要用桌面版 Claude Web 的内置浏览器来搜') && !textOf(s2e).includes('Tavily'), textOf(s2e).slice(0, 200));
+  await a.req({ kind: 'settings.set', key: 'web.search.engine', value: 'auto' });
+  check('… and no result page was asked of any window so far', pageHits.length === 0, pageHits.join(' | '));
   const s3 = await mcp.call('web_search', {});
   check('a call without its argument is an error result the model can read', s3.isError === true && textOf(s3).includes('query'), textOf(s3));
 
@@ -200,6 +239,8 @@ async function main() {
   check('browser_click says it needs the desktop app', c1.isError === true && textOf(c1).includes('这个操作需要桌面版 Claude Web 的内置浏览器（现在没有桌面窗口连着）。'), textOf(c1));
   const shot0 = await mcp.call('browser_screenshot');
   check('… and so does browser_screenshot', shot0.isError === true && textOf(shot0).includes('需要桌面版'), textOf(shot0));
+  const cu0 = await mcp.call('browser_computer', { action: 'left_click', coordinate: [10, 10] });
+  check('… and browser_computer', cu0.isError === true && textOf(cu0).includes('需要桌面版') && textOf(cu0).includes('browser_computer'), textOf(cu0));
   const self = await mcp.call('browser_open', { url: `http://127.0.0.1:${port}/api/health` });
   check('the server does not open itself', self.isError === true && textOf(self).includes('Claude Web 自己'), textOf(self));
   const lan = await mcp.call('browser_open', { url: `${siteUrl}/to-lan` });
@@ -235,13 +276,41 @@ async function main() {
   const shot = (await mcp.wait(shotId)).result;
   check('a screenshot comes back as an image block', cmd3?.op === 'screenshot' && shot?.content?.some((c) => c.type === 'image' && c.data === 'iVBORw0KGgo=' && c.mimeType === 'image/png'), JSON.stringify(shot?.content?.map((c) => c.type)));
 
+  // the mouse by position: the checked arguments go over, a fresh picture with its size comes back
+  const cuId = mcp.send('tools/call', { name: 'browser_computer', arguments: { action: 'left_click', coordinate: [640, 300], text: 'shift' } });
+  const cmd4 = await until(() => a.commands()[3], 10_000);
+  check('browser_computer arrives as a `computer` command with the action and the position', cmd4?.op === 'computer' && cmd4?.sessionId === 'phase23-conv' && JSON.stringify(cmd4?.args) === JSON.stringify({ action: 'left_click', coordinate: [640, 300], modifiers: 'shift' }), JSON.stringify(cmd4));
+  await a.req({ kind: 'browser.result', id: cmd4?.id, ok: true, answer: { note: '已点击。', image: { mime: 'image/jpeg', data: '/9j/4AAQ', width: 1280, height: 843 } } });
+  const cu = (await mcp.wait(cuId)).result;
+  check('… and comes back with the picture and its size', !cu?.isError && textOf(cu).includes('已点击。') && textOf(cu).includes('截图是 1280×843 像素') && cu?.content?.some((c) => c.type === 'image' && c.data === '/9j/4AAQ' && c.mimeType === 'image/jpeg'), textOf(cu));
+  const cuBad = await mcp.call('browser_computer', { action: 'left_click' });
+  check('… a click without a position never reaches the window', cuBad.isError === true && textOf(cuBad).includes('coordinate') && a.commands().length === 4, textOf(cuBad));
+
+  // searching is done in the window's browser now: a result page per engine, read there; the server fetches nothing
+  const fetchedBefore = engineHits.length;
+  const b1 = await mcp.call('web_search', { query: 'node in the browser' });
+  const sent = a.searches();
+  check('with a window: web_search loads DuckDuckGo\'s result page in the built-in browser', !b1.isError && textOf(b1).includes('用 DuckDuckGo 搜索「node in the browser」') && textOf(b1).includes('1. Ducks for node in the browser\n   https://duck.example/in-the-browser\n   Read in the browser.'), textOf(b1).slice(0, 260));
+  check('… as one `search` command to the hosting window, in no conversation\'s tab', sent.length === 1 && sent[0].sessionId === '' && sent[0].args?.engine === 'duckduckgo' && sent[0].args?.url === `${siteUrl}/ddg/html/?q=node%20in%20the%20browser` && b.searches().length === 0, JSON.stringify(sent));
+  const b2 = await mcp.call('web_search', { query: 'the wall again' });
+  check('… a challenge page there → the next engine\'s page is read (the link behind Bing\'s redirect)', !b2.isError && textOf(b2).includes('用 Bing 搜索') && textOf(b2).includes('https://docs.example/in-the-browser') && pageHits.slice(-2).join(' | ') === 'duckduckgo the wall again | bing the wall again', `${pageHits.slice(-2).join(' | ')} — ${textOf(b2).slice(0, 160)}`);
+  const b3 = await mcp.call('web_search', { query: 'node once more' });
+  check('… and the engine that challenged is left out of the next search', textOf(b3).includes('用 Bing 搜索') && pageHits[pageHits.length - 1] === 'bing node once more', pageHits.slice(-2).join(' | '));
+  await a.req({ kind: 'settings.set', key: 'web.search.engine', value: 'google' });
+  const b4 = await mcp.call('web_search', { query: 'node' });
+  check('… an engine asking for verification: the model is told to open its page so the user can do it', b4.isError === true && textOf(b4).includes('Google：要求验证') && textOf(b4).includes('browser_open 打开 https://www.google.com/search?q=node&hl=en') && textOf(b4).includes('在右侧面板的浏览器里打开它'), textOf(b4).slice(0, 300));
+  await a.req({ kind: 'settings.set', key: 'web.search.engine', value: 'auto' });
+  const b5 = await mcp.call('web_search', { query: 'unrelated zzz' });
+  check('… a list about something else is not handed on from the browser either', !b5.isError && textOf(b5).includes('用 Bing 搜索') && !textOf(b5).includes('Manage your storage'), textOf(b5).slice(0, 200));
+  check('… and through all of it the server fetched no result page itself', engineHits.length === fetchedBefore, engineHits.slice(fetchedBefore).join(' | '));
+
   // ---- (d) who may call the endpoint, who may host ----
   const wrong = await post(port, { sessionId: 's', tool: 'web_search', args: { query: 'x' } }, 'not-the-secret');
   const none = await post(port, { sessionId: 's', tool: 'web_search', args: { query: 'x' } });
   const appToken = await post(port, { sessionId: 's', tool: 'web_search', args: { query: 'x' } }, token);
   check('the endpoint refuses a wrong secret, no secret, and the app\'s own token', wrong.status === 401 && none.status === 401 && appToken.status === 401, `${wrong.status} ${none.status} ${appToken.status}`);
   const right = await post(port, { sessionId: 's', tool: 'web_search', args: { query: 'direct' } }, secret);
-  check('… and runs for the secret', right.status === 200 && textOf(right.json).includes('https://docs.example/streams'), String(right.status));
+  check('… and runs for the secret', right.status === 200 && textOf(right.json).includes('https://duck.example/in-the-browser'), `${right.status} ${textOf(right.json).slice(0, 160)}`);
 
   const rst = await a.req({ kind: 'remote.set', enabled: true, port: await freePort(), anywhere: false });
   check('remote access is on (the phone\'s listener)', rst.running === true, rst.error);
@@ -301,6 +370,9 @@ async function main() {
   check('… and the status says no window hosts the browser', !!st2);
   const back = await mcp.call('browser_read', {});
   check('reading falls back to the server: the page this conversation opened there is still its page', !back.isError && textOf(back).includes('# It works'), textOf(back).slice(0, 160));
+  const pagesBefore = pageHits.length;
+  const after = await mcp.call('web_search', { query: 'node after' });
+  check('… and so does searching: the server fetches the result page itself again', !after.isError && textOf(after).includes('用 Bing 搜索') && engineHits[engineHits.length - 1] === 'bing node after' && pageHits.length === pagesBefore, `${engineHits[engineHits.length - 1]} — ${textOf(after).slice(0, 120)}`);
 }
 
 main().catch((e) => { check('phase23 ran to the end', false, e.stack || e.message); }).finally(async () => {

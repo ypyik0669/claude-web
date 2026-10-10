@@ -197,3 +197,24 @@ MCP 进程（stdio）→ `POST /api/web/tool`（只认回环 + 本次启动的�
   Windows 应用里跑过（14 项，见 CLAUDE.md）：截图没问题；新窗口那条**原来不工作**（`<webview>` 默认不让页面调
   `window.open`，处理器从没被叫到），加上 `allowpopups` 和 `disablePopups = false` 后通过。macOS / Linux 上没跑过；
   发版流程的 `smoke-packaged` 现在会在三种系统的安装包里起一次 `web` MCP 服务器。
+
+## 8. 发版之后改的（2026-10-10，用户要求）
+
+v0.2.0 发出去之后用户说了两件事：「不要 tavily，就走现在各大开源 agents 的那种内置浏览器搜索」「computer use 应该有两种：
+in-app browser 的，和整个电脑的」。于是 §5.1、§5.4 和 §7 里的几条结论被推翻了（细节和踩过的坑在 CLAUDE.md
+「搜索在内置浏览器里 / 网页上的鼠标键盘 / 操控电脑」）：
+
+- **搜索**：有桌面窗口时，结果页在内置浏览器的一张隐藏页面里打开、读出来（DuckDuckGo → Bing → Yahoo → 百度，可点名
+  Google）；没有窗口时才由服务端去抓。Tavily 删了。§7 说「用真的浏览器页面开都一样」是对 Bing 说的；DuckDuckGo 在
+  真页面里是好的（同一台机器、同一个代理，三个查询 1–4 秒、全部对题），所以把它排在第一。
+- **引擎自带的 WebSearch**：在我们的引擎上拿掉（它默认经过上游托管的 Tavily 代理）；用户自己选过后端的不动。
+- **`browser_computer`**：`web` 的第 11 个工具，按截图里的位置在 Agent 的标签页上用鼠标键盘。
+- **操控电脑**（§5.4 原来写的是「用不了」）：我们自己的 MCP 服务器 `computer`（Windows），工具名照 Claude Code 自带的
+  computer-use。没有直接调自带的那个，因为它调不了：官方的只在 macOS 终端界面里，我们引擎里的是空壳，而且
+  `computer-use` 这个服务器名被两个引擎保留。哪些应用可以操控，由本应用自己弹卡片问用户（不看对话的权限模式），
+  只有点击能批准；卡片上没写的（剪贴板、系统快捷键）服务端不做。
+
+验证：`server/ws-phase24.mjs`（34 项，真引擎 + 真 MCP 进程 + 真截图）、`ws-phase23.mjs`（60 项）、
+`scripts/browser-smoke.cjs`（本机 77 项、`--real` 76 项）、界面冒烟（354 项，含授权卡和 `+` 开关）、打包后的应用里
+`computer` 进程能起 helper 并截图。没验的：真模型自己决定用
+这些工具（引擎没登录）、macOS / Linux、远端对话上的操控电脑、多显示器。

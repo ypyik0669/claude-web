@@ -96,6 +96,7 @@ export interface WebviewEl extends HTMLElement {
   getURL(): string;
   getTitle(): string;
   isLoading(): boolean;
+  isLoadingMainFrame?(): boolean;
   stop(): void;
   reload(): void;
   canGoBack(): boolean;
@@ -105,7 +106,8 @@ export interface WebviewEl extends HTMLElement {
   executeJavaScript<T = unknown>(code: string, userGesture?: boolean): Promise<T>;
   sendInputEvent(e: Record<string, unknown>): Promise<void> | void;
   getWebContentsId(): number;
-  capturePage?(): Promise<{ toDataURL(): string; isEmpty?(): boolean }>;
+  capturePage?(): Promise<{ toDataURL(): string; isEmpty?(): boolean; getSize?(): { width: number; height: number } }>;
+  insertText?(text: string): Promise<void>;
   openDevTools?(): void;
 }
 

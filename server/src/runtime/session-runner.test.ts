@@ -817,32 +817,83 @@ describe('SessionRunner: 联网', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   };
-  const adapterOf = async (params: any, provider?: any) => {
+  /** What a conversation's engine is told about its own WebSearch: the backend (env) and whether the tool is taken away. */
+  const searchOf = async (params: any, provider?: any) => {
     const r = new SessionRunner(params, provider);
     await tick();
-    const env = queries[queries.length - 1].options.env;
+    const o = queries[queries.length - 1].options;
     await r.close();
-    return env?.WEB_SEARCH_ADAPTER;
+    return { adapter: o.env?.WEB_SEARCH_ADAPTER, off: o.disallowedTools };
   };
   const openaiProvider = { id: 'ds', name: 'DS', type: 'openai', baseUrl: 'https://relay/v1', apiKey: 'sk', createdAt: 0, shim: { base: 'http://127.0.0.1:9/gateway/~p/ds', key: 'cws-x' } };
 
-  it('our engine\'s own WebSearch keeps the backend it picks itself: nothing is set for it, on the account or on a provider', async () => {
+  it('our engine\'s own WebSearch is taken away (its default backend is a hosted Tavily proxy: searching is the web tools\'); the official binary\'s is left', async () => {
     await withConfig({}, async (dir) => {
       eng.kind = 'ccb';
-      expect(await adapterOf({ sessionId: 'w1', cwd: dir })).toBeUndefined();
-      expect(await adapterOf({ sessionId: 'w2', cwd: dir }, openaiProvider)).toBeUndefined();
+      expect(await searchOf({ sessionId: 'w1', cwd: dir })).toEqual({ adapter: undefined, off: ['WebSearch'] });
+      expect(await searchOf({ sessionId: 'w2', cwd: dir }, openaiProvider)).toEqual({ adapter: undefined, off: ['WebSearch'] });
       eng.kind = 'claude';
-      expect(await adapterOf({ sessionId: 'w3', cwd: dir })).toBeUndefined();
+      expect(await searchOf({ sessionId: 'w3', cwd: dir })).toEqual({ adapter: undefined, off: undefined });
     });
   });
 
-  it('…and what the user chose reaches it as it is: their environment, the conversation\'s env', async () => {
+  it('…unless the user chose a backend for it themselves: their environment, the conversation\'s env, a settings file — then it is theirs, as they set it', async () => {
     await withConfig({}, async (dir) => {
       eng.kind = 'ccb';
       process.env.WEB_SEARCH_ADAPTER = 'exa';
-      expect(await adapterOf({ sessionId: 'u1', cwd: dir })).toBe('exa');
+      expect(await searchOf({ sessionId: 'u1', cwd: dir })).toEqual({ adapter: 'exa', off: undefined });
       delete process.env.WEB_SEARCH_ADAPTER;
-      expect(await adapterOf({ sessionId: 'u2', cwd: dir, features: { env: { WEB_SEARCH_ADAPTER: 'brave' } } })).toBe('brave');
+      expect(await searchOf({ sessionId: 'u2', cwd: dir, features: { env: { WEB_SEARCH_ADAPTER: 'brave' } } })).toEqual({ adapter: 'brave', off: undefined });
+      // the project's own settings file
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.claude', 'settings.local.json'), JSON.stringify({ webSearchAdapter: 'bing' }));
+      expect((await searchOf({ sessionId: 'u3', cwd: dir })).off).toBeUndefined();
+      fs.rmSync(path.join(dir, '.claude'), { recursive: true, force: true });
+      expect((await searchOf({ sessionId: 'u4', cwd: dir })).off).toEqual(['WebSearch']);
+    });
+    // the user's settings.json: the setting the engine's own panel writes, or the variable in its env
+    await withConfig({ webSearchAdapter: 'brave' }, async (dir) => {
+      eng.kind = 'ccb';
+      expect((await searchOf({ sessionId: 'u5', cwd: dir })).off).toBeUndefined();
+    });
+    await withConfig({ env: { WEB_SEARCH_ADAPTER: 'exa' } }, async (dir) => {
+      eng.kind = 'ccb';
+      expect((await searchOf({ sessionId: 'u6', cwd: dir })).off).toBeUndefined();
+    });
+  });
+
+  it('操控电脑: a conversation with it on is handed the `computer` server, its tools not asked about one by one (Windows); the engine\'s own flag is never passed', async () => {
+    const { configureComputerMcp } = await import('../computer/launcher.js');
+    await withConfig({}, async (dir) => {
+      configureComputerMcp({ url: 'http://127.0.0.1:45679', token: 'y'.repeat(64) }, dir);
+      try {
+        const off = new SessionRunner({ sessionId: 'c1', cwd: dir } as any);
+        await tick();
+        expect(Object.keys(queries[0].options.mcpServers)).not.toContain('computer');
+        expect(queries[0].options.allowedTools ?? []).not.toContain('mcp__computer__screenshot');
+        await off.close();
+        const on = new SessionRunner({ sessionId: 'c2', cwd: dir, features: { computerUse: true } } as any);
+        await tick();
+        const o = queries[1].options;
+        // `--computer-use-mcp` starts the engine's stand-alone MCP mode: a conversation given it exits at once
+        expect(Object.keys(o.extraArgs ?? {})).not.toContain('computer-use-mcp');
+        if (process.platform === 'win32') {
+          expect(o.mcpServers.computer.env).toMatchObject({ CW_COMPUTER_ASK_URL: 'http://127.0.0.1:45679', CW_SESSION_ID: 'c2' });
+          expect(JSON.stringify(o.mcpServers)).not.toContain('y'.repeat(64)); // this object ends up on the CLI's command line
+          // all of them, request_access too: the user's yes is asked for by this app (computer/access.ts), in any permission mode
+          expect(o.allowedTools).toEqual(expect.arrayContaining(['mcp__computer__request_access', 'mcp__computer__screenshot', 'mcp__computer__left_click', 'mcp__computer__type']));
+          expect(o.allowedTools.every((t: string) => t.startsWith('mcp__computer__'))).toBe(true);
+        } else {
+          // Windows only for now: elsewhere the switch hands out nothing
+          expect(Object.keys(o.mcpServers)).not.toContain('computer');
+          expect(o.allowedTools ?? []).toEqual([]);
+        }
+        await on.close();
+      } finally {
+        configureComputerMcp(null, dir);
+      }
     });
   });
 

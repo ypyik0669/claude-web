@@ -14,6 +14,7 @@ import type { LibraryService } from '../library/service.js';
 import { expandSessionRefs } from '../library/briefing.js';
 import { gitAdapter } from './git.js';
 import { DEFAULT_MAX_PARALLEL, type OrchDeps, type SessionHandlers } from './service.js';
+import { defaultFeaturesOf } from '../computer/launcher.js';
 
 /** How long a 'closed' may be followed by a replacement runner (provider / agent hot swap) before it counts. */
 const SWAP_GRACE_MS = 3000;
@@ -78,7 +79,7 @@ export function orchestraDeps(s: RuntimeServices, dirs: { runs: string; worktree
       if (p.agent !== 'claude') params.agent = p.agent as AgentKind;
       else {
         params = { ...params, providerId: settings.defaultProviderId as string | undefined };
-        if (settings.defaultFeatures) params.features = settings.defaultFeatures as any;
+        if (settings.defaultFeatures) params.features = defaultFeaturesOf(settings.defaultFeatures);
       }
       const r = s.pool.open(params, p.agent === 'claude' ? null : []);
       await s.canonical.ensure(r.sessionId, p.cwd);

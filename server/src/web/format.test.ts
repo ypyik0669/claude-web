@@ -95,7 +95,7 @@ describe('formatSearch / formatFind', () => {
     const weak = formatSearch('sqlite fts5 trigram', { engine: 'bing', weak: true, results: [{ title: 'SQLite Home Page', url: 'https://sqlite.example/', snippet: '' }] }).split('\n');
     expect(weak.slice(-3)).toEqual([
       '<<<END_WEB_CONTENT>>>',
-      '注意：这些结果和搜索词只对上了一小部分，很可能不是你要找的——不要当成答案用。你如果有自带的网页搜索工具，用它再搜一次；没有的话换一种说法再搜（更短、更常见的词）。',
+      '注意：这些结果和搜索词只对上了一小部分，很可能不是你要找的——不要当成答案用。换一种说法再搜（更短、更常见的词）；你有别的搜索工具的话也可以用它核对。',
       '要读某一条的全文：browser_open {"url": "…"}。',
     ]);
     expect(formatSearch('sqlite', { engine: 'bing', results: [{ title: 'SQLite', url: 'https://sqlite.example/', snippet: '' }] })).not.toContain('注意');

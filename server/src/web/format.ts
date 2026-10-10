@@ -74,15 +74,15 @@ export function formatPage(page: BrowserPage, w: PageWindow, note?: string): str
   return lines.join('\n');
 }
 
-/** Under results that know little of the query: said to the model, which may have a search tool of its own. */
-export const SEARCH_WEAK_NOTE = '注意：这些结果和搜索词只对上了一小部分，很可能不是你要找的——不要当成答案用。你如果有自带的网页搜索工具，用它再搜一次；没有的话换一种说法再搜（更短、更常见的词）。';
+/** Under results that know little of the query. */
+export const SEARCH_WEAK_NOTE = '注意：这些结果和搜索词只对上了一小部分，很可能不是你要找的——不要当成答案用。换一种说法再搜（更短、更常见的词）；你有别的搜索工具的话也可以用它核对。';
 
 /**
  * Added to a failed search for the model (not for the settings page's 试一下, which shows the engines' own words):
- * without a key the search reads public result pages, and from many networks those are rate-limited or answer with
- * something else (measured 2026-10-10) — so it says what else there is.
+ * every engine refused or could not be reached — so it says what else there is. An engine that asks for a
+ * verification can be answered by the user, in the browser, once.
  */
-export const SEARCH_FAILED_HINT = '你如果有自带的网页搜索工具，改用它。没有的话告诉用户：不用密钥的搜索在不少网络下会被限流，在 设置 → 联网 里选 Tavily 或 Brave 并填上密钥之后就稳了。';
+export const SEARCH_FAILED_HINT = '可以换一种说法再搜；或者用 browser_open 直接打开一个搜索引擎的结果页自己读。如果上面有搜索引擎说要求验证，告诉用户：在右侧面板的浏览器里打开它、完成一次验证，之后就能搜了。';
 
 export function formatSearch(query: string, r: SearchOutcome): string {
   if (!r.results.length) return `用 ${engineLabel(r.engine)} 搜索「${oneLine(query, 200)}」没有找到结果。换几个词再试。`;

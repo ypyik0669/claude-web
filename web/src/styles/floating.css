@@ -101,6 +101,14 @@
 .pd-scroll.jt { padding: 8px; border: 0; border-radius: var(--r-md); background: var(--fill-subtle); }
 .pd-plan { padding: 4px 14px; border: 0; border-radius: var(--r-md); background: var(--fill-subtle); }
 .pd-note { font-size: var(--fs-meta); line-height: 16px; }
+/* 操控电脑 asking for applications: what it says it will do, then the applications as a row of chips */
+.pd-access { display: flex; flex-direction: column; gap: 8px; }
+.pd-access .pd-note { margin-top: 0; }
+.pd-why { padding: 8px 12px; border-radius: var(--r-md); background: var(--fill-subtle); font-size: var(--fs-base); line-height: 20px; overflow-wrap: anywhere; }
+.pd-why .k { display: block; font-size: var(--fs-meta); line-height: 16px; color: var(--ink-4); }
+.pd-apps { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.pd-app { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; max-width: 100%; padding: 4px 10px; border-radius: var(--r-pill); background: var(--fill-subtle); font-size: var(--fs-base); font-weight: 600; line-height: 20px; overflow-wrap: anywhere; }
+.pd-app svg { flex: none; color: var(--ink-3); }
 /* a question's options: borderless rows on a fill; the chosen one is ringed and its mark is the accent */
 .pdock .q-opt, .pdock-out .q-opt { width: 100%; text-align: left; margin: 6px 0; padding: 8px 12px; border: 0; border-radius: var(--r-md); background: var(--fill-subtle); transition: background-color 150ms linear, box-shadow 150ms linear; }
 .pdock .q-opt:hover { background: var(--layer-selected); transition-duration: 0s; }

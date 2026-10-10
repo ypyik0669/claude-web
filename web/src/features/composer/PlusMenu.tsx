@@ -5,7 +5,7 @@ import { ago, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { imeComposing } from '@/ui/ime';
-import { CAPABILITIES, CHANNELS, parseChannels, plusSections, withChannels, withFeature, type FeatureKey } from './capabilities';
+import { CAPABILITIES, CHANNELS, capabilitiesFor, parseChannels, plusSections, withChannels, withFeature, type FeatureKey } from './capabilities';
 import { PLUS_ID } from './ids';
 import { Popover } from './Popover';
 
@@ -57,10 +57,14 @@ export function PlusMenu(p: PlusMenuProps) {
 function PlusBody(p: PlusMenuProps & { close: (refocus: boolean) => void }) {
   const [view, setView] = useState<'main' | 'reference'>('main');
   const s = plusSections({ claude: p.claude, live: p.live, remote: p.remote });
+  // 操控电脑 can be switched on only where the server's machine supports it (engine.info). (A hook: before the
+  // other view's return — the menu's two views must run the same hooks.)
+  const computer = useStore((st) => st.engine?.computerUse === true);
   if (view === 'reference') return <ReferenceList selfId={p.selfId} onBack={() => setView('main')} onPick={(x) => { p.close(true); p.onReference(x); }} />;
-  const toggle = (k: FeatureKey) => { if (!s.readOnly) p.onFeatures(withFeature(p.features, k, !p.features[k])); };
+  const caps = capabilitiesFor({ computer });
+  const toggle = (k: FeatureKey) => { if (!s.readOnly) p.onFeatures(withFeature(p.features, k, !p.features[k], { computer })); };
   const row = (k: FeatureKey) => {
-    const c = CAPABILITIES.find((x) => x.key === k)!;
+    const c = caps.find((x) => x.key === k)!;
     const on = !!p.features[k] && !c.unavailable;
     return (
       <button key={k} type="button" data-mi data-id={k} role="menuitemcheckbox" aria-checked={on} aria-disabled={s.readOnly || !!c.unavailable || undefined}

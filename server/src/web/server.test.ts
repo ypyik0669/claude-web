@@ -37,7 +37,30 @@ const freePort = () => new Promise<number>((resolve, reject) => {
   s.listen(0, '127.0.0.1', () => { const p = (s.address() as net.AddressInfo).port; s.close(() => resolve(p)); });
 });
 
-/** A window: requests with replies, and every event it was sent. */
+/** The result pages a hosting window "loaded": `<engine> <query>`. */
+const pageHits: string[] = [];
+
+/**
+ * What the built-in browser would read off a search engine's result page (page-agent.js `results`), by a fake web:
+ * DuckDuckGo shows its "bots" page for a query with "wall" in it and a list about something else for one with
+ * "unrelated"; Bing always lists; Google asks for a CAPTCHA; the others cannot be reached.
+ */
+function resultPage(args: { engine: string; url: string }) {
+  const u = new URL(args.url);
+  const q = u.searchParams.get('q') ?? u.searchParams.get('p') ?? u.searchParams.get('wd') ?? '';
+  pageHits.push(`${args.engine} ${q}`);
+  const page = (title: string, text: string, candidates: unknown[] = []) => ({ url: args.url, title, text, candidates });
+  if (args.engine === 'duckduckgo') {
+    if (q.includes('wall')) return page('DuckDuckGo', 'Unfortunately, bots use DuckDuckGo too.');
+    const title = q.includes('unrelated') ? 'Manage your storage' : `Ducks for ${q}`;
+    return page(`${q} at DuckDuckGo`, title, [{ title, href: `https://duckduckgo.com/l/?uddg=${encodeURIComponent('https://duck.example/answer')}`, snippet: `${title} Read in the browser.` }]);
+  }
+  if (args.engine === 'bing') return page(`${q} - Search`, `Streams for ${q}`, [{ title: `Streams for ${q}`, href: 'https://docs.example/streams', snippet: 'A fake result.' }]);
+  if (args.engine === 'google') return { ...page('Sorry', 'Our systems have detected unusual traffic from your computer network.'), url: 'https://www.google.com/sorry/index' };
+  return { ...page('', ''), failed: 'ERR_NAME_NOT_RESOLVED' };
+}
+
+/** A window: requests with replies, and every event it was sent. A `search` it is sent is answered at once, as a real window's hidden page would. */
 function client(url: string) {
   const ws = new WebSocket(url);
   const pending = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void }>();
@@ -45,7 +68,12 @@ function client(url: string) {
   let n = 0;
   ws.on('message', (raw) => {
     const m = JSON.parse(String(raw));
-    if (m.type === 'event') { events.push(m.event); return; }
+    if (m.type === 'event') {
+      events.push(m.event);
+      const c = m.event.kind === 'browser.command' ? m.event.command : null;
+      if (c?.op === 'search') void req('browser.result', { id: c.id, ok: true, answer: { search: resultPage(c.args) } }).catch(() => {});
+      return;
+    }
     const p = pending.get(m.reply.id);
     pending.delete(m.reply.id);
     if (m.reply.ok) p?.resolve(m.reply.data); else p?.reject(new Error(m.reply.error));
@@ -56,7 +84,8 @@ function client(url: string) {
     pending.set(id, { resolve, reject });
     ws.send(JSON.stringify({ type: 'request', request: { id, req: { kind, ...extra } } }));
   });
-  return { ws, open, req, events, commands: () => events.filter((e) => e.kind === 'browser.command').map((e) => e.command) };
+  // the commands a test answers by hand: everything but the searches
+  return { ws, open, req, events, commands: () => events.filter((e) => e.kind === 'browser.command' && e.command.op !== 'search').map((e) => e.command) };
 }
 
 let server: { port: number; close(): Promise<void> };
@@ -127,18 +156,24 @@ describe('联网 through a running server', () => {
     expect(secret).toMatch(/^[0-9a-f]{64}$/);
     const st = await a.req('web.status');
     expect(st).toMatchObject({ enabled: true, engine: 'auto', host: false, isolated: false });
-    expect(st.engines.map((e: any) => e.id)).toEqual(['auto', 'bing', 'duckduckgo', 'tavily', 'brave']);
+    expect(st.engines.map((e: any) => e.id)).toEqual(['auto', 'duckduckgo', 'bing', 'google', 'yahoo', 'baidu', 'brave']);
     expect(JSON.stringify(st)).not.toContain(secret);
     // nothing a window can ask for gives the secret away
     expect(JSON.stringify(await a.req('settings.get'))).not.toContain(secret);
   });
 
-  it('web.search (the settings page\'s try-it) and the tool endpoint search with the configured engine', async () => {
+  it('with no window hosting the browser, web.search (the settings page\'s try-it) and the tool endpoint fetch the result page themselves', async () => {
     expect(await a.req('web.search', { query: 'backpressure', count: 3 })).toEqual({ engine: 'bing', results: [{ title: 'Streams for backpressure', url: 'https://docs.example/streams', snippet: 'A fake result.' }] });
     const r = await tool(server.port, { sessionId: 's1', tool: 'web_search', args: { query: 'pipes' } });
     expect(r.status).toBe(200);
     expect(textOf(r)).toContain('1. Streams for pipes\n   https://docs.example/streams\n   A fake result.');
     expect(engineHits).toEqual(['bing backpressure', 'bing pipes']);
+    // an engine that is only read in the browser says what it needs
+    await a.req('settings.set', { key: 'web.search.engine', value: 'baidu' });
+    await expect(a.req('web.search', { query: 'q' })).rejects.toThrow('百度：要用桌面版 Claude Web 的内置浏览器来搜');
+    await a.req('settings.set', { key: 'web.search.engine', value: 'auto' });
+    expect(pageHits).toEqual([]);
+    expect(engineHits).toHaveLength(2);
   });
 
   it('the endpoint is for this start\'s secret only', async () => {
@@ -194,6 +229,17 @@ describe('联网 through a running server', () => {
     await a.req('browser.result', { id: c3.id, ok: true, answer: { image: { mime: 'image/png', data: 'iVBORw0KGgo=' } } });
     expect((await shot).json?.content[1]).toEqual({ type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' });
     expect(a.events.length).toBeGreaterThan(before);
+
+    // searching is now done in that window's browser: the result page is loaded and read there, nothing is fetched here
+    const fetched = engineHits.length;
+    expect(await b.req('web.search', { query: 'backpressure', count: 3 })).toEqual({ engine: 'duckduckgo', results: [{ title: 'Ducks for backpressure', url: 'https://duck.example/answer', snippet: 'Read in the browser.' }] });
+    expect(pageHits).toEqual(['duckduckgo backpressure']);
+    const sent = a.events.filter((e) => e.kind === 'browser.command' && e.command.op === 'search').map((e) => e.command);
+    expect(sent).toHaveLength(1);
+    // (this file points the engines at its own site: the page a window is asked to load is there too)
+    expect(sent[0]).toMatchObject({ sessionId: '', args: { engine: 'duckduckgo', url: `${siteUrl}/nothing-here/html/?q=backpressure` } });
+    expect(b.events.some((e) => e.kind === 'browser.command')).toBe(false);
+    expect(engineHits).toHaveLength(fetched);
   });
 
   it('the MCP server, started as the launcher tells an agent to start it, reaches the hosting window', async () => {
@@ -221,7 +267,8 @@ describe('联网 through a running server', () => {
       send(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'agent', version: '0' } });
       send(2, 'tools/call', { name: 'web_search', arguments: { query: 'from the agent' } });
       const searched = await until(() => replies.get(2), `the search through the MCP process (stderr: ${stderr.slice(-300)})`, 30_000);
-      expect(searched.result.content[0].text).toContain('Streams for from the agent');
+      expect(searched.result.content[0].text).toContain('用 DuckDuckGo 搜索「from the agent」');
+      expect(searched.result.content[0].text).toContain('1. Ducks for from the agent\n   https://duck.example/answer');
       const n = a.commands().length;
       send(3, 'tools/call', { name: 'browser_read', arguments: { offset: 40 } });
       const cmd = await until(() => a.commands()[n], 'the read at the hosting window');
@@ -272,7 +319,7 @@ describe('联网 through a running server', () => {
     await a.req('settings.set', { key: 'web.search.braveKey', value: 'brave-unit-test-key' });
     const settings = await a.req('settings.get');
     expect(settings['web.search.braveKey']).toBe('••••••');
-    expect((await a.req('web.status')).engines.find((e: any) => e.id === 'brave')).toEqual({ id: 'brave', label: 'Brave Search', needsKey: true, hasKey: true });
+    expect((await a.req('web.status')).engines.find((e: any) => e.id === 'brave')).toEqual({ id: 'brave', label: 'Brave Search（API，要密钥）', needsKey: true, hasKey: true });
     const onDisk = await until(() => { try { const t = fs.readFileSync(path.join(process.env.CLAUDE_WEB_DIR!, 'meta.json'), 'utf8'); return t.includes('web.search.braveKey') ? t : null; } catch { return null; } }, 'the key in meta.json');
     expect(onDisk).not.toContain('brave-unit-test-key');
     expect(JSON.parse(onDisk).settings['web.search.braveKey']).toMatch(/^enc:/);
@@ -286,8 +333,9 @@ describe('联网 through a running server', () => {
 
   it('the settings are followed: the engine, the isolated-browser flag, and the switch that stops handing the server out', async () => {
     const { webClaudeMcpServer, webAllowedTools } = await import('./launcher.js');
-    await a.req('settings.set', { key: 'web.search.engine', value: 'duckduckgo' });
-    await expect(a.req('web.search', { query: 'q' })).rejects.toThrow(/DuckDuckGo：HTTP 404/);
+    await a.req('settings.set', { key: 'web.search.engine', value: 'google' });
+    await expect(a.req('web.search', { query: 'q' })).rejects.toThrow(/Google：要求验证，或者没有给出结果页。可以用 browser_open 打开 https:\/\/www\.google\.com\/search\?q=q&hl=en/);
+    expect(pageHits[pageHits.length - 1]).toBe('google q');
     await a.req('settings.set', { key: 'web.search.engine', value: 'auto' });
     await a.req('settings.set', { key: 'web.browser.isolated', value: true });
     expect(await a.req('web.status')).toMatchObject({ engine: 'auto', isolated: true, enabled: true });
@@ -302,22 +350,24 @@ describe('联网 through a running server', () => {
     expect(webAllowedTools()).toEqual(['mcp__web__web_search']);
   });
 
-  it('an engine that refused is left out of the next searches until a 联网 setting is saved; a Bing list about something else is not handed on', async () => {
-    const from = engineHits.length;
-    // Bing answers with a challenge page: DuckDuckGo is asked…
-    expect(await a.req('web.search', { query: 'duck wall' })).toEqual({ engine: 'duckduckgo', results: [{ title: 'From the duck', url: 'https://duck.example/answer', snippet: '' }] });
-    // …and Bing not again for the next search (a model searches several times in a row)
-    expect((await a.req('web.search', { query: 'duck again' })).engine).toBe('duckduckgo');
-    expect(engineHits.slice(from)).toEqual(['bing duck wall', 'ddg duck wall', 'ddg duck again']);
+  it('an engine that challenged is left out of the next searches until a 联网 setting is saved; a list about something else is not handed on', async () => {
+    const from = pageHits.length;
+    const fetched = engineHits.length;
+    // DuckDuckGo shows its "bots" page: Bing's result page is read…
+    expect(await a.req('web.search', { query: 'wall one' })).toEqual({ engine: 'bing', results: [{ title: 'Streams for wall one', url: 'https://docs.example/streams', snippet: 'A fake result.' }] });
+    // …and DuckDuckGo not again for the next search (a model searches several times in a row)
+    expect((await a.req('web.search', { query: 'again' })).engine).toBe('bing');
+    expect(pageHits.slice(from)).toEqual(['duckduckgo wall one', 'bing wall one', 'bing again']);
     await a.req('settings.set', { key: 'web.search.engine', value: 'auto' });
-    expect((await a.req('web.search', { query: 'duck again' })).engine).toBe('bing');
-    // HTTP 200 and a normal list, about nothing that was asked: the model gets the next engine's results
-    const r = await tool(server.port, { sessionId: 's1', tool: 'web_search', args: { query: 'duck unrelated' } });
-    expect(textOf(r)).toContain('用 DuckDuckGo 搜索「duck unrelated」');
+    expect((await a.req('web.search', { query: 'again' })).engine).toBe('duckduckgo');
+    // a normal-looking list, about nothing that was asked: the model gets the next engine's results
+    const r = await tool(server.port, { sessionId: 's1', tool: 'web_search', args: { query: 'unrelated topic' } });
+    expect(textOf(r)).toContain('用 Bing 搜索「unrelated topic」');
     expect(textOf(r)).not.toContain('Manage your storage');
-    expect(engineHits.slice(from + 3)).toEqual(['bing duck again', 'bing duck unrelated', 'ddg duck unrelated']);
-    // that was about one query, not about Bing: it is asked for the next
-    expect((await a.req('web.search', { query: 'pipes' })).engine).toBe('bing');
+    expect(pageHits.slice(from + 3)).toEqual(['duckduckgo again', 'duckduckgo unrelated topic', 'bing unrelated topic']);
+    // that was about one query, not about DuckDuckGo: it is asked for the next
+    expect((await a.req('web.search', { query: 'pipes' })).engine).toBe('duckduckgo');
+    expect(engineHits).toHaveLength(fetched);
   });
 
   it('the hosting window closing fails what it was asked at once, and reading falls back to the server', async () => {
@@ -333,5 +383,10 @@ describe('联网 through a running server', () => {
     await until(() => b.events.filter((e) => e.kind === 'web.changed').length >= 1, 'web.changed');
     expect((await b.req('web.status')).host).toBe(false);
     expect(textOf(await tool(server.port, { sessionId: 's1', tool: 'browser_read', args: {} }))).toContain('# It works'); // the page s1 opened through the server
+    // and searching goes back to this server fetching the page
+    const pages = pageHits.length;
+    expect((await b.req('web.search', { query: 'after the window' })).engine).toBe('bing');
+    expect(engineHits[engineHits.length - 1]).toBe('bing after the window');
+    expect(pageHits).toHaveLength(pages);
   });
 });

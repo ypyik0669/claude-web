@@ -1,29 +1,39 @@
 import { parseBing } from './engines/bing.js';
 import { parseDuckDuckGo } from './engines/duckduckgo.js';
+import { PAGE_ENGINES, readResultPage, resultPageUrl, type PageEngineId, type RawSearchPage } from './engines/pages.js';
 import { httpUrl, type ParsedPage, type SearchHit } from './engines/types.js';
 import { relevance } from './relevance.js';
 
 /**
- * Web search for every agent, without an API key: Bing's and DuckDuckGo's HTML result pages, fetched with this
- * process's `fetch` — which already goes through the user's proxy (net/proxy.ts). Tavily and Brave are there for
- * people who have a key. `auto` tries them in turn: a keyed engine first when its key is set, then Bing, then
- * DuckDuckGo; an engine that refuses (a CAPTCHA, an HTTP error, a bad key, a timeout) is skipped, and left out for a
- * while so the next search does not wait for it again.
+ * Web search for every agent, without an API key — the way browser agents do it: the engine's result page is opened
+ * in the built-in browser (a real page, with the user's cookies and address behind it) and read there
+ * (engines/pages.ts). `auto` tries DuckDuckGo, Bing, Yahoo and Baidu in turn; Google is there to be chosen (it asks
+ * many networks for a CAPTCHA, which the user can do in the browser). An engine that refuses (a challenge, an error,
+ * a timeout) is skipped, and left out for a while so the next search does not wait for it again.
  *
- * Bing answers a program with HTTP 200 and results that often have little to do with the query (relevance.ts):
- * its results are checked against the query's words. Unrelated ones are not handed on; ones that know only one word
- * of a longer query are kept as a last resort (`weak`) while the next engine is asked.
+ * With no desktop window hosting the browser (the web app, a phone) the result pages of Bing and DuckDuckGo are
+ * fetched by this process instead — through the user's proxy (net/proxy.ts), but as a program, which both engines
+ * treat worse: measured 2026-10-10, DuckDuckGo rate-limited it after two requests where it answered a real page 24
+ * times out of 24. Brave's API is there for people who have a key.
+ *
+ * Whatever the way, results are checked against the query's words (relevance.ts): Bing answers some networks with
+ * HTTP 200 and a normal-looking list about something else. Unrelated ones are not handed on; ones that know only one
+ * word of a longer query are kept as a last resort (`weak`) while the next engine is asked.
  */
-export type EngineId = 'bing' | 'duckduckgo' | 'tavily' | 'brave';
+export type EngineId = PageEngineId | 'brave';
 export type EngineSetting = 'auto' | EngineId;
-export const ENGINES: { id: EngineSetting; label: string; needsKey: boolean }[] = [
-  { id: 'auto', label: '自动（Bing → DuckDuckGo）', needsKey: false },
-  { id: 'bing', label: 'Bing', needsKey: false },
+/** `browser`: only in the built-in browser (there is no way to fetch its page as a program). */
+export const ENGINES: { id: EngineSetting; label: string; needsKey: boolean; browser?: boolean }[] = [
+  { id: 'auto', label: '自动（DuckDuckGo → Bing → Yahoo → 百度）', needsKey: false },
   { id: 'duckduckgo', label: 'DuckDuckGo', needsKey: false },
-  { id: 'tavily', label: 'Tavily', needsKey: true },
-  { id: 'brave', label: 'Brave Search', needsKey: true },
+  { id: 'bing', label: 'Bing', needsKey: false },
+  { id: 'google', label: 'Google', needsKey: false, browser: true },
+  { id: 'yahoo', label: 'Yahoo', needsKey: false, browser: true },
+  { id: 'baidu', label: '百度', needsKey: false, browser: true },
+  { id: 'brave', label: 'Brave Search（API，要密钥）', needsKey: true },
 ];
-const LABEL: Record<EngineId, string> = { bing: 'Bing', duckduckgo: 'DuckDuckGo', tavily: 'Tavily', brave: 'Brave Search' };
+const LABEL: Record<EngineId, string> = { duckduckgo: 'DuckDuckGo', bing: 'Bing', google: 'Google', yahoo: 'Yahoo', baidu: '百度', brave: 'Brave Search' };
+const isPageEngine = (e: EngineId): e is PageEngineId => (PAGE_ENGINES as readonly string[]).includes(e);
 export const engineLabel = (id: string) => LABEL[id as EngineId] ?? id;
 
 /** Anything that is not one of ours reads as `auto` (a setting written by a newer or older version). */
@@ -36,12 +46,21 @@ export interface SearchOutcome { engine: EngineId; results: SearchHit[]; weak?: 
 export interface SearchOptions { count?: number; engine?: EngineSetting; signal?: AbortSignal }
 /** Engines `auto` leaves out until a time, after they failed to answer (per process; a named engine is always asked). */
 export type Cooldown = Map<EngineId, { until: number; why: string }>;
+/** Load a result page in the built-in browser and hand back what it lists. Throws when the window cannot (no answer, a failed load). */
+export type BrowserSearch = (engine: PageEngineId, url: string, signal: AbortSignal) => Promise<RawSearchPage>;
 export interface SearchDeps {
   fetch?: typeof fetch;
-  /** base URLs can be pointed elsewhere for tests: CW_BING_URL, CW_DDG_URL, CW_TAVILY_URL, CW_BRAVE_URL */
+  /** base URLs can be pointed elsewhere (tests, a mirror): CW_DDG_URL, CW_BING_URL, CW_GOOGLE_URL, CW_YAHOO_URL, CW_BAIDU_URL, CW_BRAVE_URL */
   env?: Record<string, string | undefined>;
-  keys?: { tavily?: string; brave?: string };
+  keys?: { brave?: string };
+  /** set when a desktop window hosts the browser: result pages are read there */
+  browser?: BrowserSearch;
+  /** the window did not answer a result page in time: whoever supplies `browser` may want to leave it alone for a while */
+  onBrowserSilent?: () => void;
+  /** one fetch by this process */
   timeoutMs?: number;
+  /** one result page in the browser */
+  browserTimeoutMs?: number;
   cooldown?: Cooldown;
   now?: () => number;
 }
@@ -49,11 +68,17 @@ export interface SearchDeps {
 export const DEFAULT_COUNT = 8;
 export const MAX_COUNT = 20;
 const TIMEOUT_MS = 12_000;
+/**
+ * A result page in the browser. The window bounds a page itself (search-page.ts: about 18 s for one that never
+ * finishes, and one that cannot be loaded comes back as `failed`), and reads three at a time; so this much later
+ * with no answer at all it is the window that is not answering, not the engine.
+ */
+export const BROWSER_TIMEOUT_MS = 40_000;
 /** An engine that answered with a refusal (a challenge page, 429, 5xx) is asked again after this… */
 export const REFUSED_COOLDOWN_MS = 60_000;
 /** …one that could not be reached at all (blocked network, timeout) after this. */
 export const UNREACHABLE_COOLDOWN_MS = 5 * 60_000;
-const UNRELATED = '返回的结果和搜索词对不上（它有时这样回答不是浏览器发出的请求）';
+const UNRELATED = '返回的结果和搜索词对不上';
 
 /**
  * The engine answered, but not with results (or did not answer): `auto` goes on to the next one.
@@ -95,7 +120,7 @@ export function bingMarket(query: string): string {
 
 const base = (env: Record<string, string | undefined>, key: string, fallback: string) => (env[key]?.trim() || fallback).replace(/\/+$/, '');
 
-interface Ctx { fetch: typeof fetch; env: Record<string, string | undefined>; keys: { tavily?: string; brave?: string }; signal: AbortSignal; count: number }
+interface Ctx { fetch: typeof fetch; env: Record<string, string | undefined>; keys: { brave?: string }; signal: AbortSignal; count: number }
 
 async function page(engine: EngineId, url: string, ctx: Ctx, query: string, parse: (html: string) => ParsedPage): Promise<SearchHit[]> {
   const res = await ctx.fetch(url, { headers: { ...BROWSER_HEADERS, 'Accept-Language': acceptLanguage(query) }, redirect: 'follow', signal: ctx.signal });
@@ -106,20 +131,10 @@ async function page(engine: EngineId, url: string, ctx: Ctx, query: string, pars
   return parsed.results;
 }
 
-const RUN: Record<EngineId, (query: string, ctx: Ctx) => Promise<SearchHit[]>> = {
+/** What this process can do by itself: the two engines whose result page can be fetched as a program, and Brave's API. */
+const RUN: Partial<Record<EngineId, (query: string, ctx: Ctx) => Promise<SearchHit[]>>> = {
   bing: (q, ctx) => page('bing', `${base(ctx.env, 'CW_BING_URL', 'https://www.bing.com')}/search?q=${encodeURIComponent(q)}&setmkt=${bingMarket(q)}`, ctx, q, parseBing),
   duckduckgo: (q, ctx) => page('duckduckgo', `${base(ctx.env, 'CW_DDG_URL', 'https://html.duckduckgo.com')}/html/?q=${encodeURIComponent(q)}`, ctx, q, parseDuckDuckGo),
-  async tavily(q, ctx) {
-    if (!ctx.keys.tavily) throw new EngineRefused('tavily', '还没有填 API Key');
-    const res = await ctx.fetch(`${base(ctx.env, 'CW_TAVILY_URL', 'https://api.tavily.com')}/search`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${ctx.keys.tavily}` },
-      body: JSON.stringify({ query: q, max_results: ctx.count, search_depth: 'basic' }),
-      signal: ctx.signal,
-    });
-    const j = await json('tavily', res);
-    return hits((j?.results ?? []) as unknown[], (r) => ({ title: r.title, url: r.url, snippet: r.content }));
-  },
   async brave(q, ctx) {
     if (!ctx.keys.brave) throw new EngineRefused('brave', '还没有填 API Key');
     const res = await ctx.fetch(`${base(ctx.env, 'CW_BRAVE_URL', 'https://api.search.brave.com')}/res/v1/web/search?q=${encodeURIComponent(q)}&count=${ctx.count}`, {
@@ -158,10 +173,19 @@ function hits(rows: unknown[], pick: (r: any) => { title: unknown; url: unknown;
   return out;
 }
 
-/** The engines `auto` tries, in order. */
-export function autoOrder(keys: { tavily?: string; brave?: string } = {}): EngineId[] {
-  return [...(keys.tavily ? (['tavily'] as const) : []), ...(keys.brave ? (['brave'] as const) : []), 'bing', 'duckduckgo'];
+/**
+ * The engines `auto` tries, in order. In the built-in browser DuckDuckGo comes first (it answers a real page from
+ * most places) and Google is left out (a CAPTCHA on many networks, and by then another has answered); fetched as a
+ * program it is Bing first, because DuckDuckGo rate-limits programs quickly.
+ */
+export function autoOrder(keys: { brave?: string } = {}, o: { browser?: boolean } = {}): EngineId[] {
+  return [...(keys.brave ? (['brave'] as const) : []), ...(o.browser ? (['duckduckgo', 'bing', 'yahoo', 'baidu'] as const) : (['bing', 'duckduckgo'] as const))];
 }
+
+export const NEEDS_BROWSER = '要用桌面版 Claude Web 的内置浏览器来搜（现在没有桌面窗口连着）';
+/** The window was there when the search began and stopped answering part-way. */
+const BROWSER_GONE = '要用内置浏览器来搜，而它这次没有应答';
+const challenged = (url: string) => `要求验证，或者没有给出结果页。可以用 browser_open 打开 ${url} ，请用户在内置浏览器里完成验证后再搜`;
 
 export function clampCount(n: unknown): number {
   const v = typeof n === 'number' && Number.isFinite(n) ? Math.floor(n) : DEFAULT_COUNT;
@@ -180,17 +204,49 @@ export async function search(query: string, opts: SearchOptions = {}, deps: Sear
   const refused: string[] = [];
   let empty: EngineId | null = null;
   let weak: SearchOutcome | null = null;
-  for (const engine of auto ? autoOrder(keys) : [setting]) {
+  /** the window stopped answering during this search: the rest is fetched by this process */
+  let browser = deps.browser;
+  for (const engine of auto ? autoOrder(keys, { browser: !!browser }) : [setting]) {
     if (opts.signal?.aborted) throw new Error('搜索被取消了');
     const resting = auto ? cooldown?.get(engine) : undefined;
     if (resting && resting.until > now()) { refused.push(`${LABEL[engine]}：${resting.why}（刚失败过，过一会儿再试它）`); continue; }
-    const timeout = AbortSignal.timeout(deps.timeoutMs ?? TIMEOUT_MS);
-    const ctx: Ctx = { fetch: deps.fetch ?? fetch, env: deps.env ?? process.env, keys, count, signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout };
+    const own = RUN[engine];
+    let timeout: AbortSignal | null = null;
+    const within = (ms: number) => {
+      timeout = AbortSignal.timeout(ms);
+      return opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+    };
     try {
-      const results = (await RUN[engine](q, ctx)).slice(0, count);
+      let results: SearchHit[] | null = null;
+      if (browser && isPageEngine(engine)) {
+        const url = resultPageUrl(engine, q, deps.env ?? process.env);
+        let raw: RawSearchPage | null = null;
+        try { raw = await browser(engine, url, within(deps.browserTimeoutMs ?? BROWSER_TIMEOUT_MS)); } catch (e) {
+          if (opts.signal?.aborted) throw e;
+          // the window, not the engine: it is gone, said it cannot, or did not answer in time. This process does
+          // what it can for the rest of the search, and the engine is not held to blame.
+          const silent = !!(timeout as AbortSignal | null)?.aborted;
+          browser = undefined;
+          timeout = null;
+          if (silent) deps.onBrowserSilent?.();
+          if (!own) throw new EngineRefused(engine, `内置浏览器没有完成这次搜索（${silent ? '没有在限定时间内应答' : reason(e)}）`);
+        }
+        if (raw) {
+          // the page itself could not be loaded: the engine is out of reach from here, like a failed fetch
+          if (raw.failed) throw new Error(raw.failed);
+          const parsed = readResultPage(engine, raw, count);
+          if (parsed.state === 'blocked') throw new EngineRefused(engine, challenged(url), true);
+          results = parsed.results;
+        }
+      }
+      if (!results) {
+        if (!own) { refused.push(`${LABEL[engine]}：${deps.browser ? BROWSER_GONE : NEEDS_BROWSER}`); continue; }
+        const signal = within(deps.timeoutMs ?? TIMEOUT_MS);
+        results = (await own(q, { fetch: deps.fetch ?? fetch, env: deps.env ?? process.env, keys, count, signal })).slice(0, count);
+      }
       cooldown?.delete(engine);
       if (!results.length) { empty ??= engine; continue; } // nothing matched there: another engine may still know something
-      const fit = engine === 'bing' ? relevance(q, results) : 'ok';
+      const fit = engine === 'brave' ? 'ok' : relevance(q, results);
       if (fit === 'unrelated') throw new EngineRefused(engine, UNRELATED);
       if (fit === 'weak') {
         if (!auto) return { engine, results, weak: true };
@@ -201,7 +257,7 @@ export async function search(query: string, opts: SearchOptions = {}, deps: Sear
     } catch (e) {
       if (opts.signal?.aborted) throw new Error('搜索被取消了');
       const known = e instanceof EngineRefused;
-      const why = known ? e.message.slice(LABEL[engine].length + 1) : timeout.aborted ? '超时' : reason(e);
+      const why = known ? e.message.slice(LABEL[engine].length + 1) : (timeout as AbortSignal | null)?.aborted ? '超时' : reason(e);
       refused.push(`${LABEL[engine]}：${why}`);
       // not reached at all (a blocked network costs the whole timeout every time), or told to come back later
       if (!known) cooldown?.set(engine, { until: now() + UNREACHABLE_COOLDOWN_MS, why });

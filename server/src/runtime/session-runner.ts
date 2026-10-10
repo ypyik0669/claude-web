@@ -13,6 +13,8 @@ import { ccbAccountEnv, ccbMisthinks, ccbModel, isChatModel, modelCaps, modelLab
 import { turnShare, type RunningTotals } from '../usage/turn-cost.js';
 import { claudeMcpServer } from '../memory/launcher.js';
 import { webAllowedTools, webClaudeMcpServer } from '../web/launcher.js';
+import { computerAllowedTools, computerClaudeMcpServer } from '../computer/launcher.js';
+import { ENGINE_SEARCH_TOOL, engineSearchOff, userPickedSearchAdapter } from '../web/engine-search.js';
 import { markUnknownCost } from '../usage/pricing.js';
 import type { AttachmentRef, EffortLevel, ModelInfo, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot } from '../protocol.js';
 
@@ -201,9 +203,9 @@ export class SessionRunner extends EventEmitter {
     const f = this.features;
     const a: Record<string, string | null> = {};
     if (f.chrome) a.chrome = null;
-    // (`computerUse` is not a flag: the engine's `--computer-use-mcp` only starts its stand-alone MCP mode, and a
-    // conversation given it exits before its first message — probed 2026-10-10. The engine sets computer use up only
-    // in its own terminal interface; from here the web is reached through the `web` MCP server instead.)
+    // (`computerUse` is not a flag: the engine's `--computer-use-mcp` only starts its stand-alone MCP mode, whose
+    // tools answer "not wired to a session", and a conversation given it exits before its first message — probed
+    // 2026-10-10. 操控电脑 is our own `computer` MCP server instead: see `mcpServers` below.)
     if (f.proactive) a.proactive = null;
     if (f.brief) a.brief = null;
     if (f.channels?.length) a.channels = f.channels.join(',');
@@ -301,10 +303,12 @@ export class SessionRunner extends EventEmitter {
     // claude-sonnet-5 default hung 220 s on model_not_found, 2026-10-01)
     const own = userAnthropicEnv();
     if (engine.kind === 'ccb' && !this.provider && !own.relay) for (const [k, v] of Object.entries(ccbAccountEnv())) if (!(k in fenv) && !(own.env as Record<string, string | undefined>)[k]) fenv[k] = v;
-    // (The engine's own WebSearch tool is left on the backend it picks itself — WEB_SEARCH_ADAPTER is not set here.
-    // Measured 2026-10-10 from a real network: its default answered every query with fitting results; its `bing`
-    // backend, which we had set for provider conversations, returned a page about something else for one query in
-    // four. The `web` MCP server's search is there beside it, not instead of it.)
+    // The engine's own WebSearch tool: its default backend is a hosted Tavily proxy of the upstream project, and the
+    // user wants no Tavily — searching is the `web` MCP server's, in the built-in browser. So the engine's tool is
+    // taken away below (`disallowedTools`), unless the user chose a backend for it themselves (web/engine-search.ts).
+    const computer = this.features.computerUse ? computerClaudeMcpServer({ sessionId: this.sessionId }) : {};
+    const allowed = [...webAllowedTools(), ...(Object.keys(computer).length ? computerAllowedTools() : [])];
+    const noEngineSearch = engineSearchOff({ engine: engine.kind, userChoice: 'WEB_SEARCH_ADAPTER' in fenv || userPickedSearchAdapter(this.cwd) });
     // a provider session must not inherit provider-ish env from this process (e.g. a global ANTHROPIC_API_KEY)
     const base = { ...process.env };
     // …including a stray CLAUDE_CODE_USE_* switch, which would route the profile to another ccb provider
@@ -338,9 +342,13 @@ export class SessionRunner extends EventEmitter {
       // Shared cross-agent memory, injected per session rather than written into ~/.claude —
       // uninstalling claude-web must not leave an MCP entry behind in the user's own config.
       // 联网 (`web`: search + the built-in browser) goes in the same way (web/launcher.ts).
-      mcpServers: { ...claudeMcpServer({ cwd: this.cwd, sessionId: this.sessionId, agent: 'claude' }), ...webClaudeMcpServer({ sessionId: this.sessionId }) },
-      // searching only reads: 每步询问 does not ask for every search (the browser tools follow the permission mode)
-      ...(webAllowedTools().length ? { allowedTools: webAllowedTools() } : {}),
+      // 操控电脑 (`computer`: the whole desktop, computer/launcher.ts) only for a conversation that has it switched on.
+      mcpServers: { ...claudeMcpServer({ cwd: this.cwd, sessionId: this.sessionId, agent: 'claude' }), ...webClaudeMcpServer({ sessionId: this.sessionId }), ...computer },
+      // searching only reads: 每步询问 does not ask for every search (the browser tools follow the permission mode).
+      // The computer tools are not asked about one by one either: the user approves the applications, in the app
+      // (computer/access.ts), and the server's own gate holds every action to that.
+      ...(allowed.length ? { allowedTools: allowed } : {}),
+      ...(noEngineSearch ? { disallowedTools: [ENGINE_SEARCH_TOOL] } : {}),
       includePartialMessages: true,
       includeHookEvents: true,
       forwardSubagentText: true,

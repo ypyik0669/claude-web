@@ -119,6 +119,8 @@ export interface EngineInfo {
   path: string;
   source: 'bundled' | 'global' | 'env';
   fallback?: { runtime: RuntimeKind; version?: string; path: string }; // the other binary, if present
+  /** 操控电脑 (the `computer` MCP server) can run on the machine this server is on — Windows, for now */
+  computerUse?: boolean;
 }
 
 export type ProviderType = 'anthropic' | 'openai' | 'gemini' | 'grok' | 'gateway';
@@ -209,16 +211,20 @@ export interface ProxyStatus {
 // ---- 联网: web search + the built-in browser, for every agent (server/src/web) ----
 /** One operation on the built-in browser. Args: open `{url}`, read `{offset?, maxChars?}`, find `{query}`, click `{ref}`,
  *  type `{ref, text, submit?}`, key `{key}`, scroll `{direction: 'up' | 'down', amount?}`, back `{}`, screenshot `{}`. */
-export type BrowserOp = 'open' | 'read' | 'find' | 'click' | 'type' | 'key' | 'scroll' | 'back' | 'screenshot';
+/** `search`: load a search engine's result page (in a page of its own, not the conversation's tab) and list what it shows. `computer`: mouse and keyboard at coordinates of the last screenshot. */
+export type BrowserOp = 'open' | 'read' | 'find' | 'click' | 'type' | 'key' | 'scroll' | 'back' | 'screenshot' | 'search' | 'computer';
 /** Something on the page the agent can act on (`ref` goes back in click / type). */
 export interface BrowserElement { ref: string; role: string; name: string; value?: string; href?: string }
 /** A page as text. `text` starts at the offset that was asked for (0 for open); `nextOffset` is where the rest begins. */
 export interface BrowserPage { url: string; title: string; text: string; truncated?: boolean; nextOffset?: number; elements?: BrowserElement[] }
 /** Sent to the ONE window hosting the browser (`browser.command`); it answers with the request `browser.result` and the same id. */
 export interface BrowserCommand { id: string; sessionId: string; op: BrowserOp; args: Record<string, unknown> }
-export interface BrowserAnswer { page?: BrowserPage; elements?: BrowserElement[]; image?: { mime: 'image/jpeg' | 'image/png'; data: string }; note?: string }
+/** What a result page listed, as the page had it (the server knows each engine's link wrapping): `failed` = the page could not be loaded. */
+export interface BrowserSearchPage { url: string; title: string; text: string; candidates: { title: string; href: string; snippet?: string; alt?: string }[]; failed?: string }
+/** `image.width / height`: the picture's own size in pixels — the frame `computer` coordinates are given in. */
+export interface BrowserAnswer { page?: BrowserPage; elements?: BrowserElement[]; image?: { mime: 'image/jpeg' | 'image/png'; data: string; width?: number; height?: number }; note?: string; search?: BrowserSearchPage }
 /** `web.status`: the switch (`web.mcp`), the search engine, whether a desktop window is hosting the browser. Keys never leave the server. */
-export interface WebStatus { enabled: boolean; engine: string; engines: { id: string; label: string; needsKey: boolean; hasKey?: boolean }[]; host: boolean; isolated: boolean }
+export interface WebStatus { enabled: boolean; engine: string; engines: { id: string; label: string; needsKey: boolean; hasKey?: boolean; browser?: boolean }[]; host: boolean; isolated: boolean }
 export interface WebSearchResult { title: string; url: string; snippet: string }
 /** What `web.search` answers (the settings page's 「试一下」). `weak`: the results match little of the query (Bing answering a program) and nothing better was to be had. */
 export interface WebSearchAnswer { engine: string; results: WebSearchResult[]; weak?: boolean }
@@ -565,7 +571,7 @@ export type ClientRequest =
   | { kind: 'library.reindex' }
   | { kind: 'library.join'; kind_: AgentKind; joined: boolean }
   | { kind: 'library.dismiss'; kind_: AgentKind }
-  // ---- 联网 (server/src/web): the settings live in settings.set `web.mcp` / `web.search.engine` / `web.search.tavilyKey` /
+  // ---- 联网 (server/src/web): the settings live in settings.set `web.mcp` / `web.search.engine` / `web.search.braveKey` /
   // `web.search.braveKey` (keys come back masked) / `web.browser.isolated` ----
   /** This window hosts the built-in browser (a desktop window only: refused from a phone or another machine). The most recent one gets the commands. */
   | { kind: 'browser.host'; on: boolean }

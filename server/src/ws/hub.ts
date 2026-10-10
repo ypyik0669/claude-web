@@ -53,6 +53,8 @@ import { parseProxySetting, proxy } from '../net/proxy.js';
 import { handleOrchestra, isOrchestraRequest } from '../orchestra/handlers.js';
 import { isWebKeySetting, maskWebSettings, type WebService } from '../web/service.js';
 import { setWebMcpEnabled } from '../web/launcher.js';
+import type { ComputerAccess } from '../computer/access.js';
+import { computerSupported, defaultFeaturesOf } from '../computer/launcher.js';
 
 export interface Services {
   /** Unified session library: every joined source's sessions (sessions.list / search / library.*). */
@@ -97,6 +99,8 @@ export interface Services {
   gateway: GatewayService;
   /** 联网: web search, and the browser tools carried out by the window hosting the built-in browser (web.* / browser.*). */
   web: WebService;
+  /** 操控电脑: the user's answer to an agent asking for control of applications (computer/access.ts). */
+  computer: ComputerAccess;
 }
 
 /** Requests after which something connects out: they wait for a fresh look at the proxy. (`web.search` waits inside WebService, like the agents' searches.) */
@@ -127,6 +131,11 @@ export class Hub {
     s.pool.on('info', (info) => this.broadcast({ kind: 'session.info', info }));
     s.pool.on('permission', (request) => this.broadcast({ kind: 'permission.request', request }));
     s.pool.on('permissionResolved', (_sid, requestId) => this.broadcast({ kind: 'permission.resolved', requestId }));
+    // 操控电脑: which applications an agent may control is asked here, as a permission card of its conversation —
+    // by this server, whatever the conversation's own permission mode lets through (computer/access.ts)
+    s.computer.on('permission', (request) => this.broadcast({ kind: 'permission.request', request }));
+    s.computer.on('permissionResolved', (requestId) => this.broadcast({ kind: 'permission.resolved', requestId }));
+    s.pool.on('state', (sessionId, state) => { if (state === 'closed' || state === 'error') s.computer.drop(sessionId); });
     s.sessions.on('changed', () => this.broadcast({ kind: 'sessions.changed' }));
     s.meta.on('changed', () => this.broadcast({ kind: 'meta.changed' }));
     const pushLimits = () => s.limits.get().then((limits) => this.broadcast({ kind: 'limits', limits })).catch(() => {});
@@ -215,6 +224,11 @@ export class Hub {
     if (this.peerConns.has(ws) || this.remoteConns.has(ws)) throw new Error(`只有本机的桌面窗口才能提供${what}`);
   }
 
+  /** What a conversation is waiting on the user for: its tools' requests, and what 操控电脑 asked. */
+  private pendingOf(sessionId: string) {
+    return [...(this.s.pool.get(sessionId)?.getPendingPermissions() ?? []), ...this.s.computer.pendingFor(sessionId)];
+  }
+
   private runner(sessionId: string) {
     const r = this.s.pool.get(sessionId);
     if (!r) throw new Error(`session ${sessionId} is not open`);
@@ -237,7 +251,7 @@ export class Hub {
       // recorded only when this open started the process (re-review m-3): a runner handed back as it was runs on its
       // own provider, whatever this request asked for (openOnProvider swaps those)
       if (r !== before && params.providerId && params.providerId !== 'claude' && s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId }).catch(() => { /* in memory; the next save persists it */ });
-      return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
+      return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: this.pendingOf(r.sessionId) };
     }
     // provider: explicit → the one the session was created with → user default (new sessions only)
     if (params.providerId === undefined) {
@@ -245,7 +259,7 @@ export class Hub {
       const def = params.sessionId ? undefined : (s.meta.settings().defaultProviderId as string | undefined);
       params = { ...params, providerId: remembered ?? def };
     }
-    if (!params.features && s.meta.settings().defaultFeatures) params = { ...params, features: s.meta.settings().defaultFeatures as any };
+    if (!params.features && s.meta.settings().defaultFeatures) params = { ...params, features: defaultFeaturesOf(s.meta.settings().defaultFeatures) };
     // prompt-cache route key: a fork keeps its parent's (the prefix is the same), decided before the id changes
     const cacheParentId = cacheParentFor(params, (id) => s.meta.sessionMeta(id).cacheKey);
     if (cacheParentId) params = { ...params, cacheParentId };
@@ -266,7 +280,7 @@ export class Hub {
       // uuid from us) — only when this open started the process (re-review m-3: a live runner keeps its own provider)
       if (s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId }).catch(() => { /* in memory; the next save persists it */ });
     }
-    return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
+    return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: this.pendingOf(r.sessionId) };
   }
 
   private async handle(req: ClientRequest, ws: WebSocket): Promise<unknown> {
@@ -322,13 +336,13 @@ export class Hub {
         return openOnProvider({ pool: s.pool, meta: s.meta, canonical: s.canonical }, params, nameOf, {
           open: (p) => this.openSession(p),
           // running on another provider: the same as session.setProvider (re-review m-3)
-          swapped: (r) => ({ ...r, pending: s.pool.get(r.sessionId)?.getPendingPermissions() ?? [] }),
+          swapped: (r) => ({ ...r, pending: this.pendingOf(r.sessionId) }),
           onRecorded: () => s.sessions.emit('changed'),
         });
       }
       case 'session.info': {
         const r = this.runner(req.sessionId);
-        return { info: r.info, history: r.getHistory(), pending: r.getPendingPermissions() };
+        return { info: r.info, history: r.getHistory(), pending: this.pendingOf(r.sessionId) };
       }
       case 'session.send': {
         // `<session-ref>` markers (inserted by the composer when the user references another
@@ -391,7 +405,7 @@ export class Hub {
       case 'limits.get':
         return s.limits.get(req.force);
       case 'engine.info':
-        return engineInfo();
+        return { ...(await engineInfo()), computerUse: computerSupported() };
       case 'engine.cli':
         return runClaudeCli(req.args, { cwd: req.cwd, timeoutMs: 120_000 });
       case 'providers.list':
@@ -578,6 +592,7 @@ export class Hub {
         await this.runner(req.sessionId).stopTask?.(req.taskId);
         return null;
       case 'permission.respond': {
+        if (s.computer.respond(req.requestId, req.response)) return null;
         const r = s.pool.findPermission(req.requestId);
         if (!r) throw new Error('permission request not found (already answered?)');
         r.respondPermission(req.requestId, req.response);

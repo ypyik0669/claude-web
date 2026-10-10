@@ -89,6 +89,30 @@ describe('dockAction: Enter / send in the composer while a card sits above it', 
     expect(enter(plan, '', { ctrl: true, seen: { requestId: plan.requestId, shownAt: T - 10, carried: false } })).toBe('ignore');
     expect(enter(plan, '改第二步', { ctrl: true })).toBe('deny');
   });
+  // 操控电脑 asking which applications it may control: the whole desktop is behind that yes, so it is a click on the
+  // card — no key gives it, however long the card has been there
+  it('操控电脑\'s access request is never approved from the keyboard: Enter and Ctrl+Enter do nothing, and say so', () => {
+    const access = req('mcp__computer__request_access', { apps: ['记事本'], reason: '写一段话' });
+    expect(enter(access, '')).toBe('ignore');
+    expect(enter(access, '', { ctrl: true })).toBe('ignore');
+    expect(enter(access, '  \n')).toBe('ignore');
+    expect(click(access, '')).toBe('ignore');
+    const at = (shownAt: number, o: { repeat?: boolean; ctrl?: boolean } = {}) =>
+      dockDecide(access, { text: '', attachments: false, seen: { requestId: access.requestId, shownAt, carried: false }, now: T, enter: o });
+    expect(at(T - DOCK_COOLDOWN_MS - 1)).toEqual({ act: 'ignore', why: 'access' });
+    expect(at(T - DOCK_COOLDOWN_MS - 1, { ctrl: true })).toEqual({ act: 'ignore', why: 'access' });
+    expect(at(T - 60_000)).toEqual({ act: 'ignore', why: 'access' });
+    expect(at(T - 10)).toEqual({ act: 'ignore', why: 'soon' });
+    expect(at(T - DOCK_COOLDOWN_MS - 1, { repeat: true })).toEqual({ act: 'ignore' });
+    // words are a no with a reason, like on every card; what was typed before it came is still an ordinary message
+    expect(enter(access, '别动我的记事本')).toBe('deny');
+    expect(click(access, '别动我的记事本')).toBe('deny');
+    expect(enter(access, '看这个', { attachments: true })).toBe('blocked');
+    expect(enter(access, '先把上一步做完', { seen: settled(access, { carried: true }) })).toBe('send');
+    expect(enter(access, '/compact')).toBe('send');
+    // its other tools (were another host to ask about one) are ordinary tool cards
+    expect(enter(req('mcp__computer__left_click', { coordinate: [1, 2] }), '')).toBe('primary');
+  });
   it('words and attachments together (typed while the card is up) cannot go as a deny: blocked, with a note (review M2)', () => {
     expect(enter(bash, '看这个报错', { attachments: true })).toBe('blocked');
     expect(click(bash, '看这个报错', { attachments: true })).toBe('blocked');
@@ -113,6 +137,9 @@ describe('denyResponse', () => {
     expect(denyResponse(req('Bash'), '')).toEqual({ behavior: 'deny', message: '用户拒绝了这次操作' });
     expect(denyResponse(req('ExitPlanMode'), '')).toEqual({ behavior: 'deny', message: '用户要求修改计划' });
     expect(denyResponse(req('AskUserQuestion'), '')).toEqual({ behavior: 'deny', message: '用户取消了提问' });
+    // 操控电脑: the server words the refusal for the model itself — only what the user typed is added to it
+    expect(denyResponse(req('mcp__computer__request_access'), '')).toEqual({ behavior: 'deny', message: '' });
+    expect(denyResponse(req('mcp__computer__request_access'), ' 只许用画图 ')).toEqual({ behavior: 'deny', message: '只许用画图' });
   });
 });
 
@@ -131,6 +158,17 @@ describe('dockKind / permissionTitle', () => {
     expect(permissionTitle(req('SomethingElse'))).toBe('Claude 想使用 SomethingElse');
     expect(permissionTitle(req('AskUserQuestion'))).toBe('Claude 有问题要问你');
     expect(permissionTitle(req('ExitPlanMode'))).toBe('Claude 想按这个计划开始动手');
+  });
+  it('操控电脑: the access request is its own kind of card, titled with the application', () => {
+    expect(dockKind(req('mcp__computer__request_access'))).toBe('access');
+    expect(dockKind(req('mcp__computer__left_click'))).toBe('tool');
+    expect(dockKind(req('mcp__other__request_access'))).toBe('tool'); // another server's tool of the same name
+    expect(permissionTitle(req('mcp__computer__request_access', { apps: ['记事本'] }))).toBe('Claude 想操控这台电脑上的 记事本');
+    expect(permissionTitle(req('mcp__computer__request_access', { apps: ['记事本', '画图'] }))).toBe('Claude 想操控这台电脑上的 2 个应用');
+    // its other tools are not asked about here; asked by another host, they read as what they do, not as 「computer 的 key」
+    expect(permissionTitle(req('mcp__computer__left_click', { coordinate: [3, 4] }))).toBe('Claude 想点击屏幕');
+    expect(permissionTitle(req('mcp__computer__type', { text: 'hi' }))).toBe('Claude 想用键盘输入');
+    expect(permissionTitle(req('mcp__computer__screenshot'))).toBe('Claude 想看屏幕');
   });
 });
 

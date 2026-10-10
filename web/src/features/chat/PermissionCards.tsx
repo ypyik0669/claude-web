@@ -10,6 +10,7 @@ import { Icon } from '@/ui/icons';
 import { DOCK_DENY_QUEUED, DOCK_HINT, DOCK_STATUS } from '@/ui/terms';
 import { useLeaveGhost, type GhostOpts } from '@/ui/ghost';
 import { alwaysDetails, alwaysLabel, denyResponse, dockKind, permissionTitle, primaryKey } from './permission-dock';
+import { ACCESS_NOTE, accessAsk } from '@/features/computer/computer-tools';
 
 // The card a permission request, an AskUserQuestion or an ExitPlanMode docks above the composer (redesign phase 5,
 // spec §5.3 / §5.11): one at a time, 「还有 N 条」 when more wait. The old 「拒绝理由 / 修改意见」 field is the composer
@@ -81,7 +82,7 @@ function Head({ p, agent, more, where }: { p: PermissionRequestEvent; agent: str
   const kind = dockKind(p);
   return (
     <div className="pd-head">
-      <span className="pd-ic" aria-hidden><Icon name={kind === 'ask' ? 'question' : kind === 'plan' ? 'plan' : 'shield'} size={15} /></span>
+      <span className="pd-ic" aria-hidden><Icon name={kind === 'ask' ? 'question' : kind === 'plan' ? 'plan' : kind === 'access' ? 'machine' : 'shield'} size={15} /></span>
       <span className="pd-title">{permissionTitle(p, agent)}</span>
       {more > 0 && <span className="pd-more" title="其它请求排在这一条后面，一次处理一条">还有 {more} 条</span>}
       <span className="grow" />
@@ -126,6 +127,35 @@ function ToolPermission({ p, agent, cwd, more, reason, onReasonUsed, scope, note
         <button className="btn" data-act="deny" disabled={busy} onClick={deny} title={reason.trim() ? `拒绝，并把输入框里的话告诉 ${agent}` : '拒绝这次操作'}>拒绝</button>
         {always && <button className="btn" data-act="always" disabled={busy} title={`允许，并写进权限规则，之后同样的操作不再询问：\n${alwaysDetails(p.suggestions).join('\n')}`} onClick={() => send({ behavior: 'allow', updatedPermissions: p.suggestions })}>{always}</button>}
         <button className="btn primary pd-main" data-act="allow" disabled={busy} onClick={allowOnce} title="允许这一次（输入框空着时按 Enter 也是）">允许一次 <Enter /></button>
+      </div>
+    </>
+  );
+}
+
+/**
+ * 操控电脑 asking which applications it may control (server/src/computer/access.ts): the applications, the agent's
+ * reason, what a yes means. No main button for Enter: control of the desktop is given with a click.
+ */
+function AccessRequest({ p, agent, more, reason, onReasonUsed, note, onDenyQueued }: CardProps) {
+  const { busy, send } = useRespond(p);
+  const ask = accessAsk(p.input);
+  const deny = () => { if (send(denyResponse(p, reason)) && reason.trim()) onReasonUsed(); };
+  return (
+    <>
+      <Head p={p} agent={agent} more={more} />
+      <div className="pd-body pd-access">
+        {ask.reason && <div className="pd-why"><span className="k">它说要做的事</span>{ask.reason}</div>}
+        <ul className="pd-apps" aria-label="要操控的应用">
+          {ask.apps.map((a) => <li key={a} className="pd-app"><Icon name="machine" size={13} />{a}</li>)}
+        </ul>
+        {ask.extras.length > 0 && <div className="pd-note">还会：{ask.extras.join('；')}</div>}
+        <div className="pd-note">{ACCESS_NOTE}</div>
+      </div>
+      <div className="pd-actions">
+        <Hint hint={DOCK_HINT.access(agent)} note={note} />
+        <DenyQueued p={p} busy={busy} onDenyQueued={onDenyQueued} />
+        <button className="btn" data-act="deny" disabled={busy} onClick={deny} title={reason.trim() ? `不允许，并把输入框里的话告诉 ${agent}` : '不允许'}>不允许</button>
+        <button className="btn primary pd-main" data-act="allow" disabled={busy} onClick={() => send({ behavior: 'allow' })} title="允许它在这个对话里操控这些应用（只能点这里，按键不会允许）">允许操控</button>
       </div>
     </>
   );
@@ -246,7 +276,7 @@ export function PermissionDock({ sessionId, reason, onReasonUsed, scope, note, o
       <DockLive text={note ?? `${title}。${DOCK_STATUS[kind]}`} />
       {/* before the card: its cleanup must run first, while the card's own nodes are still there */}
       <CardLeave key={`leave:${p.requestId}`} dock={dock} />
-      {kind === 'ask' ? <AskQuestion key={p.requestId} {...props} /> : kind === 'plan' ? <PlanApproval key={p.requestId} {...props} /> : <ToolPermission key={p.requestId} {...props} />}
+      {kind === 'ask' ? <AskQuestion key={p.requestId} {...props} /> : kind === 'plan' ? <PlanApproval key={p.requestId} {...props} /> : kind === 'access' ? <AccessRequest key={p.requestId} {...props} /> : <ToolPermission key={p.requestId} {...props} />}
     </div>
   );
 }

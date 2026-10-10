@@ -40,7 +40,7 @@ export interface DesktopBridge {
   // the built-in browser (features/browser): a page of it wants a new window → a new tab here; a picture of a page
   onBrowserPopup?(cb: (p: { url: string }) => void): () => void;
   /** `id`: the <webview>'s `getWebContentsId()`. Null: nothing could be drawn. */
-  captureGuest?(id: number): Promise<{ mime: 'image/jpeg' | 'image/png'; data: string } | null>;
+  captureGuest?(id: number): Promise<{ mime: 'image/jpeg' | 'image/png'; data: string; width?: number; height?: number } | null>;
 }
 
 /** `max`: the largest factor this window's screen can take (the smallest window must still fit it). */

@@ -53,6 +53,9 @@ import { proxy } from './net/proxy.js';
 import { WebService } from './web/service.js';
 import { handleWebTool } from './web/http.js';
 import { configureWebMcp, setWebMcpEnabled } from './web/launcher.js';
+import { ComputerAccess } from './computer/access.js';
+import { handleComputerAsk } from './computer/http.js';
+import { configureComputerMcp } from './computer/launcher.js';
 
 const FILE_MIME: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif', '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac', '.html': 'text/html; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.json': 'application/json' };
 
@@ -162,6 +165,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   let gateway: GatewayService;
   // eslint-disable-next-line prefer-const
   let web: WebService;
+  // eslint-disable-next-line prefer-const
+  let computer: ComputerAccess;
   /** the main listener's port once it is listening (PORT=0 in the desktop app: a new one every start) */
   let listenPort = 0;
   const handler = (req: http.IncomingMessage, res: http.ServerResponse) => {
@@ -170,6 +175,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     if (gateway?.handle(req, res, url)) return;
     // 联网: the `web` MCP processes' tool calls — this start's secret, loopback only (404 on the LAN listener)
     if (web && handleWebTool(web, req, res, url)) return;
+    // 操控电脑: a `computer` MCP process asking the user for access — the same terms (computer/http.ts)
+    if (computer && handleComputerAsk(computer, req, res, url)) return;
     if (url.pathname === '/pair' && req.method === 'GET') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(pairPage()); return; }
     if (url.pathname === '/api/pair' && req.method === 'POST') {
       let body = '';
@@ -293,6 +300,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   await web.warm();
   setWebMcpEnabled(meta.settings()['web.mcp'] !== false);
   const pool = new RunnerPool(providers, agents, transcripts);
+  // 操控电脑: only a conversation that is open here can ask for control of applications
+  computer = new ComputerAccess({ knows: (sid) => !!pool.get(sid) });
   const config = new ConfigService();
   pool.accountLoggedOut = () => config.knownLoggedOut();
   const ledger = new LedgerService((id) => meta.provider(id)?.type);
@@ -345,7 +354,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   fedHealth = (nonce, authed) => federation.healthInfo(nonce, authed);
   const goals = new GoalService(meta, pool);
   const orchestra = await createOrchestra({ pool, meta, canonical, transcripts, agents, git: gitSvc, goals, library, im });
-  const services = { orchestra, remote, anywhere, tunnels, im, vcs: new VcsService(gitSvc), goals, android: new AndroidService(), pool, sessions: sessionsSvc, config, usage: new UsageService(async (sid) => providerTimeline(await canonical.providerSwitches(sid), meta.sessionMeta(sid).providerId, (id) => { const p = meta.provider(id); return p ? { type: p.type, name: p.name } : undefined; })), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway, web };
+  const services = { orchestra, remote, anywhere, tunnels, im, vcs: new VcsService(gitSvc), goals, android: new AndroidService(), pool, sessions: sessionsSvc, config, usage: new UsageService(async (sid) => providerTimeline(await canonical.providerSwitches(sid), meta.sessionMeta(sid).providerId, (id) => { const p = meta.provider(id); return p ? { type: p.type, name: p.name } : undefined; })), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway, web, computer };
   new Hub(wss, services);
   // model lists older than a day (or never pulled) are refreshed in the background — list only, no tokens
   void providers.autoRefreshModels();
@@ -359,6 +368,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   listenPort = port;
   // from here on new conversations are told about the `web` MCP server: it calls back to this port
   configureWebMcp({ url: `http://127.0.0.1:${port}`, token: web.token });
+  // …and conversations with 操控电脑 on about the `computer` one, which asks here before it grants anything
+  configureComputerMcp({ url: `http://127.0.0.1:${port}`, token: computer.token });
   await remote.start();
   if (remote.status().running) console.log(`remote access on http://0.0.0.0:${remote.port}  (${remote.addresses().join(', ')})`);
   // 不让电脑睡眠: the shell holds a powerSaveBlocker while remote access is on — told now and on every change
@@ -375,6 +386,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     async close() {
       stopKeepAwake(); // no keepAwake reports while shutting down (the shell releases its blocker on quit)
       configureWebMcp(null); // the MCP secret file goes with this server
+      configureComputerMcp(null);
       await im.stopAll();
       await federation.close();
       await tunnels.closeAll();

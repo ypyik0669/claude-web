@@ -5,10 +5,12 @@ import type { PermissionRequestEvent, PermissionResponse } from '@shared';
 import { walkTools, type Item, type ToolUseBlock } from '@/model/conversation';
 import { basename } from '@/util';
 import { webToolAsk, webToolOf } from '@/features/browser/web-tools';
+import { accessTitle, computerToolLabel, computerToolOf, isAccessRequest } from '@/features/computer/computer-tools';
 
-export type DockKind = 'tool' | 'ask' | 'plan';
+/** `access`: 操控电脑 asking which applications it may control — answered by a click on the card, never by a key. */
+export type DockKind = 'tool' | 'ask' | 'plan' | 'access';
 
-export const dockKind = (p: Pick<PermissionRequestEvent, 'toolName'>): DockKind => (p.toolName === 'AskUserQuestion' ? 'ask' : p.toolName === 'ExitPlanMode' ? 'plan' : 'tool');
+export const dockKind = (p: Pick<PermissionRequestEvent, 'toolName'>): DockKind => (p.toolName === 'AskUserQuestion' ? 'ask' : p.toolName === 'ExitPlanMode' ? 'plan' : isAccessRequest(p.toolName) ? 'access' : 'tool');
 
 /** How long a card (or the next one taking its place) is on screen before an empty Enter may answer it. */
 export const DOCK_COOLDOWN_MS = 600;
@@ -39,7 +41,7 @@ export interface DockSeen { requestId: string; shownAt: number; carried: boolean
  */
 export type DockAct = 'send' | 'deny' | 'blocked' | 'primary' | 'ignore';
 /** Why an Enter did nothing, when the user should be told (the card's status line, review M-6): too soon, or a plan. */
-export type DockWhy = 'soon' | 'plan';
+export type DockWhy = 'soon' | 'plan' | 'access';
 type DockInput = { text: string; attachments: boolean; seen?: DockSeen | null; now: number; enter?: { repeat?: boolean; ctrl?: boolean } };
 
 export function dockDecide(p: PermissionRequestEvent | undefined, o: DockInput): { act: DockAct; why?: DockWhy } {
@@ -55,6 +57,8 @@ export function dockDecide(p: PermissionRequestEvent | undefined, o: DockInput):
   if (!o.enter) return { act: 'ignore' };
   if (!seen || o.now - seen.shownAt < DOCK_COOLDOWN_MS) return { act: 'ignore', why: 'soon' };
   if (dockKind(p) === 'plan' && !o.enter.ctrl) return { act: 'ignore', why: 'plan' };
+  // control of the desktop is given with a click on the card: no key says yes to it, with Ctrl or without
+  if (dockKind(p) === 'access') return { act: 'ignore', why: 'access' };
   return { act: 'primary' };
 }
 export const dockAction = (p: PermissionRequestEvent | undefined, o: DockInput): DockAct => dockDecide(p, o).act;
@@ -68,7 +72,7 @@ export const isSlashCommand = (words: string): boolean => /^\/[A-Za-z][\w:-]*(\s
 /** The main-button registry's key: the composer's pane and tile + the request (one conversation can be open in two panes: review M3). */
 export const primaryKey = (scope: string, requestId: string): string => `${scope}\u0000${requestId}`;
 
-const DENY_DEFAULT: Record<DockKind, string> = { tool: '用户拒绝了这次操作', plan: '用户要求修改计划', ask: '用户取消了提问' };
+const DENY_DEFAULT: Record<DockKind, string> = { tool: '用户拒绝了这次操作', plan: '用户要求修改计划', ask: '用户取消了提问', access: '' };
 
 /** The deny sent from the composer or the card's 拒绝 / 要求修改 / 跳过: the typed words, else each card's old default. */
 export function denyResponse(p: PermissionRequestEvent, text: string): PermissionResponse {
@@ -95,6 +99,10 @@ export function permissionTitle(p: Pick<PermissionRequestEvent, 'toolName' | 'in
   }
   const web = webToolOf(p.toolName);
   if (web) return webToolAsk(web, inp, agent);
+  const computer = computerToolOf(p.toolName);
+  if (computer === 'request_access') return accessTitle(inp, agent);
+  // (its other tools are not asked about one by one; another host's prompt for one reads as what it does)
+  if (computer) return `${agent} 想${computerToolLabel(computer, inp).verb.replace(/[:：]$/, '')}`;
   const mcp = /^mcp__(.+?)__(.+)$/.exec(p.toolName);
   if (mcp) return `${agent} 想使用 ${mcp[1]} 的 ${mcp[2]}`;
   return `${agent} 想使用 ${p.toolName}`;

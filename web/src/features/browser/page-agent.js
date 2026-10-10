@@ -5,7 +5,7 @@
 // What it gives back is the page's own content — the server marks it as untrusted before a model sees it. Everything
 // returned is plain JSON.
 (() => {
-  if (window.__cwAgent && window.__cwAgent.v === 1) return;
+  if (window.__cwAgent && window.__cwAgent.v === 2) return;
 
   /** ref → element (weakly: a removed element's ref just stops resolving), element → ref (stable while it lives). */
   const byRef = new Map();
@@ -174,8 +174,52 @@
     return best || doc;
   }
 
+  // A search engine's result page, read generically: every engine lists its results as links that are headings
+  // (or hold one). What an engine wraps its links in, which links are its own, what its challenge page looks like —
+  // that is judged by the server (engines/pages.ts), which gets the list as the page had it.
+  const HEAD_LINKS = 'h1 a[href], h2 a[href], h3 a[href], h4 a[href], a[href] h1, a[href] h2, a[href] h3, a[href] h4, [role="heading"] a[href], a[href] [role="heading"]';
+  const MAX_CANDIDATES = 60;
+
+  function candidates() {
+    const out = [];
+    const seen = new Set();
+    for (const n of document.querySelectorAll(HEAD_LINKS)) {
+      if (out.length >= MAX_CANDIDATES) break;
+      const a = n.closest('a[href]');
+      if (!a || seen.has(a)) continue;
+      seen.add(a);
+      if (!/^https?:/i.test(a.href || '') || !shown(a)) continue;
+      const head = a.querySelector('h1,h2,h3,h4,[role="heading"]') || a.closest('h1,h2,h3,h4,[role="heading"]') || a;
+      const title = clean(head.innerText || head.textContent, 300);
+      if (!title) continue;
+      // the result's block: as far up as the link is still the only heading link in it
+      let box = a;
+      for (let p = a.parentElement, i = 0; p && p !== document.body && i < 8; p = p.parentElement, i++) {
+        if (p.querySelectorAll(HEAD_LINKS).length > 1) break;
+        box = p;
+      }
+      const c = { title, href: a.href, snippet: clean(box.innerText, 900) };
+      // an engine that wraps its links may keep the real address beside it (Baidu's `mu`)
+      const kept = a.closest('[mu]');
+      const alt = (kept && kept.getAttribute('mu')) || a.getAttribute('data-mdurl') || a.getAttribute('data-landurl') || '';
+      if (alt) c.alt = alt.slice(0, 2000);
+      out.push(c);
+    }
+    return out;
+  }
+
   window.__cwAgent = {
-    v: 1,
+    v: 2,
+
+    /** A search engine's result page: where it is, how it starts, and the links it lists. */
+    results() {
+      return { url: location.href, title: clean(document.title, 300), text: clean(document.body ? document.body.innerText : '', 3000), candidates: candidates() };
+    },
+
+    /** The page's own size, in its own pixels: what a position in a picture of it is scaled to. */
+    view() {
+      return { width: window.innerWidth || document.documentElement.clientWidth || 0, height: window.innerHeight || document.documentElement.clientHeight || 0 };
+    },
 
     /** The page as text from `offset`, at most `maxChars`; the things to act on go with the start of the page. */
     read(o) {

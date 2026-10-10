@@ -9,12 +9,21 @@
 //     a screenshot; a ref that is gone is said in words; each conversation's Agent has its own tab, marked as such;
 //   · the page keeps working while another tab of the right panel is in front, and a hidden right panel is brought
 //     back for an operation that needs the page on screen;
+//   · web search the way it is done in the desktop app: a search engine's result page loaded in a hidden page of the
+//     browser and read there (features/browser/search-page.ts) — a list, a list a script draws late, a page whose
+//     pictures never arrive, a challenge page, a page that cannot be loaded, five at once;
+//   · browser_computer, the mouse and keyboard by position: a picture with its size, click / double click / right
+//     click / a held modifier, typing into what has the focus, a shortcut, a drag, the wheel both ways;
 //   · the whole loop the way an agent drives it: the `web` MCP process (server/dist/web/mcp.js, JSON-RPC over stdio)
 //     → POST /api/web/tool → the server → this window (browser.command) → the page → browser.result → the tool's
-//     result. No model, no token; nothing leaves the machine.
+//     result — for a page, for a search (the engines are this script's own site: CW_DDG_URL / CW_BING_URL) and for a
+//     click by position. No model, no token; nothing leaves the machine.
 //   · any console error or warning of the app fails the run.
 //
-//   npm run build:all && node scripts/browser-smoke.cjs [--out <dir>] [--show] [--keep]
+//   npm run build:all && node scripts/browser-smoke.cjs [--out <dir>] [--show] [--keep] [--real]
+//
+// --real: the search engines are the real ones (this does leave the machine): three searches over MCP through the
+// whole chain, each printed with the engine that answered and its first results.
 //
 // Plain `node` runs the orchestration half, then Electron runs this same file (options in env vars, a result JSON
 // file back), as scripts/ui-smoke.cjs does. The window is a real one (a <webview> does not draw in an offscreen
@@ -77,17 +86,60 @@ function startSite() {
   });
 </script>`));
     }
+    // a search engine's result page (this site plays DuckDuckGo at /ddg and Bing at /bing): links that are headings,
+    // each with a line about it. Words in the query pick what kind of page it is.
+    if (u.pathname === '/results' || u.pathname === '/ddg/html/' || u.pathname === '/bing/search') {
+      const q = u.searchParams.get('q') || '';
+      const has = (w) => new RegExp(`\\b${w}\\b`).test(q);
+      const item = (i) => `<div class="result"><h2><a href="https://r${i}.example/${encodeURIComponent(q)}">${esc(q)} — result ${i}</a></h2><p>About ${esc(q)}, number ${i}.</p></div>`;
+      const items = Array.from({ length: 4 }, (_, i) => item(i + 1)).join('');
+      const title = `${esc(q)} at Smoke Search`;
+      // "DuckDuckGo" asks for a check when the query has "wall" in it; "Bing" always lists
+      if (has('wall') && u.pathname !== '/bing/search') return html(page('Smoke Search', '<h1>Unfortunately, bots use Smoke Search too.</h1><p>Please complete the following challenge.</p>'));
+      if (has('late')) return html(page(title, `<div id="links"></div><script>setTimeout(() => { document.getElementById('links').innerHTML = ${JSON.stringify(items)}; }, 900);</script>`));
+      if (has('slowimg')) return html(page(title, `<div id="links">${items}</div><img src="/never.png" alt="">`));
+      return html(page(title, `<div id="links">${items}</div><p><a href="/results?q=more">More results</a></p>`));
+    }
+    if (u.pathname === '/never.png') return; // never answered: a page whose load does not finish
+    // a page to work on by position: everything at a known place, everything that happens to it written down
+    if (u.pathname === '/pad') {
+      return html(`<!doctype html><html><head><meta charset="utf-8"><title>Smoke Pad</title><style>
+  body { margin: 0; font: 15px sans-serif; }
+  #btn { position: absolute; left: 40px; top: 40px; width: 160px; height: 60px; }
+  #field { position: absolute; left: 40px; top: 130px; width: 260px; height: 30px; box-sizing: border-box; }
+  #box { position: absolute; left: 40px; top: 200px; width: 320px; height: 120px; background: #e4e4e4; user-select: none; }
+  #tall { position: absolute; left: 0; top: 400px; width: 10px; height: 3000px; }
+</style></head><body>
+<button id="btn" type="button">Pad button</button>
+<input id="field" aria-label="Pad field">
+<div id="box">drag here</div>
+<div id="tall"></div>
+<script>
+  const st = { clicks: 0, dbl: 0, ctx: 0, shift: false, down: null, up: null, moves: 0, wheel: [], keys: [] };
+  window.__pad = st;
+  const btn = document.getElementById('btn');
+  const box = document.getElementById('box');
+  btn.addEventListener('click', (e) => { st.clicks += 1; st.shift = e.shiftKey; });
+  btn.addEventListener('dblclick', () => { st.dbl += 1; });
+  box.addEventListener('contextmenu', (e) => { st.ctx += 1; e.preventDefault(); });
+  box.addEventListener('mousedown', (e) => { if (e.button === 0) st.down = [e.clientX, e.clientY]; });
+  addEventListener('mousemove', (e) => { if (e.buttons & 1) st.moves += 1; });
+  addEventListener('mouseup', (e) => { if (e.button === 0) st.up = [e.clientX, e.clientY]; });
+  addEventListener('wheel', (e) => { st.wheel.push([Math.round(e.deltaX), Math.round(e.deltaY)]); }, { passive: true });
+  addEventListener('keydown', (e) => { st.keys.push((e.ctrlKey ? 'C-' : '') + e.key); });
+</script></body></html>`);
+    }
     s.writeHead(404, { 'content-type': 'text/plain' });
     s.end('not here');
   });
   return new Promise((res) => srv.listen(0, '127.0.0.1', () => res({ srv, url: `http://127.0.0.1:${srv.address().port}` })));
 }
 
-async function startServer(home, out) {
+async function startServer(home, out, more = {}) {
   const { spawn } = require('node:child_process');
   const token = require('node:crypto').randomBytes(12).toString('hex');
-  const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: path.join(home, '.claude-web'), CW_NO_MODEL_REFRESH: '1', CW_NO_PUBLIC_BROKERS: '1' };
-  for (const k of Object.keys(env)) if (/^(ANTHROPIC_|CLAUDE_CODE_)/.test(k) || /^(no|http|https|all)_proxy$/i.test(k) || k === 'CW_WEB_TOKEN' || k === 'CW_WEB_TOKEN_FILE') delete env[k];
+  const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: path.join(home, '.claude-web'), CW_NO_MODEL_REFRESH: '1', CW_NO_PUBLIC_BROKERS: '1', ...more };
+  for (const k of Object.keys(env)) if (/^(ANTHROPIC_|CLAUDE_CODE_)/.test(k) || (!more.KEEP_PROXY && /^(no|http|https|all)_proxy$/i.test(k)) || k === 'CW_WEB_TOKEN' || k === 'CW_WEB_TOKEN_FILE') delete env[k];
   const logFile = path.join(out, 'server.log');
   fs.writeFileSync(logFile, '');
   const server = spawn(process.execPath, [path.join(ROOT, 'server', 'dist', 'index.js')], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
@@ -128,8 +180,10 @@ async function runner() {
   }
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-bsmoke-'));
   const site = await startSite();
-  const srv = await startServer(home, out);
-  console.log(`server up (HOME=${home}), site ${site.url}`);
+  const real = !!arg('--real', false);
+  // the search engines are this script's site — unless the real ones are asked for (then the user's proxy is kept too)
+  const srv = await startServer(home, out, real ? { KEEP_PROXY: '1' } : { CW_DDG_URL: `${site.url}/ddg`, CW_BING_URL: `${site.url}/bing` });
+  console.log(`server up (HOME=${home}), site ${site.url}${real ? ', REAL search engines' : ''}`);
   const result = path.join(out, 'browser-smoke.json');
   fs.rmSync(result, { force: true });
   const code = await runElectron({
@@ -141,7 +195,8 @@ async function runner() {
     SMOKE_DATA: path.join(home, '.claude-web'),
     SMOKE_NODE: process.execPath,
     SMOKE_SHOW: arg('--show', false) ? '1' : '',
-  }, 240_000);
+    SMOKE_REAL: real ? '1' : '',
+  }, 420_000);
   let r = null;
   try { r = JSON.parse(fs.readFileSync(result, 'utf8')); } catch { /* electron died */ }
   let failed = !r || code !== 0;
@@ -155,6 +210,7 @@ async function runner() {
     console.log(`electron exited ${code} without a result (see ${result}.log)`);
   }
   srv.server.kill();
+  site.srv.closeAllConnections?.(); // (a picture this site never finishes sending)
   site.srv.close();
   await sleep(800);
   if (!arg('--keep', false)) { try { fs.rmSync(home, { recursive: true, force: true }); } catch { /* windows may still hold a handle */ } }
@@ -177,7 +233,7 @@ function driver() {
   const check = (name, ok, detail) => { res.checks.push({ name, ok: !!ok, detail: detail ? String(detail).slice(0, 400) : undefined }); log(`${ok ? 'PASS' : 'FAIL'} ${name} ${detail || ''}`); };
   const finish = (code) => { res.seconds = Math.round((Date.now() - res.startedAt) / 1000); try { fs.writeFileSync(E.SMOKE_RESULT, JSON.stringify(res, null, 2)); } catch { /* ignore */ } app.exit(code); };
   process.on('uncaughtException', (e) => { log(`uncaught ${e.stack || e}`); check('driver', false, String(e.message || e)); finish(3); });
-  const hardStop = setTimeout(() => { check('driver finished in time', false, phase); finish(6); }, 200_000);
+  const hardStop = setTimeout(() => { check('driver finished in time', false, phase); finish(6); }, 380_000);
 
   /** The `web` MCP server as an agent starts it: a process, JSON-RPC lines over stdio. */
   function startMcp(env) {
@@ -202,7 +258,7 @@ function driver() {
     const wait = async (id, ms = 40_000) => { const end = Date.now() + ms; for (;;) { const r = replies.get(id); if (r) return r; if (Date.now() > end) return { error: { message: `no answer in ${ms} ms. stderr: ${stderr.slice(-300)}` } }; await sleep(50); } };
     return {
       rpc: (method, params) => wait(send(method, params)),
-      call: async (name, args = {}) => { const r = await wait(send('tools/call', { name, arguments: args })); return r.result ?? { isError: true, content: [{ type: 'text', text: `rpc error: ${r.error?.message}` }] }; },
+      call: async (name, args = {}, ms) => { const r = await wait(send('tools/call', { name, arguments: args }), ms); return r.result ?? { isError: true, content: [{ type: 'text', text: `rpc error: ${r.error?.message}` }] }; },
       stop: () => { try { p.stdin.end(); } catch { /* gone */ } setTimeout(() => { try { p.kill(); } catch { /* gone */ } }, 1500); },
     };
   }
@@ -335,6 +391,108 @@ function driver() {
       const front = await waitFor(`!!document.querySelector('.dock .tab.active[data-panel="browser"]') && document.querySelector('.rpanel').offsetWidth > 0`, 4000);
       check('with the right panel put away, an operation brings the browser back (a page with no size cannot be worked in)', reopened.ok && front, reopened.ok ? '' : reopened.error);
 
+      // ---- web search: a result page loaded in a page of its own, off screen, and read there
+      phase = 'search';
+      {
+        const tabsBefore = (await tabs()).length;
+        const search = (url) => op('', 'search', { engine: 'duckduckgo', url });
+        const hiddenPages = () => js(`document.querySelectorAll('webview[data-cw-search]').length`);
+        const first = await search(`${SITE}/results?q=alpha+beta`);
+        const list = first.ok ? first.a.search.candidates : [];
+        check('search: a result page is read in a page of the browser — its links that are headings, with the text around them',
+          first.ok && list.length === 4 && list[0].title === 'alpha beta — result 1' && list[0].href === 'https://r1.example/alpha%20beta' && /About alpha beta, number 1\./.test(list[0].snippet || '') && first.a.search.url === `${SITE}/results?q=alpha+beta` && first.a.search.title === 'alpha beta at Smoke Search',
+          first.ok ? JSON.stringify({ url: first.a.search.url, title: first.a.search.title, first: list[0], n: list.length }) : first.error);
+        const where = await js(`(() => { const w = [...document.querySelectorAll('webview[data-cw-search]')]; return { n: w.length, left: w[0] ? w[0].getBoundingClientRect().left : null, width: w[0] ? w[0].offsetWidth : 0, vis: w[0] ? getComputedStyle(w[0]).visibility : '', inBrowser: !!document.querySelector('.bw webview[data-cw-search]') }; })()`);
+        check('…in a page of its own: no tab appears, the page is off screen and never drawn', (await tabs()).length === tabsBefore && where.n === 1 && where.left < -1000 && where.width >= 1000 && where.vis === 'hidden' && !where.inBrowser, JSON.stringify(where));
+        const second = await search(`${SITE}/results?q=gamma`);
+        check('the next search uses that page again and reads the NEW list, not the one before', second.ok && second.a.search.candidates.length === 4 && second.a.search.candidates.every((c) => /^gamma — result/.test(c.title)) && (await hiddenPages()) === 1, second.ok ? second.a.search.candidates.map((c) => c.title).join(' | ') : second.error);
+        const tLate = Date.now();
+        const late = await search(`${SITE}/results?q=late+list`);
+        check('a list a script draws after the load is waited for', late.ok && late.a.search.candidates.length === 4 && late.a.search.candidates[0].title === 'late list — result 1', `${Date.now() - tLate} ms ${late.ok ? late.a.search.candidates.length : late.error}`);
+        const tSlow = Date.now();
+        const slow = await search(`${SITE}/results?q=slowimg`);
+        check('a list that is there is read without waiting for the page\'s pictures', slow.ok && slow.a.search.candidates.length === 4 && Date.now() - tSlow < 6000, `${Date.now() - tSlow} ms ${slow.ok ? slow.a.search.candidates.length : slow.error}`);
+        const tWall = Date.now();
+        const wall = await search(`${SITE}/results?q=wall`);
+        check('a challenge in place of results comes back as what the page says, with nothing listed', wall.ok && wall.a.search.candidates.length === 0 && /bots use Smoke Search too/.test(wall.a.search.text) && !wall.a.search.failed && Date.now() - tWall < 12_000, `${Date.now() - tWall} ms ${wall.ok ? JSON.stringify(wall.a.search).slice(0, 200) : wall.error}`);
+        const down = await search('http://127.0.0.1:1/html/?q=x');
+        check('a page that cannot be loaded says why — the engine is out of reach, not an error of the window', down.ok && /ERR_/.test(down.a.search.failed || '') && down.a.search.candidates.length === 0, JSON.stringify(down.ok ? down.a.search : down.error));
+        const again = await search(`${SITE}/results?q=after+failing`);
+        check('…and the page works for the next search', again.ok && again.a.search.candidates.length === 4 && /^after failing/.test(again.a.search.candidates[0].title), again.ok ? again.a.search.candidates[0].title : again.error);
+        const words = ['one', 'two', 'three', 'four', 'five'];
+        const many = await Promise.all(words.map((w) => search(`${SITE}/results?q=many+${w}`)));
+        const pagesNow = await hiddenPages();
+        check('five searches at once: each gets its own list, on at most three pages', many.every((m, i) => m.ok && m.a.search.candidates.length === 4 && m.a.search.candidates[0].title === `many ${words[i]} — result 1`) && pagesNow >= 2 && pagesNow <= 3, `pages=${pagesNow} ${many.map((m) => (m.ok ? m.a.search.candidates[0]?.title : m.error)).join(' | ')}`);
+        const notWeb = await search('javascript:alert(1)');
+        check('only web addresses are loaded for a search', !notWeb.ok && /不是能打开的地址/.test(notWeb.error), JSON.stringify(notWeb));
+        check('…and through all of it the tabs are as they were', (await tabs()).length === tabsBefore);
+      }
+
+      // ---- browser_computer: the mouse and keyboard by position, in the Agent's tab
+      phase = 'computer';
+      {
+        const pad = await op(S, 'open', { url: `${SITE}/pad` });
+        const tabId = (await tabs()).find((t) => t.agent === S).id;
+        const guest = (code) => js(`document.querySelector('.bw-view[data-tab="${tabId}"] webview').executeJavaScript(${JSON.stringify(code)})`);
+        const padNow = () => guest(`(() => Object.assign({}, window.__pad, { value: document.getElementById('field').value, y: Math.round(scrollY), iw: innerWidth, ih: innerHeight }))()`);
+        const act = (args) => op(S, 'computer', args);
+        const near = (a, b) => Array.isArray(a) && Math.abs(a[0] - b[0]) <= 3 && Math.abs(a[1] - b[1]) <= 3;
+        const shot = await act({ action: 'screenshot' });
+        const pic = shot.ok ? shot.a.image : null;
+        const p0 = await padNow();
+        check('computer: a picture of the page that says how large it is', pad.ok && !!pic && pic.width > 100 && pic.height > 100 && pic.data.length > 2000 && shot.a.page.url === `${SITE}/pad`, shot.ok ? `${pic.mime} ${pic.width}x${pic.height} of a page ${p0.iw}x${p0.ih}` : shot.error);
+        if (pic) {
+          /** A place of the page (its own pixels) as a position in the picture — what a model reads off the picture. */
+          const P = (x, y) => [Math.round((x * pic.width) / p0.iw), Math.round((y * pic.height) / p0.ih)];
+          const clicked = await act({ action: 'left_click', coordinate: P(120, 70) });
+          const p1 = await padNow();
+          check('left_click at a position presses what is there, and answers with a fresh picture', clicked.ok && p1.clicks === 1 && clicked.a.note === '已点击。' && (clicked.a.image?.data?.length ?? 0) > 2000 && clicked.a.image.width === pic.width, clicked.ok ? JSON.stringify({ clicks: p1.clicks, note: clicked.a.note }) : clicked.error);
+          const twice = await act({ action: 'double_click', coordinate: P(120, 70) });
+          const p2 = await padNow();
+          check('double_click is a double click to the page', twice.ok && p2.dbl === 1 && p2.clicks === 3, JSON.stringify({ dbl: p2.dbl, clicks: p2.clicks, e: twice.error }));
+          await act({ action: 'left_click', coordinate: P(120, 70), modifiers: 'shift' });
+          check('a held modifier reaches the page', (await padNow()).shift === true);
+          const right = await act({ action: 'right_click', coordinate: P(200, 260) });
+          check('right_click is the context-menu click of what is there', right.ok && (await padNow()).ctx === 1, right.ok ? '' : right.error);
+          await act({ action: 'left_click', coordinate: P(170, 145) });
+          const typedAt = await act({ action: 'type', text: 'héllo 世界' });
+          const p3 = await padNow();
+          check('type goes into what was clicked, as the keyboard would put it there', typedAt.ok && p3.value === 'héllo 世界' && typedAt.a.note === '已输入。', typedAt.ok ? p3.value : typedAt.error);
+          const all = await act({ action: 'key', text: 'ctrl+a' });
+          await act({ action: 'type', text: 'x' });
+          const p4 = await padNow();
+          check('key takes a shortcut: select all, and typing replaces what was there', all.ok && p4.value === 'x' && p4.keys.includes('C-a'), JSON.stringify({ value: p4.value, keys: p4.keys, e: all.error }));
+          const dragged = await act({ action: 'left_click_drag', start: P(60, 220), coordinate: P(300, 280) });
+          const p5 = await padNow();
+          check('left_click_drag: pressed at the start, moved with the button held, released at the end', dragged.ok && near(p5.down, [60, 220]) && near(p5.up, [300, 280]) && p5.moves >= 4, JSON.stringify({ down: p5.down, up: p5.up, moves: p5.moves, e: dragged.error }));
+          const wheelDown = await act({ action: 'scroll', coordinate: P(200, 300), direction: 'down', amount: 3 });
+          await sleep(500);
+          const p6 = await padNow();
+          check('scroll down moves the page down (the wheel at that position)', wheelDown.ok && p6.y > 100, `scrollY ${p6.y}, the page saw wheel ${JSON.stringify(p6.wheel.slice(-1))}`);
+          await act({ action: 'scroll', coordinate: P(200, 300), direction: 'up', amount: 10 });
+          await sleep(500);
+          const p7 = await padNow();
+          check('…and up brings it back', p7.y === 0, `scrollY ${p7.y}`);
+          const outside = await act({ action: 'left_click', coordinate: [pic.width + 40, 10] });
+          const p8 = await padNow();
+          check('a position outside the picture is said in words, and nothing is clicked', !outside.ok && /在截图/.test(outside.error) && p8.clicks === p7.clicks, JSON.stringify(outside).slice(0, 200));
+          const unknown = await act({ action: 'key', text: 'NoSuchKey' });
+          check('a key nobody knows is said, not pressed', !unknown.ok && /不认识的按键/.test(unknown.error), JSON.stringify(unknown).slice(0, 200));
+          // with another tab of the browser in front: what goes by the picture brings its tab to the front first
+          await js(`(() => { const s = window.__cwBrowser.state.getState(); const other = s.tabs.find((t) => !t.agent); document.querySelector('.bw .bw-tab[data-tab="' + other.id + '"]').click(); })()`);
+          await sleep(300);
+          const behindClick = await act({ action: 'left_click', coordinate: P(120, 70) });
+          const frontNow = await js(`(() => { const s = window.__cwBrowser.state.getState(); return s.tabs.find((x) => x.id === s.active)?.agent || null; })()`);
+          check('an action by position brings the Agent\'s tab to the front first (it goes by what is drawn)', behindClick.ok && frontNow === S && (await padNow()).clicks === p8.clicks + 1, JSON.stringify({ ok: behindClick.ok, frontNow, e: behindClick.error }));
+        }
+        // a page that never finishes loading (a picture that does not arrive) is read as it is, not waited for until the server gives up
+        const tStuck = Date.now();
+        const stuck = await op(S, 'open', { url: `${SITE}/results?q=slowimg` });
+        check('a page that never stops loading is still read, once it has had its time', stuck.ok && /slowimg — result 1/.test(stuck.a.page.text) && /还在加载/.test(stuck.a.note || '') && Date.now() - tStuck < 28_000, `${Date.now() - tStuck} ms ${stuck.ok ? stuck.a.note : stuck.error}`);
+        // back where the later checks expect this conversation's tab
+        await op(S, 'open', { url: `${SITE}/long` });
+      }
+
       // ---- the whole loop, the way an agent drives it
       phase = 'mcp';
       const dir = path.join(E.SMOKE_DATA, 'runtime', 'web-mcp');
@@ -359,6 +517,40 @@ function driver() {
         check('browser_screenshot over MCP returns an image block', !s.isError && !!img && /^image\//.test(img.mimeType) && img.data.length > 2000, s.isError ? text(s) : `${img?.mimeType} ${img?.data?.length}`);
         const gone = await mcp.call('browser_click', { ref: 'zzz9999' });
         check('a failure in the page is what the model reads', gone.isError === true && /不在页面上了/.test(text(gone)), text(gone).slice(0, 200));
+        // a click by position, the way a model does it: a picture, a position read off it, the click
+        const padOpen = await mcp.call('browser_open', { url: `${SITE}/pad` });
+        const cs = await mcp.call('browser_computer', { action: 'screenshot' });
+        const cimg = (cs.content ?? []).find((x) => x.type === 'image');
+        const size = /截图是 (\d+)×(\d+) 像素/.exec(text(cs));
+        check('browser_computer over MCP: a picture, and its size in words (positions go by it)', !padOpen.isError && !cs.isError && !!cimg && cimg.data.length > 2000 && !!size, text(cs).slice(0, 200));
+        if (size) {
+          const mcpTab = (await tabs()).find((t) => t.agent === 'smoke-mcp').id;
+          const inPad = (code) => js(`document.querySelector('.bw-view[data-tab="${mcpTab}"] webview').executeJavaScript(${JSON.stringify(code)})`);
+          const view = await inPad(`({ iw: innerWidth, ih: innerHeight })`);
+          const at = [Math.round((120 * Number(size[1])) / view.iw), Math.round((70 * Number(size[2])) / view.ih)];
+          const cc = await mcp.call('browser_computer', { action: 'left_click', coordinate: at });
+          const clicks = await inPad(`window.__pad.clicks`);
+          check('…and a left_click at a position read off that picture presses the button there', !cc.isError && clicks === 1 && /已点击。截图是 \d+×\d+ 像素/.test(text(cc)) && (cc.content ?? []).some((x) => x.type === 'image'), `${clicks} click(s) — ${text(cc).slice(0, 160)}`);
+          const nowhere = await mcp.call('browser_computer', { action: 'left_click' });
+          check('…a click with no position is refused before it reaches the page', nowhere.isError === true && /coordinate/.test(text(nowhere)) && (await inPad(`window.__pad.clicks`)) === 1, text(nowhere).slice(0, 160));
+        }
+        // a search, the whole way: MCP → the server → this window → a hidden page loads the engine's result page
+        if (!E.SMOKE_REAL) {
+          const ws1 = await mcp.call('web_search', { query: 'smoke chain' });
+          check('web_search over MCP is done in this window\'s browser: the engine\'s result page is loaded in a hidden page and its list is the tool\'s result',
+            !ws1.isError && text(ws1).includes('用 DuckDuckGo 搜索「smoke chain」') && text(ws1).includes('1. smoke chain — result 1\n   https://r1.example/smoke%20chain\n   About smoke chain, number 1.') && /<<<WEB_CONTENT search>>>/.test(text(ws1)), text(ws1).slice(0, 320));
+          const ws2 = await mcp.call('web_search', { query: 'the wall' });
+          check('…a challenge on the first engine: the next engine\'s page is read instead', !ws2.isError && text(ws2).includes('用 Bing 搜索「the wall」') && text(ws2).includes('1. the wall — result 1'), text(ws2).slice(0, 240));
+          const three = await Promise.all(['pipes', 'streams', 'buffers'].map((q) => mcp.call('web_search', { query: `smoke ${q}`, count: 2 })));
+          check('…three searches in one turn come back each with its own results', three.every((r, i) => !r.isError && text(r).includes(`1. smoke ${['pipes', 'streams', 'buffers'][i]} — result 1`) && !text(r).includes('3. ')), three.map((r) => text(r).slice(0, 60)).join(' | '));
+          check('…and still no tab was opened for any search', (await tabs()).every((t) => !/results|ddg|bing/.test(t.url)), JSON.stringify((await tabs()).map((t) => t.url)));
+        } else {
+          for (const q of ['node.js stream backpressure', 'rust tokio select macro', '提示缓存 怎么用']) {
+            const t0 = Date.now();
+            const r = await mcp.call('web_search', { query: q, count: 5 }, 150_000);
+            check(`REAL search engines, the whole chain: 「${q}」 has results`, !r.isError && /^用 .+ 搜索/.test(text(r)) && /\n1\. /.test(text(r)), `${Date.now() - t0} ms — ${text(r).replace(/\n/g, ' ⏎ ').slice(0, 380)}`);
+          }
+        }
         mcp.stop();
       }
       // the shell's own picture of a page (desktop/src/browser-capture.ts — what `desktop.captureGuest` runs): scaled, JPEG,
@@ -373,7 +565,7 @@ function driver() {
         check('a picture of a tab that is not in front brings it to the front first (only what is drawn can be pictured)', behindShot.ok && (behindShot.a.image?.data?.length ?? 0) > 2000 && frontNow === S, behindShot.ok ? `${behindShot.a.image?.mime} front=${frontNow}` : behindShot.error);
         const gid = await js(`(() => { const s = window.__cwBrowser.state.getState(); const t = s.tabs.find((x) => x.agent === 'smoke-conv'); return document.querySelector('.bw-view[data-tab="' + t.id + '"] webview').getWebContentsId(); })()`);
         const mine = await captureGuest(wc, gid);
-        check('the shell draws a page of this window as a JPEG', !!mine && mine.mime === 'image/jpeg' && mine.data.length > 2000 && Buffer.from(mine.data, 'base64').subarray(0, 2).toString('hex') === 'ffd8', mine ? `${mine.mime} ${mine.data.length}` : 'null');
+        check('the shell draws a page of this window as a JPEG, and says how large the picture is', !!mine && mine.mime === 'image/jpeg' && mine.data.length > 2000 && Buffer.from(mine.data, 'base64').subarray(0, 2).toString('hex') === 'ffd8' && mine.width > 100 && mine.width <= 1280 && mine.height > 100, mine ? `${mine.mime} ${mine.data.length} ${mine.width}x${mine.height}` : 'null');
         const stranger = new BrowserWindow({ show: false });
         check('…and refuses a page that the asking window does not host, or that does not exist', (await captureGuest(stranger.webContents, gid)) === null && (await captureGuest(wc, 999999)) === null && (await captureGuest(wc, 'x')) === null && !!webContents.fromId(gid));
         stranger.destroy();

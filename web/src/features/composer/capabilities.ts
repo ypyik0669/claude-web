@@ -22,37 +22,64 @@ export interface Capability {
   icon: IconName;
   /** 'main' = 这次对话可以…, 'advanced' = 进阶 */
   group: 'main' | 'advanced';
-  /** it cannot be turned on from here, and why (the row is shown off, with this under its name) */
+  /** what the machine the server runs on has to offer for it (see `CapabilityEnv`) */
+  needs?: keyof CapabilityEnv;
+  /** shown under its name where `needs` is not met: why it cannot be turned on there (the row stays, off) */
   unavailable?: string;
 }
+
+/** What the server's machine offers (`engine.info`): 操控电脑 is Windows-only for now. Unknown counts as no. */
+export interface CapabilityEnv { computer?: boolean }
+const NO_ENV: CapabilityEnv = {};
 
 export const CAPABILITIES: Capability[] = [
   // (the built-in browser needs no switch — every conversation has it; this one is the user's own Chrome)
   { key: 'chrome', label: '控制 Chrome', desc: '用你自己的 Chrome（要装 Claude 扩展）', title: 'Claude in Chrome（--chrome）：在你自己的 Chrome 里打开网页、点击、填表，用的是那里登录着的账号。内置浏览器不用开这个', icon: 'browser', group: 'main' },
-  // the engine sets this up only in its own terminal interface (probed 2026-10-10: a conversation started from here
-  // with its flag exits at once), so the row is there to say so — and where the web part of it is
-  { key: 'computerUse', label: '操控电脑', desc: '截图、键盘鼠标', title: 'Computer Use：键盘、鼠标和截图操作整台电脑', icon: 'machine', group: 'main', unavailable: '现在用不了：运行内核只在它自己的终端界面里支持。上网不用它——搜索、打开网页、点击、截图都在右侧的「浏览器」里' },
+  // the whole desktop, through our own `computer` MCP server (server/src/computer): which applications is asked of
+  // the user every time, in a card of this app. Windows only for now — elsewhere the row says so
+  { key: 'computerUse', label: '操控电脑', desc: '看屏幕、用键盘鼠标操作你允许的应用（每次先问你）', title: 'Computer Use：截图、键盘和鼠标操作整台电脑上你允许的应用。只对这一个对话开；要用哪些应用，每次都会先弹出来问你', icon: 'machine', group: 'main', needs: 'computer', unavailable: '目前只支持 Windows（看的是运行 Claude Web 的那台电脑）。上网不用它——搜索、打开网页、点击、截图都在右侧的「浏览器」里' },
   { key: 'coordinator', label: '协调者模式', desc: '自己不动手，只派活给子代理', title: '协调者模式（CLAUDE_CODE_COORDINATOR_MODE）', icon: 'orchestra', group: 'advanced' },
   { key: 'proactive', label: '主动模式', desc: '空闲时继续推进', title: '主动模式（--proactive）', icon: 'play', group: 'advanced' },
   { key: 'brief', label: 'Brief', desc: '让 Claude 用简报工具随时告诉你进展', title: 'Brief（--brief，SendUserMessage 工具）', icon: 'chat', group: 'advanced' },
 ];
 export const FEATURE_KEYS = CAPABILITIES.map((c) => c.key);
-/** The ones that can be on: a stored default for one that cannot is dropped (it would start nothing). */
-export const UNAVAILABLE_KEYS = CAPABILITIES.filter((c) => c.unavailable).map((c) => c.key);
 
-/** Features as they are sent and shown: without what cannot be turned on from here. */
-export function usable(f: SessionFeatures): SessionFeatures {
-  if (!UNAVAILABLE_KEYS.some((k) => f[k])) return f;
+/** The rows as this machine has them: `unavailable` only where what the row needs is missing. */
+export function capabilitiesFor(env: CapabilityEnv = NO_ENV): Capability[] {
+  return CAPABILITIES.map((c) => (c.needs && !env[c.needs] ? c : { ...c, unavailable: undefined }));
+}
+
+/** The ones that cannot be on here: a stored default for one is left out (it would start nothing). */
+export function unavailableKeys(env: CapabilityEnv = NO_ENV): FeatureKey[] {
+  return CAPABILITIES.filter((c) => c.needs && !env[c.needs]).map((c) => c.key);
+}
+
+/** Features as they are sent and shown: without what cannot be turned on on this machine. */
+export function usable(f: SessionFeatures, env: CapabilityEnv = NO_ENV): SessionFeatures {
+  const off = unavailableKeys(env);
+  if (!off.some((k) => f[k])) return f;
   const next = { ...f };
-  for (const k of UNAVAILABLE_KEYS) delete next[k];
+  for (const k of off) delete next[k];
+  return next;
+}
+
+/**
+ * Capabilities that are asked for anew for every conversation: after a conversation was started with one, the next
+ * new conversation starts without it. 操控电脑 reaches the whole desktop — it is not something to leave switched on.
+ */
+export const ONE_TIME_KEYS: FeatureKey[] = ['computerUse'];
+export function afterStart(f: SessionFeatures): SessionFeatures {
+  if (!ONE_TIME_KEYS.some((k) => f[k])) return f;
+  const next = { ...f };
+  for (const k of ONE_TIME_KEYS) delete next[k];
   return next;
 }
 
 export const CHANNELS = { label: '频道', desc: '让插件 / MCP 服务器往对话里推消息', title: '频道（--channels），格式 plugin:name@marketplace 或 server:name，逗号分隔', placeholder: 'plugin:name@marketplace, server:name' } as const;
 
-export function withFeature(f: SessionFeatures, key: FeatureKey, on: boolean): SessionFeatures {
+export function withFeature(f: SessionFeatures, key: FeatureKey, on: boolean, env: CapabilityEnv = NO_ENV): SessionFeatures {
   const next = { ...f };
-  if (on && !UNAVAILABLE_KEYS.includes(key)) next[key] = true;
+  if (on && !unavailableKeys(env).includes(key)) next[key] = true;
   else delete next[key];
   return next;
 }
@@ -69,15 +96,16 @@ export function withChannels(f: SessionFeatures, list: string[]): SessionFeature
 }
 
 /** How many capabilities are on (env is plumbing, not a capability). */
-export function featureCount(f: SessionFeatures): number {
-  return FEATURE_KEYS.filter((k) => !!f[k] && !UNAVAILABLE_KEYS.includes(k)).length + (f.channels?.length ? 1 : 0);
+export function featureCount(f: SessionFeatures, env: CapabilityEnv = NO_ENV): number {
+  const off = unavailableKeys(env);
+  return FEATURE_KEYS.filter((k) => !!f[k] && !off.includes(k)).length + (f.channels?.length ? 1 : 0);
 }
 
 export interface CapabilityTag { key: FeatureKey | 'channels'; label: string; icon: IconName; title: string }
 
 /** The small removable tags in the text box, in menu order. */
-export function capabilityTags(f: SessionFeatures): CapabilityTag[] {
-  const tags: CapabilityTag[] = CAPABILITIES.filter((c) => !!f[c.key] && !c.unavailable).map((c) => ({ key: c.key, label: c.label, icon: c.icon, title: `${c.label}：${c.desc}（${c.title}）` }));
+export function capabilityTags(f: SessionFeatures, env: CapabilityEnv = NO_ENV): CapabilityTag[] {
+  const tags: CapabilityTag[] = capabilitiesFor(env).filter((c) => !!f[c.key] && !c.unavailable).map((c) => ({ key: c.key, label: c.label, icon: c.icon, title: `${c.label}：${c.desc}（${c.title}）` }));
   if (f.channels?.length) tags.push({ key: 'channels', label: `${CHANNELS.label} ${f.channels.length}`, icon: 'bell', title: `${CHANNELS.label}：${f.channels.join(', ')}` });
   return tags;
 }
@@ -133,9 +161,11 @@ const isFeatures = (v: unknown): v is SessionFeatures => !!v && typeof v === 'ob
 
 export function migrateFeatureDefaults(stored: unknown, legacy: string | null): { value: SessionFeatures; write: boolean; dropLegacy: boolean } {
   const dropLegacy = legacy !== null;
-  if (isFeatures(stored)) return { value: usable(stored), write: false, dropLegacy };
+  // (what cannot be on on this machine is left out where the defaults are read — `usable` — not here: the machine
+  // is not known yet when this runs)
+  if (isFeatures(stored)) return { value: stored, write: false, dropLegacy };
   let parsed: unknown = null;
   try { parsed = legacy ? JSON.parse(legacy) : null; } catch { /* a broken value is dropped */ }
-  if (isFeatures(parsed)) return { value: usable(parsed), write: true, dropLegacy };
+  if (isFeatures(parsed)) return { value: afterStart(parsed), write: true, dropLegacy };
   return { value: {}, write: false, dropLegacy };
 }
