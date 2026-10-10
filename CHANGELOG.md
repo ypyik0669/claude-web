@@ -2,7 +2,7 @@
 
 每个版本的变化都记在这里；安装包在 [Releases](https://github.com/ypyik0669/claude-web/releases) 下载。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## 未发布
+## [0.2.1] — 2026-10-11
 
 ### 新增
 
