@@ -562,8 +562,9 @@ For more detail on the architecture, protocols and the pitfalls hit along the wa
 
 ```bash
 npm install
+npm run site:install     # install the site's separate dependencies (also needed for typecheck and tests)
 npm run dev              # dev mode: server hot reload + Vite (http://localhost:5173)
-npm run typecheck        # type-check server + web + desktop
+npm run typecheck        # type-check server + web + desktop + site
 npm test                 # unit tests
 npm run build:all        # build server / web / desktop
 npm run e2e              # end-to-end checks (temp folder, mock agent, costs no tokens)

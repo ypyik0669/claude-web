@@ -562,8 +562,9 @@ worktree 放在仓库外面的 `~/.claude-web/worktrees/<仓库名>-<hash>/`（�
 
 ```bash
 npm install
+npm run site:install     # 安装官网的独立依赖（类型检查和测试也需要）
 npm run dev              # 开发模式：server 热重载 + Vite（http://localhost:5173）
-npm run typecheck        # server + web + desktop 类型检查
+npm run typecheck        # server + web + desktop + site 类型检查
 npm test                 # 单元测试
 npm run build:all        # 构建 server / web / desktop
 npm run e2e              # 端到端检查（临时目录，mock agent，不花 token）
