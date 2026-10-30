@@ -2,7 +2,7 @@
 // answer is read leniently (defaults filled, a bad cron becomes daily) so the user always gets a form to edit.
 import { randomBytes } from 'node:crypto';
 import type { AgentDriver } from '../agents/types.js';
-import type { BotGenerated, OpenSessionParams, Routine } from '../protocol.js';
+import type { BotGenerated, BotTier, OpenSessionParams, Routine } from '../protocol.js';
 import { nextCron } from '../schedules/cron.js';
 import { tr } from '../i18n/index.js';
 
@@ -10,6 +10,8 @@ export interface GenerateDeps {
   open(params: OpenSessionParams): AgentDriver; defaultProvider(): string | undefined;
   /** the model to write the draft with (the service passes the provider's strongest); undefined = the provider's default */
   model?(): string | undefined;
+  /** settings bots.defaultTier: the tier of a draft the model gave none (or a bad one) */
+  defaultTier?(): BotTier | undefined;
 }
 /** the scheduler checks every routine this often at most; a draft never asks for more */
 export const MIN_EVERY_MINUTES = 15;
@@ -36,7 +38,7 @@ export const GENERATE_PROMPT = (text: string) => [
  * Reads the first ```json block of the answer; `text` (the user's sentence) names a bot the model left unnamed.
  * `clamped`: the routines whose everyMinutes was under MIN_EVERY_MINUTES and was raised to it (the preview says so).
  */
-export function parseDraft(answer: string, cwd: string, text = ''): BotGenerated {
+export function parseDraft(answer: string, cwd: string, text = '', defaultTier: BotTier = 'balanced'): BotGenerated {
   const m = /```json\s*([\s\S]*?)```/.exec(answer);
   let j: any; try { j = JSON.parse(m?.[1] ?? ''); } catch { throw new Error(tr('没能从回答里读出 Bot 设置')); }
   if (!j || typeof j !== 'object') throw new Error(tr('没能从回答里读出 Bot 设置'));
@@ -52,7 +54,7 @@ export function parseDraft(answer: string, cwd: string, text = ''): BotGenerated
   return {
     name: String(j.name ?? '').trim() || [...text.trim()].slice(0, 12).join('') || tr('新 Bot'), cwd,
     charter: { role: String(j.charter?.role ?? ''), audience: str(j.charter?.audience), sources: Array.isArray(j.charter?.sources) ? j.charter.sources.map(String) : [], report: str(j.charter?.report), done: str(j.charter?.done) },
-    tier: ['cheap', 'balanced', 'best'].includes(j.tier) ? j.tier : 'balanced', policy: { rules: [], signOff: true }, budget: { dailyUsd: Number(j.budget?.dailyUsd) > 0 ? Number(j.budget.dailyUsd) : 2 },
+    tier: ['cheap', 'balanced', 'best'].includes(j.tier) ? j.tier : defaultTier, policy: { rules: [], signOff: true }, budget: { dailyUsd: Number(j.budget?.dailyUsd) > 0 ? Number(j.budget.dailyUsd) : 2 },
     routines, outputs: [{ kind: 'inbox' }],
     ...(clamped.length ? { clamped } : {}),
   };
@@ -69,6 +71,6 @@ export async function generateBot(d: GenerateDeps, text: string, cwd: string): P
       r.on('message', onMsg);
       r.send(GENERATE_PROMPT(text));
     });
-    return parseDraft(answer, cwd, text);
+    return parseDraft(answer, cwd, text, d.defaultTier?.() ?? 'balanced');
   } finally { await r.close().catch(() => {}); }
 }

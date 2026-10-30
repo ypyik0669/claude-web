@@ -24,6 +24,13 @@ describe('parseDraft', () => {
     expect(parseDraft('```json\n{"name":"x","charter":{"role":"r","sources":[]}}\n```', '/p').clamped).toBeUndefined();
   });
   it('no json block throws', () => { expect(() => parseDraft('没有', '/p')).toThrow(); });
+  it('a draft with no (or a bad) tier gets the default tier; a good one is kept', () => {
+    const j = (tier: string) => `\`\`\`json\n{"name":"x","charter":{"role":"r","sources":[]}${tier}}\n\`\`\``;
+    expect(parseDraft(j(''), '/p').tier).toBe('balanced');
+    expect(parseDraft(j(''), '/p', '', 'best').tier).toBe('best');
+    expect(parseDraft(j(',"tier":"huge"'), '/p', '', 'cheap').tier).toBe('cheap');
+    expect(parseDraft(j(',"tier":"best"'), '/p', '', 'cheap').tier).toBe('best');
+  });
 });
 
 describe('generateBot', () => {
@@ -35,6 +42,8 @@ describe('generateBot', () => {
     const b = await generateBot({ open: (p) => { params = p; return r; }, defaultProvider: () => 'relay' }, '每天早上盯 issue', '/p');
     expect(params).toMatchObject({ features: { chatOnly: true }, permissionMode: 'dontAsk', providerId: 'relay' });
     expect(b.name).toBe('小晨'); expect(r.closed).toBe(true);
+    expect(b.tier).toBe('balanced');
+    expect((await generateBot({ open: () => r, defaultProvider: () => 'relay', defaultTier: () => 'cheap' }, 'x', '/p')).tier).toBe('cheap');
     expect(GENERATE_PROMPT('x')).toContain('```json');
   });
 });

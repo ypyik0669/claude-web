@@ -283,6 +283,21 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
       expect(store.runs('b')).toEqual([]);
     });
 
+    it('a refresh that fails to write (lease not taken by anyone) does not abort the runs in flight', async () => {
+      await store.save(bot('a', [routine({ id: 'r1', nextRunAt: 1 })]));
+      const s = sched(deps(() => fakeRunner(10_000)));
+      await s.tick(5); await until(() => runners[0]?.sent.length === 1);
+      // the lock path can't be written (a directory now): the lease names nobody else
+      fs.rmSync(lockFile(), { force: true }); fs.mkdirSync(lockFile());
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        expect(await s.claim()).toBe(false);
+        await settle();
+        expect(runners[0].interrupt).not.toHaveBeenCalled();
+        expect(s.isRunning('a')).toBe(true);
+      } finally { warn.mockRestore(); fs.rmSync(lockFile(), { recursive: true, force: true }); }
+    });
+
     it('a stale lease (not refreshed for 3 ticks) or one of a dead process is taken over', async () => {
       await store.save(bot('a', [routine({ nextRunAt: 1 })]));
       fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.pid, host: os.hostname(), at: Date.now() - LEASE_STALE_MS - 1000, instance: 'other' }));

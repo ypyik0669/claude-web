@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import { atomicWrite } from '../agent-config/backup.js';
 import { tr } from '../i18n/index.js';
 
+const TIERS: unknown[] = ['cheap', 'balanced', 'best'];
 /** a bot's tier as a 智能路由 strategy (a virtual model): only meaningful on a routing group's provider */
 export function tierModel(tier: BotTier): string {
   return tier === 'cheap' ? 'smart-free' : tier === 'best' ? 'smart-performance' : 'smart-auto';
@@ -209,12 +210,8 @@ export class BotService extends EventEmitter {
     await this.acting();
     await this.ensureManager();
     const now = Date.now();
-    // a draft without a (valid) tier gets the settings' default for new bots (bots.defaultTier), else balanced
-    const tiers: unknown[] = ['cheap', 'balanced', 'best'];
-    if (draft && typeof draft === 'object' && !tiers.includes((draft as { tier?: unknown }).tier)) {
-      const def = this.d.meta.settings()['bots.defaultTier'];
-      draft = { ...draft, tier: tiers.includes(def) ? def as BotTier : 'balanced' };
-    }
+    // a draft without a (valid) tier gets the settings' default for new bots
+    if (draft && typeof draft === 'object' && !TIERS.includes((draft as { tier?: unknown }).tier)) draft = { ...draft, tier: this.defaultTier() };
     const bot = await this.store.save({ ...botFields(draft), id: this.store.newId(), createdAt: now, updatedAt: now });
     this.changed();
     return this.statusOf(bot);
@@ -318,7 +315,12 @@ export class BotService extends EventEmitter {
 
   /** one sentence → a draft, on the strongest model the default provider has */
   generate(text: string, cwd: string): Promise<BotGenerated> {
-    return generateBot({ open: (p) => this.d.pool.open(p), defaultProvider: () => this.defaultProvider(), model: () => this.modelFor('best', undefined) }, text, cwd);
+    return generateBot({ open: (p) => this.d.pool.open(p), defaultProvider: () => this.defaultProvider(), model: () => this.modelFor('best', undefined), defaultTier: () => this.defaultTier() }, text, cwd);
+  }
+  /** settings bots.defaultTier (省钱 / 均衡 / 最强 for new bots), else balanced */
+  private defaultTier(): BotTier {
+    const v = this.d.meta.settings()['bots.defaultTier'];
+    return TIERS.includes(v) ? v as BotTier : 'balanced';
   }
   templates(): BotTemplate[] { return BOT_TEMPLATES; }
   load(): BotLoad { return this.scheduler.load(); }
