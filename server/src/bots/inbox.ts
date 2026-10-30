@@ -4,7 +4,11 @@ import type { InboxAnswer, InboxItem } from '../protocol.js';
 import type { BotStore } from './store.js';
 import { tr } from '../i18n/index.js';
 
-/** 收件箱: approvals, findings, drafts, proposals from every bot. Nothing here expires. */
+/**
+ * 收件箱: approvals, findings, drafts, proposals from every bot. Nothing here expires.
+ * One instance per BotStore: it reads inbox.json once and then owns it, so a second Inbox on the same store
+ * would overwrite the first one's items.
+ */
 export class Inbox extends EventEmitter {
   private items: InboxItem[];
   /** every update is check → write → commit on this chain, so two concurrent add() / answer() never lose an item */

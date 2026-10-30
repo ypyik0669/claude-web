@@ -21,10 +21,11 @@ describe('Inbox', () => {
     expect(seen).toEqual(['finding:open', 'approval:open', 'approval:done']);
   });
   it('never expires: an item from long ago is still pending', async () => {
-    const i = await inbox.add({ kind: 'approval', botId: 'b1', title: 'old' });
-    const all = inbox.list(undefined, true); all[0].at = 1;
-    await new Inbox(new BotStore(root)).add({ kind: 'finding', botId: 'b1', title: 'x' });
-    expect(inbox.get(i.id)?.done).toBeUndefined();
+    await new BotStore(root).setInbox([{ id: 'i_old', kind: 'approval', botId: 'b1', title: 'old', at: 1 }]);
+    const fresh = new Inbox(new BotStore(root));
+    expect(fresh.list().map((i) => i.id)).toEqual(['i_old']);
+    expect(fresh.pendingCount('b1')).toBe(1);
+    expect(fresh.get('i_old')?.done).toBeUndefined();
   });
   it('answering twice or an unknown id throws', async () => {
     const i = await inbox.add({ kind: 'approval', botId: 'b1', title: 'x' });
