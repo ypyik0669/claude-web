@@ -44,6 +44,7 @@ import { CustomCssSection } from './CustomCssSection';
 import { VIEW_MODES, viewModeLabel } from '@/features/chat/view-mode';
 import { LocalEnvEditor } from './LocalEnvEditor';
 import { thinkingLanguageOptions } from './thinking-language';
+import { BotsBudget, BotsDefaultProvider, BotsDesktopKeep, BotsDutyService, BotsUnleashAll } from './BotsSection';
 // review X1: the GitLab hosts editor loads when its row is shown
 const GitlabSection = lazy(() => import('./GitlabSection').then((m) => ({ default: m.GitlabSection })));
 
@@ -93,6 +94,13 @@ const CONTROLS: Record<EntryId, (e: EntryMeta) => ReactNode> = {
   'ui.cjkFont': (e) => <Select k={e.id} def="" label={e.label} options={CJK_FONTS} />,
   'ui.reduceMotion': (e) => <Toggle k={e.id} label={e.label} />,
   'ui.haptics': (e) => <Toggle k={e.id} def label={e.label} />,
+  'bots.concurrency': (e) => <NumberSelect k={e.id} def={2} label={e.label} options={[1, 2, 3, 4, 5, 6, 7, 8]} />,
+  'bots.globalBudgetUsd': (e) => <BotsBudget label={e.label} />,
+  'bots.defaultProvider': (e) => <BotsDefaultProvider label={e.label} />,
+  'bots.defaultTier': (e) => <Seg k={e.id} def="balanced" label={e.label} options={[{ id: 'cheap', l: tr('省钱') }, { id: 'balanced', l: tr('均衡') }, { id: 'best', l: tr('最强') }]} />,
+  'bots.duty.service': (e) => <BotsDutyService label={e.label} />,
+  'bots.loginItem': (e) => <BotsDesktopKeep label={e.label} />,
+  'bots.unleashAll': () => <BotsUnleashAll />,
 };
 
 const muted = { color: 'var(--ink-3)', fontSize: 12 } as const;

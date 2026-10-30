@@ -195,7 +195,7 @@ function onlyDeclarations(file: string, src: string, names: string[]): string {
 /** Helpers the settings pages use from files that also hold other things. */
 const CONFIG_HELPERS = ['Cmd', 'CacheOptions', 'PROVIDER_TYPES'];
 /** Modules the visible pages call that put text on screen themselves (toasts, dialogs, sub-panels). */
-const PAGE_HELPERS = ['features/models/data.ts', S('AgentConfigPanel.tsx'), S('agent-config-form.ts')];
+const PAGE_HELPERS = ['features/models/data.ts', S('AgentConfigPanel.tsx'), S('agent-config-form.ts'), S('BotsSection.tsx')];
 
 describe('non-advanced settings pages speak the interface vocabulary (ui/terms.ts)', () => {
   const advanced = new Set(SETTINGS_SECTIONS.filter((s) => s.advanced).flatMap((s) => [...(s.bodies ?? []), ...(s.more ?? [])]));
