@@ -895,7 +895,7 @@ export class Hub {
 
       // ---- shared memory (also reachable by every agent over MCP; see memory/mcp.ts) ----
       case 'memory.search':
-        return s.memory.search({ q: req.query, scope: req.scope, cwd: req.cwd, sessionId: req.sessionId, kind: req.kind_, limit: req.limit });
+        return s.memory.search({ q: req.query, scope: req.scope, cwd: req.cwd, sessionId: req.sessionId, botId: req.botId, kind: req.kind_, limit: req.limit });
       case 'memory.write':
         return s.memory.write({ text: req.text, scope: req.scope, key: (req.scope ?? 'project') === 'session' ? req.sessionId ?? '' : req.cwd ?? '', kind: req.kind_, tags: req.tags, pinned: req.pinned, sourceSession: req.sessionId });
       case 'memory.update':

@@ -1,7 +1,7 @@
 // 值班 Bot (spec 2026-10-30-duty-bots-design): the bots, their inbox, runs and load as the server keeps them, and the
 // Bot page over the main area. A small store of its own, like the 后台 page's; nothing goes into store/index.ts.
 import { create } from 'zustand';
-import type { BotLoad, BotRun, BotStatus, BotTemplate, InboxAnswer, InboxItem, ServerEvent } from '@shared';
+import type { AuditRow, Bot, BotLoad, BotRun, BotStatus, BotTemplate, InboxAnswer, InboxItem, ServerEvent } from '@shared';
 import { hideSheet, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { closeOtherPages, registerPage } from '@/features/sections/pages';
@@ -102,6 +102,27 @@ export async function deleteBot(id: string): Promise<void> {
 /** 放开全部 (every gate off except stop and audit) / 收回. */
 export async function unleashBot(id: string, on: boolean): Promise<void> {
   try { await ws.request({ kind: 'bots.unleash', id, on }); } catch (e) { useStore.getState().toast(tr('操作失败：{message}', { message: msg(e) })); }
+}
+
+export function setBotTab(tab: BotTab): void { useBots.setState({ tab }); }
+
+/** An edit of a bot. No local copy changes: the server answers with bots.changed. Resolves false when it failed. */
+export async function updateBot(id: string, patch: Partial<Bot>): Promise<boolean> {
+  try { await ws.request({ kind: 'bots.update', id, patch }); return true; } catch (e) { useStore.getState().toast(tr('保存失败：{message}', { message: msg(e) })); return false; }
+}
+
+/** A bot's latest runs from the server (replacing what the pushes collected so far). Quiet when the server has none. */
+export async function loadRuns(botId: string): Promise<void> {
+  try {
+    const list = await ws.request<BotRun[]>({ kind: 'bots.runs.list', botId, limit: RUNS_KEEP });
+    if (Array.isArray(list)) useBots.setState((s) => ({ runs: { ...s.runs, [botId]: list.slice(0, RUNS_KEEP) } }));
+  } catch { /* an older server: the pushes are all there is */ }
+}
+
+/** One run's audit rows (every tool call the gate saw). Throws when the server can't answer. */
+export async function loadAudit(botId: string, runId: string): Promise<AuditRow[]> {
+  const rows = await ws.request<AuditRow[]>({ kind: 'bots.runs.audit', botId, runId });
+  return Array.isArray(rows) ? rows : [];
 }
 
 registerPage('bots', { isOpen: () => useBots.getState().open, close: closeBots, subscribe: (fn) => useBots.subscribe(fn) });

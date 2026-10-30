@@ -567,7 +567,7 @@ export type ClientRequest =
   | { kind: 'session.setProvider'; sessionId: string; providerId?: string; model?: string } // model: the respawned process starts on it
   | { kind: 'session.switchAgent'; sessionId: string; agent: AgentKind; model?: string }
   | { kind: 'session.canonical'; sessionId: string }
-  | { kind: 'memory.search'; query?: string; scope?: MemoryScope; cwd?: string; sessionId?: string; kind_?: MemoryKind; limit?: number }
+  | { kind: 'memory.search'; query?: string; scope?: MemoryScope; cwd?: string; sessionId?: string; /** scope 'bot': whose memory */ botId?: string; kind_?: MemoryKind; limit?: number }
   | { kind: 'memory.write'; text: string; scope?: MemoryScope; cwd?: string; sessionId?: string; kind_?: MemoryKind; tags?: string[]; pinned?: boolean }
   | { kind: 'memory.update'; id: string; patch: { text?: string; kind?: MemoryKind; tags?: string[]; pinned?: boolean; scope?: MemoryScope } }
   | { kind: 'memory.remove'; id: string }
