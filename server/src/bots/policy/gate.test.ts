@@ -77,17 +77,49 @@ describe('makeGate', () => {
     g.approveOnce('Bash', { command: 'git push origin main' });
     expect((await g.gate(ev('Bash', { command: 'git push origin main' })))?.behavior).toBe('deny');
   });
-  it('perDay counts today\'s allowed calls of that class and scope, across runs of the bot', async () => {
-    const send = (ch: string) => ev('ExecuteExtraTool', { tool_name: 'mcp__slack__send_message', params: { channel: ch, text: 'x' } });
+  const slack = (...ch: string[]) => ev('ExecuteExtraTool', { tool_name: 'mcp__slack__send_message', params: { channel: ch.join(','), text: 'x' } });
+  it('perDay counts per rule, across runs of the bot: a 2-channel call counts once and later single-channel calls see it', async () => {
     const policy: Bot['policy'] = { rules: [{ cls: 'send', level: 'do', scope: { channels: ['C1', 'C2'], perDay: 2 } }] };
-    await store.save(bot(policy));
     await store.addRun({ id: 'run0', botId: 'b1', routineId: 'r1', at: Date.now() - 1000, trigger: 'cron' });
     const g0 = makeGate({ bot: bot(policy), runId: 'run0', routineId: 'r1', store, audit, inbox });
-    expect((await g0.gate(send('C1')))?.behavior).toBe('allow');
+    expect((await g0.gate(slack('C1', 'C2')))?.behavior).toBe('allow');
     const g = makeGate({ bot: bot(policy), runId: 'run1', routineId: 'r1', store, audit, inbox });
-    expect((await g.gate(send('C1')))?.behavior).toBe('allow');
-    expect((await g.gate(send('C1')))?.behavior).toBe('deny'); // third today on C1: asks
-    expect((await g.gate(send('C2')))?.behavior).toBe('allow'); // another scope key has its own count
+    expect((await g.gate(slack('C1')))?.behavior).toBe('allow');
+    expect((await g.gate(slack('C2')))?.behavior).toBe('deny'); // the rule's third today, whatever channel: asks
+    expect((await g.gate(slack('C1', 'C2')))?.behavior).toBe('deny');
+  });
+  it('autopilot perDay caps what autopilot does on its own today, across classes', async () => {
+    const policy: Bot['policy'] = { rules: [], autoPilot: { on: true, scope: { perDay: 2 } } };
+    const g = makeGate({ bot: bot(policy), runId: 'run1', routineId: 'r1', store, audit, inbox });
+    expect((await g.gate(slack('C1')))?.behavior).toBe('allow');
+    expect((await g.gate(ev('Bash', { command: 'git push origin --delete x' })))?.behavior).toBe('allow');
+    expect((await g.gate(ev('Bash', { command: 'git push origin main' })))?.behavior).toBe('deny');
+    expect(store.audit('b1', 'run1').map((r) => [r.cls, r.basis, r.result])).toEqual([['send', 'autopilot', 'allowed'], ['delete', 'autopilot', 'allowed'], ['send', 'rule', 'queued']]);
+  });
+  it('an approval that a rule made unnecessary does not linger for a later call', async () => {
+    const policy: Bot['policy'] = { rules: [{ cls: 'send', level: 'do', scope: { channels: ['C1'], perDay: 1 } }] };
+    const g = makeGate({ bot: bot(policy), runId: 'run1', routineId: 'r1', store, audit, inbox });
+    g.approveOnce('mcp__slack__send_message', { channel: 'C1', text: 'x' });
+    expect((await g.gate(slack('C1')))?.behavior).toBe('allow'); // by the rule
+    expect((await g.gate(slack('C1')))?.behavior).toBe('deny'); // perDay used up, and the approval was spent
+    expect(store.audit('b1', 'run1').map((r) => r.basis)).toEqual(['rule', 'rule']);
+  });
+  it('an approval is spent only once the call is on record', async () => {
+    let fail = true;
+    const flaky = { add: async (r: any) => { if (fail && r.result === 'allowed') throw new Error('disk full'); return audit.add(r); } } as unknown as AuditLog;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const g = makeGate({ bot: bot(), runId: 'run1', routineId: 'r1', store, audit: flaky, inbox });
+    g.approveOnce('Bash', { command: 'git push origin main' });
+    expect((await g.gate(ev('Bash', { command: 'git push origin main' })))?.behavior).toBe('deny');
+    fail = false;
+    expect((await g.gate(ev('Bash', { command: 'git push origin main' })))?.behavior).toBe('allow');
+    expect(store.audit('b1', 'run1')[0]).toMatchObject({ basis: 'user', result: 'allowed' });
+    warn.mockRestore();
+  });
+  it("audit rows carry the gate's clock", async () => {
+    const g = makeGate({ bot: bot(), runId: 'run1', routineId: 'r1', store, audit, inbox, now: () => 12345 });
+    await g.gate(ev('Read', { file_path: '/a' }));
+    expect(store.audit('b1', 'run1')[0].at).toBe(12345);
   });
   it('yesterday\'s calls do not count', async () => {
     const policy: Bot['policy'] = { rules: [{ cls: 'send', level: 'do', scope: { channels: ['C1'], perDay: 1 } }] };

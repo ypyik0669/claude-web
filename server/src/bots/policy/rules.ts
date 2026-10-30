@@ -75,13 +75,23 @@ function scopeTouches(scope: PolicyScope | undefined, t: Target, now: number): b
   return !listed;
 }
 
-export function decide(policy: BotPolicy, cls: ActionClass, t: Target, now: number, todayCount: number): Decision {
+/** A rule's identity for its daily count: class + scope, keys sorted (rules have no id; changing the scope starts a new count). */
+export function ruleKey(rule: PolicyRule): string {
+  const s = rule.scope ? Object.fromEntries(Object.entries(rule.scope).sort(([a], [b]) => a.localeCompare(b))) : null;
+  return `${rule.cls}|${JSON.stringify(s)}`;
+}
+
+/** Today's allowed actions: per rule (a rule's perDay) and what autopilot let through on its own (autopilot's perDay). */
+export interface DayCounts { perRule(rule: PolicyRule): number; autopilot: number }
+export const NO_COUNTS: DayCounts = { perRule: () => 0, autopilot: 0 };
+
+export function decide(policy: BotPolicy, cls: ActionClass, t: Target, now: number, counts: DayCounts = NO_COUNTS): Decision {
   const own = policy.rules.filter((r) => r.cls === cls);
   const deny = own.find((r) => r.level === 'deny' && scopeTouches(r.scope, t, now));
   if (deny) return { level: 'deny', basis: 'rule', rule: deny };
   if (policy.unleashed) return { level: 'do', basis: 'unleashed' };
-  if (policy.autoPilot?.on && scopeMatches(policy.autoPilot.scope, t, now, todayCount, cls)) return { level: 'do', basis: 'autopilot' };
-  const scoped = own.find((r) => r.level !== 'deny' && r.scope && scopeMatches(r.scope, t, now, todayCount, cls));
+  if (policy.autoPilot?.on && scopeMatches(policy.autoPilot.scope, t, now, counts.autopilot, cls)) return { level: 'do', basis: 'autopilot' };
+  const scoped = own.find((r) => r.level !== 'deny' && r.scope && scopeMatches(r.scope, t, now, counts.perRule(r), cls));
   if (scoped) return { level: scoped.level, basis: 'rule', rule: scoped };
   const plain = own.find((r) => r.level !== 'deny' && !r.scope);
   if (plain) return { level: plain.level, basis: 'rule', rule: plain };

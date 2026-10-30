@@ -41,35 +41,35 @@ describe('trust: upgrades are always scoped, corrections remove the rule that le
     for (let i = 1; i <= TRUST_THRESHOLD; i++) { r = recordApproval(t, 'send', key, i); t = r.trust; }
     expect(r.propose).toBe(true);
     const p: BotPolicy = { rules: [{ cls: 'send', level: 'do', scope: scopeFromKey(key) }] };
-    expect(decide(p, 'send', { domains: ['a.com', 'b.com'] }, 0, 0).level).toBe('do');
-    expect(decide(p, 'send', { domains: ['a.com', 'c.com'] }, 0, 0).level).toBe('ask');
+    expect(decide(p, 'send', { domains: ['a.com', 'b.com'] }, 0).level).toBe('do');
+    expect(decide(p, 'send', { domains: ['a.com', 'c.com'] }, 0).level).toBe('ask');
   });
   it('I3: demotion removes the exact scoped rule that allowed the action, even when the key names another kind', () => {
     const allow = { cls: 'send' as const, level: 'do' as const, scope: { domains: ['mail.example.com'] } };
     const other = { cls: 'send' as const, level: 'do' as const, scope: { channels: ['C2'] } };
     const p: BotPolicy = { rules: [allow, other, { cls: 'read', level: 'do' }] };
-    const d = decide(p, 'send', { domains: ['mail.example.com'], recipients: ['boss@x.com'] }, 0, 0);
+    const d = decide(p, 'send', { domains: ['mail.example.com'], recipients: ['boss@x.com'] }, 0);
     expect(d.rule).toBe(allow);
     const after = demoteRule(p, d.rule);
     expect(after.rules).toEqual([other, { cls: 'read', level: 'do' }]);
-    expect(decide(after, 'send', { domains: ['mail.example.com'] }, 0, 0).level).toBe('ask');
+    expect(decide(after, 'send', { domains: ['mail.example.com'] }, 0).level).toBe('ask');
   });
   it('I3: a plain (unscoped) do / do_tell rule goes back to ask', () => {
     const p: BotPolicy = { rules: [{ cls: 'send', level: 'do' }] };
-    const d = decide(p, 'send', { channels: ['C1'] }, 0, 0);
+    const d = decide(p, 'send', { channels: ['C1'] }, 0);
     const after = demoteRule(p, d.rule);
     expect(after.rules).toEqual([{ cls: 'send', level: 'ask' }]);
-    expect(decide(after, 'send', { channels: ['C1'] }, 0, 0).level).toBe('ask');
+    expect(decide(after, 'send', { channels: ['C1'] }, 0).level).toBe('ask');
   });
   it('the rule is found by value after the policy was reloaded', () => {
     const p: BotPolicy = { rules: [{ cls: 'send', level: 'do', scope: { channels: ['C1'] } }] };
-    const d = decide(p, 'send', { channels: ['C1'] }, 0, 0);
+    const d = decide(p, 'send', { channels: ['C1'] }, 0);
     const reloaded: BotPolicy = JSON.parse(JSON.stringify(p));
     expect(demoteRule(reloaded, d.rule).rules).toEqual([]);
   });
   it('defaults, ask / deny rules, autopilot and unleashed are left alone', () => {
     const p: BotPolicy = { rules: [{ cls: 'send', level: 'ask', scope: { channels: ['C1'] } }] };
-    expect(demoteRule(p, decide({ rules: [] }, 'write_local', {}, 0, 0).rule)).toBe(p);
+    expect(demoteRule(p, decide({ rules: [] }, 'write_local', {}, 0).rule)).toBe(p);
     expect(demoteRule(p, p.rules[0])).toBe(p);
     expect(demoteRule(p, undefined)).toBe(p);
   });
@@ -88,9 +88,9 @@ describe('trust: an earned payment upgrade is capped', () => {
     expect(r.scope).toEqual({ domains: ['api.stripe.com'], maxAmount: 75 });
     expect(r.trust[`pay|${key}`]).toEqual({ approvals: 3, lastAt: 3, maxAmount: 75 });
     const p: BotPolicy = { rules: [{ cls: 'pay', level: 'do', scope: r.scope }] };
-    expect(decide(p, 'pay', { domains: ['api.stripe.com'], amount: 75 }, 0, 0).level).toBe('do');
-    expect(decide(p, 'pay', { domains: ['api.stripe.com'], amount: 76 }, 0, 0).level).toBe('ask');
-    expect(decide(p, 'pay', { domains: ['api.stripe.com'] }, 0, 0).level).toBe('ask');
+    expect(decide(p, 'pay', { domains: ['api.stripe.com'], amount: 75 }, 0).level).toBe('do');
+    expect(decide(p, 'pay', { domains: ['api.stripe.com'], amount: 76 }, 0).level).toBe('ask');
+    expect(decide(p, 'pay', { domains: ['api.stripe.com'] }, 0).level).toBe('ask');
   });
   it('any approved payment without an amount: no pay upgrade at all', () => {
     for (const amounts of [[20, undefined, 40], [undefined, 20, 40], [20, 40, undefined]]) {

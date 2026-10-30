@@ -1,6 +1,6 @@
 // server/src/bots/policy/rules.test.ts
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_RULES, decide, scopeMatches, scopeKey } from './rules.js';
+import { DEFAULT_RULES, decide, ruleKey, scopeMatches, scopeKey } from './rules.js';
 import { classify, targetOf } from './classify.js';
 import type { BotPolicy } from '../../protocol.js';
 
@@ -8,17 +8,17 @@ const empty: BotPolicy = { rules: [] };
 describe('decide', () => {
   it('defaults: read / local / browser do, install do_tell, send / pay / delete ask', () => {
     expect(DEFAULT_RULES.find((r) => r.cls === 'read')!.level).toBe('do');
-    expect(decide(empty, 'write_local', {}, 0, 0)).toEqual({ level: 'do', basis: 'rule', rule: DEFAULT_RULES.find((r) => r.cls === 'write_local') });
-    expect(decide(empty, 'install', {}, 0, 0).level).toBe('do_tell');
-    expect(decide(empty, 'send', {}, 0, 0).level).toBe('ask');
-    expect(decide(empty, 'pay', {}, 0, 0).level).toBe('ask');
-    expect(decide(empty, 'delete', {}, 0, 0).level).toBe('ask');
+    expect(decide(empty, 'write_local', {}, 0)).toEqual({ level: 'do', basis: 'rule', rule: DEFAULT_RULES.find((r) => r.cls === 'write_local') });
+    expect(decide(empty, 'install', {}, 0).level).toBe('do_tell');
+    expect(decide(empty, 'send', {}, 0).level).toBe('ask');
+    expect(decide(empty, 'pay', {}, 0).level).toBe('ask');
+    expect(decide(empty, 'delete', {}, 0).level).toBe('ask');
   });
   it('a scoped rule beats the default only when the target is inside the scope', () => {
     const p: BotPolicy = { rules: [{ cls: 'send', level: 'do', scope: { channels: ['C1'], until: 100 } }] };
-    expect(decide(p, 'send', { channels: ['C1'] }, 50, 0).level).toBe('do');
-    expect(decide(p, 'send', { channels: ['C2'] }, 50, 0).level).toBe('ask');
-    expect(decide(p, 'send', { channels: ['C1'] }, 200, 0).level).toBe('ask');
+    expect(decide(p, 'send', { channels: ['C1'] }, 50).level).toBe('do');
+    expect(decide(p, 'send', { channels: ['C2'] }, 50).level).toBe('ask');
+    expect(decide(p, 'send', { channels: ['C1'] }, 200).level).toBe('ask');
   });
   it('maxAmount and perDay are limits, unlimited matches everything', () => {
     expect(scopeMatches({ maxAmount: 50 }, { amount: 30 }, 0, 0)).toBe(true);
@@ -28,15 +28,15 @@ describe('decide', () => {
     expect(scopeMatches({ unlimited: true }, { amount: 1e9 }, 0, 999)).toBe(true);
   });
   it('autoPilot and unleashed say do with their own basis', () => {
-    expect(decide({ rules: [], autoPilot: { on: true, scope: { domains: ['a.com'] } } }, 'send', { domains: ['a.com'] }, 0, 0)).toMatchObject({ level: 'do', basis: 'autopilot' });
-    expect(decide({ rules: [], autoPilot: { on: true, scope: { domains: ['a.com'] } } }, 'send', { domains: ['b.com'] }, 0, 0).level).toBe('ask');
-    expect(decide({ rules: [], unleashed: true }, 'pay', {}, 0, 0)).toMatchObject({ level: 'do', basis: 'unleashed' });
+    expect(decide({ rules: [], autoPilot: { on: true, scope: { domains: ['a.com'] } } }, 'send', { domains: ['a.com'] }, 0)).toMatchObject({ level: 'do', basis: 'autopilot' });
+    expect(decide({ rules: [], autoPilot: { on: true, scope: { domains: ['a.com'] } } }, 'send', { domains: ['b.com'] }, 0).level).toBe('ask');
+    expect(decide({ rules: [], unleashed: true }, 'pay', {}, 0)).toMatchObject({ level: 'do', basis: 'unleashed' });
   });
   it('an explicit deny stays deny even with autoPilot', () => {
-    expect(decide({ rules: [{ cls: 'pay', level: 'deny' }], autoPilot: { on: true, scope: { unlimited: true } } }, 'pay', {}, 0, 0).level).toBe('deny');
+    expect(decide({ rules: [{ cls: 'pay', level: 'deny' }], autoPilot: { on: true, scope: { unlimited: true } } }, 'pay', {}, 0).level).toBe('deny');
   });
   it('a user-written deny still wins under unleashed (it is the user\'s own knob)', () => {
-    expect(decide({ rules: [{ cls: 'pay', level: 'deny' }], unleashed: true }, 'pay', {}, 0, 0).level).toBe('deny');
+    expect(decide({ rules: [{ cls: 'pay', level: 'deny' }], unleashed: true }, 'pay', {}, 0).level).toBe('deny');
   });
   it('scopeKey names what trust is counted on', () => {
     expect(scopeKey(undefined, { channels: ['C1'] })).toBe('channel:C1');
@@ -49,8 +49,8 @@ describe('decide', () => {
 describe('scopes: every host, the largest amount, lists apply to their own kind', () => {
   it('I2: a call is inside a domain scope only if EVERY host it touches is listed', () => {
     const p: BotPolicy = { rules: [{ cls: 'send', level: 'do', scope: { domains: ['trusted.com'] } }] };
-    expect(decide(p, 'send', { domains: ['trusted.com'] }, 0, 0).level).toBe('do');
-    expect(decide(p, 'send', { domains: ['trusted.com', 'evil.com'] }, 0, 0).level).toBe('ask');
+    expect(decide(p, 'send', { domains: ['trusted.com'] }, 0).level).toBe('do');
+    expect(decide(p, 'send', { domains: ['trusted.com', 'evil.com'] }, 0).level).toBe('ask');
     expect(scopeMatches({ maxAmount: 50 }, { amount: 99999 }, 0, 0, 'pay')).toBe(false);
   });
   it('domain lists compare case-insensitively', () => {
@@ -68,17 +68,17 @@ describe('scopes: every host, the largest amount, lists apply to their own kind'
     expect(scopeMatches(scope, { domains: ['a.com'] }, 0, 0, 'send')).toBe(true);
     expect(scopeMatches(scope, { channels: ['C2'] }, 0, 0, 'send')).toBe(false);
     const ap: BotPolicy = { rules: [], autoPilot: { on: true, scope: { maxAmount: 50 } } };
-    expect(decide(ap, 'send', {}, 0, 0)).toMatchObject({ level: 'do', basis: 'autopilot' });
-    expect(decide(ap, 'delete', {}, 0, 0)).toMatchObject({ level: 'do', basis: 'autopilot' });
-    expect(decide(ap, 'pay', { amount: 30 }, 0, 0)).toMatchObject({ level: 'do', basis: 'autopilot' });
-    expect(decide(ap, 'pay', { amount: 80 }, 0, 0).level).toBe('ask');
-    expect(decide(ap, 'pay', {}, 0, 0).level).toBe('ask');
-    expect(decide(ap, 'send', { amount: 80 }, 0, 0).level).toBe('ask');
+    expect(decide(ap, 'send', {}, 0)).toMatchObject({ level: 'do', basis: 'autopilot' });
+    expect(decide(ap, 'delete', {}, 0)).toMatchObject({ level: 'do', basis: 'autopilot' });
+    expect(decide(ap, 'pay', { amount: 30 }, 0)).toMatchObject({ level: 'do', basis: 'autopilot' });
+    expect(decide(ap, 'pay', { amount: 80 }, 0).level).toBe('ask');
+    expect(decide(ap, 'pay', {}, 0).level).toBe('ask');
+    expect(decide(ap, 'send', { amount: 80 }, 0).level).toBe('ask');
   });
   it('a scoped deny catches the call if it touches any listed value', () => {
     const p: BotPolicy = { rules: [{ cls: 'send', level: 'deny', scope: { domains: ['evil.com'] } }], unleashed: true };
-    expect(decide(p, 'send', { domains: ['ok.com', 'evil.com'] }, 0, 0).level).toBe('deny');
-    expect(decide(p, 'send', { domains: ['ok.com'] }, 0, 0)).toMatchObject({ level: 'do', basis: 'unleashed' });
+    expect(decide(p, 'send', { domains: ['ok.com', 'evil.com'] }, 0).level).toBe('deny');
+    expect(decide(p, 'send', { domains: ['ok.com'] }, 0)).toMatchObject({ level: 'do', basis: 'unleashed' });
   });
 });
 
@@ -87,7 +87,7 @@ describe('round 2: scopes are not ridden by unseen destinations or unreadable am
   const gate = (policy: BotPolicy, command: string) => {
     const input = { command };
     const cls = classify('Bash', input);
-    return decide(policy, cls, targetOf(cls, 'Bash', input), 0, 0).level;
+    return decide(policy, cls, targetOf(cls, 'Bash', input), 0).level;
   };
   const slack: BotPolicy = { rules: [{ cls: 'send', level: 'do', scope: { domains: ['hooks.slack.com'] } }] };
   const stripe: BotPolicy = { rules: [{ cls: 'pay', level: 'do', scope: { domains: ['api.stripe.com'], maxAmount: 75 } }] };
@@ -106,13 +106,32 @@ describe('round 2: scopes are not ridden by unseen destinations or unreadable am
     expect(scopeMatches({ domains: ['a.com'] }, { domains: ['a.com'], opaque: true }, 0, 0)).toBe(false);
     expect(scopeMatches({ perDay: 5 }, { opaque: true }, 0, 0)).toBe(false);
     expect(scopeMatches({ unlimited: true }, { opaque: true }, 0, 0)).toBe(true);
-    expect(decide({ rules: [], autoPilot: { on: true, scope: { domains: ['a.com'] } } }, 'send', { domains: ['a.com'], opaque: true }, 0, 0).level).toBe('ask');
-    expect(decide({ rules: [{ cls: 'send', level: 'deny', scope: { domains: ['evil.com'] } }] }, 'send', { domains: ['a.com'], opaque: true }, 0, 0).level).toBe('deny');
+    expect(decide({ rules: [], autoPilot: { on: true, scope: { domains: ['a.com'] } } }, 'send', { domains: ['a.com'], opaque: true }, 0).level).toBe('ask');
+    expect(decide({ rules: [{ cls: 'send', level: 'deny', scope: { domains: ['evil.com'] } }] }, 'send', { domains: ['a.com'], opaque: true }, 0).level).toBe('deny');
     expect(scopeKey(undefined, { domains: ['a.com'], opaque: true })).toBe('*');
   });
   it('amountUnknown: no maxAmount matches, for pay or any class', () => {
     expect(scopeMatches({ maxAmount: 50 }, { amount: 10, amountUnknown: true }, 0, 0, 'pay')).toBe(false);
     expect(scopeMatches({ maxAmount: 50 }, { amountUnknown: true }, 0, 0, 'send')).toBe(false);
     expect(scopeMatches({ domains: ['a.com'] }, { domains: ['a.com'], amountUnknown: true }, 0, 0, 'send')).toBe(true);
+  });
+});
+
+describe('daily counts: per rule, and autopilot on its own', () => {
+  it("a rule's perDay reads that rule's count; autopilot's reads the autopilot count", () => {
+    const a = { cls: 'send' as const, level: 'do' as const, scope: { channels: ['C1'], perDay: 1 } };
+    const b = { cls: 'send' as const, level: 'do_tell' as const, scope: { channels: ['C1', 'C2'], perDay: 5 } };
+    const counts = (n: Record<string, number>, autopilot = 0) => ({ perRule: (r: typeof a | typeof b) => n[ruleKey(r)] ?? 0, autopilot });
+    const p: BotPolicy = { rules: [a, b] };
+    expect(decide(p, 'send', { channels: ['C1'] }, 0, counts({}))).toMatchObject({ level: 'do', rule: a });
+    expect(decide(p, 'send', { channels: ['C1'] }, 0, counts({ [ruleKey(a)]: 1 }))).toMatchObject({ level: 'do_tell', rule: b });
+    expect(decide(p, 'send', { channels: ['C1'] }, 0, counts({ [ruleKey(a)]: 1, [ruleKey(b)]: 5 })).level).toBe('ask');
+    const ap: BotPolicy = { rules: [], autoPilot: { on: true, scope: { perDay: 2 } } };
+    expect(decide(ap, 'delete', {}, 0, counts({}, 1)).basis).toBe('autopilot');
+    expect(decide(ap, 'delete', {}, 0, counts({}, 2)).level).toBe('ask');
+  });
+  it('ruleKey ignores the order of scope keys and the level', () => {
+    expect(ruleKey({ cls: 'send', level: 'do', scope: { perDay: 2, channels: ['C1'] } })).toBe(ruleKey({ cls: 'send', level: 'ask', scope: { channels: ['C1'], perDay: 2 } }));
+    expect(ruleKey({ cls: 'send', level: 'do' })).not.toBe(ruleKey({ cls: 'pay', level: 'do' }));
   });
 });
