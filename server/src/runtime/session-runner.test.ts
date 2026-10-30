@@ -75,7 +75,7 @@ vi.mock('node:fs/promises', async (orig) => {
   return { ...out, default: out };
 });
 
-const { SessionRunner } = await import('./session-runner.js');
+const { SessionRunner, GATE_HOOK_TIMEOUT_S, GATE_DEADLINE_MS } = await import('./session-runner.js');
 const tick = () => new Promise((r) => setTimeout(r, 10));
 
 describe('SessionRunner', () => {
@@ -2381,6 +2381,34 @@ describe('值班 Bot gate', () => {
       // an allowed-tools wrapper is not waved through either
       expect((await queries[0].options.canUseTool('ExecuteExtraTool', { tool_name: 'mcp__sessions__list_sessions', params: {} }, { signal, toolUseID: 'tu-c' })).behavior).toBe('deny');
       expect(r.getPendingPermissions()).toEqual([]);
+      await r.close();
+    });
+
+    it('the hook has a generous timeout of its own, and a slow gate is refused on abort or before that timeout — never left to fall through', async () => {
+      queries.length = 0;
+      const r = new SessionRunner({ sessionId: 'gh4', cwd: '/x', gated: true } as any);
+      await tick();
+      const m = queries[0].options.hooks?.PreToolUse as { timeout?: number; hooks: any[] }[];
+      expect(m[m.length - 1].timeout).toBe(GATE_HOOK_TIMEOUT_S);
+      expect(GATE_DEADLINE_MS).toBeLessThan(GATE_HOOK_TIMEOUT_S * 1000);
+      let release!: (v: any) => void;
+      r.gate = () => new Promise((res) => { release = res; });
+      const call = (signal: AbortSignal, id: string) => m[m.length - 1].hooks[0]({ hook_event_name: 'PreToolUse', session_id: 'x', transcript_path: '', cwd: '/x', tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: id }, id, { signal });
+      // the turn is aborted while the gate thinks: refused at once; the gate's late allow is dropped
+      const ac = new AbortController();
+      const p = call(ac.signal, 'tu-slow');
+      ac.abort();
+      expect(decision(await p)).toMatchObject({ permissionDecision: 'deny' });
+      release({ behavior: 'allow', updatedInput: {} });
+      await tick();
+      expect((r as any).hookAnswers.has('tu-slow')).toBe(false); // canUseTool won't reuse an allow nobody acted on
+      // a gate that never answers: refused at the deadline
+      vi.useFakeTimers();
+      try {
+        const q = call(new AbortController().signal, 'tu-hang');
+        await vi.advanceTimersByTimeAsync(GATE_DEADLINE_MS);
+        expect(decision(await q)).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining('太久') });
+      } finally { vi.useRealTimers(); }
       await r.close();
     });
 

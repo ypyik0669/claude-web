@@ -1822,4 +1822,5 @@ export const EN_SERVER: Record<string, string> = {
   "值班服务": "the duty service",
   "放宽的范围要写明用在哪里（域名、频道或收件人）：{field}": "A scope that lets more run must say where it applies (domains, channels or recipients): {field}",
   "付款的放宽范围要写上限金额：{field}": "A payment scope must set a maximum amount: {field}",
+  "策略检查太久没有回答，这一步没有执行": "The policy check took too long to answer; this step was not run",
 };

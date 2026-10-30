@@ -152,6 +152,25 @@ export interface RunnerEvents {
 const NO_RELAY: ReturnType<typeof userAnthropicEnv> = { env: {}, relay: false };
 
 /**
+ * A gated conversation's PreToolUse hook: the CLI's own hook timeout is short, and a hook that times out is a
+ * non-blocking error — the call would fall through to the normal permissions (fail open). So the matcher gets a
+ * generous timeout, and the gate is cut off before it (GATE_DEADLINE_MS): the hook always answers, with a refusal.
+ */
+export const GATE_HOOK_TIMEOUT_S = 600;
+export const GATE_DEADLINE_MS = (GATE_HOOK_TIMEOUT_S - 10) * 1000;
+/** the gate's answer, or a refusal once `signal` aborts or GATE_DEADLINE_MS passes (a late answer is dropped) */
+function untilAbortOrDeadline(answer: Promise<PermissionResult>, signal?: AbortSignal): Promise<PermissionResult> {
+  if (signal?.aborted) return Promise.resolve({ behavior: 'deny', message: 'cancelled' });
+  return new Promise((resolve) => {
+    const done = (r: PermissionResult) => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); resolve(r); };
+    const onAbort = () => done({ behavior: 'deny', message: 'cancelled' });
+    const timer = setTimeout(() => done({ behavior: 'deny', message: tr('策略检查太久没有回答，这一步没有执行') }), GATE_DEADLINE_MS);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    answer.then(done, () => done({ behavior: 'deny', message: tr('没有人在看这个对话，这一步没法批准，没有执行') }));
+  });
+}
+
+/**
  * The tool set a sidecar-backed conversation gets (Gemini web / WorkBuddy). Those upstreams take the tool schemas
  * as text inside the prompt, so every extra tool costs latency and can push a turn over the sidecar's 128 KB
  * attachment limit. These six cover reading, searching, editing and running commands — the core of a coding turn.
@@ -639,7 +658,7 @@ export class SessionRunner extends EventEmitter {
       // (see thinking-language.ts, 2026-10-22)
       ...extra,
     };
-    if (this.gated) options.hooks = { ...extra.hooks, PreToolUse: [...(extra.hooks?.PreToolUse ?? []), { hooks: [this.gateHook] }] };
+    if (this.gated) options.hooks = { ...extra.hooks, PreToolUse: [...(extra.hooks?.PreToolUse ?? []), { hooks: [this.gateHook], timeout: GATE_HOOK_TIMEOUT_S }] };
     this.q = query({ prompt: this.input, options });
     void this.pump();
   }
@@ -906,11 +925,12 @@ export class SessionRunner extends EventEmitter {
   }
 
   /** OpenSessionParams.gated: the PreToolUse hook that puts every tool call — whatever would skip canUseTool — before the gate */
-  private gateHook: HookCallback = async (input, toolUseID) => {
+  private gateHook: HookCallback = async (input, toolUseID, opts) => {
     if (input.hook_event_name !== 'PreToolUse') return { continue: true };
     const toolInput = input.tool_input && typeof input.tool_input === 'object' && !Array.isArray(input.tool_input) ? input.tool_input as Record<string, unknown> : {};
     const id = toolUseID ?? input.tool_use_id;
-    const r = await this.askGate({ requestId: randomUUID(), sessionId: this.sessionId, toolName: input.tool_name, input: toolInput, toolUseId: id });
+    // the turn aborted, or the gate is still thinking near the hook's timeout: refused, never left to the CLI
+    const r = await untilAbortOrDeadline(this.askGate({ requestId: randomUUID(), sessionId: this.sessionId, toolName: input.tool_name, input: toolInput, toolUseId: id }), opts?.signal);
     // a refused call never reaches canUseTool: only an allow is kept for it
     if (id && r.behavior === 'allow') {
       this.hookAnswers.set(id, r);
