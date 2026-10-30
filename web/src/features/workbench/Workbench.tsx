@@ -8,6 +8,7 @@ import { useAutomation } from '@/features/automation/state';
 import { useExtensions } from '@/features/extensions/state';
 import { useHub } from '@/features/model-hub/state';
 import { useBackground } from '@/features/background/state';
+import { useBots } from '@/features/bots/state';
 import { usePageOpen } from '@/features/sections';
 import { GroupBar } from './GroupBar';
 import { PaneLayer } from './PaneLayer';
@@ -18,6 +19,7 @@ import { tr } from '@/i18n';
 // 后台 too: the office and the graph are not in the app's first file
 const BackgroundPage = lazy(() => import('@/features/background/BackgroundPage').then((m) => ({ default: m.BackgroundPage })));
 const ExtensionsPage = lazy(() => import('@/features/extensions/ExtensionsPage').then((m) => ({ default: m.ExtensionsPage })));
+const BotsPage = lazy(() => import('@/features/bots/BotsPage').then((m) => ({ default: m.BotsPage })));
 const ModelHubPage = lazy(() => import('@/features/model-hub/ModelHubPage').then((m) => ({ default: m.ModelHubPage })));
 
 /**
@@ -38,6 +40,7 @@ export function Workbench() {
   const extSeen = useExtensions((s) => s.seen.length > 0);
   const hubSeen = useHub((s) => s.seen.length > 0);
   const bgSeen = useBackground((s) => s.seen);
+  const botsSeen = useBots((s) => s.seen);
   // a phone never gets the group bar / tab strips / rail (spec §5.11): its one row is the conversation header
   const vis = chromeVisibility(layout, { workbench, mobile });
   return (
@@ -46,6 +49,7 @@ export function Workbench() {
       <div className="main-stack">
         <PaneLayer tabStrips={vis.tabStrip} underGroupBar={vis.groupBar} workbench={workbench && !mobile} inert={autoOpen} />
         {bgSeen && <ErrorBoundary area={tr('后台')}><Suspense fallback={null}><BackgroundPage /></Suspense></ErrorBoundary>}
+        {botsSeen && <ErrorBoundary area={tr('Bot')}><Suspense fallback={null}><BotsPage /></Suspense></ErrorBoundary>}
         {autoSeen && <ErrorBoundary area={tr('自动化')}><AutomationPage /></ErrorBoundary>}
         {extSeen && <ErrorBoundary area={tr('扩展')}><Suspense fallback={null}><ExtensionsPage /></Suspense></ErrorBoundary>}
         {hubSeen && <ErrorBoundary area={tr('模型')}><Suspense fallback={null}><ModelHubPage /></Suspense></ErrorBoundary>}

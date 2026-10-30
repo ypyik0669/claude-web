@@ -1,0 +1,44 @@
+/* 值班 Bot (spec 2026-10-30-duty-bots-design): the Bot page — load bar, then list / detail / run in three columns
+   (one on a phone). Shared tokens only. */
+
+.bots-load { flex: none; display: flex; align-items: center; gap: var(--sp-2); margin: 0 var(--sp-5) var(--sp-3); padding: 6px var(--sp-3); border: var(--hairline) solid var(--edge-subtle); border-radius: var(--r-md); background: var(--surface-1); color: var(--ink-2); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.bots-load .grow { flex: 1 1 auto; }
+
+.bots-empty { justify-content: center; }
+
+.bots-body { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 260px minmax(0, 1fr) 380px; gap: 12px; height: 100%; padding: 0 var(--sp-5) var(--sp-5); }
+.bots-body > * { min-height: 0; overflow: auto; }
+
+.bot-list { display: flex; flex-direction: column; gap: 2px; }
+.bot-row { position: relative; display: flex; align-items: center; gap: var(--sp-2); padding: 8px var(--sp-2); border-radius: var(--r-row); cursor: pointer; color: var(--ink-1); }
+.bot-row:hover { background: var(--layer-hover); }
+.bot-row.on { background: var(--layer-selected); }
+.bot-avatar { flex: none; width: 26px; height: 26px; border-radius: var(--r-sm); image-rendering: pixelated; }
+.bot-avatar.letter { display: inline-flex; align-items: center; justify-content: center; background: var(--surface-2); color: var(--ink-2); font-size: var(--fs-sm); font-weight: 600; }
+.bot-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bot-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bot-line .grow { flex: 1 1 auto; }
+.bot-line.sub { color: var(--ink-3); font-size: var(--fs-meta); }
+.bot-name { font-size: var(--fs-base); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bot-role { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bot-tag { flex: none; padding: 0 6px; border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent-text); font-size: var(--fs-meta); }
+.bot-state { flex: none; padding: 0 6px; border-radius: var(--r-pill); background: var(--fill-subtle); color: var(--ink-3); font-size: var(--fs-meta); }
+.bot-state[data-state=running] { background: var(--ok-soft); color: var(--ok); }
+.bot-state[data-state=queued] { color: var(--ink-2); }
+.bot-state[data-state=attention] { background: var(--warn-soft); color: var(--warn); }
+.bot-state[data-state=paused] { color: var(--ink-4); }
+.bot-cost { flex: none; font-variant-numeric: tabular-nums; }
+.bot-trust { flex: none; display: inline-flex; gap: 2px; }
+.bot-trust i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+.bot-more { flex: none; position: relative; opacity: 0; }
+.bot-row:hover .bot-more, .bot-row.on .bot-more, .bot-more:focus-within, .bot-more:has(.menu) { opacity: 1; }
+
+.bot-detail, .bot-run-pane { border: var(--hairline) solid var(--edge-subtle); border-radius: var(--r-lg); background: var(--surface-1); padding: var(--sp-4); }
+.bot-detail .bd-name { margin: 0; font-size: var(--fs-lg); }
+.bot-run-pane .rp-name { color: var(--ink-3); font-size: var(--fs-sm); }
+
+.bot-create { position: absolute; right: var(--sp-5); top: 56px; z-index: 2; display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); border: var(--hairline) solid var(--edge-default); border-radius: var(--r-lg); background: var(--surface-elev); box-shadow: var(--elev-1); }
+
+/* a phone: one column — the bots are the page's tabs */
+.bots-page.phone .bots-load { margin: 0 var(--sp-3) var(--sp-2); }
+.bots-page.phone .bots-body { grid-template-columns: minmax(0, 1fr); padding: 0 var(--sp-3) var(--sp-3); }

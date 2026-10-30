@@ -91,6 +91,19 @@ export async function stopAll(): Promise<void> {
   try { await ws.request({ kind: 'bots.stopAll' }); } catch (e) { useStore.getState().toast(tr('停止失败：{message}', { message: msg(e) })); }
 }
 
+export async function pauseBot(id: string, paused: boolean): Promise<void> {
+  try { await ws.request({ kind: 'bots.pause', id, paused }); } catch (e) { useStore.getState().toast(tr('操作失败：{message}', { message: msg(e) })); }
+}
+
+export async function deleteBot(id: string): Promise<void> {
+  try { await ws.request({ kind: 'bots.delete', id }); } catch (e) { useStore.getState().toast(tr('删除失败：{message}', { message: msg(e) })); }
+}
+
+/** 放开全部 (every gate off except stop and audit) / 收回. */
+export async function unleashBot(id: string, on: boolean): Promise<void> {
+  try { await ws.request({ kind: 'bots.unleash', id, on }); } catch (e) { useStore.getState().toast(tr('操作失败：{message}', { message: msg(e) })); }
+}
+
 registerPage('bots', { isOpen: () => useBots.getState().open, close: closeBots, subscribe: (fn) => useBots.subscribe(fn) });
 
 let installed = false;

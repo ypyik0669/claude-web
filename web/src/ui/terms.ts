@@ -126,6 +126,8 @@ export const EMPTY = {
   tasks: { what: tr('子代理或后台任务'), when: tr('Claude 派出子代理、在后台跑命令') },
   // 后台
   background: { what: tr('在跑的子代理'), when: tr('对话里派出子代理、跑工作流或后台命令') },
+  // the Bot page
+  bots: { what: tr('Bot'), when: tr('新建一个 Bot'), line: tr('还没有 Bot。从晨报、PR 巡检、收件箱分拣里挑一个开始') },
   // the automation page
   schedules: { what: tr('定时任务'), when: tr('设好时间和提示词') },
   scheduleRuns: { what: tr('运行记录'), when: tr('定时任务跑过一次') },
