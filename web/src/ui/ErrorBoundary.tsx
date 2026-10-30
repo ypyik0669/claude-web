@@ -4,6 +4,7 @@ import { useStore } from '@/store';
 import { Icon } from '@/ui/icons';
 import { crashTargets, formatErrorReport, toReport, type ErrorReport } from './error-report';
 import { tr } from '@/i18n';
+import { copyText } from './clipboard';
 
 /**
  * Error boundaries: a component that throws takes down only its own region (a tile, a dock panel, one
@@ -19,20 +20,6 @@ import { tr } from '@/i18n';
 const CRASH_EVENT = 'cw:crash';
 if (typeof window !== 'undefined') {
   (window as any).__cwCrash = (area = '') => window.dispatchEvent(new CustomEvent(CRASH_EVENT, { detail: String(area) }));
-}
-
-function copyText(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text).catch(() => legacyCopy(text));
-  return Promise.resolve(legacyCopy(text));
-}
-function legacyCopy(text: string) {
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.position = 'fixed';
-  ta.style.opacity = '0';
-  document.body.appendChild(ta);
-  ta.select();
-  try { document.execCommand('copy'); } finally { ta.remove(); }
 }
 
 function Thrower({ area }: { area: string }): never {

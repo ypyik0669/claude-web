@@ -30,13 +30,15 @@ export interface BotsState {
   /** the template the create flow opens on (a starter card on the empty page), else it opens on the three entries */
   createTemplate?: string;
   templates: BotTemplate[];
+  /** a phone shows the inbox tab (its first screen); opening the page on a bot turns it off */
+  phoneInbox: boolean;
 }
 
 const RUNS_KEEP = 200;
 const EMPTY_LOAD: BotLoad = { running: 0, queued: 0, todayUsd: 0, weekEstimateUsd: 0, concurrency: 0 };
 
 export const useBots = create<BotsState>(() => ({
-  open: false, seen: false, bots: [], tab: 'routines', inbox: [], pending: 0, runs: {}, load: EMPTY_LOAD, creating: false, templates: [],
+  open: false, seen: false, bots: [], tab: 'routines', inbox: [], pending: 0, runs: {}, load: EMPTY_LOAD, creating: false, templates: [], phoneInbox: true,
 }));
 
 const pendingOf = (inbox: InboxItem[]) => inbox.filter((i) => !i.done).length;
@@ -65,7 +67,7 @@ function upsertRun(run: BotRun): void {
 export function openBots(id?: string): boolean {
   closeOtherPages('bots');
   if (!useBots.getState().open) markPageOpened();
-  useBots.setState((s) => ({ open: true, seen: true, selected: id ?? s.selected }));
+  useBots.setState((s) => ({ open: true, seen: true, selected: id ?? s.selected, phoneInbox: id ? false : s.phoneInbox }));
   if (useStore.getState().mobile) { useStore.setState({ sidebarOpen: false }); hideSheet(); }
   return true;
 }

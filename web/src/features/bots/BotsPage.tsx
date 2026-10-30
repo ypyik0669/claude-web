@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useStore } from '@/store';
 import { EmptyState } from '@/ui/EmptyState';
 import { EMPTY } from '@/ui/terms';
@@ -43,7 +43,7 @@ export function BotsPage() {
     return inboxTab ? [{ id: INBOX_TAB, label: tr('收件箱'), icon: 'approval' as const, count: pending ? <span className="count">{pending}</span> : undefined }, ...own] : own;
   }, [sorted, inboxTab, pending]);
   // a phone opens on the inbox; picking a bot's tab shows that bot
-  const [onInbox, setOnInbox] = useState(true);
+  const onInbox = useBots((s) => s.phoneInbox);
   const showInbox = inboxTab && onInbox;
   const newBtn = <button className="btn primary" onClick={() => startCreate()}>{tr('新建 Bot')}</button>;
   return (
@@ -57,7 +57,7 @@ export function BotsPage() {
       tab={showInbox ? INBOX_TAB : bot?.id ?? ''}
       tabs={tabs}
       showTabs={mobile && tabs.length > 0}
-      onTab={(id) => { setOnInbox(id === INBOX_TAB); if (id !== INBOX_TAB) selectBot(id); }}
+      onTab={(id) => { useBots.setState({ phoneInbox: id === INBOX_TAB }); if (id !== INBOX_TAB) selectBot(id); }}
       actions={newBtn}
       onEscape={() => { if (useBots.getState().creating) { stopCreate(); return true; } return false; }}
     >

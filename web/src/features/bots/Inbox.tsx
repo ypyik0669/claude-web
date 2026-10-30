@@ -14,6 +14,7 @@ import { tr } from '@/i18n';
 import { classLabel, groupInbox, INBOX_KINDS, inboxKindLabel } from './model';
 import { closeBots, useBots } from './state';
 import { confirmRisk, splitList } from './fields';
+import { copyText } from '@/ui/clipboard';
 
 export interface InboxAction { id: InboxAnswer['answer']; label: string; danger?: boolean; needsScope?: boolean }
 
@@ -27,7 +28,7 @@ export function inboxActions(item: InboxItem): InboxAction[] {
   }
 }
 
-type ScopeField = 'domains' | 'channels' | 'recipients' | 'maxAmount' | 'perDay';
+export type ScopeField = 'domains' | 'channels' | 'recipients' | 'maxAmount' | 'perDay' | 'until';
 const LIST_FIELDS = ['domains', 'channels', 'recipients'] as const;
 export type ScopeForm = Record<ScopeField, string>;
 export type ScopeUnlimited = Record<ScopeField, boolean>;
@@ -50,28 +51,65 @@ export function scopeDefaults(item: Pick<InboxItem, 'toolName' | 'input'>): Scop
     recipients: [...new Set(strs(p.to, p.recipient, p.recipients, p.cc, p.bcc))].join(', '),
     maxAmount: '',
     perDay: '',
+    until: '',
   };
 }
 
+/** The fields the form shows: the three lists, 每天最多, 有效期; 金额上限 too for a payment. */
+export function scopeFields(cls: InboxItem['cls']): ScopeField[] {
+  return cls === 'pay' ? ['domains', 'channels', 'recipients', 'maxAmount', 'perDay', 'until'] : ['domains', 'channels', 'recipients', 'perDay', 'until'];
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** 有效期 as typed: whole days from now (≥ 1) or a date (YYYY-MM-DD, valid to the end of that day, not in the past). */
+export function parseUntil(text: string, now: number): number | null {
+  const t = text.trim();
+  if (/^\d+$/.test(t)) { const n = Number(t); return n >= 1 ? now + n * DAY_MS : null; }
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t);
+  if (!m) return null;
+  const end = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 23, 59, 59, 999);
+  if (end.getMonth() !== Number(m[2]) - 1 || end.getTime() <= now) return null;
+  return end.getTime();
+}
+
+export type ScopeResult = { scope: PolicyScope } | { problem: string };
+
 /**
- * The scope to send, or null when there is none: the filled fields (a ticked 无限制 leaves its field out); nothing
- * filled but some 无限制 ticked (and confirmed) = unlimited. Never an empty scope; a number that is not one = null.
+ * The scope the user confirmed, field by field — nothing blank ever means "no limit":
+ * - every shown field is either filled in or has its 无限制 ticked (each tick was confirmed with its own risk);
+ * - at least one list (域名 / 频道 / 收件人) is filled in — a scope of numbers alone would match every destination;
+ * - only when every shown field is ticked 无限制 is the scope `{ unlimited: true }`.
+ * 每天最多 is a whole number ≥ 1, 金额上限 a number ≥ 0, 有效期 whole days ≥ 1 or a date.
  */
-export function buildScope(form: ScopeForm, unlimited: ScopeUnlimited): PolicyScope | null {
+export function buildScope(form: ScopeForm, unlimited: ScopeUnlimited, fields: ScopeField[], now: number): ScopeResult {
+  if (fields.every((f) => unlimited[f])) return { scope: { unlimited: true } };
   const out: PolicyScope = {};
-  for (const f of LIST_FIELDS) {
+  for (const f of fields) {
     if (unlimited[f]) continue;
-    const list = splitList(form[f]);
-    if (list.length) out[f] = list;
+    const text = form[f].trim();
+    const blank = { problem: tr('「{field}」要填，或者勾它的「无限制」', { field: fieldLabel(f) }) };
+    if (!text) return blank;
+    if (f === 'domains' || f === 'channels' || f === 'recipients') {
+      const list = splitList(text);
+      if (!list.length) return blank;
+      out[f] = list;
+    } else if (f === 'perDay') {
+      const n = Number(text);
+      if (!(Number.isInteger(n) && n >= 1)) return { problem: tr('每天最多要填不小于 1 的整数') };
+      out.perDay = n;
+    } else if (f === 'maxAmount') {
+      const n = Number(text);
+      if (!(Number.isFinite(n) && n >= 0)) return { problem: tr('金额上限要填不小于 0 的数') };
+      out.maxAmount = n;
+    } else {
+      const until = parseUntil(text, now);
+      if (until === null) return { problem: tr('有效期填天数（至少 1），或者一个以后的日期，如 2026-12-31') };
+      out.until = until;
+    }
   }
-  for (const f of ['maxAmount', 'perDay'] as const) {
-    if (unlimited[f] || !form[f].trim()) continue;
-    const n = Number(form[f].trim());
-    if (!(Number.isFinite(n) && n >= 0)) return null;
-    out[f] = n;
-  }
-  if (Object.keys(out).length) return out;
-  return Object.values(unlimited).some(Boolean) ? { unlimited: true } : null;
+  if (!out.domains && !out.channels && !out.recipients) return { problem: tr('域名、频道、收件人至少填一项：只限次数或金额，等于对谁都直接做') };
+  return { scope: out };
 }
 
 function fieldLabel(f: ScopeField): string {
@@ -81,6 +119,7 @@ function fieldLabel(f: ScopeField): string {
     case 'recipients': return tr('收件人');
     case 'maxAmount': return tr('金额上限');
     case 'perDay': return tr('每天最多');
+    case 'until': return tr('有效期');
   }
 }
 
@@ -92,6 +131,7 @@ function unlimitedRisk(f: ScopeField): string {
     case 'recipients': return tr('收件人不限后，它以后可以给任何人发消息、发邮件，不再问你。确定？');
     case 'maxAmount': return tr('金额不限后，它可以在你不在时无上限花钱。确定？');
     case 'perDay': return tr('次数不限后，它一天里可以不停地做下去，没有次数上限。确定？');
+    case 'until': return tr('不设有效期后，这条范围会一直有效，直到你自己删掉它。确定？');
   }
 }
 
@@ -112,21 +152,30 @@ export async function answerInOrder(ids: string[], answer: InboxAnswer['answer']
   return n;
 }
 
+/** The batch's one question: how many, and how many of them can't be taken back or go out / pay / delete. */
+export function batchConfirm(list: InboxItem[], answer: 'approve' | 'archive'): { title: string; message?: string; danger: boolean } {
+  if (answer === 'archive') return { title: tr('归档这 {n} 条？', { n: list.length }), danger: false };
+  const undo = list.filter((i) => i.undoable === false).length;
+  const risky = list.filter((i) => i.cls === 'send' || i.cls === 'pay' || i.cls === 'delete').length;
+  const parts = [undo ? tr('其中 {n} 条不可撤', { n: undo }) : '', risky ? tr('{n} 条是对外发送、付款或删除', { n: risky }) : ''].filter(Boolean);
+  return { title: tr('批准这 {n} 条？', { n: list.length }), message: parts.length ? parts.join('；') : undefined, danger: undo > 0 || risky > 0 };
+}
+
 /** 批并以后直接做: the scope it may do this kind of thing in from now on, prefilled from the call. */
 function ScopeEditor({ item, busy, onSend, onCancel }: { item: InboxItem; busy: boolean; onSend: (s: PolicyScope) => void; onCancel: () => void }) {
   const [form, setForm] = useState<ScopeForm>(() => scopeDefaults(item));
-  const [unlimited, setUnlimited] = useState<ScopeUnlimited>({ domains: false, channels: false, recipients: false, maxAmount: false, perDay: false });
+  const [unlimited, setUnlimited] = useState<ScopeUnlimited>({ domains: false, channels: false, recipients: false, maxAmount: false, perDay: false, until: false });
   const [problem, setProblem] = useState('');
-  const fields: ScopeField[] = item.cls === 'pay' ? ['domains', 'channels', 'recipients', 'maxAmount', 'perDay'] : ['domains', 'channels', 'recipients', 'perDay'];
+  const fields = scopeFields(item.cls);
   const tick = async (f: ScopeField, on: boolean) => {
     if (on && !(await confirmRisk(unlimitedRisk(f)))) return;
     setUnlimited((u) => ({ ...u, [f]: on }));
     setProblem('');
   };
   const submit = () => {
-    const scope = buildScope(form, unlimited);
-    if (!scope) { setProblem(tr('至少填一项范围，或勾「无限制」')); return; }
-    onSend(scope);
+    const r = buildScope(form, unlimited, fields, Date.now());
+    if ('problem' in r) { setProblem(r.problem); return; }
+    onSend(r.scope);
   };
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (imeComposing(e.nativeEvent)) return;
@@ -134,7 +183,7 @@ function ScopeEditor({ item, busy, onSend, onCancel }: { item: InboxItem; busy: 
   };
   return (
     <div className="ib-scope bd-form" onClick={(e) => e.stopPropagation()}>
-      <div className="ib-scope-h">{tr('以后在这个范围里，{cls}直接做：', { cls: item.cls ? classLabel(item.cls) : '' })}</div>
+      <div className="ib-scope-h">{item.cls ? tr('以后在这个范围里，「{cls}」直接做，不再问你：', { cls: classLabel(item.cls) }) : tr('以后在这个范围里，这类操作直接做，不再问你：')}</div>
       {fields.map((f) => (
         <div className="bd-row" key={f} data-field={f}>
           <span>{fieldLabel(f)}</span>
@@ -144,8 +193,8 @@ function ScopeEditor({ item, busy, onSend, onCancel }: { item: InboxItem; busy: 
               aria-label={fieldLabel(f)}
               disabled={unlimited[f]}
               value={unlimited[f] ? '' : form[f]}
-              placeholder={unlimited[f] ? tr('无限制') : f === 'maxAmount' || f === 'perDay' ? tr('不填 = 不限') : tr('用逗号隔开')}
-              inputMode={f === 'maxAmount' || f === 'perDay' ? 'decimal' : undefined}
+              placeholder={unlimited[f] ? tr('无限制') : f === 'until' ? tr('天数，或 2026-12-31') : f === 'perDay' ? tr('次数') : f === 'maxAmount' ? tr('金额') : tr('用逗号隔开')}
+              inputMode={f === 'maxAmount' ? 'decimal' : f === 'perDay' ? 'numeric' : undefined}
               onChange={(e) => { const v = e.target.value; setForm((s) => ({ ...s, [f]: v })); setProblem(''); }}
               onKeyDown={onKey}
             />
@@ -162,8 +211,8 @@ function ScopeEditor({ item, busy, onSend, onCancel }: { item: InboxItem; busy: 
   );
 }
 
-function Item({ item, botName, picked, onPick, busy, act }: {
-  item: InboxItem; botName: string; picked: boolean; onPick: (on: boolean) => void; busy: boolean;
+function Item({ item, botName, routineName, picked, onPick, busy, act }: {
+  item: InboxItem; botName: string; routineName?: string; picked: boolean; onPick: (on: boolean) => void; busy: boolean;
   act: (item: InboxItem, a: InboxAnswer['answer'], scope?: PolicyScope) => void;
 }) {
   const [scoping, setScoping] = useState(false);
@@ -182,6 +231,8 @@ function Item({ item, botName, picked, onPick, busy, act }: {
         <span>{botName}</span>
         {item.cls && <span>· {classLabel(item.cls)}</span>}
         {item.toolName && <span className="mono">· {item.toolName}</span>}
+        {item.routineId && <span>· {tr('例行「{name}」', { name: routineName ?? item.routineId })}</span>}
+        {item.runId && <span className="mono" title={item.runId}>· {tr('运行 {id}', { id: item.runId.slice(-6) })}</span>}
         <span>· {ago(item.at)}</span>
         {item.undoable === false && <span className="ib-undo">{tr('不可撤')}</span>}
       </div>
@@ -212,6 +263,7 @@ export function Inbox({ botId, empty }: { botId?: string; /** shown when nothing
   const items = useMemo(() => inbox.filter((i) => !i.done && (!botId || i.botId === botId)), [inbox, botId]);
   const groups = useMemo(() => groupInbox(items), [items]);
   const names = useMemo(() => new Map(bots.map((b) => [b.id, b.name])), [bots]);
+  const routineNames = useMemo(() => new Map(bots.flatMap((b) => b.routines.map((r) => [`${b.id}/${r.id}`, r.name] as const))), [bots]);
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState<Set<string>>(() => new Set());
   // only what is still waiting counts as picked
@@ -225,7 +277,7 @@ export function Inbox({ botId, empty }: { botId?: string; /** shown when nothing
     if (answer === 'send') {
       // a draft: its text goes on the clipboard (the user sends it), then it is marked sendable
       const text = item.body ?? item.title;
-      try { await navigator.clipboard.writeText(text); } catch { useStore.getState().toast(tr('没能复制')); return; }
+      try { await copyText(text); } catch { useStore.getState().toast(tr('没能复制')); return; }
     }
     mark([item.id], true);
     const ok = await send({ id: item.id, answer, scope });
@@ -233,15 +285,18 @@ export function Inbox({ botId, empty }: { botId?: string; /** shown when nothing
     if (ok && answer === 'send') useStore.getState().toast(tr('已复制'), true);
   };
 
-  /** Many at once, one after another; the first refusal stops the rest (its toast says why). */
-  const batch = async (list: InboxItem[], answer: 'approve' | 'archive') => {
+  /** Many at once, one after another (skipping any already being answered); the first refusal stops the rest, which stay picked. */
+  const batch = async (all: InboxItem[], answer: 'approve' | 'archive') => {
+    const list = all.filter((i) => !busy.has(i.id));
     if (!list.length) return;
-    const title = answer === 'approve' ? tr('批准这 {n} 条？', { n: list.length }) : tr('归档这 {n} 条？', { n: list.length });
-    if (!(await dlg.confirm(title, { okLabel: answer === 'approve' ? tr('批准') : tr('归档') }))) return;
+    const { title, message, danger } = batchConfirm(list, answer);
+    if (!(await dlg.confirm(title, { message, danger, focusCancel: danger, okLabel: answer === 'approve' ? tr('批准') : tr('归档') }))) return;
     const ids = list.map((i) => i.id);
     mark(ids, true);
-    try { await answerInOrder(ids, answer, send); } finally { mark(ids, false); }
-    setPicked(new Set());
+    let n = 0;
+    try { n = await answerInOrder(ids, answer, send); } finally { mark(ids, false); }
+    const sent = new Set(ids.slice(0, n));
+    setPicked((s) => new Set([...s].filter((id) => !sent.has(id))));
   };
 
   if (!items.length) return empty ? <div className="ib-empty">{empty}</div> : null;
@@ -264,6 +319,7 @@ export function Inbox({ botId, empty }: { botId?: string; /** shown when nothing
               key={i.id}
               item={i}
               botName={names.get(i.botId) ?? i.botId}
+              routineName={i.routineId ? routineNames.get(`${i.botId}/${i.routineId}`) : undefined}
               picked={picked.has(i.id)}
               onPick={(on) => setPicked((s) => { const n = new Set(s); if (on) n.add(i.id); else n.delete(i.id); return n; })}
               busy={busy.has(i.id)}
