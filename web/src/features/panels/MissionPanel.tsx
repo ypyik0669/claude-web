@@ -11,6 +11,8 @@ import { tr } from '@/i18n';
 import { usePrs } from '@/features/vcs/PrBar';
 import { laneOf, quickAnswer, resolved, type Lane } from './mission-lanes';
 import { SwitchChip } from '@/ui/Switch';
+import { Inbox } from '@/features/bots/Inbox';
+import { useInboxPending } from '@/features/bots/state';
 
 /**
  * Mission Control: every session across workspaces at a glance — what needs you, what is running (with the
@@ -36,6 +38,8 @@ export function MissionPanel() {
   const sessionMeta = useStore((s) => s.sessionMeta);
   const done = useMemo(() => resolved(sessions.filter((x) => !x.peer), (id) => !!sessionMeta[id]?.archived), [sessions, sessionMeta]);
   const [showDone, setShowDone] = useState(false);
+  // 值班 Bot: what the bots' inbox waits on (approvals, findings, drafts, proposals) is the top of 需要你
+  const inboxPending = useInboxPending();
 
   const cards = useMemo(() => {
     const now = Date.now();
@@ -64,12 +68,12 @@ export function MissionPanel() {
   return (
     <div className="mission">
       <div className="mission-head">
-        <span>{tr('{total} 个活动对话 · {filterCount} 需要你 · {filterCount2} 运行中', { total, filterCount: cards.filter((c) => c.lane === 'attention').length + orchWait.length + remote.filter((s) => s.live === 'waiting').length, filterCount2: cards.filter((c) => c.lane === 'running').length + remote.filter((s) => s.live !== 'waiting').length })}</span>
+        <span>{tr('{total} 个活动对话 · {filterCount} 需要你 · {filterCount2} 运行中', { total, filterCount: cards.filter((c) => c.lane === 'attention').length + orchWait.length + inboxPending + remote.filter((s) => s.live === 'waiting').length, filterCount2: cards.filter((c) => c.lane === 'running').length + remote.filter((s) => s.live !== 'waiting').length })}</span>
         <span className="grow" />
         <SwitchChip on={showIdle} onChange={setShowIdle}>{tr('显示空闲')}</SwitchChip>
         <SwitchChip on={showDone} onChange={setShowDone}>{tr('显示已解决')}</SwitchChip>
       </div>
-      {!total && !remote.length && !orchWait.length && <div className="empty">{tr('没有活动的对话。侧栏点开一个，或用「恢复」继续。')}</div>}
+      {!total && !remote.length && !orchWait.length && !inboxPending && <div className="empty">{tr('没有活动的对话。侧栏点开一个，或用「恢复」继续。')}</div>}
       <div className="mission-lanes">
         {remote.length > 0 && (
           <div className="lane running remote">
@@ -86,11 +90,13 @@ export function MissionPanel() {
         {lanes.filter((l) => l.id !== 'idle' || showIdle).map((lane) => {
           const items = cards.filter((c) => c.lane === lane.id);
           const orch = lane.id === 'attention' ? orchWait : [];
+          const bots = lane.id === 'attention' ? inboxPending : 0;
           if (!items.length && lane.id !== 'attention' && lane.id !== 'running') return null;
           // (待审 / 落地中 only appear when a conversation is in them)
           return (
             <div key={lane.id} className={clsx('lane', lane.id)}>
-              <div className="lane-h"><b>{lane.l}</b><span className="badge">{items.length + orch.length}</span><span className="muted">{lane.hint}</span></div>
+              <div className="lane-h"><b>{lane.l}</b><span className="badge">{items.length + orch.length + bots}</span><span className="muted">{lane.hint}</span></div>
+              {bots > 0 && <Inbox />}
               {items.map((c) => (
                 <div key={c.o.sessionId} className="mcard" onClick={() => openInPane(c.o.sessionId, 'replace')}>
                   <div className="t"><span className={clsx('dot', c.o.state)} />{c.title}</div>
@@ -132,7 +138,7 @@ export function MissionPanel() {
                   )}
                 </div>
               ))}
-              {!items.length && !orch.length && <div className="empty sm">—</div>}
+              {!items.length && !orch.length && !bots && <div className="empty sm">—</div>}
             </div>
           );
         })}

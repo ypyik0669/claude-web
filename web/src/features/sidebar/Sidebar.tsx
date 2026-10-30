@@ -33,6 +33,7 @@ import { anchoredMenuOpen } from '@/ui/menus';
 import { openAutomation } from '@/features/automation/state';
 import { openExtensions } from '@/features/extensions/state';
 import { openBackground } from '@/features/background/state';
+import { openBots, useInboxPending } from '@/features/bots/state';
 import { useSection } from '@/features/sections';
 import type { CustomId, ProjectMenuId, ProjectsHeadId, RowId, SectionId, TopId } from './entries';
 import { tr, trAs } from '@/i18n';
@@ -95,6 +96,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const setSourceFilter = useStore((s) => s.setSourceFilter);
   const busy = useStore(busyIds);
   const section = useSection();
+  const inboxPending = useInboxPending();
   // at desktop width the icon rail has 搜索's neighbours (自动化 · 扩展), the sidebar's switch, 设置 and the account
   // (structure round 2); a phone has no rail: they stay in its drawer
   const mobile = useStore((s) => s.mobile);
@@ -373,6 +375,8 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
           {/* 后台 → what runs besides the turns (sub-agents, workflows, background commands), spec 2026-10-12 */}
           <button className={clsx('nav', section === 'background' && 'active')} data-id={top('background')} title={tr('在跑的子代理、工作流和后台命令')} aria-pressed={section === 'background'} onClick={() => { setMenu(null); openBackground(); }}><Icon name="office" size={16} />{tr('后台')}</button>
           <button className={clsx('nav', section === 'automation' && 'active')} data-id={top('automation')} title={tr('定时任务、目标、编排')} aria-pressed={section === 'automation'} onClick={() => { setMenu(null); openAutomation(); }}><Icon name="tasks" size={16} />{tr('自动化')}</button>
+          {/* Bot → the duty bots' page (spec 2026-10-30): on a phone it opens on the inbox */}
+          <button className={clsx('nav', section === 'bots' && 'active')} data-id={top('bots')} title={tr('Bot：住在你电脑里的值班队友')} aria-pressed={section === 'bots'} onClick={() => { setMenu(null); openBots(); }}><Icon name="bot" size={16} />{tr('Bot')}{inboxPending > 0 && <span className="k">{inboxPending}</span>}</button>
           <button className={clsx('nav', section === 'extensions' && 'active')} data-id={top('extensions')} title={tr('连接器、Skills、插件')} aria-pressed={section === 'extensions'} onClick={() => { setMenu(null); openExtensions(); }}><Icon name="extensions" size={16} />{tr('扩展')}</button>
         </>}
       </nav>

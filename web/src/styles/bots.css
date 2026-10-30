@@ -150,3 +150,26 @@
 .bot-run-pane .rp-name { color: var(--ink-1); font-weight: 600; font-size: var(--fs-base); }
 .rp-sub { color: var(--ink-3); font-size: var(--fs-sm); }
 .rp-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+
+/* the inbox (Inbox.tsx): in the mission panel's 需要你 lane, and a phone's first tab of the Bot page */
+.bots-inbox { display: flex; flex-direction: column; gap: 6px; }
+.bots-inbox-page { overflow: auto; padding: 0 var(--sp-3) var(--sp-3); }
+.ib-empty { padding: var(--sp-5) var(--sp-3); color: var(--ink-3); font-size: var(--fs-sm); text-align: center; }
+.ib-batch { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: var(--r-md); background: var(--surface-1); box-shadow: var(--elev-1); font-size: var(--fs-sm); }
+.ib-batch .grow { flex: 1 1 auto; }
+.ib-group { display: flex; flex-direction: column; gap: 4px; }
+.ib-group-h { display: flex; align-items: center; gap: 6px; padding: 2px 4px; color: var(--ink-2); font-size: var(--fs-sm); }
+.ib-item { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border-radius: var(--r-md); background: var(--surface-0); box-shadow: var(--elev-1); }
+.ib-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ib-line.sub { flex-wrap: wrap; gap: 4px; color: var(--ink-3); font-size: var(--fs-meta); }
+.ib-line .mono { font-family: var(--mono); }
+.ib-pick { flex: none; margin: 0; }
+.ib-title { min-width: 0; overflow-wrap: anywhere; color: var(--ink-1); font-size: var(--fs-sm); font-weight: 600; }
+.ib-undo { color: var(--err); font-weight: 600; }
+.ib-body summary { cursor: pointer; color: var(--ink-3); font-size: var(--fs-meta); }
+.ib-body pre { margin: 4px 0 0; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; font-size: var(--fs-sm); color: var(--ink-2); }
+.ib-acts { display: flex; flex-wrap: wrap; gap: 4px; }
+.ib-scope { padding-top: 4px; border-top: var(--hairline) solid var(--edge-subtle); }
+.ib-scope .bd-row { grid-template-columns: 64px minmax(0, 1fr); }
+.ib-scope-h { color: var(--ink-2); font-size: var(--fs-sm); }
+.ib-problem { color: var(--err); font-size: var(--fs-meta); }
