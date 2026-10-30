@@ -1,8 +1,13 @@
 // server/src/bots/policy/rules.ts
 import type { ActionClass, AuditBasis, BotPolicy, PolicyLevel, PolicyRule, PolicyScope } from '../../protocol.js';
 
-/** What a call touches: every host, channel and recipient in it, and the largest amount. */
-export type Target = { domains?: string[]; channels?: string[]; recipients?: string[]; amount?: number };
+/**
+ * What a call touches: every host, channel and recipient in it, and the largest amount.
+ * opaque: the call also goes somewhere we can't read precisely (a bare host, user@host:, ssh / scp, a proxy, a
+ * non-http scheme…) — no allow scope matches it. amountUnknown: some amount in it isn't a plain number — no
+ * maxAmount matches it.
+ */
+export type Target = { domains?: string[]; channels?: string[]; recipients?: string[]; amount?: number; opaque?: boolean; amountUnknown?: boolean };
 export interface Decision { level: PolicyLevel; basis: AuditBasis; rule?: PolicyRule }
 
 /** 宽但不出事: everything local runs; installing tells; anything outward, money or irreversible asks. */
@@ -18,6 +23,7 @@ const norm = (field: string, vals: string[]) => field === 'domains' ? vals.map((
 
 /** What trust is counted on: `channel:C1` / `recipient:a,b` / `domain:x.com` — every value of that kind, sorted. '*' when the call names none. */
 export function scopeKey(_scope: PolicyScope | undefined, t: Target): string {
+  if (t.opaque) return '*'; // trust is never earned on a call whose destination we couldn't see
   for (const [field, kind] of KINDS) {
     const vals = t[field];
     if (vals?.length) return `${kind}:${[...new Set(norm(field, vals))].sort().join(',')}`;
@@ -34,6 +40,7 @@ export function scopeMatches(scope: PolicyScope | undefined, t: Target, now: num
   if (!scope) return true;
   if (scope.unlimited) return true;
   if (scope.until !== undefined && now > scope.until) return false;
+  if (t.opaque) return false;
   let listed = false, covered = false;
   for (const [field] of KINDS) {
     const list = scope[field];
@@ -46,7 +53,8 @@ export function scopeMatches(scope: PolicyScope | undefined, t: Target, now: num
     covered = true;
   }
   if (listed && !covered) return false;
-  if (scope.maxAmount !== undefined && (cls === undefined || cls === 'pay' || t.amount !== undefined) && !(t.amount !== undefined && t.amount <= scope.maxAmount)) return false;
+  if (scope.maxAmount !== undefined && (cls === undefined || cls === 'pay' || t.amount !== undefined || t.amountUnknown)
+    && !(t.amount !== undefined && !t.amountUnknown && t.amount <= scope.maxAmount)) return false;
   if (scope.perDay !== undefined && todayCount >= scope.perDay) return false;
   return true;
 }
@@ -55,6 +63,7 @@ export function scopeMatches(scope: PolicyScope | undefined, t: Target, now: num
 function scopeTouches(scope: PolicyScope | undefined, t: Target, now: number): boolean {
   if (!scope || scope.unlimited) return true;
   if (scope.until !== undefined && now > scope.until) return false;
+  if (t.opaque) return true; // it may be going exactly where the deny points
   let listed = false;
   for (const [field] of KINDS) {
     const list = scope[field];
