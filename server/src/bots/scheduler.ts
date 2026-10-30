@@ -16,6 +16,7 @@ import { allowScope, routineOf } from './shape.js';
 import { callKey } from './policy/gate.js';
 import type { ApprovedCall } from './types.js';
 import { tr } from '../i18n/index.js';
+import { bootTime } from './server-lock.js';
 
 export interface SchedulerDeps extends PipelineDeps {
   /** how many runs may be in flight at once, across all bots */
@@ -37,6 +38,8 @@ interface Lease { pid: number; host: string; at: number; instance?: string }
 export const TICK_MS = 30_000;
 /** a lease not refreshed for three ticks belongs to a server that is gone */
 export const LEASE_STALE_MS = 3 * TICK_MS;
+/** a lease on this host unrefreshed this long is free even if its pid runs (a reused pid, or a hung server) */
+export const LEASE_DEAD_MS = 10 * LEASE_STALE_MS;
 /** `<lock>.take` guards a takeover; one left behind by a crash mid-take is cleared after this */
 export const TAKE_STALE_MS = 30_000;
 const DAY = 24 * 3600_000;
@@ -139,10 +142,11 @@ export class BotScheduler extends EventEmitter {
       const cur = this.readLease();
       const now = Date.now();
       const mine = cur?.instance === this.instance;
-      // on this host the process tells: a live one keeps its lease however old (it may just be busy); another
-      // host's lease is free once it went unrefreshed for three ticks
+      // on this host the process tells: a live one keeps its lease while it may just be busy — but not a lease from
+      // before this boot (its pid may now be any program) nor one unrefreshed for LEASE_DEAD_MS (a reused pid, or a
+      // hung server); another host's lease is free once it went unrefreshed for three ticks
       const free = !cur || typeof cur.at !== 'number' || (cur.host === os.hostname()
-        ? (cur.pid === process.pid ? !liveInstances.has(String(cur.instance)) : !pidAlive(cur.pid))
+        ? (cur.at < bootTime() || now - cur.at > LEASE_DEAD_MS || (cur.pid === process.pid ? !liveInstances.has(String(cur.instance)) : !pidAlive(cur.pid)))
         : now - cur.at > LEASE_STALE_MS);
       if (!mine && !free) return this.setHolding(false);
       try {

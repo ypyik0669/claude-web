@@ -115,7 +115,7 @@ import { SiteAsk } from './web/site-gate.js';
 import { handleComputerAsk } from './computer/http.js';
 import { configureComputerMcp } from './computer/launcher.js';
 import { noteDutyPid, restartDutyAfterApp } from './bots/duty.js';
-import { acquireServerLock, BUSY_EXIT, processLockEnv, releaseLock, setLockPort, watchYield } from './bots/server-lock.js';
+import { acquireServerLock, BUSY_EXIT, lockNonce, processLockEnv, releaseLock, setLockReady, watchYield } from './bots/server-lock.js';
 import { BotService } from './bots/service.js';
 import { CLAUDE_PROVIDER_ID } from './protocol.js';
 
@@ -285,7 +285,10 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     if (url.pathname === '/api/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
       // federation: a hash of the serverId (+ a nonce proof) for anyone; the ids themselves only with a valid token
-      res.end(JSON.stringify({ ok: true, version, ...(fedHealth?.(url.searchParams.get('nonce'), authOk(req, url)) ?? {}) }));
+      // server.lock: ?lock=<nonce> proves this is the server that wrote the lock (bots/server-lock.ts) — a yes / no, the
+      // nonce itself is never sent
+      const lockQ = url.searchParams.get('lock');
+      res.end(JSON.stringify({ ok: true, version, ...(lockQ ? { lock: !!lockNonce() && lockQ === lockNonce() } : {}), ...(fedHealth?.(url.searchParams.get('nonce'), authOk(req, url)) ?? {}) }));
       return;
     }
     // Raw local file for previews (images / pdf / media): GET /api/file?path=<abs>&token= — token-guarded like /ws
@@ -764,14 +767,19 @@ if (isMain || process.env.CLAUDE_WEB_STANDALONE === '1') {
     console.log(`[duty] another claude-web (pid ${got.holder.pid}, ${got.holder.kind}) serves ${lockDir}; trying again later`);
     process.exit(BUSY_EXIT);
   }
+  // the duty server watches for a yield request from the start: an app opened at logon asks while this one starts
+  let yieldAsked = false;
+  let onYield = () => { yieldAsked = true; };
+  const stopYield = kind === 'duty' ? watchYield(lockDir, got.lock.startedAt, process.pid, () => onYield()) : () => {};
   let running: Awaited<ReturnType<typeof startServer>>;
   try {
     running = await startServer();
   } catch (e) {
+    stopYield();
     releaseLock(lockDir, process.pid);
     throw e;
   }
-  setLockPort(lockDir, process.pid, running.port);
+  setLockReady(lockDir, process.pid, running.port);
   // under the Windows duty task: let "duty off" find and stop us
   noteDutyPid();
   const ready = { type: 'ready', port: running.port, host: running.host };
@@ -779,7 +787,6 @@ if (isMain || process.env.CLAUDE_WEB_STANDALONE === '1') {
   if (parentPort) parentPort.postMessage(ready);
   else if (process.send) process.send(ready);
   let stopping = false;
-  let stopYield = () => {};
   const shutdown = async () => {
     if (stopping) return; // SIGINT twice / signal + parent message: don't close everything twice
     stopping = true;
@@ -794,8 +801,10 @@ if (isMain || process.env.CLAUDE_WEB_STANDALONE === '1') {
     if (kind === 'app') await restartDutyAfterApp().catch(() => false);
     process.exit(0);
   };
-  // the duty server: an app asked for the dir (server.yield) → the normal shutdown (its bot runs end as stopped)
-  if (kind === 'duty') stopYield = watchYield(lockDir, got.lock.startedAt, () => { console.log('[duty] the app asked for the data dir; stepping down'); void shutdown(); });
+  // the duty server: an app asked for the dir (server.yield, or it took the lock) → the normal shutdown (its bot runs
+  // end as stopped) — at once if that came while it was starting
+  onYield = () => { console.log('[duty] the app asked for the data dir; stepping down'); void shutdown(); };
+  if (yieldAsked) onYield();
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   process.on('message', (m: any) => { if (m?.type === 'shutdown') void shutdown(); });

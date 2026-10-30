@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { BotStore } from './store.js'; import { AuditLog } from './audit.js'; import { Inbox } from './inbox.js';
-import { BotScheduler, LEASE_STALE_MS, type SchedulerDeps } from './scheduler.js';
+import { BotScheduler, LEASE_DEAD_MS, LEASE_STALE_MS, type SchedulerDeps } from './scheduler.js';
 import type { Bot, Routine } from '../protocol.js';
 
 function fakeRunner(delayMs = 0, calls: { toolName: string; input: Record<string, unknown> }[] = [], isError = false) {
@@ -422,14 +422,25 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
       expect(await fresh.claim()).toBe(false);
     });
 
-    it('on this host a live process keeps its lease however old; a lease of another host is free once stale', async () => {
-      fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.ppid, host: os.hostname(), at: Date.now() - 10 * LEASE_STALE_MS, instance: 'busy' }));
+    it('on this host a live process keeps its lease while it may be busy; a lease of another host is free once stale', async () => {
+      fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.ppid, host: os.hostname(), at: Date.now() - 5 * LEASE_STALE_MS, instance: 'busy' }));
       const s = sched(deps());
       expect(await s.claim()).toBe(false);
       fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.ppid, host: 'other-host', at: Date.now() - LEASE_STALE_MS / 2, instance: 'far' }));
       expect(await s.claim()).toBe(false);
       fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.ppid, host: 'other-host', at: Date.now() - LEASE_STALE_MS - 1000, instance: 'far' }));
       expect(await s.claim()).toBe(true);
+    });
+
+    it('pid reuse: a lease of this host from before the boot, or unrefreshed for LEASE_DEAD_MS, is free though its pid runs', async () => {
+      const s = sched(deps());
+      const boot = Date.now() - os.uptime() * 1000;
+      fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.ppid, host: os.hostname(), at: boot - 60_000, instance: 'before-boot' }));
+      expect(await s.claim()).toBe(true);
+      s.stop();
+      const s2 = sched(deps());
+      fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.ppid, host: os.hostname(), at: Date.now() - LEASE_DEAD_MS - 1000, instance: 'hung' }));
+      expect(await s2.claim()).toBe(true);
     });
   });
 });

@@ -1,78 +1,130 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
-import { acquireServerLock, readLock, releaseLock, watchYield, writeLock, LOCK_FILE, YIELD_FILE, YIELD_WAIT_MS, type LockEnv } from './server-lock.js';
+import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import http from 'node:http';
+import { acquireServerLock, probeLock, readLock, releaseLock, setLockReady, watchYield, writeLock, LOCK_FILE, YIELD_FILE, YIELD_WAIT_MS, YIELD_WAIT_STARTING_MS, type LockEnv, type ServerLock } from './server-lock.js';
 import { dutyStartCommand } from './duty.js';
 
 describe('server.lock: one server per data dir', () => {
-  let dir: string; let t: number; let alive: Set<number>; let killed: number[];
+  let dir: string; let t: number; let alive: Set<number>; let killed: number[]; let confirmed: boolean;
+  const BOOT = 500;
   const env = (pid: number, extra: Partial<LockEnv> = {}): LockEnv => ({
-    pid, isAlive: (p) => alive.has(p), now: () => t, sleep: async (ms) => { t += ms; }, kill: (p) => { killed.push(p); alive.delete(p); }, log: () => {}, ...extra,
+    pid, isAlive: (p) => alive.has(p), bootTime: () => BOOT, now: () => t, sleep: async (ms) => { t += ms; },
+    kill: async (p) => { killed.push(p); alive.delete(p); }, confirm: async () => confirmed, log: () => {}, ...extra,
   });
-  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-slock-')); t = 1000; alive = new Set([1, 2]); killed = []; });
+  const lock = (p: Partial<ServerLock>): ServerLock => ({ pid: 2, kind: 'app', port: 5555, startedAt: 600, ready: true, nonce: 'n', ...p });
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-slock-')); t = 1000; alive = new Set([1, 2]); killed = []; confirmed = true; });
   afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
   it('a duty server refuses a dir another live server holds, and takes a free one', async () => {
-    writeLock(dir, { pid: 2, kind: 'app', port: 5555, startedAt: 1 });
+    writeLock(dir, lock({ kind: 'app' }));
     expect(await acquireServerLock(dir, 'duty', 3090, env(1))).toMatchObject({ ok: false, holder: { pid: 2, kind: 'app' } });
     expect(readLock(dir)?.pid).toBe(2);
-    writeLock(dir, { pid: 2, kind: 'duty', port: 3090, startedAt: 1 });
+    writeLock(dir, lock({ kind: 'duty' }));
     expect((await acquireServerLock(dir, 'duty', 3090, env(1))).ok).toBe(false);
   });
 
-  it('a lock whose pid is dead is free', async () => {
-    writeLock(dir, { pid: 99, kind: 'app', port: 5555, startedAt: 1 });
-    expect(await acquireServerLock(dir, 'duty', 3090, env(1))).toMatchObject({ ok: true, lock: { pid: 1, kind: 'duty', port: 3090 } });
-    expect(readLock(dir)).toMatchObject({ pid: 1, kind: 'duty' });
+  it('a lock whose pid is dead is free; the new lock has a nonce and is not ready until it listens', async () => {
+    writeLock(dir, lock({ pid: 99 }));
+    const got = await acquireServerLock(dir, 'duty', 3090, env(1));
+    expect(got).toMatchObject({ ok: true, held: true, lock: { pid: 1, kind: 'duty', port: 3090, ready: false } });
+    expect(readLock(dir)?.nonce).toMatch(/^[0-9a-f]{24}$/);
+    setLockReady(dir, 1, 4321);
+    expect(readLock(dir)).toMatchObject({ pid: 1, port: 4321, ready: true });
     releaseLock(dir, 1);
     expect(fs.existsSync(path.join(dir, LOCK_FILE))).toBe(false);
   });
 
+  it('pid reuse: a lock written before this boot is dead though its pid runs — never waited on, never killed', async () => {
+    writeLock(dir, lock({ pid: 2, kind: 'duty', startedAt: BOOT - 1 })); // pid 2 is alive: some other program now
+    expect(await acquireServerLock(dir, 'duty', 3090, env(1))).toMatchObject({ ok: true, held: true });
+    fs.rmSync(path.join(dir, LOCK_FILE));
+    writeLock(dir, lock({ pid: 2, kind: 'duty', startedAt: BOOT - 1 }));
+    const t0 = t;
+    const got = await acquireServerLock(dir, 'app', 0, env(1));
+    expect(got).toMatchObject({ ok: true, held: true }); expect((got as any).yielded).toBeUndefined();
+    expect(t - t0).toBe(0);
+    expect(killed).toEqual([]);
+    expect(fs.existsSync(path.join(dir, YIELD_FILE))).toBe(false);
+  });
+
   it('an app asks the duty server to yield and takes over once its lock is gone', async () => {
-    writeLock(dir, { pid: 2, kind: 'duty', port: 3090, startedAt: 1 });
+    writeLock(dir, lock({ kind: 'duty' }));
     let asked = false;
     // the duty server sees server.yield on its next look, shuts down and removes its lock
     const sleep = async (ms: number) => { t += ms; if (fs.existsSync(path.join(dir, YIELD_FILE))) { asked = true; releaseLock(dir, 2); } };
     const got = await acquireServerLock(dir, 'app', 0, env(1, { sleep }));
     expect(asked).toBe(true);
-    expect(got).toMatchObject({ ok: true, yielded: { pid: 2 } });
+    expect(got).toMatchObject({ ok: true, held: true, yielded: { pid: 2 } });
     expect(killed).toEqual([]);
     expect(readLock(dir)).toMatchObject({ pid: 1, kind: 'app' });
     expect(fs.existsSync(path.join(dir, YIELD_FILE))).toBe(false);
   });
 
-  it('a duty server that does not step down in time is killed', async () => {
-    writeLock(dir, { pid: 2, kind: 'duty', port: 3090, startedAt: 1 });
+  it('a ready duty server that does not step down is stopped after 10 s — only once its port confirms it', async () => {
+    writeLock(dir, lock({ kind: 'duty', ready: true }));
     const t0 = t;
     const got = await acquireServerLock(dir, 'app', 0, env(1));
     expect(t - t0).toBeGreaterThanOrEqual(YIELD_WAIT_MS);
+    expect(t - t0).toBeLessThan(YIELD_WAIT_STARTING_MS);
     expect(killed).toEqual([2]);
     expect(got.ok).toBe(true);
     expect(readLock(dir)?.pid).toBe(1);
   });
 
+  it('a duty server still starting gets up to 60 s; one that cannot be confirmed is never killed — the app takes the lock over', async () => {
+    writeLock(dir, lock({ kind: 'duty', ready: false }));
+    confirmed = false;
+    const t0 = t;
+    const got = await acquireServerLock(dir, 'app', 0, env(1));
+    expect(t - t0).toBeGreaterThanOrEqual(YIELD_WAIT_STARTING_MS);
+    expect(killed).toEqual([]);
+    expect(got).toMatchObject({ ok: true, held: true });
+    expect(readLock(dir)).toMatchObject({ pid: 1, kind: 'app' });
+  });
+
   it('beside another live app an app starts anyway and leaves its lock alone', async () => {
-    writeLock(dir, { pid: 2, kind: 'app', port: 5555, startedAt: 1 });
+    writeLock(dir, lock({ kind: 'app' }));
     const log = vi.fn();
-    expect((await acquireServerLock(dir, 'app', 0, env(1, { log }))).ok).toBe(true);
+    expect(await acquireServerLock(dir, 'app', 0, env(1, { log }))).toMatchObject({ ok: true, held: false });
     expect(log).toHaveBeenCalled();
     expect(readLock(dir)?.pid).toBe(2);
     expect(killed).toEqual([]);
   });
 
-  it('a yield request newer than the duty server\'s start makes it step down; an older one does not', async () => {
+  it('two servers taking a free dir at once: exactly one holds it (exclusive create)', async () => {
+    const [a, b] = await Promise.all([acquireServerLock(dir, 'duty', 1, env(1)), acquireServerLock(dir, 'duty', 2, env(2))]);
+    expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
+  });
+
+  it('the duty server steps down on a yield request newer than its start, or when the lock stops naming it; not on an older one', async () => {
     fs.writeFileSync(path.join(dir, YIELD_FILE), '{}');
+    writeLock(dir, lock({ pid: 7 }));
     const onYield = vi.fn();
-    const stop = watchYield(dir, Date.now() + 60_000, onYield, 10);
+    const stop = watchYield(dir, Date.now() + 60_000, 7, onYield, 10);
     await new Promise((r) => setTimeout(r, 60));
     expect(onYield).not.toHaveBeenCalled();
     stop();
-    const since = Date.now() - 1000;
-    const stop2 = watchYield(dir, since, onYield, 10);
+    const stop2 = watchYield(dir, Date.now() - 1000, 7, onYield, 10);
     fs.writeFileSync(path.join(dir, YIELD_FILE), '{}');
     await vi.waitFor(() => expect(onYield).toHaveBeenCalledTimes(1));
-    await new Promise((r) => setTimeout(r, 40));
-    expect(onYield).toHaveBeenCalledTimes(1);
     stop2();
+    fs.rmSync(path.join(dir, YIELD_FILE));
+    const other = vi.fn();
+    const stop3 = watchYield(dir, Date.now() + 60_000, 7, other, 10);
+    writeLock(dir, lock({ pid: 8 }));
+    await vi.waitFor(() => expect(other).toHaveBeenCalledTimes(1));
+    stop3();
+  });
+
+  it('probeLock: yes only from a server that answers lock: true for the nonce; no port / no answer is no', async () => {
+    const srv = http.createServer((req, res) => res.end(JSON.stringify({ ok: true, lock: !!req.url?.includes('lock=good') })));
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+    const port = (srv.address() as any).port;
+    try {
+      expect(await probeLock(lock({ port, nonce: 'good' }))).toBe(true);
+      expect(await probeLock(lock({ port, nonce: 'bad' }))).toBe(false);
+      expect(await probeLock(lock({ port: 0, nonce: 'good' }))).toBe(false);
+    } finally { await new Promise((r) => srv.close(r)); }
+    expect(await probeLock(lock({ port, nonce: 'good' }), 300)).toBe(false);
   });
 
   it('the command that starts the duty service again, per platform', () => {

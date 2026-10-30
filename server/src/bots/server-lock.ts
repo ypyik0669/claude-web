@@ -1,45 +1,93 @@
 // One full server per data dir: `<dataDir>/server.lock` names the server that serves it. Two servers on one dir (the
 // headless duty service and the desktop app) would race on meta.json, tick the schedules twice and poll the IM
 // gateways twice. The duty server yields: it refuses to start while another live server holds the lock, and steps
-// down when one asks (`<dataDir>/server.yield`). An app / dev server asks a duty server to yield and takes over; beside
-// another app it starts anyway (a warning), as before. A lock whose pid is dead is free (same host: process.kill(pid, 0)).
+// down when one asks (`<dataDir>/server.yield`) or when the lock stops naming it. An app / dev server asks a duty
+// server to yield and takes over; beside another app it starts anyway (a warning), as before.
+//
+// Live means: the pid runs AND the lock was written after this boot (a pid from before a reboot may now be any
+// program). A process is only ever killed once its port answered /api/health with the lock's nonce — never a pid this
+// can't confirm is that claude-web.
 import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 
 export const LOCK_FILE = 'server.lock';
 export const YIELD_FILE = 'server.yield';
 /** the duty server's exit code when another server holds the dir (EX_TEMPFAIL); its loop backs off and tries again */
 export const BUSY_EXIT = 75;
-/** how long an app waits for a duty server to step down before it kills it */
+/** how long an app waits for a ready duty server to step down before it stops it */
 export const YIELD_WAIT_MS = 10_000;
+/** …and for one still starting (it steps down as soon as its startup is done) */
+export const YIELD_WAIT_STARTING_MS = 60_000;
 /** how often a duty server looks for a yield request */
 export const YIELD_POLL_MS = 2_000;
+/** SIGTERM, then SIGKILL after this */
+export const KILL_GRACE_MS = 3_000;
 
 export type ServerKind = 'duty' | 'app';
-export interface ServerLock { pid: number; kind: ServerKind; port: number; startedAt: number }
+export interface ServerLock {
+  pid: number; kind: ServerKind; port: number; startedAt: number;
+  /** false until the server listens (then `port` is real) */
+  ready?: boolean;
+  /** proves the process on `port` is the one that wrote this lock: /api/health?lock=<nonce> answers lock: true */
+  nonce?: string;
+}
 
 /** the side effects, injectable for tests */
 export interface LockEnv {
   pid: number;
   isAlive(pid: number): boolean;
+  /** when this machine booted (ms) */
+  bootTime(): number;
   now(): number;
   sleep(ms: number): Promise<void>;
-  kill(pid: number): void;
+  /** stops the process (SIGTERM, then SIGKILL after a grace) */
+  kill(pid: number): Promise<void>;
+  /** the server on lock.port answers as the claude-web that wrote this lock */
+  confirm(lock: ServerLock): Promise<boolean>;
   log(msg: string): void;
 }
 
 export const pidAlive = (pid: number) => {
   try { process.kill(pid, 0); return true; } catch (e: any) { return e?.code === 'EPERM'; } // EPERM = alive, not ours
 };
+export const bootTime = () => Date.now() - os.uptime() * 1000;
+
+/** GET http://127.0.0.1:<port>/api/health?lock=<nonce> → lock: true (1.5 s) */
+export function probeLock(lock: ServerLock, timeoutMs = 1500): Promise<boolean> {
+  if (!lock.nonce || !(lock.port > 0)) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port: lock.port, path: `/api/health?lock=${encodeURIComponent(lock.nonce!)}`, timeout: timeoutMs }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { body += c; if (body.length > 65_536) req.destroy(); });
+      res.on('end', () => { try { resolve(JSON.parse(body)?.lock === true); } catch { resolve(false); } });
+    });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => resolve(false));
+  });
+}
 
 export const processLockEnv = (): LockEnv => ({
   pid: process.pid,
   isAlive: pidAlive,
+  bootTime,
   now: () => Date.now(),
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-  kill: (pid) => { try { process.kill(pid); } catch { /* gone */ } },
+  kill: async (pid) => {
+    try { process.kill(pid, 'SIGTERM'); } catch { return; }
+    for (let t = 0; t < KILL_GRACE_MS && pidAlive(pid); t += 100) await new Promise((r) => setTimeout(r, 100));
+    if (pidAlive(pid)) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+  },
+  confirm: (lock) => probeLock(lock),
   log: (msg) => console.log(msg),
 });
+
+/** this process's own lock nonce (for /api/health), once it has taken the lock */
+let ownNonce: string | undefined;
+export function lockNonce(): string | undefined { return ownNonce; }
 
 export function readLock(dir: string): ServerLock | null {
   try {
@@ -48,12 +96,28 @@ export function readLock(dir: string): ServerLock | null {
   } catch { return null; }
 }
 
-/** atomic: a reader never sees half a lock */
+/** a lock this process may treat as a live server's: another pid, written since boot, still running */
+export function isLive(lock: ServerLock | null, env: Pick<LockEnv, 'pid' | 'isAlive' | 'bootTime'>): lock is ServerLock {
+  return !!lock && lock.pid !== env.pid && typeof lock.startedAt === 'number' && lock.startedAt >= env.bootTime() && env.isAlive(lock.pid);
+}
+
+/** exclusive create: false when a lock is already there */
+function createLock(dir: string, lock: ServerLock): boolean {
+  fs.mkdirSync(dir, { recursive: true });
+  let fd: number;
+  try { fd = fs.openSync(path.join(dir, LOCK_FILE), 'wx', 0o600); } catch (e: any) {
+    if (e?.code === 'EEXIST') return false;
+    throw e;
+  }
+  try { fs.writeSync(fd, JSON.stringify(lock)); } finally { fs.closeSync(fd); }
+  return true;
+}
+/** replaces whatever lock is there (an app taking over from a duty server it asked to yield) — atomic */
 export function writeLock(dir: string, lock: ServerLock) {
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, LOCK_FILE);
   const tmp = `${file}.${lock.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(lock));
+  fs.writeFileSync(tmp, JSON.stringify(lock), { mode: 0o600 });
   fs.renameSync(tmp, file);
 }
 
@@ -62,61 +126,84 @@ export function releaseLock(dir: string, pid: number) {
   try { if (readLock(dir)?.pid === pid) fs.rmSync(path.join(dir, LOCK_FILE), { force: true }); } catch { /* gone */ }
 }
 
-/** the server's real port, once it listens (an app starts on PORT 0) */
-export function setLockPort(dir: string, pid: number, port: number) {
+/** the server listens: its real port (an app starts on PORT 0), ready */
+export function setLockReady(dir: string, pid: number, port: number) {
   const cur = readLock(dir);
-  if (cur?.pid === pid && cur.port !== port) { try { writeLock(dir, { ...cur, port }); } catch { /* best effort */ } }
+  if (cur?.pid === pid) { try { writeLock(dir, { ...cur, port, ready: true }); } catch { /* best effort */ } }
 }
 
 /** the lock of another live process, or null when the dir is free */
-export function liveHolder(dir: string, env: Pick<LockEnv, 'pid' | 'isAlive'>): ServerLock | null {
+export function liveHolder(dir: string, env: Pick<LockEnv, 'pid' | 'isAlive' | 'bootTime'>): ServerLock | null {
   const lock = readLock(dir);
-  return lock && lock.pid !== env.pid && env.isAlive(lock.pid) ? lock : null;
+  return isLive(lock, env) ? lock : null;
 }
 
-export type Acquired = { ok: true; lock: ServerLock; yielded?: ServerLock } | { ok: false; holder: ServerLock };
+export type Acquired = { ok: true; lock: ServerLock; held: boolean; yielded?: ServerLock } | { ok: false; holder: ServerLock };
+
+/**
+ * Takes the lock exclusively ('wx'); a lock there that is not live (dead pid, from before the boot, unreadable for
+ * over a second) is removed and the create tried once more. Returns the live holder when it can't.
+ */
+async function claim(dir: string, lock: ServerLock, env: LockEnv): Promise<ServerLock | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (createLock(dir, lock)) return null;
+    // a lock being written right now reads as nothing for a moment
+    let cur = readLock(dir);
+    for (let i = 0; !cur && i < 10 && fs.existsSync(path.join(dir, LOCK_FILE)); i++) { await env.sleep(100); cur = readLock(dir); }
+    if (isLive(cur, env)) return cur;
+    try { fs.rmSync(path.join(dir, LOCK_FILE), { force: true }); } catch { /* raced */ }
+  }
+  const cur = readLock(dir);
+  return isLive(cur, env) ? cur : readLock(dir) ?? { pid: -1, kind: 'app', port: 0, startedAt: 0 };
+}
 
 /**
  * At startup, before any port or service opens. A duty server refuses a dir another live server holds. An app asks a
- * live duty server to yield, waits up to YIELD_WAIT_MS for its lock to go, kills it if it is still there, then takes the
- * lock; beside another live app it takes the lock anyway and warns.
+ * live duty server to yield and waits for its lock to go (up to 60 s while it is still starting, 10 s once ready);
+ * one that stays is stopped only if its port confirms it is that claude-web, otherwise the app takes the lock over and
+ * the duty server steps down on its own (its poll sees the lock no longer names it). Beside another live app an app
+ * starts anyway, holding no lock, and warns.
  */
 export async function acquireServerLock(dir: string, kind: ServerKind, port: number, env: LockEnv): Promise<Acquired> {
-  const holder = liveHolder(dir, env);
-  let yielded: ServerLock | undefined;
-  if (holder && kind === 'duty') return { ok: false, holder };
-  if (holder?.kind === 'duty') {
-    yielded = holder;
-    env.log(`[server] asking the duty server (pid ${holder.pid}) to step down`);
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, YIELD_FILE), JSON.stringify({ by: env.pid, at: env.now() }));
-    const end = env.now() + YIELD_WAIT_MS;
-    const gone = () => readLock(dir)?.pid !== holder.pid || !env.isAlive(holder.pid);
-    while (!gone() && env.now() < end) await env.sleep(250);
-    if (!gone()) { env.log(`[server] the duty server (pid ${holder.pid}) did not step down; stopping it`); env.kill(holder.pid); }
-    try { fs.rmSync(path.join(dir, YIELD_FILE), { force: true }); } catch { /* raced */ }
-  }
-  const lock: ServerLock = { pid: env.pid, kind, port, startedAt: env.now() };
-  if (holder && !yielded) {
-    // a second app / dev server: starts as before, and leaves the first one's lock alone (a duty server started while
-    // that one runs must still step aside)
+  const lock: ServerLock = { pid: env.pid, kind, port, startedAt: env.now(), ready: false, nonce: randomBytes(12).toString('hex') };
+  const holder = await claim(dir, lock, env);
+  if (!holder) { ownNonce = lock.nonce; return { ok: true, lock, held: true }; }
+  if (kind === 'duty') return { ok: false, holder };
+  if (holder.kind !== 'duty') {
     env.log(`[server] another claude-web (pid ${holder.pid}) is also serving ${dir}; starting anyway`);
-    return { ok: true, lock };
+    return { ok: true, lock, held: false };
   }
-  writeLock(dir, lock);
-  return { ok: true, lock, ...(yielded ? { yielded } : {}) };
+  env.log(`[server] asking the duty server (pid ${holder.pid}) to step down`);
+  fs.writeFileSync(path.join(dir, YIELD_FILE), JSON.stringify({ by: env.pid, at: env.now() }));
+  const start = env.now();
+  const gone = () => { const cur = readLock(dir); return cur?.pid !== holder.pid || !isLive(cur, env); };
+  const waited = () => env.now() - start >= (readLock(dir)?.ready ? YIELD_WAIT_MS : YIELD_WAIT_STARTING_MS);
+  while (!gone() && !waited()) await env.sleep(250);
+  if (!gone()) {
+    const cur = readLock(dir) ?? holder;
+    if (await env.confirm(cur)) {
+      env.log(`[server] the duty server (pid ${holder.pid}) did not step down; stopping it`);
+      await env.kill(holder.pid);
+    } else env.log(`[server] the duty server (pid ${holder.pid}) did not step down and could not be confirmed; taking the data dir over (it steps down on its own)`);
+  }
+  try { fs.rmSync(path.join(dir, YIELD_FILE), { force: true }); } catch { /* raced */ }
+  // what is there now is the duty server's (gone, stopped or about to step down): ours replaces it
+  if (await claim(dir, lock, env)) writeLock(dir, lock);
+  ownNonce = lock.nonce;
+  return { ok: true, lock, held: true, yielded: holder };
 }
 
 /**
- * The duty server: calls onYield once when a yield request newer than `since` appears (a cheap stat every interval).
- * Returns the stop function.
+ * The duty server: calls onYield once when a yield request newer than `since` appears, or the lock no longer names
+ * this process (an app took it over). A cheap stat / read every interval. Returns the stop function.
  */
-export function watchYield(dir: string, since: number, onYield: () => void, intervalMs = YIELD_POLL_MS): () => void {
+export function watchYield(dir: string, since: number, pid: number, onYield: () => void, intervalMs = YIELD_POLL_MS): () => void {
   const file = path.join(dir, YIELD_FILE);
   const timer = setInterval(() => {
-    let m = 0;
-    try { m = fs.statSync(file).mtimeMs; } catch { return; }
-    if (m < since) return;
+    let asked = false;
+    try { asked = fs.statSync(file).mtimeMs >= since; } catch { /* none */ }
+    if (!asked) { const cur = readLock(dir); asked = !!cur && cur.pid !== pid; }
+    if (!asked) return;
     clearInterval(timer);
     onYield();
   }, intervalMs);
