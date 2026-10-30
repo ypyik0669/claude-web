@@ -117,3 +117,24 @@ describe('harvest', () => {
     expect(r.skipped).toBeGreaterThan(0);
   });
 });
+
+describe('bot scope', () => {
+  let dir: string;
+  let m: MemoryService;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-mem-'));
+    m = new MemoryService(path.join(dir, 'memory.db'));
+  });
+  afterEach(() => {
+    m.close();
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  });
+
+  it('writes and finds memories keyed by bot id, and never leaks them into a project search', () => {
+    m.write({ scope: 'bot', key: 'bot_a', text: '晨报只看 GitHub 的 issue' });
+    m.write({ scope: 'project', key: '/p', text: '晨报也看飞书' });
+    expect(m.search({ scope: 'bot', botId: 'bot_a' }).map((x) => x.text)).toEqual(['晨报只看 GitHub 的 issue']);
+    expect(m.search({ scope: 'bot', botId: 'bot_b' })).toEqual([]);
+    expect(m.search({ cwd: '/p' }).map((x) => x.text)).toEqual(['晨报也看飞书']);
+  });
+});

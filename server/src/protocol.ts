@@ -28,7 +28,7 @@ export * from './wsl/paths.js';
 export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
 // `ultra` is Codex-only (its own enum member). `ultracode` is NOT here on purpose: in Claude Code it is a
 // separate session-scoped boolean (xhigh + dynamic workflows) that CLAUDE_CODE_EFFORT_LEVEL rejects.
-export type MemoryScope = 'global' | 'project' | 'session';
+export type MemoryScope = 'global' | 'project' | 'session' | 'bot';
 export type MemoryKind = 'decision' | 'constraint' | 'fact' | 'deadend' | 'preference' | 'note';
 export interface MemoryItem {
   id: string; scope: MemoryScope; key: string; kind: MemoryKind; text: string; tags: string[];
@@ -846,7 +846,26 @@ export type ClientRequest =
   // ---- cross-machine sessions (federation) ----
   | PeerRequest
   // ---- stage F: local versions of claude.ai features ----
-  | CloudRequest;
+  | CloudRequest
+  // ---- 值班 Bot ----
+  | { kind: 'bots.list' }
+  | { kind: 'bots.get'; id: string }
+  | { kind: 'bots.create'; bot: BotDraft['bot'] }
+  | { kind: 'bots.update'; id: string; patch: Partial<Bot> }
+  | { kind: 'bots.delete'; id: string }
+  | { kind: 'bots.pause'; id: string; paused: boolean }
+  | { kind: 'bots.runNow'; id: string; routineId: string }
+  | { kind: 'bots.stopAll' }
+  | { kind: 'bots.stop'; id: string }
+  | { kind: 'bots.inbox.list'; botId?: string; includeDone?: boolean }
+  | { kind: 'bots.inbox.answer'; answer: InboxAnswer }
+  | { kind: 'bots.runs.list'; botId?: string; routineId?: string; limit?: number }
+  | { kind: 'bots.runs.audit'; botId: string; runId: string }
+  | { kind: 'bots.generate'; text: string; cwd: string }
+  | { kind: 'bots.templates' }
+  | { kind: 'bots.load' }
+  | { kind: 'bots.unleash'; id: string; on: boolean }
+  | { kind: 'bots.duty.install'; mode: 'autostart' | 'service'; on: boolean };
 
 /** `via`: serverIds a forwarded request already passed through (federation loop guard). */
 export interface RequestEnvelope { id: string; req: ClientRequest; via?: string[] }
@@ -901,7 +920,12 @@ export type ServerEvent =
   | PeerEvent
   | OrchestraEvent
   | BackgroundEvent
-  | CharactersEvent;
+  | CharactersEvent
+  // ---- 值班 Bot ----
+  | { kind: 'bots.changed'; bots: BotStatus[] }
+  | { kind: 'bots.run'; run: BotRun }
+  | { kind: 'bots.inbox'; item: InboxItem }
+  | { kind: 'bots.load'; load: BotLoad };
 
 // ---------- phase 3: files / search / git ----------
 export interface FsEntry { name: string; dir: boolean; size?: number; mtime?: number; symlink?: boolean }
@@ -944,6 +968,59 @@ export interface SecretsStatus { scheme: 'dpapi' | 'keychain' | 'plain'; total: 
 /** One model call as seen from the runner (per `result` / assistant message). */
 export interface LedgerEntry { ts: number; sessionId: string; model: string; durationMs: number; apiMs?: number; input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number; ok: boolean; error?: string; turns?: number; providerId?: string; kind?: 'gateway'; gateway?: GatewayLedgerInfo; /** cost not known (non-Claude model, gateway / shim call): costUsd is 0 but must not read as $0 */ costUnknown?: boolean }
 export interface ScheduleRun { id: string; scheduleId: string; at: number; sessionId?: string; ok: boolean; durationMs?: number; summary?: string; error?: string; /** run for a time missed while the app was closed / asleep */ catchUp?: boolean }
+
+// ---- 值班 Bot（spec 2026-10-30-duty-bots-design） ----
+export type BotTier = 'cheap' | 'balanced' | 'best';
+/** what a tool call is about to do; the policy is written per class, not per tool */
+export type ActionClass = 'read' | 'write_local' | 'browser' | 'send' | 'pay' | 'delete' | 'install';
+export type PolicyLevel = 'do' | 'do_tell' | 'ask' | 'deny';
+export interface PolicyScope { recipients?: string[]; domains?: string[]; channels?: string[]; maxAmount?: number; perDay?: number; until?: number; unlimited?: boolean }
+export interface PolicyRule { cls: ActionClass; level: PolicyLevel; scope?: PolicyScope }
+export interface BotPolicy { rules: PolicyRule[]; autoPilot?: { on: boolean; scope?: PolicyScope }; /** 放开全部: every gate off except stop and audit */ unleashed?: boolean; signOff?: boolean }
+export interface BotCharter { role: string; audience?: string; sources: string[]; report?: string; done?: string }
+export type BotOutput = { kind: 'inbox' } | { kind: 'im'; gatewayId: string; chatId: string } | { kind: 'file'; path: string };
+export type RoutineAcceptance = { kind: 'script'; script: string } | { kind: 'none' };
+export interface Routine {
+  id: string; name: string; prompt: string; cron?: string; everyMinutes?: number; enabled: boolean;
+  /** a script whose stdout is a fingerprint: unchanged since last run = skip without a model */
+  precheck?: string;
+  acceptance: RoutineAcceptance;
+  timeoutMin?: number;
+  onFail: 'retry_up' | 'resume' | 'inbox';
+  failures?: number; nextRunAt?: number; lastRunAt?: number;
+  selfMade?: boolean; shadow?: boolean;
+}
+export interface BotBudget { dailyUsd?: number; weeklyUsd?: number; explorePct?: number }
+export interface Bot {
+  id: string; name: string; avatar?: string; charter: BotCharter; cwd: string; tier: BotTier; providerId?: string; model?: string;
+  policy: BotPolicy; budget: BotBudget; routines: Routine[]; outputs: BotOutput[];
+  quiet?: { from: string; to: string }; threshold?: number; maxRoutines?: number; paused?: boolean; manager?: boolean;
+  createdAt: number; updatedAt: number;
+}
+export type RunTrigger = 'cron' | 'manual' | 'dispatch' | 'resume';
+export interface BotRun {
+  id: string; botId: string; routineId: string; at: number; trigger: RunTrigger;
+  skipped?: boolean; sessionId?: string; ok?: boolean; endedAt?: number; durationMs?: number;
+  costUsd?: number; toolCalls?: number; usedScript?: boolean;
+  /** what the bot said it did (its final text) vs what the acceptance check found */
+  said?: string; verified?: { ok: boolean; note?: string }; error?: string; queued?: number;
+}
+export type AuditBasis = 'rule' | 'trust' | 'user' | 'autopilot' | 'unleashed';
+export interface AuditRow { at: number; runId: string; botId: string; toolName: string; cls: ActionClass; level: PolicyLevel; basis: AuditBasis; summary: string; result: 'allowed' | 'denied' | 'queued'; undo?: string }
+export type InboxKind = 'approval' | 'finding' | 'draft' | 'proposal';
+export type InboxProposal = { type: 'trust_up'; cls: ActionClass; scope: PolicyScope } | { type: 'routine'; routine: Routine };
+export interface InboxItem {
+  id: string; kind: InboxKind; botId: string; runId?: string; routineId?: string; sessionId?: string; at: number;
+  title: string; body?: string;
+  toolName?: string; input?: Record<string, unknown>; cls?: ActionClass; undoable?: boolean;
+  proposal?: InboxProposal;
+  done?: { at: number; answer: InboxAnswer['answer'] };
+}
+export interface InboxAnswer { id: string; answer: 'approve' | 'approve_scope' | 'reject' | 'archive' | 'send' | 'adopt'; scope?: PolicyScope }
+export interface BotLoad { running: number; queued: number; todayUsd: number; weekEstimateUsd: number; concurrency: number }
+export interface BotStatus extends Bot { state: 'idle' | 'running' | 'queued' | 'paused' | 'attention'; todayUsd: number; weekUsd: number; pendingInbox: number; trust: Record<string, { approvals: number; lastAt: number }> }
+export interface BotTemplate { id: string; name: string; desc: string; risk?: string; bot: Omit<Bot, 'id' | 'cwd' | 'createdAt' | 'updatedAt'> }
+export interface BotDraft { bot: Omit<Bot, 'id' | 'createdAt' | 'updatedAt'> }
 
 export type WireDown = { type: 'reply'; reply: ReplyEnvelope } | { type: 'event'; event: ServerEvent };
 export type WireUp = { type: 'request'; request: RequestEnvelope };

@@ -20,13 +20,13 @@ import { dataDir } from '../files/service.js';
  * fact that keeps getting used is usually the one that still holds.
  */
 
-export type MemoryScope = 'global' | 'project' | 'session';
+export type MemoryScope = 'global' | 'project' | 'session' | 'bot';
 export type MemoryKind = 'decision' | 'constraint' | 'fact' | 'deadend' | 'preference' | 'note';
 
 export interface Memory {
   id: string;
   scope: MemoryScope;
-  /** cwd for `project`, sessionId for `session`, empty for `global` */
+  /** cwd for `project`, sessionId for `session`, bot id for `bot`, empty for `global` */
   key: string;
   kind: MemoryKind;
   text: string;
@@ -44,6 +44,7 @@ export interface MemoryQuery {
   scope?: MemoryScope;
   cwd?: string;
   sessionId?: string;
+  botId?: string;
   kind?: MemoryKind;
   tags?: string[];
   limit?: number;
@@ -186,13 +187,14 @@ export class MemoryService extends EventEmitter {
       args.push(q.scope);
       if (q.scope !== 'global') {
         where.push('m.key = ?');
-        args.push(norm(q.scope === 'session' ? q.sessionId ?? '' : q.cwd ?? ''));
+        args.push(norm(q.scope === 'session' ? q.sessionId ?? '' : q.scope === 'bot' ? q.botId ?? '' : q.cwd ?? ''));
       }
     } else {
       // default view: global + this project + this session
       const parts = ["m.scope = 'global'"];
       if (q.cwd) { parts.push("(m.scope = 'project' AND m.key = ?)"); args.push(norm(q.cwd)); }
       if (q.sessionId) { parts.push("(m.scope = 'session' AND m.key = ?)"); args.push(norm(q.sessionId)); }
+      if (q.botId) { parts.push("(m.scope = 'bot' AND m.key = ?)"); args.push(norm(q.botId)); }
       where.push(`(${parts.join(' OR ')})`);
     }
     if (q.kind) { where.push('m.kind = ?'); args.push(q.kind); }
