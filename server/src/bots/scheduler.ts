@@ -471,7 +471,31 @@ export class BotScheduler extends EventEmitter {
     this.emit('bots');
   }
 
-  async onInboxAnswer(item: InboxItem, a: InboxAnswer) {
+  /** an approval this answer would resume: its call (else undefined) */
+  private approvedCall(item: InboxItem, a: InboxAnswer) {
+    const { cls, toolName, input } = item;
+    if ((a.answer === 'approve' || a.answer === 'approve_scope') && item.kind === 'approval' && cls && toolName && input && item.routineId && item.sessionId) return { toolName, input };
+    return undefined;
+  }
+  /**
+   * Before the item is marked done: the approved call goes into resumes.json, so a crash between the two never loses
+   * an approval the inbox already shows as answered. `fresh` = it was not there yet (onInboxAnswer counts trust on it).
+   */
+  async persistApproval(item: InboxItem, a: InboxAnswer): Promise<{ fresh: boolean } | undefined> {
+    const call = this.approvedCall(item, a);
+    if (!call) return undefined;
+    if (!(await this.claim())) this.notHolder();
+    if (!this.d.store.get(item.botId)) return undefined;
+    return { fresh: await this.addResume(item.botId, item.routineId!, item.sessionId!, call) };
+  }
+  /** takes back what persistApproval added (the answer did not land) */
+  async unpersistApproval(item: InboxItem, a: InboxAnswer, pre: { fresh: boolean } | undefined) {
+    const call = this.approvedCall(item, a);
+    if (call && pre?.fresh) await this.dropResumeCall(item.botId, item.sessionId!, call).catch(() => {});
+  }
+
+  /** `pre`: persistApproval already put the call in resumes.json */
+  async onInboxAnswer(item: InboxItem, a: InboxAnswer, pre?: { fresh: boolean }) {
     if (a.answer === 'archive') return;
     const epoch = this.epoch;
     // a non-holder writes nothing (its bots / inbox may be stale); claim() may reload them, so read the bot after
@@ -492,12 +516,12 @@ export class BotScheduler extends EventEmitter {
       if (this.epoch === epoch) {
         // on disk before it is queued: a restart, a budget wait or a new holder of the lease doesn't lose it
         const call = { toolName, input };
-        fresh = await this.addResume(bot.id, item.routineId, item.sessionId, call);
+        fresh = pre ? pre.fresh : await this.addResume(bot.id, item.routineId, item.sessionId, call);
         try { this.enqueue(bot.id, item.routineId, 'resume', { sessionId: item.sessionId }); } catch (e) {
-          if (fresh) await this.dropResumeCall(bot.id, item.sessionId, call).catch(() => {});
+          if (fresh && !pre) await this.dropResumeCall(bot.id, item.sessionId, call).catch(() => {});
           throw e;
         }
-      }
+      } else if (pre) fresh = pre.fresh;
       // trust counts an approval only once its effect (the resume) is under way: a retried answer isn't counted twice;
       // a failure to record it costs one count, never the approval
       // a second item for a call already approved and waiting (a duplicate) earns no second count

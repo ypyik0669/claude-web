@@ -125,7 +125,7 @@ describe('BotService', { timeout: 30_000 }, () => {
     const pushed: InboxItem[] = []; svc.on('inbox', (i) => pushed.push(i));
     const done = await svc.inboxAnswer({ id: item.id, answer: 'archive' });
     expect(done.done?.answer).toBe('archive');
-    expect(fed).toHaveBeenCalledWith(expect.objectContaining({ id: item.id }), { id: item.id, answer: 'archive' });
+    expect(fed).toHaveBeenCalledWith(expect.objectContaining({ id: item.id }), { id: item.id, answer: 'archive' }, undefined);
     expect(pushed.at(-1)).toMatchObject({ id: item.id, done: { answer: 'archive' } });
   });
 
@@ -306,6 +306,23 @@ describe('BotService', { timeout: 30_000 }, () => {
     const pushed: any[] = []; svc.on('inbox', (i) => pushed.push(i));
     await svc.remove(b.id);
     expect(pushed).toEqual([expect.objectContaining({ id: item.id, done: expect.objectContaining({ answer: 'archive' }) })]);
+  });
+
+  it('an approval is in resumes.json before the item reads as answered; a failed answer takes it back', async () => {
+    const b = await svc.create(draft({ routines: [rt('r1')] }));
+    const store = (svc as any).store; const inbox = (svc as any).inbox;
+    const item = await inbox.add({ kind: 'approval', botId: b.id, routineId: 'r1', sessionId: 's', title: 't', toolName: 'Bash', input: { command: 'git push' }, cls: 'send' });
+    let seen: unknown[] | undefined;
+    const real = inbox.answer.bind(inbox);
+    const spy = vi.spyOn(inbox, 'answer').mockImplementationOnce(async (x: any) => { seen = store.pendingResumes(b.id); return real(x); });
+    vi.spyOn((svc as any).scheduler, 'enqueue').mockImplementation(() => {});
+    await svc.inboxAnswer({ id: item.id, answer: 'approve' });
+    expect(seen).toEqual([expect.objectContaining({ sessionId: 's', approved: [{ toolName: 'Bash', input: { command: 'git push' } }] })]);
+    // the item could not be marked (already answered elsewhere): what was added for it goes again
+    const item2 = await inbox.add({ kind: 'approval', botId: b.id, routineId: 'r1', sessionId: 's2', title: 't', toolName: 'Bash', input: { command: 'npm publish' }, cls: 'send' });
+    spy.mockImplementationOnce(async () => { throw new Error('taken'); });
+    await expect(svc.inboxAnswer({ id: item2.id, answer: 'approve' })).rejects.toThrow('taken');
+    expect(store.pendingResumes(b.id).some((p: any) => p.sessionId === 's2')).toBe(false);
   });
 
   it('an answer whose effect fails is taken back: the approval stays pending', async () => {

@@ -320,10 +320,18 @@ export class BotService extends EventEmitter {
     // and it must name where it applies (a payment one: up to how much) — see allowScope
     if (a.answer === 'approve_scope' && a.scope !== undefined) a = { ...a, scope: allowScope(a.scope, 'scope', this.inbox.get(a.id)?.cls) };
     await this.acting();
-    const item = await this.inbox.answer(a);
-    try { await this.scheduler.onInboxAnswer(item, a); } catch (e) {
+    // an approval's call is on disk (resumes.json) before the item reads as answered
+    const open = this.inbox.get(a.id);
+    const pre = open && !open.done ? await this.scheduler.persistApproval(open, a) : undefined;
+    let item: InboxItem;
+    try { item = await this.inbox.answer(a); } catch (e) {
+      if (open) await this.scheduler.unpersistApproval(open, a, pre);
+      throw e;
+    }
+    try { await this.scheduler.onInboxAnswer(item, a, pre); } catch (e) {
       // what the answer should start didn't happen (the lease went, a write failed): the item is pending again, so an
       // approval is never spent without its effect
+      await this.scheduler.unpersistApproval(item, a, pre);
       await this.inbox.reopen(item.id).catch(() => {});
       throw e;
     }
