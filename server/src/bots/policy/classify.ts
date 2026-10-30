@@ -325,6 +325,89 @@ const SEND_CMD: RegExp[] = [
 /** De-quoted tokens back into one line for the regexes; spaces / separators inside a token can't start a command. */
 const flatten = (segs: string[][]) => segs.map((s) => s.map((t) => t.replace(/[\s;&|(){}]/g, '_')).join(' ')).join(' ; ');
 
+// ---- network calls that carry local data out ----
+
+/** A simple command with what feeds it: substitution in its words, a pipe into it, a `<` redirect. */
+interface PCmd { toks: string[]; subst: boolean; piped: boolean; stdin: boolean }
+
+/**
+ * Parse into simple commands, keeping what `segments()` throws away: whether a command's words contain command
+ * substitution — bash $(…) / `…` / <(…), PowerShell $(…) / @(…) / (…) as an argument — and whether its stdin is a
+ * pipe or a `<` file. The commands inside a substitution are parsed too (they are separate entries).
+ */
+function parseCommands(src: string, ps: boolean): PCmd[] {
+  const all: PCmd[] = [];
+  const esc = ps ? '`' : '\\';
+  let i = 0;
+  const level = (stop: string | null): void => {
+    let cmd: PCmd = { toks: [], subst: false, piped: false, stdin: false };
+    let cur = '', has = false;
+    const endTok = () => { if (has) cmd.toks.push(cur); cur = ''; has = false; };
+    const endCmd = (piped: boolean) => { endTok(); if (cmd.toks.length) all.push(cmd); cmd = { toks: [], subst: false, piped, stdin: false }; };
+    const sub = (close: string) => { cmd.subst = true; cur += '$SUB'; has = true; level(close); };
+    while (i < src.length) {
+      const ch = src[i], nx = src[i + 1];
+      if (stop !== null && ch === stop) { i++; endCmd(false); return; }
+      if (ch === "'") { const j = src.indexOf("'", i + 1); const e = j < 0 ? src.length : j; cur += src.slice(i + 1, e); has = true; i = e + 1; continue; }
+      if (ch === '"') {
+        i++; has = true;
+        while (i < src.length && src[i] !== '"') {
+          if (src[i] === esc && i + 1 < src.length) { cur += src[i + 1]; i += 2; continue; }
+          if (src[i] === '$' && src[i + 1] === '(') { i += 2; sub(')'); continue; }
+          if (!ps && src[i] === '`') { i++; sub('`'); continue; }
+          cur += src[i++];
+        }
+        i++; continue;
+      }
+      if (ch === esc) { if (i + 1 < src.length) cur += nx; i += 2; has = true; continue; }
+      if ((ch === '$' || (ps && ch === '@')) && nx === '(') { i += 2; sub(')'); continue; }
+      if (!ps && (ch === '<' || ch === '>') && nx === '(') { i += 2; sub(')'); continue; }
+      if (!ps && ch === '`') { i++; sub('`'); continue; }
+      if (ch === '(') { i++; if (cmd.toks.length || has) sub(')'); else { endCmd(false); level(')'); } continue; }
+      if (ch === ')') { i++; endCmd(false); continue; }
+      if (ch === '|') { if (nx === '|') { i += 2; endCmd(false); } else { i++; endCmd(true); } continue; }
+      if (ch === ';' || ch === '&' || ch === '\n') { i++; endCmd(false); continue; }
+      if (!ps && ch === '<') { endTok(); cmd.stdin = true; i++; continue; }
+      if (/\s/.test(ch)) { endTok(); i++; continue; }
+      cur += ch; has = true; i++;
+    }
+    endCmd(false);
+  };
+  level(null);
+  return all;
+}
+
+const NET_TOOLS = new Set(['curl', 'wget', 'irm', 'iwr', 'invoke-webrequest', 'invoke-restmethod', 'http', 'https', 'httpie', 'xh', 'xhs', 'nc', 'ncat', 'netcat', 'socat', 'telnet']);
+const HTTPIE = new Set(['http', 'https', 'httpie', 'xh', 'xhs']);
+
+/** A word that makes the tool read a local file and send it: @file, -d@file, --data-binary=@x, f=@x / f=<x, -T, -InFile, wget -i / --post-file. */
+function readsLocalFile(cmd: string, a: string): boolean {
+  if (a.startsWith('@') || /^-[a-zA-Z]+@/.test(a) || /^--[\w-]+=@/.test(a) || /[=:]@|=</.test(a)) return true;
+  if (cmd === 'curl' && (/^-[a-zA-Z]*T/.test(a) || /^--upload-file\b/.test(a))) return true;
+  if (cmd === 'wget' && (/^-[a-zA-Z]*i/.test(a) || /^--(input-file|post-file|body-file)\b/.test(a))) return true;
+  if (['irm', 'iwr', 'invoke-webrequest', 'invoke-restmethod'].includes(cmd) && /^-in(f(i(le?)?)?)?(:|$)/i.test(a)) return true;
+  return false;
+}
+
+/** httpie / xh: an explicit non-GET method, or request items that make a body (k=v, k:=v, k@file). */
+function httpieSends(args: string[]): boolean {
+  const pos = args.filter((a) => !a.startsWith('-'));
+  if (pos[0] && /^(POST|PUT|PATCH|DELETE)$/i.test(pos[0])) return true;
+  return pos.some((a) => /^[^=:@/]+(:=|=(?!=)|@)/.test(a));
+}
+
+/** Local data leaving through a network tool: substitution in its words, piped / redirected input, a file it reads. */
+function carriesLocalData(raw: string, ps: boolean): boolean {
+  for (const pc of parseCommands(raw, ps)) {
+    const c = commandOf(pc.toks);
+    if (!c || !NET_TOOLS.has(c.cmd)) continue;
+    if (pc.subst || pc.piped || pc.stdin) return true;
+    if (c.args.some((a) => readsLocalFile(c.cmd, a))) return true;
+    if (HTTPIE.has(c.cmd) && httpieSends(c.args)) return true;
+  }
+  return false;
+}
+
 function classifyCommand(cmd: string, ps: boolean): ActionClass {
   const raw = cmd.trim();
   const segs = segments(raw, ps);
@@ -344,6 +427,7 @@ function classifyCommand(cmd: string, ps: boolean): ActionClass {
       if (REMOVE_WORDS.has(w) && psRecurse(seg.slice(i + 1))) found.add('delete');
     });
   }
+  if (carriesLocalData(raw, ps)) found.add('send');
   if ([raw, ...segs.flat()].some((t) => urlsIn(t).some(isPayUrl))) found.add('pay');
   return RANK.find((k) => found.has(k)) ?? 'write_local';
 }
