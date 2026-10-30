@@ -1817,4 +1817,7 @@ export const EN_SERVER: Record<string, string> = {
   "已拒绝": "Rejected",
   "不认识的操作": "Unknown action",
   "这个 IM 没在运行": "That IM isn't running",
+  "Bot 设置不对：{field}": "The bot's settings aren't valid: {field}",
+  "已请正在值班的 claude-web 停下": "Asked the claude-web on duty to stop",
+  "值班服务": "the duty service",
 };

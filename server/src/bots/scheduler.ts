@@ -43,7 +43,7 @@ const pidAlive = (pid: number) => {
  * cap with at most one run per bot (the gate's per-day counts rely on it). Budgets are checked before a run opens a
  * conversation. Inbox answers feed trust and resume the run that asked. stopAll is the hard stop.
  * Only the holder of `<botsRoot>/scheduler.lock` runs anything — the desktop app and the duty service may share a dir.
- * Events: 'run' (BotRun), 'bots' (something about a bot changed), 'load' (BotLoad).
+ * Events: 'run' (BotRun), 'bots' (something about a bot changed), 'load' (BotLoad), 'tick' (a tick ran on duty).
  */
 export class BotScheduler extends EventEmitter {
   private timer?: NodeJS.Timeout;
@@ -179,8 +179,10 @@ export class BotScheduler extends EventEmitter {
     if (!(await this.claim())) { this.emit('load', this.load()); return; }
     const resumes = this.nextTick; this.nextTick = [];
     for (const j of resumes) this.push(j);
+    let changedAny = false;
     for (const { id } of this.d.store.list()) {
-      await this.mutate(id, (bot) => {
+      // one bad bot.json (a hand edit, an old shape) costs that bot its tick, not the others theirs
+      try { await this.mutate(id, (bot) => {
         let changed = false;
         const routines = bot.routines.map((r) => ({ ...r }));
         for (const r of routines) {
@@ -196,10 +198,12 @@ export class BotScheduler extends EventEmitter {
           if (missed === 'drop') continue;
           if (this.epoch === epoch && this.holding) this.push({ botId: bot.id, routineId: r.id, trigger: 'cron' });
         }
+        if (changed) changedAny = true;
         return changed ? { ...bot, routines } : undefined;
-      });
+      }); } catch (e) { console.warn(`[bots] tick skipped ${id}:`, e); }
     }
-    this.emit('bots');
+    this.emit('tick');
+    if (changedAny) this.emit('bots');
     this.pump();
   }
 

@@ -3,7 +3,6 @@
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
-import { randomBytes } from 'node:crypto';
 import type { AuditRow, Bot, BotDraft, BotLoad, BotOutput, BotRun, BotStatus, BotTemplate, BotTier, InboxAnswer, InboxItem, OpenSessionParams } from '../protocol.js';
 import type { RunnerPool } from '../runtime/pool.js';
 import type { MemoryService } from '../memory/service.js';
@@ -15,6 +14,9 @@ import { AuditLog } from './audit.js';
 import { BotScheduler } from './scheduler.js';
 import { generateBot } from './generate.js';
 import { BOT_TEMPLATES } from './templates.js';
+import { botFields } from './shape.js';
+import fs from 'node:fs';
+import { atomicWrite } from '../agent-config/backup.js';
 import { tr } from '../i18n/index.js';
 
 /** a bot's tier as a 智能路由 strategy (a virtual model): only meaningful on a routing group's provider */
@@ -71,8 +73,19 @@ function acquire(dir: string): Shared {
 
 export const MANAGER_ID = 'manager';
 const QUIET_FLUSH_MS = 60_000;
-const newRoutineId = () => `r_${randomBytes(3).toString('hex')}`;
 
+/** `<botsRoot>/stop.request.json`: a stop asked for in a window of a server not on duty; the holder carries it out */
+export const STOP_REQUEST = 'stop.request.json';
+interface StopRequest { botIds: string[] | '*'; at: number; by: number }
+/** `<botsRoot>/held.json`: IM pushes held over quiet hours, per bot (they survive a restart) */
+const HELD_FILE = 'held.json';
+
+/**
+ * Tier -> model (deviation from the plan, approved): a tier names a 智能路由 strategy (`tierModel`) only on a provider
+ * that is the routing group; anywhere else `smart-*` would be refused. On Claude (the account, an Anthropic or
+ * claude-account profile) 'best' is 'opus' and the other tiers keep the default; any other provider keeps its own
+ * default model. A bot that names a model keeps it.
+ */
 /** Events: 'changed' (BotStatus[]), 'run' (BotRun), 'inbox' (InboxItem), 'load' (BotLoad). */
 export class BotService extends EventEmitter {
   private store: BotStore;
@@ -83,7 +96,12 @@ export class BotService extends EventEmitter {
   private held = new Map<string, string[]>();
   private quietTimer?: NodeJS.Timeout;
   private released = false;
-  private readonly onItem = (item: InboxItem) => { this.emit('inbox', item); this.deliverItem(item); };
+  private readonly onItem = (item: InboxItem) => {
+    this.emit('inbox', item);
+    try { this.deliverItem(item); } catch (e) { console.warn('[bots] IM delivery failed:', e); }
+  };
+  private watcher?: fs.FSWatcher;
+  private taking = false;
 
   constructor(private d: BotServiceDeps) {
     super();
@@ -105,6 +123,8 @@ export class BotService extends EventEmitter {
       this.emit('changed', this.list());
     });
     this.scheduler.on('load', (l: BotLoad) => this.emit('load', l));
+    this.scheduler.on('tick', () => void this.takeStopRequest());
+    this.held = this.readHeld();
     this.inbox.on('item', this.onItem);
     d.im?.onCallback('bots', (parts, ctx) => this.onImCallback(parts, ctx));
   }
@@ -112,10 +132,18 @@ export class BotService extends EventEmitter {
   async start(): Promise<void> {
     try { if (await this.scheduler.claim()) await this.ensureManager(); } catch (e) { console.warn('[bots] start:', e); }
     this.scheduler.start();
+    if (!this.watcher) {
+      try {
+        this.watcher = fs.watch(this.d.dataDir, (_e, f) => { if (!f || String(f) === STOP_REQUEST) void this.takeStopRequest(); });
+        this.watcher.on('error', () => { /* the tick still checks */ });
+      } catch (e) { console.warn('[bots] cannot watch for stop requests (the tick still checks):', e); }
+    }
+    void this.takeStopRequest();
     if (!this.quietTimer) { this.quietTimer = setInterval(() => void this.flushQuiet(), QUIET_FLUSH_MS); this.quietTimer.unref(); }
   }
   stop(): void {
     this.scheduler.stop();
+    this.watcher?.close(); this.watcher = undefined;
     if (this.quietTimer) clearInterval(this.quietTimer);
     this.quietTimer = undefined;
     if (this.released) return;
@@ -178,11 +206,7 @@ export class BotService extends EventEmitter {
     await this.acting();
     await this.ensureManager();
     const now = Date.now();
-    const { manager: _m, ...rest } = draft as BotDraft['bot'] & { id?: string; createdAt?: number; updatedAt?: number };
-    const bot = await this.store.save({
-      ...rest, id: this.store.newId(), createdAt: now, updatedAt: now,
-      routines: (rest.routines ?? []).map((r) => ({ ...r, id: r.id || newRoutineId() })),
-    });
+    const bot = await this.store.save({ ...botFields(draft), id: this.store.newId(), createdAt: now, updatedAt: now });
     this.changed();
     return this.statusOf(bot);
   }
@@ -197,9 +221,9 @@ export class BotService extends EventEmitter {
   }
   update(id: string, patch: Partial<Bot>): Promise<BotStatus> {
     return this.edit(id, (b) => {
-      const next = { ...b, ...patch };
-      if (patch.routines) next.routines = patch.routines.map((r) => ({ ...r, id: r.id || newRoutineId() }));
-      return next;
+      // only a bot's own fields, checked, merged into the stored bot around what the scheduler owns (shape.ts)
+      // (a key cleared in the request is gone: the fields replace the stored ones whole)
+      return { ...botFields(patch, b), id: b.id, createdAt: b.createdAt, updatedAt: b.updatedAt };
     });
   }
   pause(id: string, paused: boolean) { return this.edit(id, (b) => ({ ...b, paused })); }
@@ -209,27 +233,64 @@ export class BotService extends EventEmitter {
     if (this.must(id).manager) throw new Error(tr('总管不能删除'));
     await this.scheduler.stopBot(id);
     await this.inbox.removeBot(id);
-    this.held.delete(id);
+    if (this.held.delete(id)) this.saveHeld();
     await this.store.remove(id);
     this.changed();
   }
 
   runNow(id: string, routineId: string): Promise<void> { this.must(id); return this.scheduler.runNow(id, routineId); }
-  /** the hard stops: always allowed */
-  stopBot(id: string): Promise<void> { return this.scheduler.stopBot(id); }
-  stopAll(): Promise<void> { return this.scheduler.stopAll(); }
+  /**
+   * The hard stops (spec §5, always work): on duty they stop at once; otherwise they are written to stop.request.json
+   * for the server on duty, which carries them out (it watches the dir and checks every tick).
+   */
+  async stopBot(id: string): Promise<{ requested: true; note: string } | null> {
+    if (this.scheduler.canAct()) { await this.scheduler.stopBot(id); return null; }
+    return this.requestStop([id]);
+  }
+  async stopAll(): Promise<{ requested: true; note: string } | null> {
+    if (this.scheduler.canAct()) { await this.scheduler.stopAll(); return null; }
+    return this.requestStop('*');
+  }
+  private async requestStop(ids: string[] | '*') {
+    const file = path.join(this.d.dataDir, STOP_REQUEST);
+    let cur: StopRequest | undefined;
+    try { cur = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* none pending */ }
+    const before = Array.isArray(cur?.botIds) ? cur.botIds : [];
+    const botIds: StopRequest['botIds'] = ids === '*' || cur?.botIds === '*' ? '*' : [...new Set([...before, ...ids])];
+    await atomicWrite(file, JSON.stringify({ botIds, at: Date.now(), by: process.pid } satisfies StopRequest));
+    return { requested: true as const, note: tr('已请正在值班的 claude-web 停下') };
+  }
+  /** the holder: a stop asked for elsewhere is taken (the file removed) first, then done */
+  private async takeStopRequest() {
+    if (this.taking || !this.scheduler.canAct()) return;
+    const file = path.join(this.d.dataDir, STOP_REQUEST);
+    this.taking = true;
+    try {
+      let req: StopRequest;
+      try { req = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return; }
+      try { fs.rmSync(file, { force: true }); } catch { /* raced */ }
+      if (req.botIds === '*') await this.scheduler.stopAll();
+      else if (Array.isArray(req.botIds)) for (const id of req.botIds) if (typeof id === 'string') await this.scheduler.stopBot(id);
+    } catch (e) { console.warn('[bots] stop request:', e); } finally { this.taking = false; }
+  }
 
   inboxList(botId?: string, includeDone = false): InboxItem[] { return this.inbox.list(botId, includeDone); }
   /** checked before anything is written; the item's 'item' event reaches the windows as bots.inbox */
   async inboxAnswer(a: InboxAnswer): Promise<InboxItem> {
     await this.acting();
     const item = await this.inbox.answer(a);
-    await this.scheduler.onInboxAnswer(item, a);
-    this.changed();
+    try { await this.scheduler.onInboxAnswer(item, a); } catch (e) {
+      // what the answer should start didn't happen (the lease went, a write failed): the item is pending again, so an
+      // approval is never spent without its effect
+      await this.inbox.reopen(item.id).catch(() => {});
+      throw e;
+    }
+    if (a.answer === 'archive') this.changed(); // the others: the scheduler's 'bots'
     return item;
   }
 
   runs(botId?: string, routineId?: string, limit = 50): BotRun[] {
+    limit = Math.min(500, Math.max(1, Math.floor(Number(limit) || 50)));
     const all = botId ? this.store.runs(botId, routineId ? 2000 : limit) : this.store.list().flatMap((b) => this.store.runs(b.id, limit));
     return all.filter((r) => !routineId || r.routineId === routineId).sort((a, b) => b.at - a.at).slice(0, limit);
   }
@@ -251,13 +312,24 @@ export class BotService extends EventEmitter {
       const h = this.held.get(bot.id) ?? [];
       h.push(text.split('\n')[0]);
       this.held.set(bot.id, h);
+      this.saveHeld();
       return;
     }
     for (const o of outs) void this.d.im.sendTo(o.gatewayId, o.chatId, text, buttons).catch((e) => console.warn(`[bots] cannot push to ${o.gatewayId}:`, e?.message ?? e));
   }
+  private readHeld(): Map<string, string[]> {
+    try {
+      const j = JSON.parse(fs.readFileSync(path.join(this.d.dataDir, HELD_FILE), 'utf8'));
+      return new Map(Object.entries(j).filter(([, v]) => Array.isArray(v)).map(([k, v]) => [k, (v as unknown[]).map(String)]));
+    } catch { return new Map(); }
+  }
+  private saveHeld() {
+    void atomicWrite(path.join(this.d.dataDir, HELD_FILE), JSON.stringify(Object.fromEntries(this.held))).catch((e) => console.warn('[bots] cannot save held IM pushes:', e));
+  }
   /** a new inbox item of a bot with an IM output; approvals get 批准 / 拒绝 buttons */
   private deliverItem(item: InboxItem) {
-    if (item.done) return;
+    // only the server on duty pushes (two services can share one Inbox in a process)
+    if (item.done || !this.scheduler.canAct()) return;
     const bot = this.store.get(item.botId);
     if (!bot) return;
     const text = `【${bot.name}】${item.title}${item.body ? `\n${item.body.slice(0, 1500)}` : ''}`;
@@ -279,6 +351,7 @@ export class BotService extends EventEmitter {
       if (!bot) { this.held.delete(botId); continue; }
       if (inQuiet(bot.quiet)) continue;
       this.held.delete(botId);
+      this.saveHeld();
       const shown = lines.slice(-20);
       this.push(bot, `【${bot.name}】${tr('夜里有 {n} 条', { n: lines.length })}\n${shown.map((l) => `- ${l}`).join('\n')}`);
     }

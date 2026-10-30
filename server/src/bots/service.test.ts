@@ -9,7 +9,7 @@ function fakePool() {
   p.open = (params: any) => {
     const r: any = new EventEmitter(); r.sessionId = params.sessionId ?? `s_${p.runners.size}`; r.state = 'idle'; r.params = params;
     r.info = { agent: 'claude' }; r.gated = !!params.gated;
-    r.send = () => setTimeout(() => r.emit('message', { type: 'result', is_error: false, result: 'ok' }), 0);
+    r.send = () => { if (!p.hang) setTimeout(() => r.emit('message', { type: 'result', is_error: false, result: 'ok' }), 0); };
     r.interrupt = vi.fn(async () => {}); r.close = async () => {};
     p.runners.set(r.sessionId, r); return r;
   };
@@ -169,5 +169,108 @@ describe('BotService', { timeout: 30_000 }, () => {
     expect('gated' in p).toBe(false);
     const q = { cwd: '/p' } as any;
     expect(clientSessionParams(q)).toBe(q);
+  });
+  const rt = (id: string, p: Record<string, unknown> = {}) => ({ id, name: id, prompt: 'p', enabled: true, everyMinutes: 60, acceptance: { kind: 'none' }, onFail: 'inbox', ...p }) as any;
+
+  it('only a real bot shape is accepted: arrays must be arrays, a bad cron or path is refused, nothing is written', async () => {
+    const b = await svc.create(draft({ routines: [rt('r1')] }));
+    const before = fs.readFileSync(path.join(root, b.id, 'bot.json'), 'utf8');
+    await expect(svc.update(b.id, { routines: null } as any)).rejects.toThrow(/routines/);
+    await expect(svc.update(b.id, { routines: [rt('r1', { cron: 'not a cron' })] })).rejects.toThrow(/cron/);
+    await expect(svc.update(b.id, { routines: [rt('r1', { everyMinutes: 0.5 })] })).rejects.toThrow(/everyMinutes/);
+    await expect(svc.update(b.id, { outputs: [{ kind: 'file', path: 'rel/x.md' }] })).rejects.toThrow(/outputs/);
+    await expect(svc.update(b.id, { outputs: [{ kind: 'mail' }] } as any)).rejects.toThrow(/outputs/);
+    await expect(svc.update(b.id, { cwd: 'relative' })).rejects.toThrow(/cwd/);
+    await expect(svc.update(b.id, { tier: 'huge' } as any)).rejects.toThrow(/tier/);
+    await expect(svc.update(b.id, { budget: { dailyUsd: -1 } })).rejects.toThrow(/budget/);
+    await expect(svc.update(b.id, { charter: { role: 'r', sources: 'x' } } as any)).rejects.toThrow(/sources/);
+    await expect(svc.update(b.id, { policy: { rules: {} } } as any)).rejects.toThrow(/rules/);
+    await expect(svc.create({ ...draft(), routines: null } as any)).rejects.toThrow(/routines/);
+    expect(fs.readFileSync(path.join(root, b.id, 'bot.json'), 'utf8')).toBe(before);
+  });
+
+  it('status fields and server-owned keys are not stored; policy.unleashed only moves through unleash', async () => {
+    const b = await svc.create({ ...draft({ policy: { rules: [], unleashed: true } }), state: 'running', todayUsd: 9, trust: { x: 1 } } as any);
+    expect(b.policy.unleashed).toBeFalsy();
+    await svc.update(b.id, { ...svc.get(b.id), name: 'n2', policy: { rules: [], unleashed: true } } as any);
+    const disk = JSON.parse(fs.readFileSync(path.join(root, b.id, 'bot.json'), 'utf8'));
+    expect(disk.name).toBe('n2');
+    for (const k of ['state', 'todayUsd', 'weekUsd', 'pendingInbox', 'trust']) expect(disk).not.toHaveProperty(k);
+    expect(disk.policy.unleashed).toBeUndefined();
+    await svc.unleash(b.id, true);
+    await svc.update(b.id, { policy: { rules: [] } });
+    expect(svc.get(b.id).policy.unleashed).toBe(true);
+  });
+
+  it('a routine id that is not a plain name gets one from the server', async () => {
+    const b = await svc.create(draft({ routines: [rt('../x'), rt('')] }));
+    for (const r of b.routines) expect(r.id).toMatch(/^[\w-]+$/);
+    expect(new Set(b.routines.map((r) => r.id)).size).toBe(2);
+  });
+
+  it('the manager gets no routines', async () => {
+    await expect(svc.update('manager', { routines: [rt('r1')] })).rejects.toThrow(/routines/);
+  });
+
+  it('edits merge around what the scheduler owns: a routine the pipeline turned off stays off, run times stay', async () => {
+    const b = await svc.create(draft({ charter: { role: 'role', audience: 'a', sources: ['s'] }, routines: [rt('r1'), rt('r2')] }));
+    const seen = svc.get(b.id).routines; // what a window has before the pipeline writes
+    await (svc as any).store.update(b.id, (x: any) => ({ ...x, routines: x.routines.map((r: any) => (r.id === 'r1' ? { ...r, enabled: false, failures: 3, lastRunAt: 7, nextRunAt: 99 } : r)) }));
+    await svc.update(b.id, { routines: seen.map((r) => (r.id === 'r2' ? { ...r, name: 'R2' } : r)) });
+    let now = svc.get(b.id);
+    expect(now.routines[0]).toMatchObject({ id: 'r1', enabled: false, failures: 3, lastRunAt: 7, nextRunAt: 99 });
+    expect(now.routines[1].name).toBe('R2');
+    // a window that saw it turned off turns it on again: failures reset
+    await svc.update(b.id, { routines: now.routines.map((r) => (r.id === 'r1' ? { ...r, enabled: true } : r)) });
+    now = svc.get(b.id);
+    expect(now.routines[0]).toMatchObject({ enabled: true, failures: 0, lastRunAt: 7 });
+    // charter merges field by field
+    await svc.update(b.id, { charter: { audience: 'b' } } as any);
+    expect(svc.get(b.id).charter).toMatchObject({ role: 'role', audience: 'b', sources: ['s'] });
+  });
+
+  it('a stop asked for in a server not on duty stops the run on the one on duty', async () => {
+    pool.hang = true;
+    const b = await svc.create(draft({ routines: [rt('r1')] }));
+    const runs: any[] = []; svc.on('run', (r) => runs.push(r));
+    await svc.runNow(b.id, 'r1');
+    await until(() => (svc as any).scheduler.isRunning(b.id) && pool.runners.size > 0);
+    const other = make(); extra.push(other);
+    await other.start();
+    const res = await other.stopAll();
+    expect(res).toMatchObject({ requested: true });
+    await until(() => runs.some((r) => r.endedAt && r.error));
+    expect(svc.load().running).toBe(0);
+    await until(() => !fs.existsSync(path.join(root, 'stop.request.json')));
+  });
+
+  it('deleting a bot tells the windows its inbox items are gone', async () => {
+    const b = await svc.create(draft());
+    const item = await (svc as any).inbox.add({ kind: 'finding', botId: b.id, title: 't' });
+    const pushed: any[] = []; svc.on('inbox', (i) => pushed.push(i));
+    await svc.remove(b.id);
+    expect(pushed).toEqual([expect.objectContaining({ id: item.id, done: expect.objectContaining({ answer: 'archive' }) })]);
+  });
+
+  it('an answer whose effect fails is taken back: the approval stays pending', async () => {
+    const b = await svc.create(draft());
+    const item = await (svc as any).inbox.add({ kind: 'finding', botId: b.id, title: 't' });
+    vi.spyOn((svc as any).scheduler, 'onInboxAnswer').mockRejectedValueOnce(new Error('boom'));
+    await expect(svc.inboxAnswer({ id: item.id, answer: 'approve' })).rejects.toThrow('boom');
+    expect(svc.inboxList(b.id)[0].done).toBeUndefined();
+  });
+
+  it('held IM pushes survive a restart (held.json)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(2026, 0, 1, 12, 0));
+    onTestFinished(() => { vi.useRealTimers(); });
+    const b = await svc.create(draft({ outputs: [{ kind: 'im', gatewayId: 'tg', chatId: 'c1' }], quiet: { from: '00:00', to: '23:59' } }));
+    await (svc as any).inbox.add({ kind: 'finding', botId: b.id, title: 'late' });
+    await until(() => fs.existsSync(path.join(root, 'held.json')));
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'held.json'), 'utf8'))[b.id]).toHaveLength(1);
+  });
+
+  it('runs() clamps the limit', () => {
+    expect(() => svc.runs(undefined, undefined, -5)).not.toThrow();
+    expect(() => svc.runs(undefined, undefined, 1e9)).not.toThrow();
   });
 });

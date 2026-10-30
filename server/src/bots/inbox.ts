@@ -38,18 +38,40 @@ export class Inbox extends EventEmitter {
       const next = [...this.items, full];
       await this.store.setInbox(next);
       this.items = next;
-      this.emit('item', full);
+      this.tell(full);
       return full;
     });
   }
 
-  /** a deleted bot's items go with it */
+  /** listeners (the windows, IM pushes) never break a write that already landed */
+  private tell(item: InboxItem) {
+    try { this.emit('item', item); } catch (e) { console.warn('[bots] inbox listener failed:', e); }
+  }
+
+  /** a deleted bot's items go with it; each is told once more as done (archived) so the windows drop it */
   removeBot(botId: string): Promise<void> {
     return this.serial(async () => {
+      const gone = this.items.filter((i) => i.botId === botId);
+      if (!gone.length) return;
       const next = this.items.filter((i) => i.botId !== botId);
-      if (next.length === this.items.length) return;
       await this.store.setInbox(next);
       this.items = next;
+      const at = Date.now();
+      for (const i of gone) if (!i.done) this.tell({ ...i, done: { at, answer: 'archive' } });
+    });
+  }
+
+  /** takes an answer back (what it should have started failed): the item is pending again */
+  reopen(id: string): Promise<InboxItem | undefined> {
+    return this.serial(async () => {
+      const i = this.get(id);
+      if (!i?.done) return i;
+      const { done: _d, ...open } = i;
+      const next = this.items.map((x) => (x === i ? open : x));
+      await this.store.setInbox(next);
+      this.items = next;
+      this.tell(open);
+      return open;
     });
   }
 
@@ -63,7 +85,7 @@ export class Inbox extends EventEmitter {
       const next = this.items.map((x) => (x === i ? updated : x));
       await this.store.setInbox(next);
       this.items = next;
-      this.emit('item', updated);
+      this.tell(updated);
       return updated;
     });
   }

@@ -1326,7 +1326,7 @@ export class Hub {
       case 'bots.generate': return s.bots.generate(req.text, req.cwd);
       case 'bots.templates': return s.bots.templates();
       case 'bots.load': return s.bots.load();
-      case 'bots.duty.install': return installDuty(req.on);
+      case 'bots.duty.install': this.localWindowOnly(ws, tr('值班服务')); return installDuty(req.on);
       case 'goals.list': return s.goals.list();
       case 'goals.create': return s.goals.create({ objective: req.objective, spec: req.spec, cwd: req.cwd, maxTurns: req.maxTurns, tokenBudget: req.tokenBudget, agent: req.agent, permissionMode: req.permissionMode, model: req.model });
       case 'goals.update': return s.goals.update(req.id, req.patch);
