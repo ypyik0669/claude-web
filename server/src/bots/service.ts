@@ -19,6 +19,7 @@ import { LEASE_STALE_MS } from './scheduler.js';
 import fs from 'node:fs';
 import { atomicWrite } from '../agent-config/backup.js';
 import { tr } from '../i18n/index.js';
+import { refusePeerUnc } from '../meta/folder-check.js';
 
 const TIERS: unknown[] = ['cheap', 'balanced', 'best'];
 /** a bot's tier as a 智能路由 strategy (a virtual model): only meaningful on a routing group's provider */
@@ -51,6 +52,17 @@ export function clientSessionParams(p: OpenSessionParams): OpenSessionParams {
   if (!('gated' in p) && !('botId' in p)) return p;
   const { gated: _drop, botId: _bot, ...rest } = p;
   return rest;
+}
+
+/**
+ * A bot's folder and its file outputs from another machine (a federation peer) may not be network paths: the bot's
+ * conversation works in that folder and appends to those files (workspaces.add refuses the same, refusePeerUnc).
+ */
+export function refusePeerUncBot(b: unknown, fromPeer: boolean): void {
+  if (!fromPeer || !b || typeof b !== 'object') return;
+  const x = b as { cwd?: unknown; outputs?: unknown };
+  refusePeerUnc(x.cwd, true);
+  if (Array.isArray(x.outputs)) for (const o of x.outputs) if (o && typeof o === 'object') refusePeerUnc((o as { path?: unknown }).path, true);
 }
 
 /** 'HH:mm' local time inside [from, to) — `to` before `from` wraps past midnight */
@@ -167,7 +179,7 @@ export class BotService extends EventEmitter {
    * request — a server not on duty quitting must not stop the runs of the one that is.
    */
   async shutdown(): Promise<void> {
-    try { await this.scheduler.stopAll(); } finally { this.stop(); }
+    try { await this.scheduler.stopAll(); } finally { this.stop(); await this.scheduler.settled(); }
   }
 
   private defaultProvider(): string | undefined {

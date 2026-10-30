@@ -85,10 +85,19 @@ export class BotScheduler extends EventEmitter {
 
   start() {
     if (this.timer) return;
-    this.timer = setInterval(() => void this.tick().catch((e) => console.warn('[bots] tick failed:', e)), TICK_MS);
+    this.timer = setInterval(() => void this.timedTick(), TICK_MS);
     this.timer.unref();
-    void this.tick().catch((e) => console.warn('[bots] tick failed:', e));
+    void this.timedTick();
   }
+  /** the timer's tick, kept so a shutdown can wait for it (it writes bot.json / the lease) */
+  private inflight: Promise<void> = Promise.resolve();
+  private timedTick() {
+    const p = this.tick().catch((e) => console.warn('[bots] tick failed:', e));
+    this.inflight = p;
+    return p;
+  }
+  /** resolves once the timer's tick in flight (if any) is done */
+  settled(): Promise<void> { return this.inflight; }
   stop() {
     liveInstances.delete(this.instance);
     if (this.timer) clearInterval(this.timer);

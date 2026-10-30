@@ -1477,6 +1477,7 @@ export const EN_SERVER: Record<string, string> = {
   "账号池不存在": "account pool not found",
   "走模型网关的供应商请在「设置 → 模型网关」里用组的「测试」按钮": "For providers that go through the model gateway, use the group's “Test” button in Settings → Model gateway",
   "超时": "Timeout",
+  "预检查出错：{error}": "The pre-check failed: {error}",
   "超时（{timeoutMs} 秒）：{message}": "Timed out ({timeoutMs} s): {message}",
   "超时：{PROBE_TIMEOUT_MS} 秒内没有收到回答（中转没有回应，或一直在报错重试）": "Timed out: no answer within {PROBE_TIMEOUT_MS} seconds (the relay didn't respond, or kept erroring and retrying)",
   "超时：网络不通、对方太慢，或者代理有问题。检查网络和代理后重试。": "Timed out: the network is down, the other side is too slow, or the proxy has a problem. Check the network and proxy and try again.",

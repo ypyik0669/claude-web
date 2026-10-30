@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi, onTestFinished } from 'vitest';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { BotService, tierModel, clientSessionParams, type BotServiceDeps } from './service.js';
+import { BotService, tierModel, clientSessionParams, refusePeerUncBot, type BotServiceDeps } from './service.js';
 import type { BotDraft, InboxItem } from '../protocol.js';
 
 function fakePool() {
@@ -108,7 +108,7 @@ describe('BotService', { timeout: 30_000 }, () => {
       await s2.runNow(b.id, 'r1');
       await until(() => runs.some((r) => r.endedAt));
       expect([...pool.runners.values()].at(-1).params.model).toBeUndefined();
-    } finally { await s2.stopAll(); s2.stop(); await settle(); fs.rmSync(s2root, { recursive: true, force: true }); }
+    } finally { await s2.shutdown(); fs.rmSync(s2root, { recursive: true, force: true }); }
   });
 
   it('stop / stopAll go to the scheduler', async () => {
@@ -194,6 +194,14 @@ describe('BotService', { timeout: 30_000 }, () => {
     expect(im.sendTo).toHaveBeenCalledTimes(1);
     expect(im.sendTo.mock.calls[0][2]).toContain('2');
     expect(im.sendTo.mock.calls[0][2]).toContain('later');
+  });
+
+  it('a peer cannot give a bot a network folder or output file (refusePeerUncBot); this machine can', () => {
+    const unc = String.fromCharCode(92).repeat(2) + 'nas' + String.fromCharCode(92) + 'proj';
+    expect(() => refusePeerUncBot({ cwd: unc }, true)).toThrow();
+    expect(() => refusePeerUncBot({ cwd: 'C:/proj', outputs: [{ kind: 'file', path: '//nas/out.md' }] }, true)).toThrow();
+    expect(() => refusePeerUncBot({ cwd: unc, outputs: [{ kind: 'file', path: '//nas/out.md' }] }, false)).not.toThrow();
+    expect(() => refusePeerUncBot({ cwd: 'C:/proj', outputs: [{ kind: 'inbox' }] }, true)).not.toThrow();
   });
 
   it('client session params lose the server-only gated flag', () => {

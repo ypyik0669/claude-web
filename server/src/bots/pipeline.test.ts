@@ -59,6 +59,14 @@ describe('runRoutine', () => {
     expect(second.run.skipped).toBe(true); expect(opened).toHaveLength(1);
   });
 
+  it('a failing precheck is named in the language of the app (tr), and the run still goes on', async () => {
+    const fail = process.platform === 'win32' ? 'Write-Error nope; exit 3' : 'echo nope >&2; exit 3';
+    const b = bot([routine({ precheck: fail })]); await store.save(b);
+    const { run } = await runRoutine(deps(fakeRunner()), b, b.routines[0], 'cron');
+    expect(opened).toHaveLength(1);
+    expect(run.error).toMatch(/^预检查出错：/);
+  });
+
   it('an ask inside the run is queued, the run still ends ok, and resume approves exactly that call', async () => {
     const b = bot([routine()]); await store.save(b);
     const push = { toolName: 'Bash', input: { command: 'git push origin main' } };

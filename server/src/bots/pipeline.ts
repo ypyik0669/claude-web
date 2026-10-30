@@ -158,7 +158,7 @@ export async function runRoutine(d: PipelineDeps, bot: Bot, routine: Routine, tr
       const fp = fingerprint(pc.stdout);
       if (fp === d.store.stateOf(bot.id, routine.id).fingerprint) { run.skipped = true; run.ok = true; return finish(); }
       await d.store.setState(bot.id, routine.id, { fingerprint: fp });
-    } else run.error = `precheck: ${(pc.stderr || pc.stdout).trim().slice(0, 200)}`;
+    } else run.error = tr('预检查出错：{error}', { error: (pc.stderr || pc.stdout).trim().slice(0, 200) });
   }
 
   const checkpointFile = path.join(d.store.dir(bot.id), 'state', `${routine.id.replace(/[^\w-]/g, '_')}.checkpoint.md`);

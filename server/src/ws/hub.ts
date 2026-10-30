@@ -104,7 +104,7 @@ import type { ComputerAccess } from '../computer/access.js';
 import type { SiteAsk } from '../web/site-gate.js';
 import { computerSupported, defaultFeaturesOf } from '../computer/launcher.js';
 import { tr } from '../i18n/index.js';
-import { clientSessionParams, type BotService } from '../bots/service.js';
+import { clientSessionParams, refusePeerUncBot, type BotService } from '../bots/service.js';
 import { dutyInstalled, installDuty } from '../bots/duty.js';
 
 export interface Services {
@@ -1311,8 +1311,9 @@ export class Hub {
       case 'vcs.checkout': return s.vcs.checkout(req.cwd, req.number, { worktree: req.worktree, repo: req.repo });
       case 'bots.list': return s.bots.list();
       case 'bots.get': return s.bots.get(req.id);
-      case 'bots.create': return s.bots.create(req.bot);
-      case 'bots.update': return s.bots.update(req.id, req.patch);
+      // a peer's network path never becomes a bot's folder or output file
+      case 'bots.create': refusePeerUncBot(req.bot, this.peerConns.has(ws)); return s.bots.create(req.bot);
+      case 'bots.update': refusePeerUncBot(req.patch, this.peerConns.has(ws)); return s.bots.update(req.id, req.patch);
       case 'bots.delete': await s.bots.remove(req.id); return null;
       case 'bots.pause': return s.bots.pause(req.id, req.paused);
       case 'bots.unleash': return s.bots.unleash(req.id, req.on);
@@ -1324,7 +1325,7 @@ export class Hub {
       case 'bots.inbox.answer': return s.bots.inboxAnswer(req.answer);
       case 'bots.runs.list': return s.bots.runs(req.botId, req.routineId, req.limit);
       case 'bots.runs.audit': return s.bots.audit(req.botId, req.runId);
-      case 'bots.generate': return s.bots.generate(req.text, req.cwd);
+      case 'bots.generate': refusePeerUnc(req.cwd, this.peerConns.has(ws)); return s.bots.generate(req.text, req.cwd);
       case 'bots.templates': return s.bots.templates();
       case 'bots.load': return s.bots.load();
       case 'bots.duty.install': this.localWindowOnly(ws, tr('值班服务')); return installDuty(req.on);
