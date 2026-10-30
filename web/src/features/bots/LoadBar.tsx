@@ -12,7 +12,7 @@ export function LoadBar() {
     <div className="bots-load" role="status">
       <span className="bl-text">{tr('在跑 {running} · 排队 {queued} · 今天 {today} · 本周 {week}', { running: load.running, queued: load.queued, today: usd(load.todayUsd), week: usd(load.weekEstimateUsd) })}</span>
       <span className="grow" />
-      <button className="btn sm" title={tr('全部停')} onClick={() => void stop()}><Icon name="stop" size={12} /><span className="l">{tr('全部停')}</span></button>
+      <button className="btn sm" onClick={() => void stop()}><Icon name="stop" size={12} /><span className="l">{tr('全部停')}</span></button>
     </div>
   );
 }

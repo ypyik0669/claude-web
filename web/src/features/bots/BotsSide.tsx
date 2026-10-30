@@ -22,7 +22,7 @@ export function BotsSide() {
     <SectionSide
       name="bots"
       title={tr('Bot')}
-      tab={selected ?? sorted[0]?.id ?? ''}
+      tab={(sorted.find((b) => b.id === selected) ?? sorted[0])?.id ?? ''}
       tabs={tabs}
       onTab={selectBot}
       action={<button className="icon-btn" title={tr('新建 Bot')} aria-label={tr('新建 Bot')} onClick={() => useBots.setState({ creating: true })}><Icon name="plus" size={16} /></button>}
