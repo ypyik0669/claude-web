@@ -10,11 +10,13 @@ import { Icon } from '@/ui/icons';
 import { clsx } from '@/util';
 import { tr } from '@/i18n';
 import { stateLabel } from './model';
-import { setBotTab, updateBot, type BotTab } from './state';
+import { setBotTab, stopBot, updateBot, type BotTab } from './state';
 import { BlurField, NumField, currentBot, splitList, toggleUnleash } from './fields';
 import { RoutineTable } from './RoutineTable';
 import { RunList } from './RunList';
 import { PolicyEditor } from './PolicyEditor';
+import { Inbox } from './Inbox';
+import { BotMenu } from './BotList';
 
 const TABS: { id: BotTab; label: () => string }[] = [
   { id: 'routines', label: () => tr('例行') },
@@ -29,7 +31,7 @@ function CharterCard({ bot }: { bot: BotStatus }) {
   const [open, setOpen] = useState(true);
   const c = bot.charter;
   // merged into the charter as stored at the moment of saving: tabbing on before bots.changed is back can't undo the last field
-  const save = (patch: Partial<BotCharter>) => { const cur = currentBot(bot.id); if (cur) void updateBot(bot.id, { charter: { ...cur.charter, ...patch } }); };
+  const save = (patch: Partial<BotCharter>) => { const cur = currentBot(bot.id); return cur ? updateBot(bot.id, { charter: { ...cur.charter, ...patch } }) : false; };
   return (
     <section className={clsx('bd-card bd-charter', open && 'open')}>
       <button className="bd-card-head" aria-expanded={open} onClick={() => setOpen(!open)}>
@@ -63,6 +65,8 @@ function Outputs({ bot }: { bot: BotStatus }) {
   }, []);
   const im = bot.outputs.find((o): o is ImOut => o.kind === 'im');
   const file = bot.outputs.find((o): o is FileOut => o.kind === 'file');
+  // the IM output as stored at the moment of saving (not this render's copy)
+  const storedIm = () => currentBot(bot.id)?.outputs.find((o): o is ImOut => o.kind === 'im');
   const save = (next: { im?: ImOut | null; file?: FileOut | null }) => {
     const cur = currentBot(bot.id)?.outputs ?? bot.outputs;
     const i = next.im === undefined ? cur.find((o): o is ImOut => o.kind === 'im') : next.im ?? undefined;
@@ -70,7 +74,7 @@ function Outputs({ bot }: { bot: BotStatus }) {
     const outputs: BotOutput[] = [{ kind: 'inbox' }];
     if (i) outputs.push(i);
     if (f) outputs.push(f);
-    void updateBot(bot.id, { outputs });
+    return updateBot(bot.id, { outputs });
   };
   const options = [{ value: '', label: tr('不发') }, ...gateways.map((g) => ({ value: g.id, label: g.name || g.id }))];
   // a gateway the bot names that the list doesn't have (removed, or not loaded yet) still shows
@@ -81,8 +85,9 @@ function Outputs({ bot }: { bot: BotStatus }) {
       <div className="bd-row">
         <span>{tr('IM')}</span>
         <span className="bd-pair">
-          <Select label={tr('IM 网关')} value={im?.gatewayId ?? ''} options={options} onValueChange={(v) => save({ im: v ? { kind: 'im', gatewayId: String(v), chatId: im?.chatId ?? '' } : null })} />
-          {im && <BlurField label={tr('聊天 ID')} placeholder={tr('聊天 ID')} value={im.chatId} onSave={(chatId) => save({ im: { ...im, chatId: chatId.trim() } })} />}
+          <Select label={tr('IM 网关')} value={im?.gatewayId ?? ''} options={options} onValueChange={(v) => void save({ im: v ? { kind: 'im', gatewayId: String(v), chatId: storedIm()?.chatId ?? '' } : null })} />
+          {im && <BlurField label={tr('聊天 ID')} placeholder={tr('聊天 ID')} value={im.chatId} onSave={(chatId) => { const cur = storedIm(); return cur ? save({ im: { ...cur, chatId: chatId.trim() } }) : false; }} />}
+          {im && !im.chatId.trim() && <span className="bd-hint warn">{tr('还没填聊天 ID，不会发')}</span>}
         </span>
       </div>
       <div className="bd-row"><span>{tr('文件')}</span><BlurField label={tr('写到文件')} placeholder={tr('文件路径（不填就不写）')} value={file?.path ?? ''} onSave={(p) => save({ file: p.trim() ? { kind: 'file', path: p.trim() } : null })} /></div>
@@ -100,12 +105,12 @@ function Settings({ bot }: { bot: BotStatus }) {
   const quiet = bot.quiet;
   const saveQuiet = (patch: { from?: string; to?: string }) => {
     const cur = currentBot(bot.id);
-    if (!cur) return;
+    if (!cur) return false;
     const from = patch.from ?? cur.quiet?.from ?? '';
     const to = patch.to ?? cur.quiet?.to ?? '';
-    void updateBot(bot.id, { quiet: from && to ? { from, to } : undefined });
+    return updateBot(bot.id, { quiet: from && to ? { from, to } : undefined });
   };
-  const saveBudget = (patch: Partial<BotStatus['budget']>) => { const cur = currentBot(bot.id); if (cur) void updateBot(bot.id, { budget: { ...cur.budget, ...patch } }); };
+  const saveBudget = (patch: Partial<BotStatus['budget']>) => { const cur = currentBot(bot.id); return cur ? updateBot(bot.id, { budget: { ...cur.budget, ...patch } }) : false; };
   return (
     <section className="bd-card">
       <div className="bd-form">
@@ -177,6 +182,9 @@ function SelfTab({ bot }: { bot: BotStatus }) {
 /** The page's middle column: one bot — name, charter, settings, then routines / runs / policy / memory / self. */
 export function BotDetail({ bot, tab }: { bot: BotStatus; tab: BotTab }) {
   const unleashed = !!bot.policy.unleashed;
+  const mobile = useStore((s) => s.mobile);
+  const [menu, setMenu] = useState(false);
+  const going = bot.state === 'running' || bot.state === 'queued';
   const rename = async () => {
     const name = (await dlg.prompt(tr('Bot 的名字'), bot.name))?.trim();
     if (name && name !== bot.name) void updateBot(bot.id, { name });
@@ -190,11 +198,21 @@ export function BotDetail({ bot, tab }: { bot: BotStatus; tab: BotTab }) {
         {!unleashed && bot.policy.autoPilot?.on && <span className="badge" title={tr('范围内的动作都直接做，不问你；到期自动关')}>{tr('全自动')}</span>}
         <span className="bot-state" data-state={bot.state}>{stateLabel(bot.state)}</span>
         <span className="grow" />
+        {going && <button className="btn sm" data-act="stop" onClick={() => void stopBot(bot.id)}><Icon name="stop" size={12} />{tr('停止')}</button>}
         <label className="switch-inline bd-unleash">
           {tr('放开全部')}
           <Switch on={unleashed} onChange={(on) => void toggleUnleash(bot, on)} />
         </label>
+        {/* a phone has no bot list: its menu (pause, run a routine, delete) is here */}
+        {mobile && (
+          <span className="bot-more bd-more">
+            <button className="icon-btn" title={tr('更多')} aria-label={tr('更多')} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}><Icon name="more" size={14} /></button>
+            {menu && <BotMenu bot={bot} onClose={() => setMenu(false)} />}
+          </span>
+        )}
       </div>
+      {/* what waits for you from this bot, answered right here (the same items as 总览 · 需要你) */}
+      {bot.pendingInbox > 0 && <div className="bd-inbox"><Inbox botId={bot.id} /></div>}
       <CharterCard bot={bot} />
       <Settings bot={bot} />
       <div className="bd-tabs" role="tablist" aria-label={bot.name}>

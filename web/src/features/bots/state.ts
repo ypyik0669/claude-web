@@ -67,8 +67,10 @@ function upsertRun(run: BotRun): void {
 export function openBots(id?: string): boolean {
   closeOtherPages('bots');
   if (!useBots.getState().open) markPageOpened();
-  useBots.setState((s) => ({ open: true, seen: true, selected: id ?? s.selected, phoneInbox: id ? false : s.phoneInbox }));
-  if (useStore.getState().mobile) { useStore.setState({ sidebarOpen: false }); hideSheet(); }
+  // a phone opens on the inbox (its first screen) unless it is opened on a bot
+  const mobile = useStore.getState().mobile;
+  useBots.setState((s) => ({ open: true, seen: true, selected: id ?? s.selected, phoneInbox: id ? false : mobile ? true : s.phoneInbox }));
+  if (mobile) { useStore.setState({ sidebarOpen: false }); hideSheet(); }
   return true;
 }
 
@@ -76,7 +78,8 @@ export function closeBots(): void {
   if (useBots.getState().open) useBots.setState({ open: false });
 }
 
-export function selectBot(id: string): void { useBots.setState({ selected: id }); }
+/** Show a bot — on a phone that leaves the inbox tab for it. */
+export function selectBot(id: string): void { useBots.setState({ selected: id, phoneInbox: false }); }
 
 /** The inbox badge: how many items wait for an answer. */
 export const useInboxPending = () => useBots((s) => s.pending);
@@ -99,9 +102,21 @@ export async function runNow(botId: string, routineId: string): Promise<boolean>
   return err === null;
 }
 
-export async function stopAll(): Promise<void> {
-  try { await ws.request({ kind: 'bots.stopAll' }); } catch (e) { useStore.getState().toast(tr('停止失败：{message}', { message: msg(e) })); }
+/** A stop's answer: null when this server stopped it; `requested` when it is not the one on duty and only asked it to. */
+type StopReply = { requested?: boolean; note?: string } | null;
+
+async function stop(req: { kind: 'bots.stopAll' } | { kind: 'bots.stop'; id: string }): Promise<void> {
+  try {
+    const r = await ws.request<StopReply>(req);
+    // only asked: say so — the runs stop when the claude-web on duty reads the request
+    if (r?.requested) useStore.getState().toast(r.note || tr('已请正在值班的 claude-web 停下'), true);
+  } catch (e) { useStore.getState().toast(tr('停止失败：{message}', { message: msg(e) })); }
 }
+
+export function stopAll(): Promise<void> { return stop({ kind: 'bots.stopAll' }); }
+
+/** Stop one bot's runs (running and queued). */
+export function stopBot(id: string): Promise<void> { return stop({ kind: 'bots.stop', id }); }
 
 export async function pauseBot(id: string, paused: boolean): Promise<void> {
   try { await ws.request({ kind: 'bots.pause', id, paused }); } catch (e) { useStore.getState().toast(tr('操作失败：{message}', { message: msg(e) })); }

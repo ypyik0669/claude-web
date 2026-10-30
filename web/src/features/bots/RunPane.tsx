@@ -9,7 +9,7 @@ import { EmptyState } from '@/ui/EmptyState';
 import { Icon } from '@/ui/icons';
 import { tr } from '@/i18n';
 import { usd } from './model';
-import { useBots } from './state';
+import { loadRuns, useBots } from './state';
 import { openRunChat } from './RunList';
 
 /** How often a running run's conversation is read again. */
@@ -52,7 +52,10 @@ const hasSession = (r: BotRun | undefined): r is BotRun & { sessionId: string } 
 
 /** The page's right column: the bot's latest run — the one running, else the last one — as its conversation. */
 export function RunPane({ bot }: { bot: BotStatus }) {
-  const latest = useBots((s) => s.runs[bot.id]?.[0]);
+  // the runs so far, not only what is pushed from now on (else this is empty until the 运行 tab is opened)
+  useEffect(() => { void loadRuns(bot.id); }, [bot.id]);
+  // the newest run that has a conversation (a skipped one has none and would blank the pane)
+  const latest = useBots((s) => s.runs[bot.id]?.find((r) => !!r.sessionId));
   const routine = latest && bot.routines.find((r) => r.id === latest.routineId);
   const going = !!latest && !latest.endedAt && !latest.skipped;
   return (

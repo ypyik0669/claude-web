@@ -8,7 +8,7 @@ import { useCafe } from '@/features/cafe/state';
 import { bakeCharacter } from '@/features/cafe/bake';
 import { tr } from '@/i18n';
 import { stateLabel, usd } from './model';
-import { deleteBot, pauseBot, runNow, selectBot, unleashBot } from './state';
+import { deleteBot, pauseBot, runNow, selectBot, stopBot, unleashBot } from './state';
 
 /** A cafe character standing still when `avatar` names one, else the name's first letter. */
 export function BotAvatar({ bot }: { bot: BotStatus }) {
@@ -24,7 +24,8 @@ export function BotAvatar({ bot }: { bot: BotStatus }) {
   return <span className="bot-avatar letter" aria-hidden>{[...bot.name.trim()][0] ?? '?'}</span>;
 }
 
-function BotMenu({ bot, onClose }: { bot: BotStatus; onClose: () => void }) {
+/** A bot's actions: pause / continue, stop what runs, run a routine now, 放开全部 / 收回, delete. */
+export function BotMenu({ bot, onClose }: { bot: BotStatus; onClose: () => void }) {
   const [routines, setRoutines] = useState(false);
   const act = (fn: () => unknown) => () => { onClose(); void fn(); };
   const remove = async () => {
@@ -39,6 +40,7 @@ function BotMenu({ bot, onClose }: { bot: BotStatus; onClose: () => void }) {
   return (
     <Menu onClose={onClose} label={bot.name} className="bot-menu" align="right">
       <button data-id="pause" onClick={act(() => pauseBot(bot.id, !bot.paused))}><Icon name={bot.paused ? 'play' : 'pause'} size={14} /> {bot.paused ? tr('继续') : tr('暂停')}</button>
+      {(bot.state === 'running' || bot.state === 'queued') && <button data-id="stop" onClick={act(() => stopBot(bot.id))}><Icon name="stop" size={14} /> {tr('停止')}</button>}
       <button data-id="run" onClick={() => setRoutines(!routines)} aria-expanded={routines}><Icon name="bolt" size={14} /> <span style={{ flex: 1 }}>{tr('立即运行')}</span><Icon name={routines ? 'chevronDown' : 'chevronRight'} size={12} /></button>
       {routines && (
         <div className="sub-menu">

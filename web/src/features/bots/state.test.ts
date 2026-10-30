@@ -4,9 +4,11 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const listeners: ((e: any) => void)[] = [];
 const sent: any[] = [];
+/** what the next requests answer (null by default) */
+let reply: any = null;
 vi.mock('@/ws/client', () => ({
   authToken: () => null,
-  ws: { onStatus: null, connect() {}, on(l: (e: any) => void) { listeners.push(l); return () => {}; }, async request(req: any) { sent.push(req); return null; } },
+  ws: { onStatus: null, connect() {}, on(l: (e: any) => void) { listeners.push(l); return () => {}; }, async request(req: any) { sent.push(req); return reply; } },
 }));
 
 const mem = new Map<string, string>();
@@ -60,6 +62,36 @@ describe('bots page state', () => {
     list = bots.useBots.getState().runs.b;
     expect(list).toHaveLength(200);
     expect(list[0]).toMatchObject({ id: 'r204', ok: true });
+  });
+
+  it('stop: a forwarded stop (not the server on duty) is said in a toast; a direct one says nothing', async () => {
+    const { useStore } = await import('@/store');
+    const toasts: string[] = [];
+    const orig = useStore.getState().toast;
+    useStore.setState({ toast: (t: string) => void toasts.push(t) } as any);
+    try {
+      sent.length = 0;
+      reply = { requested: true, note: 'asked the one on duty' };
+      await bots.stopBot('b1');
+      await bots.stopAll();
+      expect(sent.map((r) => [r.kind, r.id])).toEqual([['bots.stop', 'b1'], ['bots.stopAll', undefined]]);
+      expect(toasts).toEqual(['asked the one on duty', 'asked the one on duty']);
+      reply = null;
+      await bots.stopAll();
+      expect(toasts).toHaveLength(2);
+    } finally { reply = null; useStore.setState({ toast: orig } as any); }
+  });
+
+  it('a phone: picking a bot leaves the inbox tab, opening the page without one goes back to it', async () => {
+    const { useStore } = await import('@/store');
+    useStore.setState({ mobile: true } as any);
+    try {
+      bots.useBots.setState({ phoneInbox: true });
+      bots.selectBot('b_2');
+      expect(bots.useBots.getState().phoneInbox).toBe(false);
+      bots.openBots();
+      expect(bots.useBots.getState().phoneInbox).toBe(true);
+    } finally { useStore.setState({ mobile: false } as any); }
   });
 
   it('changed / load pushes replace the bots and the load', () => {
