@@ -101,10 +101,19 @@ export function makeGate(ctx: GateCtx): GateHandle {
       await ctx.audit.add({ ...base, level: 'ask', basis, result: 'queued', ...(rule ? { rule } : {}) });
       return { behavior: 'deny', message: tr('这个动作要先经你批准，已放进收件箱（{title}）。先做别的；批准后会从这里继续。', { title: item.title }) };
     }
-    await ctx.audit.add({ ...base, level, basis, result: 'allowed', ...(rule ? { rule } : {}) });
-    // only once it's on record: spend the approval (whatever let the call through — none lingers), count it
-    approved.delete(ck);
-    for (const k of countKeys(basis, rule)) bump(mine, `${dayStart(t)}|${k}`);
+    // spend the approval (whatever let the call through — none lingers) and take the perDay slot before the audit
+    // write's await, so a concurrent call can't pass the same slot or spend the same approval; both go back if the
+    // call doesn't get on record
+    const hadApproval = approved.delete(ck);
+    const slots = countKeys(basis, rule).map((k) => `${dayStart(t)}|${k}`);
+    for (const k of slots) bump(mine, k);
+    try {
+      await ctx.audit.add({ ...base, level, basis, result: 'allowed', ...(rule ? { rule } : {}) });
+    } catch (e) {
+      if (hadApproval) approved.add(ck);
+      for (const k of slots) mine.set(k, (mine.get(k) ?? 1) - 1);
+      throw e;
+    }
     const call: AllowedCall = { toolName: ev.toolName, input: ev.input, cls, key, level, basis, ...(rule ? { rule } : {}) };
     allowedCalls.set(ck, call);
     if (level === 'do_tell') ctx.onTell?.(summary, call);

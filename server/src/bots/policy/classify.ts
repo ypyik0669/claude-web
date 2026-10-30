@@ -82,6 +82,22 @@ interface Tok { t: string; dyn: boolean; brace?: boolean }
 /** A simple command with what feeds it: substitution in its words, a pipe into it, a `<` redirect. */
 interface PCmd { toks: Tok[]; subst: boolean; piped: boolean; stdin: boolean; devnet?: boolean }
 
+/**
+ * A redirect target bash may open as a socket: /dev/tcp/… or /dev/udp/…, or one whose value isn't in the text and
+ * could still become that — its literal part before the first expansion is empty or on the way to /dev/, or it is
+ * ANSI-C quoted with escapes we don't decode.
+ */
+function netTarget(t0: string, dyn: boolean): boolean {
+  const t = capped(t0);
+  if (/^\$?\/dev\/(tcp|udp)\//i.test(t)) return true; // $"…" (a locale string) is the string itself
+  if (!dyn) return false;
+  if (t.includes('\\')) return true;
+  let k = 0;
+  while (k < t.length && t[k] !== '$' && t[k] !== '\u0001' && t[k] !== '`') k++;
+  const lit = t.slice(0, k).toLowerCase();
+  return lit.startsWith('/dev/') || '/dev/'.startsWith(lit);
+}
+
 /** `$x`, `${x}`, `$1`, `$@`, PowerShell `$env:x`, `$_`. */
 const EXPANDS = /[\w{:?@*#!$-]/;
 const SPACE = new Set([' ', '\t', '\r', '\v', '\f']);
@@ -106,7 +122,7 @@ function parseCommands(src: string, ps: boolean): { cmds: PCmd[]; overflow: bool
       const brace = !!f.ub && f.cur.includes('}') && (f.cur.includes(',') || f.cur.includes('..'));
       f.cmd.toks.push({ t: f.cur, dyn: f.dyn || (f.cur.includes('%') && /%[A-Za-z_]\w*%/.test(capped(f.cur))), brace });
     }
-    if (f.has && f.drop) { f.drop = false; if (/^\/dev\/(tcp|udp)\//i.test(f.cur)) f.cmd.devnet = true; } // bash's network redirects
+    if (f.has && f.drop) { f.drop = false; if (netTarget(f.cur, f.dyn)) f.cmd.devnet = true; } // bash's network redirects
     f.cur = ''; f.has = false; f.dyn = false; f.ub = false;
   };
   const endCmd = (piped: boolean) => { endTok(); f.drop = false; if (f.cmd.toks.length) f.cmd = fresh(piped); else f.cmd.piped ||= piped; };
@@ -162,7 +178,8 @@ function parseCommands(src: string, ps: boolean): { cmds: PCmd[]; overflow: bool
     if (ch === '>' || (ch === '&' && nx === '>') || (!ps && ch === '<')) { // redirection: drop it and its file word
       if (f.has && /^\d$/.test(f.cur)) { f.cur = ''; f.has = false; f.dyn = false; } else endTok();
       if (ch === '<') { f.cmd.stdin = true; i++; while (src[i] === '<') i++; } else { i += ch === '&' ? 2 : 1; if (src[i] === '>' || src[i] === '|') i++; }
-      if (src[i] === '&') { i++; while (i < src.length && /[\d-]/.test(src[i])) i++; continue; }
+      // >&2, 2>&1, >&-: duplicating a descriptor; `>& word` (any other target) writes to a file named word
+      if (src[i] === '&') { i++; if (i < src.length && /[\d-]/.test(src[i])) { while (i < src.length && /[\d-]/.test(src[i])) i++; continue; } }
       f.drop = true; continue;
     }
     if (ch === '$' && nx !== undefined && EXPANDS.test(nx)) f.dyn = true;
@@ -181,7 +198,7 @@ function parseCommands(src: string, ps: boolean): { cmds: PCmd[]; overflow: bool
 }
 
 /** Words that run the next word as the command (sudo rm …, xargs rm …, env X=1 curl …). */
-const PREFIX_WORDS = new Set(['sudo', 'doas', 'exec', 'command', 'builtin', 'env', 'nohup', 'time', 'nice', 'ionice', 'xargs', 'timeout', 'then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}', '$', '&', '.']);
+const PREFIX_WORDS = new Set(['sudo', 'doas', 'exec', 'command', 'builtin', 'env', 'nohup', 'time', 'nice', 'ionice', 'xargs', 'timeout', 'setsid', 'stdbuf', 'sshpass', 'unbuffer', 'then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}', '$', '&', '.']);
 /** Options of those prefix words that take a value (so the value isn't mistaken for the command). */
 const PREFIX_ARG_OPTS: Record<string, Set<string>> = {
   sudo: new Set(['-u', '-g', '-h', '-p', '-C', '-D', '-r', '-t', '-U', '-T', '--user', '--group']),
@@ -191,6 +208,8 @@ const PREFIX_ARG_OPTS: Record<string, Set<string>> = {
   ionice: new Set(['-c', '-n', '-p']),
   xargs: new Set(['-I', '-n', '-P', '-L', '-d', '-E', '-s', '-a']),
   timeout: new Set(['-s', '-k', '--signal', '--kill-after']),
+  stdbuf: new Set(['-i', '-o', '-e']),
+  sshpass: new Set(['-p', '-f', '-d', '-P']),
 };
 const base = (t: string) => !/[\\/.]/.test(t) ? t.toLowerCase() : capped(t).replace(/^.*[\\/]/, '').toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '');
 
@@ -242,6 +261,14 @@ function gitSub(args: Tok[]): { sub?: string; rest: Tok[]; config: string[] } {
   }
   return { sub: args[i]?.t.toLowerCase(), rest: args.slice(i + 1), config };
 }
+/** git config keys whose value is a program, a hook, a file to include or a transport: setting one runs code. */
+const GIT_RUNS_CONFIG = /^(alias\.|protocol\.|credential\.|pager\.|filter\.|gpg\.|include\.|includeif\.|uploadpack\.|receivepack\.|sendemail\.|url\.|core\.(fsmonitor|sshcommand|pager|editor|askpass|hookspath|gitproxy)|sequence\.editor|diff\.external|diff\..*\.(textconv|command)|merge\..*\.driver|remote\..*\.(uploadpack|receivepack|vcs)|.*sshcommand)/i;
+/** --upload-pack / --receive-pack / --exec, or a prefix of one git accepts. */
+const runsRemoteProgram = (a: string) => {
+  if (!a.startsWith('--')) return false;
+  const n = a.slice(2).split('=')[0].toLowerCase();
+  return n.length >= 2 && ['upload-pack', 'receive-pack', 'exec'].some((o) => o.startsWith(n));
+};
 const shortHas = (args: string[], letter: string) => args.some((a) => /^-[a-zA-Z]+$/.test(a) && a.includes(letter));
 
 /**
@@ -264,7 +291,7 @@ const CURL_LONG_VALUE = new Set(['data', 'data-ascii', 'data-binary', 'data-raw'
   'retry', 'retry-delay', 'retry-max-time', 'resolve', 'connect-to', 'url', 'output-dir', 'limit-rate', 'interface', 'dns-servers', 'doh-url', 'socks4', 'socks4a', 'socks5',
   'socks5-hostname', 'oauth2-bearer', 'aws-sigv4', 'unix-socket', 'abstract-unix-socket', 'request-target', 'variable', 'dump-header', 'continue-at', 'max-filesize', 'expect100-timeout',
   'url-query', 'trace', 'trace-ascii', 'stderr', 'netrc-file', 'hsts', 'alt-svc', 'ciphers', 'pinnedpubkey', 'local-port', 'happy-eyeballs-timeout-ms']);
-const CURL_REDIRECT = /^(proxy|preproxy|proxy1\.0|socks.*|resolve|connect-to|unix-socket|abstract-unix-socket|config|doh-url|netrc-file)$/;
+const CURL_REDIRECT = /^(proxy|preproxy|proxy1\.0|socks.*|resolve|connect-to|unix-socket|abstract-unix-socket|config|doh-url|netrc-file|engine)$/;
 function curlParse(args: Tok[]): Http {
   const h = newHttp();
   for (let i = 0; i < args.length; i++) {
@@ -276,7 +303,9 @@ function curlParse(args: Tok[]): Http {
       const val: Tok | undefined = eq >= 0 ? { t: a.slice(eq + 1), dyn: args[i].dyn } : takes ? args[++i] : undefined;
       if (n === 'request') h.method = val ?? { t: '', dyn: true };
       if (CURL_REDIRECT.test(n)) h.opaque = true;
-      if (n === 'url') { if (val) h.dests.push(val); else h.opaque = true; }
+      if (n === 'url' || n === 'expand-url') { if (val) h.dests.push(val); else h.opaque = true; }
+      // --expand-*: {{var}} is filled in from a variable (a file, the environment) — its value isn't in the call
+      if (n.startsWith('expand-') && (!val || val.dyn || val.t.includes('{{'))) { h.opaque = true; h.unread = true; }
       if (n === 'upload-file') { h.body = true; addData(h, val, true); }
       const form = /^(expand-)?form/.test(n);
       if (/^(expand-)?(data|form|json)/.test(n)) { h.body = true; addData(h, val, val !== undefined && (form ? /=[@<]/.test(val.t) || val.t.startsWith('@') : FILE_DATA.test(val.t))); }
@@ -318,7 +347,7 @@ function wgetParse(args: Tok[]): Http {
       if (n === 'method') h.method = val ?? { t: '', dyn: true };
       if (n === 'post-data' || n === 'body-data') { h.body = true; addData(h, val, false); }
       if (n === 'post-file' || n === 'body-file') { h.body = true; addData(h, val, true); }
-      if (/^(input-file|execute|base|config)$/.test(n)) { h.opaque = true; h.readsFile = true; }
+      if (/^(input-file|execute|base|config|use-askpass)$/.test(n)) { h.opaque = true; h.readsFile = true; }
       continue;
     }
     if (/^-[a-zA-Z]/.test(a)) {
@@ -439,8 +468,12 @@ function commandClasses(c: Cmd, fed: boolean, first: boolean, s: Seen): void {
   if (cmd === 'git') {
     const { sub, rest, config } = gitSub(args);
     const r = rest.map((t) => t.t);
-    if (config.some((v) => /^alias\./i.test(v))) send(); // an inline alias can run anything
+    if (config.some((v) => GIT_RUNS_CONFIG.test(v))) send(); // an inline alias / helper / hook / transport can run anything
     if (args.some((t) => t.t.startsWith('--config-env'))) send(); // config from the environment: can't see it
+    if (args.some((t) => t.t.toLowerCase().includes('ext::'))) send(); // the ext:: transport runs a command
+    // a program for the other side to run (on a local "remote", that's here): clone / fetch / ls-remote / archive -u, push --receive-pack / --exec
+    // (git takes any unambiguous prefix of a long option: --upl=…, --rece=…)
+    if (rest.some((t) => runsRemoteProgram(t.t) || (sub !== undefined && sub !== 'push' && GIT_NET.has(sub) && /^-[a-zA-Z]*u/.test(t.t)))) send();
     if (sub === 'push') {
       const del = r.includes('--delete') || r.includes('--mirror') || r.includes('--prune') || shortHas(r, 'd') || r.some((x) => /^\+?:/.test(x));
       s.cls.push(del ? 'delete' : 'send'); s.outward = true;
@@ -513,14 +546,36 @@ const MAX_COMMAND = 32 * 1024;
 const MAX_COMMANDS = 200;
 
 /**
- * Command words a scoped rule may cover: the network / VCS tools this file parses, and locals that can't reach the
- * network. Anything else — a wrapper (sudo, env, nohup, xargs, timeout, stdbuf, setsid, sshpass…), an interpreter, an
- * unknown binary — may do with its arguments what we can't see, so the target is opaque (the class is unchanged).
+ * What a scoped rule may cover: a simple command that is an HTTP client this file parses (curl, wget, Invoke-RestMethod
+ * / Invoke-WebRequest and their aliases), or `git push <https-url>` with nothing that runs a program or changes config.
+ * Every other command in the call — a wrapper, an interpreter, a package runner (npm exec, pnpm dlx, npx), any other
+ * git or gh subcommand, an unknown binary, even a harmless local like cd or jq — makes the target opaque (the class is
+ * unchanged): a scope says where a call may go, and only these say it in their words.
  */
-const SCOPE_OK = new Set(['git', 'curl', 'wget', 'gh', 'npm', 'pnpm', 'yarn', 'cd', 'ls', 'cat', 'echo', 'printf', 'grep', 'rg', 'jq', 'head', 'tail', 'sort', 'wc', 'mkdir',
-  'cp', 'mv', 'touch', 'test', '[', 'true', 'false', 'get-childitem', 'gci', 'dir', 'get-content', 'gc', 'type', 'select-string', 'write-output', 'set-location', 'new-item',
-  'copy-item', 'move-item', 'invoke-restmethod', 'irm', 'invoke-webrequest', 'iwr']);
-const isAssign = (t: string) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(t);
+const SCOPE_HTTP = new Set(['curl', 'wget', ...PS_WEB]);
+const PUSH_LONG_OK = new Set(['force', 'force-with-lease', 'force-if-includes', 'tags', 'follow-tags', 'dry-run', 'porcelain', 'quiet', 'verbose', 'atomic', 'no-verify',
+  'progress', 'no-progress', 'thin', 'no-thin', 'ipv4', 'ipv6', 'delete', 'prune', 'mirror', 'all']);
+function scopeCovers(c: Cmd): boolean {
+  if (SCOPE_HTTP.has(c.cmd)) return true;
+  if (c.cmd !== 'git') return false;
+  const a = c.args;
+  let i = 0;
+  // global options: only -C <dir> and --no-pager (-c / --config-env / --exec-path / … change what runs)
+  while (i < a.length && a[i].t.startsWith('-')) {
+    if (a[i].t === '-C') i += 2;
+    else if (a[i].t === '--no-pager') i++;
+    else return false;
+  }
+  if (a[i]?.t !== 'push') return false;
+  const rest = a.slice(i + 1);
+  for (const t of rest) {
+    if (t.dyn || t.brace) return false;
+    if (t.t.startsWith('--')) { if (!PUSH_LONG_OK.has(t.t.slice(2).split('=')[0])) return false; continue; } // no -u / --set-upstream / --receive-pack / --exec / --repo
+    if (t.t.startsWith('-') && !/^-[fnqvd46]+$/.test(t.t)) return false;
+  }
+  const repo = rest.find((t) => !t.t.startsWith('-'));
+  return !!repo && /^https:\/\//i.test(repo.t);
+}
 /** PowerShell `$v =` before the command: an assignment, not a wrapper. */
 const isPsAssign = (t: string) => /^\$[\w:]+$/.test(t) || /^[-+*/]?=$/.test(t);
 
@@ -545,7 +600,9 @@ function walkShell(src: string, ps: boolean, nest: number, acc: Shell): void {
       const prefix = pc.toks.slice(0, c.at);
       // a command word we can't read: bash runs any expansion there; PowerShell only after & or .
       if (word.dyn && (!ps || prefix.some((t) => t.t === '&' || t.t === '.'))) sendBlind();
-      if (nest === 0 && (!SCOPE_OK.has(c.cmd) || word.dyn || prefix.some((t) => !isAssign(t.t) && !(ps && isPsAssign(t.t))))) acc.opaque = true;
+      // anything before the command word but PowerShell's `$v =` — a wrapper, or an environment variable (LD_PRELOAD,
+      // BASH_ENV, CURL_HOME, GIT_EXEC_PATH… change what runs or where it goes) — and the scope doesn't cover it
+      if (nest === 0 && (!scopeCovers(c) || word.dyn || word.brace || prefix.some((t) => !(ps && isPsAssign(t.t))))) acc.opaque = true;
       if (c.env.some((e) => /proxy|git_ssh|git_config|curl_home|wgetrc/i.test(e.split('=')[0]))) acc.opaque = true;
       if (c.cmd === 'git' && gitSub(c.args).config.some((v) => /proxy|insteadof|sshcommand|askpass/i.test(v))) acc.opaque = true;
       // deleting what a pipe names: `find … | xargs rm`, `gci … | Remove-Item`
@@ -557,12 +614,16 @@ function walkShell(src: string, ps: boolean, nest: number, acc: Shell): void {
       for (let i = c.at + 1; i < pc.toks.length && at.length <= MAX_SHIFT; i++) if (pc.toks[i].t.length < 300 && KNOWN.has(base(pc.toks[i].t))) at.push(i);
       if (at.length > MAX_SHIFT) { sendBlind(); at.length = MAX_SHIFT; }
       at.forEach((i, n) => commandClasses({ cmd: base(pc.toks[i].t), args: pc.toks.slice(i + 1, at[n + 1] ?? pc.toks.length), env: [], at: i }, fed, false, s));
-    } else if (nest === 0 && pc.toks.some((t) => !isAssign(t.t) && !(ps && isPsAssign(t.t)))) acc.opaque = true;
+    } else if (nest === 0) acc.opaque = true; // `X=…` alone changes an exported X (HTTPS_PROXY, LD_PRELOAD) for what runs next
     const childPs = c && (c.cmd === 'powershell' || c.cmd === 'pwsh') ? true : c && SHELLS.has(c.cmd) && c.cmd !== 'iex' && c.cmd !== 'invoke-expression' ? false : ps;
     for (const tok of pc.toks) {
       const t = tok.t;
       if (t.length > CAP) acc.long = true;
-      if (tok.brace) s.unread = true;
+      if (tok.brace) {
+        s.unread = true;
+        // one word the shell turns into several (`--{proxy=evil.com:80,silent}`): what runs isn't what we read
+        if (nest === 0) { acc.opaque = true; acc.unread = true; }
+      }
       if (!INTERESTING.test(t)) continue; // a plain word: no URL, address, .NET call or command string in it
       if (t.includes('://')) {
         const u = scanUrls(t);

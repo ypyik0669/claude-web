@@ -116,6 +116,28 @@ describe('makeGate', () => {
     expect(store.audit('b1', 'run1')[0]).toMatchObject({ basis: 'user', result: 'allowed' });
     warn.mockRestore();
   });
+  it('two concurrent calls cannot both pass one perDay slot or both spend one approval; a failed write gives both back', async () => {
+    // a slow audit write: both calls are inside the gate at once
+    const slow = { add: async (r: any) => { await new Promise((res) => setTimeout(res, 20)); return audit.add(r); } } as unknown as AuditLog;
+    const policy: Bot['policy'] = { rules: [{ cls: 'send', level: 'do', scope: { channels: ['C1'], perDay: 1 } }] };
+    const g = makeGate({ bot: bot(policy), runId: 'run1', routineId: 'r1', store, audit: slow, inbox });
+    const both = await Promise.all([g.gate(slack('C1')), g.gate(slack('C1'))]);
+    expect(both.map((r) => r?.behavior).sort()).toEqual(['allow', 'deny']);
+
+    const g2 = makeGate({ bot: bot(), runId: 'run2', routineId: 'r1', store, audit: slow, inbox });
+    g2.approveOnce('Bash', { command: 'git push origin main' });
+    const two = await Promise.all([g2.gate(ev('Bash', { command: 'git push origin main' })), g2.gate(ev('Bash', { command: 'git push origin main' }))]);
+    expect(two.map((r) => r?.behavior).sort()).toEqual(['allow', 'deny']);
+
+    let fail = true;
+    const flaky = { add: async (r: any) => { await new Promise((res) => setTimeout(res, 5)); if (fail && r.result === 'allowed') throw new Error('disk full'); return audit.add(r); } } as unknown as AuditLog;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const g3 = makeGate({ bot: bot(policy), runId: 'run3', routineId: 'r1', store: new BotStore(fs.mkdtempSync(path.join(root, 's3-'))), audit: flaky, inbox });
+    expect((await g3.gate(slack('C1')))?.behavior).toBe('deny'); // not on record: the slot goes back
+    fail = false;
+    expect((await g3.gate(slack('C1')))?.behavior).toBe('allow');
+    warn.mockRestore();
+  });
   it("audit rows carry the gate's clock", async () => {
     const g = makeGate({ bot: bot(), runId: 'run1', routineId: 'r1', store, audit, inbox, now: () => 12345 });
     await g.gate(ev('Read', { file_path: '/a' }));
