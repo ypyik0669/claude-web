@@ -80,7 +80,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (!r) return;
     const eng = useStore.getState().engine;
     const version = eng ? `${eng.runtime} ${eng.version ?? '?'}` : undefined;
-    void copyText(formatErrorReport(r, { version, url: location.pathname, userAgent: navigator.userAgent })).then(() => this.setState({ copied: true }));
+    void copyText(formatErrorReport(r, { version, url: location.pathname, userAgent: navigator.userAgent })).then(() => this.setState({ copied: true }), () => useStore.getState().toast(tr('没能复制')));
   };
 
   render() {

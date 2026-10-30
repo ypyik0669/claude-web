@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sortBots, usd, groupInbox, monthlyEstimate } from './model';
+import { sortBots, usd, groupInbox, monthlyEstimate, runsPerMonth, cronFieldCount } from './model';
 const b = (id: string, state: any, manager = false): any => ({ id, name: id, state, manager });
 describe('bots model', () => {
   it('sortBots: manager, attention, running, queued, idle, paused', () => {
@@ -13,7 +13,25 @@ describe('bots model', () => {
   it('monthlyEstimate', () => {
     expect(monthlyEstimate({ everyMinutes: 5 } as any, 0.05)).toBeCloseTo(432);
     expect(monthlyEstimate({ cron: '0 * * * *' } as any, 0.05)).toBeCloseTo(36);
-    expect(monthlyEstimate({ cron: '30 7 * * 1-5' } as any, 0.05)).toBeCloseTo(1.5);
+    // 21.4 weekdays in 30 days
+    expect(monthlyEstimate({ cron: '30 7 * * 1-5' } as any, 0.05)).toBeCloseTo((30 * 5 / 7) * 0.05);
+  });
+  it('runsPerMonth counts lists, ranges, steps and the day fields of a cron', () => {
+    const cases: [string, number][] = [
+      ['0 9,13,17 * * 1-5', 3 * 30 * 5 / 7],
+      ['0,30 * * * *', 2 * 24 * 30],
+      ['*/5 9-17 * * *', 12 * 9 * 30],
+      ['* * * * *', 30 * 24 * 60],
+      ['0 */6 * * *', 4 * 30],
+      ['15 10 1,15 * *', 2],
+      ['0 8 * * 0,7', 30 / 7],
+      ['0 9-17/2 * * *', 5 * 30],
+    ];
+    for (const [cron, n] of cases) expect(runsPerMonth({ cron }), cron).toBeCloseTo(n);
+    expect(runsPerMonth({ cron: 'nonsense here * * *' })).toBe(30);
+  });
+  it('cronFieldCount', () => {
+    expect([cronFieldCount('*', 0, 59), cronFieldCount('5/15', 0, 59), cronFieldCount('1-3,2', 0, 59), cronFieldCount('70', 0, 59), cronFieldCount('a', 0, 59)]).toEqual([60, 4, 3, null, null]);
   });
 });
 
@@ -38,6 +56,8 @@ describe('bots create flow', () => {
     expect(d.outputs).toEqual([{ kind: 'inbox' }]);
     expect(d.charter.sources).toEqual([]);
     expect(d.tier).toBe('balanced');
+    expect(normalizeDraft({ name: 'x', charter: { role: 'r' } } as any, 'cheap').draft.tier).toBe('cheap');
+    expect(normalizeDraft(draft({ tier: 'best' }), 'cheap').draft.tier).toBe('best');
     expect(d.routines).toEqual([]);
     expect(normalizeDraft(draft({ outputs: [{ kind: 'file', path: 'a' }] })).draft.outputs).toEqual([{ kind: 'inbox' }, { kind: 'file', path: 'a' }]);
   });
@@ -70,8 +90,9 @@ describe('bots create flow', () => {
     expect(underMinimum({ everyMinutes: 15 })).toBe(false);
     expect(underMinimum({ cron: '*/5 * * * *' })).toBe(true);
     expect(underMinimum({ cron: '0 9 * * *' })).toBe(false);
-    expect(['C:\\x', 'C:/x', '\\\\srv\\x', '/x', '~/x'].every(isAbsolutePath)).toBe(true);
-    expect(['x', './x', 'C:x', ''].some(isAbsolutePath)).toBe(false);
+    expect(['C:\\x', 'C:/x', '\\\\srv\\x', '/x'].every(isAbsolutePath)).toBe(true);
+    // the server takes the path as typed: ~ is not expanded there
+    expect(['x', './x', 'C:x', '', '~/x'].some(isAbsolutePath)).toBe(false);
   });
   it('lastUserText skips meta and cross-conversation prompts', () => {
     expect(lastUserText([{ kind: 'user', text: 'first' }, { kind: 'assistant' }, { kind: 'user', text: 'x', meta: true }, { kind: 'user', text: 'y', from: {} }])).toBe('first');

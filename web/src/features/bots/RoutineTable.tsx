@@ -10,13 +10,9 @@ import { Switch } from '@/ui/Switch';
 import { Icon } from '@/ui/icons';
 import { ago, clsx } from '@/util';
 import { dateLocale, tr } from '@/i18n';
-import { monthlyEstimate, runsPerMonth, usd } from './model';
+import { MONTH_MINUTES, monthlyEstimate, PER_RUN_USD, runsPerMonth, usd } from './model';
 import { runNow, updateBot } from './state';
 import { currentBot } from './fields';
-
-/** What one model wake-up costs, roughly, for the month estimate of a routine without a precheck. */
-const PER_RUN_USD = 0.05;
-const MONTH_MINUTES = 30 * 24 * 60;
 
 export function cadenceText(r: Pick<Routine, 'cron' | 'everyMinutes'>): string {
   if (r.everyMinutes && r.everyMinutes > 0) return tr('每 {n} 分钟', { n: r.everyMinutes });
@@ -57,16 +53,17 @@ function fromDraft(d: Draft): RoutineEdit | string {
   if (!name) return tr('例行需要一个名字');
   if (!d.prompt.trim()) return tr('写一下这个例行要做什么');
   const every = Number(d.every);
-  if (d.mode === 'every' && !(Number.isFinite(every) && every >= 1)) return tr('间隔至少 1 分钟');
+  if (d.mode === 'every' && !(Number.isInteger(every) && every >= 1)) return tr('间隔要是至少 1 的整数分钟');
   if (d.mode === 'cron' && d.cron.trim().split(/\s+/).length !== 5) return tr('cron 要五段：分 时 日 月 周');
   const timeout = Number(d.timeout);
+  if (d.timeout.trim() && !(Number.isFinite(timeout) && timeout > 0)) return tr('超时要填大于 0 的分钟数，或者留空');
   return {
     name, prompt: d.prompt.trim(),
     cron: d.mode === 'cron' ? d.cron.trim() : undefined,
     everyMinutes: d.mode === 'every' ? every : undefined,
     precheck: d.precheck.trim() || undefined,
     acceptance: d.script.trim() ? { kind: 'script', script: d.script.trim() } : { kind: 'none' },
-    timeoutMin: d.timeout.trim() && Number.isFinite(timeout) && timeout > 0 ? timeout : undefined,
+    timeoutMin: d.timeout.trim() ? timeout : undefined,
     onFail: d.onFail,
   };
 }

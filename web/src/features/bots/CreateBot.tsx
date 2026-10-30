@@ -182,7 +182,7 @@ function Preview({ d, set, risk, clamped }: { d: Draft; set: (p: Partial<Draft>)
         </span>
       </div>
       <div className="bd-row"><span>{tr('文件')}</span><BlurField label={tr('写到文件')} placeholder={tr('文件路径（不填就不写）')} value={file?.path ?? ''} onSave={(p) => outputs(im, p.trim() ? { kind: 'file', path: p.trim() } : undefined)} /></div>
-      <div className="bc-safety">{tr('默认只读、只起草；对外发送、付款、删除会先问你')}</div>
+      <div className="bc-safety">{tr('默认会读写本地文件、用浏览器；对外发送、付款、删除会先问你')}</div>
     </div>
   );
 }
@@ -200,7 +200,9 @@ export function CreateBot({ onClose }: { onClose: () => void }) {
   /** after 保存并先跑一次: the bot, and whether its first run started (else why not) */
   const [made, setMade] = useState<{ botId: string; runError: string | null } | null>(null);
   const onDraft: OnDraft = (d, r) => {
-    const n = normalizeDraft({ ...d, cwd: d.cwd || activeCwd });
+    // a draft that names no tier (one sentence, from an older server) starts on 设置 › 新 Bot 的默认档位; a template keeps its own
+    const tier = useStore.getState().settings['bots.defaultTier'];
+    const n = normalizeDraft({ ...d, cwd: d.cwd || activeCwd }, tier === 'cheap' || tier === 'best' || tier === 'balanced' ? tier : 'balanced');
     setDraft(n.draft); setClamped(n.clamped); setRisk(r); setErr('');
   };
   // opened from a starter card: straight to that template's preview; else the focus goes into the dialog
@@ -229,7 +231,8 @@ export function CreateBot({ onClose }: { onClose: () => void }) {
   const back = () => { setDraft(null); setErr(''); setClamped([]); setRisk(undefined); };
   const goSee = (botId: string, tab: 'runs' | 'routines') => { selectBot(botId); setBotTab(tab); onClose(); };
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape' && !imeComposing(e.nativeEvent)) { e.stopPropagation(); e.preventDefault(); onClose(); }
+    // while it creates or generates, Escape is held like the backdrop click (the run would still start after it closed)
+    if (e.key === 'Escape' && !imeComposing(e.nativeEvent)) { e.stopPropagation(); e.preventDefault(); if (!busy && !generating) onClose(); }
     else trapTab(e, box.current);
   };
   return (

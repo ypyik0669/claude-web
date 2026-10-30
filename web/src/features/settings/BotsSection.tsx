@@ -39,17 +39,23 @@ export function BotsBudget({ label }: { label: string }) {
 }
 
 /**
- * 默认来源: a provider bots without their own use. Empty = the conversation default. A Claude account is allowed (the
- * product refuses nothing, §10) but asks once with the concrete risk.
+ * 默认来源: a provider bots without their own use. Empty = the conversation default — named in the blank option, and
+ * warned about under the row when that is (or may be) a Claude subscription (no default provider = this computer's
+ * Claude login). A Claude account is allowed (the product refuses nothing, §10) but asks once with the concrete risk.
  */
 export function BotsDefaultProvider({ label }: { label: string }) {
   const v = useStore((s) => s.settings['bots.defaultProvider']);
   const providers = useStore((s) => s.providers);
+  const convDefault = useStore((s) => s.settings.defaultProviderId);
   const set = useStore((s) => s.setSetting);
   useEffect(() => { if (!useStore.getState().providers.length) void useStore.getState().loadProviders().catch(() => {}); }, []);
   const cur = typeof v === 'string' ? v : '';
+  const def = typeof convDefault === 'string' && convDefault ? providers.find((p) => p.id === convDefault) : undefined;
+  const defName = def ? (def.type === 'claude-account' ? tr('{name}（Claude 订阅）', { name: def.name }) : def.name) : tr('本机的 Claude 登录');
+  // blank: bots run on what new conversations use — a Claude subscription when that is an account or no provider at all
+  const maySubscription = !cur && (!def || def.type === 'claude-account');
   const options = [
-    { value: '', label: tr('跟新对话的默认一样') },
+    { value: '', label: tr('跟新对话的默认一样（现在是 {name}）', { name: defName }) },
     ...providers.map((p) => ({ value: p.id, label: p.type === 'claude-account' ? tr('{name}（Claude 订阅）', { name: p.name }) : p.name })),
   ];
   // a provider that was deleted since: still shown, so the value is not silently something else
@@ -63,7 +69,16 @@ export function BotsDefaultProvider({ label }: { label: string }) {
     }))) return;
     void set('bots.defaultProvider', id || undefined);
   };
-  return <MenuSelect className="field" aria-label={label} label={label} value={cur} onValueChange={(x) => void pick(String(x))} options={options} />;
+  const select = <MenuSelect className="field" aria-label={label} label={label} value={cur} onValueChange={(x) => void pick(String(x))} options={options} />;
+  if (!maySubscription) return select;
+  return (
+    <div className="bots-source" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, maxWidth: 300 }}>
+      {select}
+      <span className="bots-source-warn" role="note" style={{ fontSize: 12, textAlign: 'right', color: 'var(--warn)' }}>
+        {tr('Bot 会用新对话的默认来源，可能是 Claude 订阅：Anthropic 条款可能禁止用订阅 7×24 小时跑，有封号风险。建议在这里选一个 API Key 或网关来源。')}
+      </span>
+    </div>
+  );
 }
 
 const failed = (on: boolean, detail: string) => (on ? tr('没能打开值班服务：{detail}', { detail }) : tr('没能关闭值班服务：{detail}', { detail }));

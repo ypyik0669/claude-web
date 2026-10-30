@@ -217,7 +217,8 @@ async function main() {
   // 7. delete
   let threw = '';
   try { await req({ kind: 'bots.delete', id: 'manager' }); } catch (e) { threw = e.message; }
-  check('deleting the 总管 is refused', !!threw, threw);
+  // the refusal itself (in either language), not any error: an unknown id would throw too
+  check('deleting the 总管 is refused', /总管不能删除|manager can't be deleted/.test(threw), threw);
   await req({ kind: 'bots.delete', id: bot.id });
   const left = await req({ kind: 'bots.list' });
   check('deleting the bot leaves only the 总管', left.length === 1 && left[0].manager === true, JSON.stringify(left.map((b) => b.id)));

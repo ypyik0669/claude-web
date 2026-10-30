@@ -1,6 +1,6 @@
 // 值班 Bot (spec 2026-10-30-duty-bots-design): the pure bits the Bot page draws with — labels, order, money, the
 // inbox grouped by kind, a routine's monthly cost. No store, no wire.
-import type { ActionClass, BotDraft, BotGenerated, BotOutput, BotStatus, BotTemplate, InboxItem, InboxKind, PolicyLevel, Routine } from '@shared';
+import type { ActionClass, BotDraft, BotGenerated, BotOutput, BotStatus, BotTemplate, BotTier, InboxItem, InboxKind, PolicyLevel, Routine } from '@shared';
 import { tr } from '@/i18n';
 
 export function stateLabel(s: BotStatus['state']): string {
@@ -66,21 +66,48 @@ export function classLabel(c: ActionClass): string {
   }
 }
 
-const MONTH_MINUTES = 30 * 24 * 60;
+export const MONTH_MINUTES = 30 * 24 * 60;
 
-/** How often a routine runs in 30 days — approximate: only the minute / hour fields of a cron are looked at. */
+/**
+ * How many values one cron field takes in [lo, hi]: `*`, `n`, `a-b`, `a,b,…`, and a `/step` on `*`, a range or a
+ * start (`5/15` = 5 to hi). null when it can't be read.
+ */
+export function cronFieldCount(f: string, lo: number, hi: number): number | null {
+  const seen = new Set<number>();
+  for (const part of f.split(',')) {
+    const m = /^(\*|\d+(?:-\d+)?)(?:\/(\d+))?$/.exec(part.trim());
+    if (!m) return null;
+    const step = m[2] !== undefined ? Number(m[2]) : 1;
+    if (!(step >= 1)) return null;
+    let a = lo, b = hi;
+    if (m[1] !== '*') {
+      const [x, y] = m[1].split('-').map(Number);
+      a = x; b = y ?? (m[2] !== undefined ? hi : x);
+    }
+    if (a < lo || b > hi || a > b) return null;
+    for (let v = a; v <= b; v += step) seen.add(v);
+  }
+  return seen.size;
+}
+
+/**
+ * How often a routine runs in 30 days. A cron: its minute × hour values a day, times the share of days its
+ * day-of-month and day-of-week fields leave (both restricted: either one matches, as cron does). Unreadable → 30.
+ */
 export function runsPerMonth(r: Pick<Routine, 'cron' | 'everyMinutes'>): number {
   if (r.everyMinutes && r.everyMinutes > 0) return MONTH_MINUTES / r.everyMinutes;
   if (!r.cron) return 0;
-  const [min = '', hour = ''] = r.cron.trim().split(/\s+/);
-  const step = (f: string) => { const m = /^\*\/(\d+)$/.exec(f); return m && Number(m[1]) > 0 ? Number(m[1]) : null; };
-  if (min === '*') return MONTH_MINUTES;
-  const minStep = step(min);
-  if (minStep) return MONTH_MINUTES / minStep;
-  if (hour === '*') return 30 * 24;
-  const hourStep = step(hour);
-  if (hourStep) return (30 * 24) / hourStep;
-  return 30;
+  const [min = '', hour = '', dom = '*', , dow = '*'] = r.cron.trim().split(/\s+/);
+  const mins = cronFieldCount(min, 0, 59);
+  const hours = cronFieldCount(hour, 0, 23);
+  if (mins === null || hours === null) return 30;
+  // day of week 0–7: 0 and 7 are both Sunday
+  const dowN = cronFieldCount(dow.replace(/\b7\b/g, '0'), 0, 6);
+  const domN = cronFieldCount(dom, 1, 31);
+  const domShare = dom === '*' || domN === null ? 1 : Math.min(1, domN / 30);
+  const dowShare = dow === '*' || dowN === null ? 1 : dowN / 7;
+  const dayShare = dom !== '*' && dow !== '*' ? Math.min(1, domShare + dowShare - domShare * dowShare) : domShare * dowShare;
+  return mins * hours * 30 * dayShare;
 }
 
 export function monthlyEstimate(r: Routine, perRunUsd: number): number {
@@ -109,7 +136,7 @@ export function underMinimum(r: Pick<Routine, 'cron' | 'everyMinutes'>): boolean
  * among the outputs. `clamped`: the routines whose interval was raised to MIN_EVERY_MINUTES — named by the server's
  * bots.generate (it clamps first), plus any this still finds under it (an older server); the wire field is dropped.
  */
-export function normalizeDraft(g: BotGenerated): { draft: BotDraft['bot']; clamped: string[] } {
+export function normalizeDraft(g: BotGenerated, defaultTier: BotTier = 'balanced'): { draft: BotDraft['bot']; clamped: string[] } {
   const { clamped: named, ...d } = g;
   const clamped = Array.isArray(named) ? named.map(String) : [];
   const routines = (d.routines ?? []).map((r) => {
@@ -120,7 +147,7 @@ export function normalizeDraft(g: BotGenerated): { draft: BotDraft['bot']; clamp
   const outputs: BotOutput[] = (d.outputs ?? []).some((o) => o.kind === 'inbox') ? d.outputs : [{ kind: 'inbox' }, ...(d.outputs ?? [])];
   const charter = { ...d.charter, role: d.charter?.role ?? '', sources: Array.isArray(d.charter?.sources) ? d.charter.sources : [] };
   return {
-    draft: { ...d, name: d.name ?? '', cwd: d.cwd ?? '', tier: d.tier ?? 'balanced', policy: d.policy ?? { rules: [] }, budget: d.budget ?? {}, charter, routines, outputs },
+    draft: { ...d, name: d.name ?? '', cwd: d.cwd ?? '', tier: d.tier ?? defaultTier, policy: d.policy ?? { rules: [] }, budget: d.budget ?? {}, charter, routines, outputs },
     clamped,
   };
 }
@@ -150,8 +177,8 @@ export function draftProblem(d: BotDraft['bot']): string | null {
   return null;
 }
 
-/** C:\x, C:/x, \\server\x, /x, ~/x */
-export const isAbsolutePath = (p: string): boolean => /^(?:[a-zA-Z]:[\\/]|[\\/]|~[\\/])/.test(p.trim());
+/** C:\x, C:/x, \\server\x, /x — not ~/x: the server takes the path as typed (path.isAbsolute) and refuses that */
+export const isAbsolutePath = (p: string): boolean => /^(?:[a-zA-Z]:[\\/]|[\\/])/.test(p.trim());
 
 /** The text of the latest prompt the user typed in a conversation (not a meta one, not one from another conversation). */
 export function lastUserText(items: readonly { kind: string; text?: string; meta?: boolean; from?: unknown }[]): string {
