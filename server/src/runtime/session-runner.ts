@@ -882,6 +882,8 @@ export class SessionRunner extends EventEmitter {
   /** the usual permission card: pending until respondPermission() or the turn's abort */
   private askUser(event: PermissionRequestEvent, signal: AbortSignal): Promise<PermissionResult> {
     const requestId = event.requestId;
+    // a gate that said null / threw after the turn was aborted: the abort listener below would never fire
+    if (signal.aborted) return Promise.resolve({ behavior: 'deny', message: 'cancelled' });
     return new Promise<PermissionResult>((resolve) => {
       this.pending.set(requestId, { event, resolve });
       signal.addEventListener('abort', () => {

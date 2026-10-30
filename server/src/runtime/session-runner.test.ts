@@ -2315,4 +2315,17 @@ describe('值班 Bot gate', () => {
     r.respondPermission(r.getPendingPermissions()[0].requestId, { behavior: 'allow' });
     expect((await p).behavior).toBe('allow');
   });
+  it('a gate that falls through after the turn was aborted is denied at once, no card', async () => {
+    const r = new SessionRunner({ sessionId: 'g4', cwd: '/x' } as any);
+    const seen: unknown[] = []; r.on('permission', (e) => seen.push(e));
+    let release!: () => void;
+    r.gate = () => new Promise((res) => { release = () => res(null); });
+    const ac = new AbortController();
+    const p = (r as any).onCanUseTool('Edit', { file_path: '/a' }, { signal: ac.signal }) as Promise<PermissionResult>;
+    ac.abort();
+    release();
+    expect(await p).toEqual({ behavior: 'deny', message: 'cancelled' });
+    expect(seen).toEqual([]);
+    expect(r.getPendingPermissions()).toEqual([]);
+  });
 });
