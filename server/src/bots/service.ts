@@ -14,7 +14,7 @@ import { AuditLog } from './audit.js';
 import { BotScheduler } from './scheduler.js';
 import { generateBot } from './generate.js';
 import { BOT_TEMPLATES } from './templates.js';
-import { botFields, policyScope } from './shape.js';
+import { allowScope, botFields } from './shape.js';
 import { LEASE_STALE_MS } from './scheduler.js';
 import fs from 'node:fs';
 import { atomicWrite } from '../agent-config/backup.js';
@@ -289,7 +289,8 @@ export class BotService extends EventEmitter {
   /** checked before anything is written; the item's 'item' event reaches the windows as bots.inbox */
   async inboxAnswer(a: InboxAnswer): Promise<InboxItem> {
     // the scope is checked before anything is written: a bad one leaves the item pending
-    if (a.answer === 'approve_scope' && a.scope !== undefined) a = { ...a, scope: policyScope(a.scope) };
+    // and it must name where it applies (a payment one: up to how much) — see allowScope
+    if (a.answer === 'approve_scope' && a.scope !== undefined) a = { ...a, scope: allowScope(a.scope, 'scope', this.inbox.get(a.id)?.cls) };
     await this.acting();
     const item = await this.inbox.answer(a);
     try { await this.scheduler.onInboxAnswer(item, a); } catch (e) {

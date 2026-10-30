@@ -68,12 +68,25 @@ export function policyScope(v: unknown, field = 'scope'): PolicyScope {
     unlimited: v.unlimited === undefined ? undefined : typeof v.unlimited === 'boolean' ? v.unlimited : bad(`${field}.unlimited`),
   });
 }
-function scopeOf(v: unknown, field: string): PolicyScope | undefined {
-  return v === undefined || v === null ? undefined : policyScope(v, field);
+/**
+ * A scope that lets more run (a non-deny rule, an approve_scope answer, autopilot, an adopted trust_up) must name
+ * WHERE it applies: rules.ts scopeMatches treats a scope with no domains / channels / recipients as every
+ * destination, so `{ perDay: 5 }` would mean "anywhere, 5 a day". A payment one also needs maxAmount. Only
+ * `unlimited: true` (anywhere, said outright) is exempt. Deny rules take any scope (policyScope).
+ */
+export function allowScope(v: unknown, field = 'scope', cls?: ActionClass): PolicyScope {
+  const s = policyScope(v, field);
+  if (s.unlimited === true) return s;
+  if (!s.domains?.length && !s.channels?.length && !s.recipients?.length) throw new Error(tr('放宽的范围要写明用在哪里（域名、频道或收件人）：{field}', { field }));
+  if (cls === 'pay' && s.maxAmount === undefined) throw new Error(tr('付款的放宽范围要写上限金额：{field}', { field }));
+  return s;
+}
+function scopeOf(v: unknown, field: string, allow: boolean, cls?: ActionClass): PolicyScope | undefined {
+  return v === undefined || v === null ? undefined : allow ? allowScope(v, field, cls) : policyScope(v, field);
 }
 function ruleOf(v: unknown): PolicyRule {
   if (!isObj(v) || !CLASSES.includes(v.cls) || !LEVELS.includes(v.level)) return bad('policy.rules');
-  return compact({ cls: v.cls, level: v.level, scope: scopeOf(v.scope, 'policy.rules.scope') });
+  return compact({ cls: v.cls, level: v.level, scope: scopeOf(v.scope, 'policy.rules.scope', v.level !== 'deny', v.cls) });
 }
 /** `unleashed` is bots.unleash's alone: always the stored value */
 function policyOf(v: unknown, prev?: BotPolicy): BotPolicy {
@@ -84,7 +97,7 @@ function policyOf(v: unknown, prev?: BotPolicy): BotPolicy {
     autoPilot: pick(v, 'autoPilot', p.autoPilot, (x) => {
       if (x === undefined || x === null) return undefined;
       if (!isObj(x) || typeof x.on !== 'boolean') return bad('policy.autoPilot');
-      return compact({ on: x.on, scope: scopeOf(x.scope, 'policy.autoPilot.scope') });
+      return compact({ on: x.on, scope: scopeOf(x.scope, 'policy.autoPilot.scope', true) });
     }),
     signOff: pick(v, 'signOff', p.signOff, (x) => (x === undefined || x === null ? undefined : typeof x === 'boolean' ? x : bad('policy.signOff'))),
     unleashed: p.unleashed,

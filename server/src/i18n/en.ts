@@ -1820,4 +1820,6 @@ export const EN_SERVER: Record<string, string> = {
   "Bot 设置不对：{field}": "The bot's settings aren't valid: {field}",
   "已请正在值班的 claude-web 停下": "Asked the claude-web on duty to stop",
   "值班服务": "the duty service",
+  "放宽的范围要写明用在哪里（域名、频道或收件人）：{field}": "A scope that lets more run must say where it applies (domains, channels or recipients): {field}",
+  "付款的放宽范围要写上限金额：{field}": "A payment scope must set a maximum amount: {field}",
 };

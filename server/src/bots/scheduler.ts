@@ -12,7 +12,7 @@ import { runRoutine, type PipelineDeps, type RunOptions } from './pipeline.js';
 import { recordApproval, recordCorrection, demoteRule, TRUST_THRESHOLD } from './policy/trust.js';
 import { scopeKey } from './policy/rules.js';
 import { summarize, targetOf } from './policy/classify.js';
-import { policyScope, routineOf } from './shape.js';
+import { allowScope, routineOf } from './shape.js';
 import { tr } from '../i18n/index.js';
 
 export interface SchedulerDeps extends PipelineDeps {
@@ -331,7 +331,7 @@ export class BotScheduler extends EventEmitter {
       const target = targetOf(cls, toolName, input);
       const key = scopeKey(undefined, target);
       if (a.answer === 'approve_scope' && a.scope) {
-        const scope = policyScope(a.scope);
+        const scope = allowScope(a.scope, 'scope', cls);
         // idempotent: an answer retried after a failure doesn't add the rule twice
         const same = JSON.stringify({ cls, level: 'do', scope });
         await this.mutate(bot.id, (b) => (b.policy.rules.some((r) => JSON.stringify({ cls: r.cls, level: r.level, scope: r.scope }) === same) ? undefined : { ...b, policy: { ...b.policy, rules: [...b.policy.rules, { cls, level: 'do', scope }] } }));
@@ -361,7 +361,7 @@ export class BotScheduler extends EventEmitter {
     } else if (a.answer === 'adopt' && item.proposal) {
       const p = item.proposal;
       // a proposal is a bot's own writing: checked like a window's edit before it lands
-      const scope = p.type === 'trust_up' ? policyScope(p.scope) : undefined;
+      const scope = p.type === 'trust_up' ? allowScope(p.scope, 'scope', p.cls) : undefined;
       const routine = p.type === 'routine' ? { ...routineOf(p.routine, new Map()), selfMade: true } : undefined;
       await this.mutate(bot.id, (b) => {
         if (scope && p.type === 'trust_up') return { ...b, policy: { ...b.policy, rules: [...b.policy.rules, { cls: p.cls, level: 'do', scope }] } };

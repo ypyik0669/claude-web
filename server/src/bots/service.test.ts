@@ -308,6 +308,30 @@ describe('BotService', { timeout: 30_000 }, () => {
     expect(svc.get(b.id).policy.rules).toEqual([]);
   });
 
+  it('a scope that lets more run must name where it applies; a payment one up to how much; deny rules take any scope', async () => {
+    const b = await svc.create(draft({ routines: [rt('r1')] }));
+    for (const scope of [{ perDay: 5 }, {}, { maxAmount: 10 }, { until: Date.now() + 1000 }, { domains: [], channels: [] }, { unlimited: false, perDay: 1 }]) {
+      for (const level of ['do', 'do_tell', 'ask'] as const)
+        await expect(svc.update(b.id, { policy: { rules: [{ cls: 'send', level, scope }] } } as any), JSON.stringify(scope)).rejects.toThrow(/where it applies|写明用在哪里/);
+      await expect(svc.update(b.id, { policy: { rules: [], autoPilot: { on: true, scope } } } as any)).rejects.toThrow(/where it applies|写明用在哪里/);
+    }
+    await expect(svc.update(b.id, { policy: { rules: [{ cls: 'pay', level: 'do', scope: { domains: ['api.stripe.com'] } }] } })).rejects.toThrow(/maximum amount|上限金额/);
+    expect((await svc.update(b.id, { policy: { rules: [{ cls: 'pay', level: 'do', scope: { domains: ['api.stripe.com'], maxAmount: 50 } }] } })).policy.rules).toHaveLength(1);
+    expect((await svc.update(b.id, { policy: { rules: [{ cls: 'send', level: 'deny', scope: { perDay: 5 } }] } })).policy.rules[0].scope).toEqual({ perDay: 5 });
+    expect((await svc.update(b.id, { policy: { rules: [{ cls: 'pay', level: 'do', scope: { unlimited: true } }] } })).policy.rules[0].scope).toEqual({ unlimited: true });
+    expect((await svc.update(b.id, { policy: { rules: [], autoPilot: { on: true, scope: { channels: ['C1'], perDay: 2 } } } })).policy.autoPilot?.scope).toEqual({ channels: ['C1'], perDay: 2 });
+
+    // approve_scope: refused, the item stays pending, no rule lands
+    const send = await (svc as any).inbox.add({ kind: 'approval', botId: b.id, routineId: 'r1', sessionId: 's', title: 't', toolName: 'Bash', input: { command: 'git push' }, cls: 'send' });
+    await expect(svc.inboxAnswer({ id: send.id, answer: 'approve_scope', scope: { perDay: 5 } })).rejects.toThrow(/where it applies|写明用在哪里/);
+    const pay = await (svc as any).inbox.add({ kind: 'approval', botId: b.id, routineId: 'r1', sessionId: 's', title: 't', toolName: 'Bash', input: { command: 'curl https://api.stripe.com/v1/charges -d amount=5' }, cls: 'pay' });
+    await expect(svc.inboxAnswer({ id: pay.id, answer: 'approve_scope', scope: { domains: ['api.stripe.com'] } })).rejects.toThrow(/maximum amount|上限金额/);
+    expect(svc.inboxList(b.id).filter((i) => i.kind === 'approval' && !i.done)).toHaveLength(2);
+    expect(svc.get(b.id).policy.rules.some((r) => r.level === 'do' && r.cls === 'send')).toBe(false);
+    // and the scheduler refuses it on its own too (an answer that reached it some other way)
+    await expect((svc as any).scheduler.onInboxAnswer(send, { id: send.id, answer: 'approve_scope', scope: { perDay: 5 } })).rejects.toThrow(/where it applies|写明用在哪里/);
+  });
+
   it('an adopted routine proposal is checked like an edit', async () => {
     const b = await svc.create(draft());
     const bad = await (svc as any).inbox.add({ kind: 'proposal', botId: b.id, title: 'p', proposal: { type: 'routine', routine: rt('r9', { cron: 'nope' }) } });
