@@ -4,7 +4,7 @@
 // The icon rail's sections are these pages plus 对话, which is "none of them open".
 import { useSyncExternalStore } from 'react';
 
-export type Section = 'chat' | 'background' | 'automation' | 'extensions' | 'gateway';
+export type Section = 'chat' | 'background' | 'automation' | 'extensions' | 'gateway' | 'bots';
 export type PageId = Exclude<Section, 'chat'>;
 
 interface Page { isOpen(): boolean; close(): void; subscribe(fn: () => void): () => void }

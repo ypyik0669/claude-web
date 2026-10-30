@@ -30,6 +30,8 @@ const HAND = {
   qwen: ['M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17z', 'M12 3.5a4.25 4.25 0 0 0 0 8.5 4.25 4.25 0 0 1 0 8.5'],
   kimi: ['M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17z', ['M12 4.6a7.4 7.4 0 0 1 0 14.8z', { fill: 'currentColor', stroke: 'none' }]],
   opencode: ['M9.5 7.5L4.5 12l5 4.5', 'M14.5 7.5l5 4.5-5 4.5', 'M13 6.5l-2 11'],
+  // 值班 Bot (the rail's Bot section): a rounded head with two eyes and an antenna — `agent` is Lucide's bot already
+  bot: ['M7 7.5h10a3 3 0 0 1 3 3v6.5a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-6.5a3 3 0 0 1 3-3z', 'M12 7.5V4', 'M9.5 13v1.5', 'M14.5 13v1.5'],
 } satisfies Record<string, P[]>;
 
 const PATHS = { ...GENERATED, ...HAND } satisfies Record<string, P[]>;

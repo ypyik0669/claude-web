@@ -2,6 +2,7 @@
 // before a component subscribes (features/sections/pages.ts).
 import '@/features/automation/state';
 import '@/features/background/state';
+import '@/features/bots/state';
 import '@/features/extensions/state';
 import '@/features/gateway/state';
 
