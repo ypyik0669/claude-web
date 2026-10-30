@@ -195,6 +195,8 @@ export class SessionRunner extends EventEmitter {
    * settings allow rules, acceptEdits / bypassPermissions and allowedTools, so it alone let a bot `git push` unseen
    */
   readonly gated: boolean;
+  /** OpenSessionParams.botId (only with gated): the memory MCP server gets that bot's own scope */
+  private readonly botId?: string;
   /** what the hook answered per tool_use_id: canUseTool reached for the same call reuses it (one gate run, one audit row) */
   private hookAnswers = new Map<string, PermissionResult>();
   private history: SDKMessage[] = []; // messages since spawn, replayed to late-joining clients
@@ -281,6 +283,7 @@ export class SessionRunner extends EventEmitter {
     this.features = params.features ?? {};
     this.drivenBy = params.drivenBy;
     this.gated = !!params.gated;
+    this.botId = this.gated && typeof params.botId === 'string' && params.botId ? params.botId : undefined;
     // a fork gets its own id from the CLI at init; until then use a placeholder so the pool
     // never clobbers the source session's runner
     const isFork = !!params.sessionId && (params.fork || !!params.resumeAt);
@@ -621,7 +624,7 @@ export class SessionRunner extends EventEmitter {
       // uninstalling claude-web must not leave an MCP entry behind in the user's own config.
       // 联网 (`web`: search + the built-in browser) goes in the same way (web/launcher.ts).
       // 操控电脑 (`computer`: the whole desktop, computer/launcher.ts) only for a conversation that has it switched on.
-      mcpServers: bare ? {} : { ...this.injectedMcp({ ...claudeMcpServer({ cwd: this.cwd, sessionId: this.sessionId, agent: 'claude' }), ...webClaudeMcpServer({ sessionId: this.sessionId }), ...computer }), ...sessionsMcp, ...previewMcp },
+      mcpServers: bare ? {} : { ...this.injectedMcp({ ...claudeMcpServer({ cwd: this.cwd, sessionId: this.sessionId, agent: 'claude', ...(this.botId ? { botId: this.botId } : {}) }), ...webClaudeMcpServer({ sessionId: this.sessionId }), ...computer }), ...sessionsMcp, ...previewMcp },
       // a sidecar (`lean`, see above): the core set still covers read / search / edit / run
       ...(chatOnly ? { tools: [], strictMcpConfig: true } : lean ? { tools: LEAN_TOOLS, strictMcpConfig: true } : {}),
       // 网吧's cafe-character skill, as a local plugin (both runtimes load it: 2026-10-13), only while the `web` server

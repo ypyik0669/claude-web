@@ -696,8 +696,10 @@ export function classify(toolName: string, input: Record<string, unknown>): Acti
   if (READ_TOOLS.has(name)) return 'read';
   if (WRITE_TOOLS.has(name)) return 'write_local';
   if (name === 'Bash' || name === 'PowerShell') return classifyCommand(String(p.command ?? ''), name === 'PowerShell');
-  if (/^web\.(search|read)$|^memory\.(search|reflect)$/.test(name)) return 'read';
-  if (/^memory\.write$|^sessions\./.test(name)) return 'write_local';
+  if (/^web\.(search|read)$/.test(name)) return 'read';
+  // the memory MCP server (memory/mcp-tools.ts): reading it is a read, writing it stays in this machine's memory.db
+  if (/^mcp__claude-web-memory__memory_(search|list)$/.test(name)) return 'read';
+  if (name === 'mcp__claude-web-memory__memory_write') return 'write_local';
   const w = words(name);
   if (DELETE_NAME.test(w)) return 'delete';
   if (PAY_NAME.test(w) || urlsIn(String(p.url ?? '')).some(isPayUrl)) return 'pay';

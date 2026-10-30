@@ -16,6 +16,11 @@ describe('memory MCP launcher', () => {
     expect(s.env.ELECTRON_RUN_AS_NODE).toBe('1');
   });
 
+  it('the run of a bot gets --bot <id> (its own memory scope); others do not', () => {
+    expect(claudeMcpServer({ ...target, botId: 'b1' }, 'C:\\node.exe')['claude-web-memory']!.args.slice(-2)).toEqual(['--bot', 'b1']);
+    expect(claudeMcpServer(target, 'C:\\node.exe')['claude-web-memory']!.args).not.toContain('--bot');
+  });
+
   it('gives ACP the same server with env as name/value pairs', () => {
     const [s] = acpMcpServers(target, 'C:\\node.exe');
     expect(s.name).toBe('claude-web-memory');

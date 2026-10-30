@@ -9,6 +9,15 @@ describe('classify', () => {
     expect(classify('WebFetch', { url: 'https://x.com' })).toBe('read');
     expect(classify('ExecuteExtraTool', { tool_name: 'web.search', params: {} })).toBe('read');
   });
+  it('the memory MCP server: search / list read, write is local (also under ExecuteExtraTool)', () => {
+    expect(classify('mcp__claude-web-memory__memory_search', { query: 'x' })).toBe('read');
+    expect(classify('mcp__claude-web-memory__memory_list', {})).toBe('read');
+    expect(classify('mcp__claude-web-memory__memory_write', { text: 'x' })).toBe('write_local');
+    expect(classify('ExecuteExtraTool', { tool_name: 'mcp__claude-web-memory__memory_search', params: { query: 'x' } })).toBe('read');
+    expect(classify('ExecuteExtraTool', { tool_name: 'mcp__claude-web-memory__memory_write', params: { text: 'x' } })).toBe('write_local');
+    // another server's tool of the same name is not ours
+    expect(classify('mcp__other__memory_write', { text: 'x' })).toBe('send');
+  });
   it('local writes: Edit / Write / NotebookEdit, and Bash that stays local', () => {
     expect(classify('Edit', { file_path: '/a' })).toBe('write_local');
     expect(classify('Bash', { command: 'npm test' })).toBe('write_local');

@@ -162,6 +162,8 @@ export interface OpenSessionParams {
    * allow rules or the permission mode say; no gate / no answer = refused, never a card. Claude only.
    */
   gated?: boolean;
+  /** Server-set with `gated`: the bot whose run this is — its memory MCP server gets the bot's own `bot` scope */
+  botId?: string;
 }
 
 /** The single runtime that drives every session: our engine claude-web-engine (runtime 'ccb': a fork of claude-code-best, a superset of Claude Code) with the official binary as silent fallback. */

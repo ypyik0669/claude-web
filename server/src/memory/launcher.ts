@@ -42,6 +42,8 @@ export interface MemoryMcpTarget {
   sessionId?: string;
   agent?: string;
   dbFile?: string;
+  /** a bot's run (值班 Bot): its own `bot` memory scope, keyed by the bot id */
+  botId?: string;
 }
 
 /** argv for spawning the memory MCP server for one session. */
@@ -50,6 +52,7 @@ export function memoryMcpArgs(t: MemoryMcpTarget): string[] {
   if (t.sessionId) args.push('--session', t.sessionId);
   if (t.agent) args.push('--agent', t.agent);
   if (t.dbFile) args.push('--db', t.dbFile);
+  if (t.botId) args.push('--bot', t.botId);
   return args;
 }
 

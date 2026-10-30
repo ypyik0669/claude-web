@@ -37,7 +37,7 @@ describe('runRoutine', () => {
     const b = bot([routine()]); await store.save(b);
     const runner = fakeRunner({ resultText: '今天 3 个 issue' });
     const { run } = await runRoutine(deps(runner), b, b.routines[0], 'cron');
-    expect(opened[0]).toMatchObject({ cwd: process.cwd(), providerId: 'relay-1', drivenBy: 'schedule', gated: true, permissionMode: 'default' });
+    expect(opened[0]).toMatchObject({ cwd: process.cwd(), providerId: 'relay-1', drivenBy: 'schedule', gated: true, botId: 'b1', permissionMode: 'default' });
     expect(opened[0].sessionId).toBeUndefined();
     expect(opened[0].model).toBeUndefined();
     expect(run).toMatchObject({ ok: true, costUsd: 0.0123, said: '今天 3 个 issue', trigger: 'cron' });
@@ -177,7 +177,8 @@ describe('runRoutine', () => {
 
   it('buildPrompt carries charter, routine, state, memories and the rules', () => {
     const p = buildPrompt(bot([routine()]), routine(), { lastSummary: '上次 2 个', checkpoint: '做到第 3 步', updatedAt: 0 }, ['只看 claude-web'], '/x/cp.md');
-    for (const s of ['小晨', '每天出晨报', 'github', '汇总 issue', '上次 2 个', '做到第 3 步', '只看 claude-web', '/x/cp.md', '<draft>', 'memory.write', 'b1']) expect(p).toContain(s);
+    for (const s of ['小晨', '每天出晨报', 'github', '汇总 issue', '上次 2 个', '做到第 3 步', '只看 claude-web', '/x/cp.md', '<draft>', 'mcp__claude-web-memory__memory_write']) expect(p).toContain(s);
+    expect(p).not.toMatch(/memory\.write|scope 填 bot/);
     expect(p).toContain('只是告知（由系统把关，不用你自己拦）：对外发送/付款/删除会先问人。');
   });
   it("the prompt's policy line is built from the bot's own levels", () => {

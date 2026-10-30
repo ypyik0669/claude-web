@@ -69,7 +69,7 @@ export function buildPrompt(bot: Bot, routine: Routine, state: RoutineState, mem
     policyLine(bot.policy),
     '- 查不到的标「待核实」，不要猜。',
     '- 结尾固定写：查了什么 / 没能查到什么 / 建议的下一步。',
-    `- 要记住的事用 memory.write，scope 填 bot、key 填 ${bot.id}。`,
+    '- 要记住的事用 mcp__claude-web-memory__memory_write（scope 默认就是你自己的 bot，下次运行会出现在「你记住的」里）。',
   ].filter((l, i, a) => l !== '' || (i > 0 && a[i - 1] !== '')).join('\n');
 }
 
@@ -162,7 +162,7 @@ export async function runRoutine(d: PipelineDeps, bot: Bot, routine: Routine, tr
 
   const checkpointFile = path.join(d.store.dir(bot.id), 'state', `${routine.id.replace(/[^\w-]/g, '_')}.checkpoint.md`);
   await fsp.mkdir(path.dirname(checkpointFile), { recursive: true });
-  const params: OpenSessionParams = { sessionId: o.resume?.sessionId, cwd: bot.cwd, permissionMode: 'default', providerId: bot.providerId || d.defaultProvider(), model: bot.model || undefined, drivenBy: 'schedule', gated: true };
+  const params: OpenSessionParams = { sessionId: o.resume?.sessionId, cwd: bot.cwd, permissionMode: 'default', providerId: bot.providerId || d.defaultProvider(), model: bot.model || undefined, drivenBy: 'schedule', gated: true, botId: bot.id };
   let runner: AgentDriver;
   const failed = async (cause: Cause, error: string) => {
     run.ok = false; run.error = error;

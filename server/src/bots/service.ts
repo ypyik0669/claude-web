@@ -44,10 +44,10 @@ export interface BotServiceDeps {
   providerKind?(providerId: string | undefined): ProviderKind;
 }
 
-/** `gated` is server-set (a bot's run): a request from a window never gets to set it */
+/** `gated` / `botId` are server-set (a bot's run): a request from a window never gets to set them */
 export function clientSessionParams(p: OpenSessionParams): OpenSessionParams {
-  if (!('gated' in p)) return p;
-  const { gated: _drop, ...rest } = p;
+  if (!('gated' in p) && !('botId' in p)) return p;
+  const { gated: _drop, botId: _bot, ...rest } = p;
   return rest;
 }
 

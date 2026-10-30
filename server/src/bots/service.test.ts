@@ -175,8 +175,10 @@ describe('BotService', { timeout: 30_000 }, () => {
   });
 
   it('client session params lose the server-only gated flag', () => {
-    const p = clientSessionParams({ cwd: '/p', gated: true } as any);
+    const p = clientSessionParams({ cwd: '/p', gated: true, botId: 'b1' } as any);
     expect('gated' in p).toBe(false);
+    expect('botId' in p).toBe(false);
+    expect('botId' in clientSessionParams({ cwd: '/p', botId: 'b1' } as any)).toBe(false);
     const q = { cwd: '/p' } as any;
     expect(clientSessionParams(q)).toBe(q);
   });
