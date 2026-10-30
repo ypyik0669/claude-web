@@ -128,7 +128,13 @@ export class BotScheduler extends EventEmitter {
   }
   private async setHolding(v: boolean): Promise<boolean> {
     if (v && !this.holding) { await this.d.store.reload(); await this.d.inbox.reload(); this.heldSince = Date.now(); }
-    if (!v && this.holding) { this.queue = []; this.nextTick = []; this.emit('load', this.load()); }
+    // the lease is gone (another server took it): nothing of ours may keep running beside the new holder's — the
+    // queue goes and every run in flight is aborted (recorded as stopped, not as a failure)
+    if (!v && this.holding) {
+      this.queue = []; this.nextTick = [];
+      for (const s of this.running.values()) s.ctl.abort();
+      this.emit('load', this.load());
+    }
     this.holding = v;
     return v;
   }

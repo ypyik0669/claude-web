@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentDriver } from '../agents/types.js';
-import type { Bot, BotRun, OpenSessionParams, Routine, RunTrigger } from '../protocol.js';
+import type { ActionClass, Bot, BotPolicy, BotRun, OpenSessionParams, PolicyLevel, Routine, RunTrigger } from '../protocol.js';
 import type { BotStore } from './store.js';
 import type { AuditLog } from './audit.js';
 import type { Inbox } from './inbox.js';
@@ -10,6 +10,7 @@ import type { RoutineState } from './types.js';
 import { makeGate } from './policy/gate.js';
 import { fingerprint, runScript } from './precheck.js';
 import { summarize } from './policy/classify.js';
+import { DEFAULT_RULES } from './policy/rules.js';
 import { tr } from '../i18n/index.js';
 
 /** the slice of RunnerPool / services the pipeline needs — tests fake it */
@@ -33,6 +34,23 @@ export interface RunOptions {
 export const RUN_TIMEOUT_MIN = 30;
 export const MAX_FAILURES = 3;
 
+/**
+ * One line for the model (spec §3.3): what the gate does with outward / money / irreversible actions, from the bot's
+ * own levels. Informational only — the gate enforces it whatever the model makes of it.
+ */
+const OUTWARD: [ActionClass, string][] = [['send', '对外发送'], ['pay', '付款'], ['delete', '删除']];
+const LEVEL_SAYS: Record<PolicyLevel, string> = { ask: '会先问人', deny: '不允许', do: '可以直接做', do_tell: '可以直接做（做完告诉人）' };
+export function policyLine(policy: BotPolicy): string {
+  const groups = new Map<string, string[]>();
+  for (const [cls, name] of OUTWARD) {
+    const level = policy.unleashed ? 'do' : (policy.rules.find((r) => r.cls === cls && !r.scope)?.level ?? DEFAULT_RULES.find((r) => r.cls === cls)!.level);
+    const scoped = !policy.unleashed && level !== 'do' && policy.rules.some((r) => r.cls === cls && r.scope && r.level !== 'deny');
+    const says = LEVEL_SAYS[level] + (scoped ? '（放行范围内的直接做）' : '');
+    groups.set(says, [...(groups.get(says) ?? []), name]);
+  }
+  return `- 只是告知（由系统把关，不用你自己拦）：${[...groups].map(([says, names]) => names.join('/') + says).join('；')}。`;
+}
+
 export function buildPrompt(bot: Bot, routine: Routine, state: RoutineState, memories: string[], checkpointFile: string): string {
   const c = bot.charter;
   return [
@@ -48,6 +66,7 @@ export function buildPrompt(bot: Bot, routine: Routine, state: RoutineState, mem
     '', '## 规则',
     `- 长任务每完成一步就把进度写进 ${checkpointFile}（覆盖写），做完后删掉它。`,
     '- 要发出去的内容不要直接发，写在 <draft>…</draft> 里，由我来发。',
+    policyLine(bot.policy),
     '- 查不到的标「待核实」，不要猜。',
     '- 结尾固定写：查了什么 / 没能查到什么 / 建议的下一步。',
     `- 要记住的事用 memory.write，scope 填 bot、key 填 ${bot.id}。`,

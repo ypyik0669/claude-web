@@ -209,6 +209,12 @@ export class BotService extends EventEmitter {
     await this.acting();
     await this.ensureManager();
     const now = Date.now();
+    // a draft without a (valid) tier gets the settings' default for new bots (bots.defaultTier), else balanced
+    const tiers: unknown[] = ['cheap', 'balanced', 'best'];
+    if (draft && typeof draft === 'object' && !tiers.includes((draft as { tier?: unknown }).tier)) {
+      const def = this.d.meta.settings()['bots.defaultTier'];
+      draft = { ...draft, tier: tiers.includes(def) ? def as BotTier : 'balanced' };
+    }
     const bot = await this.store.save({ ...botFields(draft), id: this.store.newId(), createdAt: now, updatedAt: now });
     this.changed();
     return this.statusOf(bot);

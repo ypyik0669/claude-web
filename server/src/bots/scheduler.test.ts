@@ -265,6 +265,24 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
       expect(JSON.parse(fs.readFileSync(lockFile(), 'utf8'))).toMatchObject({ pid: process.pid, host: os.hostname() });
     });
 
+    it('losing the lease aborts the runs in flight (recorded as stopped, no retry) and empties the queue', async () => {
+      conc = 1;
+      await store.save(bot('a', [routine({ id: 'r1', nextRunAt: 1, onFail: 'retry_up' })]));
+      await store.save(bot('b', [routine({ id: 'r1', nextRunAt: 1 })]));
+      const s = sched(deps(() => fakeRunner(10_000)));
+      await s.tick(5); await until(() => runners[0]?.sent.length === 1);
+      expect(s.load()).toMatchObject({ running: 1, queued: 1 });
+      // another server took the lease (this one stalled past LEASE_STALE_MS, say)
+      fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.pid, host: os.hostname(), at: Date.now(), instance: 'other' }));
+      expect(await s.claim()).toBe(false);
+      await idle(s);
+      expect(runners[0].interrupt).toHaveBeenCalled();
+      await settle();
+      expect(runners).toHaveLength(1);
+      expect(store.runs('a')[0]).toMatchObject({ ok: false, error: '被停下了' });
+      expect(store.runs('b')).toEqual([]);
+    });
+
     it('a stale lease (not refreshed for 3 ticks) or one of a dead process is taken over', async () => {
       await store.save(bot('a', [routine({ nextRunAt: 1 })]));
       fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.pid, host: os.hostname(), at: Date.now() - LEASE_STALE_MS - 1000, instance: 'other' }));

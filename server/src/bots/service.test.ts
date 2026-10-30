@@ -51,6 +51,16 @@ describe('BotService', { timeout: 30_000 }, () => {
     expect((await svc.update(b.id, { name: 'y' })).name).toBe('y');
   });
 
+  it('a draft without a valid tier gets bots.defaultTier (else balanced); a valid one is kept', async () => {
+    const settings: Record<string, unknown> = { 'bots.concurrency': 2, 'bots.defaultTier': 'best' };
+    (svc as any).d.meta = fakeMeta(settings);
+    expect((await svc.create(draft({ tier: undefined as any }))).tier).toBe('best');
+    expect((await svc.create(draft({ tier: 'nope' as any }))).tier).toBe('best');
+    expect((await svc.create(draft({ tier: 'cheap' }))).tier).toBe('cheap');
+    settings['bots.defaultTier'] = 'bogus';
+    expect((await svc.create(draft({ tier: undefined as any }))).tier).toBe('balanced');
+  });
+
   it('edits go through the store lock: two concurrent updates both land', async () => {
     const b = await svc.create(draft());
     await Promise.all([svc.update(b.id, { name: 'n2' }), svc.pause(b.id, true), svc.unleash(b.id, true)]);

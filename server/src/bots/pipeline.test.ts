@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { BotStore } from './store.js'; import { AuditLog } from './audit.js'; import { Inbox } from './inbox.js';
-import { runRoutine, buildPrompt, type PipelineDeps } from './pipeline.js';
+import { runRoutine, buildPrompt, policyLine, type PipelineDeps } from './pipeline.js';
 import type { Bot, Routine } from '../protocol.js';
 
 /** a runner that answers the first send with a result, after running `calls` through its gate */
@@ -178,5 +178,11 @@ describe('runRoutine', () => {
   it('buildPrompt carries charter, routine, state, memories and the rules', () => {
     const p = buildPrompt(bot([routine()]), routine(), { lastSummary: '上次 2 个', checkpoint: '做到第 3 步', updatedAt: 0 }, ['只看 claude-web'], '/x/cp.md');
     for (const s of ['小晨', '每天出晨报', 'github', '汇总 issue', '上次 2 个', '做到第 3 步', '只看 claude-web', '/x/cp.md', '<draft>', 'memory.write', 'b1']) expect(p).toContain(s);
+    expect(p).toContain('只是告知（由系统把关，不用你自己拦）：对外发送/付款/删除会先问人。');
+  });
+  it("the prompt's policy line is built from the bot's own levels", () => {
+    expect(policyLine({ rules: [{ cls: 'pay', level: 'deny' }, { cls: 'delete', level: 'do_tell' }, { cls: 'send', level: 'do', scope: { domains: ['hooks.slack.com'] } }] }))
+      .toBe('- 只是告知（由系统把关，不用你自己拦）：对外发送会先问人（放行范围内的直接做）；付款不允许；删除可以直接做（做完告诉人）。');
+    expect(policyLine({ rules: [{ cls: 'pay', level: 'deny' }], unleashed: true })).toBe('- 只是告知（由系统把关，不用你自己拦）：对外发送/付款/删除可以直接做。');
   });
 });
