@@ -5,7 +5,9 @@
 // server to yield and takes over; beside another app it starts anyway (a warning), as before.
 //
 // Live means: the pid runs AND the lock was written after this boot (a pid from before a reboot may now be any
-// program). A process is only ever killed once its port answered /api/health with the lock's nonce — never a pid this
+// program) AND — since a server that died without cleanup may have its pid handed to another program long before a
+// reboot — a ready lock's port still answers with its nonce, and a lock not ready yet is younger than
+// STARTING_STALE_MS. A process is only ever killed once its port answered /api/health with the lock's nonce — never a pid this
 // can't confirm is that claude-web.
 import fs from 'node:fs';
 import http from 'node:http';
@@ -23,6 +25,8 @@ export const YIELD_WAIT_MS = 10_000;
 export const YIELD_WAIT_STARTING_MS = 60_000;
 /** how often a duty server looks for a yield request */
 export const YIELD_POLL_MS = 2_000;
+/** a lock still not ready after this long is a server that died while starting (its pid may be another program's now) */
+export const STARTING_STALE_MS = 5 * 60_000;
 /** SIGTERM, then SIGKILL after this */
 export const KILL_GRACE_MS = 3_000;
 
@@ -115,6 +119,21 @@ export function isLive(lock: ServerLock | null, env: Pick<LockEnv, 'pid' | 'isAl
   return !!lock && lock.pid !== env.pid && typeof lock.startedAt === 'number' && lock.startedAt >= env.bootTime() && env.isAlive(lock.pid);
 }
 
+/**
+ * isLive, confirmed: a ready lock (port + nonce) counts only when its port answers as that server (asked twice, a
+ * second apart, so a busy server isn't judged dead on one slow answer); a lock not ready yet only while younger than
+ * STARTING_STALE_MS.
+ */
+export async function isLiveConfirmed(lock: ServerLock | null, env: Pick<LockEnv, 'pid' | 'isAlive' | 'bootTime' | 'now' | 'sleep' | 'confirm'>): Promise<boolean> {
+  if (!isLive(lock, env)) return false;
+  if (lock.ready && lock.port > 0 && lock.nonce) {
+    if (await env.confirm(lock)) return true;
+    await env.sleep(1000);
+    return env.confirm(lock);
+  }
+  return env.now() - lock.startedAt < STARTING_STALE_MS;
+}
+
 /** exclusive create: false when a lock is already there */
 function createLock(dir: string, lock: ServerLock): boolean {
   fs.mkdirSync(dir, { recursive: true });
@@ -153,17 +172,17 @@ export function setLockReady(dir: string, pid: number, port: number): boolean {
   return after?.pid === pid && after.nonce === cur.nonce;
 }
 
-/** the lock of another live process, or null when the dir is free */
-export function liveHolder(dir: string, env: Pick<LockEnv, 'pid' | 'isAlive' | 'bootTime'>): ServerLock | null {
+/** the lock of another live process (confirmed: isLiveConfirmed), or null when the dir is free */
+export async function liveHolder(dir: string, env: Pick<LockEnv, 'pid' | 'isAlive' | 'bootTime' | 'now' | 'sleep' | 'confirm'>): Promise<ServerLock | null> {
   const lock = readLock(dir);
-  return isLive(lock, env) ? lock : null;
+  return (await isLiveConfirmed(lock, env)) ? lock : null;
 }
 
 export type Acquired = { ok: true; lock: ServerLock; held: boolean; yielded?: ServerLock } | { ok: false; holder: ServerLock };
 
 /**
- * Takes the lock exclusively ('wx'); a lock there that is not live (dead pid, from before the boot, unreadable for
- * over a second) is removed and the create tried once more. Returns the live holder when it can't.
+ * Takes the lock exclusively ('wx'); a lock there that is not live (dead pid, from before the boot, a ready one whose
+ * port doesn't answer, one not ready for STARTING_STALE_MS, unreadable for over a second) is removed and the create tried once more. Returns the live holder when it can't.
  */
 async function claim(dir: string, lock: ServerLock, env: LockEnv): Promise<ServerLock | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -171,7 +190,7 @@ async function claim(dir: string, lock: ServerLock, env: LockEnv): Promise<Serve
     // a lock being written right now reads as nothing for a moment
     let cur = readLock(dir);
     for (let i = 0; !cur && i < 10 && fs.existsSync(path.join(dir, LOCK_FILE)); i++) { await env.sleep(100); cur = readLock(dir); }
-    if (isLive(cur, env)) return cur;
+    if (await isLiveConfirmed(cur, env)) return cur;
     // only the stale lock just judged: another server may have replaced it since (then that one is read next round)
     const again = readLock(dir);
     const seen = cur as ServerLock | null;
@@ -179,7 +198,7 @@ async function claim(dir: string, lock: ServerLock, env: LockEnv): Promise<Serve
     if (same || (!seen && !again)) { try { fs.rmSync(path.join(dir, LOCK_FILE), { force: true }); } catch { /* raced */ } }
   }
   const cur = readLock(dir);
-  return isLive(cur, env) ? cur : readLock(dir) ?? { pid: -1, kind: 'app', port: 0, startedAt: 0 };
+  return (await isLiveConfirmed(cur, env)) ? cur : readLock(dir) ?? { pid: -1, kind: 'app', port: 0, startedAt: 0 };
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import http from 'node:http';
-import { acquireServerLock, probeLock, readLock, releaseLock, setLockReady, watchYield, writeLock, LOCK_FILE, YIELD_FILE, YIELD_WAIT_MS, YIELD_WAIT_STARTING_MS, type LockEnv, type ServerLock } from './server-lock.js';
+import { acquireServerLock, liveHolder, probeLock, STARTING_STALE_MS, readLock, releaseLock, setLockReady, watchYield, writeLock, LOCK_FILE, YIELD_FILE, YIELD_WAIT_MS, YIELD_WAIT_STARTING_MS, type LockEnv, type ServerLock } from './server-lock.js';
 import { dutyStartCommand } from './duty.js';
 
 describe('server.lock: one server per data dir', () => {
@@ -79,6 +79,32 @@ describe('server.lock: one server per data dir', () => {
     expect(killed).toEqual([]);
     expect(got).toMatchObject({ ok: true, held: true });
     expect(readLock(dir)).toMatchObject({ pid: 1, kind: 'app' });
+  });
+
+  it('pid reuse since boot: a ready lock whose port does not answer is dead (asked twice) — the duty server and the app take the dir', async () => {
+    writeLock(dir, lock({ pid: 2, kind: 'app', ready: true })); // the app died uncleanly; pid 2 is another program now
+    confirmed = false;
+    expect(await liveHolder(dir, env(1))).toBeNull();
+    expect(await acquireServerLock(dir, 'duty', 3090, env(1))).toMatchObject({ ok: true, held: true });
+    writeLock(dir, lock({ pid: 2, kind: 'app', ready: true }));
+    expect(await acquireServerLock(dir, 'app', 0, env(1))).toMatchObject({ ok: true, held: true });
+    expect(readLock(dir)?.pid).toBe(1);
+    expect(killed).toEqual([]);
+    // one slow answer is not death
+    writeLock(dir, lock({ pid: 2, kind: 'app', ready: true }));
+    let asks = 0;
+    expect(await liveHolder(dir, env(1, { confirm: async () => ++asks > 1 }))).toMatchObject({ pid: 2 });
+    confirmed = true;
+    expect(await liveHolder(dir, env(1))).toMatchObject({ pid: 2 });
+  });
+
+  it('a lock not ready yet counts while it is younger than STARTING_STALE_MS, not after', async () => {
+    writeLock(dir, lock({ pid: 2, kind: 'duty', ready: false, port: 0, startedAt: 900 }));
+    confirmed = false;
+    expect(await liveHolder(dir, env(1))).toMatchObject({ pid: 2 });
+    t = 900 + STARTING_STALE_MS;
+    expect(await liveHolder(dir, env(1))).toBeNull();
+    expect(await acquireServerLock(dir, 'duty', 3090, env(1))).toMatchObject({ ok: true, held: true });
   });
 
   it('beside another live app an app starts anyway and leaves its lock alone', async () => {

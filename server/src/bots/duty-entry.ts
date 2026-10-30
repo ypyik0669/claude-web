@@ -4,7 +4,7 @@
 import { BUSY_EXIT, liveHolder, processLockEnv } from './server-lock.js';
 
 const dir = process.env.CLAUDE_WEB_DIR;
-const holder = dir ? liveHolder(dir, processLockEnv()) : null;
+const holder = dir ? await liveHolder(dir, processLockEnv()) : null; // a ready lock is asked on its port: a dead server's pid reused by another program doesn't block
 if (holder) {
   console.log(`[duty] ${new Date().toISOString()} another claude-web (pid ${holder.pid}, ${holder.kind}) serves this data dir; trying again later`);
   process.exit(BUSY_EXIT);
