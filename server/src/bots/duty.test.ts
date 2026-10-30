@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
-import { dutyPlan, dutyOn, DutyCharError } from './duty.js';
+import { dutyPlan, dutyOn, DutyCharError, restartDutyAfterApp } from './duty.js';
 
 const o = { nodeBin: '/usr/bin/node', serverEntry: '/app/server/dist/index.js', dataDir: '/home/me/.claude-web', port: 3090, home: '/home/me' };
 const win = {
@@ -34,12 +34,13 @@ describe('dutyPlan', () => {
     );
     expect(cmd.content).not.toContain('CLAUDE_WEB_TOKEN');
     expect(cmd.content).not.toContain('secret');
-    // the vbs loops: hidden + wait, 5 s between rounds, ends on the stop marker or a missing duty.cmd, consumes the marker
+    // the vbs loops: hidden + wait, 30 s between rounds (a duty server that steps aside exits at once), ends on the stop marker or a missing duty.cmd, consumes the marker
     expect(vbs.content).toContain('cmdFile = "C:\\Users\\Jo Smith\\.claude-web\\duty\\duty.cmd"');
     expect(vbs.content).toContain('stopFile = "C:\\Users\\Jo Smith\\.claude-web\\duty\\duty.stop"');
     expect(vbs.content).toContain('sh.Run "cmd.exe /d /s /c """"" & cmdFile & """""", 0, True');
     expect(vbs.content).toContain('If fso.FileExists(stopFile) Or Not fso.FileExists(cmdFile) Then Exit Do');
-    expect(vbs.content).toContain('WScript.Sleep 5000');
+    expect(vbs.content).toContain('WScript.Sleep 30000');
+    expect(vbs.content).not.toContain('WScript.Sleep 5000');
     expect(vbs.content).toContain('If fso.FileExists(stopFile) Then fso.DeleteFile stopFile, True');
     // a plain /SC ONLOGON needs admin; an XML task whose logon trigger is for this user doesn't
     expect(p.commands).toEqual([
@@ -71,6 +72,7 @@ describe('dutyPlan', () => {
     expect(p.files[0].path).toBe('/home/me/Library/LaunchAgents/app.claude-web.duty.plist');
     expect(p.files[0].content).toContain('<string>/app/server/dist/index.js</string>');
     expect(p.files[0].content).toContain('<key>KeepAlive</key>');
+    expect(p.files[0].content).toContain('<key>ThrottleInterval</key><integer>30</integer>');
     expect(p.files[0].content).toContain('<key>CLAUDE_WEB_DIR</key><string>/home/me/.claude-web</string>');
     expect(p.files[0].content).toContain('<key>PORT</key><string>3090</string>');
     expect(p.files[0].content).toContain('<key>CLAUDE_WEB_DUTY</key><string>1</string>');
@@ -95,6 +97,8 @@ describe('dutyPlan', () => {
     expect(p.files[0].path).toBe('/home/me/.config/systemd/user/claude-web-duty.service');
     expect(p.files[0].content).toContain('ExecStart="/usr/bin/node" "/app/server/dist/index.js"');
     expect(p.files[0].content).toContain('Restart=always');
+    expect(p.files[0].content).toContain('RestartSec=30');
+    expect(p.files[0].content).toContain('StartLimitIntervalSec=0');
     expect(p.files[0].content).not.toContain('After=');
     expect(p.files[0].content).toContain('Environment="CLAUDE_WEB_DIR=/home/me/.claude-web"');
     expect(p.files[0].content).toContain('Environment="PORT=3090"');
@@ -149,5 +153,28 @@ describe('dutyOn: a failed file write', () => {
       expect((await dutyOn(plan, false, io(1))).ok).toBe(false);
       expect(fs.existsSync(plan.files[0].path)).toBe(true);
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('restartDutyAfterApp: the app quitting hands the dir back to the duty service', () => {
+  it('does nothing when duty mode is not on for this data dir', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-duty-'));
+    const prev = process.env.CLAUDE_WEB_DIR; process.env.CLAUDE_WEB_DIR = dir;
+    const ran: string[] = [];
+    try {
+      expect(await restartDutyAfterApp({ run: async (c) => { ran.push(c); return { code: 0, out: '' }; }, writeFile: async () => {} })).toBe(false);
+      expect(ran).toEqual([]);
+    } finally { if (prev === undefined) delete process.env.CLAUDE_WEB_DIR; else process.env.CLAUDE_WEB_DIR = prev; fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+  it.runIf(process.platform === 'win32')('windows: duty.cmd for this dir and the task registered → the task is run now', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-duty-'));
+    const prev = process.env.CLAUDE_WEB_DIR; process.env.CLAUDE_WEB_DIR = dir;
+    const ran: string[] = [];
+    try {
+      fs.mkdirSync(path.join(dir, 'duty'));
+      fs.writeFileSync(path.join(dir, 'duty', 'duty.cmd'), `@echo off\r\nset "CLAUDE_WEB_DIR=${dir}"\r\n`);
+      expect(await restartDutyAfterApp({ run: async (c) => { ran.push(c); return { code: 0, out: '' }; }, writeFile: async () => {} })).toBe(true);
+      expect(ran).toEqual(['schtasks /Query /TN "ClaudeWebDuty"', 'schtasks /Run /TN "ClaudeWebDuty"']);
+    } finally { if (prev === undefined) delete process.env.CLAUDE_WEB_DIR; else process.env.CLAUDE_WEB_DIR = prev; fs.rmSync(dir, { recursive: true, force: true }); }
   });
 });

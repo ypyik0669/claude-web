@@ -49,6 +49,8 @@ export class ServerHost extends EventEmitter {
         stdio: 'pipe',
         env: {
           ...process.env,
+          // the app's server is never the duty one (server-lock.ts): it asks a running duty server to step aside
+          CLAUDE_WEB_DUTY: '',
           CLAUDE_WEB_SYSTEM_LANG: app.getLocale(),
           CLAUDE_WEB_STANDALONE: '1',
           PORT: '0',

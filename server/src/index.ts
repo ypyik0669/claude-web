@@ -114,7 +114,8 @@ import { ComputerAccess } from './computer/access.js';
 import { SiteAsk } from './web/site-gate.js';
 import { handleComputerAsk } from './computer/http.js';
 import { configureComputerMcp } from './computer/launcher.js';
-import { noteDutyPid } from './bots/duty.js';
+import { noteDutyPid, restartDutyAfterApp } from './bots/duty.js';
+import { acquireServerLock, BUSY_EXIT, processLockEnv, releaseLock, setLockPort, watchYield } from './bots/server-lock.js';
 import { BotService } from './bots/service.js';
 import { CLAUDE_PROVIDER_ID } from './protocol.js';
 
@@ -755,7 +756,22 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
 // `npm start` / `tsx src/index.ts`: run directly
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 if (isMain || process.env.CLAUDE_WEB_STANDALONE === '1') {
-  const running = await startServer();
+  // one server per data dir (bots/server-lock.ts): the duty service steps aside for the app, before any port opens
+  const lockDir = dataDir();
+  const kind = process.env.CLAUDE_WEB_DUTY === '1' ? 'duty' : 'app';
+  const got = await acquireServerLock(lockDir, kind, Number(process.env.PORT) || 0, processLockEnv());
+  if (!got.ok) {
+    console.log(`[duty] another claude-web (pid ${got.holder.pid}, ${got.holder.kind}) serves ${lockDir}; trying again later`);
+    process.exit(BUSY_EXIT);
+  }
+  let running: Awaited<ReturnType<typeof startServer>>;
+  try {
+    running = await startServer();
+  } catch (e) {
+    releaseLock(lockDir, process.pid);
+    throw e;
+  }
+  setLockPort(lockDir, process.pid, running.port);
   // under the Windows duty task: let "duty off" find and stop us
   noteDutyPid();
   const ready = { type: 'ready', port: running.port, host: running.host };
@@ -763,16 +779,23 @@ if (isMain || process.env.CLAUDE_WEB_STANDALONE === '1') {
   if (parentPort) parentPort.postMessage(ready);
   else if (process.send) process.send(ready);
   let stopping = false;
+  let stopYield = () => {};
   const shutdown = async () => {
     if (stopping) return; // SIGINT twice / signal + parent message: don't close everything twice
     stopping = true;
+    stopYield();
     try {
       await running.close();
     } catch (e) {
       console.error('shutdown:', e);
     }
+    releaseLock(lockDir, process.pid);
+    // the app / dev server hands the dir back to the duty service, if duty mode is on for it
+    if (kind === 'app') await restartDutyAfterApp().catch(() => false);
     process.exit(0);
   };
+  // the duty server: an app asked for the dir (server.yield) → the normal shutdown (its bot runs end as stopped)
+  if (kind === 'duty') stopYield = watchYield(lockDir, got.lock.startedAt, () => { console.log('[duty] the app asked for the data dir; stepping down'); void shutdown(); });
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   process.on('message', (m: any) => { if (m?.type === 'shutdown') void shutdown(); });

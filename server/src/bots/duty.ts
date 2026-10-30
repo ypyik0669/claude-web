@@ -1,8 +1,10 @@
 // Headless duty mode: register the claude-web server as a per-user service so bots keep running with no window.
-// Windows: a logon task (Task Scheduler) → wscript runs duty.vbs hidden; the vbs loops (restart after a crash,
-//   stop when duty.stop appears or duty.cmd is gone) and each round runs duty.cmd, which sets the env and starts the server.
+// Windows: a logon task (Task Scheduler) → wscript runs duty.vbs hidden; the vbs loops (restart 30 s after the server
+//   ends, stop when duty.stop appears or duty.cmd is gone) and each round runs duty.cmd, which sets the env and starts the server.
 //   The server writes its pid to duty/duty.pid so "off" can kill its tree (the task doesn't track it).
-// macOS: a LaunchAgent (KeepAlive). Linux: a systemd user unit (Restart=always).
+// macOS: a LaunchAgent (KeepAlive, ThrottleInterval 30). Linux: a systemd user unit (Restart=always, RestartSec=30).
+// Every loop waits 30 s between starts: the duty server exits at once (BUSY_EXIT, server-lock.ts) while the app serves
+// the same dir, and when an app asks it to step down.
 // No secret (CLAUDE_WEB_TOKEN etc.) ever goes into these files.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -93,7 +95,7 @@ export function dutyPlan(o: DutyPlanOptions): DutyPlan {
     ].join('\r\n');
     const vs = (s: string) => `"${s.replace(/"/g, '""')}"`;
     const vbs = [
-      "' Claude Web duty: run duty.cmd hidden, again 5 s after it ends, until duty.stop appears or duty.cmd is gone",
+      "' Claude Web duty: run duty.cmd hidden, again 30 s after it ends, until duty.stop appears or duty.cmd is gone",
       'Option Explicit',
       'Dim sh, fso, cmdFile, stopFile',
       'Set sh = CreateObject("WScript.Shell")',
@@ -105,7 +107,7 @@ export function dutyPlan(o: DutyPlanOptions): DutyPlan {
       // window style 0 = hidden, True = wait
       '  sh.Run "cmd.exe /d /s /c """"" & cmdFile & """""", 0, True',
       '  If fso.FileExists(stopFile) Or Not fso.FileExists(cmdFile) Then Exit Do',
-      '  WScript.Sleep 5000',
+      '  WScript.Sleep 30000',
       'Loop',
       // tell whoever asked us to stop that we did
       'If fso.FileExists(stopFile) Then fso.DeleteFile stopFile, True',
@@ -160,6 +162,8 @@ export function dutyPlan(o: DutyPlanOptions): DutyPlan {
       `  <key>ProgramArguments</key><array>${s(o.nodeBin)}${s(o.serverEntry)}</array>`,
       '  <key>RunAtLoad</key><true/>',
       '  <key>KeepAlive</key><true/>',
+      // launchd's default is 10 s; a duty server that steps aside exits at once
+      '  <key>ThrottleInterval</key><integer>30</integer>',
       '  <key>EnvironmentVariables</key>',
       '  <dict>',
       ...Object.entries(env).map(([k, v]) => `    <key>${xmlEsc(k)}</key>${s(v)}`),
@@ -188,11 +192,13 @@ export function dutyPlan(o: DutyPlanOptions): DutyPlan {
   const content = [
     '[Unit]',
     'Description=Claude Web duty (bots keep running with no window)',
+    // it exits at once while the app serves the dir: never give up restarting it
+    'StartLimitIntervalSec=0',
     '',
     '[Service]',
     `ExecStart=${q(o.nodeBin)} ${q(o.serverEntry)}`,
     'Restart=always',
-    'RestartSec=5',
+    'RestartSec=30',
     ...Object.entries(env).map(([k, v]) => `Environment=${q(`${k}=${v}`)}`),
     '',
     '[Install]',
@@ -228,9 +234,12 @@ function runDetached(command: string) {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** where dist's bots/duty.js finds the server entry (dist/index.js) */
+/**
+ * where dist's bots/duty.js finds the duty entry (dist/bots/duty-entry.js): it checks server.lock before loading the
+ * whole server, so a duty server that has to step aside (every 30 s while the app is open) costs almost nothing
+ */
 function serverEntry() {
-  return path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'index.js');
+  return path.join(path.dirname(fileURLToPath(import.meta.url)), 'duty-entry.js');
 }
 
 function currentPlan(): DutyPlan {
@@ -354,7 +363,7 @@ export async function dutyOn(plan: DutyPlan, self: boolean, io: DutyIo = IO): Pr
   const ok = { ok: true, detail: tr('已注册值班服务，登录后自动在后台运行（日志：{log}）', { log: path.join(dataDir(), 'duty.log') }) };
   if (self) {
     if (win) {
-      // re-register (the task may have been deleted by hand), then end this server: the loop starts the new duty.cmd in 5 s
+      // re-register (the task may have been deleted by hand), then end this server: the loop starts the new duty.cmd in 30 s
       const r = await io.run(plan.commands[0]);
       if (r.code !== 0) return { ok: false, detail: tr('注册值班服务失败：{detail}', { detail: failed(plan.commands[0], r.out) }) };
       runDetached(`taskkill /T /F /PID ${process.pid}`);
@@ -398,6 +407,32 @@ async function dutyOff(plan: DutyPlan, self: boolean): Promise<{ ok: boolean; de
   if (win) await winStop(plan);
   await removeFiles(plan);
   return { ok: true, detail: tr('已取消值班服务') };
+}
+
+/** the command that starts the registered duty service now (the app quitting hands the dir back to it) */
+export function dutyStartCommand(platform: NodeJS.Platform, uid?: number): string {
+  if (platform === 'win32') return `schtasks /Run /TN "${TASK}"`;
+  if (platform === 'darwin') return `launchctl kickstart -k gui/${uid ?? 0}/${LABEL}`;
+  return `systemctl --user start ${UNIT}`;
+}
+
+/** the service file registered for duty mode serves this data dir (not another one's — a test's temporary HOME) */
+function servesThisDir(plan: DutyPlan): boolean {
+  const f = plan.files[0];
+  const marker = f.content.split(/\r?\n/).find((l) => l.includes('CLAUDE_WEB_DIR'));
+  try { return !!marker && fs.readFileSync(f.path, 'utf8').includes(marker.trim()); } catch { return false; }
+}
+
+/**
+ * An app / dev server that quit cleanly: if duty mode is on for this data dir, start the duty service again now
+ * (best effort; the loop would also start it within 30 s on Windows, and launchd / systemd keep it alive).
+ */
+export async function restartDutyAfterApp(io: DutyIo = IO): Promise<boolean> {
+  if (process.env.CLAUDE_WEB_DUTY === '1') return false;
+  let plan: DutyPlan;
+  try { plan = currentPlan(); } catch { return false; }
+  if (!servesThisDir(plan) || !(await dutyInstalled(io))) return false;
+  return (await io.run(dutyStartCommand(plan.platform, process.getuid?.()))).code === 0;
 }
 
 /** Is the duty service registered? */
