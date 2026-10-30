@@ -30,6 +30,7 @@ import { ENGINE_SEARCH_TOOL, engineSearchOff, userPickedSearchAdapter } from '..
 import { markUnknownCost } from '../usage/pricing.js';
 import type { AttachmentRef, EffortLevel, ModelInfo, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot, SideTurn } from '../protocol.js';
 import type { ToolGate } from '../agents/types.js';
+import { killTree } from '../agents/kill-tree.js';
 import { getLocale, tr } from '../i18n/index.js';
 import { thinkingLanguageFor, thinkingLanguagePrompt } from './thinking-language.js';
 import { subagentPolicyPrompt } from './subagent-policy.js';
@@ -704,7 +705,9 @@ export class SessionRunner extends EventEmitter {
   /**
    * The SDK's close resolves before the CLI is gone, and on Windows waits 2 s + 5 s before killing it: meanwhile the
    * old process still answered (and billed) a turn the window never saw, and a new one on the same id sometimes failed
-   * "Session ID … already in use". Give it a moment to finish writing the transcript, then make sure it is gone.
+   * "Session ID … already in use". Give it a moment to finish writing the transcript, then make sure it is gone —
+   * with its whole tree: on Windows child.kill() ends only the CLI's node, and a hung CLI's Bash tools / background
+   * commands / curl loops would keep running (a bot's hard stop must stop them too).
    */
   private async endProcess(child: ChildProcess | null) {
     if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -715,7 +718,7 @@ export class SessionRunner extends EventEmitter {
       child.once('exit', done);
     });
     if (await exited(1500)) return;
-    try { child.kill(); } catch { /* already gone */ }
+    await killTree(child);
     await exited(2000);
   }
 
@@ -1037,7 +1040,7 @@ export class SessionRunner extends EventEmitter {
    * returns (or anywhere it no longer reads its control channel) would leave the conversation "thinking" for good —
    * after the grace period the turn is ended here and the process restarted on the same conversation.
    */
-  async interrupt() {
+  async interrupt(o: { closing?: boolean } = {}) {
     // deny any pending permission first so the turn can unwind
     for (const [id, p] of this.pending) {
       this.pending.delete(id);
@@ -1049,7 +1052,7 @@ export class SessionRunner extends EventEmitter {
     const grace = SessionRunner.STOP_GRACE_MS;
     await Promise.race([q.interrupt().catch(() => {}), new Promise((r) => setTimeout(r, grace))]);
     if (await this.settles(q, grace)) return;
-    await this.forceStop(q);
+    await this.forceStop(q, o.closing);
   }
 
   /**
@@ -1164,8 +1167,11 @@ export class SessionRunner extends EventEmitter {
     });
   }
 
-  /** End the turn with a result of our own (the reducer, the ledger and the UI finish it like any other), then restart. */
-  private async forceStop(q: Query) {
+  /**
+   * End the turn with a result of our own (the reducer, the ledger and the UI finish it like any other), then restart —
+   * unless a close comes next (`closing`): that ends the hung process (and its tree) itself, a restart would be wasted.
+   */
+  private async forceStop(q: Query, closing = false) {
     if (this.closed || this.q !== q) return;
     const reason = tr('已强制停止：运行内核没有响应中断，已结束它的进程并重新接上这个对话');
     this.ingest({
@@ -1174,7 +1180,7 @@ export class SessionRunner extends EventEmitter {
       usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
       modelUsage: {}, permission_denials: [], session_id: this.sessionId, uuid: randomUUID(),
     } as unknown as SDKMessage);
-    await this.respawn();
+    if (!closing) await this.respawn();
   }
 
   async setPermissionMode(mode: PermissionMode) {

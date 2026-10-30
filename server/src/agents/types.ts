@@ -32,7 +32,8 @@ export interface AgentDriver extends EventEmitter {
   getPendingPermissions(): PermissionRequestEvent[];
   respondPermission(requestId: string, r: PermissionResponse): boolean;
   send(text: string, images?: { mediaType: string; data: string }[], steer?: boolean, uuid?: string, attachments?: AttachmentRef[]): void;
-  interrupt(): Promise<void>;
+  /** `closing`: a close() follows at once (a bot's hard stop) — a driver need not restart anything to recover */
+  interrupt(o?: { closing?: boolean }): Promise<void>;
   close(): Promise<void>;
   setPermissionMode(mode: PermissionMode): Promise<void>;
   setModel(model: string): Promise<void>;

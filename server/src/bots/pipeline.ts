@@ -203,7 +203,7 @@ export async function runRoutine(d: PipelineDeps, bot: Bot, routine: Routine, tr
   } catch (e) {
     res = { isError: true, text: '', died: e instanceof Error ? e.message : String(e) };
   }
-  if (res.timedOut || res.stopped) await runner.interrupt().catch(() => { /* gone */ });
+  if (res.timedOut || res.stopped) await runner.interrupt({ closing: true }).catch(() => { /* gone */ });
   await close();
   run.sessionId = runner.sessionId;
   run.toolCalls = g.calls;

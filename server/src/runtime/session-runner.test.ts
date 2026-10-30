@@ -75,6 +75,10 @@ vi.mock('node:fs/promises', async (orig) => {
   return { ...out, default: out };
 });
 
+// final review I3: a process that doesn't go is ended with its whole tree (stubbed: never a real taskkill here)
+const killed = vi.hoisted(() => [] as any[]);
+vi.mock('../agents/kill-tree.js', async (orig) => ({ ...(await orig() as any), killTree: async (child: any) => { killed.push(child); child.exitCode = 1; child.emit('exit', 1); } }));
+
 const { SessionRunner, GATE_HOOK_TIMEOUT_S, GATE_DEADLINE_MS } = await import('./session-runner.js');
 const tick = () => new Promise((r) => setTimeout(r, 10));
 
@@ -720,6 +724,29 @@ describe('SessionRunner Stop (interrupt)', () => {
       await tick();
       expect(msgs.some((m) => m.uuid === 'late')).toBe(false);
       await r.close();
+    } finally {
+      SessionRunner.STOP_GRACE_MS = grace;
+    }
+  });
+
+  it('a forced stop right before a close: no restart, and a CLI that does not exit goes with its whole tree', async () => {
+    queries.length = 0; killed.length = 0;
+    const grace = SessionRunner.STOP_GRACE_MS;
+    SessionRunner.STOP_GRACE_MS = 40;
+    try {
+      const r = new SessionRunner({ sessionId: 'stop-4', cwd: '/x' } as any);
+      await tick();
+      const { EventEmitter } = await import('node:events');
+      const child: any = Object.assign(new EventEmitter(), { pid: 4242, exitCode: null, signalCode: null, kill: vi.fn() });
+      (r as any).child = child; // the CLI the fake SDK would have spawned: hung, never exits by itself
+      const msgs = collect(r);
+      r.send('hi');
+      await r.interrupt({ closing: true });
+      expect(msgs.filter((m) => m.type === 'result')).toHaveLength(1);
+      expect(queries).toHaveLength(1); // no respawn of a conversation about to close
+      await r.close();
+      expect(killed).toEqual([child]);
+      expect(child.kill).not.toHaveBeenCalled();
     } finally {
       SessionRunner.STOP_GRACE_MS = grace;
     }
