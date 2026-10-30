@@ -13,6 +13,8 @@ import { recordApproval, recordCorrection, demoteRule, TRUST_THRESHOLD } from '.
 import { scopeKey } from './policy/rules.js';
 import { summarize, targetOf } from './policy/classify.js';
 import { allowScope, routineOf } from './shape.js';
+import { callKey } from './policy/gate.js';
+import type { ApprovedCall } from './types.js';
 import { tr } from '../i18n/index.js';
 
 export interface SchedulerDeps extends PipelineDeps {
@@ -24,7 +26,11 @@ export interface SchedulerDeps extends PipelineDeps {
   modelFor?(bot: Bot): string | undefined;
 }
 export type ResumeInfo = NonNullable<RunOptions['resume']>;
-interface Job { botId: string; routineId: string; trigger: RunTrigger; resume?: ResumeInfo; retried?: boolean }
+/**
+ * resume: the conversation to go on with; `approved` is filled when the job starts and takes the conversation's
+ * pending approvals from `<bot>/resumes.json` (a retry_up retry reuses them)
+ */
+interface Job { botId: string; routineId: string; trigger: RunTrigger; resume?: { sessionId: string; approved?: ApprovedCall[] }; retried?: boolean }
 interface Slot { job: Job; ctl: AbortController; done: Promise<void> }
 interface Lease { pid: number; host: string; at: number; instance?: string }
 
@@ -38,6 +44,10 @@ const dayKey = (t: number) => { const d = new Date(t); return `${d.getFullYear()
 const pidAlive = (pid: number) => {
   try { process.kill(pid, 0); return true; } catch (e: any) { return e?.code !== 'ESRCH'; } // EPERM = alive, not ours
 };
+/** the schedulers of this process not stopped yet (two in one process share a pid: the lease's instance tells them apart) */
+const liveInstances = new Set<string>();
+/** a refresh of the lease that fails to write: held on through this many in a row, and at least LEASE_STALE_MS */
+export const LEASE_WRITE_TRIES = 3;
 
 /**
  * Runs the bots' routines (spec §3–§5): a 30 s tick puts due routines on a FIFO queue, which runs under a concurrency
@@ -62,9 +72,13 @@ export class BotScheduler extends EventEmitter {
   /** which scheduler wrote the lease (two in one process share a pid) */
   private readonly instance = randomBytes(6).toString('hex');
   private readonly lockFile: string;
+  /** failed lease writes in a row while holding, and when the first of them was */
+  private writeFails = 0;
+  private writeFailSince = 0;
 
   constructor(private d: SchedulerDeps) {
     super();
+    liveInstances.add(this.instance);
     // the store's root: the dir of any bot id's parent (BotStore keeps its root private)
     this.lockFile = path.join(path.dirname(d.store.dir('scheduler')), 'scheduler.lock');
   }
@@ -76,6 +90,7 @@ export class BotScheduler extends EventEmitter {
     void this.tick().catch((e) => console.warn('[bots] tick failed:', e));
   }
   stop() {
+    liveInstances.delete(this.instance);
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
     this.queue = []; this.nextTick = [];
@@ -115,11 +130,25 @@ export class BotScheduler extends EventEmitter {
       const cur = this.readLease();
       const now = Date.now();
       const mine = cur?.instance === this.instance;
-      const free = !cur || typeof cur.at !== 'number' || now - cur.at > LEASE_STALE_MS || (cur.host === os.hostname() && !pidAlive(cur.pid));
+      // on this host the process tells: a live one keeps its lease however old (it may just be busy); another
+      // host's lease is free once it went unrefreshed for three ticks
+      const free = !cur || typeof cur.at !== 'number' || (cur.host === os.hostname()
+        ? (cur.pid === process.pid ? !liveInstances.has(String(cur.instance)) : !pidAlive(cur.pid))
+        : now - cur.at > LEASE_STALE_MS);
       if (!mine && !free) return this.setHolding(false);
       try {
         await atomicWrite(this.lockFile, JSON.stringify({ pid: process.pid, host: os.hostname(), at: now, instance: this.instance }));
-      } catch (e) { console.warn('[bots] cannot write the scheduler lease:', e); return this.setHolding(false); }
+      } catch (e) {
+        console.warn('[bots] cannot write the scheduler lease:', e);
+        // a transient failure (a locked file, a full disk for a moment) while nobody else has the lease: keep holding,
+        // try again next tick — given up only after LEASE_WRITE_TRIES in a row spanning more than LEASE_STALE_MS
+        if (this.holding && (mine || !cur)) {
+          if (!this.writeFails++) this.writeFailSince = now;
+          if (this.writeFails < LEASE_WRITE_TRIES || now - this.writeFailSince <= LEASE_STALE_MS) return true;
+        }
+        return this.setHolding(false);
+      }
+      this.writeFails = 0;
       return this.setHolding(this.readLease()?.instance === this.instance);
     } finally {
       await fh.close().catch(() => {});
@@ -127,7 +156,13 @@ export class BotScheduler extends EventEmitter {
     }
   }
   private async setHolding(v: boolean): Promise<boolean> {
-    if (v && !this.holding) { await this.d.store.reload(); await this.d.inbox.reload(); this.heldSince = Date.now(); }
+    if (v && !this.holding) {
+      await this.d.store.reload(); await this.d.inbox.reload(); this.heldSince = Date.now();
+      this.holding = true;
+      try { await this.recover(); } catch (e) { console.warn('[bots] recovering after taking the lease:', e); }
+      this.emit('claimed');
+      return true;
+    }
     if (!v && this.holding) {
       this.queue = []; this.nextTick = [];
       // confirmed lost — the lease names another instance and is fresh (not just a refresh we failed to write): nothing
@@ -139,6 +174,54 @@ export class BotScheduler extends EventEmitter {
     this.holding = v;
     return v;
   }
+  /**
+   * Taking the lease: what the last holder left — its runs that never ended (it died) are closed as interrupted and,
+   * for an onFail 'resume' routine, resumed next tick; approved steps waiting for their resume (resumes.json) are
+   * queued again.
+   */
+  private async recover() {
+    const now = Date.now();
+    for (const bot of this.d.store.list()) {
+      for (const p of this.d.store.pendingResumes(bot.id)) {
+        if (!this.nextTick.some((j) => j.resume?.sessionId === p.sessionId)) this.nextTick.push({ botId: bot.id, routineId: p.routineId, trigger: 'resume', resume: { sessionId: p.sessionId } });
+      }
+      if (this.running.has(bot.id)) continue;
+      for (const r of this.d.store.runs(bot.id, 2000)) {
+        if (r.endedAt || r.skipped) continue;
+        await this.d.store.addRun({ ...r, ok: false, error: tr('中断（服务重启）'), endedAt: now });
+        const routine = bot.routines.find((x) => x.id === r.routineId);
+        if (routine?.onFail === 'resume' && routine.enabled && !bot.paused && !this.nextTick.some((j) => j.botId === bot.id && j.routineId === routine.id)) {
+          this.nextTick.push({ botId: bot.id, routineId: routine.id, trigger: 'resume', retried: true });
+        }
+      }
+    }
+  }
+  /** the approved call joins its conversation's pending resume (once: a retried answer adds nothing) */
+  private addResume(botId: string, routineId: string, sessionId: string, call: ApprovedCall) {
+    const k = callKey(call.toolName, call.input);
+    return this.d.store.updateResumes(botId, (cur) => {
+      const i = cur.findIndex((p) => p.sessionId === sessionId);
+      if (i < 0) return { next: [...cur, { sessionId, routineId, approved: [call], at: Date.now() }], out: undefined };
+      if (cur[i].approved.some((a) => callKey(a.toolName, a.input) === k)) return { next: cur, out: undefined };
+      const next = [...cur]; next[i] = { ...cur[i], approved: [...cur[i].approved, call] };
+      return { next, out: undefined };
+    });
+  }
+  private dropResumeCall(botId: string, sessionId: string, call: ApprovedCall) {
+    const k = callKey(call.toolName, call.input);
+    return this.d.store.updateResumes(botId, (cur) => ({
+      next: cur.map((p) => (p.sessionId === sessionId ? { ...p, approved: p.approved.filter((a) => callKey(a.toolName, a.input) !== k) } : p)).filter((p) => p.approved.length),
+      out: undefined,
+    }));
+  }
+  /** the run that carries a conversation's approvals starts: they leave resumes.json */
+  private takeResume(botId: string, sessionId: string): Promise<ApprovedCall[] | undefined> {
+    return this.d.store.updateResumes(botId, (cur) => {
+      const p = cur.find((x) => x.sessionId === sessionId);
+      return { next: cur.filter((x) => x !== p), out: p?.approved };
+    });
+  }
+
   /** read-modify-write inside the store's bot.json lock, so a run's write-back in flight isn't lost */
   private async mutate(botId: string, fn: (b: Bot) => Bot | undefined): Promise<void> { await this.d.store.update(botId, fn); }
   private notHolder(): never { throw new Error(tr('另一个 claude-web 正在值班，请在那边操作')); }
@@ -205,9 +288,8 @@ export class BotScheduler extends EventEmitter {
             continue;
           }
           if (r.nextRunAt > now) continue;
-          const missed = missedRun(r.nextRunAt, now);
-          r.nextRunAt = this.nextRunAt(r, now); changed = true;
-          if (missed === 'drop') continue;
+          if (missedRun(r.nextRunAt, now) === 'drop') { r.nextRunAt = this.nextRunAt(r, now); changed = true; continue; }
+          // queued, not advanced: its next time is set when it starts (exec), so a restart before then runs it still
           if (this.epoch === epoch && this.holding) this.push({ botId: bot.id, routineId: r.id, trigger: 'cron' });
         }
         if (changed) changedAny = true;
@@ -220,13 +302,14 @@ export class BotScheduler extends EventEmitter {
   }
 
   /** queues a run; a manual one throws when that routine is already running or queued, or another server is on duty */
-  enqueue(botId: string, routineId: string, trigger: RunTrigger, resume?: ResumeInfo) {
+  enqueue(botId: string, routineId: string, trigger: RunTrigger, resume?: { sessionId: string }) {
     if (!this.holding) { if (trigger === 'manual' || trigger === 'resume') this.notHolder(); return; }
     const busy = this.running.get(botId)?.job.routineId === routineId || this.queue.some((j) => j.botId === botId && j.routineId === routineId);
     if (busy && trigger === 'manual') throw new Error(tr('这条例行正在运行'));
     if (busy && trigger !== 'resume') return;
-    // a resume waits behind the run that asked (one run per bot); the same conversation is resumed once
-    if (resume && this.queue.some((j) => j.resume?.sessionId === resume.sessionId)) return;
+    // a resume waits behind the run that asked (one run per bot); a conversation already waiting to be resumed takes
+    // this approval along (resumes.json), so it isn't queued twice
+    if (resume && [...this.queue, ...this.nextTick].some((j) => j.resume?.sessionId === resume.sessionId && !j.resume.approved)) return;
     this.queue.push({ botId, routineId, trigger, resume });
     this.pump();
   }
@@ -236,8 +319,9 @@ export class BotScheduler extends EventEmitter {
     this.enqueue(botId, routineId, 'manual');
   }
 
-  /** a due routine: skipped when already running / queued */
+  /** a due routine: skipped when already running / queued; a resume of a conversation already queued is one job */
   private push(j: Job) {
+    if (j.resume && this.queue.some((q) => q.resume?.sessionId === j.resume!.sessionId && !q.resume.approved)) return;
     const busy = this.running.get(j.botId)?.job.routineId === j.routineId || this.queue.some((q) => q.botId === j.botId && q.routineId === j.routineId);
     if (!busy || j.trigger === 'resume') this.queue.push(j);
   }
@@ -265,19 +349,43 @@ export class BotScheduler extends EventEmitter {
   }
 
   private async exec(job: Job, signal: AbortSignal): Promise<BotRun | undefined> {
-    const bot = this.d.store.get(job.botId);
-    const routine = bot?.routines.find((r) => r.id === job.routineId);
+    let bot = this.d.store.get(job.botId);
+    let routine = bot?.routines.find((r) => r.id === job.routineId);
     if (!bot || !routine) return undefined;
     const now = this.d.now?.() ?? Date.now();
+    // a cron run's next time is set as it starts (or is skipped), not when it was queued
+    if (job.trigger === 'cron') {
+      await this.mutate(bot.id, (b) => {
+        const i = b.routines.findIndex((r) => r.id === job.routineId);
+        const r = b.routines[i];
+        if (i < 0 || r.nextRunAt === undefined || r.nextRunAt > now) return undefined;
+        const routines = [...b.routines]; routines[i] = { ...r, nextRunAt: this.nextRunAt(r, Math.max(now, r.nextRunAt)) };
+        return { ...b, routines };
+      });
+      bot = this.d.store.get(job.botId) ?? bot;
+      routine = bot.routines.find((r) => r.id === job.routineId) ?? routine;
+    }
+    // paused / turned off while it waited in the queue: an approved step waits on; anything else is skipped, not failed
+    if (bot.paused || !routine.enabled) {
+      if (job.resume) {
+        if (!this.nextTick.some((j) => j.resume?.sessionId === job.resume!.sessionId)) this.nextTick.push(job);
+        return undefined;
+      }
+      const run: BotRun = { id: `${routine.id}-${now.toString(36)}`, botId: bot.id, routineId: routine.id, at: now, trigger: job.trigger, skipped: true, ok: true, error: bot.paused ? tr('Bot 已暂停，这次没有运行') : tr('例行已关闭，这次没有运行') };
+      await this.d.store.addRun(run);
+      this.emit('run', run); this.emit('bots');
+      return run;
+    }
     if (this.overBudget(bot, now)) {
       if (job.resume) {
-        // an approved step isn't thrown away: it waits for the budget, retried every tick; told once a day
+        // an approved step isn't thrown away: it waits for the budget (in resumes.json too), retried every tick; told once a day
         const resume = job.resume;
         if (!this.nextTick.some((j) => j.resume?.sessionId === resume.sessionId)) this.nextTick.push(job);
         const told = `${bot.id}|${dayKey(now)}|${resume.sessionId}`;
-        if (!this.budgetTold.has(told)) {
+        const calls = resume.approved ?? this.d.store.pendingResumes(bot.id).find((p) => p.sessionId === resume.sessionId)?.approved ?? [];
+        if (!this.budgetTold.has(told) && calls.length) {
           this.budgetTold.add(told);
-          await this.d.inbox.add({ kind: 'finding', botId: bot.id, routineId: routine.id, sessionId: resume.sessionId, title: tr('「{name}」的预算用完了，已批准的「{summary}」等预算够了再做', { name: bot.name, summary: summarize(resume.approved.toolName, resume.approved.input) }) });
+          await this.d.inbox.add({ kind: 'finding', botId: bot.id, routineId: routine.id, sessionId: resume.sessionId, title: tr('「{name}」的预算用完了，已批准的「{summary}」等预算够了再做', { name: bot.name, summary: calls.map((c) => summarize(c.toolName, c.input)).join('」「') }) });
         }
         this.emit('bots');
         return undefined;
@@ -292,8 +400,15 @@ export class BotScheduler extends EventEmitter {
       this.emit('run', run); this.emit('bots');
       return run;
     }
+    if (job.resume && !job.resume.approved) {
+      // the approvals leave resumes.json as their run starts; none left = another job already took them
+      const approved = await this.takeResume(bot.id, job.resume.sessionId);
+      if (!approved?.length) return undefined;
+      job.resume = { sessionId: job.resume.sessionId, approved };
+    }
     const effective = bot.model ? bot : { ...bot, model: this.d.modelFor?.(bot) };
-    const { run } = await runRoutine(this.d, effective, routine, job.trigger, { signal, ...(job.resume ? { resume: job.resume } : {}) });
+    const resume = job.resume?.approved ? { sessionId: job.resume.sessionId, approved: job.resume.approved } : undefined;
+    const { run } = await runRoutine(this.d, effective, routine, job.trigger, { signal, ...(resume ? { resume } : {}) });
     this.emit('run', run); this.emit('bots');
     return run;
   }
@@ -307,7 +422,10 @@ export class BotScheduler extends EventEmitter {
     else if (routine.onFail === 'resume') this.nextTick.push({ botId: job.botId, routineId: job.routineId, trigger: 'resume', retried: true });
   }
 
-  /** the hard stop for one bot: drop its queued runs, abort its run (kills scripts, interrupts + closes the conversation) */
+  /**
+   * The hard stop for one bot: drop its queued runs, abort its run (kills scripts, interrupts + closes the conversation),
+   * and close its open approvals and approved steps waiting to resume — a later approve doesn't start a stopped bot again.
+   */
   async stopBot(botId: string) {
     this.queue = this.queue.filter((j) => j.botId !== botId);
     this.nextTick = this.nextTick.filter((j) => j.botId !== botId);
@@ -315,15 +433,29 @@ export class BotScheduler extends EventEmitter {
     s?.ctl.abort();
     this.emit('load', this.load());
     await s?.done;
+    await this.closeWaiting([botId]);
   }
-  /** the hard stop (spec §5): always works — empties the queue and aborts every run; nothing gets paused */
-  async stopAll() {
+  /**
+   * The hard stop (spec §5): always works — empties the queue and aborts every run; nothing gets paused. `hard`
+   * (the user's stop) also closes the open approvals and the steps waiting to resume; a server shutting down keeps them
+   * for the next holder.
+   */
+  async stopAll(o: { hard?: boolean } = {}) {
     this.epoch++;
     this.queue = []; this.nextTick = [];
     const slots = [...this.running.values()];
     for (const s of slots) s.ctl.abort();
     this.emit('load', this.load());
     await Promise.all(slots.map((s) => s.done));
+    if (o.hard) await this.closeWaiting(this.d.store.list().map((b) => b.id));
+  }
+  private async closeWaiting(botIds: string[]) {
+    const ids = new Set(botIds);
+    try {
+      await this.d.inbox.closeApprovals((i) => ids.has(i.botId), tr('运行已停下，这一条不再执行'));
+      for (const id of ids) if (this.d.store.get(id)) await this.d.store.updateResumes(id, () => ({ next: [], out: undefined }));
+    } catch (e) { console.warn('[bots] closing what waited on a stopped bot:', e); }
+    this.emit('bots');
   }
 
   async onInboxAnswer(item: InboxItem, a: InboxAnswer) {
@@ -343,7 +475,15 @@ export class BotScheduler extends EventEmitter {
         const same = JSON.stringify({ cls, level: 'do', scope });
         await this.mutate(bot.id, (b) => (b.policy.rules.some((r) => JSON.stringify({ cls: r.cls, level: r.level, scope: r.scope }) === same) ? undefined : { ...b, policy: { ...b.policy, rules: [...b.policy.rules, { cls, level: 'do', scope }] } }));
       }
-      if (this.epoch === epoch) this.enqueue(bot.id, item.routineId, 'resume', { sessionId: item.sessionId, approved: { toolName, input } });
+      if (this.epoch === epoch) {
+        // on disk before it is queued: a restart, a budget wait or a new holder of the lease doesn't lose it
+        const call = { toolName, input };
+        await this.addResume(bot.id, item.routineId, item.sessionId, call);
+        try { this.enqueue(bot.id, item.routineId, 'resume', { sessionId: item.sessionId }); } catch (e) {
+          await this.dropResumeCall(bot.id, item.sessionId, call).catch(() => {});
+          throw e;
+        }
+      }
       // trust counts an approval only once its effect (the resume) is under way: a retried answer isn't counted twice;
       // a failure to record it costs one count, never the approval
       if (a.answer === 'approve') {

@@ -77,7 +77,7 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
     await store.save(bot('b', [routine({ nextRunAt: Date.now() - 1000 })]));
     await store.addRun({ id: 'old', botId: 'b', routineId: 'r1', at: Date.now() - 1000, trigger: 'cron', costUsd: 2, ok: true });
     const s = sched({ ...deps(), globalBudgetUsd: () => 1.5 });
-    await s.tick(Date.now()); await settle();
+    await s.tick(Date.now()); await until(() => store.runs('a').length > 0); await idle(s);
     expect(runners).toHaveLength(0);
     expect(store.runs('a')[0]).toMatchObject({ skipped: true, error: '超出预算' });
   });
@@ -204,6 +204,109 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
     expect(store.get('a')!.routines.map((r) => [r.id, r.selfMade])).toEqual([['r1', undefined], ['r9', true]]);
   });
 
+  describe('restarts and waits lose nothing', () => {
+    const gitPush = { toolName: 'Bash', input: { command: 'git push' } };
+    const overBudget = async () => {
+      await store.save(bot('a', [routine()], { budget: { dailyUsd: 0.5 } }));
+      await store.addRun({ id: 'old', botId: 'a', routineId: 'r1', at: Date.now() - 1000, trigger: 'cron', costUsd: 0.6, ok: true, endedAt: Date.now() - 500 });
+    };
+    it('an approval blocked by the budget survives a new scheduler (resumes.json), then runs once the budget allows', async () => {
+      await overBudget();
+      const s1 = sched(deps());
+      const ap = await inbox.add({ kind: 'approval', botId: 'a', routineId: 'r1', sessionId: 'sX', title: 't', ...gitPush, cls: 'send' });
+      await s1.onInboxAnswer(ap, { id: ap.id, answer: 'approve' });
+      await until(() => inbox.list('a').some((i) => i.title.includes('预算'))); await idle(s1);
+      expect(runners).toHaveLength(0);
+      s1.stop(); // the server goes away
+      await store.update('a', (b) => ({ ...b, budget: { dailyUsd: 10 } }));
+      const s2 = sched(deps());
+      await s2.tick(Date.now()); // takes the lease: the pending resume is queued for the next tick
+      await s2.tick(Date.now()); await until(() => runners.length === 1); await idle(s2);
+      expect(runners[0].sent[0]).toContain('已经批准');
+      expect(store.pendingResumes('a')).toEqual([]);
+    });
+
+    it('a second approval for the same conversation rides along with the first: one resumed run, both calls let through', async () => {
+      await overBudget();
+      const mail = { toolName: 'ExecuteExtraTool', input: { tool_name: 'mcp__slack__send_message', params: { channel: 'C9', text: 'hi' } } };
+      const s = sched(deps(() => fakeRunner(0, [gitPush, mail])));
+      const a1 = await inbox.add({ kind: 'approval', botId: 'a', routineId: 'r1', sessionId: 'sX', title: 't1', ...gitPush, cls: 'send' });
+      const a2 = await inbox.add({ kind: 'approval', botId: 'a', routineId: 'r1', sessionId: 'sX', title: 't2', ...mail, cls: 'send' });
+      await inbox.answer({ id: a1.id, answer: 'approve' }); await s.onInboxAnswer(a1, { id: a1.id, answer: 'approve' });
+      await inbox.answer({ id: a2.id, answer: 'approve' }); await s.onInboxAnswer(a2, { id: a2.id, answer: 'approve' });
+      await idle(s);
+      expect(store.pendingResumes('a')[0].approved).toHaveLength(2);
+      await store.update('a', (b) => ({ ...b, budget: { dailyUsd: 10 } }));
+      await s.tick(Date.now()); await until(() => runners.length === 1); await idle(s);
+      expect(runners).toHaveLength(1);
+      // both calls went through on the resumed run: nothing new asked
+      expect(inbox.list('a').filter((i) => i.kind === 'approval' && !i.done)).toHaveLength(0);
+    });
+
+    it('taking the lease closes the runs a dead holder left open; an onFail resume routine is picked up again', async () => {
+      await store.save(bot('a', [routine({ id: 'r1', onFail: 'resume' })]));
+      await store.save(bot('b', [routine({ id: 'r1', onFail: 'inbox' })]));
+      await store.addRun({ id: 'r1-x', botId: 'a', routineId: 'r1', at: Date.now() - 5000, trigger: 'cron' });
+      await store.addRun({ id: 'r1-y', botId: 'b', routineId: 'r1', at: Date.now() - 5000, trigger: 'cron' });
+      const s = sched(deps());
+      await s.tick(Date.now()); await idle(s);
+      expect(store.runs('a').find((r) => r.id === 'r1-x')).toMatchObject({ ok: false, error: '中断（服务重启）' });
+      expect(store.runs('b').find((r) => r.id === 'r1-y')).toMatchObject({ ok: false, error: '中断（服务重启）' });
+      await s.tick(Date.now()); await until(() => runners.length === 1); await idle(s);
+      expect(store.runs('a').map((r) => r.trigger)).toContain('resume');
+      expect(store.runs('b')).toHaveLength(1);
+    });
+
+    it('a queued cron run keeps its due time until it starts: a restart before then still runs it', async () => {
+      conc = 1;
+      const due = Date.now() - 1000;
+      await store.save(bot('a', [routine({ id: 'r1', nextRunAt: due })]));
+      await store.save(bot('b', [routine({ id: 'r1', nextRunAt: due })]));
+      const s1 = sched(deps(() => fakeRunner(10_000)));
+      await s1.tick(Date.now()); await until(() => runners.length === 1);
+      expect(s1.load()).toMatchObject({ running: 1, queued: 1 });
+      const waiting = s1.isQueued('a') ? 'a' : 'b';
+      expect(store.get(waiting)!.routines[0].nextRunAt).toBe(due); // queued, not advanced
+      await s1.stopAll(); s1.stop(); // the server goes away before it started
+      const s2 = sched(deps());
+      await s2.tick(Date.now()); await until(() => store.runs(waiting).some((r) => r.endedAt)); await idle(s2);
+      expect(store.get(waiting)!.routines[0].nextRunAt).toBeGreaterThan(Date.now());
+    });
+
+    it('a bot paused (or a routine turned off) while its run waited in the queue: skipped, not failed', async () => {
+      conc = 1;
+      await store.save(bot('x', [routine({ id: 'r1', nextRunAt: 1 })]));
+      await store.save(bot('a', [routine({ id: 'r1', nextRunAt: 1 })]));
+      await store.save(bot('b', [routine({ id: 'r1', nextRunAt: 1 })]));
+      const s = sched(deps(() => fakeRunner(200)));
+      await s.tick(5);
+      expect(s.load()).toMatchObject({ running: 1, queued: 2 });
+      const [p, o] = ['x', 'a', 'b'].filter((id) => s.isQueued(id));
+      await store.update(p, (b) => ({ ...b, paused: true }));
+      await store.update(o, (b) => ({ ...b, routines: b.routines.map((r) => ({ ...r, enabled: false })) }));
+      await idle(s);
+      expect(runners).toHaveLength(1);
+      expect(store.runs(p)[0]).toMatchObject({ skipped: true, ok: true, error: 'Bot 已暂停，这次没有运行' });
+      expect(store.runs(o)[0]).toMatchObject({ skipped: true, ok: true, error: '例行已关闭，这次没有运行' });
+      expect(store.get(o)!.routines[0].failures ?? 0).toBe(0);
+    });
+
+    it('the hard stop of a bot closes its open approvals and its approved steps waiting to resume', async () => {
+      await overBudget();
+      const s = sched(deps());
+      const a1 = await inbox.add({ kind: 'approval', botId: 'a', routineId: 'r1', sessionId: 'sX', title: 't1', ...gitPush, cls: 'send' });
+      const open = await inbox.add({ kind: 'approval', botId: 'a', routineId: 'r1', sessionId: 'sX', title: 't2', toolName: 'Bash', input: { command: 'npm publish' }, cls: 'send' });
+      await s.onInboxAnswer(a1, { id: a1.id, answer: 'approve' }); await idle(s);
+      expect(store.pendingResumes('a')).toHaveLength(1);
+      await s.stopBot('a');
+      expect(store.pendingResumes('a')).toEqual([]);
+      expect(inbox.list('a', true).find((i) => i.id === open.id)?.done).toMatchObject({ answer: 'archive', note: expect.any(String) });
+      await store.update('a', (b) => ({ ...b, budget: { dailyUsd: 10 } }));
+      await s.tick(Date.now()); await s.tick(Date.now()); await idle(s);
+      expect(runners).toHaveLength(0);
+    });
+  });
+
   describe('lease: one scheduler per data dir', () => {
     const lockFile = () => path.join(root, 'scheduler.lock');
     const staleLease = (instance: string) => fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.pid, host: os.hostname(), at: Date.now() - LEASE_STALE_MS - 1000, instance }));
@@ -272,8 +375,8 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
       const s = sched(deps(() => fakeRunner(10_000)));
       await s.tick(5); await until(() => runners[0]?.sent.length === 1);
       expect(s.load()).toMatchObject({ running: 1, queued: 1 });
-      // another server took the lease (this one stalled past LEASE_STALE_MS, say)
-      fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.pid, host: os.hostname(), at: Date.now(), instance: 'other' }));
+      // another server took the lease (this one stalled past LEASE_STALE_MS, say): a live process (the parent stands in)
+      fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.ppid, host: os.hostname(), at: Date.now(), instance: 'other' }));
       expect(await s.claim()).toBe(false);
       await idle(s);
       expect(runners[0].interrupt).toHaveBeenCalled();
@@ -283,7 +386,7 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
       expect(store.runs('b')).toEqual([]);
     });
 
-    it('a refresh that fails to write (lease not taken by anyone) does not abort the runs in flight', async () => {
+    it('a refresh that fails to write (lease not taken by anyone) keeps holding and does not abort the runs in flight; given up only after several failures spanning the stale time', async () => {
       await store.save(bot('a', [routine({ id: 'r1', nextRunAt: 1 })]));
       const s = sched(deps(() => fakeRunner(10_000)));
       await s.tick(5); await until(() => runners[0]?.sent.length === 1);
@@ -291,6 +394,11 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
       fs.rmSync(lockFile(), { force: true }); fs.mkdirSync(lockFile());
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       try {
+        expect(await s.claim()).toBe(true);
+        expect(await s.claim()).toBe(true);
+        expect(await s.claim()).toBe(true); // three in a row, but not yet LEASE_STALE_MS apart
+        expect(s.canAct()).toBe(true);
+        (s as any).writeFailSince = Date.now() - LEASE_STALE_MS - 1;
         expect(await s.claim()).toBe(false);
         await settle();
         expect(runners[0].interrupt).not.toHaveBeenCalled();
@@ -312,6 +420,16 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
       expect(await s3.claim()).toBe(true);
       const fresh = sched(deps());
       expect(await fresh.claim()).toBe(false);
+    });
+
+    it('on this host a live process keeps its lease however old; a lease of another host is free once stale', async () => {
+      fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.ppid, host: os.hostname(), at: Date.now() - 10 * LEASE_STALE_MS, instance: 'busy' }));
+      const s = sched(deps());
+      expect(await s.claim()).toBe(false);
+      fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.ppid, host: 'other-host', at: Date.now() - LEASE_STALE_MS / 2, instance: 'far' }));
+      expect(await s.claim()).toBe(false);
+      fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.ppid, host: 'other-host', at: Date.now() - LEASE_STALE_MS - 1000, instance: 'far' }));
+      expect(await s.claim()).toBe(true);
     });
   });
 });

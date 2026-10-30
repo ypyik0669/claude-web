@@ -4,7 +4,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { AuditRow, Bot, BotRun, InboxItem } from '../protocol.js';
 import { atomicWrite } from '../agent-config/backup.js';
-import type { RoutineState, TrustMap } from './types.js';
+import type { PendingResume, RoutineState, TrustMap } from './types.js';
 
 /** Bot and run ids arrive from WebSocket requests and become path segments: plain names only. */
 const SAFE_ID = /^[\w-]+$/;
@@ -125,6 +125,19 @@ export class BotStore {
   private trustFile(id: string) { return path.join(this.dir(id), 'trust.json'); }
   trust(id: string): TrustMap { return readJson<TrustMap>(this.trustFile(id), {}); }
   async setTrust(id: string, t: TrustMap) { const file = this.trustFile(id); await this.locked(file, () => writeJson(file, t)); }
+
+  private resumesFile(id: string) { return path.join(this.dir(id), 'resumes.json'); }
+  pendingResumes(id: string): PendingResume[] { const v = readJson<PendingResume[]>(this.resumesFile(id), []); return Array.isArray(v) ? v : []; }
+  /** read-modify-write in the file's lock; `fn` returns the new list and what to hand back */
+  async updateResumes<T>(id: string, fn: (cur: PendingResume[]) => { next: PendingResume[]; out: T }): Promise<T> {
+    const file = this.resumesFile(id);
+    return this.locked(file, async () => {
+      const { next, out } = fn(this.pendingResumes(id));
+      if (next.length) await writeJson(file, next);
+      else await fsp.rm(file, { force: true });
+      return out;
+    });
+  }
 
   private runsFile(id: string) { return path.join(this.dir(id), 'runs', 'index.jsonl'); }
   /** newest first; when an id has several lines (its start, then its end) the last line wins */

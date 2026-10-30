@@ -75,6 +75,25 @@ export class Inbox extends EventEmitter {
     });
   }
 
+  /** closes the open approvals that match (their run was stopped): done, archived, with a note — no later approve resumes them */
+  closeApprovals(match: (i: InboxItem) => boolean, note: string): Promise<InboxItem[]> {
+    return this.serial(async () => {
+      const at = Date.now();
+      const closed: InboxItem[] = [];
+      const next = this.items.map((i) => {
+        if (i.kind !== 'approval' || i.done || !match(i)) return i;
+        const c: InboxItem = { ...i, done: { at, answer: 'archive', note } };
+        closed.push(c);
+        return c;
+      });
+      if (!closed.length) return closed;
+      await this.store.setInbox(next);
+      this.items = next;
+      for (const c of closed) this.tell(c);
+      return closed;
+    });
+  }
+
   /** marks the item done; throws when it is unknown or already answered */
   answer(a: InboxAnswer): Promise<InboxItem> {
     return this.serial(async () => {

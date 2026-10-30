@@ -6,7 +6,7 @@ import type { ActionClass, Bot, BotPolicy, BotRun, OpenSessionParams, PolicyLeve
 import type { BotStore } from './store.js';
 import type { AuditLog } from './audit.js';
 import type { Inbox } from './inbox.js';
-import type { RoutineState } from './types.js';
+import type { ApprovedCall, RoutineState } from './types.js';
 import { makeGate } from './policy/gate.js';
 import { fingerprint, runScript } from './precheck.js';
 import { summarize } from './policy/classify.js';
@@ -27,7 +27,8 @@ export interface PipelineDeps {
 }
 export interface RunOutcome { run: BotRun }
 export interface RunOptions {
-  resume?: { sessionId: string; approved: { toolName: string; input: Record<string, unknown> } };
+  /** the conversation to go on with and the calls the user approved for it (each passes once) */
+  resume?: { sessionId: string; approved: ApprovedCall[] };
   /** the hard stop: aborting kills a running pre-check / acceptance script, interrupts and closes the conversation */
   signal?: AbortSignal;
 }
@@ -193,8 +194,8 @@ export async function runRoutine(d: PipelineDeps, bot: Bot, routine: Routine, tr
   let res: Outcome;
   try {
     if (o.resume) {
-      g.approveOnce(o.resume.approved.toolName, o.resume.approved.input);
-      runner.send(tr('你之前要做的「{summary}」已经批准，现在执行它，然后接着完成例行任务。', { summary: summarize(o.resume.approved.toolName, o.resume.approved.input) }));
+      for (const a of o.resume.approved) g.approveOnce(a.toolName, a.input);
+      runner.send(tr('你之前要做的「{summary}」已经批准，现在执行它，然后接着完成例行任务。', { summary: o.resume.approved.map((a) => summarize(a.toolName, a.input)).join('」「') }));
     } else {
       runner.send(buildPrompt(bot, routine, d.store.stateOf(bot.id, routine.id), d.memories(bot.id, routine.name).slice(0, 8), checkpointFile));
     }

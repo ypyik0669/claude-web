@@ -262,7 +262,7 @@ export class BotService extends EventEmitter {
     return this.requestStop([id]);
   }
   async stopAll(): Promise<{ requested: true; note: string } | null> {
-    if (this.scheduler.canAct()) { await this.scheduler.stopAll(); return null; }
+    if (this.scheduler.canAct()) { await this.scheduler.stopAll({ hard: true }); return null; }
     return this.requestStop('*');
   }
   private requestStop(ids: string[] | '*') {
@@ -291,7 +291,7 @@ export class BotService extends EventEmitter {
       // left by a window of an earlier holder's time (a dead one): not for the runs this holder started
       const at = typeof req.at === 'number' ? req.at : 0;
       if (at < Date.now() - LEASE_STALE_MS || at < this.scheduler.holdingSince()) return;
-      if (req.botIds === '*') await this.scheduler.stopAll();
+      if (req.botIds === '*') await this.scheduler.stopAll({ hard: true });
       else if (Array.isArray(req.botIds)) for (const id of req.botIds) if (typeof id === 'string') await this.scheduler.stopBot(id);
     } catch (e) { console.warn('[bots] stop request:', e); } finally { this.taking = false; }
   }

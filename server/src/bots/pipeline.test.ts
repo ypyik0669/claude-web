@@ -66,7 +66,7 @@ describe('runRoutine', () => {
     const item = inbox.list('b1').find((i) => i.kind === 'approval')!;
     expect(item).toMatchObject({ toolName: 'Bash', runId: first.run.id, sessionId: first.run.sessionId });
     const r2 = fakeRunner({ calls: [push] });
-    const second = await runRoutine(deps(r2), b, b.routines[0], 'resume', { resume: { sessionId: item.sessionId!, approved: { toolName: item.toolName!, input: item.input! } } });
+    const second = await runRoutine(deps(r2), b, b.routines[0], 'resume', { resume: { sessionId: item.sessionId!, approved: [{ toolName: item.toolName!, input: item.input! }] } });
     expect(opened[1].sessionId).toBe(item.sessionId);
     expect(r2.sent[0]).toContain('已经批准');
     expect(store.audit('b1', second.run.id).map((a) => a.result)).toEqual(['allowed']);

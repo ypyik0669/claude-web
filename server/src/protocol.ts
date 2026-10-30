@@ -1025,7 +1025,8 @@ export interface InboxItem {
   title: string; body?: string;
   toolName?: string; input?: Record<string, unknown>; cls?: ActionClass; undoable?: boolean;
   proposal?: InboxProposal;
-  done?: { at: number; answer: InboxAnswer['answer'] };
+  /** note: why it was closed without an answer (its run was stopped) */
+  done?: { at: number; answer: InboxAnswer['answer']; note?: string };
 }
 export interface InboxAnswer { id: string; answer: 'approve' | 'approve_scope' | 'reject' | 'archive' | 'send' | 'adopt'; scope?: PolicyScope }
 export interface BotLoad { running: number; queued: number; todayUsd: number; weekEstimateUsd: number; concurrency: number }
