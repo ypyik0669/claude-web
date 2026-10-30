@@ -1006,7 +1006,9 @@ export interface BotRun {
   said?: string; verified?: { ok: boolean; note?: string }; error?: string; queued?: number;
 }
 export type AuditBasis = 'rule' | 'trust' | 'user' | 'autopilot' | 'unleashed';
-export interface AuditRow { at: number; runId: string; botId: string; toolName: string; cls: ActionClass; level: PolicyLevel; basis: AuditBasis; summary: string; result: 'allowed' | 'denied' | 'queued'; undo?: string }
+export interface AuditRow { at: number; runId: string; botId: string; toolName: string; cls: ActionClass; level: PolicyLevel; basis: AuditBasis; summary: string; result: 'allowed' | 'denied' | 'queued'; undo?: string;
+  /** scopeKey of the call ('channel:C1' / 'domain:x.com' / '*'): what perDay counts on */ scope?: string;
+  /** the policy rule that decided it — a later correction demotes exactly this rule */ rule?: PolicyRule }
 export type InboxKind = 'approval' | 'finding' | 'draft' | 'proposal';
 export type InboxProposal = { type: 'trust_up'; cls: ActionClass; scope: PolicyScope } | { type: 'routine'; routine: Routine };
 export interface InboxItem {
