@@ -19,6 +19,8 @@ export interface SchedulerDeps extends PipelineDeps {
   concurrency(): number;
   /** settings: the day's spend cap over every bot */
   globalBudgetUsd(): number | undefined;
+  /** the model a run of this bot asks for when the bot names none (its tier on a routing provider); undefined = the provider's */
+  modelFor?(bot: Bot): string | undefined;
 }
 export type ResumeInfo = NonNullable<RunOptions['resume']>;
 interface Job { botId: string; routineId: string; trigger: RunTrigger; resume?: ResumeInfo; retried?: boolean }
@@ -81,6 +83,9 @@ export class BotScheduler extends EventEmitter {
   private readLease(): Lease | undefined {
     try { return JSON.parse(fs.readFileSync(this.lockFile, 'utf8')) as Lease; } catch { return undefined; }
   }
+  /** a run of this bot is in flight / waiting in the queue (BotStatus.state) */
+  isRunning(botId: string): boolean { return this.running.has(botId); }
+  isQueued(botId: string): boolean { return this.queue.some((j) => j.botId === botId); }
   /** whether this scheduler is the one on duty: the service checks it before marking an inbox answer done */
   canAct(): boolean { return this.holding; }
 
@@ -271,7 +276,8 @@ export class BotScheduler extends EventEmitter {
       this.emit('run', run); this.emit('bots');
       return run;
     }
-    const { run } = await runRoutine(this.d, bot, routine, job.trigger, { signal, ...(job.resume ? { resume: job.resume } : {}) });
+    const effective = bot.model ? bot : { ...bot, model: this.d.modelFor?.(bot) };
+    const { run } = await runRoutine(this.d, effective, routine, job.trigger, { signal, ...(job.resume ? { resume: job.resume } : {}) });
     this.emit('run', run); this.emit('bots');
     return run;
   }

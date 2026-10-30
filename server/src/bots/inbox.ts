@@ -43,6 +43,16 @@ export class Inbox extends EventEmitter {
     });
   }
 
+  /** a deleted bot's items go with it */
+  removeBot(botId: string): Promise<void> {
+    return this.serial(async () => {
+      const next = this.items.filter((i) => i.botId !== botId);
+      if (next.length === this.items.length) return;
+      await this.store.setInbox(next);
+      this.items = next;
+    });
+  }
+
   /** marks the item done; throws when it is unknown or already answered */
   answer(a: InboxAnswer): Promise<InboxItem> {
     return this.serial(async () => {

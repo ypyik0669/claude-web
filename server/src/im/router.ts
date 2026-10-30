@@ -229,6 +229,13 @@ export class ImRouter {
     }
   }
 
+  /** 值班 Bot: push to one chat of one gateway (a bot's output), buttons as inline keys where the platform has them */
+  async sendTo(gatewayId: string, chatId: string, text: string, buttons?: { id: string; label: string; danger?: boolean }[]) {
+    const a = this.adapters.get(gatewayId);
+    if (!a || a.state !== 'running') throw new Error(tr('这个 IM 没在运行'));
+    await a.send(chatId, text, buttons ? { buttons } : undefined);
+  }
+
   private async notify(sessionId: string, text: string, o?: { buttons?: { id: string; label: string; danger?: boolean }[] }) {
     for (const b of this.chatsFor(sessionId)) {
       const a = this.adapters.get(b.gatewayId);

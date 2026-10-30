@@ -104,6 +104,8 @@ import type { ComputerAccess } from '../computer/access.js';
 import type { SiteAsk } from '../web/site-gate.js';
 import { computerSupported, defaultFeaturesOf } from '../computer/launcher.js';
 import { tr } from '../i18n/index.js';
+import { clientSessionParams, type BotService } from '../bots/service.js';
+import { installDuty } from '../bots/duty.js';
 
 export interface Services {
   /** Unified session library: every joined source's sessions (sessions.list / search / library.*). */
@@ -184,10 +186,12 @@ export interface Services {
   computer: ComputerAccess;
   /** 允许的网站: the user's answer before an agent changes a page of a new site in the built-in browser (web/site-gate.ts). */
   siteAsk?: SiteAsk;
+  /** 值班 Bot */
+  bots: BotService;
 }
 
 /** Requests after which something connects out: they wait for a fresh look at the proxy. (`web.search` waits inside WebService, like the agents' searches.) */
-const GOES_OUT = new Set<string>(['session.open', 'session.send', 'session.setProvider', 'session.switchAgent', 'providers.probe', 'providers.refreshModels', 'import.run', 'terminal.open', 'im.set', 'im.test', 'mcp.registry', 'sync.remote.test', 'sync.remote.push', 'sync.remote.pull']);
+const GOES_OUT = new Set<string>(['session.open', 'session.send', 'session.setProvider', 'bots.generate', 'session.switchAgent', 'providers.probe', 'providers.refreshModels', 'import.run', 'terminal.open', 'im.set', 'im.test', 'mcp.registry', 'sync.remote.test', 'sync.remote.push', 'sync.remote.pull']);
 
 const isLoopback = (a: string | undefined) => !!a && (a === '::1' || a.startsWith('127.') || a.startsWith('::ffff:127.'));
 
@@ -300,6 +304,10 @@ export class Hub {
     s.customCss.on('changed', () => this.broadcast({ kind: 'customCss.changed' }));
     s.themes.on('changed', () => this.broadcast({ kind: 'themes.changed' }));
     s.agents.events.on('reported', () => this.broadcast({ kind: 'agents.changed' }));
+    s.bots.on('changed', (bots) => this.broadcast({ kind: 'bots.changed', bots }));
+    s.bots.on('run', (run) => this.broadcast({ kind: 'bots.run', run }));
+    s.bots.on('inbox', (item) => this.broadcast({ kind: 'bots.inbox', item }));
+    s.bots.on('load', (load) => this.broadcast({ kind: 'bots.load', load }));
   }
 
   /** `fromPeer`: re-broadcast of another machine's event — local clients only (two machines peering each other would echo forever). */
@@ -521,7 +529,8 @@ export class Hub {
         return s.sessions.subagent(req.sessionId, req.agentId);
 
       case 'session.open': {
-        let params = req.params;
+        // `gated` is set by the server for a bot's run only, never by a window
+        let params = clientSessionParams(req.params);
         // 发送前核对权限: the chip showed another mode than the resume would run in — do not start, say which it is
         {
           const changed = s.pool.modeMismatch(params);
@@ -1300,6 +1309,24 @@ export class Hub {
         await s.vcsTokens.set(req.host, req.token); s.vcs.forgetToken(req.host); return null;
       case 'vcs.create': return s.vcs.create(req.cwd, { title: req.title, body: req.body, isPr: req.isPr, head: req.head, base: req.base, draft: req.draft, labels: req.labels }, req.repo);
       case 'vcs.checkout': return s.vcs.checkout(req.cwd, req.number, { worktree: req.worktree, repo: req.repo });
+      case 'bots.list': return s.bots.list();
+      case 'bots.get': return s.bots.get(req.id);
+      case 'bots.create': return s.bots.create(req.bot);
+      case 'bots.update': return s.bots.update(req.id, req.patch);
+      case 'bots.delete': await s.bots.remove(req.id); return null;
+      case 'bots.pause': return s.bots.pause(req.id, req.paused);
+      case 'bots.unleash': return s.bots.unleash(req.id, req.on);
+      case 'bots.runNow': await s.bots.runNow(req.id, req.routineId); return null;
+      case 'bots.stop': await s.bots.stopBot(req.id); return null;
+      case 'bots.stopAll': await s.bots.stopAll(); return null;
+      case 'bots.inbox.list': return s.bots.inboxList(req.botId, req.includeDone);
+      case 'bots.inbox.answer': return s.bots.inboxAnswer(req.answer);
+      case 'bots.runs.list': return s.bots.runs(req.botId, req.routineId, req.limit);
+      case 'bots.runs.audit': return s.bots.audit(req.botId, req.runId);
+      case 'bots.generate': return s.bots.generate(req.text, req.cwd);
+      case 'bots.templates': return s.bots.templates();
+      case 'bots.load': return s.bots.load();
+      case 'bots.duty.install': return installDuty(req.on);
       case 'goals.list': return s.goals.list();
       case 'goals.create': return s.goals.create({ objective: req.objective, spec: req.spec, cwd: req.cwd, maxTurns: req.maxTurns, tokenBudget: req.tokenBudget, agent: req.agent, permissionMode: req.permissionMode, model: req.model });
       case 'goals.update': return s.goals.update(req.id, req.patch);

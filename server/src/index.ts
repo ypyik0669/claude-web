@@ -115,6 +115,8 @@ import { SiteAsk } from './web/site-gate.js';
 import { handleComputerAsk } from './computer/http.js';
 import { configureComputerMcp } from './computer/launcher.js';
 import { noteDutyPid } from './bots/duty.js';
+import { BotService } from './bots/service.js';
+import { CLAUDE_PROVIDER_ID } from './protocol.js';
 
 /** the backdrop worker's own CSP: its scripts from here (and the theme's code through new Function), nothing else */
 export const BACKDROP_WORKER_CSP = "default-src 'none'; script-src 'self' 'unsafe-eval'";
@@ -640,7 +642,20 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     },
   });
   themes.watch();
-  const services = { importer, customCss, orchestra, background, characters, themes, remote, anywhere, tunnels, im, vcs: new VcsService(gitSvc, { gitlabHosts: () => { const v = meta.settings()['vcs.gitlabHosts']; return Array.isArray(v) ? v : []; }, tokens: vcsTokens }), vcsTokens, wsl, goals, android: new AndroidService(), pool, sessions: sessionsSvc, config, usage: new UsageService(async (sid) => providerTimeline(await canonical.providerSwitches(sid), meta.sessionMeta(sid).providerId, (id) => { const p = meta.provider(id); return p ? { type: p.type, name: p.name } : undefined; })), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway, privacy, upstreams, channels, engines, plugins, sync, syncRemote, share, tasks, web, computer, siteAsk, localEnv: localEnvStore, previews, cloud };
+  // 值班 Bot: one service per data dir; runs only while this server holds <dataDir>/bots/scheduler.lock
+  const bots = new BotService({
+    dataDir: path.join(dataDir(), 'bots'), pool, memory, ledger, meta,
+    im: { sendTo: (g, c, t, b) => im.router.sendTo(g, c, t, b), onCallback: (p, h) => im.router.callbackHandlers.set(p, (parts, ctx) => h(parts, ctx)) },
+    providerKind: (pid) => {
+      const id = pid ?? pool.defaultProviderFor('claude');
+      if (!id || id === CLAUDE_PROVIDER_ID) return 'claude';
+      const p = meta.provider(id);
+      if (p?.type === 'gateway' && p.gatewayGroupId && gateway.routingGroup()?.id === p.gatewayGroupId) return 'routing';
+      return p?.type === 'anthropic' || p?.type === 'claude-account' ? 'claude' : 'other';
+    },
+  });
+  void bots.start();
+  const services = { importer, customCss, orchestra, background, characters, themes, remote, anywhere, tunnels, im, vcs: new VcsService(gitSvc, { gitlabHosts: () => { const v = meta.settings()['vcs.gitlabHosts']; return Array.isArray(v) ? v : []; }, tokens: vcsTokens }), vcsTokens, wsl, goals, android: new AndroidService(), pool, sessions: sessionsSvc, config, usage: new UsageService(async (sid) => providerTimeline(await canonical.providerSwitches(sid), meta.sessionMeta(sid).providerId, (id) => { const p = meta.provider(id); return p ? { type: p.type, name: p.name } : undefined; })), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway, privacy, upstreams, channels, engines, plugins, sync, syncRemote, share, tasks, web, computer, siteAsk, localEnv: localEnvStore, previews, cloud, bots };
   new Hub(wss, services);
   tasks.start();
   // model lists older than a day (or never pulled) are refreshed in the background — list only, no tokens
@@ -719,6 +734,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       await upstreams.stop();
       await engines.stopAll(); // CLIProxyAPI / Magpie we started (their trees); they come back at the next start
       await remote.stop();
+      await bots.stopAll().catch(() => {}); // the bots' runs end as stopped, before the pool closes their conversations
+      bots.stop(); // gives the scheduler lease back
       await orchestra.shutdown(); // before the pool: session closes must not fail / advance runs
       await pool.closeAll();
       await library.close(); // library-only Codex app-server / opencode serve / ACP processes

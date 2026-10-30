@@ -6,7 +6,13 @@ import type { BotDraft, OpenSessionParams, Routine } from '../protocol.js';
 import { nextCron } from '../schedules/cron.js';
 import { tr } from '../i18n/index.js';
 
-export interface GenerateDeps { open(params: OpenSessionParams): AgentDriver; defaultProvider(): string | undefined }
+export interface GenerateDeps {
+  open(params: OpenSessionParams): AgentDriver; defaultProvider(): string | undefined;
+  /** the model to write the draft with (the service passes the provider's strongest); undefined = the provider's default */
+  model?(): string | undefined;
+}
+/** the scheduler checks every routine this often at most; a draft never asks for more */
+export const MIN_EVERY_MINUTES = 15;
 
 /** model-facing, not shown to the user */
 export const GENERATE_PROMPT = (text: string) => [
@@ -14,7 +20,8 @@ export const GENERATE_PROMPT = (text: string) => [
   '{ "name": "短名字", "charter": { "role": "一句话职责", "audience": "服务对象", "sources": ["只用这些来源"], "report": "报告格式", "done": "完成条件" },',
   '  "routines": [ { "name": "例行名", "prompt": "每次运行的指令，写清要查什么、输出什么、不做什么", "cron": "5 字段 cron 或省略", "everyMinutes": 60, "precheck": "一段 shell：输出会变化的东西（列表、哈希），没变化就不唤醒；没有合适的就省略", "acceptance": { "kind": "none" } } ],',
   '  "tier": "cheap|balanced|best", "budget": { "dailyUsd": 2 } }',
-  '规则：默认只读、只起草、不对外发送；要发的东西让它写进 <draft>…</draft>；节奏能慢就慢（每天一次优先于每小时）。',
+  '规则：默认只读、只起草、不对外发送；要发的东西让它写进 <draft>…</draft>；节奏能慢就慢（每天一次优先于每小时），everyMinutes 不小于 15。',
+  `precheck 和验收脚本在${process.platform === 'win32' ? ' Windows PowerShell' : ' sh'} 里运行，用它的语法。`,
   'role 写成「你是我的……。你的活：……」，结尾写明不做什么；report 结尾固定是「查了什么 / 没能查到什么 / 建议的下一步」。名字和文字用这句话的语言。',
   '例子：「每天早上看看仓库有什么新 issue」→',
   '```json',
@@ -33,7 +40,7 @@ export function parseDraft(answer: string, cwd: string, text = ''): BotDraft['bo
   const routines: Routine[] = (Array.isArray(j.routines) && j.routines.length ? j.routines : [{ name: tr('每天一次'), prompt: String(j.charter?.role ?? ''), everyMinutes: 1440 }]).map((r: any) => {
     let cron = typeof r.cron === 'string' && r.cron.trim() ? r.cron.trim() : undefined;
     if (cron) { try { nextCron(cron); } catch { cron = undefined; } }
-    return { id: `r_${randomBytes(3).toString('hex')}`, name: String(r.name ?? tr('例行')), prompt: String(r.prompt ?? ''), enabled: true, onFail: 'inbox' as const, acceptance: r.acceptance?.kind === 'script' && typeof r.acceptance.script === 'string' ? { kind: 'script' as const, script: r.acceptance.script } : { kind: 'none' as const }, ...(cron ? { cron } : { everyMinutes: Number(r.everyMinutes) > 0 ? Number(r.everyMinutes) : 1440 }), ...(typeof r.precheck === 'string' && r.precheck.trim() ? { precheck: r.precheck.trim() } : {}) };
+    return { id: `r_${randomBytes(3).toString('hex')}`, name: String(r.name ?? tr('例行')), prompt: String(r.prompt ?? ''), enabled: true, onFail: 'inbox' as const, acceptance: r.acceptance?.kind === 'script' && typeof r.acceptance.script === 'string' ? { kind: 'script' as const, script: r.acceptance.script } : { kind: 'none' as const }, ...(cron ? { cron } : { everyMinutes: Number(r.everyMinutes) > 0 ? Math.max(MIN_EVERY_MINUTES, Number(r.everyMinutes)) : 1440 }), ...(typeof r.precheck === 'string' && r.precheck.trim() ? { precheck: r.precheck.trim() } : {}) };
   });
   const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v : undefined);
   return {
@@ -45,7 +52,7 @@ export function parseDraft(answer: string, cwd: string, text = ''): BotDraft['bo
 }
 
 export async function generateBot(d: GenerateDeps, text: string, cwd: string): Promise<BotDraft['bot']> {
-  const r = d.open({ cwd, features: { chatOnly: true }, permissionMode: 'dontAsk', providerId: d.defaultProvider(), drivenBy: 'schedule' });
+  const r = d.open({ cwd, features: { chatOnly: true }, permissionMode: 'dontAsk', providerId: d.defaultProvider(), model: d.model?.(), drivenBy: 'schedule' });
   try {
     for (let i = 0; i < 60 && r.state === 'starting'; i++) await new Promise((res) => setTimeout(res, 500));
     const answer = await new Promise<string>((resolve, reject) => {
