@@ -8,7 +8,7 @@ import type { Bot, BotLoad, BotRun, InboxAnswer, InboxItem, Routine, RunTrigger 
 import { nextCron } from '../schedules/cron.js';
 import { missedRun } from '../schedules/catch-up.js';
 import { atomicWrite } from '../agent-config/backup.js';
-import { runRoutine, type PipelineDeps, type RunOptions } from './pipeline.js';
+import { HANDOFF, runRoutine, type PipelineDeps, type RunOptions } from './pipeline.js';
 import { recordApproval, recordCorrection, demoteRule, TRUST_THRESHOLD } from './policy/trust.js';
 import { scopeKey } from './policy/rules.js';
 import { summarize, targetOf } from './policy/classify.js';
@@ -189,8 +189,8 @@ export class BotScheduler extends EventEmitter {
   }
   /**
    * Taking the lease: what the last holder left — its runs that never ended (it died) are closed as interrupted and,
-   * for an onFail 'resume' routine, resumed next tick; approved steps waiting for their resume (resumes.json) are
-   * queued again.
+   * for an onFail 'resume' routine, resumed next tick; a cron run a quitting server handed over (`handoff`) runs again
+   * once; approved steps waiting for their resume (resumes.json) are queued again.
    */
   private async recover() {
     const now = Date.now();
@@ -201,11 +201,11 @@ export class BotScheduler extends EventEmitter {
       if (this.running.has(bot.id)) continue;
       for (const r of this.d.store.runs(bot.id, 2000)) {
         if (r.endedAt || r.skipped) continue;
-        await this.d.store.addRun({ ...r, ok: false, error: tr('中断（服务重启）'), endedAt: now });
+        await this.d.store.addRun({ ...r, ok: false, error: r.handoff ? r.error : tr('中断（服务重启）'), endedAt: now });
         const routine = bot.routines.find((x) => x.id === r.routineId);
-        if (routine?.onFail === 'resume' && routine.enabled && !bot.paused && !this.nextTick.some((j) => j.botId === bot.id && j.routineId === routine.id)) {
-          this.nextTick.push({ botId: bot.id, routineId: routine.id, trigger: 'resume', retried: true });
-        }
+        if (!routine?.enabled || bot.paused || this.nextTick.some((j) => j.botId === bot.id && j.routineId === routine.id)) continue;
+        if (routine.onFail === 'resume') this.nextTick.push({ botId: bot.id, routineId: routine.id, trigger: 'resume', retried: true });
+        else if (r.handoff && r.trigger === 'cron') this.nextTick.push({ botId: bot.id, routineId: routine.id, trigger: 'cron', retried: true });
       }
     }
   }
@@ -451,13 +451,13 @@ export class BotScheduler extends EventEmitter {
   /**
    * The hard stop (spec §5): always works — empties the queue and aborts every run; nothing gets paused. `hard`
    * (the user's stop) also closes the open approvals and the steps waiting to resume; a server shutting down keeps them
-   * for the next holder.
+   * for the next holder, and hands it its runs in flight too (HANDOFF: left open, closed and run again on its claim).
    */
   async stopAll(o: { hard?: boolean } = {}) {
     this.epoch++;
     this.queue = []; this.nextTick = [];
     const slots = [...this.running.values()];
-    for (const s of slots) s.ctl.abort();
+    for (const s of slots) s.ctl.abort(o.hard ? undefined : HANDOFF);
     this.emit('load', this.load());
     await Promise.all(slots.map((s) => s.done));
     if (o.hard) await this.closeWaiting(this.d.store.list().map((b) => b.id));

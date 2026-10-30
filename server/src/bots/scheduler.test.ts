@@ -127,14 +127,14 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
     expect(s.load().queued).toBe(0);
   });
 
-  it('stopAll running runs (interrupted, recorded as stopped, no retry) and empties the queue', async () => {
+  it('stopAll({ hard }) stops running runs (interrupted, recorded as stopped, no retry) and empties the queue', async () => {
     conc = 1;
     await store.save(bot('a', [routine({ id: 'r1', nextRunAt: 1, onFail: 'retry_up' })]));
     await store.save(bot('b', [routine({ id: 'r1', nextRunAt: 1 })]));
     const s = sched(deps(() => fakeRunner(10_000)));
     await s.tick(5); await until(() => runners[0]?.sent.length === 1);
     expect(s.load()).toMatchObject({ running: 1, queued: 1 });
-    await s.stopAll();
+    await s.stopAll({ hard: true });
     expect(runners[0].interrupt).toHaveBeenCalled();
     expect(s.load()).toMatchObject({ running: 0, queued: 0 });
     await settle();
@@ -255,6 +255,37 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
       await s.tick(Date.now()); await until(() => runners.length === 1); await idle(s);
       expect(store.runs('a').map((r) => r.trigger)).toContain('resume');
       expect(store.runs('b')).toHaveLength(1);
+    });
+
+    it('a server quitting mid-run (the duty server yielding to the app) hands the run over: the next holder closes it, resumes an onFail resume routine and runs a cut-short cron occurrence once', async () => {
+      const due = Date.now() - 1000;
+      await store.save(bot('a', [routine({ id: 'r1', onFail: 'resume', nextRunAt: due })]));
+      await store.save(bot('b', [routine({ id: 'r1', onFail: 'inbox', nextRunAt: due })]));
+      const s1 = sched(deps(() => fakeRunner(10_000)));
+      await s1.tick(Date.now()); await until(() => runners.length === 2);
+      await s1.stopAll(); s1.stop(); // shutdown, not the user's stop
+      for (const id of ['a', 'b']) expect(store.runs(id)[0]).toMatchObject({ ok: false, handoff: true, error: '中断（让给另一个 claude-web）' });
+      expect(store.runs('a')[0].endedAt).toBeUndefined();
+      const s2 = sched(deps());
+      await s2.tick(Date.now()); await idle(s2); // takes the lease: closes them
+      for (const id of ['a', 'b']) expect(store.runs(id).find((r) => r.trigger === 'cron')!.endedAt).toBeGreaterThan(0);
+      await s2.tick(Date.now()); await until(() => runners.length === 4); await idle(s2);
+      expect(store.runs('a').map((r) => r.trigger)).toContain('resume');
+      expect(store.runs('b').filter((r) => r.trigger === 'cron' && r.ok)).toHaveLength(1);
+      await s2.tick(Date.now()); await idle(s2);
+      expect(runners).toHaveLength(4); // once
+    });
+
+    it('a hard stop (the user) hands nothing over', async () => {
+      await store.save(bot('b', [routine({ id: 'r1', nextRunAt: Date.now() - 1000 })]));
+      const s1 = sched(deps(() => fakeRunner(10_000)));
+      await s1.tick(Date.now()); await until(() => runners.length === 1);
+      await s1.stopAll({ hard: true }); s1.stop();
+      expect(store.runs('b')[0]).toMatchObject({ ok: false, error: '被停下了' });
+      expect(store.runs('b')[0].handoff).toBeUndefined();
+      const s2 = sched(deps());
+      await s2.tick(Date.now()); await idle(s2); await s2.tick(Date.now()); await idle(s2);
+      expect(runners).toHaveLength(1);
     });
 
     it('a queued cron run keeps its due time until it starts: a restart before then still runs it', async () => {

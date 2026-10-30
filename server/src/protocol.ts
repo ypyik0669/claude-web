@@ -1013,6 +1013,8 @@ export interface BotRun {
   costUsd?: number; toolCalls?: number; usedScript?: boolean;
   /** what the bot said it did (its final text) vs what the acceptance check found */
   said?: string; verified?: { ok: boolean; note?: string }; error?: string; queued?: number;
+  /** the server quit mid-run (a duty server yielding to the app): left open for the next holder, which closes it and runs it again */
+  handoff?: boolean;
 }
 export type AuditBasis = 'rule' | 'trust' | 'user' | 'autopilot' | 'unleashed';
 export interface AuditRow { at: number; runId: string; botId: string; toolName: string; cls: ActionClass; level: PolicyLevel; basis: AuditBasis; summary: string; result: 'allowed' | 'denied' | 'queued'; undo?: string;

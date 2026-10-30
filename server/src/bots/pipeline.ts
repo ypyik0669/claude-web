@@ -138,6 +138,9 @@ async function settleRoutine(d: PipelineDeps, botId: string, routineId: string, 
   else if (after.onFail === 'inbox') await d.inbox.add({ ...base, title: causeTitle(cause, after.name) });
 }
 
+/** the abort reason of a server quitting mid-run (scheduler.stopAll without hard): the run is handed to the next holder */
+export const HANDOFF = 'handoff';
+
 /**
  * One run of a routine (spec §3): pre-check → a new conversation (or the one being resumed), gated before anything
  * is sent → wait for the result → acceptance → record → deliver. `o.signal` is the hard stop.
@@ -148,7 +151,12 @@ export async function runRoutine(d: PipelineDeps, bot: Bot, routine: Routine, tr
   const run: BotRun = { id: `${routine.id}-${started.toString(36)}`, botId: bot.id, routineId: routine.id, at: started, trigger };
   await d.store.addRun(run);
   const finish = async () => { run.endedAt = now(); run.durationMs = run.endedAt - started; await d.store.addRun(run); return { run }; };
-  const stopped = async () => { run.ok = false; run.error = tr('被停下了'); return finish(); };
+  const stopped = async () => {
+    run.ok = false;
+    // the server quitting (not the user's stop): the run stays open for the next holder, which closes it and runs it again
+    if (o.signal?.reason === HANDOFF) { run.error = tr('中断（让给另一个 claude-web）'); run.handoff = true; await d.store.addRun(run); return { run }; }
+    run.error = tr('被停下了'); return finish();
+  };
   if (o.signal?.aborted) return stopped();
 
   if (trigger !== 'resume' && routine.precheck) {

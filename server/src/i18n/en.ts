@@ -1805,6 +1805,7 @@ export const EN_SERVER: Record<string, string> = {
   "这条例行正在运行": "This routine is already running",
   "超出预算": "Over budget",
   "中断（服务重启）": "Interrupted (the server restarted)",
+  "中断（让给另一个 claude-web）": "Interrupted (handed over to another claude-web)",
   "Bot 已暂停，这次没有运行": "The bot is paused, so this run was skipped",
   "例行已关闭，这次没有运行": "The routine is turned off, so this run was skipped",
   "运行已停下，这一条不再执行": "The run was stopped; this won't be carried out",
