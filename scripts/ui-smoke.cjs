@@ -616,7 +616,7 @@ function driver() {
       // redesign phase 1: one pane, one tab, no workbench setting → no global top bar, no group bar, no tab strip, no panel rail
       if (E.SMOKE_READONLY !== '1') {
         const chrome = await js('({ wb: window.__store.getState().settings["ui.workbench"], topbar: !!document.querySelector(".topbar"), groupbar: !!document.querySelector(".groupbar"), strips: document.querySelectorAll(".tabstrip").length, rail: !!document.querySelector(".dock-rail"), iconRail: [...document.querySelectorAll(".rail .rail-main > [data-id], .rail .rail-main > .rail-anchor > [data-id]")].map((b) => b.dataset.id).join(" ") })');
-        check('default chrome: no top bar / group bar / tab strip / row of panel icons; the icon rail is 对话 · 后台 · 自动化 · 网关 · 扩展 · 更多', chrome.wb === false && !chrome.topbar && !chrome.groupbar && !chrome.strips && !chrome.rail && chrome.iconRail === 'chat background automation gateway extensions more', JSON.stringify(chrome));
+        check('default chrome: no top bar / group bar / tab strip / row of panel icons; the icon rail is 对话 · 后台 · 自动化 · Bot · 网关 · 扩展 · 更多', chrome.wb === false && !chrome.topbar && !chrome.groupbar && !chrome.strips && !chrome.rail && chrome.iconRail === 'chat background automation bots gateway extensions more', JSON.stringify(chrome));
         const quota = await js('[...document.querySelectorAll(".quota")].every((q) => q.closest(".sb-foot"))');
         check('the quota ring lives in the sidebar bottom row', quota);
       }
@@ -4593,6 +4593,49 @@ window.desktop = {
           try { ew.destroy(); } catch { /* gone */ }
           await forge.close();
           try { fs.rmSync(ghRepo, { recursive: true, force: true }); } catch { /* windows may hold it */ }
+        }
+      }
+
+      // ---- 值班 Bot (spec 2026-10-30-duty-bots-design): the page with two bots put in through the debug hook (no run;
+      // phase 42 drives the real thing) — the rows, the load bar, the create dialog's templates (Esc closes the dialog
+      // first, then the page), and the two approvals with 批准 in 总览's 需要你 lane
+      if (E.SMOKE_READONLY !== '1') {
+        phase = 'bots';
+        try {
+          const now = Date.now();
+          const botOf = (id, name, state, pendingInbox) => ({ id, name, charter: { role: `${name} 的活`, sources: [] }, cwd: E.SMOKE_REPO || '.', tier: 'balanced', policy: { rules: [] }, budget: { dailyUsd: 2 }, routines: [{ id: 'r_smoke' + id, name: '巡检', prompt: 'p', everyMinutes: 60, enabled: true, onFail: 'inbox', acceptance: { kind: 'none' } }], outputs: [{ kind: 'inbox' }], createdAt: now - 3600_000, updatedAt: now, state, todayUsd: 0.12, weekUsd: 0.5, pendingInbox, trust: {} });
+          const appr = (id, cmd) => ({ id, kind: 'approval', botId: 'b_smoke1', runId: 'r_smoke1-x', routineId: 'r_smokeb_smoke1', sessionId: 'smoke-bot-session', at: now - 60_000, title: `Bash: ${cmd}`, toolName: 'Bash', input: { command: cmd }, cls: 'send' });
+          const payload = { bots: [botOf('b_smoke1', '烟测 A', 'attention', 2), botOf('b_smoke2', '烟测 B', 'running', 0)], inbox: [appr('i_smoke1', 'git push origin main'), appr('i_smoke2', 'curl -X POST https://example.com/hook')], load: { running: 1, queued: 0, todayUsd: 0.12, weekEstimateUsd: 0.5, concurrency: 2 } };
+          // the server pushes its own load every tick: put ours in again right before each look
+          const inject = `window.__cwBots.inject(${JSON.stringify(payload)})`;
+          await js(`(() => { window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } }); ${inject}; window.__cwBots.open('b_smoke1'); })()`);
+          const page = await waitFor(`(${inject}, document.querySelectorAll('.bot-list .bot-row').length === 2 && /在跑 1/.test(document.querySelector('.bots-load .bl-text')?.textContent ?? ''))`, 8000);
+          const seen = await js(`({ rows: [...document.querySelectorAll('.bot-list .bot-row')].map((r) => r.dataset.id + ':' + r.querySelector('.bot-state')?.dataset.state), load: document.querySelector('.bots-load .bl-text')?.textContent ?? null })`);
+          check('bots: two rows (attention, running), the load bar says 在跑 1', page && seen.rows.includes('b_smoke1:attention') && seen.rows.includes('b_smoke2:running'), JSON.stringify(seen));
+          await shot('bots-page');
+          const newBtn = await js(`(() => { const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === '新建 Bot' && x.offsetParent); if (!b) return false; b.click(); return true; })()`);
+          const tpls = await waitFor(`document.querySelectorAll('.bc-tpls .bc-tpl').length === 14`, 8000);
+          check('bots: 新建 Bot opens the dialog with 14 template cards', newBtn && tpls, String(await js(`document.querySelectorAll('.bc-tpls .bc-tpl').length`)));
+          await shot('bots-create');
+          await key('Escape');
+          const closed = await waitFor(`!document.querySelector('.bc-tpls') && window.__cwBots.state().open === true`, 3000);
+          check('bots: Esc closes the dialog, the page stays', closed, JSON.stringify(await js(`({ dialog: !!document.querySelector('.bc-tpls'), open: window.__cwBots.state().open })`)));
+          await key('Escape');
+          check('bots: a second Esc closes the page', await waitFor(`window.__cwBots.state().open === false`, 3000));
+          await js(`(() => { ${inject}; window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'mission' }); })()`);
+          const MP = '.dock-panel[data-panel="mission"]:not([hidden])';
+          const inboxUp = await waitFor(`document.querySelectorAll('${MP} .bots-inbox .ib-item[data-kind="approval"]').length === 2`, 8000);
+          const ib = await js(`[...document.querySelectorAll('${MP} .bots-inbox .ib-item[data-kind="approval"]')].map((i) => ({ id: i.dataset.id, approve: [...i.querySelectorAll('button')].some((b) => b.textContent.trim() === '批准') }))`);
+          check('bots: the inbox (总览 · 需要你) has the 2 approvals, each with 批准', inboxUp && ib.length === 2 && ib.every((i) => i.approve), JSON.stringify(ib));
+          await shot('bots-inbox');
+          const bErr = await noBoundary(MP);
+          check('bots: inbox without error boundary', !bErr, bErr);
+        } catch (e) {
+          check('bots', false, e.stack || String(e));
+        } finally {
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`).catch(() => {});
+          await js(`window.__cwBots.inject({ bots: [], inbox: [], load: { running: 0, queued: 0, todayUsd: 0, weekEstimateUsd: 0, concurrency: 2 } })`).catch(() => {});
+          await sleep(200);
         }
       }
 

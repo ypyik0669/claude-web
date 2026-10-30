@@ -103,6 +103,7 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 | [node-graph](docs/notes/node-graph.md) | 节点图（spec 2026-10-24 D） | ui/node-graph 共用组件；nodegraph 格式、marks / 状态标签；后台指挥台、编排执行图、对话代码块与 Mermaid 切换；动效与 150 张上限；ui.nodegraphHint |
 | [free-sources](docs/notes/free-sources.md) | 免费来源与托管程序（2026-10-26，spec「统一模型来源」切片 4） | 来源目录三层与签名远程目录、ChannelDriver 注册表、channels.add 一步添加、Kilo 免 key、modelFilter、CLIProxyAPI / Magpie 的下载校验 / 回退 / 运行 / 连接已有 |
 | [screen-recording](docs/notes/screen-recording.md) | 录屏（阶段 E3，2026-10-25） | + 菜单录屏、自己的选择框、主进程只放行选中的源、录制格式与上限、抽关键帧、录下 Claude 的操作 |
+| [duty-bots](docs/notes/duty-bots.md) | 值班 Bot（2026-10-30） | Bot 目录、流水线、策略闸、收件箱、调度与预算、值班模式、调试 |
 
 ## 结构
 
