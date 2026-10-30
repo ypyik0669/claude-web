@@ -81,6 +81,19 @@ describe('BotStore', () => {
     expect(all.filter((f) => f.endsWith('.tmp'))).toEqual([]);
   });
 
+  it('concurrent updates to different routines of one bot both land (on disk too); unknown id / undefined change nothing', async () => {
+    const r = (id: string) => ({ id, name: id, prompt: 'p', enabled: true, acceptance: { kind: 'none' as const }, onFail: 'inbox' as const });
+    await s.save({ ...bot('b_u'), routines: [r('r1'), r('r2')] });
+    const bump = (rid: string) => s.update('b_u', (b) => ({ ...b, routines: b.routines.map((x) => (x.id === rid ? { ...x, failures: 2 } : x)) }));
+    await Promise.all([bump('r1'), bump('r2'), s.update('b_u', (b) => ({ ...b, name: '改名' }))]);
+    for (const b of [s.get('b_u')!, new BotStore(root).get('b_u')!]) {
+      expect(b.routines.map((x) => x.failures)).toEqual([2, 2]);
+      expect(b.name).toBe('改名');
+    }
+    expect(await s.update('nope', (b) => b)).toBeUndefined();
+    expect((await s.update('b_u', () => undefined))?.name).toBe('改名');
+  });
+
   it('concurrent setState patches to the same routine both land', async () => {
     await s.save(bot('b_1'));
     await Promise.all([s.setState('b_1', 'r1', { fingerprint: 'f' }), s.setState('b_1', 'r1', { checkpoint: 'c' }), s.setState('b_1', 'r1', { lastSummary: 'l' })]);

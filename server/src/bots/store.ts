@@ -78,6 +78,23 @@ export class BotStore {
     await this.locked(file, () => writeJson(file, b));
     return b;
   }
+  /**
+   * Read-modify-write inside the bot.json lock: `fn` sees the bot as it is after every earlier save / update, so two
+   * runs (or a run and a user edit) changing different routines both land. `fn` → undefined = no change; unknown id → undefined.
+   */
+  async update(id: string, fn: (bot: Bot) => Bot | undefined): Promise<Bot | undefined> {
+    const file = path.join(this.dir(id), 'bot.json');
+    return this.locked(file, async () => {
+      const cur = this.bots.get(id);
+      if (!cur) return undefined;
+      const next = fn(cur);
+      if (!next) return cur;
+      const b = { ...next, id, updatedAt: Date.now() };
+      this.bots.set(id, b);
+      await writeJson(file, b);
+      return b;
+    });
+  }
   /** only a bot this store knows: an unknown id touches nothing on disk */
   async remove(id: string) {
     const dir = this.dir(id);

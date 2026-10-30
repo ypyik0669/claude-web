@@ -84,6 +84,40 @@ const drafts = (text: string) => [...text.matchAll(/<draft>([\s\S]*?)<\/draft>/g
 /** only a Claude SessionRunner opened with `gated` answers every tool call through `gate` (Codex / ACP drivers ignore it) */
 const honoursGate = (r: AgentDriver) => r.info?.agent === 'claude' && (r as AgentDriver & { gated?: boolean }).gated === true;
 
+/** why a run failed, for the inbox title */
+type Cause = 'open' | 'ungated' | 'timeout' | 'died' | 'error' | 'verify';
+const causeTitle = (c: Cause, name: string) => ({
+  open: () => tr('例行「{name}」没能开始：对话打不开', { name }),
+  ungated: () => tr('例行「{name}」没能开始：对话不经过策略检查', { name }),
+  timeout: () => tr('例行「{name}」超时了', { name }),
+  died: () => tr('例行「{name}」的进程退出了', { name }),
+  error: () => tr('例行「{name}」出错了', { name }),
+  verify: () => tr('例行「{name}」没通过验收', { name }),
+}[c])();
+
+/**
+ * Every finished run that was not stopped: the routine's lastRunAt / failures (and enabled, at MAX_FAILURES) written
+ * back inside the store's lock — whatever else changed bot.json meanwhile stays — then the notices.
+ */
+async function settleRoutine(d: PipelineDeps, botId: string, routineId: string, run: BotRun, cause: Cause | null) {
+  let after: Routine | undefined;
+  await d.store.update(botId, (b) => {
+    const i = b.routines.findIndex((r) => r.id === routineId);
+    if (i < 0) return undefined;
+    const r = { ...b.routines[i], lastRunAt: run.at };
+    r.failures = cause ? (r.failures ?? 0) + 1 : 0;
+    if (cause && r.failures >= MAX_FAILURES) r.enabled = false;
+    after = r;
+    const routines = [...b.routines]; routines[i] = r;
+    return { ...b, routines };
+  });
+  if (!cause || !after) return;
+  const why = run.error ?? run.verified?.note;
+  const base = { kind: 'finding' as const, botId, runId: run.id, routineId, ...(run.sessionId ? { sessionId: run.sessionId } : {}), ...(why ? { body: why } : {}) };
+  if (after.failures! >= MAX_FAILURES) await d.inbox.add({ ...base, title: tr('例行「{name}」连续失败 {n} 次，已停用', { name: after.name, n: MAX_FAILURES }) });
+  else if (after.onFail === 'inbox') await d.inbox.add({ ...base, title: causeTitle(cause, after.name) });
+}
+
 /**
  * One run of a routine (spec §3): pre-check → a new conversation (or the one being resumed), gated before anything
  * is sent → wait for the result → acceptance → record → deliver. `o.signal` is the hard stop.
@@ -111,9 +145,13 @@ export async function runRoutine(d: PipelineDeps, bot: Bot, routine: Routine, tr
   await fsp.mkdir(path.dirname(checkpointFile), { recursive: true });
   const params: OpenSessionParams = { sessionId: o.resume?.sessionId, cwd: bot.cwd, permissionMode: 'default', providerId: bot.providerId || d.defaultProvider(), model: bot.model || undefined, drivenBy: 'schedule', gated: true };
   let runner: AgentDriver;
-  try { runner = d.open(params); } catch (e) {
-    run.ok = false; run.error = e instanceof Error ? e.message : String(e);
+  const failed = async (cause: Cause, error: string) => {
+    run.ok = false; run.error = error;
+    await settleRoutine(d, bot.id, routine.id, run, cause);
     return finish();
+  };
+  try { runner = d.open(params); } catch (e) {
+    return failed('open', e instanceof Error ? e.message : String(e));
   }
   const close = () => runner.close().catch(() => { /* already gone */ });
   // the pool hands back a resumed conversation still running from before — ungated: once more, as a fresh process
@@ -124,8 +162,7 @@ export async function runRoutine(d: PipelineDeps, bot: Bot, routine: Routine, tr
   run.sessionId = runner.sessionId;
   if (!honoursGate(runner)) {
     await close();
-    run.ok = false; run.error = tr('这个对话不经过 Bot 的策略检查（只有 Claude 的对话可以），没有运行');
-    return finish();
+    return failed('ungated', tr('这个对话不经过 Bot 的策略检查（只有 Claude 的对话可以），没有运行'));
   }
   const g = makeGate({ bot, runId: run.id, routineId: routine.id, store: d.store, audit: d.audit, inbox: d.inbox, now, onTell: (t) => void d.inbox.add({ kind: 'finding', botId: bot.id, runId: run.id, routineId: routine.id, title: tr('做了：{t}', { t }) }) });
   // before anything is sent: no tool of this conversation runs ungated
@@ -165,27 +202,14 @@ export async function runRoutine(d: PipelineDeps, bot: Bot, routine: Routine, tr
   const checkpoint = fs.existsSync(checkpointFile) ? fs.readFileSync(checkpointFile, 'utf8').slice(0, 4000) : undefined;
   await d.store.setState(bot.id, routine.id, { lastSummary: run.said.slice(0, 500), checkpoint });
 
-  const fresh = d.store.get(bot.id) ?? bot;
-  const idx = fresh.routines.findIndex((r) => r.id === routine.id);
-  if (idx >= 0) {
-    const r = { ...fresh.routines[idx] };
-    r.lastRunAt = started;
-    r.failures = run.ok ? 0 : (r.failures ?? 0) + 1;
-    const why = run.error ?? run.verified?.note;
-    if (!run.ok && r.failures >= MAX_FAILURES) {
-      r.enabled = false;
-      await d.inbox.add({ kind: 'finding', botId: bot.id, runId: run.id, routineId: routine.id, title: tr('例行「{name}」连续失败 {n} 次，已停用', { name: r.name, n: MAX_FAILURES }), ...(why ? { body: why } : {}) });
-    } else if (!run.ok && r.onFail === 'inbox') {
-      await d.inbox.add({ kind: 'finding', botId: bot.id, runId: run.id, routineId: routine.id, title: tr('例行「{name}」没通过验收', { name: r.name }), ...(why ? { body: why } : {}) });
-    }
-    const routines = [...fresh.routines]; routines[idx] = r;
-    await d.store.save({ ...fresh, routines });
-  }
+  const cause: Cause | null = run.ok ? null : res.timedOut ? 'timeout' : res.died ? 'died' : res.isError ? 'error' : 'verify';
+  await settleRoutine(d, bot.id, routine.id, run, cause);
 
-  for (const out of bot.outputs) {
+  // the outputs as they are now (edited while the run went), the drafts from the whole answer (said is cut at 2000)
+  for (const out of (d.store.get(bot.id) ?? bot).outputs) {
     if (out.kind === 'inbox') {
       await d.inbox.add({ kind: 'finding', botId: bot.id, runId: run.id, routineId: routine.id, sessionId: runner.sessionId, title: routine.name, body: run.said });
-      for (const t of drafts(run.said)) await d.inbox.add({ kind: 'draft', botId: bot.id, runId: run.id, routineId: routine.id, sessionId: runner.sessionId, title: tr('{name} 的草稿', { name: routine.name }), body: t });
+      for (const t of drafts(res.text)) await d.inbox.add({ kind: 'draft', botId: bot.id, runId: run.id, routineId: routine.id, sessionId: runner.sessionId, title: tr('{name} 的草稿', { name: routine.name }), body: t });
     } else if (out.kind === 'file') {
       try {
         await fsp.mkdir(path.dirname(out.path), { recursive: true });

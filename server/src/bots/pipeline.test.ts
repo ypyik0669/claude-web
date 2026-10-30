@@ -98,6 +98,53 @@ describe('runRoutine', () => {
       expect(runner.sent).toEqual([]);
       expect(runner.closed).toBe(1);
     }
+    // both counted as failures, each with its notice
+    expect(store.get('b1')!.routines[0].failures).toBe(2);
+    expect(inbox.list('b1').filter((i) => i.title.includes('不经过策略检查'))).toHaveLength(2);
+    // the third (open throws) disables the routine
+    const { run } = await runRoutine(deps(fakeRunner(), { open: () => { throw new Error('no provider'); } }), b, store.get('b1')!.routines[0], 'manual');
+    expect(run).toMatchObject({ ok: false, error: 'no provider' });
+    expect(store.get('b1')!.routines[0]).toMatchObject({ failures: 3, enabled: false });
+    expect(inbox.list('b1').some((i) => i.title.includes('已停用') && i.body === 'no provider')).toBe(true);
+  });
+
+  it('a conversation that cannot be opened counts as a failure with its own notice', async () => {
+    const b = bot([routine()]); await store.save(b);
+    const { run } = await runRoutine(deps(fakeRunner(), { open: () => { throw new Error('boom'); } }), b, b.routines[0], 'cron');
+    expect(run.ok).toBe(false);
+    expect(store.get('b1')!.routines[0].failures).toBe(1);
+    expect(inbox.list('b1')[0]).toMatchObject({ kind: 'finding', title: expect.stringContaining('对话打不开'), body: 'boom' });
+  });
+
+  it('the failure notice names its cause: an error result vs a failed check', async () => {
+    const b = bot([routine()]); await store.save(b);
+    await runRoutine(deps(fakeRunner({ isError: true, resultText: 'api 500' })), b, store.get('b1')!.routines[0], 'cron');
+    expect(inbox.list('b1').some((i) => i.title === '例行「晨报」出错了')).toBe(true);
+    await store.update('b1', (x) => ({ ...x, routines: [{ ...x.routines[0], acceptance: { kind: 'script', script: 'exit 1' } }] }));
+    await runRoutine(deps(fakeRunner()), store.get('b1')!, store.get('b1')!.routines[0], 'cron');
+    expect(inbox.list('b1').some((i) => i.title === '例行「晨报」没通过验收')).toBe(true);
+  });
+
+  it('the write-back keeps what changed in bot.json while the run went; outputs are read as they are now; drafts past 2000 chars count', async () => {
+    const b = bot([routine(), routine({ id: 'r2', name: '周报' })]); await store.save(b);
+    const runner = fakeRunner({ resultText: 'x'.repeat(2100) + '<draft>晚到的草稿</draft>' });
+    const send = runner.send;
+    runner.send = (t: string) => {
+      // meanwhile: the other routine fails, and the user renames the bot and drops the inbox output
+      void store.update('b1', (x) => ({ ...x, name: '新名字', outputs: [], routines: x.routines.map((r) => (r.id === 'r2' ? { ...r, failures: 2 } : r)) }));
+      send(t);
+    };
+    const { run } = await runRoutine(deps(runner), b, b.routines[0], 'cron');
+    expect(run.ok).toBe(true);
+    const now = store.get('b1')!;
+    expect(now.name).toBe('新名字');
+    expect(now.routines.find((r) => r.id === 'r2')!.failures).toBe(2);
+    expect(now.routines.find((r) => r.id === 'r1')!).toMatchObject({ failures: 0, lastRunAt: run.at });
+    expect(inbox.list('b1')).toEqual([]); // no inbox output any more
+
+    await store.update('b1', (x) => ({ ...x, outputs: [{ kind: 'inbox' }] }));
+    await runRoutine(deps(fakeRunner({ resultText: 'x'.repeat(2100) + '<draft>晚到的草稿</draft>' })), store.get('b1')!, store.get('b1')!.routines[0], 'cron');
+    expect(inbox.list('b1').find((i) => i.kind === 'draft')!.body).toBe('晚到的草稿');
   });
 
   it('the hard stop: aborting interrupts and closes the conversation; the run is recorded as stopped, not as a failure', async () => {
@@ -105,7 +152,7 @@ describe('runRoutine', () => {
     const runner = fakeRunner({ never: true });
     const ac = new AbortController();
     const p = runRoutine(deps(runner), b, b.routines[0], 'manual', { signal: ac.signal });
-    await new Promise((res) => setTimeout(res, 20));
+    for (let i = 0; i < 500 && !runner.sent.length; i++) await new Promise((res) => setTimeout(res, 10));
     expect(runner.sent).toHaveLength(1);
     ac.abort();
     const { run } = await p;
