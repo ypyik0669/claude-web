@@ -1779,4 +1779,10 @@ export const EN_SERVER: Record<string, string> = {
   "［图片］": "[image]",
   "［文件 {name}（导出包里没有内容）］": "[File {name} (its content isn't in the export)]",
   "［附件 {name}］": "[Attachment {name}]",
+  "找不到服务端入口 {path}（开发模式下先 npm run build）": "Can't find the server entry {path} (in development, run npm run build first)",
+  "写入值班文件失败：{error}": "Couldn't write the duty files: {error}",
+  "注册值班服务失败：{detail}": "Couldn't register the duty service: {detail}",
+  "已注册值班服务，登录后自动在后台运行（日志：{log}）": "Duty service registered: it runs in the background after you sign in (log: {log})",
+  "已取消值班服务": "Duty service removed",
+  "取消值班服务时出错：{detail}": "Error while removing the duty service: {detail}",
 };
