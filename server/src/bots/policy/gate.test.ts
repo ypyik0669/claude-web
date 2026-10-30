@@ -92,7 +92,7 @@ describe('makeGate', () => {
     const policy: Bot['policy'] = { rules: [], autoPilot: { on: true, scope: { perDay: 2 } } };
     const g = makeGate({ bot: bot(policy), runId: 'run1', routineId: 'r1', store, audit, inbox });
     expect((await g.gate(slack('C1')))?.behavior).toBe('allow');
-    expect((await g.gate(ev('Bash', { command: 'git push origin --delete x' })))?.behavior).toBe('allow');
+    expect((await g.gate(ev('Bash', { command: 'git push https://github.com/me/x.git --delete x' })))?.behavior).toBe('allow');
     expect((await g.gate(ev('Bash', { command: 'git push origin main' })))?.behavior).toBe('deny');
     expect(store.audit('b1', 'run1').map((r) => [r.cls, r.basis, r.result])).toEqual([['send', 'autopilot', 'allowed'], ['delete', 'autopilot', 'allowed'], ['send', 'rule', 'queued']]);
   });
