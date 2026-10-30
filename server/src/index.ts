@@ -114,6 +114,7 @@ import { ComputerAccess } from './computer/access.js';
 import { SiteAsk } from './web/site-gate.js';
 import { handleComputerAsk } from './computer/http.js';
 import { configureComputerMcp } from './computer/launcher.js';
+import { noteDutyPid } from './bots/duty.js';
 
 /** the backdrop worker's own CSP: its scripts from here (and the theme's code through new Function), nothing else */
 export const BACKDROP_WORKER_CSP = "default-src 'none'; script-src 'self' 'unsafe-eval'";
@@ -737,6 +738,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
 if (isMain || process.env.CLAUDE_WEB_STANDALONE === '1') {
   const running = await startServer();
+  // under the Windows duty task: let "duty off" find and stop us
+  noteDutyPid();
   const ready = { type: 'ready', port: running.port, host: running.host };
   // Electron utilityProcess talks over process.parentPort; plain child_process.fork over process.send
   if (parentPort) parentPort.postMessage(ready);

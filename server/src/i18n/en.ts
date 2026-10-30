@@ -1792,4 +1792,6 @@ export const EN_SERVER: Record<string, string> = {
   "例行「{name}」没通过验收": "Routine “{name}” didn't pass its check",
   "{name} 的草稿": "Draft from {name}",
   "你之前要做的「{summary}」已经批准，现在执行它，然后接着完成例行任务。": "What you wanted to do earlier (“{summary}”) has been approved. Do it now, then carry on with the routine.",
+  "便携版不能注册值班服务：它的文件在程序退出后就不在了。请先安装正式版": "The portable build can't register the duty service: its files are gone once it exits. Install the regular version first",
+  "路径或环境变量里有值班服务没法处理的字符（\" 或 %）：{value}": "A path or environment variable has a character the duty service can't handle (\" or %): {value}",
 };
