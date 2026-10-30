@@ -88,6 +88,7 @@ describe('English texts that other code matches on', () => {
 describe('no Chinese text left outside tr()', () => {
   const ALLOWED: Record<string, string> = {
     'server/src/bots/generate.ts': 'the prompt that turns a sentence into a bot draft (for the model)',
+    'server/src/bots/pipeline.ts': "a routine run's prompt and its policy line (for the model); what a person sees is in tr()",
     'server/src/characters/skill-text.ts': 'the cafe-character skill: a file for the model, in the language the skill is written in',
     'server/src/characters/tool-defs.ts': 'tool descriptions of the character maker (for the model)',
     'server/src/computer/apps.ts': 'the names a user gives an app, in Chinese, to find it',

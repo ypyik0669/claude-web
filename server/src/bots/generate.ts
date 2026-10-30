@@ -45,8 +45,8 @@ export function parseDraft(answer: string, cwd: string, text = ''): BotGenerated
     let cron = typeof r.cron === 'string' && r.cron.trim() ? r.cron.trim() : undefined;
     if (cron) { try { nextCron(cron); } catch { cron = undefined; } }
     const every = Number(r.everyMinutes);
-    if (!cron && every > 0 && every < MIN_EVERY_MINUTES) clamped.push(String(r.name ?? tr('例行')));
-    return { id: `r_${randomBytes(3).toString('hex')}`, name: String(r.name ?? tr('例行')), prompt: String(r.prompt ?? ''), enabled: true, onFail: 'inbox' as const, acceptance: r.acceptance?.kind === 'script' && typeof r.acceptance.script === 'string' ? { kind: 'script' as const, script: r.acceptance.script } : { kind: 'none' as const }, ...(cron ? { cron } : { everyMinutes: Number(r.everyMinutes) > 0 ? Math.max(MIN_EVERY_MINUTES, Number(r.everyMinutes)) : 1440 }), ...(typeof r.precheck === 'string' && r.precheck.trim() ? { precheck: r.precheck.trim() } : {}) };
+    if (!cron && every > 0 && every < MIN_EVERY_MINUTES) clamped.push(String(r.name ?? tr('未命名例行')));
+    return { id: `r_${randomBytes(3).toString('hex')}`, name: String(r.name ?? tr('未命名例行')), prompt: String(r.prompt ?? ''), enabled: true, onFail: 'inbox' as const, acceptance: r.acceptance?.kind === 'script' && typeof r.acceptance.script === 'string' ? { kind: 'script' as const, script: r.acceptance.script } : { kind: 'none' as const }, ...(cron ? { cron } : { everyMinutes: Number(r.everyMinutes) > 0 ? Math.max(MIN_EVERY_MINUTES, Number(r.everyMinutes)) : 1440 }), ...(typeof r.precheck === 'string' && r.precheck.trim() ? { precheck: r.precheck.trim() } : {}) };
   });
   const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v : undefined);
   return {
