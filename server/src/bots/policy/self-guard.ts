@@ -42,7 +42,13 @@ function mentions(command: string, root: string): boolean {
       forms.add(`~\\${rel.replace(/\//g, '\\')}`);
     }
   }
-  return [...forms].some((f) => c.includes(fold(f)));
+  if ([...forms].some((f) => c.includes(fold(f)))) return true;
+  // however the start is spelled ($HOME, %USERPROFILE%, $env:USERPROFILE, ../..): the data dir's name followed by
+  // bots; a name that says claude-web (the default .claude-web) anywhere at all
+  const base = path.basename(path.dirname(path.resolve(root)));
+  const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (base && new RegExp(`${esc}["'\`]?[\\\\/]+["'\`]?bots(?![\\w-])`, 'i').test(command)) return true;
+  return /claude-web/i.test(base) && command.toLowerCase().includes(base.toLowerCase());
 }
 
 /**

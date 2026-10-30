@@ -210,6 +210,36 @@ describe('makeGate', () => {
     expect(await g.gate(ev('Write', { file_path: path.join(os.tmpdir(), 'elsewhere.md'), content: 'x' }))).toMatchObject({ behavior: 'allow' });
   });
 
+  it('the guard also catches state/../bot.json and a Write wrapped in ExecuteExtraTool', async () => {
+    const g = makeGate({ bot: bot({ rules: [], unleashed: true }), runId: 'run1', routineId: 'r1', store, audit, inbox });
+    const botDir = store.dir('b1');
+    expect(await g.gate(ev('Write', { file_path: path.join(botDir, 'state', '..', 'bot.json'), content: '{}' }))).toMatchObject({ behavior: 'deny' });
+    expect(await g.gate(ev('Write', { file_path: `${botDir}/state/../trust.json`, content: '{}' }))).toMatchObject({ behavior: 'deny' });
+    expect(await g.gate(ev('ExecuteExtraTool', { tool_name: 'Write', params: { file_path: path.join(botDir, 'bot.json'), content: '{}' } }))).toMatchObject({ behavior: 'deny' });
+    expect(store.audit('b1', 'run1').every((r) => r.result === 'denied')).toBe(true);
+  });
+
+  it('a shell command reaching the bots dir by $HOME, %USERPROFILE%, $env:USERPROFILE or ../ goes to the user first', async () => {
+    const data = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-home-'));
+    const botsRoot = path.join(data, '.claude-web', 'bots');
+    const s2 = new BotStore(botsRoot); const i2 = new Inbox(s2); const a2 = new AuditLog(s2);
+    try {
+      const g = makeGate({ bot: bot({ rules: [], unleashed: true }), runId: 'run1', routineId: 'r1', store: s2, audit: a2, inbox: i2 });
+      const B = String.fromCharCode(92);
+      for (const command of [
+        'echo x > $HOME/.claude-web/bots/b1/bot.json',
+        `type %USERPROFILE%${B}.claude-web${B}bots${B}inbox.json`,
+        'Set-Content "$env:USERPROFILE\\.Claude-Web\\BOTS\\b1\\trust.json" x',
+        'cat ../../.claude-web/bots/b1/bot.json',
+        'cd ~ && cd .claude-web && ls',
+      ]) {
+        expect(await g.gate(ev('Bash', { command })), command).toMatchObject({ behavior: 'deny' });
+      }
+      expect(i2.list('b1').filter((i) => i.kind === 'approval')).toHaveLength(5);
+      expect(await g.gate(ev('Bash', { command: 'ls robots/ && cat claude-webapp.md' }))).toMatchObject({ behavior: 'allow' });
+    } finally { fs.rmSync(data, { recursive: true, force: true }); }
+  });
+
   it('a shell command that names the bots dir (either slash style) goes to the user first, even unleashed', async () => {
     const g = makeGate({ bot: bot({ rules: [], unleashed: true }), runId: 'run1', routineId: 'r1', store, audit, inbox });
     const fwd = root.split(path.sep).join('/');
