@@ -4,10 +4,26 @@
 import { randomBytes } from 'node:crypto';
 import type { BotDraft, BotTemplate, Routine } from '../protocol.js';
 import { tr } from '../i18n/index.js';
+import { parseCron } from '../schedules/cron.js';
+
+/**
+ * A template's default daily budget, from how often its routines run: runs/day × ~$0.40 (a Sonnet-class run on a relay,
+ * mostly the new conversation's cache write — Task 22) × 1.25, whole dollars, at least $2, at most $15 (hourly → $12).
+ * A cron run counts its minutes × hours on a day it fires (weekdays / day-of-month ignored: the busiest day).
+ */
+const RUN_USD = 0.4, MARGIN = 1.25, MIN_USD = 2, MAX_USD = 15;
+export function dailyUsdFor(routines: Pick<Routine, 'cron' | 'everyMinutes'>[]): number {
+  let runs = 0;
+  for (const r of routines) {
+    if (r.cron) { try { const c = parseCron(r.cron); runs += c.minute.size * c.hour.size; } catch { /* no estimate */ } }
+    else if (r.everyMinutes) runs += 1440 / Math.max(1, r.everyMinutes);
+  }
+  return Math.min(MAX_USD, Math.max(MIN_USD, Math.ceil(runs * RUN_USD * MARGIN - 1e-9)));
+}
 
 const base = (p: { name: string; role: string; audience?: string; sources: string[]; report?: string; done?: string; routines: Omit<Routine, 'id' | 'enabled' | 'onFail' | 'acceptance'>[] }): BotTemplate['bot'] => ({
   name: p.name, charter: { role: p.role, audience: p.audience, sources: p.sources, report: p.report ?? tr('结尾固定写：查了什么 / 没能查到什么 / 建议的下一步'), done: p.done },
-  tier: 'balanced', policy: { rules: [], signOff: true }, budget: { dailyUsd: 2 }, outputs: [{ kind: 'inbox' }],
+  tier: 'balanced', policy: { rules: [], signOff: true }, budget: { dailyUsd: dailyUsdFor(p.routines) }, outputs: [{ kind: 'inbox' }],
   routines: p.routines.map((r) => ({ id: '', enabled: true, onFail: 'inbox', acceptance: { kind: 'none' }, ...r })),
 });
 
