@@ -1524,6 +1524,7 @@ export const EN_SERVER: Record<string, string> = {
   "这个 Agent 不支持列出对话": "This agent can't list conversations",
   "这个 Bot 的策略检查出错了，这一步没有执行：{message}": "This bot's policy check failed, so this step was not run: {message}",
   "这个 Bot 的策略禁止这类动作：{cls}": "This bot's policy forbids this kind of action: {cls}",
+  "Bot 不能改自己的策略、审计和收件箱：这一步没有执行": "A bot can't change its own policy, audit or inbox: this step was not run",
   "这个动作要先经你批准，已放进收件箱（{title}）。先做别的；批准后会从这里继续。": "This action needs your approval first and has been put in the inbox ({title}). Do something else for now; once approved, it will continue from here.",
   "这个 CLIProxyAPI 不是 claude-web 启动的，请用它自己的管理页登录": "This CLIProxyAPI was not started by claude-web; sign in from its own management page",
   "这个 Git 项目没有远端（remote），常开机器拿不到代码": "This Git project has no remote, so the always-on machine can't get the code",

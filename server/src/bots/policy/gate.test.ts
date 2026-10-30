@@ -171,4 +171,36 @@ describe('makeGate', () => {
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
+  it('a bot cannot write its own policy / audit / inbox, even unleashed; its own state/ is fine', async () => {
+    const g = makeGate({ bot: bot({ rules: [], unleashed: true }), runId: 'run1', routineId: 'r1', store, audit, inbox });
+    const botDir = store.dir('b1');
+    for (const [tool, input] of [
+      ['Write', { file_path: path.join(botDir, 'bot.json'), content: '{}' }],
+      ['Edit', { file_path: path.join(root, 'inbox.json'), old_string: 'a', new_string: 'b' }],
+      ['MultiEdit', { file_path: path.join(botDir, 'runs', 'run1.audit.jsonl'), edits: [] }],
+      ['NotebookEdit', { notebook_path: path.join(botDir, 'trust.json'), new_source: 'x' }],
+      ['Write', { file_path: path.join(root, 'other-bot', 'state', 'x.md'), content: 'x' }],
+      // relative to the bot's cwd, and the other slash style / case on Windows
+      ['Write', { file_path: path.relative('/p', path.join(botDir, 'bot.json')), content: '{}' }],
+      ['Write', { file_path: (process.platform === 'win32' ? botDir.toUpperCase() : botDir).split(path.sep).join('/') + '/bot.json', content: '{}' }],
+    ] as const) {
+      const r = await g.gate(ev(tool, input as any));
+      expect(r, `${tool} ${JSON.stringify(input)}`).toMatchObject({ behavior: 'deny' });
+    }
+    expect(store.audit('b1', 'run1').every((r) => r.result === 'denied')).toBe(true);
+    expect(await g.gate(ev('Write', { file_path: path.join(botDir, 'state', 'r1.checkpoint.md'), content: 'step 2' }))).toMatchObject({ behavior: 'allow' });
+    expect(await g.gate(ev('Write', { file_path: path.join(os.tmpdir(), 'elsewhere.md'), content: 'x' }))).toMatchObject({ behavior: 'allow' });
+  });
+
+  it('a shell command that names the bots dir (either slash style) goes to the user first, even unleashed', async () => {
+    const g = makeGate({ bot: bot({ rules: [], unleashed: true }), runId: 'run1', routineId: 'r1', store, audit, inbox });
+    const fwd = root.split(path.sep).join('/');
+    const back = root.split('/').join(String.fromCharCode(92));
+    for (const command of [`cat > ${fwd}/b1/bot.json`, `echo x >> "${back}${String.fromCharCode(92)}inbox.json"`, 'echo hi > $CLAUDE_WEB_DIR/bots/b1/trust.json']) {
+      expect(await g.gate(ev('Bash', { command }))).toMatchObject({ behavior: 'deny' });
+    }
+    expect(inbox.list('b1').filter((i) => i.kind === 'approval')).toHaveLength(3);
+    expect(store.audit('b1', 'run1').every((r) => r.result === 'queued')).toBe(true);
+    expect(await g.gate(ev('Bash', { command: 'npm test' }))).toMatchObject({ behavior: 'allow' });
+  });
 });

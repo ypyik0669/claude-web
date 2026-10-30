@@ -1,5 +1,6 @@
 // server/src/bots/policy/gate.ts
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { ActionClass, AuditBasis, Bot, PermissionRequestEvent, PolicyLevel, PolicyRule } from '../../protocol.js';
 import type { ToolGate } from '../../agents/types.js';
@@ -7,7 +8,8 @@ import type { BotStore } from '../store.js';
 import type { AuditLog } from '../audit.js';
 import type { Inbox } from '../inbox.js';
 import { classify, summarize, targetOf } from './classify.js';
-import { decide, ruleKey, scopeKey, type DayCounts } from './rules.js';
+import { decide, ruleKey, scopeKey, type Decision, type DayCounts } from './rules.js';
+import { selfGuard } from './self-guard.js';
 import { tr } from '../../i18n/index.js';
 
 /** A call the gate let through: what it was and the rule that allowed it (demoteRule takes that rule on a correction). */
@@ -81,16 +83,18 @@ export function makeGate(ctx: GateCtx): GateHandle {
 
   const check = async (ev: PermissionRequestEvent): Promise<PermissionResult> => {
     const t = now();
-    const [name] = unwrap(ev.toolName, ev.input);
+    const [name, params] = unwrap(ev.toolName, ev.input);
     const cls = classify(ev.toolName, ev.input);
     const summary = summarize(ev.toolName, ev.input);
     const target = targetOf(cls, ev.toolName, ev.input);
     const key = scopeKey(undefined, target);
     const base = { at: t, runId: ctx.runId, botId: ctx.bot.id, toolName: name, cls, summary, scope: key };
-    const d = decide(ctx.bot.policy, cls, target, t, today(t));
+    // the bots' own files (policy, audit, inbox) are out of reach whatever the bot's levels — unleashed too
+    const guard = selfGuard(path.dirname(ctx.store.dir(ctx.bot.id)), ctx.bot.id, ctx.bot.cwd, name, params);
+    const d: Decision = guard ? { level: guard, basis: 'rule' } : decide(ctx.bot.policy, cls, target, t, today(t));
     if (d.level === 'deny') {
       await ctx.audit.add({ ...base, level: 'deny', basis: d.basis, result: 'denied', ...(d.rule ? { rule: d.rule } : {}) });
-      return { behavior: 'deny', message: tr('这个 Bot 的策略禁止这类动作：{cls}', { cls }) };
+      return { behavior: 'deny', message: guard ? tr('Bot 不能改自己的策略、审计和收件箱：这一步没有执行') : tr('这个 Bot 的策略禁止这类动作：{cls}', { cls }) };
     }
     const ck = callKey(ev.toolName, ev.input);
     const level = d.level;
