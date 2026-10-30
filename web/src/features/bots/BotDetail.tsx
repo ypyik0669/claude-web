@@ -11,7 +11,7 @@ import { clsx } from '@/util';
 import { tr } from '@/i18n';
 import { stateLabel } from './model';
 import { setBotTab, updateBot, type BotTab } from './state';
-import { BlurField, NumField, splitList, toggleUnleash } from './fields';
+import { BlurField, NumField, currentBot, splitList, toggleUnleash } from './fields';
 import { RoutineTable } from './RoutineTable';
 import { RunList } from './RunList';
 import { PolicyEditor } from './PolicyEditor';
@@ -28,7 +28,8 @@ const TABS: { id: BotTab; label: () => string }[] = [
 function CharterCard({ bot }: { bot: BotStatus }) {
   const [open, setOpen] = useState(true);
   const c = bot.charter;
-  const save = (patch: Partial<BotCharter>) => void updateBot(bot.id, { charter: { ...c, ...patch } });
+  // merged into the charter as stored at the moment of saving: tabbing on before bots.changed is back can't undo the last field
+  const save = (patch: Partial<BotCharter>) => { const cur = currentBot(bot.id); if (cur) void updateBot(bot.id, { charter: { ...cur.charter, ...patch } }); };
   return (
     <section className={clsx('bd-card bd-charter', open && 'open')}>
       <button className="bd-card-head" aria-expanded={open} onClick={() => setOpen(!open)}>
@@ -63,8 +64,9 @@ function Outputs({ bot }: { bot: BotStatus }) {
   const im = bot.outputs.find((o): o is ImOut => o.kind === 'im');
   const file = bot.outputs.find((o): o is FileOut => o.kind === 'file');
   const save = (next: { im?: ImOut | null; file?: FileOut | null }) => {
-    const i = next.im === undefined ? im : next.im ?? undefined;
-    const f = next.file === undefined ? file : next.file ?? undefined;
+    const cur = currentBot(bot.id)?.outputs ?? bot.outputs;
+    const i = next.im === undefined ? cur.find((o): o is ImOut => o.kind === 'im') : next.im ?? undefined;
+    const f = next.file === undefined ? cur.find((o): o is FileOut => o.kind === 'file') : next.file ?? undefined;
     const outputs: BotOutput[] = [{ kind: 'inbox' }];
     if (i) outputs.push(i);
     if (f) outputs.push(f);
@@ -96,7 +98,14 @@ function Settings({ bot }: { bot: BotStatus }) {
     { value: 'best', label: tr('最强') },
   ];
   const quiet = bot.quiet;
-  const saveQuiet = (from: string, to: string) => void updateBot(bot.id, { quiet: from && to ? { from, to } : undefined });
+  const saveQuiet = (patch: { from?: string; to?: string }) => {
+    const cur = currentBot(bot.id);
+    if (!cur) return;
+    const from = patch.from ?? cur.quiet?.from ?? '';
+    const to = patch.to ?? cur.quiet?.to ?? '';
+    void updateBot(bot.id, { quiet: from && to ? { from, to } : undefined });
+  };
+  const saveBudget = (patch: Partial<BotStatus['budget']>) => { const cur = currentBot(bot.id); if (cur) void updateBot(bot.id, { budget: { ...cur.budget, ...patch } }); };
   return (
     <section className="bd-card">
       <div className="bd-form">
@@ -104,16 +113,16 @@ function Settings({ bot }: { bot: BotStatus }) {
         <div className="bd-row">
           <span>{tr('预算')}</span>
           <span className="bd-pair">
-            <span className="bd-unit">{tr('每天 $')}</span><NumField label={tr('每天预算（美元）')} placeholder={tr('不限')} value={bot.budget.dailyUsd} onSave={(dailyUsd) => void updateBot(bot.id, { budget: { ...bot.budget, dailyUsd } })} />
-            <span className="bd-unit">{tr('每周 $')}</span><NumField label={tr('每周预算（美元）')} placeholder={tr('不限')} value={bot.budget.weeklyUsd} onSave={(weeklyUsd) => void updateBot(bot.id, { budget: { ...bot.budget, weeklyUsd } })} />
+            <span className="bd-unit">{tr('每天 $')}</span><NumField label={tr('每天预算（美元）')} placeholder={tr('不限')} value={bot.budget.dailyUsd} onSave={(dailyUsd) => saveBudget({ dailyUsd })} />
+            <span className="bd-unit">{tr('每周 $')}</span><NumField label={tr('每周预算（美元）')} placeholder={tr('不限')} value={bot.budget.weeklyUsd} onSave={(weeklyUsd) => saveBudget({ weeklyUsd })} />
           </span>
         </div>
         <div className="bd-row">
           <span>{tr('勿扰时段')}</span>
           <span className="bd-pair">
-            <BlurField type="time" label={tr('勿扰开始')} value={quiet?.from ?? ''} onSave={(from) => saveQuiet(from, quiet?.to ?? '')} />
+            <BlurField type="time" label={tr('勿扰开始')} value={quiet?.from ?? ''} onSave={(from) => saveQuiet({ from })} />
             <span className="bd-unit">–</span>
-            <BlurField type="time" label={tr('勿扰结束')} value={quiet?.to ?? ''} onSave={(to) => saveQuiet(quiet?.from ?? '', to)} />
+            <BlurField type="time" label={tr('勿扰结束')} value={quiet?.to ?? ''} onSave={(to) => saveQuiet({ to })} />
           </span>
         </div>
       </div>

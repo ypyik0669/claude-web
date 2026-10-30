@@ -1,7 +1,9 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { BotStatus, Routine } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { imeComposing } from '@/ui/ime';
+import { trapTab } from '@/ui/focus-trap';
+import { useStore } from '@/store';
 import { Segmented } from '@/ui/Segmented';
 import { Select } from '@/ui/Select';
 import { Switch } from '@/ui/Switch';
@@ -10,6 +12,7 @@ import { ago, clsx } from '@/util';
 import { dateLocale, tr } from '@/i18n';
 import { monthlyEstimate, runsPerMonth, usd } from './model';
 import { runNow, updateBot } from './state';
+import { currentBot } from './fields';
 
 /** What one model wake-up costs, roughly, for the month estimate of a routine without a precheck. */
 const PER_RUN_USD = 0.05;
@@ -46,7 +49,10 @@ function toDraft(r?: Routine): Draft {
   };
 }
 
-function fromDraft(d: Draft, base?: Routine): Routine | string {
+/** The fields the form edits — merged into the routine as stored when 保存 is pressed (the rest is the scheduler's). */
+export type RoutineEdit = Pick<Routine, 'name' | 'prompt' | 'cron' | 'everyMinutes' | 'precheck' | 'acceptance' | 'timeoutMin' | 'onFail'>;
+
+function fromDraft(d: Draft): RoutineEdit | string {
   const name = d.name.trim();
   if (!name) return tr('例行需要一个名字');
   if (!d.prompt.trim()) return tr('写一下这个例行要做什么');
@@ -54,8 +60,7 @@ function fromDraft(d: Draft, base?: Routine): Routine | string {
   if (d.mode === 'every' && !(Number.isFinite(every) && every >= 1)) return tr('间隔至少 1 分钟');
   if (d.mode === 'cron' && d.cron.trim().split(/\s+/).length !== 5) return tr('cron 要五段：分 时 日 月 周');
   const timeout = Number(d.timeout);
-  const r: Routine = {
-    ...(base ?? { id: `r_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, enabled: true }),
+  return {
     name, prompt: d.prompt.trim(),
     cron: d.mode === 'cron' ? d.cron.trim() : undefined,
     everyMinutes: d.mode === 'every' ? every : undefined,
@@ -64,33 +69,51 @@ function fromDraft(d: Draft, base?: Routine): Routine | string {
     timeoutMin: d.timeout.trim() && Number.isFinite(timeout) && timeout > 0 ? timeout : undefined,
     onFail: d.onFail,
   };
-  return r;
 }
 
+/**
+ * Send the bot's routines with one change: `change` gets the list as the store has it at this moment (after any
+ * await), so the scheduler's bookkeeping (lastRunAt / nextRunAt / failures) and other routines are never sent stale.
+ */
+export async function patchRoutines(botId: string, change: (cur: Routine[]) => Routine[] | string): Promise<boolean> {
+  const bot = currentBot(botId);
+  if (!bot) return false;
+  const next = change(bot.routines);
+  if (typeof next === 'string') { useStore.getState().toast(next); return false; }
+  return updateBot(botId, { routines: next });
+}
+
+const newRoutineId = () => `r_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
 /** The one-screen form for a routine (new or existing). Escape closes it; nothing is saved until 保存. */
-function RoutineEditor({ routine, onSave, onClose }: { routine?: Routine; onSave: (r: Routine) => Promise<boolean>; onClose: () => void }) {
+function RoutineEditor({ routine, onSave, onClose }: { routine?: Routine; onSave: (r: RoutineEdit) => Promise<boolean>; onClose: () => void }) {
+  const box = useRef<HTMLDivElement>(null);
+  // the focus goes into the form when it opens (the name box)
+  useEffect(() => { box.current?.querySelector<HTMLElement>('input, textarea')?.focus(); }, []);
   const [d, setD] = useState<Draft>(() => toDraft(routine));
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const set = (p: Partial<Draft>) => setD((x) => ({ ...x, ...p }));
   const save = async () => {
-    const r = fromDraft(d, routine);
+    const r = fromDraft(d);
     if (typeof r === 'string') { setErr(r); return; }
     setBusy(true);
     const ok = await onSave(r);
     setBusy(false);
     if (ok) onClose();
   };
+  // Escape from anywhere in the form (a Select's own list closes itself first: it prevents the default); Tab stays inside
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape' && !imeComposing(e.nativeEvent)) { e.stopPropagation(); e.preventDefault(); onClose(); }
+    if (e.key === 'Escape' && !e.defaultPrevented && !imeComposing(e.nativeEvent)) { e.stopPropagation(); e.preventDefault(); onClose(); return; }
+    trapTab(e, box.current);
   };
   const failOptions = (['retry_up', 'resume', 'inbox'] as const).map((v) => ({ value: v, label: onFailLabel(v) }));
   return (
     <div className="modal-bg dialog-bg" onMouseDown={(e) => e.target === e.currentTarget && onClose()} onKeyDown={onKey}>
-      <div className="modal dialog bd-routine-editor" role="dialog" aria-modal="true" aria-label={routine ? tr('编辑例行') : tr('添加例行')}>
+      <div ref={box} tabIndex={-1} className="modal dialog bd-routine-editor" role="dialog" aria-modal="true" aria-label={routine ? tr('编辑例行') : tr('添加例行')}>
         <h3>{routine ? tr('编辑例行') : tr('添加例行')}</h3>
         <div className="bd-form">
-          <label><span>{tr('名字')}</span><input className="field" autoFocus value={d.name} onChange={(e) => set({ name: e.target.value })} /></label>
+          <label><span>{tr('名字')}</span><input className="field" value={d.name} onChange={(e) => set({ name: e.target.value })} /></label>
           <label><span>{tr('要做什么')}</span><textarea className="field" rows={4} value={d.prompt} onChange={(e) => set({ prompt: e.target.value })} /></label>
           <div className="bd-row">
             <span>{tr('节奏')}</span>
@@ -122,11 +145,16 @@ function RoutineEditor({ routine, onSave, onClose }: { routine?: Routine; onSave
 /** The routines of a bot: cadence, cost when nothing gates the model, acceptance, last / next, failures, on/off. */
 export function RoutineTable({ bot, routines, adding }: { bot: BotStatus; routines: Routine[]; adding?: boolean }) {
   const [editing, setEditing] = useState<Routine | 'new' | null>(null);
-  const put = (next: Routine[]) => updateBot(bot.id, { routines: next });
-  const replace = (r: Routine) => put(bot.routines.some((x) => x.id === r.id) ? bot.routines.map((x) => (x.id === r.id ? r : x)) : [...bot.routines, r]);
+  const setEnabled = (id: string, enabled: boolean) => void patchRoutines(bot.id, (cur) => cur.map((x) => (x.id === id ? { ...x, enabled } : x)));
   const remove = async (r: Routine) => {
-    if (await dlg.confirm(tr('删除例行「{name}」？', { name: r.name }), { danger: true, focusCancel: true, okLabel: tr('删除') })) void put(bot.routines.filter((x) => x.id !== r.id));
+    if (await dlg.confirm(tr('删除例行「{name}」？', { name: r.name }), { danger: true, focusCancel: true, okLabel: tr('删除') })) void patchRoutines(bot.id, (cur) => cur.filter((x) => x.id !== r.id));
   };
+  // the form's fields over the routine as stored now (a form open for minutes doesn't put back an old copy)
+  const save = (id: string | undefined) => (edit: RoutineEdit) => patchRoutines(bot.id, (cur) => {
+    if (!id) return [...cur, { id: newRoutineId(), enabled: true, ...edit }];
+    if (!cur.some((x) => x.id === id)) return tr('这个例行已经被删掉了');
+    return cur.map((x) => (x.id === id ? { ...x, ...edit } : x));
+  });
   return (
     <div className="bd-routines">
       {routines.length > 0 ? (
@@ -154,7 +182,7 @@ export function RoutineTable({ bot, routines, adding }: { bot: BotStatus; routin
                   <td>{r.acceptance.kind === 'script' ? tr('脚本') : tr('无')}</td>
                   <td className="bd-when" title={r.lastRunAt ? new Date(r.lastRunAt).toLocaleString(dateLocale()) : undefined}>{r.lastRunAt ? ago(r.lastRunAt) : '—'} / {when(r.nextRunAt)}</td>
                   <td className={clsx((r.failures ?? 0) > 0 && 'bd-fail')}>{r.failures ?? 0}</td>
-                  <td><Switch on={r.enabled} label={tr('启用「{name}」', { name: r.name })} onChange={(enabled) => void replace({ ...r, enabled })} /></td>
+                  <td><Switch on={r.enabled} label={tr('启用「{name}」', { name: r.name })} onChange={(enabled) => setEnabled(r.id, enabled)} /></td>
                   <td className="bd-acts">
                     <button className="icon-btn" title={tr('立即运行')} aria-label={tr('立即运行')} onClick={() => void runNow(bot.id, r.id)}><Icon name="play" size={13} /></button>
                     <button className="icon-btn" title={tr('编辑')} aria-label={tr('编辑')} onClick={() => setEditing(r)}><Icon name="edit" size={13} /></button>
@@ -167,7 +195,7 @@ export function RoutineTable({ bot, routines, adding }: { bot: BotStatus; routin
         </table>
       ) : <div className="bd-note">{tr('还没有例行任务')}</div>}
       {adding && <button className="btn sm bd-add" onClick={() => setEditing('new')}><Icon name="plus" size={12} />{tr('添加例行')}</button>}
-      {editing && <RoutineEditor routine={editing === 'new' ? undefined : editing} onSave={replace} onClose={() => setEditing(null)} />}
+      {editing && <RoutineEditor routine={editing === 'new' ? undefined : editing} onSave={save(editing === 'new' ? undefined : editing.id)} onClose={() => setEditing(null)} />}
     </div>
   );
 }

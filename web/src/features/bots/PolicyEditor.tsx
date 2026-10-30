@@ -8,7 +8,7 @@ import { clsx } from '@/util';
 import { dateLocale, tr } from '@/i18n';
 import { classLabel, levelLabel } from './model';
 import { updateBot } from './state';
-import { BlurField, NumField, confirmRisk, doRisk, splitList } from './fields';
+import { BlurField, NumField, confirmRisk, currentBot, doRisk, policyPatch, splitList } from './fields';
 
 export const CLASSES: ActionClass[] = ['read', 'write_local', 'browser', 'send', 'pay', 'delete', 'install'];
 const LEVELS: PolicyLevel[] = ['do', 'do_tell', 'ask', 'deny'];
@@ -33,6 +33,19 @@ export function scopeText(s: PolicyScope | undefined): string {
   return parts.length ? parts.join(' · ') : tr('无限制');
 }
 
+/** The same rule (rules have no id): class, level and scope. */
+const sameRule = (a: PolicyRule, b: PolicyRule) => a.cls === b.cls && a.level === b.level && JSON.stringify(a.scope ?? null) === JSON.stringify(b.scope ?? null);
+
+/**
+ * Send the bot's policy with one change, built from the policy as stored at this moment (after any confirm), so a
+ * trust demotion or another edit that landed meanwhile stays; `unleashed` is never in it (bots.unleash only).
+ */
+function patchPolicy(botId: string, change: (cur: BotPolicy) => Partial<BotPolicy>): void {
+  const bot = currentBot(botId);
+  if (!bot) return;
+  void updateBot(botId, { policy: policyPatch({ ...bot.policy, ...change(bot.policy) }) });
+}
+
 const plainOf = (rules: PolicyRule[], cls: ActionClass) => rules.find((r) => r.cls === cls && !r.scope);
 
 /** One class: its level (four), then the scoped rules under it. */
@@ -40,16 +53,15 @@ function ClassRow({ bot, cls }: { bot: BotStatus; cls: ActionClass }) {
   const rules = bot.policy.rules;
   const level = plainOf(rules, cls)?.level ?? DEFAULT_LEVEL[cls];
   const scoped = rules.filter((r) => r.cls === cls && r.scope);
-  const save = (next: PolicyRule[]) => void updateBot(bot.id, { policy: { ...bot.policy, rules: next } });
   const setLevel = async (l: PolicyLevel) => {
     if (l === level) return;
     const risk = l === 'do' ? doRisk(cls) : null;
     if (risk && !(await confirmRisk(risk))) return;
-    save([...rules.filter((r) => !(r.cls === cls && !r.scope)), { cls, level: l }]);
+    patchPolicy(bot.id, (cur) => ({ rules: [...cur.rules.filter((r) => !(r.cls === cls && !r.scope)), { cls, level: l }] }));
   };
   const remove = async (r: PolicyRule) => {
     if (!(await dlg.confirm(tr('删除这条「{cls}」的规则？', { cls: classLabel(cls) }), { message: `${levelLabel(r.level)} · ${scopeText(r.scope)}`, focusCancel: true, okLabel: tr('删除') }))) return;
-    save(rules.filter((x) => x !== r));
+    patchPolicy(bot.id, (cur) => ({ rules: cur.rules.filter((x) => !sameRule(x, r)) }));
   };
   return (
     <div className="bd-class" data-cls={cls}>
@@ -130,16 +142,16 @@ function AutoPilot({ bot }: { bot: BotStatus }) {
   const scope: PolicyScope = ap?.scope ?? {};
   // fields the user un-ticked 无限制 on but hasn't filled yet
   const [limiting, setLimiting] = useState<Set<ScopeField>>(() => new Set());
-  const save = (policy: Partial<BotPolicy>) => void updateBot(bot.id, { policy: { ...bot.policy, ...policy } });
-  const setScope = (patch: Partial<PolicyScope>) => {
-    const next: PolicyScope = { ...scope, ...patch };
+  // one scope field over autopilot as stored now
+  const setScope = (patch: Partial<PolicyScope>) => patchPolicy(bot.id, (cur) => {
+    const next: PolicyScope = { ...cur.autoPilot?.scope, ...patch };
     for (const k of Object.keys(next) as (keyof PolicyScope)[]) if (next[k] === undefined) delete next[k];
-    save({ autoPilot: { on, scope: next } });
-  };
+    return { autoPilot: { on: !!cur.autoPilot?.on, scope: next } };
+  });
   const emptyScope = (s: PolicyScope) => s.unlimited || (!s.domains?.length && !s.channels?.length && !s.recipients?.length && s.maxAmount === undefined && s.perDay === undefined && s.until === undefined);
   const toggle = async (next: boolean) => {
     if (next && emptyScope(scope) && !(await confirmRisk(tr('全自动没有任何范围：发送、付款、删除都会直接做，不再问你。确定？')))) return;
-    save({ autoPilot: { on: next, scope: ap?.scope } });
+    patchPolicy(bot.id, (cur) => ({ autoPilot: { on: next, scope: cur.autoPilot?.scope } }));
   };
   const setUnlimited = async (f: ScopeField, unlimited: boolean) => {
     if (!unlimited) { setLimiting((s) => new Set(s).add(f)); return; }

@@ -1,23 +1,32 @@
 // 值班 Bot: the detail's small editing pieces — a field that saves when it loses the focus, a number field, and the
 // one-time risk sentences (spec §10) shown before a gate is turned off.
 import { useEffect, useState, type KeyboardEvent } from 'react';
-import type { ActionClass, BotStatus } from '@shared';
+import type { ActionClass, BotPolicy, BotStatus } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { imeComposing } from '@/ui/ime';
 import { clsx } from '@/util';
 import { tr } from '@/i18n';
-import { unleashBot } from './state';
+import { unleashBot, useBots } from './state';
+
+/** The bot as the store has it now — what an edit is built from at the moment it is sent (never a render's copy). */
+export const currentBot = (id: string): BotStatus | undefined => useBots.getState().bots.find((b) => b.id === id);
+
+/** A policy to send with bots.update: everything but `unleashed` (that goes through bots.unleash only). */
+export function policyPatch(p: BotPolicy): BotPolicy {
+  const { unleashed: _skip, ...rest } = p;
+  return rest;
+}
 
 /**
  * A text box that saves on blur (only when the text changed). Enter (single line) commits by blurring; Escape puts
  * the saved text back. `value` from the server replaces what is shown whenever it changes.
  */
 export function BlurField({ value, onSave, multiline, placeholder, label, className, type }: {
-  value: string; onSave: (v: string) => void; multiline?: boolean; placeholder?: string; label: string; className?: string; type?: 'text' | 'time' | 'date';
+  value: string; /** false: the text is not valid — the saved one comes back */ onSave: (v: string) => void | boolean; multiline?: boolean; placeholder?: string; label: string; className?: string; type?: 'text' | 'time' | 'date';
 }) {
   const [draft, setDraft] = useState(value);
   useEffect(() => { setDraft(value); }, [value]);
-  const commit = () => { if (draft !== value) onSave(draft); };
+  const commit = () => { if (draft !== value && onSave(draft) === false) setDraft(value); };
   const onKey = (e: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     if (imeComposing(e.nativeEvent)) return;
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setDraft(value); setTimeout(() => (e.target as HTMLElement).blur(), 0); }
@@ -39,7 +48,8 @@ export function NumField({ value, onSave, label, placeholder, className }: { val
         const t = s.trim();
         if (!t) { onSave(undefined); return; }
         const n = Number(t);
-        if (Number.isFinite(n) && n >= 0) onSave(n);
+        if (!(Number.isFinite(n) && n >= 0)) return false;
+        onSave(n);
       }}
     />
   );
