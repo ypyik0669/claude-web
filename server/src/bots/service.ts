@@ -130,6 +130,8 @@ export class BotService extends EventEmitter {
     });
     this.scheduler.on('load', (l: BotLoad) => this.emit('load', l));
     this.scheduler.on('tick', () => void this.takeStopRequest());
+    // the last holder may have held (or flushed) IM pushes since this server read held.json
+    this.scheduler.on('claimed', () => { this.held = this.readHeld(); });
     this.held = this.readHeld();
     this.inbox.on('item', this.onItem);
     d.im?.onCallback('bots', (parts, ctx) => this.onImCallback(parts, ctx));
@@ -338,9 +340,10 @@ export class BotService extends EventEmitter {
 
   // ---------- IM ----------
   private imOutputs(bot: Bot) { return bot.outputs.filter((o): o is Extract<BotOutput, { kind: 'im' }> => o.kind === 'im'); }
+  /** only the server on duty pushes, holds or flushes (held.json is its file) */
   private push(bot: Bot, text: string, buttons?: ImButton[]) {
     const outs = this.imOutputs(bot);
-    if (!outs.length || !this.d.im) return;
+    if (!outs.length || !this.d.im || !this.scheduler.canAct()) return;
     if (inQuiet(bot.quiet)) {
       const h = this.held.get(bot.id) ?? [];
       h.push(text.split('\n')[0]);
@@ -357,6 +360,7 @@ export class BotService extends EventEmitter {
     } catch { return new Map(); }
   }
   private saveHeld() {
+    if (!this.scheduler.canAct()) return;
     void atomicWrite(path.join(this.d.dataDir, HELD_FILE), JSON.stringify(Object.fromEntries(this.held))).catch((e) => console.warn('[bots] cannot save held IM pushes:', e));
   }
   /** a new inbox item of a bot with an IM output; approvals get 批准 / 拒绝 buttons */
@@ -379,6 +383,7 @@ export class BotService extends EventEmitter {
   }
   /** after a bot's quiet hours: what was held goes out as one message */
   async flushQuiet() {
+    if (!this.scheduler.canAct()) return;
     for (const [botId, lines] of [...this.held]) {
       const bot = this.store.get(botId);
       if (!bot) { this.held.delete(botId); continue; }

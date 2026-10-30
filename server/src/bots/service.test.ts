@@ -317,6 +317,34 @@ describe('BotService', { timeout: 30_000 }, () => {
     expect(JSON.parse(fs.readFileSync(path.join(root, 'held.json'), 'utf8'))[b.id]).toHaveLength(1);
   });
 
+  it('quiet hours: a server not on duty pushes, holds and flushes nothing; taking the lease reads held.json again', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(2026, 0, 1, 12, 0));
+    onTestFinished(() => { vi.useRealTimers(); });
+    const b = await svc.create(draft({ outputs: [{ kind: 'im', gatewayId: 'tg', chatId: 'c1' }], quiet: { from: '00:00', to: '23:59' } }));
+    const other = make(); extra.push(other);
+    await other.start();
+    expect(other.load()).toBeDefined();
+    (other as any).held.set(b.id, ['stale']); // what it read at startup, long gone
+    await (svc as any).inbox.add({ kind: 'finding', botId: b.id, title: 'late' });
+    await until(() => fs.existsSync(path.join(root, 'held.json')));
+    const heldFile = path.join(root, 'held.json');
+    const before = fs.readFileSync(heldFile, 'utf8');
+    await svc.update(b.id, { quiet: undefined });
+    await (other as any).flushQuiet();
+    (other as any).saveHeld();
+    await settle();
+    expect(im.sendTo).not.toHaveBeenCalled();
+    expect(fs.readFileSync(heldFile, 'utf8')).toBe(before);
+    // the holder goes; the other takes the lease and holds what the file says
+    svc.stop();
+    expect(await (other as any).scheduler.claim()).toBe(true);
+    expect((other as any).held.get(b.id)).toEqual(['【x】late']);
+    await (other as any).flushQuiet();
+    expect(im.sendTo).toHaveBeenCalledTimes(1);
+    expect(im.sendTo.mock.calls[0][2]).toContain('late');
+    expect(im.sendTo.mock.calls[0][2]).not.toContain('stale');
+  });
+
   it('runs() clamps the limit', () => {
     expect(() => svc.runs(undefined, undefined, -5)).not.toThrow();
     expect(() => svc.runs(undefined, undefined, 1e9)).not.toThrow();
