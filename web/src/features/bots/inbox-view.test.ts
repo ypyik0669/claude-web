@@ -113,6 +113,14 @@ describe('formOfScope / validScope: a stored 全自动 scope in the form', () =>
     expect([f.unlimited.domains, f.unlimited.perDay, f.unlimited.channels, f.unlimited.until]).toEqual([false, false, true, true]);
     expect(buildScope(f.form, f.unlimited, ALL, 0)).toEqual({ scope: { domains: ['a.com', 'b.com'], perDay: 3 } });
   });
+  it('有效期 saved unchanged keeps the stored moment (not moved to the end of that day); a new one is parsed', () => {
+    const at = new Date(2026, 11, 31, 9, 30).getTime();
+    const f = formOfScope({ domains: ['a.com'], until: at });
+    expect(f.form.until).toBe('2026-12-31');
+    const keep = (form: typeof f.form) => buildScope(form, f.unlimited, ALL, 0, { keepUntil: f.until });
+    expect(keep(f.form)).toEqual({ scope: { domains: ['a.com'], until: at } });
+    expect(keep({ ...f.form, until: '2026-12-30' })).toEqual({ scope: { domains: ['a.com'], until: new Date(2026, 11, 30, 23, 59, 59, 999).getTime() } });
+  });
   it('an older numbers-only scope is not saved back as it is', () => {
     const f = formOfScope({ perDay: 10 });
     expect('problem' in buildScope(f.form, f.unlimited, ALL, 0)).toBe(true);

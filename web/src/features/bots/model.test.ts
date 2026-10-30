@@ -25,6 +25,9 @@ describe('bots model', () => {
       ['0 */6 * * *', 4 * 30],
       ['15 10 1,15 * *', 2],
       ['0 8 * * 0,7', 30 / 7],
+      ['0 8 * * 1-7', 30],
+      ['0 8 * * */7', 30 / 7],
+      ['0 8 * * 5-7', 30 * 3 / 7],
       ['0 9-17/2 * * *', 5 * 30],
     ];
     for (const [cron, n] of cases) expect(runsPerMonth({ cron }), cron).toBeCloseTo(n);

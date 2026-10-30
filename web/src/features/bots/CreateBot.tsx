@@ -179,6 +179,7 @@ function Preview({ d, set, risk, clamped }: { d: Draft; set: (p: Partial<Draft>)
         <span className="bd-pair">
           <Select label={tr('IM 网关')} value={im?.gatewayId ?? ''} options={gwOptions} onValueChange={(v) => outputs(v ? { kind: 'im', gatewayId: String(v), chatId: im?.chatId ?? '' } : undefined, file)} />
           {im && <BlurField label={tr('聊天 ID')} placeholder={tr('聊天 ID')} value={im.chatId} onSave={(chatId) => outputs({ ...im, chatId: chatId.trim() }, file)} />}
+          {im && !im.chatId.trim() && <span className="bd-hint warn">{tr('还没填聊天 ID，不会发')}</span>}
         </span>
       </div>
       <div className="bd-row"><span>{tr('文件')}</span><BlurField label={tr('写到文件')} placeholder={tr('文件路径（不填就不写）')} value={file?.path ?? ''} onSave={(p) => outputs(im, p.trim() ? { kind: 'file', path: p.trim() } : undefined)} /></div>

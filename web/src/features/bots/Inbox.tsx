@@ -13,6 +13,7 @@ import { classLabel, groupInbox, INBOX_KINDS, inboxKindLabel } from './model';
 import { closeBots, useBots } from './state';
 import { callParams, ruleUnlimitedRisk, scopeDefaults, scopeFields, ScopeEditor } from './scope-form';
 import { copyText } from '@/ui/clipboard';
+import { maskSecrets } from './mask';
 
 export interface InboxAction { id: InboxAnswer['answer']; label: string; danger?: boolean; needsScope?: boolean }
 
@@ -24,20 +25,6 @@ export function inboxActions(item: InboxItem): InboxAction[] {
     case 'draft': return [{ id: 'send', label: tr('复制并标为可发') }, { id: 'archive', label: tr('归档') }];
     case 'proposal': return [{ id: 'adopt', label: tr('采纳') }, { id: 'archive', label: tr('忽略') }];
   }
-}
-
-/**
- * Obvious secrets in a call, masked for showing (the same kinds the server's redact masks): auth headers, bearer
- * tokens, user:pass@ in a URL, the value of a key named like token / secret / password, sk- / ghp_ style keys.
- */
-export function maskSecrets(s: string): string {
-  return s
-    .replace(/\b(authorization|proxy-authorization|x-api-key|api-key|x-auth-token|cookie)(\s*[:=]\s*)[^'"\n]+/gi, '$1$2[redacted]')
-    .replace(/\bbearer\s+[\w.~+/-]+=*/gi, 'Bearer [redacted]')
-    .replace(/(\/\/)[^\s/@'":]+:[^\s/@'"]+@/g, '$1[redacted]@')
-    .replace(/([?&;:\s"'{,$]|^)([\w-]*(?:token|secret|password|passwd|pwd|api[_-]?key|signature|credential)[\w-]*)(["']?\s*[=:]\s*)("[^"]{0,256}"|'[^']{0,256}'|[^&\s'",}]+)/gi, '$1$2$3[redacted]')
-    .replace(/\b(sk|rk|pk)-[\w-]{8,}/g, '$1-[redacted]')
-    .replace(/\b(ghp|gho|ghs|ghu|ghr|github_pat|glpat|xox[abprs])[-_][\w-]{8,}/g, '$1_[redacted]');
 }
 
 /**

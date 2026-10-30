@@ -73,6 +73,10 @@ export const MONTH_MINUTES = 30 * 24 * 60;
  * start (`5/15` = 5 to hi). null when it can't be read.
  */
 export function cronFieldCount(f: string, lo: number, hi: number): number | null {
+  return cronFieldValues(f, lo, hi)?.size ?? null;
+}
+
+function cronFieldValues(f: string, lo: number, hi: number): Set<number> | null {
   const seen = new Set<number>();
   for (const part of f.split(',')) {
     const m = /^(\*|\d+(?:-\d+)?)(?:\/(\d+))?$/.exec(part.trim());
@@ -87,7 +91,7 @@ export function cronFieldCount(f: string, lo: number, hi: number): number | null
     if (a < lo || b > hi || a > b) return null;
     for (let v = a; v <= b; v += step) seen.add(v);
   }
-  return seen.size;
+  return seen;
 }
 
 /**
@@ -101,8 +105,9 @@ export function runsPerMonth(r: Pick<Routine, 'cron' | 'everyMinutes'>): number 
   const mins = cronFieldCount(min, 0, 59);
   const hours = cronFieldCount(hour, 0, 23);
   if (mins === null || hours === null) return 30;
-  // day of week 0–7: 0 and 7 are both Sunday
-  const dowN = cronFieldCount(dow.replace(/\b7\b/g, '0'), 0, 6);
+  // day of week 0–7: 0 and 7 are both Sunday (counted once)
+  const dowVals = cronFieldValues(dow, 0, 7);
+  const dowN = dowVals ? new Set([...dowVals].map((d) => d % 7)).size : null;
   const domN = cronFieldCount(dom, 1, 31);
   const domShare = dom === '*' || domN === null ? 1 : Math.min(1, domN / 30);
   const dowShare = dow === '*' || dowN === null ? 1 : dowN / 7;

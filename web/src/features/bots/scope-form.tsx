@@ -52,7 +52,13 @@ const isoDay = (t: number) => { const d = new Date(t); return `${d.getFullYear()
  * A stored scope as the form shows it: none → every field blank (to be filled or ticked); `unlimited` → every field
  * ticked; else each set field filled and each unset one ticked 无限制 (what it means on the server).
  */
-export function formOfScope(s: PolicyScope | undefined): { form: ScopeForm; unlimited: ScopeUnlimited } {
+export interface ScopeInitial {
+  form: ScopeForm; unlimited: ScopeUnlimited;
+  /** the stored 有效期 and the text it shows as: saved with that text unchanged, the stored moment stays (never moved to that day's end) */
+  until?: { text: string; at: number };
+}
+
+export function formOfScope(s: PolicyScope | undefined): ScopeInitial {
   if (!s) return { form: { ...BLANK }, unlimited: { ...NONE } };
   if (s.unlimited) return { form: { ...BLANK }, unlimited: { domains: true, channels: true, recipients: true, maxAmount: true, perDay: true, until: true } };
   const list = (v?: string[]) => (v ?? []).join(', ');
@@ -64,7 +70,7 @@ export function formOfScope(s: PolicyScope | undefined): { form: ScopeForm; unli
   };
   const unlimited = { ...NONE };
   for (const f of ALL_SCOPE_FIELDS) unlimited[f] = !form[f];
-  return { form, unlimited };
+  return { form, unlimited, ...(s.until !== undefined ? { until: { text: form.until, at: s.until } } : {}) };
 }
 
 /** A scope the server takes for a 全自动 / scoped rule as it is: `{unlimited:true}` or one that names a destination. */
@@ -91,9 +97,9 @@ export type ScopeResult = { scope: PolicyScope } | { problem: string };
  * - at least one list (域名 / 频道 / 收件人) is filled in — a scope of numbers alone would match every destination;
  * - only when every shown field is ticked 无限制 is the scope `{ unlimited: true }`;
  * - `amountRequired` (a payment): 金额上限 is filled in unless the whole scope is unlimited.
- * 每天最多 is a whole number ≥ 1, 金额上限 a number ≥ 0, 有效期 whole days ≥ 1 or a date.
+ * 每天最多 is a whole number ≥ 1, 金额上限 a number ≥ 0, 有效期 whole days ≥ 1 or a date — or, untouched, the stored moment (`keepUntil`).
  */
-export function buildScope(form: ScopeForm, unlimited: ScopeUnlimited, fields: ScopeField[], now: number, opts: { amountRequired?: boolean } = {}): ScopeResult {
+export function buildScope(form: ScopeForm, unlimited: ScopeUnlimited, fields: ScopeField[], now: number, opts: { amountRequired?: boolean; keepUntil?: ScopeInitial['until'] } = {}): ScopeResult {
   if (fields.every((f) => unlimited[f])) return { scope: { unlimited: true } };
   if (opts.amountRequired && fields.includes('maxAmount') && unlimited.maxAmount) return { problem: tr('付款要写金额上限；要不限金额，就把每一项都勾上「无限制」') };
   const out: PolicyScope = {};
@@ -114,6 +120,8 @@ export function buildScope(form: ScopeForm, unlimited: ScopeUnlimited, fields: S
       const n = Number(text);
       if (!(Number.isFinite(n) && n >= 0)) return { problem: tr('金额上限要填不小于 0 的数') };
       out.maxAmount = n;
+    } else if (opts.keepUntil && text === opts.keepUntil.text.trim()) {
+      out.until = opts.keepUntil.at;
     } else {
       const until = parseUntil(text, now);
       if (until === null) return { problem: tr('有效期填天数（至少 1），或者一个以后的日期，如 2026-12-31') };
@@ -161,7 +169,7 @@ export function autoPilotUnlimitedRisk(f: ScopeField): string {
 
 /** The form: one row per field (a box and its 无限制), the problem if any, 保存 / 取消. */
 export function ScopeEditor({ head, fields, initial, risk, amountRequired, okLabel, busy, onSend, onCancel, className }: {
-  head: ReactNode; fields: ScopeField[]; initial: { form: ScopeForm; unlimited: ScopeUnlimited }; risk: (f: ScopeField) => string;
+  head: ReactNode; fields: ScopeField[]; initial: ScopeInitial; risk: (f: ScopeField) => string;
   amountRequired?: boolean; okLabel: string; busy: boolean; onSend: (s: PolicyScope) => void; onCancel: () => void; className?: string;
 }) {
   const [form, setForm] = useState<ScopeForm>(initial.form);
@@ -173,7 +181,7 @@ export function ScopeEditor({ head, fields, initial, risk, amountRequired, okLab
     setProblem('');
   };
   const submit = () => {
-    const r = buildScope(form, unlimited, fields, Date.now(), { amountRequired });
+    const r = buildScope(form, unlimited, fields, Date.now(), { amountRequired, keepUntil: initial.until });
     if ('problem' in r) { setProblem(r.problem); return; }
     onSend(r.scope);
   };
