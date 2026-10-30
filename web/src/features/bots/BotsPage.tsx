@@ -6,14 +6,13 @@ import { OverPage } from '@/features/sections/OverPage';
 import { tr } from '@/i18n';
 import { sortBots } from './model';
 import { botTabs } from './BotsSide';
-import { closeBots, selectBot, useBots } from './state';
+import { closeBots, selectBot, startCreate, useBots } from './state';
 import { LoadBar } from './LoadBar';
 import { BotList } from './BotList';
 import { BotDetail } from './BotDetail';
 import { RunPane } from './RunPane';
-import { CreateBot } from './CreateBot';
+import { CreateBot, StarterTemplates } from './CreateBot';
 
-const startCreate = () => useBots.setState({ creating: true });
 const stopCreate = () => useBots.setState({ creating: false });
 
 /**
@@ -30,7 +29,9 @@ export function BotsPage() {
   const sorted = useMemo(() => sortBots(bots), [bots]);
   const bot = sorted.find((b) => b.id === selected) ?? sorted[0];
   const tabs = useMemo(() => botTabs(sorted), [sorted]);
-  const newBtn = <button className="btn primary" onClick={startCreate}>{tr('新建 Bot')}</button>;
+  // nothing but the manager yet: the empty state with three starter templates
+  const firstTime = !bots.some((b) => !b.manager);
+  const newBtn = <button className="btn primary" onClick={() => startCreate()}>{tr('新建 Bot')}</button>;
   return (
     <OverPage
       name="bots"
@@ -47,8 +48,8 @@ export function BotsPage() {
       onEscape={() => { if (useBots.getState().creating) { stopCreate(); return true; } return false; }}
     >
       <LoadBar />
-      {!bots.length ? (
-        <div className="over-body bots-empty"><EmptyState e={EMPTY.bots} action={newBtn} /></div>
+      {firstTime ? (
+        <div className="over-body bots-empty"><EmptyState e={EMPTY.bots} action={newBtn} /><StarterTemplates /></div>
       ) : (
         <div className="bots-body">
           {!mobile && <BotList bots={sorted} selected={bot?.id} />}

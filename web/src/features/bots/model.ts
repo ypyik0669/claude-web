@@ -1,6 +1,6 @@
 // 值班 Bot (spec 2026-10-30-duty-bots-design): the pure bits the Bot page draws with — labels, order, money, the
 // inbox grouped by kind, a routine's monthly cost. No store, no wire.
-import type { ActionClass, BotStatus, InboxItem, InboxKind, PolicyLevel, Routine } from '@shared';
+import type { ActionClass, BotDraft, BotOutput, BotStatus, BotTemplate, InboxItem, InboxKind, PolicyLevel, Routine } from '@shared';
 import { tr } from '@/i18n';
 
 export function stateLabel(s: BotStatus['state']): string {
@@ -85,4 +85,62 @@ export function runsPerMonth(r: Pick<Routine, 'cron' | 'everyMinutes'>): number 
 
 export function monthlyEstimate(r: Routine, perRunUsd: number): number {
   return runsPerMonth(r) * perRunUsd;
+}
+
+// ---- the create flow (Task 18) ----
+
+/** What one model wake-up costs, roughly — the month estimate of the create preview. */
+export const PER_RUN_USD = 0.05;
+/** A generated routine never wakes more often than this (the server's generate clamps the same). */
+export const MIN_EVERY_MINUTES = 15;
+
+/** Wakes more often than once an hour: the preview shows its month estimate. */
+export function fasterThanHourly(r: Pick<Routine, 'cron' | 'everyMinutes'>): boolean {
+  return runsPerMonth(r) > 30 * 24;
+}
+
+/**
+ * A draft as the preview edits it: every routine complete (id may stay '' — the server mints it), every interval at
+ * least MIN_EVERY_MINUTES (`clamped` says one was raised), the inbox always among the outputs.
+ */
+export function normalizeDraft(d: BotDraft['bot']): { draft: BotDraft['bot']; clamped: boolean } {
+  let clamped = false;
+  const routines = (d.routines ?? []).map((r) => {
+    let everyMinutes = r.everyMinutes;
+    if (everyMinutes !== undefined && everyMinutes > 0 && everyMinutes < MIN_EVERY_MINUTES) { everyMinutes = MIN_EVERY_MINUTES; clamped = true; }
+    return { ...r, id: r.id ?? '', name: r.name ?? '', prompt: r.prompt ?? '', enabled: r.enabled ?? true, onFail: r.onFail ?? 'inbox', acceptance: r.acceptance ?? { kind: 'none' }, everyMinutes } as Routine;
+  });
+  const outputs: BotOutput[] = (d.outputs ?? []).some((o) => o.kind === 'inbox') ? d.outputs : [{ kind: 'inbox' }, ...(d.outputs ?? [])];
+  const charter = { ...d.charter, role: d.charter?.role ?? '', sources: Array.isArray(d.charter?.sources) ? d.charter.sources : [] };
+  return {
+    draft: { ...d, name: d.name ?? '', cwd: d.cwd ?? '', tier: d.tier ?? 'balanced', policy: d.policy ?? { rules: [] }, budget: d.budget ?? {}, charter, routines, outputs },
+    clamped,
+  };
+}
+
+/** A template as a draft in `cwd`. */
+export function draftFromTemplate(t: BotTemplate, cwd: string): BotDraft['bot'] {
+  return normalizeDraft({ ...t.bot, cwd }).draft;
+}
+
+/** What is wrong with a draft before it can be created, or null. */
+export function draftProblem(d: BotDraft['bot']): string | null {
+  if (!d.name.trim()) return tr('Bot 需要一个名字');
+  if (!d.cwd.trim()) return tr('选一个工作目录');
+  if (!d.charter.role.trim()) return tr('写一下它的职责');
+  for (const r of d.routines) {
+    if (!r.prompt.trim()) return tr('写一下例行「{name}」要做什么', { name: r.name || '?' });
+    if (r.cron !== undefined && !r.everyMinutes && r.cron.trim().split(/\s+/).length !== 5) return tr('cron 要五段：分 时 日 月 周');
+    if (r.everyMinutes !== undefined && !(r.everyMinutes >= 1)) return tr('间隔至少 1 分钟');
+  }
+  return null;
+}
+
+/** The text of the latest prompt the user typed in a conversation (not a meta one, not one from another conversation). */
+export function lastUserText(items: readonly { kind: string; text?: string; meta?: boolean; from?: unknown }[]): string {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.kind === 'user' && !it.meta && !it.from && it.text?.trim()) return it.text.trim();
+  }
+  return '';
 }

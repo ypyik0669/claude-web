@@ -4,7 +4,7 @@
 .bots-load { flex: none; display: flex; align-items: center; gap: var(--sp-2); margin: 0 var(--sp-5) var(--sp-3); padding: 6px var(--sp-3); border: var(--hairline) solid var(--edge-subtle); border-radius: var(--r-md); background: var(--surface-1); color: var(--ink-2); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
 .bots-load .grow { flex: 1 1 auto; }
 
-.bots-empty { justify-content: center; }
+.bots-empty { justify-content: center; align-items: center; }
 
 .bots-body { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: 260px minmax(0, 1fr) 380px; gap: 12px; height: 100%; padding: 0 var(--sp-5) var(--sp-5); }
 .bots-body > * { min-height: 0; overflow: auto; }
@@ -36,7 +36,30 @@
 .bot-detail, .bot-run-pane { border: var(--hairline) solid var(--edge-subtle); border-radius: var(--r-lg); background: var(--surface-1); padding: var(--sp-4); }
 .bot-detail .bd-name { margin: 0; font-size: var(--fs-lg); }
 
-.bot-create { position: absolute; right: var(--sp-5); top: 56px; z-index: 2; display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); border: var(--hairline) solid var(--edge-default); border-radius: var(--r-lg); background: var(--surface-elev); box-shadow: var(--elev-1); }
+/* the create flow (a dialog) */
+.modal.bot-create { width: min(760px, calc(100vw - 2 * var(--sp-5))); max-height: calc(100vh - 2 * var(--sp-5)); display: flex; flex-direction: column; }
+.modal.bot-create:focus { outline: none; }
+.bot-create .bc-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.bot-create .actions .grow { flex: 1 1 auto; }
+.bc-entries { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); }
+.bc-entry { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3); border: var(--hairline) solid var(--edge-subtle); border-radius: var(--r-md); }
+.bc-entry.wide { grid-column: 1 / -1; }
+.bc-entry h4, .bc-preview h4 { margin: var(--sp-2) 0 0; font-size: var(--fs-sm); font-weight: 600; color: var(--ink-2); }
+.bc-entry textarea.field { width: 100%; resize: vertical; }
+.bc-entry-foot { display: flex; justify-content: flex-end; margin-top: auto; }
+.bc-quote { color: var(--ink-2); font-size: var(--fs-sm); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.bc-tpls, .bc-starters { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--sp-2); }
+.bc-starters { width: min(720px, 100%); margin-top: var(--sp-4); }
+.bc-tpl { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: var(--sp-2) var(--sp-3); border: var(--hairline) solid var(--edge-subtle); border-radius: var(--r-md); background: var(--surface-1); color: var(--ink-1); text-align: left; cursor: pointer; }
+.bc-tpl:hover { background: var(--layer-hover); }
+.bc-tpl-name { font-weight: 600; }
+.bc-tpl-desc { color: var(--ink-3); font-size: var(--fs-sm); }
+.bc-risk { color: var(--err); font-size: var(--fs-sm); }
+.bc-cwd { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-size: var(--fs-sm); }
+.bc-routine { display: flex; flex-direction: column; gap: 6px; padding: var(--sp-2); border: var(--hairline) solid var(--edge-subtle); border-radius: var(--r-md); }
+.bc-safety { margin-top: var(--sp-2); color: var(--ink-3); font-size: var(--fs-sm); }
+.bc-started { flex: 1 1 auto; color: var(--ink-2); font-size: var(--fs-sm); }
+.app.mobile .bc-entries { grid-template-columns: minmax(0, 1fr); }
 
 /* a phone: one column — the bots are the page's tabs */
 .bots-page.phone .bots-load { margin: 0 var(--sp-3) var(--sp-2); }

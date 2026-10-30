@@ -1,7 +1,7 @@
 // 值班 Bot (spec 2026-10-30-duty-bots-design): the bots, their inbox, runs and load as the server keeps them, and the
 // Bot page over the main area. A small store of its own, like the 后台 page's; nothing goes into store/index.ts.
 import { create } from 'zustand';
-import type { AuditRow, Bot, BotLoad, BotRun, BotStatus, BotTemplate, InboxAnswer, InboxItem, ServerEvent } from '@shared';
+import type { AuditRow, Bot, BotDraft, BotLoad, BotRun, BotStatus, BotTemplate, InboxAnswer, InboxItem, ServerEvent } from '@shared';
 import { hideSheet, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { closeOtherPages, registerPage } from '@/features/sections/pages';
@@ -27,6 +27,8 @@ export interface BotsState {
   load: BotLoad;
   /** the create flow is showing */
   creating: boolean;
+  /** the template the create flow opens on (a starter card on the empty page), else it opens on the three entries */
+  createTemplate?: string;
   templates: BotTemplate[];
 }
 
@@ -109,6 +111,27 @@ export function setBotTab(tab: BotTab): void { useBots.setState({ tab }); }
 /** An edit of a bot. No local copy changes: the server answers with bots.changed. Resolves false when it failed. */
 export async function updateBot(id: string, patch: Partial<Bot>): Promise<boolean> {
   try { await ws.request({ kind: 'bots.update', id, patch }); return true; } catch (e) { useStore.getState().toast(tr('保存失败：{message}', { message: msg(e) })); return false; }
+}
+
+/** Open the create flow — on a template's preview when one is given. */
+export function startCreate(templateId?: string): void { useBots.setState({ creating: true, createTemplate: templateId }); }
+
+/** Create a bot from a reviewed draft. The new bot, or null when it failed (toasted). */
+export async function createBot(draft: BotDraft['bot']): Promise<BotStatus | null> {
+  try {
+    const bot = await ws.request<BotStatus>({ kind: 'bots.create', bot: draft });
+    if (bot?.id) useBots.setState((s) => ({ selected: bot.id, bots: s.bots.some((b) => b.id === bot.id) ? s.bots : [...s.bots, bot] }));
+    return bot ?? null;
+  } catch (e) { useStore.getState().toast(tr('创建失败：{message}', { message: msg(e) })); return null; }
+}
+
+/** One sentence → a draft (the server asks a model). Null when it failed (toasted). */
+export async function generate(text: string, cwd: string): Promise<BotDraft['bot'] | null> {
+  try {
+    const d = await ws.request<BotDraft['bot']>({ kind: 'bots.generate', text, cwd });
+    if (!d || typeof d !== 'object') throw new Error(tr('没有拿到草案'));
+    return d;
+  } catch (e) { useStore.getState().toast(tr('生成失败：{message}', { message: msg(e) })); return null; }
 }
 
 /** A bot's latest runs from the server (replacing what the pushes collected so far). Quiet when the server has none. */
