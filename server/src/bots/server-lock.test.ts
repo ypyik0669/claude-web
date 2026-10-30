@@ -127,6 +127,49 @@ describe('server.lock: one server per data dir', () => {
     expect(await probeLock(lock({ port, nonce: 'good' }), 300)).toBe(false);
   });
 
+  it('probeLock: a server that trickles bytes, sends over 64 KB or drops the connection is a no within the deadline', async () => {
+    const timers: NodeJS.Timeout[] = [];
+    const srv = http.createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      if (req.url?.includes('trickle')) { res.write('{'); timers.push(setInterval(() => res.write(' '), 100)); return; }
+      if (req.url?.includes('big')) { const chunk = ' '.repeat(16_384); timers.push(setInterval(() => res.write(chunk), 5)); return; }
+      if (req.url?.includes('drop')) { res.write('{"lock":'); setTimeout(() => res.destroy(), 50); return; }
+    });
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+    const port = (srv.address() as any).port;
+    const within = async (nonce: string) => {
+      const t0 = Date.now();
+      const v = await Promise.race([probeLock(lock({ port, nonce }), 600), new Promise((r) => setTimeout(() => r('hung'), 5000))]);
+      return { v, ms: Date.now() - t0 };
+    };
+    try {
+      const trickle = await within('trickle');
+      expect(trickle.v).toBe(false); expect(trickle.ms).toBeLessThan(2000);
+      expect((await within('big')).v).toBe(false);
+      expect((await within('drop')).v).toBe(false);
+    } finally { for (const t of timers) clearInterval(t); srv.closeAllConnections(); await new Promise((r) => srv.close(r)); }
+  });
+
+  it('a stale lock replaced by a live one between the check and the unlink is left alone', async () => {
+    writeLock(dir, lock({ pid: 99, kind: 'app' })); // dead
+    const isAlive = (p: number) => {
+      // another server takes the dir right after the stale lock was judged
+      if (p === 99 && readLock(dir)?.pid === 99) writeLock(dir, lock({ pid: 2, kind: 'app', nonce: 'fresh' }));
+      return alive.has(p);
+    };
+    expect(await acquireServerLock(dir, 'duty', 3090, env(1, { isAlive }))).toMatchObject({ ok: false, holder: { pid: 2 } });
+    expect(readLock(dir)).toMatchObject({ pid: 2, nonce: 'fresh' });
+  });
+
+  it('setLockReady says whether the lock still names this process', () => {
+    writeLock(dir, lock({ pid: 1, ready: false, port: 0, nonce: 'mine' }));
+    expect(setLockReady(dir, 1, 4000)).toBe(true);
+    expect(readLock(dir)).toMatchObject({ pid: 1, ready: true, port: 4000 });
+    writeLock(dir, lock({ pid: 2, nonce: 'theirs' })); // an app took the dir over
+    expect(setLockReady(dir, 1, 4000)).toBe(false);
+    expect(readLock(dir)).toMatchObject({ pid: 2, nonce: 'theirs' });
+  });
+
   it('the command that starts the duty service again, per platform', () => {
     expect(dutyStartCommand('win32')).toBe('schtasks /Run /TN "ClaudeWebDuty"');
     expect(dutyStartCommand('darwin', 501)).toBe('launchctl kickstart -k gui/501/app.claude-web.duty');

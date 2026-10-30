@@ -779,7 +779,8 @@ if (isMain || process.env.CLAUDE_WEB_STANDALONE === '1') {
     releaseLock(lockDir, process.pid);
     throw e;
   }
-  setLockReady(lockDir, process.pid, running.port);
+  // the duty server: an app took the lock over while this one started (the write may have raced it) → step down below
+  if (!setLockReady(lockDir, process.pid, running.port) && kind === 'duty') yieldAsked = true;
   // under the Windows duty task: let "duty off" find and stop us
   noteDutyPid();
   // the duty service's own files, from an older version (a 5 s back-off, the old entry): brought up to date

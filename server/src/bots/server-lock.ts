@@ -55,18 +55,32 @@ export const pidAlive = (pid: number) => {
 };
 export const bootTime = () => Date.now() - os.uptime() * 1000;
 
-/** GET http://127.0.0.1:<port>/api/health?lock=<nonce> → lock: true (1.5 s) */
+/**
+ * GET http://127.0.0.1:<port>/api/health?lock=<nonce> → lock: true. Whole answer within `timeoutMs` (a server that
+ * trickles bytes doesn't hold it open), at most 64 KB; anything else is no.
+ */
 export function probeLock(lock: ServerLock, timeoutMs = 1500): Promise<boolean> {
   if (!lock.nonce || !(lock.port > 0)) return Promise.resolve(false);
   return new Promise((resolve) => {
+    let settled = false;
+    const done = (v: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      if (!v) req.destroy();
+      resolve(v);
+    };
+    const deadline = setTimeout(() => done(false), timeoutMs);
     const req = http.get({ host: '127.0.0.1', port: lock.port, path: `/api/health?lock=${encodeURIComponent(lock.nonce!)}`, timeout: timeoutMs }, (res) => {
       let body = '';
       res.setEncoding('utf8');
-      res.on('data', (c) => { body += c; if (body.length > 65_536) req.destroy(); });
-      res.on('end', () => { try { resolve(JSON.parse(body)?.lock === true); } catch { resolve(false); } });
+      res.on('data', (c) => { body += c; if (body.length > 65_536) done(false); });
+      res.on('end', () => { let ok = false; try { ok = JSON.parse(body)?.lock === true; } catch { /* not JSON */ } done(ok); });
+      res.on('error', () => done(false));
+      res.on('close', () => done(false)); // after 'end' this is a no-op
     });
-    req.on('timeout', () => req.destroy());
-    req.on('error', () => resolve(false));
+    req.on('timeout', () => done(false));
+    req.on('error', () => done(false));
   });
 }
 
@@ -126,10 +140,17 @@ export function releaseLock(dir: string, pid: number) {
   try { if (readLock(dir)?.pid === pid) fs.rmSync(path.join(dir, LOCK_FILE), { force: true }); } catch { /* gone */ }
 }
 
-/** the server listens: its real port (an app starts on PORT 0), ready */
-export function setLockReady(dir: string, pid: number, port: number) {
+/**
+ * The server listens: its real port (an app starts on PORT 0), ready. False when the lock no longer names this
+ * process (an app took it over meanwhile — read again after the write, which may have raced it): the caller steps
+ * down, as the yield poll would.
+ */
+export function setLockReady(dir: string, pid: number, port: number): boolean {
   const cur = readLock(dir);
-  if (cur?.pid === pid) { try { writeLock(dir, { ...cur, port, ready: true }); } catch { /* best effort */ } }
+  if (cur?.pid !== pid) return false;
+  try { writeLock(dir, { ...cur, port, ready: true }); } catch { /* best effort */ }
+  const after = readLock(dir);
+  return after?.pid === pid && after.nonce === cur.nonce;
 }
 
 /** the lock of another live process, or null when the dir is free */
@@ -151,7 +172,11 @@ async function claim(dir: string, lock: ServerLock, env: LockEnv): Promise<Serve
     let cur = readLock(dir);
     for (let i = 0; !cur && i < 10 && fs.existsSync(path.join(dir, LOCK_FILE)); i++) { await env.sleep(100); cur = readLock(dir); }
     if (isLive(cur, env)) return cur;
-    try { fs.rmSync(path.join(dir, LOCK_FILE), { force: true }); } catch { /* raced */ }
+    // only the stale lock just judged: another server may have replaced it since (then that one is read next round)
+    const again = readLock(dir);
+    const seen = cur as ServerLock | null;
+    const same = seen && again && again.pid === seen.pid && again.startedAt === seen.startedAt && again.nonce === seen.nonce;
+    if (same || (!seen && !again)) { try { fs.rmSync(path.join(dir, LOCK_FILE), { force: true }); } catch { /* raced */ } }
   }
   const cur = readLock(dir);
   return isLive(cur, env) ? cur : readLock(dir) ?? { pid: -1, kind: 'app', port: 0, startedAt: 0 };
