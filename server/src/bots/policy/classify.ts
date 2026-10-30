@@ -78,9 +78,9 @@ const isHttp = (s: string) => /^https?:\/\//i.test(s);
 // ---- shell: read the command the way the shell does ----
 
 /** A word as the program receives it (quotes removed, escapes applied). dyn: its value isn't in the text — an expansion, a substitution, ANSI-C quoting. */
-interface Tok { t: string; dyn: boolean }
+interface Tok { t: string; dyn: boolean; brace?: boolean }
 /** A simple command with what feeds it: substitution in its words, a pipe into it, a `<` redirect. */
-interface PCmd { toks: Tok[]; subst: boolean; piped: boolean; stdin: boolean }
+interface PCmd { toks: Tok[]; subst: boolean; piped: boolean; stdin: boolean; devnet?: boolean }
 
 /** `$x`, `${x}`, `$1`, `$@`, PowerShell `$env:x`, `$_`. */
 const EXPANDS = /[\w{:?@*#!$-]/;
@@ -96,18 +96,22 @@ function parseCommands(src: string, ps: boolean): { cmds: PCmd[]; overflow: bool
   const all: PCmd[] = [];
   const esc = ps ? '`' : '\\';
   let overflow = false;
-  interface Frame { stop: string | null; cmd: PCmd; cur: string; has: boolean; dyn: boolean; dq: boolean; drop: boolean }
+  interface Frame { stop: string | null; cmd: PCmd; cur: string; has: boolean; dyn: boolean; dq: boolean; drop: boolean; ub?: boolean }
   const fresh = (piped: boolean): PCmd => { const c = { toks: [], subst: false, piped, stdin: false }; all.push(c); return c; };
   const stack: Frame[] = [{ stop: null, cmd: fresh(false), cur: '', has: false, dyn: false, dq: false, drop: false }];
   let f = stack[0];
   const endTok = () => {
-    if (f.has && !f.drop) f.cmd.toks.push({ t: f.cur, dyn: f.dyn || (f.cur.includes('%') && /%[A-Za-z_]\w*%/.test(capped(f.cur))) });
-    if (f.has) f.drop = false;
-    f.cur = ''; f.has = false; f.dyn = false;
+    if (f.has && !f.drop) {
+      // brace expansion: an unquoted { with a , or .. inside — the shell turns one word into several
+      const brace = !!f.ub && f.cur.includes('}') && (f.cur.includes(',') || f.cur.includes('..'));
+      f.cmd.toks.push({ t: f.cur, dyn: f.dyn || (f.cur.includes('%') && /%[A-Za-z_]\w*%/.test(capped(f.cur))), brace });
+    }
+    if (f.has && f.drop) { f.drop = false; if (/^\/dev\/(tcp|udp)\//i.test(f.cur)) f.cmd.devnet = true; } // bash's network redirects
+    f.cur = ''; f.has = false; f.dyn = false; f.ub = false;
   };
   const endCmd = (piped: boolean) => { endTok(); f.drop = false; if (f.cmd.toks.length) f.cmd = fresh(piped); else f.cmd.piped ||= piped; };
   const open = (stop: string, sub: boolean) => {
-    if (sub) { f.cmd.subst = true; f.cur += '$SUB'; f.has = true; f.dyn = true; } else endCmd(false);
+    if (sub) { f.cmd.subst = true; f.cur += '\u0001SUB'; /* no $: a nested read must not take it for an expansion */ f.has = true; f.dyn = true; } else endCmd(false);
     if (stack.length >= MAX_DEPTH) { overflow = true; return; }
     f = { stop, cmd: fresh(false), cur: '', has: false, dyn: false, dq: false, drop: false };
     stack.push(f);
@@ -120,7 +124,7 @@ function parseCommands(src: string, ps: boolean): { cmds: PCmd[]; overflow: bool
   while (i < src.length) {
     const ord = f.dq ? DQ_ORD : ORD;
     ord.lastIndex = i;
-    if (ord.test(src)) { const run = src.slice(i, ord.lastIndex); f.cur = f.has ? f.cur + run : run; f.has = true; i = ord.lastIndex; continue; }
+    if (ord.test(src)) { const run = src.slice(i, ord.lastIndex); if (!f.dq && !ps && run.includes('{')) f.ub = true; f.cur = f.has ? f.cur + run : run; f.has = true; i = ord.lastIndex; continue; }
     const ch = src[i], nx = src[i + 1];
     if (!f.dq && SPACE.has(ch)) { endTok(); i++; continue; }
     if (f.dq) {
@@ -165,6 +169,8 @@ function parseCommands(src: string, ps: boolean): { cmds: PCmd[]; overflow: bool
     if (ch === '(') { i++; open(')', f.cmd.toks.length > 0 || f.has); continue; }
     if (ch === ')') { i++; endCmd(false); continue; }
     if (ch === '|') { if (nx === '|') { i += 2; endCmd(false); } else { i++; endCmd(true); } continue; }
+    // PowerShell's call operator & at the start of a command is a word, not a separator
+    if (ps && ch === '&' && nx !== '&' && !f.cmd.toks.length && !f.has) { f.cur = '&'; f.has = true; endTok(); i++; continue; }
     if (ch === ';' || ch === '&' || ch === '\n' || (ps && (ch === '{' || ch === '}'))) { i++; endCmd(false); continue; }
     if (SPACE.has(ch)) { endTok(); i++; continue; }
     f.cur += ch; f.has = true; i++;
@@ -195,6 +201,7 @@ function commandOf(toks: Tok[]): Cmd | undefined {
   while (i < toks.length) {
     const t = toks[i].t;
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) { env.push(t); i++; continue; }
+    if (/^\$[\w:]+$/.test(t) && /^[-+*/]?=$/.test(toks[i + 1]?.t ?? '')) { env.push(`${t}=`); i += 2; continue; } // PowerShell $v = …
     const w = base(t);
     if (PREFIX_WORDS.has(w)) {
       i++;
@@ -244,8 +251,10 @@ const shortHas = (args: string[], letter: string) => args.some((a) => /^-[a-zA-Z
  */
 interface Http { method?: Tok; body: boolean; readsFile: boolean; dests: Tok[]; opaque: boolean; data: string[]; unread: boolean }
 const newHttp = (): Http => ({ body: false, readsFile: false, dests: [], opaque: false, data: [], unread: false });
+/** @file, or name@file (--data-urlencode reads the file; for -d it is at best ambiguous) — anything with an @ before the first =. */
+const FILE_DATA = /^[^=]*@/;
 const addData = (h: Http, v: Tok | undefined, fileRef: boolean) => {
-  if (!v || v.dyn || fileRef || v.t.length > CAP) { h.unread = true; if (fileRef) h.readsFile = true; return; }
+  if (!v || v.dyn || v.brace || fileRef || v.t.length > CAP) { h.unread = true; if (fileRef) h.readsFile = true; return; }
   h.data.push(v.t);
 };
 
@@ -270,7 +279,8 @@ function curlParse(args: Tok[]): Http {
       if (n === 'url') { if (val) h.dests.push(val); else h.opaque = true; }
       if (n === 'upload-file') { h.body = true; addData(h, val, true); }
       const form = /^(expand-)?form/.test(n);
-      if (/^(expand-)?(data|form|json)/.test(n)) { h.body = true; addData(h, val, val !== undefined && (form ? /=[@<]/.test(val.t) || val.t.startsWith('@') : val.t.startsWith('@'))); }
+      if (/^(expand-)?(data|form|json)/.test(n)) { h.body = true; addData(h, val, val !== undefined && (form ? /=[@<]/.test(val.t) || val.t.startsWith('@') : FILE_DATA.test(val.t))); }
+      if (n === 'header' && val?.t.startsWith('@')) { h.readsFile = true; h.unread = true; }
       if (n === 'url-query' || n === 'variable' || n === 'expand-url') addData(h, val, val !== undefined && val.t.includes('@'));
       continue;
     }
@@ -281,7 +291,8 @@ function curlParse(args: Tok[]): Http {
         if (CURL_SHORT_VALUE.has(ch)) {
           const val: Tok | undefined = j + 1 < a.length ? { t: a.slice(j + 1), dyn: args[i].dyn } : args[++i];
           if (ch === 'X') h.method = val ?? { t: '', dyn: true };
-          if (ch === 'd') { h.body = true; addData(h, val, val !== undefined && val.t.startsWith('@')); }
+          if (ch === 'd') { h.body = true; addData(h, val, val !== undefined && FILE_DATA.test(val.t)); }
+          if (ch === 'H' && val?.t.startsWith('@')) { h.readsFile = true; h.unread = true; }
           if (ch === 'F') { h.body = true; addData(h, val, val !== undefined && (/=[@<]/.test(val.t) || val.t.startsWith('@'))); }
           if (ch === 'T') { h.body = true; addData(h, val, true); }
           break;
@@ -382,7 +393,7 @@ function httpOf(c: Cmd): Http | undefined {
 /** Always outward, to a destination we don't extract. */
 const SEND_WORDS = new Set(['ssh', 'scp', 'sftp', 'mosh', 'mail', 'mailx', 'sendmail', 'mutt', 'nc', 'ncat', 'netcat', 'telnet', 'socat', 'ftp', 'tftp', 'send-mailmessage']);
 /** Talk to the network: anything fed into them, or an expansion / substitution in their words (DNS exfil included), is a send. */
-const NET_TOOLS = new Set(['curl', 'wget', 'aria2c', ...PS_WEB, ...HTTPIE, 'nslookup', 'dig', 'host', 'drill', 'ping', 'ping6', 'traceroute', 'tracert', 'resolve-dnsname',
+const NET_TOOLS = new Set(['curl', 'wget', 'aria2c', 'getent', ...PS_WEB, ...HTTPIE, 'nslookup', 'dig', 'host', 'drill', 'ping', 'ping6', 'traceroute', 'tracert', 'resolve-dnsname',
   'test-netconnection', 'tnc', 'test-connection', 'start-bitstransfer', 'gh', 'glab']);
 const REMOVE_WORDS = new Set(['remove-item', 'ri', 'rd', 'rmdir', 'del', 'erase']);
 const GIT_NET = new Set(['push', 'fetch', 'pull', 'clone', 'ls-remote', 'remote', 'submodule', 'archive']);
@@ -399,7 +410,8 @@ const PUBLISHERS = new Set(['npm', 'pnpm', 'yarn', 'bun', 'cargo', 'poetry', 'vs
 /** Command words also looked for past the first word of a command — where the first word may not be what runs. */
 const KNOWN = new Set(['rm', ...REMOVE_WORDS, 'find', 'git', 'gh', 'glab', 'curl', 'wget', ...PS_WEB, 'rsync', 'send-mailmessage', ...INSTALLERS, ...PUBLISHERS, 'powershell', 'pwsh']);
 /** .NET network calls from PowerShell. */
-const DOTNET_SEND = /\.upload(file|string|data|values)|net\.webclient|httpclient|net\.sockets|webrequest\]::|\.(post|put|patch|send)async/i;
+const DOTNET_SEND = /\.upload(file|string|data|values)|net\.webclient|httpclient|net\.sockets|webrequest\]::|dns\]::|\.(post|put|patch|send)async/i;
+const DOTNET_DELETE = /directory\]::delete/i;
 /** Characters without which a word holds no URL, user@host:, .NET call or command string. */
 const INTERESTING = /[:@.\]\s;&|`$(]/;
 const remoteArg = (a: string) => /^[^\s/\\:]{2,}:/.test(a) || /^[a-z][a-z0-9+.-]*:\/\//i.test(a); // host:path, user@host:path, rsync://…
@@ -428,6 +440,7 @@ function commandClasses(c: Cmd, fed: boolean, first: boolean, s: Seen): void {
     const { sub, rest, config } = gitSub(args);
     const r = rest.map((t) => t.t);
     if (config.some((v) => /^alias\./i.test(v))) send(); // an inline alias can run anything
+    if (args.some((t) => t.t.startsWith('--config-env'))) send(); // config from the environment: can't see it
     if (sub === 'push') {
       const del = r.includes('--delete') || r.includes('--mirror') || r.includes('--prune') || shortHas(r, 'd') || r.some((x) => /^\+?:/.test(x));
       s.cls.push(del ? 'delete' : 'send'); s.outward = true;
@@ -492,31 +505,64 @@ function commandClasses(c: Cmd, fed: boolean, first: boolean, s: Seen): void {
     s.cls.push('install');
 }
 
-/** What a whole shell command does and where it goes. */
-interface Shell { found: Set<ActionClass>; hosts: string[]; opaque: boolean; data: string[]; unread: boolean; long: boolean }
+/** What a whole shell command does and where it goes. n: simple commands read so far. */
+interface Shell { found: Set<ActionClass>; hosts: string[]; opaque: boolean; data: string[]; unread: boolean; long: boolean; n: number }
+
+/** Past these the gate doesn't read on: the command is a send to somewhere it can't see. */
+const MAX_COMMAND = 32 * 1024;
+const MAX_COMMANDS = 200;
+
+/**
+ * Command words a scoped rule may cover: the network / VCS tools this file parses, and locals that can't reach the
+ * network. Anything else — a wrapper (sudo, env, nohup, xargs, timeout, stdbuf, setsid, sshpass…), an interpreter, an
+ * unknown binary — may do with its arguments what we can't see, so the target is opaque (the class is unchanged).
+ */
+const SCOPE_OK = new Set(['git', 'curl', 'wget', 'gh', 'npm', 'pnpm', 'yarn', 'cd', 'ls', 'cat', 'echo', 'printf', 'grep', 'rg', 'jq', 'head', 'tail', 'sort', 'wc', 'mkdir',
+  'cp', 'mv', 'touch', 'test', '[', 'true', 'false', 'get-childitem', 'gci', 'dir', 'get-content', 'gc', 'type', 'select-string', 'write-output', 'set-location', 'new-item',
+  'copy-item', 'move-item', 'invoke-restmethod', 'irm', 'invoke-webrequest', 'iwr']);
+const isAssign = (t: string) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(t);
+/** PowerShell `$v =` before the command: an assignment, not a wrapper. */
+const isPsAssign = (t: string) => /^\$[\w:]+$/.test(t) || /^[-+*/]?=$/.test(t);
 
 function walkShell(src: string, ps: boolean, nest: number, acc: Shell): void {
+  const giveUp = () => { acc.found.add('send'); acc.opaque = true; acc.unread = true; };
+  if (src.length > MAX_COMMAND) { giveUp(); return; }
   const { cmds, overflow } = parseCommands(src, ps);
   if (overflow) { acc.found.add('send'); acc.opaque = true; }
+  acc.n += cmds.length;
+  if (acc.n > MAX_COMMANDS) { giveUp(); return; }
   for (const pc of cmds) {
     const fed = pc.subst || pc.piped || pc.stdin;
     const s: Seen = { cls: [], outward: false, imprecise: false, data: [], unread: false };
+    const sendBlind = () => { s.cls.push('send'); s.outward = true; s.imprecise = true; };
     const c = commandOf(pc.toks);
+    if (pc.devnet) sendBlind(); // > /dev/tcp/host/port
+    // git's config through the environment (GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT / KEY / VALUE, export, $env:): it can run anything
+    if (pc.toks.some((t) => t.t.length < 300 && /^(\$env:)?git_config/i.test(t.t))) sendBlind();
     if (c) {
       commandClasses(c, fed, true, s);
+      const word = pc.toks[c.at];
+      const prefix = pc.toks.slice(0, c.at);
+      // a command word we can't read: bash runs any expansion there; PowerShell only after & or .
+      if (word.dyn && (!ps || prefix.some((t) => t.t === '&' || t.t === '.'))) sendBlind();
+      if (nest === 0 && (!SCOPE_OK.has(c.cmd) || word.dyn || prefix.some((t) => !isAssign(t.t) && !(ps && isPsAssign(t.t))))) acc.opaque = true;
       if (c.env.some((e) => /proxy|git_ssh|git_config|curl_home|wgetrc/i.test(e.split('=')[0]))) acc.opaque = true;
       if (c.cmd === 'git' && gitSub(c.args).config.some((v) => /proxy|insteadof|sshcommand|askpass/i.test(v))) acc.opaque = true;
+      // deleting what a pipe names: `find … | xargs rm`, `gci … | Remove-Item`
+      if (c.cmd === 'rm' && fed && prefix.some((t) => base(t.t) === 'xargs')) s.cls.push('delete');
+      if (ps && pc.piped && (c.cmd === 'rm' || REMOVE_WORDS.has(c.cmd))) s.cls.push('delete');
       // the first word may not be what runs (`foo curl -d @x …`): read up to MAX_SHIFT known command words past it
       // (each reads the words up to the next known word, so the whole command is read at most twice)
       const at: number[] = [];
       for (let i = c.at + 1; i < pc.toks.length && at.length <= MAX_SHIFT; i++) if (pc.toks[i].t.length < 300 && KNOWN.has(base(pc.toks[i].t))) at.push(i);
-      if (at.length > MAX_SHIFT) { s.cls.push('send'); s.outward = true; s.imprecise = true; at.length = MAX_SHIFT; }
+      if (at.length > MAX_SHIFT) { sendBlind(); at.length = MAX_SHIFT; }
       at.forEach((i, n) => commandClasses({ cmd: base(pc.toks[i].t), args: pc.toks.slice(i + 1, at[n + 1] ?? pc.toks.length), env: [], at: i }, fed, false, s));
-    }
+    } else if (nest === 0 && pc.toks.some((t) => !isAssign(t.t) && !(ps && isPsAssign(t.t)))) acc.opaque = true;
     const childPs = c && (c.cmd === 'powershell' || c.cmd === 'pwsh') ? true : c && SHELLS.has(c.cmd) && c.cmd !== 'iex' && c.cmd !== 'invoke-expression' ? false : ps;
     for (const tok of pc.toks) {
       const t = tok.t;
       if (t.length > CAP) acc.long = true;
+      if (tok.brace) s.unread = true;
       if (!INTERESTING.test(t)) continue; // a plain word: no URL, address, .NET call or command string in it
       if (t.includes('://')) {
         const u = scanUrls(t);
@@ -525,7 +571,8 @@ function walkShell(src: string, ps: boolean, nest: number, acc: Shell): void {
         if (u.urls.some(isPayUrl)) s.cls.push('pay');
       }
       if (t.includes('@') && /^[\w.+-]+@[\w.-]+:/.test(t)) acc.opaque = true;
-      if ((t.includes('.') || t.includes(']')) && DOTNET_SEND.test(capped(t))) { s.cls.push('send'); s.outward = true; s.imprecise = true; }
+      if ((t.includes('.') || t.includes(']')) && DOTNET_SEND.test(capped(t))) sendBlind();
+      if (t.includes(']') && DOTNET_DELETE.test(capped(t))) s.cls.push('delete');
       // a command string inside a word (bash -c "…", powershell -Command "…", a quoted script): read it too
       if (nest < MAX_NEST && t.length <= CAP && /[\s;&|`$(]/.test(t) && tok !== pc.toks[c?.at ?? -1]) walkShell(t, childPs, nest + 1, acc);
     }
@@ -543,7 +590,7 @@ function walkShell(src: string, ps: boolean, nest: number, acc: Shell): void {
 let memo: { src: string; ps: boolean; out: Shell } | undefined;
 function readShell(src: string, ps: boolean): Shell {
   if (memo && memo.src === src && memo.ps === ps) return memo.out;
-  const out: Shell = { found: new Set(), hosts: [], opaque: false, data: [], unread: false, long: false };
+  const out: Shell = { found: new Set(), hosts: [], opaque: false, data: [], unread: false, long: false, n: 0 };
   walkShell(src, ps, 0, out);
   memo = { src, ps, out };
   return out;
@@ -656,6 +703,7 @@ function scanAmounts(text: string, push: (n: number) => void, bad: () => void): 
     if (PLAIN.test(v)) push(Number(v)); else bad();
   }
 }
+const countOf = (h: string, n: string) => { let c = 0; for (let i = h.indexOf(n); i >= 0; i = h.indexOf(n, i + n.length)) c++; return c; };
 function textVariants(s: string): string[] {
   const out = [s];
   if (s.includes('\\u')) out.push(s.replace(/\\u([0-9a-f]{4})/gi, (_m, h: string) => String.fromCharCode(parseInt(h, 16))));
@@ -669,7 +717,12 @@ function amountsOf(p: Record<string, unknown> | undefined, texts: string[]): { a
   let unknown = false, long = false;
   const scan = (s: string) => {
     if (s.length > CAP) long = true;
-    for (const v of textVariants(capped(s))) scanAmounts(v, (n) => amounts.push(n), () => { unknown = true; });
+    textVariants(capped(s)).forEach((v, k) => {
+      let clean = 0;
+      scanAmounts(v, (n) => { amounts.push(n); clean++; }, () => { unknown = true; });
+      // every "amount" in the text must have been read as one: a spelling, spacing or layout we don't parse is unknown
+      if (k === 0 && countOf(v.toLowerCase(), 'amount') > clean) unknown = true;
+    });
   };
   const walk = (v: unknown, key: string, depth: number) => {
     if (depth > 8) return;

