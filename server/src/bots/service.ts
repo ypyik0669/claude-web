@@ -157,6 +157,14 @@ export class BotService extends EventEmitter {
     if (s && --s.refs <= 0) shared.delete(k);
   }
 
+  /**
+   * The server quitting: aborts only this server's own runs (recorded as stopped) and gives the lease back. Never a stop
+   * request — a server not on duty quitting must not stop the runs of the one that is.
+   */
+  async shutdown(): Promise<void> {
+    try { await this.scheduler.stopAll(); } finally { this.stop(); }
+  }
+
   private defaultProvider(): string | undefined {
     const v = this.d.meta.settings()['bots.defaultProvider'];
     return typeof v === 'string' && v ? v : undefined;

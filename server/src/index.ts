@@ -734,8 +734,9 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       await upstreams.stop();
       await engines.stopAll(); // CLIProxyAPI / Magpie we started (their trees); they come back at the next start
       await remote.stop();
-      await bots.stopAll().catch(() => {}); // the bots' runs end as stopped, before the pool closes their conversations
-      bots.stop(); // gives the scheduler lease back
+      // this server's own bot runs end as stopped, before the pool closes their conversations; the lease goes back.
+      // Not stopAll: on a server not on duty that would ask the one on duty to stop its runs
+      await bots.shutdown().catch(() => {});
       await orchestra.shutdown(); // before the pool: session closes must not fail / advance runs
       await pool.closeAll();
       await library.close(); // library-only Codex app-server / opencode serve / ACP processes

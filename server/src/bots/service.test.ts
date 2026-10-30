@@ -31,7 +31,7 @@ describe('BotService', { timeout: 30_000 }, () => {
     await svc.start();
   });
   afterEach(async () => {
-    for (const s of [svc, ...extra.splice(0)]) { await s.stopAll().catch(() => {}); s.stop(); }
+    for (const s of [svc, ...extra.splice(0)]) await s.shutdown().catch(() => {});
     await settle();
     fs.rmSync(root, { recursive: true, force: true });
   });
@@ -252,6 +252,20 @@ describe('BotService', { timeout: 30_000 }, () => {
     await until(() => runs.some((r) => r.endedAt && r.error));
     expect(svc.load().running).toBe(0);
     await until(() => !fs.existsSync(path.join(root, 'stop.request.json')));
+  });
+
+  it('quitting a server not on duty leaves the runs of the one on duty alone (no stop request)', async () => {
+    pool.hang = true;
+    const b = await svc.create(draft({ routines: [rt('r1')] }));
+    await svc.runNow(b.id, 'r1');
+    await until(() => (svc as any).scheduler.isRunning(b.id));
+    const other = make(); extra.push(other);
+    await other.start();
+    await other.shutdown();
+    await settle(50);
+    expect(fs.existsSync(path.join(root, 'stop.request.json'))).toBe(false);
+    await (svc as any).takeStopRequest();
+    expect((svc as any).scheduler.isRunning(b.id)).toBe(true);
   });
 
   it('deleting a bot tells the windows its inbox items are gone', async () => {
