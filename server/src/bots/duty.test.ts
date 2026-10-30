@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { dutyPlan, DutyCharError } from './duty.js';
+import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
+import { dutyPlan, dutyOn, DutyCharError } from './duty.js';
 
 const o = { nodeBin: '/usr/bin/node', serverEntry: '/app/server/dist/index.js', dataDir: '/home/me/.claude-web', port: 3090, home: '/home/me' };
 const win = {
@@ -118,5 +119,35 @@ describe('dutyPlan', () => {
   it('never lets the port be 0 (the phone has to find it)', () => {
     const p = dutyPlan({ ...o, platform: 'linux', port: 0 });
     expect(p.files[0].content).toContain('Environment="PORT=3090"');
+  });
+});
+
+describe('dutyOn: a failed file write', () => {
+  const setup = () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-duty-'));
+    const plan = dutyPlan({ ...win, dataDir: dir });
+    const ran: string[] = [];
+    const io = (uninstallCode: number) => ({
+      run: async (c: string) => { ran.push(c); return { code: c.includes('/Delete') ? uninstallCode : 0, out: '' }; },
+      // duty.cmd lands, duty.vbs fails (disk full, a locked file)
+      writeFile: async (f: string, content: string) => { if (f.endsWith('.vbs')) throw new Error('disk full'); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, content); },
+    });
+    return { dir, plan, ran, io };
+  };
+  it('windows: the logon task is unregistered before its files are deleted', async () => {
+    const { dir, plan, ran, io } = setup();
+    try {
+      const r = await dutyOn(plan, false, io(0));
+      expect(r.ok).toBe(false);
+      expect(ran).toContain('schtasks /Delete /TN "ClaudeWebDuty" /F');
+      expect(fs.existsSync(plan.files[0].path)).toBe(false);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('windows: if the task cannot be unregistered, the files it points at stay', async () => {
+    const { dir, plan, io } = setup();
+    try {
+      expect((await dutyOn(plan, false, io(1))).ok).toBe(false);
+      expect(fs.existsSync(plan.files[0].path)).toBe(true);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 });

@@ -275,34 +275,38 @@ async function writeFile(file: string, content: string) {
   else await fs.promises.writeFile(file, content, 'utf8');
 }
 
-async function removeFiles(plan: DutyPlan) {
+async function removeFiles(plan: DutyPlan, io: DutyIo = IO) {
   const all = [...plan.files.map((f) => f.path), ...(plan.pidFile ? [plan.pidFile] : [])];
   for (const f of all) await fs.promises.rm(f, { force: true }).catch(() => {});
   if (plan.platform === 'win32') await fs.promises.rmdir(path.dirname(plan.files[0].path)).catch(() => {});
-  if (plan.platform === 'linux') await run('systemctl --user daemon-reload');
+  if (plan.platform === 'linux') await io.run('systemctl --user daemon-reload');
 }
 
 /** win32: the duty server's pid if it is alive and still the program we registered (not a reused pid) */
-async function winDutyPid(plan: DutyPlan): Promise<number | null> {
+async function winDutyPid(plan: DutyPlan, io: DutyIo): Promise<number | null> {
   const pid = Number(await fs.promises.readFile(plan.pidFile!, 'utf8').catch(() => ''));
   if (!pid || pid === process.pid) return null;
-  const r = await run(`tasklist /FI "PID eq ${pid}" /FO CSV /NH`);
+  const r = await io.run(`tasklist /FI "PID eq ${pid}" /FO CSV /NH`);
   const image = /^"([^"]+)","(\d+)"/m.exec(r.out);
   return image && Number(image[2]) === pid && image[1].toLowerCase() === path.basename(process.execPath).toLowerCase() ? pid : null;
 }
 
 /** win32: stop a running duty server (not this process) and wait for its loop to end */
-async function winStop(plan: DutyPlan) {
-  const pid = await winDutyPid(plan);
+async function winStop(plan: DutyPlan, io: DutyIo = IO) {
+  const pid = await winDutyPid(plan, io);
   if (pid) {
     await fs.promises.writeFile(plan.stopFile!, '');
-    await run(`taskkill /T /F /PID ${pid}`);
+    await io.run(`taskkill /T /F /PID ${pid}`);
     // the vbs deletes the marker when it sees it and ends
     for (let i = 0; i < 40 && fs.existsSync(plan.stopFile!); i++) await sleep(250);
   }
   await fs.promises.rm(plan.stopFile!, { force: true }).catch(() => {});
   await fs.promises.rm(plan.pidFile!, { force: true }).catch(() => {});
 }
+
+/** the side effects dutyOn has, so a test can fake them */
+export interface DutyIo { run(command: string): Promise<{ code: number; out: string }>; writeFile(file: string, content: string): Promise<void> }
+const IO: DutyIo = { run, writeFile };
 
 const failed = (c: string, out: string) => `${c}\n${out}`;
 
@@ -326,37 +330,44 @@ export async function installDuty(on: boolean): Promise<{ ok: boolean; detail: s
   return on ? dutyOn(plan, self) : dutyOff(plan, self);
 }
 
-async function dutyOn(plan: DutyPlan, self: boolean): Promise<{ ok: boolean; detail: string }> {
+/** exported for tests (io faked); installDuty is the way in */
+export async function dutyOn(plan: DutyPlan, self: boolean, io: DutyIo = IO): Promise<{ ok: boolean; detail: string }> {
   const win = plan.platform === 'win32';
   // stop the old one first so the new files take effect
   if (!self) {
-    if (win) await winStop(plan);
-    else if (await dutyInstalled()) for (const c of plan.uninstall) await run(c);
+    if (win) await winStop(plan, io);
+    else if (await dutyInstalled(io)) for (const c of plan.uninstall) await io.run(c);
   }
   if (win) await fs.promises.rm(plan.stopFile!, { force: true }).catch(() => {});
   try {
-    for (const f of plan.files) await writeFile(f.path, f.content);
+    for (const f of plan.files) await io.writeFile(f.path, f.content);
   } catch (e) {
-    if (!self) await removeFiles(plan);
+    if (!self) {
+      // Windows: winStop stopped the server but the logon task is still registered — it must not outlive its files
+      // (a wscript error box at every logon). Unregister it first; if that fails, keep the files it points at.
+      let unregistered = true;
+      if (win) for (const u of plan.uninstall) if ((await io.run(u)).code !== 0) unregistered = false;
+      if (unregistered) await removeFiles(plan, io);
+    }
     return { ok: false, detail: tr('写入值班文件失败：{error}', { error: (e as Error).message }) };
   }
   const ok = { ok: true, detail: tr('已注册值班服务，登录后自动在后台运行（日志：{log}）', { log: path.join(dataDir(), 'duty.log') }) };
   if (self) {
     if (win) {
       // re-register (the task may have been deleted by hand), then end this server: the loop starts the new duty.cmd in 5 s
-      const r = await run(plan.commands[0]);
+      const r = await io.run(plan.commands[0]);
       if (r.code !== 0) return { ok: false, detail: tr('注册值班服务失败：{detail}', { detail: failed(plan.commands[0], r.out) }) };
       runDetached(`taskkill /T /F /PID ${process.pid}`);
     } else runDetached(plan.selfRestart);
     return ok;
   }
   for (const c of plan.commands) {
-    const r = await run(c);
+    const r = await io.run(c);
     if (r.code !== 0) {
       // leave nothing half-done
-      for (const u of plan.uninstall) await run(u);
-      if (win) await winStop(plan);
-      await removeFiles(plan);
+      for (const u of plan.uninstall) await io.run(u);
+      if (win) await winStop(plan, io);
+      await removeFiles(plan, io);
       return { ok: false, detail: tr('注册值班服务失败：{detail}', { detail: failed(c, r.out) }) };
     }
   }
@@ -390,8 +401,8 @@ async function dutyOff(plan: DutyPlan, self: boolean): Promise<{ ok: boolean; de
 }
 
 /** Is the duty service registered? */
-export async function dutyInstalled(): Promise<boolean> {
-  if (process.platform === 'win32') return (await run(`schtasks /Query /TN "${TASK}"`)).code === 0;
-  if (process.platform === 'darwin') return (await run(`launchctl list ${LABEL}`)).code === 0;
-  return (await run(`systemctl --user is-enabled ${UNIT}`)).code === 0;
+export async function dutyInstalled(io: DutyIo = IO): Promise<boolean> {
+  if (process.platform === 'win32') return (await io.run(`schtasks /Query /TN "${TASK}"`)).code === 0;
+  if (process.platform === 'darwin') return (await io.run(`launchctl list ${LABEL}`)).code === 0;
+  return (await io.run(`systemctl --user is-enabled ${UNIT}`)).code === 0;
 }
