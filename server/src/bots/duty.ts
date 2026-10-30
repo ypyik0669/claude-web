@@ -97,13 +97,21 @@ export function dutyPlan(o: DutyPlanOptions): DutyPlan {
     const vbs = [
       "' Claude Web duty: run duty.cmd hidden, again 30 s after it ends, until duty.stop appears or duty.cmd is gone",
       'Option Explicit',
-      'Dim sh, fso, cmdFile, stopFile',
+      'Dim sh, fso, cmdFile, stopFile, logFile',
       'Set sh = CreateObject("WScript.Shell")',
       'Set fso = CreateObject("Scripting.FileSystemObject")',
       `cmdFile = ${vs(cmdPath)}`,
       `stopFile = ${vs(stopFile)}`,
+      `logFile = ${vs(log)}`,
       'Do',
       '  If fso.FileExists(stopFile) Or Not fso.FileExists(cmdFile) Then Exit Do',
+      // duty.log stays under 1 MB (one old copy): rotated here, between runs, while nothing holds it open — a BUSY
+      // line every 30 s while the app is open, and the duty server's whole output, would otherwise grow it for good
+      '  On Error Resume Next',
+      '  If fso.FileExists(logFile) Then',
+      '    If fso.GetFile(logFile).Size > 1048576 Then fso.CopyFile logFile, logFile & ".1", True: fso.DeleteFile logFile, True',
+      '  End If',
+      '  On Error GoTo 0',
       // window style 0 = hidden, True = wait
       '  sh.Run "cmd.exe /d /s /c """"" & cmdFile & """""", 0, True',
       '  If fso.FileExists(stopFile) Or Not fso.FileExists(cmdFile) Then Exit Do',
@@ -189,6 +197,8 @@ export function dutyPlan(o: DutyPlanOptions): DutyPlan {
   const unit = p.join(o.home, '.config', 'systemd', 'user', `${UNIT}.service`);
   // systemd: % starts a specifier; inside "…" backslash is an escape (" was rejected above)
   const q = (v: string) => `"${v.replace(/\\/g, '\\\\').replace(/%/g, '%%')}"`;
+  // …and ExecStart expands $VAR / ${VAR} (Environment= doesn't): $$ is a literal $ there
+  const qx = (v: string) => q(v).replace(/\$/g, '$$$$');
   const content = [
     '[Unit]',
     'Description=Claude Web duty (bots keep running with no window)',
@@ -196,7 +206,7 @@ export function dutyPlan(o: DutyPlanOptions): DutyPlan {
     'StartLimitIntervalSec=0',
     '',
     '[Service]',
-    `ExecStart=${q(o.nodeBin)} ${q(o.serverEntry)}`,
+    `ExecStart=${qx(o.nodeBin)} ${qx(o.serverEntry)}`,
     'Restart=always',
     'RestartSec=30',
     ...Object.entries(env).map(([k, v]) => `Environment=${q(`${k}=${v}`)}`),

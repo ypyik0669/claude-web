@@ -120,6 +120,19 @@ describe('dutyPlan', () => {
     expect(() => dutyPlan({ ...o, platform: 'linux', env: { X: 'a\nb' } })).toThrow(DutyCharError);
   });
 
+  it('linux escaping: $ doubled in ExecStart (it expands $VAR there), left alone in Environment= (no expansion there)', () => {
+    const p = dutyPlan({ ...o, platform: 'linux', serverEntry: '/opt/$HOME/index.js', env: { X: 'a$b' } });
+    expect(p.files[0].content).toContain('ExecStart="/usr/bin/node" "/opt/$$HOME/index.js"');
+    expect(p.files[0].content).toContain('Environment="X=a$b"');
+  });
+
+  it('windows: the vbs keeps duty.log under 1 MB between runs (one old copy, duty.log.1)', () => {
+    const vbs = dutyPlan({ ...win, env: {} }).files.find((f) => f.path.endsWith('duty.vbs'))!.content;
+    expect(vbs).toContain('logFile = "C:\\Users\\Jo Smith\\.claude-web\\duty.log"');
+    const rotate = ['  On Error Resume Next', '  If fso.FileExists(logFile) Then', '    If fso.GetFile(logFile).Size > 1048576 Then fso.CopyFile logFile, logFile & ".1", True: fso.DeleteFile logFile, True', '  End If', '  On Error GoTo 0', '  sh.Run'].join('\r\n');
+    expect(vbs).toContain(rotate); // right before each run, while nothing holds the log open
+  });
+
   it('never lets the port be 0 (the phone has to find it)', () => {
     const p = dutyPlan({ ...o, platform: 'linux', port: 0 });
     expect(p.files[0].content).toContain('Environment="PORT=3090"');

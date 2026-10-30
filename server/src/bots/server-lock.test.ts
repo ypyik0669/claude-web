@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import http from 'node:http';
-import { acquireServerLock, liveHolder, probeLock, STARTING_STALE_MS, readLock, releaseLock, setLockReady, watchYield, writeLock, LOCK_FILE, YIELD_FILE, YIELD_WAIT_MS, YIELD_WAIT_STARTING_MS, type LockEnv, type ServerLock } from './server-lock.js';
+import { acquireServerLock, liveHolder, probeLock, rotateLog, STARTING_STALE_MS, readLock, releaseLock, setLockReady, watchYield, writeLock, LOCK_FILE, YIELD_FILE, YIELD_WAIT_MS, YIELD_WAIT_STARTING_MS, type LockEnv, type ServerLock } from './server-lock.js';
 import { dutyStartCommand } from './duty.js';
 
 describe('server.lock: one server per data dir', () => {
@@ -185,6 +185,17 @@ describe('server.lock: one server per data dir', () => {
     };
     expect(await acquireServerLock(dir, 'duty', 3090, env(1, { isAlive }))).toMatchObject({ ok: false, holder: { pid: 2 } });
     expect(readLock(dir)).toMatchObject({ pid: 2, nonce: 'fresh' });
+  });
+
+  it('rotateLog: over the cap the log becomes .1 (replacing the old one); under it, or missing, nothing happens', () => {
+    const f = path.join(dir, 'duty.log');
+    rotateLog(f, 10);
+    fs.writeFileSync(f, 'short'); rotateLog(f, 10);
+    expect(fs.readFileSync(f, 'utf8')).toBe('short');
+    fs.writeFileSync(`${f}.1`, 'older');
+    fs.writeFileSync(f, 'x'.repeat(11)); rotateLog(f, 10);
+    expect(fs.existsSync(f)).toBe(false);
+    expect(fs.readFileSync(`${f}.1`, 'utf8')).toBe('x'.repeat(11));
   });
 
   it('setLockReady says whether the lock still names this process', () => {

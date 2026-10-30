@@ -103,6 +103,15 @@ export const processLockEnv = (): LockEnv => ({
   log: (msg) => console.log(msg),
 });
 
+/**
+ * duty.log over `max` bytes becomes `<file>.1` (replacing the old one). The duty entry calls it on every start (every
+ * 30 s while the app is open); where the log is held open (Windows: the cmd's redirect) the rename fails and the vbs
+ * rotates it between runs instead.
+ */
+export function rotateLog(file: string, max = 1024 * 1024) {
+  try { if (fs.statSync(file).size > max) fs.renameSync(file, `${file}.1`); } catch { /* none, or held open */ }
+}
+
 /** this process's own lock nonce (for /api/health), once it has taken the lock */
 let ownNonce: string | undefined;
 export function lockNonce(): string | undefined { return ownNonce; }
