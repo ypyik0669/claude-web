@@ -1,0 +1,135 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
+import { EventEmitter } from 'node:events';
+import { BotStore } from './store.js'; import { AuditLog } from './audit.js'; import { Inbox } from './inbox.js';
+import { runRoutine, buildPrompt, type PipelineDeps } from './pipeline.js';
+import type { Bot, Routine } from '../protocol.js';
+
+/** a runner that answers the first send with a result, after running `calls` through its gate */
+function fakeRunner(o: { resultText?: string; isError?: boolean; calls?: { toolName: string; input: Record<string, unknown> }[]; agent?: string; gated?: boolean; never?: boolean } = {}) {
+  const r: any = new EventEmitter();
+  r.sessionId = `s_${Math.random().toString(36).slice(2, 8)}`; r.state = 'idle'; r.sent = [] as string[];
+  r.info = { agent: o.agent ?? 'claude' }; r.gated = o.gated ?? true;
+  r.interrupted = 0; r.closed = 0; r.gateAtSend = undefined;
+  r.send = (text: string) => {
+    r.sent.push(text); r.state = 'running'; r.gateAtSend ??= r.gate;
+    if (o.never) return;
+    setTimeout(async () => {
+      for (const c of o.calls ?? []) await r.gate?.({ requestId: 'q', sessionId: r.sessionId, toolName: c.toolName, input: c.input });
+      r.state = 'idle';
+      r.emit('message', { type: 'result', is_error: !!o.isError, result: o.resultText ?? 'done' });
+    }, 0);
+  };
+  r.interrupt = async () => { r.interrupted++; }; r.close = async () => { r.closed++; r.state = 'closed'; };
+  return r;
+}
+
+const routine = (p: Partial<Routine> = {}): Routine => ({ id: 'r1', name: '晨报', prompt: '汇总 issue', enabled: true, acceptance: { kind: 'none' }, onFail: 'inbox', ...p });
+const bot = (routines: Routine[]): Bot => ({ id: 'b1', name: '小晨', charter: { role: '每天出晨报', sources: ['github'] }, cwd: process.cwd(), tier: 'balanced', policy: { rules: [] }, budget: {}, routines, outputs: [{ kind: 'inbox' }], createdAt: 0, updatedAt: 0 });
+
+describe('runRoutine', () => {
+  let root: string; let store: BotStore; let inbox: Inbox; let audit: AuditLog; let opened: any[];
+  const deps = (runner: any, extra: Partial<PipelineDeps> = {}): PipelineDeps => ({ store, audit, inbox, open: (p) => { opened.push(p); return runner; }, memories: () => ['只看 claude-web 仓库'], costOf: async () => 0.0123, defaultProvider: () => 'relay-1', ...extra });
+  beforeEach(async () => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-pipe-')); store = new BotStore(root); inbox = new Inbox(store); audit = new AuditLog(store); opened = []; });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('a plain run: new conversation, prompt built, result recorded with cost, a finding delivered', async () => {
+    const b = bot([routine()]); await store.save(b);
+    const runner = fakeRunner({ resultText: '今天 3 个 issue' });
+    const { run } = await runRoutine(deps(runner), b, b.routines[0], 'cron');
+    expect(opened[0]).toMatchObject({ cwd: process.cwd(), providerId: 'relay-1', drivenBy: 'schedule', gated: true, permissionMode: 'default' });
+    expect(opened[0].sessionId).toBeUndefined();
+    expect(opened[0].model).toBeUndefined();
+    expect(run).toMatchObject({ ok: true, costUsd: 0.0123, said: '今天 3 个 issue', trigger: 'cron' });
+    expect(run.skipped).toBeUndefined();
+    expect(store.runs('b1')[0].id).toBe(run.id);
+    expect(inbox.list('b1')[0]).toMatchObject({ kind: 'finding', title: '晨报', body: '今天 3 个 issue' });
+    expect(store.stateOf('b1', 'r1').lastSummary).toBe('今天 3 个 issue');
+    // the gate was in place before the prompt went out; the conversation is closed once the run is over
+    expect(typeof runner.gateAtSend).toBe('function');
+    expect(runner.closed).toBe(1);
+  });
+
+  it('precheck: same fingerprint skips without opening a conversation', async () => {
+    const echo = process.platform === 'win32' ? 'Write-Output same' : 'echo same';
+    const b = bot([routine({ precheck: echo })]); await store.save(b);
+    const first = await runRoutine(deps(fakeRunner()), b, b.routines[0], 'cron');
+    expect(first.run.skipped).toBeUndefined(); expect(opened).toHaveLength(1);
+    const second = await runRoutine(deps(fakeRunner()), b, b.routines[0], 'cron');
+    expect(second.run.skipped).toBe(true); expect(opened).toHaveLength(1);
+  });
+
+  it('an ask inside the run is queued, the run still ends ok, and resume approves exactly that call', async () => {
+    const b = bot([routine()]); await store.save(b);
+    const push = { toolName: 'Bash', input: { command: 'git push origin main' } };
+    const first = await runRoutine(deps(fakeRunner({ calls: [push] })), b, b.routines[0], 'cron');
+    const item = inbox.list('b1').find((i) => i.kind === 'approval')!;
+    expect(item).toMatchObject({ toolName: 'Bash', runId: first.run.id, sessionId: first.run.sessionId });
+    const r2 = fakeRunner({ calls: [push] });
+    const second = await runRoutine(deps(r2), b, b.routines[0], 'resume', { resume: { sessionId: item.sessionId!, approved: { toolName: item.toolName!, input: item.input! } } });
+    expect(opened[1].sessionId).toBe(item.sessionId);
+    expect(r2.sent[0]).toContain('已经批准');
+    expect(store.audit('b1', second.run.id).map((a) => a.result)).toEqual(['allowed']);
+  });
+
+  it('acceptance script decides ok; three failures disable the routine and say so', async () => {
+    const fail = 'exit 1';
+    const b = bot([routine({ acceptance: { kind: 'script', script: fail } })]); await store.save(b);
+    for (let i = 0; i < 3; i++) await runRoutine(deps(fakeRunner()), store.get('b1')!, store.get('b1')!.routines[0], 'cron');
+    const runs = store.runs('b1');
+    expect(runs.every((r) => r.ok === false && r.verified?.ok === false)).toBe(true);
+    expect(store.get('b1')!.routines[0]).toMatchObject({ enabled: false, failures: 3 });
+    expect(inbox.list('b1').some((i) => i.title.includes('停用'))).toBe(true);
+  });
+
+  it('drafts in the answer become draft items', async () => {
+    const b = bot([routine()]); await store.save(b);
+    await runRoutine(deps(fakeRunner({ resultText: '写好了 <draft>嗨，这是回复</draft> 请过目' })), b, b.routines[0], 'manual');
+    expect(inbox.list('b1').map((i) => i.kind).sort()).toEqual(['draft', 'finding']);
+    expect(inbox.list('b1').find((i) => i.kind === 'draft')!.body).toBe('嗨，这是回复');
+  });
+
+  it('a driver that does not honour the gate (another agent, or an ungated runner) is closed and the run fails, nothing sent', async () => {
+    const b = bot([routine()]); await store.save(b);
+    for (const runner of [fakeRunner({ agent: 'codex' }), fakeRunner({ gated: false })]) {
+      const { run } = await runRoutine(deps(runner), b, store.get('b1')!.routines[0], 'manual');
+      expect(run.ok).toBe(false);
+      expect(run.error).toMatch(/策略/);
+      expect(runner.sent).toEqual([]);
+      expect(runner.closed).toBe(1);
+    }
+  });
+
+  it('the hard stop: aborting interrupts and closes the conversation; the run is recorded as stopped, not as a failure', async () => {
+    const b = bot([routine()]); await store.save(b);
+    const runner = fakeRunner({ never: true });
+    const ac = new AbortController();
+    const p = runRoutine(deps(runner), b, b.routines[0], 'manual', { signal: ac.signal });
+    await new Promise((res) => setTimeout(res, 20));
+    expect(runner.sent).toHaveLength(1);
+    ac.abort();
+    const { run } = await p;
+    expect(runner.interrupted).toBe(1); expect(runner.closed).toBe(1);
+    expect(run).toMatchObject({ ok: false, error: '被停下了' });
+    expect(store.get('b1')!.routines[0].failures ?? 0).toBe(0);
+    expect(inbox.list('b1')).toEqual([]);
+  });
+
+  it('a stop during the pre-check kills it and opens nothing', async () => {
+    const slow = process.platform === 'win32' ? 'Start-Sleep -Seconds 20; Write-Output x' : 'sleep 20; echo x';
+    const b = bot([routine({ precheck: slow })]); await store.save(b);
+    const ac = new AbortController();
+    const t0 = Date.now();
+    const p = runRoutine(deps(fakeRunner()), b, b.routines[0], 'manual', { signal: ac.signal });
+    setTimeout(() => ac.abort(), 300);
+    const { run } = await p;
+    expect(Date.now() - t0).toBeLessThan(10_000);
+    expect(opened).toHaveLength(0);
+    expect(run).toMatchObject({ ok: false, error: '被停下了' });
+  }, 15_000);
+
+  it('buildPrompt carries charter, routine, state, memories and the rules', () => {
+    const p = buildPrompt(bot([routine()]), routine(), { lastSummary: '上次 2 个', checkpoint: '做到第 3 步', updatedAt: 0 }, ['只看 claude-web'], '/x/cp.md');
+    for (const s of ['小晨', '每天出晨报', 'github', '汇总 issue', '上次 2 个', '做到第 3 步', '只看 claude-web', '/x/cp.md', '<draft>', 'memory.write', 'b1']) expect(p).toContain(s);
+  });
+});

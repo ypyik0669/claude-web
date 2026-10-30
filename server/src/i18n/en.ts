@@ -1785,4 +1785,11 @@ export const EN_SERVER: Record<string, string> = {
   "已注册值班服务，登录后自动在后台运行（日志：{log}）": "Duty service registered: it runs in the background after you sign in (log: {log})",
   "已取消值班服务": "Duty service removed",
   "取消值班服务时出错：{detail}": "Error while removing the duty service: {detail}",
+  "被停下了": "Stopped",
+  "这个对话不经过 Bot 的策略检查（只有 Claude 的对话可以），没有运行": "This conversation doesn't go through the bot's policy check (only Claude conversations do), so it wasn't run",
+  "做了：{t}": "Did: {t}",
+  "例行「{name}」连续失败 {n} 次，已停用": "Routine “{name}” failed {n} times in a row and has been turned off",
+  "例行「{name}」没通过验收": "Routine “{name}” didn't pass its check",
+  "{name} 的草稿": "Draft from {name}",
+  "你之前要做的「{summary}」已经批准，现在执行它，然后接着完成例行任务。": "What you wanted to do earlier (“{summary}”) has been approved. Do it now, then carry on with the routine.",
 };
