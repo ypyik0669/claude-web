@@ -302,7 +302,7 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
       await store.save(bot('a', [routine({ nextRunAt: 1 })]));
       fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.pid, host: os.hostname(), at: Date.now() - LEASE_STALE_MS - 1000, instance: 'other' }));
       const s = sched(deps());
-      await s.tick(5); await settle();
+      await s.tick(5); await until(() => runners.length === 1); await idle(s); // polled: a fixed sleep flaked under a loaded CPU
       expect(runners).toHaveLength(1);
       s.stop();
       expect(fs.existsSync(lockFile())).toBe(false); // released on stop
