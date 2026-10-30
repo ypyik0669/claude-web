@@ -1,4 +1,4 @@
-// 设置 → Bot (spec 2026-10-30-duty-bots-design §「设置 → Bot」, §10): the controls of the rows that are more than a
+// 设置 › 通用 › 值班 Bot (spec 2026-10-30-duty-bots-design §「设置 → Bot」, §10): the controls of the rows that are more than a
 // plain meta.json switch — the global budget, the default source, the headless duty service, the desktop shell's
 // tray / launch-at-login, and 放开全部 / 收回. Every value still goes through `settings.set`.
 import { useEffect, useState } from 'react';
@@ -10,6 +10,7 @@ import { imeComposing } from '@/ui/ime';
 import { Select as MenuSelect } from '@/ui/Select';
 import { useBots } from '@/features/bots/state';
 import { tr } from '@/i18n';
+import { dutyAfter, dutyShown, eachUntilError, parseBudget, type DutyResult } from './bots-settings';
 
 const msg = (e: unknown) => (e as Error)?.message ?? String(e);
 
@@ -21,20 +22,16 @@ export function BotsBudget({ label }: { label: string }) {
   const [text, setText] = useState(saved);
   useEffect(() => setText(saved), [saved]);
   const commit = () => {
-    const t = text.trim();
-    if (t === saved) return;
-    const n = Number(t);
-    if (t && (!Number.isFinite(n) || n < 0)) {
-      useStore.getState().toast(tr('预算要填一个不小于 0 的数，或者留空'));
-      setText(saved);
-      return;
-    }
+    if (text.trim() === saved) return;
+    const r = parseBudget(text);
+    // the text stays as typed, so you see what was refused
+    if (!r.ok) { useStore.getState().toast(tr('预算要填一个不小于 0 的数，或者留空')); return; }
     // empty or 0 = no global budget (the server reads only a positive number)
-    void set('bots.globalBudgetUsd', t && n > 0 ? n : undefined);
-    if (!(n > 0)) setText('');
+    void set('bots.globalBudgetUsd', r.value);
+    if (r.value === undefined) setText('');
   };
   return (
-    <input className="field" type="number" min={0} step="any" inputMode="decimal" aria-label={label} placeholder={tr('不设')} value={text}
+    <input className="field" type="text" inputMode="decimal" aria-label={label} placeholder={tr('不设')} value={text}
       style={{ width: 110 }}
       onChange={(e) => setText(e.target.value)} onBlur={commit}
       onKeyDown={(e) => { if (e.key === 'Enter' && !imeComposing(e.nativeEvent)) { e.preventDefault(); commit(); } }} />
@@ -70,31 +67,35 @@ export function BotsDefaultProvider({ label }: { label: string }) {
 }
 
 const failed = (on: boolean, detail: string) => (on ? tr('没能打开值班服务：{detail}', { detail }) : tr('没能关闭值班服务：{detail}', { detail }));
-
-interface DutyResult { on: boolean; ok: boolean; detail: string; at: number }
+// machine-local: settings sync only carries routing.* / models.* (sync/backup.ts)
 const DUTY_KEY = 'bots.duty.last';
 
 /**
- * 值班服务 (headless): register the server as a per-user service. There is no "is it installed" request, so the switch
- * shows the last result (kept in meta.json) and says the system's own task list is what counts.
+ * 值班服务 (headless): register the server as a per-user service. The switch shows what the system says
+ * (`bots.duty.status`); while that is unknown (an older server, a remote window), the state the last change left.
  */
 export function BotsDutyService({ label }: { label: string }) {
   const last = useStore((s) => s.settings[DUTY_KEY]) as DutyResult | undefined;
   const set = useStore((s) => s.setSetting);
   const [busy, setBusy] = useState(false);
-  const on = !!last && last.ok && last.on;
+  const [installed, setInstalled] = useState<boolean | null>(null);
+  const ask = () => ws.request<{ installed: boolean }>({ kind: 'bots.duty.status' })
+    .then((r) => setInstalled(typeof r?.installed === 'boolean' ? r.installed : null)).catch(() => setInstalled(null));
+  useEffect(() => { void ask(); }, []);
+  const on = dutyShown(last, installed);
   const flip = async () => {
     const want = !on;
     setBusy(true);
     try {
       const r = await ws.request<{ ok: boolean; detail: string }>({ kind: 'bots.duty.install', mode: 'service', on: want });
-      const res: DutyResult = { on: want, ok: !!r?.ok, detail: r?.detail ?? '', at: Date.now() };
-      // a failed "off" leaves it as it was: keep showing on
-      void set(DUTY_KEY, res.ok ? res : { ...res, on: on });
+      const res = dutyAfter(on, want, { ok: !!r?.ok, detail: r?.detail ?? '' }, Date.now());
+      void set(DUTY_KEY, res);
       useStore.getState().toast(res.ok ? res.detail || (want ? tr('值班服务已打开') : tr('值班服务已关闭')) : failed(want, res.detail));
     } catch (e) {
+      void set(DUTY_KEY, dutyAfter(on, want, { ok: false, detail: msg(e) }, Date.now()));
       useStore.getState().toast(failed(want, msg(e)));
     } finally {
+      await ask();
       setBusy(false);
     }
   };
@@ -139,21 +140,14 @@ export function BotsUnleashAll() {
       danger: true, focusCancel: true, okLabel: tr('放开全部'),
     }))) return;
     setBusy(true);
-    let done = 0;
     try {
-      for (const b of targets) {
-        try {
-          await ws.request({ kind: 'bots.unleash', id: b.id, on });
-          done++;
-        } catch (e) {
-          const message = msg(e);
-          useStore.getState().toast(on
-            ? tr('「{name}」没能放开，后面的没有再动（已处理 {done} 个）：{message}', { name: b.name, done, message })
-            : tr('「{name}」没能收回，后面的没有再动（已处理 {done} 个）：{message}', { name: b.name, done, message }));
-          return;
-        }
-      }
-      useStore.getState().toast(on ? tr('已放开 {count} 个 Bot', { count: done }) : tr('已收回 {count} 个 Bot', { count: done }));
+      const { done, failed: f } = await eachUntilError(targets, (b) => ws.request({ kind: 'bots.unleash', id: b.id, on }));
+      if (f) {
+        const o = { name: f.target.name, done, message: msg(f.error) };
+        useStore.getState().toast(on
+          ? tr('「{name}」没能放开，后面的没有再动（已处理 {done} 个）：{message}', o)
+          : tr('「{name}」没能收回，后面的没有再动（已处理 {done} 个）：{message}', o));
+      } else useStore.getState().toast(on ? tr('已放开 {count} 个 Bot', { count: done }) : tr('已收回 {count} 个 Bot', { count: done }));
     } finally {
       setBusy(false);
     }

@@ -68,14 +68,13 @@ describe('settings map (spec §5.7)', () => {
     expect(byGroup).toEqual({
       常用: ['通用', '外观', '账号与登录'],
       模型: ['模型与智能程度', '供应商', '模型网关'],
-      扩展: ['MCP 与插件', 'Skills', 'Agents 与子代理', '共享记忆', 'Bot'],
+      扩展: ['MCP 与插件', 'Skills', 'Agents 与子代理', '共享记忆'],
       连接: ['手机与其它电脑', 'IM 机器人', '联网'],
       数据: ['对话库', '密钥'],
       高级: ['Hooks', '环境变量', 'CLI 工具', '诊断', '更新', 'settings.json'],
     });
-    // (值班 Bot, spec 2026-10-30-duty-bots-design 「设置 → Bot」: a sixteenth, under 扩展)
-    expect(VISIBLE_SECTIONS.length).toBeLessThanOrEqual(16);
-    expect(VISIBLE_SECTIONS.length).toBe(16);
+    expect(VISIBLE_SECTIONS.length).toBeLessThanOrEqual(15);
+    expect(VISIBLE_SECTIONS.length).toBe(15);
     expect(ADVANCED_SECTIONS.every((s) => s.advanced && s.group === 'advanced')).toBe(true);
     expect(VISIBLE_SECTIONS.some((s) => s.advanced)).toBe(false);
   });
@@ -192,12 +191,13 @@ describe('settings map (spec §5.7)', () => {
     }
   });
 
-  it('设置 → Bot: its rows on one page, the subscription warning verbatim, found by 值班 / 放开', () => {
+  it('值班 Bot: one block on 通用 (no page of its own), the subscription warning verbatim, found by 放开 / 值班 / 后台 / Bot', () => {
     const bots = allEntries().filter(({ entry }) => entry.id.startsWith('bots.'));
-    expect(bots.map((e) => e.section.id)).toEqual(Array(7).fill('bots'));
+    expect(bots.map((e) => [e.section.id, e.entry.block, !!e.entry.more])).toEqual(Array(7).fill(['general', '值班 Bot', false]));
     expect(bots.find((e) => e.entry.id === 'bots.defaultProvider')!.entry.hint).toBe('Bot 7×24 小时跑，默认走 API / 网关来源，不用 Claude 订阅登录（2026-04 起条款可能禁止这样用订阅，有封号风险）');
     expect(ids(searchSettings('放开'))).toContain('entry:bots.unleashAll');
     expect(ids(searchSettings('值班 后台'))).toContain('entry:bots.duty.service');
+    for (const q of ['值班', 'Bot']) expect(ids(searchSettings(q)), q).toEqual(expect.arrayContaining(bots.map((e) => `entry:${e.entry.id}`)));
   });
 
   it('退出前确认 and 减少动画 are on their pages, not behind 更多选项', () => {

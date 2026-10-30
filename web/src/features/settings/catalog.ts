@@ -148,21 +148,22 @@ const APPEARANCE: EntryMeta[] = [
   { id: 'ui.haptics', block: tr('显示'), label: tr('触感反馈'), hint: tr('在支持的手机上，发送、批准、长按出菜单时轻震一下。打开「减少动画」时不震。'), keywords: tr('haptic vibrate 震动 振动 触感 手机') },
 ];
 
-// 值班 Bot (spec 2026-10-30-duty-bots-design 「设置 → Bot」). Not all meta.json keys: 值班服务 registers a system service,
+// 值班 Bot (spec 2026-10-30-duty-bots-design 「设置 → Bot」): a block on 通用 (the 15-page cap holds), next to
+// 关闭窗口时留在托盘. Not all meta.json keys: 值班服务 registers a system service,
 // 开机自启 is the desktop shell's login item, 放开全部 flips every bot.
 const BOTS: EntryMeta[] = [
-  { id: 'bots.concurrency', block: tr('运行'), label: tr('同时运行几个 Bot'), hint: tr('超出的排队等着，前面的跑完再开始。'), keywords: tr('bot concurrency parallel 并发 同时 排队 值班') },
-  { id: 'bots.globalBudgetUsd', block: tr('运行'), label: tr('全部 Bot 每天的预算（美元）'), hint: tr('所有 Bot 当天加起来花到这个数就停下，第二天再跑。留空或 0：不设总预算，只看每个 Bot 自己的。'), keywords: tr('bot budget cost usd money 预算 费用 花钱 上限 值班') },
-  { id: 'bots.defaultProvider', block: tr('模型'), label: tr('默认来源'), hint: tr('Bot 7×24 小时跑，默认走 API / 网关来源，不用 Claude 订阅登录（2026-04 起条款可能禁止这样用订阅，有封号风险）'), keywords: tr('bot provider source gateway api subscription 供应商 来源 网关 订阅 值班') },
-  { id: 'bots.defaultTier', block: tr('模型'), label: tr('新 Bot 的默认档位'), hint: tr('省钱用最便宜的模型，最强用最好的；每个 Bot 自己还能改。'), keywords: tr('bot tier model cheap balanced best 档位 模型 省钱 均衡 最强 值班') },
-  { id: 'bots.duty.service', block: tr('值班'), label: tr('不开窗口也值班'), hint: tr('把服务注册成这台电脑的后台服务，登录后自动运行，窗口全关了 Bot 也照常跑。第一次启动可能要 1–2 分钟；开 / 关后以系统里的计划任务为准。'), keywords: tr('bot duty service headless background autostart 值班 后台 服务 计划任务 开机') },
-  { id: 'bots.loginItem', block: tr('值班'), label: tr('开机自启（桌面版）'), hint: tr('登录电脑后桌面版自己在托盘里启动。配合「关闭窗口时留在托盘」，关掉窗口 Bot 也继续值班。'), keywords: tr('bot login item startup tray 开机 自启 托盘 值班') },
-  { id: 'bots.unleashAll', block: tr('限制'), label: tr('放开全部 Bot'), hint: tr('一次关掉所有 Bot 的限制（总管除外）：发送、付款、删除都不再先问你；只有停止和审计还在。「收回」恢复原来的规则。'), keywords: tr('bot unleash gate limit 放开 无闸 收回 限制 全自动 值班') },
+  { id: 'bots.concurrency', block: tr('值班 Bot'), label: tr('同时运行几个 Bot'), hint: tr('超出的排队等着，前面的跑完再开始。'), keywords: tr('bot concurrency parallel 并发 同时 排队 值班') },
+  { id: 'bots.globalBudgetUsd', block: tr('值班 Bot'), label: tr('全部 Bot 每天的预算（美元）'), hint: tr('所有 Bot 当天加起来花到这个数就停下，第二天再跑。留空或 0：不设总预算，只看每个 Bot 自己的。'), keywords: tr('bot budget cost usd money 预算 费用 花钱 上限 值班') },
+  { id: 'bots.defaultProvider', block: tr('值班 Bot'), label: tr('默认来源'), hint: tr('Bot 7×24 小时跑，默认走 API / 网关来源，不用 Claude 订阅登录（2026-04 起条款可能禁止这样用订阅，有封号风险）'), keywords: tr('bot provider source gateway api subscription 供应商 来源 网关 订阅 值班') },
+  { id: 'bots.defaultTier', block: tr('值班 Bot'), label: tr('新 Bot 的默认档位'), hint: tr('省钱用最便宜的模型，最强用最好的；每个 Bot 自己还能改。'), keywords: tr('bot tier model cheap balanced best 档位 模型 省钱 均衡 最强 值班') },
+  { id: 'bots.duty.service', block: tr('值班 Bot'), label: tr('不开窗口也值班'), hint: tr('把服务注册成这台电脑的后台服务，登录后自动运行，窗口全关了 Bot 也照常跑。第一次启动可能要 1–2 分钟；开 / 关后以系统里的后台服务 / 计划任务为准。'), keywords: tr('bot duty service headless background autostart 值班 后台 服务 计划任务 开机') },
+  { id: 'bots.loginItem', block: tr('值班 Bot'), label: tr('开机自启（桌面版）'), hint: tr('登录电脑后桌面版自己在托盘里启动。配合「关闭窗口时留在托盘」，关掉窗口 Bot 也继续值班。'), keywords: tr('bot login item startup tray 开机 自启 托盘 值班') },
+  { id: 'bots.unleashAll', block: tr('值班 Bot'), label: tr('放开全部 Bot'), hint: tr('一次关掉所有 Bot 的限制（总管除外）：发送、付款、删除都不再先问你；只有停止和审计还在。「收回」恢复原来的规则。'), keywords: tr('bot unleash gate limit 放开 无闸 收回 限制 全自动 值班') },
 ];
 
 export const SETTINGS_SECTIONS: SectionMeta[] = [
   // 常用
-  { id: 'general', l: tr('通用'), ic: 'settings', group: 'common', desc: tr('新对话的默认行为、提醒方式，以及界面要显示多少工具。'), keywords: tr('界面 会话 interface session'), entries: GENERAL },
+  { id: 'general', l: tr('通用'), ic: 'settings', group: 'common', desc: tr('新对话的默认行为、提醒方式，以及界面要显示多少工具。'), keywords: tr('界面 会话 interface session'), entries: [...GENERAL, ...BOTS] },
   { id: 'appearance', l: tr('外观'), ic: 'sun', group: 'common', desc: tr('主题、字号和界面密度。'), keywords: tr('appearance theme 主题'), entries: APPEARANCE, bodies: ['customCss'] },
   { id: 'account', l: tr('账号与登录'), ic: 'user', group: 'common', desc: tr('Claude 账号的登录状态。用第三方接口或中转站请去「供应商」。'), keywords: tr('引擎与账号 engine account login 登录 账号'), bodies: ['account'], more: ['engine'] },
   // 模型
@@ -186,7 +187,6 @@ export const SETTINGS_SECTIONS: SectionMeta[] = [
     ],
   },
   { id: 'memory', l: tr('共享记忆'), ic: 'memory', group: 'ext', desc: tr('所有 Agent 共用的一份记忆：做过的决定、约束、踩过的坑。'), keywords: tr('memory 记忆'), bodies: ['memory'] },
-  { id: 'bots', l: 'Bot', ic: 'bot', group: 'ext', desc: tr('一直在后台值班的 Bot：同时跑几个、花多少钱、用什么模型，以及不开窗口时怎么继续跑。'), keywords: tr('bot bots 值班 机器人 队友 duty'), entries: BOTS },
   // 连接
   { id: 'remote', l: tr('手机与其它电脑'), ic: 'device', group: 'connect', desc: tr('在手机上接着用，或者把其它电脑上的对话接到这里。'), keywords: tr('远程 / 手机 remote phone 手机 远程'), bodies: ['remote', 'peers'], more: ['anywhere', 'hosts'] },
   { id: 'im', l: tr('IM 机器人'), ic: 'chat', group: 'connect', desc: tr('在 Telegram、飞书、钉钉等聊天软件里给 Claude 派活、批准操作。'), keywords: tr('IM 网关 im bot 机器人'), bodies: ['im'] },

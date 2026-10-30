@@ -870,7 +870,9 @@ export type ClientRequest =
   | { kind: 'bots.templates' }
   | { kind: 'bots.load' }
   | { kind: 'bots.unleash'; id: string; on: boolean }
-  | { kind: 'bots.duty.install'; mode: 'autostart' | 'service'; on: boolean };
+  | { kind: 'bots.duty.install'; mode: 'autostart' | 'service'; on: boolean }
+  /** is the duty service registered (asks the system: schtasks / launchctl / systemctl) */
+  | { kind: 'bots.duty.status' };
 
 /** `via`: serverIds a forwarded request already passed through (federation loop guard). */
 export interface RequestEnvelope { id: string; req: ClientRequest; via?: string[] }
