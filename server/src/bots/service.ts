@@ -3,7 +3,7 @@
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
-import type { AuditRow, Bot, BotDraft, BotLoad, BotOutput, BotRun, BotStatus, BotTemplate, BotTier, InboxAnswer, InboxItem, OpenSessionParams } from '../protocol.js';
+import type { AuditRow, Bot, BotDraft, BotGenerated, BotLoad, BotOutput, BotRun, BotStatus, BotTemplate, BotTier, InboxAnswer, InboxItem, OpenSessionParams } from '../protocol.js';
 import type { RunnerPool } from '../runtime/pool.js';
 import type { MemoryService } from '../memory/service.js';
 import type { LedgerService } from '../usage/ledger.js';
@@ -297,7 +297,7 @@ export class BotService extends EventEmitter {
   audit(botId: string, runId: string): AuditRow[] { return this.store.audit(botId, runId); }
 
   /** one sentence → a draft, on the strongest model the default provider has */
-  generate(text: string, cwd: string): Promise<BotDraft['bot']> {
+  generate(text: string, cwd: string): Promise<BotGenerated> {
     return generateBot({ open: (p) => this.d.pool.open(p), defaultProvider: () => this.defaultProvider(), model: () => this.modelFor('best', undefined) }, text, cwd);
   }
   templates(): BotTemplate[] { return BOT_TEMPLATES; }

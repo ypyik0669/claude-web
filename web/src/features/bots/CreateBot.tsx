@@ -1,7 +1,8 @@
 // 值班 Bot: the create flow — three entries (one sentence → a generated draft, a template, the current conversation),
-// then every field of the draft on one screen, then 先影子跑一次 (create and run the first routine at once) or 保存.
+// then every field of the draft on one screen, then 保存并先跑一次 (create and start the first routine at once) or 保存.
+// (A true shadow run — nothing reaches the outside — is phase 2.)
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import type { BotDraft, BotOutput, BotTemplate, BotTier, ImGatewayInfo, Routine } from '@shared';
+import type { BotDraft, BotGenerated, BotOutput, BotTemplate, BotTier, ImGatewayInfo, Routine } from '@shared';
 import { useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { imeComposing } from '@/ui/ime';
@@ -10,15 +11,15 @@ import { pickFolder } from '@/ui/pick-folder';
 import { Segmented } from '@/ui/Segmented';
 import { Select } from '@/ui/Select';
 import { tr } from '@/i18n';
-import { draftFromTemplate, draftProblem, fasterThanHourly, lastUserText, monthlyEstimate, normalizeDraft, PER_RUN_USD, usd } from './model';
+import { draftFromTemplate, draftProblem, fasterThanHourly, lastUserText, MIN_EVERY_MINUTES, monthlyEstimate, normalizeDraft, PER_RUN_USD, underMinimum, usd } from './model';
 import { BlurField, NumField, splitList } from './fields';
-import { createBot, generate, runNow, setBotTab, startCreate, useBots } from './state';
+import { createBot, generate, selectBot, setBotTab, startCreate, startRun, useBots } from './state';
 
 type Draft = BotDraft['bot'];
 type ImOut = Extract<BotOutput, { kind: 'im' }>;
 type FileOut = Extract<BotOutput, { kind: 'file' }>;
 /** a draft arrived: `generated` ones get the 15-minute clamp; a template's risk shows on the preview */
-type OnDraft = (d: Draft, generated: boolean, risk?: string) => void;
+type OnDraft = (d: BotGenerated, risk?: string) => void;
 
 /** The active conversation's folder (the default 工作目录). */
 const useActiveCwd = () => useStore((s) => (s.activeId ? s.open[s.activeId]?.cwd ?? '' : ''));
@@ -51,17 +52,17 @@ export function StarterTemplates() {
 }
 
 /** Step 1: the three entries. */
-function Entries({ cwd, onDraft }: { cwd: string; onDraft: OnDraft }) {
+function Entries({ cwd, onDraft, onBusy }: { cwd: string; onDraft: OnDraft; onBusy: (busy: boolean) => void }) {
   const templates = useBots((s) => s.templates);
   const prompt = useActivePrompt();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState<'' | 'text' | 'conv'>('');
   const run = async (src: 'text' | 'conv', t: string) => {
     if (!t.trim() || busy) return;
-    setBusy(src);
+    setBusy(src); onBusy(true);
     const d = await generate(t.trim(), cwd);
-    setBusy('');
-    if (d) onDraft(d, true);
+    setBusy(''); onBusy(false);
+    if (d) onDraft(d);
   };
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (imeComposing(e.nativeEvent)) return;
@@ -88,7 +89,7 @@ function Entries({ cwd, onDraft }: { cwd: string; onDraft: OnDraft }) {
       <section className="bc-entry wide">
         <h4>{tr('模板')}</h4>
         {templates.length
-          ? <div className="bc-tpls">{templates.map((t) => <TemplateCard key={t.id} t={t} onPick={(x) => onDraft(draftFromTemplate(x, cwd), false, x.risk)} />)}</div>
+          ? <div className="bc-tpls">{templates.map((t) => <TemplateCard key={t.id} t={t} onPick={(x) => onDraft(draftFromTemplate(x, cwd), x.risk)} />)}</div>
           : <div className="bd-note">{tr('模板还没有加载，稍后再试')}</div>}
       </section>
     </div>
@@ -117,13 +118,17 @@ function RoutineRow({ r, onChange, onRemove }: { r: Routine; onChange: (r: Routi
           {fasterThanHourly(r) && <span className="bd-hint">{tr('约 {usd}/月', { usd: usd(monthlyEstimate(r, PER_RUN_USD)) })}</span>}
         </span>
       </div>
+      {underMinimum(r) && <div className="bc-note warn" role="note">{tr('比每 {n} 分钟还勤，费用会很高；值班一般不需要这么快', { n: MIN_EVERY_MINUTES })}</div>}
       <label className="bd-row"><span>{tr('预检脚本')}</span><BlurField className="mono" label={tr('预检脚本')} placeholder={tr('输出没变就跳过、不唤醒模型（可不填）')} value={r.precheck ?? ''} onSave={(p) => onChange({ ...r, precheck: p.trim() || undefined })} /></label>
     </div>
   );
 }
 
 /** Step 2: the whole draft on one screen. */
-function Preview({ d, set, risk, clamped }: { d: Draft; set: (p: Partial<Draft>) => void; risk?: string; clamped: boolean }) {
+function Preview({ d, set, risk, clamped }: { d: Draft; set: (p: Partial<Draft>) => void; risk?: string; clamped: string[] }) {
+  const root = useRef<HTMLDivElement>(null);
+  // the draft just appeared: the focus goes to its name
+  useEffect(() => { root.current?.querySelector<HTMLInputElement>('input.field')?.focus(); }, []);
   const [gateways, setGateways] = useState<ImGatewayInfo[]>([]);
   useEffect(() => {
     let live = true;
@@ -141,7 +146,7 @@ function Preview({ d, set, risk, clamped }: { d: Draft; set: (p: Partial<Draft>)
   const tiers: { value: BotTier; label: string }[] = [{ value: 'cheap', label: tr('省钱') }, { value: 'balanced', label: tr('均衡') }, { value: 'best', label: tr('最强') }];
   const pick = async () => { const p = await pickFolder({ start: d.cwd || undefined }); if (p) set({ cwd: p }); };
   return (
-    <div className="bd-form bc-preview">
+    <div ref={root} className="bd-form bc-preview">
       {risk && <div className="bc-risk" role="note">{risk}</div>}
       <label><span>{tr('名字')}</span><BlurField label={tr('名字')} value={d.name} onSave={(name) => set({ name })} /></label>
       <div className="bd-row">
@@ -156,7 +161,7 @@ function Preview({ d, set, risk, clamped }: { d: Draft; set: (p: Partial<Draft>)
       <label><span>{tr('怎么汇报')}</span><BlurField label={tr('怎么汇报')} value={c.report ?? ''} onSave={(v) => charter({ report: v || undefined })} /></label>
       <label><span>{tr('怎样算做完')}</span><BlurField label={tr('怎样算做完')} value={c.done ?? ''} onSave={(v) => charter({ done: v || undefined })} /></label>
       <h4>{tr('例行')}</h4>
-      {clamped && <div className="bd-hint" role="note">{tr('有例行的间隔不到 15 分钟，已改成 15 分钟')}</div>}
+      {clamped.length > 0 && <div className="bc-note" role="note">{tr('「{names}」原本比每 {n} 分钟还勤，已放慢到每 {n} 分钟', { names: clamped.join('、'), n: MIN_EVERY_MINUTES })}</div>}
       {d.routines.map((r, i) => <RoutineRow key={i} r={r} onChange={(x) => routine(i, x)} onRemove={() => routine(i, null)} />)}
       <div><button className="btn sm" onClick={addRoutine}>{tr('添加例行')}</button></div>
       <h4>{tr('设置')}</h4>
@@ -188,54 +193,59 @@ export function CreateBot({ onClose }: { onClose: () => void }) {
   const box = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [risk, setRisk] = useState<string | undefined>();
-  const [clamped, setClamped] = useState(false);
+  const [clamped, setClamped] = useState<string[]>([]);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  const [started, setStarted] = useState(false);
-  const onDraft: OnDraft = (d, generated, r) => {
+  const [generating, setGenerating] = useState(false);
+  /** after 保存并先跑一次: the bot, and whether its first run started (else why not) */
+  const [made, setMade] = useState<{ botId: string; runError: string | null } | null>(null);
+  const onDraft: OnDraft = (d, r) => {
     const n = normalizeDraft({ ...d, cwd: d.cwd || activeCwd });
-    setDraft(n.draft); setClamped(generated && n.clamped); setRisk(r); setErr('');
+    setDraft(n.draft); setClamped(n.clamped); setRisk(r); setErr('');
   };
   // opened from a starter card: straight to that template's preview; else the focus goes into the dialog
   useEffect(() => {
     const id = useBots.getState().createTemplate;
     const t = id ? useBots.getState().templates.find((x) => x.id === id) : undefined;
-    if (t) onDraft(draftFromTemplate(t, activeCwd), false, t.risk);
+    if (t) onDraft(draftFromTemplate(t, activeCwd), t.risk);
     if (id) useBots.setState({ createTemplate: undefined });
     if (!box.current?.contains(document.activeElement)) box.current?.focus();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (p: Partial<Draft>) => { setDraft((x) => (x ? { ...x, ...p } : x)); setErr(''); };
-  const create = async (shadow: boolean) => {
+  const create = async (runFirst: boolean) => {
     if (!draft || busy) return;
     const problem = draftProblem(draft);
     if (problem) { setErr(problem); return; }
-    if (shadow && !draft.routines.length) { setErr(tr('先加一条例行，才能跑')); return; }
+    if (runFirst && !draft.routines.length) { setErr(tr('先加一条例行，才能跑')); return; }
     setBusy(true);
     const bot = await createBot(draft);
-    setBusy(false);
-    if (!bot) return;
-    if (!shadow) { onClose(); return; }
+    if (!bot) { setBusy(false); return; }
+    if (!runFirst) { setBusy(false); onClose(); return; }
     const first = bot.routines[0];
-    if (first?.id) void runNow(bot.id, first.id);
-    setStarted(true);
+    const runError = first?.id ? await startRun(bot.id, first.id) : tr('没有找到要跑的例行');
+    setBusy(false);
+    setMade({ botId: bot.id, runError });
   };
-  const back = () => { setDraft(null); setErr(''); setClamped(false); setRisk(undefined); };
+  const back = () => { setDraft(null); setErr(''); setClamped([]); setRisk(undefined); };
+  const goSee = (botId: string, tab: 'runs' | 'routines') => { selectBot(botId); setBotTab(tab); onClose(); };
   const onKey = (e: KeyboardEvent) => {
     if (e.key === 'Escape' && !imeComposing(e.nativeEvent)) { e.stopPropagation(); e.preventDefault(); onClose(); }
     else trapTab(e, box.current);
   };
   return (
-    <div className="modal-bg dialog-bg" onMouseDown={(e) => e.target === e.currentTarget && !busy && onClose()} onKeyDown={onKey}>
+    <div className="modal-bg dialog-bg" onMouseDown={(e) => e.target === e.currentTarget && !busy && !generating && onClose()} onKeyDown={onKey}>
       <div ref={box} tabIndex={-1} className="modal dialog bot-create" role="dialog" aria-modal="true" aria-label={tr('新建 Bot')}>
         <h3>{tr('新建 Bot')}</h3>
         <div className="bc-body">
-          {draft ? <Preview d={draft} set={set} risk={risk} clamped={clamped} /> : <Entries cwd={activeCwd} onDraft={onDraft} />}
+          {draft ? <Preview d={draft} set={set} risk={risk} clamped={clamped} /> : <Entries cwd={activeCwd} onDraft={onDraft} onBusy={setGenerating} />}
         </div>
         {err && <div className="bd-err" role="alert">{err}</div>}
-        {started ? (
+        {made ? (
           <div className="actions">
-            <span className="bc-started">{tr('已创建并开始第一次运行，去「运行」看它做了什么')}</span>
-            <button className="btn primary" autoFocus onClick={() => { setBotTab('runs'); onClose(); }}>{tr('去看看')}</button>
+            {made.runError === null
+              ? <span className="bc-started">{tr('已创建并开始第一次运行，去「运行」看它做了什么')}</span>
+              : <span className="bc-started err" role="alert">{tr('已创建，但第一次运行没开始：{reason}', { reason: made.runError })}</span>}
+            <button className="btn primary" autoFocus onClick={() => goSee(made.botId, made.runError === null ? 'runs' : 'routines')}>{tr('去看看')}</button>
           </div>
         ) : (
           <div className="actions">
@@ -243,7 +253,7 @@ export function CreateBot({ onClose }: { onClose: () => void }) {
             <span className="grow" />
             <button className="btn" onClick={onClose}>{tr('取消')}</button>
             {draft && <button className="btn" disabled={busy} onClick={() => void create(false)}>{tr('保存')}</button>}
-            {draft && <button className="btn primary" disabled={busy} onClick={() => void create(true)}>{tr('先影子跑一次')}</button>}
+            {draft && <button className="btn primary" disabled={busy} onClick={() => void create(true)}>{tr('保存并先跑一次')}</button>}
           </div>
         )}
       </div>

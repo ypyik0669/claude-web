@@ -2,7 +2,7 @@
 // answer is read leniently (defaults filled, a bad cron becomes daily) so the user always gets a form to edit.
 import { randomBytes } from 'node:crypto';
 import type { AgentDriver } from '../agents/types.js';
-import type { BotDraft, OpenSessionParams, Routine } from '../protocol.js';
+import type { BotGenerated, OpenSessionParams, Routine } from '../protocol.js';
 import { nextCron } from '../schedules/cron.js';
 import { tr } from '../i18n/index.js';
 
@@ -32,14 +32,20 @@ export const GENERATE_PROMPT = (text: string) => [
   '', '这句话：', text,
 ].join('\n');
 
-/** Reads the first ```json block of the answer; `text` (the user's sentence) names a bot the model left unnamed. */
-export function parseDraft(answer: string, cwd: string, text = ''): BotDraft['bot'] {
+/**
+ * Reads the first ```json block of the answer; `text` (the user's sentence) names a bot the model left unnamed.
+ * `clamped`: the routines whose everyMinutes was under MIN_EVERY_MINUTES and was raised to it (the preview says so).
+ */
+export function parseDraft(answer: string, cwd: string, text = ''): BotGenerated {
   const m = /```json\s*([\s\S]*?)```/.exec(answer);
   let j: any; try { j = JSON.parse(m?.[1] ?? ''); } catch { throw new Error(tr('没能从回答里读出 Bot 设置')); }
   if (!j || typeof j !== 'object') throw new Error(tr('没能从回答里读出 Bot 设置'));
+  const clamped: string[] = [];
   const routines: Routine[] = (Array.isArray(j.routines) && j.routines.length ? j.routines : [{ name: tr('每天一次'), prompt: String(j.charter?.role ?? ''), everyMinutes: 1440 }]).map((r: any) => {
     let cron = typeof r.cron === 'string' && r.cron.trim() ? r.cron.trim() : undefined;
     if (cron) { try { nextCron(cron); } catch { cron = undefined; } }
+    const every = Number(r.everyMinutes);
+    if (!cron && every > 0 && every < MIN_EVERY_MINUTES) clamped.push(String(r.name ?? tr('例行')));
     return { id: `r_${randomBytes(3).toString('hex')}`, name: String(r.name ?? tr('例行')), prompt: String(r.prompt ?? ''), enabled: true, onFail: 'inbox' as const, acceptance: r.acceptance?.kind === 'script' && typeof r.acceptance.script === 'string' ? { kind: 'script' as const, script: r.acceptance.script } : { kind: 'none' as const }, ...(cron ? { cron } : { everyMinutes: Number(r.everyMinutes) > 0 ? Math.max(MIN_EVERY_MINUTES, Number(r.everyMinutes)) : 1440 }), ...(typeof r.precheck === 'string' && r.precheck.trim() ? { precheck: r.precheck.trim() } : {}) };
   });
   const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v : undefined);
@@ -48,10 +54,11 @@ export function parseDraft(answer: string, cwd: string, text = ''): BotDraft['bo
     charter: { role: String(j.charter?.role ?? ''), audience: str(j.charter?.audience), sources: Array.isArray(j.charter?.sources) ? j.charter.sources.map(String) : [], report: str(j.charter?.report), done: str(j.charter?.done) },
     tier: ['cheap', 'balanced', 'best'].includes(j.tier) ? j.tier : 'balanced', policy: { rules: [], signOff: true }, budget: { dailyUsd: Number(j.budget?.dailyUsd) > 0 ? Number(j.budget.dailyUsd) : 2 },
     routines, outputs: [{ kind: 'inbox' }],
+    ...(clamped.length ? { clamped } : {}),
   };
 }
 
-export async function generateBot(d: GenerateDeps, text: string, cwd: string): Promise<BotDraft['bot']> {
+export async function generateBot(d: GenerateDeps, text: string, cwd: string): Promise<BotGenerated> {
   const r = d.open({ cwd, features: { chatOnly: true }, permissionMode: 'dontAsk', providerId: d.defaultProvider(), model: d.model?.(), drivenBy: 'schedule' });
   try {
     for (let i = 0; i < 60 && r.state === 'starting'; i++) await new Promise((res) => setTimeout(res, 500));

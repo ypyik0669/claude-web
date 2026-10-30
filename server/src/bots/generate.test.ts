@@ -17,6 +17,12 @@ describe('parseDraft', () => {
   it('a missing name takes the first 12 characters of the sentence', () => {
     expect(parseDraft('```json\n{"charter":{"role":"r","sources":[]}}\n```', '/p', '每天早上八点帮我看一下仓库的新 issue').name).toBe('每天早上八点帮我看一下仓');
   });
+  it('an interval under 15 minutes is raised to 15 and named in clamped', () => {
+    const b = parseDraft('```json\n{"name":"x","charter":{"role":"r","sources":[]},"routines":[{"name":"快","prompt":"p","everyMinutes":5},{"name":"慢","prompt":"p","everyMinutes":60}]}\n```', '/p');
+    expect(b.routines.map((r) => r.everyMinutes)).toEqual([15, 60]);
+    expect(b.clamped).toEqual(['快']);
+    expect(parseDraft('```json\n{"name":"x","charter":{"role":"r","sources":[]}}\n```', '/p').clamped).toBeUndefined();
+  });
   it('no json block throws', () => { expect(() => parseDraft('没有', '/p')).toThrow(); });
 });
 

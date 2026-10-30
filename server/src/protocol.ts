@@ -1028,6 +1028,8 @@ export interface BotLoad { running: number; queued: number; todayUsd: number; we
 export interface BotStatus extends Bot { state: 'idle' | 'running' | 'queued' | 'paused' | 'attention'; todayUsd: number; weekUsd: number; pendingInbox: number; trust: Record<string, { approvals: number; lastAt: number }> }
 export interface BotTemplate { id: string; name: string; desc: string; risk?: string; bot: Omit<Bot, 'id' | 'cwd' | 'createdAt' | 'updatedAt'> }
 export interface BotDraft { bot: Omit<Bot, 'id' | 'createdAt' | 'updatedAt'> }
+/** bots.generate's answer: the draft, and the names of routines whose interval was raised to the 15-minute minimum */
+export type BotGenerated = BotDraft['bot'] & { clamped?: string[] };
 
 export type WireDown = { type: 'reply'; reply: ReplyEnvelope } | { type: 'event'; event: ServerEvent };
 export type WireUp = { type: 'request'; request: RequestEnvelope };

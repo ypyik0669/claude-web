@@ -59,6 +59,9 @@
 .bc-routine { display: flex; flex-direction: column; gap: 6px; padding: var(--sp-2); border: var(--hairline) solid var(--edge-subtle); border-radius: var(--r-md); }
 .bc-safety { margin-top: var(--sp-2); color: var(--ink-3); font-size: var(--fs-sm); }
 .bc-started { flex: 1 1 auto; color: var(--ink-2); font-size: var(--fs-sm); }
+.bc-started.err { color: var(--err); }
+.bc-note { color: var(--ink-3); font-size: var(--fs-sm); white-space: normal; overflow-wrap: anywhere; }
+.bc-note.warn { color: var(--warn); }
 .app.mobile .bc-entries { grid-template-columns: minmax(0, 1fr); }
 
 /* a phone: one column — the bots are the page's tabs */

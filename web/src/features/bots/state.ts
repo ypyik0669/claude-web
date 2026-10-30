@@ -1,7 +1,7 @@
 // 值班 Bot (spec 2026-10-30-duty-bots-design): the bots, their inbox, runs and load as the server keeps them, and the
 // Bot page over the main area. A small store of its own, like the 后台 page's; nothing goes into store/index.ts.
 import { create } from 'zustand';
-import type { AuditRow, Bot, BotDraft, BotLoad, BotRun, BotStatus, BotTemplate, InboxAnswer, InboxItem, ServerEvent } from '@shared';
+import type { AuditRow, Bot, BotDraft, BotGenerated, BotLoad, BotRun, BotStatus, BotTemplate, InboxAnswer, InboxItem, ServerEvent } from '@shared';
 import { hideSheet, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { closeOtherPages, registerPage } from '@/features/sections/pages';
@@ -85,8 +85,16 @@ export async function answerInbox(a: InboxAnswer): Promise<void> {
   try { await ws.request({ kind: 'bots.inbox.answer', answer: a }); } catch (e) { useStore.getState().toast(tr('处理失败：{message}', { message: msg(e) })); }
 }
 
-export async function runNow(botId: string, routineId: string): Promise<void> {
-  try { await ws.request({ kind: 'bots.runNow', id: botId, routineId }); } catch (e) { useStore.getState().toast(tr('运行失败：{message}', { message: msg(e) })); }
+/** Start a routine now, quietly: null when it started, else why not. */
+export async function startRun(botId: string, routineId: string): Promise<string | null> {
+  try { await ws.request({ kind: 'bots.runNow', id: botId, routineId }); return null; } catch (e) { return msg(e); }
+}
+
+/** Start a routine now; a failure is toasted. True when it started. */
+export async function runNow(botId: string, routineId: string): Promise<boolean> {
+  const err = await startRun(botId, routineId);
+  if (err !== null) useStore.getState().toast(tr('运行失败：{message}', { message: err }));
+  return err === null;
 }
 
 export async function stopAll(): Promise<void> {
@@ -126,9 +134,9 @@ export async function createBot(draft: BotDraft['bot']): Promise<BotStatus | nul
 }
 
 /** One sentence → a draft (the server asks a model). Null when it failed (toasted). */
-export async function generate(text: string, cwd: string): Promise<BotDraft['bot'] | null> {
+export async function generate(text: string, cwd: string): Promise<BotGenerated | null> {
   try {
-    const d = await ws.request<BotDraft['bot']>({ kind: 'bots.generate', text, cwd });
+    const d = await ws.request<BotGenerated>({ kind: 'bots.generate', text, cwd });
     if (!d || typeof d !== 'object') throw new Error(tr('没有拿到草案'));
     return d;
   } catch (e) { useStore.getState().toast(tr('生成失败：{message}', { message: msg(e) })); return null; }

@@ -1,6 +1,6 @@
 // 值班 Bot (spec 2026-10-30-duty-bots-design): the pure bits the Bot page draws with — labels, order, money, the
 // inbox grouped by kind, a routine's monthly cost. No store, no wire.
-import type { ActionClass, BotDraft, BotOutput, BotStatus, BotTemplate, InboxItem, InboxKind, PolicyLevel, Routine } from '@shared';
+import type { ActionClass, BotDraft, BotGenerated, BotOutput, BotStatus, BotTemplate, InboxItem, InboxKind, PolicyLevel, Routine } from '@shared';
 import { tr } from '@/i18n';
 
 export function stateLabel(s: BotStatus['state']): string {
@@ -99,15 +99,22 @@ export function fasterThanHourly(r: Pick<Routine, 'cron' | 'everyMinutes'>): boo
   return runsPerMonth(r) > 30 * 24;
 }
 
+/** Wakes more often than every MIN_EVERY_MINUTES: the preview warns (a generated draft never asks for that). */
+export function underMinimum(r: Pick<Routine, 'cron' | 'everyMinutes'>): boolean {
+  return runsPerMonth(r) > MONTH_MINUTES / MIN_EVERY_MINUTES;
+}
+
 /**
- * A draft as the preview edits it: every routine complete (id may stay '' — the server mints it), every interval at
- * least MIN_EVERY_MINUTES (`clamped` says one was raised), the inbox always among the outputs.
+ * A draft as the preview edits it: every routine complete (id may stay '' — the server mints it), the inbox always
+ * among the outputs. `clamped`: the routines whose interval was raised to MIN_EVERY_MINUTES — named by the server's
+ * bots.generate (it clamps first), plus any this still finds under it (an older server); the wire field is dropped.
  */
-export function normalizeDraft(d: BotDraft['bot']): { draft: BotDraft['bot']; clamped: boolean } {
-  let clamped = false;
+export function normalizeDraft(g: BotGenerated): { draft: BotDraft['bot']; clamped: string[] } {
+  const { clamped: named, ...d } = g;
+  const clamped = Array.isArray(named) ? named.map(String) : [];
   const routines = (d.routines ?? []).map((r) => {
     let everyMinutes = r.everyMinutes;
-    if (everyMinutes !== undefined && everyMinutes > 0 && everyMinutes < MIN_EVERY_MINUTES) { everyMinutes = MIN_EVERY_MINUTES; clamped = true; }
+    if (everyMinutes !== undefined && everyMinutes > 0 && everyMinutes < MIN_EVERY_MINUTES) { everyMinutes = MIN_EVERY_MINUTES; if (!clamped.includes(r.name)) clamped.push(r.name ?? ''); }
     return { ...r, id: r.id ?? '', name: r.name ?? '', prompt: r.prompt ?? '', enabled: r.enabled ?? true, onFail: r.onFail ?? 'inbox', acceptance: r.acceptance ?? { kind: 'none' }, everyMinutes } as Routine;
   });
   const outputs: BotOutput[] = (d.outputs ?? []).some((o) => o.kind === 'inbox') ? d.outputs : [{ kind: 'inbox' }, ...(d.outputs ?? [])];
@@ -129,12 +136,22 @@ export function draftProblem(d: BotDraft['bot']): string | null {
   if (!d.cwd.trim()) return tr('选一个工作目录');
   if (!d.charter.role.trim()) return tr('写一下它的职责');
   for (const r of d.routines) {
-    if (!r.prompt.trim()) return tr('写一下例行「{name}」要做什么', { name: r.name || '?' });
-    if (r.cron !== undefined && !r.everyMinutes && r.cron.trim().split(/\s+/).length !== 5) return tr('cron 要五段：分 时 日 月 周');
-    if (r.everyMinutes !== undefined && !(r.everyMinutes >= 1)) return tr('间隔至少 1 分钟');
+    const name = r.name || '?';
+    if (!r.prompt.trim()) return tr('写一下例行「{name}」要做什么', { name });
+    if (r.everyMinutes !== undefined) {
+      if (!(Number.isInteger(r.everyMinutes) && r.everyMinutes >= 1)) return tr('例行「{name}」的间隔要是至少 1 的整数分钟', { name });
+    } else if (r.cron?.trim()) {
+      if (r.cron.trim().split(/\s+/).length !== 5) return tr('例行「{name}」的 cron 要五段：分 时 日 月 周', { name });
+    } else return tr('例行「{name}」还没定节奏', { name });
+  }
+  for (const o of d.outputs) {
+    if (o.kind === 'file' && !isAbsolutePath(o.path)) return tr('写到文件要填完整路径（从盘符或 / 开始）');
   }
   return null;
 }
+
+/** C:\x, C:/x, \\server\x, /x, ~/x */
+export const isAbsolutePath = (p: string): boolean => /^(?:[a-zA-Z]:[\\/]|[\\/]|~[\\/])/.test(p.trim());
 
 /** The text of the latest prompt the user typed in a conversation (not a meta one, not one from another conversation). */
 export function lastUserText(items: readonly { kind: string; text?: string; meta?: boolean; from?: unknown }[]): string {
