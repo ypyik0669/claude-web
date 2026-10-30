@@ -782,6 +782,7 @@ export const EN_SERVER: Record<string, string> = {
   "已存在同名文件": "A file with the same name already exists",
   "已存在同名服务器 {name}（勾选「覆盖」可替换）": "A server named {name} already exists (check “Overwrite” to replace it)",
   "已完成。": "Done.",
+  "已强制停止：运行内核没有响应中断，已结束它的进程": "Force-stopped: the runtime didn't respond to the interrupt, so its process was ended",
   "已强制停止：运行内核没有响应中断，已结束它的进程并重新接上这个对话": "Force-stopped: the runtime didn't respond to the interrupt, so its process was ended and this conversation was reconnected",
   "已打开 {url}": "Opened {url}",
   "已执行 {action}。": "Performed {action}.",

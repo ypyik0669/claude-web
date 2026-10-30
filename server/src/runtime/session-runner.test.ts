@@ -743,6 +743,7 @@ describe('SessionRunner Stop (interrupt)', () => {
       r.send('hi');
       await r.interrupt({ closing: true });
       expect(msgs.filter((m) => m.type === 'result')).toHaveLength(1);
+      expect(String(msgs.find((m) => m.type === 'result').result)).not.toMatch(/重新接上/); // nothing is reconnected
       expect(queries).toHaveLength(1); // no respawn of a conversation about to close
       await r.close();
       expect(killed).toEqual([child]);

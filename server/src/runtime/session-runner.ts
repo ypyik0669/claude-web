@@ -1173,7 +1173,7 @@ export class SessionRunner extends EventEmitter {
    */
   private async forceStop(q: Query, closing = false) {
     if (this.closed || this.q !== q) return;
-    const reason = tr('已强制停止：运行内核没有响应中断，已结束它的进程并重新接上这个对话');
+    const reason = closing ? tr('已强制停止：运行内核没有响应中断，已结束它的进程') : tr('已强制停止：运行内核没有响应中断，已结束它的进程并重新接上这个对话');
     this.ingest({
       type: 'result', subtype: 'error_during_execution', is_error: true, result: reason, errors: [reason], terminal_reason: 'aborted_forced',
       duration_ms: 0, duration_api_ms: 0, num_turns: 0, total_cost_usd: 0,
