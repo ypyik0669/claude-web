@@ -3,7 +3,7 @@
 // taken from the request, and an edit is merged into the stored bot field by field.
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import type { ActionClass, Bot, BotBudget, BotCharter, BotOutput, BotPolicy, BotTier, PolicyLevel, PolicyRule, Routine } from '../protocol.js';
+import type { ActionClass, Bot, BotBudget, BotCharter, BotOutput, BotPolicy, BotTier, PolicyLevel, PolicyRule, PolicyScope, Routine } from '../protocol.js';
 import { nextCron } from '../schedules/cron.js';
 import { MAX_FAILURES } from './pipeline.js';
 import { tr } from '../i18n/index.js';
@@ -47,9 +47,29 @@ function charterOf(v: unknown, prev?: BotCharter): BotCharter {
   });
 }
 
-function scopeOf(v: unknown, field: string) {
-  if (v === undefined || v === null) return undefined;
-  return isObj(v) ? v : bad(field);
+const SCOPE_KEYS = ['recipients', 'domains', 'channels', 'maxAmount', 'perDay', 'until', 'unlimited'];
+/**
+ * A PolicyScope, checked all the way down (rules, autoPilot, an approve_scope answer): lists of non-empty strings
+ * (domains lower-cased), amounts / counts finite and >= 0, `until` a finite timestamp, `unlimited` strictly boolean.
+ * Unknown keys are refused too: the gate would silently ignore them.
+ */
+export function policyScope(v: unknown, field = 'scope'): PolicyScope {
+  if (!isObj(v)) return bad(field);
+  for (const k of Object.keys(v)) if (!SCOPE_KEYS.includes(k)) bad(`${field}.${k}`);
+  const list = (k: string, lower = false) => {
+    if (v[k] === undefined) return undefined;
+    const a = arr<unknown>(v[k], `${field}.${k}`).map((x) => (typeof x === 'string' && x.trim() ? x.trim() : bad(`${field}.${k}`)));
+    return lower ? a.map((x) => x.toLowerCase()) : a;
+  };
+  const n = (k: string) => (v[k] === undefined ? undefined : typeof v[k] === 'number' && Number.isFinite(v[k]) && v[k] >= 0 ? (v[k] as number) : bad(`${field}.${k}`));
+  return compact({
+    recipients: list('recipients'), domains: list('domains', true), channels: list('channels'),
+    maxAmount: n('maxAmount'), perDay: n('perDay'), until: n('until'),
+    unlimited: v.unlimited === undefined ? undefined : typeof v.unlimited === 'boolean' ? v.unlimited : bad(`${field}.unlimited`),
+  });
+}
+function scopeOf(v: unknown, field: string): PolicyScope | undefined {
+  return v === undefined || v === null ? undefined : policyScope(v, field);
 }
 function ruleOf(v: unknown): PolicyRule {
   if (!isObj(v) || !CLASSES.includes(v.cls) || !LEVELS.includes(v.level)) return bad('policy.rules');
@@ -104,10 +124,12 @@ function outputOf(v: unknown): BotOutput {
 /**
  * One routine. What the scheduler owns comes from the stored routine of that id: lastRunAt, nextRunAt (dropped when
  * the cadence changed, so the next tick plans it again), failures. A routine the pipeline turned off after
- * MAX_FAILURES stays off unless this request turns it on knowing that: enabled true with failures 0 (a reset) or at
- * least the stored count (it saw the failures) — an edit from a window that hadn't seen it turned off can't revive it.
+ * MAX_FAILURES stays off unless this request turns it on knowing that: enabled true with failures at least the stored
+ * count (it saw the failures; failures then reset to 0). A window that hadn't seen it turned off still holds a lower
+ * count (often 0), so its edit can't revive it. `selfMade` is never the client's; onFail omitted keeps the stored one.
+ * Exported for adopted routine proposals (scheduler): same checks, no stored routine.
  */
-function routineOf(v: unknown, prevs: Map<string, Routine>): Routine {
+export function routineOf(v: unknown, prevs: Map<string, Routine>): Routine {
   if (!isObj(v)) return bad('routines');
   const id = typeof v.id === 'string' && SAFE_ID.test(v.id) ? v.id : newRoutineId();
   const prev = prevs.get(id);
@@ -118,14 +140,14 @@ function routineOf(v: unknown, prevs: Map<string, Routine>): Routine {
   const acc = v.acceptance;
   const acceptance: Routine['acceptance'] = acc === undefined || acc === null || (isObj(acc) && acc.kind === 'none') ? { kind: 'none' }
     : isObj(acc) && acc.kind === 'script' ? { kind: 'script', script: str(acc.script, 'routines.acceptance') } : bad('routines.acceptance');
-  const onFail = v.onFail === undefined ? 'inbox' : ON_FAIL.includes(v.onFail) ? v.onFail : bad('routines.onFail');
+  const onFail = v.onFail === undefined ? (prev?.onFail ?? 'inbox') : ON_FAIL.includes(v.onFail) ? v.onFail : bad('routines.onFail');
   const timeoutMin = v.timeoutMin === undefined || v.timeoutMin === null ? undefined
     : typeof v.timeoutMin === 'number' && Number.isFinite(v.timeoutMin) && v.timeoutMin > 0 ? v.timeoutMin : bad('routines.timeoutMin');
   let enabled = v.enabled === undefined ? (prev?.enabled ?? true) : typeof v.enabled === 'boolean' ? v.enabled : bad('routines.enabled');
   let failures = prev?.failures;
   if (prev && !prev.enabled && (prev.failures ?? 0) >= MAX_FAILURES && enabled) {
     const seen = typeof v.failures === 'number' ? v.failures : -1;
-    if (seen === 0 || seen >= (prev.failures ?? 0)) failures = 0;
+    if (seen >= (prev.failures ?? 0)) failures = 0;
     else enabled = false;
   }
   const sameCadence = prev && prev.cron === cron && prev.everyMinutes === every;
@@ -133,7 +155,7 @@ function routineOf(v: unknown, prevs: Map<string, Routine>): Routine {
     id, name: str(v.name ?? prev?.name ?? '', 'routines.name'), prompt: str(v.prompt ?? prev?.prompt ?? '', 'routines.prompt'),
     cron, everyMinutes: every, enabled, precheck: optStr(v.precheck, 'routines.precheck'), acceptance, timeoutMin, onFail,
     failures, nextRunAt: sameCadence ? prev.nextRunAt : undefined, lastRunAt: prev?.lastRunAt,
-    selfMade: prev?.selfMade ?? (v.selfMade === true ? true : undefined), shadow: typeof v.shadow === 'boolean' ? v.shadow : prev?.shadow,
+    selfMade: prev?.selfMade, shadow: typeof v.shadow === 'boolean' ? v.shadow : prev?.shadow,
   });
 }
 

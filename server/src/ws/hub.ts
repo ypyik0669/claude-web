@@ -1317,8 +1317,9 @@ export class Hub {
       case 'bots.pause': return s.bots.pause(req.id, req.paused);
       case 'bots.unleash': return s.bots.unleash(req.id, req.on);
       case 'bots.runNow': await s.bots.runNow(req.id, req.routineId); return null;
-      case 'bots.stop': await s.bots.stopBot(req.id); return null;
-      case 'bots.stopAll': await s.bots.stopAll(); return null;
+      // { requested, note } when another claude-web is on duty: the stop was handed to it
+      case 'bots.stop': return s.bots.stopBot(req.id);
+      case 'bots.stopAll': return s.bots.stopAll();
       case 'bots.inbox.list': return s.bots.inboxList(req.botId, req.includeDone);
       case 'bots.inbox.answer': return s.bots.inboxAnswer(req.answer);
       case 'bots.runs.list': return s.bots.runs(req.botId, req.routineId, req.limit);

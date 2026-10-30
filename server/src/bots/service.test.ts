@@ -273,4 +273,73 @@ describe('BotService', { timeout: 30_000 }, () => {
     expect(() => svc.runs(undefined, undefined, -5)).not.toThrow();
     expect(() => svc.runs(undefined, undefined, 1e9)).not.toThrow();
   });
+  it('a stale copy (failures 0) of a routine stopped for failures cannot revive it', async () => {
+    const b = await svc.create(draft({ routines: [rt('r1'), rt('r2')] }));
+    const stale = svc.get(b.id).routines.map((r) => ({ ...r, failures: 0 }));
+    await (svc as any).store.update(b.id, (x: any) => ({ ...x, routines: x.routines.map((r: any) => (r.id === 'r1' ? { ...r, enabled: false, failures: 3 } : r)) }));
+    await svc.update(b.id, { routines: stale.map((r) => (r.id === 'r2' ? { ...r, name: 'R2' } : r)) });
+    expect(svc.get(b.id).routines[0]).toMatchObject({ enabled: false, failures: 3 });
+    expect(svc.get(b.id).routines[1].name).toBe('R2');
+  });
+
+  it('selfMade is not the client\'s, and an omitted onFail keeps the stored one', async () => {
+    const b = await svc.create(draft({ routines: [rt('r1', { onFail: 'retry_up', selfMade: true })] }));
+    expect(b.routines[0].selfMade).toBeUndefined();
+    const { onFail: _o, ...r } = svc.get(b.id).routines[0];
+    await svc.update(b.id, { routines: [r as any] });
+    expect(svc.get(b.id).routines[0].onFail).toBe('retry_up');
+  });
+
+  it('scopes are checked all the way down', async () => {
+    const b = await svc.create(draft());
+    for (const scope of [{ domains: 'x.com' }, { domains: [''] }, { channels: [1] }, { maxAmount: -1 }, { perDay: Infinity }, { until: 'soon' }, { unlimited: 'yes' }, { other: 1 }]) {
+      await expect(svc.update(b.id, { policy: { rules: [{ cls: 'send', level: 'do', scope }] } } as any)).rejects.toThrow(/scope/);
+      await expect(svc.update(b.id, { policy: { rules: [], autoPilot: { on: true, scope } } } as any)).rejects.toThrow(/scope/);
+    }
+    const u = await svc.update(b.id, { policy: { rules: [{ cls: 'browser', level: 'do', scope: { domains: ['X.com'], perDay: 3 } }] } });
+    expect(u.policy.rules[0].scope).toEqual({ domains: ['x.com'], perDay: 3 });
+  });
+
+  it('approve_scope with a bad scope is refused and the item stays pending', async () => {
+    const b = await svc.create(draft({ routines: [rt('r1')] }));
+    const item = await (svc as any).inbox.add({ kind: 'approval', botId: b.id, routineId: 'r1', sessionId: 's', title: 't', toolName: 'Bash', input: { command: 'git push' }, cls: 'send' });
+    await expect(svc.inboxAnswer({ id: item.id, answer: 'approve_scope', scope: { domains: 'x' } as any })).rejects.toThrow(/scope/);
+    expect(svc.inboxList(b.id)[0].done).toBeUndefined();
+    expect(svc.get(b.id).policy.rules).toEqual([]);
+  });
+
+  it('an adopted routine proposal is checked like an edit', async () => {
+    const b = await svc.create(draft());
+    const bad = await (svc as any).inbox.add({ kind: 'proposal', botId: b.id, title: 'p', proposal: { type: 'routine', routine: rt('r9', { cron: 'nope' }) } });
+    await expect(svc.inboxAnswer({ id: bad.id, answer: 'adopt' })).rejects.toThrow(/cron/);
+    expect(svc.inboxList(b.id).some((i) => i.id === bad.id)).toBe(true);
+    const ok = await (svc as any).inbox.add({ kind: 'proposal', botId: b.id, title: 'p', proposal: { type: 'routine', routine: rt('r9', { failures: 7, lastRunAt: 5 }) } });
+    await svc.inboxAnswer({ id: ok.id, answer: 'adopt' });
+    expect(svc.get(b.id).routines[0]).toMatchObject({ id: 'r9', selfMade: true });
+    expect(svc.get(b.id).routines[0].failures).toBeUndefined();
+  });
+
+  it('an approval retried after its effect failed counts for trust once', async () => {
+    const b = await svc.create(draft({ routines: [rt('r1')] }));
+    const item = await (svc as any).inbox.add({ kind: 'approval', botId: b.id, routineId: 'r1', sessionId: 's', title: 't', toolName: 'ExecuteExtraTool', input: { tool_name: 'mcp__slack__send_message', params: { channel: 'C9', text: 'hi' } }, cls: 'send' });
+    const sch = (svc as any).scheduler;
+    vi.spyOn(sch, 'enqueue').mockImplementationOnce(() => { throw new Error('boom'); }).mockImplementation(() => {});
+    await expect(svc.inboxAnswer({ id: item.id, answer: 'approve' })).rejects.toThrow('boom');
+    expect(Object.keys((svc as any).store.trust(b.id))).toHaveLength(0);
+    await svc.inboxAnswer({ id: item.id, answer: 'approve' });
+    const t = Object.values((svc as any).store.trust(b.id)) as any[];
+    expect(t).toHaveLength(1); expect(t[0].approvals).toBe(1);
+  });
+
+  it('a stop request older than the holder\'s lease is ignored and removed', async () => {
+    pool.hang = true;
+    const b = await svc.create(draft({ routines: [rt('r1')] }));
+    await svc.runNow(b.id, 'r1');
+    await until(() => (svc as any).scheduler.isRunning(b.id));
+    const file = path.join(root, 'stop.request.json');
+    fs.writeFileSync(file, JSON.stringify({ botIds: '*', at: Date.now() - 10 * 60_000, by: 1 }));
+    await (svc as any).takeStopRequest();
+    expect(fs.existsSync(file)).toBe(false);
+    expect((svc as any).scheduler.isRunning(b.id)).toBe(true);
+  });
 });

@@ -12,6 +12,7 @@ import { runRoutine, type PipelineDeps, type RunOptions } from './pipeline.js';
 import { recordApproval, recordCorrection, demoteRule, TRUST_THRESHOLD } from './policy/trust.js';
 import { scopeKey } from './policy/rules.js';
 import { summarize, targetOf } from './policy/classify.js';
+import { policyScope, routineOf } from './shape.js';
 import { tr } from '../i18n/index.js';
 
 export interface SchedulerDeps extends PipelineDeps {
@@ -54,6 +55,8 @@ export class BotScheduler extends EventEmitter {
   private nextTick: Job[] = [];
   private budgetTold = new Set<string>();
   private holding = false;
+  /** when this scheduler last took the lease (a stop request written before it is not for it) */
+  private heldSince = 0;
   /** bumped by stopAll: a tick or an answer that started before it queues nothing */
   private epoch = 0;
   /** which scheduler wrote the lease (two in one process share a pid) */
@@ -88,6 +91,8 @@ export class BotScheduler extends EventEmitter {
   isQueued(botId: string): boolean { return this.queue.some((j) => j.botId === botId); }
   /** whether this scheduler is the one on duty: the service checks it before marking an inbox answer done */
   canAct(): boolean { return this.holding; }
+  /** when this scheduler took the lease; 0 = it doesn't hold it */
+  holdingSince(): number { return this.holding ? this.heldSince : 0; }
 
   /**
    * Takes or refreshes the lease; true when this scheduler holds it. Exclusive: `<lock>.take` (created with 'wx')
@@ -122,7 +127,7 @@ export class BotScheduler extends EventEmitter {
     }
   }
   private async setHolding(v: boolean): Promise<boolean> {
-    if (v && !this.holding) { await this.d.store.reload(); await this.d.inbox.reload(); }
+    if (v && !this.holding) { await this.d.store.reload(); await this.d.inbox.reload(); this.heldSince = Date.now(); }
     if (!v && this.holding) { this.queue = []; this.nextTick = []; this.emit('load', this.load()); }
     this.holding = v;
     return v;
@@ -325,17 +330,24 @@ export class BotScheduler extends EventEmitter {
     if ((a.answer === 'approve' || a.answer === 'approve_scope') && item.kind === 'approval' && cls && toolName && input && item.routineId && item.sessionId) {
       const target = targetOf(cls, toolName, input);
       const key = scopeKey(undefined, target);
-      if (a.answer === 'approve') {
-        const r = recordApproval(this.d.store.trust(bot.id), cls, key, Date.now(), target.amount);
-        await this.d.store.setTrust(bot.id, r.trust);
-        if (r.propose && r.scope) {
-          await this.d.inbox.add({ kind: 'proposal', botId: bot.id, routineId: item.routineId, title: tr('「{cls}」到「{key}」已连续批准 {n} 次，以后直接做？', { cls, key, n: TRUST_THRESHOLD }), proposal: { type: 'trust_up', cls, scope: r.scope } });
-        }
-      } else if (a.scope) {
-        const scope = a.scope;
-        await this.mutate(bot.id, (b) => ({ ...b, policy: { ...b.policy, rules: [...b.policy.rules, { cls, level: 'do', scope }] } }));
+      if (a.answer === 'approve_scope' && a.scope) {
+        const scope = policyScope(a.scope);
+        // idempotent: an answer retried after a failure doesn't add the rule twice
+        const same = JSON.stringify({ cls, level: 'do', scope });
+        await this.mutate(bot.id, (b) => (b.policy.rules.some((r) => JSON.stringify({ cls: r.cls, level: r.level, scope: r.scope }) === same) ? undefined : { ...b, policy: { ...b.policy, rules: [...b.policy.rules, { cls, level: 'do', scope }] } }));
       }
       if (this.epoch === epoch) this.enqueue(bot.id, item.routineId, 'resume', { sessionId: item.sessionId, approved: { toolName, input } });
+      // trust counts an approval only once its effect (the resume) is under way: a retried answer isn't counted twice;
+      // a failure to record it costs one count, never the approval
+      if (a.answer === 'approve') {
+        try {
+          const r = recordApproval(this.d.store.trust(bot.id), cls, key, Date.now(), target.amount);
+          await this.d.store.setTrust(bot.id, r.trust);
+          if (r.propose && r.scope) {
+            await this.d.inbox.add({ kind: 'proposal', botId: bot.id, routineId: item.routineId, title: tr('「{cls}」到「{key}」已连续批准 {n} 次，以后直接做？', { cls, key, n: TRUST_THRESHOLD }), proposal: { type: 'trust_up', cls, scope: r.scope } });
+          }
+        } catch (e) { console.warn(`[bots] cannot record the approval of ${item.id}:`, e); }
+      }
     } else if (a.answer === 'reject' && cls && toolName && input) {
       const key = scopeKey(undefined, targetOf(cls, toolName, input));
       await this.d.store.setTrust(bot.id, recordCorrection(this.d.store.trust(bot.id), cls, key));
@@ -348,10 +360,13 @@ export class BotScheduler extends EventEmitter {
       }
     } else if (a.answer === 'adopt' && item.proposal) {
       const p = item.proposal;
+      // a proposal is a bot's own writing: checked like a window's edit before it lands
+      const scope = p.type === 'trust_up' ? policyScope(p.scope) : undefined;
+      const routine = p.type === 'routine' ? { ...routineOf(p.routine, new Map()), selfMade: true } : undefined;
       await this.mutate(bot.id, (b) => {
-        if (p.type === 'trust_up') return { ...b, policy: { ...b.policy, rules: [...b.policy.rules, { cls: p.cls, level: 'do', scope: p.scope }] } };
-        if (b.routines.length >= (b.maxRoutines ?? 20) || b.routines.some((r) => r.id === p.routine.id)) return undefined;
-        return { ...b, routines: [...b.routines, { ...p.routine, selfMade: true }] };
+        if (scope && p.type === 'trust_up') return { ...b, policy: { ...b.policy, rules: [...b.policy.rules, { cls: p.cls, level: 'do', scope }] } };
+        if (!routine || b.manager || b.routines.length >= (b.maxRoutines ?? 20) || b.routines.some((r) => r.id === routine.id)) return undefined;
+        return { ...b, routines: [...b.routines, routine] };
       });
     } else if (a.answer === 'send' && item.kind === 'draft') {
       await this.d.inbox.add({ kind: 'finding', botId: bot.id, runId: item.runId, title: tr('已标记为可发送：{title}', { title: item.title }), ...(item.body ? { body: item.body } : {}) });

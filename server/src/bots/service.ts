@@ -14,7 +14,8 @@ import { AuditLog } from './audit.js';
 import { BotScheduler } from './scheduler.js';
 import { generateBot } from './generate.js';
 import { BOT_TEMPLATES } from './templates.js';
-import { botFields } from './shape.js';
+import { botFields, policyScope } from './shape.js';
+import { LEASE_STALE_MS } from './scheduler.js';
 import fs from 'node:fs';
 import { atomicWrite } from '../agent-config/backup.js';
 import { tr } from '../i18n/index.js';
@@ -101,6 +102,8 @@ export class BotService extends EventEmitter {
     try { this.deliverItem(item); } catch (e) { console.warn('[bots] IM delivery failed:', e); }
   };
   private watcher?: fs.FSWatcher;
+  /** requestStop's read-merge-write, one at a time in this process */
+  private stopChain: Promise<unknown> = Promise.resolve();
   private taking = false;
 
   constructor(private d: BotServiceDeps) {
@@ -251,7 +254,12 @@ export class BotService extends EventEmitter {
     if (this.scheduler.canAct()) { await this.scheduler.stopAll(); return null; }
     return this.requestStop('*');
   }
-  private async requestStop(ids: string[] | '*') {
+  private requestStop(ids: string[] | '*') {
+    const run = this.stopChain.then(() => this.writeStopRequest(ids));
+    this.stopChain = run.catch(() => {});
+    return run;
+  }
+  private async writeStopRequest(ids: string[] | '*') {
     const file = path.join(this.d.dataDir, STOP_REQUEST);
     let cur: StopRequest | undefined;
     try { cur = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* none pending */ }
@@ -269,6 +277,9 @@ export class BotService extends EventEmitter {
       let req: StopRequest;
       try { req = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return; }
       try { fs.rmSync(file, { force: true }); } catch { /* raced */ }
+      // left by a window of an earlier holder's time (a dead one): not for the runs this holder started
+      const at = typeof req.at === 'number' ? req.at : 0;
+      if (at < Date.now() - LEASE_STALE_MS || at < this.scheduler.holdingSince()) return;
       if (req.botIds === '*') await this.scheduler.stopAll();
       else if (Array.isArray(req.botIds)) for (const id of req.botIds) if (typeof id === 'string') await this.scheduler.stopBot(id);
     } catch (e) { console.warn('[bots] stop request:', e); } finally { this.taking = false; }
@@ -277,6 +288,8 @@ export class BotService extends EventEmitter {
   inboxList(botId?: string, includeDone = false): InboxItem[] { return this.inbox.list(botId, includeDone); }
   /** checked before anything is written; the item's 'item' event reaches the windows as bots.inbox */
   async inboxAnswer(a: InboxAnswer): Promise<InboxItem> {
+    // the scope is checked before anything is written: a bad one leaves the item pending
+    if (a.answer === 'approve_scope' && a.scope !== undefined) a = { ...a, scope: policyScope(a.scope) };
     await this.acting();
     const item = await this.inbox.answer(a);
     try { await this.scheduler.onInboxAnswer(item, a); } catch (e) {
