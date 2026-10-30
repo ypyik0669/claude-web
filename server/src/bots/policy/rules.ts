@@ -90,7 +90,10 @@ export function decide(policy: BotPolicy, cls: ActionClass, t: Target, now: numb
   const deny = own.find((r) => r.level === 'deny' && scopeTouches(r.scope, t, now));
   if (deny) return { level: 'deny', basis: 'rule', rule: deny };
   if (policy.unleashed) return { level: 'do', basis: 'unleashed' };
-  if (policy.autoPilot?.on && scopeMatches(policy.autoPilot.scope, t, now, counts.autopilot, cls)) return { level: 'do', basis: 'autopilot' };
+  // autopilot needs a scope (none would be everywhere — an old bot.json); a payment only under a maxAmount or unlimited
+  const ap = policy.autoPilot;
+  if (ap?.on && ap.scope && (cls !== 'pay' || ap.scope.unlimited === true || ap.scope.maxAmount !== undefined)
+    && scopeMatches(ap.scope, t, now, counts.autopilot, cls)) return { level: 'do', basis: 'autopilot' };
   const scoped = own.find((r) => r.level !== 'deny' && r.scope && scopeMatches(r.scope, t, now, counts.perRule(r), cls));
   if (scoped) return { level: scoped.level, basis: 'rule', rule: scoped };
   const plain = own.find((r) => r.level !== 'deny' && !r.scope);

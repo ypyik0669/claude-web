@@ -97,7 +97,10 @@ function policyOf(v: unknown, prev?: BotPolicy): BotPolicy {
     autoPilot: pick(v, 'autoPilot', p.autoPilot, (x) => {
       if (x === undefined || x === null) return undefined;
       if (!isObj(x) || typeof x.on !== 'boolean') return bad('policy.autoPilot');
-      return compact({ on: x.on, scope: scopeOf(x.scope, 'policy.autoPilot.scope', true) });
+      const scope = scopeOf(x.scope, 'policy.autoPilot.scope', true);
+      // 全自动 with no scope would be everywhere: it has to name where (or say unlimited outright), like any wider scope
+      if (x.on && !scope) throw new Error(tr('放宽的范围要写明用在哪里（域名、频道或收件人）：{field}', { field: 'policy.autoPilot.scope' }));
+      return compact({ on: x.on, scope });
     }),
     signOff: pick(v, 'signOff', p.signOff, (x) => (x === undefined || x === null ? undefined : typeof x === 'boolean' ? x : bad('policy.signOff'))),
     unleashed: p.unleashed,

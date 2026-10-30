@@ -32,6 +32,12 @@ describe('decide', () => {
     expect(decide({ rules: [], autoPilot: { on: true, scope: { domains: ['a.com'] } } }, 'send', { domains: ['b.com'] }, 0).level).toBe('ask');
     expect(decide({ rules: [], unleashed: true }, 'pay', {}, 0)).toMatchObject({ level: 'do', basis: 'unleashed' });
   });
+  it('autoPilot with no scope (an old bot.json) does nothing; a payment needs its maxAmount (or unlimited)', () => {
+    expect(decide({ rules: [], autoPilot: { on: true } }, 'send', { domains: ['a.com'] }, 0).level).toBe('ask');
+    expect(decide({ rules: [], autoPilot: { on: true, scope: { domains: ['pay.com'] } } }, 'pay', { domains: ['pay.com'], amount: 5 }, 0).level).not.toBe('do');
+    expect(decide({ rules: [], autoPilot: { on: true, scope: { domains: ['pay.com'], maxAmount: 10 } } }, 'pay', { domains: ['pay.com'], amount: 5 }, 0)).toMatchObject({ level: 'do', basis: 'autopilot' });
+    expect(decide({ rules: [], autoPilot: { on: true, scope: { unlimited: true } } }, 'pay', { amount: 500 }, 0)).toMatchObject({ level: 'do', basis: 'autopilot' });
+  });
   it('an explicit deny stays deny even with autoPilot', () => {
     expect(decide({ rules: [{ cls: 'pay', level: 'deny' }], autoPilot: { on: true, scope: { unlimited: true } } }, 'pay', {}, 0).level).toBe('deny');
   });

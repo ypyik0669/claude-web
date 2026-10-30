@@ -404,6 +404,10 @@ describe('BotService', { timeout: 30_000 }, () => {
     expect((await svc.update(b.id, { policy: { rules: [{ cls: 'send', level: 'deny', scope: { perDay: 5 } }] } })).policy.rules[0].scope).toEqual({ perDay: 5 });
     expect((await svc.update(b.id, { policy: { rules: [{ cls: 'pay', level: 'do', scope: { unlimited: true } }] } })).policy.rules[0].scope).toEqual({ unlimited: true });
     expect((await svc.update(b.id, { policy: { rules: [], autoPilot: { on: true, scope: { channels: ['C1'], perDay: 2 } } } })).policy.autoPilot?.scope).toEqual({ channels: ['C1'], perDay: 2 });
+    // 全自动 turned on with no scope at all would be everywhere: refused; off needs none; unlimited is said outright
+    await expect(svc.update(b.id, { policy: { rules: [], autoPilot: { on: true } } })).rejects.toThrow(/where it applies|写明用在哪里/);
+    expect((await svc.update(b.id, { policy: { rules: [], autoPilot: { on: false } } })).policy.autoPilot).toEqual({ on: false });
+    expect((await svc.update(b.id, { policy: { rules: [], autoPilot: { on: true, scope: { unlimited: true } } } })).policy.autoPilot?.scope).toEqual({ unlimited: true });
 
     // approve_scope: refused, the item stays pending, no rule lands
     const send = await (svc as any).inbox.add({ kind: 'approval', botId: b.id, routineId: 'r1', sessionId: 's', title: 't', toolName: 'Bash', input: { command: 'git push' }, cls: 'send' });
