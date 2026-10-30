@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 
 /** Every query() the runner starts: end / fail its message stream, push a message into it, react to interrupt(). */
 interface FakeQuery { options: any; end: () => void; fail: (e: Error) => void; push: (m: any) => void; onInterrupt?: () => void; flags: any[]; sides: any[]; sideAnswer?: any; toggles: [string, boolean][]; mcp?: any[]; usage?: any }
@@ -2282,5 +2283,36 @@ describe('SessionRunner: 项目说明 (stage F2)', () => {
     await tick();
     expect(queries[0].options.systemPrompt.append ?? '').not.toContain('Project instructions');
     await plain.close();
+  });
+});
+
+describe('值班 Bot gate', () => {
+  const call = (r: SessionRunner, toolName: string, input: Record<string, unknown>) => (r as any).onCanUseTool(toolName, input, { signal: new AbortController().signal }) as Promise<PermissionResult>;
+  it('a gate that answers is used and nothing is emitted', async () => {
+    const r = new SessionRunner({ sessionId: 'g1', cwd: '/x' } as any);
+    const seen: unknown[] = []; r.on('permission', (e) => seen.push(e));
+    r.gate = async (ev) => (ev.toolName === 'Bash' ? { behavior: 'allow', updatedInput: ev.input } : null);
+    expect(await call(r, 'Bash', { command: 'ls' })).toEqual({ behavior: 'allow', updatedInput: { command: 'ls' } });
+    expect(seen).toEqual([]);
+    expect(r.getPendingPermissions()).toEqual([]);
+  });
+  it('a gate that says null falls through to the usual card', async () => {
+    const r = new SessionRunner({ sessionId: 'g2', cwd: '/x' } as any);
+    r.gate = async () => null;
+    const p = call(r, 'Edit', { file_path: '/a' });
+    await new Promise((res) => setTimeout(res, 0));
+    const pend = r.getPendingPermissions();
+    expect(pend).toHaveLength(1);
+    r.respondPermission(pend[0].requestId, { behavior: 'deny', message: 'no' });
+    expect(await p).toMatchObject({ behavior: 'deny' });
+  });
+  it('a gate that throws also falls through', async () => {
+    const r = new SessionRunner({ sessionId: 'g3', cwd: '/x' } as any);
+    r.gate = async () => { throw new Error('boom'); };
+    const p = call(r, 'Edit', { file_path: '/a' });
+    await new Promise((res) => setTimeout(res, 0));
+    expect(r.getPendingPermissions()).toHaveLength(1);
+    r.respondPermission(r.getPendingPermissions()[0].requestId, { behavior: 'allow' });
+    expect((await p).behavior).toBe('allow');
   });
 });

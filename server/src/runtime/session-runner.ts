@@ -29,6 +29,7 @@ import { computerAllowedTools, computerClaudeMcpServer } from '../computer/launc
 import { ENGINE_SEARCH_TOOL, engineSearchOff, userPickedSearchAdapter } from '../web/engine-search.js';
 import { markUnknownCost } from '../usage/pricing.js';
 import type { AttachmentRef, EffortLevel, ModelInfo, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot, SideTurn } from '../protocol.js';
+import type { ToolGate } from '../agents/types.js';
 import { getLocale, tr } from '../i18n/index.js';
 import { thinkingLanguageFor, thinkingLanguagePrompt } from './thinking-language.js';
 import { subagentPolicyPrompt } from './subagent-policy.js';
@@ -168,6 +169,8 @@ export class SessionRunner extends EventEmitter {
   private pending = new Map<string, PendingPermission>();
   /** the tools this query runs without asking (Options.allowedTools): ccb asks for them wrapped, see onCanUseTool */
   private preAllowed = new Set<string>();
+  /** 值班 Bot: answers a tool's permission before the card (null / a throw = the card as usual); see AgentDriver.gate */
+  gate?: ToolGate;
   private history: SDKMessage[] = []; // messages since spawn, replayed to late-joining clients
   info: SessionInfoSnapshot;
   private model?: string;
@@ -870,9 +873,18 @@ export class SessionRunner extends EventEmitter {
     // claude-web-engine (ccb) defers MCP tools behind ExecuteExtraTool { tool_name, params }: `allowedTools` names the tool
     // inside, so the wrapper asked every time (2026-10-16, the sessions tools on ccb). Allowed when what it runs is.
     if (toolName === 'ExecuteExtraTool' && typeof input.tool_name === 'string' && this.preAllowed.has(input.tool_name)) return Promise.resolve({ behavior: 'allow', updatedInput: input });
+    if (this.gate) {
+      return this.gate(event).then((r) => r ?? this.askUser(event, o.signal)).catch(() => this.askUser(event, o.signal));
+    }
+    return this.askUser(event, o.signal);
+  }
+
+  /** the usual permission card: pending until respondPermission() or the turn's abort */
+  private askUser(event: PermissionRequestEvent, signal: AbortSignal): Promise<PermissionResult> {
+    const requestId = event.requestId;
     return new Promise<PermissionResult>((resolve) => {
       this.pending.set(requestId, { event, resolve });
-      o.signal.addEventListener('abort', () => {
+      signal.addEventListener('abort', () => {
         if (this.pending.delete(requestId)) {
           resolve({ behavior: 'deny', message: 'cancelled' });
           this.emit('permissionResolved', requestId);

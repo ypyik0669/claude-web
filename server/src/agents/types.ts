@@ -4,6 +4,7 @@ import { findBundled, installTool, refreshProcessPath } from './locate.js';
 import { promisify } from 'node:util';
 import { EventEmitter } from 'node:events';
 import type { AgentKind, AgentInfo, EffortLevel, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, RunnerState, SessionInfoSnapshot, AttachmentRef, ReportedModel } from '../protocol.js';
+import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { MetaStore } from '../meta/store.js';
 import { modelsFor } from '../models/catalog.js';
 import { tr } from '../i18n/index.js';
@@ -12,6 +13,8 @@ import { askCodexModels } from './reported-models.js';
 const catalogIds = (k: AgentKind) => modelsFor(k).map((m) => m.value);
 
 const execFileAsync = promisify(execFile);
+
+export type ToolGate = (ev: PermissionRequestEvent) => Promise<PermissionResult | null>;
 
 /**
  * What the pool / hub need from any live session, whatever agent is behind it. SessionRunner already fits.
@@ -45,6 +48,8 @@ export interface AgentDriver extends EventEmitter {
   /** retitle the running process (it keeps its title in memory); false = it does not take renames */
   renameLive?(title: string): Promise<boolean>;
   respawn?(): Promise<void>;
+  /** 值班 Bot: answers a tool's permission before it is asked anywhere (null = ask as usual) */
+  gate?: ToolGate;
 }
 
 export interface AgentDef {
