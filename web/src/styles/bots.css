@@ -84,6 +84,13 @@
 .bd-pair .field { flex: 1 1 0; }
 .bd-pair .field.num { flex: 0 0 88px; }
 .bd-unit, .bd-fixed, .bd-hint { color: var(--ink-3); font-size: var(--fs-sm); white-space: nowrap; }
+.bd-hint.warn { color: var(--warn); }
+/* the detail head's menu on a phone (no bot list there) is always shown */
+.bd-head .bd-more { opacity: 1; }
+/* this bot's waiting items, above its tabs */
+.bd-inbox { border: var(--hairline) solid var(--edge-subtle); border-radius: var(--r-md); padding: var(--sp-2) var(--sp-3); }
+/* 全自动's scope, read-only until 改范围 */
+.bd-ap-scope { grid-template-columns: 96px minmax(0, 1fr) auto; }
 .bd-outputs { margin-top: var(--sp-2); }
 .field.mono { font-family: var(--mono); font-size: var(--fs-sm); }
 .bd-tabs { display: flex; gap: 2px; border-bottom: var(--hairline) solid var(--edge-subtle); }

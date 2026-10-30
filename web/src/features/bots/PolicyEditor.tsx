@@ -1,14 +1,15 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import type { ActionClass, BotPolicy, BotStatus, PolicyLevel, PolicyRule, PolicyScope } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { Select } from '@/ui/Select';
-import { Switch, SwitchChip } from '@/ui/Switch';
+import { Switch } from '@/ui/Switch';
 import { Icon } from '@/ui/icons';
 import { clsx } from '@/util';
 import { dateLocale, tr } from '@/i18n';
 import { classLabel, levelLabel } from './model';
 import { updateBot } from './state';
-import { BlurField, NumField, confirmRisk, currentBot, doRisk, policyPatch, splitList } from './fields';
+import { confirmRisk, currentBot, doRisk } from './fields';
+import { ALL_SCOPE_FIELDS, autoPilotUnlimitedRisk, formOfScope, ScopeEditor, validScope } from './scope-form';
 
 export const CLASSES: ActionClass[] = ['read', 'write_local', 'browser', 'send', 'pay', 'delete', 'install'];
 const LEVELS: PolicyLevel[] = ['do', 'do_tell', 'ask', 'deny'];
@@ -37,13 +38,14 @@ export function scopeText(s: PolicyScope | undefined): string {
 const sameRule = (a: PolicyRule, b: PolicyRule) => a.cls === b.cls && a.level === b.level && JSON.stringify(a.scope ?? null) === JSON.stringify(b.scope ?? null);
 
 /**
- * Send the bot's policy with one change, built from the policy as stored at this moment (after any confirm), so a
- * trust demotion or another edit that landed meanwhile stays; `unleashed` is never in it (bots.unleash only).
+ * Send one change of the bot's policy, built from the policy as stored at this moment (after any confirm), so a
+ * trust demotion or another edit that landed meanwhile stays. Only the changed key goes (the server merges policy per
+ * key): an older 全自动 scope the server would now refuse can't block a level change, and `unleashed` is never in it.
  */
-function patchPolicy(botId: string, change: (cur: BotPolicy) => Partial<BotPolicy>): void {
+export function patchPolicy(botId: string, change: (cur: BotPolicy) => Pick<BotPolicy, 'rules'>): Promise<boolean> {
   const bot = currentBot(botId);
-  if (!bot) return;
-  void updateBot(botId, { policy: policyPatch({ ...bot.policy, ...change(bot.policy) }) });
+  if (!bot) return Promise.resolve(false);
+  return updateBot(botId, { policy: change(bot.policy) as BotPolicy });
 }
 
 const plainOf = (rules: PolicyRule[], cls: ActionClass) => rules.find((r) => r.cls === cls && !r.scope);
@@ -55,13 +57,14 @@ function ClassRow({ bot, cls }: { bot: BotStatus; cls: ActionClass }) {
   const scoped = rules.filter((r) => r.cls === cls && r.scope);
   const setLevel = async (l: PolicyLevel) => {
     if (l === level) return;
-    const risk = l === 'do' ? doRisk(cls) : null;
+    // 做了告诉我 runs it unasked too (it only reports afterwards): the same question as 直接做
+    const risk = l === 'do' || l === 'do_tell' ? doRisk(cls, l) : null;
     if (risk && !(await confirmRisk(risk))) return;
-    patchPolicy(bot.id, (cur) => ({ rules: [...cur.rules.filter((r) => !(r.cls === cls && !r.scope)), { cls, level: l }] }));
+    void patchPolicy(bot.id, (cur) => ({ rules: [...cur.rules.filter((r) => !(r.cls === cls && !r.scope)), { cls, level: l }] }));
   };
   const remove = async (r: PolicyRule) => {
     if (!(await dlg.confirm(tr('删除这条「{cls}」的规则？', { cls: classLabel(cls) }), { message: `${levelLabel(r.level)} · ${scopeText(r.scope)}`, focusCancel: true, okLabel: tr('删除') }))) return;
-    patchPolicy(bot.id, (cur) => ({ rules: cur.rules.filter((x) => !sameRule(x, r)) }));
+    void patchPolicy(bot.id, (cur) => ({ rules: cur.rules.filter((x) => !sameRule(x, r)) }));
   };
   return (
     <div className="bd-class" data-cls={cls}>
@@ -108,86 +111,60 @@ function TrustMap({ bot }: { bot: BotStatus }) {
   );
 }
 
-type ScopeField = 'domains' | 'channels' | 'recipients' | 'maxAmount' | 'perDay' | 'until';
-
-function fieldLabel(f: ScopeField): string {
-  switch (f) {
-    case 'domains': return tr('域名');
-    case 'channels': return tr('频道');
-    case 'recipients': return tr('收件人');
-    case 'maxAmount': return tr('金额上限');
-    case 'perDay': return tr('每天最多');
-    case 'until': return tr('到期');
-  }
+/** Send 全自动 alone (`policy.autoPilot`; the server merges policy per key, so the rules are left as stored). */
+function sendAutoPilot(botId: string, autoPilot: NonNullable<BotPolicy['autoPilot']>): Promise<boolean> {
+  return updateBot(botId, { policy: { autoPilot } as BotPolicy });
 }
 
-/** What 无限制 on one field lets it do — said once before it is ticked (spec §10). */
-function unlimitedRisk(f: ScopeField): string {
-  switch (f) {
-    case 'domains': return tr('域名不限后，全自动时它可以访问并操作任何网站。确定？');
-    case 'channels': return tr('频道不限后，全自动时它可以往任何频道、群发消息。确定？');
-    case 'recipients': return tr('收件人不限后，全自动时它可以给任何人发消息、发邮件。确定？');
-    case 'maxAmount': return tr('金额不限后，它可以在你不在时无上限花钱。确定？');
-    case 'perDay': return tr('次数不限后，它一天里可以不停地做下去，没有次数上限。确定？');
-    case 'until': return tr('不设到期后，全自动会一直开着，直到你自己关掉。确定？');
-  }
-}
-
-const isoDay = (t: number) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
-
-/** 全自动: on / off, and the scope it acts in without asking — every field can be 无限制 (= not set). */
+/**
+ * 全自动: on / off, and the scope it acts in without asking. Turning it on opens the scope form first; 保存 sends on
+ * and the whole scope at once — one that names a destination, or `{unlimited:true}` when every field was ticked
+ * 无限制 (each tick confirmed, then once more for the whole). Turning it off never asks.
+ */
 function AutoPilot({ bot }: { bot: BotStatus }) {
   const ap = bot.policy.autoPilot;
   const on = !!ap?.on;
-  const scope: PolicyScope = ap?.scope ?? {};
-  // fields the user un-ticked 无限制 on but hasn't filled yet
-  const [limiting, setLimiting] = useState<Set<ScopeField>>(() => new Set());
-  // one scope field over autopilot as stored now
-  const setScope = (patch: Partial<PolicyScope>) => patchPolicy(bot.id, (cur) => {
-    const next: PolicyScope = { ...cur.autoPilot?.scope, ...patch };
-    for (const k of Object.keys(next) as (keyof PolicyScope)[]) if (next[k] === undefined) delete next[k];
-    return { autoPilot: { on: !!cur.autoPilot?.on, scope: next } };
-  });
-  const emptyScope = (s: PolicyScope) => s.unlimited || (!s.domains?.length && !s.channels?.length && !s.recipients?.length && s.maxAmount === undefined && s.perDay === undefined && s.until === undefined);
-  const toggle = async (next: boolean) => {
-    if (next && emptyScope(scope) && !(await confirmRisk(tr('全自动没有任何范围：发送、付款、删除都会直接做，不再问你。确定？')))) return;
-    patchPolicy(bot.id, (cur) => ({ autoPilot: { on: next, scope: cur.autoPilot?.scope } }));
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const save = async (scope: PolicyScope) => {
+    if (scope.unlimited && !(await confirmRisk(tr('全自动没有任何范围：发送、付款、删除都会直接做，不再问你。确定？')))) return;
+    setBusy(true);
+    const ok = await sendAutoPilot(bot.id, { on: true, scope });
+    setBusy(false);
+    if (ok) setEditing(false);
   };
-  const setUnlimited = async (f: ScopeField, unlimited: boolean) => {
-    if (!unlimited) { setLimiting((s) => new Set(s).add(f)); return; }
-    if (!(await confirmRisk(unlimitedRisk(f)))) return;
-    setLimiting((s) => { const n = new Set(s); n.delete(f); return n; });
-    setScope({ [f]: undefined });
+  const toggle = (next: boolean) => {
+    if (next) { setEditing(true); return; }
+    setEditing(false);
+    if (!on) return;
+    // the scope stays for next time — unless it is one the server would refuse now (an older, looser rule)
+    const cur = currentBot(bot.id)?.policy.autoPilot?.scope;
+    void sendAutoPilot(bot.id, { on: false, scope: validScope(cur) ? cur : undefined });
   };
-  const fields: ScopeField[] = ['domains', 'channels', 'recipients', 'maxAmount', 'perDay', 'until'];
   return (
     <section className="bd-card bd-autopilot">
       <div className="bd-row">
         <span>{tr('全自动')}</span>
-        <Switch on={on} label={tr('全自动')} onChange={(v) => void toggle(v)} />
+        <Switch on={on} label={tr('全自动')} disabled={busy} onChange={toggle} />
         <span className="bd-hint">{tr('范围内的动作都直接做，不问你；到期自动关')}</span>
       </div>
-      {on && (
-        <div className="bd-form">
-          {fields.map((f) => {
-            const v = scope[f];
-            const unlimited = v === undefined && !limiting.has(f);
-            let input: ReactNode = null;
-            if (!unlimited) {
-              if (f === 'maxAmount' || f === 'perDay') input = <NumField label={fieldLabel(f)} value={scope[f]} onSave={(n) => setScope({ [f]: n })} />;
-              else if (f === 'until') input = <BlurField type="date" label={fieldLabel(f)} value={scope.until !== undefined ? isoDay(scope.until) : ''} onSave={(s) => { const t = s ? new Date(`${s}T23:59:59`).getTime() : NaN; setScope({ until: Number.isFinite(t) ? t : undefined }); }} />;
-              else input = <BlurField label={fieldLabel(f)} placeholder={tr('用逗号隔开')} value={(scope[f] ?? []).join(', ')} onSave={(s) => { const list = splitList(s); setScope({ [f]: list.length ? list : undefined }); }} />;
-            }
-            return (
-              <div className="bd-row" key={f} data-field={f}>
-                <span>{fieldLabel(f)}</span>
-                <span className="bd-pair">
-                  {input}
-                  <SwitchChip on={unlimited} onChange={(u) => void setUnlimited(f, u)}>{tr('无限制')}</SwitchChip>
-                </span>
-              </div>
-            );
-          })}
+      {editing ? (
+        <ScopeEditor
+          className="bd-form bd-ap-form"
+          head={on ? tr('全自动的范围：') : tr('先定范围，保存后才打开全自动：')}
+          fields={ALL_SCOPE_FIELDS}
+          initial={formOfScope(ap?.scope)}
+          risk={autoPilotUnlimitedRisk}
+          okLabel={on ? tr('保存') : tr('保存并打开全自动')}
+          busy={busy}
+          onSend={(scope) => void save(scope)}
+          onCancel={() => setEditing(false)}
+        />
+      ) : on && (
+        <div className="bd-row bd-ap-scope">
+          <span>{tr('范围')}</span>
+          <span className="bd-scope">{scopeText(ap?.scope)}</span>
+          <button className="btn sm" onClick={() => setEditing(true)}>{tr('改范围')}</button>
         </div>
       )}
     </section>

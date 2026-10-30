@@ -8,19 +8,24 @@ vi.mock('@/ws/client', () => ({
 }));
 
 let inboxActions: typeof import('./Inbox').inboxActions;
-let scopeDefaults: typeof import('./Inbox').scopeDefaults;
-let buildScope: typeof import('./Inbox').buildScope;
+let scopeDefaults: typeof import('./scope-form').scopeDefaults;
+let buildScope: typeof import('./scope-form').buildScope;
 let answerInOrder: typeof import('./Inbox').answerInOrder;
-let scopeFields: typeof import('./Inbox').scopeFields;
-let parseUntil: typeof import('./Inbox').parseUntil;
+let scopeFields: typeof import('./scope-form').scopeFields;
+let parseUntil: typeof import('./scope-form').parseUntil;
+let formOfScope: typeof import('./scope-form').formOfScope;
+let validScope: typeof import('./scope-form').validScope;
+let ALL: typeof import('./scope-form').ALL_SCOPE_FIELDS;
 let batchConfirm: typeof import('./Inbox').batchConfirm;
+let callDetail: typeof import('./Inbox').callDetail;
 
 beforeAll(async () => {
   vi.stubGlobal('window', { matchMedia: undefined, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; } });
   vi.stubGlobal('document', { addEventListener() {}, hasFocus: () => true, querySelector: () => null, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} }, classList: { toggle() {}, add() {}, remove() {} } } });
   vi.stubGlobal('localStorage', { getItem: () => null, setItem() {}, removeItem() {} });
   vi.stubGlobal('location', { search: '', protocol: 'http:', host: 'x' });
-  ({ inboxActions, scopeDefaults, buildScope, answerInOrder, scopeFields, parseUntil, batchConfirm } = await import('./Inbox'));
+  ({ inboxActions, answerInOrder, batchConfirm, callDetail } = await import('./Inbox'));
+  ({ scopeDefaults, buildScope, scopeFields, parseUntil, formOfScope, validScope, ALL_SCOPE_FIELDS: ALL } = await import('./scope-form'));
 });
 
 describe('inboxActions', () => {
@@ -60,13 +65,22 @@ describe('buildScope: exactly what was confirmed, nothing blank means unlimited'
     expect(ok(buildScope(full, { ...none, domains: true, channels: true, recipients: true }, send, NOW))).toBeNull());
   it('every shown field ticked 无限制: unlimited', () =>
     expect(ok(buildScope(full, { domains: true, channels: true, recipients: true, maxAmount: false, perDay: true, until: true }, send, NOW))).toEqual({ unlimited: true }));
-  it('pay: 金额上限 is required unless ticked; with it, sent', () => {
-    expect(ok(buildScope({ ...full, maxAmount: '' }, none, pay, NOW))).toBeNull();
-    expect(ok(buildScope(full, none, pay, NOW))?.maxAmount).toBe(50);
-    expect(ok(buildScope({ ...full, maxAmount: '' }, { ...none, maxAmount: true }, pay, NOW))?.maxAmount).toBeUndefined();
+  it('pay (server allowScope): 金额上限 is always required — 无限制 on it alone is refused; with it, sent', () => {
+    expect(ok(buildScope({ ...full, maxAmount: '' }, none, pay, NOW, { amountRequired: true }))).toBeNull();
+    expect(ok(buildScope(full, none, pay, NOW, { amountRequired: true }))?.maxAmount).toBe(50);
+    const r = buildScope({ ...full, maxAmount: '' }, { ...none, maxAmount: true }, pay, NOW, { amountRequired: true });
+    expect('problem' in r && r.problem).toContain('金额上限');
   });
-  it('pay: unlimited only when 金额上限 is ticked too', () =>
-    expect(ok(buildScope(full, { domains: true, channels: true, recipients: true, maxAmount: false, perDay: true, until: true }, pay, NOW))).toBeNull());
+  it('pay: unlimited only when 金额上限 is ticked too, and then it is the whole scope', () => {
+    expect(ok(buildScope(full, { domains: true, channels: true, recipients: true, maxAmount: false, perDay: true, until: true }, pay, NOW, { amountRequired: true }))).toBeNull();
+    expect(ok(buildScope(full, { domains: true, channels: true, recipients: true, maxAmount: true, perDay: true, until: true }, pay, NOW, { amountRequired: true }))).toEqual({ unlimited: true });
+  });
+  it('全自动 (every field, no amount rule): 金额上限 may be 无限制 next to a named destination', () =>
+    expect(ok(buildScope(full, { ...none, maxAmount: true }, ALL, NOW))).toEqual({ domains: ['a.com', 'b.com'], channels: ['C1'], recipients: ['x@y.com'], perDay: 5, until: NOW + 7 * DAY }));
+  it('全自动: numbers only is refused (the server wants a destination), clearing a field never widens it', () => {
+    expect(ok(buildScope(full, { ...none, domains: true, channels: true, recipients: true }, ALL, NOW))).toBeNull();
+    expect(ok(buildScope({ ...full, perDay: '' }, none, ALL, NOW))).toBeNull();
+  });
   it('每天最多: a whole number ≥ 1; 金额上限 ≥ 0', () => {
     for (const perDay of ['0', '1.5', '-1', 'abc']) expect(ok(buildScope({ ...full, perDay }, none, send, NOW)), perDay).toBeNull();
     expect(ok(buildScope({ ...full, maxAmount: '-1' }, none, pay, NOW))).toBeNull();
@@ -80,6 +94,52 @@ describe('buildScope: exactly what was confirmed, nothing blank means unlimited'
     expect(ok(buildScope({ ...full, until: '' }, { ...none, until: true }, send, NOW))?.until).toBeUndefined();
   });
   it('parseUntil: no invalid dates', () => { expect(parseUntil('2026-02-30', NOW)).toBeNull(); expect(parseUntil('soon', NOW)).toBeNull(); });
+});
+
+describe('formOfScope / validScope: a stored 全自动 scope in the form', () => {
+  it('none: every field blank and not ticked (to be filled or ticked)', () => {
+    const f = formOfScope(undefined);
+    expect(Object.values(f.unlimited).some(Boolean)).toBe(false);
+    expect(Object.values(f.form).every((v) => v === '')).toBe(true);
+  });
+  it('unlimited: every field ticked — saved as it is, it stays {unlimited:true}', () => {
+    const f = formOfScope({ unlimited: true, domains: ['a.com'] });
+    expect(Object.values(f.unlimited).every(Boolean)).toBe(true);
+    expect(buildScope(f.form, f.unlimited, ALL, 0)).toEqual({ scope: { unlimited: true } });
+  });
+  it('a set field filled, an unset one ticked; saved again unchanged it is the same scope', () => {
+    const f = formOfScope({ domains: ['a.com', 'b.com'], perDay: 3 });
+    expect(f.form.domains).toBe('a.com, b.com');
+    expect([f.unlimited.domains, f.unlimited.perDay, f.unlimited.channels, f.unlimited.until]).toEqual([false, false, true, true]);
+    expect(buildScope(f.form, f.unlimited, ALL, 0)).toEqual({ scope: { domains: ['a.com', 'b.com'], perDay: 3 } });
+  });
+  it('an older numbers-only scope is not saved back as it is', () => {
+    const f = formOfScope({ perDay: 10 });
+    expect('problem' in buildScope(f.form, f.unlimited, ALL, 0)).toBe(true);
+  });
+  it('validScope: unlimited or a named destination', () => {
+    expect([validScope(undefined), validScope({}), validScope({ perDay: 1 }), validScope({ channels: ['C'] }), validScope({ unlimited: true })]).toEqual([false, false, false, true, true]);
+  });
+});
+
+describe('callDetail: the whole call on the approval card, secrets masked', () => {
+  it('a shell command in full, past 160 characters', () => {
+    const cmd = `curl -X POST https://api.example.com/x -d '${'a'.repeat(300)}'`;
+    expect(callDetail({ input: { command: cmd } })).toBe(cmd);
+  });
+  it('an IM send through a wrapper: the inner tool and its text', () => {
+    const d = callDetail({ input: { tool_name: 'mcp__slack__send_message', params: { channel: 'C1', text: 'hello team, the build is red' } } });
+    expect(d.startsWith('mcp__slack__send_message\n')).toBe(true);
+    expect(d).toContain('hello team, the build is red');
+  });
+  it('masks auth headers, bearer tokens and token values', () => {
+    const val = ['q', 'w', 'e', 'r', 't', 'y'].join('9');
+    const d = callDetail({ input: { command: `curl -H 'Authorization: Bearer abc.def' 'https://x.com/?token=${val}'` } });
+    expect(d).not.toContain('abc.def');
+    expect(d).not.toContain(val);
+    expect(d).toContain('https://x.com/');
+  });
+  it('no input: nothing', () => expect(callDetail({})).toBe(''));
 });
 
 describe('batchConfirm', () => {

@@ -37,6 +37,11 @@ describe('pure helpers', () => {
   it('doRisk has a sentence for exactly send / pay / delete', () => {
     const all: ActionClass[] = ['read', 'write_local', 'browser', 'send', 'pay', 'delete', 'install'];
     expect(all.filter((c) => fields.doRisk(c))).toEqual(['send', 'pay', 'delete']);
+    // 做了告诉我 runs it unasked too: the same question, naming that level; 先问我 / 禁止 ask nothing
+    expect(all.filter((c) => fields.doRisk(c, 'do_tell'))).toEqual(['send', 'pay', 'delete']);
+    expect(fields.doRisk('send', 'do_tell')).toContain('做了告诉我');
+    expect(fields.doRisk('pay', 'do')).toContain('直接做');
+    expect([fields.doRisk('send', 'ask'), fields.doRisk('delete', 'deny')]).toEqual([null, null]);
   });
   it('DEFAULT_LEVEL is spec §5: read / write / browser just do it, install tells, send / pay / delete ask', () => {
     expect(policy.DEFAULT_LEVEL).toEqual({ read: 'do', write_local: 'do', browser: 'do', install: 'do_tell', send: 'ask', pay: 'ask', delete: 'ask' });
