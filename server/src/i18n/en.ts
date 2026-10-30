@@ -1799,4 +1799,10 @@ export const EN_SERVER: Record<string, string> = {
   "你之前要做的「{summary}」已经批准，现在执行它，然后接着完成例行任务。": "What you wanted to do earlier (“{summary}”) has been approved. Do it now, then carry on with the routine.",
   "便携版不能注册值班服务：它的文件在程序退出后就不在了。请先安装正式版": "The portable build can't register the duty service: its files are gone once it exits. Install the regular version first",
   "路径或环境变量里有值班服务没法处理的字符（\" 或 %）：{value}": "A path or environment variable has a character the duty service can't handle (\" or %): {value}",
+  "另一个 claude-web 正在值班，请在那边操作": "Another claude-web is on duty for these bots. Do this over there",
+  "这条例行正在运行": "This routine is already running",
+  "超出预算": "Over budget",
+  "「{name}」的预算用完了，今天不再运行": "“{name}” has used up its budget and won't run again today",
+  "「{cls}」到「{key}」已连续批准 {n} 次，以后直接做？": "You approved “{cls}” to “{key}” {n} times in a row. Let it do this without asking from now on?",
+  "已标记为可发送：{title}": "Marked as ready to send: {title}",
 };
