@@ -7,7 +7,10 @@ export interface MemoryToolContext { cwd: string; sessionId?: string; agent?: st
 const KINDS = ['decision', 'constraint', 'fact', 'deadend', 'preference', 'note'];
 
 export function memoryTools(botId?: string) {
-  const scopes = botId ? ['global', 'project', 'session', 'bot'] : ['global', 'project', 'session'];
+  // a bot writes only its own memory: anything wider would reach every other conversation's prompt (the gate asks
+  // before any other scope — bots/policy/classify.ts)
+  const writeScopes = botId ? ['bot'] : ['global', 'project', 'session'];
+  const listScopes = botId ? ['global', 'project', 'session', 'bot'] : writeScopes;
   return [
     {
       name: 'memory_search',
@@ -33,8 +36,8 @@ export function memoryTools(botId?: string) {
           kind: { type: 'string', enum: KINDS, description: 'Default: note.' },
           scope: {
             type: 'string',
-            enum: scopes,
-            description: botId ? 'Default: bot (your own memory, shown to you at every run).' : 'Default: project. Use global only for things true everywhere.',
+            enum: writeScopes,
+            description: botId ? 'Your own memory, shown to you at every run.' : 'Default: project. Use global only for things true everywhere.',
           },
           tags: { type: 'array', items: { type: 'string' } },
         },
@@ -44,7 +47,7 @@ export function memoryTools(botId?: string) {
     {
       name: 'memory_list',
       description: 'List stored memories for this project without searching (newest and pinned first).',
-      inputSchema: { type: 'object', properties: { scope: { type: 'string', enum: scopes }, limit: { type: 'number' } } },
+      inputSchema: { type: 'object', properties: { scope: { type: 'string', enum: listScopes }, limit: { type: 'number' } } },
     },
   ];
 }

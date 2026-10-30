@@ -30,6 +30,8 @@ describe('memory MCP tools', () => {
 
   it('only a bot run has the bot scope', () => {
     expect(JSON.stringify(memoryTools('b1'))).toContain('"bot"');
+    const write = memoryTools('b1').find((t) => t.name === 'memory_write')!;
+    expect((write.inputSchema.properties as any).scope.enum).toEqual(['bot']);
     expect(JSON.stringify(memoryTools())).not.toContain('"bot"');
     expect(() => memoryCall(mem, { cwd: '/repo' }, 'memory_write', { text: 'x', scope: 'bot' })).toThrow(/bot/);
     memoryCall(mem, { cwd: '/repo' }, 'memory_write', { text: 'plain' });
