@@ -74,3 +74,40 @@ describe('trust: upgrades are always scoped, corrections remove the rule that le
     expect(demoteRule(p, undefined)).toBe(p);
   });
 });
+
+describe('trust: an earned payment upgrade is capped', () => {
+  const key = 'domain:api.stripe.com';
+  const run = (amounts: (number | undefined)[]) => {
+    let t = {}; let r: ReturnType<typeof recordApproval> = { trust: t, propose: false };
+    for (const [i, a] of amounts.entries()) { r = recordApproval(t, 'pay', key, i + 1, a); t = r.trust; }
+    return r;
+  };
+  it('the proposal carries maxAmount = the largest approved amount, tracked on the entry', () => {
+    const r = run([20, 75, 40]);
+    expect(r.propose).toBe(true);
+    expect(r.scope).toEqual({ domains: ['api.stripe.com'], maxAmount: 75 });
+    expect(r.trust[`pay|${key}`]).toEqual({ approvals: 3, lastAt: 3, maxAmount: 75 });
+    const p: BotPolicy = { rules: [{ cls: 'pay', level: 'do', scope: r.scope }] };
+    expect(decide(p, 'pay', { domains: ['api.stripe.com'], amount: 75 }, 0, 0).level).toBe('do');
+    expect(decide(p, 'pay', { domains: ['api.stripe.com'], amount: 76 }, 0, 0).level).toBe('ask');
+    expect(decide(p, 'pay', { domains: ['api.stripe.com'] }, 0, 0).level).toBe('ask');
+  });
+  it('any approved payment without an amount: no pay upgrade at all', () => {
+    for (const amounts of [[20, undefined, 40], [undefined, 20, 40], [20, 40, undefined]]) {
+      const r = run(amounts);
+      expect(r.propose, String(amounts)).toBe(false);
+      expect(r.scope).toBeUndefined();
+      expect(r.trust[`pay|${key}`].unpriced).toBe(true);
+    }
+  });
+  it('a correction clears the record, so a fresh priced streak can earn it again', () => {
+    const t = recordCorrection(run([10, undefined]).trust, 'pay', key);
+    let r = recordApproval(t, 'pay', key, 1, 5); r = recordApproval(r.trust, 'pay', key, 2, 9); r = recordApproval(r.trust, 'pay', key, 3, 7);
+    expect(r).toMatchObject({ propose: true, scope: { domains: ['api.stripe.com'], maxAmount: 9 } });
+  });
+  it('other classes propose the plain key scope and keep no amount', () => {
+    let r = recordApproval({}, 'send', 'channel:C1', 1, 500); r = recordApproval(r.trust, 'send', 'channel:C1', 2); r = recordApproval(r.trust, 'send', 'channel:C1', 3);
+    expect(r.scope).toEqual({ channels: ['C1'] });
+    expect(r.trust['send|channel:C1']).toEqual({ approvals: 3, lastAt: 3 });
+  });
+});
