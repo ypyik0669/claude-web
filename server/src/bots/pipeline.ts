@@ -159,13 +159,14 @@ export async function runRoutine(d: PipelineDeps, bot: Bot, routine: Routine, tr
   };
   if (o.signal?.aborted) return stopped();
 
+  // the precheck's fingerprint is kept once the run ends ok: a failed, stopped or handed-over run isn't "unchanged" next time
+  let fp: string | undefined;
   if (trigger !== 'resume' && routine.precheck) {
     const pc = await runScript(routine.precheck, { cwd: bot.cwd, signal: o.signal });
     if (o.signal?.aborted) return stopped();
     if (pc.ok) {
-      const fp = fingerprint(pc.stdout);
+      fp = fingerprint(pc.stdout);
       if (fp === d.store.stateOf(bot.id, routine.id).fingerprint) { run.skipped = true; run.ok = true; return finish(); }
-      await d.store.setState(bot.id, routine.id, { fingerprint: fp });
     } else run.error = tr('预检查出错：{error}', { error: (pc.stderr || pc.stdout).trim().slice(0, 200) });
   }
 
@@ -228,7 +229,7 @@ export async function runRoutine(d: PipelineDeps, bot: Bot, routine: Routine, tr
   }
   run.ok = !res.isError && (run.verified?.ok ?? true);
   const checkpoint = fs.existsSync(checkpointFile) ? fs.readFileSync(checkpointFile, 'utf8').slice(0, 4000) : undefined;
-  await d.store.setState(bot.id, routine.id, { lastSummary: run.said.slice(0, 500), checkpoint });
+  await d.store.setState(bot.id, routine.id, { lastSummary: run.said.slice(0, 500), checkpoint, ...(run.ok && fp ? { fingerprint: fp } : {}) });
 
   const cause: Cause | null = run.ok ? null : res.timedOut ? 'timeout' : res.died ? 'died' : res.isError ? 'error' : 'verify';
   await settleRoutine(d, bot.id, routine.id, run, cause);

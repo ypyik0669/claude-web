@@ -59,6 +59,23 @@ describe('runRoutine', () => {
     expect(second.run.skipped).toBe(true); expect(opened).toHaveLength(1);
   });
 
+  it('precheck: the fingerprint is kept only once a run ends ok — a failed, stopped or handed-over run is not "unchanged" next time', async () => {
+    const echo = process.platform === 'win32' ? 'Write-Output same' : 'echo same';
+    const b = bot([routine({ precheck: echo })]); await store.save(b);
+    await runRoutine(deps(fakeRunner({ isError: true })), b, b.routines[0], 'cron');
+    expect(store.stateOf('b1', 'r1').fingerprint).toBeUndefined();
+    const ac = new AbortController();
+    const runner = fakeRunner({ never: true });
+    const p = runRoutine(deps(runner), b, b.routines[0], 'cron', { signal: ac.signal });
+    for (let i = 0; i < 500 && !runner.sent.length; i++) await new Promise((res) => setTimeout(res, 10));
+    ac.abort('handoff');
+    expect((await p).run.handoff).toBe(true);
+    expect(store.stateOf('b1', 'r1').fingerprint).toBeUndefined();
+    const third = await runRoutine(deps(fakeRunner()), b, b.routines[0], 'cron');
+    expect(third.run.skipped).toBeUndefined(); expect(opened).toHaveLength(3);
+    expect(store.stateOf('b1', 'r1').fingerprint).toMatch(/^[0-9a-f]{40}$/);
+  });
+
   it('a failing precheck is named in the language of the app (tr), and the run still goes on', async () => {
     const fail = process.platform === 'win32' ? 'Write-Error nope; exit 3' : 'echo nope >&2; exit 3';
     const b = bot([routine({ precheck: fail })]); await store.save(b);
