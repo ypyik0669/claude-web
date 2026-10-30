@@ -47,6 +47,52 @@ describe('BotStore', () => {
     expect(new BotStore(root).inbox()).toHaveLength(2);
   });
 
+  it('rejects ids that are not plain names, and never deletes anything for them', async () => {
+    await s.save(bot('b_1'));
+    fs.writeFileSync(path.join(root, 'keep.txt'), 'x');
+    for (const bad of ['..', '../x', 'a/b', 'a\\b', '', '.']) {
+      expect(() => s.dir(bad)).toThrow();
+      await expect(s.remove(bad)).rejects.toThrow();
+      await expect(s.appendAudit('b_1', bad, { at: 1, runId: bad, botId: 'b_1', toolName: 'Bash', cls: 'read', level: 'do', basis: 'rule', summary: '', result: 'allowed' })).rejects.toThrow();
+    }
+    await s.remove('b_unknown');
+    expect(fs.existsSync(path.join(root, 'keep.txt'))).toBe(true);
+    expect(fs.existsSync(path.join(root, 'b_1', 'bot.json'))).toBe(true);
+  });
+
+  it('a truncated last line in runs/index.jsonl keeps the earlier runs', async () => {
+    await s.save(bot('b_1'));
+    await s.addRun({ id: 'run1', botId: 'b_1', routineId: 'r1', at: 1, trigger: 'cron' });
+    fs.appendFileSync(path.join(root, 'b_1', 'runs', 'index.jsonl'), '{"id":"run2","bo');
+    const warn = console.warn; console.warn = () => {};
+    try { expect(s.runs('b_1').map((r) => r.id)).toEqual(['run1']); } finally { console.warn = warn; }
+  });
+
+  it('a corrupt json file falls back instead of throwing', async () => {
+    await s.save(bot('b_1'));
+    fs.writeFileSync(path.join(root, 'b_1', 'trust.json'), '{not json');
+    const warn = console.warn; console.warn = () => {};
+    try { expect(s.trust('b_1')).toEqual({}); } finally { console.warn = warn; }
+  });
+
+  it('writes leave no tmp files behind', async () => {
+    await s.save(bot('b_1')); await s.setTrust('b_1', {}); await s.setInbox([]);
+    const all = fs.readdirSync(root, { recursive: true }).map(String);
+    expect(all.filter((f) => f.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('concurrent setState patches to the same routine both land', async () => {
+    await s.save(bot('b_1'));
+    await Promise.all([s.setState('b_1', 'r1', { fingerprint: 'f' }), s.setState('b_1', 'r1', { checkpoint: 'c' }), s.setState('b_1', 'r1', { lastSummary: 'l' })]);
+    const st = new BotStore(root).stateOf('b_1', 'r1');
+    expect([st.fingerprint, st.checkpoint, st.lastSummary]).toEqual(['f', 'c', 'l']);
+  });
+
+  it('concurrent inbox writes keep their order', async () => {
+    await Promise.all([s.setInbox([{ id: 'a', kind: 'finding', botId: 'b_1', at: 1, title: 'a' }]), s.setInbox([{ id: 'b', kind: 'finding', botId: 'b_1', at: 1, title: 'b' }])]);
+    expect(new BotStore(root).inbox().map((i) => i.id)).toEqual(['b']);
+  });
+
   it('remove deletes the directory', async () => {
     await s.save(bot('b_1')); await s.remove('b_1');
     expect(s.list()).toEqual([]); expect(fs.existsSync(path.join(root, 'b_1'))).toBe(false);
