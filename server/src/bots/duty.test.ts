@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
-import { dutyPlan, dutyOn, DutyCharError, restartDutyAfterApp } from './duty.js';
+import { dutyPlan, dutyOn, DutyCharError, restartDutyAfterApp, refreshDutyFilesFor } from './duty.js';
 
 const o = { nodeBin: '/usr/bin/node', serverEntry: '/app/server/dist/index.js', dataDir: '/home/me/.claude-web', port: 3090, home: '/home/me' };
 const win = {
@@ -176,5 +176,36 @@ describe('restartDutyAfterApp: the app quitting hands the dir back to the duty s
       expect(await restartDutyAfterApp({ run: async (c) => { ran.push(c); return { code: 0, out: '' }; }, writeFile: async () => {} })).toBe(true);
       expect(ran).toEqual(['schtasks /Query /TN "ClaudeWebDuty"', 'schtasks /Run /TN "ClaudeWebDuty"']);
     } finally { if (prev === undefined) delete process.env.CLAUDE_WEB_DIR; else process.env.CLAUDE_WEB_DIR = prev; fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('refreshDutyFilesFor: service files of an older version are brought up to date', () => {
+  it('windows: duty.cmd / duty.vbs that differ are rewritten (UTF-16 read back), missing ones are not created', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-duty-'));
+    try {
+      const plan = dutyPlan({ ...win, dataDir: dir });
+      const [cmd, vbs, xml] = plan.files;
+      fs.mkdirSync(path.dirname(cmd.path), { recursive: true });
+      // an older version's entry
+      fs.writeFileSync(cmd.path, cmd.content.replace('index.js"', 'old-index.js"'));
+      fs.writeFileSync(vbs.path, Buffer.from('\ufeff' + vbs.content.replace('WScript.Sleep 30000', 'WScript.Sleep 5000'), 'utf16le'));
+      const written: string[] = [];
+      const io = { run: async () => ({ code: 0, out: '' }), writeFile: async (f: string, c: string) => { written.push(f); fs.writeFileSync(f, c); } };
+      expect(await refreshDutyFilesFor(plan, io)).toEqual([cmd.path, vbs.path]);
+      expect(written).not.toContain(xml.path);
+      expect(fs.readFileSync(cmd.path, 'utf8')).toBe(cmd.content);
+      // the same again: nothing to do
+      fs.writeFileSync(vbs.path, Buffer.from('\ufeff' + vbs.content, 'utf16le'));
+      expect(await refreshDutyFilesFor(plan, io)).toEqual([]);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('a service file for another data dir is left alone', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-duty-'));
+    try {
+      const plan = dutyPlan({ ...win, dataDir: dir });
+      fs.mkdirSync(path.dirname(plan.files[0].path), { recursive: true });
+      fs.writeFileSync(plan.files[0].path, '@echo off\r\nset "CLAUDE_WEB_DIR=D:\\elsewhere"\r\n');
+      expect(await refreshDutyFilesFor(plan, { run: async () => ({ code: 0, out: '' }), writeFile: async () => { throw new Error('no'); } })).toEqual([]);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 });

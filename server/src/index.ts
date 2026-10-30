@@ -114,7 +114,7 @@ import { ComputerAccess } from './computer/access.js';
 import { SiteAsk } from './web/site-gate.js';
 import { handleComputerAsk } from './computer/http.js';
 import { configureComputerMcp } from './computer/launcher.js';
-import { noteDutyPid, restartDutyAfterApp } from './bots/duty.js';
+import { noteDutyPid, refreshDutyFiles, restartDutyAfterApp } from './bots/duty.js';
 import { acquireServerLock, BUSY_EXIT, lockNonce, processLockEnv, releaseLock, setLockReady, watchYield } from './bots/server-lock.js';
 import { BotService } from './bots/service.js';
 import { CLAUDE_PROVIDER_ID } from './protocol.js';
@@ -782,6 +782,8 @@ if (isMain || process.env.CLAUDE_WEB_STANDALONE === '1') {
   setLockReady(lockDir, process.pid, running.port);
   // under the Windows duty task: let "duty off" find and stop us
   noteDutyPid();
+  // the duty service's own files, from an older version (a 5 s back-off, the old entry): brought up to date
+  if (kind === 'duty') void refreshDutyFiles().then((c) => { if (c.length) console.log(`[duty] updated ${c.join(', ')}`); }).catch(() => {});
   const ready = { type: 'ready', port: running.port, host: running.host };
   // Electron utilityProcess talks over process.parentPort; plain child_process.fork over process.send
   if (parentPort) parentPort.postMessage(ready);

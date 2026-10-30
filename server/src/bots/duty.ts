@@ -435,6 +435,39 @@ export async function restartDutyAfterApp(io: DutyIo = IO): Promise<boolean> {
   return (await io.run(dutyStartCommand(plan.platform, process.getuid?.()))).code === 0;
 }
 
+/** a service file as text (the .vbs / .xml are UTF-16 with a BOM) */
+function readServiceFile(file: string): string | undefined {
+  let b: Buffer;
+  try { b = fs.readFileSync(file); } catch { return undefined; }
+  return b[0] === 0xff && b[1] === 0xfe ? b.subarray(2).toString('utf16le') : b.toString('utf8');
+}
+
+/**
+ * The service files of a registered duty mode for this data dir, brought up to this version (a new back-off, the
+ * duty entry): each one that is there and differs is written again. Only files that exist — nothing is registered
+ * here. Linux reloads the unit definitions (no restart); launchd and Task Scheduler read theirs at the next start.
+ * Exported for tests; refreshDutyFiles is the way in.
+ */
+export async function refreshDutyFilesFor(plan: DutyPlan, io: DutyIo = IO): Promise<string[]> {
+  if (!servesThisDir(plan)) return [];
+  const changed: string[] = [];
+  for (const f of plan.files) {
+    const cur = readServiceFile(f.path);
+    if (cur === undefined || cur === f.content) continue;
+    await io.writeFile(f.path, f.content);
+    changed.push(f.path);
+  }
+  if (changed.length && plan.platform === 'linux') await io.run('systemctl --user daemon-reload');
+  return changed;
+}
+/** the duty server at startup: its own service files, written by an older version, rewritten (best effort) */
+export async function refreshDutyFiles(): Promise<string[]> {
+  if (process.env.CLAUDE_WEB_DUTY !== '1' || !fs.existsSync(serverEntry())) return [];
+  let plan: DutyPlan;
+  try { plan = currentPlan(); } catch { return []; }
+  return refreshDutyFilesFor(plan);
+}
+
 /** Is the duty service registered? */
 export async function dutyInstalled(io: DutyIo = IO): Promise<boolean> {
   if (process.platform === 'win32') return (await io.run(`schtasks /Query /TN "${TASK}"`)).code === 0;
