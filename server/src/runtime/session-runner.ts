@@ -1,4 +1,4 @@
-import { query, type Query, type SDKMessage, type SDKUserMessage, type Options, type PermissionResult, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { query, type Query, type SDKMessage, type SDKUserMessage, type Options, type PermissionResult, type McpServerConfig, type HookCallback, type HookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 import { nodegraphHintPrompt } from './nodegraph-hint.js';
 import type { ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -171,6 +171,13 @@ export class SessionRunner extends EventEmitter {
   private preAllowed = new Set<string>();
   /** 值班 Bot: answers a tool's permission before the card (null / a throw = the card as usual); see AgentDriver.gate */
   gate?: ToolGate;
+  /**
+   * OpenSessionParams.gated: every tool call is answered by `gate` in a PreToolUse hook — canUseTool is skipped for
+   * settings allow rules, acceptEdits / bypassPermissions and allowedTools, so it alone let a bot `git push` unseen
+   */
+  readonly gated: boolean;
+  /** what the hook answered per tool_use_id: canUseTool reached for the same call reuses it (one gate run, one audit row) */
+  private hookAnswers = new Map<string, PermissionResult>();
   private history: SDKMessage[] = []; // messages since spawn, replayed to late-joining clients
   info: SessionInfoSnapshot;
   private model?: string;
@@ -254,6 +261,7 @@ export class SessionRunner extends EventEmitter {
     else this.provider = provider;
     this.features = params.features ?? {};
     this.drivenBy = params.drivenBy;
+    this.gated = !!params.gated;
     // a fork gets its own id from the CLI at init; until then use a placeholder so the pool
     // never clobbers the source session's runner
     const isFork = !!params.sessionId && (params.fork || !!params.resumeAt);
@@ -631,6 +639,7 @@ export class SessionRunner extends EventEmitter {
       // (see thinking-language.ts, 2026-10-22)
       ...extra,
     };
+    if (this.gated) options.hooks = { ...extra.hooks, PreToolUse: [...(extra.hooks?.PreToolUse ?? []), { hooks: [this.gateHook] }] };
     this.q = query({ prompt: this.input, options });
     void this.pump();
   }
@@ -870,6 +879,13 @@ export class SessionRunner extends EventEmitter {
     const requestId = randomUUID();
     const event: PermissionRequestEvent = { requestId, sessionId: this.sessionId, toolName, input, toolUseId: o.toolUseID, suggestions: o.suggestions, blockedPath: o.blockedPath, decisionReason: o.decisionReason };
     if (o.signal.aborted) return Promise.resolve({ behavior: 'deny', message: 'cancelled' });
+    if (this.gated) {
+      // the PreToolUse hook already asked the gate about this call: its answer, not a second gate run (and audit row)
+      const decided = o.toolUseID ? this.hookAnswers.get(o.toolUseID) : undefined;
+      if (decided) { this.hookAnswers.delete(o.toolUseID!); return Promise.resolve(decided); }
+      // the backstop (a call the hook never saw): gated here, no card, no allowed-tools shortcut
+      return this.askGate(event);
+    }
     // claude-web-engine (ccb) defers MCP tools behind ExecuteExtraTool { tool_name, params }: `allowedTools` names the tool
     // inside, so the wrapper asked every time (2026-10-16, the sessions tools on ccb). Allowed when what it runs is.
     if (toolName === 'ExecuteExtraTool' && typeof input.tool_name === 'string' && this.preAllowed.has(input.tool_name)) return Promise.resolve({ behavior: 'allow', updatedInput: input });
@@ -878,6 +894,34 @@ export class SessionRunner extends EventEmitter {
     }
     return this.askUser(event, o.signal);
   }
+
+  /** a gated conversation's answer: the gate's, else refused — nobody is there to see a card */
+  private async askGate(event: PermissionRequestEvent): Promise<PermissionResult> {
+    const nobody: PermissionResult = { behavior: 'deny', message: tr('没有人在看这个对话，这一步没法批准，没有执行') };
+    if (!this.gate) return nobody;
+    try { return (await this.gate(event)) ?? nobody; } catch (e) {
+      console.warn(`[session ${this.sessionId}] gate failed for ${event.toolName}:`, e);
+      return nobody;
+    }
+  }
+
+  /** OpenSessionParams.gated: the PreToolUse hook that puts every tool call — whatever would skip canUseTool — before the gate */
+  private gateHook: HookCallback = async (input, toolUseID) => {
+    if (input.hook_event_name !== 'PreToolUse') return { continue: true };
+    const toolInput = input.tool_input && typeof input.tool_input === 'object' && !Array.isArray(input.tool_input) ? input.tool_input as Record<string, unknown> : {};
+    const id = toolUseID ?? input.tool_use_id;
+    const r = await this.askGate({ requestId: randomUUID(), sessionId: this.sessionId, toolName: input.tool_name, input: toolInput, toolUseId: id });
+    // a refused call never reaches canUseTool: only an allow is kept for it
+    if (id && r.behavior === 'allow') {
+      this.hookAnswers.set(id, r);
+      // calls the hook allowed and canUseTool never asked about: keep the map small
+      if (this.hookAnswers.size > 200) this.hookAnswers.delete(this.hookAnswers.keys().next().value!);
+    }
+    const out: HookJSONOutput = r.behavior === 'allow'
+      ? { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', ...(r.updatedInput ? { updatedInput: r.updatedInput } : {}) } }
+      : { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: r.message } };
+    return out;
+  };
 
   /** the usual permission card: pending until respondPermission() or the turn's abort */
   private askUser(event: PermissionRequestEvent, signal: AbortSignal): Promise<PermissionResult> {

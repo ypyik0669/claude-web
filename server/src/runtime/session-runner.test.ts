@@ -2328,4 +2328,68 @@ describe('值班 Bot gate', () => {
     expect(seen).toEqual([]);
     expect(r.getPendingPermissions()).toEqual([]);
   });
+
+  // settings allow rules, acceptEdits / bypassPermissions and allowedTools skip canUseTool: a gated conversation
+  // answers every tool call in a PreToolUse hook instead
+  describe('gated', () => {
+    const preToolUse = (q: FakeQuery) => {
+      const m = q.options.hooks?.PreToolUse as { hooks: ((i: any, id: string | undefined, o: { signal: AbortSignal }) => Promise<any>)[] }[] | undefined;
+      return (toolName: string, input: Record<string, unknown>, id = 'tu1') => m![m!.length - 1].hooks[0]({ hook_event_name: 'PreToolUse', session_id: 'x', transcript_path: '', cwd: '/x', tool_name: toolName, tool_input: input, tool_use_id: id }, id, { signal: new AbortController().signal });
+    };
+    const decision = (o: any) => o?.hookSpecificOutput;
+
+    it('every tool call goes through the gate: allow / deny / null and no gate are answered, never a card', async () => {
+      queries.length = 0;
+      const r = new SessionRunner({ sessionId: 'gh1', cwd: '/x', gated: true, permissionMode: 'bypassPermissions' } as any);
+      await tick();
+      const seen: unknown[] = []; r.on('permission', (e) => seen.push(e));
+      const hook = preToolUse(queries[0]);
+      // no gate set yet: refused
+      expect(decision(await hook('Bash', { command: 'ls' }))).toMatchObject({ hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining('没有人在看这个对话') });
+      const asked: any[] = [];
+      r.gate = async (ev) => {
+        asked.push(ev);
+        if (ev.toolName === 'Read') return { behavior: 'allow', updatedInput: { ...ev.input, limit: 5 } };
+        if (ev.toolName === 'Bash') return { behavior: 'deny', message: 'policy says no' };
+        if (ev.toolName === 'Boom') throw new Error('boom');
+        return null;
+      };
+      expect(decision(await hook('Read', { file_path: '/a' }))).toEqual({ hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: { file_path: '/a', limit: 5 } });
+      expect(asked[0]).toMatchObject({ sessionId: 'gh1', toolName: 'Read', input: { file_path: '/a' }, toolUseId: 'tu1', requestId: expect.any(String) });
+      expect(decision(await hook('Bash', { command: 'git push' }))).toEqual({ hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'policy says no' });
+      expect(decision(await hook('Edit', { file_path: '/a' }))).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining('没有人在看这个对话') });
+      expect(decision(await hook('Boom', {}))).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining('没有人在看这个对话') });
+      expect(seen).toEqual([]);
+      expect(r.getPendingPermissions()).toEqual([]);
+      await r.close();
+    });
+
+    it('canUseTool after the hook allowed that call reuses its answer (the gate, and its audit, run once); one the hook never saw is gated there too', async () => {
+      queries.length = 0;
+      const r = new SessionRunner({ sessionId: 'gh2', cwd: '/x', gated: true } as any);
+      await tick();
+      let n = 0;
+      r.gate = async (ev) => { n++; return ev.toolName === 'Read' ? { behavior: 'allow', updatedInput: ev.input } : null; };
+      const hook = preToolUse(queries[0]);
+      await hook('Read', { file_path: '/a' }, 'tu-a');
+      const signal = new AbortController().signal;
+      expect(await queries[0].options.canUseTool('Read', { file_path: '/a' }, { signal, toolUseID: 'tu-a' })).toEqual({ behavior: 'allow', updatedInput: { file_path: '/a' } });
+      expect(n).toBe(1);
+      // the backstop: a call that reached canUseTool without the hook — gated, null = refused, no card
+      expect(await queries[0].options.canUseTool('Edit', { file_path: '/b' }, { signal, toolUseID: 'tu-b' })).toMatchObject({ behavior: 'deny', message: expect.stringContaining('没有人在看这个对话') });
+      expect(n).toBe(2);
+      // an allowed-tools wrapper is not waved through either
+      expect((await queries[0].options.canUseTool('ExecuteExtraTool', { tool_name: 'mcp__sessions__list_sessions', params: {} }, { signal, toolUseID: 'tu-c' })).behavior).toBe('deny');
+      expect(r.getPendingPermissions()).toEqual([]);
+      await r.close();
+    });
+
+    it('a conversation that is not gated gets no hook (and canUseTool is as before)', async () => {
+      queries.length = 0;
+      const r = new SessionRunner({ sessionId: 'gh3', cwd: '/x' } as any);
+      await tick();
+      expect(queries[0].options.hooks).toBeUndefined();
+      await r.close();
+    });
+  });
 });

@@ -1139,6 +1139,7 @@ export const EN_SERVER: Record<string, string> = {
   "没有 id 为 {id} 的角色": "No character with id {id}",
   "没有 {id} 在这个平台上的组件版本（{platform}）": "No {id} component build for this platform ({platform})",
   "没有 {kind} 的对话来源": "No conversation source for {kind}",
+  "没有人在看这个对话，这一步没法批准，没有执行": "No one is watching this conversation to approve this step, so it was not run",
   "没有令牌": "No token",
   "没有会话": "No conversations",
   "没有候选回答": "No candidate answered",

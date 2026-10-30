@@ -157,6 +157,11 @@ export interface OpenSessionParams {
   /** Server-set: the run is driven from IM, a scheduled task or the orchestra — its replies are not read in Claude Web
    *  first, so no ```nodegraph hint (review D-minor) */
   drivenBy?: 'im' | 'schedule' | 'orchestra';
+  /**
+   * Server-set (值班 Bot): every tool call goes through the runner's `gate` (a PreToolUse hook), whatever the settings'
+   * allow rules or the permission mode say; no gate / no answer = refused, never a card. Claude only.
+   */
+  gated?: boolean;
 }
 
 /** The single runtime that drives every session: our engine claude-web-engine (runtime 'ccb': a fork of claude-code-best, a superset of Claude Code) with the official binary as silent fallback. */
