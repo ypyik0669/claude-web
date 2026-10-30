@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import http from 'node:http';
-import { acquireServerLock, liveHolder, probeLock, rotateLog, STARTING_STALE_MS, readLock, releaseLock, setLockReady, watchYield, writeLock, LOCK_FILE, YIELD_FILE, YIELD_WAIT_MS, YIELD_WAIT_STARTING_MS, type LockEnv, type ServerLock } from './server-lock.js';
+import { acquireServerLock, dutyMayStart, liveHolder, probeLock, reclaimFromDuty, rotateLog, SUSPECT_MIN_MS, STARTING_STALE_MS, readLock, releaseLock, setLockReady, watchYield, writeLock, LOCK_FILE, YIELD_FILE, YIELD_WAIT_MS, YIELD_WAIT_STARTING_MS, type LockEnv, type ServerLock } from './server-lock.js';
 import { dutyStartCommand } from './duty.js';
 
 describe('server.lock: one server per data dir', () => {
@@ -185,6 +185,46 @@ describe('server.lock: one server per data dir', () => {
     };
     expect(await acquireServerLock(dir, 'duty', 3090, env(1, { isAlive }))).toMatchObject({ ok: false, holder: { pid: 2 } });
     expect(readLock(dir)).toMatchObject({ pid: 2, nonce: 'fresh' });
+  });
+
+  it('dutyMayStart: a lock that does not answer is taken only on a second look >= 25 s later; one that answers again clears it', async () => {
+    writeLock(dir, lock({ pid: 2, kind: 'app', ready: true })); // pid 2 runs, its port is silent (a stall, or another program)
+    confirmed = false;
+    expect(await dutyMayStart(dir, env(1))).toMatchObject({ start: false, holder: { pid: 2 } }); // first look
+    t += 5_000;
+    expect((await dutyMayStart(dir, env(1))).start).toBe(false); // too soon
+    t += SUSPECT_MIN_MS;
+    expect((await dutyMayStart(dir, env(1))).start).toBe(true); // the next start of the duty loop
+    // the app recovers between the two looks: its stall is forgotten
+    t += 1_000;
+    expect((await dutyMayStart(dir, env(1))).start).toBe(false);
+    confirmed = true;
+    expect((await dutyMayStart(dir, env(1))).start).toBe(false);
+    confirmed = false; t += SUSPECT_MIN_MS * 2;
+    expect((await dutyMayStart(dir, env(1))).start).toBe(false); // a first look again
+    // a dead pid / no lock: at once
+    writeLock(dir, lock({ pid: 99 }));
+    expect((await dutyMayStart(dir, env(1))).start).toBe(true);
+  });
+
+  it('reclaimFromDuty: an app finds a live duty server on its lock, asks it to step down and takes the lock back; a lock of another app is left alone', async () => {
+    const own = lock({ pid: 1, kind: 'app', nonce: 'app', port: 3090 });
+    writeLock(dir, own);
+    expect(await reclaimFromDuty(dir, own, env(1))).toBe(false); // ours
+    writeLock(dir, lock({ pid: 2, kind: 'duty', nonce: 'duty' })); // the duty server took it while the app stalled
+    let asked = false;
+    const sleep = async (ms: number) => { t += ms; if (fs.existsSync(path.join(dir, YIELD_FILE))) { asked = true; releaseLock(dir, 2); } };
+    expect(await reclaimFromDuty(dir, own, env(1, { sleep }))).toBe(true);
+    expect(asked).toBe(true);
+    expect(readLock(dir)).toMatchObject({ pid: 1, nonce: 'app' });
+    expect(fs.existsSync(path.join(dir, YIELD_FILE))).toBe(false);
+    expect(killed).toEqual([]);
+    writeLock(dir, lock({ pid: 2, kind: 'app', nonce: 'other' }));
+    expect(await reclaimFromDuty(dir, own, env(1))).toBe(false);
+    expect(readLock(dir)?.nonce).toBe('other');
+    fs.rmSync(path.join(dir, LOCK_FILE)); // gone: taken
+    expect(await reclaimFromDuty(dir, own, env(1))).toBe(true);
+    expect(readLock(dir)?.nonce).toBe('app');
   });
 
   it('rotateLog: over the cap the log becomes .1 (replacing the old one); under it, or missing, nothing happens', () => {

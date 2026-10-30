@@ -115,7 +115,7 @@ import { SiteAsk } from './web/site-gate.js';
 import { handleComputerAsk } from './computer/http.js';
 import { configureComputerMcp } from './computer/launcher.js';
 import { noteDutyPid, refreshDutyFiles, restartDutyAfterApp } from './bots/duty.js';
-import { acquireServerLock, BUSY_EXIT, lockNonce, processLockEnv, releaseLock, setLockReady, watchYield } from './bots/server-lock.js';
+import { acquireServerLock, BUSY_EXIT, lockNonce, processLockEnv, releaseLock, setLockReady, watchLock, watchYield } from './bots/server-lock.js';
 import { BotService } from './bots/service.js';
 import { CLAUDE_PROVIDER_ID } from './protocol.js';
 
@@ -781,6 +781,9 @@ if (isMain || process.env.CLAUDE_WEB_STANDALONE === '1') {
   }
   // the duty server: an app took the lock over while this one started (the write may have raced it) → step down below
   if (!setLockReady(lockDir, process.pid, running.port) && kind === 'duty') yieldAsked = true;
+  // the app: a duty server that took the dir meanwhile (it judged this one dead through a stall) is asked to step down
+  // and the lock taken back — or the lock, gone or dead, just taken (an app that started beside another one)
+  const stopWatchLock = kind === 'app' ? watchLock(lockDir, () => ({ ...got.lock, port: running.port, ready: true }), processLockEnv()) : () => {};
   // under the Windows duty task: let "duty off" find and stop us
   noteDutyPid();
   // the duty service's own files, from an older version (a 5 s back-off, the old entry): brought up to date
@@ -794,6 +797,7 @@ if (isMain || process.env.CLAUDE_WEB_STANDALONE === '1') {
     if (stopping) return; // SIGINT twice / signal + parent message: don't close everything twice
     stopping = true;
     stopYield();
+    stopWatchLock();
     try {
       await running.close();
     } catch (e) {

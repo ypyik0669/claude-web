@@ -16,6 +16,10 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 export const LOCK_FILE = 'server.lock';
+/** the duty entry's note of a lock that looked dead once (dutyMayStart): it is taken only on a second look */
+export const SUSPECT_FILE = 'server.lock.suspect';
+/** …at least this long after the first (the duty loop starts the entry every 30 s) */
+export const SUSPECT_MIN_MS = 25_000;
 export const YIELD_FILE = 'server.yield';
 /** the duty server's exit code when another server holds the dir (EX_TEMPFAIL); its loop backs off and tries again */
 export const BUSY_EXIT = 75;
@@ -226,6 +230,18 @@ export async function acquireServerLock(dir: string, kind: ServerKind, port: num
     env.log(`[server] another claude-web (pid ${holder.pid}) is also serving ${dir}; starting anyway`);
     return { ok: true, lock, held: false };
   }
+  await askDutyToYield(dir, holder, env);
+  // what is there now is the duty server's (gone, stopped or about to step down): ours replaces it
+  if (await claim(dir, lock, env)) writeLock(dir, lock);
+  ownNonce = lock.nonce;
+  return { ok: true, lock, held: true, yielded: holder };
+}
+
+/**
+ * An app asks a live duty server to step down (server.yield) and waits for its lock to go (up to 60 s while it is
+ * still starting, 10 s once ready); one that stays is stopped only if its port confirms it is that claude-web.
+ */
+async function askDutyToYield(dir: string, holder: ServerLock, env: LockEnv) {
   env.log(`[server] asking the duty server (pid ${holder.pid}) to step down`);
   fs.writeFileSync(path.join(dir, YIELD_FILE), JSON.stringify({ by: env.pid, at: env.now() }));
   const start = env.now();
@@ -240,10 +256,59 @@ export async function acquireServerLock(dir: string, kind: ServerKind, port: num
     } else env.log(`[server] the duty server (pid ${holder.pid}) did not step down and could not be confirmed; taking the data dir over (it steps down on its own)`);
   }
   try { fs.rmSync(path.join(dir, YIELD_FILE), { force: true }); } catch { /* raced */ }
-  // what is there now is the duty server's (gone, stopped or about to step down): ours replaces it
-  if (await claim(dir, lock, env)) writeLock(dir, lock);
-  ownNonce = lock.nonce;
-  return { ok: true, lock, held: true, yielded: holder };
+}
+
+/**
+ * An app's look at the lock (watchLock, every YIELD_POLL_MS). A duty server can take the dir while this app runs:
+ * its entry judged the app dead (an event loop stalled past the probe, twice 30 s apart), or this app started beside
+ * another one without the lock. A live duty server named there is asked to step down and the lock taken back; a lock
+ * that is gone or dead is taken back too. Another live app's is left alone. True when it took the lock (back).
+ */
+export async function reclaimFromDuty(dir: string, own: ServerLock, env: LockEnv): Promise<boolean> {
+  const cur = readLock(dir);
+  if (cur?.pid === own.pid && cur.nonce === own.nonce) return false;
+  if (isLive(cur, env)) {
+    if (cur.kind !== 'duty') return false;
+    env.log(`[server] the duty server (pid ${cur.pid}) took the data dir while this server ran; taking it back`);
+    await askDutyToYield(dir, cur, env);
+  }
+  const now = readLock(dir);
+  if (now && now.pid !== own.pid && now.kind !== 'duty' && isLive(now, env)) return false; // another app got there first
+  writeLock(dir, own);
+  ownNonce = own.nonce;
+  return true;
+}
+
+/** the app's side of the yield: reclaimFromDuty every interval (one at a time); `own` is the lock as it is now (port, ready). Returns the stop function. */
+export function watchLock(dir: string, own: () => ServerLock, env: LockEnv, intervalMs = YIELD_POLL_MS): () => void {
+  let busy = false;
+  const timer = setInterval(() => {
+    if (busy) return;
+    busy = true;
+    reclaimFromDuty(dir, own(), env).catch((e) => env.log(`[server] checking the data dir's lock: ${e}`)).finally(() => { busy = false; });
+  }, intervalMs);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
+/**
+ * The duty entry, before it loads the server: start, or not (holder: who serves the dir). A lock whose pid is gone /
+ * from before the boot is free at once. One whose pid runs but doesn't answer (isLiveConfirmed says no) is dead only
+ * on a second look at least SUSPECT_MIN_MS after the first (the next start of the duty loop) — an app whose event loop
+ * stalled for a few seconds isn't taken over.
+ */
+export async function dutyMayStart(dir: string, env: Pick<LockEnv, 'pid' | 'isAlive' | 'bootTime' | 'now' | 'sleep' | 'confirm'>): Promise<{ start: boolean; holder?: ServerLock }> {
+  const file = path.join(dir, SUSPECT_FILE);
+  const clear = () => { try { fs.rmSync(file, { force: true }); } catch { /* gone */ } };
+  const lock = readLock(dir);
+  if (!isLive(lock, env)) { clear(); return { start: true }; }
+  if (await isLiveConfirmed(lock, env)) { clear(); return { start: false, holder: lock }; }
+  const key = `${lock.pid}|${lock.startedAt}|${lock.nonce ?? ''}`;
+  let seen: { key?: string; at?: number } | null = null;
+  try { seen = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* first look */ }
+  if (seen?.key === key && typeof seen.at === 'number' && env.now() - seen.at >= SUSPECT_MIN_MS) { clear(); return { start: true }; }
+  if (seen?.key !== key) { try { fs.writeFileSync(file, JSON.stringify({ key, at: env.now() })); } catch { /* next time */ } }
+  return { start: false, holder: lock };
 }
 
 /**
