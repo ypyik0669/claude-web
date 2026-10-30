@@ -50,11 +50,24 @@ export class BotStore {
   private locks = new Map<string, Promise<unknown>>();
   constructor(private root: string) {
     fs.mkdirSync(root, { recursive: true });
-    for (const d of fs.readdirSync(root, { withFileTypes: true })) {
+    this.bots = this.readAll();
+  }
+  private readAll(): Map<string, Bot> {
+    const out = new Map<string, Bot>();
+    for (const d of fs.readdirSync(this.root, { withFileTypes: true })) {
       if (!d.isDirectory() || !SAFE_ID.test(d.name)) continue;
-      const b = readJson<Bot | null>(path.join(root, d.name, 'bot.json'), null);
-      if (b?.id === d.name) this.bots.set(b.id, b);
+      const b = readJson<Bot | null>(path.join(this.root, d.name, 'bot.json'), null);
+      if (b?.id === d.name) out.set(b.id, b);
     }
+    return out;
+  }
+  /**
+   * Re-reads every bot.json (another server on this dir may have changed them — the scheduler calls this when it takes
+   * the lease over). Waits for this store's own writes in flight first, so it never reads back half of them.
+   */
+  async reload(): Promise<void> {
+    for (let pending = [...this.locks.values()]; pending.length; pending = [...this.locks.values()]) await Promise.all(pending);
+    this.bots = this.readAll();
   }
 
   private async locked<T>(file: string, fn: () => Promise<T>): Promise<T> {

@@ -21,6 +21,11 @@ export class Inbox extends EventEmitter {
     return run;
   }
 
+  /** re-reads inbox.json after this instance's own updates (another server on this dir may have written it) */
+  reload(): Promise<void> {
+    return this.serial(async () => { this.items = this.store.inbox(); });
+  }
+
   list(botId?: string, includeDone = false): InboxItem[] {
     return this.items.filter((i) => (!botId || i.botId === botId) && (includeDone || !i.done)).sort((a, b) => b.at - a.at);
   }

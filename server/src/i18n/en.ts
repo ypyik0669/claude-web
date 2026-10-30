@@ -1805,4 +1805,5 @@ export const EN_SERVER: Record<string, string> = {
   "「{name}」的预算用完了，今天不再运行": "“{name}” has used up its budget and won't run again today",
   "「{cls}」到「{key}」已连续批准 {n} 次，以后直接做？": "You approved “{cls}” to “{key}” {n} times in a row. Let it do this without asking from now on?",
   "已标记为可发送：{title}": "Marked as ready to send: {title}",
+  "「{name}」的预算用完了，已批准的「{summary}」等预算够了再做": "“{name}” has used up its budget: the approved “{summary}” will be done once there is budget again",
 };

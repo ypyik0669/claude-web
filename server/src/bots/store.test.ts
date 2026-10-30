@@ -18,6 +18,19 @@ describe('BotStore', () => {
     expect(new BotStore(root).list().map((b) => b.id)).toEqual(['b_1']);
   });
 
+  it('reload() picks up what another store on the same dir wrote, after its own writes in flight', async () => {
+    await s.save(bot('b_1'));
+    const other = new BotStore(root);
+    await other.update('b_1', (b) => ({ ...b, name: '改了' }));
+    await other.save(bot('b_2'));
+    fs.mkdirSync(path.join(root, 'not a bot'), { recursive: true });
+    const mine = s.save(bot('b_3'));
+    await s.reload();
+    await mine;
+    expect(s.get('b_1')!.name).toBe('改了');
+    expect(s.list().map((b) => b.id).sort()).toEqual(['b_1', 'b_2', 'b_3']);
+  });
+
   it('keeps routine state and trust per bot', async () => {
     await s.save(bot('b_1'));
     await s.setState('b_1', 'r1', { fingerprint: 'abc' });

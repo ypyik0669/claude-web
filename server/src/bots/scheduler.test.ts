@@ -92,7 +92,42 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
     expect(s.todayUsd('a', now)).toBeCloseTo(1.75);
   });
 
-  it('stopAll aborts running runs (interrupted, recorded as stopped, no retry) and empties the queue', async () => {
+  it('a routine with no schedule is not written back every tick', async () => {
+    await store.save(bot('a', [routine({ everyMinutes: undefined })]));
+    const at = store.get('a')!.updatedAt;
+    const s = sched(deps());
+    await settle(5); await s.tick(5); await s.tick(6);
+    expect(store.get('a')!.updatedAt).toBe(at);
+  });
+
+  it('an approved step over budget waits for the budget (named in the inbox), then runs', async () => {
+    await store.save(bot('a', [routine()], { budget: { dailyUsd: 0.5 } }));
+    await store.addRun({ id: 'old', botId: 'a', routineId: 'r1', at: Date.now() - 1000, trigger: 'cron', costUsd: 0.6, ok: true });
+    const s = sched(deps());
+    const ap = await inbox.add({ kind: 'approval', botId: 'a', routineId: 'r1', sessionId: 'sX', title: 't', toolName: 'Bash', input: { command: 'git push' }, cls: 'send' });
+    await s.onInboxAnswer(ap, { id: ap.id, answer: 'approve' });
+    await until(() => inbox.list('a').some((i) => i.title.includes('git push'))); await idle(s);
+    expect(runners).toHaveLength(0);
+    await s.tick(Date.now()); await idle(s);
+    expect(runners).toHaveLength(0);
+    expect(inbox.list('a').filter((i) => i.title.includes('预算'))).toHaveLength(1);
+    await store.update('a', (b) => ({ ...b, budget: { dailyUsd: 10 } }));
+    await s.tick(Date.now()); await until(() => runners.length === 1); await idle(s);
+    expect(runners[0].sent[0]).toContain('已经批准');
+  });
+
+  it('stopAll during an answer: the approved resume is not queued', async () => {
+    await store.save(bot('a', [routine()]));
+    const s = sched(deps());
+    await s.claim();
+    const ap = await inbox.add({ kind: 'approval', botId: 'a', routineId: 'r1', sessionId: 'sX', title: 't', toolName: 'Bash', input: { command: 'git push' }, cls: 'send' });
+    const p = s.onInboxAnswer(ap, { id: ap.id, answer: 'approve' });
+    await s.stopAll(); await p; await settle();
+    expect(runners).toHaveLength(0);
+    expect(s.load().queued).toBe(0);
+  });
+
+  it('stopAll running runs (interrupted, recorded as stopped, no retry) and empties the queue', async () => {
     conc = 1;
     await store.save(bot('a', [routine({ id: 'r1', nextRunAt: 1, onFail: 'retry_up' })]));
     await store.save(bot('b', [routine({ id: 'r1', nextRunAt: 1 })]));
@@ -171,6 +206,52 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
 
   describe('lease: one scheduler per data dir', () => {
     const lockFile = () => path.join(root, 'scheduler.lock');
+    const staleLease = (instance: string) => fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.pid, host: os.hostname(), at: Date.now() - LEASE_STALE_MS - 1000, instance }));
+
+    it("taking the lease over reloads the bots from disk first: the last holder's changes stay, no catch-up storm", async () => {
+      const now = Date.now();
+      await store.save(bot('a', [routine({ nextRunAt: now - 1000 })]));
+      const storeB = new BotStore(root); const inboxB = new Inbox(storeB); // B: loaded at startup, then only watched
+      const sA = sched(deps());
+      await sA.tick(now); await until(() => runners.length === 1); await idle(sA);
+      await store.update('a', (b) => ({ ...b, policy: { rules: [{ cls: 'send', level: 'do', scope: { channels: ['C1'] } }] } }));
+      const nextA = store.get('a')!.routines[0].nextRunAt!;
+      expect(nextA).toBeGreaterThan(now);
+      expect(storeB.get('a')!.routines[0].nextRunAt).toBe(now - 1000); // B's copy is stale
+      sA.stop(); staleLease('A'); // A is gone; its lease went stale
+      const sB = sched({ ...deps(), store: storeB, inbox: inboxB });
+      await sB.tick(now + 5000); await idle(sB);
+      expect(runners).toHaveLength(1); // nothing caught up
+      const onDisk = JSON.parse(fs.readFileSync(path.join(root, 'a', 'bot.json'), 'utf8'));
+      expect(onDisk.routines[0].nextRunAt).toBe(nextA);
+      expect(onDisk.policy.rules).toEqual([{ cls: 'send', level: 'do', scope: { channels: ['C1'] } }]);
+      expect(inboxB.list('a').length).toBe(inbox.list('a').length);
+    });
+
+    it('a non-holder writes nothing for an inbox answer', async () => {
+      await store.save(bot('a', [routine()], { policy: { rules: [{ cls: 'send', level: 'do', scope: { channels: ['C1'] } }] } }));
+      const s1 = sched(deps()); const s2 = sched(deps());
+      expect(await s1.claim()).toBe(true);
+      expect(s2.canAct()).toBe(false);
+      const pr = await inbox.add({ kind: 'proposal', botId: 'a', title: 'p', proposal: { type: 'trust_up', cls: 'send', scope: { channels: ['C9'] } } });
+      const before = fs.readFileSync(path.join(root, 'a', 'bot.json'), 'utf8');
+      await expect(s2.onInboxAnswer(pr, { id: pr.id, answer: 'adopt' })).rejects.toThrow('另一个 claude-web 正在值班');
+      expect(fs.readFileSync(path.join(root, 'a', 'bot.json'), 'utf8')).toBe(before);
+      expect(s1.canAct()).toBe(true);
+    });
+
+    it('two schedulers taking over a stale lease at once: exactly one holds; a .take left by a crash is cleared', async () => {
+      staleLease('gone');
+      const a = sched(deps()); const b = sched(deps());
+      const got = await Promise.all([a.claim(), b.claim()]);
+      expect(got.filter(Boolean)).toHaveLength(1);
+      expect(fs.existsSync(`${lockFile()}.take`)).toBe(false);
+      staleLease('gone2');
+      fs.writeFileSync(`${lockFile()}.take`, '');
+      const old = (Date.now() - 60_000) / 1000; fs.utimesSync(`${lockFile()}.take`, old, old);
+      const c = sched(deps());
+      expect(await c.claim()).toBe(true);
+    });
 
     it('two schedulers on one dir: only the lease holder runs routines; manual runs on the other are refused', async () => {
       await store.save(bot('a', [routine({ nextRunAt: 1 })]));
