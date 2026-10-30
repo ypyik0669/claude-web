@@ -39,6 +39,8 @@ export interface BotServiceDeps {
   im?: {
     sendTo(gatewayId: string, chatId: string, text: string, buttons?: ImButton[]): Promise<void>;
     onCallback(prefix: string, h: (parts: string[], ctx?: { gatewayId: string; chatId: string }) => Promise<string>): void;
+    /** `/stop` in a chat: the bots that report there stop too */
+    onStop?(h: (gatewayId: string, chatId: string) => Promise<string | undefined>): void;
   };
   /** undefined providerId = the default a new conversation gets; absent = 'other' */
   providerKind?(providerId: string | undefined): ProviderKind;
@@ -131,6 +133,7 @@ export class BotService extends EventEmitter {
     this.held = this.readHeld();
     this.inbox.on('item', this.onItem);
     d.im?.onCallback('bots', (parts, ctx) => this.onImCallback(parts, ctx));
+    d.im?.onStop?.((g, c) => this.onImStop(g, c));
   }
 
   async start(): Promise<void> {
@@ -385,6 +388,13 @@ export class BotService extends EventEmitter {
       const shown = lines.slice(-20);
       this.push(bot, `【${bot.name}】${tr('夜里有 {n} 条', { n: lines.length })}\n${shown.map((l) => `- ${l}`).join('\n')}`);
     }
+  }
+  /** `/stop` in a chat that is some bots' IM output: the hard stop for those bots (handed to the server on duty if need be) */
+  private async onImStop(gatewayId: string, chatId: string): Promise<string | undefined> {
+    const bots = this.store.list().filter((b) => this.imOutputs(b).some((o) => o.gatewayId === gatewayId && o.chatId === chatId));
+    if (!bots.length) return undefined;
+    for (const b of bots) await this.stopBot(b.id);
+    return tr('已停下 {n} 个 Bot：{names}', { n: bots.length, names: bots.map((b) => b.name).join('、') });
   }
   private async onImCallback(parts: string[], ctx?: { gatewayId: string; chatId: string }): Promise<string> {
     const [act, id] = parts;

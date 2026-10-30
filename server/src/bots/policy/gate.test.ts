@@ -171,6 +171,24 @@ describe('makeGate', () => {
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
+  it('the same call asked again while it waits (same run, or same conversation) reuses the open approval', async () => {
+    const g = makeGate({ bot: bot(), runId: 'run1', routineId: 'r1', store, audit, inbox });
+    const push = { command: 'git push' };
+    for (let i = 0; i < 3; i++) expect(await g.gate(ev('Bash', push))).toMatchObject({ behavior: 'deny' });
+    expect(inbox.list('b1').filter((i) => i.kind === 'approval')).toHaveLength(1);
+    // the resumed conversation (another run) asking the same thing again: still the one item
+    const g2 = makeGate({ bot: bot(), runId: 'run2', routineId: 'r1', store, audit, inbox });
+    expect(await g2.gate(ev('Bash', push))).toMatchObject({ behavior: 'deny' });
+    expect(inbox.list('b1').filter((i) => i.kind === 'approval')).toHaveLength(1);
+    // a different call is its own item; once answered, asking again is a new one
+    await g.gate(ev('Bash', { command: 'npm publish' }));
+    expect(inbox.list('b1').filter((i) => i.kind === 'approval')).toHaveLength(2);
+    const first = inbox.list('b1').find((i) => (i.input as any).command === 'git push')!;
+    await inbox.answer({ id: first.id, answer: 'reject' });
+    await g.gate(ev('Bash', push));
+    expect(inbox.list('b1').filter((i) => i.kind === 'approval')).toHaveLength(2);
+  });
+
   it('a bot cannot write its own policy / audit / inbox, even unleashed; its own state/ is fine', async () => {
     const g = makeGate({ bot: bot({ rules: [], unleashed: true }), runId: 'run1', routineId: 'r1', store, audit, inbox });
     const botDir = store.dir('b1');

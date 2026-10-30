@@ -26,7 +26,7 @@ describe('BotService', { timeout: 30_000 }, () => {
   const make = (p: Partial<BotServiceDeps> = {}) => new BotService({ dataDir: root, pool, memory: { search: () => [] } as any, ledger: { rowsFor: async () => [{ costUsd: 0.5 }] } as any, meta: fakeMeta({ 'bots.concurrency': 2 }) as any, im, ...p });
   beforeEach(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-botsvc-')); pool = fakePool();
-    im = { sendTo: vi.fn(async () => {}), handlers: new Map(), onCallback: (p: string, h: any) => im.handlers.set(p, h) };
+    im = { sendTo: vi.fn(async () => {}), handlers: new Map(), onCallback: (p: string, h: any) => im.handlers.set(p, h), onStop: (h: any) => { im.stop = h; } };
     svc = make({ providerKind: () => 'routing' });
     await svc.start();
   });
@@ -157,6 +157,28 @@ describe('BotService', { timeout: 30_000 }, () => {
     expect(svc.inboxList(b.id, true)[0].done).toBeUndefined();
     expect(await im.handlers.get('bots')(['reject', item.id], { gatewayId: 'tg', chatId: 'c1' })).toContain('拒');
     expect(svc.inboxList(b.id, true)[0].done?.answer).toBe('reject');
+  });
+
+  it('/stop in a chat that is a bot\'s IM output stops that bot; another chat stops nothing', async () => {
+    pool.hang = true;
+    const b = await svc.create(draft({ name: '小晨', routines: [rt('r1')], outputs: [{ kind: 'im', gatewayId: 'tg', chatId: 'c1' }] }));
+    const other = await svc.create(draft({ routines: [rt('r1')], outputs: [{ kind: 'inbox' }] }));
+    await svc.runNow(b.id, 'r1'); await svc.runNow(other.id, 'r1');
+    await until(() => (svc as any).scheduler.isRunning(b.id) && (svc as any).scheduler.isRunning(other.id));
+    expect(await im.stop('tg', 'c9')).toBeUndefined();
+    const said = await im.stop('tg', 'c1');
+    expect(said).toContain('小晨');
+    expect((svc as any).scheduler.isRunning(b.id)).toBe(false);
+    expect((svc as any).scheduler.isRunning(other.id)).toBe(true);
+  });
+
+  it('a call asked again while its approval waits is pushed to IM once', async () => {
+    const b = await svc.create(draft({ routines: [rt('r1')], outputs: [{ kind: 'im', gatewayId: 'tg', chatId: 'c1' }] }));
+    const { makeGate } = await import('./policy/gate.js');
+    const g = makeGate({ bot: svc.get(b.id), runId: 'run1', routineId: 'r1', store: (svc as any).store, audit: (svc as any).audits, inbox: (svc as any).inbox });
+    for (let i = 0; i < 3; i++) await g.gate({ requestId: 'q', sessionId: 's1', toolName: 'Bash', input: { command: 'git push' } });
+    await settle(0);
+    expect(im.sendTo).toHaveBeenCalledTimes(1);
   });
 
   it('quiet hours hold IM pushes, then send one summary', async () => {

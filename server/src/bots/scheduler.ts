@@ -196,15 +196,15 @@ export class BotScheduler extends EventEmitter {
       }
     }
   }
-  /** the approved call joins its conversation's pending resume (once: a retried answer adds nothing) */
-  private addResume(botId: string, routineId: string, sessionId: string, call: ApprovedCall) {
+  /** the approved call joins its conversation's pending resume, once: false when it was already there (a duplicate) */
+  private addResume(botId: string, routineId: string, sessionId: string, call: ApprovedCall): Promise<boolean> {
     const k = callKey(call.toolName, call.input);
     return this.d.store.updateResumes(botId, (cur) => {
       const i = cur.findIndex((p) => p.sessionId === sessionId);
-      if (i < 0) return { next: [...cur, { sessionId, routineId, approved: [call], at: Date.now() }], out: undefined };
-      if (cur[i].approved.some((a) => callKey(a.toolName, a.input) === k)) return { next: cur, out: undefined };
+      if (i < 0) return { next: [...cur, { sessionId, routineId, approved: [call], at: Date.now() }], out: true };
+      if (cur[i].approved.some((a) => callKey(a.toolName, a.input) === k)) return { next: cur, out: false };
       const next = [...cur]; next[i] = { ...cur[i], approved: [...cur[i].approved, call] };
-      return { next, out: undefined };
+      return { next, out: true };
     });
   }
   private dropResumeCall(botId: string, sessionId: string, call: ApprovedCall) {
@@ -475,18 +475,20 @@ export class BotScheduler extends EventEmitter {
         const same = JSON.stringify({ cls, level: 'do', scope });
         await this.mutate(bot.id, (b) => (b.policy.rules.some((r) => JSON.stringify({ cls: r.cls, level: r.level, scope: r.scope }) === same) ? undefined : { ...b, policy: { ...b.policy, rules: [...b.policy.rules, { cls, level: 'do', scope }] } }));
       }
+      let fresh = true;
       if (this.epoch === epoch) {
         // on disk before it is queued: a restart, a budget wait or a new holder of the lease doesn't lose it
         const call = { toolName, input };
-        await this.addResume(bot.id, item.routineId, item.sessionId, call);
+        fresh = await this.addResume(bot.id, item.routineId, item.sessionId, call);
         try { this.enqueue(bot.id, item.routineId, 'resume', { sessionId: item.sessionId }); } catch (e) {
-          await this.dropResumeCall(bot.id, item.sessionId, call).catch(() => {});
+          if (fresh) await this.dropResumeCall(bot.id, item.sessionId, call).catch(() => {});
           throw e;
         }
       }
       // trust counts an approval only once its effect (the resume) is under way: a retried answer isn't counted twice;
       // a failure to record it costs one count, never the approval
-      if (a.answer === 'approve') {
+      // a second item for a call already approved and waiting (a duplicate) earns no second count
+      if (a.answer === 'approve' && fresh) {
         try {
           const r = recordApproval(this.d.store.trust(bot.id), cls, key, Date.now(), target.amount);
           await this.d.store.setTrust(bot.id, r.trust);

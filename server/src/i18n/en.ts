@@ -1819,6 +1819,7 @@ export const EN_SERVER: Record<string, string> = {
   "夜里有 {n} 条": "{n} came in overnight",
   "这个聊天不能处理这一条": "This chat can't answer that item",
   "已批准": "Approved",
+  "已停下 {n} 个 Bot：{names}": "Stopped {n} bot(s): {names}",
   "已拒绝": "Rejected",
   "不认识的操作": "Unknown action",
   "这个 IM 没在运行": "That IM isn't running",

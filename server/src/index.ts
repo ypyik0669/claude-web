@@ -646,7 +646,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   // 值班 Bot: one service per data dir; runs only while this server holds <dataDir>/bots/scheduler.lock
   const bots = new BotService({
     dataDir: path.join(dataDir(), 'bots'), pool, memory, ledger, meta,
-    im: { sendTo: (g, c, t, b) => im.router.sendTo(g, c, t, b), onCallback: (p, h) => im.router.callbackHandlers.set(p, (parts, ctx) => h(parts, ctx)) },
+    im: { sendTo: (g, c, t, b) => im.router.sendTo(g, c, t, b), onCallback: (p, h) => im.router.callbackHandlers.set(p, (parts, ctx) => h(parts, ctx)), onStop: (h) => { im.router.onStop = h; } },
     providerKind: (pid) => {
       const id = pid ?? pool.defaultProviderFor('claude');
       if (!id || id === CLAUDE_PROVIDER_ID) return 'claude';

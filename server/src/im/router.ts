@@ -162,7 +162,13 @@ export class ImRouter {
         const p = this.lastPermission.get(b.sessionId);
         return reply(tr("会话 {sessionId} · {st}{v}{channel}\n目录 {cwd}{v2}", { sessionId: b.sessionId.slice(0, 8), st, v: runner?.info.model ? ` · ${runner.info.model}` : '', channel: runner ? channel(runner.info) : '', cwd: b.cwd, v2: p ? tr("\n待处理权限：{toolName}", { toolName: p.toolName }) : '' }));
       }
-      case '/stop': if (!runner) return reply(tr('没有运行中的会话')); await runner.interrupt(); return reply(tr('⏹ 已中断'));
+      case '/stop': {
+        // the hard stop also reaches the bots that report to this chat (值班 Bot): their runs stop
+        const bots = await this.onStop?.(gw, m.chatId).catch((e) => { console.warn('[im] stopping the bots of this chat:', e); return undefined; });
+        if (!runner) return reply(bots ?? tr('没有运行中的会话'));
+        await runner.interrupt();
+        return reply(bots ? `${tr('⏹ 已中断')}\n${bots}` : tr('⏹ 已中断'));
+      }
       case '/allow': case '/deny': {
         if (!b) return reply(tr('没有绑定会话'));
         const p = this.lastPermission.get(b.sessionId) ?? runner?.getPendingPermissions().slice(-1)[0];
@@ -214,6 +220,9 @@ export class ImRouter {
   }
 
   // ---- outbound ----
+  /** `/stop` in a chat: also stops what else reports to it (the bots whose IM output it is); the reply says what stopped, if anything */
+  onStop?: (gatewayId: string, chatId: string) => Promise<string | undefined>;
+
   /** Button callbacks with other prefixes (e.g. `orch:` for orchestration approvals); gets the chat and the session it is bound to, returns the reply text. */
   callbackHandlers = new Map<string, (parts: string[], ctx: { gatewayId: string; chatId: string; sessionId?: string }) => Promise<string>>();
 

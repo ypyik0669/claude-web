@@ -101,7 +101,11 @@ export function makeGate(ctx: GateCtx): GateHandle {
     let basis = d.basis, rule = d.rule;
     if (level === 'ask' && approved.has(ck)) { basis = 'user'; rule = undefined; } // the user let this one through, not a rule
     else if (level === 'ask') {
-      const item = await ctx.inbox.add({ kind: 'approval', botId: ctx.bot.id, runId: ctx.runId, routineId: ctx.routineId, sessionId: ev.sessionId, title: summary, toolName: ev.toolName, input: ev.input, cls });
+      // the model retrying a call that already waits for an answer (this run, or this conversation) gets the same item:
+      // no second inbox item, no second IM push, nothing counted twice
+      const waiting = ctx.inbox.list(ctx.bot.id).find((i) => i.kind === 'approval' && !i.done && !!i.toolName && !!i.input
+        && (i.runId === ctx.runId || (!!ev.sessionId && i.sessionId === ev.sessionId)) && callKey(i.toolName, i.input) === ck);
+      const item = waiting ?? await ctx.inbox.add({ kind: 'approval', botId: ctx.bot.id, runId: ctx.runId, routineId: ctx.routineId, sessionId: ev.sessionId, title: summary, toolName: ev.toolName, input: ev.input, cls });
       await ctx.audit.add({ ...base, level: 'ask', basis, result: 'queued', ...(rule ? { rule } : {}) });
       return { behavior: 'deny', message: tr('这个动作要先经你批准，已放进收件箱（{title}）。先做别的；批准后会从这里继续。', { title: item.title }) };
     }

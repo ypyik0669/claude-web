@@ -114,6 +114,13 @@ describe('ImRouter', () => {
     expect(a.sent.at(-1)!.text).toContain('zz9');
     a.inbound_({ text: '/stop' }); await tick();
     expect(pool.runners.get('zz9')!.interrupted).toBe(true);
+    // the bots that report to this chat stop too, and the reply says so
+    const asked: string[] = [];
+    router.onStop = async (g, c) => { asked.push(`${g}|${c}`); return 'bots stopped'; };
+    a.inbound_({ text: '/stop' }); await tick();
+    expect(asked).toEqual([`${cfg.id}|c1`]);
+    expect(a.sent.at(-1)!.text).toContain('bots stopped');
+    router.onStop = undefined;
     a.inbound_({ text: '/model opus' }); await tick();
     expect(pool.runners.get('zz9')!.info.model).toBe('opus');
     a.inbound_({ text: '/verbose on' }); await tick();
