@@ -547,12 +547,19 @@ const MAX_COMMANDS = 200;
 
 /**
  * What a scoped rule may cover: a simple command that is an HTTP client this file parses (curl, wget, Invoke-RestMethod
- * / Invoke-WebRequest and their aliases), or `git push <https-url>` with nothing that runs a program or changes config.
- * Every other command in the call — a wrapper, an interpreter, a package runner (npm exec, pnpm dlx, npx), any other
- * git or gh subcommand, an unknown binary, even a harmless local like cd or jq — makes the target opaque (the class is
- * unchanged): a scope says where a call may go, and only these say it in their words.
+ * / Invoke-WebRequest and their aliases), or `git push <https-url>` with nothing that runs a program or changes config,
+ * and around them only locals that can neither run a program nor reach the network (cd, cat, grep, jq…; not sort or
+ * rg, which take a program to run). Every other command in the call — a wrapper, an interpreter, a package runner
+ * (npm exec, pnpm dlx, npx), any other git or gh subcommand, an unknown binary — makes the target opaque (the class
+ * is unchanged): a scope says where a call may go, and only these say it in their words.
  */
 const SCOPE_HTTP = new Set(['curl', 'wget', ...PS_WEB]);
+const SCOPE_LOCAL = new Set(['cd', 'pwd', 'ls', 'cat', 'echo', 'printf', 'grep', 'jq', 'head', 'tail', 'wc', 'mkdir', 'cp', 'mv', 'touch', 'test', '[', 'true', 'false',
+  'set-location', 'get-childitem', 'gci', 'dir', 'get-content', 'gc', 'type', 'select-string', 'write-output', 'new-item', 'copy-item', 'move-item']);
+/** `X=…` for one of these changes what runs or where it goes: a preloaded library, the PATH a client is found on, the HOME its rc file is read from, a proxy */
+const RISKY_ENV = /^(ld_|dyld_)|^(bash_env|env|path|home|ifs|cdpath|shellopts|bashopts|ps4|prompt_command|gconv_path|node_options|node_path|pythonstartup|pythonpath|perl5opt|perl5lib|rubyopt|xdg_config_home|sslkeylogfile|netrc|tmpdir)$|proxy|^curl|^wget|^git_|^ssl_|^openssl|^nss_|^requests_ca/i;
+/** not a plain `NAME=value`, or one whose NAME is risky */
+const riskyAssign = (t: string) => { const m = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(t); return !m || RISKY_ENV.test(m[1]); };
 const PUSH_LONG_OK = new Set(['force', 'force-with-lease', 'force-if-includes', 'tags', 'follow-tags', 'dry-run', 'porcelain', 'quiet', 'verbose', 'atomic', 'no-verify',
   'progress', 'no-progress', 'thin', 'no-thin', 'ipv4', 'ipv6', 'delete', 'prune', 'mirror', 'all']);
 function scopeCovers(c: Cmd): boolean {
@@ -600,9 +607,9 @@ function walkShell(src: string, ps: boolean, nest: number, acc: Shell): void {
       const prefix = pc.toks.slice(0, c.at);
       // a command word we can't read: bash runs any expansion there; PowerShell only after & or .
       if (word.dyn && (!ps || prefix.some((t) => t.t === '&' || t.t === '.'))) sendBlind();
-      // anything before the command word but PowerShell's `$v =` — a wrapper, or an environment variable (LD_PRELOAD,
-      // BASH_ENV, CURL_HOME, GIT_EXEC_PATH… change what runs or where it goes) — and the scope doesn't cover it
-      if (nest === 0 && (!scopeCovers(c) || word.dyn || word.brace || prefix.some((t) => !(ps && isPsAssign(t.t))))) acc.opaque = true;
+      // before the command word only plain `NAME=value` (not LD_PRELOAD, PATH, HOME, a proxy…) or PowerShell's `$v =`:
+      // a wrapper or a risky variable and the scope doesn't cover it
+      if (nest === 0 && (!(scopeCovers(c) || SCOPE_LOCAL.has(c.cmd)) || word.dyn || word.brace || prefix.some((t) => !(ps && isPsAssign(t.t)) && riskyAssign(t.t)))) acc.opaque = true;
       if (c.env.some((e) => /proxy|git_ssh|git_config|curl_home|wgetrc/i.test(e.split('=')[0]))) acc.opaque = true;
       if (c.cmd === 'git' && gitSub(c.args).config.some((v) => /proxy|insteadof|sshcommand|askpass/i.test(v))) acc.opaque = true;
       // deleting what a pipe names: `find … | xargs rm`, `gci … | Remove-Item`
@@ -614,7 +621,7 @@ function walkShell(src: string, ps: boolean, nest: number, acc: Shell): void {
       for (let i = c.at + 1; i < pc.toks.length && at.length <= MAX_SHIFT; i++) if (pc.toks[i].t.length < 300 && KNOWN.has(base(pc.toks[i].t))) at.push(i);
       if (at.length > MAX_SHIFT) { sendBlind(); at.length = MAX_SHIFT; }
       at.forEach((i, n) => commandClasses({ cmd: base(pc.toks[i].t), args: pc.toks.slice(i + 1, at[n + 1] ?? pc.toks.length), env: [], at: i }, fed, false, s));
-    } else if (nest === 0) acc.opaque = true; // `X=…` alone changes an exported X (HTTPS_PROXY, LD_PRELOAD) for what runs next
+    } else if (nest === 0 && pc.toks.some((t) => !(ps && isPsAssign(t.t)) && riskyAssign(t.t))) acc.opaque = true; // `HTTPS_PROXY=…` alone changes an exported one for what runs next
     const childPs = c && (c.cmd === 'powershell' || c.cmd === 'pwsh') ? true : c && SHELLS.has(c.cmd) && c.cmd !== 'iex' && c.cmd !== 'invoke-expression' ? false : ps;
     for (const tok of pc.toks) {
       const t = tok.t;
