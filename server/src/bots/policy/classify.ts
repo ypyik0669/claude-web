@@ -716,9 +716,12 @@ export function classify(toolName: string, input: Record<string, unknown>): Acti
 }
 
 const Q = String.raw`(?:'[^'\n]{0,256}'|"[^"\n]{0,256}"|[^\s'"]+)`; // a shell word's value, quoted (spaces and all) or bare
-/** Secrets never reach the audit: auth headers, bearer tokens, -u user:pass, URL userinfo, *_KEY / *_TOKEN / *_SECRET values, --token / --password v, mysql -p…, sshpass -p, sk- / ghp_ keys. */
+/** A header named in quotes with a quoted value (a JSON body / MCP params): `"Authorization": "Basic …"`, `'Cookie': '…'`, `\"X-Api-Key\": \"…\"`, a bare `"auth"` key. */
+const QUOTED_HEADER = /(\\?["'])(authorization|proxy-authorization|x-api-key|api-key|x-auth-token|cookie|set-cookie|auth)\1(\s*[:=]\s*)(\\?["'])((?:(?!\4)[^\n])*)\4/gi;
+/** Secrets never reach the audit: auth headers (quoted JSON ones too), bearer tokens, -u user:pass, URL userinfo, *_KEY / *_TOKEN / *_SECRET values, --token / --password v, mysql -p…, sshpass -p, sk- / ghp_ keys. */
 export function redact(s: string): string {
   return s
+    .replace(QUOTED_HEADER, '$1$2$1$3$4[redacted]$4')
     .replace(/\b(authorization|proxy-authorization|x-api-key|api-key|x-auth-token|cookie)(\s*[:=]\s*)[^'"\n]+/gi, '$1$2[redacted]')
     .replace(/\bbearer\s+[\w.~+/-]+=*/gi, 'Bearer [redacted]')
     .replace(new RegExp(String.raw`(\s(?:-u|--user|--proxy-user)(?:\s+|=))${Q}`, 'g'), '$1[redacted]')

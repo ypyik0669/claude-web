@@ -1,5 +1,5 @@
-// The approval card's masking is at least the server's audit redact(): the same output wherever the server set is
-// the whole story, and every secret of the corpus gone (quoted header values too, which the server set leaves).
+// The approval card's masking is the server's audit redact(): the same output on the corpus, and every secret of the
+// corpus gone (quoted header values too).
 import { describe, expect, it } from 'vitest';
 import { redact } from '../../../../server/src/bots/policy/classify';
 import { maskSecrets, redactLikeServer } from './mask';
@@ -22,19 +22,20 @@ const corpus: { text: string; secrets: string[] }[] = [
   { text: `{"private_key": "${S(13)}", "access_key": "${S(14)}"}`, secrets: [S(13), S(14)] },
   { text: `use sk-${S(15)} and ghp_${S(16)}`, secrets: [S(15), S(16)] },
 ];
-// quoted headers in a JSON body / MCP params: beyond the server set
+// quoted headers in a JSON body / MCP params
 const quoted: { text: string; secrets: string[] }[] = [
   { text: `{\n  "headers": {\n    "Authorization": "Basic ${S(17)}",\n    "Cookie": "sid=${S(18)}; t=1"\n  }\n}`, secrets: [S(17), S(18)] },
   { text: JSON.stringify({ body: JSON.stringify({ 'X-Api-Key': S(19) }) }), secrets: [S(19)] },
   { text: `{'authorization': 'Token ${S(20)}'}`, secrets: [S(20)] },
+  { text: `{"Set-Cookie": "sid=${S(21)}", "Proxy-Authorization": "Basic ${S(22)}", "auth": "${S(23)}"}`, secrets: [S(21), S(22), S(23)] },
 ];
 
 describe('maskSecrets', () => {
   it('the copy of the server set is the server set (same output on the corpus)', () => {
     for (const { text } of [...corpus, ...quoted]) expect(redactLikeServer(text), text).toBe(redact(text));
   });
-  it('where the server set is the whole story, the same output as the server', () => {
-    for (const { text } of corpus) expect(maskSecrets(text), text).toBe(redact(text));
+  it('the same output as the server', () => {
+    for (const { text } of [...corpus, ...quoted]) expect(maskSecrets(text), text).toBe(redact(text));
   });
   it('every secret of the corpus is gone, quoted header values too', () => {
     for (const { text, secrets } of [...corpus, ...quoted]) for (const s of secrets) expect(maskSecrets(text), text).not.toContain(s);

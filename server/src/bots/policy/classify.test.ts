@@ -1,6 +1,6 @@
 // server/src/bots/policy/classify.test.ts
 import { describe, it, expect } from 'vitest';
-import { classify, summarize, targetOf } from './classify.js';
+import { classify, redact, summarize, targetOf } from './classify.js';
 
 describe('classify', () => {
   it('reads: Read / Glob / Grep / WebFetch GET / web.search', () => {
@@ -440,6 +440,21 @@ describe('round 5: redact', () => {
       `curl -u 'me:${S} x' https://x.com`, `gh auth login --with-token ${S}`])
       expect(summarize('Bash', { command }), command).not.toContain(S);
     expect(summarize('Bash', { command: 'tool --token-file' })).toBe('Bash: tool --token-file');
+  });
+});
+
+describe('final review I1: quoted JSON headers', () => {
+  const S = 'zq' + 'HIDDEN' + '9';
+  it('an MCP call whose params carry headers / a bare auth key: none of it reaches the audit or the approval title', () => {
+    for (const h of ['Authorization', 'Proxy-Authorization', 'Cookie', 'Set-Cookie', 'X-Api-Key', 'x-goog-api-key', 'auth', 'X-Auth-Token']) {
+      const s = summarize('mcp__http__request', { headers: { [h]: `Basic ${S} more` } });
+      expect(s, h).not.toContain(S);
+      expect(s, h).toContain('[redacted]');
+    }
+    expect(redact(`{'Cookie': 'sid=${S}; t=1'}`)).toBe(`{'Cookie': '[redacted]'}`);
+    expect(redact(`{"Authorization": "Basic ${S}"}`)).toBe(`{"Authorization": "[redacted]"}`);
+    expect(redact(JSON.stringify({ body: JSON.stringify({ Authorization: `Basic ${S}` }) }))).not.toContain(S);
+    expect(redact('{"author": "Ann", "channel": "C1", "authors": "x"}')).toBe('{"author": "Ann", "channel": "C1", "authors": "x"}');
   });
 });
 
