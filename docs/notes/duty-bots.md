@@ -18,3 +18,21 @@ spec：`docs/superpowers/specs/2026-10-30-duty-bots-design.md`；一期的计划
 - **调试**：`CLAUDE_WEB_DIR=/tmp/x npm start`（别碰自己的 `~/.claude-web`），建一个 Bot，`bots.runNow`，看 `bots/<id>/runs/index.jsonl` 和 `runs/*.audit.jsonl`；对话本身在对话列表里。`window.__cwBots.inject({ bots, inbox, runs, load })` / `open(id)` / `state()` 是前端调试入口（服务端下次推送会覆盖，tick 每 30 s 推一次 load）。
 - **测试**：`node server/ws-phase42.mjs`（e2e 默认列表里，自己起 server）：真引擎（ccb）+ 假 Anthropic 上游，不花 token——模板 14 个、建 Bot、跑一次（finding、费用是数字）、`git push origin main`（仓库没有 remote，不出网）被闸拒绝进收件箱、批准后 resume 同一对话且这次放行、放开后不再问、在上游挂住时硬停、总管删不掉。ui-smoke 的「bots」一段用注入的数据：两行、负载条「在跑 1」、新建对话框 14 张模板、Esc 先关对话框再关页面、总览里两条带「批准」。
 - **坑**：e2e 的阶段脚本自己起 server 时要设 `CLAUDE_WEB_SYSTEM_LANG: 'zh-CN'`，不然单跑时闸的提示是英文，断言中文会失败。跑 e2e 前先 `npm run build -w server`（脚本跑的是 `server/dist`）。
+
+## 真机实测（2026-10-31，Task 22，两个真中转）
+
+临时 HOME / `CLAUDE_WEB_DIR`，模板 `pr`，cwd 是仓库的本地克隆（push 地址改成无效），`everyMinutes: 60`，默认策略，模板预算 `dailyUsd: 2`。脚本和明细在 `.superpowers/sdd/2026-10-30-duty-bots-phase1/task-22-report.md`。
+
+| 来源 / 模型 | 运行 | 成功 | 跳过 | 每次费用 | 每次用时 |
+| --- | --- | --- | --- | --- | --- |
+| super-nb.me / claude-sonnet-5-5（档案默认） | 10（含 1 次 resume、1 次硬停） | 7 | 2（预检指纹没变 1、超预算 1） | 0.36–0.38 $（resume 只多 0.055 $） | 25–35 s |
+| aizhongzhuan.cc / claude-opus-5-5（档案默认） | 2 | 0 | 0 | 0 | 179–200 s，中转 503「分组里没有这个模型的通道」 |
+| aizhongzhuan.cc / deepseek-v4.1-flash（Bot 指定 model） | 4（3 次手动 + 1 次 60 分钟定时自己触发） | 4 | 0 | 记成 0（价格未知） | 65–70 s，定时那次 171 s / 30 个工具调用 |
+
+- **验收通过率**：带验收脚本（工作区干净）的 10 次全部通过；但模型调用失败的那两次也「验收通过」——验收只看脚本，run.ok 另由 isError 判。
+- **收件箱**：finding 16（每次一条报告 + 预算用完一条）、草稿 4、approval 13——批了 1 条，其余 12 条里 11 条出自 deepseek 那 4 次：它每次都想在 cwd 外的 Bot state 目录 `mkdir` / `rm` 检查点、把 `gh` 输出管道给 `python -c`（opaque → 要问）；sonnet 只在探针里问了 push 和删检查点。
+- **approve → resume 接上**：同一 sessionId、`trigger: resume`，被批的 push 审计依据 `user`、真执行（没有 nowhere remote，退出 128）。
+- **硬停**：跑到第 12 s 时 `bots.stop` → 0.80 s 后运行记录结束（「被停下了」），`bots.load.running` 1 → 0。
+- **闸覆盖**：每次 transcript 的 tool_use 数 = 审计行数（唯一的差是被 SDK 取消、没执行的并行调用）；`ExecuteExtraTool` 按里面的真工具记审计；`state/<routine>.checkpoint.md` 的 Write 放行（do）。
+- **档位 → 模型**：两个中转都是 Anthropic 档案（kind=claude），balanced 不映射，用档案默认模型；不需要路由组。档案默认模型在中转分组里没通道时 Bot 不回退，要给 Bot 指定 model。
+- **要改的**：① 模板 `dailyUsd: 2` 在 sonnet 中转上只够 ~6 次（每次新对话大半是 cache 写），每小时一次的模板中午前就停；② 价格未知的模型费用记 0，预算闸管不住；③ 同一个 `memory_write` 一次判 write_local 放行、一次判 send 要问；Bot 自己 state 目录下的 `mkdir` / `rm` 也要问（在 cwd 外）。
