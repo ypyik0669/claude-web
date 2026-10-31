@@ -12,7 +12,7 @@ import { HANDOFF, runRoutine, type PipelineDeps, type RunOptions } from './pipel
 import { recordApproval, recordCorrection, demoteRule, TRUST_THRESHOLD } from './policy/trust.js';
 import { scopeKey } from './policy/rules.js';
 import { summarize, targetOf } from './policy/classify.js';
-import { allowScope, routineOf, ruleOf } from './shape.js';
+import { allowScope, routineOf, ruleOf, untilPassed } from './shape.js';
 import { callKey } from './policy/gate.js';
 import type { ApprovedCall } from './types.js';
 import { tr } from '../i18n/index.js';
@@ -57,7 +57,7 @@ export const LEASE_WRITE_TRIES = 3;
  * cap with at most one run per bot (the gate's per-day counts rely on it). Budgets are checked before a run opens a
  * conversation. Inbox answers feed trust and resume the run that asked. stopAll is the hard stop.
  * Only the holder of `<botsRoot>/scheduler.lock` runs anything — the desktop app and the duty service may share a dir.
- * Events: 'run' (BotRun), 'bots' (something about a bot changed), 'load' (BotLoad), 'tick' (a tick ran on duty).
+ * Events: 'run' (BotRun), 'bots' (something about a bot changed), 'load' (BotLoad), 'tick' (a tick ran on duty), 'ended' (botId, routine name: past its end date, turned off).
  */
 export class BotScheduler extends EventEmitter {
   private timer?: NodeJS.Timeout;
@@ -291,11 +291,15 @@ export class BotScheduler extends EventEmitter {
     for (const j of resumes) this.push(j);
     let changedAny = false;
     for (const { id } of this.d.store.list()) {
+      const ended: string[] = [];
       // one bad bot.json (a hand edit, an old shape) costs that bot its tick, not the others theirs
       try { await this.mutate(id, (bot) => {
         let changed = false;
+        ended.length = 0;
         const routines = bot.routines.map((r) => ({ ...r }));
         for (const r of routines) {
+          // past its end date: off, whatever else (a paused bot's too)
+          if (r.enabled && untilPassed(r.until, now)) { r.enabled = false; delete r.nextRunAt; changed = true; ended.push(r.name); continue; }
           if (!r.enabled || bot.paused) continue;
           if (r.nextRunAt === undefined) {
             const next = this.nextRunAt(r, now);
@@ -309,7 +313,9 @@ export class BotScheduler extends EventEmitter {
         }
         if (changed) changedAny = true;
         return changed ? { ...bot, routines } : undefined;
-      }); } catch (e) { console.warn(`[bots] tick skipped ${id}:`, e); }
+      });
+      for (const name of ended) this.emit('ended', id, name);
+      } catch (e) { console.warn(`[bots] tick skipped ${id}:`, e); }
     }
     this.emit('tick');
     if (changedAny) this.emit('bots');

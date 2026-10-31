@@ -1011,6 +1011,8 @@ export interface Routine {
   onFail: 'retry_up' | 'resume' | 'inbox';
   failures?: number; nextRunAt?: number; lastRunAt?: number;
   selfMade?: boolean; shadow?: boolean;
+  /** when it stops: a local date YYYY-MM-DD (it runs through that day) or 'forever'; past it the scheduler turns it off */
+  until?: string;
 }
 export interface BotBudget { dailyUsd?: number; weeklyUsd?: number; explorePct?: number }
 /** A bot conversation's role: its own conversation, a routine run, or generator / kickoff work */

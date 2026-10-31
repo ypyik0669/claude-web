@@ -58,7 +58,7 @@ export function threadPrompt(bot: Bot, o: { tools?: boolean } = {}): string {
     c.sources.length ? `只用这些来源：${c.sources.join('、')}` : '',
     c.report ? `报告格式：${c.report}` : '',
     c.done ? `完成条件：${c.done}` : '',
-    bot.routines.length ? `现有的例行：${bot.routines.map((r) => `「${r.name}」（${cadence(r)}${r.enabled ? '' : '，已关闭'}）`).join('、')}` : '现在还没有例行。',
+    bot.routines.length ? `现有的例行：${bot.routines.map((r) => `「${r.name}」（${cadence(r)}${r.enabled ? '' : '，已关闭'}${r.selfMade ? '' : '，用户建的：你不能改'}）`).join('、')}` : '现在还没有例行。',
     '',
     '# 怎么说话',
     '- 像同事一样说话：简短、直接、具体，不客套，不说「作为 AI」。',

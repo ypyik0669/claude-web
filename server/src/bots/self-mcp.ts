@@ -7,10 +7,11 @@
 import { createSdkMcpServer, tool, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod/v4';
 import type { Bot, BotTimelineEntry, InboxItem, InboxProposal, Routine } from '../protocol.js';
-import { describeCron } from '../schedules/cron.js';
+import { describeCron, nextCron } from '../schedules/cron.js';
 import { tr } from '../i18n/index.js';
 import { BOT_SELF_SERVER } from './runtime-hooks.js';
-import { allowScope, botFields, routineOf, ruleOf } from './shape.js';
+import { allowScope, botFields, routineOf, ruleOf, untilPassed } from './shape.js';
+import { MAX_FAILURES } from './pipeline.js';
 
 export interface BotSelfDeps {
   get(botId: string): Bot | undefined;
@@ -55,6 +56,18 @@ function cadenceOf(r: Pick<Routine, 'cron' | 'everyMinutes'>, until?: string): s
   if (!until) return how;
   return `${how} · ${until === 'forever' ? tr('一直运行') : tr('到 {date} 为止', { date: until })}`;
 }
+/** a bot-made cron fires at least MIN_EVERY minutes apart: the gaps between its next fires (minutes repeat each hour, so a burst shows) */
+function cronOk(cron: string | undefined): string | undefined {
+  if (!cron) return undefined;
+  let t: Date;
+  try { t = nextCron(cron, new Date()); } catch { throw new Error(tr('Bot 设置不对：{field}', { field: 'cron' })); }
+  for (let i = 0; i < 24; i++) {
+    const n = nextCron(cron, t);
+    if (n.getTime() - t.getTime() < MIN_EVERY * 60_000) throw new Error(tr('这个 cron 太密了：两次之间至少 {n} 分钟', { n: MIN_EVERY }));
+    t = n;
+  }
+  return cron;
+}
 function everyOf(v: unknown): number | undefined {
   if (v === undefined || v === null) return undefined;
   if (typeof v !== 'number' || !Number.isInteger(v) || v < MIN_EVERY) throw new Error(tr('间隔至少 {n} 分钟', { n: MIN_EVERY }));
@@ -76,6 +89,12 @@ const cadence = {
 export function botSelfTools(botId: string, _self: () => string, d: BotSelfDeps) {
   const bot = () => { const b = d.get(botId); if (!b) throw new Error(tr('没有这个 Bot')); return b; };
   const routine = (id: string) => { const r = bot().routines.find((x) => x.id === id); if (!r) throw new Error(tr('没有这个例行：{id}', { id })); return r; };
+  /** a routine the bot made itself: the user's own routines are the user's to change */
+  const own = (id: string) => {
+    const r = routine(id);
+    if (!r.selfMade) throw new Error(tr('「{name}」是用户自己建的例行，你不能改、停或删它：想怎么改，跟用户说，请用户在 Bot 页上改', { name: r.name }));
+    return r;
+  };
   const safe = <A>(fn: (a: A) => Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }>) => async (a: A) => {
     try { return await fn(a); } catch (e) { return fail(e instanceof Error ? e.message : String(e)); }
   };
@@ -113,54 +132,61 @@ export function botSelfTools(botId: string, _self: () => string, d: BotSelfDeps)
       return text(tr('已更新'));
     }), opts),
 
-    tool('routine_create', `Create a routine: work you do on a schedule. Every routine needs an end: a date, or "forever" only when the user asked for it. At least ${MIN_EVERY} minutes apart.`, {
+    tool('routine_create', `Create a routine: work you do on a schedule. Every routine needs an end: a date, or "forever" only when the user asked for it. At least ${MIN_EVERY} minutes apart (a cron too).`, {
       name: z.string().min(1).max(80), prompt: z.string().min(1).max(8000).describe('what to do each run'), ...cadence,
     }, safe(async (a: { name: string; prompt: string; cron?: string; everyMinutes?: number; until?: string; notify?: string }) => {
       const until = untilOf(a.until);
       const every = everyOf(a.everyMinutes);
+      const cron = cronOk(a.cron);
       let made: Routine | undefined;
       await d.edit(botId, (b) => {
         if (b.manager) throw new Error(tr('总管不做例行'));
         if (b.routines.length >= (b.maxRoutines ?? 20)) throw new Error(tr('例行已满（最多 {n} 个）', { n: b.maxRoutines ?? 20 }));
-        made = { ...routineOf({ name: a.name.trim(), prompt: withFooter(promptOf(a.prompt, a.notify), until), cron: a.cron, everyMinutes: every }, new Map()), selfMade: true };
+        made = { ...routineOf({ name: a.name.trim(), prompt: withFooter(promptOf(a.prompt, a.notify), until), cron, everyMinutes: every, until }, new Map()), selfMade: true };
         return { ...b, routines: [...b.routines, made] };
       });
       await d.event(botId, tr('已创建例行 ⏲ {name}', { name: made!.name }), 'routine', cadenceOf(made!, until));
       return text(tr('已创建例行 {name}（{id}）：{how}', { name: made!.name, id: made!.id, how: cadenceOf(made!, until) }));
     }), opts),
 
-    tool('routine_update', 'Change one of your routines: anything left out stays as it is. Giving cron drops everyMinutes and the other way round.', {
+    tool('routine_update', 'Change one of the routines you made (the user’s own routines are theirs to change): anything left out stays as it is. Giving cron drops everyMinutes and the other way round.', {
       id: z.string().min(1).max(40), name: z.string().min(1).max(80).optional(), prompt: z.string().min(1).max(8000).optional(), ...cadence,
     }, safe(async (a: { id: string; name?: string; prompt?: string; cron?: string; everyMinutes?: number; until?: string; notify?: string }) => {
-      const cur = routine(a.id);
-      const until = a.until !== undefined ? untilOf(a.until) : footerOf(cur.prompt);
+      const cur = own(a.id);
+      const until = a.until !== undefined ? untilOf(a.until) : cur.until ?? footerOf(cur.prompt);
       const every = everyOf(a.everyMinutes);
+      const cron = cronOk(a.cron);
       const newCadence = a.cron !== undefined || a.everyMinutes !== undefined;
       let next: Routine | undefined;
       await editRoutine(a.id, (r, prevs) => {
         const base = a.prompt !== undefined ? promptOf(a.prompt, a.notify) : a.notify !== undefined ? promptOf(r.prompt.replace(FOOTER, ''), a.notify) : r.prompt;
         const prompt = until ? withFooter(base, until) : base;
-        next = routineOf({ ...r, name: a.name?.trim() ?? r.name, prompt, ...(newCadence ? { cron: a.cron, everyMinutes: every } : {}) }, prevs);
+        next = routineOf({ ...r, name: a.name?.trim() ?? r.name, prompt, ...(newCadence ? { cron, everyMinutes: every } : {}), ...(until ? { until } : {}) }, prevs);
         return next;
       });
       await d.event(botId, tr('已修改例行 ⏲ {name}', { name: next!.name }), 'routine', cadenceOf(next!, until));
       return text(tr('已修改例行 {name}：{how}', { name: next!.name, how: cadenceOf(next!, until) }));
     }), opts),
 
-    tool('routine_pause', 'Pause or resume one of your routines.', {
+    tool('routine_pause', 'Pause or resume one of the routines you made. A routine stopped after failing again and again only the user can turn back on.', {
       id: z.string().min(1).max(40), paused: z.boolean(),
     }, safe(async (a: { id: string; paused: boolean }) => {
-      const cur = routine(a.id);
-      await editRoutine(a.id, (r, prevs) => routineOf({ ...r, enabled: !a.paused }, prevs));
+      const cur = own(a.id);
+      if (!a.paused && !cur.enabled && (cur.failures ?? 0) >= MAX_FAILURES) {
+        return fail(tr('「{name}」连续失败后被停下了，只有用户能重新打开：告诉用户出了什么问题', { name: cur.name }));
+      }
+      if (!a.paused && untilPassed(cur.until, Date.now())) return fail(tr('「{name}」已经到期：先用 routine_update 定一个新的结束日期（问过用户），再恢复', { name: cur.name }));
+      // the bot never lifts the failure stop: `failures` is not handed back, so routineOf keeps a stopped one off
+      await editRoutine(a.id, (r, prevs) => routineOf({ ...r, failures: undefined, enabled: !a.paused }, prevs));
       const line = a.paused ? tr('已暂停例行 ⏲ {name}', { name: cur.name }) : tr('已恢复例行 ⏲ {name}', { name: cur.name });
       await d.event(botId, line, 'routine');
       return text(line);
     }), opts),
 
-    tool('routine_delete', 'Delete one of your routines.', {
+    tool('routine_delete', 'Delete one of the routines you made (the user’s own routines are theirs to delete).', {
       id: z.string().min(1).max(40),
     }, safe(async (a: { id: string }) => {
-      const cur = routine(a.id);
+      const cur = own(a.id);
       await d.edit(botId, (b) => ({ ...b, routines: b.routines.filter((r) => r.id !== a.id) }));
       const line = tr('已删除例行 ⏲ {name}', { name: cur.name });
       await d.event(botId, line, 'routine');

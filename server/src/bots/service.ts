@@ -179,6 +179,9 @@ export class BotService extends EventEmitter {
       if (this.scheduler.canAct() && !this.store.get(MANAGER_ID)) void this.ensureManager().catch((e) => console.warn('[bots] cannot create the manager:', e));
       this.emit('changed', this.list());
     });
+    this.scheduler.on('ended', (botId: string, name: string) => {
+      void this.addEntry(systemEntry(botId, tr('例行「{name}」到期，已停', { name }), 'routine')).then(() => this.changed());
+    });
     this.scheduler.on('load', (l: BotLoad) => this.emit('load', l));
     this.scheduler.on('tick', () => { void this.takeStopRequest(); void this.refreshThreadCosts(); });
     // the last holder may have held (or flushed) IM pushes since this server read held.json

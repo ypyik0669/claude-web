@@ -92,6 +92,27 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
     expect(s.todayUsd('a', now)).toBeCloseTo(1.75);
   });
 
+  it("a routine past its end date is turned off (not run) and says so once; 'forever' and today's end run on", async () => {
+    const now = new Date(2026, 10, 8, 9, 0).getTime(); // 2026-11-08 09:00 local
+    await store.save(bot('a', [
+      routine({ id: 'r1', name: '旧的', nextRunAt: now - 1000, until: '2026-11-07' }),
+      routine({ id: 'r2', name: '今天', nextRunAt: now - 1000, until: '2026-11-08' }),
+      routine({ id: 'r3', name: '一直', nextRunAt: now - 1000, until: 'forever' }),
+    ]));
+    const s = sched({ ...deps(), now: () => now });
+    const ended: [string, string][] = [];
+    s.on('ended', (id: string, name: string) => ended.push([id, name]));
+    await s.tick(now); await idle(s);
+    const rs = store.get('a')!.routines;
+    expect(rs.find((r) => r.id === 'r1')).toMatchObject({ enabled: false });
+    expect(rs.find((r) => r.id === 'r1')!.nextRunAt).toBeUndefined();
+    expect(rs.filter((r) => r.enabled).map((r) => r.id)).toEqual(['r2', 'r3']);
+    expect(store.runs('a').map((r) => r.routineId).sort()).toEqual(['r2', 'r3']);
+    expect(ended).toEqual([['a', '旧的']]);
+    await s.tick(now + 1); await idle(s);
+    expect(ended).toHaveLength(1);
+  });
+
   it('a routine with no schedule is not written back every tick', async () => {
     await store.save(bot('a', [routine({ everyMinutes: undefined })]));
     const at = store.get('a')!.updatedAt;

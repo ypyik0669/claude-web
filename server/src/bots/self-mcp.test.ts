@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Bot, InboxItem, InboxProposal } from '../protocol.js';
+import type { Bot, InboxItem, InboxProposal, Routine } from '../protocol.js';
 import { BOT_SELF_TOOLS, botSelfTools, type BotSelfDeps } from './self-mcp.js';
-import { botFields, ruleOf } from './shape.js';
+import { botFields, routineOf, ruleOf } from './shape.js';
 
 const baseBot = (): Bot => ({
   id: 'b1', name: 'Scout', cwd: '/w', tier: 'balanced', charter: { role: 'watch', sources: [] },
@@ -82,6 +82,62 @@ describe('bot-self tools', () => {
     expect(f.bot().routines).toHaveLength(0);
     expect(f.events).toHaveLength(5);
     expect((await f.call('routine_pause', { id: 'nope', paused: true })).isError).toBe(true);
+  });
+
+  it('until is a field of the routine (kept by an update; a bad one refused by routineOf)', async () => {
+    const f = fake();
+    await f.call('routine_create', { name: 'A', prompt: 'p', everyMinutes: 30, until: '2026-12-31' });
+    const id = f.bot().routines[0].id;
+    expect(f.bot().routines[0].until).toBe('2026-12-31');
+    await f.call('routine_update', { id, name: 'B' });
+    expect(f.bot().routines[0].until).toBe('2026-12-31');
+    await f.call('routine_update', { id, until: 'forever' });
+    expect(f.bot().routines[0].until).toBe('forever');
+    expect(() => routineOf({ name: 'n', prompt: 'p', until: '2026-02-30' }, new Map())).toThrow();
+    expect(() => routineOf({ name: 'n', prompt: 'p', until: 'someday' }, new Map())).toThrow();
+    // the user turning an ended routine back on (end unchanged) means it: the old end goes
+    const ended = { ...f.bot().routines[0], enabled: false, until: '2020-01-01' };
+    expect(routineOf({ ...ended, enabled: true }, new Map([[id, ended]])).until).toBeUndefined();
+    expect(routineOf({ ...ended, enabled: true, until: '2099-01-01' }, new Map([[id, ended]])).until).toBe('2099-01-01');
+  });
+
+  it('a cron firing less than 15 minutes apart is refused, create and update', async () => {
+    const f = fake();
+    for (const cron of ['* * * * *', '*/5 * * * *', '0,10 9 * * *']) {
+      const r = await f.call('routine_create', { name: 'n', prompt: 'p', cron, until: 'forever' });
+      expect(r.isError, cron).toBe(true);
+      expect(r.content[0].text).toContain('15');
+    }
+    expect(f.bot().routines).toHaveLength(0);
+    expect((await f.call('routine_create', { name: 'n', prompt: 'p', cron: '*/15 * * * *', until: 'forever' })).isError).toBeFalsy();
+    const id = f.bot().routines[0].id;
+    expect((await f.call('routine_update', { id, cron: '*/2 * * * *' })).isError).toBe(true);
+    expect(f.bot().routines[0].cron).toBe('*/15 * * * *');
+  });
+
+  it("the user's routines can't be updated, paused or deleted by the bot (testing one is fine)", async () => {
+    const user: Routine = { id: 'u1', name: 'Mine', prompt: 'p', enabled: true, everyMinutes: 60, acceptance: { kind: 'none' }, onFail: 'inbox' };
+    const f = fake({}, { routines: [user] });
+    for (const [name, args] of [['routine_update', { id: 'u1', name: 'X' }], ['routine_pause', { id: 'u1', paused: true }], ['routine_delete', { id: 'u1' }]] as const) {
+      const r = await f.call(name, args);
+      expect(r.isError, name).toBe(true);
+      expect(r.content[0].text).toContain('Mine');
+    }
+    expect(f.bot().routines).toEqual([user]);
+    expect(f.d.edit).not.toHaveBeenCalled();
+    expect((await f.call('routine_test', { id: 'u1' })).isError).toBeFalsy();
+  });
+
+  it('a routine the scheduler stopped for failures stays off: only the user turns it back on', async () => {
+    const stopped: Routine = { id: 's1', name: 'Flaky', prompt: 'p', enabled: false, failures: 3, everyMinutes: 60, acceptance: { kind: 'none' }, onFail: 'inbox', selfMade: true };
+    const f = fake({}, { routines: [stopped] });
+    const r = await f.call('routine_pause', { id: 's1', paused: false });
+    expect(r.isError).toBe(true);
+    expect(f.bot().routines[0]).toMatchObject({ enabled: false, failures: 3 });
+    // an ended one needs a new end first
+    const g = fake({}, { routines: [{ ...stopped, failures: 0, until: '2020-01-01' }] });
+    expect((await g.call('routine_pause', { id: 's1', paused: false })).isError).toBe(true);
+    expect(g.bot().routines[0].enabled).toBe(false);
   });
 
   it('bot_profile changes name / title / charter but never policy or budget', async () => {

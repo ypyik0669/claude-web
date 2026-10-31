@@ -138,6 +138,22 @@ function outputOf(v: unknown): BotOutput {
   return bad('outputs.kind');
 }
 
+const UNTIL_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+/** a routine's `until`: 'forever' or a real YYYY-MM-DD */
+export function validUntil(v: unknown): v is string {
+  if (v === 'forever') return true;
+  if (typeof v !== 'string') return false;
+  const m = UNTIL_DATE.exec(v);
+  if (!m) return false;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  return d.getFullYear() === +m[1] && d.getMonth() === +m[2] - 1 && d.getDate() === +m[3];
+}
+/** the routine's end date is behind `now` (it runs through that local day); never for 'forever' or none */
+export function untilPassed(until: string | undefined, now: number): boolean {
+  const m = until && until !== 'forever' ? UNTIL_DATE.exec(until) : null;
+  return !!m && now >= new Date(+m[1], +m[2] - 1, +m[3] + 1).getTime();
+}
+
 /**
  * One routine. What the scheduler owns comes from the stored routine of that id: lastRunAt, nextRunAt (dropped when
  * the cadence changed, so the next tick plans it again), failures. A routine the pipeline turned off after
@@ -168,11 +184,14 @@ export function routineOf(v: unknown, prevs: Map<string, Routine>): Routine {
     else enabled = false;
   }
   const sameCadence = prev && prev.cron === cron && prev.everyMinutes === every;
+  let until = pick(v, 'until', prev?.until, (x) => (x === undefined || x === null ? undefined : validUntil(x) ? x : bad('routines.until')));
+  // turned back on past its end date, the end unchanged: the user means it to run again (the scheduler would stop it at once)
+  if (prev && !prev.enabled && enabled && until === prev.until && untilPassed(until, Date.now())) until = undefined;
   return compact({
     id, name: str(v.name ?? prev?.name ?? '', 'routines.name'), prompt: str(v.prompt ?? prev?.prompt ?? '', 'routines.prompt'),
     cron, everyMinutes: every, enabled, precheck: optStr(v.precheck, 'routines.precheck'), acceptance, timeoutMin, onFail,
     failures, nextRunAt: sameCadence ? prev.nextRunAt : undefined, lastRunAt: prev?.lastRunAt,
-    selfMade: prev?.selfMade, shadow: typeof v.shadow === 'boolean' ? v.shadow : prev?.shadow,
+    selfMade: prev?.selfMade, shadow: typeof v.shadow === 'boolean' ? v.shadow : prev?.shadow, until,
   });
 }
 
