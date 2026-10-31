@@ -220,6 +220,9 @@ export async function openThread(id: string): Promise<string | null> {
   // a phase-1 bot got its conversation just now: known here before the server's bots.changed says so
   if (bot && bot.threadId !== sessionId) patchBot(id, { threadId: sessionId });
   useBots.setState({ selected: id, view: 'thread', phoneScreen: 'thread' });
+  // the bot's own conversation (the server's meta says so too, but this window read it before the bot was made): only
+  // here are the server's hidden blocks hidden
+  useStore.setState((s) => (s.sessionMeta[sessionId]?.botRole === 'thread' ? {} : { sessionMeta: { ...s.sessionMeta, [sessionId]: { ...s.sessionMeta[sessionId], botId: id, botRole: 'thread' } } }));
   try { await useStore.getState().openSession({ sessionId, cwd: bot?.cwd ?? '' }, 'none'); }
   catch (e) { useStore.getState().toast(tr('打开失败：{message}', { message: msg(e) })); return null; }
   await markSeen(id);

@@ -107,6 +107,7 @@ import { tr } from '../i18n/index.js';
 import { clientSessionParams, refusePeerUncBot, type BotService } from '../bots/service.js';
 import { dutyInstalled, installDuty } from '../bots/duty.js';
 import { isBotSession } from '../bots/hidden.js';
+import { serverSend, stripBotTags } from '../bots/tags.js';
 
 export interface Services {
   /** Unified session library: every joined source's sessions (sessions.list / search / library.*). */
@@ -634,9 +635,10 @@ export class Hub {
         await afterSwitch(req.params.sessionId); // a switch in progress: the new process takes it
         this.s.pool.assertWritable(req.params.sessionId); // handed to another machine (F4): read-only here
         const runner = this.runner(req.params.sessionId);
-        // a bot's own conversation: what happened since the user last wrote goes in front, for the model only
-        outgoing = s.bots.threads.withEvents(req.params.sessionId, outgoing);
-        runner.send(outgoing, req.params.images, req.params.steer, req.params.uuid, req.params.attachments);
+        // a bot's own conversation: what happened since the user last wrote goes in front, for the model only — the
+        // user's text loses any such block of its own first, and only the server's goes through (serverSend)
+        outgoing = s.bots.threads.withEvents(req.params.sessionId, stripBotTags(outgoing));
+        serverSend(runner, outgoing, req.params.images, req.params.steer, req.params.uuid, req.params.attachments);
         // Neither path echoes the user's own message back through the pool (the SDK doesn't, and the
         // foreign drivers `record()` it without emitting), so the canonical mirror has to be told here
         // — otherwise a handover briefing would have no idea what was actually asked for.

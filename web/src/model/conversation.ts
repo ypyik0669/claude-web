@@ -155,13 +155,15 @@ export interface Conversation {
   /** the engine's guess at the next prompt (SDK `prompt_suggestion`, after a turn) — grey in the empty composer, Tab
    *  takes it; the next user message clears it. Not an item: it is not part of the conversation */
   suggestion?: string;
+  /** a 值班 Bot's own conversation: the server's hidden blocks (<cw-bot-events>, kickoff, continue) are hidden — only here */
+  botThread?: boolean;
 }
 
 /** The marker a read ends with when another program is in the middle of its last turn (server `codex-items.ts`). */
 export const ELSEWHERE = 'cw_elsewhere';
 
-export function createConversation(): Conversation {
-  return { items: [], toolIndex: new Map(), tasks: new Map(), streaming: new Map(), compacting: false, retracted: new Set() };
+export function createConversation(o?: { botThread?: boolean }): Conversation {
+  return { items: [], toolIndex: new Map(), tasks: new Map(), streaming: new Map(), compacting: false, retracted: new Set(), ...(o?.botThread ? { botThread: true } : {}) };
 }
 
 const key = (p: string | null | undefined) => p ?? '';
@@ -202,9 +204,10 @@ function isToolResultOnly(content: unknown): boolean {
 }
 
 /** A whole message the server sent for a 值班 Bot (`decodeAttachments` → hidden). */
-function isBotHidden(content: unknown): boolean {
+function isBotHidden(c: Conversation, content: unknown): boolean {
+  if (!c.botThread) return false;
   const text = typeof content === 'string' ? content : Array.isArray(content) ? content.filter((b: any) => b?.type === 'text').map((b: any) => b.text).join('\n') : '';
-  return text.includes('<cw-bot-') && !!decodeAttachments(text).hidden;
+  return text.includes('<cw-bot-') && !!decodeAttachments(text, { bot: true }).hidden;
 }
 
 /** A message the user wrote: not a meta line (a reminder, command output), not one the server sent for a bot. */
@@ -525,16 +528,20 @@ const BOT_EVENTS_RE = /^<cw-bot-events>([\s\S]*?)<\/cw-bot-events>\n*/;
 // …and whole messages the server sends on the bot's behalf: the kickoff, the 「已批准…继续」 after a thread approval
 const BOT_HIDDEN_RE = /^<(cw-bot-kickoff|cw-bot-continue)>[\s\S]*<\/\1>$/;
 
-export function decodeAttachments(text: string): { text: string; attachments: Attachment[]; from?: { sessionId: string; title: string }; botEvents?: string; hidden?: true } {
+/**
+ * `bot`: the text is from a 值班 Bot's own conversation — only there are the server's <cw-bot-…> blocks taken out (the
+ * server strips them from anything else it is sent, server bots/tags.ts; anywhere else they are shown as they are).
+ */
+export function decodeAttachments(text: string, o?: { bot?: boolean }): { text: string; attachments: Attachment[]; from?: { sessionId: string; title: string }; botEvents?: string; hidden?: true } {
   const attachments: Attachment[] = [];
   let from: { sessionId: string; title: string } | undefined;
   let botEvents: string | undefined;
-  const ev = BOT_EVENTS_RE.exec(text);
+  const ev = o?.bot ? BOT_EVENTS_RE.exec(text) : null;
   if (ev) {
     botEvents = ev[1].trim();
     text = text.slice(ev[0].length);
   }
-  if (BOT_HIDDEN_RE.test(text.trim())) return { text: '', attachments, ...(botEvents !== undefined ? { botEvents } : {}), hidden: true };
+  if (o?.bot && BOT_HIDDEN_RE.test(text.trim())) return { text: '', attachments, ...(botEvents !== undefined ? { botEvents } : {}), hidden: true };
   const fm = FROM_RE.exec(text.trim());
   if (fm) {
     from = { sessionId: attrOf(fm[1], 'session') ?? '', title: attrOf(fm[1], 'title') ?? '' };
@@ -558,7 +565,7 @@ function applyUser(c: Conversation, m: any) {
   if (m.uuid && c.retracted.has(m.uuid)) return;
   // someone said something (here or in another window): the guess at it is spent. A tool result is not someone.
   // Nor is the server speaking for a bot (its kickoff, its 「已批准…继续」).
-  if (!m.parent_tool_use_id && !m.isMeta && !isToolResultOnly(m.message?.content) && !isBotHidden(m.message?.content)) c.suggestion = undefined;
+  if (!m.parent_tool_use_id && !m.isMeta && !isToolResultOnly(m.message?.content) && !isBotHidden(c, m.message?.content)) c.suggestion = undefined;
   // the server's copy of a message sent from wherever (hub `cw_echo`): the window that sent it already shows it under
   // the same uuid (store `send`); every other window — the phone's, the computer's — shows it now instead of only the
   // answer. A steer joins the turn already running: it does not restart its clock.
@@ -616,7 +623,7 @@ function applyUser(c: Conversation, m: any) {
     return;
   }
   const isMeta = m.isMeta || m.isSynthetic || /^<(command-name|local-command|system-reminder|task-notification)/.test(rawText.trim());
-  const { text, attachments, from, hidden } = decodeAttachments(rawText);
+  const { text, attachments, from, hidden } = decodeAttachments(rawText, { bot: c.botThread });
   containerFor(c, parent).push({ kind: 'user', id: m.uuid ?? String(Math.random()), ts: m.timestamp, text, images, attachments: attachments.length ? attachments : undefined, ...(from ? { from } : {}), meta: isMeta, ...(hidden ? { hidden } : {}), raw: m });
   if (!parent && !isMeta) c.turnStartedAt = clock();
 }
@@ -828,7 +835,7 @@ export function applyTranscript(c: Conversation, msgs: any[], opts?: { live?: bo
  * (running tool, turn clock, streaming) belongs to the newest page and is left alone.
  */
 export function prependTranscript(c: Conversation, msgs: any[]): void {
-  const older = createConversation();
+  const older = createConversation({ botThread: c.botThread });
   for (const u of c.retracted) older.retracted.add(u);
   applyTranscript(older, msgs);
   const byId = new Map<string, Item>();

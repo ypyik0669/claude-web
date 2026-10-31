@@ -310,6 +310,11 @@ document.addEventListener('visibilitychange', () => {
   for (const [sid, at] of autoContinueAt) armAutoContinue(sid, at);
 });
 
+/** a fresh conversation; a 值班 Bot's own one (SessionMeta.botRole, the bots page marks it as it opens) hides the server's blocks */
+export function botConv(s: Pick<State, 'sessionMeta'>, sessionId: string): Conversation {
+  return createConversation({ botThread: s.sessionMeta?.[sessionId]?.botRole === 'thread' });
+}
+
 function bump(s: State, id: string, fn: (o: OpenSession) => void): Partial<State> {
   const o = s.open[id];
   if (!o) return {};
@@ -790,7 +795,7 @@ export const useStore = create<State>((set, get) => ({
     // `caughtUp`: what was said in the harness since was added to its transcript — the history shown is old
     const moved = !!existing && r.sessionId !== p.sessionId;
     const reload = moved || (!!existing && !!r.caughtUp);
-    const conv = existing && !reload ? existing.conv : createConversation();
+    const conv = existing && !reload ? existing.conv : botConv(get(), r.sessionId);
     if (existing && !reload) {
       // history already loaded from transcript; only apply live messages we have not seen
       // (runner history is replayed from spawn — transcript already contains them, so skip when history was loaded)
@@ -959,7 +964,7 @@ export const useStore = create<State>((set, get) => ({
     // an open conversation never keeps an empty folder once one is known: a resume would start it in the server's
     // own directory (the list, the caller's hint, later `session.info` / the refreshed list fill it)
     const cwdKnown = meta?.cwd || opts?.cwd || '';
-    if (!cur) set((s) => ({ open: { ...s.open, [sessionId]: { sessionId, cwd: cwdKnown, conv: createConversation(), version: 0, state: 'history', pending: [], loading: true, queue: [], draft: '', feedback: {} } } }));
+    if (!cur) set((s) => ({ open: { ...s.open, [sessionId]: { sessionId, cwd: cwdKnown, conv: botConv(get(), sessionId), version: 0, state: 'history', pending: [], loading: true, queue: [], draft: '', feedback: {} } } }));
     else set((s) => bump(s, sessionId, (o) => { o.loading = true; o.loadError = undefined; if (!o.cwd && cwdKnown) o.cwd = cwdKnown; }));
     if (opts?.focus !== false) get().openInPane(sessionId, opts?.mode ?? 'replace');
     void get().loadFeedback(sessionId);
@@ -969,7 +974,7 @@ export const useStore = create<State>((set, get) => ({
       extSeen.set(sessionId, seenOf(msgs));
       set((s) => bump(s, sessionId, (o) => {
         o.historyCursor = cursor;
-        const conv = createConversation();
+        const conv = botConv(get(), sessionId);
         applyTranscript(conv, msgs, { live: meta?.live === 'running' || meta?.live === 'waiting' });
         // re-apply live messages that arrived after spawn (they are also in transcript; duplicates are merged by id)
         o.conv = conv;
@@ -1028,7 +1033,7 @@ export const useStore = create<State>((set, get) => ({
       extSeen.set(sessionId, seen);
       set((s) => bump(s, sessionId, (x) => {
         if (grew) x.externalAt = Date.now();
-        const conv = createConversation();
+        const conv = botConv(get(), sessionId);
         applyTranscript(conv, msgs, { live: externalLive(x) });
         x.conv = conv;
         x.historyCursor = cursor;

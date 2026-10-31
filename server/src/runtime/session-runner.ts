@@ -38,6 +38,7 @@ import { accountModel, accountWindowOf, compactAtOk, effectiveCompact, familyWin
 import { localEnv } from './local-env.js';
 import { SESSIONS_ALLOWED, SESSIONS_SERVER, sessionsMcpEnabled, sessionsMcpServer } from '../sessions-mcp/tools.js';
 import { BOT_SELF_SERVER, botRuntime } from '../bots/runtime-hooks.js';
+import { stripBotTags } from '../bots/tags.js';
 import { PREVIEW_ALLOWED, PREVIEW_SERVER, previewEnabled, previewMcpServer, verifyInstructions } from '../preview/tools.js';
 
 /** A conversation above this share of the next model's window is compacted before the switch. */
@@ -1010,6 +1011,9 @@ export class SessionRunner extends EventEmitter {
       this.ultracodeFirst = false;
       this.send('/effort ultracode');
     }
+    // a bot's hidden blocks (<cw-bot-events> …) come only from the server (serverSend): from a window, IM, a peer or a
+    // tool, a leading one would reach the model while the bot page hides it from the user
+    text = stripBotTags(text);
     this.hasTranscript = true; // the CLI writes the JSONL with this message
     uuid ??= randomUUID(); // becomes the transcript uuid: how this conversation's own prompts are told from others
     this.known.add(uuid);

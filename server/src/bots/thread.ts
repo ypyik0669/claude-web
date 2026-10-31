@@ -13,6 +13,7 @@ import type { AuditLog } from './audit.js';
 import { makeGate, type GateHandle } from './policy/gate.js';
 import { policyLine } from './pipeline.js';
 import { eventsBlock, systemEntry } from './timeline.js';
+import { serverSend } from './tags.js';
 import { getLocale, tr } from '../i18n/index.js';
 
 export const KICKOFF_TAG = 'cw-bot-kickoff';
@@ -195,7 +196,7 @@ export class BotThreads extends EventEmitter {
     const now = Date.now();
     this.delivered.set(bot.id, now);
     await this.d.store.setThreadState(bot.id, { deliveredAt: now });
-    r.send(kickoffText(bot, template));
+    serverSend(r, kickoffText(bot, template));
     return r.sessionId;
   }
 
@@ -245,7 +246,7 @@ export class BotThreads extends EventEmitter {
     this.sendWhenIdle(bot.id, r, text);
   }
   private sendWhenIdle(botId: string, r: AgentDriver, text: string) {
-    const go = () => { try { r.send(text); } catch (e) { console.warn(`[bots] cannot tell ${botId}'s conversation about an answer:`, e); } };
+    const go = () => { try { serverSend(r, text); } catch (e) { console.warn(`[bots] cannot tell ${botId}'s conversation about an answer:`, e); } };
     if (r.state !== 'running' && r.state !== 'waiting') { go(); return; }
     const on = (s: string) => {
       if (s === 'idle') { r.off('state', on); go(); } else if (s === 'closed' || s === 'error') r.off('state', on);
