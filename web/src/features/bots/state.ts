@@ -1,22 +1,36 @@
 // 值班 Bot (spec 2026-10-30-duty-bots-design): the bots, their inbox, runs and load as the server keeps them, and the
 // Bot page over the main area. A small store of its own, like the 后台 page's; nothing goes into store/index.ts.
 import { create } from 'zustand';
-import type { AuditRow, Bot, BotDraft, BotGenerated, BotLoad, BotRun, BotStatus, BotTemplate, InboxAnswer, InboxItem, ServerEvent } from '@shared';
+import type { AuditRow, Bot, BotDraft, BotGenerated, BotLoad, BotRun, BotStatus, BotTemplate, BotTimelineEntry, InboxAnswer, InboxItem, ServerEvent } from '@shared';
 import { hideSheet, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { closeOtherPages, registerPage } from '@/features/sections/pages';
 import { markPageOpened } from '@/features/automation/state';
 import { tr } from '@/i18n';
 
+/** @deprecated removed in T12 */
 export type BotTab = 'routines' | 'runs' | 'policy' | 'memory' | 'self';
+
+export type BotProfileSection = 'profile' | 'computer' | 'routines' | 'policy' | 'memory' | 'usage';
 
 export interface BotsState {
   open: boolean;
   /** opened at least once: the page stays mounted from then on (hidden, never unmounted) */
   seen: boolean;
   bots: BotStatus[];
-  /** the bot the detail shows */
+  /** the bot whose conversation shows */
   selected?: string;
+  /** the middle column: the selected bot's conversation, or the New Bot page */
+  view: 'thread' | 'new';
+  /** the profile column (right) is showing; hidden, never unmounted */
+  profileOpen: boolean;
+  /** the profile section it was left on (scrolled back into view when it opens again) */
+  profileSection: BotProfileSection;
+  /** a phone shows one of these at a time (all three stay mounted) */
+  phoneScreen: 'roster' | 'thread' | 'profile';
+  /** each bot's timeline (system events, run / approval / draft / proposal cards), oldest first */
+  timeline: Record<string, BotTimelineEntry[]>;
+  /** @deprecated removed in T12 */
   tab: BotTab;
   /** the inbox (pending ones, and whatever done ones the server sent) */
   inbox: InboxItem[];
@@ -25,12 +39,14 @@ export interface BotsState {
   /** each bot's runs, newest first (at most RUNS_KEEP) */
   runs: Record<string, BotRun[]>;
   load: BotLoad;
-  /** the create flow is showing */
+  /** the create flow is showing
+   * @deprecated removed in T12 */
   creating: boolean;
-  /** the template the create flow opens on (a starter card on the empty page), else it opens on the three entries */
+  /** @deprecated removed in T12 — the template the create flow opens on (a starter card on the empty page), else it opens on the three entries */
   createTemplate?: string;
   templates: BotTemplate[];
-  /** a phone shows the inbox tab (its first screen); opening the page on a bot turns it off */
+  /** a phone shows the inbox tab (its first screen); opening the page on a bot turns it off
+   * @deprecated removed in T12 */
   phoneInbox: boolean;
 }
 
@@ -38,7 +54,8 @@ const RUNS_KEEP = 200;
 const EMPTY_LOAD: BotLoad = { running: 0, queued: 0, todayUsd: 0, weekEstimateUsd: 0, concurrency: 0 };
 
 export const useBots = create<BotsState>(() => ({
-  open: false, seen: false, bots: [], tab: 'routines', inbox: [], pending: 0, runs: {}, load: EMPTY_LOAD, creating: false, templates: [], phoneInbox: true,
+  open: false, seen: false, bots: [], view: 'thread', profileOpen: false, profileSection: 'profile', phoneScreen: 'roster', timeline: {},
+  tab: 'routines', inbox: [], pending: 0, runs: {}, load: EMPTY_LOAD, creating: false, templates: [], phoneInbox: true,
 }));
 
 const pendingOf = (inbox: InboxItem[]) => inbox.filter((i) => !i.done).length;
@@ -63,6 +80,31 @@ function upsertRun(run: BotRun): void {
   });
 }
 
+/** Merge entries into a bot's timeline: the same id replaces in place, the rest go in by time (oldest first). */
+function mergeTimeline(cur: BotTimelineEntry[], add: BotTimelineEntry[]): BotTimelineEntry[] {
+  const byId = new Map(cur.map((e) => [e.id, e] as const));
+  for (const e of add) byId.set(e.id, e);
+  // a Map keeps the first insertion's place, and the sort is stable: equal times keep their order
+  return [...byId.values()].sort((a, b) => a.at - b.at);
+}
+
+/** Timeline entries the server pushed or sent: a bot's array changes only when one of its entries came. */
+function upsertTimeline(entries: BotTimelineEntry[]): void {
+  if (!entries.length) return;
+  useBots.setState((s) => {
+    const by: Record<string, BotTimelineEntry[]> = {};
+    for (const e of entries) (by[e.botId] ??= []).push(e);
+    const timeline = { ...s.timeline };
+    for (const [botId, add] of Object.entries(by)) timeline[botId] = mergeTimeline(timeline[botId] ?? [], add);
+    return { timeline };
+  });
+}
+
+/** A bot's fields as known here, before the server's bots.changed says the same. */
+function patchBot(id: string, patch: Partial<BotStatus>): void {
+  useBots.setState((s) => (s.bots.some((b) => b.id === id) ? { bots: s.bots.map((b) => (b.id === id ? { ...b, ...patch } : b)) } : {}));
+}
+
 /** Show the page — on a bot, or as it was left. Returns true: it is on screen. */
 export function openBots(id?: string): boolean {
   closeOtherPages('bots');
@@ -78,7 +120,8 @@ export function closeBots(): void {
   if (useBots.getState().open) useBots.setState({ open: false });
 }
 
-/** Show a bot — on a phone that leaves the inbox tab for it. */
+/** Show a bot — on a phone that leaves the inbox tab for it.
+ * @deprecated removed in T12 (openThread) */
 export function selectBot(id: string): void { useBots.setState({ selected: id, phoneInbox: false }); }
 
 /** The inbox badge: how many items wait for an answer. */
@@ -131,6 +174,7 @@ export async function unleashBot(id: string, on: boolean): Promise<void> {
   try { await ws.request({ kind: 'bots.unleash', id, on }); } catch (e) { useStore.getState().toast(tr('操作失败：{message}', { message: msg(e) })); }
 }
 
+/** @deprecated removed in T12 */
 export function setBotTab(tab: BotTab): void { useBots.setState({ tab }); }
 
 /** An edit of a bot. No local copy changes: the server answers with bots.changed. Resolves false when it failed. */
@@ -138,10 +182,12 @@ export async function updateBot(id: string, patch: Partial<Bot>): Promise<boolea
   try { await ws.request({ kind: 'bots.update', id, patch }); return true; } catch (e) { useStore.getState().toast(tr('保存失败：{message}', { message: msg(e) })); return false; }
 }
 
-/** Open the create flow — on a template's preview when one is given. */
+/** Open the create flow — on a template's preview when one is given.
+ * @deprecated removed in T12 (view: 'new' + startBot) */
 export function startCreate(templateId?: string): void { useBots.setState({ creating: true, createTemplate: templateId }); }
 
-/** Create a bot from a reviewed draft. The new bot, or null when it failed (toasted). */
+/** Create a bot from a reviewed draft. The new bot, or null when it failed (toasted).
+ * @deprecated removed in T12 (startBot) */
 export async function createBot(draft: BotDraft['bot']): Promise<BotStatus | null> {
   try {
     const bot = await ws.request<BotStatus>({ kind: 'bots.create', bot: draft });
@@ -150,13 +196,66 @@ export async function createBot(draft: BotDraft['bot']): Promise<BotStatus | nul
   } catch (e) { useStore.getState().toast(tr('创建失败：{message}', { message: msg(e) })); return null; }
 }
 
-/** One sentence → a draft (the server asks a model). Null when it failed (toasted). */
+/** One sentence → a draft (the server asks a model). Null when it failed (toasted).
+ * @deprecated removed in T12 (the server's bots.generate is going away) */
 export async function generate(text: string, cwd: string): Promise<BotGenerated | null> {
   try {
     const d = await ws.request<BotGenerated>({ kind: 'bots.generate', text, cwd });
     if (!d || typeof d !== 'object') throw new Error(tr('没有拿到草案'));
     return d;
   } catch (e) { useStore.getState().toast(tr('生成失败：{message}', { message: msg(e) })); return null; }
+}
+
+// ---- the bot's own conversation (chat-first redesign) ----
+
+/** A page of a bot's timeline: the newest page replaces what is here; an older one (`before`) is merged in front. Quiet on failure. */
+export async function loadTimeline(id: string, before?: number): Promise<void> {
+  try {
+    const list = await ws.request<BotTimelineEntry[]>({ kind: 'bots.timeline.list', id, ...(before !== undefined ? { before } : {}) });
+    if (!Array.isArray(list)) return;
+    if (before === undefined) useBots.setState((s) => ({ timeline: { ...s.timeline, [id]: mergeTimeline([], list) } }));
+    else upsertTimeline(list.map((e) => ({ ...e, botId: id })));
+  } catch { /* an older server: no timeline */ }
+}
+
+/** The user has seen the bot's conversation: the server keeps that, the count here goes to 0 now. */
+export async function markSeen(id: string): Promise<void> {
+  patchBot(id, { unseen: 0 });
+  try { await ws.request({ kind: 'bots.thread.seen', id }); } catch { /* the next bots.changed says it again */ }
+}
+
+/**
+ * Show a bot's main conversation: the server opens (or makes) it, this window opens it as a conversation that is not
+ * put in the layout (the thread column shows it), then it is marked seen and its timeline loaded.
+ * The conversation id, or null when it failed (toasted).
+ */
+export async function openThread(id: string): Promise<string | null> {
+  let sessionId: string;
+  try {
+    const r = await ws.request<{ sessionId: string }>({ kind: 'bots.thread.open', id });
+    if (!r?.sessionId) throw new Error(tr('没有拿到对话'));
+    sessionId = r.sessionId;
+  } catch (e) { useStore.getState().toast(tr('打开失败：{message}', { message: msg(e) })); return null; }
+  const bot = useBots.getState().bots.find((b) => b.id === id);
+  // a phase-1 bot got its conversation just now: known here before the server's bots.changed says so
+  if (bot && bot.threadId !== sessionId) patchBot(id, { threadId: sessionId });
+  useBots.setState({ selected: id, view: 'thread', phoneScreen: 'thread' });
+  try { await useStore.getState().openSession({ sessionId, cwd: bot?.cwd ?? '' }, 'none'); }
+  catch (e) { useStore.getState().toast(tr('打开失败：{message}', { message: msg(e) })); return null; }
+  await markSeen(id);
+  await loadTimeline(id);
+  return sessionId;
+}
+
+/** A new bot: the server makes it and its conversation (the bot speaks first), then that conversation opens. Null when it failed (toasted). */
+export async function startBot(p: { name: string; avatar?: string; templateId?: string; cwd: string }): Promise<BotStatus | null> {
+  let made: BotStatus | null;
+  try { made = await ws.request<BotStatus>({ kind: 'bots.start', ...p }); } catch (e) { useStore.getState().toast(tr('创建失败：{message}', { message: msg(e) })); return null; }
+  if (!made?.id) return null;
+  const bot = made;
+  useBots.setState((s) => ({ bots: s.bots.some((b) => b.id === bot.id) ? s.bots : [...s.bots, bot] }));
+  await openThread(bot.id);
+  return bot;
 }
 
 /** A bot's latest runs from the server (replacing what the pushes collected so far). Quiet when the server has none. */
@@ -195,16 +294,18 @@ export function installBots(): void {
       case 'bots.run': upsertRun(e.run); return;
       case 'bots.inbox': upsertInbox(e.item); return;
       case 'bots.load': useBots.setState({ load: e.load }); return;
+      case 'bots.timeline': upsertTimeline([e.entry]); return;
     }
   });
   refresh();
-  // ui-smoke / debugging: put bots / inbox / runs in without a server (the server's next push replaces them)
+  // ui-smoke / debugging: put bots / inbox / runs / timeline in without a server (the server's next push replaces them)
   (window as any).__cwBots = {
-    inject: (p: { bots?: BotStatus[]; inbox?: InboxItem[]; runs?: BotRun[]; load?: BotLoad }) => {
+    inject: (p: { bots?: BotStatus[]; inbox?: InboxItem[]; runs?: BotRun[]; load?: BotLoad; timeline?: BotTimelineEntry[] }) => {
       if (p.bots) useBots.setState({ bots: p.bots });
       if (p.inbox) setInbox(p.inbox);
       for (const r of p.runs ?? []) upsertRun(r);
       if (p.load) useBots.setState({ load: p.load });
+      if (p.timeline) upsertTimeline(p.timeline);
     },
     state: () => useBots.getState(),
     open: openBots,

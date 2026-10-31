@@ -43,6 +43,54 @@ describe('bots model', () => {
   });
 });
 
+import { rosterGroups, rowState, lastLineOf, cadenceText, pendingByBot } from './model';
+const sb = (id: string, p: any = {}): any => ({ id, name: id, state: 'idle', pendingInbox: 0, unseen: 0, ...p });
+const item = (id: string, botId: string, p: any = {}): any => ({ id, kind: 'approval', botId, at: 1, title: 't', ...p });
+describe('bots roster', () => {
+  it('rosterGroups: who needs you first, the manager apart, hidden last; pinned then the latest line within a group', () => {
+    const g = rosterGroups([
+      sb('m', { manager: true, lastLine: { text: 'x', at: 99 } }),
+      sb('old', { lastLine: { text: 'x', at: 1 } }),
+      sb('new', { lastLine: { text: 'x', at: 5 } }),
+      sb('pin', { pinned: true, lastLine: { text: 'x', at: 0 } }),
+      sb('none'),
+      sb('ask', { lastLine: { text: 'x', at: 2 } }),
+      sb('attn', { state: 'attention' }),
+      sb('hid', { hidden: true, state: 'attention' }),
+    ], [item('i1', 'ask'), item('i2', 'old', { done: { at: 2, answer: 'approve' } })]);
+    expect(g.manager?.id).toBe('m');
+    expect(g.attention.map((b) => b.id)).toEqual(['ask', 'attn']);
+    expect(g.rest.map((b) => b.id)).toEqual(['pin', 'new', 'old', 'none']);
+    expect(g.hidden.map((b) => b.id)).toEqual(['hid']);
+  });
+  it('rosterGroups: no manager → undefined', () => { expect(rosterGroups([sb('a')], []).manager).toBeUndefined(); });
+  it('pendingByBot counts the open items per bot', () => {
+    expect(pendingByBot([item('1', 'a'), item('2', 'a', { kind: 'draft' }), item('3', 'b', { done: { at: 1, answer: 'reject' } })])).toEqual({ a: 2 });
+  });
+  it('rowState: needs you, error, working, fresh, idle', () => {
+    expect(rowState(sb('a', { state: 'attention' }))).toBe('attention');
+    expect(rowState(sb('a', { pendingInbox: 1 }))).toBe('attention');
+    expect(rowState(sb('a', { error: { reason: 'r' }, state: 'running', unseen: 2 }))).toBe('error');
+    expect(rowState(sb('a', { state: 'running', unseen: 2 }))).toBe('working');
+    expect(rowState(sb('a', { state: 'queued' }))).toBe('working');
+    expect(rowState(sb('a', { unseen: 2 }))).toBe('fresh');
+    expect(rowState(sb('a', { state: 'paused' }))).toBe('idle');
+    expect(rowState(sb('a'))).toBe('idle');
+  });
+  it('lastLineOf: waiting items, then its last line, then its title', () => {
+    expect(lastLineOf(sb('a', { lastLine: { text: 'hi', at: 1 }, title: 'T' }), 3)).toBe('3 件事等你点头');
+    expect(lastLineOf(sb('a', { lastLine: { text: 'hi', at: 1 }, title: 'T' }), 0)).toBe('hi');
+    expect(lastLineOf(sb('a', { title: 'T' }), 0)).toBe('T');
+    expect(lastLineOf(sb('a'), 0)).toBe('');
+  });
+  it('cadenceText in words', () => {
+    expect(cadenceText({ cron: '30 7 * * 1-5' } as any)).toBe('工作日 07:30');
+    expect(cadenceText({ everyMinutes: 60 } as any)).toBe('每小时');
+    expect(cadenceText({ cron: 'odd thing' } as any)).toBe('odd thing');
+    expect(cadenceText({} as any)).toBe('');
+  });
+});
+
 import { normalizeDraft, draftFromTemplate, draftProblem, fasterThanHourly, lastUserText, underMinimum, isAbsolutePath } from './model';
 const draft = (p: any = {}): any => ({ name: 'n', cwd: '/w', charter: { role: 'r', sources: [] }, tier: 'balanced', policy: { rules: [] }, budget: {}, outputs: [{ kind: 'inbox' }], routines: [], ...p });
 describe('bots create flow', () => {

@@ -4,11 +4,11 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const listeners: ((e: any) => void)[] = [];
 const sent: any[] = [];
-/** what the next requests answer (null by default) */
+/** what the next requests answer (null by default; a function answers per request) */
 let reply: any = null;
 vi.mock('@/ws/client', () => ({
   authToken: () => null,
-  ws: { onStatus: null, connect() {}, on(l: (e: any) => void) { listeners.push(l); return () => {}; }, async request(req: any) { sent.push(req); return reply; } },
+  ws: { onStatus: null, connect() {}, on(l: (e: any) => void) { listeners.push(l); return () => {}; }, async request(req: any) { sent.push(req); return typeof reply === 'function' ? reply(req) : reply; } },
 }));
 
 const mem = new Map<string, string>();
@@ -99,5 +99,106 @@ describe('bots page state', () => {
     push({ kind: 'bots.load', load: { running: 1, queued: 2, todayUsd: 0.5, weekEstimateUsd: 3, concurrency: 2 } });
     expect(bots.useBots.getState().bots.map((b) => b.id)).toEqual(['x']);
     expect(bots.useBots.getState().load.queued).toBe(2);
+  });
+});
+
+describe('bots timeline and the main conversation', () => {
+  const entry = (id: string, at: number, p: any = {}) => ({ id, botId: 'b', at, kind: 'system', text: id, ...p });
+  const ids = (botId = 'b') => (bots.useBots.getState().timeline[botId] ?? []).map((e) => e.id);
+  beforeEach(() => { reply = null; sent.length = 0; bots.useBots.setState({ bots: [], timeline: {}, selected: undefined, view: 'thread' }); });
+
+  it('a timeline push: the same id replaces in place, a new one goes in by time (oldest first)', () => {
+    push({ kind: 'bots.timeline', entry: entry('a', 1) });
+    push({ kind: 'bots.timeline', entry: entry('c', 3) });
+    push({ kind: 'bots.timeline', entry: entry('b', 2) });
+    expect(ids()).toEqual(['a', 'b', 'c']);
+    push({ kind: 'bots.timeline', entry: entry('b', 2, { text: 'B' }) });
+    expect(ids()).toEqual(['a', 'b', 'c']);
+    expect(bots.useBots.getState().timeline.b[1].text).toBe('B');
+  });
+
+  it('a push for one bot keeps the other bots\' arrays (stable references for selectors)', () => {
+    push({ kind: 'bots.timeline', entry: entry('a', 1, { botId: 'x' }) });
+    const before = bots.useBots.getState().timeline.x;
+    push({ kind: 'bots.timeline', entry: entry('a', 1) });
+    expect(bots.useBots.getState().timeline.x).toBe(before);
+  });
+
+  it('loadTimeline: the newest page replaces, an older page (before) goes in front, without doubles', async () => {
+    reply = () => [entry('c', 3), entry('d', 4)];
+    await bots.loadTimeline('b');
+    expect(sent.at(-1)).toMatchObject({ kind: 'bots.timeline.list', id: 'b' });
+    expect(ids()).toEqual(['c', 'd']);
+    reply = () => [entry('a', 1), entry('b', 2), entry('c', 3)];
+    await bots.loadTimeline('b', 3);
+    expect(sent.at(-1)).toMatchObject({ kind: 'bots.timeline.list', id: 'b', before: 3 });
+    expect(ids()).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('openThread: open the thread, open it as a conversation outside the layout, mark it seen, load the timeline', async () => {
+    const { useStore } = await import('@/store');
+    const orig = useStore.getState().openSession;
+    const opened: any[] = [];
+    useStore.setState({ openSession: async (p: any, target: any) => { opened.push([p, target]); return p.sessionId; } } as any);
+    bots.useBots.setState({ bots: [{ id: 'b', name: 'B', cwd: '/w', state: 'idle', unseen: 2 } as any], view: 'new' });
+    reply = (r: any) => (r.kind === 'bots.thread.open' ? { sessionId: 's1' } : r.kind === 'bots.timeline.list' ? [entry('a', 1)] : null);
+    try {
+      expect(await bots.openThread('b')).toBe('s1');
+      expect(sent.map((r) => r.kind)).toEqual(['bots.thread.open', 'bots.thread.seen', 'bots.timeline.list']);
+      expect(opened).toEqual([[{ sessionId: 's1', cwd: '/w' }, 'none']]);
+      const s = bots.useBots.getState();
+      expect(s).toMatchObject({ selected: 'b', view: 'thread', phoneScreen: 'thread' });
+      // a phase-1 bot gets its thread now: the id is there before the server's bots.changed
+      expect(s.bots[0]).toMatchObject({ threadId: 's1', unseen: 0 });
+      expect(ids()).toEqual(['a']);
+    } finally { useStore.setState({ openSession: orig } as any); }
+  });
+
+  it('openThread: a failure is toasted and opens nothing', async () => {
+    const { useStore } = await import('@/store');
+    const orig = { openSession: useStore.getState().openSession, toast: useStore.getState().toast };
+    const toasts: string[] = []; let opened = 0;
+    useStore.setState({ openSession: async () => { opened++; return ''; }, toast: (t: string) => void toasts.push(t) } as any);
+    bots.useBots.setState({ bots: [{ id: 'b', name: 'B', cwd: '/w', state: 'idle', unseen: 0 } as any] });
+    reply = () => { throw new Error('nope'); };
+    try {
+      expect(await bots.openThread('b')).toBeNull();
+      expect(opened).toBe(0);
+      expect(toasts).toHaveLength(1);
+    } finally { useStore.setState(orig as any); }
+  });
+
+  it('startBot: bots.start, then the new bot\'s thread is opened', async () => {
+    const { useStore } = await import('@/store');
+    const orig = useStore.getState().openSession;
+    useStore.setState({ openSession: async (p: any) => p.sessionId } as any);
+    const made = { id: 'n', name: 'N', cwd: '/w', state: 'idle', unseen: 0, threadId: 's2' };
+    reply = (r: any) => (r.kind === 'bots.start' ? made : r.kind === 'bots.thread.open' ? { sessionId: 's2' } : r.kind === 'bots.timeline.list' ? [] : null);
+    try {
+      const b = await bots.startBot({ name: 'N', cwd: '/w', templateId: 't' });
+      expect(b?.id).toBe('n');
+      expect(sent[0]).toEqual({ kind: 'bots.start', name: 'N', cwd: '/w', templateId: 't' });
+      expect(sent.map((r) => r.kind)).toEqual(['bots.start', 'bots.thread.open', 'bots.thread.seen', 'bots.timeline.list']);
+      expect(bots.useBots.getState()).toMatchObject({ selected: 'n', view: 'thread' });
+      expect(bots.useBots.getState().bots.map((x) => x.id)).toEqual(['n']);
+    } finally { useStore.setState({ openSession: orig } as any); }
+  });
+
+  it('markSeen tells the server and clears the count here', async () => {
+    bots.useBots.setState({ bots: [{ id: 'b', name: 'B', state: 'idle', unseen: 4 } as any] });
+    await bots.markSeen('b');
+    expect(sent).toEqual([{ kind: 'bots.thread.seen', id: 'b' }]);
+    expect(bots.useBots.getState().bots[0].unseen).toBe(0);
+  });
+
+  it('__cwBots.inject takes a timeline too', () => {
+    (window as any).__cwBots.inject({ timeline: [entry('a', 1), entry('z', 2, { botId: 'y' })] });
+    expect(ids()).toEqual(['a']);
+    expect(ids('y')).toEqual(['z']);
+  });
+
+  it('the profile column and the phone screen have defaults', () => {
+    const s = bots.useBots.getInitialState();
+    expect([s.profileOpen, s.profileSection, s.phoneScreen, s.view]).toEqual([false, 'profile', 'roster', 'thread']);
   });
 });

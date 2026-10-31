@@ -2,6 +2,7 @@
 // inbox grouped by kind, a routine's monthly cost. No store, no wire.
 import type { ActionClass, BotDraft, BotRun, BotGenerated, BotOutput, BotStatus, BotTemplate, BotTier, InboxItem, InboxKind, PolicyLevel, Routine } from '@shared';
 import { tr } from '@/i18n';
+import { scheduleText } from '@/features/automation/schedule-text';
 
 export function stateLabel(s: BotStatus['state']): string {
   switch (s) {
@@ -23,9 +24,64 @@ export function runCost(run: Pick<BotRun, 'costUsd' | 'costEstimated'>): string 
   return run.costEstimated ? tr('约 {usd}', { usd: n }) : n;
 }
 
+// ---- the roster (chat-first redesign) ----
+
+/** How many items wait for an answer, per bot (bots with none are left out). */
+export function pendingByBot(inbox: InboxItem[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const i of inbox) if (!i.done) out[i.botId] = (out[i.botId] ?? 0) + 1;
+  return out;
+}
+
+/** A roster row's state dot: needs you (amber + count) > error > working (the avatar moves) > something new (blue) > idle. */
+export function rowState(b: BotStatus): 'attention' | 'fresh' | 'working' | 'error' | 'idle' {
+  if (b.state === 'attention' || b.pendingInbox > 0) return 'attention';
+  if (b.error) return 'error';
+  if (b.state === 'running' || b.state === 'queued') return 'working';
+  if (b.unseen > 0) return 'fresh';
+  return 'idle';
+}
+
+/** Pinned first, then the latest line, then by name. */
+const rosterOrder = (a: BotStatus, b: BotStatus) =>
+  Number(!!b.pinned) - Number(!!a.pinned)
+  || (b.lastLine?.at ?? 0) - (a.lastLine?.at ?? 0)
+  || a.name.localeCompare(b.name);
+
+/**
+ * The roster's groups: who needs you (it says so, or has an open inbox item), the rest, the hidden ones (folded at
+ * the bottom; even when they need you — they don't notify), and the manager (★) apart.
+ */
+export function rosterGroups(bots: BotStatus[], inbox: InboxItem[]): { attention: BotStatus[]; rest: BotStatus[]; hidden: BotStatus[]; manager?: BotStatus } {
+  const waiting = pendingByBot(inbox);
+  const attention: BotStatus[] = [], rest: BotStatus[] = [], hidden: BotStatus[] = [];
+  let manager: BotStatus | undefined;
+  for (const b of bots) {
+    if (b.manager && !manager) manager = b;
+    else if (b.hidden) hidden.push(b);
+    else if (rowState(b) === 'attention' || waiting[b.id]) attention.push(b);
+    else rest.push(b);
+  }
+  return { attention: attention.sort(rosterOrder), rest: rest.sort(rosterOrder), hidden: hidden.sort(rosterOrder), manager };
+}
+
+/** A row's second line: what waits for you, else the last thing it said, else its 职位. */
+export function lastLineOf(b: BotStatus, pendingForBot: number): string {
+  if (pendingForBot > 0) return tr('{n} 件事等你点头', { n: pendingForBot });
+  return b.lastLine?.text || b.title || '';
+}
+
+/** A routine's rhythm in words (工作日 07:30 · 每小时); a cron that has no words reads as itself; none → ''. */
+export function cadenceText(r: Pick<Routine, 'cron' | 'everyMinutes'>): string {
+  if (r.cron?.trim()) return scheduleText({ cron: r.cron.trim(), everyMinutes: 0 }).text;
+  if (r.everyMinutes && r.everyMinutes > 0) return scheduleText({ everyMinutes: r.everyMinutes }).text;
+  return '';
+}
+
 const STATE_ORDER: Record<BotStatus['state'], number> = { attention: 0, running: 1, queued: 2, idle: 3, paused: 4 };
 
-/** The manager first, then who needs you, who runs, who waits, who idles, who is paused; by name within each. */
+/** The manager first, then who needs you, who runs, who waits, who idles, who is paused; by name within each.
+ * @deprecated removed in T12 */
 export function sortBots(bots: BotStatus[]): BotStatus[] {
   return [...bots].sort((a, b) =>
     Number(!!b.manager) - Number(!!a.manager)
@@ -127,17 +183,20 @@ export function monthlyEstimate(r: Routine, perRunUsd: number): number {
 
 // ---- the create flow (Task 18) ----
 
-/** What one model wake-up costs, roughly — the month estimate of the create preview. */
+/** What one model wake-up costs, roughly — the month estimate of a routine. */
 export const PER_RUN_USD = 0.05;
-/** A generated routine never wakes more often than this (the server's generate clamps the same). */
+/** A generated routine never wakes more often than this (the server's generate clamps the same).
+ * @deprecated removed in T12 */
 export const MIN_EVERY_MINUTES = 15;
 
-/** Wakes more often than once an hour: the preview shows its month estimate. */
+/** Wakes more often than once an hour: the preview shows its month estimate.
+ * @deprecated removed in T12 */
 export function fasterThanHourly(r: Pick<Routine, 'cron' | 'everyMinutes'>): boolean {
   return runsPerMonth(r) > 30 * 24;
 }
 
-/** Wakes more often than every MIN_EVERY_MINUTES: the preview warns (a generated draft never asks for that). */
+/** Wakes more often than every MIN_EVERY_MINUTES: the preview warns (a generated draft never asks for that).
+ * @deprecated removed in T12 */
 export function underMinimum(r: Pick<Routine, 'cron' | 'everyMinutes'>): boolean {
   return runsPerMonth(r) > MONTH_MINUTES / MIN_EVERY_MINUTES;
 }
@@ -146,6 +205,7 @@ export function underMinimum(r: Pick<Routine, 'cron' | 'everyMinutes'>): boolean
  * A draft as the preview edits it: every routine complete (id may stay '' — the server mints it), the inbox always
  * among the outputs. `clamped`: the routines whose interval was raised to MIN_EVERY_MINUTES — named by the server's
  * bots.generate (it clamps first), plus any this still finds under it (an older server); the wire field is dropped.
+ * @deprecated removed in T12
  */
 export function normalizeDraft(g: BotGenerated, defaultTier: BotTier = 'balanced'): { draft: BotDraft['bot']; clamped: string[] } {
   const { clamped: named, ...d } = g;
@@ -163,12 +223,14 @@ export function normalizeDraft(g: BotGenerated, defaultTier: BotTier = 'balanced
   };
 }
 
-/** A template as a draft in `cwd`. */
+/** A template as a draft in `cwd`.
+ * @deprecated removed in T12 */
 export function draftFromTemplate(t: BotTemplate, cwd: string): BotDraft['bot'] {
   return normalizeDraft({ ...t.bot, cwd }).draft;
 }
 
-/** What is wrong with a draft before it can be created, or null. */
+/** What is wrong with a draft before it can be created, or null.
+ * @deprecated removed in T12 */
 export function draftProblem(d: BotDraft['bot']): string | null {
   if (!d.name.trim()) return tr('Bot 需要一个名字');
   if (!d.cwd.trim()) return tr('选一个工作目录');
@@ -188,10 +250,12 @@ export function draftProblem(d: BotDraft['bot']): string | null {
   return null;
 }
 
-/** C:\x, C:/x, \\server\x, /x — not ~/x: the server takes the path as typed (path.isAbsolute) and refuses that */
+/** C:\x, C:/x, \\server\x, /x — not ~/x: the server takes the path as typed (path.isAbsolute) and refuses that
+ * @deprecated removed in T12 */
 export const isAbsolutePath = (p: string): boolean => /^(?:[a-zA-Z]:[\\/]|[\\/])/.test(p.trim());
 
-/** The text of the latest prompt the user typed in a conversation (not a meta one, not one from another conversation). */
+/** The text of the latest prompt the user typed in a conversation (not a meta one, not one from another conversation).
+ * @deprecated removed in T12 */
 export function lastUserText(items: readonly { kind: string; text?: string; meta?: boolean; from?: unknown }[]): string {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
