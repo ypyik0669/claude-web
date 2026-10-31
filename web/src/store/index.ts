@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { readView, VIEW_KEY } from '@/features/sidebar/view';
 import type { RoutedInfo, AgentInfo, AgentKind, AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionEnv, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, SourceStatus, Workspace } from '@shared';
 import { withDefaultMode } from './default-mode';
-import { decodeAttachments, findChainUuidBefore } from '@/model/conversation';
+import { decodeAttachments, findChainUuidBefore, isPrompt } from '@/model/conversation';
 import { activeGroup, chatTile, deriveActive, hasLegacyLayout, initialLayout, layoutReducer, migrateLegacy, migrateWorkbench, needsSimplifiedNotice, panelToggleEffect, sanitizeLayout, SIMPLIFIED_NOTICE_KEY, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
 import { PaneContext, winId } from './paneContext';
 import { useContext } from 'react';
@@ -884,6 +884,8 @@ export const useStore = create<State>((set, get) => ({
   async editAndResend(sessionId, userItemId, text) {
     const o = get().open[sessionId];
     if (!o) return;
+    // a bot's hidden kickoff / 「已批准」 is the server's, not something to edit
+    if (o.conv.items.some((i) => i.id === userItemId && i.kind === 'user' && i.hidden)) return;
     const anchor = findChainUuidBefore(o.conv, userItemId);
     if (anchor === undefined) throw new Error(tr('找不到这条消息'));
     const orig = o.conv.items.find((i) => i.id === userItemId);
@@ -904,7 +906,7 @@ export const useStore = create<State>((set, get) => ({
   async rerun(sessionId, userItemId) {
     const o = get().open[sessionId];
     const it = o?.conv.items.find((i) => i.id === userItemId);
-    if (!o || it?.kind !== 'user') return;
+    if (!o || it?.kind !== 'user' || it.hidden) return;
     // the last thing asked (a turn that failed, an answer to try again — user report: 重跑 opened a new conversation):
     // asked again right here. An earlier one would leave the turns after it behind, so that one still forks.
     if (isLastPrompt(o.conv.items, userItemId)) {
@@ -1278,9 +1280,9 @@ useStore.subscribe((s, prev) => {
 });
 
 /** Whether `userItemId` is the conversation's last prompt (no message typed after it). */
-export function isLastPrompt(items: readonly { kind: string; id: string; meta?: boolean }[], userItemId: string): boolean {
+export function isLastPrompt(items: readonly { kind: string; id: string; meta?: boolean; hidden?: boolean }[], userItemId: string): boolean {
   const at = items.findIndex((i) => i.id === userItemId);
-  return at >= 0 && !items.slice(at + 1).some((i) => i.kind === 'user' && !i.meta);
+  return at >= 0 && isPrompt(items[at]) && !items.slice(at + 1).some(isPrompt);
 }
 
 const dataUrlImage = (u: string): { mediaType: string; data: string } | null => {

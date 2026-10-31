@@ -600,3 +600,47 @@ describe('prompt suggestions (phase 2 spec §2)', () => {
     expect(c.suggestion).toBeUndefined();
   });
 });
+
+// 值班 Bot, chat first: the server prepends what happened since (<cw-bot-events>) and sends the kickoff and the
+// 「已批准…继续」 itself — words for the model, not the user's
+describe('bot thread: hidden prefixes and hidden messages', () => {
+  const user = (uuid: string, text: string) => ({ type: 'user', uuid, timestamp: '2026-10-31T09:00:00Z', message: { role: 'user', content: [{ type: 'text', text }] }, parent_tool_use_id: null });
+  const reply = (id: string, text: string) => ({ type: 'assistant', uuid: `w-${id}`, message: { id, role: 'assistant', content: [{ type: 'text', text }] }, parent_tool_use_id: null });
+
+  it('strips the events prefix and keeps what the user typed', () => {
+    const d = decodeAttachments('<cw-bot-events>\n- 9:41 例行「早间简报」完成：三个新 issue\n- 9:42 你批准了：git push\n</cw-bot-events>\n\n给我推一下');
+    expect(d.text).toBe('给我推一下');
+    expect(d.botEvents).toContain('你批准了：git push');
+    expect(d.hidden).toBeUndefined();
+    const c = createConversation();
+    applyTranscript(c, [user('u1', '<cw-bot-events>\n- 9:42 你批准了：git push\n</cw-bot-events>\n\n给我推一下')]);
+    expect((c.items[0] as UserItem).text).toBe('给我推一下');
+    expect((c.items[0] as UserItem).hidden).toBeUndefined();
+    // only a leading block is the server's
+    expect(decodeAttachments('see <cw-bot-events>x</cw-bot-events>').text).toBe('see <cw-bot-events>x</cw-bot-events>');
+  });
+
+  it('the kickoff and the tagged 已批准 continue are hidden; plain 已批准 typed by the user is not', () => {
+    expect(decodeAttachments('<cw-bot-kickoff>\n你是 晨报……\n</cw-bot-kickoff>').hidden).toBe(true);
+    expect(decodeAttachments('<cw-bot-continue>已批准：git push，继续</cw-bot-continue>').hidden).toBe(true);
+    expect(decodeAttachments('<cw-bot-events>\n- x\n</cw-bot-events>\n\n<cw-bot-continue>已批准，继续</cw-bot-continue>').hidden).toBe(true);
+    expect(decodeAttachments('已批准').hidden).toBeUndefined();
+    const c = createConversation();
+    applyMessage(c, { type: 'prompt_suggestion', suggestion: 'run the tests', uuid: 'ps1', session_id: 's' });
+    applyMessage(c, user('k', '<cw-bot-kickoff>hi</cw-bot-kickoff>'));
+    expect((c.items[0] as UserItem).hidden).toBe(true);
+    expect((c.items[0] as UserItem).meta).toBeFalsy();
+    expect(c.suggestion).toBe('run the tests'); // not someone saying something
+    expect(c.turnStartedAt).toBe(now); // but it does start the turn
+  });
+
+  it('a hidden message still anchors its turn: one turn with the reply', () => {
+    const c = createConversation();
+    applyTranscript(c, [user('k', '<cw-bot-kickoff>hi</cw-bot-kickoff>'), reply('m1', '嗨，我是 晨报'), user('u1', '早'), reply('m2', '早'), user('c', '<cw-bot-continue>已批准，继续</cw-bot-continue>'), reply('m3', '推好了')]);
+    const turns = groupTurns(c.items);
+    expect(turns.map((t) => [t.user?.id, t.user?.hidden ?? false, t.body.map((b) => b.id)])).toEqual([
+      ['k', true, ['m1']], ['u1', false, ['m2']], ['c', true, ['m3']],
+    ]);
+    expect(turnItems(c, 'k').map((i) => i.id)).toEqual(['k', 'm1']);
+  });
+});

@@ -516,6 +516,13 @@ describe('isLastPrompt (重跑 the last one asks again in place; an earlier one 
     expect(isLastPrompt(items, 'u1')).toBe(false);
     expect(isLastPrompt(items, 'nope')).toBe(false);
   });
+  it('a bot conversation\'s hidden kickoff / 已批准 is never the prompt, and does not make the one before it older', async () => {
+    const { isLastPrompt } = await import('./index');
+    const items = [{ kind: 'user', id: 'k', hidden: true }, { kind: 'assistant', id: 'a0' }, { kind: 'user', id: 'u1' }, { kind: 'assistant', id: 'a1' }, { kind: 'user', id: 'c', hidden: true }, { kind: 'assistant', id: 'a2' }];
+    expect(isLastPrompt(items, 'u1')).toBe(true);
+    expect(isLastPrompt(items, 'c')).toBe(false);
+    expect(isLastPrompt(items, 'k')).toBe(false);
+  });
 });
 
 // 2026-10-26 QA: the permission chip of a conversation that is not running shows the server's answer to

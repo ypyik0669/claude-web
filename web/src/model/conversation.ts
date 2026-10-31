@@ -53,6 +53,9 @@ export interface UserItem {
   /** 跨对话工具: sent by Claude in another conversation (server sessions-mcp `<cw-from>`) */
   from?: { sessionId: string; title: string };
   meta?: boolean;
+  /** 值班 Bot: sent by the server, not typed (the kickoff, the 「已批准…继续」 after a thread approval). Still starts its
+   *  turn (unlike `meta`), but it is no prompt: not shown, not edited, re-run or rewound to, does not spend a suggestion */
+  hidden?: boolean;
   raw?: unknown;
 }
 export interface AssistantItem {
@@ -196,6 +199,17 @@ function contentImages(content: unknown): string[] {
 
 function isToolResultOnly(content: unknown): boolean {
   return Array.isArray(content) && content.length > 0 && content.every((b: any) => b?.type === 'tool_result');
+}
+
+/** A whole message the server sent for a 值班 Bot (`decodeAttachments` → hidden). */
+function isBotHidden(content: unknown): boolean {
+  const text = typeof content === 'string' ? content : Array.isArray(content) ? content.filter((b: any) => b?.type === 'text').map((b: any) => b.text).join('\n') : '';
+  return text.includes('<cw-bot-') && !!decodeAttachments(text).hidden;
+}
+
+/** A message the user wrote: not a meta line (a reminder, command output), not one the server sent for a bot. */
+export function isPrompt(it: { kind: string; meta?: boolean; hidden?: boolean }): boolean {
+  return it.kind === 'user' && !it.meta && !it.hidden;
 }
 
 function findItem(c: Conversation, parent: string | null | undefined, pred: (i: Item) => boolean): Item | undefined {
@@ -506,10 +520,21 @@ export function sessionRefMarker(id: string, title: string): string {
 
 // a whole message from another conversation (server sessions-mcp/format.ts `fromMarker`)
 const FROM_RE = /^<cw-from ([^>]*)>\n([\s\S]*)\n<\/cw-from>$/;
+// 值班 Bot (server bots/thread.ts): what happened since the user's last message, ahead of what they typed — for the model
+const BOT_EVENTS_RE = /^<cw-bot-events>([\s\S]*?)<\/cw-bot-events>\n*/;
+// …and whole messages the server sends on the bot's behalf: the kickoff, the 「已批准…继续」 after a thread approval
+const BOT_HIDDEN_RE = /^<(cw-bot-kickoff|cw-bot-continue)>[\s\S]*<\/\1>$/;
 
-export function decodeAttachments(text: string): { text: string; attachments: Attachment[]; from?: { sessionId: string; title: string } } {
+export function decodeAttachments(text: string): { text: string; attachments: Attachment[]; from?: { sessionId: string; title: string }; botEvents?: string; hidden?: true } {
   const attachments: Attachment[] = [];
   let from: { sessionId: string; title: string } | undefined;
+  let botEvents: string | undefined;
+  const ev = BOT_EVENTS_RE.exec(text);
+  if (ev) {
+    botEvents = ev[1].trim();
+    text = text.slice(ev[0].length);
+  }
+  if (BOT_HIDDEN_RE.test(text.trim())) return { text: '', attachments, ...(botEvents !== undefined ? { botEvents } : {}), hidden: true };
   const fm = FROM_RE.exec(text.trim());
   if (fm) {
     from = { sessionId: attrOf(fm[1], 'session') ?? '', title: attrOf(fm[1], 'title') ?? '' };
@@ -526,13 +551,14 @@ export function decodeAttachments(text: string): { text: string; attachments: At
       return '';
     });
   }
-  return { text: clean.replace(/\n{3,}$/, '\n\n').trimEnd(), attachments, ...(from ? { from } : {}) };
+  return { text: clean.replace(/\n{3,}$/, '\n\n').trimEnd(), attachments, ...(from ? { from } : {}), ...(botEvents !== undefined ? { botEvents } : {}) };
 }
 
 function applyUser(c: Conversation, m: any) {
   if (m.uuid && c.retracted.has(m.uuid)) return;
   // someone said something (here or in another window): the guess at it is spent. A tool result is not someone.
-  if (!m.parent_tool_use_id && !m.isMeta && !isToolResultOnly(m.message?.content)) c.suggestion = undefined;
+  // Nor is the server speaking for a bot (its kickoff, its 「已批准…继续」).
+  if (!m.parent_tool_use_id && !m.isMeta && !isToolResultOnly(m.message?.content) && !isBotHidden(m.message?.content)) c.suggestion = undefined;
   // the server's copy of a message sent from wherever (hub `cw_echo`): the window that sent it already shows it under
   // the same uuid (store `send`); every other window — the phone's, the computer's — shows it now instead of only the
   // answer. A steer joins the turn already running: it does not restart its clock.
@@ -590,8 +616,8 @@ function applyUser(c: Conversation, m: any) {
     return;
   }
   const isMeta = m.isMeta || m.isSynthetic || /^<(command-name|local-command|system-reminder|task-notification)/.test(rawText.trim());
-  const { text, attachments, from } = decodeAttachments(rawText);
-  containerFor(c, parent).push({ kind: 'user', id: m.uuid ?? String(Math.random()), ts: m.timestamp, text, images, attachments: attachments.length ? attachments : undefined, ...(from ? { from } : {}), meta: isMeta, raw: m });
+  const { text, attachments, from, hidden } = decodeAttachments(rawText);
+  containerFor(c, parent).push({ kind: 'user', id: m.uuid ?? String(Math.random()), ts: m.timestamp, text, images, attachments: attachments.length ? attachments : undefined, ...(from ? { from } : {}), meta: isMeta, ...(hidden ? { hidden } : {}), raw: m });
   if (!parent && !isMeta) c.turnStartedAt = clock();
 }
 
