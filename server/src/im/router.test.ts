@@ -29,8 +29,9 @@ class FakePool extends EventEmitter {
   findPermission(id: string) { return this.list().find((r) => r.pending.some((p: any) => p.requestId === id)); }
 }
 class FakeMeta {
-  gws: ImGatewayConfig[] = []; binds: any[] = []; ws = [{ path: 'C:/proj' }];
+  gws: ImGatewayConfig[] = []; binds: any[] = []; ws = [{ path: 'C:/proj' }]; sm: Record<string, any> = {};
   workspaces() { return this.ws; }
+  sessionMeta(id: string) { return this.sm[id] ?? {}; }
   imGateways() { return this.gws; } async setImGateway(g: any) { const i = this.gws.findIndex((x) => x.id === g.id); if (i >= 0) this.gws[i] = g; else this.gws.push(g); }
   imBindings() { return this.binds; } async setImBinding(b: any) { this.binds = [...this.binds.filter((x) => !(x.gatewayId === b.gatewayId && x.chatId === b.chatId)), b]; }
   async removeImBinding() {}
@@ -195,6 +196,16 @@ describe('ImRouter: agent and provider of the sessions a bot opens', () => {
     a.inbound_({ text: 'second' }); await tick();
     expect(pool.opened.at(-1)).toMatchObject({ sessionId: sid, agent: 'codex' });
     expect(pool.opened.at(-1).providerId).toBeUndefined(); // the pool keeps the recorded one
+  });
+
+  it('/sessions and /use leave out a bot’s conversations (值班 Bot)', async () => {
+    meta.sm.cx1 = { botId: 'b1', botRole: 'thread' };
+    a.inbound_({ text: '/sessions' }); await tick();
+    expect(a.sent.at(-1)!.text).toContain('1. ○ claude one');
+    expect(a.sent.at(-1)!.text).not.toContain('codex one');
+    a.inbound_({ text: '/use cx1' }); await tick();
+    expect(a.sent.at(-1)!.text).toBe('没找到');
+    expect(pool.opened).toEqual([]);
   });
 
   it('/use on a Codex conversation opens it as Codex and remembers that', async () => {

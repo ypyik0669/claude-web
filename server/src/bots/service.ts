@@ -3,7 +3,7 @@
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
-import type { AuditRow, Bot, BotDraft, BotGenerated, BotLoad, BotOutput, BotRun, BotStatus, BotTemplate, BotTier, InboxAnswer, InboxItem, OpenSessionParams } from '../protocol.js';
+import type { AuditRow, Bot, BotDraft, BotLoad, BotOutput, BotRun, BotStatus, BotTemplate, BotTier, InboxAnswer, InboxItem, OpenSessionParams } from '../protocol.js';
 import type { RunnerPool } from '../runtime/pool.js';
 import type { MemoryService } from '../memory/service.js';
 import type { LedgerService } from '../usage/ledger.js';
@@ -13,7 +13,6 @@ import { Inbox } from './inbox.js';
 import { AuditLog } from './audit.js';
 import { BotScheduler, LEASE_STALE_MS } from './scheduler.js';
 import { ledgerCost } from './pipeline.js';
-import { generateBot } from './generate.js';
 import { BOT_TEMPLATES } from './templates.js';
 import { allowScope, botFields } from './shape.js';
 import fs from 'node:fs';
@@ -47,10 +46,10 @@ export interface BotServiceDeps {
   providerKind?(providerId: string | undefined): ProviderKind;
 }
 
-/** `gated` / `botId` are server-set (a bot's run): a request from a window never gets to set them */
+/** `gated` / `botId` / `botRole` are server-set (a bot's run or thread): a request from a window never gets to set them */
 export function clientSessionParams(p: OpenSessionParams): OpenSessionParams {
-  if (!('gated' in p) && !('botId' in p)) return p;
-  const { gated: _drop, botId: _bot, ...rest } = p;
+  if (!('gated' in p) && !('botId' in p) && !('botRole' in p)) return p;
+  const { gated: _drop, botId: _bot, botRole: _role, ...rest } = p;
   return rest;
 }
 
@@ -346,10 +345,6 @@ export class BotService extends EventEmitter {
   }
   audit(botId: string, runId: string): AuditRow[] { return this.store.audit(botId, runId); }
 
-  /** one sentence → a draft, on the strongest model the default provider has */
-  generate(text: string, cwd: string): Promise<BotGenerated> {
-    return generateBot({ open: (p) => this.d.pool.open(p), defaultProvider: () => this.defaultProvider(), model: () => this.modelFor('best', undefined), defaultTier: () => this.defaultTier() }, text, cwd);
-  }
   /** settings bots.defaultTier (省钱 / 均衡 / 最强 for new bots), else balanced */
   private defaultTier(): BotTier {
     const v = this.d.meta.settings()['bots.defaultTier'];

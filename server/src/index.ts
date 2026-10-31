@@ -117,6 +117,8 @@ import { configureComputerMcp } from './computer/launcher.js';
 import { noteDutyPid, refreshDutyFiles, restartDutyAfterApp } from './bots/duty.js';
 import { acquireServerLock, BUSY_EXIT, lockNonce, processLockEnv, releaseLock, setLockReady, watchLock, watchYield } from './bots/server-lock.js';
 import { BotService } from './bots/service.js';
+import { isBotSession } from './bots/hidden.js';
+import { tr } from './i18n/index.js';
 import { CLAUDE_PROVIDER_ID } from './protocol.js';
 
 /** the backdrop worker's own CSP: its scripts from here (and the theme's code through new Function), nothing else */
@@ -589,11 +591,13 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   setPreviewDeps({ service: previews, open: async (sid, url) => { await web.openPreview(sid, url); } });
   // 跨对话工具: what a conversation's sessions tools see and do (sessions-mcp/tools.ts)
   setSessionsDeps({
-    list: () => library.list(),
+    // a bot's conversations are the bot's: list_sessions leaves them out, nothing is sent to them (bots/hidden.ts)
+    list: async () => (await library.list()).filter((x) => !isBotSession(meta.sessionMeta(x.sessionId), x)),
     read: async (id) => (await library.read(id)).messages,
     stateOf: (id) => pool.stateOf(id),
     deliver: async (id, text) => {
       const sum = (await library.list()).find((x) => x.sessionId === id);
+      if (isBotSession(meta.sessionMeta(id), sum)) throw new Error(tr('这是 Bot 的对话，请从 Bot 页打开'));
       // a closed conversation opens again (its provider / mode come back from meta, runtime/pool.ts) and then hears it
       pool.assertWritable(id); // handed to another machine (F4)
       const r = pool.get(id) ?? pool.open({ sessionId: id, cwd: sum?.cwd ?? '', agent: sum?.agent });

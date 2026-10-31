@@ -194,6 +194,9 @@ export class RunnerPool extends EventEmitter {
   open(params: OpenSessionParams, resumeHistory: unknown[] | null = null): AgentDriver {
     if (params.expectMode !== undefined) { params = { ...params }; delete params.expectMode; }
     if (!params.fork) this.assertWritable(params.sessionId);
+    // a bot's main conversation runs only through its gate: IM, another conversation's message, goals, schedules and
+    // forks reach the pool without it (bots.thread.open passes it)
+    if (params.sessionId && !params.gated && this.providers.meta?.sessionMeta(params.sessionId).botRole === 'thread') throw new Error(tr('这是 Bot 的对话，请从 Bot 页打开'));
     void proxy.refresh(); // IM / schedules / goals come straight here: a stale look is redone for the next start (net/proxy.ts)
     if (params.sessionId && !params.fork && !params.resumeAt) {
       const existing = this.runners.get(params.sessionId);
@@ -311,6 +314,14 @@ export class RunnerPool extends EventEmitter {
       if (projInstr && meta && id && id !== placeholder && meta.sessionMeta(id).projectInstructions !== projInstr) void meta.setSessionMeta(id, { projectInstructions: projInstr }).catch(() => { /* in memory; the next save persists it */ });
     };
     keepInstr(r.sessionId);
+    // a bot's conversation (its thread, a run, internal work) is recorded as the bot's: the lists leave it out (bots/hidden.ts)
+    const botMark = params.botId || params.botRole ? { ...(params.botId ? { botId: params.botId } : {}), ...(params.botRole ? { botRole: params.botRole } : {}) } : undefined;
+    const keepBot = (id: string | undefined) => {
+      if (!botMark || !meta || !id || id === placeholder) return;
+      const was = meta.sessionMeta(id);
+      if (was.botId !== botMark.botId || was.botRole !== botMark.botRole) void meta.setSessionMeta(id, botMark).catch(() => { /* in memory; the next save persists it */ });
+    };
+    keepBot(r.sessionId);
     // a mode the caller said is the conversation's from the start — not only once the process reports it (below): one
     // whose start failed, or that closed before init, came back without a record, so in 新对话默认权限 — 完全放开 for
     // a conversation opened as 每步询问 (2026-10-26, desktop QA)
@@ -340,6 +351,7 @@ export class RunnerPool extends EventEmitter {
       keepChatOnly(i.sessionId);
       keepEnv(i.sessionId);
       keepInstr(i.sessionId);
+      keepBot(i.sessionId);
       // the mode it runs in now (picked in a window, or the CLI's own move out of plan mode) is what it comes back in
       const mode = asMode(i.permissionMode);
       if (mode && meta && i.sessionId && i.sessionId !== placeholder && meta.sessionMeta(i.sessionId).permissionMode !== mode) {

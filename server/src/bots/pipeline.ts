@@ -197,7 +197,7 @@ export async function runRoutine(d: PipelineDeps, bot: Bot, routine: Routine, tr
 
   const checkpointFile = path.join(d.store.dir(bot.id), 'state', `${routine.id.replace(/[^\w-]/g, '_')}.checkpoint.md`);
   await fsp.mkdir(path.dirname(checkpointFile), { recursive: true });
-  const params: OpenSessionParams = { sessionId: o.resume?.sessionId, cwd: bot.cwd, permissionMode: 'default', providerId: bot.providerId || d.defaultProvider(), model: bot.model || undefined, drivenBy: 'schedule', gated: true, botId: bot.id };
+  const params: OpenSessionParams = { sessionId: o.resume?.sessionId, cwd: bot.cwd, permissionMode: 'default', providerId: bot.providerId || d.defaultProvider(), model: bot.model || undefined, drivenBy: 'schedule', gated: true, botId: bot.id, botRole: 'run' };
   let runner: AgentDriver;
   const failed = async (cause: Cause, error: string) => {
     run.ok = false; run.error = error;

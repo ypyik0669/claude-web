@@ -37,7 +37,7 @@ describe('runRoutine', () => {
     const b = bot([routine()]); await store.save(b);
     const runner = fakeRunner({ resultText: '今天 3 个 issue' });
     const { run } = await runRoutine(deps(runner), b, b.routines[0], 'cron');
-    expect(opened[0]).toMatchObject({ cwd: process.cwd(), providerId: 'relay-1', drivenBy: 'schedule', gated: true, botId: 'b1', permissionMode: 'default' });
+    expect(opened[0]).toMatchObject({ cwd: process.cwd(), providerId: 'relay-1', drivenBy: 'schedule', gated: true, botId: 'b1', botRole: 'run', permissionMode: 'default' });
     expect(opened[0].sessionId).toBeUndefined();
     expect(opened[0].model).toBeUndefined();
     expect(run).toMatchObject({ ok: true, costUsd: 0.0123, said: '今天 3 个 issue', trigger: 'cron' });

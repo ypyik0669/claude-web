@@ -106,6 +106,7 @@ import { computerSupported, defaultFeaturesOf } from '../computer/launcher.js';
 import { tr } from '../i18n/index.js';
 import { clientSessionParams, refusePeerUncBot, type BotService } from '../bots/service.js';
 import { dutyInstalled, installDuty } from '../bots/duty.js';
+import { isBotSession } from '../bots/hidden.js';
 
 export interface Services {
   /** Unified session library: every joined source's sessions (sessions.list / search / library.*). */
@@ -191,7 +192,7 @@ export interface Services {
 }
 
 /** Requests after which something connects out: they wait for a fresh look at the proxy. (`web.search` waits inside WebService, like the agents' searches.) */
-const GOES_OUT = new Set<string>(['session.open', 'session.send', 'session.setProvider', 'bots.generate', 'session.switchAgent', 'providers.probe', 'providers.refreshModels', 'import.run', 'terminal.open', 'im.set', 'im.test', 'mcp.registry', 'sync.remote.test', 'sync.remote.push', 'sync.remote.pull']);
+const GOES_OUT = new Set<string>(['session.open', 'session.send', 'session.setProvider', 'session.switchAgent', 'providers.probe', 'providers.refreshModels', 'import.run', 'terminal.open', 'im.set', 'im.test', 'mcp.registry', 'sync.remote.test', 'sync.remote.push', 'sync.remote.pull']);
 
 const isLoopback = (a: string | undefined) => !!a && (a === '::1' || a.startsWith('127.') || a.startsWith('::ffff:127.'));
 
@@ -500,7 +501,8 @@ export class Hub {
     if (isCloudRequest(req)) return handleCloud(s.cloud, req, { peer: this.peerConns.has(ws), remote: this.remoteConns.has(ws) });
     switch (req.kind) {
       case 'sessions.list': {
-        const all = await s.library.list();
+        // a bot's thread, its runs and internal work are reached from the Bot page, never the list (bots/hidden.ts)
+        const all = (await s.library.list()).filter((x) => !isBotSession(s.meta.sessionMeta(x.sessionId), x));
         const list = req.limit ? all.slice(0, req.limit) : all;
         // a folder the list could not read (issue #9) is known to the conversation's own process while it runs
         return list.map((x) => {
@@ -755,7 +757,7 @@ export class Hub {
         if (req.key === 'remote.anywhere' || req.key.startsWith('remote.anywhere.') || req.key === 'remote.keepAwake') await s.anywhere?.refresh();
         return null;
       case 'sessions.search':
-        return s.library.search(req.query, req.limit ?? 30);
+        return (await s.library.search(req.query, req.limit ?? 30)).filter((h) => !isBotSession(s.meta.sessionMeta(h.session.sessionId), h.session));
 
       // ---- unified session library ----
       case 'library.sources':
@@ -1325,7 +1327,8 @@ export class Hub {
       case 'bots.inbox.answer': return s.bots.inboxAnswer(req.answer);
       case 'bots.runs.list': return s.bots.runs(req.botId, req.routineId, req.limit);
       case 'bots.runs.audit': return s.bots.audit(req.botId, req.runId);
-      case 'bots.generate': refusePeerUnc(req.cwd, this.peerConns.has(ws)); return s.bots.generate(req.text, req.cwd);
+      // the one-sentence generator is gone (it left its conversations in the list): a bot starts as a conversation now
+      case 'bots.generate': throw new Error(tr('一句话生成 Bot 已停用：新建 Bot 后在它的对话里说你要什么'));
       // chat-first bots: wired in later tasks of the redesign
       case 'bots.start': case 'bots.thread.open': case 'bots.thread.seen': case 'bots.timeline.list': throw new Error('not yet');
       case 'bots.templates': return s.bots.templates();

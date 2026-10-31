@@ -438,6 +438,38 @@ describe('RunnerPool: 只聊天 stays without tools, whoever reopens it', () => 
   });
 });
 
+describe('RunnerPool: a bot’s conversations (值班 Bot)', () => {
+  const setup = (recorded: Record<string, any> = {}) => {
+    const writes: [string, any][] = [];
+    const meta = { sessionMeta: (id: string) => recorded[id] ?? {}, settings: () => ({}), setSessionMeta: async (id: string, patch: any) => { writes.push([id, patch]); recorded[id] = { ...recorded[id], ...patch }; } };
+    return { p: new RunnerPool({ forSession: () => undefined, meta } as any), writes, recorded };
+  };
+  it('a run opened for a bot is recorded as the bot’s (so the lists leave it out)', () => {
+    const { p, recorded } = setup();
+    const r: any = p.open({ cwd: 'C:/x', gated: true, botId: 'b1', botRole: 'run' });
+    expect(recorded[r.sessionId]).toMatchObject({ botId: 'b1', botRole: 'run' });
+  });
+  it('a fork is recorded under the id the CLI gives it, never the placeholder', () => {
+    const { p, writes } = setup();
+    const f: any = p.open({ sessionId: 'src', cwd: 'C:/x', fork: true, gated: true, botId: 'b1', botRole: 'internal' });
+    f.emit('info', { sessionId: f.id });
+    expect(writes.filter(([id]) => id === f.id)).toEqual([]);
+    f.emit('info', { sessionId: 'forked' });
+    expect(writes).toContainEqual(['forked', { botId: 'b1', botRole: 'internal' }]);
+  });
+  it('a bot’s thread opened without the gate (IM, another conversation, goals, a fork) is refused', () => {
+    const { p } = setup({ th: { botId: 'b1', botRole: 'thread' } });
+    expect(() => p.open({ sessionId: 'th', cwd: 'C:/x' })).toThrow(/Bot 的对话/);
+    expect(() => p.open({ sessionId: 'th', cwd: 'C:/x', fork: true })).toThrow(/Bot 的对话/);
+    expect(() => p.open({ sessionId: 'th', cwd: 'C:/x', gated: true, botId: 'b1', botRole: 'thread' })).not.toThrow();
+  });
+  it('a normal conversation records nothing about bots', () => {
+    const { p, writes } = setup();
+    p.open({ cwd: 'C:/x' });
+    expect(writes.some(([, w]) => 'botId' in w || 'botRole' in w)).toBe(false);
+  });
+});
+
 describe('RunnerPool: the provider when the caller does not name one (IM, schedules, goals, hand-overs)', () => {
   const setup = (o: { recorded?: Record<string, any>; settings?: Record<string, unknown>; agents?: Record<string, any>; providers?: Record<string, { type: string }> } = {}) => {
     const recorded: Record<string, any> = { ...(o.recorded ?? {}) };

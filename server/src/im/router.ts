@@ -5,6 +5,7 @@ import type { SessionService } from '../sessions/service.js';
 import type { ImAdapter, InboundMessage } from './types.js';
 import type { AgentKind, ImBinding, ImGatewayConfig, PermissionRequestEvent } from '../protocol.js';
 import { tr } from '../i18n/index.js';
+import { isBotSession } from '../bots/hidden.js';
 import { isDispatchCommand, parseImDispatch } from '../dispatch/core.js';
 
 const HELP = tr("Claude Web 命令：\n/new [目录] — 新会话（默认第一个工作区）\n/sessions — 最近会话\n/use <序号|id前缀> — 切换到某个会话\n/status — 当前会话状态\n/stop — 中断当前回合\n/allow · /deny — 处理最近的权限请求\n/mode <default|acceptEdits|bypassPermissions> — 权限模式\n/model <名字> — 切换模型\n/verbose on|off — 是否推送工具调用过程\n/help — 这份说明\n其它文字 = 直接发给当前会话");
@@ -30,6 +31,11 @@ export class ImRouter {
     d.pool.on('permission', (e: PermissionRequestEvent) => this.onPermission(e));
     d.pool.on('permissionResolved', (sid: string) => { this.lastPermission.delete(sid); });
     d.pool.on('state', (sid: string, state: string, err?: string) => { if (state === 'error' && err) void this.notify(sid, tr('⚠️ 会话出错：{v}', { v: err.split('\n')[0] })); });
+  }
+
+  /** /sessions and /use pick from these: a bot's conversations are the bot's (bots/hidden.ts) */
+  private async pickable() {
+    return (await this.d.sessions.list(30)).filter((s) => !isBotSession(this.d.meta.sessionMeta(s.sessionId), s)).slice(0, 15);
   }
 
   attach(cfg: ImGatewayConfig, a: ImAdapter) {
@@ -138,14 +144,14 @@ export class ImRouter {
         return reply(tr("🆕 新会话 {sessionId} · {cwd}{channel}\n直接发消息即可。", { sessionId: r.sessionId.slice(0, 8), cwd, channel: channel(r.info) }));
       }
       case '/sessions': {
-        const list = (await this.d.sessions.list(15));
+        const list = await this.pickable();
         const live = new Set(this.d.pool.list().map((x) => x.sessionId));
         const lines = list.slice(0, 10).map((s, i) => `${i + 1}. ${live.has(s.sessionId) ? '●' : '○'} ${s.title.slice(0, 40)} (${s.sessionId.slice(0, 8)})`);
         return reply(lines.length ? tr("{lines}\n/use <序号> 切换", { lines: lines.join('\n') }) : tr('没有会话'));
       }
       case '/use': {
         if (!arg) return reply(tr('/use <序号|id前缀>'));
-        const list = await this.d.sessions.list(15);
+        const list = await this.pickable();
         const target = /^\d+$/.test(arg) ? list[Number(arg) - 1] : list.find((s) => s.sessionId.startsWith(arg));
         if (!target) return reply(tr('没找到'));
         let r = this.d.pool.get(target.sessionId);

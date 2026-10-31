@@ -225,6 +225,10 @@ describe('BotService', { timeout: 30_000 }, () => {
     expect('botId' in clientSessionParams({ cwd: '/p', botId: 'b1' } as any)).toBe(false);
     const q = { cwd: '/p' } as any;
     expect(clientSessionParams(q)).toBe(q);
+    // a window can't open a conversation as a bot's thread / run either
+    const t = clientSessionParams({ cwd: '/p', gated: true, botId: 'x', botRole: 'thread' });
+    expect(['gated', 'botId', 'botRole'].filter((k) => k in t)).toEqual([]);
+    expect('botRole' in clientSessionParams({ cwd: '/p', botRole: 'internal' })).toBe(false);
   });
   const rt = (id: string, p: Record<string, unknown> = {}) => ({ id, name: id, prompt: 'p', enabled: true, everyMinutes: 60, acceptance: { kind: 'none' }, onFail: 'inbox', ...p }) as any;
 
