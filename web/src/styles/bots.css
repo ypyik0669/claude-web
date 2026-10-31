@@ -203,3 +203,45 @@
 @media (prefers-reduced-motion: reduce) {
   .bot-face-eyes, .bot-face-dots circle { animation: none !important; }
 }
+
+/* ---- the thread (chat-first redesign, T11): header, banner, the conversation and the cards between its turns ---- */
+.bot-thread { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.bot-thread .bt-main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.bot-thread .bt-main[hidden] { display: none; }
+.bot-thread .bt-chat { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.bt-head { flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: 8px var(--sp-3); border: 0; border-bottom: var(--hairline) solid var(--edge-subtle); background: none; color: var(--ink-1); text-align: left; cursor: pointer; }
+.bt-head:hover { background: var(--layer-hover); }
+.bt-head-text { min-width: 0; display: flex; flex-direction: column; }
+.bt-head-name { font-weight: 600; font-size: var(--fs-base); }
+.bt-head-act { color: var(--ink-3); font-size: var(--fs-meta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt-head-act[data-error] { color: var(--err); }
+.bt-banner { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin: var(--sp-2) var(--sp-3) 0; padding: 4px var(--sp-3); border-radius: var(--r-md); background: var(--warn-soft); color: var(--warn); font-size: var(--fs-sm); }
+.bt-waking, .bt-note { margin: auto; color: var(--ink-3); font-size: var(--fs-sm); }
+.bt-runview { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.bt-runview-h { flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: 6px var(--sp-3); color: var(--ink-2); font-size: var(--fs-sm); border-bottom: var(--hairline) solid var(--edge-subtle); }
+.bt-runview-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: var(--sp-3); }
+
+.bt-sys { display: flex; flex-direction: column; align-items: center; margin: var(--sp-2) 0; }
+.bt-sys-line { border: 0; background: none; padding: 2px 8px; color: var(--ink-3); font-size: var(--fs-meta); }
+button.bt-sys-line { cursor: pointer; border-radius: var(--r-pill); }
+button.bt-sys-line:hover { background: var(--layer-hover); color: var(--ink-2); }
+.bt-sys-detail { max-width: 100%; }
+.bt-sys-detail pre, .bt-ap-evidence, .bt-draft-body { margin: 6px 0 0; padding: 8px 10px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink-1); font-size: var(--fs-sm); white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; }
+
+.bt-card { margin: var(--sp-2) 0; padding: 10px var(--sp-3); border: var(--hairline) solid var(--edge-subtle); border-radius: var(--r-md); background: var(--surface-1); display: flex; flex-direction: column; gap: 6px; }
+.bt-card-h, .bt-ap-h, .bt-run-h { font-weight: 600; font-size: var(--fs-sm); color: var(--ink-1); }
+.bt-run-line { display: flex; align-items: center; gap: var(--sp-2); justify-content: space-between; }
+.bt-run[data-state=running] .bt-run-h { color: var(--accent-text); }
+.bt-run[data-state=failed] .bt-run-said { color: var(--err); }
+.bt-run-said { color: var(--ink-2); font-size: var(--fs-sm); }
+.bt-ap-hint, .bt-ap-note { color: var(--ink-3); font-size: var(--fs-meta); }
+.bt-ap-facts { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--fs-sm); color: var(--ink-2); }
+.bt-ap-facts b { color: var(--ink-3); font-weight: 500; margin-right: 4px; }
+.bt-ap-acts { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2); }
+.bt-allow { position: relative; display: flex; }
+.bt-allow-main { flex: 1 1 auto; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.bt-allow-more { flex: none; border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: var(--hairline) solid var(--edge-subtle); }
+.bt-ap-done { display: flex; align-items: center; gap: var(--sp-2); color: var(--ink-3); font-size: var(--fs-sm); }
+.bt-approval[data-done=approve] .bt-ap-done, .bt-approval[data-done=approve_scope] .bt-ap-done { color: var(--ok); }
+.bt-card-acts { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.bt-rules { margin: 0; padding-left: 18px; font-size: var(--fs-sm); color: var(--ink-2); }
