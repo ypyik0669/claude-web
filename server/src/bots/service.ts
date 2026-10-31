@@ -3,7 +3,8 @@
 import { EventEmitter } from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
-import type { AuditRow, Bot, BotDraft, BotLoad, BotOutput, BotRun, BotStatus, BotTemplate, BotTier, InboxAnswer, InboxItem, OpenSessionParams } from '../protocol.js';
+import type { AuditRow, Bot, BotDraft, BotLoad, BotOutput, BotRun, BotStatus, BotTemplate, BotTier, BotTimelineEntry, InboxAnswer, InboxItem, OpenSessionParams } from '../protocol.js';
+import type { AgentDriver } from '../agents/types.js';
 import type { RunnerPool } from '../runtime/pool.js';
 import type { MemoryService } from '../memory/service.js';
 import type { LedgerService } from '../usage/ledger.js';
@@ -13,7 +14,11 @@ import { Inbox } from './inbox.js';
 import { AuditLog } from './audit.js';
 import { BotScheduler, LEASE_STALE_MS } from './scheduler.js';
 import { ledgerCost } from './pipeline.js';
-import { BOT_TEMPLATES } from './templates.js';
+import { BOT_TEMPLATES, fromTemplate } from './templates.js';
+import { BotThreads, avatarFor, threadPrompt } from './thread.js';
+import { entryForItem, entryForRun, systemEntry } from './timeline.js';
+import { botRuntime, setBotRuntime, type BotRuntime } from './runtime-hooks.js';
+import { botSelfServer, type BotSelfDeps } from './self-mcp.js';
 import { allowScope, botFields } from './shape.js';
 import fs from 'node:fs';
 import { atomicWrite } from '../agent-config/backup.js';
@@ -21,6 +26,7 @@ import { tr } from '../i18n/index.js';
 import { refusePeerUnc } from '../meta/folder-check.js';
 
 const TIERS: unknown[] = ['cheap', 'balanced', 'best'];
+const AVATAR = /^shape:(\d|1[01])\|color:\d\|seed:\d+$/;
 /** a bot's tier as a 智能路由 strategy (a virtual model): only meaningful on a routing group's provider */
 export function tierModel(tier: BotTier): string {
   return tier === 'cheap' ? 'smart-free' : tier === 'best' ? 'smart-performance' : 'smart-auto';
@@ -33,7 +39,7 @@ export type ProviderKind = 'routing' | 'claude' | 'other';
 export interface BotServiceDeps {
   dataDir: string;
   pool: Pick<RunnerPool, 'open' | 'get'>;
-  memory: Pick<MemoryService, 'search'>;
+  memory: Pick<MemoryService, 'search' | 'write'>;
   ledger: Pick<LedgerService, 'rowsFor'>;
   meta: Pick<MetaStore, 'settings'>;
   im?: {
@@ -101,7 +107,7 @@ const HELD_FILE = 'held.json';
  * claude-account profile) 'best' is 'opus' and the other tiers keep the default; any other provider keeps its own
  * default model. A bot that names a model keeps it.
  */
-/** Events: 'changed' (BotStatus[]), 'run' (BotRun), 'inbox' (InboxItem), 'load' (BotLoad). */
+/** Events: 'changed' (BotStatus[]), 'run' (BotRun), 'inbox' (InboxItem), 'load' (BotLoad), 'timeline' (BotTimelineEntry). */
 export class BotService extends EventEmitter {
   private store: BotStore;
   private inbox: Inbox;
@@ -114,7 +120,35 @@ export class BotService extends EventEmitter {
   private readonly onItem = (item: InboxItem) => {
     this.emit('inbox', item);
     try { this.deliverItem(item); } catch (e) { console.warn('[bots] IM delivery failed:', e); }
+    // a new approval / draft / proposal gets its card on the bot's timeline (an answer is drawn live from the item)
+    if (!item.done && !this.carded.has(item.id)) {
+      this.carded.add(item.id);
+      const e = entryForItem(item);
+      if (e) void this.addEntry(e).then(() => this.changed());
+    }
   };
+  /** inbox items whose timeline card this service already wrote */
+  private carded = new Set<string>();
+  /** the bot's own conversation */
+  readonly threads: BotThreads;
+  /** what each bot's own conversation has cost so far, read from the ledger after each of its replies and every tick */
+  private threadCost = new Map<string, number>();
+  /** what a bot's main conversation gets at each process start (runtime-hooks) */
+  private readonly runtime: BotRuntime = {
+    selfServer: (id, self) => botSelfServer(id, self, this.selfDeps),
+    threadPrompt: (id, o) => threadPrompt(this.must(id), o),
+  };
+  /** the bot-self tools' way in: the same leased edits, runs, inbox and memory as the windows' */
+  private readonly selfDeps: BotSelfDeps = {
+    get: (id) => this.store.get(id),
+    edit: (id, fn) => this.edit(id, fn),
+    runNow: (id, routineId) => this.runNow(id, routineId),
+    remember: async (id, text) => { this.d.memory.write({ scope: 'bot', key: id, text, sourceAgent: 'bot' }); },
+    propose: async (id, proposal, title) => { await this.acting(); this.must(id); return this.inbox.add({ kind: 'proposal', botId: id, title, proposal }); },
+    event: async (id, text, icon, detail) => { await this.addEntry(systemEntry(id, text, icon ?? 'bot', detail)); this.changed(); },
+  };
+  /** threadOpen giving a bot its first conversation: one at a time per bot (two windows must not make two) */
+  private opening = new Map<string, Promise<string>>();
   private watcher?: fs.FSWatcher;
   /** requestStop's read-merge-write, one at a time in this process */
   private stopChain: Promise<unknown> = Promise.resolve();
@@ -134,17 +168,32 @@ export class BotService extends EventEmitter {
       globalBudgetUsd: () => { const g = d.meta.settings()['bots.globalBudgetUsd']; return typeof g === 'number' && g > 0 ? g : undefined; },
       modelFor: (bot) => this.modelFor(bot.tier, bot.providerId),
     });
-    this.scheduler.on('run', (run: BotRun) => { this.emit('run', run); this.deliverRun(run); });
+    this.scheduler.on('run', (run: BotRun) => {
+      this.emit('run', run); this.deliverRun(run);
+      // a finished run: its card on the timeline (the id is the run's, so a re-emitted run replaces it)
+      const routine = this.store.get(run.botId)?.routines.find((r) => r.id === run.routineId);
+      const e = entryForRun(run, routine?.name ?? run.routineId);
+      if (e) void this.addEntry(e).then(() => this.changed());
+    });
     this.scheduler.on('bots', () => {
       if (this.scheduler.canAct() && !this.store.get(MANAGER_ID)) void this.ensureManager().catch((e) => console.warn('[bots] cannot create the manager:', e));
       this.emit('changed', this.list());
     });
     this.scheduler.on('load', (l: BotLoad) => this.emit('load', l));
-    this.scheduler.on('tick', () => void this.takeStopRequest());
+    this.scheduler.on('tick', () => { void this.takeStopRequest(); void this.refreshThreadCosts(); });
     // the last holder may have held (or flushed) IM pushes since this server read held.json
     this.scheduler.on('claimed', () => { this.held = this.readHeld(); });
     this.held = this.readHeld();
     this.inbox.on('item', this.onItem);
+    this.threads = new BotThreads({
+      store: this.store, inbox: this.inbox, audit: this.audits, pool: d.pool,
+      defaultProvider: () => this.defaultProvider(),
+      modelFor: (bot) => this.modelFor(bot.tier, bot.providerId),
+    });
+    this.threads.on('line', (botId: string) => { void this.refreshThreadCost(botId).finally(() => this.changed()); });
+    this.threads.on('activity', () => this.changed());
+    this.threads.on('timeline', (e: BotTimelineEntry) => { this.emit('timeline', e); this.changed(); });
+    setBotRuntime(this.runtime);
     d.im?.onCallback('bots', (parts, ctx) => this.onImCallback(parts, ctx));
     d.im?.onStop?.((g, c) => this.onImStop(g, c));
   }
@@ -169,6 +218,7 @@ export class BotService extends EventEmitter {
     if (this.released) return;
     this.released = true;
     this.inbox.off('item', this.onItem);
+    if (botRuntime() === this.runtime) setBotRuntime(null);
     const k = dirKey(this.d.dataDir); const s = shared.get(k);
     if (s && --s.refs <= 0) shared.delete(k);
   }
@@ -225,7 +275,26 @@ export class BotService extends EventEmitter {
       : this.scheduler.isQueued(bot.id) ? 'queued' : 'idle';
     const trust: BotStatus['trust'] = {};
     for (const [k, v] of Object.entries(this.store.trust(bot.id))) trust[k] = { approvals: v.approvals, lastAt: v.lastAt };
-    return { ...bot, state, todayUsd: this.scheduler.todayUsd(bot.id), weekUsd: this.scheduler.weekUsd(bot.id), pendingInbox: pending.length, trust, unseen: 0 /* counted from thread.json in a later task */ };
+    const todayUsd = this.scheduler.todayUsd(bot.id), weekUsd = this.scheduler.weekUsd(bot.id);
+    const thread = this.store.threadState(bot.id);
+    const runs = this.store.runs(bot.id, 20).filter((r) => r.endedAt && !r.skipped).sort((a, b) => b.endedAt! - a.endedAt!);
+    const last = runs[0];
+    // the last line: the bot's own last reply, or a run's conclusion if that came later
+    let lastLine = thread.lastLine;
+    const said = last?.ok && last.said ? last.said.split('\n').map((l) => l.trim()).find(Boolean)?.slice(0, 80) : undefined;
+    if (said && last.endedAt! > (lastLine?.at ?? 0)) lastLine = { text: said, at: last.endedAt! };
+    const unseen = this.store.timeline(bot.id).filter((e) => e.at > (thread.seenAt ?? 0)).length;
+    const running = this.scheduler.runningRoutine(bot.id);
+    const activity = running ? tr('在跑例行「{name}」', { name: bot.routines.find((r) => r.id === running)?.name ?? running }) : this.threads.activity(bot.id);
+    const b = bot.budget;
+    const error: BotStatus['error'] = b.dailyUsd !== undefined && todayUsd >= b.dailyUsd ? { reason: tr('预算用完'), next: tr('明早 0 点恢复') }
+      : b.weeklyUsd !== undefined && weekUsd >= b.weeklyUsd ? { reason: tr('本周预算用完'), next: tr('在 Bot 资料里调高预算') }
+      : last && last.ok === false && !last.handoff ? { reason: last.error || tr('上次运行没有成功') } : undefined;
+    const threadUsd = this.threadCost.get(bot.id);
+    return {
+      ...bot, state, todayUsd, weekUsd, pendingInbox: pending.length, trust, unseen,
+      ...(lastLine ? { lastLine } : {}), ...(activity ? { activity } : {}), ...(error ? { error } : {}), ...(threadUsd !== undefined ? { threadUsd } : {}),
+    };
   }
   list(): BotStatus[] { return this.store.list().map((b) => this.statusOf(b)); }
   get(id: string): BotStatus { return this.statusOf(this.must(id)); }
@@ -321,7 +390,8 @@ export class BotService extends EventEmitter {
     await this.acting();
     // an approval's call is on disk (resumes.json) before the item reads as answered
     const open = this.inbox.get(a.id);
-    const pre = open && !open.done ? await this.scheduler.persistApproval(open, a) : undefined;
+    // an approval from the bot's own conversation resumes no run (it goes on in the conversation, below)
+    const pre = open && !open.done && !open.thread ? await this.scheduler.persistApproval(open, a) : undefined;
     let item: InboxItem;
     try { item = await this.inbox.answer(a); } catch (e) {
       if (open) await this.scheduler.unpersistApproval(open, a, pre);
@@ -334,6 +404,10 @@ export class BotService extends EventEmitter {
       await this.inbox.reopen(item.id).catch(() => {});
       throw e;
     }
+    if (item.thread && item.kind === 'approval' && a.answer !== 'archive') {
+      // the answer stands whatever happens to the conversation (closed, another process): the card shows it
+      await this.threads.onApproval(item, a.answer === 'approve' || a.answer === 'approve_scope').catch((e) => console.warn(`[bots] cannot carry an answer into ${item.botId}'s conversation:`, e));
+    }
     if (a.answer === 'archive') this.changed(); // the others: the scheduler's 'bots'
     return item;
   }
@@ -344,6 +418,83 @@ export class BotService extends EventEmitter {
     return all.filter((r) => !routineId || r.routineId === routineId).sort((a, b) => b.at - a.at).slice(0, limit);
   }
   audit(botId: string, runId: string): AuditRow[] { return this.store.audit(botId, runId); }
+
+  // ---------- the bot's own conversation (chat-first) ----------
+  /**
+   * 新 Bot: a template's bot (its routines kept: the bot only confirms them) or a bare one, then its conversation,
+   * opened with the hidden kickoff — the bot speaks first. A conversation that fails to open leaves the bot without
+   * one; threadOpen makes it later.
+   */
+  async startBot(p: { name: string; avatar?: string; templateId?: string; cwd: string }): Promise<BotStatus> {
+    const name = typeof p?.name === 'string' ? p.name.trim() : '';
+    if (!name) throw new Error(tr('Bot 设置不对：{field}', { field: 'name' }));
+    const template = p.templateId ? BOT_TEMPLATES.find((t) => t.id === p.templateId) : undefined;
+    if (p.templateId && !template) throw new Error(tr('没有这个模板'));
+    const base: BotDraft['bot'] = template ? fromTemplate(template.id, p.cwd)!
+      : { name, charter: { role: '', sources: [] }, cwd: p.cwd, tier: undefined as unknown as BotTier, policy: { rules: [], signOff: true }, budget: { dailyUsd: 2 }, routines: [], outputs: [{ kind: 'inbox' }] };
+    const avatar = typeof p.avatar === 'string' && AVATAR.test(p.avatar) ? p.avatar : avatarFor(name);
+    const created = await this.create({ ...base, name, avatar });
+    await this.giveThread(created.id, template);
+    const now = Date.now();
+    await this.addEntry(systemEntry(created.id, tr('已创建 {name}', { name }), 'bot'));
+    // the user is looking at it: its first line is not news
+    await this.store.setThreadState(created.id, { seenAt: now });
+    this.changed();
+    return this.statusOf(this.must(created.id));
+  }
+  /** a new conversation for the bot, its id stored as threadId; one at a time per bot */
+  private giveThread(id: string, template?: BotTemplate): Promise<string> {
+    const going = this.opening.get(id);
+    if (going) return going;
+    const run = (async () => {
+      await this.acting();
+      const sessionId = await this.threads.start(this.must(id), template);
+      await this.edit(id, (x) => ({ ...x, threadId: sessionId }));
+      return sessionId;
+    })().finally(() => this.opening.delete(id));
+    this.opening.set(id, run);
+    return run;
+  }
+  /** the bot's conversation, open and gated; a bot from before it had one (phase 1) gets one now, its kickoff naming its routines */
+  async threadOpen(id: string): Promise<{ sessionId: string }> {
+    const bot = this.must(id);
+    if (!bot.threadId) return { sessionId: await this.giveThread(id) };
+    return { sessionId: (await this.threads.ensure(bot)).sessionId };
+  }
+  /** session.open on a bot's conversation (hub): the gated runner, whatever the window asked for */
+  openThread(botId: string): Promise<AgentDriver> { return this.threads.ensure(this.must(botId)); }
+  timeline(id: string, before?: number, limit?: number): BotTimelineEntry[] {
+    this.must(id);
+    const n = Math.min(1000, Math.max(1, Math.floor(Number(limit) || 300)));
+    return this.store.timeline(id, { ...(typeof before === 'number' && Number.isFinite(before) ? { before } : {}), limit: n });
+  }
+  /** the user looked at the bot: what came before now is seen */
+  async seen(id: string): Promise<void> {
+    this.must(id);
+    await this.store.setThreadState(id, { seenAt: Date.now() });
+    this.changed();
+  }
+  /** timeline.jsonl is written without the lease (store.ts): the thread may live on a server not on duty */
+  private async addEntry(e: BotTimelineEntry): Promise<void> {
+    if (!this.store.get(e.botId)) return;
+    try { await this.store.appendTimeline(e.botId, e); } catch (err) { console.warn(`[bots] cannot write ${e.botId}'s timeline:`, err); return; }
+    this.emit('timeline', e);
+  }
+  private async refreshThreadCost(botId: string): Promise<boolean> {
+    const id = this.store.get(botId)?.threadId;
+    if (!id) return false;
+    try {
+      const usd = ledgerCost(await this.d.ledger.rowsFor(id)).usd;
+      if (this.threadCost.get(botId) === usd) return false;
+      this.threadCost.set(botId, usd);
+      return true;
+    } catch { return false; }
+  }
+  private async refreshThreadCosts() {
+    let any = false;
+    for (const b of this.store.list()) if (await this.refreshThreadCost(b.id)) any = true;
+    if (any) this.changed();
+  }
 
   /** settings bots.defaultTier (省钱 / 均衡 / 最强 for new bots), else balanced */
   private defaultTier(): BotTier {

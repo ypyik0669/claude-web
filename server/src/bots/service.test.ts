@@ -3,14 +3,18 @@ import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'
 import { EventEmitter } from 'node:events';
 import { BotService, tierModel, clientSessionParams, refusePeerUncBot, type BotServiceDeps } from './service.js';
 import type { BotDraft, InboxItem } from '../protocol.js';
+import { BOT_TEMPLATES } from './templates.js';
 
 function fakePool() {
   const p: any = new EventEmitter(); p.runners = new Map();
   p.open = (params: any) => {
+    // like the pool: a live conversation is handed back as it is
+    const live = params.sessionId ? p.runners.get(params.sessionId) : undefined;
+    if (live && live.state !== 'closed') return live;
     const r: any = new EventEmitter(); r.sessionId = params.sessionId ?? `s_${p.runners.size}`; r.state = 'idle'; r.params = params;
-    r.info = { agent: 'claude' }; r.gated = !!params.gated;
-    r.send = () => { if (!p.hang) setTimeout(() => r.emit('message', { type: 'result', is_error: false, result: 'ok' }), 0); };
-    r.interrupt = vi.fn(async () => {}); r.close = async () => {};
+    r.info = { agent: 'claude' }; r.gated = !!params.gated; r.botRole = params.gated ? params.botRole : undefined; r.sent = [] as string[];
+    r.send = (text: string) => { r.sent.push(text); if (!p.hang) setTimeout(() => r.emit('message', { type: 'result', is_error: false, result: 'ok' }), 0); };
+    r.interrupt = vi.fn(async () => {}); r.close = async () => { r.state = 'closed'; };
     p.runners.set(r.sessionId, r); return r;
   };
   p.get = (id: string) => p.runners.get(id);
@@ -488,5 +492,81 @@ describe('BotService', { timeout: 30_000 }, () => {
     await (svc as any).takeStopRequest();
     expect(fs.existsSync(file)).toBe(false);
     expect((svc as any).scheduler.isRunning(b.id)).toBe(true);
+  });
+
+  describe('the bot\'s own conversation', () => {
+    it('start with a template keeps its routines, opens the thread, sends the kickoff and stores threadId', async () => {
+      const b = await svc.startBot({ name: '巡检', templateId: 'pr', cwd: process.cwd() });
+      expect(b.name).toBe('巡检');
+      expect(b.routines.map((r) => r.name)).toEqual([BOT_TEMPLATES.find((t) => t.id === 'pr')!.bot.routines[0].name]);
+      expect(b.threadId).toBeTruthy();
+      expect(b.avatar).toMatch(/^shape:\d+\|color:\d\|seed:\d+$/);
+      const r = pool.get(b.threadId);
+      expect(r.params).toMatchObject({ gated: true, botId: b.id, botRole: 'thread' });
+      expect(r.sent).toHaveLength(1);
+      expect(r.sent[0]).toMatch(/^<cw-bot-kickoff>/);
+      expect(svc.timeline(b.id).map((e) => e.text)).toEqual([expect.stringContaining('巡检')]);
+      expect(svc.threads.isThread(b.threadId!)).toBe(b.id);
+    });
+
+    it('start without a template: a bot with no routines, inbox output, sign-off policy and a $2 day', async () => {
+      const b = await svc.startBot({ name: '小助手', cwd: process.cwd() });
+      expect(b).toMatchObject({ routines: [], outputs: [{ kind: 'inbox' }], policy: { rules: [], signOff: true }, budget: { dailyUsd: 2 } });
+      await expect(svc.startBot({ name: 'x', templateId: 'nope', cwd: process.cwd() })).rejects.toThrow();
+    });
+
+    it('threadOpen gives a bot made before it had a conversation one, naming its routines; then reopens the same', async () => {
+      const b = await svc.create(draft({ routines: [rt('r1')] }));
+      const { sessionId } = await svc.threadOpen(b.id);
+      expect(svc.get(b.id).threadId).toBe(sessionId);
+      expect(pool.get(sessionId).sent[0]).toContain(b.routines[0].name);
+      expect((await svc.threadOpen(b.id)).sessionId).toBe(sessionId);
+      expect(pool.get(sessionId).sent).toHaveLength(1);
+    });
+
+    it('a thread approval answered with approve_scope adds the rule, resumes nothing, and goes on in the thread', async () => {
+      const b = await svc.startBot({ name: 't', cwd: process.cwd() });
+      const sch = (svc as any).scheduler; const enq = vi.spyOn(sch, 'enqueue'); const persist = vi.spyOn(sch, 'persistApproval');
+      const item = await (svc as any).inbox.add({ kind: 'approval', botId: b.id, thread: true, sessionId: b.threadId, title: 'curl', toolName: 'Bash', input: { command: 'curl -X POST https://api.example.com/x' }, cls: 'send' });
+      await svc.inboxAnswer({ id: item.id, answer: 'approve_scope', scope: { domains: ['api.example.com'] } });
+      expect(svc.get(b.id).policy.rules).toContainEqual({ cls: 'send', level: 'do', scope: { domains: ['api.example.com'] } });
+      expect(enq).not.toHaveBeenCalled(); expect(persist).not.toHaveBeenCalled();
+      await settle();
+      expect(pool.get(b.threadId).sent.at(-1)).toMatch(/^<cw-bot-continue>已批准/);
+    });
+
+    it('adopting a policy proposal adds its rules (checked), once', async () => {
+      const b = await svc.create(draft());
+      const p = await (svc as any).inbox.add({ kind: 'proposal', botId: b.id, title: 'p', proposal: { type: 'policy', rules: [{ cls: 'send', level: 'do', scope: { channels: ['C1'] } }, { cls: 'delete', level: 'deny' }], why: 'w' } });
+      await svc.inboxAnswer({ id: p.id, answer: 'adopt' });
+      expect(svc.get(b.id).policy.rules).toEqual([{ cls: 'send', level: 'do', scope: { channels: ['C1'] } }, { cls: 'delete', level: 'deny' }]);
+      const wide = await (svc as any).inbox.add({ kind: 'proposal', botId: b.id, title: 'p', proposal: { type: 'policy', rules: [{ cls: 'send', level: 'do' }], why: 'w' } });
+      await expect(svc.inboxAnswer({ id: wide.id, answer: 'adopt' })).rejects.toThrow();
+      expect(svc.get(b.id).policy.rules).toHaveLength(2);
+    });
+
+    it('unseen counts the timeline after the last look; seen clears it', async () => {
+      const b = await svc.startBot({ name: 'u', cwd: process.cwd() });
+      expect(svc.get(b.id).unseen).toBe(0);
+      await settle(5);
+      await (svc as any).inbox.add({ kind: 'draft', botId: b.id, title: 'd', body: 'x' });
+      await until(() => svc.timeline(b.id).length === 2);
+      expect(svc.get(b.id).unseen).toBe(1);
+      await svc.seen(b.id);
+      expect(svc.get(b.id).unseen).toBe(0);
+    });
+
+    it('a finished run lands on the timeline once; status shows its last line, the thread\'s cost and a spent budget', async () => {
+      const b = await svc.startBot({ name: 'r', cwd: process.cwd() });
+      await svc.update(b.id, { routines: [rt('r1')], budget: { dailyUsd: 0.4 } } as any);
+      const got: string[] = []; svc.on('timeline', (e) => got.push(e.id));
+      await svc.runNow(b.id, 'r1');
+      await until(() => got.some((id) => id.startsWith('run:')));
+      const s = svc.get(b.id);
+      expect(svc.timeline(b.id).filter((e) => e.kind === 'run')).toHaveLength(1);
+      expect(s.lastLine?.text).toBe('ok');
+      expect(s.error?.reason).toBeTruthy();
+      await until(() => svc.get(b.id).threadUsd === 0.5);
+    });
   });
 });

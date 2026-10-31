@@ -12,7 +12,7 @@ import { HANDOFF, runRoutine, type PipelineDeps, type RunOptions } from './pipel
 import { recordApproval, recordCorrection, demoteRule, TRUST_THRESHOLD } from './policy/trust.js';
 import { scopeKey } from './policy/rules.js';
 import { summarize, targetOf } from './policy/classify.js';
-import { allowScope, routineOf } from './shape.js';
+import { allowScope, routineOf, ruleOf } from './shape.js';
 import { callKey } from './policy/gate.js';
 import type { ApprovedCall } from './types.js';
 import { tr } from '../i18n/index.js';
@@ -116,6 +116,8 @@ export class BotScheduler extends EventEmitter {
   /** a run of this bot is in flight / waiting in the queue (BotStatus.state) */
   isRunning(botId: string): boolean { return this.running.has(botId); }
   isQueued(botId: string): boolean { return this.queue.some((j) => j.botId === botId); }
+  /** the routine of this bot's run in flight (BotStatus.activity) */
+  runningRoutine(botId: string): string | undefined { return this.running.get(botId)?.job.routineId; }
   /** whether this scheduler is the one on duty: the service checks it before marking an inbox answer done */
   canAct(): boolean { return this.holding; }
   /** when this scheduler took the lease; 0 = it doesn't hold it */
@@ -503,7 +505,7 @@ export class BotScheduler extends EventEmitter {
     const bot = this.d.store.get(item.botId);
     if (!bot) return;
     const { cls, toolName, input } = item;
-    if ((a.answer === 'approve' || a.answer === 'approve_scope') && item.kind === 'approval' && cls && toolName && input && item.routineId && item.sessionId) {
+    if ((a.answer === 'approve' || a.answer === 'approve_scope') && item.kind === 'approval' && cls && toolName && input) {
       const target = targetOf(cls, toolName, input);
       const key = scopeKey(undefined, target);
       if (a.answer === 'approve_scope' && a.scope) {
@@ -513,12 +515,15 @@ export class BotScheduler extends EventEmitter {
         await this.mutate(bot.id, (b) => (b.policy.rules.some((r) => JSON.stringify({ cls: r.cls, level: r.level, scope: r.scope }) === same) ? undefined : { ...b, policy: { ...b.policy, rules: [...b.policy.rules, { cls, level: 'do', scope }] } }));
       }
       let fresh = true;
-      if (this.epoch === epoch) {
+      // a routine run's approval resumes that run; one from the bot's own conversation (item.thread) goes on in the
+      // conversation instead (BotThreads.onApproval) — trust and the scope rule are the same for both
+      const routineId = item.routineId, sessionId = item.sessionId;
+      if (!item.thread && routineId && sessionId && this.epoch === epoch) {
         // on disk before it is queued: a restart, a budget wait or a new holder of the lease doesn't lose it
         const call = { toolName, input };
-        fresh = pre ? pre.fresh : await this.addResume(bot.id, item.routineId, item.sessionId, call);
-        try { this.enqueue(bot.id, item.routineId, 'resume', { sessionId: item.sessionId }); } catch (e) {
-          if (fresh && !pre) await this.dropResumeCall(bot.id, item.sessionId, call).catch(() => {});
+        fresh = pre ? pre.fresh : await this.addResume(bot.id, routineId, sessionId, call);
+        try { this.enqueue(bot.id, routineId, 'resume', { sessionId }); } catch (e) {
+          if (fresh && !pre) await this.dropResumeCall(bot.id, sessionId, call).catch(() => {});
           throw e;
         }
       } else if (pre) fresh = pre.fresh;
@@ -530,7 +535,7 @@ export class BotScheduler extends EventEmitter {
           const r = recordApproval(this.d.store.trust(bot.id), cls, key, Date.now(), target.amount);
           await this.d.store.setTrust(bot.id, r.trust);
           if (r.propose && r.scope) {
-            await this.d.inbox.add({ kind: 'proposal', botId: bot.id, routineId: item.routineId, title: tr('「{cls}」到「{key}」已连续批准 {n} 次，以后直接做？', { cls, key, n: TRUST_THRESHOLD }), proposal: { type: 'trust_up', cls, scope: r.scope } });
+            await this.d.inbox.add({ kind: 'proposal', botId: bot.id, ...(item.routineId ? { routineId: item.routineId } : {}), title: tr('「{cls}」到「{key}」已连续批准 {n} 次，以后直接做？', { cls, key, n: TRUST_THRESHOLD }), proposal: { type: 'trust_up', cls, scope: r.scope } });
           }
         } catch (e) { console.warn(`[bots] cannot record the approval of ${item.id}:`, e); }
       }
@@ -549,8 +554,21 @@ export class BotScheduler extends EventEmitter {
       // a proposal is a bot's own writing: checked like a window's edit before it lands
       const scope = p.type === 'trust_up' ? allowScope(p.scope, 'scope', p.cls) : undefined;
       const routine = p.type === 'routine' ? { ...routineOf(p.routine, new Map()), selfMade: true } : undefined;
+      // a policy the bot proposed (propose_policy): each rule checked like a window's edit — one that lets more run must
+      // name where. The only way a bot's suggestion reaches its policy, and only once the user clicked
+      const rules = p.type === 'policy' ? (Array.isArray(p.rules) ? p.rules : []).map((r) => {
+        const rule = ruleOf(r);
+        if ((rule.level === 'do' || rule.level === 'do_tell') && !rule.scope) allowScope({}, 'rules.scope', rule.cls);
+        return rule;
+      }) : undefined;
       await this.mutate(bot.id, (b) => {
         if (scope && p.type === 'trust_up') return { ...b, policy: { ...b.policy, rules: [...b.policy.rules, { cls: p.cls, level: 'do', scope }] } };
+        if (rules) {
+          // idempotent: an answer retried after a failure doesn't add a rule twice
+          const has = new Set(b.policy.rules.map((r) => JSON.stringify(r)));
+          const add = rules.filter((r) => !has.has(JSON.stringify(r)));
+          return add.length ? { ...b, policy: { ...b.policy, rules: [...b.policy.rules, ...add] } } : undefined;
+        }
         if (!routine || b.manager || b.routines.length >= (b.maxRoutines ?? 20) || b.routines.some((r) => r.id === routine.id)) return undefined;
         return { ...b, routines: [...b.routines, routine] };
       });
