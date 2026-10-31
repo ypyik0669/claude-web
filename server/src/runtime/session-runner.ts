@@ -37,6 +37,7 @@ import { subagentPolicyPrompt } from './subagent-policy.js';
 import { accountModel, accountWindowOf, compactAtOk, effectiveCompact, familyWindows, type AccountWindows } from '../models/account-window.js';
 import { localEnv } from './local-env.js';
 import { SESSIONS_ALLOWED, SESSIONS_SERVER, sessionsMcpEnabled, sessionsMcpServer } from '../sessions-mcp/tools.js';
+import { BOT_SELF_SERVER, botRuntime } from '../bots/runtime-hooks.js';
 import { PREVIEW_ALLOWED, PREVIEW_SERVER, previewEnabled, previewMcpServer, verifyInstructions } from '../preview/tools.js';
 
 /** A conversation above this share of the next model's window is compacted before the switch. */
@@ -198,6 +199,11 @@ export class SessionRunner extends EventEmitter {
   readonly gated: boolean;
   /** OpenSessionParams.botId (only with gated): the memory MCP server gets that bot's own scope */
   private readonly botId?: string;
+  /**
+   * OpenSessionParams.botRole (only with gated): 'thread' is the bot's main conversation, which a person watches —
+   * it gets the bot's own tools and prompt (botRuntime), and its AskUserQuestion shows the card instead of the gate
+   */
+  readonly botRole?: OpenSessionParams['botRole'];
   /** what the hook answered per tool_use_id: canUseTool reached for the same call reuses it (one gate run, one audit row) */
   private hookAnswers = new Map<string, PermissionResult>();
   private history: SDKMessage[] = []; // messages since spawn, replayed to late-joining clients
@@ -285,6 +291,7 @@ export class SessionRunner extends EventEmitter {
     this.drivenBy = params.drivenBy;
     this.gated = !!params.gated;
     this.botId = this.gated && typeof params.botId === 'string' && params.botId ? params.botId : undefined;
+    this.botRole = this.gated ? params.botRole : undefined;
     // a fork gets its own id from the CLI at init; until then use a placeholder so the pool
     // never clobbers the source session's runner
     const isFork = !!params.sessionId && (params.fork || !!params.resumeAt);
@@ -569,6 +576,11 @@ export class SessionRunner extends EventEmitter {
     const computer = this.features.computerUse && !bare ? computerClaudeMcpServer({ sessionId: this.sessionId }) : {};
     // 跨对话工具 (sessions-mcp/tools.ts): in-process, so nothing to hand out; archive_session is left to the permission mode
     const sessionsMcp: Record<string, McpServerConfig> = sessionsMcpEnabled() && !bare ? { [SESSIONS_SERVER]: sessionsMcpServer(() => this.sessionId) } : {};
+    // 值班 Bot's main conversation: the bot's own tools (in-process, gated as audited writes) and who it is — read at
+    // each start, so a respawn picks up a renamed bot / changed charter
+    const bot = this.botRole === 'thread' && this.botId ? botRuntime() : null;
+    const botMcp: Record<string, McpServerConfig> = bot && !bare ? { [BOT_SELF_SERVER]: bot.selfServer(this.botId!, () => this.sessionId) } : {};
+    const botPrompt = bot ? bot.threadPrompt(this.botId!) : '';
     // 预览服务器 (preview/tools.ts): preview_start runs a command, so only its logs / stop are pre-allowed
     const previewMcp: Record<string, McpServerConfig> = previewEnabled() && !bare ? { [PREVIEW_SERVER]: previewMcpServer(this.cwd, () => this.sessionId) } : {};
     const verify = bare ? null : verifyInstructions(this.cwd);
@@ -579,7 +591,7 @@ export class SessionRunner extends EventEmitter {
     // — only when the model is bound (`sub`): a pick that cannot be reached leaves the subagents on the main model, and
     // sending every piece of work to them would only cost more
     const delegate = bare || !sub ? '' : subagentPolicyPrompt(this.subagent);
-    const append = [verify, this.thinkingSection, delegate, this.projectInstructions, bare || this.drivenBy ? '' : nodegraphHintPrompt(nodegraphHintOn)].filter(Boolean).join('\n\n');
+    const append = [verify, this.thinkingSection, delegate, this.projectInstructions, bare || this.drivenBy ? '' : nodegraphHintPrompt(nodegraphHintOn), botPrompt].filter(Boolean).join('\n\n');
     const allowed = bare ? [] : [...webAllowedTools(), ...(Object.keys(computer).length ? computerAllowedTools() : []), ...(Object.keys(sessionsMcp).length ? SESSIONS_ALLOWED : []), ...(Object.keys(previewMcp).length ? PREVIEW_ALLOWED : [])];
     this.preAllowed = new Set(allowed);
     const noEngineSearch = engineSearchOff({ engine: engine.kind, userChoice: 'WEB_SEARCH_ADAPTER' in fenv || userPickedSearchAdapter(this.cwd) });
@@ -625,7 +637,7 @@ export class SessionRunner extends EventEmitter {
       // uninstalling claude-web must not leave an MCP entry behind in the user's own config.
       // 联网 (`web`: search + the built-in browser) goes in the same way (web/launcher.ts).
       // 操控电脑 (`computer`: the whole desktop, computer/launcher.ts) only for a conversation that has it switched on.
-      mcpServers: bare ? {} : { ...this.injectedMcp({ ...claudeMcpServer({ cwd: this.cwd, sessionId: this.sessionId, agent: 'claude', ...(this.botId ? { botId: this.botId } : {}) }), ...webClaudeMcpServer({ sessionId: this.sessionId }), ...computer }), ...sessionsMcp, ...previewMcp },
+      mcpServers: bare ? {} : { ...this.injectedMcp({ ...claudeMcpServer({ cwd: this.cwd, sessionId: this.sessionId, agent: 'claude', ...(this.botId ? { botId: this.botId } : {}) }), ...webClaudeMcpServer({ sessionId: this.sessionId }), ...computer }), ...sessionsMcp, ...previewMcp, ...botMcp },
       // a sidecar (`lean`, see above): the core set still covers read / search / edit / run
       ...(chatOnly ? { tools: [], strictMcpConfig: true } : lean ? { tools: LEAN_TOOLS, strictMcpConfig: true } : {}),
       // 网吧's cafe-character skill, as a local plugin (both runtimes load it: 2026-10-13), only while the `web` server
@@ -908,6 +920,8 @@ export class SessionRunner extends EventEmitter {
       // the PreToolUse hook already asked the gate about this call: its answer, not a second gate run (and audit row)
       const decided = o.toolUseID ? this.hookAnswers.get(o.toolUseID) : undefined;
       if (decided) { this.hookAnswers.delete(o.toolUseID!); return Promise.resolve(decided); }
+      // the bot's main conversation has a person in front of it: its questions get the usual card (the hook left them)
+      if (this.asksThePerson(toolName)) return this.askUser(event, o.signal);
       // the backstop (a call the hook never saw): gated here, no card, no allowed-tools shortcut
       return this.askGate(event);
     }
@@ -930,9 +944,17 @@ export class SessionRunner extends EventEmitter {
     }
   }
 
+  /** a gated call that goes to the person watching instead of the gate: AskUserQuestion in the bot's main conversation */
+  private asksThePerson(toolName: string): boolean {
+    return this.botRole === 'thread' && toolName === 'AskUserQuestion';
+  }
+
   /** OpenSessionParams.gated: the PreToolUse hook that puts every tool call — whatever would skip canUseTool — before the gate */
   private gateHook: HookCallback = async (input, toolUseID, opts) => {
     if (input.hook_event_name !== 'PreToolUse') return { continue: true };
+    // AskUserQuestion in the bot's main conversation: no decision here, canUseTool shows the card (a question runs
+    // nothing, and the gate would class it as an unknown 'send' and queue it in the inbox)
+    if (this.asksThePerson(input.tool_name)) return { continue: true };
     const toolInput = input.tool_input && typeof input.tool_input === 'object' && !Array.isArray(input.tool_input) ? input.tool_input as Record<string, unknown> : {};
     const id = toolUseID ?? input.tool_use_id;
     // the turn aborted, or the gate is still thinking near the hook's timeout: refused, never left to the CLI

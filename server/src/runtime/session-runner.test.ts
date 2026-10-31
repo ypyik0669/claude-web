@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 
 /** Every query() the runner starts: end / fail its message stream, push a message into it, react to interrupt(). */
@@ -80,6 +80,7 @@ const killed = vi.hoisted(() => [] as any[]);
 vi.mock('../agents/kill-tree.js', async (orig) => ({ ...(await orig() as any), killTree: async (child: any) => { killed.push(child); child.exitCode = 1; child.emit('exit', 1); } }));
 
 const { SessionRunner, GATE_HOOK_TIMEOUT_S, GATE_DEADLINE_MS } = await import('./session-runner.js');
+const { setBotRuntime, BOT_SELF_SERVER } = await import('../bots/runtime-hooks.js');
 const tick = () => new Promise((r) => setTimeout(r, 10));
 
 describe('SessionRunner', () => {
@@ -2438,6 +2439,74 @@ describe('值班 Bot gate', () => {
         expect(decision(await q)).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining('太久') });
       } finally { vi.useRealTimers(); }
       await r.close();
+    });
+
+    // 值班 Bot 聊天优先: the bot's main conversation is gated, but a person is watching it — its questions get a card
+    describe('the bot thread (botRole: thread)', () => {
+      const runtime = { selfServer: vi.fn((botId: string, self: () => string) => ({ type: 'sdk', name: 'cw-bot', botId, self } as any)), threadPrompt: vi.fn((botId: string) => `BOT-THREAD-PROMPT ${botId}`) };
+      afterEach(() => setBotRuntime(null));
+
+      it('gets the bot-self server and the thread prompt; a run of the same bot does not', async () => {
+        setBotRuntime(runtime);
+        queries.length = 0;
+        const t = new SessionRunner({ sessionId: 'bt0', cwd: '/x', gated: true, botId: 'b1', botRole: 'thread' } as any);
+        await tick();
+        expect(t.botRole).toBe('thread');
+        const srv = queries[0].options.mcpServers[BOT_SELF_SERVER];
+        expect(srv).toMatchObject({ botId: 'b1' });
+        expect(srv.self()).toBe('bt0');
+        expect(queries[0].options.systemPrompt.append).toContain('BOT-THREAD-PROMPT b1');
+        const run = new SessionRunner({ sessionId: 'bt1', cwd: '/x', gated: true, botId: 'b1', botRole: 'run' } as any);
+        await tick();
+        expect(queries[1].options.mcpServers[BOT_SELF_SERVER]).toBeUndefined();
+        expect(queries[1].options.systemPrompt.append ?? '').not.toContain('BOT-THREAD-PROMPT');
+        // botRole is only honoured on a gated conversation
+        const plain = new SessionRunner({ sessionId: 'bt2', cwd: '/x', botId: 'b1', botRole: 'thread' } as any);
+        await tick();
+        expect(plain.botRole).toBeUndefined();
+        expect(queries[2].options.mcpServers[BOT_SELF_SERVER]).toBeUndefined();
+        await Promise.all([t.close(), run.close(), plain.close()]);
+      });
+
+      it('AskUserQuestion is left to canUseTool, which shows the card; Bash still goes to the gate', async () => {
+        setBotRuntime(runtime);
+        queries.length = 0;
+        const r = new SessionRunner({ sessionId: 'bt3', cwd: '/x', gated: true, botId: 'b1', botRole: 'thread' } as any);
+        await tick();
+        const asked: string[] = [];
+        r.gate = async (ev) => { asked.push(ev.toolName); return { behavior: 'deny', message: 'policy says no' }; };
+        const hook = preToolUse(queries[0]);
+        const q = { questions: [{ question: '叫什么？', options: [] }] };
+        expect(await hook('AskUserQuestion', q, 'tu-q')).toEqual({ continue: true });
+        const seen: any[] = []; r.on('permission', (e) => seen.push(e));
+        const ac = new AbortController();
+        const p = queries[0].options.canUseTool('AskUserQuestion', q, { signal: ac.signal, toolUseID: 'tu-q' });
+        await tick();
+        expect(seen).toHaveLength(1);
+        expect(seen[0]).toMatchObject({ toolName: 'AskUserQuestion', sessionId: 'bt3' });
+        r.respondPermission(seen[0].requestId, { behavior: 'allow', updatedInput: { ...q, answers: { '叫什么？': '小值' } } } as any);
+        expect(await p).toMatchObject({ behavior: 'allow' });
+        expect(asked).toEqual([]);
+        expect(decision(await hook('Bash', { command: 'git push' }, 'tu-b'))).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: 'policy says no' });
+        expect(asked).toEqual(['Bash']);
+        await r.close();
+      });
+
+      it('a routine run (botRole: run) still puts AskUserQuestion before the gate', async () => {
+        setBotRuntime(runtime);
+        queries.length = 0;
+        const r = new SessionRunner({ sessionId: 'bt4', cwd: '/x', gated: true, botId: 'b1', botRole: 'run' } as any);
+        await tick();
+        const asked: string[] = [];
+        r.gate = async (ev) => { asked.push(ev.toolName); return { behavior: 'deny', message: 'queued' }; };
+        const hook = preToolUse(queries[0]);
+        expect(decision(await hook('AskUserQuestion', { questions: [] }, 'tu-q'))).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: 'queued' });
+        const seen: any[] = []; r.on('permission', (e) => seen.push(e));
+        expect(await queries[0].options.canUseTool('AskUserQuestion', { questions: [] }, { signal: new AbortController().signal, toolUseID: 'tu-q2' })).toMatchObject({ behavior: 'deny' });
+        expect(seen).toEqual([]);
+        expect(asked).toEqual(['AskUserQuestion', 'AskUserQuestion']);
+        await r.close();
+      });
     });
 
     it('a conversation that is not gated gets no hook (and canUseTool is as before)', async () => {

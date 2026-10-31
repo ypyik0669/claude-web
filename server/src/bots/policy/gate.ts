@@ -14,7 +14,11 @@ import { tr } from '../../i18n/index.js';
 
 /** A call the gate let through: what it was and the rule that allowed it (demoteRule takes that rule on a correction). */
 export interface AllowedCall { toolName: string; input: Record<string, unknown>; cls: ActionClass; key: string; level: PolicyLevel; basis: AuditBasis; rule?: PolicyRule }
-export interface GateCtx { bot: Bot; runId: string; routineId: string; store: BotStore; audit: AuditLog; inbox: Inbox; now?: () => number; onTell?: (text: string, call: AllowedCall) => void }
+/**
+ * `bot`: the bot, or a getter read on every call — a long-lived main conversation sees policy changes made while it
+ * runs. `routineId`: unset for that conversation (no routine).
+ */
+export interface GateCtx { bot: Bot | (() => Bot); runId: string; routineId?: string; store: BotStore; audit: AuditLog; inbox: Inbox; now?: () => number; onTell?: (text: string, call: AllowedCall) => void }
 export interface GateHandle {
   gate: ToolGate;
   /** the user approved this call (inbox): the next identical call passes once */
@@ -41,6 +45,8 @@ export function callKey(toolName: string, input: Record<string, unknown>): strin
 }
 
 const DAY = 24 * 3600_000;
+/** the bot-self MCP server's tools (runtime-hooks BOT_SELF_SERVER), after unwrap */
+const BOT_SELF_TOOL = /^mcp__cw-bot__/;
 const dayStart = (t: number) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
 
 /**
@@ -51,6 +57,8 @@ const dayStart = (t: number) => { const d = new Date(t); d.setHours(0, 0, 0, 0);
  */
 export function makeGate(ctx: GateCtx): GateHandle {
   const now = ctx.now ?? Date.now;
+  const botOf = (): Bot => (typeof ctx.bot === 'function' ? ctx.bot() : ctx.bot);
+  const botId = botOf().id;
   const approved = new Set<string>();
   const allowedCalls = new Map<string, AllowedCall>();
   /**
@@ -66,9 +74,9 @@ export function makeGate(ctx: GateCtx): GateHandle {
   const countKeys = (basis: AuditBasis, rule?: PolicyRule) => basis === 'autopilot' ? [AUTOPILOT] : rule ? [ruleKey(rule)] : [];
   const seed = (start: number) => {
     others = new Map();
-    for (const r of ctx.store.runs(ctx.bot.id, 2000)) {
+    for (const r of ctx.store.runs(botId, 2000)) {
       if (r.id === ctx.runId || r.at < start - DAY) continue;
-      for (const row of ctx.store.audit(ctx.bot.id, r.id)) {
+      for (const row of ctx.store.audit(botId, r.id)) {
         if (row.result !== 'allowed' || row.at < start || row.at >= start + DAY) continue;
         for (const k of countKeys(row.basis, row.rule)) bump(others, k);
       }
@@ -83,15 +91,22 @@ export function makeGate(ctx: GateCtx): GateHandle {
 
   const check = async (ev: PermissionRequestEvent): Promise<PermissionResult> => {
     const t = now();
+    const bot = botOf();
     const [name, params] = unwrap(ev.toolName, ev.input);
+    // the bot's own tools (bot-self MCP, the main conversation's): they change only what the user can see and undo on
+    // the bot page, and none reaches its policy or budget (propose_policy makes a card) — run, on record
+    if (BOT_SELF_TOOL.test(name)) {
+      await ctx.audit.add({ at: t, runId: ctx.runId, botId: bot.id, toolName: name, cls: 'write_local', summary: summarize(ev.toolName, ev.input), level: 'do', basis: 'rule', result: 'allowed' });
+      return { behavior: 'allow', updatedInput: ev.input };
+    }
     const cls = classify(ev.toolName, ev.input);
     const summary = summarize(ev.toolName, ev.input);
     const target = targetOf(cls, ev.toolName, ev.input);
     const key = scopeKey(undefined, target);
-    const base = { at: t, runId: ctx.runId, botId: ctx.bot.id, toolName: name, cls, summary, scope: key };
+    const base = { at: t, runId: ctx.runId, botId: bot.id, toolName: name, cls, summary, scope: key };
     // the bots' own files (policy, audit, inbox) are out of reach whatever the bot's levels — unleashed too
-    const guard = selfGuard(path.dirname(ctx.store.dir(ctx.bot.id)), ctx.bot.id, ctx.bot.cwd, name, params);
-    const d: Decision = guard ? { level: guard, basis: 'rule' } : decide(ctx.bot.policy, cls, target, t, today(t));
+    const guard = selfGuard(path.dirname(ctx.store.dir(bot.id)), bot.id, bot.cwd, name, params);
+    const d: Decision = guard ? { level: guard, basis: 'rule' } : decide(bot.policy, cls, target, t, today(t));
     if (d.level === 'deny') {
       await ctx.audit.add({ ...base, level: 'deny', basis: d.basis, result: 'denied', ...(d.rule ? { rule: d.rule } : {}) });
       return { behavior: 'deny', message: guard ? tr('Bot 不能改自己的策略、审计和收件箱：这一步没有执行') : tr('这个 Bot 的策略禁止这类动作：{cls}', { cls }) };
@@ -103,9 +118,9 @@ export function makeGate(ctx: GateCtx): GateHandle {
     else if (level === 'ask') {
       // the model retrying a call that already waits for an answer (this run, or this conversation) gets the same item:
       // no second inbox item, no second IM push, nothing counted twice
-      const waiting = ctx.inbox.list(ctx.bot.id).find((i) => i.kind === 'approval' && !i.done && !!i.toolName && !!i.input
+      const waiting = ctx.inbox.list(bot.id).find((i) => i.kind === 'approval' && !i.done && !!i.toolName && !!i.input
         && (i.runId === ctx.runId || (!!ev.sessionId && i.sessionId === ev.sessionId)) && callKey(i.toolName, i.input) === ck);
-      const item = waiting ?? await ctx.inbox.add({ kind: 'approval', botId: ctx.bot.id, runId: ctx.runId, routineId: ctx.routineId, sessionId: ev.sessionId, title: summary, toolName: ev.toolName, input: ev.input, cls });
+      const item = waiting ?? await ctx.inbox.add({ kind: 'approval', botId: bot.id, runId: ctx.runId, ...(ctx.routineId ? { routineId: ctx.routineId } : { thread: true }), sessionId: ev.sessionId, title: summary, toolName: ev.toolName, input: ev.input, cls });
       await ctx.audit.add({ ...base, level: 'ask', basis, result: 'queued', ...(rule ? { rule } : {}) });
       return { behavior: 'deny', message: tr('这个动作要先经你批准，已放进收件箱（{title}）。先做别的；批准后会从这里继续。', { title: item.title }) };
     }

@@ -297,4 +297,34 @@ describe('makeGate', () => {
     expect(store.audit('b1', 'run1').every((r) => r.result === 'queued')).toBe(true);
     expect(await g.gate(ev('Bash', { command: 'npm test' }))).toMatchObject({ behavior: 'allow' });
   });
+
+  // ---- 聊天优先: the bot's own tools, and a thread that lives across policy changes ----
+
+  it("the bot's own tools (mcp__cw-bot__*), direct or wrapped, run with one audit row each — even when its policy would deny writes", async () => {
+    const g = makeGate({ bot: bot({ rules: [{ cls: 'write_local', level: 'deny' }, { cls: 'send', level: 'deny' }] }), runId: 'thread1', store, audit, inbox });
+    const input = { name: '早间简报', cron: '0 9 * * *' };
+    expect(await g.gate(ev('mcp__cw-bot__routine_create', input))).toEqual({ behavior: 'allow', updatedInput: input });
+    const wrappedSelf = { tool_name: 'mcp__cw-bot__routine_create', params: input };
+    expect(await g.gate(ev('ExecuteExtraTool', wrappedSelf))).toEqual({ behavior: 'allow', updatedInput: wrappedSelf });
+    const rows = store.audit('b1', 'thread1');
+    expect(rows).toHaveLength(2);
+    for (const r of rows) expect(r).toMatchObject({ toolName: 'mcp__cw-bot__routine_create', cls: 'write_local', level: 'do', basis: 'rule', result: 'allowed' });
+    expect(inbox.list('b1')).toEqual([]);
+    // only that server: a look-alike name is gated as usual
+    expect((await g.gate(ev('mcp__cw-botx__routine_create', input)))?.behavior).toBe('deny');
+  });
+
+  it('a bot getter is read on every call: a policy change reaches a long-lived thread', async () => {
+    let current = bot();
+    const g = makeGate({ bot: () => current, runId: 'thread1', store, audit, inbox });
+    expect((await g.gate(ev('Read', { file_path: '/a' })))?.behavior).toBe('allow');
+    current = bot({ rules: [{ cls: 'read', level: 'deny' }] });
+    expect((await g.gate(ev('Read', { file_path: '/a' })))?.behavior).toBe('deny');
+    expect(store.audit('b1', 'thread1').map((r) => r.result)).toEqual(['allowed', 'denied']);
+    // no routine: an approval it queues is marked as the main conversation's
+    expect((await g.gate(ev('Bash', { command: 'git push origin main' })))?.behavior).toBe('deny');
+    const [item] = inbox.list('b1');
+    expect(item).toMatchObject({ kind: 'approval', thread: true, runId: 'thread1', sessionId: 's1' });
+    expect(item.routineId).toBeUndefined();
+  });
 });
