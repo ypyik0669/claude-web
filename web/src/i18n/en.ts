@@ -1122,7 +1122,6 @@ export const EN_WEB: Record<string, string> = {
   "依据最近记录的额度使用情况排序": "Order by the most recently recorded quota usage",
   "依赖": "Depends on",
   "侧栏": "Sidebar",
-  "侧栏 · Bot": "Sidebar · Bots",
   "侧栏 · 后台": "Sidebar · Background",
   "侧栏 · 扩展": "Sidebar · Extensions",
   "侧栏 · 模型": "Sidebar · Models",

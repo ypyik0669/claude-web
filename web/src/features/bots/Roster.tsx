@@ -1,9 +1,9 @@
 // 值班 Bot 名册（spec 2026-10-31 聊天优先 §1 / §6）: every bot as a contact — face, name and 职位, its last line, the
 // time, and a dot for what it wants. 需要你 on top, the manager ★, the hidden ones folded at the bottom. On a desktop it
-// is the section sidebar while the Bot page is in front; on a phone it is the page's first screen.
+// is the Bot page's own first column (there whether the app's sidebar is open or not — the sidebar shows the
+// conversations while the page is in front); on a phone it is the page's first screen.
 import { useMemo, useState } from 'react';
 import type { BotStatus } from '@shared';
-import { SectionSide } from '@/features/sections/SectionSide';
 import { Menu } from '@/features/sidebar/menus';
 import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
@@ -152,20 +152,17 @@ function RosterBody({ phone }: { phone?: boolean }) {
   );
 }
 
-/** The roster. `phone`: the Bot page's first screen (no section shell; the pinned bots as faces on top). */
+/** The roster: its head (Bot, ＋ 新 Bot), the search box, the groups, the load line. `phone`: the page's first screen
+ *  (the pinned bots as faces on top); else the desktop page's first column. */
 export function Roster({ phone }: { phone?: boolean }) {
-  const add = <button className="icon-btn" title={tr('新 Bot')} aria-label={tr('新 Bot')} data-act="new-bot" onClick={showNewBot}><Icon name="plus" size={16} /></button>;
-  if (phone) {
-    return (
-      <div className="bots-phone-roster">
-        <div className="br-top"><span className="sect-title">{tr('Bot')}</span><span className="grow" />{add}</div>
-        <RosterBody phone />
-      </div>
-    );
-  }
   return (
-    <SectionSide name="bots" title={tr('Bot')} tab="" tabs={[]} onTab={() => {}} action={add}>
-      <RosterBody />
-    </SectionSide>
+    <div className={phone ? 'bots-phone-roster' : 'bots-roster-col'}>
+      <div className="br-top">
+        <span className="sect-title">{tr('Bot')}</span>
+        <span className="grow" />
+        <button className="icon-btn" title={tr('新 Bot')} aria-label={tr('新 Bot')} data-act="new-bot" onClick={showNewBot}><Icon name="plus" size={16} /></button>
+      </div>
+      <RosterBody phone={phone} />
+    </div>
   );
 }

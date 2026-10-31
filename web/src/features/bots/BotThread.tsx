@@ -12,7 +12,7 @@ import { tr } from '@/i18n';
 import { BotAvatar, type BotAvatarState } from './BotAvatar';
 import { pendingByBot, rowState } from './model';
 import { threadOnScreen } from './roster-model';
-import { openThread, markSeen, useBots } from './state';
+import { loadRuns, openThread, markSeen, useBots } from './state';
 import { useThreadExtras } from './useThreadExtras';
 import { ThreadNavContext, type ThreadNav } from './cards/nav';
 import { RunView } from './cards/RunView';
@@ -72,6 +72,15 @@ export function BotThread({ bot }: { bot: BotStatus }) {
     tried.current = id;
     void openThread(id);
   }, [visible, loaded, id]);
+
+  // its runs, once per bot when its conversation first shows: the run cards need the records (until then they say the
+  // routine and the time, 打开 disabled)
+  const runsFor = useRef('');
+  useEffect(() => {
+    if (!visible || runsFor.current === id) return;
+    runsFor.current = id;
+    void loadRuns(id);
+  }, [visible, id]);
 
   // seen while it is on screen: new entries as they come
   useEffect(() => { if (visible && bot.unseen > 0) void markSeen(id); }, [visible, bot.unseen, id]);

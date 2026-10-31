@@ -1,10 +1,8 @@
-/* 值班 Bot (spec 2026-10-31-bots-chat-first-redesign): the roster (the section sidebar, a phone's first screen), the
-   page — the conversation with one bot | its profile column — and the New Bot page. Shared tokens only. */
+/* 值班 Bot (spec 2026-10-31-bots-chat-first-redesign): the page — the roster | the conversation with one bot | its
+   profile column (a phone: one screen each) — and the New Bot page. Shared tokens only. */
 
 /* the roster (Roster.tsx) */
 .bot-roster { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
-.bots-side .sect-nav:empty { display: none; }
-.bots-side .sect-list { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .br-search { flex: none; display: flex; align-items: center; gap: 6px; margin: 0 var(--sp-3) var(--sp-2); padding: 0 8px; border-radius: var(--r-md); background: var(--fill-subtle); color: var(--ink-3); }
 .br-search .field { flex: 1 1 auto; min-width: 0; border: 0; background: none; padding: 6px 0; box-shadow: none; }
 .br-pinned { flex: none; display: flex; gap: var(--sp-3); overflow-x: auto; padding: 4px var(--sp-3) var(--sp-2); }
@@ -40,12 +38,21 @@
 .bots-load .grow { flex: 1 1 auto; }
 
 /* the page (BotsPage.tsx): the conversation | the profile column; the New Bot page instead of both */
-.bots-body { flex: 1 1 auto; min-height: 0; display: flex; gap: var(--sp-3); padding: 0 var(--sp-4) var(--sp-4); }
+.bots-body { flex: 1 1 auto; min-height: 0; display: flex; }
 .bots-col { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .bots-col[hidden] { display: none; }
+/* the roster: the page's first column, its head as tall as the other columns' (a page has no head row on a desktop) */
+.bots-col-roster { flex: 0 0 280px; border-right: var(--hairline) solid var(--edge-subtle); }
+.bots-roster-col { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.bots-roster-col > .br-top { height: var(--h-head); padding: 0 var(--sp-2) 0 var(--sp-4); }
 .bots-col-thread { flex: 1 1 auto; }
+.bots-col-thread .bt-head { min-height: var(--h-head); }
 .bots-col-new { flex: 1 1 auto; overflow: auto; }
-.bots-col-profile { flex: 0 0 340px; overflow: auto; border-left: var(--hairline) solid var(--edge-subtle); padding-left: var(--sp-3); }
+.bots-col-profile { flex: 0 0 340px; overflow: auto; border-left: var(--hairline) solid var(--edge-subtle); padding: 0 var(--sp-3); }
+/* Windows / Linux: the caption buttons float over the top-right corner (unless the right panel owns it) — the profile's
+   tabs and × start under them, and the conversation's head keeps clear of them when it reaches the corner */
+html.desktop:not(.mac) .app:not(.dock-open) .bots-col-profile { padding-top: var(--h-head); }
+html.desktop:not(.mac) .app:not(.dock-open) .bots-body:not(:has(.bots-col-profile:not([hidden]))) .bt-head { padding-right: calc(158px / var(--zoom, 1)); }
 
 /* a phone: one screen at a time */
 .bots-phone { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }

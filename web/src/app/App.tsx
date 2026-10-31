@@ -43,7 +43,6 @@ import { RAIL_WIDTH } from '@/features/rail/rail-model';
 import { AutomationSide } from '@/features/automation/AutomationSide';
 import { ExtensionsSide } from '@/features/extensions/ExtensionsSide';
 import { ModelHubSide } from '@/features/model-hub/ModelHubSide';
-import { Roster } from '@/features/bots/Roster';
 import { installChecklist } from '@/features/home/checklist-sync';
 import { installAccountDefault } from '@/features/models/account-default';
 import { installSettingsClose } from '@/features/settings/close-on-nav';
@@ -78,10 +77,11 @@ function SidebarColumn() {
   useLayoutEffect(() => { if (el.current) drawerEnter(el.current); }, []);
   // which section's sidebar: the conversations, or a page section's own (structure round 2). A phone's drawer is
   // always the conversations — the pages draw their parts as tabs there. Each is mounted when first shown and only
-  // hidden after that (the list's filter, what was unfolded, a multi-select all survive a visit to 自动化)
+  // hidden after that (the list's filter, what was unfolded, a multi-select all survive a visit to 自动化). The Bot
+  // page keeps its roster in its own first column, so beside it the sidebar is the conversations too (no second copy)
   const mobile = useStore((s) => s.mobile);
   const current = useSection();
-  const section = mobile ? 'chat' : current;
+  const section = mobile || current === 'bots' ? 'chat' : current;
   const [seen, setSeen] = useState<string[]>([section]);
   if (!seen.includes(section)) setSeen([...seen, section]);
   // NOTE: no inline `position` here — an inline style beats `.app.mobile .sidebar { position: fixed }`
@@ -91,7 +91,6 @@ function SidebarColumn() {
       <div className="sb-sect" data-section="chat" hidden={section !== 'chat'}><ErrorBoundary area={tr('侧栏')}><Sidebar onNew={() => runCommand('new')} /></ErrorBoundary></div>
       {seen.includes('background') && <div className="sb-sect" data-section="background" hidden={section !== 'background'}><ErrorBoundary area={tr('侧栏 · 后台')}><BackgroundSide /></ErrorBoundary></div>}
       {seen.includes('automation') && <div className="sb-sect" data-section="automation" hidden={section !== 'automation'}><ErrorBoundary area={tr('侧栏 · 自动化')}><AutomationSide /></ErrorBoundary></div>}
-      {seen.includes('bots') && <div className="sb-sect" data-section="bots" hidden={section !== 'bots'}><ErrorBoundary area={tr('侧栏 · Bot')}><Roster /></ErrorBoundary></div>}
       <div className="sb-sect" data-section="gateway" hidden={section !== 'gateway'}><ErrorBoundary area={tr('侧栏 · 模型')}><ModelHubSide /></ErrorBoundary></div>
       {seen.includes('extensions') && <div className="sb-sect" data-section="extensions" hidden={section !== 'extensions'}><ErrorBoundary area={tr('侧栏 · 扩展')}><ExtensionsSide /></ErrorBoundary></div>}
       <div

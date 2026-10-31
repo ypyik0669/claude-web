@@ -55,6 +55,8 @@ export function OverPage(p: {
   narrow?: boolean;
   /** Esc: put away something inside the page first (a drawer, a detail view); true = handled, the page stays */
   onEscape?(): boolean;
+  /** false: no head row on a desktop (the page's columns carry their own heads — the Bot page); a phone keeps it */
+  head?: boolean;
   children: React.ReactNode;
 }) {
   const mobile = useStore((s) => s.mobile);
@@ -108,7 +110,7 @@ export function OverPage(p: {
         p.onClose();
       }}
     >
-      <div className={clsx('over-head', `${n}-head`, p.narrow && 'narrow')}>
+      {(p.head !== false || mobile) && <div className={clsx('over-head', `${n}-head`, p.narrow && 'narrow')}>
         <SidebarReveal />
         {/* the title and the actions span the content's width (新建 lines up with the list's right edge, review 7 M13) */}
         <div className={clsx('over-head-in', `${n}-head-in`)}>
@@ -120,7 +122,7 @@ export function OverPage(p: {
           {p.actions}
         </div>
         <button className="icon-btn over-close" title={tr('关闭 (Esc)')} aria-label={tr('关闭{label}', { label: p.label })} onClick={p.onClose}><Icon name="close" size={16} /></button>
-      </div>
+      </div>}
       {p.showTabs && (
         <div className={clsx('utabs over-tabs', `${n}-tabs`)} role="tablist" aria-label={p.label}>
           {p.tabs.map((t) => (

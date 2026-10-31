@@ -1,5 +1,6 @@
-// 值班 Bot（spec 2026-10-31 聊天优先 §1 / §6）: the page over the main area. A desktop: the roster is the section
-// sidebar, the page is the conversation with the chosen bot, and its profile column at the right when asked for. A
+// 值班 Bot（spec 2026-10-31 聊天优先 §1 / §6）: the page over the main area. A desktop: three columns — the roster
+// (always there, whether the app's sidebar is open or not), the conversation with the chosen bot, and its profile at
+// the right when asked for; no page head row (the roster's head says Bot, the conversation's head is the bot). A
 // phone: three screens — the roster, the conversation (or the New Bot page), the profile — all mounted, one shown.
 // No bot yet (the manager aside): the New Bot page.
 import { useEffect, useMemo } from 'react';
@@ -75,6 +76,7 @@ export function BotsPage() {
       showTabs={false}
       onTab={() => {}}
       onEscape={botsEscape}
+      head={false}
     >
       {mobile ? (
         <div className="bots-phone" data-screen={phoneScreen}>
@@ -101,6 +103,7 @@ export function BotsPage() {
         </div>
       ) : (
         <div className="bots-body">
+          <div className="bots-col bots-col-roster"><Roster /></div>
           <div className="bots-col bots-col-thread" hidden={showNew}>{thread}</div>
           <div className="bots-col bots-col-new" hidden={!showNew}><NewBot /></div>
           <div className="bots-col bots-col-profile" hidden={showNew || !profileOpen || !bot}>{bot && <BotProfile bot={bot} shown={open && !showNew && profileOpen} />}</div>
