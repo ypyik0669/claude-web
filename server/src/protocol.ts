@@ -1014,7 +1014,7 @@ export interface BotRun {
   /** costUsd is an estimate: the model had no known price, its tokens were counted at a Sonnet-class price */
   costEstimated?: boolean;
   /** what the bot said it did (its final text) vs what the acceptance check found */
-  said?: string; verified?: { ok: boolean; note?: string }; error?: string; queued?: number;
+  said?: string; verified?: { ok: boolean; note?: string; /** the conversation failed: the acceptance script was not run */ skipped?: boolean }; error?: string; queued?: number;
   /** the server quit mid-run (a duty server yielding to the app): left open for the next holder, which closes it and runs it again */
   handoff?: boolean;
 }

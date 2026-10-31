@@ -98,7 +98,7 @@ function RunRow({ bot, run }: { bot: BotStatus; run: BotRun }) {
         <span className="bd-run-name">{routine?.name ?? run.routineId}</span>
         <span className="bd-run-facts">{facts.join(' · ')}</span>
         <span className="grow" />
-        {run.verified && <span className={clsx('bd-verdict', run.verified.ok ? 'ok' : 'bad')} title={tr('验收')}>{run.verified.ok ? '✓' : '✗'} {tr('验收')}</span>}
+        {run.verified && <span className={clsx('bd-verdict', run.verified.ok ? 'ok' : run.verified.skipped ? '' : 'bad')} title={run.verified.skipped ? tr('对话没有完成，没有跑验收') : tr('验收')}>{run.verified.ok ? '✓' : run.verified.skipped ? '–' : '✗'} {tr('验收')}</span>}
         {!run.skipped && <button className="btn sm ghost" aria-expanded={audit} onClick={() => setAudit(!audit)}>{tr('审计')}</button>}
         {run.sessionId && <button className="btn sm ghost" title={tr('打开这次运行的对话')} onClick={() => openRunChat(run.sessionId!)}><Icon name="chat" size={12} />{tr('打开对话')}</button>}
       </div>

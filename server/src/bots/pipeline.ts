@@ -122,6 +122,13 @@ const drafts = (text: string) => [...text.matchAll(/<draft>([\s\S]*?)<\/draft>/g
 /** only a Claude SessionRunner opened with `gated` answers every tool call through `gate` (Codex / ACP drivers ignore it) */
 const honoursGate = (r: AgentDriver) => r.info?.agent === 'claude' && (r as AgentDriver & { gated?: boolean }).gated === true;
 
+/** a relay / source that can't serve the model (Task 22: new-api's 503 "No available channel for model … under group …") */
+const NO_MODEL = /no available channel|no channel for model|model_not_found|model[\s\S]{0,80}\b(?:not (?:available|found|supported)|does not exist)|无可用渠道|没有可用的?渠道|模型不存在/i;
+export function modelUnavailable(text: string, model: string | undefined): string | undefined {
+  if (!NO_MODEL.test(text)) return undefined;
+  return tr('这个来源上用不了模型 {model}，在 Bot 的设置里选一个这个来源有的模型（或换一个来源）。原话：{detail}', { model: model || tr('来源的默认模型'), detail: text.trim().slice(0, 200) });
+}
+
 /** why a run failed, for the inbox title */
 type Cause = 'open' | 'ungated' | 'timeout' | 'died' | 'error' | 'verify';
 const causeTitle = (c: Cause, name: string) => ({
@@ -241,8 +248,11 @@ export async function runRoutine(d: PipelineDeps, bot: Bot, routine: Routine, tr
 
   run.said = res.text.slice(0, 2000);
   if (res.timedOut) run.error = tr('超时');
-  else if (res.died) run.error = res.died;
-  if (routine.acceptance.kind === 'script') {
+  else if (res.died) run.error = modelUnavailable(res.died, params.model) ?? res.died;
+  else if (res.isError) { const why = modelUnavailable(res.text, params.model); if (why) run.error = why; }
+  // a conversation that failed did not do the work: its acceptance isn't run (a clean tree would read as "passed")
+  if (routine.acceptance.kind === 'script' && res.isError) run.verified = { ok: false, skipped: true, note: tr('对话没有完成，没有跑验收') };
+  else if (routine.acceptance.kind === 'script') {
     const a = await runScript(routine.acceptance.script, { cwd: bot.cwd, signal: o.signal });
     if (o.signal?.aborted) return stopped();
     run.verified = { ok: a.ok, note: (a.stdout || a.stderr).trim().slice(0, 300) };

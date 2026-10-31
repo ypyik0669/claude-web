@@ -114,6 +114,39 @@ describe('runRoutine', () => {
     expect(inbox.list('b1').some((i) => i.title.includes('停用'))).toBe(true);
   });
 
+  it('a failed conversation is not accepted: the acceptance script does not run and the run says it was skipped', async () => {
+    const marker = path.join(root, 'accepted');
+    const script = process.platform === 'win32' ? `New-Item -ItemType File -Path '${marker}' | Out-Null` : `touch '${marker}'`;
+    const b = bot([routine({ acceptance: { kind: 'script', script } })]); await store.save(b);
+    const { run } = await runRoutine(deps(fakeRunner({ isError: true, resultText: 'API Error' })), b, b.routines[0], 'manual');
+    expect(fs.existsSync(marker)).toBe(false);
+    expect(run.ok).toBe(false);
+    expect(run.verified).toMatchObject({ ok: false, skipped: true });
+    // and an ok conversation still runs it
+    const { run: r2 } = await runRoutine(deps(fakeRunner()), b, b.routines[0], 'manual');
+    expect(fs.existsSync(marker)).toBe(true);
+    expect(r2.verified).toEqual({ ok: true, note: '' });
+  });
+
+  it('a source without a channel for the model: the error says so and points at the bot’s model setting', async () => {
+    const b = { ...bot([routine()]), model: 'claude-opus-5-5' }; await store.save(b);
+    const text = 'API Error: 503 {"error":{"message":"No available channel for model claude-opus-5-5 under group 活动专用分组","type":"new_api_error"}}';
+    const { run } = await runRoutine(deps(fakeRunner({ isError: true, resultText: text })), b, b.routines[0], 'manual');
+    expect(run.ok).toBe(false);
+    expect(run.error).toContain('这个来源上用不了模型 claude-opus-5-5');
+    expect(run.error).toContain('在 Bot 的设置里选一个这个来源有的模型');
+    expect(inbox.list('b1').find((i) => i.kind === 'finding' && i.title.includes('出错'))?.body).toBe(run.error);
+    // the provider's default model (the bot names none)
+    const b2 = bot([routine({ id: 'r2' })]); await store.save(b2);
+    const { run: r2 } = await runRoutine(deps(fakeRunner({ isError: true, resultText: 'model_not_found: no channel' })), b2, b2.routines[0], 'manual');
+    expect(r2.error).toContain('这个来源上用不了模型 来源的默认模型');
+    const { run: r4 } = await runRoutine(deps(fakeRunner({ isError: true, resultText: 'The model `x-1` does not exist' })), b2, b2.routines[0], 'manual');
+    expect(r4.error).toContain('这个来源上用不了模型');
+    // any other error is left as it was
+    const { run: r3 } = await runRoutine(deps(fakeRunner({ isError: true, resultText: 'rate limited' })), b2, b2.routines[0], 'manual');
+    expect(r3.error).toBeUndefined();
+  });
+
   it('drafts in the answer become draft items', async () => {
     const b = bot([routine()]); await store.save(b);
     await runRoutine(deps(fakeRunner({ resultText: '写好了 <draft>嗨，这是回复</draft> 请过目' })), b, b.routines[0], 'manual');
