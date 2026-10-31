@@ -81,7 +81,9 @@ export function buildPrompt(bot: Bot, routine: Routine, state: RoutineState, mem
     '', '## 检查点（上次没做完的从这里接着）', state.checkpoint || '无',
     '', '## 你记住的', ...(memories.length ? memories.map((m) => `- ${m}`) : ['- 无']),
     '', '## 规则',
-    `- 长任务每完成一步就把进度写进 ${checkpointFile}（覆盖写），做完后删掉它。`,
+    // the gate lets the Write tool into the bot's own state/ but asks for any shell command naming the bots dir
+    `- 长任务每完成一步就用 Write 工具把进度写进 ${checkpointFile}（覆盖写），做完后用 Write 把它写成空的。`,
+    `- 这个文件夹已经建好：不要用命令行（mkdir / rm / echo > 等）碰 ${path.dirname(checkpointFile)}，命令行碰它每次都要先问人。`,
     '- 要发出去的内容不要直接发，写在 <draft>…</draft> 里，由我来发。',
     policyLine(bot.policy),
     '- 查不到的标「待核实」，不要猜。',

@@ -213,6 +213,12 @@ describe('runRoutine', () => {
     expect(p).not.toMatch(/memory\.write|scope 填 bot/);
     expect(p).toContain('只是告知（由系统把关，不用你自己拦）：对外发送/付款/删除会先问人。');
   });
+  it('buildPrompt: the checkpoint is written and cleared with the Write tool, no shell in the state folder (Task 22: mkdir / rm there always ask)', () => {
+    const p = buildPrompt(bot([routine()]), routine(), { updatedAt: 0 }, [], '/x/state/cp.md');
+    expect(p).toContain('- 长任务每完成一步就用 Write 工具把进度写进 /x/state/cp.md（覆盖写），做完后用 Write 把它写成空的。');
+    expect(p).toContain('- 这个文件夹已经建好：不要用命令行（mkdir / rm / echo > 等）碰 /x/state，命令行碰它每次都要先问人。');
+    expect(p).not.toContain('删掉它');
+  });
   it("the prompt's policy line is built from the bot's own levels", () => {
     expect(policyLine({ rules: [{ cls: 'pay', level: 'deny' }, { cls: 'delete', level: 'do_tell' }, { cls: 'send', level: 'do', scope: { domains: ['hooks.slack.com'] } }] }))
       .toBe('- 只是告知（由系统把关，不用你自己拦）：对外发送会先问人（放行范围内的直接做）；付款不允许；删除可以直接做（做完告诉人）。');
