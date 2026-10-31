@@ -14,9 +14,13 @@ describe('classify', () => {
     expect(classify('mcp__claude-web-memory__memory_list', {})).toBe('read');
     expect(classify('mcp__claude-web-memory__memory_write', { text: 'x' })).toBe('write_local');
     expect(classify('mcp__claude-web-memory__memory_write', { text: 'x', scope: 'bot' })).toBe('write_local');
-    // a wider scope reaches every other conversation's prompt: asked first
-    for (const scope of ['global', 'project', 'session', 'other']) expect(classify('mcp__claude-web-memory__memory_write', { text: 'x', scope })).toBe('send');
-    expect(classify('ExecuteExtraTool', { tool_name: 'mcp__claude-web-memory__memory_write', params: { text: 'x', scope: 'global' } })).toBe('send');
+    // a bot's memory server writes only the bot's own scope whatever scope the model names (memory/mcp-tools.ts), so
+    // the same call is the same class with or without a scope, wrapped or direct (Task 22: one allowed, one asked)
+    for (const scope of [undefined, null, '', 'bot', 'global', 'project', 'session', 'other']) {
+      const p = { text: 'x', ...(scope === undefined ? {} : { scope }) };
+      expect(classify('mcp__claude-web-memory__memory_write', p)).toBe('write_local');
+      expect(classify('ExecuteExtraTool', { tool_name: 'mcp__claude-web-memory__memory_write', params: p })).toBe('write_local');
+    }
     expect(classify('ExecuteExtraTool', { tool_name: 'mcp__claude-web-memory__memory_search', params: { query: 'x' } })).toBe('read');
     expect(classify('ExecuteExtraTool', { tool_name: 'mcp__claude-web-memory__memory_write', params: { text: 'x' } })).toBe('write_local');
     // another server's tool of the same name is not ours

@@ -22,6 +22,10 @@ describe('memory MCP tools', () => {
     // the pipeline's read (bots/service.ts memories)
     expect(mem.search({ scope: 'bot', botId: 'b1', q: '周报', limit: 8 }).map((m) => m.text)).toEqual(['周报发给 #team 频道']);
     expect(mem.search({ scope: 'bot', botId: 'b2', limit: 8 })).toEqual([]);
+    // whatever scope a bot names, its write stays in its own memory (the policy gate counts on it)
+    memoryCall(mem, { cwd: '/repo', sessionId: 's1', botId: 'b1' }, 'memory_write', { text: '项目级的说法', scope: 'project' });
+    expect(mem.search({ scope: 'project', cwd: '/repo' })).toEqual([]);
+    expect(mem.search({ scope: 'bot', botId: 'b1', q: '项目级', limit: 8 }).map((m) => m.text)).toEqual(['项目级的说法']);
     // and its own search / list see it
     const found = memoryCall(mem, { cwd: '/elsewhere', botId: 'b1' }, 'memory_search', { query: '周报' });
     expect(found.content[0].text).toContain('周报发给');

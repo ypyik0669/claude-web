@@ -63,7 +63,8 @@ export function memoryCall(mem: Pick<MemoryService, 'search' | 'write'>, c: Memo
       return text(rows.map((m) => `- [${m.kind}] ${m.text}${m.tags.length ? `  (${m.tags.join(', ')})` : ''}`).join('\n'));
     }
     case 'memory_write': {
-      const scope = (args.scope as MemoryScope | undefined) ?? (botId ? 'bot' : 'project');
+      // a bot writes only its own memory, whatever scope the model names (the bots' policy gate counts on it)
+      const scope = botId ? 'bot' : (args.scope as MemoryScope | undefined) ?? 'project';
       if (scope === 'bot' && !botId) throw new Error('scope bot is only for a bot\'s run');
       const m = mem.write({
         text: String(args.text ?? ''),

@@ -699,8 +699,9 @@ export function classify(toolName: string, input: Record<string, unknown>): Acti
   if (/^web\.(search|read)$/.test(name)) return 'read';
   // the memory MCP server (memory/mcp-tools.ts): reading it is a read, writing it stays in this machine's memory.db
   if (/^mcp__claude-web-memory__memory_(search|list)$/.test(name)) return 'read';
-  // a bot's own memory (the default of its run) stays local; any wider scope lands in other conversations' prompts
-  if (name === 'mcp__claude-web-memory__memory_write') return p.scope === undefined || p.scope === 'bot' ? 'write_local' : 'send';
+  // a bot's run has the memory server with --bot: its writes land in the bot's own memory whatever scope it names
+  // (memory/mcp-tools.ts), so a write is local with or without a scope — no call of the same kind allowed once, asked next
+  if (name === 'mcp__claude-web-memory__memory_write') return 'write_local';
   const w = words(name);
   if (DELETE_NAME.test(w)) return 'delete';
   if (PAY_NAME.test(w) || urlsIn(String(p.url ?? '')).some(isPayUrl)) return 'pay';
