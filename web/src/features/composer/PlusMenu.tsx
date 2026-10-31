@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SessionFeatures } from '@shared';
 import { useStore } from '@/store';
 import { ago, clsx } from '@/util';
@@ -39,6 +39,8 @@ export interface PlusMenuProps {
   onRecord?: () => void;
   /** a running conversation: its connectors switch on and off here (连接器 ›) */
   sessionId?: string;
+  /** a 值班 Bot's conversation: only what goes into the message — no connectors, capabilities, 只聊天 or goal */
+  plain?: boolean;
 }
 
 /**
@@ -116,13 +118,23 @@ function PlusBody(p: PlusMenuProps & { close: (refocus: boolean) => void }) {
           <span className="cm-r">/</span>
         </button>
       )}
-      {p.sessionId && (
+      {p.sessionId && !p.plain && (
         <button type="button" data-mi data-id={PLUS_ID.connectors} role="menuitem" className="cm-it one" title={tr('这个对话的连接器（MCP）：开关、看状态')} onClick={() => setView('connectors')}>
           <span className="cm-ic"><Icon name="mcp" size={15} /></span>
           <span className="cm-tx"><span className="cm-l">{tr('连接器')}</span></span>
           <span className="cm-r"><Icon name="chevronRight" size={12} /></span>
         </button>
       )}
+      {!p.plain && <ConversationRows {...p} s={s} row={row} />}
+    </>
+  );
+}
+
+/** The + menu's part about the conversation itself: what it may do, 只聊天, a goal, and the 进阶 switches. */
+function ConversationRows(p: PlusMenuProps & { close: (refocus: boolean) => void; s: ReturnType<typeof plusSections>; row: (k: FeatureKey) => ReactNode }) {
+  const { s, row } = p;
+  return (
+    <>
       <div className="menu-sep" />
       <div className="cm-h">{tr('这次对话可以…')}</div>
       {s.note && <div className="cm-sub">{s.note}</div>}

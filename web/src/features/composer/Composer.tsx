@@ -128,7 +128,13 @@ function fastOffText(reason: string): string {
   }
 }
 
-export function Composer({ welcome = false, target, disabled = false, visible = true }: { welcome?: boolean; target?: { paneId: string; tileId: string }; disabled?: boolean; visible?: boolean }) {
+/**
+ * `variant: 'bot'`: the box in a 值班 Bot's main conversation — what it runs with is the bot's (its policy decides the
+ * permissions), so no model / 子代理 / 强度 / permission chips, no Shift+Tab mode step, and the + menu keeps only what
+ * goes into the message (files, folder, a reference, 录屏, 斜杠命令).
+ */
+export function Composer({ welcome = false, target, disabled = false, visible = true, variant }: { welcome?: boolean; target?: { paneId: string; tileId: string }; disabled?: boolean; visible?: boolean; variant?: 'bot' }) {
+  const bot = variant === 'bot' && !welcome;
   const active = useScopedSession();
   const ownName = useStore((s) => ownClaudeName(s.auth));
   const send = useStore((s) => s.send);
@@ -1053,7 +1059,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
 
   // ---- the row's pieces
   const plus = (
-    <PlusMenu claude={claudeHere} live={!welcome} remote={remote} disabled={disabled}
+    <PlusMenu claude={claudeHere} live={!welcome} remote={remote} disabled={disabled} plain={bot}
       features={welcome ? featDefaults : sessionFeatures} onFeatures={setFeatures} selfId={welcome ? undefined : active?.sessionId}
       chatOnly={welcome ? wChatOnly : undefined} onChatOnly={welcome && claudeHere && !wPeer && !wWsl ? setWChatOnly : undefined}
       onFiles={() => fileInput.current?.click()} onFolder={() => folderInput.current?.click()} onReference={addRef} onGoal={insertGoal} onSlash={insertSlash} onRecord={desktop?.captureSources && !remote ? () => openPicker(recTarget) : undefined} sessionId={!welcome && claudeHere ? active?.sessionId : undefined} />
@@ -1203,6 +1209,13 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
       : <span className="cb-status opt" title={tr('对话没在运行，发送后按这里选的模型和权限继续')}>{tr('发送后继续')}</span>;
   } else if (active) {
     status = <span className="cb-status">{disabled ? tr('对话已删除') : tr('启动中…')}</span>;
+  }
+  // a bot's conversation: none of what it runs with is picked here (the 「发送后继续」 note speaks of those chips too)
+  if (bot) {
+    model = subagent = effort = permission = null;
+    permCycle.current = null;
+    shownMode.current = undefined;
+    if (active && !liveOk && !disabled && active.state !== 'starting') status = null;
   }
   if (!welcome && active) meter = <ContextMeter sessionId={active.sessionId} />;
   // the model menu's last row opens the 子代理 menu (the chip is right there, but people look in the model menu)

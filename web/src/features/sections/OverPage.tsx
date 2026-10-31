@@ -18,7 +18,10 @@ function focusComposer() {
     const a = document.activeElement;
     // something else took it (a new conversation, the other page, a row of the section's sidebar…)
     if (a && a !== document.body && !a.closest('.over-page')) return;
-    const t = document.querySelector<HTMLTextAreaElement>('.pane.focused .composer textarea') ?? document.querySelector<HTMLTextAreaElement>('.pane .composer textarea');
+    // the focused pane's, else a 值班 Bot's conversation on the page in front, else any pane's — one that is on
+    // screen (a page that is only hidden keeps its composer mounted)
+    const shown = (sel: string) => [...document.querySelectorAll<HTMLTextAreaElement>(sel)].find((x) => x.getClientRects().length > 0);
+    const t = shown('.pane.focused .composer textarea') ?? shown('.bot-thread .composer textarea') ?? shown('.pane .composer textarea');
     t?.focus({ preventScroll: true });
   });
 }

@@ -1,4 +1,4 @@
-import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { PermissionRequestEvent } from '@shared';
 import type { AssistantItem, Attachment, Block, Item, ResultItem, ThinkingBlock, ToolUseBlock, UserItem } from '@/model/conversation';
 import { walkTools } from '@/model/conversation';
@@ -42,6 +42,10 @@ import { fileMenuProps } from '@/features/files/FileMenu';
 import { normViewMode, type ViewMode } from './view-mode';
 import { SelectionMenu } from './SelectionMenu';
 import { TurnRecordings } from '@/features/browser/TurnRecordings';
+import { interleave, turnStarts } from './interleave';
+
+/** Something shown between a conversation's turns that isn't part of it (a 值班 Bot's cards). `at`: ms. */
+export interface ChatExtra { at: number; key: string; node: ReactNode }
 
 const useViewMode = (): ViewMode => useStore((s) => normViewMode(s.settings['ui.viewMode']));
 
@@ -572,7 +576,8 @@ const TurnView = memo(function TurnView({ turn, last, live, version, sessionId, 
   const answerActions = !!lastFinal && !lastFinal.streaming && lastFinal.blocks.some((b) => b.type === 'text' && b.text.trim());
   return (
     <div className={clsx('turn', fold && 'folded', fold && open && 'open')} data-turn={turn.id}>
-      {turn.user && <UserRow it={turn.user} version={version} />}
+      {/* a 值班 Bot's kickoff / resume is the server's, not something the user said: no bubble (it still starts the turn) */}
+      {turn.user && !turn.user.hidden && <UserRow it={turn.user} version={version} />}
       {fold && summary && (
         <div className={clsx('turn-sum-row', ended && 'just')} data-item-id={parts.process[0]?.id}>
           {/* a click made by the keyboard (detail 0) folds at once */}
@@ -614,8 +619,15 @@ const TurnView = memo(function TurnView({ turn, last, live, version, sessionId, 
  * the version without the frames of streamed deltas — those only write into the last turn (a background subagent's
  * deltas into an earlier one show with its next whole message).
  */
-function TurnList({ items, version, settled, live, waiting, sessionId, cwd, ask, scope }: { items: Item[]; version: number; settled: number; live: boolean; waiting: boolean; sessionId: string; cwd: string; ask?: PermissionRequestEvent; scope: string }) {
+function TurnList({ items, version, settled, live, waiting, sessionId, cwd, ask, scope, extras, hasOlder }: { items: Item[]; version: number; settled: number; live: boolean; waiting: boolean; sessionId: string; cwd: string; ask?: PermissionRequestEvent; scope: string; extras?: ChatExtra[]; hasOlder: boolean }) {
   const turns = useMemo(() => groupTurns(items), [items, version]);
+  // things that aren't the conversation's own (a 值班 Bot's cards), ahead of the turn that came after them
+  const slots = useMemo(() => {
+    if (!extras?.length) return null;
+    const placed = interleave(turnStarts(turns), extras, hasOlder);
+    return new Map(placed.map((g) => [g.before, g.items]));
+  }, [turns, extras, hasOlder]);
+  const extraAt = (i: number) => slots?.get(i)?.map((x) => <div key={`x|${x.key}`} className="chat-extra" data-extra={x.key}>{x.node}</div>);
   const view = useViewMode();
   const bg = hasLive(useBgSession(sessionId));
   const going = live || bg;
@@ -625,7 +637,13 @@ function TurnList({ items, version, settled, live, waiting, sessionId, cwd, ask,
     <PlanCtx.Provider value={plan}>
       {/* keyed by the conversation too: a fork has its parent's message ids, and a turn's view (what it saw of its
           end, whether the user opened it) belongs to one conversation */}
-      {turns.map((t, i) => <TurnView key={`${sessionId}|${t.id}|${view}`} turn={t} last={i === turns.length - 1} live={live} version={i === turns.length - 1 ? version : settled} sessionId={sessionId} cwd={cwd} />)}
+      {/* one flat keyed list (not an array per turn): a turn keeps its element when an older page is prepended */}
+      {turns.flatMap((t, i) => {
+        const tv = <TurnView key={`${sessionId}|${t.id}|${view}`} turn={t} last={i === turns.length - 1} live={live} version={i === turns.length - 1 ? version : settled} sessionId={sessionId} cwd={cwd} />;
+        const x = extraAt(i);
+        return x ? [...x, tv] : [tv];
+      })}
+      {extraAt(turns.length)}
       {/* the question card at the end of the turn, above the plan (stage C1) */}
       {ask && <AskCard key={ask.requestId} p={ask} sessionId={sessionId} scope={scope} />}
       {plan && <PlanDock t={plan} going={going} waiting={waiting} />}
@@ -659,7 +677,12 @@ function PlanDock({ t, going, waiting }: { t: ToolUseBlock; going: boolean; wait
   );
 }
 
-export function ChatView() {
+/**
+ * `extras`: shown between the turns by time (a 值班 Bot's thread puts its cards there); without it the view is the
+ * plain conversation. Embedded under a made-up pane (`bot:<id>`, not in the layout) Ctrl+F opens no find bar: the
+ * layout check below finds no such pane — a page that is mounted but hidden can't steal the key that way.
+ */
+export function ChatView({ extras }: { extras?: ChatExtra[] } = {}) {
   const active = useScopedSession();
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -777,7 +800,7 @@ export function ChatView() {
         <WaitingCtx.Provider value={waiting}>
           <LiveCtx.Provider value={live}>
             <ArrivalCtx.Provider value={arrival}>
-              <TurnList items={active.conv.items} version={version} settled={settled} live={live} waiting={active.state === 'waiting' || pending.length > 0} sessionId={sid} cwd={active.cwd || listCwd || ''} ask={ask} scope={askScope} />
+              <TurnList items={active.conv.items} version={version} settled={settled} live={live} waiting={active.state === 'waiting' || pending.length > 0} sessionId={sid} cwd={active.cwd || listCwd || ''} ask={ask} scope={askScope} extras={extras} hasOlder={!!active.historyCursor} />
             </ArrivalCtx.Provider>
           </LiveCtx.Provider>
         </WaitingCtx.Provider>
