@@ -243,6 +243,25 @@ describe('makeGate', () => {
     expect(inbox.list('b1').filter((i) => i.kind === 'approval')).toHaveLength(1);
   });
 
+  it.runIf(process.platform === 'win32')('a mapped drive onto this machine (net use V: \\\\localhost\\c$) is the local path too; mapping a drive or a link asks', async () => {
+    const g = makeGate({ bot: bot({ rules: [] }), runId: 'run1', routineId: 'r1', store, audit, inbox });
+    const abs = path.join(store.dir('b1'), 'bot.json');
+    const orig = fs.realpathSync.native;
+    // what realpath gives on a mapped drive: its network form
+    const spy = vi.spyOn(fs.realpathSync, 'native').mockImplementation(((p: string) => (/^v:/i.test(String(p)) ? `\\\\localhost\\${abs[0].toLowerCase()}$${String(p).slice(2)}` : orig(p))) as any);
+    try {
+      for (const tool of ['Write', 'Edit'] as const) {
+        expect(await g.gate(ev(tool, { file_path: `V:${abs.slice(2)}`, content: '{}', old_string: 'a', new_string: 'b' })), tool).toMatchObject({ behavior: 'deny' });
+      }
+      expect(store.audit('b1', 'run1').every((r) => r.result === 'denied')).toBe(true);
+    } finally { spy.mockRestore(); }
+    for (const command of ['net use V: \\\\localhost\\c$', 'New-PSDrive -Name V -PSProvider FileSystem -Root \\\\localhost\\c$', 'subst W: C:\\Users', 'cmd /c mklink /J link C:\\Users', 'New-Item -ItemType Junction -Path x -Target C:\\Users']) {
+      expect(await g.gate(ev('Bash', { command })), command).toMatchObject({ behavior: 'deny' });
+    }
+    expect(inbox.list('b1').filter((i) => i.kind === 'approval')).toHaveLength(5);
+    expect(await g.gate(ev('Bash', { command: 'git status && npm run build' }))).toMatchObject({ behavior: 'allow' });
+  });
+
   it('a shell command reaching the bots dir by $HOME, %USERPROFILE%, $env:USERPROFILE or ../ goes to the user first', async () => {
     const data = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-home-'));
     const botsRoot = path.join(data, '.claude-web', 'bots');

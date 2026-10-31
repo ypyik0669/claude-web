@@ -23,7 +23,10 @@ function real(p: string): string {
   }
 }
 
-const LOCAL_HOSTS = () => new Set(['localhost', '.', '::1', '0--1.ipv6-literal.net', os.hostname().toLowerCase()]);
+/** commands that give a path another name (a drive letter, a share, a link): what they point at is the user's call */
+const DRIVE_MAP = /(?<![\w-])(net(\.exe)?\s+(use|share)|new-psdrive|new-smbmapping|new-smbshare|subst(\.exe)?\s+[a-z]:|mklink|new-item\b[^\n;|&]*-itemtype\s+["']?(junction|symboliclink|hardlink))(?![\w-])/i;
+
+const LOCAL_HOSTS =() => new Set(['localhost', '.', '::1', '0--1.ipv6-literal.net', os.hostname().toLowerCase()]);
 
 /**
  * A Windows network / device path, brought back to the drive path it names on this machine: \\localhost\c$\x,
@@ -82,14 +85,17 @@ export function selfGuard(botsRoot: string, botId: string, cwd: string, toolName
     // a network path that may be this machine under another name goes to the user first
     const local = win ? localOfUnc(raw) : raw;
     if (local === null) return 'ask';
-    const target = real(path.resolve(cwd, local));
+    // a mapped drive (net use V: \\localhost\c$) realpaths to its network form: fold that back too
+    const resolved = real(path.resolve(cwd, local));
+    const target = win ? localOfUnc(resolved) : resolved;
+    if (target === null) return 'ask';
     const root = real(botsRoot);
     if (!inside(target, root)) return undefined;
     return inside(target, path.join(root, botId, 'state')) ? undefined : 'deny';
   }
   if (toolName === 'Bash' || toolName === 'PowerShell') {
     const cmd = String(input.command ?? '');
-    return mentions(cmd, botsRoot) || /CLAUDE_WEB_DIR/i.test(cmd) ? 'ask' : undefined;
+    return mentions(cmd, botsRoot) || /CLAUDE_WEB_DIR/i.test(cmd) || DRIVE_MAP.test(cmd) ? 'ask' : undefined;
   }
   return undefined;
 }
