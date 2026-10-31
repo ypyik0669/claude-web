@@ -72,9 +72,74 @@ function sse(s, j, blocks, stop) {
   s.end(out);
 }
 const REPORT = '查了什么：打开的 PR 和 CI / 没能查到什么：无 / 建议的下一步：无';
+// ---- a bot's own conversation (chat-first A): told apart by its system prompt, which explains <cw-bot-events> ----
+const QUESTION = '你最想让我帮什么？';
+const ANSWER = 'A 每天早上给我一份简报';
+const ROUTINE = { name: '早间简报', prompt: '每个工作日早上 8 点看一眼仓库，写一份简报。', cron: '0 8 * * 1-5', until: 'forever' };
+/** every request of the thread: { text (this turn's user text), toolResult?, kind } */
+const threadReqs = [];
+const isThreadReq = (j) => /cw-bot-events/.test(textOf(j.system));
+/** the bot-self server is named per install (`cw-bot-<hex>`, kept in <data dir>/bots/self-server.json) */
+const selfTool = (name) => `mcp__${JSON.parse(fs.readFileSync(path.join(dataDir, 'bots', 'self-server.json'), 'utf8')).name}__${name}`;
+/** the tool_use the last tool_result answers */
+const answeredTool = (j, tr) => {
+  for (const m of [...(j.messages ?? [])].reverse()) {
+    if (m.role !== 'assistant' || !Array.isArray(m.content)) continue;
+    const u = m.content.find((b) => b?.type === 'tool_use' && b.id === tr.tool_use_id);
+    if (u) return u;
+  }
+  return null;
+};
+function threadTurn(s, j, h) {
+  const tr = lastToolResult(j);
+  const text = turnText(j);
+  // the engine's next-message suggestion is a side request on the same prompt: not a turn of the thread
+  if (/\[SUGGESTION MODE:/.test(text)) return sse(s, j, [{ type: 'text', text: '' }], 'end_turn');
+  const r = { text, at: Date.now() };
+  threadReqs.push(r);
+  if (tr) {
+    const u = answeredTool(j, tr);
+    r.toolResult = { name: u?.name, error: !!tr.is_error, text: textOf(tr.content) };
+    // the bot makes the routine the user picked: by its own name when the request lists it (alwaysLoad), else the way
+    // a model on our engine reaches a deferred tool — SearchExtraTools first, then ExecuteExtraTool (ccb runs a deferred
+    // tool only after a search found it; without one it answers `result: null` and nothing runs)
+    const RC = selfTool('routine_create');
+    const direct = (j.tools ?? []).some((t) => t?.name === RC);
+    const make = () => (direct
+      ? { type: 'tool_use', id: `toolu_rc_${++n}`, name: RC, input: ROUTINE }
+      : { type: 'tool_use', id: `toolu_rc_${++n}`, name: 'ExecuteExtraTool', input: { tool_name: RC, params: ROUTINE } });
+    if (u?.name === 'AskUserQuestion') {
+      r.kind = 'answered';
+      r.direct = direct;
+      r.tools = (j.tools ?? []).map((t) => t?.name);
+      if (direct) return sse(s, j, [make()], 'tool_use');
+      return sse(s, j, [{ type: 'tool_use', id: `toolu_search_${++n}`, name: 'SearchExtraTools', input: { query: `select:${RC}`, max_results: 3 } }], 'tool_use');
+    }
+    if (u?.name === 'SearchExtraTools') { r.kind = 'searched'; return sse(s, j, [make()], 'tool_use'); }
+    r.kind = 'after-tool';
+    return sse(s, j, [{ type: 'text', text: '好的，弄好了。' }], 'end_turn');
+  }
+  if (/cw-bot-kickoff/.test(text)) {
+    r.kind = 'kickoff';
+    return sse(s, j, [
+      { type: 'text', text: '嗨，我是 晨报。我能每天替你盯着仓库。' },
+      { type: 'tool_use', id: `toolu_ask_${++n}`, name: 'AskUserQuestion', input: { questions: [{ question: QUESTION, header: '帮什么', multiSelect: false, options: [
+        { label: ANSWER, description: '工作日早上 8 点' },
+        { label: 'B 盯着 CI', description: '红了叫你' },
+        { label: 'C 看新的 PR', description: '有人提就说' },
+        { label: 'D 整理 issue', description: '每周一次' },
+      ] }] } },
+    ], 'tool_use');
+  }
+  // asked to push, and again once told it was approved: the very same call (the thread gate lets it through once)
+  if (/给我推一下|已批准「/.test(text)) { r.kind = /已批准「/.test(text) ? 'continue' : 'push'; return sse(s, j, [{ type: 'tool_use', id: `toolu_tpush_${++n}`, name: 'Bash', input: PUSH }], 'tool_use'); }
+  r.kind = 'plain';
+  return sse(s, j, [{ type: 'text', text: '在呢。' }], 'end_turn');
+}
 function anthropic(s, j, h) {
   if (h.url.includes('/count_tokens')) return json(s, 200, { input_tokens: 10 });
   if (!j.stream) return json(s, 200, { id: `msg_${++n}`, type: 'message', role: 'assistant', model: j.model, content: [{ type: 'text', text: 'side:ok' }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 2 } });
+  if (isThreadReq(j)) return threadTurn(s, j, h);
   const tr = lastToolResult(j);
   const text = turnText(j);
   h.mode = mode;
@@ -222,6 +287,94 @@ async function main() {
   await req({ kind: 'bots.delete', id: bot.id });
   const left = await req({ kind: 'bots.list' });
   check('deleting the bot leaves only the 总管', left.length === 1 && left[0].manager === true, JSON.stringify(left.map((b) => b.id)));
+
+  await chatFirst();
+}
+
+/** chat-first A: a bot is a conversation — kickoff question, a routine it made itself, a thread approval, events told once */
+async function chatFirst() {
+  // 8. bots.start → its own conversation, kept out of the list
+  let from = events.length;
+  const b = await req({ kind: 'bots.start', name: '晨报', cwd: repo });
+  const tid = b.threadId;
+  check('bots.start → a bot with its own conversation (threadId)', !!tid && b.name === '晨报', JSON.stringify({ id: b.id, threadId: tid }));
+  const listed = await req({ kind: 'sessions.list' });
+  check('… which sessions.list does not show', !listed.some((x) => x.sessionId === tid), String(listed.length));
+
+  // 9. the kickoff spoke first: the AskUserQuestion card reaches the window (not the inbox)
+  const ask = await until(() => events.slice(from).find((e) => e.kind === 'permission.request' && e.request.sessionId === tid && e.request.toolName === 'AskUserQuestion')?.request, 120_000);
+  check('the kickoff asks with AskUserQuestion on the thread', !!ask && ask.input?.questions?.[0]?.question === QUESTION, JSON.stringify({ ask: !!ask, reqs: threadReqs.map((r) => r.kind) }));
+  check('… and the kickoff text reached the model hidden in <cw-bot-kickoff>', threadReqs.some((r) => r.kind === 'kickoff'));
+  check('… not as an inbox approval', (await approvals(b.id)).length === 0);
+  if (!ask) return;
+  await req({ kind: 'permission.respond', requestId: ask.requestId, response: { behavior: 'allow', updatedInput: { ...ask.input, answers: { [QUESTION]: ANSWER } } } });
+
+  // 10. the bot makes the routine itself
+  const made = await until(async () => (await req({ kind: 'bots.get', id: b.id })).routines.find((r) => r.name === ROUTINE.name), 120_000);
+  const via = threadReqs.find((r) => r.kind === 'answered');
+  const back = threadReqs.find((r) => r.kind === 'after-tool' && /routine_create|ExecuteExtraTool/.test(r.toolResult?.name ?? ''))?.toolResult;
+  const found = threadReqs.find((r) => r.kind === 'searched')?.toolResult;
+  check('the answer → the bot made 早间简报 itself (selfMade)', !!made && made.selfMade === true && made.cron === ROUTINE.cron, JSON.stringify({ made, direct: via?.direct, search: found?.text.slice(0, 300), tool: back }));
+  // plan risk 11: the cw-bot tools are alwaysLoad, so the model sees them without searching (on ccb as on the binary)
+  check('… the cw-bot tools were in the model\'s own tool list (alwaysLoad, not deferred)', via?.direct === true, `tools: ${via?.tools?.filter((x) => /^mcp__|ExtraTool/.test(x)).join(',')}`);
+  check('… with an end (until)', !!made?.until, JSON.stringify(made && { until: made.until }));
+  const rules = await until(async () => (await req({ kind: 'bots.inbox.list', botId: b.id })).find((i) => i.kind === 'proposal' && i.proposal?.type === 'rules'), 10_000);
+  check('… and its first routine files the 规矩 card (a rules proposal)', !!rules);
+  const tl = await req({ kind: 'bots.timeline.list', id: b.id });
+  check('… bots.timeline.list has a system line 已创建例行', tl.some((e) => e.kind === 'system' && /已创建例行/.test(e.text ?? '')), JSON.stringify(tl.map((e) => ({ kind: e.kind, text: e.text }))));
+  const day = (() => { const d = new Date(); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`; })();
+  const auditOf = () => req({ kind: 'bots.runs.audit', botId: b.id, runId: `thread-${day}` });
+  const a1 = await auditOf();
+  check('… audited: mcp__cw-bot-<hex>__routine_create, basis rule', a1.some((a) => a.toolName === selfTool('routine_create') &&a.basis === 'rule' && a.result === 'allowed'), JSON.stringify(a1.map((a) => ({ toolName: a.toolName, basis: a.basis, result: a.result }))));
+  await until(async () => !/running|waiting/.test((await req({ kind: 'bots.get', id: b.id })).activity ?? '') && threadReqs.at(-1)?.kind === 'after-tool', 30_000);
+
+  // 11. the user asks for a push in the thread → a thread approval, on a card in the timeline
+  const opened = await req({ kind: 'session.open', params: { sessionId: tid, cwd: repo } });
+  check('session.open on the thread answers the thread', opened.sessionId === tid, JSON.stringify({ sessionId: opened.sessionId }));
+  from = events.length;
+  let mark = threadReqs.length;
+  await req({ kind: 'session.send', params: { sessionId: tid, text: '给我推一下', uuid: crypto.randomUUID() } });
+  const ap = await until(async () => (await approvals(b.id)).find((i) => i.toolName === 'Bash'), 120_000);
+  check('「给我推一下」 → an approval with thread: true on the thread', !!ap && ap.thread === true && ap.sessionId === tid && ap.input?.command === PUSH.command, JSON.stringify(ap && { thread: ap.thread, sessionId: ap.sessionId, routineId: ap.routineId }));
+  const pushReq = threadReqs.slice(mark).find((r) => r.kind === 'push');
+  // the only thing new since the user last spoke is the 规矩 card routine_create filed (a proposal: told once, here);
+  // the bot's own system line 已创建例行 stays out, and nothing about the push exists yet
+  const ev = /^<cw-bot-events>\n([\s\S]*?)\n<\/cw-bot-events>/.exec(pushReq?.text.trimStart() ?? '')?.[1].split('\n') ?? [];
+  check('… that turn told only the 规矩 card (no own system line, nothing about the push yet)', !!pushReq && ev.length === 1 && /提议等你看：规矩/.test(ev[0]) && pushReq.text.trimEnd().endsWith('给我推一下'), JSON.stringify(pushReq?.text.slice(0, 200)));
+  const tl2 = await until(async () => (await req({ kind: 'bots.timeline.list', id: b.id })).find((e) => e.kind === 'approval' && e.itemId === ap?.id), 10_000);
+  check('… and a timeline entry of kind approval holds it', !!tl2);
+  const refused = threadReqs.slice(mark).find((r) => r.toolResult?.name === 'Bash')?.toolResult;
+  check('… the model was told it waits for the user', !!refused && refused.error, JSON.stringify(refused));
+  await until(() => threadReqs.at(-1)?.kind === 'after-tool', 30_000);
+
+  // 12. approving it on the card: the thread is told 已批准 and the push passes this once (basis user)
+  if (!ap) return;
+  mark = threadReqs.length;
+  await req({ kind: 'bots.inbox.answer', answer: { id: ap.id, answer: 'approve' } });
+  const cont = await until(() => threadReqs.slice(mark).find((r) => r.kind === 'continue'), 60_000);
+  check('approve → the thread\'s next request says 已批准', !!cont && /已批准/.test(cont.text), JSON.stringify(threadReqs.slice(mark).map((r) => r.kind)));
+  const ran = await until(() => threadReqs.slice(mark).find((r) => r.toolResult?.name === 'Bash')?.toolResult, 60_000);
+  check('… where the push ran (no gate refusal)', !!ran && !/收件箱|策略/.test(ran.text), JSON.stringify(ran));
+  const a2 = await auditOf();
+  check('… audited with basis user', a2.some((a) => a.toolName === 'Bash' && a.result === 'allowed' && a.basis === 'user'), JSON.stringify(a2.map((a) => ({ toolName: a.toolName, basis: a.basis, result: a.result }))));
+  await until(() => threadReqs.at(-1)?.kind === 'after-tool', 30_000);
+  await until(async () => (await req({ kind: 'session.info', sessionId: tid })).info?.state === 'idle', 30_000);
+
+  // 13. the next thing the user says carries what happened since, once — the transcript keeps it, the UI strips it (T7)
+  mark = threadReqs.length;
+  const said = '今天怎么样';
+  await req({ kind: 'session.send', params: { sessionId: tid, text: said, uuid: crypto.randomUUID() } });
+  const next = await until(() => threadReqs.slice(mark).find((r) => r.kind === 'plain'), 60_000);
+  check('a later message → the model gets <cw-bot-events> first, with 你批准了', !!next && next.text.trimStart().startsWith('<cw-bot-events>') && /你批准了/.test(next.text) && next.text.includes(said), JSON.stringify(next?.text.slice(0, 300)));
+  await until(async () => (await req({ kind: 'session.info', sessionId: tid })).info?.state === 'idle', 30_000);
+  const tx = await req({ kind: 'transcript.load', sessionId: tid });
+  check('… and the transcript holds it', JSON.stringify(tx).includes('cw-bot-events'));
+
+  // 14. deleting the bot removes its timeline with its folder
+  const dir = path.join(dataDir, 'bots', b.id);
+  const had = fs.existsSync(path.join(dir, 'timeline.jsonl'));
+  await req({ kind: 'bots.delete', id: b.id });
+  check('deleting the bot removes its folder and timeline.jsonl', had && !fs.existsSync(dir), JSON.stringify({ had }));
 }
 
 try {

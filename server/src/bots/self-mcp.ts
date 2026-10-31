@@ -77,6 +77,16 @@ const charterShape = z.object({
   role: z.string().max(2000).optional(), audience: z.string().max(500).optional(), sources: z.array(z.string().max(500)).max(30).optional(),
   report: z.string().max(1000).optional(), done: z.string().max(1000).optional(),
 });
+/**
+ * A rule's scope (protocol PolicyScope; ruleOf still checks it all the way down). Spelled out, never `z.record`: the
+ * agent SDK converts tool schemas with its own bundled walker, which throws on zod 4.5's record (`reading 'push'`) —
+ * tools/list then fails for the whole server and the engine leaves every one of its tools out (2026-10-31, phase42).
+ */
+const scopeShape = z.object({
+  domains: z.array(z.string().max(200)).max(50).optional(), channels: z.array(z.string().max(200)).max(50).optional(),
+  recipients: z.array(z.string().max(200)).max(50).optional(), maxAmount: z.number().optional(), perDay: z.number().optional(),
+  until: z.number().optional().describe('epoch ms'), unlimited: z.boolean().optional().describe('anywhere, said outright'),
+});
 const cadence = {
   cron: z.string().max(100).optional().describe('5-field cron, local time (e.g. "0 9 * * 1-5")'),
   everyMinutes: z.number().int().min(MIN_EVERY).optional().describe(`every N minutes, at least ${MIN_EVERY}`),
@@ -220,7 +230,7 @@ export function botSelfTools(botId: string, _self: () => string, d: BotSelfDeps)
       rules: z.array(z.object({
         cls: z.enum(['read', 'write_local', 'browser', 'send', 'pay', 'delete', 'install']),
         level: z.enum(['do', 'do_tell', 'ask', 'deny']),
-        scope: z.record(z.string(), z.unknown()).optional(),
+        scope: scopeShape.optional(),
       })).min(1).max(20),
       why: z.string().min(1).max(1000),
     }, safe(async (a: { rules: unknown[]; why: string }) => {

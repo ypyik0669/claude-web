@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Bot, InboxItem, InboxProposal, Routine } from '../protocol.js';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
-import { selfToolNames, botSelfTools, type BotSelfDeps } from './self-mcp.js';
+import { selfToolNames, botSelfTools, botSelfServer, BOT_SELF_TOOL_NAMES, type BotSelfDeps } from './self-mcp.js';
 import { selfServerName } from './runtime-hooks.js';
 import { botFields, routineOf, ruleOf } from './shape.js';
 
@@ -36,6 +36,19 @@ describe('bot-self tools', () => {
   it('selfToolNames (what the thread gate passes) is exactly the registered tools, on the given server', () => {
     const names = botSelfTools('b1', () => 't1', fake().d).map((t) => `mcp__cw-bot-0123456789ab__${t.name}`).sort();
     expect([...selfToolNames('cw-bot-0123456789ab')].sort()).toEqual(names);
+  });
+
+  it('the in-process server answers tools/list with every tool, alwaysLoad (one schema the SDK cannot convert fails the whole list, and the engine drops the server)', async () => {
+    const cfg = botSelfServer('b1', () => 't1', fake().d, 'cw-bot-0123456789ab') as { instance: { connect(t: unknown): Promise<void> } };
+    // a bare MCP transport: one JSON-RPC request in, its answer out
+    const answer = new Promise<any>((resolve) => {
+      const t: Record<string, unknown> = { start: async () => {}, close: async () => {}, send: async (m: unknown) => resolve(m) };
+      void cfg.instance.connect(t).then(() => (t.onmessage as (m: unknown) => void)({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }));
+    });
+    const r = await answer;
+    expect(r.error).toBeUndefined();
+    expect(r.result.tools.map((x: { name: string }) => x.name).sort()).toEqual([...BOT_SELF_TOOL_NAMES].sort());
+    for (const x of r.result.tools) expect(x._meta?.['anthropic/alwaysLoad']).toBe(true);
   });
 
   it('selfServerName: cw-bot-<12 hex>, made once per bots dir and kept; a bad stored one is replaced', () => {
