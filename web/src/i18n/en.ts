@@ -2487,6 +2487,7 @@ export const EN_WEB: Record<string, string> = {
   "已跳过": "Skipped",
   "已输入。": "Typed.",
   "已过期": "Expired",
+  "已收起": "Put away",
   "已返回上一页。": "Went back to the previous page.",
   "已还原 {name}": "Restored {name}",
   "已连上": "Connected",

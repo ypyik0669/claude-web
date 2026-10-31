@@ -1,6 +1,6 @@
 // 值班 Bot thread: an approval (spec 2026-10-31 §1) — 「〈类别〉· 〈Bot〉想要 〈做什么〉」, gray 「请核对后再批准」, the
 // whole call (secrets masked), the key facts, then an equal-width 拒绝｜允许 ▾ (the body is 仅这次, the narrowest).
-// Answered it stays as 「已允许 · 9:42」 / 「已拒绝」 / 「已过期」. Answers go to the server, which pushes the item back done.
+// Answered it stays as 「已允许 · 9:42」 / 「已拒绝」 / 「已过期」 / 「已收起」 (doneText). Answers go to the server, which pushes the item back done.
 import { useMemo, useRef, useState } from 'react';
 import type { InboxItem, PolicyScope } from '@shared';
 import { tr } from '@/i18n';
@@ -10,7 +10,7 @@ import { answerInbox, useBots } from '../state';
 import { callDetail } from '../Inbox';
 import { callParams, ruleUnlimitedRisk, scopeDefaults, scopeFields, ScopeEditor, type ScopeField, type ScopeInitial } from '../scope-form';
 import { confirmRisk } from '../fields';
-import { approvalChoices, RUN_SCOPE_MS, type ApprovalChoice } from './approval-menu';
+import { approvalChoices, doneText, RUN_SCOPE_MS, type ApprovalChoice } from './approval-menu';
 import { clock } from './nav';
 
 const NONE = { domains: false, channels: false, recipients: false, maxAmount: false, perDay: false, until: false };
@@ -82,12 +82,6 @@ function ChoiceEditor({ item, choice, busy, onSend, onCancel }: { item: InboxIte
   );
 }
 
-function doneText(d: NonNullable<InboxItem['done']>): string {
-  if (d.note) return tr('已过期');
-  if (d.answer === 'reject') return tr('已拒绝');
-  return tr('已允许 · {time}', { time: clock(d.at) });
-}
-
 export function ApprovalCard({ item, botName }: { item: InboxItem; botName: string }) {
   const [menu, setMenu] = useState(false);
   const [editing, setEditing] = useState<{ choice: ApprovalChoice; target: InboxItem } | null>(null);
@@ -118,7 +112,7 @@ export function ApprovalCard({ item, botName }: { item: InboxItem; botName: stri
         <ChoiceEditor item={editing.target} choice={editing.choice} busy={busy} onCancel={() => setEditing(null)} onSend={(s) => void answer(editing.target, 'approve_scope', s)} />
       ) : item.done ? (
         <div className="bt-ap-done">
-          <span>{doneText(item.done)}</span>
+          <span>{doneText(item.done, clock)}</span>
           {item.done.note && (twin
             ? <button className="btn sm ghost" onClick={() => { const cs = approvalChoices(twin, Date.now()); pick(cs.find((x) => x.id === 'target') ?? cs[cs.length - 1], twin); }}>{tr('以后总是允许？')}</button>
             : <span className="bt-ap-note">{tr('下次它再问到这件事时，可以选「对这个目标总是允许」')}</span>)}

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi, onTestFinished } from 'vitest';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { BotService, tierModel, clientSessionParams, refusePeerUncBot, type BotServiceDeps } from './service.js';
+import { BotService, tierModel, clientSessionParams, refusePeerUncBot, THREAD_APPROVAL_MS, type BotServiceDeps } from './service.js';
 import type { BotDraft, InboxItem } from '../protocol.js';
 import { BOT_TEMPLATES } from './templates.js';
 
@@ -533,6 +533,26 @@ describe('BotService', { timeout: 30_000 }, () => {
       expect(enq).not.toHaveBeenCalled(); expect(persist).not.toHaveBeenCalled();
       await settle();
       expect(pool.get(b.threadId).sent.at(-1)).toMatch(/^<cw-bot-continue>已批准/);
+    });
+
+    it('a thread approval expires after 24 h: answering it then does nothing and says so; the tick closes the rest as 已过期', async () => {
+      const b = await svc.startBot({ name: 'e', cwd: process.cwd() });
+      const add = () => (svc as any).inbox.add({ kind: 'approval', botId: b.id, thread: true, sessionId: b.threadId, title: 'curl', toolName: 'Bash', input: { command: 'curl -X POST https://x.example/y' }, cls: 'send' });
+      const old = await add(); const other = await add();
+      const sent = pool.get(b.threadId).sent.length;
+      const later = Date.now() + THREAD_APPROVAL_MS + 1000;
+      const now = vi.spyOn(Date, 'now').mockReturnValue(later);
+      try {
+        await expect(svc.inboxAnswer({ id: old.id, answer: 'approve' })).rejects.toThrow(/过期/);
+      } finally { now.mockRestore(); }
+      expect((svc as any).inbox.get(old.id).done).toMatchObject({ answer: 'archive', note: '已过期' });
+      await settle();
+      expect(pool.get(b.threadId).sent).toHaveLength(sent);
+      expect((svc as any).inbox.get(other.id).done?.note).toBe('已过期'); // swept along
+      // the tick's sweep: a fresh one is left alone until its day is up
+      const fresh = await add();
+      expect(await svc.expireThreadApprovals(Date.now())).toEqual([]);
+      expect((await svc.expireThreadApprovals(fresh.at + THREAD_APPROVAL_MS)).map((i) => i.id)).toEqual([fresh.id]);
     });
 
     it('adopting a policy proposal adds its rules (checked), once', async () => {

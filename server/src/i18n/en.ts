@@ -1873,6 +1873,8 @@ export const EN_SERVER: Record<string, string> = {
   "「{name}」连续失败后被停下了，只有用户能重新打开：告诉用户出了什么问题": "“{name}” was stopped after failing again and again; only the user can turn it back on. Tell the user what went wrong",
   "「{name}」已经到期：先用 routine_update 定一个新的结束日期（问过用户），再恢复": "“{name}” has ended: set a new end date with routine_update first (after asking the user), then resume it",
   "例行「{name}」到期，已停": "Routine “{name}” reached its end date and stopped",
+  "已过期": "Expired",
+  "这个请求已经过期（超过 24 小时），没有执行：要做的话，在对话里再跟它说一次": "This request expired (over 24 hours old) and was not carried out: to have it done, ask again in the conversation",
   "没有要记的": "Nothing to remember",
   "已记住：{text}": "Remembered: {text}",
   "已记住": "Remembered",

@@ -42,3 +42,15 @@ export function approvalChoices(item: Pick<InboxItem, 'cls' | 'toolName' | 'inpu
     : { id: 'run', label: tr('这次运行内'), answer: 'approve_scope', scope: { ...target, until: now + RUN_SCOPE_MS } };
   return [once, run, { id: 'target', label: tr('对这个目标总是允许'), answer: 'approve_scope', editor: 'target', amountRequired: pay }, always];
 }
+
+/**
+ * What an answered card says: 已允许 · 9:42 / 已拒绝; closed with a note (its run stopped, its day ran out) 已过期;
+ * put away from the inbox 已收起; anything else 已关闭 — never 「已允许」 for what nobody allowed.
+ */
+export function doneText(d: NonNullable<InboxItem['done']>, clock: (at: number) => string): string {
+  if (d.note) return tr('已过期');
+  if (d.answer === 'approve' || d.answer === 'approve_scope') return tr('已允许 · {time}', { time: clock(d.at) });
+  if (d.answer === 'reject') return tr('已拒绝');
+  if (d.answer === 'archive') return tr('已收起');
+  return tr('已关闭');
+}

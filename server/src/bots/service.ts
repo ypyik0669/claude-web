@@ -94,6 +94,8 @@ function acquire(dir: string): Shared {
 
 export const MANAGER_ID = 'manager';
 const QUIET_FLUSH_MS = 60_000;
+/** a thread approval not answered within a day expires (expireThreadApprovals) */
+export const THREAD_APPROVAL_MS = 24 * 3600_000;
 
 /** `<botsRoot>/stop.request.json`: a stop asked for in a window of a server not on duty; the holder carries it out */
 export const STOP_REQUEST = 'stop.request.json';
@@ -183,7 +185,10 @@ export class BotService extends EventEmitter {
       void this.addEntry(systemEntry(botId, tr('例行「{name}」到期，已停', { name }), 'routine')).then(() => this.changed());
     });
     this.scheduler.on('load', (l: BotLoad) => this.emit('load', l));
-    this.scheduler.on('tick', () => { void this.takeStopRequest(); void this.refreshThreadCosts(); });
+    this.scheduler.on('tick', () => {
+      void this.takeStopRequest(); void this.refreshThreadCosts();
+      void this.expireThreadApprovals().catch((e) => console.warn('[bots] cannot close expired approvals:', e));
+    });
     // the last holder may have held (or flushed) IM pushes since this server read held.json
     this.scheduler.on('claimed', () => { this.held = this.readHeld(); });
     this.held = this.readHeld();
@@ -385,8 +390,24 @@ export class BotService extends EventEmitter {
   }
 
   inboxList(botId?: string, includeDone = false): InboxItem[] { return this.inbox.list(botId, includeDone); }
+
+  /**
+   * A thread approval left a day unanswered is closed (「已过期」): answered later it would run a step out of its
+   * moment (and spawn the conversation's process to do it). Every tick on duty, and before an answer.
+   */
+  async expireThreadApprovals(now = Date.now()): Promise<InboxItem[]> {
+    if (!this.scheduler.canAct()) return [];
+    return this.inbox.closeApprovals((i) => !!i.thread && now - i.at >= THREAD_APPROVAL_MS, tr('已过期'));
+  }
+
   /** checked before anything is written; the item's 'item' event reaches the windows as bots.inbox */
   async inboxAnswer(a: InboxAnswer): Promise<InboxItem> {
+    const asked = this.inbox.get(a.id);
+    if (asked && !asked.done && asked.thread && asked.kind === 'approval' && a.answer !== 'archive' && Date.now() - asked.at >= THREAD_APPROVAL_MS) {
+      await this.acting();
+      await this.expireThreadApprovals();
+      throw new Error(tr('这个请求已经过期（超过 24 小时），没有执行：要做的话，在对话里再跟它说一次'));
+    }
     // the scope is checked before anything is written: a bad one leaves the item pending
     // and it must name where it applies (a payment one: up to how much) — see allowScope
     if (a.answer === 'approve_scope' && a.scope !== undefined) a = { ...a, scope: allowScope(a.scope, 'scope', this.inbox.get(a.id)?.cls) };

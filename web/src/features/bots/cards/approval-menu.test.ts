@@ -9,13 +9,14 @@ vi.mock('@/ws/client', () => ({
 
 let approvalChoices: typeof import('./approval-menu').approvalChoices;
 let RUN_SCOPE_MS: number;
+let doneText: typeof import('./approval-menu').doneText;
 
 beforeAll(async () => {
   vi.stubGlobal('window', { matchMedia: undefined, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; } });
   vi.stubGlobal('document', { addEventListener() {}, hasFocus: () => true, querySelector: () => null, documentElement: { dataset: {}, style: { setProperty() {}, removeProperty() {} }, classList: { toggle() {}, add() {}, remove() {} } } });
   vi.stubGlobal('localStorage', { getItem: () => null, setItem() {}, removeItem() {} });
   vi.stubGlobal('location', { search: '', protocol: 'http:', host: 'x' });
-  ({ approvalChoices, RUN_SCOPE_MS } = await import('./approval-menu'));
+  ({ approvalChoices, RUN_SCOPE_MS, doneText } = await import('./approval-menu'));
 });
 
 const item = (p: Partial<InboxItem>): InboxItem => ({ id: 'i1', kind: 'approval', botId: 'b1', at: 1, title: 't', ...p });
@@ -45,5 +46,18 @@ describe('approvalChoices', () => {
     expect(run.editor).toBe('run');
     expect(run.amountRequired).toBe(true);
     expect(c.find((x) => x.id === 'target')?.amountRequired).toBe(true);
+  });
+});
+
+describe('doneText', () => {
+  const t = () => '9:42';
+  beforeAll(async () => { (await import('@i18n')).setLocale('zh'); });
+  it('only an approval reads 已允许; archived 已收起, rejected 已拒绝, closed with a note 已过期, anything else 已关闭', () => {
+    expect(doneText({ at: 1, answer: 'approve' }, t)).toBe('已允许 · 9:42');
+    expect(doneText({ at: 1, answer: 'approve_scope' }, t)).toBe('已允许 · 9:42');
+    expect(doneText({ at: 1, answer: 'reject' }, t)).toBe('已拒绝');
+    expect(doneText({ at: 1, answer: 'archive' }, t)).toBe('已收起');
+    expect(doneText({ at: 1, answer: 'archive', note: '已过期' }, t)).toBe('已过期');
+    expect(doneText({ at: 1, answer: 'send' }, t)).toBe('已关闭');
   });
 });
