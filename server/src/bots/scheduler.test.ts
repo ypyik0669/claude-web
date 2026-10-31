@@ -17,7 +17,7 @@ const bot = (id: string, routines: Routine[], p: Partial<Bot> = {}): Bot => ({ i
 
 describe('BotScheduler', { timeout: 30_000 }, () => {
   let root: string; let store: BotStore; let inbox: Inbox; let audit: AuditLog; let runners: any[]; let conc: number;
-  const deps = (mk: () => any = () => fakeRunner()): SchedulerDeps => ({ store, audit, inbox, open: () => { const r = mk(); runners.push(r); return r; }, memories: () => [], costOf: async () => 1, defaultProvider: () => undefined, concurrency: () => conc, globalBudgetUsd: () => undefined });
+  const deps = (mk: () => any = () => fakeRunner()): SchedulerDeps => ({ store, audit, inbox, open: () => { const r = mk(); runners.push(r); return r; }, memories: () => [], costOf: async () => ({ usd: 1 }), defaultProvider: () => undefined, concurrency: () => conc, globalBudgetUsd: () => undefined });
   const live: BotScheduler[] = [];
   const sched = (d: SchedulerDeps) => { const s = new BotScheduler(d); live.push(s); return s; };
   beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-sched-')); store = new BotStore(root); inbox = new Inbox(store); audit = new AuditLog(store); runners = []; conc = 2; });

@@ -4260,6 +4260,7 @@ export const EN_WEB: Record<string, string> = {
   "紧凑": "Compact",
   "紧凑模式减少行高与内边距。": "Compact mode reduces line height and padding.",
   "约 ${n}": "About ${n}",
+  "约 {usd}": "about {usd}",
   "约 {usd}/月": "about {usd}/month",
   "约束": "Constraint",
   "纸张": "Paper",

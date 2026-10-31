@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentDriver } from '../agents/types.js';
-import type { ActionClass, Bot, BotPolicy, BotRun, OpenSessionParams, PolicyLevel, Routine, RunTrigger } from '../protocol.js';
+import type { ActionClass, Bot, BotPolicy, BotRun, LedgerEntry, OpenSessionParams, PolicyLevel, Routine, RunTrigger } from '../protocol.js';
 import type { BotStore } from './store.js';
 import type { AuditLog } from './audit.js';
 import type { Inbox } from './inbox.js';
@@ -12,6 +12,7 @@ import { fingerprint, runScript } from './precheck.js';
 import { summarize } from './policy/classify.js';
 import { DEFAULT_RULES } from './policy/rules.js';
 import { tr } from '../i18n/index.js';
+import { claudePrice } from '../usage/pricing.js';
 
 /** the slice of RunnerPool / services the pipeline needs — tests fake it */
 export interface PipelineDeps {
@@ -19,8 +20,8 @@ export interface PipelineDeps {
   open(params: OpenSessionParams): AgentDriver;
   /** texts, ≤ 8 (MemoryService.search, scope 'bot') */
   memories(botId: string, q: string): string[];
-  /** sum of the ledger's costUsd for the conversation */
-  costOf(sessionId: string): Promise<number>;
+  /** the conversation's cost so far (ledgerCost of its ledger rows) */
+  costOf(sessionId: string): Promise<{ usd: number; estimated?: boolean }>;
   /** settings 'bots.defaultProvider' */
   defaultProvider(): string | undefined;
   now?: () => number;
@@ -50,6 +51,21 @@ export function policyLine(policy: BotPolicy): string {
     groups.set(says, [...(groups.get(says) ?? []), name]);
   }
   return `- 只是告知（由系统把关，不用你自己拦）：${[...groups].map(([says, names]) => names.join('/') + says).join('；')}。`;
+}
+
+/**
+ * A conversation's cost from its ledger rows. A row without a known price (costUnknown: another vendor's model on a
+ * relay — the ledger records it as 0) is estimated from its tokens at a Sonnet-class price, so a bot's budget still
+ * holds on such a source; `estimated` says the number is a guess (费用未知 elsewhere in the app).
+ */
+export function ledgerCost(rows: Pick<LedgerEntry, 'costUsd' | 'costUnknown' | 'input' | 'output' | 'cacheRead' | 'cacheWrite'>[]): { usd: number; estimated: boolean } {
+  let usd = 0, estimated = false;
+  for (const r of rows) {
+    if (!r.costUnknown) { usd += r.costUsd ?? 0; continue; }
+    const guess = claudePrice('sonnet', { input: r.input ?? 0, output: r.output ?? 0, cacheRead: r.cacheRead ?? 0, cacheWrite: r.cacheWrite ?? 0 });
+    if (guess > 0) { usd += guess; estimated = true; }
+  }
+  return { usd, estimated };
 }
 
 export function buildPrompt(bot: Bot, routine: Routine, state: RoutineState, memories: string[], checkpointFile: string): string {
@@ -216,7 +232,9 @@ export async function runRoutine(d: PipelineDeps, bot: Bot, routine: Routine, tr
   await close();
   run.sessionId = runner.sessionId;
   run.toolCalls = g.calls;
-  run.costUsd = await d.costOf(runner.sessionId).catch(() => 0);
+  const cost: { usd: number; estimated?: boolean } = await d.costOf(runner.sessionId).catch(() => ({ usd: 0 }));
+  run.costUsd = cost.usd;
+  if (cost.estimated) run.costEstimated = true;
   if (res.stopped) return stopped();
 
   run.said = res.text.slice(0, 2000);

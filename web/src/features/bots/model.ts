@@ -1,6 +1,6 @@
 // 值班 Bot (spec 2026-10-30-duty-bots-design): the pure bits the Bot page draws with — labels, order, money, the
 // inbox grouped by kind, a routine's monthly cost. No store, no wire.
-import type { ActionClass, BotDraft, BotGenerated, BotOutput, BotStatus, BotTemplate, BotTier, InboxItem, InboxKind, PolicyLevel, Routine } from '@shared';
+import type { ActionClass, BotDraft, BotRun, BotGenerated, BotOutput, BotStatus, BotTemplate, BotTier, InboxItem, InboxKind, PolicyLevel, Routine } from '@shared';
 import { tr } from '@/i18n';
 
 export function stateLabel(s: BotStatus['state']): string {
@@ -15,6 +15,12 @@ export function stateLabel(s: BotStatus['state']): string {
 
 export function usd(n: number): string {
   return `$${(Number.isFinite(n) ? Math.max(0, n) : 0).toFixed(2)}`;
+}
+
+/** a run's cost; an estimate (the model had no known price, its tokens were counted at a Sonnet-class price) says 约 */
+export function runCost(run: Pick<BotRun, 'costUsd' | 'costEstimated'>): string {
+  const n = usd(run.costUsd ?? 0);
+  return run.costEstimated ? tr('约 {usd}', { usd: n }) : n;
 }
 
 const STATE_ORDER: Record<BotStatus['state'], number> = { attention: 0, running: 1, queued: 2, idle: 3, paused: 4 };

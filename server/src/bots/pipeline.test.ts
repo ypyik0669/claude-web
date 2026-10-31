@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { BotStore } from './store.js'; import { AuditLog } from './audit.js'; import { Inbox } from './inbox.js';
-import { runRoutine, buildPrompt, policyLine, type PipelineDeps } from './pipeline.js';
+import { runRoutine, buildPrompt, policyLine, ledgerCost, type PipelineDeps } from './pipeline.js';
 import type { Bot, Routine } from '../protocol.js';
 
 /** a runner that answers the first send with a result, after running `calls` through its gate */
@@ -29,7 +29,7 @@ const bot = (routines: Routine[]): Bot => ({ id: 'b1', name: '小晨', charter: 
 
 describe('runRoutine', () => {
   let root: string; let store: BotStore; let inbox: Inbox; let audit: AuditLog; let opened: any[];
-  const deps = (runner: any, extra: Partial<PipelineDeps> = {}): PipelineDeps => ({ store, audit, inbox, open: (p) => { opened.push(p); return runner; }, memories: () => ['只看 claude-web 仓库'], costOf: async () => 0.0123, defaultProvider: () => 'relay-1', ...extra });
+  const deps = (runner: any, extra: Partial<PipelineDeps> = {}): PipelineDeps => ({ store, audit, inbox, open: (p) => { opened.push(p); return runner; }, memories: () => ['只看 claude-web 仓库'], costOf: async () => ({ usd: 0.0123 }), defaultProvider: () => 'relay-1', ...extra });
   beforeEach(async () => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-pipe-')); store = new BotStore(root); inbox = new Inbox(store); audit = new AuditLog(store); opened = []; });
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
@@ -42,6 +42,7 @@ describe('runRoutine', () => {
     expect(opened[0].model).toBeUndefined();
     expect(run).toMatchObject({ ok: true, costUsd: 0.0123, said: '今天 3 个 issue', trigger: 'cron' });
     expect(run.skipped).toBeUndefined();
+    expect(run.costEstimated).toBeUndefined();
     expect(store.runs('b1')[0].id).toBe(run.id);
     expect(inbox.list('b1')[0]).toMatchObject({ kind: 'finding', title: '晨报', body: '今天 3 个 issue' });
     expect(store.stateOf('b1', 'r1').lastSummary).toBe('今天 3 个 issue');
@@ -95,6 +96,12 @@ describe('runRoutine', () => {
     expect(opened[1].sessionId).toBe(item.sessionId);
     expect(r2.sent[0]).toContain('已经批准');
     expect(store.audit('b1', second.run.id).map((a) => a.result)).toEqual(['allowed']);
+  });
+
+  it('an estimated cost is recorded with costEstimated (budgets count it)', async () => {
+    const b = bot([routine()]); await store.save(b);
+    const { run } = await runRoutine(deps(fakeRunner(), { costOf: async () => ({ usd: 1.2, estimated: true }) }), b, b.routines[0], 'manual');
+    expect(run).toMatchObject({ ok: true, costUsd: 1.2, costEstimated: true });
   });
 
   it('acceptance script decides ok; three failures disable the routine and say so', async () => {
@@ -210,5 +217,21 @@ describe('runRoutine', () => {
     expect(policyLine({ rules: [{ cls: 'pay', level: 'deny' }, { cls: 'delete', level: 'do_tell' }, { cls: 'send', level: 'do', scope: { domains: ['hooks.slack.com'] } }] }))
       .toBe('- 只是告知（由系统把关，不用你自己拦）：对外发送会先问人（放行范围内的直接做）；付款不允许；删除可以直接做（做完告诉人）。');
     expect(policyLine({ rules: [{ cls: 'pay', level: 'deny' }], unleashed: true })).toBe('- 只是告知（由系统把关，不用你自己拦）：对外发送/付款/删除可以直接做。');
+  });
+});
+
+describe('ledgerCost', () => {
+  const row = (p: Record<string, unknown>) => ({ ts: 0, sessionId: 's', model: 'm', durationMs: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0, ok: true, ...p }) as any;
+  it('known prices are summed as they are', () => {
+    expect(ledgerCost([row({ costUsd: 0.25 }), row({ costUsd: 0.5 })])).toEqual({ usd: 0.75, estimated: false });
+    expect(ledgerCost([])).toEqual({ usd: 0, estimated: false });
+  });
+  it('an unknown price (deepseek on a relay) is estimated from its tokens at a Sonnet-class price, and says so', () => {
+    const c = ledgerCost([row({ costUsd: 0.1 }), row({ model: 'deepseek-v4.1-flash', costUnknown: true, input: 350_000, output: 10_000, cacheRead: 100_000, cacheWrite: 20_000 })]);
+    expect(c.estimated).toBe(true);
+    expect(c.usd).toBeCloseTo(0.1 + (350_000 * 3 + 10_000 * 15 + 20_000 * 3.75 + 100_000 * 0.3) / 1e6, 6);
+  });
+  it('an unknown row without tokens (a retry note) adds nothing and is not an estimate', () => {
+    expect(ledgerCost([row({ costUnknown: true })])).toEqual({ usd: 0, estimated: false });
   });
 });

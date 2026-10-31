@@ -1011,6 +1011,8 @@ export interface BotRun {
   id: string; botId: string; routineId: string; at: number; trigger: RunTrigger;
   skipped?: boolean; sessionId?: string; ok?: boolean; endedAt?: number; durationMs?: number;
   costUsd?: number; toolCalls?: number; usedScript?: boolean;
+  /** costUsd is an estimate: the model had no known price, its tokens were counted at a Sonnet-class price */
+  costEstimated?: boolean;
   /** what the bot said it did (its final text) vs what the acceptance check found */
   said?: string; verified?: { ok: boolean; note?: string }; error?: string; queued?: number;
   /** the server quit mid-run (a duty server yielding to the app): left open for the next holder, which closes it and runs it again */

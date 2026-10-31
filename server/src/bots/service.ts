@@ -12,6 +12,7 @@ import { BotStore } from './store.js';
 import { Inbox } from './inbox.js';
 import { AuditLog } from './audit.js';
 import { BotScheduler, LEASE_STALE_MS } from './scheduler.js';
+import { ledgerCost } from './pipeline.js';
 import { generateBot } from './generate.js';
 import { BOT_TEMPLATES } from './templates.js';
 import { allowScope, botFields } from './shape.js';
@@ -128,7 +129,7 @@ export class BotService extends EventEmitter {
       store: this.store, audit: this.audits, inbox: this.inbox,
       open: (p) => d.pool.open(p),
       memories: (botId, q) => d.memory.search({ scope: 'bot', botId, q, limit: 8 }).map((m) => m.text),
-      costOf: async (sid) => (await d.ledger.rowsFor(sid)).reduce((a, r) => a + (r.costUsd ?? 0), 0),
+      costOf: async (sid) => ledgerCost(await d.ledger.rowsFor(sid)),
       defaultProvider: () => this.defaultProvider(),
       concurrency: () => { const n = Number(d.meta.settings()['bots.concurrency'] ?? 2); return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 2; },
       globalBudgetUsd: () => { const g = d.meta.settings()['bots.globalBudgetUsd']; return typeof g === 'number' && g > 0 ? g : undefined; },

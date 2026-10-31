@@ -4,7 +4,7 @@ import { useStore } from '@/store';
 import { Icon } from '@/ui/icons';
 import { clsx, fmtMs } from '@/util';
 import { dateLocale, tr } from '@/i18n';
-import { classLabel, levelLabel, usd } from './model';
+import { classLabel, levelLabel, runCost } from './model';
 import { closeBots, loadAudit, loadRuns, useBots } from './state';
 
 const NO_RUNS: BotRun[] = [];
@@ -88,7 +88,7 @@ function RunRow({ bot, run }: { bot: BotStatus; run: BotRun }) {
     triggerLabel(run.trigger),
     run.skipped ? tr('跳过') : going ? tr('在跑') : tr('跑了'),
     !run.skipped && (run.usedScript ? tr('脚本') : tr('模型')),
-    !run.skipped && usd(run.costUsd ?? 0),
+    !run.skipped && runCost(run),
     run.durationMs ? fmtMs(run.durationMs) : '',
   ].filter(Boolean);
   return (

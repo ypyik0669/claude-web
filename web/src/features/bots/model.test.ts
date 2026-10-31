@@ -1,11 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { sortBots, usd, groupInbox, monthlyEstimate, runsPerMonth, cronFieldCount } from './model';
+import { sortBots, usd, runCost, groupInbox, monthlyEstimate, runsPerMonth, cronFieldCount } from './model';
 const b = (id: string, state: any, manager = false): any => ({ id, name: id, state, manager });
 describe('bots model', () => {
   it('sortBots: manager, attention, running, queued, idle, paused', () => {
     expect(sortBots([b('p', 'paused'), b('i', 'idle'), b('m', 'idle', true), b('a', 'attention'), b('r', 'running'), b('q', 'queued')]).map((x) => x.id)).toEqual(['m', 'a', 'r', 'q', 'i', 'p']);
   });
   it('usd', () => { expect(usd(0)).toBe('$0.00'); expect(usd(1.2345)).toBe('$1.23'); });
+  it('runCost marks an estimate (a model without a known price)', () => {
+    expect(runCost({ costUsd: 0.36 })).toBe('$0.36');
+    expect(runCost({})).toBe('$0.00');
+    expect(runCost({ costUsd: 1.2, costEstimated: true })).toBe('约 $1.20');
+  });
   it('groupInbox keeps every kind present', () => {
     const g = groupInbox([{ id: '1', kind: 'draft', botId: 'b', at: 1, title: 't' }]);
     expect(g.draft).toHaveLength(1); expect(g.approval).toEqual([]);

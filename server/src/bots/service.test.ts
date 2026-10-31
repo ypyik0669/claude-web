@@ -98,6 +98,20 @@ describe('BotService', { timeout: 30_000 }, () => {
     expect(svc.get(b.id).todayUsd).toBe(0.5);
   });
 
+  it('a model without a known price: the run counts a token estimate (costEstimated), so the budget applies', async () => {
+    const s2root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-botsvc3-'));
+    const s2 = make({ dataDir: s2root, ledger: { rowsFor: async () => [{ costUsd: 0, costUnknown: true, model: 'deepseek-v4.1-flash', input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0 }] } as any });
+    try {
+      await s2.start();
+      const b = await s2.create(draft({ routines: [{ id: 'r1', name: 'n', prompt: 'p', enabled: true, acceptance: { kind: 'none' }, onFail: 'inbox' }] }));
+      const runs: any[] = []; s2.on('run', (r) => runs.push(r));
+      await s2.runNow(b.id, 'r1');
+      await until(() => runs.some((r) => r.endedAt));
+      expect(runs.at(-1)).toMatchObject({ ok: true, costUsd: 3, costEstimated: true });
+      expect(s2.get(b.id).todayUsd).toBe(3);
+    } finally { await s2.shutdown(); fs.rmSync(s2root, { recursive: true, force: true }); }
+  });
+
   it('a provider without routing gets no tier model (the provider picks)', async () => {
     const s2root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-botsvc2-'));
     const s2 = new BotService({ dataDir: s2root, pool, memory: { search: () => [] } as any, ledger: { rowsFor: async () => [] } as any, meta: fakeMeta() as any, providerKind: () => 'other' });
