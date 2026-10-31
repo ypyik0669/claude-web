@@ -461,6 +461,7 @@ describe('RunnerPool: a bot’s conversations (值班 Bot)', () => {
     const { p } = setup({ th: { botId: 'b1', botRole: 'thread' } });
     expect(() => p.open({ sessionId: 'th', cwd: 'C:/x' })).toThrow(/Bot 的对话/);
     expect(() => p.open({ sessionId: 'th', cwd: 'C:/x', fork: true })).toThrow(/Bot 的对话/);
+    expect(() => p.open({ sessionId: 'TH', cwd: 'C:/x' })).toThrow(/Bot 的对话/); // the same transcript file on Windows
     expect(() => p.open({ sessionId: 'th', cwd: 'C:/x', gated: true, botId: 'b1', botRole: 'thread' })).not.toThrow();
   });
   it('a normal conversation records nothing about bots', () => {

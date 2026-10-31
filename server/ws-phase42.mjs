@@ -302,10 +302,10 @@ async function chatFirst() {
   check('… which sessions.list does not show', !listed.some((x) => x.sessionId === tid), String(listed.length));
   // a fork / rewind of it would run as an ordinary, ungated copy: refused before the copy is made
   const copies = [];
-  for (const r of [{ kind: 'session.open', params: { sessionId: tid, cwd: repo, fork: true } }, { kind: 'session.open', params: { sessionId: tid, cwd: repo, resumeAt: tid } }, { kind: 'library.fork', sessionId: tid }]) {
+  for (const r of [{ kind: 'session.open', params: { sessionId: tid, cwd: repo, fork: true } }, { kind: 'session.open', params: { sessionId: tid, cwd: repo, resumeAt: tid } }, { kind: 'library.fork', sessionId: tid }, { kind: 'session.open', params: { sessionId: tid.toUpperCase(), cwd: repo, fork: true } }, { kind: 'library.fork', sessionId: tid.toUpperCase() }]) {
     copies.push(await req(r).then((x) => `opened ${JSON.stringify(x?.sessionId ?? x)}`, (e) => /分叉|fork/i.test(String(e?.message ?? e)) ? 'refused' : `error ${e?.message ?? e}`));
   }
-  check('… and can\'t be forked or rewound (session.open fork / resumeAt, library.fork)', copies.every((x) => x === 'refused'), JSON.stringify(copies));
+  check('… and can\'t be forked or rewound (session.open fork / resumeAt, library.fork; the id in upper case too)', copies.every((x) => x === 'refused'), JSON.stringify(copies));
 
   // 9. the kickoff spoke first: the AskUserQuestion card reaches the window (not the inbox)
   const ask = await until(() => events.slice(from).find((e) => e.kind === 'permission.request' && e.request.sessionId === tid && e.request.toolName === 'AskUserQuestion')?.request, 120_000);

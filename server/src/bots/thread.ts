@@ -113,6 +113,9 @@ export function kickoffText(bot: Bot, template?: BotTemplate): string {
 
 const live = (r: AgentDriver | undefined): r is AgentDriver => !!r && r.state !== 'closed' && r.state !== 'error';
 /** the runner answers every tool call through the gate and is this bot's thread (SessionRunner: gated + botRole) */
+/** a conversation id as the transcript files know it: on Windows <ID>.jsonl and <id>.jsonl are one file, so an id
+ *  in other case (or padded) still names the bot's conversation */
+const idKey = (id: string) => id.trim().toLowerCase();
 const isThreadRunner = (r: AgentDriver) => r.info?.agent === 'claude' && (r as { gated?: boolean }).gated === true && (r as { botRole?: string }).botRole === 'thread';
 const firstLine = (s: string) => (s.split('\n').map((l) => l.trim()).find(Boolean) ?? '').slice(0, 80);
 
@@ -175,7 +178,7 @@ export class BotThreads extends EventEmitter {
   /** opens (or returns) the gated runner of bot.threadId: a live ungated one is closed and reopened; the gate is set before any send */
   async ensure(bot: Bot): Promise<AgentDriver> {
     if (!bot.threadId) throw new Error(tr('这个 Bot 还没有自己的对话'));
-    this.byThread.set(bot.threadId, bot.id);
+    this.byThread.set(idKey(bot.threadId), bot.id);
     const cur = this.d.pool.get(bot.threadId);
     if (live(cur) && !isThreadRunner(cur)) await cur.close().catch(() => { /* already gone */ });
     const r = this.d.pool.open(this.params(bot, bot.threadId));
@@ -194,7 +197,7 @@ export class BotThreads extends EventEmitter {
       await r.close().catch(() => { /* already gone */ });
       throw new Error(tr('这个对话不经过 Bot 的策略检查（只有 Claude 的对话可以），没有运行'));
     }
-    this.byThread.set(r.sessionId, bot.id);
+    this.byThread.set(idKey(r.sessionId), bot.id);
     this.arm(bot.id, r);
     // what happened before the conversation existed is not news to it
     const now = Date.now();
@@ -206,10 +209,11 @@ export class BotThreads extends EventEmitter {
 
   /** the bot whose main conversation this is */
   isThread(sessionId: string): string | undefined {
-    const known = this.byThread.get(sessionId);
-    if (known && this.d.store.get(known)?.threadId === sessionId) return known;
-    const b = this.d.store.list().find((x) => x.threadId === sessionId);
-    if (b) { this.byThread.set(sessionId, b.id); return b.id; }
+    const k = idKey(sessionId);
+    const known = this.byThread.get(k);
+    if (known && idKey(this.d.store.get(known)?.threadId ?? '') === k) return known;
+    const b = this.d.store.list().find((x) => !!x.threadId && idKey(x.threadId) === k);
+    if (b) { this.byThread.set(k, b.id); return b.id; }
     return known && !this.d.store.get(known)?.threadId ? known : undefined; // started, threadId not stored yet
   }
 

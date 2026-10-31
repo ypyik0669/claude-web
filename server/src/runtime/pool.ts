@@ -196,7 +196,8 @@ export class RunnerPool extends EventEmitter {
     if (!params.fork) this.assertWritable(params.sessionId);
     // a bot's main conversation runs only through its gate: IM, another conversation's message, goals, schedules and
     // forks reach the pool without it (bots.thread.open passes it)
-    if (params.sessionId && !params.gated && this.providers.meta?.sessionMeta(params.sessionId).botRole === 'thread') throw new Error(tr('这是 Bot 的对话，请从 Bot 页打开'));
+    // (the id in any case: on Windows <ID>.jsonl is the same transcript file as <id>.jsonl)
+    if (params.sessionId && !params.gated && [params.sessionId, params.sessionId.trim().toLowerCase()].some((id) => this.providers.meta?.sessionMeta(id).botRole === 'thread')) throw new Error(tr('这是 Bot 的对话，请从 Bot 页打开'));
     void proxy.refresh(); // IM / schedules / goals come straight here: a stale look is redone for the next start (net/proxy.ts)
     if (params.sessionId && !params.fork && !params.resumeAt) {
       const existing = this.runners.get(params.sessionId);

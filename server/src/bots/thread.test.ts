@@ -48,6 +48,9 @@ describe('BotThreads', () => {
     expect(r.sent[0]).toMatch(new RegExp(`^<${KICKOFF_TAG}>[\\s\\S]*</${KICKOFF_TAG}>$`));
     expect(typeof r.gatesAtSend[0]).toBe('function');
     expect(threads.isThread(sid)).toBe('b1');
+    // another case (or padding) names the same transcript file on Windows: still the bot's
+    expect(threads.isThread(sid.toUpperCase())).toBe('b1');
+    expect(threads.isThread(` ${sid} `)).toBe('b1');
   });
 
   it('ensure reuses the gated runner, and closes and reopens a live ungated one', async () => {
