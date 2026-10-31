@@ -8,7 +8,8 @@ import type { McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
  */
 export interface BotRuntime {
   selfServer(botId: string, self: () => string): McpServerConfig;
-  threadPrompt(botId: string): string;
+  /** `tools`: the conversation has the bot-self tools (a 只聊天 / lean-tools one has none: the prompt must not promise them) */
+  threadPrompt(botId: string, o?: { tools: boolean }): string;
 }
 
 /** the bot-self MCP server's name: its tools are `mcp__cw-bot__*`, which the policy gate lets through (audited) */

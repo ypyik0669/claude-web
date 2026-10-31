@@ -580,7 +580,7 @@ export class SessionRunner extends EventEmitter {
     // each start, so a respawn picks up a renamed bot / changed charter
     const bot = this.botRole === 'thread' && this.botId ? botRuntime() : null;
     const botMcp: Record<string, McpServerConfig> = bot && !bare ? { [BOT_SELF_SERVER]: bot.selfServer(this.botId!, () => this.sessionId) } : {};
-    const botPrompt = bot ? bot.threadPrompt(this.botId!) : '';
+    const botPrompt = bot ? bot.threadPrompt(this.botId!, { tools: !bare }) : '';
     // 预览服务器 (preview/tools.ts): preview_start runs a command, so only its logs / stop are pre-allowed
     const previewMcp: Record<string, McpServerConfig> = previewEnabled() && !bare ? { [PREVIEW_SERVER]: previewMcpServer(this.cwd, () => this.sessionId) } : {};
     const verify = bare ? null : verifyInstructions(this.cwd);
