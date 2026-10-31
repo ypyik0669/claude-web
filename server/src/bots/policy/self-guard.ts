@@ -23,6 +23,26 @@ function real(p: string): string {
   }
 }
 
+const LOCAL_HOSTS = () => new Set(['localhost', '.', '::1', '0--1.ipv6-literal.net', os.hostname().toLowerCase()]);
+
+/**
+ * A Windows network / device path, brought back to the drive path it names on this machine: \\localhost\c$\x,
+ * \\127.0.0.1\c$\x, \\<this host>\c$\x, \\?\UNC\localhost\c$\x, \\.\C:\x → C:\x. Null for a share that stays a
+ * network path (another host, a named share): realpath can't map those back, so the guard can't tell where they land.
+ */
+export function localOfUnc(p: string): string | null {
+  let s = p.replace(/\//g, '\\');
+  if (!s.startsWith('\\\\')) return p;
+  s = s.replace(/^\\\\[?.]\\UNC\\/i, '\\\\');
+  const dev = /^\\\\[?.]\\([a-z]:)(\\.*)?$/i.exec(s);
+  if (dev) return dev[1] + (dev[2] ?? '\\');
+  const m = /^\\\\([^\\]+)\\([a-z])\$(\\.*)?$/i.exec(s);
+  if (!m) return null;
+  const host = m[1].toLowerCase();
+  const local = LOCAL_HOSTS().has(host) || /^127(\.\d{1,3}){3}$/.test(host);
+  return local ? `${m[2]}:${m[3] ?? '\\'}` : null;
+}
+
 const inside = (child: string, dir: string) => {
   const rel = path.relative(fold(dir), fold(child));
   return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel));
@@ -59,7 +79,10 @@ export function selfGuard(botsRoot: string, botId: string, cwd: string, toolName
   if (FILE_WRITE_TOOLS.has(toolName)) {
     const raw = input.file_path ?? input.notebook_path ?? input.path;
     if (typeof raw !== 'string' || !raw) return undefined;
-    const target = real(path.resolve(cwd, raw));
+    // a network path that may be this machine under another name goes to the user first
+    const local = win ? localOfUnc(raw) : raw;
+    if (local === null) return 'ask';
+    const target = real(path.resolve(cwd, local));
     const root = real(botsRoot);
     if (!inside(target, root)) return undefined;
     return inside(target, path.join(root, botId, 'state')) ? undefined : 'deny';

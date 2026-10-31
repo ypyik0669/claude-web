@@ -219,6 +219,30 @@ describe('makeGate', () => {
     expect(store.audit('b1', 'run1').every((r) => r.result === 'denied')).toBe(true);
   });
 
+  it.runIf(process.platform === 'win32')('a network path naming this machine (\\\\localhost\\c$, \\\\127.0.0.1, \\\\?\\UNC, \\\\.\\C:) is the local path; another share asks', async () => {
+    const g = makeGate({ bot: bot({ rules: [], unleashed: true }), runId: 'run1', routineId: 'r1', store, audit, inbox });
+    const abs = path.join(store.dir('b1'), 'bot.json');
+    const drive = abs[0].toLowerCase(), rest = abs.slice(2);
+    for (const file_path of [
+      `\\\\localhost\\${drive}$${rest}`,
+      `\\\\127.0.0.1\\${drive.toUpperCase()}$${rest}`,
+      `\\\\${os.hostname()}\\${drive}$${rest}`,
+      `//localhost/${drive}$${rest.replace(/\\/g, '/')}`,
+      `\\\\?\\UNC\\localhost\\${drive}$${rest}`,
+      `\\\\.\\${abs}`,
+    ]) {
+      for (const tool of ['Write', 'Edit'] as const) {
+        expect(await g.gate(ev(tool, { file_path, content: '{}', old_string: 'a', new_string: 'b' })), `${tool} ${file_path}`).toMatchObject({ behavior: 'deny' });
+      }
+    }
+    // a new file under bots\ the same way
+    expect(await g.gate(ev('Write', { file_path: `\\\\localhost\\${drive}$${path.join(store.dir('b1'), 'new.json').slice(2)}`, content: '{}' }))).toMatchObject({ behavior: 'deny' });
+    expect(store.audit('b1', 'run1').every((r) => r.result === 'denied')).toBe(true);
+    // a share the guard can't map back: the user decides
+    expect(await g.gate(ev('Write', { file_path: '\\\\fileserver\\team\\notes.md', content: 'x' }))).toMatchObject({ behavior: 'deny' });
+    expect(inbox.list('b1').filter((i) => i.kind === 'approval')).toHaveLength(1);
+  });
+
   it('a shell command reaching the bots dir by $HOME, %USERPROFILE%, $env:USERPROFILE or ../ goes to the user first', async () => {
     const data = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-home-'));
     const botsRoot = path.join(data, '.claude-web', 'bots');
