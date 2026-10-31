@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { BotStore } from '../store.js'; import { AuditLog } from '../audit.js'; import { Inbox } from '../inbox.js';
 import { makeGate, callKey } from './gate.js';
+import { BOT_SELF_TOOLS } from '../self-mcp.js';
 import type { Bot } from '../../protocol.js';
 
 const bot = (policy: Bot['policy'] = { rules: [] }): Bot => ({ id: 'b1', name: 'x', charter: { role: 'r', sources: [] }, cwd: '/p', tier: 'balanced', policy, budget: {}, routines: [], outputs: [], createdAt: 0, updatedAt: 0 });
@@ -301,7 +302,7 @@ describe('makeGate', () => {
   // ---- 聊天优先: the bot's own tools, and a thread that lives across policy changes ----
 
   it("the bot's own tools (mcp__cw-bot__*), direct or wrapped, run with one audit row each — even when its policy would deny writes", async () => {
-    const g = makeGate({ bot: bot({ rules: [{ cls: 'write_local', level: 'deny' }, { cls: 'send', level: 'deny' }] }), runId: 'thread1', store, audit, inbox });
+    const g = makeGate({ bot: bot({ rules: [{ cls: 'write_local', level: 'deny' }, { cls: 'send', level: 'deny' }] }), runId: 'thread1', store, audit, inbox, selfTools: true });
     const input = { name: '早间简报', cron: '0 9 * * *' };
     expect(await g.gate(ev('mcp__cw-bot__routine_create', input))).toEqual({ behavior: 'allow', updatedInput: input });
     const wrappedSelf = { tool_name: 'mcp__cw-bot__routine_create', params: input };
@@ -312,6 +313,50 @@ describe('makeGate', () => {
     expect(inbox.list('b1')).toEqual([]);
     // only that server: a look-alike name is gated as usual
     expect((await g.gate(ev('mcp__cw-botx__routine_create', input)))?.behavior).toBe('deny');
+  });
+
+  it('a routine run grades mcp__cw-bot__* like any tool (a project .mcp.json may name a server cw-bot)', async () => {
+    const g = makeGate({ bot: bot({ rules: [{ cls: 'write_local', level: 'deny' }, { cls: 'send', level: 'deny' }] }), runId: 'run1', routineId: 'r1', store, audit, inbox });
+    for (const name of ['mcp__cw-bot__routine_create', 'mcp__cw-bot__anything']) {
+      expect((await g.gate(ev(name, { name: 'x' })))?.behavior).toBe('deny');
+      expect((await g.gate(ev('ExecuteExtraTool', { tool_name: name, params: { name: 'x' } })))?.behavior).toBe('deny');
+    }
+    expect(store.audit('b1', 'run1').some((r) => r.result === 'allowed')).toBe(false);
+  });
+
+  it('the thread passes only the exact bot-self tool names; another tool on a cw-bot server is graded', async () => {
+    const g = makeGate({ bot: bot({ rules: [{ cls: 'write_local', level: 'deny' }, { cls: 'send', level: 'deny' }] }), runId: 'thread1', store, audit, inbox, selfTools: true });
+    for (const name of ['mcp__cw-bot__shell', 'mcp__cw-bot__routine_createx', 'mcp__cw-bot__']) {
+      expect((await g.gate(ev(name, { command: 'curl x' })))?.behavior).toBe('deny');
+      expect((await g.gate(ev('ExecuteExtraTool', { tool_name: name, params: {} })))?.behavior).toBe('deny');
+    }
+    for (const name of BOT_SELF_TOOLS) expect((await g.gate(ev(name, {})))?.behavior).toBe('allow');
+  });
+
+  it('writes to MCP / settings files ask first: .mcp.json and .claude/settings*.json at any depth under cwd, the user-level ones too', async () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-gate-cwd-')); // outside the bots dir
+    onTestFinished(() => fs.rmSync(cwd, { recursive: true, force: true }));
+    const b = { ...bot({ rules: [], unleashed: true }), cwd };
+    const g = makeGate({ bot: b, runId: 'run1', routineId: 'r1', store, audit, inbox });
+    const home = os.homedir();
+    const paths = [
+      path.join(cwd, '.mcp.json'), path.join(cwd, 'sub', 'deep', '.mcp.json'),
+      path.join(cwd, '.claude', 'settings.json'), path.join(cwd, '.claude', 'settings.local.json'), path.join(cwd, 'pkg', '.claude', 'settings.local.json'),
+      path.join(home, '.claude', 'settings.json'), path.join(home, '.claude', 'settings.local.json'), path.join(home, '.claude.json'),
+    ];
+    for (const file_path of paths) {
+      for (const tool of ['Write', 'Edit']) expect((await g.gate(ev(tool, { file_path, content: '{}' })))?.behavior, `${tool} ${file_path}`).toBe('deny');
+    }
+    // relative too
+    expect((await g.gate(ev('Write', { file_path: 'a/.mcp.json', content: '{}' })))?.behavior).toBe('deny');
+    expect(inbox.list('b1').filter((i) => i.kind === 'approval').length).toBeGreaterThanOrEqual(paths.length);
+    for (const command of ['echo {} > .mcp.json', 'cp x .claude/settings.local.json', 'Set-Content ~\\.claude\\settings.json x', 'echo x >> ~/.claude.json']) {
+      expect((await g.gate(ev('Bash', { command })))?.behavior, command).toBe('deny');
+    }
+    // other files under .claude, and a normal write, still run
+    expect((await g.gate(ev('Write', { file_path: path.join(cwd, 'src', 'a.ts'), content: '' })))?.behavior).toBe('allow');
+    expect((await g.gate(ev('Write', { file_path: path.join(cwd, 'mcp.json.md'), content: '' })))?.behavior).toBe('allow');
+    expect((await g.gate(ev('Bash', { command: 'cat README.md' })))?.behavior).toBe('allow');
   });
 
   it('a bot getter is read on every call: a policy change reaches a long-lived thread', async () => {

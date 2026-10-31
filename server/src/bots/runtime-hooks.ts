@@ -12,8 +12,11 @@ export interface BotRuntime {
   threadPrompt(botId: string, o?: { tools: boolean }): string;
 }
 
-/** the bot-self MCP server's name: its tools are `mcp__cw-bot__*`, which the policy gate lets through (audited) */
+/** the bot-self MCP server's name: its tools are `mcp__cw-bot__*` */
 export const BOT_SELF_SERVER = 'cw-bot';
+/** the tools self-mcp.ts registers (re-exported there); only the main conversation's gate lets these, exactly, through */
+export const BOT_SELF_TOOL_NAMES = ['bot_profile', 'routine_create', 'routine_update', 'routine_pause', 'routine_delete', 'routine_test', 'remember', 'propose_policy'] as const;
+export const BOT_SELF_TOOLS: readonly string[] = BOT_SELF_TOOL_NAMES.map((n) => `mcp__${BOT_SELF_SERVER}__${n}`);
 
 let current: BotRuntime | null = null;
 export function setBotRuntime(r: BotRuntime | null): void { current = r; }

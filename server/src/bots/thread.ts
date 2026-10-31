@@ -140,7 +140,7 @@ export class BotThreads extends EventEmitter {
     const store = this.d.store;
     const g = makeGate({
       bot: () => store.get(botId) ?? (() => { throw new Error(tr('没有这个 Bot')); })(),
-      runId: `thread-${yyyymmdd(Date.now())}`, store, audit: this.d.audit, inbox: this.d.inbox,
+      runId: `thread-${yyyymmdd(Date.now())}`, store, audit: this.d.audit, inbox: this.d.inbox, selfTools: true,
       onTell: (t) => void this.event(botId, tr('做了：{t}', { t })),
     });
     r.gate = g.gate;

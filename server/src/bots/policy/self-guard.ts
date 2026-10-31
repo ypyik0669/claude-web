@@ -1,7 +1,8 @@
 // A bot can't edit its own policy or audit (spec §5: the rules and the record live where the model can't change them).
 // Everything of the bots — bot.json (the policy), trust.json, runs/ (the audit), inbox.json, the leases — is under
 // `<dataDir>/bots/`. A file tool writing there is refused, except into the bot's own `state/` (its checkpoint); a shell
-// command that names that dir goes to the user first, whatever the bot's levels (unleashed too).
+// command that names that dir goes to the user first, whatever the bot's levels (unleashed too). So does a write to the
+// files that pick the next process's MCP servers and settings (.mcp.json, .claude/settings*.json, ~/.claude.json).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -75,8 +76,29 @@ function mentions(command: string, root: string): boolean {
 }
 
 /**
+ * The files that decide which MCP servers and settings the bot's next process loads: `.mcp.json` and
+ * `.claude/settings*.json` at any depth under its cwd, and the user-level ~/.claude/settings*.json and ~/.claude.json.
+ * One write there could add a server whose tools nobody grades — so the user is asked first.
+ */
+const CONFIG_IN_COMMAND = /(^|[\\/\s"'`=:])(\.mcp\.json|\.claude\.json|\.claude[\\/]+settings[^\s"'`\\/;|&>]*\.json)(?![\w.-])/i;
+const same = (a: string, b: string) => fold(path.resolve(a)) === fold(path.resolve(b));
+function configFile(target: string, cwd: string): boolean {
+  const base = path.basename(target).toLowerCase();
+  const dir = path.dirname(target);
+  const mcp = base === '.mcp.json';
+  const settings = /^settings.*\.json$/.test(base) && path.basename(dir).toLowerCase() === '.claude';
+  const user = base === '.claude.json';
+  if (!mcp && !settings && !user) return false;
+  const home = real(os.homedir());
+  if (settings && same(dir, path.join(home, '.claude'))) return true;
+  if (user && same(dir, home)) return true;
+  return inside(target, real(cwd));
+}
+
+/**
  * 'deny' for a file write under the bots dir (other than this bot's own state/), 'ask' for a shell command that names
- * that dir (or CLAUDE_WEB_DIR), undefined for everything else.
+ * that dir (or CLAUDE_WEB_DIR), 'ask' for a write to the MCP / settings files (configFile) or a command naming one,
+ * undefined for everything else.
  */
 export function selfGuard(botsRoot: string, botId: string, cwd: string, toolName: string, input: Record<string, unknown>): 'deny' | 'ask' | undefined {
   if (FILE_WRITE_TOOLS.has(toolName)) {
@@ -90,12 +112,12 @@ export function selfGuard(botsRoot: string, botId: string, cwd: string, toolName
     const target = win ? localOfUnc(resolved) : resolved;
     if (target === null) return 'ask';
     const root = real(botsRoot);
-    if (!inside(target, root)) return undefined;
+    if (!inside(target, root)) return configFile(target, cwd) ? 'ask' : undefined;
     return inside(target, path.join(root, botId, 'state')) ? undefined : 'deny';
   }
   if (toolName === 'Bash' || toolName === 'PowerShell') {
     const cmd = String(input.command ?? '');
-    return mentions(cmd, botsRoot) || /CLAUDE_WEB_DIR/i.test(cmd) || DRIVE_MAP.test(cmd) ? 'ask' : undefined;
+    return mentions(cmd, botsRoot) || /CLAUDE_WEB_DIR/i.test(cmd) || DRIVE_MAP.test(cmd) || CONFIG_IN_COMMAND.test(cmd) ? 'ask' : undefined;
   }
   return undefined;
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Bot, InboxItem, InboxProposal } from '../protocol.js';
-import { botSelfTools, type BotSelfDeps } from './self-mcp.js';
+import { BOT_SELF_TOOLS, botSelfTools, type BotSelfDeps } from './self-mcp.js';
 import { botFields, ruleOf } from './shape.js';
 
 const baseBot = (): Bot => ({
@@ -31,6 +31,10 @@ function fake(over: Partial<BotSelfDeps> = {}, start: Partial<Bot> = {}) {
 }
 
 describe('bot-self tools', () => {
+  it('BOT_SELF_TOOLS (what the thread gate passes) is exactly the registered tools', () => {
+    const names = botSelfTools('b1', () => 't1', fake().d).map((t) => `mcp__cw-bot__${t.name}`).sort();
+    expect([...BOT_SELF_TOOLS].sort()).toEqual(names);
+  });
   it('routine_create without until is refused', async () => {
     const f = fake();
     const r = await f.call('routine_create', { name: 'n', prompt: 'p', everyMinutes: 30 });

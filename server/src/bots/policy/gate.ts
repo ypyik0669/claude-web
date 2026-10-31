@@ -10,15 +10,17 @@ import type { Inbox } from '../inbox.js';
 import { classify, summarize, targetOf } from './classify.js';
 import { decide, ruleKey, scopeKey, type Decision, type DayCounts } from './rules.js';
 import { selfGuard } from './self-guard.js';
+import { BOT_SELF_TOOLS } from '../runtime-hooks.js';
 import { tr } from '../../i18n/index.js';
 
 /** A call the gate let through: what it was and the rule that allowed it (demoteRule takes that rule on a correction). */
 export interface AllowedCall { toolName: string; input: Record<string, unknown>; cls: ActionClass; key: string; level: PolicyLevel; basis: AuditBasis; rule?: PolicyRule }
 /**
  * `bot`: the bot, or a getter read on every call — a long-lived main conversation sees policy changes made while it
- * runs. `routineId`: unset for that conversation (no routine).
+ * runs. `routineId`: unset for that conversation (no routine). `selfTools`: the gate of the bot's main conversation
+ * (BotThreads.arm only) — its bot-self tools run ungraded.
  */
-export interface GateCtx { bot: Bot | (() => Bot); runId: string; routineId?: string; store: BotStore; audit: AuditLog; inbox: Inbox; now?: () => number; onTell?: (text: string, call: AllowedCall) => void }
+export interface GateCtx { bot: Bot | (() => Bot); runId: string; routineId?: string; selfTools?: boolean;store: BotStore; audit: AuditLog; inbox: Inbox; now?: () => number; onTell?: (text: string, call: AllowedCall) => void }
 export interface GateHandle {
   gate: ToolGate;
   /** the user approved this call (inbox): the next identical call passes once */
@@ -45,8 +47,8 @@ export function callKey(toolName: string, input: Record<string, unknown>): strin
 }
 
 const DAY = 24 * 3600_000;
-/** the bot-self MCP server's tools (runtime-hooks BOT_SELF_SERVER), after unwrap */
-const BOT_SELF_TOOL = /^mcp__cw-bot__/;
+/** the bot-self MCP server's tools, exactly (after unwrap) — only where ctx.selfTools says the gate is the thread's */
+const BOT_SELF = new Set(BOT_SELF_TOOLS);
 const dayStart = (t: number) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
 
 /**
@@ -94,8 +96,9 @@ export function makeGate(ctx: GateCtx): GateHandle {
     const bot = botOf();
     const [name, params] = unwrap(ev.toolName, ev.input);
     // the bot's own tools (bot-self MCP, the main conversation's): they change only what the user can see and undo on
-    // the bot page, and none reaches its policy or budget (propose_policy makes a card) — run, on record
-    if (BOT_SELF_TOOL.test(name)) {
+    // the bot page, and none reaches its policy or budget (propose_policy makes a card) — run, on record. Only on the
+    // thread's gate and only these names: a routine run has no such server, so a `cw-bot` there is someone else's
+    if (ctx.selfTools && BOT_SELF.has(name)) {
       await ctx.audit.add({ at: t, runId: ctx.runId, botId: bot.id, toolName: name, cls: 'write_local', summary: summarize(ev.toolName, ev.input), level: 'do', basis: 'rule', result: 'allowed' });
       return { behavior: 'allow', updatedInput: ev.input };
     }

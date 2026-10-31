@@ -1,7 +1,8 @@
 // 值班 Bot, chat-first (plan 2026-10-31 A, T5): the tools through which a bot's own conversation sets the bot up — its
 // name, title, picture and charter, its routines, what to remember — and asks for a policy change. An in-process MCP
-// server (like sessions-mcp/tools.ts). The policy gate lets `mcp__cw-bot__*` through without grading (audited, one
-// row a call), and the self-guard doesn't see them: so nothing here ever writes the policy or the budget.
+// server (like sessions-mcp/tools.ts). The main conversation's policy gate lets exactly these tools (BOT_SELF_TOOLS)
+// through without grading (audited, one row a call; a routine run grades them like any tool), and the self-guard
+// doesn't see them: so nothing here ever writes the policy or the budget.
 // propose_policy only puts a card in front of the user; bot_profile takes only its own four fields.
 import { createSdkMcpServer, tool, type McpServerConfig } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod/v4';
@@ -21,6 +22,13 @@ export interface BotSelfDeps {
   propose(botId: string, p: InboxProposal, title: string): Promise<InboxItem>;
   event(botId: string, text: string, icon: BotTimelineEntry['icon'], detail?: string): Promise<void>;
 }
+
+/**
+ * The tools botSelfTools registers, as the model calls them: the thread's gate lets exactly these through (a self-mcp
+ * test keeps the list in step with the tools). Kept in runtime-hooks, which imports nothing, so the gate can read it
+ * without an import cycle (self-mcp → shape → pipeline → gate).
+ */
+export { BOT_SELF_TOOL_NAMES, BOT_SELF_TOOLS } from './runtime-hooks.js';
 
 /** the shortest interval a bot may give itself (the generator's minimum too) */
 export const MIN_EVERY = 15;
