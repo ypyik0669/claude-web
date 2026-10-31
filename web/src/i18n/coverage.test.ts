@@ -87,7 +87,10 @@ describe('English texts that other code matches on', () => {
  */
 describe('no Chinese text left outside tr()', () => {
   const ALLOWED: Record<string, string> = {
-    'server/src/bots/generate.ts': 'the prompt that turns a sentence into a bot draft (for the model)',
+    'server/src/bots/thread.ts': "a bot's own conversation: its system prompt and the hidden kickoff (for the model)",
+    'server/src/bots/timeline.ts': 'the <cw-bot-events> block a bot reads before your next message (for the model)',
+    'server/src/bots/self-mcp.ts': "the bot's own tools: their descriptions and answers go to the model",
+    'server/src/bots/hidden.ts': "the old one-sentence generator's prompt, matched to keep its conversations out of the lists",
     'server/src/bots/pipeline.ts': "a routine run's prompt and its policy line (for the model); what a person sees is in tr()",
     'server/src/characters/skill-text.ts': 'the cafe-character skill: a file for the model, in the language the skill is written in',
     'server/src/characters/tool-defs.ts': 'tool descriptions of the character maker (for the model)',
