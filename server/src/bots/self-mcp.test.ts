@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Bot, InboxItem, InboxProposal, Routine } from '../protocol.js';
-import { BOT_SELF_TOOLS, botSelfTools, type BotSelfDeps } from './self-mcp.js';
+import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
+import { selfToolNames, botSelfTools, type BotSelfDeps } from './self-mcp.js';
+import { selfServerName } from './runtime-hooks.js';
 import { botFields, routineOf, ruleOf } from './shape.js';
 
 const baseBot = (): Bot => ({
@@ -31,9 +33,22 @@ function fake(over: Partial<BotSelfDeps> = {}, start: Partial<Bot> = {}) {
 }
 
 describe('bot-self tools', () => {
-  it('BOT_SELF_TOOLS (what the thread gate passes) is exactly the registered tools', () => {
-    const names = botSelfTools('b1', () => 't1', fake().d).map((t) => `mcp__cw-bot__${t.name}`).sort();
-    expect([...BOT_SELF_TOOLS].sort()).toEqual(names);
+  it('selfToolNames (what the thread gate passes) is exactly the registered tools, on the given server', () => {
+    const names = botSelfTools('b1', () => 't1', fake().d).map((t) => `mcp__cw-bot-0123456789ab__${t.name}`).sort();
+    expect([...selfToolNames('cw-bot-0123456789ab')].sort()).toEqual(names);
+  });
+
+  it('selfServerName: cw-bot-<12 hex>, made once per bots dir and kept; a bad stored one is replaced', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-selfname-'));
+    try {
+      const a = selfServerName(dir);
+      expect(a).toMatch(/^cw-bot-[0-9a-f]{12}$/);
+      expect(selfServerName(dir)).toBe(a);
+      const other = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-selfname-'));
+      try { expect(selfServerName(other)).not.toBe(a); } finally { fs.rmSync(other, { recursive: true, force: true }); }
+      fs.writeFileSync(path.join(dir, 'self-server.json'), JSON.stringify({ name: 'cw-bot' }));
+      expect(selfServerName(dir)).toMatch(/^cw-bot-[0-9a-f]{12}$/);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
   it('routine_create without until is refused', async () => {
     const f = fake();

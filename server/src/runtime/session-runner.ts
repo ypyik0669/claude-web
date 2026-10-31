@@ -37,7 +37,7 @@ import { subagentPolicyPrompt } from './subagent-policy.js';
 import { accountModel, accountWindowOf, compactAtOk, effectiveCompact, familyWindows, type AccountWindows } from '../models/account-window.js';
 import { localEnv } from './local-env.js';
 import { SESSIONS_ALLOWED, SESSIONS_SERVER, sessionsMcpEnabled, sessionsMcpServer } from '../sessions-mcp/tools.js';
-import { BOT_SELF_SERVER, botRuntime } from '../bots/runtime-hooks.js';
+import { botRuntime } from '../bots/runtime-hooks.js';
 import { stripBotTags } from '../bots/tags.js';
 import { PREVIEW_ALLOWED, PREVIEW_SERVER, previewEnabled, previewMcpServer, verifyInstructions } from '../preview/tools.js';
 
@@ -205,6 +205,8 @@ export class SessionRunner extends EventEmitter {
    * it gets the bot's own tools and prompt (botRuntime), and its AskUserQuestion shows the card instead of the gate
    */
   readonly botRole?: OpenSessionParams['botRole'];
+  /** the name the built-in bot-self MCP server was loaded under at this process's last start; unset when it wasn't (BotThreads' gate reads it) */
+  botSelfServer?: string;
   /** what the hook answered per tool_use_id: canUseTool reached for the same call reuses it (one gate run, one audit row) */
   private hookAnswers = new Map<string, PermissionResult>();
   private history: SDKMessage[] = []; // messages since spawn, replayed to late-joining clients
@@ -580,7 +582,10 @@ export class SessionRunner extends EventEmitter {
     // 值班 Bot's main conversation: the bot's own tools (in-process, gated as audited writes) and who it is — read at
     // each start, so a respawn picks up a renamed bot / changed charter
     const bot = this.botRole === 'thread' && this.botId ? botRuntime() : null;
-    const botMcp: Record<string, McpServerConfig> = bot && !bare ? { [BOT_SELF_SERVER]: bot.selfServer(this.botId!, () => this.sessionId) } : {};
+    const botMcp: Record<string, McpServerConfig> = bot && !bare && bot.serverName ? { [bot.serverName]: bot.selfServer(this.botId!, () => this.sessionId) } : {};
+    // what the thread's gate lets through ungraded: this process's built-in server, under its per-install name — none
+    // when it isn't loaded (lean / 只聊天), so a `cw-bot…` server from the project's config is graded like any other
+    this.botSelfServer = Object.keys(botMcp)[0];
     const botPrompt = bot ? bot.threadPrompt(this.botId!, { tools: !bare }) : '';
     // 预览服务器 (preview/tools.ts): preview_start runs a command, so only its logs / stop are pre-allowed
     const previewMcp: Record<string, McpServerConfig> = previewEnabled() && !bare ? { [PREVIEW_SERVER]: previewMcpServer(this.cwd, () => this.sessionId) } : {};

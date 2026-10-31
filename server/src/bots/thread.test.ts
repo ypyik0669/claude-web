@@ -133,7 +133,11 @@ describe('BotThreads', () => {
     expect(withTools).toContain('晨报员');
     expect(withTools).toContain('mcp__cw-bot__propose_policy');
     expect(withTools).toContain('<cw-bot-events>');
-    expect(threadPrompt(b, { tools: false })).not.toContain('mcp__cw-bot__');
+    expect(threadPrompt(b, { tools: false })).not.toContain('mcp__cw-bot');
+    // the install's own server name, when given (BotService passes it)
+    const named = threadPrompt(b, { tools: true, server: 'cw-bot-0123456789ab' });
+    expect(named).toContain('mcp__cw-bot-0123456789ab__propose_policy');
+    expect(named).not.toContain('mcp__cw-bot__');
   });
 
   it('avatarFor is stable per name and in the stored format', () => {

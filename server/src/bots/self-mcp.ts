@@ -1,6 +1,6 @@
 // 值班 Bot, chat-first (plan 2026-10-31 A, T5): the tools through which a bot's own conversation sets the bot up — its
 // name, title, picture and charter, its routines, what to remember — and asks for a policy change. An in-process MCP
-// server (like sessions-mcp/tools.ts). The main conversation's policy gate lets exactly these tools (BOT_SELF_TOOLS)
+// server (like sessions-mcp/tools.ts). The main conversation's policy gate lets exactly these tools (selfToolNames of this install's server name)
 // through without grading (audited, one row a call; a routine run grades them like any tool), and the self-guard
 // doesn't see them: so nothing here ever writes the policy or the budget.
 // propose_policy only puts a card in front of the user; bot_profile takes only its own four fields.
@@ -9,7 +9,6 @@ import { z } from 'zod/v4';
 import type { Bot, BotTimelineEntry, InboxItem, InboxProposal, Routine } from '../protocol.js';
 import { describeCron, nextCron } from '../schedules/cron.js';
 import { tr } from '../i18n/index.js';
-import { BOT_SELF_SERVER } from './runtime-hooks.js';
 import { allowScope, botFields, routineOf, ruleOf, untilPassed } from './shape.js';
 import { MAX_FAILURES } from './pipeline.js';
 
@@ -29,7 +28,7 @@ export interface BotSelfDeps {
  * test keeps the list in step with the tools). Kept in runtime-hooks, which imports nothing, so the gate can read it
  * without an import cycle (self-mcp → shape → pipeline → gate).
  */
-export { BOT_SELF_TOOL_NAMES, BOT_SELF_TOOLS } from './runtime-hooks.js';
+export { BOT_SELF_TOOL_NAMES, selfToolNames } from './runtime-hooks.js';
 
 /** the shortest interval a bot may give itself (the generator's minimum too) */
 export const MIN_EVERY = 15;
@@ -238,7 +237,7 @@ export function botSelfTools(botId: string, _self: () => string, d: BotSelfDeps)
   ];
 }
 
-/** The bot's own server (runtime-hooks: registered as BotRuntime.selfServer). `self()` is its conversation's id. */
-export function botSelfServer(botId: string, self: () => string, d: BotSelfDeps): McpServerConfig {
-  return createSdkMcpServer({ name: BOT_SELF_SERVER, version: '1.0.0', tools: botSelfTools(botId, self, d) });
+/** The bot's own server (runtime-hooks: registered as BotRuntime.selfServer) under this install's `name`. `self()` is its conversation's id. */
+export function botSelfServer(botId: string, self: () => string, d: BotSelfDeps, name: string): McpServerConfig {
+  return createSdkMcpServer({ name, version: '1.0.0', tools: botSelfTools(botId, self, d) });
 }

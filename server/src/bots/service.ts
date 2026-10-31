@@ -17,7 +17,7 @@ import { ledgerCost } from './pipeline.js';
 import { BOT_TEMPLATES, fromTemplate } from './templates.js';
 import { BotThreads, avatarFor, threadPrompt } from './thread.js';
 import { entryForItem, entryForRun, systemEntry } from './timeline.js';
-import { botRuntime, setBotRuntime, type BotRuntime } from './runtime-hooks.js';
+import { BOT_SELF_PREFIX, botRuntime, selfServerName, setBotRuntime, type BotRuntime } from './runtime-hooks.js';
 import { botSelfServer, type BotSelfDeps } from './self-mcp.js';
 import { allowScope, botFields } from './shape.js';
 import fs from 'node:fs';
@@ -137,9 +137,12 @@ export class BotService extends EventEmitter {
   private threadCost = new Map<string, number>();
   /** what a bot's main conversation gets at each process start (runtime-hooks) */
   private readonly runtime: BotRuntime = {
-    selfServer: (id, self) => botSelfServer(id, self, this.selfDeps),
-    threadPrompt: (id, o) => threadPrompt(this.must(id), o),
+    serverName: '',
+    selfServer: (id, self) => botSelfServer(id, self, this.selfDeps, this.selfName),
+    threadPrompt: (id, o) => threadPrompt(this.must(id), { ...o, server: this.selfName }),
   };
+  /** this install's bot-self server name (runtime-hooks selfServerName), read in the constructor */
+  private selfName = BOT_SELF_PREFIX;
   /** the bot-self tools' way in: the same leased edits, runs, inbox and memory as the windows' */
   private readonly selfDeps: BotSelfDeps = {
     get: (id) => this.store.get(id),
@@ -159,6 +162,8 @@ export class BotService extends EventEmitter {
   constructor(private d: BotServiceDeps) {
     super();
     const sh = acquire(d.dataDir);
+    this.selfName = selfServerName(d.dataDir);
+    this.runtime.serverName = this.selfName;
     this.store = sh.store; this.inbox = sh.inbox; this.audits = sh.audit;
     this.scheduler = new BotScheduler({
       store: this.store, audit: this.audits, inbox: this.inbox,

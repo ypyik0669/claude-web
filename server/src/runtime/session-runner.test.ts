@@ -80,7 +80,8 @@ const killed = vi.hoisted(() => [] as any[]);
 vi.mock('../agents/kill-tree.js', async (orig) => ({ ...(await orig() as any), killTree: async (child: any) => { killed.push(child); child.exitCode = 1; child.emit('exit', 1); } }));
 
 const { SessionRunner, GATE_HOOK_TIMEOUT_S, GATE_DEADLINE_MS } = await import('./session-runner.js');
-const { setBotRuntime, BOT_SELF_SERVER } = await import('../bots/runtime-hooks.js');
+const { setBotRuntime } = await import('../bots/runtime-hooks.js');
+const BOT_SELF_SERVER = 'cw-bot-0123456789ab';
 const tick = () => new Promise((r) => setTimeout(r, 10));
 
 describe('SessionRunner', () => {
@@ -2456,7 +2457,7 @@ describe('值班 Bot gate', () => {
 
     // 值班 Bot 聊天优先: the bot's main conversation is gated, but a person is watching it — its questions get a card
     describe('the bot thread (botRole: thread)', () => {
-      const runtime = { selfServer: vi.fn((botId: string, self: () => string) => ({ type: 'sdk', name: 'cw-bot', botId, self } as any)), threadPrompt: vi.fn((botId: string) => `BOT-THREAD-PROMPT ${botId}`) };
+      const runtime = { serverName: BOT_SELF_SERVER, selfServer: vi.fn((botId: string, self: () => string) => ({ type: 'sdk', name: BOT_SELF_SERVER, botId, self } as any)), threadPrompt: vi.fn((botId: string) => `BOT-THREAD-PROMPT ${botId}`) };
       afterEach(() => setBotRuntime(null));
 
       it('gets the bot-self server and the thread prompt; a run of the same bot does not', async () => {
@@ -2478,7 +2479,16 @@ describe('值班 Bot gate', () => {
         await tick();
         expect(plain.botRole).toBeUndefined();
         expect(queries[2].options.mcpServers[BOT_SELF_SERVER]).toBeUndefined();
-        await Promise.all([t.close(), run.close(), plain.close()]);
+        // the name it loaded the server under is what the thread's gate passes; a run / ungated one has none
+        expect(t.botSelfServer).toBe(BOT_SELF_SERVER);
+        expect(run.botSelfServer).toBeUndefined();
+        expect(plain.botSelfServer).toBeUndefined();
+        // a thread without tools (只聊天 here; a lean provider the same): no built-in server, nothing passed ungraded
+        const bare = new SessionRunner({ sessionId: 'bt4', cwd: '/x', gated: true, botId: 'b1', botRole: 'thread', features: { chatOnly: true } } as any);
+        await tick();
+        expect(queries[3].options.mcpServers?.[BOT_SELF_SERVER]).toBeUndefined();
+        expect(bare.botSelfServer).toBeUndefined();
+        await Promise.all([t.close(), run.close(), plain.close(), bare.close()]);
       });
 
       it('AskUserQuestion is left to canUseTool, which shows the card; Bash still goes to the gate', async () => {

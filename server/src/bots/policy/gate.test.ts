@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, onTestFinished, vi } from 
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { BotStore } from '../store.js'; import { AuditLog } from '../audit.js'; import { Inbox } from '../inbox.js';
 import { makeGate, callKey } from './gate.js';
-import { BOT_SELF_TOOLS } from '../self-mcp.js';
+import { selfToolNames } from '../self-mcp.js';
 import type { Bot } from '../../protocol.js';
 
 const bot = (policy: Bot['policy'] = { rules: [] }): Bot => ({ id: 'b1', name: 'x', charter: { role: 'r', sources: [] }, cwd: '/p', tier: 'balanced', policy, budget: {}, routines: [], outputs: [], createdAt: 0, updatedAt: 0 });
@@ -301,36 +301,43 @@ describe('makeGate', () => {
 
   // ---- 聊天优先: the bot's own tools, and a thread that lives across policy changes ----
 
-  it("the bot's own tools (mcp__cw-bot__*), direct or wrapped, run with one audit row each — even when its policy would deny writes", async () => {
-    const g = makeGate({ bot: bot({ rules: [{ cls: 'write_local', level: 'deny' }, { cls: 'send', level: 'deny' }] }), runId: 'thread1', store, audit, inbox, selfTools: true });
+  const SRV = 'cw-bot-0123456789ab';
+  it("the bot's own tools (on the runner's built-in server), direct or wrapped, run with one audit row each — even when its policy would deny writes", async () => {
+    const g = makeGate({ bot: bot({ rules: [{ cls: 'write_local', level: 'deny' }, { cls: 'send', level: 'deny' }] }), runId: 'thread1', store, audit, inbox, selfServer: () => SRV });
     const input = { name: '早间简报', cron: '0 9 * * *' };
-    expect(await g.gate(ev('mcp__cw-bot__routine_create', input))).toEqual({ behavior: 'allow', updatedInput: input });
-    const wrappedSelf = { tool_name: 'mcp__cw-bot__routine_create', params: input };
+    const name = `mcp__${SRV}__routine_create`;
+    expect(await g.gate(ev(name, input))).toEqual({ behavior: 'allow', updatedInput: input });
+    const wrappedSelf = { tool_name: name, params: input };
     expect(await g.gate(ev('ExecuteExtraTool', wrappedSelf))).toEqual({ behavior: 'allow', updatedInput: wrappedSelf });
     const rows = store.audit('b1', 'thread1');
     expect(rows).toHaveLength(2);
-    for (const r of rows) expect(r).toMatchObject({ toolName: 'mcp__cw-bot__routine_create', cls: 'write_local', level: 'do', basis: 'rule', result: 'allowed' });
+    for (const r of rows) expect(r).toMatchObject({ toolName: name, cls: 'write_local', level: 'do', basis: 'rule', result: 'allowed' });
     expect(inbox.list('b1')).toEqual([]);
-    // only that server: a look-alike name is gated as usual
-    expect((await g.gate(ev('mcp__cw-botx__routine_create', input)))?.behavior).toBe('deny');
+    // only that server: a plain `cw-bot` (a project's config) or a look-alike is graded as usual
+    for (const other of ['mcp__cw-bot__routine_create', `mcp__${SRV}x__routine_create`, 'mcp__cw-bot-ffffffffffff__routine_create']) {
+      expect((await g.gate(ev(other, input)))?.behavior, other).toBe('deny');
+    }
   });
 
-  it('a routine run grades mcp__cw-bot__* like any tool (a project .mcp.json may name a server cw-bot)', async () => {
+  it('a routine run grades mcp__cw-bot…__* like any tool (a project .mcp.json may name a server so)', async () => {
     const g = makeGate({ bot: bot({ rules: [{ cls: 'write_local', level: 'deny' }, { cls: 'send', level: 'deny' }] }), runId: 'run1', routineId: 'r1', store, audit, inbox });
-    for (const name of ['mcp__cw-bot__routine_create', 'mcp__cw-bot__anything']) {
+    for (const name of ['mcp__cw-bot__routine_create', `mcp__${SRV}__routine_create`, 'mcp__cw-bot__anything']) {
       expect((await g.gate(ev(name, { name: 'x' })))?.behavior).toBe('deny');
       expect((await g.gate(ev('ExecuteExtraTool', { tool_name: name, params: { name: 'x' } })))?.behavior).toBe('deny');
     }
     expect(store.audit('b1', 'run1').some((r) => r.result === 'allowed')).toBe(false);
   });
 
-  it('the thread passes only the exact bot-self tool names; another tool on a cw-bot server is graded', async () => {
-    const g = makeGate({ bot: bot({ rules: [{ cls: 'write_local', level: 'deny' }, { cls: 'send', level: 'deny' }] }), runId: 'thread1', store, audit, inbox, selfTools: true });
-    for (const name of ['mcp__cw-bot__shell', 'mcp__cw-bot__routine_createx', 'mcp__cw-bot__']) {
+  it('the thread passes only the exact bot-self tool names, and nothing while its process has no built-in server (lean / 只聊天)', async () => {
+    let loaded: string | undefined = SRV;
+    const g = makeGate({ bot: bot({ rules: [{ cls: 'write_local', level: 'deny' }, { cls: 'send', level: 'deny' }] }), runId: 'thread1', store, audit, inbox, selfServer: () => loaded });
+    for (const name of [`mcp__${SRV}__shell`, `mcp__${SRV}__routine_createx`, `mcp__${SRV}__`]) {
       expect((await g.gate(ev(name, { command: 'curl x' })))?.behavior).toBe('deny');
       expect((await g.gate(ev('ExecuteExtraTool', { tool_name: name, params: {} })))?.behavior).toBe('deny');
     }
-    for (const name of BOT_SELF_TOOLS) expect((await g.gate(ev(name, {})))?.behavior).toBe('allow');
+    for (const name of selfToolNames(SRV)) expect((await g.gate(ev(name, {})))?.behavior).toBe('allow');
+    loaded = undefined; // respawned lean: a server of that name now is the project's
+    for (const name of selfToolNames(SRV)) expect((await g.gate(ev(name, {})))?.behavior, name).toBe('deny');
   });
 
   it('writes to MCP / settings files ask first: .mcp.json and .claude/settings*.json at any depth under cwd, the user-level ones too', async () => {

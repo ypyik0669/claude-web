@@ -14,6 +14,7 @@ import { makeGate, type GateHandle } from './policy/gate.js';
 import { policyLine } from './pipeline.js';
 import { eventsBlock, systemEntry } from './timeline.js';
 import { serverSend } from './tags.js';
+import { BOT_SELF_PREFIX } from './runtime-hooks.js';
 import { getLocale, tr } from '../i18n/index.js';
 
 export const KICKOFF_TAG = 'cw-bot-kickoff';
@@ -48,8 +49,9 @@ const cadence = (r: Bot['routines'][number]) => (r.cron ? `cron ${r.cron}` : r.e
  * start. `tools`: the conversation has the bot-self tools and AskUserQuestion (a 只聊天 / lean-tools one has none). For
  * the model only, so not translated; it is told to speak the user's language.
  */
-export function threadPrompt(bot: Bot, o: { tools?: boolean } = {}): string {
+export function threadPrompt(bot: Bot, o: { tools?: boolean; server?: string } = {}): string {
   const tools = o.tools !== false;
+  const t = (n: string) => `mcp__${o.server ?? BOT_SELF_PREFIX}__${n}`;
   const c = bot.charter;
   return [
     '# 你是谁',
@@ -68,9 +70,9 @@ export function threadPrompt(bot: Bot, o: { tools?: boolean } = {}): string {
     '',
     '# 管好你自己',
     ...(tools ? [
-      '- 名字、职位、头像、职责用 mcp__cw-bot__bot_profile 改；例行用 mcp__cw-bot__routine_create / routine_update / routine_pause / routine_delete / routine_test；要记住的事用 mcp__cw-bot__remember。改完时间线上会出一行，用户看得见。',
+      `- 名字、职位、头像、职责用 ${t('bot_profile')} 改；例行用 ${t('routine_create')} / routine_update / routine_pause / routine_delete / routine_test；要记住的事用 ${t('remember')}。改完时间线上会出一行，用户看得见。`,
       '- 每条例行都要有结束日期，或者用户明确说了「一直」（until 写 forever）。没问清楚就先问，别替用户定。',
-      '- 策略（哪些事你可以不问就做）是用户的：你改不了。想改就用 mcp__cw-bot__propose_policy 提议，用户在卡片上确认后才生效。',
+      `- 策略（哪些事你可以不问就做）是用户的：你改不了。想改就用 ${t('propose_policy')} 提议，用户在卡片上确认后才生效。`,
     ] : [
       '- 这个对话没有工具：名字、例行和策略请用户在 Bot 页上改，你可以告诉他怎么改。',
     ]),
@@ -141,7 +143,9 @@ export class BotThreads extends EventEmitter {
     const store = this.d.store;
     const g = makeGate({
       bot: () => store.get(botId) ?? (() => { throw new Error(tr('没有这个 Bot')); })(),
-      runId: `thread-${yyyymmdd(Date.now())}`, store, audit: this.d.audit, inbox: this.d.inbox, selfTools: true,
+      runId: `thread-${yyyymmdd(Date.now())}`, store, audit: this.d.audit, inbox: this.d.inbox,
+      // the built-in server's name as the runner loaded it at its last start (SessionRunner.botSelfServer; none when lean)
+      selfServer: () => (r as { botSelfServer?: string }).botSelfServer,
       onTell: (t) => void this.event(botId, tr('做了：{t}', { t })),
     });
     r.gate = g.gate;

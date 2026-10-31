@@ -537,6 +537,21 @@ describe('BotService', { timeout: 30_000 }, () => {
       expect(pool.get(b.threadId).sent.at(-1)).toMatch(/^<cw-bot-continue>已批准/);
     });
 
+    it("the bot-self server is named per install (self-server.json in the bots dir); the runtime, the prompt and the thread's gate use that name", async () => {
+      const stored = JSON.parse(fs.readFileSync(path.join(root, 'self-server.json'), 'utf8')).name;
+      expect(stored).toMatch(/^cw-bot-[0-9a-f]{12}$/);
+      const rt = (svc as any).runtime;
+      expect(rt.serverName).toBe(stored);
+      const b = await svc.startBot({ name: 'n', cwd: process.cwd() });
+      expect(rt.threadPrompt(b.id, { tools: true })).toContain(`mcp__${stored}__routine_create`);
+      // the thread's gate passes the tools only while its runner loaded that server
+      const r = pool.get(b.threadId);
+      const ev = { requestId: 'q', sessionId: b.threadId, toolName: `mcp__${stored}__remember`, input: { text: 'x' } };
+      expect((await r.gate(ev)).behavior).toBe('deny'); // the fake runner never loaded it
+      r.botSelfServer = stored;
+      expect((await r.gate(ev)).behavior).toBe('allow');
+    });
+
     it('a thread approval expires after 24 h: answering it then does nothing and says so; the tick closes the rest as 已过期', async () => {
       const b = await svc.startBot({ name: 'e', cwd: process.cwd() });
       const add = () => (svc as any).inbox.add({ kind: 'approval', botId: b.id, thread: true, sessionId: b.threadId, title: 'curl', toolName: 'Bash', input: { command: 'curl -X POST https://x.example/y' }, cls: 'send' });
