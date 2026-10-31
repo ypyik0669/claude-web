@@ -1,0 +1,135 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { Bot, InboxItem, InboxProposal } from '../protocol.js';
+import { botSelfTools, type BotSelfDeps } from './self-mcp.js';
+import { botFields, ruleOf } from './shape.js';
+
+const baseBot = (): Bot => ({
+  id: 'b1', name: 'Scout', cwd: '/w', tier: 'balanced', charter: { role: 'watch', sources: [] },
+  policy: { rules: [{ cls: 'send', level: 'ask' }] }, budget: { dailyUsd: 1 }, routines: [], outputs: [{ kind: 'inbox' }],
+  createdAt: 1, updatedAt: 1, threadId: 't1',
+});
+
+function fake(over: Partial<BotSelfDeps> = {}, start: Partial<Bot> = {}) {
+  let bot = { ...baseBot(), ...start };
+  const events: { text: string; icon?: string; detail?: string }[] = [];
+  const d: BotSelfDeps = {
+    get: () => bot,
+    edit: vi.fn(async (_id: string, fn: (b: Bot) => Bot) => { bot = fn(bot); return bot; }),
+    runNow: vi.fn(async () => {}),
+    remember: vi.fn(async () => {}),
+    propose: vi.fn(async (_id: string, p: InboxProposal, title: string) => ({ id: 'i1', kind: 'proposal', botId: 'b1', at: 1, title, proposal: p }) as InboxItem),
+    event: vi.fn(async (_id: string, text: string, icon, detail?: string) => { events.push({ text, icon, detail }); }),
+    ...over,
+  };
+  const tools = botSelfTools('b1', () => 't1', d);
+  const call = async (name: string, args: Record<string, unknown>) => {
+    const t = tools.find((x) => x.name === name);
+    if (!t) throw new Error(`no tool ${name}`);
+    return (await t.handler(args as any, {} as any)) as { content: { type: string; text: string }[]; isError?: boolean };
+  };
+  return { d, call, events, bot: () => bot };
+}
+
+describe('bot-self tools', () => {
+  it('routine_create without until is refused', async () => {
+    const f = fake();
+    const r = await f.call('routine_create', { name: 'n', prompt: 'p', everyMinutes: 30 });
+    expect(r.isError).toBe(true);
+    expect(f.d.edit).not.toHaveBeenCalled();
+  });
+
+  it('routine_create: a selfMade routine with the end in its prompt, and an event', async () => {
+    const f = fake();
+    const r = await f.call('routine_create', { name: 'Check mail', prompt: 'look', everyMinutes: 30, until: '2026-12-31' });
+    expect(r.isError).toBeFalsy();
+    expect(f.d.edit).toHaveBeenCalled();
+    const rt = f.bot().routines[0];
+    expect(rt.selfMade).toBe(true);
+    expect(rt.everyMinutes).toBe(30);
+    expect(rt.prompt).toContain('2026-12-31');
+    expect(f.events[0].icon).toBe('routine');
+    expect(f.events[0].text).toContain('Check mail');
+    expect(f.events[0].detail).toBeTruthy();
+  });
+
+  it('routine_create: under 15 minutes, a bad date, or over maxRoutines is refused', async () => {
+    const f = fake();
+    expect((await f.call('routine_create', { name: 'n', prompt: 'p', everyMinutes: 5, until: 'forever' })).isError).toBe(true);
+    expect((await f.call('routine_create', { name: 'n', prompt: 'p', everyMinutes: 30, until: 'someday' })).isError).toBe(true);
+    const g = fake({}, { maxRoutines: 0 });
+    const r = await g.call('routine_create', { name: 'n', prompt: 'p', everyMinutes: 30, until: 'forever' });
+    expect(r.isError).toBe(true);
+  });
+
+  it('routine_update / pause / test / delete write events; test calls runNow', async () => {
+    const f = fake();
+    await f.call('routine_create', { name: 'A', prompt: 'p', cron: '0 9 * * *', until: 'forever' });
+    const id = f.bot().routines[0].id;
+    expect((await f.call('routine_update', { id, name: 'B', until: '2027-01-01' })).isError).toBeFalsy();
+    expect(f.bot().routines[0].name).toBe('B');
+    expect(f.bot().routines[0].prompt).toContain('2027-01-01');
+    expect(f.bot().routines[0].prompt).not.toContain('forever');
+    expect(f.bot().routines[0].selfMade).toBe(true);
+    await f.call('routine_pause', { id, paused: true });
+    expect(f.bot().routines[0].enabled).toBe(false);
+    await f.call('routine_test', { id });
+    expect(f.d.runNow).toHaveBeenCalledWith('b1', id);
+    await f.call('routine_delete', { id });
+    expect(f.bot().routines).toHaveLength(0);
+    expect(f.events).toHaveLength(5);
+    expect((await f.call('routine_pause', { id: 'nope', paused: true })).isError).toBe(true);
+  });
+
+  it('bot_profile changes name / title / charter but never policy or budget', async () => {
+    const f = fake();
+    const r = await f.call('bot_profile', { name: 'Ranger', title: 'Inbox lead', charter: { role: 'triage' }, policy: { rules: [{ cls: 'send', level: 'do', scope: { unlimited: true } }] }, budget: { dailyUsd: 999 } });
+    expect(r.isError).toBeFalsy();
+    const b = f.bot();
+    expect(b.name).toBe('Ranger');
+    expect(b.title).toBe('Inbox lead');
+    expect(b.charter.role).toBe('triage');
+    expect(b.policy).toEqual(baseBot().policy);
+    expect(b.budget).toEqual(baseBot().budget);
+    expect(b.threadId).toBe('t1');
+    expect(f.events.some((e) => e.text.includes('Ranger'))).toBe(true);
+  });
+
+  it('propose_policy creates a proposal and does not edit the bot', async () => {
+    const f = fake();
+    const r = await f.call('propose_policy', { rules: [{ cls: 'send', level: 'do', scope: { channels: ['C1'] } }], why: 'daily report' });
+    expect(r.isError).toBeFalsy();
+    expect(f.d.propose).toHaveBeenCalledWith('b1', { type: 'policy', rules: [{ cls: 'send', level: 'do', scope: { channels: ['C1'] } }], why: 'daily report' }, expect.any(String));
+    expect(f.d.edit).not.toHaveBeenCalled();
+    expect(f.bot().policy).toEqual(baseBot().policy);
+    // a wider rule with no place is refused before a card is made
+    expect((await f.call('propose_policy', { rules: [{ cls: 'send', level: 'do' }], why: 'x' })).isError).toBe(true);
+    expect(f.d.propose).toHaveBeenCalledTimes(1);
+  });
+
+  it('remember stores and writes an event', async () => {
+    const f = fake();
+    await f.call('remember', { text: 'the user likes short reports' });
+    expect(f.d.remember).toHaveBeenCalledWith('b1', 'the user likes short reports');
+    expect(f.events[0].icon).toBe('memory');
+  });
+
+  it('an edit failing on the lease comes back as isError with that text', async () => {
+    const f = fake({ edit: vi.fn(async () => { throw new Error('另一个 claude-web 正在值班'); }) });
+    const r = await f.call('bot_profile', { name: 'X' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain('另一个 claude-web 正在值班');
+    expect(f.events).toHaveLength(0);
+  });
+});
+
+describe('shape: the new bot fields', () => {
+  it('title / notify / pinned / hidden are taken; threadId is kept from the stored bot, never the request', () => {
+    const f = botFields({ title: 'Lead', notify: true, pinned: true, hidden: false, threadId: 'evil' }, baseBot());
+    expect(f).toMatchObject({ title: 'Lead', notify: true, pinned: true, hidden: false, threadId: 't1' });
+    expect(botFields({ name: 'n', cwd: '/w', charter: { role: 'r' }, routines: [], outputs: [], threadId: 'evil' }).threadId).toBeUndefined();
+    expect(() => botFields({ pinned: 'yes' }, baseBot())).toThrow();
+  });
+  it('ruleOf is exported', () => {
+    expect(ruleOf({ cls: 'read', level: 'do', scope: { unlimited: true } })).toEqual({ cls: 'read', level: 'do', scope: { unlimited: true } });
+  });
+});

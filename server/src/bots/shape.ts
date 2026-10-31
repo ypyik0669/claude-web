@@ -84,7 +84,8 @@ export function allowScope(v: unknown, field = 'scope', cls?: ActionClass): Poli
 function scopeOf(v: unknown, field: string, allow: boolean, cls?: ActionClass): PolicyScope | undefined {
   return v === undefined || v === null ? undefined : allow ? allowScope(v, field, cls) : policyScope(v, field);
 }
-function ruleOf(v: unknown): PolicyRule {
+/** one policy rule, checked (a wider rule must name where); exported for the bot-self propose_policy */
+export function ruleOf(v: unknown): PolicyRule {
   if (!isObj(v) || !CLASSES.includes(v.cls) || !LEVELS.includes(v.level)) return bad('policy.rules');
   return compact({ cls: v.cls, level: v.level, scope: scopeOf(v.scope, 'policy.rules.scope', v.level !== 'deny', v.cls) });
 }
@@ -195,6 +196,7 @@ export function botFields(input: unknown, prev?: Bot): BotFields {
   if (prev?.manager && routines.length) bad('routines'); // phase 1: the manager does no work of its own
   const outputs = req('outputs', (x) => arr<unknown>(x, 'outputs').map(outputOf), prev?.outputs);
   const num = (k: string, cur: number | undefined) => pick(v, k, cur, (x) => money(x, k));
+  const flag = (k: string, cur: boolean | undefined) => pick(v, k, cur, (x) => (x === undefined || x === null ? undefined : typeof x === 'boolean' ? x : bad(k)));
   return compact({
     name, cwd, tier, charter, policy, budget, routines, outputs,
     avatar: pick(v, 'avatar', prev?.avatar, (x) => optStr(x, 'avatar')),
@@ -203,6 +205,12 @@ export function botFields(input: unknown, prev?: Bot): BotFields {
     quiet: pick(v, 'quiet', prev?.quiet, (x) => quietOf(x, prev?.quiet)),
     threshold: num('threshold', prev?.threshold),
     maxRoutines: num('maxRoutines', prev?.maxRoutines),
-    paused: pick(v, 'paused', prev?.paused, (x) => (x === undefined || x === null ? undefined : typeof x === 'boolean' ? x : bad('paused'))),
+    paused: flag('paused', prev?.paused),
+    title: pick(v, 'title', prev?.title, (x) => optStr(x, 'title')?.trim() || undefined),
+    notify: flag('notify', prev?.notify),
+    pinned: flag('pinned', prev?.pinned),
+    hidden: flag('hidden', prev?.hidden),
+    // the server's (the bot's own conversation): kept from the stored bot, never taken from a request
+    threadId: prev?.threadId,
   });
 }
