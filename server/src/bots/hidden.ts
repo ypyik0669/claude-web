@@ -17,8 +17,13 @@ const THREAD_LOCKED = new Set<string>(['session.setProvider', 'session.switchAge
  * Throws for such a request on a bot's own conversation: it stays the gated Claude conversation the bot page set up (a
  * provider / agent swap reopens it ungated, which the pool refuses — the thread would die; a handoff makes it read-only).
  */
-export function refuseOnThread(req: { kind: string; sessionId?: unknown }, isThread: (sessionId: string) => boolean): void {
+export function refuseOnThread(req: { kind: string; sessionId?: unknown; params?: unknown }, isThread: (sessionId: string) => boolean): void {
   if (THREAD_LOCKED.has(req.kind) && typeof req.sessionId === 'string' && isThread(req.sessionId)) {
     throw new Error(tr('这是 Bot 的对话：它的模型来源和设置在 Bot 资料里改'));
   }
+  // a fork / rewind copies the transcript to a new id first, so the pool's guard only ever sees the copy: the copy
+  // would run as an ordinary, ungated conversation carrying the bot's hidden blocks — refused before the copy is made
+  const p = req.kind === 'session.open' && req.params && typeof req.params === 'object' ? req.params as { sessionId?: unknown; fork?: unknown; resumeAt?: unknown } : undefined;
+  const copied = req.kind === 'library.fork' ? req.sessionId : p && (p.fork || p.resumeAt) ? p.sessionId : undefined;
+  if (typeof copied === 'string' && isThread(copied)) throw new Error(tr('Bot 的对话不能分叉或回退'));
 }

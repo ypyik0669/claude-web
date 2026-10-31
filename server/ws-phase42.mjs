@@ -300,6 +300,12 @@ async function chatFirst() {
   check('bots.start → a bot with its own conversation (threadId)', !!tid && b.name === '晨报', JSON.stringify({ id: b.id, threadId: tid }));
   const listed = await req({ kind: 'sessions.list' });
   check('… which sessions.list does not show', !listed.some((x) => x.sessionId === tid), String(listed.length));
+  // a fork / rewind of it would run as an ordinary, ungated copy: refused before the copy is made
+  const copies = [];
+  for (const r of [{ kind: 'session.open', params: { sessionId: tid, cwd: repo, fork: true } }, { kind: 'session.open', params: { sessionId: tid, cwd: repo, resumeAt: tid } }, { kind: 'library.fork', sessionId: tid }]) {
+    copies.push(await req(r).then((x) => `opened ${JSON.stringify(x?.sessionId ?? x)}`, (e) => /分叉|fork/i.test(String(e?.message ?? e)) ? 'refused' : `error ${e?.message ?? e}`));
+  }
+  check('… and can\'t be forked or rewound (session.open fork / resumeAt, library.fork)', copies.every((x) => x === 'refused'), JSON.stringify(copies));
 
   // 9. the kickoff spoke first: the AskUserQuestion card reaches the window (not the inbox)
   const ask = await until(() => events.slice(from).find((e) => e.kind === 'permission.request' && e.request.sessionId === tid && e.request.toolName === 'AskUserQuestion')?.request, 120_000);
@@ -343,7 +349,7 @@ async function chatFirst() {
   check('… that turn told only the 规矩 card (no own system line, nothing about the push yet)', !!pushReq && ev.length === 1 && /提议等你看：规矩/.test(ev[0]) && pushReq.text.trimEnd().endsWith('给我推一下'), JSON.stringify(pushReq?.text.slice(0, 200)));
   const tl2 = await until(async () => (await req({ kind: 'bots.timeline.list', id: b.id })).find((e) => e.kind === 'approval' && e.itemId === ap?.id), 10_000);
   check('… and a timeline entry of kind approval holds it', !!tl2);
-  const refused = threadReqs.slice(mark).find((r) => r.toolResult?.name === 'Bash')?.toolResult;
+  const refused = await until(() => threadReqs.slice(mark).find((r) => r.toolResult?.name === 'Bash')?.toolResult, 30_000);
   check('… the model was told it waits for the user', !!refused && refused.error, JSON.stringify(refused));
   await until(() => threadReqs.at(-1)?.kind === 'after-tool', 30_000);
 

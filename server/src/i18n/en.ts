@@ -1875,6 +1875,7 @@ export const EN_SERVER: Record<string, string> = {
   "「{name}」已经到期：先用 routine_update 定一个新的结束日期（问过用户），再恢复": "“{name}” has ended: set a new end date with routine_update first (after asking the user), then resume it",
   "例行「{name}」到期，已停": "Routine “{name}” reached its end date and stopped",
   "这是 Bot 的对话：它的模型来源和设置在 Bot 资料里改": "This is a bot's conversation: change its model source and settings in the bot's profile",
+  "Bot 的对话不能分叉或回退": "A bot's conversation can't be forked or rewound",
   "已过期": "Expired",
   "这个请求已经过期（超过 24 小时），没有执行：要做的话，在对话里再跟它说一次": "This request expired (over 24 hours old) and was not carried out: to have it done, ask again in the conversation",
   "没有要记的": "Nothing to remember",

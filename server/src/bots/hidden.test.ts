@@ -27,4 +27,14 @@ describe('refuseOnThread: a bot thread keeps its provider, agent and machine', (
     expect(() => refuseOnThread({ kind: 'session.setProvider', sessionId: 's2' }, isThread)).not.toThrow();
     expect(() => refuseOnThread({ kind: 'session.send', sessionId: 't1' }, isThread)).not.toThrow();
   });
+  it('a fork / rewind of a thread (session.open fork / resumeAt, library.fork) is refused: the copy would run ungated', () => {
+    expect(() => refuseOnThread({ kind: 'session.open', params: { sessionId: 't1', fork: true } }, isThread)).toThrow(/Bot/);
+    expect(() => refuseOnThread({ kind: 'session.open', params: { sessionId: 't1', resumeAt: 'u1' } }, isThread)).toThrow(/Bot/);
+    expect(() => refuseOnThread({ kind: 'library.fork', sessionId: 't1' }, isThread)).toThrow(/Bot/);
+  });
+  it('a plain open of a thread, or a fork of another conversation, goes on', () => {
+    expect(() => refuseOnThread({ kind: 'session.open', params: { sessionId: 't1' } }, isThread)).not.toThrow();
+    expect(() => refuseOnThread({ kind: 'session.open', params: { sessionId: 's2', fork: true } }, isThread)).not.toThrow();
+    expect(() => refuseOnThread({ kind: 'library.fork', sessionId: 's2' }, isThread)).not.toThrow();
+  });
 });

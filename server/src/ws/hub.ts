@@ -497,7 +497,8 @@ export class Hub {
     // resolves at once when that look is under a minute old (net/proxy.ts)
     if (GOES_OUT.has(req.kind)) await proxy.refresh();
     // a bot's own conversation stays the gated Claude conversation the bot page set up: no provider / agent swap (the
-    // pool would refuse the ungated reopen and the thread would die), no handoff (it would turn read-only)
+    // pool would refuse the ungated reopen and the thread would die), no handoff (it would turn read-only), no fork /
+    // rewind (the copy would run ungated)
     refuseOnThread(req, (id) => !!s.bots.threads.isThread(id));
     if (isAgentConfigRequest(req)) return handleAgentConfig(s.agentConfig, req);
     if (isOrchestraRequest(req)) return handleOrchestra(s.orchestra, req);
@@ -539,7 +540,7 @@ export class Hub {
         // `gated` is set by the server for a bot's run only, never by a window
         let params = clientSessionParams(req.params);
         // a bot's own conversation opens only gated, as the bot set it up: the window's model / mode / provider are not
-        // its to pick (a fork or a rewind of it goes on as below: a copy, not the bot's)
+        // its to pick (a fork or a rewind of it was refused above, refuseOnThread)
         const threadOf = params.sessionId && !params.fork && !params.resumeAt ? s.bots.threads.isThread(params.sessionId) : undefined;
         if (threadOf) {
           const r = await s.bots.openThread(threadOf);
