@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { BotStore } from './store.js';
-import type { Bot, BotRun } from '../protocol.js';
+import type { Bot, BotRun, BotTimelineEntry } from '../protocol.js';
 
 const bot = (id: string): Bot => ({ id, name: '晨报', charter: { role: '每天早上汇总 issue', sources: ['github'] }, cwd: '/p', tier: 'balanced', policy: { rules: [] }, budget: {}, routines: [], outputs: [{ kind: 'inbox' }], createdAt: 1, updatedAt: 1 });
 
@@ -122,5 +122,42 @@ describe('BotStore', () => {
   it('remove deletes the directory', async () => {
     await s.save(bot('b_1')); await s.remove('b_1');
     expect(s.list()).toEqual([]); expect(fs.existsSync(path.join(root, 'b_1'))).toBe(false);
+  });
+
+  const entry = (id: string, at: number): BotTimelineEntry => ({ id, botId: 'b_1', at, kind: 'system', text: id });
+  it('timeline: append → read round-trip, oldest first, a re-appended id keeps its place with the new content', async () => {
+    await s.appendTimeline('b_1', entry('a', 2));
+    await s.appendTimeline('b_1', entry('b', 1));
+    await s.appendTimeline('b_1', { ...entry('a', 2), text: 'a2' });
+    expect(fs.existsSync(path.join(root, 'b_1', 'timeline.jsonl'))).toBe(true);
+    expect(s.timeline('b_1').map((e) => [e.id, e.text])).toEqual([['b', 'b'], ['a', 'a2']]);
+    expect(s.timeline('b_2')).toEqual([]);
+  });
+
+  it('timeline: a torn last line is skipped', async () => {
+    await s.appendTimeline('b_1', entry('a', 1));
+    fs.appendFileSync(path.join(root, 'b_1', 'timeline.jsonl'), '{"id":"b","botId":"b_1","at');
+    const warn = console.warn; console.warn = () => {};
+    try { expect(s.timeline('b_1').map((e) => e.id)).toEqual(['a']); } finally { console.warn = warn; }
+  });
+
+  it('timeline: before / limit page backwards from the newest, still oldest first; default limit 300', async () => {
+    for (let i = 1; i <= 310; i++) await s.appendTimeline('b_1', entry(`e${i}`, i));
+    const all = s.timeline('b_1');
+    expect(all.length).toBe(300);
+    expect(all[0].id).toBe('e11'); expect(all[299].id).toBe('e310');
+    expect(s.timeline('b_1', { limit: 3 }).map((e) => e.id)).toEqual(['e308', 'e309', 'e310']);
+    expect(s.timeline('b_1', { before: 5, limit: 2 }).map((e) => e.id)).toEqual(['e3', 'e4']);
+    expect(s.timeline('b_1', { before: 1 })).toEqual([]);
+  });
+
+  it('thread state: defaults, then patches merge', async () => {
+    expect(s.threadState('b_1')).toEqual({ updatedAt: 0 });
+    await s.setThreadState('b_1', { lastLine: { text: '好的', at: 5 } });
+    await s.setThreadState('b_1', { seenAt: 7 });
+    const t = new BotStore(root).threadState('b_1');
+    expect(t.lastLine).toEqual({ text: '好的', at: 5 });
+    expect(t.seenAt).toBe(7);
+    expect(t.updatedAt).toBeGreaterThan(0);
   });
 });

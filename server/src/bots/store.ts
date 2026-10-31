@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import type { AuditRow, Bot, BotRun, InboxItem } from '../protocol.js';
+import type { AuditRow, Bot, BotRun, BotTimelineEntry, InboxItem } from '../protocol.js';
 import { atomicWrite } from '../agent-config/backup.js';
-import type { PendingResume, RoutineState, TrustMap } from './types.js';
+import type { PendingResume, RoutineState, ThreadState, TrustMap } from './types.js';
 
 /** Bot and run ids arrive from WebSocket requests and become path segments: plain names only. */
 const SAFE_ID = /^[\w-]+$/;
@@ -163,6 +163,43 @@ export class BotStore {
     });
   }
   audit(id: string, runId: string): AuditRow[] { return readJsonl<AuditRow>(this.auditFile(id, runId)); }
+
+  /*
+   * timeline.jsonl and thread.json are written without the duty lease, on purpose: the timeline is append-only and
+   * thread.json is per bot, and the bot's own conversation can live on a server that doesn't hold the lease. The
+   * per-file lock below still keeps this process's own writes from interleaving.
+   */
+  private timelineFile(id: string) { return path.join(this.dir(id), 'timeline.jsonl'); }
+  async appendTimeline(id: string, e: BotTimelineEntry): Promise<void> {
+    const f = this.timelineFile(id);
+    await this.locked(f, async () => {
+      await fsp.mkdir(path.dirname(f), { recursive: true });
+      await fsp.appendFile(f, JSON.stringify(e) + '\n', 'utf8');
+    });
+  }
+  /**
+   * Oldest first. An id appended again (a run re-emitted) keeps its first place and takes the newest content.
+   * `before` = only entries with at < before; `limit` (default 300) keeps the newest of those.
+   */
+  timeline(id: string, o: { before?: number; limit?: number } = {}): BotTimelineEntry[] {
+    const byId = new Map<string, BotTimelineEntry>();
+    for (const e of readJsonl<BotTimelineEntry>(this.timelineFile(id))) if (e && typeof e.id === 'string') byId.set(e.id, e);
+    let out = [...byId.values()].sort((a, b) => a.at - b.at);
+    if (o.before != null) out = out.filter((e) => e.at < o.before!);
+    const limit = Math.max(0, o.limit ?? 300);
+    return limit < out.length ? out.slice(out.length - limit) : out;
+  }
+
+  private threadFile(id: string) { return path.join(this.dir(id), 'thread.json'); }
+  threadState(id: string): ThreadState { return readJson<ThreadState>(this.threadFile(id), { updatedAt: 0 }); }
+  async setThreadState(id: string, patch: Partial<ThreadState>): Promise<ThreadState> {
+    const file = this.threadFile(id);
+    return this.locked(file, async () => {
+      const next = { ...this.threadState(id), ...patch, updatedAt: Date.now() };
+      await writeJson(file, next);
+      return next;
+    });
+  }
 
   private inboxFile() { return path.join(this.root, 'inbox.json'); }
   inbox(id?: string): InboxItem[] { const all = readJson<InboxItem[]>(this.inboxFile(), []); return id ? all.filter((i) => i.botId === id) : all; }

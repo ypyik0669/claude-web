@@ -10,3 +10,8 @@ export interface ApprovedCall { toolName: string; input: Record<string, unknown>
  */
 export interface PendingResume { sessionId: string; routineId: string; approved: ApprovedCall[]; at: number }
 export interface RoutineState { fingerprint?: string; checkpoint?: string; lastSummary?: string; updatedAt: number }
+/**
+ * `<bot>/thread.json`: the bot's own conversation as the list sees it. lastLine = its last reply; seenAt = when the
+ * user last looked (what counts as unseen); deliveredAt = the newest timeline entry already told to the model.
+ */
+export interface ThreadState { lastLine?: { text: string; at: number }; seenAt?: number; deliveredAt?: number; updatedAt: number }
