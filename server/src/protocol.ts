@@ -164,6 +164,8 @@ export interface OpenSessionParams {
   gated?: boolean;
   /** Server-set with `gated`: the bot whose run this is — its memory MCP server gets the bot's own `bot` scope */
   botId?: string;
+  /** Server-set (值班 Bot): 'thread' = the bot's own conversation, 'run' = a routine run, 'internal' = generator / kickoff work */
+  botRole?: BotRole;
 }
 
 /** The single runtime that drives every session: our engine claude-web-engine (runtime 'ccb': a fork of claude-code-best, a superset of Claude Code) with the official binary as silent fallback. */
@@ -416,6 +418,8 @@ export interface MessageFeedback { rating: 'up' | 'down' | null; note?: string; 
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number; /** extra folders (stage C2): never the main path; [] for old data */ folders: string[]; /** 项目页 (stage F2): appended to the system prompt of every conversation in the project */ instructions?: string; /** the sessions tools of its conversations only see this project's conversations */ sessionsScope?: 'project'; /** the permission mode 派活 (stage F3) starts its conversations in */ permissionMode?: PermissionMode; /** made by 导入 claude.ai 数据 from this claude.ai project (stage F4) */ claudeAiUuid?: string }
 export interface SessionMeta {
+  /** 值班 Bot: the bot this conversation belongs to, and what it is for it (kept out of the conversation lists) */
+  botId?: string; botRole?: BotRole;
   /** replies pinned with 📌 under them (the info column's 钉住 card): their item id and first words */
   pinnedMsgs?: { id: string; text: string }[];
   /** a rename made while the conversation's process ran (server/src/meta/store.ts) */
@@ -868,7 +872,15 @@ export type ClientRequest =
   | { kind: 'bots.inbox.answer'; answer: InboxAnswer }
   | { kind: 'bots.runs.list'; botId?: string; routineId?: string; limit?: number }
   | { kind: 'bots.runs.audit'; botId: string; runId: string }
+  /** goes away in T2 (server) / T12 (UI) of the chat-first redesign */
   | { kind: 'bots.generate'; text: string; cwd: string }
+  /** answers the BotStatus, with its threadId */
+  | { kind: 'bots.start'; name: string; avatar?: string; templateId?: string; cwd: string }
+  /** answers { sessionId } */
+  | { kind: 'bots.thread.open'; id: string }
+  | { kind: 'bots.thread.seen'; id: string }
+  /** answers BotTimelineEntry[], oldest first */
+  | { kind: 'bots.timeline.list'; id: string; before?: number; limit?: number }
   | { kind: 'bots.templates' }
   | { kind: 'bots.load' }
   | { kind: 'bots.unleash'; id: string; on: boolean }
@@ -934,6 +946,7 @@ export type ServerEvent =
   | { kind: 'bots.changed'; bots: BotStatus[] }
   | { kind: 'bots.run'; run: BotRun }
   | { kind: 'bots.inbox'; item: InboxItem }
+  | { kind: 'bots.timeline'; entry: BotTimelineEntry }
   | { kind: 'bots.load'; load: BotLoad };
 
 // ---------- phase 3: files / search / git ----------
@@ -1000,8 +1013,16 @@ export interface Routine {
   selfMade?: boolean; shadow?: boolean;
 }
 export interface BotBudget { dailyUsd?: number; weeklyUsd?: number; explorePct?: number }
+/** A bot conversation's role: its own conversation, a routine run, or generator / kickoff work */
+export type BotRole = 'thread' | 'run' | 'internal';
 export interface Bot {
-  id: string; name: string; avatar?: string; charter: BotCharter; cwd: string; tier: BotTier; providerId?: string; model?: string;
+  /** avatar format: `shape:<0-11>|color:<0-9>|seed:<n>` (a generated SVG); `char:<id>` is reserved for batch B (a cafe character) */
+  id: string; name: string; avatar?: string; charter: BotCharter;
+  /** 职位: one line under the name */
+  title?: string;
+  /** server-owned: the bot's own conversation */
+  threadId?: string;
+  notify?: boolean; pinned?: boolean; hidden?: boolean; cwd: string; tier: BotTier; providerId?: string; model?: string;
   policy: BotPolicy; budget: BotBudget; routines: Routine[]; outputs: BotOutput[];
   quiet?: { from: string; to: string }; threshold?: number; maxRoutines?: number; paused?: boolean; manager?: boolean;
   createdAt: number; updatedAt: number;
@@ -1023,18 +1044,39 @@ export interface AuditRow { at: number; runId: string; botId: string; toolName: 
   /** scopeKey of the call ('channel:C1' / 'domain:x.com' / '*'): what trust is counted on */ scope?: string;
   /** the policy rule that decided it — a later correction demotes exactly this rule; perDay counts per rule */ rule?: PolicyRule }
 export type InboxKind = 'approval' | 'finding' | 'draft' | 'proposal';
-export type InboxProposal = { type: 'trust_up'; cls: ActionClass; scope: PolicyScope } | { type: 'routine'; routine: Routine };
+export type InboxProposal = { type: 'trust_up'; cls: ActionClass; scope: PolicyScope } | { type: 'routine'; routine: Routine } | { type: 'policy'; rules: PolicyRule[]; why?: string };
 export interface InboxItem {
   id: string; kind: InboxKind; botId: string; runId?: string; routineId?: string; sessionId?: string; at: number;
   title: string; body?: string;
   toolName?: string; input?: Record<string, unknown>; cls?: ActionClass; undoable?: boolean;
   proposal?: InboxProposal;
+  /** the approval came from the bot's own conversation (no routineId) */
+  thread?: boolean;
   /** note: why it was closed without an answer (its run was stopped) */
   done?: { at: number; answer: InboxAnswer['answer']; note?: string };
 }
 export interface InboxAnswer { id: string; answer: 'approve' | 'approve_scope' | 'reject' | 'archive' | 'send' | 'adopt'; scope?: PolicyScope }
 export interface BotLoad { running: number; queued: number; todayUsd: number; weekEstimateUsd: number; concurrency: number }
-export interface BotStatus extends Bot { state: 'idle' | 'running' | 'queued' | 'paused' | 'attention'; todayUsd: number; weekUsd: number; pendingInbox: number; trust: Record<string, { approvals: number; lastAt: number }> }
+export interface BotStatus extends Bot { state: 'idle' | 'running' | 'queued' | 'paused' | 'attention'; todayUsd: number; weekUsd: number; pendingInbox: number; trust: Record<string, { approvals: number; lastAt: number }>;
+  /** the last line of its own conversation */
+  lastLine?: { text: string; at: number };
+  /** entries in its conversation / timeline the user has not seen */
+  unseen: number;
+  /** what it is doing now, one line */
+  activity?: string;
+  error?: { reason: string; next?: string };
+  /** what its own conversation has cost */
+  threadUsd?: number;
+}
+export type BotTimelineKind = 'system' | 'run' | 'approval' | 'draft' | 'proposal';
+export interface BotTimelineEntry {
+  id: string; botId: string; at: number; kind: BotTimelineKind;
+  /** system: one line; run: the routine name */ text?: string;
+  /** system: what the click opens (≤ 2000 chars) */ detail?: string;
+  icon?: 'routine' | 'rename' | 'memory' | 'policy' | 'profile' | 'bot';
+  runId?: string; routineId?: string;
+  /** approval / draft / proposal: the inbox item drawn live from useBots.inbox */ itemId?: string;
+}
 export interface BotTemplate { id: string; name: string; desc: string; risk?: string; bot: Omit<Bot, 'id' | 'cwd' | 'createdAt' | 'updatedAt'> }
 export interface BotDraft { bot: Omit<Bot, 'id' | 'createdAt' | 'updatedAt'> }
 /** bots.generate's answer: the draft, and the names of routines whose interval was raised to the 15-minute minimum */

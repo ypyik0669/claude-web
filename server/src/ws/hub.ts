@@ -1326,6 +1326,8 @@ export class Hub {
       case 'bots.runs.list': return s.bots.runs(req.botId, req.routineId, req.limit);
       case 'bots.runs.audit': return s.bots.audit(req.botId, req.runId);
       case 'bots.generate': refusePeerUnc(req.cwd, this.peerConns.has(ws)); return s.bots.generate(req.text, req.cwd);
+      // chat-first bots: wired in later tasks of the redesign
+      case 'bots.start': case 'bots.thread.open': case 'bots.thread.seen': case 'bots.timeline.list': throw new Error('not yet');
       case 'bots.templates': return s.bots.templates();
       case 'bots.load': return s.bots.load();
       case 'bots.duty.install': this.localWindowOnly(ws, tr('值班服务')); return installDuty(req.on);

@@ -226,7 +226,7 @@ export class BotService extends EventEmitter {
       : this.scheduler.isQueued(bot.id) ? 'queued' : 'idle';
     const trust: BotStatus['trust'] = {};
     for (const [k, v] of Object.entries(this.store.trust(bot.id))) trust[k] = { approvals: v.approvals, lastAt: v.lastAt };
-    return { ...bot, state, todayUsd: this.scheduler.todayUsd(bot.id), weekUsd: this.scheduler.weekUsd(bot.id), pendingInbox: pending.length, trust };
+    return { ...bot, state, todayUsd: this.scheduler.todayUsd(bot.id), weekUsd: this.scheduler.weekUsd(bot.id), pendingInbox: pending.length, trust, unseen: 0 /* counted from thread.json in a later task */ };
   }
   list(): BotStatus[] { return this.store.list().map((b) => this.statusOf(b)); }
   get(id: string): BotStatus { return this.statusOf(this.must(id)); }

@@ -30,7 +30,7 @@ beforeAll(async () => {
 const routine = (id: string, extra: Partial<Routine> = {}): Routine => ({ id, name: id, prompt: 'p', everyMinutes: 30, enabled: true, acceptance: { kind: 'none' }, onFail: 'inbox', ...extra });
 const bot = (rs: Routine[]): BotStatus => ({
   id: 'b1', name: 'B', charter: { role: 'r', sources: [] }, cwd: '/', tier: 'balanced', policy: { rules: [], unleashed: true }, budget: {}, routines: rs, outputs: [{ kind: 'inbox' }],
-  createdAt: 0, updatedAt: 0, state: 'idle', todayUsd: 0, weekUsd: 0, pendingInbox: 0, trust: {},
+  createdAt: 0, updatedAt: 0, state: 'idle', todayUsd: 0, weekUsd: 0, pendingInbox: 0, trust: {}, unseen: 0,
 });
 
 describe('pure helpers', () => {
