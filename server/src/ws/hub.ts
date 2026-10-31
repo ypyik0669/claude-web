@@ -106,7 +106,7 @@ import { computerSupported, defaultFeaturesOf } from '../computer/launcher.js';
 import { tr } from '../i18n/index.js';
 import { clientSessionParams, refusePeerUncBot, type BotService } from '../bots/service.js';
 import { dutyInstalled, installDuty } from '../bots/duty.js';
-import { isBotSession } from '../bots/hidden.js';
+import { isBotSession, refuseOnThread } from '../bots/hidden.js';
 import { serverSend, stripBotTags } from '../bots/tags.js';
 
 export interface Services {
@@ -496,6 +496,9 @@ export class Hub {
     // about to go out (a CLI starts, a provider is asked): the system proxy may have changed since the last look —
     // resolves at once when that look is under a minute old (net/proxy.ts)
     if (GOES_OUT.has(req.kind)) await proxy.refresh();
+    // a bot's own conversation stays the gated Claude conversation the bot page set up: no provider / agent swap (the
+    // pool would refuse the ungated reopen and the thread would die), no handoff (it would turn read-only)
+    refuseOnThread(req, (id) => !!s.bots.threads.isThread(id));
     if (isAgentConfigRequest(req)) return handleAgentConfig(s.agentConfig, req);
     if (isOrchestraRequest(req)) return handleOrchestra(s.orchestra, req);
     if (isBackgroundRequest(req)) return handleBackground(s.background, req);
