@@ -309,6 +309,7 @@ export class Hub {
     s.bots.on('run', (run) => this.broadcast({ kind: 'bots.run', run }));
     s.bots.on('inbox', (item) => this.broadcast({ kind: 'bots.inbox', item }));
     s.bots.on('load', (load) => this.broadcast({ kind: 'bots.load', load }));
+    s.bots.on('timeline', (entry) => this.broadcast({ kind: 'bots.timeline', entry }));
   }
 
   /** `fromPeer`: re-broadcast of another machine's event — local clients only (two machines peering each other would echo forever). */
@@ -533,6 +534,14 @@ export class Hub {
       case 'session.open': {
         // `gated` is set by the server for a bot's run only, never by a window
         let params = clientSessionParams(req.params);
+        // a bot's own conversation opens only gated, as the bot set it up: the window's model / mode / provider are not
+        // its to pick (a fork or a rewind of it goes on as below: a copy, not the bot's)
+        const threadOf = params.sessionId && !params.fork && !params.resumeAt ? s.bots.threads.isThread(params.sessionId) : undefined;
+        if (threadOf) {
+          const r = await s.bots.openThread(threadOf);
+          await s.canonical.ensure(r.sessionId, r.cwd);
+          return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: this.pendingOf(r.sessionId) };
+        }
         // 发送前核对权限: the chip showed another mode than the resume would run in — do not start, say which it is
         {
           const changed = s.pool.modeMismatch(params);
@@ -624,7 +633,10 @@ export class Hub {
         }
         await afterSwitch(req.params.sessionId); // a switch in progress: the new process takes it
         this.s.pool.assertWritable(req.params.sessionId); // handed to another machine (F4): read-only here
-        this.runner(req.params.sessionId).send(outgoing, req.params.images, req.params.steer, req.params.uuid, req.params.attachments);
+        const runner = this.runner(req.params.sessionId);
+        // a bot's own conversation: what happened since the user last wrote goes in front, for the model only
+        outgoing = s.bots.threads.withEvents(req.params.sessionId, outgoing);
+        runner.send(outgoing, req.params.images, req.params.steer, req.params.uuid, req.params.attachments);
         // Neither path echoes the user's own message back through the pool (the SDK doesn't, and the
         // foreign drivers `record()` it without emitting), so the canonical mirror has to be told here
         // — otherwise a handover briefing would have no idea what was actually asked for.
@@ -1329,8 +1341,11 @@ export class Hub {
       case 'bots.runs.audit': return s.bots.audit(req.botId, req.runId);
       // the one-sentence generator is gone (it left its conversations in the list): a bot starts as a conversation now
       case 'bots.generate': throw new Error(tr('一句话生成 Bot 已停用：新建 Bot 后在它的对话里说你要什么'));
-      // chat-first bots: wired in later tasks of the redesign
-      case 'bots.start': case 'bots.thread.open': case 'bots.thread.seen': case 'bots.timeline.list': throw new Error('not yet');
+      // chat-first bots: a bot is a conversation (its thread), with its timeline beside it
+      case 'bots.start': refusePeerUnc(req.cwd, this.peerConns.has(ws)); return s.bots.startBot({ name: req.name, avatar: req.avatar, templateId: req.templateId, cwd: req.cwd });
+      case 'bots.thread.open': return s.bots.threadOpen(req.id);
+      case 'bots.thread.seen': await s.bots.seen(req.id); return null;
+      case 'bots.timeline.list': return s.bots.timeline(req.id, req.before, req.limit);
       case 'bots.templates': return s.bots.templates();
       case 'bots.load': return s.bots.load();
       case 'bots.duty.install': this.localWindowOnly(ws, tr('值班服务')); return installDuty(req.on);

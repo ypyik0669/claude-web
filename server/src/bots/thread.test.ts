@@ -26,6 +26,7 @@ function fakePool() {
 
 const bot = (p: Partial<Bot> = {}): Bot => ({ id: 'b1', name: '晨报', charter: { role: '每天一页纸', sources: [] }, cwd: process.cwd(), tier: 'balanced', policy: { rules: [] }, budget: {}, routines: [], outputs: [{ kind: 'inbox' }], createdAt: 0, updatedAt: 0, ...p });
 const settle = (ms = 20) => new Promise((r) => setTimeout(r, ms));
+const until = async (ok: () => boolean, ms = 5_000) => { const end = Date.now() + ms; while (!ok()) { if (Date.now() > end) throw new Error('timed out waiting'); await settle(10); } };
 
 describe('BotThreads', () => {
   let root: string; let store: BotStore; let inbox: Inbox; let audit: AuditLog; let pool: any; let threads: BotThreads;
@@ -34,7 +35,7 @@ describe('BotThreads', () => {
     store = new BotStore(root); inbox = new Inbox(store); audit = new AuditLog(store); pool = fakePool();
     threads = new BotThreads({ store, inbox, audit, pool, defaultProvider: () => 'relay-1', modelFor: () => 'smart-auto' });
   });
-  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+  afterEach(async () => { await settle(50); fs.rmSync(root, { recursive: true, force: true }); });
 
   it('start opens a gated thread and sends exactly one hidden kickoff, with the gate set before it', async () => {
     const b = bot(); await store.save(b);
@@ -74,8 +75,7 @@ describe('BotThreads', () => {
     const first = threads.withEvents('T1', '你好');
     expect(first).toMatch(/^<cw-bot-events>\n- \d+:\d\d 等你批准：git push\n<\/cw-bot-events>\n\n你好$/);
     expect(threads.withEvents('T1', '再说一句')).toBe('再说一句');
-    await settle();
-    expect(store.threadState('b1').deliveredAt).toBeGreaterThan(Date.now() - 5_000);
+    await until(() => (store.threadState('b1').deliveredAt ?? 0) > Date.now() - 5_000);
     expect(threads.withEvents('other', 'x')).toBe('x');
   });
 
@@ -111,7 +111,7 @@ describe('BotThreads', () => {
     r.state = 'running';
     expect(threads.activity('b1')).toBeTruthy();
     r.emit('message', { type: 'result', is_error: false, result: '搞定了。\n紧急 2 条' });
-    await settle();
+    await until(() => lines.length > 0);
     expect(lines).toEqual(['b1']);
     expect(store.threadState('b1').lastLine?.text).toBe('搞定了。');
     r.state = 'idle';
