@@ -8,10 +8,13 @@ import type { BotRun, BotTimelineEntry, InboxItem } from '../protocol.js';
 
 const DETAIL_MAX = 2000;
 
-/** one entry per finished, non-skipped run; the id is stable (`run:<runId>`), so a re-emitted run replaces its entry */
+/**
+ * One entry per non-skipped run; the id is stable (`run:<runId>`): the card a run gets as it starts (at its start,
+ * 在跑…) is replaced by its finished one (at its end), and a re-emitted run replaces it again.
+ */
 export function entryForRun(run: BotRun, routineName: string): BotTimelineEntry | undefined {
-  if (run.skipped || run.endedAt == null) return undefined;
-  return { id: `run:${run.id}`, botId: run.botId, at: run.endedAt, kind: 'run', text: routineName, runId: run.id, routineId: run.routineId };
+  if (run.skipped) return undefined;
+  return { id: `run:${run.id}`, botId: run.botId, at: run.endedAt ?? run.at, kind: 'run', text: routineName, runId: run.id, routineId: run.routineId };
 }
 
 /** approval / draft / proposal → an entry carrying the itemId; a finding gets none (its run card carries it) */
@@ -42,6 +45,7 @@ function lineFor(e: BotTimelineEntry, items: Map<string, InboxItem>, runs: Map<s
     const r = e.runId ? runs.get(e.runId) : undefined;
     if (!r) return undefined;
     const name = `例行「${e.text ?? r.routineId}」`;
+    if (r.endedAt == null) return `${name}在跑`;
     return r.ok === false ? `${name}失败：${oneLine(r.error ?? r.verified?.note) || '原因未知'}` : `${name}完成：${oneLine(r.said) || '（没有说明）'}`;
   }
   const it = e.itemId ? items.get(e.itemId) : undefined;

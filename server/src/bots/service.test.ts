@@ -581,9 +581,14 @@ describe('BotService', { timeout: 30_000 }, () => {
     it('a finished run lands on the timeline once; status shows its last line, the thread\'s cost and a spent budget', async () => {
       const b = await svc.startBot({ name: 'r', cwd: process.cwd() });
       await svc.update(b.id, { routines: [rt('r1')], budget: { dailyUsd: 0.4 } } as any);
-      const got: string[] = []; svc.on('timeline', (e) => got.push(e.id));
+      const got: { id: string; at: number }[] = []; svc.on('timeline', (e) => got.push({ id: e.id, at: e.at }));
+      const runs: any[] = []; svc.on('run', (r) => runs.push(r));
       await svc.runNow(b.id, 'r1');
-      await until(() => got.some((id) => id.startsWith('run:')));
+      await until(() => runs.some((r) => r.endedAt) && got.filter((g) => g.id.startsWith('run:')).length === 2);
+      // a card as it starts (在跑…), then the finished one under the same id
+      const cards = got.filter((g) => g.id.startsWith('run:'));
+      expect(cards[0].id).toBe(cards[1].id);
+      expect(runs[0].endedAt).toBeUndefined();
       const s = svc.get(b.id);
       expect(svc.timeline(b.id).filter((e) => e.kind === 'run')).toHaveLength(1);
       expect(s.lastLine?.text).toBe('ok');

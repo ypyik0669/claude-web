@@ -57,7 +57,7 @@ export const LEASE_WRITE_TRIES = 3;
  * cap with at most one run per bot (the gate's per-day counts rely on it). Budgets are checked before a run opens a
  * conversation. Inbox answers feed trust and resume the run that asked. stopAll is the hard stop.
  * Only the holder of `<botsRoot>/scheduler.lock` runs anything — the desktop app and the duty service may share a dir.
- * Events: 'run' (BotRun), 'bots' (something about a bot changed), 'load' (BotLoad), 'tick' (a tick ran on duty), 'ended' (botId, routine name: past its end date, turned off).
+ * Events: 'run' (BotRun: as it starts, endedAt unset, and as it ends), 'bots' (something about a bot changed), 'load' (BotLoad), 'tick' (a tick ran on duty), 'ended' (botId, routine name: past its end date, turned off).
  */
 export class BotScheduler extends EventEmitter {
   private timer?: NodeJS.Timeout;
@@ -429,7 +429,7 @@ export class BotScheduler extends EventEmitter {
     }
     const effective = bot.model ? bot : { ...bot, model: this.d.modelFor?.(bot) };
     const resume = job.resume?.approved ? { sessionId: job.resume.sessionId, approved: job.resume.approved } : undefined;
-    const { run } = await runRoutine(this.d, effective, routine, job.trigger, { signal, ...(resume ? { resume } : {}) });
+    const { run } = await runRoutine(this.d, effective, routine, job.trigger, { signal, ...(resume ? { resume } : {}), onStarted: (r) => this.emit('run', r) });
     this.emit('run', run); this.emit('bots');
     return run;
   }

@@ -32,6 +32,8 @@ export interface RunOptions {
   resume?: { sessionId: string; approved: ApprovedCall[] };
   /** the hard stop: aborting kills a running pre-check / acceptance script, interrupts and closes the conversation */
   signal?: AbortSignal;
+  /** the run's conversation is open and gated, about to be told what to do (a copy of the run, not yet ended) */
+  onStarted?: (run: BotRun) => void;
 }
 export const RUN_TIMEOUT_MIN = 30;
 export const MAX_FAILURES = 3;
@@ -222,6 +224,7 @@ export async function runRoutine(d: PipelineDeps, bot: Bot, routine: Routine, tr
   // before anything is sent: no tool of this conversation runs ungated
   runner.gate = g.gate;
   await d.store.addRun(run);
+  try { o.onStarted?.({ ...run }); } catch (e) { console.warn('[bots] onStarted:', e); }
   await waitStarted(runner, o.signal);
   if (o.signal?.aborted) { await close(); return stopped(); }
 

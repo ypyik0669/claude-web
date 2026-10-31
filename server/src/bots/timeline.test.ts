@@ -7,10 +7,12 @@ const item = (p: Partial<InboxItem> = {}): InboxItem => ({ id: 'i_1', kind: 'app
 const hm = (at: number) => { const d = new Date(at); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
 describe('timeline entries', () => {
-  it('a finished run → one run entry with a stable id; skipped or unfinished → none', () => {
+  it('a run → one run entry with a stable id: as it starts at its start, finished at its end; skipped → none', () => {
     expect(entryForRun(run(), '早间简报')).toEqual({ id: 'run:r_1', botId: 'b_1', at: 200, kind: 'run', text: '早间简报', runId: 'r_1', routineId: 'morning' });
     expect(entryForRun(run({ skipped: true }), '早间简报')).toBeUndefined();
-    expect(entryForRun(run({ endedAt: undefined, ok: undefined }), '早间简报')).toBeUndefined();
+    expect(entryForRun(run({ endedAt: undefined, ok: undefined }), '早间简报')).toEqual({ id: 'run:r_1', botId: 'b_1', at: 100, kind: 'run', text: '早间简报', runId: 'r_1', routineId: 'morning' });
+    const live = run({ endedAt: undefined, ok: undefined });
+    expect(eventsBlock([entryForRun(live, '早间简报')!], new Map(), new Map([[live.id, live]]))).toContain('例行「早间简报」在跑');
   });
 
   it('approval / draft / proposal → an entry carrying the itemId; a finding → none', () => {
