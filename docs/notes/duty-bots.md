@@ -34,6 +34,10 @@ spec：`docs/superpowers/specs/2026-10-30-duty-bots-design.md`；一期的计划
 - 闸门外的脚本：预检查（precheck）和验收脚本不过闸门，继承整个服务器的环境变量（`precheck.ts` 的 spawn，在
   密钥保险箱之前就是这样）；`generateBot` 让模型写的预检查 / 验收脚本，用户点「保存并先跑一次」就会跑——预览里
   必须原样展示，不能默认折叠。
+- shell 自己拼出来的路径：通配 / 变量拼接（`~/.cl*/bo*/b1/bot.json`、`$a$b`）写进 bots 目录，或先建个硬链接再用
+  Write 改——命令里认不出 bots 目录。文件工具的守卫按真实路径判（目录链接、映射盘符、`\\localhost\c$` 都折回），
+  建盘符 / 共享 / 链接的命令（`net use`、`New-PSDrive`/`ndr`、`subst`、`mklink`、`ln`、`fsutil hardlink`、
+  `ni -ItemType …`、`CreateSymbolicLink`、`wmic share`）一律要问，但 shell 字符串匹配做不到完整。
 - 批准过的 / 放开的调用不计入任何上限（ledger L71）。
 - IM 里的批准 / 拒绝：绑定的群里任何成员都能点，群聊里等于谁都能批付款 / 外发；第 2 阶段考虑只认绑定者的用户 id。
 - spec §5 的不可信内容隔离和 Rule of Two 是第 2 阶段的事。

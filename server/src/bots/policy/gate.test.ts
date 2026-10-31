@@ -255,10 +255,13 @@ describe('makeGate', () => {
       }
       expect(store.audit('b1', 'run1').every((r) => r.result === 'denied')).toBe(true);
     } finally { spy.mockRestore(); }
-    for (const command of ['net use V: \\\\localhost\\c$', 'New-PSDrive -Name V -PSProvider FileSystem -Root \\\\localhost\\c$', 'subst W: C:\\Users', 'cmd /c mklink /J link C:\\Users', 'New-Item -ItemType Junction -Path x -Target C:\\Users']) {
+    for (const command of ['net use V: \\\\localhost\\c$', 'New-PSDrive -Name V -PSProvider FileSystem -Root \\\\localhost\\c$', 'subst W: C:\\Users', 'cmd /c mklink /J link C:\\Users', 'New-Item -ItemType Junction -Path x -Target C:\\Users',
+      'ndr V FileSystem \\\\localhost\\c$', 'ni x -ItemType SymbolicLink -Value C:\\Users', 'ln -s /c/Users x', 'ln a b', 'fsutil hardlink create a.json C:\\x',
+      '[IO.Directory]::CreateSymbolicLink("x", "C:\\Users")', 'wmic share call create "C:\\",x,0', 'cmd /c "mk""link /J x C:\\Users"']) {
       expect(await g.gate(ev('Bash', { command })), command).toMatchObject({ behavior: 'deny' });
     }
-    expect(inbox.list('b1').filter((i) => i.kind === 'approval')).toHaveLength(5);
+    expect(inbox.list('b1').filter((i) => i.kind === 'approval')).toHaveLength(13);
+    expect(await g.gate(ev('Bash', { command: 'ls -ln && git log --oneline' }))).toMatchObject({ behavior: 'allow' });
     expect(await g.gate(ev('Bash', { command: 'git status && npm run build' }))).toMatchObject({ behavior: 'allow' });
   });
 

@@ -24,7 +24,7 @@ function real(p: string): string {
 }
 
 /** commands that give a path another name (a drive letter, a share, a link): what they point at is the user's call */
-const DRIVE_MAP = /(?<![\w-])(net(\.exe)?\s+(use|share)|new-psdrive|new-smbmapping|new-smbshare|subst(\.exe)?\s+[a-z]:|mklink|new-item\b[^\n;|&]*-itemtype\s+["']?(junction|symboliclink|hardlink))(?![\w-])/i;
+const DRIVE_MAP = /(?<![\w-])(net(\.exe)?\s+(use|share)|new-psdrive|ndr|new-smbmapping|new-smbshare|subst(\.exe)?\s+[a-z]:|mk["']*link|fsutil(\.exe)?\s+hardlink|wmic\b[^\n;|&]*\bshare|ln|(new-item|ni)\b[^\n;|&]*-itemtype\s+["']?(junction|symboliclink|hardlink)|create(symbolic|hard)link)(?![\w-])/i;
 
 const LOCAL_HOSTS =() => new Set(['localhost', '.', '::1', '0--1.ipv6-literal.net', os.hostname().toLowerCase()]);
 
