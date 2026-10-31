@@ -7,6 +7,15 @@ import { ago, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { imeComposing } from '@/ui/ime';
 import { tr, dateLocale } from '@/i18n';
+import { usePaneCtx } from '@/store/paneContext';
+
+/**
+ * Whether a message here can be forked (分叉, edit and resend, re-run an earlier one): not in a 值班 Bot's own
+ * conversation (BotThread's pane id is `bot:<id>`) — a fork would be a new conversation outside the bot's gate.
+ */
+export function useForkable(): boolean {
+  return !usePaneCtx()?.paneId.startsWith('bot:');
+}
 
 function useSession(sessionId: string) {
   return useStore((s) => s.open[sessionId]);
@@ -66,12 +75,13 @@ export function UserActions({ it, sessionId, onEdit }: { it: UserItem; sessionId
   const o = useSession(sessionId);
   const busy = o && (o.state === 'running' || o.state === 'waiting' || o.state === 'starting');
   const last = !!o && isLastPrompt(o.conv.items, it.id);
+  const forkable = useForkable();
   return (
     <div className="msg-actions" role="toolbar" aria-label={tr('这条消息的操作')}>
       <button title={tr('复制')} aria-label={tr('复制')} onClick={() => navigator.clipboard.writeText(it.text)}><Icon name="copy" size={14} /></button>
-      <button title={tr('编辑并重新发送（从这里分叉）')} aria-label={tr('编辑')} disabled={!!busy} onClick={onEdit}><Icon name="edit" size={14} /></button>
-      <button title={last ? tr('用同样的消息再问一次') : tr('用同样的消息重跑（从这里分叉出新对话）')} aria-label={tr('重跑')} disabled={!!busy} onClick={() => st().rerun(sessionId, it.id).catch((e) => st().toast(e.message))}><Icon name="refresh" size={14} /></button>
-      <button title={tr('从这条消息之前分叉出新对话')} aria-label={tr('分叉')} onClick={() => st().forkAt(sessionId, it.id).catch((e) => st().toast(e.message))}><Icon name="branch" size={14} /></button>
+      {forkable && <button title={tr('编辑并重新发送（从这里分叉）')} aria-label={tr('编辑')} disabled={!!busy} onClick={onEdit}><Icon name="edit" size={14} /></button>}
+      {(forkable || last) && <button title={last ? tr('用同样的消息再问一次') : tr('用同样的消息重跑（从这里分叉出新对话）')} aria-label={tr('重跑')} disabled={!!busy} onClick={() => st().rerun(sessionId, it.id).catch((e) => st().toast(e.message))}><Icon name="refresh" size={14} /></button>}
+      {forkable && <button title={tr('从这条消息之前分叉出新对话')} aria-label={tr('分叉')} onClick={() => st().forkAt(sessionId, it.id).catch((e) => st().toast(e.message))}><Icon name="branch" size={14} /></button>}
       <button title={tr('导出这一轮为 HTML')} aria-label={tr('分享本轮')} onClick={(e) => shareTurn(sessionId, turnIdOf(e.currentTarget, sessionId, it.id) ?? it.id)}><Icon name="share" size={14} /></button>
     </div>
   );
@@ -122,6 +132,7 @@ export function AssistantActions({ it, sessionId }: { it: AssistantItem; session
   const setFeedback = useStore((s) => s.setFeedback);
   const text = replyMarkdown(it);
   const [copied, setCopied] = useState(false);
+  const forkable = useForkable();
   // the round this reply is in — its own `cont-…` turn when no user message of this window started it (review M-4)
   const turn = (e: React.MouseEvent<HTMLButtonElement>) => {
     const id = turnIdOf(e.currentTarget, sessionId, it.id);
@@ -136,7 +147,7 @@ export function AssistantActions({ it, sessionId }: { it: AssistantItem; session
       {/* the official app's row also has 分叉 and when it was said (phase 6 §6) */}
       <button data-act="pin" className={clsx(pinned && 'on')} title={pinned ? tr('取消钉住') : tr('钉住这条回复（在右边信息栏的「钉住的回复」里能找回）')} aria-label={pinned ? tr('取消钉住') : tr('钉住')} aria-pressed={pinned} onClick={() => togglePin(sessionId, it.id, text)}><Icon name={pinned ? 'pinFill' : 'pin'} size={14} /></button>
       {'speechSynthesis' in window && text && <button data-act="speak" className={clsx(talking && 'on')} title={talking ? tr('停止朗读') : tr('朗读这条回复')} aria-label={talking ? tr('停止朗读') : tr('朗读')} aria-pressed={talking} onClick={() => setTalking(speak(it.id, text, () => setTalking(false)))}><Icon name={talking ? 'volumeOff' : 'volume'} size={14} /></button>}
-      {it.uuid && <button data-act="fork" title={tr('从这条回复之后分叉出新对话（原对话不变）')} aria-label={tr('分叉')} onClick={() => st().forkAt(sessionId, it.uuid!).catch((e) => st().toast(e.message))}><Icon name="branch" size={14} /></button>}
+      {it.uuid && forkable && <button data-act="fork" title={tr('从这条回复之后分叉出新对话（原对话不变）')} aria-label={tr('分叉')} onClick={() => st().forkAt(sessionId, it.uuid!).catch((e) => st().toast(e.message))}><Icon name="branch" size={14} /></button>}
       {it.ts && <span className="msg-time" title={new Date(it.ts).toLocaleString(dateLocale())}>{agoText(it.ts)}</span>}
     </div>
   );

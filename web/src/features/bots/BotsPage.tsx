@@ -1,51 +1,58 @@
-import { useMemo } from 'react';
+// 值班 Bot（spec 2026-10-31 聊天优先 §1 / §6）: the page over the main area. A desktop: the roster is the section
+// sidebar, the page is the conversation with the chosen bot, and its profile column at the right when asked for. A
+// phone: three screens — the roster, the conversation (or the New Bot page), the profile — all mounted, one shown.
+// No bot yet (the manager aside): the New Bot page.
+import { useEffect, useMemo } from 'react';
 import { useStore } from '@/store';
-import { EmptyState } from '@/ui/EmptyState';
-import { EMPTY } from '@/ui/terms';
 import { OverPage } from '@/features/sections/OverPage';
+import { Icon } from '@/ui/icons';
 import { tr } from '@/i18n';
-import { sortBots } from './model';
-import { botTabs } from './BotsSide';
-import { closeBots, selectBot, startCreate, useBots } from './state';
-import { LoadBar } from './LoadBar';
-import { BotList } from './BotList';
-import { BotDetail } from './BotDetail';
-import { RunPane } from './RunPane';
-import { CreateBot, StarterTemplates } from './CreateBot';
-import { Inbox } from './Inbox';
+import { BotAvatar } from './BotAvatar';
+import { BotProfile } from './BotProfile';
+import { BotThread } from './BotThread';
+import { NewBot } from './NewBot';
+import { Roster } from './Roster';
+import { rosterGroups } from './model';
+import { closeBots, setPhoneScreen, showProfile, useBots } from './state';
 
-/** A phone's first tab: the inbox (spec §6: 手机壳 Bot 分区以收件箱优先). */
-const INBOX_TAB = '__inbox';
+/** Esc from inside the page: the profile first, then the New Bot page (back to a conversation), then a phone's screens. */
+export function botsEscape(): boolean {
+  const s = useBots.getState();
+  const mobile = useStore.getState().mobile;
+  const hasBot = !!s.selected && s.bots.some((b) => b.id === s.selected);
+  if (mobile) {
+    if (s.phoneScreen === 'profile') { showProfile(false); return true; }
+    if (s.phoneScreen === 'thread') { setPhoneScreen('roster'); return true; }
+    return false;
+  }
+  if (s.profileOpen && s.view === 'thread' && hasBot) { showProfile(false); return true; }
+  if (s.view === 'new' && hasBot) { useBots.setState({ view: 'thread' }); return true; }
+  return false;
+}
 
-const stopCreate = () => useBots.setState({ creating: false });
-
-/**
- * 值班 Bot (spec 2026-10-30-duty-bots-design): the page over the main area — the load bar on top, then the bots on
- * the left, the chosen one's detail in the middle, its run on the right. A phone gets one column (the bots as tabs),
- * the inbox first.
- */
 export function BotsPage() {
   const open = useBots((s) => s.open);
   const bots = useBots((s) => s.bots);
+  const inbox = useBots((s) => s.inbox);
   const selected = useBots((s) => s.selected);
-  const tab = useBots((s) => s.tab);
-  const creating = useBots((s) => s.creating);
+  const view = useBots((s) => s.view);
+  const phoneScreen = useBots((s) => s.phoneScreen);
+  const profileOpen = useBots((s) => s.profileOpen);
   const mobile = useStore((s) => s.mobile);
-  const sorted = useMemo(() => sortBots(bots), [bots]);
-  const bot = sorted.find((b) => b.id === selected) ?? sorted[0];
-  const pending = useBots((s) => s.pending);
-  // nothing but the manager yet: the empty state with three starter templates
-  const firstTime = !bots.some((b) => !b.manager);
-  // a phone has the inbox as its first tab — unless there is nothing yet at all (then the starters show)
-  const inboxTab = mobile && !(firstTime && !pending);
-  const tabs = useMemo(() => {
-    const own = botTabs(sorted);
-    return inboxTab ? [{ id: INBOX_TAB, label: tr('收件箱'), icon: 'approval' as const, count: pending ? <span className="count">{pending}</span> : undefined }, ...own] : own;
-  }, [sorted, inboxTab, pending]);
-  // a phone opens on the inbox; picking a bot's tab shows that bot
-  const onInbox = useBots((s) => s.phoneInbox);
-  const showInbox = inboxTab && onInbox;
-  const newBtn = <button className="btn primary" onClick={() => startCreate()}>{tr('新建 Bot')}</button>;
+  const bot = useMemo(() => bots.find((b) => b.id === selected), [bots, selected]);
+  const own = useMemo(() => bots.some((b) => !b.manager), [bots]);
+  // the New Bot page: asked for, or nothing chosen and no bot of your own yet
+  const showNew = view === 'new' || (!bot && !own);
+
+  // a desktop opens on a conversation, never on an empty column: the first in the roster's order (who needs you first)
+  useEffect(() => {
+    if (!open || mobile || bot || view !== 'thread' || !own) return;
+    const g = rosterGroups(bots, inbox);
+    const first = g.attention[0] ?? g.rest[0] ?? g.hidden[0];
+    if (first) useBots.setState({ selected: first.id });
+  }, [open, mobile, bot, view, own, bots, inbox]);
+
+  const thread = bot && <BotThread bot={bot} />;
   return (
     <OverPage
       name="bots"
@@ -54,26 +61,42 @@ export function BotsPage() {
       onClose={closeBots}
       title={tr('Bot')}
       desc={tr('住在你电脑里的值班队友')}
-      tab={showInbox ? INBOX_TAB : bot?.id ?? ''}
-      tabs={tabs}
-      showTabs={mobile && tabs.length > 0}
-      onTab={(id) => { useBots.setState({ phoneInbox: id === INBOX_TAB }); if (id !== INBOX_TAB) selectBot(id); }}
-      actions={newBtn}
-      onEscape={() => { if (useBots.getState().creating) { stopCreate(); return true; } return false; }}
+      tab=""
+      tabs={[]}
+      showTabs={false}
+      onTab={() => {}}
+      onEscape={botsEscape}
     >
-      <LoadBar />
-      {showInbox ? (
-        <div className="over-body bots-inbox-page"><Inbox empty={tr('收件箱是空的：没有等你批的、也没有新的发现和草稿')} /></div>
-      ) : firstTime ? (
-        <div className="over-body bots-empty"><EmptyState e={EMPTY.bots} action={newBtn} /><StarterTemplates /></div>
+      {mobile ? (
+        <div className="bots-phone" data-screen={phoneScreen}>
+          <div className="bots-ph-screen" data-screen="roster" hidden={phoneScreen !== 'roster'}><Roster phone /></div>
+          <div className="bots-ph-screen" data-screen="profile" hidden={phoneScreen !== 'profile'}>
+            <div className="bots-ph-bar">
+              <button className="btn sm ghost" aria-label={tr('返回对话')} onClick={() => showProfile(false)}><Icon name="chevronLeft" size={14} />{bot?.name ?? tr('返回')}</button>
+            </div>
+            <div className="bots-ph-body">{bot && <BotProfile bot={bot} shown={open && phoneScreen === 'profile'} />}</div>
+          </div>
+          <div className="bots-ph-screen" data-screen="thread" hidden={phoneScreen !== 'thread'}>
+            <div className="bots-ph-bar">
+              <button className="btn sm ghost" aria-label={tr('返回名册')} onClick={() => setPhoneScreen('roster')}><Icon name="chevronLeft" size={14} />{tr('名册')}</button>
+              <span className="grow" />
+              {bot && !showNew && (
+                <button className="icon-btn bots-ph-face" title={tr('资料')} aria-label={tr('资料')} onClick={() => showProfile(true)}>
+                  <BotAvatar name={bot.name} avatar={bot.avatar} size={26} />
+                </button>
+              )}
+            </div>
+            <div className="bots-ph-body" hidden={showNew}>{thread}</div>
+            <div className="bots-ph-body" hidden={!showNew}><NewBot /></div>
+          </div>
+        </div>
       ) : (
         <div className="bots-body">
-          {!mobile && <BotList bots={sorted} selected={bot?.id} />}
-          {bot && <BotDetail bot={bot} tab={tab} />}
-          {bot && !mobile && <RunPane bot={bot} />}
+          <div className="bots-col bots-col-thread" hidden={showNew}>{thread}</div>
+          <div className="bots-col bots-col-new" hidden={!showNew}><NewBot /></div>
+          <div className="bots-col bots-col-profile" hidden={showNew || !profileOpen || !bot}>{bot && <BotProfile bot={bot} shown={open && !showNew && profileOpen} />}</div>
         </div>
       )}
-      {creating && <CreateBot onClose={stopCreate} />}
     </OverPage>
   );
 }

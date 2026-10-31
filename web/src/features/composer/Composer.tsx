@@ -329,14 +329,16 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     if (!cwd) { const c = initialCwd({ stored: null, sessions, workspaces, meta: sessionMeta }); if (c) setCwd(c); }
   }, [sessions, workspaces, sessionMeta]);
 
-  // a starter / the 入门清单 fills this (welcome) composer: text, project, focus (fill.ts)
+  // a starter / the 入门清单 fills this (welcome) composer: text, project, focus (fill.ts); a 值班 Bot's box takes
+  // only what names its tile (the profile column's 「编辑」 of a routine)
   const textRef = useRef(text);
   textRef.current = text;
+  const fillTile = welcome ? target?.tileId : bot ? pane?.tileId : undefined;
   useEffect(() => {
-    if (!welcome || !target) return;
+    if (!fillTile) return;
     const on = (ev: Event) => {
       const d = (ev as CustomEvent<FillDetail>).detail;
-      if (d.tileId && d.tileId !== target.tileId) return;
+      if (bot ? d.tileId !== fillTile : d.tileId && d.tileId !== fillTile) return;
       if (d.cwd) setCwd(d.cwd);
       if (d.text !== undefined) onChange(applyStarter(textRef.current, d.text));
       if (d.text !== undefined || d.focus) requestAnimationFrame(() => { const el = ta.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } });
@@ -344,7 +346,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     window.addEventListener(FILL_EVENT, on);
     return () => window.removeEventListener(FILL_EVENT, on);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [welcome, target?.tileId]);
+  }, [fillTile, bot]);
 
   // 文件右键 → 加到下一条消息: this conversation's box takes `@path` (relative to its folder when inside it)
   useEffect(() => {

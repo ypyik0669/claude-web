@@ -1,4 +1,4 @@
-// The Bot detail's pure helpers (risk sentences, default levels, cadence) and how its edits are built: from the store
+// The Bot detail's pure helpers (risk sentences, default levels) and how its edits are built: from the store
 // at the moment they are sent, changing only the routine / field touched, never carrying `unleashed`.
 // The transport and browser globals are stubbed as in state.test.ts.
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,7 +14,6 @@ const mem = new Map<string, string>();
 let state: typeof import('./state');
 let fields: typeof import('./fields');
 let policy: typeof import('./PolicyEditor');
-let routines: typeof import('./RoutineTable');
 
 beforeAll(async () => {
   vi.stubGlobal('window', { matchMedia: undefined, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; } });
@@ -24,7 +23,6 @@ beforeAll(async () => {
   state = await import('./state');
   fields = await import('./fields');
   policy = await import('./PolicyEditor');
-  routines = await import('./RoutineTable');
 });
 
 const routine = (id: string, extra: Partial<Routine> = {}): Routine => ({ id, name: id, prompt: 'p', everyMinutes: 30, enabled: true, acceptance: { kind: 'none' }, onFail: 'inbox', ...extra });
@@ -47,11 +45,6 @@ describe('pure helpers', () => {
     expect(policy.DEFAULT_LEVEL).toEqual({ read: 'do', write_local: 'do', browser: 'do', install: 'do_tell', send: 'ask', pay: 'ask', delete: 'ask' });
     expect(policy.CLASSES).toHaveLength(7);
   });
-  it('cadenceText: every N minutes, cron, or manual only', () => {
-    expect(routines.cadenceText({ everyMinutes: 15 })).toBe('每 15 分钟');
-    expect(routines.cadenceText({ cron: '0 9 * * *' })).toBe('cron 0 9 * * *');
-    expect(routines.cadenceText({})).toBe('只手动');
-  });
   it('policyPatch drops unleashed', () => {
     expect(fields.policyPatch({ rules: [], unleashed: true, signOff: false })).toEqual({ rules: [], signOff: false });
   });
@@ -64,7 +57,7 @@ describe('edits are built from the latest state', () => {
     state.useBots.setState({ bots: [bot([routine('a'), routine('b')])] });
     // the scheduler wrote back meanwhile
     state.useBots.setState({ bots: [bot([routine('a', { lastRunAt: 5, failures: 2 }), routine('b', { nextRunAt: 9 })])] });
-    await routines.patchRoutines('b1', (cur) => cur.map((x) => (x.id === 'b' ? { ...x, name: 'B2' } : x)));
+    await fields.patchRoutines('b1', (cur) => cur.map((x) => (x.id === 'b' ? { ...x, name: 'B2' } : x)));
     const req = sent.find((r) => r.kind === 'bots.update');
     expect(req.patch.routines).toEqual([routine('a', { lastRunAt: 5, failures: 2 }), routine('b', { nextRunAt: 9, name: 'B2' })]);
     expect(Object.keys(req.patch)).toEqual(['routines']);

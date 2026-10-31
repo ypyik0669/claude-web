@@ -1,15 +1,12 @@
 // 值班 Bot (spec 2026-10-30-duty-bots-design): the bots, their inbox, runs and load as the server keeps them, and the
 // Bot page over the main area. A small store of its own, like the 后台 page's; nothing goes into store/index.ts.
 import { create } from 'zustand';
-import type { AuditRow, Bot, BotDraft, BotGenerated, BotLoad, BotRun, BotStatus, BotTemplate, BotTimelineEntry, InboxAnswer, InboxItem, ServerEvent } from '@shared';
+import type { AuditRow, Bot, BotLoad, BotRun, BotStatus, BotTemplate, BotTimelineEntry, InboxAnswer, InboxItem, ServerEvent } from '@shared';
 import { hideSheet, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { closeOtherPages, registerPage } from '@/features/sections/pages';
 import { markPageOpened } from '@/features/automation/state';
 import { tr } from '@/i18n';
-
-/** @deprecated removed in T12 */
-export type BotTab = 'routines' | 'runs' | 'policy' | 'memory' | 'self';
 
 export type BotProfileSection = 'profile' | 'computer' | 'routines' | 'policy' | 'memory' | 'usage';
 
@@ -30,8 +27,6 @@ export interface BotsState {
   phoneScreen: 'roster' | 'thread' | 'profile';
   /** each bot's timeline (system events, run / approval / draft / proposal cards), oldest first */
   timeline: Record<string, BotTimelineEntry[]>;
-  /** @deprecated removed in T12 */
-  tab: BotTab;
   /** the inbox (pending ones, and whatever done ones the server sent) */
   inbox: InboxItem[];
   /** how many of `inbox` are not done — kept with it so a selector reads a number */
@@ -39,15 +34,7 @@ export interface BotsState {
   /** each bot's runs, newest first (at most RUNS_KEEP) */
   runs: Record<string, BotRun[]>;
   load: BotLoad;
-  /** the create flow is showing
-   * @deprecated removed in T12 */
-  creating: boolean;
-  /** @deprecated removed in T12 — the template the create flow opens on (a starter card on the empty page), else it opens on the three entries */
-  createTemplate?: string;
   templates: BotTemplate[];
-  /** a phone shows the inbox tab (its first screen); opening the page on a bot turns it off
-   * @deprecated removed in T12 */
-  phoneInbox: boolean;
 }
 
 const RUNS_KEEP = 200;
@@ -55,7 +42,7 @@ const EMPTY_LOAD: BotLoad = { running: 0, queued: 0, todayUsd: 0, weekEstimateUs
 
 export const useBots = create<BotsState>(() => ({
   open: false, seen: false, bots: [], view: 'thread', profileOpen: false, profileSection: 'profile', phoneScreen: 'roster', timeline: {},
-  tab: 'routines', inbox: [], pending: 0, runs: {}, load: EMPTY_LOAD, creating: false, templates: [], phoneInbox: true,
+  inbox: [], pending: 0, runs: {}, load: EMPTY_LOAD, templates: [],
 }));
 
 const pendingOf = (inbox: InboxItem[]) => inbox.filter((i) => !i.done).length;
@@ -109,9 +96,12 @@ function patchBot(id: string, patch: Partial<BotStatus>): void {
 export function openBots(id?: string): boolean {
   closeOtherPages('bots');
   if (!useBots.getState().open) markPageOpened();
-  // a phone opens on the inbox (its first screen) unless it is opened on a bot
+  // a phone opens on the roster (its first screen) unless it is opened on a bot — or there is only one bot besides
+  // the manager: then straight into its conversation (no roster of one)
   const mobile = useStore.getState().mobile;
-  useBots.setState((s) => ({ open: true, seen: true, selected: id ?? s.selected, phoneInbox: id ? false : mobile ? true : s.phoneInbox }));
+  const own = useBots.getState().bots.filter((b) => !b.manager);
+  const to = id ?? (mobile && own.length === 1 ? own[0].id : undefined);
+  useBots.setState((s) => ({ open: true, seen: true, selected: to ?? s.selected, ...(to ? { view: 'thread' as const, phoneScreen: 'thread' as const } : mobile ? { phoneScreen: 'roster' as const } : {}) }));
   if (mobile) { useStore.setState({ sidebarOpen: false }); hideSheet(); }
   return true;
 }
@@ -120,9 +110,26 @@ export function closeBots(): void {
   if (useBots.getState().open) useBots.setState({ open: false });
 }
 
-/** Show a bot — on a phone that leaves the inbox tab for it.
- * @deprecated removed in T12 (openThread) */
-export function selectBot(id: string): void { useBots.setState({ selected: id, phoneInbox: false }); }
+/** The New Bot page in the middle column (the roster's ＋); on a phone it is the screen after the roster. */
+export function showNewBot(): void {
+  openBots();
+  useBots.setState({ view: 'new', profileOpen: false, phoneScreen: 'thread' });
+}
+
+/** Show / hide the profile column (a phone: its own screen). `section` scrolls to that part and is remembered. */
+export function showProfile(on: boolean, section?: BotProfileSection): void {
+  const mobile = useStore.getState().mobile;
+  useBots.setState((s) => ({
+    profileOpen: on,
+    ...(section ? { profileSection: section } : {}),
+    ...(mobile ? { phoneScreen: on ? 'profile' as const : s.phoneScreen === 'profile' ? 'thread' as const : s.phoneScreen } : {}),
+  }));
+}
+
+/** A phone's screen: the roster, the conversation (or the New Bot page), the profile. */
+export function setPhoneScreen(phoneScreen: BotsState['phoneScreen']): void {
+  useBots.setState({ phoneScreen, ...(phoneScreen === 'profile' ? { profileOpen: true } : phoneScreen === 'roster' ? { profileOpen: false } : {}) });
+}
 
 /** The inbox badge: how many items wait for an answer. */
 export const useInboxPending = () => useBots((s) => s.pending);
@@ -174,36 +181,9 @@ export async function unleashBot(id: string, on: boolean): Promise<void> {
   try { await ws.request({ kind: 'bots.unleash', id, on }); } catch (e) { useStore.getState().toast(tr('操作失败：{message}', { message: msg(e) })); }
 }
 
-/** @deprecated removed in T12 */
-export function setBotTab(tab: BotTab): void { useBots.setState({ tab }); }
-
 /** An edit of a bot. No local copy changes: the server answers with bots.changed. Resolves false when it failed. */
 export async function updateBot(id: string, patch: Partial<Bot>): Promise<boolean> {
   try { await ws.request({ kind: 'bots.update', id, patch }); return true; } catch (e) { useStore.getState().toast(tr('保存失败：{message}', { message: msg(e) })); return false; }
-}
-
-/** Open the create flow — on a template's preview when one is given.
- * @deprecated removed in T12 (view: 'new' + startBot) */
-export function startCreate(templateId?: string): void { useBots.setState({ creating: true, createTemplate: templateId }); }
-
-/** Create a bot from a reviewed draft. The new bot, or null when it failed (toasted).
- * @deprecated removed in T12 (startBot) */
-export async function createBot(draft: BotDraft['bot']): Promise<BotStatus | null> {
-  try {
-    const bot = await ws.request<BotStatus>({ kind: 'bots.create', bot: draft });
-    if (bot?.id) useBots.setState((s) => ({ selected: bot.id, bots: s.bots.some((b) => b.id === bot.id) ? s.bots : [...s.bots, bot] }));
-    return bot ?? null;
-  } catch (e) { useStore.getState().toast(tr('创建失败：{message}', { message: msg(e) })); return null; }
-}
-
-/** One sentence → a draft (the server asks a model). Null when it failed (toasted).
- * @deprecated removed in T12 (the server's bots.generate is going away) */
-export async function generate(text: string, cwd: string): Promise<BotGenerated | null> {
-  try {
-    const d = await ws.request<BotGenerated>({ kind: 'bots.generate', text, cwd });
-    if (!d || typeof d !== 'object') throw new Error(tr('没有拿到草案'));
-    return d;
-  } catch (e) { useStore.getState().toast(tr('生成失败：{message}', { message: msg(e) })); return null; }
 }
 
 // ---- the bot's own conversation (chat-first redesign) ----

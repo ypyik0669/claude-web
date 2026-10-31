@@ -169,14 +169,3 @@ describe('answerInOrder: one after another, stop at the first refusal', () => {
   });
   it('all of them when none fails', async () => expect(await answerInOrder(['a', 'b'], 'archive', async () => true)).toBe(2));
 });
-
-describe('the phone opens on the inbox, but openBots(id) shows that bot', () => {
-  it('openBots(id) turns the inbox tab off; openBots() keeps it', async () => {
-    const st = await import('./state');
-    st.useBots.setState({ phoneInbox: true });
-    st.openBots();
-    expect(st.useBots.getState().phoneInbox).toBe(true);
-    st.openBots('b_1');
-    expect([st.useBots.getState().phoneInbox, st.useBots.getState().selected]).toEqual([false, 'b_1']);
-  });
-});

@@ -1,16 +1,30 @@
 // 值班 Bot: the detail's small editing pieces — a field that saves when it loses the focus, a number field, and the
 // one-time risk sentences (spec §10) shown before a gate is turned off.
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import type { ActionClass, BotPolicy, BotStatus, PolicyLevel } from '@shared';
+import type { ActionClass, BotPolicy, BotStatus, PolicyLevel, Routine } from '@shared';
+import { useStore } from '@/store';
 import { dlg } from '@/ui/dialog';
 import { imeComposing } from '@/ui/ime';
 import { clsx } from '@/util';
 import { tr } from '@/i18n';
-import { unleashBot, useBots } from './state';
+import { unleashBot, updateBot, useBots } from './state';
 import { levelLabel } from './model';
 
 /** The bot as the store has it now — what an edit is built from at the moment it is sent (never a render's copy). */
 export const currentBot = (id: string): BotStatus | undefined => useBots.getState().bots.find((b) => b.id === id);
+
+/**
+ * Send the bot's routines with one change: `change` gets the list as the store has it at this moment (after any
+ * await), so the scheduler's bookkeeping (lastRunAt / nextRunAt / failures) and other routines are never sent stale.
+ * A string from `change` is a refusal: toasted, nothing sent.
+ */
+export async function patchRoutines(botId: string, change: (cur: Routine[]) => Routine[] | string): Promise<boolean> {
+  const bot = currentBot(botId);
+  if (!bot) return false;
+  const next = change(bot.routines);
+  if (typeof next === 'string') { useStore.getState().toast(next); return false; }
+  return updateBot(botId, { routines: next });
+}
 
 /** A policy to send with bots.update: everything but `unleashed` (that goes through bots.unleash only). */
 export function policyPatch(p: BotPolicy): BotPolicy {

@@ -1,6 +1,6 @@
 // 值班 Bot (spec 2026-10-30-duty-bots-design §6): the inbox — 待批 / 发现 / 草稿 / 提议, each item with its bot, time
 // and whether it can be taken back; approve / approve with a scope / reject / open the conversation; many at once.
-// In the mission panel's 需要你 lane and, on a phone, the Bot page's first screen. Answers go to the server, which pushes
+// In the mission panel's 需要你 lane (a bot's own page shows the same items as cards in its conversation). Answers go to the server, which pushes
 // the item back done (bots.inbox) — nothing changes here before that.
 import { useMemo, useState } from 'react';
 import type { InboxAnswer, InboxItem, PolicyScope } from '@shared';
@@ -10,7 +10,7 @@ import { dlg } from '@/ui/dialog';
 import { ago, clsx } from '@/util';
 import { tr } from '@/i18n';
 import { classLabel, groupInbox, INBOX_KINDS, inboxKindLabel } from './model';
-import { closeBots, useBots } from './state';
+import { closeBots, openBots, openThread, useBots } from './state';
 import { callParams, ruleUnlimitedRisk, scopeDefaults, scopeFields, ScopeEditor } from './scope-form';
 import { copyText } from '@/ui/clipboard';
 import { maskSecrets } from './mask';
@@ -74,6 +74,8 @@ function Item({ item, botName, routineName, picked, onPick, busy, act }: {
   const [scoping, setScoping] = useState(false);
   const detail = item.kind === 'approval' ? callDetail(item) : '';
   const openChat = () => {
+    // from the bot's own conversation: that conversation, on the Bot page (the card is there too)
+    if (item.thread) { openBots(item.botId); void openThread(item.botId); return; }
     if (!item.sessionId) return;
     closeBots();
     void useStore.getState().loadHistory(item.sessionId);
@@ -122,7 +124,7 @@ function Item({ item, botName, routineName, picked, onPick, busy, act }: {
           {inboxActions(item).map((a) => (
             <button key={a.id + a.label} className={clsx('btn sm', a.danger && 'danger', a.id === 'approve' && 'primary')} disabled={busy} onClick={() => (a.needsScope ? setScoping(true) : act(item, a.id))}>{a.label}</button>
           ))}
-          {item.sessionId && <button className="btn sm ghost" onClick={openChat}>{tr('看对话')}</button>}
+          {(item.thread || item.sessionId) && <button className="btn sm ghost" onClick={openChat}>{tr('看对话')}</button>}
         </div>
       )}
     </div>

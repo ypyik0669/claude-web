@@ -12,7 +12,7 @@ import { quoteInComposer } from '@/features/composer/quote';
 import { menuKey } from '@/features/composer/dir-menu';
 import { modKey } from '@/features/workbench/shortcuts';
 import { codeOf } from './CodeBlock';
-import { forkFrom, replyMarkdown, togglePin } from './MessageActions';
+import { forkFrom, replyMarkdown, togglePin, useForkable } from './MessageActions';
 import { refineDoubleClick } from './dblclick-select';
 import { openSideChat } from './side-chat';
 import { isQuoteKey, placeSelectionMenu, selectionItems, type Rect, type SelItem } from './selection-menu';
@@ -211,11 +211,12 @@ function Menu({ snap, sessionId, box, close }: { snap: Snap; sessionId: string; 
   const motion = useMenuMotion(() => box.current, [!!pos]);
 
   const reply = m?.item.kind === 'assistant' ? (m.item as AssistantItem) : undefined;
+  const forkable = useForkable();
   const groups = selectionItems({
     inCode: snap.code !== undefined,
     msg: m ? m.item.kind : null,
     hasText: !!reply && !!replyMarkdown(reply).trim(),
-    canFork: !!m && (m.item.kind === 'user' ? !(m.item as UserItem).meta : !!reply?.uuid),
+    canFork: forkable && !!m && (m.item.kind === 'user' ? !(m.item as UserItem).meta : !!reply?.uuid),
     canSide: canSideChat(sessionId),
   });
   const run = (it: SelItem) => {

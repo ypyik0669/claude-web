@@ -82,16 +82,41 @@ describe('bots page state', () => {
     } finally { reply = null; useStore.setState({ toast: orig } as any); }
   });
 
-  it('a phone: picking a bot leaves the inbox tab, opening the page without one goes back to it', async () => {
+  it('a phone: the roster first; opened on a bot, or with only one bot besides the manager, its conversation', async () => {
     const { useStore } = await import('@/store');
     useStore.setState({ mobile: true } as any);
     try {
-      bots.useBots.setState({ phoneInbox: true });
-      bots.selectBot('b_2');
-      expect(bots.useBots.getState().phoneInbox).toBe(false);
+      bots.useBots.setState({ phoneScreen: 'thread', selected: undefined, bots: [{ id: 'm', manager: true }, { id: 'a' }, { id: 'b' }] as any });
       bots.openBots();
-      expect(bots.useBots.getState().phoneInbox).toBe(true);
+      expect(bots.useBots.getState().phoneScreen).toBe('roster');
+      bots.openBots('b');
+      expect([bots.useBots.getState().phoneScreen, bots.useBots.getState().selected, bots.useBots.getState().view]).toEqual(['thread', 'b', 'thread']);
+      bots.useBots.setState({ phoneScreen: 'roster', selected: undefined, bots: [{ id: 'm', manager: true }, { id: 'a' }] as any });
+      bots.openBots();
+      expect([bots.useBots.getState().phoneScreen, bots.useBots.getState().selected]).toEqual(['thread', 'a']);
     } finally { useStore.setState({ mobile: false } as any); }
+  });
+
+  it('a phone: the profile is its own screen; leaving it goes back to the conversation, the roster closes it', async () => {
+    const { useStore } = await import('@/store');
+    useStore.setState({ mobile: true } as any);
+    try {
+      bots.useBots.setState({ phoneScreen: 'thread', profileOpen: false });
+      bots.showProfile(true, 'routines');
+      expect([bots.useBots.getState().phoneScreen, bots.useBots.getState().profileOpen, bots.useBots.getState().profileSection]).toEqual(['profile', true, 'routines']);
+      bots.showProfile(false);
+      expect([bots.useBots.getState().phoneScreen, bots.useBots.getState().profileOpen]).toEqual(['thread', false]);
+      bots.setPhoneScreen('profile');
+      bots.setPhoneScreen('roster');
+      expect([bots.useBots.getState().phoneScreen, bots.useBots.getState().profileOpen]).toEqual(['roster', false]);
+    } finally { useStore.setState({ mobile: false } as any); }
+  });
+
+  it('showNewBot opens the page on the New Bot page and puts the profile away', () => {
+    bots.useBots.setState({ open: false, view: 'thread', profileOpen: true });
+    bots.showNewBot();
+    expect([bots.useBots.getState().open, bots.useBots.getState().view, bots.useBots.getState().profileOpen]).toEqual([true, 'new', false]);
+    bots.useBots.setState({ view: 'thread' });
   });
 
   it('changed / load pushes replace the bots and the load', () => {
