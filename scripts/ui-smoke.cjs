@@ -4596,45 +4596,158 @@ window.desktop = {
         }
       }
 
-      // ---- 值班 Bot (spec 2026-10-30-duty-bots-design): the page with two bots put in through the debug hook (no run;
-      // phase 42 drives the real thing) — the rows, the load bar, the create dialog's templates (Esc closes the dialog
-      // first, then the page), and the two approvals with 批准 in 总览's 需要你 lane
+      // ---- 值班 Bot, chat-first (plan 2026-10-31 A, T13): two bots, bot 1's timeline (a system line, a finished and a
+      // running run, a thread approval, the 规矩 card) and its conversation — a copy of the seeded one under the bot's
+      // threadId, so the thread opens without a server round trip — put in through the debug hooks. The roster (the
+      // page's own first column, also with the app's sidebar closed; needs you first), the run cards before their run
+      // records arrive, the cards in time order inside the conversation, the approval's ▾ menu, the profile's
+      // sections, the New Bot page's 14 templates, Esc (profile, then the page), 总览 · 需要你, the phone's screens.
+      // phase 42 drives the real thing.
       if (E.SMOKE_READONLY !== '1') {
         phase = 'bots';
+        const TID = 'smoke-bot-thread';
         try {
           const now = Date.now();
-          const botOf = (id, name, state, pendingInbox) => ({ id, name, charter: { role: `${name} 的活`, sources: [] }, cwd: E.SMOKE_REPO || '.', tier: 'balanced', policy: { rules: [] }, budget: { dailyUsd: 2 }, routines: [{ id: 'r_smoke' + id, name: '巡检', prompt: 'p', everyMinutes: 60, enabled: true, onFail: 'inbox', acceptance: { kind: 'none' } }], outputs: [{ kind: 'inbox' }], createdAt: now - 3600_000, updatedAt: now, state, todayUsd: 0.12, weekUsd: 0.5, pendingInbox, trust: {} });
-          const appr = (id, cmd) => ({ id, kind: 'approval', botId: 'b_smoke1', runId: 'r_smoke1-x', routineId: 'r_smokeb_smoke1', sessionId: 'smoke-bot-session', at: now - 60_000, title: `Bash: ${cmd}`, toolName: 'Bash', input: { command: cmd }, cls: 'send' });
-          const payload = { bots: [botOf('b_smoke1', '烟测 A', 'attention', 2), botOf('b_smoke2', '烟测 B', 'running', 0)], inbox: [appr('i_smoke1', 'git push origin main'), appr('i_smoke2', 'curl -X POST https://example.com/hook')], load: { running: 1, queued: 0, todayUsd: 0.12, weekEstimateUsd: 0.5, concurrency: 2 } };
-          // the server pushes its own load every tick: put ours in again right before each look
-          const inject = `window.__cwBots.inject(${JSON.stringify(payload)})`;
-          await js(`(() => { window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } }); ${inject}; window.__cwBots.open('b_smoke1'); })()`);
-          const page = await waitFor(`(${inject}, document.querySelectorAll('.bot-list .bot-row').length === 2 && /在跑 1/.test(document.querySelector('.bots-load .bl-text')?.textContent ?? ''))`, 8000);
-          const seen = await js(`({ rows: [...document.querySelectorAll('.bot-list .bot-row')].map((r) => r.dataset.id + ':' + r.querySelector('.bot-state')?.dataset.state), load: document.querySelector('.bots-load .bl-text')?.textContent ?? null })`);
-          check('bots: two rows (attention, running), the load bar says 在跑 1', page && seen.rows.includes('b_smoke1:attention') && seen.rows.includes('b_smoke2:running'), JSON.stringify(seen));
-          await shot('bots-page');
-          const newBtn = await js(`(() => { const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === '新建 Bot' && x.offsetParent); if (!b) return false; b.click(); return true; })()`);
-          const tpls = await waitFor(`document.querySelectorAll('.bc-tpls .bc-tpl').length === 14`, 8000);
-          check('bots: 新建 Bot opens the dialog with 14 template cards', newBtn && tpls, String(await js(`document.querySelectorAll('.bc-tpls .bc-tpl').length`)));
-          await shot('bots-create');
+          const botOf = (id, name, state, pendingInbox, extra = {}) => ({ id, name, charter: { role: `${name} 的活`, sources: [] }, cwd: E.SMOKE_REPO || '.', tier: 'balanced', policy: { rules: [] }, budget: { dailyUsd: 2 }, routines: [{ id: 'r_smoke' + id, name: '巡检', prompt: 'p', everyMinutes: 60, enabled: true, onFail: 'inbox', acceptance: { kind: 'none' } }], outputs: [{ kind: 'inbox' }], createdAt: now - 3600_000, updatedAt: now, state, todayUsd: 0.12, weekUsd: 0.5, pendingInbox, trust: {}, unseen: 0, ...extra });
+          const bots = [
+            botOf('b_smoke2', '烟测 B', 'running', 0, { lastLine: { text: '在看 CI', at: now - 120_000 }, activity: '例行「巡检」在跑' }),
+            botOf('b_smoke1', '烟测 A', 'attention', 2, { threadId: TID, lastLine: { text: '要推送，等你批', at: now - 60_000 } }),
+          ];
+          const appr = { id: 'i_smoke1', kind: 'approval', botId: 'b_smoke1', sessionId: TID, thread: true, at: now - 10 * 60_000, title: 'Bash: git push origin main', toolName: 'Bash', input: { command: 'git push origin main' }, cls: 'send' };
+          const rules = { id: 'i_smoke_rules', kind: 'proposal', botId: 'b_smoke1', at: now - 5 * 60_000, title: '规矩', proposal: { type: 'rules' } };
+          const runs = [
+            { id: 'r_smokeb_smoke1-done', botId: 'b_smoke1', routineId: 'r_smokeb_smoke1', at: now - 20 * 60_000, trigger: 'cron', ok: true, endedAt: now - 20 * 60_000 + 42_000, durationMs: 42_000, said: '查了三个 PR，都没问题', sessionId: 'smoke-run-done' },
+            { id: 'r_smokeb_smoke1-going', botId: 'b_smoke1', routineId: 'r_smokeb_smoke1', at: now - 60_000, trigger: 'manual', sessionId: 'smoke-run-going' },
+          ];
+          const timeline = [
+            { id: 't_sys', botId: 'b_smoke1', at: now - 30 * 60_000, kind: 'system', text: '已创建例行 ⏲ 巡检', icon: 'routine' },
+            { id: 't_run', botId: 'b_smoke1', at: runs[0].at, kind: 'run', text: '巡检', runId: runs[0].id, routineId: 'r_smokeb_smoke1' },
+            { id: 't_ap', botId: 'b_smoke1', at: appr.at, kind: 'approval', itemId: appr.id },
+            { id: 't_rules', botId: 'b_smoke1', at: rules.at, kind: 'proposal', itemId: rules.id },
+            { id: 't_going', botId: 'b_smoke1', at: runs[1].at, kind: 'run', text: '巡检', runId: runs[1].id, routineId: 'r_smokeb_smoke1' },
+          ];
+          const load = { running: 1, queued: 0, todayUsd: 0.12, weekEstimateUsd: 0.5, concurrency: 2 };
+          // the server pushes its own bots / load every tick: put ours in again right before each look
+          const inject = `window.__cwBots.inject(${JSON.stringify({ bots, inbox: [appr, rules], load })})`;
+          // the bot's conversation: the seeded one, copied under TID, marked as a bot's thread
+          const SIDJ = JSON.stringify(E.SMOKE_SID || '');
+          if (E.SMOKE_SID) await js(`window.__store.getState().open[${SIDJ}] ? null : window.__store.getState().loadHistory(${SIDJ})`).catch(() => {});
+          await waitFor(`!!window.__store.getState().open[${SIDJ}]`, 8000);
+          await js(`(() => { const st = window.__store.getState(); const o = st.open[${SIDJ}]; window.__store.setState({ open: { ...st.open, ${JSON.stringify(TID)}: { ...o, sessionId: ${JSON.stringify(TID)}, pending: [], queue: [], state: 'history' } }, sessionMeta: { ...st.sessionMeta, ${JSON.stringify(TID)}: { botId: 'b_smoke1', botRole: 'thread' } } }); })()`);
+          await js(`(() => { window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } }); ${inject}; window.__cwBots.inject(${JSON.stringify({ timeline })}); window.__cwBots.open(); })()`);
+
+          // the roster: the page's own first column (the sidebar has no second copy), two rows, the one that needs you
+          // first, each with a face and its last line
+          const R = '.bots-page:not([hidden]) .bots-col-roster .bot-roster .bot-row';
+          const rosterUp = await waitFor(`(${inject}, document.querySelectorAll('${R}').length === 2)`, 8000);
+          const rows = await js(`[...document.querySelectorAll('${R}')].map((r) => ({ id: r.dataset.id, group: r.closest('.br-group')?.dataset.group ?? null, face: r.querySelector('.bot-face')?.closest('[data-state]')?.dataset.state ?? null, line: r.querySelector('.br-last')?.textContent.trim() ?? '' }))`);
+          check('bots: the roster column has 2 rows, the attention one first (需要你), each with a face (data-state) and its last line', rosterUp && rows.length === 2 && rows[0].id === 'b_smoke1' && rows[0].group === 'attention' && rows.every((r) => r.face && r.line), JSON.stringify(rows));
+          const side = await js(`({ copies: document.querySelectorAll('.sidebar .bot-roster').length, head: document.querySelector('.bots-page .over-head') ? 'page head' : null, colHead: document.querySelector('.bots-col-roster .br-top .sect-title')?.textContent.trim() ?? null })`);
+          check('bots: no roster in the app sidebar, no page head row; the roster column says Bot', side.copies === 0 && !side.head && side.colHead === 'Bot', JSON.stringify(side));
+          // the app's sidebar closed: the roster is still there
+          await js(`window.__store.setState({ sidebarOpen: false })`);
+          const noSide = await waitFor(`document.querySelector('.bots-col-roster')?.getClientRects().length > 0 && document.querySelectorAll('${R}').length === 2`, 3000);
+          await js(`window.__store.setState({ sidebarOpen: true })`);
+          check('bots: the roster column stays with the app sidebar closed', noSide);
+          await shot('bots-roster');
+
+          // bot 1's conversation: the cards between the messages, in time order
+          await js(`(() => { ${inject}; window.__cwBots.open('b_smoke1'); })()`);
+          const T = '.bots-col-thread:not([hidden]) .bot-thread[data-bot="b_smoke1"]';
+          const threadUp = await waitFor(`!!document.querySelector('${T} .chat-inner .bt-approval')`, 8000);
+          // the run records not here yet (the thread asked bots.runs.list; the server knows no such bot): each run card
+          // says 例行 · the routine · its time, with 打开 disabled — never empty
+          const pre = await js(`[...document.querySelectorAll('${T} .chat-inner .bt-run')].map((c) => ({ state: c.dataset.state, h: c.querySelector('.bt-run-h')?.textContent.trim() ?? '', open: [...c.querySelectorAll('button')].find((b) => b.textContent.trim() === '打开')?.disabled ?? null }))`);
+          check('bots: run cards before their runs load say 例行 · 巡检 · a time, 打开 disabled', pre.length === 2 && pre.every((c) => c.state === 'loading' && /^例行 · 巡检 · \S/.test(c.h) && c.open === true), JSON.stringify(pre));
+          // the runs arrive (put in again each look: the thread's own bots.runs.list answer may land after us)
+          const runsIn = await waitFor(`(window.__cwBots.inject(${JSON.stringify({ runs })}), !!document.querySelector('${T} .bt-run[data-state="running"]') && !!document.querySelector('${T} .bt-run[data-state="done"]'))`, 5000);
+          const cards = await js(`(() => { const r = document.querySelector('${T} .bt-run[data-state="running"] .bt-run-h')?.textContent.trim() ?? ''; const d = document.querySelector('${T} .bt-run[data-state="done"]'); return { running: r, done: d?.querySelector('.bt-run-h')?.textContent.trim() ?? '', said: d?.querySelector('.bt-run-said')?.textContent.trim() ?? '', open: d ? [...d.querySelectorAll('button')].some((b) => b.textContent.trim() === '打开' && !b.disabled) : false }; })()`);
+          check('bots: with the runs, the running card says 在跑… + seconds, the finished one 用时 / its line / 打开', runsIn && /在跑… \d+ s/.test(cards.running) && cards.done.includes('用时 42 s') && cards.said === '查了三个 PR，都没问题' && cards.open, JSON.stringify(cards));
+          const order = await js(`[...document.querySelectorAll('${T} .chat-inner .chat-extra')].map((x) => x.querySelector('.bt-sys') ? 'sys' : x.querySelector('.bt-run') ? 'run:' + x.querySelector('.bt-run').dataset.state : x.querySelector('.bt-approval') ? 'approval' : x.querySelector('.bt-proposal') ? 'proposal:' + x.querySelector('.bt-proposal').dataset.type : '?')`);
+          check('bots: the thread shows its cards inside .chat-inner in time order (system line, run, approval, 规矩, running run)', threadUp && JSON.stringify(order) === JSON.stringify(['sys', 'run:done', 'approval', 'proposal:rules', 'run:running']), JSON.stringify(order));
+          const ap = await js(`(() => { const c = document.querySelector('${T} .bt-approval'); if (!c) return null; const b = [...c.querySelectorAll('button')].map((x) => x.textContent.trim()); return { deny: b.includes('拒绝'), allow: b.includes('允许'), more: !!c.querySelector('.bt-allow-more') }; })()`);
+          check('bots: the approval card has 拒绝 and 允许 and a ▾', ap && ap.deny && ap.allow && ap.more, JSON.stringify(ap));
+          await click(`${T} .bt-approval .bt-allow-more`);
+          const menuUp = await waitFor(`document.querySelectorAll('.bt-allow-menu [role="menuitem"]').length > 0`, 3000);
+          const choices = await js(`[...document.querySelectorAll('.bt-allow-menu [role="menuitem"]')].map((b) => b.dataset.choice)`);
+          // git push names no domain / channel / recipient: an opaque target, so only 仅这次 and 总是 (approval-menu.ts)
+          check('bots: its ▾ menu has 仅这次 / 总是 (an opaque target has no narrower scope)', menuUp && JSON.stringify(choices) === JSON.stringify(['once', 'always']), JSON.stringify(choices));
           await key('Escape');
-          const closed = await waitFor(`!document.querySelector('.bc-tpls') && window.__cwBots.state().open === true`, 3000);
-          check('bots: Esc closes the dialog, the page stays', closed, JSON.stringify(await js(`({ dialog: !!document.querySelector('.bc-tpls'), open: window.__cwBots.state().open })`)));
+          await waitFor(`!document.querySelector('.bt-allow-menu')`, 2000);
+          const rulesCard = await js(`(() => { const c = document.querySelector('${T} .bt-proposal[data-type="rules"]'); return c ? [...c.querySelectorAll('button')].map((x) => x.textContent.trim()) : null; })()`);
+          check('bots: the 规矩 card (data-type rules) has 就这样 and 改一下', rulesCard && rulesCard.includes('就这样') && rulesCard.includes('改一下'), JSON.stringify(rulesCard));
+          await shot('bots-thread');
+
+          // 资料: the profile column with its sections
+          await click(`${T} .bt-head`);
+          const P = '.bots-col-profile:not([hidden]) .bot-profile';
+          const profUp = await waitFor(`!!document.querySelector('${P}')`, 3000);
+          // the profile asks bots.runs.list too: the runs again for the picture
+          await waitFor(`(window.__cwBots.inject(${JSON.stringify({ runs })}), !!document.querySelector('${T} .bt-run[data-state="running"]'))`, 3000);
+          const prof = await js(`({ heads: [...document.querySelectorAll('${P} .bp-sect .bp-h')].map((h) => h.textContent.trim()), idle: document.querySelector('${P} [data-section="computer"]')?.textContent.includes('电脑闲着') ?? false })`);
+          check('bots: 资料 opens .bot-profile with 资料 / 电脑 / 例行 / 权限 / 记忆 / 用量, 电脑 says 电脑闲着', profUp && ['资料', '电脑', '例行', '权限', '记忆', '用量'].every((h) => prof.heads.includes(h)) && prof.idle, JSON.stringify(prof));
+          await shot('bots-profile');
+
+          // Esc: the profile first, then the page
+          await key('Escape');
+          const profClosed = await waitFor(`!document.querySelector('${P}') && window.__cwBots.state().open === true`, 3000);
+          check('bots: Esc closes the profile first, the page stays', profClosed, JSON.stringify(await js(`({ profile: window.__cwBots.state().profileOpen, open: window.__cwBots.state().open })`)));
           await key('Escape');
           check('bots: a second Esc closes the page', await waitFor(`window.__cwBots.state().open === false`, 3000));
+
+          // ＋: the New Bot page with the name field and the 14 template cards
+          await js(`(() => { ${inject}; window.__cwBots.open('b_smoke1'); })()`);
+          await waitFor(`!!document.querySelector('.bots-col-roster [data-act="new-bot"]')`, 3000);
+          await click('.bots-col-roster [data-act="new-bot"]');
+          const N = '.bots-col-new:not([hidden]) .bot-new';
+          const newUp = await waitFor(`!!document.querySelector('${N} input.field') && document.querySelectorAll('${N} .bn-tpl').length === 14`, 8000);
+          check('bots: ＋ opens the New Bot page with the name field and 14 template cards', newUp, String(await js(`document.querySelectorAll('${N} .bn-tpl').length`)));
+          await shot('bots-new');
+          await key('Escape');
+          check('bots: Esc on the New Bot page goes back to the conversation', await waitFor(`window.__cwBots.state().view === 'thread' && window.__cwBots.state().open === true`, 3000));
+          await key('Escape');
+          await waitFor(`window.__cwBots.state().open === false`, 3000);
+
+          // 总览 · 需要你 still has the approval with 批准
           await js(`(() => { ${inject}; window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'mission' }); })()`);
           const MP = '.dock-panel[data-panel="mission"]:not([hidden])';
-          const inboxUp = await waitFor(`document.querySelectorAll('${MP} .bots-inbox .ib-item[data-kind="approval"]').length === 2`, 8000);
+          const inboxUp = await waitFor(`!!document.querySelector('${MP} .bots-inbox .ib-item[data-kind="approval"]')`, 8000);
           const ib = await js(`[...document.querySelectorAll('${MP} .bots-inbox .ib-item[data-kind="approval"]')].map((i) => ({ id: i.dataset.id, approve: [...i.querySelectorAll('button')].some((b) => b.textContent.trim() === '批准') }))`);
-          check('bots: the inbox (总览 · 需要你) has the 2 approvals, each with 批准', inboxUp && ib.length === 2 && ib.every((i) => i.approve), JSON.stringify(ib));
-          await shot('bots-inbox');
+          check('bots: 总览 · 需要你 still shows the thread approval with 批准', inboxUp && ib.some((i) => i.id === 'i_smoke1' && i.approve), JSON.stringify(ib));
           const bErr = await noBoundary(MP);
-          check('bots: inbox without error boundary', !bErr, bErr);
+          check('bots: 总览 without error boundary', !bErr, bErr);
+          await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
+
+          // the phone: roster → thread → profile, and back
+          win.setContentSize(480, 860);
+          await waitFor('document.querySelector(".app")?.classList.contains("mobile")', 4000);
+          await js(`(() => { ${inject}; window.__cwBots.open(); })()`);
+          const PH = '.bots-phone';
+          const phRoster = await waitFor(`document.querySelector('${PH}')?.dataset.screen === 'roster' && document.querySelectorAll('${PH} [data-screen="roster"]:not([hidden]) .bot-row').length === 2`, 5000);
+          await shot('bots-phone-roster');
+          await js(`window.__cwBots.open('b_smoke1')`);
+          const phThread = await waitFor(`document.querySelector('${PH}')?.dataset.screen === 'thread' && !!document.querySelector('${PH} [data-screen="thread"]:not([hidden]) .bot-thread .chat-inner')`, 5000);
+          await shot('bots-phone-thread');
+          await click(`${PH} .bots-ph-face`);
+          const phProfile = await waitFor(`document.querySelector('${PH}')?.dataset.screen === 'profile' && !!document.querySelector('${PH} [data-screen="profile"]:not([hidden]) .bot-profile')`, 3000);
+          await key('Escape');
+          const phBack = await waitFor(`document.querySelector('${PH}')?.dataset.screen === 'thread'`, 3000);
+          await key('Escape');
+          const phRosterAgain = await waitFor(`document.querySelector('${PH}')?.dataset.screen === 'roster'`, 3000);
+          check('bots, phone: roster → thread → profile screens, Esc back to the thread and the roster', phRoster && phThread && phProfile && phBack && phRosterAgain, JSON.stringify({ phRoster, phThread, phProfile, phBack, phRosterAgain }));
+          await key('Escape');
+          await waitFor(`window.__cwBots.state().open === false`, 3000);
+          win.setContentSize(1360, 860);
+          await waitFor('!document.querySelector(".app")?.classList.contains("mobile")', 4000);
+          const pErr = await noBoundary('.app');
+          check('bots: no error boundary', !pErr, pErr);
         } catch (e) {
           check('bots', false, e.stack || String(e));
         } finally {
+          win.setContentSize(1360, 860);
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`).catch(() => {});
           await js(`window.__cwBots.inject({ bots: [], inbox: [], load: { running: 0, queued: 0, todayUsd: 0, weekEstimateUsd: 0, concurrency: 2 } })`).catch(() => {});
+          await js(`window.__store.setState((s) => { const { [${JSON.stringify(TID)}]: _t, ...open } = s.open; return { open }; })`).catch(() => {});
           await sleep(200);
         }
       }
