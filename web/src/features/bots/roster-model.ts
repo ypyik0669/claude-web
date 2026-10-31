@@ -33,3 +33,17 @@ export function rowTime(at: number | undefined, now = Date.now()): string {
   if (at >= dayStart(today - 1)) return tr('昨天');
   return new Date(at).toLocaleDateString(dateLocale(), { month: 'numeric', day: 'numeric' });
 }
+
+/** A phone with exactly one bot of its own (the manager aside) goes straight into that bot's conversation: its id. */
+export function soleBot(bots: Pick<BotStatus, 'id' | 'manager'>[]): string | undefined {
+  const own = bots.filter((b) => !b.manager);
+  return own.length === 1 ? own[0].id : undefined;
+}
+
+/**
+ * The thread column of bot `id` is on screen: the page open on it, its conversation view — and on a phone, the
+ * conversation screen (the roster and profile screens keep it mounted but hidden). What marks it seen, what lets its input take focus.
+ */
+export function threadOnScreen(s: { open: boolean; selected?: string; view: string; phoneScreen: string }, id: string, mobile: boolean): boolean {
+  return s.open && s.selected === id && s.view === 'thread' && (!mobile || s.phoneScreen === 'thread');
+}

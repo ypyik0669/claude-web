@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BotStatus, InboxItem } from '@shared';
 import { tr } from '@/i18n';
-import { rosterView, rowTime, searchBots } from './roster-model';
+import { rosterView, rowTime, searchBots, soleBot, threadOnScreen } from './roster-model';
 
 const sb = (id: string, extra: Partial<BotStatus> = {}): BotStatus => ({
   id, name: id, charter: { role: '', sources: [] }, cwd: '/', tier: 'balanced', policy: { rules: [] }, budget: {}, routines: [], outputs: [],
@@ -47,5 +47,21 @@ describe('rowTime', () => {
     expect(rowTime(new Date(2026, 9, 30, 23, 0).getTime(), now)).toBe(tr('昨天'));
     expect(rowTime(new Date(2026, 9, 20, 8, 0).getTime(), now)).toMatch(/20/);
     expect(rowTime(undefined, now)).toBe('');
+  });
+});
+
+describe('phone screens', () => {
+  it('soleBot: one bot of your own (the manager aside), else none', () => {
+    expect(soleBot([sb('manager', { manager: true }), sb('a')])).toBe('a');
+    expect(soleBot([sb('manager', { manager: true })])).toBeUndefined();
+    expect(soleBot([sb('a'), sb('b')])).toBeUndefined();
+  });
+  it('threadOnScreen: on a phone only the conversation screen counts', () => {
+    const s = { open: true, selected: 'a', view: 'thread', phoneScreen: 'roster' };
+    expect(threadOnScreen(s, 'a', false)).toBe(true);
+    expect(threadOnScreen(s, 'a', true)).toBe(false);
+    expect(threadOnScreen({ ...s, phoneScreen: 'profile' }, 'a', true)).toBe(false);
+    expect(threadOnScreen({ ...s, phoneScreen: 'thread' }, 'a', true)).toBe(true);
+    expect(threadOnScreen({ ...s, phoneScreen: 'thread', open: false }, 'a', true)).toBe(false);
   });
 });

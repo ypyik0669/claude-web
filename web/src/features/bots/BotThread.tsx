@@ -11,6 +11,7 @@ import { Composer } from '@/features/composer/Composer';
 import { tr } from '@/i18n';
 import { BotAvatar, type BotAvatarState } from './BotAvatar';
 import { pendingByBot, rowState } from './model';
+import { threadOnScreen } from './roster-model';
 import { openThread, markSeen, useBots } from './state';
 import { useThreadExtras } from './useThreadExtras';
 import { ThreadNavContext, type ThreadNav } from './cards/nav';
@@ -52,7 +53,9 @@ function OthersBanner({ botId }: { botId: string }) {
 export function BotThread({ bot }: { bot: BotStatus }) {
   const id = bot.id;
   const sessionId = bot.threadId ?? null;
-  const visible = useBots((s) => s.open && s.selected === id && s.view === 'thread');
+  const mobile = useStore((s) => s.mobile);
+  // on screen: on a phone only while the conversation screen shows (not the roster's or the profile's)
+  const visible = useBots((s) => threadOnScreen(s, id, mobile));
   const profileOpen = useBots((s) => s.profileOpen);
   const loaded = useStore((s) => !!sessionId && !!s.open[sessionId]);
   const runs = useBots((s) => s.runs[id] ?? NO_RUNS);

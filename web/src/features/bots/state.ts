@@ -7,6 +7,7 @@ import { ws } from '@/ws/client';
 import { closeOtherPages, registerPage } from '@/features/sections/pages';
 import { markPageOpened } from '@/features/automation/state';
 import { tr } from '@/i18n';
+import { soleBot } from './roster-model';
 
 export type BotProfileSection = 'profile' | 'computer' | 'routines' | 'policy' | 'memory' | 'usage';
 
@@ -99,8 +100,7 @@ export function openBots(id?: string): boolean {
   // a phone opens on the roster (its first screen) unless it is opened on a bot — or there is only one bot besides
   // the manager: then straight into its conversation (no roster of one)
   const mobile = useStore.getState().mobile;
-  const own = useBots.getState().bots.filter((b) => !b.manager);
-  const to = id ?? (mobile && own.length === 1 ? own[0].id : undefined);
+  const to = id ?? (mobile ? soleBot(useBots.getState().bots) : undefined);
   useBots.setState((s) => ({ open: true, seen: true, selected: to ?? s.selected, ...(to ? { view: 'thread' as const, phoneScreen: 'thread' as const } : mobile ? { phoneScreen: 'roster' as const } : {}) }));
   if (mobile) { useStore.setState({ sidebarOpen: false }); hideSheet(); }
   return true;

@@ -13,6 +13,7 @@ import { BotThread } from './BotThread';
 import { NewBot } from './NewBot';
 import { Roster } from './Roster';
 import { rosterGroups } from './model';
+import { soleBot } from './roster-model';
 import { closeBots, setPhoneScreen, showProfile, useBots } from './state';
 
 /** Esc from inside the page: the profile first, then the New Bot page (back to a conversation), then a phone's screens. */
@@ -51,6 +52,14 @@ export function BotsPage() {
     const first = g.attention[0] ?? g.rest[0] ?? g.hidden[0];
     if (first) useBots.setState({ selected: first.id });
   }, [open, mobile, bot, view, own, bots, inbox]);
+
+  // a phone with one bot of its own: straight into its conversation, also when the list arrives after the page opened
+  // (openBots does it when it is already known); once a bot is chosen the roster stays reachable with 返回
+  useEffect(() => {
+    if (!open || !mobile || selected || phoneScreen !== 'roster') return;
+    const only = soleBot(bots);
+    if (only) useBots.setState({ selected: only, view: 'thread', phoneScreen: 'thread' });
+  }, [open, mobile, selected, phoneScreen, bots]);
 
   const thread = bot && <BotThread bot={bot} />;
   return (
