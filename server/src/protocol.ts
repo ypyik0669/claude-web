@@ -1046,7 +1046,8 @@ export interface AuditRow { at: number; runId: string; botId: string; toolName: 
   /** scopeKey of the call ('channel:C1' / 'domain:x.com' / '*'): what trust is counted on */ scope?: string;
   /** the policy rule that decided it — a later correction demotes exactly this rule; perDay counts per rule */ rule?: PolicyRule }
 export type InboxKind = 'approval' | 'finding' | 'draft' | 'proposal';
-export type InboxProposal = { type: 'trust_up'; cls: ActionClass; scope: PolicyScope } | { type: 'routine'; routine: Routine } | { type: 'policy'; rules: PolicyRule[]; why?: string };
+/** `rules`: 规矩 — after a bot's first routine, its current policy in plain words for the user to confirm (就这样) or change (改一下: the profile's 权限); adopting it changes nothing */
+export type InboxProposal = { type: 'trust_up'; cls: ActionClass; scope: PolicyScope } | { type: 'routine'; routine: Routine } | { type: 'policy'; rules: PolicyRule[]; why?: string } | { type: 'rules' };
 export interface InboxItem {
   id: string; kind: InboxKind; botId: string; runId?: string; routineId?: string; sessionId?: string; at: number;
   title: string; body?: string;

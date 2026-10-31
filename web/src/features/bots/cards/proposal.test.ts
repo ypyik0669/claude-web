@@ -30,3 +30,19 @@ describe('proposalRisks', () => {
     expect(m.scopeWords({ channels: ['C1'], until: new Date(2026, 10, 7).getTime() })).toMatch(/^C1、到 .+ 为止$/);
   });
 });
+
+describe('rulesWords (the 规矩 card)', () => {
+  it('the defaults: send / pay / delete ask first; reading and local writes run', () => {
+    const w = m.rulesWords({ rules: [] });
+    expect(w.ask).toEqual(['对外发送', '付款交易', '不可恢复删除']);
+    expect(w.own).toContain('读'); expect(w.own).toContain('写本地');
+    expect(w.never).toEqual([]); expect(w.scoped).toBe(0);
+  });
+  it('an unscoped rule or a deny moves a class; scoped rules are counted; 全自动 runs everything', () => {
+    const w = m.rulesWords({ rules: [{ cls: 'send', level: 'do', scope: { channels: ['C1'] } }, { cls: 'pay', level: 'deny' }, { cls: 'read', level: 'ask' }] });
+    expect(w.ask).toEqual(['对外发送', '不可恢复删除', '读']);
+    expect(w.never).toEqual(['付款交易']);
+    expect(w.scoped).toBe(1);
+    expect(m.rulesWords({ rules: [], unleashed: true }).ask).toEqual([]);
+  });
+});

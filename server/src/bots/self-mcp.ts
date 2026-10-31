@@ -139,13 +139,17 @@ export function botSelfTools(botId: string, _self: () => string, d: BotSelfDeps)
       const every = everyOf(a.everyMinutes);
       const cron = cronOk(a.cron);
       let made: Routine | undefined;
+      let first = false;
       await d.edit(botId, (b) => {
+        first = b.routines.length === 0;
         if (b.manager) throw new Error(tr('总管不做例行'));
         if (b.routines.length >= (b.maxRoutines ?? 20)) throw new Error(tr('例行已满（最多 {n} 个）', { n: b.maxRoutines ?? 20 }));
         made = { ...routineOf({ name: a.name.trim(), prompt: withFooter(promptOf(a.prompt, a.notify), until), cron, everyMinutes: every, until }, new Map()), selfMade: true };
         return { ...b, routines: [...b.routines, made] };
       });
       await d.event(botId, tr('已创建例行 ⏲ {name}', { name: made!.name }), 'routine', cadenceOf(made!, until));
+      // its first routine: it will work while the user is away — they see what it may do on its own (规矩, spec §2.4)
+      if (first) await d.propose(botId, { type: 'rules' }, tr('规矩：我自己做什么、先问你什么')).catch((e) => console.warn(`[bots] cannot propose ${botId}'s rules:`, e));
       return text(tr('已创建例行 {name}（{id}）：{how}', { name: made!.name, id: made!.id, how: cadenceOf(made!, until) }));
     }), opts),
 

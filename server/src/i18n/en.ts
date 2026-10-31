@@ -1861,6 +1861,7 @@ export const EN_SERVER: Record<string, string> = {
   "总管不做例行": "The manager doesn't run routines",
   "例行已满（最多 {n} 个）": "No room for another routine (at most {n})",
   "已创建例行 ⏲ {name}": "Created routine ⏲ {name}",
+  "规矩：我自己做什么、先问你什么": "Ground rules: what I do on my own, what I ask you first",
   "已创建例行 {name}（{id}）：{how}": "Created routine {name} ({id}): {how}",
   "已修改例行 ⏲ {name}": "Changed routine ⏲ {name}",
   "已修改例行 {name}：{how}": "Changed routine {name}: {how}",

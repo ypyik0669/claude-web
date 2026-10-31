@@ -56,6 +56,14 @@ describe('bot-self tools', () => {
     expect(f.events[0].detail).toBeTruthy();
   });
 
+  it('the first routine brings the 规矩 card (once): the user sees what the bot may do on its own', async () => {
+    const f = fake();
+    await f.call('routine_create', { name: 'A', prompt: 'p', everyMinutes: 30, until: 'forever' });
+    await f.call('routine_create', { name: 'B', prompt: 'p', everyMinutes: 30, until: 'forever' });
+    expect(f.d.propose).toHaveBeenCalledTimes(1);
+    expect(f.d.propose).toHaveBeenCalledWith('b1', { type: 'rules' }, expect.any(String));
+  });
+
   it('routine_create: under 15 minutes, a bad date, or over maxRoutines is refused', async () => {
     const f = fake();
     expect((await f.call('routine_create', { name: 'n', prompt: 'p', everyMinutes: 5, until: 'forever' })).isError).toBe(true);
