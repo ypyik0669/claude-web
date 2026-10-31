@@ -291,7 +291,7 @@ export class BotService extends EventEmitter {
     let lastLine = thread.lastLine;
     const said = last?.ok && last.said ? last.said.split('\n').map((l) => l.trim()).find(Boolean)?.slice(0, 80) : undefined;
     if (said && last.endedAt! > (lastLine?.at ?? 0)) lastLine = { text: said, at: last.endedAt! };
-    const unseen = this.store.timeline(bot.id).filter((e) => e.at > (thread.seenAt ?? 0)).length;
+    const unseen = this.store.timelineCount(bot.id, thread.seenAt ?? 0);
     const running = this.scheduler.runningRoutine(bot.id);
     const activity = running ? tr('在跑例行「{name}」', { name: bot.routines.find((r) => r.id === running)?.name ?? running }) : this.threads.activity(bot.id);
     const b = bot.budget;
@@ -459,10 +459,10 @@ export class BotService extends EventEmitter {
     const avatar = typeof p.avatar === 'string' && AVATAR.test(p.avatar) ? p.avatar : avatarFor(name);
     const created = await this.create({ ...base, name, avatar });
     await this.giveThread(created.id, template);
-    const now = Date.now();
-    await this.addEntry(systemEntry(created.id, tr('已创建 {name}', { name }), 'bot'));
-    // the user is looking at it: its first line is not news
-    await this.store.setThreadState(created.id, { seenAt: now });
+    const made = systemEntry(created.id, tr('已创建 {name}', { name }), 'bot');
+    await this.addEntry(made);
+    // the user is looking at it: its first line is not news (seen as of that line, which may be a tick after now)
+    await this.store.setThreadState(created.id, { seenAt: Math.max(Date.now(), made.at) });
     this.changed();
     return this.statusOf(this.must(created.id));
   }

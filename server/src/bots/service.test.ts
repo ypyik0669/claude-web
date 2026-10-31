@@ -238,7 +238,9 @@ describe('BotService', { timeout: 30_000 }, () => {
 
   it('only a real bot shape is accepted: arrays must be arrays, a bad cron or path is refused, nothing is written', async () => {
     const b = await svc.create(draft({ routines: [rt('r1')] }));
-    const before = fs.readFileSync(path.join(root, b.id, 'bot.json'), 'utf8');
+    // what the scheduler's tick writes (a planned run time, updatedAt) is not the request's doing
+    const shape = () => { const j = JSON.parse(fs.readFileSync(path.join(root, b.id, 'bot.json'), 'utf8')); delete j.updatedAt; for (const r of j.routines) delete r.nextRunAt; return j; };
+    const before = shape();
     await expect(svc.update(b.id, { routines: null } as any)).rejects.toThrow(/routines/);
     await expect(svc.update(b.id, { routines: [rt('r1', { cron: 'not a cron' })] })).rejects.toThrow(/cron/);
     await expect(svc.update(b.id, { routines: [rt('r1', { everyMinutes: 0.5 })] })).rejects.toThrow(/everyMinutes/);
@@ -250,7 +252,7 @@ describe('BotService', { timeout: 30_000 }, () => {
     await expect(svc.update(b.id, { charter: { role: 'r', sources: 'x' } } as any)).rejects.toThrow(/sources/);
     await expect(svc.update(b.id, { policy: { rules: {} } } as any)).rejects.toThrow(/rules/);
     await expect(svc.create({ ...draft(), routines: null } as any)).rejects.toThrow(/routines/);
-    expect(fs.readFileSync(path.join(root, b.id, 'bot.json'), 'utf8')).toBe(before);
+    expect(shape()).toEqual(before);
   });
 
   it('status fields and server-owned keys are not stored; policy.unleashed only moves through unleash', async () => {

@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { BotStore } from './store.js';
+import { BotStore, TIMELINE_COMPACT_AT, TIMELINE_KEEP } from './store.js';
 import type { Bot, BotRun, BotTimelineEntry } from '../protocol.js';
 
 const bot = (id: string): Bot => ({ id, name: '晨报', charter: { role: '每天早上汇总 issue', sources: ['github'] }, cwd: '/p', tier: 'balanced', policy: { rules: [] }, budget: {}, routines: [], outputs: [{ kind: 'inbox' }], createdAt: 1, updatedAt: 1 });
@@ -149,6 +149,33 @@ describe('BotStore', () => {
     expect(s.timeline('b_1', { limit: 3 }).map((e) => e.id)).toEqual(['e308', 'e309', 'e310']);
     expect(s.timeline('b_1', { before: 5, limit: 2 }).map((e) => e.id)).toEqual(['e3', 'e4']);
     expect(s.timeline('b_1', { before: 1 })).toEqual([]);
+  });
+
+  it('timelineCount counts entries after a time without reading the file again; a write by another process is seen', async () => {
+    await s.appendTimeline('b_1', entry('a', 1));
+    await s.appendTimeline('b_1', entry('b', 5));
+    await s.appendTimeline('b_1', { ...entry('a', 1), text: 'a2' }); // the same entry again: counted once
+    const read = vi.spyOn(fs, 'readFileSync');
+    try {
+      expect(s.timelineCount('b_1', 0)).toBe(2);
+      expect(s.timelineCount('b_1', 1)).toBe(1);
+      expect(s.timelineCount('b_2', 0)).toBe(0);
+      expect(read.mock.calls.filter(([f]) => String(f).endsWith('timeline.jsonl'))).toHaveLength(1); // b_2's (missing) only
+    } finally { read.mockRestore(); }
+    fs.appendFileSync(path.join(root, 'b_1', 'timeline.jsonl'), JSON.stringify(entry('c', 9)) + '\n');
+    expect(s.timelineCount('b_1', 1)).toBe(2);
+  });
+
+  it(`timeline.jsonl past ${TIMELINE_COMPACT_AT} lines is cut to the newest ${TIMELINE_KEEP} entries`, async () => {
+    const f = path.join(root, 'b_1', 'timeline.jsonl');
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, Array.from({ length: TIMELINE_COMPACT_AT }, (_, i) => JSON.stringify(entry(`e${i}`, i + 1)) + '\n').join(''));
+    await s.appendTimeline('b_1', entry('last', TIMELINE_COMPACT_AT + 10));
+    const lines = fs.readFileSync(f, 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(TIMELINE_KEEP);
+    expect(JSON.parse(lines.at(-1)!).id).toBe('last');
+    expect(s.timelineCount('b_1', 0)).toBe(TIMELINE_KEEP);
+    expect(s.timeline('b_1', { limit: 1 })[0].id).toBe('last');
   });
 
   it('thread state: defaults, then patches merge', async () => {

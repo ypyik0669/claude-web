@@ -41,6 +41,9 @@ function readJsonl<T>(file: string): T[] {
   if (bad) console.warn(`[bots] skipped ${bad} bad line(s) in ${file}`);
   return out;
 }
+/** timeline.jsonl past this many lines is rewritten with the newest TIMELINE_KEEP entries */
+export const TIMELINE_COMPACT_AT = 4000;
+export const TIMELINE_KEEP = 2000;
 const writeJson = (file: string, v: unknown) => atomicWrite(file, JSON.stringify(v, null, 2) + '\n', { mode: 0o600 });
 
 /** One directory per bot under <dataDir>/bots; bot.json is the profile, everything else is what it accumulates. */
@@ -170,12 +173,48 @@ export class BotStore {
    * per-file lock below still keeps this process's own writes from interleaving.
    */
   private timelineFile(id: string) { return path.join(this.dir(id), 'timeline.jsonl'); }
+  /**
+   * Per bot: each entry's time (by id, the newest line's) and the file's lines and size as last read or written here.
+   * The bot's status asks for its unseen count on every change: read from here, the file only when its size says
+   * another process wrote to it.
+   */
+  private tl = new Map<string, { ats: Map<string, number>; lines: number; size: number }>();
+  private timelineIndex(id: string) {
+    const f = this.timelineFile(id);
+    let size = 0;
+    try { size = fs.statSync(f).size; } catch { /* none yet */ }
+    const cur = this.tl.get(id);
+    if (cur && cur.size === size) return cur;
+    const ats = new Map<string, number>();
+    let lines = 0;
+    for (const e of readJsonl<BotTimelineEntry>(f)) { lines++; if (e && typeof e.id === 'string') ats.set(e.id, e.at); }
+    const next = { ats, lines, size };
+    this.tl.set(id, next);
+    return next;
+  }
+  /** how many entries are newer than `since` (the status's unseen) */
+  timelineCount(id: string, since: number): number {
+    let n = 0;
+    for (const at of this.timelineIndex(id).ats.values()) if (at > since) n++;
+    return n;
+  }
   async appendTimeline(id: string, e: BotTimelineEntry): Promise<void> {
     const f = this.timelineFile(id);
     await this.locked(f, async () => {
+      const idx = this.timelineIndex(id);
+      const line = JSON.stringify(e) + '\n';
       await fsp.mkdir(path.dirname(f), { recursive: true });
-      await fsp.appendFile(f, JSON.stringify(e) + '\n', 'utf8');
+      await fsp.appendFile(f, line, 'utf8');
+      idx.ats.set(e.id, e.at); idx.lines++; idx.size += Buffer.byteLength(line);
+      if (idx.lines > TIMELINE_COMPACT_AT) await this.compactTimeline(id);
     });
+  }
+  /** past TIMELINE_COMPACT_AT lines: rewritten with the newest TIMELINE_KEEP entries, one line each (under the file's lock) */
+  private async compactTimeline(id: string) {
+    const keep = this.timeline(id, { limit: TIMELINE_KEEP });
+    const text = keep.map((x) => JSON.stringify(x) + '\n').join('');
+    await atomicWrite(this.timelineFile(id), text, { mode: 0o600 });
+    this.tl.set(id, { ats: new Map(keep.map((x) => [x.id, x.at])), lines: keep.length, size: Buffer.byteLength(text) });
   }
   /**
    * Oldest first. An id appended again (a run re-emitted) keeps its first place and takes the newest content.
