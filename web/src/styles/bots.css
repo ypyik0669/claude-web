@@ -183,3 +183,23 @@
 .ib-scope .bd-row { grid-template-columns: 64px minmax(0, 1fr); }
 .ib-scope-h { color: var(--ink-2); font-size: var(--fs-sm); }
 .ib-problem { color: var(--err); font-size: var(--fs-meta); }
+
+/* the avatar face (BotAvatar.tsx): the body takes its agent colour from `color`; eyes and dots are cut out in --bg, which
+   the agent colours already clear by 3:1 in every theme (ui/contrast.test.ts) */
+.bot-face { flex: none; display: block; overflow: visible; }
+.bot-face-body { fill: currentColor; stroke: currentColor; stroke-width: 1; stroke-linejoin: round; }
+.bot-face-eyes, .bot-face-dots { fill: var(--bg); }
+.bot-face-eyes { transform-box: fill-box; transform-origin: center; }
+.bot-face-ring { fill: none; stroke: var(--warn); stroke-width: 2; }
+.bot-face[data-state=idle] .bot-face-eyes { animation: bot-face-blink 5s infinite; }
+.bot-face[data-state=working] .bot-face-eyes { animation: bot-face-glance 2.4s ease-in-out infinite; }
+.bot-face-dots circle { animation: bot-face-dot 1.2s ease-in-out infinite; }
+.bot-face-dots circle:nth-child(2) { animation-delay: .2s; }
+.bot-face-dots circle:nth-child(3) { animation-delay: .4s; }
+.bot-face[data-state=error] { filter: grayscale(1); opacity: .7; }
+@keyframes bot-face-blink { 0%, 94%, 100% { transform: scaleY(1); } 97% { transform: scaleY(.1); } }
+@keyframes bot-face-glance { 0%, 15%, 85%, 100% { transform: translateX(0); } 30%, 45% { transform: translateX(-1.5px); } 60%, 75% { transform: translateX(1.5px); } }
+@keyframes bot-face-dot { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .bot-face-eyes, .bot-face-dots circle { animation: none !important; }
+}
