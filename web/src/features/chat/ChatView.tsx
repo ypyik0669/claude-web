@@ -1,7 +1,9 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PermissionRequestEvent } from '@shared';
-import type { AssistantItem, Attachment, Block, Item, ResultItem, ThinkingBlock, ToolUseBlock, UserItem } from '@/model/conversation';
+import type { AssistantItem, Attachment, Block, Item, ResultItem, ShellRun, ThinkingBlock, ToolUseBlock, UserItem } from '@/model/conversation';
 import { walkTools } from '@/model/conversation';
+import { Expandable } from './Expandable';
+import { stripAnsi } from './tools/ShellTool';
 import { WorkflowLive } from '@/features/background/WorkflowLive';
 import { useBgSession } from '@/features/background/state';
 import { hasLive } from '@/features/background/model';
@@ -320,6 +322,20 @@ function FromHead({ from }: { from: { sessionId: string; title: string } }) {
   );
 }
 
+/** A command the user ran themselves: a box on the reply's side, like the official app's, not a thing they said. */
+function ShellRunCard({ run }: { run: ShellRun }) {
+  const stdout = stripAnsi(run.stdout).trimEnd();
+  const stderr = stripAnsi(run.stderr).trimEnd();
+  return (
+    <div className="shell-run">
+      {run.input && <div className="shell-run-cmd" aria-label={tr('命令')}><Icon name="terminal" size={13} /><code>{run.input}</code></div>}
+      {stdout && <Expandable text={stdout} lines={40} chars={12000}>{(v) => <pre>{v}</pre>}</Expandable>}
+      {stderr && <Expandable text={stderr} lines={20} chars={6000}>{(v) => <pre className="err">{v}</pre>}</Expandable>}
+      {!stdout && !stderr && <div className="shell-run-none">{tr('（无输出）')}</div>}
+    </div>
+  );
+}
+
 function UserRow({ it, version }: { it: UserItem; version: number }) {
   const sessionId = useScopedSessionId();
   const [editing, setEditing] = useState(false);
@@ -331,8 +347,10 @@ function UserRow({ it, version }: { it: UserItem; version: number }) {
   const arrival = useContext(ArrivalCtx);
   const enter = useEntrance(() => arrival.current && !it.meta && !!sessionId && useStore.getState().open[sessionId]?.lastSent?.id === it.id && !reducedMotion(), BUBBLE_IN_MS);
   return (
-    <div className={clsx('msg user', it.meta && 'meta', enter && 'enter')} data-item-id={it.id}>
-      {editing && sessionId ? (
+    <div className={clsx('msg user', it.meta && 'meta', it.shell && 'shell', enter && 'enter')} data-item-id={it.id}>
+      {it.shell ? (
+        <ShellRunCard run={it.shell} />
+      ) : editing && sessionId ? (
         <UserEditor it={it} sessionId={sessionId} onDone={() => setEditing(false)} />
       ) : (
         <div className="bubble">

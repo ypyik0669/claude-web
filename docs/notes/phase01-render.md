@@ -12,3 +12,5 @@
 - **代码块有内容却显示为空**（2026-10-09 用户转述别人的截图：头部「12 行」，下面空白；这里复现不出来，怀疑是浏览器扩展 / 网页翻译改了 DOM）：`CodeBlock` 在文字停下 0.8 s 后量自己（`features/chat/code-blank.ts`：DOM 里没字 / 有字却不占位置 / 字和底色一样），`MutationObserver` 盯着外面对它的改动再量；有问题先重画一次（`<pre key>`），还不行改成纯文本（`.code-plain`），最后在 server.log 记一条 `[web warn] 代码块: …`（问题、怎么恢复的、语言、行数、字数、页面翻译的标记、外来标签 / 属性的名字、浏览器——不带代码本身，每个页面最多 5 条）。ui-smoke 的 chat-turns 一段把一个代码块从 React 外面清空，断言它回来了、server.log 有这一行。
 - `scripts/shot.cjs`：用 Electron 给页面截图（`npx electron scripts/shot.cjs <url> out.png "<js>"`），本机 Chrome 扩展连的是别的机器时靠它看 UI。
 - `server/ws-phase1.mjs`：附件上传 / uuid 锚点 / contextUsage / 评分草稿 / 分叉 / 导出 的端到端检查。
+- **用户自己跑的命令**（2026-11-01 用户报告：气泡里露出 `<bash-input>…<bash-stdout>…`）：官方桌面版代码块的运行按钮、终端的 `!` 把命令和输出写成一条普通 user 消息（2.1.309 三个标签连在一行）。`parseShellRun` 只认整条消息是这些标签的，得到 `UserItem.shell`，`text` 是命令；`ShellRunCard` 画成回复一侧的框，没有「编辑 / 重跑」（会把命令当提问发出去）。它仍算一轮的开始：Claude 会接着回答。
+- **斜杠命令**（同上）：`commandText` 把整条是 `<command-*>` / `<local-command-*>` 的消息还原成 `/名字 参数` 或输出。标签顺序有两种：技能是 `<command-message>` 在前（算用户发的，开一轮），本地命令如 `/compact` 是 `<command-name>` 在前（meta，留在原来的轮里，和 `sessions/history.ts` 的 `TAG_META` 一致，别只改一边）。`<local-command-caveat>` 是说给模型听的，空输出也没东西可看，这两种不进列表。

@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { contextUsageOf, applyMessage, applyTranscript, createConversation, decodeAttachments, sessionRefMarker, shownErrors, findChainUuidBefore, prependTranscript, setConversationClock, turnItems, walkTools, type AssistantItem, type Conversation, type UserItem } from './conversation';
+import { contextUsageOf, applyMessage, applyTranscript, commandText, createConversation, decodeAttachments, parseShellRun, sessionRefMarker, shownErrors, findChainUuidBefore, prependTranscript, setConversationClock, turnItems, walkTools, type AssistantItem, type Conversation, type UserItem } from './conversation';
 import { credentialHint, noResponseHint } from './health';
 import { groupTurns, turnSummary } from './turn';
 
@@ -234,6 +234,51 @@ describe('user messages', () => {
     const expanded = decodeAttachments('hi\n\n<referenced-session id="s-2" title="T">\n# briefing\nline\n</referenced-session>\n<referenced-session id="s-3" title="U" error="无法读取：gone" />');
     expect(expanded.text).toBe('hi');
     expect(expanded.attachments.map((a) => [a.sessionId, a.name, a.error])).toEqual([['s-2', 'T', undefined], ['s-3', 'U', '无法读取：gone']]);
+  });
+
+  it('a command run from the app or `!`: what it ran and printed, not the tags around them', () => {
+    const c = createConversation();
+    applyMessage(c, { type: 'user', uuid: 'u-sh', message: { role: 'user', content: '<bash-input>node a.mjs && echo ok</bash-input><bash-stdout>a.png\nb.png</bash-stdout><bash-stderr></bash-stderr>' } } as any);
+    const u = c.items.find((i) => i.id === 'u-sh') as any;
+    expect(u.shell).toEqual({ input: 'node a.mjs && echo ok', stdout: 'a.png\nb.png', stderr: '' });
+    expect(u.text).toBe('node a.mjs && echo ok');
+    expect(u.meta).toBe(false);
+    // the output on its own (the terminal writes it as the next line) is still one
+    expect(parseShellRun('<bash-stdout>x</bash-stdout><bash-stderr>boom</bash-stderr>')).toEqual({ input: '', stdout: 'x', stderr: 'boom' });
+    expect(parseShellRun('<bash-input>ls</bash-input>')).toEqual({ input: 'ls', stdout: '', stderr: '' });
+    // a command's output may print the tags itself
+    expect(parseShellRun('<bash-input>cat f</bash-input><bash-stdout></bash-stderr> x</bash-stdout><bash-stderr></bash-stderr>')?.stdout).toBe('</bash-stderr> x');
+    // only a whole message is one: a quote of the tags inside someone's text stays text
+    expect(parseShellRun('why does <bash-stdout>x</bash-stdout> show?')).toBeUndefined();
+    expect(parseShellRun('plain')).toBeUndefined();
+    expect(parseShellRun('')).toBeUndefined();
+  });
+
+  it('a slash command and its output: what was typed and printed, not the tags around them', () => {
+    // a skill (official 2.1.309): its own turn, a message the user sent — a rerun sends "/name args" again
+    const skill = '<command-message>video</command-message>\n<command-name>/video</command-name>\n<command-args>主题：合众</command-args>';
+    expect(commandText(skill)).toBe('/video 主题：合众');
+    expect(commandText('<command-message>h</command-message>\n<command-name>/h</command-name>')).toBe('/h');
+    // a local command: the other order, indented
+    expect(commandText('<command-name>/compact</command-name>\n            <command-message>compact</command-message>\n            <command-args></command-args>')).toBe('/compact');
+    expect(commandText('<local-command-stdout>Compacted </local-command-stdout>')).toBe('Compacted');
+    expect(commandText('<local-command-stderr>bad</local-command-stderr>')).toBe('bad');
+    // said to the model, about the command after it: nothing to show
+    expect(commandText('<local-command-caveat>The command below was run directly</local-command-caveat>')).toBe('');
+    expect(commandText('<local-command-stdout></local-command-stdout>')).toBe('');
+    // only a whole message is one
+    expect(commandText('why <command-name>/x</command-name>?')).toBeUndefined();
+    expect(commandText('<command-name>/x</command-name> and more')).toBeUndefined();
+    expect(commandText('plain')).toBeUndefined();
+
+    const c = createConversation();
+    const add = (uuid: string, content: string, extra = {}) => applyMessage(c, { type: 'user', uuid, message: { role: 'user', content }, ...extra } as any);
+    add('s1', skill);
+    add('l0', '<local-command-caveat>The command below</local-command-caveat>', { isMeta: true });
+    add('l1', '<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>');
+    add('l2', '<local-command-stdout>Compacted </local-command-stdout>');
+    const users = c.items.filter((i) => i.kind === 'user') as UserItem[];
+    expect(users.map((u) => [u.id, u.text, !!u.meta])).toEqual([['s1', '/video 主题：合众', false], ['l1', '/compact', true], ['l2', 'Compacted', true]]);
   });
 
   it('跨对话工具: a message from another conversation is drawn as from it, with only what was said', () => {

@@ -43,6 +43,8 @@ export type Block = TextBlock | ThinkingBlock | ToolUseBlock;
 /** `session` = a reference to another library session (`sessionId`; `name` is its title when referenced). */
 export interface Attachment { kind: 'image' | 'text' | 'file' | 'folder' | 'session'; name: string; size?: number; path?: string; sessionId?: string; error?: string }
 
+export interface ShellRun { input: string; stdout: string; stderr: string }
+
 export interface UserItem {
   kind: 'user';
   id: string; // transcript uuid (client-minted on send, so local echo == transcript id)
@@ -52,6 +54,8 @@ export interface UserItem {
   attachments?: Attachment[];
   /** 跨对话工具: sent by Claude in another conversation (server sessions-mcp `<cw-from>`) */
   from?: { sessionId: string; title: string };
+  /** a command the user ran themselves (`!` in the terminal, a code block's run button in the official app): `text` is its command */
+  shell?: ShellRun;
   meta?: boolean;
   raw?: unknown;
 }
@@ -481,6 +485,34 @@ export function sessionRefMarker(id: string, title: string): string {
 // a whole message from another conversation (server sessions-mcp/format.ts `fromMarker`)
 const FROM_RE = /^<cw-from ([^>]*)>\n([\s\S]*)\n<\/cw-from>$/;
 
+// a whole message that is a command the user ran: official 2.1.309 writes all three tags in one line
+const SHELL_RE = /^(?:<bash-input>([\s\S]*?)<\/bash-input>)?\s*(?:<bash-stdout>([\s\S]*?)<\/bash-stdout>)?\s*(?:<bash-stderr>([\s\S]*?)<\/bash-stderr>)?$/;
+
+export function parseShellRun(text: string): ShellRun | undefined {
+  const t = text.trim();
+  if (!t.startsWith('<bash-')) return undefined;
+  const m = SHELL_RE.exec(t);
+  return m ? { input: m[1] ?? '', stdout: m[2] ?? '', stderr: m[3] ?? '' } : undefined;
+}
+
+// a whole message that is a slash command or its output, in either order the CLI writes the tags
+const COMMAND_TAG = /^<(command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat)>([\s\S]*?)<\/\1>/;
+
+/** What such a message says to the user ('' = nothing: the caveat is said to the model); undefined = it is not one. */
+export function commandText(text: string): string | undefined {
+  let rest = text.trim();
+  if (!/^<(command-|local-command-)/.test(rest)) return undefined;
+  const tags: Record<string, string> = {};
+  while (rest) {
+    const m = COMMAND_TAG.exec(rest);
+    if (!m) return undefined;
+    tags[m[1]] = m[2].trim();
+    rest = rest.slice(m[0].length).trimStart();
+  }
+  if (tags['command-name']) return [tags['command-name'], tags['command-args']].filter(Boolean).join(' ');
+  return [tags['local-command-stdout'], tags['local-command-stderr']].filter(Boolean).join('\n');
+}
+
 export function decodeAttachments(text: string): { text: string; attachments: Attachment[]; from?: { sessionId: string; title: string } } {
   const attachments: Attachment[] = [];
   let from: { sessionId: string; title: string } | undefined;
@@ -564,8 +596,11 @@ function applyUser(c: Conversation, m: any) {
     return;
   }
   const isMeta = m.isMeta || m.isSynthetic || /^<(command-name|local-command|system-reminder|task-notification)/.test(rawText.trim());
-  const { text, attachments, from } = decodeAttachments(rawText);
-  containerFor(c, parent).push({ kind: 'user', id: m.uuid ?? String(Math.random()), ts: m.timestamp, text, images, attachments: attachments.length ? attachments : undefined, ...(from ? { from } : {}), meta: isMeta, raw: m });
+  const shell = parseShellRun(rawText);
+  const command = commandText(rawText);
+  if (command === '' && !images.length) return;
+  const { text, attachments, from } = decodeAttachments(shell ? shell.input : command ?? rawText);
+  containerFor(c, parent).push({ kind: 'user', id: m.uuid ?? String(Math.random()), ts: m.timestamp, text, images, attachments: attachments.length ? attachments : undefined, ...(from ? { from } : {}), ...(shell ? { shell } : {}), meta: isMeta, raw: m });
   if (!parent && !isMeta) c.turnStartedAt = clock();
 }
 

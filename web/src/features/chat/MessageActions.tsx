@@ -69,8 +69,8 @@ export function UserActions({ it, sessionId, onEdit }: { it: UserItem; sessionId
   return (
     <div className="msg-actions" role="toolbar" aria-label={tr('这条消息的操作')}>
       <button title={tr('复制')} aria-label={tr('复制')} onClick={() => navigator.clipboard.writeText(it.text)}><Icon name="copy" size={14} /></button>
-      <button title={tr('编辑并重新发送（从这里分叉）')} aria-label={tr('编辑')} disabled={!!busy} onClick={onEdit}><Icon name="edit" size={14} /></button>
-      <button title={last ? tr('用同样的消息再问一次') : tr('用同样的消息重跑（从这里分叉出新对话）')} aria-label={tr('重跑')} disabled={!!busy} onClick={() => st().rerun(sessionId, it.id).catch((e) => st().toast(e.message))}><Icon name="refresh" size={14} /></button>
+      {!it.shell && <button title={tr('编辑并重新发送（从这里分叉）')} aria-label={tr('编辑')} disabled={!!busy} onClick={onEdit}><Icon name="edit" size={14} /></button>}
+      {!it.shell && <button title={last ? tr('用同样的消息再问一次') : tr('用同样的消息重跑（从这里分叉出新对话）')} aria-label={tr('重跑')} disabled={!!busy} onClick={() => st().rerun(sessionId, it.id).catch((e) => st().toast(e.message))}><Icon name="refresh" size={14} /></button>}
       <button title={tr('从这条消息之前分叉出新对话')} aria-label={tr('分叉')} onClick={() => st().forkAt(sessionId, it.id).catch((e) => st().toast(e.message))}><Icon name="branch" size={14} /></button>
       <button title={tr('导出这一轮为 HTML')} aria-label={tr('分享本轮')} onClick={(e) => shareTurn(sessionId, turnIdOf(e.currentTarget, sessionId, it.id) ?? it.id)}><Icon name="share" size={14} /></button>
     </div>

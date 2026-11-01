@@ -51,6 +51,17 @@ html[data-density='compact'] .msg.assistant { margin: 0; }
 .msg.user .bubble { background: var(--user-bg); border: 0; border-radius: var(--r-bubble) var(--r-bubble) var(--r-sm) var(--r-bubble); padding: 10px 16px; font-size: var(--fs-body); line-height: 24px; }
 /* a note in the user's place (a reminder, a command's output): a quiet box on the reply's side, not a bubble */
 .msg.user.meta .bubble { background: var(--fill-subtle); border: 0; border-radius: var(--r-lg); padding: 8px 12px; font-size: var(--fs-sm); line-height: 18px; }
+/* a command the user ran themselves and what it printed: a box on the reply's side, not a bubble */
+.msg.user.shell { align-items: stretch; }
+.msg.user.shell .msg-actions { align-self: flex-end; }
+.shell-run { min-width: 0; padding: 8px 12px; background: var(--fill-subtle); border-radius: var(--r-lg); font-family: var(--mono); font-size: var(--fs-sm); line-height: 18px; }
+.shell-run-cmd { display: flex; gap: 6px; align-items: flex-start; color: var(--ink-3); }
+.shell-run-cmd > svg { flex: none; margin-top: 2px; }
+.shell-run-cmd code { min-width: 0; font: inherit; white-space: pre-wrap; word-break: break-word; }
+.shell-run pre { margin: 4px 0 0; font: inherit; white-space: pre-wrap; word-break: break-word; }
+.shell-run pre.err { color: var(--err); }
+.shell-run > pre:first-child, .shell-run > :first-child pre { margin-top: 0; }
+.shell-run-none { margin-top: 4px; color: var(--ink-3); }
 /* the message this window just sent rises into place; history does not (ChatView adds `enter` for its length) */
 .msg.user.enter > .bubble { transform-origin: 100% 100%; animation: bubble-rise 420ms var(--ease-sheet) backwards; }
 @keyframes bubble-rise { from { opacity: 0; transform: translateY(14px) scale(0.985); } }
