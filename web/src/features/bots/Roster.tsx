@@ -158,7 +158,8 @@ export function Roster({ phone }: { phone?: boolean }) {
   return (
     <div className={phone ? 'bots-phone-roster' : 'bots-roster-col'}>
       <div className="br-top">
-        <span className="sect-title">{tr('Bot')}</span>
+        {/* a phone's page head already says Bot: the roster's own title would say it twice */}
+        {!phone && <span className="sect-title">{tr('Bot')}</span>}
         <span className="grow" />
         <button className="icon-btn" title={tr('新 Bot')} aria-label={tr('新 Bot')} data-act="new-bot" onClick={showNewBot}><Icon name="plus" size={16} /></button>
       </div>

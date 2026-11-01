@@ -121,6 +121,9 @@ html.desktop:not(.mac) .app:not(.dock-open) .bots-body:not(:has(.bots-col-profil
 .bd-level { flex: none; padding: 0 6px; border-radius: var(--r-pill); background: var(--fill-subtle); color: var(--ink-2); font-size: var(--fs-meta); }
 .bd-level.deny { background: var(--err-soft); color: var(--err); }
 .bd-scope { min-width: 0; flex: 1 1 auto; color: var(--ink-2); overflow-wrap: anywhere; }
+/* the profile column is narrow: a scoped rule takes the full row under its class, a long scope (a path) two lines at most (the whole of it on hover) */
+.bots-col-profile .bd-scoped { margin-left: 0; }
+.bots-col-profile .bd-scope { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .bd-trust { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); }
 .bd-trust li { display: flex; align-items: center; gap: var(--sp-2); }
 .bd-trust-name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

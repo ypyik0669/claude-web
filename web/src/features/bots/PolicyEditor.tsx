@@ -78,7 +78,7 @@ function ClassRow({ bot, cls }: { bot: BotStatus; cls: ActionClass }) {
           {scoped.map((r, i) => (
             <li key={i}>
               <span className={clsx('bd-level', r.level)}>{levelLabel(r.level)}</span>
-              <span className="bd-scope">{scopeText(r.scope)}</span>
+              <span className="bd-scope" title={scopeText(r.scope)}>{scopeText(r.scope)}</span>
               <button className="icon-btn" title={tr('删除')} aria-label={tr('删除')} onClick={() => void remove(r)}><Icon name="trash" size={12} /></button>
             </li>
           ))}
