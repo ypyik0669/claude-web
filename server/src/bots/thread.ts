@@ -62,7 +62,7 @@ export function threadPrompt(bot: Bot, o: { tools?: boolean; server?: string } =
     // only the routine runs' reports: on the real relay the bot answered a plain chat turn in it (查了什么 / 没能查到什么 / …)
     c.report ? `例行跑完写报告时的格式（只用于例行的报告；在这里聊天时照常说话）：${c.report}` : '',
     c.done ? `完成条件：${c.done}` : '',
-    bot.routines.length ? `现有的例行：${bot.routines.map((r) => `「${r.name}」（${cadence(r)}${r.enabled ? '' : '，已关闭'}${r.selfMade ? '' : '，用户建的：你不能改'}）`).join('、')}` : '现在还没有例行。',
+    bot.routines.length ? `现有的例行：${bot.routines.map((r) => `「${noTags(r.name)}」（${cadence(r)}${r.enabled ? '' : '，已关闭'}${r.selfMade ? '' : '，用户建的：你不能改'}）`).join('、')}` : '现在还没有例行。',
     '',
     '# 怎么说话',
     '- 像同事一样说话：简短、直接、具体，不客套，不说「作为 AI」。',
@@ -96,14 +96,14 @@ export function threadPrompt(bot: Bot, o: { tools?: boolean; server?: string } =
  */
 export function kickoffText(bot: Bot, template?: BotTemplate): string {
   const body = template ? [
-    `用户用模板「${template.name}」建了你，职责和例行已经按模板设好了：${bot.routines.map((r) => `「${r.name}」（${cadence(r)}）`).join('、') || '（没有例行）'}。`,
-    `开口先说「我按『${template.name}』来」，然后最多问两个确认问题，用 AskUserQuestion 问（没有这个工具就直接列出来）——比如具体盯哪个仓库或来源、出了问题要不要叫用户。`,
+    `用户用模板「${noTags(template.name)}」建了你，职责和例行已经按模板设好了：${bot.routines.map((r) => `「${noTags(r.name)}」（${cadence(r)}）`).join('、') || '（没有例行）'}。`,
+    `开口先说「我按『${noTags(template.name)}』来」，然后最多问两个确认问题，用 AskUserQuestion 问（没有这个工具就直接列出来）——比如具体盯哪个仓库或来源、出了问题要不要叫用户。`,
     '问清楚后用你的工具改职责或例行；没什么要改的就不用改。',
   ] : bot.routines.length ? [
     `你已经在值班了，现有的例行：${bot.routines.map((r) => `「${r.name}」（${cadence(r)}${r.enabled ? '' : '，已关闭'}）`).join('、')}。`,
     '这是用户第一次打开和你的对话：用一两句话介绍自己和你现在在做的事，问用户要不要调整什么。',
   ] : [
-    `这是你的第一句话：用户刚把你建好，打开了和你的对话。先用一句话介绍自己（你叫「${bot.name}」，会在用户不在的时候接着干活），`,
+    `这是你的第一句话：用户刚把你建好，打开了和你的对话。先用一句话介绍自己（你叫「${noTags(bot.name)}」，会在用户不在的时候接着干活），`,
     '然后用 AskUserQuestion 问用户最想让你帮什么（没有这个工具就直接列出来）。卡片上放四个选项，问题里顺带一句「要是想要 E 帮我写东西，或者 F 别的，点『其它』自己写」：',
     'A 每天早上给我一页纸',
     'B 盯一个仓库的 PR 和 CI',
@@ -232,7 +232,8 @@ export class BotThreads extends EventEmitter {
     const now = Date.now();
     this.delivered.set(botId, now);
     void this.d.store.setThreadState(botId, { deliveredAt: now }).catch((e) => console.warn(`[bots] cannot keep ${botId}'s delivered mark:`, e));
-    const fresh = this.d.store.timeline(botId).filter((e) => e.at > since && e.kind !== 'system');
+    // a system line from an inbox item (a routine stopped, a budget used up, 做了告诉我: item:<id>) is news to it, unlike its own
+    const fresh = this.d.store.timeline(botId).filter((e) => e.at > since && (e.kind !== 'system' || e.id.startsWith('item:')));
     if (!fresh.length) return text;
     const items = new Map<string, InboxItem>(this.d.inbox.list(botId, true).map((i) => [i.id, i]));
     const runs = new Map<string, BotRun>(this.d.store.runs(botId, 300).map((r) => [r.id, r]));

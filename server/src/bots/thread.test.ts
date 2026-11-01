@@ -82,6 +82,17 @@ describe('BotThreads', () => {
     expect(threads.withEvents('other', 'x')).toBe('x');
   });
 
+  it("withEvents tells the system line of an inbox item (a routine stopped) but not the bot's own (a routine it made)", async () => {
+    const b = bot({ threadId: 'T1' }); await store.save(b);
+    await threads.ensure(b);
+    await store.setThreadState('b1', { deliveredAt: Date.now() - 60_000 });
+    await store.appendTimeline('b1', { id: 'sys:1', botId: 'b1', at: Date.now(), kind: 'system', text: '已创建例行 晨检', icon: 'routine' });
+    await store.appendTimeline('b1', { id: 'item:f1', botId: 'b1', at: Date.now(), kind: 'system', text: '例行「晨检」连续失败 3 次，已停用', icon: 'routine' });
+    const out = threads.withEvents('T1', '晨检怎么没跑？');
+    expect(out).toContain('例行「晨检」连续失败 3 次，已停用');
+    expect(out).not.toContain('已创建例行');
+  });
+
   it('onApproval lets the approved call through the thread gate once and sends a hidden 「已批准」', async () => {
     const b = bot({ threadId: 'T1' }); await store.save(b);
     const r = await threads.ensure(b);
