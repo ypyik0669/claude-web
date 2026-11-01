@@ -12,6 +12,7 @@ import { tr, dateLocale } from '@/i18n';
 import { EMPTY } from '@/ui/terms';
 import { EmptyState } from '@/ui/EmptyState';
 import { pickFolder } from '@/ui/pick-folder';
+import { previewFile } from './right-panel';
 
 function join(dir: string, name: string) {
   const sep = dir.includes('\\') ? '\\' : '/';
@@ -69,7 +70,7 @@ function Node({ path, name, depth, ctx, forceOpen }: { path: string; name: strin
         <div className="ft-row" style={{ paddingLeft: 6 + (depth + 1) * 12 }}>
           <span className="chev" style={{ visibility: 'hidden' }}><Icon name="chevronRight" size={11} /></span>
           <span className="ic"><Icon name={ctx.editing.mode === 'newDir' ? 'folder' : 'read'} size={13} /></span>
-          <InlineInput initial="" onDone={async (v) => { const mode = ctx.editing!.mode; ctx.setEditing(null); if (!v) return; const target = join(path, v); await ws.request(mode === 'newDir' ? { kind: 'fs.mkdir', path: target } : { kind: 'fs.create', path: target }).catch((e) => useStore.getState().toast(e.message)); ctx.reload(path); if (mode === 'newFile') useStore.getState().openTile({ id: `d${Date.now()}`, kind: 'doc', path: target }, 'tab'); }} />
+          <InlineInput initial="" onDone={async (v) => { const mode = ctx.editing!.mode; ctx.setEditing(null); if (!v) return; const target = join(path, v); await ws.request(mode === 'newDir' ? { kind: 'fs.mkdir', path: target } : { kind: 'fs.create', path: target }).catch((e) => useStore.getState().toast(e.message)); ctx.reload(path); if (mode === 'newFile') previewFile(target); }} />
         </div>
       )}
       {isOpen && err && <div className="ft-row" style={{ paddingLeft: 6 + (depth + 1) * 12, color: 'var(--red)' }}>{err}</div>}
@@ -84,14 +85,13 @@ function Node({ path, name, depth, ctx, forceOpen }: { path: string; name: strin
 }
 
 function FileRow({ entry, path, depth, ctx }: { entry: FsEntry; path: string; depth: number; ctx: Ctx }) {
-  const openTile = useStore((s) => s.openTile);
   const g = ctx.git.get(norm(path));
   const sel = ctx.selected === path;
   return (
     <div
       className={clsx('ft-row file', sel && 'sel', g && `git-${g.status}`)}
       style={{ paddingLeft: 6 + depth * 12 }}
-      onClick={(e) => { ctx.setSelected(path); openTile({ id: `d${Date.now()}`, kind: 'doc', path }, e.ctrlKey || e.metaKey ? 'tab' : 'tab'); }}
+      onClick={() => { ctx.setSelected(path); previewFile(path); }}
       onContextMenu={(e) => { e.preventDefault(); ctx.setSelected(path); ctx.setMenu({ path, dir: false, x: e.clientX, y: e.clientY }); }}
       draggable
       onDragStart={(e) => { e.dataTransfer.setData('text/plain', path); e.dataTransfer.setData(MIME_SESSION + '-file', path); }}
@@ -135,7 +135,8 @@ function ContextMenu({ m, ctx, onClose }: { m: NonNullable<Ctx['menu']>; ctx: Ct
   };
   return (
     <div ref={box} className="menu ft-menu" role="menu" aria-label={tr('文件操作')} style={{ position: 'fixed', left: Math.min(m.x, window.innerWidth - 220), top: Math.min(m.y, window.innerHeight - 320) }} onClick={(e) => e.stopPropagation()}>
-      {!m.dir && <button onClick={act(() => st.openTile({ id: `d${Date.now()}`, kind: 'doc', path: m.path }, 'tab'))}>{tr('打开')}</button>}
+      {!m.dir && <button onClick={act(() => previewFile(m.path))}>{tr('打开')}</button>}
+      {!m.dir && <button onClick={act(() => st.openTile({ id: `d${Date.now()}`, kind: 'doc', path: m.path }, 'tab'))}>{tr('在标签页打开')}</button>}
       {!m.dir && <button onClick={act(() => { const before = st.layout; st.dispatchLayout({ t: 'pane.split', paneId: (st.layout.groups.find((g) => g.id === st.layout.activeGroupId) ?? st.layout.groups[0]).focusedPaneId, dir: 'row' }); if (useStore.getState().layout !== before) useStore.getState().openTile({ id: `d${Date.now()}`, kind: 'doc', path: m.path }, 'replace'); })}>{tr('在右侧分屏打开')}</button>}
       {!m.dir && ctx.git.get(norm(m.path)) && <button onClick={act(() => st.openTile({ id: `df${Date.now()}`, kind: 'diff', sessionId: '', path: m.path }, 'tab'))}>{tr('查看改动 (diff)')}</button>}
       <button onClick={act(() => ctx.setEditing({ path: dir, mode: 'newFile' }))}>{tr('新建文件')}</button>

@@ -16,11 +16,12 @@ vi.mock('@/store/paneContext', () => ({ usePaneCtx: () => null }));
 const links = vi.hoisted(() => ({
   desktop: null as null | { openExternal: ReturnType<typeof vi.fn> },
   openInBrowser: vi.fn(),
+  previewFile: vi.fn(),
 }));
 vi.mock('@/desktop', () => ({ get desktop() { return links.desktop; } }));
 vi.mock('@/features/remote-guard', () => ({ blockRemoteOpen: () => false }));
 vi.mock('./CodeBlock', () => ({ CodeBlock: () => null }));
-vi.mock('@/features/workbench/right-panel', () => ({ openInBrowser: (u: string) => links.openInBrowser(u) }));
+vi.mock('@/features/workbench/right-panel', () => ({ openInBrowser: (u: string) => links.openInBrowser(u), previewFile: (p: string, l?: number) => links.previewFile(p, l) }));
 
 const hrefs = (md: string) => [...renderToStaticMarkup(createElement(Markdown, { text: md })).matchAll(/<a href="([^"]*)"/g)].map((m) => m[1].replace(/&amp;/g, '&'));
 
@@ -50,15 +51,16 @@ describe('<Markdown> links keep their href and route', () => {
   it('a middle click is routed like a click (and prevented); other buttons are left alone', () => {
     const h = linkHandlers('file:///C:/x.html', undefined, 's1');
     const ev = (button: number) => ({ button, preventDefault: vi.fn() });
-    openTile.mockClear();
+    links.previewFile.mockClear();
     const right = ev(2);
     h.onAuxClick(right);
     expect(right.preventDefault).not.toHaveBeenCalled();
-    expect(openTile).not.toHaveBeenCalled();
+    expect(links.previewFile).not.toHaveBeenCalled();
     const middle = ev(1);
     h.onAuxClick(middle);
     expect(middle.preventDefault).toHaveBeenCalled();
-    expect(openTile).toHaveBeenCalledWith(expect.objectContaining({ kind: 'doc', path: 'C:/x.html' }), 'tab');
+    // a file opens in 文件's preview in the right panel (like the official app)
+    expect(links.previewFile).toHaveBeenCalledWith('C:/x.html', undefined);
     // a middle click on a link that goes nowhere still does not open a window
     const none = ev(1);
     linkHandlers('data:text/html,x', undefined, null).onAuxClick(none);

@@ -9,11 +9,11 @@ import { Icon } from '@/ui/icons';
 import { tr } from '@/i18n';
 import { fileMenuProps } from '@/features/files/FileMenu';
 import { openPublish, openPublished } from '@/features/cloud/cloud-open';
+import { previewFile } from './right-panel';
 
 export function AllArtifacts() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<ArtifactRef[] | null>(null);
-  const openTile = useStore((s) => s.openTile);
   useEffect(() => {
     if (!open) return;
     let live = true;
@@ -37,7 +37,7 @@ export function AllArtifacts() {
           <button className="sub link-btn all-arts-published" data-act="published" onClick={() => openPublished()}><Icon name="share" size={12} /> {tr('已发布的文件')}</button>
           {items.map((a) => (
             <div key={a.path} className="row clickable" title={a.path} {...fileMenuProps(a.path)}
-              onClick={() => openTile({ id: `d${Date.now()}`, kind: 'doc', path: a.path }, 'tab')}>
+              onClick={() => previewFile(a.path)}>
               <span><Icon name="read" size={13} /></span>
               <div className="grow">
                 <div>{basename(a.path)}</div>

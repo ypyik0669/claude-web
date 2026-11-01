@@ -11,6 +11,7 @@ import { viewTarget, type ExplorerMode, type ReviewIntent } from './panel-entrie
 import type { WbView } from './wb-views';
 import { openUrl } from '@/features/browser/state';
 import { tr } from '@/i18n';
+import { samePath } from '@/features/paths';
 
 interface RightPanelState {
   /** the last request for the review; `n` grows so asking for the same thing twice still applies */
@@ -20,8 +21,11 @@ interface RightPanelState {
   reviewCount: number;
   /** an in-place 改动 view (a conversation whose views stay in place): the file a change card asked for (only that conversation's in-place review takes it) */
   inPlace: { sessionId: string; path?: string; n: number } | null;
+  /** files previewed in 文件 (beside the tree, like the official app's file pane); `active` is the one in front */
+  preview: { files: PreviewFile[]; active: string | null };
 }
-export const useRightPanel = create<RightPanelState>(() => ({ review: null, explorer: null, reviewCount: 0, inPlace: null }));
+export interface PreviewFile { id: string; path: string; line?: number }
+export const useRightPanel = create<RightPanelState>(() => ({ review: null, explorer: null, reviewCount: 0, inPlace: null, preview: { files: [], active: null } }));
 let seq = 0;
 
 // The functions below are the right panel's public entry points (the sidebar, the composer, the palette and the
@@ -50,6 +54,41 @@ export function openReview(intent: ReviewIntent = {}): void {
 /** 文件 on the tree, the search, or this conversation's generated files. */
 export function openExplorer(mode: ExplorerMode): void {
   if (showPanel('explorer')) useRightPanel.setState({ explorer: { mode, n: ++seq } });
+}
+
+/** At most this many previews stay mounted (each text one is a Monaco editor); the oldest goes first. */
+const MAX_PREVIEWS = 8;
+/** The right panel is widened to this when a preview first opens beside the tree (never narrowed). */
+const PREVIEW_WIDTH = 760;
+
+/**
+ * Open a file in 文件's preview (the right panel, next to the tree) — the same file again just comes to the front
+ * (at `line` when given). On a phone the right panel is a bottom drawer: the file opens in place as a doc tab
+ * (a whole screen beats a drawer for reading a file).
+ */
+export function previewFile(path: string, line?: number): void {
+  const s = useStore.getState();
+  if (s.mobile) { s.openTile({ id: `d${Date.now().toString(36)}`, kind: 'doc', path, ...(line ? { line } : {}) }, 'tab'); return; }
+  const { files } = useRightPanel.getState().preview;
+  if (!files.length && s.layout.dock.width < PREVIEW_WIDTH) s.dispatchLayout({ t: 'dock.set', patch: { width: PREVIEW_WIDTH } });
+  showPanel('explorer');
+  const had = files.find((f) => samePath(f.path, path));
+  const it: PreviewFile = had ? { ...had, line } : { id: `p${Date.now().toString(36)}${++seq}`, path, line };
+  const next = had ? files.map((f) => (f.id === had.id ? it : f)) : [...files, it].slice(-MAX_PREVIEWS);
+  useRightPanel.setState({ preview: { files: next, active: it.id } });
+}
+
+/** Close a preview; the one next to it (or before it) comes to the front. */
+export function closePreview(id: string): void {
+  const { files, active } = useRightPanel.getState().preview;
+  const i = files.findIndex((f) => f.id === id);
+  if (i < 0) return;
+  const next = files.filter((f) => f.id !== id);
+  useRightPanel.setState({ preview: { files: next, active: active === id ? (next[i] ?? next[i - 1])?.id ?? null : active } });
+}
+
+export function activatePreview(id: string): void {
+  useRightPanel.setState((st) => ({ preview: { ...st.preview, active: id } }));
 }
 
 /**

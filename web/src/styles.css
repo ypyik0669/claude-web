@@ -1789,6 +1789,27 @@ html.desktop:not(.mac) .dock.simple:not(.min) .dock-tabs .tab.fixed { padding: 0
 
 /* 文件 */
 .files-view { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.fv-side { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.fv-side[hidden] { display: none; }
+/* 文件 with previewed files (like the official app): the file on the left, the tree as a column on the right */
+.files-view.with-preview { flex-direction: row; }
+.files-view.with-preview .fv-side { flex: none; width: clamp(200px, 36%, 300px); border-left: var(--hairline) solid var(--edge-subtle); }
+.fv-preview { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.fv-ptabs { flex: none; display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 8px; border-bottom: var(--hairline) solid var(--edge-subtle); }
+.fv-ptab-list { flex: 1; min-width: 0; display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.fv-ptab-list::-webkit-scrollbar { display: none; }
+.fv-ptab { flex: none; max-width: 200px; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 4px 0 8px; border-radius: var(--r-row); font-size: var(--fs-sm); color: var(--ink-3); cursor: default; }
+.fv-ptab:hover { background: var(--layer-hover); color: var(--ink-1); }
+.fv-ptab.active { background: var(--layer-active); color: var(--ink-1); }
+.fv-ptab svg { flex: none; color: var(--ink-4); }
+.fv-ptab .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fv-ptab .x { flex: none; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-sm, 4px); opacity: 0; }
+.fv-ptab:hover .x, .fv-ptab.active .x, .fv-ptab .x:focus-visible { opacity: 1; }
+.fv-ptab .x:hover { background: var(--layer-hover); }
+.fv-tree-toggle { width: 26px; height: 26px; }
+.fv-tree-toggle.on { color: var(--ink-1); background: var(--layer-active); }
+.fv-pdoc { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.fv-pdoc[hidden] { display: none; }
 .fv-head { flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) 14px var(--sp-2); }
 .fv-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .fv-body[hidden] { display: none; }

@@ -6,6 +6,7 @@ import { blockRemoteOpen } from '@/features/remote-guard';
 import { Icon } from '@/ui/icons';
 import { EmptyState } from '@/ui/EmptyState';
 import { EMPTY } from '@/ui/terms';
+import { previewFile } from './right-panel';
 
 /** Files a session produced: Artifact tool outputs and Write-created files, newest first. */
 export function useArtifacts(sessionId: string | null | undefined): { path: string; via: string }[] {
@@ -25,12 +26,11 @@ export function useArtifacts(sessionId: string | null | undefined): { path: stri
 /** The 生成的文件 list (the in-place view, and the group at the top of the right panel's 文件 tab). */
 export function Artifacts({ sessionId, compact }: { sessionId: string; compact?: boolean }) {
   const items = useArtifacts(sessionId);
-  const openTile = useStore((s) => s.openTile);
   if (!items.length) return compact ? null : <EmptyState e={EMPTY.artifacts} />;
   return (
     <div className="list">
       {items.map((a) => (
-        <div key={a.path} className="row clickable" onClick={() => { if (!blockRemoteOpen(sessionId, a.path)) openTile({ id: `d${Date.now()}`, kind: 'doc', path: a.path }, 'tab'); }} title={a.path}>
+        <div key={a.path} className="row clickable" onClick={() => { if (!blockRemoteOpen(sessionId, a.path)) previewFile(a.path); }} title={a.path}>
           <span><Icon name="read" size={13} /></span>
           <div className="grow"><div>{basename(a.path)}</div><div className="sub">{a.path}</div></div>
           <span className="badge">{a.via}</span>

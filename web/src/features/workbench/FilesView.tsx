@@ -9,7 +9,10 @@ import { FileTree } from './FileTree';
 import { SearchView } from './SearchView';
 import { Artifacts, useArtifacts } from './Artifacts';
 import { useGitStatus } from './git-status';
-import { useRightPanel } from './right-panel';
+import { useRightPanel, previewFile, closePreview, activatePreview, type PreviewFile } from './right-panel';
+import { DocTile } from './tiles/DocTile';
+import { basename } from '@/util';
+import { dlg } from '@/ui/dialog';
 import { tr } from '@/i18n';
 import { AllArtifacts } from './AllArtifacts';
 import { RootGroups } from './RootGroups';
@@ -29,6 +32,8 @@ let appliedIntent = 0;
  * Both halves stay mounted once shown (`hidden`), so the tree's open folders and the search's query / results
  * survive switching back and forth; the search mounts the first time it is asked for (it focuses its box).
  * `inDock`: the right panel's own copy, the one the open requests (··· 文件 / 搜索 / 生成的文件) go to.
+ * Files opened from the tree, the search, the chat's links (`previewFile`) show in that copy's preview on the left,
+ * the tree as a column on the right (like the official app); the tree column can be hidden (`ui.filesTreeHidden`).
  */
 export function FilesView({ visible, inDock }: { visible: boolean; inDock?: boolean }) {
   const active = useScopedSession();
@@ -66,18 +71,25 @@ export function FilesView({ visible, inDock }: { visible: boolean; inDock?: bool
   const [shownSid, setShownSid] = useState(sid);
   if (shownSid !== sid) { setShownSid(sid); setAskedArtifacts(false); }
 
-  if (!active) return <EmptyState e={EMPTY.filesNoChat} />;
+  const previews = useRightPanel((s) => s.preview);
+  const treeHidden = useStore((s) => s.settings['ui.filesTreeHidden'] === true);
+  const withPreview = !!inDock && previews.files.length > 0;
+  const preview = withPreview && <PreviewPane files={previews.files} active={previews.active} treeHidden={treeHidden} />;
+
+  if (!active) return preview ? <div className={clsx('files-view with-preview', treeHidden && 'tree-hidden')}>{preview}</div> : <EmptyState e={EMPTY.filesNoChat} />;
   if (peer) return <div className="empty">{tr('这个对话在机器「{name}」上，它的文件在那台机器上。', { name: peer.name })}</div>;
   const pick = (m: 'tree' | 'search') => { setMode(m); if (m === 'search') setSearched(true); };
   const searchKey = keyLabel(SHORTCUTS.find((x) => x.id === 'files.search')!);
   // 打开文件: the desktop's own file box; a browser has none — go to the search instead
   const openFile = async () => {
     const p = desktop?.pickFile ? await desktop.pickFile() : null;
-    if (p) useStore.getState().openTile({ id: `d${Date.now()}`, kind: 'doc', path: p }, 'tab');
+    if (p) previewFile(p);
     else if (!desktop?.pickFile) pick('search');
   };
   return (
-    <div className="files-view">
+    <div className={clsx('files-view', withPreview && 'with-preview', withPreview && treeHidden && 'tree-hidden')}>
+      {preview}
+      <div className="fv-side" hidden={withPreview && treeHidden}>
       <div className="fv-head">
         <span className="seg" role="tablist" aria-label={tr('文件或搜索')}>
           <button role="tab" aria-selected={mode === 'tree'} className={clsx(mode === 'tree' && 'active')} onClick={() => pick('tree')}>{tr('文件')}</button>
@@ -93,7 +105,7 @@ export function FilesView({ visible, inDock }: { visible: boolean; inDock?: bool
           </button>
           {showTouched && (touched.length
             ? <div className="fv-touched-list">{touched.map((p) => (
-                <button key={p} className="fv-touched-it" title={p} onClick={() => useStore.getState().openTile({ id: `d${Date.now()}`, kind: 'doc', path: p }, 'tab')}>
+                <button key={p} className="fv-touched-it" title={p} onClick={() => previewFile(p)}>
                   <Icon name="files" size={12} /><span className="grow">{p.split(/[\/]/).pop()}</span>
                 </button>
               ))}</div>
@@ -118,6 +130,41 @@ export function FilesView({ visible, inDock }: { visible: boolean; inDock?: bool
         {roots.length ? <RootGroups roots={roots}>{(r) => <FileTree root={r} gitStatus={r === cwd ? gitStatus : undefined} />}</RootGroups> : <FileTree root="" onPickRoot={setBrowseRoot} />}
       </div>
       {searched && <div className="fv-body" hidden={mode !== 'search'}><RootGroups roots={roots}>{(r) => <SearchView root={r} />}</RootGroups></div>}
+      </div>
+    </div>
+  );
+}
+
+/** The previewed files: a tab per file and the tree's show / hide switch; every preview stays mounted (`hidden`). */
+function PreviewPane({ files, active, treeHidden }: { files: PreviewFile[]; active: string | null; treeHidden: boolean }) {
+  const close = async (f: PreviewFile) => {
+    if (useStore.getState().dirtyDocs[f.id] && !(await dlg.confirm(tr('「{name}」还没保存，仍然关闭？', { name: basename(f.path) }), { danger: true }))) return;
+    closePreview(f.id);
+  };
+  const toggleTree = () => void useStore.getState().setSetting('ui.filesTreeHidden', !treeHidden);
+  return (
+    <div className="fv-preview">
+      <div className="fv-ptabs" role="tablist" aria-label={tr('预览的文件')}>
+        <div className="fv-ptab-list">
+          {files.map((f) => (
+            <div key={f.id} role="tab" aria-selected={f.id === active} className={clsx('fv-ptab', f.id === active && 'active')} title={f.path}
+              onClick={() => activatePreview(f.id)} onAuxClick={(e) => { if (e.button === 1) void close(f); }}>
+              <Icon name="files" size={12} />
+              <span className="nm">{basename(f.path)}</span>
+              <button className="x" aria-label={tr('关闭')} title={tr('关闭')} onClick={(e) => { e.stopPropagation(); void close(f); }}><Icon name="close" size={11} /></button>
+            </div>
+          ))}
+        </div>
+        <button className={clsx('icon-btn fv-tree-toggle', !treeHidden && 'on')} aria-pressed={!treeHidden} onClick={toggleTree}
+          title={treeHidden ? tr('显示文件树') : tr('隐藏文件树')} aria-label={treeHidden ? tr('显示文件树') : tr('隐藏文件树')}>
+          <Icon name="sidebar" size={14} />
+        </button>
+      </div>
+      {files.map((f) => (
+        <div key={f.id} className="fv-pdoc" hidden={f.id !== active}>
+          <DocTile tile={{ id: f.id, kind: 'doc', path: f.path, line: f.line }} />
+        </div>
+      ))}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useStore } from '@/store';
 import { desktop } from '@/desktop';
 import { blockRemoteOpen } from '@/features/remote-guard';
 import { openInBrowser } from '@/features/workbench/right-panel';
+import { previewFile } from '@/features/workbench/right-panel';
 
 /**
  * Where a link in a reply goes (spec 2026-10-24 A1). Every link in a reply is decided here: a page → the browser,
@@ -111,5 +112,5 @@ export function followLink(r: LinkRoute, sessionId: string | null | undefined, o
   if (r.to === 'external') return openExternal(r.url);
   if (r.to !== 'file') return;
   if (blockRemoteOpen(sessionId, r.path)) return;
-  useStore.getState().openTile({ id: `d${Date.now().toString(36)}`, kind: 'doc', path: r.path, ...(r.line ? { line: r.line } : {}) }, 'tab');
+  previewFile(r.path, r.line);
 }

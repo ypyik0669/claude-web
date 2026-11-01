@@ -4009,4 +4009,8 @@ export const EN_WEB: Record<string, string> = {
   "，跳过 node_modules / .git 等 {skipped} 个": ", skipped {skipped} such as node_modules / .git",
   "，首次使用在对话里输入 /mcp 完成 OAuth 授权": ", on first use type /mcp in a conversation to finish OAuth authorization",
   "；": "; ",
+  "显示文件树": "Show file tree",
+  "隐藏文件树": "Hide file tree",
+  "预览的文件": "Previewed files",
+  "「{name}」还没保存，仍然关闭？": "“{name}” has unsaved changes. Close it anyway?",
 };

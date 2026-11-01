@@ -7,10 +7,10 @@ import { dlg } from '@/ui/dialog';
 import { imeComposing } from '@/ui/ime';
 import { Icon } from '@/ui/icons';
 import { tr } from '@/i18n';
+import { previewFile } from './right-panel';
 
 /** Cross-file search & replace (ripgrep on the server). Results grouped per file; click → editor at that line. */
 export function SearchView({ root }: { root: string }) {
-  const openTile = useStore((s) => s.openTile);
   const toast = useStore((s) => s.toast);
   const [q, setQ] = useState('');
   const [rep, setRep] = useState('');
@@ -105,7 +105,7 @@ export function SearchView({ root }: { root: string }) {
             {!collapsed[f.path] && f.matches.map((m) => {
               const key = `${f.path}:${m.line}`;
               return (
-                <div key={key} className={clsx('sr-line', excluded.has(key) && 'excluded')} onClick={() => openTile({ id: `d${Date.now().toString(36)}`, kind: 'doc', path: f.path, line: m.line }, 'tab')} title={`${f.path}:${m.line}`}>
+                <div key={key} className={clsx('sr-line', excluded.has(key) && 'excluded')} onClick={() => previewFile(f.path, m.line)} title={`${f.path}:${m.line}`}>
                   <span className="ln">{m.line}</span>
                   <span className="tx">{preview(m)}</span>
                   {showRep && <button className="x" title={excluded.has(key) ? tr('重新包含') : tr('从替换中排除')} onClick={(e) => { e.stopPropagation(); const n = new Set(excluded); n.has(key) ? n.delete(key) : n.add(key); setExcluded(n); }}><Icon name={excluded.has(key) ? 'plus' : 'close'} size={11} /></button>}

@@ -9,6 +9,7 @@ import { ErrorPre, ImageGrid } from './McpTool';
 import { blockRemoteOpen } from '@/features/remote-guard';
 import { fileMenuProps } from '@/features/files/FileMenu';
 import { tr } from '@/i18n';
+import { previewFile } from '@/features/workbench/right-panel';
 
 export function ReadBody({ t }: { t: ToolUseBlock }) {
   const inp = t.input as any;
@@ -117,7 +118,7 @@ export function FileLink({ path, line, children }: { path: string; line?: number
     if (blockRemoteOpen(sid, path)) return;
     // plain click → editor tab at the line; Alt+click → inspector (read-only quick look)
     if (e.altKey) { if (sid) useStore.setState({ inspect: { sessionId: sid, file: { path, line } } }); return; }
-    st.openTile({ id: `d${Date.now().toString(36)}`, kind: 'doc', path, line }, 'tab');
+    previewFile(path, line);
   };
   return <button className="file-link" onClick={open} {...fileMenuProps(path, ctx?.sessionId ?? useStore.getState().activeId)} title={tr("{path}\nAlt+点击 在详情面板查看", { path })}>{children ?? path}</button>;
 }
