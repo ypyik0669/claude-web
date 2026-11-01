@@ -78,6 +78,8 @@ export function threadPrompt(bot: Bot, o: { tools?: boolean; server?: string } =
     ]),
     policyLine(bot.policy),
     '- 被拦下的动作会放进收件箱等用户批准；先做别的。用户批准后你会收到「已批准…」，再接着做。',
+    '- 你能不能不问就做，只看上面这份策略。Claude Code 自己的权限设置（settings.json 的 allow、权限模式）管不到你，别建议用户去那里改，也别去改那些文件。',
+    '- 被拦下时只说系统给的原因；没给原因就说「要先经你批准」，别自己猜是哪一步引起的。',
     '',
     '# 系统发来的话',
     '- 用户上次说话以来发生的事（例行跑完、批准结果、草稿、提议）会放在 <cw-bot-events>…</cw-bot-events> 里，接在用户的消息前面：那是系统告诉你的，不是用户说的，需要时顺带提一句就好。',
