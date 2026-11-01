@@ -13,7 +13,12 @@ const PAIR_TTL_MS = 10 * 60_000;
 const MAX_TRIES = 5;
 
 /** `tokenHash` is the hex sha256 of the device token; the diagnostics bundle masks it. */
-export interface DeviceRecord { id: string; name: string; tokenHash: string; createdAt: number; lastSeenAt: number; ip?: string; ua?: string }
+export interface DeviceRecord {
+  id: string; name: string; tokenHash: string; createdAt: number; lastSeenAt: number; ip?: string; ua?: string;
+  /** another computer's federation (it said so when pairing, or once connected with `?peer=`): its token is held to
+   *  the peer rules from then on, whatever its later requests claim (SEC-07) */
+  kind?: 'peer';
+}
 
 /**
  * LAN / phone access: a second HTTP listener on 0.0.0.0 whose clients authenticate with per-device tokens
@@ -130,7 +135,7 @@ export class RemoteService extends EventEmitter {
   }
 
   /** Exchange a pairing code for a device token. */
-  async redeem(code: string, name: string, req: IncomingMessage): Promise<{ token: string; device: DeviceInfo } | { error: string }> {
+  async redeem(code: string, name: string, req: IncomingMessage, kind?: 'peer'): Promise<{ token: string; device: DeviceInfo } | { error: string }> {
     const p = this.pair;
     if (!p || p.expiresAt < Date.now()) return { error: tr('配对码已过期，请在电脑上重新生成') };
     if (p.tries >= MAX_TRIES) { this.pair = null; return { error: tr('尝试次数过多，请重新生成配对码') }; }
@@ -140,7 +145,7 @@ export class RemoteService extends EventEmitter {
     }
     this.pair = null;
     const token = randomBytes(32).toString('base64url');
-    const rec: DeviceRecord = { id: randomBytes(6).toString('hex'), name: (name || '').trim().slice(0, 60) || guessName(req.headers['user-agent'] ?? ''), tokenHash: hash(token), createdAt: Date.now(), lastSeenAt: Date.now(), ip: clientIp(req), ua: (req.headers['user-agent'] ?? '').slice(0, 200) };
+    const rec: DeviceRecord = { id: randomBytes(6).toString('hex'), name: (name || '').trim().slice(0, 60) || guessName(req.headers['user-agent'] ?? ''), tokenHash: hash(token), createdAt: Date.now(), lastSeenAt: Date.now(), ip: clientIp(req), ua: (req.headers['user-agent'] ?? '').slice(0, 200), ...(kind === 'peer' ? { kind } : {}) };
     await this.meta.addDevice(rec);
     this.tokenCache.set(token, rec.id);
     this.emit('changed');
@@ -164,6 +169,17 @@ export class RemoteService extends EventEmitter {
     return id;
   }
 
+  /** Another computer's token (see DeviceRecord.kind). */
+  isPeer(id: string | null | undefined): boolean { return !!id && this.meta.devices().find((d) => d.id === id)?.kind === 'peer'; }
+
+  /** A device that connected as another computer stays one: there is no way back to the phone rules. */
+  async markPeer(id: string) {
+    const d = this.meta.devices().find((x) => x.id === id);
+    if (!d || d.kind === 'peer') return;
+    await this.meta.markDevicePeer(id);
+    this.emit('changed');
+  }
+
   /** Removes the device. */
   async revoke(id: string) {
     await this.meta.removeDevice(id);
@@ -185,7 +201,11 @@ function guessName(ua: string) {
   return tr('设备');
 }
 
-/** The /pair page: reads the code from the URL fragment, asks for a device name, stores the token and opens the app. */
+/**
+ * The /pair page: reads the code from the URL fragment, asks for a device name and opens the app. The token lives only in
+ * the HttpOnly cookie /api/pair sets (SEC-06): no script can read it and it never goes into a URL; an older token in
+ * localStorage is dropped.
+ */
 export function pairPage() {
   return `<!doctype html><html lang="${getLocale() === 'zh' ? 'zh-CN' : 'en'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#f7f6f2" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#12110f" media="(prefers-color-scheme: dark)"><title>${tr('配对 · Claude Web')}</title>
 <style>:root{--g:#f7f6f2;--c:#fefdfc;--f:#1c1917;--f2:#67625f;--e:#be2a27;--r:#a94900;--pf:#fefdfc}
@@ -203,5 +223,5 @@ button{margin-top:22px;width:100%;font:inherit;font-weight:600;height:48px;borde
 <script>const c=location.hash.slice(1);if(/^\\d{6}$/.test(c))document.getElementById('code').value=c;
 document.getElementById('f').onsubmit=async(e)=>{e.preventDefault();const err=document.getElementById('err');err.textContent='';
 try{const r=await fetch('/api/pair',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:document.getElementById('code').value,name:document.getElementById('name').value})});const j=await r.json();
-if(!r.ok||j.error){err.textContent=j.error||(${JSON.stringify(tr('失败'))}+' '+r.status);return;}localStorage.setItem('cw.token',j.token);location.replace('/');}catch(x){err.textContent=String(x);}};</script></body></html>`;
+if(!r.ok||j.error){err.textContent=j.error||(${JSON.stringify(tr('失败'))}+' '+r.status);return;}try{localStorage.removeItem('cw.token');}catch(x){}location.replace('/');}catch(x){err.textContent=String(x);}};</script></body></html>`;
 }

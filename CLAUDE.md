@@ -50,7 +50,7 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 | [phase04-config](docs/notes/phase04-config.md) | 配置中心 / 自动化 / 打磨（阶段 4，2026-09-03） | 设置、对话框、密钥、Skills、MCP、定时任务、账本、诊断 |
 | [phase05-agents](docs/notes/phase05-agents.md) | 多 agent（阶段 5，2026-09-03） | AgentDriver、Codex / ACP 协议、归一成 SDK 消息、Windows 垫片、shot.cjs 用法 |
 | [phase06-remote-im](docs/notes/phase06-remote-im.md) | 远程 / 手机 / IM（阶段 6，2026-09-03） | 远程监听、配对、SSH 隧道、手机布局、IM 网关 |
-| [remote-anywhere](docs/notes/remote-anywhere.md) | 手机在外面也能连（2026-10-01，已删除 2026-10-31） | 删了什么、为什么、留下了什么、外面还要手动收的 VPS / 站点 |
+| [remote-anywhere](docs/notes/remote-anywhere.md) | 手机在外面也能连（2026-10-01，已删除 2026-10-31） | 删了什么、为什么、留下了什么（VPS / 站点是上游的，不用管） |
 | [phase07-board-goal](docs/notes/phase07-board-goal.md) | 看板 / 目标 / Android（阶段 7，2026-09-03） | Issue/PR 看板、目标（Goal）、Android |
 | [phase08-tokens-dock](docs/notes/phase08-tokens-dock.md) | 设计令牌 / 图标 / 停靠面板（阶段 8，2026-09-04） | 令牌分层、焦点环、PANELS 表、停靠面板不卸载 |
 | [phase09-chat](docs/notes/phase09-chat.md) | 对话渲染与 composer（阶段 9，2026-09-04） | 回合时间线、RunCard、applyTranscript live、模型 catalog、ultracode、流式卡顿（按帧渲染 / 测量脚本） |

@@ -18,6 +18,7 @@ import { freePort, unpack } from '../upstreams/sidecar.js';
 import { planModels } from '../channels/plan.js';
 import { proxy } from '../net/proxy.js';
 import { MANIFESTS, type EngineManifest } from './manifests/index.js';
+import { PINS, pinFor, type PinTable } from './manifests/pins.js';
 import { startProcess, stopTree, tailLog } from './process.js';
 import type { EngineId, EngineLoginImportResult, EngineLoginProvider, EngineLoginSession, EngineStatus } from './types.js';
 
@@ -25,7 +26,12 @@ const READY_MS = 30_000;
 const HEALTH_MS = 30_000;
 const DETECT_TTL = 10_000;
 
-interface Build { entry: string; sha256: string; verified: 'release' | 'recorded'; asset: string; at: number }
+/**
+ * verified: pinned = the hash this app ships (manifests/pins.ts); release = the user confirmed a file that matched the
+ * release's own checksum; recorded = the user confirmed a file whose release publishes no checksum. confirmed marks a
+ * build the user accepted (builds from before SEC-09 recorded 'release' without asking).
+ */
+interface Build { entry: string; sha256: string; verified: 'pinned' | 'release' | 'recorded'; asset: string; at: number; confirmed?: boolean }
 interface EngineState {
   version?: string;
   previousVersion?: string;
@@ -63,6 +69,8 @@ export interface EngineDeps {
   root?: string;
   /** builds that travel with the desktop app (`CLAUDE_WEB_ENGINES`, <resources>/engines): <platform>/<id>/<entry> */
   bundledDir?: string;
+  /** SHA-256 pinned per version / platform (default: manifests/pins.ts, read from bundled.json) */
+  pins?: PinTable;
 }
 
 const exe = process.platform === 'win32' ? '.exe' : '';
@@ -73,19 +81,32 @@ const isArchive = (name: string) => /\.zip$/i.test(name) ? 'zip' as const : /\.(
 
 export const platformKey = () => `${process.platform}-${process.arch}`;
 
-/** No SHA-256 published and the user has not confirmed this file (review E2): nothing is installed. */
+/**
+ * No SHA-256 pinned in this app for this version and the user has not confirmed this file (review E2, SEC-09):
+ * nothing is installed. releaseSha256 = the release's own checksum, which the file matches (a mismatch is refused
+ * outright); it comes from the same place as the file, so it is shown, not trusted.
+ */
 export class UnverifiedBuild extends Error {
-  constructor(readonly info: { version: string; asset: string; sha256: string }, name: string) {
-    super(tr('{name} {version} 的发布没有附带 SHA-256，要你确认后才安装（文件的 SHA-256：{sha256}）', { name, version: info.version, sha256: info.sha256 }));
+  constructor(readonly info: { version: string; asset: string; sha256: string; releaseSha256?: string }, name: string) {
+    super(info.releaseSha256
+      ? tr('{name} {version} 没有本应用固定的校验值，要你确认后才安装（文件的 SHA-256：{sha256}，和发布里附带的校验值一致）', { name, version: info.version, sha256: info.sha256 })
+      : tr('{name} {version} 的发布没有附带 SHA-256，要你确认后才安装（文件的 SHA-256：{sha256}）', { name, version: info.version, sha256: info.sha256 }));
   }
 }
 
 export interface InstallOptions {
-  /** the user agreed to install a build whose release publishes no SHA-256 */
+  /**
+   * the user confirmed a build whose hash this app does not pin; takes effect only together with `sha256` (the
+   * exact hash they were shown) — never a blanket "install anything"
+   */
   allowUnverified?: boolean;
   /** the hash the user was shown; the download must still have it */
   sha256?: string;
 }
+
+/** Did the user accept this exact file? allowUnverified alone is not consent: the hash they saw must match. */
+export const consented = (opts: InstallOptions, hash: string): boolean =>
+  opts.allowUnverified === true && typeof opts.sha256 === 'string' && opts.sha256.trim().toLowerCase() === hash;
 
 /** The build for this OS / CPU among a release's assets (the manifest's preference first, archives before bare files). */
 export function pickAsset(m: Pick<EngineManifest, 'prefer'>, assets: GhAsset[], platform = process.platform, arch = process.arch): GhAsset | null {
@@ -124,6 +145,7 @@ async function findEntry(dir: string, entry: string, depth = 0): Promise<string 
 export class EngineManager extends EventEmitter {
   readonly root: string;
   private readonly bundledRoot: string;
+  private readonly pins: PinTable;
   private runs = new Map<EngineId, Runtime>();
   private busy = new Map<EngineId, Promise<unknown>>();
   private detected = new Map<EngineId, { at: number; hit: { port: number; version?: string } | null }>();
@@ -133,6 +155,7 @@ export class EngineManager extends EventEmitter {
     super();
     this.root = deps.root ?? path.join(dataDir(), 'engines');
     this.bundledRoot = deps.bundledDir ?? process.env.CLAUDE_WEB_ENGINES ?? '';
+    this.pins = deps.pins ?? PINS;
   }
 
   private state(id: EngineId): EngineState {
@@ -407,6 +430,7 @@ export class EngineManager extends EventEmitter {
     const out: string[] = [];
     for (const w of this.manifest(id).warnings) if (w === 'self-update') out.push(tr('Magpie 会在后台自己更新，实际运行的版本可能和这里装的不同'));
     const b = st.version && this.binary(id) ? st.builds?.[st.version] : undefined;
+    if (b?.verified === 'release') out.push(tr('这个版本没有本应用固定的校验值：安装时你确认了文件的哈希（和发布里附带的一致）'));
     if (b?.verified === 'recorded') out.push(tr('这个版本的发布没有附带 SHA-256：首次安装时记下了文件的哈希，只能保证之后没被换过'));
     return out;
   }
@@ -515,9 +539,12 @@ export class EngineManager extends EventEmitter {
       if (st.version !== version) { st.previousVersion = st.version; st.version = version; await this.save(); }
       return version;
     }
-    const asset = pickAsset(m, rel.assets);
+    // a hash this app pins for the version names the file too; the release's own checksum is only shown (SEC-09)
+    const pin = pinFor(this.pins, id, version, platformKey());
+    const asset = pin ? rel.assets.find((a) => a.name === pin.asset) ?? null : pickAsset(m, rel.assets);
+    if (!asset && pin) throw new Error(tr('{name} {version} 的发布里没有 {asset}（本应用固定了它的校验值），已停止', { name: m.name, version, asset: pin.asset }));
     if (!asset) throw new Error(tr('{name} {version} 没有这个平台（{platform}）的版本', { name: m.name, version, platform: platformKey() }));
-    const expected = await this.releaseHash(rel, asset);
+    const releaseSha = pin ? null : await this.releaseHash(rel, asset);
     const dir = path.join(this.root, id);
     const tmp = path.join(dir, `.tmp-${crypto.randomBytes(4).toString('hex')}`);
     await fs.mkdir(tmp, { recursive: true });
@@ -534,14 +561,18 @@ export class EngineManager extends EventEmitter {
       if (asset.size && buf.length !== asset.size) throw new Error(tr('{name} 下载不完整（{got} / {want} 字节）', { name: m.name, got: buf.length, want: asset.size }));
       this.emit('progress', id, 'verify');
       const hash = crypto.createHash('sha256').update(buf).digest('hex');
-      if (expected && hash !== expected) throw new Error(tr('{name} 校验失败（SHA-256 和发布的不一致），已丢弃', { name: m.name }));
-      // no published hash: one we recorded earlier for the same file must still match
-      const before = st.builds?.[version];
-      if (!expected && before && before.asset === asset.name && before.sha256 !== hash) throw new Error(tr('{name} 的文件和上次安装时记下的哈希不一致，已丢弃', { name: m.name }));
-      // no published hash and not the file the user already confirmed: ask first (the same file's hash is shown)
-      const confirmedBefore = !!before && before.asset === asset.name && before.sha256 === hash;
-      if (!expected && !confirmedBefore && (!opts.allowUnverified || (opts.sha256 && opts.sha256.toLowerCase() !== hash))) {
-        throw new UnverifiedBuild({ version, asset: asset.name, sha256: hash }, m.name);
+      if (pin) {
+        if (hash !== pin.sha256) throw new Error(tr('{name} 校验失败（SHA-256 和本应用固定的不一致），已丢弃', { name: m.name }));
+      } else {
+        if (releaseSha && hash !== releaseSha) throw new Error(tr('{name} 校验失败（SHA-256 和发布的不一致），已丢弃', { name: m.name }));
+        // a hash the user accepted earlier for the same file must still match
+        const before = st.builds?.[version];
+        const accepted = !!before && before.asset === asset.name && (before.verified !== 'release' || before.confirmed === true);
+        if (accepted && before.sha256 !== hash) throw new Error(tr('{name} 的文件和上次安装时记下的哈希不一致，已丢弃', { name: m.name }));
+        // nothing pinned and not the file the user already accepted: ask first, showing this file's hash
+        if (!(accepted && before.sha256 === hash) && !consented(opts, hash)) {
+          throw new UnverifiedBuild({ version, asset: asset.name, sha256: hash, ...(releaseSha ? { releaseSha256: releaseSha } : {}) }, m.name);
+        }
       }
       const kind = isArchive(asset.name);
       const dl = path.join(tmp, kind === 'zip' ? 'download.zip' : kind ? 'download.tar.gz' : `${m.entry}${exe}`);
@@ -563,7 +594,7 @@ export class EngineManager extends EventEmitter {
       else await fs.copyFile(found, path.join(dest, entryName));
       if (path.basename(found) !== entryName && kind) await fs.rename(path.join(dest, path.basename(found)), path.join(dest, entryName));
       await fs.chmod(path.join(dest, entryName), 0o755).catch(() => {});
-      st.builds = { ...(st.builds ?? {}), [version]: { entry: entryName, sha256: hash, verified: expected ? 'release' : 'recorded', asset: asset.name, at: Date.now() } };
+      st.builds = { ...(st.builds ?? {}), [version]: { entry: entryName, sha256: hash, verified: pin ? 'pinned' : releaseSha ? 'release' : 'recorded', asset: asset.name, at: Date.now(), ...(pin ? {} : { confirmed: true }) } };
       if (st.version && st.version !== version) st.previousVersion = st.version;
       st.version = version;
       // keep the current and the previous build only
@@ -579,16 +610,16 @@ export class EngineManager extends EventEmitter {
     }
   }
 
-  upgrade(id: EngineId): Promise<EngineStatus> {
+  upgrade(id: EngineId, opts: InstallOptions = {}): Promise<EngineStatus> {
     return this.serial(id, async () => {
       const st = this.state(id);
       const was = st.version;
       const running = this.runs.has(id);
       let now: string;
       try {
-        now = await this.installNow(id);
+        now = await this.installNow(id, undefined, opts);
       } catch (e) {
-        // unverified: the UI confirms and installs that version with engines.install (nothing changed here)
+        // not pinned: the UI shows the hash and, on a yes, sends engines.upgrade again with it (nothing changed here)
         if (e instanceof UnverifiedBuild) return { ...(await this.status(id)), confirm: e.info };
         throw e;
       }
@@ -626,7 +657,16 @@ export class EngineManager extends EventEmitter {
   // ---- run ----
 
   start(id: EngineId): Promise<EngineStatus> {
-    return this.serial(id, async () => { await this.startNow(id); return this.status(id); });
+    return this.serial(id, async () => {
+      try {
+        await this.startNow(id);
+      } catch (e) {
+        // nothing installed yet and the download needs the user's confirmation: the UI asks, installs, starts again
+        if (e instanceof UnverifiedBuild) return { ...(await this.status(id)), confirm: e.info };
+        throw e;
+      }
+      return this.status(id);
+    });
   }
 
   private async keys(id: EngineId, m: EngineManifest): Promise<{ clientKey: string; managementKey: string }> {

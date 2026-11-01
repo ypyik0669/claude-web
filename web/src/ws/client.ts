@@ -130,7 +130,10 @@ export class WsClient {
   }
 }
 
-/** Access token: `?token=` on the page URL (desktop shell / dev) or the device token saved by the /pair page (phones). */
+/**
+ * Access token: `?token=` on the page URL (desktop shell / dev), remembered for reloads. A paired phone has none here: its
+ * token is an HttpOnly cookie the browser sends by itself (phones paired before that may still have one saved).
+ */
 export function authToken(): string | null {
   const q = new URLSearchParams(location.search).get('token');
   if (q) { try { localStorage.setItem('cw.token', q); } catch { /* private mode */ } return q; }

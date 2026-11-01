@@ -104,8 +104,17 @@ export type PluginRequest =
   | { kind: 'plugins.market.status' }
   | { kind: 'plugins.market.refresh' }
   | { kind: 'plugins.market.set'; config: PluginMarketConfig }
-  /** `id` = a catalog entry; or `url` (https) / `path` (a local .zip, .tar.gz or .json) */
-  | { kind: 'plugins.install'; id?: string; url?: string; path?: string; sha256?: string };
+  /**
+   * Download / read and verify a package without installing it: says whether it is verified by a trusted key and
+   * the SHA-256 of the exact bytes (shown in the confirmation before an unverified install).
+   */
+  | { kind: 'plugins.install.check'; id?: string; url?: string; path?: string; sha256?: string }
+  /**
+   * `id` = a catalog entry; or `url` (https) / `path` (a local .zip, .tar.gz or .json). `sha256`, when given, must
+   * match the bytes. A package not verified by a trusted key (unsigned catalog, a URL, a local file) is refused
+   * unless `acknowledgeUnverified` is true — the user confirmed running unverified code.
+   */
+  | { kind: 'plugins.install'; id?: string; url?: string; path?: string; sha256?: string; acknowledgeUnverified?: boolean };
 
 export interface PluginListResult { plugins: PluginView[]; dir: string; warnings: string[] }
 
@@ -137,6 +146,8 @@ export interface PluginMarketEntry {
   kind: 'declarative' | 'executable';
   hooks: PluginHook[];
   permissions: PluginPermissions;
+  /** catalog signed with the configured key and the entry pins its bytes; otherwise installing needs an acknowledgement */
+  verified: boolean;
 }
 
 export interface PluginMarketStatus {
@@ -151,8 +162,25 @@ export interface PluginMarketStatus {
   error?: string;
 }
 
+/** Why a package is not verified: a catalog without a public key, a direct URL, a local file. */
+export type PluginUnverifiedReason = 'unsigned-catalog' | 'url' | 'file';
+
+export interface PluginInstallCheck {
+  verified: boolean;
+  reason?: PluginUnverifiedReason;
+  /** hex SHA-256 of the exact bytes downloaded / read */
+  sha256: string;
+  size: number;
+  kind: 'declarative' | 'executable';
+  /** the catalog entry id, when installing by id */
+  id?: string;
+  name?: string;
+  /** where it came from, without credentials or query (a URL) or the file name */
+  source: string;
+}
+
 export interface PluginInstallResult {
-  installed: { id: string; name: string; version: string; kind: 'declarative' | 'executable'; file: string };
+  installed: { id: string; name: string; version: string; kind: 'declarative' | 'executable'; file: string; verified: boolean; sha256: string };
   plugins: PluginView[];
   dir: string;
   warnings: string[];

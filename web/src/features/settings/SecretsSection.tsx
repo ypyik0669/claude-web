@@ -4,7 +4,7 @@ import { useStore } from '@/store';
 import type { SecretsStatus } from '@shared';
 import { tr } from '@/i18n';
 
-const SCHEME_LABEL = { dpapi: tr('Windows DPAPI（当前用户）'), keychain: tr('macOS 钥匙串'), plain: tr('仅编码（此平台没有系统钥匙串）') };
+const SCHEME_LABEL = { dpapi: tr('Windows DPAPI（当前用户）'), keychain: tr('macOS 钥匙串'), libsecret: tr('Linux 密钥环（libsecret）'), plain: tr('仅编码（此平台没有系统钥匙串）') };
 
 export function SecretsSection() {
   const [st, setSt] = useState<SecretsStatus | null>(null);

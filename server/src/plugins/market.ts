@@ -34,6 +34,12 @@ export interface MarketEntry {
   repository?: string;
   hooks: PluginHook[];
   permissions: PluginPermissions;
+  /**
+   * The catalog was verified with the configured public key AND this entry pins its bytes (a signature or a
+   * SHA-256 covered by the signed catalog). Anything else is unverified code: installing it needs an explicit
+   * acknowledgement (`plugins.install { acknowledgeUnverified: true }`).
+   */
+  verified: boolean;
 }
 
 export interface MarketCatalog {
@@ -97,6 +103,8 @@ export function parseMarketEntry(raw: unknown): MarketEntry {
     ...(v.repository !== undefined ? { repository: httpsUrl(v.repository, 'repository') } : {}),
     hooks: parseHooks(v.hooks),
     permissions: parsePermissions(v.permissions),
+    // only parseSignedMarketCatalog may turn this on, after the catalog signature verified
+    verified: false,
   };
 }
 
@@ -204,7 +212,10 @@ export function sha256Hex(bytes: Buffer): string {
 
 /**
  * Parse a catalog body. With a configured public key the body must be a signed envelope and the signature has to
- * verify; without one an unsigned array / `{ entries }` is accepted. Invalid entries are still dropped per entry.
+ * verify (a missing or bad signature refuses the whole catalog), and every entry must pin its bytes with its own
+ * `signature` or a `sha256` (covered by the catalog signature) — an entry with neither is dropped. Those entries
+ * come back `verified: true`. Without a key an unsigned array / `{ entries }` is accepted, but every entry is
+ * `verified: false` (installing one needs an explicit acknowledgement). Invalid entries are still dropped per entry.
  */
 export function parseSignedMarketCatalog(text: string, publicKey?: string): { catalog: MarketCatalog; signed: boolean } {
   let raw: unknown;
@@ -217,7 +228,20 @@ export function parseSignedMarketCatalog(text: string, publicKey?: string): { ca
       throw new Error(tr('插件市场目录签名不对，已丢弃'));
     }
   }
-  return { catalog: parseMarketCatalog(raw), signed: !!publicKey && hasSignature };
+  const catalog = parseMarketCatalog(raw);
+  if (!publicKey) return { catalog, signed: false };
+  const rawList = obj!.entries as unknown[];
+  const entries: MarketEntry[] = [];
+  const errors = [...catalog.errors];
+  for (const e of catalog.entries) {
+    if (!e.signature && !e.sha256) {
+      const index = rawList.findIndex((r) => !!r && typeof r === 'object' && typeof (r as { id?: unknown }).id === 'string' && (r as { id: string }).id.trim() === e.id);
+      errors.push({ index, message: tr('插件市场条目 {id} 没有签名或校验值', { id: e.id }) });
+      continue;
+    }
+    entries.push({ ...e, verified: true });
+  }
+  return { catalog: { entries, errors }, signed: true };
 }
 
 /** `https://host/path?query` — only used to keep callers from ever printing credentials. */

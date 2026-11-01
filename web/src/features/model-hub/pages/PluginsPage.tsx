@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { PluginInstallResult, PluginListResult, PluginMarketEntry, PluginMarketStatus, PluginPermissions, PluginView } from '@shared';
+import type { PluginInstallCheck, PluginInstallResult, PluginListResult, PluginMarketEntry, PluginMarketStatus, PluginPermissions, PluginView } from '@shared';
 import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { dlg } from '@/ui/dialog';
@@ -82,7 +82,9 @@ function MarketCard({ e, installed, busy, installing, onInstall }: { e: PluginMa
         <span className="hub-meta">{tr('{n} 次安装', { n: e.downloads })}</span>
         <span className="hub-grow" />
         {e.sha256 && <span className="hub-chip" title={e.sha256}>{tr('有校验值')}</span>}
-        {e.signature && <span className="hub-chip green">{tr('已签名')}</span>}
+        {e.verified
+          ? <span className="hub-chip green">{tr('已验证')}</span>
+          : <span className="hub-chip warn" title={tr('没有用你配置的公钥验证过；安装前会再问一次')}>{tr('未验证')}</span>}
       </div>
     </div>
   );
@@ -132,6 +134,39 @@ function PluginCard({ p, busy, onToggle, onRemove }: { p: PluginView; busy: bool
   );
 }
 
+function unverifiedReason(c: PluginInstallCheck): string {
+  switch (c.reason) {
+    case 'url': return tr('它是直接从地址下载的，没有可信的签名能证明是谁发布的。');
+    case 'file': return tr('它是本机上的一个文件，没有可信的签名能证明是谁发布的。');
+    default: return tr('插件市场没有配置公钥，目录和插件包都没法验证。');
+  }
+}
+
+/**
+ * The second confirmation before installing a package no trusted key verified (the server refuses those unless
+ * the request says the user acknowledged it). Shows the SHA-256 of the exact bytes that will be installed.
+ */
+function confirmUnverified(c: PluginInstallCheck): Promise<boolean> {
+  const name = c.name ?? c.id ?? c.source;
+  const what = c.kind === 'executable'
+    ? tr('这是没有经过验证的代码：启用后会在这台电脑上运行，能做它申请的权限允许的一切。只在你信任它的来源时安装。')
+    : tr('这是没有经过验证的来源定义：启用后，你的请求和密钥会发到它写的地址。只在你信任它的来源时安装。');
+  const lines = [
+    what,
+    unverifiedReason(c),
+    '',
+    tr('来源：{source}', { source: c.source }),
+    tr('SHA-256：{hash}', { hash: c.sha256 }),
+    tr('大小：{size} KB', { size: (c.size / 1024).toFixed(1) }),
+  ];
+  return dlg.confirm(tr('安装未经验证的插件「{name}」？', { name }), {
+    message: lines.join('\n'),
+    okLabel: tr('仍然安装'),
+    danger: true,
+    focusCancel: true,
+  });
+}
+
 /**
  * 插件 (spec §6.10 / P7): the plugins actually installed under <data>/plugins (declarative sources and sandboxed
  * executables, from PluginService), the core capabilities that are always on, and the remote market (catalog +
@@ -147,6 +182,8 @@ export function PluginsPage() {
   const [marketKey, setMarketKey] = useState('');
   const [marketBusy, setMarketBusy] = useState(false);
   const [installing, setInstalling] = useState<string | null>(null);
+  const [pkgUrl, setPkgUrl] = useState('');
+  const [pkgSha, setPkgSha] = useState('');
 
   const load = async (reload = false) => {
     setBusy(true);
@@ -181,13 +218,33 @@ export function PluginsPage() {
     } catch (e: any) { toast(e.message); setMarket((m) => (m ? { ...m, error: e.message } : m)); } finally { setMarketBusy(false); }
   };
 
-  const installFromMarket = async (e: PluginMarketEntry) => {
-    setInstalling(e.id);
+  /**
+   * Install a package. A verified catalog entry goes straight in; anything else is downloaded and checked first,
+   * then confirmed (showing its SHA-256), and installed with that SHA-256 pinned so the confirmed bytes go in.
+   */
+  const installPackage = async (key: string, input: { id?: string; url?: string; sha256?: string }, verified: boolean): Promise<boolean> => {
+    setInstalling(key);
     try {
-      const res = await ws.request<PluginInstallResult>({ kind: 'plugins.install', id: e.id });
+      let req: { id?: string; url?: string; sha256?: string; acknowledgeUnverified?: boolean } = input;
+      if (!verified) {
+        const check = await ws.request<PluginInstallCheck>({ kind: 'plugins.install.check', ...input });
+        if (!check.verified) {
+          if (!(await confirmUnverified(check))) return false;
+          req = { ...input, sha256: check.sha256, acknowledgeUnverified: true };
+        }
+      }
+      const res = await ws.request<PluginInstallResult>({ kind: 'plugins.install', ...req });
       setList({ plugins: res.plugins, dir: res.dir, warnings: res.warnings });
       toast(tr('{name} 已安装', { name: res.installed.name }), true);
-    } catch (err: any) { toast(err.message); } finally { setInstalling(null); }
+      return true;
+    } catch (err: any) { toast(err.message); return false; } finally { setInstalling(null); }
+  };
+  const installFromMarket = (e: PluginMarketEntry) => installPackage(e.id, { id: e.id }, e.verified);
+  const installFromUrl = async () => {
+    const url = pkgUrl.trim();
+    if (!url) return;
+    const sha256 = pkgSha.trim();
+    if (await installPackage(':url', { url, ...(sha256 ? { sha256 } : {}) }, false)) { setPkgUrl(''); setPkgSha(''); }
   };
 
   const plugins = list?.plugins ?? [];
@@ -270,6 +327,7 @@ export function PluginsPage() {
       )}
 
       {tab === 'market' && (
+        <>
         <section className="hub-card">
           <div className="bd">
             <div className="hub-row" style={{ flexWrap: 'wrap', marginBottom: 10 }}>
@@ -323,6 +381,25 @@ export function PluginsPage() {
             )}
           </div>
         </section>
+        <section className="hub-card" style={{ marginTop: 12 }}>
+          <div className="bd">
+            <div className="hub-row" style={{ flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <label className="field" style={{ flex: '2 1 320px', margin: 0 }}>
+                <span>{tr('从地址安装')}</span>
+                <input className="input" value={pkgUrl} onChange={(e) => setPkgUrl(e.target.value)} placeholder="https://example.com/plugin.zip" spellCheck={false} />
+              </label>
+              <label className="field" style={{ flex: '1 1 220px', margin: 0 }}>
+                <span>{tr('SHA-256（可选）')}</span>
+                <input className="input" value={pkgSha} onChange={(e) => setPkgSha(e.target.value)} placeholder={tr('填了就必须一致')} spellCheck={false} />
+              </label>
+              <button className="btn sm" disabled={installing !== null || !pkgUrl.trim()} onClick={() => void installFromUrl()}>
+                {installing === ':url' ? tr('安装中…') : tr('安装')}
+              </button>
+            </div>
+            <div className="hub-meta" style={{ marginTop: 6 }}>{tr('从地址安装的插件没有经过验证，安装前会显示它的 SHA-256 并再问你一次。')}</div>
+          </div>
+        </section>
+        </>
       )}
     </div>
   );

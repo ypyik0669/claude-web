@@ -79,7 +79,7 @@ export function RemoteSection() {
         <span className={clsx('badge', st.running ? 'ok' : st.error ? 'err' : '')}>{st.running ? tr('运行中') : st.enabled ? (st.error || tr('未运行')) : tr('关闭')}</span>
       </div>
       <div className="sub" style={{ marginTop: 6 }}>
-        {tr('每台设备用一次性配对码换取自己的访问令牌（可随时吊销）。同一个 Wi-Fi 里走局域网，是明文 HTTP，别在公共网络上开。')}
+        {tr('每台设备用一次性配对码换取自己的访问令牌（可随时吊销）。配对的设备能在这台电脑上跑命令、读写文件，等于把电脑交给它；生成配对码、管理设备、看密钥只能在这台电脑上做。同一个 Wi-Fi 里走局域网，是明文 HTTP，别在公共网络上开；不在同一个网络就用 SSH 隧道。')}
         {st.addresses.length > 0 && <> {tr('本机地址：')}{st.addresses.map((a) => <code key={a} style={{ marginLeft: 6 }}>{a}:{st.port}</code>)}</>}
       </div>
       {st.enabled && (
@@ -114,7 +114,7 @@ export function RemoteSection() {
           <div key={d.id} className="row" data-device={d.id}>
             <span className={clsx('dot', Date.now() - d.lastSeenAt < 120_000 ? 'running' : 'idle')} />
             <div className="grow">
-              <div>{d.name} {d.ip && <span className="muted" style={{ fontSize: 12 }}>{d.ip.replace(/^::ffff:/i, '')}</span>}</div>
+              <div>{d.name} {d.kind === 'peer' && <span className="badge">{tr('电脑')}</span>} {d.ip && <span className="muted" style={{ fontSize: 12 }}>{d.ip.replace(/^::ffff:/i, '')}</span>}</div>
               <div className="sub">{tr('最近 {agoText} · 配对于 {toLocaleDateString} · {ua}', { agoText: agoText(d.lastSeenAt), toLocaleDateString: new Date(d.createdAt).toLocaleDateString(dateLocale()), ua: d.ua?.slice(0, 60) })}</div>
             </div>
             <button className="btn sm ghost" onClick={async () => { const n = await dlg.prompt(tr('设备名称'), d.name); if (n && n !== d.name) await ws.request({ kind: 'remote.devices.rename', id: d.id, name: n }); }}>{tr('改名')}</button>

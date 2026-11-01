@@ -5,7 +5,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { EngineManager } from './manager.js';
+import { EngineManager, platformKey } from './manager.js';
+import { handleEngineRequest } from './handlers.js';
+import { PINS, pinFor, pinsFrom, type PinTable } from './manifests/pins.js';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -19,7 +21,7 @@ const assetName = () => {
   return `cli-proxy-api_9.9.9_${os_}_${arch}${process.platform === 'win32' ? '.exe' : ''}`;
 };
 
-function setup(release: (name: string, body: Buffer) => object, extra: Record<string, string> = {}) {
+function setup(release: (name: string, body: Buffer) => object, extra: Record<string, string> = {}, pins?: PinTable) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-engines-'));
   dirs.push(root);
   const body = Buffer.from('#!/bin/sh\necho fake engine\n');
@@ -38,7 +40,7 @@ function setup(release: (name: string, body: Buffer) => object, extra: Record<st
   const meta: any = { engineState: () => state, saveChannels: async () => { saves++; } };
   const providers: any = { upsert: async () => ({}), remove: async () => {}, refreshModels: async () => {}, list: () => [] };
   // no bundled engines: a shell started from the installed app inherits CLAUDE_WEB_ENGINES, whose CLIProxyAPI would count as installed
-  const mgr = new EngineManager({ meta, providers, root, bundledDir: '' });
+  const mgr = new EngineManager({ meta, providers, root, bundledDir: '', ...(pins ? { pins } : {}) });
   return { mgr, root, state, urls, body, name, saves: () => saves };
 }
 
@@ -118,5 +120,82 @@ describe('EngineManager install verification', () => {
     const s = setup((name, body) => ({ tag_name: 'v9.9.9', assets: [{ name, browser_download_url: `https://dl.example/${name}`, size: body.length + 1, digest: `sha256:${sha(body)}` }] }));
     await expect(s.mgr.install('cliproxyapi')).rejects.toThrow();
     expect(s.state.cliproxyapi?.version).toBeUndefined();
+  });
+});
+
+// SEC-09: a checksum from the same release as the binary is not trust; only a hash this app ships installs silently.
+describe('EngineManager pinned hashes (SEC-09)', () => {
+  const pinned = (asset: string, sha256: string): PinTable => ({ cliproxyapi: { 'v9.9.9': { [platformKey()]: { asset, sha256 } } } });
+  const plain = (name: string, body: Buffer, extra: object = {}) => ({ tag_name: 'v9.9.9', assets: [{ name, browser_download_url: `https://dl.example/${name}`, size: body.length, ...extra }] });
+
+  it('reads the pins from bundled.json: its version, per platform, by the asset in the url', () => {
+    expect(pinFor(PINS, 'cliproxyapi', 'v8.0.45', 'darwin-arm64')).toEqual({ asset: 'CLIProxyAPI_8.0.45_darwin_aarch64.tar.gz', sha256: '30a9cacbeada0a80ad1f40c2c25015244b7f4fbca8c3cc42af3c4e6ff5d2fbac' });
+    expect(pinFor(PINS, 'magpie', 'v0.1.1803', 'win32-x64')?.asset).toBe('magpie-cli-windows-amd64.exe');
+    expect(pinFor(PINS, 'cliproxyapi', 'v8.0.44', 'darwin-arm64')).toBeNull();
+    const t = pinsFrom({
+      x: { version: 'v1', platforms: { 'linux-x64': { url: 'https://h/a/b.tar.gz', sha256: 'A'.repeat(64) }, 'linux-arm64': { url: 'https://h/c', sha256: 'nope' } },
+        pins: { v0: { 'linux-x64': { asset: 'old.tar.gz', sha256: 'b'.repeat(64) } } } },
+    });
+    expect(t).toEqual({ x: { v1: { 'linux-x64': { asset: 'b.tar.gz', sha256: 'a'.repeat(64) } }, v0: { 'linux-x64': { asset: 'old.tar.gz', sha256: 'b'.repeat(64) } } } });
+  });
+
+  it('a file matching the pinned hash installs without asking, as pinned, and the release checksum is not even read', async () => {
+    const s = setup((name, body) => ({ tag_name: 'v9.9.9', assets: [
+      { name, browser_download_url: `https://dl.example/${name}`, size: body.length },
+      { name: 'checksums.txt', browser_download_url: 'https://dl.example/checksums.txt' },
+    ] }), {}, pinned(assetName(), sha(Buffer.from('#!/bin/sh\necho fake engine\n'))));
+    const st = await s.mgr.install('cliproxyapi');
+    expect(st.confirm).toBeUndefined();
+    expect(st).toMatchObject({ installed: true, version: 'v9.9.9', verified: 'pinned', sha256: sha(s.body) });
+    expect(s.urls).not.toContain('https://dl.example/checksums.txt');
+  });
+
+  it('a file that differs from the pinned hash is refused, even when the release digest agrees and the user "confirmed" it', async () => {
+    const s = setup((name, body) => plain(name, body, { digest: `sha256:${sha(body)}` }), {}, pinned(assetName(), 'c'.repeat(64)));
+    await expect(s.mgr.install('cliproxyapi', undefined, { allowUnverified: true, sha256: sha(s.body) })).rejects.toThrow(/SHA-256|校验/);
+    expect(s.state.cliproxyapi?.version).toBeUndefined();
+  });
+
+  it('a pinned version whose release lacks the pinned file stops instead of picking another', async () => {
+    const s = setup((name, body) => plain(name, body), {}, pinned('CLIProxyAPI_9.9.9_other.tar.gz', 'c'.repeat(64)));
+    await expect(s.mgr.install('cliproxyapi')).rejects.toThrow(/CLIProxyAPI_9\.9\.9_other/);
+    expect(s.urls.some((u) => u.startsWith('https://dl.example/'))).toBe(false);
+  });
+
+  it('no pin: a matching release digest still asks, shows that it matches, and installs only the confirmed hash', async () => {
+    const s = setup((name, body) => plain(name, body, { digest: `sha256:${sha(body)}` }), {}, {});
+    const asked = await s.mgr.install('cliproxyapi');
+    expect(asked.confirm).toEqual({ version: 'v9.9.9', asset: s.name, sha256: sha(s.body), releaseSha256: sha(s.body) });
+    expect(asked.installed).toBe(false);
+    // allowUnverified alone is not consent
+    const blanket = await s.mgr.install('cliproxyapi', undefined, { allowUnverified: true });
+    expect(blanket.confirm?.sha256).toBe(sha(s.body));
+    expect(s.state.cliproxyapi?.version).toBeUndefined();
+    const done = await s.mgr.install('cliproxyapi', undefined, { allowUnverified: true, sha256: sha(s.body).toUpperCase() });
+    expect(done).toMatchObject({ installed: true, verified: 'release', sha256: sha(s.body) });
+    expect(done.warnings.length).toBeGreaterThan(0);
+  });
+
+  it('a build recorded as "release" before SEC-09 (never confirmed) is asked about again on reinstall', async () => {
+    const s = setup((name, body) => plain(name, body, { digest: `sha256:${sha(body)}` }), {}, {});
+    s.state.cliproxyapi = { builds: { 'v9.9.9': { entry: 'x', sha256: sha(s.body), verified: 'release', asset: s.name, at: 1 } } };
+    expect((await s.mgr.install('cliproxyapi')).confirm?.sha256).toBe(sha(s.body));
+  });
+
+  it('engines.start on an engine that is not installed answers with the hash to confirm instead of installing', async () => {
+    const s = setup((name, body) => plain(name, body), {}, {});
+    const st = await s.mgr.start('cliproxyapi');
+    expect(st.confirm?.sha256).toBe(sha(s.body));
+    expect(st.installed).toBe(false);
+    expect(st.running).toBe(false);
+  });
+
+  it('the WS handler passes allowUnverified on only with a well-formed hash', async () => {
+    const calls: any[] = [];
+    const svc: any = { install: async (...a: any[]) => { calls.push(a); return {}; }, upgrade: async (...a: any[]) => { calls.push(a); return {}; } };
+    await handleEngineRequest(svc, { kind: 'engines.install', id: 'magpie', allowUnverified: true });
+    await handleEngineRequest(svc, { kind: 'engines.install', id: 'magpie', allowUnverified: true, sha256: 'xyz' });
+    await handleEngineRequest(svc, { kind: 'engines.upgrade', id: 'magpie', allowUnverified: true, sha256: 'D'.repeat(64) });
+    expect(calls).toEqual([['magpie', undefined, {}], ['magpie', undefined, {}], ['magpie', { allowUnverified: true, sha256: 'd'.repeat(64) }]]);
   });
 });

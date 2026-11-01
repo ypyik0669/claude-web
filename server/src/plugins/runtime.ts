@@ -50,6 +50,8 @@ export function setPluginPrivacyHook(h: PluginPrivacyHook | null): void { privac
  * `require` (Module._load), `process.getBuiltinModule`, ESM `import` / `import()` (module.registerHooks, or
  * module.register on Nodes without it — the child refuses to start when neither works), `process.binding`,
  * and the stdout / stderr pipes (net.Socket objects otherwise: their constructor would open a TCP socket).
+ * net.Socket stays reachable without loading net (tty's streams extend it, process.stdin is one), so its connect and
+ * net.Server's listen are replaced at the source before any plugin code runs (SEC-02): every way to a socket ends there.
  * `child_process` / `worker_threads` come back only when the approved manifest grants them (CW_PLUGIN_ALLOW).
  */
 export const BOOTSTRAP = [
@@ -70,6 +72,15 @@ export const BOOTSTRAP = [
   "function sink(fd) { return new Writable({ write: function (c, e, cb) { try { fs.writeSync(fd, c); } catch (x) {} cb(); } }); }",
   "lock(process, 'stdout', sink(1));",
   "lock(process, 'stderr', sink(2));",
+  // the socket classes themselves: loaded here, before Module._load refuses net, so no side door reaches a working one
+  "(function () {",
+  "  const net = require('net');",
+  "  const no = function () { throw new Error('a plugin may not open sockets (use host.fetch)'); };",
+  "  lock(net.Socket.prototype, 'connect', no);",
+  "  lock(net.Server.prototype, 'listen', no);",
+  "  const dgram = require('dgram');",
+  "  for (const k of ['bind', 'connect', 'send']) lock(dgram.Socket.prototype, k, no);",
+  "})();",
   "const load = Module._load;",
   "lock(Module, '_load', function (req) {",
   "  if (blocked(req)) throw refuse(req);",

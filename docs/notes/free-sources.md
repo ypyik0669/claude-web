@@ -58,6 +58,24 @@
     `magpie-<os>-<arch>`、`.dmg` / `.zip`，`SHA256SUMS`。
   - 两边每个 asset 都有 GitHub 的 `digest: sha256:…`，先用它，其次 checksums 文件；都没有才「首次安装记下哈希」
     并在状态里警告（`verified: 'recorded'`）。
+- **校验值信谁（SEC-09，2026-11-01）**：GitHub digest / 同一 release 的 checksums 和二进制同源，只能说明下载没坏，
+  **不算可信**。可信的只有本应用自带的固定哈希：`manifests/pins.ts` 读 `bundled.json`——它的 `version` +
+  `platforms[*]`（asset 名取 url 的文件名）就是那个版本的固定值；要固定更多版本而不随包，加可选的
+  `pins: { "<tag>": { "<platform>": { "url"|"asset", "sha256" } } }`（`fetch.mjs` 只读 `platforms`，不受影响；
+  别编哈希，按 `fetch.mjs` 的办法实际下载算出来再填）。`installNow` 的三条路：
+  ① 有固定值 → 按固定的 asset 名在 release 里找文件（找不到就停，不退回按词挑），哈希不一致就丢弃（用户确认也没用），
+     一致直接装，`verified: 'pinned'`，不读 release 的 checksums。
+  ② 没固定值、release 有校验值 → 不一致直接丢弃；一致也**不装**，回 `confirm: { version, asset, sha256, releaseSha256 }`。
+  ③ 没固定值、release 也没有 → 回 `confirm`（无 `releaseSha256`）。
+  用户在 `EnginePanel` 的 `confirmEngineHash`（`dlg.confirm`，显示 asset 和 SHA-256，默认焦点在取消）点了确认，才发
+  `engines.install { version, allowUnverified: true, sha256 }`（升级则再发 `engines.upgrade` 带同样两个字段，好重启在跑的），
+  然后「下载并启动」再发一次 `engines.start`。`allowUnverified` **只在带着和下载一致的 `sha256` 时算数**
+  （`manager.consented`；handler 的 `consent()` 还要求 64 位十六进制），光一个 `allowUnverified: true` 什么也不装；
+  代码里没有别的地方会自己带上它。确认装的记 `verified: 'release' | 'recorded'` + `confirmed: true`，之后同一文件重装
+  不再问、哈希变了就拒；SEC-09 之前自动装成 `'release'` 的（没有 `confirmed`）重装时会再问一次。`engines.start`
+  遇到要下载又没固定值时也回 `confirm`（不再抛错）；渠道的 `EngineDriver.add/install/start` 见到 `confirm` 就报错，
+  让用户去面板里确认，不会替用户装。测试在 `engines/manager.test.ts` 的 `pinned hashes (SEC-09)`。
+  手动安装 / 更新装的是 latest，通常没有固定值，所以会问——这是故意的。
 - 版本：随包版本写在 `bundled.json`（当前 CLIProxyAPI v8.0.45 / Magpie v0.1.1803）；手动安装装的是 latest，
   之后**不自动升级**；`engines.upgrade` 装新的、切过去、启动失败自动回到旧的；`engines.rollback` 手动回退。
   只留当前和上一个版本。随包 build 不能卸载（装的是应用的一部分），「更新」会装一份用户目录里的新 build 覆盖它。

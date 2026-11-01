@@ -1,6 +1,6 @@
 // Hub dispatch for `engines.*` (kept out of hub.ts). No sessionId on any of these: no federation routing entry.
 import { tr } from '../i18n/index.js';
-import type { EngineManager } from './manager.js';
+import type { EngineManager, InstallOptions } from './manager.js';
 import { MANIFESTS } from './manifests/index.js';
 import type { EngineId, EngineRequest } from './types.js';
 
@@ -14,6 +14,15 @@ const engineId = (id: unknown): EngineId => {
 };
 
 /**
+ * The user's confirmation of one downloaded file (SEC-09): only from their click on the hash dialog, and only with the
+ * hash they saw — allowUnverified without a sha256 installs nothing (manager.consented).
+ */
+const consent = (req: { allowUnverified?: unknown; sha256?: unknown }): InstallOptions =>
+  req.allowUnverified === true && typeof req.sha256 === 'string' && /^[0-9a-f]{64}$/i.test(req.sha256.trim())
+    ? { allowUnverified: true, sha256: req.sha256.trim().toLowerCase() }
+    : {};
+
+/**
  * `remote`: a federation peer, a remote-access browser or a paired phone. They may read the status; everything
  * else downloads / runs programs on this computer or reads their logs (upstream errors, OAuth messages), so it is
  * for a window on this computer only (review E4).
@@ -22,11 +31,8 @@ export async function handleEngineRequest(svc: EngineManager, req: EngineRequest
   if (remote && req.kind !== 'engines.status') throw new Error(tr('只有本机的桌面窗口才能管理托管程序'));
   switch (req.kind) {
     case 'engines.status': return { engines: await svc.statuses() };
-    case 'engines.install': return svc.install(engineId(req.id), typeof req.version === 'string' && req.version ? req.version : undefined, {
-      allowUnverified: req.allowUnverified === true,
-      ...(typeof req.sha256 === 'string' && req.sha256 ? { sha256: req.sha256 } : {}),
-    });
-    case 'engines.upgrade': return svc.upgrade(engineId(req.id));
+    case 'engines.install': return svc.install(engineId(req.id), typeof req.version === 'string' && req.version ? req.version : undefined, consent(req));
+    case 'engines.upgrade': return svc.upgrade(engineId(req.id), consent(req));
     case 'engines.rollback': return svc.rollback(engineId(req.id));
     case 'engines.start': return svc.start(engineId(req.id));
     case 'engines.stop': return svc.stop(engineId(req.id));

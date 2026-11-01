@@ -19,16 +19,21 @@ export interface EngineStatus {
   previousVersion?: string;
   /** the build ships inside the desktop installer (vendor/engines): nothing is downloaded on first use */
   bundled?: boolean;
-  /** how the installed build was checked: the release's own SHA-256, or a hash we recorded at first install */
-  verified?: 'release' | 'recorded';
-  /** SHA-256 of the installed build (the release's, or the one recorded when the user confirmed an unverified build) */
+  /**
+   * how the installed build was checked (SEC-09): pinned = the SHA-256 this app ships for that version; release = the
+   * user confirmed it and it matched the release's own checksum (same origin as the file, so not trusted alone);
+   * recorded = the user confirmed it and the release publishes no checksum
+   */
+  verified?: 'pinned' | 'release' | 'recorded';
+  /** SHA-256 of the installed build */
   sha256?: string;
   /**
-   * Only in an install / upgrade answer: the release publishes no SHA-256, so nothing was installed. The UI shows
-   * the downloaded file's hash and, if the user agrees, sends engines.install again with `allowUnverified` (and
-   * this `sha256`, so a different file is not installed under that consent).
+   * Only in an install / upgrade / start answer: this app pins no SHA-256 for that version, so nothing was installed.
+   * The UI shows the downloaded file's hash (and says whether it matches the release's own checksum, releaseSha256)
+   * and, if the user agrees, sends engines.install again with this `version`, `allowUnverified` and this `sha256`
+   * (a different file is not installed under that consent).
    */
-  confirm?: { version: string; asset: string; sha256: string };
+  confirm?: { version: string; asset: string; sha256: string; releaseSha256?: string };
   port?: number;
   /** Magpie's own web/management page, when we started it with `--web` (provider sign-in lives there) */
   webPort?: number;
@@ -86,12 +91,13 @@ export type EngineEvent = { kind: 'engines.changed'; id: EngineId; step?: Engine
 export type EngineRequest =
   | { kind: 'engines.status' }
   /**
-   * download + verify (version = a release tag; absent = latest). A release without a published SHA-256 installs
-   * only with allowUnverified (the user confirmed; sha256 = the hash they were shown, which must still match).
+   * download + verify (version = a release tag; absent = latest). A version whose SHA-256 this app does not pin
+   * installs only with allowUnverified AND sha256 = the hash the user was shown and confirmed (it must still match).
    */
   | { kind: 'engines.install'; id: EngineId; version?: string; allowUnverified?: boolean; sha256?: string }
   /** install the latest release next to the current one and switch; a failed start rolls back */
-  | { kind: 'engines.upgrade'; id: EngineId }
+  /** allowUnverified / sha256: as for engines.install, after the user confirmed the hash the first answer showed */
+  | { kind: 'engines.upgrade'; id: EngineId; allowUnverified?: boolean; sha256?: string }
   | { kind: 'engines.rollback'; id: EngineId }
   /** start on 127.0.0.1 (installs first when needed) and register it as an Anthropic-compatible provider */
   | { kind: 'engines.start'; id: EngineId }

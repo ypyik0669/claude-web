@@ -12,6 +12,11 @@
 - 单独的 Node 子进程（Electron 下 `ELECTRON_RUN_AS_NODE=1`），`windowsHide: true`，**环境变量只给最小集**（不继承我们的 key / 代理）。
 - 有 `--permission`（Node 22.13+）或 `--experimental-permission` 时开权限模型：只读自己的文件夹、bootstrap、声明的路径；子进程 / worker / addon 默认禁。没有时 `isolation: 'process'`，界面写「单独进程」。
 - bootstrap（`BOOTSTRAP`，启动时写到 `plugins/.runtime/host.cjs`）在 require 层拒绝 net / http / https / tls / dns / child_process / worker_threads / vm 等；`globalThis.fetch` 换成 `host.fetch`，走父进程：只许 https、只许声明的主机、请求体过隐私钩子（`setPluginPrivacyHook`，隐私模块启动时注册；钩子抛错 = 不发）、超时、4 MB 上限、不跟随重定向、去掉 set-cookie。
+- 拒绝 require 不够：`net.Socket` 不用 require('net') 也拿得到（`tty.ReadStream` / `WriteStream` 继承它，`process.stdin` 可能就是一个），
+  它的 `connect()` 照样外连（SEC-02，Node 24 + `--permission` 实测连得出去；Node 24 / Electron 44 的 Node 24.19 都没有 `--allow-net`）。
+  所以 bootstrap 在挡 require 之前自己加载 net / dgram，把 `net.Socket.prototype.connect`、`net.Server.prototype.listen`、
+  `dgram.Socket.prototype.{bind,connect,send}` 换成抛错并锁死（不可写、不可重定义）。http / tls / undici 最后都走 Socket.connect，一并堵住。
+  不挡 `tty`：supports-color 之类的库要 `tty.isatty`。测试：`runtime.test.ts`「a real child cannot open sockets through a side door」。
 - 每次调用有超时，超时**杀子进程**，下一次调用重新起；stdout / stderr 截到上限，界面显示最后一段。
 - 密钥：只有声明过、且用户批准过的名字才给；目前支持 `provider:<供应商 id>` = 那个供应商的 key（SecretService 解密后只发给这个子进程）。
 - 批准绑在 manifest 的哈希上（main + hooks + permissions），manifest 一变就要重新确认（`plugins.enable` 带 `approve: true`）。状态在 meta.json 设置 `plugins.state`（只有 enabled / approvedHash，没有秘密）。
@@ -29,7 +34,13 @@ WS：`plugins.list / reload / enable / disable / remove`（remove 只删插件�
 - 设置在 meta.json 的 `plugins.market`：`{ url, publicKey? }`。`url` 必须是 https；`publicKey` 是 Ed25519（PEM 或 base64 SPKI DER）。`plugins.market.set / status / refresh`。
 - 目录格式：`{ entries: [...] }`，可以再加 `signature`（base64 Ed25519，签 `JSON.stringify(entries)`）。配了公钥就必须有签名，验不过就整份丢弃；条目本身和 `plugin.json` 走同一套 `market.ts` / `manifest.ts` 校验。条目可带 `sha256`（下载字节的 SHA-256）和 `signature`（下载字节的 Ed25519 签名），`kind: 'declarative' | 'executable'`（默认 executable）。
 - 缓存：`<plugins>/.market/catalog.json`（0600，保存原始 body 和 URL；每次 status 都重新按当前公钥验签），内存里也留一份。刷新失败保留上一份好缓存。
-- 安装 `plugins.install { id? , url? , path? , sha256? }`：下载上限 64 MB、最多 5 次重定向且每一跳都要 https；先校验 SHA-256 / 签名，再解包。zip 用 `import/zip.ts` 的读取器，tar.gz 自己解析；解包层（`plugins/archive.ts`）拒绝绝对路径、`..`、盘符、设备名、链接，限制条目数 / 单文件 / 总大小；去掉共享的顶层文件夹后写进 `<plugins>/.tmp/install-*`，再 `plugin.json` 校验、`main` 必须存在，最后 rename 成 `<plugins>/<id>`。声明式则是一个 `.json`，通过 `parseDeclarative` 后写成 `<plugins>/<id>.json`。装完 `reload()`；**安装过程不 require / 不启动任何下载的代码**，可执行插件仍要启用时批准权限。
+- 安装 `plugins.install { id? , url? , path? , sha256? , acknowledgeUnverified? }`：下载上限 64 MB、最多 5 次重定向且每一跳都要 https；先校验 SHA-256 / 签名，再解包。zip 用 `import/zip.ts` 的读取器，tar.gz 自己解析；解包层（`plugins/archive.ts`）拒绝绝对路径、`..`、盘符、设备名、链接，限制条目数 / 单文件 / 总大小；去掉共享的顶层文件夹后写进 `<plugins>/.tmp/install-*`，再 `plugin.json` 校验、`main` 必须存在，最后 rename 成 `<plugins>/<id>`。声明式则是一个 `.json`，通过 `parseDeclarative` 后写成 `<plugins>/<id>.json`。装完 `reload()`；**安装过程不 require / 不启动任何下载的代码**，可执行插件仍要启用时批准权限。
+- **验证与未验证（SEC-08，2026-11-01）**：我们没有官方签名私钥，不内置公钥（`CATALOG_PUBLIC_KEYS` 也是空的，远程来源目录因此一直不生效）。规则：
+  - 配了公钥：目录必须签名且验得过（否则整份丢弃）；每个条目还得用 `signature` 或 `sha256`（被目录签名覆盖）钉住字节，两样都没有的条目丢进 `errors`（「没有签名或校验值」）。有 `signature` 就必须验过，`acknowledgeUnverified` 也压不过验不过的签名。这样的条目 `verified: true`，直接装。
+  - 没配公钥的目录、`url` 直接安装、`path` 本机文件：一律 `verified: false`（`reason: 'unsigned-catalog' | 'url' | 'file'`），条目上的 `signature` 没法验，忽略。**服务端**要求 `plugins.install` 带 `acknowledgeUnverified: true`（handlers 只认字面量 `true`），否则拒绝——不靠界面。`id` 和 `url` 一起给时不查目录，按 url 算未验证（防止借条目的验证）。
+  - `plugins.install.check { id? | url? | path?, sha256? }`：下载 + 做全部检查但不装，回 `{ verified, reason?, sha256, size, kind, id?, name?, source }`（source 去掉账号和 query）。界面对未验证的先 check，`dlg.confirm`（danger + focusCancel，「仍然安装」）里写明是未经验证的代码、会在这台电脑上运行（声明式写成请求和密钥会发到它的地址），列出来源 / SHA-256 / 大小；确认后 install 时把这个 sha256 带上，服务端按它核对（重新下载了一次，确认的字节和装进去的必须是同一份）。
+  - 请求里的 `sha256` 一律强制核对，条目的 `sha256` 也核对（两者都有就都得对）。安装结果 `installed` 带 `verified` 和 `sha256`。
+  - 界面：市场卡片「已验证 / 未验证」chip；市场页下面一块「从地址安装」（地址 + 可选 SHA-256）。测试：`market-service.test.ts` 的 `unverified packages (SEC-08)`。
 - 同名插件不覆盖：先删再装。id 以 `.` 开头（含 `.` / `..`）一律拒绝，否则会被 reload 跳过或跳出插件目录。
 - 界面：`web/src/features/model-hub/pages/PluginsPage.tsx` 的「市场」页（地址 / 公钥、保存、刷新、条目卡片、安装中状态、空 / 错误状态）。
 

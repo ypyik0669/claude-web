@@ -45,7 +45,7 @@ import { projectOf } from './meta/project.js';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { ProjectFiles, PROJECT_FILE_MAX } from './cloud/project-files.js';
-import { sameOriginRequest } from './cloud/same-origin.js';
+import { loopbackHost, sameOriginRequest, wsOriginOk } from './cloud/same-origin.js';
 import { DispatchService } from './dispatch/service.js';
 import type { CloudServices } from './cloud/handlers.js';
 import { ClaudeAiSource } from './library/claudeai-source.js';
@@ -217,7 +217,9 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const authOk = (req: http.IncomingMessage, url: URL): boolean => {
     const presented = url.searchParams.get('token') ?? cookieToken(req.headers.cookie);
     const viaRemote = !!(req.socket as any).cwRemote;
-    if (!token && !viaRemote) return true; // local browser mode without a token: trust loopback
+    // local browser mode without a token: trust loopback — only when the request is addressed to it, so a rebound
+    // DNS name (Host: evil.example:3090) gets nothing (SEC-01)
+    if (!token && !viaRemote) return loopbackHost(req.headers.host);
     if (token && presented === token) return true;
     return !!presented && !!remote?.authenticate(presented, req);
   };
@@ -267,9 +269,9 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       req.on('end', () => {
         let j: any = {};
         try { j = JSON.parse(body || '{}'); } catch { /* ignore */ }
-        remote.redeem(String(j.code ?? ''), String(j.name ?? ''), req).then((r) => {
+        remote.redeem(String(j.code ?? ''), String(j.name ?? ''), req, j.kind === 'peer' ? 'peer' : undefined).then((r) => {
           const ok = !('error' in r);
-          res.writeHead(ok ? 200 : 400, { 'content-type': 'application/json', ...(ok ? { 'set-cookie': `cw_token=${(r as any).token}; Path=/; Max-Age=31536000; SameSite=Lax` } : {}) });
+          res.writeHead(ok ? 200 : 400, { 'content-type': 'application/json', ...(ok ? { 'set-cookie': `cw_token=${(r as any).token}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict` } : {}) });
           res.end(JSON.stringify(r));
         }).catch((e) => { res.writeHead(500).end(e.message); });
       });
@@ -382,14 +384,11 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
 
   const wss = new WebSocketServer({ noServer: true });
   const upgrade = (req: http.IncomingMessage, socket: any, head: Buffer) => {
-    const origin = req.headers.origin ?? '';
     const url = requestUrl(req, HOST);
     // the model gateway's own socket (Responses over WebSocket): gateway key auth, not the app's
     if (gateway?.handleUpgrade(req, socket, head, url)) return;
-    // same-origin only: localhost, or (remote listener) whatever host the page was served from
-    const originHost = origin ? (() => { try { return new URL(origin).host; } catch { return ''; } })() : '';
-    const originOk = !origin || /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin) || (!!req.headers.host && originHost === req.headers.host);
-    if (!originOk || !authOk(req, url) || url.pathname !== '/ws') {
+    // same-origin only: the page this listener served (a page on another local port is refused, SEC-11)
+    if (!wsOriginOk(req) || !authOk(req, url) || url.pathname !== '/ws') {
       socket.destroy();
       return;
     }

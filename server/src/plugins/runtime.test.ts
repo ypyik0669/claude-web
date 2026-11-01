@@ -130,3 +130,50 @@ describe('withResolved', () => {
     }
   });
 });
+
+// SEC-02: net.Socket reached without require('net') — tty's streams extend it, so its connect() opened a TCP socket
+describe('a real child cannot open sockets through a side door', () => {
+  let root = '';
+  let server: import('node:net').Server;
+  let port = 0;
+  const seen: string[] = [];
+  beforeAll(async () => {
+    const net = await import('node:net');
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-plugin-net-'));
+    fs.writeFileSync(path.join(root, 'index.js'), [
+      'const tryIt = async (f) => { try { const s = f(); if (s && s.on) s.on("error", () => {}); await new Promise((r) => setTimeout(r, 300)); return "ran"; } catch (e) { return "denied:" + (e.code || e.message); } };',
+      "const tty = require('tty');",
+      'const Socket = Object.getPrototypeOf(tty.ReadStream);',
+      'exports.sources = async (p) => ({',
+      '  ttyReadProto: await tryIt(() => new (Object.getPrototypeOf(tty.ReadStream.prototype).constructor)().connect(p.port, "127.0.0.1")),',
+      '  ttyWriteProto: await tryIt(() => new (Object.getPrototypeOf(tty.WriteStream.prototype).constructor)().connect(p.port, "127.0.0.1")),',
+      '  socketCtor: await tryIt(() => new Socket().connect({ port: p.port, host: "127.0.0.1" })),',
+      '  stdinCtor: await tryIt(() => { const C = process.stdin && process.stdin.constructor; return C && C.prototype.connect ? new C().connect(p.port, "127.0.0.1") : null; }),',
+      '});',
+    ].join('\n'));
+    server = net.createServer((s) => { seen.push('connection'); s.destroy(); });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+    port = (server.address() as import('node:net').AddressInfo).port;
+  });
+  afterAll(async () => {
+    await new Promise((r) => server.close(r));
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  });
+
+  it('net.Socket via tty / stdin connects nowhere', async () => {
+    const runner = new PluginRunner(root, manifest(), { unrestrictedAllowed: () => true, secret: async () => undefined });
+    try {
+      const r = await runner.call<Record<string, string>>('source-provider', { port });
+      expect(r.ttyReadProto).toMatch(/^denied:/);
+      expect(r.ttyWriteProto).toMatch(/^denied:/);
+      expect(r.socketCtor).toMatch(/^denied:/);
+      await new Promise((res) => setTimeout(res, 300));
+      expect(seen).toEqual([]);
+    } finally {
+      const child = (runner as unknown as { child: import('node:child_process').ChildProcess | null }).child;
+      const gone = child && child.exitCode === null ? new Promise((res) => child.once('exit', res)) : null;
+      runner.stop();
+      await gone;
+    }
+  }, 45_000);
+});

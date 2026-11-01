@@ -14,7 +14,7 @@ import { dataDir } from '../files/service.js';
 import { loadDeclarativeDir, parseSource, setPluginSources, type LoadedDeclarative } from './declarative.js';
 import { PluginMarketService, type PluginInstallInput } from './market-service.js';
 import { PluginRunner, readManifest } from './runtime.js';
-import type { DeclarativeSource, PluginHook, PluginInstallResult, PluginListResult, PluginManifest, PluginMarketConfig, PluginMarketStatus, PluginView } from './protocol.js';
+import type { DeclarativeSource, PluginHook, PluginInstallCheck, PluginInstallResult, PluginListResult, PluginManifest, PluginMarketConfig, PluginMarketStatus, PluginView } from './protocol.js';
 import { tr } from '../i18n/index.js';
 
 interface PluginState {
@@ -353,6 +353,9 @@ export class PluginService {
   marketStatus(): Promise<PluginMarketStatus> { return this.market.status(); }
   refreshMarket(): Promise<PluginMarketStatus> { return this.market.refresh(); }
   setMarketConfig(config: PluginMarketConfig): Promise<PluginMarketStatus> { return this.market.setConfig(config); }
+
+  /** Download and verify a package without installing it (verified or not, and the SHA-256 of the bytes). */
+  checkInstall(input: PluginInstallInput): Promise<PluginInstallCheck> { return this.market.check(input); }
 
   /** Install the package (files only — never executed here), then reload so it appears in the list. */
   async installPlugin(input: PluginInstallInput): Promise<PluginInstallResult> {

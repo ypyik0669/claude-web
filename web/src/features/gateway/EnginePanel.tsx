@@ -35,6 +35,31 @@ function plain(e: any): string {
   return m || tr('出错了');
 }
 
+/** How the installed build was checked, after its version (SEC-09). */
+function verifiedText(e: EngineStatus): string {
+  if (e.bundled) return ` · ${tr('随应用附带')}`;
+  if (e.verified === 'pinned') return ` · ${tr('已按本应用固定的校验值核对')}`;
+  if (e.verified === 'release') return ` · ${tr('你确认过它的校验值（和发布里附带的一致）')}`;
+  if (e.verified === 'recorded') return ` · ${tr('已核对首次安装时记下的校验值')}`;
+  return '';
+}
+
+/**
+ * This app pins no SHA-256 for the version the server downloaded (SEC-09): show the file's hash and ask. Only a yes
+ * sends allowUnverified, always together with that exact hash.
+ */
+export async function confirmEngineHash(name: string, c: NonNullable<EngineStatus['confirm']>): Promise<boolean> {
+  return dlg.confirm(tr('安装 {name} {version}？', { name, version: c.version }), {
+    message: c.releaseSha256
+      ? tr('本应用没有为这个版本固定校验值。下载的文件和发布里附带的校验值一致，但校验值和文件来自同一处，只能说明下载没坏，不能说明文件可信。核对下面的 SHA-256 后再装。')
+      : tr('本应用没有为这个版本固定校验值，发布里也没有附带。核对下面的 SHA-256 后再装。'),
+    items: [c.asset, `SHA-256: ${c.sha256}`],
+    okLabel: tr('确认并安装'),
+    danger: true,
+    focusCancel: true,
+  });
+}
+
 /**
  * One local engine (CLIProxyAPI / Magpie): install / connect / start / stop, with each step of a long action and
  * any failure in words. `onReady` hears the provider it registered once it runs (the wizard's 「已可用」).
@@ -52,7 +77,19 @@ export function EnginePanel({ id, onReady }: { id: EngineId; onReady?(p: Provide
     setBusy(what);
     useGateway.setState((s) => ({ engineError: { ...s.engineError, [id]: undefined } }));
     try {
-      const st = await ws.request<EngineStatus>({ kind: `engines.${what}`, id, ...req } as any);
+      let st = await ws.request<EngineStatus>({ kind: `engines.${what}`, id, ...req } as any);
+      // nothing pinned for that version: the user confirms the downloaded file's hash, then install exactly it
+      if (st?.confirm) {
+        const c = st.confirm;
+        if (!(await confirmEngineHash(e.name, c))) return;
+        const ok = { allowUnverified: true, sha256: c.sha256 };
+        // an upgrade goes through engines.upgrade again (it restarts a running engine on the new build)
+        st = what === 'upgrade'
+          ? await ws.request<EngineStatus>({ kind: 'engines.upgrade', id, ...ok } as any)
+          : await ws.request<EngineStatus>({ kind: 'engines.install', id, version: c.version, ...ok } as any);
+        if (st?.confirm) throw new Error(tr('下载的文件和你确认的不是同一个（SHA-256 变了），没有安装'));
+        if (what === 'start') st = await ws.request<EngineStatus>({ kind: 'engines.start', id } as any);
+      }
       await useGateway.getState().loadEngines();
       void useStore.getState().loadProviders().catch(() => {});
       after?.(st);
@@ -84,7 +121,7 @@ export function EnginePanel({ id, onReady }: { id: EngineId; onReady?(p: Provide
   return (
     <div className="gw-engine" data-engine={id}>
       <div className="gw-kv"><span className="muted">{tr('状态')}</span><span>{engineStateText(e)}</span></div>
-      {e.installed && e.version && <div className="gw-kv"><span className="muted">{tr('版本')}</span><span>{e.version}{e.bundled ? ` · ${tr('随应用附带')}` : e.verified === 'release' ? ` · ${tr('已按发布的校验值核对')}` : e.verified === 'recorded' ? ` · ${tr('已核对首次安装时记下的校验值')}` : ''}</span></div>}
+      {e.installed && e.version && <div className="gw-kv"><span className="muted">{tr('版本')}</span><span>{e.version}{verifiedText(e)}</span></div>}
       {e.platform && !e.installed && <div className="gw-kv"><span className="muted">{tr('来自')}</span><span>{e.repo}</span></div>}
       {doing && <div className="gw-engine-step" role="status"><Icon name="refresh" size={12} /> {doing}</div>}
       {error && <div className="gw-warn" role="alert"><Icon name="alert" size={13} /><span>{error}</span></div>}

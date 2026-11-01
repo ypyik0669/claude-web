@@ -11,8 +11,8 @@ import { guardedFetch, type EgressPolicy, type LookupAll } from '../net/netguard
 import { extractPluginArchive, isGzipBytes, isZipBytes, writePluginTree } from './archive.js';
 import { parseDeclarative } from './declarative.js';
 import { parseManifest, PLUGIN_ID_RE } from './manifest.js';
-import { isCompatible, isEd25519PublicKey, parseSignedMarketCatalog, sha256Hex, verifyArchiveSignature, type MarketEntry } from './market.js';
-import type { PluginInstallResult, PluginMarketConfig, PluginMarketStatus } from './protocol.js';
+import { isCompatible, isEd25519PublicKey, parseSignedMarketCatalog, safeMarketUrl, sha256Hex, verifyArchiveSignature, type MarketEntry } from './market.js';
+import type { PluginInstallCheck, PluginInstallResult, PluginMarketConfig, PluginMarketStatus, PluginUnverifiedReason } from './protocol.js';
 
 const MARKET_SETTING = 'plugins.market';
 const MAX_CATALOG_BYTES = 2 * 1024 * 1024;
@@ -34,7 +34,27 @@ export interface PluginMarketDeps {
   now?: () => number;
 }
 
-export interface PluginInstallInput { id?: string; url?: string; path?: string; sha256?: string }
+export interface PluginInstallInput {
+  id?: string;
+  url?: string;
+  path?: string;
+  /** hex SHA-256 the bytes must match (refused otherwise) */
+  sha256?: string;
+  /** the user explicitly confirmed installing a package no trusted key verified; required for those */
+  acknowledgeUnverified?: boolean;
+}
+
+interface FetchedPackage {
+  bytes: Buffer;
+  sha256: string;
+  verified: boolean;
+  reason?: PluginUnverifiedReason;
+  kind: 'declarative' | 'executable';
+  expected: { id?: string; name?: string; version?: string };
+  source: string;
+}
+
+type InstalledFiles = Omit<PluginInstallResult['installed'], 'verified' | 'sha256'>;
 
 interface MarketCache { version: 1; url: string; fetchedAt: number; body: string }
 
@@ -244,7 +264,7 @@ export class PluginMarketService {
     }
   }
 
-  private async installDeclarative(bytes: Buffer, expected: { id?: string; name?: string; version?: string }): Promise<PluginInstallResult['installed']> {
+  private async installDeclarative(bytes: Buffer, expected: { id?: string; name?: string; version?: string }): Promise<InstalledFiles> {
     if (bytes.length > MAX_DECLARATIVE_BYTES) throw new Error(tr('插件文件太大'));
     const text = bytes.toString('utf8').replace(/^\uFEFF/, '');
     let def;
@@ -271,7 +291,7 @@ export class PluginMarketService {
     return { id: def.id, name: def.name, version: def.version ?? '0.0.0', kind: 'declarative', file };
   }
 
-  private async installExecutable(bytes: Buffer, expected: { id?: string }): Promise<PluginInstallResult['installed']> {
+  private async installExecutable(bytes: Buffer, expected: { id?: string }): Promise<InstalledFiles> {
     const files = extractPluginArchive(bytes);
     const raw = files.get('plugin.json');
     if (!raw) throw new Error(tr('插件包缺少 plugin.json'));
@@ -300,48 +320,93 @@ export class PluginMarketService {
   }
 
   /**
-   * Download / read, verify, extract and install one package. Returns what went in; the caller reloads the service.
-   * `id` installs the catalog entry with that id; `url` / `path` install a package directly.
+   * Download / read one package and run every check that does not install anything: the expected SHA-256 (from the
+   * request and / or the catalog entry), the entry signature (mandatory under a configured key: a catalog served
+   * under a key only lists entries that carry a signature or a sha256), and the package format. Says whether the
+   * bytes are verified by a trusted key; a direct URL, a local file and an unsigned catalog never are.
    */
-  async install(input: PluginInstallInput): Promise<PluginInstallResult['installed']> {
+  private async fetchPackage(input: PluginInstallInput): Promise<FetchedPackage> {
     const id = str(input.id);
     const directUrl = str(input.url);
     const localPath = str(input.path);
     if (!id && !directUrl && !localPath) throw new Error(tr('缺少插件包'));
     const config = this.config();
+    const wanted = str(input.sha256).toLowerCase();
+    if (wanted && !/^[a-f0-9]{64}$/.test(wanted)) throw new Error(tr('插件包的校验值不合法'));
     let entry: MarketEntry | undefined;
-    if (id) {
+    let catalogSigned = false;
+    if (id && !directUrl && !localPath) {
       const st = await this.status();
       if (st.error) throw new Error(st.error);
       entry = st.entries.find((e) => e.id === id);
       if (!entry) throw new Error(tr('市场里没有这个插件：{id}', { id: id.slice(0, 80) }));
       if (!isCompatible(entry, this.appVersion())) throw new Error(tr('这个插件需要更新版本的 claude-web'));
+      catalogSigned = st.signed && !!config.publicKey;
     }
-    const expected = {
-      id: entry?.id ?? id,
-      name: entry?.name,
-      version: entry?.version,
-      sha256: str(input.sha256).toLowerCase() || entry?.sha256,
-      signature: entry?.signature,
-      kind: entry?.kind,
-    };
-    if (expected.sha256 && !/^[a-f0-9]{64}$/.test(expected.sha256)) throw new Error(tr('插件包的校验值不合法'));
     let bytes: Buffer;
+    let source: string;
     if (localPath) {
       bytes = await this.readLocal(localPath);
+      source = path.basename(localPath);
     } else {
       const url = directUrl || entry?.url;
       if (!url) throw new Error(tr('缺少插件包地址'));
       bytes = await this.download(url, MAX_PACKAGE_BYTES, PACKAGE_TIMEOUT_MS, tr('插件包太大'), directUrl ? 'local' : 'public');
+      source = safeMarketUrl(url) || url.slice(0, 200);
     }
-    if (expected.sha256 && sha256Hex(bytes) !== expected.sha256) throw new Error(tr('插件包的校验值不对'));
-    if (expected.signature) {
-      if (!config.publicKey) throw new Error(tr('插件包带签名，但插件市场没有配置公钥'));
-      if (!verifyArchiveSignature(bytes, expected.signature, config.publicKey)) throw new Error(tr('插件包签名不对'));
+    const sha256 = sha256Hex(bytes);
+    if (wanted && sha256 !== wanted) throw new Error(tr('插件包的校验值不对'));
+    if (entry?.sha256 && sha256 !== entry.sha256) throw new Error(tr('插件包的校验值不对'));
+    let verified = false;
+    if (entry && catalogSigned) {
+      // under a key the bytes must be pinned: the entry's own signature (verified here) or its signed sha256
+      if (entry.signature) {
+        if (!verifyArchiveSignature(bytes, entry.signature, config.publicKey!)) throw new Error(tr('插件包签名不对'));
+      } else if (!entry.sha256) {
+        throw new Error(tr('插件市场条目 {id} 没有签名或校验值', { id: entry.id }));
+      }
+      verified = entry.verified;
     }
-    const kind = expected.kind ?? sniffKind(bytes, localPath || directUrl);
+    const reason: PluginUnverifiedReason | undefined = verified ? undefined : localPath ? 'file' : directUrl ? 'url' : 'unsigned-catalog';
+    const kind = entry?.kind ?? sniffKind(bytes, localPath || directUrl);
     if (!kind) throw new Error(tr('只支持 .zip / .tar.gz / .json 格式的插件包'));
     if (kind === 'declarative' && (isZipBytes(bytes) || isGzipBytes(bytes))) throw new Error(tr('插件包的格式和目录条目的类型不一致'));
-    return kind === 'declarative' ? this.installDeclarative(bytes, expected) : this.installExecutable(bytes, expected);
+    return {
+      bytes,
+      sha256,
+      verified,
+      ...(reason ? { reason } : {}),
+      kind,
+      expected: { id: entry?.id ?? (id || undefined), name: entry?.name, version: entry?.version },
+      source,
+    };
+  }
+
+  /** Fetch and verify without installing: what the confirmation before an unverified install shows. */
+  async check(input: PluginInstallInput): Promise<PluginInstallCheck> {
+    const p = await this.fetchPackage(input);
+    return {
+      verified: p.verified,
+      ...(p.reason ? { reason: p.reason } : {}),
+      sha256: p.sha256,
+      size: p.bytes.length,
+      kind: p.kind,
+      ...(p.expected.id ? { id: p.expected.id } : {}),
+      ...(p.expected.name ? { name: p.expected.name } : {}),
+      source: p.source,
+    };
+  }
+
+  /**
+   * Download / read, verify, extract and install one package. Returns what went in; the caller reloads the service.
+   * `id` installs the catalog entry with that id; `url` / `path` install a package directly. A package no trusted
+   * key verified is refused unless `acknowledgeUnverified` is true (the UI asks first, showing the SHA-256 from
+   * `check`, and passes that SHA-256 back so the confirmed bytes are the ones installed).
+   */
+  async install(input: PluginInstallInput): Promise<PluginInstallResult['installed']> {
+    const p = await this.fetchPackage(input);
+    if (!p.verified && input.acknowledgeUnverified !== true) throw new Error(tr('这个插件包没有经过可信公钥验证，要先确认才能安装'));
+    const installed = p.kind === 'declarative' ? await this.installDeclarative(p.bytes, p.expected) : await this.installExecutable(p.bytes, p.expected);
+    return { ...installed, verified: p.verified, sha256: p.sha256 };
   }
 }

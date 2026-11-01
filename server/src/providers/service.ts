@@ -445,7 +445,7 @@ export class ProviderService {
     if (!p.apiKey.startsWith('enc:')) return p.apiKey;
     throw new Error(tr('供应商「{name}」的密钥无法解密（换了用户或机器？请重新输入）', { name: p.name }));
   }
-  secretsStatus() {
+  secretsStatus(): import('../protocol.js').SecretsStatus {
     const all = this.meta.providers();
     return { scheme: this.secrets?.scheme ?? 'plain', total: all.filter((p) => p.apiKey).length, protected: all.filter((p) => p.apiKey?.startsWith('enc:')).length };
   }

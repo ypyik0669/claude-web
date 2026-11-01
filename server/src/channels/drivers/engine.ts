@@ -14,6 +14,11 @@ function health(e: EngineStatus): SourceHealth {
   return 'unconfigured';
 }
 
+/** A download that needs the user to confirm its SHA-256 (SEC-09) is never installed from here: send them to the panel. */
+function needsConfirm(st: EngineStatus): void {
+  if (st.confirm) throw new Error(tr('{name} {version} 要你先确认下载文件的 SHA-256：在它的面板里点「下载并启动」', { name: st.name, version: st.confirm.version }));
+}
+
 export class EngineDriver implements ChannelDriver {
   readonly kind = 'engine' as const;
   readonly needs = 'engine' as const;
@@ -62,7 +67,7 @@ export class EngineDriver implements ChannelDriver {
   async add(_entry: CatalogEntry, input: AddInput): Promise<string> {
     const st = await this.engines.status(this.engine);
     if (st.detected && !st.running) await this.engines.connect(this.engine, st.detected.port, input.key);
-    else await this.engines.start(this.engine);
+    else needsConfirm(await this.engines.start(this.engine));
     return this.id;
   }
 
@@ -72,7 +77,7 @@ export class EngineDriver implements ChannelDriver {
   }
 
   async remove(): Promise<void> { await this.engines.disconnect(this.engine); }
-  async install(): Promise<void> { await this.engines.install(this.engine); }
-  async start(): Promise<void> { await this.engines.start(this.engine); }
+  async install(): Promise<void> { needsConfirm(await this.engines.install(this.engine)); }
+  async start(): Promise<void> { needsConfirm(await this.engines.start(this.engine)); }
   async stop(): Promise<void> { await this.engines.stop(this.engine); }
 }

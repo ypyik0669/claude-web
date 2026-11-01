@@ -42,6 +42,7 @@ import { detectTools } from '../tools/detect.js';
 import { runCode } from '../tools/run-code.js';
 import { ClientLogGate } from '../diag/client-log.js';
 import type { RemoteService } from '../remote/service.js';
+import { refusedFromDevice } from '../remote/device-limits.js';
 import type { TunnelManager } from '../remote/tunnel.js';
 import { IM_KINDS, type ImService } from '../im/service.js';
 import type { VcsService } from '../vcs/service.js';
@@ -311,7 +312,13 @@ export class Hub {
 
   private onConnect(ws: WebSocket, req?: IncomingMessage) {
     this.clients.add(ws);
-    try { if (req && new URL(req.url ?? '/', 'http://x').searchParams.get('peer')) this.peerConns.add(ws); } catch { /* not a peer */ }
+    let saysPeer = false;
+    try { saysPeer = !!req && !!new URL(req.url ?? '/', 'http://x').searchParams.get('peer'); } catch { /* not a peer */ }
+    // another computer is told apart by its token, not by what it says (SEC-07): a device that ever connected as a peer
+    // stays one, so leaving `?peer=` off later does not lift the peer rules
+    const device: string | null = (req as any)?.cwDevice ?? null;
+    if (device && saysPeer) void this.s.remote.markPeer(device).catch(() => {});
+    if (saysPeer || this.s.remote.isPeer(device)) this.peerConns.add(ws);
     if (req && ((req.socket as any)?.cwRemote || (req as any).cwDevice)) this.remoteConns.add(ws);
     if (this.peerConns.has(ws) || this.remoteConns.has(ws) || !isLoopback(req?.socket?.remoteAddress)) this.otherScreen.add(ws);
     const fed = this.s.federation;
@@ -333,6 +340,8 @@ export class Hub {
       if (!up || typeof up !== 'object' || up.type !== 'request' || !up.request || typeof up.request !== 'object' || !up.request.req) return;
       const { id, req } = up.request;
       try {
+        // a paired device (phone or other computer) never manages pairing or reads this computer's secrets (SEC-06)
+        if (this.remoteConns.has(ws) || this.peerConns.has(ws)) { const why = refusedFromDevice(req); if (why) throw new Error(why); }
         const routed = this.s.federation?.route(req, { via: up.request.via, peerConn: this.peerConns.has(ws), local: (r = req) => this.handle(r, ws) });
         const data = await (routed ?? this.handle(req, ws));
         this.send(ws, { type: 'reply', reply: { id, ok: true, data } });

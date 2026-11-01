@@ -276,6 +276,7 @@ export class MetaStore extends EventEmitter {
   devices(): DeviceRecord[] { return this.data.devices ??= []; }
   async addDevice(d: DeviceRecord) { this.devices().push(d); await this.queueSave(); }
   async removeDevice(id: string) { this.data.devices = this.devices().filter((d) => d.id !== id); await this.queueSave(); }
+  async markDevicePeer(id: string) { const d = this.devices().find((x) => x.id === id); if (d) { d.kind = 'peer'; await this.queueSave(); } }
   async renameDevice(id: string, name: string) { const d = this.devices().find((x) => x.id === id); if (d) { d.name = name; await this.queueSave(); } }
   async touchDevice(id: string, ip?: string) { const d = this.devices().find((x) => x.id === id); if (d) { d.lastSeenAt = Date.now(); if (ip) d.ip = ip; await this.queueSave(true); } }
 

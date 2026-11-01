@@ -252,7 +252,7 @@ export class FederationService extends EventEmitter {
     if (!/^\d{6}$/.test(code.trim())) throw new Error(tr('配对码是 6 位数字（在那台机器的 设置 → 手机与其它电脑 里生成）'));
     let r: Response;
     try {
-      r = await this.fetchFn(`${url}/api/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: code.trim(), name: `${this.name}（Claude Web）` }), signal: AbortSignal.timeout(10_000) });
+      r = await this.fetchFn(`${url}/api/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: code.trim(), name: `${this.name}（Claude Web）`, kind: 'peer' }), signal: AbortSignal.timeout(10_000) });
     } catch (e: any) {
       throw new Error(tr('连不上 {url}：{code}（对方要打开「允许其它设备访问」）', { url, code: e?.cause?.code ?? e?.message ?? e }));
     }

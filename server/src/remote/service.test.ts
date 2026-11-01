@@ -36,3 +36,36 @@ describe('RemoteService', () => {
     wss.close();
   }, 15_000);
 });
+
+// SEC-07: "another computer" is a property of the token, set when it pairs (or first connects) as one, never lifted
+describe('RemoteService peer devices', () => {
+  const fakeMeta = () => {
+    const devices: any[] = [];
+    return {
+      settings: () => ({}),
+      devices: () => devices,
+      addDevice: async (d: any) => { devices.push(d); },
+      markDevicePeer: async (id: string) => { const d = devices.find((x) => x.id === id); if (d) d.kind = 'peer'; },
+      touchDevice: async () => {},
+    } as unknown as MetaStore;
+  };
+  const req = { headers: { 'user-agent': 'x' }, socket: { remoteAddress: '192.168.1.9' } } as unknown as http.IncomingMessage;
+
+  it('a token redeemed as a peer is a peer; a phone token is not until it connects as one', async () => {
+    const remote = new RemoteService(fakeMeta(), () => http.createServer(), '127.0.0.1');
+    const c1 = await remote.newPairCode();
+    const peer = await remote.redeem(c1.code, 'B', req, 'peer');
+    if ('error' in peer) throw new Error(peer.error);
+    expect(remote.isPeer(remote.authenticate(peer.token))).toBe(true);
+    expect(peer.device.kind).toBe('peer');
+
+    const c2 = await remote.newPairCode();
+    const phone = await remote.redeem(c2.code, 'P', req);
+    if ('error' in phone) throw new Error(phone.error);
+    const id = remote.authenticate(phone.token)!;
+    expect(remote.isPeer(id)).toBe(false);
+    await remote.markPeer(id);
+    expect(remote.isPeer(id)).toBe(true);
+    expect(remote.isPeer(null)).toBe(false);
+  });
+});
