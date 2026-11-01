@@ -96,6 +96,7 @@ export const MANAGER_ID = 'manager';
 const QUIET_FLUSH_MS = 60_000;
 /** a thread approval not answered within a day expires (expireThreadApprovals) */
 export const THREAD_APPROVAL_MS = 24 * 3600_000;
+const ANSWERS = new Set<string>(['approve', 'approve_scope', 'reject', 'archive', 'send', 'adopt'] satisfies InboxAnswer['answer'][]);
 
 /** `<botsRoot>/stop.request.json`: a stop asked for in a window of a server not on duty; the holder carries it out */
 export const STOP_REQUEST = 'stop.request.json';
@@ -407,6 +408,8 @@ export class BotService extends EventEmitter {
 
   /** checked before anything is written; the item's 'item' event reaches the windows as bots.inbox */
   async inboxAnswer(a: InboxAnswer): Promise<InboxItem> {
+    // from a window / IM / a peer: an answer no item takes is refused, not filed as 「closed」
+    if (!ANSWERS.has(a.answer)) throw new Error(tr('不认识的回答：{answer}', { answer: String(a.answer) }));
     const asked = this.inbox.get(a.id);
     if (asked && !asked.done && asked.thread && asked.kind === 'approval' && a.answer !== 'archive' && Date.now() - asked.at >= THREAD_APPROVAL_MS) {
       await this.acting();

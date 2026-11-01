@@ -46,6 +46,15 @@ describe('eventsBlock', () => {
     expect(out).not.toContain('r_2');
   });
 
+  it('carries a run\'s report whole enough to answer from (up to 1200 characters, not 200)', () => {
+    const said = '仓库晨检：' + '一切正常。'.repeat(100); // 505 characters
+    const r = run({ said });
+    const out = eventsBlock([entryForRun(r, '仓库晨检')!], new Map(), new Map([[r.id, r]]));
+    expect(out).toContain(said);
+    const long = run({ said: 'x'.repeat(3000) });
+    expect(eventsBlock([entryForRun(long, '仓库晨检')!], new Map(), new Map([[long.id, long]])).length).toBeLessThan(1300);
+  });
+
   it('says a failed run failed, a pending approval waits, and skips entries whose item / run it does not have', () => {
     const r = run({ ok: false, error: '超时' });
     const pending = item({ id: 'i_2' });

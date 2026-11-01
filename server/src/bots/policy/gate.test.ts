@@ -35,6 +35,16 @@ describe('makeGate', () => {
     expect(items[0]).toMatchObject({ kind: 'approval', toolName: 'Bash', input: { command: 'git push origin main' }, cls: 'send', runId: 'run1', sessionId: 's1' });
     expect(store.audit('b1', 'run1')[0].result).toBe('queued');
   });
+  it('a scoped send rule that can\'t see a named remote: still asked, and the model is told why and how (an https push matches)', async () => {
+    const g = makeGate({ bot: bot({ rules: [{ cls: 'send', level: 'do_tell', scope: { domains: ['github.com'] } }] }), runId: 'run1', routineId: 'r1', store, audit, inbox });
+    const r = await g.gate(ev('Bash', { command: 'git push origin main' }));
+    expect(r).toMatchObject({ behavior: 'deny' });
+    expect((r as any).message).toMatch(/为什么还要问[\s\S]*git push https:\/\//);
+    expect((await g.gate(ev('Bash', { command: 'git push https://github.com/me/repo.git main' })))?.behavior).toBe('allow');
+    // no scoped rule for the class: the plain message
+    const plain = makeGate({ bot: bot(), runId: 'run2', routineId: 'r1', store, audit, inbox });
+    expect(((await plain.gate(ev('Bash', { command: 'git push origin dev' }))) as any).message).not.toMatch(/为什么还要问/);
+  });
   it('approveOnce lets exactly that call through, once', async () => {
     const g = makeGate({ bot: bot(), runId: 'run1', routineId: 'r1', store, audit, inbox });
     g.approveOnce('Bash', { command: 'git push origin main' });

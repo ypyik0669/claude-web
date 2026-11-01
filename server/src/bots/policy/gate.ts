@@ -126,7 +126,11 @@ export function makeGate(ctx: GateCtx): GateHandle {
         && (i.runId === ctx.runId || (!!ev.sessionId && i.sessionId === ev.sessionId)) && callKey(i.toolName, i.input) === ck);
       const item = waiting ?? await ctx.inbox.add({ kind: 'approval', botId: bot.id, runId: ctx.runId, ...(ctx.routineId ? { routineId: ctx.routineId } : { thread: true }), sessionId: ev.sessionId, title: summary, toolName: ev.toolName, input: ev.input, cls });
       await ctx.audit.add({ ...base, level: 'ask', basis, result: 'queued', ...(rule ? { rule } : {}) });
-      return { behavior: 'deny', message: tr('这个动作要先经你批准，已放进收件箱（{title}）。先做别的；批准后会从这里继续。', { title: item.title }) };
+      const queued = tr('这个动作要先经你批准，已放进收件箱（{title}）。先做别的；批准后会从这里继续。', { title: item.title });
+      // a scoped rule for this kind of action exists but couldn't see where this call goes: say so, or the model makes
+      // up a reason (2026-11-01 real test: "it asked because of git commit") and the user thinks the rule is broken
+      const scoped = target.opaque && (bot.policy.rules ?? []).some((r) => r.cls === cls && (r.level === 'do' || r.level === 'do_tell') && !!r.scope && !r.scope.unlimited);
+      return { behavior: 'deny', message: scoped ? `${queued}\n${tr('为什么还要问：你有一条带范围的规矩管这类动作，但这次调用的目标看不清（比如按 remote 名字 git push、本地文件夹或 ssh 的 remote、经代理或变量拼出来的地址），规矩只认写明的 http(s) 地址。按 https 地址推送（git push https://主机/…）才会按规矩直接做。')}` : queued };
     }
     // spend the approval (whatever let the call through — none lingers) and take the perDay slot before the audit
     // write's await, so a concurrent call can't pass the same slot or spend the same approval; both go back if the

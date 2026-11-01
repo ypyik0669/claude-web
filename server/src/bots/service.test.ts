@@ -147,6 +147,13 @@ describe('BotService', { timeout: 30_000 }, () => {
     expect(pushed.at(-1)).toMatchObject({ id: item.id, done: { answer: 'archive' } });
   });
 
+  it('an answer no item takes (a window sending 「deny」) is refused and the item stays open', async () => {
+    const b = await svc.create(draft());
+    const item = await (svc as any).inbox.add({ kind: 'approval', botId: b.id, title: 't', toolName: 'Bash', input: { command: 'git push' } });
+    await expect(svc.inboxAnswer({ id: item.id, answer: 'deny' as never })).rejects.toThrow(/不认识的回答/);
+    expect((svc as any).inbox.get(item.id).done).toBeUndefined();
+  });
+
   it('a server not on duty answers nothing and leaves inbox.json and bot.json alone', async () => {
     const b = await svc.create(draft());
     const item = await (svc as any).inbox.add({ kind: 'approval', botId: b.id, title: 't' });

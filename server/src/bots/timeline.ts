@@ -7,6 +7,7 @@ import type { BotRun, BotTimelineEntry, InboxItem } from '../protocol.js';
  */
 
 const DETAIL_MAX = 2000;
+const RUN_SAID_MAX = 1200;
 
 /**
  * One entry per non-skipped run; the id is stable (`run:<runId>`): the card a run gets as it starts (at its start,
@@ -46,7 +47,8 @@ function lineFor(e: BotTimelineEntry, items: Map<string, InboxItem>, runs: Map<s
     if (!r) return undefined;
     const name = `例行「${e.text ?? r.routineId}」`;
     if (r.endedAt == null) return `${name}在跑`;
-    return r.ok === false ? `${name}失败：${oneLine(r.error ?? r.verified?.note) || '原因未知'}` : `${name}完成：${oneLine(r.said) || '（没有说明）'}`;
+    // a run's report whole enough to answer 「刚才晨检怎么说」 from (cut at 200 the bot said it only saw a truncated summary)
+    return r.ok === false ? `${name}失败：${oneLine(r.error ?? r.verified?.note, 600) || '原因未知'}` : `${name}完成：${oneLine(r.said, RUN_SAID_MAX) || '（没有说明）'}`;
   }
   const it = e.itemId ? items.get(e.itemId) : undefined;
   if (!it) return undefined;

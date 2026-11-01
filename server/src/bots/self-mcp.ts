@@ -83,8 +83,9 @@ const charterShape = z.object({
  * tools/list then fails for the whole server and the engine leaves every one of its tools out (2026-10-31, phase42).
  */
 const scopeShape = z.object({
-  domains: z.array(z.string().max(200)).max(50).optional(), channels: z.array(z.string().max(200)).max(50).optional(),
-  recipients: z.array(z.string().max(200)).max(50).optional(), maxAmount: z.number().optional(), perDay: z.number().optional(),
+  domains: z.array(z.string().max(200)).max(50).optional().describe('hosts of http(s) URLs, e.g. "github.com"'),
+  channels: z.array(z.string().max(200)).max(50).optional().describe('messaging channel ids / names'),
+  recipients: z.array(z.string().max(200)).max(50).optional().describe('mail / message recipients (not git remotes)'), maxAmount: z.number().optional(), perDay: z.number().optional(),
   until: z.number().optional().describe('epoch ms'), unlimited: z.boolean().optional().describe('anywhere, said outright'),
 });
 const cadence = {
@@ -226,7 +227,9 @@ export function botSelfTools(botId: string, _self: () => string, d: BotSelfDeps)
       return text(tr('已记住'));
     }), opts),
 
-    tool('propose_policy', 'Ask the user to change your policy (what you may do without asking). You cannot change it yourself: this puts a card in front of the user, and nothing changes until they accept it. A rule that lets more run must say where (domains, channels or recipients), or set unlimited.', {
+    tool('propose_policy', 'Ask the user to change your policy (what you may do without asking). You cannot change it yourself: this puts a card in front of the user, and nothing changes until they accept it. A rule that lets more run must say where (domains, channels or recipients), or set unlimited. '
+      + 'A scope only matches a call whose target is written out in it: domains match the host of an http(s) URL in the call (curl / wget / a web request, `git push https://host/…`); channels and recipients match the channel / to fields of a messaging or mail tool. '
+      + 'A git push to a remote NAME (`git push origin`), to a local folder or over ssh never matches a scope and will keep asking — to push without asking, propose domains: [the remote\'s https host] and push to its full https URL; for a remote that is a folder or ssh, tell the user it will keep asking instead of proposing a rule.', {
       rules: z.array(z.object({
         cls: z.enum(['read', 'write_local', 'browser', 'send', 'pay', 'delete', 'install']),
         level: z.enum(['do', 'do_tell', 'ask', 'deny']),
