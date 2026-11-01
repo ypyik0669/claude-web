@@ -18,9 +18,20 @@ export function entryForRun(run: BotRun, routineName: string): BotTimelineEntry 
   return { id: `run:${run.id}`, botId: run.botId, at: run.endedAt ?? run.at, kind: 'run', text: routineName, runId: run.id, routineId: run.routineId };
 }
 
-/** approval / draft / proposal → an entry carrying the itemId; a finding gets none (its run card carries it) */
+/**
+ * approval / draft / proposal → an entry carrying the itemId. A finding: a run's report gets none (its run card carries
+ * it); any other (a 做了告诉我, a budget used up, a routine stopped) a system line in the conversation — it is nowhere
+ * else in a window (findings are not 需要你)
+ */
 export function entryForItem(item: InboxItem): BotTimelineEntry | undefined {
-  if (item.kind === 'finding') return undefined;
+  if (item.kind === 'finding') {
+    if (item.report) return undefined;
+    const e: BotTimelineEntry = { id: `item:${item.id}`, botId: item.botId, at: item.at, kind: 'system', text: item.title, icon: item.routineId ? 'routine' : 'bot' };
+    if (item.body) e.detail = item.body.slice(0, DETAIL_MAX);
+    if (item.runId) e.runId = item.runId;
+    if (item.routineId) e.routineId = item.routineId;
+    return e;
+  }
   const e: BotTimelineEntry = { id: `item:${item.id}`, botId: item.botId, at: item.at, kind: item.kind, itemId: item.id };
   if (item.runId) e.runId = item.runId;
   if (item.routineId) e.routineId = item.routineId;
@@ -33,6 +44,9 @@ export function systemEntry(botId: string, text: string, icon: NonNullable<BotTi
   if (detail) e.detail = detail.slice(0, DETAIL_MAX);
   return e;
 }
+
+/** what goes inside a server-sent hidden block: no `<` of its own (‹ reads the same) */
+export const noTags = (s: string) => s.replace(/</g, '‹');
 
 const hm = (at: number) => { const d = new Date(at); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; };
 const oneLine = (s: string | undefined, max = 200) => {
@@ -79,7 +93,9 @@ export function eventsBlock(entries: BotTimelineEntry[], items: Map<string, Inbo
   const lines: string[] = [];
   for (const e of entries) {
     const l = lineFor(e, items, runs);
-    if (l) lines.push(`- ${hm(e.at)} ${l}`);
+    // a run's report, a tool call's summary, a title: text the model / a page wrote — a `<` in it could close this block
+    // and pass for the user's words (or a <cw-bot-continue>), so none reaches the block as `<`
+    if (l) lines.push(`- ${hm(e.at)} ${noTags(l)}`);
   }
   return lines.length ? `<cw-bot-events>\n${lines.join('\n')}\n</cw-bot-events>\n\n` : '';
 }

@@ -270,7 +270,7 @@ export async function runRoutine(d: PipelineDeps, bot: Bot, routine: Routine, tr
   // the outputs as they are now (edited while the run went), the drafts from the whole answer (said is cut at 2000)
   for (const out of (d.store.get(bot.id) ?? bot).outputs) {
     if (out.kind === 'inbox') {
-      await d.inbox.add({ kind: 'finding', botId: bot.id, runId: run.id, routineId: routine.id, sessionId: runner.sessionId, title: routine.name, body: run.said });
+      await d.inbox.add({ kind: 'finding', botId: bot.id, runId: run.id, routineId: routine.id, sessionId: runner.sessionId, title: routine.name, body: run.said, report: true });
       for (const t of drafts(res.text)) await d.inbox.add({ kind: 'draft', botId: bot.id, runId: run.id, routineId: routine.id, sessionId: runner.sessionId, title: tr('{name} 的草稿', { name: routine.name }), body: t });
     } else if (out.kind === 'file') {
       try {

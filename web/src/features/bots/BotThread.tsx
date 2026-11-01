@@ -39,7 +39,7 @@ function OthersBanner({ botId }: { botId: string }) {
     const by = pendingByBot(inbox);
     delete by[botId];
     const ids = Object.keys(by);
-    return { n: ids.reduce((a, id) => a + by[id], 0), first: inbox.find((i) => !i.done && i.botId !== botId)?.botId ?? ids[0] };
+    return { n: ids.reduce((a, id) => a + by[id], 0), first: inbox.find((i) => !i.done && i.kind !== 'finding' && i.botId !== botId)?.botId ?? ids[0] }; // the same items pendingByBot counts
   }, [inbox, botId]);
   if (!n || !first) return null;
   return (

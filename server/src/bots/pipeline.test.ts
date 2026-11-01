@@ -44,7 +44,7 @@ describe('runRoutine', () => {
     expect(run.skipped).toBeUndefined();
     expect(run.costEstimated).toBeUndefined();
     expect(store.runs('b1')[0].id).toBe(run.id);
-    expect(inbox.list('b1')[0]).toMatchObject({ kind: 'finding', title: '晨报', body: '今天 3 个 issue' });
+    expect(inbox.list('b1')[0]).toMatchObject({ kind: 'finding', title: '晨报', body: '今天 3 个 issue', report: true });
     expect(store.stateOf('b1', 'r1').lastSummary).toBe('今天 3 个 issue');
     // the gate was in place before the prompt went out; the conversation is closed once the run is over
     expect(typeof runner.gateAtSend).toBe('function');

@@ -12,7 +12,7 @@ import type { Inbox } from './inbox.js';
 import type { AuditLog } from './audit.js';
 import { makeGate, type GateHandle } from './policy/gate.js';
 import { policyLine } from './pipeline.js';
-import { eventsBlock, systemEntry } from './timeline.js';
+import { eventsBlock, noTags, systemEntry } from './timeline.js';
 import { serverSend } from './tags.js';
 import { BOT_SELF_PREFIX } from './runtime-hooks.js';
 import { getLocale, tr } from '../i18n/index.js';
@@ -252,8 +252,8 @@ export class BotThreads extends EventEmitter {
     const g = this.arm(bot.id, r);
     if (approved && item.toolName && item.input) g.approveOnce(item.toolName, item.input);
     const text = approved
-      ? `<${CONTINUE_TAG}>已批准「${item.title}」：现在执行它，然后接着做。</${CONTINUE_TAG}>`
-      : `<${CONTINUE_TAG}>用户拒绝了「${item.title}」：不要再做这一步。换个办法，或者先问用户。</${CONTINUE_TAG}>`;
+      ? `<${CONTINUE_TAG}>已批准「${noTags(item.title)}」：现在执行它，然后接着做。</${CONTINUE_TAG}>`
+      : `<${CONTINUE_TAG}>用户拒绝了「${noTags(item.title)}」：不要再做这一步。换个办法，或者先问用户。</${CONTINUE_TAG}>`;
     this.sendWhenIdle(bot.id, r, text);
   }
   private sendWhenIdle(botId: string, r: AgentDriver, text: string) {

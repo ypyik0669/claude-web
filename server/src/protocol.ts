@@ -1055,6 +1055,9 @@ export interface InboxItem {
   proposal?: InboxProposal;
   /** the approval came from the bot's own conversation (no routineId) */
   thread?: boolean;
+  /** a finding that is a routine run's report: its run card in the bot's conversation shows it (other findings get a
+   *  system line there) */
+  report?: boolean;
   /** note: why it was closed without an answer (its run was stopped) */
   done?: { at: number; answer: InboxAnswer['answer']; note?: string };
 }

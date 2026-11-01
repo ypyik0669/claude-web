@@ -123,7 +123,8 @@ export class BotService extends EventEmitter {
   private readonly onItem = (item: InboxItem) => {
     this.emit('inbox', item);
     try { this.deliverItem(item); } catch (e) { console.warn('[bots] IM delivery failed:', e); }
-    // a new approval / draft / proposal gets its card on the bot's timeline (an answer is drawn live from the item)
+    // a new approval / draft / proposal gets its card on the bot's timeline (an answer is drawn live from the item); a
+    // finding that is not a run's report, a system line
     if (!item.done && !this.carded.has(item.id)) {
       this.carded.add(item.id);
       const e = entryForItem(item);
