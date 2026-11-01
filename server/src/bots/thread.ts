@@ -59,7 +59,8 @@ export function threadPrompt(bot: Bot, o: { tools?: boolean; server?: string } =
     `职责：${c.role || '还没定——和用户聊出来，再定下来'}`,
     c.audience ? `服务对象：${c.audience}` : '',
     c.sources.length ? `只用这些来源：${c.sources.join('、')}` : '',
-    c.report ? `报告格式：${c.report}` : '',
+    // only the routine runs' reports: on the real relay the bot answered a plain chat turn in it (查了什么 / 没能查到什么 / …)
+    c.report ? `例行跑完写报告时的格式（只用于例行的报告；在这里聊天时照常说话）：${c.report}` : '',
     c.done ? `完成条件：${c.done}` : '',
     bot.routines.length ? `现有的例行：${bot.routines.map((r) => `「${r.name}」（${cadence(r)}${r.enabled ? '' : '，已关闭'}${r.selfMade ? '' : '，用户建的：你不能改'}）`).join('、')}` : '现在还没有例行。',
     '',
