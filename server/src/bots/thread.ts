@@ -100,7 +100,7 @@ export function kickoffText(bot: Bot, template?: BotTemplate): string {
     `开口先说「我按『${noTags(template.name)}』来」，然后最多问两个确认问题，用 AskUserQuestion 问（没有这个工具就直接列出来）——比如具体盯哪个仓库或来源、出了问题要不要叫用户。`,
     '问清楚后用你的工具改职责或例行；没什么要改的就不用改。',
   ] : bot.routines.length ? [
-    `你已经在值班了，现有的例行：${bot.routines.map((r) => `「${r.name}」（${cadence(r)}${r.enabled ? '' : '，已关闭'}）`).join('、')}。`,
+    `你已经在值班了，现有的例行：${bot.routines.map((r) => `「${noTags(r.name)}」（${cadence(r)}${r.enabled ? '' : '，已关闭'}）`).join('、')}。`,
     '这是用户第一次打开和你的对话：用一两句话介绍自己和你现在在做的事，问用户要不要调整什么。',
   ] : [
     `这是你的第一句话：用户刚把你建好，打开了和你的对话。先用一句话介绍自己（你叫「${noTags(bot.name)}」，会在用户不在的时候接着干活），`,
