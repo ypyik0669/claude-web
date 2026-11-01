@@ -95,7 +95,6 @@ describe('no Chinese text left outside tr()', () => {
     'server/src/memory/mcp.ts': 'the memory tool answers the model (not the screen)',
     'server/src/privacy/zhname.ts': 'Chinese surnames and name context words the privacy filter looks for in a request',
     'server/src/memory/service.ts': 'kind labels stored in memory.db',
-    'server/src/remote/anywhere/core/lists.ts': 'a list value',
     'server/src/runtime/thinking-language.ts': 'languages named in themselves, for the instruction to the model',
     'web/src/features/settings/ui-settings.ts': 'a language named in itself, and font names',
     'web/src/features/settings/thinking-language.ts': 'languages named in themselves (思考用的语言)',

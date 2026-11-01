@@ -9,7 +9,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "resolveJsonModule": true,
-    "paths": { "@shared": ["../server/src/protocol.ts"], "@catalog": ["../server/src/models/catalog.ts"], "@account-window": ["../server/src/models/account-window.ts"], "@i18n": ["../server/src/i18n/core.ts"], "@i18n-en": ["../server/src/i18n/en.ts"], "@errors": ["../server/src/errors/explain.ts"], "@anywhere": ["../server/src/remote/anywhere/core/index.ts"], "@characters": ["../server/src/characters/core/index.ts"], "@themes": ["../server/src/themes/core/index.ts"], "@/*": ["./src/*"] }
+    "paths": { "@shared": ["../server/src/protocol.ts"], "@catalog": ["../server/src/models/catalog.ts"], "@account-window": ["../server/src/models/account-window.ts"], "@i18n": ["../server/src/i18n/core.ts"], "@i18n-en": ["../server/src/i18n/en.ts"], "@errors": ["../server/src/errors/explain.ts"], "@characters": ["../server/src/characters/core/index.ts"], "@themes": ["../server/src/themes/core/index.ts"], "@/*": ["./src/*"] }
   },
-  "include": ["src", "vite.config.ts", "vite.shell.config.ts"]
+  "include": ["src", "vite.config.ts"]
 }

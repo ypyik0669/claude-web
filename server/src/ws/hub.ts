@@ -42,7 +42,6 @@ import { detectTools } from '../tools/detect.js';
 import { runCode } from '../tools/run-code.js';
 import { ClientLogGate } from '../diag/client-log.js';
 import type { RemoteService } from '../remote/service.js';
-import type { AnywhereService } from '../remote/anywhere/service.js';
 import type { TunnelManager } from '../remote/tunnel.js';
 import { IM_KINDS, type ImService } from '../im/service.js';
 import type { VcsService } from '../vcs/service.js';
@@ -142,7 +141,6 @@ export interface Services {
   memory: MemoryService;
   remote: RemoteService;
   /** 在外面也能用: phones reaching the remote-access listener through the signaling brokers; optional (tests). */
-  anywhere?: AnywhereService;
   tunnels: TunnelManager;
   im: ImService;
   vcs: VcsService;
@@ -264,7 +262,6 @@ export class Hub {
     s.files.on('changed', (e: { path: string; type: any }) => this.broadcast({ kind: 'fs.changed', path: e.path, type: e.type }));
     s.git.on('changed', (cwd: string) => this.broadcast({ kind: 'git.changed', cwd }));
     s.remote.on('changed', () => this.broadcast({ kind: 'remote.changed' }));
-    s.anywhere?.on('changed', () => this.broadcast({ kind: 'remote.changed' }));
     s.im.on('changed', () => this.broadcast({ kind: 'im.changed' }));
     s.tunnels.on('changed', () => this.broadcast({ kind: 'tunnel.changed' }));
     s.goals.on('changed', () => this.broadcast({ kind: 'goals.changed' }));
@@ -347,10 +344,8 @@ export class Hub {
     });
   }
 
-  /** Remote access, with 在外面也能用 in it when that service exists. */
   private remoteStatus(): RemoteStatus {
-    const st = this.s.remote.status();
-    return this.s.anywhere ? { ...st, anywhere: this.s.anywhere.status() } : st;
+    return this.s.remote.status();
   }
 
   /** For what only a window on this machine may do: refuses another machine's connection and a remote-access / paired-device one. */
@@ -742,8 +737,6 @@ export class Hub {
         if (req.key === 'web.mcp') setWebMcpEnabled(req.value !== false);
         if (req.key === 'web.browser.agent') setWebAgentBrowser(req.value);
         if (req.key.startsWith('web.')) s.web.settingsChanged(); // web.status reads differently now
-        // 在外面也能用: brokers / STUN / the shell address / on-off / keep-awake (restarts only when it has to)
-        if (req.key === 'remote.anywhere' || req.key.startsWith('remote.anywhere.') || req.key === 'remote.keepAwake') await s.anywhere?.refresh();
         return null;
       case 'sessions.search':
         return s.library.search(req.query, req.limit ?? 30);
@@ -1197,13 +1190,11 @@ export class Hub {
       case 'remote.status':
         return this.remoteStatus();
       case 'remote.set': {
-        if (req.anywhere !== undefined) await s.meta.setSetting('remote.anywhere', !!req.anywhere);
         if (req.keepAwake !== undefined) await s.meta.setSetting('remote.keepAwake', !!req.keepAwake);
-        // the listener restarts for enabled / port (or a bare remote.set, as before); not for the two settings alone
-        if (req.enabled !== undefined || req.port !== undefined || (req.anywhere === undefined && req.keepAwake === undefined)) {
+        // the listener restarts for enabled / port (or a bare remote.set, as before); not for keepAwake alone
+        if (req.enabled !== undefined || req.port !== undefined || req.keepAwake === undefined) {
           await s.remote.set({ enabled: req.enabled, port: req.port });
         }
-        await s.anywhere?.refresh();
         return this.remoteStatus();
       }
       case 'remote.pairCode':

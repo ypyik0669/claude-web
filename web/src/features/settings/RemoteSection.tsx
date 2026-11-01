@@ -8,15 +8,11 @@ import type { RemoteHost, RemotePairCode, RemoteStatus, TunnelInfo } from '@shar
 import { Icon } from '@/ui/icons';
 import { agoText } from '@/features/home/model';
 import { Row } from './controls';
-import { anywhereLine, deviceLastLink, lastLinkText, shownIp } from './anywhere';
 import { pairQr, type PairQr } from './pair-qr';
-import { Segmented } from '@/ui/Segmented';
 import { tr, dateLocale } from '@/i18n';
 import { SwitchChip } from '@/ui/Switch';
 
-type QrKind = 'anywhere' | 'lan';
-
-/** Remote access status, reloaded on every remote.changed (the listener, devices, 在外面也能用's brokers and links). */
+/** Remote access status, reloaded on every remote.changed (the listener, devices). */
 export function useRemoteStatus(): [RemoteStatus | null, (s: RemoteStatus) => void] {
   const toast = useStore((s) => s.toast);
   const [st, setSt] = useState<RemoteStatus | null>(null);
@@ -31,75 +27,49 @@ export function useRemoteStatus(): [RemoteStatus | null, (s: RemoteStatus) => vo
 }
 
 /**
- * LAN / phone access: second listener, 在外面也能用 (phones away from this Wi-Fi, through the public signaling
- * brokers — remote/anywhere on the server), the pairing QR (the 在哪都能用 one by default, the LAN one beside it),
- * 不让电脑睡眠, and the device table with each phone's last link. Settings → 手机与其它电脑 shows it with
- * `PeersSection` (other computers) and, under 更多选项, `AnywhereMore` (brokers / STUN / the phone page / recent
- * connections) and `HostsSection` (SSH tunnels).
+ * LAN / phone access: second listener, the pairing QR, 不让电脑睡眠, and the device table. Settings → 手机与其它电脑
+ * shows it with `PeersSection` (other computers) and, under 更多选项, `HostsSection` (SSH tunnels).
  */
 export function RemoteSection() {
   const toast = useStore((s) => s.toast);
-  const anywhereOn = useStore((s) => s.settings['remote.anywhere'] !== false);
-  // what the pairing room is made from: a change retires the room, and the QR on screen with it
-  const listsKey = useStore((s) => JSON.stringify([s.settings['remote.anywhere.brokers'] ?? null, s.settings['remote.anywhere.stun'] ?? null]));
   const [st, setSt] = useRemoteStatus();
   const [port, setPort] = useState('');
   const [pair, setPair] = useState<RemotePairCode | null>(null);
-  const [qrKind, setQrKind] = useState<QrKind>('anywhere');
   const [qr, setQr] = useState<PairQr | null>(null);
-  const [qrFailed, setQrFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pairing, setPairing] = useState(false);
   useEffect(() => { if (st) setPort(String(st.port)); }, [st?.port]); // eslint-disable-line react-hooks/exhaustive-deps
-  // the broker / STUN lists or the port changed (here, under 更多选项, or in another window): the PC listens anew, the
-  // pairing room of the code on screen is gone, so its QR and link are dead — cleared like a switch of 在外面也能用
-  const runsOn = st ? `${listsKey}|${st.port}` : '';
-  const ranOn = useRef('');
+  // the port changed (here or in another window): the code on screen points at the old address
+  const ranOn = useRef(0);
   useEffect(() => {
-    if (!runsOn) return;
-    if (ranOn.current && ranOn.current !== runsOn) setPair(null);
-    ranOn.current = runsOn;
-  }, [runsOn]);
-  // the 在哪都能用 QR when there is one (在外面也能用 on and its pairing room up), else the LAN one
-  const shown: QrKind = pair?.anywhereUrl && qrKind === 'anywhere' ? 'anywhere' : 'lan';
-  const qrUrl = pair ? (shown === 'anywhere' ? pair.anywhereUrl! : pair.url) : '';
-  // dark on white (pair-qr.ts): the anywhere address is long, longer still with the PC's own lists in it
+    if (!st) return;
+    if (ranOn.current && ranOn.current !== st.port) setPair(null);
+    ranOn.current = st.port;
+  }, [st?.port]); // eslint-disable-line react-hooks/exhaustive-deps
+  const qrUrl = pair?.url ?? '';
   useEffect(() => {
     let live = true;
     setQr(null);
-    setQrFailed(false);
-    if (qrUrl) pairQr(qrUrl).then((q) => live && setQr(q), () => live && setQrFailed(true));
+    if (qrUrl) pairQr(qrUrl).then((q) => live && setQr(q), () => {});
     return () => { live = false; };
   }, [qrUrl]);
   const [, tickState] = useState(0);
   useEffect(() => { if (!pair) return; const i = setInterval(() => tickState((x) => x + 1), 1000); return () => clearInterval(i); }, [pair]);
-  const set = async (patch: { enabled?: boolean; port?: number; anywhere?: boolean; keepAwake?: boolean }) => {
+  const set = async (patch: { enabled?: boolean; port?: number; keepAwake?: boolean }) => {
     setBusy(true);
     try {
       setSt(await ws.request<RemoteStatus>({ kind: 'remote.set', ...patch }));
-      // a LAN-paired phone keeps its token at the old address (port and all): it has to pair again
-      if (patch.port !== undefined) toast(tr('端口已改：在同一个 Wi-Fi 里配对过的手机要重新扫码（在外面用的不受影响）'), true);
-      if (patch.anywhere !== undefined) {
-        useStore.setState((x) => ({ settings: { ...x.settings, 'remote.anywhere': patch.anywhere } }));
-        setPair(null); // its QR was made for the other setting (no pairing room, or one that is gone now)
-      }
+      // a paired phone keeps its token at the old address (port and all): it has to pair again
+      if (patch.port !== undefined) toast(tr('端口已改：配对过的手机要重新扫码'), true);
       if (patch.keepAwake !== undefined) useStore.setState((x) => ({ settings: { ...x.settings, 'remote.keepAwake': patch.keepAwake } }));
     } catch (e: any) { toast(e.message); } finally { setBusy(false); }
   };
   const newPair = async () => {
     setPairing(true);
-    try { setPair(await ws.request<RemotePairCode>({ kind: 'remote.pairCode' })); setQrKind('anywhere'); } catch (e: any) { toast(e.message); } finally { setPairing(false); }
-  };
-  // the link holds the one-time pairing secret: to the clipboard only (the iPhone home-screen app cannot scan; it pastes
-  // the link into 粘贴配对链接), never into an address or a log
-  const copyLink = async () => {
-    if (!pair?.anywhereUrl) return;
-    try { await navigator.clipboard.writeText(pair.anywhereUrl); toast(tr('配对链接已复制：10 分钟内有效，只能用一次，别发给别人'), true); } catch { toast(tr('复制失败，改用手机扫码')); }
+    try { setPair(await ws.request<RemotePairCode>({ kind: 'remote.pairCode' })); } catch (e: any) { toast(e.message); } finally { setPairing(false); }
   };
   const left = pair ? Math.max(0, Math.round((pair.expiresAt - Date.now()) / 1000)) : 0;
   if (!st) return <div className="section"><div className="empty">{tr('读取中…')}</div></div>;
-  const line = anywhereLine({ enabled: st.enabled, running: st.running, settingOn: anywhereOn, anywhere: st.anywhere });
-  const keepAwake = st.anywhere?.keepAwake ?? true;
   return (
     <div className="section">
       <h5>{tr('局域网 / 手机访问')}</h5>
@@ -112,71 +82,45 @@ export function RemoteSection() {
         {tr('每台设备用一次性配对码换取自己的访问令牌（可随时吊销）。同一个 Wi-Fi 里走局域网，是明文 HTTP，别在公共网络上开。')}
         {st.addresses.length > 0 && <> {tr('本机地址：')}{st.addresses.map((a) => <code key={a} style={{ marginLeft: 6 }}>{a}:{st.port}</code>)}</>}
       </div>
-      <div className="sp-card aw-card">
-        <Row
-          label={tr('在外面也能用')}
-          hint={<>
-            {tr('手机不在同一个 Wi-Fi 时也能连上这台电脑：经公共的牵线服务器找到对方，能直连就直连，连不通就慢速转发（文字能用，文件预览和上传不能用）。牵线服务器只看得到加密后的数据和双方的 IP。')}
-            {!st.enabled && <span className="aw-line" data-id="anywhere-note">{tr('先打开上面的「允许其它设备访问」才能用。')}</span>}
-            {line && <span className="aw-line" data-id="anywhere-status" data-tone={line.tone}>{line.text}</span>}
-          </>}
-        >
-          <button className={clsx('toggle', anywhereOn && 'on')} role="switch" aria-checked={anywhereOn} aria-label={tr('在外面也能用')} data-id="anywhere" disabled={!st.enabled || busy} onClick={() => void set({ anywhere: !anywhereOn })} />
-        </Row>
-        {st.enabled && (desktop ? (
-          <Row label={tr('不让电脑睡眠')} hint={tr('远程访问开着时，电脑不会自己睡着。屏幕照样会关；笔记本合盖照样会睡。')}>
-            <button className={clsx('toggle', keepAwake && 'on')} role="switch" aria-checked={keepAwake} aria-label={tr('不让电脑睡眠')} data-id="keep-awake" disabled={busy} onClick={() => void set({ keepAwake: !keepAwake })} />
-          </Row>
-        ) : (
-          <Row label={tr('不让电脑睡眠')} hint={<span data-id="keep-awake-note">{tr('网页版做不到，去系统电源设置里关掉睡眠。')}</span>} />
-        ))}
-      </div>
+      {st.enabled && (
+        <div className="sp-card aw-card">
+          {desktop ? (
+            <Row label={tr('不让电脑睡眠')} hint={tr('远程访问开着时，电脑不会自己睡着。屏幕照样会关；笔记本合盖照样会睡。')}>
+              <button className={clsx('toggle', st.keepAwake && 'on')} role="switch" aria-checked={st.keepAwake} aria-label={tr('不让电脑睡眠')} data-id="keep-awake" disabled={busy} onClick={() => void set({ keepAwake: !st.keepAwake })} />
+            </Row>
+          ) : (
+            <Row label={tr('不让电脑睡眠')} hint={<span data-id="keep-awake-note">{tr('网页版做不到，去系统电源设置里关掉睡眠。')}</span>} />
+          )}
+        </div>
+      )}
       {st.enabled && (
         <div className="pair-box">
           <div className="pair-side">
             <button className="btn sm" data-id="pair-new" onClick={newPair} disabled={!st.running || pairing}>{pairing ? tr('生成中…') : pair && left > 0 ? tr('重新生成配对码') : tr('生成配对码')}</button>
             {pair && left > 0 && (
               <div style={{ marginTop: 10 }}>
-                {pair.anywhereUrl && (
-                  <div className="pair-switch" data-id="pair-switch">
-                    <Segmented className="sp-seg" label={tr('二维码')} arrows value={shown} onChange={(k) => setQrKind(k)}
-                      options={([['anywhere', tr('在哪都能用')], ['lan', tr('只在局域网（不用联网）')]] as const).map(([k, l]) => ({ value: k, label: l, data: { 'data-kind': k } }))} />
-                  </div>
-                )}
                 <div className="pair-code">{pair.code}</div>
-                {shown === 'anywhere' ? (
-                  <div className="sub">{tr('{left}s 后失效 · 用手机相机扫码，在哪都能连上这台电脑。iPhone 上从主屏幕图标打开的，复制配对链接，粘贴到那里的「粘贴配对链接」。', { left })}</div>
-                ) : (
-                  <div className="sub">{tr('{left}s 后失效 · 手机连同一个 Wi-Fi 扫码，或打开', { left })} <code>{pair.url.split('#')[0]}</code> {tr('手动输入')}</div>
-                )}
-                {shown === 'anywhere' && <button className="btn sm ghost" data-id="pair-copy" title={tr('链接里有一次性的配对密钥：10 分钟内有效，只能用一次')} onClick={() => void copyLink()} style={{ marginTop: 8 }}><Icon name="copy" size={12} /> {tr('复制配对链接')}</button>}
+                <div className="sub">{tr('{left}s 后失效 · 手机连同一个 Wi-Fi 扫码，或打开', { left })} <code>{pair.url.split('#')[0]}</code> {tr('手动输入')}</div>
               </div>
             )}
             {pair && left <= 0 && <div className="sub" style={{ marginTop: 8 }}>{tr('配对码已过期')}</div>}
-            {pair && left > 0 && qrFailed && <div className="aw-err" data-id="pair-qr-error">{tr('二维码装不下这么长的服务器列表：用「复制配对链接」，或在「更多选项」里删掉几行')}</div>}
           </div>
-          {qr && left > 0 && <img className="pair-qr" data-kind={shown} src={qr.src} style={{ width: qr.size }} alt={shown === 'anywhere' ? tr('配对二维码（在哪都能用）') : tr('配对二维码（只在局域网）')} />}
+          {qr && left > 0 && <img className="pair-qr" src={qr.src} style={{ width: qr.size }} alt={tr('配对二维码（只在局域网）')} />}
         </div>
       )}
       <h5 style={{ marginTop: 16 }}>{tr('已配对设备')}</h5>
       <div className="list">
-        {st.devices.map((d) => {
-          // through 在外面也能用 a phone reaches the listener from this machine: its last link, not an address
-          const last = deviceLastLink(d.id, st.anywhere?.recent);
-          const ip = shownIp(d.ip);
-          const live = !!st.anywhere?.sessions.some((x) => x.deviceId === d.id);
-          return (
+        {st.devices.map((d) => (
           <div key={d.id} className="row" data-device={d.id}>
-            <span className={clsx('dot', live || Date.now() - d.lastSeenAt < 120_000 ? 'running' : 'idle')} />
+            <span className={clsx('dot', Date.now() - d.lastSeenAt < 120_000 ? 'running' : 'idle')} />
             <div className="grow">
-              <div>{d.name} {last ? <span className="muted dev-link" style={{ fontSize: 12 }}>{lastLinkText(last)}</span> : ip && <span className="muted" style={{ fontSize: 12 }}>{ip}</span>}</div>
+              <div>{d.name} {d.ip && <span className="muted" style={{ fontSize: 12 }}>{d.ip.replace(/^::ffff:/i, '')}</span>}</div>
               <div className="sub">{tr('最近 {agoText} · 配对于 {toLocaleDateString} · {ua}', { agoText: agoText(d.lastSeenAt), toLocaleDateString: new Date(d.createdAt).toLocaleDateString(dateLocale()), ua: d.ua?.slice(0, 60) })}</div>
             </div>
             <button className="btn sm ghost" onClick={async () => { const n = await dlg.prompt(tr('设备名称'), d.name); if (n && n !== d.name) await ws.request({ kind: 'remote.devices.rename', id: d.id, name: n }); }}>{tr('改名')}</button>
             <button className="btn sm ghost danger" onClick={async () => { if (await dlg.confirm(tr('吊销「{name}」？', { name: d.name }), { message: tr('该设备需要重新配对才能访问。'), danger: true, okLabel: tr('吊销') })) await ws.request({ kind: 'remote.devices.revoke', id: d.id }); }}>{tr('吊销')}</button>
           </div>
-          );
-        })}
+        ))}
         {st.devices.length === 0 && <div className="empty">{tr('还没有配对的设备')}</div>}
       </div>
     </div>

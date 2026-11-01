@@ -3,7 +3,7 @@
 //   node scripts/i18n/extract.mjs <outDir> [chunkSize=150]    → <outDir>/todo-NN.json  [{ k, f, p }]  (k: Chinese key,
 //                                                               f: file it is used in, p: its placeholders)
 //   node scripts/i18n/extract.mjs --check                      → prints what is missing / unused, exit 1 when missing
-// The English catalogs themselves: server/src/i18n/en.ts, web/src/i18n/en.ts, web/src/shell/en.ts, desktop/src/en.ts
+// The English catalogs themselves: server/src/i18n/en.ts, web/src/i18n/en.ts, desktop/src/en.ts
 // (`node scripts/i18n/merge.mjs <dir>` writes translated chunks into them).
 import fs from 'node:fs';
 import path from 'node:path';

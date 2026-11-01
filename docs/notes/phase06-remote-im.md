@@ -22,7 +22,7 @@
 - 真机：本机没有 sshd 服务（没装），没测到 ok 那条路；e2e 第 36 期测到连不上的那条。
 ## 派活：从手机 / IM 交代任务（阶段 F3，2026-10-25）
 
-- 手机壳（`web/src/shell/`）只是装 app 的框，派活在 app 里：手机布局侧栏抽屉「派活」、命令面板「派活…」（`web/src/features/cloud/CloudDialogs.tsx` DispatchDialog）。一句任务 + 机器（本机 / peer）+ 项目，默认 `settings['dispatch.last']`（还在的才用）。
+- 派活在 app 里：手机布局侧栏抽屉「派活」、命令面板「派活…」（`web/src/features/cloud/CloudDialogs.tsx` DispatchDialog）。一句任务 + 机器（本机 / peer）+ 项目，默认 `settings['dispatch.last']`（还在的才用）。
 - 服务端 `server/src/dispatch/`：`dispatch.start` → 项目文件夹、**项目的权限模式**（项目页「派活用的权限模式」= `Workspace.permissionMode`；没设就不传，pool 用 `ui.defaultMode`）开新对话、meta `origin: 'dispatch'` + `dispatchFrom`（远程连接来的算 'phone'）、发出任务；`peer` → `federation.request(peer, dispatch.start)`，回 `peer_<id>~<sid>`。侧栏行标「从手机派来 / 从 IM 派来」。
 - 通知：hub 在派来的对话 result（做完 / 出错）和权限请求时广播 `notice`（`notify: true`），手机和桌面都收到；授权卡照常推到所有窗口（含手机）。
 - IM：`/dispatch [项目名:] <任务>`（中文别名 `isDispatchCommand`，冒号全角半角都行，项目名不分大小写，对不上就整句当任务），开新对话、绑定这个聊天、按项目权限模式，结果和授权按钮照旧回到聊天。

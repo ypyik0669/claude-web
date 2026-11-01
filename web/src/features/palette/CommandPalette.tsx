@@ -2,7 +2,6 @@ import { openClaudeAiImport, openDispatch, openPublished } from '@/features/clou
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { THEMES, forkCarry, useActive, useStore, type PanelId } from '@/store';
 import { ws } from '@/ws/client';
-import { canOpenWindow } from '@/ws/tunnel';
 import { ago, basename } from '@/util';
 import { Icon, AGENT_ICONS, type IconName } from '@/ui/icons';
 import { parsePeerId, type SessionSummary } from '@shared';
@@ -89,8 +88,7 @@ export function CommandPalette() {
       ...(['single', 'cols2', 'cols3', 'grid2x2', 'mainSide'] as const).map<Cmd>((p) => ({ id: `preset.${p}`, label: tr('布局预设: {v}', { v: { single: tr('不分屏'), cols2: tr('左右两栏'), cols3: tr('三栏'), grid2x2: tr('四宫格'), mainSide: tr('主 + 侧') }[p] }), ic: 'zoom', group: tr('工作台'), run: () => st.dispatchLayout({ t: 'pane.preset', preset: p }) })),
       { id: 'orch.new', label: tr('新建编排'), sub: tr('多 agent 工作流'), ic: 'orchestra', group: tr('编排'), run: () => useOrch.getState().ask('new') },
       { id: 'orch.run', label: tr('运行编排…'), ic: 'play', group: tr('编排'), run: () => useOrch.getState().ask('run') },
-      // not inside the phone shell: a new window there would have no tunnel to the computer
-      ...(canOpenWindow() ? [{ id: 'window.new', label: tr('在新窗口打开当前分组'), ic: 'copy' as const, group: tr('工作台'), run: () => runCommand('window.new') }] : []),
+      { id: 'window.new', label: tr('在新窗口打开当前分组'), ic: 'copy', group: tr('工作台'), run: () => runCommand('window.new') },
       ...PANELS.map(panel),
       ...THEMES.map<Cmd>((t) => ({ id: `theme.${t}`, label: tr('主题: {t}{v}', { t, v: st.theme === t ? tr('（当前）') : '' }), ic: 'moon', group: tr('主题'), run: () => st.setTheme(t) })),
     ];

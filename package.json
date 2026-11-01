@@ -36,7 +36,6 @@
     "electron-updater": "^6.8.9",
     "https-proxy-agent": "^7.0.6",
     "jsonc-parser": "^3.3.1",
-    "node-datachannel": "^0.33.4",
     "socks-proxy-agent": "^10.1.0",
     "node-pty": "^1.1.0",
     "sharp": "0.34.5",

@@ -5,7 +5,6 @@ import { closePages, openPage } from '@/features/sections';
 import { markChecklist } from '@/features/home/checklist-sync';
 import { sheetUp } from '@/features/composer/covered';
 import { activeGroup, chatTile, currentChatTile, defaultDockPanel, workbenchOn } from '@/model/layout';
-import { canOpenWindow } from '@/ws/tunnel';
 import { offerGroupToNewWindow } from './windows';
 import { underCovers } from './cover-commands';
 import { changeZoom } from '@/ui/zoom';
@@ -131,8 +130,7 @@ export function runCommand(id: string): boolean {
       return true;
     case 'interrupt': if (a) void st.interrupt(a.sessionId); return true;
     case 'close': if (a) void st.closeSession(a.sessionId); return true;
-    // inside the phone shell a new window has no tunnel to the computer: nothing (the palette does not offer it)
-    case 'window.new': if (canOpenWindow()) void offerGroupToNewWindow(st.layout.activeGroupId); return true;
+    case 'window.new': void offerGroupToNewWindow(st.layout.activeGroupId); return true;
   }
   if (id.startsWith('panel.')) { st.togglePanel(id.slice(6) as PanelId); return true; }
   return false;

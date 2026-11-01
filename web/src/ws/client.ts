@@ -1,15 +1,14 @@
 import type { ClientRequest, ServerEvent, WireDown, WireUp } from '@shared';
-import { tunnelHost } from './tunnel';
 
 type Listener = (e: ServerEvent) => void;
 
 /**
- * The part of a WebSocket the client uses; the phone shell's TunnelSocket (./tunnel) fits it too.
- * `readyState` is a plain number here (the DOM types it 0 | 1 | 2 | 3, a TunnelSocket says number).
+ * The part of a WebSocket the client uses (tests pass fakes).
+ * `readyState` is a plain number here (the DOM types it 0 | 1 | 2 | 3).
  */
 export type WebSocketLike = Pick<WebSocket, 'send' | 'close' | 'onopen' | 'onclose' | 'onmessage'> & { readonly readyState: number };
 
-/** WebSocket.OPEN, written out: a TunnelSocket and the node tests have no global WebSocket */
+/** WebSocket.OPEN, written out: the node tests have no global WebSocket */
 const OPEN = 1;
 
 /** The computer's /ws on this page's own host, with the access token when there is one. */
@@ -30,7 +29,7 @@ export class WsClient {
   connected = false;
   onStatus: ((c: boolean) => void) | null = null;
 
-  /** `open` makes one socket per (re)connect: a WebSocket to this host by default, a tunnel stream in the phone shell */
+  /** `open` makes one socket per (re)connect: a WebSocket to this host by default (tests pass fakes) */
   constructor(private readonly open: () => WebSocketLike = openWebSocket) {}
 
   connect() {
@@ -40,7 +39,7 @@ export class WsClient {
     try {
       ws = this.open();
     } catch {
-      // a tunnel whose link is down may refuse at once: try again like after a close, don't end the loop
+      // an open that throws at once: try again like after a close, don't end the loop
       this.retry();
       return;
     }
@@ -85,7 +84,7 @@ export class WsClient {
         for (const l of this.listeners) l(d.event);
       }
     };
-    // a socket must report its open / close asynchronously (tunnel.ts); one that did so from inside open(),
+    // a socket must report its open / close asynchronously; one that did so from inside open(),
     // before the handlers above existed, would otherwise sit here dead: never connected, or never reconnected
     if (ws.readyState === OPEN) onOpen();
     else if (ws.readyState > OPEN) onClose();
@@ -131,17 +130,11 @@ export class WsClient {
   }
 }
 
-/**
- * Access token: `?token=` on the page URL (desktop shell / dev) or the device token saved by the /pair page (phones).
- * Not used for the socket inside the phone shell: there the shell holds the device token and sends it when it opens
- * the stream (`CwTunnel.connect()` takes none).
- */
+/** Access token: `?token=` on the page URL (desktop shell / dev) or the device token saved by the /pair page (phones). */
 export function authToken(): string | null {
   const q = new URLSearchParams(location.search).get('token');
   if (q) { try { localStorage.setItem('cw.token', q); } catch { /* private mode */ } return q; }
   try { return localStorage.getItem('cw.token'); } catch { return null; }
 }
 
-// inside the phone shell's iframe every (re)connect is a stream over the shell's tunnel; otherwise a WebSocket
-const tunnel = tunnelHost();
-export const ws = new WsClient(tunnel ? () => tunnel.connect() : undefined);
+export const ws = new WsClient();

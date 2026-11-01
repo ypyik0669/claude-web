@@ -48,9 +48,6 @@ asarUnpack:
   - "**/node_modules/claude-web-engine/**"
   - "**/node_modules/@claude-code-best/**"
   - "**/node_modules/@vscode/ripgrep/**"
-  # WebRTC (phone reaches the PC from anywhere): the JS package plus its per-platform prebuilt .node
-  - "**/node_modules/node-datachannel/**"
-  - "**/node_modules/@node-datachannel/**"
   # the engine bundles sharp's JS but not its native binary (a dev dependency upstream): images over 2000 px failed
   # 「Could not load the "sharp" module」; sharp in our dependencies brings the per-platform @img/sharp-* it requires
   - "**/node_modules/sharp/**"

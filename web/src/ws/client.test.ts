@@ -1,13 +1,10 @@
-// WsClient on an injected socket (the phone shell's tunnel socket has the same shape), and tunnelHost().
-import fs from 'node:fs';
-import path from 'node:path';
+// WsClient on an injected socket.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClientRequest, ServerEvent } from '@shared';
 import { WsClient } from './client';
-import { canOpenWindow, tunnelHost, type CwTunnel, type TunnelSocket } from './tunnel';
 
 /** A socket the test opens and drops by hand. readyState uses the WebSocket values: 0 connecting, 1 open, 3 closed. */
-class FakeSocket implements TunnelSocket {
+class FakeSocket {
   readyState = 0;
   sent: string[] = [];
   onopen: (() => void) | null = null;
@@ -328,61 +325,3 @@ describe('WsClient on an injected socket', () => {
   });
 });
 
-describe('tunnelHost', () => {
-  const tunnel: CwTunnel = { connect: () => new FakeSocket(), kind: () => 'relay' };
-  const page = (parent: unknown, origin = 'https://ypy.github.io') => {
-    const w: Record<string, unknown> = { location: { origin } };
-    w.parent = parent === 'self' ? w : parent;
-    vi.stubGlobal('window', w);
-  };
-
-  it('no window (node, workers) → null', () => {
-    vi.stubGlobal('window', undefined); // explicit, so the test does not lean on vitest's environment: 'node'
-    expect(tunnelHost()).toBeNull();
-  });
-
-  it('a top-level page (parent is the window itself) → null', () => {
-    page('self');
-    expect(tunnelHost()).toBeNull();
-  });
-
-  it('a cross-origin parent, whose location and properties throw on access → null', () => {
-    const blocked = {
-      get location(): never { throw new Error('SecurityError: Blocked a frame with origin'); },
-      get __cwTunnel(): never { throw new Error('SecurityError: Blocked a frame with origin'); },
-    };
-    page(blocked);
-    expect(tunnelHost()).toBeNull();
-  });
-
-  it('a parent on another origin → null even when it has a __cwTunnel', () => {
-    page({ location: { origin: 'https://evil.example' }, __cwTunnel: tunnel });
-    expect(tunnelHost()).toBeNull();
-  });
-
-  it('a same-origin parent without __cwTunnel → null', () => {
-    page({ location: { origin: 'https://ypy.github.io' } });
-    expect(tunnelHost()).toBeNull();
-  });
-
-  it("a same-origin parent with __cwTunnel → the parent's tunnel", () => {
-    page({ location: { origin: 'https://ypy.github.io' }, __cwTunnel: tunnel });
-    expect(tunnelHost()).toBe(tunnel);
-  });
-
-  it('canOpenWindow (F11): not inside the phone shell (a new window there would have no tunnel), anywhere else yes', () => {
-    page({ location: { origin: 'https://ypy.github.io' }, __cwTunnel: tunnel });
-    expect(canOpenWindow()).toBe(false);
-    page('self');
-    expect(canOpenWindow()).toBe(true);
-    vi.stubGlobal('window', undefined);
-    expect(canOpenWindow()).toBe(true);
-  });
-
-  it('the palette, the command and the function behind them all ask canOpenWindow', () => {
-    const src = (f: string) => fs.readFileSync(path.resolve(__dirname, '..', f), 'utf8');
-    expect(src('features/palette/CommandPalette.tsx')).toMatch(/canOpenWindow\(\)\s*\?\s*\[\{ id: 'window\.new'/);
-    expect(src('features/workbench/commands.ts')).toMatch(/case 'window\.new': if \(canOpenWindow\(\)\)/);
-    expect(src('features/workbench/windows.ts')).toMatch(/if \(!canOpenWindow\(\)\) return;/);
-  });
-});

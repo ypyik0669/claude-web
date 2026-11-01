@@ -12,22 +12,15 @@ import type { DeviceInfo, RemotePairCode, RemoteStatus } from '../protocol.js';
 const PAIR_TTL_MS = 10 * 60_000;
 const MAX_TRIES = 5;
 
-/**
- * `tokenHash` (hex sha256 of the device token) is key material: the device's 在外面也能用 room and its keys are
- * derived from it (remote/anywhere/core/keys.ts). Never log it; the diagnostics bundle masks it.
- */
+/** `tokenHash` is the hex sha256 of the device token; the diagnostics bundle masks it. */
 export interface DeviceRecord { id: string; name: string; tokenHash: string; createdAt: number; lastSeenAt: number; ip?: string; ua?: string }
 
 /**
  * LAN / phone access: a second HTTP listener on 0.0.0.0 whose clients authenticate with per-device tokens
  * handed out through a short-lived pairing code (shown as a QR in settings). Device tokens are stored hashed.
- * Events: `changed`; `paired(deviceId)` once a device is added; `revoked(deviceId)` once one is removed (the
- * 在外面也能用 service subscribes / drops that device's room and ends its links); `pairEnded(code)` once a pairing code
- * can no longer pair (used, or its tries ran out; expiry is not an event): its pairing room stops answering.
+ * Events: `changed`.
  */
 export class RemoteService extends EventEmitter {
-  /** The 在外面也能用 QR address for a new pairing code (AnywhereService sets it); without it there is none. */
-  pairUrlHook: ((code: string) => Promise<string | null>) | null = null;
   private server: http.Server | null = null;
   /** every socket the listener accepted, upgraded (WebSocket) ones included: closeAllConnections() skips those */
   private sockets = new Set<Socket>();
@@ -117,14 +110,14 @@ export class RemoteService extends EventEmitter {
   }
 
   status(): RemoteStatus {
-    return { enabled: this.enabled(), running: !!this.server, port: this.server ? this.port : this.configuredPort(), addresses: this.addresses(), error: this.error, devices: this.devices(), pair: this.pair && this.pair.expiresAt > Date.now() ? { code: this.pair.code, expiresAt: this.pair.expiresAt } : null };
+    return { enabled: this.enabled(), running: !!this.server, port: this.server ? this.port : this.configuredPort(), addresses: this.addresses(), error: this.error, devices: this.devices(), pair: this.pair && this.pair.expiresAt > Date.now() ? { code: this.pair.code, expiresAt: this.pair.expiresAt } : null, keepAwake: this.meta.settings()['remote.keepAwake'] !== false };
   }
 
   devices(): DeviceInfo[] {
     return this.meta.devices().map(({ tokenHash: _h, ...d }) => d);
   }
 
-  /** New 6-digit pairing code; replaces the previous one. `anywhereUrl`: the 在外面也能用 QR address, null while that is off. */
+  /** New 6-digit pairing code; replaces the previous one. */
   async newPairCode(): Promise<RemotePairCode> {
     void this.refreshPrimary();
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
@@ -133,14 +126,7 @@ export class RemoteService extends EventEmitter {
     const ip = this.addresses()[0] ?? '127.0.0.1';
     this.emit('changed');
     const url = `http://${ip}:${this.server ? this.port : this.configuredPort()}/pair#${code}`;
-    const anywhereUrl = this.pairUrlHook ? await this.pairUrlHook(code).catch(() => null) : null;
-    return { code, expiresAt, url, anywhereUrl };
-  }
-
-  /** The pairing code that can still pair, if any (not expired, tries left). */
-  currentPair(): { code: string; expiresAt: number } | null {
-    const p = this.pair;
-    return p && p.expiresAt > Date.now() && p.tries < MAX_TRIES ? { code: p.code, expiresAt: p.expiresAt } : null;
+    return { code, expiresAt, url };
   }
 
   /** Exchange a pairing code for a device token. */
@@ -150,17 +136,13 @@ export class RemoteService extends EventEmitter {
     if (p.tries >= MAX_TRIES) { this.pair = null; return { error: tr('尝试次数过多，请重新生成配对码') }; }
     if (code.trim() !== p.code) {
       p.tries++;
-      // no try left: the code can no longer pair (the next attempt says 尝试次数过多)
-      if (p.tries >= MAX_TRIES) this.emit('pairEnded', p.code);
       return { error: tr('配对码不对') };
     }
     this.pair = null;
-    this.emit('pairEnded', p.code);
     const token = randomBytes(32).toString('base64url');
     const rec: DeviceRecord = { id: randomBytes(6).toString('hex'), name: (name || '').trim().slice(0, 60) || guessName(req.headers['user-agent'] ?? ''), tokenHash: hash(token), createdAt: Date.now(), lastSeenAt: Date.now(), ip: clientIp(req), ua: (req.headers['user-agent'] ?? '').slice(0, 200) };
     await this.meta.addDevice(rec);
     this.tokenCache.set(token, rec.id);
-    this.emit('paired', rec.id);
     this.emit('changed');
     const { tokenHash: _h, ...device } = rec;
     return { token, device };
@@ -182,11 +164,10 @@ export class RemoteService extends EventEmitter {
     return id;
   }
 
-  /** Removes the device; its tunneled (在外面也能用) links end at once through `revoked`. */
+  /** Removes the device. */
   async revoke(id: string) {
     await this.meta.removeDevice(id);
     for (const [t, d] of this.tokenCache) if (d === id) this.tokenCache.delete(t);
-    this.emit('revoked', id);
     this.emit('changed');
   }
 

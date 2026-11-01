@@ -2579,29 +2579,10 @@ html.desktop.mac .app.no-sidebar .workbench:not(.gb) .over-head { padding-left: 
 .update-prompt .up-foot .grow { flex: 1 1 auto; }
 .update-prompt .up-later { margin: 8px 0 0; font-size: 13px; color: var(--ink-3); text-align: right; }
 
-/* ---- 设置 → 手机与其它电脑 → 在外面也能用 (RemoteSection.tsx / AnywhereMore.tsx) ---- */
+/* ---- 设置 → 手机与其它电脑 (RemoteSection.tsx) ---- */
 .aw-card { margin-top: 10px; }
 .aw-card .sp-row + .sp-row { border-top: var(--hairline) solid var(--edge-subtle); }
-.aw-line { display: block; margin-top: 4px; color: var(--ink-2); }
-.aw-line[data-tone="ok"] { color: var(--ok); }
-.aw-line[data-tone="err"] { color: var(--err); }
-.aw-line[data-tone="wait"], .aw-line[data-tone="off"] { color: var(--ink-3); }
 .pair-side { flex: 1 1 auto; min-width: 0; }
-.pair-switch { margin-bottom: 8px; }
-/* a link that carries the PC's own lists makes a denser code: shown larger (pair-qr.ts), never wider than the box */
+/* a dense code is shown larger (pair-qr.ts), never wider than the box */
 .pair-qr { background: #fff; width: 180px; height: auto; aspect-ratio: 1 / 1; max-width: 100%; image-rendering: pixelated; }
 .pair-box { flex-wrap: wrap; }
-.aw-more .aw-def { margin-left: 6px; font-weight: 400; font-size: 12px; }
-.aw-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; }
-.aw-row .field { min-width: 0; }
-.modal .aw-row .aw-name { width: 96px; flex: none; }
-.modal .aw-row .aw-url { flex: 1 1 auto; width: auto; }
-.aw-row .aw-st { flex: none; min-width: 44px; text-align: center; }
-.modal .aw-row label.aw-relay { display: flex; align-items: center; gap: 4px; flex: none; margin: 0; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
-.modal .aw-row input[type=checkbox] { width: auto; }
-.aw-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px; }
-.aw-err { margin-top: 6px; font-size: 13px; color: var(--err); }
-@media (max-width: 600px) {
-  .aw-row { flex-wrap: wrap; }
-  .modal .aw-row .aw-url { flex-basis: 100%; order: 3; }
-}

@@ -1,6 +1,5 @@
 node_modules/
 web/dist/
-web/dist-shell/
 server/dist/
 desktop/dist/
 dist-desktop/

@@ -28,7 +28,7 @@ export type EntryId =
 export type BodyId =
   | 'account' | 'engine' | 'models' | 'providers' | 'proxy' | 'gateway'
   | 'mcp' | 'mcpCatalog' | 'mcpJson' | 'plugins' | 'skills' | 'skillsBackup' | 'agents' | 'subagents' | 'memory'
-  | 'remote' | 'anywhere' | 'peers' | 'hosts' | 'im' | 'web' | 'library' | 'secrets'
+  | 'remote' | 'peers' | 'hosts' | 'im' | 'web' | 'library' | 'secrets'
   | 'hooks' | 'localEnv' | 'env' | 'tools' | 'diagnostics' | 'update' | 'raw' | 'customCss';
 
 export interface EntryMeta {
@@ -82,8 +82,7 @@ export const BODY_INFO: Record<BodyId, { l: string; keywords: string }> = {
   subagents: { l: tr('Claude 子代理列表'), keywords: tr('subagent 子代理 agents md') },
   memory: { l: tr('记忆开关与注入'), keywords: tr('memory 记忆 跨 agent mcp sqlite 遗忘 清空 注入') },
   web: { l: tr('搜索与内置浏览器'), keywords: tr('web search browser 搜索 浏览器 联网 上网 网页 bing duckduckgo google yahoo baidu 百度 brave 密钥 截图 登录状态') },
-  remote: { l: tr('手机访问'), keywords: tr('remote lan phone mobile 手机 局域网 配对 配对码 二维码 qr 设备 吊销 端口 在外面也能用 外网 anywhere 在哪都能用 配对链接 不让电脑睡眠 睡眠 休眠 keep awake 直连 慢速转发') },
-  anywhere: { l: tr('牵线服务器与最近连接'), keywords: tr('anywhere 在外面也能用 牵线 broker mqtt stun ice webrtc 打洞 转发 relay 手机页面 壳 shell github pages 最近连接 连接记录') },
+  remote: { l: tr('手机访问'), keywords: tr('remote lan phone mobile 手机 局域网 配对 配对码 二维码 qr 设备 吊销 端口 不让电脑睡眠 睡眠 休眠 keep awake') },
   peers: { l: tr('其它电脑'), keywords: tr('其它机器 其它电脑 跨机器 联邦 peer federation 加入 重新配对') },
   hosts: { l: tr('SSH 隧道'), keywords: tr('ssh 隧道 tunnel 远程主机 端口转发 免密') },
   im: { l: tr('机器人列表'), keywords: tr('telegram discord slack 飞书 feishu lark 钉钉 dingtalk 企业微信 wecom 微信 机器人 bot im 网关 配对') },
@@ -174,7 +173,7 @@ export const SETTINGS_SECTIONS: SectionMeta[] = [
   },
   { id: 'memory', l: tr('共享记忆'), ic: 'memory', group: 'ext', desc: tr('所有 Agent 共用的一份记忆：做过的决定、约束、踩过的坑。'), keywords: tr('memory 记忆'), bodies: ['memory'] },
   // 连接
-  { id: 'remote', l: tr('手机与其它电脑'), ic: 'device', group: 'connect', desc: tr('在手机上接着用，或者把其它电脑上的对话接到这里。'), keywords: tr('远程 / 手机 remote phone 手机 远程'), bodies: ['remote', 'peers'], more: ['anywhere', 'hosts'] },
+  { id: 'remote', l: tr('手机与其它电脑'), ic: 'device', group: 'connect', desc: tr('在手机上接着用，或者把其它电脑上的对话接到这里。'), keywords: tr('远程 / 手机 remote phone 手机 远程'), bodies: ['remote', 'peers'], more: ['hosts'] },
   { id: 'im', l: tr('IM 机器人'), ic: 'chat', group: 'connect', desc: tr('在 Telegram、飞书、钉钉等聊天软件里给 Claude 派活、批准操作。'), keywords: tr('IM 网关 im bot 机器人'), bodies: ['im'] },
   { id: 'web', l: tr('联网'), ic: 'web', group: 'connect', desc: tr('让 Agent 能搜索、能打开网页：用什么搜索，在哪个浏览器里打开。'), keywords: tr('web 联网 上网 搜索 浏览器 search browser'), bodies: ['web'] },
   // 数据

@@ -13,8 +13,6 @@ import type { BackgroundEvent, BackgroundRequest } from './background/types.js';
 import type { CharactersEvent, CharactersRequest } from './characters/core/types.js';
 export * from './background/types.js';
 export * from './characters/core/types.js';
-import type { LinkKind } from './remote/anywhere/core/link.js';
-export type { LinkKind } from './remote/anywhere/core/link.js';
 import type { UpstreamRequest } from './upstreams/types.js';
 import type { ChannelRequest } from './channels/types.js';
 export * from './upstreams/types.js';
@@ -421,21 +419,9 @@ export interface Schedule { id: string; name: string; cwd: string; prompt: strin
 export interface LimitWindow { label: string; percent: number; resetsAt: string | null; active: boolean; severity?: string }
 // ---- remote access / phones / IM (phase 6) ----
 export interface DeviceInfo { id: string; name: string; createdAt: number; lastSeenAt: number; ip?: string; ua?: string }
-export interface RemoteStatus { enabled: boolean; running: boolean; port: number; addresses: string[]; error: string; devices: DeviceInfo[]; pair: { code: string; expiresAt: number } | null; anywhere?: AnywhereStatus }
-/** remote.pairCode: `url` is the LAN-only QR address; `anywhereUrl` the 在外面也能用 one (null while that is off). */
-export interface RemotePairCode { code: string; expiresAt: number; url: string; anywhereUrl: string | null }
-/** One connection a phone made through 在外面也能用 (newest first in `recent`); `error` only when it did not work. */
-export interface AnywhereRecent { at: number; deviceId?: string; ok: boolean; kind?: LinkKind; error?: string }
-/** 在外面也能用 (remote/anywhere/service.ts): the signaling brokers, the phones connected now, the last 20 connections. */
-export interface AnywhereStatus {
-  on: boolean;
-  brokers: { name: string; ok: boolean; error?: string }[];
-  /** Only links that are alive. */
-  sessions: { deviceId: string; kind: LinkKind; since: number }[];
-  recent: AnywhereRecent[];
-  shellUrl: string;
-  keepAwake: boolean;
-}
+export interface RemoteStatus { enabled: boolean; running: boolean; port: number; addresses: string[]; error: string; devices: DeviceInfo[]; pair: { code: string; expiresAt: number } | null; /** 不让电脑睡眠 (setting remote.keepAwake) */ keepAwake: boolean }
+/** remote.pairCode: `url` is the LAN QR address. */
+export interface RemotePairCode { code: string; expiresAt: number; url: string }
 /** Another machine running claude-web, reached through an ssh port-forward. */
 export interface RemoteHost { id: string; name: string; target: string; sshPort?: number; identityFile?: string; remotePort: number; token?: string; startCommand?: string }
 export interface TunnelInfo { hostId: string; localPort: number; url: string; state: 'connecting' | 'up' | 'down'; error: string; since: number }
@@ -714,8 +700,8 @@ export type ClientRequest =
   | { kind: 'schedules.templates' }
   | { kind: 'agents.list'; refresh?: boolean }
   | { kind: 'remote.status' }
-  /** `anywhere` / `keepAwake` are the settings remote.anywhere / remote.keepAwake; the listener restarts only for enabled / port. */
-  | { kind: 'remote.set'; enabled?: boolean; port?: number; anywhere?: boolean; keepAwake?: boolean }
+  /** `keepAwake` is the setting remote.keepAwake; the listener restarts only for enabled / port. */
+  | { kind: 'remote.set'; enabled?: boolean; port?: number; keepAwake?: boolean }
   | { kind: 'remote.pairCode' }
   | { kind: 'remote.devices.revoke'; id: string }
   | { kind: 'remote.devices.rename'; id: string; name: string }

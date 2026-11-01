@@ -8,7 +8,6 @@ import { parseAst } from 'vite';
 export const AREAS = [
   { dir: 'server/src', catalog: 'server/src/i18n/en.ts', export: 'EN_SERVER' },
   { dir: 'web/src', catalog: 'web/src/i18n/en.ts', export: 'EN_WEB' },
-  { dir: 'web/src/shell', catalog: 'web/src/shell/en.ts', export: 'EN_SHELL' },
   { dir: 'desktop/src', catalog: 'desktop/src/en.ts', export: 'EN_DESKTOP' },
   { dir: 'site/src', catalog: 'site/src/i18n/en.ts', export: 'EN_SITE' },
 ];
@@ -29,7 +28,7 @@ export function sourceFiles(dir) {
   return out;
 }
 
-/** The area a file belongs to (the longest matching dir: the shell has its own catalog inside web/src). */
+/** The area a file belongs to (the longest matching dir). */
 export function areaOf(root, file) {
   const rel = path.relative(root, file).split(path.sep).join('/');
   return AREAS.filter((a) => rel.startsWith(a.dir + '/')).sort((a, b) => b.dir.length - a.dir.length)[0];

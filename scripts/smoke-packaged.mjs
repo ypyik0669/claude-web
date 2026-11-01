@@ -1,7 +1,6 @@
 // Cold-starts a PACKAGED desktop build and checks it really works on this OS:
 // server boots inside the app, the page is served, both engines resolve from app.asar.unpacked and run,
-// the terminal (node-pty + spawn-helper + the SDK's native claude binary) produces output, the WebRTC addon
-// (node-datachannel) loads from app.asar.unpacked, and the app finds a new
+// the terminal (node-pty + spawn-helper + the SDK's native claude binary) produces output, and the app finds a new
 // version by itself (a local update feed advertising 99.0.0): the Windows installer build downloads it, macOS downloads,
 // checks and unpacks it (desktop/src/mac-update.ts; the swap itself is update-policy.test.ts), Linux only reports it.
 //   node scripts/smoke-packaged.mjs "<path to app executable>" [screenshot.png]
@@ -133,56 +132,6 @@ async function run() {
 }
 
 try { await run(); } catch (e) { check('smoke run', false, e.stack ?? String(e)); }
-
-// the WebRTC addon (phone reaches the PC from anywhere): its prebuilt .node must be unpacked and load under Electron.
-// Required through app.asar the way the server's import resolves it (its JS dependency detect-libc stays inside the
-// asar; Electron redirects the unpacked files), then the loaded binary must be the one in app.asar.unpacked.
-{
-  const dir = path.dirname(path.resolve(exe)); // absolute: a bare relative path would be looked up as a package name
-  const resources = process.platform === 'darwin' ? path.join(dir, '..', 'Resources') : path.join(dir, 'resources');
-  const mod = path.join(resources, 'app.asar', 'node_modules', 'node-datachannel');
-  const script = path.join(ud, 'rtc-smoke.cjs');
-  writeFileSync(script, [
-    'const ndc = require(process.argv[2]);',
-    "const pc = new ndc.PeerConnection('smoke', { iceServers: [] });",
-    'pc.close();',
-    'ndc.cleanup();',
-    "const bin = Object.keys(require.cache).find((k) => k.endsWith('node_datachannel.node')) || 'no .node loaded';",
-    "console.log('rtc ok ' + ndc.getLibraryVersion() + ' ' + bin);",
-    '',
-  ].join('\n'));
-  const r = spawnSync(exe, [script, mod], { env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, encoding: 'utf8', timeout: 30_000, windowsHide: true });
-  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
-  // require.cache names the binary by its virtual app.asar path; the real file must sit in app.asar.unpacked
-  const bin = /rtc ok \S+ (.+node_datachannel\.node)/.exec(out)?.[1] ?? '';
-  const ok = r.status === 0 && !!bin && existsSync(bin.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`));
-  check('WebRTC addon loads from app.asar.unpacked (Electron as node)', ok, r.error ? r.error.message : `exit ${r.status}: ${out.slice(0, 300)}`);
-
-  // …and the way the server really loads it: an ESM import() of node-datachannel/polyfill, through the server's own
-  // loader (server/dist/remote/anywhere/rtc.js in app.asar). The package's "import" export is another file than the
-  // CJS one above: this is the desktop's only direct-connection load path.
-  const rtcJs = path.join(resources, 'app.asar', 'server', 'dist', 'remote', 'anywhere', 'rtc.js');
-  const esm = path.join(ud, 'rtc-smoke.mjs');
-  writeFileSync(esm, [
-    "import { createRequire } from 'node:module';",
-    "import { pathToFileURL } from 'node:url';",
-    'const { loadRtc } = await import(pathToFileURL(process.argv[2]).href);',
-    'const m = await loadRtc();',
-    "if ('error' in m) { console.log('rtc esm failed ' + m.error); process.exit(1); }",
-    'const pc = new m.RTCPeerConnection({ iceServers: [] });',
-    'pc.close();',
-    // the binary the ESM build loaded: its own createRequire shares the CJS module cache
-    "const bin = Object.keys(createRequire(import.meta.url).cache).find((k) => k.endsWith('node_datachannel.node')) || 'no .node loaded';",
-    "console.log('rtc esm ok ' + bin);",
-    'process.exit(0);',
-    '',
-  ].join('\n'));
-  const e2 = spawnSync(exe, [esm, rtcJs], { env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, encoding: 'utf8', timeout: 30_000, windowsHide: true });
-  const out2 = `${e2.stdout ?? ''}${e2.stderr ?? ''}`.trim();
-  const bin2 = /rtc esm ok (.+node_datachannel\.node)/.exec(out2)?.[1] ?? '';
-  const ok2 = e2.status === 0 && !!bin2 && existsSync(bin2.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`));
-  check('WebRTC polyfill loads through an ESM import() the way the server does (Electron as node)', ok2, e2.error ? e2.error.message : `exit ${e2.status}: ${out2.slice(0, 300)}`);
-}
 
 // the `web` MCP server: its entry is inside app.asar and is started with the app's own binary as node (web/launcher.ts)
 {

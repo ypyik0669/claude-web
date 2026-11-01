@@ -48,7 +48,7 @@ spec：`docs/superpowers/specs/2026-10-24-desktop-parity-design.md` 的 D 节；
 
 ## 坑
 
-- 懒加载：后台面板和编排都在 boot 包里，所以组件 + CSS 是单独的 chunk（`LazyNodeGraph`）。boot 的上限 1 900 000 字节现在由 `web/vite.config.ts` 的 `boot-chunk-size` 插件在构建时拦、`shell/assets.test.ts` 再查一遍（`web/dist/index.html` 是手机壳的，原来的首屏检查看不到 boot；review X1，修完 1 761 095 B）。`NodegraphBlock` / `MermaidBlock` 自己已经是懒加载的，直接 import `NodeGraph`。
+- 懒加载：后台面板和编排都在 boot 包里，所以组件 + CSS 是单独的 chunk（`LazyNodeGraph`）。boot 原来有 1 900 000 字节的上限（只为手机壳的慢速转发），2026-10-31 随「在外面也能用」一起删了。`NodegraphBlock` / `MermaidBlock` 自己已经是懒加载的，直接 import `NodeGraph`。
 - `ui/` 里不能碰 store，减少动效只能读 `ui/input-intent` 的 `reducedMotion`（加 MutationObserver 跟着变）。
 - 后台 / 编排每秒用新的 graph 对象重画（时间在走）：重新适应窗口只看卡片 id 拼成的 `nodeKey`，并且用户缩放 / 平移过就不再自动适应；拖过的偏移也按 id 保留。
 - 隐藏的面板量出来是 0×0：等有尺寸才适应窗口。

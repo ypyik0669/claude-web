@@ -37,7 +37,6 @@ const BODY_SOURCE: Record<BodyId, { comp: string; file: string; props?: string }
   subagents: { comp: 'SimpleList', file: CONFIG, props: 'kind="config.agents"' },
   memory: { comp: 'MemorySettings', file: 'features/memory/MemorySettings.tsx' },
   remote: { comp: 'RemoteSection', file: S('RemoteSection.tsx') },
-  anywhere: { comp: 'AnywhereMore', file: S('AnywhereMore.tsx') },
   peers: { comp: 'PeersSection', file: S('PeersSection.tsx') },
   hosts: { comp: 'HostsSection', file: S('RemoteSection.tsx') },
   im: { comp: 'ImSection', file: S('ImSection.tsx') },
@@ -417,9 +416,8 @@ describe('the whole interface: 对话 not 会话, no implementation words by def
     expect(bad).toEqual([]);
   });
 
-  // 在外面也能用 (spec 2026-10-01 §10): the network words — MQTT / WebRTC / STUN / ICE — only under 更多选项 and in
-  // tooltips. A file may use them when every part it draws sits under 更多选项 only (AnywhereMore.tsx: the brokers, STUN,
-  // the phone page); a file that also draws a part in plain view (RemoteSection.tsx: 在外面也能用 itself) may not
+  // the network words — MQTT / WebRTC / STUN / ICE — only under 更多选项 and in tooltips (spec 2026-10-01 §10, kept
+  // after 在外面也能用 was removed). A file may use them when every part it draws sits under 更多选项 only
   const NETWORK_WORDS: [string, RegExp][] = [['MQTT', /\bMQTT\b/], ['WebRTC', /webrtc/i], ['STUN', /\bSTUN\b/], ['ICE', /\bICE\b/]];
   const networkWords = (t: string) => NETWORK_WORDS.filter(([, re]) => re.test(t)).map(([w]) => w);
   const placements = allBodies();
@@ -427,7 +425,7 @@ describe('the whole interface: 对话 not 会话, no implementation words by def
   for (const p of placements) if (!p.more) moreOnlyFiles.delete(BODY_SOURCE[p.body].file);
 
   it('says MQTT / WebRTC / STUN / ICE only under 更多选项 and in tooltips (spec 2026-10-01 §10)', () => {
-    expect([...moreOnlyFiles]).toEqual([S('AnywhereMore.tsx')]);
+    expect([...moreOnlyFiles]).toEqual([]);
     const bad: string[] = [];
     for (const f of ALL) {
       if (NOT_DEFAULT.includes(f) || moreOnlyFiles.has(f)) continue;

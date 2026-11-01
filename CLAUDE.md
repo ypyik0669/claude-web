@@ -50,7 +50,7 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 | [phase04-config](docs/notes/phase04-config.md) | 配置中心 / 自动化 / 打磨（阶段 4，2026-09-03） | 设置、对话框、密钥、Skills、MCP、定时任务、账本、诊断 |
 | [phase05-agents](docs/notes/phase05-agents.md) | 多 agent（阶段 5，2026-09-03） | AgentDriver、Codex / ACP 协议、归一成 SDK 消息、Windows 垫片、shot.cjs 用法 |
 | [phase06-remote-im](docs/notes/phase06-remote-im.md) | 远程 / 手机 / IM（阶段 6，2026-09-03） | 远程监听、配对、SSH 隧道、手机布局、IM 网关 |
-| [remote-anywhere](docs/notes/remote-anywhere.md) | 手机在外面也能连（2026-10-01） | MQTT 牵线 + WebRTC / 转发、手机壳、密钥派生、限制、调试脚本 |
+| [remote-anywhere](docs/notes/remote-anywhere.md) | 手机在外面也能连（2026-10-01，已删除 2026-10-31） | 删了什么、为什么、留下了什么、外面还要手动收的 VPS / 站点 |
 | [phase07-board-goal](docs/notes/phase07-board-goal.md) | 看板 / 目标 / Android（阶段 7，2026-09-03） | Issue/PR 看板、目标（Goal）、Android |
 | [phase08-tokens-dock](docs/notes/phase08-tokens-dock.md) | 设计令牌 / 图标 / 停靠面板（阶段 8，2026-09-04） | 令牌分层、焦点环、PANELS 表、停靠面板不卸载 |
 | [phase09-chat](docs/notes/phase09-chat.md) | 对话渲染与 composer（阶段 9，2026-09-04） | 回合时间线、RunCard、applyTranscript live、模型 catalog、ultracode、流式卡顿（按帧渲染 / 测量脚本） |
@@ -102,6 +102,7 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 | [site](docs/notes/site.md) | 官网（2026-10-22） | site/ 的 Astro 站、文案与覆盖测试、语言跳转、按系统的下载按钮、版本数据、首次加载预算、Pages 发布 |
 | [node-graph](docs/notes/node-graph.md) | 节点图（spec 2026-10-24 D） | ui/node-graph 共用组件；nodegraph 格式、marks / 状态标签；后台指挥台、编排执行图、对话代码块与 Mermaid 切换；动效与 150 张上限；ui.nodegraphHint |
 | [free-sources](docs/notes/free-sources.md) | 免费来源与托管程序（2026-10-26，spec「统一模型来源」切片 4） | 来源目录三层与签名远程目录、ChannelDriver 注册表、channels.add 一步添加、Kilo 免 key、modelFilter、CLIProxyAPI / Magpie 的下载校验 / 回退 / 运行 / 连接已有 |
+| [security-audit](docs/notes/security-audit.md) | 安全审计（2026-10-31，用户要求） | SEC-01～20 待修清单：DNS rebinding、插件沙箱、手机壳信任根、转发前向保密、局域网明文、联邦、插件市场 / 下载校验、密钥进命令行；状态表 |
 | [screen-recording](docs/notes/screen-recording.md) | 录屏（阶段 E3，2026-10-25） | + 菜单录屏、自己的选择框、主进程只放行选中的源、录制格式与上限、抽关键帧、录下 Claude 的操作 |
 
 ## 结构
@@ -112,7 +113,6 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 - `server/src/config/service.ts` — 插件/MCP/skills/agents/hooks/auth，调 `claude <子命令>`
 - `web/src/model/conversation.ts` — 纯函数 reducer，SDK 消息 → 消息树
 - `web/src/store/index.ts` — zustand，所有 WS 事件在这里进 reducer
-- `server/src/remote/anywhere/` — 手机在外面也能连：`core/`（电脑和手机壳共用）、`service.ts`、`bridge.ts`；手机壳在 `web/src/shell/`
 - `server/src/web/` — 联网：搜索、`web` MCP 服务器、给内置浏览器派活；浏览器本身在 `web/src/features/browser/`
 - `server/src/computer/` — 操控电脑（Windows）：`computer` MCP 服务器、授权闸、PowerShell helper、向用户要授权的接口；对话里的文字和授权卡在 `web/src/features/computer/` 和 `chat/PermissionCards.tsx`
 - `web/src/features/rail/`、`web/src/features/sections/` — 图标栏和分区页

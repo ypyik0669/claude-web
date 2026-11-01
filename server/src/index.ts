@@ -59,7 +59,6 @@ import { PreviewService } from './preview/service.js';
 import { setPreviewDeps } from './preview/tools.js';
 import { sendWhenIdle } from './sessions-mcp/deliver.js';
 import { RemoteService, pairPage } from './remote/service.js';
-import { AnywhereService } from './remote/anywhere/service.js';
 import { reportKeepAwake } from './remote/keep-awake.js';
 import { TunnelManager } from './remote/tunnel.js';
 import { ImService } from './im/service.js';
@@ -525,8 +524,6 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   const syncRemote = new RemoteSyncService({ meta, secrets, sync });
   const share = new ShareService(gateway);
   remote = new RemoteService(meta, () => { const s = http.createServer(handler); s.on('upgrade', upgrade); return s; });
-  // 在外面也能用: bridges phones' links to the remote-access listener above (never to this main one)
-  const anywhere = new AnywhereService(meta, remote);
   const tunnels = new TunnelManager();
   const sessionsSvc = new SessionService(path.join(dataDir(), 'session-titles.json'));
   const im = new ImService(meta, secrets, pool, sessionsSvc);
@@ -639,7 +636,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     },
   });
   themes.watch();
-  const services = { importer, customCss, orchestra, background, characters, themes, remote, anywhere, tunnels, im, vcs: new VcsService(gitSvc, { gitlabHosts: () => { const v = meta.settings()['vcs.gitlabHosts']; return Array.isArray(v) ? v : []; }, tokens: vcsTokens }), vcsTokens, wsl, goals, android: new AndroidService(), pool, sessions: sessionsSvc, config, usage: new UsageService(async (sid) => providerTimeline(await canonical.providerSwitches(sid), meta.sessionMeta(sid).providerId, (id) => { const p = meta.provider(id); return p ? { type: p.type, name: p.name } : undefined; })), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway, privacy, upstreams, channels, engines, plugins, sync, syncRemote, share, tasks, web, computer, siteAsk, localEnv: localEnvStore, previews, cloud };
+  const services = { importer, customCss, orchestra, background, characters, themes, remote, tunnels, im, vcs: new VcsService(gitSvc, { gitlabHosts: () => { const v = meta.settings()['vcs.gitlabHosts']; return Array.isArray(v) ? v : []; }, tokens: vcsTokens }), vcsTokens, wsl, goals, android: new AndroidService(), pool, sessions: sessionsSvc, config, usage: new UsageService(async (sid) => providerTimeline(await canonical.providerSwitches(sid), meta.sessionMeta(sid).providerId, (id) => { const p = meta.provider(id); return p ? { type: p.type, name: p.name } : undefined; })), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway, privacy, upstreams, channels, engines, plugins, sync, syncRemote, share, tasks, web, computer, siteAsk, localEnv: localEnvStore, previews, cloud };
   new Hub(wss, services);
   tasks.start();
   // model lists older than a day (or never pulled) are refreshed in the background — list only, no tokens
@@ -694,7 +691,6 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       })().catch(() => {});
     }, 1500).unref?.();
   });
-  await anywhere.start();
   await im.startAll();
   const eng = await engineInfo();
   console.log(`claude-web ${version} listening on http://${HOST}:${port}  (runtime: ${eng.runtime} ${eng.version ?? ''} ${eng.path})`);
@@ -710,7 +706,6 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       await im.stopAll();
       await federation.close();
       await tunnels.closeAll();
-      await anywhere.stop(); // the phones' links and the broker connections, before the listener they bridge to
       await tasks.stop(); // before the sidecars it drives
       plugins.stop(); // the executable plugins' child processes
       await gateway.stop(); // the LAN listener, the audit buffer and the key counters
