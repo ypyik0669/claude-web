@@ -29,7 +29,8 @@ export function runCost(run: Pick<BotRun, 'costUsd' | 'costEstimated'>): string 
 /** How many items wait for an answer, per bot (bots with none are left out). */
 export function pendingByBot(inbox: InboxItem[]): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const i of inbox) if (!i.done) out[i.botId] = (out[i.botId] ?? 0) + 1;
+  // a run's finding is its card in the conversation, not something to decide (new ones show as unseen)
+  for (const i of inbox) if (!i.done && i.kind !== 'finding') out[i.botId] = (out[i.botId] ?? 0) + 1;
   return out;
 }
 

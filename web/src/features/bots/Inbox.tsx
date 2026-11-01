@@ -135,7 +135,8 @@ function Item({ item, botName, routineName, picked, onPick, busy, act }: {
 export function Inbox({ botId, empty }: { botId?: string; /** shown when nothing waits (else nothing is drawn) */ empty?: string }) {
   const inbox = useBots((s) => s.inbox);
   const bots = useBots((s) => s.bots);
-  const items = useMemo(() => inbox.filter((i) => !i.done && (!botId || i.botId === botId)), [inbox, botId]);
+  // 需要你: what waits for a decision — a run's finding is read as its card in the bot's conversation
+  const items = useMemo(() => inbox.filter((i) => !i.done && i.kind !== 'finding' && (!botId || i.botId === botId)), [inbox, botId]);
   const groups = useMemo(() => groupInbox(items), [items]);
   const names = useMemo(() => new Map(bots.map((b) => [b.id, b.name])), [bots]);
   const routineNames = useMemo(() => new Map(bots.flatMap((b) => b.routines.map((r) => [`${b.id}/${r.id}`, r.name] as const))), [bots]);

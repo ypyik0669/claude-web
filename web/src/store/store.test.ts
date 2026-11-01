@@ -460,6 +460,17 @@ describe('新对话默认权限 (ui.defaultMode) for new conversations opened an
     await useStore.getState().send(sid, 'again');
     expect(opened().map((p: any) => [p.sessionId, p.permissionMode])).toEqual([[undefined, mode], [sid, mode]]);
   });
+  // 2026-11-01 (real test of the Bot page): the background transcript load of a resumed conversation placed it in a
+  // pane anyway — the window switched to the chat section and the Bot page was hidden right after it opened
+  it("a resume opened with 'none' stays out of the workbench, its history loaded too", async () => {
+    fake.handlers.set('transcript.load', () => []);
+    const before = JSON.stringify(useStore.getState().layout);
+    await useStore.getState().openSession({ sessionId: 'th1', cwd: '/w' }, 'none');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(JSON.stringify(useStore.getState().layout)).toBe(before);
+    expect(useStore.getState().open.th1).toBeDefined();
+    expect(fake.sent.some((r) => r.kind === 'transcript.load' && r.sessionId === 'th1')).toBe(true);
+  });
   it('no setting (or a bogus one): nothing is added', async () => {
     useStore.setState({ settings: { 'ui.defaultMode': 'yolo' } });
     await useStore.getState().openSession({ cwd: '/w' }, 'none');

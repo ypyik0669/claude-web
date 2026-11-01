@@ -63,6 +63,10 @@ describe('bots roster', () => {
   it('pendingByBot counts the open items per bot', () => {
     expect(pendingByBot([item('1', 'a'), item('2', 'a', { kind: 'draft' }), item('3', 'b', { done: { at: 1, answer: 'reject' } })])).toEqual({ a: 2 });
   });
+  it('pendingByBot leaves out a run\'s findings (its card in the conversation; a daily routine never needs you for them)', () => {
+    expect(pendingByBot([item('1', 'a', { kind: 'finding' }), item('2', 'a', { kind: 'finding' }), item('3', 'a', { kind: 'proposal' })])).toEqual({ a: 1 });
+    expect(pendingByBot([item('1', 'b', { kind: 'finding' })])).toEqual({});
+  });
   it('rowState: needs you, error, working, fresh, idle', () => {
     expect(rowState(sb('a', { state: 'attention' }))).toBe('attention');
     expect(rowState(sb('a', { pendingInbox: 1 }))).toBe('attention');

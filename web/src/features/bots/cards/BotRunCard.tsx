@@ -7,7 +7,13 @@ import { tr } from '@/i18n';
 import { rowTime } from '../roster-model';
 import { useThreadNav } from './nav';
 
-const firstLine = (s: string | undefined) => (s ?? '').trim().split('\n')[0]?.slice(0, 160) ?? '';
+/**
+ * The start of a run's report as plain text: its markdown marks dropped and its lines run together — a report that
+ * opens with a bold title line (「**仓库晨检（11-01）**」) showed only that title, stars and all (2026-11-01 real run)
+ */
+export const firstLine = (s: string | undefined) => (s ?? '')
+  .replace(/\*\*|__|`/g, '').replace(/^\s*(#{1,6}\s+|[-*+]\s+|>\s?)/gm, '')
+  .replace(/\s+/g, ' ').trim().slice(0, 160);
 
 export function BotRunCard({ entry, run, routineName }: { entry: BotTimelineEntry; run?: BotRun; routineName?: string }) {
   const nav = useThreadNav();

@@ -828,8 +828,10 @@ export const useStore = create<State>((set, get) => ({
       await get().refreshSessions().catch(() => {});
       await get().loadHistory(r.sessionId, { focus: false });
     }
-    // load transcript in the background for resumed / forked sessions with empty conv
-    if (p.sessionId && !existing) void get().loadHistory(r.sessionId);
+    // load transcript in the background for resumed / forked sessions with empty conv — placed where the open placed it:
+    // 'none' stays out of the workbench (a bot's conversation lives in the Bot page; placing it here switched the
+    // window to the chat section and hid the Bot page, 2026-11-01)
+    if (p.sessionId && !existing) void get().loadHistory(r.sessionId, target === 'none' ? { focus: false } : undefined);
     if (p.fork || p.resumeAt) void get().refreshSessions();
     void get().loadFeedback(r.sessionId);
     return r.sessionId;

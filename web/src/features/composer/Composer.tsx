@@ -14,6 +14,7 @@ import { StatusStrip, noLoginChipShown } from '@/features/chat/StatusStrip';
 import { QueueCards } from '@/features/chat/QueueCards';
 import { SideChat } from '@/features/chat/SideChat';
 import { openSideChat } from '@/features/chat/side-chat';
+import { useBots } from '@/features/bots/state';
 import { parseBtw } from '@/features/chat/side-chat-model';
 import { atQueryAt, pickAt } from './at-mention';
 import { RunCard } from '@/features/chat/RunCard';
@@ -136,6 +137,8 @@ function fastOffText(reason: string): string {
 export function Composer({ welcome = false, target, disabled = false, visible = true, variant }: { welcome?: boolean; target?: { paneId: string; tileId: string }; disabled?: boolean; visible?: boolean; variant?: 'bot' }) {
   const bot = variant === 'bot' && !welcome;
   const active = useScopedSession();
+  // a bot's conversation: the box speaks to the bot by name, not to 「Claude」
+  const botName = useBots((s) => (bot && active ? s.bots.find((b) => b.threadId === active.sessionId)?.name : undefined));
   const ownName = useStore((s) => ownClaudeName(s.auth));
   const send = useStore((s) => s.send);
   const interrupt = useStore((s) => s.interrupt);
@@ -1394,7 +1397,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
             rows={1}
             value={text}
             disabled={disabled}
-            placeholder={suggestion ? `${suggestion}   ${tr('Tab 采用')}` : disabled ? tr('对话已被删除，不能继续') : docked ? dockPlaceholder(docked, dockAgent) : welcome && !ultraOn ? tr('描述一个任务，或者问个问题。输入 / 查看命令，拖入文件作为附件') : busy ? tr('Enter 排到这一轮之后，Ctrl+Enter 马上插话 · Esc 中断') : ultraOn ? ULTRACODE.placeholder : active?.state === 'history' ? tr('发送即可继续这个对话…') : tr('回复 {agentName}… 输入 / 查看命令，拖入文件作为附件', { agentName: info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude' })}
+            placeholder={suggestion ? `${suggestion}   ${tr('Tab 采用')}` : disabled ? tr('对话已被删除，不能继续') : docked ? dockPlaceholder(docked, dockAgent) : welcome && !ultraOn ? tr('描述一个任务，或者问个问题。输入 / 查看命令，拖入文件作为附件') : busy ? tr('Enter 排到这一轮之后，Ctrl+Enter 马上插话 · Esc 中断') : ultraOn ? ULTRACODE.placeholder : botName ? tr('跟「{name}」说点什么… 输入 / 查看命令，拖入文件作为附件', { name: botName }) : active?.state === 'history' ? tr('发送即可继续这个对话…') : tr('回复 {agentName}… 输入 / 查看命令，拖入文件作为附件', { agentName: info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude' })}
             onChange={(e) => { setCaret(e.target.selectionStart ?? e.target.value.length); onChange(e.target.value); }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
             onKeyDown={onKey}

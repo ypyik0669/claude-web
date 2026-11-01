@@ -306,7 +306,9 @@ export class BotService extends EventEmitter {
       : last && last.ok === false && !last.handoff ? { reason: last.error || tr('上次运行没有成功') } : undefined;
     const threadUsd = this.threadCost.get(bot.id);
     return {
-      ...bot, state, todayUsd, weekUsd, pendingInbox: pending.length, trust, unseen,
+      // what waits for the user's decision (approvals, drafts, proposals): a run's finding is its card in the conversation
+      // (new ones count in unseen) — counted here, a daily routine kept its bot under 需要你 for good (2026-11-01)
+      ...bot, state, todayUsd, weekUsd, pendingInbox: pending.filter((i) => i.kind !== 'finding').length, trust, unseen,
       ...(lastLine ? { lastLine } : {}), ...(activity ? { activity } : {}), ...(error ? { error } : {}), ...(threadUsd !== undefined ? { threadUsd } : {}),
     };
   }

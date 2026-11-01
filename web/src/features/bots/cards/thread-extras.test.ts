@@ -25,3 +25,13 @@ describe('threadRows', () => {
     expect(rows[0].run).toBeUndefined();
   });
 });
+
+import { firstLine } from './BotRunCard';
+describe('a run card\'s line: the report\'s start as plain text', () => {
+  it('drops markdown marks and runs a bold title line into what follows (2026-11-01 real run)', () => {
+    expect(firstLine('**仓库晨检（2026-11-01）**\n当前在 `main` 分支，工作区干净。\n- [ ] 修登录页')).toBe('仓库晨检（2026-11-01） 当前在 main 分支，工作区干净。 [ ] 修登录页');
+    expect(firstLine('## 结论\n都没问题')).toBe('结论 都没问题');
+    expect(firstLine(undefined)).toBe('');
+    expect(firstLine('x'.repeat(400))).toHaveLength(160);
+  });
+});

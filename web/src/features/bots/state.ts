@@ -46,7 +46,8 @@ export const useBots = create<BotsState>(() => ({
   inbox: [], pending: 0, runs: {}, load: EMPTY_LOAD, templates: [],
 }));
 
-const pendingOf = (inbox: InboxItem[]) => inbox.filter((i) => !i.done).length;
+/** what waits for a decision (a run's finding is its card in the bot's conversation, not something to decide) */
+const pendingOf = (inbox: InboxItem[]) => inbox.filter((i) => !i.done && i.kind !== 'finding').length;
 
 /** Replace the inbox (and its count) in one go. */
 function setInbox(inbox: InboxItem[]): void { useBots.setState({ inbox, pending: pendingOf(inbox) }); }

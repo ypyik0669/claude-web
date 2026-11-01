@@ -1841,6 +1841,7 @@ export const EN_WEB: Record<string, string> = {
   "回到底部": "Back to bottom",
   "回到现在": "Back to now",
   "回复 {agentName}… 输入 / 查看命令，拖入文件作为附件": "Reply to {agentName}… Type / for commands; drop files in to attach them",
+  "跟「{name}」说点什么… 输入 / 查看命令，拖入文件作为附件": "Say something to “{name}”… Type / for commands; drop files in to attach them",
   "回复评论后顺手标为已解决": "Resolve comments after replying",
   "团队邮箱、测试用的 key；这些值总是原样发送": "Team emails, test keys; these are always sent as-is",
   "固定模型（可留空）": "Pin a model (optional)",
