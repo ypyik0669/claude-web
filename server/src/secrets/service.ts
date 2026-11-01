@@ -80,6 +80,7 @@ export class SecretService {
     this.run = opts.run ?? runChild;
     this._scheme = this.platform === 'win32' ? 'dpapi' : this.platform === 'darwin' ? 'keychain' : 'plain';
     if (this.platform === 'linux') this.probe = this.probeSecretTool();
+    if (this.platform === 'darwin') this.probe = this.probeKeychain();
   }
 
   /** The scheme new secrets get. On Linux it is `plain` until `secret-tool` is found, and drops back to `plain` if storing fails. */
@@ -87,6 +88,14 @@ export class SecretService {
 
   /** Wait for the Linux `secret-tool` probe (no-op elsewhere). */
   async ready(): Promise<SecretScheme> { if (this.probe) await this.probe; return this._scheme; }
+
+  /**
+   * No default keychain (a temp HOME: e2e, ui-smoke, demo scripts; a user who deleted it): `security -i` would put up
+   * a "Keychain Not Found" dialog for every store, where the old `-w` call just failed — store as `plain` instead.
+   */
+  private async probeKeychain(): Promise<void> {
+    try { await this.run('security', ['default-keychain']); } catch { this._scheme = 'plain'; }
+  }
 
   private async probeSecretTool(): Promise<void> {
     try { await this.run('secret-tool', ['--version']); this._scheme = 'libsecret'; } catch (e) {

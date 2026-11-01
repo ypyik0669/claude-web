@@ -28,6 +28,7 @@ function fakeKeychain() {
   const items = new Map<string, Buffer>();
   return recorder((c) => {
     if (c.cmd !== 'security') return new Error('unexpected ' + c.cmd);
+    if (c.args[0] === 'default-keychain') return { stdout: '    "/Users/x/Library/Keychains/login.keychain-db"\n' };
     if (c.args[0] === '-i') {
       const line = c.input!.replace(/\n$/, '');
       expect(line.length).toBeLessThanOrEqual(4000);
@@ -53,7 +54,7 @@ describe('SecretService — macOS keychain', () => {
     const enc = await s.protect(secret, 'p1');
     expect(enc).toBe('enc:keychain:provider-p1');
     expectNotInArgs(kc.calls, secret);
-    expect(kc.calls[0]!.args).toEqual(['-i']);
+    expect(kc.calls.map((c) => c.args[0])).toEqual(['default-keychain', '-i']);
     expect(await new SecretService({ platform: 'darwin', run: kc.run }).reveal(enc)).toBe(secret);
   });
 
@@ -73,8 +74,20 @@ describe('SecretService — macOS keychain', () => {
     expect(enc).toMatch(/^enc:keychain:provider-h[0-9a-f]{24}$/);
   });
 
+  // a temp HOME (e2e, ui-smoke) has no default keychain: security -i would put up a "Keychain Not Found" dialog
+  it('with no default keychain stores plain and never runs security -i', async () => {
+    const { calls, run } = recorder((c) => c.args[0] === 'default-keychain'
+      ? Object.assign(new Error('security: SecKeychainCopyDefault: A default keychain could not be found.'), { code: 1 })
+      : new Error('unexpected ' + c.args.join(' ')));
+    const s = new SecretService({ platform: 'darwin', run });
+    const enc = await s.protect('k1', 'peer-x');
+    expect(enc).toBe(`enc:plain:${Buffer.from('k1').toString('base64')}`);
+    expect(s.scheme).toBe('plain');
+    expect(calls.map((c) => c.args[0])).toEqual(['default-keychain']);
+  });
+
   it('falls back to the plain marker when security reports an error (exit 0 from -i)', async () => {
-    const { run } = recorder(() => ({ stderr: 'security: SecKeychainItemCreateFromContent: returned 1' }));
+    const { run } = recorder((c) => c.args[0] === 'default-keychain' ? {} : { stderr: 'security: SecKeychainItemCreateFromContent: returned 1' });
     const enc = await new SecretService({ platform: 'darwin', run }).protect('k1', 'x');
     expect(enc).toBe(`enc:plain:${Buffer.from('k1').toString('base64')}`);
   });
