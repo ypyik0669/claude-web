@@ -1,43 +1,21 @@
-// Sync bundle (spec §8): source settings, account references, model mappings, privacy and routing rules.
-// Not in it: process state (health, cooldowns, counters, sidecar ids, learned endpoint quirks), model-list caches,
-// absolute paths. Credentials and privacy rules only travel inside the passphrase-encrypted part (crypto.ts).
+// Sync bundle (spec §8): provider profiles, model settings and privacy rules. Not in it: model-list caches, absolute
+// paths. Keys and privacy rules only travel inside the passphrase-encrypted part (crypto.ts).
 import crypto from 'node:crypto';
 import type { MetaStore } from '../meta/store.js';
 import type { SecretService } from '../secrets/service.js';
 import type { Provider } from '../protocol.js';
-import type { GatewayGroup, GatewayKeyGroup } from '../gateway/types.js';
-import type { UpstreamAccount } from '../upstreams/types.js';
 import { open, seal, type SealedBox } from './crypto.js';
 import { tr } from '../i18n/index.js';
 
 export type SyncProvider = Omit<Provider, 'apiKey'> & { hasKey: boolean };
-export interface SyncAccountRef {
-  id: string;
-  kind: UpstreamAccount['kind'];
-  name: string;
-  enabled: boolean;
-  credentialKind: UpstreamAccount['credentialKind'];
-  source: UpstreamAccount['source'];
-  maxConcurrent?: number;
-  dailyRequestLimit?: number;
-  identity?: { email?: string; plan?: string };
-  hasCredential: boolean;
-}
-
 export interface SyncPublic {
   providers: SyncProvider[];
-  accounts: SyncAccountRef[];
-  /** gateway route groups: members and model mappings */
-  gatewayGroups: GatewayGroup[];
-  /** what share keys may use (the keys themselves never travel: a key is minted per machine) */
-  keyGroups: GatewayKeyGroup[];
-  /** routing and model settings (`routing.*`, `models.*`) */
+  /** model settings (`models.*`) */
   settings: Record<string, unknown>;
 }
 
 export interface SyncSecret {
   providers: Record<string, string>;
-  accounts: Record<string, { credential: string; proxy?: string }>;
   /** privacy rules travel encrypted (they name the things the user wants hidden) */
   privacy: Record<string, unknown>;
 }
@@ -53,14 +31,14 @@ export interface SyncBundle {
 }
 
 /** Fields of a provider that are this machine's learned / cached state, not settings. */
-const PROVIDER_LOCAL = ['models', 'modelNames', 'modelEfforts', 'modelContext', 'modelsAt', 'modelsError', 'promptEffortModels', 'noPromptCacheKey', 'noResponsesApi', 'noCacheRetention'] as const;
-const PUBLIC_SETTINGS = /^(routing|models)\./;
+const PROVIDER_LOCAL = ['models', 'modelNames', 'modelEfforts', 'modelContext', 'modelsAt', 'modelsError'] as const;
+const PUBLIC_SETTINGS = /^models\./;
 const PRIVATE_SETTINGS = /^privacy\./;
-/** Matches a sync prefix but is this machine's process state (the paid-budget counter), never synced. */
-const LOCAL_SETTINGS = new Set(['routing.spend']);
+/** Matches a sync prefix but is this machine's process state, never synced. */
+const LOCAL_SETTINGS = new Set<string>();
 
 /** May this setting travel in (and be imported from) the clear part? Import re-checks this: a crafted file
- *  must not set `ui.defaultMode`, `network.proxy`, `remote.*`, `gateway.allowQueryKey` or the like. */
+ *  must not set `ui.defaultMode`, `network.proxy`, `remote.*` or the like. */
 export const isPublicSetting = (k: string): boolean => PUBLIC_SETTINGS.test(k) && !LOCAL_SETTINGS.has(k);
 /** May this setting travel in (and be imported from) the encrypted part? */
 export const isPrivateSetting = (k: string): boolean => PRIVATE_SETTINGS.test(k) && !LOCAL_SETTINGS.has(k);
@@ -97,24 +75,11 @@ export function publicProvider(p: Provider): SyncProvider {
   return out as SyncProvider;
 }
 
-export function accountRef(a: UpstreamAccount): SyncAccountRef {
-  return {
-    id: a.id, kind: a.kind, name: a.name, enabled: a.enabled, credentialKind: a.credentialKind, source: a.source,
-    ...(a.maxConcurrent ? { maxConcurrent: a.maxConcurrent } : {}),
-    ...(a.dailyRequestLimit ? { dailyRequestLimit: a.dailyRequestLimit } : {}),
-    ...(a.identity?.email || a.identity?.plan ? { identity: { email: a.identity.email, plan: a.identity.plan } } : {}),
-    hasCredential: !!a.credential,
-  };
-}
-
 export async function buildBundle(meta: MetaStore, secrets: SecretService | undefined, o: { passphrase?: string }): Promise<SyncBundle> {
   const reveal = async (v: string | undefined) => (v ? (secrets ? secrets.reveal(v) : v) : '');
   const settings = meta.settings() as Record<string, unknown>;
   const pub: SyncPublic = {
     providers: meta.providers().map(publicProvider),
-    accounts: meta.upstreamAccounts().map(accountRef),
-    gatewayGroups: JSON.parse(JSON.stringify(meta.data.gatewayGroups ?? [])),
-    keyGroups: JSON.parse(JSON.stringify(meta.gatewayKeyGroups())),
     settings: filterSettings(settings, isPublicSetting),
   };
   const bundle: SyncBundle = {
@@ -123,12 +88,8 @@ export async function buildBundle(meta: MetaStore, secrets: SecretService | unde
     public: pub,
   };
   if (o.passphrase) {
-    const sec: SyncSecret = { providers: {}, accounts: {}, privacy: filterSettings(settings, isPrivateSetting) };
+    const sec: SyncSecret = { providers: {}, privacy: filterSettings(settings, isPrivateSetting) };
     for (const p of meta.providers()) if (p.apiKey) sec.providers[p.id] = await reveal(p.apiKey);
-    for (const a of meta.upstreamAccounts()) {
-      if (!a.credential) continue;
-      sec.accounts[a.id] = { credential: await reveal(a.credential), ...(a.proxy ? { proxy: await reveal(a.proxy) } : {}) };
-    }
     bundle.secret = await seal(JSON.stringify(sec), o.passphrase);
   }
   return bundle;
@@ -144,9 +105,6 @@ export function parseBundle(text: string): SyncBundle {
     format: 'claude-web-sync', version: 1, createdAt: Number(v.createdAt) || 0, from: String(v.from ?? ''),
     public: {
       providers: arr(pub.providers).filter((p: any) => p && typeof p.id === 'string'),
-      accounts: arr(pub.accounts).filter((a: any) => a && typeof a.id === 'string'),
-      gatewayGroups: arr(pub.gatewayGroups).filter((g: any) => g && typeof g.id === 'string'),
-      keyGroups: arr(pub.keyGroups).filter((g: any) => g && typeof g.id === 'string'),
       settings: filterSettings(pub.settings, isPublicSetting),
     },
     ...(v.secret ? { secret: v.secret as SealedBox } : {}),
@@ -157,5 +115,5 @@ export async function openSecret(b: SyncBundle, passphrase?: string): Promise<Sy
   if (!b.secret) return null;
   if (!passphrase) throw new Error(tr('这个文件带着加密的密钥，要输入导出时的口令'));
   const v = JSON.parse(await open(b.secret, passphrase));
-  return { providers: v.providers ?? {}, accounts: v.accounts ?? {}, privacy: filterSettings(v.privacy, isPrivateSetting) };
+  return { providers: v.providers ?? {}, privacy: filterSettings(v.privacy, isPrivateSetting) };
 }

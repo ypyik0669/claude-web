@@ -32,9 +32,9 @@ jobs:
       - run: npm run build:site
         env:
           SITE_MEDIA: off # the recordings are the deploy's business; a PR check does not download them
-      # end-to-end over the real WebSocket with mock agents (no model calls)
-      - name: e2e (mock agents; phase 7 reads public GitHub issues with the workflow token)
+      # end-to-end over the real WebSocket with fake upstreams (no model calls)
+      - name: e2e (fake upstreams; phase 7 reads public GitHub issues with the workflow token)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/e2e.mjs 3 4 5 6 7 11 12 13
+        run: node scripts/e2e.mjs 3 4 6 7 12

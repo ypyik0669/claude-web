@@ -80,16 +80,16 @@ describe('background on disk', () => {
   });
 
   // 2026-10-30: the run file says the main model for every agent; the picked subagent model is what really answered
-  it('an agent\'s model is what its own transcript asked for (the split route\'s alias as the real name)', async () => {
+  it('an agent\'s model is what its own transcript asked for', async () => {
     expect((await readRun(dir, 'wf_974df824-3c8'))!.agents[0].model).toBe('claude-opus-5[1m]'); // no model in its transcript: the file's
     const id = 'a9000000000000001';
-    writeFileSync(path.join(dir, 'workflows', 'wsubmodel1.json'), JSON.stringify(run({ runId: 'wsubmodel1', taskId: 'wsubmodel1', workflowProgress: [{ type: 'workflow_agent', index: 1, label: 'impl', state: 'done', agentId: id, model: 'routego/gpt-6.1-sol' }] })));
+    writeFileSync(path.join(dir, 'workflows', 'wsubmodel1.json'), JSON.stringify(run({ runId: 'wsubmodel1', taskId: 'wsubmodel1', workflowProgress: [{ type: 'workflow_agent', index: 1, label: 'impl', state: 'done', agentId: id, model: 'claude-opus-5[1m]' }] })));
     mkdirSync(path.join(dir, 'subagents', 'workflows', 'wsubmodel1'), { recursive: true });
     writeFileSync(path.join(dir, 'subagents', 'workflows', 'wsubmodel1', `agent-${id}.jsonl`), [
       JSON.stringify({ type: 'user', message: { role: 'user', content: 'go' } }),
-      JSON.stringify({ type: 'assistant', message: { role: 'assistant', model: 'cw-sub/deepseek-v4.1-flash', content: [{ type: 'text', text: 'ok' }] } }),
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', model: 'claude-haiku-4-5', content: [{ type: 'text', text: 'ok' }] } }),
     ].join('\n'));
-    expect((await readRun(dir, 'wsubmodel1'))!.agents[0].model).toBe('deepseek-v4.1-flash');
+    expect((await readRun(dir, 'wsubmodel1'))!.agents[0].model).toBe('claude-haiku-4-5');
   });
 
   it('reads a workflow agent or a plain sub-agent transcript', async () => {

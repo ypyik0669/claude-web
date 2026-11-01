@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { readView, VIEW_KEY } from '@/features/sidebar/view';
-import type { RoutedInfo, AgentInfo, AgentKind, AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionEnv, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, SourceStatus, Workspace } from '@shared';
+import type { AgentKind, AttachmentRef, EffortLevel, EngineInfo, Limits, MessageFeedback, PermissionMode, Provider, SessionEnv, SessionFeatures, PermissionRequestEvent, RunnerState, Schedule, ServerEvent, SessionInfoSnapshot, SessionMeta, SessionSummary, SourceStatus, Workspace } from '@shared';
 import { withDefaultMode } from './default-mode';
 import { decodeAttachments, findChainUuidBefore } from '@/model/conversation';
 import { activeGroup, chatTile, deriveActive, hasLegacyLayout, initialLayout, layoutReducer, migrateLegacy, migrateWorkbench, needsSimplifiedNotice, panelToggleEffect, sanitizeLayout, SIMPLIFIED_NOTICE_KEY, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
@@ -72,7 +72,7 @@ export interface OpenSession {
    * the send resumes it with `resumeParams()`, and the fresh OpenSession of the resumed one drops it
    */
   resume?: ResumeChoice;
-  /** not running here and its record changed from outside (a CLI in a terminal, Codex): when (store/external.ts) */
+  /** not running here and its record changed from outside (a CLI in a terminal): when (store/external.ts) */
   externalAt?: number;
   /** …while it was not on screen: re-read when it is shown */
   staleHistory?: boolean;
@@ -115,8 +115,6 @@ interface State {
    * of the record (2026-10-26 QA). Absent = not asked yet, or an older server.
    */
   resumeModes: Record<string, PermissionMode>;
-  /** 智能路由: the model each conversation on a routing group last really got (gateway.routed) — 「自动 → 实际：…」 */
-  routed: Record<string, RoutedInfo>;
   loadResumeMode(sessionId: string): Promise<void>;
   schedules: Schedule[];
   limits: Limits | null;
@@ -171,8 +169,6 @@ interface State {
   openSession(p: { sessionId?: string; peer?: string; cwd: string; env?: SessionEnv; model?: string; permissionMode?: PermissionMode; expectMode?: PermissionMode; effort?: EffortLevel; ultracode?: boolean; subagentModel?: string; fork?: boolean; resumeAt?: string; worktree?: string; providerId?: string; features?: SessionFeatures; agent?: AgentKind }, target?: { paneId: string; tileId: string } | 'none'): Promise<string>;
   engine: EngineInfo | null;
   providers: Provider[];
-  agents: AgentInfo[];
-  loadAgents(refresh?: boolean): Promise<void>;
   settings: Record<string, unknown>;
   loadEngine(): Promise<void>;
   loadProviders(): Promise<void>;
@@ -181,7 +177,7 @@ interface State {
   loadHistory(sessionId: string, opts?: { focus?: boolean; mode?: 'replace' | 'tab'; cwd?: string }): Promise<void>;
   /** prepend the next older page of an imported session's history; true while there is still more */
   loadOlder(sessionId: string): Promise<boolean>;
-  /** `transcripts.changed`: open conversations that are not running here re-read what the CLI / Codex wrote */
+  /** `transcripts.changed`: open conversations that are not running here re-read what the CLI wrote */
   externalChanged(sessionIds: string[]): void;
   /** re-read one such conversation now (throttled callers: externalChanged; the chat tile when a stale one is shown) */
   refreshExternal(sessionId: string): Promise<void>;
@@ -468,7 +464,6 @@ export const useStore = create<State>((set, get) => ({
   workspaces: [],
   sessionMeta: {},
   resumeModes: {},
-  routed: {},
   schedules: [],
   limits: null,
   auth: null,
@@ -497,11 +492,6 @@ export const useStore = create<State>((set, get) => ({
   async loadProviders() {
     const providers = await ws.request<Provider[]>({ kind: 'providers.list' });
     set({ providers });
-  },
-  agents: [],
-  async loadAgents(refresh = false) {
-    const agents = await ws.request<AgentInfo[]>({ kind: 'agents.list', refresh });
-    set({ agents });
   },
   settingsOpen: null,
   metaLoaded: false,
@@ -635,7 +625,6 @@ export const useStore = create<State>((set, get) => ({
         void get().loadMeta();
         void get().loadEngine().catch(() => {});
         void get().loadProviders().catch(() => {});
-        void get().loadAgents().catch(() => {});
         void get().loadLibrarySources().catch(() => {});
         void get().loadCustomCss();
         void ws.request<Limits>({ kind: 'limits.get' }).then((limits) => set({ limits })).catch(() => {});
@@ -684,22 +673,6 @@ export const useStore = create<State>((set, get) => ({
         case 'permission.resolved':
           set((s) => { const out = { ...s.open }; for (const [id, o] of Object.entries(out)) if (o.pending.some((p) => p.requestId === e.requestId)) out[id] = { ...o, pending: o.pending.filter((p) => p.requestId !== e.requestId), version: o.version + 1 }; return { open: out }; });
           break;
-        case 'gateway.routed': {
-          const { kind: _k, ...info } = e;
-          const prev = get().routed[e.sessionId];
-          // only a change re-renders (every request of a turn reports)
-          if (!prev || prev.model !== info.model || prev.label !== info.label || prev.switched !== info.switched || prev.policy !== info.policy) set((s) => ({ routed: { ...s.routed, [e.sessionId]: info } }));
-          break;
-        }
-        case 'gateway.promptHeavy':
-          // Gemini web / WorkBuddy re-send the whole prompt every turn and have a byte ceiling: past it the model
-          // gets an attachment (slow) and eventually a truncated tail. Said once per conversation, server-side.
-          get().toast(tr('「{title}」已经超过 {kb} KB。{via} 每轮都要重发整段对话，太长会先上传附件再回答，再长还会被截断。建议输入 /compact 或开一个新对话。', {
-            title: get().sessions.find((x) => x.sessionId === e.sessionId)?.title ?? tr('这条对话'),
-            kb: Math.round(e.bytes / 1024),
-            via: e.via === 'workbuddy' ? 'WorkBuddy' : tr('Gemini 网页'),
-          }));
-          break;
         case 'sessions.changed':
           void get().refreshSessions();
           // another machine's meta.changed never reaches this window, its sessions.changed does: a chip that already
@@ -709,12 +682,6 @@ export const useStore = create<State>((set, get) => ({
         case 'transcripts.changed':
           get().externalChanged(e.sessionIds);
           break;
-        case 'session.caughtUp': {
-          // said in DeepSeek Harness since, now in this conversation: a view of it re-reads (not mid-turn: its events own it)
-          const o = get().open[e.sessionId];
-          if (o && !o.loading && o.state !== 'running' && o.state !== 'waiting') void get().loadHistory(e.sessionId, { focus: false }).catch(() => {});
-          break;
-        }
         case 'library.changed': {
           // an open session that was listed before and is gone afterwards was deleted (here or elsewhere)
           const before = new Set(get().sessions.map((s) => s.sessionId));
@@ -728,10 +695,6 @@ export const useStore = create<State>((set, get) => ({
           }).catch(() => {});
           break;
         }
-        case 'library.discovered':
-          // the sidebar banner reads detected && !joined && !dismissed from the sources
-          void get().loadLibrarySources().catch(() => {});
-          break;
         case 'notice':
           // the server did something on its own (a scheduled catch-up run): say so, and to the OS when not looking
           get().toast(e.text, true, 6000);
@@ -743,9 +706,6 @@ export const useStore = create<State>((set, get) => ({
           break;
         case 'customCss.changed':
           void get().loadCustomCss();
-          break;
-        case 'agents.changed':
-          void get().loadAgents().catch(() => {});
           break;
         case 'limits':
           set({ limits: e.limits });
@@ -776,7 +736,7 @@ export const useStore = create<State>((set, get) => ({
     // caller chose one — resumes, forks and reopens keep their own (they carry a sessionId)
     const p = withDefaultMode(p0, get().settings);
     const sentAt = Date.now();
-    const r = await ws.request<{ sessionId: string; info: SessionInfoSnapshot; history: any[]; pending: PermissionRequestEvent[]; caughtUp?: number; modeChanged?: PermissionMode }>({ kind: 'session.open', params: p });
+    const r = await ws.request<{ sessionId: string; info: SessionInfoSnapshot; history: any[]; pending: PermissionRequestEvent[]; modeChanged?: PermissionMode }>({ kind: 'session.open', params: p });
     // 发送前核对权限: the server would resume it in another mode than the chip showed — nothing started
     if (r.modeChanged) {
       const sid = p.sessionId!;
@@ -785,11 +745,10 @@ export const useStore = create<State>((set, get) => ({
       throw new ModeChangedError(r.modeChanged);
     }
     const existing = p.sessionId && !p.fork && !p.resumeAt ? get().open[p.sessionId] : undefined;
-    // it goes on under another id (a DeepSeek Harness conversation → the Claude conversation that replays it): its
-    // tabs follow, and it shows that conversation's own transcript — its ids are the rewind / fork anchors now.
-    // `caughtUp`: what was said in the harness since was added to its transcript — the history shown is old
+    // it goes on under another id (a claude.ai export → the Claude conversation that replays it): its tabs follow,
+    // and it shows that conversation's own transcript — its ids are the rewind / fork anchors now
     const moved = !!existing && r.sessionId !== p.sessionId;
-    const reload = moved || (!!existing && !!r.caughtUp);
+    const reload = moved;
     const conv = existing && !reload ? existing.conv : createConversation();
     if (existing && !reload) {
       // history already loaded from transcript; only apply live messages we have not seen
@@ -1095,16 +1054,11 @@ export const useStore = create<State>((set, get) => ({
       // A reaped / crashed / history session reopens with what its chips show (final review §9 #1): the user's pick
       // there, else what it last had live (model, effort, permission mode, deep orchestration, features — without
       // them the resume silently fell back to the defaults), else its transcript's model and mode.
-      // A DeepSeek Harness conversation answers with the Claude conversation it goes on in: the send goes there.
+      // A claude.ai export's conversation answers with the Claude conversation it goes on in: the send goes there.
       const rp = resumeParams(o, get().sessionMeta[sessionId]);
       // the chip's mode goes along only when the resume names none (a named one is what the chip shows anyway)
       sessionId = await get().openSession({ sessionId, cwd: o.cwd, ...rp, ...(opts?.expectMode && rp.permissionMode === undefined ? { expectMode: opts.expectMode } : {}) }, 'none');
       if (sessionId !== sessionId0) get().saveDraft(sessionId0, '');
-    } else if ((o.state === 'idle' || o.state === 'starting') && get().sessionMeta?.[sessionId]?.continuedFrom) {
-      // it went on from DeepSeek Harness, whose process is up (or coming up): what was said there since goes in first
-      // (the process restarts with it), and shows above this message
-      const n = await ws.request<number>({ kind: 'library.catchUp', sessionId }).catch(() => 0);
-      if (n) await get().loadHistory(sessionId, { focus: false });
     }
     const cur = get().open[sessionId];
     if ((cur.state === 'running' || cur.state === 'waiting') && !steer) {

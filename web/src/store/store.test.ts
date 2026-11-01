@@ -210,17 +210,17 @@ describe('session library', () => {
   });
 
   it('imported sessions load through library.read and page older history with loadOlder', async () => {
-    useStore.setState({ sessions: [{ sessionId: 'codex-abc', cwd: '/w', title: 'c', lastModified: 0, agent: 'codex' } as any], open: {} });
+    useStore.setState({ sessions: [{ sessionId: 'claudeai-abc', cwd: '/w', title: 'c', lastModified: 0, agent: 'claudeai' } as any], open: {} });
     const user = (uuid: string, text: string) => ({ type: 'user', uuid, message: { role: 'user', content: text } });
     fake.handlers.set('library.read', (req) => (req.cursor === 'c1' ? { messages: [user('u1', 'old')], next: undefined } : { messages: [user('u2', 'new')], next: 'c1' }));
-    await useStore.getState().loadHistory('codex-abc', { focus: false });
+    await useStore.getState().loadHistory('claudeai-abc', { focus: false });
     expect(fake.sent.some((r) => r.kind === 'transcript.load')).toBe(false);
-    expect(useStore.getState().open['codex-abc'].historyCursor).toBe('c1');
-    expect(await useStore.getState().loadOlder('codex-abc')).toBe(false);
-    expect(useStore.getState().open['codex-abc'].conv.items.map((i) => i.id)).toEqual(['u1', 'u2']);
+    expect(useStore.getState().open['claudeai-abc'].historyCursor).toBe('c1');
+    expect(await useStore.getState().loadOlder('claudeai-abc')).toBe(false);
+    expect(useStore.getState().open['claudeai-abc'].conv.items.map((i) => i.id)).toEqual(['u1', 'u2']);
     fake.sent.length = 0;
     // no `next` → nothing more to fetch, and no request goes out
-    expect(await useStore.getState().loadOlder('codex-abc')).toBe(false);
+    expect(await useStore.getState().loadOlder('claudeai-abc')).toBe(false);
     expect(fake.sent.filter((r) => r.kind === 'library.read').length).toBe(0);
   });
 
@@ -266,25 +266,22 @@ describe('session library', () => {
     expect(fake.sent.filter((r) => r.kind === 'library.read').length).toBe(2);
   });
 
-  it('library.changed and library.discovered refresh the library sources', async () => {
+  it('library.changed refreshes the library sources', async () => {
     fake.handlers.set('sessions.list', () => []);
-    fake.handlers.set('library.sources', () => [{ kind: 'codex', name: 'Codex', installed: true, detected: true, joined: false, dismissed: false, enabled: false }]);
-    emit({ kind: 'library.discovered', kinds: ['codex'] });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(fake.sent.filter((r) => r.kind === 'library.sources').length).toBe(1);
-    expect(useStore.getState().librarySources.map((x) => x.kind)).toEqual(['codex']);
+    fake.handlers.set('library.sources', () => [{ kind: 'claudeai', name: 'claude.ai', installed: true, detected: true, joined: false, enabled: false }]);
     emit({ kind: 'library.changed' });
     await new Promise((r) => setTimeout(r, 0));
-    expect(fake.sent.filter((r) => r.kind === 'library.sources').length).toBe(2);
+    expect(fake.sent.filter((r) => r.kind === 'library.sources').length).toBe(1);
+    expect(useStore.getState().librarySources.map((x) => x.kind)).toEqual(['claudeai']);
   });
 
   it('an open session that vanishes on library.changed is marked deleted — unless its source was just left', async () => {
-    useStore.setState({ deletedSessions: {}, sessions: [{ sessionId: 's1', cwd: '/w', title: 't', lastModified: 0 } as any, { sessionId: 'codex-z', cwd: '/w', title: 'z', lastModified: 0, agent: 'codex' } as any] });
-    useStore.setState((s) => ({ open: { ...s.open, 'codex-z': { ...s.open.s1, sessionId: 'codex-z' } } }));
+    useStore.setState({ deletedSessions: {}, sessions: [{ sessionId: 's1', cwd: '/w', title: 't', lastModified: 0 } as any, { sessionId: 'claudeai-z', cwd: '/w', title: 'z', lastModified: 0, agent: 'claudeai' } as any] });
+    useStore.setState((s) => ({ open: { ...s.open, 'claudeai-z': { ...s.open.s1, sessionId: 'claudeai-z' } } }));
     fake.handlers.set('sessions.list', () => []);
     fake.handlers.set('library.sources', () => [
-      { kind: 'claude', name: 'Claude Code', installed: true, detected: true, joined: true, dismissed: false, enabled: true },
-      { kind: 'codex', name: 'Codex', installed: true, detected: true, joined: false, dismissed: false, enabled: false },
+      { kind: 'claude', name: 'Claude Code', installed: true, detected: true, joined: true, enabled: true },
+      { kind: 'claudeai', name: 'claude.ai', installed: true, detected: true, joined: false, enabled: false },
     ]);
     emit({ kind: 'library.changed' });
     await new Promise((r) => setTimeout(r, 0));
@@ -295,7 +292,7 @@ describe('session library', () => {
   it('no deleted mark when the source reported a listing error', async () => {
     useStore.setState({ deletedSessions: {}, sessions: [{ sessionId: 's1', cwd: '/w', title: 't', lastModified: 0 } as any] });
     fake.handlers.set('sessions.list', () => []);
-    fake.handlers.set('library.sources', () => [{ kind: 'claude', name: 'Claude Code', installed: true, detected: true, joined: true, dismissed: false, enabled: true, error: 'EACCES' }]);
+    fake.handlers.set('library.sources', () => [{ kind: 'claude', name: 'Claude Code', installed: true, detected: true, joined: true, enabled: true, error: 'EACCES' }]);
     emit({ kind: 'library.changed' });
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
@@ -310,25 +307,25 @@ describe('session library', () => {
   });
 
   it('a failed history load keeps the reason in loadError (the chat shows it with a retry)', async () => {
-    useStore.setState({ sessions: [{ sessionId: 'codex-e', cwd: '/w', title: 'c', lastModified: 0, agent: 'codex' } as any], open: {} });
+    useStore.setState({ sessions: [{ sessionId: 'claudeai-e', cwd: '/w', title: 'c', lastModified: 0, agent: 'claudeai' } as any], open: {} });
     fake.handlers.set('library.read', () => Promise.reject(new Error('thread not found')));
-    await useStore.getState().loadHistory('codex-e', { focus: false });
-    expect(useStore.getState().open['codex-e'].loadError).toBe('thread not found');
+    await useStore.getState().loadHistory('claudeai-e', { focus: false });
+    expect(useStore.getState().open['claudeai-e'].loadError).toBe('thread not found');
     fake.handlers.set('library.read', () => ({ messages: [], next: undefined }));
-    await useStore.getState().loadHistory('codex-e', { focus: false });
-    expect(useStore.getState().open['codex-e'].loadError).toBeUndefined();
+    await useStore.getState().loadHistory('claudeai-e', { focus: false });
+    expect(useStore.getState().open['claudeai-e'].loadError).toBeUndefined();
   });
 
   it('libraryOp sends library.<op> with the payload; sources and filter live on the store', async () => {
     fake.handlers.set('library.rename', () => ({ ok: true }));
     await useStore.getState().libraryOp('rename', { sessionId: 's1', title: 'x' });
     expect(fake.sent.find((r) => r.kind === 'library.rename')).toMatchObject({ sessionId: 's1', title: 'x' });
-    fake.handlers.set('library.sources', () => [{ kind: 'codex', name: 'Codex', installed: true, detected: true, joined: false, dismissed: false, enabled: false }]);
+    fake.handlers.set('library.sources', () => [{ kind: 'claudeai', name: 'claude.ai', installed: true, detected: true, joined: false, enabled: false }]);
     await useStore.getState().loadLibrarySources();
-    expect(useStore.getState().librarySources.map((x) => x.kind)).toEqual(['codex']);
+    expect(useStore.getState().librarySources.map((x) => x.kind)).toEqual(['claudeai']);
     expect(useStore.getState().sourceFilter).toBe('all');
-    useStore.getState().setSourceFilter('codex');
-    expect(useStore.getState().sourceFilter).toBe('codex');
+    useStore.getState().setSourceFilter('claudeai');
+    expect(useStore.getState().sourceFilter).toBe('claudeai');
   });
 });
 

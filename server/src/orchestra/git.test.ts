@@ -151,7 +151,7 @@ describe('worktrees are never deleted behind the user’s back (C2 / I1)', SLOW,
     expect(await g.commitAll(dir, 'c')).toBe(true);
     const info = await g.inspect(repo, dir, 'cw/r/one', 'main');
     expect(info).toMatchObject({ dirty: false, unmerged: 1 });
-    expect(info.tip).toBe(await g.head(dir));
+    expect(info.tip).toBe(git(dir, 'rev-parse', 'HEAD'));
     expect(await g.inspect(repo, path.join(tmp, 'nope'), 'cw/none', 'main')).toMatchObject({ exists: false, branchExists: false, unmerged: 0 });
   });
 
@@ -243,13 +243,5 @@ describe('worktrees are never deleted behind the user’s back (C2 / I1)', SLOW,
     } finally {
       fs.rmSync(link, { force: true });
     }
-  });
-
-  it('diffStat / diff compare the branch with the base (three-dot)', async () => {
-    cleanBranch(repo, 'cw/x');
-    const st = await g.diffStat(repo, 'main', 'cw/x');
-    expect(st.files).toBe(1);
-    expect(st.stat).toContain('b.txt');
-    expect(await g.diff(repo, 'main', 'cw/x')).toContain('+b');
   });
 });

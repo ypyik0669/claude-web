@@ -106,9 +106,9 @@ describe('renderBriefing', () => {
     expect(rows.map((r) => r.type)).toContain('assistant');
   });
 
-  // rows made in the same millisecond with the same timestamp: the default engine (ccb) resumed such a transcript
-  // from its second answer, every later turn gone from what the model saw (2026-10-22, a 12-row DeepSeek Harness
-  // replay: 5 messages sent instead of 13)
+  // rows made in the same millisecond with the same timestamp: the fork we ran before 2026-11-01 resumed such a
+  // transcript from its second answer, every later turn gone from what the model saw (2026-10-22: 5 messages sent
+  // instead of 13). Strictly ordered stamps leave nothing to guess.
   it('stamps the rows strictly in order, all before now', () => {
     const many = Array.from({ length: 40 }, (_, i) => ({ t: 0, kind: i % 2 ? 'assistant' : 'user', text: `m${i}` }) as CanonicalEvent);
     const before = Date.now();

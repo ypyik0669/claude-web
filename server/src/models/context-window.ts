@@ -51,18 +51,6 @@ export function contextWindowSource(p: WindowProvider | undefined, model: string
   return knownContextWindow(model) ? 'known' : 'engine';
 }
 
-/** claude-web-engine's `CLAUDE_WEB_CONTEXT_WINDOWS`: every model of the provider that has a window. */
-export function contextWindowsEnv(p: WindowProvider, models: (string | undefined)[]): string | undefined {
-  const out: Record<string, number> = {};
-  for (const raw of models) {
-    const id = raw?.replace(/\[1m\]$/i, '');
-    if (!id || id in out) continue;
-    const w = contextWindowFor(p, id);
-    if (w) out[id] = w;
-  }
-  return Object.keys(out).length ? JSON.stringify(out) : undefined;
-}
-
 export const isClaudeModel = (model: string) => CLAUDE.test(model) || /haiku/i.test(model);
 
 /**

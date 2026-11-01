@@ -1,5 +1,5 @@
 import type { AgentKind, Provider } from '@shared';
-import { AGENTS_SETTING_PATH, OWN_PROVIDER, type ModelMenuItem } from './menu';
+import { OWN_PROVIDER, type ModelMenuItem } from './menu';
 import { tr } from '@/i18n';
 
 /** What picking an entry in a live session's model menu does. */
@@ -8,18 +8,15 @@ export type PickAction =
   | { kind: 'error'; message: string }
   | { kind: 'setModel'; model: string }
   /** the invisible restart of session.setProvider; model undefined = the new profile's / login's default */
-  | { kind: 'setProvider'; providerId?: string; model?: string; confirm: boolean }
-  /** another agent's model: session.switchAgent (交给其它 Agent 继续), after the same confirm as the ··· menu */
-  | { kind: 'handover'; agent: AgentKind; model?: string };
+  | { kind: 'setProvider'; providerId?: string; model?: string; confirm: boolean };
 
 export interface PickContext {
   agent: AgentKind;
-  currentProvider: string; // 'claude' = the agent's own login
+  currentProvider: string; // 'claude' = the Claude account
   currentModel?: string | null;
   remote: boolean; // a session on another machine: its profiles are not ours, only models change
   busy: boolean; // a turn is running: a restart interrupts it, ask first
   providers: Provider[];
-  agentDefault?: string; // a foreign agent's configured default model
 }
 
 /**
@@ -36,21 +33,13 @@ export function switchedNote(label: string, hasContext: boolean): string {
  */
 export function routePick(it: ModelMenuItem, c: PickContext): PickAction {
   if (it.unavailable) return { kind: 'error', message: it.unavailable };
-  if (it.agent && it.agent !== c.agent) {
-    return c.remote
-      ? { kind: 'error', message: tr('其它机器上的对话在这里只能换模型；要交给本机的 Agent，用右上角 ··· 里的「交给本机的 Agent 继续」') }
-      : { kind: 'handover', agent: it.agent, model: it.model || undefined };
-  }
   const own = it.providerId === OWN_PROVIDER;
   const profile = own ? undefined : c.providers.find((p) => p.id === it.providerId);
   if (c.remote || it.providerId === c.currentProvider) {
     let model = it.model;
     if (!model) {
-      if (own && c.agent === 'claude') model = 'default';
-      else if (own) {
-        if (!c.agentDefault) return { kind: 'error', message: tr('这个 Agent 没有配置默认模型（{AGENTS_SETTING_PATH} 里可以设），请选一个具体的模型', { AGENTS_SETTING_PATH }) };
-        model = c.agentDefault;
-      } else {
+      if (own) model = 'default';
+      else {
         if (!profile?.defaultModel) return { kind: 'error', message: tr('供应商「{name}」没有设默认模型，请选一个具体的模型', { name: profile?.name ?? it.providerName }) };
         model = profile.defaultModel;
       }

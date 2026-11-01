@@ -5,7 +5,7 @@ import { useStore } from '@/store';
 import { ago, clsx } from '@/util';
 import { dlg } from '@/ui/dialog';
 import { Icon, AGENT_ICONS } from '@/ui/icons';
-import type { AgentKind, LocalHistorySource, SourceStatus } from '@shared';
+import type { AgentKind, SourceStatus } from '@shared';
 import { tr } from '@/i18n';
 
 type Tone = 'ok' | 'warn' | 'err' | 'muted';
@@ -54,7 +54,7 @@ function SourceRow({ x, busy, onToggle }: { x: SourceStatus; busy: boolean; onTo
           role="switch"
           aria-checked={x.joined}
           aria-label={x.joined ? tr('从对话库移出 {name}', { name: x.name }) : tr('把 {name} 加入对话库', { name: x.name })}
-          title={x.joined ? tr('移出：只是不在这里显示，不会删除 agent 自己的记录') : canJoin ? tr('加入对话库：列出它的对话并建立索引') : tr('未安装，无法加入')}
+          title={x.joined ? tr('移出：只是不在这里显示，不会删除导入的记录') : canJoin ? tr('加入对话库：列出它的对话并建立索引') : tr('还没有导入，无法加入')}
           disabled={busy || !canJoin}
           onClick={() => onToggle(x)}
         />
@@ -63,7 +63,7 @@ function SourceRow({ x, busy, onToggle }: { x: SourceStatus; busy: boolean; onTo
   );
 }
 
-/** 设置 → 对话库: which agents' own session records show up in the sidebar, and the search index. */
+/** 设置 → 对话库: Claude Code's conversations and an imported claude.ai export in the sidebar, and the search index. */
 export function LibrarySection() {
   const sources = useStore((s) => s.librarySources);
   const load = useStore((s) => s.loadLibrarySources);
@@ -71,12 +71,10 @@ export function LibrarySection() {
   const [busyKind, setBusyKind] = useState<AgentKind | null>(null);
   const [indexing, setIndexing] = useState(false);
   const [loaded, setLoaded] = useState(sources.length > 0);
-  const [local, setLocal] = useState<LocalHistorySource[]>([]);
   useEffect(() => { load().catch((e) => toast(e.message)).finally(() => setLoaded(true)); }, []);
-  useEffect(() => { ws.request<LocalHistorySource[]>({ kind: 'library.localScan' }).then(setLocal).catch(() => setLocal([])); }, []);
 
   const toggle = async (x: SourceStatus) => {
-    if (x.joined && !(await dlg.confirm(tr('从对话库移出「{name}」？', { name: x.name }), { message: tr('只是不在这里显示，不会删除 agent 自己的记录；以后可以随时重新加入。'), okLabel: tr('移出') }))) return;
+    if (x.joined && !(await dlg.confirm(tr('从对话库移出「{name}」？', { name: x.name }), { message: tr('只是不在这里显示，不会删除导入的记录；以后可以随时重新加入。'), okLabel: tr('移出') }))) return;
     setBusyKind(x.kind);
     try {
       const r = await ws.request<SourceStatus[]>({ kind: 'library.join', kind_: x.kind, joined: !x.joined });
@@ -104,34 +102,11 @@ export function LibrarySection() {
       </div>
       <div className="list">
         {rows.map((x) => <SourceRow key={x.kind} x={x} busy={busyKind === x.kind} onToggle={toggle} />)}
-        {rows.length === 0 && <div className="empty">{loaded ? tr('没有检测到可加入的 agent') : tr('检测中…')}</div>}
+        {rows.length === 0 && <div className="empty">{loaded ? tr('还没有可加入的来源') : tr('检测中…')}</div>}
       </div>
       <div className="sub" style={{ marginTop: 8 }}>
-        {tr('加入后才会启动该 agent 的读取进程并建立索引；移出只是不在这里显示，不会删除 agent 自己的记录。 修改其它 Agent 的对话只走它的官方接口，没有接口的来源只读。')}
+        {tr('加入后才会建立索引；移出只是不在这里显示，不会删除导入的记录。')}
       </div>
-      {local.length > 0 && (
-        <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, marginBottom: 4 }}>
-            <h5 style={{ margin: 0 }}>{tr('本机发现')}</h5>
-            <span className="sub">{tr('只检查常见位置，不扫描整个磁盘，也不读取凭据')}</span>
-          </div>
-          <div className="list">
-            {local.map((x) => (
-              <div key={x.id} className="row" style={{ alignItems: 'center', gap: 10 }}>
-                <span className={clsx('dot', x.readable ? 'idle' : '')} />
-                <div className="grow" style={{ minWidth: 0 }}>
-                  <div>
-                    {x.name}
-                    <span className="badge" style={{ marginLeft: 8 }}>{x.readable ? tr('可读取') : tr('找到数据')}</span>
-                  </div>
-                  <div className="sub mono" title={x.path}>{x.path}</div>
-                  {x.detail && <div className="sub">{x.detail}</div>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
         <button className="btn sm" disabled={indexing} onClick={reindex}>
           {indexing ? <span className="spinner" /> : <Icon name="refresh" size={12} />} {indexing ? tr('正在重建索引…') : tr('重建索引')}

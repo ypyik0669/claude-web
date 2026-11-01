@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { clsx } from '@/util';
-import type { GatewayGroup, GatewayStatus, Provider, ProviderType } from '@shared';
+import type { Provider, ProviderType } from '@shared';
 import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
 import { EnvEditor } from '@/features/settings/EnvEditor';
@@ -68,7 +68,7 @@ export function Overview({ part = 'all' }: { part?: 'all' | 'engine' }) {
       <div className="kv">
         <span className="k">{tr('运行内核')}</span>
         <span>
-          {engine ? <>v{engine.version ?? '?'} <span style={{ color: 'var(--fg-2)', fontSize: 12 }} title={tr('运行内核随应用一起更新')}>{engine.runtime === 'ccb' ? tr('claude-web-engine（基于 ccb 2.8.4）') : tr('官方 Claude Code（内置内核不可用时的兜底）')} · {engine.source === 'bundled' ? tr('内置') : engine.source === 'global' ? tr('全局 npm') : tr('环境变量')}{engine.fallback ? tr(' · 兜底 {v} v{version}', { v: engine.fallback.runtime === 'ccb' ? 'claude-web-engine' : tr('官方 Claude Code'), version: engine.fallback.version ?? '?' }) : ''}</span></> : tr('检测中…')}
+          {engine ? <>v{engine.version ?? '?'} <span style={{ color: 'var(--fg-2)', fontSize: 12 }} title={tr('运行内核随应用一起更新')}>{tr('官方 Claude Code')} · {engine.source === 'bundled' ? tr('内置') : engine.source === 'global' ? tr('全局 npm') : tr('环境变量')}</span></> : tr('检测中…')}
         </span>
         {part === 'all' && <>
           <span className="k">{tr('登录')}</span><span>{data.auth.loggedIn ? tr('已登录 ({authMethod}{v})', { authMethod: data.auth.authMethod, v: data.auth.email ? ` · ${data.auth.email}` : '' }) : tr('未登录 — 在终端里运行 claude auth login，或在「供应商」里添加第三方端点')}</span>
@@ -269,10 +269,6 @@ export function Settings() {
 
 const PROVIDER_TYPES: { v: ProviderType; l: string; hint: string }[] = [
   { v: 'anthropic', l: tr('Anthropic 兼容'), hint: tr('https://api.anthropic.com 或中转站（如 https://api.super-nb.me）') },
-  { v: 'openai', l: tr('OpenAI 兼容'), hint: 'https://api.openai.com/v1 · DeepSeek / Groq / Qwen / OpenRouter…' },
-  { v: 'gemini', l: 'Gemini', hint: tr('留空用官方 generativelanguage.googleapis.com') },
-  { v: 'grok', l: 'Grok (xAI)', hint: tr('留空用 https://api.x.ai') },
-  { v: 'gateway', l: tr('模型网关'), hint: tr('走本机模型网关的一个故障转移组（设置 → 模型网关）') },
 ];
 
 type Draft = Partial<Provider> & { apiKey: string };
@@ -290,8 +286,8 @@ export function ProviderProfiles() {
   const setSetting = useStore((s) => s.setSetting);
   const toast = useStore((s) => s.toast);
   const [editing, setEditing] = useState<Draft | null>(null);
-  type ChatCheck = { ok: boolean; runtime: string; model: string; error?: string; ms: number; switched?: boolean; status?: number };
-  const [probe, setProbe] = useState<{ ok: boolean; models: string[]; modelNames?: Record<string, string>; modelEfforts?: Provider['modelEfforts']; modelContext?: Provider['modelContext']; error?: string; ms: number; status?: number; chat?: ChatCheck; responses?: ChatCheck } | null>(null);
+  type ChatCheck = { ok: boolean; model: string; error?: string; ms: number; status?: number };
+  const [probe, setProbe] = useState<{ ok: boolean; models: string[]; modelNames?: Record<string, string>; modelEfforts?: Provider['modelEfforts']; modelContext?: Provider['modelContext']; error?: string; ms: number; status?: number; chat?: ChatCheck } | null>(null);
   const [busy, setBusy] = useState(false);
   const [showKey, setShowKey] = useState(false);
   // 「用哪些模型」: picked in this draft (null = untouched — what Settings → Models has), written on 保存
@@ -300,15 +296,6 @@ export function ProviderProfiles() {
   // opened by itself once per new provider: a 取消 there means 「all of them」, not 「ask again after every test」
   const autoPicked = useRef(false);
   const def = settings.defaultProviderId as string | undefined;
-  // gateway groups, for profiles of type 'gateway' (and to name the group in the list)
-  const [gwGroups, setGwGroups] = useState<GatewayGroup[]>([]);
-  useEffect(() => {
-    const load = () => ws.request<GatewayStatus>({ kind: 'gateway.status' }).then((s) => setGwGroups(s.groups)).catch(() => {});
-    void load();
-    const off = ws.on((e) => { if (e.kind === 'gateway.changed') void load(); });
-    return () => { off(); };
-  }, []);
-  const isGw = editing?.type === 'gateway';
 
   // 自动压缩 (A7): why the typed point is not saved ('' = it is), and a fresh editor for every 编辑 / 添加
   const [compactErr, setCompactErr] = useState('');
@@ -318,27 +305,18 @@ export function ProviderProfiles() {
     if (!editing) return;
     setBusy(true);
     try {
-      const r: any = await ws.request({ kind: 'providers.probe', id: editing.id, provider: { type: editing.type, baseUrl: editing.baseUrl, apiKey: editing.apiKey, defaultModel: editing.defaultModel, modelMap: editing.modelMap, runtime: editing.runtime, cacheShim: editing.cacheShim, responsesApi: editing.responsesApi } });
+      const r: any = await ws.request({ kind: 'providers.probe', id: editing.id, provider: { type: editing.type, baseUrl: editing.baseUrl, apiKey: editing.apiKey, defaultModel: editing.defaultModel, modelMap: editing.modelMap, authStyle: editing.authStyle } });
       setProbe(r);
       // a new service's list just came in: pick the ones to use, then save (忍冬 2026-10-14)
       if (!editing.id && r.ok && (r.models?.length ?? 0) > 3 && !picked && !autoPicked.current) { autoPicked.current = true; setPicking(true); }
-      if (r.chat?.switched) setEditing((e) => (e ? { ...e, runtime: 'claude' } : e));
-      // the server already recorded what the /v1/responses check proved on the saved profile; keep the draft in step
-      const rs = r.responses;
-      if (rs && editing.id) {
-        const missing = !rs.ok && [404, 405, 501].includes(rs.status ?? 0) && !/model/i.test(rs.error ?? '');
-        if (rs.ok) setEditing((e) => (e ? { ...e, noResponsesApi: null as any } : e));
-        else if (missing && r.chat?.ok) setEditing((e) => (e ? { ...e, noResponsesApi: true } : e));
-      }
     } catch (e: any) { setProbe({ ok: false, models: [], error: e.message, ms: 0 }); }
     setBusy(false);
   };
   const save = async () => {
     if (!editing) return;
     if (!editing.name?.trim()) return toast(tr('请填名称'));
-    if ((editing.type === 'anthropic' || editing.type === 'openai') && !editing.baseUrl?.trim()) return toast(tr('请填 Base URL'));
-    if (editing.type === 'gateway' && !editing.gatewayGroupId) return toast(tr('请选一个网关组'));
-    if (!editing.id && editing.type !== 'gateway' && !editing.apiKey.trim()) return toast(tr('请填 API Key'));
+    if (!editing.baseUrl?.trim()) return toast(tr('请填 Base URL'));
+    if (!editing.id && !editing.apiKey.trim()) return toast(tr('请填 API Key'));
     // not a toast: toasts run failures through the error explainer, which reads 「上下文窗口」 as a too-long conversation
     if (compactErr) return void dlg.alert(tr('自动压缩'), { message: compactErr });
     setBusy(true);
@@ -349,10 +327,7 @@ export function ProviderProfiles() {
       const modelNames = fresh ? probe!.modelNames ?? (null as any) : editing.modelNames;
       const modelEfforts = fresh ? probe!.modelEfforts ?? (null as any) : editing.modelEfforts;
       const modelContext = fresh ? probe!.modelContext ?? (null as any) : editing.modelContext;
-      // only Anthropic-format endpoints can be pinned to the official binary (it has no other format): a pin left from
-      // before a format change goes (user report: it greyed out every GPT model)
-      const pinOk = editing.type === 'anthropic' || editing.type === 'gateway';
-      const saved = await ws.request<Provider>({ kind: 'providers.upsert', provider: { ...editing, models, modelNames, modelEfforts, modelContext, contextWindows: editing.contextWindows && Object.keys(editing.contextWindows).length ? editing.contextWindows : (null as any), ...(pinOk ? {} : { runtime: null as any }) } });
+      const saved = await ws.request<Provider>({ kind: 'providers.upsert', provider: { ...editing, models, modelNames, modelEfforts, modelContext, contextWindows: editing.contextWindows && Object.keys(editing.contextWindows).length ? editing.contextWindows : (null as any) } });
       if (picked && models?.length) {
         const hidden = (useStore.getState().settings['ui.disabledModels'] as string[] | undefined) ?? [];
         await setSetting('ui.disabledModels', withPicked(hidden, saved.id, models, picked));
@@ -389,7 +364,7 @@ export function ProviderProfiles() {
   };
   return (
     <div className="section">
-      <h5 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>{tr('全部供应商')} <span className="grow" /><button className="btn sm" data-act="quick" onClick={() => void connectModel({ reason: 'settings' })} title={tr('选来源、粘贴 Key：模型列表和接口格式自动读取')}>{tr('快速添加')}</button><button className="btn sm" data-act="import" onClick={() => setImporting(true)} title={tr('把 Hermes、CC Switch、Codex、OpenCode 等工具里配好的供应商和 MCP 服务器拿过来')}>{tr('从其它工具导入…')}</button><button className="btn sm ghost" onClick={() => startEdit()} title={tr('所有选项：类型、地址、模型映射、缓存…')}><Icon name="plus" size={12} /> {tr('添加')}</button></h5>
+      <h5 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>{tr('全部供应商')} <span className="grow" /><button className="btn sm" data-act="quick" onClick={() => void connectModel({ reason: 'settings' })} title={tr('选来源、粘贴 Key：模型列表和接口格式自动读取')}>{tr('快速添加')}</button><button className="btn sm" data-act="import" onClick={() => setImporting(true)} title={tr('把 CC Switch、Hermes、编辑器等工具里配好的 Anthropic 兼容供应商和 MCP 服务器拿过来')}>{tr('从其它工具导入…')}</button><button className="btn sm ghost" onClick={() => startEdit()} title={tr('所有选项：地址、模型映射、缓存…')}><Icon name="plus" size={12} /> {tr('添加')}</button></h5>
       {importing && <ImportDialog only="provider" onClose={() => setImporting(false)} />}
       <div className="sub" style={{ marginBottom: 8 }}>{tr('每个对话用一个（输入框的模型菜单里换）。密钥只交给用它的那个对话，不写进')} <code>~/.claude/settings.json</code>{tr('，claude.ai 登录照常可用。')}</div>
       <div className="list">
@@ -409,8 +384,8 @@ export function ProviderProfiles() {
           <div key={p.id} className="row">
             <span className={clsx('dot', p.models?.length ? 'idle' : 'waiting')} title={p.models?.length ? tr('已测试 · {modelsCount} 个模型', { modelsCount: p.models.length }) : tr('未测试连接')} />
             <div className="grow">
-              <div title={p.runtime === 'claude' ? tr('这个端点只认官方 Claude Code 二进制（编辑里可以改）') : undefined}>{p.name} <span style={{ color: 'var(--fg-2)', fontSize: 12 }}>{PROVIDER_TYPES.find((t) => t.v === p.type)?.l}</span></div>
-              <div className="sub mono">{p.type === 'gateway' ? tr('组：{name}', { name: gwGroups.find((g) => g.id === p.gatewayGroupId)?.name ?? tr('（组已删除）') }) : <>{p.baseUrl || tr('（默认端点）')} · {p.apiKey || tr('无 key')}</>}{p.defaultModel ? ` · ${p.defaultModel}` : ''}</div>
+              <div>{p.name}</div>
+              <div className="sub mono">{p.baseUrl || tr('（默认端点）')} · {p.apiKey || tr('无 key')}{p.defaultModel ? ` · ${p.defaultModel}` : ''}</div>
             </div>
             <button className={clsx('btn sm', def === p.id && 'primary')} onClick={() => setSetting('defaultProviderId', p.id)}>{def === p.id ? tr('默认') : tr('设为默认')}</button>
             <button className="btn sm ghost" onClick={() => startEdit(p)}>{tr('编辑')}</button>
@@ -423,35 +398,23 @@ export function ProviderProfiles() {
           <h5>{editing.id ? tr('编辑「{name}」', { name: editing.name }) : tr('新供应商')}</h5>
           <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
             <input className="field" style={{ flex: 1 }} placeholder={tr('名称，如 super-nb')} value={editing.name ?? ''} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
-            <Select className="field" value={editing.type} onValueChange={(value) => setEditing({ ...editing, type: String(value) as ProviderType })} aria-label={tr('类型')} options={PROVIDER_TYPES.map((t) => ({ value: t.v, label: t.l }))} />
           </div>
-          {isGw && (
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
-              <span style={{ minWidth: 110, fontSize: 13, color: 'var(--fg-2)' }}>{tr('网关组')}</span>
-              <Select className="field" style={{ flex: 1 }} value={editing.gatewayGroupId ?? ''} onValueChange={(value) => setEditing({ ...editing, gatewayGroupId: String(value) })} aria-label={tr('网关组')} options={[{ value: '', label: tr('选择组…') }, ...gwGroups.map((g) => ({ value: g.id, label: g.name, description: tr('{n} 个成员', { n: g.members.length }) }))]} />
-            </div>
-          )}
-          {isGw && <div className="sub" style={{ marginBottom: 6 }}>{tr('地址与密钥在对话开始时由网关填入；Claude / Codex / Gemini 等 Agent 都能用这个供应商。组里有「只认官方二进制」的 Anthropic 成员时，Claude 对话默认也用官方二进制（下面的勾选优先）。Codex、Gemini CLI 即使登录了自己的账号，也会被强制走网关；Qwen Code 等其它 Agent 只注入环境变量，在 OAuth 登录状态下可能不走网关（先退出登录或改用 API Key 模式）。{gwGroupsCount}', { gwGroupsCount: !gwGroups.length && tr('还没有组：先去「设置 → 模型网关」建一个。') })}</div>}
-          {!isGw && <input className="field" style={{ width: '100%', marginBottom: 6 }} placeholder={`Base URL · ${PROVIDER_TYPES.find((t) => t.v === editing.type)?.hint}`} value={editing.baseUrl ?? ''} onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })} />}
-          {!isGw && <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+          <input className="field" style={{ width: '100%', marginBottom: 6 }} placeholder={`Base URL · ${PROVIDER_TYPES[0].hint}`} value={editing.baseUrl ?? ''} onChange={(e) => setEditing({ ...editing, baseUrl: e.target.value })} />
+          <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
             <input className="field" style={{ flex: 1 }} type={showKey ? 'text' : 'password'} placeholder={editing.id ? tr('API Key（留空保持 {apiKey}）', { apiKey: editing.apiKey || tr('现有值') }) : 'API Key'} value={editing.apiKey} onChange={(e) => setEditing({ ...editing, apiKey: e.target.value })} autoComplete="off" />
             <button className="icon-btn" onClick={() => setShowKey(!showKey)} aria-label={tr('显示密钥')}><Icon name="eye" size={14} /></button>
             <button className="btn sm" disabled={busy} onClick={test}>{busy ? tr('测试中…') : tr('测试连接')}</button>
-          </div>}
+          </div>
           {probe && (
             <div style={{ fontSize: 13, marginBottom: 6, color: probe.ok ? 'var(--green)' : 'var(--red)' }}>
               {probe.models.length > 0 ? tr('模型列表 {modelsCount} 个', { modelsCount: probe.models.length }) : probe.ok ? tr('连接正常') : tr('失败{v}：{error}', { v: probe.status ? ` HTTP ${probe.status}` : '', error: probe.error })}
               {probe.chat && (probe.chat.ok
-                ? tr(' · 对话测试通过（{model} · {v} · {ms}s）', { model: probe.chat.model, v: probe.chat.runtime === 'claude' ? tr('官方二进制') : probe.chat.runtime === 'api' ? tr('直连接口') : 'ccb', ms: (probe.chat.ms / 1000).toFixed(1) })
+                ? tr(' · 对话测试通过（{model} · {ms}s）', { model: probe.chat.model, ms: (probe.chat.ms / 1000).toFixed(1) })
                 : tr(' · 对话测试失败：{error}', { error: probe.chat.error }))}
               {REGION_RE.test(`${probe.ok ? '' : probe.error ?? ''} ${probe.chat?.ok ? '' : probe.chat?.error ?? ''}`) && <div style={{ color: 'var(--fg-1)' }}>{REGION_BLOCKED}</div>}
-              {probe.chat?.switched && <div style={{ color: 'var(--yellow)' }}>{tr('这个端点拒绝 ccb 的请求，已自动改为官方 Claude Code 二进制（ccb 专属功能在该供应商的对话里不可用）')}</div>}
-              {probe.responses && (probe.responses.ok
-                ? <div style={{ color: 'var(--green)' }}>{tr('/v1/responses 通过（{model}，gpt-* 会经垫片走这条路）', { model: probe.responses.model })}</div>
-                : <div style={{ color: 'var(--yellow)' }}>{tr('/v1/responses 不可用：{error}{v}', { error: probe.responses.error, v: [404, 405, 501].includes(probe.responses.status ?? 0) && !/model/i.test(probe.responses.error ?? '') ? tr('（已记下，gpt-* 改走 chat/completions）') : tr('（没有记下：可能是模型或临时错误，对话里仍会先试 /v1/responses，失败这一次退回 chat/completions）') })}</div>)}
             </div>
           )}
-          {!isGw && models.length > 1 && (
+          {models.length > 1 && (
             <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
               <span style={{ minWidth: 110, fontSize: 13, color: 'var(--fg-2)' }}>{tr('用哪些模型')}</span>
               <span className="sub" style={{ flex: 1 }}>{shownCount === models.length ? tr('全部 {count} 个都在模型菜单里', { count: models.length }) : tr('{n} / {count} 个在模型菜单里', { n: shownCount, count: models.length })}</span>
@@ -466,11 +429,6 @@ export function ProviderProfiles() {
           <ContextWindows editing={editing} models={models} listed={probe?.ok ? probe.modelContext : editing.modelContext} set={setEditing} />
           <CompactAt key={editSeq} value={editing.compactAt ?? undefined} window={compactWindowOfProvider({ ...editing, modelContext: probe?.ok ? probe.modelContext : editing.modelContext })}
             onChange={(v, e) => { setCompactErr(e ?? ''); setEditing((d) => (d ? { ...d, compactAt: v ?? (null as any) } : d)); }} />
-          {(editing.type === 'anthropic' || editing.type === 'gateway') && (
-            <SwitchLine on={editing.runtime === 'claude'} onChange={(on) => setEditing({ ...editing, runtime: on ? 'claude' : (null as any) })}>
-              {tr('这个端点只认官方 Claude Code 二进制（被拒时再勾）')}
-            </SwitchLine>
-          )}
           <CacheOptions editing={editing} set={setEditing} />
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn sm primary" disabled={busy} onClick={save}>{tr('保存')}</button>
@@ -484,8 +442,7 @@ export function ProviderProfiles() {
 
 /**
  * 上下文窗口 per model (2026-10-14 user report: a relay's Claude compacted at 175K; aimami sets it per model). Empty =
- * the default it shows: what the model list said, else the family's full size (Claude 1M, GPT 272K…), else the
- * engine's 200K. The models in use (default, family map) first; with many, a filter.
+ * the default it shows: what the model list said, else the family's full size (Claude 1M…), else the engine's 200K. The models in use (default, family map) first; with many, a filter.
  */
 function ContextWindows({ editing, models, listed, set }: { editing: Draft; models: string[]; listed?: Record<string, number>; set: (d: Draft) => void }) {
   const [q, setQ] = useState('');
@@ -506,7 +463,7 @@ function ContextWindows({ editing, models, listed, set }: { editing: Draft; mode
   return (
     <div className="ctx-win" style={{ margin: '8px 0' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--fg-2)', marginBottom: 4 }}>
-        <span title={tr('对话用到多少 token 时自动压缩，看的就是这个。空着 = 用默认：模型列表写的，否则按模型拉满（Claude 1M、GPT 272K…），都不知道就是 200K')}>{tr('上下文窗口')}</span>
+        <span title={tr('对话用到多少 token 时自动压缩，看的就是这个。空着 = 用默认：模型列表写的，否则按模型拉满（Claude 1M），都不知道就是 200K')}>{tr('上下文窗口')}</span>
         <span className="grow" />
         {ids.length > 8 && <input className="field" style={{ width: 160, height: 26 }} placeholder={tr('筛选模型')} value={q} onChange={(e) => setQ(e.target.value)} aria-label={tr('筛选模型')} />}
       </div>
@@ -531,52 +488,18 @@ function ContextWindows({ editing, models, listed, set }: { editing: Draft; mode
   );
 }
 
-/** Prompt-cache switches of a profile (server: gateway/shim.ts, gateway/cache.ts). `null` = back to the default. */
+/** Prompt-cache and auth switches of a profile. `null` = back to the default. */
 function CacheOptions({ editing, set }: { editing: Draft; set: (d: Draft) => void }) {
   const row = { display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, color: 'var(--fg-2)', margin: '4px 0' } as const;
-  const oai = editing.type === 'openai' || editing.type === 'grok';
-  const shimOn = editing.cacheShim !== false;
-  const promptOnly = editing.promptEffortModels ?? [];
-  const learned = [
-    editing.noPromptCacheKey && tr('端点不接受 prompt_cache_key，已停发'),
-    editing.noResponsesApi && tr('端点没有 /v1/responses，gpt-* 改走 chat/completions'),
-    editing.noCacheRetention && tr('端点不接受 prompt_cache_retention，已停发'),
-    promptOnly.length > 0 && tr('{promptOnlyCount} 个模型不接受智能程度参数，改用提示词（{promptOnly}{v}）', { promptOnlyCount: promptOnly.length, promptOnly: promptOnly.slice(0, 3).join('、'), v: promptOnly.length > 3 ? tr(' 等') : '' }),
-  ].filter(Boolean);
   return (
     <>
-      {oai && (
-        <SwitchLine title={tr('Claude 对话经本机缓存垫片访问这个端点：补 prompt_cache_key 与会话亲和头（session affinity：中转按它把同一对话路由到同一渠道），把只报在顶层的命中数（DeepSeek / Kimi）补到 ccb 读的字段里，每次调用记账本')} on={shimOn} onChange={(on) => set({ ...editing, cacheShim: on ? (null as any) : false })}>
-          {tr('缓存优化（经本机垫片补上缓存键、让同一对话走同一渠道，修正命中统计；关掉 = 直连）')}
-        </SwitchLine>
-      )}
-      {editing.type === 'openai' && shimOn && (
-        <SwitchLine title={tr('new-api 类中转默认只对 /v1/responses + prompt_cache_key 做会话亲和（Codex 规则），chat/completions 每次随机渠道；端点没有这个接口时自动退回并记住')} on={editing.responsesApi !== false} onChange={(on) => set({ ...editing, responsesApi: on ? (null as any) : false })}>
-          {tr('gpt-* 模型改走 /v1/responses（对 new-api 类中转命中率更高）')}
-        </SwitchLine>
-      )}
-      {editing.type === 'openai' && (
-        <SwitchLine title={tr('模型网关把 Anthropic 请求转给这个成员时，在 system / 最后一个工具 / 最后一条消息上带 cache_control')} on={editing.cacheControlFormat === 'anthropic'} onChange={(on) => set({ ...editing, cacheControlFormat: on ? 'anthropic' : (null as any) })}>
-          {tr('经模型网关时带 Anthropic 格式 cache_control（百炼 qwen 显式缓存、OpenRouter anthropic/*）')}
-        </SwitchLine>
-      )}
-      {editing.type === 'anthropic' && (
-        <SwitchLine title={tr('官方二进制：ENABLE_PROMPT_CACHING_1H=1；模型网关转成 Anthropic 请求给这个成员时：ttl 1h。写入按 2× 基础价（5 分钟是 1.25×），适合经常停下来超过 5 分钟的对话')} on={!!editing.cache1h} onChange={(on) => set({ ...editing, cache1h: on ? true : (null as any) })}>
-          {tr('1 小时提示缓存（官方二进制 / 经模型网关；写入 2× 基础价）')}
-        </SwitchLine>
-      )}
-      {(editing.type === 'anthropic' || editing.type === 'openai') && (
-        <label style={row} title={tr('Key 放在哪个请求头里：Authorization: Bearer、x-api-key，或两个都带。默认：Claude 格式对话用 Bearer，测试和模型网关两个都带；OpenAI 格式用 Bearer')}>
-          {tr('鉴权方式')}
-          <Select value={editing.authStyle ?? ''} onValueChange={(v) => set({ ...editing, authStyle: (String(v) || null) as any })} aria-label={tr('鉴权方式')} options={[{ value: '', label: tr('默认') }, { value: 'bearer', label: 'Authorization: Bearer' }, { value: 'x-api-key', label: 'x-api-key' }, { value: 'both', label: tr('两个都带') }]} />
-        </label>
-      )}
-      {learned.length > 0 && (
-        <div className="sub" style={{ margin: '2px 0 6px' }}>
-          {tr('自动记下：{learned}', { learned: learned.join('；') })}
-          <button className="btn sm ghost" onClick={() => set({ ...editing, noPromptCacheKey: null as any, noResponsesApi: null as any, noCacheRetention: null as any, promptEffortModels: null as any })}>{tr('保存后重新检测')}</button>
-        </div>
-      )}
+      <SwitchLine title={tr('ENABLE_PROMPT_CACHING_1H=1。写入按 2× 基础价（5 分钟是 1.25×），适合经常停下来超过 5 分钟的对话')} on={!!editing.cache1h} onChange={(on) => set({ ...editing, cache1h: on ? true : (null as any) })}>
+        {tr('1 小时提示缓存（写入 2× 基础价）')}
+      </SwitchLine>
+      <label style={row} title={tr('Key 放在哪个请求头里：Authorization: Bearer、x-api-key，或两个都带。默认：对话用 Bearer，测试两个都带')}>
+        {tr('鉴权方式')}
+        <Select value={editing.authStyle ?? ''} onValueChange={(v) => set({ ...editing, authStyle: (String(v) || null) as any })} aria-label={tr('鉴权方式')} options={[{ value: '', label: tr('默认') }, { value: 'bearer', label: 'Authorization: Bearer' }, { value: 'x-api-key', label: 'x-api-key' }, { value: 'both', label: tr('两个都带') }]} />
+      </label>
     </>
   );
 }

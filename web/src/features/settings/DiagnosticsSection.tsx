@@ -25,7 +25,7 @@ export function DiagnosticsSection() {
       </div>
       {r && <div className="mono sub" style={{ marginTop: 6 }}>{r.tar ?? r.dir}</div>}
       <div className="kv" style={{ marginTop: 10 }}>
-        <span className="k">{tr('引擎')}</span><span>{engine ? `${engine.runtime} ${engine.version ?? ''}` : '-'}</span>
+        <span className="k">{tr('引擎')}</span><span>{engine ? `Claude Code ${engine.version ?? ''}` : '-'}</span>
         <span className="k">{tr('壳')}</span><span>{desktop ? tr('桌面 {version}', { version: desktop.version }) : tr('浏览器')}</span>
         <span className="k">{tr('日志')}</span><span className="mono">{desktop ? (desktop.platform === 'win32' ? '%APPDATA%\\claude-web\\server.log · main.log' : desktop.platform === 'darwin' ? '~/Library/Application Support/claude-web/server.log · main.log' : '~/.config/claude-web/server.log · main.log') : tr('服务终端输出')}</span>
       </div>

@@ -18,14 +18,14 @@ export interface FederationStore {
 
 export type PeerLike = Pick<PeerClient, 'state' | 'error' | 'latencyMs' | 'lastSeenAt' | 'remote' | 'start' | 'stop' | 'request' | 'on'>;
 
-/** handOverImported's path (swap.ts `swapAgent` with an `imported` source): new local session + briefing. */
+/** swap.ts `handOverToClaude`: a new local Claude conversation seeded with a briefing. */
 export type HandoverFn = (a: {
   sessionId: string;
-  agent: AgentKind;
   model?: string;
-  readAll: (id: string) => Promise<any[]>;
-  imported: (id: string) => Promise<{ agent: AgentKind; cwd: string; title?: string } | null>;
-}) => Promise<{ sessionId: string; info: unknown; history: unknown[]; briefing?: string }>;
+  /** what the conversation ran as there, its title, and where it goes on here */
+  from: { agent: AgentKind; cwd: string; title?: string };
+  readAll: () => Promise<any[]>;
+}) => Promise<{ sessionId: string; info: unknown; history: unknown[] }>;
 
 export interface FederationDeps {
   store: FederationStore;
@@ -476,10 +476,9 @@ export class FederationService extends EventEmitter {
     const title = summary.title ? tr('{title}（来自 {name}）', { title: summary.title, name: this.ref(p.peerId).name }) : undefined;
     const r = await this.d.handover({
       sessionId: req.sessionId,
-      agent: req.agent,
       model: req.model,
+      from: { agent: from, cwd: req.cwd.trim(), title },
       readAll: () => this.readAllRemote(p.peerId, p.remoteId),
-      imported: async () => ({ agent: from, cwd: req.cwd.trim(), title }),
     });
     this.emit('event', { kind: 'sessions.changed' } satisfies ServerEvent);
     return r;

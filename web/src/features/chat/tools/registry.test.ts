@@ -13,9 +13,10 @@ beforeAll(async () => {
   ({ getToolDef } = await import('./registry'));
 });
 
-// Our engine (ccb) runs MCP tools without alwaysLoad through ExecuteExtraTool { tool_name, params }: the step row says
-// what the tool inside does, not 「ExecuteExtraTool tool_name=mcp__web__browser_open」.
-describe('ExecuteExtraTool in the conversation', () => {
+// Conversations from before 2026-11-01 may have turns on ccb (the Claude Code fork we used to run), which called MCP
+// tools without alwaysLoad through ExecuteExtraTool { tool_name, params }: the step row says what the tool inside
+// does, not 「ExecuteExtraTool tool_name=mcp__web__browser_open」.
+describe('ExecuteExtraTool in an old conversation', () => {
   it('labels the call as the tool inside', () => {
     expect(getToolDef('ExecuteExtraTool').label({ tool_name: 'mcp__web__browser_open', params: { url: 'https://example.com/' } })).toEqual(getToolDef('mcp__web__browser_open').label({ url: 'https://example.com/' }));
     expect(getToolDef('ExecuteExtraTool').label({ tool_name: 'Bash', params: { command: 'ls' } })).toEqual(getToolDef('Bash').label({ command: 'ls' }));

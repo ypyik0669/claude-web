@@ -28,6 +28,12 @@ describe('orchestra graph', () => {
     expect(g.nodes[2].state).toBe('stopped');
     expect(g.nodes[1].icon).toBe('close');
   });
+  it('a stored compare node (kind removed 2026-11-01) still gets a card with a neutral icon', () => {
+    const old = { id: 'cmp', kind: 'compare', title: 'C', agents: ['claude'], prompt: 'p', dependsOn: [] } as unknown as OrchNode;
+    const g = orchestraGraph([old], undefined, 0);
+    expect(g.nodes[0].icon).toBe('agent');
+    expect(g.nodes[0].subtitle).toBeTruthy();
+  });
   it('a card says its whole title on hover; an id like constructor is a node like any other (review D5 / D1)', () => {
     const g = orchestraGraph([task('constructor'), task('b', ['constructor'])], { b: run('running') }, 0);
     expect(g.nodes.map((n) => [n.tip, n.state])).toEqual([['CONSTRUCTOR', undefined], ['B', 'running']]);

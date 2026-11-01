@@ -16,14 +16,11 @@ jobs:
         include:
           - os: windows-latest
             args: --win --x64
-            sidecar_platform: win32-x64
           - os: macos-latest
             args: --mac --arm64
-            sidecar_platform: darwin-arm64
-          # Intel runner: npm installs the SDK binary and ccb's ripgrep for the runner's own CPU only
+          # Intel runner: npm installs the SDK binary for the runner's own CPU only
           - os: macos-15-intel
             args: --mac --x64
-            sidecar_platform: darwin-x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -32,10 +29,6 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: fetch sidecars (pinned, SHA256 checked)
-        run: node scripts/sidecars/fetch.mjs --platform ${{ matrix.sidecar_platform }}
-      - name: fetch engines (pinned, SHA256 checked)
-        run: node scripts/engines/fetch.mjs --platform ${{ matrix.sidecar_platform }}
       - run: npm run build:all
       - name: package
         shell: bash
@@ -43,7 +36,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npx electron-builder --config electron-builder.yml ${{ matrix.args }} --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
-      # launch the packaged app for real: embedded server, both engines, node-pty terminal
+      # launch the packaged app for real: embedded server, the Claude Code binary, node-pty terminal
       - name: smoke test packaged app
         shell: bash
         run: |

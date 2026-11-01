@@ -182,7 +182,6 @@ function ProjectDialog({ w }: { w: Workspace }) {
           <button className="btn sm" data-act="add-folder" onClick={() => void add()}><Icon name="plus" size={12} /> {tr('添加文件夹')}</button>
           <div className="dialog-msg pj-note">
             <div>{tr('新开的对话会同时看到这些文件夹；正在运行的对话下次打开时生效。')}</div>
-            <div>{tr('Claude 和 Codex 能用额外的文件夹，其它 agent 只用主文件夹。')}</div>
           </div>
         </div>
         <div hidden={tab !== 'instructions'}>

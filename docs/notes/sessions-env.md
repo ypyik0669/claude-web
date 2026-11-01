@@ -15,9 +15,8 @@
   `sendWhenIdle`，30 分钟放弃）；没开着的对话 `pool.open` 重新拉起（供应商 / 权限模式按 meta 恢复）。归档的、别的机器上的不投。
 - 前端：`decodeAttachments` 认出整条消息是 `<cw-from>` → `UserItem.from`，气泡顶上「来自『标题』」，点了跳过去。
   只认**整条**都是标记的消息，别人正文里引用的不算。
-- 真引擎实测（haiku，2026-10-16）：官方二进制 list → read → send 一次通过；**ccb 把 MCP 工具包在 `ExecuteExtraTool
-  { tool_name, params }` 里**，`allowedTools` 认的是里面的名字，于是每次都问——runner 的 `onCanUseTool` 对
-  `ExecuteExtraTool` 看 `tool_name` 是否在本 query 的 `allowedTools`（`preAllowed`）里，在就放行（web 搜索在 ccb 上也因此不再每次问）。
+- 真机实测（haiku，2026-10-16）：官方二进制 list → read → send 一次通过。（历史：ccb 把 MCP 工具包在 `ExecuteExtraTool` 里、
+  runner 为它放行的分支已随 ccb 删掉，见「只留 Claude」。）
 
 - **项目范围（阶段 F2）**：项目页「跨对话工具只看见本项目的对话」= `Workspace.sessionsScope: 'project'`。`SessionsDeps.projectOf(id)` / `restricted(selfId)`（index.ts 用 `meta/project.ts` 的 `projectOf`：meta.workspaceId，否则主文件夹 == cwd / groupCwd）；`scopeSessions()` 过滤 list 和 `find`（读 / 发 / 改名 / 归档别的项目的对话都报「找不到」）；`list_sessions` 也可以自己传 `scope: 'project'`。不在任何项目里的对话只看得见同样不在项目里的。
 
@@ -55,8 +54,8 @@
 
 - 设置 → 环境变量 第一块。存 `<dataDir>/local-env.json`（名字 → `enc:…`，SecretService），**不进 meta.json 的 settings**：
   settings 会发给所有客户端（含配对的手机），Linux 上 `enc:plain:` 只是 base64。列表只给名字，值要 `env.reveal`。
-- 作用：runner 的 `featureEnv` 最底层（供应商的变量和对话自己的 `features.env` 都盖过它）、终端 pty。选模型 / 账号 / 引擎的
-  名字（`ANTHROPIC_*`、`CLAUDE_CODE_*`、`CLAUDE_WEB_*`、`OPENAI_*`、`CW_*` 等）存的时候就拒。新开的对话 / 终端生效。
+- 作用：runner 的 `featureEnv` 最底层（供应商的变量和对话自己的 `features.env` 都盖过它）、终端 pty。选模型 / 账号的
+  名字（`ANTHROPIC_*`、`CLAUDE_CODE_*`、`CLAUDE_WEB_*`、`CW_*` 等；`OPENAI_*` / `GEMINI_*` 还在拒绝表里）存的时候就拒。新开的对话 / 终端生效。
 
 ## 深链接
 
@@ -89,7 +88,7 @@
 - **`SessionEnv`**（`{ kind: 'wsl', distro }`）写进 meta（`env`），pool 恢复对话时读回来；新对话「选机器」的值是一个字符串：
   `''` 本机 / `wsl:<distro>` / peer id（`composer/machine.ts`）。
 - **runner**：spawn 钩子换成 `wsl/spawn.ts`：`wsl.exe -d <d> --cd <linux cwd> -- claude <同样的 CLI 参数>`（参数里的 Windows
-  路径换成 /mnt/…）。跑的是**发行版自己装的官方 CLI**，用它自己的登录；不走供应商、网关、子代理分流（WSL 的 NAT 下
+  路径换成 /mnt/…）。跑的是**发行版自己装的官方 CLI**，用它自己的登录；不走供应商（WSL 的 NAT 下
   127.0.0.1 不通）。WSLENV 列出 runner 额外加的变量。
 - **注入的 MCP**（记忆、联网、操控电脑……）是 Windows 程序：经互通用 /mnt 路径启动，参数保持 Windows 路径，env 用 `WSLENV …/u`。
   互通关了就去掉它们，`info.wsl.dropped` 列出来，输入框下面一行灰字说明。

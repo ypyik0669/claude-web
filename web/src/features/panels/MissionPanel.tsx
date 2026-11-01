@@ -6,7 +6,7 @@ import { Icon } from '@/ui/icons';
 import { sessionPeer } from '@/features/peers';
 import { orchAct, useOrch, useOrchBusy, waitingOf } from '@/features/orchestra/state';
 import { accessAsk } from '@/features/computer/computer-tools';
-import { asAsked, dockKind, isEgoScriptRequest } from '@/features/chat/permission-dock';
+import { dockKind, isEgoScriptRequest } from '@/features/chat/permission-dock';
 import { tr } from '@/i18n';
 import { usePrs } from '@/features/vcs/PrBar';
 import { laneOf, quickAnswer, resolved, type Lane } from './mission-lanes';
@@ -27,7 +27,7 @@ export function MissionPanel() {
   const [, tick] = useState(0);
   useEffect(() => { const t = setInterval(() => tick((x) => x + 1), 1000); return () => clearInterval(t); }, []);
   const [showIdle, setShowIdle] = useState(true);
-  // orchestration nodes waiting for a human (approval / compare pick) belong in "needs you" too
+  // orchestration approvals waiting for a human belong in "needs you" too
   const orchFull = useOrch((s) => s.full);
   const orchWait = useMemo(() => waitingOf(orchFull), [orchFull]);
   const orchBusy = useOrchBusy((s) => s.keys);
@@ -98,7 +98,7 @@ export function MissionPanel() {
                   {c.lane === 'attention' && c.o.pending.map((p) => (
                     // 操控电脑 asking for applications: which ones and why is on the conversation's own card, and that is
                     // where it is answered (a click on this card opens it) — no 允许 here, where neither can be read
-                    dockKind(p) === 'access' ? <div key={p.requestId} className="perm" data-kind="access" title={tr('打开对话，看它要操控哪些应用再决定')}>{tr('想操控这台电脑上的应用：{apps}（打开对话再决定）', { apps: accessAsk(asAsked(p).input as Record<string, unknown>).apps.join('、') })}</div> :
+                    dockKind(p) === 'access' ? <div key={p.requestId} className="perm" data-kind="access" title={tr('打开对话，看它要操控哪些应用再决定')}>{tr('想操控这台电脑上的应用：{apps}（打开对话再决定）', { apps: accessAsk(p.input as Record<string, unknown>).apps.join('、') })}</div> :
                     // 允许的网站: which site, and the script it wants to run, are read on the conversation's card
                     isEgoScriptRequest(p) ? <div key={p.requestId} className="perm" data-kind="site" title={tr('打开对话，看它要在网页上做什么再决定')}>{tr('想在 ego lite 里运行一段脚本（打开对话再决定）')}</div> :
                     p.toolName === 'browser.site' ? <div key={p.requestId} className="perm" data-kind="site" title={tr('打开对话，看它要在网页上做什么再决定')}>{tr('想在网站 {host} 上操作网页（打开对话再决定）', { host: String((p.input as { host?: unknown }).host ?? '').slice(0, 80) })}</div> :
@@ -122,7 +122,7 @@ export function MissionPanel() {
               ))}
               {orch.map((w) => (
                 <div key={`${w.runId}:${w.nodeId}`} className="mcard orch-wait" onClick={() => useOrch.getState().ask('open', w.runId)}>
-                  <div className="t"><Icon name={w.kind === 'approval' ? 'approval' : 'compare'} size={13} />{w.title}</div>
+                  <div className="t"><Icon name="approval" size={13} />{w.title}</div>
                   <div className="sub">{tr('编排「{runName}」· {v}{v2}', { runName: w.runName, v: w.kind === 'approval' ? tr('等你审批') : tr('候选跑完了，等你选一个合并'), v2: w.since ? ` · ${ago(w.since)}` : '' })}</div>
                   {w.kind === 'approval' && (
                     <div className="orch-wait-acts">

@@ -13,11 +13,11 @@
   （默认开，标题栏 ⓘ 和 设置 → 外观 都能关）；关掉后标题栏的「+N −M」回来（信息栏开着时它在「改动」卡里）。
 - 卡片顺序 / 折叠存 `ui.infoCards`（`info-model.ts` 的 `normInfoLayout`：未知的丢掉、新卡补在后面，上下文默认折叠）。拖抓手换位置，
   标题上 Alt+↑↓ 也能挪。
-- 上下文卡：`session.contextUsage` 的 `full`（SDK `getContextUsage`），**只在展开时取一次、点「刷新」再取**，一轮结束不取（2026-10-23 起环 / 状态条 / 这张卡都不在每轮结束问引擎，见「界面改版 阶段 3」的「上下文小环不问引擎」；A5 曾加过「卡开着时每轮结束再取」，已撤回，spec 9416dfe）。2026-10-24（A5）：每个对话上一次的结果放在模块内存 `ctxCache`（本次运行，不进 meta.json / localStorage），展开时立刻显示、脚注「更新中…」再取。颜色按分类固定（`info-model` 的 `toneOf`：Messages 蓝、System tools 橙、MCP tools 青、Skills 黄、其余灰；`.ctx-t-*` / `--ctx-*` 由主题的蓝红黄绿混出来），已用的按大小排。**ccb fork 的回答没有 `kind`**（SDK 类型写着有），以前 Free space / Autocompact buffer 都被当成已用；`kindOf` 在没有 `kind` 时看 `isDeferred` 和这两行固定的名字。
+- 上下文卡：`session.contextUsage` 的 `full`（SDK `getContextUsage`），**只在展开时取一次、点「刷新」再取**，一轮结束不取（2026-10-23 起环 / 状态条 / 这张卡都不在每轮结束问引擎，见「界面改版 阶段 3」的「上下文小环不问引擎」；A5 曾加过「卡开着时每轮结束再取」，已撤回，spec 9416dfe）。2026-10-24（A5）：每个对话上一次的结果放在模块内存 `ctxCache`（本次运行，不进 meta.json / localStorage），展开时立刻显示、脚注「更新中…」再取。颜色按分类固定（`info-model` 的 `toneOf`：Messages 蓝、System tools 橙、MCP tools 青、Skills 黄、其余灰；`.ctx-t-*` / `--ctx-*` 由主题的蓝红黄绿混出来），已用的按大小排。**回答可能没有 `kind`**（SDK 类型写着有；当时的 ccb 引擎就没有，已删），以前 Free space / Autocompact buffer 都被当成已用；`kindOf` 在没有 `kind` 时看 `isDeferred` 和这两行固定的名字。
   - **2026-10-24 上下文卡（stage A 的 A5）**。现象（用户截图）：卡慢；同一类在不同对话里颜色不一样；1M 窗口时 Autocompact buffer 显示 333k / 33.3%（官方桌面版 33k / 4.7%）。
-    根因：慢 = 每次展开都 `full` 数一遍（引擎要发约 29 个 `count_tokens`，几秒到十几秒）；颜色 = 按出现顺序给调色板序号 `sw-0…7`；333k 见下。
+    根因：慢 = 每次展开都 `full` 数一遍（CLI 要发十几～二十几个 `count_tokens`，几秒到十几秒）；颜色 = 按出现顺序给调色板序号 `sw-0…7`；333k 见下。
     做法：前端见上一条（`ctxCache` 先显示、`toneOf` 固定颜色、已用按大小排、buffer / free / deferred 在最后，条和行同一套颜色；**不**每轮结束自动再取）。
-    buffer 的数字在引擎里改（cw.7，见「引擎（单运行时）与供应商档案」的 cw.7 一条），前端不自己改数字。
+    buffer 的数字是 CLI 报的，前端不自己改数字（当时在我们的 ccb 引擎 cw.7 里改，引擎已删；现在只用官方二进制的数）。
     验证：`info-model.test.ts`（固定颜色、排序、未知类名灰、没有 `kind` 的回答）；ui-smoke `parity-a` 段：卡里的行（有的话——ui-smoke 不起引擎，通常没有明细）不出现 `sw-0…7`，样式表里也没有这些规则，
     五个 `.ctx-t-*` 算出来是五种不透明的颜色；真机（`scripts/demo-up.cjs` 的假上游）浅色 / 深色 / 字符画主题都看过。
     **坑：spec 里写的「`model` vs `runtimeModel` 两个窗口不同」不是 333k 的原因**——真正的原因是用户 `~/.claude/settings.json` 的 env `CLAUDE_CODE_AUTO_COMPACT_WINDOW=700000`：
@@ -87,20 +87,18 @@
 
 ### 修掉的 bug（根因）
 
-- **大图片 / 截图失败「Could not load the "sharp" module」**：引擎（ccb fork）把 sharp 的 JS 打进了包，原生的 `@img/sharp-<平台>` 是上游的
-  devDependency，没跟着发；超过 2000px 的图一缩就失败。修法：根 package.json 依赖 `sharp`（**必须和引擎打包的版本一样，现在 0.34.5**：
-  `grep -o "0\.3[0-9]\.[0-9]*" node_modules/claude-web-engine/dist/chunks/lib-*.js`），npm 装本机平台的 `@img/sharp-*`，引擎的
-  `createRequire` 从 `dist/chunks` 往上找得到；`electron-builder.yml` 的 asarUnpack 加了 `sharp` 和 `@img`。Electron 当 node 跑也加载得了（N-API）。
+- （历史）**大图片 / 截图失败「Could not load the "sharp" module」**：当时的 ccb 引擎把 sharp 的 JS 打进了包、原生的 `@img/sharp-<平台>` 没跟着发，
+  所以根 package.json 加了 `sharp`（0.34.5），`electron-builder.yml` 的 asarUnpack 加了 `sharp` 和 `@img`。ccb 已删（「只留 Claude」），这两处还在，是否还需要没查。
 - **「Unknown skill: anthropic-skills:xlsx」**：官方桌面版把 Anthropic 的技能（xlsx / pdf / docx / pptx…）作为插件 `anthropic-skills` 下到
   `%APPDATA%\Claude\local-agent-mode-sessions\skills-plugin\<账号>\<id>\`（mac `~/Library/Application Support/Claude/…`），在那边开始的对话
-  拿到这里接着聊，列表里有这些名字，引擎却没加载。`runtime/desktop-skills.ts` 找最新的那个目录，作为本地插件给 SDK（和网吧的插件一起），
-  设置 `claude.desktopSkills` 可关。只读用户自己的下载，不拷贝。实测引擎的 init 里列出了 `anthropic-skills:*`。
+  拿到这里接着聊，列表里有这些名字，CLI 却没加载。`runtime/desktop-skills.ts` 找最新的那个目录，作为本地插件给 SDK（和网吧的插件一起），
+  设置 `claude.desktopSkills` 可关。只读用户自己的下载，不拷贝。实测 init 里列出了 `anthropic-skills:*`。
 - **「后台 · 19 条命令」不在跑也占着**：后台命令 / 子代理在**一轮进行中**结束时，CLI 把结束通知直接塞给模型（transcript 里一行
   `queue-operation` enqueue + `<task-notification>`，紧接着 remove），**流上不发 `task_notification`**——只有等到下一轮才处理的那种才发。
   登记表就一直「在跑」，pool 还因为它留着进程。`BackgroundService` 每 5 秒对有在跑任务的对话读 transcript 新增的部分（只认
   `"queue-operation"` 行，别的行里引用的不算；从第一次有后台任务时的文件末尾开始读），把结束补上。
 - **改了名过一会又变回去**：CLI 进程把标题记在内存里，`reAppendSessionMetadata` 时只从文件尾部一段里刷新——改名那一行被一长轮挤出这一段后，
-  就把旧标题写回去。官方二进制有 `rename_session` 控制请求（`Query.renameSession`）；我们的引擎没有：hub 的 `renameKept` 把新名字记在
+  就把旧标题写回去。官方二进制有 `rename_session` 控制请求（`Query.renameSession`，runner 的 `renameLive`）；它失败时（当时的 ccb 引擎没有这个请求）hub 的 `renameKept` 把新名字记在
   `SessionMeta.pendingTitle`，列表显示它，进程结束后再写一次。
 - **对话名变成了对话里最后一句话（2026-10-30 用户报告，重启也一样）**：另一个原因，和上一条无关。SDK 的 `listSessions` /
   `getSessionInfo` 只读头尾各 64 KB，标题取 `customTitle || aiTitle || lastPrompt || summary || firstPrompt`——改名那一行被后面的长轮挤出尾部
@@ -145,19 +143,17 @@
 
 ## 第三轮（2026-10-17：用户截图 + 一段录屏）
 
-- **Claude 的思考一直是空的**（别家模型有）：接口的 `thinking.display` 在现在的 Claude 模型上默认 `omitted`，思考块只有签名。ccb 只发
-  `{type:'adaptive'}`，官方二进制被 SDK 调时也一样（`-p` 打印模式下它甚至明确发 `omitted`）。用假端点记录请求体查实（`$TEMP/req-spy-server.cjs` 的做法：
+- **Claude 的思考一直是空的**（别家模型有）：接口的 `thinking.display` 在现在的 Claude 模型上默认 `omitted`，思考块只有签名。官方二进制被 SDK 调时只发
+  `{type:'adaptive'}`（`-p` 打印模式下它甚至明确发 `omitted`）。用假端点记录请求体查实（`$TEMP/req-spy-server.cjs` 的做法：
   `ANTHROPIC_BASE_URL` 指本机、回 401、只记 `anthropic-beta` 和除 messages/system/tools 以外的字段）。修法：官方二进制加
-  `--thinking-display summarized`（runner 的 extraArgs；`noThinking` 时、启动模型不是 Claude 时不加），ccb 读 `CLAUDE_WEB_THINKING_DISPLAY`（引擎 cw.5，
-  每个请求按模型名只给 Claude 加；ccb 遇到 `--thinking-display` 会 `unknown option` 退出）。只给 Claude：中转后面的 DeepSeek / Kimi 这类
-  Anthropic 格式接口可能不认这个字段。`redact-thinking-2026-02-12` 那个 beta 只在交互式终端发，不是原因。
-  cw.5 已经发了（`engine-providers` 笔记），依赖已换成 cw.5。
+  `--thinking-display summarized`（`session-runner.ts` 的 extraArgs；`noThinking` 时、启动模型不是 Claude 时不加）。只给 Claude：中转后面的 DeepSeek / Kimi 这类
+  Anthropic 格式接口可能不认这个字段。`redact-thinking-2026-02-12` 那个 beta 只在交互式终端发，不是原因。（历史：当时 ccb 引擎另走 `CLAUDE_WEB_THINKING_DISPLAY`，已删。）
 - 思考行的标题用摘要里的粗体小标题（`chat/thinking-title.ts`：在想时取最后一个，想完取第一个），用时放在后面；正在做的那一步是四个点轮流亮
   （`WorkDots`，强调色，减少动效时不动）。
 - 输入框下面一行中间：这个对话的「几轮 · 几步 · tok/s · 缓存命中」（`model/conv-stats.ts` + `composer/ConvStatsLine.tsx`，按每轮的 result 加总）。
   第四轮用户说「要的是 tok/s，不是 token——token 最右边那个圆环已经有了」：去掉了 token 总数。tok/s = 全部输出 token ÷ 模型时间；
   引擎报的 `duration_api_ms` 是这个进程的累计值，服务端 `turnShare` 把它换成每一轮自己的（`RunningTotals.apiMs`，变小了就是换了进程），
-  账本也存每轮的；历史轮从账本带上 `duration_api_ms`；一轮没有模型时间（别的 agent）或者是旧账本里的累计值（比整轮还长）就用整轮的时间。
+  账本也存每轮的；历史轮从账本带上 `duration_api_ms`；一轮没有模型时间（以前别的 agent 是这样）或者是旧账本里的累计值（比整轮还长）就用整轮的时间。
   放不下的整项藏掉（换行到被裁掉的第二行）。
   0.2.8 用户报「tok/s 怎么没有」：在新对话页开的对话一直不出统计条。原因是选择器取的 `conv.items`——reducer 原地 push、只把 `version`
   加一，数组还是同一个，`useMemo` 永远不重算（从历史打开的对话是整份换掉，所以那边好的）。改成取 open 条目、按 `version` 重算；

@@ -1,56 +1,18 @@
-import { useEffect, useSyncExternalStore } from 'react';
-import type { GatewayGroup, GatewayStatus, ModelRefreshResult } from '@shared';
+import { useSyncExternalStore } from 'react';
+import type { ModelRefreshResult } from '@shared';
 import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { tr } from '@/i18n';
 
 /**
- * Shared state of the model picker: the gateway groups (a gateway profile's models are its members'
- * union) and the "refresh every profile's model list" run. Module-level so the composer menu and the
- * settings page show the same progress; a tiny subscribe/snapshot pair instead of another store slice.
+ * Shared state of the model picker: the "refresh every profile's model list" run. Module-level so the composer
+ * menu and the settings page show the same progress; a tiny subscribe/snapshot pair instead of another store slice.
  */
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
 const emit = () => { for (const l of listeners) l(); };
 const subscribe = (l: Listener) => { listeners.add(l); return () => { listeners.delete(l); }; };
-
-/** `enabled` undefined until the first gateway.status arrives (the menu does not judge gateway profiles before). */
-export interface GatewayView {
-  enabled?: boolean;
-  groups: GatewayGroup[];
-  /** upstreamGroupId → the models its sidecar pool reported (a pool member's models are not in any profile) */
-  poolModels: Record<string, string[]>;
-}
-let gateway: GatewayView = { groups: [], poolModels: {} };
-let groupsLoaded = false;
-let groupsWatch: (() => void) | null = null;
-
-function loadGroups() {
-  return ws.request<GatewayStatus>({ kind: 'gateway.status' })
-    .then((s) => { gateway = { enabled: s.enabled, groups: s.groups, poolModels: s.poolModels ?? {} }; groupsLoaded = true; emit(); })
-    .catch(() => {});
-}
-
-/**
- * Gateway on/off + groups, loaded on first use and kept current through `gateway.changed`. A pool's model
- * list is pulled lazily by the server and lands as `upstreams.changed`, so that one reloads too.
- */
-export function useGatewayStatus(): GatewayView {
-  useEffect(() => {
-    if (!groupsLoaded) void loadGroups();
-    if (!groupsWatch) groupsWatch = ws.on((e) => {
-      if (e.kind !== 'gateway.changed' && e.kind !== 'upstreams.changed') return;
-      void loadGroups();
-      // every gateway group is also a provider profile (auto, server-side): a group added / renamed / removed has to
-      // show up in the menu without the user re-opening settings. upstreams.changed is too frequent for a full reload.
-      if (e.kind === 'gateway.changed') void useStore.getState().loadProviders().catch(() => {});
-    });
-  }, []);
-  return useSyncExternalStore(subscribe, () => gateway);
-}
-
-export const useGatewayGroups = (): GatewayGroup[] => useGatewayStatus().groups;
 
 export interface RefreshRun { running: boolean; ids: string[]; done: number; total: number; results: ModelRefreshResult[]; at?: number }
 let run: RefreshRun = { running: false, ids: [], done: 0, total: 0, results: [] };
@@ -60,14 +22,14 @@ export function useRefreshRun(): RefreshRun {
 }
 
 /**
- * Pull the model list of `ids` (default: every non-gateway profile). One request per profile, four in
+ * Pull the model list of `ids` (default: every profile). One request per profile, four in
  * flight, so the UI can count progress; the server stores `models` / `modelsAt` / `modelsError` and
  * broadcasts meta.changed, which reloads the provider list.
  */
 export async function refreshAllModels(ids?: string[]): Promise<ModelRefreshResult[]> {
   if (run.running) return run.results;
   const st = useStore.getState();
-  const targets = ids ?? st.providers.filter((p) => p.type !== 'gateway').map((p) => p.id);
+  const targets = ids ?? st.providers.map((p) => p.id);
   if (!targets.length) { st.toast(tr('还没有可刷新的供应商')); return []; }
   run = { running: true, ids: targets, done: 0, total: targets.length, results: [] };
   emit();

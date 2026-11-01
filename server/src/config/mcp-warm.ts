@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveSpawn } from '../agents/resolve.js';
-import { killTree } from '../agents/kill-tree.js';
+import { resolveSpawn } from '../proc/resolve.js';
+import { killTree } from '../proc/kill-tree.js';
 import { localEnv } from '../runtime/local-env.js';
 
 /**

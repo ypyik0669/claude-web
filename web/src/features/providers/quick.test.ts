@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { PRESETS, anthropicBase, cleanBase, explainProbe, quickPlan, relayName, uniqueName } from './quick';
 
 const relay = PRESETS.find((p) => p.id === 'relay')!;
-const deepseek = PRESETS.find((p) => p.id === 'deepseek')!;
-const gemini = PRESETS.find((p) => p.id === 'gemini')!;
+const anthropic = PRESETS.find((p) => p.id === 'anthropic')!;
 const CLAUDE_RELAY = ['claude-haiku-4-5-20251001', 'claude-opus-4-5-20251101', 'claude-sonnet-4-5-20250929', 'deepseek-chat', 'text-embedding-3-small'];
 
 describe('quick connect: the address people paste', () => {
@@ -27,21 +26,17 @@ describe('quick connect: the address people paste', () => {
 });
 
 describe('quick connect: the plan from the model list', () => {
-  it('a relay with Claude models → Claude format, every family mapped, default its sonnet', () => {
-    expect(quickPlan(relay, 'auto', 'https://r.example/v1', CLAUDE_RELAY)).toEqual({
+  it('a relay with Claude models → every family mapped, default its sonnet', () => {
+    expect(quickPlan(relay, 'https://r.example/v1', CLAUDE_RELAY)).toEqual({
       type: 'anthropic', baseUrl: 'https://r.example', defaultModel: 'claude-sonnet-4-5-20250929',
       modelMap: { opus: 'claude-opus-4-5-20251101', sonnet: 'claude-sonnet-4-5-20250929', haiku: 'claude-haiku-4-5-20251001' },
     });
   });
-  it('a relay without Claude → OpenAI format on its best chat model; the format can be forced', () => {
-    expect(quickPlan(relay, 'auto', 'https://r.example', ['dall-e-3', 'deepseek-chat', 'glm-4.6'])).toEqual({ type: 'openai', baseUrl: 'https://r.example', defaultModel: 'deepseek-chat' });
-    expect(quickPlan(relay, 'openai', 'https://r.example', CLAUDE_RELAY)).toMatchObject({ type: 'openai', defaultModel: 'claude-sonnet-4-5-20250929' });
-    // Claude format forced on a relay without Claude models: the three families all on the one model
-    expect(quickPlan(relay, 'anthropic', 'https://r.example/v1', ['deepseek-chat'])).toEqual({ type: 'anthropic', baseUrl: 'https://r.example', defaultModel: 'deepseek-chat', modelMap: { haiku: 'deepseek-chat', sonnet: 'deepseek-chat', opus: 'deepseek-chat' } });
+  it('a relay without Claude models: the three families all on its best chat model', () => {
+    expect(quickPlan(relay, 'https://r.example/v1', ['dall-e-3', 'deepseek-chat', 'glm-4.6'])).toEqual({ type: 'anthropic', baseUrl: 'https://r.example', defaultModel: 'deepseek-chat', modelMap: { haiku: 'deepseek-chat', sonnet: 'deepseek-chat', opus: 'deepseek-chat' } });
   });
-  it('vendors keep their fixed endpoint; Gemini prefers a pro model', () => {
-    expect(quickPlan(deepseek, 'auto', '', ['deepseek-chat', 'deepseek-reasoner'])).toEqual({ type: 'openai', baseUrl: 'https://api.deepseek.com', defaultModel: 'deepseek-chat' });
-    expect(quickPlan(gemini, 'auto', '', ['gemini-3-flash', 'gemini-3-pro', 'text-embedding-004'])).toEqual({ type: 'gemini', baseUrl: '', defaultModel: 'gemini-3-pro' });
+  it('Anthropic keeps its fixed endpoint', () => {
+    expect(quickPlan(anthropic, '', CLAUDE_RELAY)).toMatchObject({ type: 'anthropic', baseUrl: 'https://api.anthropic.com' });
   });
 });
 
@@ -65,10 +60,10 @@ describe('quick connect: a failed check in plain words', () => {
     }
     expect(explainProbe({ ok: false, status: 403, error: 'forbidden: regional_endpoint_key mismatch' }, 'list')).toMatch(/API Key 不对/);
   });
-  it('every preset has a name; vendors have a fixed endpoint or their own type', () => {
+  it('every preset has a name; vendors have a fixed endpoint', () => {
     for (const p of PRESETS) {
       expect(p.name).toBeTruthy();
-      if (p.type === 'openai') expect(p.baseUrl).toMatch(/^https:\/\//);
+      if (p.type !== 'auto') expect(p.baseUrl).toMatch(/^https:\/\//);
     }
   });
 });

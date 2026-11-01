@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 /**
- * The memory store as a stdio MCP server, so every agent reaches the same facts through its own
- * native tool mechanism — Claude via .mcp.json / SDK mcpServers, Codex via config.toml, Gemini and
- * Qwen via their settings. Nothing here is Claude-specific.
+ * The memory store as a stdio MCP server, so every conversation reaches the same facts (Claude gets it
+ * through the SDK's mcpServers). Nothing here is Claude-specific: any MCP host can start it.
  *
  * Run standalone: `node server/dist/memory/mcp.js --cwd <project>` (the launcher below builds the
  * argv). Speaks bare JSON-RPC 2.0 over stdio — the protocol surface an MCP host needs is small

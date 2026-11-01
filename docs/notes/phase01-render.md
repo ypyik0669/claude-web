@@ -1,8 +1,8 @@
 # 渲染与对话交互（阶段 1，2026-09-03）
 
 - **reducer 是唯一真源**：`web/src/model/conversation.ts` 纯函数，`web/src/model/__fixtures__/tools.jsonl` 是用 `server/ws-capture.mjs` 录的真实流（Read 文本+图片 / Glob / Grep / Bash / WebFetch / TodoWrite），`conversation.test.ts` 回放它。改 reducer 先跑 `npm test -w web`。
-- **发送时客户端铸 uuid**（`SendParams.uuid` → `SDKUserMessage.uuid`），本地回显 id 就是 transcript uuid，编辑重发 / 重跑 = `openSession({sessionId, resumeAt: findChainUuidBefore()})` 再发。ccb 不回显 `user_message_uuid`，但 uuid 会落到 jsonl，够用。
-- **工具输出优先用 `tool_use_result`（`result.structured`）**：SDK 的 `sdk-tools.d.ts` 有每个工具的 Output 形状（`structuredPatch` 带行号、`FileReadOutput` 的图片 base64、`GrepOutput.mode`…）。ccb 的 GrepOutput 用 `numLines` 而不是 `numMatches`，卡片两个都认。
+- **发送时客户端铸 uuid**（`SendParams.uuid` → `SDKUserMessage.uuid`），本地回显 id 就是 transcript uuid，编辑重发 / 重跑 = `openSession({sessionId, resumeAt: findChainUuidBefore()})` 再发。uuid 会落到 jsonl（当时的 ccb 不回显 `user_message_uuid`，靠的就是这个）。
+- **工具输出优先用 `tool_use_result`（`result.structured`）**：SDK 的 `sdk-tools.d.ts` 有每个工具的 Output 形状（`structuredPatch` 带行号、`FileReadOutput` 的图片 base64、`GrepOutput.mode`…）。卡片 `numLines` / `numMatches` 两个都认（`numLines` 是当时 ccb 的 GrepOutput 用的，老对话里还有）。
 - 工具卡片在 `web/src/features/chat/tools/registry.tsx` 注册（图标 / 分类 / 头部文案 / Body）；`mcp__*` 和未知工具走 `GenericBody`（键值网格 + JsonTree + 图片）。Steps 折叠的分类计数也从注册表取。
 - 健康信号（`model/health.ts`）：卡死判定是客户端计时（15s 无事件、3 分钟无模型调用）。`conv.lastModelCallAt` 是整个对话的，不按轮清零：早于 `turnStartedAt` 的不算这一轮的；这一轮一次模型回复都没有时从 `turnStartedAt` 算 3 分钟，报 `no_reply`（「N 分钟还没收到模型的任何回复，供应商「X」可能没有响应」）——以前上游从头到尾不回时界面只有一个一直走的计时器（2026-09-30 用户报告）。错误分类 `classifyError()` 输入 `api_retry.error` / `result.terminal_reason` / HTTP 状态 / 文本；限流 `rate_limit_event` → `conv.rateLimit`，`settings.autoContinueOnReset` 打开时到 `resetsAt+5s` 自动重发上一条（store 里的 `armAutoContinue`）。
 - **Agent SDK 默认空系统提示**，runner 传 `systemPrompt: {type:'preset', preset:'claude_code'}`（也是过中转指纹的必要条件）。

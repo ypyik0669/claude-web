@@ -11,10 +11,10 @@
   - **`executeJavaScript` 会等页面加载完**（踩过，Electron 的行为）：主框架还在加载时 `webContents.executeJavaScript`（`<webview>` 的也一样）一直不返回，所以「一张图片永远不回」的页面读不了——搜索页和 Agent 的标签都是先等、等不到就 `stop()` 再读（`guest.ts` 的 `askable()`：3 s）。v0.2.0 里 Agent 打开这种网页是 30 s 超时报错，现在读得到已经出来的内容并带一句「还在加载」。
   - **UA**：`desktop/src/user-agent.ts` 的 `cleanUserAgent()` 去掉 `claude-web/x` 和 `Electron/x` 两段，`app.userAgentFallback` 在 ready 前设上（搜索网站看到 Electron 就给验证页或简化页）。**Google 登录页反过来**：洗过的 UA 说自己是 Chrome，`navigator.userAgentData` 却只有 Chromium，Google 当成冒充，直接回「This browser or app may not be secure」；Electron 原样的 UA 反而放行——所以 `accounts.google.com` / `accounts.youtube.com` 上换回原样的，见「内嵌浏览器（阶段 10）」的 Google 登录那条。
   - 摘要（`snippetOf`）去掉了结果块开头的显示网址和机器格式的日期（DDG、Bing 都这么排版）。
-- **运行内核自带的 WebSearch 在我们的引擎上拿掉了**（`server/src/web/engine-search.ts`，runner 的 `disallowedTools: ['WebSearch']`；真引擎上数过：41 → 40 个工具）：它默认走上游项目托管的 Tavily 代理（用户的搜索词经过别人的服务器），用户说了不要。用户自己选过后端的不动（进程 env 或 settings 文件 `env` 里的 `WEB_SEARCH_ADAPTER`、settings 的 `webSearchAdapter`：`userPickedSearchAdapter()`）。官方二进制不动：它的 WebSearch 是 Anthropic 那边执行的服务端工具。所以模型手里只有 `mcp__web__web_search` 一个搜索工具（它仍是唯一不问权限的工具）。
+- （历史：ccb 自带的 WebSearch 默认走上游项目托管的 Tavily 代理，用户不要，当时用 `engine-search.ts` + `disallowedTools` 在 ccb 上拿掉了；ccb 删了，这些也删了。官方二进制的 WebSearch 是 Anthropic 那边执行的服务端工具，不动；`mcp__web__web_search` 仍是唯一不问权限的工具。）
 - **`browser_computer`（网页上的鼠标键盘，第 11 个 `web` 工具）**：动作 `screenshot / left_click / right_click / middle_click / double_click / triple_click / mouse_move / left_click_drag / scroll / type / key / wait`，坐标是**最近一张截图**里的像素（`ops.ts` 的 `toView()` 换算成页面的 CSS 像素；截图的宽高由桌面壳随图一起回，`desktop/src/jpeg-size.ts`），每个动作回一张新截图。`guest.ts` 用 `<webview>.sendInputEvent` 发鼠标 / 滚轮 / 按键，打字走 `insertText`（中文不经过键盘事件）。只作用在这个对话的 Agent 标签上，要桌面窗口（没有就 `NEEDS_DESKTOP`），和其它网页操作一样问权限。按键名（`parseKey`）认 `Page_Down` / `BackSpace` / `Return` / `KP_Enter` 这些写法；**没人认识的多字符名字不发任何键**（以前会发它的第一个字母）。
 - **操控电脑 = 我们自己的 MCP 服务器 `computer`**（`server/src/computer/`，Windows；工具名照 Claude Code 自带的 computer-use：`request_access`、`screenshot`、`left_click`…共 29 个）：
-  - **为什么不是「直接调 Claude Code 自带的」**（都实测过）：① 官方 Claude Code 的 computer use 只在 macOS 的终端界面里；② 我们的引擎带 `--computer-use-mcp` 起来的那个服务器，工具是空壳（回「not wired to a session」），它的 Windows 后端用的是 Bun 专有接口加 Python，node 构建里跑不了；③ **`computer-use` 这个名字被两个引擎保留**：我们的引擎直接报 `Invalid MCP configuration: "computer-use" is a reserved MCP name`，官方二进制静默丢掉。所以服务器叫 `computer`（工具是 `mcp__computer__*`；握手里的名字是 `claude-web-computer`），两个引擎都连得上。
+  - **为什么不是「直接调 Claude Code 自带的」**（都实测过）：① 官方 Claude Code 的 computer use 只在 macOS 的终端界面里；② 当时的 ccb 带 `--computer-use-mcp` 起来的那个服务器，工具是空壳（回「not wired to a session」），它的 Windows 后端用的是 Bun 专有接口加 Python，node 构建里跑不了；③ **`computer-use` 这个名字是保留的**：官方二进制静默丢掉（当时的 ccb 直接报 `reserved MCP name`）。所以服务器叫 `computer`（工具是 `mcp__computer__*`；握手里的名字是 `claude-web-computer`）。
   - **结构**：`mcp.ts`（stdio 入口，裸 JSON-RPC）→ `service.ts`（一次调用 → 闸 → helper → 给模型的话；调用串行）→ `helper-win.ts`（每个 MCP 进程一个常驻 `powershell.exe`，`Add-Type` 编译一小段 C#：SendInput、截屏、窗口 / 进程查询；脚本内容寻址写到 `<dataDir>/runtime/computer/helper-<sha8>.ps1`，纯 ASCII、没有反斜杠和反引号；进程先设成 per-monitor DPI aware，截图和指针是同一套真实像素）。纯函数：`grants.ts`（授权表和闸）、`apps.ts`（应用名怎么对上窗口）、`coords.ts`（截图缩到长边 ≤ 1568，坐标来回换算）、`keys.ts`（按键串 → 虚拟键）、`tools.ts`（工具表）。只看主显示器。
   - **闸**（`grants.ts` 的 `gate()`，`TOOL_NEEDS`）：第一次授权之前什么都不截、什么都不发；发输入的动作（点、拖、滚、打字、按键、写剪贴板）要求**最前面的窗口**属于授权的应用，按位置的还要求**那个位置下面的窗口**也是；helper 在真正发出去的那一刻再核对一遍「最前面的还是刚才看的那个」，不是就什么都不发（`changed`）。截图不过滤别的窗口（`screenshotFiltering: 'none'`，授权卡上写明了「能看到整个屏幕」）。
   - **Claude Web 自己永远不是目标**（Agent 不能去点它自己的授权按钮）：桌面版按 exe 认（`CW_COMPUTER_SELF_EXE`，launcher 在 Electron 下给），网页版只能按窗口标题认（标题里有「Claude Web」）——所以 **`web/index.html` 的 `<title>` 必须含它、页面里不许改 `document.title`**，`grants.test.ts` 有一条扫源码的测试钉着。
@@ -37,7 +37,6 @@
   - 窗口答搜索的超时（40 s）比普通命令的（30 s）长：命令计时器先响的话，「窗口沉默」就认不出来了。
 - **「图标栏 / 分区 / 联网」一节里不再成立的说法**：
   - 「搜索默认 `auto` = Bing 的结果页 → 不行换 DuckDuckGo 的 HTML 页」「Tavily / Brave 要密钥（`web.search.tavilyKey`）」「不用密钥的搜索在真实网络上靠不住……只是个兜底」「工具描述、`weak` 的提示叫模型优先用自己的搜索工具」→ 见上：有桌面窗口时在内置浏览器里搜，没有 Tavily，模型没有别的搜索工具。服务端抓取那条路（没有窗口时）靠不住的结论仍然成立。
-  - 「引擎自带的 WebSearch 不动」→ 在我们的引擎上拿掉了（用户自己选过后端的除外）。
   - 「`web` 的工具：`web_search` 和 `browser_open / read / find / click / type / press_key / scroll / back / screenshot`」→ 多了 `browser_computer`，共 11 个。
   - 「操控电脑现在用不了……`featureArgs()` 不再传它……`capabilities.ts` 的那一行带 `unavailable`」→ Windows 上能用了（见上）；`--computer-use-mcp` 仍然不传，`unavailable` 只在服务端不是 Windows 时出现。
   - 「设置 → 联网：搜索引擎和密钥」→ 「用什么搜索」下拉（自动 / DuckDuckGo / Bing / Google / Yahoo / 百度 / Brave Search），只有 Brave 要密钥。
@@ -80,7 +79,7 @@
   - **卡住的 op**：一个 op 在窗口里最多 28 s（`OP_LIMIT_MS`），`browser_eval` 15 s（`EVAL_LIMIT_MS`）；脚本超时后壳把这个页面的渲染进程结束再重新加载（`desktop:browser:recover`），队列接着走。`browser_eval` 先解析（不运行）决定当表达式还是函数体，只跑一次。
   - **总览栏**的网站请求不给「允许」按钮（看不到网站和脚本），写「想在网站 … 上操作网页（打开对话再决定）」。`browser_network` 的地址里 token / code / sig 之类参数的值换成 `…`。控制台 / 网络记录在主框架换页（`did-navigate`）时清空；两个同时的第一次查看共用一次启动。
   - 真机：`scripts/browser-smoke.cjs` 的 `fixwave` 段（伪造地址、自己跳到别的主机、换标签后再点、接管打断拖动），`scripts/ui-smoke.cjs` 的 `browser-b` 段末尾（同目录资源、被拒的本地页、`while (1) {}` 超时后下一个 op 照常）。
-- **验证**：`site-gate.test.ts`、`service.test.ts`（probe、一次 / 总是、通配、脚本每次问、完全放开、拒绝、file:、网站变了、接管）、`ops.test.ts`（含在 Node 里真跑 `evalSource`）、`server.test.ts`（没打开的对话在新网站上点击被拒、窗口一个点击都没收到）；`scripts/browser-smoke.cjs` 的 `t7` 段（真 Electron）；e2e 第 23 期用 mock ACP 的真对话走卡片 / 总是允许写列表 / 脚本每次问。
+- **验证**：`site-gate.test.ts`、`service.test.ts`（probe、一次 / 总是、通配、脚本每次问、完全放开、拒绝、file:、网站变了、接管）、`ops.test.ts`（含在 Node 里真跑 `evalSource`）、`server.test.ts`（没打开的对话在新网站上点击被拒、窗口一个点击都没收到）；`scripts/browser-smoke.cjs` 的 `t7` 段（真 Electron）；e2e 第 23 期用开着的 Claude 对话（只启动、不发消息）走卡片 / 总是允许写列表 / 脚本每次问。
 
 ## 自动检查改动（2026-10-24，阶段 B 任务 8）
 
@@ -97,13 +96,11 @@
 - 「完全放开」下不声不响批下的应用，对话离开「完全放开」后**仍然有效**：沿用「之前批过的留着」的设计，`computer/service.ts` 的 `grants` 不随模式清空，跟这个对话的 `computer` MCP 进程同生同灭。
 - 界面上的说法跟着改了：模式说明（`terms.ts`）、+ 菜单的操控电脑（`capabilities.ts`）、允许的网站页、脚本卡都写了「完全放开时不问」；给模型看的 `computer/tools.ts` 说明也加了 full access 的例外。
 - 以后新加的服务端询问也照这条：先看模式。测试：`site-gate.test.ts`、`service.test.ts`、`access.test.ts` 里五种模式照旧 / 完全放开零张卡。
-- 端到端（`server/ws-phase40.mjs`，2026-10-26 Task 4）：两个 Claude 引擎上完全放开时 ego_browser 和 `browser_eval` 都零张卡、
-  照跑、结果回到模型；默认模式整轮各恰好一张服务端的卡；mock ACP / mock Codex 的对话里 ego_browser 默认一张、完全放开零张。
-- **`browser_eval` 只问一次**（修正轮）：服务端每次都问脚本，所以 Claude 把 `mcp__web__browser_eval` 放进了 `webAllowedTools`，
-  ACP / Codex 对它自己的提示直接答（`launcher.ts` 的 `SERVER_GATED` 表，和 ego_browser 一起）。以前默认模式会弹两张。
+- 端到端（`server/ws-phase40.mjs`，2026-10-26 Task 4）：完全放开时 ego_browser 和 `browser_eval` 都零张卡、
+  照跑、结果回到模型；默认模式整轮各恰好一张服务端的卡。
+- **`browser_eval` 只问一次**（修正轮）：服务端每次都问脚本，所以 Claude 把 `mcp__web__browser_eval` 放进了 `webAllowedTools`
+  （`launcher.ts` 的 `SERVER_GATED` 表，和 ego_browser 一起）。以前默认模式会弹两张。
   click / type 等**没动**：它们只在网站不在允许列表时由服务端问。
-- Codex 对 MCP 工具调用的审批（`mcpServer/elicitation/request`，`_meta.codex_approval_kind = 'mcp_tool_call'`）以前被回 -32601
-  = 没批；现在普通的卡问用户，我们的 ego_browser / browser_eval 直接 accept（服务端自己问）。细节在「ego lite 作为 Agent 的第一浏览器」。
 - **完全放开时操作过的网站自动进「允许的网站」**（2026-10-26，用户决定，spec 14.4 最后一条）：`bypassPermissions` 下内置浏览器
   点击 / 输入 / 填表等改页面的 op（`MUTATING_OPS`，截图 / wait 除外）成功后、以及 `browser_open`（落地页的地址）/ `browser_tabs new`
   （带网址）之后，那个主机名追加进 `web.browser.allowedSites`，同时记进旁边的 `web.browser.allowedSitesAuto`（列表本身仍是
@@ -126,7 +123,7 @@
 
 - 以前默认模式下 `browser_open` 只弹 Claude 自己的卡（打开不过网站闸），已允许的网站上 `browser_scroll` 也弹 Claude 自己的
   「Claude 想滚动网页」——和允许的网站页上的说法对不上。现在：**完全放开以外的五种模式，不在列表里的网站只问一次（服务端的网站卡），
-  在列表里的什么都不问**，Claude / Codex / ACP 都不再弹它们自己的卡。脚本（`browser_eval`）照旧每次一张服务端的卡；完全放开照旧零卡
+  在列表里的什么都不问**，Claude 也不再弹自己的卡。脚本（`browser_eval`）照旧每次一张服务端的卡；完全放开照旧零卡
   （并把网站自动加进列表）；ego_browser 不变。
 - **打开也过闸**（`site-gate.ts` 的 `OPENING_OP = 'open'`，`needsAsk('open', 地址的主机)`）：`service.ts` 的 `browse()` 在
   `browser_open` 和带网址的 `browser_tabs new` 上先 `urlRefusal`、再 `openGate()`——不在列表里 → 卡 `{host, op:'open',
@@ -142,11 +139,7 @@
 - **预览服务器**：`index.ts` 改走 `web.openPreview(sid, url)`——`.claude/launch.json` 起的本机开发服务器（localhost / *.localhost /
   127.x / ::1）不问；`launch.json` 的 `url` 可以写任何地址、模型也能改这个文件，所以不是本机的照常问。
 - **全部浏览器工具预先允许**（`launcher.ts` 的 `SERVER_GATED` 表，现在是 ego_browser + 20 个 `browser_*`）：Claude 的
-  `webAllowedTools()` 带上它们（我们的引擎走 `ExecuteExtraTool` 时 runner 按里面的工具名放行，见「ego lite」笔记）；ACP 的
-  `isServerGatedAcpCall` / Codex 的 `isServerGatedCodexElicitation` 按表精确匹配：名字锚定（`mcp__web__x` / `x` /
-  `x (web MCP Server)`）、ACP 的 kind 只认缺省 / null / `other`（Gemini 系把所有 MCP 工具都报成 other；`fetch` / `read` 是 agent
-  **自己的**抓网页 / 读文件工具的 kind，标题是它自己拼的，认了就可能放过同名的内置工具——宁可多一张卡）、参数是普通对象且键 ⊆
-  该工具 inputSchema 的键、必填键都在（脚本工具的 `script` 必须是字符串）、对话确实拿到了 web 服务器（ego_browser 还要 ego 工具）。
+  `webAllowedTools()` 带上它们，所以 Claude 自己不问（以前 ACP / Codex 驱动按这张表精确匹配后代答，随其它 agent 删了）。
   表和 `mcp.ts` 的 schema 由 `launcher.test.ts` 对齐。**没放进去的**：`web_search`（本来就单独预先允许）、两个 guide、改用户设置的
   `character_assign` / `theme_apply` / `theme_delete`（照旧问）。
 - **每个浏览器工具都过服务端的闸**（逐个核过 `service.ts` 的 `tool()`）：open / tabs new → `openGate`；click / type / press_key /
@@ -155,15 +148,13 @@
   （6 分钟调用超时，够等卡）。
 - 文案：允许的网站页、联网页那一行、网站卡的说明和「总是允许」的提示都改成「打开、操作都不再问；不在列表的第一次问一次」。
 - 测试：`site-gate.test.ts`（open 在五种模式 × 新 / 已允许 / `*.`、完全放开）、`service.test.ts`（问一次、拒绝不加载、总是允许后
-  scroll / click / 再打开零卡、tabs new、读不问、没窗口也问、预览）、`launcher.test.ts`（表 = schema、每个工具的 ACP / Codex 正反例：
-  像的标题、错的 kind、多的键、少的必填、别的服务器）、`server.test.ts`（没打开的对话打开不在列表的站被拒、没抓）、
-  `permission-dock.test.ts`；e2e `ws-phase40.mjs` 的 `siteRule`：两个 Claude 引擎（我们的走 ExecuteExtraTool）+ mock ACP / Codex
-  （它们自己对 open / scroll / click 的提示零卡，像的那个照样有卡）：默认模式打开新站恰好一张（网站卡，总是允许）、那个站上 scroll /
+  scroll / click / 再打开零卡、tabs new、读不问、没窗口也问、预览）、`launcher.test.ts`（表 = schema）、`server.test.ts`（没打开的对话打开不在列表的站被拒、没抓）、
+  `permission-dock.test.ts`；e2e `ws-phase40.mjs` 的 `siteRule`：默认模式打开新站恰好一张（网站卡，总是允许）、那个站上 scroll /
   click 零张、再开一个新站一张、脚本一张；完全放开全零。
 
-## 出图的工具在我们的引擎上不延迟（2026-10-26，spec 14.2）
+## 出图的工具不延迟（2026-10-26，spec 14.2）
 
-- ccb 把 MCP 工具藏在 `ExecuteExtraTool` 后面，结果整个 `JSON.stringify` 成文字，截图就成了 base64 字。规则：**会返回图片的工具带
+- 起因是当时的 ccb 把 MCP 工具藏在 `ExecuteExtraTool` 后面、结果整个 `JSON.stringify` 成文字（截图成了 base64 字）；规则留着：**会返回图片的工具带
   `_meta: ALWAYS_LOAD`（`server/src/mcp/always-load.ts`），别的不带**。这里涉及：`browser_screenshot`、`browser_computer`，
   `computer` 的 `screenshot`、`zoom`、`computer_batch`（`computer/tools.ts` 的 `def(…, PICTURE)`）。完整清单和 e2e（`ws-phase41.mjs`）
   见「ego lite 作为 Agent 的第一浏览器」的坑一节。

@@ -5,7 +5,6 @@ import path from 'node:path';
 import type { SessionSummary, SourceCaps, SourceStatus } from '../protocol.js';
 import type { SessionSource } from './types.js';
 import { LibraryIndex } from './index-db.js';
-import { AgentTranscripts } from '../agents/transcript.js';
 import { MetaStore } from '../meta/store.js';
 import { LibraryService } from './service.js';
 import { continuationEntries, replayEvents } from './continue-in-claude.js';
@@ -55,9 +54,9 @@ describe('LibraryService.continuation', () => {
   let meta: MetaStore;
   let lib: LibraryService;
   const CAPS: SourceCaps = { resume: true, rename: false, archive: false, delete: false, fork: false, continueInClaude: true };
-  const summary: SessionSummary = { sessionId: 'dsh-s1', title: 'PDF 文献清单整理', cwd: '', lastModified: 1, agent: 'dsh', caps: CAPS };
+  const summary: SessionSummary = { sessionId: 'claudeai-s1', title: 'PDF 文献清单整理', cwd: '', lastModified: 1, agent: 'claudeai', caps: CAPS };
   let read: ReturnType<typeof vi.fn>;
-  /** what the harness has now (it can go on there after the conversation went on in Claude) */
+  /** what claude.ai has now */
   let said: any[];
   /** the Claude conversations the claude source lists */
   let claudeItems: SessionSummary[];
@@ -73,18 +72,18 @@ describe('LibraryService.continuation', () => {
     index = new LibraryIndex(path.join(dir, 'library.db'));
     meta = new MetaStore(path.join(dir, 'meta.json'));
     await meta.load();
-    await meta.setSetting('library.joined', ['dsh']);
+    await meta.setSetting('library.joined', ['claudeai']);
     // pages as a source does: the newest first, the cursor walking back
     read = vi.fn(async (_id: string, o: { cursor?: string }) => (o?.cursor ? { messages: said.slice(0, 2) } : { messages: said.slice(2), next: 'older' }));
-    const dsh = {
-      kind: 'dsh', caps: CAPS,
-      status: async (): Promise<SourceStatus> => ({ kind: 'dsh', name: 'DeepSeek Harness', installed: true, detected: true, joined: true, dismissed: false, enabled: true }),
+    const cai = {
+      kind: 'claudeai', caps: CAPS,
+      status: async (): Promise<SourceStatus> => ({ kind: 'claudeai', name: 'claude.ai', installed: true, detected: true, joined: true, enabled: true }),
       list: async () => ({ items: [summary] }),
       read,
       close: async () => {},
     } as unknown as SessionSource;
-    const claude = { kind: 'claude', caps: CAPS, status: dsh.status, list: async () => ({ items: claudeItems }), read: async () => ({ messages: [] }), close: async () => {} } as unknown as SessionSource;
-    lib = new LibraryService([claude, dsh], index, new AgentTranscripts(), meta, { dataDirs: {}, trashDir: path.join(dir, 'trash') });
+    const claude = { kind: 'claude', caps: CAPS, status: cai.status, list: async () => ({ items: claudeItems }), read: async () => ({ messages: [] }), close: async () => {} } as unknown as SessionSource;
+    lib = new LibraryService([claude, cai], index, meta, { trashDir: path.join(dir, 'trash') });
   });
 
   afterEach(() => {
@@ -95,12 +94,12 @@ describe('LibraryService.continuation', () => {
   });
 
   it('only for sources that go on in Claude', () => {
-    expect(lib.continuesInClaude('dsh-s1')).toBe(true);
+    expect(lib.continuesInClaude('claudeai-s1')).toBe(true);
     expect(lib.continuesInClaude('c1')).toBe(false);
   });
 
   it('writes one Claude conversation that replays it, titled like it, and reuses it after', async () => {
-    const [a, b] = await Promise.all([lib.continuation('dsh-s1'), lib.continuation('dsh-s1')]);
+    const [a, b] = await Promise.all([lib.continuation('claudeai-s1'), lib.continuation('claudeai-s1')]);
     expect(a).toEqual(b);
     expect(a.created).toBe(true);
     expect(a.cwd).toBe(summary.cwd);
@@ -112,70 +111,34 @@ describe('LibraryService.continuation', () => {
     expect(JSON.stringify(turns[0])).toContain('看看这些 PDF');
     expect(JSON.stringify(turns[1]).indexOf('我先列一下')).toBeLessThan(JSON.stringify(turns[1]).indexOf('xxxx'));
     expect(lines.some((l) => l.type === 'custom-title' && l.customTitle === 'PDF 文献清单整理')).toBe(true);
-    expect(meta.sessionMeta('dsh-s1').continuedAs).toBe(a.sessionId);
-    const again = await lib.continuation('dsh-s1');
+    expect(meta.sessionMeta('claudeai-s1').continuedAs).toBe(a.sessionId);
+    const again = await lib.continuation('claudeai-s1');
     expect(again).toEqual({ sessionId: a.sessionId, cwd: summary.cwd, created: false });
     expect(read).toHaveBeenCalledTimes(2);
     // its transcript gone (deleted in Claude): a fresh one next time
     fs.rmSync(file);
-    const fresh = await lib.continuation('dsh-s1');
+    const fresh = await lib.continuation('claudeai-s1');
     expect(fresh.created).toBe(true);
     expect(fresh.sessionId).not.toBe(a.sessionId);
   });
 
-  // one conversation, one row: the harness's own row would be a second one with the same title
+  // one conversation, one row: the claude.ai row would be a second one with the same title
   it('lists the Claude conversation in place of the one it goes on from', async () => {
     const before = await lib.list();
-    expect(before.map((s) => s.sessionId)).toContain('dsh-s1');
-    const a = await lib.continuation('dsh-s1');
+    expect(before.map((s) => s.sessionId)).toContain('claudeai-s1');
+    const a = await lib.continuation('claudeai-s1');
     claudeItems = [{ sessionId: a.sessionId, title: 'PDF 文献清单整理', cwd: summary.cwd, lastModified: 5, agent: 'claude' }];
-    summary.lastModified = 9; // said something new in the harness since
+    summary.lastModified = 9; // said something new on claude.ai since
     const after = await lib.list();
     expect(after.map((s) => s.sessionId)).toEqual([a.sessionId]);
     expect(after[0].lastModified).toBe(9);
     // still known for a send through its old id (a tab left on it)
-    expect(lib.continuesInClaude('dsh-s1')).toBe(true);
-    expect((await lib.continuation('dsh-s1')).sessionId).toBe(a.sessionId);
-    // the Claude one deleted: the harness's row is back
+    expect(lib.continuesInClaude('claudeai-s1')).toBe(true);
+    expect((await lib.continuation('claudeai-s1')).sessionId).toBe(a.sessionId);
+    // the Claude one deleted: the claude.ai row is back
     fs.rmSync(path.join(claudeProjectDir(summary.cwd), `${a.sessionId}.jsonl`));
     claudeItems = [];
     lib.invalidate('claude'); // the transcript watcher does this
-    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['dsh-s1']);
-  });
-
-  // nothing is written to the harness's files: what was said there afterwards comes over to Claude, never back
-  it('brings over what was said in the harness afterwards, after the Claude turns', async () => {
-    const a = await lib.continuation('dsh-s1');
-    const file = path.join(claudeProjectDir(summary.cwd), `${a.sessionId}.jsonl`);
-    expect(await lib.catchUp(a.sessionId)).toBe(0);
-    // a turn in Claude Web
-    const rows = () => fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-    const last = rows().filter((r) => r.uuid).at(-1);
-    fs.appendFileSync(file, JSON.stringify({ ...last, uuid: 'claude-turn', parentUuid: last.uuid, timestamp: new Date().toISOString(), type: 'user', message: { role: 'user', content: '在 Claude Web 里说的' } }) + '\n');
-    // then two messages in the harness
-    said = [...messages,
-      { type: 'user', message: { role: 'user', content: [{ type: 'text', text: '回到 harness 又问了一句' }] } },
-      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'harness 的回答' }] } }];
-    expect(await lib.catchUp(a.sessionId)).toBe(2);
-    const now = rows();
-    const added = now.filter((r) => r.type === 'user' || r.type === 'assistant').slice(-2);
-    expect(JSON.stringify(added[0])).toContain('回到 harness 又问了一句');
-    expect(added[0].parentUuid).toBe('claude-turn');
-    expect(added[1].parentUuid).toBe(added[0].uuid);
-    // the official binary resumes at the last leaf it was told
-    expect(now.at(-1)).toMatchObject({ type: 'last-prompt', leafUuid: added[1].uuid, sessionId: a.sessionId });
-    expect(meta.sessionMeta(a.sessionId)).toMatchObject({ continuedFrom: 'dsh-s1', replayed: 6 });
-    expect(await lib.catchUp(a.sessionId)).toBe(0);
-    // only a tool result came in: nothing to write, so nothing to restart a process for
-    said = [...said, { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'c9', content: 'ok' }] } }];
-    expect(await lib.catchUp(a.sessionId)).toBe(0);
-    expect(meta.sessionMeta(a.sessionId).replayed).toBe(7);
-    // mid-turn when it would write: nothing written, nothing counted — the next try brings it
-    said = [...said, { type: 'user', message: { role: 'user', content: [{ type: 'text', text: '第三句' }] } }];
-    expect(await lib.catchUp(a.sessionId, () => false)).toBe(0);
-    expect(meta.sessionMeta(a.sessionId).replayed).toBe(7);
-    expect(await lib.catchUp(a.sessionId)).toBe(1);
-    // a conversation that did not come from another tool
-    expect(await lib.catchUp('plain')).toBe(0);
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['claudeai-s1']);
   });
 });

@@ -1,8 +1,9 @@
 // Phase 15 end-to-end: cross-machine sessions (federation) with two servers on this machine.
 // A is the server scripts/e2e.mjs started (port / token in argv); this script starts B itself with its
-// own temp HOME + CLAUDE_WEB_DIR, turns on B's remote listener on a free port, makes a mock-ACP
-// session on B, then has A pair with B by code and checks: B's session in A's list, open + send from A
-// with events coming back, a permission round trip, hand-over to a local agent, the loop guard,
+// own temp HOME + CLAUDE_WEB_DIR, turns on B's remote listener on a free port, makes a Claude session on B
+// (against a fake Anthropic upstream started here: no model, no token), then has A pair with B by code and checks:
+// B's session in A's list, open + send from A with events coming back, a permission round trip, hand-over to a new
+// local Claude conversation, the loop guard,
 // revoked token → unauthorized → re-pair, and B going down → offline peer, local list unaffected.
 //   node server/ws-phase15.mjs [port] [token]   (meant for scripts/e2e.mjs: temp HOME + CLAUDE_WEB_DIR)
 import WebSocket from 'ws';
@@ -10,6 +11,7 @@ import net from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -19,12 +21,49 @@ const portA = args[0] ?? '3090';
 const tokenA = args[1];
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.dirname(here);
-const mock = path.join(here, 'src', 'agents', '__mocks__', 'acp-agent.mjs');
-const AGENT = 'acp:e2e-fed';
 const results = [];
 const check = (name, ok, detail = '') => { results.push([name, ok]); console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const freePort = () => new Promise((res, rej) => { const s = net.createServer(); s.listen(0, '0.0.0.0', () => { const p = s.address().port; s.close(() => res(p)); }); s.on('error', rej); });
+
+// ---- the fake Anthropic upstream both machines' conversations talk to ----
+const textOf = (c) => typeof c === 'string' ? c : Array.isArray(c) ? c.map((p) => typeof p === 'string' ? p : p?.text ?? (typeof p?.content === 'string' ? p.content : Array.isArray(p?.content) ? textOf(p.content) : '')).join('\n') : '';
+let nMsg = 0;
+function sse(s, model, blocks, stop) {
+  const ev = (type, o) => `event: ${type}\ndata: ${JSON.stringify({ type, ...o })}\n\n`;
+  let out = ev('message_start', { message: { id: `msg_${++nMsg}`, type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 1 } } });
+  blocks.forEach((b, i) => {
+    if (b.type === 'text') out += ev('content_block_start', { index: i, content_block: { type: 'text', text: '' } }) + ev('content_block_delta', { index: i, delta: { type: 'text_delta', text: b.text } });
+    else out += ev('content_block_start', { index: i, content_block: { type: 'tool_use', id: b.id, name: b.name, input: {} } }) + ev('content_block_delta', { index: i, delta: { type: 'input_json_delta', partial_json: JSON.stringify(b.input) } });
+    out += ev('content_block_stop', { index: i });
+  });
+  out += ev('message_delta', { delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: 3 } }) + ev('message_stop', {});
+  s.writeHead(200, { 'content-type': 'text/event-stream' });
+  s.end(out);
+}
+const upstream = http.createServer((q, s) => {
+  let raw = '';
+  q.on('data', (c) => { raw += c; });
+  q.on('end', () => {
+    let j = {};
+    try { j = JSON.parse(raw || '{}'); } catch { /* keep */ }
+    const json = (status, o) => s.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(o));
+    if (!(q.url ?? '').startsWith('/v1/messages')) return json(404, { error: { message: 'no' } });
+    if (q.url.includes('/count_tokens')) return json(200, { input_tokens: 10 });
+    const reply = (text) => (j.stream ? sse(s, j.model, [{ type: 'text', text }], 'end_turn') : json(200, { id: `msg_${++nMsg}`, type: 'message', role: 'assistant', model: j.model, content: [{ type: 'text', text }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 2 } }));
+    // side requests (the title, …) carry no tools; the official binary appends a trailing system message
+    if (!Array.isArray(j.tools) || !j.tools.length) return reply('fed e2e');
+    const msgs = (j.messages ?? []).filter((m) => m.role !== 'system');
+    const last = msgs.at(-1);
+    const tr = last?.role === 'user' && Array.isArray(last.content) ? last.content.find((b) => b?.type === 'tool_result') : null;
+    if (tr) return reply(`done: ${textOf(tr.content).trim()}`);
+    if (/please use a tool/.test(textOf(last?.content))) return sse(s, j.model, [{ type: 'tool_use', id: `toolu_${nMsg + 1}`, name: 'Bash', input: { command: `node -e "console.log('read '+'ok')"`, description: 'say read ok' } }], 'tool_use');
+    return reply('hello back');
+  });
+});
+await new Promise((r) => upstream.listen(0, '127.0.0.1', r));
+const up = `http://127.0.0.1:${upstream.address().port}`;
+const fakeProvider = { name: 'fed e2e relay', type: 'anthropic', baseUrl: up, apiKey: 'relay-key-e2e', defaultModel: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6'] };
 
 function client(url, label) {
   const ws = new WebSocket(url);
@@ -75,12 +114,13 @@ try {
   const helloB = await B.waitEvent((e) => e.kind === 'hello', 5000);
   check('hello carries a serverId (and they differ)', !!helloA.serverId && !!helloB.serverId && helloA.serverId !== helloB.serverId, `${helloA.serverId} / ${helloB.serverId}`);
 
-  // ---- B: remote listener + a mock-ACP session with one finished turn ----
+  // ---- B: remote listener + a Claude session with one finished turn ----
   const remotePort = await freePort();
   const st = await B.req({ kind: 'remote.set', enabled: true, port: remotePort });
   check('B: remote listener up', st.running && st.port === remotePort, st.error);
-  await B.req({ kind: 'agents.set', agent: AGENT, patch: { name: 'Fed Mock', command: process.execPath, args: [mock], protocol: 'acp' } });
-  const ob = await B.req({ kind: 'session.open', params: { cwd: root, agent: AGENT, permissionMode: 'default' } });
+  for (const c of [A, B]) await c.req({ kind: 'settings.set', key: 'network.proxy', value: 'off' });
+  const provB = await B.req({ kind: 'providers.upsert', provider: fakeProvider });
+  const ob = await B.req({ kind: 'session.open', params: { cwd: root, providerId: provB.id, model: 'claude-sonnet-4-6', permissionMode: 'default' } });
   const sidB = ob.sessionId;
   await B.waitEvent((e) => e.kind === 'session.state' && e.sessionId === sidB && (e.state === 'idle' || e.state === 'error'), 60000);
   await B.req({ kind: 'session.send', params: { sessionId: sidB, text: 'hello from machine B' } });
@@ -89,13 +129,14 @@ try {
   check('B: its session is listed', bList.some((s) => s.sessionId === sidB), sidB);
 
   // ---- A: one local session of its own (must survive everything below) ----
-  await A.req({ kind: 'agents.set', agent: AGENT, patch: { name: 'Fed Mock (A)', command: process.execPath, args: [mock], protocol: 'acp' } });
-  const oLocal = await A.req({ kind: 'session.open', params: { cwd: root, agent: AGENT } });
+  const provA = await A.req({ kind: 'providers.upsert', provider: fakeProvider });
+  const oLocal = await A.req({ kind: 'session.open', params: { cwd: root, providerId: provA.id, model: 'claude-sonnet-4-6' } });
   await A.waitEvent((e) => e.kind === 'session.state' && e.sessionId === oLocal.sessionId && (e.state === 'idle' || e.state === 'error'), 60000);
   await A.req({ kind: 'session.send', params: { sessionId: oLocal.sessionId, text: 'hello from machine A' } });
   await A.waitEvent((e) => e.kind === 'session.event' && e.sessionId === oLocal.sessionId && e.message.type === 'result', 60000);
   await A.req({ kind: 'session.close', sessionId: oLocal.sessionId }).catch(() => {});
-  const localBefore = await A.req({ kind: 'sessions.list' });
+  // the CLI's list comes from its transcript folder: give its watcher a moment
+  const localBefore = (await until(async () => { const l = await A.req({ kind: 'sessions.list' }); return l.some((s) => s.sessionId === oLocal.sessionId) ? l : null; })) ?? [];
   check('A: has its own local session', localBefore.some((s) => s.sessionId === oLocal.sessionId), `${localBefore.length} local`);
 
   // ---- A pairs with B ----
@@ -115,7 +156,7 @@ try {
   const psid = `peer_${peerId}~${sidB}`;
   const aList = await until(async () => { const l = await A.req({ kind: 'sessions.list' }); return l.some((s) => s.sessionId === psid) ? l : null; });
   const row = aList?.find((s) => s.sessionId === psid);
-  check("A: B's session is in A's list, tagged with the machine", !!row && row.peer?.id === peerId && !row.peer.offline && row.agent === AGENT, row ? JSON.stringify(row.peer) : 'missing');
+  check("A: B's session is in A's list, tagged with the machine", !!row && row.peer?.id === peerId && !row.peer.offline, row ? JSON.stringify(row.peer) : 'missing');
   check("A: A's own sessions are still there", localBefore.every((s) => aList?.some((x) => x.sessionId === s.sessionId)), `${localBefore.length} local`);
   // ---- mutual peering: B adds A too. No event echo, no rows bouncing back ----
   const remoteA = await freePort();
@@ -184,9 +225,10 @@ try {
   const touched = await A.req({ kind: 'files.changed', sessionId: psid }).catch((e) => e.message);
   check('files.changed for a remote session is answered by B', Array.isArray(touched), JSON.stringify(touched).slice(0, 60));
 
-  // ---- hand-over to a local agent ----
-  const ho = await A.req({ kind: 'peers.handover', sessionId: psid, agent: AGENT, cwd: root });
-  check('A: hand-over starts a NEW local session with a briefing', !!ho.sessionId && !ho.sessionId.startsWith('peer_') && (ho.briefing ?? '').includes('hello from machine B'), ho.sessionId);
+  // ---- hand-over to a new local Claude conversation ----
+  const ho = await A.req({ kind: 'peers.handover', sessionId: psid, cwd: root });
+  const hoCanon = ho.sessionId ? await A.req({ kind: 'session.canonical', sessionId: ho.sessionId }).catch(() => []) : [];
+  check('A: hand-over starts a NEW local session seeded with what was said on B', !!ho.sessionId && !ho.sessionId.startsWith('peer_') && JSON.stringify(hoCanon).includes('hello from machine B'), ho.sessionId);
   await A.req({ kind: 'session.close', sessionId: ho.sessionId }).catch(() => {});
 
   // ---- revoked token → unauthorized → re-pair ----
@@ -226,8 +268,8 @@ try {
   check('script error', false, e.stack ?? String(e));
 }
 if (peerId) await A.req({ kind: 'peers.remove', id: peerId }).catch(() => {});
-await A.req({ kind: 'agents.set', agent: AGENT, patch: null }).catch(() => {});
 if (bAlive) serverB.kill();
+upstream.close();
 A.ws.close();
 B.ws.close();
 await sleep(500);

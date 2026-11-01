@@ -9,7 +9,7 @@ export const RAIL_SECTIONS: { id: Section; label: string; icon: IconName; tip: s
   { id: 'chat', label: tr('对话'), icon: 'chat', tip: tr('对话') },
   { id: 'background', label: tr('后台'), icon: 'office', tip: tr('后台：在跑的子代理、工作流和后台命令') },
   { id: 'automation', label: tr('自动化'), icon: 'tasks', tip: tr('自动化：定时任务、目标、编排') },
-  { id: 'gateway', label: tr('模型'), icon: 'gateway', tip: tr('模型：来源、账号、路由、操控、用量') },
+  { id: 'gateway', label: tr('用量与隐私'), icon: 'gateway', tip: tr('用量与隐私：用量、隐私、操控、备份') },
   { id: 'extensions', label: tr('扩展'), icon: 'extensions', tip: tr('扩展：连接器、Skills、插件') },
 ];
 

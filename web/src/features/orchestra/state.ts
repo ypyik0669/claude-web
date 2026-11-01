@@ -9,7 +9,7 @@ import { openAutomation } from '@/features/automation/state';
 import type { ClientRequest, OrchRun, OrchRunSummary, ServerEvent, Workflow, WorkflowTemplate } from '@shared';
 import { tr } from '@/i18n';
 
-export interface OrchWaiting { runId: string; runName: string; nodeId: string; title: string; kind: 'approval' | 'compare'; since?: number }
+export interface OrchWaiting { runId: string; runName: string; nodeId: string; title: string; kind: 'approval'; since?: number }
 /** What the command palette asked the panel to show. */
 export type OrchIntent = { mode: 'new' | 'run'; at: number } | { mode: 'open'; runId: string; at: number };
 
@@ -29,14 +29,14 @@ export function summarize(r: OrchRun): OrchRunSummary {
   return { id: r.id, workflowId: r.workflowId, name: r.name, cwd: r.cwd, state: r.state, startedAt: r.startedAt, finishedAt: r.finishedAt, total: nodes.length, done: nodes.filter((n) => n.state === 'done').length, waiting: nodes.filter((n) => n.state === 'waiting').length };
 }
 
-/** Nodes waiting for a human across every known run (approval / compare pick). */
+/** Approval nodes waiting for a human across every known run. */
 export function waitingOf(full: Record<string, OrchRun>): OrchWaiting[] {
   const out: OrchWaiting[] = [];
   for (const r of Object.values(full)) {
     if (r.state !== 'waiting' && r.state !== 'running') continue;
     for (const n of r.workflow) {
       const nr = r.nodes[n.id];
-      if (nr?.state !== 'waiting' || n.kind === 'task') continue;
+      if (nr?.state !== 'waiting' || n.kind !== 'approval') continue;
       out.push({ runId: r.id, runName: r.name, nodeId: n.id, title: n.title || n.id, kind: n.kind, since: nr.startedAt });
     }
   }
@@ -121,7 +121,7 @@ export function installOrchestra() {
     });
     for (const w of waitingOf({ [e.run.id]: e.run })) {
       if (prev?.nodes[w.nodeId]?.state === 'waiting') continue;
-      const body = w.kind === 'approval' ? tr('等你审批：{title}', { title: w.title }) : tr('候选都跑完了，选一个合并：{title}', { title: w.title });
+      const body = tr('等你审批：{title}', { title: w.title });
       useStore.getState().toast(tr('编排「{runName}」{body}', { runName: w.runName, body }), true);
       if (desktop && !document.hasFocus()) desktop.notify(tr('编排「{runName}」', { runName: w.runName }), body);
     }

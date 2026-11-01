@@ -1,4 +1,4 @@
-// Phase 7 end-to-end: issue / PR board (GitHub via gh token, read-only against a public repo), goals with the mock ACP agent, android status.
+// Phase 7 end-to-end: issue / PR board (GitHub via gh token, read-only against a public repo), goals (create / edit / note / remove; running one needs a model), android status.
 //   node server/ws-phase7.mjs [port] [token]
 import WebSocket from 'ws';
 import path from 'node:path';
@@ -42,27 +42,17 @@ ws.on('open', async () => {
     const gl = await req({ kind: 'vcs.repo', cwd: here, repo: 'https://gitlab.com/gitlab-org/gitlab' });
     check('vcs.repo gitlab target parses (auth may be missing)', gl.provider === 'gitlab' && gl.owner === 'gitlab-org', gl.error.slice(0, 50));
 
-    // ---- goals with the mock ACP agent ----
-    const mock = path.join(here, 'src', 'agents', '__mocks__', 'acp-agent.mjs');
-    await req({ kind: 'agents.set', agent: 'acp:e2e-goal', patch: { name: 'Goal Mock', command: process.execPath, args: [mock], protocol: 'acp' } });
-    const g = await req({ kind: 'goals.create', objective: 'use a tool and make a plan for the thing', spec: '- must echo', cwd: here, maxTurns: 3, agent: 'acp:e2e-goal', permissionMode: 'bypassPermissions' });
+    // ---- goals (running one needs a model: not here) ----
+    const g = await req({ kind: 'goals.create', objective: 'use a tool and make a plan for the thing', spec: '- must echo', cwd: here, maxTurns: 3, permissionMode: 'bypassPermissions' });
     check('goals.create', g.status === 'draft' && g.maxTurns === 3);
     const g2 = await req({ kind: 'goals.update', id: g.id, patch: { spec: '- must echo\n- twice' } });
     check('goals.update', g2.spec.includes('twice'));
-    await req({ kind: 'goals.start', id: g.id });
-    // the mock echoes the prompt, which contains "GOAL_STATUS: complete" → completes after one turn
-    const done = await until(async () => { const l = await req({ kind: 'goals.list' }); const x = l.find((y) => y.id === g.id); return x && x.status !== 'active' ? x : null; }, 40000);
-    check('goal runs a turn and reaches a terminal status', !!done && done.status === 'complete', done ? `${done.status} turns=${done.turnsExecuted} tokens=${done.tokensUsed}` : 'timeout');
-    check('goal harvested steps (TodoWrite) and evidence (Read)', !!done && done.steps.length === 2 && done.evidence.some((e) => e.kind === 'note' && /目标已启动/.test(e.summary)), done ? `${done.steps.length} steps, ${done.evidence.length} evidence` : '');
-    check('goal bound to a session listed with the agent', !!done && !!done.sessionId && (await req({ kind: 'sessions.list' })).some((s) => s.sessionId === done.sessionId && s.agent === 'acp:e2e-goal'));
     check('goals.changed events were broadcast', events.some((e) => e.kind === 'goals.changed'));
     await req({ kind: 'goals.note', id: g.id, text: 'human note' });
     const g3 = (await req({ kind: 'goals.list' })).find((y) => y.id === g.id);
     check('goals.note', g3.evidence.at(-1).summary === 'human note');
-    if (done?.sessionId) { await req({ kind: 'session.close', sessionId: done.sessionId }).catch(() => {}); await req({ kind: 'session.delete', sessionId: done.sessionId }).catch(() => {}); }
     await req({ kind: 'goals.remove', id: g.id });
     check('goals.remove', !(await req({ kind: 'goals.list' })).some((y) => y.id === g.id));
-    await req({ kind: 'agents.set', agent: 'acp:e2e-goal', patch: null });
 
     // ---- android ----
     const a = await req({ kind: 'android.status' });

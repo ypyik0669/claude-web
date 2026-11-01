@@ -58,7 +58,7 @@ export function ProxySection() {
   return (
     <div className="section" data-id="proxy">
       <h5>{tr('网络代理')}</h5>
-      <Row label={tr('代理')} hint={tr('跟随系统：先看启动时的 HTTPS_PROXY 环境变量，再看系统代理（梯子的「系统代理」开关）。用在所有 Agent 和本机发出的请求上；改动对新开的对话生效，已经在跑的对话重开后才用上。')}>
+      <Row label={tr('代理')} hint={tr('跟随系统：先看启动时的 HTTPS_PROXY 环境变量，再看系统代理（梯子的「系统代理」开关）。用在 Claude 和本机发出的所有请求上；改动对新开的对话生效，已经在跑的对话重开后才用上。')}>
         <Segmented className="sp-seg" label={tr('代理')} arrows disabled={busy} value={picked} options={MODES.map((o) => ({ value: o.id, label: o.l }))} onChange={(id) => pick(id)} />
       </Row>
       {picked === 'custom' && (

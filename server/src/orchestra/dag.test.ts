@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentSlug, OUTPUT_LIMIT, parseWinner, renderPrompt, topoLayers, validateWorkflow } from './dag.js';
+import { agentSlug, OUTPUT_LIMIT, renderPrompt, topoLayers, validateWorkflow } from './dag.js';
 import type { OrchNode } from './types.js';
 
 const task = (id: string, dependsOn: string[] = [], extra: Partial<OrchNode> = {}): OrchNode => ({ id, kind: 'task', title: id, agent: 'claude', prompt: `do ${id}`, dependsOn, workspace: 'shared', ...extra } as OrchNode);
@@ -20,14 +20,19 @@ describe('validateWorkflow', () => {
     expect(errs.some((e) => e.includes('zz'))).toBe(true);
     expect(errs.some((e) => e.includes('重复'))).toBe(true);
   });
-  it('worktree tasks and compare nodes need a git repo', () => {
-    const nodes: OrchNode[] = [task('a', [], { workspace: 'worktree' } as any), { id: 'c', kind: 'compare', title: 'c', agents: ['claude', 'codex'], prompt: 'x', dependsOn: [] }];
+  it('worktree tasks need a git repo', () => {
+    const nodes: OrchNode[] = [task('a', [], { workspace: 'worktree' } as any)];
     const errs = validateWorkflow({ nodes }, { isGitRepo: false });
-    expect(errs.filter((e) => e.includes('git')).length).toBe(2);
+    expect(errs.filter((e) => e.includes('git')).length).toBe(1);
     expect(validateWorkflow({ nodes }, { isGitRepo: true })).toEqual([]);
   });
-  it('compare needs two distinct agents; tasks need a prompt; empty workflow rejected', () => {
-    expect(validateWorkflow({ nodes: [{ id: 'c', kind: 'compare', title: 'c', agents: ['claude', 'claude'], prompt: 'x', dependsOn: [] }] }, { isGitRepo: true }).length).toBe(1);
+  it('a compare node (removed 2026-11-01) is an unknown kind', () => {
+    const errs = validateWorkflow({ nodes: [{ id: 'c', kind: 'compare', title: 'c', agents: ['claude', 'claude'], prompt: 'x', dependsOn: [] } as any] }, { isGitRepo: true });
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toContain('compare');
+    expect(errs[0]).toContain('task / approval');
+  });
+  it('tasks need a prompt; empty workflow rejected', () => {
     expect(validateWorkflow({ nodes: [task('a', [], { prompt: '  ' } as any)] }, { isGitRepo: false }).length).toBe(1);
     expect(validateWorkflow({ nodes: [] }, { isGitRepo: false }).length).toBe(1);
   });
@@ -81,13 +86,7 @@ describe('renderPrompt escaping', () => {
   });
 });
 
-describe('parseWinner / agentSlug', () => {
-  it('finds the last WINNER line among the candidates', () => {
-    expect(parseWinner('分析……\nWINNER: codex', ['claude', 'codex'])).toBe('codex');
-    expect(parseWinner('WINNER: `acp:demo`', ['acp:demo', 'claude'])).toBe('acp:demo');
-    expect(parseWinner('WINNER: gemini', ['claude', 'codex'])).toBeUndefined();
-    expect(parseWinner('no verdict', ['claude'])).toBeUndefined();
-  });
+describe('agentSlug', () => {
   it('slugs agent kinds for paths and branch names', () => {
     expect(agentSlug('acp:my agent')).toBe('acp-my-agent');
     expect(agentSlug('claude')).toBe('claude');

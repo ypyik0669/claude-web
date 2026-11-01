@@ -18,14 +18,12 @@ const LEGACY: Record<string, { entries?: string[]; bodies?: BodyId[] }> = {
   engine: { bodies: ['account', 'engine'] },
   providers: { bodies: ['providers', 'env'] },
   models: { bodies: ['models'] },
-  gateway: { bodies: ['gateway'] },
   secrets: { bodies: ['secrets'] },
   mcp: { bodies: ['mcpCatalog', 'mcp', 'mcpJson'] },
   plugins: { bodies: ['plugins'] },
   skills: { bodies: ['skills', 'skillsBackup'] },
   memory: { bodies: ['memory'] },
   library: { bodies: ['library'] },
-  agents: { bodies: ['agents'] },
   subagents: { bodies: ['subagents'] },
   hooks: { bodies: ['hooks'] },
   remote: { bodies: ['remote', 'peers', 'hosts'] },
@@ -67,14 +65,13 @@ describe('settings map (spec §5.7)', () => {
     const byGroup = Object.fromEntries(SETTINGS_GROUPS.map((g) => [g.l, SETTINGS_SECTIONS.filter((s) => s.group === g.id).map((s) => s.l)]));
     expect(byGroup).toEqual({
       常用: ['通用', '外观', '账号与登录'],
-      模型: ['模型与智能程度', '供应商', '模型网关'],
-      扩展: ['MCP 与插件', 'Skills', 'Agents 与子代理', '共享记忆'],
+      模型: ['模型与智能程度', '供应商'],
+      扩展: ['MCP 与插件', 'Skills', '子代理', '共享记忆'],
       连接: ['手机与其它电脑', 'IM 机器人', '联网'],
       数据: ['对话库', '密钥'],
       高级: ['Hooks', '环境变量', 'CLI 工具', '诊断', '更新', 'settings.json'],
     });
-    expect(VISIBLE_SECTIONS.length).toBeLessThanOrEqual(15);
-    expect(VISIBLE_SECTIONS.length).toBe(15);
+    expect(VISIBLE_SECTIONS.length).toBe(14);
     expect(ADVANCED_SECTIONS.every((s) => s.advanced && s.group === 'advanced')).toBe(true);
     expect(VISIBLE_SECTIONS.some((s) => s.advanced)).toBe(false);
   });
@@ -145,7 +142,7 @@ describe('settings map (spec §5.7)', () => {
     expect(Object.keys(LEGACY_SECTIONS).sort()).toEqual(['engine', 'interface', 'mcp-json', 'plugins', 'session', 'subagents']);
     expect(resolveSettingsTarget({ section: 'mcp-json' })).toEqual({ section: 'mcp', more: true, body: 'mcpJson' });
     expect(resolveSettingsTarget({ section: 'plugins' })).toEqual({ section: 'mcp', tab: 'plugins' });
-    expect(resolveSettingsTarget({ section: 'subagents' })).toEqual({ section: 'agents', tab: 'subagents' });
+    expect(resolveSettingsTarget({ section: 'subagents' })).toEqual({ section: 'agents' });
     // 引擎与账号 → 账号与登录 with 更多选项 open, scrolled to 运行内核 (both old parts in view)
     expect(resolveSettingsTarget({ section: 'engine' })).toEqual({ section: 'account', more: true, body: 'engine' });
     expect(shownBy(resolveSettingsTarget({ section: 'engine' })).direct).toEqual(expect.arrayContaining(['account', 'engine']));
@@ -207,7 +204,6 @@ describe('searchSettings', () => {
     expect(ids(searchSettings('单窗格'))).toContain('entry:ui.workbench');
     expect(ids(searchSettings('引擎与账号'))).toContain('page:account');
     expect(ids(searchSettings('IM 网关'))).toContain('page:im');
-    expect(ids(searchSettings('CLI Agents'))).toContain('page:agents/cli');
   });
 
   it('finds pages, tabs and parts — also inside the collapsed 高级 and 更多选项', () => {
@@ -254,7 +250,7 @@ describe('searchSettings', () => {
 describe('navStatus', () => {
   it('shows only what is known', () => {
     expect(navStatus({})).toEqual({});
-    expect(navStatus({ loggedIn: true, providers: 2, gatewayEnabled: false })).toEqual({ account: '已登录', providers: '2', gateway: '关' });
-    expect(navStatus({ loggedIn: false, providers: 0, gatewayEnabled: true })).toEqual({ account: '未登录', gateway: '开' });
+    expect(navStatus({ loggedIn: true, providers: 2 })).toEqual({ account: '已登录', providers: '2' });
+    expect(navStatus({ loggedIn: false, providers: 0 })).toEqual({ account: '未登录' });
   });
 });

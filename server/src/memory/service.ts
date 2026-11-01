@@ -6,12 +6,12 @@ import { EventEmitter } from 'node:events';
 import { dataDir } from '../files/service.js';
 
 /**
- * Shared memory for every agent.
+ * Shared memory across conversations.
  *
- * One store, reachable three ways: an agent calls the MCP tools (see mcp.ts), the server harvests
+ * One store, reachable three ways: Claude calls the MCP tools (see mcp.ts), the server harvests
  * facts from a finished session, or the user writes one by hand in the panel. That is the point —
- * a decision Codex made in the morning has to be findable by Claude in the afternoon, and neither
- * of them owns the file.
+ * a decision made in one conversation in the morning has to be findable in another in the afternoon,
+ * and neither of them owns the file.
  *
  * Storage is Node's built-in SQLite (FTS5 is compiled in — checked, no extra dependency) with a
  * plain LIKE fallback if a build ever ships without it. Scope decides visibility: `session` is

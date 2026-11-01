@@ -1,4 +1,4 @@
-// Pure workflow logic: validation, layering, prompt templates, judge verdicts. No I/O — unit tested.
+// Pure workflow logic: validation, layering, prompt templates. No I/O — unit tested.
 import type { AgentKind } from '../protocol.js';
 import type { NodeRun, OrchNode } from './types.js';
 import { tr } from '../i18n/index.js';
@@ -6,11 +6,12 @@ import { tr } from '../i18n/index.js';
 /** Upstream outputs longer than this are cut and followed by a `<session-ref>` (expanded into a briefing). */
 export const OUTPUT_LIMIT = 8000;
 
-/** Every agent a node would start (task agent, compare candidates, judge). */
+/** The node kinds a workflow may hold (`compare` was removed on 2026-11-01: only Claude is left). */
+export const NODE_KINDS: readonly string[] = ['task', 'approval'];
+
+/** Every agent a node would start (a task's agent). */
 export function nodeAgents(n: OrchNode): AgentKind[] {
-  if (n.kind === 'task') return [n.agent];
-  if (n.kind === 'compare') return [...n.agents, ...(n.judge ? [n.judge] : [])];
-  return [];
+  return n.kind === 'task' ? [n.agent] : [];
 }
 
 /**
@@ -28,16 +29,12 @@ export function validateWorkflow(w: { nodes: OrchNode[] }, o: { isGitRepo: boole
   }
   for (const n of w.nodes) {
     const label = n.title || n.id;
-    if (!['task', 'compare', 'approval'].includes((n as { kind: string }).kind)) { errs.push(tr('「{label}」的类型 {kind} 不认识（只能是 task / compare / approval）', { label, kind: (n as { kind: string }).kind })); continue; }
+    if (!NODE_KINDS.includes((n as { kind: string }).kind)) { errs.push(tr('「{label}」的类型 {kind} 不认识（只能是 task / approval）', { label, kind: (n as { kind: string }).kind })); continue; }
     for (const d of n.dependsOn ?? []) if (!ids.has(d)) errs.push(tr('「{label}」依赖的节点 {d} 不存在', { label, d }));
     if (n.kind === 'task') {
       if (!n.prompt?.trim()) errs.push(tr('「{label}」没有提示词', { label }));
       if (!n.agent) errs.push(tr('「{label}」没有选 agent', { label }));
       if (n.workspace === 'worktree' && !o.isGitRepo) errs.push(tr('「{label}」要用独立 worktree，但工作目录不是 git 仓库', { label }));
-    } else if (n.kind === 'compare') {
-      if (!n.prompt?.trim()) errs.push(tr('「{label}」没有提示词', { label }));
-      if (new Set(n.agents ?? []).size < 2 || new Set(n.agents).size !== n.agents.length) errs.push(tr('「{label}」比选至少要 2 个不同的 agent', { label }));
-      if (!o.isGitRepo) errs.push(tr('「{label}」比选要在各自的 worktree 里做，但工作目录不是 git 仓库', { label }));
     }
     if (o.available) for (const a of nodeAgents(n)) if (!o.available.includes(a)) errs.push(tr('「{label}」用到的 agent {a} 没有安装或没有启用', { label, a }));
   }
@@ -128,17 +125,6 @@ export function renderPrompt(tpl: string, ctx: PromptContext): string {
     const sid = n.sessionIds?.[n.sessionIds.length - 1];
     return tr("{out}\n…（上游输出过长，已截断{v}）{v2}", { out: out.slice(0, OUTPUT_LIMIT), v: sid ? tr('，完整内容见下面引用的对话') : '', v2: sid ? tr("\n<session-ref id=\"{sid}\" title=\"上游节点 {id}\" />", { sid, id }) : '' });
   });
-}
-
-/** The judge is asked to end with `WINNER: <agent>`; the last such line naming a real candidate wins. */
-export function parseWinner(text: string, candidates: AgentKind[]): AgentKind | undefined {
-  const hits = [...text.matchAll(/WINNER:\s*[`"'*]*([A-Za-z0-9:_.~ -]+?)[`"'*]*\s*$/gim)];
-  for (let i = hits.length - 1; i >= 0; i--) {
-    const v = hits[i][1].trim();
-    const c = candidates.find((a) => a.toLowerCase() === v.toLowerCase());
-    if (c) return c;
-  }
-  return undefined;
 }
 
 /** Safe for a directory name and a git ref component (`acp:x` has a colon, custom names may have spaces). */

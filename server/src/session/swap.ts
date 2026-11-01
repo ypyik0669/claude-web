@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import type { RunnerPool } from '../runtime/pool.js';
-import type { AgentTranscripts } from '../agents/transcript.js';
 import type { MetaStore } from '../meta/store.js';
 import { CLAUDE_PROVIDER_ID, type AgentKind, type OpenSessionParams, type SessionInfoSnapshot } from '../protocol.js';
 import type { CanonicalLog } from './canonical.js';
@@ -18,40 +17,17 @@ import { providerModelId } from '../models/catalog.js';
  * "switch provider without restarting" can only mean an invisible restart: stop the child, spawn a
  * new one with the new env, resume from where the old one stopped, keep the same session id, title,
  * history and tiles. The user sees one system line, not a new session.
- *
- * Switching *agent* is the same move plus a translation step, because the new agent has no native
- * transcript for this session. Claude gets synthesized entries through the SDK's `SessionStore`;
- * everyone else gets a rendered briefing as their first message. See handoff.ts for why not more.
  */
 export interface SwapDeps {
   pool: RunnerPool;
   canonical: CanonicalLog;
-  transcripts: AgentTranscripts;
   meta: MetaStore;
-  /** Optional: read a session's native history from the session library (Task 8). Used to seed the
-   * canonical timeline when a session was imported and never ran through this server before, so a
-   * handoff still gets a real briefing instead of an empty one. */
-  readAll?: (id: string) => Promise<any[]>;
-  /** Optional: is this an IMPORTED library session (lives in another agent's store)? Its source agent,
-   * library cwd and title if so, null otherwise. Imported sessions are never swapped in place. */
-  imported?: (id: string) => Promise<{ agent: AgentKind; cwd: string; title?: string } | null>;
 }
 
 export interface SwapResult {
   sessionId: string;
   info: SessionInfoSnapshot;
   history: unknown[];
-  briefing?: string;
-}
-
-/**
- * Non-Claude agents have no way to be resumed from synthesized history, so the briefing IS their
- * first turn. Drivers queue until ready and record the message into their transcript, so the client
- * sees it in the returned history. Not mirrored into canonical: it is derived from canonical, and
- * would otherwise nest into every later briefing.
- */
-function deliverBriefing(r: ReturnType<RunnerPool['open']>, briefing: string) {
-  r.send(briefing, undefined, false, randomUUID());
 }
 
 async function stop(pool: RunnerPool, sessionId: string) {
@@ -77,7 +53,7 @@ async function stop(pool: RunnerPool, sessionId: string) {
 
 /**
  * Tell every window about the new process the moment it exists. The old one's 「closed」 has just gone out, and the
- * new runner speaks up only once its CLI has started — ccb on an OpenAI-format provider can take 15–30 s — so until
+ * new runner speaks up only once its CLI has started — that can take many seconds — so until
  * then a window showed 「已关闭」 under the OLD model, and a send in that gap reopened the conversation on the old
  * provider (real-relay test 2026-10-01).
  */
@@ -87,9 +63,9 @@ function announce(pool: RunnerPool, r: { sessionId: string; info: unknown; state
 }
 
 /**
- * One swap at a time per session. setProvider / switchAgent close the runner and open a new one; two of them
- * interleaving (a double click, two windows) would open two processes on one session id. Not re-entrant:
- * never call swapProvider / swapAgent from inside a locked section of the same session.
+ * One swap at a time per session. setProvider closes the runner and opens a new one; two of them interleaving (a
+ * double click, two windows) would open two processes on one session id. Not re-entrant: never call swapProvider
+ * from inside a locked section of the same session.
  */
 const swapLocks = new Map<string, Promise<unknown>>();
 export function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
@@ -213,7 +189,7 @@ function goesToClaude(d: Pick<SwapDeps, 'meta'>, providerId: string | undefined,
 }
 
 /**
- * Same agent, different provider profile: close, respawn with the new env, resume in place.
+ * A different provider profile: close, respawn with the new env, resume in place.
  * `model`: what to start on. Omitted on a real profile change = the new profile's / login's default — the old
  * profile's model id rarely exists behind another endpoint; omitted on the same profile = keep the current one.
  */
@@ -238,10 +214,8 @@ async function swapProviderNow(d: Pick<SwapDeps, 'pool' | 'meta' | 'canonical'>,
     // the account is a choice too: "not given" would let the pool resume on the provider still on record — the window
     // said 「Claude 账号」 while the provider kept answering (and billing; 2026-10-01, real relays)
     providerId: providerId ?? CLAUDE_PROVIDER_ID,
-    // not running: the conversation's own agent (a closed Codex conversation reopened as Claude before)
-    agent: prev?.agent ?? (await (d as Partial<SwapDeps>).transcripts?.head(sessionId).catch(() => null))?.agent ?? 'claude',
   };
-  if (changed && params.agent === 'claude') await cleanForAnotherProvider(d, sessionId, params.providerId, params.model);
+  if (changed) await cleanForAnotherProvider(d, sessionId, params.providerId, params.model);
   let r = d.pool.open(params);
   // something reopened it in the gap on the provider still on record (IM / schedules / goals open through the pool, not
   // under this lock): that process is not the switch — replace it, so the record below is what really runs
@@ -256,94 +230,21 @@ async function swapProviderNow(d: Pick<SwapDeps, 'pool' | 'meta' | 'canonical'>,
   return { sessionId: r.sessionId, info: r.info, history: r.getHistory() };
 }
 
-/** Different agent: close, spawn the new one on the same session id, hand it a briefing. */
-export function swapAgent(d: SwapDeps, sessionId: string, agent: AgentKind, model: string | undefined, objective?: string): Promise<SwapResult> {
-  // 只聊天 exists for Claude only (`tools: []`): another agent would get its files and commands back
-  if (agent !== 'claude' && d.meta.sessionMeta(sessionId).chatOnly) return Promise.reject(new Error(tr('只聊天的对话不能换成其它 agent：它们没有不带工具的模式')));
-  return withSessionLock(sessionId, () => swapAgentNow(d, sessionId, agent, model, objective));
-}
-async function swapAgentNow(d: SwapDeps, sessionId: string, agent: AgentKind, model: string | undefined, objective?: string): Promise<SwapResult> {
-  const imp = d.imported ? await d.imported(sessionId) : null;
-  if (imp) return handOverImported(d, sessionId, imp, agent, model, objective);
-  const prev = await stop(d.pool, sessionId);
-  const from = prev?.agent ?? (await d.transcripts.head(sessionId))?.agent ?? 'claude';
-  const cwd = prev?.cwd ?? (await d.canonical.head(sessionId))?.cwd ?? process.cwd();
-  let events = await d.canonical.load(sessionId);
-  if (!events.length && d.readAll) {
-    // an imported library session that never ran through this server: seed the mirror from its
-    // native history so the briefing isn't empty, then re-read what got written
-    const native = await d.readAll(sessionId).catch(() => []);
-    if (native.length) {
-      await d.canonical.ensure(sessionId, cwd);
-      await seedCanonical(d.canonical, sessionId, native);
-      events = await d.canonical.load(sessionId);
-    }
-  }
-  const briefing = renderBriefing(events, { fromAgent: from, toAgent: agent, cwd, objective }).text;
-  d.canonical.mark(sessionId, { agent, model, note: tr('已从 {from} 交接给 {agent}', { from, agent }) });
-
-  const params: OpenSessionParams = {
-    sessionId,
-    cwd,
-    model,
-    permissionMode: prev?.permissionMode,
-    agent,
-    // the provider the old agent ran on belongs to it: the new one starts on its own default (settings → 供应商 for
-    // Claude, settings → Agents for the others) — explicit, or the pool would keep a recorded one the new agent
-    // happens to accept too
-    providerId: d.pool.defaultProviderFor?.(agent) ?? 'claude',
-    // Claude resumes from synthesized entries; the others get the briefing as their first message
-    resumeEntries: agent === 'claude' ? toClaudeEntries(events, { cwd, sessionId, briefing }) : undefined,
-    briefing: agent === 'claude' ? briefing : undefined,
-  } as OpenSessionParams;
-
-  // the foreign-agent transcript has to exist (and name the new agent) before the driver appends; back to Claude it
-  // steps aside (kept for a later hand-over to that agent, which picks its own thread up again)
-  if (agent === 'claude') await d.transcripts.park(sessionId);
-  else {
-    await d.transcripts.unpark(sessionId, agent);
-    if (await d.transcripts.exists(sessionId)) await d.transcripts.patchHead(sessionId, { agent, model });
-    else await d.transcripts.create({ agent, cwd, title: objective ?? tr('交接的对话'), createdAt: Date.now(), sessionId, model });
-  }
-
-  const r = d.pool.open(params);
-  announce(d.pool, r);
-  await d.meta.setSessionMeta(sessionId, { providerId: normProvider(params.providerId) }).catch(() => { /* kept in memory; the next save persists it */ });
-  if (agent !== 'claude') deliverBriefing(r, briefing);
-  return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), briefing: agent === 'claude' ? undefined : briefing };
-}
-
 /**
- * Handing over an IMPORTED session (one that lives in Codex's / OpenCode's / an ACP agent's own
- * store) always starts a NEW session — Claude gets a fresh UUID, the others a new claude-web session
- * — seeded with a briefing built from the library history. The imported session itself is not
- * touched (no head patched, nothing stopped) and stays listed under its source; the new session runs
- * in the library summary's cwd, never this process's.
+ * Going on HERE with a conversation that lives somewhere else (another machine's, `peers.handover`): always a NEW
+ * Claude session — a fresh UUID — seeded with a briefing built from that history, which it resumes from as
+ * synthesized entries. The other conversation is not touched; the new one runs in `src.cwd`, never this process's.
  */
-async function handOverImported(d: SwapDeps, fromId: string, src: { agent: AgentKind; cwd: string; title?: string }, agent: AgentKind, model: string | undefined, objective?: string): Promise<SwapResult> {
-  if (!d.readAll) throw new Error(tr('对话库不可用，无法交接导入的对话'));
-  const native = await d.readAll(fromId); // no history → no hand-over (don't start an empty session)
+export async function handOverToClaude(d: SwapDeps, fromId: string, src: { agent: AgentKind; cwd: string; title?: string }, readAll: () => Promise<any[]>, model: string | undefined, objective?: string): Promise<SwapResult> {
+  const native = await readAll(); // no history → no hand-over (don't start an empty session)
   const sessionId = randomUUID();
   const cwd = src.cwd;
   await d.canonical.ensure(sessionId, cwd);
   if (native.length) await seedCanonical(d.canonical, sessionId, native);
   const events = await d.canonical.load(sessionId);
-  const briefing = renderBriefing(events, { fromAgent: src.agent, toAgent: agent, cwd, objective }).text;
-  d.canonical.mark(sessionId, { agent, model, note: tr('已从 {agent} 的对话 {fromId} 交接给 {agent2}', { agent: src.agent, fromId, agent2: agent }) });
-
-  if (agent !== 'claude') {
-    const title = objective ?? (src.title ? tr('{title}（交接）', { title: src.title }) : tr('交接的对话'));
-    await d.transcripts.create({ agent, cwd, title, createdAt: Date.now(), sessionId, model });
-  }
-  const params = {
-    sessionId,
-    cwd,
-    model,
-    agent,
-    resumeEntries: agent === 'claude' ? toClaudeEntries(events, { cwd, sessionId, briefing }) : undefined,
-    briefing: agent === 'claude' ? briefing : undefined,
-  } as OpenSessionParams;
+  const briefing = renderBriefing(events, { fromAgent: src.agent, toAgent: 'claude', cwd, objective }).text;
+  d.canonical.mark(sessionId, { agent: 'claude', model, note: tr('已从 {agent} 的对话 {fromId} 交接给 {agent2}', { agent: src.agent, fromId, agent2: 'claude' }) });
+  const params: OpenSessionParams = { sessionId, cwd, model, resumeEntries: toClaudeEntries(events, { cwd, sessionId, briefing }) };
   const r = d.pool.open(params);
-  if (agent !== 'claude') deliverBriefing(r, briefing);
-  return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), briefing: agent === 'claude' ? undefined : briefing };
+  return { sessionId: r.sessionId, info: r.info, history: r.getHistory() };
 }

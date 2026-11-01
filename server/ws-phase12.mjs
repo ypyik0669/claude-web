@@ -1,4 +1,4 @@
-// Phase 12 end-to-end: the shared memory store, and the MCP server every agent talks to.
+// Phase 12 end-to-end: the shared memory store, and the MCP server Claude talks to.
 //   node server/ws-phase12.mjs [port] [token]
 import WebSocket from 'ws';
 import path from 'node:path';
@@ -91,34 +91,7 @@ ws.on('open', async () => {
       created.push(...fromUi.map((m) => m.id));
     }
 
-    // ---- 3. the store reaches a CLI agent, and harvesting a finished session --
-    const mock = path.join(here, 'src', 'agents', '__mocks__', 'acp-agent.mjs');
-    await req({ kind: 'agents.set', agent: 'acp:p12', patch: { name: 'P12 Mock', command: process.execPath, args: [mock], protocol: 'acp', label: 'p12' } });
-    const o = await req({ kind: 'session.open', params: { cwd, agent: 'acp:p12', permissionMode: 'default' } });
-    const sid = o.sessionId;
-    await waitEvent((e) => e.kind === 'session.state' && e.sessionId === sid && (e.state === 'idle' || e.state === 'error'), 60000);
-
-    // the mock echoes back the MCP servers it was handed at session/new
-    await req({ kind: 'session.send', params: { sessionId: sid, text: '列一下 mcp' } });
-    const echoed = await waitEvent((e) => e.kind === 'session.event' && e.sessionId === sid && e.message.type === 'stream_event' && e.message.event?.delta?.text?.includes('[mcp:'), 30000).catch(() => null);
-    check('a CLI agent is handed the shared memory server', !!echoed && echoed.message.event.delta.text.includes('memory'), echoed?.message?.event?.delta?.text?.trim());
-    await waitEvent((e) => e.kind === 'session.event' && e.sessionId === sid && e.message.type === 'result', 30000).catch(() => null);
-
-    await req({ kind: 'session.send', params: { sessionId: sid, text: '我决定改用 vite，因为 webpack 配置已经无法维护' } });
-    const perm = (await waitEvent((e) => e.kind === 'permission.request' && e.request.sessionId === sid, 20000).catch(() => null))?.request;
-    if (perm) await req({ kind: 'permission.respond', requestId: perm.requestId, response: { behavior: 'allow' } });
-    await waitEvent((e) => e.kind === 'session.event' && e.sessionId === sid && e.message.type === 'result', 60000).catch(() => null);
-
-    const h = await req({ kind: 'memory.harvest', sessionId: sid });
-    check('harvest extracts decisions from a session', h.written > 0, `written=${h.written} skipped=${h.skipped}`);
-    const harvested = await req({ kind: 'memory.search', query: 'vite', cwd });
-    check('the harvested decision is searchable', harvested.some((m) => m.kind === 'decision'), harvested[0]?.text?.slice(0, 70));
-    created.push(...harvested.map((m) => m.id));
-
-    // ---- 4. cleanup ----------------------------------------------------------
-    await req({ kind: 'session.close', sessionId: sid }).catch(() => {});
-    await req({ kind: 'session.delete', sessionId: sid }).catch(() => {});
-    await req({ kind: 'agents.set', agent: 'acp:p12', patch: null });
+    // ---- 3. cleanup ----------------------------------------------------------
     for (const id of [...new Set(created)]) await req({ kind: 'memory.remove', id }).catch(() => {});
     const left = await req({ kind: 'memory.search', query: 'e2e-记忆', cwd });
     check('cleanup removed the e2e memories', left.length === 0, `${left.length} left`);

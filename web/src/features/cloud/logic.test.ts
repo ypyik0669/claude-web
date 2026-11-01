@@ -32,7 +32,6 @@ describe('交给常开机器继续', () => {
   it('only this machine\'s own Claude conversations that were not handed off yet', () => {
     expect(canHandOffToPeer({ sessionId: '11111111-1111-1111-1111-111111111111' })).toBe(true);
     expect(canHandOffToPeer({ sessionId: 'peer_p~x', peer: { id: 'p', name: 'P' } })).toBe(false);
-    expect(canHandOffToPeer({ sessionId: 'codex-abc', agent: 'codex' })).toBe(false);
     expect(canHandOffToPeer({ sessionId: 'claudeai-abc', agent: 'claudeai' })).toBe(false);
     expect(canHandOffToPeer({ sessionId: 'abc' }, { handedOff: { id: 'i', peerId: 'p', peerName: 'P', remote: 'origin', branch: 'cw/handoff-i', commit: 'c', base: 'b', at: 0 } })).toBe(false);
   });

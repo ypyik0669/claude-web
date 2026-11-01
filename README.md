@@ -4,13 +4,13 @@
 
 **A visual workbench for the Claude Code CLI.** It takes Claude Code out of the command line and puts it in a graphical interface: conversations, tool calls folded into one line per turn, code diff review, permission approvals, files / Git / editor, split view, and remote access from your phone, all in one window.
 
-The same program comes in two forms: a **desktop app** (Windows / macOS) and a **web version** (run a local server and open it in your browser). The features are identical and the data is shared. Besides Claude Code, the same interface can drive other CLI agents such as Codex, Gemini CLI, Qwen Code, Kimi and OpenCode. The interface comes in **English and Chinese** and follows your computer's language by default ([how to change it](#interface-language)).
+The same program comes in two forms: a **desktop app** (Windows / macOS) and a **web version** (run a local server and open it in your browser). The features are identical and the data is shared. The interface comes in **English and Chinese** and follows your computer's language by default ([how to change it](#interface-language)).
 
 > **Unofficial project.** Claude Web is a community-built open-source tool. It has no affiliation with Anthropic and is not endorsed by Anthropic. "Claude" and "Claude Code" are trademarks of Anthropic. To use it you need your own Claude Code login (a Claude subscription) or a key for a third-party API / relay (a third-party API reseller or proxy service). Costs and usage are billed to your own account.
 
 ![The conversation view: sidebar on the left, the conversation in the middle (a finished turn folded into a one-line summary, ending with a changed-files card), and a diff in the Review panel on the right](docs/images/en/chat.png)
 
-**When subagents and workflows run, you can watch them in the pixel-art Internet Café on the "Background" page**: your main conversation is the admin at the front desk, and every subagent is a guest. They boot up a PC, type code, wander off for instant noodles and games when idle, and check out at the front desk when they're done ([details](#15-background-watch-subagents-work-in-the-café)).
+**When subagents and workflows run, you can watch them in the pixel-art Internet Café on the "Background" page**: your main conversation is the admin at the front desk, and every subagent is a guest. They boot up a PC, type code, wander off for instant noodles and games when idle, and check out at the front desk when they're done ([details](#11-background-watch-subagents-work-in-the-café)).
 
 ![The café on the Background page: subagents sit at their PCs working, the step they just did pops up above their heads, and finished ones get a receipt at the front desk and check out](docs/images/en/cafe.gif)
 
@@ -30,13 +30,9 @@ The same program comes in two forms: a **desktop app** (Windows / macOS) and a *
   - [6. Connect a third-party API / relay](#6-connect-a-third-party-api--relay)
   - [7. Manage several conversations at once](#7-manage-several-conversations-at-once)
   - [8. Use it from your phone](#8-use-it-from-your-phone)
-  - [9. Other CLI agents (Codex / Gemini …)](#9-other-cli-agents-codex--gemini-)
-  - [10. Conversations from other agents on this computer](#10-conversations-from-other-agents-on-this-computer)
-  - [11. Model gateway (multi-account failover / protocol conversion)](#11-model-gateway-multi-account-failover--protocol-conversion)
-  - [12. Config for other agents (MCP / instruction files / models)](#12-config-for-other-agents-mcp--instruction-files--models)
-  - [13. Conversations on other computers](#13-conversations-on-other-computers)
-  - [14. Automation: scheduled tasks, goals, multi-agent orchestration](#14-automation-scheduled-tasks-goals-multi-agent-orchestration)
-  - [15. Background: watch subagents work in the café](#15-background-watch-subagents-work-in-the-café)
+  - [9. Conversations on other computers](#9-conversations-on-other-computers)
+  - [10. Automation: scheduled tasks, goals, orchestration](#10-automation-scheduled-tasks-goals-orchestration)
+  - [11. Background: watch subagents work in the café](#11-background-watch-subagents-work-in-the-café)
 - [Character themes](#character-themes)
 - [Interface language](#interface-language)
 - [Custom styles (custom.css)](#custom-styles-customcss)
@@ -64,10 +60,9 @@ The same program comes in two forms: a **desktop app** (Windows / macOS) and a *
 | **Needs you** | The top of the sidebar lists every conversation waiting for you to approve or answer; the Overview groups them into "Needs you / Running / Error / Idle" |
 | **Background / Café** | Subagents, workflows and background commands on one page: cards, a relationship graph and an activity feed, plus a pixel-art café where every subagent is a guest who checks out at the front desk when done; characters can be "made" from a photo or a single sentence; the Stop button in the input box only stops the current turn, background work keeps running |
 | **Web access** | The agent searches, opens pages, clicks, fills forms and takes screenshots in the built-in browser, with no search key needed; on Windows it can also operate specific desktop apps once you allow it |
-| **Automation** | Scheduled tasks (cron), goals (give it a goal and it keeps working turn after turn), and multi-agent orchestration, all on the sidebar's "Automation" page |
-| **Providers** | Each conversation can use a different provider (official account / Anthropic-compatible relay / OpenAI / Gemini …), and the model menu lists them flat as "Provider / model"; keys are stored encrypted; each model's context window can be set individually; subagents can use a different (cheaper) model |
-| **Multiple agents** | Besides Claude it can drive CLI agents such as Codex, Gemini, Qwen and Kimi, with the same interface |
-| **Remote** | Pair by scanning a QR code and use it from your phone's browser, even away from your home Wi-Fi; SSH tunnels to remote machines; bots for Telegram / Discord / Slack / DingTalk / Feishu |
+| **Automation** | Scheduled tasks (cron), goals (give it a goal and it keeps working turn after turn), and orchestration (a job split into steps, each one a Claude conversation), all on the sidebar's "Automation" page |
+| **Providers** | Each conversation can use a different provider (official account / other Claude accounts / Anthropic API or an Anthropic-compatible relay), and the model menu lists them flat as "Provider / model"; keys are stored encrypted; each model's context window can be set individually; subagents can use a different (cheaper) model |
+| **Remote** | Pair by scanning a QR code and use it from your phone's browser on the same Wi-Fi; SSH tunnels to remote machines; bots for Telegram / Discord / Slack / DingTalk / Feishu |
 | **Usage** | Subscription quota ring, per-turn time and cost ledger, context usage |
 | **English / 中文** | The whole interface (web, the desktop app's menus and tray, the phone page, exported HTML) comes in English and Chinese; it follows your computer by default and you can change it in settings |
 
@@ -152,7 +147,7 @@ Claude Web drives the Claude Code on your computer, and the login is shared with
    - **＋**: add files, folders and images (you can also drag them in or paste a screenshot), reference another conversation, set a goal, and switch on abilities such as controlling Chrome;
    - **Project · branch** (new conversations only): switch project, switch local branch, or have it work in a separate copy (git worktree);
    - **Model**: the models of every provider are in this one menu;
-   - **Subagent** (next to the model; only in Claude conversations): the main task uses the main model, and subagents (the ones sent out by Task and workflows) use the model you pick here. Pick a cheaper one to save quota; the default is "Same as main model" (see [step 6](#6-connect-a-third-party-api--relay));
+   - **Subagent** (next to the model): the main task uses the main model, and subagents (the ones sent out by Task and workflows) use the model you pick here. Pick a cheaper one to save quota; the default is "Same as main model" (see [step 6](#6-connect-a-third-party-api--relay));
    - **Thinking effort** (the button next to the model, which shows the current level): Fast / Balanced / Deep / Deeper / Max, each with a one-line description; the last row, "Deep orchestration", splits a task into subtasks done at the same time by several subagents;
    - **Permissions** (see the next step); the small ring at the bottom right is context usage, and hovering shows this conversation's usage.
 4. Type `/` to bring up the command list (`/compact`, `/model`, custom skills …), and press <kbd>Tab</kbd> to complete.
@@ -186,19 +181,19 @@ The top row of a conversation has the title, project and branch, and on the righ
 
 The **＋** in the right panel also has Café, Goals, Orchestration, Usage, Details and **Issues & PRs** (a GitHub / GitLab board; it needs `gh auth login` or `glab auth login` on this computer, and can check out a PR straight into a review conversation). The **···** in the conversation header lists all the views, and the command palette (<kbd>Ctrl</kbd>+<kbd>K</kbd>) can find them too.
 
-On the far left of the window is an **icon bar**: Conversation · Background (running subagents and workflows, see [15](#15-background-watch-subagents-work-in-the-café)) · Automation (scheduled tasks, goals, orchestration) · Extensions (connectors, Skills, plugins) · **···** (Overview, Café, Usage and ledger, Shared memory, Issues & PRs, Android, Config center; the ones you use often can be pinned to the icon bar), and at the very bottom, Settings and your account. Click "Automation" or "Extensions" and the sidebar switches to that section's own few rows, with its page in the main area; click "Conversation" to come back.
+On the far left of the window is an **icon bar**: Conversation · Background (running subagents and workflows, see [11](#11-background-watch-subagents-work-in-the-café)) · Automation (scheduled tasks, goals, orchestration) · Extensions (connectors, Skills, plugins) · **···** (Overview, Café, Usage and ledger, Shared memory, Issues & PRs, Android, Config center; the ones you use often can be pinned to the icon bar), and at the very bottom, Settings and your account. Click "Automation" or "Extensions" and the sidebar switches to that section's own few rows, with its page in the main area; click "Conversation" to come back.
 
 #### Web access: search and the built-in browser
 
-In every conversation, the agent (Claude, Codex and Gemini alike) can **search the web**, and can use the **built-in browser** to open pages, read content, click, fill forms and take screenshots. Just ask: "search for the latest way to use xxx", "open this address and see what error it shows".
+In every conversation, the agent can **search the web**, and can use the **built-in browser** to open pages, read content, click, fill forms and take screenshots. Just ask: "search for the latest way to use xxx", "open this address and see what error it shows".
 
 - **Search is done inside the built-in browser**: it opens a search site's results page (a page you can't see) and reads the results. That is the same kind of request as searching in a browser yourself, so **no key of any kind is needed** and it doesn't go through a third-party search proxy. By default it tries DuckDuckGo, Bing, Yahoo and Baidu in turn, and uses whichever gives relevant results; you can also pick one under **Settings → Web access** (Google is available there too). Which one works depends on your network; "Try it" on the same page shows you. When a site asks for verification ("prove you're not a robot"), open it in the browser in the right panel, verify once, and searching will work after that. If you'd rather use a search API, that page also takes a Brave Search key.
 - The pages it opens show up in the right panel's "Browser", and the agent in each conversation uses its own tab (marked), so you can see what it's doing. When it works in a background tab it won't steal the panel you're looking at; the browser only comes to the front the first time it opens, when it needs a screenshot, or when the panel is collapsed.
 - **Mouse and keyboard on web pages**: for buttons, links and inputs that can be listed on the page, the agent clicks and fills by element; for what can't be listed (canvases, maps, dragging, menus that only appear on hover, sliders) it works from screenshots by position: click, double-click, right-click, drag, scroll wheel, typing, key presses. It only acts on its own tab inside the built-in browser.
-- Opening pages, clicking and typing go through permission approval just like running commands (with "Ask first", you're asked each time); only searching doesn't ask. (This is for Claude conversations; Codex, Gemini and the others follow their own approval rules.)
+- Opening pages, clicking and typing go through permission approval just like running commands (with "Ask first", you're asked each time); only searching doesn't ask.
 - Clicking, form filling, screenshots and by-position actions need the **desktop app**; in the web version and on a phone, the agent can only search and read the text of pages (and then the computer fetches the Bing / DuckDuckGo results page directly, which is easy to rate-limit).
 - Web page content is handed to the model as reference material and is marked "not instructions"; but still don't let it act freely on pages where you're signed in to important accounts. With "Keep cookies" set to "Separate" under Settings → Web access (or the built-in browser's ⋯ menu), it can't see the accounts you've signed in to in the built-in browser.
-- The only search tool the model has is the one above (the one that ships with the runtime goes through someone else's hosted search proxy, so it isn't used here). One exception: when a conversation runs on the official Claude Code (for example the provider has "only accepts the official binary" ticked), its built-in search is executed on Anthropic's side and still works as usual.
+- Claude Code's own built-in search is kept as well: it is executed on Anthropic's side.
 
 #### Computer control (Windows)
 
@@ -225,31 +220,28 @@ By default the interface is just the sidebar, the conversation and the right pan
 
 ### 6. Connect a third-party API / relay
 
-**The fastest way**: Settings → Providers → **Quick add** (the "Connect a model" step when you first open the app is the same thing). Pick a source (Relay / DeepSeek / Kimi / Zhipu GLM / Qwen / SiliconFlow / OpenRouter / Gemini), for a relay also enter its address, paste your API key and click **Connect**. The model list and API format are read automatically, and it's only saved once the test passes; a wrong key, insufficient balance or a wrong address is reported directly.
+**The fastest way**: Settings → Providers → **Quick add** (the "Connect a model" step when you first open the app is the same thing). Pick a source (Relay / Anthropic API), for a relay also enter its address, paste your API key and click **Connect**. The model list is read automatically, and it's only saved once the test passes; a wrong key, insufficient balance or a wrong address is reported directly.
 
 ![Quick add provider: pick a source, enter the address and API key, click Connect](docs/images/en/connect.png)
 
-When you need more options (specifying a model mapping, how it runs, cache settings), use the full form:
+When you need more options (specifying a model mapping, cache settings), use the full form:
 
 ![Settings → Providers](docs/images/en/settings.png)
 
 1. Open **Settings** (<kbd>Ctrl</kbd>+<kbd>,</kbd>) → **Providers** → **+ Add**;
-2. Choose a type (Anthropic-compatible / OpenAI / Gemini …), fill in **Base URL** and **API Key**, and optionally specify models;
-3. Click **Test connection**: it first fetches the model list, then really runs one round of conversation. If the relay only lets the official Claude Code client through, it automatically makes this provider run on the official Claude Code;
+2. Fill in **Base URL** and **API Key** (the Anthropic API or any Anthropic-compatible relay), and optionally specify models;
+3. Click **Test connection**: it first fetches the model list, then really runs one round of conversation. Conversations always run on the official Claude Code, so relays that only let the official client through work too;
 4. Back in the input box, click the model chip and pick one of this provider's models from the menu (the chip shows `Provider / model`). You can also switch in the middle of a conversation, and the history is kept.
 
 The key is only injected into that conversation's own process and is never written to `~/.claude/settings.json`; it's stored encrypted locally (DPAPI on Windows, Keychain on macOS).
 
-**Using several relays / accounts together**: the model chip is one unified menu, with every model of every provider flattened into a single list of `Provider / model` (models of the official account show just their name, like `Fable 5.1`), and picking one switches provider and model at the same time:
-
-![The model menu: thinking effort and deep orchestration at the top, then the Claude account's models, the DeepSeek provider and other agents such as Codex](docs/images/en/models.png)
+**Using several relays / accounts together**: the model chip is one unified menu, with every model of every provider flattened into a single list of `Provider / model` (models of the official account show just their name, like `Fable 5.1`), and picking one switches provider and model at the same time.
 
 - At the top are the thinking effort and (on models that support it) the Deep orchestration switch; the search box filters by provider name or model name, <kbd>↑</kbd> <kbd>↓</kbd> select, <kbd>Enter</kbd> confirms, <kbd>Esc</kbd> closes;
 - The star at the end of a row marks a favorite, and favorites are pinned to the top; the 5 most recently used get a section of their own;
-- Each provider gets a section whose header shows the number of models and the time of the last fetch (or the error if the fetch failed); other agents (Codex, Gemini …) are a section each too;
+- Each provider gets a section whose header shows the number of models and the time of the last fetch (or the error if the fetch failed); every other Claude account is a section too;
 - "Refresh all models" at the bottom requests `/v1/models` once per provider (it only lists models, runs no conversation and costs no tokens), and after startup lists older than 24 hours are also refreshed in the background; "Manage models and providers…" opens **Settings → Models and thinking effort**;
-- The menu only lists providers the current agent can use: Claude Code takes every type, Codex and other ACP agents use OpenAI-compatible / the model gateway, and Gemini CLI uses Gemini / the model gateway;
-- In a conversation, picking another model of the same provider just switches the model; picking another provider restarts the conversation's process invisibly (the history is kept) and uses the model you picked; picking another agent's model hands the conversation over to it to continue. Conversations on other computers can only change the model;
+- In a conversation, picking another model of the same provider just switches the model; picking another provider restarts the conversation's process invisibly (the history is kept) and uses the model you picked. Conversations on other computers can only change the model;
 - If you chat a lot on a model with a big window and then switch to one with a smaller window, and the conversation is already past 80% of the new model's window, it is first compacted with the current model before switching, and the conversation gets a line saying so.
 
 **Choosing a separate model for subagents**: the **Subagent** button next to the model in the input box (or "Subagent model" at the bottom of the model menu) opens the same kind of model menu, limited to the current provider, with "Same as main model" as the top row. The main task keeps using the main model and subagents (the ones sent out by Task and workflows) use the one you picked; for example, Sonnet for the main task and Haiku for subagents saves quite a bit of quota. Tick "New conversations on this provider all do this" at the bottom of the menu, and every new conversation you start on this provider from then on (including IM bots and scheduled tasks) uses it. When you change it on a running conversation, it restarts invisibly once the current turn finishes and then switches; subagents already sent out aren't affected.
@@ -258,7 +250,7 @@ The key is only injected into that conversation's own process and is never writt
 
 ![The Subagent menu: Same as main model, or one of the current provider's models](docs/images/en/subagent.png)
 
-**Each model's context window**: under **Settings → Providers → Edit**, "Context window" has one row per model. Leave it empty to use the default (Claude on a relay is 1 million, Haiku 200k, GPT 272k, Gemini about 1.05 million; if the relay's model list states a size, that's used, and an unknown model gets 200k). To change it, just type a value (`272000`, `272k` and `1m` all work). Auto-compaction and the small context ring next to the input box both use this number.
+**Each model's context window**: under **Settings → Providers → Edit**, "Context window" has one row per model. Leave it empty to use the default (Claude on a relay is 1 million, Haiku 200k; if the relay's model list states a size, that's used, and an unknown model gets 200k). To change it, just type a value (`272000`, `272k` and `1m` all work). Auto-compaction and the small context ring next to the input box both use this number.
 
 **Settings → Models and thinking effort** has two views: "By model" is a table with one row per model, listing the providers that offer it (click a provider chip to make it that provider's default model), the favorite star and the show switch; "By provider" is the grouped view. At the top is each provider's fetch status and its own refresh button.
 
@@ -269,6 +261,8 @@ The key is only injected into that conversation's own process and is never writt
 ![Overview: all conversations grouped by status](docs/images/en/mission.png)
 
 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> (or "Overview" in the command palette) opens the Overview in the right panel: all open conversations grouped into **Needs you / Running / Error / Idle**; permission requests can be approved right on the card, and clicking a card jumps to that conversation.
+
+**Conversations from claude.ai**: under **Settings → Conversation library**, "Import claude.ai data…" takes claude.ai's data export: the conversations go into the library (read-only; you can continue one in Claude) and its projects become projects here.
 
 When the window isn't in the foreground, the desktop app pops a system notification when a conversation finishes or needs approval, and the taskbar / Dock icon shows the number of pending items.
 
@@ -287,81 +281,9 @@ This is for a phone on the same Wi-Fi only: the listener is plain HTTP, so don't
 
 <br clear="right">
 
-### 9. Other CLI agents (Codex / Gemini …)
+### 9. Conversations on other computers
 
-**Settings → Agents and subagents → Other agents** shows whether Codex, Gemini, Qwen, Kimi and others are installed and signed in, and opens a terminal for one-click install / sign-in. After that, just pick their models in the model menu (one section per agent), and conversations, tool cards and permission approvals work just like with Claude. In the middle of a conversation you can also **hand it off** to another agent (conversation header ··· → "Hand off to another agent"), and what's been done so far is condensed into a summary and carried over.
-
-### 10. Conversations from other agents on this computer
-
-If you've also used CLIs such as Codex or OpenCode on this computer (or their desktop apps / plugins), Claude Web can put their own conversation records in the sidebar too, so you can browse, search and continue them together with Claude's conversations.
-
-**Adding them is optional.** At startup it only does a light check (is it installed, does the data folder exist); it starts no process and reads none of your records. Once something is detected, a line appears at the bottom of the sidebar: "Also list the conversations in Codex here?" (it only appears after the home page's getting-started checklist is finished or dismissed, waiting at most 3 days):
-
-- Click **List them**: only then does it start reading that agent's conversation list and building a full-text index;
-- Click **×** (maybe later): you won't be prompted again;
-- You can add or remove them at any time in **Settings → Conversation library**. **Removing** only stops showing them here and doesn't delete any of the agent's own records.
-
-Once added, you can:
-
-| Action | What it does |
-| --- | --- |
-| Browse / continue | Open one to see the full history and tool cards; sending a message continues in the **original conversation**, and the new turn is also written back to the agent's own record, so you can pick up again in the command line |
-| Search | <kbd>Ctrl+K</kbd> full-text searches all sources (Chinese text works too); `agent:codex` searches only one agent, and `in:<folder fragment>` filters by working folder |
-| Filter | The funnel on the "Projects" title row: filter by source or computer, show archived, select several |
-| Rename / archive / delete / fork | Right-click a conversation (or the ··· at the end of the row when you hover). Only operations the agent's official interface supports are offered: Codex supports them all; OpenCode can only delete; other agents are read-only |
-| Sub-tasks | Subagents and forked conversations are folded under their parent conversation (the expand arrow at the start of the row) |
-| Quote / hand off to another agent | Right-click "Quote in the input box" brings another conversation's content into the current one; "Hand off to another agent" continues with a different agent |
-
-**A backup is made before anything is deleted**: the full history is exported to `~/.claude-web/library-trash/<conversation id>.json`, the delete only really happens once the backup is written successfully, and the backup is kept for 30 days. Deleting needs a second confirmation; bulk operations archive by default instead of deleting.
-
-Conversation id rules: Claude conversations keep their original UUID, and other sources are `<agent>-<native id>`, for example `codex-01a0…`, `opencode-ses_…`.
-
-### 11. Model gateway (multi-account failover / protocol conversion)
-
-A local HTTP gateway: it offers agents the **Anthropic**, **OpenAI** (Chat Completions, and the Responses API that Codex uses) and **Gemini** interfaces at once, with the providers and accounts you add behind it. What it's for:
-
-- **Automatic multi-account switching**: put a relay's main account and backup account in one group; when the main one is rate-limited (429), out of quota, returns 5xx or can't be reached, it switches to the next automatically. A rate-limited account cools down until the reset time given by `retry-after`, or if there's no hint, starts at 60 seconds and doubles (up to 30 minutes); an account whose key is invalid (401/403) is disabled, and you click "Restore" once it's fixed.
-- **Protocol conversion**: let Codex use Claude, let Claude Code use OpenAI-compatible models, and so on. Supported directions: Anthropic in → OpenAI / Gemini out, OpenAI in → Anthropic / Gemini out, Codex (Responses) in → Anthropic out, Gemini in → Anthropic out; the same protocol is passed through as is (a relay's client fingerprint check still passes).
-- **Claude subscription accounts**: add a `sk-ant-oat…` setup token or the OAuth JSON from Claude Code; its requests are sent in the Claude Code shape (Bearer + OAuth beta + the Claude Code system prefix). Health, quota, cooldown, an optional per-account proxy and a daily request cap are shown on the account row.
-- **Gemini web and WorkBuddy accounts**: add Gemini cookies (one per line, in batches) or a WorkBuddy cockpit JSON / QR login. Each family runs a pinned MIT sidecar on this computer — downloaded and SHA256-checked on first use, or bundled with the installer — supervised with health checks and restarts. Their models appear in `/v1/models`, and their pools can be gateway members next to Claude accounts and providers.
-- **A Tasks page for account upkeep**: check-in, keepalive, growth tasks, cat travel, lottery, activity, quota refresh and account check, by cron or interval, with run-now and a history; missed runs are caught up within seven days.
-
-Steps:
-
-1. **Settings → Model gateway** (or the 网关 entry in the icon rail), turn on "Enable the local model gateway" (the first time, a gateway key is generated). It opens on just 概览 / 账号 / 任务.
-2. On **账号**, add a Claude subscription account, Gemini cookies or a WorkBuddy login. It goes into a **默认** group by itself, and the 概览 shows the address (`…/v1`) plus a one-click "Copy key" for other apps. No pools, groups or keys to set up.
-3. Under **Settings → Providers**, create a new one, choose the type "Model gateway" and pick the 默认 group. After that, new conversations (Claude, Codex, Gemini and so on) just pick its models in the model menu, and the address and key are injected automatically when the conversation starts.
-4. **高级设置** has the rest when you want it: account pools and failover order, route groups, key groups, the audit log and the LAN listener. "Test" sends a minimal request and shows which member it actually went through.
-
-Notes:
-
-- The gateway only accepts loopback connections from this computer by default; the optional LAN listener serves only `/v1` and `/v1beta` to keys whose key group allows LAN and whose IP is on the allowlist. Keys are stored hashed, shown masked, and read out only when you click "Copy"; they never appear in logs.
-- A **key group** can restrict the route groups, models (glob allow/deny), source IPs, RPM, concurrency and a daily token budget of the keys that use it.
-- Once a streaming reply has started flowing to the agent, it won't switch members (an error halfway is reported as is).
-- Even if Codex and Gemini CLI are signed in to their own accounts, conversations opened through the gateway are forced through the gateway (their own config files aren't changed); other ACP agents such as Qwen Code only get environment variables injected, and under an OAuth login they may still use their own account.
-- The request the "Test" button sends doesn't carry the Claude Code fingerprint: a relay that only accepts the official client may reject the test, but real conversations go through.
-- After regenerating the gateway key, running conversations need to be reopened.
-- Every request gets a row in the ledger (the account row at the bottom of the sidebar → **Usage and ledger** → Ledger; choose "Gateway" under "Source" to see just those), including the actual member, the number of switches, time to first byte and tokens. The audit log on the 日志 tab keeps 12 fields per request and never the prompt or a key.
-- **Subscription logins are used only when you add them here.** The app never reads the login of your installed Claude Code / ChatGPT / Google client behind your back; Claude accounts are added explicitly, and Gemini/web logins live in their own sidecars.
-- The gateway itself doesn't use the system proxy (`HTTPS_PROXY`); a Claude account can have its own `http(s)://` or `socks5://` proxy, and a relay provider can be reached through a relay/private network.
-
-### 12. Config for other agents (MCP / instruction files / models)
-
-**Settings → Agents and subagents → Other agents**: on the card for Codex, Gemini, Qwen or OpenCode, click **Config center**:
-
-| Section | What it does |
-| --- | --- |
-| Instruction files | The global and current-workspace `AGENTS.md` / `GEMINI.md` / `QWEN.md` and the config file itself; click "Open" to edit in an editor tab; ones that don't exist can be created in one click |
-| MCP servers | List, add (you can fill in from the common catalog) and delete. Codex / Gemini / Qwen use their own `mcp add / remove` commands (user level); OpenCode has no non-interactive command, so the `mcp` key of `opencode.json` is edited directly |
-| Sync to multiple agents | The source is either an MCP server already configured in Claude Code or an entry in the common catalog; tick the agents to sync to, and success / failure reasons are reported one by one; same names aren't overwritten by default, and ticking "Overwrite same name" replaces them |
-| Settings | Only keys verified to exist are exposed: Codex's model / reasoning effort / approval policy / sandbox, Gemini's model / default approval mode, and Qwen's and OpenCode's model. Changes are written immediately, touching only that one key, and comments and everything else stay as they were |
-| Backups | Before every write, the original file is backed up to `~/.claude-web/config-backups/<agent>/`, and you can restore from there in one click |
-
-Values of env / header entries are always shown as `••••••` in lists; when syncing from Claude, the server reads the original config and writes the secrets over directly, without going through the browser. Codex only supports stdio and HTTP (not SSE), and custom headers are written to `[mcp_servers.<name>.http_headers]` after `codex mcp add`.
-
-### 13. Conversations on other computers
-
-If you have a Claude Web running at home, at the office and on a server, you can see the conversations of **all computers** in the sidebar of any one of them (with the computer's name), open them, continue them, approve permissions and interrupt them directly; you can also "hand off to a local agent" a conversation from another computer.
+If you have a Claude Web running at home, at the office and on a server, you can see the conversations of **all computers** in the sidebar of any one of them (with the computer's name), open them, continue them, approve permissions and interrupt them directly; you can also "Continue on this computer" with a conversation from another computer.
 
 **Adding a computer** (Settings → Phone and other computers → Other computers → Add a computer), in one of two ways:
 
@@ -374,7 +296,7 @@ Once added:
 | --- | --- |
 | Sidebar | Conversations from other computers are grouped by computer in the "Other computers" section; the funnel menu gets an extra item for filtering by computer ("All computers / This computer / Office desktop …") |
 | Conversation | Opening, sending messages, approving, interrupting, renaming, archiving and deleting all happen on that computer; the ··· only has the "Generated files" view, so check files / Git / search on that computer |
-| Conversation menu | "Hand off to a local agent": reads the full history on that computer and creates a new conversation on **this** computer with a handoff note (it asks you for a local working folder, since that computer's path most likely doesn't exist here); the original conversation is unchanged |
+| Conversation menu | "Continue on this computer": reads the full history on that computer and creates a new Claude conversation on **this** computer with a briefing (it asks you for a local working folder, since that computer's path most likely doesn't exist here); the original conversation is unchanged |
 | Overview | A "Running on other computers" column; open one to take over |
 | Offline | When that computer is shut down / offline, its conversations show the last list greyed out (read-only), and this computer's own list isn't affected; it reconnects automatically when it's back |
 
@@ -382,7 +304,7 @@ In the "Other computers" list you can see the status (Online / Offline / Token e
 
 Notes: the connection is initiated by this computer; the only addition to what this computer exposes is that `/api/health` also returns a hash of a server id (used to recognize "did I just add myself"), and it contains no token or conversation content. Two computers can add each other, but there are no multiple hops (A can't see the C that B added). Attachments (files / folders) live on this computer, so the other computer can't read them when you send them to a conversation there; paste the content directly instead.
 
-### 14. Automation: scheduled tasks, goals, multi-agent orchestration
+### 10. Automation: scheduled tasks, goals, orchestration
 
 ![The Automation page: Scheduled tasks / Goals / Orchestration in the sidebar, with the task list and "Start from a template" below](docs/images/en/automation.png)
 
@@ -392,21 +314,20 @@ Notes: the connection is initiated by this computer; the only addition to what t
 - **Goals**: give it a one-sentence goal and it keeps going, turn after turn, until it's done or stuck (`/goal <goal>` in the input box works too); a thin strip "Goal: … · Turn N" appears below the conversation header;
 - **Orchestration**: see below.
 
-**Multi-agent orchestration**: split a job into steps, hand each step to the agent you choose (Claude / Codex / Gemini / OpenCode / any ACP agent), run steps with no dependencies in parallel, and stop at key points to wait for your approval. It lives on the **Orchestration** tab of the Automation page (you can also open it from the right panel's ＋, or from the command palette's "New orchestration" and "Run orchestration…").
+**Orchestration**: split a job into steps, each one a Claude conversation, run steps with no dependencies in parallel, and stop at key points to wait for your approval. It lives on the **Orchestration** tab of the Automation page (you can also open it from the right panel's ＋, or from the command palette's "New orchestration" and "Run orchestration…").
 
-1. **Build a workflow**: click + to create one, or start from a template ("Plan → Implement → Review", "Three-way comparison", "Fix a bug + tests"). Each node is one of three kinds:
-   - **Task**: pick the agent, permissions and workspace (the shared working folder, or a separate git worktree that's merged back automatically when done); tick "Keep going until done" and it advances turn by turn under the goal protocol until the agent reports it's finished;
-   - **Compare**: the same prompt goes to several agents, each working in its own worktree, and you can name a "judge" agent to give a recommendation first;
+1. **Build a workflow**: click + to create one, or start from a template ("Plan → Implement → Review", "Fix a bug + tests"). Each node is one of two kinds:
+   - **Task**: pick the permissions and workspace (the shared working folder, or a separate git worktree that's merged back automatically when done); tick "Keep going until done" and it advances turn by turn under the goal protocol until Claude reports it's finished;
    - **Approval**: stops and waits for you to approve or reject (you can write comments).
    Set the dependencies and the execution graph above previews them live. In a prompt you can use `{{input}}` (the input you fill in at run time), `{{nodes.<id>.output}}` (an upstream node's last reply) and `{{nodes.<id>.approval}}` (the approval comments); click a variable under the prompt to insert it.
 2. **Run**: click ▶ and fill in this run's input. Every task node is an ordinary conversation, and shows up as usual in the sidebar, the Overview and permission approvals, and you can step in to interject or interrupt at any time.
-3. **While it waits for you**: when an approval or a comparison is ready, the node turns yellow, and the sidebar's "Needs you", the Overview and desktop notifications all remind you; if an IM chat is bound to one of the conversations in this run, that chat also gets the reminder, and you can click "Approve / Reject" right there (other chats don't get it and can't approve).
-4. **Compare**: the candidates show their replies, change stats and full diffs side by side; after you click "Pick and merge", the new changes in the winner's worktree are committed first, then merged into the branch the run started from with `merge --no-ff`. **Orchestration won't wreck your stuff**: if you have a merge / rebase in progress, or changes in the staging area, it refuses outright; on a merge conflict it only undoes its own merge; if the merge doesn't succeed, the node goes back to "Waiting for your pick" and all worktrees and branches are kept as they were. After a successful merge, it only deletes worktrees with no uncommitted changes and losing branches nobody has touched; anything with changes is kept and listed on the node.
+3. **While it waits for you**: when an approval is ready, the node turns yellow, and the sidebar's "Needs you", the Overview and desktop notifications all remind you; if an IM chat is bound to one of the conversations in this run, that chat also gets the reminder, and you can click "Approve / Reject" right there (other chats don't get it and can't approve).
+4. **Merging back**: when a task that worked in its own worktree is done, its branch is merged into the branch the run started from. **Orchestration won't wreck your stuff**: if you have a merge / rebase in progress, or changes in the staging area, it refuses outright; on a merge conflict it only undoes its own merge; if the merge doesn't succeed, the worktree and branch are kept as they were, and once you've sorted it out, "Merge again" on the node merges it and the run carries on.
 5. **Failure / restart**: a failed node can be "Retry"-ed on its own, and the skipped downstream nodes are redone with it; a retry uses a new worktree (the name gets a suffix such as `-attempt2`) and the old ones are all kept. If the service restarts while a run is in progress, that run is marked "Interrupted by a service restart", and clicking "Resume" continues from the nodes that weren't finished (completed outputs are kept). When you delete a run record you can choose to "also clean up worktrees and branches": it only deletes the clean, merged ones and lists the rest for you.
 
 Worktrees live outside the repository, in `~/.claude-web/worktrees/<repo name>-<hash>/` (so your tests and builds don't scan them and they don't appear in git status), and branch names are `cw/<run id>/<node>-<agent>`. The number of nodes that run at the same time is set under **Settings → General → More options → Orchestration concurrency limit** (default 3).
 
-### 15. Background: watch subagents work in the café
+### 11. Background: watch subagents work in the café
 
 ![The Background page: the café on top, one card per subagent below](docs/images/en/background.png)
 
@@ -431,7 +352,7 @@ By default guests are little octopuses, and the admin wears a blue cap. In the c
 
 ![A character made this way: black-framed glasses, blue hoodie, with frames for front, back, walking, sitting and typing](docs/images/character-made.png)
 
-If you're not happy, keep talking ("bigger eyes", "switch to a red shirt"); once you like it, save it and assign it to the admin, all guests, a type of subagent (such as Explore), or a subagent with a particular name. You can also just say "make me a café character that looks like this photo" in any conversation: this is a skill that ships with the app, and it works on both the Claude and ccb runtimes. Characters are stored in `~/.claude-web/characters/`, one JSON file per character.
+If you're not happy, keep talking ("bigger eyes", "switch to a red shirt"); once you like it, save it and assign it to the admin, all guests, a type of subagent (such as Explore), or a subagent with a particular name. You can also just say "make me a café character that looks like this photo" in any conversation: this is a skill that ships with the app. Characters are stored in `~/.claude-web/characters/`, one JSON file per character.
 
 ## Character themes
 
@@ -497,7 +418,7 @@ On the desktop app, <kbd>Ctrl</kbd> is <kbd>⌘</kbd> on macOS. Press <kbd>F1</k
 | Location | Contents |
 | --- | --- |
 | `~/.claude/` | Claude Code's own data: login state, settings, conversation records (shared with the command line) |
-| `~/.claude-web/` | This app's data: the project list, pins / archive, providers (keys encrypted), drafts, scheduled tasks, the usage ledger, attachments, the shared memory database, the conversation library index (`library.db`) and delete backups (`library-trash/`), orchestration workflows (`meta.json`), café characters (`characters/`), run records (`orchestra/`) and worktrees (`worktrees/`), backups of other agents' config files (`config-backups/`), and settings for the model gateway and other computers (`meta.json`, keys encrypted) |
+| `~/.claude-web/` | This app's data: the project list, pins / archive, providers (keys encrypted), drafts, scheduled tasks, the usage ledger, attachments, the shared memory database, the conversation library index (`library.db`) and delete backups (`library-trash/`), orchestration workflows (`meta.json`), café characters (`characters/`), run records (`orchestra/`) and worktrees (`worktrees/`), and settings for other computers (`meta.json`, keys encrypted) |
 | Desktop app logs | Windows: `%APPDATA%\claude-web\`; macOS: `~/Library/Application Support/claude-web/` (`server.log`, `main.log`) |
 
 **Settings → Advanced → Diagnostics** packs the logs and a redacted copy of your config in one click, to make troubleshooting easier.
@@ -510,10 +431,10 @@ This is caused by the missing Apple signature. Run `xattr -cr "/Applications/Cla
 **It says you're not signed in / sending a message does nothing**
 In the notice at the top of the home page, click **Sign in with Claude account** (or press <kbd>Ctrl</kbd>+<kbd>`</kbd> to open a terminal and type `/login`); **Settings → Account and login** shows the sign-in state, and "More options" there has the runtime's version and doctor, so you can see the exact error.
 
-**A relay says "client version too old" or "request may have been rewritten by a third-party relay"**
-Under **Settings → Providers**, click "Test connection" for that provider, and it automatically switches to running on the official Claude Code. For "version too old", just update to the latest Claude Web (the bundled Claude Code is upgraded along with it).
+**A relay says "client version too old"**
+Conversations always run on the official Claude Code that ships with the app, so just update to the latest Claude Web (the bundled Claude Code is upgraded along with it).
 
-**On macOS, git / gh / codex and other commands can't be found**
+**On macOS, git / gh and other commands can't be found**
 At startup the app reads the PATH of your login shell (zsh / bash). If a command is installed somewhere unusual, add it to the PATH in `~/.zshrc` and restart the app.
 
 **The interface language isn't the one I want**
@@ -528,9 +449,8 @@ The desktop app checks this repository's GitHub Releases for a new version after
 ## How it works
 
 - One Node process (`server/`) drives the Claude Code on your computer with the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript), and pushes all messages to the React frontend (`web/`) over a single WebSocket; the desktop app (`desktop/`) is just an Electron shell, running the same server and web page inside.
-- The **runtime** defaults to our own engine, claude-web-engine (bundled in the desktop installer; when you install from source, `npm install` downloads it from this repository's [engine release](https://github.com/ypyik0669/claude-web/releases/tag/engine-v2.8.4-cw.4), no account needed). It's modified from 2.8.4 of [claude-code-best](https://github.com/claude-code-best/claude-code) (ccb, a community build of Claude Code that also supports OpenAI / Gemini / Grok interfaces), so that "Thinking effort", "Deep orchestration" and "Auto" work on every interface and every model; when it can't be found, it automatically falls back to the official Claude Code that ships with the Agent SDK. Relays that only let the official client through are detected automatically, and the matching provider runs on the official Claude Code.
-- Codex goes through `codex app-server` (JSON-RPC), and Gemini / Qwen / Kimi and others go through [ACP](https://agentclientprotocol.com/); their events are all normalized into the same message format, so the interface, tool cards, permission approvals and ledger are the same for every agent.
-- Conversation records are still each CLI's own (`~/.claude/projects`, `~/.codex/sessions` …), so the command line and Claude Web can take turns on the same conversation.
+- The **runtime** is always the official Claude Code that ships with the Agent SDK (bundled in the desktop installer; installed by `npm install` when you run from source). A provider (the Anthropic API, an Anthropic-compatible relay or another Claude account) only changes the address and key injected into that conversation's process.
+- Conversation records are still Claude Code's own (`~/.claude/projects`), so the command line and Claude Web can take turns on the same conversation.
 
 For more detail on the architecture, protocols and the pitfalls hit along the way, see [CLAUDE.md](CLAUDE.md) and the [docs/notes/](docs/notes/) it indexes.
 
@@ -538,8 +458,7 @@ For more detail on the architecture, protocols and the pitfalls hit along the wa
 
 - The service **only listens on `127.0.0.1` by default**. Local-network / phone access has to be turned on by hand in settings, and every device has to exchange a one-time pairing code for a device token, which you can revoke at any time.
 - Provider keys, IM bot tokens and device tokens are all **stored encrypted** (DPAPI on Windows, Keychain on macOS) and always masked in the interface and logs; a key is only injected into the process of the conversation that uses it, and isn't written to the CLI's own config such as `~/.claude/settings.json`.
-- The model gateway only accepts loopback connections from this computer.
-- **Claude Web itself doesn't collect or report any data.** Model requests go directly from your machine to the provider you chose; the telemetry behavior of the individual CLIs (Claude Code, Codex …) follows their own settings.
+- **Claude Web itself doesn't collect or report any data.** Model requests go directly from your machine to the provider you chose; Claude Code's own telemetry behavior follows its settings.
 - If you find a security issue, report it privately through GitHub's **Security → Report a vulnerability**, and please don't open a public issue.
 
 ## Running from source and development
@@ -564,7 +483,7 @@ There's also a UI smoke test: `npm run build:all && node scripts/ui-smoke.cjs`. 
 For the architecture, protocols and the pitfalls hit along the way, see [CLAUDE.md](CLAUDE.md) (for people writing code with an AI agent: `AGENTS.md` points to the same file).
 
 ```
-server/   Node service: session driving, conversation library, providers / model gateway, files / Git, remote, IM, orchestration…
+server/   Node service: session driving, conversation library, providers, files / Git, remote, IM, orchestration…
 web/      React frontend (Vite + zustand); the core of conversation rendering is a pure-function reducer: web/src/model/conversation.ts
 desktop/  Electron shell
 scripts/  e2e, UI smoke tests, English-interface check (i18n/), README screenshots (readme-shots.cjs), packaging helpers
@@ -591,9 +510,8 @@ The code of this project is open source under the [MIT License](LICENSE).
 Some of the components it depends on have their own license terms; please follow them separately when you use and redistribute it (especially the packaged installers, which include them):
 
 - [@anthropic-ai/claude-agent-sdk](https://github.com/anthropics/claude-agent-sdk-typescript) and the Claude Code it ships with: Anthropic's terms (see that package's README);
-- [claude-code-best](https://github.com/claude-code-best/claude-code) (and claude-web-engine, which is modified from it): as stated by that project;
 - The fonts in the interface are distributed with the app and are all under the [SIL Open Font License 1.1](https://openfontlicense.org/): [Inter](https://github.com/rsms/inter) (interface text), [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) (code), [Noto Serif SC](https://github.com/notofonts/noto-cjk) (only the few dozen characters used in headings were taken). The full licenses are in `web/public/licenses/`;
 - Icon shapes come from [Lucide](https://lucide.dev) (ISC license; part of it derives from Feather, MIT);
 - The remaining dependencies (Electron, React, Monaco, node-pty, xterm.js …) are under MIT and other common open-source licenses.
 
-Thanks to these projects, and to the open agent ecosystem of Codex, Gemini CLI, Qwen Code, OpenCode and the Agent Client Protocol.
+Thanks to these projects.

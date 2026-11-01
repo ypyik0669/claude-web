@@ -59,53 +59,11 @@ describe('the server-raised ego lite script card', () => {
   });
 });
 
-// Our engine (ccb) runs MCP tools without alwaysLoad through ExecuteExtraTool { tool_name, params }: Claude's own prompt
-// for one names the wrapper. The card reads as if the tool inside had been asked about directly.
-describe('a tool asked about through ExecuteExtraTool', () => {
-  const direct: PermissionRequestEvent = { requestId: 'rx', sessionId: 's', toolName: 'mcp__web__browser_open', input: { url: 'https://example.com/' } };
-  const wrapped: PermissionRequestEvent = { requestId: 'rx', sessionId: 's', toolName: 'ExecuteExtraTool', input: { tool_name: 'mcp__web__browser_open', params: { url: 'https://example.com/' } } };
-
-  it('is the card the tool inside would have had: same title, same body, same buttons', () => {
-    const html = dock(wrapped);
+// a card with suggestions offers 总是允许 next to 拒绝 / 允许一次
+describe('总是允许 on a tool card', () => {
+  it('is offered when the request carries suggestions', () => {
+    const html = dock({ requestId: 'rd', sessionId: 's', toolName: 'mcp__web__browser_open', input: { url: 'https://example.com/' }, suggestions: [{ type: 'addRules', rules: [{ toolName: 'mcp__web__browser_open' }], behavior: 'allow', destination: 'localSettings' }] });
     expect(html).toContain('Claude 想在浏览器里打开 example.com');
-    expect(html).not.toContain('ExecuteExtraTool');
-    expect(html).toBe(dock(direct));
-  });
-
-  it('a wrapped ego_browser prompt gets the script view, a wrapped Bash its command line', () => {
-    const ego = dock({ ...wrapped, input: { tool_name: 'mcp__web__ego_browser', params: { script: 'console.log("hi")' } } });
-    expect(ego).toContain('在 ego lite 里运行的脚本');
-    const bash = dock({ ...wrapped, input: { tool_name: 'Bash', params: { command: 'npm test' } } });
-    expect(bash).toContain('Claude 想运行一条命令');
-    expect(bash).toContain('npm test');
-  });
-
-  it('malformed → the generic card it had before', () => {
-    for (const input of [{}, { tool_name: 7, params: {} }, { tool_name: 'mcp__web__browser_open', params: 'x' }, { tool_name: '', params: {} }]) {
-      const html = dock({ ...wrapped, input });
-      expect(html).toContain('Claude 想使用 ExecuteExtraTool');
-      expect(acts(html)).toEqual(['deny', 'allow']);
-    }
-  });
-});
-
-// review: the wrapper's suggestions are a rule for ExecuteExtraTool — every deferred tool — while the card reads as
-// one narrow action; 总是允许 there would write a blanket allow with one click. Not offered on an unwrapped card.
-describe('总是允许 on a card shown as the tool inside ExecuteExtraTool', () => {
-  const suggestions = [{ type: 'addRules', rules: [{ toolName: 'ExecuteExtraTool' }], behavior: 'allow', destination: 'localSettings' }];
-  it('is not offered: only 拒绝 / 允许一次', () => {
-    const html = dock({ requestId: 'rs', sessionId: 's', toolName: 'ExecuteExtraTool', input: { tool_name: 'mcp__web__browser_open', params: { url: 'https://example.com/' } }, suggestions });
-    expect(html).toContain('Claude 想在浏览器里打开 example.com');
-    expect(acts(html)).toEqual(['deny', 'allow']);
-    expect(html).not.toContain('总是允许');
-  });
-  it('a card asked about directly with suggestions still has it', () => {
-    const html = dock({ requestId: 'rd', sessionId: 's', toolName: 'mcp__web__browser_open', input: { url: 'https://example.com/' }, suggestions: [{ ...suggestions[0], rules: [{ toolName: 'mcp__web__browser_open' }] }] });
-    expect(acts(html)).toEqual(['deny', 'always', 'allow']);
-  });
-  it('a malformed wrapper (the generic card) keeps its button: it reads as ExecuteExtraTool, which is what the rule is', () => {
-    const html = dock({ requestId: 'rm', sessionId: 's', toolName: 'ExecuteExtraTool', input: {}, suggestions });
-    expect(html).toContain('Claude 想使用 ExecuteExtraTool');
     expect(acts(html)).toEqual(['deny', 'always', 'allow']);
   });
 });

@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { PERMISSION_MODE_ORDER } from '@/ui/terms';
-import { buildModelMenu } from '@/features/models/menu';
 import { FEATURE_KEYS, plusMenuIds } from './capabilities';
 import { BAR_ID, EFFORT_MENU_ID, MODEL_MENU_ID, PLUS_ID, PROJECT_MENU_ID, idSel } from './ids';
 import { COMPOSER_REACH, PLACE_CONTAINER, PLACE_OPENER } from './reach';
@@ -11,7 +10,7 @@ const ids = (place: string) => at(place).map((s) => /^\[data-id="([^"]+)"\]$/.ex
 
 describe('every control of the old composer is reachable (spec §4.2, phase 3 acceptance)', () => {
   it('the old 「功能」 menu, attachments and goal: all in +, and every + id is one the menu renders', () => {
-    for (const k of [...FEATURE_KEYS, 'channels', 'goal', 'files', 'folder', 'reference']) expect(ids('plus')).toContain(k);
+    for (const k of [...FEATURE_KEYS, 'goal', 'files', 'folder', 'reference']) expect(ids('plus')).toContain(k);
     for (const id of ids('plus')) expect(plusMenuIds()).toContain(id);
   });
   it('permission: all six modes', () => {
@@ -20,12 +19,6 @@ describe('every control of the old composer is reachable (spec §4.2, phase 3 ac
   it('add / manage / refresh are the model menu\'s own ids, effort and 深度编排 the chip\'s next to it; every one of them is listed', () => {
     expect(ids('model').sort()).toEqual(Object.values(MODEL_MENU_ID).sort());
     expect(ids('depth').sort()).toEqual(Object.values(EFFORT_MENU_ID).sort());
-  });
-  it('the agent choice really is a section of the flat menu (data-sec="agent:<kind>")', () => {
-    const m = buildModelMenu({ agent: 'claude', providers: [], settings: {}, otherAgents: [{ kind: 'codex', name: 'Codex', installed: true }] });
-    const sec = m.sections.find((s) => s.kind === 'agent');
-    expect(sec?.id).toBe('agent:codex');
-    expect(at('model')).toContain('[data-sec^="agent:"]');
   });
   it('project chip, the row, the stats ring', () => {
     expect(ids('project').sort()).toEqual(Object.values(PROJECT_MENU_ID).sort());
@@ -38,9 +31,9 @@ describe('every control of the old composer is reachable (spec §4.2, phase 3 ac
     const keys = COMPOSER_REACH.map((r) => `${r.place} ${r.sel}`);
     expect(new Set(keys).size).toBe(keys.length);
   });
-  // final review M3: 功能 → Brief was 2 clicks before the redesign; so is + → Brief / 频道, rows of their own under 进阶
-  it('Brief and 频道 are plain rows of the + menu (2 clicks), not behind an expander', () => {
-    expect(COMPOSER_REACH.filter((r) => r.sel === idSel('brief') || r.sel === idSel(PLUS_ID.channels)).map((r) => [r.place, r.when])).toEqual([['plus', undefined], ['plus', undefined]]);
+  // final review M3: 功能 → Brief was 2 clicks before the redesign; so is + → Brief, a row of its own under 进阶
+  it('Brief is a plain row of the + menu (2 clicks), not behind an expander', () => {
+    expect(COMPOSER_REACH.filter((r) => r.sel === idSel('brief')).map((r) => [r.place, r.when])).toEqual([['plus', undefined]]);
     expect(Object.keys(PLUS_ID)).not.toContain('more');
   });
 });

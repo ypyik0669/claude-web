@@ -4,7 +4,7 @@ import readline from 'node:readline';
 import path from 'node:path';
 import { dataDir } from '../files/service.js';
 import type { LedgerEntry, ProviderType } from '../protocol.js';
-import { inputIncludesCacheRead, trustsCliCost } from './pricing.js';
+import { trustsCliCost } from './pricing.js';
 
 /**
  * Traffic ledger: one line per model turn (`result` message) plus API retries / errors, appended to
@@ -43,13 +43,11 @@ export class LedgerService {
   record(e: LedgerEntry) {
     this.queue.push(JSON.stringify(e) + '\n');
     void this.flush();
-    if (e.kind !== 'gateway') {
-      if (this.bySession) add(this.bySession, e);
-      else if (this.indexing) this.late.push(e);
-    }
+    if (this.bySession) add(this.bySession, e);
+    else if (this.indexing) this.late.push(e);
   }
 
-  /** A session's rows (not the gateway's), indexed once and kept up to date: history reads them for every load. */
+  /** A session's rows, indexed once and kept up to date: history reads them for every load. */
   private bySession: Map<string, LedgerEntry[]> | null = null;
   private indexing: Promise<void> | null = null;
   private late: LedgerEntry[] = [];
@@ -58,7 +56,7 @@ export class LedgerService {
       this.indexing ??= (async () => {
         const map = new Map<string, LedgerEntry[]>();
         const seen = new Set<string>();
-        for (const e of await this.list(36500)) if (e.kind !== 'gateway') { add(map, e); seen.add(rowKey(e)); }
+        for (const e of await this.list(36500)) { add(map, e); seen.add(rowKey(e)); }
         for (const e of this.late) if (!seen.has(rowKey(e))) add(map, e);
         this.late = [];
         this.bySession = map;
@@ -88,11 +86,11 @@ export class LedgerService {
         model,
         durationMs: m.duration_ms ?? 0,
         apiMs: m.duration_api_ms,
-        input: inputIncludesCacheRead(type) ? Math.max(0, input - cacheRead) : input,
+        input,
         output: u.output_tokens ?? 0,
         cacheRead,
         cacheWrite: u.cache_creation_input_tokens ?? 0,
-        // ccb prices every model with Claude's table: meaningless for other vendors' models (0 + costUnknown)
+        // the CLI prices every model with Claude's table: meaningless for a relay's other models (0 + costUnknown)
         costUsd: unknown ? 0 : m.total_cost_usd ?? 0,
         ...(unknown ? { costUnknown: true } : {}),
         ok: !m.is_error,
@@ -115,6 +113,8 @@ export class LedgerService {
         let e: LedgerEntry;
         try { e = JSON.parse(line); } catch { continue; }
         if (e.ts < since) continue;
+        // rows the removed model gateway wrote (2026-11-01): not a conversation's turns
+        if ((e as { kind?: string }).kind === 'gateway') continue;
         if (sessionId && e.sessionId !== sessionId) continue;
         out.push(e);
       }
@@ -124,9 +124,9 @@ export class LedgerService {
 
   async exportCsv(days = 30): Promise<string> {
     const rows = await this.list(days);
-    const head = ['time', 'sessionId', 'provider', 'model', 'ok', 'error', 'durationMs', 'apiMs', 'input', 'output', 'cacheRead', 'cacheWrite', 'costUsd', 'turns', 'source', 'gatewayMember', 'switches'];
+    const head = ['time', 'sessionId', 'provider', 'model', 'ok', 'error', 'durationMs', 'apiMs', 'input', 'output', 'cacheRead', 'cacheWrite', 'costUsd', 'turns'];
     const esc = (v: unknown) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-    const lines = [head.join(','), ...rows.map((r) => [new Date(r.ts).toISOString(), r.sessionId, r.providerId ?? 'claude', r.model, r.ok, r.error, r.durationMs, r.apiMs, r.input, r.output, r.cacheRead, r.cacheWrite, r.costUsd, r.turns, r.kind ?? 'session', r.gateway?.member, r.gateway?.switches].map(esc).join(','))];
+    const lines = [head.join(','), ...rows.map((r) => [new Date(r.ts).toISOString(), r.sessionId, r.providerId ?? 'claude', r.model, r.ok, r.error, r.durationMs, r.apiMs, r.input, r.output, r.cacheRead, r.cacheWrite, r.costUsd, r.turns].map(esc).join(','))];
     const dir = path.join(dataDir(), 'exports');
     await fs.mkdir(dir, { recursive: true });
     const file = path.join(dir, `ledger-${new Date().toISOString().slice(0, 10)}.csv`);

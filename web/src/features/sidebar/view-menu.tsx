@@ -41,7 +41,7 @@ const perLabel = (p: PerGroup) => (p === 'all' ? tr('全部') : String(p));
 
 /**
  * The 显示 button's menu on the sidebar's header row (stage C3, spec C3): the old funnel's filters (the box, 来源,
- * 机器, 显示已归档, 选择) plus 分组方式 / 排序 / 其它 agent 的对话 / 每组, 新建分区, 恢复默认 and 查看全部 — one menu: the
+ * 机器, 显示已归档, 选择) plus 分组方式 / 排序 / 每组, 新建分区, 恢复默认 and 查看全部 — one menu: the
  * choices of 分组方式 / 排序 / 每组 open in place under their row (only one anchored menu can be open at a time).
  * Choices apply at once and the menu stays open; 选择多个 / 新建分区 / 查看全部 / 管理对话来源 close it.
  */
@@ -77,9 +77,6 @@ export function ViewMenu(p: ViewMenuProps) {
       <div className="menu-label">{tr('显示')}</div>
       <button data-id={id('archived')} role="menuitemcheckbox" aria-checked={showArchived} className={clsx(showArchived && 'on')} onClick={() => useStore.getState().setShowArchived(!showArchived)}>
         <Icon name="check" size={13} className="ck" /> {tr('显示已归档的对话')}
-      </button>
-      <button data-id={id('other-agents')} role="menuitemcheckbox" aria-checked={v.show.otherAgents} className={clsx(v.show.otherAgents && 'on')} onClick={() => p.setView({ ...v, show: { ...v.show, otherAgents: !v.show.otherAgents } })}>
-        <Icon name="check" size={13} className="ck" /> {tr('其它 agent 的对话')}
       </button>
       <button data-id={id('per-group')} aria-expanded={open === 'per'} onClick={() => toggle('per')}>
         <Icon name="eye" size={13} /> {tr('每组')}<span className="n">{perLabel(v.show.perGroup)}</span><Icon name={open === 'per' ? 'chevronDown' : 'chevronRight'} size={12} className="sb-view-chev" />

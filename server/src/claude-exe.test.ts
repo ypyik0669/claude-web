@@ -20,7 +20,7 @@ vi.mock('node:child_process', async (orig) => {
     spawn: (cmd: string, args: string[], opts: any) => { spawns.push({ cmd, args, opts }); return { pid: 1 } as any; },
   };
 });
-const { globalRoot, globalRootAsync, versionOf, engineInfo, spawnClaude, resetLookups, resolveCcbEntry, LOOKUP_FAIL_TTL_MS } = await import('./claude-exe.js');
+const { globalRoot, globalRootAsync, versionOf, engineInfo, spawnClaude, resetLookups, LOOKUP_FAIL_TTL_MS } = await import('./claude-exe.js');
 
 describe('claude-exe lookups: successes kept, failures kept only LOOKUP_FAIL_TTL_MS', () => {
   let now = 0;
@@ -77,64 +77,25 @@ describe('claude-exe lookups: successes kept, failures kept only LOOKUP_FAIL_TTL
     const info = await p;
     expect(syncCalls).toEqual([]);
     expect(info.path).toBeTruthy();
-    // the repo bundles both engines: ours (version from its package.json) and the SDK's claude binary
-    expect(info.runtime).toBe('ccb');
-    expect(info.path).toContain(path.join('node_modules', 'claude-web-engine', 'dist', 'cli-node.js'));
-    // the installed engine's own version (it moves with each cw.N; a literal here broke at cw.2)
-    const installed = JSON.parse(fs.readFileSync(new URL('../../node_modules/claude-web-engine/package.json', import.meta.url), 'utf8')).version;
-    expect(installed).toMatch(/^2\.8\.4-cw\.\d+$/);
-    expect(info.version).toBe(installed);
-    const claude = info.runtime === 'claude' ? info : info.fallback;
-    if (claude?.path && !claude.path.endsWith('.js')) expect(claude.version).toBe('2.1.281');
+    // the SDK's official claude binary, nothing next to it
+    expect(info.version).toBe('2.1.281');
+    expect(info).not.toHaveProperty('fallback');
+    expect(info).not.toHaveProperty('runtime');
   });
 });
 
-describe('the engine is our own claude-web-engine, never a global claude-code-best', () => {
-  it('a global npm claude-code-best is not picked; the bundled claude-web-engine is', () => {
-    const g = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-global-'));
-    const globalCcb = path.join(g, 'claude-code-best', 'dist', 'cli-node.js');
-    fs.mkdirSync(path.dirname(globalCcb), { recursive: true });
-    fs.writeFileSync(globalCcb, '');
-    try {
-      const found = resolveCcbEntry(() => g);
-      expect(found).not.toBe(globalCcb);
-      expect(found).toContain(path.join('claude-web-engine', 'dist', 'cli-node.js'));
-    } finally { fs.rmSync(g, { recursive: true, force: true }); }
-  });
-
-  it('its version comes from the package next to the entry: 2.8.4-cw.1', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-engine-'));
-    const entry = path.join(dir, 'claude-web-engine', 'dist', 'cli-node.js');
-    fs.mkdirSync(path.dirname(entry), { recursive: true });
-    fs.writeFileSync(entry, '');
-    fs.writeFileSync(path.join(dir, 'claude-web-engine', 'package.json'), JSON.stringify({ name: 'claude-web-engine', version: '2.8.4-cw.1' }));
-    try {
-      expect(await versionOf(entry)).toBe('2.8.4-cw.1');
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-  });
-});
-
-describe('spawnClaude runs a JS engine with the spawn guard in front', () => {
-  it('command "node" → our node runtime, `--require <preload>` before the engine entry, windowsHide', () => {
-    const saved = { log: process.env.CW_SPAWN_LOG, dir: process.env.CLAUDE_WEB_DIR };
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-spawnclaude-'));
-    const entry = path.join(dir, 'claude-web-engine', 'dist', 'cli-node.js');
-    try {
-      process.env.CW_SPAWN_LOG = '1'; // a plain node gets the guard only with spawn logging on (Electron always)
-      process.env.CLAUDE_WEB_DIR = dir;
-      spawnClaude({ command: 'node', args: [entry, '--output-format', 'stream-json'], env: {} });
-      const s = spawns.pop()!;
-      expect(s.cmd).toBe(process.execPath);
-      expect(s.args[0]).toBe('--require');
-      expect(s.args[1]).toMatch(/spawn-guard-[0-9a-f]{10}\.cjs$/);
-      expect(s.args.slice(2)).toEqual([entry, '--output-format', 'stream-json']);
-      expect(s.opts.windowsHide).toBe(true);
-      spawnClaude({ command: path.join(dir, 'claude.exe'), args: ['--x'], env: {} }); // a native binary: untouched
-      expect(spawns.pop()!.args).toEqual(['--x']);
-    } finally {
-      if (saved.log === undefined) delete process.env.CW_SPAWN_LOG; else process.env.CW_SPAWN_LOG = saved.log;
-      if (saved.dir === undefined) delete process.env.CLAUDE_WEB_DIR; else process.env.CLAUDE_WEB_DIR = saved.dir;
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
+describe('spawnClaude', () => {
+  it('runs the binary as given, windowsHide; a third-party session loses the SDK markers', () => {
+    spawnClaude({ command: '/x/claude', args: ['--x'], env: { A: '1', CLAUDE_AGENT_SDK_VERSION: '1' } });
+    let s = spawns.pop()!;
+    expect(s.cmd).toBe('/x/claude');
+    expect(s.args).toEqual(['--x']);
+    expect(s.opts.windowsHide).toBe(true);
+    expect(s.opts.env).toMatchObject({ A: '1', CLAUDE_AGENT_SDK_VERSION: '1' });
+    spawnClaude({ command: '/x/claude', args: [], env: { CLAUDE_WEB_PLAIN_UA: '1', CLAUDE_AGENT_SDK_VERSION: '1', CLAUDE_AGENT_SDK_CLIENT_APP: 'x' } });
+    s = spawns.pop()!;
+    expect(s.opts.env).not.toHaveProperty('CLAUDE_WEB_PLAIN_UA');
+    expect(s.opts.env).not.toHaveProperty('CLAUDE_AGENT_SDK_VERSION');
+    expect(s.opts.env).not.toHaveProperty('CLAUDE_AGENT_SDK_CLIENT_APP');
   });
 });

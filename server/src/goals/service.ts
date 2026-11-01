@@ -14,7 +14,7 @@ export const GOAL_PROTOCOL = tr("你在执行一个「目标」。规则：\n- �
 /**
  * Web-level goals: an objective + living spec bound to a session, auto-continued until the model reports
  * `GOAL_STATUS: complete` (or blocks / runs out of budget). Evidence (files, commands, tests, commits) and
- * steps (TodoWrite) are harvested from the session stream. Works with any agent driver.
+ * steps (TodoWrite) are harvested from the session stream.
  */
 export class GoalService extends EventEmitter {
   private timers = new Map<string, NodeJS.Timeout>();
@@ -32,13 +32,13 @@ export class GoalService extends EventEmitter {
 
   private async save(g: Goal) { g.updatedAt = Date.now(); await this.meta.setGoal(g); this.emit('changed'); }
 
-  async create(p: { objective: string; spec?: string; cwd: string; maxTurns?: number; tokenBudget?: number | null; agent?: string; permissionMode?: string; model?: string; sessionId?: string }): Promise<Goal> {
-    const g: Goal = { id: randomBytes(5).toString('hex'), objective: p.objective.trim(), spec: p.spec ?? '', cwd: p.cwd, status: 'draft', turnsExecuted: 0, maxTurns: p.maxTurns ?? 50, tokensUsed: 0, tokenBudget: p.tokenBudget ?? null, createdAt: Date.now(), updatedAt: Date.now(), steps: [], evidence: [], agent: p.agent || undefined, permissionMode: p.permissionMode, model: p.model, sessionId: p.sessionId };
+  async create(p: { objective: string; spec?: string; cwd: string; maxTurns?: number; tokenBudget?: number | null; permissionMode?: string; model?: string; sessionId?: string }): Promise<Goal> {
+    const g: Goal = { id: randomBytes(5).toString('hex'), objective: p.objective.trim(), spec: p.spec ?? '', cwd: p.cwd, status: 'draft', turnsExecuted: 0, maxTurns: p.maxTurns ?? 50, tokensUsed: 0, tokenBudget: p.tokenBudget ?? null, createdAt: Date.now(), updatedAt: Date.now(), steps: [], evidence: [], permissionMode: p.permissionMode, model: p.model, sessionId: p.sessionId };
     await this.save(g);
     return g;
   }
 
-  async update(id: string, patch: Partial<Pick<Goal, 'objective' | 'spec' | 'maxTurns' | 'tokenBudget' | 'cwd' | 'agent' | 'permissionMode' | 'model'>>) {
+  async update(id: string, patch: Partial<Pick<Goal, 'objective' | 'spec' | 'maxTurns' | 'tokenBudget' | 'cwd' | 'permissionMode' | 'model'>>) {
     const g = this.get(id);
     if (!g) throw new Error(tr('目标不存在'));
     Object.assign(g, patch);
@@ -60,7 +60,7 @@ export class GoalService extends EventEmitter {
     if (!g) throw new Error(tr('目标不存在'));
     let r = g.sessionId ? this.pool.get(g.sessionId) : undefined;
     if (!r) {
-      r = this.pool.open({ sessionId: g.sessionId, cwd: g.cwd, agent: (g.agent as any) || undefined, permissionMode: (g.permissionMode as any) ?? 'default', model: g.model || undefined });
+      r = this.pool.open({ sessionId: g.sessionId, cwd: g.cwd, permissionMode: (g.permissionMode as any) ?? 'default', model: g.model || undefined });
       g.sessionId = r.sessionId;
     }
     const fresh = g.status === 'draft' || g.turnsExecuted === 0;

@@ -43,7 +43,8 @@ const upstream = http.createServer((q, s) => {
     const msg = { id: `msg_${++n}`, type: 'message', role: 'assistant', model: j.model, stop_sequence: null };
     if (!j.stream) return json(s, 200, { ...msg, content: [{ type: 'text', text: 'side:ok' }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 2 } });
     const all = `${textOf(j.system)}\n${(j.messages ?? []).map((m) => textOf(m.content)).join('\n')}`;
-    hits.push({ all, main: /DIRS-PLEASE/.test(all) });
+    // the main request carries the tool list; the official binary's title request is streamed with the same line too
+    hits.push({ all, main: /DIRS-PLEASE/.test(all) && Array.isArray(j.tools) && j.tools.length > 0 });
     const ev = (type, o) => `event: ${type}\ndata: ${JSON.stringify({ type, ...o })}\n\n`;
     let out = ev('message_start', { message: { ...msg, content: [], stop_reason: null, usage: { input_tokens: 10, output_tokens: 1 } } });
     out += ev('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }) + ev('content_block_delta', { index: 0, delta: { type: 'text_delta', text: 'ok' } });

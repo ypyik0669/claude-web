@@ -26,8 +26,8 @@ export type EntryId =
 
 /** One part of a page: a component with its own requests (a list, a form, a status block). */
 export type BodyId =
-  | 'account' | 'engine' | 'models' | 'providers' | 'proxy' | 'gateway'
-  | 'mcp' | 'mcpCatalog' | 'mcpJson' | 'plugins' | 'skills' | 'skillsBackup' | 'agents' | 'subagents' | 'memory'
+  | 'account' | 'engine' | 'models' | 'providers' | 'proxy'
+  | 'mcp' | 'mcpCatalog' | 'mcpJson' | 'plugins' | 'skills' | 'skillsBackup' | 'subagents' | 'memory'
   | 'remote' | 'peers' | 'hosts' | 'im' | 'web' | 'library' | 'secrets'
   | 'hooks' | 'localEnv' | 'env' | 'tools' | 'diagnostics' | 'update' | 'raw' | 'customCss';
 
@@ -60,33 +60,31 @@ export interface SectionMeta {
   bodies?: BodyId[];
   /** parts under 更多选项 */
   more?: BodyId[];
-  /** a page of two halves (MCP + 插件, 其它 Agent + 子代理): the parts live in the tabs */
+  /** a page of two halves (MCP + 插件): the parts live in the tabs */
   tabs?: TabMeta[];
 }
 
 /** Name + search words of every page part. */
 export const BODY_INFO: Record<BodyId, { l: string; keywords: string }> = {
   account: { l: tr('登录状态'), keywords: tr('login 登录 claude.ai 账号 auth 订阅 api 提供方 上下文窗口 context window 1M 200K 自动压缩 auto-compact 压缩') },
-  engine: { l: tr('运行内核'), keywords: tr('engine ccb claude-web-engine claude-code-best 官方 二进制 版本 更新 doctor 配置目录 引擎 插件数') },
+  engine: { l: tr('运行内核'), keywords: tr('engine 官方 二进制 版本 更新 doctor 配置目录 引擎 插件数 claude code') },
   models: { l: tr('模型列表'), keywords: tr('model 模型 启用 隐藏 收藏 星标 opus sonnet haiku effort 智能程度 刷新 按档案') },
   providers: { l: tr('供应商列表'), keywords: tr('provider api key base url 中转 openai gemini grok anthropic 缓存 cache 默认 档案 测试连接 上下文窗口 context window 1M 200K 自动压缩 auto-compact 压缩') },
   proxy: { l: tr('网络代理'), keywords: tr('proxy 代理 梯子 vpn clash v2ray http_proxy https_proxy 系统代理 pac 地区 region 403 连不上 超时') },
-  gateway: { l: tr('网关与分组'), keywords: tr('gateway 网关 故障转移 failover 转换 多账号 额度 轮询 round robin 成员') },
   mcp: { l: tr('已配置的 MCP'), keywords: tr('mcp server 当前会话 已配置 移除 连接状态') },
   mcpCatalog: { l: tr('MCP 目录'), keywords: tr('mcp 目录 catalog registry 注册表 健康检查 health 安装') },
   mcpJson: { l: tr('手动添加（JSON）'), keywords: tr('mcp json add-json 手动 添加 stdio') },
   plugins: { l: tr('插件列表'), keywords: tr('plugin marketplace 插件 市场 安装 卸载 启用') },
   skills: { l: tr('Skills 列表与安装'), keywords: tr('skill 技能 安装 github 新建 编辑 删除') },
   skillsBackup: { l: tr('Skills 备份'), keywords: tr('skill 备份 backup tar 恢复 restore') },
-  agents: { l: tr('其它 Agent 列表'), keywords: tr('agent codex gemini qwen kimi opencode acp 安装 登录 启动参数 配置中心 自定义') },
   subagents: { l: tr('Claude 子代理列表'), keywords: tr('subagent 子代理 agents md') },
-  memory: { l: tr('记忆开关与注入'), keywords: tr('memory 记忆 跨 agent mcp sqlite 遗忘 清空 注入') },
+  memory: { l: tr('记忆开关与注入'), keywords: tr('memory 记忆 跨对话 mcp sqlite 遗忘 清空 注入') },
   web: { l: tr('搜索与内置浏览器'), keywords: tr('web search browser 搜索 浏览器 联网 上网 网页 bing duckduckgo google yahoo baidu 百度 brave 密钥 截图 登录状态') },
   remote: { l: tr('手机访问'), keywords: tr('remote lan phone mobile 手机 局域网 配对 配对码 二维码 qr 设备 吊销 端口 不让电脑睡眠 睡眠 休眠 keep awake') },
   peers: { l: tr('其它电脑'), keywords: tr('其它机器 其它电脑 跨机器 联邦 peer federation 加入 重新配对') },
   hosts: { l: tr('SSH 隧道'), keywords: tr('ssh 隧道 tunnel 远程主机 端口转发 免密') },
   im: { l: tr('机器人列表'), keywords: tr('telegram discord slack 飞书 feishu lark 钉钉 dingtalk 企业微信 wecom 微信 机器人 bot im 网关 配对') },
-  library: { l: tr('来源与索引'), keywords: tr('session library codex opencode 导入 索引 加入 移出 重建 claude.ai 数据导出 export zip') },
+  library: { l: tr('来源与索引'), keywords: tr('session library 导入 索引 加入 移出 重建 claude.ai 数据导出 export zip') },
   secrets: { l: tr('API Key 存储'), keywords: tr('secret keychain credential dpapi 钥匙串 加密 密钥') },
   hooks: { l: tr('Hooks 列表'), keywords: tr('hook 钩子 事件 matcher') },
   localEnv: { l: tr('本机环境变量（加密）'), keywords: tr('env 环境变量 加密 密钥 secret database token 本机 终端 terminal') },
@@ -154,7 +152,6 @@ export const SETTINGS_SECTIONS: SectionMeta[] = [
   // 模型
   { id: 'models', l: tr('模型与智能程度'), ic: 'artifact', group: 'model', desc: tr('模型菜单里出现哪些模型、哪些置顶，以及每个模型能调的智能程度。'), keywords: tr('model 模型 effort'), entries: MODEL_ENTRIES, bodies: ['models'] },
   { id: 'providers', l: trAs('供应商', 'Providers'), ic: 'cloud', group: 'model', desc: tr('第三方接口或中转站：地址、密钥和默认模型。每个对话可以在模型菜单里换用。'), keywords: tr('供应商 / 环境 provider 中转 api key'), bodies: ['providers', 'proxy'] },
-  { id: 'gateway', l: tr('模型网关'), ic: 'gateway', group: 'model', desc: tr('把几个供应商组成一个本机入口：一个额度用完自动换下一个，不同协议之间自动转换。'), keywords: tr('gateway 网关'), bodies: ['gateway'] },
   // 扩展
   {
     id: 'mcp', l: tr('MCP 与插件'), ic: 'mcp', group: 'ext', desc: tr('给 Claude 接上外部工具和数据源（MCP），或安装插件市场里的插件。'), keywords: tr('mcp plugin 插件'),
@@ -164,20 +161,14 @@ export const SETTINGS_SECTIONS: SectionMeta[] = [
     ],
   },
   { id: 'skills', l: 'Skills', ic: 'skill', group: 'ext', desc: tr('可复用的工作方法：从 GitHub 安装、新建、编辑。'), keywords: tr('skill 技能'), bodies: ['skills'], more: ['skillsBackup'] },
-  {
-    id: 'agents', l: tr('Agents 与子代理'), ic: 'agent', group: 'ext', desc: tr('其它编程 Agent（Codex、Gemini CLI…）的安装、登录与启动参数，以及 Claude 自己的子代理。'), keywords: tr('agent agents 子代理'),
-    tabs: [
-      { id: 'cli', l: TERMS.agents, bodies: ['agents'], keywords: 'CLI Agents codex gemini qwen kimi' },
-      { id: 'subagents', l: tr('Claude 子代理'), bodies: ['subagents'], keywords: tr('subagent Claude 子代理') },
-    ],
-  },
-  { id: 'memory', l: tr('共享记忆'), ic: 'memory', group: 'ext', desc: tr('所有 Agent 共用的一份记忆：做过的决定、约束、踩过的坑。'), keywords: tr('memory 记忆'), bodies: ['memory'] },
+  { id: 'agents', l: tr('子代理'), ic: 'agent', group: 'ext', desc: tr('Claude 自己的子代理：~/.claude/agents 里的和插件带的。'), keywords: tr('agent agents 子代理 subagent'), bodies: ['subagents'] },
+  { id: 'memory', l: tr('共享记忆'), ic: 'memory', group: 'ext', desc: tr('所有对话共用的一份记忆：做过的决定、约束、踩过的坑。'), keywords: tr('memory 记忆'), bodies: ['memory'] },
   // 连接
   { id: 'remote', l: tr('手机与其它电脑'), ic: 'device', group: 'connect', desc: tr('在手机上接着用，或者把其它电脑上的对话接到这里。'), keywords: tr('远程 / 手机 remote phone 手机 远程'), bodies: ['remote', 'peers'], more: ['hosts'] },
   { id: 'im', l: tr('IM 机器人'), ic: 'chat', group: 'connect', desc: tr('在 Telegram、飞书、钉钉等聊天软件里给 Claude 派活、批准操作。'), keywords: tr('IM 网关 im bot 机器人'), bodies: ['im'] },
   { id: 'web', l: tr('联网'), ic: 'web', group: 'connect', desc: tr('让 Agent 能搜索、能打开网页：用什么搜索，在哪个浏览器里打开。'), keywords: tr('web 联网 上网 搜索 浏览器 search browser'), bodies: ['web'] },
   // 数据
-  { id: 'library', l: tr('对话库'), ic: 'archive', group: 'data', desc: tr('把 Codex、OpenCode 等其它 Agent 的历史对话并进侧栏和搜索。'), keywords: tr('library 会话库 对话库 历史'), bodies: ['library'] },
+  { id: 'library', l: tr('对话库'), ic: 'archive', group: 'data', desc: tr('把 claude.ai 数据导出里的历史对话并进侧栏和搜索。'), keywords: tr('library 会话库 对话库 历史'), bodies: ['library'] },
   { id: 'secrets', l: tr('密钥'), ic: 'lock', group: 'data', desc: tr('供应商的 API Key 怎么存在本机。'), keywords: tr('secret 密钥 加密'), bodies: ['secrets'] },
   // 高级
   { id: 'hooks', l: 'Hooks', ic: 'bolt', group: 'advanced', advanced: true, desc: tr('Claude Code 在某些事件时运行的命令（只读列表，来自 settings.json 和插件）。'), keywords: tr('hook 钩子'), bodies: ['hooks'] },
@@ -203,7 +194,7 @@ export const LEGACY_SECTIONS: Record<string, { section: string; tab?: string; mo
   plugins: { section: 'mcp', tab: 'plugins' },
   // the connector directory's 「用配置手动添加…」 (structure round 2): the form under the MCP page's 更多选项
   'mcp-json': { section: 'mcp', more: true, body: 'mcpJson' },
-  subagents: { section: 'agents', tab: 'subagents' },
+  subagents: { section: 'agents' },
 };
 
 export interface SettingsTarget {
@@ -318,12 +309,10 @@ export function searchSettings(query: string): SettingsHit[] {
 }
 
 /** The small status at the end of a nav row (Linear's 「Desktop · Disabled」): only what is known. */
-export function navStatus(o: { loggedIn?: boolean | null; providers?: number; gatewayEnabled?: boolean | null }): Record<string, string> {
+export function navStatus(o: { loggedIn?: boolean | null; providers?: number }): Record<string, string> {
   const out: Record<string, string> = {};
   if (o.loggedIn === true) out.account = tr('已登录');
   else if (o.loggedIn === false) out.account = tr('未登录');
   if (o.providers) out.providers = String(o.providers);
-  if (o.gatewayEnabled === true) out.gateway = tr('开');
-  else if (o.gatewayEnabled === false) out.gateway = tr('关');
   return out;
 }

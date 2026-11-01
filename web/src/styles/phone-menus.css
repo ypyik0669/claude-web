@@ -64,20 +64,18 @@ html.desktop .as-sheet { -webkit-app-region: no-drag; }
 .as-layer > .as-sheet.tall > .as-body > .menu { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 
 /* ---- rows: 48px, 16px text, 20px icons ---- */
-.as-sheet :is(.menu > button, .menu .sub-menu > button, .menu .menu-grid button, .menu [role='group'] > button, .menu.cm button[data-mi], .menu.dirmenu .dirmenu-list button) {
+.as-sheet :is(.menu > button, .menu .menu-grid button, .menu [role='group'] > button, .menu.cm button[data-mi], .menu.dirmenu .dirmenu-list button) {
   min-height: 48px; padding: 6px 12px; gap: 12px; border-radius: var(--r-lg); font-size: var(--fs-lg); line-height: 22px;
 }
-.as-sheet :is(.menu > button, .menu .sub-menu > button, .menu .menu-grid button, .menu [role='group'] > button, .menu.cm button[data-mi], .menu.dirmenu .dirmenu-list button) > svg { width: 20px; height: 20px; stroke-width: 1.8; }
+.as-sheet :is(.menu > button, .menu .menu-grid button, .menu [role='group'] > button, .menu.cm button[data-mi], .menu.dirmenu .dirmenu-list button) > svg { width: 20px; height: 20px; stroke-width: 1.8; }
 /* what trails a row (a tick, a chevron) is a size smaller */
-.as-sheet :is(.menu > button, .menu .sub-menu > button, .menu .menu-grid button, .menu [role='group'] > button, .menu.cm button[data-mi]) > svg:last-child:not(:first-child) { width: 18px; height: 18px; stroke-width: 2; }
+.as-sheet :is(.menu > button, .menu .menu-grid button, .menu [role='group'] > button, .menu.cm button[data-mi]) > svg:last-child:not(:first-child) { width: 18px; height: 18px; stroke-width: 2; }
 .as-sheet .menu button.danger, .as-sheet .menu button.danger > svg { color: var(--err); }
 .as-sheet .menu button:focus-visible { outline-offset: -2px; }
 .as-sheet .menu :is(.menu-label, .cm-h, .dirmenu-head, .mm-group) { padding: 14px 12px 6px; font-size: var(--fs-sm); line-height: 18px; }
 .as-sheet .menu .menu-sep { margin: 6px 12px; }
 .as-sheet .menu :is(.menu-note, .rv-menu-note) { padding: 8px 12px; font-size: var(--fs-sm); line-height: 18px; color: var(--ink-4); }
 .as-sheet .menu .menu-grid { gap: 2px 4px; }
-/* 「交给其它 Agent 继续」 in a row's menu: its agents open under it, inside the sheet */
-.as-sheet .menu .sub-menu { margin: 0 0 4px 22px; padding-left: 6px; }
 /* every field 16px: iOS zooms the page into anything smaller */
 .as-sheet .menu :is(input, textarea) { font-size: var(--fs-lg); }
 .as-sheet .menu .field { min-height: 40px; }

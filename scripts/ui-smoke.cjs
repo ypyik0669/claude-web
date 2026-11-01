@@ -5,7 +5,7 @@
 //
 //   npm run build:all && node scripts/ui-smoke.cjs [--out <dir>] [--show] [--keep]
 //   node scripts/ui-smoke.cjs --idle 180 [--live] [--activity] [--out <dir>]   # spawn-frequency measurement (CW_SPAWN_LOG)
-//     --live      also opens a real engine session in the seeded repo (ccb / claude starts, no prompt is sent)
+//     --live      also opens a real engine session in the seeded repo (claude starts, no prompt is sent)
 //     --activity  during the window, append to the seeded transcript every 5 s, edit a repo file every 10 s and
 //                 run `git status` in the repo every 20 s (what a session working in the background looks like)
 //   node scripts/ui-smoke.cjs --url "http://127.0.0.1:<port>/?token=…"  # an already running server (read-only phases)
@@ -184,6 +184,10 @@ function seedHome(home) {
     gline({ type: 'user', message: { role: 'user', content: 'smoke: draw who can read the bucket' } }, 0),
     gline({ type: 'assistant', message: { id: 'msg_g1', type: 'message', role: 'assistant', model: 'claude-smoke', content: [{ type: 'text', text: graphText }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } } }, 4),
   ].map((x) => JSON.stringify(x)).join('\n') + '\n');
+  // for the conversation on the fake Messages API (scripts/fake-anthropic.cjs): the file its Read asks about (outside
+  // the project, so Claude Code asks first), and its slow command allowed (a goal runs in 每步询问 and must not stop)
+  fs.writeFileSync(path.join(home, 'outside-note.txt'), 'outside\n');
+  fs.writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash(sleep 6)'] } }));
   return { repo, sid, toolsSid, reviewSid, graphSid, graphStage, graphDest: path.join(proj, `${graphSid}.jsonl`), transcript: path.join(proj, `${sid}.jsonl`) };
 }
 
@@ -255,7 +259,9 @@ async function runner() {
   if (external) {
     console.log(`using ${String(external).replace(/token=[^&]+/, 'token=…')} (read-only phases only)`);
   } else {
-    home = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-smoke-'));
+    // the real path: macOS's tmpdir is a symlink (/var → /private/var) and the SDK looks a transcript up under the
+    // project folder of the cwd's real path (Claude Code writes it there too), so a seed under /var reads back empty
+    home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cw-smoke-')));
     seed = seedHome(home);
     if (idle) fs.rmSync(spawnLog, { force: true });
     // stage E: the PR bar's forge requests go to scripts/fake-forge.cjs (the driver starts it and writes this file)
@@ -284,8 +290,6 @@ async function runner() {
     // the server's data dir (the temp HOME's): checks that read what the server wrote (the canonical mirror)
     SMOKE_DATA: home ? path.join(home, '.claude-web') : '',
     SMOKE_FAKE_FORGE: home ? path.join(home, 'fake-forge.json') : '',
-    // the mock ACP agent (phase 5: a real permission request) runs under this node, not Electron
-    SMOKE_NODE: process.execPath,
     SMOKE_SHOW: arg('--show', false) ? '1' : '',
     SMOKE_INVENTORY: JSON.stringify(inv),
     // longer than the driver's own hard stop (below): the driver must get to write its result and say where it stopped
@@ -495,7 +499,7 @@ function driver() {
             const loginRow = await js(`[...document.querySelectorAll('.modal.onboarding .ob-actions button')].map((b) => b.textContent.trim())`);
             const presets = await js(`[...document.querySelectorAll('.modal.onboarding .qc .qc-preset')].map((b) => b.textContent.trim())`);
             // no key needed to look: the quick connect is the step itself (presets, the key field, 连接); the Claude login is secondary
-            check('onboarding ①: 接一个模型 in place (中转站 / DeepSeek / Kimi… · API Key · 连接), then 用 Claude 账号登录 / 先跳过', presets[0] === '中转站' && presets.length >= 6 && await js(`!!document.querySelector('.modal.onboarding .qc [data-qc="key"]') && !!document.querySelector('.modal.onboarding .qc [data-qc="connect"]')`) && ['用 Claude 账号登录', '先跳过'].every((t) => loginRow.some((x) => x.includes(t))) && !loginRow.some((x) => /添加供应商|在终端登录/.test(x)), JSON.stringify({ presets, loginRow }));
+            check('onboarding ①: 接一个模型 in place (中转站 / Anthropic API · API Key · 连接), then 用 Claude 账号登录 / 先跳过', presets.join() === '中转站,Anthropic API' && await js(`!!document.querySelector('.modal.onboarding .qc [data-qc="key"]') && !!document.querySelector('.modal.onboarding .qc [data-qc="connect"]')`) && ['用 Claude 账号登录', '先跳过'].every((t) => loginRow.some((x) => x.includes(t))) && !loginRow.some((x) => /添加供应商|在终端登录/.test(x)), JSON.stringify({ presets, loginRow }));
             await click('.modal.onboarding [data-ob="skip"]');
             taken++;
           }
@@ -519,7 +523,7 @@ function driver() {
           if (await waitFor(`document.querySelector('.modal.connect-model')?.dataset.reason === 'send'`, 4000)) {
             const held = await js(`({ text: document.querySelector('.welcome .composer textarea')?.value ?? '', open: Object.keys(window.__store.getState().open).length })`);
             check('send with no login and no model: 「先接一个模型」 opens, the text stays, nothing is started', held.text.includes('smoke：第一条') && held.open === 0, JSON.stringify(held));
-            smokeProv = await srvReq({ kind: 'providers.upsert', provider: { name: 'Smoke 首发', type: 'openai', baseUrl: 'http://127.0.0.1:9', apiKey: 'smoke-placeholder-not-a-key', models: ['smoke-m1'], defaultModel: 'smoke-m1' } });
+            smokeProv = await srvReq({ kind: 'providers.upsert', provider: { name: 'Smoke 首发', type: 'anthropic', baseUrl: 'http://127.0.0.1:9', apiKey: 'smoke-placeholder-not-a-key', models: ['smoke-m1'], defaultModel: 'smoke-m1' } });
             await js('window.__store.getState().loadProviders()');
             const pickSel = '.modal.connect-model [data-qc="existing"]';
             if (await waitFor(`!!document.querySelector('${pickSel}')`, 5000)) await click(pickSel);
@@ -616,7 +620,7 @@ function driver() {
       // redesign phase 1: one pane, one tab, no workbench setting → no global top bar, no group bar, no tab strip, no panel rail
       if (E.SMOKE_READONLY !== '1') {
         const chrome = await js('({ wb: window.__store.getState().settings["ui.workbench"], topbar: !!document.querySelector(".topbar"), groupbar: !!document.querySelector(".groupbar"), strips: document.querySelectorAll(".tabstrip").length, rail: !!document.querySelector(".dock-rail"), iconRail: [...document.querySelectorAll(".rail .rail-main > [data-id], .rail .rail-main > .rail-anchor > [data-id]")].map((b) => b.dataset.id).join(" ") })');
-        check('default chrome: no top bar / group bar / tab strip / row of panel icons; the icon rail is 对话 · 后台 · 自动化 · 网关 · 扩展 · 更多', chrome.wb === false && !chrome.topbar && !chrome.groupbar && !chrome.strips && !chrome.rail && chrome.iconRail === 'chat background automation gateway extensions more', JSON.stringify(chrome));
+        check('default chrome: no top bar / group bar / tab strip / row of panel icons; the icon rail is 对话 · 后台 · 自动化 · 用量与隐私 · 扩展 · 更多', chrome.wb === false && !chrome.topbar && !chrome.groupbar && !chrome.strips && !chrome.rail && chrome.iconRail === 'chat background automation gateway extensions more', JSON.stringify(chrome));
         const quota = await js('[...document.querySelectorAll(".quota")].every((q) => q.closest(".sb-foot"))');
         check('the quota ring lives in the sidebar bottom row', quota);
       }
@@ -669,18 +673,14 @@ function driver() {
 
       // ---- model menu
       phase = 'model-menu';
-      // the other agents are sections of this menu, and agents.list probes every CLI's version first (≈ 13 s on a
-      // cold machine): wait for the list rather than racing it
-      check('agent list arrived (other agents in the model menu)', await waitFor('window.__store.getState().agents.length > 0', 30_000));
       await click('.welcome .mm-anchor > button.chip');
       check('model menu opens', await waitFor('!!document.querySelector(".menu.mm")', 5000));
-      await waitFor('!!document.querySelector(\'.menu.mm [data-sec^="agent:"]\')', 30_000);
       await sleep(600);
       await shot('model-menu');
       check('model menu without error boundary', !(await noBoundary('body')), await noBoundary('body'));
-      // the other agents as sections of the same flat list (no sub-menu); 智能程度 / 深度编排 are NOT in here any more
-      const mm = await js(`(() => { const m = document.querySelector('.menu.mm'); if (!m) return null; return { levels: [...m.querySelectorAll('[data-level]')].map((b) => b.textContent), ultra: !!m.querySelector('[data-id="ultracode"]'), agents: m.querySelectorAll('[data-sec^="agent:"]').length, nested: m.querySelectorAll('.menu').length, ids: ['add-provider', 'agents', 'manage', 'refresh'].filter((i) => !m.querySelector('[data-id="' + i + '"]')), words: /effort|ultracode|档案|引擎/i.test(m.innerText) }; })()`);
-      check('model menu: only models — other agents flat, add / manage / refresh; no 智能程度, no 深度编排', mm && !mm.levels.length && !mm.ultra && mm.agents >= 1 && !mm.nested && !mm.ids.length, JSON.stringify(mm));
+      // only Claude's models (no other agents' sections, no sub-menu); 智能程度 / 深度编排 are NOT in here any more
+      const mm = await js(`(() => { const m = document.querySelector('.menu.mm'); if (!m) return null; return { levels: [...m.querySelectorAll('[data-level]')].map((b) => b.textContent), ultra: !!m.querySelector('[data-id="ultracode"]'), agents: m.querySelectorAll('[data-sec^="agent:"]').length, nested: m.querySelectorAll('.menu').length, ids: ['add-provider', 'manage', 'refresh'].filter((i) => !m.querySelector('[data-id="' + i + '"]')), words: /effort|ultracode|档案|引擎/i.test(m.innerText) }; })()`);
+      check('model menu: only models — add / manage / refresh, no other agents; no 智能程度, no 深度编排', mm && !mm.levels.length && !mm.ultra && !mm.agents && !mm.nested && !mm.ids.length, JSON.stringify(mm));
       check('model menu shows no implementation words (effort / ultracode / 档案 / 引擎)', mm && !mm.words);
       await key('Escape');
       await sleep(250);
@@ -706,17 +706,23 @@ function driver() {
       phase = 'subagent-chip';
       const subChip = await js(`document.querySelector('.welcome .cb .sub-anchor > button.chip')?.getAttribute('aria-label') ?? null`);
       check('子代理 chip next to the model chip, nothing picked', subChip === '子代理：同主模型', subChip);
-      // any provider's models are offered, whatever the conversation runs on (2026-10-18)
-      const subProv = await srvReq({ kind: 'providers.upsert', provider: { name: 'Smoke 子代理', type: 'openai', baseUrl: 'http://127.0.0.1:9', apiKey: 'smoke-placeholder-not-a-key', models: ['smoke-sub-m'], defaultModel: 'smoke-sub-m' } }).catch(() => null);
+      // only the conversation's own provider's models (Claude only, 2026-11-01): with two providers (this HOME is not
+      // logged in, so the new conversation runs on one of them) the menu has one provider's section, not both
+      const subProv = await srvReq({ kind: 'providers.upsert', provider: { name: 'Smoke 子代理', type: 'anthropic', baseUrl: 'http://127.0.0.1:9', apiKey: 'smoke-placeholder-not-a-key', models: ['smoke-sub-m'], defaultModel: 'smoke-sub-m' } }).catch(() => null);
+      const subProv2 = await srvReq({ kind: 'providers.upsert', provider: { name: 'Smoke 子代理 2', type: 'anthropic', baseUrl: 'http://127.0.0.1:9', apiKey: 'smoke-placeholder-not-a-key', models: ['smoke-sub-m2'], defaultModel: 'smoke-sub-m2' } }).catch(() => null);
       await js('window.__store.getState().loadProviders()');
       await sleep(300);
       await click('.welcome .cb .sub-anchor > button.chip');
-      const otherListed = subProv && await waitFor(`!!document.querySelector('.menu.mm [data-sec="${subProv.id}"]')`, 3000);
-      const mainProv = await js(`window.__store.getState().settings?.['ui.lastProvider'] ?? null`);
-      check('子代理 menu lists another provider’s models', !!otherListed, JSON.stringify({ id: subProv?.id, mainProv, secs: await js(`[...document.querySelectorAll('.menu.mm [data-sec]')].map((e) => e.dataset.sec)`) }));
+      const subOpen = await waitFor(`!!document.querySelector('.menu.mm [data-id="subagent-same"]')`, 3000);
+      await sleep(300);
+      const subSecs = await js(`[...document.querySelectorAll('.menu.mm [data-sec]')].map((e) => e.dataset.sec)`);
+      const mainLabel = await js(`document.querySelector('.welcome .mm-anchor > button.chip')?.textContent ?? null`);
+      const listedProvs = subSecs.filter((x) => x === subProv?.id || x === subProv2?.id);
+      check('子代理 menu offers only the conversation’s own provider’s models (one of two providers, not both)', !!subProv && !!subProv2 && subOpen && subSecs.length === 1 && listedProvs.length === 1, JSON.stringify({ ids: [subProv?.id, subProv2?.id], mainLabel, subSecs }));
       await key('Escape');
       await sleep(250);
-      if (subProv) { await srvReq({ kind: 'providers.remove', id: subProv.id }).catch(() => {}); await js('window.__store.getState().loadProviders()'); }
+      for (const p of [subProv, subProv2]) if (p) await srvReq({ kind: 'providers.remove', id: p.id }).catch(() => {});
+      await js('window.__store.getState().loadProviders()');
       await sleep(300);
       await click('.welcome .cb .sub-anchor > button.chip');
       const sm = await waitFor(`!!document.querySelector('.menu.mm [data-id="subagent-same"]')`, 3000) && await js(`(() => { const m = document.querySelector('.menu.mm'); return { label: m.getAttribute('aria-label'), same: m.querySelector('[data-id="subagent-same"]')?.classList.contains('cur'), def: !!m.querySelector('[data-id="subagent-default"] [role="switch"]'), agents: m.querySelectorAll('[data-sec^="agent:"]').length, heads: m.querySelectorAll('[data-sec="favorites"], [data-sec="recent"]').length, words: /effort|ultracode|档案|引擎/i.test(m.innerText) }; })()`);
@@ -729,7 +735,8 @@ function driver() {
       // ---- redesign phase 3: the composer row, the + menu, the permission menu
       phase = 'composer';
       const oneRow = `(() => { const bar = document.querySelector('.welcome .composer-bar'); if (!bar) return null; const b = bar.getBoundingClientRect(); const kids = [...bar.querySelectorAll('.cb-left > *, .cb-right > *')].filter((e) => e.getBoundingClientRect().width > 0); const inside = kids.every((e) => { const r = e.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1 && r.left >= b.left - 8 && r.right <= b.right + 1; }); return { w: Math.round(b.width), h: Math.round(b.height), n: kids.length, inside, overflow: bar.scrollWidth > bar.clientWidth + 1 }; })()`;
-      for (const [w, h] of [[1440, 900], [1024, 800], [760, 860]]) {
+      // 780, not 760: ≤ 760 px is the phone layout (MOBILE_QUERY), whose row is the 40px send button high (checked below)
+      for (const [w, h] of [[1440, 900], [1024, 800], [780, 860]]) {
         win.setSize(w, h);
         await sleep(700);
         const r = await js(oneRow);
@@ -790,22 +797,17 @@ function driver() {
       await click('.welcome .cap-tag[data-cap="chrome"] button');
       check('the tag\'s × turns it off again', await waitFor('!document.querySelector(\'.welcome .cap-tag[data-cap="chrome"]\')', 2000));
       if (E.SMOKE_READONLY !== '1') {
-        // Brief and 频道: rows of their own under 进阶 (final review M3: 2 clicks, as 功能 → Brief was) — Brief right
-        // after 主动, ↓ from Brief reaches the 频道 field, and what is typed there survives a click outside (it is saved
-        // as you type, into meta.json ui.featureDefaults)
+        // Brief: a row of its own under 进阶 (final review M3: 2 clicks) — the only one there now (协调者 / 主动 / 频道 were
+        // the engine we dropped, 2026-11-01); on → a removable tag, saved into meta.json ui.featureDefaults
         await click('.welcome .cb .plus');
         const rows = await js(`[...document.querySelectorAll('.menu.plus-menu [data-id]')].map((e) => e.dataset.id)`);
-        await js(`document.querySelector('.menu.plus-menu [data-id="brief"]').focus()`);
-        await key('Down');
-        const inField = await js('document.activeElement?.closest?.(\'[data-id="channels"]\') ? "channels" : document.activeElement?.tagName');
-        wc.insertText('server:smoke');
-        await sleep(100);
-        await click('.welcome .composer textarea');
-        const saved = await waitFor('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"]?.channels) === \'["server:smoke"]\'', 3000);
-        check('+ → Brief / 频道 in 2 clicks (rows under 进阶, no 「Brief、频道…」 expander); ↓ from Brief reaches the field; typing survives a click outside', rows.join() === 'files,folder,reference,slash,chatOnly,chrome,computerUse,goal,coordinator,proactive,brief,channels' && inField === 'channels' && saved && (await waitFor('!document.querySelector(".menu.plus-menu")', 2000)), JSON.stringify({ rows, inField, saved }));
-        check('频道 shows as a removable tag', await waitFor('!!document.querySelector(\'.welcome .cap-tag[data-cap="channels"]\')', 2000));
-        await click('.welcome .cap-tag[data-cap="channels"] button');
-        await waitFor('!document.querySelector(\'.welcome .cap-tag[data-cap="channels"]\')', 2000);
+        await click('.menu.plus-menu [data-id="brief"]');
+        await key('Escape');
+        const briefTag = await waitFor('!!document.querySelector(\'.welcome .cap-tag[data-cap="brief"]\')', 2000);
+        const briefSaved = await waitFor('window.__store.getState().settings["ui.featureDefaults"]?.brief === true', 3000);
+        check('+ → Brief in 2 clicks (the only row under 进阶: no 协调者 / 主动 / 频道); on → a removable tag, saved as a default', rows.join() === 'files,folder,reference,slash,chatOnly,chrome,computerUse,goal,brief' && briefTag && briefSaved && (await waitFor('!document.querySelector(".menu.plus-menu")', 2000)), JSON.stringify({ rows, briefTag, briefSaved }));
+        await click('.welcome .cap-tag[data-cap="brief"] button');
+        check('Brief\'s tag × turns it off again', await waitFor('!document.querySelector(\'.welcome .cap-tag[data-cap="brief"]\') && !window.__store.getState().settings["ui.featureDefaults"]?.brief', 2000));
         check('the capability defaults live in meta.json, not localStorage', await js('localStorage.getItem("cw.lastFeatures") === null && !!window.__store.getState().settings["ui.featureDefaults"]'));
         // ---- 只聊天 (spec 2026-10-16 pages §5): this new conversation only — a tag, the capability rows go, × undoes it
         await click('.welcome .cb .plus');
@@ -906,9 +908,8 @@ function driver() {
       check('settings · 从其它工具导入: 取消 closes it', await waitFor(`!document.querySelector('.import-dialog')`, 3000));
       if (E.SMOKE_READONLY !== '1') {
         phase = 'settings:agent-provider';
-        const tmpProv = await srvReq({ kind: 'providers.upsert', provider: { name: 'Smoke 中转', type: 'openai', baseUrl: 'http://127.0.0.1:9', apiKey: 'smoke-placeholder-not-a-key', models: ['smoke-m1'], defaultModel: 'smoke-m1' } }).catch(() => null);
+        const tmpProv = await srvReq({ kind: 'providers.upsert', provider: { name: 'Smoke 中转', type: 'anthropic', baseUrl: 'http://127.0.0.1:9', apiKey: 'smoke-placeholder-not-a-key', models: ['smoke-m1'], defaultModel: 'smoke-m1' } }).catch(() => null);
         await js('window.__store.getState().loadProviders()');
-        await js(`window.__store.getState().openSettings({ section: 'agents' })`);
         // a dropdown is the shared Select now: open it, read its rows, close it again
         const optsOf = async (sel) => {
           await click(sel);
@@ -918,10 +919,6 @@ function driver() {
           await waitFor(`!document.querySelector('.menu.select-popover')`, 3000);
           return opts;
         };
-        const apSel = '.modal.settings .agent-provider [data-provider-select]';
-        await waitFor(`!!document.querySelector(${JSON.stringify(apSel)})`, 8000);
-        const apOpts = await optsOf(apSel);
-        check('settings · Agents: another agent picks the provider its new conversations use (自己的登录 · providers · 添加供应商…)', apOpts[0] === '自己的登录' && apOpts.some((t) => t.startsWith('Smoke 中转')) && apOpts.at(-1) === '添加供应商…', JSON.stringify(apOpts));
         await srvReq({ kind: 'im.set', id: 'smoke-dd', patch: { kind: 'dingtalk', name: 'Smoke 钉钉', enabled: false } }).catch(() => {});
         await js(`window.__store.getState().openSettings({ section: 'im' })`);
         const imSel = '.modal.settings [data-provider-select]';
@@ -1417,7 +1414,7 @@ function driver() {
         await click('.menu.plus-menu [data-id="chrome"]');
         const after = await js('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"] ?? null)');
         const stillOff = await js(`document.querySelector('.menu.plus-menu [data-id="chrome"]')?.getAttribute('aria-checked')`);
-        check('in a conversation the + capabilities show its own state, read-only, 「要改请在新对话的 + 里设置」 said once', live && /要改请在新对话的 \+ 里设置/.test(live.sub ?? '') && live.mentions === 1 && live.rows >= 4 && live.ro && !live.checked.length && before === after && stillOff === 'false', JSON.stringify({ live, before, after, stillOff }));
+        check('in a conversation the + capabilities show its own state, read-only, 「要改请在新对话的 + 里设置」 said once', live && /要改请在新对话的 \+ 里设置/.test(live.sub ?? '') && live.mentions === 1 && live.rows >= 3 /* 控制 Chrome · 操控电脑 · Brief */ && live.ro && !live.checked.length && before === after && stillOff === 'false', JSON.stringify({ live, before, after, stillOff }));
         await key('Escape');
 
         // ---- phase 6 (the official app's recording): info column, header tools, the line under the box, the menus
@@ -1557,17 +1554,14 @@ function driver() {
           await js(`window.__store.setState({ sidebarOpen: true })`);
           await sleep(200);
           await js(`(() => { const b = [...document.querySelectorAll('.rail [data-id]')].find((e) => e.dataset.id === 'gateway'); b && b.click(); })()`);
-          const hubReady = await waitFor(`(() => { const p = document.querySelector('.over-page.hub-page'); return !!p && !p.hidden && document.querySelectorAll('.hub-side [data-id]').length >= 9; })()`, 20000);
+          const hubReady = await waitFor(`(() => { const p = document.querySelector('.over-page.hub-page'); return !!p && !p.hidden && document.querySelectorAll('.hub-side [data-id]').length >= 4; })()`, 20000);
           const hub = hubReady ? await js(`(() => ({ pages: [...document.querySelectorAll('.hub-side [data-id]')].map((x) => x.dataset.id).join(','), tabs: !!document.querySelector('.hub-page .over-tabs'), adv: document.body.innerText.includes('高级设置') }))()`) : null;
-          check('模型 opens on the hub with nine pages (概览 · 上游 · 路由 · 操控 · 用量 · 隐私 · 插件 · 接入 · 设置), no tabs, no 高级设置', hub && hub.pages === 'overview,sources,routing,control,usage,privacy,plugins,agents,settings' && !hub.tabs && !hub.adv, JSON.stringify(hub));
-          await js(`document.querySelector('.hub-side [data-id="sources"]')?.click()`);
-          await waitFor(`document.querySelectorAll('.hub-filters [data-id]').length >= 6`, 10000);
-          const filters = await js(`(() => ({ ids: [...document.querySelectorAll('.hub-filters [data-id]')].map((x) => x.dataset.id).join(','), cards: document.querySelectorAll('.hub-pgrid .hub-provider').length }))()`);
-          check('上游 has the six source filters and one card per source/preset', filters.ids === 'all,subscription,api,local,custom,remote' && filters.cards > 0, JSON.stringify(filters));
+          // Claude only (2026-11-01): the rail's 用量与隐私 has four pages — no 概览 / 上游 / 路由 / 插件 / 接入 (the gateway's)
+          check('用量与隐私 opens on the hub with four pages (用量 · 隐私 · 操控 · 备份), no tabs, no 高级设置', hub && hub.pages === 'usage,privacy,control,settings' && !hub.tabs && !hub.adv, JSON.stringify(hub));
           await js(`document.querySelector('.hub-side [data-id="settings"]')?.click()`);
-          const share = await waitFor(`(() => { const p = document.querySelector('.hub-settings'); return !!p && p.innerText.includes('本机地址') && p.innerText.includes('网关密钥'); })()`, 10000);
-          const afterSettings = await js(`({ settings: !!document.querySelector('.hub-settings'), page: !!document.querySelector('.hub-page:not([hidden])'), drawer: !!document.querySelector('.gw-drawer-wrap[data-drawer="share"]:not([hidden])') })`);
-          check('设置 shows gateway address/key and sharing in the page (no drawer)', share && afterSettings.settings && afterSettings.page && !afterSettings.drawer, JSON.stringify(afterSettings));
+          const backup = await waitFor(`(() => { const p = document.querySelector('.hub-settings'); return !!p && p.innerText.includes('备份与同步'); })()`, 10000);
+          const afterSettings = await js(`({ settings: !!document.querySelector('.hub-settings'), page: !!document.querySelector('.hub-page:not([hidden])'), gateway: /网关密钥|本机地址/.test(document.querySelector('.hub-settings')?.innerText ?? '') })`);
+          check('备份 shows backup / sync in the page, nothing of the gateway (address, key, sharing)', backup && afterSettings.settings && afterSettings.page && !afterSettings.gateway, JSON.stringify(afterSettings));
           await js(`(() => { const b = [...document.querySelectorAll('.rail [data-id]')].find((e) => e.dataset.id === 'chat'); b && b.click(); })()`);
           await waitFor(`!document.querySelector('.hub-page:not([hidden])')`, 3000);
           await click('.rail-acct');
@@ -1684,8 +1678,9 @@ function driver() {
         const paneTiles = `(() => { const st = window.__store.getState(); const g = st.layout.groups.find((x) => x.id === st.layout.activeGroupId); const p = g.panes[g.focusedPaneId]; return p.tiles.map((t) => t.kind === 'chat' ? 'chat:' + (t.sessionId || 'new') : t.kind + ':' + t.id).join(',') + '|' + p.activeTileId; })()`;
         // header ··· hands over straight away: the agents (or the note that there are none) are in the menu itself
         await click('.sess-head .sh-more > button');
-        const handoff = await js(`(() => { const m = document.querySelector('.menu.sess-menu'); if (!m) return null; return { label: [...m.querySelectorAll('.menu-label')].some((l) => l.textContent.includes('交给')), nested: !!m.querySelector('button[aria-expanded]:not([data-act="thinking-language"])') }; })()`);
-        check('header ··· lists the hand-over agents directly (no sub-menu)', handoff && handoff.label && !handoff.nested, JSON.stringify(handoff));
+        // Claude only (2026-11-01): no other agents to hand a conversation of this machine to (no 交给… section, no 在本机继续)
+        const handoff = await js(`(() => { const m = document.querySelector('.menu.sess-menu'); if (!m) return null; return { label: [...m.querySelectorAll('.menu-label')].some((l) => l.textContent.includes('交给')), item: !!m.querySelector('[data-id="handoff"]'), nested: !!m.querySelector('button[aria-expanded]:not([data-act="thinking-language"])') }; })()`);
+        check('header ··· of a conversation on this machine: no hand-over to other agents, no sub-menu', handoff && !handoff.label && !handoff.item && !handoff.nested, JSON.stringify(handoff));
         await js('document.body.click()');
         await sleep(200);
         // right panel minimized to its icon strip: the header button brings it back
@@ -2325,7 +2320,6 @@ function driver() {
             row: '.sidebar .sb-list [data-id], .sidebar .sb-attn [data-id]',
             rowMenu: '.menu.sess-menu [data-id]',
             account: '.rail .rail-foot [data-id], .sidebar .sb-account [data-id]',
-            hint: '.sidebar .sb-hint [data-id]',
           };
           const seen = {};
           const harvest = async () => {
@@ -2370,7 +2364,7 @@ function driver() {
           await click('.sidebar [data-id="view"]');
           const fm = await ids('.menu.sb-view [data-id]');
           const fmIn = await js('(() => { const m = document.querySelector(".menu.sb-view"); if (!m) return false; const r = m.getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })()');
-          check('显示 menu (stage C3, was the funnel): filter box, 分组方式, 排序, 显示已归档, 其它 agent, 每组, sources, 选择多个, 新建分区, 恢复默认, 查看全部, 管理对话来源 — inside the window', has(fm, ['query', 'source', 'group-by', 'sort-by', 'archived', 'other-agents', 'per-group', 'select', 'new-section', 'reset', 'all', 'library']) && fmIn, JSON.stringify({ fm, fmIn }));
+          check('显示 menu (stage C3, was the funnel): filter box, 分组方式, 排序, 显示已归档, 每组, sources, 选择多个, 新建分区, 恢复默认, 查看全部, 管理对话来源 — inside the window', has(fm, ['query', 'source', 'group-by', 'sort-by', 'archived', 'per-group', 'select', 'new-section', 'reset', 'all', 'library']) && fmIn, JSON.stringify({ fm, fmIn }));
           await harvest();
           await shot('sidebar-filter');
           if (E.SMOKE_READONLY !== '1') {
@@ -2629,8 +2623,9 @@ function driver() {
           await ctxMenu(`.sidebar .sb-list [data-sid=${SID}]`);
           await sleep(300);
           const rm = await ids('.menu.sess-menu [data-id]');
-          check('conversation right-click menu: open in tab / split, resume, pin, folder, VS Code, reference, rename, fork, archive, hand-over, native CLI, copy id, delete',
-            has(rm, ['open-tab', 'open-split', 'resume', 'pin', 'explorer', 'vscode', 'reference', 'rename', 'fork', 'archive', 'handoff', 'native-cli', 'copy-id', 'delete']), JSON.stringify(rm));
+          // 在本机继续 (handoff) is only for a conversation on another machine: checked on a peer row below
+          check('conversation right-click menu: open in tab / split, resume, pin, folder, VS Code, reference, rename, fork, archive, native CLI, copy id, delete (no hand-over on this machine)',
+            has(rm, ['open-tab', 'open-split', 'resume', 'pin', 'explorer', 'vscode', 'reference', 'rename', 'fork', 'archive', 'native-cli', 'copy-id', 'delete']) && !rm.includes('handoff'), JSON.stringify(rm));
           await harvest();
           await shot('sidebar-row-menu');
           if (E.SMOKE_READONLY !== '1') {
@@ -2724,10 +2719,9 @@ function driver() {
             ];
             const saved = await js('JSON.stringify({ limits: window.__store.getState().limits, sources: window.__store.getState().librarySources, checklist: window.__store.getState().settings["onboarding.checklist"] ?? null })');
             const limits = { ok: true, capturedAt: new Date(now).toISOString(), subscriptionType: 'max', windows: [{ label: '5 小时', percent: 34, resetsAt: new Date(now + 3600e3).toISOString(), active: true }] };
-            const codex = { kind: 'codex', name: 'Codex', installed: true, detected: true, joined: false, dismissed: false, enabled: false };
             const installed = await js(`(() => {
-              const st = window.__store, F = ${JSON.stringify(fakes)}, L = ${JSON.stringify(limits)}, C = ${JSON.stringify(codex)};
-              // the newcomer checklist (the discovery hint waits for it): window.__cwSmokeChecklist, kept like the fakes
+              const st = window.__store, F = ${JSON.stringify(fakes)}, L = ${JSON.stringify(limits)};
+              // the newcomer checklist: window.__cwSmokeChecklist, kept like the fakes
               window.__cwSmokeChecklist = { done: ['project'] };
               const apply = () => {
                 const s = st.getState(), patch = {};
@@ -2735,7 +2729,6 @@ function driver() {
                 const add = F.filter((f) => !have.has(f.sessionId));
                 if (add.length) patch.sessions = [...s.sessions, ...add];
                 if (s.limits !== L) patch.limits = L;
-                if (!s.librarySources.includes(C)) patch.librarySources = [...s.librarySources.filter((x) => x.kind !== C.kind), C];
                 if (s.settings['onboarding.checklist'] !== window.__cwSmokeChecklist) patch.settings = { ...s.settings, 'onboarding.checklist': window.__cwSmokeChecklist };
                 if (Object.keys(patch).length) st.setState(patch);
               };
@@ -2753,34 +2746,9 @@ function driver() {
             })()`);
             check('sidebar scenarios: fakes installed (kept by a store subscription while they run)', installed);
             await sleep(400);
-            // final review §9 #5: the discovery hint waits while the newcomer checklist is still on the home page…
-            const hintEarly = await exists('.sidebar .sb-hint');
-            // …while the home page shows it under the checklist (user report: a newcomer who came for Codex found no way to it)
-            const homeEarly = await js(`(() => ({ home: !!document.querySelector('.welcome'), hint: !!document.querySelector('.welcome .home-hint .msg'), ids: document.querySelectorAll('.welcome .home-hint [data-id]').length }))()`);
-            // …but not forever (re-review M-7): 3 days after the list first showed (`since`) it comes anyway
-            await js(`(() => { window.__cwSmokeChecklist = { done: ['project'], since: Date.now() - 86400e3 }; window.__cwSmokeFakesApply(); })()`);
-            await sleep(300);
-            const hintDay = await exists('.sidebar .sb-hint');
-            await js(`(() => { window.__cwSmokeChecklist = { done: ['project'], since: Date.now() - 4 * 86400e3 }; window.__cwSmokeFakesApply(); })()`);
-            const hintAged = await waitFor(`!!document.querySelector('.sidebar .sb-hint')`, 2000);
-            check('library hint: an unfinished checklist shown a day ago still holds it back; one shown 4 days ago no longer does (re-review M-7)', !hintDay && hintAged, JSON.stringify({ hintDay, hintAged }));
             await js(`(() => { window.__cwSmokeChecklist = { done: ['project'], dismissed: true }; window.__cwSmokeFakesApply(); })()`);
             await sleep(300);
             await harvest();
-            // (this machine may have its own detected tools too — e.g. OpenCode's data folder — so the words follow the list)
-            const hintNow = await js(`(() => { const m = document.querySelector('.sidebar .sb-hint .msg'); const names = window.__store.getState().librarySources.filter((x) => x.kind !== 'claude' && x.detected && !x.joined && !x.dismissed).map((x) => x.name); return { msg: m?.textContent ?? null, title: m?.title ?? '', names }; })()`);
-            const hintWant = hintNow.names.length === 1 ? `把 ${hintNow.names[0]} 里的对话也列在这里？` : `把 ${hintNow.names[0]} 等工具里的对话也列在这里？`;
-            const homeLate = await exists('.welcome .home-hint');
-            check('library hint on the home page: there while the checklist holds the sidebar one back (no sidebar ids), gone once the sidebar has it', !homeEarly.home || (homeEarly.hint && homeEarly.ids === 0 && !homeLate), JSON.stringify({ homeEarly, homeLate }));
-            check('library hint: not while the newcomer checklist is on; once it is closed, one plain question (把 Codex 里的对话也列在这里？ · 列出来 / 以后再说)', !hintEarly && hintNow.msg === hintWant && hintNow.title.includes('Codex') && await exists('.sidebar .sb-hint [data-id="library-join"]') && await exists('.sidebar .sb-hint [data-id="library-later"]'), JSON.stringify({ hintEarly, hintNow, hintWant }));
-            // several agents' names wrap onto a second line instead of being cut off; the full text is the tooltip
-            await js(`(() => { const names = { opencode: 'OpenCode', gemini: 'Gemini CLI', qwen: 'Qwen Code' }; const extra = Object.keys(names).map((k) => ({ kind: k, name: names[k], installed: true, detected: true, joined: false, dismissed: false, enabled: false })); const st = window.__store.getState(); window.__store.setState({ librarySources: [...st.librarySources.filter((x) => !names[x.kind]), ...extra] }); })()`);
-            await sleep(300);
-            // the leading name is whatever this machine detected first (DeepSeek Harness and friends join Codex on a
-            // machine that has them), so the expected sentence is computed from the list, not hard-coded
-            const hintFit = await js(`(() => { const m = document.querySelector('.sidebar .sb-hint .msg'); if (!m) return null; const lh = parseFloat(getComputedStyle(m).lineHeight); const j = document.querySelector('.sidebar .sb-hint [data-id="library-join"]').getBoundingClientRect(); const h = document.querySelector('.sidebar .sb-hint').getBoundingClientRect(); const names = window.__store.getState().librarySources.filter((x) => x.kind !== 'claude' && x.detected && !x.joined && !x.dismissed).map((x) => x.name); return { text: m.textContent, names, want: names.length === 1 ? \`把 \${names[0]} 里的对话也列在这里？\` : \`把 \${names[0]} 等工具里的对话也列在这里？\`, lines: Math.round(m.clientHeight / lh), clipped: m.scrollHeight > m.clientHeight + 1, title: m.title.includes('Qwen Code'), joinInside: j.right <= h.right && j.width > 10 }; })()`);
-            check('library hint: several agents → 「把 <first> 等工具里的对话也列在这里？」, not cut off (up to three lines), every name in the tooltip; 选择… stays whole', !!hintFit && hintFit.text === hintFit.want && !hintFit.clipped && hintFit.lines <= 3 && hintFit.title && hintFit.joinInside, JSON.stringify(hintFit));
-            await shot('sidebar-hint-wrap');
             // 文件夹 (2026-10-14): every folder its own group, open — the running conversation is listed in its folder's
             // group, which offers 在这里新建对话 and 设为项目
             const other = { row: await exists('.sidebar [data-id="other"] > .sb-group [data-sid="smoke-elsewhere"] .st.run'), acts: await exists('.sidebar [data-id="other"] > .sb-group .acts [data-id="make-project"]') && await exists('.sidebar [data-id="other"] > .sb-group .acts [data-id="new-here"]'), fold: await exists('.sidebar [data-id="other"] > .sb-sec-h[role="button"]') };
@@ -2796,6 +2764,13 @@ function driver() {
             const peersMore = { rows: await count('.sidebar [data-group="peer:smokepeer"] .sb-row'), less: await exists('.sidebar [data-group="peer:smokepeer"] [data-id="less"]') };
             check('其它电脑: 5 rows, 再显示 shows the rest and 收起; an offline machine is marked and read-only', peers.rows === 5 && peers.off && peers.offRow && peersMore.rows === 7 && peersMore.less, JSON.stringify({ peers, peersMore }));
             await harvest();
+            // a conversation on another (online) machine: its menu has 在本机继续… (handoff) — the only hand-over left
+            await ctxMenu('.sidebar [data-group="peer:smokepeer"] [data-sid="peer_smokepeer~s0"]');
+            const peerMenu = await waitFor('!!document.querySelector(\'.menu.sess-menu [data-id="handoff"]\')', 2000);
+            const peerText = await js(`document.querySelector('.menu.sess-menu [data-id="handoff"]')?.textContent?.trim() ?? null`);
+            await harvest();
+            await closeMenus();
+            check('a conversation on another machine: its menu has 在本机继续…', peerMenu && /在本机继续/.test(peerText ?? ''), JSON.stringify({ peerMenu, peerText }));
             await click('.sidebar [data-group="peer:smokepeer"] [data-id="less"]');
             // the funnel lists the machines once there is another one (the list just shrank: let it settle first)
             await sleep(300);
@@ -2869,23 +2844,6 @@ function driver() {
               const lessShown = await exists('.sidebar [data-group="peer:smokepeer"] [data-id="less"]');
               await pickIn('per-group', '5');
               check('显示 → 每组 10 shows more rows of a group (5 → 7), no 收起 at its own limit', five === 5 && ten === 7 && !lessShown, JSON.stringify({ five, ten, lessShown }));
-              // 其它 agent 的对话: a Codex conversation leaves the list and comes back
-              await js(`window.__store.setState((s) => ({ sessions: [...s.sessions.filter((x) => x.sessionId !== 'smoke-codex-row'), { sessionId: 'smoke-codex-row', title: 'a codex conversation', cwd: ${JSON.stringify(E.SMOKE_REPO)}, lastModified: Date.now() - 200, agent: 'codex' }] }))`);
-              await sleep(300);
-              const codexRow = '.sidebar .sb-list [data-sid="smoke-codex-row"]';
-              await pickIn('group-by', '不分组'); // one open list: the row is on screen whatever folder it is in
-              const codexOn = await exists(codexRow);
-              await openView();
-              await click('.menu.sb-view [data-id="other-agents"]');
-              await sleep(300);
-              const codexOff = !(await exists(codexRow));
-              const otherFlag = JSON.parse(await viewNow())?.show?.otherAgents;
-              await click('.menu.sb-view [data-id="other-agents"]');
-              await sleep(300);
-              const codexBack = await exists(codexRow);
-              await js(`window.__store.setState((s) => ({ sessions: s.sessions.filter((x) => x.sessionId !== 'smoke-codex-row') }))`);
-              await pickIn('group-by', '项目');
-              check('显示 → 其它 agent 的对话 off hides a Codex conversation, on brings it back (kept in ui.sidebar.view)', codexOn && codexOff && otherFlag === false && codexBack, JSON.stringify({ codexOn, codexOff, otherFlag, codexBack }));
               // 显示已归档: the store and meta.json
               await openView();
               await click('.menu.sb-view [data-id="archived"]');
@@ -2957,7 +2915,7 @@ function driver() {
               await js('window.__store.setState({ paletteOpen: false })');
               await sleep(200);
               check('显示 → 恢复默认: 项目 / 最近更新 / 5, archived off, own sections kept; 查看全部 opens the command palette',
-                !!reset.view && reset.view.groupBy === 'project' && reset.view.sortBy === 'updated' && reset.view.show.perGroup === 5 && reset.view.show.otherAgents === true && reset.archived === false && reset.section && palette, JSON.stringify({ reset, palette }));
+                !!reset.view && reset.view.groupBy === 'project' && reset.view.sortBy === 'updated' && reset.view.show.perGroup === 5 && reset.archived === false && reset.section && palette, JSON.stringify({ reset, palette }));
               // remove the section again (its menu → 删除分区 → confirm)
               await js(`document.querySelector('.sidebar .sb-custom [aria-label="分区菜单"]')?.click()`);
               await waitFor('!!document.querySelector(".menu.sb-custom-menu [data-id=\\"custom-delete\\"]")', 2000);
@@ -3577,9 +3535,13 @@ function driver() {
           await sleep(300);
         }
 
-        // ---- the docked permission card, with a real request (the mock ACP agent asks before its Read)
+        // ---- the docked permission card, with a real request: Claude Code itself, on a provider whose endpoint is a
+        // fake Messages API (scripts/fake-anthropic.cjs — no key, no tokens), asks before its Read of a file outside
+        // the project (the mock ACP agent did this before the app became Claude-only)
         phase = 'chat-permission';
-        // one request to the server from here (the page's socket is not reachable): agents.set, goals.create / start
+        const { startFakeAnthropic } = require(path.join(ROOT, 'scripts', 'fake-anthropic.cjs'));
+        const fakeApi = await startFakeAnthropic({ readPath: path.join(path.dirname(E.SMOKE_DATA), 'outside-note.txt'), slowSeconds: 6 });
+        // one request to the server from here (the page's socket is not reachable): providers.upsert, goals.create / start
         const serverRequest = (req) => new Promise((res, rej) => {
           const WS = require(path.join(ROOT, 'node_modules', 'ws'));
           const u = new URL(E.SMOKE_URL);
@@ -3588,10 +3550,12 @@ function driver() {
           s.on('open', () => s.send(JSON.stringify({ type: 'request', request: { id: '1', req } })));
           s.on('message', (raw) => { const m = JSON.parse(String(raw)); if (m.type === 'reply' && m.reply.id === '1') { s.close(); m.reply.ok ? res(m.reply.data) : rej(new Error(m.reply.error)); } });
         });
-        await serverRequest({ kind: 'agents.set', agent: 'acp:smoke', patch: { name: 'Smoke Agent', command: E.SMOKE_NODE, args: [path.join(ROOT, 'server', 'src', 'agents', '__mocks__', 'acp-agent.mjs')], env: { MOCK_SLOW_MS: '12000' }, protocol: 'acp', label: 'smoke' } });
-        const psid = await js(`window.__store.getState().openSession({ cwd: ${JSON.stringify(E.SMOKE_REPO)}, agent: 'acp:smoke', permissionMode: 'default' })`);
+        const fakeProv = await serverRequest({ kind: 'providers.upsert', provider: { name: 'Smoke 假接口', type: 'anthropic', baseUrl: fakeApi.url, apiKey: 'smoke-placeholder-not-a-key', models: ['smoke-fake'], defaultModel: 'smoke-fake' } });
+        await js('window.__store.getState().loadProviders()');
+        const psid = await js(`window.__store.getState().openSession({ cwd: ${JSON.stringify(E.SMOKE_REPO)}, providerId: ${JSON.stringify(fakeProv.id)}, permissionMode: 'default' })`);
         const pj = JSON.stringify(psid);
-        check('a mock-agent conversation opens', !!psid && await waitFor(`window.__store.getState().open[${pj}]?.state === 'idle'`, 20_000), String(psid));
+        // (before its first message the process may still be starting: the turn below starts it either way)
+        check('a conversation on the fake Messages API opens', !!psid && await waitFor(`['idle', 'starting'].includes(window.__store.getState().open[${pj}]?.state)`, 20_000), String(psid));
         // record what the page answers (the WebSocket frames it sends)
         await js(`(() => { window.__permSent = []; const orig = WebSocket.prototype.send; if (orig.__smoke) return; const wrap = function (d) { try { const m = JSON.parse(d); if (m && m.request && m.request.req && m.request.req.kind === 'permission.respond') window.__permSent.push(m.request.req); } catch {} return orig.call(this, d); }; wrap.__smoke = true; WebSocket.prototype.send = wrap; })()`);
         const lastSent = () => js('JSON.stringify(window.__permSent[window.__permSent.length - 1] ?? null)');
@@ -3602,7 +3566,7 @@ function driver() {
         const docked = await askTool('smoke: please use a tool');
         await sleep(450); // the card's entrance (it rises into place): measure where it rests
         const dock = await js(`(() => { const c = document.querySelector('.pane.focused .composer'); const d = c.querySelector('.pdock'); if (!d) return null; return { title: d.querySelector('.pd-title')?.textContent, runCard: !!c.querySelector('.run-card'), inStream: !!document.querySelector('.pane.focused .chat .pdock, .pane.focused .chat .perm'), aboveBox: d.getBoundingClientRect().bottom <= c.querySelector('.composer-box').getBoundingClientRect().top + 1, allow: d.querySelector('[data-act="allow"]')?.textContent, always: !!d.querySelector('[data-act="always"]'), hint: d.querySelector('.pd-hint')?.textContent, placeholder: c.querySelector('textarea').placeholder, waitingStep: document.querySelector('.pane.focused .tl.waiting .tool-head .st.wait')?.textContent ?? null }; })()`);
-        check('a permission request docks above the composer (not in the conversation), replacing the run card; the step says 等你确认', docked && dock && /想读取/.test(dock.title) && !dock.runCard && !dock.inStream && dock.aboveBox && /允许一次/.test(dock.allow) && !dock.always && /也可以直接在下面输入/.test(dock.hint) && /允许一次/.test(dock.placeholder) && dock.waitingStep === '等你确认', JSON.stringify(dock));
+        check('a permission request docks above the composer (not in the conversation), replacing the run card; the step says 等你确认', docked && dock && /想读取/.test(dock.title) && !dock.runCard && !dock.inStream && dock.aboveBox && /允许一次/.test(dock.allow) && dock.always /* Claude Code's request comes with suggestions */ && /也可以直接在下面输入/.test(dock.hint) && /允许一次/.test(dock.placeholder) && dock.waitingStep === '等你确认', JSON.stringify(dock));
         // its status line (aria-live, not shown) reads out the title and what an empty Enter does (review M-6)
         await waitFor(`/空着按 Enter 允许一次/.test(document.querySelector('.pane.focused .composer .pdock .pd-live')?.textContent ?? '')`, 2000);
         const live = await js(`(() => { const l = document.querySelector('.pane.focused .composer .pdock .pd-live'); if (!l) return null; const r = l.getBoundingClientRect(); return { text: l.textContent, live: l.getAttribute('aria-live'), role: l.getAttribute('role'), w: r.width, h: r.height }; })()`);
@@ -3809,7 +3773,7 @@ function driver() {
           await setOpen(`pending: [], state: 'idle'`);
           await sleep(300);
         }
-        // 5. 总是允许 and 「还有 N 条」: two staged requests with a suggestion (the mock agent sends none)
+        // 5. 总是允许 and 「还有 N 条」: two staged requests with a suggestion
         const stage = (n) => `{ requestId: 'smoke-always-${n}', sessionId: ${pj}, toolName: 'Bash', input: { command: 'npm test' }, suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test:*' }], behavior: 'allow', destination: 'localSettings' }] }`;
         await js(`(() => { const st = window.__store; const o = st.getState().open[${pj}]; st.setState({ open: { ...st.getState().open, [${pj}]: { ...o, pending: [${stage(1)}, ${stage(2)}], version: o.version + 1 } } }); })()`);
         await waitFor(`!!document.querySelector('.pane.focused .composer .pdock [data-act="always"]')`, 4000);
@@ -4070,10 +4034,11 @@ function driver() {
 
         // ---- re-review I-2: a provider picked on the chips of a conversation that is not running is recorded like
         // session.setProvider when the send reopens it — SessionMeta.providerId and the canonical 「switch」 line (usage
-        // attribution, the hand-over briefing). The mock agent's conversation: the provider's endpoint is never called.
+        // attribution, the hand-over briefing). The conversation above (on the fake API); the picked provider is another
+        // profile on the same fake API, so the resumed turn has somewhere to go.
         if (E.SMOKE_DATA) {
           phase = 'chat-resume-provider';
-          const prov = await serverRequest({ kind: 'providers.upsert', provider: { name: 'Smoke 供应商', type: 'openai', baseUrl: 'http://127.0.0.1:9', apiKey: 'smoke-placeholder-not-a-key', models: ['smoke-m1'], defaultModel: 'smoke-m1' } });
+          const prov = await serverRequest({ kind: 'providers.upsert', provider: { name: 'Smoke 供应商', type: 'anthropic', baseUrl: fakeApi.url, apiKey: 'smoke-placeholder-not-a-key', models: ['smoke-m1'], defaultModel: 'smoke-m1' } });
           const provJ = JSON.stringify(prov.id);
           await js(`window.__store.getState().closeSession(${pj})`);
           await js(`window.__store.getState().loadHistory(${pj})`);
@@ -4093,17 +4058,18 @@ function driver() {
             try { sw = fs.readFileSync(canonFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((e) => e.kind === 'switch'); } catch { /* not written yet */ }
             if (!sw.length) await sleep(200);
           }
-          check('a provider picked on the chips of a conversation not running → the send records it like 换供应商: SessionMeta and one canonical switch line (from the account)', ready && listed && JSON.parse(picked)?.providerId === prov.id && metaOk && sw.length === 1 && sw[0].providerId === prov.id && sw[0].fromProviderId === 'claude' && /Smoke 供应商/.test(sw[0].note ?? ''), JSON.stringify({ ready, listed, picked, metaOk, sw }));
+          check('a provider picked on the chips of a conversation not running → the send records it like 换供应商: SessionMeta and one canonical switch line (from the provider it ran on)', ready && listed && JSON.parse(picked)?.providerId === prov.id && metaOk && sw.length === 1 && sw[0].providerId === prov.id && sw[0].fromProviderId === fakeProv.id && /Smoke 供应商/.test(sw[0].note ?? ''), JSON.stringify({ ready, listed, picked, metaOk, sw }));
           await waitFor(`window.__store.getState().open[${pj}]?.state === 'idle'`, 20_000);
           await serverRequest({ kind: 'providers.remove', id: prov.id });
         }
 
         // ---- the goal bar, and a goal that runs two rounds (review I1): GoalService sends round 2 (「继续」) itself — the
-        // window shows it from the server's copy of what was sent (hub `cw_echo`), a turn of its own. The mock answers its first goal prompt
-        // with 「GOAL_STATUS: continue」 (MOCK_GOAL_CONTINUE); the objective has 「slow」, so each round runs a command
-        // and answers after it (MOCK_SLOW_ANSWER: the answer, with its 分享本轮, sits below the folded steps).
+        // window shows it from the server's copy of what was sent (hub `cw_echo`), a turn of its own. The fake API answers
+        // the first goal round with 「GOAL_STATUS: continue」; the objective has 「slow」, so each round runs a command
+        // (`sleep 6`, allowed in the seeded ~/.claude/settings.json) and answers after it (the answer, with its 分享本轮,
+        // sits below the folded steps). A goal's conversation starts on the default provider: the fake one, for now.
         phase = 'chat-goal';
-        await serverRequest({ kind: 'agents.set', agent: 'acp:smoke', patch: { name: 'Smoke Agent', command: E.SMOKE_NODE, args: [path.join(ROOT, 'server', 'src', 'agents', '__mocks__', 'acp-agent.mjs')], env: { MOCK_SLOW_MS: '6000', MOCK_GOAL_CONTINUE: '1', MOCK_SLOW_ANSWER: '1' }, protocol: 'acp', label: 'smoke' } });
+        await js(`window.__store.getState().setSetting('defaultProviderId', ${JSON.stringify(fakeProv.id)})`);
         // typed in the conversation's composer, as a user would: `/goal …` runs in a conversation of its own, which
         // then opens here — with its folder (review I-1: it used to open with an empty cwd and resume in the wrong place)
         await click('.pane.focused .composer textarea');
@@ -4175,6 +4141,8 @@ function driver() {
           await setView('chat');
           check('the step view numbers the goal\'s rounds 1 and 2, as the chat has them', Array.isArray(trajTurns) && trajTurns.includes('1') && trajTurns.includes('2') && !trajTurns.includes('0'), JSON.stringify(trajTurns));
         }
+        await js(`window.__store.getState().setSetting('defaultProviderId', undefined)`);
+        // (the fake API stays up: stage E opens a conversation on it too)
         const err5 = await noBoundary('body');
         check('chat rendering checks without error boundary', !err5, err5);
       }
@@ -4512,7 +4480,7 @@ window.desktop = {
           check('stage-e 录屏: the + menu has 录屏; the picker shows 整个屏幕 with a thumbnail; Esc closes it, nothing records', recRow && thumbs && pickerGone && notRec, JSON.stringify({ recRow, thumbs, pickerGone, notRec }));
 
           // 4. the PR bar against the fake GitHub: PR #12, 3 条评论 (自动处理评论 off), alice / dependabot (机器人), the CI menu has 自动处理评论
-          const ghSid = await ejs(`window.__store.getState().openSession({ cwd: ${JSON.stringify(ghRepo)}, agent: 'acp:smoke', permissionMode: 'default' })`);
+          const ghSid = await ejs(`window.__store.getState().openSession({ cwd: ${JSON.stringify(ghRepo)}, providerId: window.__store.getState().providers.find((p) => p.name === 'Smoke 假接口')?.id, permissionMode: 'default' })`);
           const bar = await ewait(`(() => { const b = document.querySelector('.pane.focused .pr-bar'); return !!b && b.querySelector('.pr-n')?.textContent === 'PR #12' && b.querySelector('.pr-comments')?.textContent === '3 条评论'; })()`, 20_000);
           await eclick('.pane.focused .pr-bar .pr-comments');
           const listed = await ewait(`(() => { const l = document.querySelector('.menu.pr-comment-list'); if (!l) return false; const t = l.textContent; return t.includes('alice') && t.includes('dependabot') && !!l.querySelector('.pr-cm-bot'); })()`, 4000);

@@ -51,10 +51,9 @@ export function HomeLists({ onOpen }: { onOpen: (sessionId: string) => void }) {
   const sessions = useStore((s) => s.sessions);
   const meta = useStore((s) => s.sessionMeta);
   const workspaces = useStore((s) => s.workspaces);
-  const agents = useStore((s) => s.agents);
   const schedules = useStore((s) => s.schedules);
   const [tab, setTab] = useState<HomeTab>('recent');
-  const { rows, more } = useMemo(() => homeRows(tab, { sessions, meta, workspaces, agents, schedules }), [tab, sessions, meta, workspaces, agents, schedules]);
+  const { rows, more } = useMemo(() => homeRows(tab, { sessions, meta, workspaces, schedules }), [tab, sessions, meta, workspaces, schedules]);
   const byId = useMemo(() => new Map(sessions.map((s) => [s.sessionId, s])), [sessions]);
   const all = () => {
     if (tab === 'schedules') openAutomation('schedules');

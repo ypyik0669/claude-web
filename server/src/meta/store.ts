@@ -2,8 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { EventEmitter } from 'node:events';
-import type { GatewayAuditConfig, GatewayGroup, GatewayKey, GatewayKeyGroup, GatewayLanConfig, Goal, ImBinding, ImGatewayConfig, MessageFeedback, PermissionMode, DispatchFrom, HandoffInfo, HandoffFrom, Provider, RemoteHost, Schedule, ScheduleRun, Workflow } from '../protocol.js';
-import type { MaintenanceRun, MaintenanceTask, UpstreamAccount, UpstreamGroup } from '../upstreams/types.js';
+import type { Goal, ImBinding, ImGatewayConfig, MessageFeedback, PermissionMode, DispatchFrom, HandoffInfo, HandoffFrom, Provider, RemoteHost, Schedule, ScheduleRun, Workflow } from '../protocol.js';
 import type { DeviceRecord } from '../remote/service.js';
 import type { PeerRecord } from '../federation/types.js';
 import type { PrivacySettings } from '../privacy/types.js';
@@ -12,7 +11,7 @@ import { normFolders } from './workspace-folders.js';
 export type { Schedule } from '../protocol.js';
 
 export interface Workspace { id: string; path: string; name: string; addedAt: number; order: number; /** extra folders (stage C2), never the main path; absent in old files */ folders?: string[]; /** stage F (protocol.ts has the same fields) */ instructions?: string; sessionsScope?: 'project'; permissionMode?: PermissionMode; claudeAiUuid?: string }
-export interface SessionMeta { /** replies pinned under them (protocol.ts) */ pinnedMsgs?: { id: string; text: string }[]; /** a rename made while the conversation's process ran: shown over the transcript's title, written into it again when the process ends */ pendingTitle?: string; /** 只聊天: a resume stays without tools (protocol.ts has the same field) */ chatOnly?: boolean; /** 保持电脑唤醒 while this conversation is busy (phase 6) */ keepAwake?: boolean; pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string; /** prompt-cache route key when it is not the session's own id (forks keep their root's) */ cacheKey?: string; /** the model its subagents run on, picked for this provider ('' = the main model) */ subagent?: { providerId: string; model: string }; /** the permission mode it last ran with: a resume without a pick comes back in it (the SDK never says it) */ permissionMode?: PermissionMode; /** 思考用的语言 of this conversation (protocol.ts has the same field) */ thinkingLanguage?: string; /** a `continueInClaude` source's conversation: the Claude conversation it goes on in (protocol.ts) */ continuedAs?: string; /** that Claude conversation: what it goes on from, how many of its messages are in it (protocol.ts) */ continuedFrom?: string; replayed?: number; /** stage E (protocol.ts has the same fields): 自动处理评论, the WSL distro it runs in, the built-in browser's recordings */ prAutoComments?: number; prCommentsDone?: string[]; prCommentsSent?: { ids: string[]; sha: string; at: number; /** local HEAD when the batch went, and the commit made after it (fix E-I2) */ head?: string; commit?: string }; env?: { kind: 'local' } | { kind: 'wsl'; distro: string }; browserRecordings?: { path: string; start: number; end: number }[]; /** stage F (protocol.ts has the same fields) */ origin?: 'dispatch'; dispatchFrom?: DispatchFrom; handedOff?: HandoffInfo; handoffFrom?: HandoffFrom; /** the project instructions it started with (runtime/pool.ts: new conversations only, kept on resume) */ projectInstructions?: string }
+export interface SessionMeta { /** replies pinned under them (protocol.ts) */ pinnedMsgs?: { id: string; text: string }[]; /** a rename made while the conversation's process ran: shown over the transcript's title, written into it again when the process ends */ pendingTitle?: string; /** 只聊天: a resume stays without tools (protocol.ts has the same field) */ chatOnly?: boolean; /** 保持电脑唤醒 while this conversation is busy (phase 6) */ keepAwake?: boolean; pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string; /** the model its subagents run on, picked for this provider ('' = the main model) */ subagent?: { providerId: string; model: string }; /** the permission mode it last ran with: a resume without a pick comes back in it (the SDK never says it) */ permissionMode?: PermissionMode; /** 思考用的语言 of this conversation (protocol.ts has the same field) */ thinkingLanguage?: string; /** a `continueInClaude` source's conversation: the Claude conversation it goes on in (protocol.ts) */ continuedAs?: string; /** that Claude conversation: what it goes on from, how many of its messages are in it (protocol.ts) */ continuedFrom?: string; replayed?: number; /** stage E (protocol.ts has the same fields): 自动处理评论, the WSL distro it runs in, the built-in browser's recordings */ prAutoComments?: number; prCommentsDone?: string[]; prCommentsSent?: { ids: string[]; sha: string; at: number; /** local HEAD when the batch went, and the commit made after it (fix E-I2) */ head?: string; commit?: string }; env?: { kind: 'local' } | { kind: 'wsl'; distro: string }; browserRecordings?: { path: string; start: number; end: number }[]; /** stage F (protocol.ts has the same fields) */ origin?: 'dispatch'; dispatchFrom?: DispatchFrom; handedOff?: HandoffInfo; handoffFrom?: HandoffFrom; /** the project instructions it started with (runtime/pool.ts: new conversations only, kept on resume) */ projectInstructions?: string }
 
 interface Data {
   version: 1;
@@ -29,27 +28,17 @@ interface Data {
   imGateways: ImGatewayConfig[];
   imBindings: ImBinding[];
   goals: Goal[];
-  gatewayGroups?: GatewayGroup[]; // model gateway failover groups
-  gateway?: { enabled?: boolean; key?: string; localPort?: number }; // key: enc:… (SecretService)
-  upstreamAccounts?: UpstreamAccount[]; // 账号池 (embedded gateway phase A)
-  upstreamGroups?: UpstreamGroup[];
-  gatewayKeyGroups?: GatewayKeyGroup[];
-  gatewayKeys?: GatewayKey[];
-  gatewayLan?: GatewayLanConfig;
-  gatewayAudit?: GatewayAuditConfig;
   privacy?: Partial<PrivacySettings> & { secret?: string };
-  maintenanceTasks?: MaintenanceTask[];
-  maintenanceRuns?: MaintenanceRun[];
+  /**
+   * Provider profiles of the formats this app no longer talks to (OpenAI / Gemini / Grok / the model gateway,
+   * removed 2026-11-01): moved out of `providers` when the file is read, kept here as they were — the keys too —
+   * so nothing the user set up is lost. Nothing reads them.
+   */
+  removedProviders?: unknown[];
 
   peers?: PeerRecord[]; // other machines this one federates with (tokens enc:)
   serverId?: string; // this server's stable id (federation loop guard)
   workflows?: Workflow[]; // orchestration templates (runs live in <dataDir>/orchestra/)
-  /** 来源 (channels/): provider id → the catalog entry it was added from (keyless / engine marks) */
-  channelLinks?: Record<string, { catalogId: string; keyless?: boolean; engine?: string }>;
-  /** 来源目录: the user's own changes to catalog entries (win over the baseline and the remote catalog) */
-  channelCatalog?: Record<string, { hidden?: boolean; patch?: Record<string, unknown> }>;
-  /** 托管程序 (engines/): installed versions, hashes, port, keys (enc:… via SecretService) */
-  engines?: Record<string, Record<string, unknown>>;
 }
 
 const defaultFile = () => path.join(process.env.CLAUDE_WEB_DIR ?? path.join(os.homedir(), '.claude-web'), 'meta.json');
@@ -76,6 +65,7 @@ export class MetaStore extends EventEmitter {
     try {
       this.data = { ...this.data, ...JSON.parse(txt) };
       this.diskValid = true;
+      this.setAsideRemoved();
     } catch {
       // A torn / hand-broken file would otherwise be silently replaced by defaults on the next save,
       // taking workspaces, providers and keys with it. Keep a copy the user can recover from.
@@ -83,8 +73,19 @@ export class MetaStore extends EventEmitter {
       // a power cut can leave the file full of NUL bytes (data never flushed): fall back to the last good copy
       try {
         this.data = { ...this.data, ...JSON.parse(await fs.readFile(`${file}.bak`, 'utf8')) };
+        this.setAsideRemoved();
       } catch { /* no usable backup */ }
     }
+  }
+
+  /** Profiles of a removed format (see `removedProviders`) out of the list; a default that was one of them goes. */
+  private setAsideRemoved() {
+    const all = Array.isArray(this.data.providers) ? this.data.providers : [];
+    const gone = all.filter((p) => p.type !== 'anthropic' && p.type !== 'claude-account');
+    if (!gone.length) return;
+    this.data.providers = all.filter((p) => !gone.includes(p));
+    this.data.removedProviders = [...(this.data.removedProviders ?? []), ...gone];
+    if (gone.some((p) => p.id === this.data.settings.defaultProviderId)) delete this.data.settings.defaultProviderId;
   }
 
   private async writeDurable(target: string, text: string) {
@@ -233,7 +234,7 @@ export class MetaStore extends EventEmitter {
     }
     const { apiKey, id: _id, createdAt: _c, ...rest } = p;
     Object.assign(cur, rest);
-    for (const k of ['runtime', 'defaultModel', 'modelMap', 'models', 'modelNames', 'modelEfforts', 'modelContext', 'contextWindows', 'compactAt', 'promptEffortModels', 'modelsAt', 'modelsError', 'cacheShim', 'responsesApi', 'cache1h', 'cacheControlFormat', 'noPromptCacheKey', 'noResponsesApi', 'noCacheRetention', 'authStyle'] as const) if ((cur as any)[k] == null) delete (cur as any)[k]; // null clears (JSON drops undefined)
+    for (const k of ['defaultModel', 'modelMap', 'models', 'modelNames', 'modelEfforts', 'modelContext', 'contextWindows', 'compactAt', 'modelsAt', 'modelsError', 'cache1h', 'authStyle'] as const) if ((cur as any)[k] == null) delete (cur as any)[k]; // null clears (JSON drops undefined)
     if (apiKey && !/^\S{0,4}…\S{0,4}$/.test(apiKey) && !apiKey.includes('…')) cur.apiKey = this.secretCodec ? await this.secretCodec.protect(apiKey.trim(), cur.id) : apiKey.trim();
     cur.baseUrl = (cur.baseUrl ?? '').trim().replace(/\/+$/, '');
     await this.queueSave();
@@ -311,33 +312,7 @@ export class MetaStore extends EventEmitter {
     this.data.settings[k] = v;
     await this.queueSave();
   }
-  // ---- model gateway ----
-  gatewayGroups(): GatewayGroup[] { return this.data.gatewayGroups ??= []; }
-  gatewayConfig(): { enabled?: boolean; key?: string; localPort?: number; dismissedProfiles?: string[] } { return this.data.gateway ??= {}; }
-  async saveGateway() { await this.queueSave(true); }
   // ---- privacy pipeline (privacy/service.ts): settings + the per-install placeholder secret (never on the wire) ----
   privacyConfig(): Partial<PrivacySettings> & { secret?: string } { return this.data.privacy ??= {}; }
   async savePrivacy() { await this.queueSave(true); }
-
-  // ---- 账号池 / 密钥 / 局域网 / 审计 (embedded gateway phase A) ----
-  upstreamAccounts(): UpstreamAccount[] { return this.data.upstreamAccounts ??= []; }
-  upstreamGroups(): UpstreamGroup[] { return this.data.upstreamGroups ??= []; }
-  gatewayKeyGroups(): GatewayKeyGroup[] { return this.data.gatewayKeyGroups ??= []; }
-  gatewayKeys(): GatewayKey[] { return this.data.gatewayKeys ??= []; }
-  gatewayLan(): GatewayLanConfig {
-    return this.data.gatewayLan ??= { enabled: false, bind: '127.0.0.1', port: 0, ipAllowlist: [], corsOrigins: [], maxBodyBytes: 8 * 1024 * 1024 };
-  }
-  gatewayAudit(): GatewayAuditConfig {
-    return this.data.gatewayAudit ??= { enabled: true, maxBytes: 10 * 1024 * 1024, keepFiles: 5 };
-  }
-  maintenanceTasks(): MaintenanceTask[] { return this.data.maintenanceTasks ??= []; }
-  maintenanceRuns(): MaintenanceRun[] { return this.data.maintenanceRuns ??= []; }
-  async saveTasks() { await this.queueSave(true); }
-  async saveUpstreams() { await this.queueSave(true); }
-  async saveGatewayKeys() { await this.queueSave(true); }
-  // ---- 来源 / 托管程序 (channels/, engines/) ----
-  channelLinks(): NonNullable<Data['channelLinks']> { return this.data.channelLinks ??= {}; }
-  channelCatalog(): NonNullable<Data['channelCatalog']> { return this.data.channelCatalog ??= {}; }
-  engineState(): NonNullable<Data['engines']> { return this.data.engines ??= {}; }
-  async saveChannels() { await this.queueSave(true); }
 }

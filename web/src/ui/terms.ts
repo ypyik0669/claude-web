@@ -16,9 +16,6 @@ export const TERMS = {
   effort: tr('智能程度'),
   ultracode: tr('深度编排'),
   provider: tr('供应商'),
-  engine: tr('运行内核'),
-  agents: tr('其它 Agent'),
-  handoff: tr('交给其它 Agent 继续'),
   trajectory: tr('步骤视图'),
   artifacts: tr('生成的文件'),
   worktree: tr('独立副本（worktree）'),
@@ -46,20 +43,15 @@ export function nextPermissionMode(mode: PermissionMode): PermissionMode {
 /** Short label per mode (chips, selects). */
 export const MODE_LABEL = Object.fromEntries(PERMISSION_MODE_ORDER.map((m) => [m, PERMISSION_MODES[m].label])) as Record<PermissionMode, string>;
 
-/** Effort levels as an intelligence scale. `ultra` exists only for Codex. */
-export const EFFORT_LABEL: Record<EffortLevel, string> = { low: tr('快'), medium: tr('均衡'), high: tr('深入'), xhigh: tr('更深'), max: tr('极限'), ultra: tr('超限') };
+/** Effort levels as an intelligence scale. */
+export const EFFORT_LABEL: Record<EffortLevel, string> = { low: tr('快'), medium: tr('均衡'), high: tr('深入'), xhigh: tr('更深'), max: tr('极限') };
 export const EFFORT_DESC: Record<EffortLevel, string> = {
   low: tr('最快，适合简单问答和小改动'),
   medium: tr('速度与质量兼顾'),
   high: tr('复杂改动更稳，速度适中'),
   xhigh: tr('想得更久，适合难排查的问题'),
   max: tr('最长的思考，慢、费额度'),
-  ultra: tr('最深推理，最慢'),
 };
-/** After the 智能程度 caption: the strength goes out as the model's own parameter, or through the prompt. */
-export const EFFORT_MODE_NOTE = { native: tr('（原生）'), prompt: tr('（通过提示词）') } as const;
-/** Tooltip of the prompt way. */
-export const EFFORT_PROMPT_TITLE = tr('这个模型没有思考强度参数，通过提示词告诉它想多深');
 /** Label for an effort value; unknown / empty values fall back to the scale's name. */
 export function effortLabel(level: string | null | undefined): string {
   return level && level in EFFORT_LABEL ? EFFORT_LABEL[level as EffortLevel] : TERMS.effort;

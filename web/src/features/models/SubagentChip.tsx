@@ -6,15 +6,15 @@ import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { ModelMenu } from './ModelMenu';
 import { OWN_PROVIDER } from './menu';
 import { SUBAGENT_DEFAULT, crossPick, crossValue, subagentModelFor } from '../../../../server/src/models/subagent';
-import { crossProviders, subagentLabel } from './subagent-label';
+import { subagentLabel } from './subagent-label';
 export { subagentLabel } from './subagent-label';
 import { tr } from '@/i18n';
 
 /**
  * 子代理: the model a conversation's subagents (and workflows) run on, next to the model chip — the main task on the
  * main model, the subagents on a cheaper one (user request 2026-10-14: a friend's subagents spent the budget on the
- * main model). Any model the split route can reach, whatever the conversation runs on (user, 2026-10-18); a pick is a
- * whole (provider, model), '' = the same as the main model. The bottom of the menu makes the pick the default for new
+ * main model). A model of the conversation's own provider / account; a pick is a whole (provider, model), '' = the
+ * same as the main model. The bottom of the menu makes the pick the default for new
  * conversations (`subagentModel` in meta.json).
  */
 export function SubagentChip(p: {
@@ -41,7 +41,6 @@ export function SubagentChip(p: {
   const setSetting = useStore((s) => s.setSetting);
   const label = subagentLabel({ providers, providerId: p.providerId, model: p.value, builtin: p.builtin });
   const def = subagentModelFor({ settings, providerId: p.providerId });
-  const also = crossProviders(providers, p.providerId);
   const cross = crossPick(p.value);
   const title = tr("子代理用的模型：{label}{v}\n主任务用主模型，子代理（Task / 工作流）用这里选的，可以选个便宜的省额度", { label: p.value ? label : tr('跟主模型一样'), v: def === p.value && p.value ? tr('（新对话默认）') : '' });
   return (
@@ -60,7 +59,7 @@ export function SubagentChip(p: {
             builtin={p.builtin}
             builtinTitle={p.builtinTitle}
             lockProvider={p.providerId}
-            lockNote={also.length ? tr('子代理（Task、工作流）用哪个模型，任何供应商的都行：主任务还是用主模型') : tr('子代理（Task、工作流）用哪个模型：主任务还是用主模型')}
+            lockNote={tr('子代理（Task、工作流）用哪个模型：主任务还是用主模型')}
             anchor={anchor}
             onClose={() => setOpen(false)}
             onPick={(it) => p.onPick(crossValue(it.providerId || OWN_PROVIDER, it.model))}
@@ -69,7 +68,6 @@ export function SubagentChip(p: {
               onSame: () => p.onPick(''),
               isDefault: def === p.value,
               onToggleDefault: () => void setSetting(SUBAGENT_DEFAULT, def === p.value ? '' : p.value),
-              alsoProviders: also,
             }}
           />
         </ErrorBoundary>

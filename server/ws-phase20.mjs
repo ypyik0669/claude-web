@@ -2,11 +2,9 @@
 // this region requires trusted account access"): the server's own requests and every CLI it starts go through the
 // user's proxy (server/src/net/proxy.ts). A fake ladder (an HTTP CONNECT proxy) is the only way to the relays' names
 // (`*.proxy-e2e.test` never resolves), so a request that reaches a relay went through the proxy. Over a real server and
-// a real ccb, no model, no token. Checks:
+// the real Claude Code, no model, no token. Checks:
 //   · HTTPS_PROXY at start = 跟随系统 picks it up; the provider test (this process's fetch) reaches the relay by name;
-//   · a Claude conversation on an OpenAI-format provider: ccb → the local cache shim (loopback stays direct) → the
-//     relay through the proxy;
-//   · a Claude conversation on an Anthropic-format provider: ccb itself goes through the proxy;
+//   · a Claude conversation on an Anthropic-format provider: the engine itself goes through the proxy;
 //   · 自定义: the terminal shell gets HTTPS_PROXY and a NO_PROXY with loopback;
 //   · 不使用: direct — the relay's name does not resolve and the test says so; a SOCKS address is refused;
 //   · back to 跟随系统.
@@ -34,22 +32,9 @@ const check = (name, ok, detail = '') => { results.push([name, !!ok]); console.l
 const until = async (fn, ms, step = 200) => { const end = Date.now() + ms; for (;;) { const v = await fn(); if (v) return v; if (Date.now() > end) return null; await new Promise((r) => setTimeout(r, step)); } };
 const listen = (srv) => new Promise((r) => srv.listen(0, '127.0.0.1', () => r(srv.address().port)));
 
-// ---- two relays: OpenAI-compatible and Anthropic-format ----
+// ---- an Anthropic-format relay ----
 const hits = [];
 const body = (q) => new Promise((r) => { let b = ''; q.on('data', (c) => { b += c; }); q.on('end', () => r(b)); });
-const oai = http.createServer(async (q, s) => {
-  const b = await body(q);
-  let j = {};
-  try { j = JSON.parse(b || '{}'); } catch { /* keep */ }
-  hits.push({ relay: 'openai', method: q.method, url: q.url, host: q.headers.host, body: b });
-  if (q.headers.authorization !== `Bearer ${KEY}`) { s.writeHead(401, { 'content-type': 'application/json' }).end('{"error":{"message":"无效的令牌"}}'); return; }
-  if (q.method === 'GET' && q.url.endsWith('/models')) { s.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ object: 'list', data: [{ id: 'deepseek-proxy', object: 'model' }] })); return; }
-  if (!q.url.endsWith('/chat/completions')) { s.writeHead(404, { 'content-type': 'application/json' }).end('{"error":{"message":"not here"}}'); return; }
-  const chunk = (o) => `data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', created: 1, model: j.model, ...o })}\n\n`;
-  if (!j.stream) { s.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'c1', object: 'chat.completion', model: j.model, choices: [{ index: 0, message: { role: 'assistant', content: 'via-proxy-openai' }, finish_reason: 'stop' }], usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 } })); return; }
-  s.writeHead(200, { 'content-type': 'text/event-stream' });
-  s.end(chunk({ choices: [{ index: 0, delta: { role: 'assistant', content: 'via-proxy-openai' }, finish_reason: null }] }) + chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }) + chunk({ choices: [], usage: { prompt_tokens: 50, completion_tokens: 2, total_tokens: 52 } }) + 'data: [DONE]\n\n');
-});
 const sse = (o) => `event: ${o.type}\ndata: ${JSON.stringify(o)}\n\n`;
 const anth = http.createServer(async (q, s) => {
   const b = await body(q);
@@ -70,13 +55,23 @@ const anth = http.createServer(async (q, s) => {
     sse({ type: 'message_stop' }),
   ].join(''));
 });
-const oaiPort = await listen(oai);
 const anthPort = await listen(anth);
 
-// ---- the fake ladder: CONNECT only; the relays' names exist only here ----
-const tunnels = []; // CONNECT targets, in order
-const NAMES = { 'relay.proxy-e2e.test': oaiPort, 'anth.proxy-e2e.test': anthPort };
-const ladder = http.createServer((_q, s) => { tunnels.push('(plain request)'); s.writeHead(400).end('CONNECT only'); });
+// ---- the fake ladder: CONNECT, or a plain http:// proxy request; the relays' names exist only here ----
+const tunnels = []; // CONNECT targets (and plain proxy requests' hosts), in order
+const NAMES = { 'anth.proxy-e2e.test': anthPort };
+// a plain request in absolute form (`GET http://host/path`) is what a client sends a proxy for an http:// target
+// (the official binary does): forwarded too, recorded as `host:80`
+const ladder = http.createServer((q, s) => {
+  let u = null;
+  try { u = new URL(String(q.url ?? '')); } catch { /* origin form: not a proxy request */ }
+  const to = u && u.protocol === 'http:' ? NAMES[u.hostname] : undefined;
+  if (!to) { tunnels.push('(plain request)'); s.writeHead(400).end('CONNECT only'); return; }
+  tunnels.push(`${u.hostname}:${u.port || 80}`);
+  const up = http.request({ host: '127.0.0.1', port: to, method: q.method, path: u.pathname + u.search, headers: { ...q.headers, host: u.host } }, (r) => { s.writeHead(r.statusCode ?? 502, r.headers); r.pipe(s); });
+  up.on('error', () => s.destroy());
+  q.pipe(up);
+});
 ladder.on('connect', (q, sock, head) => {
   const target = String(q.url ?? '');
   tunnels.push(target);
@@ -91,7 +86,7 @@ const ladderUrl = `http://127.0.0.1:${await listen(ladder)}`;
 
 // ---- the server: throwaway HOME, the ladder in HTTPS_PROXY (a user who exported it; the system proxy is read-only here) ----
 const token = randomBytes(12).toString('hex');
-const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: path.join(home, '.claude-web'), CODEX_HOME: path.join(home, '.codex'), CW_NO_MODEL_REFRESH: '1' };
+const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: path.join(home, '.claude-web'), CW_NO_MODEL_REFRESH: '1' };
 for (const k of Object.keys(env)) if (/^(ANTHROPIC_|CLAUDE_CODE_|OPENAI_)/.test(k) || /^(no|http|https|all)_proxy$/i.test(k)) delete env[k];
 Object.assign(env, { HTTPS_PROXY: ladderUrl, HTTP_PROXY: ladderUrl });
 const server = spawn(process.execPath, [path.join(here, 'dist', 'index.js')], { cwd: path.dirname(here), env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -131,23 +126,15 @@ async function main() {
   const st0 = await req({ kind: 'network.proxy' });
   check('跟随系统 picks up HTTPS_PROXY from the start environment', st0.setting === 'system' && st0.source === 'env' && st0.active === ladderUrl, JSON.stringify(st0));
 
-  const O = await req({ kind: 'providers.upsert', provider: { name: '梯子后的中转', type: 'openai', baseUrl: 'http://relay.proxy-e2e.test/v1', apiKey: KEY, defaultModel: 'deepseek-proxy', models: ['deepseek-proxy'] } });
   const N = await req({ kind: 'providers.upsert', provider: { name: '梯子后的 Anthropic', type: 'anthropic', baseUrl: 'http://anth.proxy-e2e.test', apiKey: KEY, defaultModel: 'claude-proxy-e2e' } });
 
   let t = tunnels.length;
-  const p1 = await req({ kind: 'providers.probe', id: O.id, listOnly: true });
-  check('the provider test reaches a relay only the proxy can reach (this process\'s fetch goes through it)', p1.ok && p1.models?.includes('deepseek-proxy') && tunnels.slice(t).includes('relay.proxy-e2e.test:80'), `${p1.error ?? ''} ${tunnels.slice(t).join(',')}`);
-
-  t = tunnels.length;
-  const h0 = hits.length;
-  const a1 = await ask(O.id, '经过梯子 openai');
-  const oaiChats = hits.slice(h0).filter((h) => h.relay === 'openai' && h.method === 'POST' && h.body.includes('经过梯子 openai'));
-  check('a Claude conversation on an OpenAI-format provider: ccb → local shim → relay through the proxy', a1.text.includes('via-proxy-openai') && oaiChats.length > 0, (a1.text || JSON.stringify(a1.result ?? {})).slice(0, 160));
-  check('… the local cache shim is reached directly (no tunnel to 127.0.0.1)', !tunnels.slice(t).some((x) => x.startsWith('127.0.0.1') || x.startsWith('localhost')), tunnels.slice(t).join(','));
+  const p1 = await req({ kind: 'providers.probe', id: N.id, listOnly: true });
+  check('the provider test reaches a relay only the proxy can reach (this process\'s fetch goes through it)', p1.ok && p1.models?.includes('claude-proxy-e2e') && tunnels.slice(t).includes('anth.proxy-e2e.test:80'), `${p1.error ?? ''} ${tunnels.slice(t).join(',')}`);
 
   const h1 = hits.length;
   const a2 = await ask(N.id, '经过梯子 anthropic');
-  check('a Claude conversation on an Anthropic-format provider: ccb itself goes through the proxy', a2.text.includes('via-proxy-anthropic') && hits.slice(h1).some((h) => h.relay === 'anthropic' && h.url.startsWith('/v1/messages')), (a2.text || JSON.stringify(a2.result ?? {})).slice(0, 160));
+  check('a Claude conversation on an Anthropic-format provider: the engine itself goes through the proxy', a2.text.includes('via-proxy-anthropic') && hits.slice(h1).some((h) => h.relay === 'anthropic' && h.url.startsWith('/v1/messages')), (a2.text || JSON.stringify(a2.result ?? {})).slice(0, 160));
 
   const st1 = await req({ kind: 'settings.set', key: 'network.proxy', value: ladderUrl });
   check('自定义: the address is in use', st1.setting === 'custom' && st1.source === 'setting' && st1.active === ladderUrl && !st1.note, JSON.stringify(st1));
@@ -164,7 +151,7 @@ async function main() {
 
   const st2 = await req({ kind: 'settings.set', key: 'network.proxy', value: 'off' });
   t = tunnels.length;
-  const p2 = await req({ kind: 'providers.probe', id: O.id, listOnly: true });
+  const p2 = await req({ kind: 'providers.probe', id: N.id, listOnly: true });
   check('不使用: direct — the relay\'s name does not resolve, the test says so, the proxy sees nothing', st2.setting === 'off' && st2.active === null && !p2.ok && tunnels.length === t, `${p2.error ?? ''}`.slice(0, 120));
 
   const bad = await req({ kind: 'settings.set', key: 'network.proxy', value: 'socks5://127.0.0.1:1080' }).then(() => null, (e) => e.message);
@@ -173,7 +160,7 @@ async function main() {
   check('… and the setting stays what it was', st3.setting === 'off', JSON.stringify(st3));
 
   const st4 = await req({ kind: 'settings.set', key: 'network.proxy', value: 'system' });
-  const p3 = await req({ kind: 'providers.probe', id: O.id, listOnly: true });
+  const p3 = await req({ kind: 'providers.probe', id: N.id, listOnly: true });
   check('back to 跟随系统: the environment\'s proxy again', st4.source === 'env' && p3.ok, JSON.stringify(st4));
   const saved = (await req({ kind: 'settings.get' }))['network.proxy'];
   check('跟随系统 is stored as nothing (meta.json has no network.proxy)', saved === undefined, String(saved));
@@ -182,7 +169,7 @@ async function main() {
 main().catch((e) => { check('phase20 ran to the end', false, e.stack || e.message); }).finally(async () => {
   try { ws.close(); } catch { /* */ }
   server.kill();
-  for (const s of [oai, anth, ladder]) { s.closeAllConnections?.(); s.close(); }
+  for (const s of [anth, ladder]) { s.closeAllConnections?.(); s.close(); }
   await new Promise((r) => setTimeout(r, 800));
   try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* windows may still hold a handle */ }
   const bad = results.filter(([, ok]) => !ok);

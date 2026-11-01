@@ -177,9 +177,10 @@ describe('the tool list', () => {
     expect(callTimeoutOf('ego_browser', { timeout_ms: 10 ** 9 })).toBe(720_000);
   });
 
-  it('the tools that can answer with a picture are not deferred on our engine (alwaysLoad), and no other tool is', () => {
-    // ccb hides MCP tools behind ExecuteExtraTool, whose result is one JSON string: a picture would reach the model as
-    // base64 text. alwaysLoad keeps a tool in the model's own list — only for these, so the list stays short.
+  it('the tools that can answer with a picture are not deferred (alwaysLoad), and no other tool is', () => {
+    // alwaysLoad keeps a tool in the model's own list rather than behind deferred tool search — only for these, so the
+    // list stays short. (It came in for ccb, the fork we ran before 2026-11-01, whose deferred-tool runner turned a
+    // picture into base64 text.)
     const IMAGE_TOOLS = ['browser_screenshot', 'browser_computer', 'character_draft', 'theme_draft', 'ego_browser'];
     const loadedIn = (env: NodeJS.ProcessEnv) => toolsFor(env).filter((t) => (t as { _meta?: Record<string, unknown> })._meta?.['anthropic/alwaysLoad'] === true).map((t) => t.name).sort();
     // ego_browser_guide came with ego_browser (read once before it), not for a picture

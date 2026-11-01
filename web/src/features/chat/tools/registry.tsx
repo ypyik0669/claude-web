@@ -13,7 +13,7 @@ import { WEB_TOOLS, webToolLabel, webToolOf, type WebTool } from '@/features/bro
 import { COMPUTER_TOOLS, computerToolLabel, computerToolOf, type ComputerTool } from '@/features/computer/computer-tools';
 import { tr } from '@/i18n';
 import { ThemeDraftBody } from './ThemeDraftTool';
-import { EXTRA_TOOL, asAsked } from '../permission-dock';
+import { SITE_TOOL } from '../permission-dock';
 
 export type ToolCategory = 'read' | 'edit' | 'cmd' | 'web' | 'skill' | 'mcp' | 'agent' | 'plan' | 'other';
 
@@ -95,15 +95,26 @@ const COMPUTER = Object.fromEntries(COMPUTER_TOOLS.map((t) => [t, {
 } satisfies ToolDef])) as Record<ComputerTool, ToolDef>;
 
 /**
- * Our engine (ccb) runs MCP tools without alwaysLoad through ExecuteExtraTool { tool_name, params }: the step reads as
- * the tool inside (its verb and target; another server's tool as 「server · tool」), malformed as any tool's input.
+ * Conversations from before 2026-11-01 may have turns on ccb, the Claude Code fork we used to run, which called MCP
+ * tools without alwaysLoad through ExecuteExtraTool { tool_name, params } (and looked them up with SearchExtraTools).
+ * Kept so those transcripts still read: the step reads as the tool inside (its verb and target; another server's tool
+ * as 「server · tool」), malformed — or something that is not a plain tool call — as any tool's input.
  */
+const EXTRA_TOOL = 'ExecuteExtraTool';
+const NOT_UNWRAPPED = new Set([EXTRA_TOOL, 'SearchExtraTools', 'AskUserQuestion', 'ExitPlanMode', SITE_TOOL]);
+function extraToolInner(inp: unknown): { toolName: string; input: Record<string, unknown> } | undefined {
+  if (!inp || typeof inp !== 'object' || Array.isArray(inp)) return undefined;
+  const { tool_name: name, params } = inp as Record<string, unknown>;
+  if (typeof name !== 'string' || !name.trim() || NOT_UNWRAPPED.has(name)) return undefined;
+  if (params !== undefined && (!params || typeof params !== 'object' || Array.isArray(params))) return undefined;
+  return { toolName: name, input: (params ?? {}) as Record<string, unknown> };
+}
 DEFS[EXTRA_TOOL] = {
   icon: 'mcp',
   category: 'mcp',
   label: (i) => {
-    const inner = asAsked({ toolName: EXTRA_TOOL, input: i });
-    if (inner.toolName === EXTRA_TOOL) return MCP.label(i);
+    const inner = extraToolInner(i);
+    if (!inner) return MCP.label(i);
     const l = getToolDef(inner.toolName).label(inner.input as Record<string, any>);
     return l.verb ? l : { verb: toolDisplayName(inner.toolName), arg: l.arg };
   },

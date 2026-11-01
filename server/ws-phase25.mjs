@@ -1,5 +1,5 @@
 // Phase 25 end-to-end (2026-10-12): 后台 — a workflow's agents seen from the server, over a real server and the real
-// claude-web-engine against a fake Anthropic upstream started here (no model, no token). Checks:
+// Claude Code against a fake Anthropic upstream started here (no model, no token). Checks:
 //   · the main loop calls the Workflow tool → background.changed carries the workflow (its name), its phases and
 //     agents, they go from queued / running to done, and the turn's events have a feed line per agent;
 //   · background.transcript reads a workflow agent's own conversation;
@@ -162,20 +162,17 @@ const opened = [];
 async function main() {
   await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
   await req({ kind: 'settings.set', key: 'network.proxy', value: 'off' });
-  // our engine, then the official binary (the same shapes, from the CLI that defines them)
-  for (const runtime of (process.env.PHASE25_RUNTIMES ?? 'ccb,claude').split(',')) await suite(runtime);
+  await suite('claude');
 }
 
 async function suite(runtime) {
-  const tag = runtime === 'ccb' ? '[engine]' : '[official]';
-  const check = (name, ok, detail) => checkRaw(`${tag} ${name}`, ok, detail);
+  const check = (name, ok, detail) => checkRaw(name, ok, detail);
   hits.length = 0; held.clear(); slowClosed = 0;
-  const A = await req({ kind: 'providers.upsert', provider: { name: `中转${runtime}`, type: 'anthropic', baseUrl: up, apiKey: RELAY_KEY, defaultModel: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6'], runtime } });
+  const A = await req({ kind: 'providers.upsert', provider: { name: `中转${runtime}`, type: 'anthropic', baseUrl: up, apiKey: RELAY_KEY, defaultModel: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6'] } });
   const o = await req({ kind: 'session.open', params: { cwd: proj, providerId: A.id, model: 'claude-sonnet-4-6', permissionMode: 'bypassPermissions' } });
   sid = o.sessionId;
   opened.push(sid);
   await until(() => events.some((e) => e.kind === 'session.state' && e.sessionId === sid && e.state === 'idle'), 90_000);
-  check(`the conversation runs on ${runtime}`, o.info.runtime === runtime, `runtime=${o.info.runtime}`);
 
   // ---- a quick workflow: two phases, three agents ----
   let from = events.length;

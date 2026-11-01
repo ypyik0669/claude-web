@@ -1,4 +1,3 @@
-import { openAddSource } from '@/features/gateway/add-source';
 import { useEffect, useState } from 'react';
 import { autoContinueAt, disarmAutoContinue, useStore } from '@/store';
 import { deriveStall } from '@/model/health';
@@ -81,7 +80,7 @@ export function StatusStrip({ sessionId }: { sessionId: string }) {
     if (p) await switchTo(p);
   };
   // on the Claude account, not on the providers the user added: say so, one click over (account-fail.ts)
-  const accountFail = !!showErr && !noLogin && accountFailed({ sessionId, errorKind: res?.errorKind, agent: o.info?.agent, hasInfo: !!o.info, live: o.info?.providerId, recorded: meta?.providerId, providers: providers.length });
+  const accountFail = !!showErr && !noLogin && accountFailed({ sessionId, errorKind: res?.errorKind, agent: 'claude', hasInfo: !!o.info, live: o.info?.providerId, recorded: meta?.providerId, providers: providers.length });
   const nothing = !alarm && !showErr && !rlActive && !armed && !cuWarn;
   if (nothing) return null;
   const resetAt = rl?.resetsAt ? rl.resetsAt * (rl.resetsAt < 1e12 ? 1000 : 1) : undefined;
@@ -99,7 +98,7 @@ export function StatusStrip({ sessionId }: { sessionId: string }) {
         <span className="chip err" title={res.text} data-err="no-login">
           {tr('Claude 账号还没登录 · 添加一个模型来源继续这个对话，或者登录 Claude 账号')}
           {/* 添加来源 in place (spec 2026-10-26 §2.4): an API source added there becomes this conversation's and the last message goes again */}
-          <button className="link" data-act="connect" onClick={() => openAddSource(undefined, (p) => { if (p) void switchTo(p); })}>{tr('添加来源')}</button>
+          <button className="link" data-act="connect" onClick={() => void connectModel({ reason: 'session' }).then((p) => { if (p) void switchTo(p); })}>{tr('添加来源')}</button>
           <button className="link" data-act="login" onClick={loginInTerminal}>{tr('用 Claude 账号登录')}</button>
         </span>
       )}

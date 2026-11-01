@@ -1,8 +1,8 @@
 // Outbound proxy. User report (2026-09-30): "挂了梯子，但是还是连接不上，没有开全局" — the provider test answered 403
 // "Access from this region requires trusted account access". A ladder in rule / PAC mode (Clash, v2rayN…) only sets the
 // *system* proxy: browsers follow it, Node never does (fetch and node:http ignore it; HTTP(S)_PROXY counts only when
-// NODE_USE_ENV_PROXY is set before start), so this server's own requests — provider tests, model lists, usage, IM, the
-// cache shim and the model gateway — and every CLI it starts (ccb, Codex, Gemini CLI) went out directly.
+// NODE_USE_ENV_PROXY is set before start), so this server's own requests — provider tests, model lists, usage, IM —
+// and every CLI it starts went out directly.
 //
 // Setting `network.proxy` (meta.json): 'system' (default) = the HTTP(S)_PROXY this process was started with, else the
 // system proxy (Windows: Internet Settings, a PAC file's first PROXY; macOS: scutil) — used only while it accepts a

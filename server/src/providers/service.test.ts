@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Provider } from '../protocol.js';
-import { chatProbeArgs, openaiBase, providerEnv } from './service.js';
-
-const prov = (baseUrl: string): Provider => ({ id: 'p', name: 'p', type: 'openai', baseUrl, apiKey: 'k', createdAt: 0 });
+import { chatProbeArgs, providerEnv } from './service.js';
 
 describe('chatProbeArgs (测试连接)', () => {
   it('runs one turn that leaves no conversation behind', () => {
@@ -13,76 +11,20 @@ describe('chatProbeArgs (测试连接)', () => {
   });
 });
 
-describe('openaiBase', () => {
-  it('appends /v1 to a bare relay host (what users paste)', () => {
-    expect(openaiBase('https://relay.example/')).toBe('https://relay.example/v1');
-    expect(openaiBase('https://relay.example')).toBe('https://relay.example/v1');
-  });
-  it('keeps an explicit version segment', () => {
-    expect(openaiBase('https://relay.example/v1/')).toBe('https://relay.example/v1');
-    expect(openaiBase('https://ark.example/api/v3')).toBe('https://ark.example/api/v3');
-    expect(openaiBase('https://g.example/v1beta')).toBe('https://g.example/v1beta');
-  });
-  it('leaves an empty base empty (the CLI default applies)', () => {
-    expect(openaiBase('')).toBe('');
-  });
-});
-
-describe('providerEnv (openai)', () => {
-  it('sessions get the versioned base URL, not the bare host', () => {
-    expect(providerEnv(prov('https://www.aizhongzhuan.cc/')).OPENAI_BASE_URL).toBe('https://www.aizhongzhuan.cc/v1');
-  });
-
-  it('tells the engine which haiku / sonnet / opus ids the relay itself serves, so a picked one is sent unchanged', () => {
-    const env = providerEnv({ ...prov('https://relay.example'), defaultModel: 'gpt-5', models: ['gpt-5', 'claude-sonnet-5', 'claude-haiku-4-5', 'claude-opus-5-5'] });
-    expect(JSON.parse(env.CLAUDE_WEB_SERVED_MODELS)).toEqual(['claude-sonnet-5', 'claude-haiku-4-5', 'claude-opus-5-5']);
-    // still a value per family: ccb's own background calls use ids the relay may not have
-    expect(env.OPENAI_DEFAULT_SONNET_MODEL).toBe('gpt-5');
-    expect(providerEnv({ ...prov('https://relay.example'), models: ['gpt-5', 'deepseek-v4'] }).CLAUDE_WEB_SERVED_MODELS).toBeUndefined();
-  });
-});
-
 describe('providerEnv (anthropic, prompt caching)', () => {
   const ant = (patch: Partial<Provider> = {}): Provider => ({ id: 'a', name: 'a', type: 'anthropic', baseUrl: 'https://relay.example', apiKey: 'k', createdAt: 0, ...patch });
   it('1-hour TTL is opt-in per profile (ENABLE_PROMPT_CACHING_1H, read by the official binary)', () => {
     expect(providerEnv(ant()).ENABLE_PROMPT_CACHING_1H).toBeUndefined();
     expect(providerEnv(ant({ cache1h: true })).ENABLE_PROMPT_CACHING_1H).toBe('1');
-    // a gateway profile is not an Anthropic profile: its members decide
-    expect(providerEnv({ ...ant({ cache1h: true }), type: 'gateway' }).ENABLE_PROMPT_CACHING_1H).toBeUndefined();
   });
-  it('the shim never applies to Anthropic-type env even if a shim were attached', () => {
-    const env = providerEnv({ ...ant(), shim: { base: 'http://127.0.0.1:1/gateway/~p/a', key: 'cws-x' } }, 'claude', { sessionKey: 's' });
+  it('a plain Anthropic profile: base URL and bearer token, nothing else', () => {
+    const env = providerEnv(ant());
     expect(env).toEqual({ CLAUDE_WEB_PLAIN_UA: '1', CLAUDE_CODE_ENTRYPOINT: 'cli', ANTHROPIC_BASE_URL: 'https://relay.example', ANTHROPIC_AUTH_TOKEN: 'k' });
   });
 });
 
-describe('agentLaunch (gemini profile)', () => {
-  it('Gemini CLI gets the profile key / base URL / model and the API-key auth override; other ACP agents get nothing', async () => {
-    const fs = await import('node:fs/promises');
-    const os = await import('node:os');
-    const path = await import('node:path');
-    const { MetaStore } = await import('../meta/store.js');
-    const { ProviderService } = await import('./service.js');
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cw-agentlaunch-'));
-    const prev = process.env.CLAUDE_WEB_DIR;
-    process.env.CLAUDE_WEB_DIR = dir;
-    try {
-      const meta = new MetaStore(path.join(dir, 'meta.json'));
-      const svc = new ProviderService(meta);
-      const p = await meta.upsertProvider({ name: 'g', type: 'gemini', baseUrl: 'https://g.example', apiKey: 'AIza-test', defaultModel: 'gemini-3-pro' });
-      const l = svc.agentLaunch(p.id, 'acp', 'gemini');
-      expect(l.env).toMatchObject({ GEMINI_API_KEY: 'AIza-test', GOOGLE_GEMINI_BASE_URL: 'https://g.example', GEMINI_MODEL: 'gemini-3-pro' });
-      expect(l.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH).toContain(dir);
-      expect(svc.agentLaunch(p.id, 'acp', 'qwen')).toEqual({ env: {}, args: [] });
-    } finally {
-      if (prev === undefined) delete process.env.CLAUDE_WEB_DIR; else process.env.CLAUDE_WEB_DIR = prev;
-      await fs.rm(dir, { recursive: true, force: true });
-    }
-  });
-});
-
 describe('fitError (session.setProvider guard)', () => {
-  it('refuses a profile the agent / engine cannot use, with the reason', async () => {
+  it('a missing profile is refused, with the reason', async () => {
     const fs = await import('node:fs/promises');
     const os = await import('node:os');
     const path = await import('node:path');
@@ -93,88 +35,12 @@ describe('fitError (session.setProvider guard)', () => {
       const meta = new MetaStore(path.join(dir, 'meta.json'));
       const svc = new ProviderService(meta);
       const anth = await meta.upsertProvider({ name: 'a', type: 'anthropic', baseUrl: 'https://a', apiKey: 'k' });
-      const oai = await meta.upsertProvider({ name: 'o', type: 'openai', baseUrl: 'https://o', apiKey: 'k' });
-      const oaiOfficial = await meta.upsertProvider({ name: 'oo', type: 'openai', baseUrl: 'https://o', apiKey: 'k', runtime: 'claude' });
-      expect(svc.fitError(anth.id, 'codex')).toMatch(/Codex/);
-      expect(svc.fitError(oai.id, 'codex')).toBeNull();
       expect(svc.fitError(anth.id, 'claude')).toBeNull();
-      // a pin to the official binary means nothing on an OpenAI-format profile (user report: every model on it greyed
-      // out): ccb runs it; only when ccb is not there at all is it refused
-      const { resolveEngine } = await import('../claude-exe.js');
-      if (resolveEngine('ccb').kind === 'ccb') expect(svc.fitError(oaiOfficial.id, 'claude')).toBeNull();
-      else expect(svc.fitError(oaiOfficial.id, 'claude')).toMatch(/官方/);
-      expect(svc.fitError(undefined, 'codex')).toBeNull();
       expect(svc.fitError('claude', 'claude')).toBeNull();
       expect(svc.fitError('nope', 'claude')).toMatch(/不存在/);
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
-  });
-});
-
-describe('providerEnv (gemini / grok through ccb)', () => {
-  const p = (o: Partial<Provider>): Provider => ({ id: 'p', name: 'p', type: 'gemini', baseUrl: '', apiKey: 'k', createdAt: 0, ...o });
-  it('gemini: switches ccb to its Gemini provider with the variables that provider reads', () => {
-    const env = providerEnv(p({ type: 'gemini', baseUrl: 'https://generativelanguage.googleapis.com', defaultModel: 'gemini-3-pro', modelMap: { haiku: 'gemini-3-flash' } }));
-    expect(env.CLAUDE_CODE_USE_GEMINI).toBe('1');
-    expect(env.GEMINI_API_KEY).toBe('k');
-    expect(env.GEMINI_BASE_URL).toBe('https://generativelanguage.googleapis.com/v1beta'); // ccb appends /models/<id>:streamGenerateContent
-    // every family is mapped (ccb throws on an unmapped haiku/sonnet/opus); the default fills the gaps
-    expect(env).toMatchObject({ GEMINI_DEFAULT_HAIKU_MODEL: 'gemini-3-flash', GEMINI_DEFAULT_SONNET_MODEL: 'gemini-3-pro', GEMINI_DEFAULT_OPUS_MODEL: 'gemini-3-pro' });
-    // GEMINI_MODEL pins every request (in-session model switches would do nothing)
-    expect(env.GEMINI_MODEL).toBeUndefined();
-    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
-  });
-  it('gemini: a versioned base URL is kept, an empty one left to the default; no default model → the best listed chat model', () => {
-    expect(providerEnv(p({ baseUrl: 'https://relay.example/v1beta/' })).GEMINI_BASE_URL).toBe('https://relay.example/v1beta');
-    const env = providerEnv(p({ models: ['gemini-3-flash', 'gemini-3-pro', 'imagen-4'] }));
-    expect(env.GEMINI_BASE_URL).toBeUndefined();
-    expect(env.GEMINI_DEFAULT_SONNET_MODEL).toBe('gemini-3-pro');
-    // nothing it recognises: the first chat model, never an embedding
-    expect(providerEnv(p({ models: ['text-embedding-004', 'learnlm-2'] })).GEMINI_DEFAULT_SONNET_MODEL).toBe('learnlm-2');
-  });
-  it('grok: switches ccb to its Grok provider (OpenAI-style base with /v1, GROK_API_KEY, family defaults)', () => {
-    const env = providerEnv(p({ type: 'grok', baseUrl: 'https://api.x.ai', apiKey: 'xai-k', defaultModel: 'grok-5', modelMap: { haiku: 'grok-5-mini' } }));
-    expect(env.CLAUDE_CODE_USE_GROK).toBe('1');
-    expect(env.GROK_API_KEY).toBe('xai-k');
-    expect(env.GROK_BASE_URL).toBe('https://api.x.ai/v1');
-    expect(env).toMatchObject({ GROK_DEFAULT_HAIKU_MODEL: 'grok-5-mini', GROK_DEFAULT_SONNET_MODEL: 'grok-5', GROK_DEFAULT_OPUS_MODEL: 'grok-5' });
-    expect(env.GROK_MODEL).toBeUndefined();
-    expect(providerEnv(p({ type: 'grok' })).GROK_BASE_URL).toBeUndefined();
-  });
-  it('openai: no OPENAI_MODEL (ccb sends it for every request: the model menu and the family map would do nothing); families default to the default model', () => {
-    const env = providerEnv(p({ type: 'openai', baseUrl: 'https://relay.example', defaultModel: 'deepseek-v4.1-flash', modelMap: { haiku: 'glm-5.3-flash' } }));
-    expect(env.CLAUDE_CODE_USE_OPENAI).toBe('1');
-    expect(env.OPENAI_MODEL).toBeUndefined();
-    expect(env).toMatchObject({
-      OPENAI_DEFAULT_HAIKU_MODEL: 'glm-5.3-flash', OPENAI_SMALL_FAST_MODEL: 'glm-5.3-flash',
-      OPENAI_DEFAULT_SONNET_MODEL: 'deepseek-v4.1-flash', OPENAI_DEFAULT_OPUS_MODEL: 'deepseek-v4.1-flash',
-    });
-    // no default and no map: the first listed model rather than ccb's built-in claude → gpt-4o / o3 table
-    const bare = providerEnv(p({ type: 'openai', baseUrl: 'https://relay.example', models: ['qwen3.8-max', 'kimi-k3'] }));
-    expect(bare).toMatchObject({ OPENAI_DEFAULT_HAIKU_MODEL: 'qwen3.8-max', OPENAI_DEFAULT_SONNET_MODEL: 'qwen3.8-max', OPENAI_DEFAULT_OPUS_MODEL: 'qwen3.8-max' });
-    expect(bare.OPENAI_MODEL).toBeUndefined();
-  });
-  it('only one ccb provider switch per type', () => {
-    const flags = (t: Provider['type']) => Object.keys(providerEnv(p({ type: t, baseUrl: 'https://x' }))).filter((k) => /^CLAUDE_CODE_USE_/.test(k));
-    expect(flags('openai')).toEqual(['CLAUDE_CODE_USE_OPENAI']);
-    expect(flags('gemini')).toEqual(['CLAUDE_CODE_USE_GEMINI']);
-    expect(flags('grok')).toEqual(['CLAUDE_CODE_USE_GROK']);
-    expect(flags('anthropic')).toEqual([]);
-  });
-});
-
-describe('worthOfficialRetry (测试连接 after ccb failed)', () => {
-  it('a 4xx (a relay fingerprinting the client) → try the official binary; down / out of balance / timed out → don’t', async () => {
-    const { worthOfficialRetry } = await import('./service.js');
-    expect(worthOfficialRetry('API Error: 400 请求可能被第三方中转改写')).toBe(true);
-    expect(worthOfficialRetry('API Error: 403 Forbidden')).toBe(true);
-    expect(worthOfficialRetry(undefined)).toBe(true);
-    expect(worthOfficialRetry('API Error: 503 No available accounts: no available accounts.')).toBe(false);
-    expect(worthOfficialRetry('API Error: 502 Upstream request failed')).toBe(false);
-    expect(worthOfficialRetry('API Error: 429 All available accounts are currently rate-limited')).toBe(false);
-    expect(worthOfficialRetry('API Error: 403 {"code":"INSUFFICIENT_BALANCE","message":"Insufficient account balance"}')).toBe(false);
-    expect(worthOfficialRetry('超时：120 秒内没有收到回答')).toBe(false);
   });
 });
 
@@ -185,7 +51,7 @@ describe('another Claude account (claude-account)', () => {
     expect(env).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: token, ANTHROPIC_AUTH_TOKEN: '', ANTHROPIC_API_KEY: '', ANTHROPIC_BASE_URL: '' });
     expect(env.ANTHROPIC_MODEL).toBeUndefined();
   });
-  it('saved with the account models; refreshing keeps them; the token is checked for its shape; a gateway member as a login; only Claude takes it', async () => {
+  it('saved with the account models; refreshing keeps them; the token is checked for its shape; Claude takes it', async () => {
     const fs = await import('node:fs/promises');
     const os = await import('node:os');
     const path = await import('node:path');
@@ -205,9 +71,7 @@ describe('another Claude account (claude-account)', () => {
       expect((await svc.refreshModels([p.id]))[0]).toMatchObject({ ok: true, count: models.length });
       expect(await svc.probe(p.id, undefined, { listOnly: true })).toMatchObject({ ok: true, models });
       expect(await svc.probe(undefined, { type: 'claude-account', apiKey: 'sk-relay-123' }, { listOnly: true })).toMatchObject({ ok: false });
-      expect(svc.member(p.id)).toMatchObject({ type: 'claude-account', apiKey: token });
       expect(svc.fitError(p.id, 'claude')).toBeNull();
-      expect(svc.fitError(p.id, 'codex')).toMatch(/Codex/);
       expect(svc.forSession(p.id)).toMatchObject({ type: 'claude-account', apiKey: token });
     } finally {
       if (prev === undefined) delete process.env.CLAUDE_WEB_DIR; else process.env.CLAUDE_WEB_DIR = prev;

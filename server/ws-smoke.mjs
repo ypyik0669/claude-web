@@ -22,11 +22,11 @@ ws.on('message', async (raw) => {
 });
 ws.on('open', async () => {
   const eng = await req({ kind: 'engine.info' });
-  console.log('engine:', eng.runtime, eng.version, eng.source, eng.fallback ? `(fallback ${eng.fallback.runtime} ${eng.fallback.version})` : '');
+  console.log('engine:', eng.version, eng.source, eng.path);
   const provs = await req({ kind: 'providers.list' });
   console.log('providers:', provs.map((p) => `${p.id}=${p.name}:${p.type}:${p.apiKey}`).join('  ') || '(none)');
   const o = await req({ kind: 'session.open', params: { cwd: 'C:\\Users\\YPY\\claude-web', model: 'haiku', permissionMode: 'default', providerId } });
-  console.log('opened', o.sessionId, 'runtime', o.info.runtime, 'provider', o.info.providerId ?? 'claude');
+  console.log('opened', o.sessionId, 'provider', o.info.providerId ?? 'claude');
   for (let i = 0; i < 60 && !(info && info.state !== 'starting'); i++) await new Promise((r) => setTimeout(r, 500));
   console.log('info:', 'ver', info?.claudeCodeVersion, 'cmds', info?.slashCommands?.length, 'models', info?.models?.length, 'skills', info?.skills?.length, 'mcp', info?.mcpServers?.length, 'model', info?.model);
   await req({ kind: 'session.send', params: { sessionId: o.sessionId, text: `Reply with exactly: pong via ${providerId}` } });

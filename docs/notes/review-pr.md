@@ -40,7 +40,7 @@
 - 自动归档（设置 `ui.autoArchivePr`，默认关）：PR merged / closed 且对话空闲 → `library.archive`。
 - **只认本仓库的 PR**（验证发现，2026-10-16）：只按 `headRefName` 查，facebook/react 上光 head 叫 main 的就有 519 个，全是别人 fork 来的。现在取前 10 个里第一个 `isCrossRepository: false` 的，当前分支是默认分支时直接不显示。代价：你在自己的 fork 上开 PR 到上游时，条不显示（origin 是 fork）。
 - **一个对话只有一个条在干活**：标签页隐藏时不卸载，同一个对话也可能开在两个分屏。拉取、自动修和自动归档只由第一个在屏上的条做（模块里的 `owners`），结果放在共享的小 store 里，别的条只读。自动修还有一个本窗口同步去重（`sentFix`）；两个桌面窗口之间仍可能各发一次，这一点没处理。
-- **自动归档只认这次在本窗口里看见过开着的 PR**（`sawOpen`），每个只试一次：刚打开设置时，不会把几个月前就合并的 PR 对应的对话一起扫掉；Codex 对话归档后不写 `sessionMeta.archived`，也不会因此反复归档。
+- **自动归档只认这次在本窗口里看见过开着的 PR**（`sawOpen`），每个只试一次：刚打开设置时，不会把几个月前就合并的 PR 对应的对话一起扫掉；归档后读不回 `sessionMeta.archived` 的对话（当时是 Codex 的）也不会因此反复归档。
 - 没登录 gh 时缓存 60 秒（`noToken`），不会每分钟每个对话都起一次 `gh auth token`。
 - 没做：自动处理 PR 评论（官方按作者身份筛选，要可靠的权限判断）、GitLab、联邦对话的条。
 

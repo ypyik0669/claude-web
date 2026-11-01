@@ -20,19 +20,16 @@
     "build:site": "npm run build --prefix site",
     "site:install": "cd site && npm install --no-save",
     "desktop": "npm run build:all && electron .",
-    "build:desktop": "npm run engines:fetch && npm run build:all && electron-builder --config electron-builder.yml --win",
-    "build:desktop:mac": "npm run engines:fetch && npm run build:all && electron-builder --config electron-builder.yml --mac",
-    "build:desktop:linux": "npm run engines:fetch && npm run build:all && electron-builder --config electron-builder.yml --linux",
+    "build:desktop": "npm run build:all && electron-builder --config electron-builder.yml --win",
+    "build:desktop:mac": "npm run build:all && electron-builder --config electron-builder.yml --mac",
+    "build:desktop:linux": "npm run build:all && electron-builder --config electron-builder.yml --linux",
     "typecheck": "tsc --noEmit -p server && tsc --noEmit -p web && tsc --noEmit -p desktop && tsc --noEmit -p site",
-    "e2e": "node scripts/e2e.mjs",
-    "sidecars:fetch": "node scripts/sidecars/fetch.mjs",
-    "engines:fetch": "node scripts/engines/fetch.mjs"
+    "e2e": "node scripts/e2e.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.283",
     "@larksuiteoapi/node-sdk": "^1.73.1",
     "chokidar": "^5.0.0",
-    "claude-web-engine": "https://github.com/ypyik0669/claude-web/releases/download/engine-v2.8.4-cw.7/claude-web-engine-2.8.4-cw.7.tgz",
     "electron-updater": "^6.8.9",
     "https-proxy-agent": "^7.0.6",
     "jsonc-parser": "^3.3.1",

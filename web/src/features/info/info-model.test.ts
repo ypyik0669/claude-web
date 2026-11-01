@@ -104,7 +104,7 @@ describe('context colours (A5)', () => {
     expect(b.buffer.map((c) => c.name)).toEqual(['Autocompact buffer']);
     expect(b.deferred.map((c) => c.name)).toEqual(['MCP tools (deferred)']);
   });
-  it('an engine that leaves `kind` out (the ccb fork, seen live): free space and the compact buffer still kept apart', () => {
+  it('a CLI that leaves `kind` out (seen live): free space and the compact buffer still kept apart', () => {
     const b = contextBreakdown({
       rawMaxTokens: 200_000, totalTokens: 25_200,
       categories: [

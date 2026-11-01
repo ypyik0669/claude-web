@@ -5,8 +5,8 @@ import { useStore } from '@/store';
 import { ago, clsx } from '@/util';
 import { AGENT_ICONS, Icon } from '@/ui/icons';
 import { TERMS } from '@/ui/terms';
-import { buildModelMenu, filterMenu, foldMenu, pushRecent, recentKey, type AgentSource, type ModelMenuItem, type ModelMenuSection } from './menu';
-import { refreshAllModels, useGatewayStatus, useRefreshRun } from './data';
+import { buildModelMenu, filterMenu, foldMenu, pushRecent, recentKey, type ModelMenuItem, type ModelMenuSection } from './menu';
+import { refreshAllModels, useRefreshRun } from './data';
 import { fmtWindow } from '@/features/info/info-model';
 import { placeMenu, samePlacement, withOrigin, type Placement } from './place';
 import { MODEL_MENU_ID, SUBAGENT_MENU_ID } from '@/features/composer/ids';
@@ -17,7 +17,6 @@ import { imeComposing } from '@/ui/ime';
 import { useMenuMotion } from '@/ui/menu-motion';
 import { ActionSheet, useSheetMenu } from '@/ui/ActionSheet';
 import { tr } from '@/i18n';
-import { openGateway } from '@/features/gateway/state';
 import { Switch } from '@/ui/Switch';
 
 /** `5 分钟前` / `刚刚` / a date */
@@ -32,10 +31,9 @@ export interface ModelMenuProps {
   /** false (or a promise of false) = not done (refused, cancelled, failed): the pick is not recorded as recent */
   onPick: (item: ModelMenuItem) => boolean | void | Promise<boolean | void>;
   onClose: () => void;
-  /** the agent's own model list when it reported one */
+  /** Claude's own model list when it reported one */
   builtin?: { value: string; displayName: string; description?: string }[];
   builtinTitle?: string;
-  agentDefault?: string;
   /** only this profile's entries (a session on another machine can switch models, not profiles) */
   lockProvider?: string;
   lockNote?: string;
@@ -44,8 +42,6 @@ export interface ModelMenuProps {
   /** the element the menu hangs off: the menu is then portalled to <body> with fixed coordinates, so a
    *  pane's `overflow: hidden` cannot clip it, and it opens on whichever side has more room */
   anchor?: RefObject<HTMLElement | null>;
-  /** the other agents as more sections of the flat list (picking one switches agent / hands over) */
-  otherAgents?: AgentSource[];
   /**
    * The 子代理 chip's menu (SubagentChip): `lockProvider`'s own models only, a 「跟主模型一样」 row on top, no
    * favourites / recents / default entries, and at the bottom whether new conversations on this provider take it.
@@ -69,8 +65,6 @@ export interface SubagentMenuOptions {
   /** the current pick is this provider's default for new conversations */
   isDefault: boolean;
   onToggleDefault: () => void;
-  /** other providers whose models are listed too (subagents on another provider: the gateway's split route) */
-  alsoProviders?: string[];
 }
 
 /**
@@ -85,8 +79,6 @@ export function ModelMenu(p: ModelMenuProps) {
   const providers = useStore((s) => s.providers);
   const settings = useStore((s) => s.settings);
   const setSetting = useStore((s) => s.setSetting);
-  const gateway = useGatewayStatus();
-  const engine = useStore((s) => s.engine);
   const refresh = useRefreshRun();
   const [q, setQ] = useState('');
   const [active, setActive] = useState(0);
@@ -139,17 +131,13 @@ export function ModelMenu(p: ModelMenuProps) {
 
   const sub = !!p.subagent;
   const menu = useMemo(() => {
-    const m = buildModelMenu({ agent: p.agent, providers, gatewayGroups: gateway.groups, gatewayPoolModels: gateway.poolModels, gatewayEnabled: gateway.enabled, engine, settings, current: p.current, builtin: p.builtin, builtinTitle: p.builtinTitle, agentDefault: p.agentDefault, otherAgents: p.lockProvider ? undefined : p.otherAgents });
+    const m = buildModelMenu({ agent: p.agent, providers, settings, current: p.current, builtin: p.builtin, builtinTitle: p.builtinTitle });
     if (!p.lockProvider) return m;
-    const also = new Set(p.subagent?.alsoProviders ?? []);
-    const keep = (s: ModelMenuSection) => ({ ...s, items: s.items.filter((i) => (i.providerId === p.lockProvider || also.has(i.providerId)) && !i.agent && !(sub && i.isDefault)) });
+    const keep = (s: ModelMenuSection) => ({ ...s, items: s.items.filter((i) => i.providerId === p.lockProvider && !(sub && i.isDefault)) });
     // the 子代理 menu: one model of this provider each, no favourites / recents repeating them
     const own = sub ? m.sections.filter((s) => s.kind === 'builtin' || s.kind === 'provider') : m.sections;
-    // the conversation's own provider first, the others after it in their usual order
-    const kept = own.map(keep).filter((s) => s.items.length);
-    const mine = (s: ModelMenuSection) => (s.items.some((i) => i.providerId === p.lockProvider) ? 0 : 1);
-    return { ...m, sections: [...kept].sort((a, b) => mine(a) - mine(b)) };
-  }, [p.agent, providers, gateway, engine, settings, p.current.providerId, p.current.model, p.builtin, p.builtinTitle, p.agentDefault, p.lockProvider, p.otherAgents, sub, p.subagent?.alsoProviders?.join('\n')]);
+    return { ...m, sections: own.map(keep).filter((s) => s.items.length) };
+  }, [p.agent, providers, settings, p.current.providerId, p.current.model, p.builtin, p.builtinTitle, p.lockProvider, sub]);
   // 更多模型 ›: long lists fold after the first few until opened (models/menu.ts foldMenu)
   const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
   const shown = useMemo(() => foldMenu(filterMenu(menu, q), opened, q), [menu, q, opened]);
@@ -199,7 +187,7 @@ export function ModelMenu(p: ModelMenuProps) {
     const done = await p.onPick(it);
     if (done === false || sub) return; // the subagents' model is not a recent pick of the main one
     const st = useStore.getState();
-    void st.setSetting('ui.recentModels', pushRecent(st.settings['ui.recentModels'] as string[] | undefined, recentKey(it.agent ?? p.agent, it.providerId, it.model)));
+    void st.setSetting('ui.recentModels', pushRecent(st.settings['ui.recentModels'] as string[] | undefined, recentKey(p.agent, it.providerId, it.model)));
   };
   const toggleFav = (it: ModelMenuItem) => {
     const favs = (settings['ui.favoriteModels'] as string[] | undefined) ?? [];
@@ -235,11 +223,10 @@ export function ModelMenu(p: ModelMenuProps) {
             <span className="mm-label"><span className="m">{tr('跟主模型一样')}</span></span>
           </div>
         )}
-        {shown.sections.map((s, si) => (
-          <div key={s.id} className={clsx('mm-sec', s.kind === 'agent' && 'agent')} data-sec={s.id}>
-            {s.kind === 'agent' && shown.sections[si - 1]?.kind !== 'agent' && <div className="mm-group">{TERMS.agents}</div>}
+        {shown.sections.map((s) => (
+          <div key={s.id} className="mm-sec" data-sec={s.id}>
             <div className="mm-head">
-              <Icon name={s.kind === 'favorites' ? 'star' : s.kind === 'recent' ? 'refresh' : s.kind === 'builtin' ? AGENT_ICONS[p.agent] ?? 'agent' : s.kind === 'agent' ? AGENT_ICONS[s.agent ?? ''] ?? 'agent' : s.providerType === 'gateway' ? 'gateway' : s.providerType === 'claude-account' ? AGENT_ICONS.claude ?? 'cloud' : 'cloud'} size={11} />
+              <Icon name={s.kind === 'favorites' ? 'star' : s.kind === 'recent' ? 'refresh' : s.kind === 'builtin' || s.providerType === 'claude-account' ? AGENT_ICONS.claude ?? 'cloud' : 'cloud'} size={11} />
               <span className="t">{s.title}</span>
               {s.providerType && <span className="ty">{s.providerType === 'claude-account' ? tr('Claude 账号') : s.providerType}</span>}
               {s.unavailable && <span className="err off" title={s.unavailable}>{s.unavailable}</span>}
@@ -269,7 +256,7 @@ export function ModelMenu(p: ModelMenuProps) {
                   {it.profileDefault && !sub && <span className="badge">{tr('默认')}</span>}
                   {it.hint && <span className="mm-hint">{it.hint}</span>}
                   {!q && i < 9 && <span className="mm-num" aria-hidden>{i + 1}</span>}
-                  {!it.isDefault && !it.agent && !sub && (
+                  {!it.isDefault && !sub && (
                     <button className={clsx('mm-star', it.favorite && 'on')} aria-label={it.favorite ? tr('取消收藏') : tr('收藏')} title={it.favorite ? tr('取消收藏') : tr('收藏（置顶）')} onClick={(e) => { e.stopPropagation(); toggleFav(it); }}>
                       <Icon name="star" size={12} />
                     </button>
@@ -289,7 +276,7 @@ export function ModelMenu(p: ModelMenuProps) {
         ))}
         {!flat.length && <div className="mm-empty">{q ? tr('没有匹配「{q}」的模型', { q }) : tr('没有可选的模型')}</div>}
         {!q && !p.lockProvider && (
-          <button type="button" className="mm-add" data-id={MODEL_MENU_ID.addProvider} onClick={() => { p.onClose(); useStore.getState().openSettings({ section: 'providers' }); }} title={tr('加一个中转 / 自己的 API key（Anthropic、OpenAI、Gemini、Grok 兼容）')}>
+          <button type="button" className="mm-add" data-id={MODEL_MENU_ID.addProvider} onClick={() => { p.onClose(); useStore.getState().openSettings({ section: 'providers' }); }} title={tr('加一个 Anthropic 兼容的中转，或自己的 API key')}>
             <Icon name="plus" size={12} /> {tr('添加供应商…')}
           </button>
         )}
@@ -330,14 +317,6 @@ export function ModelMenu(p: ModelMenuProps) {
           {refresh.running ? tr('刷新中 {done}/{total}', { done: refresh.done, total: refresh.total }) : tr('刷新全部模型')}
         </button>
         <span className="grow" />
-        {p.otherAgents && !p.lockProvider && (
-          <button data-id={MODEL_MENU_ID.agents} onClick={() => { p.onClose(); useStore.getState().openSettings({ section: 'agents' }); }} title={tr('安装、登录、配置 Codex / Gemini CLI 等其它 Agent')}>
-            <Icon name="agent" size={13} /> {TERMS.agents}…
-          </button>
-        )}
-        <button data-id={MODEL_MENU_ID.sources} onClick={() => { p.onClose(); openGateway(); }} title={tr('上游：账号、免费额度和 API 来源')}>
-          <Icon name="gateway" size={13} /> {tr('管理来源')}
-        </button>
         <button data-id={MODEL_MENU_ID.manage} onClick={() => { p.onClose(); useStore.getState().openSettings({ section: 'models' }); }}>
           <Icon name="settings" size={13} /> {tr('管理模型与供应商…')}
         </button>

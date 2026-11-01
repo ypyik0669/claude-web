@@ -1,6 +1,6 @@
 // Wire types of sync.* (pure: the web client imports them through @shared).
 
-export type SyncCollection = 'provider' | 'account' | 'gatewayGroup' | 'keyGroup' | 'setting';
+export type SyncCollection = 'provider' | 'setting';
 export interface SyncPlanItem {
   /** `<collection>:<id>`; what the preview sends back to skip an item */
   key: string;

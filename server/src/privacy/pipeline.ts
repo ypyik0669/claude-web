@@ -5,7 +5,7 @@
 // two deltas and one inside streamed tool-argument JSON.
 import type http from 'node:http';
 import { StringDecoder } from 'node:string_decoder';
-import { decoder } from '../gateway/upstream.js';
+import { decoder } from './upstream.js';
 import { partialTail, redactText, restoreText, type Compiled } from './detect.js';
 import type { PrivacyHit } from './types.js';
 

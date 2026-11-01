@@ -60,7 +60,7 @@ test('the intro answers in words', async () => {
   } finally { up.server.close(); }
 });
 
-test('the described theme: draft (the metro fixture) → save → apply, direct or behind ExecuteExtraTool', async () => {
+test('the described theme: draft (the metro fixture) → save → apply', async () => {
   const up = await demo.startUpstream('en', { shop, pace: 0 });
   try {
     const ask = { role: 'user', content: demo.TEXT.en.themeAsk };
@@ -74,10 +74,6 @@ test('the described theme: draft (the metro fixture) → save → apply, direct 
     assert.deepEqual(d2, { name: 'mcp__web__theme_save', input: { id: 'metro' } });
     const d3 = toolOf(await post(up.url, { model: 'm', stream: true, tools: direct, messages: [ask, used('a', 'x'), result('a'), used('b', 'x'), result('b')] }));
     assert.deepEqual(d3, { name: 'mcp__web__theme_apply', input: { id: 'metro' } });
-    const w1 = toolOf(await post(up.url, { model: 'm', stream: true, tools: [{ name: 'Read' }, { name: 'ExecuteExtraTool' }], messages: [ask] }));
-    assert.equal(w1.name, 'ExecuteExtraTool');
-    assert.equal(w1.input.tool_name, 'mcp__web__theme_draft');
-    assert.equal(w1.input.params.json.id, 'metro');
   } finally { up.server.close(); }
 });
 

@@ -28,12 +28,10 @@ export function claudePrice(model: string, u: { input: number; output: number; c
 }
 
 /**
- * Whether a `result.total_cost_usd` from the CLI means anything. ccb prices EVERY model with Claude's table
- * (an OpenAI-mode session on deepseek shows $5/M input), so for profiles that run a non-Anthropic API
- * (openai / gemini / grok) and for non-Claude model ids the number is dropped (0 = unknown).
+ * Whether a `result.total_cost_usd` from the CLI means anything. The CLI prices EVERY model with Claude's table, so
+ * for a relay's non-Claude model ids the number is dropped (0 = unknown).
  */
-export function trustsCliCost(type: ProviderType | undefined, model: string): boolean {
-  if (type === 'openai' || type === 'gemini' || type === 'grok') return false;
+export function trustsCliCost(_type: ProviderType | undefined, model: string): boolean {
   return !model || isClaudeModel(model);
 }
 
@@ -50,8 +48,3 @@ export function markUnknownCost<T extends { type?: string; total_cost_usd?: numb
   return m;
 }
 
-/**
- * ccb's Gemini adapter reports `promptTokenCount` (which already includes the cached part) as input_tokens
- * AND the cached part as cache_read_input_tokens — the hit would be counted twice. Other adapters subtract it.
- */
-export const inputIncludesCacheRead = (type: ProviderType | undefined) => type === 'gemini';

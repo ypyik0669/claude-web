@@ -70,10 +70,10 @@ describe('入门清单 (settings[onboarding.checklist])', () => {
 
 describe('the start page lists (最近任务 / 定时任务 / 已归档)', () => {
   const ws = [{ id: 'w', path: 'C:/code/app', name: 'app' }];
-  it('recent: top-level, not archived, newest first, five at most; project name or folder, agent name, time', () => {
+  it('recent: top-level, not archived, newest first, five at most; project name or folder, claude.ai marked, time', () => {
     const list = [
       S('a', { lastModified: NOW - 4 * min }),
-      S('b', { lastModified: NOW - 2 * day, cwd: 'D:/misc/tool', agent: 'codex' }),
+      S('b', { lastModified: NOW - 2 * day, cwd: 'D:/misc/tool', agent: 'claudeai' }),
       S('c', { lastModified: NOW - 10 * min, parentId: 'a' }),
       S('d', { lastModified: NOW - hour }),
       S('e', { lastModified: NOW - day }),
@@ -81,11 +81,12 @@ describe('the start page lists (最近任务 / 定时任务 / 已归档)', () =>
       S('g', { lastModified: NOW - 4 * day }),
       S('h', { lastModified: NOW - 5 * min }),
     ];
-    const r = homeRows('recent', { sessions: list, meta: { h: { archived: true } }, workspaces: ws, agents: [{ kind: 'codex', name: 'Codex' }], now: NOW });
+    const r = homeRows('recent', { sessions: list, meta: { h: { archived: true } }, workspaces: ws, now: NOW });
     expect(r.rows.map((x) => x.id)).toEqual(['a', 'd', 'e', 'b', 'f']);
     expect(r.more).toBe(1);
     expect(r.rows[0]).toMatchObject({ where: 'app', when: '4 分钟前' });
-    expect(r.rows[3]).toMatchObject({ where: 'tool', agent: 'Codex', when: '2 天前' });
+    expect(r.rows[3]).toMatchObject({ where: 'tool', agent: 'claude.ai', when: '2 天前' });
+    expect(r.rows[0].agent).toBeUndefined();
   });
   it('archived: only archived ones (meta or the source’s own flag)', () => {
     const r = homeRows('archived', { sessions: [S('a'), S('b', { archived: true }), S('c')], meta: { c: { archived: true } }, workspaces: ws, now: NOW });

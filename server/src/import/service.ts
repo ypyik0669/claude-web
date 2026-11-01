@@ -1,7 +1,7 @@
 import type { ImportItem, ImportResult, ImportScan, Provider } from '../protocol.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { scanAll, type Found, type FoundProvider, type McpConfig, type ScanResult } from './scan.js';
+import { scanAll, type Usable, type FoundProvider, type McpConfig, type ScanResult } from './scan.js';
 
 export interface ImportDeps {
   providers: {
@@ -23,7 +23,7 @@ export function commandMissing(c: McpConfig): boolean {
   return !fs.existsSync(c.command);
 }
 
-const detail = (f: Found) => (f.kind === 'provider' ? f.baseUrl : 'command' in f.config ? [f.config.command, ...(f.config.args ?? [])].join(' ') : f.config.url);
+const detail = (f: Usable) => (f.kind === 'provider' ? f.baseUrl : 'command' in f.config ? [f.config.command, ...(f.config.args ?? [])].join(' ') : f.config.url);
 
 /** 从其它工具导入: what the scan found, as the window shows it (no key), and taking the picked items in. */
 export class ImportService {
@@ -79,7 +79,7 @@ export class ImportService {
   }
 }
 
-export function providerOf(f: FoundProvider): Partial<Provider> {
+export function providerOf(f: FoundProvider & { type: 'anthropic' }): Partial<Provider> {
   return {
     name: f.name,
     type: f.type,

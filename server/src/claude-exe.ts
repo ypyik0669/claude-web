@@ -1,16 +1,14 @@
 import { spawn, exec, execFile, execSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { nodeRuntime } from './agents/resolve.js';
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
 
-import type { EngineInfo, RuntimeKind } from './protocol.js';
-export type { EngineInfo, RuntimeKind };
+import type { EngineInfo } from './protocol.js';
+export type { EngineInfo };
 
 const isWin = process.platform === 'win32';
 const unpack = (p: string) => p.replace(/app\.asar(?!\.unpacked)/, 'app.asar.unpacked');
@@ -37,7 +35,7 @@ function execOut(run: (cb: (err: Error | null, stdout: string | Buffer) => void)
 }
 
 /**
- * `npm root -g`, synchronous: only for the spawn paths (resolveClaudeExe / resolveCcbEntry), and only when
+ * `npm root -g`, synchronous: only for the spawn path (resolveClaudeExe), and only when
  * nothing bundled exists. engine.info uses globalRootAsync. Both share one memo. Exported for tests.
  */
 export function globalRoot(): string | null {
@@ -82,32 +80,11 @@ export function resolveClaudeExe(root: () => string | null = globalRoot): string
 }
 
 /**
- * Our engine, claude-web-engine (a fork of claude-code-best, "ccb"): the bundled npm dependency, or
- * CLAUDE_WEB_CCB. Entry is a JS file run by node. A global claude-code-best is never used: it has neither
- * the thinking-strength / ultracode / auto-mode work nor the inlined classifier prompt.
- * `_root` stays for callers that still pass the npm-prefix lookup; nothing global is looked at.
- */
-export function resolveCcbEntry(_root?: () => string | null): string | null {
-  const candidates: string[] = [];
-  if (process.env.CLAUDE_WEB_CCB) candidates.push(process.env.CLAUDE_WEB_CCB);
-  try {
-    candidates.push(unpack(path.join(path.dirname(require.resolve('claude-web-engine/package.json')), 'dist', 'cli-node.js')));
-  } catch {
-    /* not bundled */
-  }
-  const rp = (process as any).resourcesPath as string | undefined;
-  if (rp) candidates.push(path.join(rp, 'app.asar.unpacked', 'node_modules', 'claude-web-engine', 'dist', 'cli-node.js'));
-  return candidates.find((c) => existsSync(c)) ?? null;
-}
-
-/**
- * An engine's version: a JS engine's from its package.json; a binary's from `<binary> --version` (seconds for
- * claude.exe) run asynchronously, per file + mtime, failures kept LOOKUP_FAIL_TTL_MS. Exported for tests.
+ * The binary's version: `<binary> --version` (seconds for claude.exe) run asynchronously, per file + mtime,
+ * failures kept LOOKUP_FAIL_TTL_MS. Exported for tests.
  */
 export async function versionOf(file: string): Promise<string | undefined> {
   try {
-    const pkg = file.endsWith('.js') ? path.resolve(path.dirname(file), '..', 'package.json') : null;
-    if (pkg && existsSync(pkg)) return JSON.parse(await readFile(pkg, 'utf8')).version;
     const key = `${file}|${statSync(file).mtimeMs}`;
     const hit = versionMemo.get(key);
     if (fresh(hit)) return hit.v ?? undefined;
@@ -125,87 +102,56 @@ export async function versionOf(file: string): Promise<string | undefined> {
 }
 
 function sourceOf(file: string): EngineInfo['source'] {
-  if (file === process.env.CLAUDE_WEB_EXE || file === process.env.CLAUDE_WEB_CCB) return 'env';
-  return file.includes('app.asar') || file.includes('claude-agent-sdk') || file.includes(path.join('node_modules', 'claude-web-engine')) || file.includes(path.join('claude-web', 'node_modules')) ? 'bundled' : 'global';
+  if (file === process.env.CLAUDE_WEB_EXE) return 'env';
+  return file.includes('app.asar') || file.includes('claude-agent-sdk') || file.includes(path.join('claude-web', 'node_modules')) ? 'bundled' : 'global';
 }
 
-let cached: { file: string; kind: RuntimeKind } | null = null;
-/**
- * The one runtime every session uses. Our engine (claude-web-engine, a superset of Claude Code with the same
- * protocol and the same ~/.claude) is preferred; the official binary is the silent fallback.
- * `CLAUDE_WEB_RUNTIME=claude` or `prefer: 'claude'` picks the official binary explicitly.
- */
-export function resolveEngine(prefer?: RuntimeKind): { file: string; kind: RuntimeKind } {
-  const want = prefer ?? (process.env.CLAUDE_WEB_RUNTIME === 'claude' ? 'claude' : 'ccb');
-  if (want === 'claude') return { file: resolveClaudeExe(), kind: 'claude' };
-  if (cached) return cached;
-  const c = resolveCcbEntry();
-  cached = c ? { file: c, kind: 'ccb' } : { file: resolveClaudeExe(), kind: 'claude' };
-  return cached;
+/** The Claude Code binary every session and `claude <subcommand>` runs. */
+export function resolveEngine(): { file: string } {
+  return { file: resolveClaudeExe() };
 }
 
 /**
- * What the config center / welcome strip show: the runtime sessions use, its version and the fallback. Asked
- * on every connection, so nothing here runs a synchronous process: bundled engines are found on disk, the npm
- * prefix (only needed when one is not bundled) and `--version` are asked asynchronously.
+ * What the config center / welcome strip show: the binary, its version and where it came from. Asked on every
+ * connection, so nothing here runs a synchronous process: the bundled binary is found on disk, the npm prefix (only
+ * needed when it is not bundled) and `--version` are asked asynchronously.
  */
 export async function engineInfo(): Promise<EngineInfo> {
-  const bundledOnly = () => null;
-  const ccb = resolveCcbEntry();
   let claude: string | null = null;
-  try { claude = resolveClaudeExe(bundledOnly); } catch { /* not bundled */ }
+  try { claude = resolveClaudeExe(() => null); } catch { /* not bundled */ }
   if (!claude) {
     const g = await globalRootAsync();
     try { claude = resolveClaudeExe(() => g); } catch { /* not installed */ }
   }
-  const wantClaude = process.env.CLAUDE_WEB_RUNTIME === 'claude';
-  const main: { file: string; kind: RuntimeKind } | null = wantClaude ? (claude ? { file: claude, kind: 'claude' } : null) : ccb ? { file: ccb, kind: 'ccb' } : claude ? { file: claude, kind: 'claude' } : null;
-  if (!main) throw new Error('Claude Code executable not found (neither ccb nor the official binary)');
-  cached = wantClaude ? null : main; // resolveEngine's default pick, refreshed
-  const other = main.kind === 'ccb' ? claude : ccb;
-  const [version, otherVersion] = await Promise.all([versionOf(main.file), other ? versionOf(other) : undefined]);
-  const info: EngineInfo = { runtime: main.kind, version, path: main.file, source: sourceOf(main.file) };
-  if (other) info.fallback = { runtime: main.kind === 'ccb' ? 'claude' : 'ccb', version: otherVersion, path: other };
-  return info;
+  if (!claude) throw new Error('Claude Code executable not found');
+  return { version: await versionOf(claude), path: claude, source: sourceOf(claude) };
 }
 
 /**
  * Custom spawn for the SDK. The SDK's built-in spawn fails with ENOENT on Windows for the
- * native binary; a plain child_process.spawn with the same args works. Also maps `node` to the
- * right binary when running inside Electron.
+ * native binary; a plain child_process.spawn with the same args works.
  */
 export function spawnClaude(o: { command: string; args: string[]; cwd?: string; env: Record<string, string | undefined>; signal?: AbortSignal }) {
-  let command = o.command;
-  let env = { ...o.env } as NodeJS.ProcessEnv;
+  const env = { ...o.env } as NodeJS.ProcessEnv;
   if (env.CLAUDE_WEB_PLAIN_UA) {
     // third-party provider session: drop the SDK markers so the CLI's User-Agent is the plain `claude-cli/x (external, sdk-cli)`
     delete env.CLAUDE_WEB_PLAIN_UA;
     delete env.CLAUDE_AGENT_SDK_VERSION;
     delete env.CLAUDE_AGENT_SDK_CLIENT_APP;
   }
-  let args = o.args;
-  if (command === 'node') {
-    // JS engine (ccb): Electron-as-node inside the desktop app, with the spawn-guard preload before the script
-    const n = nodeRuntime();
-    command = n.command;
-    env = { ...env, ...n.env };
-    args = [...n.args, ...args];
-  }
-  return spawn(command, args, { cwd: o.cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, signal: o.signal });
+  return spawn(o.command, o.args, { cwd: o.cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, signal: o.signal });
 }
 
 /** Run a `claude <subcommand>` with the runtime and return stdout/stderr. Used by the config center. */
-export async function runClaudeCli(args: string[], opts: { cwd?: string; timeoutMs?: number; runtime?: RuntimeKind; env?: Record<string, string> } = {}): Promise<{ code: number; stdout: string; stderr: string; timedOut?: boolean }> {
-  const { file } = resolveEngine(opts.runtime);
-  const isJs = file.endsWith('.js');
-  const n = isJs ? nodeRuntime() : null;
+export async function runClaudeCli(args: string[], opts: { cwd?: string; timeoutMs?: number; env?: Record<string, string> } = {}): Promise<{ code: number; stdout: string; stderr: string; timedOut?: boolean }> {
+  const { file } = resolveEngine();
   try {
-    const p = execFileAsync(isJs ? n!.command : file, isJs ? [...n!.args, file, ...args] : args, {
+    const p = execFileAsync(file, args, {
       cwd: opts.cwd,
       timeout: opts.timeoutMs ?? 60_000,
       maxBuffer: 16 * 1024 * 1024,
       windowsHide: true,
-      env: { ...process.env, ...(n?.env ?? {}), ...(opts.env ?? {}) },
+      env: { ...process.env, ...(opts.env ?? {}) },
     });
     p.child.stdin?.end(); // `-p` otherwise waits 3 s for piped input and prints a warning to stderr
     const { stdout, stderr } = await p;

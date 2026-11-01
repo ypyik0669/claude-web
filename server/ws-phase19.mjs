@@ -1,11 +1,9 @@
 // Phase 19 end-to-end (2026-09-30 user reports): conversations started away from the composer run on the provider
-// the user set up, other agents can use providers, and the earlier relay fixes hold — over a real server and a real
-// ccb, against a fake relay and a fake DingTalk started here (no model, no token, no DingTalk account). Checks:
+// the user set up, and the earlier relay fixes hold — over a real server and the real Claude Code, against a fake
+// Anthropic-format relay and a fake DingTalk started here (no model, no token, no DingTalk account). Checks:
 //   · a DingTalk message (the real DingTalk adapter, Stream mode) starts a Claude conversation on the
 //     new-conversation default provider — the relay answers, /status names it, a reopen keeps it;
 //   · a bot set to another provider uses that one;
-//   · Codex (mock app-server that calls its provider like the real one) set to a provider in settings → Agents:
-//     its /v1/responses reaches a chat-only relay as chat/completions through the cache shim, the answer comes back;
 //   · a scheduled task runs on the default provider;
 //   · the model picked for a session is the model the relay gets (not the provider's default);
 //   · Stop ends a turn whose relay never answers;
@@ -22,7 +20,6 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const mockCodex = path.join(here, 'src', 'agents', '__mocks__', 'codex-server.mjs');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-phase19-'));
 const home = path.join(root, 'home');
 const proj = path.join(root, 'proj');
@@ -35,7 +32,7 @@ const results = [];
 const check = (name, ok, detail = '') => { results.push([name, !!ok]); console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`); };
 const until = async (fn, ms, step = 200) => { const end = Date.now() + ms; for (;;) { const v = await fn(); if (v) return v; if (Date.now() > end) return null; await new Promise((r) => setTimeout(r, step)); } };
 
-// ---- a chat-only OpenAI-compatible relay (no /v1/responses, like most relays): `hang-e2e` never answers ----
+// ---- an Anthropic-format relay: `hang-e2e` never answers ----
 const hits = [];
 let n = 0;
 const relay = http.createServer((q, s) => {
@@ -44,23 +41,28 @@ const relay = http.createServer((q, s) => {
   q.on('end', () => {
     let j = {};
     try { j = JSON.parse(body || '{}'); } catch { /* keep */ }
-    const h = { method: q.method, url: q.url, auth: String(q.headers.authorization ?? ''), ua: String(q.headers['user-agent'] ?? ''), model: j.model, body };
+    // the conversation's own requests carry its tools; side requests (the title, …) do not
+    const h = { method: q.method, url: q.url, auth: String(q.headers.authorization ?? ''), ua: String(q.headers['user-agent'] ?? ''), model: j.model, body, main: Array.isArray(j.tools) && j.tools.length > 0 };
     hits.push(h);
-    if (h.auth !== `Bearer ${RELAY_KEY}`) { s.writeHead(401, { 'content-type': 'application/json' }).end('{"error":{"message":"无效的令牌"}}'); return; }
-    if (q.method === 'GET' && q.url.endsWith('/models')) { s.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ object: 'list', data: ['deepseek-e2e', 'kimi-e2e'].map((id) => ({ id, object: 'model' })) })); return; }
-    if (q.url.endsWith('/responses')) { s.writeHead(404, { 'content-type': 'application/json' }).end('{"error":{"message":"Invalid URL (POST /v1/responses)"}}'); return; }
-    if (!q.url.endsWith('/chat/completions')) { s.writeHead(404).end(); return; }
-    if (j.model === 'hang-e2e') return; // headers never come
+    const json = (status, o) => s.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(o));
+    if (h.auth !== `Bearer ${RELAY_KEY}`) return json(401, { type: 'error', error: { type: 'authentication_error', message: '无效的令牌' } });
+    if (q.method === 'GET' && q.url.includes('/models')) return json(200, { data: ['deepseek-e2e', 'kimi-e2e'].map((id) => ({ id, type: 'model' })) });
+    if (!q.url.startsWith('/v1/messages')) { s.writeHead(404).end(); return; }
+    if (q.url.includes('/count_tokens')) return json(200, { input_tokens: 10 });
+    if (j.model === 'hang-e2e' && h.main) return; // headers never come
     const text = `relay:${j.model}:${++n}`;
-    const chunk = (o) => `data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', created: 1, model: j.model, ...o })}\n\n`;
-    if (!j.stream) { s.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'c1', object: 'chat.completion', model: j.model, choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } })); return; }
+    const msg = { id: `msg_${n}`, type: 'message', role: 'assistant', model: j.model, stop_sequence: null };
+    if (!j.stream) return json(200, { ...msg, content: [{ type: 'text', text }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 2 } });
+    const ev = (type, o) => `event: ${type}\ndata: ${JSON.stringify({ type, ...o })}\n\n`;
     s.writeHead(200, { 'content-type': 'text/event-stream' });
-    s.end(chunk({ choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }] }) + chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }) + chunk({ choices: [], usage: { prompt_tokens: 100, completion_tokens: 3, total_tokens: 103 } }) + 'data: [DONE]\n\n');
+    s.end(ev('message_start', { message: { ...msg, content: [], stop_reason: null, usage: { input_tokens: 100, output_tokens: 1 } } })
+      + ev('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }) + ev('content_block_delta', { index: 0, delta: { type: 'text_delta', text } }) + ev('content_block_stop', { index: 0 })
+      + ev('message_delta', { delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 3 } }) + ev('message_stop', {}));
   });
 });
 await new Promise((r) => relay.listen(0, '127.0.0.1', r));
 const relayUrl = `http://127.0.0.1:${relay.address().port}`;
-const chatsWith = (pred) => hits.filter((h) => h.method === 'POST' && h.url.endsWith('/chat/completions') && pred(h));
+const chatsWith = (pred) => hits.filter((h) => h.method === 'POST' && h.main && pred(h));
 
 // ---- a fake DingTalk open platform: Stream-mode gateway (http + ws) and per-conversation webhooks ----
 const replies = []; // { conv, text }
@@ -92,7 +94,7 @@ async function ding(conv, text, ms = 150_000) {
 
 // ---- the server: throwaway HOME, a dead system proxy, DingTalk pointed at the fake ----
 const token = randomBytes(12).toString('hex');
-const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: path.join(home, '.claude-web'), CODEX_HOME: path.join(home, '.codex'), CW_NO_MODEL_REFRESH: '1', CW_DINGTALK_API: ddBase, HTTP_PROXY: 'http://127.0.0.1:9', HTTPS_PROXY: 'http://127.0.0.1:9', http_proxy: 'http://127.0.0.1:9', https_proxy: 'http://127.0.0.1:9' };
+const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: path.join(home, '.claude-web'), CW_NO_MODEL_REFRESH: '1', CW_DINGTALK_API: ddBase, HTTP_PROXY: 'http://127.0.0.1:9', HTTPS_PROXY: 'http://127.0.0.1:9', http_proxy: 'http://127.0.0.1:9', https_proxy: 'http://127.0.0.1:9' };
 for (const k of Object.keys(env)) if (/^(ANTHROPIC_|CLAUDE_CODE_|OPENAI_)/.test(k) || /^no_proxy$/i.test(k)) delete env[k];
 const server = spawn(process.execPath, [path.join(here, 'dist', 'index.js')], { cwd: path.dirname(here), env, stdio: ['ignore', 'pipe', 'pipe'] });
 let slog = '';
@@ -117,8 +119,8 @@ const resultOf = (sid, from) => until(() => events.slice(from).find((e) => e.kin
 
 async function main() {
   await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
-  const A = await req({ kind: 'providers.upsert', provider: { name: '中转A', type: 'openai', baseUrl: `${relayUrl}/v1`, apiKey: RELAY_KEY, defaultModel: 'deepseek-e2e', models: ['deepseek-e2e', 'kimi-e2e', 'hang-e2e'] } });
-  const B = await req({ kind: 'providers.upsert', provider: { name: '中转B', type: 'openai', baseUrl: `${relayUrl}/v1`, apiKey: RELAY_KEY, defaultModel: 'kimi-e2e' } });
+  const A = await req({ kind: 'providers.upsert', provider: { name: '中转A', type: 'anthropic', baseUrl: relayUrl, apiKey: RELAY_KEY, defaultModel: 'deepseek-e2e', models: ['deepseek-e2e', 'kimi-e2e', 'hang-e2e'] } });
+  const B = await req({ kind: 'providers.upsert', provider: { name: '中转B', type: 'anthropic', baseUrl: relayUrl, apiKey: RELAY_KEY, defaultModel: 'kimi-e2e' } });
   await req({ kind: 'settings.set', key: 'defaultProviderId', value: A.id });
   check('first run: no Claude account in this HOME', (await req({ kind: 'config.auth' }).catch(() => ({}))).loggedIn !== true);
 
@@ -128,7 +130,7 @@ async function main() {
   const r1 = await ding('conv-1', '你好，钉钉');
   check('a DingTalk message is answered by the relay behind the default provider', /relay:deepseek-e2e/.test(r1 ?? ''), (r1 ?? '(no reply)').slice(0, 120));
   const first = chatsWith((h) => h.body.includes('你好，钉钉'));
-  check('… sent by ccb through the cache shim (the relay sees the real key and ccb\'s client)', first.length > 0 && first.every((h) => h.auth === `Bearer ${RELAY_KEY}`), first.map((h) => h.ua).join(' | ').slice(0, 120));
+  check('… sent with the provider\'s key (the relay sees it and Claude Code\'s client)', first.length > 0 && first.every((h) => h.auth === `Bearer ${RELAY_KEY}`), first.map((h) => h.ua).join(' | ').slice(0, 120));
   const st = await ding('conv-1', '/status', 20_000);
   check('/status names the provider', (st ?? '').includes('供应商 中转A'), (st ?? '').slice(0, 120));
   const bound = (await req({ kind: 'im.list' })).find((g) => g.id === 'dd1')?.bindings.find((b) => b.chatId === 'conv-1');
@@ -146,19 +148,6 @@ async function main() {
   const r2 = await ding('conv-2', '换个供应商');
   check('… and its answers come from 中转B\'s model', /relay:kimi-e2e/.test(r2 ?? ''), (r2 ?? '').slice(0, 120));
 
-  // ---- Codex set to a provider in settings → Agents: through the shim, to a chat-only relay ----
-  await req({ kind: 'agents.set', agent: 'codex', patch: { command: process.execPath, args: [mockCodex, 'app-server'], providerId: A.id, enabled: true } });
-  await setBot({ agent: 'codex', providerId: '' });
-  const before = hits.length;
-  const cn = await ding('conv-3', `/new ${proj}`, 60_000);
-  check('a Codex bot conversation starts on the provider set for Codex', (cn ?? '').includes('供应商 中转A'), (cn ?? '').slice(0, 120));
-  const r3 = await ding('conv-3', 'relay please');
-  const cx = hits.slice(before).filter((h) => h.method === 'POST');
-  check('Codex\'s /v1/responses reaches the chat-only relay as chat/completions and the answer comes back', /relay:deepseek-e2e/.test(r3 ?? '') && cx.some((h) => h.url.endsWith('/responses')) && cx.some((h) => h.url.endsWith('/chat/completions') && h.model === 'deepseek-e2e'), `${(r3 ?? '(no reply)').slice(0, 80)} · ${cx.map((h) => h.url.replace(/^.*\/v1/, '')).join(', ')}`);
-  check('… with the relay key only on the relay side (Codex got the shim\'s key)', cx.every((h) => h.auth === `Bearer ${RELAY_KEY}`));
-  const before2 = hits.length;
-  await ding('conv-3', 'relay again');
-  check('… the chat-only relay is remembered (the next request goes straight to chat/completions)', hits.slice(before2).filter((h) => h.method === 'POST').every((h) => h.url.endsWith('/chat/completions')) && hits.length > before2);
   await setBot({ enabled: false });
 
   // ---- a scheduled task runs on the default provider ----

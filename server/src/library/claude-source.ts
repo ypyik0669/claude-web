@@ -22,7 +22,7 @@ export class ClaudeSource implements SessionSource {
   constructor(private readonly sessions: SessionService) {}
 
   async status(): Promise<SourceStatus> {
-    return { kind: this.kind, name: 'Claude Code', installed: true, detected: true, joined: true, dismissed: false, enabled: true };
+    return { kind: this.kind, name: 'Claude Code', installed: true, detected: true, joined: true, enabled: true };
   }
 
   async list(_o: { cursor?: string; limit: number; archived?: boolean }): Promise<{ items: SessionSummary[]; next?: string }> {

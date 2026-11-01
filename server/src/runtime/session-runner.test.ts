@@ -40,10 +40,9 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: (o: any) => ({ type: 'sdk', name: o.name, instance: {} }),
   tool: (name: string) => ({ name }),
 }));
-const eng = vi.hoisted(() => ({ kind: 'claude' as 'claude' | 'ccb' }));
 /** what the CLI answers to supportedModels() (the account's list) */
 const cli = vi.hoisted(() => ({ models: [] as any[] }));
-vi.mock('../claude-exe.js', () => ({ resolveEngine: (rt?: 'claude' | 'ccb') => ({ file: 'claude', kind: rt ?? eng.kind }), spawnClaude: () => null }));
+vi.mock('../claude-exe.js', () => ({ resolveEngine: () => ({ file: 'claude' }), spawnClaude: () => null }));
 vi.mock('../memory/launcher.js', () => ({ claudeMcpServer: () => ({}) }));
 // stage E5: a WSL conversation spawns wsl.exe (only spawn is caught; the rest of child_process stays real)
 const spawned = vi.hoisted(() => [] as { cmd: string; args: string[]; opts: any }[]);
@@ -108,55 +107,17 @@ describe('SessionRunner', () => {
     await b.close();
   });
 
-  it('a claude.ai-login session on ccb resolves models like the official Claude Code; other sessions are untouched', async () => {
-    eng.kind = 'ccb';
-    try {
-      queries.length = 0;
-      const a = new SessionRunner({ sessionId: 'm1', cwd: '/x', model: 'fable' } as any);
-      await tick();
-      // ccb has no fable alias; the account's family default (1M, A7) keeps its [1m]
-      expect(queries[0].options.model).toBe('claude-fable-5-1[1m]');
-      expect(queries[0].options.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-5-5');
-      expect(queries[0].options.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-5');
-      expect(queries[0].options.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-4-5-20251001');
-      expect(a.info.model).toBe('fable'); // the chip keeps what the user picked
-      await a.close();
-      // no model: nothing passed — ccb's default follows the opus variable
-      const b = new SessionRunner({ sessionId: 'm2', cwd: '/x' } as any);
-      await tick();
-      expect(queries[1].options.model).toBeUndefined();
-      expect(queries[1].options.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-5-5');
-      await b.close();
-      // the user's own variable wins
-      process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'claude-opus-4-8';
-      try {
-        const c = new SessionRunner({ sessionId: 'm3', cwd: '/x', model: 'opus' } as any);
-        await tick();
-        expect(queries[2].options.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-8');
-        expect(queries[2].options.model).toBe('opus[1m]');
-        await c.close();
-      } finally {
-        delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
-      }
-      // a provider session keeps its provider's mapping
-      const d = new SessionRunner({ sessionId: 'm4', cwd: '/x' } as any, { id: 'p1', name: 'relay', type: 'anthropic', baseUrl: 'https://relay.invalid', apiKey: 'k', models: [] } as any);
-      await tick();
-      expect(queries[3].options.env.ANTHROPIC_DEFAULT_OPUS_MODEL).not.toBe('claude-opus-5-5');
-      await d.close();
-      // the official binary resolves its own aliases
-      eng.kind = 'claude';
-      const e = new SessionRunner({ sessionId: 'm5', cwd: '/x', model: 'fable' } as any);
-      await tick();
-      expect(queries[4].options.model).toBe('fable[1m]');
-      expect(queries[4].options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
-      await e.close();
-    } finally {
-      eng.kind = 'claude';
-    }
+  it('a claude.ai-login session passes the CLI its own aliases (no alias table of ours); a 1M family keeps its [1m]', async () => {
+    queries.length = 0;
+    const e = new SessionRunner({ sessionId: 'm5', cwd: '/x', model: 'fable' } as any);
+    await tick();
+    expect(queries[0].options.model).toBe('fable[1m]');
+    expect(queries[0].options.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+    expect(e.info.model).toBe('fable'); // the chip keeps what the user picked
+    await e.close();
   });
 
-  it('another Claude account: the account path (its aliases on ccb, its own model list) with that account\'s token, nothing of a relay in between', async () => {
-    eng.kind = 'ccb';
+  it('another Claude account: the account path with that account\'s token, nothing of a relay in between', async () => {
     process.env.ANTHROPIC_AUTH_TOKEN = 'sk-relay-from-the-environment';
     process.env.ANTHROPIC_BASE_URL = 'https://relay.invalid';
     try {
@@ -168,9 +129,9 @@ describe('SessionRunner', () => {
       expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe(acct.apiKey);
       expect(env.ANTHROPIC_AUTH_TOKEN).toBe('');
       expect(env.ANTHROPIC_BASE_URL).toBe('');
-      // the account's own alias table on ccb, as for the ~/.claude login
-      expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-5-5');
-      expect(queries[0].options.model).toBe('claude-fable-5-1[1m]'); // its family picks: none, so 1M (A7)
+      // the CLI's own aliases, as for the ~/.claude login
+      expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+      expect(queries[0].options.model).toBe('fable[1m]'); // its family picks: none, so 1M (A7)
       // the chip names the account it runs on
       expect(r.info).toMatchObject({ providerId: 'acc2', providerName: '工作号' });
       // no relay windows / caps tables for it: the account's are the CLI's own
@@ -178,7 +139,6 @@ describe('SessionRunner', () => {
       expect(env.CLAUDE_WEB_MODEL_CAPS).toBeUndefined();
       await r.close();
     } finally {
-      eng.kind = 'claude';
       delete process.env.ANTHROPIC_AUTH_TOKEN;
       delete process.env.ANTHROPIC_BASE_URL;
     }
@@ -249,7 +209,7 @@ describe('SessionRunner', () => {
     await r.close();
   });
 
-  it('ccb wraps an MCP tool in ExecuteExtraTool: allowed when the tool inside is, asked otherwise', async () => {
+  it('the sessions MCP server goes in, its read tools pre-allowed and the rest asked', async () => {
     const { SESSIONS_ALLOWED, setSessionsDeps } = await import('../sessions-mcp/tools.js');
     setSessionsDeps({ list: async () => [], read: async () => [], stateOf: () => undefined, deliver: async () => {}, rename: async () => {}, archive: async () => {} });
     queries.length = 0;
@@ -258,15 +218,8 @@ describe('SessionRunner', () => {
     setSessionsDeps(null);
     expect(queries[0].options.mcpServers.sessions).toMatchObject({ type: 'sdk', name: 'sessions' });
     const allowed = queries[0].options.allowedTools as string[];
-    const inner = 'mcp__sessions__list_sessions';
     expect(allowed).toEqual(expect.arrayContaining(SESSIONS_ALLOWED));
     expect(allowed).not.toContain('mcp__sessions__archive_session');
-    const ok = await queries[0].options.canUseTool('ExecuteExtraTool', { tool_name: inner, params: { limit: 5 } }, { signal: new AbortController().signal });
-    expect(ok).toEqual({ behavior: 'allow', updatedInput: { tool_name: inner, params: { limit: 5 } } });
-    expect(r.getPendingPermissions()).toHaveLength(0);
-    // archive_session (or anything not on the list) still asks
-    void queries[0].options.canUseTool('ExecuteExtraTool', { tool_name: 'mcp__sessions__archive_session', params: { id: 'a' } }, { signal: new AbortController().signal });
-    expect(r.getPendingPermissions()).toHaveLength(1);
     await r.close();
   });
 });
@@ -401,35 +354,6 @@ describe('SessionRunner: 思考用的语言', () => {
   });
 });
 
-describe('SessionRunner prompt-cache routing (cache shim)', () => {
-  const prov = { id: 'ds', name: 'DS', type: 'openai', baseUrl: 'https://relay/v1', apiKey: 'sk', createdAt: 0, shim: { base: 'http://127.0.0.1:9/gateway/~p/ds', key: 'cws-x' } } as any;
-  const baseOf = (i: number) => queries[i].options.env.OPENAI_BASE_URL as string;
-  it('a new session keys the cache on its own id', async () => {
-    queries.length = 0;
-    const r = new SessionRunner({ cwd: '/x' } as any, prov);
-    await tick();
-    expect(baseOf(0)).toBe(`http://127.0.0.1:9/gateway/~p/ds/k/${r.sessionId}/v1`);
-    await r.close();
-  });
-  it('a hub fork (new id up front, cacheParentId = parent) routes on the parent and logs under its own id; a respawn keeps both', async () => {
-    queries.length = 0;
-    const r = new SessionRunner({ sessionId: 'fork-1', cacheParentId: 'parent-1', cwd: '/x' } as any, prov);
-    await tick();
-    expect(baseOf(0)).toBe('http://127.0.0.1:9/gateway/~p/ds/k/parent-1/s/fork-1/v1');
-    await r.setModel('m2'); // → respawn
-    await tick();
-    expect(baseOf(1)).toBe('http://127.0.0.1:9/gateway/~p/ds/k/parent-1/s/fork-1/v1');
-    await r.close();
-  });
-  it('an SDK fork (id only known at init) routes on the parent and does not name a placeholder id', async () => {
-    queries.length = 0;
-    const r = new SessionRunner({ sessionId: 'parent-2', fork: true, cwd: '/x' } as any, prov);
-    await tick();
-    expect(baseOf(0)).toBe('http://127.0.0.1:9/gateway/~p/ds/k/parent-2/v1');
-    await r.close();
-  });
-});
-
 describe('SessionRunner Stop (interrupt)', () => {
   const result = (extra: any = {}) => ({ type: 'result', subtype: 'error_during_execution', is_error: true, result: '', session_id: 's', uuid: 'r1', ...extra });
   const collect = (r: any) => { const msgs: any[] = []; r.on('message', (m: any) => msgs.push(m)); return msgs; };
@@ -534,21 +458,6 @@ describe('SessionRunner Stop (interrupt)', () => {
   // 2026-10-22: a fresh conversation on a Gemini-web / WorkBuddy group sent 177 KB on its first turn. Narrowing the
   // engine's tools also takes its tool search away, so every MCP tool (the account's claude.ai connectors, the user's
   // settings, ours) was inlined — more than the full set. No MCP and no plugins: 62 KB.
-  it('a sidecar-only gateway (leanTools): the core tools and nothing from MCP servers or plugins', async () => {
-    queries.length = 0;
-    const lean = { id: 'gw', name: '默认', type: 'anthropic', baseUrl: 'http://127.0.0.1:1/default', apiKey: 'k', createdAt: 0, models: [], leanTools: true } as any;
-    const r = new SessionRunner({ sessionId: 'lean-1', cwd: '/x', subagentModel: 'claude-haiku-4-5' } as any, lean);
-    await tick();
-    const o = queries[0].options;
-    expect(o.tools).toEqual(['Read', 'Edit', 'Write', 'Bash', 'Grep', 'Glob', 'TodoWrite']);
-    expect(o.strictMcpConfig).toBe(true);
-    expect(o.mcpServers).toEqual({});
-    expect(o.plugins).toBeUndefined();
-    // there is no Agent tool to hand work to
-    expect(JSON.stringify(o.systemPrompt)).not.toMatch(/subagent/i);
-    await r.close();
-  });
-
   // two catch-ups at once each restarted the process: two engines resuming one conversation (verifier, 2026-10-22)
   it('reloadTranscript: one restart at a time, and not quiet while it runs', async () => {
     queries.length = 0;
@@ -739,7 +648,7 @@ describe('SessionRunner Stop (interrupt)', () => {
 describe('SessionRunner env: a local endpoint bypasses the system proxy', () => {
   it('NO_PROXY / no_proxy get the loopback hosts when the base URL is local, keeping what the user had', async () => {
     queries.length = 0;
-    const prov = { id: 'ds', name: 'DS', type: 'openai', baseUrl: 'https://relay/v1', apiKey: 'sk', createdAt: 0, shim: { base: 'http://127.0.0.1:9/gateway/~p/ds', key: 'cws-x' } } as any;
+    const prov = { id: 'ds', name: 'DS', type: 'anthropic', baseUrl: 'http://127.0.0.1:9/relay', apiKey: 'sk', createdAt: 0 } as any;
     process.env.HTTPS_PROXY = 'http://proxy.invalid:7890';
     process.env.NO_PROXY = 'corp.example';
     try {
@@ -909,99 +818,19 @@ describe('SessionRunner on a conversation that never ran a turn (user report: sw
   });
 });
 
-describe('SessionRunner: the engine follows the model, effort on ccb, per-turn cost', () => {
+describe('SessionRunner: effort, thinking display, the model list, per-turn cost', () => {
   const xy = { id: 'xy', name: 'XY', type: 'anthropic', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['claude-sonnet-4-6', 'claude-opus-5-5', 'gpt-image-2'], modelMap: { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-4-6', haiku: 'claude-sonnet-4-6' } } as any;
   const result = (cost: number, models: Record<string, number>) => ({ type: 'result', subtype: 'success', is_error: false, result: 'ok', total_cost_usd: cost, modelUsage: Object.fromEntries(Object.entries(models).map(([k, v]) => [k, { inputTokens: 1, outputTokens: 1, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, webSearchRequests: 0, costUSD: v, contextWindow: 1, maxOutputTokens: 1 }])), usage: {}, session_id: 'e1', uuid: 'u' });
 
-  it('claude-opus-5-5 on an Anthropic-format relay starts on the official binary; switching to it from ccb restarts the process', async () => {
-    eng.kind = 'ccb';
-    try {
-      queries.length = 0;
-      const a = new SessionRunner({ sessionId: 'e1', cwd: '/x', model: 'claude-opus-5-5' } as any, xy);
-      await tick();
-      expect(a.info.runtime).toBe('claude');
-      expect(queries[0].options.env.CLAUDE_CODE_DISABLE_THINKING).toBeUndefined();
-      await a.close();
-      const b = new SessionRunner({ sessionId: 'e2', cwd: '/x', model: 'claude-sonnet-4-6' } as any, xy);
-      await tick();
-      expect(b.info.runtime).toBe('ccb');
-      await b.setModel('claude-opus-5-5');
-      await tick();
-      expect(queries).toHaveLength(3); // a restart, not the in-process setModel
-      expect(b.info.runtime).toBe('claude');
-      expect(b.info.model).toBe('claude-opus-5-5');
-      await b.close();
-    } finally {
-      eng.kind = 'claude';
-    }
+  it('the provider\'s model list leaves out models that cannot chat (image models)', async () => {
+    queries.length = 0;
+    const a = new SessionRunner({ sessionId: 'e4', cwd: '/x', model: 'claude-sonnet-4-6' } as any, xy);
+    await tick();
+    expect(a.info.models?.map((m) => m.value)).toEqual(['claude-sonnet-4-6', 'claude-opus-5-5']);
+    await a.close();
   });
 
-  it('a conversation with a ccb-only flag stays on ccb, with thinking off for that model', async () => {
-    eng.kind = 'ccb';
-    try {
-      queries.length = 0;
-      const a = new SessionRunner({ sessionId: 'e3', cwd: '/x', model: 'opus', features: { proactive: true } } as any, xy);
-      await tick();
-      expect(a.info.runtime).toBe('ccb');
-      expect(queries[0].options.env.CLAUDE_CODE_DISABLE_THINKING).toBe('1');
-      await a.close();
-    } finally {
-      eng.kind = 'claude';
-    }
-  });
-
-  it('effort on our engine changes in the running process (applyFlagSettings), no restart, even mid-turn', async () => {
-    eng.kind = 'ccb';
-    try {
-      queries.length = 0;
-      const a = new SessionRunner({ sessionId: 'e4', cwd: '/x', model: 'claude-sonnet-4-6', effort: 'low' } as any, xy);
-      await tick();
-      expect(queries[0].options.effort).toBe('low');
-      a.send('hi');
-      await a.setEffort('max');
-      await tick();
-      expect(queries).toHaveLength(1);
-      expect(queries[0].flags).toEqual([{ effortLevel: 'max', ultracode: false }]);
-      expect(a.info.effort).toBe('max');
-      queries[0].push(result(0.1, { 'claude-sonnet-4-6': 0.1 }));
-      await tick();
-      expect(queries).toHaveLength(1); // the turn ending does not restart it either
-      expect(a.info.supportsUltracode).toBe(true); // claude-web-engine: --ultracode / the ultracode setting
-      expect(a.info.models?.map((m) => m.value)).toEqual(['claude-sonnet-4-6', 'claude-opus-5-5']); // no image model
-      await a.setEffort('ultra'); // Codex's own rung: max on Claude
-      expect(queries[0].flags.at(-1)).toEqual({ effortLevel: 'max', ultracode: false });
-      await a.close();
-    } finally {
-      eng.kind = 'claude';
-    }
-  });
-
-  it('深度编排 on our engine: a setting, no restart; picking a level while it is on leaves it in the same call; a restart keeps it (--ultracode)', async () => {
-    eng.kind = 'ccb';
-    try {
-      queries.length = 0;
-      const a = new SessionRunner({ sessionId: 'u1', cwd: '/x', model: 'claude-sonnet-4-6' } as any, xy);
-      await tick();
-      await a.setUltracode(true);
-      expect(queries[0].flags).toEqual([{ ultracode: true }]);
-      expect(a.info.ultracode).toBe(true);
-      await (a as any).respawn();
-      await tick();
-      expect(queries).toHaveLength(2);
-      expect(queries[1].options.extraArgs.ultracode).toBeNull(); // → --ultracode
-      await a.setEffort('low');
-      expect(queries[1].flags).toEqual([{ effortLevel: 'low', ultracode: false }]);
-      expect(a.info.ultracode).toBe(false);
-      await (a as any).respawn();
-      await tick();
-      expect('ultracode' in queries[2].options.extraArgs).toBe(false);
-      await a.close();
-    } finally {
-      eng.kind = 'claude';
-    }
-  });
-
-  it('Claude’s thinking comes back as text: --thinking-display on the official binary, an env var on ccb (it refuses the flag)', async () => {
+  it('Claude’s thinking comes back as text: --thinking-display', async () => {
     queries.length = 0;
     const a = new SessionRunner({ sessionId: 'th1', cwd: '/x', model: 'claude-opus-5-5' } as any);
     await tick();
@@ -1009,36 +838,11 @@ describe('SessionRunner: the engine follows the model, effort on ccb, per-turn c
     expect(queries[0].options.env?.CLAUDE_WEB_THINKING_DISPLAY).toBeUndefined();
     await a.close();
     // an Anthropic-format relay of another maker's model: no field it may not know
-    const ds = { id: 'ds', name: 'ds', type: 'anthropic', runtime: 'claude', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['deepseek-chat'] } as any;
+    const ds = { id: 'ds', name: 'ds', type: 'anthropic', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['deepseek-chat'] } as any;
     const c = new SessionRunner({ sessionId: 'th3', cwd: '/x', model: 'deepseek-chat' } as any, ds);
     await tick();
     expect('thinking-display' in queries[queries.length - 1].options.extraArgs).toBe(false);
     await c.close();
-    queries.length = 1;
-    eng.kind = 'ccb';
-    try {
-      const b = new SessionRunner({ sessionId: 'th2', cwd: '/x', model: 'claude-sonnet-4-6' } as any, xy);
-      await tick();
-      expect('thinking-display' in queries[1].options.extraArgs).toBe(false);
-      expect(queries[1].options.env?.CLAUDE_WEB_THINKING_DISPLAY).toBe('summarized');
-      await b.close();
-    } finally {
-      eng.kind = 'claude';
-    }
-  });
-
-  it('深度编排 picked before the conversation starts (welcome page, a reopen) starts the engine with --ultracode', async () => {
-    eng.kind = 'ccb';
-    try {
-      queries.length = 0;
-      const a = new SessionRunner({ sessionId: 'u2', cwd: '/x', model: 'claude-sonnet-4-6', ultracode: true } as any, xy);
-      await tick();
-      expect(queries[0].options.extraArgs.ultracode).toBeNull(); // → --ultracode
-      expect(a.info.ultracode).toBe(true);
-      await a.close();
-    } finally {
-      eng.kind = 'claude';
-    }
   });
 
   it('深度编排 picked before the start on the official binary: `/effort ultracode` goes just before the first message (not at open)', async () => {
@@ -1075,56 +879,7 @@ describe('SessionRunner: the engine follows the model, effort on ccb, per-turn c
     await a.close();
   });
 
-  it('a model whose native parameter was refused: recorded on the provider, shown as the prompt way, the message not passed on', async () => {
-    eng.kind = 'ccb';
-    try {
-      queries.length = 0;
-      const p = { id: 'ox', name: 'OX', type: 'openai', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['gpt-x', 'o3-mini'] } as any;
-      const a = new SessionRunner({ sessionId: 'cap1', cwd: '/x', model: 'o3-mini' } as any, p);
-      const recorded: [string, string][] = [];
-      a.onPromptOnly = (pid, model) => recorded.push([pid, model]);
-      const seen: any[] = [];
-      a.on('message', (m) => seen.push(m));
-      await tick();
-      expect(a.info.models?.find((m) => m.value === 'o3-mini')?.effortMode).toBe('native');
-      queries[0].push({ type: 'system', subtype: 'cw_capability', model: 'o3-mini', capability: 'native_effort', supported: false, param: 'reasoning_effort', status: 400, session_id: 'cap1', uuid: 'u' });
-      await tick();
-      expect(recorded).toEqual([['ox', 'o3-mini']]);
-      expect(a.info.models?.find((m) => m.value === 'o3-mini')?.effortMode).toBe('prompt');
-      expect(seen.some((m) => m.subtype === 'cw_capability')).toBe(false);
-      await (a as any).respawn();
-      await tick();
-      expect(JSON.parse(queries[1].options.env.CLAUDE_WEB_MODEL_CAPS)['o3-mini']).toMatchObject({ native: false });
-      await a.close();
-    } finally {
-      eng.kind = 'claude';
-    }
-  });
-
-  it('tells the engine what each model can do; every model offers 智能程度 (native or through the prompt) and 深度编排', async () => {
-    eng.kind = 'ccb';
-    try {
-      queries.length = 0;
-      const ds = { id: 'ds', name: 'DeepSeek', type: 'openai', baseUrl: 'https://api.deepseek.invalid', apiKey: 'k', models: ['deepseek-flash', 'gpt-4o', 'qwen-plus', 'gpt-image-2'], modelEfforts: { 'deepseek-flash': { levels: ['low', 'high', 'max'], default: 'high' } }, promptEffortModels: ['qwen-plus'] } as any;
-      const a = new SessionRunner({ sessionId: 'caps1', cwd: '/x', model: 'deepseek-flash' } as any, ds);
-      await tick();
-      const caps = JSON.parse(queries[0].options.env.CLAUDE_WEB_MODEL_CAPS);
-      expect(caps['deepseek-flash']).toEqual({ levels: ['low', 'high', 'max'], default: 'high', reasoning: true });
-      // 2026-10-26: every model on an OpenAI-format profile gets reasoning_effort until it refuses it
-      expect(caps['gpt-4o']).toEqual({ levels: ['low', 'medium', 'high'], reasoning: true });
-      expect(caps['qwen-plus']).toEqual({ native: false });
-      const byId = Object.fromEntries((a.info.models ?? []).map((m) => [m.value, m]));
-      expect(byId['deepseek-flash']).toMatchObject({ supportsEffort: true, supportedEffortLevels: ['low', 'high', 'max'], effortMode: 'native' });
-      expect(byId['gpt-4o']).toMatchObject({ supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high'], effortMode: 'native' });
-      expect(byId['qwen-plus']).toMatchObject({ supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high'], effortMode: 'prompt' });
-      expect(a.info.supportsUltracode).toBe(true);
-      await a.close();
-    } finally {
-      eng.kind = 'claude';
-    }
-  });
-
-  it('the account\'s list (aliases): the official binary keeps the CLI\'s own answer; our engine reads each alias as its model', async () => {
+  it('the account\'s list (aliases): the CLI\'s own answer is kept', async () => {
     const five = ['low', 'medium', 'high', 'xhigh', 'max'];
     cli.models = [
       { value: 'default', displayName: 'Default', description: '', supportsEffort: true, supportedEffortLevels: five },
@@ -1136,19 +891,12 @@ describe('SessionRunner: the engine follows the model, effort on ccb, per-turn c
       const byId = (r: SessionRunner) => Object.fromEntries((r.info.models ?? []).map((m) => [m.value, m]));
       const off = new SessionRunner({ sessionId: 'al1', cwd: '/x' } as any);
       await tick();
-      expect(byId(off).opus).toMatchObject({ supportsEffort: true, supportedEffortLevels: five, effortMode: 'native' });
-      expect(byId(off).default).toMatchObject({ supportsEffort: true, effortMode: 'native' });
+      expect(byId(off).opus).toMatchObject({ supportsEffort: true, supportedEffortLevels: five });
+      expect(byId(off).default).toMatchObject({ supportsEffort: true });
       expect(byId(off).haiku).toMatchObject({ supportsEffort: false });
       await off.close();
-      eng.kind = 'ccb';
-      const ours = new SessionRunner({ sessionId: 'al2', cwd: '/x' } as any);
-      await tick();
-      expect(byId(ours).opus).toMatchObject({ supportsEffort: true, effortMode: 'native' });
-      expect(byId(ours).default).toMatchObject({ supportsEffort: true, effortMode: 'native' });
-      await ours.close();
     } finally {
       cli.models = [];
-      eng.kind = 'claude';
     }
   });
 
@@ -1164,40 +912,6 @@ describe('SessionRunner: the engine follows the model, effort on ccb, per-turn c
     expect(seen.map((s) => +s.cost.toFixed(6))).toEqual([0.4, 0.5]);
     expect(seen[1].models).toEqual(['claude-haiku-4-5-20251001']);
     await a.close();
-  });
-});
-
-describe('SessionRunner: the account through a relay of the user’s own (settings.json env)', () => {
-  it('runs on the official binary (a client-checking relay refuses ccb); with a ccb-only flag on ccb, without the claude.ai alias table', async () => {
-    const fs = await import('node:fs');
-    const os = await import('node:os');
-    const path = await import('node:path');
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-relay-'));
-    fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://relay.invalid', ANTHROPIC_AUTH_TOKEN: 'x' } }));
-    const was = process.env.CLAUDE_CONFIG_DIR;
-    process.env.CLAUDE_CONFIG_DIR = dir;
-    eng.kind = 'ccb';
-    try {
-      queries.length = 0;
-      const a = new SessionRunner({ sessionId: 'r1', cwd: '/x' } as any);
-      await tick();
-      expect(a.info.runtime).toBe('claude');
-      await a.close();
-      const b = new SessionRunner({ sessionId: 'r2', cwd: '/x', features: { proactive: true } } as any);
-      await tick();
-      expect(b.info.runtime).toBe('ccb');
-      expect(queries[1].options.env?.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined(); // claude-sonnet-5 isn't on that relay
-      await b.close();
-      const c = new SessionRunner({ sessionId: 'r3', cwd: '/x', model: 'claude-opus-5-5', features: { proactive: true } } as any);
-      await tick();
-      expect(c.info.runtime).toBe('ccb');
-      expect(queries[2].options.env?.CLAUDE_CODE_DISABLE_THINKING).toBe('1');
-      await c.close();
-    } finally {
-      eng.kind = 'claude';
-      if (was === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = was;
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
   });
 });
 
@@ -1244,12 +958,10 @@ describe('SessionRunner: the account’s 200K / 1M picks and the 自动压缩 po
     process.env.CLAUDE_WEB_DIR = path.join(dir, 'data');
     fs.mkdirSync(process.env.CLAUDE_CONFIG_DIR, { recursive: true });
     if (settingsEnv) fs.writeFileSync(path.join(process.env.CLAUDE_CONFIG_DIR, 'settings.json'), JSON.stringify({ env: settingsEnv }));
-    const kind = eng.kind;
     try {
       queries.length = 0;
       await fn(dir);
     } finally {
-      eng.kind = kind;
       for (const k of keys) if (was[k] === undefined) delete process.env[k]; else process.env[k] = was[k];
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -1261,17 +973,13 @@ describe('SessionRunner: the account’s 200K / 1M picks and the 自动压缩 po
   };
   const acct = (extra: Record<string, unknown> = {}) => ({ id: 'acc2', name: '工作号', type: 'claude-account', baseUrl: '', apiKey: 'sk-ant-oat01-' + 'x'.repeat(60), models: [], ...extra }) as any;
 
-  it('the own login, nothing picked: a 1M family gets [1m] on both engines (ccb keeps it), the window is 1M', async () => {
+  it('the own login, nothing picked: a 1M family gets [1m], the window is 1M', async () => {
     await withHome(null, async (dir) => {
-      for (const kind of ['claude', 'ccb'] as const) {
-        eng.kind = kind;
-        queries.length = 0;
-        const r = new SessionRunner({ sessionId: `a7-1-${kind}`, cwd: dir, model: 'claude-opus-5-5' } as any, undefined, { account: { windows: {} } });
-        await tick();
-        expect(queries[0].options.model).toBe('claude-opus-5-5[1m]');
-        expect(r.info.contextWindow).toBe(1_000_000);
-        await r.close();
-      }
+      const r = new SessionRunner({ sessionId: 'a7-1', cwd: dir, model: 'claude-opus-5-5' } as any, undefined, { account: { windows: {} } });
+      await tick();
+      expect(queries[0].options.model).toBe('claude-opus-5-5[1m]');
+      expect(r.info.contextWindow).toBe(1_000_000);
+      await r.close();
     });
   });
 
@@ -1357,17 +1065,14 @@ describe('SessionRunner: the account’s 200K / 1M picks and the 自动压缩 po
 
   it('the account’s 自动压缩 point beats settings.json (700000) through --settings; unset, settings.json stays', async () => {
     await withHome({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '700000' }, async (dir) => {
-      for (const kind of ['claude', 'ccb'] as const) {
-        eng.kind = kind;
-        queries.length = 0;
-        const r = new SessionRunner({ sessionId: `a7-9-${kind}`, cwd: dir, model: 'claude-opus-5-5' } as any, undefined, { account: { windows: {}, compactAt: 500_000 } });
-        await tick();
-        const o = queries[0].options;
-        expect(o.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('500000');
-        expect((await flagEnv(o.settings))?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('500000');
-        expect(r.info.compactWindow).toBe(500_000);
-        await r.close();
-      }
+      queries.length = 0;
+      const r = new SessionRunner({ sessionId: 'a7-9', cwd: dir, model: 'claude-opus-5-5' } as any, undefined, { account: { windows: {}, compactAt: 500_000 } });
+      await tick();
+      const o = queries[0].options;
+      expect(o.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('500000');
+      expect((await flagEnv(o.settings))?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('500000');
+      expect(r.info.compactWindow).toBe(500_000);
+      await r.close();
       // nothing set: the key is not written, the user's 700000 is what the engine gets
       queries.length = 0;
       const n = new SessionRunner({ sessionId: 'a7-10', cwd: dir, model: 'claude-opus-5-5' } as any, undefined, { account: { windows: {} } });
@@ -1413,11 +1118,10 @@ describe('SessionRunner: the account’s 200K / 1M picks and the 自动压缩 po
     });
   });
 
-  it('a provider’s compactAt: written on both engines; too small → not written; with the official binary’s own earlier point the smaller one wins', async () => {
+  it('a provider’s compactAt: written; too small → not written; with the official binary’s own earlier point the smaller one wins', async () => {
     await withHome(null, async (dir) => {
       const base = { id: 'p1', name: 'relay', type: 'anthropic', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['claude-opus-5-5'] };
-      const run = async (p: any, kind: 'claude' | 'ccb') => {
-        eng.kind = kind;
+      const run = async (p: any) => {
         queries.length = 0;
         const r = new SessionRunner({ sessionId: `a7-p-${Math.random()}`, cwd: dir, model: 'claude-opus-5-5' } as any, p);
         await tick();
@@ -1426,38 +1130,29 @@ describe('SessionRunner: the account’s 200K / 1M picks and the 自动压缩 po
         await r.close();
         return { env, info };
       };
-      for (const kind of ['claude', 'ccb'] as const) {
-        const ok = await run({ ...base, compactAt: 400_000 }, kind);
-        expect(ok.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('400000');
-        expect(ok.info.compactWindow).toBe(400_000);
-        expect(ok.info.contextWindow).toBe(1_000_000);
-        const small = await run({ ...base, compactAt: 30_000 }, kind);
-        expect(small.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
-      }
+      const ok = await run({ ...base, compactAt: 400_000 });
+      expect(ok.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('400000');
+      expect(ok.info.compactWindow).toBe(400_000);
+      expect(ok.info.contextWindow).toBe(1_000_000);
+      const small = await run({ ...base, compactAt: 30_000 });
+      expect(small.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
       // official binary, window set to 400K (it compacts there on its own): 300K is earlier → 300K; 600K is past the window → 400K
-      const w = { ...base, runtime: 'claude', contextWindows: { 'claude-opus-5-5': 400_000 } };
-      expect((await run({ ...w, compactAt: 300_000 }, 'claude')).env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('300000');
-      expect((await run({ ...w, compactAt: 600_000 }, 'claude')).env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('400000');
+      const w = { ...base, contextWindows: { 'claude-opus-5-5': 400_000 } };
+      expect((await run({ ...w, compactAt: 300_000 })).env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('300000');
+      expect((await run({ ...w, compactAt: 600_000 })).env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('400000');
     });
   });
 
   // final review M6: the official binary will not compact under 100K whatever the variable says (engine-providers:
-  // 50K set → 100K, 120K → 120K); the ring and the context card say where it really compacts. ccb takes the value as is
-  it('the official binary’s 100K floor goes on the info (60K set → 100K); ccb keeps 60K', async () => {
+  // 50K set → 100K, 120K → 120K); the ring and the context card say where it really compacts
+  it('the official binary’s 100K floor goes on the info (60K set → 100K)', async () => {
     await withHome(null, async (dir) => {
       const p = { id: 'p1', name: 'relay', type: 'anthropic', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['claude-opus-5-5'], compactAt: 60_000 } as any;
-      const seen: Record<string, { env?: string; info?: number }> = {};
-      for (const kind of ['claude', 'ccb'] as const) {
-        eng.kind = kind;
-        queries.length = 0;
-        // the provider says which engine (an Anthropic relay's Claude prefers the official binary otherwise)
-        const r = new SessionRunner({ sessionId: `a7-m6-${kind}`, cwd: dir, model: 'claude-opus-5-5' } as any, { ...p, runtime: kind });
-        await tick();
-        expect(r.info.runtime).toBe(kind);
-        seen[kind] = { env: queries[0].options.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, info: r.info.compactWindow };
-        await r.close();
-      }
-      expect(seen).toEqual({ claude: { env: '60000', info: 100_000 }, ccb: { env: '60000', info: 60_000 } });
+      const r = new SessionRunner({ sessionId: 'a7-m6', cwd: dir, model: 'claude-opus-5-5' } as any, p);
+      await tick();
+      expect(queries[0].options.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('60000');
+      expect(r.info.compactWindow).toBe(100_000);
+      await r.close();
     });
   });
 
@@ -1760,27 +1455,14 @@ describe('cliSaid: what the CLI wrote to stderr, for the error message', () => {
   });
 });
 
-describe('SessionRunner: a hand-over to Claude on ccb (no session mirror)', () => {
-  it('ccb gets no sessionStore (the SDK would pass --session-mirror, unknown to ccb) and the briefing as its first message; the official binary keeps the entries', async () => {
-    eng.kind = 'ccb';
-    try {
-      queries.length = 0;
-      const a = new SessionRunner({ sessionId: 'h-ccb-1', cwd: '/x', resumeEntries: [{ type: 'user' }], briefing: 'BRIEFING' } as any);
-      await tick();
-      expect(queries[0].options.sessionStore).toBeUndefined();
-      expect(queries[0].options.resume).toBeUndefined();
-      expect(queries[0].options.sessionId).toBe('h-ccb-1');
-      expect(a.state).toBe('running'); // the briefing went in
-      await a.close();
-      eng.kind = 'claude';
-      const b = new SessionRunner({ sessionId: 'h-off-1', cwd: '/x', resumeEntries: [{ type: 'user' }], briefing: 'BRIEFING' } as any);
-      await tick();
-      expect(queries[1].options.sessionStore).toBeDefined();
-      expect(queries[1].options.resume).toBe('h-off-1');
-      await b.close();
-    } finally {
-      eng.kind = 'claude';
-    }
+describe('SessionRunner: a hand-over to Claude', () => {
+  it('resumes from the synthesized entries through the session store', async () => {
+    queries.length = 0;
+    const b = new SessionRunner({ sessionId: 'h-off-1', cwd: '/x', resumeEntries: [{ type: 'user' }] } as any);
+    await tick();
+    expect(queries[0].options.sessionStore).toBeDefined();
+    expect(queries[0].options.resume).toBe('h-off-1');
+    await b.close();
   });
 });
 
@@ -1960,7 +1642,7 @@ describe('SessionRunner: 联网', () => {
     const os = await import('node:os');
     const path = await import('node:path');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-websearch-'));
-    const was = { cfg: process.env.CLAUDE_CONFIG_DIR, adapter: process.env.WEB_SEARCH_ADAPTER, kind: eng.kind };
+    const was = { cfg: process.env.CLAUDE_CONFIG_DIR, adapter: process.env.WEB_SEARCH_ADAPTER };
     process.env.CLAUDE_CONFIG_DIR = path.join(dir, 'cfg');
     delete process.env.WEB_SEARCH_ADAPTER;
     fs.mkdirSync(process.env.CLAUDE_CONFIG_DIR, { recursive: true });
@@ -1969,59 +1651,11 @@ describe('SessionRunner: 联网', () => {
       queries.length = 0;
       await fn(dir);
     } finally {
-      eng.kind = was.kind;
       if (was.cfg === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = was.cfg;
       if (was.adapter === undefined) delete process.env.WEB_SEARCH_ADAPTER; else process.env.WEB_SEARCH_ADAPTER = was.adapter;
       fs.rmSync(dir, { recursive: true, force: true });
     }
   };
-  /** What a conversation's engine is told about its own WebSearch: the backend (env) and whether the tool is taken away. */
-  const searchOf = async (params: any, provider?: any) => {
-    const r = new SessionRunner(params, provider);
-    await tick();
-    const o = queries[queries.length - 1].options;
-    await r.close();
-    return { adapter: o.env?.WEB_SEARCH_ADAPTER, off: o.disallowedTools };
-  };
-  const openaiProvider = { id: 'ds', name: 'DS', type: 'openai', baseUrl: 'https://relay/v1', apiKey: 'sk', createdAt: 0, shim: { base: 'http://127.0.0.1:9/gateway/~p/ds', key: 'cws-x' } };
-
-  it('our engine\'s own WebSearch is taken away (its default backend is a hosted Tavily proxy: searching is the web tools\'); the official binary\'s is left', async () => {
-    await withConfig({}, async (dir) => {
-      eng.kind = 'ccb';
-      expect(await searchOf({ sessionId: 'w1', cwd: dir })).toEqual({ adapter: undefined, off: ['WebSearch'] });
-      expect(await searchOf({ sessionId: 'w2', cwd: dir }, openaiProvider)).toEqual({ adapter: undefined, off: ['WebSearch'] });
-      eng.kind = 'claude';
-      expect(await searchOf({ sessionId: 'w3', cwd: dir })).toEqual({ adapter: undefined, off: undefined });
-    });
-  });
-
-  it('…unless the user chose a backend for it themselves: their environment, the conversation\'s env, a settings file — then it is theirs, as they set it', async () => {
-    await withConfig({}, async (dir) => {
-      eng.kind = 'ccb';
-      process.env.WEB_SEARCH_ADAPTER = 'exa';
-      expect(await searchOf({ sessionId: 'u1', cwd: dir })).toEqual({ adapter: 'exa', off: undefined });
-      delete process.env.WEB_SEARCH_ADAPTER;
-      expect(await searchOf({ sessionId: 'u2', cwd: dir, features: { env: { WEB_SEARCH_ADAPTER: 'brave' } } })).toEqual({ adapter: 'brave', off: undefined });
-      // the project's own settings file
-      const fs = await import('node:fs');
-      const path = await import('node:path');
-      fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
-      fs.writeFileSync(path.join(dir, '.claude', 'settings.local.json'), JSON.stringify({ webSearchAdapter: 'bing' }));
-      expect((await searchOf({ sessionId: 'u3', cwd: dir })).off).toBeUndefined();
-      fs.rmSync(path.join(dir, '.claude'), { recursive: true, force: true });
-      expect((await searchOf({ sessionId: 'u4', cwd: dir })).off).toEqual(['WebSearch']);
-    });
-    // the user's settings.json: the setting the engine's own panel writes, or the variable in its env
-    await withConfig({ webSearchAdapter: 'brave' }, async (dir) => {
-      eng.kind = 'ccb';
-      expect((await searchOf({ sessionId: 'u5', cwd: dir })).off).toBeUndefined();
-    });
-    await withConfig({ env: { WEB_SEARCH_ADAPTER: 'exa' } }, async (dir) => {
-      eng.kind = 'ccb';
-      expect((await searchOf({ sessionId: 'u6', cwd: dir })).off).toBeUndefined();
-    });
-  });
-
   it('操控电脑: a conversation with it on is handed the `computer` server, its tools not asked about one by one (Windows); the engine\'s own flag is never passed', async () => {
     const { configureComputerMcp } = await import('../computer/launcher.js');
     await withConfig({}, async (dir) => {
@@ -2083,62 +1717,52 @@ describe('SessionRunner: 联网', () => {
 
 describe('the subagents model (the composer 子代理 chip)', () => {
   it('goes to the process as CLAUDE_CODE_SUBAGENT_MODEL; a change restarts it, the same pick does not', async () => {
-    eng.kind = 'ccb';
-    try {
-      queries.length = 0;
-      const p = { id: 'p1', name: 'relay', type: 'openai', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['gpt-big', 'gpt-mini'] } as any;
-      const r = new SessionRunner({ sessionId: 'sub1', cwd: '/x', model: 'gpt-big', subagentModel: 'gpt-mini' } as any, p);
-      await tick();
-      expect(queries[0].options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('gpt-mini');
-      // the official binary puts an agent's own model (Explore: inherit) first unless forced (2026-10-19, real run)
-      expect(queries[0].options.env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE).toBe('1');
-      expect(r.info.subagentModel).toBe('gpt-mini');
-      await r.setSubagentModel('');
-      await tick();
-      expect(queries).toHaveLength(2);
-      expect(queries[1].options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
-      expect(queries[1].options.env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE).toBeUndefined();
-      expect(r.info.subagentModel).toBeUndefined();
-      await r.setSubagentModel('');
-      await tick();
-      expect(queries).toHaveLength(2);
-      await r.close();
-    } finally {
-      eng.kind = 'claude';
-    }
+    queries.length = 0;
+    const p = { id: 'p1', name: 'relay', type: 'anthropic', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['gpt-big', 'gpt-mini'] } as any;
+    const r = new SessionRunner({ sessionId: 'sub1', cwd: '/x', model: 'gpt-big', subagentModel: 'gpt-mini' } as any, p);
+    await tick();
+    expect(queries[0].options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('gpt-mini');
+    // the official binary puts an agent's own model (Explore: inherit) first unless forced (2026-10-19, real run)
+    expect(queries[0].options.env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE).toBe('1');
+    expect(r.info.subagentModel).toBe('gpt-mini');
+    await r.setSubagentModel('');
+    await tick();
+    expect(queries).toHaveLength(2);
+    expect(queries[1].options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
+    expect(queries[1].options.env.CLAUDE_CODE_SUBAGENT_MODEL_FORCE).toBeUndefined();
+    expect(r.info.subagentModel).toBeUndefined();
+    await r.setSubagentModel('');
+    await tick();
+    expect(queries).toHaveLength(2);
+    await r.close();
   });
 
   // 2026-10-30 user report: the workflow cards said the main model (routego/gpt-6.1-sol) while the picked DeepSeek ran
   it('a workflow\'s agents are reported on the subagent model they really run on; without a pick, as the engine says', async () => {
-    eng.kind = 'ccb';
-    try {
-      queries.length = 0;
-      const p = { id: 'p1', name: 'relay', type: 'openai', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['gpt-big', 'gpt-mini'] } as any;
-      const progress = () => ({ type: 'system', subtype: 'task_progress', task_id: 'w1', session_id: 'wf-1', uuid: `p${Math.random()}`, workflow_progress: [{ type: 'workflow_phase', index: 1, title: 'x' }, { type: 'workflow_agent', index: 1, label: 'impl', model: 'gpt-big', state: 'progress' }] });
-      const seen: any[] = [];
-      const r = new SessionRunner({ sessionId: 'wf-1', cwd: '/x', model: 'gpt-big', subagentModel: 'gpt-mini' } as any, p);
-      r.on('message', (m: any) => { if (m.workflow_progress) seen.push(m.workflow_progress[1].model); });
-      await tick();
-      queries[0].push(progress());
-      await tick();
-      expect(seen).toEqual(['gpt-mini']);
-      await r.close();
-      const plain = new SessionRunner({ sessionId: 'wf-2', cwd: '/x', model: 'gpt-big' } as any, p);
-      const seen2: any[] = [];
-      plain.on('message', (m: any) => { if (m.workflow_progress) seen2.push(m.workflow_progress[1].model); });
-      await tick();
-      queries.at(-1)!.push(progress());
-      await tick();
-      expect(seen2).toEqual(['gpt-big']);
-      await plain.close();
-    } finally {
-      eng.kind = 'claude';
-    }
+    queries.length = 0;
+    const p = { id: 'p1', name: 'relay', type: 'anthropic', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['gpt-big', 'gpt-mini'] } as any;
+    const progress = () => ({ type: 'system', subtype: 'task_progress', task_id: 'w1', session_id: 'wf-1', uuid: `p${Math.random()}`, workflow_progress: [{ type: 'workflow_phase', index: 1, title: 'x' }, { type: 'workflow_agent', index: 1, label: 'impl', model: 'gpt-big', state: 'progress' }] });
+    const seen: any[] = [];
+    const r = new SessionRunner({ sessionId: 'wf-1', cwd: '/x', model: 'gpt-big', subagentModel: 'gpt-mini' } as any, p);
+    r.on('message', (m: any) => { if (m.workflow_progress) seen.push(m.workflow_progress[1].model); });
+    await tick();
+    queries[0].push(progress());
+    await tick();
+    expect(seen).toEqual(['gpt-mini']);
+    await r.close();
+    const plain = new SessionRunner({ sessionId: 'wf-2', cwd: '/x', model: 'gpt-big' } as any, p);
+    const seen2: any[] = [];
+    plain.on('message', (m: any) => { if (m.workflow_progress) seen2.push(m.workflow_progress[1].model); });
+    await tick();
+    queries.at(-1)!.push(progress());
+    await tick();
+    expect(seen2).toEqual(['gpt-big']);
+    await plain.close();
   });
 
   it('the official binary: a Claude with a 1M window gets its [1m], like the main model', async () => {
     queries.length = 0;
-    const p = { id: 'p2', name: 'relay', type: 'anthropic', runtime: 'claude', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5-20251001'] } as any;
+    const p = { id: 'p2', name: 'relay', type: 'anthropic', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5-20251001'] } as any;
     const a = new SessionRunner({ sessionId: 'sub2', cwd: '/x', model: 'claude-opus-5-5', subagentModel: 'claude-sonnet-5-5' } as any, p);
     await tick();
     expect(queries[0].options.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('claude-sonnet-5-5[1m]');
@@ -2149,125 +1773,6 @@ describe('the subagents model (the composer 子代理 chip)', () => {
     await b.close();
   });
 
-  it('a model of another provider: the engine’s base URL for its request format becomes the split route, whatever the conversation runs on', async () => {
-    const { setSplitHook } = await import('../gateway/split.js');
-    const { crossValue, subAlias } = await import('../models/subagent.js');
-    const asked: any[][] = [];
-    const targets: Record<string, any> = { ds: { type: 'openai' }, an: { type: 'anthropic' }, acct: { type: 'claude-account', token: 'sk-ant-oat01-other' } };
-    setSplitHook({ endpoint: (main, sub, model) => { asked.push([main, sub, model]); return 'http://127.0.0.1:1/gateway/~s/t/k/cwx-k'; }, target: (id) => targets[id] ?? null });
-    const ROUTE = 'http://127.0.0.1:1/gateway/~s/t/k/cwx-k';
-    const run = async (p: any, model: string, pick: string) => {
-      queries.length = 0;
-      asked.length = 0;
-      const r = new SessionRunner({ sessionId: `sx-${Math.random()}`, cwd: '/x', model, subagentModel: pick } as any, p);
-      await tick();
-      const env = queries[0].options.env;
-      await r.close();
-      return env;
-    };
-    const savedBase = process.env.ANTHROPIC_BASE_URL;
-    delete process.env.ANTHROPIC_BASE_URL;
-    try {
-      // an Anthropic-format provider: its requests keep the engine's own key, the alias keeps the readable name
-      const anth = { id: 'p3', name: 'relay', type: 'anthropic', runtime: 'claude', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['claude-opus-5-5'] } as any;
-      let env = await run(anth, 'claude-opus-5-5', crossValue('ds', 'deepseek-chat'));
-      expect(asked).toEqual([[{ base: 'https://relay.invalid' }, { kind: 'provider', providerId: 'ds' }, 'deepseek-chat']]);
-      expect(env.ANTHROPIC_BASE_URL).toBe(ROUTE);
-      expect(env.ANTHROPIC_AUTH_TOKEN).toBe('k');
-      expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('cw-sub/deepseek-chat');
-      // …with this machine's login for the subagents: the engine keeps the login, the route puts the key on
-      env = await run(anth, 'claude-opus-5-5', crossValue('claude', 'claude-haiku-4-5'));
-      expect(asked).toEqual([[{ base: 'https://relay.invalid', rekey: 'k' }, { kind: 'account' }, 'claude-haiku-4-5']]);
-      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
-      expect(env.ANTHROPIC_API_KEY).toBeUndefined();
-      // …with another account's: its token goes to the route
-      await run(anth, 'claude-opus-5-5', crossValue('acct', 'claude-opus-5-5'));
-      expect(asked[0][1]).toEqual({ kind: 'account', token: 'sk-ant-oat01-other' });
-      // the account (no provider): Anthropic itself behind the route, its login untouched
-      env = await run(undefined, 'claude-opus-5-5', crossValue('ds', 'deepseek-chat'));
-      expect(asked[0][0]).toEqual({ base: 'https://api.anthropic.com' });
-      expect(env.ANTHROPIC_BASE_URL).toBe(ROUTE);
-      expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
-      // the same provider's model: no route, the plain id
-      env = await run(anth, 'claude-opus-5-5', crossValue('p3', 'claude-opus-5-5'));
-      expect(asked).toHaveLength(0);
-      expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('claude-opus-5-5[1m]');
-      eng.kind = 'ccb';
-      // an OpenAI-format provider: OPENAI_BASE_URL, a hex alias (no family word for the engine's mapping to catch)
-      const oa = { id: 'p4', name: 'oa', type: 'openai', baseUrl: 'https://oa.invalid', apiKey: 'k', models: ['gpt-big'] } as any;
-      env = await run(oa, 'gpt-big', crossValue('an', 'claude-haiku-4-5'));
-      expect(asked[0][0].base).toMatch(/^https:\/\/oa\.invalid/);
-      expect(env.OPENAI_BASE_URL).toBe(ROUTE);
-      expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe(subAlias('claude-haiku-4-5', 'other'));
-      // a Gemini one without a base URL: Google's default is where its requests go on to
-      const gm = { id: 'p5', name: 'gm', type: 'gemini', baseUrl: '', apiKey: 'k', models: ['gemini-2.5-pro'] } as any;
-      env = await run(gm, 'gemini-2.5-pro', crossValue('ds', 'deepseek-chat'));
-      expect(asked[0][0]).toEqual({ base: 'https://generativelanguage.googleapis.com/v1beta' });
-      expect(env.GEMINI_BASE_URL).toBe(ROUTE);
-      // this machine's login or another account under an OpenAI-format conversation: not joined, the main model
-      for (const pick of [crossValue('claude', 'claude-haiku-4-5'), crossValue('acct', 'claude-opus-5-5')]) {
-        env = await run(oa, 'gpt-big', pick);
-        expect(asked).toHaveLength(0);
-        expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
-      }
-    } finally {
-      eng.kind = 'claude';
-      setSplitHook(null);
-      if (savedBase !== undefined) process.env.ANTHROPIC_BASE_URL = savedBase;
-    }
-  });
-
-  it('the account through the user’s own relay (settings.json env): the route passes its requests on to that relay; our base URL goes over theirs through --settings, their token stays theirs', async () => {
-    const fs = await import('node:fs');
-    const os = await import('node:os');
-    const path = await import('node:path');
-    const { setSplitHook } = await import('../gateway/split.js');
-    const { crossValue } = await import('../models/subagent.js');
-    const ROUTE = 'http://127.0.0.1:1/gateway/~s/t/k/cwx-k';
-    const asked: any[][] = [];
-    setSplitHook({ endpoint: (main, sub, model) => { asked.push([main, sub, model]); return ROUTE; }, target: (id) => (id === 'ds' ? { type: 'openai' } : null) });
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-own-relay-'));
-    const was = { cfg: process.env.CLAUDE_CONFIG_DIR, data: process.env.CLAUDE_WEB_DIR, base: process.env.ANTHROPIC_BASE_URL };
-    process.env.CLAUDE_CONFIG_DIR = path.join(dir, 'cfg');
-    process.env.CLAUDE_WEB_DIR = path.join(dir, 'data');
-    delete process.env.ANTHROPIC_BASE_URL;
-    fs.mkdirSync(process.env.CLAUDE_CONFIG_DIR, { recursive: true });
-    fs.writeFileSync(path.join(process.env.CLAUDE_CONFIG_DIR, 'settings.json'), JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://kiro.invalid/api', ANTHROPIC_AUTH_TOKEN: 'user-token', ANTHROPIC_DEFAULT_HAIKU_MODEL: 'claude-sonnet-5' } }));
-    try {
-      for (const kind of ['claude', 'ccb'] as const) {
-        eng.kind = kind;
-        queries.length = 0;
-        asked.length = 0;
-        const r = new SessionRunner({ sessionId: `own-${kind}`, cwd: dir, model: 'claude-opus-5-5', subagentModel: crossValue('ds', 'deepseek-v4.1') } as any);
-        await tick();
-        expect(asked).toEqual([[{ base: 'https://kiro.invalid/api' }, { kind: 'provider', providerId: 'ds' }, 'deepseek-v4.1']]);
-        const o = queries[0].options;
-        expect(o.env.ANTHROPIC_BASE_URL).toBe(ROUTE);
-        expect(o.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('cw-sub/deepseek-v4.1');
-        expect(o.env.ANTHROPIC_AUTH_TOKEN).not.toBe('user-token'); // the engine reads the user's token from their settings itself
-        expect(JSON.parse(fs.readFileSync(o.settings, 'utf8'))).toEqual({ env: { ANTHROPIC_BASE_URL: ROUTE } });
-        await r.close();
-        expect(fs.existsSync(o.settings)).toBe(false);
-      }
-      // the relay only in this process's environment: the plain variable is enough, nothing written
-      eng.kind = 'claude';
-      fs.writeFileSync(path.join(process.env.CLAUDE_CONFIG_DIR, 'settings.json'), '{}');
-      process.env.ANTHROPIC_BASE_URL = 'https://env-relay.invalid';
-      queries.length = 0;
-      asked.length = 0;
-      const e = new SessionRunner({ sessionId: 'own-env', cwd: dir, model: 'claude-opus-5-5', subagentModel: crossValue('ds', 'deepseek-v4.1') } as any);
-      await tick();
-      expect(asked[0][0]).toEqual({ base: 'https://env-relay.invalid' });
-      expect(queries[0].options.env.ANTHROPIC_BASE_URL).toBe(ROUTE);
-      expect(queries[0].options.settings).toBeUndefined();
-      await e.close();
-    } finally {
-      eng.kind = 'claude';
-      setSplitHook(null);
-      for (const [k, v] of [['CLAUDE_CONFIG_DIR', was.cfg], ['CLAUDE_WEB_DIR', was.data], ['ANTHROPIC_BASE_URL', was.base]] as const) if (v === undefined) delete process.env[k]; else process.env[k] = v;
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
 });
 
 describe('SessionRunner: 项目说明 (stage F2)', () => {

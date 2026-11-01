@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PermissionRequestEvent } from '@shared';
 import type { AssistantItem, Item, ToolUseBlock } from '@/model/conversation';
-import { alwaysDetails, alwaysLabel, asAsked, DOCK_COOLDOWN_MS, dockAction, dockDecide, denyResponse, dockKind, dockPlaceholder, dockStatus, isEgoScriptRequest, isSlashCommand, permissionTitle, primaryKey, splitPending, waitingToolIds, type DockSeen } from './permission-dock';
+import { alwaysDetails, alwaysLabel, DOCK_COOLDOWN_MS, dockAction, dockDecide, denyResponse, dockKind, dockPlaceholder, dockStatus, isEgoScriptRequest, isSlashCommand, permissionTitle, primaryKey, splitPending, waitingToolIds, type DockSeen } from './permission-dock';
 import { DOCK_PLACEHOLDER, DOCK_STATUS, DOCK_STATUS_CLICK } from '@/ui/terms';
 
 const req = (toolName: string, input: Record<string, unknown> = {}, extra: Partial<PermissionRequestEvent> = {}): PermissionRequestEvent => ({ requestId: `r-${toolName}`, sessionId: 's', toolName, input, ...extra });
@@ -261,10 +261,6 @@ describe('waitingToolIds (the step that shows 等你确认)', () => {
     expect([...waitingToolIds([req('Bash')], items)]).toEqual([a.id]);
     expect([...waitingToolIds([req('Edit')], items)]).toEqual([]);
   });
-  it('Codex: a file-change approval names the item; its steps are `<item>:<path>` (review M5)', () => {
-    const a = { ...tool('Edit', 'pending'), id: 'item-7:src/a.ts' }, b = { ...tool('Write', 'pending'), id: 'item-7:src/b.ts' }, other = { ...tool('Edit', 'pending'), id: 'item-70:src/c.ts' };
-    expect([...waitingToolIds([req('Edit', {}, { toolUseId: 'item-7' })], [asst(a, b, other)])].sort()).toEqual(['item-7', 'item-7:src/a.ts', 'item-7:src/b.ts']);
-  });
   it('questions and plans have no step to mark; nothing pending → empty', () => {
     expect(waitingToolIds([], []).size).toBe(0);
   });
@@ -278,35 +274,5 @@ describe('splitPending: the question goes in the conversation, everything else d
     expect(splitPending([a, b, c])).toEqual({ dock: b, ask: a });
     expect(splitPending([c])).toEqual({ dock: c, ask: undefined });
     expect(splitPending([])).toEqual({ dock: undefined, ask: undefined });
-  });
-});
-
-describe('ExecuteExtraTool (our engine runs MCP tools without alwaysLoad through it): read as the tool inside', () => {
-  const wrap = (tool_name: unknown, params?: unknown) => req('ExecuteExtraTool', { tool_name, params });
-  it('asAsked unwraps to the tool inside and its params, the request otherwise the same', () => {
-    const p = wrap('mcp__web__browser_open', { url: 'https://example.com/' });
-    expect(asAsked(p)).toEqual({ ...p, toolName: 'mcp__web__browser_open', input: { url: 'https://example.com/' } });
-    expect(asAsked(wrap('mcp__web__browser_back')).input).toEqual({});
-    const bash = req('Bash', { command: 'ls' });
-    expect(asAsked(bash)).toBe(bash);
-  });
-  it('the title is the inner tool\'s', () => {
-    expect(permissionTitle(wrap('mcp__web__browser_open', { url: 'https://example.com/' }))).toBe(permissionTitle(req('mcp__web__browser_open', { url: 'https://example.com/' })));
-    expect(permissionTitle(wrap('mcp__github__create_issue', { title: 'x' }))).toBe('Claude 想使用 github 的 create_issue');
-  });
-  it('malformed, or a tool that cannot be answered through it (a question, a plan, the server\'s own card, itself) → left as it is', () => {
-    for (const p of [req('ExecuteExtraTool', {}), wrap(5, {}), wrap('', {}), wrap('mcp__web__browser_open', 'x'), wrap('mcp__web__browser_open', [1]), wrap('AskUserQuestion', { questions: [] }), wrap('ExitPlanMode', { plan: 'x' }), wrap('browser.site', { host: 'a' }), wrap('ExecuteExtraTool', {})]) {
-      expect(asAsked(p)).toBe(p);
-      expect(permissionTitle(p)).toBe('Claude 想使用 ExecuteExtraTool');
-      expect(dockKind(p)).toBe('tool');
-    }
-  });
-  it('a wrapped 操控电脑 access request is still click-only: Enter does not allow it', () => {
-    const p = wrap('mcp__computer__request_access', { apps: ['Notepad'], reason: 'x' });
-    expect(dockKind(p)).toBe('access');
-    expect(dockDecide(p, { text: '', attachments: false, seen: { requestId: p.requestId, shownAt: 0, carried: false }, now: 10_000, enter: {} }).act).toBe('ignore');
-  });
-  it('SearchExtraTools (looking a tool up) reads in words', () => {
-    expect(permissionTitle(req('SearchExtraTools', { query: 'select:mcp__web__browser_open' }))).toBe('Claude 想查找要用的工具');
   });
 });

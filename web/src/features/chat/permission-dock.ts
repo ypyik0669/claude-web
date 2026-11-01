@@ -17,10 +17,8 @@ export const SITE_TOOL = 'browser.site';
 
 /**
  * The server's card before an ego lite script runs (site-gate.ts EGO_SCRIPT_TOOL, spec 14.1): a `browser.site` request
- * whose tool is `ego_browser` — every agent's, the whole script in it. Not an agent's own prompt for
- * `mcp__web__ego_browser`: none should come any more (Claude has the tool in its allowed tools, AcpDriver answers an
- * ACP agent's prompt for it without a card, Codex does not ask about MCP calls); ToolPermission keeps a fallback
- * look for one all the same.
+ * whose tool is `ego_browser`, the whole script in it. Not Claude's own prompt for `mcp__web__ego_browser`: none
+ * should come (Claude has the tool in its allowed tools); ToolPermission keeps a fallback look for one all the same.
  */
 export const isEgoScriptRequest = (p: Pick<PermissionRequestEvent, 'toolName' | 'input'>): boolean =>
   p.toolName === SITE_TOOL && (p.input as Record<string, unknown> | undefined)?.tool === 'ego_browser';
@@ -44,28 +42,8 @@ export const dockPlaceholder = (p: Pick<PermissionRequestEvent, 'toolName' | 'in
 /** `access`: 操控电脑 asking which applications it may control — answered by a click on the card, never by a key. */
 export type DockKind = 'tool' | 'ask' | 'plan' | 'access';
 
-/**
- * Our engine (ccb) runs MCP tools without alwaysLoad through `ExecuteExtraTool { tool_name, params }`, so Claude's own
- * prompt for one names the wrapper (QA 2026-10-26: 「Claude 想使用 ExecuteExtraTool」 over a JSON tree for "open
- * example.com"). `asAsked` is the request as if the tool inside had been asked about directly — what every card,
- * title and Enter rule here reads. Only the look: the answer goes back by `requestId` for the request as it came
- * (the runner fills an allow's input from it). Malformed, or something that must not be answered through the wrapper
- * (a question, a plan — their answers carry the input —, the server's own card, a wrapper again) → left as it is.
- */
-export const EXTRA_TOOL = 'ExecuteExtraTool';
-const NOT_UNWRAPPED = new Set([EXTRA_TOOL, 'SearchExtraTools', 'AskUserQuestion', 'ExitPlanMode', SITE_TOOL]);
-export function asAsked<P extends { toolName: string; input?: unknown }>(p: P): P {
-  if (p.toolName !== EXTRA_TOOL) return p;
-  const inp = p.input;
-  if (!inp || typeof inp !== 'object' || Array.isArray(inp)) return p;
-  const { tool_name: name, params } = inp as Record<string, unknown>;
-  if (typeof name !== 'string' || !name.trim() || NOT_UNWRAPPED.has(name)) return p;
-  if (params !== undefined && (!params || typeof params !== 'object' || Array.isArray(params))) return p;
-  return { ...p, toolName: name, input: (params ?? {}) as Record<string, unknown> };
-}
-
 export const dockKind = (p: { toolName: string; input?: unknown }): DockKind => {
-  const t = asAsked(p).toolName;
+  const t = p.toolName;
   return t === 'AskUserQuestion' ? 'ask' : t === 'ExitPlanMode' ? 'plan' : isAccessRequest(t) ? 'access' : 'tool';
 };
 
@@ -142,8 +120,7 @@ export function denyResponse(p: PermissionRequestEvent, text: string): Permissio
 }
 
 /** 「Claude 想运行一条命令」: what is being asked, in words. */
-export function permissionTitle(asked: Pick<PermissionRequestEvent, 'toolName' | 'input'>, agent = 'Claude'): string {
-  const p = asAsked(asked);
+export function permissionTitle(p: Pick<PermissionRequestEvent, 'toolName' | 'input'>, agent = 'Claude'): string {
   const inp = (p.input ?? {}) as Record<string, unknown>;
   const file = basename(String(inp.file_path ?? inp.notebook_path ?? inp.path ?? '').replace(/[\\/]+$/, ''));
   switch (p.toolName) {
@@ -159,8 +136,6 @@ export function permissionTitle(asked: Pick<PermissionRequestEvent, 'toolName' |
       return host ? tr('{agent} 想访问 {host}', { agent, host }) : tr('{agent} 想访问网页', { agent });
     }
     case 'WebSearch': return tr('{agent} 想搜索网页', { agent });
-    // our engine looking a deferred tool up before it runs one through ExecuteExtraTool
-    case 'SearchExtraTools': return tr('{agent} 想查找要用的工具', { agent });
     case SITE_TOOL: {
       const host = String(inp.host ?? '');
       if (isEgoScriptRequest(p)) return host ? tr('{agent} 想在 ego lite 里运行一段脚本（{h}）', { agent, h: host }) : tr('{agent} 想在 ego lite 里运行一段脚本', { agent });
@@ -226,22 +201,15 @@ export function alwaysDetails(suggestions: unknown[] | undefined): string[] {
 }
 
 /**
- * The steps that wait on the user (「等你确认」 on their node): the request's tool use id — and, for Codex, the steps
- * made from that item (a file-change approval names the item; its steps are `<item>:<path>`, review M5); an agent
- * that sends no id (some ACP agents) → the last unfinished call of that tool.
+ * The steps that wait on the user (「等你确认」 on their node): the request's tool use id; a request without one → the
+ * last unfinished call of that tool.
  */
 export function waitingToolIds(pending: PermissionRequestEvent[], items: Item[]): Set<string> {
   const out = new Set<string>();
   if (!pending.length) return out;
   let all: { tool: ToolUseBlock }[] | null = null;
   for (const p of pending) {
-    if (p.toolUseId) {
-      out.add(p.toolUseId);
-      all ??= [...walkTools(items)];
-      const pre = `${p.toolUseId}:`;
-      for (const { tool } of all) if (tool.id.startsWith(pre)) out.add(tool.id);
-      continue;
-    }
+    if (p.toolUseId) { out.add(p.toolUseId); continue; }
     all ??= [...walkTools(items)];
     for (let i = all.length - 1; i >= 0; i--) {
       const t = all[i].tool;

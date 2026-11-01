@@ -12,13 +12,11 @@ import { ThemeGallery } from './ThemeGallery';
 import { SkillsBackup, SkillsSection } from './SkillsSection';
 import { ToolsSection } from './ToolsSection';
 import { ProxySection } from './ProxySection';
-import { AgentsSection } from './AgentsSection';
 import { LibrarySection } from './LibrarySection';
 import { HostsSection, RemoteSection } from './RemoteSection';
 import { PeersSection } from './PeersSection';
 import { ImSection } from './ImSection';
 import { SecretsSection } from './SecretsSection';
-import { GatewaySection } from './GatewaySection';
 import { UpdateSection, type UpdateState } from './UpdateSection';
 import { DiagnosticsSection } from './DiagnosticsSection';
 import { ModelsSection } from './ModelsSection';
@@ -29,7 +27,7 @@ import { MemorySettings } from '@/features/memory/MemorySettings';
 import { Icon } from '@/ui/icons';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { MODE_LABEL } from '@/ui/terms';
-import type { GatewayStatus, PermissionMode } from '@shared';
+import type { PermissionMode } from '@shared';
 import {
   ADVANCED_SECTIONS, BODY_INFO, SETTINGS_GROUPS, VISIBLE_SECTIONS, activeTab, findSection, moreHint, navStatus,
   resolveSettingsTarget, searchSettings, type BodyId, type EntryId, type EntryMeta, type SectionMeta, type SettingsHit,
@@ -102,14 +100,12 @@ const BODIES: Record<BodyId, () => ReactNode> = {
   models: () => <ModelsSection />,
   providers: () => <ProviderProfiles />,
   proxy: () => <ProxySection />,
-  gateway: () => <GatewaySection />,
   mcp: () => <Mcp />,
   mcpCatalog: () => <McpCatalog />,
   mcpJson: () => <McpAddJson />,
   plugins: () => <Plugins />,
   skills: () => <SkillsSection />,
   skillsBackup: () => <SkillsBackup />,
-  agents: () => <AgentsSection />,
   subagents: () => <SimpleList kind="config.agents" empty={tr('还没有子代理。~/.claude/agents 里的 .md 文件和插件带的子代理会出现在这里。')} render={(a) => <div className="grow"><div>{a.name} <span style={muted}>{a.source}{a.model ? ` · ${a.model}` : ''}</span></div><div className="sub">{a.description}</div></div>} />,
   memory: () => <MemorySettings />,
   remote: () => <RemoteSection />,
@@ -295,20 +291,16 @@ function SettingsPage({ open }: { open: { section?: string; query?: string; reve
   );
 }
 
-/** Nav row statuses: login (the server's shared `config.auth`), provider count, gateway on / off. Nothing that spawns MCP servers. */
+/** Nav row statuses: login (the server's shared `config.auth`), provider count. Nothing that spawns MCP servers. */
 function useNavStatus() {
   const providers = useStore((s) => s.providers.length);
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
-  const [gateway, setGateway] = useState<boolean | null>(null);
   useEffect(() => {
     let live = true;
     useStore.getState().checkAuth().then((a) => live && setLoggedIn(typeof a?.loggedIn === 'boolean' ? a.loggedIn : null)).catch(() => {});
-    const loadGw = () => ws.request<GatewayStatus>({ kind: 'gateway.status' }).then((g) => live && setGateway(!!g?.enabled)).catch(() => {});
-    void loadGw();
-    const off = ws.on((e) => { if (e.kind === 'gateway.changed') void loadGw(); });
-    return () => { live = false; off(); };
+    return () => { live = false; };
   }, []);
-  return navStatus({ loggedIn, providers, gatewayEnabled: gateway });
+  return navStatus({ loggedIn, providers });
 }
 
 /** Bottom-left: the app version and whether it is current (desktop); click → 高级 › 更新. */

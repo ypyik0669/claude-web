@@ -18,8 +18,8 @@ describe('the tool list', () => {
     expect(new Set(TOOL_NAMES).size).toBe(TOOL_NAMES.length);
   });
 
-  it('the tools that answer with a picture are not deferred on our engine (alwaysLoad), and no other tool is', () => {
-    // ccb hides MCP tools behind ExecuteExtraTool, whose result is one JSON string: a screenshot would be base64 text
+  it('the tools that answer with a picture are not deferred (alwaysLoad), and no other tool is', () => {
+    // alwaysLoad (mcp/always-load.ts): in the model's own tool list, not behind deferred tool search — only these
     const loaded = TOOLS.filter((t) => (t as { _meta?: Record<string, unknown> })._meta?.['anthropic/alwaysLoad'] === true).map((t) => t.name);
     expect(loaded).toEqual(['screenshot', 'zoom', 'computer_batch', 'computer_observe', 'computer_task']);
     for (const name of ['request_access', 'left_click', 'type', 'key', 'read_clipboard', 'wait', 'computer_find', 'computer_act', 'computer_wait_for', 'computer_look']) expect((tool(name) as { _meta?: unknown })._meta, name).toBeUndefined();

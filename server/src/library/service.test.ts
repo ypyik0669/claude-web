@@ -5,9 +5,8 @@ import path from 'node:path';
 import type { AgentKind, SessionSummary, SourceCaps, SourceStatus } from '../protocol.js';
 import type { SessionSource } from './types.js';
 import { LibraryIndex } from './index-db.js';
-import { AgentTranscripts } from '../agents/transcript.js';
 import { MetaStore } from '../meta/store.js';
-import { LibraryService, splitInFlight } from './service.js';
+import { LibraryService } from './service.js';
 
 const ALL: SourceCaps = { resume: true, rename: true, archive: true, delete: true, fork: true };
 
@@ -21,7 +20,7 @@ function fakeSource(kind: AgentKind, items: SessionSummary[], name = kind) {
     kind,
     caps: ALL,
     items,
-    status: vi.fn(async (): Promise<SourceStatus> => ({ kind, name, installed: true, detected: true, joined: false, dismissed: false, enabled: true })),
+    status: vi.fn(async (): Promise<SourceStatus> => ({ kind, name, installed: true, detected: true, joined: false, enabled: true })),
     list: vi.fn(async (_o: { cursor?: string; limit: number }) => ({ items: src.items })),
     read: vi.fn(async (nativeId: string, _o: { cursor?: string; limit: number }) => ({ messages: [{ type: 'user', message: { role: 'user', content: `hello from ${nativeId}` } }] })),
     rename: vi.fn(async () => {}),
@@ -34,42 +33,26 @@ function fakeSource(kind: AgentKind, items: SessionSummary[], name = kind) {
   return src as typeof src & SessionSource;
 }
 
-function fakeAgents(installed: AgentKind[]) {
-  const defs = [
-    { kind: 'claude' as AgentKind, name: 'Claude Code', protocol: 'claude' },
-    { kind: 'codex' as AgentKind, name: 'Codex', protocol: 'codex' },
-    { kind: 'opencode' as AgentKind, name: 'OpenCode', protocol: 'acp' },
-    { kind: 'gemini' as AgentKind, name: 'Gemini CLI', protocol: 'acp' },
-  ];
-  return {
-    defs: () => defs,
-    list: vi.fn(async () => defs.map((d) => ({ ...d, installed: d.kind === 'claude' || installed.includes(d.kind) }))),
-  };
-}
-
 describe('LibraryService', () => {
   let dir: string;
   let prevDir: string | undefined;
   let index: LibraryIndex;
-  let transcripts: AgentTranscripts;
   let meta: MetaStore;
   let claude: ReturnType<typeof fakeSource>;
-  let codex: ReturnType<typeof fakeSource>;
+  let cai: ReturnType<typeof fakeSource>;
   let lib: LibraryService;
 
-  const make = (installed: AgentKind[] = ['codex']) =>
-    new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents(installed), makeSource: (k) => fakeSource(k, []), dataDirs: {}, trashDir: path.join(dir, 'library-trash') });
+  const make = () => new LibraryService([claude, cai], index, meta, { trashDir: path.join(dir, 'library-trash') });
 
   beforeEach(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-libsvc-'));
     prevDir = process.env.CLAUDE_WEB_DIR;
     process.env.CLAUDE_WEB_DIR = dir;
     index = new LibraryIndex(path.join(dir, 'library.db'));
-    transcripts = new AgentTranscripts();
     meta = new MetaStore(path.join(dir, 'meta.json'));
     await meta.load();
     claude = fakeSource('claude', [item('c1', 'claude', 100), item('c2', 'claude', 300)], 'Claude Code');
-    codex = fakeSource('codex', [item('codex-t1', 'codex', 200)]);
+    cai = fakeSource('claudeai', [item('claudeai-t1', 'claudeai', 200)]);
     lib = make();
   });
 
@@ -80,24 +63,23 @@ describe('LibraryService', () => {
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   });
 
-  it('never lists or probes a source that has not been joined', async () => {
+  it('never lists a source that has not been joined (a cheap status look only)', async () => {
     const ids = (await lib.list()).map((s) => s.sessionId);
     expect(ids).toEqual(['c2', 'c1']);
     const st = await lib.sources();
-    expect(st.find((s) => s.kind === 'codex')).toMatchObject({ joined: false, enabled: false, installed: true, detected: true, name: 'Codex' });
-    expect(codex.list).not.toHaveBeenCalled();
-    expect(codex.status).not.toHaveBeenCalled();
+    expect(st.find((s) => s.kind === 'claudeai')).toMatchObject({ joined: false, enabled: false, installed: true, detected: true, name: 'claude.ai' });
+    expect(cai.list).not.toHaveBeenCalled();
   });
 
   it('join adds the source (merged, sorted); leave removes it, closes it and drops its index rows', async () => {
-    await lib.join('codex', true);
-    expect(meta.settings()['library.joined']).toEqual(['codex']);
-    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'codex-t1', 'c1']);
-    index.upsert(item('codex-t1', 'codex', 200), 'codex words');
-    await lib.join('codex', false);
-    expect(codex.close).toHaveBeenCalled();
+    await lib.join('claudeai', true);
+    expect(meta.settings()['library.joined']).toEqual(['claudeai']);
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'claudeai-t1', 'c1']);
+    index.upsert(item('claudeai-t1', 'claudeai', 200), 'claude.ai words');
+    await lib.join('claudeai', false);
+    expect(cai.close).toHaveBeenCalled();
     expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'c1']);
-    expect(index.indexedAt('codex-t1')).toBeUndefined();
+    expect(index.indexedAt('claudeai-t1')).toBeUndefined();
     expect(meta.settings()['library.joined']).toEqual([]);
   });
 
@@ -105,207 +87,39 @@ describe('LibraryService', () => {
     await expect(lib.join('claude', false)).rejects.toThrow();
   });
 
-  it('detect() returns installed, not joined, not dismissed sources only', async () => {
-    lib = make(['codex', 'gemini']);
-    expect((await lib.detect()).sort()).toEqual(['codex', 'gemini']);
-    await lib.dismiss('gemini');
-    expect(await lib.detect()).toEqual(['codex']);
-    await lib.join('codex', true);
-    expect(await lib.detect()).toEqual([]);
-  });
-
-  it('detect() also counts a source whose data dir exists', async () => {
-    const d = path.join(dir, 'oc-data');
-    fs.mkdirSync(d);
-    lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents([]), makeSource: (k) => fakeSource(k, []), dataDirs: { opencode: [d] }, trashDir: path.join(dir, 'library-trash') });
-    expect(await lib.detect()).toEqual(['opencode']);
-  });
-
-  it('dedupes a claude-web session with the imported item it resumes', async () => {
-    const srcCaps: SourceCaps = { resume: true, rename: false, archive: false, delete: true, fork: false };
-    codex.items = [item('codex-t1', 'codex', 200, { caps: srcCaps, title: 'native title' })];
-    await lib.join('codex', true);
-    await transcripts.create({ sessionId: 'uuid-1', agent: 'codex', cwd: '/w', title: 'mine', createdAt: 1, nativeSessionId: 't1' });
-    const mtime = fs.statSync(transcripts.file('uuid-1')).mtimeMs;
-    const list = await lib.list();
-    const hit = list.filter((s) => s.sessionId === 'uuid-1' || s.sessionId === 'codex-t1');
-    expect(hit).toHaveLength(1);
-    expect(hit[0].sessionId).toBe('uuid-1'); // claude-web's id
-    expect(hit[0].caps).toEqual(srcCaps); // the source's caps
-    expect(hit[0].mergedFrom).toBe('codex-t1'); // the client names the source in the delete confirm
-    expect(hit[0].lastModified).toBe(Math.max(200, mtime)); // the newer of the two (file mtime here)
-
-    // and when the native side is newer, its lastModified wins
-    const future = Date.now() + 3_600_000;
-    codex.items = [item('codex-t1', 'codex', future, { caps: srcCaps })];
-    lib.invalidate();
-    expect((await lib.list()).find((s) => s.sessionId === 'uuid-1')?.lastModified).toBe(future);
-  });
-
-  // a Codex conversation started here, continued with `codex resume <thread>` in a terminal (interop F4)
-  describe('syncMirror: turns the Codex CLI added to a thread started here', () => {
-    const say = (text: string, uuid = `u-${text}`) => ({ type: 'user', uuid, message: { role: 'user', content: [{ type: 'text', text }] } });
-    const answer = (text: string) => ({ type: 'assistant', uuid: `a-${text}`, message: { role: 'assistant', content: [{ type: 'text', text }] } });
-    const toolResult = () => ({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'out' }] } });
-    const mine = async () => {
-      await transcripts.create({ sessionId: 'uuid-x', agent: 'codex', cwd: '/w', title: 'mine', createdAt: 1, nativeSessionId: 't1' });
-      for (const m of [say('one'), answer('1'), say('two'), toolResult(), answer('2')]) transcripts.append('uuid-x', m);
-    };
-    const prompts = (msgs: any[]) => msgs.filter((m) => m.type === 'user' && Array.isArray(m.message.content) && m.message.content[0].type === 'text').map((m) => m.message.content[0].text);
-
-    it("appends the thread's later turns once, and reads show them", async () => {
-      await mine();
-      codex.read.mockImplementation(async () => ({ messages: [say('one', 'n1'), answer('1'), say('two', 'n2'), toolResult(), answer('2'), say('three from cli', 'n3'), answer('3')] }));
-      expect(await lib.syncMirror('uuid-x')).toBe(2);
-      expect(await lib.syncMirror('uuid-x')).toBe(0); // already in
-      const r = await lib.read('uuid-x');
-      expect(prompts(r.messages)).toEqual(['one', 'two', 'three from cli']);
-      expect(r.messages.at(-1)).toMatchObject({ type: 'assistant', session_id: 'uuid-x' }); // our id, not the thread's
-    });
-
-    it('works without joining Codex (it is our own conversation), and not while a driver here runs it', async () => {
-      await mine();
-      codex.read.mockImplementation(async () => ({ messages: [say('one'), answer('1'), say('two'), answer('2'), say('three'), answer('3')] }));
-      let live = true;
-      lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents(['codex']), dataDirs: {}, trashDir: path.join(dir, 'library-trash'), isLive: () => live });
-      expect(prompts((await lib.read('uuid-x')).messages)).toEqual(['one', 'two']); // live: the driver writes the mirror
-      expect(codex.read).not.toHaveBeenCalled();
-      live = false;
-      expect(prompts((await lib.read('uuid-x')).messages)).toEqual(['one', 'two', 'three']);
-    });
-
-    it('concurrent calls append once', async () => {
-      await mine();
-      codex.read.mockImplementation(async () => ({ messages: [say('one'), answer('1'), say('two'), answer('2'), say('three'), answer('3')] }));
-      const n = await Promise.all([lib.syncMirror('uuid-x'), lib.syncMirror('uuid-x'), lib.syncMirror('uuid-x')]);
-      expect(n).toEqual([2, 2, 2]);
-      expect(prompts(await transcripts.load('uuid-x'))).toEqual(['one', 'two', 'three']);
-    });
-
-    it("leaves the mirror alone when its last prompts are not in the thread (don't guess), or for other agents / imported heads", async () => {
-      await mine();
-      codex.read.mockImplementation(async () => ({ messages: [say('something else'), answer('x')] }));
-      expect(await lib.syncMirror('uuid-x')).toBe(0);
-      await transcripts.create({ sessionId: 'uuid-g', agent: 'gemini', cwd: '/w', title: 'g', createdAt: 1, nativeSessionId: 'g1' });
-      await transcripts.create({ sessionId: 'uuid-i', agent: 'codex', cwd: '/w', title: 'i', createdAt: 1, nativeSessionId: 't2', imported: true });
-      expect(await lib.syncMirror('uuid-g')).toBe(0);
-      expect(await lib.syncMirror('uuid-i')).toBe(0);
-      expect(codex.read).toHaveBeenCalledTimes(1);
-    });
-
-    it('a turn Codex is still in the middle of is shown by reads but never goes into the mirror (its rest would be lost)', async () => {
-      await mine();
-      const running = { type: 'system', subtype: 'cw_elsewhere', agent: 'codex', session_id: 'codex-t1' };
-      codex.read.mockImplementation(async () => ({ messages: [say('one', 'n1'), answer('1'), say('two', 'n2'), toolResult(), answer('2'), say('three', 'n3'), answer('half'), running] }));
-      expect(await lib.syncMirror('uuid-x')).toBe(0);
-      expect(prompts(await transcripts.load('uuid-x'))).toEqual(['one', 'two']);
-      const r = await lib.read('uuid-x');
-      expect(prompts(r.messages)).toEqual(['one', 'two', 'three']);
-      expect(r.messages.at(-1)).toMatchObject({ subtype: 'cw_elsewhere', session_id: 'uuid-x' });
-      // it finished: the whole turn goes in, and the marker is gone
-      codex.read.mockImplementation(async () => ({ messages: [say('one', 'n1'), answer('1'), say('two', 'n2'), toolResult(), answer('2'), say('three', 'n3'), answer('half'), answer('rest')] }));
-      const after = await lib.read('uuid-x');
-      expect(after.messages.filter((m: any) => m.type === 'assistant').map((m: any) => m.message.content[0].text)).toEqual(['1', '2', 'half', 'rest']);
-      expect(after.messages.some((m: any) => m.subtype === 'cw_elsewhere')).toBe(false);
-    });
-
-    it("splitInFlight: from the open turn's prompt on, or nothing to split", () => {
-      const m = { type: 'system', subtype: 'cw_elsewhere' };
-      expect(splitInFlight([say('a'), answer('1')])).toEqual({ done: [say('a'), answer('1')], inflight: [] });
-      expect(splitInFlight([say('a'), answer('1'), say('b'), toolResult(), answer('2'), m])).toEqual({ done: [say('a'), answer('1')], inflight: [say('b'), toolResult(), answer('2'), m] });
-      expect(splitInFlight([answer('x'), m])).toEqual({ done: [], inflight: [answer('x'), m] });
-    });
-
-    it('looks further back a page at a time until the last prompts show up', async () => {
-      await mine();
-      codex.read.mockImplementation(async (_id: string, o: { cursor?: string }) => (o.cursor
-        ? { messages: [say('one'), answer('1'), say('two'), answer('2')] }
-        : { messages: [say('three'), answer('3'), say('four'), answer('4')], next: 'older' }));
-      expect(await lib.syncMirror('uuid-x')).toBe(4);
-      expect(prompts(await transcripts.load('uuid-x'))).toEqual(['one', 'two', 'three', 'four']);
-    });
-
-    it("the Codex CLI writing the thread's rollout also names the conversation here it was merged into", async () => {
-      const T = '01a0f133-d017-7e81-829d-fa7a91fd3158';
-      codex.items = [item(`codex-${T}`, 'codex', 200)];
-      await lib.join('codex', true);
-      await transcripts.create({ sessionId: 'uuid-w', agent: 'codex', cwd: '/w', title: 'mine', createdAt: 1, nativeSessionId: T });
-      await lib.list(); // codex-<T> merges into uuid-w
-      const codexDir = path.join(dir, 'codex-sessions');
-      const day = path.join(codexDir, '2026', '10', '02');
-      fs.mkdirSync(day, { recursive: true });
-      lib.start({ codex: [codexDir] });
-      const got: string[][] = [];
-      lib.on('transcripts', (ids: string[]) => got.push(ids));
-      await new Promise((r) => setTimeout(r, 300)); // the recursive handle is up
-      fs.writeFileSync(path.join(day, `rollout-2026-10-02T10-00-00-${T}.jsonl`), '{"type":"response_item"}\n');
-      const ids = await new Promise<string[] | null>((r) => { const end = Date.now() + 5000; const t = setInterval(() => { if (got.length || Date.now() > end) { clearInterval(t); r(got[0] ?? null); } }, 50); });
-      expect(ids?.sort()).toEqual([`codex-${T}`, 'uuid-w']);
-    });
-
-    it('…and so does a thread the cached list has not seen yet (started here after the last list)', async () => {
-      const T = '01a0f133-d017-7e81-829d-fa7a91fd3159';
-      await lib.join('codex', true);
-      await lib.list(); // cached without the thread
-      await transcripts.create({ sessionId: 'uuid-new', agent: 'codex', cwd: '/w', title: 'mine', createdAt: 1, nativeSessionId: T.toUpperCase() });
-      const codexDir = path.join(dir, 'codex-sessions');
-      const day = path.join(codexDir, '2026', '10', '02');
-      fs.mkdirSync(day, { recursive: true });
-      lib.start({ codex: [codexDir] });
-      const got: string[] = [];
-      lib.on('transcripts', (ids: string[]) => got.push(...ids));
-      await new Promise((r) => setTimeout(r, 300));
-      fs.writeFileSync(path.join(day, `rollout-2026-10-02T10-00-00-${T}.jsonl`), '{"type":"response_item"}\n');
-      await new Promise<void>((r) => { const end = Date.now() + 5000; const t = setInterval(() => { if (got.includes('uuid-new') || Date.now() > end) { clearInterval(t); r(); } }, 50); });
-      expect(got).toContain('uuid-new');
-      expect(got).toContain(`codex-${T}`);
-    });
-  });
-
   it('lists archived sessions of archive-capable sources, flagged archived', async () => {
-    codex.list.mockImplementation(async (o: { archived?: boolean }) => ({ items: o.archived ? [item('codex-old', 'codex', 50)] : codex.items }));
-    await lib.join('codex', true);
+    cai.list.mockImplementation(async (o: { archived?: boolean }) => ({ items: o.archived ? [item('claudeai-old', 'claudeai', 50)] : cai.items }));
+    await lib.join('claudeai', true);
     const list = await lib.list();
-    expect(list.find((s) => s.sessionId === 'codex-old')?.archived).toBe(true);
-    expect(list.find((s) => s.sessionId === 'codex-t1')?.archived).toBeUndefined();
-    expect(codex.list).toHaveBeenCalledWith(expect.objectContaining({ archived: true }));
+    expect(list.find((s) => s.sessionId === 'claudeai-old')?.archived).toBe(true);
+    expect(list.find((s) => s.sessionId === 'claudeai-t1')?.archived).toBeUndefined();
+    expect(cai.list).toHaveBeenCalledWith(expect.objectContaining({ archived: true }));
   });
 
   it('does not ask a source without archive caps for archived sessions', async () => {
-    (codex as any).caps = { ...ALL, archive: false };
-    await lib.join('codex', true);
+    (cai as any).caps = { ...ALL, archive: false };
+    await lib.join('claudeai', true);
     await lib.list();
-    expect(codex.list).not.toHaveBeenCalledWith(expect.objectContaining({ archived: true }));
+    expect(cai.list).not.toHaveBeenCalledWith(expect.objectContaining({ archived: true }));
   });
 
   it('concurrent list() calls share one fetch per source', async () => {
-    await lib.join('codex', true);
+    await lib.join('claudeai', true);
     await Promise.all([lib.list(), lib.list(), lib.list()]);
-    expect(codex.list).toHaveBeenCalledTimes(2); // one live + one archived page, not 3x
+    expect(cai.list).toHaveBeenCalledTimes(2); // one live + one archived page, not 3x
   });
 
-  it('leaving a source keeps index rows of claude-web sessions of that agent', async () => {
-    await lib.join('codex', true);
-    await transcripts.create({ sessionId: 'uuid-own', agent: 'codex', cwd: '/w', title: 'own', createdAt: 1 });
-    await lib.list();
-    index.upsert(item('uuid-own', 'codex', 1), 'own words');
-    index.upsert(item('codex-t1', 'codex', 200), 'codex words');
-    await lib.join('codex', false);
-    expect(index.indexedAt('uuid-own')).toBe(1);
-    expect(index.indexedAt('codex-t1')).toBeUndefined();
-  });
-
-  const bounded = () => new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents(['codex']), dataDirs: {}, trashDir: path.join(dir, 'library-trash'), listTimeoutMs: 50 });
+  const bounded = () => new LibraryService([claude, cai], index, meta, { trashDir: path.join(dir, 'library-trash'), listTimeoutMs: 50 });
 
   it('first load of a never-settling source: others still list, it is loading (not an error)', async () => {
     lib.dispose();
     lib = bounded();
-    codex.list.mockImplementation(() => new Promise(() => {}));
-    await lib.join('codex', true);
+    cai.list.mockImplementation(() => new Promise(() => {}));
+    await lib.join('claudeai', true);
     const t0 = Date.now();
     expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'c1']);
     expect(Date.now() - t0).toBeLessThan(2000);
-    const st = (await lib.sources()).find((s) => s.kind === 'codex');
+    const st = (await lib.sources()).find((s) => s.kind === 'claudeai');
     expect(st?.loading).toBe(true);
     expect(st?.error).toBeUndefined();
   });
@@ -313,8 +127,8 @@ describe('LibraryService', () => {
   it('callers joining the in-flight fetch are bounded too', async () => {
     lib.dispose();
     lib = bounded();
-    codex.list.mockImplementation(() => new Promise(() => {}));
-    await lib.join('codex', true);
+    cai.list.mockImplementation(() => new Promise(() => {}));
+    await lib.join('claudeai', true);
     const t0 = Date.now();
     const [a, b] = await Promise.all([lib.list(), lib.list()]);
     expect(a.map((s) => s.sessionId)).toEqual(['c2', 'c1']);
@@ -327,17 +141,17 @@ describe('LibraryService', () => {
   it('a first load that lands after the bound clears loading and announces the change', async () => {
     lib.dispose();
     lib = bounded();
-    (codex as any).caps = { ...ALL, archive: false };
+    (cai as any).caps = { ...ALL, archive: false };
     let release!: () => void;
-    codex.list.mockImplementation(() => new Promise((r) => { release = () => r({ items: codex.items }); }));
-    await lib.join('codex', true);
+    cai.list.mockImplementation(() => new Promise((r) => { release = () => r({ items: cai.items }); }));
+    await lib.join('claudeai', true);
     expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'c1']);
-    expect((await lib.sources()).find((s) => s.kind === 'codex')?.loading).toBe(true);
+    expect((await lib.sources()).find((s) => s.kind === 'claudeai')?.loading).toBe(true);
     const changed = new Promise<void>((r) => lib.once('changed', () => r()));
     release();
     await changed;
-    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'codex-t1', 'c1']);
-    const st = (await lib.sources()).find((s) => s.kind === 'codex');
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'claudeai-t1', 'c1']);
+    const st = (await lib.sources()).find((s) => s.kind === 'claudeai');
     expect(st?.loading).toBeUndefined();
     expect(st?.error).toBeUndefined();
   });
@@ -345,57 +159,57 @@ describe('LibraryService', () => {
   it('a timeout with a cached list is an error (cache served), cleared by the next success even from an older generation', async () => {
     lib.dispose();
     lib = bounded();
-    (codex as any).caps = { ...ALL, archive: false };
-    await lib.join('codex', true);
-    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'codex-t1', 'c1']);
+    (cai as any).caps = { ...ALL, archive: false };
+    await lib.join('claudeai', true);
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'claudeai-t1', 'c1']);
     let release!: () => void;
-    codex.list.mockImplementation(() => new Promise((r) => { release = () => r({ items: codex.items }); }));
-    lib.invalidate('codex');
-    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'codex-t1', 'c1']);
-    const st = (await lib.sources()).find((s) => s.kind === 'codex');
+    cai.list.mockImplementation(() => new Promise((r) => { release = () => r({ items: cai.items }); }));
+    lib.invalidate('claudeai');
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'claudeai-t1', 'c1']);
+    const st = (await lib.sources()).find((s) => s.kind === 'claudeai');
     expect(st?.error).toMatch(/超时/);
     expect(st?.loading).toBeUndefined();
-    lib.invalidate('codex'); // the hung fetch is now an older generation
+    lib.invalidate('claudeai'); // the hung fetch is now an older generation
     const changed = new Promise<void>((r) => lib.once('changed', () => r()));
     release();
     await changed;
-    expect((await lib.sources()).find((s) => s.kind === 'codex')?.error).toBeUndefined();
+    expect((await lib.sources()).find((s) => s.kind === 'claudeai')?.error).toBeUndefined();
   });
 
   it('stale-while-revalidate: a cached source past its TTL is served at once and refreshed behind', async () => {
     lib.dispose();
-    lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents(['codex']), dataDirs: {}, trashDir: path.join(dir, 'library-trash'), listTtlMs: 0 });
-    (codex as any).caps = { ...ALL, archive: false };
-    await lib.join('codex', true);
-    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'codex-t1', 'c1']);
+    lib = new LibraryService([claude, cai], index, meta, { trashDir: path.join(dir, 'library-trash'), listTtlMs: 0 });
+    (cai as any).caps = { ...ALL, archive: false };
+    await lib.join('claudeai', true);
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'claudeai-t1', 'c1']);
     let release!: () => void;
-    codex.list.mockImplementation(() => new Promise((r) => { release = () => r({ items: [item('codex-t9', 'codex', 250)] }); }));
+    cai.list.mockImplementation(() => new Promise((r) => { release = () => r({ items: [item('claudeai-t9', 'claudeai', 250)] }); }));
     const t0 = Date.now();
-    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'codex-t1', 'c1']); // cached, not waited for
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'claudeai-t1', 'c1']); // cached, not waited for
     expect(Date.now() - t0).toBeLessThan(1000);
-    expect((await lib.sources()).find((s) => s.kind === 'codex')?.error).toBeUndefined();
+    expect((await lib.sources()).find((s) => s.kind === 'claudeai')?.error).toBeUndefined();
     const changed = new Promise<void>((r) => lib.once('changed', () => r()));
     release();
     await changed;
-    codex.list.mockImplementation(async () => ({ items: [item('codex-t9', 'codex', 250)] }));
-    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'codex-t9', 'c1']);
+    cai.list.mockImplementation(async () => ({ items: [item('claudeai-t9', 'claudeai', 250)] }));
+    expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'claudeai-t9', 'c1']);
   });
 
   it('leaving a source while its fetch is in flight: a late success is not cached', async () => {
     lib.dispose();
     lib = bounded();
-    (codex as any).caps = { ...ALL, archive: false };
+    (cai as any).caps = { ...ALL, archive: false };
     let release!: () => void;
-    codex.list.mockImplementationOnce(() => new Promise((r) => { release = () => r({ items: [item('codex-old', 'codex', 1)] }); }));
-    await lib.join('codex', true);
+    cai.list.mockImplementationOnce(() => new Promise((r) => { release = () => r({ items: [item('claudeai-old', 'claudeai', 1)] }); }));
+    await lib.join('claudeai', true);
     await lib.list(); // first load outlives the bound
-    await lib.join('codex', false);
+    await lib.join('claudeai', false);
     release();
     await new Promise((r) => setTimeout(r, 20));
-    codex.list.mockImplementation(() => new Promise(() => {})); // after re-join: still loading
-    await lib.join('codex', true);
+    cai.list.mockImplementation(() => new Promise(() => {})); // after re-join: still loading
+    await lib.join('claudeai', true);
     expect((await lib.list()).map((s) => s.sessionId)).toEqual(['c2', 'c1']);
-    const st = (await lib.sources()).find((s) => s.kind === 'codex');
+    const st = (await lib.sources()).find((s) => s.kind === 'claudeai');
     expect(st?.count).toBeUndefined();
     expect(st?.loading).toBe(true);
   });
@@ -403,87 +217,69 @@ describe('LibraryService', () => {
   it('leaving a source while its fetch is in flight: a late failure sets no error', async () => {
     lib.dispose();
     lib = bounded();
-    (codex as any).caps = { ...ALL, archive: false };
+    (cai as any).caps = { ...ALL, archive: false };
     let fail!: () => void;
-    codex.list.mockImplementationOnce(() => new Promise((_r, rej) => { fail = () => rej(new Error('late boom')); }));
-    await lib.join('codex', true);
+    cai.list.mockImplementationOnce(() => new Promise((_r, rej) => { fail = () => rej(new Error('late boom')); }));
+    await lib.join('claudeai', true);
     await lib.list();
-    await lib.join('codex', false);
+    await lib.join('claudeai', false);
     fail();
     await new Promise((r) => setTimeout(r, 20));
-    codex.list.mockImplementation(() => new Promise(() => {}));
-    await lib.join('codex', true);
+    cai.list.mockImplementation(() => new Promise(() => {}));
+    await lib.join('claudeai', true);
     await lib.list();
-    expect((await lib.sources()).find((s) => s.kind === 'codex')?.error).toBeUndefined();
+    expect((await lib.sources()).find((s) => s.kind === 'claudeai')?.error).toBeUndefined();
   });
 
   it('file watchers run only for joined sources: started on join, stopped on leave', async () => {
     const claudeDir = path.join(dir, 'claude-projects');
-    const codexDir = path.join(dir, 'codex-sessions');
+    const caiDir = path.join(dir, 'claudeai-sessions');
     fs.mkdirSync(claudeDir);
-    fs.mkdirSync(codexDir);
-    lib.start({ claude: [claudeDir], codex: [codexDir] });
+    fs.mkdirSync(caiDir);
+    lib.start({ claude: [claudeDir], claudeai: [caiDir] });
     const watched = () => [...((lib as any).watchers as Map<string, unknown>).keys()].sort();
     expect(watched()).toEqual(['claude']);
-    await lib.join('codex', true);
-    expect(watched()).toEqual(['claude', 'codex']);
-    await lib.join('codex', false);
+    await lib.join('claudeai', true);
+    expect(watched()).toEqual(['claude', 'claudeai']);
+    await lib.join('claudeai', false);
     expect(watched()).toEqual(['claude']);
-  });
-
-  it('Codex writing a rollout (its CLI / desktop app) names that thread in one batched transcripts event (user report: an open view froze)', async () => {
-    const codexDir = path.join(dir, 'codex-sessions');
-    const day = path.join(codexDir, '2026', '09', '30');
-    fs.mkdirSync(day, { recursive: true });
-    await lib.join('codex', true);
-    lib.start({ codex: [codexDir] });
-    const got: string[][] = [];
-    lib.on('transcripts', (ids: string[]) => got.push(ids));
-    await new Promise((r) => setTimeout(r, 300)); // the recursive handle is up
-    const file = path.join(day, 'rollout-2026-09-30T10-00-00-01A0F133-D017-7E81-829D-FA7A91FD3158.jsonl');
-    fs.writeFileSync(file, '{"type":"session_meta"}\n');
-    fs.appendFileSync(file, '{"type":"response_item"}\n');
-    fs.writeFileSync(path.join(codexDir, 'notes.txt'), 'not a rollout');
-    const ids = await new Promise<string[] | null>((r) => { const end = Date.now() + 5000; const t = setInterval(() => { if (got.length || Date.now() > end) { clearInterval(t); r(got[0] ?? null); } }, 50); });
-    expect(ids).toEqual(['codex-01a0f133-d017-7e81-829d-fa7a91fd3158']);
-    expect(got.length).toBe(1);
   });
 
   it('a parent cycle folds nothing: every member stays visible', async () => {
-    codex.items = [
-      item('codex-a', 'codex', 200, { parentId: 'codex-b' }),
-      item('codex-b', 'codex', 210, { parentId: 'codex-a' }),
+    cai.items = [
+      item('claudeai-a', 'claudeai', 200, { parentId: 'claudeai-b' }),
+      item('claudeai-b', 'claudeai', 210, { parentId: 'claudeai-a' }),
     ];
-    await lib.join('codex', true);
+    await lib.join('claudeai', true);
     const list = await lib.list();
-    expect(list.map((s) => s.sessionId)).toEqual(['c2', 'codex-b', 'codex-a', 'c1']);
+    expect(list.map((s) => s.sessionId)).toEqual(['c2', 'claudeai-b', 'claudeai-a', 'c1']);
     expect(list.every((s) => !s.childCount)).toBe(true);
   });
 
   it('nested sub-agents fold transitively under the top-level ancestor', async () => {
-    codex.items = [
-      item('codex-root', 'codex', 200),
-      item('codex-kid', 'codex', 210, { parentId: 'codex-root' }),
-      item('codex-grandkid', 'codex', 220, { parentId: 'codex-kid' }),
-      item('codex-orphan', 'codex', 230, { parentId: 'codex-missing' }),
+    cai.items = [
+      item('claudeai-root', 'claudeai', 200),
+      item('claudeai-kid', 'claudeai', 210, { parentId: 'claudeai-root' }),
+      item('claudeai-grandkid', 'claudeai', 220, { parentId: 'claudeai-kid' }),
+      item('claudeai-orphan', 'claudeai', 230, { parentId: 'claudeai-missing' }),
     ];
-    await lib.join('codex', true);
+    await lib.join('claudeai', true);
     const list = await lib.list();
-    expect(list.map((s) => s.sessionId)).toEqual(['c2', 'codex-orphan', 'codex-root', 'c1']);
-    expect(list.find((s) => s.sessionId === 'codex-root')?.childCount).toBe(2);
-    expect(list.find((s) => s.sessionId === 'codex-orphan')?.childCount).toBeUndefined();
+    expect(list.map((s) => s.sessionId)).toEqual(['c2', 'claudeai-orphan', 'claudeai-root', 'c1']);
+    expect(list.find((s) => s.sessionId === 'claudeai-root')?.childCount).toBe(2);
+    expect(list.find((s) => s.sessionId === 'claudeai-orphan')?.childCount).toBeUndefined();
   });
 
   it('refreshIndex stamps indexedAt on a joined source with no sessions, not on a failed one', async () => {
     claude.items = [];
-    codex.list.mockRejectedValue(new Error('app-server crashed'));
-    await lib.join('codex', true);
+    cai.list.mockRejectedValue(new Error('app-server crashed'));
+    await lib.join('claudeai', true);
     await lib.refreshIndex();
     const st = await lib.sources();
     const cl = st.find((s) => s.kind === 'claude');
     expect(cl?.count).toBe(0);
     expect(typeof cl?.indexedAt).toBe('number');
-    expect(st.find((s) => s.kind === 'codex')?.indexedAt).toBeUndefined();
+    expect(st.find((s) => s.kind === 'claudeai')?.indexedAt).toBeUndefined();
   });
 
   it('refreshIndex prunes ids that no longer exist', async () => {
@@ -493,41 +289,41 @@ describe('LibraryService', () => {
   });
 
   it('refreshIndex keeps the index rows of a source whose fetch failed', async () => {
-    await lib.join('codex', true);
+    await lib.join('claudeai', true);
     await lib.refreshIndex();
-    expect(index.indexedAt('codex-t1')).toBe(200);
-    // a fresh service (e.g. after a restart) has no last good list for codex, and codex fails
+    expect(index.indexedAt('claudeai-t1')).toBe(200);
+    // a fresh service (e.g. after a restart) has no last good list for claude.ai, and it fails
     lib.dispose();
-    codex.list.mockRejectedValue(new Error('app-server crashed'));
+    cai.list.mockRejectedValue(new Error('app-server crashed'));
     lib = make();
     await lib.refreshIndex();
-    expect(index.indexedAt('codex-t1')).toBe(200);
+    expect(index.indexedAt('claudeai-t1')).toBe(200);
     expect(index.indexedAt('c1')).toBe(100);
   });
 
   it('invalidate() during an in-flight fetch starts a new fetch; the stale one is not cached as fresh', async () => {
-    (codex as any).caps = { ...ALL, archive: false };
-    await lib.join('codex', true);
+    (cai as any).caps = { ...ALL, archive: false };
+    await lib.join('claudeai', true);
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
-    codex.list.mockImplementationOnce(async () => { await gate; return { items: [item('codex-old', 'codex', 1)] }; });
+    cai.list.mockImplementationOnce(async () => { await gate; return { items: [item('claudeai-old', 'claudeai', 1)] }; });
     const first = lib.list();
     await new Promise((r) => setTimeout(r, 10));
-    lib.invalidate('codex');
-    codex.items = [item('codex-new', 'codex', 2)];
+    lib.invalidate('claudeai');
+    cai.items = [item('claudeai-new', 'claudeai', 2)];
     const second = lib.list();
     release();
     await first;
-    expect((await second).map((s) => s.sessionId)).toContain('codex-new');
-    expect(codex.list).toHaveBeenCalledTimes(2);
+    expect((await second).map((s) => s.sessionId)).toContain('claudeai-new');
+    expect(cai.list).toHaveBeenCalledTimes(2);
     // the pre-invalidation result must not have become the fresh cache
-    expect((await lib.list()).map((s) => s.sessionId)).toContain('codex-new');
-    expect(codex.list).toHaveBeenCalledTimes(2);
+    expect((await lib.list()).map((s) => s.sessionId)).toContain('claudeai-new');
+    expect(cai.list).toHaveBeenCalledTimes(2);
   });
 
   it('search uses the fallback until the first index pass has finished', async () => {
     const fallback = vi.fn(async () => [{ session: item('fb', 'claude', 1) }]);
-    lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents([]), fallbackSearch: fallback, dataDirs: {}, trashDir: path.join(dir, 'library-trash') });
+    lib = new LibraryService([claude, cai], index, meta, { fallbackSearch: fallback, trashDir: path.join(dir, 'library-trash') });
     index.upsert(item('c1', 'claude', 100), 'hello partial'); // partially indexed, no pass finished
     expect((await lib.search('hello', 10)).map((h) => h.session.sessionId)).toEqual(['fb']);
     expect(fallback).toHaveBeenCalledWith('hello', 10);
@@ -535,15 +331,6 @@ describe('LibraryService', () => {
     fallback.mockClear();
     expect((await lib.search('hello', 10)).map((h) => h.session.sessionId).sort()).toEqual(['c1', 'c2']);
     expect(fallback).not.toHaveBeenCalled();
-  });
-
-  it('routes a prefixed gemini id to the gemini source without any prior list()', async () => {
-    const gem = fakeSource('gemini', [item('gemini-g1', 'gemini', 10)]);
-    lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents(['gemini']), makeSource: (k) => (k === 'gemini' ? gem : null), dataDirs: {}, trashDir: path.join(dir, 'library-trash') });
-    await lib.join('gemini', true);
-    expect(await lib.kindOf('gemini-g1')).toBe('gemini');
-    await lib.read('gemini-g1');
-    expect(gem.read).toHaveBeenCalledWith('g1', expect.anything());
   });
 
   it('folds children under their parent', async () => {
@@ -554,25 +341,25 @@ describe('LibraryService', () => {
   });
 
   it('a failing source does not break the others and reports its error', async () => {
-    await lib.join('codex', true);
+    await lib.join('claudeai', true);
     await lib.list();
-    codex.list.mockRejectedValue(new Error('boom'));
+    cai.list.mockRejectedValue(new Error('boom'));
     lib.invalidate();
     const ids = (await lib.list()).map((s) => s.sessionId);
     expect(ids).toContain('c1');
-    expect(ids).toContain('codex-t1'); // last good result
-    const st = (await lib.sources()).find((s) => s.kind === 'codex');
+    expect(ids).toContain('claudeai-t1'); // last good result
+    const st = (await lib.sources()).find((s) => s.kind === 'claudeai');
     expect(st?.error).toContain('boom');
     expect(st?.joined).toBe(true);
   });
 
   it('remove: a failed export keeps the session', async () => {
-    await lib.join('codex', true);
+    await lib.join('claudeai', true);
     await lib.list();
-    codex.exportAll.mockRejectedValue(new Error('export failed'));
-    const r = await lib.remove(['codex-t1', 'c1']);
-    expect(r.failed.map((f) => f.id)).toEqual(['codex-t1']);
-    expect(codex.remove).not.toHaveBeenCalled();
+    cai.exportAll.mockRejectedValue(new Error('export failed'));
+    const r = await lib.remove(['claudeai-t1', 'c1']);
+    expect(r.failed.map((f) => f.id)).toEqual(['claudeai-t1']);
+    expect(cai.remove).not.toHaveBeenCalled();
     expect(r.removed).toEqual(['c1']);
     expect(claude.remove).toHaveBeenCalledWith('c1');
     expect(fs.existsSync(path.join(dir, 'library-trash', 'c1.json'))).toBe(true);
@@ -614,24 +401,6 @@ describe('LibraryService', () => {
     expect(claude.remove).toHaveBeenCalledTimes(1);
   });
 
-  it('prepareResume creates an imported head once', async () => {
-    await lib.join('codex', true);
-    const spy = vi.spyOn(transcripts, 'create');
-    expect(await lib.prepareResume('codex-t1')).toEqual({ agent: 'codex', cwd: '/w' });
-    const head = await transcripts.head('codex-t1');
-    expect(head).toMatchObject({ nativeSessionId: 't1', agent: 'codex', imported: true });
-    await lib.prepareResume('codex-t1');
-    expect(spy).toHaveBeenCalledTimes(1);
-  });
-
-  it('imported sessions read from the source, not the local transcript', async () => {
-    await lib.join('codex', true);
-    await lib.prepareResume('codex-t1');
-    const r = await lib.read('codex-t1');
-    expect(codex.read).toHaveBeenCalledWith('t1', expect.anything());
-    expect(r.messages[0].message.content).toBe('hello from t1');
-  });
-
   it('readAll concatenates pages oldest first', async () => {
     claude.read.mockImplementation(async (_id: string, o: { cursor?: string }) =>
       o.cursor ? { messages: [{ n: 1 }, { n: 2 }] } : { messages: [{ n: 3 }], next: 'older' });
@@ -667,26 +436,26 @@ describe('LibraryService', () => {
 
   it('the index pass does not re-list a source only because its TTL ran out (a watcher event does)', async () => {
     lib.dispose();
-    lib = new LibraryService([claude, codex], index, transcripts, meta, { agents: fakeAgents(['codex']), dataDirs: {}, trashDir: path.join(dir, 'library-trash'), listTtlMs: 0 });
-    await lib.join('codex', true);
+    lib = new LibraryService([claude, cai], index, meta, { trashDir: path.join(dir, 'library-trash'), listTtlMs: 0 });
+    await lib.join('claudeai', true);
     await lib.list();
-    const before = codex.list.mock.calls.length;
+    const before = cai.list.mock.calls.length;
     await lib.refreshIndex();
     await lib.refreshIndex();
-    expect(codex.list.mock.calls.length).toBe(before);
-    // a watcher saw Codex's data change: the next pass revalidates it (behind the cache)
+    expect(cai.list.mock.calls.length).toBe(before);
+    // a watcher saw claude.ai's data change: the next pass revalidates it (behind the cache)
     const changed = new Promise<void>((r) => lib.once('changed', () => r()));
-    lib.invalidate('codex', { soft: true });
+    lib.invalidate('claudeai', { soft: true });
     await lib.refreshIndex();
     await changed;
-    expect(codex.list.mock.calls.length).toBeGreaterThan(before);
+    expect(cai.list.mock.calls.length).toBeGreaterThan(before);
     // …and once refetched, age alone doesn't refetch again
-    const after = codex.list.mock.calls.length;
+    const after = cai.list.mock.calls.length;
     await lib.refreshIndex();
-    expect(codex.list.mock.calls.length).toBe(after);
+    expect(cai.list.mock.calls.length).toBe(after);
     // a client's list() still revalidates on the TTL
     await lib.list();
-    expect(codex.list.mock.calls.length).toBeGreaterThan(after);
+    expect(cai.list.mock.calls.length).toBeGreaterThan(after);
   });
 
   it('a Claude session with a full index text: only its summary follows while it is written, the text is re-read once quiet', async () => {
@@ -821,26 +590,9 @@ describe('LibraryService', () => {
     await lib.rename('c1', 'new');
     expect(claude.rename).toHaveBeenCalledWith('c1', 'new');
     expect(await lib.fork('c1')).toEqual({ sessionId: 'forked' });
-    (codex as any).caps = { ...ALL, rename: false };
-    await lib.join('codex', true);
+    (cai as any).caps = { ...ALL, rename: false };
+    await lib.join('claudeai', true);
     await lib.list();
-    await expect(lib.rename('codex-t1', 'x')).rejects.toThrow('该来源不支持此操作');
-  });
-});
-
-describe('turnsAfter: where a thread goes on past the mirror', () => {
-  const say = (text: string) => ({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
-  const answer = (text: string) => ({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } });
-  const tool = () => ({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'x' }] } });
-  it('the turns after the last three prompts, not after a repeated one', async () => {
-    const { turnsAfter } = await import('./service.js');
-    const mirror = [say('a'), answer('1'), say('继续'), answer('2'), say('继续'), answer('3')];
-    // the CLI also typed 「继续」: matching only the last prompt would take its turn as ours
-    const thread = [say('a'), answer('1'), say('继续'), tool(), answer('2'), say('继续'), answer('3'), say('继续'), answer('4')];
-    expect(turnsAfter(mirror, thread)).toEqual([say('继续'), answer('4')]);
-    expect(turnsAfter(mirror, thread.slice(0, 7))).toEqual([]); // lined up to the end
-    expect(turnsAfter(mirror, [say('x'), answer('y')])).toBeNull(); // not found: do not guess
-    expect(turnsAfter([answer('only')], thread)).toBeNull(); // no prompt to anchor on
-    expect(turnsAfter([say('a')], [say('a'), answer('1'), say('b')])).toEqual([say('b')]);
+    await expect(lib.rename('claudeai-t1', 'x')).rejects.toThrow('该来源不支持此操作');
   });
 });

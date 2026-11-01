@@ -44,7 +44,7 @@ export class ClaudeAiSource implements SessionSource {
 
   async status(): Promise<SourceStatus> {
     const n = (await this.all()).size;
-    return { kind: this.kind, name: 'claude.ai', installed: n > 0, detected: n > 0, joined: false, dismissed: false, enabled: n > 0, count: n };
+    return { kind: this.kind, name: 'claude.ai', installed: n > 0, detected: n > 0, joined: false, enabled: n > 0, count: n };
   }
 
   async list(_o: { cursor?: string; limit: number; archived?: boolean }): Promise<{ items: SessionSummary[] }> {

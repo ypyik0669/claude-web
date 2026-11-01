@@ -3,15 +3,13 @@ import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentKind, Goal, PermissionMode } from '../protocol.js';
-import { agentSlug, downstreamOf, nodeAgents, parseWinner, renderPrompt, validateWorkflow } from './dag.js';
+import { agentSlug, downstreamOf, NODE_KINDS, nodeAgents, renderPrompt, validateWorkflow } from './dag.js';
 import type { MergeResult, OrchGit } from './git.js';
-import type { CompareCandidate, NodeRun, OrchCleanup, OrchOrphan, OrchCompareNode, OrchNode, OrchRun, OrchRunSummary, OrchTaskNode, OrchWorktree, Workflow, WorkflowTemplate } from './types.js';
+import type { NodeRun, OrchCleanup, OrchOrphan, OrchNode, OrchRun, OrchRunSummary, OrchTaskNode, OrchWorktree, Workflow, WorkflowTemplate } from './types.js';
 import { tr } from '../i18n/index.js';
 
 export type { OrchGit } from './git.js';
 export const DEFAULT_MAX_PARALLEL = 3;
-const JUDGE_REPLY_LIMIT = 4000;
-const JUDGE_DIFF_LIMIT = 12000;
 const RESTART_ERROR = tr('服务重启中断');
 
 /** A session the orchestrator opened. Events are watched by id (pool level), never on a runner instance. */
@@ -54,8 +52,8 @@ export interface OrchDeps {
   /** installed + enabled agents */
   available(): Promise<AgentKind[]>;
   maxParallel(): number;
-  /** a node started waiting for a human (approval / compare pick) */
-  notify?(run: OrchRun, nodeId: string, what: 'approval' | 'compare'): void;
+  /** an approval node started waiting for a human */
+  notify?(run: OrchRun, nodeId: string): void;
 }
 
 interface Finish { ok: boolean; output?: string; error?: string; costUsd?: number }
@@ -64,17 +62,13 @@ const TERMINAL = new Set(['done', 'failed', 'skipped', 'cancelled']);
 const BAD = new Set(['failed', 'skipped', 'cancelled']);
 
 const PLAN_TEMPLATE: WorkflowTemplate = {
-  id: 'plan-impl-review', name: tr('计划 → 实现 → 审查'), description: tr('Claude 规划、人工审批、Codex 实现、Claude 审查'),
+  id: 'plan-impl-review', name: tr('计划 → 实现 → 审查'), description: tr('规划、人工审批、实现、审查'),
   nodes: [
     { id: 'plan', kind: 'task', title: tr('规划'), agent: 'claude', workspace: 'shared', permissionMode: 'plan', dependsOn: [], prompt: tr("为下面的需求写一份实现计划：要改哪些文件、每一步做什么、怎么验证。只写计划，不要改代码。\n\n需求：{{input}}") },
     { id: 'approve', kind: 'approval', title: tr('审批计划'), note: tr('看一眼计划；驳回时写下意见，整个编排会停下'), dependsOn: ['plan'] },
-    { id: 'impl', kind: 'task', title: tr('实现'), agent: 'codex', workspace: 'shared', permissionMode: 'acceptEdits', dependsOn: ['approve'], prompt: tr("按下面的计划实现，完成后跑相关测试并汇报结果。\n\n需求：{{input}}\n\n计划：\n{{nodes.plan.output}}\n\n审批意见：{{nodes.approve.approval}}") },
+    { id: 'impl', kind: 'task', title: tr('实现'), agent: 'claude', workspace: 'shared', permissionMode: 'acceptEdits', dependsOn: ['approve'], prompt: tr("按下面的计划实现，完成后跑相关测试并汇报结果。\n\n需求：{{input}}\n\n计划：\n{{nodes.plan.output}}\n\n审批意见：{{nodes.approve.approval}}") },
     { id: 'review', kind: 'task', title: tr('审查'), agent: 'claude', workspace: 'shared', permissionMode: 'default', dependsOn: ['impl'], prompt: tr("审查工作区里刚完成的改动（git diff）：正确性、边界、测试覆盖、和计划是否一致。列出问题，按严重程度排序。\n\n需求：{{input}}\n\n实现者的汇报：\n{{nodes.impl.output}}") },
   ],
-};
-const COMPARE_TEMPLATE: WorkflowTemplate = {
-  id: 'three-way', name: tr('三方比选'), description: tr('同一个任务交给多个 agent 各自在 worktree 里做，比较后选一个合并'),
-  nodes: [{ id: 'compare', kind: 'compare', title: tr('比选实现'), agents: ['claude', 'codex', 'gemini'], dependsOn: [], permissionMode: 'acceptEdits', prompt: tr("{{input}}\n\n完成后简要说明你的做法和改动。") }],
 };
 const BUGFIX_TEMPLATE: WorkflowTemplate = {
   id: 'bugfix', name: tr('修 bug + 测试'), description: tr('先写复现测试，再一直修到测试通过，最后回归'),
@@ -84,19 +78,15 @@ const BUGFIX_TEMPLATE: WorkflowTemplate = {
     { id: 'verify', kind: 'task', title: tr('回归'), agent: 'claude', workspace: 'shared', permissionMode: 'acceptEdits', dependsOn: ['fix'], prompt: tr('跑完整测试套件，确认 bug 已修复、没有回归。汇报通过 / 失败的数字和改动摘要。') },
   ],
 };
-export const ORCH_TEMPLATES: WorkflowTemplate[] = [PLAN_TEMPLATE, COMPARE_TEMPLATE, BUGFIX_TEMPLATE];
+export const ORCH_TEMPLATES: WorkflowTemplate[] = [PLAN_TEMPLATE, BUGFIX_TEMPLATE];
 
-/** Templates with their agents resolved against what's installed: tasks fall back to Claude, compare keeps the installed ones. */
+/** Templates with their agents resolved against what's installed: tasks fall back to Claude. */
 export function resolveTemplates(available: AgentKind[]): WorkflowTemplate[] {
   const has = (a: AgentKind) => available.includes(a);
   return ORCH_TEMPLATES.map((t) => ({
     ...t,
     nodes: t.nodes.map((n): OrchNode => {
       if (n.kind === 'task') return { ...n, agent: has(n.agent) ? n.agent : 'claude' };
-      if (n.kind === 'compare') {
-        const agents = n.agents.filter(has);
-        return { ...n, agents: agents.length >= 2 ? agents : [...new Set([...agents, ...available])].slice(0, Math.max(2, agents.length)) };
-      }
       return { ...n };
     }),
   }));
@@ -111,8 +101,6 @@ function newNodeRun(prev?: NodeRun): NodeRun {
   return { state: 'pending', sessionIds: prev ? [...prev.sessionIds] : [], attempts: prev?.attempts ?? 0, ...(retained.length ? { retained } : {}) };
 }
 
-/** `<name>-<hash>` of a repo root: one folder per repository under the worktree root. */
-const isBusy = (state?: string) => state === 'running' || state === 'starting' || state === 'waiting';
 
 const mergeFailText = (branch: string, error: string) => tr("合并 {branch} 没有成功：{error}\nworktree 与分支都保留着：处理冲突后点「重新合并」，或手动 git merge {branch2}", { branch, error, branch2: branch });
 
@@ -121,6 +109,7 @@ function short(x: string, n: number) {
   return x.length <= n ? x : `${x.slice(0, n - 5)}~${createHash('sha1').update(x).digest('hex').slice(0, 4)}`;
 }
 
+/** `<name>-<hash>` of a repo root: one folder per repository under the worktree root. */
 function repoKey(root: string) {
   const name = short(path.basename(root).replace(/[^A-Za-z0-9._-]+/g, '-') || 'repo', 24);
   return `${name}-${createHash('sha1').update(path.resolve(root).toLowerCase()).digest('hex').slice(0, 8)}`;
@@ -141,12 +130,10 @@ export class OrchestraService extends EventEmitter {
   private writes = new Map<string, Promise<void>>();
   private mergeChain: Promise<unknown> = Promise.resolve();
   private goalWatch = new Map<string, (g: Goal | undefined) => void>();
-  /** runs with a user action (resume / retry / pick / cancel / remove) in flight */
+  /** runs with a user action (resume / retry / cancel / remove) in flight */
   private busy = new Set<string>();
   /** runs with a merge into the base branch in flight (cancel waits for it) */
   private merging = new Map<string, number>();
-  /** compare nodes whose candidates are being committed (not pickable yet) */
-  private sealing = new Set<NodeRun>();
   /** set by shutdown(): nothing new starts and session closes are not failures (init() marks them on next boot) */
   private stopping = false;
 
@@ -169,8 +156,6 @@ export class OrchestraService extends EventEmitter {
         if (run.state === 'running' || run.state === 'waiting') {
           for (const nr of Object.values(run.nodes)) {
             if (nr.state === 'running' || nr.state === 'waiting') { nr.state = 'failed'; nr.error = RESTART_ERROR; nr.finishedAt = Date.now(); }
-            for (const c of nr.candidates ?? []) if (c.state === 'running') { c.state = 'failed'; c.error = RESTART_ERROR; }
-            if (nr.judge?.state === 'running') { nr.judge.state = 'failed'; nr.judge.error = RESTART_ERROR; }
           }
           run.state = 'failed';
           run.error = RESTART_ERROR;
@@ -228,9 +213,9 @@ export class OrchestraService extends EventEmitter {
     const root = await this.d.git.root(w.cwd);
     const errs = validateWorkflow(w, { isGitRepo: !!root, available: await this.d.available() });
     if (errs.length) throw new Error(errs.join('\n'));
-    const needsWorktree = w.nodes.some((n) => n.kind === 'compare' || (n.kind === 'task' && n.workspace === 'worktree'));
+    const needsWorktree = w.nodes.some((n) => n.kind === 'task' && n.workspace === 'worktree');
     const baseBranch = root ? (await this.d.git.currentBranch(w.cwd)) ?? undefined : undefined;
-    if (needsWorktree && !baseBranch) throw new Error(tr('工作目录处于分离 HEAD：worktree / 比选需要一个分支来合并结果，先切到一个分支'));
+    if (needsWorktree && !baseBranch) throw new Error(tr('工作目录处于分离 HEAD：worktree 需要一个分支来合并结果，先切到一个分支'));
     const run: OrchRun = {
       id: randomBytes(4).toString('hex'), workflowId: w.id, name: w.name, cwd: w.cwd, input: input ?? '', baseBranch,
       startedAt: Date.now(), state: 'running', workflow: structuredClone(w.nodes),
@@ -250,8 +235,8 @@ export class OrchestraService extends EventEmitter {
       run.finishedAt = Date.now();
       for (const [id, nr] of Object.entries(run.nodes)) {
         if (nr.state === 'running') {
-          const live = [...(nr.candidates ?? []).filter((c) => c.state === 'running').map((c) => c.sessionId), nr.judge?.state === 'running' ? nr.judge.sessionId : undefined, nr.sessionIds[nr.sessionIds.length - 1]];
-          for (const sid of new Set(live)) if (sid) void this.d.stop(sid).catch(() => {});
+          const sid = nr.sessionIds[nr.sessionIds.length - 1];
+          if (sid) void this.d.stop(sid).catch(() => {});
           if (nr.goalId) { this.goalWatch.delete(nr.goalId); void this.d.goals?.pause(nr.goalId).catch(() => {}); }
         }
         if (!TERMINAL.has(nr.state)) run.nodes[id] = { ...nr, state: 'cancelled', finishedAt: Date.now() };
@@ -307,69 +292,6 @@ export class OrchestraService extends EventEmitter {
   }
 
   /**
-   * Compare: commit anything new in the winner's worktree, merge its branch into the base branch, then drop
-   * the worktrees / losing branches that hold nothing but what the run put there. A failed merge sends the
-   * node back to `waiting` with everything kept, so the user can fix things and pick again.
-   */
-  async pick(runId: string, nodeId: string, winner: AgentKind): Promise<OrchRun> {
-    return this.locked(runId, async () => {
-      const run = this.get(runId);
-      const node = this.nodeOf(run, nodeId);
-      const nr = run.nodes[nodeId];
-      if (node.kind !== 'compare' || nr.state !== 'waiting') throw new Error(tr('这个节点不在等待选择'));
-      const cand = nr.candidates?.find((c) => c.agent === winner);
-      if (!cand || cand.state !== 'done' || !cand.worktree) throw new Error(tr('只能选一个成功完成的候选'));
-      if (cand.sessionId && isBusy(this.d.sessionState(cand.sessionId))) throw new Error(tr('胜者的对话还在运行，先停止或等它结束再选'));
-      const wt = cand.worktree;
-      const root = (await this.d.git.root(run.cwd)) ?? run.cwd;
-      nr.state = 'running';
-      nr.error = undefined;
-      nr.note = tr('合并中…');
-      this.save(run);
-      // held until the node has settled (merged + cleaned up, or back to waiting): no cancel in between
-      this.merging.set(run.id, (this.merging.get(run.id) ?? 0) + 1);
-      try {
-        let res: MergeResult;
-        try {
-          // the user may have touched the winner after it finished: what gets merged is what's there now
-          await this.d.git.commitAll(wt.path, `orchestra(${run.name}): ${node.title} by ${winner}`);
-          cand.head = await this.d.git.head(wt.path);
-          const st = await this.d.git.diffStat(root, run.baseBranch!, wt.branch);
-          cand.diffStat = st.stat;
-          cand.files = st.files;
-          res = await this.mergeBack(run, wt, `orchestra(${run.name}): ${node.title} ← ${winner}`);
-        } catch (e: any) {
-          res = { ok: false, kind: 'failed', error: tr('提交胜者 worktree 失败：{message}', { message: e?.message ?? e }) };
-        }
-        nr.note = undefined;
-        if (run.nodes[nodeId] !== nr) return run;
-        if (!res.ok) {
-          nr.state = 'waiting';
-          nr.error = tr('合并 {branch} 没有成功（worktree 与分支都保留着，处理后可以再选一次）：{error}', { branch: wt.branch, error: res.error });
-          this.save(run);
-          return run;
-        }
-        nr.winner = winner;
-        nr.output = cand.output ?? '';
-        const kept: OrchCleanup['kept'] = [];
-        for (const sid of [...(nr.candidates ?? []).map((c) => c.sessionId), nr.judge?.sessionId]) if (sid) await this.d.close(sid).catch(() => {});
-        for (const c of nr.candidates ?? []) {
-          if (!c.worktree) continue;
-          const r = await this.drop(root, run.baseBranch!, c.worktree, { keepBranch: c.agent === winner, expectTip: c.agent === winner ? undefined : c.head });
-          kept.push(...r.kept);
-        }
-        if (kept.length) nr.note = tr('保留了：{map}', { map: kept.map((k) => `${k.path ?? k.branch}（${k.branch}，${k.reason}）`).join('；') });
-        nr.state = 'done';
-        nr.finishedAt = Date.now();
-      } finally {
-        this.merging.set(run.id, (this.merging.get(run.id) ?? 1) - 1);
-      }
-      this.tick(run);
-      return run;
-    });
-  }
-
-  /**
    * A worktree task whose merge back failed (conflict, the user's own merge in progress…): once the user
    * has sorted it out, merge the kept branch again with every check, then continue the run.
    */
@@ -398,7 +320,7 @@ export class OrchestraService extends EventEmitter {
         const sid = nr.sessionIds[nr.sessionIds.length - 1];
         if (sid) await this.d.close(sid).catch(() => {});
         const root = (await this.d.git.root(run.cwd)) ?? run.cwd;
-        const r = await this.drop(root, run.baseBranch!, wt, {});
+        const r = await this.drop(root, run.baseBranch!, wt);
         nr.note = r.kept.length ? tr('保留了：{map}', { map: r.kept.map((k) => `${k.path ?? k.branch}（${k.reason}）`).join('；') }) : undefined;
         nr.mergePending = undefined;
         nr.error = undefined;
@@ -449,18 +371,9 @@ export class OrchestraService extends EventEmitter {
     return { removed: abs, branch: info.branch };
   }
 
-  async diff(runId: string, nodeId: string, agent: AgentKind): Promise<string> {
-    const run = this.get(runId);
-    const nr = run.nodes[nodeId];
-    const wt = nr?.candidates?.find((c) => c.agent === agent)?.worktree ?? nr?.worktrees?.find((w) => w.agent === agent);
-    if (!wt || !run.baseBranch) throw new Error(tr('没有这个候选的 worktree'));
-    const root = (await this.d.git.root(run.cwd)) ?? run.cwd;
-    return this.d.git.diff(root, run.baseBranch, wt.branch);
-  }
-
-  /** Every worktree a run ever created (current attempts, candidates, earlier attempts). */
+  /** Every worktree a run ever created (current attempts, earlier attempts). */
   private worktreesOf(run: OrchRun): OrchWorktree[] {
-    const all = Object.values(run.nodes).flatMap((nr) => [...(nr.worktrees ?? []), ...(nr.candidates ?? []).flatMap((c) => (c.worktree ? [c.worktree] : [])), ...(nr.retained ?? [])]);
+    const all = Object.values(run.nodes).flatMap((nr) => [...(nr.worktrees ?? []), ...(nr.retained ?? [])]);
     return [...new Map(all.map((w) => [path.resolve(w.path), w])).values()];
   }
 
@@ -473,7 +386,7 @@ export class OrchestraService extends EventEmitter {
       if (cleanup && run.baseBranch) {
         const root = (await this.d.git.root(run.cwd)) ?? run.cwd;
         for (const wt of this.worktreesOf(run)) {
-          const r = await this.drop(root, run.baseBranch, wt, {});
+          const r = await this.drop(root, run.baseBranch, wt);
           out.removed.push(...r.removed);
           out.kept.push(...r.kept);
         }
@@ -488,10 +401,9 @@ export class OrchestraService extends EventEmitter {
 
   /**
    * Remove a worktree and its branch — but only what holds nothing of anyone else's: a dirty worktree is
-   * kept; the branch goes only when merged into the base, or (`expectTip`) when it still points at the
-   * commit the orchestrator recorded.
+   * kept; the branch goes only when merged into the base.
    */
-  private async drop(root: string, base: string, wt: OrchWorktree, o: { keepBranch?: boolean; expectTip?: string }): Promise<OrchCleanup> {
+  private async drop(root: string, base: string, wt: OrchWorktree): Promise<OrchCleanup> {
     const out: OrchCleanup = { removed: [], kept: [] };
     const info = await this.d.git.inspect(root, wt.path, wt.branch, base);
     if (info.exists && !info.linked) { out.kept.push({ path: wt.path, branch: wt.branch, reason: tr('git 链接已断（仓库或目录被移动 / 删除过，repair 也没接上），无法确认里面没有未提交的改动') }); return out; }
@@ -499,10 +411,9 @@ export class OrchestraService extends EventEmitter {
       if (info.dirty) { out.kept.push({ path: wt.path, branch: wt.branch, reason: tr('worktree 里有未提交的改动') }); return out; }
       try { await this.d.git.worktreeRemove(root, wt.path); out.removed.push(wt.path); } catch (e: any) { out.kept.push({ path: wt.path, branch: wt.branch, reason: tr('删除 worktree 失败：{v}', { v: String(e?.message ?? e).split('\n')[0] }) }); return out; }
     }
-    if (o.keepBranch || !info.branchExists) return out;
-    const pinned = o.expectTip !== undefined;
-    if (pinned ? info.tip !== o.expectTip : info.unmerged > 0) { out.kept.push({ branch: wt.branch, reason: pinned ? tr('分支上有新的提交') : tr('分支上有 {unmerged} 个未合并的提交', { unmerged: info.unmerged }) }); return out; }
-    try { await this.d.git.deleteBranch(root, wt.branch, pinned); out.removed.push(wt.branch); } catch (e: any) { out.kept.push({ branch: wt.branch, reason: tr('删除分支失败：{v}', { v: String(e?.message ?? e).split('\n')[0] }) }); }
+    if (!info.branchExists) return out;
+    if (info.unmerged > 0) { out.kept.push({ branch: wt.branch, reason: tr('分支上有 {unmerged} 个未合并的提交', { unmerged: info.unmerged }) }); return out; }
+    try { await this.d.git.deleteBranch(root, wt.branch, false); out.removed.push(wt.branch); } catch (e: any) { out.kept.push({ branch: wt.branch, reason: tr('删除分支失败：{v}', { v: String(e?.message ?? e).split('\n')[0] }) }); }
     return out;
   }
 
@@ -550,6 +461,12 @@ export class OrchestraService extends EventEmitter {
       for (const n of run.workflow) {
         const nr = run.nodes[n.id];
         if (nr.state !== 'pending') continue;
+        if (!NODE_KINDS.includes(n.kind)) {
+          // a stored run from before a kind was removed (`compare`, 2026-11-01): the node fails, the run goes on / ends as usual
+          run.nodes[n.id] = { ...nr, state: 'failed', error: tr('这种节点（{kind}）已不再支持', { kind: String(n.kind) }), finishedAt: Date.now() };
+          changed = true;
+          continue;
+        }
         const bad = n.dependsOn.find((d) => BAD.has(run.nodes[d]?.state));
         if (bad) { run.nodes[n.id] = { ...nr, state: 'skipped', error: tr('上游「{title}」没有完成', { title: this.nodeOf(run, bad).title || bad }), finishedAt: Date.now() }; changed = true; }
       }
@@ -562,7 +479,7 @@ export class OrchestraService extends EventEmitter {
       if (n.kind === 'approval') {
         nr.state = 'waiting';
         nr.startedAt = Date.now();
-        this.d.notify?.(run, n.id, 'approval');
+        this.d.notify?.(run, n.id);
         continue;
       }
       if (running >= limit) continue;
@@ -570,8 +487,7 @@ export class OrchestraService extends EventEmitter {
       nr.state = 'running';
       nr.startedAt = Date.now();
       nr.attempts = (nr.attempts ?? 0) + 1;
-      if (n.kind === 'task') void this.startTask(run, n, nr);
-      else void this.startCompare(run, n, nr);
+      void this.startTask(run, n, nr);
     }
     const states = Object.values(run.nodes).map((x) => x.state);
     if (states.includes('running')) run.state = 'running';
@@ -662,7 +578,7 @@ export class OrchestraService extends EventEmitter {
         const sid = nr.sessionIds[nr.sessionIds.length - 1];
         if (sid) await this.d.close(sid).catch(() => {});
         const root = (await this.d.git.root(run.cwd)) ?? run.cwd;
-        const r = await this.drop(root, run.baseBranch!, wt, {});
+        const r = await this.drop(root, run.baseBranch!, wt);
         if (r.kept.length) nr.note = tr('保留了：{map}', { map: r.kept.map((k) => `${k.path ?? k.branch}（${k.reason}）`).join('；') });
       }
       if (run.nodes[n.id] === nr && nr.state === 'running') { nr.state = f.ok ? 'done' : 'failed'; if (!f.ok) nr.error = f.error ?? tr('失败'); nr.finishedAt = Date.now(); }
@@ -678,117 +594,6 @@ export class OrchestraService extends EventEmitter {
     if (!f.ok) nr.error = f.error ?? tr('失败');
     nr.finishedAt = Date.now();
     this.tick(run);
-  }
-
-  private async startCompare(run: OrchRun, n: OrchCompareNode, nr: NodeRun) {
-    const current = () => this.alive(run) && run.nodes[n.id] === nr && nr.state === 'running';
-    const prompt = this.header(run, n) + renderPrompt(n.prompt, this.ctx(run));
-    nr.candidates = n.agents.map((agent): CompareCandidate => ({ agent, state: 'running' }));
-    nr.worktrees = [];
-    this.save(run);
-    await Promise.all(nr.candidates.map(async (c) => {
-      const done = (f: Finish) => {
-        if (c.state !== 'running') return;
-        c.state = f.ok ? 'done' : 'failed';
-        c.output = f.output;
-        c.error = f.ok ? undefined : f.error ?? tr('失败');
-        c.costUsd = f.costUsd;
-        void this.candidateDone(run, n, nr);
-      };
-      try {
-        c.worktree = await this.makeWorktree(run, n.id, c.agent, nr.attempts ?? 1);
-        nr.worktrees!.push(c.worktree);
-        this.save(run);
-        if (!current()) return;
-        const s = await this.d.open({ agent: c.agent, cwd: c.worktree.path, permissionMode: n.permissionMode ?? 'acceptEdits', title: `${run.name} · ${n.title} · ${c.agent}` });
-        c.sessionId = s.sessionId;
-        nr.sessionIds.push(s.sessionId);
-        this.save(run);
-        await this.d.tag(s.sessionId, run.cwd).catch(() => {});
-        if (!current()) { await this.d.close(s.sessionId).catch(() => {}); return; }
-        this.watchSession(s.sessionId, done);
-        const sent = await this.d.send(s.sessionId, prompt, () => !current());
-        if (!sent && !current()) await this.d.close(s.sessionId).catch(() => {});
-      } catch (e: any) {
-        done({ ok: false, error: e?.message ?? String(e) });
-      }
-    }));
-  }
-
-  private async candidateDone(run: OrchRun, n: OrchCompareNode, nr: NodeRun) {
-    this.save(run);
-    const cands = nr.candidates ?? [];
-    if (cands.some((c) => c.state === 'running') || nr.state !== 'running' || run.nodes[n.id] !== nr || !this.alive(run)) return;
-    // every candidate calls in here: the first to arrive seals the node; it stays `running` (so nothing
-    // can pick yet) until all candidates are committed, and only then turns `waiting` and is announced
-    if (this.sealing.has(nr)) return;
-    this.sealing.add(nr);
-    const root = (await this.d.git.root(run.cwd)) ?? run.cwd;
-    try {
-      for (const c of cands) {
-        if (c.state !== 'done' || !c.worktree) continue;
-        try {
-          await this.d.git.commitAll(c.worktree.path, `orchestra(${run.name}): ${n.title} by ${c.agent}`);
-          c.head = await this.d.git.head(c.worktree.path);
-          const st = await this.d.git.diffStat(root, run.baseBranch!, c.worktree.branch);
-          c.diffStat = st.stat;
-          c.files = st.files;
-        } catch (e: any) {
-          c.state = 'failed';
-          c.error = tr('提交 / 对比 worktree 失败：{message}', { message: e?.message ?? e });
-        }
-      }
-    } finally {
-      this.sealing.delete(nr);
-    }
-    nr.costUsd = cands.reduce((a, c) => a + (c.costUsd ?? 0), 0);
-    if (run.nodes[n.id] !== nr || !this.alive(run) || nr.state !== 'running') return;
-    nr.state = 'waiting';
-    if (!cands.some((c) => c.state === 'done')) {
-      nr.state = 'failed';
-      nr.error = tr('所有候选都失败了');
-      nr.finishedAt = Date.now();
-      this.tick(run);
-      return;
-    }
-    this.d.notify?.(run, n.id, 'compare');
-    this.tick(run);
-    if (n.judge) void this.startJudge(run, n, nr, root);
-  }
-
-  private async startJudge(run: OrchRun, n: OrchCompareNode, nr: NodeRun, root: string) {
-    const cands = (nr.candidates ?? []).filter((c) => c.state === 'done');
-    const j = nr.judge = { agent: n.judge!, state: 'running' as const } as NonNullable<NodeRun['judge']>;
-    const current = () => this.alive(run) && run.nodes[n.id] === nr && nr.judge === j && nr.state === 'waiting';
-    this.save(run);
-    const parts: string[] = [];
-    for (const c of cands) {
-      const diff = await this.d.git.diff(root, run.baseBranch!, c.worktree!.branch).catch(() => '');
-      parts.push(tr("## 候选 {agent}\n\n### 回复\n{output}\n\n### diff --stat\n{diffStat}\n\n### diff\n```diff\n{diff}{v}\n```", { agent: c.agent, output: (c.output ?? '').slice(0, JUDGE_REPLY_LIMIT), diffStat: c.diffStat ?? '', diff: diff.slice(0, JUDGE_DIFF_LIMIT), v: diff.length > JUDGE_DIFF_LIMIT ? tr("\n…（已截断）") : '' }));
-    }
-    const prompt = tr("{header}你是裁判。下面是 {candsCount} 个 agent 对同一个任务的实现（各自在独立的 worktree 里做的）。比较正确性、完整度、改动范围和代码质量，给出推荐理由。不要修改任何文件。\n最后一行只写：WINNER: <agent>（从 {map} 里选一个）\n\n# 任务\n{renderPrompt}\n\n{parts}", { header: this.header(run, n), candsCount: cands.length, map: cands.map((c) => c.agent).join(' / '), renderPrompt: renderPrompt(n.prompt, this.ctx(run)), parts: parts.join('\n\n') });
-    const settle = (f: Finish) => {
-      if (j.state !== 'running') return;
-      j.state = f.ok ? 'done' : 'failed';
-      j.output = f.output;
-      j.error = f.ok ? undefined : f.error;
-      j.recommended = f.output ? parseWinner(f.output, cands.map((c) => c.agent)) : undefined;
-      nr.costUsd = (nr.costUsd ?? 0) + (f.costUsd ?? 0);
-      this.save(run);
-    };
-    try {
-      if (!current()) return;
-      const s = await this.d.open({ agent: j.agent, cwd: run.cwd, permissionMode: 'default', title: tr('{name} · {title} · 裁判', { name: run.name, title: n.title }) });
-      j.sessionId = s.sessionId;
-      nr.sessionIds.push(s.sessionId);
-      this.save(run);
-      if (!current()) { await this.d.close(s.sessionId).catch(() => {}); return; }
-      this.watchSession(s.sessionId, settle);
-      const sent = await this.d.send(s.sessionId, prompt, () => !current());
-      if (!sent && !current()) await this.d.close(s.sessionId).catch(() => {});
-    } catch (e: any) {
-      settle({ ok: false, error: e?.message ?? String(e) });
-    }
   }
 
   /**

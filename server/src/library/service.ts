@@ -1,16 +1,12 @@
-// Unified session library (Task 8): one list / read / search surface over every joined source.
-// Claude is always joined; every other source is opt-in (constraints.md) — a source that hasn't been
-// joined is never listed, read, indexed or even status()-probed, only lightly detected through the
-// AgentRegistry version probe and whether its data directory exists.
+// Unified session library (Task 8): one list / read / search surface over every joined source — Claude Code's
+// own conversations (always joined) and a claude.ai data export (opt-in): a source that hasn't been joined is never
+// listed, read, indexed or even status()-probed.
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AgentKind, SessionSummary, SourceStatus } from '../protocol.js';
 import { watchTree, type TreeWatcher } from '../runtime/watch-tree.js';
-import type { AgentTranscripts, Head } from '../agents/transcript.js';
-import { ELSEWHERE } from '../agents/codex-items.js';
 import type { MetaStore } from '../meta/store.js';
 import { dataDir } from '../files/service.js';
 import { INDEX_TEXT_MAX, LibraryIndex } from './index-db.js';
@@ -19,13 +15,11 @@ import type { SessionSource } from './types.js';
 import { tr } from '../i18n/index.js';
 import { randomUUID } from 'node:crypto';
 import { renameSession } from '@anthropic-ai/claude-agent-sdk';
-import { appendFileSync } from 'node:fs';
-import { currentLeaf, findClaudeTranscript, hasClaudeTranscript, writeClaudeTranscript } from '../runtime/transcript-file.js';
+import { hasClaudeTranscript, writeClaudeTranscript } from '../runtime/transcript-file.js';
 import { continuationEntries } from './continue-in-claude.js';
-import { dshHome } from './dsh-source.js';
 
 const LIST_TTL_MS = 60_000;
-/** A source with a file watcher (Codex) learns about changes from it; the TTL is only a backstop. */
+/** A source with a file watcher learns about changes from it; the TTL is only a backstop. */
 const WATCHED_LIST_TTL_MS = 10 * 60_000;
 /**
  * A session still being written (changed within this window) is re-indexed at most this often: every
@@ -34,102 +28,27 @@ const WATCHED_LIST_TTL_MS = 10 * 60_000;
  */
 const INDEX_LIVE_MS = 3 * 60_000;
 const LIST_TIMEOUT_MS = 20_000; // per source, per list() — see bounded()
-const PAGE = 100; // Codex thread/list page size (and everyone else's)
+const PAGE = 100;
 const MAX_PAGES = 500;
 const READ_PAGE = 50;
 const TRASH_KEEP_MS = 30 * 86_400_000;
 const UNSUPPORTED = tr('该来源不支持此操作');
 
-/** The thread a Codex rollout file belongs to: `…/rollout-<date>T<time>-<thread uuid>.jsonl` (name per codex-rs). */
-export function codexRolloutId(rel: string): string | null {
-  return /rollout-[^\\/]*?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(rel)?.[1]?.toLowerCase() ?? null;
-}
-
-/** How many of the mirror's last prompts must line up with the thread's before its later turns are taken (one repeated
- *  「继续」 must not match the wrong turn). */
-const ANCHOR_PROMPTS = 3;
-/** How far back into a thread the mirror sync looks for its last prompts (pages of READ_PAGE turns). */
-const SYNC_PAGES = 4;
-
-/** A prompt someone typed: a user message with text and no tool results (those are user messages too). */
-function promptOf(m: any): string | null {
-  if (m?.type !== 'user') return null;
-  const ct = m.message?.content;
-  if (typeof ct === 'string') return ct.trim() || null;
-  if (!Array.isArray(ct) || ct.some((b: any) => b?.type === 'tool_result')) return null;
-  const t = ct.filter((b: any) => b?.type === 'text').map((b: any) => b.text ?? '').join('').trim();
-  return t || null;
-}
-
-/**
- * A read whose last turn another program is still running (it ends with the `cw_elsewhere` marker): the finished part,
- * and that turn from its prompt on (marker included). The open turn never goes into the mirror — the prompts anchor
- * the next sync, so half a turn appended there would keep the rest of it out for good.
- */
-export function splitInFlight(msgs: any[]): { done: any[]; inflight: any[] } {
-  if (msgs.at(-1)?.subtype !== ELSEWHERE) return { done: msgs, inflight: [] };
-  let i = msgs.length - 1;
-  while (i > 0 && !promptOf(msgs[i])) i--;
-  return promptOf(msgs[i]) ? { done: msgs.slice(0, i), inflight: msgs.slice(i) } : { done: [], inflight: msgs };
-}
-
-/**
- * The messages of `thread` (chronological) that come after the last turn `mirror` already has, from the thread's next
- * prompt on — or [] when they line up to the end, or null when the mirror's last prompts are not found in it (do not
- * guess). The anchor is the mirror's last ANCHOR_PROMPTS prompts, consecutive in the thread.
- */
-export function turnsAfter(mirror: any[], thread: any[]): any[] | null {
-  const anchor = mirror.map(promptOf).filter((t): t is string => !!t).slice(-ANCHOR_PROMPTS);
-  if (!anchor.length) return null;
-  const at = thread.map((m, i) => [promptOf(m), i] as const).filter(([t]) => !!t);
-  for (let j = at.length - 1; j >= anchor.length - 1; j--) {
-    if (!anchor.every((t, k) => at[j - anchor.length + 1 + k][0] === t)) continue;
-    const next = at[j + 1];
-    return next ? thread.slice(next[1]) : [];
-  }
-  return null;
-}
-
-/** The slice of AgentRegistry the library needs (cheap defs + the 60 s-cached version probe). */
-export interface LibraryAgents {
-  defs(): { kind: AgentKind; name: string; protocol: string }[];
-  list(refresh?: boolean): Promise<{ kind: AgentKind; name: string; installed: boolean }[]>;
-}
-
 export interface LibraryOptions {
-  agents?: LibraryAgents;
-  /** Builds a source on join for kinds not passed to the constructor (ACP agents). */
-  makeSource?: (kind: AgentKind) => SessionSource | null;
   /** Fallback search while the index is still empty (SessionsService.search). */
   fallbackSearch?: (q: string, limit: number) => Promise<{ session: SessionSummary; snippet?: string }[]>;
-  /** Data dirs whose existence counts as "detected". Defaults: codex ~/.codex/sessions, opencode ~/.local/share/opencode. */
-  dataDirs?: Partial<Record<AgentKind, string[]>>;
   trashDir?: string;
-  /** Whether a driver here is running this conversation (its own writes keep the mirror current). */
-  isLive?: (id: string) => boolean;
   /** Per-source list timeout (default 20 s); tests shorten it. */
   listTimeoutMs?: number;
   /** How long a source's list stays fresh (default 60 s, 10 min with a file watcher); past it the cache is served and refreshed behind. */
   listTtlMs?: number;
 }
 
-interface Resolved { kind: AgentKind; nativeId?: string; source?: SessionSource; head: Head | null }
-
-function defaultDataDirs(): Partial<Record<AgentKind, string[]>> {
-  const home = os.homedir();
-  const oc = [path.join(home, '.local', 'share', 'opencode')];
-  if (process.env.LOCALAPPDATA) oc.push(path.join(process.env.LOCALAPPDATA, 'opencode'));
-  return {
-    codex: [path.join(home, '.codex', 'sessions')],
-    opencode: oc,
-    cursor: [path.join(home, '.cursor', 'projects')],
-    dsh: [process.env.DSH_HOME?.trim() || path.join(home, '.dsh')],
-  };
-}
+interface Resolved { kind: AgentKind; nativeId?: string; source?: SessionSource }
 
 function defaultWatchDirs(): Partial<Record<AgentKind, string[]>> {
   const claude = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
-  return { claude: [path.join(claude, 'projects')], codex: [path.join(os.homedir(), '.codex', 'sessions')], dsh: [path.join(dshHome(), 'sessions')] };
+  return { claude: [path.join(claude, 'projects')] };
 }
 
 /** user + assistant text blocks only — what the index stores for full-text search. */
@@ -165,16 +84,10 @@ export class LibraryService extends EventEmitter {
   private allGen = 0;
   /** Bumped when a source is left: a fetch started before that must not touch any state afterwards. */
   private leaves = new Map<AgentKind, number>();
-  /** transcripts.entries() failed on the last list(): claude-web's own sessions are unknown, don't prune them. */
-  private localFailed = false;
   /** Until the first refreshIndex pass completes, search uses the old transcript scan (a half-built index misses things). */
   private indexReady = false;
   private byId = new Map<string, SessionSummary>();
-  /** A source's library id → the conversation here it was merged into (a Codex conversation started in this app). */
-  private merged = new Map<string, string>();
-  private resuming = new Map<string, Promise<{ agent: AgentKind; cwd: string }>>();
   private continuing = new Map<string, Promise<{ sessionId: string; cwd: string; created: boolean }>>();
-  private catching = new Map<string, Promise<number>>();
   private indexing: Promise<void> | null = null;
   private indexAgain = false;
   private timers: NodeJS.Timeout[] = [];
@@ -185,33 +98,23 @@ export class LibraryService extends EventEmitter {
   private indexDue = 0;
   /** When each session was last (re-)indexed by this process — see INDEX_LIVE_MS. */
   private indexedWall = new Map<string, number>();
-  /** Kinds passed to the constructor (Codex / OpenCode); ACP sources are built on join and dropped on leave. */
-  private builtin = new Set<AgentKind>();
   private readonly trashDir: string;
-  private readonly dataDirs: Partial<Record<AgentKind, string[]>>;
 
-  constructor(sources: SessionSource[], private index: LibraryIndex, private transcripts: AgentTranscripts, private meta: MetaStore, private opts: LibraryOptions = {}) {
+  constructor(sources: SessionSource[], private index: LibraryIndex, private meta: MetaStore, private opts: LibraryOptions = {}) {
     super();
-    for (const s of sources) { this.srcs.set(s.kind, s); this.builtin.add(s.kind); }
+    for (const s of sources) this.srcs.set(s.kind, s);
     this.trashDir = opts.trashDir ?? path.join(dataDir(), 'library-trash');
-    this.dataDirs = opts.dataDirs ?? defaultDataDirs();
   }
 
   // ---------- settings ----------
-  private setting(k: 'library.joined' | 'library.dismissed'): AgentKind[] {
+  private setting(k: 'library.joined'): AgentKind[] {
     const v = this.meta.settings()[k];
     return Array.isArray(v) ? (v as AgentKind[]) : [];
   }
   isJoined(kind: AgentKind) { return kind === 'claude' || this.setting('library.joined').includes(kind); }
 
-  /** The source for a kind, built on demand (ACP) — only ever called for joined kinds. */
   private source(kind: AgentKind): SessionSource | undefined {
-    let s = this.srcs.get(kind);
-    if (!s && this.opts.makeSource) {
-      s = this.opts.makeSource(kind) ?? undefined;
-      if (s) this.srcs.set(kind, s);
-    }
-    return s;
+    return this.srcs.get(kind);
   }
 
   private joinedSources(): SessionSource[] {
@@ -219,10 +122,9 @@ export class LibraryService extends EventEmitter {
     return [...kinds].map((k) => this.source(k)).filter((s): s is SessionSource => !!s);
   }
 
-  /** Every kind the library knows how to list (constructed sources + ACP agents from the registry). */
+  /** Every kind the library knows how to list. */
   private candidateKinds(): AgentKind[] {
     const kinds = new Set<AgentKind>(this.srcs.keys());
-    if (this.opts.makeSource) for (const d of this.opts.agents?.defs() ?? []) if (d.protocol === 'acp' && d.kind !== 'claude') kinds.add(d.kind);
     kinds.delete('claude');
     return ['claude', ...kinds];
   }
@@ -264,7 +166,7 @@ export class LibraryService extends EventEmitter {
    * explicitly invalidated (our own mutation, a watcher event), waits — and that wait is bounded.
    * `revalidate: false` (the index pass): age alone doesn't refetch — only a watcher / mutation does.
    * Otherwise every index pass (a Claude transcript being written triggers one every few seconds)
-   * would re-list every other source once its TTL ran out (Codex: ~700 threads through app-server).
+   * would re-list every other source once its TTL ran out.
    */
   private listSource(src: SessionSource, revalidate = true): Promise<SessionSummary[]> {
     const hit = this.perKind.get(src.kind);
@@ -353,33 +255,14 @@ export class LibraryService extends EventEmitter {
 
   async list(o: { revalidate?: boolean } = {}): Promise<SessionSummary[]> {
     const joined = this.joinedSources();
-    const [lists, local] = await Promise.all([Promise.all(joined.map((s) => this.listSource(s, o.revalidate ?? true))), this.transcripts.entries().then((r) => { this.localFailed = false; return r; }, () => { this.localFailed = true; return []; })]);
-    const byId = new Map<string, SessionSummary>();
+    const lists = await Promise.all(joined.map((s) => this.listSource(s, o.revalidate ?? true)));
+    const out = new Map<string, SessionSummary>();
     joined.forEach((src, i) => {
       for (const it of lists[i]) {
-        byId.set(it.sessionId, { ...it, agent: it.agent ?? src.kind, caps: it.caps ?? src.caps });
+        out.set(it.sessionId, { ...it, agent: it.agent ?? src.kind, caps: it.caps ?? src.caps });
       }
     });
-    const alias = new Map<string, string>(); // imported library id -> claude-web session id it was merged into
-    const out = new Map(byId);
-    for (const { summary, head } of local) {
-      const lid = head.nativeSessionId ? libraryId(head.agent, head.nativeSessionId) : undefined;
-      const src = lid ? byId.get(lid) : undefined;
-      if (head.imported) {
-        // a resume pointer: only shown through its source (and not at all once the source is left)
-        if (src) out.set(lid!, { ...src, lastModified: Math.max(src.lastModified, summary.lastModified) });
-        continue;
-      }
-      if (src && lid && this.isJoined(head.agent)) {
-        out.delete(lid);
-        alias.set(lid, summary.sessionId);
-        out.set(summary.sessionId, { ...src, sessionId: summary.sessionId, agent: head.agent, lastModified: Math.max(src.lastModified, summary.lastModified), caps: src.caps, mergedFrom: lid });
-      } else {
-        out.set(summary.sessionId, summary);
-      }
-    }
     this.byId = new Map(out);
-    this.merged = alias;
     // a conversation that went on in Claude (continueInClaude) is one row: the Claude one, as recent as either
     for (const [id, it] of out) {
       if (!it.caps?.continueInClaude) continue;
@@ -398,8 +281,7 @@ export class LibraryService extends EventEmitter {
       let cur = id;
       const seen = new Set<string>([cur]);
       for (;;) {
-        const p = all.get(cur)?.parentId;
-        const pid = p ? alias.get(p) ?? p : undefined;
+        const pid = all.get(cur)?.parentId;
         if (!pid || !all.has(pid)) return cur;
         if (seen.has(pid)) return id;
         seen.add(pid);
@@ -421,32 +303,20 @@ export class LibraryService extends EventEmitter {
   }
 
   // ---------- routing ----------
-  /** Which agent a library id belongs to (a claude-web head wins, then the id prefix). */
+  /** Which source a library id belongs to (by its prefix). */
   async kindOf(id: string): Promise<AgentKind> {
-    const head = await this.transcripts.head(id);
-    return head ? head.agent : parseLibraryId(id).kind;
+    return parseLibraryId(id).kind;
   }
 
   private async resolve(id: string): Promise<Resolved> {
-    const head = await this.transcripts.head(id);
-    let kind: AgentKind;
-    let nativeId: string | undefined;
-    if (head) { kind = head.agent; nativeId = head.nativeSessionId; }
-    else ({ kind, nativeId } = parseLibraryId(id));
+    const { kind, nativeId } = parseLibraryId(id);
     const source = this.isJoined(kind) ? this.source(kind) : undefined;
-    return { kind, nativeId, source, head };
+    return { kind, nativeId, source };
   }
 
   // ---------- read ----------
   async read(id: string, cursor?: string, limit = 20): Promise<{ messages: any[]; next?: string }> {
     const r = await this.resolve(id);
-    if (r.head && !r.head.imported) {
-      // nothing here drives it: turns written from the agent's own CLI since are only in the agent's store
-      if (!this.opts.isLive?.(id)) await this.syncMirror(id).catch(() => 0);
-      // …and a turn it is still in the middle of is shown, not kept
-      const inflight = this.opts.isLive?.(id) ? [] : this.inflight.get(id) ?? [];
-      return { messages: [...(await this.transcripts.load(id)), ...inflight.map((m) => ({ ...m, session_id: id }))] };
-    }
     if (!r.source || !r.nativeId) throw new Error(tr('这个对话的来源没有加入对话库'));
     try {
       return await r.source.read(r.nativeId, { cursor, limit });
@@ -459,52 +329,6 @@ export class LibraryService extends EventEmitter {
       }
       throw e;
     }
-  }
-
-  private syncing = new Map<string, Promise<number>>();
-  /** Per mirrored conversation: the turn Codex is still running elsewhere, as of the last sync (not in the mirror). */
-  private inflight = new Map<string, any[]>();
-  /**
-   * A Codex conversation started here and continued in the Codex CLI (`codex resume <thread>`): those turns are only in
-   * Codex's thread — the mirror this app reads (agents/<id>.jsonl) has the turns that went through here, so they never
-   * showed (2026-10-01, real Codex). Appends the thread's turns that came after the mirror's last one to the mirror.
-   * Called on every read when nothing here drives the conversation (a live driver is the thread's only writer), and by
-   * the driver right before it resumes the thread, so its own next prompt cannot land in front of them. Concurrent
-   * calls for one conversation share one run (no double append). Returns how many messages it appended.
-   */
-  syncMirror(id: string): Promise<number> {
-    const running = this.syncing.get(id);
-    if (running) return running;
-    const p = this.syncMirrorNow(id).finally(() => this.syncing.delete(id));
-    this.syncing.set(id, p);
-    return p;
-  }
-
-  private async syncMirrorNow(id: string): Promise<number> {
-    const head = await this.transcripts.head(id);
-    if (!head || head.imported || head.agent !== 'codex' || !head.nativeSessionId) return 0;
-    // the built-in Codex source exists joined or not; reading its own thread back is not a library join
-    const src = this.source('codex');
-    if (!src?.read) return 0;
-    const mirror = await this.transcripts.load(id);
-    let thread: any[] = [];
-    let cursor: string | undefined;
-    this.inflight.delete(id);
-    for (let i = 0; i < SYNC_PAGES; i++) {
-      const page = await src.read(head.nativeSessionId, { cursor, limit: READ_PAGE });
-      // the newest page may end in a turn Codex is still running: shown by read(), never appended
-      const { done, inflight } = i === 0 ? splitInFlight(page.messages) : { done: page.messages, inflight: [] };
-      if (inflight.length) this.inflight.set(id, inflight);
-      thread = [...done, ...thread]; // each page is chronological; a later page is older
-      const extra = turnsAfter(mirror, thread);
-      if (extra) {
-        for (const m of extra) this.transcripts.append(id, { ...m, session_id: id });
-        return extra.length;
-      }
-      if (!page.next) return 0;
-      cursor = page.next;
-    }
-    return 0;
   }
 
   /**
@@ -528,31 +352,23 @@ export class LibraryService extends EventEmitter {
   }
 
   // ---------- sources / join ----------
-  private async agentInfos() {
-    try { return (await this.opts.agents?.list()) ?? []; } catch { return []; }
-  }
-
-  private dirExists(kind: AgentKind) {
-    return (this.dataDirs[kind] ?? []).some((d) => existsSync(d));
-  }
-
   async sources(): Promise<SourceStatus[]> {
-    const infos = await this.agentInfos();
-    const dismissed = this.setting('library.dismissed');
     return Promise.all(this.candidateKinds().map(async (kind): Promise<SourceStatus> => {
-      const info = infos.find((x) => x.kind === kind);
-      const defName = info?.name ?? this.opts.agents?.defs().find((d) => d.kind === kind)?.name ?? kind;
-      const installed = !!info?.installed || this.dirExists(kind);
+      const defName = kind === 'claude' ? 'Claude Code' : kind === 'claudeai' ? 'claude.ai' : kind;
       const caps = this.srcs.get(kind)?.caps;
       if (!this.isJoined(kind)) {
-        return { kind, name: defName, installed, detected: installed, joined: false, dismissed: dismissed.includes(kind), enabled: false, ...(caps ? { caps } : {}) };
+        // not joined: a cheap look only (the claude.ai export: whether anything was imported)
+        const st = await this.srcs.get(kind)?.status().catch(() => null);
+        const installed = !!st?.installed;
+        return { kind, name: defName, installed, detected: installed, joined: false, enabled: false, ...(caps ? { caps } : {}) };
       }
+      const installed = true;
       const src = this.source(kind);
       let st: SourceStatus;
       try {
-        st = src ? await src.status() : { kind, name: defName, installed, detected: installed, joined: true, dismissed: false, enabled: false, disabledReason: tr('没有可用的对话来源') };
+        st = src ? await src.status() : { kind, name: defName, installed, detected: installed, joined: true, enabled: false, disabledReason: tr('没有可用的对话来源') };
       } catch (e: any) {
-        st = { kind, name: defName, installed, detected: installed, joined: true, dismissed: false, enabled: false, error: e?.message ?? String(e) };
+        st = { kind, name: defName, installed, detected: installed, joined: true, enabled: false, error: e?.message ?? String(e) };
       }
       const err = this.errors.get(kind) ?? st.error;
       return {
@@ -560,28 +376,12 @@ export class LibraryService extends EventEmitter {
         name: !st.name || st.name === kind ? defName : st.name,
         joined: true,
         ...(caps ? { caps } : {}),
-        dismissed: dismissed.includes(kind),
         count: this.perKind.get(kind)?.items.length,
         indexedAt: this.indexedAtByKind.get(kind),
         ...(this.loading.has(kind) ? { loading: true } : {}),
         ...(err ? { error: err } : {}),
       };
     }));
-  }
-
-  async detect(): Promise<AgentKind[]> {
-    const infos = await this.agentInfos();
-    const joined = this.setting('library.joined');
-    const dismissed = this.setting('library.dismissed');
-    return this.candidateKinds().filter((k) => k !== 'claude' && !joined.includes(k) && !dismissed.includes(k)
-      && (!!infos.find((x) => x.kind === k)?.installed || this.dirExists(k)));
-  }
-
-  /** Emit 'discovered' with the detected-but-not-joined list (startup, and after agents.list refresh). */
-  async announce(): Promise<AgentKind[]> {
-    const kinds = await this.detect();
-    this.emit('discovered', kinds);
-    return kinds;
   }
 
   async join(kind: AgentKind, joined: boolean): Promise<void> {
@@ -593,7 +393,6 @@ export class LibraryService extends EventEmitter {
     if (joined) {
       if (!this.source(kind)) throw new Error(tr('没有 {kind} 的对话来源', { kind }));
       await this.meta.setSetting('library.joined', [...cur, kind]);
-      await this.meta.setSetting('library.dismissed', this.setting('library.dismissed').filter((k) => k !== kind));
       this.invalidate(kind);
       this.watch(kind);
       this.emit('changed');
@@ -606,11 +405,8 @@ export class LibraryService extends EventEmitter {
     this.gens.set(kind, (this.gens.get(kind) ?? 0) + 1);
     this.fetching.delete(kind);
     this.unwatch(kind);
-    const src = this.srcs.get(kind);
-    await src?.close().catch(() => {});
-    // an on-demand (ACP) source is rebuilt fresh on the next join
-    if (src && !this.builtin.has(kind)) this.srcs.delete(kind);
-    // only what this source listed — claude-web's own sessions with that agent stay (they're still listed)
+    await this.srcs.get(kind)?.close().catch(() => {});
+    // only what this source listed
     for (const s of this.perKind.get(kind)?.items ?? []) this.index.remove(s.sessionId);
     this.perKind.delete(kind);
     this.errors.delete(kind);
@@ -618,11 +414,6 @@ export class LibraryService extends EventEmitter {
     this.loading.delete(kind);
     this.indexedAtByKind.delete(kind);
     this.emit('changed');
-  }
-
-  async dismiss(kind: AgentKind): Promise<void> {
-    const cur = this.setting('library.dismissed');
-    if (!cur.includes(kind)) await this.meta.setSetting('library.dismissed', [...cur, kind]);
   }
 
   // ---------- mutations ----------
@@ -633,11 +424,8 @@ export class LibraryService extends EventEmitter {
 
   async rename(id: string, title: string): Promise<void> {
     const r = await this.resolve(id);
-    const native = !!(r.source && r.nativeId && r.source.caps.rename && r.source.rename);
-    const local = !!r.head && !r.head.imported;
-    if (!native && !local) throw new Error(UNSUPPORTED);
-    if (native) await r.source!.rename!(r.nativeId!, title);
-    if (r.head) await this.transcripts.patchHead(id, { title });
+    if (!r.source || !r.nativeId || !r.source.caps.rename || !r.source.rename) throw new Error(UNSUPPORTED);
+    await r.source.rename(r.nativeId, title);
     this.changed(r.kind);
   }
 
@@ -649,8 +437,8 @@ export class LibraryService extends EventEmitter {
       try {
         const r = await this.resolve(id);
         if (r.source && r.nativeId && r.source.caps.archive && r.source.archive) await r.source.archive(r.nativeId, archived);
-        // Claude and claude-web's own sessions archive in meta (Claude Code has no archive flag)
-        else if (r.kind === 'claude' || (r.head && !r.head.imported)) await this.meta.setSessionMeta(id, { archived });
+        // Claude's sessions archive in meta (Claude Code has no archive flag)
+        else if (r.kind === 'claude') await this.meta.setSessionMeta(id, { archived });
         else throw new Error(UNSUPPORTED);
         kinds.add(r.kind);
         done.push(id);
@@ -682,24 +470,21 @@ export class LibraryService extends EventEmitter {
     for (const id of ids) {
       try {
         const r = await this.resolve(id);
-        const native = !!(r.source && r.nativeId && r.source.caps.delete && r.source.remove);
-        const local = !!r.head;
-        if (!native && (!local || r.head!.imported)) throw new Error(UNSUPPORTED);
+        if (!r.source || !r.nativeId || !r.source.caps.delete || !r.source.remove) throw new Error(UNSUPPORTED);
         const safe = id.replace(/[^\w.~-]/g, '_');
-        const base = { id, agent: r.kind, nativeId: r.nativeId, deletedAt: Date.now(), summary: this.byId.get(id), local: local ? await this.transcripts.load(id) : undefined };
+        const base = { id, agent: r.kind, nativeId: r.nativeId, deletedAt: Date.now(), summary: this.byId.get(id) };
         await fs.mkdir(this.trashDir, { recursive: true });
-        if (native && r.source!.backupTo) {
+        if (r.source.backupTo) {
           // raw files (Claude: the jsonl plus the <id>/ dir its delete also removes) → library-trash/<id>/
           const dest = path.join(this.trashDir, safe);
           await fs.mkdir(dest, { recursive: true });
           await r.source!.backupTo(r.nativeId!, dest);
           await fs.writeFile(path.join(dest, 'backup.json'), JSON.stringify(base), 'utf8');
         } else {
-          const backup = { ...base, native: native ? (r.source!.exportAll ? await r.source!.exportAll(r.nativeId!) : await this.readAll(id)) : undefined };
+          const backup = { ...base, native: r.source.exportAll ? await r.source.exportAll(r.nativeId) : await this.readAll(id) };
           await fs.writeFile(path.join(this.trashDir, `${safe}.json`), JSON.stringify(backup), 'utf8');
         }
-        if (native) await r.source!.remove!(r.nativeId!);
-        if (local) await this.transcripts.remove(id);
+        await r.source.remove(r.nativeId);
         this.index.remove(id);
         kinds.add(r.kind);
         removed.push(id);
@@ -723,52 +508,7 @@ export class LibraryService extends EventEmitter {
   }
 
   /**
-   * Is `id` an IMPORTED session (its history lives in another agent's own store)? A head flagged
-   * `imported`, or no head at all and a non-Claude library id. Returns the source agent and the
-   * library summary's cwd / title (the head's as a fallback); null for Claude and claude-web's own.
-   */
-  async importedInfo(id: string): Promise<{ agent: AgentKind; cwd: string; title?: string } | null> {
-    const head = await this.transcripts.head(id);
-    if (head && !head.imported) return null;
-    const route = parseLibraryId(id);
-    if (!head && route.kind === 'claude') return null;
-    let s = this.byId.get(id);
-    if (!s) { await this.list(); s = this.byId.get(id); }
-    const cwd = s?.cwd || head?.cwd;
-    if (!cwd) throw new Error(tr('对话库里找不到这个对话'));
-    return { agent: head?.agent ?? route.kind, cwd, title: s?.title ?? head?.title };
-  }
-
-  /**
-   * Resuming an imported session: give it a claude-web head pointing at the native id, so the
-   * existing Codex / ACP drivers take their resume branch (thread/resume, session/load).
-   */
-  prepareResume(id: string): Promise<{ agent: AgentKind; cwd: string }> {
-    const running = this.resuming.get(id);
-    if (running) return running;
-    const p = (async () => {
-      const head = await this.transcripts.head(id);
-      if (head) return { agent: head.agent, cwd: head.cwd };
-      let s = this.byId.get(id);
-      if (!s) { await this.list(); s = this.byId.get(id); }
-      const route = parseLibraryId(id);
-      if (!s || route.kind === 'claude') throw new Error(tr('对话库里找不到这个对话'));
-      if (!this.isJoined(route.kind)) throw new Error(tr('这个对话的来源没有加入对话库'));
-      // a read-only source has no official way to continue: say so instead of handing it to a driver that cannot
-      const src = this.source(route.kind);
-      if (!src?.caps.resume) {
-        const name = this.opts.agents?.defs().find((d) => d.kind === route.kind)?.name ?? (route.kind === 'cursor' ? 'Cursor' : route.kind === 'claudeai' ? 'claude.ai' : route.kind);
-        throw new Error(src ? tr('{name} 的历史对话是只读的，不能接着聊；可以在对话库里查看和搜索', { name }) : tr('这个对话的来源没有加入对话库'));
-      }
-      await this.transcripts.create({ sessionId: id, agent: route.kind, cwd: s.cwd, title: s.title, createdAt: s.createdAt ?? s.lastModified ?? Date.now(), nativeSessionId: route.nativeId, imported: true });
-      return { agent: route.kind, cwd: s.cwd };
-    })();
-    this.resuming.set(id, p);
-    return p.finally(() => this.resuming.delete(id));
-  }
-
-  /**
-   * Whether a send to `id` goes on in a Claude conversation instead (`SourceCaps.continueInClaude`: DeepSeek Harness).
+   * Whether a send to `id` goes on in a Claude conversation instead (`SourceCaps.continueInClaude`: a claude.ai export).
    * Cheap — the hub asks before every open of a library id.
    */
   continuesInClaude(id: string): boolean {
@@ -801,49 +541,6 @@ export class LibraryService extends EventEmitter {
     })();
     this.continuing.set(id, p);
     return p.finally(() => this.continuing.delete(id));
-  }
-
-  /**
-   * What was said in the other tool after its conversation went on in Claude (`continuedFrom`), appended to the Claude
-   * conversation after its newest entry — the tool's own files are never written, so nothing goes back. Only while no
-   * process of ours is mid-turn in the Claude conversation (`canWrite`, asked right before the write): the engine owns
-   * its transcript then. Returns how many rows were written (0: nothing new, only tool results, or not now).
-   */
-  /** How many messages the other tool has that `catchUp` would bring over (nothing written). */
-  async newSince(claudeId: string): Promise<number> {
-    const m = this.meta.sessionMeta(claudeId);
-    if (!m.continuedFrom || m.replayed === undefined || !this.continuesInClaude(m.continuedFrom)) return 0;
-    return Math.max(0, (await this.readAll(m.continuedFrom).catch(() => [])).length - m.replayed);
-  }
-
-  catchUp(claudeId: string, canWrite: () => boolean = () => true): Promise<number> {
-    const m = this.meta.sessionMeta(claudeId);
-    const from = m.continuedFrom;
-    if (!from || m.replayed === undefined || !this.continuesInClaude(from)) return Promise.resolve(0);
-    const running = this.catching.get(claudeId);
-    if (running) return running;
-    const p = (async () => {
-      const file = findClaudeTranscript(claudeId);
-      if (!file) return 0;
-      const messages = await this.readAll(from);
-      const fresh = messages.slice(m.replayed);
-      if (!fresh.length) return 0;
-      let s = this.byId.get(from);
-      if (!s) { await this.list(); s = this.byId.get(from); }
-      if (!s) return 0;
-      // the read above took a while: a turn started in the meantime owns the transcript now (next time)
-      if (!canWrite()) return 0;
-      const rows = continuationEntries(fresh, { cwd: s.cwd, sessionId: claudeId, parentUuid: currentLeaf(file) ?? undefined });
-      if (rows.length) {
-        // the official binary resumes at the last `last-prompt` leaf (repairLeaf)
-        const leaf = { type: 'last-prompt', lastPrompt: '', leafUuid: rows[rows.length - 1].uuid, sessionId: claudeId };
-        appendFileSync(file, [...rows, leaf].map((r) => JSON.stringify(r)).join('\n') + '\n');
-      }
-      await this.meta.setSessionMeta(claudeId, { replayed: messages.length });
-      return rows.length;
-    })();
-    this.catching.set(claudeId, p);
-    return p.finally(() => this.catching.delete(claudeId));
   }
 
   // ---------- index / search ----------
@@ -898,12 +595,10 @@ export class LibraryService extends EventEmitter {
         if (retryIn) this.scheduleIndex(retryIn + 1_000, { unlessSooner: true });
         // sessions deleted / left since the last pass
         // …but only for sources that listed successfully: a failed fetch looks like "no sessions"
-        if (!this.localFailed) {
-          for (const id of this.index.ids()) {
-            const k = parseLibraryId(id).kind;
-            if (this.byId.has(id) || this.errors.has(k) || this.loading.has(k)) continue;
-            this.index.remove(id);
-          }
+        for (const id of this.index.ids()) {
+          const k = parseLibraryId(id).kind;
+          if (this.byId.has(id) || this.errors.has(k) || this.loading.has(k)) continue;
+          this.index.remove(id);
         }
         const now = Date.now();
         for (const k of done) this.indexedAtByKind.set(k, now);
@@ -942,10 +637,9 @@ export class LibraryService extends EventEmitter {
   }
 
   // ---------- lifecycle ----------
-  /** Startup: trash cleanup, discovery, first index pass after 10 s, file watchers (joined sources only). */
+  /** Startup: trash cleanup, first index pass after 10 s, file watchers (joined sources only). */
   start(watchDirs: Partial<Record<AgentKind, string[]>> = defaultWatchDirs()) {
     void this.cleanTrash();
-    void this.announce().catch(() => {});
     const t = setTimeout(() => { void this.refreshIndex().catch(() => {}); }, 10_000);
     t.unref?.();
     this.timers.push(t);
@@ -957,74 +651,15 @@ export class LibraryService extends EventEmitter {
   private watch(kind: AgentKind) {
     if (!this.watchDirs || this.watchers.has(kind)) return;
     // every configured tree, existing or not: watchTree looks for a missing one every 30 s and hooks on when it appears
-    // (Codex joined before its first run had no watcher at all, so its threads never showed up; 2026-10-01)
     const dirs = this.watchDirs[kind] ?? [];
     if (!dirs.length) return;
     // one recursive handle per tree (watchTree): chokidar's watch per file was ~18 s of blocking at startup
-    const ws = dirs.map((d) => watchTree(d, (rel) => {
+    const ws = dirs.map((d) => watchTree(d, () => {
       // Claude's list comes from SessionService (its own watcher keeps it fresh); others revalidate
       if (kind !== 'claude') this.invalidate(kind, { soft: true });
       this.scheduleIndex();
-      // said in DeepSeek Harness after the conversation went on in Claude: the Claude one catches up (hub, catchUp)
-      if (rel && kind === 'dsh') this.behind(rel);
-      // a Codex thread written by Codex itself (CLI / desktop): an open view of it re-reads (user report: it froze)
-      const id = rel && kind === 'codex' ? codexRolloutId(rel) : null;
-      if (id) {
-        const lid = libraryId('codex', id);
-        this.noteWritten(lid);
-        // a conversation started here: the window has it open under this app's id, not the thread's. The list's merge
-        // knows it — unless the list is older than the thread (cached up to 10 min with a watcher): then our heads.
-        const here = this.merged.get(lid);
-        if (here) this.noteWritten(here);
-        else void this.startedHereFor(id).then((h) => { if (h) this.noteWritten(h); }, () => {});
-      }
     }));
     this.watchers.set(kind, { close: () => { for (const w of ws) w.close(); } });
-  }
-
-  /**
-   * A file under `~/.dsh/sessions/<project>/<session>/` changed: if that conversation went on in Claude, say so
-   * (`continuationBehind`) once the harness stops writing for a moment — one turn is several appends.
-   */
-  private behindTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private behind(rel: string) {
-    const dir = rel.split(/[\\/]/)[1];
-    if (!dir) return;
-    const as = this.meta.sessionMeta(libraryId('dsh', dir)).continuedAs;
-    if (!as) return;
-    clearTimeout(this.behindTimers.get(as));
-    const t = setTimeout(() => { this.behindTimers.delete(as); this.emit('continuationBehind', as); }, 1500);
-    t.unref?.();
-    this.behindTimers.set(as, t);
-  }
-
-  /** Codex thread id → the conversation here that started it, from our own heads; re-read on a miss, at most every 10 s. */
-  private startedHere = new Map<string, string>();
-  private startedHereAt = 0;
-  private async startedHereFor(thread: string): Promise<string | undefined> {
-    const hit = this.startedHere.get(thread);
-    if (hit || Date.now() - this.startedHereAt < 10_000) return hit;
-    this.startedHereAt = Date.now();
-    const m = new Map<string, string>();
-    // rollout names come lower-cased (codexRolloutId)
-    for (const { head } of await this.transcripts.entries()) if (head.agent === 'codex' && head.nativeSessionId && !head.imported) m.set(head.nativeSessionId.toLowerCase(), head.sessionId);
-    this.startedHere = m;
-    return m.get(thread);
-  }
-
-  private written = new Set<string>();
-  private writtenTimer: NodeJS.Timeout | null = null;
-  /** Batched like the list's own events: one 'transcripts' per quiet 800 ms, naming every thread written. */
-  private noteWritten(id: string) {
-    this.written.add(id);
-    if (this.writtenTimer) clearTimeout(this.writtenTimer);
-    this.writtenTimer = setTimeout(() => {
-      this.writtenTimer = null;
-      const ids = [...this.written];
-      this.written.clear();
-      if (ids.length) this.emit('transcripts', ids);
-    }, 800);
-    this.writtenTimer.unref?.();
   }
 
   private unwatch(kind: AgentKind) {
@@ -1039,8 +674,6 @@ export class LibraryService extends EventEmitter {
     for (const t of this.timers) clearTimeout(t);
     this.timers = [];
     if (this.indexTimer) { clearTimeout(this.indexTimer); this.indexTimer = null; }
-    for (const t of this.behindTimers.values()) clearTimeout(t);
-    this.behindTimers.clear();
     for (const k of [...this.watchers.keys()]) this.unwatch(k);
     this.watchDirs = null;
   }

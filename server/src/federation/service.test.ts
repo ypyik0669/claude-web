@@ -70,7 +70,7 @@ function setup(o: { self?: string; peers?: PeerRecord[]; health?: (u: URL) => Re
       pairs.push({ url, body: JSON.parse(init.body) });
       return new Response(JSON.stringify({ token: 'devtok', device: { id: 'dev1', name: 'x' } }), { status: 200 });
     }) as any,
-    handover: async (a) => { handovers.push(a); return { sessionId: 'new-local', info: {}, history: [], native: await a.readAll(a.sessionId), src: await a.imported(a.sessionId) } as any; },
+    handover: async (a) => { handovers.push(a); return { sessionId: 'new-local', info: {}, history: [], native: await a.readAll(), src: a.from } as any; },
   });
   fed.on('event', (e) => events.push(e));
   return { fed, peers, fakes, pairs, events, handovers, hosts, tunnelOpens, revoked };
@@ -282,31 +282,31 @@ describe('FederationService', () => {
     expect(r.removed.sort()).toEqual(['mine', 'peer_b1~s1']);
   });
 
-  it('hands a remote session over to a local agent: reads every page, cwd from the caller', async () => {
+  it('hands a remote session over to a new local Claude conversation: reads every page, cwd from the caller', async () => {
     const { fed, fakes, handovers } = setup({ peers: [{ id: 'b1', name: 'Box B', url: 'http://b', via: 'direct', token: 'x', enabled: true, addedAt: 1 }] });
     await fed.start(); await settle();
     fakes[0].handler = (r: any) => {
-      if (r.kind === 'sessions.list') return [sum('s1', 1, { agent: 'acp:mock', title: 'Fix it' })];
+      if (r.kind === 'sessions.list') return [sum('s1', 1, { title: 'Fix it' })];
       if (r.kind === 'library.read') return r.cursor ? { messages: [{ n: 1 }] } : { messages: [{ n: 2 }], next: 'c1' };
       return null;
     };
     await fed.route({ kind: 'sessions.list' }, { local: local([]) });
-    const r: any = await fed.route({ kind: 'peers.handover', sessionId: 'peer_b1~s1', agent: 'claude', cwd: 'C:/work' }, { local: local([]) });
+    const r: any = await fed.route({ kind: 'peers.handover', sessionId: 'peer_b1~s1', cwd: 'C:/work' }, { local: local([]) });
     expect(r.sessionId).toBe('new-local');
     expect(r.native).toEqual([{ n: 1 }, { n: 2 }]);
-    expect(r.src).toEqual({ agent: 'acp:mock', cwd: 'C:/work', title: 'Fix it（来自 Box B）' });
-    expect(handovers[0]).toMatchObject({ sessionId: 'peer_b1~s1', agent: 'claude' });
-    await expect(fed.route({ kind: 'peers.handover', sessionId: 'peer_b1~s1', agent: 'claude', cwd: ' ' }, { local: local([]) })).rejects.toThrow('工作目录');
+    expect(r.src).toEqual({ agent: 'claude', cwd: 'C:/work', title: 'Fix it（来自 Box B）' });
+    expect(handovers[0]).toMatchObject({ sessionId: 'peer_b1~s1' });
+    await expect(fed.route({ kind: 'peers.handover', sessionId: 'peer_b1~s1', cwd: ' ' }, { local: local([]) })).rejects.toThrow('工作目录');
   });
 
-  it('hand-over looks the source agent up on the peer when the list cache has not got it (never guesses claude)', async () => {
+  it('hand-over looks the conversation up on the peer when the list cache has not got it', async () => {
     const { fed, fakes } = setup({ peers: [{ id: 'b1', name: 'Box B', url: 'http://b', via: 'direct', token: 'x', enabled: true, addedAt: 1 }] });
     await fed.start(); await settle();
-    fakes[0].handler = (r: any) => (r.kind === 'sessions.list' ? [sum('s1', 1, { agent: 'codex', title: 'T' })] : r.kind === 'library.read' ? { messages: [{ n: 1 }] } : null);
-    const r: any = await fed.route({ kind: 'peers.handover', sessionId: 'peer_b1~s1', agent: 'claude', cwd: '/w' }, { local: local([]) });
-    expect(r.src.agent).toBe('codex');
+    fakes[0].handler = (r: any) => (r.kind === 'sessions.list' ? [sum('s1', 1, { agent: 'claudeai', title: 'T' })] : r.kind === 'library.read' ? { messages: [{ n: 1 }] } : null);
+    const r: any = await fed.route({ kind: 'peers.handover', sessionId: 'peer_b1~s1', cwd: '/w' }, { local: local([]) });
+    expect(r.src).toMatchObject({ agent: 'claudeai', title: 'T（来自 Box B）' });
     expect(fakes[0].calls.some((c) => c.req.kind === 'sessions.list')).toBe(true);
-    await expect(fed.route({ kind: 'peers.handover', sessionId: 'peer_b1~gone', agent: 'claude', cwd: '/w' }, { local: local([]) })).rejects.toThrow('找不到');
+    await expect(fed.route({ kind: 'peers.handover', sessionId: 'peer_b1~gone', cwd: '/w' }, { local: local([]) })).rejects.toThrow('找不到');
   });
 
   it('ssh peers: the endpoint is the tunnel\'s local port + the host token; a host edit or 重试 reconnects', async () => {

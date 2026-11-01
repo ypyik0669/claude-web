@@ -2,7 +2,6 @@
 // A remote machine's session is shown here as `peer_<peerId>~<remote id>`: `~` separates, no colons,
 // and the peer id is `[a-z0-9]` only, so the first `~` always ends it (a remote id may contain `~`).
 
-import type { AgentKind } from '../protocol.js';
 import { tr } from '../i18n/index.js';
 
 export const PEER_ID_PREFIX = 'peer_';
@@ -86,8 +85,8 @@ export type PeerRequest =
   /** reconnect now (an ssh peer after its host's token was fixed, or any peer after an error) */
   | { kind: 'peers.retry'; id: string }
   | { kind: 'peers.remove'; id: string }
-  /** 「交给本机 agent 继续」: read the remote transcript, start a NEW local session seeded with a briefing */
-  | { kind: 'peers.handover'; sessionId: string; agent: AgentKind; model?: string; cwd: string };
+  /** 「在本机继续」: read the remote transcript, start a NEW local Claude conversation seeded with a briefing */
+  | { kind: 'peers.handover'; sessionId: string; model?: string; cwd: string };
 
 export type PeerEvent = { kind: 'peers.changed' };
 

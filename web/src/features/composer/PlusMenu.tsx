@@ -5,7 +5,7 @@ import { ago, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { imeComposing } from '@/ui/ime';
-import { CAPABILITIES, CHANNELS, capabilitiesFor, parseChannels, plusSections, withChannels, withFeature, type FeatureKey } from './capabilities';
+import { CAPABILITIES, capabilitiesFor, plusSections, withFeature, type FeatureKey } from './capabilities';
 import { PLUS_ID } from './ids';
 import { modKey } from '@/features/workbench/shortcuts';
 import { Popover } from './Popover';
@@ -43,8 +43,7 @@ export interface PlusMenuProps {
 
 /**
  * The composer's `+` (spec §5.4): attachments, a reference to another conversation, and what used to be the 「功能」
- * dropdown — the per-conversation capabilities (browser, computer, goal; coordinator / proactive / Brief / channels
- * under 进阶). One level; 「引用另一个对话」 swaps the menu body for a searchable conversation list. Every row renders
+ * dropdown — the per-conversation capabilities (browser, computer, goal; Brief under 进阶). One level; 「引用另一个对话」 swaps the menu body for a searchable conversation list. Every row renders
  * its `data-id` from `PLUS_ID` / the capability keys — the reach table and ui-smoke read the same ids.
  */
 export function PlusMenu(p: PlusMenuProps) {
@@ -146,54 +145,11 @@ function PlusBody(p: PlusMenuProps & { close: (refocus: boolean) => void }) {
         <>
           <div className="menu-sep" />
           <div className="cm-h">{tr('进阶')}</div>
-          {/* Brief and 频道 are rows of their own (final review M3: 功能 → Brief was 2 clicks, so is + → Brief) */}
+          {/* Brief is a row of its own (final review M3: 功能 → Brief was 2 clicks, so is + → Brief) */}
           {CAPABILITIES.filter((c) => c.group === 'advanced').map((c) => row(c.key))}
-          <ChannelsField features={p.features} readOnly={s.readOnly} onFeatures={p.onFeatures} />
         </>
       )}
     </>
-  );
-}
-
-/**
- * 频道 (--channels): a controlled field saved as you type (a short debounce, flushed on Enter, blur and when the menu
- * closes — closing it with a click outside used to drop what was typed). Read-only in a running conversation.
- */
-function ChannelsField({ features, readOnly, onFeatures }: { features: SessionFeatures; readOnly: boolean; onFeatures: (f: SessionFeatures) => void }) {
-  const [text, setText] = useState(() => (features.channels ?? []).join(', '));
-  const latest = useRef({ features, onFeatures });
-  latest.current = { features, onFeatures };
-  const pending = useRef<string | null>(null);
-  const timer = useRef(0);
-  const flush = () => {
-    window.clearTimeout(timer.current);
-    const v = pending.current;
-    pending.current = null;
-    if (v === null) return;
-    const next = parseChannels(v);
-    const cur = latest.current.features.channels ?? [];
-    if (next.join('\n') !== cur.join('\n')) latest.current.onFeatures(withChannels(latest.current.features, next));
-  };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => () => flush(), []);
-  return (
-    <div className="cm-field" data-id={PLUS_ID.channels} title={CHANNELS.title}>
-      <span className="cm-ic"><Icon name="bell" size={15} /></span>
-      <label className="cm-tx">
-        <span className="cm-l">{CHANNELS.label}</span>
-        <span className="cm-d">{CHANNELS.desc}</span>
-        <input className="field" data-mi placeholder={readOnly ? '' : CHANNELS.placeholder} value={text} readOnly={readOnly} aria-label={tr('频道')}
-          onChange={(e) => {
-            if (readOnly) return;
-            setText(e.target.value);
-            pending.current = e.target.value;
-            window.clearTimeout(timer.current);
-            timer.current = window.setTimeout(flush, 300);
-          }}
-          onBlur={flush}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !imeComposing(e.nativeEvent)) { e.preventDefault(); flush(); } }} />
-      </label>
-    </div>
   );
 }
 

@@ -6,10 +6,10 @@ import { projectFor } from '@/features/paths';
 export type GroupBy = 'project' | 'folder' | 'date' | 'none';
 export type SortBy = 'updated' | 'created' | 'name';
 export type PerGroup = 5 | 10 | 'all';
-export interface SidebarView { groupBy: GroupBy; sortBy: SortBy; show: { archived: boolean; otherAgents: boolean; perGroup: PerGroup } }
+export interface SidebarView { groupBy: GroupBy; sortBy: SortBy; show: { archived: boolean; perGroup: PerGroup } }
 export const VIEW_KEY = 'ui.sidebar.view';
 export const SECTIONS_KEY = 'ui.sidebar.sections';
-export const DEFAULT_VIEW: SidebarView = { groupBy: 'project', sortBy: 'updated', show: { archived: false, otherAgents: true, perGroup: 5 } };
+export const DEFAULT_VIEW: SidebarView = { groupBy: 'project', sortBy: 'updated', show: { archived: false, perGroup: 5 } };
 
 const GROUPS: readonly GroupBy[] = ['project', 'folder', 'date', 'none'];
 const SORTS: readonly SortBy[] = ['updated', 'created', 'name'];
@@ -20,12 +20,12 @@ export function readView(raw: unknown): SidebarView {
   return {
     groupBy: GROUPS.includes(r.groupBy) ? r.groupBy : DEFAULT_VIEW.groupBy,
     sortBy: SORTS.includes(r.sortBy) ? r.sortBy : DEFAULT_VIEW.sortBy,
-    show: { archived: sh.archived === true, otherAgents: sh.otherAgents !== false, perGroup: sh.perGroup === 10 || sh.perGroup === 'all' ? sh.perGroup : 5 },
+    show: { archived: sh.archived === true, perGroup: sh.perGroup === 10 || sh.perGroup === 'all' ? sh.perGroup : 5 },
   };
 }
 export const perGroupLimit = (v: SidebarView): number => (v.show.perGroup === 'all' ? Infinity : v.show.perGroup);
 /** The view differs from the default (the 显示 button's dot). */
-export const isDefaultView = (v: SidebarView): boolean => v.groupBy === DEFAULT_VIEW.groupBy && v.sortBy === DEFAULT_VIEW.sortBy && v.show.otherAgents === DEFAULT_VIEW.show.otherAgents && v.show.perGroup === DEFAULT_VIEW.show.perGroup;
+export const isDefaultView = (v: SidebarView): boolean => v.groupBy === DEFAULT_VIEW.groupBy && v.sortBy === DEFAULT_VIEW.sortBy && v.show.perGroup === DEFAULT_VIEW.show.perGroup;
 
 const titleOf = (s: SessionSummary) => (s.customTitle || s.title || '').toLocaleLowerCase();
 const timeOf = (s: SessionSummary, by: SortBy) => (by === 'created' ? s.createdAt ?? s.lastModified : s.lastModified);

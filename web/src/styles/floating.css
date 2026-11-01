@@ -22,8 +22,8 @@
 .menu.leaving { animation: fl-menu-out 120ms var(--ease-in) forwards; pointer-events: none; }
 
 /* rows: the plain buttons of a menu (the sidebar's, the header's, the workbench's) and the composer menus' rows */
-.menu > button, .menu .sub-menu > button, .menu .menu-grid button, .menu.cm button[data-mi], .menu.dirmenu .dirmenu-list button { min-height: 34px; }
-.menu > button, .menu .sub-menu > button { padding: 5px 10px; }
+.menu > button, .menu .menu-grid button, .menu.cm button[data-mi], .menu.dirmenu .dirmenu-list button { min-height: 34px; }
+.menu > button { padding: 5px 10px; }
 .menu.cm .cm-it.one { min-height: 34px; }
 .menu.cm .dock-more-open > button.x { min-height: 28px; align-self: center; border-radius: var(--r-sm); }
 /* hover: there at once, gone in 150ms */

@@ -8,7 +8,7 @@ const sz = sceneSize(map);
 
 describe('chapters', () => {
   it('are the seven of copy.ts, in order', () => {
-    expect(CHAPTERS.map((c) => c.id)).toEqual(['agents', 'turns', 'permission', 'review', 'checkout', 'elsewhere', 'gateway']);
+    expect(CHAPTERS.map((c) => c.id)).toEqual(['agents', 'turns', 'permission', 'review', 'checkout', 'elsewhere']);
     expect(chapterById('review')?.focus).toBe('tests');
     expect(chapterById('nope')).toBeUndefined();
   });

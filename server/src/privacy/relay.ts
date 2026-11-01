@@ -9,7 +9,7 @@
 import crypto from 'node:crypto';
 import type http from 'node:http';
 import zlib from 'node:zlib';
-import { UpstreamError, forwardHeaders, readText, sendUpstream } from '../gateway/upstream.js';
+import { UpstreamError, forwardHeaders, readText, sendUpstream } from './upstream.js';
 import { tr } from '../i18n/index.js';
 import { PrivacyBlocked, PrivacyFailed, privacyErrorStatus, type PrivacyService } from './service.js';
 

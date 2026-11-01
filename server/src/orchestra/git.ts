@@ -21,9 +21,6 @@ export interface OrchGit {
   worktreeAdd(root: string, dir: string, branch: string, from: string): Promise<void>;
   /** commit everything in `dir`; false when there was nothing to commit */
   commitAll(dir: string, message: string): Promise<boolean>;
-  head(dir: string): Promise<string>;
-  diffStat(root: string, base: string, branch: string): Promise<{ stat: string; files: number }>;
-  diff(root: string, base: string, branch: string): Promise<string>;
   /**
    * `merge --no-ff` into whatever `cwd` has checked out. Refused (kind `busy`) while a merge / rebase /
    * cherry-pick / revert of the user's is in progress and (kind `dirty`) while the index has staged changes;
@@ -119,14 +116,6 @@ export function gitAdapter(git: GitService): OrchGit {
       await identityRetry((pre) => git.run(dir, [...pre, 'commit', '-q', '-F', '-'], { input: message }));
       return true;
     },
-    async head(dir) { return (await git.run(dir, ['rev-parse', 'HEAD'])).stdout.trim(); },
-    async diffStat(root, base, branch) {
-      const range = `${base}...${branch}`;
-      const { stdout: stat } = await git.run(root, ['diff', '--stat', range]);
-      const { stdout: names } = await git.run(root, ['diff', '--name-only', range]);
-      return { stat: stat.trimEnd(), files: names.split('\n').filter(Boolean).length };
-    },
-    async diff(root, base, branch) { return (await git.run(root, ['diff', `${base}...${branch}`])).stdout; },
     async merge(cwd, branch, message) {
       const busy = await inProgress(cwd);
       if (busy) return { ok: false, kind: 'busy', error: tr('工作目录里有你自己进行中的 {busy}：先完成（或放弃）它，再回来合并', { busy }) };

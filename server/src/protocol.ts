@@ -2,9 +2,6 @@
 // One WebSocket. Client -> server requests carry an `id` and get exactly one `reply`.
 // Server -> client events carry no `id`.
 
-import type { AgentConfigRequest } from './agent-config/types.js';
-export type * from './agent-config/types.js';
-
 export * from './federation/types.js';
 import type { PeerEvent, PeerRequest, SessionPeer } from './federation/types.js';
 import type { OrchestraEvent, OrchestraRequest } from './orchestra/types.js';
@@ -13,19 +10,10 @@ import type { BackgroundEvent, BackgroundRequest } from './background/types.js';
 import type { CharactersEvent, CharactersRequest } from './characters/core/types.js';
 export * from './background/types.js';
 export * from './characters/core/types.js';
-import type { UpstreamRequest } from './upstreams/types.js';
-import type { ChannelRequest } from './channels/types.js';
-export * from './upstreams/types.js';
-export type * from './channels/types.js';
-export type * from './telemetry/types.js';
-import type { EngineEvent, EngineRequest } from './engines/types.js';
-export type * from './engines/types.js';
 /** stage E5: WSL ↔ Windows paths (pure, the web side uses them too) */
 export * from './wsl/paths.js';
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
-// `ultra` is Codex-only (its own enum member). `ultracode` is NOT here on purpose: in Claude Code it is a
-// separate session-scoped boolean (xhigh + dynamic workflows) that CLAUDE_CODE_EFFORT_LEVEL rejects.
 export type MemoryScope = 'global' | 'project' | 'session';
 export type MemoryKind = 'decision' | 'constraint' | 'fact' | 'deadend' | 'preference' | 'note';
 export interface MemoryItem {
@@ -33,7 +21,9 @@ export interface MemoryItem {
   sourceSession?: string; sourceAgent?: string; pinned: boolean; hits: number; createdAt: number; updatedAt: number;
 }
 
-export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
+// `ultracode` is NOT here on purpose: in Claude Code it is a separate session-scoped boolean (xhigh + dynamic
+// workflows) that CLAUDE_CODE_EFFORT_LEVEL rejects.
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 /** One entry of an agent's model picker. `value` is what gets sent back as the model id. */
 export interface ModelInfo {
@@ -42,8 +32,6 @@ export interface ModelInfo {
   description: string;
   supportsEffort?: boolean;
   supportedEffortLevels?: EffortLevel[];
-  /** claude-web-engine: the strength goes out as the provider's own parameter, or through the prompt (no such parameter). */
-  effortMode?: 'native' | 'prompt';
 }
 export type RunnerState = 'starting' | 'idle' | 'running' | 'waiting' | 'error' | 'closed';
 
@@ -59,7 +47,7 @@ export interface SessionSummary {
   live?: RunnerState; // present when a runner exists for this session
   agent?: AgentKind; // omitted = Claude Code
   // ---- unified session library (phase 13) ----
-  source?: string; // cli / vscode / exec / appServer / opencode … (how the native session was created)
+  source?: string; // cli / vscode / … (how the native session was created)
   parentId?: string; // library id of the session this one was forked/resumed from
   archived?: boolean;
   childCount?: number;
@@ -82,16 +70,6 @@ export interface SourceCaps {
   continueInClaude?: boolean;
 }
 
-/** One thing 本机发现 saw on this computer (`library.localScan`). `readable`: a source can list / read it. */
-export interface LocalHistorySource {
-  id: string;
-  name: string;
-  path: string;
-  readable: boolean;
-  /** why it cannot be read (or how it can) */
-  detail?: string;
-}
-
 /** One row of the "join a source" onboarding list (settings/library). */
 export interface SourceStatus {
   kind: AgentKind;
@@ -99,7 +77,6 @@ export interface SourceStatus {
   installed: boolean;
   detected: boolean;
   joined: boolean;
-  dismissed: boolean;
   enabled: boolean; // joined && installed/available
   version?: string;
   count?: number;
@@ -142,35 +119,25 @@ export interface OpenSessionParams {
   workspaceId?: string;
   providerId?: string; // API provider profile; omit / 'claude' = the claude.ai login
   features?: SessionFeatures; // extra CLI flags / env
-  agent?: AgentKind; // which CLI agent drives the session (default claude)
-  /** Transcript entries to resume a Claude session from (SessionStore.load); used when a session
-   *  is handed over from another agent and Claude has no native JSONL for this id. */
+  /** Transcript entries to resume a Claude session from (SessionStore.load); used when a session continues one
+   *  Claude has no native JSONL for (a claude.ai export). */
   resumeEntries?: Record<string, unknown>[];
-  /** Server-set with `resumeEntries`: the hand-over briefing as text, sent as the first message by an engine that
-   *  cannot resume from entries (ccb has no session mirror). */
-  briefing?: string;
-  /** Server-set: the prompt-cache route key when it is not this session's id — a fork's root (its prefix is the
-   *  parent's), kept in `SessionMeta.cacheKey` for later reopens (runtime/cache-key.ts). */
-  cacheParentId?: string;
   /** Server-set: the run is driven from IM, a scheduled task or the orchestra — its replies are not read in Claude Web
    *  first, so no ```nodegraph hint (review D-minor) */
   drivenBy?: 'im' | 'schedule' | 'orchestra';
 }
 
-/** The single runtime that drives every session: our engine claude-web-engine (runtime 'ccb': a fork of claude-code-best, a superset of Claude Code) with the official binary as silent fallback. */
-export type RuntimeKind = 'ccb' | 'claude';
+/** The Claude Code binary every session runs on (the Agent SDK's own, or a global / CLAUDE_WEB_EXE one). */
 export interface EngineInfo {
-  runtime: RuntimeKind;
   version?: string;
   path: string;
   source: 'bundled' | 'global' | 'env';
-  fallback?: { runtime: RuntimeKind; version?: string; path: string }; // the other binary, if present
   /** 操控电脑 (the `computer` MCP server) can run on the machine this server is on — Windows, for now */
   computerUse?: boolean;
 }
 
 /** `claude-account`: another Claude (Pro / Max) account — its long-lived token from `claude setup-token` in `apiKey` */
-export type ProviderType = 'anthropic' | 'openai' | 'gemini' | 'grok' | 'gateway' | 'claude-account';
+export type ProviderType = 'anthropic' | 'claude-account';
 /** A third-party API endpoint profile. Stored in ~/.claude-web/meta.json; the key is injected into the session process env only. */
 /** 从其它工具导入 (server/src/import/): one thing another tool on this computer has configured. */
 export interface ImportItem {
@@ -208,12 +175,7 @@ export interface Provider {
    * Thinking-strength levels the model list declares (official DeepSeek: `effort.supported_levels` /
    * `default_level`), only the five we know, in order. Pulled with the list, replaced with it.
    */
-  modelEfforts?: Record<string, { levels: Exclude<EffortLevel, 'ultra'>[]; default?: Exclude<EffortLevel, 'ultra'> }>;
-  /**
-   * learned: models whose native thinking-strength parameter this endpoint refused (the engine's `cw_capability`):
-   * their next conversations get the strength through the prompt. 保存后重新检测 clears it.
-   */
-  promptEffortModels?: string[];
+  modelEfforts?: Record<string, { levels: EffortLevel[]; default?: EffortLevel }>;
   /** context window (tokens) each model's list entry declared (`context_length`, `max_input_tokens`…), pulled with the list */
   modelContext?: Record<string, number>;
   /** context window (tokens) the user set per model in the provider's settings; wins over everything else */
@@ -226,29 +188,12 @@ export interface Provider {
   modelsError?: string;
   defaultModel?: string;
   modelMap?: { haiku?: string; sonnet?: string; opus?: string };
-  runtime?: RuntimeKind; // force a runtime for this provider (some relays only accept the official client)
-  /** type 'gateway': the local model-gateway group this profile routes through (baseUrl / apiKey are filled per session). */
-  gatewayGroupId?: string;
   createdAt: number;
-  // ---- prompt caching (2026-09-28; gateway/cache.ts, gateway/shim.ts) ----
-  /** openai / grok: Claude (ccb) sessions go through the local cache shim (default on; false = straight to the endpoint). */
-  cacheShim?: boolean;
-  /** openai: inside the shim, gpt-* chat/completions → /v1/responses (default on; false = keep chat/completions). */
-  responsesApi?: boolean;
-  /** anthropic: 1-hour cache TTL — ENABLE_PROMPT_CACHING_1H for the official binary, ttl '1h' on gateway-translated requests. */
+  /** anthropic: 1-hour prompt-cache TTL (ENABLE_PROMPT_CACHING_1H) */
   cache1h?: boolean;
-  /** openai: Anthropic-style cache_control markers on gateway-translated requests (Bailian explicit cache, OpenRouter anthropic/*). */
-  cacheControlFormat?: 'anthropic';
-  /** learned: the endpoint rejected `prompt_cache_key` (400) — no longer sent. */
-  noPromptCacheKey?: boolean;
-  /** learned: the endpoint has no /v1/responses (404 / 405 / 501, and chat/completions then worked) — the shim keeps chat/completions. */
-  noResponsesApi?: boolean;
-  /** learned: the endpoint rejected `prompt_cache_retention` by name — no longer sent on /v1/responses. */
-  noCacheRetention?: boolean;
   /**
    * How the key is sent (spec 2026-10-26 §5.1): `Authorization: Bearer`, `x-api-key`, or both. Unset = each path's
-   * old behaviour (Anthropic sessions Bearer, Anthropic model list / gateway both, OpenAI-compatible Bearer).
-   * Honoured by the session env (anthropic type), the model-list probe and the gateway's translated requests.
+   * old behaviour (sessions Bearer, the model list both). Honoured by the session env and the model-list probe.
    */
   authStyle?: 'bearer' | 'x-api-key' | 'both';
 }
@@ -261,24 +206,18 @@ export interface ModelRefreshResult { id: string; name: string; ok: boolean; cou
  */
 export interface CompactSource { value?: number; source: 'settings' | 'env' | 'none' }
 
-/** Multi-agent (phase 5): built-in kinds plus user-defined ACP agents (`acp:<id>`). */
-export type AgentKind = 'claude' | 'codex' | 'opencode' | 'gemini' | 'qwen' | 'kimi' | 'cursor' | 'dsh' | /** claude.ai data export (stage F4), read-only */ 'claudeai' | `acp:${string}`;
+/** Where a conversation comes from: Claude Code, or a claude.ai data export (stage F4, read-only). */
+export type AgentKind = 'claude' | 'claudeai';
 
 /**
  * Session library ids (shared by server/src/library/ids.ts and the web client): Claude keeps its bare
- * UUID; these built-in kinds are `<kind>-<native id>`; a custom ACP agent `acp:<id>` is
- * `acp_<id with '-' escaped as '~'>-<native id>`. No colons anywhere.
+ * UUID; a claude.ai export's are `claudeai-<native id>`. No colons anywhere.
  */
-export const LIBRARY_ID_PREFIXED_KINDS = ['codex', 'opencode', 'gemini', 'qwen', 'kimi', 'cursor', 'dsh', 'claudeai'] as const satisfies readonly AgentKind[];
+export const LIBRARY_ID_PREFIXED_KINDS = ['claudeai'] as const satisfies readonly AgentKind[];
 
 /** Inverse of `libraryId`. An id with no recognised prefix is a native Claude id. */
 export function parseLibraryId(id: string): { kind: AgentKind; nativeId: string } {
   for (const k of LIBRARY_ID_PREFIXED_KINDS) if (id.startsWith(`${k}-`)) return { kind: k, nativeId: id.slice(k.length + 1) };
-  if (id.startsWith('acp_')) {
-    const rest = id.slice('acp_'.length);
-    const dash = rest.indexOf('-');
-    if (dash >= 0) return { kind: `acp:${rest.slice(0, dash).replace(/~/g, '-')}` as AgentKind, nativeId: rest.slice(dash + 1) };
-  }
   return { kind: 'claude', nativeId: id };
 }
 /** What `network.proxy` answers (net/proxy.ts). URLs have their password masked. */
@@ -331,61 +270,12 @@ export interface WebSearchResult { title: string; url: string; snippet: string }
 /** What `web.search` answers (the settings page's 「试一下」). `weak`: the results match little of the query (Bing answering a program) and nothing better was to be had. */
 export interface WebSearchAnswer { engine: string; results: WebSearchResult[]; weak?: boolean }
 
-/** A model as an agent reported it (Codex `model/list`). */
-export interface ReportedModel {
-  value: string;
-  displayName: string;
-  description?: string;
-  isDefault?: boolean;
-}
-
-export interface AgentInfo {
-  kind: AgentKind;
-  name: string;
-  icon: string;
-  protocol: 'claude' | 'acp' | 'codex';
-  installed: boolean;
-  version: string;
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-  model: string; // default model override ('' = agent default)
-  models: string[]; // known model ids
-  /**
-   * What the agent itself said it offers this account (Codex: `model/list`), newest first-hand list — preferred over
-   * the built-in catalog, which goes stale as soon as a new model ships (忍冬, 2026-10-14: 「都到 6 了」)
-   */
-  reportedModels?: ReportedModel[];
-  /** when `reportedModels` was asked (ms) */
-  reportedAt?: number;
-  install: string; // install command
-  login: string; // login command (run in a terminal tile)
-  docs: string;
-  label: string; // user note e.g. account name
-  enabled: boolean;
-  builtin: boolean;
-  /** the provider new sessions of this agent run on ('' = its own login); settings → Agents 「用哪个供应商」 */
-  providerId?: string;
-  /** the executable that was found (absolute) */
-  path?: string;
-  /** set when `path` is a copy shipped inside another app (「Codex 桌面版」「Codex IDE 扩展」), not a CLI on PATH */
-  from?: string;
-  /** why it is not installed / why `--version` failed — shown on the card instead of a bare 「未安装」 */
-  probeError?: string;
-  /** not installed and the install command's tool (npm / uv) is missing too: what to get first */
-  installNeeds?: { name: string; url: string };
-}
-
 /** Optional per-session switches. Each maps to a CLI flag or env var; unknown to the engine = ignored/error. */
 export interface SessionFeatures {
   chrome?: boolean; // --chrome (Claude in Chrome MCP)
   /** kept for stored defaults; ignored — the engine has computer use only in its own terminal interface (session-runner featureArgs) */
   computerUse?: boolean;
-  coordinator?: boolean; // CLAUDE_CODE_COORDINATOR_MODE=1 (ccb)
-  proactive?: boolean; // --proactive (ccb)
   brief?: boolean; // --brief (SendUserMessage tool)
-  channels?: string[]; // --channels plugin:name@marketplace | server:name (ccb)
-  devChannels?: boolean; // --dangerously-load-development-channels (ccb)
   env?: Record<string, string>; // extra env for the CLI process (provider keys, LANGFUSE_*, ...)
   /** 只聊天: no tools at all — no files, no commands, no MCP (remembered per conversation: SessionMeta.chatOnly) */
   chatOnly?: boolean;
@@ -414,7 +304,7 @@ export interface SessionMeta {
   prAutoComments?: number; prCommentsDone?: string[]; prCommentsSent?: { ids: string[]; sha: string; at: number; /** local HEAD when the batch went, and the commit made after it (fix E-I2) */ head?: string; commit?: string };
   /** stage E5: the machine it runs on (WSL); stage E3: the built-in browser's recordings (newest 20) */
   env?: SessionEnv; browserRecordings?: { path: string; start: number; end: number }[];
-  pendingTitle?: string; /** 只聊天: started without tools; a resume keeps it that way */ chatOnly?: boolean; /** 保持电脑唤醒 while this conversation is busy */ keepAwake?: boolean; /** 代码审查卡: findings dismissed here, `<toolUseId>#<index>` */ reviewDismissed?: string[]; /** 任务 chip: suggestions dismissed (tool use ids), and started (tool use id → the new conversation) */ taskDismissed?: string[]; taskStarted?: Record<string, string>; /** PR 监控条: 自动修 CI on, and the failures it already asked about */ prAutoFix?: boolean; prFixed?: string[]; pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string; /** prompt-cache route key when it is not the session's own id (forks keep their root's) */ cacheKey?: string; /** the model its subagents run on, picked for this provider ('' = the main model) */ subagent?: { providerId: string; model: string }; /** the permission mode it last ran with: a resume without a pick comes back in it (the SDK never says it) */ permissionMode?: PermissionMode; /** 思考用的语言 for this conversation: '' / absent = the setting `ai.thinkingLanguage`, 'off' = none here, 'auto' = the interface language, else a THINKING_LANGUAGES id */ thinkingLanguage?: string; /** a `continueInClaude` source's conversation: the Claude conversation it goes on in */ continuedAs?: string; /** the Claude conversation of a `continuedAs`: what it goes on from, and how many of its messages are in it */ continuedFrom?: string; replayed?: number; /** 派活 (stage F3): started by a dispatch, and from where */ origin?: 'dispatch'; dispatchFrom?: DispatchFrom; /** 交给常开机器继续 (stage F1): handed to that machine, read-only here */ handedOff?: HandoffInfo; /** the always-on machine's copy: where it came from */ handoffFrom?: HandoffFrom; /** the project instructions it started with (new conversations only; a resume keeps them) */ projectInstructions?: string }
+  pendingTitle?: string; /** 只聊天: started without tools; a resume keeps it that way */ chatOnly?: boolean; /** 保持电脑唤醒 while this conversation is busy */ keepAwake?: boolean; /** 代码审查卡: findings dismissed here, `<toolUseId>#<index>` */ reviewDismissed?: string[]; /** 任务 chip: suggestions dismissed (tool use ids), and started (tool use id → the new conversation) */ taskDismissed?: string[]; taskStarted?: Record<string, string>; /** PR 监控条: 自动修 CI on, and the failures it already asked about */ prAutoFix?: boolean; prFixed?: string[]; pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string; /** the model its subagents run on, picked for this provider ('' = the main model) */ subagent?: { providerId: string; model: string }; /** the permission mode it last ran with: a resume without a pick comes back in it (the SDK never says it) */ permissionMode?: PermissionMode; /** 思考用的语言 for this conversation: '' / absent = the setting `ai.thinkingLanguage`, 'off' = none here, 'auto' = the interface language, else a THINKING_LANGUAGES id */ thinkingLanguage?: string; /** a `continueInClaude` source's conversation: the Claude conversation it goes on in */ continuedAs?: string; /** the Claude conversation of a `continuedAs`: what it goes on from, and how many of its messages are in it */ continuedFrom?: string; replayed?: number; /** 派活 (stage F3): started by a dispatch, and from where */ origin?: 'dispatch'; dispatchFrom?: DispatchFrom; /** 交给常开机器继续 (stage F1): handed to that machine, read-only here */ handedOff?: HandoffInfo; /** the always-on machine's copy: where it came from */ handoffFrom?: HandoffFrom; /** the project instructions it started with (new conversations only; a resume keeps them) */ projectInstructions?: string }
 export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; cron?: string; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string; freshSession?: boolean; lastError?: string; runs?: number; /** 手动: only 立即运行 starts it */ manual?: boolean; /** each run in its own worktree (with freshSession) */ worktree?: boolean }
 export interface LimitWindow { label: string; percent: number; resetsAt: string | null; active: boolean; severity?: string }
 // ---- remote access / phones / IM (phase 6) ----
@@ -426,8 +316,8 @@ export interface RemotePairCode { code: string; expiresAt: number; url: string }
 export interface RemoteHost { id: string; name: string; target: string; sshPort?: number; identityFile?: string; remotePort: number; token?: string; startCommand?: string }
 export interface TunnelInfo { hostId: string; localPort: number; url: string; state: 'connecting' | 'up' | 'down'; error: string; since: number }
 export type ImKind = 'telegram' | 'discord' | 'slack' | 'feishu' | 'dingtalk' | 'wecom';
-export interface ImGatewayConfig { id: string; kind: ImKind; name: string; enabled: boolean; config: Record<string, string>; allowUsers: string[]; allowNames: Record<string, string>; openAccess: boolean; defaultCwd: string; permissionMode: string; agent: string; verbose: boolean; /** '' / absent = the new-conversation default, 'claude' = the account (or the agent's own login), else a provider id */ providerId?: string }
-export interface ImBinding { gatewayId: string; chatId: string; sessionId: string; cwd: string; since: number; /** the agent the session runs (reopening it must not start Claude on a Codex session id) */ agent?: string }
+export interface ImGatewayConfig { id: string; kind: ImKind; name: string; enabled: boolean; config: Record<string, string>; allowUsers: string[]; allowNames: Record<string, string>; openAccess: boolean; defaultCwd: string; permissionMode: string; verbose: boolean; /** '' / absent = the new-conversation default, 'claude' = the account, else a provider id */ providerId?: string }
+export interface ImBinding { gatewayId: string; chatId: string; sessionId: string; cwd: string; since: number }
 export interface ImGatewayInfo extends ImGatewayConfig { state: 'stopped' | 'starting' | 'running' | 'error'; error: string; botName: string; inbound: boolean; pairCode: string; pairExpiresAt: number; bindings: ImBinding[] }
 export interface ImKindDef { kind: ImKind; name: string; icon: string; inbound: boolean; fields: { key: string; label: string; secret?: boolean; hint?: string }[]; help: string }
 
@@ -445,7 +335,7 @@ export interface VcsDetail extends VcsItem { body: string; comments: any; commen
 export type GoalStatus = 'draft' | 'active' | 'paused' | 'complete' | 'blocked' | 'max_turns';
 export interface GoalStep { id: string; text: string; status: 'pending' | 'in_progress' | 'completed' }
 export interface GoalEvidence { at: number; kind: 'file' | 'command' | 'test' | 'commit' | 'note' | 'error' | 'blocked'; summary: string; ref?: string; ok?: boolean }
-export interface Goal { id: string; objective: string; spec: string; cwd: string; sessionId?: string; status: GoalStatus; turnsExecuted: number; maxTurns: number; tokensUsed: number; tokenBudget: number | null; costUsd?: number; createdAt: number; updatedAt: number; startedAt?: number; completedAt?: number; steps: GoalStep[]; evidence: GoalEvidence[]; lastResult?: string; agent?: string; permissionMode?: string; model?: string }
+export interface Goal { id: string; objective: string; spec: string; cwd: string; sessionId?: string; status: GoalStatus; turnsExecuted: number; maxTurns: number; tokensUsed: number; tokenBudget: number | null; costUsd?: number; createdAt: number; updatedAt: number; startedAt?: number; completedAt?: number; steps: GoalStep[]; evidence: GoalEvidence[]; lastResult?: string; permissionMode?: string; model?: string }
 export interface AndroidDevice { serial: string; state: 'device' | 'offline' | 'unauthorized' | 'emulator'; model: string; product: string; emulator: boolean }
 export interface AndroidStatus { adb: string; emulator: string; avds: string[]; devices: AndroidDevice[] }
 
@@ -492,7 +382,6 @@ export interface SessionInfoSnapshot {
   fastMode?: 'off' | 'cooldown' | 'on';
   /** why fast mode can't serve right now (the SDK's FastModeDisabledReason) */
   fastModeOff?: string;
-  runtime?: RuntimeKind;
   /**
    * Claude: the autocompact cap this conversation's engine runs with — `CLAUDE_CODE_AUTO_COMPACT_WINDOW` as its CLI
    * ends up with it (the runner's own cap for the official binary, the session's / 本机环境变量, the user's settings
@@ -508,8 +397,6 @@ export interface SessionInfoSnapshot {
   providerName?: string;
   features?: SessionFeatures;
   error?: string;
-  agent?: AgentKind;
-  agentName?: string;
 }
 
 // ---- requests ----
@@ -546,7 +433,6 @@ export type ClientRequest =
   /** '' = the same as the main model. `providerId`: the provider the pick was made for (a switch in between drops it) */
   | { kind: 'session.setSubagentModel'; sessionId: string; model: string; providerId?: string }
   | { kind: 'session.setProvider'; sessionId: string; providerId?: string; model?: string } // model: the respawned process starts on it
-  | { kind: 'session.switchAgent'; sessionId: string; agent: AgentKind; model?: string }
   | { kind: 'session.canonical'; sessionId: string }
   | { kind: 'memory.search'; query?: string; scope?: MemoryScope; cwd?: string; sessionId?: string; kind_?: MemoryKind; limit?: number }
   | { kind: 'memory.write'; text: string; scope?: MemoryScope; cwd?: string; sessionId?: string; kind_?: MemoryKind; tags?: string[]; pinned?: boolean }
@@ -698,7 +584,6 @@ export type ClientRequest =
   | { kind: 'ledger.export'; days?: number } // CSV path
   | { kind: 'schedules.history'; id?: string; limit?: number }
   | { kind: 'schedules.templates' }
-  | { kind: 'agents.list'; refresh?: boolean }
   | { kind: 'remote.status' }
   /** `keepAwake` is the setting remote.keepAwake; the listener restarts only for enabled / port. */
   | { kind: 'remote.set'; enabled?: boolean; port?: number; keepAwake?: boolean }
@@ -749,8 +634,8 @@ export type ClientRequest =
   | { kind: 'vcs.create'; cwd: string; repo?: string; title: string; body?: string; isPr?: boolean; head?: string; base?: string; draft?: boolean; labels?: string[] }
   | { kind: 'vcs.checkout'; cwd: string; repo?: string; number: number; worktree?: boolean }
   | { kind: 'goals.list' }
-  | { kind: 'goals.create'; objective: string; spec?: string; cwd: string; maxTurns?: number; tokenBudget?: number | null; agent?: string; permissionMode?: string; model?: string }
-  | { kind: 'goals.update'; id: string; patch: Partial<Pick<Goal, 'objective' | 'spec' | 'maxTurns' | 'tokenBudget' | 'cwd' | 'agent' | 'permissionMode' | 'model'>> }
+  | { kind: 'goals.create'; objective: string; spec?: string; cwd: string; maxTurns?: number; tokenBudget?: number | null; permissionMode?: string; model?: string }
+  | { kind: 'goals.update'; id: string; patch: Partial<Pick<Goal, 'objective' | 'spec' | 'maxTurns' | 'tokenBudget' | 'cwd' | 'permissionMode' | 'model'>> }
   | { kind: 'goals.start'; id: string }
   | { kind: 'goals.pause'; id: string }
   | { kind: 'goals.resume'; id: string }
@@ -765,25 +650,19 @@ export type ClientRequest =
   | { kind: 'android.packages'; serial: string }
   | { kind: 'android.launchApp'; serial: string; pkg: string }
   | { kind: 'android.startEmulator'; avd: string }
-  | { kind: 'agents.set'; agent: AgentKind; patch: { command?: string; args?: string[]; env?: Record<string, string>; model?: string; label?: string; enabled?: boolean; name?: string; protocol?: 'acp' | 'codex'; providerId?: string } | null }
   | { kind: 'terminal.open'; cwd: string; cols: number; rows: number; wsl?: { distro: string } }
   | { kind: 'terminal.input'; termId: string; data: string }
   | { kind: 'terminal.resize'; termId: string; cols: number; rows: number }
   | { kind: 'terminal.close'; termId: string }
   // ---- unified session library (phase 13) ----
   | { kind: 'library.sources' }
-  /** 本机发现: other agents / editors that keep data here, and whether their conversations can be read */
-  | { kind: 'library.localScan' }
   | { kind: 'library.read'; sessionId: string; cursor?: string; limit?: number }
-  /** a conversation that went on from DeepSeek Harness, before a send: what was said there since → rows written */
-  | { kind: 'library.catchUp'; sessionId: string }
   | { kind: 'library.rename'; sessionId: string; title: string }
   | { kind: 'library.archive'; sessionIds: string[]; archived: boolean }
   | { kind: 'library.delete'; sessionIds: string[] }
   | { kind: 'library.fork'; sessionId: string }
   | { kind: 'library.reindex' }
   | { kind: 'library.join'; kind_: AgentKind; joined: boolean }
-  | { kind: 'library.dismiss'; kind_: AgentKind }
   // ---- 联网 (server/src/web): the settings live in settings.set `web.mcp` / `web.search.engine` / `web.search.braveKey` /
   // `web.search.braveKey` (keys come back masked) / `web.browser.isolated` ----
   /** This window hosts the built-in browser (a desktop window only: refused from a phone or another machine). The most recent one gets the commands. */
@@ -797,24 +676,11 @@ export type ClientRequest =
   | { kind: 'web.allowedSites.remove'; host: string }
   /** One search with the configured engine → WebSearchAnswer. */
   | { kind: 'web.search'; query: string; count?: number }
-  | GatewayRequest
   // ---- privacy pipeline (privacy/service.ts) ----
   | PrivacyRequest
-  | UpstreamRequest
-  | ChannelRequest
-  // 来源健康: probe + quota / 429 state (channels/health.ts)
-  | import('./channels/health-types.js').SourceHealthRequest
-  // ---- plugins / sync / 远程共享 (spec 2026-10-26 §4.3, §8) ----
-  | PluginRequest
+  // ---- sync (spec 2026-10-26 §8) ----
   | SyncRequest
-  | ShareRequest
-  // OTLP export of the gateway's requests (telemetry/; no sessionId)
-  | import('./telemetry/types.js').TelemetryRequest
-  // ---- 来源 / 托管程序 (channels/, engines/; no sessionId → no federation routing entry) ----
-  | EngineRequest
-  // ---- other agents' configuration center (phase 17) ----
-  | AgentConfigRequest
-  // ---- multi-agent orchestration ----
+  // ---- orchestration ----
   | OrchestraRequest
   // ---- 后台: running sub-agents / workflows / commands ----
   | BackgroundRequest
@@ -849,18 +715,14 @@ export type ServerEvent =
   | { kind: 'sessions.changed' }
   /** 隐私保护's settings or counters changed (at most once a second): the privacy center shows this */
   | { kind: 'privacy.changed'; status: PrivacyStatus }
-  /** conversations whose record changed on disk (a CLI in a terminal, Codex): an open one that is not running here re-reads it */
+  /** conversations whose record changed on disk (a CLI in a terminal): an open one that is not running here re-reads it */
   | { kind: 'transcripts.changed'; sessionIds: string[] }
-  /** what was said in DeepSeek Harness since went into this conversation (in the background): an open view re-reads */
-  | { kind: 'session.caughtUp'; sessionId: string }
   /** ~/.claude-web/custom.css was written / made / removed: windows read it again (ui.customCss) */
   | { kind: 'customCss.changed' }
   /** a saved character theme was added / changed / removed: windows ask again (themes.list) */
   | { kind: 'themes.changed' }
   /** run this theme draft for the skill and answer with themes.trialResult (to one window) */
   | { kind: 'themes.trial'; id: string; source: { id: string; json: string; backdrop?: string; css?: string } }
-  /** an agent said what it offers and that changed (AgentInfo.reportedModels): ask agents.list again */
-  | { kind: 'agents.changed' }
   | { kind: 'meta.changed' }
   /** something the server did on its own that the user should hear about (a scheduled catch-up run); `notify`: also the OS */
   | { kind: 'notice'; text: string; notify?: boolean; sessionId?: string }
@@ -874,16 +736,12 @@ export type ServerEvent =
   | { kind: 'terminal.exit'; termId: string; code: number | null }
   | { kind: 'fs.changed'; path: string; type: 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir' }
   | { kind: 'git.changed'; cwd: string }
-  // detected on this machine, not yet joined and not dismissed
-  | { kind: 'library.discovered'; kinds: AgentKind[] }
   // a library mutation (join / leave / rename / archive / delete / fork) — refetch sessions.list
   | { kind: 'library.changed' }
   /** Sent to one connection only: the window that announced `browser.host`. */
   | { kind: 'browser.command'; command: BrowserCommand }
   /** `web.status` would answer differently now (a host came or went, a setting changed). */
   | { kind: 'web.changed' }
-  | GatewayEvent
-  | EngineEvent
   | PeerEvent
   | OrchestraEvent
   | BackgroundEvent
@@ -928,25 +786,16 @@ export interface McpHealth { name: string; status: 'connected' | 'failed' | 'nee
 export interface RegistryServer { name: string; description: string; repo?: string; install?: { transport: 'stdio' | 'http' | 'sse'; command?: string; args?: string[]; url?: string; env?: string[] }; kind: 'npm' | 'pypi' | 'remote' | 'other' }
 export interface SecretsStatus { scheme: 'dpapi' | 'keychain' | 'libsecret' | 'plain'; total: number; protected: number }
 /** One model call as seen from the runner (per `result` / assistant message). */
-export interface LedgerEntry { ts: number; sessionId: string; model: string; durationMs: number; apiMs?: number; input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number; ok: boolean; error?: string; turns?: number; providerId?: string; kind?: 'gateway'; gateway?: GatewayLedgerInfo; /** cost not known (non-Claude model, gateway / shim call): costUsd is 0 but must not read as $0 */ costUnknown?: boolean }
+export interface LedgerEntry { ts: number; sessionId: string; model: string; durationMs: number; apiMs?: number; input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number; ok: boolean; error?: string; turns?: number; providerId?: string; /** cost not known (a model the price table does not know): costUsd is 0 but must not read as $0 */ costUnknown?: boolean }
 export interface ScheduleRun { id: string; scheduleId: string; at: number; sessionId?: string; ok: boolean; durationMs?: number; summary?: string; error?: string; /** run for a time missed while the app was closed / asleep */ catchUp?: boolean }
 
 export type WireDown = { type: 'reply'; reply: ReplyEnvelope } | { type: 'event'; event: ServerEvent };
 export type WireUp = { type: 'request'; request: RequestEnvelope };
 
-// ---------- model gateway (sub-project 4) ----------
-export * from './gateway/types.js';
 export * from './privacy/types.js';
 import type { PrivacyRequest, PrivacyStatus } from './privacy/types.js';
-export * from './routing/types.js';
-export * from './channels/health-types.js';
-import type { GatewayEvent, GatewayLedgerInfo, GatewayRequest } from './gateway/types.js';
-export type * from './plugins/protocol.js';
 export type * from './sync/types.js';
-export type * from './share/types.js';
-import type { PluginRequest } from './plugins/protocol.js';
 import type { SyncRequest } from './sync/types.js';
-import type { ShareRequest } from './share/types.js';
 
 // ---- stage F: local versions of claude.ai features (handoff, project page, dispatch, claude.ai import, publish) ----
 export type DispatchFrom = 'phone' | 'im' | 'app';

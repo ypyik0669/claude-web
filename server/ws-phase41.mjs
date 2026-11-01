@@ -1,16 +1,11 @@
 // Phase 41 end-to-end (2026-10-26, spec 2026-10-26 unified sources §14.2): a picture from a built-in tool reaches the
-// model as a picture on our engine. ccb defers MCP tools behind ExecuteExtraTool, whose result is one JSON string, so
-// a screenshot would arrive as base64 text; the tools that answer with a picture carry `anthropic/alwaysLoad`
-// (server/src/mcp/always-load.ts). A real server and our engine (ccb) against a fake Anthropic upstream; the window
-// hosting the built-in browser is this script's own WebSocket (browser.host), answering the screenshot with a real
-// 1×1 PNG. Checks:
-//   · the conversation's tool list has mcp__web__browser_screenshot itself, and the model calls it directly (not
-//     SearchExtraTools + ExecuteExtraTool);
+// model as a picture. A real server and the real Claude Code against a fake Anthropic upstream; the window hosting the
+// built-in browser is this script's own WebSocket (browser.host), answering the screenshot with a real 1×1 PNG. Checks:
+//   · the conversation's tool list has mcp__web__browser_screenshot itself, and the model calls it directly;
 //   · the screenshot command reaches the hosting window, for this conversation;
 //   · the tool_result the model gets holds an image block (base64 PNG), and no text block carries the base64;
 //   · the turn ends normally.
 //   node server/ws-phase41.mjs   (starts its own server; scripts/e2e.mjs' port/token are ignored)
-//   PHASE41_RUNTIMES=ccb,claude also runs it on the official binary (which loads MCP tools either way).
 import WebSocket from 'ws';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
@@ -67,23 +62,17 @@ function sse(s, j, blocks, stop) {
 let call = 0;
 function anthropic(s, j, h) {
   if (h.url.includes('/count_tokens')) return json(s, 200, { input_tokens: 10 });
+  // side requests (the title, …) carry no tools; the title one is streamed too
   if (!j.stream) return json(s, 200, { id: `msg_${++n}`, type: 'message', role: 'assistant', model: j.model, content: [{ type: 'text', text: 'side:ok' }], stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 10, output_tokens: 2 } });
+  if (!(j.tools ?? []).length) return sse(s, j, [{ type: 'text', text: 'side:ok' }], 'end_turn');
   h.main = true;
   h.tools = (j.tools ?? []).map((t) => t.name);
   const tr = lastToolResult(j);
-  const shoot = (id) => {
-    // the tool directly, or — when the engine deferred it — through its deferred-tool runner, the way a model would
-    const direct = h.tools.includes(TOOL);
-    h.called = direct ? 'direct' : 'extra';
-    h.sent = direct ? { id, name: TOOL } : { id, name: 'ExecuteExtraTool' };
-    return sse(s, j, [direct ? { type: 'tool_use', id, name: TOOL, input: {} } : { type: 'tool_use', id, name: 'ExecuteExtraTool', input: { tool_name: TOOL, params: {} } }], 'tool_use');
-  };
-  // our engine runs a deferred tool only after SearchExtraTools found it
-  if (tr && String(tr.tool_use_id).startsWith('toolu_search_')) return shoot(`toolu_shot_${++call}`);
   if (tr) { h.toolResult = tr; return sse(s, j, [{ type: 'text', text: 'main: seen' }], 'end_turn'); }
   if (/SHOT-GO/.test(turnText(j))) {
-    if (!h.tools.includes(TOOL) && h.tools.includes('SearchExtraTools')) return sse(s, j, [{ type: 'tool_use', id: `toolu_search_${++call}`, name: 'SearchExtraTools', input: { query: `select:${TOOL}`, max_results: 3 } }], 'tool_use');
-    return shoot(`toolu_shot_${++call}`);
+    const id = `toolu_shot_${++call}`;
+    h.sent = { id, name: TOOL };
+    return sse(s, j, [{ type: 'tool_use', id, name: TOOL, input: {} }], 'tool_use');
   }
   return sse(s, j, [{ type: 'text', text: 'main:ok' }], 'end_turn');
 }
@@ -143,15 +132,14 @@ async function main() {
   await req({ kind: 'settings.set', key: 'web.browser.agent', value: 'builtin' });
   const hosted = await req({ kind: 'browser.host', on: true });
   checkRaw('this window hosts the built-in browser', hosted?.host === true, JSON.stringify({ host: hosted?.host }));
-  for (const runtime of (process.env.PHASE41_RUNTIMES ?? 'ccb').split(',')) await suite(runtime);
+  await suite('claude');
 }
 
 async function suite(runtime) {
-  const tag = runtime === 'ccb' ? '[engine]' : '[official]';
-  const check = (name, ok, detail) => checkRaw(`${tag} ${name}`, ok, detail);
+  const check = (name, ok, detail) => checkRaw(name, ok, detail);
   const proj = path.join(root, `proj-${runtime}`);
   fs.mkdirSync(proj, { recursive: true });
-  const A = await req({ kind: 'providers.upsert', provider: { name: `中转${runtime}`, type: 'anthropic', baseUrl: up, apiKey: 'relay-key-e2e', defaultModel: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6'], ...(runtime === 'claude' ? { runtime: 'claude' } : {}) } });
+  const A = await req({ kind: 'providers.upsert', provider: { name: `中转${runtime}`, type: 'anthropic', baseUrl: up, apiKey: 'relay-key-e2e', defaultModel: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6'] } });
   const o = await req({ kind: 'session.open', params: { cwd: proj, providerId: A.id, model: 'claude-sonnet-4-6', permissionMode: 'default' } });
   const sid = o.sessionId;
   const mark = hits.length;
@@ -170,9 +158,9 @@ async function suite(runtime) {
 
   const mine = hits.slice(mark).filter((h) => h.main);
   const first = mine[0];
-  check('the conversation has browser_screenshot in its own tool list (not deferred behind ExecuteExtraTool)', !!first?.tools?.includes(TOOL), JSON.stringify(first?.tools?.filter((t) => /browser_screenshot|browser_computer|Extra/.test(t))));
-  // independent of the tool list: the engine answered the very tool_use naming browser_screenshot — the next request
-  // upstream carries a tool_result for that id (through ExecuteExtraTool there would be no such tool_use at all)
+  check('the conversation has browser_screenshot in its own tool list (alwaysLoad: not deferred behind a tool search)', !!first?.tools?.includes(TOOL), JSON.stringify(first?.tools?.filter((t) => /browser_screenshot|browser_computer/.test(t))));
+  // independent of the tool list: Claude Code answered the very tool_use naming browser_screenshot — the next request
+  // upstream carries a tool_result for that id
   const sentAt = mine.findIndex((h) => h.sent);
   const sent = mine[sentAt]?.sent;
   const answeredId = mine.slice(sentAt + 1).find((h) => h.toolResult)?.toolResult?.tool_use_id;

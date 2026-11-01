@@ -1,8 +1,9 @@
-/* 上游 section: lists, cards, quota bars and the audit log (the old tab bodies, now inside modules / drawers). */
+/* The 备份 page's sync panels (SyncPanel / RemoteSyncPanel): cards, rows and forms — the gateway's old tab style,
+   kept under its class names. */
 .gateway-tab { padding: 4px 0; }
 .gateway-tab h4 { margin: 18px 0 8px; font-size: var(--fs-base); }
 .gateway-tab h4:first-child { margin-top: 4px; }
-.gateway-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+
 .gateway-card { background: var(--surface-0); border-radius: var(--r-card); box-shadow: var(--elev-1); padding: 12px 14px; }
 .gateway-card .n { font-size: var(--fs-xl); font-weight: 600; }
 .gateway-card .l { color: var(--ink-3); font-size: var(--fs-sm); }
@@ -10,30 +11,11 @@
 .gateway-card .gateway-row:last-child { border-bottom: none; }
 .gateway-row .grow { flex: 1; }
 .gateway-row select, .gateway-row input { max-width: 260px; }
-.gateway-badge { border-radius: var(--r-pill); padding: 1px 8px; font-size: var(--fs-sm); background: var(--surface-2); white-space: nowrap; }
-.gateway-badge.ok { color: var(--ok); }
-.gateway-badge.bad { color: var(--err); }
-.gateway-badge.warn { color: var(--warn); }
-.gemini-login { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
-.gemini-login > .btn { align-self: stretch; padding: 10px; font-size: var(--fs-base); }
-.gemini-login .field { align-self: stretch; }
-.gemini-steps { margin: 0 0 6px; padding-left: 20px; line-height: 1.6; }
-.modal .sub .warn, .gemini-login .warn { color: var(--warn); }
+
+.modal .sub .warn { color: var(--warn); }
 .modal .sub .ok { color: var(--ok); }
-.gateway-log { max-height: calc(100vh - 240px); overflow: auto; }
-.gateway-log .gateway-row { font-size: var(--fs-sm); }
-.gw-who { display: flex; flex-direction: column; min-width: 120px; }
-.gw-who .l { font-size: var(--fs-base); }
-.gw-secret { display: block; margin: 6px 0; word-break: break-all; }
-.quota-bar { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-sm); color: var(--ink-3); }
-.quota-bar .q-track { width: 54px; height: 4px; border-radius: var(--r-pill); background: var(--surface-2); overflow: hidden; }
-.quota-bar .q-fill { display: block; height: 100%; background: var(--accent); }
-.quota-bar .q-num { min-width: 28px; text-align: right; }
+
 .sect-note { padding: 10px 12px; color: var(--ink-3); font-size: var(--fs-sm); }
-/* 添加账号: the three kinds, and the one thing to do when the gateway is still off */
-.gateway-kind { box-shadow: inset 0 0 0 var(--hairline) var(--edge-subtle); background: var(--surface-1); }
-.gateway-kind.on { box-shadow: inset 0 0 0 var(--hairline) var(--accent); background: var(--accent-soft); color: var(--ink-1); }
-.gateway-start { box-shadow: inset 0 0 0 var(--hairline) var(--accent); background: var(--accent-soft); }
 
 /* forms: a label above its control, each control keeping its own width, room between a row's fields */
 .gateway-tab .row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; margin: 6px 0; }
@@ -45,8 +27,4 @@
 /* a box marked `grow` takes the rest of its row (an address, a key), like a textarea marked `grow` already does */
 .gateway-row input.grow, .gateway-tab .gateway-row input.grow { flex: 1 1 auto; min-width: 0; max-width: none; }
 .gateway-card .gateway-row { gap: 8px; flex-wrap: wrap; }
-.gateway-local-card { margin: 8px 0 6px; }
-.gateway-local-card .l { font-family: var(--mono); font-size: var(--fs-sm); }
 
-/* 添加账号 → WorkBuddy: the two sign-in ways as a segmented switch, not radio chips */
-.modal .segmented.gw-mode { width: 240px; margin: 4px 0 10px; }

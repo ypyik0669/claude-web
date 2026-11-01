@@ -3,7 +3,7 @@
 // A throwaway server with the demo of scripts/lib/demo.cjs (a repo with real uncommitted changes, conversations in
 // three projects, a fake upstream, one conversation waiting for a permission and one still working) is driven in a
 // real Chromium (Electron); every picture is a capture of that window (offscreen: works with the screen locked).
-// Output: <out>/{characters,home,chat,split,models,subagent,settings,connect,mission,automation,background,permission,
+// Output: <out>/{characters,home,chat,split,subagent,settings,connect,mission,automation,background,permission,
 // language,themes,theme-home,mobile}.png and <out>/cafe.gif (frames of the café canvas put together with ffmpeg).
 const fs = require('node:fs');
 const os = require('node:os');
@@ -31,7 +31,7 @@ async function driver() {
   const key = (k, mods = []) => { win.webContents.sendInputEvent({ type: 'keyDown', keyCode: k, modifiers: mods }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode: k, modifiers: mods }); };
   const png = async (name, rect) => { const img = await win.webContents.capturePage(rect); fs.writeFileSync(path.join(out, `${name}.png`), img.toPNG()); console.log('wrote', name); };
   const store = (code) => js(`(() => { const st = window.__store.getState(); return (${code}); })()`);
-  const load = async (url) => { await win.loadURL(url); await waitFor('!!document.querySelector(".composer")', 30_000); await waitFor('window.__store && window.__store.getState().metaLoaded', 20_000); await waitFor('window.__store.getState().agents.length > 0', 40_000); await sleep(2500); };
+  const load = async (url) => { await win.loadURL(url); await waitFor('!!document.querySelector(".composer")', 30_000); await waitFor('window.__store && window.__store.getState().metaLoaded', 20_000); await sleep(2500); };
   const openChat = async (sid) => { await js(`window.__store.getState().loadHistory(${JSON.stringify(sid)}, { focus: true })`); await sleep(2500); };
   const reset = async () => { key('Escape'); await sleep(150); key('Escape'); await js('window.__store.setState({ settingsOpen: null, paletteOpen: false })'); };
   const dock = (panel) => js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: ${JSON.stringify(panel)} })`);
@@ -58,9 +58,6 @@ async function driver() {
   await dockClose();
 
   if (want('home')) { await reset(); await sleep(800); await png('home'); }
-  if (want('models')) {
-    await reset(); await click('.cb .mm-anchor:not(.sub-anchor) > button.chip'); await sleep(900); await png('models'); await reset(); await sleep(300);
-  }
   if (want('subagent')) {
     await reset(); await click('.cb .sub-anchor > button.chip'); await sleep(900); await png('subagent'); await reset(); await sleep(300);
   }
@@ -194,9 +191,8 @@ async function runner() {
 
   // 1) nothing connected yet
   await run({ SHOTS_PHASE: 'fresh' });
-  // 2) a relay and DeepSeek connected, the projects added, two live conversations
-  const prov = await c.req({ kind: 'providers.upsert', provider: { name: lang === 'zh' ? '中转' : 'Relay', type: 'anthropic', baseUrl: up.url, apiKey: 'sk-demo-not-real', defaultModel: 'claude-sonnet-5-5', models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5-20251001'], runtime: 'ccb' } });
-  await c.req({ kind: 'providers.upsert', provider: { name: 'DeepSeek', type: 'openai', baseUrl: up.url, apiKey: 'sk-demo-not-real', defaultModel: 'deepseek-chat', models: ['deepseek-chat', 'deepseek-reasoner'] } });
+  // 2) a relay connected, the projects added, two live conversations
+  const prov = await c.req({ kind: 'providers.upsert', provider: { name: lang === 'zh' ? '中转' : 'Relay', type: 'anthropic', baseUrl: up.url, apiKey: 'sk-demo-not-real', defaultModel: 'claude-sonnet-5-5', models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5-20251001'] } });
   await c.req({ kind: 'settings.set', key: 'defaultProviderId', value: prov.id });
   for (const p of [seed.shop, seed.notes, seed.blog]) await c.req({ kind: 'workspaces.add', path: p });
   await c.req({ kind: 'schedules.upsert', schedule: { name: T.schedules[0][0], cwd: seed.shop, prompt: T.schedules[0][1], everyMinutes: 1440, enabled: true } });

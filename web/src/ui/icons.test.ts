@@ -26,18 +26,19 @@ const version = (JSON.parse(readFileSync(`${lucide}/package.json`, 'utf8')) as {
 const mapped = Object.entries(map).filter(([k]) => !k.startsWith('$')) as [string, string][];
 const fills = (map.$fill ?? []) as string[];
 
-// every icon name of the hand-drawn set this replaces (icons.tsx at v0.1.10), in its order
+// every icon name of the hand-drawn set this replaces (icons.tsx at v0.1.10), in its order — less the compare
+// mark and the other agents' marks (removed 2026-11-01: only Claude is left)
 const LEGACY = [
-  'mission', 'goals', 'orchestra', 'compare', 'approval', 'tasks', 'files', 'usage', 'config', 'terminal', 'inspector', 'android', 'board', 'memory', 'browser',
+  'mission', 'goals', 'orchestra', 'approval', 'tasks', 'files', 'usage', 'config', 'terminal', 'inspector', 'android', 'board', 'memory', 'browser',
   'read', 'write', 'edit', 'bash', 'search', 'glob', 'web', 'agent', 'mcp', 'skill', 'todo', 'plan', 'question', 'artifact', 'workflow', 'image',
   'sidebar', 'splitRight', 'splitDown', 'zoom', 'close', 'minimize', 'restore', 'more', 'refresh', 'chevronRight', 'chevronLeft', 'chevronDown', 'plus', 'minus', 'undo',
   'check', 'checkCircle', 'circle', 'dot', 'alert', 'info', 'command', 'keyboard', 'settings', 'star', 'pin', 'archive', 'trash', 'copy', 'quote', 'external', 'share',
   'replace', 'diff', 'folder', 'branch', 'commit', 'play', 'pause', 'stop', 'send', 'mic', 'attach', 'eye', 'filter', 'sun', 'moon', 'monitor', 'lock', 'shield',
   'thumbUp', 'thumbDown', 'cloud', 'gateway', 'grip', 'arrowRight', 'user', 'device', 'machine', 'chat', 'bell', 'bolt',
-  'claude', 'codex', 'gemini', 'qwen', 'kimi', 'opencode',
+  'claude',
 ];
 // the brand / agent marks: hand-drawn in icons.tsx, never in the map
-const HAND_DRAWN = ['claude', 'codex', 'gemini', 'qwen', 'kimi', 'opencode'];
+const HAND_DRAWN = ['claude'];
 // names that share one glyph — the ones that were already drawn the same before the switch to Lucide
 const SAME_GLYPH = [['bash', 'terminal'], ['android', 'device'], ['files', 'write'], ['machine', 'monitor']];
 
@@ -48,7 +49,7 @@ const dOf = (p: P) => (typeof p === 'string' ? p : p[0]);
 
 describe('icon names', () => {
   it('keeps every legacy name', () => {
-    expect(LEGACY).toHaveLength(99);
+    expect(LEGACY).toHaveLength(93);
     expect(LEGACY.filter((n) => !(ICON_NAMES as string[]).includes(n))).toEqual([]);
   });
 

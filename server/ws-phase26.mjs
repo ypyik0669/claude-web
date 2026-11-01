@@ -32,7 +32,7 @@ const until = async (fn, ms, step = 50) => { const end = Date.now() + ms; for (;
 const freePort = () => new Promise((res, rej) => { const s = net.createServer(); s.once('error', rej); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
 
 const token = randomBytes(12).toString('hex');
-const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: dataDir, CODEX_HOME: path.join(home, '.codex'), CW_NO_MODEL_REFRESH: '1', CW_NO_PUBLIC_BROKERS: '1' };
+const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: dataDir, CW_NO_MODEL_REFRESH: '1', CW_NO_PUBLIC_BROKERS: '1' };
 for (const k of Object.keys(env)) if (/^(ANTHROPIC_|CLAUDE_CODE_|OPENAI_)/.test(k) || /^(no|http|https|all)_proxy$/i.test(k) || k === 'CW_WEB_TOKEN' || k === 'CW_WEB_TOKEN_FILE' || k === 'CLAUDE_WEB_DIST') delete env[k];
 // the conversation's engine must not reach anything: a dead endpoint (it only starts, nothing is sent)
 env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:9';

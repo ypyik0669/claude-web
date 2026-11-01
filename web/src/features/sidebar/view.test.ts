@@ -9,7 +9,7 @@ const at = (d: number, h = 12) => new Date(2026, 9, d, h).getTime();
 describe('readView', () => {
   it('defaults for nothing / junk, keeps what is valid', () => {
     expect(readView(undefined)).toEqual(DEFAULT_VIEW);
-    expect(readView({ groupBy: 'zzz', sortBy: 'name', show: { archived: true, perGroup: 10, otherAgents: false } })).toEqual({ groupBy: 'project', sortBy: 'name', show: { archived: true, otherAgents: false, perGroup: 10 } });
+    expect(readView({ groupBy: 'zzz', sortBy: 'name', show: { archived: true, perGroup: 10, otherAgents: false } })).toEqual({ groupBy: 'project', sortBy: 'name', show: { archived: true, perGroup: 10 } });
     expect(readView({ show: { perGroup: 7 } }).show.perGroup).toBe(5);
   });
   it('perGroupLimit', () => {

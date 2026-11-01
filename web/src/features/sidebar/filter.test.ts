@@ -7,9 +7,9 @@ const s = (id: string, o: Partial<SessionSummary> = {}): SessionSummary => ({ se
 const all: SessionSummary[] = [
   s('c1', { title: 'fix login bug' }),
   s('c2', { title: 'untitled', firstPrompt: 'refactor the parser' }),
-  s('codex-a', { agent: 'codex', title: 'codex work' }),
-  s('codex-b', { agent: 'codex', title: 'codex child', parentId: 'codex-a' }),
-  s('opencode-x', { agent: 'opencode', title: 'oc', archived: true }),
+  s('claudeai-a', { agent: 'claudeai', title: 'claudeai work' }),
+  s('claudeai-b', { agent: 'claudeai', title: 'claudeai child', parentId: 'claudeai-a' }),
+  s('claudeai-x', { agent: 'claudeai', title: 'old chat', archived: true }),
   s('c3', { title: 'archived in meta' }),
 ];
 const base = { source: 'all' as const, query: '', showArchived: false, meta: { c3: { archived: true } } };
@@ -17,11 +17,11 @@ const ids = (arr: SessionSummary[]) => arr.map((x) => x.sessionId);
 
 describe('filterSessions', () => {
   it('drops items that have a parentId (children are folded into their parent)', () => {
-    expect(ids(filterSessions(all, { ...base, showArchived: true }))).not.toContain('codex-b');
+    expect(ids(filterSessions(all, { ...base, showArchived: true }))).not.toContain('claudeai-b');
   });
 
-  it("source 'codex' keeps only codex sessions", () => {
-    expect(ids(filterSessions(all, { ...base, source: 'codex' }))).toEqual(['codex-a']);
+  it("source 'claudeai' keeps only claude.ai sessions", () => {
+    expect(ids(filterSessions(all, { ...base, source: 'claudeai' }))).toEqual(['claudeai-a']);
   });
 
   it("an item without `agent` counts as claude", () => {
@@ -38,25 +38,19 @@ describe('filterSessions', () => {
 
   it('archived (field or meta) is hidden unless showArchived', () => {
     const hidden = ids(filterSessions(all, base));
-    expect(hidden).not.toContain('opencode-x');
+    expect(hidden).not.toContain('claudeai-x');
     expect(hidden).not.toContain('c3');
     const shown = ids(filterSessions(all, { ...base, showArchived: true }));
-    expect(shown).toContain('opencode-x');
+    expect(shown).toContain('claudeai-x');
     expect(shown).toContain('c3');
-  });
-  it('otherAgents off hides other agents’ conversations unless a source is picked', () => {
-    const all = [{ sessionId: 'c', title: 'c', cwd: '', lastModified: 0 }, { sessionId: 'x', title: 'x', cwd: '', lastModified: 0, agent: 'codex' }] as any;
-    expect(filterSessions(all, { source: 'all', query: '', showArchived: false, meta: {}, otherAgents: false }).map((s) => s.sessionId)).toEqual(['c']);
-    expect(filterSessions(all, { source: 'codex', query: '', showArchived: false, meta: {}, otherAgents: false }).map((s) => s.sessionId)).toEqual(['x']);
   });
 });
 
 describe('sourceCounts', () => {
   it('counts per agent kind and never counts child items', () => {
     const c = sourceCounts(all);
-    expect(c.codex).toBe(1);
+    expect(c.claudeai).toBe(2);
     expect(c.claude).toBe(3);
-    expect(c.opencode).toBe(1);
   });
 });
 
@@ -99,13 +93,13 @@ describe('childrenOf', () => {
 });
 
 describe('filterSummary: what the funnel is hiding, in words', () => {
-  const names = (k: string) => ({ codex: 'Codex', claude: 'Claude Code' })[k] ?? k;
+  const names = (k: string) => ({ claudeai: 'claude.ai', claude: 'Claude Code' })[k] ?? k;
   const machineName = (id: string) => ({ b1: 'Box B', local: '本机' })[id] ?? id;
   it('nothing active → empty', () => {
     expect(filterSummary({ source: 'all', machine: 'all', query: '  ' }, names, machineName)).toEqual([]);
   });
   it('source, machine and the text query', () => {
-    expect(filterSummary({ source: 'codex', machine: 'b1', query: ' login ' }, names, machineName)).toEqual(['Codex', 'Box B', '“login”']);
+    expect(filterSummary({ source: 'claudeai', machine: 'b1', query: ' login ' }, names, machineName)).toEqual(['claude.ai', 'Box B', '“login”']);
   });
   it('showing archived conversations is not a filter (it hides nothing)', () => {
     // the Sidebar passes its whole filter state; the archive toggle must not count as narrowing the list
@@ -119,7 +113,7 @@ describe('machine dimension (federation)', () => {
   const mixed: SessionSummary[] = [
     s('c1'),
     s('peer_b1~x', { peer: peerB, title: 'remote one' }),
-    s('peer_b1~y', { peer: peerB, agent: 'codex' }),
+    s('peer_b1~y', { peer: peerB, agent: 'claudeai' }),
     s('peer_c2~z', { peer: { id: 'c2', name: 'Box C', offline: true } }),
     s('peer_b1~kid', { peer: peerB, parentId: 'peer_b1~x' }),
   ];
@@ -133,7 +127,7 @@ describe('machine dimension (federation)', () => {
   });
 
   it('source and machine combine', () => {
-    expect(ids(filterSessions(mixed, { ...mbase, machine: 'b1', source: 'codex' }))).toEqual(['peer_b1~y']);
+    expect(ids(filterSessions(mixed, { ...mbase, machine: 'b1', source: 'claudeai' }))).toEqual(['peer_b1~y']);
   });
 
   it('machineCounts: local + one entry per machine, with its name and offline flag; children excluded', () => {

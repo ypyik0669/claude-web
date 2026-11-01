@@ -1,14 +1,9 @@
 // Phase 28 end-to-end (2026-10-14): the 子代理 chip — the model a conversation's subagents run on, over a real server
-// and the real engines (ours, then the official binary) against a fake Anthropic upstream started here (no model, no
-// token). Per engine:
+// and the real Claude Code against a fake Anthropic upstream started here (no model, no token):
 //   · a conversation opened with a subagent model: the main turn goes out with the main model, the subagent's
 //     request with the picked one; the session info says it and meta.json remembers it for the conversation;
 //   · back to 「跟主模型一样」 (a restart of the process, invisible): the next subagent runs on the main model;
-//   · the old per-provider default (`subagentModels`) and the one default for new conversations (`subagentModel`);
-//   · another provider's model (2026-10-18, any model whatever the conversation runs on): the main requests keep the
-//     conversation's own key, the subagent's go out with the other provider's key and the real model id;
-//   · the account through a relay set up in the user's own ~/.claude/settings.json env (2026-10-19): the main requests
-//     reach that relay with the user's token, the subagent's the other provider with its key.
+//   · the old per-provider default (`subagentModels`).
 //   node server/ws-phase28.mjs   (starts its own server; scripts/e2e.mjs' port/token are ignored)
 import WebSocket from 'ws';
 import http from 'node:http';
@@ -87,9 +82,7 @@ const upstream = http.createServer((q, s) => {
   q.on('end', () => {
     let j = {};
     try { j = JSON.parse(raw || '{}'); } catch { /* keep */ }
-    // `/relayA/…`: the relay the user set up in their own ~/.claude/settings.json (the account-through-a-relay round)
-    const relayA = (q.url ?? '').startsWith('/relayA/');
-    const h = { method: q.method, url: relayA ? q.url.slice('/relayA'.length) : q.url ?? '', relayA, model: j.model, at: Date.now(), auth: String(q.headers.authorization ?? q.headers['x-api-key'] ?? '') };
+    const h = { method: q.method, url: q.url ?? '', model: j.model, at: Date.now(), auth: String(q.headers.authorization ?? q.headers['x-api-key'] ?? '') };
     hits.push(h);
     if (h.url.startsWith('/v1/messages')) return anthropic(q, s, j, h);
     if (h.url.includes('/models')) return json(s, 200, { data: [{ id: 'claude-sonnet-4-6', type: 'model' }, { id: 'small-model', type: 'model' }] });
@@ -136,23 +129,22 @@ async function agentTurn(sid) {
   const r = await resultOf(sid, from);
   const mine = hits.slice(mark);
   const m = mine.find((h) => h.role === 'main'), sb = mine.find((h) => h.role === 'sub');
-  return { result: r?.subtype, main: m?.model, sub: sb?.model, mainAuth: m?.auth, subAuth: sb?.auth, mainRelayA: m?.relayA, subRelayA: sb?.relayA, tool: mine.find((h) => h.agentTool)?.agentTool };
+  return { result: r?.subtype, main: m?.model, sub: sb?.model, mainAuth: m?.auth, subAuth: sb?.auth, tool: mine.find((h) => h.agentTool)?.agentTool };
 }
 
 async function main() {
   await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
   await req({ kind: 'settings.set', key: 'network.proxy', value: 'off' });
-  for (const runtime of (process.env.PHASE28_RUNTIMES ?? 'ccb,claude').split(',')) await suite(runtime);
+  await suite('claude');
 }
 
 async function suite(runtime) {
-  const tag = runtime === 'ccb' ? '[engine]' : '[official]';
-  const check = (name, ok, detail) => checkRaw(`${tag} ${name}`, ok, detail);
+  const check = (name, ok, detail) => checkRaw(name, ok, detail);
   hits.length = 0;
   const proj = path.join(root, `proj-${runtime}`);
   fs.mkdirSync(proj, { recursive: true });
-  // small-model: 120K, so neither engine gives it a [1m]
-  const A = await req({ kind: 'providers.upsert', provider: { name: `中转${runtime}`, type: 'anthropic', baseUrl: up, apiKey: 'relay-key-e2e', defaultModel: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6', 'small-model'], contextWindows: { 'small-model': 120_000 }, ...(runtime === 'claude' ? { runtime: 'claude' } : {}) } });
+  // small-model: 120K, so it gets no [1m]
+  const A = await req({ kind: 'providers.upsert', provider: { name: `中转${runtime}`, type: 'anthropic', baseUrl: up, apiKey: 'relay-key-e2e', defaultModel: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6', 'small-model'], contextWindows: { 'small-model': 120_000 } } });
 
   // ---- opened with a pick ----
   const full = (pid, m) => `cw-x:${encodeURIComponent(pid)}:${m}`;
@@ -183,50 +175,6 @@ async function suite(runtime) {
   check('… and its subagent runs on it', t3.sub === 'small-model', JSON.stringify(t3));
   await req({ kind: 'session.close', sessionId: o2.sessionId }).catch(() => {});
   await req({ kind: 'settings.set', key: 'subagentModels', value: {} });
-
-  // ---- another provider's model for the subagents ----
-  const B = await req({ kind: 'providers.upsert', provider: { name: `另一家${runtime}`, type: 'anthropic', baseUrl: up, apiKey: 'other-key-e2e', defaultModel: 'small-model', models: ['small-model'] } });
-  await req({ kind: 'settings.set', key: 'subagentModel', value: full(B.id, 'small-model') });
-  const o3 = await req({ kind: 'session.open', params: { cwd: proj, providerId: A.id, model: 'claude-sonnet-4-6', permissionMode: 'default' } });
-  check('the one default for new conversations: another provider’s model', o3.info?.subagentModel === full(B.id, 'small-model'), JSON.stringify(o3.info?.subagentModel));
-  const t4 = await agentTurn(o3.sessionId);
-  check('… the main requests go out with the conversation’s own key', /^claude-sonnet-4-6/.test(t4.main ?? '') && /relay-key-e2e/.test(t4.mainAuth ?? ''), JSON.stringify(t4));
-  check('… the subagent’s with the other provider’s key and the real model id', t4.sub === 'small-model' && /other-key-e2e/.test(t4.subAuth ?? '') && t4.result === 'success', JSON.stringify(t4));
-  await req({ kind: 'session.close', sessionId: o3.sessionId }).catch(() => {});
-  await req({ kind: 'settings.set', key: 'subagentModel', value: null });
-
-  // ---- a gateway profile's model for the subagents (2026-10-26 user report: WorkBuddy's models live only in the
-  // gateway, and a conversation on another provider could not hand them to its subagents) ----
-  const grp = await req({ kind: 'gateway.groups.upsert', group: { name: `e2e-sub-${runtime}`, strategy: 'failover', members: [{ providerId: B.id }] } });
-  const G = await req({ kind: 'providers.upsert', provider: { name: `网关${runtime}`, type: 'gateway', baseUrl: '', gatewayGroupId: grp.id } });
-  const o6 = await req({ kind: 'session.open', params: { cwd: proj, providerId: A.id, model: 'claude-sonnet-4-6', permissionMode: 'default', subagentModel: full(G.id, 'small-model') } });
-  check('a gateway profile’s model as the subagent pick', o6.info?.subagentModel === full(G.id, 'small-model'), JSON.stringify(o6.info?.subagentModel));
-  const t6 = await agentTurn(o6.sessionId);
-  check('… the main requests keep the conversation’s own key', /^claude-sonnet-4-6/.test(t6.main ?? '') && /relay-key-e2e/.test(t6.mainAuth ?? ''), JSON.stringify(t6));
-  check('… the subagent’s go through the gateway group to its member, with the member’s key and the real model id', t6.sub === 'small-model' && /other-key-e2e/.test(t6.subAuth ?? '') && t6.result === 'success', JSON.stringify(t6));
-  await req({ kind: 'session.close', sessionId: o6.sessionId }).catch(() => {});
-  await req({ kind: 'gateway.groups.remove', id: grp.id }).catch(() => {});
-
-  // ---- the account through a relay of the user's own (~/.claude/settings.json env), another provider's model for
-  // the subagents (2026-10-19 user report: the pick was ignored, the subagents ran on what the relay maps haiku to).
-  // Such a conversation runs on the official binary unless it has a flag only ours knows (session-runner plan()):
-  // the engine round gets one (development channels: a flag, nothing more for a conversation without channels).
-  const settingsFile = path.join(home, '.claude', 'settings.json');
-  fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
-  fs.writeFileSync(settingsFile, JSON.stringify({ env: { ANTHROPIC_BASE_URL: `${up}/relayA`, ANTHROPIC_AUTH_TOKEN: 'user-relay-token-e2e', ANTHROPIC_DEFAULT_HAIKU_MODEL: 'claude-sonnet-4-6' } }));
-  try {
-    const o4 = await req({ kind: 'session.open', params: { cwd: proj, model: 'claude-sonnet-4-6', permissionMode: 'default', subagentModel: full(B.id, 'small-model'), ...(runtime === 'ccb' ? { features: { devChannels: true } } : {}) } });
-    check('the account through the user’s relay: runs on this engine, no provider', !o4.info?.providerId && o4.info?.runtime === runtime, JSON.stringify({ p: o4.info?.providerId, rt: o4.info?.runtime }));
-    const t5 = await agentTurn(o4.sessionId);
-    check('… the main requests reach the user’s relay with the user’s own token', t5.mainRelayA === true && /user-relay-token-e2e/.test(t5.mainAuth ?? '') && /^claude-sonnet-4-6/.test(t5.main ?? ''), JSON.stringify(t5));
-    check('… the subagent’s reach the picked provider with its key and the real model id', t5.subRelayA === false && t5.sub === 'small-model' && /other-key-e2e/.test(t5.subAuth ?? '') && t5.result === 'success', JSON.stringify(t5));
-    const flags = path.join(home, '.claude-web', 'runtime', 'flag-settings');
-    const leaked = fs.existsSync(flags) && fs.readdirSync(flags).some((f) => fs.readFileSync(path.join(flags, f), 'utf8').includes('user-relay-token-e2e'));
-    check('… the user’s token is not copied into our --settings file', !leaked, '');
-    await req({ kind: 'session.close', sessionId: o4.sessionId }).catch(() => {});
-  } finally {
-    fs.rmSync(settingsFile, { force: true });
-  }
 }
 
 try {

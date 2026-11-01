@@ -46,9 +46,6 @@ function fakeGit(o: { repo?: boolean } = {}) {
       b.unmerged++;
       return true;
     },
-    async head(dir) { return branches.get(wts.get(dir)!.branch)!.tip; },
-    async diffStat(_r, base, branch) { return { stat: `${base}..${branch} @${branches.get(branch)?.tip}`, files: 1 }; },
-    async diff(_r, _b, branch) { return `diff of ${branch}`; },
     async merge(_cwd, branch) {
       if (git.mergeGate) await git.mergeGate;
       calls.push(`merge ${branch}`);
@@ -135,12 +132,11 @@ function deps(): OrchDeps {
     workflows: { list: () => wfs, set: async (w) => { wfs = [...wfs.filter((x) => x.id !== w.id), w]; }, remove: async (id) => { wfs = wfs.filter((x) => x.id !== id); } },
     available: async () => available,
     maxParallel: () => maxParallel,
-    notify: (_run, id, what) => notified.push(`${what}:${id}`),
+    notify: (_run, id) => notified.push(`approval:${id}`),
   };
 }
 
 const task = (id: string, dependsOn: string[] = [], extra: Record<string, unknown> = {}): OrchNode => ({ id, kind: 'task', title: id, agent: 'claude', prompt: `do ${id} {{input}}`, dependsOn, workspace: 'shared', ...extra } as OrchNode);
-const compare = (extra: Record<string, unknown> = {}): OrchNode => ({ id: 'cmp', kind: 'compare', title: '比选', agents: ['claude', 'codex'], prompt: 'build {{input}}', dependsOn: [], ...extra } as OrchNode);
 const session = (text: string) => sessions.find((s) => s.prompts.some((p) => p.includes(text)))!;
 const wtDir = (name: string) => [...git.wts.keys()].find((d) => path.basename(d) === name)!;
 
@@ -159,12 +155,24 @@ async function startRun(svc: OrchestraService, nodes: OrchNode[], input = 'IN') 
   const w = await svc.saveWorkflow({ name: 'wf', cwd: '/repo', nodes });
   return svc.start(w.id, input);
 }
-async function toWaitingCompare(svc: OrchestraService, extra: Record<string, unknown> = {}, more: OrchNode[] = []) {
-  const run = await startRun(svc, [compare(extra), ...more]);
-  await until(() => sessions.length === 2);
-  sessions[0].reply('claude way'); sessions[1].reply('codex way');
-  await until(() => run.state === 'waiting');
+/** Two worktree tasks whose merges fail: the run ends failed with both worktrees and branches kept. */
+async function toKeptWorktrees(svc: OrchestraService) {
+  git.mergeResult = { ok: false, kind: 'conflict', error: 'CONFLICT' };
+  const run = await startRun(svc, [task('a', [], { workspace: 'worktree' }), task('b', [], { workspace: 'worktree' })]);
+  await until(() => sessions.length === 2 && sessions.every((x) => x.prompts.length));
+  sessions[0].reply('a done'); sessions[1].reply('b done');
+  await until(() => run.state === 'failed');
+  git.mergeResult = { ok: true };
   return run;
+}
+/** One worktree task that has finished its turn and is merging (held at `gate`, set before the reply). */
+async function toMerging(svc: OrchestraService, gateOn: 'mergeGate' | 'inspectGate') {
+  const run = await startRun(svc, [task('w', [], { workspace: 'worktree' })]);
+  await until(() => sessions.length === 1 && sessions[0].prompts.length === 1);
+  const gate = deferred();
+  git[gateOn] = gate.p;
+  sessions[0].reply('done');
+  return { run, gate };
 }
 
 describe('OrchestraService scheduling', () => {
@@ -326,15 +334,11 @@ describe('cancellation (I3 / M4)', () => {
 
   it('cannot cancel while a merge into the base branch is running', async () => {
     const svc = svcOf();
-    const run = await toWaitingCompare(svc);
-    const gate = deferred();
-    git.mergeGate = gate.p;
-    const pick = svc.pick(run.id, 'cmp', 'codex');
+    const { run, gate } = await toMerging(svc, 'mergeGate');
     await tick();
     await expect(svc.cancel(run.id)).rejects.toThrow(/合并/);
     gate.open();
-    await pick;
-    expect(run.state).toBe('done');
+    await until(() => run.state === 'done');
   });
 });
 
@@ -367,84 +371,38 @@ describe('untilDone tasks (I4 / I5 / M9)', () => {
   });
 });
 
-describe('worktrees and compare (C1 / C2 / I1)', () => {
+describe('worktrees (C1 / C2 / I1)', () => {
   it('worktrees live under the data dir, named per run / node / agent', async () => {
     const svc = svcOf();
-    const run = await toWaitingCompare(svc);
+    const run = await startRun(svc, [task('w', [], { workspace: 'worktree' })]);
+    await until(() => git.wts.size === 1);
     const dirs = [...git.wts.keys()];
     expect(dirs.every((d) => d.startsWith(wtRoot))).toBe(true);
-    expect(dirs.map((d) => path.basename(d)).sort()).toEqual([`${run.id}-cmp-claude`, `${run.id}-cmp-codex`]);
-    expect(run.nodes.cmp.candidates?.every((c) => c.head && c.diffStat?.includes(c.head))).toBe(true);
-    expect(notified).toEqual(['compare:cmp']);
-  });
-
-  it('pick re-commits the winner, merges it, removes clean worktrees and the unchanged loser branch', async () => {
-    const svc = svcOf();
-    const run = await toWaitingCompare(svc, {}, [task('after', ['cmp'], { prompt: 'got {{nodes.cmp.output}}' })]);
-    const codexDir = wtDir(`${run.id}-cmp-codex`);
-    git.wts.get(codexDir)!.dirty = true; // the user tweaked the winner after it finished
-    await svc.pick(run.id, 'cmp', 'codex');
-    expect(run.nodes.cmp.state).toBe('done');
-    expect(git.calls.filter((c) => c === `commit ${run.id}-cmp-codex`)).toHaveLength(2);
-    const codex = run.nodes.cmp.candidates!.find((c) => c.agent === 'codex')!;
-    expect(codex.diffStat).toContain(git.branches.get(`cw/${run.id}/cmp-codex`)!.tip);
-    expect(git.calls).toContain(`merge cw/${run.id}/cmp-codex`);
-    expect(git.calls).toEqual(expect.arrayContaining([`rm ${run.id}-cmp-claude`, `rm ${run.id}-cmp-codex`, `del cw/${run.id}/cmp-claude`]));
-    expect(git.branches.has(`cw/${run.id}/cmp-codex`)).toBe(true);
-    await until(() => sessions.length === 3 && sessions[2].prompts.length === 1);
-    expect(sessions[2].prompts[0]).toContain('got codex way');
-  });
-
-  it('a loser with new commits or uncommitted work is kept and reported', async () => {
-    const svc2 = svcOf();
-    const r = await startRun(svc2, [compare({ agents: ['claude', 'codex', 'gemini'] })]);
-    await until(() => sessions.length === 3);
-    sessions.forEach((s) => s.reply(`${s.agent} way`));
-    await until(() => r.state === 'waiting');
-    git.branches.get(`cw/${r.id}/cmp-claude`)!.tip = 'user-commit';
-    git.wts.get(wtDir(`${r.id}-cmp-gemini`))!.dirty = true;
-    await svc2.pick(r.id, 'cmp', 'codex');
-    expect(r.nodes.cmp.state).toBe('done');
-    expect(git.branches.has(`cw/${r.id}/cmp-claude`)).toBe(true);
-    expect(git.wts.has(wtDir(`${r.id}-cmp-gemini`) ?? 'x')).toBe(true);
-    expect(r.nodes.cmp.note).toMatch(/claude/);
-    expect(r.nodes.cmp.note).toMatch(/gemini/);
-  });
-
-  it('a failed merge sends the compare back to waiting with everything kept (C2)', async () => {
-    const svc = svcOf();
-    const run = await toWaitingCompare(svc);
-    git.mergeResult = { ok: false, kind: 'busy', error: '你自己进行中的 merge' };
-    await svc.pick(run.id, 'cmp', 'claude');
-    expect(run.nodes.cmp.state).toBe('waiting');
-    expect(run.state).toBe('waiting');
-    expect(run.nodes.cmp.error).toContain('进行中的 merge');
-    expect(git.calls.some((c) => c.startsWith('rm ') || c.startsWith('del '))).toBe(false);
-    git.mergeResult = { ok: true };
-    await svc.pick(run.id, 'cmp', 'claude');
-    expect(run.state).toBe('done');
-    expect(run.nodes.cmp.error).toBeUndefined();
+    expect(dirs.map((d) => path.basename(d))).toEqual([`${run.id}-w-claude`]);
   });
 
   it('refuses to merge when the base worktree moved to another branch', async () => {
     const svc = svcOf();
-    const run = await toWaitingCompare(svc);
+    const run = await startRun(svc, [task('w', [], { workspace: 'worktree' })]);
+    await until(() => sessions.length === 1 && sessions[0].prompts.length === 1);
     git.branch = 'feature';
-    await svc.pick(run.id, 'cmp', 'claude');
-    expect(run.nodes.cmp.state).toBe('waiting');
-    expect(run.nodes.cmp.error).toContain('feature');
+    sessions[0].reply('done');
+    await until(() => run.state === 'failed');
+    expect(run.nodes.w.error).toContain('feature');
     expect(git.calls.some((c) => c.startsWith('merge'))).toBe(false);
   });
 
-  it('retrying a compare never deletes: new worktrees get an -attempt suffix, the old ones are retained', async () => {
+  it('retrying a worktree task never deletes: the new worktree gets an -attempt suffix, the old one is retained', async () => {
     const svc = svcOf();
-    const run = await toWaitingCompare(svc);
-    await svc.retry(run.id, 'cmp');
-    await until(() => sessions.length === 4);
+    const run = await startRun(svc, [task('w', [], { workspace: 'worktree' })]);
+    await until(() => sessions.length === 1 && sessions[0].prompts.length === 1);
+    sessions[0].reply('x', true);
+    await until(() => run.state === 'failed');
+    await svc.retry(run.id, 'w');
+    await until(() => sessions.length === 2);
     expect(git.calls.some((c) => c.startsWith('rm ') || c.startsWith('del '))).toBe(false);
-    expect(git.wts.size).toBe(4);
-    expect([...git.wts.keys()].map((d) => path.basename(d))).toEqual(expect.arrayContaining([`${run.id}-cmp-claude-attempt2`, `${run.id}-cmp-codex-attempt2`]));
-    expect(run.nodes.cmp.retained?.map((w) => path.basename(w.path)).sort()).toEqual([`${run.id}-cmp-claude`, `${run.id}-cmp-codex`]);
+    expect([...git.wts.keys()].map((d) => path.basename(d)).sort()).toEqual([`${run.id}-w-claude`, `${run.id}-w-claude-attempt2`]);
+    expect(run.nodes.w.retained?.map((w) => path.basename(w.path))).toEqual([`${run.id}-w-claude`]);
   });
 
   it('a name that is still taken is skipped rather than reused', async () => {
@@ -457,30 +415,6 @@ describe('worktrees and compare (C1 / C2 / I1)', () => {
     await svc.retry(run.id, 'w');
     await until(() => sessions.length === 2);
     expect(path.basename(sessions[1].cwd)).toBe(`${run.id}-w-claude-attempt3`);
-  });
-
-  it('a judge recommends a winner, the user still confirms', async () => {
-    const svc = svcOf();
-    const run = await toWaitingCompare(svc, { judge: 'gemini' });
-    await until(() => sessions.length === 3 && sessions[2].prompts.length === 1);
-    expect(sessions[2].agent).toBe('gemini');
-    expect(sessions[2].prompts[0]).toContain(`diff of cw/${run.id}/cmp-claude`);
-    sessions[2].reply('codex is cleaner\nWINNER: codex');
-    await until(() => run.nodes.cmp.judge?.state === 'done');
-    expect(run.nodes.cmp.judge?.recommended).toBe('codex');
-    expect(run.nodes.cmp.state).toBe('waiting');
-  });
-
-  it('all candidates failing fails the node; compare without git is rejected at save', async () => {
-    const svc = svcOf();
-    const run = await startRun(svc, [compare()]);
-    await until(() => sessions.length === 2 && sessions.every((s) => s.prompts.length));
-    sessions[0].reply('x', true); sessions[1].reply('y', true);
-    await until(() => run.state === 'failed');
-    expect(run.nodes.cmp.error).toContain('所有候选');
-    git = fakeGit({ repo: false });
-    const svc2 = svcOf();
-    await expect(svc2.saveWorkflow({ name: 'n', cwd: '/x', nodes: [compare()] })).rejects.toThrow(/git/);
   });
 
   it('a worktree task merges back and removes its worktree + merged branch', async () => {
@@ -508,7 +442,7 @@ describe('worktrees and compare (C1 / C2 / I1)', () => {
   it('a detached HEAD refuses worktree runs up front', async () => {
     git.branch = null;
     const svc = svcOf();
-    const w = await svc.saveWorkflow({ name: 'n', cwd: '/repo', nodes: [compare()] });
+    const w = await svc.saveWorkflow({ name: 'n', cwd: '/repo', nodes: [task('w', [], { workspace: 'worktree' })] });
     await expect(svc.start(w.id, '')).rejects.toThrow(/分离 HEAD/);
   });
 });
@@ -560,15 +494,12 @@ describe('OrchestraService persistence and removal', () => {
 
   it('remove broadcasts; with cleanup it removes clean merged leftovers and only lists the rest (M7)', async () => {
     const svc = svcOf();
-    const run = await toWaitingCompare(svc);
-    git.mergeResult = { ok: false, kind: 'conflict', error: 'CONFLICT' };
-    await svc.pick(run.id, 'cmp', 'claude');
-    await svc.cancel(run.id);
-    git.wts.get(wtDir(`${run.id}-cmp-codex`))!.dirty = true;
+    const run = await toKeptWorktrees(svc);
+    git.wts.get(wtDir(`${run.id}-b-claude`))!.dirty = true;
     const res = await svc.remove(run.id, true);
-    expect(res.kept.map((k) => k.branch).sort()).toEqual([`cw/${run.id}/cmp-claude`, `cw/${run.id}/cmp-codex`]);
-    expect(res.kept.find((k) => k.branch.endsWith('codex'))?.reason).toContain('未提交');
-    expect(res.kept.find((k) => k.branch.endsWith('claude'))?.reason).toContain('未合并');
+    expect(res.kept.map((k) => k.branch).sort()).toEqual([`cw/${run.id}/a-claude`, `cw/${run.id}/b-claude`]);
+    expect(res.kept.find((k) => k.branch.endsWith('b-claude'))?.reason).toContain('未提交');
+    expect(res.kept.find((k) => k.branch.endsWith('a-claude'))?.reason).toContain('未合并');
     expect(events.at(-1)).toMatchObject({ removed: true });
     await svc.flush();
     expect(fs.existsSync(path.join(dir, `${run.id}.json`))).toBe(false);
@@ -600,13 +531,12 @@ describe('second review (N1–N9)', () => {
 
   it('N2: cleanup tells a broken git link from uncommitted changes', async () => {
     const svc = svcOf();
-    const run = await toWaitingCompare(svc);
-    await svc.cancel(run.id);
-    git.broken.add(wtDir(`${run.id}-cmp-claude`));
-    git.wts.get(wtDir(`${run.id}-cmp-codex`))!.dirty = true;
+    const run = await toKeptWorktrees(svc);
+    git.broken.add(wtDir(`${run.id}-a-claude`));
+    git.wts.get(wtDir(`${run.id}-b-claude`))!.dirty = true;
     const res = await svc.remove(run.id, true);
-    expect(res.kept.find((k) => k.branch.endsWith('claude'))?.reason).toContain('链接已断');
-    expect(res.kept.find((k) => k.branch.endsWith('codex'))?.reason).toContain('未提交');
+    expect(res.kept.find((k) => k.branch.endsWith('a-claude'))?.reason).toContain('链接已断');
+    expect(res.kept.find((k) => k.branch.endsWith('b-claude'))?.reason).toContain('未提交');
   });
 
   it('N2: orphan worktree directories are listed and removed only when provably clean', async () => {
@@ -626,21 +556,17 @@ describe('second review (N1–N9)', () => {
     await svc.removeOrphan(clean);
     expect(git.calls).toContain('rm aa-x-claude');
     // a directory that a run still references is not an orphan
-    const run = await toWaitingCompare(svc);
+    const run = await toKeptWorktrees(svc);
     expect((await svc.orphans()).some((o) => o.path.includes(run.id))).toBe(false);
   });
 
   it('N3: the merge guard is held until the node is settled (no cancel between merge and cleanup)', async () => {
     const svc = svcOf();
-    const run = await toWaitingCompare(svc);
-    const gate = deferred();
-    git.inspectGate = gate.p;
-    const pick = svc.pick(run.id, 'cmp', 'codex');
-    await until(() => git.calls.includes(`merge cw/${run.id}/cmp-codex`));
+    const { run, gate } = await toMerging(svc, 'inspectGate');
+    await until(() => git.calls.includes(`merge cw/${run.id}/w-claude`));
     await expect(svc.cancel(run.id)).rejects.toThrow(/合并/);
     gate.open();
-    await pick;
-    expect(run.state).toBe('done');
+    await until(() => run.state === 'done');
   });
 
   it('N5: a hot swap mid-turn is noted on the node; the node still completes from the new runner', async () => {
@@ -666,47 +592,43 @@ describe('second review (N1–N9)', () => {
     expect(name.length).toBeLessThanOrEqual(48);
   });
 
-  it('N7: the compare stays running (and unpickable) until every candidate is committed', async () => {
-    const svc = svcOf();
-    const run = await startRun(svc, [compare()]);
-    await until(() => sessions.length === 2 && sessions.every((s) => s.prompts.length));
-    const gate = deferred();
-    git.commitGate = gate.p;
-    sessions[0].reply('a'); sessions[1].reply('b');
-    await tick(); await tick();
-    expect(run.nodes.cmp.state).toBe('running');
-    expect(notified).toEqual([]);
-    await expect(svc.pick(run.id, 'cmp', 'claude')).rejects.toThrow();
-    gate.open();
-    git.commitGate = undefined;
-    await until(() => run.nodes.cmp.state === 'waiting');
-    expect(run.nodes.cmp.candidates!.every((c) => c.head)).toBe(true);
-    expect(notified).toEqual(['compare:cmp']);
-  });
-
-  it('N8: picking a winner whose session is still running is refused', async () => {
-    const svc = svcOf();
-    const run = await toWaitingCompare(svc);
-    const winnerSid = run.nodes.cmp.candidates!.find((c) => c.agent === 'codex')!.sessionId!;
-    sessionStates.set(winnerSid, 'running');
-    await expect(svc.pick(run.id, 'cmp', 'codex')).rejects.toThrow(/还在运行/);
-    expect(run.nodes.cmp.state).toBe('waiting');
-    sessionStates.set(winnerSid, 'idle');
-    await svc.pick(run.id, 'cmp', 'codex');
-    expect(run.state).toBe('done');
-  });
-
   it('N9: sessions opened in worktrees are grouped under the run directory', async () => {
     const svc = svcOf();
-    await toWaitingCompare(svc);
+    await toKeptWorktrees(svc);
     expect(tags.sort()).toEqual(['s1@/repo', 's2@/repo']);
   });
 });
 
+describe('compare nodes from before 2026-11-01', () => {
+  it('a saved workflow with one is refused as an unknown kind; a stored run fails that node and the run carries on', async () => {
+    const svc = svcOf();
+    const old = { id: 'cmp', kind: 'compare', title: '比选', agents: ['claude', 'codex'], prompt: 'x', dependsOn: [] } as unknown as OrchNode;
+    await expect(svc.saveWorkflow({ name: 'n', cwd: '/repo', nodes: [old] })).rejects.toThrow(/task \/ approval/);
+    const stored: OrchRun = {
+      id: 'oldrun', workflowId: 'w', name: 'old', cwd: '/repo', input: '', baseBranch: 'main', startedAt: 1, state: 'waiting',
+      workflow: [old, task('next', ['cmp']), task('free')],
+      nodes: { cmp: { state: 'waiting', sessionIds: ['x1', 'x2'], candidates: [{ agent: 'codex', state: 'done' }] } as any, next: { state: 'pending', sessionIds: [] }, free: { state: 'done', sessionIds: [], output: 'ok' } },
+    };
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'oldrun.json'), JSON.stringify(stored));
+    const svc2 = svcOf();
+    await svc2.init();
+    const r = svc2.get('oldrun');
+    expect(r.state).toBe('failed');
+    await svc2.resume('oldrun');
+    expect(r.nodes.cmp.state).toBe('failed');
+    expect(r.nodes.cmp.error).toContain('compare');
+    expect(r.nodes.next.state).toBe('skipped');
+    expect(r.state).toBe('failed');
+    expect(sessions).toHaveLength(0);
+    await svc2.remove('oldrun', true);
+  });
+});
+
 describe('resolveTemplates', () => {
-  it('falls back to Claude for missing task agents and keeps installed compare agents', () => {
-    const t = resolveTemplates(['claude', 'gemini']);
+  it('every task runs on Claude; no compare template is left', () => {
+    const t = resolveTemplates(['claude']);
     expect(t.find((x) => x.id === 'plan-impl-review')!.nodes.find((n) => n.id === 'impl')).toMatchObject({ agent: 'claude' });
-    expect((t.find((x) => x.id === 'three-way')!.nodes[0] as any).agents).toEqual(['claude', 'gemini']);
+    expect(t.some((x) => x.nodes.some((n) => (n.kind as string) === 'compare'))).toBe(false);
   });
 });

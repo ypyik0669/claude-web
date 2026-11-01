@@ -16,8 +16,6 @@ const newMeta = () => {
   dirs.push(d);
   return new MetaStore(path.join(d, 'meta.json'));
 };
-const account = (id: string, credential: string) => ({ id, kind: 'claude' as const, name: `acct ${id}`, enabled: true, credential, credentialKind: 'setup-token' as const, source: 'paste' as const, createdAt: 1, updatedAt: 1, health: 'unknown' as const });
-
 describe('sync crypto', () => {
   it('seal → open round-trips; a wrong passphrase or a changed byte fails, without partial text', async () => {
     const box = await seal('秘密 sk-ant-xyz', 'correct horse');
@@ -38,58 +36,45 @@ describe('sync bundle and merge', () => {
   it('credentials only travel encrypted; a different credential on both sides keeps both', async () => {
     const a = newMeta();
     const pa = await a.upsertProvider({ name: 'Relay', type: 'anthropic', baseUrl: 'https://r.example', apiKey: 'sk-from-a' });
-    a.upstreamAccounts().push(account('acc1', 'cred-a'));
     const bundle = await buildBundle(a, undefined, { passphrase: 'pass phrase' });
     const text = JSON.stringify(bundle);
     expect(text).not.toContain('sk-from-a');
-    expect(text).not.toContain('cred-a');
 
     const b = newMeta();
     await b.upsertProvider({ name: 'Relay', type: 'anthropic', baseUrl: 'https://r.example', apiKey: 'sk-from-b' });
     b.providers()[0].id = pa.id; // the same provider on both machines
-    b.upstreamAccounts().push(account('acc1', 'cred-b'));
 
     const parsed = parseBundle(text);
     await expect(openSecret(parsed, 'not it at all')).rejects.toThrow();
     const sec = await openSecret(parsed, 'pass phrase');
     const plan = await planMerge(b, undefined, parsed, sec);
     expect(plan.find((x) => x.collection === 'provider')!.action).toBe('conflict');
-    expect(plan.find((x) => x.collection === 'account')!.action).toBe('conflict');
     const r = await applyMerge(b, undefined, parsed, sec, plan);
-    expect(r.conflicts).toBe(2);
+    expect(r.conflicts).toBe(1);
     const keys = b.providers().map((p) => p.apiKey).sort();
     expect(keys).toEqual(['sk-from-a', 'sk-from-b']);
     expect(b.provider(pa.id)!.apiKey).toBe('sk-from-b'); // the local one untouched
-    expect(b.upstreamAccounts().map((x) => x.credential).sort()).toEqual(['cred-a', 'cred-b']);
-    expect(b.upstreamAccounts().find((x) => x.id === 'acc1')!.credential).toBe('cred-b');
   });
 
-  it('a missing local key is filled; without the passphrase part an account cannot be added', async () => {
+  it('a missing local key is filled from the passphrase part', async () => {
     const a = newMeta();
-    const pa = await a.upsertProvider({ name: 'P', type: 'openai', baseUrl: 'https://p.example/v1', apiKey: 'sk-1' });
-    a.upstreamAccounts().push(account('acc2', 'cred'));
+    const pa = await a.upsertProvider({ name: 'P', type: 'anthropic', baseUrl: 'https://p.example', apiKey: 'sk-1' });
     const b = newMeta();
-    await b.upsertProvider({ name: 'P', type: 'openai', baseUrl: 'https://p.example/v1' });
+    await b.upsertProvider({ name: 'P', type: 'anthropic', baseUrl: 'https://p.example' });
     b.providers()[0].id = pa.id;
     const withKey = parseBundle(JSON.stringify(await buildBundle(a, undefined, { passphrase: 'pass phrase' })));
     const sec = await openSecret(withKey, 'pass phrase');
     const plan = await planMerge(b, undefined, withKey, sec);
     await applyMerge(b, undefined, withKey, sec, plan);
     expect(b.provider(pa.id)!.apiKey).toBe('sk-1');
-
-    const plain = parseBundle(JSON.stringify(await buildBundle(a, undefined, {})));
-    const plan2 = await planMerge(newMeta(), undefined, plain, null);
-    expect(plan2.find((x) => x.collection === 'account')!.action).toBe('skip');
   });
 
   it('a file that moves a provider with a local key to another host is a conflict; the local key never follows (Y2)', async () => {
     const a = newMeta();
     const pa = await a.upsertProvider({ name: 'Relay', type: 'anthropic', baseUrl: 'https://evil.example', apiKey: 'sk-local' });
-    a.data.gatewayGroups = [{ id: 'g1', name: 'G', strategy: 'failover', members: [{ ref: 'p:evil' } as any] }];
     const b = newMeta();
     await b.upsertProvider({ name: 'Relay', type: 'anthropic', baseUrl: 'https://r.example', apiKey: 'sk-local' });
     b.providers()[0].id = pa.id;
-    b.data.gatewayGroups = [{ id: 'g1', name: 'G', strategy: 'failover', members: [{ ref: 'p:mine' } as any] }];
 
     for (const pass of [undefined, 'pass phrase']) { // no key in the file, and the same key in the file
       const parsed = parseBundle(JSON.stringify(await buildBundle(a, undefined, { passphrase: pass })));
@@ -98,57 +83,68 @@ describe('sync bundle and merge', () => {
       const pi = plan.find((x) => x.collection === 'provider')!;
       expect(pi.action).toBe('conflict');
       expect(pi.fields).toEqual(['baseUrl']);
-      expect(plan.find((x) => x.collection === 'gatewayGroup')!.action).toBe('conflict');
       // even a forged 'update' never moves the saved key
-      const forged = plan.map((x) => (x.collection === 'provider' || x.collection === 'gatewayGroup' ? { ...x, action: 'update' as const } : x));
+      const forged = plan.map((x) => (x.collection === 'provider' ? { ...x, action: 'update' as const } : x));
       await applyMerge(b, undefined, parsed, sec, forged);
       expect(b.provider(pa.id)!.baseUrl).toBe('https://r.example');
-      expect(b.data.gatewayGroups!.find((g) => g.id === 'g1')!.members).toEqual([{ ref: 'p:mine' }]);
       await applyMerge(b, undefined, parsed, sec, plan);
       expect(b.provider(pa.id)!.baseUrl).toBe('https://r.example');
       expect(b.provider(pa.id)!.apiKey).toBe('sk-local');
       const copies = b.providers().filter((p) => p.id !== pa.id);
       expect(copies.at(-1)!.baseUrl).toBe('https://evil.example');
       expect(copies.at(-1)!.apiKey).toBeFalsy();
-      expect(b.data.gatewayGroups!.find((g) => g.id === 'g1')!.members).toEqual([{ ref: 'p:mine' }]);
-      expect(b.data.gatewayGroups!.some((g) => g.id !== 'g1' && JSON.stringify(g.members) === JSON.stringify([{ ref: 'p:evil' }]))).toBe(true);
     }
   });
 
-  it('import only writes routing.* / models.* from the clear part and privacy.* from the encrypted part (Y1)', async () => {
-    const a = newMeta();
-    await a.setSetting('routing.spend', { day: '2026-10-26', usd: 3 });
-    await a.setSetting('routing.mode', 'auto');
-    expect(Object.keys((await buildBundle(a, undefined, {})).public.settings)).toEqual(['routing.mode']);
+  it('a provider of a removed type in the file is not taken', async () => {
+    const box = await seal(JSON.stringify({ providers: { o1: 'sk-o' }, privacy: {} }), 'pass phrase');
+    const crafted = JSON.stringify({
+      format: 'claude-web-sync', version: 1, createdAt: 1, from: 'x',
+      public: { providers: [{ id: 'o1', name: 'O', type: 'openai', baseUrl: 'https://o.example', createdAt: 1 }], settings: {} },
+      secret: box,
+    });
+    const b = newMeta();
+    const parsed = parseBundle(crafted);
+    const sec = await openSecret(parsed, 'pass phrase');
+    const plan = await planMerge(b, undefined, parsed, sec);
+    await applyMerge(b, undefined, parsed, sec, plan);
+    expect(b.providers()).toEqual([]);
+  });
 
-    const box = await seal(JSON.stringify({ providers: {}, accounts: {}, privacy: { 'privacy.rules': ['x'], 'ui.defaultMode': 'bypassPermissions', 'routing.mode': 'evil' } }), 'pass phrase');
+  it('import only writes models.* from the clear part and privacy.* from the encrypted part (Y1)', async () => {
+    const a = newMeta();
+    await a.setSetting('models.pinned', ['m']);
+    await a.setSetting('ui.defaultMode', 'plan');
+    expect(Object.keys((await buildBundle(a, undefined, {})).public.settings)).toEqual(['models.pinned']);
+
+    const box = await seal(JSON.stringify({ providers: {}, privacy: { 'privacy.rules': ['x'], 'ui.defaultMode': 'bypassPermissions', 'models.pinned': ['evil'] } }), 'pass phrase');
     const crafted = JSON.stringify({
       format: 'claude-web-sync', version: 1, createdAt: 1, from: 'x',
       public: {
-        providers: [], accounts: [], gatewayGroups: [], keyGroups: [],
+        providers: [],
         settings: {
-          'routing.mode': 'cheap', 'models.pinned': ['m'], 'routing.spend': { day: '2026-10-26', usd: 0 },
+          'models.pinned': ['m'], 'routing.mode': 'cheap',
           'ui.defaultMode': 'bypassPermissions', 'network.proxy': 'http://evil:8080', 'remote.enabled': true,
-          'gateway.allowQueryKey': true, 'privacy.rules': ['clear part is not allowed'],
+          'privacy.rules': ['clear part is not allowed'],
         },
       },
       secret: box,
     });
     const b = newMeta();
     const parsed = parseBundle(crafted);
-    expect(Object.keys(parsed.public.settings).sort()).toEqual(['models.pinned', 'routing.mode']);
+    expect(Object.keys(parsed.public.settings).sort()).toEqual(['models.pinned']);
     const sec = await openSecret(parsed, 'pass phrase');
     expect(Object.keys(sec!.privacy)).toEqual(['privacy.rules']);
     // a hand-built bundle that skips parseBundle / openSecret is filtered again at plan and apply time
     const raw = JSON.parse(crafted);
-    const rawSec = { providers: {}, accounts: {}, privacy: { 'privacy.rules': ['x'], 'ui.defaultMode': 'bypassPermissions' } };
+    const rawSec = { providers: {}, privacy: { 'privacy.rules': ['x'], 'ui.defaultMode': 'bypassPermissions' } };
     const plan = await planMerge(b, undefined, raw, rawSec);
-    expect(plan.map((x) => x.id).sort()).toEqual(['models.pinned', 'privacy.rules', 'routing.mode']);
+    expect(plan.map((x) => x.id).sort()).toEqual(['models.pinned', 'privacy.rules']);
     const forged = [...plan, { key: 'setting:network.proxy', collection: 'setting' as const, id: 'network.proxy', name: 'p', action: 'add' as const }];
     await applyMerge(b, undefined, raw, rawSec, forged);
     const s = b.settings() as Record<string, unknown>;
-    expect(s['routing.mode']).toBe('cheap');
+    expect(s['models.pinned']).toEqual(['m']);
     expect(s['privacy.rules']).toEqual(['x']);
-    for (const k of ['ui.defaultMode', 'network.proxy', 'remote.enabled', 'gateway.allowQueryKey', 'routing.spend']) expect(k in s).toBe(false);
+    for (const k of ['ui.defaultMode', 'network.proxy', 'remote.enabled', 'routing.mode']) expect(k in s).toBe(false);
   });
 });

@@ -8,7 +8,6 @@ import { findClaudeTranscript } from '../runtime/transcript-file.js';
 import { createBgState, mergeWorkflowProgress } from './registry.js';
 import type { BgRunSummary, BgStatus, BgTask } from './types.js';
 import { tr } from '../i18n/index.js';
-import { unalias } from '../models/subagent.js';
 
 /** The official binary names a run `wf_xxxxxxxx-xxx`; our engine uses its task id, `w` + 8 characters. */
 const RUN_ID = /^w[\w-]{1,80}$/;
@@ -111,7 +110,7 @@ export async function firstModel(file: string, maxBytes = 1 << 20): Promise<stri
     const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
     for (const line of buf.toString('utf8', 0, bytesRead).split('\n')) {
       if (!line.includes('"assistant"')) continue;
-      try { const e = JSON.parse(line); if (e?.type === 'assistant' && typeof e.message?.model === 'string') return unalias(e.message.model); } catch { /* a line cut at the end */ }
+      try { const e = JSON.parse(line); if (e?.type === 'assistant' && typeof e.message?.model === 'string') return e.message.model; } catch { /* a line cut at the end */ }
     }
   } catch { /* unreadable */ } finally { await fh?.close(); }
   return null;

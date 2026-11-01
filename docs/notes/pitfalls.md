@@ -35,7 +35,7 @@
 - 用户那两个对话（`5b7b91f6…` / `16bbc467…`）是手工修的，备份在同目录 `*.jsonl.bak-2026-10-19T08-19-10-948Z`。
   用真文件（27.9 MB）跑 `dropEmptyBlocks`：改 2 条消息、510 ms，结果和手工修的逐字节一致，再跑一次不改。
 - **去掉空的之后还不够**（同一天，装好后在真接口上测）：分叉那个对话发一轮 Opus，回 ``messages.3.content.0: Invalid `signature` in `thinking` block``。
-  DeepSeek 的 325 个思考块全是 `signature: ""`；Anthropic 先查空白（所以先报的是 179），再查签名。引擎（ccb）只在 ant 用户的模型回退时
+  DeepSeek 的 325 个思考块全是 `signature: ""`；Anthropic 先查空白（所以先报的是 179），再查签名。当时的引擎（ccb，已删）只在 ant 用户的模型回退时
   去掉签名块（`stripSignatureBlocks`），普通换模型不管。现在 `dropEmptyBlocks(file, { unsigned: true })` 把没签名的思考块也去掉（Claude 的思考总带签名，
   `redacted_thinking` 不动）：runner 里「下一个模型是 Claude」（`toClaude`：账号；供应商按 `providerModelId` 认；`cw-x:<供应商>:<模型>` 按模型名）
   或者接口报了这个 400（`repairUnsigned`，不管模型叫什么）时用；从别家模型 `setModel` 到 Claude 一律重开进程（进程内换的话第一轮必 400）；

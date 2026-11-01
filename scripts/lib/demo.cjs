@@ -255,15 +255,11 @@ function scriptFor(T, ask, tools, shop) {
     ];
   }
   if (ask.includes(T.themeAsk)) {
-    // ccb hides MCP tools behind ExecuteExtraTool { tool_name, params }; the official client lists them by name
-    const call = (i, id, name, input, n, gap) => (tools.includes(name) || !tools.includes('ExecuteExtraTool')
-      ? streamTool(i, id, name, input, n, gap)
-      : streamTool(i, id, 'ExecuteExtraTool', { tool_name: name, params: input }, n, gap));
     return [
       // short: the draft's try-out (~4 s) and the runtime's own round trips take most of the 8 s to the apply card
-      () => [...streamText(0, T.themeSay[0], 4, 30), ...call(1, 'toolu_th_draft', 'mcp__web__theme_draft', metroFixture(), 6, 30), ...finish('tool_use')],
-      () => [...streamText(0, T.themeSay[1], 4, 30), ...call(1, 'toolu_th_save', 'mcp__web__theme_save', { id: 'metro' }, 2, 30), ...finish('tool_use')],
-      () => [...streamText(0, T.themeSay[2], 4, 30), ...call(1, 'toolu_th_apply', 'mcp__web__theme_apply', { id: 'metro' }, 2, 30), ...finish('tool_use')],
+      () => [...streamText(0, T.themeSay[0], 4, 30), ...streamTool(1, 'toolu_th_draft', 'mcp__web__theme_draft', metroFixture(), 6, 30), ...finish('tool_use')],
+      () => [...streamText(0, T.themeSay[1], 4, 30), ...streamTool(1, 'toolu_th_save', 'mcp__web__theme_save', { id: 'metro' }, 2, 30), ...finish('tool_use')],
+      () => [...streamText(0, T.themeSay[2], 4, 30), ...streamTool(1, 'toolu_th_apply', 'mcp__web__theme_apply', { id: 'metro' }, 2, 30), ...finish('tool_use')],
       () => [...streamText(0, T.themeDone, 6, 40), ...finish('end_turn')],
     ];
   }

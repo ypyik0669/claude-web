@@ -13,9 +13,6 @@ const ACTION: Record<SyncPlanItem['action'], () => string> = {
 };
 const COLLECTION: Record<SyncPlanItem['collection'], () => string> = {
   provider: () => tr('供应商'),
-  account: () => tr('账号'),
-  gatewayGroup: () => tr('网关组'),
-  keyGroup: () => tr('密钥组'),
   setting: () => tr('设置'),
 };
 

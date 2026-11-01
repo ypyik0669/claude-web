@@ -13,7 +13,6 @@ import { CommandPalette } from '@/features/palette/CommandPalette';
 import { ImageViewer } from '@/features/chat/ImageViewer';
 import { DialogHost } from '@/ui/dialog';
 import { ConnectModelHost } from '@/features/providers/ConnectModel';
-import { AddSourceLazy } from '@/features/gateway/AddSourceLazy';
 import { UpdatePrompt } from '@/features/update/UpdatePrompt';
 import { SettingsModal } from '@/features/settings/SettingsModal';
 import { Onboarding } from '@/features/onboarding/Onboarding';
@@ -89,7 +88,7 @@ function SidebarColumn() {
       <div className="sb-sect" data-section="chat" hidden={section !== 'chat'}><ErrorBoundary area={tr('侧栏')}><Sidebar onNew={() => runCommand('new')} /></ErrorBoundary></div>
       {seen.includes('background') && <div className="sb-sect" data-section="background" hidden={section !== 'background'}><ErrorBoundary area={tr('侧栏 · 后台')}><BackgroundSide /></ErrorBoundary></div>}
       {seen.includes('automation') && <div className="sb-sect" data-section="automation" hidden={section !== 'automation'}><ErrorBoundary area={tr('侧栏 · 自动化')}><AutomationSide /></ErrorBoundary></div>}
-      <div className="sb-sect" data-section="gateway" hidden={section !== 'gateway'}><ErrorBoundary area={tr('侧栏 · 模型')}><ModelHubSide /></ErrorBoundary></div>
+      <div className="sb-sect" data-section="gateway" hidden={section !== 'gateway'}><ErrorBoundary area={tr('侧栏 · 用量与隐私')}><ModelHubSide /></ErrorBoundary></div>
       {seen.includes('extensions') && <div className="sb-sect" data-section="extensions" hidden={section !== 'extensions'}><ErrorBoundary area={tr('侧栏 · 扩展')}><ExtensionsSide /></ErrorBoundary></div>}
       <div
         className="resizer right"
@@ -332,7 +331,6 @@ export function App() {
       <ErrorBoundary area={tr('图片查看')} floating><ImageViewer /></ErrorBoundary>
       <ErrorBoundary area={tr('文件菜单')} floating><FileMenu /></ErrorBoundary>
       <ErrorBoundary area={tr('接一个模型')} floating><ConnectModelHost /></ErrorBoundary>
-      <ErrorBoundary area={tr('添加来源')} floating><AddSourceLazy /></ErrorBoundary>
       <ErrorBoundary area={tr('应用更新')} floating><UpdatePrompt /></ErrorBoundary>
       <ErrorBoundary area={tr('角色库')} floating><CharacterLibrary /></ErrorBoundary>
       <ErrorBoundary area={tr('编辑项目')} floating><ProjectDialogLazy /></ErrorBoundary>

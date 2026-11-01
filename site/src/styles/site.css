@@ -61,11 +61,6 @@ img { max-width: 100%; }
 .ov-chips li { padding: 3px 10px; border: 1px solid var(--line-1); border-radius: 999px; }
 .ov-phone { display: grid; gap: 3px; width: 34px; padding: 6px 4px; margin-bottom: 8px; border: 2px solid var(--fg-2); border-radius: 7px; }
 .ov-phone span { height: 4px; border-radius: 2px; background: var(--fg-3); }
-.ov-accounts { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; }
-.ov-accounts li { display: flex; align-items: center; gap: 8px; }
-.ov-accounts li span:last-child { margin-left: auto; color: var(--fg-2); }
-.lamp { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-3); }
-.lamp.on { background: var(--green); }
 .scene-tip { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; padding: 8px 10px; border-radius: var(--r-sm); background: color-mix(in oklab, var(--bg-elev) 94%, transparent); font-size: var(--fs-meta); white-space: pre; }
 .scene-tip[hidden] { display: none; }
 .scene-sound { position: absolute; right: clamp(12px, 3vw, 32px); top: 72px; z-index: 4; display: none; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--line-1); border-radius: 999px; background: color-mix(in oklab, var(--bg) 80%, transparent); color: var(--fg-1); font: inherit; font-size: var(--fs-meta); cursor: pointer; }

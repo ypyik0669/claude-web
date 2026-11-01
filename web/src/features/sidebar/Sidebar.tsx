@@ -25,8 +25,7 @@ import { addAllToSection, addSection, addToSection, DEFAULT_VIEW, deleteSection,
 import { MIME_SESSION } from '@/features/workbench/dnd';
 import { dlg } from '@/ui/dialog';
 import { AccountRow } from './account';
-import { DiscoveryHint } from './hint';
-import { hintReady, makeProjectSpelled, projectsEmpty } from './newcomer';
+import { makeProjectSpelled, projectsEmpty } from './newcomer';
 import { CHECKLIST_KEY } from '@/features/home/model';
 import { Menu, closeDrawer } from './menus';
 import { anchoredMenuOpen } from '@/ui/menus';
@@ -90,7 +89,6 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const dispatch = useStore((s) => s.dispatchLayout);
   const toast = useStore((s) => s.toast);
   const sources = useStore((s) => s.librarySources);
-  const agents = useStore((s) => s.agents);
   const sourceFilter = useStore((s) => s.sourceFilter);
   const setSourceFilter = useStore((s) => s.setSourceFilter);
   const busy = useStore(busyIds);
@@ -115,13 +113,13 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const closeMenu = useCallback((k: string) => setMenu((m) => (m === k ? null : m)), []);
 
   const ql = q.trim();
-  const visible = useMemo(() => filterSessions(sessions, { source: sourceFilter, query: q, showArchived, meta: sessionMeta, machine, otherAgents: view.show.otherAgents }), [sessions, sessionMeta, showArchived, q, sourceFilter, machine, view.show.otherAgents]);
+  const visible = useMemo(() => filterSessions(sessions, { source: sourceFilter, query: q, showArchived, meta: sessionMeta, machine }), [sessions, sessionMeta, showArchived, q, sourceFilter, machine]);
   // counts follow the archive toggle but not the source filter itself
   const counts = useMemo(() => sourceCounts(filterSessions(sessions, { source: 'all', query: '', showArchived, meta: sessionMeta, machine })), [sessions, sessionMeta, showArchived, machine]);
   // machines (federation): 本机 + every other machine with sessions; follows the source filter, not itself
-  const machines = useMemo(() => machineCounts(filterSessions(sessions, { source: sourceFilter, query: '', showArchived, meta: sessionMeta, otherAgents: view.show.otherAgents })), [sessions, sessionMeta, showArchived, sourceFilter, view.show.otherAgents]);
+  const machines = useMemo(() => machineCounts(filterSessions(sessions, { source: sourceFilter, query: '', showArchived, meta: sessionMeta })), [sessions, sessionMeta, showArchived, sourceFilter]);
   const showMachines = machines.length > 1 || machine !== 'all';
-  const nameOf = useCallback((kind: string) => sources.find((x) => x.kind === kind)?.name ?? agents.find((a) => a.kind === kind)?.name ?? (kind === 'claude' ? 'Claude Code' : kind), [sources, agents]);
+  const nameOf = useCallback((kind: string) => sources.find((x) => x.kind === kind)?.name ?? (kind === 'claude' ? 'Claude Code' : kind), [sources]);
   // a source still on its first read has no sessions yet: it is listed with a spinner instead of a count
   const chips: SourceChip[] = sources.filter((x) => x.enabled && ((counts[x.kind] ?? 0) > 0 || x.loading));
   // the active filter stays listed even while the sources are (re)loading, so it can always be seen and cleared
@@ -135,9 +133,8 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   // the 显示 button's dot (and the button staying shown at rest): something narrows, widens or hides part of the list.
   // A deliberate 分组 / 排序 / 每组几条 choice is not that — the list itself shows it — and lighting it for good would
   // add a control at rest (外框控件计数, 界面改版 阶段 0–1; stage C fix wave C-U4)
-  const viewDot = narrowed || showArchived || !view.show.otherAgents;
+  const viewDot = narrowed || showArchived;
   const clearFilters = () => { setQ(''); setSourceFilter('all'); setMachine('all'); };
-  const pending = sources.filter((x) => x.kind !== 'claude' && x.detected && !x.joined && !x.dismissed);
   const pinned = visible.filter((s) => sessionMeta[s.sessionId]?.pinned);
 
   // grouped as the 显示 menu says (view.ts: by project — the folder it ran in, the rest by folder —, by folder, by
@@ -164,7 +161,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
 
   // 文件夹: every folder with conversations on its own, newest first (2026-10-14 user report — like Claude's own app);
   // past the first FOLDERS_SHOWN they wait under 「更早的文件夹」, folded unless the user opened it (`sections.__older`)
-  // (re-review M-6: dozens of CLI folders or hundreds of joined Codex conversations must not bury 其它电脑)
+  // (re-review M-6: dozens of CLI folders must not bury 其它电脑)
   const folders = useMemo(() => splitFolders(grouped.other), [grouped]);
   const labels = useMemo(() => folderLabels(grouped.other.map(([cwd]) => cwd), workspaces.map((w) => w.name)), [grouped, workspaces]);
   const otherCollapsed = collapsed.__older ?? true;
@@ -182,10 +179,9 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const otherKept = useMemo(() => (otherCollapsed ? otherAll.filter(keep) : []), [otherCollapsed, otherAll, keep]);
   const otherBusy = otherAll.some(isBusy);
   // someone new (final review §9 #5): no project yet → the empty state points at 其它文件夹's folders, whose 设为项目
-  // is written out; the library's discovery hint waits until the newcomer checklist is finished or closed
+  // is written out
   const empty = byProject ? projectsEmpty({ projects: workspaces.length, otherFolders: grouped.other.length }) : null;
   const spellMake = makeProjectSpelled(workspaces.length);
-  const hintOk = useStore((s) => hintReady(s.settings[CHECKLIST_KEY], Date.now()));
 
   // selection (全选, Shift ranges) only ever covers rows that are on screen: expanded groups, within their page limit
   // a folder's group key: by 文件夹, a project's own folder is that project's group (its name, menu, fold state)
@@ -525,7 +521,6 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
           <div className="empty sb-empty">{tr('没有匹配的对话')}<div><button className="btn sm" onClick={clearFilters}>{tr('清除筛选')}</button></div></div>
         )}
       </div>
-      {pending.length > 0 && hintOk && <DiscoveryHint pending={pending} />}
       {mobile && <AccountRow open={menu === 'account'} setOpen={(v) => (v ? setMenu('account') : closeMenu('account'))} />}
     </>
   );

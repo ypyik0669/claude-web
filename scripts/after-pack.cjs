@@ -5,13 +5,13 @@ const path = require('node:path');
 
 const EXEC = [/[\/]spawn-helper$/, /[\/]claude-agent-sdk-[^\/]+[\/]claude$/, /[\/]ripgrep[\/][^\/]+[\/]rg$/, /[\/]bin[\/]rg$/];
 
-function walk(dir, out, all = false) {
+function walk(dir, out) {
   let ents;
   try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
   for (const e of ents) {
     const p = path.join(dir, e.name);
-    if (e.isDirectory()) walk(p, out, all);
-    else if (all || EXEC.some((r) => r.test(p))) out.push(p);
+    if (e.isDirectory()) walk(p, out);
+    else if (EXEC.some((r) => r.test(p))) out.push(p);
   }
 }
 
@@ -23,12 +23,6 @@ exports.default = async function afterPack(ctx) {
   const app = path.join(resources, 'app.asar.unpacked');
   const files = [];
   walk(app, files);
-  // the pinned sidecars are plain executables under resources/sidecars/<platform>/<id>/
-  const sidecars = [];
-  walk(path.join(resources, 'sidecars'), sidecars, true);
-  // CLIProxyAPI / Magpie under resources/engines/<platform>/<id>/ (version.txt is not executable; harmless)
-  const engines = [];
-  walk(path.join(resources, 'engines'), engines, true);
-  for (const f of [...files, ...sidecars, ...engines]) fs.chmodSync(f, 0o755);
-  console.log(`  • after-pack: chmod +x ${files.length} helper binaries, ${sidecars.length} sidecars, ${engines.length} engines`);
+  for (const f of files) fs.chmodSync(f, 0o755);
+  console.log(`  • after-pack: chmod +x ${files.length} helper binaries`);
 };

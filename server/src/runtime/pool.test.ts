@@ -41,19 +41,6 @@ vi.mock('./session-runner.js', async () => {
   return { SessionRunner: FakeRunner };
 });
 
-// other agents: no process either
-vi.mock('../agents/acp-driver.js', async () => {
-  const { EventEmitter } = await import('node:events');
-  class FakeAcp extends EventEmitter {
-    id: string; sessionId: string; state = 'starting'; info: any; lastActivity = Date.now();
-    constructor(kind: string, _launch: unknown, params: any) { super(); this.id = this.sessionId = params.sessionId ?? `acp-${Math.random()}`; this.info = { sessionId: this.sessionId, agent: kind }; }
-    getHistory() { return []; }
-    getPendingPermissions() { return []; }
-    async close() { this.state = 'closed'; }
-  }
-  return { AcpDriver: FakeAcp };
-});
-
 const { RunnerPool, idleTtlFor, MAX_IDLE_CLAUDE, ACCOUNT_PREFS_DEBOUNCE_MS } = await import('./pool.js');
 
 const pool = () => new RunnerPool({ forSession: () => undefined } as any);
@@ -134,15 +121,9 @@ describe('RunnerPool', () => {
   it('idle TTL follows the profile\'s cache retention: long-retention providers keep the process (a resume rebuilds the prompt prefix)', () => {
     const MIN = 60_000;
     expect(idleTtlFor(undefined)).toBe(30 * MIN);
-    expect(idleTtlFor({ type: 'openai' } as any)).toBe(120 * MIN);
-    expect(idleTtlFor({ type: 'grok' } as any)).toBe(120 * MIN);
-    expect(idleTtlFor({ type: 'gemini' } as any)).toBe(30 * MIN);
-    expect(idleTtlFor({ type: 'gateway' } as any)).toBe(30 * MIN);
     expect(idleTtlFor({ type: 'anthropic' } as any)).toBe(30 * MIN);
+    expect(idleTtlFor({ type: 'claude-account' } as any)).toBe(30 * MIN);
     expect(idleTtlFor({ type: 'anthropic', cache1h: true } as any)).toBe(65 * MIN);
-    // the long TTL is part of the cache optimisation: a profile that switched the shim off is back to 30 min
-    expect(idleTtlFor({ type: 'openai', cacheShim: false } as any)).toBe(30 * MIN);
-    expect(idleTtlFor({ type: 'grok', cacheShim: false } as any)).toBe(30 * MIN);
   });
 
   it('at most MAX_IDLE_CLAUDE idle Claude processes: beyond that the least recently used go first', () => {
@@ -175,8 +156,8 @@ describe('RunnerPool', () => {
   });
 
   it('the reaper uses the per-session TTL', () => {
-    const p = new RunnerPool({ forSession: (id?: string) => (id === 'oai' ? { type: 'openai' } : undefined) } as any);
-    const long: any = p.open({ sessionId: 'long', cwd: '/x', providerId: 'oai' });
+    const p = new RunnerPool({ forSession: (id?: string) => (id === 'long1h' ? { type: 'anthropic', cache1h: true } : undefined) } as any);
+    const long: any = p.open({ sessionId: 'long', cwd: '/x', providerId: 'long1h' });
     const plain: any = p.open({ sessionId: 'plain', cwd: '/x' });
     for (const r of [long, plain]) { r.state = 'idle'; r.lastActivity = Date.now() - 45 * 60_000; }
     (p as any).reap();
@@ -204,16 +185,6 @@ describe('RunnerPool', () => {
     a.close = async () => { throw new Error('boom'); };
     await expect(p.closeAll()).resolves.toBeUndefined();
     expect(b.closeCalls).toBe(1);
-  });
-});
-
-describe('RunnerPool: prompt-cache key of a reopened session', () => {
-  it('a session reopened from anywhere (goals, IM, schedules, hot switch) keeps the key recorded for it', () => {
-    const recorded: Record<string, any> = { 'fork-1': { cacheKey: 'root' } };
-    const p = new RunnerPool({ forSession: () => undefined, meta: { sessionMeta: (id: string) => recorded[id] ?? {}, settings: () => ({}) } } as any);
-    expect((p.open({ sessionId: 'fork-1', cwd: 'C:/x' }) as any).params.cacheParentId).toBe('root');
-    expect((p.open({ sessionId: 'plain', cwd: 'C:/x' }) as any).params.cacheParentId).toBeUndefined();
-    expect((p.open({ sessionId: 'other', cwd: 'C:/x', cacheParentId: 'explicit' }) as any).params.cacheParentId).toBe('explicit');
   });
 });
 
@@ -430,30 +401,22 @@ describe('RunnerPool: 只聊天 stays without tools, whoever reopens it', () => 
     f.emit('info', { sessionId: 'forked' });
     expect(writes[1]).toEqual(['forked', { chatOnly: true }]);
   });
-  it('a non-Claude agent is never started on it (none has a mode without tools)', () => {
-    const { p } = setup({ chat: { chatOnly: true } });
-    (p as any).agents = { launch: () => { throw new Error('launched'); } };
-    (p as any).transcripts = {};
-    expect(() => p.open({ sessionId: 'chat', cwd: 'C:/x', agent: 'codex' } as any)).toThrow(/只聊天/);
-  });
 });
 
 describe('RunnerPool: the provider when the caller does not name one (IM, schedules, goals, hand-overs)', () => {
-  const setup = (o: { recorded?: Record<string, any>; settings?: Record<string, unknown>; agents?: Record<string, any>; providers?: Record<string, { type: string }> } = {}) => {
+  const setup = (o: { recorded?: Record<string, any>; settings?: Record<string, unknown>; providers?: Record<string, { type: string }> } = {}) => {
     const recorded: Record<string, any> = { ...(o.recorded ?? {}) };
     const writes: [string, any][] = [];
-    const providers = o.providers ?? { relay: { type: 'openai' }, claudeRelay: { type: 'anthropic' } };
+    const providers = o.providers ?? { relay: { type: 'anthropic' }, claudeRelay: { type: 'anthropic' } };
     const meta = {
       sessionMeta: (id: string) => recorded[id] ?? {},
       setSessionMeta: async (id: string, patch: any) => { writes.push([id, patch]); recorded[id] = { ...recorded[id], ...patch }; },
       settings: () => o.settings ?? {},
       provider: (id: string) => (providers[id] ? { id, name: `P-${id}`, ...providers[id] } : undefined),
     };
-    // the table the server really uses: Codex takes openai / gateway, Claude everything
-    const fitError = (id: string | undefined, agent: string) => (!id || id === 'claude' ? null : !providers[id] ? 'missing' : agent === 'codex' && providers[id].type !== 'openai' ? 'unfit' : null);
-    const agents = { config: (k: string) => o.agents?.[k] ?? {}, launch: () => ({ command: 'x', args: [], env: {}, def: { name: 'X', protocol: 'acp', login: '' } }) };
+    const fitError = (id: string | undefined) => (!id || id === 'claude' ? null : !providers[id] ? 'missing' : null);
     const seen: (string | undefined)[] = [];
-    const p = new RunnerPool({ forSession: (id: string | undefined) => { seen.push(id); return undefined; }, fitError, meta, agentLaunch: () => ({ env: {}, args: [] }) } as any, agents as any);
+    const p = new RunnerPool({ forSession: (id: string | undefined) => { seen.push(id); return undefined; }, fitError, meta } as any);
     return { p, seen, writes, recorded };
   };
 
@@ -500,37 +463,6 @@ describe('RunnerPool: the provider when the caller does not name one (IM, schedu
     p.open({ sessionId: 's1', cwd: 'C:/x', providerId: 'claudeRelay' });
     expect(seen).toEqual(['claude', 'claudeRelay']);
     expect(writes).toEqual([]); // the caller (hub, swap) records what it asked for
-  });
-
-  it('another agent: its own 「用哪个供应商」 (settings → Agents), never Claude\'s default; a provider it cannot use is ignored', () => {
-    const launches: (string | undefined)[] = [];
-    const mk = (agents: Record<string, any>) => {
-      const s = setup({ settings: { defaultProviderId: 'claudeRelay' }, agents });
-      (s.p as any).providers.agentLaunch = (id: string | undefined) => { launches.push(id); return { env: {}, args: [] }; };
-      (s.p as any).transcripts = {};
-      return s;
-    };
-    const a = mk({ codex: { providerId: 'relay' } });
-    const r: any = a.p.open({ cwd: 'C:/x', agent: 'codex' });
-    expect(launches.pop()).toBe('relay');
-    expect(r.info).toMatchObject({ providerId: 'relay', providerName: 'P-relay' });
-    expect(a.writes).toEqual([[r.sessionId, { providerId: 'relay' }]]);
-    mk({}).p.open({ cwd: 'C:/x', agent: 'codex' });
-    expect(launches.pop()).toBeUndefined(); // its own login, not Claude's default
-    mk({ codex: { providerId: 'claudeRelay' } }).p.open({ cwd: 'C:/x', agent: 'codex' });
-    expect(launches.pop()).toBeUndefined();
-  });
-
-  it('a session handed to an agent that cannot use its recorded provider gets that agent\'s default', () => {
-    const s = setup({ recorded: { s1: { providerId: 'claudeRelay' } }, agents: { codex: { providerId: 'relay' } } });
-    const launches: (string | undefined)[] = [];
-    (s.p as any).providers.agentLaunch = (id: string | undefined) => { launches.push(id); return { env: {}, args: [] }; };
-    (s.p as any).transcripts = {};
-    s.p.open({ sessionId: 's1', cwd: 'C:/x', agent: 'codex' });
-    expect(launches).toEqual(['relay']);
-    expect(s.recorded.s1.providerId).toBe('relay');
-    expect(s.p.defaultProviderFor('codex')).toBe('relay');
-    expect(s.p.defaultProviderFor('claude')).toBeUndefined();
   });
 });
 

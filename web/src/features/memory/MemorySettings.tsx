@@ -7,17 +7,11 @@ import { Icon } from '@/ui/icons';
 import type { MemoryItem } from '@shared';
 import { tr } from '@/i18n';
 
-const AGENTS = [
-  { l: 'Claude', how: tr('Agent SDK 的 mcpServers（进程内注入）') },
-  { l: 'Codex', how: tr('-c mcp_servers.claude-web-memory.* 命令行覆盖') },
-  { l: tr('Gemini / Qwen / Kimi / 其它 Agent'), how: tr('session/new 的 mcpServers 字段') },
-];
-
 /**
  * Settings for the shared memory store.
  *
- * The one thing worth being loud about: every agent gets the store through the process WE spawn, so
- * nothing is written into the user's own `~/.claude`, `~/.codex` or `~/.gemini` config.
+ * The one thing worth being loud about: Claude gets the store through the process WE spawn, so
+ * nothing is written into the user's own `~/.claude` config.
  */
 export function MemorySettings() {
   const on = (useStore((s) => s.settings['memory.mcp']) ?? true) as boolean;
@@ -40,20 +34,18 @@ export function MemorySettings() {
     <div className="sec">
       <div className="row">
         <div className="grow">
-          <div>{tr('把记忆开放给所有 agent')}</div>
-          <div className="sub">{tr('关掉之后 agent 不再看到 memory_search / memory_write 工具，记忆面板仍然可用。改动在下次开对话时生效。')}</div>
+          <div>{tr('把记忆开放给 Claude')}</div>
+          <div className="sub">{tr('关掉之后 Claude 不再看到 memory_search / memory_write 工具，记忆面板仍然可用。改动在下次开对话时生效。')}</div>
         </div>
         <button className={clsx('toggle', on && 'on')} onClick={() => void setSetting('memory.mcp', !on)} />
       </div>
 
       <div className="label" style={{ marginTop: 14 }}>{tr('注入方式')}</div>
-      {AGENTS.map((a) => (
-        <div key={a.l} className="row">
-          <div className="grow"><div>{a.l}</div><div className="sub">{a.how}</div></div>
-        </div>
-      ))}
+      <div className="row">
+        <div className="grow"><div>Claude</div><div className="sub">{tr('Agent SDK 的 mcpServers（进程内注入）')}</div></div>
+      </div>
       <div className="sub" style={{ marginTop: 8 }}>
-        {tr('一律只作用在我们启动的进程上：')}<code>~/.claude</code>、<code>~/.codex</code>、<code>~/.gemini</code> {tr('里的配置一个字都不改，卸载 claude-web 不留痕迹。')}
+        {tr('一律只作用在我们启动的进程上：')}<code>~/.claude</code> {tr('里的配置一个字都不改，卸载 claude-web 不留痕迹。')}
       </div>
 
       <div className="label" style={{ marginTop: 14 }}>{tr('存储')}</div>

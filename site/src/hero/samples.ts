@@ -33,5 +33,3 @@ export function diffStat(d: DiffFile[]): { add: number; del: number } {
   for (const f of d) for (const l of f.lines) { if (l.kind === 'add') add++; if (l.kind === 'del') del++; }
   return { add, del };
 }
-
-export const GATEWAY_ADDRESS = 'http://127.0.0.1:3090/v1';

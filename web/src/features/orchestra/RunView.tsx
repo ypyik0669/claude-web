@@ -1,22 +1,17 @@
 import { useEffect, useState } from 'react';
-import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { ago, basename, clsx, fmtMs } from '@/util';
 import { Icon } from '@/ui/icons';
 import { dlg } from '@/ui/dialog';
 import { Markdown } from '@/features/chat/Markdown';
-import type { CompareCandidate, NodeRun, OrchCleanup, OrchNode, OrchRun } from '@shared';
-import { Graph, KIND_ICON, STATE_L } from './Graph';
-import { agentIcon, agentLabel } from './labels';
+import type { NodeRun, OrchCleanup, OrchNode, OrchRun } from '@shared';
+import { Graph, kindIcon, STATE_L } from './Graph';
+import { agentLabel } from './labels';
 import { orchAct, useOrch, useOrchBusy } from './state';
 import { tr } from '@/i18n';
 
 export const RUN_L: Record<OrchRun['state'], string> = { running: tr('运行中'), waiting: tr('等你'), done: tr('完成'), failed: tr('失败'), cancelled: tr('已取消') };
 const OUT_SHOW = 6000;
-
-const req = async (r: any, ok?: string) => {
-  try { const v = await ws.request(r); if (ok) useStore.getState().toast(ok, true); return v; } catch (e: any) { useStore.getState().toast(e.message); return null; }
-};
 
 function SessionLinks({ ids }: { ids: string[] }) {
   const loadHistory = useStore((s) => s.loadHistory);
@@ -25,60 +20,6 @@ function SessionLinks({ ids }: { ids: string[] }) {
     <span className="orch-sess">
       {ids.map((id, i) => <button key={id} className="btn xs ghost" onClick={() => void loadHistory(id)} title={id}><Icon name="chat" size={11} /> {tr('对话{v}', { v: ids.length > 1 ? ` ${i + 1}` : '' })}</button>)}
     </span>
-  );
-}
-
-function DiffText({ text }: { text: string }) {
-  return (
-    <pre className="orch-diff">
-      {text.split('\n').map((l, i) => <span key={i} className={clsx(l.startsWith('+') && !l.startsWith('+++') && 'add', l.startsWith('-') && !l.startsWith('---') && 'del', l.startsWith('@@') && 'hunk')}>{l}{'\n'}</span>)}
-    </pre>
-  );
-}
-
-function Candidate({ run, nodeId, c, winner, recommended, canPick }: { run: OrchRun; nodeId: string; c: CompareCandidate; winner?: string; recommended?: string; canPick: boolean }) {
-  const [diff, setDiff] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
-  const loadHistory = useStore((s) => s.loadHistory);
-  const toggleDiff = async () => {
-    if (!open && diff === null) setDiff(((await req({ kind: 'orchestra.node.diff', runId: run.id, nodeId, agent: c.agent })) as string | null) ?? '');
-    setOpen(!open);
-  };
-  const busy = useOrchBusy((s) => !!s.keys[run.id]);
-  // the user may have kept talking to a candidate: merging it mid-turn would merge a moving target
-  const live = useStore((s) => { const st = c.sessionId ? s.open[c.sessionId]?.state : undefined; return st === 'running' || st === 'starting' || st === 'waiting'; });
-  const pick = async () => {
-    const message = [
-      tr('1. 先把 {path} 里还没提交的改动提交到 {branch}；', { path: c.worktree?.path, branch: c.worktree?.branch }),
-      tr('2. 用 merge --no-ff 合并到 {baseBranch}（你手上有进行中的 merge / rebase 或暂存区有改动时会拒绝，什么都不动）；', { baseBranch: run.baseBranch }),
-      tr('3. 合并成功后：各候选的独立副本目录在没有未提交改动时删除；落选分支只有在没被人动过（仍是跑完时的提交）时才删除；胜者分支保留。有改动的一律保留并列出来。'),
-      tr('合并失败时节点回到「等你选」，所有独立副本和分支都不动。'),
-    ].join('\n');
-    if (!(await dlg.confirm(tr('选 {agentLabel} 的实现？', { agentLabel: agentLabel(c.agent) }), { message, okLabel: tr('合并') }))) return;
-    await orchAct(run.id, { kind: 'orchestra.node.pick', runId: run.id, nodeId, winner: c.agent }, tr('已处理'));
-  };
-  return (
-    <div className={clsx('orch-cand', `st-${c.state}`, winner === c.agent && 'win')}>
-      <div className="hd">
-        <Icon name={agentIcon(c.agent)} size={13} />
-        <b>{agentLabel(c.agent)}</b>
-        {winner === c.agent && <span className="badge ok">{tr('已选')}</span>}
-        {recommended === c.agent && winner !== c.agent && <span className="badge info">{tr('裁判推荐')}</span>}
-        <span className="grow" />
-        <span className="muted">{c.state === 'running' ? tr('运行中…') : c.state === 'failed' ? tr('失败') : tr('{files} 个文件{v}', { files: c.files ?? 0, v: c.costUsd ? ` · $${c.costUsd.toFixed(3)}` : '' })}</span>
-      </div>
-      {c.error && <div className="orch-errline">{c.error}</div>}
-      {c.output && <div className="reply"><Markdown text={c.output.slice(0, OUT_SHOW)} /></div>}
-      {c.diffStat && <pre className="stat">{c.diffStat}</pre>}
-      <div className="acts">
-        {c.sessionId && <button className="btn xs ghost" onClick={() => void loadHistory(c.sessionId!)}><Icon name="chat" size={11} /> {tr('对话')}</button>}
-        {c.state === 'done' && c.worktree && !winner && <button className="btn xs ghost" onClick={() => void toggleDiff()}><Icon name="eye" size={11} /> {open ? tr('收起 diff') : tr('完整 diff')}</button>}
-        <span className="grow" />
-        {canPick && c.state === 'done' && live && <span className="muted sm">{tr('胜者的对话还在运行，先停止或等它结束')}</span>}
-        {canPick && c.state === 'done' && <button className="btn xs primary" disabled={busy || live} title={live ? tr('胜者的对话还在运行，先停止或等它结束') : undefined} onClick={() => void pick()}><Icon name="check" size={11} /> {tr('选它合并')}</button>}
-      </div>
-      {open && diff !== null && (diff ? <DiffText text={diff} /> : <div className="muted sm">{tr('没有改动')}</div>)}
-    </div>
   );
 }
 
@@ -101,16 +42,16 @@ function ApprovalBox({ run, node }: { run: OrchRun; node: OrchNode & { kind: 'ap
 
 function NodeDetail({ run, node, nr, selected }: { run: OrchRun; node: OrchNode; nr: NodeRun; selected: boolean }) {
   const secs = nr.startedAt ? (nr.finishedAt ?? Date.now()) - nr.startedAt : 0;
-  const canRetry = nr.state === 'failed' || nr.state === 'cancelled' || nr.state === 'skipped' || (node.kind === 'compare' && nr.state === 'waiting');
+  const canRetry = nr.state === 'failed' || nr.state === 'cancelled' || nr.state === 'skipped';
   const busy = useOrchBusy((s) => !!s.keys[run.id]);
   const wts = [...(nr.worktrees ?? []), ...(nr.retained ?? [])];
   const retry = async () => {
     const lines = [
-      node.kind === 'compare' ? tr('所有候选会在新的对话、新的独立副本（名字带 -attempt 后缀）里重新跑一遍，已经跑完的结果不再能选。') : tr('这个节点会在新的对话里重新跑，还没完成的下游节点也会重新排队。'),
+      tr('这个节点会在新的对话里重新跑，还没完成的下游节点也会重新排队。'),
       nr.mergePending ? tr('这个节点的活已经做完、只是没合并进去：处理冲突后点「重新合并」就够了（或手动 git merge 它的分支），不必整个重跑。') : '',
       wts.length ? tr("现有的独立副本与分支都保留，不会删除：\n{map}", { map: wts.map((w) => `· ${w.path}（${w.branch}）`).join('\n') }) : '',
     ].filter(Boolean).join('\n\n');
-    if (nr.state === 'waiting' || wts.length) { if (!(await dlg.confirm(tr('重试「{title}」？', { title: node.title || node.id }), { message: lines, okLabel: tr('重试') }))) return; }
+    if (wts.length) { if (!(await dlg.confirm(tr('重试「{title}」？', { title: node.title || node.id }), { message: lines, okLabel: tr('重试') }))) return; }
     await orchAct(run.id, { kind: 'orchestra.node.retry', runId: run.id, nodeId: node.id }, tr('已重新开始'));
   };
   const remerge = async () => {
@@ -122,12 +63,12 @@ function NodeDetail({ run, node, nr, selected }: { run: OrchRun; node: OrchNode;
   return (
     <div className={clsx('orch-detail', `st-${nr.state}`, selected && 'sel')} id={`orch-node-${run.id}-${node.id}`}>
       <div className="hd">
-        <Icon name={KIND_ICON[node.kind]} size={14} />
+        <Icon name={kindIcon(node.kind)} size={14} />
         <b>{node.title || node.id}</b>
         <span className={clsx('pill', `st-${nr.state}`)}>{STATE_L[nr.state]}</span>
-        <span className="muted">{node.kind === 'task' ? agentLabel(node.agent) : node.kind === 'compare' ? node.agents.map(agentLabel).join(' / ') : ''}{secs && nr.state !== 'pending' ? ` · ${fmtMs(secs)}` : ''}{nr.costUsd ? ` · $${nr.costUsd.toFixed(3)}` : ''}{(nr.attempts ?? 0) > 1 ? tr(' · 第 {attempts} 次', { attempts: nr.attempts }) : ''}</span>
+        <span className="muted">{node.kind === 'task' ? agentLabel(node.agent) : ''}{secs && nr.state !== 'pending' ? ` · ${fmtMs(secs)}` : ''}{nr.costUsd ? ` · $${nr.costUsd.toFixed(3)}` : ''}{(nr.attempts ?? 0) > 1 ? tr(' · 第 {attempts} 次', { attempts: nr.attempts }) : ''}</span>
         <span className="grow" />
-        {node.kind !== 'compare' && <SessionLinks ids={nr.sessionIds} />}
+        <SessionLinks ids={nr.sessionIds} />
         {nr.mergePending && nr.state === 'failed' && <button className="btn xs" disabled={busy} onClick={() => void remerge()}><Icon name="branch" size={11} /> {tr('重新合并')}</button>}
         {canRetry && <button className="btn xs ghost" disabled={busy} onClick={() => void retry()}><Icon name="refresh" size={11} /> {tr('重试')}</button>}
       </div>
@@ -135,19 +76,6 @@ function NodeDetail({ run, node, nr, selected }: { run: OrchRun; node: OrchNode;
       {nr.note && <div className="orch-note">{nr.note}</div>}
       {node.kind === 'approval' && nr.state === 'waiting' && <ApprovalBox run={run} node={node} />}
       {node.kind === 'approval' && nr.approval && <div className="muted sm">{nr.approval.decision === 'approve' ? tr('已通过') : tr('已驳回')}{nr.approval.comment ? `：${nr.approval.comment}` : ''} · {ago(nr.approval.at)}</div>}
-      {node.kind === 'compare' && nr.candidates && (
-        <>
-          {nr.judge && (
-            <div className="orch-judge">
-              <div className="hd"><Icon name="approval" size={12} /> {tr('裁判 {agentLabel} · {v}', { agentLabel: agentLabel(nr.judge.agent), v: nr.judge.state === 'running' ? tr('评审中…') : nr.judge.state === 'failed' ? tr('失败：{error}', { error: nr.judge.error ?? '' }) : nr.judge.recommended ? tr('推荐 {agentLabel}', { agentLabel: agentLabel(nr.judge.recommended) }) : tr('没给出明确推荐') })}{nr.judge.sessionId && <SessionLinks ids={[nr.judge.sessionId]} />}</div>
-              {nr.judge.output && <details><summary>{tr('裁判意见')}</summary><Markdown text={nr.judge.output.slice(0, OUT_SHOW)} /></details>}
-            </div>
-          )}
-          <div className="orch-cands">
-            {nr.candidates.map((c) => <Candidate key={c.agent} run={run} nodeId={node.id} c={c} winner={nr.winner} recommended={nr.judge?.recommended} canPick={nr.state === 'waiting'} />)}
-          </div>
-        </>
-      )}
       {wts.length > 0 && nr.state !== 'done' && (
         <details className="orch-wts"><summary>{tr('独立副本 {wtsCount} 个（保留着，不会自动删除）', { wtsCount: wts.length })}</summary>{wts.map((w) => <div key={w.path} className="mono">{w.path} · {w.branch}</div>)}</details>
       )}
@@ -161,7 +89,7 @@ function NodeDetail({ run, node, nr, selected }: { run: OrchRun; node: OrchNode;
   );
 }
 
-/** One run: header + actions, the live execution graph, and a detail card per node (approval / compare inline). */
+/** One run: header + actions, the live execution graph, and a detail card per node (approvals inline). */
 export function RunView({ runId, onClose }: { runId: string; onClose: () => void }) {
   const run = useOrch((s) => s.full[runId]);
   const [sel, setSel] = useState<string | null>(null);
@@ -173,7 +101,7 @@ export function RunView({ runId, onClose }: { runId: string; onClose: () => void
   const live = run.state === 'running' || run.state === 'waiting';
   const removeRun = async () => {
     if (!(await dlg.confirm(tr('删除这条运行记录？'), { message: tr('对话本身不会被删除。'), danger: true, okLabel: tr('删除') }))) return;
-    const hasWts = Object.values(run.nodes).some((n) => n.worktrees?.length || n.retained?.length || n.candidates?.some((c) => c.worktree));
+    const hasWts = Object.values(run.nodes).some((n) => n.worktrees?.length || n.retained?.length);
     const cleanup = hasWts && (await dlg.confirm(tr('同时清理这次运行的独立副本与 cw/ 分支？'), { message: tr('只删除干净、已合并（或仍是编排自己提交的）的独立副本与分支；有未提交改动或未合并提交的只列出来，不删。'), okLabel: tr('清理'), cancelLabel: tr('只删记录') }));
     const r = await orchAct<OrchCleanup>(runId, { kind: 'orchestra.run.remove', runId, cleanup });
     if (!r) return;

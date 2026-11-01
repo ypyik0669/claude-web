@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionFeatures } from '@shared';
-import { CAPABILITIES, FEATURE_KEYS, LIVE_CAPS_NOTE, ONE_TIME_KEYS, afterStart, capabilitiesFor, capabilityTags, featureCount, migrateFeatureDefaults, parseChannels, plusMenuIds, plusSections, unavailableKeys, withFeature, withoutTag, usable } from './capabilities';
+import { CAPABILITIES, FEATURE_KEYS, LIVE_CAPS_NOTE, ONE_TIME_KEYS, afterStart, capabilitiesFor, capabilityTags, featureCount, migrateFeatureDefaults, plusMenuIds, plusSections, unavailableKeys, withFeature, withoutTag, usable } from './capabilities';
 
 describe('session capabilities (the old 「功能」 menu, now in +)', () => {
   it('every switch of the old menu is here, in the spec order and groups', () => {
-    // the old 功能 menu: chrome, computerUse, coordinator, proactive, brief + the channels field
-    expect(FEATURE_KEYS).toEqual(['chrome', 'computerUse', 'coordinator', 'proactive', 'brief']);
+    expect(FEATURE_KEYS).toEqual(['chrome', 'computerUse', 'brief']);
     expect(CAPABILITIES.filter((c) => c.group === 'main').map((c) => c.key)).toEqual(['chrome', 'computerUse']);
-    expect(CAPABILITIES.filter((c) => c.group === 'advanced').map((c) => c.key)).toEqual(['coordinator', 'proactive', 'brief']);
+    expect(CAPABILITIES.filter((c) => c.group === 'advanced').map((c) => c.key)).toEqual(['brief']);
     for (const c of CAPABILITIES) {
       expect(c.label).toBeTruthy();
       expect(c.desc.length).toBeGreaterThan(4);
@@ -17,7 +16,7 @@ describe('session capabilities (the old 「功能」 menu, now in +)', () => {
 
   it('uses the spec wording', () => {
     const by = Object.fromEntries(CAPABILITIES.map((c) => [c.key, c.label]));
-    expect(by).toMatchObject({ chrome: '控制 Chrome', computerUse: '操控电脑', coordinator: '协调者模式', proactive: '主动模式' });
+    expect(by).toMatchObject({ chrome: '控制 Chrome', computerUse: '操控电脑', brief: 'Brief' });
   });
 
   it('toggles and counts', () => {
@@ -27,16 +26,14 @@ describe('session capabilities (the old 「功能」 menu, now in +)', () => {
     expect(featureCount(f)).toBe(2);
     f = withFeature(f, 'chrome', false);
     expect(f.chrome).toBeUndefined();
-    expect(featureCount({ ...f, channels: ['server:x'], env: { A: '1' } })).toBe(2); // env is not a capability
+    expect(featureCount({ ...f, env: { A: '1' } })).toBe(1); // env is not a capability
   });
 
-  it('open capabilities become removable tags (channels included)', () => {
-    const f: SessionFeatures = { brief: true, chrome: true, channels: ['plugin:a@m', 'server:b'] };
+  it('open capabilities become removable tags', () => {
+    const f: SessionFeatures = { brief: true, chrome: true };
     const tags = capabilityTags(f);
-    expect(tags.map((t) => t.key)).toEqual(['chrome', 'brief', 'channels']); // menu order, not object order
-    expect(tags.find((t) => t.key === 'channels')?.label).toBe('频道 2');
-    expect(withoutTag(f, 'channels').channels).toBeUndefined();
-    expect(withoutTag(f, 'chrome')).toEqual({ brief: true, channels: ['plugin:a@m', 'server:b'] });
+    expect(tags.map((t) => t.key)).toEqual(['chrome', 'brief']); // menu order, not object order
+    expect(withoutTag(f, 'chrome')).toEqual({ brief: true });
     expect(capabilityTags({})).toEqual([]);
   });
 
@@ -78,18 +75,13 @@ describe('session capabilities (the old 「功能」 menu, now in +)', () => {
 
   it('…asked for anew for every conversation: after one was started with it, the next starts without', () => {
     expect(ONE_TIME_KEYS).toEqual(['computerUse']);
-    expect(afterStart({ computerUse: true, chrome: true, channels: ['server:x'] })).toEqual({ chrome: true, channels: ['server:x'] });
+    expect(afterStart({ computerUse: true, chrome: true, brief: true })).toEqual({ chrome: true, brief: true });
     const kept: SessionFeatures = { chrome: true, brief: true };
     expect(afterStart(kept)).toBe(kept);
     // what an older build left in localStorage is taken over without it; what is in meta.json is read as it is
     // (the machine is not known yet there: `usable` leaves out what it cannot do when the defaults are read)
     expect(migrateFeatureDefaults(undefined, JSON.stringify({ computerUse: true, chrome: true }))).toEqual({ value: { chrome: true }, write: true, dropLegacy: true });
     expect(migrateFeatureDefaults({ computerUse: true, chrome: true }, null).value).toEqual({ computerUse: true, chrome: true });
-  });
-
-  it('channels: a comma / whitespace list, empty entries dropped', () => {
-    expect(parseChannels(' plugin:a@m ,server:b,, ')).toEqual(['plugin:a@m', 'server:b']);
-    expect(parseChannels('')).toEqual([]);
   });
 });
 
@@ -121,7 +113,7 @@ describe('+ menu sections', () => {
     expect(s.goal).toBe(false);
   });
   it('plusMenuIds: every row id the menu can draw', () => {
-    expect(plusMenuIds()).toEqual(['files', 'folder', 'reference', 'slash', 'connectors', 'chrome', 'computerUse', 'coordinator', 'proactive', 'brief', 'channels', 'goal']);
+    expect(plusMenuIds()).toEqual(['files', 'folder', 'reference', 'slash', 'connectors', 'chrome', 'computerUse', 'brief', 'goal']);
   });
 });
 
@@ -131,7 +123,7 @@ describe('new-conversation capability defaults live in meta.json (ui.featureDefa
     expect(migrateFeatureDefaults({}, null)).toEqual({ value: {}, write: false, dropLegacy: false });
   });
   it('nothing stored yet: the old cw.lastFeatures is taken over once', () => {
-    expect(migrateFeatureDefaults(undefined, '{"chrome":true,"channels":["server:x"]}')).toEqual({ value: { chrome: true, channels: ['server:x'] }, write: true, dropLegacy: true });
+    expect(migrateFeatureDefaults(undefined, '{"chrome":true,"brief":true}')).toEqual({ value: { chrome: true, brief: true }, write: true, dropLegacy: true });
   });
   it('garbage in localStorage is dropped, not written', () => {
     expect(migrateFeatureDefaults(undefined, '{oops')).toEqual({ value: {}, write: false, dropLegacy: true });

@@ -1,22 +1,17 @@
-# 引擎切换 / 费用 / 切换竞态（2026-10-01～02，真中转实测）
+# 续接位置 / 费用 / 切换竞态（2026-10-01～02，真中转实测）
 
-用 super-nb（只放行官方二进制）和 aizhongzhuan（ccb 能用）两个中转、12 个 key 花额度实测出来的，脚本和报告在会话 scratchpad 的 `relay-test/`（不入库）。
+用两个中转、12 个 key 花额度实测出来的，脚本和报告在会话 scratchpad 的 `relay-test/`（不入库）。当时还有我们自己的引擎 ccb（2026-11-01 删了，见「只留 Claude」），下面只留对官方 Claude Code 还成立的部分。
 
-- **两个引擎共用一份 transcript，但续接位置不一样**（`runtime/transcript-file.ts`）：官方 2.1.283 从最后一个带 `leafUuid` 的 `last-prompt` 接，ccb 2.8.4 写的 `last-prompt` 不带 `leafUuid`。所以 ccb 跑过几轮再换回官方，官方从那几轮之前接上，下一轮还会岔开，ccb 那几轮就永久丢了（终端里 `claude --resume` 接网页上的 ccb 对话也一样）。`repairLeaf()` 在官方二进制续接前、以及每个回合 result 之后追加一条指向最新链条目的 `last-prompt`：ccb 是 result 后 1.5 s；官方是等这一轮最后一个回答落盘（`flushed()`）再 1.5 s。最后一个带 leaf 的 `last-prompt` 写在所有链条目之后时（终端里 `/rewind` 过），以它为准、不动。`resumeSessionAt` 不能用来修这个：它是截断式 resume，会分叉。
+- **续接位置**（`runtime/transcript-file.ts`）：官方 Claude Code 从最后一个带 `leafUuid` 的 `last-prompt` 接。`repairLeaf()` 在续接前、以及每个回合 result 之后（等这一轮最后一个回答落盘 `flushed()` 再 1.5 s）追加一条指向最新链条目的 `last-prompt`。最后一个带 leaf 的 `last-prompt` 写在所有链条目之后时（终端里 `/rewind` 过），以它为准、不动。`resumeSessionAt` 不能用来修这个：它是截断式 resume，会分叉。（历史：起因是 ccb 写的 `last-prompt` 不带 `leafUuid`，ccb 跑过的轮次换回官方后会被岔掉；老对话里还有这种轮次，修复照样管用。）
   - **官方二进制自己只在发出 prompt 时和进程退出时写 leaf**（2026-10-02 实测）：发 prompt 时写的 leaf 是回答之前那一条，退出时写的是它自己知道的最新一条（和 `cost-state` 一起）。所以它闲置时文件里的 leaf 一直落后一个回答，这时候在终端里 `claude --resume`，会丢掉网页最后那个回答。上面这条 result 后的修复就是为它加的。
   - 因为终端写入（`wroteElsewhere()`）而关掉一个闲置的官方进程时，它退出时写的 leaf 落在终端那几轮**后面**，看上去像一次 `/rewind`，下一次续接又会把终端那几轮岔掉。`pool.transcriptChanged()` 改走 `runner.yieldToOutside()`：关之前记下文件大小，关完之后调用 `repairLeaf(file, id, {ignoreLeavesFrom: 大小})`，从那个位置起写的 leaf 不算；如果终端在这之前 `/rewind` 过，就把它重新写到最后。
-- **官方二进制把累计费用存在 transcript 的 `cost-state`**，续接时接着累计；ccb 不写也不读。
+- **官方二进制把累计费用存在 transcript 的 `cost-state`**，续接时接着累计（`lastCostState()`）。
 - **`result.total_cost_usd` / `modelUsage` 是进程内的累计值**（sdk.d.ts：「read the latest result rather than summing」），`usage` 才是每轮的。下游（composer 合计、账本、目标、IM、编排）全按每轮相加。`usage/turn-cost.ts` 的 `turnShare()` 在 runner 里把每个 result 改写成本轮的份额，进程累计值放在 `session_cost_usd`，`modelUsage` 只留本轮涨了的模型（账本按第一个键记模型）。计算规则：
-  - 起点：官方引擎是 transcript 最后一个 `cost-state`，ccb 是 0；
+  - 起点：transcript 最后一个 `cost-state`；
   - 累计值变小（换了进程、`/clear`）就当作重新开始；
   - 全零的 result（强制停止、启动失败）不动累计值。
-- **ccb 按模型名决定 thinking**：认识的 opus-4-6 / opus-4-7 / sonnet-4-6 发 adaptive，其它所有 opus / sonnet / haiku 都发 `budget_tokens`。claude-opus-5-5 在中转上因此 400「requires adaptive thinking; omit thinking or use thinking.type=adaptive」；claude.ai 账号本身接受（账本里有 ccb 上 Opus 5.5 成功的轮次）。**我们的引擎 cw.1 起按版本判断**（4.6 起都发 `{type:'adaptive'}` + `output_config.effort`，和官方二进制的请求形状一致，phase 22 和 2026-10-09 真中转抓包确认）；下面的绕行**还留着**：要在真的 Claude 格式中转上跑通一轮才去掉，2026-10-09 那次用的 Key 被中转收回了分组（官方二进制同样 403「无权访问 CC福利版 分组」），没验成——换一个能用的 Key 跑 scratchpad 里的 `relay-test/own-engine/w7-real.mjs claude-cli`，过了就删 `ccbMisthinks()`、`preferredRuntime()` 里那条分支、`user-env.ts` 同样的判断和 runner `plan()` 的 `noThinking`。
-  - **规则**：`@catalog` 的 `ccbMisthinks(id)`（opus|sonnet|haiku 主版本 ≥ 5）+ `preferredRuntime(p, model)`：Anthropic 格式 / 网关供应商、没有显式 runtime、模型是这种 → 官方二进制。别名经 `providerModelId()` 走档案的 modelMap，没给模型时跟 opus 那个映射。在 settings.json 里自己配中转的账号也按这个判断（`runtime/user-env.ts` 的 `userAnthropicEnv()`）。
-  - **例外**：官方二进制不认 `--proactive` / `--computer-use-mcp`（unknown option），对话用了这两个或 devChannels 时留在 ccb，加 `CLAUDE_CODE_DISABLE_THINKING=1`。
-  - runner 的 `plan()` 返回 `{engine, noThinking, key}`。`setModel` 换出来的 key 不同就重开进程；正在回答时等这一轮的 result 再重开（`respawnWhenIdle()`，不截断回合）。
-- **settings.json 里自己配了中转的账号**（`ANTHROPIC_BASE_URL` / `AUTH_TOKEN` / `API_KEY`）不注入 `ccbAccountEnv()`：以前默认模型被换成 claude-sonnet-5，中转没有，220 s 后才 model_not_found。
-- **ccb 没有 headless 的 `/effort`**（回「Unknown skill: effort」，而且不是错误）。我们的引擎上改档 / 深度编排都走 SDK 的 `query.applyFlagSettings({effortLevel, ultracode})`，进程不重启、回合进行中也行（引擎不认时才退回 `respawnWhenIdle()`）；改档会同时离开深度编排（`ultracode:false` 一起发）。开对话时就选了深度编排（欢迎页、重开）= 引擎带 `--ultracode` 启动（`OpenSessionParams.ultracode`，2026-10-09 以前服务端从来不读它）。官方二进制照旧只有对话里的 `/effort …`（开对话时选的深度编排在第一条消息之前补发）。见「思考强度 / 深度编排 / 自动判断在所有模型上」。
-- **SDK 的 `sessionStore`（交接到 Claude 的 `resumeEntries`）会加 `--session-mirror`，ccb 不认，直接 exit 1。** 只有官方引擎用 entries；ccb 上按原来的方式接：有自己的 transcript 就续接，没有就在同一个 id 上新开，简报（`OpenSessionParams.briefing`）作为第一条消息发进去。交回 Claude 时，其它 agent 的镜像 `agents/<sid>.jsonl` 改名成 `.parked-<agent>`（`AgentTranscripts.park`），不然 `session.open` / `transcript.load` / 列表会继续把它当成 Codex 对话（在 Claude 的供应商上起 Codex，503 ×28）；再交给同一个 agent 时 `unpark`，原生线程接着用。Claude 还没有自己的 transcript 时（官方二进制要等下一条消息才写），`AgentTranscripts.entries()` 把搁置的镜像列成一行 Claude 对话，不然侧栏里这一行会消失（e2e phase 11 抓到的）。
+- **改档 / 深度编排**：Claude Code 没有运行时的强度控制，`setEffort` / `setUltracode` 往对话里发 `/effort …`（改档同时离开深度编排）；开对话时就选了深度编排在第一条消息之前补发。见「思考强度 / 深度编排」。runner 的 `plan()` 返回 `{engine, key}`（key 只看压缩点和子代理模型），key 变了就重开进程；正在回答时等这一轮的 result 再重开（`respawnWhenIdle()`，不截断回合，后台子代理 / 工作流还在跑也等）。
+- 历史（ccb 删了，代码也没了）：ccb 按模型名决定 thinking 导致 claude-opus-5-5 在中转上 400 的绕行（`ccbMisthinks` / `preferredRuntime`）、`ccbAccountEnv()`、`applyFlagSettings({effortLevel, ultracode})` 改档、ccb 不认 `--session-mirror`、交回 Claude 时其它 agent 镜像的 `.parked-<agent>`。
 - **CLI 的 stderr**：自定义 `spawnClaudeCodeProcess` 时 SDK 不读它，所以错误只剩「exited with code 1」，没人读的管道还可能写满。runner 的 `spawnProcess()` 自己读：每行加 `[claude xxxxxxxx]` 前缀写进 server.log，留最后 4000 字；出错时 `cliSaid()` 取最后 3 行，拼成「（CLI 输出：…）」。
 - **旧进程要真的结束**：SDK 的 close 在进程退出之前就 resolve，而且 Windows 上要等 2 s + 5 s 才杀。这期间旧进程还会替旧供应商答完一轮、扣费，窗口里看不到；同一个 id 上的新进程偶尔报「Session ID … already in use」。`endProcess()` 在 `respawn()` / `close()` 里给它 1.5 s 写完 transcript，然后 kill，再等最多 2 s。
 - **切换竞态**（`session/swap.ts`）：
@@ -31,17 +26,5 @@
   - `--no-session-persistence`：以前每测一次都在 `其它文件夹 › Temp` 留一个「Reply with exactly: ok」对话，欢迎页的默认目录也被带偏；
   - `CLAUDE_CODE_MAX_RETRIES=1`；
   - 超时直接说超时（`runClaudeCli` 返回 `timedOut`）；
-  - `worthOfficialRetry()`：5xx / 429 / 余额 / 没有可用账号 / 超时时，不再换官方二进制重测一遍。以前一个一直 503 的中转要等 242 s；
   - 列表里一个聊天模型都没有（只有图片模型的 key）就直接这么说。模型菜单和会话的模型列表也用 `isChatModel` 过滤。
-- **缓存垫片的错误体**：中转回 `{code, message}`（没有 `error` 对象）或纯文本时，OpenAI SDK 只显示「403 status code (no body)」。`clientErrorBody()` 包成 `{error:{message, code}}`。
-- **Codex**：
-  - 闲置 Codex 进程会一直占着线程，终端里 `codex exec resume` 报「already has an active writer」，所以 TTL 改成 2 分钟（`CODEX_IDLE_TTL_MS`）；
-  - resume 回复里的 model 会写回 info；
-  - 对话库对还不存在的数据目录也挂 `watchTree`（它每 30 s 找一次）。以前在 Codex 第一次运行之前加入对话库，就永远没有监听。
-  - **网页里开的 Codex 对话，在 Codex CLI 里（`codex exec resume <线程>`）接着聊的轮次**只在 Codex 的线程里，本地镜像 `agents/<id>.jsonl` 没有。`LibraryService.syncMirror(id)` 从 Codex 读这个线程（内置的 Codex 来源，加没加入对话库都行），找到镜像最后 3 条 prompt 连续出现的位置（`turnsAfter()`：一条重复的「继续」不会对错；找不到就不动，不猜），把之后的轮次追加进镜像。同一个对话的并发调用共用一次。谁调用它：
-    - `library.read` / `transcript.load`，只在本机没有驱动在跑它时（活着的 Codex 驱动是线程唯一的写入者）；
-    - Codex 驱动 resume 线程之前（`hooks.beforeResume`，和 app-server 启动并行，最多等 20 s）。这期间 `send()` 先不往镜像里记 prompt，等同步完再记，否则网页的下一条会排到 CLI 那几轮前面，之后再也对不上。
-  - 打开着的窗口要知道：Codex 的 rollout 监听除了 `codex-<线程>`，还报这个线程合并进的网页对话 id（列表合并时的 `merged`；列表缓存比线程旧时查我们自己的 head，`startedHereFor()`，未命中时最多 10 s 读一次）。
-  - 2026-10-02 用真 Codex + api.super-nb.me 实测通过（`relay-test/retest/interop/f4-codex-cli.mjs`）。
-  - **还没修**：`codex resume --last` 找不到网页在供应商上开的线程（model_provider 是 `cwgw`）。
 - 在 bash 里用 `node -e` 改文件时，脚本里的 `\\d`、`\\(` 会被吃掉一层反斜杠（这次出过三次：`\w` 变成 `w`、`\d{2}` 变成 `d{2}`、`\s*\(` 变成 `s*(`）。正则用 Edit 改，改完 grep 一遍确认。

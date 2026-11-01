@@ -5,13 +5,13 @@ import { tr } from '@/i18n';
 
 /**
  * The per-conversation capabilities (spec §5.4 「+ 菜单」): what used to be the composer's 「功能」 dropdown —
- * Claude in Chrome, Computer Use, coordinator / proactive mode, Brief and channels. They are launch parameters
- * (`SessionFeatures` → CLI flags / env in session-runner's featureArgs / featureEnv): a running conversation keeps
+ * Claude in Chrome, Computer Use and Brief. They are launch parameters (`SessionFeatures` → CLI flags / env in
+ * session-runner's featureArgs / featureEnv): a running conversation keeps
  * the ones it was started with, so there the menu edits what the NEXT new conversation starts with.
  * Pure — the + menu, the tags in the text box and the tests read the same table.
  */
 
-export type FeatureKey = 'chrome' | 'computerUse' | 'coordinator' | 'proactive' | 'brief';
+export type FeatureKey = 'chrome' | 'computerUse' | 'brief';
 
 export interface Capability {
   key: FeatureKey;
@@ -39,8 +39,6 @@ export const CAPABILITIES: Capability[] = [
   // the whole desktop, through our own `computer` MCP server (server/src/computer): which applications is asked of
   // the user every time, in a card of this app. Windows only for now — elsewhere the row says so
   { key: 'computerUse', label: tr('操控电脑'), desc: tr('看屏幕、用键盘鼠标操作你允许的应用（每次先问你，完全放开时不问）'), title: tr('Computer Use：截图、键盘和鼠标操作整台电脑上你允许的应用。只对这一个对话开；要用哪些应用，每次都会先弹出来问你（完全放开时不问）'), icon: 'machine', group: 'main', needs: 'computer', unavailable: tr('目前只支持 Windows（看的是运行 Claude Web 的那台电脑）。上网不用它——搜索、打开网页、点击、截图都在右侧的「浏览器」里') },
-  { key: 'coordinator', label: tr('协调者模式'), desc: tr('自己不动手，只派活给子代理'), title: tr('协调者模式（CLAUDE_CODE_COORDINATOR_MODE）'), icon: 'orchestra', group: 'advanced' },
-  { key: 'proactive', label: tr('主动模式'), desc: tr('空闲时继续推进'), title: tr('主动模式（--proactive）'), icon: 'play', group: 'advanced' },
   { key: 'brief', label: 'Brief', desc: tr('让 Claude 用简报工具随时告诉你进展'), title: tr('Brief（--brief，SendUserMessage 工具）'), icon: 'chat', group: 'advanced' },
 ];
 export const FEATURE_KEYS = CAPABILITIES.map((c) => c.key);
@@ -76,8 +74,6 @@ export function afterStart(f: SessionFeatures): SessionFeatures {
   return next;
 }
 
-export const CHANNELS = { label: tr('频道'), desc: tr('让插件 / MCP 服务器往对话里推消息'), title: tr('频道（--channels），格式 plugin:name@marketplace 或 server:name，逗号分隔'), placeholder: 'plugin:name@marketplace, server:name' } as const;
-
 export function withFeature(f: SessionFeatures, key: FeatureKey, on: boolean, env: CapabilityEnv = NO_ENV): SessionFeatures {
   const next = { ...f };
   if (on && !unavailableKeys(env).includes(key)) next[key] = true;
@@ -85,34 +81,21 @@ export function withFeature(f: SessionFeatures, key: FeatureKey, on: boolean, en
   return next;
 }
 
-export function parseChannels(s: string): string[] {
-  return s.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
-}
-
-export function withChannels(f: SessionFeatures, list: string[]): SessionFeatures {
-  const next = { ...f };
-  if (list.length) next.channels = list;
-  else delete next.channels;
-  return next;
-}
-
 /** How many capabilities are on (env is plumbing, not a capability). */
 export function featureCount(f: SessionFeatures, env: CapabilityEnv = NO_ENV): number {
   const off = unavailableKeys(env);
-  return FEATURE_KEYS.filter((k) => !!f[k] && !off.includes(k)).length + (f.channels?.length ? 1 : 0);
+  return FEATURE_KEYS.filter((k) => !!f[k] && !off.includes(k)).length;
 }
 
-export interface CapabilityTag { key: FeatureKey | 'channels'; label: string; icon: IconName; title: string }
+export interface CapabilityTag { key: FeatureKey; label: string; icon: IconName; title: string }
 
 /** The small removable tags in the text box, in menu order. */
 export function capabilityTags(f: SessionFeatures, env: CapabilityEnv = NO_ENV): CapabilityTag[] {
-  const tags: CapabilityTag[] = capabilitiesFor(env).filter((c) => !!f[c.key] && !c.unavailable).map((c) => ({ key: c.key, label: c.label, icon: c.icon, title: `${c.label}：${c.desc}（${c.title}）` }));
-  if (f.channels?.length) tags.push({ key: 'channels', label: `${CHANNELS.label} ${f.channels.length}`, icon: 'bell', title: `${CHANNELS.label}：${f.channels.join(', ')}` });
-  return tags;
+  return capabilitiesFor(env).filter((c) => !!f[c.key] && !c.unavailable).map((c) => ({ key: c.key, label: c.label, icon: c.icon, title: `${c.label}：${c.desc}（${c.title}）` }));
 }
 
 export function withoutTag(f: SessionFeatures, key: CapabilityTag['key']): SessionFeatures {
-  return key === 'channels' ? withChannels(f, []) : withFeature(f, key, false);
+  return withFeature(f, key, false);
 }
 
 export interface AttachItem { id: typeof PLUS_ID.files | typeof PLUS_ID.folder | typeof PLUS_ID.reference; label: string; icon: IconName; note?: string; disabled?: string; /** with Ctrl / ⌘ */ key?: string }
@@ -144,10 +127,10 @@ export function plusSections(o: { claude: boolean; live: boolean; remote?: boole
   };
 }
 
-/** Every data-id the + menu can render (attachments, capability switches, goal, channels). */
+/** Every data-id the + menu can render (attachments, capability switches, goal). */
 export function plusMenuIds(): string[] {
   const s = plusSections({ claude: true, live: false });
-  return [...s.attach.map((a) => a.id), PLUS_ID.slash, PLUS_ID.connectors, ...FEATURE_KEYS, PLUS_ID.channels, PLUS_ID.goal];
+  return [...s.attach.map((a) => a.id), PLUS_ID.slash, PLUS_ID.connectors, ...FEATURE_KEYS, PLUS_ID.goal];
 }
 
 /**

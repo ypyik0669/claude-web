@@ -1,5 +1,5 @@
 // Cold-starts a PACKAGED desktop build and checks it really works on this OS:
-// server boots inside the app, the page is served, both engines resolve from app.asar.unpacked and run,
+// server boots inside the app, the page is served, the Claude Code binary resolves from app.asar.unpacked and runs,
 // the terminal (node-pty + spawn-helper + the SDK's native claude binary) produces output, and the app finds a new
 // version by itself (a local update feed advertising 99.0.0): the Windows installer build downloads it, macOS downloads,
 // checks and unpacks it (desktop/src/mac-update.ts; the swap itself is update-policy.test.ts), Linux only reports it.
@@ -98,21 +98,10 @@ async function run() {
   const req = (r) => new Promise((res, rej) => { const id = String(++seq); pending.set(id, { res, rej }); ws.send(JSON.stringify({ type: 'request', request: { id, req: r } })); });
 
   const eng = await req({ kind: 'engine.info' }).catch((e) => ({ error: e.message }));
-  check('engine resolves inside the app', !!eng.path && eng.path.includes('app.asar.unpacked'), `${eng.runtime} ${eng.version ?? ''} ${eng.path ?? eng.error}`);
-  check('fallback engine resolves inside the app', !!eng.fallback?.path?.includes('app.asar.unpacked'), `${eng.fallback?.runtime} ${eng.fallback?.version ?? ''}`);
-
-  // 托管程序: CLIProxyAPI / Magpie travel in <resources>/engines — a fresh install starts them without a download
-  const engs = await req({ kind: 'engines.status' }).catch((e) => ({ error: e.message, engines: [] }));
-  const byId = Object.fromEntries((engs.engines ?? []).map((e) => [e.id, e]));
-  check('CLIProxyAPI and Magpie ship with the app', ['cliproxyapi', 'magpie'].every((id) => byId[id]?.installed && byId[id]?.bundled), engs.error ?? ['cliproxyapi', 'magpie'].map((id) => `${id}: ${byId[id]?.version ?? 'missing'}${byId[id]?.bundled ? ' (bundled)' : ''}`).join(', '));
-  for (const id of ['magpie', 'cliproxyapi']) {
-    const started = await req({ kind: 'engines.start', id }).catch((e) => ({ error: e.message }));
-    check(`bundled ${id} starts`, started.running === true && started.health === 'ok', started.error ?? `${started.version ?? ''} · port ${started.port ?? '?'}`);
-    await req({ kind: 'engines.stop', id }).catch(() => {});
-  }
+  check('Claude Code resolves inside the app', !!eng.path && eng.path.includes('app.asar.unpacked'), `${eng.version ?? ''} ${eng.path ?? eng.error}`);
 
   const v = await req({ kind: 'engine.cli', args: ['--version'] }).catch((e) => ({ code: -1, stderr: e.message }));
-  check('engine runs (Electron as node)', v.code === 0 && /\d+\.\d+\.\d+/.test(v.stdout), (v.stdout || v.stderr).trim().slice(0, 200));
+  check('Claude Code runs', v.code === 0 && /\d+\.\d+\.\d+/.test(v.stdout), (v.stdout || v.stderr).trim().slice(0, 200));
 
   // 联网: agents are handed the `web` MCP server (web search + the built-in browser) unless it is switched off
   const web = await req({ kind: 'web.status' }).catch((e) => ({ error: e.message }));

@@ -38,7 +38,6 @@ body::before { content: ''; position: fixed; inset: 0; z-index: 49; pointer-even
 .chapter[data-chapter='review'] { --ch: var(--neon-pink); }
 .chapter[data-chapter='checkout'] { --ch: var(--neon-amber); }
 .chapter[data-chapter='elsewhere'] { --ch: var(--neon-pink); }
-.chapter[data-chapter='gateway'] { --ch: var(--neon-cyan); }
 .chapter-more { color: var(--ch); }
 .chapter-more:hover { text-shadow: 0 0 10px var(--ch); }
 
@@ -66,9 +65,6 @@ body::before { content: ''; position: fixed; inset: 0; z-index: 49; pointer-even
 /* the scene's small parts */
 .glyph { display: inline-block; width: 8px; height: 8px; background: var(--neon-teal); box-shadow: 0 0 6px var(--neon-teal); animation: glyph 1.2s steps(1) infinite; }
 @keyframes glyph { 25% { transform: translate(2px, 0); } 50% { transform: translate(2px, 2px); } 75% { transform: translate(0, 2px); } }
-.lamp.on { box-shadow: 0 0 6px var(--green); animation: blink 1.6s steps(2) infinite; }
-@keyframes blink { 50% { opacity: 0.45; } }
-.ov-address { color: var(--neon-cyan); text-shadow: var(--glow-cyan); }
 .ov-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--neon-teal); box-shadow: 0 0 8px var(--neon-teal); }
 .ov-badge { color: var(--neon-amber); text-shadow: 0 0 8px rgba(255, 212, 106, 0.6); }
 

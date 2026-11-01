@@ -1,22 +1,20 @@
-import type { AgentKind, EffortLevel, ModelInfo, ProviderType, RuntimeKind } from '../protocol.js';
+import type { AgentKind, EffortLevel, ModelInfo, ProviderType } from '../protocol.js';
 import { tr } from '../i18n/index.js';
 
 /**
  * The one model / effort table.
  *
- * Verified in Sept 2026 against the docs AND the binaries installed on this machine
- * (claude 2.1.259, codex-cli 0.153.0, gemini-cli 0.41.2). Two things this table exists to get right:
+ * Verified in Sept 2026 against the docs and the Claude Code binary. Two things this table exists to get right:
  *
  * 1. Display names carry version numbers. "Fable" is not a model; "Fable 5.1" is.
- * 2. Effort is per agent AND per model. Only Codex has `ultra`; Opus/Sonnet 4.6 have no `xhigh`;
- *    Gemini has no effort command at all (it uses thinkingLevel, LOW/HIGH in the shipped CLI).
+ * 2. Effort is per model: Opus/Sonnet 4.6 have no `xhigh`.
  *
  * `ultracode` is deliberately NOT in any effort list. In Claude Code it is a separate session-scoped
- * boolean (`xhigh` + dynamic workflow orchestration) that `CLAUDE_CODE_EFFORT_LEVEL` rejects; Codex's
- * structural equivalent is the real enum member `ultra`. See `supportsUltracode` below.
+ * boolean (`xhigh` + dynamic workflow orchestration) that `CLAUDE_CODE_EFFORT_LEVEL` rejects. See
+ * `supportsUltracode` below.
  *
- * This is a FALLBACK and a display-name map. When an agent reports its own model list at runtime
- * (Codex `model/list`, Claude's `supported_models`), that list wins — only the labels come from here.
+ * This is a FALLBACK and a display-name map. When Claude reports its own model list at runtime
+ * (`supported_models`), that list wins — only the labels come from here.
  */
 
 export const EFFORT_ALL: EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
@@ -41,9 +39,6 @@ export interface AgentCatalog {
   /** false → the composer hides the effort chip entirely for this agent */
   supportsEffort: boolean;
   supportsUltracode?: boolean;
-  /** shown in the picker when we could not verify the catalog (Kimi) */
-  unverified?: boolean;
-  note?: string;
 }
 
 export const CATALOG: Partial<Record<AgentKind, AgentCatalog>> = {
@@ -63,7 +58,7 @@ export const CATALOG: Partial<Record<AgentKind, AgentCatalog>> = {
       { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', effort: NO_XHIGH, legacy: true },
       { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5', effort: NO_XHIGH, legacy: true },
     ],
-    // what the official Claude Code resolves each alias to (OFFICIAL_ALIAS_TARGETS, measured); ccb is aligned to it
+    // what the official Claude Code resolves each alias to (OFFICIAL_ALIAS_TARGETS, measured)
     aliases: {
       fable: 'claude-fable-5-1', opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5', haiku: 'claude-haiku-4-5',
       best: 'claude-fable-5-1', opusplan: 'claude-opus-5-5', default: 'claude-opus-5-5',
@@ -74,73 +69,15 @@ export const CATALOG: Partial<Record<AgentKind, AgentCatalog>> = {
     supportsEffort: true,
     supportsUltracode: true,
   },
-  codex: {
-    models: [
-      { id: 'gpt-5.6-sol', label: '5.6 Sol', hint: tr('旗舰，推荐默认') },
-      { id: 'gpt-5.6-terra', label: '5.6 Terra' },
-      { id: 'gpt-5.6-luna', label: '5.6 Luna', hint: tr('快') },
-      { id: 'gpt-5.6-pro', label: '5.6 Pro', hint: tr('最深推理，慢') },
-      { id: 'gpt-5.5', label: '5.5', legacy: true },
-      { id: 'gpt-5.3-codex-spark', label: '5.3 Codex Spark', legacy: true },
-    ],
-    // `ultra` is a real enum member here — Codex's answer to ultracode
-    effort: [...FIVE, 'ultra'] as EffortLevel[],
-    defaultEffort: 'medium',
-    supportsEffort: true,
-  },
-  gemini: {
-    models: [
-      { id: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro' },
-      { id: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite', hint: tr('快') },
-      { id: 'gemini-3-pro', label: 'Gemini 3 Pro' },
-      { id: 'gemini-3-flash', label: 'Gemini 3 Flash' },
-    ],
-    effort: [],
-    supportsEffort: false,
-    note: tr('Gemini CLI 不能调智能程度：思考深度由它自己的 thinkingLevel 控制，随包 SDK 只有 LOW / HIGH。'),
-  },
-  qwen: {
-    models: [{ id: 'qwen3-coder-plus', label: 'Qwen3 Coder Plus' }],
-    effort: FIVE,
-    supportsEffort: true,
-    note: tr('官方文档只列出了 qwen3-coder-plus；智能程度会按各家接口的支持情况截断。'),
-  },
-  kimi: {
-    models: [],
-    effort: [],
-    supportsEffort: false,
-    unverified: true,
-    note: tr('Kimi CLI 的模型表与智能程度开关未能核实，请以 `kimi --help` / 官方文档为准。'),
-  },
 };
 
 /**
  * What the official Claude Code (2.1.283, the Agent SDK's bundled binary) resolves the claude.ai login's aliases to —
  * read off its system/init line with `--model <alias>` (2026-09-29): no model / default → claude-opus-5-5[1m] (Max),
  * opus → claude-opus-5-5, sonnet → claude-sonnet-5, haiku → claude-haiku-4-5-20251001, fable / best → claude-fable-5-1.
- * The bundled ccb 2.8.4 predates the Claude 5 family (default / opus → claude-opus-4-7, sonnet → claude-sonnet-4-6,
- * `fable` passed through literally), so a claude.ai-login session on ccb gets these targets through the CLI's own
- * ANTHROPIC_DEFAULT_*_MODEL variables (ccbAccountEnv — its default follows the opus one) and the aliases ccb lacks are
- * rewritten (ccbModel). Re-measure when the SDK's claude binary is upgraded.
+ * Re-measure when the SDK's claude binary is upgraded.
  */
 export const OFFICIAL_ALIAS_TARGETS = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5', haiku: 'claude-haiku-4-5-20251001', fable: 'claude-fable-5-1' } as const;
-
-/** Env for a claude.ai-login session on ccb: its aliases (and its default, which is the opus one) resolve like the official CLI. */
-export function ccbAccountEnv(): Record<string, string> {
-  return {
-    ANTHROPIC_DEFAULT_OPUS_MODEL: OFFICIAL_ALIAS_TARGETS.opus,
-    ANTHROPIC_DEFAULT_SONNET_MODEL: OFFICIAL_ALIAS_TARGETS.sonnet,
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: OFFICIAL_ALIAS_TARGETS.haiku,
-  };
-}
-
-/** A model for ccb: the aliases it doesn't know (`fable`, `best`, with or without `[1m]`) become the official target; the rest pass. */
-export function ccbModel(model: string | undefined): string | undefined {
-  if (!model) return model;
-  const long = model.endsWith('[1m]');
-  const base = long ? model.slice(0, -4) : model;
-  return base === 'fable' || base === 'best' ? `${OFFICIAL_ALIAS_TARGETS.fable}${long ? '[1m]' : ''}` : model;
-}
 
 /** Display name for a model id or alias — falls back to the raw id so unknown models still render. */
 export function modelLabel(agent: AgentKind, id: string): string {
@@ -186,29 +123,14 @@ export function supportsUltracode(agent: AgentKind): boolean {
 }
 
 /**
- * Which provider-profile types can drive an agent — what providerEnv / agentLaunch actually wire up.
- * Shared by the model menu (web) and session.setProvider (server), so both refuse the same things.
+ * Which provider-profile types can drive an agent — what providerEnv actually wires up. Shared by the model menu
+ * (web) and session.setProvider (server), so both refuse the same things.
  */
 export function providerTypesFor(agent: AgentKind): ProviderType[] {
-  if (agent === 'claude') return ['anthropic', 'openai', 'gemini', 'grok', 'gateway', 'claude-account'];
-  if (agent === 'gemini') return ['gemini', 'gateway'];
-  return ['openai', 'gateway']; // codex, qwen, kimi, opencode, custom ACP agents: OpenAI-compatible endpoints
+  return agent === 'claude' ? ['anthropic', 'claude-account'] : [];
 }
 
-const AGENT_LABEL: Partial<Record<string, string>> = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI', qwen: 'Qwen Code', kimi: 'Kimi CLI', opencode: 'OpenCode' };
-
-/**
- * ccb 2.8.4 decides thinking by the model's name: adaptive for the opus-4-6 / opus-4-7 / sonnet-4-6 it knows, a fixed
- * `budget_tokens` for every other opus / sonnet / haiku. The Claude 5 models came after it, and claude-opus-5-5
- * refuses a budget — 400 "requires adaptive thinking" (aizhongzhuan, 2026-10-01; the official binary sends adaptive
- * and the same key answers). True for the ids ccb would send a budget to that are Claude 5 or later.
- */
-export function ccbMisthinks(model: string | undefined): boolean {
-  const m = /(?:^|[^a-z])(opus|sonnet|haiku)[-_.]?(\d{1,2})(?!\d)/i.exec(model ?? '');
-  return !!m && Number(m[2]) >= 5;
-}
-
-/** The model id a provider session actually sends: an alias goes through the profile's family map; ccb's default follows the opus one. */
+/** The model id a provider session actually sends: an alias goes through the profile's family map; the default follows the opus one. */
 export function providerModelId(p: { defaultModel?: string; modelMap?: { haiku?: string; sonnet?: string; opus?: string } }, model: string | undefined): string {
   const m = (model || p.defaultModel || '').replace(/\[1m\]$/i, '');
   const map = p.modelMap ?? {};
@@ -216,35 +138,16 @@ export function providerModelId(p: { defaultModel?: string; modelMap?: { haiku?:
   return (m === 'opus' || m === 'sonnet' || m === 'haiku' ? map[m] : undefined) ?? m;
 }
 
-/**
- * The runtime a Claude session on a provider asks for. OpenAI / Gemini / Grok formats exist only in ccb, so a pin to
- * the official binary on one of those is ignored — it is left over from an Anthropic-format past (the probe pins a
- * relay like super-nb to the official binary; switching that provider's format to OpenAI kept the pin, and every
- * model of it then showed greyed out: user report, 「GPT 选不了模型」). With `model` given, an Anthropic-format
- * provider left on automatic runs a model ccb gets wrong (`ccbMisthinks`) on the official binary.
- */
-export const preferredRuntime = (p: { type: ProviderType; runtime?: RuntimeKind; defaultModel?: string; modelMap?: { haiku?: string; sonnet?: string; opus?: string } }, model?: string): RuntimeKind | undefined => {
-  if (p.type === 'openai' || p.type === 'gemini' || p.type === 'grok') return 'ccb';
-  if (p.runtime || model === undefined) return p.runtime;
-  return ccbMisthinks(providerModelId(p, model)) ? 'claude' : undefined;
-};
-
-/**
- * Why a profile of `type` cannot drive `agent` (null = it can). `runtime` is the engine a Claude session would
- * run on: only ccb speaks OpenAI / Gemini / Grok; the official Claude Code binary (forced per profile, or the
- * silent fallback when ccb is missing) only talks Anthropic — to a relay or through the local gateway.
- */
-export function profileFitError(agent: AgentKind, type: ProviderType, runtime?: RuntimeKind): string | null {
+/** Why a profile of `type` cannot drive `agent` (null = it can). */
+export function profileFitError(agent: AgentKind, type: ProviderType): string | null {
   const types = providerTypesFor(agent);
-  if (!types.includes(type)) return tr('{agent} 不能用 {type} 类型的供应商（只支持 {types}）', { agent: AGENT_LABEL[agent] ?? agent, type, types: types.join(' / ') });
-  if (agent === 'claude' && runtime === 'claude' && (type === 'openai' || type === 'gemini' || type === 'grok')) return tr('官方 Claude Code 只支持 Anthropic 兼容 / 模型网关类型的供应商，{type} 类型要换成 ccb 运行内核（设置 → 账号与登录 → 更多选项）', { type });
+  if (!types.includes(type)) return tr('{agent} 不能用 {type} 类型的供应商（只支持 {types}）', { agent: agent === 'claude' ? 'Claude Code' : agent, type, types: types.join(' / ') });
   return null;
 }
 
-// ---- thinking strength on every model (claude-web-engine; same rules as the engine's effortPlan.ts) ----
+// ---- thinking strength per model ----
 
-/** The Claude-side levels: `ultra` is Codex's own and never goes to the engine. */
-export type ClaudeEffort = Exclude<EffortLevel, 'ultra'>;
+export type ClaudeEffort = EffortLevel;
 const CLAUDE_ORDER: ClaudeEffort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 /** Closest available level; a tie goes to the higher one (DeepSeek low/high/max: medium → high, xhigh → max). */
@@ -271,43 +174,26 @@ export function claudeVersion(model: string): number | undefined {
 /** A Claude model's levels: the catalog's (Opus / Sonnet 4.6 and Sonnet 4.5 have no xhigh); an id it lacks, by version. */
 function claudeLevels(model: string, v: number): ClaudeEffort[] {
   const known = CATALOG.claude?.models.find((x) => x.id === baseName(model))?.effort;
-  if (known) return known.filter((l): l is ClaudeEffort => l !== 'ultra');
+  if (known) return known;
   return v >= 4.6 && v < 4.7 ? CLAUDE_ORDER.filter((l) => l !== 'xhigh') : CLAUDE_ORDER;
 }
 
-type CapsProvider = { type: ProviderType; modelEfforts?: Record<string, { levels: ClaudeEffort[]; default?: ClaudeEffort }>; promptEffortModels?: string[] };
-export interface ModelCaps { levels: ClaudeEffort[]; default?: ClaudeEffort; reasoning: boolean; native: boolean }
+type CapsProvider = { type: ProviderType; modelEfforts?: Record<string, { levels: ClaudeEffort[]; default?: ClaudeEffort }> };
+export interface ModelCaps { levels: ClaudeEffort[]; default?: ClaudeEffort; reasoning: boolean }
 
 const baseName = (model: string) => { const m = model.toLowerCase(); return m.slice(m.lastIndexOf('/') + 1); };
-/** OpenAI's own reasoning models: o1 / o3 / o4, gpt-5 and every later gpt (the engine's effortPlan.ts / requestBody.ts have the same rule). */
-export const OPENAI_REASONING = /^(o[134]|gpt-(?:[5-9]|[1-9]\d))/;
-/**
- * Kimi's thinking models: k2-thinking, k2.5 and later, k3 and later (k2-instruct does not reason). 2026-10-26 user report:
- * kimi-k3.1-pro through a NewAPI relay never got `reasoning_effort`, so its strength was only ever in the prompt.
- */
-const KIMI_REASONING = /kimi-k(?:2[.-]?(?:[5-9]|thinking)|[3-9])/;
 
 /** What the table knows about a model by name (nothing = undefined). */
 function tableCaps(model: string): { levels: ClaudeEffort[]; default?: ClaudeEffort } | undefined {
-  const m = model.toLowerCase();
   const v = claudeVersion(model);
-  if (v !== undefined) return { levels: claudeLevels(model, v) };
-  if (m.includes('deepseek')) return { levels: ['low', 'high', 'max'], default: 'high' };
-  if (OPENAI_REASONING.test(baseName(model))) return { levels: ['low', 'medium', 'high'] };
-  if (m.includes('qwq') || m.includes('reasoner')) return { levels: ['low', 'medium', 'high'] };
-  if (KIMI_REASONING.test(baseName(model))) return { levels: ['low', 'medium', 'high'] };
-  if (m.includes('gemini-3')) return { levels: ['low', 'high'] };
-  if (m.includes('gemini-2.5')) return { levels: CLAUDE_ORDER };
-  if (m.includes('grok-3-mini')) return { levels: ['low', 'high'] };
-  return undefined;
+  return v !== undefined ? { levels: claudeLevels(model, v) } : undefined;
 }
 
 const plainId = (model: string) => model.replace(/\[1m\]$/i, '');
 
 /**
- * What a model can do with thinking strength on claude-web-engine: its levels (the provider's model list > our table >
- * all five), whether it reasons, and whether the engine sends the provider's own parameter (`native`) or puts the
- * strength in the prompt. `p` undefined = the Claude account. Same target rules as the engine's effortPlan.ts.
+ * What a model can do with thinking strength: its levels (the provider's model list > our table > all five) and
+ * whether it reasons. `p` undefined = the Claude account.
  */
 export function modelCaps(p: CapsProvider | undefined, model: string): ModelCaps {
   // the account's list holds aliases (default / opus / sonnet …): the model each stands for
@@ -315,46 +201,9 @@ export function modelCaps(p: CapsProvider | undefined, model: string): ModelCaps
   const id = aliases?.[model] ?? aliases?.[plainId(model)] ?? plainId(model);
   const declared = p?.modelEfforts?.[model] ?? p?.modelEfforts?.[id];
   const table = tableCaps(id);
-  const type = p?.type ?? 'anthropic';
-  // an OpenAI-format model nobody describes: the standard reasoning_effort values
-  const levels = declared?.levels?.length ? declared.levels : table?.levels ?? (type === 'openai' ? OPENAI_LEVELS : CLAUDE_ORDER);
+  const levels = declared?.levels?.length ? declared.levels : table?.levels ?? CLAUDE_ORDER;
   const def = declared?.default ?? table?.default;
-  const reasoning = !!declared?.levels?.length || !!table;
-  const lower = id.toLowerCase();
-  let native: boolean;
-  // 2026-10-26 user report: a relay's log showed which requests carried reasoning_effort, and every model our table
-  // did not know (Kimi) never did. So every model on a Claude-format, OpenAI-format or gateway profile gets the
-  // parameter; a model that refuses it is remembered (promptEffortModels) and goes through the prompt from then on.
-  // Gemini and Grok stay by name: the engine picks those targets by name only, and their other models take none.
-  if (type === 'anthropic' || type === 'claude-account' || type === 'gateway' || type === 'openai') native = true;
-  else if (type === 'gemini') native = lower.includes('gemini-3') || lower.includes('gemini-2.5');
-  else native = lower.includes('grok-3-mini');
-  if (p?.promptEffortModels?.includes(model) || p?.promptEffortModels?.includes(id)) native = false;
-  return { levels, ...(def ? { default: def } : {}), reasoning, native };
-}
-
-const OPENAI_LEVELS: ClaudeEffort[] = ['low', 'medium', 'high'];
-const NATIVE_FOR_ALL = new Set<ProviderType>(['anthropic', 'claude-account', 'gateway', 'openai']);
-
-/**
- * `CLAUDE_WEB_MODEL_CAPS` for a session: our `modelCaps` verdict for every model — the ones this format sends
- * natively get their levels and "reasons" (the engine sends the parameter only for a model marked so; on an
- * OpenAI-format profile that also turns on the DeepSeek-style thinking switches, which the engine drops for the rest of
- * the process when a model refuses them); the others (one recorded as refusing, a Gemini / Grok model the engine has
- * no target for) get `{native:false}`: the prompt way. On Gemini / Grok profiles a model neither the list nor the table
- * knows is left out (the engine's own name rules cover the same names; `reasoning:false` would switch off its MiMo
- * detection).
- */
-export function webCapsEnv(p: CapsProvider | undefined, models: string[]): string {
-  const out: Record<string, { levels?: ClaudeEffort[]; default?: ClaudeEffort; reasoning?: boolean; native?: boolean }> = {};
-  for (const model of new Set(models.filter(Boolean))) {
-    const declared = p?.modelEfforts?.[model];
-    const known = NATIVE_FOR_ALL.has(p?.type ?? 'anthropic') || !!declared?.levels?.length || !!tableCaps(plainId(model)) || !!p?.promptEffortModels?.includes(model);
-    if (!known) continue;
-    const c = modelCaps(p, model);
-    out[model] = c.native ? { levels: c.levels, ...(c.default ? { default: c.default } : {}), reasoning: true } : { native: false };
-  }
-  return JSON.stringify(out);
+  return { levels, ...(def ? { default: def } : {}), reasoning: !!declared?.levels?.length || !!table };
 }
 
 /** Ids in an endpoint's model list that are not chat models (embeddings, images, speech, moderation, rerank…). */
@@ -394,17 +243,10 @@ export function claudeFamilyMap(models: string[]): Partial<Record<Family, string
   return { opus: opus ?? sonnet ?? any, sonnet: sonnet ?? opus ?? any, haiku: haiku ?? sonnet ?? any };
 }
 
-/** What a coding agent should default to, first match wins (then the newest id within it). */
-export const CHAT_MODEL_PREFERENCE: RegExp[] = [
-  /claude.*sonnet|sonnet.*claude/i, /claude.*opus|opus.*claude/i,
-  /^gpt-(?:[5-9]|\d{2})(?!.*(nano|mini|chat|image|audio))/i, /deepseek-(chat|v\d)/i, /kimi-k2/i, /glm-[4-9]\.\d|glm-[5-9]/i,
-  /qwen3?-coder/i, /qwen3|qwen-(max|plus)/i, /gemini-[\d.]+-pro/i, /grok-[\d]/i, /deepseek/i, /^gpt-4\.1|^gpt-4o/i,
-];
+/** What a conversation should default to, first match wins (then the newest id within it). */
+export const CHAT_MODEL_PREFERENCE: RegExp[] = [/claude.*sonnet|sonnet.*claude/i, /claude.*opus|opus.*claude/i, /claude/i];
 
-/**
- * A sensible default chat model from an endpoint's list: by `prefer` (Claude first — this is a Claude Code front
- * end — then the known coding-capable families), else the first id that looks like a chat model.
- */
+/** A sensible default chat model from an endpoint's list: by `prefer` (Sonnet, then Opus, then any Claude), else the first id that looks like a chat model. */
 export function pickChatModel(models: string[], prefer: RegExp[] = CHAT_MODEL_PREFERENCE): string | undefined {
   for (const re of prefer) { const m = newestMatch(models, re); if (m) return m; }
   return models.find(isChatModel);

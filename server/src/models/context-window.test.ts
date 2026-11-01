@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { contextWindowFor, contextWindowSource, contextWindowsEnv, knownContextWindow, listedContext, officialWindow } from './context-window.js';
+import { contextWindowFor, contextWindowSource, knownContextWindow, listedContext, officialWindow } from './context-window.js';
 
 describe('context windows (provider settings → each engine)', () => {
   it('拉满 by name: Claude 1M (Haiku 200K), GPT 272K, Gemini ~1M; unknown = the engine default', () => {
@@ -32,12 +32,6 @@ describe('context windows (provider settings → each engine)', () => {
     expect(contextWindowSource(p, 'mystery')).toBe('list');
     expect(contextWindowFor(p, 'claude-opus-5-5[1m]')).toBe(1_000_000);
     expect(contextWindowSource(p, 'nothing-known')).toBe('engine');
-  });
-
-  it('the engine table: every model with a window, once', () => {
-    const env = contextWindowsEnv({ contextWindows: { 'gpt-5.6-sol': 272_000 } }, ['gpt-5.6-sol', 'claude-opus-5-5', 'claude-opus-5-5[1m]', 'unknown', undefined]);
-    expect(JSON.parse(env!)).toEqual({ 'gpt-5.6-sol': 272_000, 'claude-opus-5-5': 1_000_000 });
-    expect(contextWindowsEnv({}, ['unknown'])).toBeUndefined();
   });
 
   it('the official binary: [1m] for a Claude model over 200K, an earlier compaction for anything smaller than it assumes', () => {

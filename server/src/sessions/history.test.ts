@@ -48,9 +48,9 @@ describe('withTurnStats: the line under each answer for turns that did not run i
     const cut = convo.slice(0, 2);
     expect(withTurnStats(cut, []).filter((m) => m.type === 'result')).toHaveLength(0);
   });
-  it('gateway calls and retries are not turns; one API call split into several entries counts once', () => {
+  it('retries are not turns; one API call split into several entries counts once', () => {
     const split = [user('u1', T(0)), answer('a1', T(0, 1), 'm1', 'end_turn', { input_tokens: 5, output_tokens: 9 }), answer('a1b', T(0, 2), 'm1', 'end_turn', { input_tokens: 5, output_tokens: 20 })];
-    const out = withTurnStats(split, [row(T(0, 3), { kind: 'gateway' }), row(T(0, 3), { error: 'retry 529 overloaded', model: '' })]);
+    const out = withTurnStats(split, [row(T(0, 3), { error: 'retry 529 overloaded', model: '' })]);
     const r = out.find((m) => m.type === 'result');
     expect(r).toMatchObject({ num_turns: 1, usage: { input_tokens: 5, output_tokens: 20 } });
     // an endpoint that reports no cache fields: none on the line either (0 % would claim it missed)

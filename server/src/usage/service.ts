@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs';
 import readline from 'node:readline';
 import path from 'node:path';
 import { projectsDir } from '../sessions/service.js';
-import { claudePrice, inputIncludesCacheRead, isClaudeModel } from './pricing.js';
+import { claudePrice, isClaudeModel } from './pricing.js';
 import type { ProviderTimeline, TurnProvider } from './timeline.js';
 import { tr } from '../i18n/index.js';
 
@@ -52,7 +52,7 @@ async function scanFile(file: string, at: (ts: number) => TurnProvider, onTurn: 
     const u = rec.message.usage;
     const cacheRead = u.cache_read_input_tokens ?? 0;
     const input = u.input_tokens ?? 0;
-    const b = { input: inputIncludesCacheRead(p.type) ? Math.max(0, input - cacheRead) : input, output: u.output_tokens ?? 0, cacheRead, cacheWrite: u.cache_creation_input_tokens ?? 0 };
+    const b = { input, output: u.output_tokens ?? 0, cacheRead, cacheWrite: u.cache_creation_input_tokens ?? 0 };
     const model = rec.message.model ?? 'unknown';
     const tokens = b.input + b.output + b.cacheRead + b.cacheWrite;
     onTurn({ ts: rec.timestamp, model, provider: p.name, ...b, costUsd: claudePrice(model, b), costUnknown: tokens > 0 && !isClaudeModel(model) });

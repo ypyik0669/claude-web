@@ -123,7 +123,6 @@ export function PrivacyPage() {
   if (!st) return <div className="hub-body"><div className="hub-muted">{error || tr('加载中…')}</div></div>;
   const s = st.settings;
   const model = st.model;
-  const coverage = st.coverage ?? [];
 
   const save = async (patch: Partial<Omit<PrivacySettings, 'actions'>> & { actions?: Partial<Record<PrivacyCategory, PrivacyAction>> }) => {
     try { setSt(await ws.request<PrivacyStatus>({ kind: 'privacy.set', patch })); } catch (e) { toast((e as Error).message); }
@@ -301,22 +300,6 @@ export function PrivacyPage() {
                 <button className="btn sm ghost" onClick={() => void removeModel()}>{model.runtimeOwn ? tr('删除模型和运行库') : tr('删除模型')}</button>
               )}
               {model?.error && <div className="hub-row hub-sml" role="alert" style={{ color: 'var(--err)', marginTop: 6 }}><Icon name="alert" size={13} />{model.error}</div>}
-            </div>
-          </section>
-
-          <section className="hub-card" data-privacy-coverage>
-            <div className="hd"><h3>{tr('用自己登录的 Agent')}</h3></div>
-            <div className="bd">
-              <div className="hub-muted hub-sml" style={{ marginBottom: 6 }}>{tr('选了供应商的对话都经过隐私保护；没选供应商、用 Agent 自己的登录时如下。')}</div>
-              {coverage.map((c) => (
-                <div className="hub-setrow" key={c.agent} data-privacy-agent={c.agent}>
-                  <div className="tx">
-                    <b>{c.name}{c.login ? ` · ${c.login}` : ''}</b>
-                    <span>{c.note ?? ''}</span>
-                  </div>
-                  <span className={`hub-chip ${c.covered ? 'green' : ''}`}>{c.covered ? tr('已覆盖') : tr('未覆盖')}</span>
-                </div>
-              ))}
             </div>
           </section>
 

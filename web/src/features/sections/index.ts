@@ -3,6 +3,5 @@
 import '@/features/automation/state';
 import '@/features/background/state';
 import '@/features/extensions/state';
-import '@/features/gateway/state';
 
 export { closePages, currentSection, openPage, usePageOpen, useSection, type PageId, type Section } from './pages';

@@ -3,9 +3,8 @@
 // in English and Chinese. Nothing real is spent: a throwaway HOME, the demo repo and a fake upstream that replays the
 // same turn every time (scripts/lib/demo.cjs). Electron renders offscreen at 1280×800 ×2; every painted frame is kept
 // with its time, and ffmpeg resamples them to a constant 30 fps, so frame n is the same moment in every clip.
-//   env -u ELECTRON_RUN_AS_NODE -u CLAUDE_WEB_DIST node scripts/record-themes.cjs [--lang en|zh] [--only phosphor,describe] [--out <dir>] [--keep-frames] [--runtime claude|ccb] [--describe-runtime claude|ccb]
-// Both runtimes default to the official binary: on our engine the 连接器 panel would show its built-in `mcp-chrome` (off),
-// which no setting removes (see CONNECTORS_ALLOWED below). Before recording, the connectors the app reports and the
+//   env -u ELECTRON_RUN_AS_NODE -u CLAUDE_WEB_DIST node scripts/record-themes.cjs [--lang en|zh] [--only phosphor,describe] [--out <dir>] [--keep-frames]
+// Before recording, the connectors the app reports and the
 // page's text are checked: only the app's own servers, none failing, nothing of this machine (home folder, user name).
 // Manual (not in CI). It never touches web/dist: the web app is built into a temp folder and the server runs from source.
 // Debugging the timing: CW_DEMO_UPSTREAM_LOG=1 prints when each scripted step was asked for (the describe clip also logs
@@ -49,7 +48,6 @@ async function driver() {
   await win.loadURL(E.REC_URL);
   await waitFor('!!document.querySelector(".composer")', 30_000);
   await waitFor('window.__store && window.__store.getState().metaLoaded', 20_000);
-  await waitFor('window.__store.getState().agents.length > 0', 40_000);
   await js(`window.__store.getState().setSetting('ui.theme', ${JSON.stringify(`ascii:${clip.theme}`)})`);
   await js("window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })");
   // the sidebar's 新对话 (web/src/features/sidebar/Sidebar.tsx: `.nav[data-id="new"]`; the others are older names)
@@ -218,15 +216,12 @@ async function driver() {
 
 // ------------------------------------------------------------------------------------------------------------ runner
 // The recordings are published: the right panel's 连接器 may list only the app's own servers, connected. What else
-// turned up under the throwaway HOME (2026-10-23): our engine's built-in `weixin` plugin (can't connect: never logged in)
-// and its hard-coded `mcp-chrome` (off), and the memory server, which cannot start from the source tree in the demo
-// project's folder (`--import tsx` is not found there). weixin and the memory server are switched off with their own
-// settings; `mcp-chrome` is merged into every engine session after the settings' deny list is applied, so the clips
-// run on the official binary (--runtime), which has neither.
+// turned up under the throwaway HOME (2026-10-23): the memory server, which cannot start from the source tree in the demo
+// project's folder (`--import tsx` is not found there); it is switched off with its own setting.
 const CONNECTORS_ALLOWED = ['web', 'sessions', 'preview'];
 const CONNECTORS_BAD = ['failed', 'needs-auth'];
-/** the throwaway HOME's ~/.claude/settings.json: the engine's own switches for its built-ins */
-const ENGINE_SETTINGS = { enabledPlugins: { 'weixin@builtin': false }, deniedMcpServers: [{ serverName: 'mcp-chrome' }] };
+/** the throwaway HOME's ~/.claude/settings.json: nothing of the user's own */
+const ENGINE_SETTINGS = {};
 /** what must never be on screen: this machine's home folder and user name */
 function privateNeedles() {
   const home = os.homedir();
@@ -303,8 +298,7 @@ async function recordOne(clip, lang, out, dist, opts) {
   try {
     await c.ready;
     await c.req({ kind: 'settings.set', key: 'network.proxy', value: 'off' });
-    const runtime = clip.id === 'describe' ? opts.describeRuntime : opts.runtime;
-    const prov = await c.req({ kind: 'providers.upsert', provider: { name: lang === 'zh' ? '中转' : 'Relay', type: 'anthropic', baseUrl: up.url, apiKey: 'sk-demo-not-real', defaultModel: 'claude-sonnet-5-5', models: ['claude-opus-5-5', 'claude-sonnet-5-5'], runtime } });
+    const prov = await c.req({ kind: 'providers.upsert', provider: { name: lang === 'zh' ? '中转' : 'Relay', type: 'anthropic', baseUrl: up.url, apiKey: 'sk-demo-not-real', defaultModel: 'claude-sonnet-5-5', models: ['claude-opus-5-5', 'claude-sonnet-5-5'] } });
     await c.req({ kind: 'settings.set', key: 'defaultProviderId', value: prov.id });
     await c.req({ kind: 'workspaces.add', path: seed.shop });
     // the conversation the theme clips open at 3 s: live, edits allowed, one short exchange already in it. The describe
@@ -344,7 +338,7 @@ async function runner() {
   const clips = CLIPS.filter((c) => !only || only.includes(c.id));
   if (!clips.length) throw new Error(`--only names none of: ${CLIPS.map((c) => c.id).join(' ')}`);
   const out = path.resolve(String(arg('--out', path.join(demo.ROOT, 'site', '.media-local'))));
-  const opts = { keepFrames: !!arg('--keep-frames', false), describeRuntime: String(arg('--describe-runtime', 'claude')), runtime: String(arg('--runtime', 'claude')) };
+  const opts = { keepFrames: !!arg('--keep-frames', false) };
   require('./lib/media-encode.cjs').webmEncoder(); // fail early on an ffmpeg without the encoders
   fs.mkdirSync(out, { recursive: true });
   // the web app, built where nothing else looks (a running dev app serves web/dist: never rebuild that)

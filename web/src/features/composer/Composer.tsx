@@ -4,7 +4,7 @@ import { ModeChangedError, useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { clsx, shortModel } from '@/util';
-import { parsePeerId, policyOfModel, type AgentKind, type AttachmentRef, type EffortLevel, type PeerInfo, type PermissionMode, type PermissionRequestEvent, type SessionFeatures, type WslDistro, wslToWin } from '@shared';
+import { parsePeerId, type AgentKind, type AttachmentRef, type EffortLevel, type PeerInfo, type PermissionMode, type PermissionRequestEvent, type SessionFeatures, type WslDistro, wslToWin } from '@shared';
 import { MachineChip } from './MachineChip';
 import { machineOf } from './machine';
 import { installClaudeInWsl } from '@/features/remote/wsl-install';
@@ -29,20 +29,19 @@ import { usePaneCtx } from '@/store/paneContext';
 import { activeGroup } from '@/model/layout';
 import { sessionRefMarker } from '@/model/conversation';
 import { SessionRefChip } from '@/features/chat/ChatView';
-import { REFERENCE_EVENT, handOver, type ReferenceDetail } from '@/features/sidebar/session-actions';
+import { REFERENCE_EVENT, type ReferenceDetail } from '@/features/sidebar/session-actions';
 import { ModelChip } from '@/features/models/ModelMenu';
 import { EffortChip, type EffortChipProps } from '@/features/models/EffortChip';
 import { SubagentChip, subagentLabel } from '@/features/models/SubagentChip';
 import { subagentModelFor } from '../../../../server/src/models/subagent';
-import { OWN_PROVIDER, agentModels, effectiveRuntime, routingPolicyLabel, usableProfile, type AgentSource, type ModelMenuItem } from '@/features/models/menu';
+import { OWN_PROVIDER, usableProfile, type ModelMenuItem } from '@/features/models/menu';
 import { mergeResume, resumeView } from '@/store/reopen';
 import { routePick, switchedNote } from '@/features/models/route';
 import { claudeEffortView, modelChipText } from '@/features/models/intelligence';
 import { useAccountDefault } from '@/features/models/account-default';
-import { providersLoaded, useGatewayStatus } from '@/features/models/data';
+import { providersLoaded } from '@/features/models/data';
 import { needsModel, welcomeProvider } from './welcome-provider';
 import { connectModel, useConnect } from '@/features/providers/ConnectModel';
-import { openAddSource, useAddSource } from '@/features/gateway/add-source';
 import { dlg, useDialogStore } from '@/ui/dialog';
 import { DOCK_BLOCKED, DOCK_CARRIED, DOCK_ENTER_IGNORED, DOCK_REQUEUED, DOCK_SEND, EFFORT_LABEL, TERMS, ULTRACODE } from '@/ui/terms';
 import { showGoals } from '@/features/workbench/right-panel';
@@ -81,11 +80,6 @@ const NO_FEATURES: SessionFeatures = {};
 const isFeatures = (v: unknown): v is SessionFeatures => !!v && typeof v === 'object' && !Array.isArray(v);
 
 const NO_PENDING_LOCAL: PermissionRequestEvent[] = [];
-
-/** The agent's name in a docked card's words: 「告诉 Claude 换个做法」, 「告诉 Codex …」. */
-function agentWord(info: { agent?: string; agentName?: string } | undefined): string {
-  return info?.agent && info.agent !== 'claude' ? info.agentName ?? info.agent : 'Claude';
-}
 
 /**
  * Once per page, after meta.json arrived: older builds kept the capability defaults in localStorage
@@ -161,8 +155,6 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // 发送前核对权限: the mode the chip of a conversation that is not running shows (set while rendering it), and the
   // short notice when a send was refused because the conversation would really resume in another one
   const shownMode = useRef<PermissionMode | undefined>(undefined);
-  // 智能路由: the model this conversation really got last (shown after the strategy on the chip)
-  const routed = useStore((s) => (active ? s.routed[active.sessionId] : undefined));
   const [modeNotice, setModeNotice] = useState<{ sid: string; text: string } | null>(null);
   const [palIdx, setPalIdx] = useState(0);
   // Shift+Tab in the empty box: the next permission mode (like the CLI) — set by whichever chip is drawn below
@@ -222,45 +214,32 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // picked in the model menu (or connected on send): from then on the choice is the user's, not welcomeProvider's
   const providerPicked = useRef(false);
   const loggedIn = useStore((s) => s.auth?.loggedIn);
-  const agents = useStore((s) => s.agents);
-  const [wAgent, setWAgent] = useState<AgentKind>((localStorage.getItem('cw.lastAgent') as AgentKind) || 'claude');
-  const agent = wAgent !== 'claude' ? agents.find((a) => a.kind === wAgent) : undefined;
-  const foreign = !!agent;
-  const wKind: AgentKind = foreign ? wAgent : 'claude';
-  // a remembered profile the chosen agent cannot use (or one since deleted) falls back to the agent's own login
-  const engine = useStore((s) => s.engine);
-  const gatewayView = useGatewayStatus();
-  // unusable right now (official engine, gateway off / group gone) counts as gone too
-  const provider = usableProfile(providers, wProvider, { agent: wKind, engine, gatewayGroups: gatewayView.groups, gatewayEnabled: gatewayView.enabled });
-  // the agent's own model list: the catalog, or what the agent registry probed when the catalog has none
+  const wKind: AgentKind = 'claude';
+  // a remembered profile that cannot be used (or one since deleted) falls back to the Claude account
+  const provider = usableProfile(providers, wProvider, { agent: wKind });
   const wProviderId = provider ? provider.id : 'claude';
   // a whole pick: switching the new conversation to another provider keeps it
   const wSubModel = subagentModelFor({ recorded: wSub ?? undefined, settings, providerId: wProviderId });
-  // (what the agent said it offers this account comes first: the catalog goes stale with every release)
-  const wBuiltin = agent && (agent.reportedModels?.length || !modelsFor(agent.kind).length) ? agentModels(agent) : undefined;
   // providers a Claude conversation could use right now (the model menu's own check)
-  const usableIds = useMemo(() => providers.filter((p) => usableProfile(providers, p.id, { agent: 'claude', engine, gatewayGroups: gatewayView.groups, gatewayEnabled: gatewayView.enabled })).map((p) => p.id), [providers, engine, gatewayView.groups, gatewayView.enabled]);
+  const usableIds = useMemo(() => providers.filter((p) => usableProfile(providers, p.id, { agent: 'claude' })).map((p) => p.id), [providers]);
   const usableKey = usableIds.join(',');
   // nothing picked yet: follow welcomeProvider — the settings, the login check and the list arrive after the first
   // render, and a provider connected on first run (or 设为默认 in settings) has to be in the chip without a reload;
   // a logged-out account is never the default when there is a provider. Picked: kept, unless it became unusable
-  // (deleted, or not for this agent) — then its model goes with it, or a relay's model id would be sent to the
-  // agent's own login
+  // (deleted) — then its model goes with it, or a relay's model id would be sent to the account
   useEffect(() => {
     if (!welcome || !providersLoaded(providers)) return;
     const keep = wProvider === 'claude' || !!provider;
-    const want = foreign ? (keep ? wProvider : 'claude')
-      : providerPicked.current && keep ? wProvider
+    const want = providerPicked.current && keep ? wProvider
       : welcomeProvider({ last: providerPicked.current ? null : lastProvider.current, def: settings.defaultProviderId as string | undefined, loggedIn, usable: usableIds });
     if (want === wProvider) return;
     setWProvider(want);
     setWModel('');
     if (want === 'claude') { localStorage.removeItem('cw.lastProvider'); localStorage.removeItem('cw.lastModel'); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [welcome, foreign, wProvider, provider, providers, usableKey, settings.defaultProviderId, loggedIn]);
-  // effort is per agent AND per model (Codex alone has `ultra`, Opus/Sonnet 4.6 have no `xhigh`); Claude on a provider,
-  // on our engine: every model, native or through the prompt (claudeEffortView)
-  const wView = claudeEffortView({ agent: wKind, providers, providerId: wProvider, model: wModel, runtime: provider ? effectiveRuntime(provider, engine) : undefined });
+  }, [welcome, wProvider, provider, providers, usableKey, settings.defaultProviderId, loggedIn]);
+  // effort is per model (Opus/Sonnet 4.6 have no `xhigh`); on a provider only what Claude Code sends (claudeEffortView)
+  const wView = claudeEffortView({ agent: wKind, providers, providerId: wProvider, model: wModel });
   const wEfforts = wView.levels;
   // a level picked for another model that this one lacks falls back to the default (not sent, not shown)
   const wEffortOk = wEffort && wEfforts.includes(wEffort) ? wEffort : undefined;
@@ -438,7 +417,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // the question card is in the conversation (stage C1), the others dock; the box keys behave the same for both
   const { dock: dockReq, ask: askReq } = splitPending(active?.pending ?? NO_PENDING_LOCAL);
   const docked = !welcome && !disabled && active ? dockReq ?? askReq : undefined;
-  const dockAgent = agentWord(active?.info);
+  const dockAgent = 'Claude';
   const hasAttachments = imgs.length > 0 || atts.length > 0 || bundles.length > 0 || files.length > 0 || refs.length > 0 || recordings.length > 0;
   // 插话 takes words only (what the button always sent); attachments and slash commands wait their turn in the queue
   const canSteer = busy && !docked && !!active && canSend && !!text.trim() && !hasAttachments && !isSlashCommand(text);
@@ -471,8 +450,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // the 接一个模型 dialog is a dialog too: an Enter meant for it must not answer a docked card underneath
   const dlgOpen = useDialogStore((s) => s.queue.length > 0);
   const connectOpen = useConnect((s) => !!s.req);
-  const addOpen = useAddSource((s) => s.open);
-  const dialogOpen = dlgOpen || connectOpen || addOpen;
+  const dialogOpen = dlgOpen || connectOpen;
   const covered = useStore((s) => composerCovered({ settingsOpen: !!s.settingsOpen, automationOpen: autoOver, shortcutsOpen: s.shortcutsOpen, paletteOpen: s.paletteOpen, dialogOpen, mobile: s.mobile, sheetAt: s.sheetAt, dockOpen: s.layout.dock.open, dockTabs: s.layout.dock.tabs.length, inspect: !!s.inspect }));
   const inView = visible && !covered;
   useEffect(() => { if (inView && seenRef.current) setSeen({ shownAt: Date.now() }); }, [inView]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -640,7 +618,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
       const cwdFor = welcome ? cwd.trim() : active?.cwd ?? '';
       if (!cwdFor) { toast(tr('先选一个项目文件夹')); return; }
       try {
-        const g = await ws.request<{ id: string }>({ kind: 'goals.create', objective, cwd: cwdFor, permissionMode: welcome ? wMode : (active?.info?.permissionMode ?? 'acceptEdits'), agent: welcome ? (foreign ? wAgent : undefined) : (active?.info?.agent && active.info.agent !== 'claude' ? active.info.agent : undefined) });
+        const g = await ws.request<{ id: string }>({ kind: 'goals.create', objective, cwd: cwdFor, permissionMode: welcome ? wMode : (active?.info?.permissionMode ?? 'acceptEdits') });
         const started = await ws.request<{ sessionId?: string }>({ kind: 'goals.start', id: g.id });
         onChange(''); // also clears the persisted draft, or the /goal line comes back on reopen
         // the goal runs in a conversation of its own (goals.create takes no conversation): open it here, where its bar
@@ -666,7 +644,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
       let effort = wEffortOk;
       // the Claude account is logged out: this would only come back as 「Not logged in」 — connect a model (or pick
       // one already added) and the message goes out on it; closing the dialog keeps the text
-      if (needsModel({ provider: providerId, foreignAgent: foreign, loggedIn: useStore.getState().auth?.loggedIn })) {
+      if (needsModel({ provider: providerId, foreignAgent: false, loggedIn: useStore.getState().auth?.loggedIn })) {
         const p = await connectModel({ reason: 'send' });
         if (!p) return;
         providerPicked.current = true;
@@ -683,12 +661,10 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         localStorage.setItem('cw.lastModel', model ?? '');
         localStorage.setItem('cw.lastMode', wMode);
         localStorage.setItem('cw.lastProvider', providerId);
-        localStorage.setItem('cw.lastAgent', wAgent);
-        if (wAgent !== 'claude' && !agent) throw new Error(tr('选中的 agent 已不可用'));
-        const id = await openSession({ cwd: cwd.trim(), model, permissionMode: wMode, effort, ultracode: wUltracode && wUltra ? true : undefined, subagentModel: foreign ? undefined : wSubModel, worktree: wWorktree || undefined, providerId, features: foreign ? {} : wChatOnly ? { chatOnly: true } : featDefaults, agent: foreign ? wAgent : undefined }, target);
+        const id = await openSession({ cwd: cwd.trim(), model, permissionMode: wMode, effort, ultracode: wUltracode && wUltra ? true : undefined, subagentModel: wSubModel, worktree: wWorktree || undefined, providerId, features: wChatOnly ? { chatOnly: true } : featDefaults }, target);
         setWChatOnly(false);
         // what is asked for anew for every conversation (操控电脑) is off again for the next one
-        if (!foreign && isFeatures(storedFeatures) && afterStart(storedFeatures) !== storedFeatures) setFeatures(afterStart(storedFeatures));
+        if (isFeatures(storedFeatures) && afterStart(storedFeatures) !== storedFeatures) setFeatures(afterStart(storedFeatures));
         const uploaded = files.length ? await uploadAll(id) : [];
         const recs = recordings;
         const rec = recs.length ? await sendRecordings(id, recs) : { images: [], atts: [], prefix: '' };
@@ -921,21 +897,21 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // live controls
   const info = active?.info;
   const liveOk = !welcome && active && active.state !== 'history' && active.state !== 'closed' && active.state !== 'error' && info;
-  // the model's own capability flags decide the ladder; fall back to the catalog for agents that don't report
+  // the model's own capability flags decide the ladder; fall back to the catalog when it does not say
   const liveModel = info?.models?.find((m) => m.value === info?.model);
   const liveEfforts: EffortLevel[] = liveModel?.supportedEffortLevels?.length
     ? liveModel.supportedEffortLevels
-    : liveModel?.supportsEffort === false ? [] : effortLevels(info?.agent ?? 'claude', info?.model ?? undefined);
+    : liveModel?.supportsEffort === false ? [] : effortLevels('claude', info?.model ?? undefined);
   const setMode = (mode: PermissionMode) => active && ws.request({ kind: 'session.setPermissionMode', sessionId: active.sessionId, mode }).catch((e) => toast(e.message));
   // the unified model menu inside a session: same profile → setModel; another profile → the invisible
-  // restart of session.setProvider, started directly on the picked model; another agent → the hand-over
+  // restart of session.setProvider, started directly on the picked model
   const [swapping, setSwapping] = useState(false);
-  const liveAgent: AgentKind = info?.agent ?? 'claude';
-  // a conversation not running yet has no info: its agent comes from the list — except one that goes on in Claude
-  // (DeepSeek Harness): its chips are Claude's, on what a new conversation would use until one is picked
+  const liveAgent: AgentKind = 'claude';
+  // a conversation not running yet that goes on in Claude (a claude.ai export): its chips are what a new conversation
+  // would use until one is picked
   const listed = sessions.find((s) => s.sessionId === active?.sessionId);
   const inClaude = !info && !!listed?.caps?.continueInClaude;
-  const sessionAgent: AgentKind = info?.agent ?? (inClaude ? 'claude' : listed?.agent) ?? 'claude';
+  const sessionAgent: AgentKind = 'claude';
   // the permission chip of a conversation that is not running: ask the server what the next send will really run in
   // (its record, else 新对话默认权限 — on the machine the conversation is on), again whenever this window's copy of the
   // record or the default changes; the chip shows that over the window's own guess (2026-10-26 QA)
@@ -950,27 +926,20 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   const convProvider = info?.providerId ?? (active ? sessionMeta[active.sessionId]?.providerId : undefined) ?? 'claude';
   // the status strip's 「not logged in」 chip already offers 添加来源 (and resends): then only it shows
   const stripAsks = useStore((s) => (active ? noLoginChipShown(s.open[active.sessionId]) : false));
-  const liveNoSource = !welcome && !!active && !remote && !disabled && sessionAgent === 'claude' && !stripAsks
+  const liveNoSource = !welcome && !!active && !remote && !disabled && !stripAsks
     && (convProvider === 'claude' ? needsModel({ provider: 'claude', foreignAgent: false, loggedIn }) : providers.length > 0 && !providers.some((p) => p.id === convProvider)); // (an empty list may just not be loaded yet)
-  const liveAgentDefault = liveAgent !== 'claude' ? agents.find((a) => a.kind === liveAgent)?.model || undefined : undefined;
   // the account's default model by name for a chip with no model (final review §9 #2): this conversation's CLI says
-  // it (its own login only), else the one remembered from the last conversation that did
-  const accountDefault = useAccountDefault(liveAgent === 'claude' && liveProvider === 'claude' ? info?.models : undefined);
+  // it (the account only), else the one remembered from the last conversation that did
+  const accountDefault = useAccountDefault(liveProvider === 'claude' ? info?.models : undefined);
   /** false = nothing happened (refused / cancelled / failed): the menu then does not record it as recent */
   const pickLive = async (it: ModelMenuItem): Promise<boolean> => {
     if (!active || swapping) return false;
-    const act = routePick(it, { agent: liveAgent, currentProvider: remote ? 'claude' : liveProvider, currentModel: info?.model, remote, busy, providers, agentDefault: liveAgentDefault });
+    const act = routePick(it, { agent: liveAgent, currentProvider: remote ? 'claude' : liveProvider, currentModel: info?.model, remote, busy, providers });
     if (act.kind === 'none') return true;
     if (act.kind === 'error') { toast(act.message); return false; }
     if (act.kind === 'setModel') {
       // with the provider this pick was for: a switch from another window in between drops it (server-side check)
       try { await ws.request({ kind: 'session.setModel', sessionId: active.sessionId, model: act.model, providerId: remote ? undefined : liveProvider }); toast(switchedNote(it.label, active.conv.items.length > 0), true); return true; } catch (e: any) { toast(e.message); return false; }
-    }
-    if (act.kind === 'handover') {
-      // the same hand-over as ··· 「交给其它 Agent 继续」 (same confirm, same refresh), on the picked model
-      const summary = sessions.find((s) => s.sessionId === active.sessionId) ?? { sessionId: active.sessionId, title: '', cwd: active.cwd, lastModified: 0 };
-      setSwapping(true);
-      try { return await handOver(summary, act.agent, act.model, it.display); } finally { setSwapping(false); }
     }
     if (act.confirm && !(await dlg.confirm(tr('切换供应商？'), { message: tr('对话正在运行，当前这一轮会被中断。换供应商会重启对话进程，历史保留。'), okLabel: tr('切换') }))) return false;
     setSwapping(true);
@@ -981,19 +950,13 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     } catch (e: any) { toast(e.message); return false; } finally { setSwapping(false); }
   };
   // a conversation that is not running: a pick only changes what the next send resumes it with. The menu lists the
-  // profiles this agent can use and greys the ones it cannot right now (the same fit check `session.open` runs —
-  // `profileFitError`), and routePick refuses those; another agent's model is the same hand-over as a live one
-  const resumeAgentDefault = sessionAgent !== 'claude' ? agents.find((a) => a.kind === sessionAgent)?.model || undefined : undefined;
+  // profiles Claude can use and greys the ones it cannot right now (the same fit check `session.open` runs —
+  // `profileFitError`), and routePick refuses those
   const pickResume = async (it: ModelMenuItem, v: { providerId: string; model?: string }): Promise<boolean> => {
     if (!active || swapping) return false;
-    const act = routePick(it, { agent: sessionAgent, currentProvider: remote ? 'claude' : v.providerId, currentModel: v.model, remote, busy: false, providers, agentDefault: resumeAgentDefault });
+    const act = routePick(it, { agent: sessionAgent, currentProvider: remote ? 'claude' : v.providerId, currentModel: v.model, remote, busy: false, providers });
     if (act.kind === 'none') return true;
     if (act.kind === 'error') { toast(act.message); return false; }
-    if (act.kind === 'handover') {
-      const summary = sessions.find((s) => s.sessionId === active.sessionId) ?? { sessionId: active.sessionId, title: '', cwd: active.cwd, lastModified: 0 };
-      setSwapping(true);
-      try { return await handOver(summary, act.agent, act.model, it.display); } finally { setSwapping(false); }
-    }
     // '' = the default (the account's `default` alias, or the profile's own): the resume then sends no model
     if (act.kind === 'setModel') setResume(active.sessionId, { model: act.model === 'default' ? '' : act.model });
     else setResume(active.sessionId, { providerId: act.providerId ?? OWN_PROVIDER, model: act.model ?? '' });
@@ -1001,15 +964,6 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   };
   const pickWelcome = (it: ModelMenuItem) => {
     providerPicked.current = true;
-    if (it.agent && it.agent !== wKind) {
-      // another agent: switch agent (the old agent picker), its default effort — on the provider its section lists
-      // (settings → Agents 「新对话用」), else its own login
-      setWAgent(it.agent);
-      setWProvider(it.providerId || 'claude');
-      setWModel(it.model);
-      setWEffort('');
-      return true;
-    }
     setWProvider(it.providerId);
     setWModel(it.model);
     return true;
@@ -1026,25 +980,13 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   const setEffort = (effort: EffortLevel) => active && ws.request({ kind: 'session.setEffort', sessionId: active.sessionId, effort }).catch((e) => toast(e.message));
   const setUltracode = (on: boolean) => active && ws.request({ kind: 'session.setUltracode', sessionId: active.sessionId, on }).catch((e) => toast(e.message));
 
-  // the other agents as sources in the model menu (Claude Code included when another agent is current)
-  const otherAgents = useMemo<AgentSource[]>(() => {
-    const list: AgentSource[] = agents.filter((a) => a.enabled !== false).map((a) => {
-      // Claude's is the new-conversation default (settings → 供应商), the others' their own 「新对话用」
-      const pid = a.kind === 'claude' ? (settings.defaultProviderId as string | undefined) : a.providerId;
-      const via = usableProfile(providers, pid, { agent: a.kind, engine, gatewayGroups: gatewayView.groups, gatewayEnabled: gatewayView.enabled });
-      return { kind: a.kind, name: a.name, installed: a.installed !== false, models: a.models, reportedModels: a.reportedModels, defaultModel: a.model || undefined, ...(via ? { provider: via } : {}) };
-    });
-    if (!list.some((a) => a.kind === 'claude')) list.unshift({ kind: 'claude', name: 'Claude Code', installed: true });
-    return list;
-  }, [agents, providers, engine, gatewayView.groups, gatewayView.enabled, settings.defaultProviderId]);
-
   // another computer's folders: the ones its conversations ran in (this computer's dialog cannot browse there)
   const recentDirs = useMemo(() => (wWsl ? wslDirs(wWsl) : [...new Set(sessions.filter((s) => (wPeer ? s.peer?.id === wPeer : !s.peer) && sessionMeta[s.sessionId]?.env?.kind !== 'wsl').map((s) => s.cwd).filter(Boolean))].slice(0, 8)), [sessions, wPeer, wWsl, sessionMeta]);
   const folderChips = useMemo(() => { const m = new Map<string, number>(); for (const f of files) { const top = f.rel.includes('/') ? f.rel.split('/')[0] : null; if (top) m.set(top, (m.get(top) ?? 0) + 1); } return m; }, [files]);
 
   // the capabilities: on the welcome page the ones the new conversation will get (removable); in a running one
   // what it was started with (fixed — a launch parameter)
-  const claudeHere = welcome ? !foreign : sessionAgent === 'claude';
+  const claudeHere = true;
   const sessionFeatures = info?.features ?? NO_FEATURES;
   const tags = welcome ? (claudeHere && !wChatOnly ? capabilityTags(featDefaults, capEnv) : []) : capabilityTags(sessionFeatures, capEnv);
   const hasChips = imgs.length > 0 || atts.length > 0 || bundles.length > 0 || files.length > 0 || refs.length > 0 || recordings.length > 0 || !!upload || tags.length > 0 || (welcome && (!!wWorktree || wChatOnly)) || (!welcome && liveChatOnly);
@@ -1086,28 +1028,25 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // 深度编排 on: the placeholder says what to ask for (user report: the switch looked clear, but not how to use it)
   let ultraOn = false;
   if (welcome) {
-    const t = modelChipText({ agent: wKind, agentName: agent?.name, providers, providerId: provider?.id, model: wModel, builtin: wBuiltin, agentDefault: agent?.model || undefined, efforts: wEfforts, effort: wEffortOk, defaultEffort: wView.defaultLevel, ultracode: wUltracode && wUltra, accountDefault });
+    const t = modelChipText({ agent: wKind, providers, providerId: provider?.id, model: wModel, efforts: wEfforts, effort: wEffortOk, defaultEffort: wView.defaultLevel, ultracode: wUltracode && wUltra, accountDefault });
     model = (
       <ModelChip
         agent={wKind}
         current={{ providerId: provider ? provider.id : 'claude', model: wModel }}
         label={t.main}
-        title={tr("{main}{v}\n用哪个模型：Agent、供应商、模型都在这里", { main: t.main, v: t.isDefault ? tr('（默认）') : '' })}
-        builtin={wBuiltin}
-        builtinTitle={agent ? tr('{name} 账号', { name: agent.name }) : ownName}
-        agentDefault={agent?.model || undefined}
-        otherAgents={otherAgents}
+        title={tr("{main}{v}\n用哪个模型：供应商和模型都在这里", { main: t.main, v: t.isDefault ? tr('（默认）') : '' })}
+        builtinTitle={ownName}
         onPick={pickWelcome}
       />
     );
     // WSL: the distro's own Claude login — the model chip is locked to Claude
     if (wWsl) model = <button type="button" className="cchip" disabled title={tr('WSL 里的对话用发行版自己的 Claude 登录')}><span className="cchip-l">Claude</span></button>;
-    if (!foreign && !wWsl) subagent = <SubagentChip providerId={wProviderId} value={wSubModel} onPick={(m) => setWSub({ providerId: wProviderId, model: m })} />;
+    if (!wWsl) subagent = <SubagentChip providerId={wProviderId} value={wSubModel} onPick={(m) => setWSub({ providerId: wProviderId, model: m })} />;
     ultraOn = wUltracode && wUltra;
     effort = (
       <EffortChip
         compact={mobile}
-        intelligence={{ levels: wEfforts, value: wEffortOk, defaultLevel: wView.defaultLevel, mode: wView.mode, onChange: (effort) => { const next = mergeResume({ effort: wEffort || undefined, ultracode: wUltra }, { effort }); setWEffort(effort); setWUltra(!!next.ultracode); } }}
+        intelligence={{ levels: wEfforts, value: wEffortOk, defaultLevel: wView.defaultLevel, onChange: (effort) => { const next = mergeResume({ effort: wEffort || undefined, ultracode: wUltra }, { effort }); setWEffort(effort); setWUltra(!!next.ultracode); } }}
         ultracode={wUltracode ? { on: wUltra, onChange: setWUltra } : undefined}
       />
     );
@@ -1115,31 +1054,26 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     permission = <PermissionChip mode={wMode} compact={mobile} onPick={(m) => { modeTouched.current = true; setWMode(m); }} />;
   } else if (liveOk) {
     const ultraOk = info.supportsUltracode !== false && !!CATALOG[liveAgent]?.supportsUltracode;
-    const liveView = claudeEffortView({ agent: liveAgent, providers, providerId: remote ? 'claude' : liveProvider, model: info.model, runtime: info.runtime });
+    const liveView = claudeEffortView({ agent: liveAgent, providers, providerId: remote ? 'claude' : liveProvider, model: info.model });
     const defaultEffort = liveView.defaultLevel;
-    const t = modelChipText({ agent: liveAgent, agentName: info.agentName, providers, providerId: remote ? 'claude' : liveProvider, providerName: info.providerName, model: info.model, builtin: liveProvider === 'claude' && info.models?.length ? info.models : undefined, agentDefault: liveAgentDefault, efforts: liveEfforts, effort: info.effort, defaultEffort, ultracode: ultraOk && !!info.ultracode, accountDefault });
+    const t = modelChipText({ agent: liveAgent, providers, providerId: remote ? 'claude' : liveProvider, providerName: info.providerName, model: info.model, builtin: liveProvider === 'claude' && info.models?.length ? info.models : undefined, efforts: liveEfforts, effort: info.effort, defaultEffort, ultracode: ultraOk && !!info.ultracode, accountDefault });
     const remoteLabel = `${info.providerName ? `${info.providerName} / ` : ''}${info.models?.find((m) => m.value === info.model)?.displayName ?? (shortModel(info.model) || tr('模型'))}`;
-    // 智能路由: 「自动 → 实际：<model>」 — the real model is never hidden behind the strategy (spec §7.2)
-    const pol = info.model ? policyOfModel(info.model) : undefined;
-    const routedNote = pol && routed ? { label: tr('{policy} → 实际：{model}', { policy: routingPolicyLabel(pol), model: routed.model }), title: tr('智能路由实际用的是 {label}（{reason}）{switched}', { label: routed.label, reason: routed.reason, switched: routed.switched ? tr('，这次换过候选') : '' }) } : undefined;
     model = (
       <ModelChip
         agent={liveAgent}
         current={{ providerId: remote ? 'claude' : liveProvider, model: info.model }}
-        label={routedNote ? routedNote.label : remote ? remoteLabel : t.main}
-        title={(remote ? tr('模型（其它机器上的对话：换供应商请在那台机器上操作）') : tr("{main}{v}\n同一供应商直接换模型；换供应商会无感重启对话；选其它 Agent 的模型 = 交给它继续", { main: t.main, v: t.isDefault ? tr('（默认）') : '' })) + (routedNote ? '\n' + routedNote.title : '')}
+        label={remote ? remoteLabel : t.main}
+        title={remote ? tr('模型（其它机器上的对话：换供应商请在那台机器上操作）') : tr("{main}{v}\n同一供应商直接换模型；换供应商会无感重启对话", { main: t.main, v: t.isDefault ? tr('（默认）') : '' })}
         builtin={(remote || liveProvider === 'claude') && info.models?.length ? info.models : undefined}
-        builtinTitle={remote ? info.providerName ?? info.agentName ?? tr('模型') : liveAgent === 'claude' ? ownName : tr('{agentName} 账号', { agentName: info.agentName ?? liveAgent })}
-        agentDefault={liveAgentDefault}
+        builtinTitle={remote ? info.providerName ?? tr('模型') : ownName}
         lockProvider={remote ? 'claude' : undefined}
         lockNote={tr('其它机器上的对话：只能换模型，换供应商请在那台机器上操作')}
-        otherAgents={remote ? undefined : otherAgents}
         busy={swapping}
         disabled={swapping}
         onPick={pickLive}
       />
     );
-    if (liveAgent === 'claude' && !remote) {
+    if (!remote) {
       const builtin = liveProvider === 'claude' && info.models?.length ? info.models : undefined;
       subagent = <SubagentChip providerId={liveProvider} value={info.subagentModel ?? ''} builtin={builtin} disabled={swapping} onPick={(m) => void pickSubagent(m, liveProvider, builtin, true)} />;
     }
@@ -1148,7 +1082,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
       <EffortChip
         compact={mobile}
         disabled={swapping}
-        intelligence={{ levels: liveEfforts, value: info.effort, defaultLevel: defaultEffort, mode: liveModel?.effortMode ?? liveView.mode, onChange: setEffort }}
+        intelligence={{ levels: liveEfforts, value: info.effort, defaultLevel: defaultEffort, onChange: setEffort }}
         ultracode={ultraOk ? { on: !!info.ultracode, onChange: setUltracode } : undefined}
       />
     );
@@ -1161,11 +1095,10 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     const v = resumeView(active, !inClaude ? sessionMeta[active.sessionId] : cont ? sessionMeta[cont] ?? {} : { providerId: (settings.defaultProviderId as string | undefined) || 'claude' }, remote ? undefined : defaultMode, inClaude ? undefined : serverMode);
     const rAgent = sessionAgent;
     const rProvider = remote ? 'claude' : v.providerId;
-    const rP = providers.find((p) => p.id === rProvider);
-    const rView = claudeEffortView({ agent: rAgent, providers, providerId: rProvider, model: v.model, runtime: rP ? effectiveRuntime(rP, engine) : undefined });
+    const rView = claudeEffortView({ agent: rAgent, providers, providerId: rProvider, model: v.model });
     const rEfforts = rView.levels;
     const rUltraOk = !remote && rView.ultracode;
-    const t = modelChipText({ agent: rAgent, agentName: agents.find((a) => a.kind === rAgent)?.name, providers, providerId: rProvider, model: v.model, agentDefault: resumeAgentDefault, efforts: rEfforts, effort: v.effort, defaultEffort: rView.defaultLevel, ultracode: rUltraOk && v.ultracode, accountDefault });
+    const t = modelChipText({ agent: rAgent, providers, providerId: rProvider, model: v.model, efforts: rEfforts, effort: v.effort, defaultEffort: rView.defaultLevel, ultracode: rUltraOk && v.ultracode, accountDefault });
     const sid = active.sessionId;
     // nothing picked: the chip names the default the resume will really get; the transcript's last model is a hint
     const lastHint = !v.model && v.lastModel ? tr("\n上次回答用的是 {displayName}", { displayName: modelsFor(rAgent, [{ id: v.lastModel }])[0]?.displayName ?? v.lastModel }) : '';
@@ -1174,24 +1107,22 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         agent={rAgent}
         current={{ providerId: rProvider, model: v.model }}
         label={t.main}
-        title={tr("{main}{v}{lastHint}\n对话没在运行：发送后用这里选的模型继续{v2}", { main: t.main, v: t.isDefault ? tr('（默认）') : '', lastHint, v2: remote ? '' : tr('；选其它 Agent 的模型 = 交给它继续') })}
-        builtinTitle={rAgent === 'claude' ? ownName : tr('{name} 账号', { name: agents.find((a) => a.kind === rAgent)?.name ?? rAgent })}
-        agentDefault={resumeAgentDefault}
+        title={tr("{main}{v}{lastHint}\n对话没在运行：发送后用这里选的模型继续", { main: t.main, v: t.isDefault ? tr('（默认）') : '', lastHint })}
+        builtinTitle={ownName}
         lockProvider={remote ? 'claude' : undefined}
         lockNote={tr('其它机器上的对话：只能换模型，换供应商请在那台机器上操作')}
-        otherAgents={remote ? undefined : otherAgents}
         busy={swapping}
         disabled={swapping}
         onPick={(it) => pickResume(it, v)}
       />
     );
-    if (rAgent === 'claude' && !remote) subagent = <SubagentChip providerId={rProvider} value={subagentModelFor({ recorded: sessionMeta[sid]?.subagent, settings, providerId: rProvider })} disabled={swapping} onPick={(m) => void pickSubagent(m, rProvider, undefined, false)} />;
+    if (!remote) subagent = <SubagentChip providerId={rProvider} value={subagentModelFor({ recorded: sessionMeta[sid]?.subagent, settings, providerId: rProvider })} disabled={swapping} onPick={(m) => void pickSubagent(m, rProvider, undefined, false)} />;
     ultraOn = rUltraOk && !!v.ultracode;
     effort = (
       <EffortChip
         compact={mobile}
         disabled={swapping}
-        intelligence={{ levels: rEfforts, value: v.effort, defaultLevel: rView.defaultLevel, mode: rView.mode, onChange: (effort) => setResume(sid, { effort }) }}
+        intelligence={{ levels: rEfforts, value: v.effort, defaultLevel: rView.defaultLevel, onChange: (effort) => setResume(sid, { effort }) }}
         ultracode={rUltraOk ? { on: v.ultracode, onChange: (on) => setResume(sid, { ultracode: on }) } : undefined}
       />
     );
@@ -1281,20 +1212,20 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         {active && !welcome && (docked && dockReq
           ? <PermissionDock sessionId={active.sessionId} reason={text} onReasonUsed={() => onChange('')} scope={dockScope} note={dockNote} onDenyQueued={queuedOffer ? denyQueued : undefined} />
           : <RunCard sessionId={active.sessionId} />)}
-        {/* nothing to send with (spec 2026-10-26 §2.4): 添加来源 opens over this conversation; the draft stays in the box and
-            a source added there is picked up by welcomeProvider, so this line goes away by itself */}
-        {welcome && needsModel({ provider: wProviderId, foreignAgent: foreign, loggedIn }) && (
+        {/* nothing to send with (spec 2026-10-26 §2.4): 接一个模型 opens over this conversation; the draft stays in the box
+            and a provider added there is picked up by welcomeProvider, so this line goes away by itself */}
+        {welcome && needsModel({ provider: wProviderId, foreignAgent: false, loggedIn }) && (
           <div className="cmp-add-source" role="status">
             <span>{tr('还没有能用的模型来源。')}</span>
-            <button type="button" className="link" onClick={() => openAddSource()}>{tr('添加来源')}</button>
+            <button type="button" className="link" onClick={() => void connectModel({ reason: 'send' })}>{tr('添加来源')}</button>
           </div>
         )}
-        {/* the same for a conversation already going: the wizard opens in place, the draft stays, and an API source added
+        {/* the same for a conversation already going: the dialog opens in place, the draft stays, and a provider added
             there becomes this conversation's (session.setProvider) */}
         {liveNoSource && active && (
           <div className="cmp-add-source" role="status" data-live="1">
             <span>{tr('这个对话没有能用的模型来源。')}</span>
-            <button type="button" className="link" onClick={() => openAddSource(undefined, (p) => {
+            <button type="button" className="link" onClick={() => void connectModel({ reason: 'send' }).then((p) => {
               if (p) void ws.request({ kind: 'session.setProvider', sessionId: active.sessionId, providerId: p.id }).catch((e) => toast(e.message));
             })}>{tr('添加来源')}</button>
           </div>
@@ -1379,7 +1310,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
             rows={1}
             value={text}
             disabled={disabled}
-            placeholder={suggestion ? `${suggestion}   ${tr('Tab 采用')}` : disabled ? tr('对话已被删除，不能继续') : docked ? dockPlaceholder(docked, dockAgent) : welcome && !ultraOn ? tr('描述一个任务，或者问个问题。输入 / 查看命令，拖入文件作为附件') : busy ? tr('Enter 排到这一轮之后，Ctrl+Enter 马上插话 · Esc 中断') : ultraOn ? ULTRACODE.placeholder : active?.state === 'history' ? tr('发送即可继续这个对话…') : tr('回复 {agentName}… 输入 / 查看命令，拖入文件作为附件', { agentName: info?.agentName && info.agent !== 'claude' ? info.agentName : 'Claude' })}
+            placeholder={suggestion ? `${suggestion}   ${tr('Tab 采用')}` : disabled ? tr('对话已被删除，不能继续') : docked ? dockPlaceholder(docked, dockAgent) : welcome && !ultraOn ? tr('描述一个任务，或者问个问题。输入 / 查看命令，拖入文件作为附件') : busy ? tr('Enter 排到这一轮之后，Ctrl+Enter 马上插话 · Esc 中断') : ultraOn ? ULTRACODE.placeholder : active?.state === 'history' ? tr('发送即可继续这个对话…') : tr('回复 {agentName}… 输入 / 查看命令，拖入文件作为附件', { agentName: 'Claude' })}
             onChange={(e) => { setCaret(e.target.selectionStart ?? e.target.value.length); onChange(e.target.value); }}
             onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
             onKeyDown={onKey}

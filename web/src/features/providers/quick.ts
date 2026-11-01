@@ -1,6 +1,6 @@
 // 接一个模型: the quick connect for people without a Claude subscription (first run, a send with nothing to send
-// it with, settings). Pick where the key is from, paste it; the endpoint's own model list decides the format and the
-// default model. Pure — the component (QuickConnect.tsx) only wires requests to these.
+// it with, settings). Pick where the key is from, paste it; the endpoint's own model list decides the default model
+// and the family map. Pure — the component (QuickConnect.tsx) only wires requests to these.
 import { claudeFamilyMap, pickChatModel } from '@catalog';
 import type { ProviderType } from '@shared';
 import { tr } from '@/i18n';
@@ -8,7 +8,7 @@ import { tr } from '@/i18n';
 export interface QuickPreset {
   id: string;
   name: string;
-  /** 'auto' = a relay: its model list decides Claude format vs OpenAI format */
+  /** 'auto' = a relay: its address is asked for */
   type: ProviderType | 'auto';
   /** fixed endpoint (vendors); relays ask for it */
   baseUrl?: string;
@@ -18,20 +18,12 @@ export interface QuickPreset {
   note?: string;
 }
 
-// Endpoints are the vendors' documented OpenAI-compatible ones: every one serves /models, so the list decides the
-// model; ccb talks to them through the cache shim (settings → 供应商 has the details).
+// Anthropic-format endpoints only (Claude Code talks the Messages API): every one serves /v1/models, so the list
+// decides the default model and the family map.
 export const PRESETS: QuickPreset[] = [
-  { id: 'relay', name: tr('中转站'), type: 'auto', note: tr('填中转站给的地址和 Key。有 Claude 模型的用 Claude 格式（带缓存，更省），其它模型用 OpenAI 格式，读到模型列表后自动选。') },
-  { id: 'deepseek', name: 'DeepSeek', type: 'openai', baseUrl: 'https://api.deepseek.com', keyUrl: 'https://platform.deepseek.com/api_keys' },
-  { id: 'kimi', name: 'Kimi', type: 'openai', baseUrl: 'https://api.moonshot.cn/v1', keyUrl: 'https://platform.moonshot.cn/console/api-keys' },
-  { id: 'glm', name: tr('智谱 GLM'), type: 'openai', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', keyUrl: 'https://open.bigmodel.cn/usercenter/apikeys' },
-  { id: 'qwen', name: tr('通义千问'), type: 'openai', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', keyUrl: 'https://bailian.console.aliyun.com/' },
-  { id: 'siliconflow', name: tr('硅基流动'), type: 'openai', baseUrl: 'https://api.siliconflow.cn/v1', keyUrl: 'https://cloud.siliconflow.cn/account/ak' },
-  { id: 'openrouter', name: 'OpenRouter', type: 'openai', baseUrl: 'https://openrouter.ai/api/v1', keyUrl: 'https://openrouter.ai/keys' },
-  { id: 'gemini', name: 'Gemini', type: 'gemini', keyUrl: 'https://aistudio.google.com/apikey' },
+  { id: 'relay', name: tr('中转站'), type: 'auto', note: tr('填中转站给的地址和 Key（Anthropic 兼容接口），读到模型列表后自动选默认模型。') },
+  { id: 'anthropic', name: 'Anthropic API', type: 'anthropic', baseUrl: 'https://api.anthropic.com', keyUrl: 'https://console.anthropic.com/settings/keys' },
 ];
-
-export type QuickFormat = 'auto' | 'anthropic' | 'openai';
 
 /**
  * What people paste: a bare host, a host without a scheme, the full `/v1/chat/completions` URL from a relay's docs.
@@ -49,21 +41,16 @@ export function cleanBase(url: string): string {
 /** An Anthropic base is the part before `/v1` (the CLI appends `/v1/messages`). */
 export const anthropicBase = (url: string) => cleanBase(url).replace(/\/v1$/i, '');
 
-const hasClaude = (models: string[]) => Object.keys(claudeFamilyMap(models)).length > 0;
-
 export interface QuickPlan { type: ProviderType; baseUrl: string; defaultModel?: string; modelMap?: { haiku?: string; sonnet?: string; opus?: string } }
 
 /**
- * The profile to test and save, from the preset, the chosen format and the endpoint's model list. Claude format:
- * every family mapped (the CLI calls haiku for background work — a relay without that exact id would fail those),
- * default = its sonnet. OpenAI format: the best chat model in the list (never an embedding / image model).
+ * The profile to test and save, from the preset and the endpoint's model list: every family mapped (the CLI calls
+ * haiku for background work — a relay without that exact id would fail those), default = its sonnet.
  */
-export function quickPlan(p: QuickPreset, fmt: QuickFormat, base: string, models: string[]): QuickPlan {
-  if (p.type === 'gemini') return { type: 'gemini', baseUrl: '', defaultModel: pickChatModel(models, [/gemini-[\d.]+-pro/i, /gemini-[\d.]+-flash(?!.*lite)/i, /gemini/i]) };
+export function quickPlan(p: QuickPreset, base: string, models: string[]): QuickPlan {
+  const type = 'anthropic' as const;
   // an Anthropic base never keeps its /v1 (the CLI appends /v1/messages — `…/v1` became /v1/v1/messages)
-  if (p.type !== 'auto') return { type: p.type, baseUrl: p.type === 'anthropic' ? anthropicBase(p.baseUrl ?? base) : p.baseUrl ?? cleanBase(base), defaultModel: pickChatModel(models) };
-  const type: 'anthropic' | 'openai' = fmt === 'auto' ? (hasClaude(models) ? 'anthropic' : 'openai') : fmt;
-  if (type === 'openai') return { type, baseUrl: cleanBase(base), defaultModel: pickChatModel(models) };
+  if (p.type !== 'auto') return { type, baseUrl: anthropicBase(p.baseUrl ?? base), defaultModel: pickChatModel(models) };
   const fam = claudeFamilyMap(models);
   const def = fam.sonnet ?? pickChatModel(models);
   // a relay answering Claude format with other models (new-api converts): all three families on that model

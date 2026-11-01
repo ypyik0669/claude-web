@@ -6,7 +6,6 @@ import Showcase from '../showcase/Showcase.astro';
 import data from '../data/site-data.json';
 import { copy } from '../copy';
 import { readmeLink } from '../readme';
-import { AGENTS } from '../data/agents';
 import type { SiteData } from '../data/releases';
 import type { Locale } from '../i18n';
 
@@ -19,7 +18,6 @@ const num = (n: number) => n.toLocaleString(locale === 'zh' ? 'zh-CN' : 'en-US')
 const stats = [
   d.stars != null ? { n: num(d.stars), label: c.stats.stars } : null,
   d.releases != null ? { n: num(d.releases), label: c.stats.releases } : null,
-  { n: num(AGENTS.length), label: c.stats.agents },
 ].filter((s) => s !== null);
 ---
 <Base locale={locale} page="home">

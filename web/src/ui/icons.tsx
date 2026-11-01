@@ -22,14 +22,9 @@ import { GENERATED } from './icons.generated';
 
 type P = string | [string, Record<string, string | number>];
 
-// ---- brand / agent marks (hand-drawn) -------------------------------------
+// ---- brand marks (hand-drawn) -------------------------------------
 const HAND = {
   claude: ['M12 3.2v17.6M4.4 7.6l15.2 8.8M19.6 7.6L4.4 16.4'],
-  codex: ['M12 3.4l7.4 4.3v8.6L12 20.6 4.6 16.3V7.7z', 'M12 9.4a2.6 2.6 0 1 0 0 5.2 2.6 2.6 0 0 0 0-5.2z'],
-  gemini: ['M12 3.2c.6 4.6 4 8 8.6 8.6-4.6.6-8 4-8.6 8.6-.6-4.6-4-8-8.6-8.6 4.6-.6 8-4 8.6-8.6z'],
-  qwen: ['M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17z', 'M12 3.5a4.25 4.25 0 0 0 0 8.5 4.25 4.25 0 0 1 0 8.5'],
-  kimi: ['M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17z', ['M12 4.6a7.4 7.4 0 0 1 0 14.8z', { fill: 'currentColor', stroke: 'none' }]],
-  opencode: ['M9.5 7.5L4.5 12l5 4.5', 'M14.5 7.5l5 4.5-5 4.5', 'M13 6.5l-2 11'],
 } satisfies Record<string, P[]>;
 
 const PATHS = { ...GENERATED, ...HAND } satisfies Record<string, P[]>;
@@ -61,4 +56,4 @@ export function Icon({ name, size = 16, className, title }: { name: IconName; si
 export const ICON_NAMES = Object.keys(PATHS) as IconName[];
 
 /** Agent kind → icon. Custom ACP agents (`acp:<id>`) fall back to the generic bot. */
-export const AGENT_ICONS: Record<string, IconName> = { claude: 'claude', codex: 'codex', gemini: 'gemini', qwen: 'qwen', kimi: 'kimi', opencode: 'opencode' };
+export const AGENT_ICONS: Record<string, IconName> = { claude: 'claude' };

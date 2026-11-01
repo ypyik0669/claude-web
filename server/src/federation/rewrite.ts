@@ -17,7 +17,7 @@ const FORWARD = new Set<ClientRequest['kind']>([
   'session.contextUsage', 'session.stopTask', 'session.fastMode', 'session.toggleMcp', 'session.canonical',
   'permission.respond',
   'transcript.load', 'transcript.subagents', 'transcript.subagent',
-  'library.read', 'library.catchUp', 'library.rename', 'library.fork',
+  'library.read', 'library.rename', 'library.fork',
   'session.rename', 'session.delete',
   // read on the machine that has the transcript / the files
   'usage.session', 'files.changed', 'files.diff',
@@ -89,7 +89,6 @@ export function planRoute(req: ClientRequest): RoutePlan {
   if (!peers.size) return { kind: 'none' };
   if (SPLIT.has(req.kind)) return { kind: 'split' };
   if (LOCAL.has(req.kind)) return { kind: 'local' };
-  if (req.kind === 'session.switchAgent') return { kind: 'reject', reason: tr('其它机器上的对话请用「交给本机的 Agent 继续」') };
   if (!FORWARD.has(req.kind)) return { kind: 'reject', reason: tr('其它机器上的对话不支持「{kind}」', { kind: req.kind }) };
   // a forwarded request goes to exactly one machine, and only concerns that machine's sessions
   if (peers.size > 1 || ids.some((id) => !isPeerId(id))) return { kind: 'reject', reason: tr('一个请求不能同时涉及多台机器') };
@@ -180,10 +179,6 @@ export function rewriteEvent(e: ServerEvent, peer: PeerRef): { event?: ServerEve
     case 'permission.request':
       if (!e.request || isPeerId(e.request.sessionId) || isPeerId(e.request.requestId)) return null;
       return { event: { ...e, request: { ...e.request, sessionId: peerSessionId(peer.id, e.request.sessionId), requestId: peerSessionId(peer.id, e.request.requestId) } } };
-    case 'gateway.routed':
-      // 智能路由 on that machine: its conversation's 「自动 → 实际」 shows here under the prefixed id
-      if (isPeerId(e.sessionId)) return null;
-      return { event: { ...e, sessionId: peerSessionId(peer.id, e.sessionId) } };
     case 'permission.resolved':
       if (isPeerId(e.requestId)) return null;
       return { event: { ...e, requestId: peerSessionId(peer.id, e.requestId) } };

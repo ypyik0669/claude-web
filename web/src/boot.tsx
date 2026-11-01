@@ -8,7 +8,6 @@ import { ErrorBoundary } from './ui/ErrorBoundary';
 import { useStore } from './store';
 import { COMPOSER_REACH, PLACE_CONTAINER, PLACE_OPENER } from './features/composer/reach';
 import { tr } from '@/i18n';
-import { startGeminiKeepalive } from '@/features/gateway/gemini-login';
 
 export function boot(): void {
   useStore.getState().init();
@@ -21,8 +20,6 @@ export function boot(): void {
       setTimeout(() => useStore.getState().toast(tr('页面出错，已恢复'), true), 1200);
     }
   }
-  // Gemini web sessions die if the sidecar cannot renew its cookie: keep them alive while the app runs
-  startGeminiKeepalive();
   (window as any).__store = useStore; // debugging aid
   (window as any).__openFileMenu = (p: string) => openFileMenuAt(p, 40, 40); // ui-smoke: the file menu without a file row on screen
   // where every control of the old composer went (the table reach.test.ts checks): ui-smoke opens each place

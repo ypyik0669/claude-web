@@ -151,8 +151,8 @@ export function toClaudeEntries(events: CanonicalEvent[], opts: { cwd: string; s
   const user = (text: string) => base({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
   const assistant = (text: string) => base({ type: 'assistant', message: { role: 'assistant', model: 'external', content: [{ type: 'text', text }] } });
 
-  // one millisecond apart, the last just before now: rows sharing a timestamp made the default engine (ccb) resume
-  // from an early row, the turns after it gone from what the model saw
+  // one millisecond apart, the last just before now: rows sharing a timestamp are not reliably ordered on resume (the
+  // fork we ran before 2026-11-01 resumed from an early row, the turns after it gone from what the model saw)
   const stamped = () => {
     const now = Date.now();
     out.forEach((r, i) => { r.timestamp = new Date(now - (out.length - i)).toISOString(); });

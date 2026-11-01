@@ -5,11 +5,9 @@ import { tr } from '../i18n/index.js';
 import { compile, customDetectors, PROCESS_SECRET, redactText, scrubForLog, TAG, type Compiled } from './detect.js';
 import { redactBody, redactValue, restoreResponse } from './pipeline.js';
 import path from 'node:path';
-import { ownLoginCoverage } from './agents.js';
 import { PrivacyModel } from './model/index.js';
 import { maskOutput, outputCompiled } from './output.js';
 import { RecordStore } from './records.js';
-import type { PrivacyCoverage } from './types.js';
 import { DEFAULT_PRIVACY, PRIVACY_CATEGORIES, type PrivacyCategory, type PrivacyHit, type PrivacyPreview, type PrivacyRecord, type PrivacyRequest, type PrivacySettings, type PrivacyStats, type PrivacyStatus } from './types.js';
 import type http from 'node:http';
 
@@ -136,7 +134,6 @@ export class PrivacyService {
   private records: RecordStore;
   readonly model: PrivacyModel;
   private armHooks: (() => void)[] = [];
-  private coverageCache: { at: number; list: PrivacyCoverage[] } | null = null;
   private outCache: { key: string; c: Compiled | null } | null = null;
 
   /**
@@ -201,12 +198,7 @@ export class PrivacyService {
 
   status(): PrivacyStatus {
     const s = this.settings();
-    if (!this.coverageCache || Date.now() - this.coverageCache.at > 15_000) {
-      let list: PrivacyCoverage[] = [];
-      try { list = ownLoginCoverage(); } catch { /* unreadable: no list */ }
-      this.coverageCache = { at: Date.now(), list };
-    }
-    return { settings: s, stats: this.stats, badPatterns: customDetectors(s).bad, routed: this.routed(), coverage: this.coverageCache.list, model: this.model.status() };
+    return { settings: s, stats: this.stats, badPatterns: customDetectors(s).bad, routed: this.routed(), model: this.model.status() };
   }
 
   async set(patch: Extract<PrivacyRequest, { kind: 'privacy.set' }>['patch']): Promise<PrivacyStatus> {

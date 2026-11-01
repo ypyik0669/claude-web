@@ -3,7 +3,7 @@ import type { Provider } from '@shared';
 import { routePick, switchedNote } from './route';
 import type { ModelMenuItem } from './menu';
 
-const prov = (id: string, o: Partial<Provider> = {}): Provider => ({ id, name: id, type: 'openai', baseUrl: 'https://x', apiKey: '…', createdAt: 0, ...o });
+const prov = (id: string, o: Partial<Provider> = {}): Provider => ({ id, name: id, type: 'anthropic', baseUrl: 'https://x', apiKey: '…', createdAt: 0, ...o });
 const providers = [prov('a', { defaultModel: 'a-default' }), prov('b'), prov('c', { defaultModel: 'c-default' })];
 const item = (providerId: string, model: string, o: Partial<ModelMenuItem> = {}): ModelMenuItem => ({ key: `${providerId}:${model}`, providerId, providerName: providerId, model, display: model || '默认模型', label: model, favorite: false, recent: false, compatible: true, current: false, isDefault: !model, ...o });
 const ctx = (o: Partial<Parameters<typeof routePick>[1]> = {}) => ({ agent: 'claude' as const, currentProvider: 'a', currentModel: 'm1', remote: false, busy: false, providers, ...o });
@@ -19,13 +19,6 @@ describe('routePick (in-session model menu)', () => {
   });
   it('the Claude login default → `default`', () => {
     expect(routePick(item('claude', ''), ctx({ currentProvider: 'claude' }))).toEqual({ kind: 'setModel', model: 'default' });
-  });
-  it('a foreign agent default entry → its configured default, else an error that points at the agent settings', () => {
-    expect(routePick(item('claude', ''), ctx({ agent: 'codex', currentProvider: 'claude', agentDefault: 'gpt-5.6-sol' }))).toEqual({ kind: 'setModel', model: 'gpt-5.6-sol' });
-    const r = routePick(item('claude', ''), ctx({ agent: 'codex', currentProvider: 'claude' }));
-    expect(r).toMatchObject({ kind: 'error' });
-    expect((r as { message: string }).message).toMatch(/Agents 与子代理/);
-    expect((r as { message: string }).message).not.toMatch(/档案|CLI Agents/);
   });
   it('another profile → setProvider with the picked model', () => {
     expect(routePick(item('b', 'x'), ctx())).toEqual({ kind: 'setProvider', providerId: 'b', model: 'x', confirm: false });
@@ -43,17 +36,7 @@ describe('routePick (in-session model menu)', () => {
     expect(routePick(item('claude', 'm9'), ctx({ remote: true }))).toEqual({ kind: 'setModel', model: 'm9' });
   });
   it('an unavailable entry is refused with its reason', () => {
-    expect(routePick(item('b', 'x', { unavailable: '网关未启用' }), ctx())).toEqual({ kind: 'error', message: '网关未启用' });
-  });
-  it("another agent's model = a hand-over to that agent (the same confirm as ···), on the picked model", () => {
-    expect(routePick(item('claude', 'gpt-5.6-sol', { agent: 'codex' }), ctx())).toEqual({ kind: 'handover', agent: 'codex', model: 'gpt-5.6-sol' });
-    expect(routePick(item('claude', '', { agent: 'codex', isDefault: true }), ctx())).toEqual({ kind: 'handover', agent: 'codex', model: undefined });
-  });
-  it('a remote session is not handed over from the model menu (···: 交给本机的 Agent 继续)', () => {
-    expect(routePick(item('claude', 'x', { agent: 'codex' }), ctx({ remote: true }))).toMatchObject({ kind: 'error' });
-  });
-  it('the item of the current agent is not a hand-over', () => {
-    expect(routePick(item('claude', 'm2', { agent: 'claude' }), ctx({ currentProvider: 'claude' }))).toEqual({ kind: 'setModel', model: 'm2' });
+    expect(routePick(item('b', 'x', { unavailable: '用不了' }), ctx())).toEqual({ kind: 'error', message: '用不了' });
   });
 });
 

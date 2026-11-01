@@ -12,7 +12,6 @@ import { BRIEFING_HEAD } from '../session/handoff.js';
 import { tr } from '../i18n/index.js';
 import { summaryFromFile, unlistedTranscripts } from './unlisted.js';
 import { wslToWin } from '../wsl/paths.js';
-import { unalias } from '../models/subagent.js';
 
 export const claudeDir = process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude');
 export const projectsDir = path.join(claudeDir, 'projects');
@@ -24,9 +23,9 @@ export function cleanTitle(t: string | undefined): string {
 }
 
 /**
- * The SDK's `summary` is the conversation's LAST prompt when nothing better exists, so right after a hand-over back to
- * Claude on ccb (the briefing goes in as a message) the list said 「# 会话交接 这个会话之前由 Codex 在跑…」 (real relay
- * retest, 2026-10-02). A briefing is never the title: the first prompt that is not one, else 「交接的对话」.
+ * The SDK's `summary` is the conversation's LAST prompt when nothing better exists, so right after a hand-over (the
+ * briefing goes in as a message) the list said 「# 会话交接 这个会话之前由 … 在跑…」 (real relay retest, 2026-10-02).
+ * A briefing is never the title: the first prompt that is not one, else 「交接的对话」.
  */
 export function listTitle(s: Pick<SDKSessionInfo, 'sessionId' | 'customTitle' | 'summary' | 'firstPrompt'>): string {
   if (s.customTitle) return s.customTitle;
@@ -36,7 +35,7 @@ export function listTitle(s: Pick<SDKSessionInfo, 'sessionId' | 'customTitle' | 
 }
 
 /**
- * The folder a transcript ran in, read past the SDK's head: our engine writes a user line's `message` before its `cwd`
+ * The folder a transcript ran in, read past the SDK's head: Claude Code writes a user line's `message` before its `cwd`
  * and the queue-operation line before it carries the whole prompt, so a long first prompt (pasted text, an image) puts
  * the first `"cwd"` beyond the 64 KB the SDK reads — the list said 「(未知目录)」 (GitHub issue #9).
  */
@@ -254,10 +253,7 @@ export class SessionService extends EventEmitter {
 
   async subagent(sessionId: string, agentId: string) {
     const info = await getSessionInfo(sessionId);
-    const msgs = await getSubagentMessages(sessionId, agentId, { dir: info?.cwd });
-    // through the subagent split route the engine recorded the alias it asked with: show the real model
-    for (const m of msgs as any[]) if (m?.type === 'assistant' && typeof m.message?.model === 'string') m.message.model = unalias(m.message.model);
-    return msgs;
+    return getSubagentMessages(sessionId, agentId, { dir: info?.cwd });
   }
 
   /** Copy a transcript into a new session (optionally only up to a message), returning the new id. */

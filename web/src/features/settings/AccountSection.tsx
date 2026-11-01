@@ -13,7 +13,7 @@ import { accountSummary, savedWindows } from './compact-model';
 interface AuthStatus { loggedIn?: boolean; authMethod?: string; email?: string; orgName?: string; apiProvider?: string; error?: boolean }
 
 /**
- * Settings → 账号与登录: the login state first (spec §5.7); the runtime details (version, ccb / official binary,
+ * Settings → 账号与登录: the login state first (spec §5.7); the runtime details (version, where the binary is from,
  * doctor) are the page's 更多选项 (`Overview part="engine"`).
  */
 export function AccountSection() {

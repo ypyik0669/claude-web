@@ -112,7 +112,6 @@ export interface HomeInput {
   sessions: SessionSummary[];
   meta: Record<string, SessionMeta>;
   workspaces: { path: string; name: string }[];
-  agents?: { kind: string; name: string }[];
   schedules?: Schedule[];
   status?: Record<string, KnownStatus>;
   now?: number;
@@ -187,7 +186,7 @@ export function homeRows(tab: HomeTab, o: HomeInput): { rows: HomeRow[]; more: n
   const list = o.sessions
     .filter((s) => !s.parentId && (tab === 'archived') === isArchived(s, o.meta))
     .sort((a, b) => b.lastModified - a.lastModified);
-  const agentName = (k?: string) => (k && k !== 'claude' ? o.agents?.find((a) => a.kind === k)?.name ?? k : undefined);
+  const agentName = (k?: string) => (k === 'claudeai' ? 'claude.ai' : undefined);
   const rows = list.slice(0, HOME_PAGE).map((s): HomeRow => {
     const where = projectOf(s.cwd, o.workspaces);
     return {

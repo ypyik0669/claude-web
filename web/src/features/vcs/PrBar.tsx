@@ -48,7 +48,7 @@ const sentComments = new Set<string>();
 // a reply round in flight (one per conversation)
 const replying = new Set<string>();
 // 自动归档 acts on a PR this window saw open: turning the setting on must not sweep up conversations whose PRs were
-// merged months ago; one try each (a Codex conversation's archive never shows in sessionMeta)
+// merged months ago; one try each
 const sawOpen = new Set<string>();
 
 export function PrBar({ sessionId, visible = true }: { sessionId: string; visible?: boolean }) {

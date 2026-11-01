@@ -54,7 +54,7 @@ export function shortAgo(ts: number, now = Date.now()): string {
 }
 
 export interface OpenLike { state: RunnerState | 'history'; pending: readonly { toolName: string }[]; error?: string }
-export interface OrchWait { runId: string; runName: string; nodeId: string; title: string; kind: 'approval' | 'compare'; since?: number }
+export interface OrchWait { runId: string; runName: string; nodeId: string; title: string; kind: 'approval'; since?: number }
 
 export type AttentionItem =
   | { kind: 'session'; sessionId: string; title: string; status: RowStatus; summary?: SessionSummary; at: number }

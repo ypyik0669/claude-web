@@ -17,8 +17,8 @@ spec：`docs/superpowers/specs/2026-10-13-cafe-design.md`，计划 `docs/superpo
   也没有。guide / draft / save / list 只动角色库，预先放行（`CHARACTER_FREE_TOOLS`）；assign 改设置，照常问。
 - **skill = 本地插件**：`characters/cafe-character.md` 是源，`node scripts/gen-skill-text.mjs` 生成 `skill-text.ts`（tsc 不复制 .md，打包版只带
   `server/dist`；`tools.test.ts` 比对两者）。`cafePluginDir()` 把它写到 `<dataDir>/runtime/plugins/cafe/`（内容变了才重写），runner 在 `web.mcp`
-  开着时传 SDK `plugins: [{type:'local', path}]`。**2026-10-13 实测两个运行内核都认**（我们的引擎和官方二进制的 init 里都有 `cafe:cafe-character`），
-  phase 26 用真引擎再验一遍。
+  开着时传 SDK `plugins: [{type:'local', path}]`。官方二进制的 init 里有 `cafe:cafe-character`（2026-10-13 实测；当时的 ccb 也认），
+  phase 26 用真 Claude Code 再验一遍。
 - **网吧引擎** `web/src/features/cafe/`，Canvas 2D，没有依赖：
   - `iso.ts`（2:1 等距，地板格 16×8）、`map.ts`（快照 → 平面图，纯函数：u 0–5 服务区（厕所、零食、充电宝、前台、门）、u 7–24 座位（每排 6 个，
     每个工作流阶段一排，单个子代理一排，最多 8 排，多出来的在门口排队）、u 26–33 包间（后台命令的机器）和吸烟阳台；结束的任务留 2 分钟让客人结账）、

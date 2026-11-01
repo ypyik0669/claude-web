@@ -1,0 +1,86 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { guardNodeArgs } from '../runtime/spawn-guard.js';
+import { tr } from '../i18n/index.js';
+
+const isWin = process.platform === 'win32';
+
+/**
+ * Node binary to run JS entries with (Electron has no `node` on PATH; the shell itself runs in Node mode).
+ * `args` go before the script: the spawn-guard preload, so an Electron-as-node child (no console of its
+ * own on Windows) does not pop a console window for every git / reg / cmd it starts.
+ */
+export function nodeRuntime(): { command: string; env: Record<string, string>; args: string[] } {
+  if (process.versions.electron) return { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: '1' }, args: guardNodeArgs() };
+  return { command: process.execPath || 'node', env: {}, args: guardNodeArgs() };
+}
+
+/** Find `cmd` on PATH honouring PATHEXT on Windows. Returns the absolute file or null. */
+export function findOnPath(cmd: string): string | null {
+  if (cmd.includes('/') || cmd.includes('\\')) return fs.existsSync(cmd) ? cmd : null;
+  const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+  const exts = isWin ? (path.extname(cmd) ? [''] : ['.exe', '.cmd', '.bat', '.com', '']) : [''];
+  for (const d of dirs) for (const e of exts) {
+    const f = path.join(d, cmd + e);
+    try { if (fs.statSync(f).isFile()) return f; } catch { /* next */ }
+  }
+  return null;
+}
+
+/** Does the file start with a `#!…node` shebang (npm's POSIX bin scripts)? */
+export function isNodeScript(file: string): boolean {
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(128);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      return /^#!.*\bnode\b/.test(buf.subarray(0, n).toString('utf8').split('\n')[0]);
+    } finally { fs.closeSync(fd); }
+  } catch { return false; }
+}
+
+/**
+ * Turn a user-facing command (`npx`, an MCP server's command, a path…) into something `child_process.spawn` can run
+ * without a shell. npm's Windows `.cmd` shims are unwrapped to `node <entry.js>` so the program is a direct child
+ * (killable, no cmd.exe in between).
+ */
+export function resolveSpawn(command: string, args: string[]): { command: string; args: string[]; env: Record<string, string>; via: 'direct' | 'node-shim' | 'cmd' } {
+  if (!isWin) {
+    // npm bins are `#!/usr/bin/env node` scripts. A Finder-launched macOS app gets a minimal PATH without node, so
+    // the shebang fails with exit 127 even when the script itself was found — run it with our own Node instead.
+    const found = findOnPath(command);
+    if (found && isNodeScript(found) && !findOnPath('node')) { const n = nodeRuntime(); return { command: n.command, args: [...n.args, found, ...args], env: n.env, via: 'node-shim' }; }
+    return { command, args, env: {}, via: 'direct' };
+  }
+  const found = findOnPath(command) ?? command;
+  if (!/\.(cmd|bat)$/i.test(found)) return { command: found, args, env: {}, via: 'direct' };
+  try {
+    const text = fs.readFileSync(found, 'utf8');
+    // every quoted `%dp0%\…` / `%~dp0\…` path in the shim, minus the node.exe it may prefer; a .js entry,
+    // or an extensionless one with a node shebang (npm's shim for a package whose bin has no extension), runs
+    // under our node — otherwise the tree is cmd.exe → node → program and only cmd.exe is a direct child.
+    // Never an entry inside app.asar (an Electron app's shim): that archive is Electron's own
+    // format, plain node answers MODULE_NOT_FOUND — such a shim runs its own Electron binary, so keep cmd.exe
+    const rels = [...text.matchAll(/"%(?:dp0%|~dp0)\\([^"%]+)"/gi)].map((m) => m[1])
+      .filter((r) => !/(^|\\)node(\.exe)?$/i.test(r) && !/(^|[\\/])[^\\/]*\.asar([\\/]|$)/i.test(r));
+    for (const rel of rels) {
+      const entry = path.join(path.dirname(found), rel);
+      if (!fs.existsSync(entry)) continue;
+      if (/\.(?:m?js|cjs)$/i.test(rel) || (!path.extname(rel) && isNodeScript(entry))) {
+        const n = nodeRuntime();
+        return { command: n.command, args: [...n.args, entry, ...args], env: n.env, via: 'node-shim' };
+      }
+    }
+  } catch { /* fall through */ }
+  // generic .cmd/.bat: run through cmd.exe with proper quoting. cmd.exe expands `%VAR%` even inside quotes
+  // and ends the command at a newline — no quoting fixes either, so refuse rather than run something else
+  // the message names the argument (position + the `--key` before `=`), never its value — it may be a secret
+  const which = (a: string, i: number) => { const k = /^(-{1,2}[\w.-]+)=/.exec(a)?.[1]; return tr('第 {i} 个参数{v}', { i: i + 1, v: k ? `（${k}=…）` : '' }); };
+  args.forEach((a, i) => {
+    if (a.includes('%')) throw new Error(tr('{which}含 %，经 cmd.exe 运行 {basename} 时会被当成环境变量展开；请改用不含 % 的值', { which: which(a, i), basename: path.basename(found) }));
+    if (/[\r\n]/.test(a)) throw new Error(tr('{which}含换行，经 cmd.exe 运行 {basename} 时会被截断', { which: which(a, i), basename: path.basename(found) }));
+  });
+  // an empty argument must stay one (`--tools ""`): left bare it vanishes and the next flag becomes its value
+  const q = (s: string) => (s === '' || /[\s"&|<>^]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+  return { command: process.env.ComSpec ?? 'cmd.exe', args: ['/d', '/s', '/c', `"${[found, ...args].map(q).join(' ')}"`], env: {}, via: 'cmd' };
+}

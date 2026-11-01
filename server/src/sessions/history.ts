@@ -40,8 +40,8 @@ const tsOf = (m: Msg): number => {
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
-/** The ledger rows of a session that are turns (not a gateway call, not a retry). */
-export const turnRows = (rows: LedgerEntry[]) => rows.filter((r) => r.kind !== 'gateway' && !/^retry\b/.test(r.error ?? '') && r.model !== '');
+/** The ledger rows of a session that are turns (not a retry). */
+export const turnRows = (rows: LedgerEntry[]) => rows.filter((r) => !/^retry\b/.test(r.error ?? '') && r.model !== '');
 
 /**
  * `msgs` with a `result` (marked `cw_history`) after each finished turn. `live`: the conversation is running here —

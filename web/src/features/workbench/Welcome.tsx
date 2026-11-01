@@ -1,14 +1,11 @@
-import { useMemo } from 'react';
 import { useStore } from '@/store';
 import { Composer } from '@/features/composer/Composer';
 import { fillComposer } from '@/features/composer/fill';
 import { Icon } from '@/ui/icons';
-import { CHECKLIST_KEY, GREETING, STARTERS } from '@/features/home/model';
+import { GREETING, STARTERS } from '@/features/home/model';
 import { Checklist } from '@/features/home/Checklist';
 import { EngineNotice } from '@/features/home/EngineNotice';
 import { HomeLists } from '@/features/home/HomeLists';
-import { DiscoveryHint } from '@/features/sidebar/hint';
-import { hintReady } from '@/features/sidebar/newcomer';
 import { SidebarReveal, usePaneEdge } from './pane-edge';
 import { tr } from '@/i18n';
 import { LetterFlow } from '@/features/home/LetterFlow';
@@ -56,7 +53,6 @@ export function Welcome({ paneId, tileId }: { paneId: string; tileId: string }) 
           </div>
           <EngineNotice />
           <Checklist tileId={tileId} />
-          <HomeDiscovery />
           <HomeLists onOpen={pick} />
         </div>
       </div>
@@ -64,11 +60,3 @@ export function Welcome({ paneId, tileId }: { paneId: string; tileId: string }) 
   );
 }
 
-/** 对话库 discovery (Codex, OpenCode… found on this machine, not joined) while the sidebar still holds it back for the checklist. */
-function HomeDiscovery() {
-  const sources = useStore((s) => s.librarySources);
-  const sidebarShows = useStore((s) => hintReady(s.settings[CHECKLIST_KEY], Date.now()));
-  const pending = useMemo(() => sources.filter((x) => x.kind !== 'claude' && x.detected && !x.joined && !x.dismissed), [sources]);
-  if (!pending.length || sidebarShows) return null;
-  return <DiscoveryHint pending={pending} home />;
-}

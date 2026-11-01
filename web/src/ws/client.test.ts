@@ -130,7 +130,7 @@ describe('WsClient on an injected socket', () => {
     const events: ServerEvent[] = [];
     c.on((ev) => events.push(ev));
 
-    sockets[0].down({ type: 'reply', reply: { id: '2', ok: true, data: { engine: 'ccb' } } });
+    sockets[0].down({ type: 'reply', reply: { id: '2', ok: true, data: { engine: 'claude' } } });
     sockets[0].down({ type: 'reply', reply: { id: '99', ok: true, data: 'nobody asked' } }); // unknown id: ignored
     sockets[0].down({ type: 'event', event: { kind: 'sessions.changed' } });
     sockets[0].down({ type: 'reply', reply: { id: '1', ok: true, data: [1, 2] } });
@@ -138,7 +138,7 @@ describe('WsClient on an injected socket', () => {
     await flush();
 
     expect(a).toEqual({ state: 'resolved', value: [1, 2] });
-    expect(b).toEqual({ state: 'resolved', value: { engine: 'ccb' } });
+    expect(b).toEqual({ state: 'resolved', value: { engine: 'claude' } });
     expect(e).toEqual({ state: 'rejected', value: 'boom' });
     expect(events).toEqual([{ kind: 'sessions.changed' }]);
   });

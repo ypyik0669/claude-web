@@ -14,10 +14,10 @@
   `side_question` 控制请求。CLI 要的 history 是 `{ question, response }[]`（引擎报错原文：「history an array of
   {question, response} strings」）。回 `{ response, synthetic }`，`null` 表示没答。
 - 真引擎实测（官方二进制，haiku，2026-10-16）：先说「我喜欢 teal」，旁聊问「我喜欢什么颜色」答「Teal.」；
-  带 history 再问「我刚才问了什么」答对；**jsonl 里没有旁聊的任何字**。ccb fork 没测。
+  带 history 再问「我刚才问了什么」答对；**jsonl 里没有旁聊的任何字**。
 - 服务端 `session.side` → `SessionRunner.askSide`；没有 runner 回 `{ error: 'not-open' }`，前端
-  （`features/chat/side-chat.ts`）照发送的路子 `openSession(resumeParams)` 再问一次；Codex / ACP 等回
-  `{ error: 'unsupported' }`。进了联邦路由表。
+  （`features/chat/side-chat.ts`）照发送的路子 `openSession(resumeParams)` 再问一次；runner 不是 `SessionRunner` 时回
+  `{ error: 'unsupported' }`（以前是 Codex / ACP，现在基本到不了）。进了联邦路由表。
 - 前端状态是独立的小 zustand（`useSideChat`），只在内存里，关了就没；「放进对话」把最后一问一答引用成草稿。
 - `/btw` 是我们自己加进斜杠补全的本地命令，发送时在 `doSend` 里截住（引擎列表里若也有 btw 就去重）。
 

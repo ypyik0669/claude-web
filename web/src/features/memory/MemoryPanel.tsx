@@ -123,7 +123,7 @@ export function MemoryPanel() {
         {!rows.length && !err && (
           <div className="empty" style={{ padding: 20 }}>
             <div style={{ marginBottom: 6 }}>{tr('还没有记忆')}</div>
-            <div className="sub">{tr('所有 agent（Claude / Codex / Gemini / Qwen）都通过同一个 MCP 服务读写这里，一个 agent 记下的事另一个能直接读到。上面手写一条，或从一个对话里提取。')}</div>
+            <div className="sub">{tr('每个对话都通过同一个 MCP 服务读写这里，一个对话记下的事另一个能直接读到。上面手写一条，或从一个对话里提取。')}</div>
           </div>
         )}
       </div>

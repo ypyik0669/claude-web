@@ -1,4 +1,4 @@
-// Phase 23 end-to-end: 联网 — web search and the built-in browser as the MCP server `web`, for every agent
+// Phase 23 end-to-end: 联网 — web search and the built-in browser as the MCP server `web`, for Claude
 // (server/src/web; spec docs/superpowers/specs/2026-10-10-ui-structure/design.md §5). Over a real server and the real
 // MCP entry (server/dist/web/mcp.js, driven with raw JSON-RPC over stdio the way an agent drives it); the search
 // engines are fakes on this machine (CW_BING_URL / CW_DDG_URL), the desktop window hosting the browser is this
@@ -18,8 +18,8 @@
 //     pending command at once and searching goes back to the server;
 //   · POST /api/web/tool refuses a wrong secret, and does not exist on the remote-access listener; a paired device
 //     cannot become the browser host;
-//   · a search engine's key is stored protected and read back as a mask; a CLI agent (mock ACP) is handed both the
-//     memory and the web server, and neither once `web.mcp` is off;
+//   · a search engine's key is stored protected and read back as a mask; a Claude conversation is handed the web
+//     server, and not once `web.mcp` is off;
 //   · 允许的网站 (stage B task 7): in an open conversation a page-changing tool on a site not on the list raises a card
 //     (permission.request, tool browser.site) before anything reaches the window; 总是允许 writes the host into
 //     web.browser.allowedSites and the next change there is not asked about; a script (browser_eval) is asked about
@@ -84,8 +84,11 @@ const siteUrl = `http://127.0.0.1:${sitePort}`;
 
 // ---- the server: throwaway HOME, the fake engines ----
 const token = randomBytes(12).toString('hex');
-const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: dataDir, CODEX_HOME: path.join(home, '.codex'), CW_NO_MODEL_REFRESH: '1', CW_NO_PUBLIC_BROKERS: '1', CW_BING_URL: `${siteUrl}/bing`, CW_DDG_URL: `${siteUrl}/ddg` };
+const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: dataDir, CW_NO_MODEL_REFRESH: '1', CW_NO_PUBLIC_BROKERS: '1', CW_BING_URL: `${siteUrl}/bing`, CW_DDG_URL: `${siteUrl}/ddg` };
 for (const k of Object.keys(env)) if (/^(ANTHROPIC_|CLAUDE_CODE_|OPENAI_)/.test(k) || /^(no|http|https|all)_proxy$/i.test(k) || k === 'CW_WEB_TOKEN' || k === 'CW_WEB_TOKEN_FILE') delete env[k];
+// the conversations' engine must not reach anything: a dead endpoint (they only start, nothing is sent)
+env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:9';
+env.ANTHROPIC_API_KEY = 'sk-phase23-not-a-key';
 const server = spawn(process.execPath, [path.join(here, 'dist', 'index.js')], { cwd: path.dirname(here), env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 let slog = '';
 server.stderr.on('data', (d) => { slog += d; });
@@ -344,30 +347,24 @@ async function main() {
   await a.req({ kind: 'settings.set', key: 'web.search.braveKey', value: '' });
   check('… and \'\' removes it', (await a.req({ kind: 'web.status' })).engines.find((e) => e.id === 'brave')?.hasKey === false);
 
-  const mock = path.join(here, 'src', 'agents', '__mocks__', 'acp-agent.mjs');
-  await a.req({ kind: 'agents.set', agent: 'acp:p23', patch: { name: 'P23 Mock', command: process.execPath, args: [mock], protocol: 'acp', label: 'p23' } });
-  /** The MCP servers a new conversation of the mock agent was handed (it echoes them back). */
+  /** The MCP servers a new Claude conversation was handed (its engine reports them when it starts; nothing is sent). */
   const handed = async () => {
-    const o = await a.req({ kind: 'session.open', params: { cwd: proj, agent: 'acp:p23', permissionMode: 'default' } });
-    await until(() => a.events.some((e) => e.kind === 'session.state' && e.sessionId === o.sessionId && (e.state === 'idle' || e.state === 'error')), 60_000);
-    const from = a.events.length;
-    await a.req({ kind: 'session.send', params: { sessionId: o.sessionId, text: '列一下 mcp' } });
-    const echoed = await until(() => a.events.slice(from).find((e) => e.kind === 'session.event' && e.sessionId === o.sessionId && e.message.type === 'stream_event' && e.message.event?.delta?.text?.includes('[mcp:')), 30_000);
-    await until(() => a.events.slice(from).some((e) => e.kind === 'session.event' && e.sessionId === o.sessionId && e.message.type === 'result'), 30_000);
+    const o = await a.req({ kind: 'session.open', params: { cwd: proj, permissionMode: 'default' } });
+    const info = await until(() => a.events.find((e) => e.kind === 'session.info' && e.info?.sessionId === o.sessionId && e.info.mcpServers?.length)?.info, 60_000);
     await a.req({ kind: 'session.close', sessionId: o.sessionId }).catch(() => {});
     await a.req({ kind: 'session.delete', sessionId: o.sessionId }).catch(() => {});
-    return echoed?.message?.event?.delta?.text?.trim() ?? '(nothing echoed)';
+    return (info?.mcpServers ?? []).map((m) => m.name);
   };
   const withWeb = await handed();
-  check('a CLI agent is handed the web server next to the shared memory', withWeb === '[mcp: claude-web-memory,web]', withWeb);
+  check('a Claude conversation is handed the web server', withWeb.includes('web'), withWeb.join(','));
   await a.req({ kind: 'settings.set', key: 'web.mcp', value: false });
   const withoutWeb = await handed();
-  check('with web.mcp off a new conversation is not told about it', withoutWeb === '[mcp: claude-web-memory]' && (await a.req({ kind: 'web.status' })).enabled === false, withoutWeb);
+  check('with web.mcp off a new conversation is not told about it', !withoutWeb.includes('web') && (await a.req({ kind: 'web.status' })).enabled === false, withoutWeb.join(','));
   await a.req({ kind: 'settings.set', key: 'web.mcp', value: true });
 
-  // ---- 允许的网站 (stage B task 7): an open conversation (the mock agent's) asks on a card ----
+  // ---- 允许的网站 (stage B task 7): an open conversation asks on a card ----
   {
-    const g = await a.req({ kind: 'session.open', params: { cwd: proj, agent: 'acp:p23', permissionMode: 'default' } });
+    const g = await a.req({ kind: 'session.open', params: { cwd: proj, permissionMode: 'default' } });
     await until(() => a.events.some((e) => e.kind === 'session.state' && e.sessionId === g.sessionId && (e.state === 'idle' || e.state === 'error')), 60_000);
     const GS = g.sessionId;
     const tool = (name, args) => post(port, { sessionId: GS, tool: name, args }, secret);
@@ -424,7 +421,6 @@ async function main() {
     await a.req({ kind: 'session.close', sessionId: GS }).catch(() => {});
     await a.req({ kind: 'session.delete', sessionId: GS }).catch(() => {});
   }
-  await a.req({ kind: 'agents.set', agent: 'acp:p23', patch: null });
 
   // ---- the hosting window goes away ----
   const hangId = mcp.send('tools/call', { name: 'browser_click', arguments: { ref: 'e2' } });

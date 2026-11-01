@@ -46,7 +46,6 @@
 .orch-nodes { display: flex; flex-direction: column; gap: 8px; padding: 0 10px; }
 .orch-node-edit { border: var(--hairline) solid var(--edge-default); border-radius: var(--r-xl); background: var(--surface-1); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
 .orch-node-edit.k-approval { border-left: 3px solid var(--warn); }
-.orch-node-edit.k-compare { border-left: 3px solid var(--info); }
 .orch-node-edit .hd { display: flex; align-items: center; gap: 6px; color: var(--ink-3); }
 .orch-node-edit .hd .title { flex: 1; min-width: 0; font-weight: 600; }
 .orch-node-edit .hd .id { font-size: var(--fs-micro); color: var(--ink-4); }
@@ -85,23 +84,10 @@
 .orch-detail > .hd b { color: var(--ink-1); font-size: var(--fs-sm); }
 .orch-sess { display: inline-flex; gap: 2px; }
 .orch-out { font-size: var(--fs-sm); }
-.orch-out summary, .orch-judge summary { cursor: pointer; color: var(--ink-3); font-size: var(--fs-meta); }
+.orch-out summary { cursor: pointer; color: var(--ink-3); font-size: var(--fs-meta); }
 .orch-approval { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: var(--r-lg); background: var(--warn-soft); }
 .orch-approval .note { font-size: var(--fs-sm); color: var(--ink-1); }
-.orch-approval .acts, .orch-cand .acts { display: flex; gap: 6px; align-items: center; }
-.orch-judge { padding: 6px 8px; border-radius: var(--r-lg); background: var(--surface-2); font-size: var(--fs-sm); }
-.orch-judge .hd { display: flex; align-items: center; gap: 6px; color: var(--ink-2); flex-wrap: wrap; }
-.orch-cands { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
-.orch-cand { border: var(--hairline) solid var(--edge-default); border-radius: var(--r-lg); padding: 8px; display: flex; flex-direction: column; gap: 6px; background: var(--surface-0); min-width: 0; }
-.orch-cand.win { border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok); }
-.orch-cand.st-failed { opacity: 0.75; }
-.orch-cand .hd { display: flex; align-items: center; gap: 6px; }
-.orch-cand .reply { max-height: 220px; overflow: auto; font-size: var(--fs-sm); border-top: var(--hairline) solid var(--edge-subtle); padding-top: 4px; }
-.orch-cand .stat { margin: 0; font-family: var(--mono); font-size: var(--fs-micro); color: var(--ink-3); white-space: pre-wrap; background: var(--surface-2); border-radius: var(--r-md); padding: 4px 6px; }
-.orch-diff { margin: 0; max-height: 360px; overflow: auto; font-family: var(--mono); font-size: var(--fs-micro); background: var(--surface-2); border-radius: var(--r-md); padding: 6px; white-space: pre; }
-.orch-diff .add { color: var(--ok); }
-.orch-diff .del { color: var(--err); }
-.orch-diff .hunk { color: var(--info); }
+.orch-approval .acts { display: flex; gap: 6px; align-items: center; }
 
 /* mission control: waiting orchestration nodes */
 .mcard.orch-wait { border-color: var(--warn); }

@@ -1,5 +1,4 @@
 // The sidebar's first screen for someone new (final review §9 #5). Pure: the component passes what it knows.
-import { checklistView, readChecklist } from '@/features/home/model';
 import { tr } from '@/i18n';
 
 /**
@@ -18,25 +17,3 @@ export function makeProjectSpelled(projects: number): boolean {
   return projects === 0;
 }
 
-/** How long the library's discovery hint waits for an unfinished checklist (re-review M-7). */
-export const HINT_WAIT_MS = 3 * 24 * 60 * 60 * 1000;
-
-/**
- * The library's discovery hint waits until the newcomer checklist is finished or closed: finding Codex / OpenCode
- * conversations is not the first thing to learn, and the first screen has enough to say. Not forever (re-review
- * M-7): the list only shows on the home page, and someone whose desktop app always opens on a conversation never
- * finishes it — 3 days after the list first showed (`since`), the hint comes anyway. A list without `since` (not read
- * by this build yet) waits: it gets one the first time it is read.
- */
-export function hintReady(checklist: unknown, now: number): boolean {
-  const c = readChecklist(checklist);
-  if (!checklistView(c).visible) return true;
-  return c.since !== undefined && now - c.since >= HINT_WAIT_MS;
-}
-
-/** 「把 Codex 等工具里的对话也列在这里？」: one tool by name, several by the first one's; every name is in the tooltip. */
-export function hintText(names: readonly string[]): { text: string; title: string } {
-  const list = names.join('、');
-  const text = names.length <= 1 ? tr('把 {v} 里的对话也列在这里？', { v: names[0] ?? tr('其它工具') }) : tr('把 {v} 等工具里的对话也列在这里？', { v: names[0] });
-  return { text, title: tr('本机有 {list} 的对话。列出来以后，它们会出现在侧栏和搜索里（不会改动它们的数据）', { list }) };
-}

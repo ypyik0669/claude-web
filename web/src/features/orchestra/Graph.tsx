@@ -4,7 +4,7 @@ import { LazyNodeGraph } from '@/ui/node-graph';
 import { useColumnFit } from '@/ui/node-graph/useColumnFit';
 import { ORCH_CARD_W, ORCH_FIT, orchestraGraph } from './orch-graph';
 import { tr } from '@/i18n';
-export { KIND_ICON, STATE_L } from './orch-graph';
+export { kindIcon, STATE_L } from './orch-graph';
 
 const LAYOUT = { cardW: ORCH_CARD_W, align: 'top' } as const;
 

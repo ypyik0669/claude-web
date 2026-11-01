@@ -66,8 +66,8 @@ spec `docs/superpowers/specs/2026-10-16-texture-design.md`，计划 `docs/superp
 ## 表单控件：不用系统自带的样子（2026-10-28，用户报告「模型 → 设置」一堆系统控件）
 
 - **下拉**一律 `ui/Select.tsx`（可以直接包 `<option>`）；`<select>` 一个都不留。
-- **开关**一律 `ui/Switch.tsx`：`Switch`（`role="switch"` 按钮，`hub` 属性在模型页用绿色 `hub-switch`，否则是 `toggle`）、`SwitchLine`（字在左、开关在右的一整行）、`SwitchChip`（夹在一行别的控件中间的「字 + 小开关」）。它们是 `<label>` 包按钮，点字也能切。`<input type="checkbox">` 只留给「从列表里勾几项」（导入预览、模型挑选、同步到哪几个 Agent），全局 `accent-color: var(--accent)`。
-- **文本框**：应用里用 `field`（`input.field` / `textarea.field`），模型页里用 `input`（`.hub-page .input`，以前只在 `.hub-settings` 里生效，路由弹窗、插件市场的框都是裸的）。`label.field > textarea.field` 自动占满一行。
-- `.gateway-page .gateway-tab …` 那组表单规则以前挂在已经不挂载的旧「上游」页上，`.gateway-tab` 在模型页里全是裸控件——已去掉 `.gateway-page` 前缀。旧页那棵树（`GatewayPage` → `SourceDetail` / `AccountsTab` / `KeysTab` / `TasksTab` / `ExitsPanel` …）没人挂载了，但控件也一起换了。
+- **开关**一律 `ui/Switch.tsx`：`Switch`（`role="switch"` 按钮，`hub` 属性在模型页用绿色 `hub-switch`，否则是 `toggle`）、`SwitchLine`（字在左、开关在右的一整行）、`SwitchChip`（夹在一行别的控件中间的「字 + 小开关」）。它们是 `<label>` 包按钮，点字也能切。`<input type="checkbox">` 只留给「从列表里勾几项」（导入预览、模型挑选），全局 `accent-color: var(--accent)`。
+- **文本框**：应用里用 `field`（`input.field` / `textarea.field`），「用量与隐私」页里用 `input`（`.hub-page .input`）。`label.field > textarea.field` 自动占满一行。
+- （历史）那时还给模型网关的旧「上游」页、路由弹窗、插件市场换过控件；这些页面 2026-11-01 删了（「只留 Claude」）。`styles/gateway.css` / `gateway-sources.css` 还在 `main.tsx` 里引着，多半已无人用，清样式时可以一起看。
 - 模型页的设置行：`hub-setrow` + `hub-setlabel`（左字右控件）；整行宽的框用 `hub-setrow hub-setrow-stack`（字在上、框、按钮在右下）。
-- 查漏：`node .superpowers/scan-controls.cjs` 列出所有裸 `<input>/<select>/<textarea>`（不在仓库里的话照着写一个：按大括号配对找标签）。截图：`.superpowers/hub-shot-theme.cjs`（`CW_THEME=dark CW_SHOT_DIR=…`，会滚动 设置 / 隐私 / 路由 并打开智能路由弹窗）。
+- 查漏：`node .superpowers/scan-controls.cjs` 列出所有裸 `<input>/<select>/<textarea>`（不在仓库里的话照着写一个：按大括号配对找标签）。（当时的截图脚本 `.superpowers/hub-shot-theme.cjs` 会滚动 设置 / 隐私 / 路由 并打开智能路由弹窗，路由那部分已不适用。）

@@ -58,7 +58,7 @@ describe('ClaudeSource (real SessionService over a scratch ~/.claude/projects)',
   it('reports installed/joined/enabled — Claude is not part of the opt-in join flow', async () => {
     const src = new ClaudeSource(new SessionService());
     const status = await src.status();
-    expect(status).toMatchObject({ kind: 'claude', installed: true, detected: true, joined: true, dismissed: false, enabled: true });
+    expect(status).toMatchObject({ kind: 'claude', installed: true, detected: true, joined: true, enabled: true });
   });
 
   it('list() sees the session with its native UUID (no id transformation) and full caps', async () => {
@@ -113,7 +113,6 @@ describe('ClaudeSource (real SessionService over a scratch ~/.claude/projects)',
   it('LibraryService.remove backs up the raw jsonl AND the <id>/ dir (subagents) before deleting', async () => {
     const { LibraryService } = await import('./service.js');
     const { LibraryIndex } = await import('./index-db.js');
-    const { AgentTranscripts } = await import('../agents/transcript.js');
     const { MetaStore } = await import('../meta/store.js');
     const service = new SessionService();
     const src = new ClaudeSource(service);
@@ -130,7 +129,7 @@ describe('ClaudeSource (real SessionService over a scratch ~/.claude/projects)',
     const index = new LibraryIndex(path.join(webDir, 'library.db'));
     const meta = new MetaStore(path.join(webDir, 'meta.json'));
     await meta.load();
-    const lib = new LibraryService([src], index, new AgentTranscripts(), meta, { dataDirs: {}, trashDir: trash });
+    const lib = new LibraryService([src], index, meta, { trashDir: trash });
     try {
       const r = await lib.remove([doomed]);
       expect(r.failed).toEqual([]);
@@ -149,7 +148,6 @@ describe('ClaudeSource (real SessionService over a scratch ~/.claude/projects)',
   it('a Claude session whose raw backup cannot be made is not deleted', async () => {
     const { LibraryService } = await import('./service.js');
     const { LibraryIndex } = await import('./index-db.js');
-    const { AgentTranscripts } = await import('../agents/transcript.js');
     const { MetaStore } = await import('../meta/store.js');
     const service = new SessionService();
     const src = new ClaudeSource(service);
@@ -161,7 +159,7 @@ describe('ClaudeSource (real SessionService over a scratch ~/.claude/projects)',
     const index = new LibraryIndex(path.join(webDir, 'library.db'));
     const meta = new MetaStore(path.join(webDir, 'meta.json'));
     await meta.load();
-    const lib = new LibraryService([src], index, new AgentTranscripts(), meta, { dataDirs: {}, trashDir: trash });
+    const lib = new LibraryService([src], index, meta, { trashDir: trash });
     try {
       const r = await lib.remove([keep]);
       expect(r.removed).toEqual([]);

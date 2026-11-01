@@ -7,8 +7,8 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { preloadFile } from './spawn-guard.js';
 
 /**
- * The desktop build runs ccb / npm-shimmed agents as `electron.exe` with ELECTRON_RUN_AS_NODE=1 and our
- * guard as a `--require` preload (agents/resolve.ts nodeRuntime()). This drives the real Electron binary the
+ * The desktop build runs npm-shimmed JS children as `electron.exe` with ELECTRON_RUN_AS_NODE=1 and our
+ * guard as a `--require` preload (proc/resolve.ts nodeRuntime()). This drives the real Electron binary the
  * same way. Skipped when there is no Electron that can start in node mode (not installed, or a CI box
  * without its shared libraries).
  */
@@ -31,7 +31,7 @@ describe.skipIf(!electron)('spawn guard under Electron-as-node (--require preloa
   it('an ESM script run by electron.exe gets windowsHide on its spawns, named imports included', () => {
     const pre = preloadFile(path.join(dir, 'runtime'))!;
     const main = path.join(dir, 'agent-main.mjs');
-    // like ccb: ESM, `import { … } from 'child_process'` bound before any of its code runs
+    // a typical CLI: ESM, `import { … } from 'child_process'` bound before any of its code runs
     fs.writeFileSync(main, [
       "import { execFileSync, spawnSync } from 'node:child_process';",
       "import fs from 'node:fs';",

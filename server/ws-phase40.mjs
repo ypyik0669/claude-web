@@ -1,24 +1,20 @@
-// Phase 40 end-to-end (2026-10-26): ego lite as the browser Claude acts in first — a real server and the real engines
-// (ours, then the official binary) against a fake Anthropic upstream, with a fake `ego-browser` on PATH. Per engine:
+// Phase 40 end-to-end (2026-10-26): ego lite as the browser Claude acts in first — a real server and the real Claude
+// Code against a fake Anthropic upstream, with a fake `ego-browser` on PATH:
 //   · web.status finds ego lite (and its version); a conversation's tools include ego_browser, and the built-in
 //     browser's tools say to prefer it;
 //   · the model calls ego_browser with a script in Chinese, quotes and backticks: the permission card carries the script,
 //     ego-browser gets `nodejs -e "await import('file:///…/round-01.mjs')"` and that file holds the script byte for byte
 //     after the CW_SPACE / CW_OUT lines; the output and the screenshot the script saved reach the model;
 //   · 「内置浏览器」 in settings: a new conversation has no ego tools.
-// The permission rule (spec 14.1 / 14.4), per engine: default mode → exactly one card for ego_browser, the server's;
+// The permission rule (spec 14.1 / 14.4): default mode → exactly one card for ego_browser, the server's;
 // 完全放开 (bypassPermissions) → no card at all, the script runs and its output reaches the model. The built-in
 // browser's browser_eval (this script's WebSocket hosts the browser and answers it): default → one server card for the
-// script, 完全放开 → none. Then the other agents, with the mock ACP agent and the mock Codex app-server: the agent's own
-// prompt for ego_browser is answered without a card (ACP: session/request_permission; Codex: mcpServer/elicitation/
-// request), and the call itself — made here through the real web MCP entry with that conversation's id, the way the
-// agent's MCP process makes it — raises one server card in default mode and none in 完全放开. Last, 允许的网站 (spec
-// 14.4, last bullet): a click on a new site in 完全放开 raises no card and puts the site on the list, marked as added by
-// 完全放开; a click there in the default mode then raises no card, while another new site still asks.
-// 允许的网站 is the only say for the built-in browser (the user's decision, 2026-10-27), for both Claude engines (ours
-// through ExecuteExtraTool) and the ACP / Codex mocks (their own prompts for the browser tools get no card; the calls go
-// through the web MCP entry): default mode — opening a new site → exactly one card (the site card, op open; 总是允许),
-// a scroll / click there → none, opening another new site → one, a script → one; 完全放开 → none (siteRule below).
+// script, 完全放开 → none. Last, 允许的网站 (spec 14.4, last bullet): a click on a new site in 完全放开 raises no card
+// and puts the site on the list, marked as added by 完全放开; a click there in the default mode then raises no card,
+// while another new site still asks.
+// 允许的网站 is the only say for the built-in browser (the user's decision, 2026-10-27): default mode — opening a new
+// site → exactly one card (the site card, op open; 总是允许), a scroll / click there → none, opening another new site →
+// one, a script → one; 完全放开 → none (siteRule below).
 //   node server/ws-phase40.mjs   (starts its own server; scripts/e2e.mjs' port/token are ignored)
 import WebSocket from 'ws';
 import http from 'node:http';
@@ -100,33 +96,19 @@ function anthropic(s, j, h, raw) {
   const tr = lastToolResult(j);
   const WANT = { ego: { name: 'mcp__web__ego_browser', input: { script: SCRIPT } }, eval: { name: 'mcp__web__browser_eval', input: { script: EVAL_SCRIPT } } };
   const use = (w, id) => {
-    // the tool directly, or through the engine's deferred-tool runner
+    // 'direct' when the tool is in the conversation's own tool list, 'missing' when the model is calling one it was not given
     const { name, input } = w;
-    const direct = h.tools.includes(name);
-    h.called = direct ? 'direct' : 'extra';
-    return sse(s, j, [direct ? { type: 'tool_use', id, name, input } : { type: 'tool_use', id, name: 'ExecuteExtraTool', input: { tool_name: name, params: input } }], 'tool_use');
+    h.called = h.tools.includes(name) ? 'direct' : 'missing';
+    return sse(s, j, [{ type: 'tool_use', id, name, input }], 'tool_use');
   };
-  // our engine runs a deferred tool only after SearchExtraTools found it, the way a model first looks it up (the
-  // lookup's id says which tool the turn wanted)
-  const looked = tr && searches.get(String(tr.tool_use_id));
-  if (looked) { searches.delete(String(tr.tool_use_id)); return use(looked, `toolu_use_${++call}`); }
   if (tr) { h.toolResult = tr; return sse(s, j, [{ type: 'text', text: 'main: done' }], 'end_turn'); }
   // 'TOOL-GO <web tool> <json args>': any tool of the web server with those arguments (允许的网站 below)
   const t = turnText(j);
   const go = /TOOL-GO (\w+) (\{.*\})/.exec(t);
   const w = /EGO-GO/.test(t) ? WANT.ego : /EVAL-GO/.test(t) ? WANT.eval : go ? { name: `mcp__web__${go[1]}`, input: JSON.parse(go[2]) } : null;
-  if (w) {
-    if (!h.tools.includes(w.name) && h.tools.includes('SearchExtraTools')) {
-      const id = `toolu_search_${++call}`;
-      searches.set(id, w);
-      return sse(s, j, [{ type: 'tool_use', id, name: 'SearchExtraTools', input: { query: `select:${w.name}`, max_results: 3 } }], 'tool_use');
-    }
-    return use(w, `toolu_use_${++call}`);
-  }
+  if (w) return use(w, `toolu_use_${++call}`);
   return sse(s, j, [{ type: 'text', text: 'main:ok' }], 'end_turn');
 }
-/** SearchExtraTools lookups the mock made: its tool_use id → the call the turn wanted */
-const searches = new Map();
 const upstream = http.createServer((q, s) => {
   let raw = '';
   q.on('data', (c) => { raw += c; });
@@ -187,8 +169,7 @@ async function main() {
   checkRaw('web.status finds ego lite on PATH, with the version its guide states; the choice is 自动', st?.ego?.version === '9.8.7' && st.agentBrowser === 'auto', JSON.stringify(st && { ego: st.ego, agentBrowser: st.agentBrowser }));
   const hosted = await req({ kind: 'browser.host', on: true });
   checkRaw('this window hosts the built-in browser', hosted?.host === true, JSON.stringify({ host: hosted?.host }));
-  for (const runtime of (process.env.PHASE40_RUNTIMES ?? 'ccb,claude').split(',')) await suite(runtime);
-  for (const agent of (process.env.PHASE40_AGENTS ?? 'acp,codex').split(',').filter(Boolean)) await agentSuite(agent);
+  await suite('claude');
   if (process.env.PHASE40_ALLOWLIST !== '0') await allowListSuite();
 }
 
@@ -253,8 +234,8 @@ async function siteRule(check, mode, hosts, doCall) {
   }
 }
 
-/** A call made by Claude: a turn whose model calls `tool` (directly or through ExecuteExtraTool); `via` collects how. */
-const claudeCall = (sid, via) => async (tool, args, site) => {
+/** A call made by Claude: a turn whose model calls `tool`. */
+const claudeCall = (sid) => async (tool, args, site) => {
   const from = events.length;
   const mark = hits.length;
   await req({ kind: 'session.send', params: { sessionId: sid, text: `TOOL-GO ${tool} ${JSON.stringify(args)}` } });
@@ -264,17 +245,15 @@ const claudeCall = (sid, via) => async (tool, args, site) => {
     return msgsOf(sid, from).find((m) => m.type === 'result');
   }, 180_000, 300);
   const tr = hits.slice(mark).find((h) => h.main && h.toolResult)?.toolResult;
-  via.push(hits.slice(mark).find((h) => h.called)?.called);
   return { cards: cardsOf(sid, from), cmds: cmdsOf(sid, from), ok: r?.subtype === 'success' && !!tr && !tr.is_error };
 };
 
 async function suite(runtime) {
-  const tag = runtime === 'ccb' ? '[engine]' : '[official]';
-  const check = (name, ok, detail) => checkRaw(`${tag} ${name}`, ok, detail);
+  const check = (name, ok, detail) => checkRaw(name, ok, detail);
   const proj = path.join(root, `proj-${runtime}`);
   fs.mkdirSync(proj, { recursive: true });
   await req({ kind: 'settings.set', key: 'web.browser.agent', value: null });
-  const A = await req({ kind: 'providers.upsert', provider: { name: `中转${runtime}`, type: 'anthropic', baseUrl: up, apiKey: 'relay-key-e2e', defaultModel: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6'], ...(runtime === 'claude' ? { runtime: 'claude' } : {}) } });
+  const A = await req({ kind: 'providers.upsert', provider: { name: `中转${runtime}`, type: 'anthropic', baseUrl: up, apiKey: 'relay-key-e2e', defaultModel: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6'] } });
 
   // ---- ego lite found: its tools are there and Claude can run a script ----
   const o = await req({ kind: 'session.open', params: { cwd: proj, providerId: A.id, model: 'claude-sonnet-4-6', permissionMode: 'default' } });
@@ -285,7 +264,7 @@ async function suite(runtime) {
   await req({ kind: 'session.send', params: { sessionId: sid, text: 'EGO-GO open the page' } });
   // allow anything else that asks on the way (looking the tool up); keep the ego_browser card — the server's
   // (browser.site, tool ego_browser: spec 14.1), never Claude's own (the tool is in its allowed tools)
-  const isEgo = (rq) => /ego_browser/.test(String(rq.toolName) + String(rq.input?.tool_name ?? '') + String(rq.input?.tool ?? ''));
+  const isEgo = (rq) => /ego_browser/.test(String(rq.toolName) + String(rq.input?.tool ?? ''));
   const asked = await until(() => {
     for (const e of events.slice(from)) {
       if (e.kind !== 'permission.request' || e.request.sessionId !== sid) continue;
@@ -294,7 +273,7 @@ async function suite(runtime) {
     }
     return null;
   }, 120_000, 300);
-  const askedScript = asked?.input?.script ?? asked?.input?.params?.script;
+  const askedScript = asked?.input?.script;
   check('ego_browser is asked about on the server\'s card, and the card carries the whole script', !!asked && asked.toolName === 'browser.site' && asked.input?.tool === 'ego_browser' && askedScript === SCRIPT, JSON.stringify(asked && { toolName: asked.toolName, input: asked.input }).slice(0, 400));
   if (asked) await req({ kind: 'permission.respond', requestId: asked.requestId, response: { behavior: 'allow' } });
   const r = await resultOf(sid, from);
@@ -303,7 +282,7 @@ async function suite(runtime) {
   check('… and only that one card in the whole turn: Claude asks about nothing itself', allCards.length === 1 && allCards[0].requestId === asked?.requestId, cardBrief(allCards));
   const mine = hits.slice(mark).filter((h) => h.main);
   const first = mine[0];
-  check('the conversation has ego_browser in its tool list itself (not deferred behind ExecuteExtraTool, which would turn the picture into text)', !!first?.tools?.includes('mcp__web__ego_browser') && mine.find((h) => h.called)?.called === 'direct', JSON.stringify({ called: mine.find((h) => h.called)?.called, tools: first?.tools?.filter((t) => /web__|Extra/.test(t)) }));
+  check('the conversation has ego_browser in its tool list itself (alwaysLoad: not deferred behind a tool search)', !!first?.tools?.includes('mcp__web__ego_browser') && mine.find((h) => h.called)?.called === 'direct', JSON.stringify({ called: mine.find((h) => h.called)?.called, tools: first?.tools?.filter((t) => /web__/.test(t)) }));
   if (first?.openDesc) check('… and the built-in browser\'s tools say to prefer it', /use it instead for web tasks/.test(first.openDesc), first.openDesc.slice(-200));
   const calls = fs.readFileSync(egoLog, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((a) => a[0] === 'nodejs');
   check('ego-browser is run once with nodejs -e "await import(file:///…round-01.mjs)" — no script on the command line', calls.length === 1 && calls[0][1] === '-e' && /^await import\("file:\/\/\/.*round-01\.mjs"\)$/.test(calls[0][2] ?? ''), JSON.stringify(calls));
@@ -346,10 +325,6 @@ async function suite(runtime) {
       // one card in the whole turn, the server's, for the script: Claude has browser_eval in its allowed tools (the
       // server asks), and nothing else on the way (a lookup) asks
       check('default: browser_eval raises exactly one card in the whole turn, the server\'s, for the script', cards.length === 1 && server.length === 1 && server[0].input?.op === 'eval' && server[0].input?.tool === 'browser_eval' && server[0].input?.script === EVAL_SCRIPT, cardBrief(cards));
-      // our engine defers browser_eval (no alwaysLoad) behind ExecuteExtraTool: allowedTools names the tool inside, so
-      // the wrapper would raise Claude's own card next to the server's — the runner allows it when the tool inside is
-      // pre-allowed (session-runner onCanUseTool). The one card above must have come through that path.
-      if (runtime === 'ccb') check('default: … and on our engine that call went through ExecuteExtraTool (Claude raised no card of its own for it)', hits.slice(mark4).find((h) => h.called)?.called === 'extra' && !cards.some((c) => c.toolName === 'ExecuteExtraTool'), JSON.stringify({ called: hits.slice(mark4).find((h) => h.called)?.called, cards: cardBrief(cards) }));
     } else {
       check('完全放开: browser_eval raises no card at all', cards.length === 0, cardBrief(cards));
     }
@@ -360,11 +335,7 @@ async function suite(runtime) {
   // ---- 允许的网站 is the only say: Claude raises no card of its own for any browser tool ----
   for (const permissionMode of ['default', 'bypassPermissions']) {
     const o5 = await req({ kind: 'session.open', params: { cwd: proj, providerId: A.id, model: 'claude-sonnet-4-6', permissionMode } });
-    const via = [];
-    await siteRule(check, permissionMode, [`open1-${runtime}.example`, `open2-${runtime}.example`, `open3-${runtime}.example`], claudeCall(o5.sessionId, via));
-    // our engine defers the browser tools behind ExecuteExtraTool: the runner allows the wrapper when the tool inside is
-    // pre-allowed, so no card of Claude's came from that path either (the counts above include every card)
-    if (runtime === 'ccb' && permissionMode === 'default') check('default: … on our engine those calls went through ExecuteExtraTool', via.length > 0 && via.every((v) => v === 'extra'), JSON.stringify(via));
+    await siteRule(check, permissionMode, [`open1-${runtime}.example`, `open2-${runtime}.example`, `open3-${runtime}.example`], claudeCall(o5.sessionId));
     await req({ kind: 'session.close', sessionId: o5.sessionId }).catch(() => {});
   }
   pageUrl = 'https://app.example/';
@@ -378,7 +349,7 @@ async function suite(runtime) {
   await req({ kind: 'session.send', params: { sessionId: o2.sessionId, text: 'hello' } });
   await resultOf(o2.sessionId, from2);
   const h2 = hits.slice(mark2).find((h) => h.main);
-  check('… then a new conversation has no ego tools (the built-in browser\'s are still there)', !!h2 && !h2.mentionsEgo && (h2.tools.includes('mcp__web__browser_open') || /ExecuteExtraTool/.test(h2.tools.join())), JSON.stringify(h2?.tools?.filter((t) => /web__/.test(t))));
+  check('… then a new conversation has no ego tools (the built-in browser\'s are still there)', !!h2 && !h2.mentionsEgo && h2.tools.includes('mcp__web__browser_open'), JSON.stringify(h2?.tools?.filter((t) => /web__/.test(t))));
   await req({ kind: 'session.close', sessionId: o2.sessionId }).catch(() => {});
   await req({ kind: 'settings.set', key: 'web.browser.agent', value: null });
 }
@@ -406,105 +377,6 @@ function startMcp(sid) {
   p.stderr.on('data', () => {});
   const send = (method, params = {}) => { const n = ++id; p.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: n, method, params })}\n`); return n; };
   return { send, reply: (n) => replies.get(n), stop: () => { p.stdin.end(); setTimeout(() => p.kill(), 3000).unref?.(); } };
-}
-
-/** Calls through one web MCP process for conversation `sid` (siteRule's doCall); `.stop()` ends it. */
-function mcpCaller(sid) {
-  let mcp = null;
-  let ready = null;
-  const doCall = async (tool, args, site) => {
-    if (!mcp) {
-      mcp = startMcp(sid);
-      const init = mcp.send('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'phase40', version: '0' } });
-      ready = until(() => mcp.reply(init), 30_000);
-    }
-    await ready;
-    const from = events.length;
-    const n = mcp.send('tools/call', { name: tool, arguments: args });
-    const answered = new Set();
-    const res = await until(() => {
-      for (const rq of cardsOf(sid, from)) { if (!answered.has(rq.requestId)) { answered.add(rq.requestId); void answerCard(rq, site); } }
-      return mcp.reply(n);
-    }, 120_000, 300);
-    return { cards: cardsOf(sid, from), cmds: cmdsOf(sid, from), ok: !!res?.result && !res.result.isError };
-  };
-  doCall.stop = () => mcp?.stop();
-  return doCall;
-}
-
-/**
- * Another agent (mock ACP agent / mock Codex app-server): its own prompt for our ego_browser is answered without a
- * card; the call itself, made through the real web MCP entry with this conversation's id, raises one server card in
- * default mode and none in 完全放开.
- */
-async function agentSuite(kind) {
-  const tag = kind === 'acp' ? '[ACP]' : '[Codex]';
-  const check = (name, ok, detail) => checkRaw(`${tag} ${name}`, ok, detail);
-  const mocks = path.join(here, 'src', 'agents', '__mocks__');
-  const agent = kind === 'acp' ? 'acp:p40' : 'codex';
-  const proj = path.join(root, `proj-${kind}`);
-  fs.mkdirSync(proj, { recursive: true });
-  // Codex: `app-server` in the argv, so the web server's -c overrides go in front of it as with the real one
-  await req({ kind: 'agents.set', agent, patch: kind === 'acp' ? { name: 'P40 Mock', command: process.execPath, args: [path.join(mocks, 'acp-agent.mjs')], protocol: 'acp', label: 'p40' } : { command: process.execPath, args: [path.join(mocks, 'codex-server.mjs'), 'app-server'] } });
-  await req({ kind: 'agents.list', refresh: true });
-  try {
-    for (const permissionMode of ['default', 'bypassPermissions']) {
-      const o = await req({ kind: 'session.open', params: { cwd: proj, agent, permissionMode } });
-      const sid = o.sessionId;
-      const from = events.length;
-      await req({ kind: 'session.send', params: { sessionId: sid, text: kind === 'acp' ? 'EGO please' : 'MCPTOOL:ego' } });
-      const { cards: agentCards } = await runTurn(sid, from);
-      const said = JSON.stringify(msgsOf(sid, from));
-      check(`${permissionMode}: the agent's own prompt for ego_browser is answered without a card`, agentCards.length === 0 && said.includes(kind === 'acp' ? '(ego answer: allow)' : '(mcp answer: accept)'), cardBrief(agentCards) + said.slice(-300));
-      // the call, as the agent's web MCP process makes it
-      const mcp = startMcp(sid);
-      const before = egoCalls().length;
-      const from2 = events.length;
-      const init = mcp.send('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'phase40', version: '0' } });
-      await until(() => mcp.reply(init), 30_000);
-      const call = mcp.send('tools/call', { name: 'ego_browser', arguments: { script: SCRIPT } });
-      const answered = new Set();
-      const res = await until(() => {
-        for (const rq of cardsOf(sid, from2)) {
-          if (answered.has(rq.requestId)) continue;
-          answered.add(rq.requestId);
-          void req({ kind: 'permission.respond', requestId: rq.requestId, response: { behavior: 'allow' } }).catch(() => {});
-        }
-        return mcp.reply(call);
-      }, 120_000, 300);
-      mcp.stop();
-      const cards = cardsOf(sid, from2);
-      if (permissionMode === 'default') check('default: the ego_browser call raises exactly one card, the server\'s, with the whole script', cards.length === 1 && cards[0].toolName === 'browser.site' && cards[0].input?.tool === 'ego_browser' && cards[0].input?.script === SCRIPT, cardBrief(cards));
-      else check('完全放开: the ego_browser call raises no card at all', cards.length === 0, cardBrief(cards));
-      const out = (res?.result?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
-      check(`… ${permissionMode}: the script runs once and its output comes back`, egoCalls().length === before + 1 && out.includes(OUTPUT(sid)) && !res?.result?.isError, out.slice(0, 300) || JSON.stringify(res?.error ?? null));
-
-      // ---- the built-in browser (允许的网站 is the only say): the agent's own prompts for its tools get no card ----
-      const answeredBy = kind === 'acp' ? '(ego answer: allow)' : '(mcp answer: accept)';
-      const own = [];
-      for (const v of ['open', 'scroll', 'clickref']) {
-        const f = events.length;
-        await req({ kind: 'session.send', params: { sessionId: sid, text: kind === 'acp' ? `EGO:${v}` : `MCPTOOL:${v}` } });
-        const { cards: c } = await runTurn(sid, f);
-        own.push({ v, cards: c.length, answered: JSON.stringify(msgsOf(sid, f)).includes(answeredBy) });
-      }
-      check(`${permissionMode}: the agent's own prompts for browser_open / browser_scroll / browser_click are answered without a card`, own.every((x) => x.cards === 0 && x.answered), JSON.stringify(own));
-      if (permissionMode === 'default') {
-        // a look-alike (the agent's own fetch kind / a key the schema lacks) still gets the agent's card
-        const f = events.length;
-        await req({ kind: 'session.send', params: { sessionId: sid, text: kind === 'acp' ? 'EGO:openfetch' : 'MCPTOOL:openextra' } });
-        const { cards: c } = await runTurn(sid, f);
-        check('default: … while a look-alike of browser_open still gets the agent\'s own card', c.length === 1 && c[0].toolName !== 'browser.site', cardBrief(c));
-      }
-      // the calls themselves, through the real web MCP entry with this conversation's id
-      const caller = mcpCaller(sid);
-      try { await siteRule(check, permissionMode, [`open1-${kind}.example`, `open2-${kind}.example`, `open3-${kind}.example`], caller); } finally { caller.stop(); }
-      pageUrl = 'https://app.example/';
-      await req({ kind: 'session.close', sessionId: sid }).catch(() => {});
-    }
-  } finally {
-    await req({ kind: 'agents.set', agent, patch: null }).catch(() => {});
-  }
 }
 
 /**

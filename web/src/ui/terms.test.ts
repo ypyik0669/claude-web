@@ -3,14 +3,14 @@ import type { EffortLevel, PermissionMode } from '@shared';
 import { DISCONNECTED, EFFORT_DESC, EFFORT_LABEL, EMPTY, MODE_LABEL, PERMISSION_MODES, PERMISSION_MODE_ORDER, ULTRACODE, WORKBENCH_VIEW_LABEL, effortLabel, effortTitle, emptyText, panelToggleLabel } from './terms';
 import { WORKBENCH_TABS } from '@/model/layout';
 
-const EFFORTS: EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+const EFFORTS: EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 const MODES: PermissionMode[] = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions'];
 // words that must not reach a default screen (tooltips keep them)
 const IMPL = /effort|ultracode|窗格|停靠|引擎|ACP|档案/i;
 
 describe('effort → 智能程度', () => {
   it('maps every level to the spec wording', () => {
-    expect(EFFORT_LABEL).toEqual({ low: '快', medium: '均衡', high: '深入', xhigh: '更深', max: '极限', ultra: '超限' });
+    expect(EFFORT_LABEL).toEqual({ low: '快', medium: '均衡', high: '深入', xhigh: '更深', max: '极限' });
     for (const l of EFFORTS) expect(EFFORT_DESC[l]).toBeTruthy();
   });
 

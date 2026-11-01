@@ -79,7 +79,7 @@ export interface ResultItem {
   durationMs: number;
   apiMs: number;
   costUsd: number;
-  /** no real price for this turn (non-Claude model, Codex, ACP): `costUsd` is 0, show 「费用未知」 */
+  /** no real price for this turn (a non-Claude model on a relay): `costUsd` is 0, show 「费用未知」 */
   costUnknown?: boolean;
   numTurns: number;
   isError: boolean;
@@ -147,15 +147,10 @@ export interface Conversation {
   retracted: Set<string>;
   /** the last transcript timestamp applied (a thinking line's time is counted from it) */
   lastTs?: string;
-  /** the last turn is still running in another program (Codex's own app / CLI): the read ended with `cw_elsewhere` */
-  elsewhere?: { agent: string };
   /** the engine's guess at the next prompt (SDK `prompt_suggestion`, after a turn) — grey in the empty composer, Tab
    *  takes it; the next user message clears it. Not an item: it is not part of the conversation */
   suggestion?: string;
 }
-
-/** The marker a read ends with when another program is in the middle of its last turn (server `codex-items.ts`). */
-export const ELSEWHERE = 'cw_elsewhere';
 
 export function createConversation(): Conversation {
   return { items: [], toolIndex: new Map(), tasks: new Map(), streaming: new Map(), compacting: false, retracted: new Set() };
@@ -208,12 +203,6 @@ function findItem(c: Conversation, parent: string | null | undefined, pred: (i: 
 export function applyMessage(c: Conversation, m: any): void {
   if (m && m.type !== 'stream_event') c.lastEventAt = clock();
   else if (m?.type === 'stream_event') c.lastEventAt = clock();
-  if (m?.type === 'system' && m.subtype === ELSEWHERE) {
-    c.elsewhere = { agent: typeof m.agent === 'string' ? m.agent : '' };
-    return;
-  }
-  // anything after it: this window has the conversation again
-  if (c.elsewhere) c.elsewhere = undefined;
   dispatch(c, m);
   if (typeof m?.timestamp === 'string') c.lastTs = m.timestamp;
 }
@@ -271,14 +260,6 @@ function resetText(resetsAt: number) {
   return m < 60 ? tr('{m} 分钟后重置', { m }) : tr('{m} 小时 {m2} 分后重置', { m: Math.floor(m / 60), m2: m % 60 });
 }
 
-/**
- * Where a streamed block sits in its item. Normally its stream index; but an agent's synthesised turn (ACP / Codex,
- * server/src/agents/normalize.ts) counts only its text / thinking blocks and sends each tool call as a whole
- * `assistant` frame of the same message — so a text block streamed after a tool call arrives with an index the tool
- * call already holds. It goes after it instead (and its deltas / stop follow it), rather than overwriting the call.
- */
-const slots = new WeakMap<AssistantItem, Map<number, number>>();
-const slotOf = (item: AssistantItem, index: number) => slots.get(item)?.get(index) ?? index;
 
 function applyStream(c: Conversation, m: any) {
   const ev = m.event;
@@ -299,14 +280,7 @@ function applyStream(c: Conversation, m: any) {
   if (m.user_message_uuid && !cur.userMessageUuid) cur.userMessageUuid = m.user_message_uuid;
   if (ev.type === 'content_block_start') {
     const b = ev.content_block;
-    let at: number = ev.index;
-    if (cur.blocks[at] !== undefined) {
-      // taken by a whole frame that came first (a synthesised tool call): after it
-      at = cur.blocks.length;
-      let map = slots.get(cur);
-      if (!map) slots.set(cur, (map = new Map()));
-      map.set(ev.index, at);
-    }
+    const at: number = ev.index;
     if (b.type === 'text') cur.blocks[at] = { type: 'text', text: b.text ?? '' };
     else if (b.type === 'thinking') cur.blocks[at] = { type: 'thinking', thinking: b.thinking ?? '', startedAt: clock() };
     else if (b.type === 'redacted_thinking') cur.blocks[at] = { type: 'thinking', thinking: '', redacted: true, startedAt: clock() };
@@ -316,7 +290,7 @@ function applyStream(c: Conversation, m: any) {
       c.toolIndex.set(b.id, tb);
     }
   } else if (ev.type === 'content_block_delta') {
-    const b = cur.blocks[slotOf(cur, ev.index)];
+    const b = cur.blocks[ev.index];
     const d = ev.delta;
     if (!b) return;
     if (d.type === 'text_delta' && b.type === 'text') b.text += d.text;
@@ -330,7 +304,7 @@ function applyStream(c: Conversation, m: any) {
       }
     }
   } else if (ev.type === 'content_block_stop') {
-    const b = cur.blocks[slotOf(cur, ev.index)];
+    const b = cur.blocks[ev.index];
     if (b?.type === 'thinking' && b.startedAt !== undefined) {
       b.ms = Math.max(0, clock() - b.startedAt);
       delete b.startedAt;
@@ -762,8 +736,7 @@ function applySystem(c: Conversation, m: any) {
  */
 export function applyTranscript(c: Conversation, msgs: any[], opts?: { live?: boolean }) {
   for (const m of msgs) applyMessage(c, m);
-  // a turn another program is still in: as if it ran here (its steps keep their spinners, it does not fold)
-  if (opts?.live || c.elsewhere) {
+  if (opts?.live) {
     // the replay stamped turnStartedAt with the replay clock; the transcript knows better
     let turn = 0;
     for (let i = c.items.length - 1; i >= 0; i--) {

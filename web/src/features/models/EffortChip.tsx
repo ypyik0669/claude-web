@@ -7,12 +7,11 @@ import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { EFFORT_DESC, EFFORT_LABEL, TERMS, ULTRACODE, effortTitle } from '@/ui/terms';
 import { Popover } from '@/features/composer/Popover';
 import { EFFORT_MENU_ID } from '@/features/composer/ids';
-import { EFFORT_PROMPT_TITLE } from './intelligence';
 import { tr } from '@/i18n';
 
 export interface EffortChipProps {
-  /** the levels the current model takes; none → no ladder (Gemini) */
-  intelligence?: { levels: EffortLevel[]; value?: EffortLevel | null; defaultLevel?: EffortLevel; mode?: 'native' | 'prompt'; onChange: (l: EffortLevel) => void; disabled?: boolean };
+  /** the levels the current model takes; none → no ladder */
+  intelligence?: { levels: EffortLevel[]; value?: EffortLevel | null; defaultLevel?: EffortLevel; onChange: (l: EffortLevel) => void; disabled?: boolean };
   /** 深度编排 — only where the agent has it */
   ultracode?: { on: boolean; onChange: (on: boolean) => void; disabled?: boolean };
   compact?: boolean;
@@ -85,8 +84,6 @@ export function EffortChip({ intelligence, ultracode, compact, disabled, openSig
                 </button>
               </>
             )}
-            {/* a model without the parameter: the level goes out as a reminder in the prompt — said once, here */}
-            {intelligence?.mode === 'prompt' && levels.length > 0 && <div className="menu-note depth-note">{EFFORT_PROMPT_TITLE}</div>}
           </Popover>
         </ErrorBoundary>
       )}

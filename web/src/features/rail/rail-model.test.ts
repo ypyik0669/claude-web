@@ -5,7 +5,7 @@ import { MAX_PINS, RAIL_MORE, RAIL_SECTIONS, railPanel, readPins, togglePin } fr
 describe('the icon rail: the sections, the other panels behind ···', () => {
   it('the sections are 对话 · 后台 · 自动化 · 模型 · 扩展, in that order (spec 2026-10-27: the gateway section is the 模型 hub, its id stays gateway)', () => {
     expect(RAIL_SECTIONS.map((s) => s.id)).toEqual(['chat', 'background', 'automation', 'gateway', 'extensions']);
-    expect(RAIL_SECTIONS.map((s) => s.label)).toEqual(['对话', '后台', '自动化', '模型', '扩展']);
+    expect(RAIL_SECTIONS.map((s) => s.label)).toEqual(['对话', '后台', '自动化', '用量与隐私', '扩展']);
   });
   it('··· lists real panels, none of them a fixed tab of the right panel', () => {
     const ids = PANELS.map((p) => p.id);

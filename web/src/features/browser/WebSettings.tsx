@@ -90,7 +90,7 @@ export function WebSettings() {
     <>
       <div className="section" data-id="web-agents">
         <h5>{tr('Agent 上网')}</h5>
-        <Row label={tr('让 Agent 能搜索和打开网页')} hint={tr('每个对话里的 Agent 多出「搜索」和「浏览器」两类工具，Claude、Codex、Gemini 都一样。改动对之后新开的对话生效。')}>
+        <Row label={tr('让 Agent 能搜索和打开网页')} hint={tr('每个对话里的 Claude 多出「搜索」和「浏览器」两类工具。改动对之后新开的对话生效。')}>
           <button className={clsx('toggle', st?.enabled && 'on')} role="switch" aria-checked={!!st?.enabled} aria-label={tr('让 Agent 能搜索和打开网页')} disabled={!st} data-id="web-on" onClick={() => void set('web.mcp', !st?.enabled)} />
         </Row>
         <Row label={tr('Agent 用哪个浏览器操作网页')} hint={

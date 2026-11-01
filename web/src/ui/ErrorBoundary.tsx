@@ -92,7 +92,7 @@ export class ErrorBoundary extends Component<Props, State> {
     const r = this.state.report;
     if (!r) return;
     const eng = useStore.getState().engine;
-    const version = eng ? `${eng.runtime} ${eng.version ?? '?'}` : undefined;
+    const version = eng ? `Claude Code ${eng.version ?? '?'}` : undefined;
     void copyText(formatErrorReport(r, { version, url: location.pathname, userAgent: navigator.userAgent })).then(() => this.setState({ copied: true }));
   };
 

@@ -10,7 +10,7 @@ import { JsonTree } from './tools/McpTool';
 import { Icon } from '@/ui/icons';
 import { DOCK_DENY_QUEUED, DOCK_HINT } from '@/ui/terms';
 import { useLeaveGhost, type GhostOpts } from '@/ui/ghost';
-import { SITE_TOOL, alwaysDetails, alwaysLabel, asAsked, denyResponse, dockKind, dockStatus, isClickOnly, isEgoScriptRequest, permissionTitle, primaryKey, splitPending } from './permission-dock';
+import { SITE_TOOL, alwaysDetails, alwaysLabel, denyResponse, dockKind, dockStatus, isClickOnly, isEgoScriptRequest, permissionTitle, primaryKey, splitPending } from './permission-dock';
 import { ACCESS_NOTE, accessAsk } from '@/features/computer/computer-tools';
 import { webToolOf } from '@/features/browser/web-tools';
 import { tr } from '@/i18n';
@@ -133,8 +133,8 @@ function ToolPermission({ p, agent, cwd, more, reason, onReasonUsed, scope, note
         ) : edit ? (
           <div className="pd-scroll">{(p.toolName === 'MultiEdit' ? inp.edits ?? [] : [inp]).map((e: any, i: number) => <DiffView key={i} oldText={String(e.old_string ?? '')} newText={String(e.new_string ?? '')} title={String(inp.file_path ?? '')} collapse={false} />)}</div>
         ) : webToolOf(p.toolName) === 'ego_browser' ? (
-          // an agent's own prompt for the tool — a fallback look only: the server asks (EgoScriptRequest), Claude has
-          // the tool allowed, AcpDriver answers an ACP agent's prompt for it without a card, Codex does not ask
+          // Claude's own prompt for the tool — a fallback look only: the server asks (EgoScriptRequest), Claude has
+          // the tool allowed
           <div className="pd-scroll"><CodeBlock code={String(inp.script ?? '')} lang="javascript" title={tr('在 ego lite 里运行的脚本')} maxLines={30} /></div>
         ) : p.toolName === 'Write' ? (
           <div className="pd-scroll"><CodeBlock code={String(inp.content ?? '')} lang={langFromPath(String(inp.file_path ?? ''))} title={String(inp.file_path ?? '')} maxLines={40} /></div>
@@ -307,7 +307,7 @@ export function PermissionDock({ sessionId, reason, onReasonUsed, scope, note, o
   const [dock, setDock] = useState<HTMLElement | null>(null);
   const { dock: p } = splitPending(o?.pending ?? []);
   if (!o || !p) return null;
-  const agent = o.info?.agent && o.info.agent !== 'claude' ? o.info.agentName ?? o.info.agent : 'Claude';
+  const agent = 'Claude';
   const props: CardProps = { p, agent, cwd: o.cwd, more: o.pending.filter((x) => dockKind(x) !== 'ask').length - 1, reason, onReasonUsed, scope, note, onDenyQueued };
   const kind = dockKind(p);
   const title = permissionTitle(p, agent);
@@ -321,16 +321,9 @@ export function PermissionDock({ sessionId, reason, onReasonUsed, scope, note, o
   );
 }
 
-/**
- * Which card a request docks as — a tool our engine runs through ExecuteExtraTool as the card of the tool inside
- * (`asAsked`); the answer still goes back by the request's id, for the request as it came.
- */
-export function DockCard(asked: CardProps) {
-  const inner = asAsked(asked.p);
-  // the wrapper's suggestions are a rule for ExecuteExtraTool — every deferred tool — while the card reads as one
-  // narrow action: no 总是允许 on it (only 允许一次 / 拒绝), and no rule made up for the tool inside either
-  const p = inner === asked.p ? inner : { ...inner, suggestions: undefined };
-  const props = p === asked.p ? asked : { ...asked, p };
+/** Which card a request docks as. */
+export function DockCard(props: CardProps) {
+  const { p } = props;
   const kind = dockKind(p);
   return kind === 'plan' ? <PlanApproval {...props} /> : kind === 'access' ? <AccessRequest {...props} /> : isEgoScriptRequest(p) ? <EgoScriptRequest {...props} /> : p.toolName === SITE_TOOL ? <SiteRequest {...props} /> : <ToolPermission {...props} />;
 }

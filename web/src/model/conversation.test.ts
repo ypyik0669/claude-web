@@ -57,7 +57,7 @@ describe('fixture replay (real SDK stream: Read/Glob/Grep/Bash/WebFetch/TodoWrit
     expect((txt.result.structured as any).file.filePath).toMatch(/package\.json$/);
     expect(typeof (txt.result.structured as any).file.startLine).toBe('number');
     expect((tools.Grep[0].result.structured as any).mode).toBe('content');
-    // official CLI reports numMatches; ccb reports numLines — the card accepts either
+    // the official CLI reports numMatches; this fixture (recorded on the fork we ran before 2026-11-01) numLines — the card accepts either
     const g = tools.Grep[0].result.structured as any;
     expect(typeof (g.numMatches ?? g.numLines)).toBe('number');
     expect((tools.Glob[0].result.structured as any).filenames.length).toBeGreaterThan(0);
@@ -387,41 +387,8 @@ describe('stream lanes', () => {
   });
 });
 
-describe('a turn synthesised from an ACP / Codex agent (server/src/agents/normalize.ts MessageSynth)', () => {
-  // the synth streams text / thinking with its own block counter and sends a tool call as one whole `assistant`
-  // frame of the same message; at the end it restates the turn's text and thinking, concatenated
-  const se = (event: any) => ({ type: 'stream_event', uuid: `e${Math.random()}`, session_id: 's', parent_tool_use_id: null, event });
-  const msgs = [
-    se({ type: 'message_start', message: { id: 'mA', role: 'assistant', content: [] } }),
-    se({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }),
-    se({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'thinking about it' } }),
-    se({ type: 'content_block_stop', index: 0 }),
-    se({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } }),
-    se({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'Echo: please use a tool' } }),
-    se({ type: 'content_block_stop', index: 1 }),
-    { type: 'assistant', uuid: 'a1', session_id: 's', parent_tool_use_id: null, message: { id: 'mA', role: 'assistant', content: [{ type: 'tool_use', id: 'call-1', name: 'Read', input: { file_path: 'C:/x/package.json' } }] } },
-    { type: 'user', uuid: 'u1', session_id: 's', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-1', content: [{ type: 'text', text: '{"name":"x"}' }] }] } },
-    se({ type: 'content_block_start', index: 2, content_block: { type: 'text', text: '' } }),
-    se({ type: 'content_block_delta', index: 2, delta: { type: 'text_delta', text: ' (read ok)' } }),
-    se({ type: 'content_block_stop', index: 2 }),
-    se({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 0 } }),
-    se({ type: 'message_stop' }),
-    { type: 'assistant', uuid: 'a2', session_id: 's', parent_tool_use_id: null, message: { id: 'mA', role: 'assistant', content: [{ type: 'thinking', thinking: 'thinking about it' }, { type: 'text', text: 'Echo: please use a tool (read ok)' }] } },
-    { type: 'result', uuid: 'r1', session_id: 's', subtype: 'success', is_error: false, result: 'x', duration_ms: 46, duration_api_ms: 46, num_turns: 2, total_cost_usd: 0, cost_unknown: true },
-  ];
-
-  it('keeps the tool call where it happened: text streamed after it does not take its slot, and the closing restatement adds nothing', () => {
-    const c = createConversation();
-    for (const m of msgs) applyMessage(c, m);
-    const a = c.items.find((i) => i.kind === 'assistant') as AssistantItem;
-    expect(a.blocks.map((b) => (b.type === 'text' ? `text:${b.text}` : b.type === 'thinking' ? `thinking:${b.thinking}` : `${b.type}:${b.name}`))).toEqual([
-      'thinking:thinking about it', 'text:Echo: please use a tool', 'tool_use:Read', 'text: (read ok)',
-    ]);
-    expect(c.toolIndex.get('call-1')?.status).toBe('done');
-    expect(c.items.filter((i) => i.kind === 'assistant')).toHaveLength(1);
-  });
-
-  it('a Claude stream (tool blocks streamed at their own index) is laid out as before', () => {
+describe('stream layout', () => {
+  it('a Claude stream (tool blocks streamed at their own index)', () => {
     const c = createConversation();
     for (const m of loadFixture()) applyMessage(c, m);
     const a = c.items.find((i) => i.kind === 'assistant') as AssistantItem;
@@ -526,22 +493,6 @@ describe('prependTranscript (older history paging)', () => {
     expect(c.toolIndex.get('t2')!.status).toBe('pending');
     expect(c.runningTool?.id).toBe('t2');
     expect(c.toolIndex.get('t1')!.status).toBe('done');
-  });
-});
-
-describe('a turn another program is still in (cw_elsewhere)', () => {
-  it('the read ends with the marker: the conversation knows, the last turn stays live; anything after clears it', () => {
-    const c = createConversation();
-    applyTranscript(c, [
-      { type: 'user', uuid: 'u1', message: { role: 'user', content: 'go' } },
-      { type: 'assistant', uuid: 'a1', message: { id: 'm1', role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm test' } }] } },
-      { type: 'system', subtype: 'cw_elsewhere', agent: 'codex' },
-    ]);
-    expect(c.elsewhere).toEqual({ agent: 'codex' });
-    expect(c.items.some((i) => i.kind === 'system')).toBe(false);
-    expect(c.toolIndex.get('t1')?.status).not.toBe('done');
-    applyMessage(c, { type: 'user', uuid: 'u2', message: { role: 'user', content: 'next' } });
-    expect(c.elsewhere).toBeUndefined();
   });
 });
 

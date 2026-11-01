@@ -3,7 +3,7 @@
 import { onPage, type SceneSize, type View } from './engine';
 import type { DemoPhase, GUESTS } from './demo';
 
-export type ChapterId = 'agents' | 'turns' | 'permission' | 'review' | 'checkout' | 'elsewhere' | 'gateway';
+export type ChapterId = 'agents' | 'turns' | 'permission' | 'review' | 'checkout' | 'elsewhere';
 export interface ChapterLook { u: number; v: number; h?: number; zoom: number }
 export interface ChapterSpec {
   id: ChapterId;
@@ -29,7 +29,7 @@ export const HERO_LOOK_PHONE: ChapterLook = { u: 14, v: 8, zoom: 1 };
 export const HERO_COPY_PX = 600;
 export const heroLookFor = (cssWidth: number): ChapterLook => (cssWidth < 720 ? HERO_LOOK_PHONE : HERO_LOOK);
 // seats of the demo's one row: api u 7, tests u 10, docs u 13, lint u 16 (v 3, chair v 4); counter u 1–2 v 12–14;
-// the big screen u 9–15 on the back wall (h 18–40); the door (2, 17)
+// the door (2, 17)
 export const CHAPTERS: ChapterSpec[] = [
   { id: 'agents', look: { u: 14, v: 8, zoom: 1.1 }, jump: null, ok: [], focus: null, label: 'agents' },
   { id: 'turns', look: { u: 8, v: 4, h: 8, zoom: 2.2 }, jump: 'noodles', ok: ['noodles', 'needsYou'], focus: 'api', label: 'turns' },
@@ -37,7 +37,6 @@ export const CHAPTERS: ChapterSpec[] = [
   { id: 'review', look: { u: 11, v: 4, h: 8, zoom: 2.2 }, jump: 'noodles', ok: ['arrive', 'noodles', 'needsYou'], focus: 'tests', label: 'review' },
   { id: 'checkout', look: { u: 2.5, v: 13, h: 6, zoom: 2.4 }, jump: 'checkout', ok: ['checkout'], focus: null, label: 'checkout' },
   { id: 'elsewhere', look: { u: 6, v: 13, zoom: 1.4 }, jump: 'guest', ok: ['guest'], focus: 'lint', label: 'elsewhere' },
-  { id: 'gateway', look: { u: 12, v: 0.2, h: 30, zoom: 2.6 }, jump: null, ok: [], focus: null, label: 'gateway' },
 ];
 
 export const chapterById = (id: string): ChapterSpec | undefined => CHAPTERS.find((c) => c.id === id);

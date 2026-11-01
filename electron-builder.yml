@@ -45,11 +45,7 @@ files:
 asarUnpack:
   - "**/node_modules/@anthropic-ai/claude-agent-sdk-*/**"
   - "**/node_modules/node-pty/**"
-  - "**/node_modules/claude-web-engine/**"
-  - "**/node_modules/@claude-code-best/**"
   - "**/node_modules/@vscode/ripgrep/**"
-  # the engine bundles sharp's JS but not its native binary (a dev dependency upstream): images over 2000 px failed
-  # 「Could not load the "sharp" module」; sharp in our dependencies brings the per-platform @img/sharp-* it requires
   - "**/node_modules/sharp/**"
   - "**/node_modules/@img/**"
 # 深链接 (claude-web://new?folder=…&q=…): Windows registers it in the installer, macOS in Info.plist
@@ -60,14 +56,6 @@ protocols:
 extraResources:
   - from: desktop/build/icon.png
     to: icon.png
-  # pinned Gemini / WorkBuddy sidecars, fetched by scripts/sidecars/fetch.mjs before packaging (CI does this;
-  # without them the server downloads on first use into the data directory)
-  - from: vendor/sidecars
-    to: sidecars
-  # CLIProxyAPI / Magpie, fetched by scripts/engines/fetch.mjs before packaging: a fresh install signs in and runs
-  # without downloading an engine first (server/src/engines/manager.ts reads <resources>/engines)
-  - from: vendor/engines
-    to: engines
 win:
   target:
     - nsis

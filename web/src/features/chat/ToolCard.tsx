@@ -188,9 +188,9 @@ export function GroupHead({ steps, open, onToggle }: { steps: ToolUseBlock[]; op
 /**
  * Seconds a running tool has been going, ticking on its own.
  *
- * `progress.elapsed` is authoritative when the agent keeps sending it (Claude does); ACP and Codex
- * announce the start and then go quiet, so the wall clock since `startedAt` is what stops the row
- * from sitting at "0 秒" for the whole command.
+ * `progress.elapsed` is authoritative when it keeps coming; when it does not (a tool that only
+ * announces its start), the wall clock since `startedAt` is what stops the row from sitting at
+ * "0 秒" for the whole command.
  */
 function useElapsed(t: ToolUseBlock): number | null {
   const live = t.status === 'running';

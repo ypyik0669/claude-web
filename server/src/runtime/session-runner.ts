@@ -11,22 +11,20 @@ import { toWslPath } from '../wsl/paths.js';
 import { wslService } from '../wsl/service.js';
 import { addTranscriptRoot, dropEmptyBlocks, findClaudeTranscript, hasClaudeTranscript, hasEntry, lastCostState, lastHumanPrompt, repairLeaf } from './transcript-file.js';
 import { compactCap, ownAnthropicBase, ownOverride, settingsOverride, userAnthropicEnv } from './user-env.js';
-import { providerKey, splitSupport, subAlias, subagentTarget, unalias, type SplitKind, type SubagentPick } from '../models/subagent.js';
-import { splitEndpoint, splitTarget, type SplitSub } from '../gateway/split.js';
+import { subagentTarget } from '../models/subagent.js';
 import { desktopSkillsPlugin } from './desktop-skills.js';
 import { writeFlagSettings, type FlagSettings } from './flag-settings.js';
 import { resolveEngine, spawnClaude } from '../claude-exe.js';
 import { loopbackNoProxy, providerEnv, type SessionProvider } from '../providers/service.js';
 import { privacyRoute } from '../privacy/route.js';
-import { ENGINE_DEFAULT_WINDOW, ONE_M, contextWindowFor, contextWindowsEnv, isClaudeModel, officialWindow } from '../models/context-window.js';
-import { ccbAccountEnv, ccbMisthinks, ccbModel, isChatModel, modelCaps, modelLabel, modelsFor, preferredRuntime, providerModelId, supportsUltracode, webCapsEnv } from '../models/catalog.js';
+import { ENGINE_DEFAULT_WINDOW, ONE_M, contextWindowFor, isClaudeModel, officialWindow } from '../models/context-window.js';
+import { isChatModel, modelCaps, modelLabel, modelsFor, providerModelId, supportsUltracode } from '../models/catalog.js';
 import { turnShare, type RunningTotals } from '../usage/turn-cost.js';
 import { claudeMcpServer } from '../memory/launcher.js';
 import { webAllowedTools, webClaudeMcpServer, webMcpEnabled } from '../web/launcher.js';
 import { cafePluginDir } from '../characters/tools.js';
 import { asciiPluginDir } from '../themes/tools.js';
 import { computerAllowedTools, computerClaudeMcpServer } from '../computer/launcher.js';
-import { ENGINE_SEARCH_TOOL, engineSearchOff, userPickedSearchAdapter } from '../web/engine-search.js';
 import { markUnknownCost } from '../usage/pricing.js';
 import type { AttachmentRef, EffortLevel, ModelInfo, OpenSessionParams, PermissionMode, PermissionRequestEvent, PermissionResponse, Provider, RunnerState, SessionFeatures, SessionInfoSnapshot, SideTurn } from '../protocol.js';
 import { getLocale, tr } from '../i18n/index.js';
@@ -147,16 +145,6 @@ export interface RunnerEvents {
  * Re-spawns itself (with resume) when the model changes, since model is fixed per process
  * unless the CLI supports setModel (it does; we use it and fall back to respawn on failure).
  */
-/** What the account path reads instead of the user's own Anthropic env, for another Claude account. */
-const NO_RELAY: ReturnType<typeof userAnthropicEnv> = { env: {}, relay: false };
-
-/**
- * The tool set a sidecar-backed conversation gets (Gemini web / WorkBuddy). Those upstreams take the tool schemas
- * as text inside the prompt, so every extra tool costs latency and can push a turn over the sidecar's 128 KB
- * attachment limit. These six cover reading, searching, editing and running commands — the core of a coding turn.
- */
-const LEAN_TOOLS = ['Read', 'Edit', 'Write', 'Bash', 'Grep', 'Glob', 'TodoWrite'];
-
 export class SessionRunner extends EventEmitter {
   readonly id: string; // sessionId (known up front for resume; assigned from init otherwise)
   sessionId: string;
@@ -166,8 +154,6 @@ export class SessionRunner extends EventEmitter {
   private input = new InputQueue();
   private abort = new AbortController();
   private pending = new Map<string, PendingPermission>();
-  /** the tools this query runs without asking (Options.allowedTools): ccb asks for them wrapped, see onCanUseTool */
-  private preAllowed = new Set<string>();
   private history: SDKMessage[] = []; // messages since spawn, replayed to late-joining clients
   info: SessionInfoSnapshot;
   private model?: string;
@@ -179,8 +165,6 @@ export class SessionRunner extends EventEmitter {
    * own models, aliases, effort levels and windows — with that account's token instead of the ~/.claude login.
    */
   private account?: SessionProvider;
-  /** prompt-cache route key: this session's id (a fork keeps its parent's, whose prefix it shares) */
-  private cacheKey: string;
   /** the id the shim's ledger rows go under; unset for an SDK fork, whose id only arrives at init */
   private ledgerId?: string;
   private features: SessionFeatures;
@@ -256,30 +240,25 @@ export class SessionRunner extends EventEmitter {
     const isFork = !!params.sessionId && (params.fork || !!params.resumeAt);
     this.sessionId = params.sessionId && !isFork ? params.sessionId : randomUUID();
     this.id = this.sessionId;
-    this.cacheKey = params.cacheParentId ?? params.sessionId ?? this.sessionId;
     this.ledgerId = isFork ? undefined : this.sessionId;
     this.model = params.model || provider?.defaultModel || undefined;
     this.effort = params.effort;
     this.permissionMode = params.permissionMode ?? 'default';
     // in WSL (NAT) this computer's gateway is not at 127.0.0.1: subagents stay on the main model
     this.subagent = this.wsl ? '' : params.subagentModel ?? '';
-    this.info = { sessionId: this.sessionId, state: 'starting', cwd: this.cwd, model: this.model, effort: this.effort, permissionMode: this.permissionMode, providerId: provider?.id, providerName: provider?.name, features: this.features, agent: 'claude', ...(this.wsl ? { wsl: { distro: this.wsl.distro, dropped: [] } } : {}) };
+    this.info = { sessionId: this.sessionId, state: 'starting', cwd: this.cwd, model: this.model, effort: this.effort, permissionMode: this.permissionMode, providerId: provider?.id, providerName: provider?.name, features: this.features, ...(this.wsl ? { wsl: { distro: this.wsl.distro, dropped: [] } } : {}) };
     if (this.subagent) this.info.subagentModel = this.subagent;
-    // 深度编排 picked before the conversation started (welcome page, a reopen): our engine starts with --ultracode; the
-    // official binary only has `/effort ultracode` inside the conversation — sent just before the first message (at
-    // open it would make a conversation of its own, titled after the command, even if nothing is ever sent)
+    // 深度编排 picked before the conversation started (welcome page, a reopen): Claude Code only has `/effort ultracode`
+    // inside the conversation — sent just before the first message (at open it would make a conversation of its own,
+    // titled after the command, even if nothing is ever sent)
     if (params.ultracode) {
       this.info.ultracode = true;
-      if (this.plan().engine.kind !== 'ccb') this.ultracodeFirst = true;
+      this.ultracodeFirst = true;
     }
-    // Handover from another agent: Claude has no JSONL for this id, so feed it synthesized entries
-    // through the documented SessionStore hook — the SDK materializes them to a temp transcript the
-    // subprocess resumes from natively. `persistSession: false` is incompatible with sessionStore.
-    // Only the official binary has that hook: the SDK passes `--session-mirror`, and ccb 2.8.4 exits "unknown option"
-    // (every hand-over back to Claude on ccb failed, 2026-10-01) — there it is like the other agents: its own transcript
-    // (if the conversation began as Claude) or a new one on the id, and the briefing as the first message.
-    const mirror = !!params.resumeEntries?.length && this.plan().engine.kind === 'claude';
-    const briefFirst = !!params.resumeEntries?.length && !mirror ? params.briefing : undefined;
+    // A conversation Claude has no JSONL for (a claude.ai export going on here): feed it synthesized entries through
+    // the documented SessionStore hook — the SDK materializes them to a temp transcript the subprocess resumes from
+    // natively. `persistSession: false` is incompatible with sessionStore.
+    const mirror = !!params.resumeEntries?.length;
     // an id that never ran a turn has nothing to resume: start a new conversation on the same id
     this.hasTranscript = !!params.sessionId && (isFork || mirror || hasClaudeTranscript(params.sessionId));
     const extra: Partial<Options> = this.hasTranscript ? { resume: params.sessionId, forkSession: isFork, resumeSessionAt: params.resumeAt } : { sessionId: this.sessionId };
@@ -296,7 +275,6 @@ export class SessionRunner extends EventEmitter {
     if (params.worktree) extra.extraArgs.worktree = params.worktree;
     this.extraArgs = extra.extraArgs;
     this.start(extra);
-    if (briefFirst) this.send(briefFirst, undefined, false, randomUUID());
   }
 
   /** Map SessionFeatures to CLI flags (`--flag` = null, `--flag value` = string). */
@@ -307,10 +285,7 @@ export class SessionRunner extends EventEmitter {
     // (`computerUse` is not a flag: the engine's `--computer-use-mcp` only starts its stand-alone MCP mode, whose
     // tools answer "not wired to a session", and a conversation given it exits before its first message — probed
     // 2026-10-10. 操控电脑 is our own `computer` MCP server instead: see `mcpServers` below.)
-    if (f.proactive) a.proactive = null;
     if (f.brief) a.brief = null;
-    if (f.channels?.length) a.channels = f.channels.join(',');
-    if (f.devChannels) a['dangerously-load-development-channels'] = null;
     return a;
   }
 
@@ -318,38 +293,7 @@ export class SessionRunner extends EventEmitter {
     const f = this.features;
     const routed = this.provider ?? this.account;
     // 本机环境变量 lowest: 供应商's variables and the session's own win over them (local-env.ts keeps routing names out)
-    const env: Record<string, string> = { ...localEnv(), ...(routed ? providerEnv(routed, 'claude', { sessionKey: this.cacheKey, sessionId: this.ledgerId }) : {}), ...(f.env ?? {}) };
-    if (f.coordinator) env.CLAUDE_CODE_COORDINATOR_MODE = '1';
-    return env;
-  }
-
-  /**
-   * Subagents on a model this conversation's own provider does not serve: the engine's base URL for its request format
-   * becomes the gateway's split route, which passes the conversation's requests on to where they were going (with the
-   * engine's own credential) and sends the alias's to the picked model. Returns the alias the engine asks for, or null
-   * when this pair cannot be joined (models/subagent.ts splitSupport) or the route is not up yet.
-   */
-  private subagentSplit(pick: SubagentPick, fenv: Record<string, string>): string | null {
-    const mainType: SplitKind = this.provider?.type ?? (this.account ? 'claude-account' : 'claude');
-    const t = providerKey(pick.providerId) === 'claude' ? { type: 'claude' as const } : splitTarget(pick.providerId);
-    if (!t || !splitSupport({ mainType, subType: t.type })) return null;
-    const groupId = 'groupId' in t ? t.groupId : undefined;
-    if (t.type === 'gateway' && !groupId) return null;
-    const sub: SplitSub = t.type === 'claude' ? { kind: 'account' } : t.type === 'claude-account' ? { kind: 'account', token: t.token } : groupId ? { kind: 'gateway', groupId } : { kind: 'provider', providerId: pick.providerId };
-    const v = mainType === 'openai' ? 'OPENAI_BASE_URL' : mainType === 'grok' ? 'GROK_BASE_URL' : mainType === 'gemini' ? 'GEMINI_BASE_URL' : 'ANTHROPIC_BASE_URL';
-    const defaults: Record<string, string> = { OPENAI_BASE_URL: 'https://api.openai.com/v1', GROK_BASE_URL: 'https://api.x.ai/v1', GEMINI_BASE_URL: 'https://generativelanguage.googleapis.com/v1beta', ANTHROPIC_BASE_URL: 'https://api.anthropic.com' };
-    // the account: claude.ai, or the relay the user set up in their settings files / environment (2026-10-19 user
-    // report: Opus 5.5 through their relay, the subagents' DeepSeek ignored) — its requests go on there with the
-    // relay's own key, which the engine still sends (start() puts our base URL over theirs with `ownOverride`)
-    const mainBase = mainType === 'claude' ? ownAnthropicBase(this.cwd) || defaults.ANTHROPIC_BASE_URL : mainType === 'claude-account' ? defaults.ANTHROPIC_BASE_URL : fenv[v] || defaults[v];
-    // this machine's login for the subagents: the engine keeps it (no provider key for it to prefer), the route puts the
-    // provider's key on the conversation's own requests
-    const rekey = t.type === 'claude' ? this.provider?.apiKey : undefined;
-    const base = splitEndpoint({ base: mainBase, ...(rekey !== undefined ? { rekey } : {}) }, sub, pick.model);
-    if (!base) return null;
-    fenv[v] = base;
-    if (rekey !== undefined) { delete fenv.ANTHROPIC_AUTH_TOKEN; delete fenv.ANTHROPIC_API_KEY; }
-    return subAlias(pick.model, v === 'ANTHROPIC_BASE_URL' ? 'anthropic' : 'other');
+    return { ...localEnv(), ...(routed ? providerEnv(routed) : {}), ...(f.env ?? {}) };
   }
 
   getHistory() {
@@ -368,47 +312,30 @@ export class SessionRunner extends EventEmitter {
     this.emit('state', s, error);
   }
 
-  /** One model of the picker: its thinking-strength levels and whether they go out natively or through the prompt. */
+  /** One model of the picker: its thinking-strength levels. */
   private modelEntry(value: string, displayName: string, description: string, reported?: { supportsEffort?: boolean; levels?: EffortLevel[] }): ModelInfo {
     const c = modelCaps(this.provider, value);
-    const onOurs = this.info.runtime === 'ccb';
-    // the official binary on the account: its own answer (it has no prompt way), as before the engine change
-    if (!this.provider && reported && !onOurs) {
+    // the account: Claude Code's own answer
+    if (!this.provider && reported) {
       const own = reported.levels?.length ? reported.levels : c.levels;
       const supportsEffort = reported.supportsEffort ?? own.length > 0;
-      return { value, displayName, description, supportsEffort, supportedEffortLevels: supportsEffort ? own : [], effortMode: 'native' };
+      return { value, displayName, description, supportsEffort, supportedEffortLevels: supportsEffort ? own : [] };
     }
-    const levels: EffortLevel[] = reported?.levels?.length && !this.provider ? reported.levels : c.levels;
-    // the official binary sends strength only for models it knows itself (our table) and has no prompt way
-    const native = onOurs ? c.native : c.native && c.reasoning;
-    const supportsEffort = onOurs || native;
-    return { value, displayName, description, supportsEffort, supportedEffortLevels: supportsEffort ? levels : [], effortMode: native ? 'native' : 'prompt' };
+    // a provider's model: Claude Code sends strength only for models it knows itself (our table)
+    const supportsEffort = c.reasoning;
+    return { value, displayName, description, supportsEffort, supportedEffortLevels: supportsEffort ? c.levels : [] };
   }
 
   /**
-   * The engine a process for `model` runs on. A provider's Anthropic-format endpoint and a Claude 5 model ccb gets the
-   * thinking wrong for (`ccbMisthinks`) → the official binary — unless this conversation uses a flag only ccb has
-   * (the official one refuses `--proactive` as an unknown option); then ccb, with thinking off
-   * for that model (`omit thinking` is what the API asks for).
+   * The process a conversation on `model` needs: the binary, and what is read once at its start — the earlier
+   * compaction for a window smaller than the binary assumes (2026-10-14) or a 自动压缩 point the user set for the
+   * provider / the account (A7), and the subagents' model. A change of the key is another process.
    */
   private plan(model = this.model) {
-    const ccbOnly = !!(this.features.proactive || this.features.devChannels);
-    // the account through a relay of the user's own (settings.json / environment) is an Anthropic-format relay too;
-    // claude.ai itself takes the budget ccb sends (the ledger has Opus 5.5 turns on ccb)
-    // another Claude account is claude.ai itself, whatever relay the user's own settings point the ~/.claude login at
-    const own = this.provider ? null : this.account ? NO_RELAY : userAnthropicEnv();
-    // …and it runs on the official binary: a relay checking the client (super-nb) refuses ccb's requests, and the
-    // account has no 测试连接 that could have found that out and pinned it (2026-10-02, real relays)
-    const relay = this.provider ?? (own!.relay ? { type: 'anthropic' as const, runtime: ccbOnly ? undefined : ('claude' as const), defaultModel: own!.env.ANTHROPIC_MODEL, modelMap: { opus: own!.env.ANTHROPIC_DEFAULT_OPUS_MODEL, sonnet: own!.env.ANTHROPIC_DEFAULT_SONNET_MODEL, haiku: own!.env.ANTHROPIC_DEFAULT_HAIKU_MODEL } } : undefined);
     // WSL: the distro's own `claude` on its PATH (no extension: the SDK takes it as a native binary; spawnWsl runs it)
-    const engine = this.wsl ? { file: 'claude', kind: 'claude' as const } : resolveEngine(relay ? preferredRuntime(relay, ccbOnly ? undefined : model ?? '') : ccbOnly ? undefined : this.account?.runtime);
-    const anthropicWire = relay?.type === 'anthropic' || relay?.type === 'gateway';
-    const noThinking = engine.kind === 'ccb' && anthropicWire && ccbMisthinks(providerModelId(relay!, model ?? ''));
-    // the official binary's earlier compaction is an environment variable, read once at start: a model that needs
-    // another one (a window set smaller than the binary assumes) is another process (2026-10-14) — and so is a
-    // 自动压缩 point the user set for the provider / the account (A7), on either engine
-    const compact = this.compactPoint(engine.kind, model);
-    return { engine, noThinking, key: `${engine.kind}${noThinking ? ':no-thinking' : ''}${compact ? `:compact-${compact}` : ''}${this.subagent ? `:sub-${this.subagent}` : ''}` };
+    const engine = this.wsl ? { file: 'claude' } : resolveEngine();
+    const compact = this.compactPoint(model);
+    return { engine, key: `claude${compact ? `:compact-${compact}` : ''}${this.subagent ? `:sub-${this.subagent}` : ''}` };
   }
 
   private start(extra: Partial<Options>) {
@@ -418,24 +345,18 @@ export class SessionRunner extends EventEmitter {
       const root = wslService()?.projectsRoot(d);
       if (root) addTranscriptRoot(root, d);
     }
-    const { engine, noThinking, key } = this.plan();
+    const { engine, key } = this.plan();
     this.planKey = key;
-    // ultracode on: a restarted claude-web-engine process starts with it (`--ultracode`)
     const args = { ...(extra.extraArgs ?? {}) };
-    if (engine.kind === 'ccb' && this.info.ultracode) args.ultracode = null;
-    else delete args.ultracode;
     // Claude's thinking as text: the API's `thinking.display` defaults to "omitted" on current Claude models (the
-    // blocks come back as a bare signature) — other providers' models showed their thinking and Claude's never did.
-    // The official binary takes the flag (for the model the process starts on: a Claude one — an Anthropic-format relay
-    // of DeepSeek / Kimi might refuse a field it does not know); ccb would exit on it as an unknown option and reads
-    // CLAUDE_WEB_THINKING_DISPLAY instead (below), which it applies per request to Claude models only
+    // blocks come back as a bare signature). For the model the process starts on: a Claude one — an Anthropic-format
+    // relay of another model might refuse a field it does not know
     const startModel = this.model || this.provider?.defaultModel || '';
     const claudeStart = !this.provider || !startModel || /claude/i.test(providerModelId(this.provider, startModel));
-    if (engine.kind === 'claude' && !noThinking && claudeStart) args['thinking-display'] = 'summarized';
+    if (claudeStart) args['thinking-display'] = 'summarized';
     else delete args['thinking-display'];
     extra = { ...extra, extraArgs: args };
-    // the transcript both engines share: the official binary resumes at its last recorded leaf (repair it after turns
-    // on ccb) and continues the cost totals it saved; ccb starts every process from zero
+    // the transcript: the binary resumes at its last recorded leaf and continues the cost totals it saved
     const resumeId = typeof extra.resume === 'string' ? extra.resume : undefined;
     const file = resumeId ? findClaudeTranscript(resumeId) : null;
     // refused for an empty block in the history (a picture sent alone before 2026-10-17, another vendor's blank
@@ -452,86 +373,52 @@ export class SessionRunner extends EventEmitter {
       this.repairUnsigned = false;
       if (dropEmptyBlocks(file, { unsigned, allThinking })) console.warn(`[runner] ${resumeId}: blocks the next model refuses taken out of the transcript`);
     }
-    if (engine.kind === 'claude' && resumeId && !extra.forkSession) repairLeaf(file, resumeId);
-    const saved = engine.kind === 'claude' && resumeId ? lastCostState(file, resumeId) : null;
+    if (resumeId && !extra.forkSession) repairLeaf(file, resumeId);
+    const saved = resumeId ? lastCostState(file, resumeId) : null;
     this.totals = saved ? { cost: saved.cost, models: saved.models, ...(saved.apiMs !== undefined ? { apiMs: saved.apiMs } : {}) } : { cost: 0, models: {} };
     const onDisk = lastHumanPrompt(file);
     if (onDisk) this.known.add(onDisk);
     const exe = engine.file;
-    this.info.runtime = engine.kind;
     const fenv = this.featureEnv();
-    // the subagents' model: one of this conversation's own provider goes to the engine as it is; one of another goes
-    // through the gateway's split route (subagentSplit), the engine asking for it by an alias
-    const target = subagentTarget(this.subagent, this.provider?.id ?? this.account?.id);
-    const sameSub = target?.kind === 'same' ? target.model : undefined;
-    const splitAlias = target?.kind === 'cross' ? this.subagentSplit(target.pick, fenv) : null;
-    if (target?.kind === 'cross' && !splitAlias) console.warn(`[session ${this.sessionId.slice(0, 8)}] subagents stay on the main model: ${target.pick.providerId} / ${target.pick.model} cannot be reached from this conversation`);
+    // the subagents' model: one of this conversation's own provider (another provider's pick: the main model)
+    const sameSub = subagentTarget(this.subagent, this.provider?.id ?? this.account?.id) ?? undefined;
     // 隐私保护 on, this machine's own login (claude.ai, or the relay in the user's settings files): through the privacy
-    // relay to where it was going — unless the split route already took the base (it redacts on its own)
-    const privacyOwn = !this.provider && !this.account && !splitAlias ? privacyRoute(ownAnthropicBase(this.cwd) || 'https://api.anthropic.com') : null;
+    // relay to where it was going
+    const privacyOwn = !this.provider && !this.account ? privacyRoute(ownAnthropicBase(this.cwd) || 'https://api.anthropic.com') : null;
     if (privacyOwn) fenv.ANTHROPIC_BASE_URL = privacyOwn;
-    if (noThinking && !('CLAUDE_CODE_DISABLE_THINKING' in fenv)) fenv.CLAUDE_CODE_DISABLE_THINKING = '1';
-    if (engine.kind === 'ccb' && !('CLAUDE_WEB_THINKING_DISPLAY' in fenv) && !process.env.CLAUDE_WEB_THINKING_DISPLAY) fenv.CLAUDE_WEB_THINKING_DISPLAY = 'summarized';
-    // what each of the provider's models can do with thinking strength (claude-web-engine reads it: levels, whether it
-    // reasons, models recorded as refusing the native parameter); the official binary ignores it
-    if (engine.kind === 'ccb' && this.provider) {
-      fenv.CLAUDE_WEB_MODEL_CAPS = webCapsEnv(this.provider, [...(this.provider.models ?? []), providerModelId(this.provider, this.model), ...(sameSub ? [providerModelId(this.provider, sameSub)] : [])]);
-    }
-    // each model's context window (2026-10-14: a relay's Claude compacted at 175K): claude-web-engine takes the whole
-    // table (a model switched to mid-conversation keeps its own); the official binary only knows `[1m]` (engineModel)
-    // and an earlier compaction for this model
-    if (this.provider) {
-      const windows = engine.kind === 'ccb' ? contextWindowsEnv(this.provider, [...(this.provider.models ?? []), ...Object.values(this.provider.modelMap ?? {}), this.provider.defaultModel, providerModelId(this.provider, this.model), ...(sameSub ? [providerModelId(this.provider, sameSub)] : [])]) : undefined;
-      if (windows && !('CLAUDE_WEB_CONTEXT_WINDOWS' in fenv)) fenv.CLAUDE_WEB_CONTEXT_WINDOWS = windows;
-    }
-    // where to compact: the official binary's earlier point for a window smaller than it assumes (a provider's), and a
-    // 自动压缩 point the user set for the provider / the account (A7) — the smaller one. The user's own value is theirs
-    // to decide, over 本机环境变量 / the session's env; the binary's computed one, as before, gives way to those
-    const compact = this.compactPoint(engine.kind, this.model);
+    // where to compact: the binary's earlier point for a window smaller than it assumes (a provider's; it only knows
+    // `[1m]`, engineModel), and a 自动压缩 point the user set for the provider / the account (A7) — the smaller one. The
+    // user's own value is theirs to decide, over 本机环境变量 / the session's env; the binary's computed one, as before,
+    // gives way to those
+    const compact = this.compactPoint(this.model);
     const userCompact = this.userCompact(this.model) !== undefined;
     if (compact && (userCompact || !('CLAUDE_CODE_AUTO_COMPACT_WINDOW' in fenv))) fenv.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(compact);
-    // the cap the engine will put on the window (both engines take it): the composer's ring and the folded context card
+    // the cap the engine will put on the window: the composer's ring and the folded context card
     // divide by min(window, this) as the card's body (the engine's count) does (2026-10-24 review I3: 58 % against 82 %)
     // — a point the user set on the own login goes over settings.json through --settings too (`ownOverride` below)
     const cap = compactCap(fenv, this.cwd, !!(this.provider || this.account) || userCompact);
     const before = `${this.info.compactWindow}/${this.info.contextWindow}`;
-    // the official binary will not go under 100K whatever the variable says (engine-providers: 50K set → 100K): the
-    // ring and the card say where it really compacts (final review M6); ccb takes the value as it is
-    if (cap) this.info.compactWindow = engine.kind === 'claude' ? Math.max(cap, OFFICIAL_COMPACT_FLOOR) : cap;
+    // the binary will not go under 100K whatever the variable says (engine-providers: 50K set → 100K): the ring and
+    // the card say where it really compacts (final review M6)
+    if (cap) this.info.compactWindow = Math.max(cap, OFFICIAL_COMPACT_FLOOR);
     else delete this.info.compactWindow;
     this.noteWindow(false);
     if (`${this.info.compactWindow}/${this.info.contextWindow}` !== before) this.emit('info', this.info);
     // the subagents' model (the composer's 子代理 chip), over an agent's own `model:` and the tool's haiku / sonnet /
-    // opus: ccb always; the official binary only with `_FORCE` — without it the agent's own model came first, and
-    // Explore (inherit) ran on the main model (2026-10-19, real: Opus 5.5 + a DeepSeek pick, the Explore subagent on
-    // Opus; a user's relay showed claude-sonnet-5). On the official binary a 1M Claude gets its `[1m]` like the main model
-    const sub = splitAlias ?? (sameSub ? this.engineModel(engine.kind, sameSub) : undefined);
+    // opus: only with `_FORCE` — without it the agent's own model came first, and Explore (inherit) ran on the main
+    // model (2026-10-19; a user's relay showed claude-sonnet-5). A 1M Claude gets its `[1m]` like the main model
+    const sub = sameSub ? this.engineModel(sameSub) : undefined;
     if (sub) { fenv.CLAUDE_CODE_SUBAGENT_MODEL = sub; fenv.CLAUDE_CODE_SUBAGENT_MODEL_FORCE = '1'; }
-    this.subRuns = sub ? unalias(sub) : '';
-    // 下一句提示: the `promptSuggestions` option alone did not bring one on the official binary (2026-10-16, a real
+    this.subRuns = sub ?? '';
+    // 下一句提示: the `promptSuggestions` option alone did not bring one (2026-10-16, a real
     // two-turn conversation); with the CLI's own switch it did
     if (promptSuggestionsOn && !('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION' in fenv) && process.env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION === undefined) fenv.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = '1';
     // 代码审查卡: /code-review reports through the ReportFindings tool (drawn as a card) instead of printing its findings
     if (!('CLAUDE_CODE_REPORT_FINDINGS' in fenv) && !process.env.CLAUDE_CODE_REPORT_FINDINGS) fenv.CLAUDE_CODE_REPORT_FINDINGS = '1';
-    // a claude.ai-login session on the bundled ccb: its alias table predates the Claude 5 family (see
-    // OFFICIAL_ALIAS_TARGETS) — the CLI's own variables align it with the official one; the user's env / settings win.
-    // Not for a relay the user set up in settings.json / the environment: its model list is its own (the injected
-    // claude-sonnet-5 default hung 220 s on model_not_found, 2026-10-01)
-    const own = this.account ? NO_RELAY : userAnthropicEnv();
-    if (engine.kind === 'ccb' && !this.provider && !own.relay) for (const [k, v] of Object.entries(ccbAccountEnv())) if (!(k in fenv) && !(own.env as Record<string, string | undefined>)[k]) fenv[k] = v;
-    // The engine's own WebSearch tool: its default backend is a hosted Tavily proxy of the upstream project, and the
-    // user wants no Tavily — searching is the `web` MCP server's, in the built-in browser. So the engine's tool is
-    // taken away below (`disallowedTools`), unless the user chose a backend for it themselves (web/engine-search.ts).
     // 只聊天: no tool of any kind — the engine's own (`tools: []`), ours (no MCP servers, no plugin), the user's
     // (`strictMcpConfig`: the servers in their settings files are not loaded either)
     const chatOnly = !!this.features.chatOnly;
-    // A Gemini-web / WorkBuddy sidecar has no native tool calling: every schema rides in the prompt, past 128 KB the
-    // prompt is uploaded as an attachment and past ~163 KB its tail (the tool-call format) is cut. Narrowing the
-    // engine's tools also takes its tool search away, so every MCP tool got inlined — the account's claude.ai
-    // connectors, the user's servers, ours: 177 KB before the user said anything (2026-10-22). The core tools only
-    // (62 KB): no MCP server of any origin, no plugin, no prompt section about tools that are not there.
-    const lean = !chatOnly && !!this.provider?.leanTools;
-    const bare = chatOnly || lean;
+    const bare = chatOnly;
     const computer = this.features.computerUse && !bare ? computerClaudeMcpServer({ sessionId: this.sessionId }) : {};
     // 跨对话工具 (sessions-mcp/tools.ts): in-process, so nothing to hand out; archive_session is left to the permission mode
     const sessionsMcp: Record<string, McpServerConfig> = sessionsMcpEnabled() && !bare ? { [SESSIONS_SERVER]: sessionsMcpServer(() => this.sessionId) } : {};
@@ -542,29 +429,27 @@ export class SessionRunner extends EventEmitter {
     this.thinkingSection = this.thinkingLanguageSection();
     // a subagent model picked: the work goes to subagents without the user asking each time (subagent-policy.ts); the
     // pick is in the plan key, so a change restarts the process and this is read again
-    // — only when the model is bound (`sub`): a pick that cannot be reached leaves the subagents on the main model, and
+    // — only when the model is bound (`sub`): a pick of another provider leaves the subagents on the main model, and
     // sending every piece of work to them would only cost more
     const delegate = bare || !sub ? '' : subagentPolicyPrompt(this.subagent);
     const append = [verify, this.thinkingSection, delegate, this.projectInstructions, bare || this.drivenBy ? '' : nodegraphHintPrompt(nodegraphHintOn)].filter(Boolean).join('\n\n');
     const allowed = bare ? [] : [...webAllowedTools(), ...(Object.keys(computer).length ? computerAllowedTools() : []), ...(Object.keys(sessionsMcp).length ? SESSIONS_ALLOWED : []), ...(Object.keys(previewMcp).length ? PREVIEW_ALLOWED : [])];
-    this.preAllowed = new Set(allowed);
-    const noEngineSearch = engineSearchOff({ engine: engine.kind, userChoice: 'WEB_SEARCH_ADAPTER' in fenv || userPickedSearchAdapter(this.cwd) });
     // a provider session must not inherit provider-ish env from this process (e.g. a global ANTHROPIC_API_KEY)
     const base = { ...process.env };
-    // …including a stray CLAUDE_CODE_USE_* switch, which would route the profile to another ccb provider
-    if (this.provider || this.account) for (const k of Object.keys(base)) if (/^((ANTHROPIC|OPENAI|GEMINI|GROK|XAI)_|CLAUDE_CODE_USE_)/.test(k) && !(k in fenv)) delete base[k];
+    // …including a stray CLAUDE_CODE_USE_* switch, which would route the profile to Bedrock / Vertex
+    if (this.provider || this.account) for (const k of Object.keys(base)) if (/^(ANTHROPIC_|CLAUDE_CODE_USE_)/.test(k) && !(k in fenv)) delete base[k];
     const env = Object.keys(fenv).length ? { ...base, ...fenv } : undefined;
-    // the cache shim / model gateway live on 127.0.0.1: an HTTP(S)_PROXY from the user's environment must not carry
-    // those requests off to a proxy (a remote one cannot reach our loopback, and the turn just hangs)
+    // the privacy relay lives on 127.0.0.1: an HTTP(S)_PROXY from the user's environment must not carry those
+    // requests off to a proxy (a remote one cannot reach our loopback, and the turn just hangs)
     if (env) Object.assign(env, loopbackNoProxy(env));
     // a provider conversation: what the user's settings files would lay over the provider's env goes back on top
     // through the flag tier (`settingsOverride`)
     this.nextFlag?.dispose();
     this.nextFlag = null;
-    // The account: only what we set goes over the same keys there — the subagents' model, and the split route's base
-    // URL over the user's own relay (both engines lay the settings files' env over the one they start with), and the
+    // The account: only what we set goes over the same keys there — the subagents' model, the privacy relay's base
+    // URL over the user's own relay (the CLI lays the settings files' env over the one it starts with), and the
     // 自动压缩 point the user set for the account over a CLAUDE_CODE_AUTO_COMPACT_WINDOW in their settings.json (A7)
-    const ours: Record<string, string> = { ...(sub ? { CLAUDE_CODE_SUBAGENT_MODEL: sub, CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' } : {}), ...((splitAlias || privacyOwn) && fenv.ANTHROPIC_BASE_URL ? { ANTHROPIC_BASE_URL: fenv.ANTHROPIC_BASE_URL } : {}), ...(userCompact && fenv.CLAUDE_CODE_AUTO_COMPACT_WINDOW ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: fenv.CLAUDE_CODE_AUTO_COMPACT_WINDOW } : {}) };
+    const ours: Record<string, string> = { ...(sub ? { CLAUDE_CODE_SUBAGENT_MODEL: sub, CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' } : {}), ...(privacyOwn && fenv.ANTHROPIC_BASE_URL ? { ANTHROPIC_BASE_URL: fenv.ANTHROPIC_BASE_URL } : {}), ...(userCompact && fenv.CLAUDE_CODE_AUTO_COMPACT_WINDOW ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: fenv.CLAUDE_CODE_AUTO_COMPACT_WINDOW } : {}) };
     const override = this.provider || this.account ? settingsOverride(fenv, this.cwd) : ownOverride(ours, this.cwd);
     if (override) {
       try {
@@ -578,9 +463,8 @@ export class SessionRunner extends EventEmitter {
       // a project's extra folders (stage C2): Claude Code may read and edit them like the main one
       ...(this.extraDirs.length ? { additionalDirectories: this.extraDirs } : {}),
       env,
-      model: this.engineModel(engine.kind, this.model),
-      // `ultra` is Codex-only; the Claude SDK's ladder tops out at max
-      effort: this.effort === 'ultra' ? 'max' : this.effort,
+      model: this.engineModel(this.model),
+      effort: this.effort,
       permissionMode: this.permissionMode,
       // The SDK defaults to an EMPTY system prompt. We want the real Claude Code prompt: same behaviour as the
       // CLI, and relays that fingerprint Claude Code requests (e.g. super-nb) reject bodies without it.
@@ -592,9 +476,8 @@ export class SessionRunner extends EventEmitter {
       // 联网 (`web`: search + the built-in browser) goes in the same way (web/launcher.ts).
       // 操控电脑 (`computer`: the whole desktop, computer/launcher.ts) only for a conversation that has it switched on.
       mcpServers: bare ? {} : { ...this.injectedMcp({ ...claudeMcpServer({ cwd: this.cwd, sessionId: this.sessionId, agent: 'claude' }), ...webClaudeMcpServer({ sessionId: this.sessionId }), ...computer }), ...sessionsMcp, ...previewMcp },
-      // a sidecar (`lean`, see above): the core set still covers read / search / edit / run
-      ...(chatOnly ? { tools: [], strictMcpConfig: true } : lean ? { tools: LEAN_TOOLS, strictMcpConfig: true } : {}),
-      // 网吧's cafe-character skill, as a local plugin (both runtimes load it: 2026-10-13), only while the `web` server
+      ...(chatOnly ? { tools: [], strictMcpConfig: true } : {}),
+      // 网吧's cafe-character skill, as a local plugin, only while the `web` server
       // that answers its character_* tools is handed out
       // + the official app's download of Anthropic's skills (desktop-skills.ts), so its conversations' anthropic-skills:*
       // names work here
@@ -607,7 +490,6 @@ export class SessionRunner extends EventEmitter {
       // The computer tools are not asked about one by one either: the user approves the applications, in the app
       // (computer/access.ts), and the server's own gate holds every action to that.
       ...(allowed.length ? { allowedTools: allowed } : {}),
-      ...(noEngineSearch ? { disallowedTools: [ENGINE_SEARCH_TOOL] } : {}),
       includePartialMessages: true,
       // 下一句提示: one `prompt_suggestion` after a turn (the composer shows it grey; settings → ui.promptSuggestions)
       promptSuggestions: promptSuggestionsOn,
@@ -634,7 +516,7 @@ export class SessionRunner extends EventEmitter {
 
   /**
    * The SDK reads the CLI's stderr only with its own spawn, so with ours it went nowhere: every failure was just
-   * "exited with code 1" (the cause — ccb's "unknown option '--session-mirror'" — was one stderr line), and a pipe nobody
+   * "exited with code 1" (the cause — an "unknown option" — was one stderr line), and a pipe nobody
    * reads can fill and stall the CLI. Read it, log it, keep its end for the error message.
    */
   /**
@@ -697,21 +579,20 @@ export class SessionRunner extends EventEmitter {
             q.supportedAgents().catch(() => []),
             q.mcpServerStatus().catch(() => []),
           ]);
-          // ccb has no supported_commands/supported_models control requests; fall back to the initialize payload
+          // an older CLI without supported_commands/supported_models control requests: the initialize payload
           const im = init as any;
           const cmdSrc: any[] = cmds.length ? cmds : im.commands ?? [];
           const modelSrc: any[] = models.length ? models : im.models ?? [];
           this.info.slashCommands = cmdSrc.map((c) => ({ name: c.name, description: c.description ?? '', argumentHint: c.argumentHint ?? c.argument_hint ?? '' }));
           // The CLI's own list wins; the catalog only supplies the versioned display name ("Fable 5.1", not "Fable").
-          // Thinking strength on our engine: every model has it — the provider's own parameter, or through the prompt
-          // (`effortMode`, levels from the model list > our table > five; modelCaps). The official binary has no prompt
-          // way, so there only the models with the parameter offer it. Image / embedding models are not for chatting.
+          // Thinking strength: only the models Claude Code sends it for offer it (modelCaps). Image / embedding models
+          // are not for chatting.
           this.info.models = this.provider?.models?.length
             ? this.provider.models.filter(isChatModel).map((v) => this.modelEntry(v, modelLabel('claude', v), this.provider!.name))
             : modelSrc.length
               ? modelSrc.map((m) => this.modelEntry(m.value, m.displayName && m.displayName !== m.value ? m.displayName : modelLabel('claude', m.value), m.description ?? '', { supportsEffort: m.supportsEffort, levels: m.supportedEffortLevels }))
               : modelsFor('claude');
-          // claude-web-engine: --ultracode / the `ultracode` setting on every model; the official binary: `/effort ultracode`
+          // `/effort ultracode`
           this.info.supportsUltracode = supportsUltracode('claude');
           this.info.agents = agents.map((a) => ({ name: a.name, description: a.description, model: a.model }));
           this.info.mcpServers = mcp.map((m) => ({ name: m.name, status: m.status, error: m.error, tools: m.tools }));
@@ -748,12 +629,6 @@ export class SessionRunner extends EventEmitter {
   }
 
   private ingest(m: SDKMessage) {
-    // claude-web-engine: a model refused its native thinking-strength parameter — ours to record, not the window's
-    if (m.type === 'system' && (m as { subtype?: string }).subtype === 'cw_capability') {
-      const model = (m as { model?: unknown }).model;
-      if (typeof model === 'string' && model) this.promptOnly(model);
-      return;
-    }
     if (m.type === 'system' && m.subtype === 'init') {
       // resumed: the CLI says init as the first turn STARTS — that turn is running, not idle (a switch mid-turn missed
       // it and never ended the turn; Stop took the no-turn path)
@@ -781,8 +656,6 @@ export class SessionRunner extends EventEmitter {
       for (const e of (m as any).workflow_progress) if (e?.type === 'workflow_agent' && typeof e.model === 'string') e.model = this.subRuns;
     }
     this.trackBackground(m);
-    // a subagent through the split route: the engine names its messages after the alias it asked with
-    if (m.type === 'assistant' && typeof (m as any).message?.model === 'string') (m as any).message.model = unalias((m as any).message.model);
     if ((m.type === 'result' || (m.type === 'system' && m.subtype === 'init')) && (m as any).fast_mode_state) this.noteFast((m as any).fast_mode_state, (m as any).fast_mode_disabled_reason);
     if (m.type === 'system' && m.subtype === 'session_state_changed') {
       this.setState(m.state === 'running' ? 'running' : m.state === 'requires_action' ? 'waiting' : 'idle');
@@ -796,19 +669,8 @@ export class SessionRunner extends EventEmitter {
       this.emit('info', this.info);
     }
     if (m.type === 'result') {
-      // subagents through the split route are counted by the engine under the alias it asked with: under the real model
-      const mu = (m as any).modelUsage;
-      if (mu && typeof mu === 'object' && Object.keys(mu).some((k) => unalias(k) !== k)) {
-        const out: Record<string, Record<string, unknown>> = {};
-        for (const [k, v] of Object.entries(mu as Record<string, Record<string, unknown>>)) {
-          const prev = out[unalias(k)];
-          if (!prev) { out[unalias(k)] = { ...v }; continue; }
-          for (const [f, x] of Object.entries(v)) if (typeof x === 'number') prev[f] = (typeof prev[f] === 'number' ? (prev[f] as number) : 0) + x;
-        }
-        (m as any).modelUsage = out;
-      }
       turnShare(m as any, this.totals); // the CLI reports running totals; everything downstream adds turns up
-      // ccb prices every model with Claude's table: for other vendors' models the number is fiction
+      // the CLI prices every model with Claude's table: for a relay's other models the number is fiction
       markUnknownCost(m as any, this.provider?.type);
       // refused for an empty block in the history: the process keeps that history in memory and would be refused
       // again on every turn — start it over, so the resume reads the transcript with the block taken out (dropEmptyBlocks)
@@ -823,15 +685,14 @@ export class SessionRunner extends EventEmitter {
       if (this.history.length > 5000) this.history.splice(0, 1000);
     }
     this.emit('message', m);
-    // Point the file's leaf at this turn, for a `claude --resume` in the terminal: ccb writes no leaf at all, and the
-    // official binary writes it when a prompt is sent and when it exits — while it sat idle, the file's leaf was the
+    // Point the file's leaf at this turn, for a `claude --resume` in the terminal: the CLI writes it when a prompt is
+    // sent and when it exits — while it sat idle, the file's leaf was the
     // entry before its last answer (2026-10-02, real relays). A moment after the answer is on disk: the CLI still
     // writes its own lines after a result.
     if (m.type === 'result' && this.hasTranscript) {
       const id = this.sessionId;
       const repair = () => repairLeaf(findClaudeTranscript(id), id);
-      if (this.info.runtime === 'ccb') setTimeout(repair, 1500).unref?.();
-      else void this.flushed(5000).then(() => setTimeout(repair, 1500).unref?.());
+      void this.flushed(5000).then(() => setTimeout(repair, 1500).unref?.());
     }
     // a model / effort change made during the turn that needs another process: now that the turn is over
     // — and once its background subagents / workflows are back: a restart would take them down (their notification
@@ -867,9 +728,6 @@ export class SessionRunner extends EventEmitter {
     const requestId = randomUUID();
     const event: PermissionRequestEvent = { requestId, sessionId: this.sessionId, toolName, input, toolUseId: o.toolUseID, suggestions: o.suggestions, blockedPath: o.blockedPath, decisionReason: o.decisionReason };
     if (o.signal.aborted) return Promise.resolve({ behavior: 'deny', message: 'cancelled' });
-    // claude-web-engine (ccb) defers MCP tools behind ExecuteExtraTool { tool_name, params }: `allowedTools` names the tool
-    // inside, so the wrapper asked every time (2026-10-16, the sessions tools on ccb). Allowed when what it runs is.
-    if (toolName === 'ExecuteExtraTool' && typeof input.tool_name === 'string' && this.preAllowed.has(input.tool_name)) return Promise.resolve({ behavior: 'allow', updatedInput: input });
     return new Promise<PermissionResult>((resolve) => {
       this.pending.set(requestId, { event, resolve });
       o.signal.addEventListener('abort', () => {
@@ -887,9 +745,8 @@ export class SessionRunner extends EventEmitter {
     const p = this.pending.get(requestId);
     if (!p) return false;
     this.pending.delete(requestId);
-    // an allow says what to run with: claude-web-engine (ccb) checks the answer against a schema where `updatedInput`
-    // is required and turned every 允许 without it into "Tool permission request failed" — every tool that asks
-    // failed (user report 2026-10-14, a relay's Claude on ccb). The input as it was asked is what was allowed.
+    // an allow says what to run with: the input as it was asked is what was allowed (a CLI that checks the answer
+    // against a schema where `updatedInput` is required turns an allow without it into a failure)
     const answer = r.behavior === 'allow' && !r.updatedInput ? { ...r, updatedInput: p.event.input as Record<string, unknown> } : r;
     p.resolve(answer as PermissionResult);
     this.emit('permissionResolved', requestId);
@@ -1104,17 +961,15 @@ export class SessionRunner extends EventEmitter {
   }
 
   /**
-   * The model as the engine takes it: ccb's own spelling, or — on the official binary with a provider — `[1m]` after a
+   * The model as the engine takes it: with a provider, `[1m]` after a
    * Claude model whose window is over 200K (with no model picked, the provider's default one, so it gets the suffix too).
    */
-  private engineModel(kind: string | undefined, model: string | undefined): string | undefined {
+  private engineModel(model: string | undefined): string | undefined {
     // the account (claude.ai: the own login, another Claude account): the family's 200K / 1M pick decides `[1m]`
-    // whatever the menu's id said (A7: new conversations sometimes started on Opus 5.5 at 200K) — before ccb's spelling,
-    // which keeps the suffix
+    // whatever the menu's id said (A7: new conversations sometimes started on Opus 5.5 at 200K)
     const w = this.accountWindows();
     if (w) model = accountModel(model, w);
-    if (kind === 'ccb') return ccbModel(model);
-    if (kind !== 'claude' || !this.provider) return model;
+    if (!this.provider) return model;
     const id = providerModelId(this.provider, model);
     if (!id || !officialWindow(contextWindowFor(this.provider, id), id).suffix) return model;
     return `${model && model !== 'default' ? model.replace(/\[1m\]$/i, '') : id}[1m]`;
@@ -1152,15 +1007,15 @@ export class SessionRunner extends EventEmitter {
     return window ? Math.min(set!, window) : set;
   }
 
-  /** Where `model` compacts on `kind`: the official binary's earlier point and the user's, the smaller one (none: the engine's own). */
-  private compactPoint(kind: string, model: string | undefined): number | undefined {
-    return effectiveCompact(kind === 'claude' ? this.officialCompactWindow(model) : undefined, this.userCompact(model));
+  /** Where `model` compacts: the binary's earlier point and the user's, the smaller one (none: the engine's own). */
+  private compactPoint(model: string | undefined): number | undefined {
+    return effectiveCompact(this.officialCompactWindow(model), this.userCompact(model));
   }
 
   /**
    * The context window `model` will have here, when it is known: the provider's settings (engine default otherwise);
    * on the account, the family's 200K / 1M pick (A7; haiku 200K, "default" is whatever the plan says); the own login
-   * through a relay of the user's: `[1m]` is 1M and a plain id the 200K both engines give it. `prefs`: the own login's
+   * through a relay of the user's: `[1m]` is 1M and a plain id the 200K the CLI gives it. `prefs`: the own login's
    * picks to read it under (setAccountPrefs asks with the new ones before they take effect).
    */
   private windowOf(model: string | undefined, prefs = this.accountPrefs): number | undefined {
@@ -1241,7 +1096,7 @@ export class SessionRunner extends EventEmitter {
 
   async setModel(model: string) {
     await this.fitBeforeSwitch(model);
-    // the model can decide the engine (see plan()): crossing over means another process, resuming this conversation
+    // the model can decide the process (see plan()): crossing over means another one, resuming this conversation
     // what one vendor's model left in the history another's API can refuse (DeepSeek's blank thinking → Claude): the
     // next process reads the transcript cleaned. An in-process switch keeps the history in memory — the 400 does it;
     // so from another vendor's model to Claude it is always another process (its thinking is unsigned: every turn a 400)
@@ -1255,7 +1110,7 @@ export class SessionRunner extends EventEmitter {
       return;
     }
     try {
-      await this.q?.setModel(this.engineModel(this.info.runtime, model));
+      await this.q?.setModel(this.engineModel(model));
       this.model = model;
       this.info.model = model;
       this.noteWindow(false);
@@ -1276,38 +1131,18 @@ export class SessionRunner extends EventEmitter {
     this.info.effort = effort;
     if (this.info.ultracode) this.info.ultracode = false; // picking a rung leaves ultracode
     this.ultracodeFirst = false;
-    if (this.info.runtime === 'ccb') {
-      this.emit('info', this.info);
-      // claude-web-engine: the level (and leaving ultracode, in the same call) is a flag setting of the running
-      // process — the next request has it, no restart, not even mid-turn. `ultra` is Codex's own: max here.
-      try {
-        await this.q?.applyFlagSettings({ effortLevel: effort === 'ultra' ? 'max' : effort, ultracode: false } as any);
-      } catch {
-        await this.respawnWhenIdle(); // an engine without it: the level is an option of the process
-      }
-      return;
-    }
-    // The official binary has no runtime control for effort: send the slash command through the conversation.
+    // Claude Code has no runtime control for effort: send the slash command through the conversation.
     this.send(`/effort ${effort}`);
   }
 
   /**
-   * ultracode = xhigh + workflow orchestration, session-scoped; NOT an effort value. claude-web-engine: the
-   * `ultracode` flag setting (every model; `--ultracode` when the process restarts). The official binary: only
-   * `/effort ultracode` in the conversation. Turning it off restores the rung.
+   * ultracode = xhigh + workflow orchestration, session-scoped; NOT an effort value: `/effort ultracode` in the
+   * conversation. Turning it off restores the rung.
    */
   async setUltracode(on: boolean) {
     this.info.ultracode = on;
     this.ultracodeFirst = false; // the command below says it now
     this.emit('info', this.info);
-    if (this.info.runtime === 'ccb') {
-      try {
-        await this.q?.applyFlagSettings({ ultracode: on } as any);
-      } catch {
-        await this.respawnWhenIdle();
-      }
-      return;
-    }
     this.send(`/effort ${on ? 'ultracode' : this.effort ?? 'high'}`);
   }
 
@@ -1377,9 +1212,9 @@ export class SessionRunner extends EventEmitter {
   }
 
   /** The subagents' model as the engine is given it, when it is one of this conversation's own provider / account. */
-  private subEngineModel(kind: string | undefined): string | undefined {
+  private subEngineModel(): string | undefined {
     const t = subagentTarget(this.subagent, this.provider?.id ?? this.account?.id);
-    return t?.kind === 'same' ? this.engineModel(kind, t.model) : undefined;
+    return t ? this.engineModel(t) : undefined;
   }
 
   /**
@@ -1398,12 +1233,11 @@ export class SessionRunner extends EventEmitter {
     // conversation is compacted on the current window first. Mid-turn that cannot happen: the whole change waits for
     // the turn's end (ingest), and the fit runs then, before the new window takes effect
     if (!(await this.fitForShrink(seq, this.windowOf(this.model, next), () => this.setAccountPrefs(next)))) return;
-    const kind = this.info.runtime;
-    const before = { main: this.engineModel(kind, this.model), sub: this.subEngineModel(kind) };
+    const before = { main: this.engineModel(this.model), sub: this.subEngineModel() };
     this.accountPrefs = next;
     this.noteWindow();
-    if (this.plan().key !== this.planKey || this.subEngineModel(kind) !== before.sub) { await this.respawnWhenIdle(); return; }
-    const main = this.engineModel(kind, this.model);
+    if (this.plan().key !== this.planKey || this.subEngineModel() !== before.sub) { await this.respawnWhenIdle(); return; }
+    const main = this.engineModel(this.model);
     if (main === before.main) return;
     try {
       await this.q?.setModel(main);
@@ -1412,20 +1246,6 @@ export class SessionRunner extends EventEmitter {
       // process next to that one's (final review I1)
       if (seq === this.prefsSeq && !this.closed) await this.respawnWhenIdle();
     }
-  }
-
-  /** Set by the pool: a model of this conversation's provider refused its native thinking-strength parameter. */
-  onPromptOnly?: (providerId: string, model: string) => void;
-
-  /** The engine's `cw_capability`: the model gets the strength through the prompt from now on (and next time). */
-  private promptOnly(model: string) {
-    if (this.provider) {
-      const list = this.provider.promptEffortModels ?? [];
-      if (!list.includes(model)) this.provider = { ...this.provider, promptEffortModels: [...list, model] };
-      this.onPromptOnly?.(this.provider.id, model);
-    }
-    if (this.info.models) this.info.models = this.info.models.map((e) => (e.value === model ? { ...e, effortMode: 'prompt' } : e));
-    this.emit('info', this.info);
   }
 
   private noteFast(state: 'off' | 'cooldown' | 'on', reason?: string) {
@@ -1444,8 +1264,8 @@ export class SessionRunner extends EventEmitter {
 
   /**
    * A rename while the process runs: it keeps the title in memory and writes it back into the transcript later, which
-   * undid a rename made in the list (2026-10-17 user report). The official binary takes the new title (`rename_session`);
-   * our engine does not know that request — the caller then keeps the name itself until the process ends.
+   * undid a rename made in the list (2026-10-17 user report). The CLI takes the new title (`rename_session`); one that
+   * does not know that request leaves the caller to keep the name itself until the process ends.
    */
   async renameLive(title: string): Promise<boolean> {
     if (!this.q) return false;

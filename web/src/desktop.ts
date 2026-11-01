@@ -78,15 +78,6 @@ export interface DesktopBridge {
   clearBrowsingData?(partition: string): Promise<boolean>;
   /** 右键菜单 → 引用到输入框 (desktop/src/context-menu.ts): the text that was selected where the menu was opened */
   onQuoteSelection?(cb: (text: string) => void): () => void;
-  /** 网关 → Gemini 账号: sign in to Google in a window of its own (`partition`: one from an earlier login, to sign in
-   *  again); its cookies once signed in, null when the window was closed first. `proxyServer` is the loopback
-   *  host:port the server tunnels to the chosen exit. */
-  geminiLogin?(partition?: string, proxyServer?: string): Promise<{ cookie: string; partition: string; userAgent: string } | null>;
-  /** the account was deleted: wipe the login that window kept */
-  geminiForget?(partition: string): Promise<void>;
-  /** keep a signed-in profile alive: load gemini.google.com in a windowless Chrome so Chromium renews its
-   *  cookies, and hand the renewed ones back (null when nothing changed or the sign-in is gone) */
-  geminiRefresh?(partition: string): Promise<{ cookie: string; userAgent: string } | null>;
 }
 
 /** `max`: the largest factor this window's screen can take (the smallest window must still fit it). */

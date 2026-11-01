@@ -102,7 +102,7 @@ describe('spawn guard: --require preload in a child node process', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('guards and logs the spawns of an ESM child (how ccb is written), attributing the caller', () => {
+  it('guards and logs the spawns of an ESM child (how most JS CLIs are written), attributing the caller', () => {
     const pre = preloadFile(path.join(dir, 'runtime'))!;
     expect(pre).toMatch(/spawn-guard-[0-9a-f]{10}\.cjs$/);
     const main = path.join(dir, 'agent-main.mjs');

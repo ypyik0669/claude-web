@@ -266,10 +266,10 @@ describe('联网 through a running server', () => {
   });
 
   it('the MCP server, started as the launcher tells an agent to start it, reaches the hosting window', async () => {
-    const { webAcpMcpServers } = await import('./launcher.js');
-    const [spec] = webAcpMcpServers({ sessionId: 'conv-mcp' });
-    expect(spec.name).toBe('web');
-    const env = Object.fromEntries(spec.env.map((e) => [e.name, e.value]));
+    const { webClaudeMcpServer } = await import('./launcher.js');
+    const spec = webClaudeMcpServer({ sessionId: 'conv-mcp' }).web;
+    expect(spec).toBeTruthy();
+    const env = { ...spec.env };
     expect(env.CW_WEB_URL).toBe(`http://127.0.0.1:${server.port}`);
     expect(JSON.stringify(spec)).not.toContain(secret);
     const { ELECTRON_RUN_AS_NODE: _unused, ...mcpEnv } = env; // this test's node is not Electron

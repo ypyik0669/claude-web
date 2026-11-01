@@ -64,9 +64,6 @@ contextBridge.exposeInMainWorld('desktop', {
   // 导入 Cookie… (parsed in the page from the user's file) / 清除浏览数据, for one of the browser's profiles
   importCookies: (partition: string, cookies: unknown[]) => ipcRenderer.invoke('desktop:browser:importCookies', partition, cookies),
   clearBrowsingData: (partition: string) => ipcRenderer.invoke('desktop:browser:clearData', partition),
-  geminiLogin: (partition?: string, proxyServer?: string) => ipcRenderer.invoke('desktop:gemini:login', partition, proxyServer),
-  geminiForget: (partition: string) => ipcRenderer.invoke('desktop:gemini:forget', partition),
-  geminiRefresh: (partition: string) => ipcRenderer.invoke('desktop:gemini:refresh', partition),
   // the right-click menu's 引用到输入框 (context-menu.ts): the selected text, for the input box in front
   onQuoteSelection: on('desktop:quoteSelection'),
   setFlags: (f: Record<string, unknown>) => ipcRenderer.invoke('desktop:flags:set', f),

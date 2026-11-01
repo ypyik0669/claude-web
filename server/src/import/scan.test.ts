@@ -19,7 +19,7 @@ const prov = (r: Awaited<ReturnType<typeof scanAll>>, from: string) => r.found.f
 const mcp = (r: Awaited<ReturnType<typeof scanAll>>, from: string) => r.found.filter((f): f is FoundMcp => f.kind === 'mcp' && f.from === from);
 
 describe('what other tools have, read from their own files', () => {
-  it('Hermes: the main model’s endpoint, custom providers, keys in .env, MCP servers', async () => {
+  it('Hermes: Anthropic keys in .env (other vendors left out), MCP servers', async () => {
     const h = home();
     put(path.join(h, '.hermes', 'config.yaml'), [
       'model:',
@@ -39,13 +39,11 @@ describe('what other tools have, read from their own files', () => {
       '    url: https://mcp.example.com/mcp',
       '    headers: { Authorization: Bearer t }',
     ].join('\n'));
-    put(path.join(h, '.hermes', '.env'), 'OPENROUTER_API_KEY=sk-or-1\n# comment\nDEEPSEEK_API_KEY="sk-ds"\nUNRELATED=1\n');
+    put(path.join(h, '.hermes', '.env'), 'OPENROUTER_API_KEY=sk-or-1\n# comment\nDEEPSEEK_API_KEY="sk-ds"\nANTHROPIC_API_KEY="sk-ant-1"\nUNRELATED=1\n');
     const r = await scanAll(W(h));
     const ps = prov(r, 'hermes');
-    expect(ps.map((p) => [p.name, p.type, p.baseUrl, p.apiKey, p.defaultModel ?? ''])).toEqual([
-      ['Local vLLM', 'openai', 'http://localhost:8000/v1', 'local-key', 'qwen3-32b'],
-      ['OpenRouter', 'openai', 'https://openrouter.ai/api/v1', 'sk-or-1', 'anthropic/claude-opus-4.6'],
-      ['DeepSeek', 'openai', 'https://api.deepseek.com/v1', 'sk-ds', ''],
+    expect(ps.map((p) => [p.name, p.type, p.baseUrl, p.apiKey])).toEqual([
+      ['Anthropic', 'anthropic', 'https://api.anthropic.com', 'sk-ant-1'],
     ]);
     expect(mcp(r, 'hermes').map((m) => [m.name, m.config])).toEqual([
       ['github', { command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'], env: { GITHUB_TOKEN: 'ghp_x' } }],
@@ -53,7 +51,7 @@ describe('what other tools have, read from their own files', () => {
     ]);
   });
 
-  it('cc-switch: Claude / Codex / Gemini / Hermes providers and the MCP list, from a copy (the file stays as it was)', async () => {
+  it('cc-switch: Claude providers (other apps left out) and the MCP list, from a copy (the file stays as it was)', async () => {
     const h = home();
     const db = path.join(h, '.cc-switch', 'cc-switch.db');
     fs.mkdirSync(path.dirname(db), { recursive: true });
@@ -71,17 +69,13 @@ describe('what other tools have, read from their own files', () => {
     const r = await scanAll(W(h));
     expect(prov(r, 'cc-switch').map((p) => [p.name, p.type, p.baseUrl, p.apiKey])).toEqual([
       ['My relay', 'anthropic', 'https://relay.example', 'sk-relay'],
-      ['Codex relay', 'openai', 'https://cx.example/v1', 'sk-cx'],
-      ['Gem', 'gemini', 'https://generativelanguage.googleapis.com', 'g-key'],
-      ['Hermes relay', 'openai', 'https://h.example/v1', 'h-key'],
     ]);
     expect(prov(r, 'cc-switch')[0].modelMap).toEqual({ haiku: 'claude-haiku-4-5', opus: 'claude-opus-5' });
-    expect(prov(r, 'cc-switch')[1].defaultModel).toBe('gpt-5.5');
     expect(mcp(r, 'cc-switch')).toEqual([{ kind: 'mcp', key: 'cc-switch:mcp:pencil', from: 'cc-switch', name: 'pencil', config: { command: 'pencil.exe', args: ['--mcp'] } }]);
     expect(fs.readFileSync(db).equals(before)).toBe(true);
   });
 
-  it('Codex, OpenCode and the MCP files of the IDEs; Mirasim / Cherry Studio named as unreadable', async () => {
+  it('the MCP files of Codex, OpenCode and the IDEs (their OpenAI-style providers left out); Mirasim / Cherry Studio named as unreadable', async () => {
     const h = home();
     put(path.join(h, '.codex', 'config.toml'), 'model_provider = "ds"\nmodel = "deepseek-chat"\n[model_providers.ds]\nname = "DS"\nbase_url = "https://api.deepseek.com/v1"\nenv_key = "DS_KEY"\n[mcp_servers.fs]\ncommand = "npx"\nargs = ["-y", "fs-mcp"]\n');
     put(path.join(h, '.config', 'opencode', 'opencode.json'), JSON.stringify({ provider: { myrelay: { npm: '@ai-sdk/openai-compatible', name: 'My OC', options: { baseURL: 'https://oc.example/v1', apiKey: 'oc-key' }, models: { 'm-a': {}, 'm-b': {} } } }, mcp: { pencil: { type: 'local', command: ['pencil.exe', '--mcp'], enabled: true }, off: { type: 'local', command: ['x'], enabled: false } } }));
@@ -92,12 +86,9 @@ describe('what other tools have, read from their own files', () => {
     fs.mkdirSync(path.join(h, 'AppData', '@mirasim', 'desktop'), { recursive: true });
     fs.mkdirSync(path.join(h, 'AppData', 'CherryStudio', 'IndexedDB'), { recursive: true });
     const r = await scanAll({ ...W(h), env: { DS_KEY: 'sk-env', OLLAMA_HOST: '127.0.0.1:9' } });
-    expect(prov(r, 'codex').map((p) => [p.name, p.apiKey, p.defaultModel])).toEqual([['DS', 'sk-env', 'deepseek-chat']]);
+    expect(prov(r, 'codex')).toEqual([]);
     expect(mcp(r, 'codex').map((m) => m.config)).toEqual([{ command: 'npx', args: ['-y', 'fs-mcp'] }]);
-    expect(prov(r, 'opencode').map((p) => [p.name, p.baseUrl, p.apiKey, p.models])).toEqual([
-      ['My OC', 'https://oc.example/v1', 'oc-key', ['m-a', 'm-b']],
-      ['DeepSeek', 'https://api.deepseek.com/v1', 'oc-ds', undefined],
-    ]);
+    expect(prov(r, 'opencode')).toEqual([]);
     expect(mcp(r, 'opencode').map((m) => [m.name, m.config])).toEqual([['pencil', { command: 'pencil.exe', args: ['--mcp'] }]]);
     expect(mcp(r, 'cursor').map((m) => m.config)).toEqual([{ type: 'sse', url: 'https://mcp.linear.app/sse' }]);
     expect(mcp(r, 'claude-desktop').map((m) => m.name)).toEqual(['memory']);
@@ -166,8 +157,8 @@ describe('what other tools have, read from their own files', () => {
 describe('taking them in', () => {
   const found = (): Awaited<ReturnType<typeof scanAll>> => ({
     found: [
-      { kind: 'provider', key: 'p1', from: 'hermes', name: 'OpenRouter', type: 'openai', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-1', models: ['m'], defaultModel: 'm' },
-      { kind: 'provider', key: 'p2', from: 'hermes', name: 'Dup', type: 'openai', baseUrl: 'https://dup.example/v1', apiKey: 'sk-dup' },
+      { kind: 'provider', key: 'p1', from: 'hermes', name: 'Relay', type: 'anthropic', baseUrl: 'https://relay.example', apiKey: 'sk-1', models: ['m'], defaultModel: 'm' },
+      { kind: 'provider', key: 'p2', from: 'hermes', name: 'Dup', type: 'anthropic', baseUrl: 'https://dup.example/v1', apiKey: 'sk-dup' },
       { kind: 'mcp', key: 'm1', from: 'cursor', name: 'linear', config: { type: 'sse', url: 'https://mcp.linear.app/sse' } },
       { kind: 'mcp', key: 'm2', from: 'cursor', name: 'github', config: { command: 'npx' } },
       { kind: 'mcp', key: 'm3', from: 'cursor', name: 'broken', config: { command: 'npx' } },
@@ -188,9 +179,9 @@ describe('taking them in', () => {
     const s = await svc2.scan();
     expect(JSON.stringify(s)).not.toContain('sk-');
     expect(s.items.map((i) => [i.key, i.already])).toEqual([['p1', false], ['p2', true], ['m1', false], ['m2', true], ['m3', false]]);
-    expect(s.items[0]).toMatchObject({ kind: 'provider', type: 'openai', hasKey: true, models: 1, detail: 'https://openrouter.ai/api/v1' });
+    expect(s.items[0]).toMatchObject({ kind: 'provider', type: 'anthropic', hasKey: true, models: 1, detail: 'https://relay.example' });
     const r = await svc.run(['p1', 'm1', 'm2', 'm3', 'gone']);
-    expect(added).toEqual([{ name: 'OpenRouter', type: 'openai', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-1', models: ['m'], defaultModel: 'm' }]);
+    expect(added).toEqual([{ name: 'Relay', type: 'anthropic', baseUrl: 'https://relay.example', apiKey: 'sk-1', models: ['m'], defaultModel: 'm' }]);
     expect(mcpAdded.map(([n, j]) => [n, JSON.parse(j)])).toEqual([['linear', { type: 'sse', url: 'https://mcp.linear.app/sse' }], ['broken', { command: 'npx' }]]);
     expect(r).toEqual({ providers: ['id-1'], mcp: ['linear'], skipped: ['m2'], failed: [{ key: 'm3', error: 'bad config' }, { key: 'gone', error: 'gone' }] });
   });

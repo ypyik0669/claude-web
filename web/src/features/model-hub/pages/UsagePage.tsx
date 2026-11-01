@@ -1,14 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { LedgerEntry, QuotaWindow } from '@shared';
+import type { LedgerEntry } from '@shared';
 import { ws } from '@/ws/client';
 import { useStore } from '@/store';
-import { useGateway } from '@/features/gateway/state';
 import { hitRate, pickRows, profileName } from '@/features/panels/ledger-stats';
-import { FAMILY_LABEL } from '@/features/gateway/tasks-model';
 import { Icon } from '@/ui/icons';
 import { clsx, fmtMs, fmtTok, fmtUsd, shortModel } from '@/util';
 import { dateLocale, tr } from '@/i18n';
-import { showHubPage } from '../state';
 
 type RangeId = 'today' | '7d' | '30d' | 'all';
 const RANGES: { id: RangeId; label: string; days: number }[] = [
@@ -20,19 +17,7 @@ const RANGES: { id: RangeId; label: string; days: number }[] = [
 type Tab = 'requests' | 'sessions' | 'context';
 const DAY = 86_400_000;
 
-const usedOf = (w: QuotaWindow): number | undefined => w.usedPct ?? (w.used !== undefined && w.limit ? Math.round((w.used / w.limit) * 100) : undefined);
 const tokensOf = (r: LedgerEntry) => r.input + r.output + r.cacheRead + r.cacheWrite;
-
-function resetIn(ts?: number): string {
-  if (!ts) return '';
-  const d = ts - Date.now();
-  if (d <= 0) return tr('已到期');
-  const hours = Math.floor(d / 3_600_000);
-  const mins = Math.round((d % 3_600_000) / 60_000);
-  if (hours >= 24) return tr('{d} 天 {h} 小时后重置', { d: Math.floor(hours / 24), h: hours % 24 });
-  if (hours) return tr('{h} 小时 {m} 分后重置', { h: hours, m: mins });
-  return tr('{m} 分钟后重置', { m: mins });
-}
 
 /** A compact column chart: one column per hour (today) or day; hover names the bucket. */
 function Columns({ data }: { data: { label: string; tokens: number; calls: number; cost: number }[] }) {
@@ -53,11 +38,10 @@ function Columns({ data }: { data: { label: string; tokens: number; calls: numbe
 }
 
 /**
- * 用量 (spec §6.8): the subscription quota cards, the token / cost total with its curve, a split by source, and
- * 请求 / 对话 / 上下文 tables. Reads the ledger (one row per model call) and the upstream account snapshots.
+ * 用量 (spec §6.8): the token / cost total with its curve, a split by provider, and 请求 / 对话 / 上下文 tables.
+ * Reads the ledger (one row per model call).
  */
 export function UsagePage() {
-  const accounts = useGateway((s) => s.accounts);
   const providers = useStore((s) => s.providers);
   const toast = useStore((s) => s.toast);
   const [range, setRange] = useState<RangeId>('today');
@@ -133,7 +117,7 @@ export function UsagePage() {
   const bySource = useMemo(() => {
     const m = new Map<string, { tokens: number; calls: number; cost: number }>();
     for (const r of picked) {
-      const name = r.gateway?.member ?? profileName(providers, r.providerId);
+      const name = profileName(providers, r.providerId);
       const b = m.get(name) ?? m.set(name, { tokens: 0, calls: 0, cost: 0 }).get(name)!;
       b.tokens += tokensOf(r); b.calls++; b.cost += r.costUsd;
     }
@@ -174,41 +158,6 @@ export function UsagePage() {
     } catch (e: any) { toast(e.message); }
   };
 
-  const quotaCards = accounts.length > 0 ? accounts.map((a) => {
-    const windows = a.quota?.windows ?? [];
-    return (
-      <div className="hub-card hub-quota-card" key={a.id}>
-        <div className="nm">
-          <span className="hub-chip">{FAMILY_LABEL[a.kind]}</span>
-          <span title={a.name}>{a.name}</span>
-          <span className="hub-grow" />
-          <span className={clsx('hub-chip', a.health === 'ok' ? 'green' : a.health === 'cooling' || a.health === 'unknown' ? 'warn' : 'danger')}>
-            {a.health === 'ok' ? tr('正常') : a.health === 'cooling' ? tr('冷却中') : a.health === 'expired' ? tr('已过期') : a.health === 'error' ? tr('出错') : tr('未检查')}
-          </span>
-        </div>
-        {a.identity?.plan && <div className="hub-meta">{a.identity.plan}</div>}
-        {windows.length ? windows.slice(0, 3).map((w) => {
-          const pct = usedOf(w);
-          return (
-            <div className="hub-quota-window" key={w.id}>
-              <div className="l"><span>{w.label}</span><span>{pct === undefined ? tr('未知') : `${pct}%`}{w.resetAt ? ` · ${resetIn(w.resetAt)}` : ''}</span></div>
-              <div className="hub-bar"><i className={pct !== undefined && pct > 90 ? 'warn' : ''} style={{ width: `${pct ?? 0}%` }} /></div>
-            </div>
-          );
-        }) : <div className="hub-meta">{tr('额度未知')}</div>}
-        {a.quota?.credits && (a.quota.credits.remaining !== undefined || a.quota.credits.total !== undefined) && (
-          <div className="hub-meta">{tr('积分 {remaining} / {total}', { remaining: a.quota.credits.remaining ?? '—', total: a.quota.credits.total ?? '—' })}</div>
-        )}
-      </div>
-    );
-  }) : (
-    <div className="hub-card hub-quota-card">
-      <div className="nm">{tr('订阅额度')}</div>
-      <div className="hub-meta">{tr('还没有订阅账号')}</div>
-      <button className="link" onClick={() => showHubPage('sources')}>{tr('去上游添加')}</button>
-    </div>
-  );
-
   return (
     <div className="hub-body">
       <div className="hub-toolbar">
@@ -221,11 +170,6 @@ export function UsagePage() {
         <button className="btn sm ghost" disabled={busy} onClick={() => void load()}><Icon name="refresh" size={12} /> {busy ? tr('刷新中…') : tr('刷新')}</button>
         <button className="btn sm ghost" onClick={() => void exportCsv()}><Icon name="share" size={12} /> {tr('导出')}</button>
       </div>
-
-      <section className="hub-card hub-quota-section">
-        <div className="hd"><h3>{tr('订阅额度')}</h3></div>
-        <div className="bd"><div className="hub-quotas">{quotaCards}</div></div>
-      </section>
 
       <div className="hub-grid-3 hub-usage-cards">
         <section className="hub-card hub-usage-total">
@@ -285,7 +229,7 @@ export function UsagePage() {
                 {picked.slice().reverse().slice(0, 200).map((r, i) => (
                   <tr key={`${r.ts}-${i}`}>
                     <td className="hub-mono">{new Date(r.ts).toLocaleString(dateLocale(), { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
-                    <td title={r.gateway?.member}>{r.gateway?.member ?? profileName(providers, r.providerId)}</td>
+                    <td>{profileName(providers, r.providerId)}</td>
                     <td title={r.model}>{shortModel(r.model) || '-'}</td>
                     <td className="num hub-mono">{fmtTok(tokensOf(r))}</td>
                     <td className="num hub-mono" title={r.costUnknown ? tr('没有可靠价格') : undefined}>{r.costUnknown ? (tokensOf(r) ? tr('未知') : '-') : r.costUsd ? fmtUsd(r.costUsd) : '-'}</td>
@@ -302,7 +246,7 @@ export function UsagePage() {
               <thead><tr><th>{tr('对话')}</th><th className="num">{tr('调用')}</th><th className="num">{tr('Token')}</th><th className="num">{tr('费用')}</th><th>{tr('最近')}</th></tr></thead>
               <tbody>
                 {sessions.map(([id, b]) => (
-                  <tr key={id || 'gateway'}>
+                  <tr key={id || '-'}>
                     <td title={id || tr('网关调用')}>{id ? id.slice(0, 18) : tr('网关调用')}</td>
                     <td className="num hub-mono">{b.calls}</td>
                     <td className="num hub-mono">{fmtTok(b.tokens)}</td>

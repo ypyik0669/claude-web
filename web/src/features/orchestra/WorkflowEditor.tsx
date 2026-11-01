@@ -1,27 +1,26 @@
-import { useMemo, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import type { AgentKind, OrchNode, PermissionMode, Workflow } from '@shared';
-import { Graph, KIND_ICON } from './Graph';
+import { Graph, kindIcon } from './Graph';
 import { nextNodeId, promptVars } from './graph-layout';
-import { agentIcon, agentLabel } from './labels';
+import { agentLabel } from './labels';
 import { tr } from '@/i18n';
 import { Select } from '@/ui/Select';
 import { SwitchChip } from '@/ui/Switch';
 
 export type WorkflowDraft = Omit<Workflow, 'id' | 'createdAt' | 'updatedAt'> & { id?: string };
 
-const KIND_L: Record<OrchNode['kind'], string> = { task: tr('任务'), compare: tr('比选'), approval: tr('审批') };
+const KIND_L: Record<OrchNode['kind'], string> = { task: tr('任务'), approval: tr('审批') };
 const PERM: { v: PermissionMode; l: string }[] = [{ v: 'default', l: tr('每次询问') }, { v: 'acceptEdits', l: tr('自动接受编辑') }, { v: 'plan', l: tr('只规划') }, { v: 'bypassPermissions', l: tr('完全权限') }];
 
 /** Convert a node to another kind, keeping what carries over (id, title, deps, prompt). */
 function withKind(n: OrchNode, kind: OrchNode['kind'], agents: AgentKind[]): OrchNode {
   const base = { id: n.id, title: n.title, dependsOn: n.dependsOn };
   const prompt = n.kind === 'approval' ? '' : n.prompt;
-  if (kind === 'task') return { ...base, kind, agent: n.kind === 'task' ? n.agent : (n.kind === 'compare' ? n.agents[0] : undefined) ?? agents[0] ?? 'claude', prompt, workspace: 'shared', permissionMode: 'acceptEdits' };
-  if (kind === 'compare') return { ...base, kind, agents: agents.slice(0, 2), prompt, permissionMode: 'acceptEdits' };
+  if (kind === 'task') return { ...base, kind, agent: n.kind === 'task' ? n.agent : agents[0] ?? 'claude', prompt: prompt ?? '', workspace: 'shared', permissionMode: 'acceptEdits' };
   return { ...base, kind, note: '' };
 }
 
@@ -44,7 +43,7 @@ function NodeCard({ n, all, agents, index, count, onChange, onMove, onRemove }: 
   return (
     <div className={clsx('orch-node-edit', `k-${n.kind}`)} id={`orch-edit-${n.id}`}>
       <div className="hd">
-        <Icon name={KIND_ICON[n.kind]} size={14} />
+        <Icon name={kindIcon(n.kind)} size={14} />
         <input className="field title" value={n.title} placeholder={tr('节点名称')} onChange={(e) => onChange({ ...n, title: e.target.value })} />
         <span className="mono id" title={tr('模板里用这个 id 引用它')}>{n.id}</span>
         <button className="icon-btn xs" disabled={index === 0} onClick={() => onMove(-1)} title={tr('上移')} aria-label={tr('上移')}><Icon name="chevronDown" size={12} className="flip" /></button>
@@ -52,7 +51,7 @@ function NodeCard({ n, all, agents, index, count, onChange, onMove, onRemove }: 
         <button className="icon-btn xs" onClick={onRemove} title={tr('删除节点')} aria-label={tr('删除节点')}><Icon name="trash" size={12} /></button>
       </div>
       <div className="grid">
-        <label>{tr('类型')}<Select className="field" value={n.kind} onValueChange={(value) => onChange(withKind(n, String(value) as OrchNode['kind'], agents))} aria-label={tr('类型')} options={(['task', 'compare', 'approval'] as const).map((k) => ({ value: k, label: KIND_L[k] }))} /></label>
+        <label>{tr('类型')}<Select className="field" value={n.kind} onValueChange={(value) => onChange(withKind(n, String(value) as OrchNode['kind'], agents))} aria-label={tr('类型')} options={(['task', 'approval'] as const).map((k) => ({ value: k, label: KIND_L[k] }))} /></label>
         {n.kind === 'task' && <>
           <label>Agent<Select className="field" value={n.agent} onValueChange={(value) => onChange({ ...n, agent: String(value) as AgentKind })} aria-label="Agent" options={agentOpts(n.agent).map((a) => ({ value: a, label: agentLabel(a), description: agents.includes(a) ? undefined : tr('不可用') }))} /></label>
           <label>{tr('工作区')}<Select className="field" value={n.workspace} onValueChange={(value) => onChange({ ...n, workspace: String(value) as 'shared' | 'worktree' })} aria-label={tr('工作区')} options={[{ value: 'shared', label: tr('共享工作目录') }, { value: 'worktree', label: tr('独立副本（worktree），完成后合并') }]} /></label>
@@ -60,20 +59,8 @@ function NodeCard({ n, all, agents, index, count, onChange, onMove, onRemove }: 
           <label>{tr('模型（空 = 默认）')}<input className="field" value={n.model ?? ''} onChange={(e) => onChange({ ...n, model: e.target.value || undefined })} /></label>
           <SwitchChip className="check" on={!!n.untilDone} onChange={(on) => onChange({ ...n, untilDone: on || undefined })}>{tr('一直做到完成（目标协议）')}</SwitchChip>
         </>}
-        {n.kind === 'compare' && <>
-          <label>{tr('裁判（可选）')}<Select className="field" value={n.judge ?? ''} onValueChange={(value) => onChange({ ...n, judge: (String(value) || undefined) as AgentKind | undefined })} aria-label={tr('裁判（可选）')} options={[{ value: '', label: tr('不用裁判') }, ...agents.map((a) => ({ value: a, label: agentLabel(a) }))]} /></label>
-          <label>{tr('权限')}<Select className="field" value={n.permissionMode ?? 'acceptEdits'} onValueChange={(value) => onChange({ ...n, permissionMode: String(value) as PermissionMode })} aria-label={tr('权限')} options={PERM.map((p) => ({ value: p.v, label: p.l }))} /></label>
-        </>}
         {n.kind === 'approval' && <label className="wide">{tr('说明（给审批人看）')}<input className="field" value={n.note ?? ''} onChange={(e) => onChange({ ...n, note: e.target.value })} placeholder={tr('例如：看一眼计划再决定是否实现')} /></label>}
       </div>
-      {n.kind === 'compare' && (
-        <div className="chips" role="group" aria-label={tr('候选 agent')}>
-          <span className="lbl">{tr('候选')}</span>
-          {agentOpts().concat(n.agents.filter((a) => !agents.includes(a))).map((a) => (
-            <button key={a} type="button" className={clsx('chip', n.agents.includes(a) && 'on', !agents.includes(a) && 'bad')} onClick={() => onChange({ ...n, agents: n.agents.includes(a) ? n.agents.filter((x) => x !== a) : [...n.agents, a] })}><Icon name={agentIcon(a)} size={11} /> {agentLabel(a)}</button>
-          ))}
-        </div>
-      )}
       {others.length > 0 && (
         <div className="chips" role="group" aria-label={tr('依赖')}>
           <span className="lbl">{tr('依赖')}</span>
@@ -90,15 +77,11 @@ function NodeCard({ n, all, agents, index, count, onChange, onMove, onRemove }: 
 
 /** Form editor: node list with live graph preview above. Saving validates on the server (cycles, deps, git). */
 export function WorkflowEditor({ initial, onSaved, onRun, onCancel }: { initial: WorkflowDraft; onSaved: (w: Workflow) => void; onRun: (w: Workflow) => void; onCancel: () => void }) {
-  const allAgents = useStore((s) => s.agents);
   const workspaces = useStore((s) => s.workspaces);
   const [w, setW] = useState<WorkflowDraft>(initial);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const agents = useMemo(() => {
-    const ok = allAgents.filter((a) => a.installed && a.enabled).map((a) => a.kind);
-    return ok.length ? ok : (['claude'] as AgentKind[]);
-  }, [allAgents]);
+  const agents: AgentKind[] = ['claude'];
   // node ids are fixed once created (templates reference them), so replacing in place is enough
   const setNode = (i: number, n: OrchNode) => setW((cur) => ({ ...cur, nodes: cur.nodes.map((x, j) => (j === i ? n : x)) }));
   const add = (kind: OrchNode['kind']) => setW((cur) => {
@@ -121,7 +104,7 @@ export function WorkflowEditor({ initial, onSaved, onRun, onCancel }: { initial:
     <div className="orch-editor">
       <div className="orch-meta">
         <input className="field name" value={w.name} placeholder={tr('工作流名称')} onChange={(e) => setW({ ...w, name: e.target.value })} />
-        <Select className="field" value={w.cwd} onValueChange={(value) => setW({ ...w, cwd: String(value) })} title={tr('工作目录（worktree / 比选要求是 git 仓库）')} aria-label={tr('工作目录')} searchable options={[...(cwds.includes(w.cwd) ? [] : [{ value: '', label: tr('选择工作目录…') }]), ...cwds.map((p) => ({ value: p, label: p }))]} />
+        <Select className="field" value={w.cwd} onValueChange={(value) => setW({ ...w, cwd: String(value) })} title={tr('工作目录（worktree 要求是 git 仓库）')} aria-label={tr('工作目录')} searchable options={[...(cwds.includes(w.cwd) ? [] : [{ value: '', label: tr('选择工作目录…') }]), ...cwds.map((p) => ({ value: p, label: p }))]} />
         <input className="field desc" value={w.description ?? ''} placeholder={tr('说明（可选）')} onChange={(e) => setW({ ...w, description: e.target.value || undefined })} />
       </div>
       <div className="orch-sec-h">{tr('执行图预览')}</div>
@@ -131,7 +114,6 @@ export function WorkflowEditor({ initial, onSaved, onRun, onCancel }: { initial:
         {w.nodes.map((n, i) => <NodeCard key={n.id} n={n} all={w.nodes} agents={agents} index={i} count={w.nodes.length} onChange={(x) => setNode(i, x)} onMove={(d) => move(i, d)} onRemove={() => remove(i)} />)}
         <div className="orch-add">
           <button className="btn sm ghost" onClick={() => add('task')}><Icon name="plus" size={12} /> {tr('任务')}</button>
-          <button className="btn sm ghost" onClick={() => add('compare')}><Icon name="compare" size={12} /> {tr('比选')}</button>
           <button className="btn sm ghost" onClick={() => add('approval')}><Icon name="approval" size={12} /> {tr('审批')}</button>
         </div>
       </div>

@@ -56,17 +56,6 @@ export interface PrivacyRecord {
 
 export interface PrivacyStats { since: number; requests: number; redacted: number; warned: number; blocked: number; hits: Partial<Record<PrivacyCategory, number>>; recent: PrivacyRecord[] }
 
-/** One agent's own login (not a provider profile): does the privacy pipeline see its traffic? */
-export interface PrivacyCoverage {
-  agent: string;
-  /** the agent's display name */
-  name: string;
-  /** which login it uses, as detected on this machine ('' = unknown / not installed) */
-  login: string;
-  covered: boolean;
-  /** why not, or how (short, for the page) */
-  note?: string;
-}
 
 /** The local semantic model (privacy/model.ts). */
 export interface PrivacyModelStatus {
@@ -96,8 +85,6 @@ export interface PrivacyStatus {
   badPatterns: string[];
   /** conversations started from now on go through the local relay (on, or 立即生效 armed) */
   routed?: boolean;
-  /** agents on their own login and whether they are covered */
-  coverage?: PrivacyCoverage[];
   model?: PrivacyModelStatus;
 }
 

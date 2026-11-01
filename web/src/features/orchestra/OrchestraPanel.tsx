@@ -27,7 +27,7 @@ export async function startWorkflow(w: Workflow): Promise<OrchRun | null> {
 
 /**
  * Orchestration panel: workflows + run history on the left; the form editor (with a live graph preview)
- * or a run view (execution graph, approvals, compare) on the right. Stacks vertically when narrow. `page`: on the
+ * or a run view (execution graph, approvals) on the right. Stacks vertically when narrow. `page`: on the
  * automation page, whose header 新建 (`newSignal`, its last click) is the one way to start a workflow there; in the
  * right panel it is the list's +. Templates are the list's 模板… (review 7 M13: one 新建 entry, not three).
  */

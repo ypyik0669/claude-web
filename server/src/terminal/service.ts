@@ -17,8 +17,7 @@ type Pty = { write(d: string): void; resize(c: number, r: number): void; kill():
 /**
  * The terminal panel's program: a real shell. It used to be the bundled `claude` TUI itself, which (a) checks
  * api.anthropic.com on start and exits where that answers 403 (mainland China without a proxy — people who only
- * use a relay), and (b) took every command the app types into a terminal (`npm i -g @openai/codex`, `codex login`,
- * `git init`…) as a chat prompt. Windows: cmd.exe (`ComSpec`) — PowerShell's default execution policy refuses
+ * use a relay), and (b) took every command the app types into a terminal (`npm i -g …`, `git init`…) as a chat prompt. Windows: cmd.exe (`ComSpec`) — PowerShell's default execution policy refuses
  * npm.ps1, so `npm i -g` would fail there; macOS / Linux: the user's `$SHELL` as a login shell. The bundled
  * claude's directory is appended to PATH so `claude` / `claude auth login` work; a claude of the user's own wins.
  */

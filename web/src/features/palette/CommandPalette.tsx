@@ -24,7 +24,7 @@ import { pickFolder } from '@/ui/pick-folder';
 
 interface Cmd { id: string; label: string; sub?: string; ic?: IconName; group: string; run: () => void }
 
-/** `agent:codex in:proj rest` → the same filters the server's library search understands. */
+/** `agent:claude in:proj rest` → the same filters the server's library search understands. */
 function parseFilters(raw: string): { agent?: string; cwd?: string; rest: string; filtered: boolean } {
   let agent: string | undefined, cwd: string | undefined;
   const rest = raw
@@ -142,7 +142,7 @@ export function CommandPalette() {
   return (
     <div className="palette-bg" onMouseDown={(e) => e.target === e.currentTarget && close()}>
       <div className="cmdk" onKeyDown={onKey}>
-        <input ref={inp} value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr('输入命令，或搜索对话（全文）…  > 只搜命令 · agent:codex · in:目录')} />
+        <input ref={inp} value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr('输入命令，或搜索对话（全文）…  > 只搜命令 · in:目录')} />
         <div className="list">
           {items.map((it, i) => {
             const group = it.kind === 'cmd' ? it.c.group : hits.length ? tr('对话 · 全文匹配') : ql ? tr('匹配的对话') : tr('最近的对话');

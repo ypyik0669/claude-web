@@ -65,8 +65,9 @@ export function toneOf(name: string): CtxTone {
 }
 
 const KINDS = new Set(['used', 'free', 'buffer', 'deferred']);
-/** The row's `kind` as the SDK documents it. The ccb fork answers without it (seen live 2026-10-24: every row came as
- *  `used`, so 141k of free space sorted to the top): then `isDeferred`, and the two rows the CLI always names the same. */
+/** The row's `kind` as the SDK documents it. A CLI that answers without it (the fork we ran before 2026-11-01, seen
+ *  live 2026-10-24: every row came as `used`, so 141k of free space sorted to the top): then `isDeferred`, and the two
+ *  rows the CLI always names the same. */
 function kindOf(c: { name: string; kind?: unknown; isDeferred?: unknown }): CtxCategory['kind'] {
   if (typeof c.kind === 'string' && KINDS.has(c.kind)) return c.kind as CtxCategory['kind'];
   if (c.isDeferred) return 'deferred';

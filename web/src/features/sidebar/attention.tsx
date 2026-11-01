@@ -56,7 +56,7 @@ function Item({ it, ctx, dismiss }: { it: AttentionItem; ctx: RowCtx; dismiss: (
       <div className="sess sb-row flat orch" role="button" tabIndex={0} title={tr('编排「{runName}」· {v}', { runName: w.runName, v: w.kind === 'approval' ? tr('等你审批') : tr('候选跑完了，等你选一个合并') })}
         onClick={go} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } }}>
         <span className="pip" />
-        <Icon name={w.kind === 'approval' ? 'approval' : 'compare'} size={13} className="orch-ic" />
+        <Icon name="approval" size={13} className="orch-ic" />
         <span className="t">{w.title}</span>
         <span className="st need">{w.kind === 'approval' ? tr('待审批') : tr('待选择')}</span>
       </div>

@@ -10,7 +10,6 @@ import { execFileSync } from 'node:child_process';
 import { captureGuest, drawGuest, hostedGuest } from './browser-capture';
 import { guestDebug, pageNavigated } from './guest-debug';
 import { BROWSER_PARTITIONS, LOCAL_PARTITION, Downloads, browserPartition, cleanVp, clearBrowsingData, emulate, emulatedUa, endStuckPage, forgetGuest, guestKeyOf, importCookies, safeName } from './guest-tools';
-import { geminiForget, geminiLogin, geminiRefresh } from './gemini-login';
 import { cleanUserAgent } from './user-agent';
 import { userAgentFor } from './sign-in-ua';
 import os from 'node:os';
@@ -27,7 +26,7 @@ const isMac = process.platform === 'darwin';
 
 /**
  * Apps launched from Finder / the Dock get launchd's minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin), so git, gh,
- * codex, gemini, ssh-agent helpers and a global npm are all "not found". Ask the user's login shell for its PATH
+ * claude, ssh-agent helpers and a global npm are all "not found". Ask the user's login shell for its PATH
  * once, before the server is forked (the server and every session inherit it).
  */
 function fixPosixPath() {
@@ -965,11 +964,6 @@ ipcMain.handle('desktop:download:show', (e, p: unknown) => {
   shell.showItemInFolder(p as string);
   return true;
 });
-// 网关 → 添加 Gemini 账号: sign in to Google in this computer's Chrome and hand back its cookies (gemini-login.ts)
-ipcMain.handle('desktop:gemini:login', (_e, partition: unknown, proxyServer: unknown) =>
-  geminiLogin(partition, typeof proxyServer === 'string' ? proxyServer : undefined));
-ipcMain.handle('desktop:gemini:forget', (_e, partition: unknown) => geminiForget(partition));
-ipcMain.handle('desktop:gemini:refresh', (_e, partition: unknown) => geminiRefresh(partition));
 ipcMain.handle('desktop:loginItem:get', () => app.getLoginItemSettings().openAtLogin);
 ipcMain.handle('desktop:loginItem:set', (_e, on: boolean) => app.setLoginItemSettings({ openAtLogin: on, args: ['--hidden'] }));
 ipcMain.handle('desktop:window:new', () => {

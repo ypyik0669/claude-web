@@ -8,14 +8,14 @@
 | 编号 | 级别 | 标题 | 状态 |
 | --- | --- | --- | --- |
 | SEC-01 | 高 | 浏览器版无 token 时 DNS rebinding → 远程执行 | 已修（2026-11-01） |
-| SEC-02 | 高 | 可执行插件网络沙箱可经 `tty` 绕过 | 已修（2026-11-01，短期修法；OS 层隔离未做） |
+| SEC-02 | 高 | 可执行插件网络沙箱可经 `tty` 绕过 | 已修（2026-11-01）；之后插件运行时整块删了（只留 Claude） |
 | SEC-03 | 高 | 手机壳托管服务器是最高信任根 | 已解决：整块删除（2026-10-31） |
 | SEC-04 | 中 | 慢速转发没有前向保密 | 已解决：整块删除（2026-10-31） |
 | SEC-05 | 中 | 配对链接泄露 = 10 分钟内完全控制 | 已解决：「复制配对链接」随整块删除；局域网配对码仍是 6 位 / 10 分钟 / 5 次 |
 | SEC-06 | 中 | 局域网直连明文 HTTP、监听 0.0.0.0、token 进 URL / 非 HttpOnly cookie | 部分修（2026-11-01）：cookie / 设备权限 / 文案；TLS 未做 |
 | SEC-07 | 中 | 联邦「来自对端」限制由客户端自报 | 已修（2026-11-01） |
-| SEC-08 | 中 | 插件市场签名非强制、公钥未内置 | 已修（2026-11-01）：未验证要显式确认；没有内置公钥（fork 没有官方目录） |
-| SEC-09 | 中 | 托管程序下载的校验值与二进制同源 | 已修（2026-11-01） |
+| SEC-08 | 中 | 插件市场签名非强制、公钥未内置 | 已修（2026-11-01）；之后插件市场整块删了（只留 Claude） |
+| SEC-09 | 中 | 托管程序下载的校验值与二进制同源 | 已修（2026-11-01）；之后托管程序（engines/）整块删了（只留 Claude） |
 | SEC-10 | 中 | API key 明文出现在子进程命令行；Linux 只 base64 | 已修（2026-11-01）：macOS 实测；Windows / Linux 只有单测 |
 | SEC-11 | 中 | 本机任意 localhost 页面可连 `/ws`（无 token 模式） | 已修（2026-11-01，随 SEC-01） |
 | SEC-12 | 低 | 手机远程的元数据泄露（固定频道名、IP、时序） | 已解决：整块删除（2026-10-31） |
@@ -38,10 +38,11 @@
 - 验证：e2e 里伪造 `Host: evil.com:3090` + 同 Origin 的 WS 和 `/api/file`，应被拒。
 - **已修（2026-11-01）**：`cloud/same-origin.ts` 加 `loopbackHost`，`authOk` 无 token 的分支改成 `return loopbackHost(req.headers.host)`，
   所以 `/ws`、`/api/file`、上传都只认 Host 为 `127.x` / `localhost` / `[::1]` 的请求（远程监听口本来就要令牌，不受影响；
-  静态页、`/api/health`、`/pair`、发布快照、网关这些不经 `authOk` 的照旧）。没选「默认生成 token」：浏览器版要换成带 token 的地址，改动面大。
+  静态页、`/api/health`、`/pair`、发布快照这些不经 `authOk` 的照旧；隐私中转 `/gateway/~v` 只收本机回环）。没选「默认生成 token」：浏览器版要换成带 token 的地址，改动面大。
   真机验证（临时 HOME、无 token）：`Host: evil.example` 的 `/api/file` 403、WS 被拒；`127.0.0.1` / `localhost` 照常。单测在 `same-origin.test.ts`。
 
 ### SEC-02 可执行插件网络沙箱可经 `tty` 绕过（子代理实测）
+- （2026-11-01 之后：`server/src/plugins/` 随模型网关一族删了，见「只留 Claude」。下面留作记录。）
 - 位置：`server/src/plugins/runtime.ts` BOOTSTRAP 的 `BLOCK` 集合（没有 `tty`、`readline` 等）。
 - 攻击：`Object.getPrototypeOf(require('tty').ReadStream.prototype).constructor` 就是 `net.Socket`，可以直接 TCP 外连；Node 24 + `--permission`（无 `--allow-net`）下实测连接确实发出。原生网络拦截只在 Node 25+ 才有（runtime.ts 里 `--allow-net` 那段），Electron 内置 Node 版本待核实。
 - 影响：插件绕过 `permissions.network` 白名单外传拿到的 secret；配合 SEC-01 / WS 无 Origin 放行，可连本机 3090 完全逃逸。
@@ -90,18 +91,20 @@
   剩下：SSH 方式的对端用的是对方的主令牌，主令牌本来就是完全控制，这条规则管不到它。设置页设备列表给 peer 标「电脑」。
 
 ### SEC-08 插件市场签名非强制、公钥未内置
+- （2026-11-01 之后：插件市场 / 来源插件随模型网关一族删了，见「只留 Claude」。下面留作记录。）
 - 位置：`server/src/plugins/market-service.ts`（条目有签名才验）、`market.ts`（没配公钥时收未签名目录）、按 URL 直接安装不要求哈希。声明式远程目录用内置 `CATALOG_PUBLIC_KEYS`（目前空，等于关着）。
 - 修法：内置官方公钥；官方目录强制签名；第三方 / 按 URL 安装醒目标「未验证」，二次确认。
 - **已修（2026-11-01）**：配了公钥的目录，每个条目必须有签名或 sha256（受目录签名保护），签名错的直接拒；其它一律 `verified: false`（无公钥目录 / 按 URL / 本地文件），
   `plugins.install` 不带 `acknowledgeUnverified: true` 就拒（服务端拦，不只是界面）。新 `plugins.install.check` 先下载算 sha256 给对话框看，确认后带着这个 sha256 安装，服务端核对是同一份。
-  插件页加了「已验证 / 未验证」标和「从地址安装」。没有内置公钥：这个 fork 没有官方目录。细节在「插件 / 同步 / 远程共享」笔记。界面没在真 app 里点过。
+  插件页加了「已验证 / 未验证」标和「从地址安装」。没有内置公钥：这个 fork 没有官方目录。界面没在真 app 里点过。
 
 ### SEC-09 托管程序下载的校验值与二进制同源
+- （2026-11-01 之后：`server/src/engines/`（托管程序）随模型网关一族删了，见「只留 Claude」。下面留作记录。）
 - 位置：`server/src/engines/manager.ts` 下载段（GitHub asset digest / 同 release 的 checksums；`allowUnverified` 且无 `sha256` 时任何哈希都装）。
 - 修法：在签名的来源目录 / `bundled.json` 里固定每个版本的 sha256；无固定哈希的版本必须用户确认并显示哈希；`allowUnverified` 只在显式设置里开。
 - **已修（2026-11-01）**：`bundled.json` 里每个平台的 sha256 当作固定值（`engines/manifests/pins.ts`，另可加 `pins` 块）。固定版本：哈希不对就丢，发布里没有那个文件就停；
   没固定的版本（同 release 的 digest / checksums 只拿来比对、显示「和发布附带的一致」）一律要用户在面板里确认具体哈希，`allowUnverified` 必须和下载文件的 sha256 一起来才算数。
-  以前自动记成 `release` 的版本重装时会再问一次。细节在「免费来源与托管程序」笔记。确认对话框没在真 app 里点过。
+  以前自动记成 `release` 的版本重装时会再问一次。确认对话框没在真 app 里点过。
 
 ### SEC-10 API key 明文出现在子进程命令行；Linux 只 base64
 - 位置：`server/src/secrets/service.ts`：macOS `security add-generic-password ... -w <明文>`；Windows DPAPI 把 base64 明文放在 `-Command`；Linux scheme `plain`。
@@ -137,7 +140,7 @@
 - 直连 DTLS 指纹在加密的 offer / answer 里，broker 无法中间人。
 - bridge 只连远程监听口、不连 3090；配对通道只放 `POST /api/pair`；设备通道只认本设备令牌（`bridge.ts`）。
 - 配对码：`randomInt` 6 位、10 分钟、5 次；设备令牌 32 字节随机、只存 sha256。
-- gateway / share：回环 / 私网限制、CORS 白名单、密钥加盐 + `timingSafeEqual`。
+- gateway / share（已删，2026-11-01）：回环 / 私网限制、CORS 白名单、密钥加盐 + `timingSafeEqual`。
 - Electron：`contextIsolation`、无 `nodeIntegration`、webview 去 preload、IPC `fromOurWindow`、`openExternal` 协议白名单、`file:` guard。
 - 操控电脑：PowerShell 走 stdin JSON，`Start-Process` 目标来自内置表 / `Get-StartApps`，无注入点。
 - 主题 Worker：独立 CSP `default-src 'none'` + lockdown；`frameHtml` 转义、颜色白名单。
@@ -146,5 +149,5 @@
 ## 派发建议
 
 「在外面也能用」2026-10-31 整块删除（SEC-03 / 04 / 05 / 12 / 13 / 14 随之解决；VPS 和手机壳站点是上游的，本 fork 不用管），下面这些条目留作记录。
-剩下的顺序：SEC-01（+11、19、20 同一处，小改动）→ SEC-02 → SEC-10 → SEC-06 → SEC-07 → 其余。
+剩下的顺序：SEC-01（+11、19、20 同一处，小改动）→ SEC-02 → SEC-10 → SEC-06 → SEC-07 → 其余。（SEC-02 / 08 / 09 涉及的代码已随「只留 Claude」删掉。）
 每个任务的完成标准：修复 + 回归测试（能复现攻击的用例必须失败）+ `npm run typecheck && npm test`，涉及界面文字的跑 i18n 检查。

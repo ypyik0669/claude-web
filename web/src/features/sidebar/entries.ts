@@ -24,19 +24,17 @@ export const PROJECTS_HEAD = ['view', 'add-project'] as const;
  * The 显示 menu (stage C3): the old funnel's filters (the box, 来源, 机器, 显示已归档, 选择) plus how the list is grouped,
  * ordered and how much of each group shows; the user's own sections; 恢复默认 / 查看全部.
  */
-export const VIEW = ['query', 'source', 'machine', 'group-by', 'sort-by', 'archived', 'other-agents', 'per-group', 'select', 'new-section', 'reset', 'all', 'library'] as const;
+export const VIEW = ['query', 'source', 'machine', 'group-by', 'sort-by', 'archived', 'per-group', 'select', 'new-section', 'reset', 'all', 'library'] as const;
 /** A section of the user's own: its header (a drop target), its menu, the × on its rows. */
 export const CUSTOM = ['custom-section', 'custom-rename', 'custom-delete', 'custom-out'] as const;
 /** A project's ··· / right-click menu; `add-project` on a folder outside every project. */
 export const PROJECT_MENU = ['new-here', 'worktree', 'terminal', 'move-top', 'move-up', 'move-down', 'edit', 'rename', 'explorer', 'vscode', 'remove', 'make-project'] as const;
-/** A conversation row's ··· / right-click menu (shown by capability). */
+/** A conversation row's ··· / right-click menu (shown by capability; `handoff` = 在本机继续, only for a conversation on another machine). */
 export const ROW_MENU = ['open-tab', 'open-split', 'resume', 'pin', 'explorer', 'vscode', 'stop', 'reference', 'rename', 'fork', 'archive', 'handoff', 'handoff-peer', 'native-cli', 'copy-id', 'delete', 'section-add', 'section-out'] as const;
 /** On the rows themselves. */
 export const ROW = ['status', 'kids', 'more', 'less', 'select-bar', 'select-section'] as const;
 /** The account row at the bottom and its popover. */
 export const ACCOUNT = ['account', 'quota', 'connection', 'today', 'theme', 'usage', 'settings', 'config', 'ascii-themes', 'appearance', 'shortcuts', 'palette'] as const;
-/** The light, dismissable hint. */
-export const HINT = ['library-join', 'library-later'] as const;
 
 export type TopId = (typeof TOP)[number];
 export type AutomationId = (typeof AUTOMATION)[number];
@@ -48,7 +46,6 @@ export type ProjectMenuId = (typeof PROJECT_MENU)[number];
 export type RowMenuId = (typeof ROW_MENU)[number];
 export type RowId = (typeof ROW)[number];
 export type AccountId = (typeof ACCOUNT)[number];
-export type HintId = (typeof HINT)[number];
 
 /**
  * The panels whose content the sidebar reaches — 自动化 → the page's 目标 / 编排 tabs (the same GoalsPanel /
@@ -61,7 +58,7 @@ export const ACCOUNT_PANELS = { usage: 'usage', config: 'config' } as const sati
 
 export const PLACES = {
   top: TOP, automation: AUTOMATION, section: SECTIONS, head: PROJECTS_HEAD, view: VIEW, custom: CUSTOM,
-  project: PROJECT_MENU, row: ROW, rowMenu: ROW_MENU, account: ACCOUNT, hint: HINT,
+  project: PROJECT_MENU, row: ROW, rowMenu: ROW_MENU, account: ACCOUNT,
 } as const;
 export type Place = keyof typeof PLACES;
 
@@ -77,8 +74,6 @@ export const LEGACY: { old: string; now: `${Place}:${string}`[] }[] = [
   { old: tr('连接状态点 / 重连中…'), now: ['account:connection'] },
   { old: tr('显示已归档（底部开关）'), now: ['view:archived'] },
   { old: tr('主题 / 设置（底部月亮 → 命令面板）'), now: ['account:theme', 'account:appearance', 'account:palette'] },
-  { old: tr('会话库发现横幅：加入 X'), now: ['hint:library-join'] },
-  { old: tr('会话库发现横幅：以后再说'), now: ['hint:library-later'] },
   { old: tr('来源 chip 行'), now: ['view:source'] },
   { old: tr('机器 chip 行'), now: ['view:machine'] },
   { old: tr('筛选会话…（输入框）'), now: ['view:query'] },
@@ -108,14 +103,13 @@ export const LEGACY: { old: string; now: `${Place}:${string}`[] }[] = [
   { old: tr('会话 ··· · 重命名'), now: ['rowMenu:rename'] },
   { old: tr('会话 ··· · 分叉'), now: ['rowMenu:fork'] },
   { old: tr('会话 ··· · 归档 / 取消归档'), now: ['rowMenu:archive'] },
-  { old: tr('会话 ··· · 交给其它 Agent 继续'), now: ['rowMenu:handoff'] },
   { old: tr('会话 ··· · 在原生 CLI 打开'), now: ['rowMenu:native-cli'] },
   { old: tr('会话 ··· · 复制 ID'), now: ['rowMenu:copy-id'] },
   { old: tr('会话 ··· · 删除…'), now: ['rowMenu:delete'] },
 ];
 
 /** Where the spec's new L0 / L1 entries live (§4.2 / §5.1), beyond the old ones. */
-export const ADDED: `${Place}:${string}`[] = ['top:app-menu', 'top:back', 'top:forward', 'top:chat', 'top:background', 'top:extensions', 'top:more', 'top:automation', 'automation:schedules', 'automation:goals', 'automation:orchestra', 'section:attention', 'section:projects', 'head:view', 'account:account', 'account:today', 'account:shortcuts', 'view:library', 'view:group-by', 'view:sort-by', 'view:other-agents', 'view:per-group', 'view:new-section', 'view:reset', 'view:all', 'section:custom', 'custom:custom-section', 'custom:custom-rename', 'custom:custom-delete', 'custom:custom-out', 'row:less', 'project:move-top', 'project:move-up', 'project:move-down', 'project:edit', 'account:ascii-themes', 'rowMenu:handoff-peer', 'rowMenu:section-add', 'rowMenu:section-out', 'row:select-section'];
+export const ADDED: `${Place}:${string}`[] = ['top:app-menu', 'top:back', 'top:forward', 'top:chat', 'top:background', 'top:extensions', 'top:more', 'top:automation', 'automation:schedules', 'automation:goals', 'automation:orchestra', 'section:attention', 'section:projects', 'head:view', 'account:account', 'account:today', 'account:shortcuts', 'view:library', 'view:group-by', 'view:sort-by', 'view:per-group', 'view:new-section', 'view:reset', 'view:all', 'section:custom', 'custom:custom-section', 'custom:custom-rename', 'custom:custom-delete', 'custom:custom-out', 'row:less', 'project:move-top', 'project:move-up', 'project:move-down', 'project:edit', 'account:ascii-themes', 'rowMenu:handoff', 'rowMenu:handoff-peer', 'rowMenu:section-add', 'rowMenu:section-out', 'row:select-section'];
 
 export function resolves(ref: `${Place}:${string}`): boolean {
   const [place, id] = ref.split(':') as [Place, string];

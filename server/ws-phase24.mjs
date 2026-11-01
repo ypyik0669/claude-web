@@ -43,7 +43,7 @@ const freePort = () => new Promise((res, rej) => { const s = net.createServer();
 
 // ---- the server: throwaway HOME ----
 const token = randomBytes(12).toString('hex');
-const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: dataDir, CODEX_HOME: path.join(home, '.codex'), CW_NO_MODEL_REFRESH: '1', CW_NO_PUBLIC_BROKERS: '1' };
+const env = { ...process.env, HOME: home, USERPROFILE: home, PORT: '0', CLAUDE_WEB_TOKEN: token, CLAUDE_WEB_DIR: dataDir, CW_NO_MODEL_REFRESH: '1', CW_NO_PUBLIC_BROKERS: '1' };
 for (const k of Object.keys(env)) if (/^(ANTHROPIC_|CLAUDE_CODE_|OPENAI_)/.test(k) || /^CW_(COMPUTER|WEB)_/.test(k)) delete env[k];
 const server = spawn(process.execPath, [path.join(here, 'dist', 'index.js')], { cwd: path.dirname(here), env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 let slog = '';
@@ -137,7 +137,7 @@ async function main() {
 
   // ---- what this machine can do, and where the secret lives ----
   const engine = await a.req({ kind: 'engine.info' });
-  check(`engine.info: 操控电脑 ${WIN ? 'can' : 'cannot'} run on this machine (${process.platform})`, engine.computerUse === WIN, JSON.stringify({ computerUse: engine.computerUse, runtime: engine.runtime }));
+  check(`engine.info: 操控电脑 ${WIN ? 'can' : 'cannot'} run on this machine (${process.platform})`, engine.computerUse === WIN, JSON.stringify({ computerUse: engine.computerUse }));
   const tokenFile = path.join(dataDir, 'runtime', 'computer-mcp', `${server.pid}.token`);
   const secret = await until(() => { try { return fs.readFileSync(tokenFile, 'utf8').trim(); } catch { return null; } }, 5000);
   check('the per-start secret is in a file under the data folder (the MCP processes are pointed at it)', /^[0-9a-f]{64}$/.test(secret ?? ''), tokenFile);

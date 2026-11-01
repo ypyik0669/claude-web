@@ -4,27 +4,22 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import type { SearchMatch, SearchOptions, SearchResult } from '../protocol.js';
 import { tr } from '../i18n/index.js';
+import { resolveClaudeExe } from '../claude-exe.js';
 
 const require = createRequire(import.meta.url);
 
-/** ripgrep binary: ccb vendors one (dist/vendor/ripgrep/<arch>-<platform>/rg), else @vscode/ripgrep, else PATH. */
-export function resolveRg(): string {
-  const plat = `${process.arch}-${process.platform}`;
-  const exe = process.platform === 'win32' ? 'rg.exe' : 'rg';
-  try {
-    const pkg = require.resolve('claude-web-engine/package.json');
-    // packaged (Electron asar): binaries live in app.asar.unpacked — a spawn from inside the asar is ENOENT
-    const p = path.join(path.dirname(pkg), 'dist', 'vendor', 'ripgrep', plat, exe).replace(/app\.asar(?!\.unpacked)/, 'app.asar.unpacked');
-    if (require('node:fs').existsSync(p)) return p;
-  } catch { /* not installed */ }
-  try {
-    return (require('@vscode/ripgrep').rgPath as string).replace(/app\.asar(?!\.unpacked)/, 'app.asar.unpacked');
-  } catch { /* not installed */ }
-  // a Finder-launched macOS app has PATH=/usr/bin:/bin:/usr/sbin:/sbin, so a Homebrew rg is invisible by name
+/**
+ * ripgrep: the Claude Code binary has it built in and runs as rg when started with argv0 `rg` (what Claude Code's own
+ * shell integration does), so it is always there, packaged or not. Before 2026-11-01 it came from our engine's vendor
+ * folder. Without the binary: a Homebrew rg (a Finder-launched macOS app has PATH=/usr/bin:/bin:/usr/sbin:/sbin, so it
+ * is invisible by name), else `rg` on PATH.
+ */
+export function resolveRg(): { cmd: string; argv0?: string } {
+  try { return { cmd: resolveClaudeExe(), argv0: 'rg' }; } catch { /* no Claude Code binary */ }
   if (process.platform !== 'win32') {
-    for (const p of ['/opt/homebrew/bin/rg', '/usr/local/bin/rg', '/usr/bin/rg']) if (require('node:fs').existsSync(p)) return p;
+    for (const p of ['/opt/homebrew/bin/rg', '/usr/local/bin/rg', '/usr/bin/rg']) if (require('node:fs').existsSync(p)) return { cmd: p };
   }
-  return 'rg';
+  return { cmd: 'rg' };
 }
 
 /** rg --json reports submatch offsets in UTF-8 bytes; the UI slices JS strings (UTF-16 units). */
@@ -64,7 +59,7 @@ export class SearchService {
       for (const g of o.exclude ?? []) if (g.trim()) args.push('--glob', `!${g.trim()}`);
       args.push('--glob', '!.git', '--glob', '!node_modules', '-e', query, '--', root);
       const max = o.maxResults ?? 2000;
-      const child = spawn(this.rg, args, { windowsHide: true });
+      const child = spawn(this.rg.cmd, args, { windowsHide: true, ...(this.rg.argv0 ? { argv0: this.rg.argv0 } : {}) });
       const files = new Map<string, SearchMatch[]>();
       let total = 0, truncated = false, buf = '';
       const onLine = (line: string) => {

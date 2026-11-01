@@ -1,10 +1,8 @@
-// 「用哪个供应商」 for places that start conversations without the composer: an agent's own default (settings →
-// Agents), an IM bot. Lists the providers that agent can use (same table as the model menu and the server's
-// fitError); the last entry adds one through the quick connect.
+// 「用哪个供应商」 for places that start conversations without the composer (an IM bot). Lists the providers Claude
+// can use (same table as the model menu and the server's fitError); the last entry adds one through the quick connect.
 import { useStore } from '@/store';
 import type { AgentKind, Provider } from '@shared';
 import { compatibleTypes, profileUnavailable } from '@/features/models/menu';
-import { useGatewayStatus } from '@/features/models/data';
 import { connectModel } from './ConnectModel';
 import { tr } from '@/i18n';
 import { Select } from '@/ui/Select';
@@ -19,27 +17,25 @@ export function providerChoices(providers: Provider[], agent: AgentKind, i: Para
 
 export function ProviderSelect({ agent, value, onChange, first, own, className = 'field' }: {
   agent: AgentKind;
-  /** '' = the first entry (`first`), 'claude' = the account / the agent's own login, else a provider id */
+  /** '' = the first entry (`first`), 'claude' = the account, else a provider id */
   value: string;
   onChange: (v: string) => void;
-  /** the '' entry: e.g. 「自己的登录」, 「跟新对话默认一样」 */
+  /** the '' entry: e.g. 「跟新对话默认一样」 */
   first: { label: string; title?: string };
   /** an explicit 'claude' entry besides `first` (IM: the account even when a default provider exists) */
   own?: string;
   className?: string;
 }) {
   const providers = useStore((s) => s.providers);
-  const engine = useStore((s) => s.engine);
   const toast = useStore((s) => s.toast);
-  const gw = useGatewayStatus();
-  const list = providerChoices(providers, agent, { agent, engine, gatewayGroups: gw.groups, gatewayEnabled: gw.enabled });
-  // a picked provider that was deleted since: shown as such instead of silently reading as 「自己的登录」
+  const list = providerChoices(providers, agent, { agent });
+  // a picked provider that was deleted since: shown as such instead of silently reading as the account
   const missing = value && value !== 'claude' && !providers.some((p) => p.id === value);
   const pick = async (v: string) => {
     if (v !== ADD) return onChange(v);
     const p = await connectModel({ reason: 'settings', makeDefault: false });
     if (!p) return;
-    if (!compatibleTypes(agent).includes(p.type)) { toast(tr('「{name}」已添加，但这个 Agent 用不了这种格式的供应商', { name: p.name })); return; }
+    if (!compatibleTypes(agent).includes(p.type)) { toast(tr('「{name}」已添加，但用不了这种格式的供应商', { name: p.name })); return; }
     onChange(p.id);
   };
   const options = [

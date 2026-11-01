@@ -1,7 +1,7 @@
 ---
 import { copy } from '../copy';
 import type { Locale } from '../i18n';
-import { DIFF, diffStat, GATEWAY_ADDRESS, TEST_OUTPUT, TURN_STEPS } from '../hero/samples';
+import { DIFF, diffStat, TEST_OUTPUT, TURN_STEPS } from '../hero/samples';
 
 interface Props { locale: Locale }
 const { locale } = Astro.props;
@@ -55,21 +55,9 @@ const stat = diffStat(DIFF);
 
   <div class="ov ov-elsewhere" data-overlay="elsewhere" hidden>
     <ul class="ov-chips">
-      <li>Codex</li>
-      <li>Gemini CLI</li>
       <li>{s.elsewhere.other}</li>
     </ul>
     <div class="ov-phone" aria-hidden="true"><span></span><span></span><span></span></div>
-    <p>{s.elsewhere.phone} · {s.elsewhere.anyModel}</p>
-  </div>
-
-  <div class="ov ov-gateway" data-overlay="gateway" hidden>
-    <p class="ov-title">{s.gateway.title}</p>
-    <code class="ov-address">{GATEWAY_ADDRESS}</code>
-    <ul class="ov-accounts">
-      <li><span class="lamp on" aria-hidden="true"></span>{s.gateway.claude}<span>{s.gateway.online}</span></li>
-      <li><span class="lamp on" aria-hidden="true"></span>{s.gateway.geminiWeb}<span>{s.gateway.online}</span></li>
-      <li><span class="lamp" aria-hidden="true"></span>WorkBuddy<span>{s.gateway.standby}</span></li>
-    </ul>
+    <p>{s.elsewhere.phone}</p>
   </div>
 </div>

@@ -7,11 +7,11 @@ import { createRequire } from 'node:module';
 /**
  * Spawn guard: every child process defaults to `windowsHide: true`, and `CW_SPAWN_LOG=1` records each one.
  *
- * Why: the desktop build runs the server in an Electron utility process and JS agents (ccb, Codex's
- * wrapper, …) under Electron-as-node. Electron is a GUI-subsystem binary, so none of those processes owns
- * a console — and on Windows every console program they start WITHOUT `windowsHide` (git, reg, cmd,
- * powershell, where…) gets a brand-new, visible console window. Our own call sites pass the flag
- * explicitly; this is the backstop for everything else (third-party code, and the agents' own spawns).
+ * Why: the desktop build runs the server in an Electron utility process and npm-shimmed JS children (MCP
+ * servers started through npx, preview servers, …) under Electron-as-node. Electron is a GUI-subsystem binary, so
+ * none of those processes owns a console — and on Windows every console program they start WITHOUT `windowsHide`
+ * (git, reg, cmd, powershell, where…) gets a brand-new, visible console window. Our own call sites pass the flag
+ * explicitly; this is the backstop for everything else (third-party code, and the children's own spawns).
  *
  * The implementation is one CommonJS source string so the same code runs in two places:
  *  - in the server itself (`installSpawnGuard()`, evaluated in-process, the first import of index.ts), and
@@ -236,7 +236,7 @@ export function preloadFile(dir = path.join(dataDir(), 'runtime')): string | nul
 }
 
 /**
- * Node CLI args that put the guard into a JS child we start (ccb, npm-shimmed agents). Needed where the
+ * Node CLI args that put the guard into a JS child we start (npm-shimmed tools: proc/resolve.ts). Needed where the
  * "node" is Electron-as-node on Windows (no console of its own → its console children pop windows);
  * a real node.exe gets a hidden console from `windowsHide` that its own children inherit. Also added
  * whenever spawn logging is on, so the children's spawns land in the same log.
@@ -249,7 +249,7 @@ export function guardNodeArgs(host: { platform: NodeJS.Platform; electron: boole
   if (f) return ['--require', f];
   if (!preloadWarned) {
     preloadWarned = true;
-    console.warn(`[spawn guard] could not write the preload to ${path.join(dataDir(), 'runtime')} or ${path.join(os.tmpdir(), 'claude-web-runtime')}: agents started from here run without it (their console programs may flash windows on Windows)`);
+    console.warn(`[spawn guard] could not write the preload to ${path.join(dataDir(), 'runtime')} or ${path.join(os.tmpdir(), 'claude-web-runtime')}: JS children started from here run without it (their console programs may flash windows on Windows)`);
   }
   return [];
 }

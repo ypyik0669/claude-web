@@ -8,7 +8,6 @@
   "mission": "locate-fixed",
   "goals": "flag",
   "orchestra": "network",
-  "compare": "columns-2",
   "approval": "shield-check",
   "tasks": "clock",
   "files": "file-plus",

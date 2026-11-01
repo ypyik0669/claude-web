@@ -429,7 +429,7 @@ export class WebService extends EventEmitter {
 
   /**
    * An ego lite script runs with the user's sign-ins: the user is asked on the server's card before every one, whatever
-   * the agent (Codex / ACP agents may not ask on their own) — not in 完全放开, and not without a gate (spec 14.1 / 14.4).
+   * Claude's own permission mode — not in 完全放开, and not without a gate (spec 14.1 / 14.4).
    * The same rule as a script in the built-in browser (`needsAsk('eval')`). An 'always' is this once: no site is ever
    * added to the allow-list from an ego script. A 拒绝 / no answer in time / the turn stopped throws a refusal — not
    * EGO_FALLBACK: ego lite works, the user said no, so the model must not redo it in the built-in browser.

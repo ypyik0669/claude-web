@@ -1,24 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Provider, ProviderType } from '@shared';
+import type { Provider } from '@shared';
 import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { imeComposing } from '@/ui/ime';
-import { PRESETS, anthropicBase, cleanBase, explainProbe, quickPlan, relayName, uniqueName, type ProbeLike, type QuickFormat, type QuickPlan } from './quick';
-import { Segmented } from '@/ui/Segmented';
+import { PRESETS, anthropicBase, cleanBase, explainProbe, quickPlan, relayName, uniqueName, type ProbeLike, type QuickPlan } from './quick';
 import { tr } from '@/i18n';
 
 /** A model list as the probe returned it: the ids and the display names it gave. */
 type Listed = { models: string[]; modelNames?: Record<string, string>; modelEfforts?: Provider['modelEfforts']; modelContext?: Provider['modelContext'] };
-interface Probe extends ProbeLike { models: string[]; modelNames?: Record<string, string>; modelEfforts?: Provider['modelEfforts']; modelContext?: Provider['modelContext']; chat?: { ok: boolean; model: string; error?: string; switched?: boolean } }
+interface Probe extends ProbeLike { models: string[]; modelNames?: Record<string, string>; modelEfforts?: Provider['modelEfforts']; modelContext?: Provider['modelContext']; chat?: { ok: boolean; model: string; error?: string } }
 type Phase = 'idle' | 'list' | 'chat' | 'save';
-
-const FORMATS: { v: QuickFormat; l: string; t: string }[] = [
-  { v: 'auto', l: tr('自动'), t: tr('读到 Claude 模型就用 Claude 格式，否则 OpenAI 格式') },
-  { v: 'anthropic', l: tr('Claude 格式'), t: tr('Anthropic Messages 接口（/v1/messages）') },
-  { v: 'openai', l: tr('OpenAI 格式'), t: tr('OpenAI Chat Completions 接口（/v1/chat/completions）') },
-];
 
 function probe(provider: Partial<Provider>, listOnly: boolean): Promise<Probe> {
   return ws.request<Probe>({ kind: 'providers.probe', provider, listOnly });
@@ -26,7 +19,7 @@ function probe(provider: Partial<Provider>, listOnly: boolean): Promise<Probe> {
 
 /**
  * 接一个模型 (quick connect): where the key is from · (a relay's address) · the key · 连接. The endpoint's model list
- * picks the format and the default model (quick.ts), then one short real message proves it works, and the profile is
+ * picks the default model (quick.ts), then one short real message proves it works, and the profile is
  * saved — the default for new conversations when `makeDefault`. Used by the first-run wizard, the 「接一个模型」
  * dialog (a send with nothing to send it with, a conversation on a Claude account that is not logged in) and settings.
  */
@@ -36,12 +29,11 @@ export function QuickConnect({ onDone, makeDefault, autoFocus = true, preset: st
   const relay = preset.type === 'auto';
   const [base, setBase] = useState('');
   const [key, setKey] = useState('');
-  const [fmt, setFmt] = useState<QuickFormat>('auto');
   const [phase, setPhase] = useState<Phase>('idle');
   const [plan, setPlan] = useState<QuickPlan | null>(null);
   const [err, setErr] = useState<{ text: string; raw?: string } | null>(null);
   // a failed chat check: the list worked, so 仍然保存 can keep the profile (the model can be changed later)
-  const [fallback, setFallback] = useState<{ plan: QuickPlan; list: Listed; runtime?: 'claude' } | null>(null);
+  const [fallback, setFallback] = useState<{ plan: QuickPlan; list: Listed } | null>(null);
   const [started, setStarted] = useState(0);
   const [, tick] = useState(0);
   const busy = phase !== 'idle';
@@ -55,14 +47,13 @@ export function QuickConnect({ onDone, makeDefault, autoFocus = true, preset: st
 
   const pick = (id: string) => { if (busy) return; setPresetId(id); setErr(null); setFallback(null); };
 
-  const save = async (p: QuickPlan, { models, modelNames, modelEfforts, modelContext }: Listed, runtime?: 'claude') => {
+  const save = async (p: QuickPlan, { models, modelNames, modelEfforts, modelContext }: Listed) => {
     setPhase('save');
     const st = useStore.getState();
     const name = uniqueName(relay ? relayName(base) : preset.name, st.providers.map((x) => x.name));
-    const draft: Partial<Provider> = { name, type: p.type as ProviderType, baseUrl: p.baseUrl, apiKey: key.trim(), models, ...(modelNames ? { modelNames } : {}), ...(modelEfforts ? { modelEfforts } : {}), ...(modelContext ? { modelContext } : {}), ...(models.length ? { modelsAt: Date.now() } : {}) };
+    const draft: Partial<Provider> = { name, type: p.type, baseUrl: p.baseUrl, apiKey: key.trim(), models, ...(modelNames ? { modelNames } : {}), ...(modelEfforts ? { modelEfforts } : {}), ...(modelContext ? { modelContext } : {}), ...(models.length ? { modelsAt: Date.now() } : {}) };
     if (p.defaultModel) draft.defaultModel = p.defaultModel;
     if (p.modelMap) draft.modelMap = p.modelMap;
-    if (runtime) draft.runtime = runtime;
     const saved = await ws.request<Provider>({ kind: 'providers.upsert', provider: draft });
     if (makeDefault) await st.setSetting('defaultProviderId', saved.id);
     await st.loadProviders();
@@ -80,25 +71,15 @@ export function QuickConnect({ onDone, makeDefault, autoFocus = true, preset: st
     if (!k) { setErr({ text: tr('先粘贴 API Key。') }); return; }
     try {
       setPhase('list');
-      let used: QuickFormat = fmt;
-      const listType: ProviderType = relay ? (fmt === 'anthropic' ? 'anthropic' : 'openai') : (preset.type as ProviderType);
-      let list = await probe({ type: listType, baseUrl: listType === 'anthropic' ? anthropicBase(b) : b, apiKey: k }, true);
-      // a relay that only speaks Claude format may refuse a Bearer-only model list: ask again the Anthropic way
-      if (!list.ok && relay && fmt === 'auto') {
-        const again = await probe({ type: 'anthropic', baseUrl: anthropicBase(b), apiKey: k }, true);
-        if (again.ok) { list = again; used = 'anthropic'; }
-      }
+      const list = await probe({ type: 'anthropic', baseUrl: anthropicBase(b), apiKey: k }, true);
       if (!list.ok || !list.models.length) { setErr({ text: explainProbe(list, 'list'), raw: list.error }); return; }
-      const p = quickPlan(preset, used, b, list.models);
+      const p = quickPlan(preset, b, list.models);
       setPlan(p);
-      // no chat check for Gemini (the probe has none either): the key already listed the models
-      if (p.type !== 'anthropic' && p.type !== 'openai') { await save(p, list); return; }
       setPhase('chat');
       setStarted(Date.now());
       const r = await probe({ type: p.type, baseUrl: p.baseUrl, apiKey: k, defaultModel: p.defaultModel, modelMap: p.modelMap }, false);
-      const runtime = r.chat?.switched ? 'claude' as const : undefined;
-      if (!r.ok) { setErr({ text: explainProbe(r, 'chat'), raw: r.chat?.error ?? r.error }); setFallback({ plan: p, list, runtime }); return; }
-      await save(p, r.models.length ? r : list, runtime);
+      if (!r.ok) { setErr({ text: explainProbe(r, 'chat'), raw: r.chat?.error ?? r.error }); setFallback({ plan: p, list }); return; }
+      await save(p, r.models.length ? r : list);
     } catch (e: any) {
       setErr({ text: e?.message ?? String(e) });
     } finally {
@@ -108,12 +89,12 @@ export function QuickConnect({ onDone, makeDefault, autoFocus = true, preset: st
 
   const forceSave = async () => {
     if (!fallback || busy) return;
-    try { await save(fallback.plan, fallback.list, fallback.runtime); } catch (e: any) { setErr({ text: e?.message ?? String(e) }); } finally { setPhase('idle'); }
+    try { await save(fallback.plan, fallback.list); } catch (e: any) { setErr({ text: e?.message ?? String(e) }); } finally { setPhase('idle'); }
   };
 
   const secs = started ? Math.max(0, Math.round((Date.now() - started) / 1000)) : 0;
   const status = phase === 'list' ? tr('正在读取模型列表…')
-    : phase === 'chat' ? tr('正在发一条很短的消息测试 {defaultModel}{v}… {secs} 秒', { defaultModel: plan?.defaultModel ?? '', v: plan?.type === 'anthropic' ? tr('（Claude 格式要启动一次 Claude Code，约 10–40 秒）') : '', secs })
+    : phase === 'chat' ? tr('正在发一条很短的消息测试 {defaultModel}{v}… {secs} 秒', { defaultModel: plan?.defaultModel ?? '', v: tr('（要启动一次 Claude Code，约 10–40 秒）'), secs })
     : phase === 'save' ? tr('正在保存…') : '';
   const enter = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !imeComposing(e.nativeEvent)) { e.preventDefault(); void connect(); } };
 
@@ -135,12 +116,6 @@ export function QuickConnect({ onDone, makeDefault, autoFocus = true, preset: st
         <input ref={relay ? undefined : first} className="field" data-qc="key" type="password" value={key} disabled={busy} onChange={(e) => setKey(e.target.value)} onKeyDown={enter} placeholder={relay ? tr('中转站给的 Key（通常以 sk- 开头）') : tr('在 {name} 官网创建的 API Key', { name: preset.name })} spellCheck={false} autoComplete="off" />
       </label>
       {preset.keyUrl && <div className="qc-hint"><a href={preset.keyUrl} target="_blank" rel="noreferrer">{tr('去 {name} 官网创建 API Key', { name: preset.name })} <Icon name="external" size={11} /></a></div>}
-      {relay && (
-        <div className="qc-f qc-fmt">
-          <span className="qc-l">{tr('接口格式')}</span>
-          <Segmented className="sp-seg" label={tr('接口格式')} arrows disabled={busy} value={fmt} options={FORMATS.map((f) => ({ value: f.v, label: f.l, title: f.t }))} onChange={setFmt} />
-        </div>
-      )}
       {preset.note && <div className="qc-hint sub">{preset.note}</div>}
       <div className="qc-status" role="status" aria-live="polite">
         {busy && <><span className="spin" aria-hidden /> {status}</>}

@@ -51,7 +51,7 @@
 - `PreviewService`（`preview/service.ts`）：同一项目同一配置只起一个；`resolveSpawn`（Windows 上 `npm` 这类 `.cmd` 不经 shell）+ `killTree`；
   env = 本机环境变量 + 配置 env + `PORT`；端口被占：`autoPort: true` 换空端口、`false` 报错、没写报错并告诉怎么改；等端口通最多 60 秒，
   进程先退出就带最后 30 行输出报错；输出留最后 2000 行；应用退出时全停。
-- 工具（`preview/tools.ts`，进程内 MCP，**只给 Claude 引擎**）：`preview_start`（**不**预授权——起进程等于跑命令，第一次要用户批准）、
+- 工具（`preview/tools.ts`，进程内 MCP）：`preview_start`（**不**预授权——起进程等于跑命令，第一次要用户批准）、
   `preview_logs`、`preview_stop`。起好后用 `web.browser(sid, 'open', { url })` 在内置浏览器打开。
 - 自动验证：项目有 launch.json 且 `autoVerify !== false` 时，system prompt 追加一段「改完会影响运行结果的代码后，preview_start、截图 /
   读页面、看日志，修好再结束这一轮」。
@@ -75,7 +75,7 @@
   端口只查 127.0.0.1，Vite 在 `localhost`（Windows 上是 ::1）永远等不到、别人占在 ::1 / 0.0.0.0 的端口被当成空的；两次 preview_start 同时来
   会起两个、第一个成了孤儿。现在 `portFree` 查四个地址、`connects` 试两个回环、同一配置并发共用一次启动、`cwd` 不许出项目。测试里有真的 `.cmd`。
 - 只聊天：以前只有窗口打开对话那条路补回 `chatOnly`；别的对话发消息、IM、目标、定时任务、换供应商重开都会把工具还回去，分叉也记在了临时 id 上。
-  现在由 `RunnerPool.open` 统一从 meta 补，分叉在 CLI 给出真 id 时记；只聊天的对话不能换成其它 agent。
+  现在由 `RunnerPool.open` 统一从 meta 补，分叉在 CLI 给出真 id 时记。
 - 「立即运行」碰上对话正忙 / 失败，不再改下一次的定时，也不说「1 分钟后重试」（手动任务没有定时器去重试）。
 - 跨对话的生成文件：同一个文件路径写法不同（大小写、斜杠）只列一次。菜单数字键不数 + 菜单里的「频道」输入框。
 - 已知限制（没改）：preview_start 的审批卡只显示配置名，不显示要跑的命令；选了「总是允许」后，Claude 改了 launch.json 再起也不会再问。

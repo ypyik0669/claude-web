@@ -42,7 +42,7 @@ describe('ImRouter', () => {
   beforeEach(() => {
     pool = new FakePool(); meta = new FakeMeta(); a = new FakeAdapter();
     router = new ImRouter({ pool: pool as any, meta: meta as any, sessions: { list: async () => [{ sessionId: 's1', title: 'first', cwd: 'C:/proj' }, { sessionId: 'zz9', title: 'other', cwd: 'C:/other' }] } as any });
-    cfg = { id: 'g1', kind: 'telegram', name: 'tg', enabled: true, config: {}, allowUsers: [], allowNames: {}, openAccess: false, defaultCwd: '', permissionMode: 'default', agent: '', verbose: false };
+    cfg = { id: 'g1', kind: 'telegram', name: 'tg', enabled: true, config: {}, allowUsers: [], allowNames: {}, openAccess: false, defaultCwd: '', permissionMode: 'default', verbose: false };
     meta.gws.push(cfg);
     router.attach(cfg, a as any);
   });
@@ -138,14 +138,13 @@ describe('chunk', () => {
   });
 });
 
-describe('ImRouter: agent and provider of the sessions a bot opens', () => {
-  let pool: FakePool & { providerFitError?: (id: string | undefined, agent?: string) => string | null }, meta: FakeMeta, a: FakeAdapter, router: ImRouter, cfg: ImGatewayConfig;
-  const list = [{ sessionId: 'cx1', title: 'codex one', cwd: 'C:/proj', agent: 'codex' }, { sessionId: 's9', title: 'claude one', cwd: 'C:/proj' }];
+describe('ImRouter: provider of the sessions a bot opens', () => {
+  let pool: FakePool, meta: FakeMeta, a: FakeAdapter, router: ImRouter, cfg: ImGatewayConfig;
+  const list = [{ sessionId: 'cx1', title: 'one', cwd: 'C:/proj' }, { sessionId: 's9', title: 'two', cwd: 'C:/proj' }];
   beforeEach(() => {
-    pool = new FakePool() as any; meta = new FakeMeta(); a = new FakeAdapter();
-    pool.providerFitError = (id, agent) => (id === 'claudeOnly' && agent === 'codex' ? 'unfit' : null);
+    pool = new FakePool(); meta = new FakeMeta(); a = new FakeAdapter();
     router = new ImRouter({ pool: pool as any, meta: meta as any, sessions: { list: async () => list } as any });
-    cfg = { id: 'g1', kind: 'dingtalk', name: 'dd', enabled: true, config: {}, allowUsers: ['u1'], allowNames: {}, openAccess: false, defaultCwd: '', permissionMode: 'default', agent: '', verbose: false };
+    cfg = { id: 'g1', kind: 'dingtalk', name: 'dd', enabled: true, config: {}, allowUsers: ['u1'], allowNames: {}, openAccess: false, defaultCwd: '', permissionMode: 'default', verbose: false };
     meta.gws.push(cfg);
     router.attach(cfg, a as any);
   });
@@ -162,12 +161,6 @@ describe('ImRouter: agent and provider of the sessions a bot opens', () => {
     expect(pool.opened[2].providerId).toBe('claude'); // explicitly the account
   });
 
-  it('a picked provider the bot\'s agent cannot use falls back to the default instead of failing', async () => {
-    router.updateConfig({ ...cfg, agent: 'codex', providerId: 'claudeOnly' });
-    a.inbound_({ text: '/new C:/p' }); await tick();
-    expect(pool.opened[0]).toMatchObject({ agent: 'codex', providerId: undefined });
-  });
-
   it('replies name the provider (so people can check which channel the bot uses)', async () => {
     router.updateConfig({ ...cfg, providerId: 'relay' });
     const open = pool.open.bind(pool);
@@ -178,24 +171,21 @@ describe('ImRouter: agent and provider of the sessions a bot opens', () => {
     expect(a.sent.at(-1)!.text).toContain('供应商 我的中转');
   });
 
-  it('reopening a bound session keeps its agent (a Codex session is not restarted as Claude on that id)', async () => {
-    router.updateConfig({ ...cfg, agent: 'codex' });
+  it('a bound session reaped while idle is reopened on its id, on the provider on record', async () => {
     a.inbound_({ text: 'first' }); await tick();
     const sid = meta.binds[0].sessionId;
-    expect(meta.binds[0].agent).toBe('codex');
-    pool.runners.delete(sid); // reaped while idle
-    router.updateConfig({ ...cfg, agent: '' }); // the bot's agent changed since: the bound session is still Codex
+    pool.runners.delete(sid);
     a.inbound_({ text: 'second' }); await tick();
-    expect(pool.opened.at(-1)).toMatchObject({ sessionId: sid, agent: 'codex' });
+    expect(pool.opened.at(-1)).toMatchObject({ sessionId: sid });
     expect(pool.opened.at(-1).providerId).toBeUndefined(); // the pool keeps the recorded one
   });
 
-  it('/use on a Codex conversation opens it as Codex and remembers that', async () => {
+  it('/use binds the picked conversation and opens it', async () => {
     a.inbound_({ text: '/use 1' }); await tick();
-    expect(pool.opened.at(-1)).toMatchObject({ sessionId: 'cx1', agent: 'codex' });
-    expect(meta.binds[0]).toMatchObject({ sessionId: 'cx1', agent: 'codex' });
+    expect(pool.opened.at(-1)).toMatchObject({ sessionId: 'cx1' });
+    expect(meta.binds[0]).toMatchObject({ sessionId: 'cx1' });
     a.inbound_({ text: '/use 2' }); await tick();
-    expect(pool.opened.at(-1).agent).toBeUndefined();
+    expect(pool.opened.at(-1)).toMatchObject({ sessionId: 's9' });
   });
 
   it('/dispatch (派活, stage F3): a new conversation in the named project with its mode, bound here, the task sent, marked', async () => {

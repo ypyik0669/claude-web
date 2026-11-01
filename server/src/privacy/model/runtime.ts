@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { extractTarGzFile } from '../../plugins/archive.js';
+import { extractTarGzFile } from './archive.js';
 import { guardedFetch } from '../../net/netguard.js';
 import { tr } from '../../i18n/index.js';
 import { fetchVerified } from './download.js';

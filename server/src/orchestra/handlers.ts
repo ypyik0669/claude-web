@@ -47,15 +47,11 @@ export class OrchImBridge {
 export async function createOrchestra(s: RuntimeServices & { im: ImService }): Promise<OrchestraService> {
   const sessionsOf = (run: OrchRun) => Object.values(run.nodes).flatMap((n) => n.sessionIds);
   let bridge: OrchImBridge;
-  const notify = (run: OrchRun, nodeId: string, what: 'approval' | 'compare') => {
+  const notify = (run: OrchRun, nodeId: string) => {
     const node = run.workflow.find((n) => n.id === nodeId);
     const title = node?.title || nodeId;
-    if (what === 'approval') {
-      const note = node?.kind === 'approval' && node.note ? `\n${node.note}` : '';
-      void s.im.router.announce(sessionsOf(run), tr('编排「{name}」等你审批：{title}{note}', { name: run.name, title, note }), { buttons: bridge.buttons(run.id, nodeId) });
-    } else {
-      void s.im.router.announce(sessionsOf(run), tr('编排「{name}」的比选「{title}」候选都跑完了，到 claude-web 的「编排」面板里选一个合并。', { name: run.name, title }));
-    }
+    const note = node?.kind === 'approval' && node.note ? `\n${node.note}` : '';
+    void s.im.router.announce(sessionsOf(run), tr('编排「{name}」等你审批：{title}{note}', { name: run.name, title, note }), { buttons: bridge.buttons(run.id, nodeId) });
   };
   const svc = new OrchestraService(orchestraDeps(s, { runs: path.join(dataDir(), 'orchestra'), worktrees: path.join(dataDir(), 'worktrees') }, notify));
   bridge = new OrchImBridge(svc);
@@ -78,8 +74,6 @@ export async function handleOrchestra(o: OrchestraService, req: OrchestraRequest
     case 'orchestra.run.remove': return o.remove(req.runId, !!req.cleanup);
     case 'orchestra.node.retry': return o.retry(req.runId, req.nodeId);
     case 'orchestra.node.approve': return o.approve(req.runId, req.nodeId, req.decision, req.comment);
-    case 'orchestra.node.pick': return o.pick(req.runId, req.nodeId, req.winner);
-    case 'orchestra.node.diff': return o.diff(req.runId, req.nodeId, req.agent);
     case 'orchestra.node.remerge': return o.remerge(req.runId, req.nodeId);
     case 'orchestra.orphans.list': return o.orphans();
     case 'orchestra.orphans.remove': return o.removeOrphan(req.path);

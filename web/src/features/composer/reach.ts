@@ -42,7 +42,7 @@ export const PLACE_OPENER: Partial<Record<ComposerPlace, string>> = {
   permission: '.cb .perm-chip',
 };
 
-const OLD_FEATURE_NAME: Record<string, string> = { chrome: 'Claude in Chrome', computerUse: 'Computer Use', coordinator: tr('协调者模式'), proactive: tr('主动模式'), brief: 'Brief' };
+const OLD_FEATURE_NAME: Record<string, string> = { chrome: 'Claude in Chrome', computerUse: 'Computer Use', brief: 'Brief' };
 const OLD_MODE_NAME: Record<string, string> = { default: tr('每次询问'), acceptEdits: tr('自动接受编辑'), plan: tr('计划模式'), auto: tr('自动模式'), dontAsk: tr('不询问'), bypassPermissions: tr('完全权限') };
 
 export const COMPOSER_REACH: ReachEntry[] = [
@@ -51,7 +51,6 @@ export const COMPOSER_REACH: ReachEntry[] = [
   { was: tr('拖入文件夹（现在也能点）'), place: 'plus', sel: idSel(PLUS_ID.folder) },
   { was: tr('引用到输入框（会话菜单）'), place: 'plus', sel: idSel(PLUS_ID.reference) },
   ...CAPABILITIES.map((c): ReachEntry => ({ was: tr('功能 · {key}', { key: OLD_FEATURE_NAME[c.key] ?? c.key }), place: 'plus', sel: idSel(c.key) })),
-  { was: tr('功能 · 频道'), place: 'plus', sel: idSel(PLUS_ID.channels) },
   { was: tr('/goal 目标'), place: 'plus', sel: idSel(PLUS_ID.goal) },
   { was: tr('斜杠命令'), place: 'plus', sel: idSel(PLUS_ID.slash) },
   { was: tr('连接器'), place: 'plus', sel: idSel(PLUS_ID.connectors), when: 'live' },
@@ -59,16 +58,13 @@ export const COMPOSER_REACH: ReachEntry[] = [
   { was: tr('选择目录（最近的目录）'), place: 'project', sel: '[data-dir]' },
   { was: tr('… 浏览文件夹'), place: 'project', sel: idSel(PROJECT_MENU_ID.browse) },
   { was: tr('worktree 会话（侧栏菜单）'), place: 'project', sel: idSel(PROJECT_MENU_ID.worktree) },
-  // the model menu: agent, profile, model, refresh, manage — and the chip next to it (place `depth`): effort, ultracode
-  { was: tr('Claude Code / 其它 agent 选择'), place: 'model', sel: '[data-sec^="agent:"]' },
+  // the model menu: profile, model, refresh, manage — and the chip next to it (place `depth`): effort, ultracode
   { was: tr('供应商档案 / 模型'), place: 'model', sel: '[data-sec="builtin"] .mm-row' },
   { was: tr('+ 添加供应商档案…'), place: 'model', sel: idSel(MODEL_MENU_ID.addProvider) },
-  { was: tr('管理 agent…'), place: 'model', sel: idSel(MODEL_MENU_ID.agents) },
   { was: 'effort', place: 'depth', sel: idSel(EFFORT_MENU_ID.effort) },
   { was: 'ultracode', place: 'depth', sel: idSel(EFFORT_MENU_ID.ultracode) },
   { was: tr('刷新全部模型'), place: 'model', sel: idSel(MODEL_MENU_ID.refresh) },
   { was: tr('管理模型…'), place: 'model', sel: idSel(MODEL_MENU_ID.manage) },
-  { was: tr('管理来源'), place: 'model', sel: idSel(MODEL_MENU_ID.sources) },
   { was: tr('强度 ›'), place: 'model', sel: idSel(MODEL_MENU_ID.effort) },
   { was: tr('快速模式'), place: 'model', sel: idSel(MODEL_MENU_ID.fast), when: 'fast' },
   { was: tr('更多模型 ›'), place: 'model', sel: idSel(MODEL_MENU_ID.more), when: 'manyModels' },

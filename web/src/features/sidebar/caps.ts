@@ -1,5 +1,5 @@
 import type { SessionSummary, SourceCaps } from '@shared';
-import { isImportedSessionId, nativeSessionId } from '@/util';
+import { isImportedSessionId } from '@/util';
 import { agentOf } from './filter';
 import { tr } from '@/i18n';
 
@@ -29,17 +29,13 @@ export function capsIntersection(list: SessionSummary[]): { archive: boolean; de
   return { archive: list.length > 0 && list.every((s) => effectiveCaps(s).archive), delete: list.length > 0 && list.every((s) => effectiveCaps(s).delete) };
 }
 
-/** Command that resumes this session in the agent's own CLI, or null when there is no such flag. */
+/** Command that resumes this session in Claude Code's own CLI, or null when there is none (an imported one). */
 export function nativeCliCommand(s: SessionSummary): string | null {
-  const kind = agentOf(s);
   if (s.peer) return null; // lives on another machine: its CLI and files are there
-  if (!isImportedSessionId(s.sessionId)) return kind === 'claude' ? `claude --resume ${s.sessionId}` : null; // an agent claude-web drove: its native id is not the session id
-  if (kind === 'codex') return `codex resume ${nativeSessionId(s.sessionId)}`;
-  if (kind === 'opencode') return `opencode --session ${nativeSessionId(s.sessionId)}`;
-  return null;
+  return !isImportedSessionId(s.sessionId) && agentOf(s) === 'claude' ? `claude --resume ${s.sessionId}` : null;
 }
 
-/** 「将删除 12 个对话（Codex 8、Claude Code 4）」 — the count and where they are deleted from, biggest source first. */
+/** 「将删除 12 个对话（Claude Code 12）」 — the count and where they are deleted from, biggest source first. */
 export function deleteSummary(list: SessionSummary[], nameOf: (kind: string) => string): string {
   const by = new Map<string, number>();
   for (const s of list) by.set(agentOf(s), (by.get(agentOf(s)) ?? 0) + 1);

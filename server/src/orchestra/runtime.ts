@@ -2,12 +2,10 @@
 // `session.open` + `session.send`; git goes through GitService (orchestra/git.ts). Kept out of service.ts
 // so the engine stays unit-testable with fakes.
 import { randomUUID } from 'node:crypto';
-import type { AgentKind, OpenSessionParams } from '../protocol.js';
+import type { OpenSessionParams } from '../protocol.js';
 import type { RunnerPool } from '../runtime/pool.js';
 import type { MetaStore } from '../meta/store.js';
 import type { CanonicalLog } from '../session/canonical.js';
-import type { AgentTranscripts } from '../agents/transcript.js';
-import type { AgentRegistry } from '../agents/types.js';
 import type { GitService } from '../git/service.js';
 import type { GoalService } from '../goals/service.js';
 import type { LibraryService } from '../library/service.js';
@@ -52,12 +50,11 @@ export function poolWatch(pool: Pick<RunnerPool, 'on' | 'off' | 'get'>, sessionI
 }
 
 export interface RuntimeServices {
-  pool: RunnerPool; meta: MetaStore; canonical: CanonicalLog; transcripts: AgentTranscripts;
-  agents: AgentRegistry; git: GitService; goals: GoalService; library: LibraryService;
+  pool: RunnerPool; meta: MetaStore; canonical: CanonicalLog;
+  git: GitService; goals: GoalService; library: LibraryService;
 }
 
 export function orchestraDeps(s: RuntimeServices, dirs: { runs: string; worktrees: string }, notify?: OrchDeps['notify']): OrchDeps {
-  const titles = new Map<string, string>();
   const expand = (text: string) => (text.includes('<session-ref ') ? expandSessionRefs(text, (id) => s.library.readAll(id)) : Promise.resolve(text));
   return {
     dir: dirs.runs,
@@ -71,21 +68,16 @@ export function orchestraDeps(s: RuntimeServices, dirs: { runs: string; worktree
       set: (w) => s.meta.setWorkflow(w),
       remove: (id) => s.meta.removeWorkflow(id),
     },
-    available: async () => (await s.agents.list()).filter((a) => a.installed && a.enabled).map((a) => a.kind),
+    available: async () => ['claude'],
     maxParallel: () => Number(s.meta.settings()['orchestra.maxParallel']) || DEFAULT_MAX_PARALLEL,
     async open(p) {
       // same defaults as the hub's session.open for a brand-new session
       const settings = s.meta.settings();
-      let params: OpenSessionParams = { cwd: p.cwd, model: p.model, permissionMode: p.permissionMode ?? 'default', drivenBy: 'orchestra' };
-      if (p.agent !== 'claude') params.agent = p.agent as AgentKind;
-      else {
-        params = { ...params, providerId: settings.defaultProviderId as string | undefined };
-        if (settings.defaultFeatures) params.features = defaultFeaturesOf(settings.defaultFeatures);
-      }
-      const r = s.pool.open(params, p.agent === 'claude' ? null : []);
+      const params: OpenSessionParams = { cwd: p.cwd, model: p.model, permissionMode: p.permissionMode ?? 'default', drivenBy: 'orchestra', providerId: settings.defaultProviderId as string | undefined };
+      if (settings.defaultFeatures) params.features = defaultFeaturesOf(settings.defaultFeatures);
+      const r = s.pool.open(params);
       await s.canonical.ensure(r.sessionId, p.cwd);
       if (params.providerId && params.providerId !== 'claude') await s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId }).catch(() => {});
-      titles.set(r.sessionId, p.title);
       return { sessionId: r.sessionId };
     },
     async send(sessionId, text, isCancelled) {
@@ -102,11 +94,7 @@ export function orchestraDeps(s: RuntimeServices, dirs: { runs: string; worktree
       const uuid = randomUUID();
       r.send(outgoing, undefined, undefined, uuid);
       s.canonical.observe(sessionId, { type: 'user', uuid, message: { role: 'user', content: [{ type: 'text', text }] } });
-      // foreign agents: give the session a recognisable title (Claude derives it from the first prompt, whose first line says 编排)
-      const title = titles.get(sessionId);
-      titles.delete(sessionId);
-      const head = await s.transcripts.head(sessionId).catch(() => null);
-      if (head && !head.title && title) await s.transcripts.patchHead(sessionId, { title: tr('编排 · {title}', { title }).slice(0, 80) }).catch(() => {});
+      // (Claude derives the title from the first prompt, whose first line says 编排)
       return true;
     },
     watch: (sessionId, on) => poolWatch(s.pool, sessionId, on),

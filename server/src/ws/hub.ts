@@ -19,7 +19,6 @@ import { autoLeases } from '../vcs/auto-lease.js';
 import type { WslService } from '../wsl/service.js';
 import { INSTALL_CMD } from '../wsl/distros.js';
 import type { PreviewService } from '../preview/service.js';
-import { cacheParentFor } from '../runtime/cache-key.js';
 import { userCompactSource } from '../runtime/user-env.js';
 import { SessionService, claudeDir } from '../sessions/service.js';
 import { ConfigService } from '../config/service.js';
@@ -53,39 +52,19 @@ import type { CustomCssService } from '../appearance/custom-css.js';
 import { LOCAL_PAGE_BYTES, REMOTE_PAGE_BYTES, pageOf, withTurnStats } from '../sessions/history.js';
 import { SCHEDULE_TEMPLATES } from '../schedules/service.js';
 import { nextCron } from '../schedules/cron.js';
-import type { AgentRegistry } from '../agents/types.js';
-import type { AgentTranscripts } from '../agents/transcript.js';
 import type { CanonicalLog } from '../session/canonical.js';
 import type { MemoryService } from '../memory/service.js';
 import { harvest } from '../memory/extract.js';
 import { setMemoryMcpEnabled } from '../memory/launcher.js';
-import { afterSwitch, normProvider, openOnProvider, swapAgent, swapProvider } from '../session/swap.js';
+import { afterSwitch, normProvider, openOnProvider, swapProvider } from '../session/swap.js';
 import { fullPick, providerKey } from '../models/subagent.js';
 import { applyLanguage } from '../i18n/boot.js';
 import { LANGUAGE_KEY } from '../i18n/core.js';
 import { expandSessionRefs } from '../library/briefing.js';
 import type { LibraryService } from '../library/service.js';
-import { scanLocalHistory } from '../library/local-scan.js';
-import type { GatewayService } from '../gateway/service.js';
-import { handleGatewayRequest, isGatewayRequest } from '../gateway/handlers.js';
 import { handlePrivacyRequest, isPrivacyRequest, type PrivacyService } from '../privacy/service.js';
-import type { UpstreamService } from '../upstreams/service.js';
-import type { MaintenanceScheduler } from '../upstreams/tasks.js';
-import { handleUpstreamRequest, isUpstreamRequest } from '../upstreams/handlers.js';
-import type { ChannelService } from '../channels/service.js';
-import { handleChannelRequest, isChannelRequest } from '../channels/handlers.js';
-import { handleSourceHealthRequest, isSourceHealthRequest, sourceHealth } from '../channels/health.js';
-import type { PluginService } from '../plugins/service.js';
-import { handlePluginRequest, isPluginRequest } from '../plugins/handlers.js';
 import { handleSyncRequest, isSyncRequest, type SyncService } from '../sync/service.js';
 import { handleRemoteSyncRequest, isRemoteSyncRequest, maskSyncRemoteSettings, type RemoteSyncService } from '../sync/remote.js';
-import { handleShareRequest, isShareRequest, type ShareService } from '../share/service.js';
-import { handleTelemetryRequest, isTelemetryRequest, maskOtlpSettings, otlpExporter } from '../telemetry/otlp.js';
-import type { EngineManager } from '../engines/manager.js';
-import { handleEngineRequest, isEngineRequest } from '../engines/handlers.js';
-
-import type { AgentConfigService } from '../agent-config/service.js';
-import { handleAgentConfig, isAgentConfigRequest } from '../agent-config/handlers.js';
 
 import type { FederationService } from '../federation/service.js';
 import type { IncomingMessage } from 'node:http';
@@ -108,8 +87,6 @@ import { tr } from '../i18n/index.js';
 export interface Services {
   /** Unified session library: every joined source's sessions (sessions.list / search / library.*). */
   library: LibraryService;
-  /** Other agents' config center: MCP / instructions / settings of Codex, Gemini, Qwen, OpenCode (agentConfig.*). */
-  agentConfig: AgentConfigService;
   /** 本机环境变量 (runtime/local-env.ts); optional (tests) */
   localEnv?: LocalEnvStore;
   /** 预览服务器 (preview/service.ts): the browser's empty page lists and starts them; optional (tests) */
@@ -121,7 +98,7 @@ export interface Services {
 
   /** Cross-machine sessions: routes peer_… requests / merges lists before handle(); optional (tests). */
   federation?: FederationService;
-  /** Multi-agent orchestration (workflows / runs); requests routed by orchestra/handlers.ts */
+  /** Orchestration (workflows / runs); requests routed by orchestra/handlers.ts */
   orchestra: OrchestraService;
   /** 后台: every conversation's running sub-agents / workflows / commands (background/service.ts). */
   background: BackgroundService;
@@ -136,8 +113,6 @@ export interface Services {
   diag: DiagService;
   ledger: LedgerService;
   customCss: CustomCssService;
-  agents: AgentRegistry;
-  transcripts: AgentTranscripts;
   canonical: CanonicalLog;
   memory: MemoryService;
   remote: RemoteService;
@@ -160,23 +135,12 @@ export interface Services {
   /** 从其它工具导入 (import/) */
   importer: ImportService;
   version: string;
-  /** Local model gateway (/gateway/<group>/…, /<group>/v1/… and the /v1 root). */
-  gateway: GatewayService;
   /** 隐私保护: settings, preview and hit counts (privacy.*) */
   privacy: PrivacyService;
-  /** 账号池: Claude subscription accounts and the pools they are grouped into (upstreams.*). */
-  upstreams: UpstreamService;
-  channels: ChannelService;
-  /** plugins / sync / 远程共享 (spec 2026-10-26 §4.3, §8); optional so test hubs need not build them */
-  plugins?: PluginService;
+  /** sync (spec 2026-10-26 §8); optional so test hubs need not build it */
   sync?: SyncService;
   /** 备份与同步 → 远程同步: WebDAV / S3 / GitHub (sync/remote.ts); optional so test hubs need not build it */
   syncRemote?: RemoteSyncService;
-  share?: ShareService;
-  /** 托管程序: CLIProxyAPI / Magpie (engines.*) */
-  engines: EngineManager;
-  /** 任务中心: the scheduler behind tasks.* (check-in, keepalive, growth, …). */
-  tasks: MaintenanceScheduler;
   /** 联网: web search, and the browser tools carried out by the window hosting the built-in browser (web.* / browser.*). */
   web: WebService;
   /** 操控电脑: the user's answer to an agent asking for control of applications (computer/access.ts). */
@@ -186,7 +150,7 @@ export interface Services {
 }
 
 /** Requests after which something connects out: they wait for a fresh look at the proxy. (`web.search` waits inside WebService, like the agents' searches.) */
-const GOES_OUT = new Set<string>(['session.open', 'session.send', 'session.setProvider', 'session.switchAgent', 'providers.probe', 'providers.refreshModels', 'import.run', 'terminal.open', 'im.set', 'im.test', 'mcp.registry', 'sync.remote.test', 'sync.remote.push', 'sync.remote.pull']);
+const GOES_OUT = new Set<string>(['session.open', 'session.send', 'session.setProvider', 'providers.probe', 'providers.refreshModels', 'import.run', 'terminal.open', 'im.set', 'im.test', 'mcp.registry', 'sync.remote.test', 'sync.remote.push', 'sync.remote.pull']);
 
 const isLoopback = (a: string | undefined) => !!a && (a === '::1' || a.startsWith('127.') || a.startsWith('::ffff:127.'));
 
@@ -206,10 +170,10 @@ export class Hub {
 
   constructor(private wss: WebSocketServer, private s: Services) {
     wss.on('connection', (ws, req: IncomingMessage) => this.onConnect(ws, req));
-    // every session is mirrored into the provider-neutral timeline, whichever agent is behind it
+    // every session is mirrored into the provider-neutral timeline
     s.pool.on('message', (sessionId, message) => s.canonical.observe(sessionId, message));
     s.pool.on('message', (sessionId, message) => this.broadcast({ kind: 'session.event', sessionId, message }));
-    // what was asked, from wherever (a phone, another window, IM, a schedule, a goal's 继续): no agent echoes it, and the
+    // what was asked, from wherever (a phone, another window, IM, a schedule, a goal's 继续): the CLI does not echo it, and the
     // other windows showed only the answer (2026-10-08, a user's phone). `cw_echo`: the sender's window already has it
     // under the same uuid and skips it
     s.pool.on('sent', (sessionId, message) => this.broadcast({ kind: 'session.event', sessionId, message: { ...message, cw_echo: true } }));
@@ -268,26 +232,10 @@ export class Hub {
     s.goals.on('changed', () => this.broadcast({ kind: 'goals.changed' }));
     s.memory.on('changed', () => this.broadcast({ kind: 'memory.changed' }));
     s.library.on('changed', () => this.broadcast({ kind: 'library.changed' }));
-    s.library.on('continuationBehind', (id: string) => void this.catchUpFromSource(id, { announce: true }));
-    s.pool.on('state', (sessionId: string, state: string) => { if (state === 'idle' && this.behindPending.has(sessionId)) this.behindRetry(sessionId); });
-    s.library.on('transcripts', (ids: string[]) => this.broadcast({ kind: 'transcripts.changed', sessionIds: ids }));
     s.sessions.on('transcripts', (ids: string[]) => {
       for (const id of ids) s.pool.transcriptChanged(id); // a turn from a terminal on a conversation held open here
       this.broadcast({ kind: 'transcripts.changed', sessionIds: ids });
     });
-    s.library.on('discovered', (kinds) => this.broadcast({ kind: 'library.discovered', kinds }));
-    s.gateway.on('changed', () => this.broadcast({ kind: 'gateway.changed' }));
-    s.gateway.on('audit', (lines) => this.broadcast({ kind: 'gateway.log', lines }));
-    s.gateway.on('promptHeavy', (e: { sessionId: string; bytes: number; via: string }) => this.broadcast({ kind: 'gateway.promptHeavy', ...e }));
-    // 智能路由: which model a conversation on a routing group really got (the composer's 「自动 → 实际：…」)
-    s.gateway.on('routed', (e: import('../routing/types.js').RoutedInfo) => this.broadcast({ kind: 'gateway.routed', ...e }));
-    s.upstreams.on('changed', () => this.broadcast({ kind: 'upstreams.changed' }));
-    // 托管程序: each step of a long install / start, every state change, and a stop nobody asked for
-    s.engines.on('progress', (id: import('../engines/types.js').EngineId, step: import('../engines/types.js').EngineStep) => this.broadcast({ kind: 'engines.changed', id, step }));
-    s.engines.on('changed', (id: import('../engines/types.js').EngineId) => this.broadcast({ kind: 'engines.changed', id }));
-    s.engines.on('crash', (id: import('../engines/types.js').EngineId, why: string) => this.broadcast({ kind: 'engines.changed', id, crash: why }));
-    s.tasks.on('changed', () => this.broadcast({ kind: 'upstreams.changed' }));
-    s.tasks.on('notice', (text: string, notify?: boolean) => this.broadcast({ kind: 'notice', text, notify: !!notify }));
     s.web.on('changed', () => this.broadcast({ kind: 'web.changed' }));
 
     s.federation?.on('event', (e: ServerEvent) => this.broadcast(e, true));
@@ -297,7 +245,6 @@ export class Hub {
     s.characters.on('changed', () => this.broadcast({ kind: 'characters.changed' }));
     s.customCss.on('changed', () => this.broadcast({ kind: 'customCss.changed' }));
     s.themes.on('changed', () => this.broadcast({ kind: 'themes.changed' }));
-    s.agents.events.on('reported', () => this.broadcast({ kind: 'agents.changed' }));
   }
 
   /** `fromPeer`: re-broadcast of another machine's event — local clients only (two machines peering each other would echo forever). */
@@ -323,8 +270,6 @@ export class Hub {
     if (this.peerConns.has(ws) || this.remoteConns.has(ws) || !isLoopback(req?.socket?.remoteAddress)) this.otherScreen.add(ws);
     const fed = this.s.federation;
     this.send(ws, { type: 'event', event: { kind: 'hello', version: this.s.version, ...(fed ? { serverId: fed.serverId, name: fed.name, bootId: fed.bootId } : {}) } });
-    // startup discovery happens before anyone is connected: tell each new client what's waiting to be joined
-    void this.s.library.detect().then((kinds) => { if (kinds.length) this.send(ws, { type: 'event', event: { kind: 'library.discovered', kinds } }); }).catch(() => {});
     // a window that hosted the built-in browser is gone with its connection: what it was asked fails now, not in 30 s
     ws.on('close', () => { this.clients.delete(ws); this.s.web.dropConnection(ws); this.s.themes.dropConnection(ws); });
     // without a listener, a malformed frame / oversized payload makes ws emit an 'error' that crashes the server
@@ -367,88 +312,15 @@ export class Hub {
     return [...(this.s.pool.get(sessionId)?.getPendingPermissions() ?? []), ...this.s.computer.pendingFor(sessionId), ...(this.s.siteAsk?.pendingFor(sessionId) ?? [])];
   }
 
-  /**
-   * A conversation that went on from DeepSeek Harness: what was said there since goes into its transcript
-   * (LibraryService.catchUp) — only while nothing of ours is mid-turn in it. A process of it then restarts so its
-   * context has those turns. Mid-turn, it is noted and tried again once that process is idle and quiet (a write
-   * skipped then was never caught up while the process lived: verifier, 2026-10-22).
-   * `wait`: a send is coming — an idle process that is not quiet yet gets a few seconds. `announce`: nobody asked
-   * (watcher, retry) — open views re-read (`session.caughtUp`).
-   */
-  private behindPending = new Set<string>();
-  private catchingUp = new Map<string, Promise<number>>();
-  private catchUpFromSource(sessionId: string, o: { wait?: boolean; announce?: boolean } = {}): Promise<number> {
-    if (!this.s.meta.sessionMeta(sessionId).continuedFrom) return Promise.resolve(0);
-    // one at a time per conversation, each after the one before: two at once each restarted the process — two engines
-    // on one conversation (verifier, 2026-10-22). A send waiting behind one that wrote still reloads its view.
-    const prev = this.catchingUp.get(sessionId);
-    const p = (prev ?? Promise.resolve(0)).catch(() => 0).then(async (before) => {
-      const n = await this.catchUpOnce(sessionId, o);
-      return o.wait ? n + before : n;
-    });
-    this.catchingUp.set(sessionId, p);
-    void p.finally(() => { if (this.catchingUp.get(sessionId) === p) this.catchingUp.delete(sessionId); }).catch(() => {});
-    return p;
-  }
-  private async catchUpOnce(sessionId: string, o: { wait?: boolean; announce?: boolean }): Promise<number> {
-    const s = this.s;
-    // a send waits only when there is something to bring, and only for what ends soon on its own: a process starting
-    // (~5 s after a restart or an open), restarting, or inside its 3 s after a turn — up to 10 s. Background work (a
-    // dev server) kept every send waiting 11 s for nothing (verifier, 2026-10-22): that one is caught up after.
-    if (o.wait && s.pool.settling(sessionId) && (await s.library.newSince(sessionId)) > 0) {
-      for (let i = 0; i < 40 && !s.pool.quiet(sessionId) && s.pool.settling(sessionId); i++) await new Promise((r) => setTimeout(r, 250));
-    }
-    if (!s.pool.quiet(sessionId)) { this.behindLater(sessionId); return 0; }
-    this.behindPending.delete(sessionId);
-    const n = await s.library.catchUp(sessionId, () => s.pool.quiet(sessionId)).catch(() => 0);
-    // a turn started while the harness was read: next time
-    if (!n && !s.pool.quiet(sessionId)) this.behindLater(sessionId);
-    if (n && s.pool.get(sessionId)) await s.pool.reloadTranscript(sessionId);
-    if (n && o.announce) this.broadcast({ kind: 'session.caughtUp', sessionId });
-    return n;
-  }
-
-  /** Try again once the process is idle and quiet: now if it already is idle (no state change will come), else on its next `idle`. */
-  private behindLater(sessionId: string) {
-    this.behindPending.add(sessionId);
-    if (this.s.pool.stateOf(sessionId) === 'idle') this.behindRetry(sessionId);
-  }
-  /** one timer per conversation: every skipped trigger used to start its own chain */
-  private behindTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private behindRetry(sessionId: string) {
-    if (this.behindTimers.has(sessionId)) return;
-    const t = setTimeout(() => {
-      this.behindTimers.delete(sessionId);
-      if (this.behindPending.has(sessionId)) void this.catchUpFromSource(sessionId, { announce: true });
-    }, 3300);
-    t.unref?.();
-    this.behindTimers.set(sessionId, t);
-  }
-
   private runner(sessionId: string) {
     const r = this.s.pool.get(sessionId);
     if (!r) throw new Error(`session ${sessionId} is not open`);
     return r;
   }
 
-  /** `session.open` after the agent is known and the profile checked: foreign agents resume from their transcript, Claude forks / resumes / starts. */
+  /** `session.open` after the profile is checked: forks / resumes / starts. */
   private async openSession(params: OpenSessionParams) {
     const s = this.s;
-    if (params.agent && params.agent !== 'claude') {
-      // the profile a foreign-agent session was started / switched with survives a resume, like Claude's
-      if (params.providerId === undefined && params.sessionId) params = { ...params, providerId: s.meta.sessionMeta(params.sessionId).providerId };
-      const head = params.sessionId ? await s.transcripts.head(params.sessionId) : null;
-      const hist = !params.sessionId ? [] : head?.imported
-        ? await s.library.read(params.sessionId).then((r) => r.messages).catch(() => [])
-        : await s.transcripts.load(params.sessionId).catch(() => []);
-      const before = params.sessionId ? s.pool.get(params.sessionId) : undefined;
-      const r = s.pool.open(params, hist);
-      await s.canonical.ensure(r.sessionId, params.cwd);
-      // recorded only when this open started the process (re-review m-3): a runner handed back as it was runs on its
-      // own provider, whatever this request asked for (openOnProvider swaps those)
-      if (r !== before && params.providerId && params.providerId !== 'claude' && s.meta.sessionMeta(r.sessionId).providerId !== params.providerId) void s.meta.setSessionMeta(r.sessionId, { providerId: params.providerId }).catch(() => { /* in memory; the next save persists it */ });
-      return { sessionId: r.sessionId, info: r.info, history: r.getHistory(), pending: this.pendingOf(r.sessionId) };
-    }
     // provider: explicit → the one the session was created with → user default (new sessions only)
     if (params.providerId === undefined) {
       const remembered = params.sessionId ? s.meta.sessionMeta(params.sessionId).providerId : undefined;
@@ -456,14 +328,11 @@ export class Hub {
       params = { ...params, providerId: remembered ?? def };
     }
     if (!params.features && s.meta.settings().defaultFeatures) params = { ...params, features: defaultFeaturesOf(s.meta.settings().defaultFeatures) };
-    // prompt-cache route key: a fork keeps its parent's (the prefix is the same), decided before the id changes
-    const cacheParentId = cacheParentFor(params, (id) => s.meta.sessionMeta(id).cacheKey);
-    if (cacheParentId) params = { ...params, cacheParentId };
     // forks: copy the transcript first (SDK forkSession) so the new session has a real id before the process starts
     if (params.sessionId && (params.fork || params.resumeAt)) {
       // right after a turn the CLI is still writing its last answer (~2 s after the result): a copy taken now lost it
       const src = s.pool.get(params.sessionId);
-      if (src instanceof SessionRunner) await src.flushed();
+      if (src) await src.flushed();
       // 只聊天 carries over: the copy gets a new id the pool has no record for (it records it once opened)
       const chatOnly = !!s.meta.sessionMeta(params.sessionId).chatOnly;
       const thinkingLanguage = s.meta.sessionMeta(params.sessionId).thinkingLanguage;
@@ -474,7 +343,6 @@ export class Hub {
     }
     const before = params.sessionId ? s.pool.get(params.sessionId) : undefined;
     const r = s.pool.open(params);
-    if (cacheParentId && cacheParentId !== r.sessionId && s.meta.sessionMeta(r.sessionId).cacheKey !== cacheParentId) void s.meta.setSessionMeta(r.sessionId, { cacheKey: cacheParentId }).catch(() => { /* in memory; the next save persists it */ });
     await s.canonical.ensure(r.sessionId, params.cwd);
     if (r !== before && params.providerId && params.providerId !== 'claude') {
       // remember which provider a session uses so resume / fork keep it (the id is known up front: new sessions get a
@@ -489,7 +357,6 @@ export class Hub {
     // about to go out (a CLI starts, a provider is asked): the system proxy may have changed since the last look —
     // resolves at once when that look is under a minute old (net/proxy.ts)
     if (GOES_OUT.has(req.kind)) await proxy.refresh();
-    if (isAgentConfigRequest(req)) return handleAgentConfig(s.agentConfig, req);
     if (isOrchestraRequest(req)) return handleOrchestra(s.orchestra, req);
     if (isBackgroundRequest(req)) return handleBackground(s.background, req);
     if (isCharactersRequest(req)) return handleCharacters(s.characters, req, this.peerConns.has(ws) || this.remoteConns.has(ws));
@@ -507,13 +374,8 @@ export class Hub {
       case 'sessions.projects':
         return s.sessions.projects();
       case 'transcript.load': {
-        // imported sessions (and anything a joined foreign source lists) are read from the agent itself
-        const head = await s.transcripts.head(req.sessionId);
-        // ours (the mirror) — the library first brings in turns the agent's own CLI added since (Codex)
-        if (head && !head.imported) return (await s.library.read(req.sessionId)).messages;
-        if (head?.imported || (await s.library.kindOf(req.sessionId)) !== 'claude') return (await s.library.read(req.sessionId)).messages;
-        // a Claude conversation that went on from DeepSeek Harness: what was said there since, first
-        if (!req.cursor) await this.catchUpFromSource(req.sessionId);
+        // a claude.ai export's conversation is read from the library source
+        if ((await s.library.kindOf(req.sessionId)) !== 'claude') return (await s.library.read(req.sessionId)).messages;
         const state = s.pool.stateOf(req.sessionId);
         const msgs = withTurnStats(await s.sessions.transcript(req.sessionId), await s.ledger.rowsFor(req.sessionId), { live: state === 'running' || state === 'waiting' || state === 'starting' });
         if (!req.page) return msgs;
@@ -538,38 +400,25 @@ export class Hub {
           const d = await s.wsl.check(params.env.distro);
           if (d.claude === false) throw new Error(tr('{d} 里没有 Claude Code，先在「选机器」里安装', { d: d.name }));
         }
-        // DeepSeek Harness (SourceCaps.continueInClaude): a send goes on in the Claude conversation that replays it, on
-        // any provider — never in the harness (its own DeepSeek key). Before the head check: an earlier version left an
-        // imported `dsh` head that would start the harness again. The reply's other sessionId re-keys the client.
-        if (params.sessionId && !params.agent && s.library.continuesInClaude(params.sessionId)) {
+        // a claude.ai export (SourceCaps.continueInClaude): a send goes on in the Claude conversation that replays it.
+        // The reply's other sessionId re-keys the client.
+        if (params.sessionId && s.library.continuesInClaude(params.sessionId)) {
           const c = await s.library.continuation(params.sessionId);
           // a new one runs where a new conversation would (what its chips showed), unless one was picked; a subagent
-          // model picked on its chips was recorded under the harness id
+          // model picked on its chips was recorded under the export's id
           if (c.created) {
             const sub = s.meta.sessionMeta(params.sessionId).subagent;
             await s.meta.setSessionMeta(c.sessionId, { providerId: normProvider(params.providerId ?? s.pool.defaultProviderFor('claude')), ...(sub ? { subagent: sub } : {}) });
           }
-          params = { ...params, sessionId: c.sessionId, cwd: c.cwd, agent: 'claude', fork: false, resumeAt: undefined };
-        }
-        // …and what was said in the harness since, before the engine reads the transcript (never while it has it); a
-        // client showing the old history reloads it (`caughtUp`)
-        const caughtUp = params.sessionId && !params.fork ? await this.catchUpFromSource(params.sessionId) : 0;
-        // resuming a foreign-agent session: the transcript head knows which agent it belongs to
-        if (params.sessionId && !params.agent) {
-          const head = await s.transcripts.head(params.sessionId);
-          if (head) params = { ...params, agent: head.agent, fork: false, resumeAt: undefined };
-          else if ((await s.library.kindOf(params.sessionId)) !== 'claude') {
-            // a library session from another agent's own store: give it a resume head first, so the
-            // Codex / ACP driver continues the native thread and new turns land in the agent's record
-            const r = await s.library.prepareResume(params.sessionId);
-            params = { ...params, agent: r.agent, cwd: params.cwd || r.cwd, fork: false, resumeAt: undefined };
-          }
+          params = { ...params, sessionId: c.sessionId, cwd: c.cwd, fork: false, resumeAt: undefined };
+        } else if (params.sessionId && (await s.library.kindOf(params.sessionId)) !== 'claude') {
+          throw new Error(tr('这个对话的来源没有加入对话库'));
         }
         // worktree 位置 / 分支前缀 (spec 2026-10-16 sessions-env §4): Claude Code's --worktree always makes
         // <repo>/.claude/worktrees/<name> on worktree-<name>. With either setting the worktree is made here instead (and
         // .worktreeinclude copied, which the CLI does for its own), then the conversation starts in it, listed under the repo
         let worktreeRoot: string | undefined;
-        if (params.worktree && !params.sessionId && (params.agent ?? 'claude') === 'claude') {
+        if (params.worktree && !params.sessionId) {
           const set = s.meta.settings();
           const where = typeof set['worktree.dir'] === 'string' ? set['worktree.dir'].trim() : '';
           const prefix = typeof set['worktree.prefix'] === 'string' ? set['worktree.prefix'].trim() : '';
@@ -582,8 +431,8 @@ export class Hub {
             worktreeRoot = root;
           }
         }
-        // an explicitly chosen profile must fit the agent / engine (welcome page, schedules, IM, orchestration all land here)
-        const unfitOpen = s.providers.fitError(req.params.providerId, params.agent ?? 'claude');
+        // an explicitly chosen profile must be one Claude Code can use (welcome page, schedules, IM, orchestration all land here)
+        const unfitOpen = s.providers.fitError(req.params.providerId, 'claude');
         if (unfitOpen) throw new Error(unfitOpen);
         // an existing conversation opened with an explicit provider (a pick on a history conversation's chips, another
         // window, a client whose state is stale — IM, schedules and orchestration open through the pool, not here):
@@ -601,7 +450,7 @@ export class Hub {
           swapped: (r) => ({ ...r, pending: this.pendingOf(r.sessionId) }),
           onRecorded: () => s.sessions.emit('changed'),
         });
-        return caughtUp ? { ...opened, caughtUp } : opened;
+        return opened;
       }
       case 'session.info': {
         const r = this.runner(req.sessionId);
@@ -618,13 +467,9 @@ export class Hub {
         await afterSwitch(req.params.sessionId); // a switch in progress: the new process takes it
         this.s.pool.assertWritable(req.params.sessionId); // handed to another machine (F4): read-only here
         this.runner(req.params.sessionId).send(outgoing, req.params.images, req.params.steer, req.params.uuid, req.params.attachments);
-        // Neither path echoes the user's own message back through the pool (the SDK doesn't, and the
-        // foreign drivers `record()` it without emitting), so the canonical mirror has to be told here
-        // — otherwise a handover briefing would have no idea what was actually asked for.
+        // The SDK does not echo the user's own message back through the pool, so the canonical mirror has to be told
+        // here — otherwise a handover briefing would have no idea what was actually asked for.
         s.canonical.observe(req.params.sessionId, { type: 'user', uuid: req.params.uuid, message: { role: 'user', content: [{ type: 'text', text: req.params.text }] } });
-        // foreign agents: first prompt becomes the title (Claude's transcripts derive it themselves)
-        const head = await s.transcripts.head(req.params.sessionId);
-        if (head && !head.title) { await s.transcripts.patchHead(req.params.sessionId, { title: req.params.text.replace(/<attached[^>]*\/>/g, '').trim().slice(0, 80) }); s.sessions.emit('changed'); }
         return null;
       }
 
@@ -715,7 +560,7 @@ export class Hub {
       }
       case 'settings.get':
         // the search engines' keys and the remote sync credentials are stored protected and read as masks here
-        return maskOtlpSettings(maskSyncRemoteSettings(maskWebSettings(s.meta.settings())));
+        return maskSyncRemoteSettings(maskWebSettings(s.meta.settings()));
       case 'network.proxy':
         return proxy.refresh(!!req.refresh);
       case 'settings.set':
@@ -753,13 +598,7 @@ export class Hub {
       // ---- unified session library ----
       case 'library.sources':
         return s.library.sources();
-      case 'library.localScan':
-        return scanLocalHistory();
-      case 'library.catchUp':
-        return this.catchUpFromSource(req.sessionId, { wait: true });
       case 'library.read':
-        // a conversation that went on from DeepSeek Harness: what was said there since comes over first (catchUp)
-        if (!req.cursor) await this.catchUpFromSource(req.sessionId);
         return s.library.read(req.sessionId, req.cursor, req.limit);
       case 'library.rename':
         await renameKept(s, req.sessionId, req.title);
@@ -776,9 +615,6 @@ export class Hub {
         return null;
       case 'library.join':
         await s.library.join(req.kind_, req.joined);
-        return s.library.sources();
-      case 'library.dismiss':
-        await s.library.dismiss(req.kind_);
         return s.library.sources();
       case 'shell.open':
         openPath(req.path, req.app);
@@ -869,33 +705,23 @@ export class Hub {
         await on?.setSubagentModel?.(model);
         return null;
       }
-      // Swapping the provider or the agent behind a live session. Both are an invisible restart:
+      // Swapping the provider behind a live session is an invisible restart:
       // the CLI's env is fixed at spawn, so "no restart" can only mean the user never sees one.
       case 'session.setProvider': {
         // 'claude' = back to the account, like no provider at all (the window sends either)
         const own = !req.providerId || req.providerId === CLAUDE_PROVIDER_ID;
         const p = own ? undefined : s.providers.forSession(req.providerId);
         if (!own && !p) throw new Error(tr('没有这个供应商'));
-        // the agent behind the session must be able to use this profile type (Codex cannot talk to an Anthropic relay…)
-        const agent = s.pool.get(req.sessionId)?.info.agent ?? (await s.transcripts.head(req.sessionId).catch(() => null))?.agent ?? 'claude';
-        const unfit = s.providers.fitError(req.providerId, agent);
+        const unfit = s.providers.fitError(req.providerId, 'claude');
         if (unfit) throw new Error(unfit);
-        const r = await swapProvider({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta }, req.sessionId, req.providerId, p?.name ?? tr('Claude 账号'), req.model); // serialised per session inside
-        s.sessions.emit('changed');
-        return r;
-      }
-      case 'session.switchAgent': {
-        const readAll = (id: string) => s.library.readAll(id);
-        // imported library sessions hand over into a NEW session (returned sessionId differs); the rest swap in place
-        const imported = (id: string) => s.library.importedInfo(id);
-        const r = await swapAgent({ pool: s.pool, canonical: s.canonical, transcripts: s.transcripts, meta: s.meta, readAll, imported }, req.sessionId, req.agent, req.model);
+        const r = await swapProvider({ pool: s.pool, canonical: s.canonical, meta: s.meta }, req.sessionId, req.providerId, p?.name ?? tr('Claude 账号'), req.model); // serialised per session inside
         s.sessions.emit('changed');
         return r;
       }
       case 'session.canonical':
         return s.canonical.load(req.sessionId);
 
-      // ---- shared memory (also reachable by every agent over MCP; see memory/mcp.ts) ----
+      // ---- shared memory (also reachable over MCP; see memory/mcp.ts) ----
       case 'memory.search':
         return s.memory.search({ q: req.query, scope: req.scope, cwd: req.cwd, sessionId: req.sessionId, kind: req.kind_, limit: req.limit });
       case 'memory.write':
@@ -911,9 +737,9 @@ export class Hub {
         const events = await s.canonical.load(req.sessionId);
         const cwd = s.pool.get(req.sessionId)?.cwd ?? (await s.canonical.head(req.sessionId))?.cwd ?? '';
         if (!cwd) throw new Error(tr('这个对话没有可用的目录'));
-        return harvest(s.memory, events, { cwd, sessionId: req.sessionId, agent: s.pool.get(req.sessionId)?.info.agent });
+        return harvest(s.memory, events, { cwd, sessionId: req.sessionId, agent: 'claude' });
       }
-      // ---- 联网: search + the built-in browser (every agent reaches them over MCP; see web/mcp.ts) ----
+      // ---- 联网: search + the built-in browser (reached over MCP; see web/mcp.ts) ----
       case 'web.status':
         return s.web.status();
       case 'web.egoDetect':
@@ -1190,12 +1016,6 @@ export class Hub {
         return s.meta.scheduleRuns(req.id, req.limit);
       case 'schedules.templates':
         return SCHEDULE_TEMPLATES;
-      case 'agents.list': {
-        const list = await s.agents.list(!!req.refresh);
-        // a refresh re-probes what's installed: newly detected agents are offered to the library
-        if (req.refresh) void s.library.announce().catch(() => {});
-        return list;
-      }
       case 'remote.status':
         return this.remoteStatus();
       case 'remote.set': {
@@ -1301,7 +1121,7 @@ export class Hub {
       case 'vcs.create': return s.vcs.create(req.cwd, { title: req.title, body: req.body, isPr: req.isPr, head: req.head, base: req.base, draft: req.draft, labels: req.labels }, req.repo);
       case 'vcs.checkout': return s.vcs.checkout(req.cwd, req.number, { worktree: req.worktree, repo: req.repo });
       case 'goals.list': return s.goals.list();
-      case 'goals.create': return s.goals.create({ objective: req.objective, spec: req.spec, cwd: req.cwd, maxTurns: req.maxTurns, tokenBudget: req.tokenBudget, agent: req.agent, permissionMode: req.permissionMode, model: req.model });
+      case 'goals.create': return s.goals.create({ objective: req.objective, spec: req.spec, cwd: req.cwd, maxTurns: req.maxTurns, tokenBudget: req.tokenBudget, permissionMode: req.permissionMode, model: req.model });
       case 'goals.update': return s.goals.update(req.id, req.patch);
       case 'goals.start': return s.goals.start(req.id);
       case 'goals.pause': return s.goals.pause(req.id);
@@ -1317,11 +1137,6 @@ export class Hub {
       case 'android.packages': return s.android.packages(req.serial);
       case 'android.launchApp': return s.android.launchApp(req.serial, req.pkg);
       case 'android.startEmulator': return s.android.startEmulator(req.avd);
-      case 'agents.set':
-        await s.agents.setConfig(req.agent, req.patch);
-        s.agents.invalidate();
-        return s.agents.list();
-
       case 'terminal.open':
         // a WSL terminal only in a distro this computer lists (its name goes to wsl.exe -d)
         if (req.wsl) { if (!s.wsl) throw new Error('no WSL'); await s.wsl.ensureKnown(String(req.wsl.distro)); }
@@ -1336,17 +1151,9 @@ export class Hub {
         s.terminal.close(req.termId);
         return null;
     }
-    if (isChannelRequest(req)) return handleChannelRequest(s.channels, req);
-    if (isSourceHealthRequest(req)) return handleSourceHealthRequest(sourceHealth({ providers: s.providers }), req);
-    if (isPluginRequest(req) && s.plugins) return handlePluginRequest(s.plugins, req);
     // remote kinds also start with `sync.`, so they must be matched before the file export / import handler
     if (isRemoteSyncRequest(req) && s.syncRemote) return handleRemoteSyncRequest(s.syncRemote, req);
     if (isSyncRequest(req) && s.sync) return handleSyncRequest(s.sync, req);
-    if (isShareRequest(req) && s.share) return handleShareRequest(s.share, req);
-    if (isTelemetryRequest(req) && otlpExporter()) return handleTelemetryRequest(otlpExporter()!, req, this.peerConns.has(ws) || this.remoteConns.has(ws));
-    if (isEngineRequest(req)) return handleEngineRequest(s.engines, req, this.peerConns.has(ws) || this.remoteConns.has(ws));
-    if (isUpstreamRequest(req)) return handleUpstreamRequest(s.upstreams, s.tasks, req);
-    if (isGatewayRequest(req)) return handleGatewayRequest(s.gateway, req);
     if (isPrivacyRequest(req)) return handlePrivacyRequest(s.privacy, req);
     throw new Error(`unknown request ${(req as any).kind}`);
   }

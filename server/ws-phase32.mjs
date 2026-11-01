@@ -41,7 +41,8 @@ const turnText = (j) => {
   return msgs.slice(i).filter((m) => m.role === 'user').map((m) => textOf(m.content)).join('\n');
 };
 const lastToolResult = (j) => {
-  const last = (j.messages ?? []).at(-1);
+  // the official binary ends a request with a mid-conversation `system` message (<total_tokens>…): skip it
+  const last = (j.messages ?? []).filter((m) => m.role !== 'system').at(-1);
   if (last?.role !== 'user' || !Array.isArray(last.content)) return null;
   return last.content.find((b) => b?.type === 'tool_result') ?? null;
 };
@@ -136,7 +137,7 @@ async function main() {
   // ---- the own login ----
   const ownEnv = { features: { env: { ANTHROPIC_BASE_URL: up, ANTHROPIC_AUTH_TOKEN: 'own-login-e2e' } } };
   const o1 = await open(ownEnv);
-  check('own login, nothing set: Opus 5.5 opens at 1M (session info)', o1.info?.contextWindow === 1_000_000 && !o1.info?.providerId, JSON.stringify({ w: o1.info?.contextWindow, p: o1.info?.providerId, rt: o1.info?.runtime }));
+  check('own login, nothing set: Opus 5.5 opens at 1M (session info)', o1.info?.contextWindow === 1_000_000 && !o1.info?.providerId, JSON.stringify({ w: o1.info?.contextWindow, p: o1.info?.providerId }));
   const t1 = await envTurn(o1.sessionId);
   check('… its requests go out at 1M (the context-1m beta)', t1.result === 'success' && /^claude-opus-5-5/.test(t1.model ?? '') && oneM(t1) && /own-login-e2e/.test(t1.auth), brief(t1));
   check('… no 自动压缩 set: settings.json’s 700000 is the one in the engine', t1.compact === '700000' && t1.compactWindow === 700_000, brief(t1));

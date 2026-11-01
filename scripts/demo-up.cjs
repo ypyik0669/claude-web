@@ -14,7 +14,7 @@ const arg = (n, d) => { const i = process.argv.indexOf(n); return i < 0 ? d : pr
   const c = demo.client(srv.port, srv.token);
   await c.ready;
   await c.req({ kind: 'settings.set', key: 'network.proxy', value: 'off' });
-  const prov = await c.req({ kind: 'providers.upsert', provider: { name: lang === 'zh' ? '中转' : 'Relay', type: 'anthropic', baseUrl: up.url, apiKey: 'sk-demo-not-real', defaultModel: 'claude-sonnet-5-5', models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5-20251001'], runtime: 'ccb' } });
+  const prov = await c.req({ kind: 'providers.upsert', provider: { name: lang === 'zh' ? '中转' : 'Relay', type: 'anthropic', baseUrl: up.url, apiKey: 'sk-demo-not-real', defaultModel: 'claude-sonnet-5-5', models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5-20251001'] } });
   for (const p of [seed.shop, seed.notes, seed.blog]) await c.req({ kind: 'workspaces.add', path: p });
   console.log(JSON.stringify({ url: srv.url, home, sid: seed.sid, provider: prov.id }));
   const file = arg('--port-file', '');

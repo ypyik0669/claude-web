@@ -3,7 +3,7 @@ import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { dlg } from '@/ui/dialog';
-import type { AgentKind, ImGatewayInfo, ImKind, ImKindDef } from '@shared';
+import type { ImGatewayInfo, ImKind, ImKindDef } from '@shared';
 import { ProviderSelect } from '@/features/providers/ProviderSelect';
 import { Icon } from '@/ui/icons';
 import { MODE_LABEL } from '@/ui/terms';
@@ -15,7 +15,6 @@ const MODES = (['default', 'acceptEdits', 'bypassPermissions'] as const).map((m)
 
 function GatewayCard({ g, def, onChange }: { g: ImGatewayInfo; def: ImKindDef; onChange: () => void }) {
   const toast = useStore((s) => s.toast);
-  const agents = useStore((s) => s.agents);
   const workspaces = useStore((s) => s.workspaces);
   const [open, setOpen] = useState(!g.config || Object.values(g.config).every((v) => !v));
   const [f, setF] = useState<Record<string, string>>({ ...g.config });
@@ -36,10 +35,8 @@ function GatewayCard({ g, def, onChange }: { g: ImGatewayInfo; def: ImKindDef; o
   // what 「跟新对话一样」 resolves to right now (the server's RunnerPool.defaultProviderFor)
   const providers = useStore((s) => s.providers);
   const settings = useStore((s) => s.settings);
-  const agentInfo = g.agent ? agents.find((a) => a.kind === g.agent) : undefined;
-  const agentName = agentInfo?.name ?? g.agent;
-  const defId = g.agent ? agentInfo?.providerId : (settings.defaultProviderId as string | undefined);
-  const sameAsNew = providers.find((p) => p.id === defId)?.name ?? (g.agent ? tr('{agentName} 自己的登录', { agentName }) : tr('Claude 账号'));
+  const defId = settings.defaultProviderId as string | undefined;
+  const sameAsNew = providers.find((p) => p.id === defId)?.name ?? tr('Claude 账号');
   return (
     <div className={clsx('row agent-card', !g.enabled && 'muted')} style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -59,9 +56,8 @@ function GatewayCard({ g, def, onChange }: { g: ImGatewayInfo; def: ImKindDef; o
           {def.fields.map((fl) => <label key={fl.key}>{fl.label}<input className="field" type={fl.secret ? 'password' : 'text'} value={f[fl.key] ?? ''} onChange={(e) => setF({ ...f, [fl.key]: e.target.value })} placeholder={fl.hint ?? ''} autoComplete="off" /></label>)}
           <label>{tr('默认项目')}<Select className="field" value={g.defaultCwd} onValueChange={(value) => patch({ defaultCwd: String(value) })} aria-label={tr('默认项目')} searchable={workspaces.length > 8} options={[{ value: '', label: tr('第一个项目') }, ...workspaces.map((w) => ({ value: w.path, label: w.name, description: w.path }))]} /></label>
           <label>{tr('权限模式')}<Select className="field" value={g.permissionMode} onValueChange={(value) => patch({ permissionMode: String(value) })} aria-label={tr('权限模式')} options={MODES.map(([v, l]) => ({ value: v, label: l }))} /></label>
-          <label>{tr('用哪个 Agent')}<Select className="field" value={g.agent} onValueChange={(value) => patch({ agent: String(value) })} aria-label={tr('用哪个 Agent')} options={[{ value: '', label: 'Claude Code' }, ...agents.filter((a) => a.kind !== 'claude' && a.installed && a.enabled).map((a) => ({ value: a.kind, label: a.name }))]} /></label>
           {/* the bot's new conversations: a relay, the account, or whatever a new conversation in the window gets */}
-          <label>{tr('用哪个供应商')}<ProviderSelect agent={(g.agent || 'claude') as AgentKind} value={g.providerId ?? ''} onChange={(v) => patch({ providerId: v })} first={{ label: tr('跟新对话一样（{sameAsNew}）', { sameAsNew }), title: tr('和在窗口里开新对话时用的一样') }} own={g.agent ? tr('{agentName} 自己的登录', { agentName }) : tr('Claude 账号')} /></label>
+          <label>{tr('用哪个供应商')}<ProviderSelect agent="claude" value={g.providerId ?? ''} onChange={(v) => patch({ providerId: v })} first={{ label: tr('跟新对话一样（{sameAsNew}）', { sameAsNew }), title: tr('和在窗口里开新对话时用的一样') }} own={tr('Claude 账号')} /></label>
           <SwitchChip style={{ alignSelf: 'end' }} on={g.verbose} onChange={(on) => patch({ verbose: on })}>{tr('推送工具调用过程')}</SwitchChip>
           <div style={{ gridColumn: '1 / -1' }} className="sub">{def.help}</div>
           <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', gridColumn: '1 / -1' }}>

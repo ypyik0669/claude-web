@@ -32,7 +32,7 @@ async function driver() {
     await sleep(1500);
     await shot(`hero-${lang}`);
     const ids = await js('[...document.querySelectorAll("section.chapter[data-chapter]")].map((s) => s.dataset.chapter)');
-    if (ids.length !== 7) errors.push(`${page}: ${ids.length} chapters, want 7`);
+    if (ids.length !== 6) errors.push(`${page}: ${ids.length} chapters, want 6`);
     for (const id of ids) {
       await js(`document.getElementById("ch-${id}").scrollIntoView({ block: "center" })`);
       const ok = await waitFor(`document.querySelector("#hero-scene").dataset.chapter === "${id}"`, 4000);
@@ -42,7 +42,7 @@ async function driver() {
         const shown = await js(`(() => { const o = document.querySelector('[data-overlay="${id}"]'); return !!o && !o.hidden && o.getBoundingClientRect().width > 0; })()`);
         if (!shown && id !== 'permission') errors.push(`${page}: the ${id} card is not showing`);
       }
-      if (['turns', 'permission', 'gateway'].includes(id)) await shot(`ch-${id}-${lang}`);
+      if (['turns', 'permission', 'elsewhere'].includes(id)) await shot(`ch-${id}-${lang}`);
     }
     await js('window.scrollTo(0, document.body.scrollHeight)');
     await sleep(600);

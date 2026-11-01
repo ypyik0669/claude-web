@@ -4,9 +4,9 @@ import { ws } from '@/ws/client';
 import { clsx } from '@/util';
 import { Icon, AGENT_ICONS } from '@/ui/icons';
 import { CATALOG, modelsFor } from '@catalog';
-import type { AgentKind, Provider } from '@shared';
+import type { Provider } from '@shared';
 import { modelTable, profileModels, type ModelRow } from '@/features/models/menu';
-import { refreshAllModels, useGatewayStatus, useRefreshRun } from '@/features/models/data';
+import { refreshAllModels, useRefreshRun } from '@/features/models/data';
 import { agoText } from '@/features/models/ModelMenu';
 import '@/features/models/models.css';
 import { TERMS, ULTRACODE, effortLabel, effortTitle } from '@/ui/terms';
@@ -16,18 +16,10 @@ import { ownClaudeName } from '@/store/auth';
 /** stable fallback for the selectors below (a fresh `[]` per call re-renders forever: React #185) */
 const NONE: string[] = [];
 
-const AGENTS: { kind: AgentKind; name: string }[] = [
-  { kind: 'claude', name: 'Claude Code' },
-  { kind: 'codex', name: 'Codex' },
-  { kind: 'gemini', name: 'Gemini CLI' },
-  { kind: 'qwen', name: 'Qwen Code' },
-  { kind: 'kimi', name: 'Kimi CLI' },
-];
-
 /**
  * Settings → Models. Top: "refresh every profile's model list" and each profile's pull status. Two views:
  * by model (each model once, the profiles that serve it, favourite star, show / hide) and by profile
- * (the built-in lists per agent with their effort ladders, then each profile's models). Hiding
+ * (Claude's built-in list with its effort ladder, then each profile's models). Hiding
  * (`ui.disabledModels`) and favourites (`ui.favoriteModels`) feed the composer's model menu.
  */
 export function ModelsSection() {
@@ -36,16 +28,13 @@ export function ModelsSection() {
   const favorites = useStore((s) => (s.settings['ui.favoriteModels'] as string[] | undefined) ?? NONE);
   const setSetting = useStore((s) => s.setSetting);
   const providers = useStore((s) => s.providers);
-  const agents = useStore((s) => s.agents);
   const toast = useStore((s) => s.toast);
-  const gatewayView = useGatewayStatus();
-  const groups = gatewayView.groups;
   const refresh = useRefreshRun();
   const [view, setView] = useState<'model' | 'profile'>('model');
   const [q, setQ] = useState('');
   const relay = useStore((s) => s.auth?.relay);
   const ownName = ownClaudeName(relay ? { relay } : null);
-  const rows = useMemo(() => modelTable(providers, groups, q, ownName, gatewayView.poolModels), [providers, groups, q, ownName, gatewayView.poolModels]);
+  const rows = useMemo(() => modelTable(providers, q, ownName), [providers, q, ownName]);
   // 按供应商: each a fold, so a long list reads (GitHub issue #4); the first one starts open
   const [openSec, setOpenSec] = useState<Record<string, boolean>>({});
   const isOpen = (k: string, i: number) => openSec[k] ?? i === 0;
@@ -69,7 +58,7 @@ export function ModelsSection() {
       toast(tr('「{name}」的默认模型改为 {model}', { name: p.name, model }), true);
     } catch (e: any) { toast(e.message); }
   };
-  const fetchable = providers.filter((p) => p.type !== 'gateway');
+  const fetchable = providers;
 
   const row = (id: string, l: string, d?: string) => (
     <div key={id} className="row">
@@ -142,18 +131,14 @@ export function ModelsSection() {
         </div>
       ) : (
         <>
-          {AGENTS.map(({ kind, name }, i) => {
-            const c = CATALOG[kind];
-            // what the agent said it offers this account (Codex's model/list) before the built-in list, which goes stale
-            const a = agents.find((x) => x.kind === kind);
-            const reported = kind !== 'claude' && a?.reportedModels?.length ? a.reportedModels : undefined;
-            const models = reported ?? modelsFor(kind);
-            return fold(kind, i, <><Icon name={AGENT_ICONS[kind] ?? 'agent'} size={13} /> {name}{kind === 'claude' && relay && <span className="badge" title={tr('~/.claude/settings.json 里设了中转地址，Claude Code 的模型走它')}>{tr('中转 {host}', { host: relay })}</span>}</>, models.length, (
+          {(() => {
+            const c = CATALOG.claude;
+            const models = modelsFor('claude');
+            return fold('claude', 0, <><Icon name={AGENT_ICONS.claude ?? 'agent'} size={13} /> Claude Code{relay && <span className="badge" title={tr('~/.claude/settings.json 里设了中转地址，Claude Code 的模型走它')}>{tr('中转 {host}', { host: relay })}</span>}</>, models.length, (
               <>
-                {reported && a?.reportedAt && <div className="sub" style={{ padding: '0 4px 4px' }}>{tr('{name} 自己报的列表（这个账号能用的）· {ago}', { name, ago: agoText(a.reportedAt) })}</div>}
                 <div className="list">
-                  {models.map((m) => row(kind === 'claude' ? m.value : `${kind}:${m.value}`, m.displayName, m.description || undefined))}
-                  {!models.length && <div className="empty">{c?.unverified ? tr('模型表未核实') : tr('没有内置模型')}</div>}
+                  {models.map((m) => row(m.value, m.displayName, m.description || undefined))}
+                  {!models.length && <div className="empty">{tr('没有内置模型')}</div>}
                 </div>
                 <div className="efforts">
                   {c?.supportsEffort && c.effort.length > 0 ? (
@@ -166,22 +151,21 @@ export function ModelsSection() {
                     <span className="sub">{tr('不能调智能程度')}</span>
                   )}
                 </div>
-                {c?.note && <div className="sub" style={{ padding: '2px 4px' }}>{c.note}</div>}
               </>
             ));
-          })}
+          })()}
           {providers.map((p) => {
-            const models = profileModels(p, groups, providers, gatewayView.poolModels);
-            return fold(p.id, -1, <><Icon name={p.type === 'gateway' ? 'gateway' : 'cloud'} size={13} /> {p.name} <span className="badge">{p.type}</span></>, models.length, (
+            const models = profileModels(p);
+            return fold(p.id, -1, <><Icon name="cloud" size={13} /> {p.name} <span className="badge">{p.type}</span></>, models.length, (
                 <div className="list">
                   {models.map((m) => row(`${p.id}:${m}`, m, p.defaultModel === m ? tr('默认') : undefined))}
-                  {!models.length && <div className="empty">{p.type === 'gateway' ? tr('网关组的成员还没有模型列表') : tr('点上面的「刷新全部模型」拉取模型列表')}</div>}
+                  {!models.length && <div className="empty">{tr('点上面的「刷新全部模型」拉取模型列表')}</div>}
                 </div>
             ));
           })}
         </>
       )}
-      <div className="sub" style={{ padding: '8px 4px 0' }}>{tr('关掉的模型不再出现在输入框的模型菜单里；星标的模型在菜单里置顶。「刷新全部模型」只请求各供应商的')} <code>/v1/models</code>{tr('，不跑对话、不花 token；启动后也会在后台刷新超过 24 小时的列表。每个模型能调的智能程度是内置的，Agent 自己报上来的模型列表优先。')}</div>
+      <div className="sub" style={{ padding: '8px 4px 0' }}>{tr('关掉的模型不再出现在输入框的模型菜单里；星标的模型在菜单里置顶。「刷新全部模型」只请求各供应商的')} <code>/v1/models</code>{tr('，不跑对话、不花 token；启动后也会在后台刷新超过 24 小时的列表。每个模型能调的智能程度是内置的。')}</div>
     </>
   );
 }

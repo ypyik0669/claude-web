@@ -141,9 +141,7 @@ function SessionHeader({ tile, paneId, infoShown }: { tile: ChatTileModel; paneI
   const cwd = active?.cwd || meta?.cwd || '';
   const live = !!active && active.state !== 'history' && active.state !== 'closed' && active.state !== 'error';
   const wsOf = workspaces.find((w) => cwd.toLowerCase().startsWith(w.path.toLowerCase()));
-  const agentKind = active?.info?.agent ?? meta?.agent;
-  const agentDef = useStore((s) => s.agents.find((a) => a.kind === agentKind));
-  const agentName = active?.info?.agentName ?? agentDef?.name ?? agentKind;
+  const agentKind = meta?.agent;
   const { git, worktree } = useRepoContext(cwd, sid);
   const branch = git?.branch ?? meta?.gitBranch;
   const stat = useMemo(() => (active ? sessionDiffStat(active.conv.items) : null), [active?.version]);
@@ -187,7 +185,7 @@ function SessionHeader({ tile, paneId, infoShown }: { tile: ChatTileModel; paneI
             </span>
           )}
           {worktree && <span className="tag" title={tr('这个对话在仓库的一个独立副本（git worktree）里运行，不是主检出')}>{tr('独立副本')}</span>}
-          {agentKind && agentKind !== 'claude' && <span className="tag" title={tr('这个对话由 {agentName} 运行', { agentName })}>{agentName}</span>}
+          {agentKind === 'claudeai' && <span className="tag" title={tr('从 claude.ai 数据导出导入的对话')}>claude.ai</span>}
           {!live && !gone && !caps.resume && <span className="tag" title={tr('这个来源没有官方的续聊接口，只能查看')}>{tr('只读')}</span>}
         </span>
         {viewDef && (
@@ -213,8 +211,8 @@ function SessionHeader({ tile, paneId, infoShown }: { tile: ChatTileModel; paneI
         })}
         {!mobile && <button className={clsx('icon-btn', dockShown && !dockMin && 'active')} title={dockMin ? tr('展开{dock} ({modKey}+J)', { dock: TERMS.dock, modKey }) : `${TERMS.dock} (${modKey}+J)`} aria-label={dockMin ? tr('展开{dock}', { dock: TERMS.dock }) : TERMS.dock} aria-pressed={dockShown && !dockMin} onClick={toggleDock}><Icon name="inspector" size={16} /></button>}
         <span className="sh-more">
-          <button className={clsx('icon-btn', menu && 'active')} title={tr('这个对话的更多操作：导出、步骤视图、改动 / Git / 文件…、重命名、分叉、归档、交给其它 Agent、删除')} aria-label={tr('更多操作')} aria-expanded={menu} aria-haspopup="menu" onClick={(e) => { e.stopPropagation(); setMenu(!menu); }}><Icon name="more" size={16} /></button>
-          {menu && <SessionMenu s={summary} deleted={gone} handoffInline onClose={() => setMenu(false)} style={{ right: 0, top: 34 }} extra={<HeaderMenu tile={tile} paneId={paneId} s={summary} live={live} remote={!!peer} gone={gone} onClose={() => setMenu(false)} />} />}
+          <button className={clsx('icon-btn', menu && 'active')} title={tr('这个对话的更多操作：导出、步骤视图、改动 / Git / 文件…、重命名、分叉、归档、删除')} aria-label={tr('更多操作')} aria-expanded={menu} aria-haspopup="menu" onClick={(e) => { e.stopPropagation(); setMenu(!menu); }}><Icon name="more" size={16} /></button>
+          {menu && <SessionMenu s={summary} deleted={gone} onClose={() => setMenu(false)} style={{ right: 0, top: 34 }} extra={<HeaderMenu tile={tile} paneId={paneId} s={summary} live={live} remote={!!peer} gone={gone} onClose={() => setMenu(false)} />} />}
         </span>
       </span>
     </div>
@@ -254,7 +252,7 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
   useEffect(() => {
     if (sid && !has && visible) void loadHistory(sid, { focus: false });
   }, [sid, has, visible]);
-  // written from outside (a CLI in a terminal, Codex) while it was not on screen: catch up when it is shown
+  // written from outside (a CLI in a terminal) while it was not on screen: catch up when it is shown
   const stale = useStore((s) => (sid ? !!s.open[sid]?.staleHistory : false));
   useEffect(() => {
     if (sid && stale && visible) void useStore.getState().refreshExternal(sid);

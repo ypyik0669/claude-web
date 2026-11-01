@@ -1,6 +1,5 @@
 // English texts of the desktop shell's strings (key = the Chinese source).
 export const EN_DESKTOP: Record<string, string> = {
-  "Chrome 没能启动，可以改用粘贴 cookie": "Chrome did not start; you can paste cookies instead",
   "{APP_NAME} · {pendingCount} 个待处理": "{APP_NAME} · {pendingCount} pending",
   "{dirty} 个文件未保存": "{dirty} {dirty?file:files} unsaved",
   "{pendingCount} 个待处理": "{pendingCount} pending",
@@ -64,7 +63,6 @@ export const EN_DESKTOP: Record<string, string> = {
   "新版本可能已经修好了这个问题。点「安装并重启」装上它。\n\n{failure}": "The new version may already fix this. Click \"Install and restart\" to install it.\n\n{failure}",
   "最小化到托盘": "Minimize to tray",
   "正在启动…": "Starting…",
-  "没找到 Chrome 或 Edge，可以改用粘贴 cookie": "Chrome or Edge was not found on this computer; you can paste cookies instead",
   "添加到字典": "Add to dictionary",
   "版本 {getVersion}": "Version {getVersion}",
   "用量": "Usage",

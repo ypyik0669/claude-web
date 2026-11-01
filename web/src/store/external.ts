@@ -1,5 +1,4 @@
-// A conversation written by something other than this app — the Claude CLI in a terminal, Codex's own CLI or desktop
-// app (user report: the open view froze at whatever was on disk when it was clicked, a CLI turn's closing report never
+// A conversation written by something other than this app — the Claude CLI in a terminal (user report: the open view froze at whatever was on disk when it was clicked, a CLI turn's closing report never
 // showed, later turns never came; only restarting the app caught up). The server names the conversations whose
 // record changed (`transcripts.changed`); these decide which open ones re-read and how often. Pure — the store wires it.
 import type { LayoutState } from '@/model/layout';

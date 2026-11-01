@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseAst } from 'vite';
 import { describe, expect, it } from 'vitest';
-import { CATALOG } from '@catalog';
 import { BODY_INFO, SETTINGS_SECTIONS, VISIBLE_SECTIONS, allBodies, type BodyId } from './catalog';
 
 /**
@@ -26,14 +25,12 @@ const BODY_SOURCE: Record<BodyId, { comp: string; file: string; props?: string }
   models: { comp: 'ModelsSection', file: S('ModelsSection.tsx') },
   providers: { comp: 'ProviderProfiles', file: CONFIG },
   proxy: { comp: 'ProxySection', file: S('ProxySection.tsx') },
-  gateway: { comp: 'GatewaySection', file: S('GatewaySection.tsx') },
   mcp: { comp: 'Mcp', file: CONFIG },
   mcpCatalog: { comp: 'McpCatalog', file: S('McpCatalog.tsx') },
   mcpJson: { comp: 'McpAddJson', file: CONFIG },
   plugins: { comp: 'Plugins', file: CONFIG },
   skills: { comp: 'SkillsSection', file: S('SkillsSection.tsx') },
   skillsBackup: { comp: 'SkillsBackup', file: S('SkillsSection.tsx') },
-  agents: { comp: 'AgentsSection', file: S('AgentsSection.tsx') },
   subagents: { comp: 'SimpleList', file: CONFIG, props: 'kind="config.agents"' },
   memory: { comp: 'MemorySettings', file: 'features/memory/MemorySettings.tsx' },
   remote: { comp: 'RemoteSection', file: S('RemoteSection.tsx') },
@@ -162,9 +159,7 @@ const LATIN_BANNED: [string, RegExp][] = [
   ['source path', /\b(server|web)\/src\b/],
 ];
 /** Deliberate exceptions: [file, the whole literal, why]. */
-const WHITELIST: [string, string, string][] = [
-  [S('AgentsSection.tsx'), 'ACP', 'PROTO_LABEL: only rendered inside the agent name\'s title tooltip'],
-];
+const WHITELIST: [string, string, string][] = [];
 
 function badWords(text: string): string[] {
   return [...CJK_BANNED.filter((w) => text.includes(w)), ...LATIN_BANNED.filter(([, re]) => re.test(text)).map(([w]) => w)];
@@ -194,7 +189,7 @@ function onlyDeclarations(file: string, src: string, names: string[]): string {
 /** Helpers the settings pages use from files that also hold other things. */
 const CONFIG_HELPERS = ['Cmd', 'CacheOptions', 'PROVIDER_TYPES'];
 /** Modules the visible pages call that put text on screen themselves (toasts, dialogs, sub-panels). */
-const PAGE_HELPERS = ['features/models/data.ts', S('AgentConfigPanel.tsx'), S('agent-config-form.ts')];
+const PAGE_HELPERS = ['features/models/data.ts'];
 
 describe('non-advanced settings pages speak the interface vocabulary (ui/terms.ts)', () => {
   const advanced = new Set(SETTINGS_SECTIONS.filter((s) => s.advanced).flatMap((s) => [...(s.bodies ?? []), ...(s.more ?? [])]));
@@ -221,11 +216,11 @@ describe('non-advanced settings pages speak the interface vocabulary (ui/terms.t
       else scan(file, read(file)); // files that hold one page's parts: whole (their helpers draw the same page)
     }
     for (const file of [S('SettingsModal.tsx'), S('controls.tsx'), ...PAGE_HELPERS]) scan(file, read(file));
-    expect(scanned.length).toBeGreaterThanOrEqual(18);
+    expect(scanned.length).toBeGreaterThanOrEqual(16);
     expect(bad).toEqual([]);
   });
 
-  it('the settings map and the model catalog notes shown on the 模型与智能程度 page use none of them either', () => {
+  it('the settings map shown on the settings pages uses none of them either', () => {
     const bad: string[] = [];
     const check = (where: string, text: string | undefined) => { if (text) for (const w of badWords(text)) bad.push(`${where}: ${w}`); };
     for (const s of VISIBLE_SECTIONS) {
@@ -235,9 +230,6 @@ describe('non-advanced settings pages speak the interface vocabulary (ui/terms.t
       for (const e of s.entries ?? []) { check(e.id, e.label); check(`${e.id}.hint`, e.hint); check(`${e.id}.block`, e.block); check(`${e.id}.tag`, e.tag); }
     }
     for (const b of visibleBodies) check(`BODY_INFO.${b}`, BODY_INFO[b].l);
-    // ModelsSection shows each agent's `note` under its 智能程度 row (按供应商 view)
-    for (const [agent, c] of Object.entries(CATALOG)) check(`CATALOG.${agent}.note`, c?.note);
-    expect(Object.values(CATALOG).some((c) => c?.note)).toBe(true);
     expect(bad).toEqual([]);
   });
 
@@ -358,7 +350,6 @@ describe('the whole interface: 对话 not 会话, no implementation words by def
   const NOT_DEFAULT = [S('DiagnosticsSection.tsx'), S('UpdateSection.tsx'), S('ToolsSection.tsx'), S('EnvEditor.tsx'), 'features/composer/ids.ts'];
   /** Deliberate exceptions: [file, a piece of the literal, why]. */
   const ALLOWED: [string, string, string][] = [
-    [S('AgentsSection.tsx'), 'ACP', 'PROTO_LABEL: only rendered inside the agent name\'s title tooltip'],
     ['ui/terms.ts', '（effort', 'effortTitle(): the raw value, in the effort control\'s tooltip'],
     ['ui/terms.ts', '（ultracode）', 'ULTRACODE.title: the 深度编排 switch\'s tooltip'],
   ];

@@ -1,17 +1,15 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { toWslPath, type AgentKind, type SessionMeta, type SessionSummary } from '@shared';
 import { wslCliCommand } from '@/features/composer/machine';
 import { forkCarry, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { dlg } from '@/ui/dialog';
-import { Icon, AGENT_ICONS } from '@/ui/icons';
+import { Icon } from '@/ui/icons';
 import { isImportedSessionId } from '@/util';
-import { handOverConfirmText, turnRunning } from './handover-text';
-import { agentOf, isArchived } from './filter';
+import { isArchived } from './filter';
 import { deleteSummary, deleteTargets, effectiveCaps, nativeCliCommand } from './caps';
 import { MenuHost, closeDrawer, useAnchoredMenu } from './menus';
 import type { RowMenuId } from './entries';
-import { TERMS } from '@/ui/terms';
 import { tr } from '@/i18n';
 import { SECTIONS_KEY, pruneSections, type CustomSection } from './view';
 import { canHandOffToPeer } from '@/features/cloud/logic';
@@ -21,7 +19,7 @@ export { effectiveCaps, capsIntersection, nativeCliCommand, type EffectiveCaps }
 
 function sourceName(kind: AgentKind): string {
   const st = useStore.getState();
-  return st.librarySources.find((x) => x.kind === kind)?.name ?? st.agents.find((a) => a.kind === kind)?.name ?? (kind === 'claude' ? 'Claude Code' : kind);
+  return st.librarySources.find((x) => x.kind === kind)?.name ?? (kind === 'claude' ? 'Claude Code' : kind);
 }
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -51,7 +49,7 @@ export async function deleteSessions(list: SessionSummary[]): Promise<boolean> {
   const st = useStore.getState();
   if (!list.length) return false;
   const first = list.length === 1 ? tr('删除对话「{title}」？', { title: list[0].title }) : tr('删除选中的 {listCount} 个对话？', { listCount: list.length });
-  if (!(await dlg.confirm(first, { message: tr('{deleteSummary}。对话记录会从它所属的 agent 里移除；只是不想看到的话，用「归档」。', { deleteSummary: deleteSummary(list, (k) => sourceName(k as AgentKind)) }), danger: true, okLabel: tr('继续') }))) return false;
+  if (!(await dlg.confirm(first, { message: tr('{deleteSummary}。对话记录会从它的来源里移除；只是不想看到的话，用「归档」。', { deleteSummary: deleteSummary(list, (k) => sourceName(k as AgentKind)) }), danger: true, okLabel: tr('继续') }))) return false;
   const where = deleteTargets(list, (k) => sourceName(k as AgentKind));
   if (!(await dlg.confirm(tr('再确认一次：删除后不能在这里恢复'), { message: tr('将先备份到 ~/.claude-web/library-trash，再{where}', { where }), danger: true, okLabel: tr('删除') }))) return false;
   try {
@@ -80,44 +78,21 @@ export async function forkSession(s: SessionSummary): Promise<void> {
 }
 
 /**
- * Hand a session to another agent (··· and the model menu, which passes the model picked in that agent's section
- * and its name as the menu shows it). false = cancelled or failed.
+ * 「在本机继续」: a session on another machine is read through that machine and goes on HERE as a new Claude
+ * conversation with a briefing. Its paths are the other machine's, so the user picks the local directory (default:
+ * the first workspace).
  */
-export async function handOver(s: SessionSummary, agent: AgentKind, model?: string, modelLabel?: string): Promise<boolean> {
+export async function handOverToLocal(s: SessionSummary): Promise<void> {
   const st = useStore.getState();
-  const name = agent === 'claude' ? 'Claude Code' : st.agents.find((a) => a.kind === agent)?.name ?? agent;
-  const running = turnRunning(st.open[s.sessionId]?.state, s.live);
-  const text = handOverConfirmText({ sessionId: s.sessionId, agentName: name, modelLabel: model ? modelLabel || model : undefined, running });
-  const ok = await dlg.confirm(text.title, { message: text.message, okLabel: tr('交接') });
-  if (!ok) return false;
-  try {
-    const r = await ws.request<{ sessionId: string }>({ kind: 'session.switchAgent', sessionId: s.sessionId, agent, model });
-    st.toast(tr('已交接给 {name}', { name }), true);
-    await st.refreshSessions().catch(() => {});
-    // an imported session is never swapped in place: the hand-over is a new session — open that one
-    if (r?.sessionId && r.sessionId !== s.sessionId) await st.loadHistory(r.sessionId, { mode: 'tab' });
-    else await st.loadHistory(s.sessionId);
-    return true;
-  } catch (e) { st.toast(errText(e)); return false; }
-}
-
-/**
- * 「交给本机 agent 继续」: a session on another machine is read through that machine and handed to an agent
- * HERE as a new session with a briefing. Its paths are the other machine's, so the user picks the local
- * directory (default: the first workspace).
- */
-export async function handOverToLocal(s: SessionSummary, agent: AgentKind): Promise<void> {
-  const st = useStore.getState();
-  const name = st.agents.find((a) => a.kind === agent)?.name ?? agent;
   const def = st.workspaces[0]?.path ?? '';
-  const cwd = (await dlg.prompt(tr('交给本机的 {name}：在哪个目录继续？', { name }), def, {
+  const cwd = (await dlg.prompt(tr('在本机继续：在哪个目录？'), def, {
     message: tr('这个对话在机器「{name}」上（目录 {cwd}），那里的路径在本机多半不存在。会新建一个本机对话，带上一份交接说明；原对话保持不变。', { name: s.peer?.name ?? '?', cwd: s.cwd }),
-    okLabel: tr('交接'),
+    okLabel: tr('继续'),
   }))?.trim();
   if (!cwd) return;
   try {
-    const r = await ws.request<{ sessionId: string }>({ kind: 'peers.handover', sessionId: s.sessionId, agent, cwd });
-    st.toast(tr('已交给本机的 {name}', { name }), true);
+    const r = await ws.request<{ sessionId: string }>({ kind: 'peers.handover', sessionId: s.sessionId, cwd });
+    st.toast(tr('已在本机新开对话'), true);
     await st.refreshSessions().catch(() => {});
     if (r?.sessionId) await st.loadHistory(r.sessionId, { mode: 'tab' });
   } catch (e) { st.toast(errText(e)); }
@@ -155,31 +130,21 @@ export function referenceSession(s: SessionSummary): void {
 /**
  * The session menu: the sidebar row's "…" / right-click, and the session header's "…".
  * `extra` lets the sidebar keep its own entries (open in tab / split, pin, explorer…).
- * `handoffInline` lists the agents right in the menu instead of behind a sub-menu (the header's ···).
  * `deleted`: the session is gone from its source — only `extra` (what works on the screen) and the id remain.
  */
-export function SessionMenu({ s, onClose, style, extra, handoffInline, deleted }: { s: SessionSummary; onClose: () => void; style?: React.CSSProperties; extra?: React.ReactNode; handoffInline?: boolean; deleted?: boolean }) {
+export function SessionMenu({ s, onClose, style, extra, deleted }: { s: SessionSummary; onClose: () => void; style?: React.CSSProperties; extra?: React.ReactNode; deleted?: boolean }) {
   const meta = useStore((st) => st.sessionMeta[s.sessionId]) as SessionMeta | undefined;
-  const agents = useStore((st) => st.agents);
-  const [handoff, setHandoff] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   // fixed to the viewport next to its anchor: a scrolling sidebar list or a pane edge never clips it, and a long
   // menu near the bottom of the window opens upwards instead
-  useAnchoredMenu(ref, onClose, { deps: [handoff] });
+  useAnchoredMenu(ref, onClose);
   const caps = effectiveCaps(s);
   const archived = isArchived(s, meta ? { [s.sessionId]: meta } : {});
   const cli = nativeCliCommand(s);
   // an action from the phone drawer (the sidebar's row menu) gets the drawer out of the way; elsewhere closeDrawer is a no-op
   const act = (fn: () => unknown) => () => { onClose(); closeDrawer(); void fn(); };
-  const cur = agentOf(s);
-  // a session on another machine can go to ANY local agent (the same kind included: it moves machines);
-  // an offline machine can't be read, so there is nothing to hand over
-  const remote = !!s.peer;
-  const targets = remote && s.peer?.offline ? [] : agents.filter((a) => a.installed !== false && a.enabled !== false && (remote || a.kind !== cur));
-  const handoffLabel = remote ? tr('交给本机的 Agent 继续') : TERMS.handoff;
-  const agentButtons = targets.map((a) => (
-    <button key={a.kind} data-agent={a.kind} onClick={act(() => (remote ? handOverToLocal(s, a.kind) : handOver(s, a.kind)))}><Icon name={AGENT_ICONS[a.kind] ?? 'agent'} size={13} /> {a.name}</button>
-  ));
+  // a session on another machine goes on here as a new conversation; an offline machine can't be read
+  const canTakeOver = !!s.peer && !s.peer.offline;
   const id = (x: RowMenuId) => x;
   return (
     // (a phone: MenuHost draws this same element in an action sheet instead — UI refresh §8)
@@ -191,23 +156,7 @@ export function SessionMenu({ s, onClose, style, extra, handoffInline, deleted }
       {caps.rename && <button data-id={id('rename')} onClick={act(() => renameSession(s))}><Icon name="edit" size={14} /> {tr('重命名')}</button>}
       {caps.fork && <button data-id={id('fork')} onClick={act(() => forkSession(s))}><Icon name="branch" size={14} /> {tr('分叉')}</button>}
       {caps.archive && <button data-id={id('archive')} onClick={act(() => setArchived([s], !archived))}><Icon name="archive" size={14} /> {archived ? tr('取消归档') : tr('归档')}</button>}
-      {handoffInline ? (
-        <>
-          <div className="menu-label" data-id={id('handoff')}>{handoffLabel}</div>
-          {agentButtons}
-          {!targets.length && <div className="menu-note">{tr('没有其它可用的 agent')}</div>}
-        </>
-      ) : (
-        <>
-          <button data-id={id('handoff')} onClick={() => setHandoff(!handoff)} aria-expanded={handoff}><Icon name="agent" size={14} /> <span style={{ flex: 1 }}>{handoffLabel}</span><Icon name={handoff ? 'chevronDown' : 'chevronRight'} size={12} /></button>
-          {handoff && (
-            <div className="sub-menu">
-              {agentButtons}
-              {!targets.length && <div className="menu-note">{tr('没有其它可用的 agent')}</div>}
-            </div>
-          )}
-        </>
-      )}
+      {canTakeOver && <button data-id={id('handoff')} onClick={act(() => handOverToLocal(s))}><Icon name="monitor" size={14} /> {tr('在本机继续…')}</button>}
       {canHandOffToPeer(s, meta) && <button data-id={id('handoff-peer')} onClick={act(() => openHandoffDialog(s))}><Icon name="monitor" size={14} /> {tr('交给常开机器继续…')}</button>}
       {cli && <button data-id={id('native-cli')} onClick={act(() => openNativeCli(s))} title={cli}><Icon name="terminal" size={14} /> {tr('在原生 CLI 打开')}</button>}
       </>}

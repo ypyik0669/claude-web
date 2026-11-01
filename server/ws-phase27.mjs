@@ -1,7 +1,7 @@
-// Phase 27 end-to-end (2026-10-14): permissions and model switches, over a real server and the real engines (ours,
-// then the official binary) against a fake Anthropic upstream started here (no model, no token). Checks, per engine:
-//   · 允许 without updatedInput (what the window's 「允许一次」 sends) lets the tool run — claude-web-engine required it
-//     and turned every such answer into "Tool permission request failed" (user report: every tool that asks failed);
+// Phase 27 end-to-end (2026-10-14): permissions and model switches, over a real server and the real Claude Code against
+// a fake Anthropic upstream started here (no model, no token). Checks:
+//   · 允许 without updatedInput (what the window's 「允许一次」 sends) lets the tool run (user report: every tool that
+//     asks failed with "Tool permission request failed");
 //   · the context window of the provider's settings: a Claude model starts with 1M; after switching to a model set to
 //     120K the engine says 120K (the official binary only through another process: its earlier-compaction variable);
 //   · switching to a model the conversation no longer fits in (110K used, 120K window: over 80%): a line says so, the current
@@ -127,18 +127,17 @@ const windowOf = async (sid) => (await until(async () => { const u = await req({
 async function main() {
   await new Promise((res, rej) => { ws.once('open', res); ws.once('error', rej); });
   await req({ kind: 'settings.set', key: 'network.proxy', value: 'off' });
-  for (const runtime of (process.env.PHASE27_RUNTIMES ?? 'ccb,claude').split(',')) await suite(runtime);
+  await suite('claude');
 }
 
 async function suite(runtime) {
-  const tag = runtime === 'ccb' ? '[engine]' : '[official]';
-  const check = (name, ok, detail) => checkRaw(`${tag} ${name}`, ok, detail);
+  const check = (name, ok, detail) => checkRaw(name, ok, detail);
   hits.length = 0;
   bigUsage = 0;
   const proj = path.join(root, `proj-${runtime}`);
   fs.mkdirSync(proj, { recursive: true });
   writeTarget = path.join(proj, 'allowed.txt');
-  const A = await req({ kind: 'providers.upsert', provider: { name: `中转${runtime}`, type: 'anthropic', baseUrl: up, apiKey: 'relay-key-e2e', defaultModel: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6', 'small-model'], contextWindows: { 'small-model': 120_000 }, ...(runtime === 'claude' ? { runtime: 'claude' } : {}) } });
+  const A = await req({ kind: 'providers.upsert', provider: { name: `中转${runtime}`, type: 'anthropic', baseUrl: up, apiKey: 'relay-key-e2e', defaultModel: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6', 'small-model'], contextWindows: { 'small-model': 120_000 } } });
   const o = await req({ kind: 'session.open', params: { cwd: proj, providerId: A.id, model: 'claude-sonnet-4-6', permissionMode: 'default' } });
   const sid = o.sessionId;
 
@@ -155,12 +154,8 @@ async function suite(runtime) {
   // ---- the window of the provider's settings ----
   const w1 = await windowOf(sid);
   check('a Claude model on a relay starts with 1M (not the 200K the engines assume)', w1 === 1_000_000, String(w1));
-  if (runtime === 'claude') {
-    const init = msgsOf(sid, 0).find((m) => m.type === 'system' && m.subtype === 'init');
-    check('… on the official binary through `[1m]` (and the 1M beta goes out)', /\[1m\]$/.test(init?.model ?? '') && hits.some((h) => h.role === 'main' && /context-1m/.test(h.beta)), JSON.stringify({ model: init?.model, beta: hits.find((h) => h.role === 'main')?.beta }));
-  } else {
-    check('… on our engine with the 1M beta on the wire', hits.some((h) => h.role === 'main' && /context-1m/.test(h.beta)), hits.find((h) => h.role === 'main')?.beta);
-  }
+  const init = msgsOf(sid, 0).find((m) => m.type === 'system' && m.subtype === 'init');
+  check('… through `[1m]` (and the 1M beta goes out)', /\[1m\]$/.test(init?.model ?? '') && hits.some((h) => h.role === 'main' && /context-1m/.test(h.beta)), JSON.stringify({ model: init?.model, beta: hits.find((h) => h.role === 'main')?.beta }));
 
   // ---- a conversation too big for the next model ----
   bigUsage = 110_000;
@@ -183,7 +178,7 @@ async function suite(runtime) {
   const next = hits.slice(mark).find((h) => h.role === 'main');
   check('… then the next turn goes out with the new model', next?.model === 'small-model', next?.model);
   const w2 = await windowOf(sid);
-  check(runtime === 'claude' ? '… and the window is its 120K (another process: the official binary reads it at start)' : '… and the window is its 120K', w2 === 120_000, String(w2));
+  check('… and the window is its 120K (another process: the official binary reads it at start)', w2 === 120_000, String(w2));
   await req({ kind: 'session.close', sessionId: sid }).catch(() => {});
 }
 

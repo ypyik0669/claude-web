@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * 联网 as a stdio MCP server (`web`): web search and the built-in browser, for whichever agent starts it — Claude via
- * the SDK's mcpServers, Codex via `-c mcp_servers.web.*`, ACP agents via session/new (web/launcher.ts builds all three).
+ * 联网 as a stdio MCP server (`web`): web search and the built-in browser, handed to Claude through the SDK's
+ * mcpServers (web/launcher.ts).
  *
  * It does nothing itself: every tool call is `POST <CW_WEB_URL>/api/web/tool` to the claude-web server that started
  * the conversation (loopback, bearer = that server's per-start secret), and the answer is already MCP content. Bare
@@ -273,9 +273,8 @@ export const TOOLS = [
 /**
  * ego lite (web/ego.ts): listed only when the launcher found it and the user did not pick the built-in browser
  * (CW_WEB_BROWSER=ego). Then it is the browser for web tasks and the browser_* tools say so. `anthropic/alwaysLoad`
- * (mcp/always-load.ts) keeps them in the model's tool list on our engine, which otherwise defers MCP tools behind
- * ExecuteExtraTool — and that runner hands a result back as one JSON string, so a screenshot would reach the model as
- * base64 text. (The guide has it too: it is read once right before the first ego_browser call.)
+ * (mcp/always-load.ts) keeps them in the model's own tool list rather than behind deferred tool search. (The guide
+ * has it too: it is read once right before the first ego_browser call.)
  */
 export const EGO_TOOLS = [
   {

@@ -8,6 +8,7 @@
 - 请求：`import.scan`（只给名字、地址 / 命令行、有没有 key、模型数、是否已有——**key 不上 wire**）、`import.run { keys }`（服务端重新扫一遍，按 key 导入；导入的供应商随后拉一次模型列表再回答）。都在 `GOES_OUT`。
   「已有哪些 MCP」只读 `~/.claude.json` 的 `mcpServers` 名字（`ConfigService.mcpUserNames`）——别用 `config.mcp()`：它跑 `claude mcp list`，会把每个服务器都起一遍检查，负载高时超过 15 s，对话框一直空着（ui-smoke 抓到的）。
 - 导到哪：供应商 → `ProviderService.upsert`（key 照常加密存）；MCP → `ConfigService.mcpAdd(name, json, 'user')`，也就是 `claude mcp add-json -s user`（所有项目可用，新对话起生效）。同名的 MCP、同类型 + 同地址（`sameBase`：大小写、结尾 `/`、结尾 `/v1` 不算不同）+ 同 key 的供应商算「已有」，跳过，不覆盖。
+- **只出 Anthropic 格式的供应商**（2026-11-01「只留 Claude」）：下面的读取器仍认得各工具里 OpenAI / Gemini / Grok 格式的配置（`FoundProvider.type`），但 `scanAll` 只交出 MCP 和 `type: 'anthropic'` 的供应商（`Usable`），别的格式不进对话框。CLIProxyAPI / Magpie 两个来源随模型网关一起删了。
 
 ## 来源（`server/src/import/scan.ts` 的 `SOURCES`，全部只读）
 
@@ -21,7 +22,7 @@
 | Cursor / Windsurf / Kiro / Claude Desktop / Gemini CLI / Qwen Code | 各自的 `mcpServers` 文件 |
 | VS Code / Cline / Roo Code | `Code/User/mcp.json` 的 `servers`、settings 的 `mcp.servers`；Cline / Roo 在 globalStorage 下的 MCP 设置 |
 | Zed / Goose | `context_servers`（`command: { path, args }`）/ `extensions`（stdio / sse） |
-| Ollama | 在跑就读 `/api/tags`（800ms 超时），作为 OpenAI 兼容供应商 |
+| Ollama | 在跑就读 `/api/tags`（800ms 超时）；是 OpenAI 兼容格式，现在会被 `scanAll` 滤掉（读取器还在） |
 | Mirasim / Cherry Studio | **读不了**：Mirasim 把设置加密（`secret-key.enc`）存在 IndexedDB，Cherry Studio 存在浏览器数据库。只报「在，但读不出来」，对话框里请用户从它的设置里复制地址和 key 用「快速添加」。没有逆向它们。 |
 
 只写了地址的（Cursor、Claude Desktop）路径以 `/sse` 结尾就按 SSE 导入，写了 `type` / `transport` 的照写的。MCP 的各种写法统一成 `{command,args,env}` 或 `{type:'http'|'sse',url,headers}`（`mcpOf`），`disabled:true` / `enabled:false` 的不要。
