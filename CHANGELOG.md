@@ -4,6 +4,12 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.1] — 2026-11-02
+
+### Fixed
+
+- **A duty bot can't reach its own policy through a mapped drive whose path has a short (8.3) folder name.** Folding a mapped drive back to the local path now resolves the short name too.
+
 ## [0.5.0] — 2026-11-02
 
 ### Added
