@@ -109,8 +109,11 @@ export function selfGuard(botsRoot: string, botId: string, cwd: string, toolName
     if (local === null) return 'ask';
     // a mapped drive (net use V: \\localhost\c$) realpaths to its network form: fold that back too
     const resolved = real(path.resolve(cwd, local));
-    const target = win ? localOfUnc(resolved) : resolved;
-    if (target === null) return 'ask';
+    const folded = win ? localOfUnc(resolved) : resolved;
+    if (folded === null) return 'ask';
+    // folded back from a network form: realpath the drive path too (an 8.3 name in it — C:\Users\RUNNER~1 — is
+    // another spelling of the bots dir; found on the CI runner, where the temp dir has one)
+    const target = folded !== resolved ? real(folded) : folded;
     const root = real(botsRoot);
     if (!inside(target, root)) return configFile(target, cwd) ? 'ask' : undefined;
     return inside(target, path.join(root, botId, 'state')) ? undefined : 'deny';

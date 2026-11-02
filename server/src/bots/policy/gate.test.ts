@@ -276,6 +276,24 @@ describe('makeGate', () => {
     expect(await g.gate(ev('Bash', { command: 'git status && npm run build' }))).toMatchObject({ behavior: 'allow' });
   });
 
+  // the CI runner's temp dir is C:\Users\RUNNER~1\…: a mapped drive's network form spelled with an 8.3 name must
+  // still be the bots dir after it is folded back to a drive path
+  it.runIf(process.platform === 'win32')('a mapped drive whose network form spells the bots dir with an 8.3 name is still denied', async () => {
+    const long = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-longdirectoryname-'));
+    try {
+      const short = (await import('node:child_process')).execFileSync('powershell.exe', ['-NoProfile', '-Command', `(New-Object -ComObject Scripting.FileSystemObject).GetFolder('${long}').ShortPath`], { encoding: 'utf8', windowsHide: true }).trim();
+      if (!short || short.toLowerCase() === long.toLowerCase()) return; // 8.3 names are off on this volume
+      const s2 = new BotStore(path.join(long, 'bots'));
+      const g = makeGate({ bot: bot({ rules: [] }), runId: 'run1', routineId: 'r1', store: s2, audit: new AuditLog(s2), inbox: new Inbox(s2) });
+      const shortJson = path.join(short, 'bots', 'b1', 'bot.json');
+      const orig = fs.realpathSync.native;
+      const spy = vi.spyOn(fs.realpathSync, 'native').mockImplementation(((p: string) => (/^v:/i.test(String(p)) ? `\\\\localhost\\${shortJson[0].toLowerCase()}$${shortJson.slice(2)}` : orig(p))) as any);
+      try {
+        expect(await g.gate(ev('Write', { file_path: 'V:\\bot.json', content: '{}' }))).toMatchObject({ behavior: 'deny' });
+      } finally { spy.mockRestore(); }
+    } finally { fs.rmSync(long, { recursive: true, force: true }); }
+  });
+
   it('a shell command reaching the bots dir by $HOME, %USERPROFILE%, $env:USERPROFILE or ../ goes to the user first', async () => {
     const data = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-home-'));
     const botsRoot = path.join(data, '.claude-web', 'bots');

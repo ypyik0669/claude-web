@@ -475,7 +475,10 @@ describe('BotScheduler', { timeout: 30_000 }, () => {
     });
 
     it('on this host a live process keeps its lease while it may be busy; a lease of another host is free once stale', async () => {
-      fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.ppid, host: os.hostname(), at: Date.now() - 5 * LEASE_STALE_MS, instance: 'busy' }));
+      // stale but written after this boot (a CI machine may have booted less than 5 × LEASE_STALE_MS ago: a lease from
+      // before the boot is free — the next test)
+      const boot = Date.now() - os.uptime() * 1000;
+      fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.ppid, host: os.hostname(), at: Math.max(Date.now() - 5 * LEASE_STALE_MS, boot + 1000), instance: 'busy' }));
       const s = sched(deps());
       expect(await s.claim()).toBe(false);
       fs.writeFileSync(lockFile(), JSON.stringify({ pid: process.ppid, host: 'other-host', at: Date.now() - LEASE_STALE_MS / 2, instance: 'far' }));
