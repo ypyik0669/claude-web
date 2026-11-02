@@ -56,6 +56,8 @@ export function desktopCodexBin(env: NodeJS.ProcessEnv = process.env, platform =
 }
 /** How long a thread that could not be read stays out of the list (a thread that was about to get its first message comes back). */
 export const GONE_HIDE_MS = 10 * 60_000;
+/** a list page from the desktop app's CLI: its cursor goes back to it */
+const NEWER_CURSOR = 'desktop:';
 export const THREAD_GONE = 'THREAD_GONE';
 /** A rollout whose last turn started this long ago without an end is a Codex that died mid-turn, not one still going. */
 export const ROLLOUT_STALE_MS = 30 * 60_000;
@@ -196,6 +198,21 @@ export class CodexSource implements SessionSource {
   }
 
   async list(o: { cursor?: string; limit: number; archived?: boolean }): Promise<{ items: SessionSummary[]; next?: string }> {
+    // the desktop app's own CLI first: it is as new as the app that wrote the threads. An older `codex` on PATH leaves
+    // out what a newer one stored (user report 2026-11-02: after Codex desktop 0.166 its new conversations stopped
+    // showing up). Its cursors are its own, so a page goes on with the CLI that gave it.
+    const newer = this.newerRpc();
+    if (newer && (!o.cursor || o.cursor.startsWith(NEWER_CURSOR))) {
+      try {
+        const r = await newer.request<any>('thread/list', { ...LIST_PARAMS, limit: o.limit, cursor: o.cursor?.slice(NEWER_CURSOR.length), archived: o.archived ?? false }, 30_000);
+        const now = Date.now();
+        const items = (r?.data ?? []).filter((t: any) => !(typeof t.path === 'string' && t.path && !existsSync(t.path)) && !((this.gone.get(t.id) ?? 0) > now - GONE_HIDE_MS)).map(mapThread);
+        return { items, next: r?.nextCursor ? NEWER_CURSOR + r.nextCursor : undefined };
+      } catch (e) {
+        if (o.cursor) throw e;
+        console.warn('[codex] the desktop app\'s CLI could not list, the configured one does:', (e as Error)?.message ?? e);
+      }
+    }
     try {
       const r = await this.rpc.request<any>('thread/list', { ...LIST_PARAMS, limit: o.limit, cursor: o.cursor, archived: o.archived ?? false }, 30_000);
       // ThreadListResponse / ThreadTurnsListResponse (generate-ts) are `{ data, nextCursor, backwardsCursor }`.
@@ -212,6 +229,11 @@ export class CodexSource implements SessionSource {
   }
 
   async read(nativeId: string, o: { cursor?: string; limit: number }): Promise<{ messages: any[]; next?: string }> {
+    // the desktop app's Codex first, as for the list: what it lists, an older `codex` may not find at all
+    const first = this.newerRpc();
+    if (first) {
+      try { return await this.readVia(first, nativeId, o, true); } catch { /* the configured one, below */ }
+    }
     try {
       return await this.readVia(this.rpc, nativeId, o);
     } catch (e: any) {

@@ -11,6 +11,9 @@ import { JsonRpcProcess } from '../agents/jsonrpc.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const mock = path.join(here, '..', 'agents', '__mocks__', 'codex-server.mjs');
 
+/** no desktop app's Codex: these tests talk only to the mock (the real one may be installed on this machine) */
+const none = () => undefined;
+
 function launch() {
   return { command: process.execPath, args: [mock], env: {} };
 }
@@ -72,7 +75,7 @@ describe('a thread stored by a newer Codex than the configured one (「paginated
 
 describe('CodexSource (mock app-server)', () => {
   it('lists threads newest-first, paginates, and maps a subAgent thread parentId', async () => {
-    const src = new CodexSource(launch);
+    const src = new CodexSource(launch, none);
     try {
       const page1 = await src.list({ limit: 2 });
       expect(page1.items).toHaveLength(2);
@@ -100,7 +103,7 @@ describe('CodexSource (mock app-server)', () => {
   });
 
   it('reads a long thread in pages of turns, most-recent page first, older pages via next', async () => {
-    const src = new CodexSource(launch);
+    const src = new CodexSource(launch, none);
     try {
       const page1 = await src.read('thr-b', { limit: 20 });
       expect(page1.messages.length).toBeGreaterThan(0);
@@ -121,7 +124,7 @@ describe('CodexSource (mock app-server)', () => {
   });
 
   it('renames, archives/unarchives, and forks a thread via the official thread/* API', async () => {
-    const src = new CodexSource(launch);
+    const src = new CodexSource(launch, none);
     try {
       await src.rename!('thr-a', 'renamed title');
       const afterRename = await src.list({ limit: 10 });
@@ -147,7 +150,7 @@ describe('CodexSource (mock app-server)', () => {
   });
 
   it('not installed: status disabled, list() / read() empty (nothing to list, not a failure)', async () => {
-    const src = new CodexSource(() => ({ command: 'definitely-not-a-real-codex-binary-xyz', args: [], env: {} }));
+    const src = new CodexSource(() => ({ command: 'definitely-not-a-real-codex-binary-xyz', args: [], env: {} }), none);
     try {
       const status = await src.status();
       expect(status.enabled).toBe(false);
@@ -160,7 +163,7 @@ describe('CodexSource (mock app-server)', () => {
   });
 
   it('installed but thread/list errors: list() and read() reject so the library keeps its last good list', async () => {
-    const src = new CodexSource(() => ({ ...launch(), env: { CW_FAIL_LIST: '1' } }));
+    const src = new CodexSource(() => ({ ...launch(), env: { CW_FAIL_LIST: '1' } }), none);
     try {
       await expect(src.list({ limit: 10 })).rejects.toThrow(/mock thread\/list failure/);
       await expect(src.read('t', { limit: 10 })).rejects.toThrow(/failure/);
@@ -170,7 +173,7 @@ describe('CodexSource (mock app-server)', () => {
   });
 
   it('a thread Codex has no history for ("thread not loaded"): a clear error, not the raw one; a deleted file is not listed', async () => {
-    const src = new CodexSource(() => ({ ...launch(), env: { MOCK_CODEX_DELETED: '1' } }));
+    const src = new CodexSource(() => ({ ...launch(), env: { MOCK_CODEX_DELETED: '1' } }), none);
     try {
       // listed by Codex's index, but its file is gone (user report: deleted conversations were listed)
       const all = (await src.list({ limit: 50 })).items.map((x) => x.sessionId);
@@ -188,7 +191,7 @@ describe('CodexSource (mock app-server)', () => {
   });
 
   it('an app-server without the paged read (codex 0.130: "requires experimentalApi"): the whole thread from thread/read', async () => {
-    const src = new CodexSource(() => ({ ...launch(), env: { MOCK_CODEX_OLD: '1' } }));
+    const src = new CodexSource(() => ({ ...launch(), env: { MOCK_CODEX_OLD: '1' } }), none);
     try {
       const r = await src.read('thr-b', { limit: 20 });
       expect(r.next).toBeUndefined();
@@ -202,7 +205,7 @@ describe('CodexSource (mock app-server)', () => {
   });
 
   it('installed but the process crashes: list() rejects', async () => {
-    const src = new CodexSource(() => ({ command: process.execPath, args: ['-e', 'process.exit(3)'], env: {} }));
+    const src = new CodexSource(() => ({ command: process.execPath, args: ['-e', 'process.exit(3)'], env: {} }), none);
     try {
       await expect(src.list({ limit: 10 })).rejects.toThrow();
     } finally {
@@ -242,5 +245,31 @@ describe('rolloutTurnOpen', () => {
     expect(rolloutTurnOpen([ev('task_started'), ev('task_complete')].join(' '))).toBe(false);
     expect(rolloutTurnOpen([ev('task_started'), ev('turn_aborted')].join(' '))).toBe(false);
     expect(rolloutTurnOpen(ev('token_count'))).toBe(false);
+  });
+});
+
+describe("the list comes from the desktop app's Codex when it is there (an older `codex` on PATH misses what a newer one stored)", () => {
+  // the configured one lists nothing (an old CLI that can't read the new storage), the desktop app's lists the threads
+  const old = () => ({ ...launch(), env: { CW_FAIL_LIST: '1' } });
+  it("lists with the desktop app's Codex, and its next page goes back to it", async () => {
+    const src = new CodexSource(old, launch);
+    try {
+      const first = await src.list({ limit: 1 });
+      expect(first.items.length).toBe(1);
+      expect(first.next?.startsWith('desktop:')).toBe(true);
+      const second = await src.list({ limit: 1, cursor: first.next });
+      expect(second.items.length).toBe(1);
+      expect(second.items[0].sessionId).not.toBe(first.items[0].sessionId);
+    } finally {
+      await src.close();
+    }
+  });
+  it("the desktop app's Codex failing: the configured one lists", async () => {
+    const src = new CodexSource(launch, () => ({ command: 'definitely-not-a-real-codex-binary-xyz', args: [], env: {} }));
+    try {
+      expect((await src.list({ limit: 5 })).items.length).toBeGreaterThan(0);
+    } finally {
+      await src.close();
+    }
   });
 });
