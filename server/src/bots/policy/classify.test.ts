@@ -134,7 +134,7 @@ describe('classify: the gate cannot be talked past', () => {
 
   it('harness / meta tools are reads; ExecuteExtraTool still goes by its inner tool', () => {
     for (const t of ['Agent', 'Task', 'Skill', 'SearchExtraTools', 'ToolSearch', 'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'TaskOutput',
-      'Glob', 'Grep', 'Read', 'NotebookRead', 'LS', 'WebSearch', 'WebFetch', 'ExitPlanMode'])
+      'Glob', 'Grep', 'Read', 'NotebookRead', 'LS', 'WebSearch', 'WebFetch', 'ExitPlanMode', 'Sleep', 'EnterPlanMode', 'ListAgents', 'Workflow', 'DiscoverSkills'])
       expect(classify(t, {}), t).toBe('read');
     expect(ext('Bash', { command: 'git push' })).toBe('send');
     expect(ext('Agent')).toBe('read');

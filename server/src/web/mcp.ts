@@ -58,6 +58,9 @@ export const TOOLS = [
       required: ['query'],
     },
     annotations: { title: 'Web search', readOnlyHint: true, openWorldHint: true },
+    // in the model's own list, not deferred: a research run's sub-agents spent ~5 turns each finding it through
+    // SearchExtraTools before their first search (2026-11-02 real run)
+    _meta: ALWAYS_LOAD,
   },
   {
     name: 'browser_open',

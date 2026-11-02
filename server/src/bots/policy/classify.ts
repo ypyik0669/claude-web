@@ -18,6 +18,9 @@ const READ_TOOLS = new Set([
   'Read', 'NotebookRead', 'LS', 'Glob', 'Grep', 'LSP', 'WebFetch', 'WebSearch',
   'Agent', 'Task', 'Skill', 'SearchExtraTools', 'ToolSearch', 'ExitPlanMode',
   'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'TaskOutput', 'TaskStop', 'KillShell', 'BashOutput',
+  // waiting, planning, listing / starting the session's own agents (their calls pass the gate): a Sleep was put to the
+  // user as a 「send」 in the 2026-11-02 real run while its research agents worked
+  'Sleep', 'EnterPlanMode', 'ListAgents', 'Workflow', 'DiscoverSkills',
 ]);
 const WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 

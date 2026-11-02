@@ -177,15 +177,16 @@ describe('the tool list', () => {
     expect(callTimeoutOf('ego_browser', { timeout_ms: 10 ** 9 })).toBe(720_000);
   });
 
-  it('the tools that can answer with a picture are not deferred on our engine (alwaysLoad), and no other tool is', () => {
+  it('the tools that can answer with a picture, and web_search, are not deferred on our engine (alwaysLoad); no other tool is', () => {
     // ccb hides MCP tools behind ExecuteExtraTool, whose result is one JSON string: a picture would reach the model as
     // base64 text. alwaysLoad keeps a tool in the model's own list — only for these, so the list stays short.
     const IMAGE_TOOLS = ['browser_screenshot', 'browser_computer', 'character_draft', 'theme_draft', 'ego_browser'];
     const loadedIn = (env: NodeJS.ProcessEnv) => toolsFor(env).filter((t) => (t as { _meta?: Record<string, unknown> })._meta?.['anthropic/alwaysLoad'] === true).map((t) => t.name).sort();
     // ego_browser_guide came with ego_browser (read once before it), not for a picture
-    expect(loadedIn({ CW_WEB_BROWSER: 'ego' })).toEqual([...IMAGE_TOOLS, 'ego_browser_guide'].sort());
-    expect(loadedIn({})).toEqual(['browser_computer', 'browser_screenshot', 'character_draft', 'theme_draft']);
-    for (const name of ['web_search', 'browser_open', 'browser_read', 'browser_click', 'browser_eval', 'character_list', 'theme_list']) {
+    expect(loadedIn({ CW_WEB_BROWSER: 'ego' })).toEqual([...IMAGE_TOOLS, 'ego_browser_guide', 'web_search'].sort());
+    // web_search: the first tool research reaches for (sub-agents spent turns finding it, 2026-11-02)
+    expect(loadedIn({})).toEqual(['browser_computer', 'browser_screenshot', 'character_draft', 'theme_draft', 'web_search']);
+    for (const name of ['browser_open', 'browser_read', 'browser_click', 'browser_eval', 'character_list', 'theme_list']) {
       expect((toolsFor({}).find((t) => t.name === name) as { _meta?: unknown })._meta, name).toBeUndefined();
     }
   });
