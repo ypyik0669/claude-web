@@ -4,6 +4,21 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.0] — 2026-11-02
+
+### Added
+
+- **Duty bots.** The icon rail has 「Bot」: teammates that live on your computer. The left column is the roster (each bot has its own face, its last line and an unread count; the ones that need you come first), the middle is your conversation with it, and the right column is its profile, computer, routines, permissions, memory and usage.
+  - **Made by talking**: ＋, pick a face, a name and a folder (or one of 14 templates), and it speaks first with a few choices; say "every day at 9, check …" and it makes the routine itself (with an end date).
+  - **Works while you're away**: routines run on schedule and each run is a card in the conversation; 「值班模式」 in Settings keeps them running with the window closed.
+  - **Actions go through its policy first**: reading and local writes just happen, installs happen and tell you, sending out, paying and deleting ask you first — on an approval card right in the conversation (Deny / Allow ▾: just this once, for this run, always for this target, always). A bot can't change its own policy: it can only propose a 「规矩」 card, which takes effect when you accept it.
+  - A bot's conversations stay out of the conversation list; daily budgets, quiet hours and IM notifications can be set.
+- **Web search is always in the model's tool list**, so research doesn't spend turns finding it first.
+
+### Fixed
+
+- **Codex conversations sync again after Codex desktop 0.166.** The new Codex names its session files with a second UUID (`…-<session>_<another>.jsonl`); the last one was taken as the session, so open Codex conversations stopped updating at the moment of the upgrade.
+
 ## [0.4.6] — 2026-10-30
 
 ### Fixed
