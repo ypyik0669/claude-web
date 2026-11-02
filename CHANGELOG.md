@@ -4,6 +4,12 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.2] — 2026-11-02
+
+### Fixed
+
+- **New Codex conversations show up in the library again after the Codex desktop app updates.** The library listed Codex conversations with the configured `codex` command — often an older CLI on PATH — which can't read what a newer Codex stored, so conversations started after the update never appeared. With the Codex desktop app installed, its own CLI (always as new as the app) now lists and reads them first; the configured command is the fallback.
+
 ## [0.5.1] — 2026-11-02
 
 ### Fixed
