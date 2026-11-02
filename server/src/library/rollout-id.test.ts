@@ -11,4 +11,12 @@ describe('the Codex thread a rollout file belongs to (live refresh of an open Co
     expect(codexRolloutId(`2026/09/30/rollout-2026-09-30T15-24-59-${id}.jsonl.tmp`)).toBeNull();
     expect(codexRolloutId('session_index.jsonl')).toBeNull();
   });
+  it("Codex desktop 0.166: a second uuid after the thread's — the thread is the first one", () => {
+    const id = '01a0f133-d017-7e81-829d-fa7a91fd3158';
+    const extra = '9b2c7e10-5d3a-4f61-8a0e-2c4d6f8b1a3e';
+    expect(codexRolloutId(`2026/11/01/rollout-2026-11-01T11-31-02-${id}_${extra}.jsonl`)).toBe(id);
+    expect(codexRolloutId(`2026\\11\\01\\rollout-2026-11-01T11-31-02-${id.toUpperCase()}_${extra}.jsonl`)).toBe(id);
+    expect(codexRolloutId(`rollout-2026-11-01T11-31-02-${id}-${extra}.jsonl`)).toBe(id);
+    expect(codexRolloutId(`rollout-2026-11-01T11-31-02-${id}_${extra}.jsonl.tmp`)).toBeNull();
+  });
 });

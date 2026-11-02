@@ -40,9 +40,13 @@ const READ_PAGE = 50;
 const TRASH_KEEP_MS = 30 * 86_400_000;
 const UNSUPPORTED = tr('该来源不支持此操作');
 
-/** The thread a Codex rollout file belongs to: `…/rollout-<date>T<time>-<thread uuid>.jsonl` (name per codex-rs). */
+/**
+ * The thread a Codex rollout file belongs to: `…/rollout-<date>T<time>-<thread uuid>.jsonl` (name per codex-rs). Codex
+ * desktop 0.166 (2026-11) adds a second uuid after the thread's — `…-<thread uuid>_<uuid>.jsonl` — and the thread is the
+ * FIRST one (taking the last tied every new rollout to a thread that doesn't exist: the library stopped syncing).
+ */
 export function codexRolloutId(rel: string): string | null {
-  return /rollout-[^\\/]*?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(rel)?.[1]?.toLowerCase() ?? null;
+  return /rollout-[^\\/]*?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[_-][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?\.jsonl$/i.exec(rel)?.[1]?.toLowerCase() ?? null;
 }
 
 /** How many of the mirror's last prompts must line up with the thread's before its later turns are taken (one repeated
