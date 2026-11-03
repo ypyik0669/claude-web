@@ -142,7 +142,7 @@ export class CodexSource implements SessionSource {
   private newer: { rpc: LazyRpc; command: string } | undefined;
 
   constructor(
-    private readonly getLaunch: () => { command: string; args: string[]; env: Record<string, string> },
+    private readonly getLaunch: () => { command: string; args: string[]; env: Record<string, string>; chosen?: true },
     private readonly getNewer: () => { command: string; args: string[]; env: Record<string, string> } | undefined = () => {
       const bin = desktopCodexBin();
       return bin ? { command: bin, args: ['app-server'], env: this.getLaunch().env } : undefined;
@@ -201,7 +201,8 @@ export class CodexSource implements SessionSource {
     // the desktop app's own CLI first: it is as new as the app that wrote the threads. An older `codex` on PATH leaves
     // out what a newer one stored (user report 2026-11-02: after Codex desktop 0.166 its new conversations stopped
     // showing up). Its cursors are its own, so a page goes on with the CLI that gave it.
-    const newer = this.newerRpc();
+    // (a command the user chose in settings → Agents is theirs: used as is)
+    const newer = this.getLaunch().chosen ? undefined : this.newerRpc();
     if (newer && (!o.cursor || o.cursor.startsWith(NEWER_CURSOR))) {
       try {
         const r = await newer.request<any>('thread/list', { ...LIST_PARAMS, limit: o.limit, cursor: o.cursor?.slice(NEWER_CURSOR.length), archived: o.archived ?? false }, 30_000);
@@ -230,7 +231,7 @@ export class CodexSource implements SessionSource {
 
   async read(nativeId: string, o: { cursor?: string; limit: number }): Promise<{ messages: any[]; next?: string }> {
     // the desktop app's Codex first, as for the list: what it lists, an older `codex` may not find at all
-    const first = this.newerRpc();
+    const first = this.getLaunch().chosen ? undefined : this.newerRpc();
     if (first) {
       try { return await this.readVia(first, nativeId, o, true); } catch { /* the configured one, below */ }
     }

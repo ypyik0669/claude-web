@@ -264,6 +264,15 @@ describe("the list comes from the desktop app's Codex when it is there (an older
       await src.close();
     }
   });
+  it('a command the user chose in settings is used as is, even with the desktop app there', async () => {
+    const src = new CodexSource(() => ({ ...old(), chosen: true as const }), launch);
+    try {
+      // the chosen one fails to list (the mock's CW_FAIL_LIST): its answer, not the desktop app's list
+      await expect(src.list({ limit: 5 })).rejects.toThrow(/mock thread\/list failure/);
+    } finally {
+      await src.close();
+    }
+  });
   it("the desktop app's Codex failing: the configured one lists", async () => {
     const src = new CodexSource(launch, () => ({ command: 'definitely-not-a-real-codex-binary-xyz', args: [], env: {} }));
     try {

@@ -184,10 +184,11 @@ export class AgentRegistry {
    * Effective launch spec after overrides. No command of the user's own and nothing on PATH → the copy another app
    * ships (the Codex desktop app's codex.exe), so a user who only has that can still start a session.
    */
-  launch(kind: AgentKind): { command: string; args: string[]; env: Record<string, string>; model?: string; def: AgentDef } {
+  /** `chosen`: the user set the command themselves (settings → Agents), so no other copy is put in its place */
+  launch(kind: AgentKind): { command: string; args: string[]; env: Record<string, string>; model?: string; def: AgentDef; chosen?: true } {
     const def = this.def(kind);
     const c = this.config(kind);
-    return { command: c.command || this.defaultCommand(def), args: c.args ?? def.args, env: c.env ?? {}, model: c.model || undefined, def };
+    return { command: c.command || this.defaultCommand(def), args: c.args ?? def.args, env: c.env ?? {}, model: c.model || undefined, def, ...(c.command ? { chosen: true as const } : {}) };
   }
 
   private defaultCommand(def: AgentDef): string {
