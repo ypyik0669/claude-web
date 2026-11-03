@@ -3319,6 +3319,8 @@ export const EN_WEB: Record<string, string> = {
   "未安装": "Not installed",
   "未安装 · {hint}": "Not installed · {hint}",
   "未安装（{AGENTS_SETTING_PATH}）": "Not installed ({AGENTS_SETTING_PATH})",
+  "{name} 只能用 Gemini 的来源：在 Claude 对话里用它，或在「上游」把它加进一个网关组": "{name} can only use Gemini sources: use this one in a Claude conversation, or add it to a gateway group under Upstreams",
+  "{name} 只能用 OpenAI 兼容的来源：在 Claude 对话里用它，或在「上游」把它加进一个网关组": "{name} can only use OpenAI-compatible sources: use this one in a Claude conversation, or add it to a gateway group under Upstreams",
   "未安装，无法加入": "Not installed, can’t be added",
   "未完成": "Not done",
   "未开启": "Off",

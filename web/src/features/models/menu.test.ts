@@ -15,7 +15,9 @@ const GROUPS: GatewayGroup[] = [
   { id: 'g1', name: 'main', strategy: 'failover', members: [{ providerId: 'gkey' }, { providerId: 'snbchr', model: 'pinned-x' }], modelMap: { 'claude-*': 'gpt-6-astra', 'alias-a': 'claude-opus-5' } },
 ];
 const menu = (o: Partial<Parameters<typeof buildModelMenu>[0]> = {}) => buildModelMenu({ agent: 'claude', providers: PROVIDERS, gatewayGroups: GROUPS, settings: {}, ...o });
-const sectionIds = (m: ReturnType<typeof menu>) => m.sections.map((s) => s.id);
+/** the sections this agent can pick from (the others are listed after them, greyed, with why) */
+const sectionIds = (m: ReturnType<typeof menu>) => m.sections.filter((s) => !(s.kind === 'provider' && s.items.every((i) => !i.compatible))).map((s) => s.id);
+const greyIds = (m: ReturnType<typeof menu>) => m.sections.filter((s) => s.kind === 'provider' && s.items.every((i) => !i.compatible)).map((s) => s.id);
 
 describe('compatibility by agent', () => {
   it('claude: its login models + every profile type', () => {
@@ -28,6 +30,19 @@ describe('compatibility by agent', () => {
     expect(m.items.find((i) => i.providerId === 'snbchr')?.compatible).toBe(false);
   });
   it('gemini: gateway / gemini profiles', () => expect(sectionIds(menu({ agent: 'gemini' }))).toEqual(['builtin', 'gem', 'gw']));
+  it("a source the agent can't use is listed after the usable ones, greyed, saying why (user report 2026-11-03: an Anthropic relay looked lost in a Codex menu)", () => {
+    const m = menu({ agent: 'codex' });
+    const ids = m.sections.map((s) => s.id);
+    const grey = greyIds(m);
+    expect(grey.length).toBeGreaterThan(0);
+    expect(Math.min(...grey.map((g) => ids.indexOf(g)))).toBeGreaterThan(ids.indexOf('gw'));
+    for (const g of grey) {
+      const s = m.sections.find((x) => x.id === g)!;
+      expect(s.unavailable).toMatch(/Codex 只能用 OpenAI 兼容的来源/);
+      expect(s.items.every((i) => i.unavailable)).toBe(true);
+    }
+    expect(greyIds(menu({ agent: 'claude' }))).toEqual([]);
+  });
   it('other ACP agents (qwen, custom): openai / gateway', () => {
     expect(sectionIds(menu({ agent: 'qwen' }))).toEqual(['builtin', 'gkey', 'gw']);
     expect(sectionIds(menu({ agent: 'acp:mine' }))).toEqual(['builtin', 'gkey', 'gw']);

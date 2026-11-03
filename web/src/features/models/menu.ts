@@ -144,6 +144,14 @@ export function effectiveRuntime(p: Pick<Provider, 'runtime'> & { type?: Provide
   return want === 'ccb' && engine.fallback?.runtime === 'ccb' ? 'ccb' : 'claude';
 }
 
+/** Why a source of `type` is not offered to `agent` at all (it doesn't speak that protocol), and what to do instead. */
+export function notForAgent(agent: AgentKind, type: ProviderType): string {
+  const name = agent === 'codex' ? 'Codex' : agent === 'gemini' ? 'Gemini CLI' : agent;
+  return agent === 'gemini'
+    ? tr('{name} 只能用 Gemini 的来源：在 Claude 对话里用它，或在「上游」把它加进一个网关组', { name })
+    : tr('{name} 只能用 OpenAI 兼容的来源：在 Claude 对话里用它，或在「上游」把它加进一个网关组', { name });
+}
+
 /** Why profile `p` cannot be picked right now although the agent takes its type (null = it can). */
 export function profileUnavailable(p: Provider, i: Pick<BuildMenuInput, 'agent' | 'engine' | 'gatewayGroups' | 'gatewayEnabled'>): string | null {
   if (p.type === 'gateway') {
@@ -293,6 +301,7 @@ export function buildModelMenu(i: BuildMenuInput): ModelMenu {
   const ownShown = own.filter(visible);
   sections.push({ id: 'builtin', kind: 'builtin', title: ownTitle, providerId: OWN_PROVIDER, items: ownShown, count: ownShown.filter((x) => !x.isDefault).length });
 
+  const incompatible: ModelMenuSection[] = [];
   for (const p of i.providers) {
     const compatible = types.includes(p.type);
     const unavailable = compatible ? profileUnavailable(p, i) ?? undefined : undefined;
@@ -310,7 +319,12 @@ export function buildModelMenu(i: BuildMenuInput): ModelMenu {
       })
       : [make(p.id, p.name, '', tr('默认模型'), compatible, { isDefault: true, unavailable })];
     items.push(...list);
-    if (!compatible) continue;
+    if (!compatible) {
+      // listed, greyed, with why: hidden, a user who added an Anthropic relay (or the Magpie pool) looked for it in a
+      // Codex conversation's menu and thought it was lost (user report 2026-11-03)
+      if (p.type !== 'gateway') incompatible.push({ id: p.id, kind: 'provider', title: p.name, providerId: p.id, providerType: p.type, items: [make(p.id, p.name, '', tr('默认模型'), false, { isDefault: true, unavailable: notForAgent(i.agent, p.type) })], count: 0, unavailable: notForAgent(i.agent, p.type) });
+      continue;
+    }
     const shown = list.filter(visible);
     // a profile whose every model is hidden still needs one entry, or it can no longer be picked at all
     sections.push({
@@ -326,6 +340,7 @@ export function buildModelMenu(i: BuildMenuInput): ModelMenu {
       unavailable,
     });
   }
+  sections.push(...incompatible);
 
   for (const a of i.otherAgents ?? []) {
     if (a.kind === i.agent) continue;
