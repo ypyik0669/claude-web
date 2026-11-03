@@ -4,6 +4,14 @@
 
 每个版本的变化都记在这里；安装包在 [Releases](https://github.com/ypyik0669/claude-web/releases) 下载。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.4] — 2026-11-03
+
+### 修复
+
+- **WorkBuddy 的模型能在对话里用了。** 对话选了「新组 / deepseek-v4.1-flash」这种名字，而 WorkBuddy 只认 `global:deepseek-v4.1-flash`，网关就把它跳过，报「组没有可用成员」。现在不带前缀的名字会对上 WorkBuddy 自己的模型。
+- **被 WorkBuddy 封掉的账号显示「要重新登录」和原因**，不再显示「正常」。
+- **网关组用不了时说清楚为什么**：要重新登录、组件没启动、没有这个模型。
+
 ## [0.5.3] — 2026-11-03
 
 ### 修复

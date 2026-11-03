@@ -4,6 +4,14 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.4] — 2026-11-03
+
+### Fixed
+
+- **WorkBuddy models work in a conversation.** A conversation on 「新组 / deepseek-v4.1-flash」 sent the bare name, WorkBuddy only knows `global:deepseek-v4.1-flash`, so the gateway skipped it and answered "no usable member". A bare name now maps to WorkBuddy's own id.
+- **A WorkBuddy account the service banned shows "needs sign-in again" and why**, not "OK".
+- **A gateway group that can't serve says why**: sign in again, component not running, or no such model.
+
 ## [0.5.3] — 2026-11-03
 
 ### Fixed
