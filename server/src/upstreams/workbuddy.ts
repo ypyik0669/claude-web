@@ -16,6 +16,7 @@ interface WbAccount {
   cooling?: boolean;
   until?: number;
   reason?: string;
+  disabled_reason?: string;
   credits?: number;
   credits_total?: number;
   last_error?: string;
@@ -136,13 +137,15 @@ export class WorkBuddyAdapter implements SidecarDriver {
     await this.prepareRead(options);
     const o = await this.api<{ accounts?: WbAccount[] }>('/panel/api/overview');
     return (o.accounts ?? []).map((a) => {
-      const health: SidecarAccount['health'] = a.disabled ? 'disabled' : a.cooling || a.paused ? 'cooling' : 'ok';
+      // 「banned by upstream … re-login required」: the login is dead, not paused — the row says 要重新登录
+      const relogin = a.disabled && /re-?login|banned|11140|11128/i.test(`${a.disabled_reason ?? ''} ${a.reason ?? ''}`);
+      const health: SidecarAccount['health'] = relogin ? 'expired' : a.disabled ? 'disabled' : a.cooling || a.paused ? 'cooling' : 'ok';
       return {
         remoteId: a.uid,
         name: a.nickname?.trim() || a.uid,
         enabled: !a.disabled,
         health,
-        lastError: a.last_error || a.reason || undefined,
+        lastError: relogin ? tr('WorkBuddy 拒绝了这个账号的请求（{reason}），要重新扫码登录', { reason: (a.disabled_reason || a.reason || '').replace(/^account banned by upstream \(|\), re-login required$/g, '') }) : a.last_error || a.disabled_reason || a.reason || undefined,
         quota: this.quota(a),
         identity: a.nickname ? { email: a.nickname } : undefined,
       };

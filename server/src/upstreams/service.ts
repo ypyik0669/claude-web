@@ -58,6 +58,16 @@ const today = (now = Date.now()) => new Date(now).toISOString().slice(0, 10);
 /** How long a sidecar's model list is trusted. It is per-login (anonymous answers two models, a subscription many). */
 const MODELS_TTL_MS = 5 * 60_000;
 
+/**
+ * A model a family lists under a region prefix (WorkBuddy: `global:x`, `cn:x`) asked for by its bare name: the listed
+ * id, global first; undefined when the family doesn't have it under any prefix.
+ */
+export function familyIdFor(model: string, known: string[]): string | undefined {
+  const bare = model.toLowerCase();
+  const hits = known.filter((k) => { const i = k.indexOf(':'); return i > 0 && k.slice(i + 1).toLowerCase() === bare; });
+  return hits.find((k) => k.startsWith('global:')) ?? hits[0];
+}
+
 export class UpstreamService extends EventEmitter {
   /** set by the server: a gateway group may have just been created (the gateway mirrors each group as a profile) */
   onGatewayGroups: (() => void) | null = null;
@@ -563,10 +573,20 @@ export class UpstreamService extends EventEmitter {
     return model;
   }
 
+  /** why an account gave no target on its last resolve (the gateway's 503 says it instead of 「no usable member」) */
+  readonly whyNot = new Map<string, string>();
+  /** the reasons of the accounts behind a member, for the gateway's error */
+  whyMember(m: GatewayMember): string[] {
+    const ids = m.accountId ? [m.accountId] : m.upstreamGroupId ? this.groups().find((x) => x.id === m.upstreamGroupId)?.members ?? [] : [];
+    return ids.map((id) => this.whyNot.get(id)).filter((x): x is string => !!x);
+  }
+
   async resolveMembers(m: GatewayMember, model: string, sessionKey?: string): Promise<GatewayTarget[]> {
     if (m.accountId) {
       const a = this.store.get(m.accountId);
+      if (a) this.whyNot.delete(a.id);
       // a single account member follows the same health / limit rules as a pool
+      if (a && !this.usable(a, this.now())) this.whyNot.set(a.id, a.lastError || (a.health === 'expired' || a.health === 'disabled' ? tr('{name} 要重新登录', { name: a.name }) : tr('{name} 暂时不可用', { name: a.name })));
       return a && this.usable(a, this.now()) ? this.targets([a], model) : [];
     }
     if (m.upstreamGroupId) {
@@ -645,9 +665,14 @@ export class UpstreamService extends EventEmitter {
       const driver = this.driver(a.kind);
       if (!driver) continue;
       const known = sidecarModels.get(a.kind);
-      if (model && known?.length && !known.includes(model)) continue;
-      if (!sidecarEndpoints.has(a.kind)) sidecarEndpoints.set(a.kind, await driver.endpoint().catch(() => null));
+      // the family's own id for a bare name: WorkBuddy lists `global:deepseek-v4.1-flash`, a profile / conversation says
+      // `deepseek-v4.1-flash` (user report 2026-11-03: every request got 「组没有可用成员」)
+      const own = model && known?.length && !known.includes(model) ? familyIdFor(model, known) : model;
+      if (model && known?.length && !own) { this.whyNot.set(a.id, tr('{name} 没有模型 {model}', { name: a.name, model })); continue; }
+      const sent = own || model;
+      if (!sidecarEndpoints.has(a.kind)) sidecarEndpoints.set(a.kind, await driver.endpoint().catch((e) => { this.whyNot.set(a.id, String(e?.message ?? e)); return null; }));
       const ep = sidecarEndpoints.get(a.kind);
+      if (!ep) { if (!this.whyNot.has(a.id)) this.whyNot.set(a.id, tr('{name} 组件没有启动', { name: a.kind === 'gemini' ? tr('Gemini 网页') : 'WorkBuddy' })); continue; }
       const id = `sidecar:${a.kind}`;
       if (!ep || out.some((t) => t.id === id)) continue;
       out.push({
@@ -657,7 +682,7 @@ export class UpstreamService extends EventEmitter {
         baseUrl: ep.baseUrl,
         apiKey: ep.apiKey,
         createdAt: 0,
-        ...(model ? { model } : {}),
+        ...(sent ? { model: sent } : {}),
       });
     }
     return out;

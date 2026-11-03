@@ -118,6 +118,16 @@ describe('WorkBuddyAdapter', () => {
     return { f, a: new WorkBuddyAdapter(null, fetch, { baseUrl: f.url }) };
   };
 
+  it('an account WorkBuddy banned (re-login required) reads 要重新登录, not 正常 or just disabled (2026-11-03)', async () => {
+    const f = await fake((req, res) => {
+      if (req.url === '/panel/api/overview') return json(res, 200, { accounts: [{ uid: 'u1', nickname: 'Nick', disabled: true, disabled_reason: 'account banned by upstream (11140 request illegal), re-login required', credits: 350, credits_total: 350 }] });
+      return json(res, 404, {});
+    });
+    const [acc] = await new WorkBuddyAdapter(null, fetch, { baseUrl: f.url }).listAccounts();
+    expect(acc).toMatchObject({ health: 'expired', enabled: false });
+    expect(acc.lastError).toMatch(/11140 request illegal.*重新扫码登录/);
+  });
+
   it('syncs the pool, imports cockpit JSON and runs tasks', async () => {
     const { f, a } = await make();
     const list = await a.listAccounts();

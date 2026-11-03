@@ -1373,6 +1373,8 @@ export class GatewayService extends EventEmitter {
       const next = this.states.nextAvailable(group);
       const wait = next ? Math.max(1, Math.ceil((next.at - Date.now()) / 1000)) : 0;
       if (next && next.at > Date.now()) return fail(next.rate ? 429 : 503, tr('组「{name}」的成员都在冷却中，约 {wait}s 后恢复', { name: group.name, wait }), { 'retry-after': String(wait) });
+      const why = [...new Set(group.members.flatMap((m) => this.deps.upstreams?.whyMember?.(m) ?? []))];
+      if (why.length) return fail(503, tr('组「{name}」现在用不了：{why}', { name: group.name, why: why.join('；') }));
       return fail(503, tr('组「{name}」没有可用成员（都已停用或档案缺失）', { name: group.name }));
     }
     // every member failed with a switchable error: report the last one as is
