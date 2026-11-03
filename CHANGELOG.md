@@ -4,6 +4,14 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.3] — 2026-11-03
+
+### Fixed
+
+- **Accounts added to a gateway group (WorkBuddy, for example) show up in the model menu.** If a group's menu entry had been deleted once, adding an account to the group later never brought it back. Now a new account brings it back.
+- **Sources the current conversation can't use are listed in the model menu, greyed, saying why.** In a Codex conversation, an Anthropic-format relay or the Magpie pool used to be left out and looked lost; now they come last with "use it in a Claude conversation, or add it to a gateway group under Upstreams".
+- **A Codex command you set in Settings → Agents is used as is.** The library tries the Codex desktop app's own CLI first only with the default command.
+
 ## [0.5.2] — 2026-11-02
 
 ### Fixed
