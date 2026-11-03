@@ -312,7 +312,7 @@ export class MetaStore extends EventEmitter {
   }
   // ---- model gateway ----
   gatewayGroups(): GatewayGroup[] { return this.data.gatewayGroups ??= []; }
-  gatewayConfig(): { enabled?: boolean; key?: string; localPort?: number; dismissedProfiles?: string[] } { return this.data.gateway ??= {}; }
+  gatewayConfig(): { enabled?: boolean; key?: string; localPort?: number; dismissedProfiles?: string[]; dismissedMembers?: Record<string, string[]> } { return this.data.gateway ??= {}; }
   async saveGateway() { await this.queueSave(true); }
   // ---- privacy pipeline (privacy/service.ts): settings + the per-install placeholder secret (never on the wire) ----
   privacyConfig(): Partial<PrivacySettings> & { secret?: string } { return this.data.privacy ??= {}; }

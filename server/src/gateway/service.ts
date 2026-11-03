@@ -293,8 +293,22 @@ export class GatewayService extends EventEmitter {
    * dismissed (`gateway.dismissedProfiles`) and it is not created again.
    */
   async syncProfiles(): Promise<void> {
-    const dismissed = new Set(this.deps.meta.gatewayConfig().dismissedProfiles ?? []);
+    const cfg = this.deps.meta.gatewayConfig();
     const groups = this.groups();
+    // a dismissed group that got a member since (the user added an account to it: user report 2026-11-03, a WorkBuddy
+    // account in a group whose menu entry was deleted earlier never showed up) is welcome in the menu again. A dismissal
+    // from before members were recorded counts as an empty group then
+    const back = (cfg.dismissedProfiles ?? []).filter((id) => {
+      const g = groups.find((x) => x.id === id);
+      const then = new Set(cfg.dismissedMembers?.[id] ?? []);
+      return !!g && g.members.some((m) => !then.has(memberKey(m)));
+    });
+    if (back.length) {
+      cfg.dismissedProfiles = (cfg.dismissedProfiles ?? []).filter((id) => !back.includes(id));
+      cfg.dismissedMembers = Object.fromEntries(Object.entries(cfg.dismissedMembers ?? {}).filter(([id]) => !back.includes(id)));
+      await this.deps.meta.saveGateway();
+    }
+    const dismissed = new Set(cfg.dismissedProfiles ?? []);
     const profiles = this.deps.meta.providers();
     let changed = false;
     for (const g of groups) {

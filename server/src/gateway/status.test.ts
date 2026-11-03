@@ -118,12 +118,30 @@ describe('syncProfiles: every group is a provider profile', () => {
     expect(meta.providers().filter((p) => p.type === 'gateway')).toHaveLength(1);
   });
 
-  it('a dismissed group is not created again', async () => {
+  it('a dismissed group is not created again — until an account is added to it', async () => {
+    const gw = await make([{ accountId: 'acct_1' }]);
+    const meta = (gw as unknown as { deps: { meta: MetaStore } }).deps.meta;
+    meta.gatewayConfig().dismissedProfiles = ['g'];
+    meta.gatewayConfig().dismissedMembers = { g: ['a:acct_1'] };
+    await gw.syncProfiles();
+    expect(meta.providers().filter((p) => p.type === 'gateway')).toHaveLength(0);
+    // a WorkBuddy account added to it later (user report 2026-11-03): back in the menu, the dismissal forgotten
+    meta.gatewayGroups()[0].members.push({ accountId: 'acct_2' });
+    await gw.syncProfiles();
+    expect(meta.providers().filter((p) => p.type === 'gateway')).toHaveLength(1);
+    expect(meta.gatewayConfig().dismissedProfiles).toEqual([]);
+  });
+  it('a dismissal from before members were recorded: a group with accounts comes back, an empty one stays out', async () => {
     const gw = await make([{ accountId: 'acct_1' }]);
     const meta = (gw as unknown as { deps: { meta: MetaStore } }).deps.meta;
     meta.gatewayConfig().dismissedProfiles = ['g'];
     await gw.syncProfiles();
-    expect(meta.providers().filter((p) => p.type === 'gateway')).toHaveLength(0);
+    expect(meta.providers().filter((p) => p.type === 'gateway')).toHaveLength(1);
+    const empty = await make([]);
+    const m2 = (empty as unknown as { deps: { meta: MetaStore } }).deps.meta;
+    m2.gatewayConfig().dismissedProfiles = ['g'];
+    await empty.syncProfiles();
+    expect(m2.providers().filter((p) => p.type === 'gateway')).toHaveLength(0);
   });
 
   it('a removed group takes its auto profile with it', async () => {

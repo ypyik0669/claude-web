@@ -6,6 +6,7 @@ import { resolveEngine, runClaudeCli } from '../claude-exe.js';
 import type { SecretService } from '../secrets/service.js';
 import { contextWindowFor, listedContext } from '../models/context-window.js';
 import { CODEX_KEY_ENV, codexGatewayArgs, codexProviderArgs, geminiApiKeyEnv } from '../gateway/agents.js';
+import { memberKey } from '../gateway/types.js';
 import { claudeFamilyMap, isChatModel, modelsFor, pickChatModel, preferredRuntime, profileFitError } from '../models/catalog.js';
 import { wantsResponses } from '../gateway/shim.js';
 import { settingsOverride } from '../runtime/user-env.js';
@@ -639,6 +640,9 @@ export class ProviderService {
       const list = new Set(cfg.dismissedProfiles ?? []);
       list.add(p.gatewayGroupId);
       cfg.dismissedProfiles = [...list];
+      // who was in it then: an account added to it later brings it back (gateway/service.ts syncProfiles)
+      const g = this.meta.gatewayGroups().find((x) => x.id === p.gatewayGroupId);
+      cfg.dismissedMembers = { ...cfg.dismissedMembers, [p.gatewayGroupId]: (g?.members ?? []).map(memberKey) };
       await this.meta.saveGateway();
     }
     await this.meta.removeProvider(id);
