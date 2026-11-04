@@ -103,3 +103,11 @@
   429 冷却倒计时、剩余额度（来自 `routing/quota.ts`，网关的每次回应也在喂）、上次检查结果。没有自动定时检查。
 - CLIProxyAPI 自己的订阅登录（`--login`）和 Magpie 的账号页现在走引擎登录（见上一节）；但用户自己启动的副本仍要在它们自己的管理页登录。CLIProxyAPI 的检测只是「有 JSON 回应」。
 - Cherry 列表里 opencode（base 带 `/v1`，不确定）、vertex / bedrock（SDK 拼地址）、new-api / aionly（没地址）没收。
+
+## Grok 网页账号（2026-11-04，用户反馈「没有 grok 账号反代」）
+
+- 目录项 `grok-web`（driver `grok-web`，`channels/drivers/grok-web{,-core}.ts`）：本机起一个 OpenAI chat-completions 小接口（127.0.0.1 随机端口），每个账号一条 openai 供应商档案指向它。**档案的 key 就是凭据**（`grok1.<base64url JSON>`：sso / cf_clearance / __cf_bm / ua），接口自己不存东西，一个接口服务所有账号。
+- 协议照 CNFlyCat/GrokProxy（MIT）和 AIClient2API 的 grok-web（GPL-3.0，只读协议没抄代码）：`POST grok.com/rest/app-chat/conversations/new`，body 的 `modeId`（auto/fast/expert/heavy/grok-4-1-thinking/grok-4-1-mini），`temporary: true`；整段对话压成一条 message；返回 NDJSON（`result.response.token`、`isThinking`、`modelResponse.generatedImageUrls`）。思考走 `reasoning_content`。
+- 工具调用靠提示词模拟（`<tool_call>{…}</tool_call>`），带 tools 时整段答完才吐出。
+- 添加时用 `/rest/rate-limits` 探一下：401 拒绝添加，其它问题（Cloudflare 403 等）照样加上、卡片显示原因。Cloudflare 拦时让用户粘整段 Cookie（带 cf_clearance）并在末尾加 `; ua=<浏览器 UA>`。没做 utls 指纹垫片。
+- **没验的**：真 grok.com 账号（这台机器没有）；只有单测 + 假 grok 的端到端。

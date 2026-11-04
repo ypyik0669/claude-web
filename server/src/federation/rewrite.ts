@@ -13,7 +13,7 @@ import { cloudRefusedFromPeer } from '../cloud/handlers.js';
 /** Requests about a remote session that are answered by the machine the session lives on. */
 const FORWARD = new Set<ClientRequest['kind']>([
   'session.open', 'session.info', 'session.send', 'session.interrupt', 'session.side', 'session.close',
-  'session.setModel', 'session.setPermissionMode', 'session.resumeMode', 'session.setEffort', 'session.setUltracode', 'session.setSubagentModel',
+  'session.setModel', 'session.setPermissionMode', 'session.resumeMode', 'session.setEffort', 'session.setUltracode', 'session.setSubagentModel', 'session.setFeatures',
   'session.contextUsage', 'session.stopTask', 'session.fastMode', 'session.toggleMcp', 'session.canonical',
   'permission.respond',
   'transcript.load', 'transcript.subagents', 'transcript.subagent',

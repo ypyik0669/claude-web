@@ -468,6 +468,7 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   // 操控电脑: only a conversation that is open here can ask for control of applications; one in 完全放开 is not
   // asked (the same mode lookup as the browser gate's)
   computer = new ComputerAccess({ knows: knowsSession, mode: modeOf });
+  computer.on('granted', (sid: string, apps: string[]) => pool.get(sid)?.noteComputerApps?.(apps));
   const config = new ConfigService();
   pool.accountLoggedOut = () => config.knownLoggedOut();
   const ledger = new LedgerService((id) => meta.provider(id)?.type);

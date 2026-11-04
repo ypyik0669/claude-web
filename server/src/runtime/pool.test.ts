@@ -217,6 +217,16 @@ describe('RunnerPool: prompt-cache key of a reopened session', () => {
   });
 });
 
+describe('RunnerPool: 操控电脑 / 控制 Chrome switched in the conversation', () => {
+  it('the user’s last word wins over the features a window reopens it with; not for forks, not for 只聊天', () => {
+    const recorded: Record<string, any> = { off: { liveFeatures: { computerUse: false, chrome: true } }, chat: { chatOnly: true, liveFeatures: { computerUse: true } } };
+    const p = new RunnerPool({ forSession: () => undefined, meta: { sessionMeta: (id: string) => recorded[id] ?? {}, settings: () => ({}) } } as any);
+    expect((p.open({ sessionId: 'off', cwd: 'C:/x', features: { computerUse: true, brief: true } }) as any).params.features).toEqual({ brief: true, chrome: true });
+    expect((p.open({ sessionId: 'off', cwd: 'C:/x', fork: true, features: { computerUse: true } }) as any).params.features).toEqual({ computerUse: true });
+    expect((p.open({ sessionId: 'chat', cwd: 'C:/x' }) as any).params.features).toEqual({ chatOnly: true });
+  });
+});
+
 describe('RunnerPool: the subagents model', () => {
   const setup = (recorded: Record<string, any>, settings: Record<string, unknown>) => {
     const writes: [string, any][] = [];

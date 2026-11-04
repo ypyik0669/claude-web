@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { SessionRunner, type AccountPrefs } from './session-runner.js';
 import { familyWindows } from '../models/account-window.js';
-import type { AgentKind, OpenSessionParams, PermissionMode, Provider, ReportedModel, RunnerState } from '../protocol.js';
+import type { AgentKind, OpenSessionParams, PermissionMode, Provider, SessionFeatures, ReportedModel, RunnerState } from '../protocol.js';
 import { loopbackNoProxy, type ProviderService } from '../providers/service.js';
 import type { AgentRegistry, AgentDriver } from '../agents/types.js';
 import type { AgentTranscripts } from '../agents/transcript.js';
@@ -233,6 +233,14 @@ export class RunnerPool extends EventEmitter {
     // a provider switch) and its forks: without tools it started, without tools it stays — no caller can drop it
     const chatOnly = !!params.features?.chatOnly || !!(params.sessionId && this.providers.meta?.sessionMeta(params.sessionId).chatOnly);
     if (chatOnly && !params.features?.chatOnly) params = { ...params, features: { ...params.features, chatOnly: true } };
+    // 操控电脑 / 控制 Chrome switched in this conversation: the user's last word wins over what a window reopening it
+    // still has from before (its old info.features) — not for its forks
+    const live = params.sessionId && !params.fork && !params.resumeAt ? this.providers.meta?.sessionMeta(params.sessionId).liveFeatures : undefined;
+    if (live && !chatOnly) {
+      const f: SessionFeatures = { ...params.features };
+      for (const k of ['computerUse', 'chrome'] as const) if (typeof live[k] === 'boolean') { if (live[k]) f[k] = true; else delete f[k]; }
+      params = { ...params, features: f };
+    }
     let r: AgentDriver;
     let projInstr = '';
     if (kind === 'claude' || !this.agents || !this.transcripts) {

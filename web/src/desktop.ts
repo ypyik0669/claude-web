@@ -16,6 +16,10 @@ export interface DesktopBridge {
   /** bg: the shell ground (new windows start on it); overlay: what the caption buttons are painted on (default bg);
    *  height: how tall the caption buttons' area is — the row they sit over, from the window's top edge */
   setTitleBarColors(bg: string, fg: string, overlay?: string, height?: number): void;
+  /** Windows / Linux: the page draws the caption buttons; older shells lack these (and draw their own) */
+  windowControl?(act: 'min' | 'max' | 'close'): void;
+  isMaximized?(): boolean;
+  onMaximized?(cb: (max: boolean) => void): () => void;
   getLoginItem(): Promise<boolean>;
   setLoginItem(on: boolean): Promise<void>;
   onCommand(cb: (id: string) => void): () => void;

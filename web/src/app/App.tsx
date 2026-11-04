@@ -27,6 +27,7 @@ import { RecordingIndicator } from '@/features/recording/RecordingIndicator';
 import { chromeVisibility, workbenchOn } from '@/model/layout';
 import { captionHeight, captionHeightAt, captionRow, captionWidth } from '@/features/workbench/tab-row';
 import { setCaptionSize } from '@/ui/caption';
+import { WindowControls } from '@/ui/WindowControls';
 import { installZoom, useZoom } from '@/ui/zoom';
 import { MOBILE_QUERY, drawerYields } from '@/ui/viewport';
 import { installAutomation } from '@/features/automation/state';
@@ -212,6 +213,7 @@ export function App() {
   const capRow = captionRow({ settings: settingsOpen, dockOpen: rpWidth > MIN_RAIL, workbench, groupBar, chromeRow });
   const density = useStore((s) => s.settings['ui.density']);
   const zoom = useZoom();
+  const [capH, setCapH] = useState(60);
   useEffect(() => {
     const d = desktop;
     if (!d) return;
@@ -223,6 +225,7 @@ export function App() {
       const height = captionHeightAt(zoom, capRow, dims);
       // menus keep clear of the buttons (ui/caption.ts) — not on macOS, whose traffic lights are on the left
       setCaptionSize(document.documentElement.classList.contains('mac') ? null : { w: captionWidth(zoom), h: captionHeight(capRow, dims) });
+      setCapH(captionHeight(capRow, dims));
       d.setTitleBarColors(cs.getPropertyValue('--bg-1').trim(), cs.getPropertyValue('--fg-1').trim(), linux ? cs.getPropertyValue(sideSurface ? '--bg-1' : '--bg').trim() : '#00000000', height);
     }, 0);
     return () => clearTimeout(t);
@@ -336,6 +339,7 @@ export function App() {
       <ErrorBoundary area={tr('文件菜单')} floating><FileMenu /></ErrorBoundary>
       <ErrorBoundary area={tr('接一个模型')} floating><ConnectModelHost /></ErrorBoundary>
       <ErrorBoundary area={tr('添加来源')} floating><AddSourceLazy /></ErrorBoundary>
+      {isDesktop && desktop?.platform !== 'darwin' && !mobile && <WindowControls height={capH} />}
       <ErrorBoundary area={tr('应用更新')} floating><UpdatePrompt /></ErrorBoundary>
       <ErrorBoundary area={tr('角色库')} floating><CharacterLibrary /></ErrorBoundary>
       <ErrorBoundary area={tr('编辑项目')} floating><ProjectDialogLazy /></ErrorBoundary>

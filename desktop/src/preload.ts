@@ -23,6 +23,10 @@ contextBridge.exposeInMainWorld('desktop', {
   notify: (title: string, body: string, sessionId?: string) => ipcRenderer.send('desktop:notify', { title, body, sessionId }),
   setBadge: (n: number) => ipcRenderer.send('desktop:badge', n),
   setTitleBarColors: (bg: string, fg: string, overlay?: string, height?: number) => ipcRenderer.send('desktop:titlebar', { bg, fg, overlay, height }),
+  // Windows / Linux: the page's own caption buttons (ui/WindowControls.tsx)
+  windowControl: (act: 'min' | 'max' | 'close') => ipcRenderer.send('desktop:win', act),
+  isMaximized: () => ipcRenderer.sendSync('desktop:win:maximized') as boolean,
+  onMaximized: on('desktop:maximized'),
   getLoginItem: () => ipcRenderer.invoke('desktop:loginItem:get'),
   setLoginItem: (on: boolean) => ipcRenderer.invoke('desktop:loginItem:set', on),
   onCommand: on('desktop:command'),

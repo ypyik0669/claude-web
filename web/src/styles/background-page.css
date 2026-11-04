@@ -113,3 +113,11 @@ span.bg-chip { padding: 0 2px 0 0; }
   --agent-9: color-mix(in oklab, var(--accent-text) 86%, var(--fg-3));
   --agent-10: color-mix(in oklab, var(--accent-text) 50%, var(--fg-3));
 }
+
+/* 操控电脑 on in this conversation (features/computer/ComputerPill.tsx) */
+.cu-pill-row { display: flex; justify-content: flex-start; margin: 0 var(--sp-4) 6px; }
+.cu-pill { display: inline-flex; align-items: center; gap: 8px; height: 28px; max-width: 100%; padding: 0 4px 0 10px; border-radius: var(--r-pill); background: color-mix(in oklab, var(--accent) 10%, var(--bg-elev)); box-shadow: var(--elev-1); color: var(--ink-2); font-size: var(--fs-meta); animation: bg-pill-in var(--dur-slow) var(--ease-out); }
+.cu-pill > svg { flex: none; color: var(--accent-text, var(--accent)); }
+.cu-pill-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cu-pill-off { flex: none; height: 22px; padding: 0 10px; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--ink-3); font-size: var(--fs-meta); cursor: pointer; }
+.cu-pill-off:hover { background: var(--fill-subtle); color: var(--ink-1); }

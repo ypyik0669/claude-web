@@ -10,7 +10,7 @@ import { providerChannels } from './providers/registry.js';
 import type { CatalogEntry, ChannelCatalogOverride, ChannelStatus, SourceSummary } from './types.js';
 
 export interface ChannelDeps {
-  providers: Pick<ProviderService, 'list' | 'refreshModels'> & Partial<Pick<ProviderService, 'upsert' | 'remove' | 'modelFilter'>>;
+  providers: Pick<ProviderService, 'list' | 'refreshModels'> & Partial<Pick<ProviderService, 'upsert' | 'remove' | 'modelFilter' | 'forSession'>>;
   upstreams: Pick<UpstreamService, 'status' | 'syncFamily' | 'probe'>;
   /** 托管程序 (absent in tests that only project providers / upstreams) */
   engines?: EngineManager;
@@ -39,6 +39,7 @@ export class ChannelService {
       engines: deps.engines,
       meta: deps.meta,
       catalog: () => this.catalog(),
+      plainKey: (id) => { try { return p.forSession?.(id)?.apiKey ?? ''; } catch { return ''; } },
     });
     // a free-only source (Kilo, OpenRouter :free …) keeps only its free models from every pull
     if (deps.meta && 'modelFilter' in deps.providers) {

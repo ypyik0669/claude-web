@@ -1429,6 +1429,25 @@ export class SessionRunner extends EventEmitter {
     this.send(`/effort ${on ? 'ultracode' : this.effort ?? 'high'}`);
   }
 
+  async setFeatures(patch: { computerUse?: boolean; chrome?: boolean }) {
+    if (this.features.chatOnly) return; // no tools at all: nothing to switch on
+    const next: SessionFeatures = { ...this.features };
+    for (const k of ['computerUse', 'chrome'] as const) if (typeof patch[k] === 'boolean') { if (patch[k]) next[k] = true; else delete next[k]; }
+    if (!!next.computerUse === !!this.features.computerUse && !!next.chrome === !!this.features.chrome) return;
+    this.features = next;
+    if (next.chrome) this.extraArgs.chrome = null; else delete this.extraArgs.chrome;
+    this.info.features = next;
+    this.emit('info', this.info);
+    await this.respawnWhenIdle();
+  }
+
+  noteComputerApps(apps: string[]) {
+    const all = [...new Set([...(this.info.computerApps ?? []), ...apps.map((a) => a.trim()).filter(Boolean)])];
+    if (all.length === (this.info.computerApps ?? []).length) return;
+    this.info.computerApps = all;
+    this.emit('info', this.info);
+  }
+
   /**
    * The model subagents run on ('' = the main model). An environment variable read once at start: another process,
    * resuming this conversation (mid-turn: once the turn is done — subagents already out keep theirs).
@@ -1624,6 +1643,8 @@ export class SessionRunner extends EventEmitter {
       if (this.closed) return; // closed while the old process was shutting down: don't spawn an orphan
       try { repair?.(); } catch { /* the next resume repairs what it can */ }
       this.bgLive.clear(); // the old process's background went with it
+      // …and its MCP processes, with every application the user let 操控电脑 use: the new one asks again
+      if (this.info.computerApps) { delete this.info.computerApps; this.emit('info', this.info); }
       this.setState('starting');
       this.start(this.hasTranscript ? { resume: this.sessionId, extraArgs: { ...this.extraArgs } } : { sessionId: this.sessionId, extraArgs: { ...this.extraArgs } });
     } finally {

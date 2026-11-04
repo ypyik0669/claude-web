@@ -52,7 +52,7 @@
 /* Windows / Linux: the caption buttons float over the top-right corner (unless the right panel owns it) — the profile's
    tabs and × start under them, and the conversation's head keeps clear of them when it reaches the corner */
 html.desktop:not(.mac) .app:not(.dock-open) .bots-col-profile { padding-top: var(--h-head); }
-html.desktop:not(.mac) .app:not(.dock-open) .bots-body:not(:has(.bots-col-profile:not([hidden]))) .bt-head { padding-right: calc(158px / var(--zoom, 1)); }
+html.desktop:not(.mac) .app:not(.dock-open) .bots-body:not(:has(.bots-col-profile:not([hidden]))) .bt-head { padding-right: calc(var(--caption-w)); }
 
 /* a phone: one screen at a time */
 .bots-phone { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }

@@ -42,6 +42,10 @@ export interface AgentDriver extends EventEmitter {
   setUltracode?(on: boolean): Promise<void>;
   /** Claude: the model subagents run on ('' = the main model) — another process when it changes */
   setSubagentModel?(model: string): Promise<void>;
+  /** 操控电脑 / 控制 Chrome on or off: a restart once the turn is done */
+  setFeatures?(patch: { computerUse?: boolean; chrome?: boolean }): Promise<void>;
+  /** 操控电脑: the user let it operate these applications */
+  noteComputerApps?(apps: string[]): void;
   stopTask?(taskId: string): Promise<void>;
   contextUsage?(detail: 'summary' | 'full'): Promise<unknown>;
   setFastMode?(on: boolean): Promise<void>;

@@ -6,6 +6,8 @@ import { sweepWebTokens } from '../web/launcher.js';
 import type { SessionFeatures } from '../protocol.js';
 import { COMPUTER_SERVER } from './access.js';
 import { TOOL_NAMES } from './tools.js';
+import { agentDesktopSupported, ensureAgentDesktop } from './agent-desktop.js';
+import { DESKTOP_SERVER, DESKTOP_TOOLS } from './desktop-mcp.js';
 
 /**
  * How a Claude conversation with 「操控电脑」 on is handed the `computer` MCP server (computer/mcp.ts): through the
@@ -19,9 +21,12 @@ import { TOOL_NAMES } from './tools.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-export function computerSupported(platform: NodeJS.Platform = process.platform): boolean {
-  return platform === 'win32';
+/** Windows: the `computer` server (screenshots, mouse, keyboard) and `desktop` (agent-desktop's accessibility tree);
+ *  macOS: `desktop` alone. */
+export function computerSupported(platform: NodeJS.Platform = process.platform, arch: string = process.arch): boolean {
+  return platform === 'win32' || agentDesktopSupported(platform, arch);
 }
+const classicSupported = (platform: NodeJS.Platform) => platform === 'win32';
 
 /**
  * Capabilities a conversation gets when nobody chose any for it (the old `defaultFeatures` setting; conversations the
@@ -60,10 +65,10 @@ export function configureComputerMcp(e: { url: string; token: string } | null, d
 }
 
 /** Path to the MCP entry, whether we're running from src (tsx) or dist. */
-export function computerEntry(): string {
-  const compiled = path.join(here, 'mcp.js');
+export function computerEntry(name = 'mcp'): string {
+  const compiled = path.join(here, `${name}.js`);
   if (fs.existsSync(compiled)) return compiled;
-  const src = path.join(here, 'mcp.ts');
+  const src = path.join(here, `${name}.ts`);
   return fs.existsSync(src) ? src : compiled;
 }
 
@@ -83,26 +88,34 @@ export function selfExe(): string | undefined {
 type StdioServer = { type: 'stdio'; command: string; args: string[]; env: Record<string, string> };
 
 /** The `mcpServers` entry for the Agent SDK; {} when it is not to be handed out (another platform, not listening yet). */
-export function computerClaudeMcpServer(t: { sessionId: string }, o: { execPath?: string; platform?: NodeJS.Platform } = {}): Record<string, StdioServer> {
-  if (!endpoint || !computerSupported(o.platform)) return {};
-  const entry = computerEntry();
+export function computerClaudeMcpServer(t: { sessionId: string }, o: { execPath?: string; platform?: NodeJS.Platform; arch?: string } = {}): Record<string, StdioServer> {
+  const platform = o.platform ?? process.platform;
+  if (!endpoint || !computerSupported(platform, o.arch)) return {};
   const self = selfExe();
-  return {
-    [COMPUTER_SERVER]: {
+  const ep = endpoint;
+  const server = (entry: string): StdioServer => ({
       type: 'stdio',
       command: o.execPath ?? process.execPath,
       args: entry.endsWith('.ts') ? ['--import', tsxLoader(), entry] : [entry],
       env: {
         // process.execPath is the Electron binary in a packaged build; the same trick `spawnClaude` uses
         ELECTRON_RUN_AS_NODE: '1',
-        CW_COMPUTER_ASK_URL: endpoint.url,
-        ...(endpoint.tokenFile ? { CW_COMPUTER_TOKEN_FILE: endpoint.tokenFile } : { CW_COMPUTER_TOKEN: endpoint.token }),
+        CW_COMPUTER_ASK_URL: ep.url,
+        ...(ep.tokenFile ? { CW_COMPUTER_TOKEN_FILE: ep.tokenFile } : { CW_COMPUTER_TOKEN: ep.token }),
         CW_SESSION_ID: t.sessionId,
         CLAUDE_WEB_DIR: dataDir(),
         ...(self ? { CW_COMPUTER_SELF_EXE: self } : {}),
+        ...(process.env.CW_AGENT_DESKTOP_BIN ? { CW_AGENT_DESKTOP_BIN: process.env.CW_AGENT_DESKTOP_BIN } : {}),
       },
-    },
-  };
+  });
+  const out: Record<string, StdioServer> = {};
+  if (classicSupported(platform)) out[COMPUTER_SERVER] = server(computerEntry());
+  if (agentDesktopSupported(platform, o.arch ?? process.arch)) {
+    out[DESKTOP_SERVER] = server(computerEntry('desktop-mcp'));
+    // fetched here (this process follows the user's proxy) while the conversation starts; the server waits for it
+    if (!o.platform && !process.env.VITEST) void ensureAgentDesktop().catch((e) => console.warn(`[computer] agent-desktop: ${(e as Error).message}`));
+  }
+  return out;
 }
 
 /**
@@ -110,6 +123,11 @@ export function computerClaudeMcpServer(t: { sessionId: string }, o: { execPath?
  * in the app in every permission mode but 完全放开, which is granted unasked (access.ts), and what the others may do is decided by
  * the server's gate from what was granted. [] when the server is not handed out.
  */
-export function computerAllowedTools(o: { platform?: NodeJS.Platform } = {}): string[] {
-  return endpoint && computerSupported(o.platform) ? TOOL_NAMES.map((t) => `mcp__${COMPUTER_SERVER}__${t}`) : [];
+export function computerAllowedTools(o: { platform?: NodeJS.Platform; arch?: string } = {}): string[] {
+  const platform = o.platform ?? process.platform;
+  if (!endpoint || !computerSupported(platform, o.arch)) return [];
+  return [
+    ...(classicSupported(platform) ? TOOL_NAMES.map((t) => `mcp__${COMPUTER_SERVER}__${t}`) : []),
+    ...(agentDesktopSupported(platform, o.arch ?? process.arch) ? DESKTOP_TOOLS.map((t) => `mcp__${DESKTOP_SERVER}__${t.name}`) : []),
+  ];
 }

@@ -181,6 +181,19 @@ export const BASELINE: CatalogEntry[] = [
     authStyle: 'x-api-key', limits: 'plain chat only, no tool use; one claude CLI run per request (2 at a time); uses your own Claude plan',
     driver: 'claude-bridge', source: 'magpie internal/claudebridge',
   },
+  // ---- a grok.com account through its sso cookie (drivers/grok-web.ts) ----
+  {
+    id: 'grok-web', name: 'Grok (grok.com account)', category: 'subscription', needs: 'key', protocol: 'openai', authStyle: 'bearer',
+    free: 'some', signupUrl: 'https://grok.com/', driver: 'grok-web', source: 'CNFlyCat/GrokProxy, justlovemaki/AIClient2API (protocol)',
+    keyLabel: 'sso cookie',
+    keyHint: 'grok.com → F12 → Application → Cookies → copy the value of sso (or the whole Cookie header; add a line ua=<your browser User-Agent> if Cloudflare blocks it)',
+    limits: "the account's own grok.com limits; tool calls emulated in the prompt",
+    models: [
+      { id: 'grok-4.20', capabilities: { tools: true, reasoning: true } }, { id: 'grok-4.20-fast', capabilities: { tools: true } },
+      { id: 'grok-4.20-expert', capabilities: { tools: true, reasoning: true } }, { id: 'grok-4.20-heavy', capabilities: { tools: true, reasoning: true } },
+      { id: 'grok-4.1-thinking', capabilities: { tools: true, reasoning: true } }, { id: 'grok-4.1-mini', capabilities: { tools: true } },
+    ],
+  },
   // ---- logins we already run (upstreams/) ----
   { id: 'claude-account', name: 'Claude', category: 'subscription', needs: 'login', protocol: 'anthropic', driver: 'upstream:claude' },
   { id: 'gemini-web', name: 'Gemini', category: 'subscription', needs: 'login', protocol: 'gemini', driver: 'upstream:gemini' },
@@ -196,7 +209,7 @@ interface RemoteCatalogFile { version: number; entries: unknown[]; signature: st
 
 export type { RemoteCatalogState };
 
-const KNOWN_FIELDS = new Set(['id', 'name', 'category', 'needs', 'protocol', 'baseUrl', 'authStyle', 'signupUrl', 'free', 'mayTrain', 'modelFilter', 'models', 'limits', 'notes', 'driver', 'retired']);
+const KNOWN_FIELDS = new Set(['id', 'name', 'category', 'needs', 'protocol', 'baseUrl', 'authStyle', 'signupUrl', 'free', 'mayTrain', 'modelFilter', 'models', 'limits', 'notes', 'driver', 'retired', 'keyLabel', 'keyHint']);
 const remoteFile = () => path.join(dataDir(), 'channels', 'catalog-remote.json');
 const MAX_REMOTE_BYTES = 2 * 1024 * 1024;
 /** a verified copy older than this is fetched again in the background when the catalog is first read */

@@ -167,3 +167,23 @@
   `_meta: ALWAYS_LOAD`（`server/src/mcp/always-load.ts`），别的不带**。这里涉及：`browser_screenshot`、`browser_computer`，
   `computer` 的 `screenshot`、`zoom`、`computer_batch`（`computer/tools.ts` 的 `def(…, PICTURE)`）。完整清单和 e2e（`ws-phase41.mjs`）
   见「ego lite 作为 Agent 的第一浏览器」的坑一节。
+
+## agent-desktop：Windows + macOS 的「操控电脑」（2026-11-04，用户要求）
+
+- 新 MCP 服务器 `desktop`（`server/src/computer/desktop-mcp.ts`），用 vercel-labs/agent-desktop（Apache-2.0，Rust）读无障碍树、按 ref 操作：snapshot / find / act / press / launch / window / wait / screenshot / mouse / clipboard + request_access / list_apps，12 个工具。Windows 上和旧的 `computer` 一起给，macOS 上只给它（`computerSupported` 现在是 win32 或 agent-desktop 有构建的平台）。
+- **1.1.0 的正式版没有 `agent-desktop mcp` 子命令**（文档里有）：每个工具调用起一次命令行，单次 0.1–2 s。
+- 程序不打包：第一次用时从 GitHub release 下载（`agent-desktop.ts`，钉 1.1.0 + SHA-256），放 `<数据目录>/tools/agent-desktop/1.1.0/`；`CW_AGENT_DESKTOP_BIN` 可指向别的副本。下载在主进程开对话时就开始（走用户代理），MCP 进程里也会等它。
+- 授权闸同 `computer`：request_access → 同一张授权卡；ref 只能用在读它的那个应用上；坐标 / 截整屏要求至少授权过一个应用；剪贴板单独授权。
+- 真机验过（Windows）：下载 + 校验、list_apps、snapshot（Chrome 103 个 ref 约 1.9 s）、find。**没验的**：macOS（辅助功能权限提示）、真模型自己驱动、未签名程序被 SmartScreen 拦的情况。
+
+## 操控电脑在对话里开关（2026-11-04，用户：在聊天界面点不开，应该放在聊天里）
+
+- 进行中的对话里，`+` 的「操控电脑」「控制 Chrome」能开关（`LIVE_FEATURES`，protocol.ts），其它能力仍是开对话时定死（`LIVE_CAPS_NOTE` 说哪两项能改）。请求 `session.setFeatures`（已进联邦路由表）→ 记进 `SessionMeta.liveFeatures`（之后重开这个对话还带着，分叉不带）→ 在跑的 runner `setFeatures()`：改 features / `extraArgs.chrome`，**这一轮结束后**重启进程（`respawnWhenIdle`），下一句起生效。
+- 输入框上方的小条 `features/computer/ComputerPill.tsx`：开着时显示「操控电脑已开」或「正在操控 · 已允许 …」+「关掉」。允许过的应用：`ComputerAccess` 在「允许」/ 完全放开时 emit `granted` → `runner.noteComputerApps` → `info.computerApps`；进程重启时清空（MCP 进程连同授权一起没了，要重新问）。
+- 模型中心的「操控」页删了（`ControlPage.tsx` 一直是空数组的占位，从没接上任务）。
+
+## 别动用户已经打开的文件（2026-11-04，真机测试时出事）
+
+- 测试时 `launch notepad` 接管了用户开着的记事本（Win11 记事本是单实例 + 标签），`set_value` 把当前标签「mobbin脚本.js」整个换掉；UIA 的 SetValue 不进撤销记录，Ctrl+Z 撤不回。
+- 现在：`DesktopService` 在 snapshot / find 时记下每个 ref 的值；`set_value` / `clear` 打到已有文字的 ref 上默认拒绝，要 `overwrite: true`（说明里写只在用户要求替换时传）。`launch` 前先 list-apps，应用已经在跑时结果里提醒「这是用户自己的窗口，先 ctrl+n 新建再写」。服务器说明里加了同样的规矩；授权卡的 ACCESS_NOTE 写明「已经打开的窗口和文件它也能改」。
+- 以后真机测 `desktop` 工具：只用自己新开、确认是空的窗口，或者只读（snapshot / find / screenshot）。

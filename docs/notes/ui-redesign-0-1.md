@@ -22,3 +22,8 @@ spec：`docs/superpowers/specs/2026-09-28-ui-redesign/proposal.md`（§5.2、§5
   - `shot.cjs` 截图时 JS 在应用初始化完成前就跑了，紧接着 `dispatchLayout` 的结果可能被覆盖（看到的尺寸 / 面板状态不对）；改布局的步骤包在 `setTimeout(…, 1500)` 里。ui-smoke 的离屏窗口 `setContentSize` 之后的截图也不可靠，只用来断言 DOM。
 - **默认对话页静止时可点的外框控件：16 个**（spec §8 要求 ≤ 16；终审 I3 之前是 19，终审修复后 15，复审 M-6 让没有项目时的「其它文件夹」标题重新可折叠后 16；阶段 C 把漏斗换成「显示」按钮，一换一，仍是 16；「显示」按钮只在有东西被筛掉 / 显示已归档 / 关了「其它 agent 的对话」时亮点并常显，自己选的分组 / 排序 / 每组几条不亮——那是列表本身看得出来的设置，亮着就成了静止时多一个控件（阶段 C 修复 C-U4））。口径是终审探针的 `countCtl`：侧栏里对话行以外、会话头、输入框那一行里看得见（有尺寸、不透明、不在 `[hidden]` / `[inert]` 里）的 `button / [role=button] / [role=tab] / a[href] / input / select / textarea / [tabindex=0]`，嵌在按钮里的不重复算，指针不在侧栏上。场景：全新 HOME、没有项目、一个文件夹里有 CLI 的历史对话、从侧栏打开它（没在运行）。侧栏 7（新对话 · 搜索 · 自动化 ·「其它文件夹」标题 · 那个文件夹 · 账户 · 设置）+ 会话头 4（+N −M · 终端 · 右侧面板 · ···）+ 输入框 5（+ · 模型 · 权限 · 语音 · 发送）。省下来的：会话头的项目 / 分支是灰字、上下文小环 ≥ 60% 才出现（其余在 ··· 本对话用量）、收起侧栏和「项目」标题行的漏斗 / + 悬停或聚焦才出现、没有项目时不另画「打开文件夹」按钮、对话库发现提示等入门清单结束（或满 3 天）；多出来的是没在运行的对话的模型 / 权限 chip（终审 §9 #1）。每多一个项目 +1。
 - 调试：`web/src/features/workbench/pane-edge.tsx` + `data-*` 属性决定标题栏行为，浏览器里给 `<html>` 加 `desktop win` / `desktop mac` 类就能看到桌面版的留白（shot.cjs 的 JS 里 `document.documentElement.classList.add('desktop','win')`）。截图脚本造 demo：临时 HOME 里放一个带 Read / Edit / Bash 的 Claude transcript（Edit 用 old/new_string，`+N −M` 走估算分支）。
+
+## 窗口按钮改为页面自己画（2026-11-04，用户：右上角三个按钮太大）
+
+- Windows / Linux 不再用 `titleBarOverlay`（系统按钮 46px 宽、整行高，hover 块改不小）：`ui/WindowControls.tsx` 画 34×28、圆角 hover、关闭键红底；壳经 `desktop:win`（min/max/close）和 `desktop:maximized` 事件 / `isMaximized()` 配合。
+- 让位宽度 `--caption-w: 130px`（114 按钮 + 16 留白），`tab-row.ts CAPTION_W` 同步；按钮随界面缩放一起缩，所以 `captionWidth(zoom)` 不再除以 zoom。ui-smoke 的两条留白检查按 114 量。

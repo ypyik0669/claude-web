@@ -21,9 +21,9 @@ describe('right panel tab row', () => {
 
   it('1440 wide, default panel: the row stays beside the caption buttons (the reported 280 > 277 is gone)', () => {
     const m = at(1440);
-    // 440 − 8 (the card's gap) − 12 − 158 (20px of air before −: 忍冬 hit − for the panel's ×) — the names alone no
-    // longer fit (201 + 62 + 4), the short form does, so the row stays up
-    expect(m.row - m.padLeft - CAPTION_W).toBe(262);
+    // 440 − 8 (the card's gap) − 12 − 130 (the page's compact buttons and 16px of air before −: 忍冬 hit − for the
+    // panel's ×) — the short form fits, so the row stays up
+    expect(m.row - m.padLeft - CAPTION_W).toBe(290);
     const short = { ...m, fixedShort: shortFixedWidth(m.fixed, [61, 46, 46, 44]) };
     expect(rowStacked(false, short, true)).toBe(false);
     // and a row that was down (a narrower window a moment ago) comes back up: it fits with the hysteresis to spare
@@ -98,30 +98,25 @@ describe('right panel tab row', () => {
     expect(captionHeight('bar', { gap: 0, head: 52, bar: 10 })).toBe(32);
   });
 
-  it('界面缩放: the caption buttons keep their size in the window, so in the page they take 1 / zoom of the row', () => {
+  it('界面缩放: the page draws the caption buttons, so they scale with it and take the same room in its pixels', () => {
     expect(captionWidth()).toBe(CAPTION_W);
-    expect(captionWidth(1)).toBe(CAPTION_W);
-    expect(captionWidth(2)).toBe(CAPTION_W / 2);
-    expect(captionWidth(0.5)).toBe(CAPTION_W * 2);
-    expect(captionWidth(0)).toBe(CAPTION_W); // an unreadable factor is 100%
+    expect(captionWidth(2)).toBe(CAPTION_W);
+    expect(captionWidth(0.5)).toBe(CAPTION_W);
     // the area's height goes to the shell in the window's pixels: the row is `zoom` times as tall there
     const px = { gap: SHELL_GAP, head: 52, bar: 40 };
     expect(captionHeightAt(1, 'head', px)).toBe(60);
     expect(captionHeightAt(1.5, 'head', px)).toBe(90);
     expect(captionHeightAt(2, 'bar', px)).toBe(96);
     expect(captionHeightAt(0.5, 'head', px)).toBe(30);
-    // a row that fits beside the buttons at 100% fits with room to spare zoomed in (the same window is fewer page
-    // pixels wide, but that is the caller's `row`), and may have to move down zoomed out
-    const m: RowMeasure = { row: 420, padLeft: 12, fixed: 201, controls: 62, gaps: 4 };
-    expect(rowStacked(false, m, true, 1)).toBe(true); // 420 − 12 − 142 = 266 < 267
-    expect(rowStacked(false, m, true, 1.25)).toBe(false); // 420 − 12 − 113.6 = 294.4
-    expect(rowStacked(false, { ...m, row: 480 }, true, 1)).toBe(false);
-    expect(rowStacked(false, { ...m, row: 480 }, true, 0.67)).toBe(true); // 480 − 12 − 211.9 = 256.1
+    // the buttons are the page's: zoom does not change the room they take in its pixels
+    const m: RowMeasure = { row: 400, padLeft: 12, fixed: 201, controls: 62, gaps: 4 };
+    for (const z of [0.5, 1, 1.25, 2]) expect(rowStacked(false, m, true, z)).toBe(true); // 400 − 12 − 130 = 258 < 267
+    expect(rowStacked(false, { ...m, row: 420 }, true, 2)).toBe(false); // 278
     expect(rowStacked(false, m, false, 0.5)).toBe(false); // no caption buttons (a browser, macOS): never
     // the temporary strip gets what the buttons do not take
-    const wide: RowMeasure = { ...m, row: 480 };
-    expect(tempsFolded(wide, { stacked: false, caption: true, zoom: 1 })).toBe(true); // 480 − 12 − 142 − 267 − 13 = 46 < 56
-    expect(tempsFolded(wide, { stacked: false, caption: true, zoom: 2 })).toBe(false); // 71 more
+    const wide: RowMeasure = { ...m, row: 470 };
+    expect(tempsFolded(wide, { stacked: false, caption: true, zoom: 1 })).toBe(true); // 470 − 12 − 130 − 267 − 13 = 48 < 56
+    expect(tempsFolded({ ...wide, row: 560 }, { stacked: false, caption: true, zoom: 1 })).toBe(false);
   });
 });
 

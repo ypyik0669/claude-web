@@ -22,6 +22,7 @@ import { PendingPicks, SourceCache, displayMediaGrant, listSources, oneAtATime, 
 import { CrashGuard, allowNavigation, externalAllowed, sameOrigin, windowOpenAction } from './nav-guard';
 import { FileGuard, guardSession } from './file-guard';
 import { fromOurWindow, openablePath, type IpcAsker } from './ipc-guard';
+import { openingHold, openingHtml, setOpeningNote } from './opening';
 
 const isMac = process.platform === 'darwin';
 
@@ -192,15 +193,8 @@ function windowUrl(base: string, winId: string) {
  * scan of ~/.claude), and a window that only appears once the page has rendered reads as「打不开」— a second launch
  * from the Start menu in that time found no window to show either.
  */
-function splashUrl(dark: boolean, note = tr('正在启动…')): string {
-  const [bg, fg, mut] = dark ? ['#12110f', '#c4c2be', '#868480'] : ['#f7f6f2', '#47433f', '#7f7b77'];
-  const html = `<!doctype html><html lang="${getLocale() === 'zh' ? 'zh-CN' : 'en'}"><head><meta charset="utf-8"><title>${APP_NAME}</title><style>`
-    + `html,body{height:100%;margin:0;background:${bg};color:${fg};font:14px "Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",system-ui,sans-serif;-webkit-app-region:drag;user-select:none;cursor:default}`
-    + `body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}`
-    + `.n{font-size:17px;font-weight:600}.s{color:${mut};max-width:420px;text-align:center;line-height:1.6}`
-    + `.d{width:18px;height:18px;border:2px solid ${mut};border-top-color:transparent;border-radius:50%;animation:r .9s linear infinite}`
-    + `@keyframes r{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){.d{animation:none}}`
-    + `</style></head><body><div class="d"></div><div class="n">${APP_NAME}</div><div class="s">${note}</div></body></html>`;
+function splashUrl(dark: boolean, note = ''): string {
+  const html = openingHtml({ dark, lang: getLocale() === 'zh' ? 'zh' : 'en', title: APP_NAME, note, waiting: tr('正在启动…') });
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
@@ -237,10 +231,10 @@ function createWindow(url: string | null, winId = 'main', bounds?: Bounds, hidde
     icon: iconPath(),
     backgroundColor: titleBar.bg || (dark ? '#12110f' : '#f7f6f2'),
     titleBarStyle: 'hidden',
-    // macOS keeps its own traffic lights (left, see `html.mac` in styles.css; y centres them in the 52px top rows); elsewhere we draw the overlay buttons
-    ...(isMac
-      ? { trafficLightPosition: { x: 14, y: trafficLightY(z) } } // centred in the sidebar's 52px top row, which starts under the 8px shell gap
-      : { titleBarOverlay: { color: titleBar.overlay || overlayDefault(dark), symbolColor: titleBar.fg || (dark ? '#c4c2be' : '#47433f'), height: captionNow() } }),
+    // macOS keeps its own traffic lights (left, see `html.mac` in styles.css; y centres them in the 52px top rows);
+    // elsewhere the page draws its own compact buttons (ui/WindowControls.tsx): the native overlay's are 46px wide
+    // and as tall as the whole head row, and their hover block can't be made smaller
+    ...(isMac ? { trafficLightPosition: { x: 14, y: trafficLightY(z) } } : {}),
     show: false,
     // webviewTag powers the in-app browser tile; each <webview> declares its own partition and denies popups (and keeps
     // its own zoom: only our pages are zoomed)
@@ -253,6 +247,9 @@ function createWindow(url: string | null, winId = 'main', bounds?: Bounds, hidde
   win.once('ready-to-show', () => { if (!hidden) win.show(); });
   win.on('resize', saveState);
   win.on('move', saveState);
+  for (const ev of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen'] as const) {
+    win.on(ev as 'maximize', () => { if (!win.isDestroyed()) win.webContents.send('desktop:maximized', win.isMaximized() || win.isFullScreen()); });
+  }
   win.on('close', (e) => {
     if (quitting) return;
     const visible = liveWins().filter(([, w]) => w.isVisible());
@@ -480,7 +477,6 @@ function setZoom(ask: ZoomAsk, from: BrowserWindow | null = focusedWin()) {
     if (titleBar.height) titleBar.height = captionH(scaleCaption(titleBar.height, prev, next));
     for (const [, w] of liveWins()) {
       applyZoom(w);
-      if (!isMac && titleBar.fg) { try { w.setTitleBarOverlay({ color: titleBar.overlay, symbolColor: titleBar.fg, height: captionNow() }); } catch { /* not supported */ } }
     }
     mainLog(`[zoom] ${Math.round(next * 100)}%`);
   }
@@ -884,8 +880,15 @@ ipcMain.on('desktop:notify', (e, { title, body, sessionId }: { title: string; bo
 ipcMain.on('desktop:badge', (_e, n: number) => { pendingCount = n; updateBadge(); });
 ipcMain.on('desktop:titlebar', (_e, { bg, fg, overlay, height }: { bg: string; fg: string; overlay?: string; height?: number }) => {
   titleBar = { bg, fg, overlay: overlay || bg, height: captionH(height) };
-  if (!isMac) for (const [, w] of liveWins()) { try { w.setTitleBarOverlay({ color: titleBar.overlay, symbolColor: fg, height: captionNow() }); } catch { /* not supported */ } }
 });
+ipcMain.on('desktop:win', (e, act: unknown) => {
+  const w = BrowserWindow.fromWebContents(e.sender);
+  if (!w || w.isDestroyed()) return;
+  if (act === 'min') w.minimize();
+  else if (act === 'max') { if (w.isFullScreen()) w.setFullScreen(false); else if (w.isMaximized()) w.unmaximize(); else w.maximize(); }
+  else if (act === 'close') w.close();
+});
+ipcMain.on('desktop:win:maximized', (e) => { const w = BrowserWindow.fromWebContents(e.sender); e.returnValue = !!w && (w.isMaximized() || w.isFullScreen()); });
 ipcMain.handle('desktop:zoom:get', (e) => zoomInfo(BrowserWindow.fromWebContents(e.sender)));
 ipcMain.handle('desktop:zoom:set', (e, v: unknown) => {
   const from = BrowserWindow.fromWebContents(e.sender);
@@ -1029,12 +1032,19 @@ if (gotLock) app.whenReady().then(async () => {
   // the window first (on the splash), then the server: see splashUrl
   const hidden = process.argv.includes('--hidden');
   const main = createWindow(null, 'main', undefined, hidden);
+  // the opening starts when its page is in, not when the window was made
+  let openedAt = Date.now();
+  main.webContents.once('dom-ready', () => { openedAt = Date.now(); });
+  // only the line under the opening changes: reloading the page would play the animation again
   const slowSplash = () => {
-    if (!main.isDestroyed()) void main.loadURL(splashUrl(nativeTheme.shouldUseDarkColors, tr('电脑比较忙，启动得比平时慢，请稍等…')));
+    if (!main.isDestroyed()) void main.webContents.executeJavaScript(setOpeningNote(tr('电脑比较忙，启动得比平时慢，请稍等…'))).catch(() => {});
   };
   host.once('slow', slowSplash);
   try {
     const info = await host.start().finally(() => host.off('slow', slowSplash));
+    // a server up before the opening has played (a warm start): let it finish, it is under two seconds
+    const hold = hidden ? 0 : openingHold(openedAt);
+    if (hold) await new Promise((r) => setTimeout(r, hold));
     buildMenu();
     buildTray();
     setupUpdater();

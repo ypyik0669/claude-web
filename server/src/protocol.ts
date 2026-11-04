@@ -390,7 +390,7 @@ export interface AgentInfo {
 /** Optional per-session switches. Each maps to a CLI flag or env var; unknown to the engine = ignored/error. */
 export interface SessionFeatures {
   chrome?: boolean; // --chrome (Claude in Chrome MCP)
-  /** kept for stored defaults; ignored — the engine has computer use only in its own terminal interface (session-runner featureArgs) */
+  /** 操控电脑: our own `computer` / `desktop` MCP servers (computer/launcher.ts); can be switched mid-conversation (LIVE_FEATURES) */
   computerUse?: boolean;
   coordinator?: boolean; // CLAUDE_CODE_COORDINATOR_MODE=1 (ccb)
   proactive?: boolean; // --proactive (ccb)
@@ -427,7 +427,7 @@ export interface SessionMeta {
   prAutoComments?: number; prCommentsDone?: string[]; prCommentsSent?: { ids: string[]; sha: string; at: number; /** local HEAD when the batch went, and the commit made after it (fix E-I2) */ head?: string; commit?: string };
   /** stage E5: the machine it runs on (WSL); stage E3: the built-in browser's recordings (newest 20) */
   env?: SessionEnv; browserRecordings?: { path: string; start: number; end: number }[];
-  pendingTitle?: string; /** 只聊天: started without tools; a resume keeps it that way */ chatOnly?: boolean; /** 保持电脑唤醒 while this conversation is busy */ keepAwake?: boolean; /** 代码审查卡: findings dismissed here, `<toolUseId>#<index>` */ reviewDismissed?: string[]; /** 任务 chip: suggestions dismissed (tool use ids), and started (tool use id → the new conversation) */ taskDismissed?: string[]; taskStarted?: Record<string, string>; /** PR 监控条: 自动修 CI on, and the failures it already asked about */ prAutoFix?: boolean; prFixed?: string[]; pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string; /** prompt-cache route key when it is not the session's own id (forks keep their root's) */ cacheKey?: string; /** the model its subagents run on, picked for this provider ('' = the main model) */ subagent?: { providerId: string; model: string }; /** the permission mode it last ran with: a resume without a pick comes back in it (the SDK never says it) */ permissionMode?: PermissionMode; /** 思考用的语言 for this conversation: '' / absent = the setting `ai.thinkingLanguage`, 'off' = none here, 'auto' = the interface language, else a THINKING_LANGUAGES id */ thinkingLanguage?: string; /** a `continueInClaude` source's conversation: the Claude conversation it goes on in */ continuedAs?: string; /** the Claude conversation of a `continuedAs`: what it goes on from, and how many of its messages are in it */ continuedFrom?: string; replayed?: number; /** 派活 (stage F3): started by a dispatch, and from where */ origin?: 'dispatch'; dispatchFrom?: DispatchFrom; /** 交给常开机器继续 (stage F1): handed to that machine, read-only here */ handedOff?: HandoffInfo; /** the always-on machine's copy: where it came from */ handoffFrom?: HandoffFrom; /** the project instructions it started with (new conversations only; a resume keeps them) */ projectInstructions?: string }
+  pendingTitle?: string; /** 只聊天: started without tools; a resume keeps it that way */ chatOnly?: boolean; /** 操控电脑 / 控制 Chrome switched while it ran: its later starts keep them */ liveFeatures?: { computerUse?: boolean; chrome?: boolean }; /** 保持电脑唤醒 while this conversation is busy */ keepAwake?: boolean; /** 代码审查卡: findings dismissed here, `<toolUseId>#<index>` */ reviewDismissed?: string[]; /** 任务 chip: suggestions dismissed (tool use ids), and started (tool use id → the new conversation) */ taskDismissed?: string[]; taskStarted?: Record<string, string>; /** PR 监控条: 自动修 CI on, and the failures it already asked about */ prAutoFix?: boolean; prFixed?: string[]; pinned?: boolean; archived?: boolean; workspaceId?: string; tags?: string[]; providerId?: string; /** sidebar grouping directory when it differs from the cwd (orchestration worktrees) */ groupCwd?: string; /** prompt-cache route key when it is not the session's own id (forks keep their root's) */ cacheKey?: string; /** the model its subagents run on, picked for this provider ('' = the main model) */ subagent?: { providerId: string; model: string }; /** the permission mode it last ran with: a resume without a pick comes back in it (the SDK never says it) */ permissionMode?: PermissionMode; /** 思考用的语言 for this conversation: '' / absent = the setting `ai.thinkingLanguage`, 'off' = none here, 'auto' = the interface language, else a THINKING_LANGUAGES id */ thinkingLanguage?: string; /** a `continueInClaude` source's conversation: the Claude conversation it goes on in */ continuedAs?: string; /** the Claude conversation of a `continuedAs`: what it goes on from, and how many of its messages are in it */ continuedFrom?: string; replayed?: number; /** 派活 (stage F3): started by a dispatch, and from where */ origin?: 'dispatch'; dispatchFrom?: DispatchFrom; /** 交给常开机器继续 (stage F1): handed to that machine, read-only here */ handedOff?: HandoffInfo; /** the always-on machine's copy: where it came from */ handoffFrom?: HandoffFrom; /** the project instructions it started with (new conversations only; a resume keeps them) */ projectInstructions?: string }
 export interface Schedule { id: string; name: string; cwd: string; prompt: string; everyMinutes: number; cron?: string; enabled: boolean; lastRunAt?: number; nextRunAt?: number; sessionId?: string; model?: string; permissionMode?: string; freshSession?: boolean; lastError?: string; runs?: number; /** 手动: only 立即运行 starts it */ manual?: boolean; /** each run in its own worktree (with freshSession) */ worktree?: boolean }
 export interface LimitWindow { label: string; percent: number; resetsAt: string | null; active: boolean; severity?: string }
 // ---- remote access / phones / IM (phase 6) ----
@@ -532,10 +532,16 @@ export interface SessionInfoSnapshot {
   providerId?: string;
   providerName?: string;
   features?: SessionFeatures;
+  /** 操控电脑: the applications the user let this process operate (gone with the process: a restart asks again) */
+  computerApps?: string[];
   error?: string;
   agent?: AgentKind;
   agentName?: string;
 }
+
+/** The capabilities a running conversation can switch (the next message runs on a restarted process with them). */
+export const LIVE_FEATURES = ['computerUse', 'chrome'] as const;
+export type LiveFeatureKey = (typeof LIVE_FEATURES)[number];
 
 // ---- requests ----
 /** One question and answer of a side chat (旁聊), as the CLI wants them. */
@@ -570,6 +576,8 @@ export type ClientRequest =
   | { kind: 'session.setUltracode'; sessionId: string; on: boolean }
   /** '' = the same as the main model. `providerId`: the provider the pick was made for (a switch in between drops it) */
   | { kind: 'session.setSubagentModel'; sessionId: string; model: string; providerId?: string }
+  /** 操控电脑 / 控制 Chrome switched in a running conversation (remembered for its later starts) */
+  | { kind: 'session.setFeatures'; sessionId: string; features: Partial<Record<LiveFeatureKey, boolean>> }
   | { kind: 'session.setProvider'; sessionId: string; providerId?: string; model?: string } // model: the respawned process starts on it
   | { kind: 'session.switchAgent'; sessionId: string; agent: AgentKind; model?: string }
   | { kind: 'session.canonical'; sessionId: string }

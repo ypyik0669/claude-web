@@ -207,6 +207,30 @@ describe('SessionRunner', () => {
     await r.close();
   });
 
+  it('控制 Chrome / 操控电脑 switched mid-conversation: the next process has them, the same pick again restarts nothing', async () => {
+    queries.length = 0;
+    const r = new SessionRunner({ sessionId: 'lf', cwd: '/x' } as any);
+    await tick();
+    await r.setFeatures({ chrome: true });
+    await tick();
+    expect(queries).toHaveLength(2);
+    expect(queries[1].options.extraArgs.chrome).toBeNull();
+    expect(r.info.features).toEqual({ chrome: true });
+    await r.setFeatures({ chrome: true });
+    await tick();
+    expect(queries).toHaveLength(2);
+    r.noteComputerApps(['Chrome', 'Chrome', 'Notepad']);
+    expect(r.info.computerApps).toEqual(['Chrome', 'Notepad']);
+    await r.setFeatures({ chrome: false, computerUse: true });
+    await tick();
+    expect(queries).toHaveLength(3);
+    expect(queries[2].options.extraArgs.chrome).toBeUndefined();
+    expect(r.info.features).toEqual({ computerUse: true });
+    // the restart took the MCP processes, and every yes with them
+    expect(r.info.computerApps).toBeUndefined();
+    await r.close();
+  });
+
   it('refuses to send into a dead query instead of hanging in "running"', async () => {
     queries.length = 0;
     const r = new SessionRunner({ sessionId: 'b', cwd: process.cwd() } as any);
@@ -2086,9 +2110,15 @@ describe('SessionRunner: 联网', () => {
           expect(JSON.stringify(o.mcpServers)).not.toContain('y'.repeat(64)); // this object ends up on the CLI's command line
           // all of them, request_access too: the user's yes is asked for by this app (computer/access.ts), in any permission mode
           expect(o.allowedTools).toEqual(expect.arrayContaining(['mcp__computer__request_access', 'mcp__computer__screenshot', 'mcp__computer__left_click', 'mcp__computer__type']));
-          expect(o.allowedTools.every((t: string) => t.startsWith('mcp__computer__'))).toBe(true);
+          // …and `desktop` (agent-desktop's accessibility tree), behind the same ask
+          expect(o.mcpServers.desktop.env).toMatchObject({ CW_COMPUTER_ASK_URL: 'http://127.0.0.1:45679', CW_SESSION_ID: 'c2' });
+          expect(o.allowedTools).toEqual(expect.arrayContaining(['mcp__desktop__request_access', 'mcp__desktop__snapshot', 'mcp__desktop__act']));
+          expect(o.allowedTools.every((t: string) => t.startsWith('mcp__computer__') || t.startsWith('mcp__desktop__'))).toBe(true);
+        } else if (process.platform === 'darwin') {
+          expect(Object.keys(o.mcpServers)).not.toContain('computer');
+          expect(Object.keys(o.mcpServers)).toContain('desktop');
+          expect(o.allowedTools.every((t: string) => t.startsWith('mcp__desktop__'))).toBe(true);
         } else {
-          // Windows only for now: elsewhere the switch hands out nothing
           expect(Object.keys(o.mcpServers)).not.toContain('computer');
           expect(o.allowedTools ?? []).toEqual([]);
         }

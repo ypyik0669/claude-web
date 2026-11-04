@@ -6,7 +6,6 @@ export type HubPageId =
   | 'overview'
   | 'sources'
   | 'routing'
-  | 'control'
   | 'usage'
   | 'privacy'
   | 'plugins'
@@ -27,7 +26,6 @@ export const HUB_PAGES: HubPageDef[] = [
   { id: 'overview', label: tr('概览'), icon: 'mission', title: tr('概览'), desc: tr('所有来源、账号与路由的实时状态') },
   { id: 'sources', label: tr('上游'), icon: 'gateway', title: tr('上游'), desc: tr('来源、账号、模型与额度') },
   { id: 'routing', label: tr('路由'), icon: 'orchestra', title: tr('路由'), desc: tr('这一轮为什么去了这个模型') },
-  { id: 'control', label: tr('操控'), icon: 'browser', title: tr('操控'), desc: tr('看正在跑的操控任务、接管、批应用授权') },
   { id: 'usage', label: tr('用量'), icon: 'usage', title: tr('用量'), desc: tr('Token、缓存、费用与额度') },
   { id: 'privacy', label: tr('隐私'), icon: 'shield', title: tr('隐私'), desc: tr('厂商能看到什么，留在这台电脑上') },
   { id: 'plugins', label: tr('插件'), icon: 'puzzle', title: tr('插件'), desc: tr('供应商、中间件、工具与页面') },

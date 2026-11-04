@@ -1472,12 +1472,14 @@ function driver() {
         await sleep(200);
         // + in a running conversation: the switches show THIS conversation's state, read-only; one note says where to change them
         await click('.pane .composer .cb .plus');
-        const live = await js(`(() => { const m = document.querySelector('.menu.plus-menu'); if (!m) return null; const rows = [...m.querySelectorAll('[role="menuitemcheckbox"]')]; return { sub: m.querySelector('.cm-sub')?.textContent ?? null, mentions: (m.innerText.match(/新对话/g) || []).length, rows: rows.length, ro: rows.every((r) => r.getAttribute('aria-disabled') === 'true'), checked: rows.filter((r) => r.getAttribute('aria-checked') === 'true').map((r) => r.dataset.id) }; })()`);
+        const live = await js(`(() => { const m = document.querySelector('.menu.plus-menu'); if (!m) return null; const rows = [...m.querySelectorAll('[role="menuitemcheckbox"]')]; return { sub: m.querySelector('.cm-sub')?.textContent ?? null, mentions: (m.innerText.match(/新对话/g) || []).length, rows: rows.length, ro: rows.filter((r) => !['chrome', 'computerUse'].includes(r.dataset.id)).every((r) => r.getAttribute('aria-disabled') === 'true'), liveOpen: rows.filter((r) => ['chrome', 'computerUse'].includes(r.dataset.id) && !r.classList.contains('na')).every((r) => r.getAttribute('aria-disabled') !== 'true'), checked: rows.filter((r) => r.getAttribute('aria-checked') === 'true').map((r) => r.dataset.id) }; })()`);
         const before = await js('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"] ?? null)');
         await click('.menu.plus-menu [data-id="chrome"]');
         const after = await js('JSON.stringify(window.__store.getState().settings["ui.featureDefaults"] ?? null)');
-        const stillOff = await js(`document.querySelector('.menu.plus-menu [data-id="chrome"]')?.getAttribute('aria-checked')`);
-        check('in a conversation the + capabilities show its own state, read-only, 「要改请在新对话的 + 里设置」 said once', live && /要改请在新对话的 \+ 里设置/.test(live.sub ?? '') && live.mentions === 1 && live.rows >= 4 && live.ro && !live.checked.length && before === after && stillOff === 'false', JSON.stringify({ live, before, after, stillOff }));
+        const nowOn = await waitFor(`document.querySelector('.menu.plus-menu [data-id="chrome"]')?.getAttribute('aria-checked') === 'true' && Object.values(window.__store.getState().sessionMeta).some((m) => m?.liveFeatures?.chrome === true)`, 3000);
+        await click('.menu.plus-menu [data-id="chrome"]');
+        const backOff = await waitFor(`document.querySelector('.menu.plus-menu [data-id="chrome"]')?.getAttribute('aria-checked') === 'false'`, 3000);
+        check('in a conversation the + capabilities show its own state: 控制 Chrome / 操控电脑 switch here (this conversation only, not the defaults), the rest read-only, the note said once', live && /操控电脑、控制 Chrome 随时能开关/.test(live.sub ?? '') && live.rows >= 4 && live.ro && live.liveOpen && !live.checked.length && before === after && nowOn && backOff, JSON.stringify({ live, before, after, nowOn, backOff }));
         await key('Escape');
 
         // ---- phase 6 (the official app's recording): info column, header tools, the line under the box, the menus
@@ -1613,13 +1615,13 @@ function driver() {
           // the account menu over a full page (扩展): nothing of it under the page (user report, macOS)
           await js(`(() => { const b = [...document.querySelectorAll('.rail [data-id]')].find((e) => e.dataset.id === 'extensions'); b && b.click(); })()`);
           await waitFor(`!!document.querySelector('.ext-page')`, 3000);
-          // 模型: one hub with nine first-level pages (no tabs, no 高级设置); 上游 has one filter strip; 设置 holds sharing
+          // 模型: one hub with eight first-level pages (no tabs, no 高级设置); 上游 has one filter strip; 设置 holds sharing
           await js(`window.__store.setState({ sidebarOpen: true })`);
           await sleep(200);
           await js(`(() => { const b = [...document.querySelectorAll('.rail [data-id]')].find((e) => e.dataset.id === 'gateway'); b && b.click(); })()`);
-          const hubReady = await waitFor(`(() => { const p = document.querySelector('.over-page.hub-page'); return !!p && !p.hidden && document.querySelectorAll('.hub-side [data-id]').length >= 9; })()`, 20000);
+          const hubReady = await waitFor(`(() => { const p = document.querySelector('.over-page.hub-page'); return !!p && !p.hidden && document.querySelectorAll('.hub-side [data-id]').length >= 8; })()`, 20000);
           const hub = hubReady ? await js(`(() => ({ pages: [...document.querySelectorAll('.hub-side [data-id]')].map((x) => x.dataset.id).join(','), tabs: !!document.querySelector('.hub-page .over-tabs'), adv: document.body.innerText.includes('高级设置') }))()`) : null;
-          check('模型 opens on the hub with nine pages (概览 · 上游 · 路由 · 操控 · 用量 · 隐私 · 插件 · 接入 · 设置), no tabs, no 高级设置', hub && hub.pages === 'overview,sources,routing,control,usage,privacy,plugins,agents,settings' && !hub.tabs && !hub.adv, JSON.stringify(hub));
+          check('模型 opens on the hub with eight pages (概览 · 上游 · 路由 · 用量 · 隐私 · 插件 · 接入 · 设置), no tabs, no 高级设置', hub && hub.pages === 'overview,sources,routing,usage,privacy,plugins,agents,settings' && !hub.tabs && !hub.adv, JSON.stringify(hub));
           await js(`document.querySelector('.hub-side [data-id="sources"]')?.click()`);
           await waitFor(`document.querySelectorAll('.hub-filters [data-id]').length >= 6`, 10000);
           const filters = await js(`(() => ({ ids: [...document.querySelectorAll('.hub-filters [data-id]')].map((x) => x.dataset.id).join(','), cards: document.querySelectorAll('.hub-pgrid .hub-provider').length }))()`);
@@ -2216,7 +2218,7 @@ function driver() {
           check('desktop · Windows, 1440 wide, default panel, 审阅 with files, a temporary tab open: the row is not moved below the caption buttons', counted && r1440.rp === 432 /* the 440 column less the shell gap */ && !r1440.stacked && r1440.fixedOk && r1440.bodyTop <= 61 /* 8 gap + the 52px row */, JSON.stringify(r1440));
           check('…and the temporary tab is reachable: its own tab, or 「更多」 counting it (and marked while it is in front)', r1440.strip || (r1440.badge === '1' && r1440.moreActive), JSON.stringify(r1440));
           // 忍冬 2026-10-14: the row's last button sat 4px from − and a click meant for one landed on the other
-          const air = await js(`(() => { const bs = [...document.querySelectorAll('.dock .dock-tabs button')].filter((b) => b.getClientRects().length && b.getBoundingClientRect().top < 40); const right = Math.max(...bs.map((b) => b.getBoundingClientRect().right)); return { right: Math.round(right), air: Math.round(innerWidth - 138 - right) }; })()`);
+          const air = await js(`(() => { const bs = [...document.querySelectorAll('.dock .dock-tabs button')].filter((b) => b.getClientRects().length && b.getBoundingClientRect().top < 40); const right = Math.max(...bs.map((b) => b.getBoundingClientRect().right)); return { right: Math.round(right), air: Math.round(innerWidth - 114 - right) }; })()`);
           check('desktop · Windows: at least 16px between the right panel\'s last button and the caption buttons', air.air >= 16, JSON.stringify(air));
           // five names do not fit beside the caption buttons of the default panel: only the tab in front keeps its name
           // (a temporary panel is in front here, so none does); the others are their icons, each with its name as tooltip
@@ -3839,9 +3841,9 @@ function driver() {
             if (!(await js(`!!document.querySelector(':is(.rail, .sidebar) [data-id="automation"]')`)) && await js(`!!document.querySelector('.rail .sb-reveal')`)) await click('.rail .sb-reveal');
             await click(':is(.rail, .sidebar) [data-id="automation"]');
             await waitFor(`(() => { const p = document.querySelector('.auto-page'); return !!p && !p.hidden; })()`, 3000);
-            // the section page's header and the Windows caption buttons (138px): 20px of air as on the other rows (the
+            // the section page's header and the Windows caption buttons (114px, drawn by the page): 16px of air as on the other rows (the
             // verification of 2026-10-16 found 12 — rail.css kept the old reserve); measured with the desktop class on
-            const capAir = await js(`(() => { const de = document.documentElement; const had = de.classList.contains('desktop'); de.classList.add('desktop'); const app = document.querySelector('.app'); const wb = document.querySelector('.workbench'); const h = [...document.querySelectorAll('.auto-page .over-head')].find((x) => x.getClientRects().length); let res; if (h && !app.classList.contains('dock-open') && !wb.classList.contains('gb')) { const bs = [...h.querySelectorAll('button')].filter((b) => b.getClientRects().length && getComputedStyle(b).visibility !== 'hidden' && getComputedStyle(b).display !== 'none' && b.getBoundingClientRect().top < 60); const right = Math.max(...bs.map((b) => b.getBoundingClientRect().right)); res = { air: Math.round(innerWidth - 138 - right), vw: innerWidth, buttons: bs.length }; } else res = { notApplicable: { dockOpen: app.classList.contains('dock-open'), groupBar: wb.classList.contains('gb'), head: !!h } }; if (!had) de.classList.remove('desktop'); return res; })()`);
+            const capAir = await js(`(() => { const de = document.documentElement; const had = de.classList.contains('desktop'); de.classList.add('desktop'); const app = document.querySelector('.app'); const wb = document.querySelector('.workbench'); const h = [...document.querySelectorAll('.auto-page .over-head')].find((x) => x.getClientRects().length); let res; if (h && !app.classList.contains('dock-open') && !wb.classList.contains('gb')) { const bs = [...h.querySelectorAll('button')].filter((b) => b.getClientRects().length && getComputedStyle(b).visibility !== 'hidden' && getComputedStyle(b).display !== 'none' && b.getBoundingClientRect().top < 60); const right = Math.max(...bs.map((b) => b.getBoundingClientRect().right)); res = { air: Math.round(innerWidth - 114 - right), vw: innerWidth, buttons: bs.length }; } else res = { notApplicable: { dockOpen: app.classList.contains('dock-open'), groupBar: wb.classList.contains('gb'), head: !!h } }; if (!had) de.classList.remove('desktop'); return res; })()`);
             check('desktop · Windows: the automation page header keeps 16px+ before the caption buttons', capAir.notApplicable ? true : capAir.buttons > 0 && capAir.air >= 16, JSON.stringify(capAir));
           } else if (cover === 'settings') {
             await js('window.__store.getState().openSettings()');

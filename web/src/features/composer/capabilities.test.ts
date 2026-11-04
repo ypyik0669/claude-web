@@ -102,12 +102,12 @@ describe('+ menu sections', () => {
     expect(s.note).toBeUndefined();
     expect(s.goal).toBe(true);
   });
-  it('in a running conversation: the switches show its own state, read-only, and ONE note says changes go to new ones', () => {
+  it('in a running conversation: the switches show its own state, read-only but 操控电脑 / 控制 Chrome, and ONE note says which', () => {
     const s = plusSections({ claude: true, live: true });
     expect(s.readOnly).toBe(true);
     expect(s.note).toBe(LIVE_CAPS_NOTE);
-    expect(LIVE_CAPS_NOTE).toMatch(/要改请在新对话的 \+ 里设置/);
-    expect(LIVE_CAPS_NOTE).not.toMatch(/生效/); // 「…在新对话生效」 read as if this menu changed them
+    expect(LIVE_CAPS_NOTE).toMatch(/操控电脑、控制 Chrome 随时能开关/);
+    expect(LIVE_CAPS_NOTE).toMatch(/其它的开对话时就定下了/);
   });
   it('other agents: no Claude-only capabilities (the old `!foreign` condition), goals still work', () => {
     const s = plusSections({ claude: false, live: false });

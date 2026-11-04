@@ -38,7 +38,7 @@ export const CAPABILITIES: Capability[] = [
   { key: 'chrome', label: tr('控制 Chrome'), desc: tr('用你自己的 Chrome（要装 Claude 扩展）'), title: tr('Claude in Chrome（--chrome）：在你自己的 Chrome 里打开网页、点击、填表，用的是那里登录着的账号。内置浏览器不用开这个'), icon: 'browser', group: 'main' },
   // the whole desktop, through our own `computer` MCP server (server/src/computer): which applications is asked of
   // the user every time, in a card of this app. Windows only for now — elsewhere the row says so
-  { key: 'computerUse', label: tr('操控电脑'), desc: tr('看屏幕、用键盘鼠标操作你允许的应用（每次先问你，完全放开时不问）'), title: tr('Computer Use：截图、键盘和鼠标操作整台电脑上你允许的应用。只对这一个对话开；要用哪些应用，每次都会先弹出来问你（完全放开时不问）'), icon: 'machine', group: 'main', needs: 'computer', unavailable: tr('目前只支持 Windows（看的是运行 Claude Web 的那台电脑）。上网不用它——搜索、打开网页、点击、截图都在右侧的「浏览器」里') },
+  { key: 'computerUse', label: tr('操控电脑'), desc: tr('读应用的界面结构、点按钮填表，必要时截图和用鼠标（每次先问你，完全放开时不问）'), title: tr('Computer Use：截图、键盘和鼠标操作整台电脑上你允许的应用。只对这一个对话开；要用哪些应用，每次都会先弹出来问你（完全放开时不问）'), icon: 'machine', group: 'main', needs: 'computer', unavailable: tr('目前只支持 Windows 和 macOS（看的是运行 Claude Web 的那台电脑）。上网不用它——搜索、打开网页、点击、截图都在右侧的「浏览器」里') },
   { key: 'coordinator', label: tr('协调者模式'), desc: tr('自己不动手，只派活给子代理'), title: tr('协调者模式（CLAUDE_CODE_COORDINATOR_MODE）'), icon: 'orchestra', group: 'advanced' },
   { key: 'proactive', label: tr('主动模式'), desc: tr('空闲时继续推进'), title: tr('主动模式（--proactive）'), icon: 'play', group: 'advanced' },
   { key: 'brief', label: 'Brief', desc: tr('让 Claude 用简报工具随时告诉你进展'), title: tr('Brief（--brief，SendUserMessage 工具）'), icon: 'chat', group: 'advanced' },
@@ -121,7 +121,7 @@ export interface AttachItem { id: typeof PLUS_ID.files | typeof PLUS_ID.folder |
  * Under 「这次对话可以…」 in a running conversation: the switches show what it was started with, read-only — the note
  * says where they CAN be changed (「改动在新对话生效」 read as if this menu changed them).
  */
-export const LIVE_CAPS_NOTE = tr('开对话时就定下了，要改请在新对话的 + 里设置');
+export const LIVE_CAPS_NOTE = tr('操控电脑、控制 Chrome 随时能开关（从下一句起生效）；其它的开对话时就定下了');
 
 /**
  * What the + menu shows. `claude` = the conversation runs on Claude (the capabilities are Claude Code flags: the old

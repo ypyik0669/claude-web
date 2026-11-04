@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { SessionFeatures } from '@shared';
+import { LIVE_FEATURES, type SessionFeatures } from '@shared';
 import { useStore } from '@/store';
 import { ago, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
@@ -78,13 +78,15 @@ function PlusBody(p: PlusMenuProps & { close: (refocus: boolean) => void }) {
   if (view === 'connectors' && p.sessionId) return <ConnectorList sessionId={p.sessionId} onBack={() => setView('main')} onManage={() => { p.close(false); openExtensions('connectors'); }} />;
   if (view === 'reference') return <ReferenceList selfId={p.selfId} onBack={() => setView('main')} onPick={(x) => { p.close(true); p.onReference(x); }} />;
   const caps = capabilitiesFor({ computer });
-  const toggle = (k: FeatureKey) => { if (!s.readOnly) p.onFeatures(withFeature(p.features, k, !p.features[k], { computer })); };
+  const locked = (k: FeatureKey) => s.readOnly && (!!p.features.chatOnly || !(LIVE_FEATURES as readonly string[]).includes(k));
+  const toggle = (k: FeatureKey) => { if (!locked(k)) p.onFeatures(withFeature(p.features, k, !p.features[k], { computer })); };
   const row = (k: FeatureKey) => {
     const c = caps.find((x) => x.key === k)!;
     const on = !!p.features[k] && !c.unavailable;
+    const ro = locked(k);
     return (
-      <button key={k} type="button" data-mi data-id={k} role="menuitemcheckbox" aria-checked={on} aria-disabled={s.readOnly || !!c.unavailable || undefined}
-        className={clsx('cm-it', on && 'on', (s.readOnly || c.unavailable) && 'ro', c.unavailable && 'na')} title={c.unavailable ? c.title : s.readOnly ? tr("{title}\n这个对话{v}", { title: c.title, v: on ? tr('开着') : tr('没开') }) : c.title} onClick={() => { if (!c.unavailable) toggle(k); }}>
+      <button key={k} type="button" data-mi data-id={k} role="menuitemcheckbox" aria-checked={on} aria-disabled={ro || !!c.unavailable || undefined}
+        className={clsx('cm-it', on && 'on', (ro || c.unavailable) && 'ro', c.unavailable && 'na')} title={c.unavailable ? c.title : ro ? tr("{title}\n这个对话{v}", { title: c.title, v: on ? tr('开着') : tr('没开') }) : c.title} onClick={() => { if (!c.unavailable) toggle(k); }}>
         <span className="cm-ic"><Icon name={c.icon} size={15} /></span>
         <span className="cm-tx"><span className="cm-l">{c.label}</span><span className="cm-d">{c.unavailable ?? c.desc}</span></span>
         {c.unavailable ? <span className="cm-na">{tr('暂不可用')}</span> : <span className={clsx('toggle sm', on && 'on')} aria-hidden />}

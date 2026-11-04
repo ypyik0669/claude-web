@@ -4,7 +4,7 @@ import { ModeChangedError, useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
 import { clsx, shortModel } from '@/util';
-import { parsePeerId, policyOfModel, type AgentKind, type AttachmentRef, type EffortLevel, type PeerInfo, type PermissionMode, type PermissionRequestEvent, type SessionFeatures, type WslDistro, wslToWin } from '@shared';
+import { parsePeerId, policyOfModel, LIVE_FEATURES, type AgentKind, type AttachmentRef, type EffortLevel, type PeerInfo, type PermissionMode, type PermissionRequestEvent, type SessionFeatures, type WslDistro, wslToWin } from '@shared';
 import { MachineChip } from './MachineChip';
 import { machineOf } from './machine';
 import { installClaudeInWsl } from '@/features/remote/wsl-install';
@@ -18,6 +18,7 @@ import { useBots } from '@/features/bots/state';
 import { parseBtw } from '@/features/chat/side-chat-model';
 import { atQueryAt, pickAt } from './at-mention';
 import { RunCard } from '@/features/chat/RunCard';
+import { ComputerPill } from '@/features/computer/ComputerPill';
 import { BackgroundPill } from '@/features/background/BackgroundPill';
 import { PermissionDock, runDockPrimary, setAskNote } from '@/features/chat/PermissionCards';
 import { denyResponse, dockAction, dockDecide, dockKind, dockPlaceholder, isSlashCommand, primaryKey, splitPending, type DockSeen, type DockWhy } from '@/features/chat/permission-dock';
@@ -1056,7 +1057,14 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // the capabilities: on the welcome page the ones the new conversation will get (removable); in a running one
   // what it was started with (fixed — a launch parameter)
   const claudeHere = welcome ? !foreign : sessionAgent === 'claude';
-  const sessionFeatures = info?.features ?? NO_FEATURES;
+  const liveFeat = useStore((s) => (active ? s.sessionMeta[active.sessionId]?.liveFeatures : undefined));
+  const sessionFeatures = useMemo(() => (liveFeat ? { ...(info?.features ?? NO_FEATURES), ...liveFeat } : info?.features ?? NO_FEATURES), [info?.features, liveFeat]);
+  const setSessionFeatures = (f: SessionFeatures) => {
+    if (!active) return;
+    const patch: { computerUse?: boolean; chrome?: boolean } = {};
+    for (const k of LIVE_FEATURES) if (!!f[k] !== !!sessionFeatures[k]) patch[k] = !!f[k];
+    if (Object.keys(patch).length) void useStore.getState().setLiveFeatures(active.sessionId, patch).catch((e) => toast(e.message));
+  };
   const tags = welcome ? (claudeHere && !wChatOnly ? capabilityTags(featDefaults, capEnv) : []) : capabilityTags(sessionFeatures, capEnv);
   const hasChips = imgs.length > 0 || atts.length > 0 || bundles.length > 0 || files.length > 0 || refs.length > 0 || recordings.length > 0 || !!upload || tags.length > 0 || (welcome && (!!wWorktree || wChatOnly)) || (!welcome && liveChatOnly);
   const insertSlash = () => { const v = text.startsWith('/') ? text : `/${text}`; onChange(v); requestAnimationFrame(() => { const el = ta.current; if (el) { el.focus(); el.setSelectionRange(1, 1); } }); };
@@ -1065,7 +1073,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // ---- the row's pieces
   const plus = (
     <PlusMenu claude={claudeHere} live={!welcome} remote={remote} disabled={disabled} plain={bot}
-      features={welcome ? featDefaults : sessionFeatures} onFeatures={setFeatures} selfId={welcome ? undefined : active?.sessionId}
+      features={welcome ? featDefaults : sessionFeatures} onFeatures={welcome ? setFeatures : setSessionFeatures} selfId={welcome ? undefined : active?.sessionId}
       chatOnly={welcome ? wChatOnly : undefined} onChatOnly={welcome && claudeHere && !wPeer && !wWsl ? setWChatOnly : undefined}
       onFiles={() => fileInput.current?.click()} onFolder={() => folderInput.current?.click()} onReference={addRef} onGoal={insertGoal} onSlash={insertSlash} onRecord={desktop?.captureSources && !remote ? () => openPicker(recTarget) : undefined} sessionId={!welcome && claudeHere ? active?.sessionId : undefined} />
   );
@@ -1295,6 +1303,8 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         {active && !welcome && <QueueCards key={active.sessionId} sessionId={active.sessionId} queue={active.queue} onEdit={(t) => { setText((cur) => (cur ? `${cur}\n${t}` : t)); ta.current?.focus(); }} />}
         {/* 后台: a workflow / sub-agent / background command still going — the pill opens the 后台 page on it */}
         {active && !welcome && <BackgroundPill sessionId={active.sessionId} />}
+        {/* 操控电脑 on here: what it may operate, and 关掉 */}
+        {active && !welcome && claudeHere && <ComputerPill sessionId={active.sessionId} on={!!sessionFeatures.computerUse} />}
         {/* a docked card takes the run card's place (spec §4.2: 「等确认时被权限卡替代」) */}
         {active && !welcome && (docked && dockReq
           ? <PermissionDock sessionId={active.sessionId} reason={text} onReasonUsed={() => onChange('')} scope={dockScope} note={dockNote} onDenyQueued={queuedOffer ? denyQueued : undefined} />

@@ -2,7 +2,7 @@ import path from 'node:path';
 import type { ImportService } from '../import/service.js';
 import fs from 'node:fs';
 import type { WebSocket, WebSocketServer } from 'ws';
-import { CLAUDE_PROVIDER_ID, type ClientRequest, type OpenSessionParams, type RemoteStatus, type ServerEvent, type WireDown, type WireUp } from '../protocol.js';
+import { CLAUDE_PROVIDER_ID, LIVE_FEATURES, type ClientRequest, type OpenSessionParams, type RemoteStatus, type ServerEvent, type WireDown, type WireUp } from '../protocol.js';
 import { RunnerPool, asMode } from '../runtime/pool.js';
 import { SessionRunner, setNodegraphHint, setPromptSuggestions, setThinkingLanguageSetting } from '../runtime/session-runner.js';
 import { NODEGRAPH_HINT_KEY } from '../runtime/nodegraph-hint.js';
@@ -884,6 +884,18 @@ export class Hub {
         await afterSwitch(req.sessionId);
         await this.runner(req.sessionId).setUltracode?.(req.on);
         return null;
+      // 操控电脑 / 控制 Chrome in a running conversation: remembered for its later starts, a restart once the turn is done
+      case 'session.setFeatures': {
+        const patch: { computerUse?: boolean; chrome?: boolean } = {};
+        for (const k of LIVE_FEATURES) if (typeof req.features?.[k] === 'boolean') patch[k] = req.features[k];
+        if (patch.computerUse && !computerSupported()) throw new Error(tr('这台电脑不支持操控电脑'));
+        if (s.meta.sessionMeta(req.sessionId).chatOnly) throw new Error(tr('只聊天的对话没有工具，开不了这个'));
+        const before = s.meta.sessionMeta(req.sessionId).liveFeatures ?? {};
+        await s.meta.setSessionMeta(req.sessionId, { liveFeatures: { ...before, ...patch } });
+        const live = s.pool.get(req.sessionId);
+        if (live && live.state !== 'closed' && live.state !== 'error') await live.setFeatures?.(patch);
+        return null;
+      }
       // the subagents' model: the conversation's own from now on (also one that is not running: its next start takes it)
       case 'session.setSubagentModel': {
         await afterSwitch(req.sessionId);

@@ -1342,7 +1342,6 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
 .gw-member .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gw-grip { color: var(--ink-4); cursor: grab; display: inline-flex; }
 .gw-order { font-family: var(--mono); font-size: 12px; color: var(--ink-3); width: 14px; text-align: right; }
-.gw-add { align-self: flex-start; margin-top: 2px; width: auto !important; }
 .gw-group-head select.field, .gw-actions select.field { width: auto !important; flex: none; }
 .gw-group-head input.field { flex: none; }
 .gw-map { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
@@ -1399,12 +1398,22 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
 .err-boundary.floating { position: fixed; right: 16px; bottom: 16px; z-index: 2000; margin: 0; max-width: min(420px, calc(100vw - 32px)); background: color-mix(in oklab, var(--err) 10%, var(--surface-elev)); box-shadow: var(--elev-3); }
 
 /* ===== desktop title bar (改版阶段 1): no global top bar — the top row of each column is the title bar =====
-   Windows / Linux: caption buttons are an overlay 40px high over the top-right 138px (three 46px buttons), transparent on
-   Windows — they float over the top-right card. The rows under them leave 158px: 20px of air between the row's last
-   button and −, so a click meant for one does not land on the other (tab-row.ts CAPTION_W).
+   Windows / Linux: the page draws three compact caption buttons (ui/WindowControls.tsx) over the top-right card. The
+   rows under them leave --caption-w: the buttons plus air between the row's last button and −, so a click meant for
+   one does not land on the other (tab-row.ts CAPTION_W).
    macOS: traffic lights at the top-left. The row that touches each corner makes room; every top row drags,
    its controls do not. Pane edges come from PaneLayer (data-top / data-left / data-right, `.tabs` = strip shown). */
 html.desktop .app::before { content: ''; position: fixed; top: 0; left: 0; right: 0; height: var(--shell-gap); -webkit-app-region: drag; z-index: 1; }
+html { --caption-w: 130px; }
+.win-ctl { position: fixed; top: 0; right: 8px; z-index: 2100; display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
+.win-ctl button { width: 34px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--r-md); background: transparent; color: var(--ink-3); cursor: default; transition: background-color 120ms var(--ease-out), color 120ms var(--ease-out); }
+.win-ctl button:hover { background: var(--layer-hover, var(--fill-subtle)); color: var(--ink-1); }
+.win-ctl button:active { background: var(--fill-subtle); }
+.win-ctl button.close:hover { background: #c42b1c; color: #fff; }
+.win-ctl button.close:active { background: #b22a1c; }
+.win-ctl button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.win-ctl svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.1; stroke-linecap: round; stroke-linejoin: round; }
+html.desktop.linux .win-ctl { right: 4px; }
 /* Linux: the caption buttons are an opaque block in the card's colour (a transparent overlay is unverified there), so the
    card under them reaches the window's top-right corner — no gap above or beside it, a square corner */
 html.desktop.linux .app { padding-top: 0; padding-right: 0; }
@@ -1431,12 +1440,12 @@ html.desktop:not(.mac) .app:not(.dock-open) .groupbar,
 html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .pane[data-top][data-right] > .tabstrip,
 html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .pane[data-top][data-right]:not(.tabs) .sess-head,
 html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .pane[data-top][data-right]:not(.tabs) .welcome-top,
-html.desktop:not(.mac) .app.dock-open .dock:not(.min) .dock-tabs { padding-right: calc(158px / var(--zoom, 1)); }
+html.desktop:not(.mac) .app.dock-open .dock:not(.min) .dock-tabs { padding-right: calc(var(--caption-w)); }
 /* minimized to its 36px icon strip, the right panel is under the caption buttons: its icons start below them
    (and the workbench's top-right row makes room, since the app is not `.dock-open` then) */
 html.desktop:not(.mac) .dock.min .dock-tabs { padding-top: var(--h-head); }
 /* the image viewer covers the window: its bar keeps clear of the caption buttons / the traffic lights */
-html.desktop:not(.mac) .viewer-bar { padding-right: calc(158px / var(--zoom, 1)); }
+html.desktop:not(.mac) .viewer-bar { padding-right: calc(var(--caption-w)); }
 html.desktop.mac .viewer-bar { padding-left: calc(84px / var(--zoom, 1)); }
 html.desktop.mac .sb-top { padding-left: max(0px, calc(84px / var(--zoom, 1) - var(--rail, 0px))); }
 html.desktop.mac .app.no-sidebar .groupbar,
@@ -2239,7 +2248,7 @@ html.desktop.mac .sp-nav-top { min-height: 40px; padding-left: calc(76px / var(-
 .over-body[data-body='orchestra'] .orch { border: var(--hairline) solid var(--edge-subtle); border-radius: var(--r-lg); overflow: hidden; }
 html.desktop .workbench:not(.gb) .over-head { -webkit-app-region: drag; }
 html.desktop .over-head button, html.desktop .over-head [title] { -webkit-app-region: no-drag; }
-html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .over-head { padding-right: calc(158px / var(--zoom, 1)); }
+html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .over-head { padding-right: calc(var(--caption-w)); }
 html.desktop.mac .app.no-sidebar .workbench:not(.gb) .over-head { padding-left: max(0px, calc(84px / var(--zoom, 1) - var(--rail, 0px))); }
 
 /* 「连接断开，正在重连…」 at the top of the main area */

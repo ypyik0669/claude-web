@@ -231,6 +231,8 @@ interface State {
   setResume(sessionId: string, patch: ResumeChoice): void;
   /** 子代理: the model the conversation's subagents run on ('' = the main model), picked for `providerId` */
   setSubagentModel(sessionId: string, model: string, providerId: string): Promise<void>;
+  /** 操控电脑 / 控制 Chrome in a running conversation (the next message runs with it) */
+  setLiveFeatures(sessionId: string, patch: { computerUse?: boolean; chrome?: boolean }): Promise<void>;
   closeSession(sessionId: string): Promise<void>;
   setTheme(t: Theme, fromSettings?: boolean): void;
   forkAt(sessionId: string, messageUuid: string): Promise<void>;
@@ -1223,6 +1225,16 @@ export const useStore = create<State>((set, get) => ({
   },
   setResume(sessionId, patch) {
     set((s) => bump(s, sessionId, (o) => { o.resume = mergeResume(o.resume, patch); }));
+  },
+  async setLiveFeatures(sessionId, patch) {
+    const prev = get().sessionMeta[sessionId];
+    set((s) => ({ sessionMeta: { ...s.sessionMeta, [sessionId]: { ...s.sessionMeta[sessionId], liveFeatures: { ...s.sessionMeta[sessionId]?.liveFeatures, ...patch } } } }));
+    try {
+      await ws.request({ kind: 'session.setFeatures', sessionId, features: patch });
+    } catch (e) {
+      set((s) => ({ sessionMeta: { ...s.sessionMeta, [sessionId]: { ...prev } } }));
+      throw e;
+    }
   },
   async setSubagentModel(sessionId, model, providerId) {
     const prev = get().sessionMeta[sessionId];

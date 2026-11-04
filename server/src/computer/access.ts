@@ -80,7 +80,7 @@ export class ComputerAccess extends EventEmitter {
       return Promise.resolve({ granted: false, message: 'This conversation is not open in Claude Web, so the user cannot be asked. Nothing was granted.' });
     }
     if (signal?.aborted) return Promise.resolve({ granted: false, message: 'cancelled' });
-    if (this.d.mode?.(sessionId) === 'bypassPermissions') return Promise.resolve({ granted: true });
+    if (this.d.mode?.(sessionId) === 'bypassPermissions') { this.emit('granted', sessionId, req.apps); return Promise.resolve({ granted: true }); }
     const requestId = randomUUID();
     const event: PermissionRequestEvent = { requestId, sessionId, toolName: ACCESS_TOOL, input: { ...req } };
     return new Promise<AccessAnswer>((resolve) => {
@@ -91,6 +91,7 @@ export class ComputerAccess extends EventEmitter {
         clearTimeout(w.timer);
         resolve(a);
         this.emit('permissionResolved', requestId, sessionId);
+        if (a.granted) this.emit('granted', sessionId, req.apps);
       };
       const timer = setTimeout(() => done({ granted: false, message: 'The user did not answer the request in time, so nothing was granted. Tell the user what you need and ask again when they are there.' }), this.d.timeoutMs ?? ASK_TIMEOUT_MS);
       timer.unref?.();

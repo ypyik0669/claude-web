@@ -8,7 +8,6 @@ import { closeHub, useHub } from './state';
 import { OverviewPage } from './pages/OverviewPage';
 import { SourcesPage } from './pages/SourcesPage';
 import { RoutingPage } from './pages/RoutingPage';
-import { ControlPage } from './pages/ControlPage';
 import { UsagePage } from './pages/UsagePage';
 import { PrivacyPage } from './pages/PrivacyPage';
 import { PluginsPage } from './pages/PluginsPage';
@@ -57,7 +56,6 @@ export function ModelHubPage() {
       {seen.includes('overview') && <div className="hub-pane" hidden={page !== 'overview'}><OverviewPage /></div>}
       {seen.includes('sources') && <div className="hub-pane" hidden={page !== 'sources'}><SourcesPage /></div>}
       {seen.includes('routing') && <div className="hub-pane" hidden={page !== 'routing'}><RoutingPage /></div>}
-      {seen.includes('control') && <div className="hub-pane" hidden={page !== 'control'}><ControlPage /></div>}
       {seen.includes('usage') && <div className="hub-pane" hidden={page !== 'usage'}><UsagePage /></div>}
       {seen.includes('privacy') && <div className="hub-pane" hidden={page !== 'privacy'}><PrivacyPage /></div>}
       {seen.includes('plugins') && <div className="hub-pane" hidden={page !== 'plugins'}><PluginsPage /></div>}

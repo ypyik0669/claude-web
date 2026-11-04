@@ -18,16 +18,12 @@
 /** tokens.css `--shell-gap`: the right panel is a card, one gap narrower than its grid column (4px in compact density —
  *  the 4px this over-counts there only makes the row move down a little earlier). */
 export const SHELL_GAP = 8;
-/** styles.css: `html.desktop:not(.mac) .app.dock-open .dock:not(.min) .dock-tabs { padding-right: calc(158px / var(--zoom, 1)) }`
- *  — the three caption buttons are 46px each (138), plus 20px of air at 100%: with 4 the row's last button (the
- *  panel's ×) sat against − and a click meant for one landed on the other (忍冬, 2026-10-14). */
-export const CAPTION_W = 158;
-/**
- * The room the caption buttons take in the page's pixels at a 界面缩放 factor (ui/zoom.ts): they are drawn by the
- * system, as big as ever in the window's pixels, while the page's pixels are `zoom` of those — zoomed in they take
- * less of the row, zoomed out more. The same division as styles.css's.
- */
-export const captionWidth = (zoom = 1) => CAPTION_W / (zoom > 0 ? zoom : 1);
+/** styles.css `--caption-w`: the page's three caption buttons (ui/WindowControls.tsx: 3 × 34 + 2 × 2 gaps + 8 to the
+ *  edge = 114) plus 16px of air — with 4 the row's last button (the panel's ×) sat against − and a click meant for one
+ *  landed on the other (忍冬, 2026-10-14). */
+export const CAPTION_W = 130;
+/** The room the caption buttons take in the page's pixels: the page draws them, so 界面缩放 scales them with it. */
+export const captionWidth = (_zoom = 1) => CAPTION_W;
 /** styles.css: the default row's right padding (`.dock.simple:not(.min) .dock-tabs`, and `.stacked`). */
 export const SIDE_PAD = 8;
 /** Moved down, the row moves back up only when it fits with this much to spare (no flip-flop on a pixel). */

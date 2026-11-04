@@ -162,23 +162,6 @@
 .hub-rule .when { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; }
 .hub-rule .to { font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; }
 
-/* ---------- control ---------- */
-.hub-control { display: grid; grid-template-columns: 228px minmax(0, 1fr) 280px; gap: 12px; }
-.hub-sessions { padding: 6px; align-self: start; }
-.hub-session { width: 100%; text-align: left; padding: 9px 10px; border-radius: 9px; color: var(--hub-muted); }
-.hub-session.on { background: var(--surface-0); color: var(--hub-text); box-shadow: var(--elev-1); }
-.hub-session .nm { font-size: var(--fs-sm); font-weight: 600; }
-.hub-session .sub { font-size: var(--fs-meta); color: var(--hub-muted); margin-top: 2px; }
-.hub-live { min-height: 300px; display: flex; flex-direction: column; }
-.hub-live .frame { flex: 1; min-height: 250px; border: 1px solid var(--hub-line); border-radius: 12px; background: linear-gradient(135deg, var(--surface-2), var(--surface-1)); display: grid; place-items: center; color: var(--hub-muted); font-size: var(--fs-sm); }
-.hub-timeline { display: flex; flex-direction: column; gap: 0; }
-.hub-step { display: flex; align-items: flex-start; gap: 8px; padding: 7px 0; border-bottom: 1px dashed var(--hub-line); font-size: var(--fs-sm); }
-.hub-step:last-child { border-bottom: 0; }
-.hub-step .n { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); font-size: var(--fs-meta); color: var(--hub-muted); flex: none; }
-.hub-step.done .n { background: var(--hub-accent-soft); color: var(--hub-accent); }
-.hub-step.now .n { background: var(--hub-accent); color: var(--bg); }
-.hub-step .tx { flex: 1; }
-
 /* ---------- usage ---------- */
 .hub-quotas { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .hub-quota-card { padding: 12px 13px; }
@@ -223,8 +206,7 @@
 
 @media (max-width: 1180px) {
   .hub-kpis, .hub-quotas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .hub-grid-2, .hub-grid-3, .hub-privacy, .hub-control { grid-template-columns: 1fr; }
-  .hub-control { grid-template-columns: 1fr; }
+  .hub-grid-2, .hub-grid-3, .hub-privacy { grid-template-columns: 1fr; }
   .hub-sources, .hub-routing { grid-template-columns: 1fr; }
   .hub-filters { flex-direction: row; overflow: auto; }
 }

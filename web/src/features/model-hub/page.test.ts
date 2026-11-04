@@ -2,12 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { HUB_PAGES, hubPage } from './page';
 
 describe('the model hub pages', () => {
-  it('are the nine first-level pages, in the spec order', () => {
+  it('are the eight first-level pages, in the spec order (操控 lives in the conversation: its + switch and pill)', () => {
     expect(HUB_PAGES.map((p) => p.id)).toEqual([
       'overview',
       'sources',
       'routing',
-      'control',
       'usage',
       'privacy',
       'plugins',

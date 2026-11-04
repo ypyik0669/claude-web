@@ -10,9 +10,11 @@ afterAll(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 afterEach(() => { configureComputerMcp(null, tmp); });
 
 describe('where 操控电脑 can run', () => {
-  it('Windows, for now', () => {
-    expect(computerSupported('win32')).toBe(true);
-    for (const p of ['darwin', 'linux', 'freebsd'] as const) expect(computerSupported(p)).toBe(false);
+  it('Windows and macOS (agent-desktop has builds for both)', () => {
+    expect(computerSupported('win32', 'x64')).toBe(true);
+    expect(computerSupported('darwin', 'arm64')).toBe(true);
+    expect(computerSupported('darwin', 'x64')).toBe(true);
+    for (const p of ['linux', 'freebsd'] as const) expect(computerSupported(p, 'x64')).toBe(false);
   });
 });
 
@@ -32,16 +34,21 @@ describe('what a Claude conversation with it on is handed', () => {
     expect(computerClaudeMcpServer({ sessionId: 's1' }, { platform: 'win32' })).toEqual({});
     expect(computerAllowedTools({ platform: 'win32' })).toEqual([]);
     configureComputerMcp({ url: 'http://127.0.0.1:3090', token: secret }, tmp);
-    expect(computerClaudeMcpServer({ sessionId: 's1' }, { platform: 'darwin' })).toEqual({});
-    expect(computerAllowedTools({ platform: 'linux' })).toEqual([]);
+    expect(computerClaudeMcpServer({ sessionId: 's1' }, { platform: 'linux', arch: 'x64' })).toEqual({});
+    expect(computerAllowedTools({ platform: 'linux', arch: 'x64' })).toEqual([]);
+    // macOS: only `desktop` (the `computer` server's helper is Windows-only)
+    expect(Object.keys(computerClaudeMcpServer({ sessionId: 's1' }, { platform: 'darwin', arch: 'arm64' }))).toEqual(['desktop']);
+    expect(computerAllowedTools({ platform: 'darwin', arch: 'arm64' }).every((t) => t.startsWith('mcp__desktop__'))).toBe(true);
   });
 
   it('the server `computer`, told where to ask and whose conversation it is — the secret in a file, not on a command line', () => {
     configureComputerMcp({ url: 'http://127.0.0.1:3090', token: secret }, tmp);
     const file = path.join(tmp, `${process.pid}.token`);
     expect(fs.readFileSync(file, 'utf8')).toBe(secret);
-    const handed = computerClaudeMcpServer({ sessionId: 'conv-1' }, { platform: 'win32', execPath: 'C:/app/node.exe' });
-    expect(Object.keys(handed)).toEqual(['computer']); // (`computer-use` is a reserved name in both engines)
+    const handed = computerClaudeMcpServer({ sessionId: 'conv-1' }, { platform: 'win32', arch: 'x64', execPath: 'C:/app/node.exe' });
+    expect(Object.keys(handed)).toEqual(['computer', 'desktop']); // (`computer-use` is a reserved name in both engines)
+    expect(handed.desktop.args[handed.desktop.args.length - 1]).toMatch(/computer[\\/]desktop-mcp\.(js|ts)$/);
+    expect(handed.desktop.env).toMatchObject({ CW_COMPUTER_ASK_URL: 'http://127.0.0.1:3090', CW_SESSION_ID: 'conv-1' });
     const s = handed.computer;
     expect(s.type).toBe('stdio');
     expect(s.command).toBe('C:/app/node.exe');
@@ -55,7 +62,7 @@ describe('what a Claude conversation with it on is handed', () => {
 
   it('all of its tools are let through the agent\'s own prompt: the user is asked by the app, the rest is the gate', () => {
     configureComputerMcp({ url: 'http://127.0.0.1:3090', token: secret }, tmp);
-    const allowed = computerAllowedTools({ platform: 'win32' });
+    const allowed = computerAllowedTools({ platform: 'win32', arch: 'x64' }).filter((t) => t.startsWith('mcp__computer__'));
     expect(allowed).toHaveLength(TOOL_NAMES.length);
     expect(allowed).toHaveLength(29);
     expect(allowed.every((t) => t.startsWith('mcp__computer__'))).toBe(true);

@@ -74,4 +74,4 @@ export function accessTitle(input: Input, agent = 'Claude'): string {
 }
 
 /** What the user is told the yes means — under the list, before the buttons. */
-export const ACCESS_NOTE = tr('允许后，它可以看整个屏幕的截图，并在这些应用位于最前面时用键盘鼠标操作它们；别的应用和 Claude Web 自己它动不了。只对这一个对话有效，对话结束就收回。');
+export const ACCESS_NOTE = tr('允许后，它可以看整个屏幕的截图，并在这些应用位于最前面时用键盘鼠标操作它们；这些应用里已经打开的窗口和文件它也能改，有要紧的没保存先存一下；别的应用和 Claude Web 自己它动不了。只对这一个对话有效，对话结束就收回。');

@@ -88,7 +88,7 @@ const CATALOG_ALIAS: Record<string, string> = {
   openrouter: 'openrouter', groq: 'groq', nvidia: 'nvidia-nim', modelscope: 'modelscope', cerebras: 'cerebras',
   siliconflow: 'siliconflow', mistral: 'mistral-free', minimax: 'minimax', stepfun: 'stepfun', fireworks: 'fireworks',
   mimo: 'mimo', anthropic: 'anthropic', deepseek: 'deepseek', ollama: 'ollama', lmstudio: 'lmstudio', openai: 'openai',
-  xai: 'xai', together: 'together',
+  xai: 'xai', together: 'together', grok: 'grok-web',
 };
 
 /** Descriptor ids that already have a richer family card on this page. */

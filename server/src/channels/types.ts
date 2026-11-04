@@ -31,7 +31,7 @@ export interface CatalogModel {
   capabilities?: { tools?: boolean; images?: boolean; reasoning?: boolean };
 }
 
-export type CatalogDriverId = 'provider' | 'engine:cliproxyapi' | 'engine:magpie' | 'upstream:claude' | 'upstream:gemini' | 'upstream:workbuddy' | 'upstream:provider' | 'claude-bridge';
+export type CatalogDriverId = 'provider' | 'engine:cliproxyapi' | 'engine:magpie' | 'upstream:claude' | 'upstream:gemini' | 'upstream:workbuddy' | 'upstream:provider' | 'claude-bridge' | 'grok-web';
 
 /** One entry of the add-source catalog (data only: never code). */
 export interface CatalogEntry {
@@ -54,6 +54,9 @@ export interface CatalogEntry {
   /** published limits as the vendor (or the aggregator list) states them; absent = not known */
   limits?: string;
   notes?: CatalogNote[];
+  /** the key field's label / how to get it, when it is not an API key (Grok web: the sso cookie) */
+  keyLabel?: string;
+  keyHint?: string;
   /** which driver adds it: a provider profile, a local engine, or an upstream family's login */
   driver: CatalogDriverId;
   /** where the values came from (research note / vendor doc) */

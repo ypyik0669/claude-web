@@ -255,10 +255,10 @@ const defs: ProviderLoginDef[] = [
   {
     id: 'grok',
     name: 'Grok',
-    auth: 'oauth-loopback',
-    docsUrl: 'https://x.ai/',
-    instructions: tr('用 xAI 账号登录 Grok。'),
-    ...unavailable(tr('xAI 的 Grok CLI OAuth 客户端没有公开登记，无法保证回调可用。请改用 xAI API Key。')),
+    auth: 'paste-token',
+    docsUrl: 'https://grok.com/',
+    instructions: tr('粘贴 grok.com 的 sso cookie。'),
+    ...unavailable(tr('Grok 账号在「添加来源」→「Grok (grok.com account)」里添加（粘贴 sso cookie）。')),
   },
   {
     id: 'devin',

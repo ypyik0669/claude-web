@@ -256,8 +256,8 @@ describe('handing the `computer` server to a conversation', () => {
     expect(computerClaudeMcpServer({ sessionId: 's' }, { platform: 'win32' })).toEqual({});
     expect(computerAllowedTools({ platform: 'win32' })).toEqual([]);
     configureComputerMcp({ url: 'http://127.0.0.1:45678', token: 't'.repeat(64) }, dir);
-    const s = computerClaudeMcpServer({ sessionId: 'conv-7' }, { platform: 'win32', execPath: 'C:/node.exe' });
-    expect(Object.keys(s)).toEqual(['computer']);
+    const s = computerClaudeMcpServer({ sessionId: 'conv-7' }, { platform: 'win32', arch: 'x64', execPath: 'C:/node.exe' });
+    expect(Object.keys(s)).toEqual(['computer', 'desktop']);
     expect(s.computer.command).toBe('C:/node.exe');
     expect(s.computer.args[s.computer.args.length - 1]).toMatch(/computer[\\/]mcp\.(ts|js)$/);
     expect(s.computer.env).toMatchObject({ ELECTRON_RUN_AS_NODE: '1', CW_COMPUTER_ASK_URL: 'http://127.0.0.1:45678', CW_SESSION_ID: 'conv-7', CW_COMPUTER_TOKEN_FILE: path.join(dir, `${process.pid}.token`) });
@@ -271,14 +271,27 @@ describe('handing the `computer` server to a conversation', () => {
 
   it('every tool of it runs without the agent\'s own prompt (the user approves the applications instead); other platforms get nothing', () => {
     configureComputerMcp({ url: 'http://127.0.0.1:45678', token: 'x' }, dir);
-    expect(computerAllowedTools({ platform: 'win32' })).toEqual(TOOL_NAMES.map((t) => `mcp__computer__${t}`));
-    expect(computerAllowedTools({ platform: 'win32' })).toContain('mcp__computer__request_access');
-    for (const platform of ['darwin', 'linux'] as const) {
-      expect(computerSupported(platform)).toBe(false);
-      expect(computerClaudeMcpServer({ sessionId: 's' }, { platform })).toEqual({});
-      expect(computerAllowedTools({ platform })).toEqual([]);
-    }
+    expect(computerAllowedTools({ platform: 'win32', arch: 'x64' }).filter((t) => t.startsWith('mcp__computer__'))).toEqual(TOOL_NAMES.map((t) => `mcp__computer__${t}`));
+    expect(computerAllowedTools({ platform: 'win32', arch: 'x64' })).toContain('mcp__computer__request_access');
+    expect(computerAllowedTools({ platform: 'win32', arch: 'x64' })).toContain('mcp__desktop__request_access');
+    expect(computerSupported('linux', 'x64')).toBe(false);
+    expect(computerClaudeMcpServer({ sessionId: 's' }, { platform: 'linux', arch: 'x64' })).toEqual({});
+    expect(computerAllowedTools({ platform: 'linux', arch: 'x64' })).toEqual([]);
     configureComputerMcp(null, dir);
     expect(fs.existsSync(path.join(dir, `${process.pid}.token`))).toBe(false);
+  });
+});
+
+describe('what the user let it operate', () => {
+  it('a yes (or 完全放开) says which applications; a no says nothing', async () => {
+    const mode: Record<string, string> = { b: 'bypassPermissions' };
+    const a = new ComputerAccess({ knows: () => true, mode: (sid) => mode[sid] as any });
+    const got: [string, string[]][] = [];
+    a.on('granted', (sid: string, apps: string[]) => got.push([sid, apps]));
+    a.on('permission', (ev: any) => a.respond(ev.requestId, ev.sessionId === 'y' ? { behavior: 'allow' } as any : { behavior: 'deny', message: '' } as any));
+    await a.ask('b', { apps: ['Chrome'], reason: 'r' });
+    await a.ask('y', { apps: ['Notepad', 'Excel'], reason: 'r' });
+    await a.ask('n', { apps: ['Word'], reason: 'r' });
+    expect(got).toEqual([['b', ['Chrome']], ['y', ['Notepad', 'Excel']]]);
   });
 });

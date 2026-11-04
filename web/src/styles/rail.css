@@ -98,9 +98,9 @@
 .over-body.narrow { align-items: center; scrollbar-gutter: stable both-edges; }
 .app:not(.mobile) .over-head.narrow ~ :is(.over-tabs, .over-desc) { width: 100%; max-width: calc(860px + 2 * (var(--sp-5) + 10px)); margin-inline: auto; padding-inline: calc(var(--sp-5) + 10px); }
 /* Windows / Linux: the row stays clear of the system's buttons by getting narrower from both sides, not by moving
-   (158px: the caption buttons and 20px of air, as in styles.css and tab-row.ts CAPTION_W) */
+   (--caption-w: the caption buttons and air, as in styles.css and tab-row.ts CAPTION_W) */
 html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .over-head.narrow { padding-right: calc(var(--sp-5) + 10px); }
-html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .over-head.narrow .over-head-in { max-width: min(860px, calc(100% - 2 * (158px / var(--zoom, 1) - var(--sp-5) - 10px))); }
+html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .over-head.narrow .over-head-in { max-width: min(860px, calc(100% - 2 * (var(--caption-w) - var(--sp-5) - 10px))); }
 .ext-plain { display: flex; flex-direction: column; gap: var(--sp-3); padding-top: var(--sp-2); }
 
 /* desktop: the rail's column is part of the title bar; its buttons are not */
