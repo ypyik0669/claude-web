@@ -15,6 +15,7 @@ import {
   type TokenSet, type LoopbackReceiver,
 } from './oauth.js';
 import type { UpstreamAccountInput, UpstreamAccountView } from './types.js';
+import { ssoToGrokTokens } from './grok-sso.js';
 
 export type LoginSessionState = 'pending' | 'done' | 'error' | 'cancelled' | 'unavailable';
 
@@ -243,6 +244,11 @@ export class ProviderLoginService {
     if (!cfg) throw new Error(tr('这个来源不支持粘贴令牌'));
     const text = credential?.trim();
     if (!text) throw new Error(tr('先粘贴凭据'));
+    if (cfg.convert === 'grok-sso') {
+      const t = await ssoToGrokTokens(text, { fetch: this.fetchImpl });
+      await this.finishTokens(s, { accessToken: t.accessToken, refreshToken: t.refreshToken, idToken: t.idToken, expiresAt: t.expiresAt, scope: t.scope });
+      return;
+    }
     const input = this.accountInput(s.def, { token: text }, name, undefined, 'paste');
     await this.addAccounts(s, [input]);
   }
@@ -450,7 +456,8 @@ export async function refreshProviderCredential(
     const c = await exchangeCopilotToken(fetchImpl, refreshToken, def.device?.headers, now);
     return { ...credential, token: c.token, expiresAt: c.expiresAt, refreshToken };
   }
-  const oauth = def.oauth;
+  // a device-code login (Grok) refreshes at its token endpoint like an OAuth one
+  const oauth = def.oauth ?? (def.device ? { tokenUrl: def.device.tokenUrl, clientId: def.device.clientId, clientSecret: def.device.clientSecret, extraTokenParams: undefined, tokenAuth: undefined } : undefined);
   if (!oauth) return null;
   const params: Record<string, string> = {
     grant_type: 'refresh_token',

@@ -18,7 +18,7 @@ describe('provider login registry', () => {
 
   it('marks only flows with a real public client / reader as available', () => {
     const available = PROVIDER_LOGINS.filter((d) => d.available).map((d) => d.id).sort();
-    expect(available).toEqual(['claude', 'codex', 'copilot', 'opencode']);
+    expect(available).toEqual(['claude', 'codex', 'copilot', 'grok', 'opencode']);
     expect(loginDef('gemini')?.available).toBe(false);
     expect(loginDef('gemini')?.reason).toContain('Code Assist');
     expect(loginDef('kimi')?.available).toBe(false);

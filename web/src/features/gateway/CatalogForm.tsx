@@ -19,15 +19,6 @@ export const NOTE_TEXT: Record<CatalogNote, string> = {
   'non-commercial': tr('只能非商业使用'),
 };
 
-/** The key field of an entry whose credential is not an API key, in the interface's language (the catalog's own
- *  keyLabel / keyHint are the fallback, for remote / plugin entries). */
-const KEY_FIELD: Record<string, () => { label: string; hint: string }> = {
-  'grok-web': () => ({
-    label: tr('sso cookie'),
-    hint: tr('在浏览器打开 grok.com 并登录 → F12 → Application（应用）→ Cookies → 复制 sso 的值。也可以粘贴整段 Cookie；被 Cloudflare 拦时，在末尾加上 ; ua=<浏览器的 User-Agent>。'),
-  }),
-};
-
 /** The tags a catalog entry / source carries: free, may train on prompts, from a plugin. */
 export function SourceTags({ free, mayTrain, plugin }: { free?: boolean | 'some'; mayTrain?: boolean; plugin?: boolean }) {
   return (
@@ -46,7 +37,7 @@ export function CatalogForm({ entry, onDone }: { entry: CatalogSummary; onDone(n
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const needsKey = entry.needs === 'key';
-  const field = KEY_FIELD[entry.id]?.() ?? { label: entry.keyLabel ?? tr('Key'), hint: entry.keyHint ?? '' };
+  const field = { label: entry.keyLabel ?? tr('Key'), hint: entry.keyHint ?? '' };
 
   const add = async () => {
     if (needsKey && !key.trim()) { setError(tr('先填 Key。')); return; }

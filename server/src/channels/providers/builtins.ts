@@ -31,7 +31,7 @@ const builtins: ProviderDescriptor[] = [
     docsUrl: 'https://antigravity.google/', free: true,
   }),
   subscription({ id: 'kimi', name: 'Kimi', auth: 'oauth-loopback', loginHint: tr('用 Kimi 账号登录，或改用 Kimi API Key。'), docsUrl: 'https://platform.moonshot.cn/', free: 'some' }),
-  subscription({ id: 'grok', name: 'Grok', auth: 'paste-token', loginHint: tr('粘贴 grok.com 的 sso cookie。'), docsUrl: 'https://grok.com/', free: 'some' }),
+  subscription({ id: 'grok', name: 'Grok', auth: 'device-code', loginHint: tr('用 grok.com 账号登录，或粘贴 sso cookie；能用 Grok 4.7 等最新模型。'), docsUrl: 'https://grok.com/', free: 'some' }),
   subscription({ id: 'devin', name: 'Devin', auth: 'paste-token', loginHint: tr('在 Devin 里连接账号后，把浏览器里的会话令牌粘贴到这里。'), docsUrl: 'https://devin.ai/', free: false }),
   subscription({ id: 'copilot', name: 'GitHub Copilot', auth: 'device-code', loginHint: device('GitHub'), docsUrl: 'https://github.com/features/copilot', free: true }),
   subscription({ id: 'kiro', name: 'Kiro', auth: 'device-code', loginHint: device('AWS'), docsUrl: 'https://kiro.dev/', free: true }),

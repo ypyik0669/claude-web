@@ -98,7 +98,7 @@ export function ProviderLoginWizard({ providerId, providerName, onClose, embedde
       setSession(s);
       if (s.state === 'pending') {
         // OAuth opens the system browser; a device code shows a URL + code and waits for the user
-        if (mode === 'oauth' && s.url) openExternal(s.url);
+        if ((mode === 'oauth' || mode === 'device') && s.url) openExternal(s.url);
         watch(s.id);
       } else {
         setBusy(false);
@@ -180,7 +180,7 @@ export function ProviderLoginWizard({ providerId, providerName, onClose, embedde
               {info.modes.includes('paste') && (
                 <div className="gateway-card">
                   <label className="field"><span>{tr('名称')}</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr('可留空')} /></label>
-                  <label className="field"><span>{tr('凭据')}</span><textarea className="field" rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder={tr('粘贴凭据')} /></label>
+                  <label className="field"><span>{tr('凭据')}</span><textarea className="field" rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder={info.pastePlaceholder ?? tr('粘贴凭据')} /></label>
                   <button className="btn" disabled={busy || !text.trim()} onClick={() => void begin('paste')}>{busy ? tr('添加中…') : tr('添加')}</button>
                 </div>
               )}

@@ -12,9 +12,10 @@ import type { Provider } from '@shared';
 import { useGateway, installGatewayEvents } from './state';
 import { CatalogForm, SourceTags } from './CatalogForm';
 import { EnginePanel } from './EnginePanel';
+import { ProviderLoginWizard } from './ProviderLoginWizard';
 import { tr } from '@/i18n';
 
-type How = { type: 'account'; kind: UpstreamKind } | { type: 'api'; preset: string } | { type: 'catalog'; entry: CatalogSummary } | { type: 'engine'; id: EngineId };
+type How = { type: 'account'; kind: UpstreamKind } | { type: 'login'; providerId: string } | { type: 'api'; preset: string } | { type: 'catalog'; entry: CatalogSummary } | { type: 'engine'; id: EngineId };
 interface Entry { id: string; name: string; groups: AddStart[]; icon?: IconName; note: string; how: How; free?: boolean | 'some'; mayTrain?: boolean; plugin?: boolean; added?: boolean }
 
 const presetName = (id: string) => PRESETS.find((p) => p.id === id)?.name ?? id;
@@ -53,11 +54,16 @@ function fromCatalog(c: CatalogSummary): Entry {
   return { id: c.id, name: c.name, groups, icon: ICONS.find(([re]) => re.test(c.id))?.[1], note, how, free: c.free, mayTrain: c.mayTrain, plugin: !!c.plugin, added: c.added };
 }
 
+/** Subscription logins of the provider-login registry (upstreams/oauth-registry.ts) that the catalog has no entry for. */
+const LOGINS: Entry[] = [
+  { id: 'grok', name: 'Grok', groups: ['login'], note: tr('用 grok.com 账号登录，或粘贴 sso cookie；Grok 4.7 等最新模型'), how: { type: 'login', providerId: 'grok' } },
+];
+
 /** The live catalog (with the relay form kept for any other address), or the fixed list on an older server. */
 function entriesOf(catalog: CatalogSummary[]): Entry[] {
   if (!catalog.length) return FALLBACK;
   const relay = FALLBACK.find((e) => e.id === 'api-relay');
-  return [...catalog.filter((c) => !c.retired).map(fromCatalog), ...(relay ? [relay] : [])];
+  return [...catalog.filter((c) => !c.retired).map(fromCatalog), ...LOGINS, ...(relay ? [relay] : [])];
 }
 
 const CHOICES: { id: AddStart; title: string; note: string; icon: IconName }[] = [
@@ -141,6 +147,9 @@ function AddSourceWizard() {
         )}
         {!done && entry?.how.type === 'catalog' && (
           <CatalogForm key={entry.id} entry={entry.how.entry} onDone={finished} />
+        )}
+        {!done && entry?.how.type === 'login' && (
+          <ProviderLoginWizard embedded providerId={entry.how.providerId} providerName={entry.name} onClose={() => setEntry(null)} onAdded={() => finished(entry.name)} />
         )}
         {!done && entry?.how.type === 'engine' && (
           <EnginePanel key={entry.id} id={entry.how.id} onReady={(p) => finished(entry.name, p)} />

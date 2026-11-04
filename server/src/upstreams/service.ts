@@ -611,6 +611,8 @@ export class UpstreamService extends EventEmitter {
         if (model && a.models?.length && !a.models.includes(model)) continue;
         let c: any;
         try { c = JSON.parse(await this.store.revealCredential(a)); } catch { continue; }
+        // a short-lived login (Grok's CLI token lasts hours) is renewed before it is handed out, not after a 401
+        if (typeof c.expiresAt === 'number' && c.refreshToken && c.expiresAt - this.now() < 2 * 60_000) c = (await this.renewProvider(a, c)) ?? c;
         const token = c.token ?? c.accessToken;
         if (typeof token !== 'string' || !token) continue;
         const protocol = ['anthropic', 'openai', 'responses', 'gemini'].includes(String(c.protocol)) ? String(c.protocol) : 'openai';
@@ -686,6 +688,20 @@ export class UpstreamService extends EventEmitter {
       });
     }
     return out;
+  }
+
+  private renewing = new Map<string, Promise<any | null>>();
+  /** Refresh a provider login now (one at a time per account); the stored credential is updated. */
+  private renewProvider(a: UpstreamAccount, c: any): Promise<any | null> {
+    let p = this.renewing.get(a.id);
+    if (!p) {
+      p = refreshProviderCredential(this.providerFetch, a.providerId ?? String(c.providerId ?? ''), c, this.now())
+        .then(async (r) => { if (r) await this.store.update(a.id, { credential: r, credentialKind: r.kind === 'oauth' ? 'oauth' : 'token' }); return r; })
+        .catch(() => null)
+        .finally(() => { this.renewing.delete(a.id); });
+      this.renewing.set(a.id, p);
+    }
+    return p;
   }
 
   /** One in-flight slot for an account (maxConcurrent); false when it is at its cap. */

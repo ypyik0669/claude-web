@@ -9,6 +9,7 @@
 // of a made-up flow. See the report in the task for the per-provider status.
 import { tr } from '../i18n/index.js';
 import type { ProviderAuth } from '../channels/providers/types.js';
+import { GROK_CLI_BASE, GROK_CLI_HEADERS, XAI_CLIENT_ID, XAI_ISSUER, XAI_SCOPES } from './grok-sso.js';
 
 export type LoginAuth = Extract<ProviderAuth, 'oauth-loopback' | 'device-code' | 'paste-token' | 'local-credential'>;
 export type LoginMode = 'oauth' | 'device' | 'paste' | 'local';
@@ -54,6 +55,8 @@ export interface PasteLoginConfig {
   placeholder: string;
   /** A login that is only a key (an API-key preset, not a subscription) can still ride this path. */
   credentialKind?: 'token' | 'password';
+  /** what is pasted is turned into OAuth tokens first (Grok: the grok.com sso cookie → the Grok CLI's tokens) */
+  convert?: 'grok-sso';
 }
 
 export type LocalReader = 'opencode-auth' | 'claude-credentials';
@@ -112,6 +115,8 @@ export interface ProviderLoginInfo {
   available: boolean;
   reason?: string;
   modes: LoginMode[];
+  /** what the paste box asks for, when it is not a plain token */
+  pastePlaceholder?: string;
 }
 
 /**
@@ -253,12 +258,33 @@ const defs: ProviderLoginDef[] = [
     ...unavailable(tr('Moonshot 没有公开的第三方 OAuth 客户端。请改用「Kimi API」Key（OpenAI / Anthropic 兼容接口）。')),
   },
   {
+    // the Grok CLI's own login (xAI device authorization) → cli-chat-proxy.grok.com: the current models (Grok 4.7 …)
+    // with native tool calling, on the user's grok.com plan. Or paste the grok.com sso cookie: grok-sso.ts walks the
+    // same authorization with it.
     id: 'grok',
     name: 'Grok',
-    auth: 'paste-token',
+    auth: 'device-code',
     docsUrl: 'https://grok.com/',
-    instructions: tr('粘贴 grok.com 的 sso cookie。'),
-    ...unavailable(tr('Grok 账号在「添加来源」→「Grok (grok.com account)」里添加（粘贴 sso cookie）。')),
+    instructions: tr('用 grok.com 账号登录（Grok CLI 的登录），或粘贴 grok.com 的 sso cookie。能用 Grok 4.7 等最新模型。'),
+    available: true,
+    device: {
+      deviceAuthorizationUrl: `${XAI_ISSUER}/oauth2/device/code`,
+      tokenUrl: `${XAI_ISSUER}/oauth2/token`,
+      clientId: XAI_CLIENT_ID,
+      scopes: XAI_SCOPES,
+    },
+    paste: { placeholder: tr('grok.com 的 sso cookie（F12 → Application → Cookies → sso），或整段 Cookie'), convert: 'grok-sso' },
+    account: {
+      kind: 'provider',
+      providerId: 'grok',
+      credentialKind: 'oauth',
+      protocol: 'openai',
+      baseUrl: GROK_CLI_BASE,
+      authStyle: 'bearer',
+      chatPath: '/chat/completions',
+      headers: GROK_CLI_HEADERS,
+      usable: true,
+    },
   },
   {
     id: 'devin',
@@ -359,6 +385,7 @@ export function loginInfos(): ProviderLoginInfo[] {
     available: d.available && (d.account?.usable ?? false),
     ...(d.available ? {} : { reason: d.reason ?? d.account?.reason ?? tr('这个来源还不能从 claude-web 登录') }),
     modes: loginModes(d),
+    ...(d.paste?.placeholder ? { pastePlaceholder: d.paste.placeholder } : {}),
   }));
 }
 

@@ -111,3 +111,11 @@
 - 工具调用靠提示词模拟（`<tool_call>{…}</tool_call>`），带 tools 时整段答完才吐出。
 - 添加时用 `/rest/rate-limits` 探一下：401 拒绝添加，其它问题（Cloudflare 403 等）照样加上、卡片显示原因。Cloudflare 拦时让用户粘整段 Cookie（带 cf_clearance）并在末尾加 `; ua=<浏览器 UA>`。没做 utls 指纹垫片。
 - **没验的**：真 grok.com 账号（这台机器没有）；只有单测 + 假 grok 的端到端。
+
+## Grok 改走 Grok CLI 的登录（2026-11-05，用户：最新已经是 Grok 4.7）
+
+- 上面那套 grok.com 网页接法（`grok-web` 目录项）模型老、工具靠提示词模拟，**目录项已去掉**；已经加过的旧来源还在，卡片上提示删掉重加。驱动 `channels/drivers/grok-web.ts` 留着只为列出 / 删除旧来源。
+- 现在：provider-login 的 `grok`（`upstreams/oauth-registry.ts`）= xAI 给 Grok CLI 的设备码登录（client `b1a00492-…`，`auth.x.ai/oauth2/device/code` / `token`，scope 含 `grok-cli:access`），账号是 upstream provider 账号，打 `https://cli-chat-proxy.grok.com/v1/chat/completions`（原生工具调用、Grok 4.7 / 4.6 / 4.5 / 4.3 / build / composer，模型列表来自 `/v1/models`），带 Grok CLI 的身份头（`GROK_CLI_HEADERS`，版本 1.0.46；低于 1.0.13 会 426，版本过旧时改 `GROK_CLI_VERSION`）。参考 Wei-Shaw/sub2api（LGPL，只读协议）和 router-for-me/CLIProxyAPI（MIT）。
+- 也能粘 sso cookie：`upstreams/grok-sso.ts` 用 cookie 自己走一遍设备码授权（accounts.x.ai → device/code → verify → consent_token → approve → token）。**accounts.x.ai 的 Cloudflare 拒 Node 的 TLS（fetch 一律 403），也拒小写的 `user-agent:` 头**：这一段走系统自带的 curl（`curlFetch`，头名按浏览器大小写），token 端点和 cli-chat-proxy 用 Node 没问题。
+- 令牌几小时过期：`UpstreamService.targets()` 在交给网关前离过期不到 2 分钟就先刷新（`renewProvider`，同一账号同时只刷一次）；`refreshProviderCredential` 对设备码登录也用它的 token 端点刷新。设备码的打开地址优先用 `verification_uri_complete`（带好代码），向导会自动打开浏览器。
+- 真机验过：设备码端点用我们的 client id 返回 device_code；`/v1/models` 401、`/v1/chat/completions` 405（GET）说明端点在；假 cookie 粘进去得到「sso cookie 无效或已过期」。**没验的**：真账号登录后的对话。

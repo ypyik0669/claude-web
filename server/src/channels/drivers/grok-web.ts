@@ -234,7 +234,7 @@ export class GrokWebDriver implements ChannelDriver {
         id: SOURCE_PREFIX + id,
         category: 'subscription',
         health,
-        detail: err || tr('用你 grok.com 账号的登录 cookie 回答；工具调用靠提示词模拟'),
+        detail: err || tr('旧的接法（grok.com 网页，模型较旧）：删掉它，在「Grok」卡片里重新登录，就能用 Grok 4.7 等最新模型'),
         catalogId: GROK_CATALOG_ID,
         needs: 'key',
         actions: { canAddAccount: false, canEditProvider: true, canManageEngine: false, canRemove: true },

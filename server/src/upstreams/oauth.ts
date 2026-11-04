@@ -230,7 +230,8 @@ export async function startDeviceAuthorization(fetchImpl: Fetch, cfg: DeviceLogi
   return {
     deviceCode: String(r.json.device_code),
     userCode: String(r.json.user_code),
-    verificationUri: String(r.json.verification_uri ?? r.json.verification_url ?? r.json.verification_uri_complete ?? ''),
+    // the complete URI carries the code: one click instead of typing it (GitHub sends none)
+    verificationUri: String(r.json.verification_uri_complete ?? r.json.verification_uri ?? r.json.verification_url ?? ''),
     expiresAt: now + expiresIn * 1000,
     intervalMs: interval * 1000,
   };
