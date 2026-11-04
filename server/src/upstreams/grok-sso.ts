@@ -146,7 +146,7 @@ export async function ssoToGrokTokens(raw: string, o: { fetch?: typeof fetch; wa
       if (!loc) throw new Error('xAI sign-in: a redirect without a Location');
       cur = new URL(loc, cur).toString();
       // signed out: the sign-in page itself is not needed (and Cloudflare guards it)
-      if (/\/sign-(in|up)/.test(new URL(cur).pathname)) return { status: r.status, url: cur, text: '' };
+      if (/\/sign-(in|up)(\/|$)/.test(new URL(cur).pathname)) return { status: r.status, url: cur, text: '' };
       if (r.status === 303 || ((r.status === 301 || r.status === 302) && m !== 'GET')) { m = 'GET'; body = undefined; }
     }
     throw new Error('xAI sign-in: too many redirects');
