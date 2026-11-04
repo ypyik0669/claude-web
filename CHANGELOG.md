@@ -4,6 +4,28 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.5] — 2026-11-04
+
+### Added
+
+- **An opening animation.** The app plays a 1.45 s opening while it starts; a slow start shows "Starting…" under it.
+- **Grok web accounts.** Add source → "Grok (grok.com account)": paste grok.com's `sso` cookie to use Grok 4.20 / 4.1 from your web account. Tool calls are emulated in the prompt.
+- **Computer use on macOS, and smoother on Windows.** A new set of tools reads an app's interface structure and acts on its elements — no screenshot-and-guess, and by default it doesn't take your mouse; screenshots and the mouse remain the fallback. The first use downloads a ~2 MB helper (vercel-labs/agent-desktop).
+- **Switch computer use and Chrome control in a running conversation**, from the next message on. While it's on, a strip over the input box shows the apps you allowed, with "Turn off".
+
+### Improved
+
+- **Smaller minimize / maximize / close buttons** at the top right, with a small rounded hover.
+- **Computer use won't silently overwrite files you have open**: replacing or clearing existing text is refused, and opening an app that is already running reminds it to make a new document first.
+
+### Fixed
+
+- **The Add source dialog is centred in the window again**, including the step where you enter a key.
+
+### Removed
+
+- The model hub's "Control" page, which was always empty. Computer use is switched and shown in the conversation.
+
 ## [0.5.4] — 2026-11-03
 
 ### Fixed
