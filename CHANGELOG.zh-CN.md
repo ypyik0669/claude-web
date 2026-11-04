@@ -4,6 +4,13 @@
 
 每个版本的变化都记在这里；安装包在 [Releases](https://github.com/ypyik0669/claude-web/releases) 下载。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.6] — 2026-11-05
+
+### 改进
+
+- **Grok 账号能用最新的 Grok 4.7 了。** 「Grok」改成和 Grok CLI 一样的登录：点「获取设备码」在浏览器里用 grok.com 账号确认，或者粘贴 grok.com 的 `sso` cookie。模型列表（Grok 4.7 / 4.6 / 4.5 / 4.3 / Build / Composer）跟着 xAI 走，工具调用是原生的，不再靠提示词模拟。登录令牌快过期时自动续上。
+- 0.5.5 加的「Grok (grok.com account)」网页接法下线了；已经加过的，卡片上会提示删掉后在「Grok」里重新登录。
+
 ## [0.5.5] — 2026-11-04
 
 ### 新增

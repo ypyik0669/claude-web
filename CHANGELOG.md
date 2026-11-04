@@ -4,6 +4,13 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.6] — 2026-11-05
+
+### Improved
+
+- **Grok accounts get the latest Grok 4.7.** "Grok" now signs in the way the Grok CLI does: "Get device code" and confirm with your grok.com account in the browser, or paste grok.com's `sso` cookie. The model list (Grok 4.7 / 4.6 / 4.5 / 4.3 / Build / Composer) comes from xAI, tool calls are native instead of emulated in the prompt, and the sign-in is renewed before it expires.
+- The "Grok (grok.com account)" web-chat connection added in 0.5.5 is retired; if you added one, its card tells you to remove it and sign in again under "Grok".
+
 ## [0.5.5] — 2026-11-04
 
 ### Added
