@@ -4,6 +4,26 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.7] — 2026-11-05
+
+### Added
+
+- **A 3D net cafe.** The background view's net cafe is now 3D: each conversation gets a row of PCs (Zone A, Zone B…) and its sub-agents are the customers — typing at their desks when working, a raised hand when they need you, a blue screen when stuck, checking out at the counter and leaving when done. Click a zone sign to fly in, click a customer for its card (task, time, tokens, cost, open conversation / stop). Day and night.
+- **Sign in to Codex from the app.** "Sign in / switch" on the Codex section of the model menu, or Settings → CLI agents → Codex "Sign in": sign in with your ChatGPT account in the browser, or with a device code. No terminal needed.
+- **An expired Claude sign-in now shows.** When conversations on this computer's Claude account fail to authenticate (revoked token, refresh failed), the avatar at the bottom left gets a red dot and the account menu says so, with "Sign in to Claude again" and "Sign out of Claude".
+
+### Improved
+
+- **Codex's model list follows the account.** Model menus list the models Codex reports for your account, not a fixed built-in few.
+- **ChatGPT (Codex) accounts reason better.** Requests to Codex now carry the reasoning effort, and each turn's reasoning is carried into the next, so the model no longer starts its thinking over after every tool call.
+- **Finished background tasks leave after a minute,** so the background page and the cafe don't pile up with done cards and customers.
+- **Pictures given as a path on this computer show in answers** (they used to be broken images).
+
+### Fixed
+
+- On Windows, non-Claude models (DeepSeek and others) no longer wrap PowerShell code in `cmd.exe /c`, which failed with garbled errors.
+- The "Same for new conversations" switch in the sub-agent model menu no longer stretches across the row with its label wrapped one character per line.
+
 ## [0.5.6] — 2026-11-05
 
 ### Improved
