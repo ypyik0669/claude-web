@@ -7,6 +7,8 @@ import { usePaneCtx } from '@/store/paneContext';
 import { followLink, routeLink } from './link-route';
 import { arrive, rehypeStreamFade, settledCuts, type FadeState } from './stream-fade';
 import { reducedMotion } from './Fold';
+import { localImagePath } from './local-image';
+import { fileUrl } from '@/features/editor/preview';
 
 export { DiffView } from './DiffView';
 
@@ -28,7 +30,7 @@ const CodeRunCtx = createContext<CodeRunContext | undefined>(undefined);
  * `C`), `C:\…` (→ `C:%5C…`), `tel:` — and a blank link opens nothing (2026-10-24 review I1). Those hrefs pass through;
  * routeLink is what decides (and refuses) where a link goes. `src` and everything else keep the default.
  */
-const urlTransform: UrlTransform = (url, key) => (key === 'href' && /^(file:|tel:|[a-zA-Z]:)/i.test(url) ? url : defaultUrlTransform(url));
+const urlTransform: UrlTransform = (url, key) => (key === 'href' && /^(file:|tel:|[a-zA-Z]:)/i.test(url) ? url : key === 'src' && localImagePath(url) ? url : defaultUrlTransform(url));
 
 type LinkMouse = { button: number; ctrlKey?: boolean; metaKey?: boolean; preventDefault(): void };
 
@@ -72,8 +74,11 @@ const components: Components = {
     );
   },
   img({ src, alt }) {
-    const s = typeof src === 'string' ? src : '';
-    return <img src={s} alt={alt ?? ''} className="md-img" onClick={() => useStore.getState().openViewer([s], 0)} />;
+    const raw = typeof src === 'string' ? src : '';
+    // a path on this computer: through the server's raw-file endpoint (local-image.ts)
+    const local = localImagePath(raw);
+    const s = local ? fileUrl(local) : raw;
+    return <img src={s} alt={alt ?? ''} title={local ?? undefined} className="md-img" onClick={() => useStore.getState().openViewer([s], 0)} />;
   },
 };
 

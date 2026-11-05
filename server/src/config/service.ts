@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 import { runClaudeCli } from '../claude-exe.js';
 import { claudeDir } from '../sessions/service.js';
 import { userAnthropicEnv } from '../runtime/user-env.js';
@@ -183,6 +184,10 @@ export class ConfigService {
       const r = await runClaudeCli(['auth', 'status']);
       const a = { ...tryJson<any>(r.stdout, { raw: r.stdout }), stderr: r.code ? r.stderr : undefined };
       if (typeof a.loggedIn === 'boolean') this.lastLoggedIn = a.loggedIn;
+      // a different account (or none) than the one that failed: that failure is not about this login
+      if (this.broken && (a.loggedIn !== true || (this.broken.email && a.email !== this.broken.email))) this.broken = null;
+      if (this.broken) { this.broken.email ??= a.email; a.expired = true; a.expiredMessage = this.broken.message; a.expiredAt = this.broken.at; }
+      this.lastEmail = a.email;
       // the 「Claude 账号」 is really a relay set in settings.json / the environment: say where (GitHub issues #5, #6)
       const own = userAnthropicEnv();
       if (own.relay) a.relay = relayName(own.env.ANTHROPIC_BASE_URL);
@@ -190,8 +195,39 @@ export class ConfigService {
     }, force);
   }
   private lastLoggedIn: boolean | undefined;
+  private lastEmail: string | undefined;
   /** The last answer said logged out (never asked yet = false). */
   knownLoggedOut() { return this.lastLoggedIn === false; }
+
+  /**
+   * The own login failed in a conversation (auth-signal.ts) although `claude auth status` still says logged in: the
+   * token was revoked or could not be refreshed. Kept until a turn on it works again, a logout, or another account.
+   * 'authChanged' tells the windows to ask config.auth again.
+   */
+  readonly events = new EventEmitter();
+  private broken: { at: number; message: string; email?: string } | null = null;
+  noteAuthBroken(message: string) {
+    const was = !!this.broken;
+    this.broken = { at: Date.now(), message, email: this.lastEmail };
+    this.authMemo.clear();
+    if (!was) this.events.emit('authChanged');
+  }
+  noteAuthOk() {
+    if (!this.broken) return;
+    this.broken = null;
+    this.authMemo.clear();
+    this.events.emit('authChanged');
+  }
+
+  /** `claude auth logout`: the stuck or expired login goes, so 登录 starts clean. */
+  async logout() {
+    const r = await runClaudeCli(['auth', 'logout']);
+    this.broken = null;
+    this.authMemo.clear();
+    this.events.emit('authChanged');
+    if (r.code) throw new Error((r.stderr || r.stdout || `claude auth logout: ${r.code}`).trim().slice(0, 400));
+    return this.auth(true);
+  }
 
   async doctor() {
     const r = await runClaudeCli(['doctor'], { timeoutMs: 120_000 });

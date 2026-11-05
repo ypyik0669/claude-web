@@ -1,5 +1,6 @@
 // Anthropic Messages API ⇄ IR. Shapes per docs.anthropic.com (Messages, streaming events).
 import { claudeVersion } from '../models/catalog.js';
+import { detectSignatureProvider } from './signature.js';
 import { newId, safeJson, mergeAlternating, effortOf, effortOfBudget, type IrEvent, type IrMessage, type IrPart, type IrRequest, type IrResponse, type IrStop, type IrTool, type IrUsage, type StreamParser, type StreamRenderer } from './ir.js';
 import { sse } from './sse.js';
 import { anthropicError } from './compat/errors.js';
@@ -43,7 +44,9 @@ function blocks(content: unknown): IrPart[] {
       const c = typeof b.content === 'string' ? b.content : blocks(b.content).filter((p) => p.type === 'text' || p.type === 'image');
       out.push({ type: 'tool_result', id: String(b.tool_use_id), content: c ?? '', isError: !!b.is_error });
     } else if (b.type === 'document') out.push({ type: 'text', text: b.source?.type === 'text' ? String(b.source.data ?? '') : '[document]' });
-    // thinking / redacted_thinking / server tool blocks: provider-bound, dropped
+    // a Codex reasoning item we handed out as a thinking block (ResponsesStreamParser): it goes back to Codex
+    else if (b.type === 'thinking' && typeof b.signature === 'string' && detectSignatureProvider(b.signature) === 'gpt') out.push({ type: 'reasoning', encrypted: b.signature, ...(b.thinking ? { summary: String(b.thinking) } : {}) });
+    // other thinking / redacted_thinking / server tool blocks: provider-bound, dropped
   }
   return out;
 }
@@ -72,6 +75,8 @@ function renderPart(p: IrPart): any {
   if (p.type === 'text') return { type: 'text', text: p.text };
   if (p.type === 'image') return p.data ? { type: 'image', source: { type: 'base64', media_type: p.mediaType, data: p.data } } : { type: 'image', source: { type: 'url', url: p.url } };
   if (p.type === 'tool_call') return { type: 'tool_use', id: p.id, name: p.name, input: p.args };
+  // never here: buildOutbound keeps Codex reasoning for Responses only
+  if (p.type === 'reasoning') return { type: 'text', text: '' };
   const content = typeof p.content === 'string' ? p.content : p.content.map(renderPart);
   return { type: 'tool_result', tool_use_id: p.id, content, ...(p.isError ? { is_error: true } : {}) };
 }
@@ -146,7 +151,7 @@ export function renderResponse(r: IrResponse, model: string): any {
     role: 'assistant',
     model,
     // another format's reasoning has no signature (the runner's dropEmptyBlocks unsigned case before Claude sees it)
-    content: [...(r.thinking ? [{ type: 'thinking', thinking: r.thinking, signature: '' }] : []), ...r.parts.filter((p) => p.type === 'text' || p.type === 'tool_call').map(renderPart)],
+    content: [...(r.thinking || r.signature ? [{ type: 'thinking', thinking: r.thinking ?? '', signature: r.signature ?? '' }] : []), ...r.parts.filter((p) => p.type === 'text' || p.type === 'tool_call').map(renderPart)],
     stop_reason: STOP_OUT[r.stop],
     stop_sequence: null,
     usage: usageOut(r.usage),
@@ -256,6 +261,18 @@ export class AnthropicStreamRenderer implements StreamRenderer {
         }
         if (e.text) s += sse({ type: 'content_block_delta', index: this.index, delta: { type: 'thinking_delta', thinking: e.text } }, 'content_block_delta');
         return s;
+      }
+      case 'signature': {
+        let s = this.start();
+        if (this.open !== 'thinking') {
+          s += this.close();
+          this.open = 'thinking';
+          this.index++;
+          s += sse({ type: 'content_block_start', index: this.index, content_block: { type: 'thinking', thinking: '', signature: '' } }, 'content_block_start');
+        }
+        s += sse({ type: 'content_block_delta', index: this.index, delta: { type: 'signature_delta', signature: e.sig } }, 'content_block_delta');
+        // one reasoning item = one block: the next one opens its own
+        return s + this.close();
       }
       case 'tool': {
         let s = this.start() + this.close();

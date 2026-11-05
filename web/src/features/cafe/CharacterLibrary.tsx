@@ -16,8 +16,8 @@ import { tr } from '@/i18n';
 /** Who has a character, in words. */
 export function holdersText(id: string, a: CafeAssign): string[] {
   const out: string[] = [];
-  if (a.admin === id) out.push(tr('网管'));
-  if (a.default === id) out.push(tr('所有客人'));
+  if (a.admin === id) out.push(tr('主对话'));
+  if (a.default === id) out.push(tr('所有子代理'));
   for (const [k, v] of Object.entries(a.byType ?? {})) if (v === id) out.push(tr('{k} 类子代理', { k }));
   for (const [k, v] of Object.entries(a.byName ?? {})) if (v === id) out.push(tr('叫 {k} 的', { k }));
   return out;
@@ -72,8 +72,8 @@ function AssignForm({ id, onDone }: { id: string; onDone: () => void }) {
   return (
     <div className="cafe-assign">
       <div className="row">
-        <button className="btn sm" onClick={() => void give('admin')}>{tr('网管')}</button>
-        <button className="btn sm" onClick={() => void give('default')}>{tr('所有客人')}</button>
+        <button className="btn sm" onClick={() => void give('admin')}>{tr('主对话')}</button>
+        <button className="btn sm" onClick={() => void give('default')}>{tr('所有子代理')}</button>
       </div>
       {field(type, setType, tr('子代理类型，比如 Explore'), (s) => `type:${s}`)}
       {field(name, setName, tr('名字，比如 researcher'), (s) => `name:${s}`)}
@@ -88,7 +88,7 @@ export function CharacterLibrary() {
   const [giving, setGiving] = useState<string | null>(null);
   if (!open) return null;
   const remove = async (c: CharacterDef) => {
-    if (!(await dlg.confirm(tr('删除角色「{name}」？', { name: c.name }), { message: tr('用它的人会换回小章鱼。'), focusCancel: true }))) return;
+    if (!(await dlg.confirm(tr('删除角色「{name}」？', { name: c.name }), { message: tr('用它的会换回默认的样子。'), focusCancel: true }))) return;
     await ws.request({ kind: 'characters.delete', id: c.id }).catch(() => {});
   };
   const takeBack = async (id: string) => {
@@ -117,7 +117,7 @@ export function CharacterLibrary() {
                 {(c.builtin || c.draft) && <span className="tag">{c.builtin ? tr('内置') : tr('草稿')}</span>}
                 <Walker def={c} tint={c.id === 'octopus' ? AGENT_NIGHT[6] : undefined} />
                 <div className="n" title={c.id}>{c.name}</div>
-                <div className="who">{c.id === 'octopus' && !assign.default ? tr('所有客人（默认）') : c.id === 'admin' && !assign.admin ? tr('网管（默认）') : who.join('、') || (c.draft ? tr('还没保存，在对话里说「保存」') : tr('还没给谁'))}</div>
+                <div className="who">{c.id === 'octopus' && !assign.default ? tr('所有子代理（默认）') : c.id === 'admin' && !assign.admin ? tr('主对话（默认）') : who.join('、') || (c.draft ? tr('还没保存，在对话里说「保存」') : tr('还没给谁'))}</div>
                 {!c.builtin && !c.draft && (
                   <div className="acts">
                     <button className="btn sm" aria-expanded={giving === c.id} onClick={() => setGiving(giving === c.id ? null : c.id)}>{tr('给谁用')}</button>

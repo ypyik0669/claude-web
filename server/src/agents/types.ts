@@ -9,6 +9,7 @@ import type { MetaStore } from '../meta/store.js';
 import { modelsFor } from '../models/catalog.js';
 import { tr } from '../i18n/index.js';
 import { askCodexModels } from './reported-models.js';
+import { CodexLogin } from './codex-login.js';
 
 const catalogIds = (k: AgentKind) => modelsFor(k).map((m) => m.value);
 
@@ -158,6 +159,12 @@ export class AgentRegistry {
       .finally(() => this.asking.delete(kind));
     this.asking.set(kind, p);
     return p;
+  }
+
+  private codexLogins?: CodexLogin;
+  /** Signing Codex in from the page (codex-login.ts): its own app-server, on the same command a conversation uses. */
+  codexLogin(): CodexLogin {
+    return this.codexLogins ??= new CodexLogin(() => this.launch('codex'), () => { void this.askModels('codex', true); });
   }
 
   config(kind: AgentKind): AgentConfig {

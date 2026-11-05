@@ -137,6 +137,8 @@ export class WsClient {
  * the stream (`CwTunnel.connect()` takes none).
  */
 export function authToken(): string | null {
+  // rendered outside a page (the markdown tests render to a string): no page URL, no token
+  if (typeof location === 'undefined') return null;
   const q = new URLSearchParams(location.search).get('token');
   if (q) { try { localStorage.setItem('cw.token', q); } catch { /* private mode */ } return q; }
   try { return localStorage.getItem('cw.token'); } catch { return null; }

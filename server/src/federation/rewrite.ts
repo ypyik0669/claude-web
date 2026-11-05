@@ -50,6 +50,8 @@ export function refusedFromPeer(req: ClientRequest): string | null {
   if (req.kind.startsWith('wsl.') || req.kind === 'remote.hosts.test') return tr('其它机器不能使用本机的 WSL 或 SSH');
   if ((req.kind === 'session.open' && req.params?.env?.kind === 'wsl') || (req.kind === 'terminal.open' && req.wsl)) return tr('其它机器不能使用本机的 WSL 或 SSH');
   if (req.kind.startsWith('vcs.tokens.')) return tr('其它机器不能查看或修改本机的 GitHub / GitLab 令牌');
+  if (req.kind.startsWith('agents.codex.')) return tr('其它机器不能登录或退出本机的 Codex 账号');
+  if (req.kind === 'config.logout') return tr('其它机器不能退出本机的 Claude 账号');
   // stage F: only the receiving side of a hand-off / publish, and a 派活 run here (cloud/handlers.ts)
   if (cloudRefusedFromPeer(req)) return tr('其它机器不能在本机做这件事');
   return null;

@@ -92,6 +92,15 @@ export function installBackground(): void {
   ws.on((e: ServerEvent) => {
     if (e.kind === 'hello') { refresh(); return; }
     if (e.kind !== 'background.changed') return;
+    // nothing left (the server pruned its ended tasks): the conversation leaves the page and the 网吧
+    if (!e.session.tasks.length) {
+      useBackground.setState((s) => {
+        if (!(e.session.sessionId in s.sessions)) return s;
+        const { [e.session.sessionId]: _gone, ...rest } = s.sessions;
+        return { sessions: rest };
+      });
+      return;
+    }
     useBackground.setState((s) => ({ sessions: { ...s.sessions, [e.session.sessionId]: e.session } }));
   });
   refresh();

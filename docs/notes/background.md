@@ -18,3 +18,11 @@ spec 和实施记录：`docs/superpowers/specs/2026-10-12-background-office-desi
 - **一轮进行中结束的后台任务，流上没有 `task_notification`**（2026-10-17 用户报告「后台 · 19 条命令」）：CLI 把这种结束通知当附件塞进这一轮
   （transcript 里 `queue-operation` enqueue 之后马上 remove），只在下一轮才处理的那种才走流。`BackgroundService.reconcile()` 每 5 秒读有在跑任务的
   对话的 transcript 新增部分，只认 `"queue-operation"` 行里的 `<task-notification>`，补上结束。详见「照官方桌面版录屏改的界面」第二轮。
+
+## 跑完的任务一分钟后离开（2026-11-05，用户报告：跑完的卡片和网吧里坐着的人一多就卡）
+
+- `BackgroundService.pruneEnded()`（每 5 秒，`list()` 前也跑）：结束（完成 / 失败 / 停止）超过 `KEEP_TASK_MS`（60 秒）的任务从快照里去掉——
+  一分钟够网吧的结账走完、卡片上看清「完成 / 失败」。磁盘上的工作流记录和子代理 transcript 不动，历史照样能看。
+- 一个对话的任务全没了：服务端丢掉它，并推一次 `tasks: []` 的空快照；前端 `installBackground` 收到空快照就把这个对话从 `sessions` 里删掉
+  （页面侧栏「结束了」里也就没有它了）。`KEEP_ENDED_MS` 的一天上限仍在，只是现在基本用不到。
+- 测试：`service.test.ts`「an ended task leaves the snapshot after a minute」。

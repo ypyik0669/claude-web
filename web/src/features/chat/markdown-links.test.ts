@@ -93,9 +93,19 @@ describe('<Markdown> links keep their href and route', () => {
       expect(links.openInBrowser).toHaveBeenCalledTimes(1);
     } finally { links.desktop = null; }
   });
-  it('an image src keeps the default transform', () => {
+  it('an image src never carries a file: URL to the page', () => {
     const html = renderToStaticMarkup(createElement(Markdown, { text: '![i](file:///C:/x.png)' }));
     expect(html).toContain('<img');
     expect(html).not.toContain('file:');
+  });
+  it('a picture given as a path on this computer loads through the raw-file endpoint (it showed broken)', () => {
+    for (const text of ['![3D 网吧](C:\\Users\\YPY\\Downloads\\claude-web-3d网吧.gif)', '![x](file:///C:/Users/YPY/Downloads/claude-web-3d网吧.gif)']) {
+      const html = renderToStaticMarkup(createElement(Markdown, { text }));
+      const src = /<img[^>]*src="([^"]*)"/.exec(html)?.[1] ?? '';
+      expect(src.startsWith('api/file?path=')).toBe(true);
+      expect(decodeURIComponent(new URLSearchParams(src.replace(/&amp;/g, '&').split('?')[1]).get('path') ?? '').replace(/\\/g, '/')).toBe('C:/Users/YPY/Downloads/claude-web-3d网吧.gif');
+    }
+    // a web picture is left alone
+    expect(renderToStaticMarkup(createElement(Markdown, { text: '![w](https://x.io/a.png)' }))).toContain('src="https://x.io/a.png"');
   });
 });

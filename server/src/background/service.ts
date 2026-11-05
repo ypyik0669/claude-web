@@ -11,6 +11,12 @@ import { tr } from '../i18n/index.js';
 /** A conversation whose background has all ended is kept this long (the page's 「结束了」). */
 export const KEEP_ENDED_MS = 24 * 3600_000;
 export const MAX_SESSIONS = 50;
+/**
+ * A task that ended (done / failed / stopped) leaves the picture after this: long enough for the 网吧's checkout walk
+ * and to read 完成 / 失败 on its card, then it goes — a day of finished cards and seated customers made the page and
+ * the 3D cafe slow (2026-11-05 user report). A conversation left with nothing goes with it.
+ */
+export const KEEP_TASK_MS = 60_000;
 
 /**
  * The ends the CLI wrote into the transcript, as task_notification messages. A background command (or sub-agent) that
@@ -61,7 +67,9 @@ export class BackgroundService extends EventEmitter {
   private readAt = new Map<string, { file: string; pos: number }>();
   private sweep?: NodeJS.Timeout;
 
-  constructor(o: { pool: BgPool; now?: () => number; flushMs?: number; transcriptOf?: (sessionId: string) => string | null; sweepMs?: number }) {
+  private pruner?: NodeJS.Timeout;
+
+  constructor(o: { pool: BgPool; now?: () => number; flushMs?: number; transcriptOf?: (sessionId: string) => string | null; sweepMs?: number; pruneMs?: number }) {
     super();
     this.now = o.now ?? Date.now;
     this.flushMs = o.flushMs ?? 1000;
@@ -70,6 +78,8 @@ export class BackgroundService extends EventEmitter {
       this.sweep = setInterval(() => { for (const id of this.states.keys()) this.reconcile(id); }, o.sweepMs ?? 5000);
       this.sweep.unref?.();
     }
+    this.pruner = setInterval(() => this.pruneEnded(), o.pruneMs ?? 5000);
+    this.pruner.unref?.();
     o.pool.on('message', (sid, m) => this.observe(sid, m));
     // the CLI process ended or is being replaced (a provider switch, a forced stop): its background went with it
     o.pool.on('state', (sid, state) => {
@@ -148,6 +158,23 @@ export class BackgroundService extends EventEmitter {
 
   private running = (s: BgState) => s.tasks.some((t) => t.status === 'running');
 
+  /**
+   * Ended tasks past KEEP_TASK_MS leave the snapshot (their runs and transcripts stay on disk for 历史). A conversation
+   * with none left is dropped and pushed once empty, so the windows forget it too.
+   */
+  pruneEnded(): void {
+    const now = this.now();
+    for (const [id, s] of this.states) {
+      const keep = s.tasks.filter((t) => t.status === 'running' || now - (t.endedAt ?? s.updatedAt) < KEEP_TASK_MS);
+      if (keep.length === s.tasks.length) continue;
+      s.tasks = keep;
+      if (!keep.length) {
+        this.drop(id);
+        this.emit('changed', { sessionId: id, updatedAt: now, tasks: [], events: [] } satisfies BgSession);
+      } else this.schedule(id);
+    }
+  }
+
   /** Ended conversations past KEEP_ENDED_MS go; beyond MAX_SESSIONS the oldest ended ones go first. */
   private trim(): void {
     const now = this.now();
@@ -166,6 +193,7 @@ export class BackgroundService extends EventEmitter {
   }
 
   list(): BgSession[] {
+    this.pruneEnded();
     this.trim();
     return [...this.states.values()].map(snapshotBg);
   }
@@ -193,6 +221,7 @@ export class BackgroundService extends EventEmitter {
 
   dispose(): void {
     if (this.sweep) clearInterval(this.sweep);
+    if (this.pruner) clearInterval(this.pruner);
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
   }

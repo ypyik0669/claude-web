@@ -13,6 +13,7 @@ import { SessionService } from './sessions/service.js';
 import { appendLastPrompt } from './sessions/unlisted.js';
 import { getSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 import { ConfigService } from './config/service.js';
+import { authSignal } from './config/auth-signal.js';
 import { UsageService } from './usage/service.js';
 import { providerTimeline } from './usage/timeline.js';
 import { ATTACH_MAX_BYTES, FilesService, attachmentPath, dataDir, workspaceRoots } from './files/service.js';
@@ -471,6 +472,14 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   computer.on('granted', (sid: string, apps: string[]) => pool.get(sid)?.noteComputerApps?.(apps));
   const config = new ConfigService();
   pool.accountLoggedOut = () => config.knownLoggedOut();
+  // the own Claude login: what its conversations answer says whether it still works (auth status does not know)
+  pool.on('message', (sessionId: string, m: unknown) => {
+    const info = pool.get(sessionId)?.info;
+    if (!info || (info.agent ?? 'claude') !== 'claude' || (info.providerId && info.providerId !== 'claude')) return;
+    const sig = authSignal(m);
+    if (sig?.kind === 'bad') config.noteAuthBroken(sig.message);
+    else if (sig?.kind === 'ok') config.noteAuthOk();
+  });
   const ledger = new LedgerService((id) => meta.provider(id)?.type);
   pool.on('message', (sessionId: string, m: unknown) => ledger.observe(sessionId, m, meta.sessionMeta(sessionId).providerId));
   // 账号池: Claude subscription logins, pools, and the targets a pool resolves to

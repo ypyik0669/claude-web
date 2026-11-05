@@ -34,3 +34,15 @@
 - `server/ws-phase29.mjs` 最后一段：存下、令牌不上线、形状不对直接拒、刷新保持目录。
 - **真机**（2026-10-15）：用本机 Max 账号的访问令牌当 `claude-account` 的令牌，临时 HOME（没有 ~/.claude 登录），进程环境里故意放一个假中转（`ANTHROPIC_AUTH_TOKEN` + 不可达的 `ANTHROPIC_BASE_URL`）：ccb 和官方二进制都测试通过、真对话回答 `account-ok`。测试脚本只在临时目录里，令牌不打印。
 - 没在真机上走完 `claude setup-token`（要在浏览器里登另一个账号）；令牌读取用 cmd 真实输出验证。
+
+## 本机 Claude 登录过期 / 退出登录（2026-11-05，用户报告：「登录过期了这里不会显示，有时候就卡着了」）
+
+- `claude auth status` 只读凭据文件：令牌被服务端吊销、或者刷新不了，它照样说 `loggedIn: true`。真信号是对话的回答：
+  `config/auth-signal.ts` 的 `authSignal(m)` 认 `assistant.error === 'authentication_failed'`、`isApiErrorMessage` 里的 401 / revoked /
+  expired / `Please run /login`、`result.is_error` + `api_error_status: 401`；一轮正常 `result success` 算「能用」。
+- 只看本机登录的对话：`index.ts` 里 `pool.on('message')`，`info.agent` 是 claude、`providerId` 空或 `'claude'`（供应商 / 别的 Claude 账号档案不算）。
+- `ConfigService.noteAuthBroken / noteAuthOk`：记下 `broken`，清 auth 缓存，发 `authChanged` → hub 广播 `auth.changed` → 前端 `checkAuth()`。
+  `config.auth` 的回答多 `expired / expiredMessage / expiredAt`。换了账号（email 变了）或没登录了，`broken` 自动作废。
+- `config.logout` = `claude auth logout`（联邦里拒绝）。界面：侧栏底部账号行头像上红点；弹出菜单顶上红条「Claude 登录已过期…」，
+  加「重新登录 Claude 账号」（终端里 `claude auth login`，跟首次引导同一个 `loginInTerminal`）和「退出 Claude 账号」（确认后退出）。中转（settings.json 的 relay）不显示这些。
+- 测试：`config/auth-signal.test.ts`。

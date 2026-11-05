@@ -10,6 +10,7 @@ import { TERMS } from '@/ui/terms';
 import { ProviderSelect } from '@/features/providers/ProviderSelect';
 import { tr } from '@/i18n';
 import { SwitchChip } from '@/ui/Switch';
+import { CodexLoginDialog } from './CodexLoginDialog';
 
 const PROTO_LABEL: Record<AgentInfo['protocol'], string> = { claude: 'Claude Code', acp: 'ACP', codex: 'app-server' };
 
@@ -51,6 +52,7 @@ function AgentCard({ a, onChange }: { a: AgentInfo; onChange: () => void }) {
   const [cfgOpen, setCfgOpen] = useState(false);
   const configurable = (CONFIGURABLE as string[]).includes(a.kind);
   const [busy, setBusy] = useState(false);
+  const [login, setLogin] = useState(false);
   const fromAgent = () => ({ command: a.command, args: a.args.join(' '), model: a.model, label: a.label, env: Object.entries(a.env).map(([k, v]) => `${k}=${v}`).join('\n') });
   const [f, setF] = useState(fromAgent);
   // reset only when the saved config really changed: every agents reload (another card's toggle,
@@ -87,12 +89,14 @@ function AgentCard({ a, onChange }: { a: AgentInfo; onChange: () => void }) {
         {a.kind !== 'claude' && <SwitchChip title={tr('关掉后新对话的选择器里不再出现')} on={a.enabled} onChange={(on) => save({ enabled: on })}>{tr('启用')}</SwitchChip>}
         {!a.installed && a.installNeeds && <a className="btn sm" href={a.installNeeds.url} target="_blank" rel="noreferrer" title={a.installNeeds.url}>{tr('下载 {name}', { name: a.installNeeds.name })}</a>}
         {!a.installed && a.install && <button className={clsx('btn sm', a.installNeeds && 'ghost')} onClick={() => runInTerminal(a.install)} title={a.install}>{tr('安装')}</button>}
-        {a.installed && a.login && <button className="btn sm ghost" onClick={() => runInTerminal(a.login)} title={a.login}>{tr('登录')}</button>}
+        {a.installed && a.kind === 'codex' && <button className="btn sm ghost" data-id="codex-login-open" onClick={() => setLogin(true)} title={tr('用 ChatGPT 账号登录 Codex')}>{tr('登录')}</button>}
+        {a.installed && a.login && a.kind !== 'codex' && <button className="btn sm ghost" onClick={() => runInTerminal(a.login)} title={a.login}>{tr('登录')}</button>}
         {a.docs && <a className="btn sm ghost" href={a.docs} target="_blank" rel="noreferrer">{tr('文档')}</a>}
         {configurable && <button className={clsx('btn sm ghost', cfgOpen && 'on')} onClick={() => setCfgOpen(!cfgOpen)} title={tr('说明文件 / MCP / 模型等设置 / 备份')}>{tr('配置中心')}</button>}
         <button className="btn sm ghost" onClick={() => setOpen(!open)}>{open ? tr('收起') : tr('启动参数')}</button>
       </div>
       {a.kind !== 'claude' && <AgentProvider a={a} save={save} />}
+      {login && <CodexLoginDialog onClose={() => { setLogin(false); onChange(); }} />}
       {cfgOpen && configurable && <AgentConfigPanel kind={a.kind as AgentConfigKind} />}
       {open && (
         <div className="agent-form">

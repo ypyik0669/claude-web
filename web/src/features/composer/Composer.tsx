@@ -248,6 +248,11 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   const wSubModel = subagentModelFor({ recorded: wSub ?? undefined, settings, providerId: wProviderId });
   // (what the agent said it offers this account comes first: the catalog goes stale with every release)
   const wBuiltin = agent && (agent.reportedModels?.length || !modelsFor(agent.kind).length) ? agentModels(agent) : undefined;
+  // the same for a conversation of another agent that is running or resumed: its account's own list, not the catalog
+  const reportedFor = (kind: string) => {
+    const a = kind !== 'claude' ? agents.find((x) => x.kind === kind) : undefined;
+    return a?.reportedModels?.length ? agentModels(a) : undefined;
+  };
   // providers a Claude conversation could use right now (the model menu's own check)
   const usableIds = useMemo(() => providers.filter((p) => usableProfile(providers, p.id, { agent: 'claude', engine, gatewayGroups: gatewayView.groups, gatewayEnabled: gatewayView.enabled })).map((p) => p.id), [providers, engine, gatewayView.groups, gatewayView.enabled]);
   const usableKey = usableIds.join(',');
@@ -1136,7 +1141,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     const ultraOk = info.supportsUltracode !== false && !!CATALOG[liveAgent]?.supportsUltracode;
     const liveView = claudeEffortView({ agent: liveAgent, providers, providerId: remote ? 'claude' : liveProvider, model: info.model, runtime: info.runtime });
     const defaultEffort = liveView.defaultLevel;
-    const t = modelChipText({ agent: liveAgent, agentName: info.agentName, providers, providerId: remote ? 'claude' : liveProvider, providerName: info.providerName, model: info.model, builtin: liveProvider === 'claude' && info.models?.length ? info.models : undefined, agentDefault: liveAgentDefault, efforts: liveEfforts, effort: info.effort, defaultEffort, ultracode: ultraOk && !!info.ultracode, accountDefault });
+    const t = modelChipText({ agent: liveAgent, agentName: info.agentName, providers, providerId: remote ? 'claude' : liveProvider, providerName: info.providerName, model: info.model, builtin: (!remote && liveProvider === 'claude' && reportedFor(liveAgent)) || (liveProvider === 'claude' && info.models?.length ? info.models : undefined), agentDefault: liveAgentDefault, efforts: liveEfforts, effort: info.effort, defaultEffort, ultracode: ultraOk && !!info.ultracode, accountDefault });
     const remoteLabel = `${info.providerName ? `${info.providerName} / ` : ''}${info.models?.find((m) => m.value === info.model)?.displayName ?? (shortModel(info.model) || tr('模型'))}`;
     // 智能路由: 「自动 → 实际：<model>」 — the real model is never hidden behind the strategy (spec §7.2)
     const pol = info.model ? policyOfModel(info.model) : undefined;
@@ -1147,7 +1152,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         current={{ providerId: remote ? 'claude' : liveProvider, model: info.model }}
         label={routedNote ? routedNote.label : remote ? remoteLabel : t.main}
         title={(remote ? tr('模型（其它机器上的对话：换供应商请在那台机器上操作）') : tr("{main}{v}\n同一供应商直接换模型；换供应商会无感重启对话；选其它 Agent 的模型 = 交给它继续", { main: t.main, v: t.isDefault ? tr('（默认）') : '' })) + (routedNote ? '\n' + routedNote.title : '')}
-        builtin={(remote || liveProvider === 'claude') && info.models?.length ? info.models : undefined}
+        builtin={(!remote && liveProvider === 'claude' && reportedFor(liveAgent)) || ((remote || liveProvider === 'claude') && info.models?.length ? info.models : undefined)}
         builtinTitle={remote ? info.providerName ?? info.agentName ?? tr('模型') : liveAgent === 'claude' ? ownName : tr('{agentName} 账号', { agentName: info.agentName ?? liveAgent })}
         agentDefault={liveAgentDefault}
         lockProvider={remote ? 'claude' : undefined}
@@ -1184,7 +1189,9 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     const rView = claudeEffortView({ agent: rAgent, providers, providerId: rProvider, model: v.model, runtime: rP ? effectiveRuntime(rP, engine) : undefined });
     const rEfforts = rView.levels;
     const rUltraOk = !remote && rView.ultracode;
-    const t = modelChipText({ agent: rAgent, agentName: agents.find((a) => a.kind === rAgent)?.name, providers, providerId: rProvider, model: v.model, agentDefault: resumeAgentDefault, efforts: rEfforts, effort: v.effort, defaultEffort: rView.defaultLevel, ultracode: rUltraOk && v.ultracode, accountDefault });
+    // this machine's account list: not for a conversation of another machine (rProvider reads 'claude' there too)
+    const rBuiltin = !remote && rProvider === 'claude' ? reportedFor(rAgent) : undefined;
+    const t = modelChipText({ agent: rAgent, agentName: agents.find((a) => a.kind === rAgent)?.name, providers, providerId: rProvider, model: v.model, builtin: rBuiltin, agentDefault: resumeAgentDefault, efforts: rEfforts, effort: v.effort, defaultEffort: rView.defaultLevel, ultracode: rUltraOk && v.ultracode, accountDefault });
     const sid = active.sessionId;
     // nothing picked: the chip names the default the resume will really get; the transcript's last model is a hint
     const lastHint = !v.model && v.lastModel ? tr("\n上次回答用的是 {displayName}", { displayName: modelsFor(rAgent, [{ id: v.lastModel }])[0]?.displayName ?? v.lastModel }) : '';
@@ -1194,6 +1201,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         current={{ providerId: rProvider, model: v.model }}
         label={t.main}
         title={tr("{main}{v}{lastHint}\n对话没在运行：发送后用这里选的模型继续{v2}", { main: t.main, v: t.isDefault ? tr('（默认）') : '', lastHint, v2: remote ? '' : tr('；选其它 Agent 的模型 = 交给它继续') })}
+        builtin={rBuiltin}
         builtinTitle={rAgent === 'claude' ? ownName : tr('{name} 账号', { name: agents.find((a) => a.kind === rAgent)?.name ?? rAgent })}
         agentDefault={resumeAgentDefault}
         lockProvider={remote ? 'claude' : undefined}

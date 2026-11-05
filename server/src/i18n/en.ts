@@ -1902,4 +1902,10 @@ export const EN_SERVER: Record<string, string> = {
   "［图片］": "[image]",
   "［文件 {name}（导出包里没有内容）］": "[File {name} (its content isn't in the export)]",
   "［附件 {name}］": "[Attachment {name}]",
+  "Codex 没有给出登录地址": "Codex did not give a sign-in address",
+  "登录超时（10 分钟），请重试": "Sign-in timed out (10 minutes). Try again",
+  "Codex 进程退出了": "The Codex process exited",
+  "登录已过期，请重新开始": "This sign-in has expired. Start again",
+  "其它机器不能登录或退出本机的 Codex 账号": "Another computer cannot sign this computer's Codex in or out",
+  "其它机器不能退出本机的 Claude 账号": "Another computer cannot sign this computer's Claude account out",
 };

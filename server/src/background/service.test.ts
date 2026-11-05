@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BackgroundService, KEEP_ENDED_MS, handleBackground, isBackgroundRequest } from './service.js';
+import { BackgroundService, KEEP_ENDED_MS, KEEP_TASK_MS, handleBackground, isBackgroundRequest } from './service.js';
 import type { BgSession } from './types.js';
 
 const sys = (subtype: string, o: Record<string, unknown>) => ({ type: 'system', subtype, uuid: 'u', session_id: 's', ...o });
@@ -33,6 +33,25 @@ describe('BackgroundService', () => {
     tick(2000);
     expect(pushes.length).toBe(2);
     expect(svc.hasRunning('s1')).toBe(true);
+    svc.dispose();
+  });
+
+  it('an ended task leaves the snapshot after a minute; a conversation with nothing left is pushed empty and dropped', () => {
+    vi.useFakeTimers();
+    const { pool, svc, pushes, tick } = setup();
+    pool.emit('message', 's1', sys('task_started', { task_id: 'a1', description: 'x', task_type: 'local_agent' }));
+    pool.emit('message', 's1', sys('task_started', { task_id: 'a2', description: 'y', task_type: 'local_agent' }));
+    tick(1000);
+    pool.emit('message', 's1', sys('task_notification', { task_id: 'a1', status: 'completed' }));
+    tick(1000);
+    expect(svc.list()[0].tasks.map((t) => t.id)).toEqual(['a1', 'a2']);
+    tick(KEEP_TASK_MS);
+    expect(svc.list()[0].tasks.map((t) => t.id)).toEqual(['a2']);
+    expect(pushes.at(-1)!.tasks.map((t) => t.id)).toEqual(['a2']);
+    pool.emit('message', 's1', sys('task_notification', { task_id: 'a2', status: 'failed' }));
+    tick(KEEP_TASK_MS + 5000);
+    expect(pushes.at(-1)).toMatchObject({ sessionId: 's1', tasks: [] });
+    expect(svc.list()).toEqual([]);
     svc.dispose();
   });
 

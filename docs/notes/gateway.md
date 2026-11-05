@@ -148,3 +148,16 @@
 - `replay-cache.ts`：内存 LRU + TTL，键 = 网关 key + 对话。从透传的回答里记下带签名的思考，客户端下一轮丢了就补回。转换协议的请求按设计仍丢思考，缓存只帮透传。
 - `ws-relay.ts`：`/v1/responses`、`/v1/ws`（含组前缀）走 WebSocket，主端口 / 本机 / LAN 监听都有（`listener.ts` 加了 upgrade 钩子）。鉴权同 HTTP；每一轮转成一次普通的 `POST /v1/responses` 走网关，所以路由、故障转移、额度、隐私、账本都照常；不对上游开 WebSocket。审计里 WS 的 IP 显示 127.0.0.1。
 - 路由候选的 `weight` 以前保存时被丢，「按权重」排序退化成按剩余额度；现在保存时保留（0–1000）。
+
+## Codex 账号的推理来回带 / 强度（2026-11-05，用户反馈「经 Magpie GPT 降智」，要我们自己顶替 Magpie）
+
+- **以前的两个洞**：`anthropic>responses` 翻译时 `R.renderRequest` 根本不写 `reasoning`（强度丢了，Codex 用默认档）；每轮的推理
+  item（`encrypted_content`）也被丢，`store:false` 下模型每次工具调用后都从零想起——这就是「降智」。
+- **做法**：IR 多一种 part `{type:'reasoning', encrypted, summary}` 和一个事件 `{t:'signature'}`。Codex 回来的 reasoning item →
+  Anthropic 思考块（摘要当 thinking 文字、`encrypted_content` 原样当 signature，一个 item 一块）；Claude Code 把思考块带回来时，
+  `anthropic.ts blocks()` 用 `detectSignatureProvider(sig) === 'gpt'` 认出它，变回 reasoning item 放在那一轮的工具调用前面。
+  请求带 `reasoning {effort, summary:'auto'}` + `include: ['reasoning.encrypted_content']`（`ResponsesRenderOpts.reasoning`，只有网关的
+  Codex 路径开；缓存垫片不开——官方 API 对没验证的组织拒绝 summary）。`max` 映射成 `xhigh`。
+- **不会串到别家**：`buildOutbound` 对非 Responses 出站把 reasoning part 剥掉；透传到 Claude 的请求由 signature.ts 按 gpt 签名丢块（原有逻辑）。
+- **网络**：网关上游本来就走 `net/proxy.ts`（全局设置）和账号自己的 `proxy`，「Magpie 走不了梯子」在原生账号上不存在。
+- 测试：`gateway/codex-reasoning.test.ts`。**没有用真账号跑过**——拿到 ChatGPT 账号后看第二轮请求的 input 里有没有 reasoning item、思考强度是否生效。

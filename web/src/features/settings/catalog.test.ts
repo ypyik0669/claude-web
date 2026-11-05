@@ -94,7 +94,7 @@ describe('settings map (spec §5.7)', () => {
     const legacy = Object.values(LEGACY).flatMap((x) => x.entries ?? []);
     // redesign phase 5: 「在对话里直接展开改动」 — the per-step diffs no longer start open (spec §5.3: 设置里可以改回)
     // 界面缩放 (ui.zoom): the desktop app's whole-window zoom, next to 字号
-    const added = ['ui.inlineDiffs', 'ui.haptics', 'ui.zoom', 'cafe.rate', 'cafe.sound', 'ui.language', 'ui.promptSuggestions', 'ui.viewMode', 'ui.infoPanel', 'ui.sidebarFolded', 'ui.backdropMotion', 'ui.welcomeLayout', 'ui.autoArchivePr', 'sessions.mcp', 'claude.desktopSkills', 'worktree.dir', 'worktree.prefix', 'ai.thinkingLanguage', 'ui.backdropInChat', 'vcs.gitlabHosts', 'vcs.resolveOnReply', 'ui.nodegraphHint',
+    const added = ['ui.inlineDiffs', 'ui.haptics', 'ui.zoom', 'ui.language', 'ui.promptSuggestions', 'ui.viewMode', 'ui.infoPanel', 'ui.sidebarFolded', 'ui.backdropMotion', 'ui.welcomeLayout', 'ui.autoArchivePr', 'sessions.mcp', 'claude.desktopSkills', 'worktree.dir', 'worktree.prefix', 'ai.thinkingLanguage', 'ui.backdropInChat', 'vcs.gitlabHosts', 'vcs.resolveOnReply', 'ui.nodegraphHint',
       // 设置 → Bot (duty bots)
       'bots.concurrency', 'bots.globalBudgetUsd', 'bots.defaultProvider', 'bots.defaultTier', 'bots.duty.service', 'bots.loginItem', 'bots.unleashAll'];
     const now = allEntries().map(({ entry }) => entry.id);

@@ -1628,6 +1628,8 @@ html[data-density='compact'] .sb-row.sess { height: 28px; padding: 0 10px 0 var(
 .quota-win { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 13px; }
 .quota-win .l { display: inline-flex; align-items: center; gap: 7px; color: var(--ink-2); }
 .quota-win .v { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.sb-acct-menu .acct-expired { display: flex; align-items: flex-start; gap: 6px; margin: 2px 6px 6px; padding: 6px 8px; border-radius: var(--r-md); background: color-mix(in oklab, var(--err) 12%, transparent); color: var(--err); font-size: var(--fs-sm); line-height: 1.45; }
+.sb-acct-menu .acct-expired > svg { flex: none; margin-top: 2px; }
 .sb-acct-menu .acct-today { display: flex; justify-content: space-between; gap: 12px; padding: 4px 10px 6px; font-size: 13px; color: var(--ink-2); }
 .sb-acct-menu .acct-today .v { color: var(--ink-1); font-variant-numeric: tabular-nums; }
 

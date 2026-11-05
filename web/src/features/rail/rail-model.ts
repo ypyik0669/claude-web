@@ -25,7 +25,7 @@ export const RAIL_MORE: PanelId[] = ['mission', 'cafe', 'usage', 'memory', 'boar
 const MORE_LABEL: Partial<Record<PanelId, string>> = { usage: tr('用量与账本'), memory: tr('共享记忆') };
 const MORE_HINT: Partial<Record<PanelId, string>> = {
   mission: tr('谁在等你、谁在跑、谁出错了'),
-  cafe: tr('子代理在网吧里上机、吃泡面、结账'),
+  cafe: tr('子代理在 3D 网吧里干活'),
   usage: tr('用了多少、花了多少、缓存命中'),
   memory: tr('各 Agent 共用的决定和约束'),
   board: tr('这个仓库的 Issue 和 PR'),

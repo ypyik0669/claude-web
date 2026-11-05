@@ -3,7 +3,7 @@
 // untouched); the outbound side (IR → request, response / stream → IR) is for the cache shim, which turns
 // ccb's gpt-* chat/completions into /v1/responses (shim.ts).
 // Shapes per platform.openai.com (responses, streaming events `response.*`).
-import { newId, safeJson, effortOf, type IrEvent, type IrMessage, type IrPart, type IrRequest, type IrResponse, type IrStop, type IrTool, type IrUsage, type StreamParser, type StreamRenderer } from './ir.js';
+import { newId, safeJson, effortOf, type IrEffort, type IrEvent, type IrMessage, type IrPart, type IrRequest, type IrResponse, type IrStop, type IrTool, type IrUsage, type StreamParser, type StreamRenderer } from './ir.js';
 import { dataUrlImage, usageIn, wantsCompletionTokens } from './openai-chat.js';
 import { sse } from './sse.js';
 import { CACHE_KEY_MAX } from './cache.js';
@@ -75,7 +75,17 @@ export interface ResponsesRenderOpts {
   retention?: string;
   /** default false: stateless, the full history goes every time (like chat/completions) */
   store?: boolean;
+  /**
+   * `reasoning` {effort, summary} + `include: reasoning.encrypted_content`, the way Codex CLI asks (the gateway's
+   * Codex accounts). Off for the cache shim: the public API refuses summaries for an unverified organization.
+   */
+  reasoning?: boolean;
 }
+
+/** o-series, gpt-5+ and the Codex models think; they take `reasoning` and reject sampling parameters */
+export const isReasoningModel = (model: string) => wantsCompletionTokens(model) || /codex/i.test(model);
+/** the service has already snapped the level to the model's own (catalog modelCaps); `max` is past Responses' top */
+const RESPONSES_EFFORT: Record<IrEffort, string> = { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'xhigh' };
 
 const imageItem = (p: Extract<IrPart, { type: 'image' }>) => ({ type: 'input_image', image_url: p.data ? `data:${p.mediaType};base64,${p.data}` : p.url });
 
@@ -84,6 +94,8 @@ export function renderRequest(r: IrRequest, opts: ResponsesRenderOpts = {}): any
   const input: any[] = [];
   for (const m of r.messages) {
     if (m.role === 'assistant') {
+      // the turn's reasoning goes back first (stateless: no item id to point at, the encrypted state is the item)
+      for (const p of m.parts) if (p.type === 'reasoning') input.push({ type: 'reasoning', summary: p.summary ? [{ type: 'summary_text', text: p.summary }] : [], encrypted_content: p.encrypted });
       const text = m.parts.filter((p) => p.type === 'text').map((p) => (p as any).text).join('');
       if (text) input.push({ type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] });
       for (const p of m.parts) if (p.type === 'tool_call') input.push({ type: 'function_call', call_id: p.id, name: p.name, arguments: JSON.stringify(p.args) });
@@ -112,11 +124,18 @@ export function renderRequest(r: IrRequest, opts: ResponsesRenderOpts = {}): any
   }
   if (r.maxTokens !== undefined) out.max_output_tokens = r.maxTokens;
   // reasoning models reject sampling parameters on Responses
-  if (!wantsCompletionTokens(r.model)) {
+  const reasons = isReasoningModel(r.model);
+  if (!reasons) {
     if (r.temperature !== undefined) out.temperature = r.temperature;
     if (r.topP !== undefined) out.top_p = r.topP;
   }
   out.store = opts.store ?? false;
+  if (reasons && opts.reasoning) {
+    // what Codex CLI sends: the level, a readable summary, and the encrypted reasoning back so the next turn
+    // continues from it (with store:false nothing is kept upstream)
+    out.reasoning = { ...(r.effort ? { effort: RESPONSES_EFFORT[r.effort] } : {}), summary: 'auto' };
+    if (!out.store) out.include = ['reasoning.encrypted_content'];
+  }
   out.stream = r.stream;
   if (opts.cacheKey) out.prompt_cache_key = opts.cacheKey.slice(0, CACHE_KEY_MAX);
   if (opts.retention) out.prompt_cache_retention = opts.retention;
@@ -128,14 +147,22 @@ const stopOf = (status: string | undefined, incompleteReason: string | undefined
 
 const messageText = (it: any) => (it?.content ?? []).map((c: any) => (c?.type === 'output_text' ? c.text ?? '' : c?.type === 'refusal' ? c.refusal ?? '' : '')).join('');
 
-/** A whole Responses object → IR (non-stream answer). Reasoning items are dropped. */
+const summaryText = (it: any): string => (Array.isArray(it?.summary) ? it.summary : []).map((s: any) => (typeof s?.text === 'string' ? s.text : '')).filter(Boolean).join('\n\n');
+
+/** A whole Responses object → IR (non-stream answer). The (last) reasoning item becomes the thinking + signature. */
 export function parseResponse(j: any): IrResponse {
   const parts: IrPart[] = [];
+  let thinking: string | undefined;
+  let signature: string | undefined;
   for (const it of j?.output ?? []) {
-    if (it?.type === 'message') { const t = messageText(it); if (t) parts.push({ type: 'text', text: t }); }
+    if (it?.type === 'reasoning') {
+      const t = summaryText(it);
+      if (t) thinking = thinking ? `${thinking}\n\n${t}` : t;
+      if (typeof it.encrypted_content === 'string' && it.encrypted_content) signature = it.encrypted_content;
+    } else if (it?.type === 'message') { const t = messageText(it); if (t) parts.push({ type: 'text', text: t }); }
     else if (it?.type === 'function_call') parts.push({ type: 'tool_call', id: String(it.call_id ?? it.id), name: it.name, args: safeJson(it.arguments) });
   }
-  return { id: j?.id ?? newId('resp_'), model: j?.model ?? '', parts, stop: stopOf(j?.status, j?.incomplete_details?.reason, parts.some((p) => p.type === 'tool_call')), usage: { input: 0, output: 0, ...usageIn(j?.usage) } };
+  return { id: j?.id ?? newId('resp_'), model: j?.model ?? '', parts, ...(thinking ? { thinking } : {}), ...(signature ? { signature } : {}), stop: stopOf(j?.status, j?.incomplete_details?.reason, parts.some((p) => p.type === 'tool_call')), usage: { input: 0, output: 0, ...usageIn(j?.usage) } };
 }
 
 /**
@@ -147,6 +174,9 @@ export class ResponsesStreamParser implements StreamParser {
   private done = false;
   private sawTool = false;
   private items = new Map<string, { args: boolean; text: boolean }>();
+  /** reasoning items whose summary already streamed (their `done` must not repeat it) */
+  private summarized = new Set<string>();
+  private lastSummary = '';
 
   feed(e: { event?: string; data: string }): IrEvent[] {
     if (this.done) return [];
@@ -177,6 +207,17 @@ export class ResponsesStreamParser implements StreamParser {
         if (s) s.text = true; else this.items.set(j.item_id, { args: false, text: true });
         break;
       }
+      case 'response.reasoning_summary_text.delta': {
+        if (!j.delta) break;
+        start();
+        // summary parts of one item: a blank line between them
+        const key = `${j.item_id}:${j.summary_index ?? 0}`;
+        if (this.lastSummary && this.lastSummary !== key && this.lastSummary.startsWith(`${j.item_id}:`)) out.push({ t: 'thinking', text: '\n\n' });
+        this.lastSummary = key;
+        this.summarized.add(j.item_id);
+        out.push({ t: 'thinking', text: j.delta });
+        break;
+      }
       case 'response.function_call_arguments.delta': {
         if (!j.delta) break;
         out.push({ t: 'args', json: j.delta });
@@ -199,6 +240,10 @@ export class ResponsesStreamParser implements StreamParser {
         } else if (it.type === 'message' && !s?.text) {
           const t = messageText(it);
           if (t) { start(); out.push({ t: 'text', text: t }); }
+        } else if (it.type === 'reasoning') {
+          const summary = summaryText(it);
+          if (!this.summarized.has(it.id) && summary) { start(); out.push({ t: 'thinking', text: summary }); }
+          if (typeof it.encrypted_content === 'string' && it.encrypted_content) { start(); out.push({ t: 'signature', sig: it.encrypted_content }); }
         }
         break;
       }
@@ -232,6 +277,8 @@ export class ResponsesStreamParser implements StreamParser {
 /** A whole answer as the event sequence a stream would have produced (upstream answered JSON to a stream request). */
 export function irEvents(r: IrResponse): IrEvent[] {
   const out: IrEvent[] = [{ t: 'start', id: r.id, model: r.model }];
+  if (r.thinking) out.push({ t: 'thinking', text: r.thinking });
+  if (r.signature) out.push({ t: 'signature', sig: r.signature });
   for (const p of r.parts) {
     if (p.type === 'text') out.push({ t: 'text', text: p.text });
     else if (p.type === 'tool_call') out.push({ t: 'tool', id: p.id, name: p.name }, { t: 'args', json: JSON.stringify(p.args) });

@@ -754,6 +754,9 @@ export const useStore = create<State>((set, get) => ({
         case 'agents.changed':
           void get().loadAgents().catch(() => {});
           break;
+        case 'auth.changed':
+          void get().checkAuth(false).catch(() => {});
+          break;
         case 'limits':
           set({ limits: e.limits });
           break;

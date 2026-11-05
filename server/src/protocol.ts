@@ -118,6 +118,7 @@ export interface SourceStatus {
 export type SessionEnv = { kind: 'local' } | { kind: 'wsl'; distro: string };
 export interface WslDistro { name: string; claude: boolean | null; interop: boolean | null; home: string | null }
 export type { SshProbe } from './remote/ssh-probe.js';
+export type { CodexAccount, CodexLoginView } from './agents/codex-login.js';
 export interface OpenSessionParams {
   sessionId?: string; // resume this session; omit to start a new one
   /** stage E5: run it inside a WSL distro (local only; recorded in the session meta) */
@@ -659,6 +660,8 @@ export type ClientRequest =
   /** from: a row's key → the key it had when the form opened (so a masked value follows a renamed row) */
   | { kind: 'config.mcp.update'; name: string; json: string; cwd?: string; from?: Record<string, string> }
   | { kind: 'config.auth'; force?: boolean }
+  /** `claude auth logout` (an expired or stuck login, before signing in again) */
+  | { kind: 'config.logout' }
   | { kind: 'config.settings.read'; scope: 'user' | 'project' | 'local'; cwd?: string }
   | { kind: 'config.settings.write'; scope: 'user' | 'project' | 'local'; cwd?: string; json: string }
   | { kind: 'config.skills' }
@@ -732,6 +735,12 @@ export type ClientRequest =
   | { kind: 'schedules.history'; id?: string; limit?: number }
   | { kind: 'schedules.templates' }
   | { kind: 'agents.list'; refresh?: boolean }
+  /** Codex's own ChatGPT sign-in, done by its app-server (agents/codex-login.ts) */
+  | { kind: 'agents.codex.account' }
+  | { kind: 'agents.codex.login.begin'; device?: boolean }
+  | { kind: 'agents.codex.login.status'; id: string }
+  | { kind: 'agents.codex.login.cancel'; id: string }
+  | { kind: 'agents.codex.logout' }
   | { kind: 'remote.status' }
   /** `anywhere` / `keepAwake` are the settings remote.anywhere / remote.keepAwake; the listener restarts only for enabled / port. */
   | { kind: 'remote.set'; enabled?: boolean; port?: number; anywhere?: boolean; keepAwake?: boolean }
@@ -923,6 +932,8 @@ export type ServerEvent =
   | { kind: 'themes.trial'; id: string; source: { id: string; json: string; backdrop?: string; css?: string } }
   /** an agent said what it offers and that changed (AgentInfo.reportedModels): ask agents.list again */
   | { kind: 'agents.changed' }
+  /** the own Claude login turned out expired, or works again: ask config.auth */
+  | { kind: 'auth.changed' }
   | { kind: 'meta.changed' }
   /** something the server did on its own that the user should hear about (a scheduled catch-up run); `notify`: also the OS */
   | { kind: 'notice'; text: string; notify?: boolean; sessionId?: string }

@@ -14,6 +14,8 @@ import { showPanel } from '@/features/workbench/right-panel';
 import { ThemeQuick } from '@/features/settings/ThemePicker';
 import { tr } from '@/i18n';
 import { ProcessGlyph } from '@/themes/ProcessGlyph';
+import { dlg } from '@/ui/dialog';
+import { loginInTerminal } from '@/features/providers/ConnectModel';
 
 /**
  * Today's spend for the account popover: `ledger.list` parses the whole ledger file on the server, so one answer is
@@ -55,6 +57,7 @@ export function AccountRow({ open, setOpen }: { open: boolean; setOpen(v: boolea
         <span className={clsx('avatar', !who.signedIn && 'anon')} data-id={id('connection')} data-state={connected ? 'on' : 'off'} title={connected ? tr('已连接') : tr('连接断开，正在重连…')}>
           {who.initial || <Icon name="user" size={15} />}
           {!connected && <span className="off-dot" />}
+          {connected && auth?.expired && !auth.relay && <span className="off-dot" title={tr('Claude 登录已过期')} />}
         </span>
         <span className="who">
           <span className="nm">{who.name}</span>
@@ -67,6 +70,19 @@ export function AccountRow({ open, setOpen }: { open: boolean; setOpen(v: boolea
       {open && <AccountMenu auth={auth} name={who.name} onClose={() => setOpen(false)} />}
     </div>
   );
+}
+
+/** `claude auth logout` (a stuck / expired login): confirm, sign out, then the row and the menus read it again. */
+async function logoutClaude() {
+  const st = useStore.getState();
+  if (!(await dlg.confirm(tr('退出 Claude 账号？'), { message: tr('退出后用 Claude 账号的对话要重新登录才能继续；用供应商的对话不受影响。'), okLabel: tr('退出登录'), danger: true }))) return;
+  try {
+    await ws.request({ kind: 'config.logout' });
+    st.toast(tr('已退出 Claude 账号'), true);
+  } catch (e: any) {
+    st.toast(tr('退出失败：{message}', { message: e?.message ?? e }));
+  }
+  await st.checkAuth(true).catch(() => {});
 }
 
 export function AccountMenu({ auth, name, onClose, side }: { auth: AccountAuth | null; name: string; onClose: () => void; side?: 'right' }) {
@@ -88,6 +104,11 @@ export function AccountMenu({ auth, name, onClose, side }: { auth: AccountAuth |
         <div className="nm">{name}</div>
         <div className="sub">{[auth?.email, plan].filter(Boolean).join(' · ') || (auth?.loggedIn === false ? tr('没有登录 Claude 账号') : '')}</div>
       </div>
+      {auth?.expired && !auth.relay && (
+        <div className="acct-expired" data-id={id('expired')} role="alert" title={auth.expiredMessage}>
+          <Icon name="alert" size={14} /> {tr('Claude 登录已过期：对话会一直认证失败。重新登录，或先退出再登录。')}
+        </div>
+      )}
       {limits?.ok && limits.windows.length > 0 && (
         <div className="acct-quota" data-id={id('quota')}>
           <QuotaWindows limits={limits} />
@@ -100,6 +121,13 @@ export function AccountMenu({ auth, name, onClose, side }: { auth: AccountAuth |
         <span>{tr('今日费用')}</span>
         <span className="v">{today ? fmtCost(today.cost, today.unknown) : '…'}</span>
       </div>
+      {!auth?.relay && (
+        <>
+          <div className="menu-sep" />
+          <button data-id={id('login')} onClick={act(() => loginInTerminal())}><Icon name="user" size={14} /> {auth?.loggedIn ? tr('重新登录 Claude 账号') : tr('登录 Claude 账号')}</button>
+          {auth?.loggedIn && <button data-id={id('logout')} className="danger" onClick={() => { onClose(); void logoutClaude(); }}><Icon name="close" size={14} /> {tr('退出 Claude 账号')}</button>}
+        </>
+      )}
       <div className="menu-sep" />
       <ThemeQuick dataId={id('theme')} />
       <button data-id={id('usage')} onClick={act(() => showPanel(ACCOUNT_PANELS.usage))}><Icon name="usage" size={14} /> {tr('用量与账本')}</button>

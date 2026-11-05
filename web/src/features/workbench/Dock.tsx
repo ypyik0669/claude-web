@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { CafePanel } from '@/features/cafe/CafePanel';
+import { OfficePanel } from '@/features/office/OfficePanel';
 import { hideSheet, useScopedSession, useStore } from '@/store';
 import { PANELS, PANEL_ICONS, PANEL_TITLES, defaultDockPanel, dockView, workbenchOn, type DockTab, type PanelId } from '@/model/layout';
 import { clsx } from '@/util';
@@ -85,7 +85,7 @@ function PanelContent({ id, visible, host }: { id: PanelId; visible: boolean; ho
     case 'memory': return <MemoryPanel />;
     case 'orchestra': return <OrchestraPanel />;
     case 'board': return <BoardPanel visible={visible} />;
-    case 'cafe': return <CafePanel />;
+    case 'cafe': return <OfficePanel />;
     // one browser per window: its pages live in the right panel's copy (a second set of webviews would be other pages)
     case 'browser': return host === 'dock' ? <BrowserPanel visible={visible} /> : <div className="empty">{tr('浏览器在右侧面板里。')}</div>;
   }

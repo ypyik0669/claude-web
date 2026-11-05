@@ -4,7 +4,11 @@ import { tr } from '@/i18n';
  * `config.auth` (`claude auth status`), as far as the sidebar's account row reads it. `relay`: the server found a relay
  * (base URL / key) in ~/.claude/settings.json or the environment — its host, or 'API Key'.
  */
-export interface AccountAuth { loggedIn?: boolean; email?: string; orgName?: string; subscriptionType?: string; authMethod?: string; relay?: string }
+export interface AccountAuth {
+  loggedIn?: boolean; email?: string; orgName?: string; subscriptionType?: string; authMethod?: string; relay?: string;
+  /** signed in on paper, but a conversation on it just failed to authenticate (revoked / could not refresh) */
+  expired?: boolean; expiredMessage?: string; expiredAt?: number;
+}
 
 /**
  * What the built-in Claude Code login is called in model lists and menus: 「Claude 账号」, or — when settings.json points it

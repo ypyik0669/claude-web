@@ -1483,7 +1483,7 @@ export class GatewayService extends EventEmitter {
         const opts: OutboundOpts = outbound === 'anthropic'
           ? { cacheTtl: group.cache1h || p.cache1h ? '1h' : undefined, systemPrefix: p.auth === 'oauth' ? CLAUDE_CODE_SYSTEM_PREFIX : undefined }
           : outbound === 'openai' ? { promptCacheKey: !p.noPromptCacheKey, cacheControl: p.cacheControlFormat === 'anthropic' }
-            : outbound === 'responses' ? { cacheKey: ir.cacheKey } : {};
+            : outbound === 'responses' ? { cacheKey: ir.cacheKey, reasoning: true } : {};
         const out = buildOutbound(outbound, ir, opts);
         path = p.chatPath ?? out.path;
         body = Buffer.from(JSON.stringify(out.body));

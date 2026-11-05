@@ -107,6 +107,8 @@ function partOut(p: IrPart): any {
   if (p.type === 'text') return { text: p.text };
   if (p.type === 'image') return p.data ? { inlineData: { mimeType: p.mediaType, data: p.data } } : { text: `[image: ${p.url}]` };
   if (p.type === 'tool_call') return { functionCall: { name: p.name, args: p.args }, thoughtSignature: DUMMY_THOUGHT_SIGNATURE };
+  // never here: buildOutbound keeps Codex reasoning for Responses only
+  if (p.type === 'reasoning') return { text: '' };
   const text = resultText(p.content);
   return { functionResponse: { name: p.name ?? 'tool', response: p.isError ? { error: text } : { output: text } } };
 }

@@ -21,6 +21,8 @@
 .mm-sec + .mm-sec { margin-top: 4px; }
 .mm-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px 4px; font-size: var(--fs-meta); line-height: 16px; color: var(--ink-4); min-width: 0; }
 .mm-head .t { color: var(--ink-3); font-weight: 600; white-space: nowrap; }
+.menu .mm-head button.mm-headlink { width: auto; margin-left: auto; padding: 0 6px; min-height: 0; border-radius: var(--r-sm); font-size: var(--fs-meta); color: var(--accent-text); white-space: nowrap; }
+.menu .mm-head button.mm-headlink:hover { background: var(--layer-hover); }
 .mm-head .ty { font-size: 10px; padding: 0 5px; border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink-4); }
 .mm-head .meta { margin-left: auto; white-space: nowrap; }
 .mm-head .err { margin-left: auto; color: var(--err); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 60%; }
@@ -107,7 +109,11 @@
 .mm-row.mm-same { margin-bottom: 4px; }
 .mm-row.mm-same:hover { background-color: var(--layer-hover); }
 .mm-subdef { flex: none; display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 8px 0; border-top: var(--hairline) solid var(--edge-subtle); font-size: var(--fs-sm); color: var(--ink-2); cursor: pointer; }
-.mm-subdef .grow { flex: 1; min-width: 0; }
+.mm-subdef .grow { flex: 1; min-width: 0; white-space: nowrap; }
+/* `.menu button` (width 100%, padding, hover fill) would stretch the switch across the row */
+.menu .mm-subdef button.toggle { width: 36px; height: 20px; min-height: 0; padding: 0; border-radius: var(--r-pill); }
+.menu .mm-subdef button.toggle:not(.on):hover { background: color-mix(in oklab, var(--fg) 24%, transparent); }
+.menu .mm-subdef button.toggle.on:hover { background: var(--ctl-on); }
 .mm-subdef:has(button:disabled) { cursor: default; color: var(--ink-4); }
 .cb .sub-anchor > .chip > svg { flex: none; color: var(--ink-3); }
 .cb .sub-anchor > .chip.on > svg { color: var(--accent-text); }

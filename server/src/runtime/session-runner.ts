@@ -41,6 +41,13 @@ import { botRuntime } from '../bots/runtime-hooks.js';
 import { stripBotTags } from '../bots/tags.js';
 import { PREVIEW_ALLOWED, PREVIEW_SERVER, previewEnabled, previewMcpServer, verifyInstructions } from '../preview/tools.js';
 
+const WINDOWS_SHELL_HINT = [
+  '# Shell on Windows',
+  'The Bash tool runs Git Bash (POSIX sh), not cmd.exe and not PowerShell. Use Unix syntax and forward slashes there.',
+  '- Never pass PowerShell code to `cmd.exe /c` — cmd cannot run cmdlets or `$variables`, and its error text comes back garbled.',
+  "- When you need PowerShell, call it directly: `powershell.exe -NoProfile -Command '<code>'` (single quotes, so bash leaves `$` alone). For anything longer than one line, write a .ps1 file and run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <file>`.",
+  '- Prefer the Read / Grep / Glob tools over shell commands for reading and searching files.',
+].join('\n');
 /** A conversation above this share of the next model's window is compacted before the switch. */
 const FIT_SHARE = 0.8;
 /** the official binary's lowest CLAUDE_CODE_AUTO_COMPACT_WINDOW (it reads a smaller one as this: phase 27, measured) */
@@ -597,7 +604,10 @@ export class SessionRunner extends EventEmitter {
     // — only when the model is bound (`sub`): a pick that cannot be reached leaves the subagents on the main model, and
     // sending every piece of work to them would only cost more
     const delegate = bare || !sub ? '' : subagentPolicyPrompt(this.subagent);
-    const append = [verify, this.thinkingSection, delegate, this.projectInstructions, bare || this.drivenBy ? '' : nodegraphHintPrompt(nodegraphHintOn), botPrompt].filter(Boolean).join('\n\n');
+    // Other vendors' models on Windows keep writing `cmd.exe /c '<PowerShell code>'` into the Bash tool: cmd cannot run
+    // it, and its GBK error text reaches the transcript as mojibake. Claude models get Git Bash right without this.
+    const winShell = process.platform === 'win32' && this.provider && !bare ? WINDOWS_SHELL_HINT : '';
+    const append = [verify, this.thinkingSection, delegate, winShell, this.projectInstructions, bare || this.drivenBy ? '' : nodegraphHintPrompt(nodegraphHintOn), botPrompt].filter(Boolean).join('\n\n');
     const allowed = bare ? [] : [...webAllowedTools(), ...(Object.keys(computer).length ? computerAllowedTools() : []), ...(Object.keys(sessionsMcp).length ? SESSIONS_ALLOWED : []), ...(Object.keys(previewMcp).length ? PREVIEW_ALLOWED : [])];
     this.preAllowed = new Set(allowed);
     const noEngineSearch = engineSearchOff({ engine: engine.kind, userChoice: 'WEB_SEARCH_ADAPTER' in fenv || userPickedSearchAdapter(this.cwd) });

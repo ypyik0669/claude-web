@@ -10,7 +10,14 @@ export type IrPart =
   | { type: 'text'; text: string }
   | { type: 'image'; mediaType: string; data?: string; url?: string }
   | { type: 'tool_call'; id: string; name: string; args: Record<string, unknown> }
-  | { type: 'tool_result'; id: string; name?: string; content: string | IrPart[]; isError?: boolean };
+  | { type: 'tool_result'; id: string; name?: string; content: string | IrPart[]; isError?: boolean }
+  /**
+   * An OpenAI Responses reasoning item carried through an Anthropic client: its `encrypted_content` rides as the
+   * thinking block's signature (signature.ts tells it apart as `gpt`), its summary as the thinking text. Only the
+   * Responses renderer sends it (`buildOutbound` strips it for every other format) — without it a Codex model
+   * reasons from nothing again after every tool call.
+   */
+  | { type: 'reasoning'; encrypted: string; summary?: string };
 
 export interface IrMessage { role: 'user' | 'assistant'; parts: IrPart[] }
 
@@ -71,6 +78,8 @@ export interface IrResponse {
   parts: IrPart[]; // text / tool_call only
   /** The model's reasoning (non-blank), shown as a thinking block where the client's format has one. */
   thinking?: string;
+  /** the reasoning's signature in the client's format (a Responses `encrypted_content`) */
+  signature?: string;
   stop: IrStop;
   usage: IrUsage;
 }
@@ -84,6 +93,8 @@ export type IrEvent =
   | { t: 'start'; id: string; model: string }
   | { t: 'text'; text: string }
   | { t: 'thinking'; text: string }
+  /** closes the current thinking block with this signature (opening an empty one if none is open) */
+  | { t: 'signature'; sig: string }
   | { t: 'tool'; id: string; name: string }
   | { t: 'args'; json: string }
   | { t: 'usage'; usage: Partial<IrUsage> }
@@ -144,6 +155,7 @@ export function collect(events: IrEvent[]): IrResponse {
     } else if (e.t === 'tool') { closeTool(); cur = { type: 'tool_call', id: e.id, name: e.name, args: {} }; r.parts.push(cur); }
     else if (e.t === 'args') args += e.json;
     else if (e.t === 'thinking') r.thinking = (r.thinking ?? '') + e.text;
+    else if (e.t === 'signature') r.signature = e.sig;
     else if (e.t === 'usage') Object.assign(r.usage, e.usage);
     else if (e.t === 'end') r.stop = e.stop;
   }

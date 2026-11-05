@@ -18,3 +18,16 @@
 - **Claude 订阅桥**（`channels/drivers/claude-bridge*.ts`，参考 Magpie claudebridge）：目录项 `claude-bridge`，加了才起 127.0.0.1 随机端口 + 随机 key 的 Anthropic 端点，供应商档案指过去（channelLinks 的 `engine: 'claude-bridge'` 让 ProviderDriver 不重复列）。每个请求起一次 `claude -p` stream-json（`--tools ''`、空 MCP、`--setting-sources project` + 空临时目录、`--settings` 清 ANTHROPIC_*），env 是白名单；`loopRisk` 每次都查（代理指向自己端口、managed settings 的本地 BASE_URL / apiKeyHelper → 508）。并发 2（超出 429）、空闲 2 分钟 / 整体 10 分钟超时、客户端断开就杀。只支持纯文字：带 tools 的请求 400。测试用 `claude-bridge.fake-cli.mjs`。
   - Windows 上 `claude` 是 npm 的 `.cmd` 垫片，经 cmd.exe 跑：JSON 参数（`--mcp-config` / `--settings`）写成运行目录里的文件再传路径，
     spawn 带 `windowsVerbatimArguments: via === 'cmd'`。只用假 CLI 测不出来，2026-10-28 用真 CLI（2.1.306）跑通了普通和流式各一次。
+
+## 在界面里登录 Codex（2026-11-05，用户要求：设置里的「登录」只是开终端敲 codex login）
+
+- `server/src/agents/codex-login.ts`：起一个短命的 `codex app-server`（跟对话用同一个命令，`registry.launch('codex')`），走它自己的账号接口：
+  `account/read`（谁登录着：`{account:{type:'chatgpt',email,planType}}` / `apiKey` / `null`）、`account/login/start`
+  （`{type:'chatgpt'}` → `authUrl`，Codex 自己在 1455 端口收回调；`{type:'chatgptDeviceCode'}` → `userCode` + `verificationUrl`）、
+  通知 `account/login/completed {loginId, success, error}`、`account/login/cancel`、`account/logout`。令牌仍在 `~/.codex/auth.json`，claude-web 不存。
+  协议从 `codex app-server generate-json-schema --out <dir>` 生成的 `v2/LoginAccount*.json` 查到（0.163）。
+- 登录成功 → `askModels('codex', true)` 立刻重新要模型列表（套餐变了列表就变）；退出也一样。
+- 请求 `agents.codex.account / login.begin / login.status / login.cancel / logout`；联邦里一律拒绝（另一台机器不能登录 / 退出这台的 Codex）。
+- 界面：`settings/CodexLoginDialog.tsx`（`openCodexLogin()`，App 里挂一次 `CodexLoginHost`）；入口 = 设置 → CLI Agent 的 Codex「登录」，
+  和模型菜单里 Codex 那一节标题右边的「登录 / 换账号」（只在 Codex 用自己的登录时出现）。
+- 真机：本机 Codex 0.163 读到 `plan: free`（所以 `model/list` 只有三个），`login/start` 回 auth.openai.com 的地址，cancel 正常。

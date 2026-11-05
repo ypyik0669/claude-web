@@ -3170,16 +3170,16 @@ function driver() {
         check('后台: the composer\'s pill says what runs besides the turn', pill === '后台 · 1 个工作流 · 1 个子代理 · 1 条命令 · 2 个在跑', JSON.stringify(pill));
         await shot('background-pill');
         await click('.pane.focused .composer .bg-pill');
-        const up = await waitFor(`!!document.querySelector('.bg-page:not([hidden]) .cafe-canvas') && document.querySelectorAll('.bg-page .cafe-person').length >= 5`, 10000);
+        const up = await waitFor(`!!document.querySelector('.bg-page:not([hidden]) .office-canvas') && document.querySelectorAll('.bg-page .office-bot').length >= 6 && (window.__cwCafe?.frames ?? 0) > 2`, 15000);
         await sleep(600);
         await waitFor(`document.querySelectorAll('.bg-page .bg-graph .ng-card').length >= 9`, 8000);   // the node graph is its own chunk (spec D2)
         const sidSel = JSON.stringify(JSON.stringify(E.SMOKE_SID));
-        const page = await js(`(() => { const p = document.querySelector('.bg-page'); return { title: p.querySelector('.over-title h2')?.textContent, desc: p.querySelector('.over-sub, .over-desc')?.textContent ?? '', cards: p.querySelectorAll('.bg-card:not(.bg-card-more)').length, chars: p.querySelectorAll('.cafe-person').length, admin: !!p.querySelector('.cafe-person[aria-label^="网管"]'), lit: (() => { const c = p.querySelector('.cafe-canvas'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0, k = 0; for (let i = 0; i < d.length; i += 4 * 97) { k++; if (d[i] + d[i + 1] + d[i + 2] > 60) n++; } return Math.round((n / k) * 100); })(), nodes: p.querySelectorAll('.bg-graph .ng-card').length, edges: p.querySelectorAll('.bg-graph .ng-edge').length, strong: p.querySelector('.bg-graph .ng-edge[data-edge="wf|wf1|p1>wf1|w1"]')?.dataset.style, feed: p.querySelector('.bg-feed')?.textContent ?? '', chips: p.querySelectorAll('.bg-chips .bg-chip').length, rail: !!document.querySelector('.rail [data-id="background"].on'), side: !!document.querySelector('.sb-sect:not([hidden]) .bg-side .bg-srow.active[data-sid=' + ${sidSel} + ']') }; })()`);
-        check('the pill opens 后台 on this conversation: five cards (three of a workflow, a sub-agent, a command), four guests and the admin in the cafe (the picture drawn), a node each in the graph, the feed, a chip per task', up && page.title && page.title !== '后台' && /运行中/.test(page.desc) && page.cards === 5 && page.chars === 5 && page.admin && page.lit > 15 && page.nodes === 9 && page.edges === 8 && page.strong === 'strong' && /alpha/.test(page.feed) && page.chips === 4 && page.rail && page.side, JSON.stringify(page));
+        const page = await js(`(() => { const p = document.querySelector('.bg-page'); return { title: p.querySelector('.over-title h2')?.textContent, desc: p.querySelector('.over-sub, .over-desc')?.textContent ?? '', cards: p.querySelectorAll('.bg-card:not(.bg-card-more)').length, chars: p.querySelectorAll('.office-bot').length, admin: !!p.querySelector('.office-bot[aria-label^="前台网管"]'), floor: p.querySelector('.office-ftag')?.textContent ?? '', zoneTag: p.querySelector('.office-ftag[data-anchor="zone:0"]')?.getAttribute('aria-label') ?? '', lit: (() => { const c = p.querySelector('.office-canvas'); const t = document.createElement('canvas'); t.width = c.width; t.height = c.height; const g = t.getContext('2d'); g.drawImage(c, 0, 0); const d = g.getImageData(0, 0, t.width, t.height).data; const r0 = d[0], g0 = d[1], b0 = d[2]; let n = 0, k = 0; for (let i = 0; i < d.length; i += 4 * 97) { k++; if (Math.abs(d[i] - r0) + Math.abs(d[i + 1] - g0) + Math.abs(d[i + 2] - b0) > 40) n++; } return Math.round((n / k) * 100); })(), nodes: p.querySelectorAll('.bg-graph .ng-card').length, edges: p.querySelectorAll('.bg-graph .ng-edge').length, strong: p.querySelector('.bg-graph .ng-edge[data-edge="wf|wf1|p1>wf1|w1"]')?.dataset.style, feed: p.querySelector('.bg-feed')?.textContent ?? '', chips: p.querySelectorAll('.bg-chips .bg-chip').length, rail: !!document.querySelector('.rail [data-id="background"].on'), side: !!document.querySelector('.sb-sect:not([hidden]) .bg-side .bg-srow.active[data-sid=' + ${sidSel} + ']') }; })()`);
+        check('the pill opens 后台 on this conversation: five cards (three of a workflow, a sub-agent, a command), A区 with its 网管 and five people in the 3D cafe (the picture drawn), a node each in the graph, the feed, a chip per task', up && page.title && page.title !== '后台' && /运行中/.test(page.desc) && page.cards === 5 && page.chars >= 6 && page.admin && /^A/.test(page.floor) && /^A区 · /.test(page.zoneTag) && page.lit > 3 && page.nodes === 9 && page.edges === 8 && page.strong === 'strong' && /alpha/.test(page.feed) && page.chips === 4 && page.rail && page.side, JSON.stringify(page));
         const bgErr = await noBoundary('.bg-page');
         check('后台 without error boundary', !bgErr, bgErr);
         await shot('background-page');
-        // ---- stage A of 2026-10-24 (spec desktop-parity): the cafe wheel (A3) — here, while the page is up
+        // ---- stage A of 2026-10-24 (spec desktop-parity): the office wheel (A3, the cafe's before 2026-11-05) — here, while the page is up
         phase = 'parity-a';
         {
           // a shorter window gives the page room to scroll; it starts a little down, so a wheel either way would move it
@@ -3189,9 +3189,9 @@ function driver() {
           const room = await js(`(() => { const p = document.querySelector(${bodySel}); if (!p) return -1; p.scrollTop = 40; return p.scrollHeight - p.clientHeight; })()`);
           await sleep(200);
           // every wheel event the page sees, after the cafe had its say (a passive listener on window: bubble phase)
-          await js(`(() => { window.__smokeWheel = []; window.__smokeWheelOn = (e) => window.__smokeWheel.push({ prevented: e.defaultPrevented, shift: e.shiftKey, dy: e.deltaY, cafe: !!e.target.closest?.('.cafe-canvas') }); addEventListener('wheel', window.__smokeWheelOn, { passive: true }); })()`);
+          await js(`(() => { window.__smokeWheel = []; window.__smokeWheelOn = (e) => window.__smokeWheel.push({ prevented: e.defaultPrevented, shift: e.shiftKey, dy: e.deltaY, cafe: !!e.target.closest?.('.office-canvas') }); addEventListener('wheel', window.__smokeWheelOn, { passive: true }); })()`);
           // a point on the canvas itself (not on a guest's button over it), nearest its middle and on screen
-          const pos = () => js(`(() => { const c = document.querySelector('.bg-page .cafe-canvas'); const b = c.getBoundingClientRect(); let best = null; for (let i = 1; i < 12; i++) for (let j = 1; j < 8; j++) { const x = Math.round(b.left + (b.width * i) / 12), y = Math.round(b.top + (b.height * j) / 8); if (y < 0 || y > innerHeight - 4 || document.elementFromPoint(x, y) !== c) continue; const d = Math.hypot(x - (b.left + b.width / 2), y - (b.top + b.height / 2)); if (!best || d < best.d) best = { x, y, d: Math.round(d) }; } const s = document.querySelector(${bodySel}).getBoundingClientRect(); let other = null; for (let y = Math.max(s.top, 0) + 10; !other && y < Math.min(s.bottom, innerHeight) - 4; y += 24) for (const x of [s.left + 12, s.left + s.width / 2, s.right - 30]) { const el = document.elementFromPoint(Math.round(x), Math.round(y)); if (el && document.querySelector(${bodySel}).contains(el) && !el.closest('.cafe-canvas, .cafe-person, .cafe-tools, .cafe-lib')) { other = { x: Math.round(x), y: Math.round(y), el: el.className?.baseVal ?? el.className }; break; } } return { ...(best || { x: -1, y: -1 }), below: other }; })()`);
+          const pos = () => js(`(() => { const c = document.querySelector('.bg-page .office-canvas'); const b = c.getBoundingClientRect(); let best = null; for (let i = 1; i < 12; i++) for (let j = 1; j < 8; j++) { const x = Math.round(b.left + (b.width * i) / 12), y = Math.round(b.top + (b.height * j) / 8); if (y < 0 || y > innerHeight - 4 || document.elementFromPoint(x, y) !== c) continue; const d = Math.hypot(x - (b.left + b.width / 2), y - (b.top + b.height / 2)); if (!best || d < best.d) best = { x, y, d: Math.round(d) }; } const s = document.querySelector(${bodySel}).getBoundingClientRect(); let other = null; for (let y = Math.max(s.top, 0) + 10; !other && y < Math.min(s.bottom, innerHeight) - 4; y += 24) for (const x of [s.left + 12, s.left + s.width / 2, s.right - 30]) { const el = document.elementFromPoint(Math.round(x), Math.round(y)); if (el && document.querySelector(${bodySel}).contains(el) && !el.closest('.office, .cafe-lib')) { other = { x: Math.round(x), y: Math.round(y), el: el.className?.baseVal ?? el.className }; break; } } return { ...(best || { x: -1, y: -1 }), below: other }; })()`);
           const scrollTop = () => js(`document.querySelector(${bodySel}).scrollTop`);
           const wheelAt = async (x, y, deltaY, modifiers) => { wc.sendInputEvent({ type: 'mouseMove', x, y }); wc.sendInputEvent({ type: 'mouseWheel', x, y, deltaX: 0, deltaY, ...(modifiers ? { modifiers } : {}) }); await sleep(120); };
           const p = await pos();
@@ -3221,7 +3221,7 @@ function driver() {
             }
           }
           check('A3 (control): the same wheel on the page outside the cafe scrolls it', p.x > 0 && !!control && control.to !== control.from && control.wheels.every((w) => !w.cafe && !w.prevented), JSON.stringify({ control, at: p }));
-          await js(`(() => { removeEventListener('wheel', window.__smokeWheelOn, { passive: true }); delete window.__smokeWheel; delete window.__smokeWheelOn; document.querySelector('.bg-page .cafe-canvas').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); document.querySelector(${bodySel}).scrollTop = 0; })()`);
+          await js(`(() => { removeEventListener('wheel', window.__smokeWheelOn, { passive: true }); delete window.__smokeWheel; delete window.__smokeWheelOn; document.querySelector('.bg-page .office-canvas').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); document.querySelector(${bodySel}).scrollTop = 0; })()`);
           win.setContentSize(1360, 860);
           await sleep(500);
         }
@@ -3233,11 +3233,15 @@ function driver() {
         await js(`document.querySelector('.bg-page').focus()`);
         await key('Escape');
         await waitFor(`!document.querySelector('.bg-page .bg-drawer')`, 3000);
-        await js(`document.querySelector('.bg-page .cafe-person[aria-label^="alpha"]').click()`);
+        await js(`document.querySelector('.bg-page .office-bot[aria-label^="alpha"]').click()`);
+        const botCard = await waitFor(`!!document.querySelector('.bg-page .office-card[aria-label="alpha"]') && /改了 a.ts/.test(document.querySelector('.bg-page .office-card').textContent)`, 4000);
+        check('a customer in the cafe opens its card (status, task, what it did last)', botCard);
+        await shot('office-bot-card');
+        await js(`document.querySelector('.bg-page .office-card .oc-acts .btn.primary').click()`);
         const drawer = await waitFor(`/alpha/.test(document.querySelector('.bg-page .bg-drawer .bg-drawer-title .n')?.textContent ?? '')`, 4000);
-        check('a guest in the cafe opens their own conversation beside the board', drawer);
+        check('… and its 打开对话 opens its own conversation beside the board', drawer);
         await shot('background-drawer');
-        await click('.bg-page .cafe-tools .btn');
+        await click('.bg-page .office-tools .office-lib');
         const lib = (await waitFor(`!!document.querySelector('.cafe-lib')`, 3000)) && await js(`[...document.querySelectorAll('.cafe-lib .cafe-card')].map((c) => c.dataset.character).join(',')`);
         check('网吧 → 角色库: the octopus and the admin, walking', lib === 'octopus,admin', JSON.stringify(lib));
         await shot('cafe-library');
@@ -3254,9 +3258,9 @@ function driver() {
         check('右侧面板 → 任务: the small graph, the three tasks (a Stop each) and the workflow\'s agents', tasks && tasks.tasks === 3 && tasks.agents === 3 && tasks.stops === 3, JSON.stringify(tasks));
         await shot('background-tasks');
         await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'cafe' })`);
-        const panelCafe = await waitFor(`!!document.querySelector('.dock-panel[data-panel="cafe"]:not([hidden]) .cafe-canvas') && document.querySelectorAll('.dock-panel[data-panel="cafe"] .cafe-person').length >= 5`, 8000);
-        check('右侧面板 → 网吧: the same cafe, small, with its guests and the admin', panelCafe);
-        await shot('cafe-panel');
+        const panelCafe = await waitFor(`!!document.querySelector('.dock-panel[data-panel="cafe"]:not([hidden]) .office-canvas') && document.querySelectorAll('.dock-panel[data-panel="cafe"] .office-bot').length >= 6 && !!document.querySelector('.dock-panel[data-panel="cafe"] .office-card.floor')`, 10000);
+        check('右侧面板 → 网吧: the same cafe, small, on this conversation’s zone (its card, its 网管 and customers)', panelCafe);
+        await shot('office-panel');
         await js(`window.__store.getState().dispatchLayout({ t: 'dock.close', panel: 'cafe', workbench: false })`);
         await js(`(() => { window.__cwBackground.inject({ sessionId: ${bsid}, updatedAt: Date.now(), tasks: [], events: [] }); window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } }); })()`);
         const pillGone = await waitFor(`!document.querySelector('.pane.focused .composer .bg-pill')`, 3000);

@@ -20,7 +20,7 @@ export interface ReachEntry {
    * a context filling up (≥ 60 %: the ring — its card is also the header ··· 「本对话用量」, final review I3), a
    * conversation (not the welcome page: 连接器 ›), Claude's fast mode reported by the CLI (first-party accounts), a model list longer than five (更多模型 ›)
    */
-  when?: 'running' | 'speech' | 'usage' | 'live' | 'fast' | 'manyModels';
+  when?: 'running' | 'speech' | 'usage' | 'live' | 'fast' | 'manyModels' | 'codex';
 }
 
 /** The element each place lives in (after its chip is clicked). */
@@ -72,6 +72,7 @@ export const COMPOSER_REACH: ReachEntry[] = [
   { was: tr('强度 ›'), place: 'model', sel: idSel(MODEL_MENU_ID.effort) },
   { was: tr('快速模式'), place: 'model', sel: idSel(MODEL_MENU_ID.fast), when: 'fast' },
   { was: tr('更多模型 ›'), place: 'model', sel: idSel(MODEL_MENU_ID.more), when: 'manyModels' },
+  { was: 'codex login', place: 'model', sel: idSel(MODEL_MENU_ID.codexLogin), when: 'codex' },
   // permission: all six modes
   ...PERMISSION_MODE_ORDER.map((m) => ({ was: tr('权限 · {label}', { label: OLD_MODE_NAME[m] ?? PERMISSION_MODES[m].label }), place: 'permission' as const, sel: `[data-mode="${m}"]` })),
   // the row itself

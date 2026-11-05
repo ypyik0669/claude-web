@@ -4,7 +4,7 @@
 // three projects, a fake upstream, one conversation waiting for a permission and one still working) is driven in a
 // real Chromium (Electron); every picture is a capture of that window (offscreen: works with the screen locked).
 // Output: <out>/{characters,home,chat,split,models,subagent,settings,connect,mission,automation,background,permission,
-// language,themes,theme-home,mobile}.png and <out>/cafe.gif (frames of the café canvas put together with ffmpeg).
+// language,themes,theme-home,mobile}.png and <out>/cafe.gif (frames of the 3D cafe put together with ffmpeg).
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -117,22 +117,22 @@ async function driver() {
     await js(scene());
     await click('.rail-btn[data-id="background"]'); await sleep(2500);
     // the page must be visible for requestAnimationFrame to run (the canvas starts at 300×150 otherwise)
-    await waitFor('!!document.querySelector(".cafe canvas, canvas.cafe-canvas, .bg-stage canvas")', 8000);
+    await waitFor('!!document.querySelector(".office canvas, canvas.office-canvas, .bg-stage canvas")', 8000);
     await sleep(2500);
     if (want('background')) await png('background');
     if (want('cafe')) {
-      let rect = await js(`(() => { const c = document.querySelector('.cafe canvas, canvas.cafe-canvas, .bg-stage canvas'); if (!c) return null; const r = c.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }; })()`);
+      let rect = await js(`(() => { const c = document.querySelector('.office canvas, canvas.office-canvas, .bg-stage canvas'); if (!c) return null; const r = c.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }; })()`);
       if (rect) {
         // the tools overlay out of the way, and in close on the seats (wheel = zoom at the pointer)
-        await js("(() => { const t = document.querySelector('.cafe-tools'); if (t) t.style.display = 'none'; })()");
+        await js("(() => { const t = document.querySelector('.office-tools'); if (t) t.style.display = 'none'; })()");
         const at = { x: Math.round(rect.x + rect.width * Number(E.SHOTS_ZX || 0.42)), y: Math.round(rect.y + rect.height * Number(E.SHOTS_ZY || 0.55)) };
-        await js(`(() => { const c = document.querySelector('.cafe-canvas'); for (let i = 0; i < ${Number(E.SHOTS_ZSTEPS || 3)}; i++) c.dispatchEvent(new WheelEvent('wheel', { deltaY: -240, clientX: ${at.x}, clientY: ${at.y}, bubbles: true, cancelable: true })); })()`);
+        await js(`(() => { const c = document.querySelector('.office-canvas'); for (let i = 0; i < ${Number(E.SHOTS_ZSTEPS || 3)}; i++) c.dispatchEvent(new WheelEvent('wheel', { deltaY: -240, clientX: ${at.x}, clientY: ${at.y}, bubbles: true, cancelable: true })); })()`);
         await sleep(400);
         win.webContents.sendInputEvent({ type: 'mouseMove', x: rect.x + 2, y: rect.y + 2 }); // no tooltip over the guests
         // (the wheel also scrolled the page: back to the top, and measure the canvas again)
-        await js("(() => { for (let e = document.querySelector('.cafe-canvas'); e; e = e.parentElement) e.scrollTop = 0; })()");
+        await js("(() => { for (let e = document.querySelector('.office-canvas'); e; e = e.parentElement) e.scrollTop = 0; })()");
         await sleep(600);
-        rect = await js(`(() => { const c = document.querySelector('.cafe-canvas'); const r = c.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }; })()`);
+        rect = await js(`(() => { const c = document.querySelector('.office-canvas'); const r = c.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }; })()`);
         const dir = path.join(out, 'cafe-frames');
         fs.rmSync(dir, { recursive: true, force: true });
         fs.mkdirSync(dir, { recursive: true });
@@ -148,7 +148,7 @@ async function driver() {
     }
     if (want('characters')) {
       // the character library dialog (the café page's 角色库 / Character library button), cropped to the dialog
-      const opened = await js(`(() => { const b = [...document.querySelectorAll('.cafe-tools button')].find((x) => /角色库|Character library/.test(x.textContent)); if (!b) return false; b.click(); return true; })()`);
+      const opened = await js(`(() => { const b = [...document.querySelectorAll('.office-tools button')].find((x) => /角色库|Character library/.test(x.textContent)); if (!b) return false; b.click(); return true; })()`);
       await sleep(1200);
       const box = opened ? await js(`(() => { const m = document.querySelector('.cafe-lib'); if (!m) return null; const r = m.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) }; })()`) : null;
       if (box) await png('characters', box); else console.log('characters: no library dialog');

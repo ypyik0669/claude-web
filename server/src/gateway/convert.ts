@@ -66,6 +66,10 @@ export type OutboundOpts = A.AnthropicRenderOpts & C.ChatRenderOpts & R.Response
 
 /** Outbound request path (relative to the member base) + JSON body. */
 export function buildOutbound(outbound: Outbound, r: IrRequest, opts: OutboundOpts = {}): { path: string; body: any } {
+  // Codex reasoning only means something to a Responses upstream
+  if (outbound !== 'responses' && r.messages.some((m) => m.parts.some((p) => p.type === 'reasoning'))) {
+    r = { ...r, messages: r.messages.map((m) => ({ ...m, parts: m.parts.filter((p) => p.type !== 'reasoning') })).filter((m) => m.parts.length) };
+  }
   if (outbound === 'anthropic') return { path: '/v1/messages', body: A.renderRequest(r, opts) };
   if (outbound === 'openai') return { path: '/v1/chat/completions', body: C.renderRequest(r, opts) };
   if (outbound === 'responses') return { path: '/v1/responses', body: R.renderRequest(r, opts) };

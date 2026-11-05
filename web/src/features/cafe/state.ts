@@ -1,10 +1,9 @@
-// 网吧's own small store: the character library (characters.list, kept fresh by characters.changed) and the receipts
-// each cafe has printed (the page's 今日账单 reads them).
+// The character library's small store (characters.list, kept fresh by characters.changed): what the 后台 · 网吧
+// puts on a bot that has a character of its own, and the 角色库 dialog.
 import { create } from 'zustand';
 import { BUILTIN, type CafeAssign, type CharacterDef, type CharactersList } from '@characters';
 import { ws } from '@/ws/client';
 import { useStore } from '@/store';
-import type { Receipt } from './sim';
 import { forgetCharacter } from './bake';
 
 interface CafeState {
@@ -12,16 +11,14 @@ interface CafeState {
   byId: Map<string, CharacterDef>;
   assign: CafeAssign;
   loaded: boolean;
-  /** by conversation, newest first */
-  receipts: Record<string, Receipt[]>;
   library: boolean;
 }
 
 const index = (list: CharacterDef[]) => new Map(list.map((c) => [c.id, c]));
 
-export const useCafe = create<CafeState>(() => ({ list: BUILTIN, byId: index(BUILTIN), assign: {}, loaded: false, receipts: {}, library: false }));
+export const useCafe = create<CafeState>(() => ({ list: BUILTIN, byId: index(BUILTIN), assign: {}, loaded: false, library: false }));
 
-/** The night palette of the agents' colours (the room is always at night: tokens.css's dark --agent-1…10). */
+/** The bright palette of the agents' colours (tokens.css's dark --agent-1…10): the bots' bodies, day and night. */
 export const AGENT_NIGHT = ['#a3e635', '#fbbf24', '#2dd4bf', '#f472b6', '#60a5fa', '#a78bfa', '#fb923c', '#22d3ee', '#e879f9', '#4ade80'];
 
 let installed = false;
@@ -44,11 +41,6 @@ export function installCafe() {
   });
   if (useStore.getState().connected) { was = true; void load(); }
   ws.on((e: any) => { if (e?.kind === 'characters.changed') void load(); });
-}
-
-export function setReceipts(sessionId: string, r: Receipt[]) {
-  if (useCafe.getState().receipts[sessionId] === r) return;
-  useCafe.setState((s) => ({ receipts: { ...s.receipts, [sessionId]: r } }));
 }
 
 export const openLibrary = () => useCafe.setState({ library: true });

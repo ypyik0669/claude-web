@@ -4,8 +4,6 @@ import { useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
-import { EmptyState } from '@/ui/EmptyState';
-import { EMPTY } from '@/ui/terms';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { OverPage, type OverTab } from '@/features/sections/OverPage';
 import { AgentCards } from './AgentCards';
@@ -13,13 +11,12 @@ import { AgentDrawer } from './AgentDrawer';
 import { CommandGraph } from './CommandGraph';
 import { EventFeed } from './EventFeed';
 import { lazy, Suspense } from 'react';
-import { Bill } from '@/features/cafe/Bill';
 import { BG_TITLE, clock, hasLive, KIND_LABEL, liveCounts, orderedTasks, sortSessions, taskStateText, taskTitle, tokensText } from './model';
 import { closeAgent, closeBackground, openAgent, selectBackground, stopTask, useBackground } from './state';
 import { tr } from '@/i18n';
 
-// the cafe is a canvas engine of its own: loaded when the page first shows it (the first screen's entry stays small)
-const Cafe = lazy(() => import('@/features/cafe/Cafe').then((m) => ({ default: m.Cafe })));
+// the cafe is a three.js scene: loaded when the page first shows it (the first screen's entry stays small)
+const Office = lazy(() => import('@/features/office/Office').then((m) => ({ default: m.Office })));
 
 const EMPTY_SESSION = (sessionId: string): BgSession => ({ sessionId, updatedAt: 0, tasks: [], events: [] });
 
@@ -77,7 +74,7 @@ function TaskChips({ session, taskId }: { session: BgSession; taskId?: string })
   );
 }
 
-/** Back to a conversation (the cafe's admin is its main conversation). */
+/** Back to a conversation (a floor's lead is its main conversation). */
 const toChat = (sid: string) => () => {
   closeBackground();
   const st = useStore.getState();
@@ -86,6 +83,24 @@ const toChat = (sid: string) => () => {
 };
 
 /** The page's body for one conversation (live) or one finished run (from disk). */
+/** The building of every conversation's background, on top of the page. */
+function OfficeBlock({ follow }: { follow?: string }) {
+  return (
+    <div className="bg-office-wrap">
+      <ErrorBoundary area={tr('后台 · 网吧')}>
+        <Suspense fallback={null}>
+          <Office
+            follow={follow}
+            onFloor={(sid) => selectBackground(sid)}
+            onOpenAgent={(sid, taskId, agentKey) => { selectBackground(sid); openAgent({ sessionId: sid, taskId, agentKey }); }}
+            onOpenChat={(sid) => toChat(sid)()}
+          />
+        </Suspense>
+      </ErrorBoundary>
+    </div>
+  );
+}
+
 function Board({ session, live, taskId }: { session: BgSession; live: boolean; taskId?: string }) {
   const drawer = useBackground((s) => s.drawer);
   const pick = (agentKey: string, tId: string) => openAgent({ sessionId: session.sessionId, taskId: tId, agentKey });
@@ -94,13 +109,11 @@ function Board({ session, live, taskId }: { session: BgSession; live: boolean; t
   return (
     <div className={clsx('bg-board', dAgent && 'with-drawer')}>
       <div className="bg-main">
-        <div className="bg-cafe-wrap"><ErrorBoundary area={tr('后台 · 网吧')}><Suspense fallback={null}><Cafe session={live ? session : undefined} onPick={pick} onAdmin={toChat(session.sessionId)} /></Suspense></ErrorBoundary></div>
         {live && <TaskChips session={session} taskId={taskId} />}
         <ErrorBoundary area={tr('后台 · 卡片')}><AgentCards session={session} taskId={taskId} onPick={pick} /></ErrorBoundary>
         <div className="bg-graph-wrap"><ErrorBoundary area={tr('后台 · 关系图')}><CommandGraph session={session} taskId={taskId} onPick={pick} /></ErrorBoundary></div>
         <div className="bg-stage bg-stage-low">
           <div className="bg-side-col">
-            <Bill sessionId={session.sessionId} />
             {session.events.length > 0 && <div className="bg-feed-wrap"><div className="bg-h">{tr('动态')}</div><EventFeed events={taskId ? session.events.filter((e) => e.taskId === taskId) : session.events} onPick={pick} /></div>}
           </div>
         </div>
@@ -175,8 +188,9 @@ export function BackgroundPage() {
       ) : undefined}
     >
       <div className="over-body bg-body">
+        <OfficeBlock follow={selected} />
         {!shown
-          ? <EmptyState e={EMPTY.background} />
+          ? null
           : <Board session={shown} live={!runId} taskId={runId ? undefined : taskId} />}
       </div>
     </OverPage>

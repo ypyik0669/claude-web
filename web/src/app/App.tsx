@@ -35,6 +35,7 @@ import { installBackground } from '@/features/background/state';
 import { installBots } from '@/features/bots/state';
 import { installCafe } from '@/features/cafe/state';
 import { CharacterLibrary } from '@/features/cafe/CharacterLibrary';
+import { CodexLoginHost } from '@/features/settings/CodexLoginDialog';
 import { BackgroundSide } from '@/features/background/BackgroundSide';
 import { installBrowserHost } from '@/features/browser/host';
 import { installThemes } from '@/themes/trial';
@@ -342,6 +343,7 @@ export function App() {
       {isDesktop && desktop?.platform !== 'darwin' && !mobile && <WindowControls height={capH} />}
       <ErrorBoundary area={tr('应用更新')} floating><UpdatePrompt /></ErrorBoundary>
       <ErrorBoundary area={tr('角色库')} floating><CharacterLibrary /></ErrorBoundary>
+      <ErrorBoundary area={tr('登录 Codex 账号')} floating><CodexLoginHost /></ErrorBoundary>
       <ErrorBoundary area={tr('编辑项目')} floating><ProjectDialogLazy /></ErrorBoundary>
       <ErrorBoundary area={tr('交给常开机器继续')} floating><HandoffDialogHost /></ErrorBoundary>
       <ErrorBoundary area={tr('派活')} floating><CloudDialogsLazy /></ErrorBoundary>

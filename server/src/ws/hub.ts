@@ -306,6 +306,7 @@ export class Hub {
     s.customCss.on('changed', () => this.broadcast({ kind: 'customCss.changed' }));
     s.themes.on('changed', () => this.broadcast({ kind: 'themes.changed' }));
     s.agents.events.on('reported', () => this.broadcast({ kind: 'agents.changed' }));
+    s.config.events?.on('authChanged', () => this.broadcast({ kind: 'auth.changed' }));
     s.bots.on('changed', (bots) => this.broadcast({ kind: 'bots.changed', bots }));
     s.bots.on('run', (run) => this.broadcast({ kind: 'bots.run', run }));
     s.bots.on('inbox', (item) => this.broadcast({ kind: 'bots.inbox', item }));
@@ -1057,6 +1058,8 @@ export class Hub {
         return s.config.mcpUpdate(req.name, req.json, req.cwd, req.from);
       case 'config.auth':
         return s.config.auth(req.force);
+      case 'config.logout':
+        return s.config.logout();
       case 'config.settings.read':
         return s.config.settingsRead(req.scope, req.cwd);
       case 'config.settings.write':
@@ -1385,6 +1388,15 @@ export class Hub {
       case 'android.packages': return s.android.packages(req.serial);
       case 'android.launchApp': return s.android.launchApp(req.serial, req.pkg);
       case 'android.startEmulator': return s.android.startEmulator(req.avd);
+      case 'agents.codex.account': return s.agents.codexLogin().account();
+      case 'agents.codex.login.begin': return s.agents.codexLogin().begin(!!req.device);
+      case 'agents.codex.login.status': return s.agents.codexLogin().status(req.id);
+      case 'agents.codex.login.cancel': await s.agents.codexLogin().cancel(req.id); return null;
+      case 'agents.codex.logout': {
+        const a = await s.agents.codexLogin().logout();
+        void s.agents.askModels('codex', true);
+        return a;
+      }
       case 'agents.set':
         await s.agents.setConfig(req.agent, req.patch);
         s.agents.invalidate();

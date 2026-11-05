@@ -16,6 +16,7 @@ import './styles/rail.css';
 import './styles/background.css';
 import './styles/background-page.css';
 import './styles/cafe.css';
+import './styles/office.css';
 import './styles/corners.css';
 import './styles/gateway.css';
 import './styles/gateway-sources.css';

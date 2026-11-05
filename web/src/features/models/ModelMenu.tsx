@@ -19,6 +19,7 @@ import { ActionSheet, useSheetMenu } from '@/ui/ActionSheet';
 import { tr } from '@/i18n';
 import { openGateway } from '@/features/gateway/state';
 import { Switch } from '@/ui/Switch';
+import { openCodexLogin } from '@/features/settings/CodexLoginDialog';
 
 /** `5 分钟前` / `刚刚` / a date */
 export function agoText(t: number): string {
@@ -245,6 +246,10 @@ export function ModelMenu(p: ModelMenuProps) {
               {s.unavailable && <span className="err off" title={s.unavailable}>{s.unavailable}</span>}
               {s.kind === 'provider' && !s.error && !s.unavailable && <span className="meta">{s.count ? tr('{count} 个模型', { count: s.count }) : tr('未拉取')}{s.modelsAt ? ` · ${agoText(s.modelsAt)}` : ''}</span>}
               {s.error && !s.unavailable && <span className="err" title={s.error}>{tr('拉取失败：{error}', { error: s.error })}</span>}
+              {/* Codex on its own login: sign in / switch accounts without a terminal (its models follow the account) */}
+              {((s.kind === 'builtin' && p.agent === 'codex') || (s.kind === 'agent' && s.agent === 'codex' && !s.providerType)) && !p.lockProvider && (
+                <button type="button" className="mm-headlink" data-id={MODEL_MENU_ID.codexLogin} onClick={() => { p.onClose(); openCodexLogin(); }} title={tr('用 ChatGPT 账号登录 Codex，或换一个账号')}>{tr('登录 / 换账号')}</button>
+              )}
             </div>
             {s.items.map((it) => {
               const own = it.providerId === 'claude' || sub;
