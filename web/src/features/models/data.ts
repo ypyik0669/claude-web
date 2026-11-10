@@ -68,7 +68,12 @@ export async function refreshAllModels(ids?: string[]): Promise<ModelRefreshResu
   if (run.running) return run.results;
   const st = useStore.getState();
   const targets = ids ?? st.providers.filter((p) => p.type !== 'gateway').map((p) => p.id);
-  if (!targets.length) { st.toast(tr('还没有可刷新的供应商')); return []; }
+  if (!targets.length) {
+    // no profiles: the request still pulls the signed-in Claude account's own model list on the server
+    await ws.request<ModelRefreshResult[]>({ kind: 'providers.refreshModels', ids: [] }).catch(() => []);
+    st.toast(tr('已刷新 Claude 账号的模型列表，新对话里生效'), true);
+    return [];
+  }
   run = { running: true, ids: targets, done: 0, total: targets.length, results: [] };
   emit();
   let next = 0;

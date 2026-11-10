@@ -49,12 +49,14 @@ export interface AgentCatalog {
 export const CATALOG: Partial<Record<AgentKind, AgentCatalog>> = {
   claude: {
     models: [
-      { id: 'claude-fable-5-1', label: 'Fable 5.1', hint: tr('最强，慢、贵'), effort: FIVE },
+      { id: 'claude-fable-5-2', label: 'Fable 5.2', hint: tr('最强，慢、贵'), effort: FIVE },
       { id: 'claude-opus-5-5', label: 'Opus 5.5', hint: tr('复杂任务'), effort: FIVE },
       { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', hint: tr('日常编码'), effort: FIVE },
-      { id: 'claude-sonnet-5', label: 'Sonnet 5', hint: tr('日常编码（官方 sonnet 别名）'), effort: FIVE },
-      { id: 'claude-opus-5', label: 'Opus 5', hint: tr('复杂任务'), effort: FIVE },
-      { id: 'claude-haiku-4-5', label: 'Haiku 4.5', hint: tr('快、便宜'), effort: FIVE },
+      { id: 'claude-haiku-5-5', label: 'Haiku 5.5', hint: tr('快、便宜'), effort: FIVE },
+      { id: 'claude-fable-5-1', label: 'Fable 5.1', effort: FIVE, legacy: true },
+      { id: 'claude-sonnet-5', label: 'Sonnet 5', effort: FIVE, legacy: true },
+      { id: 'claude-opus-5', label: 'Opus 5', effort: FIVE, legacy: true },
+      { id: 'claude-haiku-4-5', label: 'Haiku 4.5', effort: FIVE, legacy: true },
       { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', effort: FIVE, legacy: true },
       { id: 'claude-fable-5', label: 'Fable 5', effort: FIVE, legacy: true },
       { id: 'claude-opus-4-8', label: 'Opus 4.8', effort: FIVE, legacy: true },
@@ -63,11 +65,12 @@ export const CATALOG: Partial<Record<AgentKind, AgentCatalog>> = {
       { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', effort: NO_XHIGH, legacy: true },
       { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5', effort: NO_XHIGH, legacy: true },
     ],
-    // what the official Claude Code resolves each alias to (OFFICIAL_ALIAS_TARGETS, measured); ccb is aligned to it
+    // what the official Claude Code resolves each alias to (2.1.322, measured); ccb is aligned to it. When the
+    // account's live model list is known, the newest of each family wins over this (setLiveClaude / aliasTarget)
     aliases: {
-      fable: 'claude-fable-5-1', opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5', haiku: 'claude-haiku-4-5',
-      best: 'claude-fable-5-1', opusplan: 'claude-opus-5-5', default: 'claude-opus-5-5',
-      'fable[1m]': 'claude-fable-5-1', 'opus[1m]': 'claude-opus-5-5', 'sonnet[1m]': 'claude-sonnet-5',
+      fable: 'claude-fable-5-2', opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5',
+      best: 'claude-opus-5-5', opusplan: 'claude-opus-5-5', default: 'claude-opus-5-5',
+      'fable[1m]': 'claude-fable-5-2', 'opus[1m]': 'claude-opus-5-5', 'sonnet[1m]': 'claude-sonnet-5-5',
     },
     effort: FIVE,
     defaultEffort: 'high',
@@ -115,22 +118,51 @@ export const CATALOG: Partial<Record<AgentKind, AgentCatalog>> = {
 };
 
 /**
- * What the official Claude Code (2.1.283, the Agent SDK's bundled binary) resolves the claude.ai login's aliases to —
- * read off its system/init line with `--model <alias>` (2026-09-29): no model / default → claude-opus-5-5[1m] (Max),
- * opus → claude-opus-5-5, sonnet → claude-sonnet-5, haiku → claude-haiku-4-5-20251001, fable / best → claude-fable-5-1.
+ * What the official Claude Code (2.1.322, the Agent SDK's bundled binary) resolves the claude.ai login's aliases to —
+ * read off its system/init line with `--model <alias>` (2026-11-10): no model / default / opus / best → claude-opus-5-5,
+ * sonnet → claude-sonnet-5-5, haiku → claude-haiku-5-5, fable → claude-fable-5-2 — the newest model of each family in
+ * the account's `/v1/models`, so once that list is known (setLiveClaude) it decides and this is only the fallback.
  * The bundled ccb 2.8.4 predates the Claude 5 family (default / opus → claude-opus-4-7, sonnet → claude-sonnet-4-6,
  * `fable` passed through literally), so a claude.ai-login session on ccb gets these targets through the CLI's own
  * ANTHROPIC_DEFAULT_*_MODEL variables (ccbAccountEnv — its default follows the opus one) and the aliases ccb lacks are
- * rewritten (ccbModel). Re-measure when the SDK's claude binary is upgraded.
+ * rewritten (ccbModel).
  */
-export const OFFICIAL_ALIAS_TARGETS = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5', haiku: 'claude-haiku-4-5-20251001', fable: 'claude-fable-5-1' } as const;
+export const OFFICIAL_ALIAS_TARGETS = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-5-5', fable: 'claude-fable-5-2' } as const;
+
+type AliasFamily = keyof typeof OFFICIAL_ALIAS_TARGETS;
+export interface LiveClaudeModel { id: string; displayName: string }
+/** The signed-in account's own model list, newest first (server: usage/claude-live.ts). Null: not known yet. */
+let live: LiveClaudeModel[] | null = null;
+export function setLiveClaude(models: LiveClaudeModel[] | null | undefined): void { live = models?.length ? models : null; }
+const familyOf = (id: string): AliasFamily | null => (/(fable|opus|sonnet|haiku)/.exec(id)?.[1] as AliasFamily | undefined) ?? null;
+
+/** The alias targets: the newest model of each family the account lists, else the measured table. */
+export function officialAliasTargets(): Record<AliasFamily, string> {
+  const out: Record<AliasFamily, string> = { ...OFFICIAL_ALIAS_TARGETS };
+  const seen = new Set<AliasFamily>();
+  for (const m of live ?? []) { const f = familyOf(m.id); if (f && !seen.has(f)) { seen.add(f); out[f] = m.id; } }
+  return out;
+}
+
+/** The model an alias stands for (`fable[1m]` → claude-fable-5-2); a plain id is returned as is. */
+export function aliasTarget(agent: AgentKind, id: string): string {
+  const c = CATALOG[agent];
+  if (agent === 'claude' && live) {
+    const base = id.endsWith('[1m]') ? id.slice(0, -4) : id;
+    const t = officialAliasTargets();
+    if (Object.hasOwn(t, base)) return t[base as AliasFamily];
+    if (base === 'best' || base === 'default' || base === 'opusplan') return t.opus;
+  }
+  return c?.aliases && Object.hasOwn(c.aliases, id) ? c.aliases[id] : id;
+}
 
 /** Env for a claude.ai-login session on ccb: its aliases (and its default, which is the opus one) resolve like the official CLI. */
 export function ccbAccountEnv(): Record<string, string> {
+  const t = officialAliasTargets();
   return {
-    ANTHROPIC_DEFAULT_OPUS_MODEL: OFFICIAL_ALIAS_TARGETS.opus,
-    ANTHROPIC_DEFAULT_SONNET_MODEL: OFFICIAL_ALIAS_TARGETS.sonnet,
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: OFFICIAL_ALIAS_TARGETS.haiku,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: t.opus,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: t.sonnet,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: t.haiku,
   };
 }
 
@@ -139,15 +171,16 @@ export function ccbModel(model: string | undefined): string | undefined {
   if (!model) return model;
   const long = model.endsWith('[1m]');
   const base = long ? model.slice(0, -4) : model;
-  return base === 'fable' || base === 'best' ? `${OFFICIAL_ALIAS_TARGETS.fable}${long ? '[1m]' : ''}` : model;
+  const t = officialAliasTargets();
+  return base === 'fable' ? `${t.fable}${long ? '[1m]' : ''}` : base === 'best' ? `${t.opus}${long ? '[1m]' : ''}` : model;
 }
 
 /** Display name for a model id or alias — falls back to the raw id so unknown models still render. */
 export function modelLabel(agent: AgentKind, id: string): string {
   const c = CATALOG[agent];
   if (!c) return id;
-  const resolved = c.aliases?.[id] ?? id;
-  return c.models.find((m) => m.id === resolved)?.label ?? id;
+  const resolved = aliasTarget(agent, id);
+  return c.models.find((m) => m.id === resolved)?.label ?? (agent === 'claude' ? live?.find((m) => m.id === resolved)?.displayName : undefined) ?? id;
 }
 
 /** Effort levels a given (agent, model) pair accepts. Empty ⇒ hide the effort control. */
@@ -155,8 +188,30 @@ export function effortLevels(agent: AgentKind, model?: string | null): EffortLev
   const c = CATALOG[agent];
   if (!c || !c.supportsEffort) return [];
   if (!model) return c.effort;
-  const resolved = c.aliases?.[model] ?? model;
+  const resolved = aliasTarget(agent, model);
   return c.models.find((m) => m.id === resolved)?.effort ?? c.effort;
+}
+
+/**
+ * The account's models worth a place in the picker, newest first: the newest of each family, and every model the
+ * catalog does not call legacy. A model Anthropic adds tomorrow shows up here without a release of ours.
+ */
+function livePicker(): LiveClaudeModel[] {
+  const known = CATALOG.claude?.models ?? [];
+  const seen = new Set<AliasFamily>();
+  return (live ?? []).filter((m) => {
+    const f = familyOf(m.id);
+    const first = !!f && !seen.has(f);
+    if (f) seen.add(f);
+    const k = known.find((x) => x.id === m.id);
+    return first || (k ? !k.legacy : false);
+  });
+}
+
+/** Live models missing from a list the CLI reported (its ids and aliases, resolved): appended to the model menu. */
+export function liveClaudeExtras(listed: string[]): ModelInfo[] {
+  const have = new Set(listed.flatMap((v) => [v, aliasTarget('claude', v)]));
+  return livePicker().filter((m) => !have.has(m.id)).map((m) => modelsFor('claude', [{ id: m.id, label: modelLabel('claude', m.id) }])[0]);
 }
 
 /**
@@ -168,7 +223,7 @@ export function modelsFor(agent: AgentKind, reported?: { id: string; label?: str
   const c = CATALOG[agent];
   const known = c?.models ?? [];
   const build = (id: string, label?: string): ModelInfo => {
-    const k = known.find((m) => m.id === (c?.aliases?.[id] ?? id));
+    const k = known.find((m) => m.id === aliasTarget(agent, id));
     return {
       value: id,
       displayName: label ?? k?.label ?? id,
@@ -178,6 +233,7 @@ export function modelsFor(agent: AgentKind, reported?: { id: string; label?: str
     };
   };
   if (reported?.length) return reported.map((r) => build(r.id, r.label));
+  if (agent === 'claude' && live) return livePicker().map((m) => build(m.id, modelLabel('claude', m.id)));
   return known.filter((m) => !m.legacy).map((m) => build(m.id));
 }
 

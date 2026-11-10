@@ -4780,7 +4780,6 @@ export const EN_WEB: Record<string, string> = {
   "还没有别的对话": "No other conversations yet",
   "还没有加入其它机器": "No other computers added yet",
   "还没有发布过文件。在文件上右键 → 发布…": "Nothing published yet. Right-click a file → Publish…",
-  "还没有可刷新的供应商": "No providers to refresh yet",
   "还没有可用的地址": "No usable address yet",
   "还没有子代理。~/.claude/agents 里的 .md 文件和插件带的子代理会出现在这里。": "No subagents yet. .md files in ~/.claude/agents and subagents that come with plugins will show up here.",
   "还没有安装插件": "No plugins installed yet",
@@ -5437,4 +5436,9 @@ export const EN_WEB: Record<string, string> = {
   "重新登录 Claude 账号": "Sign in to Claude again",
   "登录 Claude 账号": "Sign in to Claude",
   "退出 Claude 账号": "Sign out of Claude",
+  "{name} 套餐": "{name} plan",
+  "模型列表已刷新，新增 {n} 个：{list}": "Model list refreshed, {n} new: {list}",
+  "模型列表已刷新，没有新模型": "Model list refreshed, no new models",
+  "重新拉取这个供应商的模型列表（/v1/models，只列模型，不花 token）": "Pull this provider's model list again (/v1/models: lists models only, costs no tokens)",
+  "已刷新 Claude 账号的模型列表，新对话里生效": "Refreshed your Claude account's model list; new conversations use it",
 };

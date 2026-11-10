@@ -122,10 +122,10 @@ describe('SessionRunner', () => {
       const a = new SessionRunner({ sessionId: 'm1', cwd: '/x', model: 'fable' } as any);
       await tick();
       // ccb has no fable alias; the account's family default (1M, A7) keeps its [1m]
-      expect(queries[0].options.model).toBe('claude-fable-5-1[1m]');
+      expect(queries[0].options.model).toBe('claude-fable-5-2[1m]');
       expect(queries[0].options.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-5-5');
-      expect(queries[0].options.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-5');
-      expect(queries[0].options.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-4-5-20251001');
+      expect(queries[0].options.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-5-5');
+      expect(queries[0].options.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-5-5');
       expect(a.info.model).toBe('fable'); // the chip keeps what the user picked
       await a.close();
       // no model: nothing passed — ccb's default follows the opus variable
@@ -177,7 +177,7 @@ describe('SessionRunner', () => {
       expect(env.ANTHROPIC_BASE_URL).toBe('');
       // the account's own alias table on ccb, as for the ~/.claude login
       expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-5-5');
-      expect(queries[0].options.model).toBe('claude-fable-5-1[1m]'); // its family picks: none, so 1M (A7)
+      expect(queries[0].options.model).toBe('claude-fable-5-2[1m]'); // its family picks: none, so 1M (A7)
       // the chip names the account it runs on
       expect(r.info).toMatchObject({ providerId: 'acc2', providerName: '工作号' });
       // no relay windows / caps tables for it: the account's are the CLI's own

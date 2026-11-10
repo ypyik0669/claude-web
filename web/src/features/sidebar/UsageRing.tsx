@@ -55,7 +55,7 @@ export function UsageRing({ tip = true, fallbackPlan }: { tip?: boolean; fallbac
     const r = ref.current?.getBoundingClientRect();
     if (r && tip) setAt({ left: Math.max(8, Math.min(r.left, window.innerWidth - 300)), bottom: window.innerHeight - r.top + 6 });
   };
-  const plan = planLabel(limits?.subscriptionType ?? fallbackPlan);
+  const plan = planLabel(limits?.subscriptionType ?? fallbackPlan, limits?.planName);
   if (!limits) return plan ? <span className="quota unknown" data-id="quota">{plan}</span> : null;
   if (!limits.ok) return <span className="quota unknown" data-id="quota" title={limits.error ?? tr('暂时读不到账号额度')}>{tr('{v}额度 –', { v: plan ? `${plan} · ` : '' })}</span>;
   const worst = worstWindow(limits);

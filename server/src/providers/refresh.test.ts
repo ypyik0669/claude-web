@@ -152,8 +152,8 @@ describe('needsModelRefresh (startup auto refresh)', () => {
   const now = 10 * MODEL_REFRESH_MAX_AGE;
   const p = (x: Partial<Provider>): Provider => ({ id: 'p', name: 'p', type: 'anthropic', baseUrl: 'https://r.example', apiKey: 'enc:dpapi:x', createdAt: 0, ...x });
   it('never pulled → due', () => expect(needsModelRefresh(p({}), now)).toBe(true));
-  it('pulled within 24 h → not due', () => expect(needsModelRefresh(p({ modelsAt: now - MODEL_REFRESH_MAX_AGE + 60_000 }), now)).toBe(false));
-  it('older than 24 h → due', () => expect(needsModelRefresh(p({ modelsAt: now - MODEL_REFRESH_MAX_AGE - 1 }), now)).toBe(true));
+  it('pulled within 6 h → not due', () => expect(needsModelRefresh(p({ modelsAt: now - MODEL_REFRESH_MAX_AGE + 60_000 }), now)).toBe(false));
+  it('older than 6 h → due', () => expect(needsModelRefresh(p({ modelsAt: now - MODEL_REFRESH_MAX_AGE - 1 }), now)).toBe(true));
   it('gateway profiles and profiles without a key are never due', () => {
     expect(needsModelRefresh(p({ type: 'gateway', apiKey: '' }), now)).toBe(false);
     expect(needsModelRefresh(p({ apiKey: '' }), now)).toBe(false);

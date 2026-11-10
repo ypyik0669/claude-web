@@ -409,12 +409,12 @@ async function listModels(p: Pick<Provider, 'type' | 'baseUrl' | 'apiKey' | 'aut
   }
 }
 
-/** A profile's model list older than this is pulled again in the background at startup. */
-export const MODEL_REFRESH_MAX_AGE = 24 * 3600_000;
+/** A profile's model list older than this is pulled again in the background (checked at startup and hourly). */
+export const MODEL_REFRESH_MAX_AGE = 6 * 3600_000;
 /** How many model-list requests run at once (a user may have many relays behind one slow network). */
 const MODEL_REFRESH_CONCURRENCY = 4;
 
-/** Startup auto refresh: a keyed, non-gateway profile whose list was never pulled or is older than a day. */
+/** Background auto refresh: a keyed, non-gateway profile whose list was never pulled or is older than MODEL_REFRESH_MAX_AGE. */
 export function needsModelRefresh(p: Provider, now = Date.now(), maxAge = MODEL_REFRESH_MAX_AGE): boolean {
   if (p.type === 'gateway' || !p.apiKey) return false;
   return !p.modelsAt || now - p.modelsAt > maxAge;
@@ -595,16 +595,21 @@ export class ProviderService {
     return out;
   }
   /**
-   * Background refresh after startup: every profile whose list is missing or older than a day. The timer is
-   * unref'd so it never holds the process open; failures only land in `modelsError`.
+   * Background refresh after startup, then every hour: every profile whose list is missing or older than
+   * MODEL_REFRESH_MAX_AGE (a relay adds a model → it is in the menu within hours, without a click). The timers are
+   * unref'd so they never hold the process open; failures only land in `modelsError`.
    */
   autoRefreshModels(delayMs = 5000): Promise<ModelRefreshResult[]> {
     // off switch for test servers (scripts/e2e.mjs): a background pull would race the checks' request counts
     if (process.env.CW_NO_MODEL_REFRESH) return Promise.resolve([]);
+    const due = () => {
+      const ids = this.meta.providers().filter((p) => needsModelRefresh(p)).map((p) => p.id);
+      return (ids.length ? this.refreshModels(ids) : Promise.resolve([])).catch((e) => { console.error('[providers] model refresh failed:', (e as Error).message); return []; });
+    };
     return new Promise((resolve) => {
       const t = setTimeout(() => {
-        const due = this.meta.providers().filter((p) => needsModelRefresh(p)).map((p) => p.id);
-        (due.length ? this.refreshModels(due) : Promise.resolve([])).then(resolve, (e) => { console.error('[providers] model refresh failed:', (e as Error).message); resolve([]); });
+        void due().then(resolve);
+        setInterval(() => void due(), 3600_000).unref?.();
       }, delayMs);
       t.unref?.();
     });

@@ -121,7 +121,9 @@ export function todayCost(rows: readonly { ts: number; costUsd: number; costUnkn
 }
 
 /** Subscription type as people say it (`limits.subscriptionType` / `claude auth status`). */
-export function planLabel(t: string | undefined | null): string {
+export function planLabel(t: string | undefined | null, name?: string | null): string {
+  // Anthropic's own current name for the plan (`plan_display_name`: Max became Ultra) wins over our table
+  if (name?.trim()) return tr('{name} 套餐', { name: name.trim() });
   if (!t) return '';
   const k = t.toLowerCase();
   if (k === 'max') return tr('Max 套餐');

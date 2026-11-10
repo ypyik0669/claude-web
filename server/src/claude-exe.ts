@@ -5,6 +5,8 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { nodeRuntime } from './agents/resolve.js';
+import { cmpVersion } from './claude-version.js';
+import { bundledClaudePkgVersion, downloadedClaude } from './engines/claude-update.js';
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -62,6 +64,10 @@ export function resolveClaudeExe(root: () => string | null = globalRoot): string
   const candidates: string[] = [];
   const pkg = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`;
   if (process.env.CLAUDE_WEB_EXE) candidates.push(process.env.CLAUDE_WEB_EXE);
+  // a newer binary the updater fetched from npm (engines/claude-update.ts) wins over the bundled one
+  const dl = downloadedClaude();
+  const bundled = bundledClaudePkgVersion();
+  if (dl && (!bundled || cmpVersion(dl.version, bundled) > 0)) candidates.push(dl.file);
   try {
     const dir = path.dirname(require.resolve(`${pkg}/package.json`));
     candidates.push(unpack(path.join(dir, isWin ? 'claude.exe' : 'claude')));

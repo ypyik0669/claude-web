@@ -1123,7 +1123,6 @@ export const EN_SERVER: Record<string, string> = {
   "无法识别的来源，支持 owner/repo、owner/repo/子目录、GitHub 链接或本地路径": "Unrecognized source. Supported: owner/repo, owner/repo/subfolder, a GitHub link, or a local path",
   "无法读取 {name} 现有的 MCP 列表，未添加：{message}": "Couldn't read the existing MCP list of {name}, so nothing was added: {message}",
   "日常编码": "Everyday coding",
-  "日常编码（官方 sonnet 别名）": "Everyday coding (the official sonnet alias)",
   "旧的接法（grok.com 网页，模型较旧）：删掉它，在「Grok」卡片里重新登录，就能用 Grok 4.7 等最新模型": "The old connection (grok.com web chat, older models): remove it and sign in again from the Grok card to use Grok 4.7 and the other latest models",
   "明早 0 点恢复": "Resumes at midnight",
   "是否附一张截图（默认 true）。": "Whether to attach a screenshot (default true).",

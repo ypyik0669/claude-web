@@ -333,6 +333,22 @@ export function ProviderProfiles() {
     } catch (e: any) { setProbe({ ok: false, models: [], error: e.message, ms: 0 }); }
     setBusy(false);
   };
+  // only the model list (/v1/models, no chat request, no tokens); a saved profile keeps the new list right away
+  const refreshList = async () => {
+    if (!editing) return;
+    setBusy(true);
+    try {
+      const before = new Set(probe?.models ?? editing.models ?? []);
+      const r: any = await ws.request({ kind: 'providers.probe', id: editing.id, listOnly: true, provider: { type: editing.type, baseUrl: editing.baseUrl, apiKey: editing.apiKey } });
+      setProbe(r);
+      if (r.ok) {
+        const added = (r.models as string[]).filter((m) => !before.has(m));
+        toast(added.length ? tr('模型列表已刷新，新增 {n} 个：{list}', { n: added.length, list: added.slice(0, 5).join('、') }) : tr('模型列表已刷新，没有新模型'), true);
+        if (editing.id) void useStore.getState().loadProviders().catch(() => {});
+      }
+    } catch (e: any) { setProbe({ ok: false, models: [], error: e.message, ms: 0 }); }
+    setBusy(false);
+  };
   const save = async () => {
     if (!editing) return;
     if (!editing.name?.trim()) return toast(tr('请填名称'));
@@ -437,6 +453,7 @@ export function ProviderProfiles() {
             <input className="field" style={{ flex: 1 }} type={showKey ? 'text' : 'password'} placeholder={editing.id ? tr('API Key（留空保持 {apiKey}）', { apiKey: editing.apiKey || tr('现有值') }) : 'API Key'} value={editing.apiKey} onChange={(e) => setEditing({ ...editing, apiKey: e.target.value })} autoComplete="off" />
             <button className="icon-btn" onClick={() => setShowKey(!showKey)} aria-label={tr('显示密钥')}><Icon name="eye" size={14} /></button>
             <button className="btn sm" disabled={busy} onClick={test}>{busy ? tr('测试中…') : tr('测试连接')}</button>
+            <button className="btn sm" data-act="refresh-models" disabled={busy || (!editing.id && !editing.apiKey.trim())} onClick={refreshList} title={tr('重新拉取这个供应商的模型列表（/v1/models，只列模型，不花 token）')}><Icon name="refresh" size={12} /> {tr('刷新模型')}</button>
           </div>}
           {probe && (
             <div style={{ fontSize: 13, marginBottom: 6, color: probe.ok ? 'var(--green)' : 'var(--red)' }}>

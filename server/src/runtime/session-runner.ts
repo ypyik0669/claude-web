@@ -19,7 +19,7 @@ import { resolveEngine, spawnClaude } from '../claude-exe.js';
 import { loopbackNoProxy, providerEnv, type SessionProvider } from '../providers/service.js';
 import { privacyRoute } from '../privacy/route.js';
 import { ENGINE_DEFAULT_WINDOW, ONE_M, contextWindowFor, contextWindowsEnv, isClaudeModel, officialWindow } from '../models/context-window.js';
-import { ccbAccountEnv, ccbMisthinks, ccbModel, isChatModel, modelCaps, modelLabel, modelsFor, preferredRuntime, providerModelId, supportsUltracode, webCapsEnv } from '../models/catalog.js';
+import { ccbAccountEnv, ccbMisthinks, ccbModel, isChatModel, liveClaudeExtras, modelCaps, modelLabel, modelsFor, preferredRuntime, providerModelId, supportsUltracode, webCapsEnv } from '../models/catalog.js';
 import { turnShare, type RunningTotals } from '../usage/turn-cost.js';
 import { claudeMcpServer } from '../memory/launcher.js';
 import { webAllowedTools, webClaudeMcpServer, webMcpEnabled } from '../web/launcher.js';
@@ -776,6 +776,8 @@ export class SessionRunner extends EventEmitter {
             : modelSrc.length
               ? modelSrc.map((m) => this.modelEntry(m.value, m.displayName && m.displayName !== m.value ? m.displayName : modelLabel('claude', m.value), m.description ?? '', { supportsEffort: m.supportsEffort, levels: m.supportedEffortLevels }))
               : modelsFor('claude');
+          // a claude.ai login: models the account has that this CLI build does not list yet (usage/claude-live.ts)
+          if (!this.provider?.models?.length && modelSrc.length) this.info.models = [...this.info.models, ...liveClaudeExtras(this.info.models.map((m) => m.value))];
           // claude-web-engine: --ultracode / the `ultracode` setting on every model; the official binary: `/effort ultracode`
           this.info.supportsUltracode = supportsUltracode('claude');
           this.info.agents = agents.map((a) => ({ name: a.name, description: a.description, model: a.model }));

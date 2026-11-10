@@ -154,6 +154,8 @@ describe('account row', () => {
     expect(planLabel('enterprise')).toBe('Enterprise');
     expect(planLabel('something_new')).toBe('something_new');
     expect(planLabel(undefined)).toBe('');
+    expect(planLabel('max', 'Ultra')).toBe('Ultra 套餐');
+    expect(planLabel(undefined, ' Ultra ')).toBe('Ultra 套餐');
   });
   it('accountName: the email name, the org, or what else there is to work with', () => {
     expect(accountName({ loggedIn: true, email: 'ypy@example.com' }, 0)).toEqual({ name: 'ypy', initial: 'Y', signedIn: true });

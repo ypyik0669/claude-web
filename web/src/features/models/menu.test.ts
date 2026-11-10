@@ -5,14 +5,14 @@ import { agentModels, buildModelMenu, chipLabel, compatibleTypes, filterMenu, ga
 const prov = (id: string, o: Partial<Provider> = {}): Provider => ({ id, name: id, type: 'anthropic', baseUrl: 'https://x', apiKey: '…', createdAt: 0, ...o });
 const PROVIDERS: Provider[] = [
   prov('gkey', { type: 'openai', models: ['gpt-6-astra', 'gpt-5.6-sol'], modelsAt: 1000 }),
-  prov('snbchr', { type: 'anthropic', models: ['claude-opus-5', 'claude-sonnet-5'], defaultModel: 'claude-sonnet-5' }),
+  prov('snbchr', { type: 'anthropic', models: ['claude-opus-5-5', 'claude-sonnet-5-5'], defaultModel: 'claude-sonnet-5-5' }),
   prov('gem', { type: 'gemini', models: ['gemini-3-pro'] }),
   prov('xai', { type: 'grok', models: [] , defaultModel: 'grok-5' }),
   prov('empty', { type: 'anthropic', modelsError: 'HTTP 401 invalid key' }),
   prov('gw', { type: 'gateway', gatewayGroupId: 'g1', defaultModel: 'router-default' }),
 ];
 const GROUPS: GatewayGroup[] = [
-  { id: 'g1', name: 'main', strategy: 'failover', members: [{ providerId: 'gkey' }, { providerId: 'snbchr', model: 'pinned-x' }], modelMap: { 'claude-*': 'gpt-6-astra', 'alias-a': 'claude-opus-5' } },
+  { id: 'g1', name: 'main', strategy: 'failover', members: [{ providerId: 'gkey' }, { providerId: 'snbchr', model: 'pinned-x' }], modelMap: { 'claude-*': 'gpt-6-astra', 'alias-a': 'claude-opus-5-5' } },
 ];
 const menu = (o: Partial<Parameters<typeof buildModelMenu>[0]> = {}) => buildModelMenu({ agent: 'claude', providers: PROVIDERS, gatewayGroups: GROUPS, settings: {}, ...o });
 /** the sections this agent can pick from (the others are listed after them, greyed, with why) */
@@ -55,7 +55,7 @@ describe('items and labels', () => {
     const b = m.sections[0];
     expect(b.title).toBe('Claude 账号');
     expect(b.items[0]).toMatchObject({ providerId: 'claude', model: '', label: '默认模型', isDefault: true });
-    expect(b.items.find((i) => i.model === 'claude-fable-5-1')?.label).toBe('Fable 5.1');
+    expect(b.items.find((i) => i.model === 'claude-fable-5-2')?.label).toBe('Fable 5.2');
     expect(m.items.find((i) => i.providerId === 'gkey' && i.model === 'gpt-6-astra')?.label).toBe('gkey / gpt-6-astra');
   });
   it('a profile without a model list still gets a selectable default entry; defaultModel is listed', () => {
@@ -63,10 +63,10 @@ describe('items and labels', () => {
     expect(m.sections.find((s) => s.id === 'empty')).toMatchObject({ error: 'HTTP 401 invalid key', count: 0 });
     expect(m.sections.find((s) => s.id === 'empty')!.items).toEqual([expect.objectContaining({ model: '', label: 'empty / 默认模型', isDefault: true })]);
     expect(m.sections.find((s) => s.id === 'xai')!.items.map((i) => i.model)).toEqual(['grok-5']);
-    expect(m.items.find((i) => i.providerId === 'snbchr' && i.model === 'claude-sonnet-5')?.profileDefault).toBe(true);
+    expect(m.items.find((i) => i.providerId === 'snbchr' && i.model === 'claude-sonnet-5-5')?.profileDefault).toBe(true);
   });
   it('keys: official Claude = bare model id (ui.disabledModels back-compat), other agents `<agent>:<model>`, profiles `<id>:<model>`', () => {
-    expect(modelKey('claude', 'claude', 'claude-opus-5')).toBe('claude-opus-5');
+    expect(modelKey('claude', 'claude', 'claude-opus-5-5')).toBe('claude-opus-5-5');
     expect(modelKey('codex', 'claude', 'gpt-6')).toBe('codex:gpt-6');
     expect(modelKey('codex', 'gkey', 'gpt-6')).toBe('gkey:gpt-6');
   });
@@ -92,7 +92,7 @@ describe('items and labels', () => {
 
 describe('gateway models', () => {
   it('union of member models + pinned models + defaults + non-wildcard modelMap keys (serveModels parity)', () => {
-    expect(gatewayModels(PROVIDERS[5], GROUPS, PROVIDERS)).toEqual(['alias-a', 'claude-opus-5', 'claude-sonnet-5', 'gpt-5.6-sol', 'gpt-6-astra', 'pinned-x', 'router-default']);
+    expect(gatewayModels(PROVIDERS[5], GROUPS, PROVIDERS)).toEqual(['alias-a', 'claude-opus-5-5', 'claude-sonnet-5-5', 'gpt-5.6-sol', 'gpt-6-astra', 'pinned-x', 'router-default']);
   });
   it('a gateway profile whose group is gone offers only its default', () => {
     expect(gatewayModels(prov('gw2', { type: 'gateway', gatewayGroupId: 'nope' }), GROUPS, PROVIDERS)).toEqual([]);
@@ -131,27 +131,27 @@ describe('gateway models', () => {
 
 describe('hidden, favorites, recents', () => {
   it('ui.disabledModels hides entries (legacy bare keys for Claude too)', () => {
-    const m = menu({ settings: { 'ui.disabledModels': ['gkey:gpt-6-astra', 'claude-opus-5'] } });
+    const m = menu({ settings: { 'ui.disabledModels': ['gkey:gpt-6-astra', 'claude-opus-5-5'] } });
     expect(m.sections.flatMap((s) => s.items).some((i) => i.key === 'gkey:gpt-6-astra')).toBe(false);
     expect(m.items.find((i) => i.key === 'gkey:gpt-6-astra')).toBeTruthy(); // built, just not shown
-    expect(m.sections[0].items.some((i) => i.model === 'claude-opus-5')).toBe(false);
+    expect(m.sections[0].items.some((i) => i.model === 'claude-opus-5-5')).toBe(false);
     expect(m.sections.find((s) => s.id === 'gkey')?.count).toBe(1);
   });
   it('favorites are pinned in their own section first (and stay in their profile section)', () => {
-    const m = menu({ settings: { 'ui.favoriteModels': ['snbchr:claude-opus-5', 'gkey:gpt-6-astra'] } });
+    const m = menu({ settings: { 'ui.favoriteModels': ['snbchr:claude-opus-5-5', 'gkey:gpt-6-astra'] } });
     expect(m.sections[0].id).toBe('favorites');
-    expect(m.sections[0].items.map((i) => i.label)).toEqual(['gkey / gpt-6-astra', 'snbchr / claude-opus-5']);
-    expect(m.sections.find((s) => s.id === 'snbchr')!.items.find((i) => i.model === 'claude-opus-5')!.favorite).toBe(true);
+    expect(m.sections[0].items.map((i) => i.label)).toEqual(['gkey / gpt-6-astra', 'snbchr / claude-opus-5-5']);
+    expect(m.sections.find((s) => s.id === 'snbchr')!.items.find((i) => i.model === 'claude-opus-5-5')!.favorite).toBe(true);
   });
   it('a favorite that is hidden or incompatible is not shown', () => {
-    const m = menu({ agent: 'codex', settings: { 'ui.favoriteModels': ['snbchr:claude-opus-5'] } });
+    const m = menu({ agent: 'codex', settings: { 'ui.favoriteModels': ['snbchr:claude-opus-5-5'] } });
     expect(sectionIds(m)).not.toContain('favorites');
   });
   it('recents: newest first, at most 5, unknown / incompatible ones dropped', () => {
-    const recent = ['gkey:gpt-5.6-sol', 'claude:claude-opus-5', 'gone:model', 'snbchr:claude-opus-5', 'gkey:gpt-6-astra', 'claude:', 'gem:gemini-3-pro', 'claude:claude-sonnet-5'];
+    const recent = ['gkey:gpt-5.6-sol', 'claude:claude-opus-5-5', 'gone:model', 'snbchr:claude-opus-5-5', 'gkey:gpt-6-astra', 'claude:', 'gem:gemini-3-pro', 'claude:claude-sonnet-5-5'];
     const m = menu({ settings: { 'ui.recentModels': recent } });
     expect(m.sections[0].id).toBe('recent');
-    expect(m.sections[0].items.map((i) => i.label)).toEqual(['gkey / gpt-5.6-sol', 'Opus 5', 'snbchr / claude-opus-5', 'gkey / gpt-6-astra', '默认模型']);
+    expect(m.sections[0].items.map((i) => i.label)).toEqual(['gkey / gpt-5.6-sol', 'Opus 5.5', 'snbchr / claude-opus-5-5', 'gkey / gpt-6-astra', '默认模型']);
     const codex = menu({ agent: 'codex', settings: { 'ui.recentModels': recent } });
     expect(codex.sections[0].items.map((i) => i.key)).toEqual(['gkey:gpt-5.6-sol', 'gkey:gpt-6-astra']); // 'claude:' is Claude's default, not Codex's
     expect(menu({ agent: 'codex', settings: { 'ui.recentModels': ['@codex:'] } }).sections[0].items.map((i) => i.label)).toEqual(['默认模型']);
@@ -172,18 +172,18 @@ describe('search and chip label', () => {
   it('filters by profile name or model name; empty sections disappear', () => {
     const m = filterMenu(menu(), 'astra');
     expect(m.sections.map((s) => s.id)).toEqual(['gkey', 'gw']);
-    expect(filterMenu(menu(), 'snb opus').sections.flatMap((s) => s.items.map((i) => i.label))).toEqual(['snbchr / claude-opus-5']);
-    expect(filterMenu(menu(), 'fable').sections[0].items.map((i) => i.label)).toEqual(['Fable 5.1']);
+    expect(filterMenu(menu(), 'snb opus').sections.flatMap((s) => s.items.map((i) => i.label))).toEqual(['snbchr / claude-opus-5-5']);
+    expect(filterMenu(menu(), 'fable').sections[0].items.map((i) => i.label)).toEqual(['Fable 5.2']);
   });
   it('chip label: profile / model, or the built-in display name', () => {
     expect(chipLabel({ agent: 'claude', providers: PROVIDERS, providerId: 'gkey', model: 'gpt-6-astra' })).toBe('gkey / gpt-6-astra');
-    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, providerId: 'claude', model: 'claude-fable-5-1' })).toBe('Fable 5.1');
+    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, providerId: 'claude', model: 'claude-fable-5-2' })).toBe('Fable 5.2');
     // final review §9 #2: never 「默认模型」 on the chip — the model it stands for, by name
     expect(chipLabel({ agent: 'claude', providers: PROVIDERS, model: '' })).toBe('Claude');
-    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, model: '', accountDefault: 'Sonnet 5' })).toBe('Sonnet 5');
-    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, model: 'default', accountDefault: 'Opus 5' })).toBe('Opus 5');
-    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, model: '', agentDefault: 'claude-haiku-4-5', accountDefault: 'Opus 5' })).toBe('Haiku 4.5');
-    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, providerId: 'snbchr', model: '' })).toBe('snbchr / claude-sonnet-5');
+    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, model: '', accountDefault: 'Sonnet 5.5' })).toBe('Sonnet 5.5');
+    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, model: 'default', accountDefault: 'Opus 5.5' })).toBe('Opus 5.5');
+    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, model: '', agentDefault: 'claude-haiku-5-5', accountDefault: 'Opus 5.5' })).toBe('Haiku 5.5');
+    expect(chipLabel({ agent: 'claude', providers: PROVIDERS, providerId: 'snbchr', model: '' })).toBe('snbchr / claude-sonnet-5-5');
     expect(chipLabel({ agent: 'claude', providers: PROVIDERS, providerId: 'empty' })).toBe('empty');
     expect(chipLabel({ agent: 'claude', providers: PROVIDERS, providerId: 'gone', providerName: '旧档案', model: 'm' })).toBe('旧档案 / m');
   });
@@ -195,10 +195,10 @@ describe('modelTable (settings, by model)', () => {
     const astra = rows.find((r) => r.model === 'gpt-6-astra')!;
     expect(astra.providers.map((p) => p.id)).toEqual(['gkey', 'gw']);
     expect(astra.keys).toEqual(['gkey:gpt-6-astra', 'gw:gpt-6-astra']);
-    const opus = rows.find((r) => r.model === 'claude-opus-5')!;
+    const opus = rows.find((r) => r.model === 'claude-opus-5-5')!;
     expect(opus.providers.map((p) => p.id)).toEqual(['claude', 'snbchr', 'gw']);
-    expect(opus.keys[0]).toBe('claude-opus-5'); // the Claude login keeps its bare key
-    expect(rows.find((r) => r.model === 'claude-sonnet-5')!.providers.find((p) => p.id === 'snbchr')!.isDefault).toBe(true);
+    expect(opus.keys[0]).toBe('claude-opus-5-5'); // the Claude login keeps its bare key
+    expect(rows.find((r) => r.model === 'claude-sonnet-5-5')!.providers.find((p) => p.id === 'snbchr')!.isDefault).toBe(true);
     expect(rows[0].providers.length).toBeGreaterThanOrEqual(rows[rows.length - 1].providers.length);
   });
   it('search matches model or profile name', () => {
@@ -302,7 +302,7 @@ describe('other agents as sources in the same flat list (the old agent picker, s
   it('the current agent is never listed as "other"; Claude is one when another agent is current', () => {
     const m = menu({ agent: 'codex', otherAgents: [{ kind: 'claude', name: 'Claude Code', installed: true }, { kind: 'codex', name: 'Codex', installed: true }] });
     expect(sectionIds(m)).toEqual(['builtin', 'gkey', 'gw', 'agent:claude']);
-    expect(m.sections.at(-1)!.items.find((i) => i.model === 'claude-opus-5')).toMatchObject({ agent: 'claude', key: 'claude-opus-5', label: 'Claude Code · Opus 5' });
+    expect(m.sections.at(-1)!.items.find((i) => i.model === 'claude-opus-5-5')).toMatchObject({ agent: 'claude', key: 'claude-opus-5-5', label: 'Claude Code · Opus 5.5' });
   });
   it('other agents stay out of favourites / recents (picking them in a session is a hand-over)', () => {
     const m = withAgents({ settings: { 'ui.favoriteModels': ['codex:gpt-5.6-sol'], 'ui.recentModels': ['@codex:gpt-5.6-sol'] } });
@@ -334,29 +334,29 @@ describe('the window mark on a model row', () => {
   it('the own Claude login: the family pick (1M by default), haiku 200K, the default entry none', () => {
     const m = menu();
     expect(win(m, 'claude', 'claude-opus-5-5')).toBe(1_000_000);
-    expect(win(m, 'claude', 'claude-sonnet-5')).toBe(1_000_000);
-    expect(win(m, 'claude', 'claude-fable-5-1')).toBe(1_000_000);
-    expect(win(m, 'claude', 'claude-haiku-4-5')).toBe(200_000);
+    expect(win(m, 'claude', 'claude-sonnet-5-5')).toBe(1_000_000);
+    expect(win(m, 'claude', 'claude-fable-5-2')).toBe(1_000_000);
+    expect(win(m, 'claude', 'claude-haiku-5-5')).toBe(200_000);
     expect(m.items.find((i) => i.providerId === 'claude' && i.isDefault)!.window).toBeUndefined();
     const picked = menu({ settings: { 'claude.contextWindows': { opus: 200_000, fable: 'x' } } });
     expect(win(picked, 'claude', 'claude-opus-5-5')).toBe(200_000);
     expect(win(picked, 'claude', 'claude-sonnet-5-5')).toBe(1_000_000);
-    expect(win(picked, 'claude', 'claude-fable-5-1')).toBe(1_000_000); // not a pick: the default
+    expect(win(picked, 'claude', 'claude-fable-5-2')).toBe(1_000_000); // not a pick: the default
     // the CLI's own list (aliases, a [1m] id): the same rule
     const cli = menu({ builtin: [{ value: 'default', displayName: 'Default' }, { value: 'opus', displayName: 'Opus' }, { value: 'sonnet[1m]', displayName: 'Sonnet (1M)' }, { value: 'haiku', displayName: 'Haiku' }], settings: { 'claude.contextWindows': { sonnet: 200_000 } } });
     expect([win(cli, 'claude', 'opus'), win(cli, 'claude', 'sonnet[1m]'), win(cli, 'claude', 'haiku')]).toEqual([1_000_000, 200_000, 200_000]);
   });
   it('a claude-account profile: its own picks, not the login\'s', () => {
-    const acct = prov('acct', { type: 'claude-account', models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5'], contextWindows: { opus: 200_000 } });
+    const acct = prov('acct', { type: 'claude-account', models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'], contextWindows: { opus: 200_000 } });
     const m = menu({ providers: [...PROVIDERS, acct], settings: { 'claude.contextWindows': { sonnet: 200_000 } } });
-    expect([win(m, 'acct', 'claude-opus-5-5'), win(m, 'acct', 'claude-sonnet-5-5'), win(m, 'acct', 'claude-haiku-4-5')]).toEqual([200_000, 1_000_000, 200_000]);
+    expect([win(m, 'acct', 'claude-opus-5-5'), win(m, 'acct', 'claude-sonnet-5-5'), win(m, 'acct', 'claude-haiku-5-5')]).toEqual([200_000, 1_000_000, 200_000]);
     expect(win(m, 'claude', 'claude-sonnet-5-5')).toBe(200_000);
   });
   it('a provider: its window for the model when it has one (set, listed, known by name)', () => {
     const set = prov('set', { type: 'openai', models: ['gpt-6-astra', 'mystery-1'], contextWindows: { 'gpt-6-astra': 400_000 } });
     const m = menu({ providers: [...PROVIDERS, set] });
     expect(win(m, 'gkey', 'gpt-6-astra')).toBe(272_000);
-    expect(win(m, 'snbchr', 'claude-opus-5')).toBe(1_000_000);
+    expect(win(m, 'snbchr', 'claude-opus-5-5')).toBe(1_000_000);
     expect(win(m, 'set', 'gpt-6-astra')).toBe(400_000);
     expect(win(m, 'set', 'mystery-1')).toBeUndefined();
     expect(m.items.find((i) => i.providerId === 'empty')!.window).toBeUndefined();

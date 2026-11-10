@@ -4,6 +4,7 @@
 // (identity headers), codex_executor_request.go (Codex UA / originator). Versions are data: bump them together with a
 // fresh capture of the real client.
 import type { Outbound } from '../convert.js';
+import { claudeCodeVersion } from '../../claude-version.js';
 
 export type ProfileId = 'claude-code' | 'codex' | 'gemini-cli';
 export const PROFILE_IDS: readonly ProfileId[] = ['claude-code', 'codex', 'gemini-cli'];
@@ -49,9 +50,8 @@ function archName(arch: string = process.arch): string {
   return arch === 'x64' ? 'x64' : arch === 'arm64' ? 'arm64' : arch === 'ia32' ? 'x32' : `other::${arch}`;
 }
 
-// ---- Claude Code CLI (2.1.280 / @anthropic-ai/sdk 0.112.1) ----
+// ---- Claude Code CLI (version: the newest known, claude-version.ts; @anthropic-ai/sdk 0.112.1) ----
 
-const CLAUDE_CODE_VERSION = '2.1.280';
 const CLAUDE_SDK_VERSION = '0.112.1';
 const CLAUDE_RUNTIME_VERSION = 'v26.3.0';
 
@@ -73,7 +73,8 @@ const claudeCode: Profile = {
   id: 'claude-code',
   outbounds: ['anthropic'],
   uaPrefix: /^claude-cli\//i,
-  userAgent: `claude-cli/${CLAUDE_CODE_VERSION} (external, cli)`,
+  // a getter: Anthropic gates new models on this version, so it follows the newest Claude Code (claude-version.ts)
+  get userAgent() { return `claude-cli/${claudeCodeVersion()} (external, cli)`; },
   identity: ({ path }) => [
     { name: 'Accept', value: 'application/json', mode: 'ensure' },
     { name: 'anthropic-version', value: '2023-06-01', mode: 'ensure' },

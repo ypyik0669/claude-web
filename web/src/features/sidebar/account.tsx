@@ -97,7 +97,7 @@ export function AccountMenu({ auth, name, onClose, side }: { auth: AccountAuth |
   // like 自动化: the phone drawer gets out of the way only when something opened (a panel is the bottom drawer there)
   const act = (fn: () => boolean | void) => () => { onClose(); if (fn() !== false) closeDrawer(); };
   const st = useStore.getState;
-  const plan = planLabel(limits?.subscriptionType ?? auth?.subscriptionType);
+  const plan = planLabel(limits?.subscriptionType ?? auth?.subscriptionType, limits?.planName);
   return (
     <Menu onClose={onClose} className="sb-acct-menu" align="left" prefer="up" side={side} label={tr('账户')}>
       <div className="acct-head">

@@ -18,7 +18,11 @@ import { UsageService } from './usage/service.js';
 import { providerTimeline } from './usage/timeline.js';
 import { ATTACH_MAX_BYTES, FilesService, attachmentPath, dataDir, workspaceRoots } from './files/service.js';
 import { TerminalService } from './terminal/service.js';
-import { engineInfo } from './claude-exe.js';
+import { engineInfo, resolveClaudeExe } from './claude-exe.js';
+import { refreshLatestClaudeVersion } from './claude-version.js';
+import { noteInstalledClaudeVersion, updateClaudeBinary } from './engines/claude-update.js';
+import { claudeLive, type ClaudeLiveState } from './usage/claude-live.js';
+import { setLiveClaude } from './models/catalog.js';
 import { MetaStore } from './meta/store.js';
 import { ProviderService } from './providers/service.js';
 import { LimitsService } from './usage/limits.js';
@@ -673,11 +677,33 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
     },
   });
   void bots.start();
-  const services = { importer, customCss, orchestra, background, characters, themes, remote, anywhere, tunnels, im, vcs: new VcsService(gitSvc, { gitlabHosts: () => { const v = meta.settings()['vcs.gitlabHosts']; return Array.isArray(v) ? v : []; }, tokens: vcsTokens }), vcsTokens, wsl, goals, android: new AndroidService(), pool, sessions: sessionsSvc, config, usage: new UsageService(async (sid) => providerTimeline(await canonical.providerSwitches(sid), meta.sessionMeta(sid).providerId, (id) => { const p = meta.provider(id); return p ? { type: p.type, name: p.name } : undefined; })), files, terminal, meta, limits: new LimitsService(), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway, privacy, upstreams, channels, engines, plugins, sync, syncRemote, share, tasks, web, computer, siteAsk, localEnv: localEnvStore, previews, cloud, bots };
+  const services = { importer, customCss, orchestra, background, characters, themes, remote, anywhere, tunnels, im, vcs: new VcsService(gitSvc, { gitlabHosts: () => { const v = meta.settings()['vcs.gitlabHosts']; return Array.isArray(v) ? v : []; }, tokens: vcsTokens }), vcsTokens, wsl, goals, android: new AndroidService(), pool, sessions: sessionsSvc, config, usage: new UsageService(async (sid) => providerTimeline(await canonical.providerSwitches(sid), meta.sessionMeta(sid).providerId, (id) => { const p = meta.provider(id); return p ? { type: p.type, name: p.name } : undefined; })), files, terminal, meta, limits: new LimitsService(() => claudeLive.plan()), schedules: new ScheduleService(meta, pool), providers, git: gitSvc, search: new SearchService(), skills: new SkillsService(), mcp: new McpService(), diag: new DiagService(version), ledger, agents, transcripts, canonical, memory, library, version, federation, agentConfig: new AgentConfigService({ agents, backupDir: path.join(dataDir(), 'config-backups') }), gateway, privacy, upstreams, channels, engines, plugins, sync, syncRemote, share, tasks, web, computer, siteAsk, localEnv: localEnvStore, previews, cloud, bots };
   new Hub(wss, services);
   tasks.start();
   // model lists older than a day (or never pulled) are refreshed in the background — list only, no tokens
   void providers.autoRefreshModels();
+  // Things Anthropic changes without a release of ours, followed live: the account's models and plan name
+  // (usage/claude-live.ts), the newest Claude Code version (claude-version.ts — new models are gated on it), and the
+  // official binary itself (engines/claude-update.ts).
+  setLiveClaude(claudeLive.models());
+  claudeLive.on('change', (s: ClaudeLiveState) => {
+    setLiveClaude(s.models);
+    const ids = meta.providers().filter((p) => p.type === 'claude-account').map((p) => p.id);
+    if (ids.length) void providers.refreshModels(ids).catch(() => {});
+  });
+  claudeLive.start();
+  if (!process.env.CW_NO_MODEL_REFRESH) {
+    const keepCurrent = async () => {
+      await proxy.refresh().catch(() => {});
+      await refreshLatestClaudeVersion();
+      const r = await updateClaudeBinary();
+      if (r.updated) console.log(`[claude] official binary updated to ${r.cli} (package ${r.version})`);
+      else if (r.error) console.error('[claude] binary update check failed:', r.error);
+    };
+    try { void noteInstalledClaudeVersion(resolveClaudeExe(() => null)); } catch { /* not bundled */ }
+    setTimeout(() => void keepCurrent(), 30_000).unref();
+    setInterval(() => void keepCurrent(), 6 * 60 * 60_000).unref();
+  }
 
   await new Promise<void>((res, rej) => {
     server.once('error', rej);

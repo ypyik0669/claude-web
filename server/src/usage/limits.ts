@@ -16,6 +16,8 @@ export interface Limits {
   capturedAt: string;
   windows: LimitWindow[];
   subscriptionType?: string;
+  /** the plan's current name from Anthropic (`organization.plan_display_name`: "Ultra"), when known */
+  planName?: string;
   rateLimitTier?: string;
   error?: string;
 }
@@ -30,6 +32,7 @@ export class LimitsService {
 
   private backoffUntil = 0;
   private inflight: Promise<Limits> | null = null;
+  constructor(private planName: () => string | undefined = () => undefined) {}
 
   /** Cached for 4 minutes; a 429 backs off for 15 minutes. The endpoint rate-limits eagerly. */
   async get(force = false): Promise<Limits> {
@@ -62,7 +65,7 @@ export class LimitsService {
         headers: { Authorization: `Bearer ${o.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'claude-web' },
         signal: AbortSignal.timeout(15_000),
       });
-      if (!r.ok) return { ok: false, capturedAt: now, windows: [], error: `HTTP ${r.status}`, subscriptionType: o.subscriptionType };
+      if (!r.ok) return { ok: false, capturedAt: now, windows: [], error: `HTTP ${r.status}`, subscriptionType: o.subscriptionType, planName: this.planName() };
       const d: any = await r.json();
       const windows: LimitWindow[] = [];
       for (const l of d.limits ?? []) {
@@ -73,7 +76,7 @@ export class LimitsService {
         if (d.five_hour) windows.push({ label: '5h', percent: Math.round(d.five_hour.utilization), resetsAt: d.five_hour.resets_at, active: true });
         if (d.seven_day) windows.push({ label: '7d', percent: Math.round(d.seven_day.utilization), resetsAt: d.seven_day.resets_at, active: false });
       }
-      return { ok: true, capturedAt: now, windows, subscriptionType: o.subscriptionType, rateLimitTier: o.rateLimitTier };
+      return { ok: true, capturedAt: now, windows, subscriptionType: o.subscriptionType, planName: this.planName(), rateLimitTier: o.rateLimitTier };
     } catch (e: any) {
       return { ok: false, capturedAt: now, windows: [], error: e?.message ?? String(e) };
     }
@@ -84,7 +87,7 @@ export class LimitsService {
  * Claude Code's OAuth credentials: `~/.claude/.credentials.json` on Windows / Linux; on macOS the CLI keeps
  * them in the login Keychain instead, so the file is usually absent there.
  */
-async function readCredentials(): Promise<string> {
+export async function readCredentials(): Promise<string> {
   try {
     return await fs.readFile(path.join(claudeDir, '.credentials.json'), 'utf8');
   } catch (e) {

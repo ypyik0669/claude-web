@@ -43,3 +43,11 @@
   1M + 上限 700k → 窗口 700k、阈值 650k、buffer **50k（7.1%）**（上限来自 settings.json 的 env 时也一样）；1M 无上限 → 1M / 930k / 70k；200K（haiku）→ 200k / 167k / 33k；cw.6 同条件 1M / 667k / 333k。
   **官方二进制同样的上限显示 33k（4.7%）**（`claude-opus-5-5[1m]` + 700000 → 700k / 667k，和用户截图一致）：官方按固定 13k 留、在 667k 压缩，ccb 在 650k 压缩——两边各自说的都是自己引擎真会在哪里压缩，所以数字不同是对的；没有上限时官方不显示 buffer 行。
   另：每一行带 SDK 的 `kind`（`used` / `free` / `buffer` / `deferred`；cw.6 没有，前端 `kindOf` 按名字兜底）。没做完的：`controlSchemas.ts` 的 `ContextCategorySchema` 还没有 `kind`，`analyzeContext.ts` 里「33k buffer」的旧注释没改——下次改引擎时顺手。
+
+## 跟着 Anthropic 实时变的东西（2026-11-10，用户报告：Fable 5.2 报「Claude Code 2.1.280 does not support this model」）
+
+- **版本号不写死**：Anthropic 按客户端版本放行新模型（Fable 5.2 要 ≥ 2.1.290）。以前网关指纹写死 `claude-cli/2.1.280`、自带二进制 2.1.283，用户本机的 `claude` 再新也没用（Claude Web 从不调用户装的那个）。现在 `server/src/claude-version.ts` 记「见过的最新版本」：自带 / 下载的二进制 `--version`、npm `@anthropic-ai/claude-code` 的 latest，只往前走，存 `<data>/claude-version.json`；网关 `claude-code` 指纹的 `userAgent` 是 getter。
+- **官方二进制自己更新**：`engines/claude-update.ts` 启动 30 秒后、之后每 6 小时查 `@anthropic-ai/claude-agent-sdk-<平台>-<arch>` 的 latest，比自带新就下 tgz（按 npm 的 integrity 校验）、只解出 `package/claude[.exe]`、跑一次 `--version` 通过才放进 `<data>/engines/claude/<包版本>/`，留最新两份（Windows 上在跑的对话锁着旧文件）。`resolveClaudeExe` 在下载的比自带新时用下载的。`CW_NO_CLAUDE_UPDATE` 关掉。win32 包是一个 346 MB 的 exe，解压时整份在内存里。
+- **账号的模型和套餐名**：`usage/claude-live.ts` 用 OAuth token 拉 `GET /v1/models`（账号能用的模型，新的在前）和 `GET /api/oauth/profile` 的 `organization.plan_display_name`（官方 CLI 也是这么显示的：「Max」现在叫「Ultra」；名字格式不合 CLI 那条正则就不用）。每小时一次，模型菜单的「刷新」也会拉，结果存 `<data>/claude-live.json`；套餐名没拉到时读 `~/.claude.json` 的 `oauthAccount.planDisplayName`。
+- catalog 不直接 import 它（web 也用 catalog）：`index.ts` 调 `setLiveClaude()`。有了实时列表：别名（fable / opus / sonnet / haiku，含 `[1m]`；best / default / opusplan → opus）= 每个家族列表里第一个，2.1.322 实测和官方 CLI 的解析一致；账号的模型菜单 = 每家族最新 + catalog 里非 legacy 的；在跑的对话里 CLI 没报的新模型由 `liveClaudeExtras` 补在后面。别名查表一律 `Object.hasOwn`（`toString` 曾被当成别名）。
+- 中转的模型列表：后台每小时检查，超过 6 小时（`MODEL_REFRESH_MAX_AGE`）就重拉；编辑供应商表单多了「刷新模型」（`providers.probe` 的 `listOnly`，不花 token）。

@@ -29,6 +29,8 @@ import { TerminalService } from '../terminal/service.js';
 import { MetaStore } from '../meta/store.js';
 import { checkExtraFolders, refusePeerUnc } from '../meta/folder-check.js';
 import { LimitsService } from '../usage/limits.js';
+import { claudeLive } from '../usage/claude-live.js';
+import { setLiveClaude } from '../models/catalog.js';
 import { ScheduleService } from '../schedules/service.js';
 import { installedEditors, openPath } from '../runtime/open-path.js';
 import { engineInfo, runClaudeCli } from '../claude-exe.js';
@@ -730,6 +732,8 @@ export class Hub {
       case 'providers.probe':
         return s.providers.probe(req.id, req.provider, { listOnly: req.listOnly });
       case 'providers.refreshModels':
+        // the signed-in account's own list too (the model menu's 刷新 is the user's "fetch the new models")
+        await claudeLive.refresh().then((st) => setLiveClaude(st?.models)).catch(() => {});
         return s.providers.refreshModels(req.ids);
       case 'import.scan':
         return s.importer.scan();

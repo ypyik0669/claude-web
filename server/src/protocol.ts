@@ -475,7 +475,7 @@ export interface Goal { id: string; objective: string; spec: string; cwd: string
 export interface AndroidDevice { serial: string; state: 'device' | 'offline' | 'unauthorized' | 'emulator'; model: string; product: string; emulator: boolean }
 export interface AndroidStatus { adb: string; emulator: string; avds: string[]; devices: AndroidDevice[] }
 
-export interface Limits { ok: boolean; capturedAt: string; windows: LimitWindow[]; subscriptionType?: string; rateLimitTier?: string; error?: string }
+export interface Limits { ok: boolean; capturedAt: string; windows: LimitWindow[]; subscriptionType?: string; planName?: string; rateLimitTier?: string; error?: string }
 
 export interface PermissionRequestEvent {
   requestId: string;
