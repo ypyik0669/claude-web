@@ -4,6 +4,19 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.8] — 2026-11-10
+
+### Fixed
+
+- **Fable 5.2 works.** Conversations on Fable 5.2 failed with "Claude Code 2.1.280 does not support this model; version 2.1.290 or newer is required", through relays and on your own Claude account alike. The bundled Claude Code is now 2.1.322, and the version Claude Web reports follows the newest Claude Code release instead of a fixed number.
+
+### Improved
+
+- **Claude Code updates itself.** When a newer official Claude Code is published, Claude Web downloads it in the background (checked against npm's published hash) and uses it for new conversations, so new models don't wait for a Claude Web release.
+- **Your Claude account's models come from Anthropic.** The model menu lists what your account actually has (Fable 5.2, Opus 5.5, Sonnet 5.5, Haiku 5.5 today) and picks up new models within the hour, or right away with "Refresh".
+- **Refresh a provider's models from its edit form.** A "Refresh models" button next to "Test connection" pulls the provider's model list again (no tokens) and says which models are new. Provider lists also refresh by themselves every few hours.
+- **The plan name is Anthropic's own,** so a renamed plan shows its current name (Max is now "Ultra").
+
 ## [0.5.7] — 2026-11-05
 
 ### Added

@@ -4,6 +4,19 @@
 
 每个版本的变化都记在这里；安装包在 [Releases](https://github.com/ypyik0669/claude-web/releases) 下载。版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.5.8] — 2026-11-10
+
+### 修复
+
+- **Fable 5.2 能用了。** 以前用 Fable 5.2 会报「Claude Code 2.1.280 does not support this model; version 2.1.290 or newer is required」，走中转和用自己的 Claude 账号都一样。现在自带的 Claude Code 是 2.1.322，Claude Web 报出去的版本号也跟着 Claude Code 最新版走，不再写死。
+
+### 改进
+
+- **Claude Code 自己更新。** 官方 Claude Code 出新版后，Claude Web 在后台下载（按 npm 公布的校验值核对），新对话就用上，新模型不用等 Claude Web 发版。
+- **Claude 账号的模型直接问 Anthropic。** 模型菜单列的是你账号实际能用的模型（现在是 Fable 5.2、Opus 5.5、Sonnet 5.5、Haiku 5.5），有新模型一小时内出现，点「刷新」立刻出现。
+- **编辑供应商时可以刷新模型。** 「测试连接」旁边多了「刷新模型」，重新拉这个供应商的模型列表（不花 token），并提示新增了哪些。供应商的模型列表也会每隔几小时自己刷新。
+- **套餐名用 Anthropic 自己的叫法，** 改了名就显示新名字（Max 现在叫「Ultra」）。
+
 ## [0.5.7] — 2026-11-05
 
 ### 新增
