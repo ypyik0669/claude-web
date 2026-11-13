@@ -102,11 +102,13 @@ function anthropic(s, j, h, raw) {
   const use = (w, id) => {
     // the tool directly, or through the engine's deferred-tool runner
     const { name, input } = w;
-    const direct = h.tools.includes(name);
-    h.called = direct ? 'direct' : 'extra';
+    // the official binary (2.1.322+) keeps most MCP tools out of the list behind its own ToolSearch: once looked up,
+    // the model calls the tool by its own name (there is no ExecuteExtraTool there)
+    const direct = h.tools.includes(name) || !h.tools.includes('ExecuteExtraTool');
+    h.called = h.tools.includes(name) ? 'direct' : direct ? 'searched' : 'extra';
     return sse(s, j, [direct ? { type: 'tool_use', id, name, input } : { type: 'tool_use', id, name: 'ExecuteExtraTool', input: { tool_name: name, params: input } }], 'tool_use');
   };
-  // our engine runs a deferred tool only after SearchExtraTools found it, the way a model first looks it up (the
+  // both engines run a deferred tool only after their search tool (SearchExtraTools / ToolSearch) found it, the way a model first looks it up (the
   // lookup's id says which tool the turn wanted)
   const looked = tr && searches.get(String(tr.tool_use_id));
   if (looked) { searches.delete(String(tr.tool_use_id)); return use(looked, `toolu_use_${++call}`); }
@@ -116,10 +118,11 @@ function anthropic(s, j, h, raw) {
   const go = /TOOL-GO (\w+) (\{.*\})/.exec(t);
   const w = /EGO-GO/.test(t) ? WANT.ego : /EVAL-GO/.test(t) ? WANT.eval : go ? { name: `mcp__web__${go[1]}`, input: JSON.parse(go[2]) } : null;
   if (w) {
-    if (!h.tools.includes(w.name) && h.tools.includes('SearchExtraTools')) {
+    const search = ['SearchExtraTools', 'ToolSearch'].find((n) => h.tools.includes(n));
+    if (!h.tools.includes(w.name) && search) {
       const id = `toolu_search_${++call}`;
       searches.set(id, w);
-      return sse(s, j, [{ type: 'tool_use', id, name: 'SearchExtraTools', input: { query: `select:${w.name}`, max_results: 3 } }], 'tool_use');
+      return sse(s, j, [{ type: 'tool_use', id, name: search, input: { query: `select:${w.name}`, max_results: 3 } }], 'tool_use');
     }
     return use(w, `toolu_use_${++call}`);
   }
@@ -378,7 +381,7 @@ async function suite(runtime) {
   await req({ kind: 'session.send', params: { sessionId: o2.sessionId, text: 'hello' } });
   await resultOf(o2.sessionId, from2);
   const h2 = hits.slice(mark2).find((h) => h.main);
-  check('… then a new conversation has no ego tools (the built-in browser\'s are still there)', !!h2 && !h2.mentionsEgo && (h2.tools.includes('mcp__web__browser_open') || /ExecuteExtraTool/.test(h2.tools.join())), JSON.stringify(h2?.tools?.filter((t) => /web__/.test(t))));
+  check('… then a new conversation has no ego tools (the built-in browser\'s are still there)', !!h2 && !h2.mentionsEgo && (h2.tools.includes('mcp__web__browser_open') || /ExecuteExtraTool|ToolSearch/.test(h2.tools.join())), JSON.stringify(h2?.tools?.filter((t) => /web__/.test(t))));
   await req({ kind: 'session.close', sessionId: o2.sessionId }).catch(() => {});
   await req({ kind: 'settings.set', key: 'web.browser.agent', value: null });
 }

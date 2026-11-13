@@ -112,3 +112,14 @@
   `claude-web <id8>` Space 建出来、`page.goto/snapshot/screenshot` 都通，截图作为图片块回来。**2.x 把脚本的 `console.log`
   打在 stderr 上**：退出码 0、stdout 空时 stderr 当「输出：」显示，不再标「错误输出」（以前模型会以为脚本出错）。
   还没做的：经真对话让 Claude 自己调 `ego_browser`。
+
+## 官方二进制 2.1.322 起 MCP 工具在 ToolSearch 后面（2026-11-13，e2e 第 40 段挂 11 项）
+
+- 0.5.8 把自带的官方 Claude Code 升到 2.1.322 之后，它经供应商（中转）跑时默认也开工具搜索：请求里只有 14 个内置工具 + `ToolSearch` +
+  一个 `DeferredToolPlaceholder`（`defer_loading`），`web` 服务器里只有 `alwaysLoad` 的那几个（`browser_computer` / `browser_screenshot` /
+  `ego_browser` …）还在列表里，`browser_open` / `browser_eval` / `browser_scroll` 这些要先 `ToolSearch`（`select:<名字>`）再**按原名**调用。
+  官方二进制没有 `ExecuteExtraTool`（那是我们的引擎的）。
+- 第 40 段的假上游以前「不在列表里就走 `ExecuteExtraTool`」，在官方二进制上得到 `No such tool available: ExecuteExtraTool`，11 项全挂在这。
+  产品这边没坏：假上游学会 `ToolSearch` 之后 91/91——网站卡、允许的网站、完全放开在官方二进制上都照旧。
+- 没验的：真中转上 `ToolSearch` 回来的 `tool_reference` 块对方认不认（把 Anthropic 格式转给别家模型的中转可能不认，那样官方二进制上这些
+  延迟的工具就调不到）。要关可以给对话的环境变量设 `ENABLE_TOOL_SEARCH=false`（二进制里 `upe()`：false → 全部内联）。
