@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import type { SessionSummary } from '../protocol.js';
 import { watchTree, type TreeWatcher } from '../runtime/watch-tree.js';
 import { findClaudeTranscript, hasClaudeTranscript, transcriptRoots } from '../runtime/transcript-file.js';
+import { forkAnchor } from './fork-anchor.js';
 import { closeSync, openSync, readFileSync, readSync, readdirSync, type Dirent } from 'node:fs';
 import { TranscriptTitles, type Titles } from './titles.js';
 import { BRIEFING_HEAD } from '../session/handoff.js';
@@ -264,7 +265,8 @@ export class SessionService extends EventEmitter {
   async fork(sessionId: string, upToMessageId?: string): Promise<string> {
     const info = await getSessionInfo(sessionId);
     const named = info && (await this.info(sessionId));
-    const r = await forkSession(sessionId, { dir: info?.cwd, upToMessageId, title: named ? forkTitle(named.title) : undefined });
+    // a live conversation names a multi-block message by a per-block uuid the transcript does not have (fork-anchor.ts)
+    const r = await forkSession(sessionId, { dir: info?.cwd, upToMessageId: forkAnchor(findClaudeTranscript(sessionId), upToMessageId), title: named ? forkTitle(named.title) : undefined });
     this.bump();
     return r.sessionId;
   }

@@ -197,6 +197,23 @@ describe('RunnerPool', () => {
     expect(() => p.providerSaved('ds')).not.toThrow();
   });
 
+  it('a provider deleted in settings: its idle conversations close now, one mid-turn as the turn ends; others stay', async () => {
+    const p = new RunnerPool({ forSession: (id?: string) => ({ id, type: 'openai' }) } as any);
+    const idle: any = p.open({ sessionId: 'idle', cwd: '/x', providerId: 'ds' });
+    const busy: any = p.open({ sessionId: 'busy', cwd: '/x', providerId: 'ds' });
+    const other: any = p.open({ sessionId: 'other', cwd: '/x', providerId: 'keep' });
+    for (const r of [idle, busy, other]) { r.info.providerId = r.params.providerId; r.state = 'idle'; }
+    busy.state = 'running';
+    p.providerRemoved('ds');
+    expect([idle.closeCalls, busy.closeCalls, other.closeCalls]).toEqual([1, 0, 0]);
+    expect(p.get('idle')).toBeUndefined();
+    busy.state = 'idle';
+    busy.emit('state', 'idle');
+    expect(busy.closeCalls).toBe(1);
+    expect(p.get('busy')).toBeUndefined();
+    expect(p.get('other')).toBe(other);
+  });
+
   it('closeAll survives a runner whose close rejects', async () => {
     const p = pool();
     const a: any = p.open({ sessionId: 's3', cwd: '/x' });

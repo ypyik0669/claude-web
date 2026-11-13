@@ -175,3 +175,21 @@
   （`trackBackground` 之前，聊天里的运行卡和后台页都用这一份）；跑完的 run 文件（引擎自己写的，同样是主模型）在 `disk.ts readRun` 里按每个代理自己 transcript
   第一条助手消息的 model 改（`firstModel`）。运行行「routego/gpt-6.1-sol · 任务输出」是主对话自己在等 TaskOutput，那是对的。
 - 测试：`session-runner.test.ts`「a workflow's agents are reported on the subagent model」、`disk.test.ts`「an agent's model is what its own transcript asked for」。
+
+## 供应商改了类型 / 被删了，在跑的对话（2026-11-13 用户报告：「API Error: 404 没有这个 OpenAI / Grok 型档案：085wm1p2」）
+
+- **现象**：对话在 OpenAI 格式的供应商上跑着（进程的 `OPENAI_BASE_URL` 指向缓存垫片 `/gateway/~p/<id>`），用户把这个供应商改成
+  Anthropic 格式保存。保存会 `reprovide` → 重开进程，但有后台任务时一直等；旧进程每一轮都打到垫片，垫片只认 openai / grok，
+  回 404（11ms、$0，请求没出本机）。重试、重选模型都不换进程，所以怎么点都一样；把类型改回 OpenAI 就又通了。
+- **改了什么**：
+  - `reprovide` 发现 `type` 变了 → `respawnWhenIdle(true)`（`respawnForced`）：不等后台任务（那个进程已经发不出请求，后台的也是死的），
+    正在跑的一轮还是等它结束。其它设置变更照旧等后台任务。
+  - 删除供应商：`ProviderService.onRemoved` → `pool.providerRemoved(id)`（index.ts 接的，设置里删、来源 / 托管程序移除都走这里）：
+    空闲的对话马上关进程，正在跑的等这一轮结束再关。下一句话重开时 `resolveProvider` 落到默认供应商。
+  - 垫片的 404 分两句：档案没了 / 类型改过了，都说该怎么做，不再甩 id。
+- **顺带：分叉报 `Message …-000000000001 not found in session`**。CLI 给多块内容的消息在流上按块派生 uuid（消息自己的 uuid 前 24 位 +
+  块序号 12 位十六进制，二进制里 `cMn`），磁盘上只有消息自己的 uuid，`forkSession({ upToMessageId })` 找不到。从磁盘加载的对话没这个问题，
+  所以只有「在跑的对话里点刚出来的回复分叉」会中。`sessions/fork-anchor.ts` 的 `forkAnchor` 在磁盘上没有这个 uuid 时按前 24 位找回原 uuid
+  （`sessions.fork` 和 runner 的 `resumeSessionAt` 都过一遍）。
+- **没做 / 没验**：只有单元测试（runner、pool、垫片、fork-anchor），没有在真机上复现整条经过。`providers.upsert` 以外改类型的路
+  （来源驱动直接写 meta）不会触发 `reprovide`。

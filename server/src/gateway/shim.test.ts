@@ -323,8 +323,14 @@ describe('cache shim: access', () => {
   it('only the internal key, only loopback, only openai / grok profiles', async () => {
     expect((await post('ds', 's', chatBody('x'), { authorization: 'Bearer nope' })).status).toBe(401);
     expect((await post('ds', 's', chatBody('x'), {}, remoteRoot)).status).toBe(404);
-    expect((await post('ant', 's', chatBody('x'))).status).toBe(404);
-    expect((await post('missing', 's', chatBody('x'))).status).toBe(404);
+    // a process that outlived its profile's kind / the profile itself: told what to do, not shown an id (2026-11-13)
+    const ant = await post('ant', 's', chatBody('x'));
+    expect(ant.status).toBe(404);
+    expect(ant.text).toMatch(/类型改过了/);
+    expect(ant.text).not.toContain('"ant"');
+    const gone = await post('missing', 's', chatBody('x'));
+    expect(gone.status).toBe(404);
+    expect(gone.text).toMatch(/已经删掉了/);
     expect(U.hits).toHaveLength(0);
   });
   it('the key is per profile: one session\'s key does not open another profile', async () => {

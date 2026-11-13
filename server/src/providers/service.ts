@@ -426,6 +426,8 @@ export class ProviderService {
   gatewayEndpoint: ((groupId: string) => { baseUrl: string; key: string; runtime?: RuntimeKind; leanTools?: boolean } | null) | null = null;
   /** Set by the server: the prompt-cache shim for an openai / grok profile (null = not listening yet). */
   shimEndpoint: ((providerId: string) => { base: string; key: string } | null) | null = null;
+  /** Set by the server: a profile was deleted (settings, a source or a managed program removed) — its running conversations end. */
+  onRemoved: ((providerId: string) => void) | null = null;
   /** Set by the channel service: a free-only source keeps only its free models from the pulled list (channels/catalog.ts). */
   modelFilter: ((providerId: string, models: string[]) => string[]) | null = null;
   private keepModels(id: string, models: string[]): string[] { return this.modelFilter ? this.modelFilter(id, models) : models; }
@@ -651,6 +653,7 @@ export class ProviderService {
       await this.meta.saveGateway();
     }
     await this.meta.removeProvider(id);
+    this.onRemoved?.(id);
   }
   /**
    * Probe a saved profile (by id, keeps the stored key) or an unsaved draft; saves the model list on success.

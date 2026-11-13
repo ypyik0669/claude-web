@@ -147,6 +147,27 @@ export class RunnerPool extends EventEmitter {
   }
 
   /**
+   * A provider was deleted in settings: its running conversations' processes end — now when idle, else as their turn
+   * ends. They could not restart on it, and one on an OpenAI / Grok profile cannot even send (the cache shim no longer
+   * knows the profile: 404 on every turn). The next message reopens the conversation on the default provider
+   * (resolveProvider), or the user picks a model.
+   */
+  providerRemoved(id: string) {
+    for (const r of new Set(this.runners.values())) {
+      if (r.info.providerId !== id || this.orphaned.has(r)) continue;
+      if (r.state === 'running' || r.state === 'waiting') this.orphaned.add(r);
+      else this.end(r);
+    }
+  }
+  /** close a runner under whichever key the map holds it (its own id until init, the session's after) */
+  private end(r: AgentDriver) {
+    for (const [k, v] of [...this.runners]) if (v === r) this.runners.delete(k);
+    void r.close().catch(() => { /* already gone */ });
+  }
+  /** runners whose provider was deleted mid-turn: closed as the turn ends */
+  private orphaned = new WeakSet<AgentDriver>();
+
+  /**
    * 思考用的语言 changed: one conversation's pick (`sessionId`, `own`: '' = the setting), or the setting / the interface
    * language (no id: every running Claude conversation). Each restarts once idle if its instruction changed.
    */
@@ -349,6 +370,8 @@ export class RunnerPool extends EventEmitter {
       this.emit('state', r.sessionId, s, s === 'error' && err ? withExplanation(err) : err);
       // after init the map may be keyed by sessionId rather than id; only drop entries that still point at this runner
       if (s === 'closed') for (const k of [r.id, r.sessionId]) if (this.runners.get(k) === r) this.runners.delete(k);
+      // its provider was deleted during the turn (providerRemoved): the turn is over
+      if (s === 'idle' && this.orphaned.has(r)) { this.orphaned.delete(r); this.end(r); }
     });
     r.on('info', (i) => {
       // session id can be assigned by init (new session) — keep the map keyed by the real id

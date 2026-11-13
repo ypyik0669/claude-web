@@ -143,7 +143,9 @@ export class CacheShim {
     try { providerId = decodeURIComponent(m[1]); cacheKey = decodeURIComponent(m[2] ?? ''); sessionId = decodeURIComponent(m[3] ?? '') || cacheKey; } catch { return this.fail(res, 400, tr('地址编码错误')); }
     if (!this.keyOk(req, providerId)) return this.fail(res, 401, tr('缓存垫片密钥无效（只接受本进程发给这个供应商的对话的内部密钥）'));
     const p = this.deps.member(providerId);
-    if (!p || (p.type !== 'openai' && p.type !== 'grok')) return this.fail(res, 404, tr('没有这个 OpenAI / Grok 型档案：{providerId}', { providerId }));
+    // a process started on this profile outlived it (deleted, or saved as another kind): say what to do, not an id
+    if (!p) return this.fail(res, 404, tr('这个对话用的供应商已经删掉了，或者它的密钥读不出来了。在模型菜单里重新选一个模型；还不行就退出应用再打开。'));
+    if (p.type !== 'openai' && p.type !== 'grok') return this.fail(res, 404, tr('供应商「{name}」的类型改过了，这个对话还在用原来的那种。退出应用再打开，或者把对话分叉出去接着聊。', { name: p.name }));
     let rest = m[4] ?? '/';
     if (!/^\/v\d/.test(rest)) rest = `/v1${rest === '/' ? '' : rest}`;
     const method = (req.method ?? 'GET').toUpperCase();

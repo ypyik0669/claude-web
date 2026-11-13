@@ -534,6 +534,8 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
   upstreams.onGatewayGroups = () => { void gateway.syncProfiles().catch(() => {}); };
   providers.gatewayEndpoint = (groupId) => gateway.endpoint(groupId);
   providers.shimEndpoint = (providerId) => gateway.shimEndpoint(providerId);
+  // a deleted profile's running conversations end (they cannot restart on it; an OpenAI / Grok one cannot even send)
+  providers.onRemoved = (id) => pool.providerRemoved(id);
   // 隐私保护 on: providers not behind the gateway / shim get the privacy relay as their base URL (privacy/route.ts)
   setPrivacyRoute((target) => gateway.privacyBase(target));
   setSplitHook({ endpoint: (main, sub, model) => gateway.splitEndpoint(main, sub, model), target: (id) => providers.subagentTarget(id) });

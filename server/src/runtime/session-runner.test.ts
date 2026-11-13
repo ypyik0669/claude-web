@@ -322,6 +322,41 @@ describe('SessionRunner: the provider saved in settings', () => {
     await r.close();
   });
 
+  // 2026-11-13 user report: a profile saved as Anthropic format while its conversation (started on OpenAI format, a
+  // background task listed) kept its process — every turn 404'd at the cache shim, retry and model re-pick included
+  it('saved as another kind of profile: the restart does not wait for background work (that process cannot send any more)', async () => {
+    queries.length = 0;
+    const r = new SessionRunner({ sessionId: 'w-k', cwd: '/x', model: 'deepseek-v4.1-flash' } as any, { ...prov, type: 'openai' });
+    await tick();
+    r.send('go');
+    queries[0].push({ type: 'system', subtype: 'task_started', task_id: 'bg1', session_id: 'w-k', uuid: 's1' });
+    queries[0].push({ type: 'result', subtype: 'success', session_id: 'w-k', uuid: 'r1', is_error: false, result: 'waiting' });
+    await tick();
+    expect(r.hasBackgroundWork()).toBe(true);
+    await r.reprovide({ ...prov, type: 'anthropic' });
+    await tick();
+    expect(queries).toHaveLength(2);
+    expect(queries[1].options.env.ANTHROPIC_BASE_URL).toBe('https://relay');
+    expect(queries[1].options.env.CLAUDE_CODE_USE_OPENAI).toBeUndefined();
+    await r.close();
+  });
+
+  it('saved as another kind mid-turn, background work still going at its end: restarts as the turn ends', async () => {
+    queries.length = 0;
+    const r = new SessionRunner({ sessionId: 'w-m', cwd: '/x', model: 'deepseek-v4.1-flash' } as any, { ...prov, type: 'openai' });
+    await tick();
+    r.send('go');
+    queries[0].push({ type: 'system', subtype: 'task_started', task_id: 'bg1', session_id: 'w-m', uuid: 's1' });
+    await tick();
+    await r.reprovide({ ...prov, type: 'anthropic' });
+    await tick();
+    expect(queries).toHaveLength(1); // the turn is not cut off
+    queries[0].push({ type: 'result', subtype: 'success', session_id: 'w-m', uuid: 'r1', is_error: true, result: 'API Error: 404' });
+    await tick();
+    expect(queries).toHaveLength(2);
+    await r.close();
+  });
+
   it('idle but with background subagents running: the restart waits until they are back (it would kill them)', async () => {
     queries.length = 0;
     const r = new SessionRunner({ sessionId: 'w-2', cwd: '/x', model: 'deepseek-v4.1-flash' } as any, prov);

@@ -13,6 +13,7 @@ import { addTranscriptRoot, dropEmptyBlocks, findClaudeTranscript, hasClaudeTran
 import { compactCap, ownAnthropicBase, ownOverride, settingsOverride, userAnthropicEnv } from './user-env.js';
 import { providerKey, splitSupport, subAlias, subagentTarget, unalias, type SplitKind, type SubagentPick } from '../models/subagent.js';
 import { splitEndpoint, splitTarget, type SplitSub } from '../gateway/split.js';
+import { forkAnchor } from '../sessions/fork-anchor.js';
 import { desktopSkillsPlugin } from './desktop-skills.js';
 import { writeFlagSettings, type FlagSettings } from './flag-settings.js';
 import { resolveEngine, spawnClaude } from '../claude-exe.js';
@@ -242,6 +243,12 @@ export class SessionRunner extends EventEmitter {
   private planKey = '';
   /** a restart asked for during a turn: done when that turn's result arrives */
   private respawnPending = false;
+  /**
+   * The restart under way / pending does not wait for background work: the process cannot reach its provider any more
+   * (the profile's kind changed under it), so that work is dead too (2026-11-13 user report: a profile switched from
+   * OpenAI to Anthropic format, a background task still listed — every turn 404'd at the cache shim, retry after retry).
+   */
+  private respawnForced = false;
   /** the next start takes empty blocks out of the transcript first (dropEmptyBlocks): set by that 400 and by a model switch */
   private repairEmptyBlocks = false;
   /** …and every thinking block with them: the API refused a signature */
@@ -333,7 +340,7 @@ export class SessionRunner extends EventEmitter {
     const briefFirst = !!params.resumeEntries?.length && !mirror ? params.briefing : undefined;
     // an id that never ran a turn has nothing to resume: start a new conversation on the same id
     this.hasTranscript = !!params.sessionId && (isFork || mirror || hasClaudeTranscript(params.sessionId));
-    const extra: Partial<Options> = this.hasTranscript ? { resume: params.sessionId, forkSession: isFork, resumeSessionAt: params.resumeAt } : { sessionId: this.sessionId };
+    const extra: Partial<Options> = this.hasTranscript ? { resume: params.sessionId, forkSession: isFork, resumeSessionAt: params.resumeAt && params.sessionId ? forkAnchor(findClaudeTranscript(params.sessionId), params.resumeAt) : params.resumeAt } : { sessionId: this.sessionId };
     if (mirror && params.resumeEntries) {
       const entries = params.resumeEntries;
       extra.resume = this.sessionId;
@@ -914,7 +921,7 @@ export class SessionRunner extends EventEmitter {
       void change().then(() => { if (pending && this.q === q && !this.closed) return this.respawnWhenIdle(); }).catch(() => { /* the old process keeps going */ });
       return;
     }
-    if (m.type === 'result' && this.respawnPending && !this.closed && !this.hasBackgroundWork()) {
+    if (m.type === 'result' && this.respawnPending && !this.closed && (this.respawnForced || !this.hasBackgroundWork())) {
       this.respawnPending = false;
       void this.respawn();
     }
@@ -925,8 +932,9 @@ export class SessionRunner extends EventEmitter {
    * over (a restart would cut the turn off, and kill the background work: 2026-10-19, a settings change restarted a
    * conversation idling while its subagents worked).
    */
-  private respawnWhenIdle(): Promise<void> {
-    if (this.busy() || this.hasBackgroundWork()) { this.respawnPending = true; return Promise.resolve(); }
+  private respawnWhenIdle(force = false): Promise<void> {
+    if (force) this.respawnForced = true;
+    if (this.busy() || (this.hasBackgroundWork() && !this.respawnForced)) { this.respawnPending = true; return Promise.resolve(); }
     return this.respawn();
   }
 
@@ -1508,7 +1516,9 @@ export class SessionRunner extends EventEmitter {
     }
     else this.provider = p;
     this.noteWindow();
-    if (changed) await this.respawnWhenIdle();
+    // another kind of profile (OpenAI ↔ Anthropic format…): the running process talks to an endpoint that no longer
+    // answers for it — nothing in it, background work included, can finish, so the restart does not wait for that
+    if (changed) await this.respawnWhenIdle(cur.type !== p.type);
   }
 
   /**
@@ -1636,6 +1646,7 @@ export class SessionRunner extends EventEmitter {
 
   private async respawnNow() {
     this.respawning = true;
+    this.respawnForced = false;
     try {
       const old = this.q;
       this.q = null; // detach first: the old pump sees it was replaced and doesn't report 'closed'
