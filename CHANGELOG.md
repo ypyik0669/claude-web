@@ -4,6 +4,15 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.9] — 2026-11-13
+
+### Fixed
+
+- **Changing a provider's type no longer breaks its running conversations.** A conversation started on an "OpenAI compatible" provider that was then saved as "Anthropic compatible" (or the other way round) failed every turn with "API Error: 404", and retrying or picking the model again did not help while a background task was listed. The conversation now restarts on the new type right away.
+- **Deleting a provider ends the conversations running on it,** so they no longer fail on every message; the next message continues on your default provider.
+- **That 404 now says what happened** (the provider was deleted, or its type was changed) and what to do, not an id.
+- **Forking at a reply that just arrived works.** It failed with "Message … not found in session" when the reply had both thinking and text; conversations reopened from the list were not affected.
+
 ## [0.5.8] — 2026-11-10
 
 ### Fixed
