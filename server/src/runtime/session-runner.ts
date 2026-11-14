@@ -566,6 +566,14 @@ export class SessionRunner extends EventEmitter {
     const sub = splitAlias ?? (sameSub ? this.engineModel(engine.kind, sameSub) : undefined);
     if (sub) { fenv.CLAUDE_CODE_SUBAGENT_MODEL = sub; fenv.CLAUDE_CODE_SUBAGENT_MODEL_FORCE = '1'; }
     this.subRuns = sub ? unalias(sub) : '';
+    // The subagents' prompt cache lasts as long as the conversation's own (2026-11-14 user report: 「子代理好像没有 1h 缓存」;
+    // the user's call: the same as the main one, no switch). The official binary keeps the main conversation's for an
+    // hour on a Claude login and everything else — subagents, workflows, background requests — for 5 minutes; a
+    // provider's 1 小时提示缓存 (ENABLE_PROMPT_CACHING_1H) covers both, but an agent's own `cacheTtl: 5m` goes over it.
+    // Not when the subagents run somewhere else (the split route: that provider may not take ttl 1h), not on the
+    // login's own relay (an API key: the main conversation is on 5 minutes there), and never over the user's own value.
+    const hourMain = this.provider ? this.provider.type === 'anthropic' && !!this.provider.cache1h : this.account ? true : !ownAnthropicBase(this.cwd);
+    if (engine.kind === 'claude' && hourMain && !splitAlias && !('CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL' in fenv) && !process.env.CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL && !fenv.FORCE_PROMPT_CACHING_5M && !process.env.FORCE_PROMPT_CACHING_5M) fenv.CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL = '1h';
     // 下一句提示: the `promptSuggestions` option alone did not bring one on the official binary (2026-10-16, a real
     // two-turn conversation); with the CLI's own switch it did
     if (promptSuggestionsOn && !('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION' in fenv) && process.env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION === undefined) fenv.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = '1';

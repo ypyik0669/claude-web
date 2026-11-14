@@ -25,3 +25,14 @@
 
 - **「缓存 0%」的说明**（2026-10-14 朋友：super-nb 上一轮 211K、$1.09、缓存 0%）：多半是隔了 5 分钟以上才发下一条，提示缓存过期，整段上下文按全价重读（他的 super-nb 档案走官方二进制，打开「1 小时提示缓存」就有效；ccb 不认 `ENABLE_PROMPT_CACHING_1H`：它的 1h 只给 Bedrock 或者 GrowthBook 白名单）。reducer 给每个 result 记 `idleBeforeMs`（这一轮开始 − 上一个 result 的时间），`tokens.ts coldCache()`：输入 ≥ 20K、命中 < 5%、间隔 > 5 分钟时，那一行多一段「隔了 12 分钟，缓存已过期」，悬停说明和「1 小时提示缓存」在哪。
 - **没在本窗口跑的轮次也有那一行**：CLI 的记录里没有 result 行。`transcript.load` 前 `sessions/history.ts withTurnStats()` 在每一轮（人打的消息到下一条之间）末尾补一个 `cw_history` 的 result：账本里有这一轮（`LedgerService.rowsFor()`，按会话建一次索引、之后随 `record()` 更新）就用账本的时间 / 步数 / 费用 / token，没有就按回答的 usage（每个 message.id 一次调用）算、不带费用（`cw_cost_absent` → 那一行不写费用，合计算「未知」）。正在跑的对话最后一轮不补；最后一条回答停在 tool_use 且账本没有的也不补（被打断的、中途插话的）。
+
+## 子代理的缓存跟主对话一样长（2026-11-14 用户报告：「子代理好像没有 1h 缓存」）
+
+- 官方二进制（2.1.322，`fwn` / `SMe`）：主对话（`repl_main_thread*` / `sdk`）在 Claude 登录上 1 小时，**其它一切**——子代理、工作流、
+  后台请求——5 分钟；`ENABLE_PROMPT_CACHING_1H`（供应商的「1 小时提示缓存」）两边都管，但代理自己写的 `cacheTtl: 5m` 压过它。
+  子代理这一侧它认 `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`（或设置 `subagentPromptCacheTtl`），主对话认 `CLAUDE_CODE_PROMPT_CACHE_TTL`。
+- 用户的决定：跟主对话一样，不加开关。runner 启动官方二进制时，主对话是 1 小时的（自己的登录且没走自己的中转、其它 Claude 账号、
+  开了 `cache1h` 的 anthropic 供应商）就设 `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h`。不设的情况：子代理走分流路由去了别家（那家未必认
+  `ttl: 1h`）、ccb（不认这个变量）、用户自己设了这个变量或 `FORCE_PROMPT_CACHING_5M`。
+- **代价和没验的**：1 小时的写入是 2× 基础价（5 分钟 1.25×），几分钟就跑完的子代理会多花写入。账号超出套餐额度（overage）时官方把
+  主对话退回 5 分钟，但这个变量照样让子代理 1 小时——那时两边不一样。只有单元测试看了环境变量，没有拿真账号看子代理请求里的 `ttl`。

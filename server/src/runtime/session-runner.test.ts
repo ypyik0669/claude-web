@@ -2606,3 +2606,36 @@ describe('值班 Bot gate', () => {
     });
   });
 });
+
+// 2026-11-14 user report: 「子代理好像没有 1h 缓存」 — the official binary keeps the main conversation's prompt cache for an
+// hour on a Claude login and the subagents' for 5 minutes; the user's call: the same as the main conversation
+describe('SessionRunner: the subagents get the prompt cache lifetime of the conversation', () => {
+  const KEY = 'CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL';
+  const acct = { id: 'acc2', name: '工作号', type: 'claude-account', baseUrl: '', apiKey: 'sk-ant-oat01-' + 'x'.repeat(60), models: [] } as any;
+  const relay = (extra: Record<string, unknown> = {}) => ({ id: 'p1', name: 'relay', type: 'anthropic', runtime: 'claude', baseUrl: 'https://relay.invalid', apiKey: 'k', models: ['claude-opus-5-5'], ...extra }) as any;
+  const envOf = async (params: Record<string, unknown>, provider: any) => {
+    queries.length = 0;
+    const r = new SessionRunner({ cwd: '/x', model: 'claude-opus-5-5', ...params } as any, provider);
+    await tick();
+    const env = queries[0].options.env ?? {};
+    await r.close();
+    return env;
+  };
+  it('a Claude account (1 hour for the main conversation): 1 hour for the subagents too', async () => {
+    expect((await envOf({ sessionId: 'ttl-1' }, acct))[KEY]).toBe('1h');
+  });
+  it('a provider with 1 小时提示缓存 on: 1 hour; off: left alone (the main conversation is on 5 minutes)', async () => {
+    expect((await envOf({ sessionId: 'ttl-2' }, relay({ cache1h: true })))[KEY]).toBe('1h');
+    expect((await envOf({ sessionId: 'ttl-3' }, relay()))[KEY]).toBeUndefined();
+  });
+  it('the own relay of the login (an API key, 5 minutes): left alone', async () => {
+    process.env.ANTHROPIC_BASE_URL = 'https://relay.invalid';
+    try { expect((await envOf({ sessionId: 'ttl-4' }, undefined))[KEY]).toBeUndefined(); } finally { delete process.env.ANTHROPIC_BASE_URL; }
+  });
+  it('a value the user set stays; our engine does not read the variable', async () => {
+    expect((await envOf({ sessionId: 'ttl-5', features: { env: { [KEY]: '5m' } } }, acct))[KEY]).toBe('5m');
+    expect((await envOf({ sessionId: 'ttl-6', features: { env: { FORCE_PROMPT_CACHING_5M: '1' } } }, acct))[KEY]).toBeUndefined();
+    eng.kind = 'ccb';
+    try { expect((await envOf({ sessionId: 'ttl-7' }, acct))[KEY]).toBeUndefined(); } finally { eng.kind = 'claude'; }
+  });
+});
