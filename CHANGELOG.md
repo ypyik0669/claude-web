@@ -4,6 +4,16 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.10] — 2026-11-14
+
+### Fixed
+
+- **A conversation no longer breaks when a model fills in a tool wrongly.** A conversation could turn into "Something went wrong here — TypeError: e.questions?.map is not a function" and stay that way after retrying or restarting the app, because a model had sent a question card's questions in the wrong shape. Such a step is now shown plainly and the rest of the conversation stays readable; conversations that broke this way open again after updating.
+
+### Improved
+
+- **Sub-agents keep their prompt cache as long as the conversation does.** On the official Claude Code, a conversation on a Claude account (or on a provider with "1-hour prompt cache" on) cached for an hour while its sub-agents, workflows and background requests only cached for 5 minutes. They now cache for an hour too. Sub-agents running on another provider's model are unchanged.
+
 ## [0.5.9] — 2026-11-13
 
 ### Fixed
