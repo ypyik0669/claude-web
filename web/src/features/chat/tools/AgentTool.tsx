@@ -1,3 +1,4 @@
+import { askQuestions } from '../ask-card';
 import { WorkflowLive } from '@/features/background/WorkflowLive';
 import { useState } from 'react';
 import type { ToolUseBlock } from '@/model/conversation';
@@ -104,8 +105,9 @@ export function PlanBody({ t }: { t: ToolUseBlock }) {
 
 export function AskUserBody({ t }: { t: ToolUseBlock }) {
   const inp = t.input as any;
-  const qs: any[] = inp.questions ?? [];
-  const answers: Record<string, string> = inp.answers ?? (t.result?.structured as any)?.answers ?? {};
+  const qs = askQuestions(inp);
+  const given = inp?.answers ?? (t.result?.structured as any)?.answers;
+  const answers: Record<string, string> = given && typeof given === 'object' ? given : {};
   return (
     <div className="ask">
       {qs.map((q, i) => (

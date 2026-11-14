@@ -1,4 +1,5 @@
-import type { ComponentType } from 'react';
+import { Component, type ComponentType } from 'react';
+import { askQuestions } from '../ask-card';
 import type { IconName } from '@/ui/icons';
 import type { ToolUseBlock } from '@/model/conversation';
 import { ReadBody, WriteBody, EditBody, NotebookBody } from './FileTools';
@@ -56,7 +57,7 @@ const DEFS: Record<string, ToolDef> = {
   ReportFindings: { icon: 'approval', category: 'other', standalone: true, defaultOpen: true, label: (i) => ({ verb: tr('代码审查'), arg: Array.isArray(i.findings) ? (i.findings.length ? tr('{n} 个发现', { n: i.findings.length }) : tr('没发现问题')) : '' }), Body: FindingsBody },
   ExitPlanMode: { icon: 'plan', category: 'plan', standalone: true, label: () => ({ verb: tr('请求批准计划'), arg: '' }), Body: PlanBody },
   EnterPlanMode: { icon: 'plan', category: 'plan', label: () => ({ verb: tr('进入计划模式'), arg: '' }), Body: GenericBody },
-  AskUserQuestion: { icon: 'question', category: 'plan', standalone: true, label: (i) => ({ verb: tr('提问'), arg: (i.questions as any[])?.map((q) => q.question).join(' / ') ?? '' }), Body: AskUserBody },
+  AskUserQuestion: { icon: 'question', category: 'plan', standalone: true, label: (i) => ({ verb: tr('提问'), arg: askQuestions(i).map((q) => q.question).join(' / ') }), Body: AskUserBody },
   Artifact: { icon: 'artifact', category: 'other', standalone: true, label: (i) => ({ verb: 'Artifact', arg: s(i, 'title') || s(i, 'name') }), Body: ArtifactBody },
   Goal: { icon: 'goals', category: 'other', standalone: true, label: (i) => ({ verb: 'Goal', arg: s(i, 'action') || s(i, 'command') || s(i, 'objective').slice(0, 80) }), Body: GoalBody },
   Workflow: { icon: 'workflow', category: 'agent', standalone: true, label: (i) => ({ verb: 'Workflow', arg: s(i, 'name') }), Body: WorkflowBody },
@@ -111,13 +112,43 @@ DEFS[EXTRA_TOOL] = {
 };
 DEFS.SearchExtraTools = { icon: 'search', category: 'other', label: (i) => ({ verb: tr('查找工具:'), arg: s(i, 'query') }), Body: GenericBody };
 
-export function getToolDef(name: string): ToolDef {
+function rawToolDef(name: string): ToolDef {
   if (DEFS[name]) return DEFS[name];
   const web = webToolOf(name);
   if (web) return WEB[web];
   const computer = computerToolOf(name);
   if (computer) return COMPUTER[computer];
   return name.startsWith('mcp__') ? MCP : OTHER;
+}
+
+/**
+ * A tool's input is whatever the model wrote: a list sent as a string, a missing field. One call drawn from such an
+ * input must not take the conversation down (it is in the transcript, so it came back on every reopen): the label
+ * falls back to the plain one, the body to the plain key / value view.
+ */
+class BodyGuard extends Component<{ t: ToolUseBlock; Body: ComponentType<{ t: ToolUseBlock }> }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(e: unknown) { console.warn('[tool card] drawn plainly, its input is not what the tool expects:', this.props.t.name, e); }
+  render() {
+    const { Body, ...rest } = this.props;
+    return this.state.failed ? <GenericBody t={rest.t} /> : <Body {...rest} />;
+  }
+}
+const safeDefs = new WeakMap<ToolDef, ToolDef>();
+function safe(def: ToolDef): ToolDef {
+  let out = safeDefs.get(def);
+  if (!out) {
+    const { Body } = def;
+    const SafeBody = Body === GenericBody ? Body : (p: { t: ToolUseBlock }) => <BodyGuard {...p} Body={Body} />;
+    out = { ...def, Body: SafeBody, label: (i) => { try { return def.label(i ?? {}); } catch { try { return MCP.label(i); } catch { return { verb: '', arg: '' }; } } } };
+    safeDefs.set(def, out);
+  }
+  return out;
+}
+
+export function getToolDef(name: string): ToolDef {
+  return safe(rawToolDef(name));
 }
 
 /** "mcp__server__tool" → { server, tool } */

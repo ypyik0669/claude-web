@@ -32,3 +32,12 @@
   - **总审查 M1（2026-10-24）**：`x.ts#L12-L20`、`x.md#section`、`page.html?v=1` 留在路径里 → 「找不到」的标签。`link-route.ts` 的 `cut()`：`#L12` / `#L12-L20` / `#L12-20` 取第一行，别的 `#…` 和 `?…` 从**本地路径**上切掉（web 地址不动）；在还没解码的 href 上切，`%23` 仍是文件名里的 `#`。
 - **A2 现象**：侧栏行的 ··· 菜单顶部被「新对话」挡住、切掉（用户截图）。**根因**：菜单是就地画的 `position: fixed` 元素，在 `.sb-list` 里；滚动渐隐的 `mask-image`（`styles/scroll-fade.css`）**会把所有后代、包括 fixed 的，裁到这个元素的框里**——列表不滚时 mask 也在（渐变全不透明，但裁剪照样）。**做法**：`scroll-fade.css` 同一组 12 个列表加 `:has(.menu)` 时 `mask-image: none`（只改 mask，不碰 animation）；`useAnchoredMenu`（`features/sidebar/menus.tsx`）钉到顶时补 `overflow-y: auto` + `overscroll-behavior: contain`，重新定位时保留菜单自己的 `scrollTop`（侧栏里任何 DOM 变化都会触发重新定位，以前一变就弹回顶部）。**验证**：`place.test.ts` 加矮窗口例子；ui-smoke `parity-a` 段：窗口 600px 高、打开一行的 ···，断言第一项、最后一项用 `elementFromPoint` 点得到，`.sb-list` 的 computed `mask-image` 是 `none`，关掉后渐变回来。**坑**：mask 裁 fixed 的后代（overflow 裁不到 fixed 元素，mask / clip-path / filter 这类会）；`elementFromPoint` 不保证反映 mask 的裁剪，所以 ui-smoke 另外断言 computed `mask-image`，不只靠「点得到」。
 - **EMFILE: too many open files（2026-10-30 用户截图：快速添加供应商时 `open '…\.claude-web\meta.json.<pid>.tmp'`）**：meta.json 只是下一个要开的文件，真正的原因是**服务进程的文件句柄漏光了**。`AgentTranscripts` 的 `headOf` 和 `CanonicalLog.head` 用 `readline` + `createReadStream` 读第一行后 `rl.close()` + return——readline 关了，底下的文件流只是暂停，句柄永远不关；`head()` 每次列对话 / 打开对话都跑，Windows 一个进程最多 8189 个，用满后所有 open 都 EMFILE（`.probe` 脚本实测第 8189 次失败）。改成 `runtime/first-line.ts` 的 `firstLine()`（`fs.open` 分块读、`finally` 关）。**别再用 readline 读一部分就退出**；读到底的循环没事（流结束会关）。`first-line.test.ts` 连调 9000 次。用户那边重启应用就能先恢复。
+
+## 工具的输入不是工具要的样子，整个对话崩掉（2026-11-14 用户报告：「TypeError: e.questions?.map is not a function」）
+
+- **现象**：对话区整块变成「这里出错了」，重试、重启都一样。有模型（ccb 上的非 Claude 模型）把 `AskUserQuestion` 的 `questions` 发成了
+  字符串，`registry.tsx` 的标题 `(i.questions as any[])?.map` 崩了；这条调用在对话记录里，所以每次打开都崩。
+- **改了什么**：`getToolDef` 交出去的定义都包了一层（`safe`，按定义缓存，引用稳定）：`label` 抛错退回普通标题，`Body` 抛错退回
+  键值视图（`BodyGuard`）——工具的输入是模型写的，什么形状都可能。`askQuestions` 认 JSON 字符串和单个对象，标题、已答卡片、
+  `util.ts` 的摘要都走它。
+- 新加工具卡片时不用自己防，但别绕过 `getToolDef` 直接拿 `DEFS`。只有单元测试，没拿那位用户的对话记录实测。

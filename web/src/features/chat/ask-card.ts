@@ -14,7 +14,11 @@ export const skippedAnswer = () => tr('（用户跳过）');
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
 
 export function askQuestions(input: unknown): AskQ[] {
-  const qs = (input as { questions?: unknown } | null | undefined)?.questions;
+  let qs = (input as { questions?: unknown } | null | undefined)?.questions;
+  // some models send the list as a JSON string, or one question as a bare object (2026-11-14 user report: the whole
+  // conversation went down on "e.questions?.map is not a function", and came back broken after every restart)
+  if (typeof qs === 'string') { try { qs = JSON.parse(qs); } catch { return []; } }
+  if (qs && typeof qs === 'object' && !Array.isArray(qs)) qs = [qs];
   if (!Array.isArray(qs)) return [];
   return qs
     .filter((q): q is Record<string, any> => !!q && typeof q === 'object' && typeof q.question === 'string')

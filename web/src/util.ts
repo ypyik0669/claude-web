@@ -1,3 +1,4 @@
+import { askQuestions } from '@/features/chat/ask-card';
 import { parseLibraryId, parsePeerId } from '@shared';
 import { tr, dateLocale } from '@/i18n';
 
@@ -73,7 +74,7 @@ export function toolSummary(name: string, input: Record<string, unknown>): strin
     case 'TodoWrite':
       return `${(input.todos as any[])?.length ?? 0} todos`;
     case 'AskUserQuestion':
-      return (input.questions as any[])?.map((q) => q.question).join(' / ') ?? '';
+      return askQuestions(input).map((q) => q.question).join(' / ');
     case 'ExitPlanMode':
       return tr('请求批准计划');
     default: {

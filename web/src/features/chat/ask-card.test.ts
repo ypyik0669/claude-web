@@ -9,6 +9,10 @@ describe('askQuestions', () => {
     const qs = askQuestions({ questions: [{ question: 'A?', options: [{ label: 'x', preview: 'p' }, { nope: 1 }] }, { header: 'no question' }, null] });
     expect(qs).toEqual([{ question: 'A?', header: undefined, options: [{ label: 'x', description: undefined, preview: 'p' }], multiSelect: false }]);
     expect(askQuestions(undefined)).toEqual([]);
+    // a list sent as a JSON string, one question as a bare object (2026-11-14: a model did, and the conversation went down)
+    expect(askQuestions({ questions: JSON.stringify([{ question: 'A?', options: [{ label: 'x' }] }]) })).toEqual([{ question: 'A?', header: undefined, options: [{ label: 'x', description: undefined, preview: undefined }], multiSelect: false }]);
+    expect(askQuestions({ questions: { question: 'A?' } }).map((q) => q.question)).toEqual(['A?']);
+    for (const questions of ['nope', 3, true, '"str"']) expect(askQuestions({ questions })).toEqual([]);
   });
 });
 
