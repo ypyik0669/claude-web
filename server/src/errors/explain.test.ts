@@ -22,6 +22,12 @@ const SEEN: [string, RegExp][] = [
   ['listen EADDRINUSE: address already in use 127.0.0.1:3090', /端口被占用/],
   ['getaddrinfo ENOTFOUND api.example.invalid', /域名解析失败/],
   ['connect ECONNREFUSED 127.0.0.1:7890', /连接被拒绝.*127\.0\.0\.1:7890/s],
+  // the official binary's own words for a stream it gave up on (2.1.322), once it no longer falls back to non-streaming
+  ['API Error: Stream idle timeout - partial response received', /回答流断了/],
+  ['Error streaming (non-streaming fallback disabled): event referenced an unstarted content block', /回答流断了/],
+  ['API Error: The response stream was malformed and no response was produced. Try again.', /回答流断了/],
+  ['API Error: Connection lost before a response was produced. Try again.', /回答流断了/],
+  ['API Error: Content block not found', /回答流断了/], // a delta for a block that never started (reproduced 2026-11-17)
   ['read ECONNRESET', /连接被中途断开/],
   ['socket hang up', /连接被中途断开/],
   ['connect ETIMEDOUT 104.18.0.1:443', /超时/],

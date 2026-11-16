@@ -520,6 +520,34 @@ describe('SessionRunner Stop (interrupt)', () => {
     } finally { setPromptSuggestions(true); }
   });
 
+  // 2026-11-17 user report: 「非流」 rows in the relay's log — the CLI re-sends a broken stream whole, non-streamed, and
+  // the relay bills the abandoned stream too
+  it('a provider conversation: the CLI does not re-send a broken stream as a non-streaming request; the login keeps its default; the user’s value wins', async () => {
+    const { noNonStreamingFallback } = await import('./session-runner.js');
+    expect(noNonStreamingFallback({ provider: true, ownRelay: false })).toBe(true);
+    expect(noNonStreamingFallback({ provider: false, ownRelay: true })).toBe(true);
+    expect(noNonStreamingFallback({ provider: false, ownRelay: false })).toBe(false);
+    const prov = { id: 'nf', name: 'NF', type: 'anthropic', baseUrl: 'https://relay', apiKey: 'sk', createdAt: 0, models: ['claude-fable-5-2'] } as any;
+    queries.length = 0;
+    const a = new SessionRunner({ sessionId: 'nf-1', cwd: '/x', model: 'claude-fable-5-2' } as any, prov);
+    await tick();
+    expect(queries[0].options.env?.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK).toBe('1');
+    await a.close();
+    queries.length = 0;
+    const b = new SessionRunner({ sessionId: 'nf-2', cwd: '/x' } as any);
+    await tick();
+    expect(queries[0].options.env?.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK).toBeUndefined();
+    await b.close();
+    process.env.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK = '0';
+    try {
+      queries.length = 0;
+      const c = new SessionRunner({ sessionId: 'nf-3', cwd: '/x', model: 'claude-fable-5-2' } as any, prov);
+      await tick();
+      expect(queries[0].options.env?.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK).toBe('0');
+      await c.close();
+    } finally { delete process.env.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK; }
+  });
+
   it('预览服务器: the tools are there, only logs / stop pre-allowed; a project with launch.json is told to verify', async () => {
     const fs = await import('node:fs');
     const os = await import('node:os');

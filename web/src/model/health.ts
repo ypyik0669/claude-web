@@ -1,7 +1,7 @@
 import { tr } from '@/i18n';
 // Pure helpers that turn SDK error / timing signals into UI-facing health state. No DOM, no store.
 
-export type ErrorKind = 'throttled' | 'quota' | 'balance' | 'network' | 'credential' | 'context' | 'output_cap' | 'server' | 'refusal' | 'aborted' | 'history' | 'unknown';
+export type ErrorKind = 'throttled' | 'quota' | 'balance' | 'network' | 'stream' | 'credential' | 'context' | 'output_cap' | 'server' | 'refusal' | 'aborted' | 'history' | 'unknown';
 
 export interface ErrorSignal {
   /** SDKAssistantMessageError / api_retry.error */
@@ -38,7 +38,11 @@ export function classifyError(s: ErrorSignal): ErrorKind {
   if (tr.startsWith('aborted') || /interrupted|aborted|cancel/.test(text)) return 'aborted';
   if (/refus/.test(text) || /refus/.test(tr)) return 'refusal';
   if (err === 'overloaded' || err === 'server_error' || (st !== undefined && st !== null && st >= 500) || /overloaded|internal server error|bad gateway|service unavailable/.test(text)) return 'server';
-  if (s.status === null || /econnreset|econnrefused|etimedout|fetch failed|network|socket hang up|enotfound|dns/.test(text)) return 'network';
+  // the answer's stream broke off (a relay / proxy cut it, stalled, or sent events out of order): on a provider the CLI
+  // no longer re-sends the turn without streaming (session-runner: CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK), so the
+  // turn ends here with one of these — 「继续」 picks it up (2026-11-17)
+  if (/stream idle timeout|error streaming|response stream was malformed|response stalled|response stopped arriving|part of the response never arrived|connection lost mid-response|stream ended without|content block not found|referenced an? (?:unstarted|already-closed) content block/.test(text)) return 'stream';
+  if (s.status === null || /econnreset|econnrefused|etimedout|fetch failed|network|socket hang up|enotfound|dns|connection lost before/.test(text)) return 'network';
   if (tr === 'api_error' || tr === 'model_error') return 'server';
   return 'unknown';
 }
@@ -48,6 +52,7 @@ export const ERROR_LABEL: Record<ErrorKind, string> = {
   quota: tr('额度用尽'),
   balance: tr('余额不足'),
   network: tr('网络错误'),
+  stream: tr('回答流断了'),
   credential: tr('凭证失效'),
   context: tr('上下文过长'),
   output_cap: tr('输出超限'),
@@ -63,6 +68,7 @@ export const ERROR_HINT: Record<ErrorKind, string> = {
   quota: tr('本窗口额度已用完，等重置或换供应商 / 模型。'),
   balance: tr('供应商账户的余额不够了：去供应商那里充值，或在模型菜单里换一个供应商。'),
   network: tr('检查网络或 Base URL；中转站可能暂时不可达。'),
+  stream: tr('网络、代理或中转在回答途中断开了，这一轮停在这里：点重试，或者发「继续」接着做。'),
   credential: tr('供应商的 API Key 不对或过期（设置 → 供应商），或 Claude 账号登录失效（终端里运行 claude auth login）。'),
   context: tr('对话太长了：/compact 压缩，或从某条消息分叉一个新对话。'),
   output_cap: tr('单次输出超过上限，让模型分段继续。'),

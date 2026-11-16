@@ -37,6 +37,9 @@ const RULES: Rule[] = [
   { test: /\bEADDRINUSE\b|address already in use/i, say: () => tr('端口被占用：有另一个程序（或另一个本软件）正在用这个端口。关掉它，或换一个端口。') },
   { test: /\bENOTFOUND\b|\bEAI_AGAIN\b|getaddrinfo/i, say: () => tr('域名解析失败：地址可能拼错了，或者网络 / DNS / 代理有问题。检查地址，开着梯子的话看看 设置 → 供应商 → 网络代理。') },
   { test: /\bECONNREFUSED\b|connection refused/i, say: () => tr('连接被拒绝：那个地址上没有服务在监听。检查地址和端口；如果是本机代理（如 127.0.0.1:7890），确认梯子开着。') },
+  // a stream the CLI gave up on halfway (the relay or a proxy broke it): pay-per-token routes no longer re-send it whole
+  // as a non-streaming request (session-runner: CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK) — the turn stops here instead
+  { test: /stream idle timeout|error streaming|response stream was malformed|response stalled|response stopped arriving|part of the response never arrived|connection lost (?:before|mid-response)|stream ended without|content block not found|referenced an? (?:unstarted|already-closed) content block/i, say: () => tr('回答流断了（网络、代理或中转出了问题），这一轮停在这里：点重试，或者发「继续」接着做。') },
   { test: /\bECONNRESET\b|socket hang up|connection reset|other side closed|\bEPIPE\b/i, say: () => tr('连接被中途断开：对方或代理断开了连接。重试一次；经常这样的话，检查网络代理设置。') },
   { test: /\bETIMEDOUT\b|\bESOCKETTIMEDOUT\b|timed? ?out|timeout/i, say: () => tr('超时：网络不通、对方太慢，或者代理有问题。检查网络和代理后重试。') },
   { test: /self[- ]signed certificate|unable to verify the first certificate|certificate has expired|\bUNABLE_TO_VERIFY_\w+|\bDEPTH_ZERO_SELF_SIGNED_CERT\b|\bSELF_SIGNED_CERT_IN_CHAIN\b|\bCERT_[A-Z_]+\b|\bERR_TLS_|ssl routines|wrong version number/i, say: () => tr('HTTPS 证书校验失败：地址的证书有问题，或者代理在拦截 HTTPS。检查地址是不是 https 开头写对了，以及代理设置。') },

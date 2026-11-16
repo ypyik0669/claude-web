@@ -31,6 +31,31 @@
   claude-web 给 ccb 设 `summarized`，官方二进制用 `--thinking-display summarized`。原因见 `recording-ux` 笔记「第三轮」。cw.5 已发（2026-10-17 预发布 Release `engine-v2.8.4-cw.5`，fork 提交 ad1fc7e9 + d0c44dec 已推；不登录下载的 sha512 和 lock 一致，`releases/latest` 仍是 v0.2.6）。
   真中转实测：两个中转都回思考文字（官方二进制 + super-nb.me、cw.5 + aizhongzhuan.cc）；aizhongzhuan.cc 用 cw.4 也回——那个中转自己就给摘要，
   空思考只出在直连 Anthropic 的路上（官方 Key 当时余额不足，没能拿真回答对照；请求里带上 display 是用假接口确认的）。super-nb.me 只收官方客户端（ccb 被它判成「请求被改写」）。
+- **中转日志里成对的「流」+「非流」**（2026-11-17 用户截图，Mac + 中转 + claude-fable-5-2）：非流那行就是 CLI 的**流断了改发非流式**
+  （`executeNonStreamingRequest`）。看缓存读数能对上：非流请求读的正好是前一条流式请求的完整前缀、不再写缓存。中转照样把被放弃的
+  流跑完计费（一轮两份钱）；长回答的非流式副本还会被中转 / CDN 的超时掐断再发一次（截图里 2m5s 失败那行 = 三份）。官方 2.1.322
+  的判定（`aGr`）：流**开始之后**、还没有完整的块时，malformed（「Content block not found」、JSON 解析错）/ stalled / timedOut /
+  serverError / 认不出的错误（没有 `ECONNRESET` 这类 code 的都算 unknown）→ 直接改非流式；只有断连（connectionLost）先按流式重试。
+  空闲看门狗默认 5 分钟（`CLAUDE_STREAM_IDLE_TIMEOUT_MS`，非官方地址首字节同样 5 分钟），54 秒那种成对的不是它。
+  **修法**：按量付费的路（供应商档案、用户自己 settings 里的中转）设 `CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK=1`
+  （`session-runner.ts` 的 `noNonStreamingFallback`，用户自己设了就不动；claude.ai 登录不动）。效果：断连照样流式重试；其它情况
+  这一轮报错停下，不再出现非流。CLI 是正常结束这一轮（结果行 `API Error: Content block not found` 之类），界面上走的是
+  `health.ts` 的 `stream` 类（「回答流断了 · …点重试，或者发「继续」接着做」）；`explain.ts` 同样一句只在进程带着这些字退出时用上。
+  提示不说「没有改成非流」：Claude 账号的对话没关这个退路，报到这里说明非流也失败了。端到端（临时 claude-web + 假上游只发坏流，
+  scratch 脚本 `bad-stream-upstream.cjs` 的思路：流式请求给没开始的块发 delta、非流式请求正常回答）：两轮各只有 1 个 `stream: true`
+  请求、0 个非流请求，提示条显示的是 `stream` 那句。流式本身没断时没有任何影响；中转根本不支持流式（流式 404）
+  那条退路不受这个开关影响（代码里写死 `true`）。两个引擎都认这个变量（ccb 是任何流错误都直接改非流式，开关后直接报错）。
+  **实测**：录制代理（换真 Key、记每个请求的 `stream` 和逐个 SSE 事件）在本机跑 15 步的任务：官方二进制对 super-nb.me、
+  aizhongzhuan.cc，引擎（ccb）对 aizhongzhuan.cc，共 50+ 个流，**没有一条是中转发坏的**——只有一次是中转真的卡死
+  （`message_start` 之后 5 分钟一个字节都没有 → 看门狗 → 改非流式 10 秒成功）。用户截图里那种「中转 4 秒就跑完、客户端却放弃」
+  这边复现不了，来自用户那台 Mac 到中转的路上（代理软件 / 网络）。**代价**：中转卡死那种情况开关打开后是等 5 分钟报错、用户点重试
+  （以前是悄悄改非流式救回来）；但改非流式本身有 Anthropic 自己记的坑——引擎源码里这个开关的注释：流里已经开始执行的工具，
+  非流式重发后会再执行一次（inc-4258）——加上中转的双份计费，按量付费的路上还是关掉。
+  注入一个坏事件（给没开始的块发 delta）：不开开关 → 日志 `Error streaming, falling back to non-streaming mode: Content block not
+  found`、中转那条流被放弃但跑完、接着一个 `stream=false` 请求（正是截图里的一对）；开关打开 → 没有非流请求，结果
+  `API Error: Content block not found`。中转回的 SSE 是 zstd 压缩的（`content-encoding: zstd`）；把录下来的压缩流切成 1–48 字节
+  回放给 CLI 三次都解析正常，不是 zstd 的问题。自己写录制代理要把 `keepAliveTimeout` 调大：Node 默认 5 秒关空闲连接，CLI 复用到
+  死连接会连报 `Request timed out`（300 ms 一次）和一次 2 分钟的 `Connection error`，看着像中转的问题其实是代理的。
 - **cw.6**（2026-10-23 预发布 Release `engine-v2.8.4-cw.6`）：数 token 没有 `count_tokens` 时本地估、不再发非流式 `max_tokens: 1` 请求（中转日志里的「非流」和 403，
   见「界面改版 阶段 3」的「上下文小环不问引擎」）；gpt-6 起算 OpenAI 的推理模型（见「思考强度」笔记）。查「中转上出现非流式请求」时，自己起一个假中转记每个请求
   （path、`stream`、`max_tokens`、有没有 `system`），引擎经 SDK 跑一轮再调 `getContextUsage()`——引擎里真正非流式的只有 `executeNonStreamingRequest`

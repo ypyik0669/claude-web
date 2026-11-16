@@ -132,6 +132,15 @@ interface PendingPermission {
   resolve: (r: PermissionResult) => void;
 }
 
+/**
+ * Whether the CLI's switch to a non-streaming request after a broken stream is turned off (CLAUDE_CODE_DISABLE_
+ * NONSTREAMING_FALLBACK): on the routes billed per token — a provider profile, or the relay the user's own settings
+ * point the login at — where the abandoned stream is billed too.
+ */
+export function noNonStreamingFallback(route: { provider: boolean; ownRelay: boolean }): boolean {
+  return route.provider || route.ownRelay;
+}
+
 let promptSuggestionsOn = true;
 /** Settings → 下一句提示 (`ui.promptSuggestions`); a query started from now on asks for them or not. */
 export function setPromptSuggestions(on: boolean) { promptSuggestionsOn = on; }
@@ -579,6 +588,15 @@ export class SessionRunner extends EventEmitter {
     if (promptSuggestionsOn && !('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION' in fenv) && process.env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION === undefined) fenv.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = '1';
     // 代码审查卡: /code-review reports through the ReportFindings tool (drawn as a card) instead of printing its findings
     if (!('CLAUDE_CODE_REPORT_FINDINGS' in fenv) && !process.env.CLAUDE_CODE_REPORT_FINDINGS) fenv.CLAUDE_CODE_REPORT_FINDINGS = '1';
+    // 中转日志里的「非流」(2026-11-17 user report, real relay): a stream the CLI gives up on halfway (malformed, stalled,
+    // an error event, anything it cannot class as a dropped connection) is sent again whole as a NON-streaming request.
+    // The relay meanwhile finishes the abandoned stream and bills it: one turn paid twice — three times when the
+    // non-streamed copy of a long answer is cut by the relay's / CDN's timeout and is sent again — and a tool the stream
+    // had started runs a second time (the engine's own note on this switch: inc-4258). Pay-per-token routes
+    // (a provider, the relay in the user's own settings) don't fall back: a dropped connection is still retried as a
+    // stream, the rest ends the turn with an error to retry. A claude.ai login keeps the CLI's default; the user's own
+    // value wins. Both engines read it (a stream that streamed fine and a relay without streaming are not affected).
+    if (noNonStreamingFallback({ provider: !!this.provider, ownRelay: !this.account && !!ownAnthropicBase(this.cwd) }) && !('CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK' in fenv) && process.env.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK === undefined) fenv.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK = '1';
     // a claude.ai-login session on the bundled ccb: its alias table predates the Claude 5 family (see
     // OFFICIAL_ALIAS_TARGETS) — the CLI's own variables align it with the official one; the user's env / settings win.
     // Not for a relay the user set up in settings.json / the environment: its model list is its own (the injected

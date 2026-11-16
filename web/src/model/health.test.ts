@@ -23,6 +23,12 @@ describe('classifyError', () => {
     [{ status: 503 }, 'server'],
     [{ status: null, text: 'fetch failed' }, 'network'],
     [{ text: 'ECONNRESET' }, 'network'],
+    [{ text: 'API Error: Connection lost before a response was produced. Try again.' }, 'network'],
+    // a stream broken halfway (a provider's turn ends with it: no non-streaming re-send, 2026-11-17)
+    [{ text: 'API Error: Content block not found' }, 'stream'],
+    [{ text: 'API Error: Stream idle timeout - partial response received' }, 'stream'],
+    [{ text: 'API Error: The response stream was malformed and no response was produced. Try again.' }, 'stream'],
+    [{ status: null, text: 'Error streaming (non-streaming fallback disabled): event referenced an unstarted content block' }, 'stream'],
     [{ terminalReason: 'aborted_streaming' }, 'aborted'],
     [{ terminalReason: 'api_error' }, 'server'],
     [{}, 'unknown'],
