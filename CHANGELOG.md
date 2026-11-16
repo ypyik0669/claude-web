@@ -4,6 +4,17 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.11] — 2026-11-17
+
+### New
+
+- **Add files and folders to the conversation from the file tree.** Right-click a file or folder and the first item is "Add to conversation"; or drag them onto the input box, or anywhere on the conversation. The input box gets `@path` (relative for files in the project), just like picking a file with @. Nothing is uploaded.
+
+### Fixed
+
+- **A running task no longer makes everything laggy.** As soon as a conversation started working, the whole of Claude Web slowed down, typing lagged by seconds, and the computer felt it too. Every word of the answer redrew the input box, the header, the info column, the sidebar and the hidden panels, and the conversation list was read again from disk every few seconds. Now only the part showing the new words moves, and the list re-reads just the rows that changed. Measured on a conversation of 600+ rows: typing while a task runs went from hundreds of milliseconds (26 seconds at worst) to about 50 ms, and everything is back to normal the moment the task ends.
+- **No more paired "non-stream" requests in relay logs.** When an answer's stream broke off halfway (the network, a proxy or the relay), Claude Code sent the whole turn again without streaming. Relays charge for both the broken stream and the re-send, and tools that had already started could run a second time. Conversations on a provider (relay) no longer re-send this way: a dropped connection still retries on its own, anything else stops the turn with "Stream broke off" — retry, or send "continue" to pick it up. Your own Claude account is unchanged.
+
 ## [0.5.10] — 2026-11-14
 
 ### Fixed
