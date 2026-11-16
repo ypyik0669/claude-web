@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
-import { useStore } from '@/store';
+import { useSettledSession, useStore } from '@/store';
 import { basename, clsx } from '@/util';
 import type { PermissionRequestEvent, PermissionResponse } from '@shared';
 import { DiffView, Markdown } from './Markdown';
@@ -301,7 +301,7 @@ function CardLeave({ dock }: { dock: HTMLElement | null }) {
  * words from before the card were queued — the card offers to take them back as its answer (a button).
  */
 export function PermissionDock({ sessionId, reason, onReasonUsed, scope, note, onDenyQueued }: { sessionId: string; reason: string; onReasonUsed: () => void; scope: string; note?: string; onDenyQueued?: () => void }) {
-  const o = useStore((s) => s.open[sessionId]);
+  const o = useSettledSession(sessionId);
   // the card's element as state (a callback ref): the leaving copy is taken from it by a child's cleanup, when a
   // plain ref is already detached
   const [dock, setDock] = useState<HTMLElement | null>(null);

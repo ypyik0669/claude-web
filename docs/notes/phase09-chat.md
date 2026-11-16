@@ -36,6 +36,55 @@
   多半是浏览器给一大段增长的思考文字排版（profile 里 `(program)` 39%，React 提交阶段的自动滚动读 `scrollHeight` 把排版算在它头上）。
   试过：更早的轮 `content-visibility: auto`（p90 75→59 ms）、关掉文字淡入（p90 63 ms），都只是一点点，没改。
 
+## 一跑任务程序和整台电脑都卡（2026-11-17 用户报告）
+
+10-19 那次只量了 92 条的短对话、只看对话本身。这次是长对话 + 默认界面（信息栏、右侧面板、停靠面板都挂着）+ 在跑的任务：
+- **服务端整份重列对话**：跑着的一轮每几秒写一次 transcript → `sessions.changed`（800 ms 去抖）→ 每个窗口 `sessions.list` →
+  `SessionService.list()` 的缓存被写清掉 → SDK `listSessions({limit: 2000})` 把所有 transcript 再读一遍。开发机 270 个对话一次
+  1.7–3 秒、1.2–1.6 秒 CPU（`getSessionInfo` 读一个是 22–50 ms）：一轮任务里 server 大半时间在重读磁盘，事件循环卡着还拖慢
+  流式事件的转发。现在：transcript 写入只记 `dirty`，下一次 `list()` 用 `getSessionInfo` 只重读这几行（SDK 不列的长首句对话走
+  `summaryFromFile`）、缓存保留；新对话 / 项目目录变化 / 删除 / 分叉 / 改名才整份重列（`bump`）。整份重列期间来的写入留在
+  `dirty` 里，结果照样存下（`structGen` 只在 bump 时动——忙的时候几乎每次 2 秒的重列都会撞上一次写入，按旧的 `gen` 判断就永远存不住）。
+  后台读完标题以后也不再整份重列，只把名字补到缓存的行上。
+- **前端每帧重渲染整片界面**：`renderStreamed` 每帧给 `open[id]` 换一个新对象，订阅整个对象的组件全都跟着每秒重画 60 次——
+  `ChatTile`（整个格子：会话头、Composer、信息栏）、`useScopedSession()` 的 ~20 个用户（Composer、右侧面板 / 停靠面板里隐藏着
+  但不卸载的配置、任务、终端、用量、记忆、连接器、技能、定时任务、浏览器、审阅、文件）、每条用户消息的 `UserActions`
+  （每帧还 `isLastPrompt` 扫一遍全部消息）、信息栏的每张卡、侧栏 / 首页的行；其中会话头和信息栏的每张卡（不管是哪张）每帧都
+  `sessionDiffStat` 走一遍全部工具调用、把每个 Write 的内容按行切开，`ReviewView` / `TasksPanel` / `TrajectoryView` /
+  文件里「本对话的文件」每帧 `walkTools`。现在：`store/streamed.ts` 的 `onlyStreamed(a, b)`（只有 `version` / `streamed` 同步
+  变了）+ `useSettledOpen`：`useScopedSession()` / `useActive()` / `useSettledSession(id)` 在只有流式帧时返回旧对象（zustand
+  不重渲染），整条消息、状态、权限请求等任何别的变化照常；真要每帧画字的只有 `ChatView`（`useScopedSessionLive()`）。
+  `RunCard` / `StatusStrip` 本来就有 1 秒的计时器，直接读原地改的 `conv`，最多晚 1 秒。`ChatTile` 只订阅「开着没有」和 `cwd`。
+  `model/diffstat.ts` 的 `cachedDiffStat(conv, settledVersion)`：按 conv 对象 + settled 版本缓存，所有调用方共用一份。
+- **不画的消息也在换版本**：思考时的 `thinking_tokens` / `stream_event` / `tool_progress` 和一堆界面不画的 system 子类型每条都
+  走 `applyMessage` → 新 `open[id]` → 上面那些订阅者全跟着动。现在 `conversation.ts` 的 `isLightMessage(m)`（`DRAWN_SYSTEM` 是
+  会画出来的 system 子类型白名单，新加会画的子类型要进这张表）为真的消息在 store 里原地改、记进 `unrendered`、等下一帧一起
+  `renderStreamed`，和流式文字走同一条路（只算 streamed 帧）。
+- **早先的回合每帧重算**：`TurnList` 给每个回合传同一个 `version`，`TurnView` 的 memo 全失效，600 行的长对话每帧把所有回合的
+  `itemsOf` / Markdown 比一遍。现在只有最后一个回合拿 live 版本；做完的回合用 `earlierVersion()`（items 数组的身份 + 子代理签名），
+  后台子代理还在跑或回合没结束时才退回 settled 版本。自动滚到底合并到一帧一次（`scrollAsked` + rAF）。
+- **整个应用的样式重算**：`phone.css` 里 `.app.mobile .chat-tile > .sess-head:has(+ .chat) > *` 这种「兄弟 `:has()`」规则在桌面上
+  也参与失效判断——对话区每加一个节点，Chromium 就把 ~3800 个元素的样式重算一遍（每次 ~165 ms，一秒好几次）。只在手机上用的
+  `:has` 规则包进 `@media (max-width: 760px)`（不命中的 media 里的规则不参与失效），`review-phone.css` 的 `.rv-fh:has(+ …)` 同理；
+  `ui/viewport.ts` 的 `MOBILE_QUERY` 和这两份 css 要一起改。查法：`CW_PERF_TRACE=1` 让 perf-busy 录一份带
+  `disabled-by-default-devtools.timeline.invalidationTracking` 的 trace，统计 `StyleInvalidatorInvalidationTracking` 的选择器。
+- **输入框每个按键一次强制布局**：`autosize` 读 `scrollHeight`。支持 `field-sizing: content` 的（Chromium 123+，桌面版都是）改用
+  CSS（`.composer textarea:not(:placeholder-shown)`，空的时候保留一行高），JS 只在不支持时跑。
+- **输入框的流光**：一块 1.5 × 长边（cqmax）的方形锥形渐变在遮罩后面转（transform）。试过改成注册的 `@property` 角度只重画一圈，
+  结果更糟：属性动画每帧在主线程重算样式（实测 560–700 ms/s）。退回 transform（合成线程做），层缩到 125cqmax，`steps(80)`，
+  `data-paused` 时 `animation-play-state: paused`。
+- 零碎：`UserRow` 只订阅「这个对话开着没有」（布尔）；`CommandPalette` 关着时不挂 `PaletteBody`（它订阅整个 `open`）；标签条 /
+  组栏 / 欢迎页 / 总览栏 / 办公室用 `useOpenSettled()`（只有流式帧时整张 map 返回旧引用）；`useArtifacts` 按 settled 版本 memo。
+
+结果（perf-busy 默认参数，跑任务那 20 秒，同一台 i5-12450H，机器本身被别的进程占满）：脚本 687 → 190 ms/s；输入到下一帧
+p50 244 ms（p95 26 秒）→ 50 ms（p95 92 ms）；页面在窗口结束后多久才回话 7.5 秒 → 0.1 秒；长任务合计 46 秒 → 2.4 秒；
+WebSocket 消息以前每秒只消化 32 条（server 发 211 条，积压到任务结束后还在追，AFTER 窗口主线程仍 770 ms/s），现在全收、
+任务一停就回到空闲水平。样式重算是跑任务时剩下的大头（~160 ms/s，流式文字本身的布局），离屏渲染下 GPU 进程的数字偏高。
+
+量法：`node scripts/perf-busy.cjs`（文件头有说明；Electron 离屏 + 假上游 + 300 个对话的临时 HOME，不花 token）。坑：假上游 /
+本机代理的 Node http server 默认 `keepAliveTimeout` 5 秒，CLI 复用到被关掉的 socket 会报「Request timed out」/「Connection
+error」然后卡一分钟——`scripts/lib/demo.cjs` 和 perf-busy 的假上游都设了 10 分钟。
+
 ## 对话里的代码块直接运行（2026-10-20，阶段 E）
 
 - `chat/CodeBlock.tsx` 的 `run` prop 只由对话正文提供（`Markdown` 里 `CodeRunCtx` 从 `ChatView` 的 `TurnView` / `ItemList`

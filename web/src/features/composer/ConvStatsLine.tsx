@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useStore } from '@/store';
+import { useSettledSession, useStore } from '@/store';
 import { convStats } from '@/model/conv-stats';
 import { pct } from '@/model/tokens';
 import { tr } from '@/i18n';
@@ -11,7 +11,7 @@ import { tr } from '@/i18n';
  */
 export function ConvStatsLine({ sessionId }: { sessionId: string }) {
   // the reducer grows conv.items in place and bumps `version`: key on that, not on the (same) array
-  const o = useStore((s) => s.open[sessionId]);
+  const o = useSettledSession(sessionId);
   const st = useMemo(() => (o ? convStats(o.conv.items) : null), [o?.version]);
   if (!st) return null;
   const parts: { text: string; title: string }[] = [

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useScopedSession, useStore } from '@/store';
+import { settledVersion, useScopedSession, useStore } from '@/store';
 import { clsx } from '@/util';
 import { sessionPeer } from '@/features/peers';
 import { EMPTY, TERMS } from '@/ui/terms';
@@ -49,7 +49,8 @@ export function FilesView({ visible, inDock }: { visible: boolean; inDock?: bool
   const artifacts = useArtifacts(sid);
   // 本对话的文件 (stage E4): what Claude read or changed here, first time first
   const conv = useStore((s) => (sid ? s.open[sid]?.conv : undefined));
-  const version = useStore((s) => (sid ? s.open[sid]?.version : undefined));
+  // a whole message, not each frame of a stream (the files come from finished tool calls)
+  const version = useStore((s) => (sid ? settledVersion(s.open[sid]) : undefined));
   const touched = useMemo(() => (conv ? touchedFiles([...walkTools(conv.items)].filter((x) => x.depth === 0).map((x) => ({ name: x.tool.name, input: x.tool.input }))) : []), [conv, version]);
   const [showTouched, setShowTouched] = useState(true);
   const gitStatus = useGitStatus(cwd, visible && mode === 'tree' && !peer);

@@ -1,6 +1,6 @@
 import { openAddSource } from '@/features/gateway/add-source';
 import { useEffect, useState } from 'react';
-import { autoContinueAt, disarmAutoContinue, useStore } from '@/store';
+import { autoContinueAt, disarmAutoContinue, useSettledSession, useStore } from '@/store';
 import { deriveStall } from '@/model/health';
 import { ERROR_HINT, ERROR_LABEL } from '@/model/health';
 import { clsx, fmtTok } from '@/util';
@@ -44,7 +44,7 @@ export function noLoginChipShown(o: { state: string; conv: { lastResult?: { isEr
  * The queued messages are not here any more: they are cards of their own under this strip (QueueCards.tsx).
  */
 export function StatusStrip({ sessionId }: { sessionId: string }) {
-  const o = useStore((s) => s.open[sessionId]);
+  const o = useSettledSession(sessionId);
   const meta = useStore((s) => s.sessionMeta[sessionId]);
   const providers = useStore((s) => s.providers);
   const settings = useStore((s) => s.settings);

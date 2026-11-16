@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { AssistantItem, UserItem } from '@/model/conversation';
 import { groupTurns } from '@/model/turn';
 import { buildHtml, downloadHtml } from '@/model/export';
-import { isLastPrompt, useStore } from '@/store';
+import { isLastPrompt, useSettledSession, useStore } from '@/store';
 import { ago, clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { imeComposing } from '@/ui/ime';
@@ -18,7 +18,7 @@ export function useForkable(): boolean {
 }
 
 function useSession(sessionId: string) {
-  return useStore((s) => s.open[sessionId]);
+  return useSettledSession(sessionId);
 }
 
 /** The rendered transcript of THIS session — with split panes / background tabs the first `.chat-inner` is often another one. */

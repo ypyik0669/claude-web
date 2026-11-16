@@ -1,11 +1,11 @@
 import { useMemo } from 'react';
 import type { SessionSummary } from '@shared';
-import { useStore } from '@/store';
+import { settledVersion, useSettledSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { MIME_SESSION } from '@/features/workbench/dnd';
-import { sessionDiffStat } from '@/model/diffstat';
+import { cachedDiffStat } from '@/model/diffstat';
 import { TERMS } from '@/ui/terms';
 import { isArchived } from './filter';
 import { SessionMenu, effectiveCaps, saveSections } from './session-actions';
@@ -108,10 +108,11 @@ export function StatusMark({ st }: { st: RowStatus }) {
 
 /** A conversation's status from what this window knows: the open runner (requests, errors, edits) or the list's `live`. */
 export function useRowStatus(s: SessionSummary, tag: string | null): RowStatus {
-  const open = useStore((st) => st.open[s.sessionId]);
+  // settled (useSettledOpen): a running row shows a spinner, nothing in it moves with each frame of the stream
+  const open = useSettledSession(s.sessionId);
   const busy = !!open && (open.state === 'running' || open.state === 'starting' || open.pending.length > 0);
   // edits are counted only for a session loaded here, and not while it streams (a spinner shows then)
-  const diff = useMemo(() => (open && !busy && open.conv ? sessionDiffStat(open.conv.items) : null), [open?.version, busy]);
+  const diff = open && !busy && open.conv ? cachedDiffStat(open.conv, settledVersion(open)) : null;
   return rowStatus({ state: open ? open.state : s.live, pending: open?.pending, error: open?.error, diff, tag, lastModified: s.lastModified });
 }
 

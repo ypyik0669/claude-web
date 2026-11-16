@@ -3,7 +3,7 @@
 // and day / night. Loaded with lazy() (three.js stays out of the first screen). Without WebGL it is a plain list.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { resolveCharacter, type CharacterDef } from '@characters';
-import { useStore } from '@/store';
+import { useOpenSettled, useStore } from '@/store';
 import { Icon } from '@/ui/icons';
 import { EmptyState } from '@/ui/EmptyState';
 import { EMPTY } from '@/ui/terms';
@@ -100,7 +100,7 @@ function Chip({ f, sm }: { f: OfficeZone; sm?: boolean }) {
 
 export function Office({ compact, follow, onFloor, onOpenAgent, onOpenChat }: OfficeProps) {
   const sessions = useBackground((s) => s.sessions);
-  const open = useStore((s) => s.open);
+  const open = useOpenSettled(); // not for each frame of a stream
   const list = useStore((s) => s.sessions);
   const respond = useStore((s) => s.respondPermission);
   const light = useStore((s) => s.settings['office.light']);

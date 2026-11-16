@@ -328,6 +328,10 @@ function startUpstream(lang, opts = {}) {
       }
     });
   });
+  // the CLI keeps its connections: Node's default 5 s keep-alive closes them under it, and its next request waits on a
+  // dead socket ("Request timed out" / "Connection error" retries, a minute's stall between steps — 2026-11-17)
+  server.keepAliveTimeout = 10 * 60_000;
+  server.headersTimeout = 10 * 60_000 + 1000;
   return new Promise((res) => server.listen(0, '127.0.0.1', () => res({ server, url: `http://127.0.0.1:${server.address().port}` })));
 }
 
@@ -349,10 +353,12 @@ async function startServer(home, opts) {
   }
   // a web build somewhere else than web/dist (the recorder builds its own: a running dev app serves web/dist)
   if (opts.dist) env.CLAUDE_WEB_DIST = opts.dist;
+  // extra variables / node flags for the server process (scripts/perf-busy.cjs: --inspect, a counting preload)
+  if (opts.env) Object.assign(env, opts.env);
   fs.mkdirSync(env.CLAUDE_WEB_DIR, { recursive: true });
   const metaFile = path.join(env.CLAUDE_WEB_DIR, 'meta.json');
   if (!fs.existsSync(metaFile)) fs.writeFileSync(metaFile, JSON.stringify({ version: 1, settings: { 'ui.language': opts.lang, 'ui.theme': opts.theme ?? 'dark', 'ui.sidebarFolded': false, ...(opts.settings ?? {}) } }));
-  const server = spawn(process.execPath, opts.fromSource ? ['--import', 'tsx', path.join(ROOT, 'server', 'src', 'index.ts')] : [path.join(ROOT, 'server', 'dist', 'index.js')], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const server = spawn(process.execPath, [...(opts.nodeArgs ?? []), ...(opts.fromSource ? ['--import', 'tsx', path.join(ROOT, 'server', 'src', 'index.ts')] : [path.join(ROOT, 'server', 'dist', 'index.js')])], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   let log = '';
   server.stderr.on('data', (d) => { log += d; });
   const port = await new Promise((res, rej) => {

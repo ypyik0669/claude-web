@@ -43,8 +43,12 @@
 }
 .composer-box > .attach { padding: 2px 4px 0; }
 
+/* field-sizing: the box grows with its text in the browser itself — the old JS autosize read scrollHeight on every
+   keystroke, a forced layout of the whole page, ~54 ms a key with a long conversation streaming beside it (2026-11-17) */
 .composer textarea { display: block; width: 100%; min-height: 36px; max-height: 280px; padding: 4px 6px 8px; border: 0; background: transparent; resize: none; font-size: var(--fs-body); line-height: 24px; color: var(--ink-1); }
 .composer textarea::placeholder { color: var(--ink-4); }
+/* not while empty: the placeholder would size it (a long one wraps to several lines in the one-line box) */
+.composer textarea:not(:placeholder-shown) { field-sizing: content; }
 .composer textarea:focus-visible { outline: none; }
 .welcome .composer textarea { min-height: 60px; }
 
@@ -192,8 +196,12 @@ html .composer-under.cb.cb .cb-right .mm-anchor:not(.sub-anchor) { min-width: 0;
 .send .spinner { position: absolute; inset: 0; margin: auto; }
 
 /* ---- running: a light travels around the box's edge, one turn in 3.2s. The ring is a mask (the 1.5px between the
-   border box and the content box) over a conic gradient that turns behind it — a transform, so nothing is repainted.
-   The gradient is a square 1.5 × the box's longer side (cqmax), enough to cover the box at any angle. ---- */
+   border box and the content box) over a conic gradient that turns behind it — a transform, run by the compositor (no
+   style recalc, no repaint). 2026-11-17: an animated registered custom property (conic-gradient(from var(--a))) was
+   tried instead and cost the page's main thread ~500 ms of style recalc a second; this stays a transform, but on a
+   square of 1.25 × the box's longer side (enough to cover any box up to 3 : 4 at every angle; it was 1.5 ×, a
+   2280 px layer on a Retina screen) and turning in 80 steps (25 a second) rather than every frame — a third of the
+   area, a third to a fifth of the frames to composite, which counts when the desktop app renders in software. ---- */
 .composer-glow {
   position: absolute; inset: 0; padding: 1.5px; border-radius: inherit; overflow: hidden; pointer-events: none;
   container-type: size;
@@ -203,9 +211,9 @@ html .composer-under.cb.cb .cb-right .mm-anchor:not(.sub-anchor) { min-width: 0;
   animation: cmp-glow-in var(--dur-slow) var(--ease-out);
 }
 .composer-glow > i {
-  position: absolute; left: 50%; top: 50%; width: 150cqmax; height: 150cqmax; margin: -75cqmax 0 0 -75cqmax;
+  position: absolute; left: 50%; top: 50%; width: 125cqmax; height: 125cqmax; margin: -62.5cqmax 0 0 -62.5cqmax;
   background: conic-gradient(transparent 0 62%, var(--accent) 80%, transparent 96%);
-  animation: cmp-glow-turn var(--cmp-glow) linear infinite;
+  animation: cmp-glow-turn var(--cmp-glow) steps(80) infinite;
 }
 @keyframes cmp-glow-in { from { opacity: 0; } }
 @keyframes cmp-glow-turn { to { transform: rotate(360deg); } }
@@ -261,7 +269,8 @@ html .composer-under.cb.cb .cb-right .mm-anchor:not(.sub-anchor) { min-width: 0;
 .run-card.waiting .rc-words { color: inherit; background: none; animation: none; }
 
 /* something lies over the conversation (the settings page, a dialog, a phone's drawer…): the loops hold still */
-.composer[data-paused] .composer-glow > i, .composer[data-paused] .run-card .pip, .composer[data-paused] .run-card .rc-words { animation-play-state: paused; }
+.composer[data-paused] .run-card .pip, .composer[data-paused] .run-card .rc-words { animation-play-state: paused; }
+.composer[data-paused] .composer-glow > i { animation-play-state: paused; }
 
 /* ---- 减少动态效果 (the setting, then the system's): colours still ease, briefly; nothing moves, scales, blurs or
    loops. No light around the box; the tab's words are plain --ink-2; the tab and its words just appear. ---- */

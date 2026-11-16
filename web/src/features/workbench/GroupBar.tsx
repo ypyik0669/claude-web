@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useStore } from '@/store';
+import { useOpenSettled, useStore } from '@/store';
 import { useDropdown } from '@/ui/menus';
 import { imeComposing } from '@/ui/ime';
 import { paneOrder, type LayoutPreset } from '@/model/layout';
@@ -28,7 +28,7 @@ const PRESETS: { id: LayoutPreset; l: string; ic: IconName }[] = [
 export function GroupBar() {
   const layout = useStore((s) => s.layout);
   const dispatch = useStore((s) => s.dispatchLayout);
-  const open = useStore((s) => s.open);
+  const open = useOpenSettled(); // not for each frame of a stream
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [presets, setPresets] = useState(false);

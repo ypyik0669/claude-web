@@ -1,4 +1,6 @@
 // Phone breakpoint (spec §5.11). App keeps `store.mobile` in sync with it; components read the store, not the query.
+// styles/phone.css repeats it as `@media (max-width: 760px)` around its :has() rules (they cost the desktop a whole-app style
+// recalc on every change otherwise) — change both together
 export const MOBILE_QUERY = '(max-width: 760px)';
 
 interface DrawerState { mobile: boolean; sidebarOpen: boolean; paletteOpen: boolean; shortcutsOpen: boolean }

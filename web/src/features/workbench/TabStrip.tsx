@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import { useStore } from '@/store';
+import { useOpenSettled, useStore } from '@/store';
 import { useDropdown } from '@/ui/menus';
 import { placeFixed } from '@/features/sidebar/place';
 import { imeComposing } from '@/ui/ime';
@@ -38,7 +38,7 @@ export function TabStrip({ pane, groupId, index, zoomed, single, lead, workbench
   const closeTile = useStore((s) => s.closeTile);
   const dirty = useStore((s) => s.dirtyDocs);
   const sessions = useStore((s) => s.sessions);
-  const open = useStore((s) => s.open);
+  const open = useOpenSettled(); // not for each frame of a stream
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [menu, setMenu] = useState(false);

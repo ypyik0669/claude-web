@@ -84,3 +84,19 @@ export function sessionDiffStat(items: Item[]): DiffStat {
   for (const r of rows) { added += r.added; removed += r.removed; }
   return { files: rows.length, added, removed };
 }
+
+/**
+ * `sessionDiffStat` of a conversation, worked out once per `settled` version and shared by every caller (the header,
+ * the info column's cards, the sidebar row). A streamed delta never changes it — an edit counts when its result
+ * arrives as a whole message — so keyed on `version - streamed` it is not walked again for every frame of a stream
+ * (2026-11-17: the header + five info cards each walked the whole conversation, splitting every Write's content,
+ * 60 times a second while a turn streamed).
+ */
+const statCache = new WeakMap<object, { key: number; stat: DiffStat }>();
+export function cachedDiffStat(conv: { items: Item[] }, settled: number): DiffStat {
+  const hit = statCache.get(conv);
+  if (hit && hit.key === settled) return hit.stat;
+  const stat = sessionDiffStat(conv.items);
+  statCache.set(conv, { key: settled, stat });
+  return stat;
+}

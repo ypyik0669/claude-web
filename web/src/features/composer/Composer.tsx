@@ -76,6 +76,8 @@ import { pickFolder } from '@/ui/pick-folder';
 const AddSshDialog = lazy(() => import('@/features/remote/AddSshDialog').then((m) => ({ default: m.AddSshDialog })));
 
 // sessions on another machine: uploads land on this machine's disk, out of the remote agent's reach
+/** The browser grows the text box with its content (composer.css field-sizing): no JS measuring, which forced a layout of the whole page on every keystroke. Older browsers (the phone shell on an older Safari) keep the JS. */
+const NATIVE_AUTOSIZE = typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('field-sizing', 'content');
 const REMOTE_ATTACH = tr('附件在本机，远端读不到，请粘贴内容（图片可以直接发）');
 // goals run on THIS machine (GoalService drives a local runner): it cannot drive a conversation over there
 const REMOTE_GOAL = tr('其它机器上的对话不能在这里设定目标（目标由本机驱动）。可以到那台机器上设定，或先「交给本机的 Agent 继续」');
@@ -384,6 +386,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   }, [inbox, active?.sessionId, disabled, visible]);
 
   const autosize = () => {
+    if (NATIVE_AUTOSIZE) return; // the CSS sizes it (field-sizing: content)
     const el = ta.current;
     if (!el || !el.clientWidth) return; // hidden / not laid out yet: a bogus scrollHeight would stick
     el.style.height = 'auto';

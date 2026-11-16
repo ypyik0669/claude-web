@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useStore } from '@/store';
+import { useSettledSession, useStore } from '@/store';
 import { getToolDef } from './tools/registry';
 import { clsx, shortModel } from '@/util';
 import { ProcessGlyph } from '@/themes/ProcessGlyph';
@@ -48,7 +48,7 @@ function useLinger(on: boolean): LingerPhase {
  * keying the node on the words).
  */
 export function RunCard({ sessionId }: { sessionId: string }) {
-  const o = useStore((s) => s.open[sessionId]);
+  const o = useSettledSession(sessionId);
   const interrupt = useStore((s) => s.interrupt);
   const [, tick] = useState(0);
   const running = !!o && (o.state === 'running' || o.state === 'waiting');

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useStore } from '@/store';
+import { useSettledSession, useStore } from '@/store';
 import { usePaneCtx } from '@/store/paneContext';
 import { clsx } from '@/util';
 import { useDropdown } from '@/ui/menus';
@@ -25,7 +25,7 @@ export function showUsageCard(tileId: string): void {
  * (2026-10-23 user report). The full breakdown is only fetched when the 信息栏's context card asks for it.
  */
 export function useContextUsage(sessionId: string): ContextUsage | undefined {
-  const o = useStore((s) => s.open[sessionId]);
+  const o = useSettledSession(sessionId);
   const providers = useStore((s) => s.providers);
   const recorded = useStore((s) => s.sessionMeta[sessionId]);
   return useMemo(() => {
@@ -50,7 +50,7 @@ export function useContextUsage(sessionId: string): ContextUsage | undefined {
  * to the ring or, without one, to this corner of the row.
  */
 export function ContextMeter({ sessionId }: { sessionId: string }) {
-  const o = useStore((s) => s.open[sessionId]);
+  const o = useSettledSession(sessionId);
   const pane = usePaneCtx();
   const [pinned, setPinned] = useState(false);
   const [hover, setHover] = useState(false);

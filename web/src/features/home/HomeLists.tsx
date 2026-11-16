@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
 import type { SessionSummary } from '@shared';
-import { useStore } from '@/store';
+import { settledVersion, useSettledSession, useStore } from '@/store';
 import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { EmptyState } from '@/ui/EmptyState';
 import { EMPTY } from '@/ui/terms';
-import { sessionDiffStat } from '@/model/diffstat';
+import { cachedDiffStat } from '@/model/diffstat';
 import { openAutomation } from '@/features/automation/state';
 import { homeRows, homeStatus, homeTabs, type HomeRow, type HomeStatus, type HomeTab } from './model';
 import { tr } from '@/i18n';
@@ -23,9 +23,9 @@ function StatusEnd({ st }: { st: HomeStatus | null }) {
 
 /** A conversation row: its status from this window's runner when it is open (requests, errors, its own edits). */
 function SessionLine({ row, s, onOpen }: { row: HomeRow; s: SessionSummary; onOpen: (id: string) => void }) {
-  const o = useStore((st) => st.open[s.sessionId]);
+  const o = useSettledSession(s.sessionId);
   const busy = !!o && (o.state === 'running' || o.state === 'starting' || o.pending.length > 0);
-  const diff = useMemo(() => (o && !busy ? sessionDiffStat(o.conv.items) : null), [o?.version, busy]);
+  const diff = o && !busy ? cachedDiffStat(o.conv, settledVersion(o)) : null;
   const st = o ? homeStatus(s, { state: o.state, pending: o.pending, error: o.error, diff }) : row.status;
   return <Line row={row} st={st} onClick={() => onOpen(s.sessionId)} />;
 }

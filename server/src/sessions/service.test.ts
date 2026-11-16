@@ -70,6 +70,41 @@ describe('SessionService.list() fetch limit', () => {
   });
 });
 
+// 2026-11-17 「一跑任务整个电脑都卡」: a running turn writes its transcript every few seconds and every window asked for
+// the list after each write — the whole listing (1.2–1.6 s of CPU for 270 conversations) again each time
+describe('SessionService.list() after a transcript was written', () => {
+  const line = (sid: string, text: string, at: number) => JSON.stringify({ type: 'user', cwd: '/work/demo', session_id: sid, uuid: `${sid.slice(0, 8)}-${at}`, parentUuid: null, parent_tool_use_id: null, parent_agent_id: null, timestamp: new Date(at).toISOString(), message: { role: 'user', content: [{ type: 'text', text }] } }) + '\n';
+  const waitFor = (svc: any, ev: string) => Promise.race([new Promise((res) => svc.once(ev, res)), new Promise((_, rej) => setTimeout(() => rej(new Error(`no ${ev}`)), 5000))]);
+
+  it('re-reads only that row (no second listing); a conversation the list does not have yet lists everything again', async () => {
+    const svc = new SessionService();
+    try {
+      await new Promise((r) => setTimeout(r, 300)); // the recursive watch is up
+      const dir = path.join(process.env.CLAUDE_CONFIG_DIR!, 'projects', 'demo');
+      const sid = '11111111-1111-1111-1111-111111111111';
+      const before = (await svc.list()).find((r) => r.sessionId === sid)!;
+      expect(before).toBeTruthy();
+      expect(calls).toHaveLength(1);
+      await new Promise((r) => setTimeout(r, 20));
+      let changed = waitFor(svc, 'changed');
+      await fs.appendFile(path.join(dir, `${sid}.jsonl`), line(sid, 'and then', Date.now()), 'utf8');
+      await changed;
+      const after = (await svc.list()).find((r) => r.sessionId === sid)!;
+      expect(calls).toHaveLength(1); // the cache stayed: only this row was read again
+      expect(after.lastModified).toBeGreaterThanOrEqual(before.lastModified);
+      const fresh = '33333333-3333-3333-3333-333333333333';
+      changed = waitFor(svc, 'changed');
+      await fs.writeFile(path.join(dir, `${fresh}.jsonl`), line(fresh, 'a new one', Date.now()), 'utf8');
+      await changed;
+      const rows = await svc.list();
+      expect(calls).toHaveLength(2);
+      expect(rows.some((r) => r.sessionId === fresh)).toBe(true);
+    } finally {
+      svc.close?.();
+    }
+  });
+});
+
 describe('which conversation a write under ~/.claude/projects belongs to', () => {
   it('a transcript names its conversation; project dirs, sub-agent logs and memory do not', async () => {
     const { transcriptIdOf } = await import('./service.js');

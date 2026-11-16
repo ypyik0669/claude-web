@@ -44,7 +44,7 @@
    in a row under it — one two-row header, so the line that closes it sits under the actions ---- */
 .app.mobile .rv-fh { min-height: 44px; padding-right: var(--sp-3); }
 .app.mobile .rv-fh .rv-tag { max-width: 30%; } /* 「重命名自 …」 must not take the line from the path */
-.app.mobile .rv-file.open .rv-fh:has(+ .rv-acts-row) { box-shadow: none; }
+@media (max-width: 760px) { .app.mobile .rv-file.open .rv-fh:has(+ .rv-acts-row) { box-shadow: none; } } /* phone width only: see phone.css (a sibling :has costs the desktop whole-subtree style recalcs) */
 .app.mobile .rv-acts-row { display: flex; gap: var(--sp-1); padding: 0 var(--sp-1) var(--sp-1); background: var(--fill-subtle); box-shadow: inset 0 -1px 0 var(--edge-subtle); }
 .app.mobile .rv-act { flex: 1 1 0; min-width: 0; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2); padding: 0 var(--sp-2); border-radius: var(--r-row); font-size: var(--fs-base); color: var(--ink-2); white-space: nowrap; transition: background var(--dur-fast) var(--ease-out), transform var(--dur-instant) var(--ease-out); }
 .app.mobile .rv-act svg { flex: none; color: var(--ink-3); }

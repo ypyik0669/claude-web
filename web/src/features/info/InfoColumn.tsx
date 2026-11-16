@@ -3,12 +3,12 @@
 // title); both are kept in meta.json `ui.infoCards`.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { RemoteStatus } from '@shared';
-import { useStore } from '@/store';
+import { settledVersion, useSettledSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { basename, clsx } from '@/util';
 import { Icon, type IconName } from '@/ui/icons';
 import { tr } from '@/i18n';
-import { sessionDiffStat } from '@/model/diffstat';
+import { cachedDiffStat } from '@/model/diffstat';
 import { sessionPeer } from '@/features/peers';
 import { useBackground, stopTask } from '@/features/background/state';
 import { usePrs } from '@/features/vcs/PrBar';
@@ -79,9 +79,10 @@ function ContextWindowLine({ sessionId }: { sessionId: string }) {
 }
 
 function CardSummary({ card, sessionId }: { card: InfoCard; sessionId: string }) {
-  const o = useStore((s) => s.open[sessionId]);
+  const o = useSettledSession(sessionId);
   const cu = useContextUsage(sessionId);
-  const stat = useMemo(() => (o ? sessionDiffStat(o.conv.items) : null), [o?.version]);
+  // only the 改动 card shows it; shared and worked out once per settled version (cachedDiffStat)
+  const stat = o && card === 'changes' ? cachedDiffStat(o.conv, settledVersion(o)) : null;
   const conns = connectorSummary(o?.info?.mcpServers as any);
   const bg = useBackground((s) => s.sessions[sessionId]);
   const running = bg?.tasks.filter((t) => t.status === 'running').length ?? 0;
@@ -141,7 +142,7 @@ const Row = ({ icon, children, title, end }: { icon: IconName; children: React.R
 // ---------- 环境 ----------
 
 function EnvCard({ sessionId }: { sessionId: string }) {
-  const o = useStore((s) => s.open[sessionId]);
+  const o = useSettledSession(sessionId);
   const sessions = useStore((s) => s.sessions);
   const meta = sessions.find((x) => x.sessionId === sessionId);
   const peer = sessionPeer(sessionId, sessions);
@@ -255,8 +256,8 @@ function ConnectorsCard({ sessionId }: { sessionId: string }) {
 // ---------- 改动 ----------
 
 function ChangesCard({ sessionId }: { sessionId: string }) {
-  const o = useStore((s) => s.open[sessionId]);
-  const stat = useMemo(() => (o ? sessionDiffStat(o.conv.items) : null), [o?.version]);
+  const o = useSettledSession(sessionId);
+  const stat = o ? cachedDiffStat(o.conv, settledVersion(o)) : null;
   const pr = usePrs((s) => s.bySession[sessionId] ?? null);
   const idle = o?.state === 'idle';
   const askPr = () => {

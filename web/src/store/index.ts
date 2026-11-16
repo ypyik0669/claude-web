@@ -5,7 +5,9 @@ import { withDefaultMode } from './default-mode';
 import { decodeAttachments, findChainUuidBefore, isPrompt } from '@/model/conversation';
 import { activeGroup, chatTile, deriveActive, hasLegacyLayout, initialLayout, layoutReducer, migrateLegacy, migrateWorkbench, needsSimplifiedNotice, panelToggleEffect, sanitizeLayout, SIMPLIFIED_NOTICE_KEY, type LayoutAction, type LayoutState, type Tile } from '@/model/layout';
 import { PaneContext, winId } from './paneContext';
-import { useContext } from 'react';
+import { useContext, useRef } from 'react';
+import { onlyStreamed } from './streamed';
+export { onlyStreamed, settledVersion } from './streamed';
 import { isAuthAnswer, type AccountAuth } from './auth';
 import { withExplanation } from '@errors';
 export type { AccountAuth } from './auth';
@@ -14,7 +16,7 @@ export const THEMES = ['dark', 'light', 'dracula', 'nord', 'tokyo-night', 'paper
 export type Theme = (typeof THEMES)[number];
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
-import { applyMessage, applyTranscript, createConversation, prependTranscript, walkTools, type Conversation } from '@/model/conversation';
+import { applyMessage, applyTranscript, createConversation, isLightMessage, prependTranscript, walkTools, type Conversation } from '@/model/conversation';
 import { staleStopResult, stopFoundNothing } from './stop';
 import { EXTERNAL_LIVE_MS, externalLive, nextReadAt, readsFromOutside, shownSessions } from './external';
 import { isImportedSessionId } from '@/util';
@@ -658,7 +660,10 @@ export const useStore = create<State>((set, get) => ({
         case 'session.event': {
           // a delta goes into the conversation now and is rendered with the next frame: one render per delta was
           // 10–33 ms, and a model streaming a token per delta (DeepSeek) left the window minutes behind the relay
-          if ((e.message as any)?.type === 'stream_event') {
+          // …and so does what changes nothing but in-place counters (isLightMessage: a tool's elapsed seconds, the
+          // binary's thinking_tokens 5–11 a second) — not while the conversation is shown as running elsewhere: any
+          // message here clears that, and every settled view has to see it
+          if (isLightMessage(e.message) && !get().open[e.sessionId]?.conv.elsewhere) {
             const o = get().open[e.sessionId];
             if (!o) break;
             applyMessage(o.conv, e.message);
@@ -1327,9 +1332,52 @@ export function forkCarry(sessionId: string): ReturnType<typeof forkParams> {
 // following the system: an OS light / dark switch also updates the cached theme and the desktop title bar colours
 setSystemThemeHandler((t) => useStore.getState().setTheme(t, true));
 
-export const useActive = () => useStore((s) => (s.activeId ? s.open[s.activeId] : undefined));
-/** Session of the enclosing workbench pane (falls back to the focused pane's session outside a pane). */
+/**
+ * An open session that re-renders its component for whole messages and every other change, but not for each frame of
+ * a stream (2026-11-17, 「一跑任务整个电脑都卡」: ~20 components — the composer, every panel the right panel and the
+ * dock keep mounted while hidden — took the whole session and re-rendered 60 times a second while a turn streamed,
+ * some walking every tool call of the conversation each time). The deltas are in `conv` already (mutated in place);
+ * the next whole message brings them along. What draws the streaming text (ChatView) uses `useScopedSessionLive`.
+ */
+function useSettledOpen(pick: (s: State) => OpenSession | undefined): OpenSession | undefined {
+  const last = useRef<OpenSession | undefined>(undefined);
+  return useStore((s) => {
+    const next = pick(s);
+    if (last.current && next && onlyStreamed(last.current, next)) return last.current;
+    last.current = next;
+    return next;
+  });
+}
+
+export const useActive = () => useSettledOpen((s) => (s.activeId ? s.open[s.activeId] : undefined));
+/**
+ * Every open session (`s.open`), settled: the same map object while the only change in any of them was frames of a
+ * stream (the tab strip, the group bar, the start page, 总览, the cafe took the map and redrew 60 times a second).
+ */
+export function useOpenSettled(): Record<string, OpenSession> {
+  const last = useRef<Record<string, OpenSession> | undefined>(undefined);
+  return useStore((s) => {
+    const next = s.open, prev = last.current;
+    if (prev && prev !== next) {
+      const ka = Object.keys(prev), kb = Object.keys(next);
+      if (ka.length === kb.length && kb.every((k) => k in prev && onlyStreamed(prev[k], next[k]))) return prev;
+    }
+    last.current = next;
+    return next;
+  });
+}
+/** One open session by id, settled (see useSettledOpen). */
+export const useSettledSession = (sessionId: string | null | undefined) => useSettledOpen((s) => (sessionId ? s.open[sessionId] : undefined));
+/** Session of the enclosing workbench pane (falls back to the focused pane's session outside a pane) — settled: see useSettledOpen. */
 export const useScopedSession = () => {
+  const ctx = useContext(PaneContext);
+  return useSettledOpen((s) => {
+    const id = ctx ? ctx.sessionId : s.activeId;
+    return id ? s.open[id] : undefined;
+  });
+};
+/** The same, re-rendering for every streamed frame too: only for what draws the streaming text. */
+export const useScopedSessionLive = () => {
   const ctx = useContext(PaneContext);
   return useStore((s) => {
     const id = ctx ? ctx.sessionId : s.activeId;

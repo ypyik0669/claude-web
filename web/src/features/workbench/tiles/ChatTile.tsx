@@ -1,10 +1,10 @@
 import { Backdrop } from '@/themes/Backdrop';
 import { useActivePack } from '@/themes/apply';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useStore } from '@/store';
+import { settledVersion, useSettledSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { basename, clsx } from '@/util';
-import { sessionDiffStat } from '@/model/diffstat';
+import { cachedDiffStat } from '@/model/diffstat';
 import type { Tile } from '@/model/layout';
 import { ChatView } from '@/features/chat/ChatView';
 import { TrajectoryView } from '@/features/trajectory/TrajectoryView';
@@ -124,7 +124,8 @@ const TOOLS: { panel: PanelId; icon: 'diff' | 'browser' | 'files'; local: boolea
 /** `infoShown`: the info column is on screen (on, and the pane wide enough) — else the header keeps the +N −M. */
 function SessionHeader({ tile, paneId, infoShown }: { tile: ChatTileModel; paneId: string; infoShown: boolean }) {
   const sid = tile.sessionId!;
-  const active = useStore((s) => s.open[sid]);
+  // settled (useSettledOpen): the header has nothing to redraw for each frame of a stream
+  const active = useSettledSession(sid);
   const meta = useStore((s) => s.sessions.find((x) => x.sessionId === sid));
   const workspaces = useStore((s) => s.workspaces);
   const dispatch = useStore((s) => s.dispatchLayout);
@@ -146,7 +147,7 @@ function SessionHeader({ tile, paneId, infoShown }: { tile: ChatTileModel; paneI
   const agentName = active?.info?.agentName ?? agentDef?.name ?? agentKind;
   const { git, worktree } = useRepoContext(cwd, sid);
   const branch = git?.branch ?? meta?.gitBranch;
-  const stat = useMemo(() => (active ? sessionDiffStat(active.conv.items) : null), [active?.version]);
+  const stat = active ? cachedDiffStat(active.conv, settledVersion(active)) : null;
   const rename = async () => {
     if (editing !== null && editing.trim() && editing !== title) await useStore.getState().libraryOp('rename', { sessionId: sid, title: editing.trim() }).catch((e) => toast(e.message));
     setEditing(null);
@@ -225,15 +226,18 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
   const sid = tile.sessionId;
   const has = useStore((s) => (sid ? !!s.open[sid] : true));
   const loadHistory = useStore((s) => s.loadHistory);
-  const active = useStore((s) => (sid ? s.open[sid] : undefined));
+  // whether it is open and its folder only: the whole session would redraw the tile (composer, header, info column)
+  // for every frame of a stream
+  const active = useStore((s) => (sid && s.open[sid] ? true : undefined));
+  const activeCwd = useStore((s) => (sid ? s.open[sid]?.cwd ?? '' : ''));
   const sessions = useStore((s) => s.sessions);
   // by id, not by the list: a fork or a restored layout may render before the list has the row
   const peer = sessionPeer(sid, sessions);
   const remoteView = !!peer && !viewsFor(true).some((v) => v.id === tile.wb) && tile.wb !== 'live';
-  const gitStatus = useGitStatus(active?.cwd ?? '', tile.wb === 'files' && !peer);
+  const gitStatus = useGitStatus(activeCwd, tile.wb === 'files' && !peer);
   // a project with extra folders: a group per folder in files / search / git (stage C2)
   const workspaces = useStore((s) => s.workspaces);
-  const roots = useMemo(() => projectRoots(active?.cwd ?? '', workspaces), [active?.cwd, workspaces]);
+  const roots = useMemo(() => projectRoots(activeCwd, workspaces), [activeCwd, workspaces]);
   const deleted = useStore((s) => (sid ? !!s.deletedSessions[sid] : false));
   // 信息栏 (phase 6 spec §1): on unless switched off; it steps aside while the pane is too narrow for both columns
   const mobile = useStore((s) => s.mobile);
@@ -283,11 +287,11 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
       {remoteView ? null : <>
       {tile.wb === 'changes' && <div className="wb-body"><ReviewView inPlace visible={visible} /></div>}
       {tile.wb === 'git' && <div className="wb-body"><RootGroups roots={roots}>{(r) => <GitView cwd={r} visible={visible} />}</RootGroups></div>}
-      {tile.wb === 'files' && <div className="wb-body"><RootGroups roots={roots}>{(r) => <FileTree root={r} gitStatus={r === active.cwd ? gitStatus : undefined} />}</RootGroups></div>}
+      {tile.wb === 'files' && <div className="wb-body"><RootGroups roots={roots}>{(r) => <FileTree root={r} gitStatus={r === activeCwd ? gitStatus : undefined} />}</RootGroups></div>}
       {tile.wb === 'search' && <div className="wb-body"><RootGroups roots={roots}>{(r) => <SearchView root={r} />}</RootGroups></div>}
       {tile.wb === 'schedules' && <div className="wb-body"><SchedulesView /></div>}
       {tile.wb === 'artifacts' && <div className="wb-body"><Artifacts sessionId={sid} /></div>}
-      {tile.wb === 'board' && <div className="wb-body"><BoardView cwd={active.cwd} sid={sid} /></div>}
+      {tile.wb === 'board' && <div className="wb-body"><BoardView cwd={activeCwd} sid={sid} /></div>}
       </>}
     </div>
   );

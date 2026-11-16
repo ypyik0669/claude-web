@@ -34,12 +34,18 @@
 .app.mobile .sess-head > .sh-actions { position: relative; z-index: 1; }
 .app.mobile .sh-diff { height: 32px; padding: 0 12px; margin: 0; border-radius: var(--r-pill); background: var(--surface-elev); box-shadow: var(--elev-1); font-family: var(--mono); font-size: var(--fs-meta); letter-spacing: -0.02em; }
 .app.mobile .sh-actions { gap: var(--sp-2); }
-/* directly over the conversation: the header's lower edge is a fade the text scrolls under */
-.app.mobile .chat-tile > .sess-head:has(+ .chat) {
-  position: relative; z-index: 6; margin-bottom: -22px; padding-bottom: 22px; height: calc(var(--h-head) + 22px + env(safe-area-inset-top, 0px));
-  background: linear-gradient(to bottom, var(--surface-0) calc(100% - 26px), transparent); pointer-events: none;
+/* directly over the conversation: the header's lower edge is a fade the text scrolls under. Inside the phone width only
+   (MOBILE_QUERY, ui/viewport.ts): a :has(+ .chat) rule anywhere in the sheet made Chromium recompute the style of the
+   whole app (~3800 elements, 165 ms) each time the conversation changed — several times a second while a task ran on
+   the desktop, where .app.mobile never matches (2026-11-17 trace). A rule in a media query that does not apply costs
+   nothing. */
+@media (max-width: 760px) {
+  .app.mobile .chat-tile > .sess-head:has(+ .chat) {
+    position: relative; z-index: 6; margin-bottom: -22px; padding-bottom: 22px; height: calc(var(--h-head) + 22px + env(safe-area-inset-top, 0px));
+    background: linear-gradient(to bottom, var(--surface-0) calc(100% - 26px), transparent); pointer-events: none;
+  }
+  .app.mobile .chat-tile > .sess-head:has(+ .chat) > * { pointer-events: auto; }
 }
-.app.mobile .chat-tile > .sess-head:has(+ .chat) > * { pointer-events: auto; }
 .app.mobile .chat-tile > .sess-head + .chat { padding-top: 26px; }
 
 /* ---- the conversation ---- */
@@ -76,7 +82,7 @@
 /* no hover on a touch screen: the row's ··· is always there, after its status (a long press opens the same sheet) */
 .app.mobile .sb-row.sess { padding-right: 4px; }
 .app.mobile .sb-row .more { position: static; transform: none; visibility: visible; flex: none; width: 36px; height: 36px; margin-left: -4px; color: var(--ink-4); }
-.app.mobile .sb-row:has(> .more):hover .st, .app.mobile .sb-row:has(> .more):focus-visible .st { visibility: visible; }
+@media (max-width: 760px) { .app.mobile .sb-row:has(> .more):hover .st, .app.mobile .sb-row:has(> .more):focus-visible .st { visibility: visible; } } /* phone width only: see above */
 
 /* ---- 连接断开: a small amber pill under the title, not a strip across the page ---- */
 .app.mobile .conn-banner:not(.over-settings) {

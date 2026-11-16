@@ -36,7 +36,15 @@ function parseFilters(raw: string): { agent?: string; cwd?: string; rest: string
   return { agent, cwd, rest, filtered: !!(agent || cwd) };
 }
 
+/**
+ * Mounted only while open: the body takes the whole store (`useStore()`), so closed it still redrew — and worked out
+ * its command list — with every change of anything, each frame of a stream included (2026-11-17 profile).
+ */
 export function CommandPalette() {
+  return useStore((s) => s.paletteOpen) ? <PaletteBody /> : null;
+}
+
+function PaletteBody() {
   const open = useStore((s) => s.paletteOpen);
   const st = useStore();
   const active = useActive();

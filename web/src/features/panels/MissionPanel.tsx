@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useStore } from '@/store';
+import { useOpenSettled, useStore } from '@/store';
 import { ago, basename, clsx, fmtMs } from '@/util';
 import { walkTools } from '@/model/conversation';
 import { Icon } from '@/ui/icons';
@@ -19,7 +19,7 @@ import { useInboxPending } from '@/features/bots/state';
  * current tool and elapsed time), what is idle, what failed — with one-click focus / interrupt / approve.
  */
 export function MissionPanel() {
-  const open = useStore((s) => s.open);
+  const open = useOpenSettled(); // not for each frame of a stream
   const sessions = useStore((s) => s.sessions);
   const schedules = useStore((s) => s.schedules);
   const openInPane = useStore((s) => s.openInPane);

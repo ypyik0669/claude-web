@@ -8,9 +8,9 @@ import { hasLive } from '@/features/background/model';
 import { credentialHint, ERROR_HINT, ERROR_LABEL, noResponseHint } from '@/model/health';
 import { fmtSize } from '@/model/attachments';
 import type { FileChange } from '@/model/diffstat';
-import { displayPath, fmtDuration, groupSteps, groupTurns, stepStarts, taskPlan, turnDone, turnDuration, turnMemo, turnStamp, turnSummaryParts, type Turn, type TurnMemo } from '@/model/turn';
+import { displayPath, fmtDuration, groupSteps, groupTurns, stepStarts, subagentSig, taskPlan, turnDone, turnDuration, turnMemo, turnStamp, turnSummaryParts, type Turn, type TurnMemo } from '@/model/turn';
 import { TodoBody, planItems, planProgress } from './tools/AgentTool';
-import { useScopedSession, useScopedSessionId, useStore } from '@/store';
+import { useScopedSessionLive, useScopedSessionId, useStore } from '@/store';
 import { usePaneCtx } from '@/store/paneContext';
 import { activeGroup } from '@/model/layout';
 import { clsx, fmtMs, fmtTok } from '@/util';
@@ -330,7 +330,8 @@ function FromHead({ from }: { from: { sessionId: string; title: string } }) {
 function UserRow({ it, version }: { it: UserItem; version: number }) {
   const sessionId = useScopedSessionId();
   const [editing, setEditing] = useState(false);
-  const open = useStore((s) => (sessionId ? s.open[sessionId] : undefined));
+  // whether it is open only: the whole session redrew every user message of the conversation for each frame of a stream
+  const open = useStore((s) => !!(sessionId && s.open[sessionId]));
   const images = it.images.filter(Boolean);
   void version;
   // the message this window just sent rises into place (the store's `lastSent` is the one it echoed itself); one that
@@ -614,6 +615,23 @@ const TurnView = memo(function TurnView({ turn, last, live, version, sessionId, 
   );
 }, sameTurn);
 
+/** One number per `items` array: a reloaded conversation (new objects, same ids) is drawn again. */
+const itemsEpochs = new WeakMap<object, number>();
+let nextEpoch = 1;
+const itemsEpoch = (items: object): number => { let n = itemsEpochs.get(items); if (n === undefined) { n = nextEpoch++; itemsEpochs.set(items, n); } return n; };
+
+/**
+ * The version an earlier turn is drawn for. One that is over, with no background work of the conversation that could
+ * still write into it, cannot change: it keeps its number (the conversation's items array, and what its Agent steps
+ * hold — `loadSubagent` fills them in place) instead of following every whole message of the turn in progress. Every
+ * tool call's result redrew the whole conversation before (2026-11-17 profile: ~24 turns, 148 replies, 820 icons per
+ * commit, 7–12 commits a second while a task ran — the window's main thread at 94–99.9 %, typing 26 s behind).
+ */
+function earlierVersion(t: Turn, items: Item[], settled: number, live: boolean, bg: boolean): number {
+  if (bg || !turnDone(t, { last: false, live })) return settled;
+  return -(itemsEpoch(items) * 1_000_003 + subagentSig(t) + 1);
+}
+
 /**
  * The conversation as turns (top level only — a subagent's messages and the detail panel use `ItemList`). `settled`:
  * the version without the frames of streamed deltas — those only write into the last turn (a background subagent's
@@ -639,7 +657,8 @@ function TurnList({ items, version, settled, live, waiting, sessionId, cwd, ask,
           end, whether the user opened it) belongs to one conversation */}
       {/* one flat keyed list (not an array per turn): a turn keeps its element when an older page is prepended */}
       {turns.flatMap((t, i) => {
-        const tv = <TurnView key={`${sessionId}|${t.id}|${view}`} turn={t} last={i === turns.length - 1} live={live} version={i === turns.length - 1 ? version : settled} sessionId={sessionId} cwd={cwd} />;
+        const last = i === turns.length - 1;
+        const tv = <TurnView key={`${sessionId}|${t.id}|${view}`} turn={t} last={last} live={live} version={last ? version : earlierVersion(t, items, settled, live, bg)} sessionId={sessionId} cwd={cwd} />;
         const x = extraAt(i);
         return x ? [...x, tv] : [tv];
       })}
@@ -683,7 +702,7 @@ function PlanDock({ t, going, waiting }: { t: ToolUseBlock; going: boolean; wait
  * layout check below finds no such pane — a page that is mounted but hidden can't steal the key that way.
  */
 export function ChatView({ extras }: { extras?: ChatExtra[] } = {}) {
-  const active = useScopedSession();
+  const active = useScopedSessionLive();
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const version = active?.version ?? 0;
@@ -727,9 +746,17 @@ export function ChatView({ extras }: { extras?: ChatExtra[] } = {}) {
     arrival.current = false;
   });
 
+  // at the bottom: stay there — once a frame, just before it is drawn (reading scrollHeight after every commit forced
+  // a layout of the whole conversation each time, several times a frame while a task ran: 2026-11-17 profile)
+  const scrollAsked = useRef(false);
   useEffect(() => {
-    const el = ref.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
+    if (!stick.current || scrollAsked.current) return;
+    scrollAsked.current = true;
+    requestAnimationFrame(() => {
+      scrollAsked.current = false;
+      const el = ref.current;
+      if (el && stick.current) el.scrollTop = el.scrollHeight;
+    });
   }, [version]);
 
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useStore } from '@/store';
+import { useOpenSettled, useStore } from '@/store';
 import { Composer } from '@/features/composer/Composer';
 import { fillComposer } from '@/features/composer/fill';
 import { Icon } from '@/ui/icons';
@@ -22,7 +22,7 @@ import { useActivePack } from '@/themes/apply';
  * notice when something is wrong · the 入门清单 · 最近任务 / 定时任务 / 已归档.
  */
 export function Welcome({ paneId, tileId }: { paneId: string; tileId: string }) {
-  const open = useStore((s) => s.open);
+  const open = useOpenSettled(); // not for each frame of a stream
   const loadHistory = useStore((s) => s.loadHistory);
   const dispatch = useStore((s) => s.dispatchLayout);
   const edge = usePaneEdge();

@@ -125,6 +125,8 @@ export class SessionService extends EventEmitter {
   // missing sessions beyond what was originally fetched.
   private cacheLimit = 0;
   private gen = 0;
+  /** moves only for what needs the whole list again (bump): a full listing that overlapped one is not kept */
+  private structGen = 0;
 
   private titles: TranscriptTitles;
 
@@ -136,18 +138,41 @@ export class SessionService extends EventEmitter {
     this.watcher = watchTree(projectsDir, (rel) => {
       if (rel !== null && !transcriptEvent(rel)) return;
       const id = rel === null ? null : transcriptIdOf(rel);
-      if (id) this.written.add(id);
-      this.bump();
+      if (id) {
+        this.written.add(id);
+        this.dirty.add(id);
+        this.touch();
+      } else this.bump();
     });
   }
 
   /** Conversations written since the last 'changed' (a CLI in a terminal, ourselves): 'transcripts' names them. */
   private written = new Set<string>();
+  /**
+   * Transcripts written since the cache was built: list() re-reads only these (getSessionInfo, ~30 ms each) instead of
+   * listing every conversation again (listSessions: 1.2–1.6 s of CPU for 270 of them on the dev machine, 2026-11-17).
+   * A running turn writes its transcript every few seconds, and every window asked for the list after each write —
+   * the server spent most of a running turn re-reading every transcript on disk (「一跑任务整个电脑都卡」).
+   */
+  private dirty = new Set<string>();
 
+  /** Anything but a transcript written (a project folder, a deletion, a fork, a rename): the whole list again. */
   private bump() {
     this.cache = null;
     this.cacheLimit = 0;
+    this.dirty.clear();
     this.gen++;
+    this.structGen++;
+    this.schedule();
+  }
+
+  /** A transcript written: the cache stays, the row is re-read on the next list(). */
+  private touch() {
+    this.gen++;
+    this.schedule();
+  }
+
+  private schedule() {
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.emit('changed');
@@ -155,13 +180,50 @@ export class SessionService extends EventEmitter {
     }, 800);
   }
 
+  /**
+   * The rows of the transcripts written since the cache was built, brought up to date in place. False when that is
+   * not enough (a conversation the list does not have yet, one the SDK cannot read by id): list everything again.
+   */
+  private async refreshDirty(): Promise<boolean> {
+    const cache = this.cache;
+    if (!cache) return false;
+    const ids = [...this.dirty];
+    this.dirty.clear();
+    for (const id of ids) {
+      const at = cache.findIndex((r) => r.sessionId === id);
+      if (at < 0) return false;
+      const info = await getSessionInfo(id).catch(() => undefined);
+      const file = findClaudeTranscript(id);
+      // one the SDK does not list (a long first prompt: sessions/unlisted.ts) is read the way the listing reads it
+      const row = info ? toSummary(info) : file ? summaryFromFile(file) : null;
+      if (!row) return false;
+      if (this.cache !== cache) return false; // listed again meanwhile
+      const old = cache[at];
+      // the name as applyTitles gives it (the whole transcript), else the one the row had — never the SDK's fallback
+      const t = file && this.titles.known(file) ? this.titles.update(file) : undefined;
+      row.title = t ? rowTitle(row, t) : old.title || row.title;
+      cache[at] = row;
+    }
+    cache.sort((a, b) => b.lastModified - a.lastModified);
+    return true;
+  }
+
   async list(limit = 500): Promise<SessionSummary[]> {
-    if (this.cache && this.cacheLimit >= limit) return this.cache.slice(0, limit);
+    if (this.cache && this.cacheLimit >= limit) {
+      if (!this.dirty.size) return this.cache.slice(0, limit);
+      if (await this.refreshDirty()) return this.cache!.slice(0, limit);
+      // fall through: list everything
+      this.cache = null;
+      this.cacheLimit = 0;
+    }
     // listSessions() without dir lists across all projects. Always ask for at least 2000 (the old
     // hardcoded cap) so small requests still cache generously, but never cap below what the caller
     // actually asked for (library sources like ClaudeSource want everything in one page).
     const fetchLimit = Math.max(2000, limit);
-    const gen = this.gen;
+    // transcripts written while listing stay in `dirty` (re-read on the next list); the listing itself is kept unless
+    // something structural happened meanwhile — a busy turn writes during almost every 2 s listing
+    const structGen = this.structGen;
+    this.dirty.clear();
     const all = await listSessions({ limit: fetchLimit });
     // + what the SDK skipped (a long first prompt and no title at the end: sessions/unlisted.ts)
     const ids = new Set(all.map((s) => s.sessionId));
@@ -178,7 +240,7 @@ export class SessionService extends EventEmitter {
     const out = [...all.map(toSummary), ...extra].sort((a, b) => b.lastModified - a.lastModified);
     this.applyTitles(out);
     // a write landed while we were scanning: this result may predate it, so don't pin it as the cache
-    if (gen === this.gen) { this.cache = out; this.cacheLimit = fetchLimit; }
+    if (structGen === this.structGen) { this.cache = out; this.cacheLimit = fetchLimit; }
     return out.slice(0, limit);
   }
 
@@ -207,7 +269,9 @@ export class SessionService extends EventEmitter {
           }
           this.titles.flush();
         } finally { this.reading = false; }
-        this.bump();
+        // the names just read go onto the rows already listed: nothing else changed, no need to list again
+        if (this.cache) this.applyTitles(this.cache);
+        this.schedule();
       })();
     }
   }

@@ -221,6 +221,21 @@ function findItem(c: Conversation, parent: string | null | undefined, pred: (i: 
   return undefined;
 }
 
+/** `system` subtypes `applySystem` turns into items, tasks or a flag something draws from (all others it ignores). */
+const DRAWN_SYSTEM = new Set(['status', 'cw_notice', 'compact_boundary', 'task_started', 'task_progress', 'task_updated', 'task_notification', 'background_tasks_changed', 'local_command_output', 'api_retry', 'model_refusal_fallback', 'model_refusal_no_fallback', 'informational', 'notification', 'permission_denied', ELSEWHERE]);
+
+/**
+ * A message the store renders with the next frame, like a streamed delta, instead of as a whole message: deltas, a
+ * running tool's elapsed seconds (`tool_progress`, every second), and the system messages the reducer ignores — the
+ * official binary sends `thinking_tokens` 5–11 times a second while it thinks (2026-11-17 profile), and each one, as
+ * a whole message, moved the settled version: every earlier turn and every settled view was drawn again for nothing.
+ */
+export function isLightMessage(m: any): boolean {
+  if (!m) return false;
+  if (m.type === 'stream_event' || m.type === 'tool_progress') return true;
+  return m.type === 'system' && typeof m.subtype === 'string' && !DRAWN_SYSTEM.has(m.subtype);
+}
+
 /** Mutates `c` in place; caller is responsible for triggering re-render (we bump a version). */
 export function applyMessage(c: Conversation, m: any): void {
   if (m && m.type !== 'stream_event') c.lastEventAt = clock();
