@@ -30,3 +30,23 @@ export function tilePayload(dt: DataTransfer): { groupId: string; paneId: string
     return null;
   }
 }
+
+// 文件树 → 对话 (user request 2026-11-17): a file or folder dragged from the tree. The payload is a JSON array of
+// absolute paths; `text/plain` carries the first one too, so a drop outside the app still gets the path.
+export const MIME_FILE = 'application/x-cw-file';
+
+export function setFileDrag(dt: DataTransfer, paths: string[]): void {
+  dt.setData(MIME_FILE, JSON.stringify(paths));
+  dt.setData('text/plain', paths.join('\n'));
+  dt.effectAllowed = 'copyMove';
+}
+
+export function filePayload(dt: DataTransfer | null): string[] {
+  if (!dt) return [];
+  try {
+    const j = JSON.parse(dt.getData(MIME_FILE) || '[]');
+    return Array.isArray(j) ? j.filter((p): p is string => typeof p === 'string' && !!p) : [];
+  } catch {
+    return [];
+  }
+}

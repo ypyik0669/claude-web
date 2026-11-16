@@ -60,6 +60,7 @@ import { BAR_ID } from './ids';
 import { FEATURE_DEFAULTS_KEY, LEGACY_FEATURES_KEY, afterStart, capabilityTags, migrateFeatureDefaults, usable, withoutTag } from './capabilities';
 import { FILL_EVENT, MENTION_EVENT, type FillDetail, type MentionDetail } from './fill';
 import { mentionText } from './at-mention';
+import { filePayload } from '@/features/workbench/dnd';
 import { QUOTE_EVENT, withLine, withQuote, type QuoteDetail } from './quote';
 import { applyStarter, initialCwd } from '@/features/home/model';
 import { usePageOpen } from '@/features/sections';
@@ -359,7 +360,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fillTile, bot]);
 
-  // 文件右键 → 加到下一条消息: this conversation's box takes `@path` (relative to its folder when inside it)
+  // 文件右键 → 添加到对话: this conversation's box takes `@path` (relative to its folder when inside it)
   useEffect(() => {
     if (welcome || !active) return;
     const sid = active.sessionId, cwdNow = active.cwd;
@@ -861,6 +862,20 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     if (disabled) return;
+    // 文件树 → 对话: a file / folder from the tree is a path on this disk — `@path`, like 添加到对话 (nothing uploads)
+    const treePaths = filePayload(e.dataTransfer);
+    if (treePaths.length) {
+      e.stopPropagation();
+      if (welcome) setText((cur) => treePaths.reduce((t, p) => mentionText(t, p, cwd), cur));
+      else if (!active) return;
+      else if (remote) { toast(REMOTE_ATTACH); return; }
+      else {
+        const sid = active.sessionId, cwdNow = active.cwd;
+        setText((cur) => { const next = treePaths.reduce((t, p) => mentionText(t, p, cwdNow), cur); setDraft(sid, next); return next; });
+      }
+      requestAnimationFrame(() => { const el = ta.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } });
+      return;
+    }
     const { files: dropped, folders, truncated } = await expandDataTransfer(e.dataTransfer);
     const imgOnly = dropped.filter((d) => !d.rel.includes('/') && d.file.type.startsWith('image/'));
     const rest = dropped.filter((d) => !imgOnly.includes(d));

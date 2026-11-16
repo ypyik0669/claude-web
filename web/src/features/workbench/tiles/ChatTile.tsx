@@ -44,6 +44,8 @@ import { openBackground, useBackground } from '@/features/background/state';
 import { desktop } from '@/desktop';
 import type { PanelId } from '@/model/layout';
 import { ThinkingLanguageRow } from '@/features/settings/ThinkingLanguageRow';
+import { MIME_FILE, filePayload, hasType } from '../dnd';
+import { mentionInComposer } from '@/features/composer/fill';
 
 type ChatTileModel = Extract<Tile, { kind: 'chat' }>;
 
@@ -263,6 +265,20 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
   useEffect(() => {
     if (sid && stale && visible) void useStore.getState().refreshExternal(sid);
   }, [sid, stale, visible]);
+  // 文件树 → 对话: a file / folder dragged from the tree onto the conversation goes into its input box as `@path`
+  // (the box itself takes the drop when it lands there — it stops it; everywhere else in the column lands here)
+  const [fileOver, setFileOver] = useState(false);
+  const fileDrop = {
+    onDragOver: (e: React.DragEvent) => { if (!hasType(e.dataTransfer, MIME_FILE) || deleted || peer) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; if (!fileOver) setFileOver(true); },
+    onDragLeave: (e: React.DragEvent) => { if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) setFileOver(false); },
+    onDrop: (e: React.DragEvent) => {
+      setFileOver(false);
+      const paths = filePayload(e.dataTransfer);
+      if (!paths.length || !sid || deleted || peer) return;
+      e.preventDefault();
+      for (const p of paths) mentionInComposer(sid, p);
+    },
+  };
   if (!sid) return <Welcome paneId={paneId} tileId={tile.id} />;
   if (!active) return <div className="empty">{tr('加载对话…')}</div>;
   const live = (
@@ -279,7 +295,7 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
       {deleted && <div className="deleted-banner" role="status"><Icon name="trash" size={13} /> {tr('这个对话已被删除（备份在 ~/.claude-web/library-trash），这里只剩最后看到的内容。')}</div>}
       {tile.wb === 'live' && (mobile ? live : (
         <div className="chat-split" ref={split}>
-          <div className="chat-main">{chatBackdrop && <Backdrop scene="chat" />}{live}</div>
+          <div className={clsx('chat-main', fileOver && 'file-over')} {...fileDrop}>{chatBackdrop && <Backdrop scene="chat" />}{live}</div>
           {infoShown && <InfoColumn sessionId={sid} />}
         </div>
       ))}
@@ -287,7 +303,7 @@ export function ChatTile({ tile, paneId, visible }: { tile: ChatTileModel; paneI
       {remoteView ? null : <>
       {tile.wb === 'changes' && <div className="wb-body"><ReviewView inPlace visible={visible} /></div>}
       {tile.wb === 'git' && <div className="wb-body"><RootGroups roots={roots}>{(r) => <GitView cwd={r} visible={visible} />}</RootGroups></div>}
-      {tile.wb === 'files' && <div className="wb-body"><RootGroups roots={roots}>{(r) => <FileTree root={r} gitStatus={r === activeCwd ? gitStatus : undefined} />}</RootGroups></div>}
+      {tile.wb === 'files' && <div className="wb-body"><RootGroups roots={roots}>{(r) => <FileTree root={r} gitStatus={r === activeCwd ? gitStatus : undefined} sessionId={peer ? null : sid} />}</RootGroups></div>}
       {tile.wb === 'search' && <div className="wb-body"><RootGroups roots={roots}>{(r) => <SearchView root={r} />}</RootGroups></div>}
       {tile.wb === 'schedules' && <div className="wb-body"><SchedulesView /></div>}
       {tile.wb === 'artifacts' && <div className="wb-body"><Artifacts sessionId={sid} /></div>}

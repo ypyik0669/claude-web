@@ -327,6 +327,12 @@ div.code { border: 0; border-radius: var(--r-lg); background-color: var(--surfac
 /* a character theme's backdrop behind a conversation (themes/Backdrop): under everything in the column, faint */
 .chat-main { position: relative; isolation: isolate; }
 .chat-main > .chat-bd { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; animation: fadein 0.6s; }
+/* 文件树 → 对话: a file or folder from the tree is over the conversation — the column says it will take it */
+.chat-main.file-over::after {
+  content: ''; position: absolute; inset: 6px; z-index: 5; pointer-events: none;
+  border: 1.5px dashed color-mix(in oklab, var(--accent) 60%, transparent); border-radius: var(--r-lg, 10px);
+  background: color-mix(in oklab, var(--accent) 6%, transparent);
+}
 
 /* 设置 → 外观's character themes (settings/ThemeGallery): a card per theme in its own colours; the card under the
    pointer runs its backdrop and four process animations */

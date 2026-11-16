@@ -18,7 +18,7 @@ export function fillComposer(d: FillDetail): void {
   window.dispatchEvent(new CustomEvent<FillDetail>(FILL_EVENT, { detail: d }));
 }
 
-// 文件右键 → 加到下一条消息: `@path ` at the end of that conversation's input box (Claude Code reads @-mentioned files)
+// 文件右键 → 添加到对话: `@path ` at the end of that conversation's input box (Claude Code reads @-mentioned files)
 export const MENTION_EVENT = 'cw:composer-mention';
 export interface MentionDetail { sessionId: string; path: string; handled: boolean }
 

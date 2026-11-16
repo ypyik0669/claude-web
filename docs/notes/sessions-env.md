@@ -49,7 +49,13 @@
 - `features/files/FileMenu.tsx`：`fileMenuProps(path, sessionId)` 撒到元素上，`<FileMenu/>` 在 App 挂一次。加到下一条消息
   （`MENTION_EVENT` → 输入框加 `@相对路径`）、用 VS Code / Cursor / Zed 打开（`shell.editors` 只列装了的：`where`/`which`，
   mac 再看 /Applications）、在资源管理器 / 访达中显示（`shell.open` 的 `reveal`：Windows `explorer /select,"…"` 要
-  `windowsVerbatimArguments`）、复制路径。远端对话只有复制。接在 FileLink、改动卡、审阅文件头；文件树有自己的右键菜单，没动。
+  `windowsVerbatimArguments`）、复制路径。远端对话只有复制。接在 FileLink、改动卡、审阅文件头、右侧面板「本对话的文件」。
+- **文件树 → 对话**（2026-11-17 用户要求，照 ZCode 的交互）：文件树自己的右键菜单第一项「添加到对话」（文件和文件夹都有），
+  `FileTree` 的 `sessionId` 由 FilesView / ChatTile 传（远端对话不传 → 没有这一项）。文件和文件夹的行都能拖：
+  `workbench/dnd.ts` 的 `setFileDrag` 写 `MIME_FILE`（绝对路径的 JSON 数组）+ `text/plain`。落点两个：输入框（`Composer.onDrop`
+  先认 `MIME_FILE`、`stopPropagation`，欢迎页按选的目录算相对路径）和对话那一栏（`ChatTile` 的 `.chat-main`，拖上去时
+  `file-over` 虚线框，放下走 `MENTION_EVENT`）。结果都是输入框里的 `@相对路径`（`mentionText`，有空格加引号），不上传；
+  远端对话拒（toast）。旧的「加到下一条消息」改名「添加到对话」。
 
 ## 本机环境变量
 

@@ -19,6 +19,8 @@ import { desktop } from '@/desktop';
 import { keyLabel, SHORTCUTS } from './shortcuts';
 import { openExplorer } from './right-panel';
 import { touchedFiles } from './touched-files';
+import { setFileDrag } from './dnd';
+import { fileMenuProps } from '@/features/files/FileMenu';
 
 /** The last open request (`useRightPanel().explorer.n`) the right panel's 文件 applied (each is applied once). */
 let appliedIntent = 0;
@@ -94,7 +96,7 @@ export function FilesView({ visible, inDock }: { visible: boolean; inDock?: bool
           </button>
           {showTouched && (touched.length
             ? <div className="fv-touched-list">{touched.map((p) => (
-                <button key={p} className="fv-touched-it" title={p} onClick={() => useStore.getState().openTile({ id: `d${Date.now()}`, kind: 'doc', path: p }, 'tab')}>
+                <button key={p} className="fv-touched-it" title={p} draggable onDragStart={(e) => setFileDrag(e.dataTransfer, [p])} {...fileMenuProps(p, sid)} onClick={() => useStore.getState().openTile({ id: `d${Date.now()}`, kind: 'doc', path: p }, 'tab')}>
                   <Icon name="files" size={12} /><span className="grow">{p.split(/[\/]/).pop()}</span>
                 </button>
               ))}</div>
@@ -116,7 +118,7 @@ export function FilesView({ visible, inDock }: { visible: boolean; inDock?: bool
           </div>
         )}
         <AllArtifacts />
-        {roots.length ? <RootGroups roots={roots}>{(r) => <FileTree root={r} gitStatus={r === cwd ? gitStatus : undefined} />}</RootGroups> : <FileTree root="" onPickRoot={setBrowseRoot} />}
+        {roots.length ? <RootGroups roots={roots}>{(r) => <FileTree root={r} gitStatus={r === cwd ? gitStatus : undefined} sessionId={sid} />}</RootGroups> : <FileTree root="" onPickRoot={setBrowseRoot} />}
       </div>
       {searched && <div className="fv-body" hidden={mode !== 'search'}><RootGroups roots={roots}>{(r) => <SearchView root={r} />}</RootGroups></div>}
     </div>

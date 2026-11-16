@@ -52,7 +52,7 @@ export function FileMenu() {
       <span ref={anchor} className="file-menu-at" style={{ left: at.x, top: at.y }} aria-hidden />
       <Popover anchor={anchor} onClose={close} prefer="down" align="left" className="file-menu" label={tr('文件')}>
         {!remote && at.sessionId && (
-          <button data-mi data-act="mention" onClick={act(() => mentionInComposer(at.sessionId!, at.path))}><Icon name="attach" size={14} /> {tr('加到下一条消息')}</button>
+          <button data-mi data-act="mention" onClick={act(() => mentionInComposer(at.sessionId!, at.path))}><Icon name="attach" size={14} /> {tr('添加到对话')}</button>
         )}
         {!remote && eds.map((e) => (
           <button key={e} data-mi data-act={`open-${e}`} onClick={act(() => open(e))}><Icon name="external" size={14} /> {tr('用 {app} 打开', { app: EDITOR_NAME[e] })}</button>

@@ -8,7 +8,7 @@ export function atQueryAt(text: string, caret: number): { start: number; q: stri
   return { start: caret - m[2].length - 1, q: m[2] };
 }
 
-/** 加到下一条消息: `text` with `@path ` added at the end — relative to `cwd` when inside it, quoted when it has spaces. */
+/** 添加到对话: `text` with `@path ` added at the end — relative to `cwd` when inside it, quoted when it has spaces. */
 export function mentionText(text: string, file: string, cwd?: string): string {
   const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
   const f = norm(file), base = cwd ? norm(cwd) : '';

@@ -3,7 +3,8 @@ import { ws } from '@/ws/client';
 import { useStore } from '@/store';
 import { clsx } from '@/util';
 import type { FsEntry, GitFileStatus, GitStatus } from '@shared';
-import { MIME_SESSION } from './dnd';
+import { setFileDrag } from './dnd';
+import { mentionInComposer } from '@/features/composer/fill';
 import { dlg } from '@/ui/dialog';
 import { Icon } from '@/ui/icons';
 import { useDropdown } from '@/ui/menus';
@@ -33,6 +34,8 @@ interface Ctx {
   setEditing: (e: Ctx['editing']) => void;
   selected: string | null;
   setSelected: (p: string) => void;
+  /** the conversation this tree belongs to: 添加到对话 puts `@path` into its input box */
+  sessionId?: string | null;
 }
 
 const BADGE: Record<string, string> = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', copied: 'C', untracked: 'U', conflict: '!', typechange: 'T' };
@@ -57,7 +60,7 @@ function Node({ path, name, depth, ctx, forceOpen }: { path: string; name: strin
   return (
     <div>
       {depth > 0 && (
-        <div className={clsx('ft-row', sel && 'sel', changed && 'changed')} style={{ paddingLeft: 6 + depth * 12 }} onClick={() => { setOpen(!open); ctx.setSelected(path); }} onContextMenu={(e) => { e.preventDefault(); ctx.setSelected(path); ctx.setMenu({ path, dir: true, x: e.clientX, y: e.clientY }); }} title={path}>
+        <div className={clsx('ft-row', sel && 'sel', changed && 'changed')} style={{ paddingLeft: 6 + depth * 12 }} onClick={() => { setOpen(!open); ctx.setSelected(path); }} onContextMenu={(e) => { e.preventDefault(); ctx.setSelected(path); ctx.setMenu({ path, dir: true, x: e.clientX, y: e.clientY }); }} draggable={ctx.editing?.path !== path} onDragStart={(e) => setFileDrag(e.dataTransfer, [path])} title={path}>
           <span className="chev"><Icon name={isOpen ? 'chevronDown' : 'chevronRight'} size={11} /></span>
           <span className="ic"><Icon name="folder" size={13} /></span>
           {ctx.editing?.path === path && ctx.editing.mode === 'rename' ? (
@@ -93,8 +96,8 @@ function FileRow({ entry, path, depth, ctx }: { entry: FsEntry; path: string; de
       style={{ paddingLeft: 6 + depth * 12 }}
       onClick={(e) => { ctx.setSelected(path); openTile({ id: `d${Date.now()}`, kind: 'doc', path }, e.ctrlKey || e.metaKey ? 'tab' : 'tab'); }}
       onContextMenu={(e) => { e.preventDefault(); ctx.setSelected(path); ctx.setMenu({ path, dir: false, x: e.clientX, y: e.clientY }); }}
-      draggable
-      onDragStart={(e) => { e.dataTransfer.setData('text/plain', path); e.dataTransfer.setData(MIME_SESSION + '-file', path); }}
+      draggable={ctx.editing?.path !== path}
+      onDragStart={(e) => setFileDrag(e.dataTransfer, [path])}
       title={`${path}${entry.size !== undefined ? ` · ${entry.size.toLocaleString(dateLocale())} B` : ''}`}
     >
       <span className="chev" style={{ visibility: 'hidden' }}><Icon name="chevronRight" size={11} /></span>
@@ -135,6 +138,7 @@ function ContextMenu({ m, ctx, onClose }: { m: NonNullable<Ctx['menu']>; ctx: Ct
   };
   return (
     <div ref={box} className="menu ft-menu" role="menu" aria-label={tr('文件操作')} style={{ position: 'fixed', left: Math.min(m.x, window.innerWidth - 220), top: Math.min(m.y, window.innerHeight - 320) }} onClick={(e) => e.stopPropagation()}>
+      {ctx.sessionId && <button data-act="mention" onClick={act(() => mentionInComposer(ctx.sessionId!, m.path))}>{tr('添加到对话')}</button>}
       {!m.dir && <button onClick={act(() => st.openTile({ id: `d${Date.now()}`, kind: 'doc', path: m.path }, 'tab'))}>{tr('打开')}</button>}
       {!m.dir && <button onClick={act(() => { const before = st.layout; st.dispatchLayout({ t: 'pane.split', paneId: (st.layout.groups.find((g) => g.id === st.layout.activeGroupId) ?? st.layout.groups[0]).focusedPaneId, dir: 'row' }); if (useStore.getState().layout !== before) useStore.getState().openTile({ id: `d${Date.now()}`, kind: 'doc', path: m.path }, 'replace'); })}>{tr('在右侧分屏打开')}</button>}
       {!m.dir && ctx.git.get(norm(m.path)) && <button onClick={act(() => st.openTile({ id: `df${Date.now()}`, kind: 'diff', sessionId: '', path: m.path }, 'tab'))}>{tr('查看改动 (diff)')}</button>}
@@ -153,7 +157,7 @@ function ContextMenu({ m, ctx, onClose }: { m: NonNullable<Ctx['menu']>; ctx: Ct
 }
 
 /** Workspace explorer: lazy directory nodes, git status badges, inline create / rename, recycle-bin delete, live refresh. */
-export function FileTree({ root, gitStatus, onPickRoot }: { root: string; gitStatus?: GitStatus | null; /** stage E4: no folder — the one picked is browsed here (never written into the conversation) */ onPickRoot?: (dir: string) => void }) {
+export function FileTree({ root, gitStatus, onPickRoot, sessionId }: { root: string; gitStatus?: GitStatus | null; /** stage E4: no folder — the one picked is browsed here (never written into the conversation) */ onPickRoot?: (dir: string) => void; /** 添加到对话 / drag into the chat go to this conversation */ sessionId?: string | null }) {
   const [filter, setFilter] = useState('');
   const [tick, setTick] = useState<Record<string, number>>({});
   const [menu, setMenu] = useState<Ctx['menu']>(null);
@@ -197,7 +201,7 @@ export function FileTree({ root, gitStatus, onPickRoot }: { root: string; gitSta
     };
     return <EmptyState e={EMPTY.filesNoFolder} action={onPickRoot ? <button className="btn sm" onClick={() => void pick()}>{tr('打开一个文件夹')}</button> : undefined} />;
   }
-  const ctx: Ctx = { root, filter, git, gitDirs, reload, tick, menu, setMenu, editing, setEditing, selected, setSelected };
+  const ctx: Ctx = { root, filter, git, gitDirs, reload, tick, menu, setMenu, editing, setEditing, selected, setSelected, sessionId };
   return (
     <div className="filetree">
       <div className="ft-head">
