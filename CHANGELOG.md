@@ -4,6 +4,24 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.12] — 2026-11-17
+
+### New
+
+- **Paste copied files and folders into the conversation.** Select files in Explorer (or Finder), press Ctrl+C, then Ctrl+V in the input box: it works just like dragging them in. A pasted folder is referenced by its path, not uploaded, and Claude reads it where it is.
+- **The / menu lists everything, in groups.** A conversation opened from the sidebar (after a restart, every one of them), the welcome page and the first half minute of a start showed nothing but /btw when you typed `/`, so installed skills couldn't be found; and the menu stopped at 40 entries. Now every command and skill Claude Code can use is there whether the conversation is running or not, in three groups (Commands, Skills, Other), each row saying whether it comes from you, the project or which plugin. Names that start with what you typed come first, and the matching part is in bold. Plugin skills always show as `plugin:name`, so two skills with the same name no longer clash.
+
+### Improved
+
+- **Attachments are cards.** The attachments above the input box are small cards with the name, the type (PDF / MD / folder…) and the size, several to a row, instead of one long strip each.
+
+### Fixed
+
+- **PDF attachments can be read on a provider (relay).** A dropped-in PDF only gave the model its path, and reading the whole PDF gives the model a PDF block that only some APIs accept: relays in OpenAI format drop it, so the model saw nothing, then tried Python libraries and reading page by page (the tool for that is missing on Windows) and ended with "the text can't be extracted". The text is now pulled out when the PDF is uploaded and sent to the model along with the message; when you open the conversation later, the message shows an "xxx.pdf.txt" you can open to see it. Scanned PDFs have no text layer and still can't be read.
+- **The conversation page no longer turns into "Something went wrong here — Cannot read properties of undefined (reading 'type')".** With the ccb runtime on some relays the numbering of the streamed parts skips, which left an empty part in the conversation, and the plan card fell over it, taking the whole page down. No empty parts are left any more, and the places that read them are guarded too.
+- **A stuck answer stream gives up after 2 minutes and carries on once by itself.** On a relay, a stream that went silent right after it started meant 5 minutes of waiting and then an error ending the turn. It now gives up after 2 minutes without a byte and sends "continue" so the model picks up where it stopped — once per message; if it stalls again it stops at the error. Slow answers the relay keeps alive with pings are not affected, and your own Claude account is unchanged.
+- **Two things cut off on a phone.** The "This conversation's usage" card from the input row stuck out of the left edge of the screen; it now stays inside. The buttons at the bottom of the folder picker were squeezed to one character wide with their words stacked; they now wrap to a new line instead and their words never break.
+
 ## [0.5.11] — 2026-11-17
 
 ### New
