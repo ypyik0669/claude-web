@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSettledSession, useStore } from '@/store';
 import { usePaneCtx } from '@/store/paneContext';
 import { clsx } from '@/util';
 import { useDropdown } from '@/ui/menus';
+import { leftInside } from '@/features/models/place';
 import { estimateContext, meterMode, ringLevel, sessionTotals, usageLines } from './stats';
 import { resumeView } from '@/store/reopen';
 import { BAR_ID } from './ids';
@@ -79,6 +80,14 @@ export function ContextMeter({ sessionId }: { sessionId: string }) {
     window.addEventListener(USAGE_CARD_EVENT, on);
     return () => window.removeEventListener(USAGE_CARD_EVENT, on);
   }, [pane?.tileId]);
+  // the card's layout width (offsetWidth: while it scales in, its box on screen is smaller), measured before the paint:
+  // it is placed by its left edge so that it stays inside the window. Its width does not depend on where it is
+  // (`width: max-content`, capped at the window minus the gutters: styles.css), so one measure settles it
+  const [cardW, setCardW] = useState(0);
+  useLayoutEffect(() => {
+    const w = card.current?.offsetWidth ?? 0;
+    if (w && w !== cardW) setCardW(w);
+  });
   const totals = useMemo(() => (o ? sessionTotals(o.conv.items) : null), [o?.version]);
   const cu = useContextUsage(sessionId);
   const pct = cu?.percentage;
@@ -91,6 +100,12 @@ export function ContextMeter({ sessionId }: { sessionId: string }) {
   const r = 6, c = 2 * Math.PI * r, p = Math.min(100, Math.max(0, pct ?? 0));
   // the ring when there is one; else the right-hand group of the row (the card's corner is the same)
   const rect = show ? (ring ? btn.current : anchor.current?.parentElement)?.getBoundingClientRect() : undefined;
+  // right-aligned to the ring (or the row's corner) when there is room to its left; else moved right, 8px in from the
+  // window's edge — on a phone the ring is mid-row and the card stuck out on the left (2026-11-17). It still grows
+  // from the ring: the origin follows it along the bottom edge
+  const vw = window.innerWidth;
+  const left = rect ? leftInside(rect.right, cardW, vw) : 0;
+  const origin = rect && cardW ? `${Math.round(Math.max(0, Math.min(cardW, (rect.left + rect.right) / 2 - left)))}px 100%` : undefined;
   return (
     <>
       <span ref={anchor} className="ctx-anchor" aria-hidden />
@@ -105,7 +120,7 @@ export function ContextMeter({ sessionId }: { sessionId: string }) {
         </button>
       )}
       {show && rect && createPortal(
-        <div ref={card} className="ctx-card" role={asked ? 'dialog' : 'tooltip'} aria-label={tr('本对话用量')} style={{ position: 'fixed', right: Math.max(8, window.innerWidth - rect.right), bottom: window.innerHeight - rect.top + 6 }}>
+        <div ref={card} className="ctx-card" role={asked ? 'dialog' : 'tooltip'} aria-label={tr('本对话用量')} style={{ position: 'fixed', left, bottom: window.innerHeight - rect.top + 6, transformOrigin: origin }}>
           <div className="ctx-card-h">{tr('本对话用量')}</div>
           {lines.map(([k, v]) => <div key={k} className="ctx-row"><span className="k">{k}</span><span className="v">{v}</span></div>)}
         </div>,

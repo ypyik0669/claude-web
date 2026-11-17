@@ -112,10 +112,12 @@ export function FolderBrowser({ api, start, okLabel, cancelLabel, onDone }: { ap
         {cur && !shown.length && naming === null && <div className="fb-empty">{tr('这里没有子文件夹')}</div>}
       </div>
       {err && <div className="fb-err" role="alert">{err}</div>}
+      {/* the tools on the left, the two answers on the right; a narrow dialog puts each pair on its own line (phone.css) */}
       <div className="actions">
-        <button className="btn" disabled={!cur || naming !== null} onClick={() => setNaming('')}><Icon name="plus" size={14} /> {tr('新建文件夹')}</button>
-        <SwitchChip on={hidden} onChange={setHidden}>{tr('显示隐藏的')}</SwitchChip>
-        <span className="grow" />
+        <div className="fb-tools">
+          <button className="btn" disabled={!cur || naming !== null} onClick={() => setNaming('')}><Icon name="plus" size={14} /> {tr('新建文件夹')}</button>
+          <SwitchChip on={hidden} onChange={setHidden}>{tr('显示隐藏的')}</SwitchChip>
+        </div>
         <button className="btn" onClick={() => onDone(null)}>{cancelLabel}</button>
         <button className="btn primary" disabled={!cur || busy} onClick={() => void choose()}>{okLabel}</button>
       </div>

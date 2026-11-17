@@ -57,6 +57,16 @@ export function placeMenu(r: Edges, view: { vw: number; vh: number }, prefer: 'u
   return st;
 }
 
+/**
+ * The left edge of a box `w` wide that wants its right edge at `right` (a card right-aligned to its anchor: the context
+ * ring's 本对话用量 card), kept inside the window with the gutter on both sides. On a phone the ring sits in the middle
+ * of the composer row, and a card wider than the room to its left stuck out of the window's left edge (2026-11-17).
+ * `w` is the layout width; the box's own `max-width: calc(100vw - 16px)` keeps it from being wider than the window.
+ */
+export function leftInside(right: number, w: number, vw: number): number {
+  return Math.max(MARGIN, Math.min(right, vw - MARGIN) - w);
+}
+
 /** Same coordinates: the layout observers fire often (every keystroke that grows the composer), skip the re-render. */
 export function samePlacement(a: Placement | null, b: Placement): boolean {
   return !!a && a.top === b.top && a.bottom === b.bottom && a.left === b.left && a.right === b.right && a.maxHeight === b.maxHeight;

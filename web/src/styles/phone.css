@@ -100,10 +100,15 @@
 .app.mobile .btn { min-height: 36px; }
 .app.mobile .modal .actions .btn { min-height: 44px; padding-left: 18px; padding-right: 18px; }
 @media (max-width: 600px) {
-  /* a dialog on a phone: nearly full width, its buttons a row of two equal halves (the main one on the right) */
+  /* a dialog on a phone: nearly full width, its buttons a row of two equal halves (the main one on the right). A row
+     that cannot hold its buttons wraps instead of squeezing them: a button never breaks its words (nowrap, so it is
+     never narrower than its label) — 「选择这个文件夹」 was a one-character pill with its words stacked (2026-11-17) */
   .modal-bg > .modal:not(.settings) { width: calc(100vw - 2 * var(--sp-4)); max-width: none; padding: 20px; }
-  .modal-bg > .modal:not(.settings) .actions { gap: var(--sp-2); }
-  .modal-bg > .modal:not(.settings) .actions .btn { flex: 1 1 0; min-height: 46px; justify-content: center; }
+  .modal-bg > .modal:not(.settings) .actions { flex-wrap: wrap; gap: var(--sp-2); }
+  .modal-bg > .modal:not(.settings) .actions .btn { flex: 1 1 0; min-height: 46px; justify-content: center; white-space: nowrap; }
+  /* the folder browser: 新建文件夹 · 显示隐藏的 on a line of their own, 取消 · 选择 the two halves under them */
+  .modal-bg > .modal .folder-browser .fb-tools { flex: 1 1 100%; justify-content: space-between; margin-right: 0; }
+  .modal-bg > .modal .folder-browser .fb-tools .btn { flex: none; }
   .sp-si, .sp-back { height: 44px; font-size: var(--fs-body); }
   .sp-row { min-height: 60px; }
   .modal.settings .sp-search { height: 40px; }

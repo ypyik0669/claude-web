@@ -1037,7 +1037,8 @@ html[data-reduce-motion='1'] * { animation: none !important; transition: none !i
 .folder-browser .fb-empty { padding: 16px 8px; color: var(--ink-4); font-size: 13px; text-align: center; }
 .folder-browser .fb-err { margin-top: 8px; color: var(--err); font-size: 13px; word-break: break-all; }
 .folder-browser .actions { align-items: center; margin-top: 12px; }
-.folder-browser .actions .grow { flex: 1; }
+/* 新建文件夹 · 显示隐藏的 on the left, 取消 · 选择 pushed right by the auto margin (narrow: phone.css) */
+.folder-browser .fb-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; margin-right: auto; }
 .btn.danger.solid { background: var(--err); color: #fff; border-color: transparent; }
 .btn.danger.solid:hover { filter: brightness(1.1); background: var(--err); }
 
@@ -1903,10 +1904,14 @@ html.desktop:not(.mac) .dock.simple:not(.min) .dock-tabs .tab.fixed { padding: 0
 /* ≥ 80 %: ink and bold, not yellow (spec §6.4: yellow is only for 「需要你」); ≥ 95 %: the error colour */
 .ctx-meter.strong, .ctx-meter.strong:hover { color: var(--fg-1); font-weight: 600; }
 .ctx-meter.err, .ctx-meter.err:hover { color: var(--err); font-weight: 600; }
-.ctx-card { z-index: 1000; min-width: 210px; padding: var(--sp-2) 10px; border-radius: var(--r-lg); background: var(--surface-elev); box-shadow: var(--elev-2); font-size: var(--fs-sm); }
+/* placed by its left edge (ContextMeter, leftInside): its width must not depend on where it is — its content's width,
+   never wider than the window minus 8px on each side; when that is too narrow the labels wrap, the numbers do not */
+.ctx-card { z-index: 1000; box-sizing: border-box; width: max-content; min-width: min(210px, calc(100vw - 16px)); max-width: calc(100vw - 16px); padding: var(--sp-2) 10px; border-radius: var(--r-lg); background: var(--surface-elev); box-shadow: var(--elev-2); font-size: var(--fs-sm); }
 .ctx-card-h { margin-bottom: 4px; font-size: 13px; font-weight: 600; color: var(--ink-1); }
 .ctx-row { display: flex; justify-content: space-between; gap: var(--sp-4); line-height: 1.75; color: var(--ink-3); }
 .ctx-row .v { color: var(--ink-1); font-variant-numeric: tabular-nums; }
+.ctx-card .ctx-row .k { min-width: 0; overflow-wrap: anywhere; }
+.ctx-card .ctx-row .v { flex: none; white-space: nowrap; text-align: right; }
 
 /* the composer's menus (+, permission, branch): one row = icon · name + one line · control */
 .menu.cm { position: fixed; z-index: 1000; min-width: 300px; max-width: min(400px, calc(100vw - 16px)); padding: 6px; border-color: var(--edge-default); border-radius: var(--r-xl); overflow-y: auto; overscroll-behavior: contain; }

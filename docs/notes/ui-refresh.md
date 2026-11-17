@@ -18,6 +18,8 @@ spec 和实施记录：`docs/superpowers/specs/2026-10-10-ui-refresh/design.md`�
   - 右侧面板是能拖的底部抽屉：`store.sheetDetent`（`half` 62% / `full` 92%），`ui/sheet-snap.ts`（松手落哪一档）+ `ui/phone-sheet.ts`（拖动，直接改 `transform`）。**还是同一个 `.rpanel`，终端不重挂。**
   - 侧栏抽屉跟手：`ui/drawer-gesture.ts` + `ui/phone-drawer.ts`；右滑开始时先把侧栏挂上（`usePhoneDrawer.held`），松手决定打开才置 `sidebarOpen`。完全打开时不能有 `transform`（里面的菜单是 fixed）。
   - 所有锚定菜单是底部操作单：`ui/ActionSheet.tsx`，`Popover` / `MenuHost`（`useAnchoredMenu`）/ 模型菜单 / 项目菜单在 `store.mobile` 时把原来的菜单根元素原样包进去、portal 到 `<body>`；内容和 `data-*` 不变。对话行长按 500ms 开同一张单（`ui/long-press.ts`），行尾的 ··· 在手机上常显。
+  - **浮层不出屏**（2026-11-17，用户报告手机上「本对话用量」卡左半边被切掉）：`Popover` 和 `useAnchoredMenu`（`placeFixed`）在桌面上本来就把左右夹在窗口里 8px，手机上它们是操作单；出问题的是自己摆位置的浮层。上下文小环的卡以前只设 `right`（对齐小环右边），手机上小环在输入框那一行的中间，卡比小环左边的地方宽，就伸出屏幕。现在按左边放：`features/models/place.ts` 的 `leftInside(right, w, vw)`，卡本身 `width: max-content; max-width: calc(100vw - 16px)`——宽度不随位置变，`useLayoutEffect` 量一次 `offsetWidth`（不是 `getBoundingClientRect`，进场缩放会量小）就定；窄到放不下时标签换行、数字不换。新写的浮层照这个来，别只设 `right` / `left` 一边。
+  - **对话框底部按钮**（≤ 600px，`phone.css`）：`.actions` 换行，不挤；按钮 `white-space: nowrap`，所以永远不比自己的字窄，一行放不下就整颗掉到下一行（以前 `flex: 1 1 0` 把「选择这个文件夹」压成一个字宽、字竖着叠）。超过两个按钮的底部自己分组：选目录对话框的 `.fb-tools`（新建文件夹 · 显示隐藏的）在窄屏上占满一行，取消 / 选择在下一行各半。
   - 系统返回手势关最上面一层：`ui/back-layer.ts` 的 `pushBackLayer(close)`，每层占一条 history 记录；只在手机宽度的浏览器里启用。
   - 点对话里的一步，详情在抽屉里打开（不原地展开）；审批卡按钮各占一行、允许一次在最上；终端上方一排按键（`panels/term-keys.ts`）；审阅有换行 / 横滚，提交收成一个按钮。
   - 手机壳（`web/src/shell/shell.css`）换了同一套颜色，自己抄了十几个原色（不引 tokens.css，要小），不带字体。

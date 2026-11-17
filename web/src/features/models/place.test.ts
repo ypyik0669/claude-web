@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MENU_ORIGIN, menuOrigin, placeMenu, samePlacement, withOrigin } from './place';
+import { leftInside, MENU_ORIGIN, menuOrigin, placeMenu, samePlacement, withOrigin } from './place';
 
 const rect = (top: number, bottom: number, left = 600, right = 700) => ({ top, bottom, left, right });
 
@@ -47,6 +47,23 @@ describe('placeMenu with the menu\'s natural height (need)', () => {
   });
   it('without a known height: the old rule (the preferred side when it has 260px)', () => {
     expect(placeMenu(mid, view, 'up', 'left').bottom).toBeDefined();
+  });
+});
+
+describe('leftInside: a right-aligned card kept inside the window', () => {
+  it('room to the anchor\'s left: the card\'s right edge on the anchor\'s right edge (the desktop ring)', () => {
+    expect(leftInside(1300, 260, 1400)).toBe(1040);
+  });
+  it('an anchor at the window\'s right edge: the gutter on the right', () => {
+    expect(leftInside(1398, 260, 1400)).toBe(1400 - 8 - 260);
+  });
+  it('a phone: the ring in the middle of the row, the card wider than the room to its left — it moves right, 8px in', () => {
+    expect(leftInside(150, 280, 390)).toBe(8);
+  });
+  it('a card as wide as the window minus the gutters (its max-width): 8px on both sides', () => {
+    const left = leftInside(200, 390 - 16, 390);
+    expect(left).toBe(8);
+    expect(left + 390 - 16).toBe(390 - 8);
   });
 });
 
