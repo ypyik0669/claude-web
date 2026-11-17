@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webFrame } from 'electron';
+import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
 
 const on = (channel: string) => (cb: (arg: any) => void) => {
   const h = (_e: unknown, arg: any) => cb(arg);
@@ -17,6 +17,10 @@ contextBridge.exposeInMainWorld('desktop', {
   captureSources: () => ipcRenderer.invoke('desktop:capture:sources'),
   chooseCapture: (pick: unknown) => ipcRenderer.invoke('desktop:capture:choose', pick),
   pickFile: () => ipcRenderer.invoke('desktop:pickFile'),
+  // 粘贴文件 / 文件夹 (clipboard-files.ts): a pasted File's path on this disk ('' for one with none, like a
+  // screenshot), and what those paths are — or, none given, the system clipboard's own files
+  pathForFile: (f: File) => { try { return webUtils.getPathForFile(f); } catch { return ''; } },
+  clipboardFiles: (paths?: string[]) => ipcRenderer.invoke('desktop:clipboard:files', paths),
   showAppMenu: (x: number, y: number) => ipcRenderer.send('desktop:appMenu', { x, y }),
   openPath: (p: string) => ipcRenderer.invoke('desktop:openPath', p),
   openExternal: (url: string) => ipcRenderer.invoke('desktop:openExternal', url),

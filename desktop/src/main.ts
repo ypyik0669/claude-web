@@ -22,6 +22,7 @@ import { PendingPicks, SourceCache, displayMediaGrant, listSources, oneAtATime, 
 import { CrashGuard, allowNavigation, externalAllowed, sameOrigin, windowOpenAction } from './nav-guard';
 import { FileGuard, guardSession } from './file-guard';
 import { fromOurWindow, openablePath, type IpcAsker } from './ipc-guard';
+import { pastedFiles } from './clipboard-files';
 import { openingHold, openingHtml, setOpeningNote } from './opening';
 
 const isMac = process.platform === 'darwin';
@@ -836,6 +837,9 @@ ipcMain.handle('desktop:capture:choose', (e, p: CapturePick) => {
   }
   return false;
 });
+// 粘贴文件 / 文件夹 (clipboard-files.ts): what the pasted paths are (folder or file, size) — the page's own list from
+// webUtils.getPathForFile, or, when it was handed no file, the system clipboard's
+ipcMain.handle('desktop:clipboard:files', (e, paths: unknown) => (ours(e) ? pastedFiles(paths, clipboard, process.platform) : []));
 ipcMain.handle('desktop:pickFile', async (e) => {
   if (!ours(e)) return null;
   const w = BrowserWindow.fromWebContents(e.sender) ?? focusedWin();

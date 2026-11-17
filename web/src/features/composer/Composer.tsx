@@ -8,7 +8,9 @@ import { parsePeerId, policyOfModel, LIVE_FEATURES, type AgentKind, type Attachm
 import { MachineChip } from './MachineChip';
 import { machineOf } from './machine';
 import { installClaudeInWsl } from '@/features/remote/wsl-install';
-import { bundleParts, compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachment, uploadAttachment, type DroppedFile, type PendingBundle, type PendingImage } from '@/model/attachments';
+import { bundleParts, compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachment, uploadAttachment, type DroppedFile, type ExpandedFiles, type PendingBundle, type PendingImage } from '@/model/attachments';
+import { addPathRefs, isPathRef, planPaste, resolvePaste, snapshotPaste, splitDropped, type PasteResult } from './paste-files';
+import { AttachmentCard } from './AttachmentCard';
 import { pickFolderFiles } from '@/model/attachment-filter';
 import { StatusStrip, noLoginChipShown } from '@/features/chat/StatusStrip';
 import { QueueCards } from '@/features/chat/QueueCards';
@@ -861,12 +863,37 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     }
   };
 
+  /** Files from the system — dropped, or pasted (paste-files.ts) — the same way: lone pictures go in as pictures, the
+   *  rest is uploaded on send (not to a conversation on another machine: its agent cannot read this disk) */
+  const takeDropped = ({ files: dropped, folders, truncated }: ExpandedFiles) => {
+    const { images, rest } = splitDropped(dropped);
+    if (images.length) void addImages(images.map((d) => d.file), images.map((d) => d.file.name));
+    if (rest.length && remote) { toast(REMOTE_ATTACH); return; }
+    if (rest.length) setFiles((s) => [...s, ...rest].slice(0, 500));
+    if (folders.length) toast(tr('已附加文件夹 {folders}（{restCount} 个文件{v}）', { folders: folders.join(', '), restCount: rest.length, v: truncated ? tr('，已截断到 500') : '' }), true);
+  };
+  /** a paste's files sorted out: what a drop would give, folders (desktop app) by their path — nothing uploaded */
+  const takePasted = (r: PasteResult) => {
+    takeDropped(r.dropped);
+    if (r.refs.length) {
+      if (remote) toast(REMOTE_ATTACH);
+      else setAtts((s) => addPathRefs(s, r.refs));
+    }
+    if (r.unreadable.length) toast(tr('读不到粘贴进来的 {names}，请把它拖进来', { names: r.unreadable.join(', ') }));
+  };
+
   const onPaste = (e: React.ClipboardEvent) => {
     if (disabled) return;
-    const imgFiles = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith('image/'));
-    if (imgFiles.length) { e.preventDefault(); void addImages(imgFiles); return; }
-    const t = e.clipboardData.getData('text/plain');
-    if (t && isLongPaste(t)) {
+    // copied files / folders (Explorer, Finder) or a screenshot: like a drop; words (Office's too) stay words
+    const snap = snapshotPaste(e.clipboardData, desktop);
+    const plan = planPaste(snap, !!desktop?.clipboardFiles);
+    if (plan === 'files' || plan === 'ask') {
+      if (plan === 'files') e.preventDefault();
+      void resolvePaste(snap.items, desktop).then(takePasted, (err) => toast(String(err?.message ?? err)));
+      return;
+    }
+    const t = snap.text;
+    if (plan === 'text' && isLongPaste(t)) {
       e.preventDefault();
       setAtts((s) => [...s, pasteAsAttachment(t)]);
       toast(tr('长文本已作为附件（{tCount} 字符）', { tCount: t.length }), true);
@@ -890,13 +917,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
       requestAnimationFrame(() => { const el = ta.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } });
       return;
     }
-    const { files: dropped, folders, truncated } = await expandDataTransfer(e.dataTransfer);
-    const imgOnly = dropped.filter((d) => !d.rel.includes('/') && d.file.type.startsWith('image/'));
-    const rest = dropped.filter((d) => !imgOnly.includes(d));
-    if (imgOnly.length) void addImages(imgOnly.map((d) => d.file), imgOnly.map((d) => d.file.name));
-    if (rest.length && remote) { toast(REMOTE_ATTACH); return; }
-    if (rest.length) setFiles((s) => [...s, ...rest].slice(0, 500));
-    if (folders.length) toast(tr('已附加文件夹 {folders}（{restCount} 个文件{v}）', { folders: folders.join(', '), restCount: rest.length, v: truncated ? tr('，已截断到 500') : '' }), true);
+    takeDropped(await expandDataTransfer(e.dataTransfer));
   };
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
@@ -1403,14 +1424,17 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
                   <button aria-label={tr('移除 {name}', { name: b.name })} onClick={() => setBundles((s) => s.filter((x) => x.id !== b.id))}><Icon name="close" size={10} /></button>
                 </span>
               ))}
+              {/* 附件卡片 (AttachmentCard.tsx): long pasted text, pasted folders / files by path (desktop app), and what
+                  is uploaded on send — dropped / pasted / picked files and folders */}
               {atts.map((a, i) => (
-                <span key={`a${i}`} className="att-chip" title={a.text?.slice(0, 300)}><Icon name="read" size={12} /> {a.name} <span className="sz">{fmtSize(a.size)}</span><button aria-label={tr('移除')} onClick={() => setAtts((s) => s.filter((_, j) => j !== i))}><Icon name="close" size={10} /></button></span>
+                <AttachmentCard key={`a${i}`} kind={isPathRef(a) ? (a.kind as 'file' | 'folder') : 'text'} name={a.name} path={isPathRef(a) ? a.path : undefined} size={a.size}
+                  title={a.text !== undefined ? a.text.slice(0, 300) : undefined} onRemove={() => setAtts((s) => s.filter((_, j) => j !== i))} />
               ))}
               {[...folderChips].map(([name, n]) => (
-                <span key={`d${name}`} className="att-chip" title={tr('{n} 个文件', { n })}><Icon name="folder" size={12} /> {name} <span className="sz">{tr('{n} 文件', { n })}</span><button aria-label={tr('移除')} onClick={() => setFiles((s) => s.filter((f) => !f.rel.startsWith(name + '/')))}><Icon name="close" size={10} /></button></span>
+                <AttachmentCard key={`d${name}`} kind="folder" name={name} count={n} onRemove={() => setFiles((s) => s.filter((f) => !f.rel.startsWith(name + '/')))} />
               ))}
               {files.filter((f) => !f.rel.includes('/')).map((f, i) => (
-                <span key={`f${i}`} className="att-chip" title={f.file.name}><Icon name="attach" size={12} /> {f.file.name} <span className="sz">{fmtSize(f.file.size)}</span><button aria-label={tr('移除')} onClick={() => setFiles((s) => s.filter((x) => x !== f))}><Icon name="close" size={10} /></button></span>
+                <AttachmentCard key={`f${i}`} kind="file" name={f.file.name} size={f.file.size} onRemove={() => setFiles((s) => s.filter((x) => x !== f))} />
               ))}
               {recordings.map((r) => (
                 <span key={r.id} className="att-rec-wrap">

@@ -7,6 +7,12 @@ export interface DesktopBridge {
   captureSources?(): Promise<{ id: string; name: string; kind: 'screen' | 'window'; thumb: string }[]>;
   chooseCapture?(p: { kind: 'source'; id: string } | { kind: 'guest'; webContentsId: number }): Promise<boolean>;
   pickFile?(): Promise<string | null>;
+  /** 粘贴文件 / 文件夹 (desktop/src/clipboard-files.ts): a pasted File's path on this disk — `webUtils.getPathForFile`;
+   *  '' for one with none (a screenshot, a File made in the page) */
+  pathForFile?(f: File): string;
+  /** what those paths are (folder or file, size); none given: the system clipboard's own files. Local paths only,
+   *  gone ones left out. Older shells lack both. */
+  clipboardFiles?(paths?: string[]): Promise<import('@/features/composer/paste-files').ClipPath[]>;
   /** ☰: the application menu (对话 / 工作台 / 视图 / 前往 / 编辑 / 帮助) as a popup at x, y (page coordinates); older shells lack it */
   showAppMenu?(x: number, y: number): void;
   openPath(p: string): Promise<void>;

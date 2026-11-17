@@ -62,17 +62,22 @@ export function pasteAsAttachment(text: string): AttachmentRef {
 
 export interface DroppedFile { file: File; rel: string }
 
+/** What a dropped / pasted set of files expands to: every file with its path under its folder, the top folders. */
+export interface ExpandedFiles { files: DroppedFile[]; folders: string[]; truncated: boolean }
+
 /** Expand a DataTransfer (files and folders via webkitGetAsEntry) into files with relative paths. */
-export async function expandDataTransfer(dt: DataTransfer, max = 500): Promise<{ files: DroppedFile[]; folders: string[]; truncated: boolean }> {
+export async function expandDataTransfer(dt: DataTransfer, max = 500): Promise<ExpandedFiles> {
+  const items = Array.from(dt.items ?? []);
+  const entries = items.map((it) => (it as any).webkitGetAsEntry?.() ?? null);
+  if (!entries.some(Boolean)) return { files: Array.from(dt.files).map((f) => ({ file: f, rel: f.name })), folders: [], truncated: false };
+  return expandEntries(entries, max);
+}
+
+/** Walk file system entries (a drop's, a paste's folder) — skipped directories left out, at most `max` files. */
+export async function expandEntries(entries: readonly any[], max = 500): Promise<ExpandedFiles> {
   const files: DroppedFile[] = [];
   const folders: string[] = [];
   let truncated = false;
-  const items = Array.from(dt.items ?? []);
-  const entries = items.map((it) => (it as any).webkitGetAsEntry?.() ?? null);
-  if (!entries.some(Boolean)) {
-    for (const f of Array.from(dt.files)) files.push({ file: f, rel: f.name });
-    return { files, folders, truncated };
-  }
   const walk = async (entry: any, prefix: string): Promise<void> => {
     if (files.length >= max) { truncated = true; return; }
     if (entry.isFile) {

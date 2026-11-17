@@ -43,6 +43,22 @@
 }
 .composer-box > .attach { padding: 2px 4px 0; }
 
+/* ---- 附件卡片 (AttachmentCard.tsx, 2026-11-17): a file / folder / pasted text as a small card in the row over the
+   text, the way the official desktop app shows them — its name or path on two lines at most (the whole on hover), a
+   type label (MD / PDF / 文件夹) and its size under it, × at the top right (on hover, always on touch — like the
+   pictures beside it). One width, so a row of them wraps evenly; at phone width two to a row ---- */
+.attach .att-card { position: relative; flex: none; display: flex; flex-direction: column; justify-content: space-between; gap: 4px; width: 168px; max-width: 100%; min-height: 56px; padding: 7px 10px 6px; border-radius: var(--r-lg); background: var(--fill-subtle); box-shadow: inset 0 0 0 var(--hairline) var(--edge-subtle); cursor: default; }
+.att-card-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: var(--fs-meta); line-height: 16px; color: var(--ink-1); }
+.att-card-meta { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--fs-meta); line-height: 16px; color: var(--ink-4); white-space: nowrap; }
+.att-card-meta .sz { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.att-card-type { flex: none; display: inline-flex; align-items: center; gap: 3px; height: 16px; padding: 0 5px; border-radius: var(--r-xs); background: var(--surface-elev); box-shadow: 0 0 0 var(--hairline) var(--edge-default); color: var(--ink-3); font-weight: var(--fw-strong); }
+.att-card-x { position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: var(--surface-1); color: var(--ink-2); box-shadow: 0 0 0 var(--hairline) var(--edge-strong), var(--shadow); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; transition: opacity var(--dur-fast), background-color var(--dur-fast), color var(--dur-fast); }
+.att-card:hover .att-card-x, .att-card:focus-within .att-card-x { opacity: 1; }
+.att-card-x:hover { background: var(--err-soft); color: var(--err); }
+.att-card-x:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+@media (hover: none) { .att-card-x { opacity: 1; } }
+.app.mobile .attach .att-card { width: calc(50% - 3px); }
+
 /* field-sizing: the box grows with its text in the browser itself — the old JS autosize read scrollHeight on every
    keystroke, a forced layout of the whole page, ~54 ms a key with a long conversation streaming beside it (2026-11-17) */
 .composer textarea { display: block; width: 100%; min-height: 36px; max-height: 280px; padding: 4px 6px 8px; border: 0; background: transparent; resize: none; font-size: var(--fs-body); line-height: 24px; color: var(--ink-1); }
