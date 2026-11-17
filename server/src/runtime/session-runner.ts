@@ -318,7 +318,10 @@ export class SessionRunner extends EventEmitter {
   /** bumped by each setAccountPrefs / claude-account reprovide: an older one still waiting for its compaction gives way */
   private prefsSeq = 0;
 
-  /** the project's extra folders (stage C2), read once when the conversation opens: the SDK's additionalDirectories (a respawn keeps them) */
+  /**
+   * the project's extra folders (stage C2) and the conversation's own (添加文件夹), given by the pool when it opens: the
+   * SDK's additionalDirectories (a respawn keeps them; setExtraDirs changes them)
+   */
   private extraDirs: string[];
   /** stage E5: running inside this WSL distro (its own claude, its own login) */
   private wsl: { distro: string } | null;
@@ -722,7 +725,7 @@ export class SessionRunner extends EventEmitter {
     }
     const options: Options = {
       cwd: this.cwd,
-      // a project's extra folders (stage C2): Claude Code may read and edit them like the main one
+      // a project's extra folders (stage C2) and the conversation's own (添加文件夹): Claude Code may read and edit them like the main one
       ...(this.extraDirs.length ? { additionalDirectories: this.extraDirs } : {}),
       env,
       model: this.engineModel(engine.kind, this.model),
@@ -1581,6 +1584,19 @@ export class SessionRunner extends EventEmitter {
   async refreshThinkingLanguage(own?: string) {
     if (own !== undefined) this.ownThinkingLanguage = own;
     if (this.closed || this.thinkingLanguageSection() === this.thinkingSection) return;
+    await this.respawnWhenIdle();
+  }
+
+  /**
+   * The folders it works in besides cwd changed (添加文件夹 in the + menu, one removed in the info column): the SDK reads
+   * additionalDirectories once at start, so another process, resuming this conversation — now when idle, else once the
+   * turn (and its background work) is over; the window's draft and pictures are its own, untouched by the restart.
+   * Nothing restarts when the list comes out the same (a folder the project already had).
+   */
+  async setExtraDirs(dirs: string[]) {
+    const next = dirs.filter((d) => typeof d === 'string' && !!d);
+    if (this.closed || next.join('\n') === this.extraDirs.join('\n')) return;
+    this.extraDirs = next;
     await this.respawnWhenIdle();
   }
 

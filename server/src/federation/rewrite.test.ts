@@ -42,6 +42,8 @@ describe('planRoute', () => {
       { kind: 'files.diff', sessionId: 'peer_b1~s1', path: '/r/a.ts' },
       // the mode a conversation there resumes in is that machine's record (the chip of one not running)
       { kind: 'session.resumeMode', sessionId: 'peer_b1~s1' },
+      // a conversation's own folders are recorded on (and checked against) the machine it runs on
+      { kind: 'session.setExtraDirs', sessionId: 'peer_b1~s1', dirs: ['/data'] },
     ] as ClientRequest[]) expect(planRoute(req)).toEqual({ kind: 'forward', peerId: 'b1' });
   });
   it('every sessionId-carrying request the web client sends is routed somewhere (no surprise "不支持")', () => {

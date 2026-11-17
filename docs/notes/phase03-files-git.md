@@ -15,4 +15,5 @@
 - 面板：`features/paths.ts` 的 `projectRoots(cwd, workspaces)`——对话在项目主文件夹里时是 `[主, ...folders]`，否则只有 cwd。文件、搜索、Git（审阅里的 Git）按这个列表画 `workbench/RootGroups.tsx`：一个文件夹一组、可折叠；只有一个文件夹时和以前完全一样。@文件补全对每个根各查一次再合并。
 - 额外文件夹是 UNC 信任根：`files/service.ts` 的 `workspaceRoots(meta.workspaces())` 把 `folders` 也算进去（`\\nas\share` 上的额外文件夹能读）。
 - 只在**新开的**对话里生效（`AgentPool.open` 时按 cwd 查一次）；正在跑的对话下次打开时才看到。给 Claude 的是 SDK 的 `additionalDirectories`，给 Codex 的见 `phase05-agents`。
+- 对话**自己的**额外文件夹（+ →「添加文件夹」，`SessionMeta.extraDirs`，2026-11-17）和项目的合成一份（`workDirs`），改了会让在跑的对话空闲时重启生效，见「界面改版 阶段 3」的「添加文件夹 = 加工作目录」。
 - e2e 第 33 期（`server/ws-phase33.mjs`）：真 server + 真引擎 + 假上游，断言 `workspaces.update` 的校验，以及项目里开的对话发给模型的请求里写着额外文件夹（Claude Code 把它放进环境段的 additional working directories）、不是项目主文件夹的对话里没有。

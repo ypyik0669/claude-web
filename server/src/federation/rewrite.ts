@@ -14,6 +14,8 @@ import { cloudRefusedFromPeer } from '../cloud/handlers.js';
 const FORWARD = new Set<ClientRequest['kind']>([
   'session.open', 'session.info', 'session.send', 'session.interrupt', 'session.side', 'session.close',
   'session.setModel', 'session.setPermissionMode', 'session.resumeMode', 'session.setEffort', 'session.setUltracode', 'session.setSubagentModel', 'session.setFeatures',
+  // 添加文件夹: the folders are that machine's, recorded with the conversation there (its own check refuses what it lacks)
+  'session.setExtraDirs',
   'session.contextUsage', 'session.stopTask', 'session.fastMode', 'session.toggleMcp', 'session.canonical',
   'permission.respond',
   'transcript.load', 'transcript.subagents', 'transcript.subagent',

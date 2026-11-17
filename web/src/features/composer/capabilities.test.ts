@@ -120,6 +120,11 @@ describe('+ menu sections', () => {
     expect(s.attach.find((a) => a.id === 'folder')?.disabled).toBeTruthy();
     expect(s.goal).toBe(false);
   });
+  it('添加文件夹 adds a working directory: on unless the composer says why not (an ACP agent, WSL, 只聊天…)', () => {
+    expect(plusSections({ claude: true, live: true }).attach.find((a) => a.id === 'folder')?.disabled).toBeUndefined();
+    expect(plusSections({ claude: false, live: true, dirsOff: 'no' }).attach.find((a) => a.id === 'folder')?.disabled).toBe('no');
+    expect(plusSections({ claude: true, live: false }).attach.find((a) => a.id === 'folder')?.title).toMatch(/工作目录/);
+  });
   it('plusMenuIds: every row id the menu can draw', () => {
     expect(plusMenuIds()).toEqual(['files', 'folder', 'reference', 'slash', 'connectors', 'chrome', 'computerUse', 'coordinator', 'proactive', 'brief', 'channels', 'goal']);
   });

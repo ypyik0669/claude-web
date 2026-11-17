@@ -26,6 +26,38 @@ export function normFolders(main: string, folders: unknown, o: { caseless?: bool
   return out;
 }
 
+/**
+ * A conversation's own extra folders (添加文件夹 in the + menu, SessionMeta.extraDirs) as stored and as read back:
+ * absolute paths only, each once (Windows: whatever the case / slashes), never the conversation's own folder. Written
+ * as given (the hub checked each exists): no resolving, so what the user picked is what the card shows.
+ */
+export function ownDirs(cwd: string, dirs: unknown, caseless = process.platform === 'win32'): string[] {
+  if (!Array.isArray(dirs)) return [];
+  // (either platform's idea of absolute: a record is read on whatever machine; the hub checked it on this one)
+  const abs = dirs.filter((d): d is string => typeof d === 'string' && (path.win32.isAbsolute(d.trim()) || path.posix.isAbsolute(d.trim())));
+  return normFolders(cwd, abs, { caseless, resolve: (p) => p });
+}
+
+/**
+ * session.setExtraDirs: the conversation's own folders as they will be stored (`dirs`), and what in the request is not
+ * one of them yet (`added`, junk included) — only those are checked against the disk, so a folder deleted since it was
+ * added can still be removed.
+ */
+export function extraDirsChange(cwd: string, recorded: unknown, requested: readonly unknown[], caseless = process.platform === 'win32'): { dirs: string[]; added: unknown[] } {
+  const before = ownDirs(cwd, recorded, caseless);
+  const added = requested.filter((d) => typeof d !== 'string' || !before.some((b) => sameDir(b, d, caseless)));
+  return { dirs: ownDirs(cwd, requested, caseless), added };
+}
+
+/**
+ * Every folder a conversation in `cwd` works in besides it — the SDK's additionalDirectories, Codex's writable roots:
+ * the groups in order (the project's extra folders, the conversation's own, the project's files folder), each folder
+ * once, never `cwd` itself.
+ */
+export function workDirs(cwd: string, groups: readonly (readonly string[])[], caseless = process.platform === 'win32'): string[] {
+  return normFolders(cwd, groups.flat(), { caseless, resolve: (p) => p });
+}
+
 /** The extra folders a conversation in `cwd` gets: only in a project's main folder (as the page's `projectFor`). */
 export function projectFolders(cwd: string, workspaces: readonly { path: string; folders?: unknown }[], caseless = process.platform === 'win32'): string[] {
   if (!cwd) return [];

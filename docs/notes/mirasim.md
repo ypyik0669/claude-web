@@ -10,4 +10,5 @@
 ## meta.json 的新键（阶段 C，2026-10-25）
 
 - workspace 的 `folders: string[]`：项目的额外文件夹（不含主文件夹），缺省读成 `[]`，见 `phase03-files-git`「项目的额外文件夹」。
+- sessions 的 `extraDirs: string[]`（2026-11-17）：对话自己加的工作目录，只经 `session.setExtraDirs` 写，见「界面改版 阶段 3」的「添加文件夹 = 加工作目录」。
 - settings `ui.sidebar.view`：侧栏「显示」菜单（分组 / 排序 / 显示已归档 / 其它 agent / 每组），`ui.sidebar.sections`：自建分区 `[{ id, name, ids }]`，见 `ui-redesign-4-sidebar`「一个显示菜单」。

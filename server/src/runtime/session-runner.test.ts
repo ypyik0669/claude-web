@@ -1108,6 +1108,32 @@ describe('SessionRunner on a conversation that never ran a turn (user report: sw
       await r.close();
     });
   });
+
+  it('添加文件夹: a new folder list restarts the process with it — mid-turn once the turn is over, resuming the conversation; the same list restarts nothing', async () => {
+    await withConfigDir(async () => {
+      queries.length = 0;
+      const r = new SessionRunner({ cwd: '/proj' } as any, undefined, { additionalDirectories: ['/lib'] });
+      await tick();
+      const id = r.sessionId;
+      await r.setExtraDirs(['/lib']); // a folder the project already had: nothing changes
+      await tick();
+      expect(queries).toHaveLength(1);
+      r.send('hi');
+      await r.setExtraDirs(['/lib', '/big']);
+      await tick();
+      expect(queries).toHaveLength(1); // the turn is not cut off
+      queries[0].push({ type: 'result', subtype: 'success', is_error: false, result: 'ok', total_cost_usd: 0, modelUsage: {}, usage: {}, session_id: id, uuid: 'u1' });
+      await tick();
+      expect(queries).toHaveLength(2);
+      expect(queries[1].options.resume).toBe(id);
+      expect(queries[1].options.additionalDirectories).toEqual(['/lib', '/big']);
+      await r.setExtraDirs([]); // the last one removed: the option goes
+      await tick();
+      expect(queries).toHaveLength(3);
+      expect('additionalDirectories' in queries[2].options).toBe(false);
+      await r.close();
+    });
+  });
 });
 
 describe('SessionRunner: the engine follows the model, effort on ccb, per-turn cost', () => {

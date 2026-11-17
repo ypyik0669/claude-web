@@ -28,6 +28,7 @@ import { FilesService } from '../files/service.js';
 import { TerminalService } from '../terminal/service.js';
 import { MetaStore } from '../meta/store.js';
 import { checkExtraFolders, refusePeerUnc } from '../meta/folder-check.js';
+import { extraDirsChange } from '../meta/workspace-folders.js';
 import { LimitsService } from '../usage/limits.js';
 import { claudeLive } from '../usage/claude-live.js';
 import { setLiveClaude } from '../models/catalog.js';
@@ -479,9 +480,10 @@ export class Hub {
       // 只聊天 carries over: the copy gets a new id the pool has no record for (it records it once opened)
       const chatOnly = !!s.meta.sessionMeta(params.sessionId).chatOnly;
       const thinkingLanguage = s.meta.sessionMeta(params.sessionId).thinkingLanguage;
+      const extraDirs = s.meta.sessionMeta(params.sessionId).extraDirs;
       const newId = await s.sessions.fork(params.sessionId, params.resumeAt);
-      // …and so does its 思考语言, before the pool reads it for the new id
-      if (thinkingLanguage) await s.meta.setSessionMeta(newId, { thinkingLanguage });
+      // …and so do its 思考语言 and its own folders (添加文件夹), before the pool reads them for the new id
+      if (thinkingLanguage || extraDirs?.length) await s.meta.setSessionMeta(newId, { ...(thinkingLanguage ? { thinkingLanguage } : {}), ...(extraDirs?.length ? { extraDirs } : {}) });
       params = { ...params, sessionId: newId, fork: false, resumeAt: undefined, ...(chatOnly ? { features: { ...params.features, chatOnly: true } } : {}) };
     }
     const before = params.sessionId ? s.pool.get(params.sessionId) : undefined;
@@ -608,6 +610,15 @@ export class Hub {
             worktreeRoot = root;
           }
         }
+        // the welcome page's 添加文件夹: folders of a NEW conversation only (a resume / fork has its own record), each an
+        // existing folder of this machine; the pool records them under its id
+        if (params.extraDirs !== undefined) {
+          if (params.sessionId || !s.pool.supportsExtraDirs(params.agent)) { params = { ...params }; delete params.extraDirs; }
+          else {
+            if (!Array.isArray(params.extraDirs) || params.extraDirs.length > 50) throw new Error(tr('文件夹列表不对'));
+            await checkExtraFolders(params.extraDirs, { fromPeer: this.peerConns.has(ws) });
+          }
+        }
         // an explicitly chosen profile must fit the agent / engine (welcome page, schedules, IM, orchestration all land here)
         const unfitOpen = s.providers.fitError(req.params.providerId, params.agent ?? 'claude');
         if (unfitOpen) throw new Error(unfitOpen);
@@ -689,11 +700,37 @@ export class Hub {
       }
       case 'sessions.meta':
         return s.meta.allSessionMeta();
-      case 'session.setMeta':
-        await s.meta.setSessionMeta(req.sessionId, req.patch);
+      case 'session.setMeta': {
+        // a conversation's own folders go through session.setExtraDirs only (checked there, and the process told)
+        const { extraDirs: _dirs, ...patch } = req.patch ?? {};
+        await s.meta.setSessionMeta(req.sessionId, patch);
         // 思考用的语言 of this conversation: its running process restarts with it once idle
-        if ('thinkingLanguage' in req.patch) s.pool.thinkingLanguageChanged(req.sessionId, req.patch.thinkingLanguage ?? '');
+        if ('thinkingLanguage' in patch) s.pool.thinkingLanguageChanged(req.sessionId, patch.thinkingLanguage ?? '');
         return null;
+      }
+      // 添加文件夹 (+ menu) / 移除 (the info column's 环境 card): the conversation's own extra working directories, the
+      // whole list. Recorded, then its running process takes them once idle (pool.extraDirsChanged) — a Claude
+      // conversation restarts invisibly and resumes, a Codex one reopens its thread. Only folders being added are
+      // checked (each must exist here): one deleted from the disk since can still be removed
+      case 'session.setExtraDirs': {
+        s.pool.assertWritable(req.sessionId);
+        if (!Array.isArray(req.dirs) || req.dirs.length > 50) throw new Error(tr('文件夹列表不对'));
+        const sm = s.meta.sessionMeta(req.sessionId);
+        const live = s.pool.get(req.sessionId);
+        const running = live && live.state !== 'closed' && live.state !== 'error' ? live : undefined;
+        // (anything not a recorded folder counts as added: junk is refused by checkExtraFolders below)
+        const { dirs, added } = extraDirsChange(running?.cwd ?? '', sm.extraDirs, req.dirs);
+        if (added.length) {
+          if (sm.env?.kind === 'wsl') throw new Error(tr('WSL 里的对话不能添加这台电脑上的文件夹'));
+          if (sm.chatOnly) throw new Error(tr('只聊天的对话没有工具，用不上工作目录'));
+          const agent = running?.info.agent ?? (await s.transcripts.head(req.sessionId).catch(() => null))?.agent ?? 'claude';
+          if (!s.pool.supportsExtraDirs(agent)) throw new Error(tr('这个 agent 不支持额外的工作目录'));
+          await checkExtraFolders(added, { fromPeer: this.peerConns.has(ws) });
+        }
+        await s.meta.setSessionMeta(req.sessionId, { extraDirs: dirs.length ? dirs : undefined });
+        s.pool.extraDirsChanged(req.sessionId);
+        return dirs;
+      }
       case 'schedules.list':
         return s.meta.schedules();
       case 'schedules.upsert': {

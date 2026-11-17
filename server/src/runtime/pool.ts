@@ -13,7 +13,7 @@ import { proxy } from '../net/proxy.js';
 import { withExplanation } from '../errors/explain.js';
 import { fullPick, providerKey, subagentModelFor } from '../models/subagent.js';
 import { tr } from '../i18n/index.js';
-import { projectFolders } from '../meta/workspace-folders.js';
+import { ownDirs, projectFolders, workDirs } from '../meta/workspace-folders.js';
 import { instructionsSection, projectFilesDir, projectOf } from '../meta/project.js';
 import { dataDir } from '../files/service.js';
 import fs from 'node:fs';
@@ -71,6 +71,54 @@ export class RunnerPool extends EventEmitter {
   private extraFolders(cwd: string): string[] {
     const meta = this.providers.meta;
     return meta && typeof meta.workspaces === 'function' ? projectFolders(cwd, meta.workspaces()) : [];
+  }
+
+  /**
+   * 添加文件夹 (+ menu): the conversation's own extra folders — a new one's are what it is opened with (the welcome
+   * page), a resumed or forked one's its record (SessionMeta.extraDirs; the hub copies a fork's over to its new id).
+   */
+  private ownDirsOf(params: OpenSessionParams): string[] {
+    if (!params.sessionId) return ownDirs(params.cwd, params.extraDirs);
+    return ownDirs(params.cwd, this.providers.meta?.sessionMeta(params.sessionId).extraDirs);
+  }
+
+  /**
+   * Every folder a conversation in `cwd` works in besides it: the project's extra folders, its own (`own`), then
+   * `more` (the project's files folder) — each once (meta/workspace-folders.ts `workDirs`).
+   */
+  private workDirsFor(cwd: string, own: string[], more: string[] = []): string[] {
+    return workDirs(cwd, [this.extraFolders(cwd), own, more]);
+  }
+
+  /** Whether `agent` can be given extra working directories: Claude (additionalDirectories), Codex (writable roots). */
+  supportsExtraDirs(agent: AgentKind | undefined): boolean {
+    const kind = agent ?? 'claude';
+    if (kind === 'claude') return true;
+    try { return this.agents?.def(kind).protocol === 'codex'; } catch { return false; }
+  }
+
+  /** what each running Codex was opened with (its writable roots are fixed when its thread opens) */
+  private codexDirs = new WeakMap<AgentDriver, string>();
+
+  /**
+   * A conversation's own folders were changed (session.setExtraDirs, already recorded): its running process takes the
+   * new list. Claude restarts once idle and resumes (SessionRunner.setExtraDirs). Codex sets its writable roots when it
+   * opens its thread, so it is closed — now when idle, else as the turn ends — and the next message resumes the thread
+   * with them (an idle Codex is closed after CODEX_IDLE_TTL_MS anyway). Others have no such thing.
+   */
+  extraDirsChanged(sessionId: string) {
+    const r = this.runners.get(sessionId);
+    if (!r || r.state === 'closed' || r.state === 'error') return;
+    const own = ownDirs(r.cwd, this.providers.meta?.sessionMeta(sessionId).extraDirs);
+    if (r instanceof SessionRunner) {
+      const proj = this.projectExtras({ cwd: r.cwd, sessionId });
+      void r.setExtraDirs(this.workDirsFor(r.cwd, own, proj.filesDir ? [proj.filesDir] : [])).catch(() => { /* the old process keeps going */ });
+      return;
+    }
+    if (!(r instanceof CodexDriver) || this.orphaned.has(r)) return;
+    if (this.codexDirs.get(r) === this.workDirsFor(r.cwd, own).join('\n')) return;
+    if (r.state === 'idle') this.end(r);
+    else this.orphaned.add(r);
   }
 
   /**
@@ -164,7 +212,10 @@ export class RunnerPool extends EventEmitter {
     for (const [k, v] of [...this.runners]) if (v === r) this.runners.delete(k);
     void r.close().catch(() => { /* already gone */ });
   }
-  /** runners whose provider was deleted mid-turn: closed as the turn ends */
+  /**
+   * runners closed as their turn ends: their provider was deleted mid-turn (providerRemoved), or a Codex whose folders
+   * changed (extraDirsChanged)
+   */
   private orphaned = new WeakSet<AgentDriver>();
 
   /**
@@ -264,6 +315,8 @@ export class RunnerPool extends EventEmitter {
     }
     let r: AgentDriver;
     let projInstr = '';
+    /** the conversation's own extra folders it runs with (Claude, Codex; none for the others) */
+    let own: string[] = [];
     if (kind === 'claude' || !this.agents || !this.transcripts) {
       // a fork routes its prompt cache under its root's key; every reopen (goals, IM, schedules, hot switch) keeps it
       if (params.sessionId && !params.fork && !params.resumeAt && !params.cacheParentId) {
@@ -282,9 +335,11 @@ export class RunnerPool extends EventEmitter {
       // the own claude.ai login: its 200K / 1M picks and 自动压缩 point (A7); a provider / another account has its own
       let account: AccountPrefs | undefined;
       if (!sp && params.env?.kind !== 'wsl') account = this.accountPrefs();
-      // a conversation in a project's main folder works in the project's extra folders too (stage C2)
+      // a conversation in a project's main folder works in the project's extra folders too (stage C2), and every
+      // conversation in the folders it was given itself (添加文件夹)
       const proj = this.projectExtras(params);
-      const extra = [...this.extraFolders(params.cwd), ...(proj.filesDir ? [proj.filesDir] : [])];
+      own = this.ownDirsOf(params);
+      const extra = this.workDirsFor(params.cwd, own, proj.filesDir ? [proj.filesDir] : []);
       // the project's instructions go into NEW conversations (spec F2) and stay theirs (recorded below): a resumed or
       // forked one runs with what it started with — a conversation older than the project never gets them, an edit
       // of the instructions changes no conversation already going
@@ -317,9 +372,12 @@ export class RunnerPool extends EventEmitter {
       // on its own login, what Codex lists for the account is kept for the menus (not a provider's: that list is the provider's)
       const agents = this.agents;
       const onModels = params.providerId ? undefined : (m: ReportedModel[]) => agents.setReported(kind, m);
-      r = l.def.protocol === 'codex' ? new CodexDriver(kind, launch, params, this.transcripts, { beforeResume, onModels, extraDirs: this.extraFolders(params.cwd) }) : new AcpDriver(kind, launch, params, this.transcripts, resumeHistory);
+      // Codex: the project's extra folders and the conversation's own are its writable roots (ACP agents have nothing like it)
+      if (l.def.protocol === 'codex') own = this.ownDirsOf(params);
+      const codexDirs = l.def.protocol === 'codex' ? this.workDirsFor(params.cwd, own) : [];
+      r = l.def.protocol === 'codex' ? new CodexDriver(kind, launch, params, this.transcripts, { beforeResume, onModels, extraDirs: codexDirs }) : new AcpDriver(kind, launch, params, this.transcripts, resumeHistory);
       // an idle Codex holds its thread: `codex exec resume` in a terminal fails "already has an active writer" until it goes
-      if (l.def.protocol === 'codex') this.ttl.set(r, CODEX_IDLE_TTL_MS);
+      if (l.def.protocol === 'codex') { this.ttl.set(r, CODEX_IDLE_TTL_MS); this.codexDirs.set(r, codexDirs.join('\n')); }
       // the composer's model chip reads the profile off the info (`档案 / 模型`); Claude's runner sets it itself
       const name = params.providerId && params.providerId !== 'claude' ? this.providers.meta?.provider(params.providerId)?.name : undefined;
       if (name) Object.assign(r.info, { providerId: params.providerId, providerName: name });
@@ -344,6 +402,14 @@ export class RunnerPool extends EventEmitter {
       if (projInstr && meta && id && id !== placeholder && meta.sessionMeta(id).projectInstructions !== projInstr) void meta.setSessionMeta(id, { projectInstructions: projInstr }).catch(() => { /* in memory; the next save persists it */ });
     };
     keepInstr(r.sessionId);
+    // 添加文件夹 on the welcome page: a new conversation's folders are its own from the start; a fork keeps its source's
+    // (a resume has its record already)
+    const carryDirs = !params.sessionId || params.fork || params.resumeAt ? own : [];
+    const keepDirs = (id: string | undefined) => {
+      if (!carryDirs.length || !meta || !id || id === placeholder) return;
+      if ((meta.sessionMeta(id).extraDirs ?? []).join('\n') !== carryDirs.join('\n')) void meta.setSessionMeta(id, { extraDirs: carryDirs }).catch(() => { /* in memory; the next save persists it */ });
+    };
+    keepDirs(r.sessionId);
     // a bot's conversation (its thread, a run, internal work) is recorded as the bot's: the lists leave it out (bots/hidden.ts)
     const botMark = params.botId || params.botRole ? { ...(params.botId ? { botId: params.botId } : {}), ...(params.botRole ? { botRole: params.botRole } : {}) } : undefined;
     const keepBot = (id: string | undefined) => {
@@ -383,6 +449,7 @@ export class RunnerPool extends EventEmitter {
       keepChatOnly(i.sessionId);
       keepEnv(i.sessionId);
       keepInstr(i.sessionId);
+      keepDirs(i.sessionId);
       keepBot(i.sessionId);
       // the mode it runs in now (picked in a window, or the CLI's own move out of plan mode) is what it comes back in
       const mode = asMode(i.permissionMode);

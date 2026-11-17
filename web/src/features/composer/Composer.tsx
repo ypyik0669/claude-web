@@ -3,7 +3,7 @@ import { ownClaudeName } from '@/store/auth';
 import { ModeChangedError, useScopedSession, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { desktop } from '@/desktop';
-import { clsx, shortModel } from '@/util';
+import { basename, clsx, shortModel } from '@/util';
 import { parsePeerId, policyOfModel, LIVE_FEATURES, type AgentKind, type AttachmentRef, type EffortLevel, type PeerInfo, type PermissionMode, type PermissionRequestEvent, type SessionFeatures, type WslDistro, wslToWin } from '@shared';
 import { MachineChip } from './MachineChip';
 import { machineOf } from './machine';
@@ -11,7 +11,8 @@ import { installClaudeInWsl } from '@/features/remote/wsl-install';
 import { bundleParts, compressImage, expandDataTransfer, fmtSize, isLongPaste, pasteAsAttachment, uploadAttachment, type DroppedFile, type ExpandedFiles, type PendingBundle, type PendingImage } from '@/model/attachments';
 import { addPathRefs, isPathRef, planPaste, resolvePaste, snapshotPaste, splitDropped, type PasteResult } from './paste-files';
 import { AttachmentCard } from './AttachmentCard';
-import { pickFolderFiles } from '@/model/attachment-filter';
+import { dirsOff, withDir, withoutDir } from './extra-dirs';
+import { addOwnDir, removeOwnDir } from './extra-dirs-actions';
 import { StatusStrip, noLoginChipShown } from '@/features/chat/StatusStrip';
 import { QueueCards } from '@/features/chat/QueueCards';
 import { SideChat } from '@/features/chat/SideChat';
@@ -91,6 +92,7 @@ const NO_FEATURES: SessionFeatures = {};
 const isFeatures = (v: unknown): v is SessionFeatures => !!v && typeof v === 'object' && !Array.isArray(v);
 
 const NO_PENDING_LOCAL: PermissionRequestEvent[] = [];
+const NO_DIRS: readonly string[] = [];
 
 /** The agent's name in a docked card's words: 「告诉 Claude 换个做法」, 「告诉 Codex …」. */
 function agentWord(info: { agent?: string; agentName?: string } | undefined): string {
@@ -202,6 +204,8 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   const [wEffort, setWEffort] = useState<EffortLevel | ''>('');
   const [wUltra, setWUltra] = useState(false);
   const [wWorktree, setWWorktree] = useState('');
+  // 添加文件夹 on the welcome page: the new conversation's own working directories (sent with session.open)
+  const [wDirs, setWDirs] = useState<readonly string[]>(NO_DIRS);
   // 新对话选机器: '' = this computer, 'wsl:<distro>' = a WSL distro, else a federation peer's id (the welcome page only)
   const [wMachine, setWMachine] = useState('');
   const wm = machineOf(wMachine);
@@ -720,8 +724,9 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
         localStorage.setItem('cw.lastProvider', providerId);
         localStorage.setItem('cw.lastAgent', wAgent);
         if (wAgent !== 'claude' && !agent) throw new Error(tr('选中的 agent 已不可用'));
-        const id = await openSession({ cwd: cwd.trim(), model, permissionMode: wMode, effort, ultracode: wUltracode && wUltra ? true : undefined, subagentModel: foreign ? undefined : wSubModel, worktree: wWorktree || undefined, providerId, features: foreign ? {} : wChatOnly ? { chatOnly: true } : featDefaults, agent: foreign ? wAgent : undefined }, target);
+        const id = await openSession({ cwd: cwd.trim(), model, permissionMode: wMode, effort, ultracode: wUltracode && wUltra ? true : undefined, subagentModel: foreign ? undefined : wSubModel, worktree: wWorktree || undefined, providerId, features: foreign ? {} : wChatOnly ? { chatOnly: true } : featDefaults, agent: foreign ? wAgent : undefined, ...(wDirs.length && !dirsWhy ? { extraDirs: [...wDirs] } : {}) }, target);
         setWChatOnly(false);
+        setWDirs(NO_DIRS); // they are that conversation's now (its 环境 card lists them)
         // what is asked for anew for every conversation (操控电脑) is off again for the next one
         if (!foreign && isFeatures(storedFeatures) && afterStart(storedFeatures) !== storedFeatures) setFeatures(afterStart(storedFeatures));
         const uploaded = files.length ? await uploadAll(id) : [];
@@ -920,18 +925,6 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     takeDropped(await expandDataTransfer(e.dataTransfer));
   };
   const fileInput = useRef<HTMLInputElement>(null);
-  const folderInput = useRef<HTMLInputElement>(null);
-  // 添加文件夹 (+ menu): the same shape a dropped folder has — every file with its path under the folder
-  const onFolderPicked = (list: FileList | null) => {
-    const fl = Array.from(list ?? []);
-    if (!fl.length) return;
-    if (remote) { toast(REMOTE_ATTACH); return; }
-    // node_modules / .git / dist… are dropped before the 500 cap, same rule as a dropped folder
-    const { files: picked, top, truncated, skipped } = pickFolderFiles(fl);
-    if (!picked.length) { toast(tr('文件夹 {top} 里只有依赖 / 构建产物 / .git，没有可附加的文件', { top })); return; }
-    setFiles((s) => [...s, ...picked].slice(0, 500));
-    toast(tr('已附加文件夹 {top}（{pickedCount} 个文件{v}{v2}）', { top, pickedCount: picked.length, v: truncated ? tr('，已截断到 500') : '', v2: skipped ? tr('，跳过 node_modules / .git 等 {skipped} 个', { skipped }) : '' }), true);
-  };
 
   // 新对话选机器: a conversation on another computer starts there with that computer's own model and settings — this
   // one's providers / models / capabilities mean nothing there. Files on this disk cannot go (images can).
@@ -1115,6 +1108,37 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
   // the capabilities: on the welcome page the ones the new conversation will get (removable); in a running one
   // what it was started with (fixed — a launch parameter)
   const claudeHere = welcome ? !foreign : sessionAgent === 'claude';
+
+  // 添加文件夹 (+ menu): another working directory for this conversation, picked where its agent runs — the system dialog
+  // on the desktop, the server's dialog for a browser on that computer, the page's own folder browser on a phone or
+  // another computer (pickFolder). Only a path: no file of it is listed or uploaded. It used to be <input
+  // webkitdirectory>, which makes the browser list every file under the folder before the page sees one — a project
+  // with node_modules and worktrees took the page down, the desktop app reloaded it, and the draft and pictures in the
+  // box went with it (2026-11-17, a community user). Who can: extra-dirs.ts `dirsOff`.
+  const dirsAgent: AgentKind = welcome ? wKind : sessionAgent;
+  const dirsAgentInfo = dirsAgent !== 'claude' ? agents.find((a) => a.kind === dirsAgent) : undefined;
+  const dirsWhy = dirsOff({
+    remote: welcome ? !!wPeer : remote,
+    wsl: welcome ? !!wWsl : !!(active?.info?.wsl || (active && sessionMeta[active.sessionId]?.env?.kind === 'wsl')),
+    chatOnly: welcome ? wChatOnly : liveChatOnly,
+    protocol: dirsAgent === 'claude' ? 'claude' : dirsAgentInfo?.protocol ?? 'acp',
+    agentName: dirsAgentInfo?.name ?? dirsAgent,
+  });
+  const ownDirs = useStore((s) => (!welcome && active ? s.sessionMeta[active.sessionId]?.extraDirs : undefined)) ?? NO_DIRS;
+  // no 环境 card to list them on a phone or with the info column switched off: the box shows them (removable) instead
+  const dirTags = !welcome && ownDirs.length > 0 && (mobile || settings['ui.infoPanel'] === false);
+  const addDir = async () => {
+    if (dirsWhy) { toast(dirsWhy); return; }
+    const base = welcome ? cwd.trim() : active?.cwd ?? '';
+    const p = await pickFolder({ title: welcome ? tr('给新对话加一个工作目录') : tr('给这个对话加一个工作目录'), start: base || undefined }).catch((e) => { toast(String((e as Error)?.message ?? e)); return null; });
+    if (!p) return;
+    // the conversation's own folder and its project's are worked in already
+    const taken = base ? projectRoots(base, useStore.getState().workspaces) : [];
+    if (!welcome) { if (active) await addOwnDir(active.sessionId, p, taken); return; }
+    const next = withDir(wDirs, p, taken);
+    if (next === wDirs) toast(tr('{name} 已经在工作目录里', { name: basename(p) }), true);
+    else setWDirs(next);
+  };
   const liveFeat = useStore((s) => (active ? s.sessionMeta[active.sessionId]?.liveFeatures : undefined));
   const sessionFeatures = useMemo(() => (liveFeat ? { ...(info?.features ?? NO_FEATURES), ...liveFeat } : info?.features ?? NO_FEATURES), [info?.features, liveFeat]);
   const setSessionFeatures = (f: SessionFeatures) => {
@@ -1124,7 +1148,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     if (Object.keys(patch).length) void useStore.getState().setLiveFeatures(active.sessionId, patch).catch((e) => toast(e.message));
   };
   const tags = welcome ? (claudeHere && !wChatOnly ? capabilityTags(featDefaults, capEnv) : []) : capabilityTags(sessionFeatures, capEnv);
-  const hasChips = imgs.length > 0 || atts.length > 0 || bundles.length > 0 || files.length > 0 || refs.length > 0 || recordings.length > 0 || !!upload || tags.length > 0 || (welcome && (!!wWorktree || wChatOnly)) || (!welcome && liveChatOnly);
+  const hasChips = imgs.length > 0 || atts.length > 0 || bundles.length > 0 || files.length > 0 || refs.length > 0 || recordings.length > 0 || !!upload || tags.length > 0 || (welcome && (!!wWorktree || wChatOnly || (wDirs.length > 0 && !dirsWhy))) || (!welcome && liveChatOnly) || dirTags;
   const insertSlash = () => { const v = text.startsWith('/') ? text : `/${text}`; onChange(v); requestAnimationFrame(() => { const el = ta.current; if (el) { el.focus(); el.setSelectionRange(1, 1); } }); };
   const insertGoal = () => { const v = text.trim() ? `/goal ${text.trim()}` : '/goal '; onChange(v); requestAnimationFrame(() => { const el = ta.current; if (el) { el.focus(); el.setSelectionRange(v.length, v.length); } }); };
 
@@ -1133,7 +1157,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     <PlusMenu claude={claudeHere} live={!welcome} remote={remote} disabled={disabled} plain={bot}
       features={welcome ? featDefaults : sessionFeatures} onFeatures={welcome ? setFeatures : setSessionFeatures} selfId={welcome ? undefined : active?.sessionId}
       chatOnly={welcome ? wChatOnly : undefined} onChatOnly={welcome && claudeHere && !wPeer && !wWsl ? setWChatOnly : undefined}
-      onFiles={() => fileInput.current?.click()} onFolder={() => folderInput.current?.click()} onReference={addRef} onGoal={insertGoal} onSlash={insertSlash} onRecord={desktop?.captureSources && !remote ? () => openPicker(recTarget) : undefined} sessionId={!welcome && claudeHere ? active?.sessionId : undefined} />
+      onFiles={() => fileInput.current?.click()} onFolder={() => void addDir()} dirsOff={dirsWhy} onReference={addRef} onGoal={insertGoal} onSlash={insertSlash} onRecord={desktop?.captureSources && !remote ? () => openPicker(recTarget) : undefined} sessionId={!welcome && claudeHere ? active?.sessionId : undefined} />
   );
   // one round button that changes in place (UI refresh §6 「发送键」): faint with nothing to send, ink with something,
   // the stop square while a turn is in flight. Both glyphs are always there and cross-fade on `data-state`
@@ -1404,6 +1428,19 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
                   <button aria-label={tr('不用独立副本')} onClick={() => setWWorktree('')}><Icon name="close" size={10} /></button>
                 </span>
               )}
+              {/* 添加文件夹: the new conversation's working directories (welcome), or this one's where no 环境 card lists them */}
+              {welcome && !dirsWhy && wDirs.map((d) => (
+                <span key={`dir${d}`} className="cap-tag" data-cap="dir" title={tr('新对话也在这个文件夹里工作：{d}', { d })}>
+                  <Icon name="folder" size={12} /> {basename(d)}
+                  <button aria-label={tr('不加 {name}', { name: basename(d) })} onClick={() => setWDirs((cur) => withoutDir(cur, d))}><Icon name="close" size={10} /></button>
+                </span>
+              ))}
+              {dirTags && active && ownDirs.map((d) => (
+                <span key={`dir${d}`} className="cap-tag" data-cap="dir" title={tr('这个对话也在这个文件夹里工作：{d}', { d })}>
+                  <Icon name="folder" size={12} /> {basename(d)}
+                  <button aria-label={tr('从工作目录移除 {name}', { name: basename(d) })} onClick={() => void removeOwnDir(active.sessionId, d)}><Icon name="close" size={10} /></button>
+                </span>
+              ))}
               {refs.map((r) => (
                 <SessionRefChip key={`r${r.id}`} a={{ kind: 'session', name: r.title, sessionId: r.id }} onRemove={() => setRefs((s) => s.filter((x) => x.id !== r.id))} />
               ))}
@@ -1471,7 +1508,6 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
             enterKeyHint={mobile ? 'send' : undefined}
           />
           <input ref={fileInput} type="file" multiple hidden onChange={(e) => { const fl = Array.from(e.target.files ?? []); void addImages(fl.filter((f) => f.type.startsWith('image/'))); if (remote && fl.some((f) => !f.type.startsWith('image/'))) { toast(REMOTE_ATTACH); e.target.value = ''; return; } setFiles((s) => [...s, ...fl.filter((f) => !f.type.startsWith('image/')).map((f) => ({ file: f, rel: f.name }))]); e.target.value = ''; }} />
-          <input ref={folderInput} type="file" multiple hidden {...{ webkitdirectory: '' }} onChange={(e) => { onFolderPicked(e.target.files); e.target.value = ''; }} />
           <ComposerBar
             plus={plus}
             project={welcomeUnder ? null : projectChips}

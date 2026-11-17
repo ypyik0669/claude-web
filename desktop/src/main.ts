@@ -293,7 +293,8 @@ function createWindow(url: string | null, winId = 'main', bounds?: Bounds, hidde
     u.searchParams.set('recovered', '1');
     void win.loadURL(u.toString());
   };
-  win.webContents.on('render-process-gone', (_e, d) => { if (d.reason !== 'clean-exit') recover(); });
+  // why it went goes into main.log (oom / crashed / killed…): the page reloading is all the user sees of it
+  win.webContents.on('render-process-gone', (_e, d) => { if (d.reason !== 'clean-exit') { mainLog(`renderer gone: ${d.reason} (exit ${d.exitCode})`); recover(); } });
   win.webContents.on('did-fail-load', (_e, code, _desc, url, isMainFrame) => {
     // -3 = ABORTED (a navigation we cancelled ourselves); only the app page's own load counts
     if (isMainFrame && code !== -3 && sameOrigin(url, host.info?.url)) recover();

@@ -235,6 +235,8 @@ interface State {
   setSubagentModel(sessionId: string, model: string, providerId: string): Promise<void>;
   /** 操控电脑 / 控制 Chrome in a running conversation (the next message runs with it) */
   setLiveFeatures(sessionId: string, patch: { computerUse?: boolean; chrome?: boolean }): Promise<void>;
+  /** 添加文件夹 / 移除: the conversation's own extra working directories, the whole list (a running one restarts with them once idle) */
+  setExtraDirs(sessionId: string, dirs: readonly string[]): Promise<void>;
   closeSession(sessionId: string): Promise<void>;
   setTheme(t: Theme, fromSettings?: boolean): void;
   forkAt(sessionId: string, messageUuid: string): Promise<void>;
@@ -1239,6 +1241,19 @@ export const useStore = create<State>((set, get) => ({
     set((s) => ({ sessionMeta: { ...s.sessionMeta, [sessionId]: { ...s.sessionMeta[sessionId], liveFeatures: { ...s.sessionMeta[sessionId]?.liveFeatures, ...patch } } } }));
     try {
       await ws.request({ kind: 'session.setFeatures', sessionId, features: patch });
+    } catch (e) {
+      set((s) => ({ sessionMeta: { ...s.sessionMeta, [sessionId]: { ...prev } } }));
+      throw e;
+    }
+  },
+  async setExtraDirs(sessionId, dirs) {
+    const prev = get().sessionMeta[sessionId];
+    const put = (list: readonly string[] | undefined) => set((s) => ({ sessionMeta: { ...s.sessionMeta, [sessionId]: { ...s.sessionMeta[sessionId], extraDirs: list?.length ? [...list] : undefined } } }));
+    put(dirs);
+    try {
+      // the server answers with the list as stored (checked, each once): the 环境 card shows that
+      const stored = await ws.request<string[]>({ kind: 'session.setExtraDirs', sessionId, dirs: [...dirs] });
+      put(Array.isArray(stored) ? stored : dirs);
     } catch (e) {
       set((s) => ({ sessionMeta: { ...s.sessionMeta, [sessionId]: { ...prev } } }));
       throw e;

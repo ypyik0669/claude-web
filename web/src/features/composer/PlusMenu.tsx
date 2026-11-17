@@ -25,7 +25,10 @@ export interface PlusMenuProps {
   /** welcome page only (a live conversation's switches are read-only) */
   onFeatures: (f: SessionFeatures) => void;
   onFiles: () => void;
+  /** 添加文件夹: pick a folder for this conversation's working directories (extra-dirs.ts) */
   onFolder: () => void;
+  /** why 添加文件夹 cannot add one here (another machine's conversation, WSL, 只聊天, an ACP agent); undefined = it can */
+  dirsOff?: string;
   onReference: (s: { id: string; title: string }) => void;
   /** the conversation's own id: it cannot reference itself */
   selfId?: string;
@@ -71,7 +74,7 @@ export function PlusMenu(p: PlusMenuProps) {
 
 function PlusBody(p: PlusMenuProps & { close: (refocus: boolean) => void }) {
   const [view, setView] = useState<'main' | 'reference' | 'connectors'>('main');
-  const s = plusSections({ claude: p.claude, live: p.live, remote: p.remote });
+  const s = plusSections({ claude: p.claude, live: p.live, remote: p.remote, dirsOff: p.dirsOff });
   // 操控电脑 can be switched on only where the server's machine supports it (engine.info). (A hook: before the
   // other view's return — the menu's two views must run the same hooks.)
   const computer = useStore((st) => st.engine?.computerUse === true);
@@ -98,9 +101,10 @@ function PlusBody(p: PlusMenuProps & { close: (refocus: boolean) => void }) {
       {s.attach.map((a) => {
         const act = a.id === PLUS_ID.files ? () => { p.close(false); p.onFiles(); } : a.id === PLUS_ID.folder ? () => { p.close(false); p.onFolder(); } : () => setView('reference');
         return (
-          <button key={a.id} type="button" data-mi data-id={a.id} role="menuitem" className="cm-it one" disabled={!!a.disabled} title={a.disabled} onClick={act}>
+          <button key={a.id} type="button" data-mi data-id={a.id} role="menuitem" className={clsx('cm-it', !a.disabled && 'one')} disabled={!!a.disabled} title={a.disabled ?? a.title} onClick={act}>
             <span className="cm-ic"><Icon name={a.icon} size={15} /></span>
-            <span className="cm-tx"><span className="cm-l">{a.label}</span></span>
+            {/* why it is off, under its name (a disabled row shows no tooltip on a phone) */}
+            <span className="cm-tx"><span className="cm-l">{a.label}</span>{a.disabled && <span className="cm-d">{a.disabled}</span>}</span>
             {a.note && <span className="cm-r">{a.note}</span>}
             {a.key && <span className="cm-r kbd">{modKey}+{a.key}</span>}
             {a.id === PLUS_ID.reference && <span className="cm-r"><Icon name="chevronRight" size={12} /></span>}

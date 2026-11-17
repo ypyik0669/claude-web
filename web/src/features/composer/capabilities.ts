@@ -115,7 +115,7 @@ export function withoutTag(f: SessionFeatures, key: CapabilityTag['key']): Sessi
   return key === 'channels' ? withChannels(f, []) : withFeature(f, key, false);
 }
 
-export interface AttachItem { id: typeof PLUS_ID.files | typeof PLUS_ID.folder | typeof PLUS_ID.reference; label: string; icon: IconName; note?: string; disabled?: string; /** with Ctrl / ⌘ */ key?: string }
+export interface AttachItem { id: typeof PLUS_ID.files | typeof PLUS_ID.folder | typeof PLUS_ID.reference; label: string; icon: IconName; note?: string; disabled?: string; /** with Ctrl / ⌘ */ key?: string; /** tooltip when it is not disabled */ title?: string }
 
 /**
  * Under 「这次对话可以…」 in a running conversation: the switches show what it was started with, read-only — the note
@@ -127,14 +127,16 @@ export const LIVE_CAPS_NOTE = tr('操控电脑、控制 Chrome 随时能开关�
  * What the + menu shows. `claude` = the conversation runs on Claude (the capabilities are Claude Code flags: the old
  * menu only showed them for Claude); `live` = an already running conversation (the capabilities are fixed there:
  * read-only switches + one note); `remote` = a conversation on another machine (uploads land on THIS disk, out of
- * its reach — images still go inline; goals run on this machine and cannot drive it).
+ * its reach — images still go inline; goals run on this machine and cannot drive it). `dirsOff`: why 添加文件夹 cannot
+ * give this conversation another working directory (extra-dirs.ts `dirsOff`; it no longer uploads the folder's files —
+ * the browser listed every file of it first, and a big project took the page down).
  */
-export function plusSections(o: { claude: boolean; live: boolean; remote?: boolean }): { attach: AttachItem[]; capabilities: boolean; readOnly: boolean; note?: string; goal: boolean } {
+export function plusSections(o: { claude: boolean; live: boolean; remote?: boolean; dirsOff?: string }): { attach: AttachItem[]; capabilities: boolean; readOnly: boolean; note?: string; goal: boolean } {
   const remoteNote = tr('其它机器上的对话只收图片（文件在本机，那边读不到）');
   return {
     attach: [
       { id: PLUS_ID.files, label: tr('添加文件或图片'), icon: 'attach', note: o.remote ? remoteNote : undefined, key: o.remote ? undefined : 'U' },
-      { id: PLUS_ID.folder, label: tr('添加文件夹'), icon: 'folder', disabled: o.remote ? remoteNote : undefined },
+      { id: PLUS_ID.folder, label: tr('添加文件夹'), icon: 'folder', disabled: o.dirsOff ?? (o.remote ? tr('其它机器上的对话不能添加这台电脑上的文件夹') : undefined), title: tr('选一个文件夹加进这个对话的工作目录：Claude 可以直接读写它（不上传）') },
       { id: PLUS_ID.reference, label: tr('引用另一个对话'), icon: 'quote' },
     ],
     capabilities: o.claude,

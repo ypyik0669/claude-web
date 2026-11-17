@@ -16,6 +16,9 @@ import { openReview } from '@/features/workbench/right-panel';
 import { useRepoContext } from '@/features/workbench/repo-context';
 import { openExtensions } from '@/features/extensions/state';
 import { useContextUsage } from '@/features/composer/ContextMeter';
+import { envFolders } from '@/features/composer/extra-dirs';
+import { removeOwnDir } from '@/features/composer/extra-dirs-actions';
+import { projectRoots } from '@/features/paths';
 import './info.css';
 import { connectorSummary, contextBreakdown, contextTitle, ctxCanRefresh, ctxLive, fmtTokens, moveCard, normInfoLayout, nudgeCard, toggleCard, type CtxBreakdown, type InfoCard, type InfoLayout } from './info-model';
 
@@ -159,12 +162,37 @@ function EnvCard({ sessionId }: { sessionId: string }) {
     <>
       <Row icon="machine">{peer ? peer.name : tr('本机')}</Row>
       {cwd && <Row icon="folder" title={cwd}>{basename(cwd)}{worktree ? <span className="ic-dim"> · {tr('独立副本')}</span> : null}</Row>}
+      {cwd && !peer && <EnvFolders sessionId={sessionId} cwd={cwd} />}
       {branch && <Row icon="branch" title={branch}>{branch}</Row>}
       {remote && (
         <Row icon="device" title={tr('让配对过的手机连上这台电脑，在手机上看和继续对话')} end={<button className={clsx('toggle sm', remote.enabled && 'on')} role="switch" aria-checked={remote.enabled} aria-label={tr('手机远程')} onClick={() => void toggleRemote()} />}>
           {tr('手机远程')}
         </Row>
       )}
+    </>
+  );
+}
+
+const NO_DIRS: readonly string[] = [];
+
+/**
+ * The folders it works in besides its own (spec: 添加文件夹, 2026-11-17): the project's extra folders — changed in the
+ * project's settings, so no × here — then the ones added to this conversation (+ → 添加文件夹), each removable. A
+ * change reaches a running conversation once it is idle (it restarts and resumes). Not for another machine's
+ * conversation: neither list here is that machine's.
+ */
+function EnvFolders({ sessionId, cwd }: { sessionId: string; cwd: string }) {
+  const workspaces = useStore((s) => s.workspaces);
+  const own = useStore((s) => s.sessionMeta[sessionId]?.extraDirs) ?? NO_DIRS;
+  const rows = useMemo(() => envFolders(cwd, projectRoots(cwd, workspaces).slice(1), own), [cwd, workspaces, own]);
+  return (
+    <>
+      {rows.map((r) => (
+        <Row key={r.path} icon="folder" title={r.from === 'project' ? tr('{path}\n项目的文件夹，在项目设置里改', { path: r.path }) : tr('{path}\n添加到这个对话的文件夹', { path: r.path })}
+          end={r.from === 'conversation' ? <button className="icon-btn xs" data-act="remove-dir" onClick={() => void removeOwnDir(sessionId, r.path)} title={tr('从这个对话的工作目录移除')} aria-label={tr('从工作目录移除 {name}', { name: basename(r.path) })}><Icon name="close" size={11} /></button> : undefined}>
+          {basename(r.path)}<span className="ic-dim"> · {r.from === 'project' ? tr('项目') : tr('这个对话')}</span>
+        </Row>
+      ))}
     </>
   );
 }

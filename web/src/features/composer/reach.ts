@@ -48,7 +48,8 @@ const OLD_MODE_NAME: Record<string, string> = { default: tr('每次询问'), acc
 export const COMPOSER_REACH: ReachEntry[] = [
   // `+` (the old paperclip + the 「功能」 dropdown)
   { was: tr('添加图片 / 文件'), place: 'plus', sel: idSel(PLUS_ID.files) },
-  { was: tr('拖入文件夹（现在也能点）'), place: 'plus', sel: idSel(PLUS_ID.folder) },
+  // (a dragged-in folder is still uploaded, in the box; this row now adds a working directory instead)
+  { was: tr('添加文件夹（加进对话的工作目录）'), place: 'plus', sel: idSel(PLUS_ID.folder) },
   { was: tr('引用到输入框（会话菜单）'), place: 'plus', sel: idSel(PLUS_ID.reference) },
   ...CAPABILITIES.map((c): ReachEntry => ({ was: tr('功能 · {key}', { key: OLD_FEATURE_NAME[c.key] ?? c.key }), place: 'plus', sel: idSel(c.key) })),
   { was: tr('功能 · 频道'), place: 'plus', sel: idSel(PLUS_ID.channels) },

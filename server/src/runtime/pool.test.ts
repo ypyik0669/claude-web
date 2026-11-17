@@ -24,6 +24,8 @@ vi.mock('./session-runner.js', async () => {
       this.info = { sessionId: this.sessionId, providerId: provider?.id };
     }
     async setAccountPrefs(p: any) { this.prefs.push(p); }
+    dirs: string[][] = [];
+    async setExtraDirs(d: string[]) { this.dirs.push(d); }
     setState(s: string) {
       this.state = s;
       this.emit('state', s);
@@ -52,6 +54,19 @@ vi.mock('../agents/acp-driver.js', async () => {
     async close() { this.state = 'closed'; }
   }
   return { AcpDriver: FakeAcp };
+});
+
+// Codex: no app-server either; the hooks it was given are kept for the test to read
+vi.mock('../agents/codex-driver.js', async () => {
+  const { EventEmitter } = await import('node:events');
+  class FakeCodex extends EventEmitter {
+    id: string; sessionId: string; state = 'starting'; info: any; cwd: string; lastActivity = Date.now(); hooks: any; closeCalls = 0;
+    constructor(kind: string, _launch: unknown, params: any, _t: unknown, hooks: any) { super(); this.id = this.sessionId = params.sessionId ?? `codex-${Math.random()}`; this.cwd = params.cwd; this.hooks = hooks; this.info = { sessionId: this.sessionId, agent: kind }; }
+    getHistory() { return []; }
+    getPendingPermissions() { return []; }
+    async close() { this.closeCalls++; this.state = 'closed'; this.emit('state', 'closed'); }
+  }
+  return { CodexDriver: FakeCodex };
 });
 
 const { RunnerPool, idleTtlFor, MAX_IDLE_CLAUDE, ACCOUNT_PREFS_DEBOUNCE_MS } = await import('./pool.js');
@@ -626,5 +641,82 @@ describe('expectMode (compare-and-refuse before a send)', () => {
     expect(r.params.expectMode).toBeUndefined();
     r.setState('idle');
     expect(p.modeMismatch({ sessionId: 'a', cwd: 'C:/x', expectMode: 'default' })).toBeNull();
+  });
+});
+
+// 添加文件夹 (+ menu): a conversation's own extra working directories, next to the project's
+describe('RunnerPool: a conversation’s own folders', () => {
+  const setup = (recorded: Record<string, any> = {}) => {
+    const writes: [string, any][] = [];
+    const meta = {
+      sessionMeta: (id: string) => recorded[id] ?? {},
+      setSessionMeta: async (id: string, patch: any) => { writes.push([id, patch]); recorded[id] = { ...recorded[id], ...patch }; },
+      settings: () => ({}),
+      provider: () => undefined,
+      workspaces: () => [{ id: 'w', path: '/proj', name: 'p', addedAt: 0, order: 0, folders: ['/lib'] }],
+    };
+    const agents = { config: () => ({}), def: (k: string) => ({ protocol: k === 'codex' ? 'codex' : 'acp' }), launch: (k: string) => ({ command: 'x', args: [], env: {}, def: { name: k, protocol: k === 'codex' ? 'codex' : 'acp', login: '' } }) };
+    const p = new RunnerPool({ forSession: () => undefined, meta, agentLaunch: () => ({ env: {}, args: [] }), fitError: () => null } as any, agents as any, {} as any);
+    return { p, writes, recorded };
+  };
+
+  it('a new one (the welcome page) works in them after the project’s, and they are recorded as its own', () => {
+    const { p, writes } = setup();
+    const r: any = p.open({ cwd: '/proj', extraDirs: ['/big', '/lib', '/proj', 'relative'] });
+    expect(r.opts.additionalDirectories).toEqual(['/lib', '/big']);
+    // its own: what it was given, without its own folder or junk (the project's /lib stays the project's too)
+    expect(writes.filter(([, w]) => 'extraDirs' in w)).toEqual([[r.sessionId, { extraDirs: ['/big', '/lib'] }]]);
+  });
+
+  it('a resume reads its record (not what the caller says); a fork keeps its source’s, under the id it gets', () => {
+    const { p, writes } = setup({ s1: { extraDirs: ['/big'] } });
+    const r: any = p.open({ sessionId: 's1', cwd: '/elsewhere', extraDirs: ['/ignored'] });
+    expect(r.opts.additionalDirectories).toEqual(['/big']);
+    expect(writes.filter(([, w]) => 'extraDirs' in w)).toEqual([]);
+    const f: any = p.open({ sessionId: 's1', cwd: '/elsewhere', fork: true });
+    expect(writes.filter(([, w]) => 'extraDirs' in w)).toEqual([]); // nothing under the made-up id
+    f.emit('info', { sessionId: 'forked' });
+    expect(writes.filter(([, w]) => 'extraDirs' in w)).toEqual([['forked', { extraDirs: ['/big'] }]]);
+  });
+
+  it('changed while it runs: a Claude process gets the whole new list (it restarts itself once idle); not one that is not running', () => {
+    const { p, recorded } = setup({ s1: {} });
+    const r: any = p.open({ sessionId: 's1', cwd: '/proj' });
+    r.state = 'running';
+    recorded.s1 = { extraDirs: ['/big'] };
+    p.extraDirsChanged('s1');
+    expect(r.dirs).toEqual([['/lib', '/big']]);
+    r.state = 'closed';
+    p.extraDirsChanged('s1');
+    p.extraDirsChanged('nobody');
+    expect(r.dirs).toHaveLength(1);
+  });
+
+  it('Codex: its writable roots are the project’s and its own; a change closes it (idle now, busy as the turn ends) so the next message reopens the thread', () => {
+    const { p, recorded } = setup({ c1: { extraDirs: ['/big'] }, c2: {} });
+    const a: any = p.open({ sessionId: 'c1', cwd: '/proj', agent: 'codex' });
+    expect(a.hooks.extraDirs).toEqual(['/lib', '/big']);
+    a.state = 'idle';
+    p.extraDirsChanged('c1'); // nothing changed: it stays
+    expect(a.closeCalls).toBe(0);
+    recorded.c1 = { extraDirs: ['/big', '/more'] };
+    p.extraDirsChanged('c1');
+    expect(a.closeCalls).toBe(1);
+    expect(p.get('c1')).toBeUndefined();
+    const b: any = p.open({ sessionId: 'c2', cwd: '/x', agent: 'codex' });
+    b.state = 'running';
+    recorded.c2 = { extraDirs: ['/big'] };
+    p.extraDirsChanged('c2');
+    expect(b.closeCalls).toBe(0);
+    b.state = 'idle';
+    b.emit('state', 'idle');
+    expect(b.closeCalls).toBe(1);
+  });
+
+  it('only Claude and Codex take folders: an ACP agent gets none and records none', () => {
+    const { p, writes } = setup();
+    expect([p.supportsExtraDirs(undefined), p.supportsExtraDirs('claude'), p.supportsExtraDirs('codex'), p.supportsExtraDirs('gemini')]).toEqual([true, true, true, false]);
+    p.open({ cwd: '/proj', agent: 'gemini', extraDirs: ['/big'] });
+    expect(writes.filter(([, w]) => 'extraDirs' in w)).toEqual([]);
   });
 });
