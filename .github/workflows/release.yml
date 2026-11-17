@@ -9,7 +9,26 @@ permissions:
   contents: write
 
 jobs:
+  # One draft for the tag before the builds start. Three jobs creating it at once made three drafts, and finishing
+  # meant downloading the installers from two of them and uploading them into the third — two hours for 0.5.12 over a
+  # slow line (2026-11-17). electron-builder uploads into an existing draft of the tag.
+  draft:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: create the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          n=$(gh api "repos/$REPO/releases?per_page=100" --jq "[.[] | select(.tag_name == \"$TAG\")] | length")
+          if [ "$n" = "0" ]; then gh api "repos/$REPO/releases" -f tag_name="$TAG" -f name="${TAG#v}" -F draft=true --jq .id; else echo "a release for $TAG exists ($n)"; fi
+
   build:
+    needs: draft
+    # a run without a tag (workflow_dispatch) has no draft job: build anyway (nothing is published)
+    if: ${{ !cancelled() && needs.draft.result != 'failure' }}
     strategy:
       fail-fast: false
       matrix:
@@ -65,3 +84,30 @@ jobs:
             dist-desktop/*.zip
             dist-desktop/*.yml
           if-no-files-found: error
+
+  # Both mac jobs upload latest-mac.yml to the draft and the later one replaces the other: put back one listing both
+  # architectures' zip + dmg (from the jobs' artifacts — on GitHub's side, no installer crosses the author's line),
+  # and the notes from CHANGELOG.md. Publishing stays a hand step (the draft is checked first).
+  finish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: claude-web-macos-*
+          path: art
+      - name: latest-mac.yml with both architectures, release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          node scripts/release/finish-draft.mjs art "${TAG#v}"
+          id=$(gh api "repos/$REPO/releases?per_page=100" --jq "[.[] | select(.tag_name == \"$TAG\" and .draft)][0].id")
+          old=$(gh api "repos/$REPO/releases/$id/assets?per_page=100" --jq '.[] | select(.name == "latest-mac.yml") | .id')
+          if [ -n "$old" ]; then gh api -X DELETE "repos/$REPO/releases/assets/$old"; fi
+          gh api -X POST -H "Content-Type: text/yaml" "https://uploads.github.com/repos/$REPO/releases/$id/assets?name=latest-mac.yml" --input latest-mac.yml --jq .name
+          gh api -X PATCH "repos/$REPO/releases/$id" -F body=@notes.md --jq .html_url
+          gh api "repos/$REPO/releases/$id/assets?per_page=100" --jq '.[] | "\(.name) \(.size)"'
