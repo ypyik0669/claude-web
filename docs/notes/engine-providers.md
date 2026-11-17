@@ -49,13 +49,31 @@
   aizhongzhuan.cc，引擎（ccb）对 aizhongzhuan.cc，共 50+ 个流，**没有一条是中转发坏的**——只有一次是中转真的卡死
   （`message_start` 之后 5 分钟一个字节都没有 → 看门狗 → 改非流式 10 秒成功）。用户截图里那种「中转 4 秒就跑完、客户端却放弃」
   这边复现不了，来自用户那台 Mac 到中转的路上（代理软件 / 网络）。**代价**：中转卡死那种情况开关打开后是等 5 分钟报错、用户点重试
-  （以前是悄悄改非流式救回来）；但改非流式本身有 Anthropic 自己记的坑——引擎源码里这个开关的注释：流里已经开始执行的工具，
+  （以前是悄悄改非流式救回来；后来改成 2 分钟 + 自动接着做一次，见下一条）；但改非流式本身有 Anthropic 自己记的坑——引擎源码里这个开关的注释：流里已经开始执行的工具，
   非流式重发后会再执行一次（inc-4258）——加上中转的双份计费，按量付费的路上还是关掉。
   注入一个坏事件（给没开始的块发 delta）：不开开关 → 日志 `Error streaming, falling back to non-streaming mode: Content block not
   found`、中转那条流被放弃但跑完、接着一个 `stream=false` 请求（正是截图里的一对）；开关打开 → 没有非流请求，结果
   `API Error: Content block not found`。中转回的 SSE 是 zstd 压缩的（`content-encoding: zstd`）；把录下来的压缩流切成 1–48 字节
   回放给 CLI 三次都解析正常，不是 zstd 的问题。自己写录制代理要把 `keepAliveTimeout` 调大：Node 默认 5 秒关空闲连接，CLI 复用到
   死连接会连报 `Request timed out`（300 ms 一次）和一次 2 分钟的 `Connection error`，看着像中转的问题其实是代理的。
+- **回答流卡住：2 分钟放弃 + 自动接着做一次**（2026-11-17，用户看了 super-nb 日志里那条 01:34:15 的「同步」后要求缩短 5 分钟）。
+  官方二进制有两只看门狗：流空闲的（`CLAUDE_STREAM_IDLE_TIMEOUT_MS`，代码里 `Math.max(值, 300000)`，**只能调大**，桌面版设置的说明也写了
+  「什么都不来的连接照样约 5 分钟失败」）和字节级的（`CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS`，夹在 10 秒–30 分钟，默认开
+  `tengu_stream_watchdog_default_on`；没设时非官方地址也是 5 分钟——ns2 日志里的 `idleDeadlineMs=300000` 就是它）。ccb 只有一只，
+  `CLAUDE_ENABLE_STREAM_WATCHDOG` 不开就**没有**（源码注释：断掉的连接会让对话无限挂着），开了是 `CLAUDE_STREAM_IDLE_TIMEOUT_MS` 或 90 秒。
+  看门狗放弃之后怎么办看流走到哪（官方 `aGr` 决策表，原因 stalled）：一个字节都没有 → 流式重试 1 次（`Stream idle timeout before first
+  event — retrying streaming (1/1)`）；只到 `message_start`（ns2 那种）→ 有非流退路就改非流，**关了退路就结束这一轮**；只有思考 → 流式重试
+  1 次；已有输出 → 保留半截。所以只缩短时间等于把「回答流断了」提前，还得用户点重试。
+  **修法**（`session-runner.ts`）：不改非流的那些路上设 `stallWatchdogEnv()`（字节级 120 秒、ccb 看门狗开 + 120 秒；用户自己设了其中任何一个
+  就全不动，比如他为了等久一点调大了 `CLAUDE_STREAM_IDLE_TIMEOUT_MS`）；一轮因卡住结束（`isStallResult`：官方结果行有
+  `api_error: "stream_idle_timeout"`，ccb 只有文字 `API Error: Stream idle timeout …`），1.5 秒后自动发一句「上一条回答的流卡住了……请从
+  中断的地方接着做」（`maybeRetryStall`）。每个提示只自动一次（重试又卡住就停在报错上），有排队的提示不发，窗口 / IM / 目标发来新提示时
+  取消。API 报错那条助手消息不进下一次请求，模型看到的是原提示（或工具结果）+ 这句。
+  **为什么 120 秒**：录下来的 56 条真中转流里最长的空档 10 秒；keep-alive ping 算字节（假上游每 10 秒一个 ping、40 秒才出字，15 秒的看门狗
+  不触发）；官方给 Anthropic 自家地址的默认是 180 秒。首字节不受它管：假上游连响应头都不回时（Node 的 `writeHead` 不写 body 就不发头）是
+  请求级超时，约 6 分钟后 CLI 自己流式重试，`CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS` 改不了那个。
+  **验证**：scratch 的 `stall-upstream.cjs`（`STALL=after_start | no_bytes | no_headers | pings`）+ `stall-run.sh` 直接跑两个 CLI；临时
+  claude-web（`check-server.cjs <上游>`）真等 2 分钟：卡住的流 63.8 s 开始、183.8 s 被放弃，1.6 s 后自动那句发出、回答正常，对话里只多那一句。
 - **cw.6**（2026-10-23 预发布 Release `engine-v2.8.4-cw.6`）：数 token 没有 `count_tokens` 时本地估、不再发非流式 `max_tokens: 1` 请求（中转日志里的「非流」和 403，
   见「界面改版 阶段 3」的「上下文小环不问引擎」）；gpt-6 起算 OpenAI 的推理模型（见「思考强度」笔记）。查「中转上出现非流式请求」时，自己起一个假中转记每个请求
   （path、`stream`、`max_tokens`、有没有 `system`），引擎经 SDK 跑一轮再调 `getContextUsage()`——引擎里真正非流式的只有 `executeNonStreamingRequest`

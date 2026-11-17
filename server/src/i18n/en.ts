@@ -398,6 +398,7 @@ export const EN_SERVER: Record<string, string> = {
   "一次跑多步": "Run several steps at once",
   "一直运行": "runs until stopped",
   "三方比选": "Three-way comparison",
+  "上一条回答的流卡住了，一直没收到内容。请从中断的地方接着做。": "The last answer’s stream stalled and nothing more arrived. Please pick up where it stopped.",
   "上下文不够（约 {n}K）": "context too small (about {n}K)",
   "上次的模型现在不能用（{why}），重新挑选": "the last model can't be used now ({why}), picked again",
   "上次运行没有成功": "The last run didn't succeed",

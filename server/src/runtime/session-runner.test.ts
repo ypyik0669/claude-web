@@ -548,6 +548,76 @@ describe('SessionRunner Stop (interrupt)', () => {
     } finally { delete process.env.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK; }
   });
 
+  // 2026-11-17: a relay stream stalled after message_start; the CLI waited its 5 minutes, then (fallback off) ended the turn
+  it('a provider conversation: a stream silent for 2 minutes is given up (both engines’ watchdogs); the login keeps the defaults; any of the user’s values leaves them alone', async () => {
+    const prov = { id: 'st', name: 'ST', type: 'anthropic', baseUrl: 'https://relay', apiKey: 'sk', createdAt: 0, models: ['claude-fable-5-2'] } as any;
+    queries.length = 0;
+    const a = new SessionRunner({ sessionId: 'st-1', cwd: '/x', model: 'claude-fable-5-2' } as any, prov);
+    await tick();
+    expect(queries[0].options.env).toMatchObject({ CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS: '120000', CLAUDE_ENABLE_STREAM_WATCHDOG: '1', CLAUDE_STREAM_IDLE_TIMEOUT_MS: '120000' });
+    await a.close();
+    queries.length = 0;
+    const b = new SessionRunner({ sessionId: 'st-2', cwd: '/x' } as any);
+    await tick();
+    expect(queries[0].options.env?.CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS).toBeUndefined();
+    expect(queries[0].options.env?.CLAUDE_ENABLE_STREAM_WATCHDOG).toBeUndefined();
+    await b.close();
+    process.env.CLAUDE_STREAM_IDLE_TIMEOUT_MS = '900000';
+    try {
+      queries.length = 0;
+      const c = new SessionRunner({ sessionId: 'st-3', cwd: '/x', model: 'claude-fable-5-2' } as any, prov);
+      await tick();
+      expect(queries[0].options.env?.CLAUDE_STREAM_IDLE_TIMEOUT_MS).toBe('900000');
+      expect(queries[0].options.env?.CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS).toBeUndefined();
+      await c.close();
+    } finally { delete process.env.CLAUDE_STREAM_IDLE_TIMEOUT_MS; }
+  });
+
+  it('a stalled stream ended the turn: the turn is sent on once per prompt (official or ccb wording); not on the login', async () => {
+    const { isStallResult, STALL_RETRY_DELAY_MS } = await import('./session-runner.js');
+    expect(isStallResult({ is_error: true, api_error: 'stream_idle_timeout', result: 'API Error: Stream idle timeout - no chunks received' })).toBe(true);
+    expect(isStallResult({ is_error: true, result: 'API Error: Stream idle timeout - partial response received' })).toBe(true);
+    expect(isStallResult({ is_error: true, result: 'API Error: 529 overloaded' })).toBe(false);
+    expect(isStallResult({ is_error: false, result: 'API Error: Stream idle timeout' })).toBe(false);
+    const wait = () => new Promise((r) => setTimeout(r, STALL_RETRY_DELAY_MS + 150));
+    const prov = { id: 'sr', name: 'SR', type: 'anthropic', baseUrl: 'https://relay', apiKey: 'sk', createdAt: 0, models: ['claude-fable-5-2'] } as any;
+    const stall = (id: string, uuid: string, extra: any = { api_error: 'stream_idle_timeout' }) => ({ type: 'result', subtype: 'success', session_id: id, uuid, is_error: true, result: 'API Error: Stream idle timeout - no chunks received', ...extra });
+    queries.length = 0;
+    const r = new SessionRunner({ sessionId: 'sr-1', cwd: '/x', model: 'claude-fable-5-2' } as any, prov);
+    await tick();
+    const login = new SessionRunner({ sessionId: 'sr-2', cwd: '/x' } as any);
+    await tick();
+    const sent: string[] = [];
+    const loginSent: string[] = [];
+    r.on('sent', (m: any) => sent.push(m.message.content));
+    login.on('sent', (m: any) => loginSent.push(m.message.content));
+    r.send('go');
+    login.send('go');
+    queries[0].push(stall('sr-1', 'r1'));
+    queries[1].push(stall('sr-2', 'r1'));
+    await wait();
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toMatch(/流卡住了|stream stalled/);
+    expect(r.state).toBe('running');
+    expect(loginSent).toEqual(['go']);
+    // the retry stalled too: no second one — the error stays for the user
+    queries[0].push(stall('sr-1', 'r2'));
+    await wait();
+    expect(sent).toHaveLength(2);
+    // a new prompt: one retry again (ccb says it only in the text)
+    r.send('again');
+    queries[0].push(stall('sr-1', 'r3', {}));
+    await wait();
+    expect(sent).toHaveLength(4);
+    // prompts already queued: the next one goes on anyway
+    r.send('more');
+    queries[0].push(stall('sr-1', 'r4', { api_error: 'stream_idle_timeout', queued_turn_count: 1 }));
+    await wait();
+    expect(sent).toHaveLength(5);
+    await r.close();
+    await login.close();
+  });
+
   it('预览服务器: the tools are there, only logs / stop pre-allowed; a project with launch.json is told to verify', async () => {
     const fs = await import('node:fs');
     const os = await import('node:os');

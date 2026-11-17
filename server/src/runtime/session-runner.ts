@@ -141,6 +141,24 @@ export function noNonStreamingFallback(route: { provider: boolean; ownRelay: boo
   return route.provider || route.ownRelay;
 }
 
+/**
+ * 回答流卡住 (2026-11-17, a real relay: `message_start`, then not one byte for 5 minutes): on the routes without the
+ * non-stream fallback, a stream gets this long without a byte before the CLI gives it up — its own default is 5
+ * minutes. Keep-alive pings count as bytes, so a slow answer the relay keeps pinging is not cut.
+ */
+export const STALL_TIMEOUT_MS = 120_000;
+/** …and the variables that say it: the official binary's byte watchdog (its idle one cannot go under 5 minutes); ccb's
+ *  watchdog, which is off unless turned on. Left alone when the user set any of them. */
+export function stallWatchdogEnv(): Record<string, string> {
+  return { CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS: String(STALL_TIMEOUT_MS), CLAUDE_ENABLE_STREAM_WATCHDOG: '1', CLAUDE_STREAM_IDLE_TIMEOUT_MS: String(STALL_TIMEOUT_MS) };
+}
+/** A turn the stall watchdog ended: the official binary says `api_error`, ccb only the text. */
+export function isStallResult(m: { is_error?: boolean; api_error?: unknown; result?: unknown }): boolean {
+  return !!m.is_error && (m.api_error === 'stream_idle_timeout' || /^API Error: Stream idle timeout/i.test(String(m.result ?? '')));
+}
+/** the pause before the automatic retry after a stall (the CLI writes its own lines after a result) */
+export const STALL_RETRY_DELAY_MS = 1_500;
+
 let promptSuggestionsOn = true;
 /** Settings → 下一句提示 (`ui.promptSuggestions`); a query started from now on asks for them or not. */
 export function setPromptSuggestions(on: boolean) { promptSuggestionsOn = on; }
@@ -273,6 +291,11 @@ export class SessionRunner extends EventEmitter {
   private nextFlag: FlagSettings | null = null;
   /** official binary, 深度编排 picked before the start: `/effort ultracode` goes before the first message */
   private ultracodeFirst = false;
+  /** a stalled stream ended a turn and was retried once since the last prompt (isStallResult); the retry, if still to go */
+  private stallRetried = false;
+  private stallRetryTimer: NodeJS.Timeout | null = null;
+  /** the send under way is that retry: it does not count as a new prompt */
+  private sendingRetry = false;
   /** the model subagents run on ('' = the main model): `CLAUDE_CODE_SUBAGENT_MODEL`, read once at start */
   private subagent = '';
   /** the model this process's subagents really run on (forced by the variable; real name, not the alias), '' = none */
@@ -379,6 +402,29 @@ export class SessionRunner extends EventEmitter {
     if (f.channels?.length) a.channels = f.channels.join(',');
     if (f.devChannels) a['dangerously-load-development-channels'] = null;
     return a;
+  }
+
+  /** a route billed per token (noNonStreamingFallback): a provider profile, or the relay in the user's own settings */
+  private noFallbackRoute(): boolean {
+    return noNonStreamingFallback({ provider: !!this.provider, ownRelay: !this.account && !!ownAnthropicBase(this.cwd) });
+  }
+
+  /**
+   * A turn the stall watchdog ended (isStallResult) on such a route: the CLI retries by itself only a stream that never
+   * sent a byte; one that went silent after `message_start` ends the turn (without the fallback there is nothing else
+   * it may do). Ask the model to go on — once per prompt, so a relay that keeps stalling ends with the error to retry.
+   * Not when prompts are queued: the next one goes on anyway.
+   */
+  private maybeRetryStall(m: any) {
+    if (!isStallResult(m) || this.stallRetried || this.closed || (m.queued_turn_count ?? 0) > 0 || !this.noFallbackRoute()) return;
+    this.stallRetried = true;
+    this.stallRetryTimer = setTimeout(() => {
+      this.stallRetryTimer = null;
+      if (this.closed || this.state !== 'idle') return;
+      this.sendingRetry = true;
+      try { this.send(tr('上一条回答的流卡住了，一直没收到内容。请从中断的地方接着做。')); } catch { /* the process is gone: the error stays */ } finally { this.sendingRetry = false; }
+    }, STALL_RETRY_DELAY_MS);
+    this.stallRetryTimer.unref?.();
   }
 
   private featureEnv(): Record<string, string> {
@@ -596,7 +642,12 @@ export class SessionRunner extends EventEmitter {
     // (a provider, the relay in the user's own settings) don't fall back: a dropped connection is still retried as a
     // stream, the rest ends the turn with an error to retry. A claude.ai login keeps the CLI's default; the user's own
     // value wins. Both engines read it (a stream that streamed fine and a relay without streaming are not affected).
-    if (noNonStreamingFallback({ provider: !!this.provider, ownRelay: !this.account && !!ownAnthropicBase(this.cwd) }) && !('CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK' in fenv) && process.env.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK === undefined) fenv.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK = '1';
+    const noFallback = this.noFallbackRoute();
+    if (noFallback && !('CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK' in fenv) && process.env.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK === undefined) fenv.CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK = '1';
+    // …which leaves a stream that stalls after it started (the 5-minute case above) ending the turn, after the CLI's
+    // 5 minutes: give up on it after STALL_TIMEOUT_MS instead, and send the turn on once (maybeRetryStall)
+    const wd = stallWatchdogEnv();
+    if (noFallback && !Object.keys(wd).some((k) => k in fenv || process.env[k] !== undefined)) Object.assign(fenv, wd);
     // a claude.ai-login session on the bundled ccb: its alias table predates the Claude 5 family (see
     // OFFICIAL_ALIAS_TARGETS) — the CLI's own variables align it with the official one; the user's env / settings win.
     // Not for a relay the user set up in settings.json / the environment: its model list is its own (the injected
@@ -916,6 +967,7 @@ export class SessionRunner extends EventEmitter {
       if ((m as any).is_error && /empty text blocks|text content blocks must be non-empty|thinking block must contain non-whitespace|Invalid `signature` in `thinking` block/.test(said)) { this.repairEmptyBlocks = true; this.respawnPending = true; }
       if ((m as any).is_error && /Invalid `signature` in `thinking` block/.test(said)) this.repairUnsigned = true;
       this.setState('idle');
+      this.maybeRetryStall(m);
     }
     // keep history bounded to avoid unbounded memory in very long sessions; partial events are dropped from history
     if (m.type !== 'stream_event') {
@@ -1058,6 +1110,11 @@ export class SessionRunner extends EventEmitter {
   send(text: string, images?: { mediaType: string; data: string }[], steer = false, uuid?: string, attachments?: AttachmentRef[]) {
     // the query loop is gone: queueing would flip the UI to "running" with nothing ever answering
     if (this.closed || this.state === 'closed' || this.state === 'error') throw new Error(sendRefused(this.state === 'error' && !this.closed, this.info.error));
+    // a prompt from anywhere (a window, IM, a goal…): the stall retry it would have made is not needed any more
+    if (!this.sendingRetry) {
+      this.stallRetried = false;
+      if (this.stallRetryTimer) { clearTimeout(this.stallRetryTimer); this.stallRetryTimer = null; }
+    }
     if (this.ultracodeFirst) {
       this.ultracodeFirst = false;
       this.send('/effort ultracode');
@@ -1704,6 +1761,7 @@ export class SessionRunner extends EventEmitter {
 
   async close() {
     this.closed = true;
+    if (this.stallRetryTimer) { clearTimeout(this.stallRetryTimer); this.stallRetryTimer = null; }
     for (const [id, p] of this.pending) {
       p.resolve({ behavior: 'deny', message: 'session closed' });
       this.emit('permissionResolved', id);
