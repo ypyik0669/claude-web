@@ -14,7 +14,9 @@ import { compactCap, ownAnthropicBase, ownOverride, settingsOverride, userAnthro
 import { providerKey, splitSupport, subAlias, subagentTarget, unalias, type SplitKind, type SubagentPick } from '../models/subagent.js';
 import { splitEndpoint, splitTarget, type SplitSub } from '../gateway/split.js';
 import { forkAnchor } from '../sessions/fork-anchor.js';
-import { desktopSkillsPlugin } from './desktop-skills.js';
+import { localPluginDirs } from './plugin-dirs.js';
+import { normalizeCommands } from './slash-commands.js';
+import { rememberEngineCommands } from './slash-disk.js';
 import { writeFlagSettings, type FlagSettings } from './flag-settings.js';
 import { resolveEngine, spawnClaude } from '../claude-exe.js';
 import { loopbackNoProxy, providerEnv, type SessionProvider } from '../providers/service.js';
@@ -23,9 +25,7 @@ import { ENGINE_DEFAULT_WINDOW, ONE_M, contextWindowFor, contextWindowsEnv, isCl
 import { ccbAccountEnv, ccbMisthinks, ccbModel, isChatModel, liveClaudeExtras, modelCaps, modelLabel, modelsFor, preferredRuntime, providerModelId, supportsUltracode, webCapsEnv } from '../models/catalog.js';
 import { turnShare, type RunningTotals } from '../usage/turn-cost.js';
 import { claudeMcpServer } from '../memory/launcher.js';
-import { webAllowedTools, webClaudeMcpServer, webMcpEnabled } from '../web/launcher.js';
-import { cafePluginDir } from '../characters/tools.js';
-import { asciiPluginDir } from '../themes/tools.js';
+import { webAllowedTools, webClaudeMcpServer } from '../web/launcher.js';
 import { computerAllowedTools, computerClaudeMcpServer } from '../computer/launcher.js';
 import { ENGINE_SEARCH_TOOL, engineSearchOff, userPickedSearchAdapter } from '../web/engine-search.js';
 import { markUnknownCost } from '../usage/pricing.js';
@@ -743,10 +743,10 @@ export class SessionRunner extends EventEmitter {
       // 网吧's cafe-character skill, as a local plugin (both runtimes load it: 2026-10-13), only while the `web` server
       // that answers its character_* tools is handed out
       // + the official app's download of Anthropic's skills (desktop-skills.ts), so its conversations' anthropic-skills:*
-      // names work here
+      // names work here (plugin-dirs.ts: the / menu's disk scan reads the same list)
       ...(() => {
         if (bare) return {};
-        const dirs = [webMcpEnabled() ? cafePluginDir() : null, webMcpEnabled() ? asciiPluginDir() : null, desktopSkillsPlugin()].filter((d): d is string => !!d);
+        const dirs = localPluginDirs();
         return dirs.length ? { plugins: dirs.map((p) => ({ type: 'local' as const, path: p })) } : {};
       })(),
       // searching only reads: 每步询问 does not ask for every search (the browser tools follow the permission mode).
@@ -850,7 +850,10 @@ export class SessionRunner extends EventEmitter {
           const im = init as any;
           const cmdSrc: any[] = cmds.length ? cmds : im.commands ?? [];
           const modelSrc: any[] = models.length ? models : im.models ?? [];
-          this.info.slashCommands = cmdSrc.map((c) => ({ name: c.name, description: c.description ?? '', argumentHint: c.argumentHint ?? c.argument_hint ?? '' }));
+          // where each one comes from, plugin skills under their namespaced name (slash-commands.ts: the two engines
+          // say it differently); the engine's own ones are kept for the / menu of conversations that are not running
+          this.info.slashCommands = normalizeCommands(cmdSrc);
+          rememberEngineCommands(this.wsl ? undefined : this.info.runtime, this.info.slashCommands);
           // The CLI's own list wins; the catalog only supplies the versioned display name ("Fable 5.1", not "Fable").
           // Thinking strength on our engine: every model has it — the provider's own parameter, or through the prompt
           // (`effortMode`, levels from the model list > our table > five; modelCaps). The official binary has no prompt
@@ -943,7 +946,8 @@ export class SessionRunner extends EventEmitter {
       this.emit('info', this.info);
     }
     if (m.type === 'system' && m.subtype === 'commands_changed') {
-      this.info.slashCommands = m.commands.map((c) => ({ name: c.name, description: c.description, argumentHint: c.argumentHint }));
+      this.info.slashCommands = normalizeCommands(m.commands);
+      rememberEngineCommands(this.wsl ? undefined : this.info.runtime, this.info.slashCommands);
       this.emit('info', this.info);
     }
     if (m.type === 'result') {

@@ -1,0 +1,21 @@
+/* The / menu (SlashMenu.tsx) — on top of the shared `.palette` (styles.css): group headings, a row = name + hint ·
+   description (one line) · where it comes from. Narrow (a phone, ~390px): the name over the description, no source. */
+.palette.slash-menu { container-type: inline-size; max-height: min(360px, 46vh); overscroll-behavior: contain; scroll-padding-block: 6px; }
+.palette.slash-menu .sm-group + .sm-group { margin-top: 4px; padding-top: 4px; border-top: var(--hairline) solid var(--line); }
+.palette.slash-menu .sm-h { padding: 6px 10px 3px; font-size: 11.5px; font-weight: var(--fw-strong); color: var(--ink-4); letter-spacing: 0.02em; user-select: none; }
+.palette.slash-menu .it { align-items: baseline; gap: 10px; min-width: 0; }
+/* the hovered row is the selected one (onMouseMove): no second highlight under a still pointer */
+.palette.slash-menu .it:hover:not(.sel) { background: transparent; }
+.palette.slash-menu .it .n { flex: 0 1 auto; min-width: 0; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.palette.slash-menu .it .n b { font-weight: var(--fw-strong); color: var(--ink-1); }
+.palette.slash-menu .sm-arg, .palette.slash-menu .sm-alias { color: var(--ink-4); }
+.palette.slash-menu .it .d { flex: 1 1 0; min-width: 0; }
+.palette.slash-menu .sm-src { flex: 0 0 auto; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-4); font-size: 12px; }
+
+@container (max-width: 480px) {
+  .palette.slash-menu .it { flex-wrap: wrap; row-gap: 1px; padding-block: 6px; }
+  .palette.slash-menu .it .n { max-width: 100%; flex-basis: 100%; }
+  /* no hover on a phone: two lines of the description instead of one */
+  .palette.slash-menu .it .d { flex-basis: 100%; font-size: 12.5px; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+  .palette.slash-menu .sm-src { display: none; }
+}

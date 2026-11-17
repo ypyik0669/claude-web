@@ -85,7 +85,7 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 | [i18n](docs/notes/i18n.md) | 界面语言：中文和英文（2026-10-15，用户要求） | tr() 约定、语言怎么定、四份英文目录、加一句字的流程、i18n-smoke、README 截图脚本、坑 |
 | [claude-accounts](docs/notes/claude-accounts.md) | 其它 Claude 账号（2026-10-15，用户要求） | claude-account 档案、setup-token 令牌、runner 走账号那条路、添加对话框、真机验证 |
 | [custom-css](docs/notes/custom-css.md) | 自定义样式 custom.css 与 DOM 钩子（2026-10-15，GitHub issue #2） | custom.css 加载 / 热更新、钩子约定、计划进度条 |
-| [chat-input](docs/notes/chat-input.md) | 对话与输入：旁聊 / 下一句提示 / 查看模式 / @文件 / 快捷键（2026-10-16） | side_question、CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION、ui.viewMode、fs.findFiles、官方快捷键对照、桌面版无麦克风 |
+| [chat-input](docs/notes/chat-input.md) | 对话与输入：旁聊 / 下一句提示 / 查看模式 / @文件 / 快捷键（2026-10-16） | side_question、CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION、ui.viewMode、fs.findFiles、官方快捷键对照、桌面版无麦克风、斜杠菜单（两种运行内核的列表形状、slash.list 扫盘兜底、分组 / 排序） |
 | [review-pr](docs/notes/review-pr.md) | 审阅与 PR：diff 行评论 / 代码审查卡 / PR 监控条（2026-10-16） | DiffView comments、CLAUDE_CODE_REPORT_FINDINGS 与 ReportFindings、vcs.prForBranch / autoMerge、自动修 CI、自动归档 |
 | [sessions-env](docs/notes/sessions-env.md) | 环境与对话：跨对话工具 / 任务 chip / 选机器 / worktree 设置 / 文件右键 / 本机环境变量 / 深链接（2026-10-16） | sessions MCP（进程内）、ccb 的 ExecuteExtraTool、<cw-from>、新对话选机器、.worktreeinclude、shell.editors、local-env.json、claude-web:// |
 | [pages](docs/notes/pages.md) | 页面与入口：总览栏 / 定时任务补跑 / 预览服务器 / 更新内容 / 只聊天 / 跨对话生成文件 / 快捷键（2026-10-16） | MissionPanel 的待审 / 落地中、missedRun、.claude/launch.json 与 preview_*、app.changelog、tools: [] + strictMcpConfig、artifacts.list、Ctrl+/ |

@@ -85,6 +85,66 @@ Electron 44 有 `webkitSpeechRecognition`，但连不上识别服务：麦克风
 - 用户说的「钉住为章节」：我们没有章节，用的是现成的「钉住」（信息栏「钉住的回复」），字照实写。桌面版右键菜单不变。
 - ui-smoke 段 `selection-menu`：用 Range 选中种子回复的 `ok`，派 pointerdown + mouseup，点 引用到输入框，查输入框是 `> ok`。
 
+## 斜杠菜单：列表从哪来、以前为什么漏 skill、怎么分组（2026-11-17，社区报告「打 /agent 什么都不出来」）
+
+**以前**：列表只有 `active.info.slashCommands`（runner 在 `initializationResult()` 之后填）+ 我们的 /btw，按名字 `includes`
+过滤后 `.slice(0, 40)`。
+
+**实测**（本机，2026-11-17；脚本：streaming input 永远不给消息，只调 `initializationResult()` / `supportedCommands()`，
+不跑回合、不花 token）：
+
+| | 官方二进制 | ccb（claude-web-engine 2.8.4-cw.7） |
+| --- | --- | --- |
+| `supportedCommands()` 条数 | 119（= `init.commands`） | 102（= `init.commands`；它没有 supported_commands 请求，SDK 退回 initialize 的） |
+| 自己的命令 | `builtin: true`（50 条） | 没有 `builtin` 字段，什么标记都不带；自带 skill 的说明结尾是 ` (bundled)` |
+| 个人 / 项目 | 说明结尾 ` (user)` / ` (project)`；文件夹名在 `aliases` | 同 |
+| 插件 skill | `superpowers:brainstorming`，短名在 `aliases`，说明开头 `(superpowers) ` | **只给 SKILL.md 的 `name`**（`brainstorming`），说明开头 `(superpowers) `；插件的 *command* 才是 `cctool:install` |
+| MCP 提示 | `rea:trace_crash (MCP)`（名字里就带 ` (MCP)`，CLI 认这第二个词） | 同 |
+| `initializationResult()` 多久回来 | 5 s | **21–46 s**（等 MCP 服务器，几个连不上的各等 30 s） |
+
+**漏的原因**，按影响排：
+
+1. **进程没在跑就是空的**：从侧栏点开的对话（重启应用之后的所有对话都是这样）、外部写入的对话、欢迎页都没有 runner，
+   菜单里只有 /btw——打 `/agent` 一条都不出。这是「什么都不出来」最可能的原因：ccb 的列表里有
+   `dispatching-parallel-agents` / `subagent-driven-development`，官方的有 `agents` / `list-agents` / `superpowers:…`，
+   只要列表在，`/agent` 不会是空的。
+2. **ccb 起来要 20–50 秒**：这段时间里 `slashCommands` 还没填，同上。热切换 / 交接起的新 runner 也一样。
+3. **ccb 的插件 skill 只有短名**：本机 15 个同名（个人的 `pdf` 和 `anthropic-skills` 的 `pdf`……），两行一个名字，React key
+   重复，选第二行插进去的 `/pdf` 跑的是个人那个。两个运行内核都认 `插件:名字`（ccb 的内部名就是它，`userFacingName` 才是短名）。
+4. 40 条上限：只打 `/` 时 100+ 条只看得见前 40。
+
+**现在**：
+
+- 服务端 `runtime/slash-commands.ts` 的 `normalizeCommands`（纯函数，web 也 import）把两种形状归成一种：`source`
+  （builtin / bundled / user / project / plugin / mcp / other）、`owner`（插件或 MCP 服务器名）、`aliases`；去掉说明里的
+  来源记号；ccb 的插件 skill 改成 `插件:名字`、短名进 aliases；同名只留第一条；`__remote-workflow` 这类内部名不要。
+  判断顺序：`builtin` → 名字带 ` (MCP)` → 说明结尾的来源 → 说明开头的 `(插件) `（`(removed)` 之类不算插件）→ 都没有：
+  列表里有人带 `builtin` 字段（官方）就是 other（本机的 `hud`，来自 mod），否则（ccb / ACP）是自己的命令。
+  runner 在 `pump` 和 `commands_changed` 都过一遍（协议的 `SlashCommandInfo`，字段都是可选的，旧的 server 照样能用）。
+- 进程不在跑时：`slash.list { cwd }`（`runtime/slash-disk.ts`，不带 sessionId，所以不进联邦路由表；cwd 照 `fs.findFiles` 的
+  `pathAllowed` 查）照 Claude Code 的读法扫盘：`~/.claude/skills/*/SKILL.md`、`~/.claude/commands/**/*.md`（子目录 → `a:b`）、
+  `<cwd>` 往上到 home 的每一层 `.claude/skills|commands`、`installed_plugins.json` 里启用的插件（`enabledPlugins` 里**有这一项**且不是
+  false——没列进去的不加载，官方二进制就是 `Object.entries(enabledPlugins).filter(([, v]) => v !== false)`，11-17 真机核对；project 范围的只在它的 projectPath 里）、每个对话都带的本地插件（`runtime/plugin-dirs.ts`，runner 用的同一份：
+  网吧 / 字符画 / 官方桌面版的 anthropic-skills）；`user-invocable: false` 不列。再加上运行内核自己的命令——没有进程就问不到，
+  所以每次 runner 报列表时把 builtin / bundled 那几条按运行内核记下（`<dataDir>/runtime/slash-commands.json`，重启后也有）。
+  本机对照：扫盘 56 条（个人 24 + 插件 32），和两个运行内核报的个人 / 插件条目一一对上，一条不多一条不少。
+- 前端 `features/composer/slash.ts`（纯函数，`slash.test.ts`）：**进程报了列表就只用它**（它知道自己能跑什么），盘上的只用来
+  标哪些个人 / 项目 / 插件条目是 command 而不是 skill（进程不说）；没报（空或没有）就用盘上的。`slash-fallback.ts` 每次
+  菜单打开问一次（server 记 5 秒），别的 agent / 别的机器 / WSL 的对话不问。/btw 永远在第一位，欢迎页没有它（旁聊要有对话）。
+- **分组**：命令（builtin、bundled、/btw；没有 source 的也算这里）→ 技能（个人 / 项目 / 插件的 skill）→ 其它（自定义
+  command、插件的 command、MCP 提示、other）；空组不显示。右边灰字是来源：个人 / 项目 / 插件 · 名字 / MCP · 服务器，命令组不写。
+- **匹配和排序**：名字子串（大小写不分）或 alias 子串；档位 0 = 名字开头、`插件:` 后面那段开头、或某个 alias 开头，
+  1 = 某个词（`-_:/. ` 之后）开头，2 = 别处；组内先按档位再按名字。命中那段加粗（只命中 alias 时在名字后面灰字写出 alias）。
+  不砍条数，列表自己滚（`max-height: min(360px, 46vh)`）。
+- **键盘 / 鼠标**：↑ ↓ 跨组循环；Tab / Enter 补成 `/名字 `；框里已经正好是这一条的名字或 alias 时 Enter 直接发送；鼠标移动到
+  哪行就选中哪行（`onMouseMove`，键盘滚动时指针不动不会抢）；选中行用列表自己的 scrollTop 滚进视野（不用 scrollIntoView：
+  它会连外面的窗格一起滚），组里第一行带上组标题。整行 `title` 是完整说明 + alias + 来源。
+- **窄屏**：`.palette.slash-menu` 是 container（`slash.css`，组件里 import），宽度 ≤480px 时名字和说明各一行、说明最多两行、
+  来源不显示。
+
+**要真机看的**：没在跑的对话打 `/` 马上有列表（不只 /btw）；ccb 刚起的 20–50 秒里也有；发第一句后换成进程报的列表；
+`/agent`、`/pdf`（两条：个人的和 `anthropic-skills:pdf`）、`/cost`（命中 usage 的 alias）；手机宽度。
+
 ## 坑
 
 - 用 `node -e` 往测试里写带 `'` 的字符串，转义经常坏成 `'CLI's'`，vitest 报「no tests」+ PARSE_ERROR——改用 Edit。

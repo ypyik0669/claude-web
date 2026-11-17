@@ -17,6 +17,9 @@ import { openSideChat } from '@/features/chat/side-chat';
 import { useBots } from '@/features/bots/state';
 import { parseBtw } from '@/features/chat/side-chat-model';
 import { atQueryAt, pickAt } from './at-mention';
+import { NO_MENU, buildCommands, slashMenu, typedExactly } from './slash';
+import { useSlashFallback } from './slash-fallback';
+import { SlashMenu } from './SlashMenu';
 import { RunCard } from '@/features/chat/RunCard';
 import { ComputerPill } from '@/features/computer/ComputerPill';
 import { BackgroundPill } from '@/features/background/BackgroundPill';
@@ -410,14 +413,23 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
     if (welcome) ta.current?.focus();
   }, [welcome]);
 
-  // /btw is ours (旁聊, never sent to the engine); the engine's own list may carry one too
-  const engineCommands = active?.info?.slashCommands;
-  const commands = useMemo(() => [{ name: 'btw', description: tr('旁聊：问一个不进对话的小问题'), argumentHint: tr('问题') }, ...(engineCommands ?? []).filter((c) => c.name !== 'btw')], [engineCommands]);
+  // the / menu (slash.ts): the running process's own list; while it is not running (opened from the list, the welcome
+  // page, still starting) what Claude Code would offer in this folder, read from the disk (`slash.list`) — a Claude
+  // conversation on this computer only (another agent cannot run Claude's skills, another machine / WSL has its own).
+  // /btw is ours (旁聊 over a conversation, never sent to the engine — so not on the welcome page); the engine's own
+  // list may carry one too
   const slashQuery = useMemo(() => {
     const m = /^\/(\S*)$/.exec(text);
     return m ? m[1].toLowerCase() : null;
   }, [text]);
-  const matches = useMemo(() => (slashQuery === null ? [] : commands.filter((c) => c.name.toLowerCase().includes(slashQuery)).slice(0, 40)), [slashQuery, commands]);
+  const engineCommands = active?.info?.slashCommands;
+  const slashAgent = welcome ? wKind : active?.info?.agent ?? (slashQuery === null ? undefined : sessions.find((x) => x.sessionId === active?.sessionId)?.agent) ?? 'claude';
+  const slashCwd = slashQuery === null || slashAgent !== 'claude' || remote || (welcome ? !!(wPeer || wWsl) : !!active?.info?.wsl) ? null : welcome ? cwd.trim() : active?.cwd ?? '';
+  const diskCommands = useSlashFallback(slashCwd);
+  const commands = useMemo(() => buildCommands(engineCommands, slashAgent === 'claude' ? diskCommands : undefined, welcome ? [] : [{ name: 'btw', description: tr('旁聊：问一个不进对话的小问题'), argumentHint: tr('问题'), source: 'builtin' }]), [engineCommands, diskCommands, slashAgent, welcome]);
+  const menu = useMemo(() => (slashQuery === null ? NO_MENU : slashMenu(commands, slashQuery)), [slashQuery, commands]);
+  const matches = menu.flat;
+  const palSel = Math.min(palIdx, Math.max(0, matches.length - 1));
   useEffect(() => setPalIdx(0), [slashQuery]);
   // @ file completion (phase 2 spec §4): the @word at the caret, the project's files matching it (not for a
   // conversation on another machine — its files are there)
@@ -816,9 +828,11 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
       if (e.key === 'Escape') { e.preventDefault(); setAtClosed(atOpen.start); return; }
     }
     if (matches.length && slashQuery !== null && !imeComposing(e.nativeEvent)) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); setPalIdx((i) => (i + 1) % matches.length); return; }
-      if (e.key === 'ArrowUp') { e.preventDefault(); setPalIdx((i) => (i - 1 + matches.length) % matches.length); return; }
-      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && text !== `/${matches[palIdx].name}`)) { e.preventDefault(); pickCmd(matches[palIdx].name); return; }
+      // ↑ ↓ walk the rows across the groups (round); Tab / Enter take the selected one — Enter sends instead when the box
+      // already names it (`/compact` + Enter runs it)
+      if (e.key === 'ArrowDown') { e.preventDefault(); setPalIdx((palSel + 1) % matches.length); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setPalIdx((palSel - 1 + matches.length) % matches.length); return; }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !typedExactly(text, matches[palSel]))) { e.preventDefault(); pickCmd(matches[palSel].cmd.name); return; }
     }
     if (e.key === 'Enter' && !e.shiftKey && !imeComposing(e.nativeEvent)) {
       e.preventDefault();
@@ -1313,16 +1327,7 @@ export function Composer({ welcome = false, target, disabled = false, visible = 
             ))}
           </div>
         )}
-        {matches.length > 0 && (
-          <div className="palette">
-            {matches.map((c, i) => (
-              <div key={c.name} className={`it ${i === palIdx ? 'sel' : ''}`} onMouseDown={(e) => { e.preventDefault(); pickCmd(c.name); }}>
-                <span className="n">/{c.name} <span style={{ color: 'var(--ink-4)' }}>{c.argumentHint}</span></span>
-                <span className="d">{c.description}</span>
-              </div>
-            ))}
-          </div>
-        )}
+        {matches.length > 0 && <SlashMenu menu={menu} sel={palSel} onPick={pickCmd} onHover={setPalIdx} />}
         {active && !welcome && <SideChat sessionId={active.sessionId} onDraft={(t) => { onChange(t); ta.current?.focus(); }} />}
         {active && !welcome && <StatusStrip sessionId={active.sessionId} />}
         {/* what was sent while the turn runs waits here, a card each; 编辑 puts one back into the box */}

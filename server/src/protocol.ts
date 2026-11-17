@@ -492,6 +492,26 @@ export type PermissionResponse =
   | { behavior: 'allow'; updatedInput?: Record<string, unknown>; updatedPermissions?: unknown[] }
   | { behavior: 'deny'; message: string; interrupt?: boolean };
 
+/**
+ * Where a slash command comes from (runtime/slash-commands.ts reads it off what the engine reports): Claude Code's own
+ * (`builtin`; `bundled` = a skill shipped inside it), a skill / command of the user (~/.claude), of the project
+ * (<cwd>/.claude), of a plugin, an MCP server's prompt, or something else (a mod, a managed setting).
+ */
+export type SlashSource = 'builtin' | 'bundled' | 'user' | 'project' | 'plugin' | 'mcp' | 'other';
+export interface SlashCommandInfo {
+  name: string;
+  description: string;
+  argumentHint: string;
+  /** other names that run it (`/cost` → `/usage`; a plugin skill's short name) */
+  aliases?: string[];
+  /** absent: an old server / a driver that does not say */
+  source?: SlashSource;
+  /** the plugin or MCP server it belongs to */
+  owner?: string;
+  /** user / project / plugin: a skill (a folder with SKILL.md) or a command (a .md under commands/); known from the disk */
+  kind?: 'skill' | 'command';
+}
+
 export interface SessionInfoSnapshot {
   sessionId: string;
   /** stage E5: running inside this WSL distro; `dropped` = injected MCP servers that could not start there */
@@ -502,7 +522,7 @@ export interface SessionInfoSnapshot {
   effort?: EffortLevel | null;
   permissionMode?: PermissionMode;
   tools?: string[];
-  slashCommands?: { name: string; description: string; argumentHint: string }[];
+  slashCommands?: SlashCommandInfo[];
   skills?: string[];
   agents?: { name: string; description: string; model?: string }[];
   mcpServers?: { name: string; status: string; error?: string; tools?: unknown[] }[];
@@ -715,6 +735,9 @@ export type ClientRequest =
   | { kind: 'git.watch'; cwd: string }
   // phase 4: settings center / automation
   | { kind: 'skills.list'; cwd?: string }
+  /** the / menu of a Claude conversation whose process is not running (yet): the skills and commands on disk + the
+   *  engine's own commands as last reported (runtime/slash-disk.ts) → SlashCommandInfo[] */
+  | { kind: 'slash.list'; cwd?: string }
   | { kind: 'skills.install'; source: string; scope: 'user' | 'project'; cwd?: string; name?: string }
   | { kind: 'skills.create'; name: string; scope: 'user' | 'project'; cwd?: string; description?: string }
   | { kind: 'skills.remove'; path: string }

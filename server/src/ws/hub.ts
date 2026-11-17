@@ -2,7 +2,7 @@ import path from 'node:path';
 import type { ImportService } from '../import/service.js';
 import fs from 'node:fs';
 import type { WebSocket, WebSocketServer } from 'ws';
-import { CLAUDE_PROVIDER_ID, LIVE_FEATURES, type ClientRequest, type OpenSessionParams, type RemoteStatus, type ServerEvent, type WireDown, type WireUp } from '../protocol.js';
+import { CLAUDE_PROVIDER_ID, LIVE_FEATURES, type ClientRequest, type OpenSessionParams, type RemoteStatus, type RuntimeKind, type ServerEvent, type WireDown, type WireUp } from '../protocol.js';
 import { RunnerPool, asMode } from '../runtime/pool.js';
 import { SessionRunner, setNodegraphHint, setPromptSuggestions, setThinkingLanguageSetting } from '../runtime/session-runner.js';
 import { NODEGRAPH_HINT_KEY } from '../runtime/nodegraph-hint.js';
@@ -33,7 +33,9 @@ import { claudeLive } from '../usage/claude-live.js';
 import { setLiveClaude } from '../models/catalog.js';
 import { ScheduleService } from '../schedules/service.js';
 import { installedEditors, openPath } from '../runtime/open-path.js';
-import { engineInfo, runClaudeCli } from '../claude-exe.js';
+import { engineInfo, resolveEngine, runClaudeCli } from '../claude-exe.js';
+import { slashList } from '../runtime/slash-disk.js';
+import { localPluginDirs } from '../runtime/plugin-dirs.js';
 import type { ProviderService } from '../providers/service.js';
 import type { GitService } from '../git/service.js';
 import type { SearchService } from '../search/service.js';
@@ -1192,6 +1194,14 @@ export class Hub {
         return s.git.watch(req.cwd);
       case 'skills.list':
         return s.skills.list(req.cwd);
+      case 'slash.list': {
+        // the engine a new conversation would start on (its own commands, as last reported) — none found: the disk only
+        let kind: RuntimeKind | undefined;
+        try { kind = resolveEngine().kind; } catch { kind = undefined; }
+        // a project folder as fs.findFiles takes one (a network path only inside a project the user added)
+        const cwd = req.cwd && path.isAbsolute(req.cwd) && s.files.pathAllowed(req.cwd) ? req.cwd : undefined;
+        return slashList({ cwd, claudeDir, kind, pluginDirs: localPluginDirs });
+      }
       case 'skills.install':
         return s.skills.install({ source: req.source, scope: req.scope, cwd: req.cwd, name: req.name });
       case 'skills.create':
