@@ -8,17 +8,20 @@ import type { AttachmentRef } from '../protocol.js';
 /**
  * A PDF the way Word / WPS / browsers write Chinese: a Type0 font with Identity-H (two-byte glyph codes) whose text
  * is known only through its ToUnicode map — no embedded glyphs needed for extraction. One page per entry of `pages`.
+ * The CIDFont's FontDescriptor is required by the spec and real PDFs always have one: without it pdftotext still reads
+ * the text, but CoreGraphics drops the font and PDFKit (the macOS fallback) sees not one character (CI, 2026-11-17).
  */
 function cjkPdf(pages: string[][]): Buffer {
   const chars = [...new Set(pages.flat().join(''))];
   const code = (ch: string) => (chars.indexOf(ch) + 1).toString(16).padStart(4, '0').toUpperCase();
   const hex = (s: string) => `<${[...s].map(code).join('')}>`;
   const objs: string[] = [];
-  const pageIds = pages.map((_, i) => 6 + i * 2);
+  const pageIds = pages.map((_, i) => 7 + i * 2);
   objs[1] = '<< /Type /Catalog /Pages 2 0 R >>';
   objs[2] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pages.length} >>`;
   objs[3] = '<< /Type /Font /Subtype /Type0 /BaseFont /TestCJK /Encoding /Identity-H /DescendantFonts [4 0 R] /ToUnicode 5 0 R >>';
-  objs[4] = '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /TestCJK /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /DW 1000 /CIDToGIDMap /Identity >>';
+  objs[4] = '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /TestCJK /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /DW 1000 /CIDToGIDMap /Identity /FontDescriptor 6 0 R >>';
+  objs[6] = '<< /Type /FontDescriptor /FontName /TestCJK /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 >>';
   const cmap = [
     '/CIDInit /ProcSet findresource begin', '12 dict begin', 'begincmap',
     '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def', '/CMapName /Adobe-Identity-UCS def', '/CMapType 2 def',
@@ -140,9 +143,8 @@ describe('PDF text in the message', () => {
     expect(withPdfText([atts[0]])).toEqual([atts[0]]);
   });
 
-  // a real pdftotext only: the macOS PDFKit fallback (osascript) gave null on the macos-latest runner (2026-11-17, no
-  // poppler there) and is unverified — see docs/notes/phase01-render.md
-  const canExtract = (resetPdftotext(), !!findPdftotext());
+  // pdftotext where there is one; on macOS without poppler (the macos-latest runner) this is the PDFKit fallback
+  const canExtract = (resetPdftotext(), !!findPdftotext()) || process.platform === 'darwin';
   it.skipIf(!canExtract)('extracts the Chinese text of a CID-font PDF under a Chinese file name (real pdftotext / PDFKit)', async () => {
     const pdf = path.join(dir, '王某-本科-10年以上.pdf');
     fs.writeFileSync(pdf, cjkPdf([['张测试 高级后端工程师', '暗号 紫色长颈鹿 PURPLE-42'], ['第二页 教育背景']]));
