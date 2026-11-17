@@ -46,7 +46,7 @@ export function runStatus(c: Conversation, state: string, label: StepLabeler): R
     if (it.kind === 'user' && !it.meta) { done = 0; total = 0; answered = false; continue; }
     if (it.kind !== 'assistant') continue;
     answered = true;
-    for (const b of it.blocks) if (b.type === 'tool_use') { total++; if (b.status === 'done' || b.status === 'error') done++; }
+    for (const b of it.blocks) if (b?.type === 'tool_use') { total++; if (b.status === 'done' || b.status === 'error') done++; }
   }
   let tasks = 0;
   for (const t of c.tasks.values()) if (t.status === 'running') tasks++;

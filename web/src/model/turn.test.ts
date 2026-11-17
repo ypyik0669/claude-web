@@ -484,6 +484,22 @@ describe('turnPlan', () => {
     expect(taskPlan(groupTurns([...items, result(1), user('something else'), asst(tool('Read', { file_path: 'z' }))]))).toBeNull();
     expect(taskPlan([])).toBeNull();
   });
+  it('a hole in blocks (a sparse array: for…of reads it as undefined) does not throw — 2026-11-17 crash', () => {
+    const plan = todo('in_progress');
+    const holey: AssistantItem['blocks'] = [];
+    holey[2] = tool('Read', { file_path: 'x' });
+    holey[4] = plan;
+    holey[5] = { type: 'text', text: 'done' };
+    const items = [user('go'), asst(...[]), { ...asst(), blocks: holey }, result(1)];
+    const turns = groupTurns(items);
+    expect(() => taskPlan(turns)).not.toThrow();
+    expect(taskPlan(turns)).toBe(plan);
+    expect(() => turnSummary(turns[0])).not.toThrow();
+    const parts = splitTurnBody(turns[0].body);
+    const shown = [...parts.process, ...parts.final].flatMap((it) => (it.kind === 'assistant' ? [...it.blocks] : []));
+    expect(shown.every(Boolean)).toBe(true);
+    expect(shown.map((b) => b.type)).toEqual(['tool_use', 'tool_use', 'text']);
+  });
   it('a subagent plan does not count; no plan → null', () => {
     const inner = todo('pending');
     const agent = tool('Agent', { description: 'x' }, undefined, { children: [asst(inner)] });

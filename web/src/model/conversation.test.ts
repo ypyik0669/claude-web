@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { contextUsageOf, applyMessage, applyTranscript, createConversation, decodeAttachments, sessionRefMarker, shownErrors, findChainUuidBefore, prependTranscript, setConversationClock, turnItems, walkTools, type AssistantItem, type Conversation, type UserItem } from './conversation';
 import { credentialHint, noResponseHint } from './health';
-import { groupTurns, turnSummary } from './turn';
+import { groupTurns, taskPlan, turnSummary } from './turn';
 
 const FIXTURE = path.join(__dirname, '__fixtures__', 'tools.jsonl');
 const USER_UUID = '11111111-2222-4333-8444-555555555555';
@@ -256,6 +256,12 @@ describe('user messages', () => {
     expect(r.attachments[0]).toEqual({ kind: 'text', name: 'paste.txt', size: 5, path: undefined });
   });
 
+  it('decodeAttachments: a self-closing marker does not reach to a later marker\'s </attached>', () => {
+    const r = decodeAttachments('see\n\n<attached kind="folder" name="tools" path="C:\\t" />\n\n<attached kind="file" name="a.md" path="C:\\a.md" size="3" />\n\n<attached kind="text" name="r.pdf.txt" size="5">\nabcde\n</attached>');
+    expect(r.text).toBe('see');
+    expect(r.attachments.map((a) => a.name)).toEqual(['tools', 'a.md', 'r.pdf.txt']);
+  });
+
   it('flags system reminders as meta', () => {
     const c = createConversation();
     applyMessage(c, { type: 'user', uuid: 'u3', session_id: 's', parent_tool_use_id: null, message: { role: 'user', content: '<system-reminder>x</system-reminder>' } });
@@ -426,6 +432,105 @@ describe('a turn synthesised from an ACP / Codex agent (server/src/agents/normal
     for (const m of loadFixture()) applyMessage(c, m);
     const a = c.items.find((i) => i.kind === 'assistant') as AssistantItem;
     expect(a.blocks.map((b) => b.type)).toEqual(['thinking', 'text', 'tool_use']);
+  });
+});
+
+// 2026-11-17 (ccb 2.8.4-cw.7, 对话 42b4a871): the page fell over with 「Cannot read properties of undefined (reading
+// 'type')」 in turnPlan. A streamed block was put at its stream index; an index past the end of `blocks` left a hole,
+// and `for…of` reads a hole as undefined (`.some` / `.map` skip it, which is why only some readers fell over).
+describe('stream indices that skip (blocks this view does not draw, a relay that starts at 1)', () => {
+  const se = (event: any) => ({ type: 'stream_event', uuid: `e${Math.random()}`, session_id: 's', parent_tool_use_id: null, event });
+  const frame = (id: string, block: any) => ({ type: 'assistant', uuid: `a${Math.random()}`, session_id: 's', parent_tool_use_id: null, message: { id, role: 'assistant', model: 'x', content: [block] } });
+  /** no holes, nothing that is not a block */
+  const dense = (a: AssistantItem) => a.blocks.length === Object.keys(a.blocks).length && [...a.blocks].every((b) => !!b && typeof b.type === 'string');
+  const top = (c: Conversation) => c.items.find((i) => i.kind === 'assistant') as AssistantItem;
+  const user = { type: 'user', uuid: 'u0', session_id: 's', parent_tool_use_id: null, message: { role: 'user', content: 'plan it' } };
+
+  it('server-side blocks before the text (advisor): no hole while it streams, the plan is found, stops reach their blocks', () => {
+    const c = createConversation();
+    // the CLI's order: a block's whole frame comes at its content_block_stop, before the stop event itself
+    for (const m of [
+      user,
+      se({ type: 'message_start', message: { id: 'mS', model: 'x', content: [] } }),
+      se({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }),
+      se({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'plan' } }),
+    ]) applyMessage(c, m);
+    now += 5_000;
+    for (const m of [
+      frame('mS', { type: 'thinking', thinking: 'plan', signature: 'x' }),
+      se({ type: 'content_block_stop', index: 0 }),
+      se({ type: 'content_block_start', index: 1, content_block: { type: 'server_tool_use', id: 'srvtoolu_1', name: 'advisor', input: {} } }),
+      frame('mS', { type: 'server_tool_use', id: 'srvtoolu_1', name: 'advisor', input: {} }),
+      se({ type: 'content_block_stop', index: 1 }),
+      se({ type: 'content_block_start', index: 2, content_block: { type: 'advisor_tool_result', tool_use_id: 'srvtoolu_1', content: {} } }),
+      frame('mS', { type: 'advisor_tool_result', tool_use_id: 'srvtoolu_1', content: {} }),
+      se({ type: 'content_block_stop', index: 2 }),
+      se({ type: 'content_block_start', index: 3, content_block: { type: 'text', text: '' } }),
+    ]) applyMessage(c, m);
+    expect(dense(top(c))).toBe(true);
+    expect(() => taskPlan(groupTurns(c.items))).not.toThrow();
+    applyMessage(c, se({ type: 'content_block_delta', index: 3, delta: { type: 'text_delta', text: 'Here is the plan' } }));
+    expect(top(c).blocks.at(-1)).toEqual({ type: 'text', text: 'Here is the plan' });
+    for (const m of [
+      frame('mS', { type: 'text', text: 'Here is the plan' }),
+      se({ type: 'content_block_stop', index: 3 }),
+      se({ type: 'content_block_start', index: 4, content_block: { type: 'tool_use', id: 'tw1', name: 'TodoWrite', input: {} } }),
+    ]) applyMessage(c, m);
+    expect(dense(top(c))).toBe(true);
+    expect(taskPlan(groupTurns(c.items))?.id).toBe('tw1');
+    for (const m of [
+      se({ type: 'content_block_delta', index: 4, delta: { type: 'input_json_delta', partial_json: '{"todos":[]}' } }),
+      frame('mS', { type: 'tool_use', id: 'tw1', name: 'TodoWrite', input: { todos: [] } }),
+      se({ type: 'content_block_stop', index: 4 }),
+    ]) applyMessage(c, m);
+    const a = top(c);
+    expect(dense(a)).toBe(true);
+    expect(a.blocks.map((b) => b.type)).toEqual(['thinking', 'text', 'tool_use']);
+    expect((a.blocks[0] as any).ms).toBe(5_000);
+    expect(c.toolIndex.get('tw1')?.status).toBe('pending');
+    expect(c.runningTool?.id).toBe('tw1'); // the stop event found its block (the array had been compacted under it)
+  });
+
+  it('a relay whose indices start at 1, whole message only at the end (ccb OpenAI-style): deltas land, no hole', () => {
+    const c = createConversation();
+    for (const m of [
+      user,
+      se({ type: 'message_start', message: { id: 'mR', model: 'x', content: [] } }),
+      se({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'lost' } }), // a delta before any start: dropped
+      se({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } }),
+      se({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'hi' } }),
+      se({ type: 'content_block_start', index: 3, content_block: { type: 'tool_use', id: 'tw2', name: 'TodoWrite', input: {} } }),
+      se({ type: 'content_block_delta', index: 3, delta: { type: 'input_json_delta', partial_json: '{"todos":[{"content":"a"}]}' } }),
+    ]) applyMessage(c, m);
+    let a = top(c);
+    expect(dense(a)).toBe(true);
+    expect(a.blocks.map((b) => (b.type === 'text' ? b.text : b.type))).toEqual(['hi', 'tool_use']);
+    expect(taskPlan(groupTurns(c.items))?.input).toEqual({ todos: [{ content: 'a' }] });
+    for (const m of [
+      se({ type: 'content_block_stop', index: 1 }),
+      se({ type: 'content_block_stop', index: 3 }),
+      { type: 'assistant', uuid: 'aR', session_id: 's', parent_tool_use_id: null, message: { id: 'mR', role: 'assistant', model: 'x', content: [{ type: 'text', text: 'hi' }, { type: 'tool_use', id: 'tw2', name: 'TodoWrite', input: { todos: [{ content: 'a' }] } }] } },
+      se({ type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 3 } }),
+      se({ type: 'message_stop' }),
+    ]) applyMessage(c, m);
+    a = top(c);
+    expect(dense(a)).toBe(true);
+    expect(a.blocks.map((b) => b.type)).toEqual(['text', 'tool_use']);
+    expect(a.streaming).toBe(false);
+  });
+
+  it('a malformed event or frame does not throw and adds nothing', () => {
+    const c = createConversation();
+    applyMessage(c, se({ type: 'message_start', message: { id: 'mM', model: 'x', content: [] } }));
+    expect(() => {
+      applyMessage(c, { type: 'stream_event', uuid: 'e-none', session_id: 's', parent_tool_use_id: null });
+      applyMessage(c, se({ type: 'content_block_start', index: 0 }));
+      applyMessage(c, se({ type: 'content_block_delta', index: 0 }));
+      applyMessage(c, { type: 'assistant', uuid: 'aM', session_id: 's', parent_tool_use_id: null, message: { id: 'mM', role: 'assistant', content: [null, { type: 'text', text: 'ok' }] } });
+    }).not.toThrow();
+    const a = top(c);
+    expect(dense(a)).toBe(true);
+    expect(a.blocks).toEqual([{ type: 'text', text: 'ok' }]);
   });
 });
 

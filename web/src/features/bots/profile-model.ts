@@ -15,7 +15,7 @@ function scan(items: Item[]): Screen | undefined {
     if (it.kind !== 'assistant') continue;
     for (let j = it.blocks.length - 1; j >= 0; j--) {
       const b = it.blocks[j];
-      if (b.type !== 'tool_use') continue;
+      if (b?.type !== 'tool_use') continue;
       // a sub-agent's calls come after its own call started
       const inner = b.children.length ? scan(b.children) : undefined;
       if (inner) return inner;

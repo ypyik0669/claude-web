@@ -88,6 +88,7 @@ type Seg = { kind: 'text'; b: Block; i: number } | { kind: 'thinking'; b: Block;
 function segment(blocks: Block[]): Seg[] {
   const out: Seg[] = [];
   blocks.forEach((b, i) => {
+    if (!b) return; // not a block (a spread hole): skipped, not the page down
     if (b.type === 'text') { if (b.text.trim() || i === blocks.length - 1) out.push({ kind: 'text', b, i }); }
     else if (b.type === 'thinking') { if (b.thinking || i === blocks.length - 1) out.push({ kind: 'thinking', b, i }); }
     else if (isStandalone(b.name)) out.push({ kind: 'agent', t: b });

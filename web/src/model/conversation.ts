@@ -304,16 +304,20 @@ function resetText(resetsAt: number) {
 }
 
 /**
- * Where a streamed block sits in its item. Normally its stream index; but an agent's synthesised turn (ACP / Codex,
- * server/src/agents/normalize.ts) counts only its text / thinking blocks and sends each tool call as a whole
- * `assistant` frame of the same message — so a text block streamed after a tool call arrives with an index the tool
- * call already holds. It goes after it instead (and its deltas / stop follow it), rather than overwriting the call.
+ * The block each stream index of an item feeds. A streamed block is appended to its item where it starts, never put
+ * AT its stream index: the indices skip blocks this view does not draw (server_tool_use / advisor_tool_result /
+ * web_search_tool_result…), a relay may start counting at 1, and an agent's synthesised turn (ACP / Codex,
+ * server/src/agents/normalize.ts) counts only its text / thinking blocks while each tool call comes as a whole
+ * `assistant` frame of the same message — an index past the end left a hole in `blocks`, which `for…of` reads as
+ * undefined (2026-11-17, ccb 2.8.4-cw.7: the whole conversation page fell over in turnPlan). Deltas and stops find
+ * their block by its index here, not by a position, so the array can change under them.
  */
-const slots = new WeakMap<AssistantItem, Map<number, number>>();
-const slotOf = (item: AssistantItem, index: number) => slots.get(item)?.get(index) ?? index;
+const streamed = new WeakMap<AssistantItem, Map<number, Block>>();
+const blockAt = (item: AssistantItem, index: number): Block | undefined => streamed.get(item)?.get(index);
 
 function applyStream(c: Conversation, m: any) {
   const ev = m.event;
+  if (!ev || typeof ev !== 'object') return;
   const k = key(m.parent_tool_use_id);
   let cur = c.streaming.get(k);
   if (ev.type === 'message_start') {
@@ -330,27 +334,25 @@ function applyStream(c: Conversation, m: any) {
   if (!cur) return;
   if (m.user_message_uuid && !cur.userMessageUuid) cur.userMessageUuid = m.user_message_uuid;
   if (ev.type === 'content_block_start') {
-    const b = ev.content_block;
-    let at: number = ev.index;
-    if (cur.blocks[at] !== undefined) {
-      // taken by a whole frame that came first (a synthesised tool call): after it
-      at = cur.blocks.length;
-      let map = slots.get(cur);
-      if (!map) slots.set(cur, (map = new Map()));
-      map.set(ev.index, at);
-    }
-    if (b.type === 'text') cur.blocks[at] = { type: 'text', text: b.text ?? '' };
-    else if (b.type === 'thinking') cur.blocks[at] = { type: 'thinking', thinking: b.thinking ?? '', startedAt: clock() };
-    else if (b.type === 'redacted_thinking') cur.blocks[at] = { type: 'thinking', thinking: '', redacted: true, startedAt: clock() };
+    const b = ev.content_block ?? {};
+    let block: Block | undefined;
+    if (b.type === 'text') block = { type: 'text', text: b.text ?? '' };
+    else if (b.type === 'thinking') block = { type: 'thinking', thinking: b.thinking ?? '', startedAt: clock() };
+    else if (b.type === 'redacted_thinking') block = { type: 'thinking', thinking: '', redacted: true, startedAt: clock() };
     else if (b.type === 'tool_use') {
       const tb: ToolUseBlock = { type: 'tool_use', id: b.id, name: b.name, input: b.input ?? {}, inputJson: '', children: [], status: 'streaming', startedAt: clock() };
-      cur.blocks[at] = tb;
       c.toolIndex.set(b.id, tb);
+      block = tb;
     }
+    let map = streamed.get(cur);
+    if (!map) streamed.set(cur, (map = new Map()));
+    if (!block) { map.delete(ev.index); return; } // not drawn here: its deltas and stop find nothing
+    cur.blocks.push(block);
+    map.set(ev.index, block);
   } else if (ev.type === 'content_block_delta') {
-    const b = cur.blocks[slotOf(cur, ev.index)];
+    const b = blockAt(cur, ev.index);
     const d = ev.delta;
-    if (!b) return;
+    if (!b || !d) return;
     if (d.type === 'text_delta' && b.type === 'text') b.text += d.text;
     else if (d.type === 'thinking_delta' && b.type === 'thinking') b.thinking += d.thinking;
     else if (d.type === 'input_json_delta' && b.type === 'tool_use') {
@@ -362,7 +364,7 @@ function applyStream(c: Conversation, m: any) {
       }
     }
   } else if (ev.type === 'content_block_stop') {
-    const b = cur.blocks[slotOf(cur, ev.index)];
+    const b = blockAt(cur, ev.index);
     if (b?.type === 'thinking' && b.startedAt !== undefined) {
       b.ms = Math.max(0, clock() - b.startedAt);
       delete b.startedAt;
@@ -409,11 +411,11 @@ function evict(c: Conversation, uuids: string[] | undefined) {
       const it = arr[i];
       const id = it.kind === 'assistant' ? it.uuid ?? it.id : it.id;
       if (set.has(id)) {
-        if (it.kind === 'assistant') for (const b of it.blocks) if (b.type === 'tool_use') c.toolIndex.delete(b.id);
+        if (it.kind === 'assistant') for (const b of it.blocks) if (b?.type === 'tool_use') c.toolIndex.delete(b.id);
         arr.splice(i, 1);
         continue;
       }
-      if (it.kind === 'assistant') for (const b of it.blocks) if (b.type === 'tool_use') prune(b.children);
+      if (it.kind === 'assistant') for (const b of it.blocks) if (b?.type === 'tool_use') prune(b.children);
     }
   };
   prune(c.items);
@@ -432,7 +434,7 @@ function applyAssistant(c: Conversation, m: any) {
   const msg = m.message ?? {};
   const parent = m.parent_tool_use_id ?? null;
   const k = key(parent);
-  const content: any[] = Array.isArray(msg.content) ? msg.content : typeof msg.content === 'string' ? [{ type: 'text', text: msg.content }] : [];
+  const content: any[] = Array.isArray(msg.content) ? msg.content.filter((b: unknown) => !!b && typeof b === 'object') : typeof msg.content === 'string' ? [{ type: 'text', text: msg.content }] : [];
   // Resuming a conversation (a provider switch respawns the CLI) the CLI may nudge itself with a meta "Continue from
   // where you left off." and answer it with a synthetic "No response requested." — bookkeeping, not a reply. Other
   // synthetic messages (API errors) stay visible.
@@ -489,7 +491,7 @@ function applyAssistant(c: Conversation, m: any) {
       }
     }
   }
-  // compact holes left by streaming index gaps
+  // nothing here leaves a hole any more (streamed blocks are appended, see `streamed`); kept as the last line of defence
   item.blocks = item.blocks.filter(Boolean);
   if (!content.some((b) => b.type === 'tool_use') || msg.stop_reason) {
     // keep streaming flag until message_stop arrives; final assistant message w/o stream implies done
@@ -511,7 +513,9 @@ function toContextUsage(u: any): ContextUsage {
 }
 
 /** `<attached kind="file" name="a.txt" path="C:\x\a.txt" size="123">` markers appended by the composer; decoded for display. */
-export const ATTACH_RE = /\n*<attached\s+kind="(image|text|file|folder)"\s+name="([^"]*)"(?:\s+path="([^"]*)")?(?:\s+size="(\d+)")?\s*\/?>(?:[\s\S]*?<\/attached>)?/g;
+// a self-closing marker ends at its `/>`: before 2026-11-17 its optional body reached to the NEXT marker's
+// `</attached>` (a folder reference, then a long paste / a PDF's text), and every chip in between disappeared
+export const ATTACH_RE = /\n*<attached\s+kind="(image|text|file|folder)"\s+name="([^"]*)"(?:\s+path="([^"]*)")?(?:\s+size="(\d+)")?\s*(?:\/>|>(?:(?:(?!<attached\s)[\s\S])*?<\/attached>)?)/g;
 
 /**
  * Session references: the composer appends `<session-ref id="…" title="…" />`; the server expands it
@@ -628,7 +632,7 @@ function applyUser(c: Conversation, m: any) {
     const last = /for tool use/.test(rawText) ? [...list].reverse().find((i) => i.kind === 'assistant' || (i.kind === 'user' && !i.meta)) : undefined;
     if (last?.kind === 'assistant') {
       for (const b of last.blocks) {
-        if (b.type !== 'tool_use' || (b.status === 'done' && !b.result?.isError)) continue;
+        if (b?.type !== 'tool_use' || (b.status === 'done' && !b.result?.isError)) continue;
         b.stopped = true;
         b.status = 'error';
         if (c.runningTool?.id === b.id) c.runningTool = null;
@@ -830,7 +834,7 @@ export function applyTranscript(c: Conversation, msgs: any[], opts?: { live?: bo
     for (const it of c.items.slice(turn)) {
       if (it.kind !== 'assistant') continue;
       for (const b of it.blocks) {
-        if (b.type !== 'tool_use' || (b.status !== 'pending' && b.status !== 'running' && b.status !== 'streaming')) continue;
+        if (b?.type !== 'tool_use' || (b.status !== 'pending' && b.status !== 'running' && b.status !== 'streaming')) continue;
         const since = it.ts ? Date.parse(it.ts) : NaN;
         c.runningTool = { id: b.id, name: b.name, since: Number.isNaN(since) ? clock() : since };
       }
@@ -862,6 +866,7 @@ export function prependTranscript(c: Conversation, msgs: any[]): void {
     if (prev.kind !== 'assistant' || it.kind !== 'assistant') continue; // duplicate: the older copy stands
     // one API message cut in two: older blocks first, then the newer ones it does not have yet
     for (const b of it.blocks) {
+      if (!b) continue;
       if (b.type === 'tool_use') {
         // the newer copy carries the result (and is what toolIndex keeps)
         const at = prev.blocks.findIndex((x) => x.type === 'tool_use' && x.id === b.id);
@@ -877,7 +882,12 @@ export function prependTranscript(c: Conversation, msgs: any[]): void {
     prev.streaming = it.streaming;
     if (it.error) { prev.error = it.error; prev.errorKind = it.errorKind; }
     if (it.aborted) prev.aborted = true;
-    for (const [k, v] of c.streaming) if (v === it) c.streaming.set(k, prev);
+    for (const [k, v] of c.streaming) if (v === it) {
+      c.streaming.set(k, prev);
+      // its blocks still streaming are the newer copy's (pushed into `prev` above): their deltas follow them there
+      const map = streamed.get(it);
+      if (map) streamed.set(prev, map);
+    }
   }
   c.items = items;
   // newer entries win: a tool_use that appears in both pages is the newer page's block (it carries the result)
@@ -891,7 +901,7 @@ export function* walkTools(items: Item[]): Generator<{ tool: ToolUseBlock; depth
     for (const it of arr) {
       if (it.kind !== 'assistant') continue;
       for (const b of it.blocks) {
-        if (b.type !== 'tool_use') continue;
+        if (b?.type !== 'tool_use') continue;
         yield { tool: b, depth, item: it };
         yield* rec(b.children, depth + 1);
       }

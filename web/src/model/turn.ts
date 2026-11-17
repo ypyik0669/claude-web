@@ -37,12 +37,16 @@ export function groupTurns(items: Item[]): Turn[] {
   return out;
 }
 
-/** The turn's plan as it stands: its last TodoWrite of the main agent (a subagent's own plan is not the turn's). */
+/**
+ * The turn's plan as it stands: its last TodoWrite of the main agent (a subagent's own plan is not the turn's).
+ * `b?.` here and in the other `for…of` over blocks: a hole in a sparse array comes out as undefined, and one bad block
+ * must not take the whole conversation page down (2026-11-17, see conversation.ts `streamed`).
+ */
 export function turnPlan(t: Turn | undefined): ToolUseBlock | null {
   let plan: ToolUseBlock | null = null;
   for (const it of t?.body ?? []) {
     if (it.kind !== 'assistant' || it.parentToolUseId) continue;
-    for (const b of it.blocks) if (b.type === 'tool_use' && b.name === 'TodoWrite') plan = b;
+    for (const b of it.blocks) if (b?.type === 'tool_use' && b.name === 'TodoWrite') plan = b;
   }
   return plan;
 }
@@ -111,7 +115,7 @@ export function turnDuration(t: Turn): number | undefined {
   let end = NaN;
   for (const it of t.body) {
     let e = tsOf(it);
-    if (it.kind === 'assistant') for (const b of it.blocks) if (b.type === 'tool_use' && b.result?.ts) { const r = Date.parse(b.result.ts); if (!Number.isNaN(r) && (Number.isNaN(e) || r > e)) e = r; }
+    if (it.kind === 'assistant') for (const b of it.blocks) if (b?.type === 'tool_use' && b.result?.ts) { const r = Date.parse(b.result.ts); if (!Number.isNaN(r) && (Number.isNaN(e) || r > e)) e = r; }
     if (!Number.isNaN(e) && (Number.isNaN(end) || e > end)) end = e;
   }
   return Number.isNaN(end) || end < start ? undefined : end - start;
@@ -129,7 +133,7 @@ export function turnSummary(t: Turn): TurnSummary {
   for (const it of t.body) {
     if (it.kind !== 'assistant') continue;
     for (const b of it.blocks) {
-      if (b.type !== 'tool_use') continue;
+      if (b?.type !== 'tool_use') continue;
       tools++;
       // cut off by the turn's Stop: it ran (a command, a search) but read and changed nothing — not a failure
       if (b.stopped) { if (SHELL.has(b.name)) commands++; else if (SEARCH.has(b.name)) searches++; else if (!READ.has(b.name) && !EDIT.has(b.name)) others++; continue; }
@@ -192,7 +196,7 @@ export function turnMemo(prev: TurnMemo | undefined, t: Turn, done: boolean, sta
 /** How much the turn's subagents hold (their messages, loaded on demand into the top-level Agent steps). */
 export function subagentSig(t: Turn): number {
   let n = 0;
-  for (const it of t.body) if (it.kind === 'assistant') for (const b of it.blocks) if (b.type === 'tool_use' && b.children.length) n += b.children.length;
+  for (const it of t.body) if (it.kind === 'assistant') for (const b of it.blocks) if (b?.type === 'tool_use' && b.children.length) n += b.children.length;
   return n;
 }
 
@@ -219,7 +223,7 @@ export function splitTurnBody(body: Item[]): TurnParts {
   let lastItem = -1, lastBlock = -1;
   body.forEach((it, i) => {
     if (it.kind !== 'assistant') return;
-    it.blocks.forEach((b, j) => { if (b.type === 'tool_use') { lastItem = i; lastBlock = j; } });
+    it.blocks.forEach((b, j) => { if (b?.type === 'tool_use') { lastItem = i; lastBlock = j; } });
   });
   if (lastItem < 0) return { work: false, process: [], final: [], tail: [...body] };
   const process: Item[] = [], final: AssistantItem[] = [], tail: Item[] = [];
@@ -229,10 +233,9 @@ export function splitTurnBody(body: Item[]): TurnParts {
     if (it.error && i >= lastItem) { final.push(it); return; }
     if (i < lastItem) { process.push(it); return; }
     const from = i === lastItem ? lastBlock + 1 : 0;
-    const before = it.blocks.slice(0, from);
-    const after = it.blocks.slice(from);
-    const work = [...before, ...after.filter((b) => b.type !== 'text')];
-    const answer = after.filter((b) => b.type === 'text');
+    // `filter` (not slice + spread, which turns a hole into an undefined block): the copies hold only real blocks
+    const work = it.blocks.filter((b, j) => !!b && (j < from || b.type !== 'text'));
+    const answer = it.blocks.filter((b, j) => !!b && j >= from && b.type === 'text');
     if (work.length) process.push(work.length === it.blocks.length ? it : { ...it, blocks: work });
     if (answer.length) final.push(answer.length === it.blocks.length ? it : { ...it, blocks: answer });
   });
