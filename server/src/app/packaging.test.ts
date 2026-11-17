@@ -21,7 +21,8 @@ function sourceFiles(dir: string): string[] {
 /** Packages the server loads at run time: value imports (not `import type`), static or dynamic. */
 function runtimePackages(src: string): string[] {
   const out: string[] = [];
-  const re = /(?:^|\n)\s*(?:import|export)(?!\s+type\b)[^'"`;]*?from\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)|(?:^|\n)\s*import\s*['"]([^'"]+)['"]/g;
+  // `(?<![\w.$])import(`: a dynamic import, not a method of that name (`ObjC.import('Quartz')` in a JXA script string)
+  const re = /(?:^|\n)\s*(?:import|export)(?!\s+type\b)[^'"`;]*?from\s*['"]([^'"]+)['"]|(?<![\w.$])import\(\s*['"]([^'"]+)['"]\s*\)|(?:^|\n)\s*import\s*['"]([^'"]+)['"]/g;
   for (const m of src.matchAll(re)) {
     const spec = m[1] ?? m[2] ?? m[3];
     if (!spec || spec.startsWith('.') || spec.startsWith('node:') || spec.startsWith('@shared')) continue;

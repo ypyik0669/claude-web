@@ -40,6 +40,7 @@ import { localEnv } from './local-env.js';
 import { SESSIONS_ALLOWED, SESSIONS_SERVER, sessionsMcpEnabled, sessionsMcpServer } from '../sessions-mcp/tools.js';
 import { botRuntime } from '../bots/runtime-hooks.js';
 import { stripBotTags } from '../bots/tags.js';
+import { withPdfText } from '../files/pdf-text.js';
 import { PREVIEW_ALLOWED, PREVIEW_SERVER, previewEnabled, previewMcpServer, verifyInstructions } from '../preview/tools.js';
 
 const WINDOWS_SHELL_HINT = [
@@ -1131,9 +1132,10 @@ export class SessionRunner extends EventEmitter {
     this.known.add(uuid);
     const content: any[] = [];
     for (const im of images ?? []) content.push({ type: 'image', source: { type: 'base64', media_type: im.mediaType, data: im.data } });
-    // attachments: markers the model can act on (Read the path) and the web UI decodes back into chips
+    // attachments: markers the model can act on (Read the path) and the web UI decodes back into chips; a PDF also
+    // brings its extracted text along (withPdfText: the PDF itself reaches only models whose API takes documents)
     if (attachments?.length) {
-      const marks = attachments.map((a) => {
+      const marks = withPdfText(attachments).map((a) => {
         const attrs = `kind="${a.kind}" name="${esc(a.name)}"${a.path ? ` path="${esc(a.path)}"` : ''}${a.size !== undefined ? ` size="${a.size}"` : ''}`;
         return a.kind === 'text' && a.text !== undefined ? `<attached ${attrs}>\n${a.text}\n</attached>` : `<attached ${attrs} />`;
       });

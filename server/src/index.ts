@@ -17,6 +17,7 @@ import { authSignal } from './config/auth-signal.js';
 import { UsageService } from './usage/service.js';
 import { providerTimeline } from './usage/timeline.js';
 import { ATTACH_MAX_BYTES, FilesService, attachmentPath, dataDir, workspaceRoots } from './files/service.js';
+import { isPdfPath, writePdfText } from './files/pdf-text.js';
 import { TerminalService } from './terminal/service.js';
 import { engineInfo, resolveClaudeExe } from './claude-exe.js';
 import { refreshLatestClaudeVersion } from './claude-version.js';
@@ -331,7 +332,14 @@ export async function startServer(opts: StartOptions = {}): Promise<RunningServe
       let size = 0;
       req.on('data', (c: Buffer) => { size += c.length; if (size > ATTACH_MAX_BYTES) { req.destroy(); out.destroy(); fs.rm(dest, { force: true }, () => {}); } });
       req.pipe(out);
-      out.on('finish', () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ path: dest, size })); });
+      // a PDF also gets its text beside it (`<file>.pdf.txt`) before the answer, so the message that follows can carry
+      // it: not every model API takes the PDF itself (files/pdf-text.ts)
+      out.on('finish', async () => {
+        const textPath = isPdfPath(dest) ? await writePdfText(dest) : null;
+        if (res.headersSent || res.destroyed) return;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ path: dest, size, ...(textPath ? { textPath } : {}) }));
+      });
       out.on('error', (e) => { if (!res.headersSent) res.writeHead(500).end(e.message); else res.destroy(); });
       return;
     }
