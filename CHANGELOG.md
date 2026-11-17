@@ -4,9 +4,13 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
-## [0.5.12] — 2026-11-17
+## [0.5.13] — 2026-11-17
+
+(0.5.12 was built but never published; everything in it is in this version.)
 
 ### New
+
+- **"Add folder" adds a working folder to the conversation.** "Add folder" in the input box's + menu used to list every file in the folder and upload them: picking a big project (node_modules and all) crashed the page, the conversation reloaded, and pictures just pasted into the input box were lost. It now only takes the folder's path and adds it to the conversation's working folders, so Claude can read and edit it like the main one; it shows under "Environment" on the right, with × to remove it. A turn already running is not interrupted: the change applies once it ends. Codex conversations can add folders too; Gemini and other agents can't, and the menu says why.
 
 - **Paste copied files and folders into the conversation.** Select files in Explorer (or Finder), press Ctrl+C, then Ctrl+V in the input box: it works just like dragging them in. A pasted folder is referenced by its path, not uploaded, and Claude reads it where it is.
 - **The / menu lists everything, in groups.** A conversation opened from the sidebar (after a restart, every one of them), the welcome page and the first half minute of a start showed nothing but /btw when you typed `/`, so installed skills couldn't be found; and the menu stopped at 40 entries. Now every command and skill Claude Code can use is there whether the conversation is running or not, in three groups (Commands, Skills, Other), each row saying whether it comes from you, the project or which plugin. Names that start with what you typed come first, and the matching part is in bold. Plugin skills always show as `plugin:name`, so two skills with the same name no longer clash.
