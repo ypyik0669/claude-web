@@ -181,6 +181,14 @@
   --elev-3: var(--ring-2), 0 1px 3px rgba(var(--shade), calc(0.07 * var(--shade-a))), 0 8px 20px -4px rgba(var(--shade), calc(0.1 * var(--shade-a))), 0 28px 72px -16px rgba(var(--shade), calc(0.22 * var(--shade-a)));
   --elev-composer: var(--ring-2), 0 2px 4px rgba(var(--shade), calc(0.04 * var(--shade-a))), 0 12px 28px -12px rgba(var(--shade), calc(0.16 * var(--shade-a)));
   --scrim: rgba(var(--shade), calc(0.38 * min(var(--shade-a), 1.4)));
+  /* the full-window viewer (ui/Viewer.tsx: a message's pictures, a node graph or Mermaid picture made big): dark in
+     every theme, like a lightbox — its bar's text and buttons are light on it whatever the theme */
+  --viewer-scrim: rgba(0, 0, 0, 0.82);
+  --viewer-bar: rgba(0, 0, 0, 0.35);
+  --viewer-ink: #eee;
+  --viewer-line: rgba(255, 255, 255, 0.2);
+  --viewer-hover: rgba(255, 255, 255, 0.1);
+  --viewer-on: rgba(255, 255, 255, 0.18);
 
   /* motion (§4.5): hover is instant in and 150ms out, a press scales, things that float scale in from their anchor.
      Only transform / opacity / filter / colour move; height animates as a grid row */

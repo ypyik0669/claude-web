@@ -58,4 +58,12 @@ describe('NodeGraph markup', () => {
   it('rows without onPick are plain text', () => {
     expect(html()).toMatch(/data-row="read"[^]*?class="v">Anyone</);
   });
+  it('全屏查看 only where the owner offers it, right after 适应窗口: the 后台 / 编排 graphs keep their bar (issue #17)', () => {
+    expect(html()).not.toContain('ng-full');
+    expect(html({ onFullscreen: () => {} })).toMatch(/class="ng-fit"[^]*?<\/button><button type="button" class="ng-full" aria-label="全屏查看"[^>]*aria-haspopup="dialog"/);
+  });
+  it('a CSS height is passed through: the fullscreen viewer fills its stage (issue #17)', () => {
+    expect(html({ height: '100%' })).toMatch(/class="ng"[^>]*style="height:100%;/);
+    expect(html()).toMatch(/class="ng"[^>]*style="height:360px;/);
+  });
 });

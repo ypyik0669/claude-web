@@ -45,9 +45,10 @@ const busyIds = (s: ReturnType<typeof useStore.getState>) =>
 
 /**
  * What takes an Esc before the sidebar's multi-select besides a menu: a dialog or the shortcuts sheet, the command
- * palette. Any `.menu` on screen counts too (a menu that forgot to claim itself still gets its Esc first).
+ * palette, the full-window viewer (ui/Viewer: a picture, a node graph made big). Any `.menu` on screen counts too (a
+ * menu that forgot to claim itself still gets its Esc first).
  */
-const OVER_SIDEBAR = '.menu, .modal-bg, .palette-bg';
+const OVER_SIDEBAR = '.menu, .modal-bg, .palette-bg, .viewer';
 
 /**
  * Esc ends multi-select only when it is meant for the sidebar: focus in the sidebar (or nowhere) and nothing that

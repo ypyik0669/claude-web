@@ -1,8 +1,39 @@
 import { describe, expect, it } from 'vitest';
 import { wheelZoom } from '@/ui/wheel-zoom';
-import { chatFit, entranceTimes, fitHeight, fitView, motionOn, NG_ZOOM, panToShow, pct, zoomAt, zoomBy } from './viewport';
+import { chatFit, entranceTimes, fitHeight, fitView, fullFit, motionOn, NG_ZOOM, PAN_KEYS, panToShow, pct, zoomAt, zoomBy } from './viewport';
+
+describe('全屏查看: fitted to the window (issue #17)', () => {
+  it("the issue's picture: a wide graph the reply holds at its 60 % floor fills the window instead", () => {
+    const graph = { w: 2000, h: 900 };
+    expect(fitHeight(graph, 760, chatFit(true)).scale).toBe(0.6);
+    const v = fitView(graph, { w: 1888, h: 960 }, fullFit(true));
+    // the width decides here: 24px each side; the title row (64) and the zoom buttons (56) kept free
+    expect(v.scale).toBeCloseTo((1888 - 48) / 2000);
+    expect(v.x).toBeCloseTo(24);
+    expect(v.y).toBeCloseTo(64 + (960 - 64 - 56 - 900 * v.scale) / 2);
+  });
+  it('a small graph stops at 125 %; one too big even at the smallest zoom starts at the top left', () => {
+    expect(fitView({ w: 300, h: 150 }, { w: 1600, h: 900 }, fullFit(false)).scale).toBe(1.25);
+    expect(fitView({ w: 20000, h: 9000 }, { w: 1600, h: 900 }, fullFit(true))).toEqual({ scale: NG_ZOOM.min, x: 24, y: 64 });
+  });
+  it('the title row is kept only when there is a title / badge; the corner of the zoom buttons always', () => {
+    expect(fullFit(true).top).toBe(64);
+    expect(fullFit(false).top).toBe(24);
+    expect(fullFit(false).bottom).toBeGreaterThanOrEqual(10 + 44); // 10px from the edge, 40px buttons + padding on a phone
+  });
+  it('a phone (390 × 700 below the bar): the stage is the window, the graph fits its width', () => {
+    const v = fitView({ w: 1200, h: 500 }, { w: 390, h: 700 }, fullFit(true));
+    expect(v.scale).toBeCloseTo((390 - 48) / 1200);
+    expect(v.x).toBeCloseTo(24);
+  });
+});
 
 describe('viewport', () => {
+  it('the arrow keys pan toward what is on that side (shared by the node graph and the picture canvas)', () => {
+    expect(PAN_KEYS.get('ArrowLeft')).toEqual([1, 0]);
+    expect(PAN_KEYS.get('ArrowDown')).toEqual([0, -1]);
+    expect(PAN_KEYS.get('a')).toBeUndefined();
+  });
   it('fit: centred, never above max', () => {
     expect(fitView({ w: 400, h: 200 }, { w: 800, h: 400 })).toEqual({ scale: 1.25, x: 150, y: 75 });
   });

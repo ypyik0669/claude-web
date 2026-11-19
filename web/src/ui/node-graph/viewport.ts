@@ -28,6 +28,11 @@ export function fitHeight(content: Size, width: number, o: Required<Pick<FitOpts
 }
 /** the chat's numbers (review D4): 60 %–100 %, 200–560 px, room for the title / badge and the zoom buttons */
 export const chatFit = (hasHead: boolean) => ({ min: 0.6, max: 1, pad: 16, top: hasHead ? 56 : 16, bottom: 44, lo: 200, hi: 560 });
+/**
+ * issue #17, 全屏查看: the whole picture in the window — down to the smallest zoom (then from the top left, the rest a
+ * pan away), never above 125 %; room above for the title / badge row, below for the zoom buttons (40px on a phone).
+ */
+export const fullFit = (hasHead: boolean): FitOpts => ({ min: NG_ZOOM.min, max: 1.25, pad: 24, top: hasHead ? 64 : 24, bottom: 56, start: true });
 /** review D6: a card that got the focus (Tab) is panned into view; one already in view leaves the view alone */
 export function panToShow(v: View, b: { x: number; y: number; w: number; h: number }, box: Size, o: { pad?: number; top?: number; bottom?: number } = {}): View {
   if (box.w <= 0 || box.h <= 0) return v;
@@ -39,6 +44,8 @@ export function panToShow(v: View, b: { x: number; y: number; w: number; h: numb
 }
 /** arrow keys pan by this many pixels */
 export const NG_PAN_STEP = 60;
+/** arrow key → which way the view moves (the content follows the arrow's opposite: ← shows what is on the left) */
+export const PAN_KEYS: ReadonlyMap<string, readonly [number, number]> = new Map<string, readonly [number, number]>([['ArrowLeft', [1, 0]], ['ArrowRight', [-1, 0]], ['ArrowUp', [0, 1]], ['ArrowDown', [0, -1]]]);
 export function zoomAt(v: View, scale: number, p: { x: number; y: number }): View {
   const s = clamp(scale, NG_ZOOM.min, NG_ZOOM.max), k = s / v.scale;
   return { scale: s, x: p.x - (p.x - v.x) * k, y: p.y - (p.y - v.y) * k };

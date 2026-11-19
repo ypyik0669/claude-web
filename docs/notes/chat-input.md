@@ -5,7 +5,7 @@
 
 ## 盘点时发现已经有的
 
-钉底（`ChatView` 的 `stick`）、图片灯箱（`ImageViewer.tsx`）、429 / 过载重试的显示（reducer 的 `api_retry`）、
+钉底（`ChatView` 的 `stick`）、图片灯箱（`ImageViewer.tsx`，外框是共用的 `ui/Viewer.tsx`，节点图的全屏查看也用它，见「节点图」笔记）、429 / 过载重试的显示（reducer 的 `api_retry`）、
 快捷键速查（F1 / ?）。别再当成缺的功能重做。
 
 ## 旁聊（/btw、Ctrl+;）

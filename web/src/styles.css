@@ -391,16 +391,27 @@ button.link:hover { text-decoration: underline; }
 .diff-pair .dc.empty { background: repeating-linear-gradient(45deg, transparent 0 6px, var(--fill-subtle) 6px 8px); }
 .dl.span { grid-column: 1 / -1; }
 
-/* ---- image viewer ---- */
-.viewer { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.82); z-index: 100; display: flex; flex-direction: column; animation: fadein 0.12s ease-out; }
-.viewer-bar { display: flex; align-items: center; gap: 6px; padding: 8px 12px; color: #eee; font-size: 13px; background: rgba(0, 0, 0, 0.35); }
-.viewer-bar .btn { color: #eee; border-color: rgba(255, 255, 255, 0.2); }
-.viewer-bar .btn.active { background: rgba(255, 255, 255, 0.18); }
+/* ---- the full-window viewer (ui/Viewer.tsx): a message's pictures (ImageViewer), a node graph / Mermaid picture made big (issue #17) ---- */
+.viewer { position: fixed; inset: 0; background: var(--viewer-scrim); z-index: 100; display: flex; flex-direction: column; animation: fadein var(--dur-fast) var(--ease-out); }
+.viewer:focus { outline: none; } /* the layer itself takes the focus when nothing in it is meant to */
+.viewer[data-kb] { animation: none; } /* opened from the keyboard: simply there (UI refresh §4.5) */
+.viewer-bar { display: flex; align-items: center; gap: 6px; padding: 8px 12px; color: var(--viewer-ink); font-size: 13px; background: var(--viewer-bar); }
+.viewer-bar .grow { flex: 1; min-width: 0; }
+.viewer-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.viewer-bar .btn { color: var(--viewer-ink); border-color: var(--viewer-line); }
+.viewer-bar .btn:hover { color: var(--viewer-ink); background: var(--viewer-hover); }
+.viewer-bar .btn.active { background: var(--viewer-on); }
+/* a phone: the bar clears the status bar, wraps instead of pushing 关闭 off the screen, and 关闭 is a 44px target */
+@media (max-width: 760px) {
+  .viewer { padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .viewer-bar { flex-wrap: wrap; padding-top: max(8px, env(safe-area-inset-top, 0px)); }
+  .viewer-bar .viewer-close { min-width: 44px; min-height: 44px; margin-inline-start: auto; }
+}
 .viewer-stage { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: zoom-out; }
 .viewer-stage img { cursor: grab; user-select: none; box-shadow: var(--elev-3); }
 .viewer-stage img.free { cursor: grab; }
 .viewer-stage img:active { cursor: grabbing; }
-.viewer-thumbs { display: flex; gap: 6px; padding: 8px 12px; justify-content: center; background: rgba(0, 0, 0, 0.35); overflow-x: auto; }
+.viewer-thumbs { display: flex; gap: 6px; padding: 8px 12px; justify-content: center; background: var(--viewer-bar); overflow-x: auto; }
 .viewer-thumbs img { height: 48px; border-radius: var(--r-sm); opacity: 0.55; cursor: pointer; border: 2px solid transparent; }
 .viewer-thumbs img.on { opacity: 1; border-color: var(--accent); }
 .img-grid { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
@@ -1445,7 +1456,7 @@ html.desktop:not(.mac) .app.dock-open .dock:not(.min) .dock-tabs { padding-right
 /* minimized to its 36px icon strip, the right panel is under the caption buttons: its icons start below them
    (and the workbench's top-right row makes room, since the app is not `.dock-open` then) */
 html.desktop:not(.mac) .dock.min .dock-tabs { padding-top: var(--h-head); }
-/* the image viewer covers the window: its bar keeps clear of the caption buttons / the traffic lights */
+/* the full-window viewer (pictures, a node graph made big) covers the window: its bar keeps clear of the caption buttons / the traffic lights */
 html.desktop:not(.mac) .viewer-bar { padding-right: calc(var(--caption-w)); }
 html.desktop.mac .viewer-bar { padding-left: calc(84px / var(--zoom, 1)); }
 html.desktop.mac .sb-top { padding-left: max(0px, calc(84px / var(--zoom, 1) - var(--rail, 0px))); }

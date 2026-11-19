@@ -5,8 +5,8 @@ import type { FitOpts } from './viewport';
 export interface NodeGraphProps {
   graph: NodeGraphData;
   ariaLabel: string;
-  /** canvas height, px (default 360) */
-  height?: number;
+  /** canvas height, px (default 360) — or a CSS length: the fullscreen viewer's graph fills its stage with '100%' */
+  height?: number | string;
   /** default NG_CARD_W */
   cardW?: number;
   /** default 'center' */
@@ -30,4 +30,7 @@ export interface NodeGraphProps {
   /** in a scrolling column (a chat reply, the orchestra panel): the wheel zooms only once the graph was clicked or
    *  focused; until then it scrolls the page (review D5) */
   embedded?: boolean;
+  /** issue #17: a 全屏查看 button after 适应窗口, handing over the button (the focus goes back to it when the viewer
+   *  closes). Only the chat's blocks pass it; without it the zoom bar is what it always was */
+  onFullscreen?: (from: HTMLElement) => void;
 }

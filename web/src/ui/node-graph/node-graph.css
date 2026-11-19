@@ -83,3 +83,20 @@
 .ng-bad { padding: 6px 10px; color: color-mix(in oklab, var(--err) 75%, var(--ink-1)); font-size: var(--fs-meta); }
 .ng-bad .sub { margin-inline-start: 8px; color: var(--ink-3); font-family: var(--mono); }
 .mmd-view { display: flex; gap: 4px; justify-content: flex-end; margin-bottom: 6px; }
+/* issue #17: the 原图's 全屏查看 sits in its bottom-right corner, where the 节点图 has its zoom buttons */
+.mmd-raw { position: relative; }
+.ng-zoom.mmd-tools { right: 0; bottom: 0; }
+/* issue #17, 全屏查看 (ui/Viewer + features/chat/GraphFullscreen, PanZoom): the canvas fills the viewer's stage, inset
+   in the dark layer like a picture in the image viewer; edge to edge on a phone, with zoom buttons a finger can hit */
+.viewer-stage.ngv-stage { display: block; position: relative; min-height: 0; padding: var(--sp-2) var(--sp-4) var(--sp-4); }
+.ngv-stage > .ng { box-shadow: var(--elev-3); cursor: default; }
+.pz-pic { width: 100%; height: 100%; }
+.pz-pic > svg { display: block; width: 100%; height: 100%; max-width: none !important; }
+.ngv-wait { height: 100%; display: flex; align-items: center; justify-content: center; gap: var(--sp-2); color: var(--viewer-ink); font-size: var(--fs-sm); cursor: default; }
+.ngv-err { max-height: 100%; border-radius: var(--r-lg); background: var(--surface-0); color: color-mix(in oklab, var(--err) 75%, var(--ink-1)); white-space: pre-wrap; cursor: auto; }
+@media (max-width: 760px) {
+  .viewer-stage.ngv-stage { padding: 0; }
+  .ngv-stage > .ng { border-radius: 0; box-shadow: none; }
+  .ngv-stage .ng-zoom button { width: 40px; height: 40px; }
+  .ngv-stage .ng-zoom-pct { min-width: 48px; }
+}

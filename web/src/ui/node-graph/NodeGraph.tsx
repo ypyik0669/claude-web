@@ -10,15 +10,14 @@ import type { NodeGraphProps } from './types';
 import { dict, own, type NgNode } from './schema';
 import { badgeView, edgeStyles, pickKey, pulses } from './marks';
 import { edgeGeom, labelWidth, layoutNodes, moveBoxes, placeLabels, NG_BODY_PAD, NG_CARD_W, NG_HEAD_H, NG_LIST_HEAD, NG_LIST_ITEM, NG_ROW_H } from './layout';
-import { entranceTimes, fitView, motionOn, NG_PAN_STEP, NG_ZOOM, panToShow, pct, zoomAt, zoomBy, type FitOpts, type View } from './viewport';
+import { entranceTimes, fitView, motionOn, NG_PAN_STEP, NG_ZOOM, PAN_KEYS, panToShow, zoomAt, zoomBy, type FitOpts, type View } from './viewport';
 import { useReducedMotion } from './motion';
+import { ZoomBar } from './ZoomBar';
 // spec 2026-10-24 D1: the shared node graph — HTML cards (dropdowns, ellipsis, Tab focus) over one SVG layer of edges
 // (glow, travelling dots, labels), in one transformed layer. Drag cards, drag the canvas, wheel / − + / fit zoom,
 // double-click empty space to reset. Nothing here is saved (spec :409). Reads no store.
 
 const EMPTY: Readonly<Record<string, string>> = {};
-/** arrow key → which way the view moves (the content follows the arrow's opposite: ← shows what is on the left) */
-const PAN_KEYS = new Map<string, [number, number]>([['ArrowLeft', [1, 0]], ['ArrowRight', [-1, 0]], ['ArrowUp', [0, 1]], ['ArrowDown', [0, -1]]]);
 type Offsets = Record<string, { dx: number; dy: number }>;
 interface Drag { kind: 'card' | 'pan'; id?: string; sx: number; sy: number; bx: number; by: number; moved: boolean; px: number; py: number }
 
@@ -28,7 +27,7 @@ function CardIcon({ n }: { n: NgNode }) {
   return <span className="ng-ic">{[...n.title][0]?.toUpperCase() ?? ''}</span>;
 }
 
-export function NodeGraph({ graph, ariaLabel, height = 360, cardW = NG_CARD_W, align = 'center', compact, entrance, selected, onSelect, canSelect, picks, onPick, className, fit, embedded }: NodeGraphProps) {
+export function NodeGraph({ graph, ariaLabel, height = 360, cardW = NG_CARD_W, align = 'center', compact, entrance, selected, onSelect, canSelect, picks, onPick, className, fit, embedded, onFullscreen }: NodeGraphProps) {
   const placed = useMemo(() => layoutNodes(graph.nodes, graph.edges, { cardW, align }), [graph, cardW, align]);
   const [offsets, setOffsets] = useState<Offsets>(dict);
   const boxes = useMemo(() => moveBoxes(placed.boxes, offsets), [placed, offsets]);
@@ -299,12 +298,7 @@ export function NodeGraph({ graph, ariaLabel, height = 360, cardW = NG_CARD_W, a
           })}
         </div>
       </div>
-      <div className="ng-zoom">
-        <button type="button" className="ng-zoom-out" aria-label={tr('缩小')} title={tr('缩小')} onClick={() => zoomButton(-1)}><Icon name="minus" size={14} /></button>
-        <span className="ng-zoom-pct">{pct(view.scale)}</span>
-        <button type="button" className="ng-zoom-in" aria-label={tr('放大')} title={tr('放大')} onClick={() => zoomButton(1)}><Icon name="plus" size={14} /></button>
-        <button type="button" className="ng-fit" aria-label={tr('适应窗口')} title={tr('适应窗口')} onClick={refit}><Icon name="frame" size={14} /></button>
-      </div>
+      <ZoomBar scale={view.scale} onZoom={zoomButton} onFit={refit} onFullscreen={onFullscreen} />
     </div>
   );
 }
