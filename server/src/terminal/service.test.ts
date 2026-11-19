@@ -100,4 +100,14 @@ describe('windowsPickDir: the native folder dialog on Windows, or why there is n
     expect(script).toContain('$d.ShowDialog($f)');
     expect(script).not.toContain('$d.ShowDialog()');
   });
+
+  it('the path comes back in UTF-8, set before anything is written (a Chinese folder name was ?? on code page 437)', async () => {
+    const r = runner({ code: 0, out: 'C:\\Users\\测试\\项目\r\n' });
+    expect(await windowsPickDir(r.run)).toBe('C:\\Users\\测试\\项目');
+    const script = r.calls[0].args[r.calls[0].args.length - 1];
+    const enc = script.indexOf('[Console]::OutputEncoding = $__u');
+    expect(enc).toBeGreaterThanOrEqual(0);
+    expect(script).toContain('New-Object System.Text.UTF8Encoding $false');
+    expect(enc).toBeLessThan(script.indexOf('Write-Output'));
+  });
 });

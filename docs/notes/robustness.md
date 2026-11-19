@@ -27,6 +27,7 @@
   - **属主 Form 自己会露出来**（同日用户报告：「点打开文件夹时左上角出现白色方块」）：第一版把属主设成 `Size(0,0)`，WinForms 把 0×0 夹回一个**可见的 136×39 框**，落在屏幕左上角（26,26）——那就是用户看到的白块。想让它隐形又保住前台，两条路都不通：`Opacity=0`（分层窗口 alpha 0）和空 `Region` 都会让 Form 丢掉激活权，对话框又开回别的窗口后面（截图实测被 Chrome 盖住）。**只有挪到屏幕外管用**：属主 `rect=-32000,-32000,-31700,-31700`，对话框照常居中在屏幕上（660,286,1048,733，不跟着属主走），前台是它，屏幕上什么多余的东西都没有。`service.test.ts` 断言脚本里是 `ShowDialog($f)` + 屏幕外坐标，不是 `ShowDialog()`。
   - **排查这类「窗口在不在」别信 `Get-Process` 的 `MainWindowHandle`**：.NET 只认「无属主的可见顶层窗口」，WinForms 对话框有属主，所以它恒为 0，看着像窗口没建出来（我第一轮就是这么误判的）。要自己 `EnumWindows` + `IsWindowVisible` + `GetWindow(GW_OWNER)` + `GetClassName`（对话框是 `#32770`）列一遍。窗口站 / 桌面用 `GetProcessWindowStation` + `GetUserObjectInformation(UOI_NAME)` 在子进程里自己报（正常是 `WinSta0\Default`），比猜会话隔离快。
   - **驱动这个对话框做验收**：`SetWindowText` 往编辑框塞路径没用（shell 子类化过它，不产生 EN_CHANGE），`BM_CLICK` 发给 `GetDlgCtrlID()==1` 的按钮能点动确定并返回真实路径；要选指定路径得 `SetFocus` 后逐字符 `WM_CHAR`。别用全局 SendKeys——用户可能正在别的窗口里干活。
+  - **中文文件夹名回来是乱码**（2026-11-19 合 PR #16 时发现，问题比这个 PR 早）：PowerShell 往管道里写字用的是控制台代码页，不是 UTF-8。英文系统（437）上「C:\Users\测试\项目」直接变成「C:\Users\??\??」，中文系统（936）写的是 GBK，Node 按 UTF-8 解出来是一堆替换字符——两种都是打开一个不存在的文件夹。修法和 `bots/precheck.ts` 的 `PS_UTF8` 一样：脚本最前面 `[Console]::OutputEncoding` / `$OutputEncoding` 设成无 BOM 的 UTF-8。`windowsHide:true`（`CREATE_NO_WINDOW`）下这个赋值不会抛（子进程有控制台，只是没窗口），实测 `execFile` 拿回来是原样的中文。以后再加「PowerShell 把路径 / 文字写回给 Node」的地方，都要带这一段。
 
 ## 2026-10-24：回答里的链接 / 主窗口白屏 / 菜单被裁（stage A 的 A1、A2，spec `2026-10-24-desktop-parity-design.md`）
 

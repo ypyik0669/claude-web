@@ -132,8 +132,12 @@ const runPicker: PickerRun = (file, args) => new Promise((res) => execFile(file,
  * 「打开文件夹…」 then looks dead while every click leaves a powershell.exe waiting for a click nobody can make
  * (2026-11-12: eight of them). Off-screen, not hidden: a 0×0 size is clamped back to a visible box in the screen's
  * corner, and Opacity 0 / an empty Region both cost the form the activation that brings the dialog to the front.
+ *
+ * The path is written to stdout in UTF-8, as bots/precheck.ts asks for it. Otherwise PowerShell writes in the console
+ * code page: 437 turns 「C:\Users\测试\项目」 into 「C:\Users\??\??」, 936 sends GBK that Node decodes as garbage — either
+ * way the folder that comes back does not exist (found 2026-11-19 while merging PR #16; the bug is older than the PR).
  */
-const WIN_PICKER_SCRIPT = 'Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.ShowNewFolderButton = $true; $f = New-Object System.Windows.Forms.Form; $f.TopMost = $true; $f.ShowInTaskbar = $false; $f.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None; $f.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual; $f.Location = New-Object System.Drawing.Point(-32000, -32000); $f.Show(); $f.Activate(); $r = $d.ShowDialog($f); $f.Close(); if ($r -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.SelectedPath }';
+const WIN_PICKER_SCRIPT = '$__u = New-Object System.Text.UTF8Encoding $false; [Console]::OutputEncoding = $__u; $OutputEncoding = $__u; Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.ShowNewFolderButton = $true; $f = New-Object System.Windows.Forms.Form; $f.TopMost = $true; $f.ShowInTaskbar = $false; $f.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None; $f.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual; $f.Location = New-Object System.Drawing.Point(-32000, -32000); $f.Show(); $f.Activate(); $r = $d.ShowDialog($f); $f.Close(); if ($r -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.SelectedPath }';
 
 /**
  * Windows: PowerShell's FolderBrowserDialog. Cancelled is exit 0 with nothing printed; PowerShell could not run at all
