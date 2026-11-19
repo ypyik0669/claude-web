@@ -3045,6 +3045,16 @@ function driver() {
             await harvest();
             check('account popover: the quota windows when the limits are known', await exists('.menu.sb-acct-menu [data-id="quota"]'));
             await closeMenus();
+            // a signed-in account whose login expired: 登录已过期 on top, 重新登录 and 退出 Claude 账号 (account.tsx shows
+            // them only then; the temp HOME has no login, so the account is put in for one look and taken back)
+            const authBefore = await js('JSON.stringify(window.__store.getState().auth ?? null)');
+            await js(`window.__store.setState({ auth: { loggedIn: true, email: 'smoke@example.invalid', expired: true, expiredMessage: 'smoke: the login expired' } })`);
+            await click(':is(.rail, .sidebar) [data-id="account"]');
+            const expiredAcc = await ids('.menu.sb-acct-menu [data-id]');
+            await harvest();
+            await closeMenus();
+            await js(`window.__store.setState({ auth: ${authBefore} })`);
+            check('account popover, signed in with an expired login: 登录已过期, 重新登录 and 退出 Claude 账号', has(expiredAcc, ['expired', 'login', 'logout']), JSON.stringify(expiredAcc));
             // a live runner: 结束进程 in the conversation menu
             await js(`window.__store.setState((s) => { const o = s.open[${SID}]; return o ? { open: { ...s.open, [${SID}]: { ...o, state: 'idle' } } } : {}; })`);
             await ctxMenu(`.sidebar .sb-list [data-sid=${SID}]`);
