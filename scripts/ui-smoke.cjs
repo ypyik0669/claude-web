@@ -151,6 +151,17 @@ function seedHome(home) {
     rline({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_r_task', content: 'Shown to the user as a task chip.' }] } }, 13),
     rline({ type: 'assistant', message: { id: 'msg_r4', type: 'message', role: 'assistant', model: 'claude-smoke', content: [{ type: 'text', text: 'smoke: suggested.' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } } }, 14),
   ].map((x) => JSON.stringify(x)).join('\n') + '\n');
+  // 后台 › 跑过的 (2026-11-19): a workflow the second conversation ran, in Claude Code's run-file shape
+  // (<conversation>/workflows/<runId>.json beside the transcript) — two phases, three agents, the last one failed
+  const wfDir = path.join(proj, toolsSid, 'workflows');
+  fs.mkdirSync(wfDir, { recursive: true });
+  const w0 = Date.now() - 540_000;
+  const wa = (index, label, phaseIndex, phaseTitle, start, dur, error) => ({ type: 'workflow_agent', index, label, phaseIndex, phaseTitle, agentId: `asmoke${index}000000000`, model: 'claude-smoke', state: error ? 'error' : 'done', queuedAt: w0 + start * 1000 - 300, startedAt: w0 + start * 1000, durationMs: dur * 1000, tokens: 1200, toolCalls: 3, ...(error ? { error } : {}) });
+  fs.writeFileSync(path.join(wfDir, 'wsmoke0001.json'), JSON.stringify({
+    runId: 'wsmoke0001', timestamp: new Date(w0).toISOString(), taskId: 'bsmoke001', agentCount: 3, durationMs: 150_000, summary: 'smoke: look, then fix', workflowName: 'smoke-run', status: 'completed', startTime: w0,
+    phases: [{ title: '看', detail: '' }, { title: '改', detail: '' }], totalTokens: 3600, totalToolCalls: 9,
+    workflowProgress: [{ type: 'workflow_phase', index: 1, title: '看' }, { type: 'workflow_phase', index: 2, title: '改' }, wa(1, 'scout', 1, '看', 0, 40), wa(2, 'reader', 1, '看', 2, 60), wa(3, 'fixer', 2, '改', 70, 80, 'smoke: gave up')],
+  }));
   // a fourth (spec 2026-10-24 D4): the mp4's node graph (keep the same as web/src/ui/node-graph/sample.ts), a mermaid
   // flowchart the node graph can read, and a broken ```nodegraph block
   const graphSid = '5a0e0e0e-0000-4000-8000-00000000c0f1';
@@ -3265,6 +3276,32 @@ function driver() {
         await js(`(() => { window.__cwBackground.inject({ sessionId: ${bsid}, updatedAt: Date.now(), tasks: [], events: [] }); window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } }); })()`);
         const pillGone = await waitFor(`!document.querySelector('.pane.focused .composer .bg-pill')`, 3000);
         check('nothing running: no pill', pillGone);
+        // ---- 跑过的 (2026-11-19): every conversation's finished work, read from disk (the run the seed put beside the
+        // second conversation) — the empty cafe's 刚跑完的, the list by day, the run opened beside it (its graph, its
+        // replay by the run's own times), 在跑 again
+        phase = 'background-history';
+        await js(`window.__cwBackground.open()`);
+        const recent = await waitFor(`!document.querySelector('.bg-page').hidden && [...document.querySelectorAll('.bg-page .hx-recent .rr')].some((r) => /smoke-run/.test(r.textContent))`, 10000);
+        check('跑过的: the empty cafe lists what just finished (刚跑完的)', recent, await js(`document.querySelector('.bg-page .hx-recent')?.textContent ?? '(no list)'`));
+        await click('.bg-page .bg-views [data-view="history"]');
+        const listed = await waitFor(`!!document.querySelector('.bg-page .hx-body:not([hidden]) .hx-row[data-kind="workflow"].on') && document.querySelectorAll('.bg-page .hx-detail .bg-graph .ng-card').length >= 6`, 10000);
+        const hx = await js(`(() => { const p = document.querySelector('.bg-page'); const row = p.querySelector('.hx-row[data-kind="workflow"]'); return { live: p.querySelector('.over-body.bg-body')?.hidden, day: p.querySelector('.hx-day')?.textContent, title: row?.querySelector('b')?.textContent, chip: row?.querySelector('.hx-st')?.textContent, head: p.querySelector('.hx-detail .hx-dh b')?.textContent, stats: p.querySelector('.hx-detail .hx-stats')?.textContent ?? '', cards: p.querySelectorAll('.hx-detail .bg-graph .ng-card').length, failed: p.querySelectorAll('.hx-detail .bg-graph .ng-card[data-state="failed"]').length }; })()`);
+        check('跑过的: the list by day (今天), the run with its title and 1 个失败, opened beside it (how long, its agents, the failed one in its graph)', listed && hx.live === true && hx.day === '今天' && hx.title === 'smoke-run' && hx.chip === '1 个失败' && hx.head === 'smoke-run' && /2:30/.test(hx.stats) && /3 个子代理/.test(hx.stats) && hx.failed >= 1, JSON.stringify(hx));
+        await click('.bg-page .hx-detail .hx-play');
+        await js(`window.__cwBackground.replay.pause()`);
+        const moment = async (ms) => { await js(`window.__cwBackground.replay.seek(${ms})`); await sleep(400); return js(`(() => { const n = (s) => document.querySelectorAll('.bg-page .hx-detail .bg-graph .ng-card[data-state="' + s + '"]').length; return { time: document.querySelector('.bg-page .hx-detail .hx-time')?.textContent, queued: n('queued'), running: n('running'), done: n('done'), failed: n('failed') }; })()`); };
+        const r0 = await moment(0), r1 = await moment(30_000), r2 = await moment(150_300);
+        check('跑过的: the replay goes by the run\'s own times (everyone queued, two at work, then how it ended)', r0.queued >= 3 && r0.failed === 0 && r1.running >= 2 && r2.failed >= 1 && r2.running === 0 && r0.time !== r2.time, JSON.stringify({ r0, r1, r2 }));
+        await shot('background-history');
+        const hxErr = await noBoundary('.bg-page');
+        check('跑过的 without error boundary', !hxErr, hxErr);
+        await js(`window.__cwBackground.replay.play()`);
+        await click('.bg-page .bg-views [data-view="live"]');
+        const back = await waitFor(`!document.querySelector('.bg-page .over-body.bg-body').hidden && document.querySelector('.bg-page .hx-body').hidden && !window.__cwBackground.replay.state().playing`, 3000);
+        check('在跑 again: the live board back, 跑过的 kept but hidden, its replay paused', back);
+        await js(`document.querySelector('.bg-page').focus()`);
+        await key('Escape');
+        check('Esc closes 后台', await waitFor(`document.querySelector('.bg-page').hidden === true`, 3000));
       }
 
       // ---- stage A of 2026-10-24 (spec desktop-parity), A2: a sidebar row's ··· menu in a short window — its first and

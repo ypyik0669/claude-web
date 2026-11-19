@@ -149,6 +149,14 @@ describe('outbound / inbound', () => {
     expect(r).toHaveLength(1);
     expect(r[0].session.sessionId).toBe('peer_b1~s1');
   });
+  it('跑过的: a remote conversation\'s rows go to its machine and come back as its (the cursor untouched)', () => {
+    expect(planRoute({ kind: 'background.historyAll', sessionId: 'peer_b1~s1', limit: 10 })).toEqual({ kind: 'forward', peerId: 'b1' });
+    // every conversation's: this machine's own (other machines are merged later, per machine)
+    expect(planRoute({ kind: 'background.historyAll' })).toEqual({ kind: 'none' });
+    expect(outbound({ kind: 'background.historyAll', sessionId: 'peer_b1~s1', before: '5:s1|agent|a1' })).toEqual({ kind: 'background.historyAll', sessionId: 's1', before: '5:s1|agent|a1' });
+    const page = inbound('background.historyAll', { items: [{ id: 's1|agent|a1', sessionId: 's1', kind: 'agent', title: 't', status: 'completed', startedAt: 5 }], next: '5:s1|agent|a1' }, P);
+    expect(page).toEqual({ items: [{ id: 'peer_b1~s1|agent|a1', sessionId: 'peer_b1~s1', kind: 'agent', title: 't', status: 'completed', startedAt: 5 }], next: '5:s1|agent|a1' });
+  });
 });
 
 describe('rewriteEvent', () => {

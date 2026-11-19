@@ -5,7 +5,8 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import { applyBg, createBgState, endRunning, snapshotBg, type BgState } from './registry.js';
 import { listRuns, readAgentTranscript, readRun, sessionDirOf } from './disk.js';
-import type { BackgroundRequest, BgRunSummary, BgSession, BgTask } from './types.js';
+import { BgHistory } from './history.js';
+import type { BackgroundRequest, BgHistoryPage, BgHistoryQuery, BgRunSummary, BgSession, BgTask } from './types.js';
 import { tr } from '../i18n/index.js';
 
 /** A conversation whose background has all ended is kept this long (the page's 「结束了」). */
@@ -68,12 +69,16 @@ export class BackgroundService extends EventEmitter {
   private sweep?: NodeJS.Timeout;
 
   private pruner?: NodeJS.Timeout;
+  /** 跑过的: read from disk when asked, never pushed (history.ts) */
+  private readonly hist: BgHistory;
 
-  constructor(o: { pool: BgPool; now?: () => number; flushMs?: number; transcriptOf?: (sessionId: string) => string | null; sweepMs?: number; pruneMs?: number }) {
+  constructor(o: { pool: BgPool; now?: () => number; flushMs?: number; transcriptOf?: (sessionId: string) => string | null; sweepMs?: number; pruneMs?: number; historyRoots?: () => { dir: string }[] }) {
     super();
     this.now = o.now ?? Date.now;
     this.flushMs = o.flushMs ?? 1000;
     this.transcriptOf = o.transcriptOf;
+    // what still runs is 在跑, not 跑过的
+    this.hist = new BgHistory({ ...(o.historyRoots ? { roots: o.historyRoots } : {}), isRunning: (sid, taskId) => !!this.states.get(sid)?.tasks.some((t) => t.id === taskId && t.status === 'running') });
     if (o.transcriptOf) {
       this.sweep = setInterval(() => { for (const id of this.states.keys()) this.reconcile(id); }, o.sweepMs ?? 5000);
       this.sweep.unref?.();
@@ -219,6 +224,11 @@ export class BackgroundService extends EventEmitter {
     return dir ? readAgentTranscript(dir, agentId) : [];
   }
 
+  /** 跑过的: every conversation's finished workflows, sub-agents and background commands, newest first, a page at a time. */
+  historyAll(q: BgHistoryQuery): Promise<BgHistoryPage> {
+    return this.hist.page(q);
+  }
+
   dispose(): void {
     if (this.sweep) clearInterval(this.sweep);
     if (this.pruner) clearInterval(this.pruner);
@@ -227,7 +237,7 @@ export class BackgroundService extends EventEmitter {
   }
 }
 
-const KINDS = new Set<string>(['background.list', 'background.history', 'background.run', 'background.transcript']);
+const KINDS = new Set<string>(['background.list', 'background.history', 'background.run', 'background.transcript', 'background.historyAll']);
 
 export function isBackgroundRequest(req: { kind: string }): req is BackgroundRequest {
   return KINDS.has(req.kind);
@@ -239,5 +249,9 @@ export async function handleBackground(s: BackgroundService, req: BackgroundRequ
     case 'background.history': return s.history(req.sessionId);
     case 'background.run': return s.run(req.sessionId, req.runId);
     case 'background.transcript': return s.transcript(req.sessionId, req.agentId);
+    case 'background.historyAll': {
+      const { kind: _kind, ...q } = req;
+      return s.historyAll(q);
+    }
   }
 }

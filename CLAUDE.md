@@ -96,7 +96,7 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 | [search-computer](docs/notes/search-computer.md) | 搜索在内置浏览器里 / 网页上的鼠标键盘 / 操控电脑（2026-10-10，用户要求） | 浏览器里搜索、browser_computer、操控电脑（computer MCP）、控制台 / 网络 / 页面结构 / 等待 / 标签 / 视口工具（共用调试器） |
 | [ego-lite](docs/notes/ego-lite.md) | ego lite 作为 Agent 的第一浏览器（2026-10-26，用户要求） | ego-browser 命令、round-NN.mjs + import()、CW_WEB_BROWSER、alwaysLoad 与 ccb 的 ExecuteExtraTool、退回内置浏览器、假 ego-browser 测试 |
 | [plugins-sync-share](docs/notes/plugins-sync-share.md) | 插件 / 同步 / 远程共享（2026-10-26，spec 统一模型来源 §4.3、§8） | 来源定义 JSON、可执行插件的子进程隔离与权限批准、pluginSources / runHook 接入点、签名远程目录、同步文件（scrypt + AES-GCM、逐项合并、凭据冲突两份都留）、共享密钥（share 密钥组、只收窄的规则、日 / 周 / 月额度、LAN 监听） |
-| [background](docs/notes/background.md) | 后台：在跑的子代理和工作流（2026-10-12） | 后台：子代理 / 工作流的数据来源、服务端、前端、调试 |
+| [background](docs/notes/background.md) | 后台：在跑的子代理和工作流（2026-10-12） | 后台：子代理 / 工作流的数据来源、服务端、前端、调试；跑过的（跨对话历史索引、回放） |
 | [cafe](docs/notes/cafe.md) | 后台 · 网吧（3D 网吧，2026-11-05） | 区 = 对话、网管 / 客人 / 包间、座位稳定、three.js 大厅 / 走路路线 / 屏幕 / 相机 / 叠层、白天夜里、按需渲染、WebGL 退列表、角色库、旧网吧引擎留给官网、ui-smoke、NaN 灯全黑 |
 | [ascii-themes](docs/notes/ascii-themes.md) | 字符画主题与过程动画（2026-10-22，用户要求） | 主题包、data-ascii、16 个过程 / 帧表、ProcessGlyph、Worker 背景的沙箱和看门狗、安静区、十套内置、theme-check 脚本、ascii-theme skill 与试跑、设置页画廊、截图办法 |
 | [site](docs/notes/site.md) | 官网（2026-10-22） | site/ 的 Astro 站、文案与覆盖测试、语言跳转、按系统的下载按钮、版本数据、首次加载预算、Pages 发布 |

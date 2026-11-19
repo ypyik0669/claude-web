@@ -4,6 +4,9 @@
 //     agents, they go from queued / running to done, and the turn's events have a feed line per agent;
 //   · background.transcript reads a workflow agent's own conversation;
 //   · background.list has the conversation; background.history lists the finished run, background.run reads it back;
+//   · 跑过的 (2026-11-19): background.historyAll lists that run across conversations (and one conversation's, one
+//     kind), then a sub-agent the turn sends (Agent tool) and a run_in_background command — read back from the
+//     transcript each engine wrote;
 //   · a workflow whose agent is slow keeps running when the turn is stopped (session.interrupt: the turn's Stop
 //     spares background work — perTaskStopAffordance), and session.stopTask stops it;
 //   · when the conversation's process ends, what was still running is marked stopped (进程结束了).
@@ -108,6 +111,9 @@ function anthropic(q, s, j, h) {
     return sse(s, j, [{ type: 'text', text: `main: after ${tr.tool_use_id}` }], 'end_turn');
   }
   const lastUser = turnText(j);
+  // 跑过的: a sub-agent (the tool is Agent, Task on an older CLI) and a background command
+  if (/RUN-AGENT/.test(lastUser)) return sse(s, j, [{ type: 'tool_use', id: 'toolu_agent_1', name: h.tools.includes('Agent') ? 'Agent' : 'Task', input: { description: 'e2e helper', prompt: 'BGAGENT helper: answer ok', subagent_type: 'general-purpose' } }], 'tool_use');
+  if (/RUN-BG/.test(lastUser)) return sse(s, j, [{ type: 'tool_use', id: 'toolu_bg_1', name: 'Bash', input: { command: 'node -e "setTimeout(()=>{},1500)"', description: 'e2e bg sleep', run_in_background: true } }], 'tool_use');
   if (/RUN-QUICK/.test(lastUser)) return sse(s, j, [{ type: 'tool_use', id: 'toolu_wf_quick', name: 'Workflow', input: { script: QUICK } }], 'tool_use');
   if (/RUN-SLOW/.test(lastUser)) return sse(s, j, [{ type: 'tool_use', id: 'toolu_wf_slow', name: 'Workflow', input: { script: SLOW } }], 'tool_use');
   return sse(s, j, [{ type: 'text', text: 'main:ok' }], 'end_turn');
@@ -208,7 +214,27 @@ async function suite(runtime) {
   check('background.history lists the finished run', runs?.some((r) => r.name === 'e2e-flow'), JSON.stringify(runs));
   const run = runs?.[0] ? await req({ kind: 'background.run', sessionId: sid, runId: runs[0].runId }) : null;
   check('… and background.run reads it back with its agents', run?.agents?.length === 3, JSON.stringify(run?.agents?.map((a) => [a.label, a.state])));
-  await until(() => events.some((e) => e.kind === 'session.state' && e.sessionId === sid && e.state === 'idle') && !events.slice(-3).some((e) => e.kind === 'session.state' && e.sessionId === sid && e.state === 'running'), 30_000);
+  // ---- 跑过的: every conversation's finished work, from disk ----
+  const all = await until(async () => { const r = await req({ kind: 'background.historyAll', limit: 20 }); return r?.items?.some((i) => i.kind === 'workflow' && i.sessionId === sid && i.title === 'e2e-flow') ? r : null; }, 15_000);
+  const row = all?.items.find((i) => i.kind === 'workflow' && i.sessionId === sid && i.title === 'e2e-flow');
+  check('background.historyAll lists the finished workflow (its run, its three agents, none failed, how long)', row?.status === 'completed' && row.agentCount === 3 && row.failed === 0 && row.runId === runs?.[0]?.runId && row.endedAt >= row.startedAt && !!row.cwd, JSON.stringify(row));
+  const mine = await req({ kind: 'background.historyAll', sessionId: sid, only: 'workflow' });
+  check('… one conversation\'s, one kind', mine?.items?.length >= 1 && mine.items.every((i) => i.sessionId === sid && i.kind === 'workflow'), JSON.stringify(mine?.items?.map((i) => [i.kind, i.title])));
+  const idle = () => until(() => events.some((e) => e.kind === 'session.state' && e.sessionId === sid && e.state === 'idle') && !events.slice(-3).some((e) => e.kind === 'session.state' && e.sessionId === sid && e.state === 'running'), 30_000);
+  await idle();
+  from = events.length;
+  await req({ kind: 'session.send', params: { sessionId: sid, text: 'RUN-AGENT 派一个子代理' } });
+  await resultOf(sid, from, 90_000);
+  const helper = await until(async () => { const r = await req({ kind: 'background.historyAll', sessionId: sid, only: 'agent' }); return r?.items?.find((i) => i.title === 'e2e helper'); }, 30_000);
+  check('跑过的: a sub-agent the turn sent, from the transcript (its own id, how it ended)', helper?.status === 'completed' && !!helper.agentId && helper.endedAt >= helper.startedAt, JSON.stringify(helper));
+  const helperTx = helper?.agentId ? await req({ kind: 'background.transcript', sessionId: sid, agentId: helper.agentId }) : [];
+  check('… and its own conversation reads back', Array.isArray(helperTx) && helperTx.some((m) => m.type === 'assistant'), `agentId=${helper?.agentId} messages=${helperTx?.length ?? 0}`);
+  await idle();
+  from = events.length;
+  await req({ kind: 'session.send', params: { sessionId: sid, text: 'RUN-BG 后台跑一个命令' } });
+  const bg = await until(async () => { const r = await req({ kind: 'background.historyAll', sessionId: sid, only: 'shell' }); return r?.items?.find((i) => i.title === 'e2e bg sleep' && i.status === 'completed'); }, 60_000);
+  check('跑过的: a background command, ended by its notification', !!bg && bg.command?.includes('setTimeout') && bg.endedAt > bg.startedAt, JSON.stringify(bg ?? (await req({ kind: 'background.historyAll', sessionId: sid })).items));
+  await idle();
 
   // ---- a slow workflow: the turn's Stop spares it, stopTask stops it ----
   from = events.length;

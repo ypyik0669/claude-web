@@ -15,6 +15,7 @@ import './styles/phone-menus.css';
 import './styles/rail.css';
 import './styles/background.css';
 import './styles/background-page.css';
+import './styles/background-history.css';
 import './styles/cafe.css';
 import './styles/office.css';
 import './styles/corners.css';
