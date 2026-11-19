@@ -160,6 +160,19 @@ export function isStallResult(m: { is_error?: boolean; api_error?: unknown; resu
 /** the pause before the automatic retry after a stall (the CLI writes its own lines after a result) */
 export const STALL_RETRY_DELAY_MS = 1_500;
 
+/**
+ * The main model's context window as the engine counts it, from a result's `modelUsage` (both engines put
+ * `contextWindow` on each row): its row under the init `model` (a `[1m]` suffix and case aside), else the only row.
+ */
+export function reportedWindow(modelUsage: unknown, mainModel: string): number | undefined {
+  if (!modelUsage || typeof modelUsage !== 'object') return undefined;
+  const rows = Object.entries(modelUsage as Record<string, { contextWindow?: unknown } | null>);
+  const norm = (s: string) => s.replace(/\[1m\]$/i, '').toLowerCase();
+  const row = (mainModel ? rows.find(([k]) => norm(k) === norm(mainModel)) : undefined) ?? (rows.length === 1 ? rows[0] : undefined);
+  const w = row?.[1]?.contextWindow;
+  return typeof w === 'number' && Number.isFinite(w) && w > 0 ? Math.round(w) : undefined;
+}
+
 let promptSuggestionsOn = true;
 /** Settings → 下一句提示 (`ui.promptSuggestions`); a query started from now on asks for them or not. */
 export function setPromptSuggestions(on: boolean) { promptSuggestionsOn = on; }
@@ -297,6 +310,16 @@ export class SessionRunner extends EventEmitter {
   private stallRetryTimer: NodeJS.Timeout | null = null;
   /** the send under way is that retry: it does not count as a new prompt */
   private sendingRetry = false;
+  /**
+   * The window the engine itself reported for the main model (reportedWindow), under OUR model name at the time — a
+   * switch goes back to the guess until the next result; a provider / account change drops it. Over windowOf's guess:
+   * 2026-11-18 (community report) the own login through the user's relay (magpie, its settings.json): the guess said
+   * 200K for "opus", the engine ran a larger window compacting at 500K — the ring said 100% / 上下文快满了 at 333K
+   * while the context card's body (the engine's count) said 276K / 500K.
+   */
+  private engineWindow: { model: string; window: number } | null = null;
+  /** the main model's name as the engine says it (init `model`): the key of its row in `modelUsage` */
+  private engineMain = '';
   /** the model subagents run on ('' = the main model): `CLAUDE_CODE_SUBAGENT_MODEL`, read once at start */
   private subagent = '';
   /** the model this process's subagents really run on (forced by the variable; real name, not the alias), '' = none */
@@ -917,6 +940,7 @@ export class SessionRunner extends EventEmitter {
       // it and never ended the turn; Stop took the no-turn path)
       const busy = this.busy();
       this.sessionId = m.session_id;
+      if (typeof m.model === 'string') this.engineMain = m.model;
       this.info = {
         ...this.info,
         sessionId: m.session_id,
@@ -955,6 +979,12 @@ export class SessionRunner extends EventEmitter {
       this.emit('info', this.info);
     }
     if (m.type === 'result') {
+      // the window the engine really runs the main model with (engineWindow): the ring and the context card use it
+      const rw = reportedWindow((m as any).modelUsage, this.engineMain);
+      if (rw && this.model && (this.engineWindow?.model !== this.model || this.engineWindow.window !== rw)) {
+        this.engineWindow = { model: this.model, window: rw };
+        this.noteWindow();
+      }
       // subagents through the split route are counted by the engine under the alias it asked with: under the real model
       const mu = (m as any).modelUsage;
       if (mu && typeof mu === 'object' && Object.keys(mu).some((k) => unalias(k) !== k)) {
@@ -1394,6 +1424,8 @@ export class SessionRunner extends EventEmitter {
    * picks to read it under (setAccountPrefs asks with the new ones before they take effect).
    */
   private windowOf(model: string | undefined, prefs = this.accountPrefs): number | undefined {
+    // the engine's own word for the current setup (not for prefs about to take effect: setAccountPrefs asks with those)
+    if (model && prefs === this.accountPrefs && this.engineWindow?.model === model) return this.engineWindow.window;
     if (this.provider) {
       const id = providerModelId(this.provider, model);
       return id ? contextWindowFor(this.provider, id) ?? ENGINE_DEFAULT_WINDOW : undefined;
@@ -1620,6 +1652,7 @@ export class SessionRunner extends EventEmitter {
       this.account = p;
     }
     else this.provider = p;
+    this.engineWindow = null; // another provider / account setting: the old process's report says nothing of it
     this.noteWindow();
     // another kind of profile (OpenAI ↔ Anthropic format…): the running process talks to an endpoint that no longer
     // answers for it — nothing in it, background work included, can finish, so the restart does not wait for that
@@ -1665,6 +1698,7 @@ export class SessionRunner extends EventEmitter {
     const kind = this.info.runtime;
     const before = { main: this.engineModel(kind, this.model), sub: this.subEngineModel(kind) };
     this.accountPrefs = next;
+    this.engineWindow = null;
     this.noteWindow();
     if (this.plan().key !== this.planKey || this.subEngineModel(kind) !== before.sub) { await this.respawnWhenIdle(); return; }
     const main = this.engineModel(kind, this.model);

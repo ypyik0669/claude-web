@@ -1527,6 +1527,35 @@ describe('SessionRunner: the account’s 200K / 1M picks and the 自动压缩 po
     });
   });
 
+  it("the engine's own window for the main model (the result's modelUsage) is the window: the ring and the card agree with it", async () => {
+    const { reportedWindow } = await import('./session-runner.js');
+    expect(reportedWindow({ 'claude-fable-5-2': { contextWindow: 1_000_000 } }, 'claude-fable-5-2')).toBe(1_000_000);
+    expect(reportedWindow({ 'Claude-Fable-5-2[1m]': { contextWindow: 1_000_000 }, 'claude-haiku-4-5': { contextWindow: 200_000 } }, 'claude-fable-5-2')).toBe(1_000_000);
+    expect(reportedWindow({ 'oneapi/Opus 5.5': { contextWindow: 512_000 } }, '')).toBe(512_000); // the only row
+    expect(reportedWindow({ a: { contextWindow: 1 }, b: { contextWindow: 2 } }, 'c')).toBeUndefined(); // which one: not known
+    expect(reportedWindow({ a: { contextWindow: 0 } }, 'a')).toBeUndefined();
+    expect(reportedWindow(undefined, 'a')).toBeUndefined();
+    await withHome(null, async (dir) => {
+      queries.length = 0;
+      // 2026-11-18: the own login through the user's relay (magpie in settings.json): "opus" guessed at 200K, the
+      // engine ran 512K — the ring said 100% at 333K
+      const r = new SessionRunner({ sessionId: 'ew-1', cwd: dir, model: 'opus' } as any, undefined, { account: { windows: { opus: 200_000 } } });
+      await tick();
+      expect(r.info.contextWindow).toBe(200_000);
+      const infos: number[] = [];
+      r.on('info', (i: any) => infos.push(i.contextWindow));
+      queries[0].push({ type: 'system', subtype: 'init', session_id: 'ew-1', model: 'oneapi/Opus 5.5', tools: [], mcp_servers: [], permissionMode: 'default' });
+      queries[0].push({ type: 'result', subtype: 'success', session_id: 'ew-1', uuid: 'r1', is_error: false, result: 'ok', total_cost_usd: 0, usage: {}, modelUsage: { 'oneapi/Opus 5.5': { inputTokens: 9, outputTokens: 1, contextWindow: 512_000 }, 'claude-haiku-4-5': { inputTokens: 1, outputTokens: 1, contextWindow: 200_000 } } });
+      await tick();
+      expect(r.info.contextWindow).toBe(512_000);
+      expect(infos).toContain(512_000);
+      // another account setting: the old process's word goes, back to the guess until the engine says again
+      await r.setAccountPrefs({ windows: { opus: 1_000_000 } } as any);
+      expect(r.info.contextWindow).toBe(1_000_000);
+      await r.close();
+    });
+  });
+
   it('a claude-account profile reads its own family picks: Sonnet at 200K has no [1m]; Opus (not picked) does', async () => {
     await withHome(null, async (dir) => {
       const p = acct({ contextWindows: { sonnet: 200_000 } });

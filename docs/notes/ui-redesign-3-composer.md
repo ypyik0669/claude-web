@@ -65,3 +65,10 @@ chip 和服务端真正会用的模式可能对不上（别的窗口改了、记
 - **谁能加**：`composer/extra-dirs.ts` 的 `dirsOff()`——远端对话、WSL（发行版自己的 Claude、Linux 路径）、只聊天、ACP agent（Gemini / Qwen / OpenCode… 没有对应参数；提示「在消息里写出它的完整路径」）禁用，原因写在菜单行名字下面（禁用的按钮在手机上没有 tooltip）。Claude 和 Codex（`protocol === 'codex'`，含自定义的）能加。
 - **显示 / 移除**：信息栏「环境」卡在主文件夹下面列项目的额外文件夹（「· 项目」，没有 ×，去项目设置里改）和对话自己加的（「· 这个对话」，× 移除，`extra-dirs-actions.ts` 的 `removeOwnDir`）；两边都有的算项目的。手机和关掉信息栏时没有这张卡，就在输入框里显示成可删的小标签。一轮中加 / 删，toast 说「这一轮结束后生效」。
 - 测试：`meta/workspace-folders.test.ts`（`ownDirs` / `workDirs` / `extraDirsChange`）、`runtime/pool.test.ts`「a conversation’s own folders」（新对话记录、resume 读记录、fork、Claude 拿到新列表、Codex 关掉重开、ACP 不给）、`session-runner.test.ts`「添加文件夹」（同样的列表不重启、一轮中等结果、resume、删光去掉选项）、`rewrite.test.ts`、`composer/extra-dirs.test.ts`、`capabilities.test.ts`。没有 e2e：真机验证见当天的汇报（问 Claude「你的工作目录有哪些」）。
+
+## 2026-11-18 小环的窗口以 Claude Code 报的为准（社区用户 StickerWu 报告）
+
+- **现象**：对话走用户自己 settings.json 里的中转（magpie 改了 `~/.claude/settings.json`：长对话 500K 时压缩、窗口 512K），模型选的是 `opus`。小环 `100%`、红字「上下文快满了 /compact 压缩」，「本对话用量」写 `333K / 200K`；信息栏上下文卡片标题「窗口 200K」，正文（引擎自己的 /context）却是 `276k / 500k`。
+- **根因**：`info.contextWindow` 是 `SessionRunner.windowOf()` 猜的——自己的登录按账号的 200K / 1M 选择算，`opus` 没选就是 200K；可这条路是用户自己的中转，引擎按 settings.json 跑的窗口比这大得多。小环、「快满了」、卡片标题都除以这个猜的数。
+- **修法**：两个内核每轮的 result 里 `modelUsage[<模型>].contextWindow` 就是引擎真用的窗口（官方二进制实测 1000000 / ccb 200000，键和 init 的 `model` 一样，`[1m]` 后缀可能被去掉）。`reportedWindow()` 取主模型那一行（按 init `model` 对，找不到且只有一行就用那行），记成 `engineWindow`（挂在**我们的**模型名下），`windowOf()` 先用它；换模型回到猜测直到下一轮，换供应商 / 改账号窗口时清掉（旧进程的话不算数）。自动压缩点照旧封顶：卡片标题变成「窗口 512K · 500K 内压缩」，和正文一致。
+- **没做**：没在跑的对话（重启后打开、侧栏点开）还是用猜的窗口估，发一句、跑完一轮才换成引擎的数；没把引擎的数存进 meta。
