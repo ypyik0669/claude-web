@@ -3035,6 +3035,20 @@ function driver() {
             await harvest();
             check('account popover: the quota windows when the limits are known', await exists('.menu.sb-acct-menu [data-id="quota"]'));
             await closeMenus();
+            // …and the two login states the temp HOME never has: signed in (退出 Claude 账号) and a login that expired (the
+            // notice). Faked for one look and put back at once — held by a subscription meanwhile, since a login check
+            // answering (`auth.changed`, a reconnect) would replace it; no email / plan, so nothing is remembered for an
+            // account (features/models/account-default.ts keys its memory on them)
+            const realAuth = await js('JSON.stringify(window.__store.getState().auth ?? null)');
+            await js(`(() => { const st = window.__store; const fake = { loggedIn: true, expired: true, expiredMessage: 'smoke: 401 authentication_error', expiredAt: Date.now() }; window.__cwSmokeAuthOff = st.subscribe((s) => { if (s.auth !== fake) st.setState({ auth: fake }); }); st.setState({ auth: fake }); })()`);
+            await sleep(200);
+            await click(':is(.rail, .sidebar) [data-id="account"]');
+            await waitFor('!!document.querySelector(".menu.sb-acct-menu")', 2000);
+            await harvest();
+            const acctStates = await js(`({ expired: !!document.querySelector('.menu.sb-acct-menu [data-id="expired"]'), logout: !!document.querySelector('.menu.sb-acct-menu [data-id="logout"]'), relogin: /重新登录/.test(document.querySelector('.menu.sb-acct-menu [data-id="login"]')?.textContent ?? '') })`);
+            await closeMenus();
+            await js(`(() => { if (window.__cwSmokeAuthOff) window.__cwSmokeAuthOff(); window.__cwSmokeAuthOff = null; window.__store.setState({ auth: JSON.parse(${JSON.stringify(realAuth)}) }); })()`);
+            check('account popover: a signed-in account offers 重新登录 and 退出; an expired login says so at the top', acctStates.expired && acctStates.logout && acctStates.relogin, JSON.stringify(acctStates));
             // a live runner: 结束进程 in the conversation menu
             await js(`window.__store.setState((s) => { const o = s.open[${SID}]; return o ? { open: { ...s.open, [${SID}]: { ...o, state: 'idle' } } } : {}; })`);
             await ctxMenu(`.sidebar .sb-list [data-sid=${SID}]`);
