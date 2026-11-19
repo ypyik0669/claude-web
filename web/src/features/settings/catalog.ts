@@ -23,6 +23,7 @@ export type EntryId =
   | 'ui.notifications' | 'ui.closeToTray' | 'ui.confirmExit' | 'ui.softwareRender' | 'orchestra.maxParallel'
   | 'ai.thinkingLanguage'
   | 'ui.language' | 'ui.theme' | 'ui.zoom' | 'ui.fontSize' | 'ui.density' | 'ui.cjkFont' | 'ui.reduceMotion' | 'ui.haptics'
+  | 'ui.opening.pack' | 'ui.opening.when' | 'ui.opening.length' | 'ui.opening.sound' | 'ui.opening.keep'
   | 'bots.concurrency' | 'bots.globalBudgetUsd' | 'bots.defaultProvider' | 'bots.defaultTier' | 'bots.duty.service' | 'bots.loginItem' | 'bots.unleashAll';
 
 /** One part of a page: a component with its own requests (a list, a form, a status block). */
@@ -30,7 +31,7 @@ export type BodyId =
   | 'account' | 'engine' | 'models' | 'providers' | 'proxy' | 'gateway'
   | 'mcp' | 'mcpCatalog' | 'mcpJson' | 'plugins' | 'skills' | 'skillsBackup' | 'agents' | 'subagents' | 'memory'
   | 'remote' | 'anywhere' | 'peers' | 'hosts' | 'im' | 'web' | 'library' | 'secrets'
-  | 'hooks' | 'localEnv' | 'env' | 'tools' | 'diagnostics' | 'update' | 'raw' | 'customCss';
+  | 'hooks' | 'localEnv' | 'env' | 'tools' | 'diagnostics' | 'update' | 'raw' | 'customCss' | 'openings';
 
 export interface EntryMeta {
   id: EntryId;
@@ -45,6 +46,8 @@ export interface EntryMeta {
   more?: boolean;
   /** small badge after the label (进阶) */
   tag?: string;
+  /** the control goes under the label, the full width of the card (开场动画's cards) */
+  wide?: boolean;
 }
 export interface TabMeta { id: string; l: string; bodies: BodyId[]; more?: BodyId[]; keywords?: string }
 export interface SectionMeta {
@@ -98,6 +101,7 @@ export const BODY_INFO: Record<BodyId, { l: string; keywords: string }> = {
   update: { l: tr('应用更新'), keywords: tr('update version release 更新 版本 检查更新') },
   raw: { l: tr('settings.json 原文'), keywords: tr('settings json raw 原文 user project local 编辑') },
   customCss: { l: tr('自定义样式'), keywords: tr('custom css 自定义样式 样式表 皮肤 美化 stylesheet userstyle 进度条') },
+  openings: { l: tr('动画包'), keywords: tr('opening pack import folder video 开场 动画包 导入 文件夹 视频 opening.json 许可') },
 };
 
 const GENERAL: EntryMeta[] = [
@@ -144,6 +148,12 @@ const APPEARANCE: EntryMeta[] = [
   { id: 'ui.cjkFont', more: true, label: tr('中文字体'), hint: tr('优先用于中日韩文字的字体。'), keywords: tr('cjk font 中文 字体 雅黑 苹方') },
   { id: 'ui.reduceMotion', block: tr('显示'), label: tr('减少动画'), hint: tr('关掉界面里的过渡与动画。'), keywords: tr('motion animation 动画 过渡') },
   { id: 'ui.haptics', block: tr('显示'), label: tr('触感反馈'), hint: tr('在支持的手机上，发送、批准、长按出菜单时轻震一下。打开「减少动画」时不震。'), keywords: tr('haptic vibrate 震动 振动 触感 手机') },
+  // 开场和背景 (界面改版方案 第 7 版 #opening): the desktop shell reads these from meta.json before the server is up
+  { id: 'ui.opening.pack', block: tr('开场和背景'), wide: true, label: tr('开场动画'), hint: tr('桌面版打开时放。Claude Web 娘是一段 10 秒的开场片，点火不用视频；也能放自己的视频。'), keywords: tr('opening intro splash animation video 开场 开场动画 启动 动画 视频 Claude Web 娘 看板娘 点火') },
+  { id: 'ui.opening.when', block: tr('开场和背景'), label: tr('什么时候放'), hint: tr('其它时候是 1.6 秒的老开场；不放就只显示标志。网页版打开时不放。'), keywords: tr('opening when daily every 开场 每天 每次 第一次 不放') },
+  { id: 'ui.opening.length', block: tr('开场和背景'), label: tr('长度'), hint: tr('Claude Web 娘完整约 13 秒、简短约 6 秒；点火完整约 4 秒、简短约 2 秒。'), keywords: tr('opening length short full 开场 长度 简短 完整 时长') },
+  { id: 'ui.opening.sound', block: tr('开场和背景'), label: tr('声音'), hint: tr('默认关。开场左下角的小喇叭也能开，下次还记得。'), keywords: tr('opening sound audio mute 开场 声音 音乐 静音 喇叭') },
+  { id: 'ui.opening.keep', block: tr('开场和背景'), label: tr('放完留作背景'), hint: tr('她站着的那段循环垫在应用后面，只从首页和空白处透出来；浅色主题换成火星。窗口最小化或切到别的程序时停下。'), keywords: tr('opening background backdrop loop opacity 开场 背景 循环 浓淡 透明度 火星 留作背景') },
 ];
 
 // 值班 Bot (spec 2026-10-30-duty-bots-design 「设置 → Bot」): a block on 通用 (the 15-page cap holds), next to
@@ -162,7 +172,7 @@ const BOTS: EntryMeta[] = [
 export const SETTINGS_SECTIONS: SectionMeta[] = [
   // 常用
   { id: 'general', l: tr('通用'), ic: 'settings', group: 'common', desc: tr('新对话的默认行为、提醒方式，以及界面要显示多少工具。'), keywords: tr('界面 会话 interface session'), entries: [...GENERAL, ...BOTS] },
-  { id: 'appearance', l: tr('外观'), ic: 'sun', group: 'common', desc: tr('主题、字号和界面密度。'), keywords: tr('appearance theme 主题'), entries: APPEARANCE, bodies: ['customCss'] },
+  { id: 'appearance', l: tr('外观'), ic: 'sun', group: 'common', desc: tr('主题、字号、界面密度，还有开场动画和背景。'), keywords: tr('appearance theme 主题 开场'), entries: APPEARANCE, bodies: ['openings', 'customCss'] },
   { id: 'account', l: tr('账号与登录'), ic: 'user', group: 'common', desc: tr('Claude 账号的登录状态。用第三方接口或中转站请去「供应商」。'), keywords: tr('引擎与账号 engine account login 登录 账号'), bodies: ['account'], more: ['engine'] },
   // 模型
   { id: 'models', l: tr('模型与智能程度'), ic: 'artifact', group: 'model', desc: tr('模型菜单里出现哪些模型、哪些置顶，以及每个模型能调的智能程度。'), keywords: tr('model 模型 effort'), entries: MODEL_ENTRIES, bodies: ['models'] },

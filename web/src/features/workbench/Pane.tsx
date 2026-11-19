@@ -64,6 +64,8 @@ export function Pane({ pane, groupId, index, rect, edges, strip, workbench, pane
       <PaneEdgeContext.Provider value={edge}>
       <div
         className={clsx('pane', focused && 'focused', zoomed && 'zoomed', strip && 'tabs')}
+        // the start page in front (an empty chat tile): 放完留作背景 shows through it (styles/opening.css)
+        data-home={active?.kind === 'chat' && !active.sessionId ? '' : undefined}
         data-top={edges.top || undefined}
         data-left={edges.left || undefined}
         data-right={edges.right || undefined}

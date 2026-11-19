@@ -15,6 +15,7 @@ import { LetterFlow } from '@/features/home/LetterFlow';
 import { backdropOn } from '@/features/home/letter-flow';
 import { Backdrop } from '@/themes/Backdrop';
 import { useActivePack } from '@/themes/apply';
+import { useOpeningBackdropOn } from '@/features/opening/OpeningBackdrop';
 
 /**
  * The start page — an empty chat tile (spec §5.8, mock-home.png): 「今天想做点什么？」 · the composer (it creates the
@@ -31,6 +32,8 @@ export function Welcome({ paneId, tileId }: { paneId: string; tileId: string }) 
   const moving = useStore((s) => s.metaLoaded && backdropOn(s.settings));
   const theme = useStore((s) => s.theme);
   const ascii = useActivePack();
+  // 放完留作背景 is on screen (features/opening): it shows through this page instead of 字流
+  const openingBackdrop = useOpeningBackdropOn((s) => s.on);
   const pick = (sid: string) => {
     dispatch({ t: 'session.assign', paneId, tileId, sessionId: sid });
     if (!open[sid]) void loadHistory(sid, { focus: false });
@@ -40,7 +43,7 @@ export function Welcome({ paneId, tileId }: { paneId: string; tileId: string }) 
       {/* 外观 → 背景动画: a character theme brings its own backdrop (themes/Backdrop); the classic themes get 字流 */}
       {!mobile && moving && ascii?.backdrop && <Backdrop scene="welcome" />}
       {/* keyed by the theme in effect (a system switch too): its colours are read when it starts */}
-      {!mobile && moving && !ascii?.backdrop && <LetterFlow key={String(theme)} />}
+      {!mobile && moving && !ascii?.backdrop && !openingBackdrop && <LetterFlow key={String(theme)} />}
       {/* the empty page's top row: nothing but the sidebar reveal; on the desktop it is also the title bar (drag) */}
       <div className="welcome-top">{((edge.lead && !edge.strip) || mobile) && <SidebarReveal />}</div>
       <div className="welcome">

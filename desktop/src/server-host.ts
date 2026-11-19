@@ -60,6 +60,8 @@ export class ServerHost extends EventEmitter {
           ...(app.isPackaged ? { CLAUDE_WEB_SIDECARS: path.join(process.resourcesPath, 'sidecars') } : {}),
           // CLIProxyAPI / Magpie come with the app too: first use starts them instead of downloading them
           ...(app.isPackaged ? { CLAUDE_WEB_ENGINES: path.join(process.resourcesPath, 'engines') } : {}),
+          // the built-in opening packs (Claude Web 娘): the settings page lists them, the backdrop loops their film
+          CLAUDE_WEB_OPENINGS: app.isPackaged ? path.join(process.resourcesPath, 'openings') : path.resolve(__dirname, '../openings'),
         },
       });
       this.proc = proc;

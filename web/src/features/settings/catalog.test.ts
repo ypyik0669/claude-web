@@ -96,7 +96,9 @@ describe('settings map (spec §5.7)', () => {
     // 界面缩放 (ui.zoom): the desktop app's whole-window zoom, next to 字号
     const added = ['ui.inlineDiffs', 'ui.haptics', 'ui.zoom', 'ui.language', 'ui.promptSuggestions', 'ui.viewMode', 'ui.infoPanel', 'ui.sidebarFolded', 'ui.backdropMotion', 'ui.welcomeLayout', 'ui.autoArchivePr', 'sessions.mcp', 'claude.desktopSkills', 'worktree.dir', 'worktree.prefix', 'ai.thinkingLanguage', 'ui.backdropInChat', 'vcs.gitlabHosts', 'vcs.resolveOnReply', 'ui.nodegraphHint',
       // 设置 → Bot (duty bots)
-      'bots.concurrency', 'bots.globalBudgetUsd', 'bots.defaultProvider', 'bots.defaultTier', 'bots.duty.service', 'bots.loginItem', 'bots.unleashAll'];
+      'bots.concurrency', 'bots.globalBudgetUsd', 'bots.defaultProvider', 'bots.defaultTier', 'bots.duty.service', 'bots.loginItem', 'bots.unleashAll',
+      // 外观 → 开场和背景 (界面改版方案 第 7 版 #opening)
+      'ui.opening.pack', 'ui.opening.when', 'ui.opening.length', 'ui.opening.sound', 'ui.opening.keep'];
     const now = allEntries().map(({ entry }) => entry.id);
     expect(new Set(now).size).toBe(now.length);
     for (const id of legacy) expect(now, id).toContain(id);
@@ -110,6 +112,12 @@ describe('settings map (spec §5.7)', () => {
     // 背景动画 (A6): an on / off under 外观, in place of 新对话页的动态背景 (字流 / 字场 / 关)
     expect(at('ui.backdropMotion')?.section.id).toBe('appearance');
     expect(at('ui.welcomeBackdrop')).toBeUndefined();
+    // 开场和背景: one block under 外观, the cards first; found by 开场 and by 背景
+    for (const id of ['ui.opening.pack', 'ui.opening.when', 'ui.opening.length', 'ui.opening.sound', 'ui.opening.keep']) expect(at(id)?.section.id, id).toBe('appearance');
+    expect(new Set(['ui.opening.pack', 'ui.opening.when', 'ui.opening.keep'].map((id) => at(id)?.entry.block)).size).toBe(1);
+    expect(at('ui.opening.pack')?.entry.wide).toBe(true);
+    expect(ids(searchSettings('开场'))).toEqual(expect.arrayContaining(['entry:ui.opening.pack', 'entry:ui.opening.when']));
+    expect(ids(searchSettings('留作背景'))).toContain('entry:ui.opening.keep');
   });
 
   it('every part of the old window is on exactly one page', () => {

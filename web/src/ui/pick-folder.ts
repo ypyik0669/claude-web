@@ -16,7 +16,7 @@ const serverFolders: FolderApi = {
  * display, a browser on another computer) the page's own folder browser. Null when cancelled.
  */
 export async function pickFolder(o: { title?: string; start?: string } = {}): Promise<string | null> {
-  if (desktop) return desktop.pickDir();
+  if (desktop) return desktop.pickDir(o.title ? { title: o.title } : undefined);
   let r: PickDirResult;
   try {
     r = await ws.request<PickDirResult>({ kind: 'fs.pickDir', fallback: true });

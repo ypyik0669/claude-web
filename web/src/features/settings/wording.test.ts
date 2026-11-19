@@ -52,6 +52,7 @@ const BODY_SOURCE: Record<BodyId, { comp: string; file: string; props?: string }
   update: { comp: 'UpdateSection', file: S('UpdateSection.tsx') },
   raw: { comp: 'Settings', file: CONFIG },
   customCss: { comp: 'CustomCssSection', file: S('CustomCssSection.tsx') },
+  openings: { comp: 'OpeningPacks', file: 'features/opening/OpeningSettings.tsx' },
 };
 
 const MODAL = read(S('SettingsModal.tsx'));

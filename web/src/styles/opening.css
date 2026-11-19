@@ -1,0 +1,63 @@
+/* 开场和背景 (features/opening): 放完留作背景, the app fading in after the opening, the settings cards, 试放一次, and
+   the phone's start screen. */
+
+/* ---- 放完留作背景: drawn behind everything (outside .app, z-index −1); only the shell ground and the start page let it
+   through — the sidebar side keeps more of its own colour than the start page (--obd-side / --obd-main, model.ts) */
+.obd { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; background: var(--surface-1); }
+.obd > video, .obd > canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity 0.9s var(--ease-out); }
+.obd > .on { opacity: 1; }
+html.obd-on .app { background: color-mix(in oklab, var(--surface-1) var(--obd-side, 100%), transparent); }
+html.obd-on .pane[data-home] { background: color-mix(in oklab, var(--surface-0) var(--obd-main, 100%), transparent); }
+
+/* ---- after a fancy opening the app comes in where the logo landed (main.tsx: ?opening=1) */
+@keyframes cw-app-in { from { opacity: 0; transform: scale(0.975); } to { opacity: 1; transform: none; } }
+html.opening-in .app { animation: cw-app-in 0.55s var(--ease-out) both; }
+@media (prefers-reduced-motion: reduce) { html.opening-in .app { animation: none; } }
+
+/* ---- 设置 › 外观 › 开场动画: the cards */
+.sp-row-wrap.wide .sp-row { flex-direction: column; align-items: stretch; gap: 10px; }
+/* (.ctl is a flex row that keeps its children at their own width: the cards would sit two to a row in a narrow column) */
+.sp-row-wrap.wide .sp-row > .ctl { width: 100%; display: block; }
+.op-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.op-card { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 0 0 8px; border: 0; border-radius: var(--r-lg); background: var(--surface-0); box-shadow: var(--elev-1); text-align: left; cursor: pointer; overflow: hidden; color: var(--ink-1); font: inherit; transition: box-shadow var(--dur-fast) var(--ease-out); }
+.op-card:hover { box-shadow: var(--elev-2); }
+.op-card[aria-checked='true'] { box-shadow: 0 0 0 2px var(--accent), var(--elev-1); }
+.op-card:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.op-card .th { position: relative; aspect-ratio: 16 / 9; background: #13110e; overflow: hidden; }
+/* the poster / 点火's picture fill the thumbnail; the + of 自己的视频 keeps its icon size */
+.op-card .th > img, .op-card .th > svg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.op-card .th .add { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-3); background: var(--fill-subtle); }
+.op-card b { padding: 6px 10px 0; font-weight: 600; font-size: var(--fs-body, 13px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.op-card small { padding: 0 10px; font-size: var(--fs-meta, 12px); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.op-card-wrap { position: relative; display: flex; }
+.op-card-wrap > .op-card { flex: 1; min-width: 0; }
+.op-rm { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; padding: 0; border-radius: 50%; display: grid; place-items: center; background: rgba(10, 9, 8, 0.6); color: #f3eee6; border: 0; cursor: pointer; opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+.op-card-wrap:hover .op-rm, .op-rm:focus-visible { opacity: 1; }
+@media (hover: none) { .op-rm { opacity: 1; } }
+.op-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.op-tools .faint { color: var(--ink-3); font-size: var(--fs-meta, 12px); }
+.op-keep { display: inline-flex; align-items: center; gap: 10px; flex-wrap: nowrap; }
+.op-keep label { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-meta, 12px); color: var(--ink-3); white-space: nowrap; }
+.op-keep input[type='range'] { width: 110px; accent-color: var(--accent); }
+.op-keep output { min-width: 3em; font: 500 12px var(--mono); color: var(--ink-2); }
+.op-keep label[aria-disabled='true'] { opacity: 0.45; }
+
+/* ---- 试放一次: the opening page over the whole window, the app right under it */
+.op-preview { position: fixed; inset: 0; z-index: 210; border: 0; width: 100%; height: 100%; background: transparent; color-scheme: normal; }
+
+/* ---- the phone's start screen: her portrait, the logo and the wordmark lighting up under it (~1 s) */
+.phone-splash { position: fixed; inset: 0; z-index: 300; background: #0b0a09; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; overflow: hidden; transition: opacity 0.35s var(--ease-out); }
+.phone-splash.out { opacity: 0; pointer-events: none; }
+.phone-splash img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 18%; animation: ps-img 1.2s var(--ease-out) both; }
+.phone-splash .fade { position: absolute; left: 0; right: 0; bottom: 0; height: 52%; background: linear-gradient(to bottom, transparent, rgba(11, 10, 9, 0.82) 45%, #0b0a09); }
+.phone-splash .mark { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px)); }
+.phone-splash .mark svg { width: 54px; height: 54px; border-radius: 23%; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16), 0 0 28px rgba(255, 90, 31, 0.35); animation: ps-logo 0.7s 0.15s var(--ease-out) both; }
+.phone-splash .w { font: 400 38px/1.1 Georgia, 'Times New Roman', serif; letter-spacing: -0.05em; color: #f3eee6; animation: ps-up 0.55s 0.35s var(--ease-out) both; }
+.phone-splash .w .c { color: #d97757; margin-right: 0.22em; }
+.phone-splash .by { font-size: 14px; color: #b8b0a4; letter-spacing: -0.01em; animation: ps-up 0.5s 0.55s var(--ease-out) both; }
+.phone-splash .by span { color: #8a8378; font-size: 0.82em; margin-right: 5px; }
+@keyframes ps-img { from { opacity: 0; transform: scale(1.04); } to { opacity: 1; transform: none; } }
+@keyframes ps-logo { from { opacity: 0; transform: scale(0.6); filter: brightness(2.2); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes ps-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .phone-splash img, .phone-splash .mark svg, .phone-splash .w, .phone-splash .by { animation: none; } }
+html[data-reduce-motion='1'] .phone-splash { transition: none; }

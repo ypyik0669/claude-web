@@ -79,6 +79,7 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 | [effort-ultracode](docs/notes/effort-ultracode.md) | 思考强度 / 深度编排 / 自动判断在所有模型上（2026-10-08） | 各接口的强度参数、CLAUDE_WEB_MODEL_CAPS、被拒记录、自动判断 |
 | [prompt-cache](docs/notes/prompt-cache.md) | 提示缓存（2026-09-28） | 用量统计修正、费用未知、网关缓存键、缓存垫片、闲置回收 |
 | [desktop](docs/notes/desktop.md) | 桌面版（desktop/） | Electron 壳、打包、应用自动更新 |
+| [opening](docs/notes/opening.md) | 人设版开场与背景（2026-11-19，界面改版方案 第 7 版） | 放哪种开场、cw-opening://、toString 播放器、主进程握手、放完留作背景 / 火星、设置卡片与试放、动画包格式与接口、手机开屏、opening-shots 截图脚本 |
 | [macos-ci](docs/notes/macos-ci.md) | macOS / CI（2026-09-27） | mac 打包、发版收尾、CI、没有 Mac 时怎么验 |
 | [robustness](docs/notes/robustness.md) | 子进程窗口 / 前端健壮性（2026-09-28） | 停止、终端是 shell、spawn guard、错误边界、zustand 选择器、ui-smoke 用法 |
 | [ui-refresh](docs/notes/ui-refresh.md) | 界面换新（2026-10-10） | 样式文件顺序、令牌、外壳、字体、图标、标题栏、动效、手机交互、质感：发丝边 / 弹簧 / 滚动渐隐 / 暗色字重（10-16） |

@@ -1653,7 +1653,8 @@ function driver() {
           await js(`window.__store.getState().openInPane(null, 'replace')`);
           const welcomeUp = await waitFor(`!!document.querySelector('.pane.focused .welcome .composer') && window.__store.getState().activeId == null`, 5000);
           await sleep(500);
-          const wl = await js(`(() => { const c = document.querySelector('.pane.focused .welcome .composer'); const u = c?.querySelector('.composer-under'); return { under: !!u, mode: !!u?.querySelector('.cmp-mode [data-mode="chat"]'), folder: !!u?.querySelector('.dirpick'), boxChips: !!c?.querySelector('.composer-box .dirpick'), backdrop: !!document.querySelector('.pane.focused .welcome-tile > canvas.ascii-field') }; })()`);
+          // the moving backdrop: 字流 on the page, or 放完留作背景 (her loop / 火星) showing through it instead (features/opening)
+          const wl = await js(`(() => { const c = document.querySelector('.pane.focused .welcome .composer'); const u = c?.querySelector('.composer-under'); const opening = document.documentElement.classList.contains('obd-on') && !!document.querySelector('.obd > video, .obd > canvas') && document.querySelector('.pane.focused')?.hasAttribute('data-home'); return { under: !!u, mode: !!u?.querySelector('.cmp-mode [data-mode="chat"]'), folder: !!u?.querySelector('.dirpick'), boxChips: !!c?.querySelector('.composer-box .dirpick'), backdrop: !!document.querySelector('.pane.focused .welcome-tile > canvas.ascii-field') || !!opening }; })()`);
           await click('.pane.focused .composer-under .cmp-mode [data-mode="chat"]');
           const chatOnly = await waitFor(`!!document.querySelector('.pane.focused .welcome .cap-tag[data-cap="chatOnly"]')`, 2000);
           await click('.pane.focused .composer-under .cmp-mode [data-mode="code"]');
