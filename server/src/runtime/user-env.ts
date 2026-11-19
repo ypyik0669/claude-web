@@ -108,13 +108,64 @@ export function ownAnthropicBase(cwd?: string): string | undefined {
  * what `ours` sets back on top through the flag tier (`settingsOverride`; `oursWins`). Blank, zero or not a number on
  * the winning layer: no cap (the CLI's parseInt). Undefined: no cap.
  */
-export function compactCap(ours: Record<string, string>, cwd: string | undefined, oursWins: boolean): number | undefined {
+export function compactCap(ours: Record<string, string>, cwd: string | undefined, oursWins: boolean, model?: string): number | undefined {
   const K = 'CLAUDE_CODE_AUTO_COMPACT_WINDOW';
   let v: unknown = process.env[K];
-  if (K in ours) v = ours[K];
-  for (const env of settingsEnvs(cwd)) if (K in env) v = env[K];
+  let set = K in process.env;
+  if (K in ours) { v = ours[K]; set = true; }
+  for (const env of settingsEnvs(cwd)) if (K in env) { v = env[K]; set = true; }
   if (oursWins && K in ours) v = ours[K];
-  return compactWindow(v);
+  // no variable anywhere: the point the official CLI's /autocompact keeps in settings.json (it ranks under the variable)
+  return set ? compactWindow(v) : autoCompactSetting(model, cwd);
+}
+
+/** Whether CLAUDE_CODE_AUTO_COMPACT_WINDOW is set at all — this server's environment or a settings file's `env` (blank counts). */
+export function compactVarSet(cwd?: string): boolean {
+  const K = 'CLAUDE_CODE_AUTO_COMPACT_WINDOW';
+  return K in process.env || settingsEnvs(cwd).some((env) => K in env);
+}
+
+/**
+ * The compaction point the official CLI (2.1.3xx) keeps in settings.json: `/autocompact 300k` writes it under
+ * `modelSettings.<model>.autoCompactWindow`, and a top-level `autoCompactWindow` holds for every model — a token count,
+ * or 'auto' (the model's own window). The CLI takes it only when no CLAUDE_CODE_AUTO_COMPACT_WINDOW is set, and never
+ * past the window. claude-web-engine does not read it, so the runner hands it over as that variable (2026-11-19, user
+ * reports of auto-compaction 「是不是因为 Claude Code 加了 /autocompact」: a point set there held on the official binary
+ * only, and the composer's ring knew of it nowhere). The later settings file wins, as the CLI merges them; a model's own
+ * entry wins over the top level ('auto' there too). Undefined: none, or 'auto'.
+ */
+export function autoCompactSetting(model: string | undefined, cwd?: string, home?: string): number | undefined {
+  const want = settingsModelKey(model);
+  let top: unknown;
+  let mine: unknown;
+  for (const doc of settingsDocs(cwd, home)) {
+    if ('autoCompactWindow' in doc) top = doc.autoCompactWindow;
+    const per = doc.modelSettings;
+    if (!want || !per || typeof per !== 'object' || Array.isArray(per)) continue;
+    for (const [k, v] of Object.entries(per as Record<string, unknown>)) {
+      if (settingsModelKey(k) === want && v && typeof v === 'object' && 'autoCompactWindow' in v) mine = (v as { autoCompactWindow: unknown }).autoCompactWindow;
+    }
+  }
+  return compactSize(mine !== undefined ? mine : top);
+}
+
+/** A model id as `modelSettings` keys it (the CLI's canonical id): compared without case, `[1m]` or a date suffix. */
+const settingsModelKey = (m: string | undefined) => (m ? m.trim().toLowerCase().replace(/\[1m\]$/, '').replace(/-\d{8}$/, '') : '');
+
+/**
+ * A compaction size as the official CLI takes one: a number, or text like 500k / 1m / 200000 — a bare number under
+ * 1000 in text is thousands (200 = 200K, its shorthand); 'auto' and anything else: none. Kept within 100K–1M, the
+ * range `/autocompact` accepts.
+ */
+export function compactSize(v: unknown): number | undefined {
+  let n: number | undefined;
+  if (typeof v === 'number') n = v;
+  else if (typeof v === 'string') {
+    const m = /^\s*(\d+(?:\.\d+)?)\s*([km])?\s*$/i.exec(v);
+    if (m) { const x = Number(m[1]); n = x * (m[2]?.toLowerCase() === 'm' ? 1_000_000 : m[2] || x < 1000 ? 1_000 : 1); }
+  }
+  if (n === undefined || !Number.isFinite(n) || n <= 0) return undefined;
+  return Math.round(Math.min(1_000_000, Math.max(100_000, n)));
 }
 
 /** A CLAUDE_CODE_AUTO_COMPACT_WINDOW value as the CLI reads it (parseInt): a positive number, or undefined for no cap. */
@@ -136,5 +187,8 @@ export function userCompactSource(home?: string): CompactSource {
   for (const env of settingsEnvs(undefined, home)) if (K in env) { inSettings = true; v = env[K]; }
   if (!inSettings) v = process.env[K];
   const value = compactWindow(v);
-  return value ? { value, source: inSettings ? 'settings' : 'env' } : { source: 'none' };
+  if (value) return { value, source: inSettings ? 'settings' : 'env' };
+  // no variable at all: the top-level point the official CLI's /autocompact setting keeps (a model's own is per model)
+  const set = !inSettings && !(K in process.env) ? autoCompactSetting(undefined, undefined, home) : undefined;
+  return set ? { value: set, source: 'settings' } : { source: 'none' };
 }

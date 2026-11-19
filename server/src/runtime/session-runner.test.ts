@@ -1519,6 +1519,37 @@ describe('SessionRunner: the account’s 200K / 1M picks and the 自动压缩 po
   };
   const acct = (extra: Record<string, unknown> = {}) => ({ id: 'acc2', name: '工作号', type: 'claude-account', baseUrl: '', apiKey: 'sk-ant-oat01-' + 'x'.repeat(60), models: [], ...extra }) as any;
 
+  // 2026-11-19 user reports on auto-compaction 「是不是因为 Claude Code 加了 /autocompact」: the point `/autocompact 300k`
+  // keeps in settings.json held on the official binary only — claude-web-engine never reads the setting
+  it('the official CLI’s /autocompact point (settings.json autoCompactWindow): ccb is handed it as the variable, the ring caps at it', async () => {
+    await withHome(null, async () => {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const file = path.join(process.env.CLAUDE_CONFIG_DIR!, 'settings.json');
+      fs.writeFileSync(file, JSON.stringify({ autoCompactWindow: 400_000, modelSettings: { 'claude-sonnet-5-5': { autoCompactWindow: 300_000 } } }));
+      for (const kind of ['ccb', 'claude'] as const) {
+        eng.kind = kind;
+        queries.length = 0;
+        const r = new SessionRunner({ sessionId: `ac-${kind}`, cwd: path.join(process.env.CLAUDE_CONFIG_DIR!, 'proj'), model: 'claude-sonnet-5-5' } as any, undefined, { account: { windows: {} } });
+        await tick();
+        // the model's own entry over the top level; the official binary reads the setting itself (a variable would
+        // shadow it there and its /autocompact would say 「CLAUDE_CODE_AUTO_COMPACT_WINDOW is set and takes precedence」)
+        expect(queries[0].options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe(kind === 'ccb' ? '300000' : undefined);
+        expect(r.info.compactWindow).toBe(300_000);
+        await r.close();
+      }
+      // a variable anywhere wins over the setting, as in the CLI: nothing is handed over, the ring caps at the variable
+      fs.writeFileSync(file, JSON.stringify({ autoCompactWindow: 400_000, env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '700000' } }));
+      eng.kind = 'ccb';
+      queries.length = 0;
+      const v = new SessionRunner({ sessionId: 'ac-var', cwd: path.join(process.env.CLAUDE_CONFIG_DIR!, 'proj'), model: 'claude-opus-5-5' } as any, undefined, { account: { windows: {} } });
+      await tick();
+      expect(queries[0].options.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+      expect(v.info.compactWindow).toBe(700_000);
+      await v.close();
+    });
+  });
+
   it('the own login, nothing picked: a 1M family gets [1m] on both engines (ccb keeps it), the window is 1M', async () => {
     await withHome(null, async (dir) => {
       for (const kind of ['claude', 'ccb'] as const) {

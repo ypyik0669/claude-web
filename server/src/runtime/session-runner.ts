@@ -10,7 +10,7 @@ import { rewriteMcpForWsl, type StdioServer } from '../wsl/launch.js';
 import { toWslPath } from '../wsl/paths.js';
 import { wslService } from '../wsl/service.js';
 import { addTranscriptRoot, dropEmptyBlocks, findClaudeTranscript, hasClaudeTranscript, hasEntry, lastCostState, lastHumanPrompt, repairLeaf } from './transcript-file.js';
-import { compactCap, ownAnthropicBase, ownOverride, settingsOverride, userAnthropicEnv } from './user-env.js';
+import { autoCompactSetting, compactCap, compactVarSet, ownAnthropicBase, ownOverride, settingsOverride, userAnthropicEnv } from './user-env.js';
 import { providerKey, splitSupport, subAlias, subagentTarget, unalias, type SplitKind, type SubagentPick } from '../models/subagent.js';
 import { splitEndpoint, splitTarget, type SplitSub } from '../gateway/split.js';
 import { forkAnchor } from '../sessions/fork-anchor.js';
@@ -630,10 +630,18 @@ export class SessionRunner extends EventEmitter {
     const compact = this.compactPoint(engine.kind, this.model);
     const userCompact = this.userCompact(this.model) !== undefined;
     if (compact && (userCompact || !('CLAUDE_CODE_AUTO_COMPACT_WINDOW' in fenv))) fenv.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(compact);
+    // the point the official CLI's /autocompact keeps in settings.json (autoCompactWindow, 2.1.3xx): the official binary
+    // reads it itself; claude-web-engine does not, and is handed it as the variable — which the CLI ranks above it, so
+    // only while none is set anywhere (2026-11-19 user reports: set there, it held on the official binary only)
+    const asSet = this.provider ? providerModelId(this.provider, this.model) : this.model;
+    if (engine.kind === 'ccb' && !('CLAUDE_CODE_AUTO_COMPACT_WINDOW' in fenv) && !compactVarSet(this.cwd)) {
+      const set = autoCompactSetting(asSet, this.cwd);
+      if (set) fenv.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(set);
+    }
     // the cap the engine will put on the window (both engines take it): the composer's ring and the folded context card
     // divide by min(window, this) as the card's body (the engine's count) does (2026-10-24 review I3: 58 % against 82 %)
     // — a point the user set on the own login goes over settings.json through --settings too (`ownOverride` below)
-    const cap = compactCap(fenv, this.cwd, !!(this.provider || this.account) || userCompact);
+    const cap = compactCap(fenv, this.cwd, !!(this.provider || this.account) || userCompact, asSet);
     const before = `${this.info.compactWindow}/${this.info.contextWindow}`;
     // the official binary will not go under 100K whatever the variable says (engine-providers: 50K set → 100K): the
     // ring and the card say where it really compacts (final review M6); ccb takes the value as it is

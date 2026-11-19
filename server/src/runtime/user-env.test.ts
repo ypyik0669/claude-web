@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { compactCap, ownAnthropicBase, ownOverride, settingsOverride, userCompactSource } from './user-env.js';
+import { compactCap, compactSize, compactVarSet, ownAnthropicBase, ownOverride, settingsOverride, userCompactSource } from './user-env.js';
 import { sweepFlagSettings, writeFlagSettings } from './flag-settings.js';
 
 let tmp: string;
@@ -143,6 +143,36 @@ describe('compactCap (the autocompact window a conversation really has)', () => 
     fs.rmSync(user());
     expect(compactCap({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '500000' }, undefined, false)).toBe(500_000);
   });
+  // 2026-11-19: the official CLI's /autocompact keeps its point in settings.json (autoCompactWindow), under the variable
+  it('no variable anywhere: the /autocompact setting — a model’s own entry, else the top level; \'auto\' is none', () => {
+    const proj = path.join(tmp, 'proj');
+    write(user(), { autoCompactWindow: 400_000, modelSettings: { 'claude-opus-5-5': { autoCompactWindow: 250_000 }, 'claude-haiku-5-5': { autoCompactWindow: 'auto' } } });
+    expect(compactCap({}, proj, true)).toBe(400_000);
+    expect(compactCap({}, proj, true, 'claude-opus-5-5[1m]')).toBe(250_000);
+    expect(compactCap({}, proj, true, 'claude-haiku-5-5')).toBeUndefined();
+    // a project's file later in the merge wins
+    write(path.join(proj, '.claude', 'settings.json'), { autoCompactWindow: '300k' });
+    expect(compactCap({}, proj, true, 'gpt-5.5')).toBe(300_000);
+    // any variable (even blank) is above the setting, as in the CLI
+    expect(compactCap({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: '500000' }, proj, true, 'gpt-5.5')).toBe(500_000);
+    process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '';
+    expect(compactCap({}, proj, true, 'gpt-5.5')).toBeUndefined();
+    expect(compactVarSet(proj)).toBe(true);
+  });
+
+  it('compactSize: numbers and the CLI’s text forms, within 100K–1M', () => {
+    expect(compactSize(500_000)).toBe(500_000);
+    expect(compactSize('500k')).toBe(500_000);
+    expect(compactSize('1m')).toBe(1_000_000);
+    expect(compactSize('200')).toBe(200_000); // the CLI's shorthand: thousands
+    expect(compactSize('200000')).toBe(200_000);
+    expect(compactSize(50_000)).toBe(100_000);
+    expect(compactSize(5_000_000)).toBe(1_000_000);
+    expect(compactSize('auto')).toBeUndefined();
+    expect(compactSize('lots')).toBeUndefined();
+    expect(compactSize(0)).toBeUndefined();
+  });
+
   it('blank, zero or not a number on the layer that wins: no cap (a blank in a settings file unsets the environment\'s)', () => {
     process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = '800000';
     expect(compactCap({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: 'abc' }, undefined, true)).toBeUndefined();
