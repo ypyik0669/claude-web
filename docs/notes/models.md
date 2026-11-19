@@ -193,3 +193,9 @@
   （`sessions.fork` 和 runner 的 `resumeSessionAt` 都过一遍）。
 - **没做 / 没验**：只有单元测试（runner、pool、垫片、fork-anchor），没有在真机上复现整条经过。`providers.upsert` 以外改类型的路
   （来源驱动直接写 meta）不会触发 `reprovide`。
+
+## 子代理硬绑定改成真拦（2026-11-19 社区用户报告：主模型 Opus 5.5、子代理选了另一组的 6.2 sol，「自己库库干」，中转后台没有 sol 的请求）
+
+- **复现**（`PROMPT=… node scripts/real-subagent-split.mjs vpx66n74 a0z22mai deepseek-v4.1-flash claude-opus-5-5`，官方二进制，aizhongzhuan 的 Opus 5.5 主对话 + 国模的 DeepSeek 子代理）：系统提示里的 `# Subagents` 段照样加了，Opus 5.5 回「三个文件都很小，我已经全部读完了」，一次 Agent 都没调，`modelUsage` 只有 claude-opus-5-5。10 月那次（Opus 4.x）光靠提示词就派了，新模型不听了。分流本身是好的：`ws-phase28.mjs` 36 条全过。
+- **修法**：选了子代理模型（不是「跟主模型一样」、不是只聊天），runner 多交一个 PreToolUse 钩子（`delegateHook` → `subagent-policy.ts` 的 `delegateDecision`）：**主线程**调 `DELEGATED_TOOLS`（Read / Write / Edit / MultiEdit / NotebookEdit / Glob / Grep / LS / Bash / PowerShell / WebFetch / WebSearch）一律 deny，理由是「这个对话的活交给子代理，用 Agent 工具、写完整简报」；**子代理**的调用放行——两个内核的钩子输入都带 `agent_id`，只在子代理里有（官方 SDK 文档原话；ccb 的 `j7()` 也是 `agent_id: toolUseContext.agentId`，主线程没有）。Agent / TodoWrite / 提问 / 计划 / Skill / MCP 工具不拦。`# Subagents` 段末尾也写明主对话里直接调这些会被拒，模型一般一开始就派。钩子读的是当前的 `this.subagent`：改回「跟主模型一样」马上解除，不用等进程重启。完全放开（bypass）下 canUseTool 不触发，所以只能用钩子；deny 的写法和 bot 的授权闸（`gateHook`）一样。
+- **真机**：同一句话，官方二进制 → 主模型「让探索子代理去读」，Explore 的 transcript 是 deepseek-v4.1-flash，`modelUsage` 两个模型都有；ccb（国模 deepseek 主 + glm-5.3-flash 子代理）→ 一样派 Explore，子代理读文件没被拦。测试：`subagent-policy.test.ts`、`session-runner.test.ts`「the main thread's own work tools are refused …」。

@@ -21,5 +21,27 @@ export function subagentPolicyPrompt(pick: string | undefined): string {
     '- Keep for yourself only: understanding the request, planning, decisions, combining the subagents\' results, managing the plan (TodoWrite), and talking to the user. Answer directly without a subagent only when no tool is needed at all.',
     '- Give each subagent a complete, self-contained brief: the goal, the relevant files and paths, constraints, and what to report back.',
     `- Do not pass a \`model\` to the Agent tool: every subagent runs on ${model} regardless.`,
+    `- In the main conversation, direct calls of ${[...DELEGATED_TOOLS].join(', ')} are refused: hand that work to a subagent from the start.`,
   ].join('\n');
+}
+
+/**
+ * The tools that do the work — reading / searching files, running commands, editing, fetching from the web. With a
+ * subagent model picked, the main thread's own calls of these are refused (`delegateDecision`): 2026-11-19 community
+ * report, reproduced on a real relay — Opus 5.5 with a DeepSeek subagent model read three small files itself, the
+ * `# Subagents` section above notwithstanding (in October it was enough). Everything else stays the main thread's:
+ * Agent, TodoWrite, questions to the user, plan mode, skills, MCP tools.
+ */
+export const DELEGATED_TOOLS: ReadonlySet<string> = new Set(['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Glob', 'Grep', 'LS', 'Bash', 'PowerShell', 'WebFetch', 'WebSearch']);
+
+/**
+ * The PreToolUse hook's answer for one call in a conversation with a subagent model (`pick`, '' = none any more: the
+ * user went back to 「跟主模型一样」 and the process has not restarted yet): a refusal with a pointer to the Agent tool
+ * for the main thread's work tools, null for the rest. `agentId`: set when a subagent calls (both engines put the
+ * caller's agent id on the hook input; the main thread has none).
+ */
+export function delegateDecision(tool: string, agentId: string | undefined, pick: string | undefined): { reason: string } | null {
+  const model = pick ? subagentModelName(pick) : '';
+  if (!model || agentId || !DELEGATED_TOOLS.has(tool)) return null;
+  return { reason: `Not run: in this conversation the user has assigned all tool work to subagents (${model}). Use the Agent tool instead, with a complete, self-contained brief (the goal, the files and paths, what to report back); do not do this step in the main conversation.` };
 }

@@ -407,6 +407,37 @@ describe('SessionRunner: a subagent model picked → the work is delegated', () 
     expect(appended(0)).not.toContain('# Subagents');
     await chat.close();
   });
+
+  it("the main thread's own work tools are refused by a PreToolUse hook; a subagent's calls pass; no hook without a pick", async () => {
+    // 2026-11-19, a real relay: Opus 5.5 with a DeepSeek subagent model read the files itself despite the section
+    const hooks = (i: number) => (queries[i].options.hooks?.PreToolUse ?? []).flatMap((m: any) => m.hooks);
+    queries.length = 0;
+    const plain = new SessionRunner({ sessionId: 'dh-0', cwd: '/x' } as any);
+    await tick();
+    expect(queries[0].options.hooks).toBeUndefined();
+    await plain.close();
+    queries.length = 0;
+    const r = new SessionRunner({ sessionId: 'dh-1', cwd: '/x', subagentModel: 'claude-haiku-4-5' } as any);
+    await tick();
+    const [hook] = hooks(0);
+    const call = (tool: string, agentId?: string) => hook({ hook_event_name: 'PreToolUse', tool_name: tool, tool_input: {}, tool_use_id: 't1', session_id: 'dh-1', transcript_path: '', cwd: '/x', ...(agentId ? { agent_id: agentId } : {}) }, 't1', { signal: new AbortController().signal });
+    const refused = await call('Read');
+    expect(refused.hookSpecificOutput?.permissionDecision).toBe('deny');
+    expect(refused.hookSpecificOutput?.permissionDecisionReason).toContain('Agent tool');
+    expect(await call('Read', 'agent-7')).toEqual({ continue: true });
+    expect(await call('Agent')).toEqual({ continue: true });
+    expect(await call('TodoWrite')).toEqual({ continue: true });
+    // back to 跟主模型一样: lifted at once, while the process waits for its restart
+    await r.setSubagentModel('');
+    expect(await call('Read')).toEqual({ continue: true });
+    await r.close();
+    // 只聊天: no tools, no hook
+    queries.length = 0;
+    const chat = new SessionRunner({ sessionId: 'dh-2', cwd: '/x', subagentModel: 'claude-haiku-4-5', features: { chatOnly: true } } as any);
+    await tick();
+    expect(queries[0].options.hooks).toBeUndefined();
+    await chat.close();
+  });
 });
 
 // 2026-10-22: the per-step reminder hook tripped the API's safety classifier on Opus 5.5 / Fable 5.1 — the system

@@ -34,7 +34,7 @@ import type { ToolGate } from '../agents/types.js';
 import { killTree } from '../agents/kill-tree.js';
 import { getLocale, tr } from '../i18n/index.js';
 import { thinkingLanguageFor, thinkingLanguagePrompt } from './thinking-language.js';
-import { subagentPolicyPrompt } from './subagent-policy.js';
+import { delegateDecision, subagentPolicyPrompt } from './subagent-policy.js';
 import { accountModel, accountWindowOf, compactAtOk, effectiveCompact, familyWindows, type AccountWindows } from '../models/account-window.js';
 import { localEnv } from './local-env.js';
 import { SESSIONS_ALLOWED, SESSIONS_SERVER, sessionsMcpEnabled, sessionsMcpServer } from '../sessions-mcp/tools.js';
@@ -802,6 +802,10 @@ export class SessionRunner extends EventEmitter {
       ...extra,
     };
     if (this.gated) options.hooks = { ...extra.hooks, PreToolUse: [...(extra.hooks?.PreToolUse ?? []), { hooks: [this.gateHook], timeout: GATE_HOOK_TIMEOUT_S }] };
+    // 子代理硬绑定, enforced (subagent-policy.ts delegateDecision): with a subagent model picked, the main thread's own
+    // read / search / run / edit calls are refused with a pointer to the Agent tool — the prompt section alone stopped
+    // holding (2026-11-19, a real relay: Opus 5.5 read the files itself). A subagent's calls (agent_id) pass
+    if (delegate) options.hooks = { ...options.hooks, PreToolUse: [...(options.hooks?.PreToolUse ?? []), { hooks: [this.delegateHook] }] };
     this.q = query({ prompt: this.input, options });
     void this.pump();
   }
@@ -1090,6 +1094,13 @@ export class SessionRunner extends EventEmitter {
   private asksThePerson(toolName: string): boolean {
     return this.botRole === 'thread' && toolName === 'AskUserQuestion';
   }
+
+  /** 子代理硬绑定: the main thread's work tools go to subagents (delegateDecision; the current pick, so 「跟主模型一样」 lifts it at once) */
+  private delegateHook: HookCallback = async (input) => {
+    if (input.hook_event_name !== 'PreToolUse') return { continue: true };
+    const d = delegateDecision(input.tool_name, (input as { agent_id?: string }).agent_id, this.subagent);
+    return d ? { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: d.reason } } : { continue: true };
+  };
 
   /** OpenSessionParams.gated: the PreToolUse hook that puts every tool call — whatever would skip canUseTool — before the gate */
   private gateHook: HookCallback = async (input, toolUseID, opts) => {
