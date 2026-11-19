@@ -360,7 +360,7 @@ export class RunnerPool extends EventEmitter {
       // The drivers resume only a session whose transcript already names a native thread, so this is still new.
       if (!params.sessionId && params.providerId && params.providerId !== 'claude') params = { ...params, sessionId: randomUUID() };
       // a model-gateway profile works for every agent: its endpoint goes into the agent's own env variables
-      const gw = this.providers.agentLaunch?.(params.providerId, l.def.protocol === 'codex' ? 'codex' : 'acp', kind, params.sessionId) ?? { env: {}, args: [] };
+      const gw = this.providers.agentLaunch?.(params.providerId, l.def.protocol === 'codex' ? 'codex' : 'acp', kind, params.sessionId, params.model) ?? { env: {}, args: [] };
       const env = { ...l.env, ...gw.env };
       // the shim / gateway are on this machine: a system HTTP(S)_PROXY must not get those requests (Codex honours it)
       const local = Object.values(gw.env).find((v) => /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])[:/]/i.test(v));

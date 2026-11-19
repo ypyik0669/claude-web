@@ -222,7 +222,7 @@ function findItem(c: Conversation, parent: string | null | undefined, pred: (i: 
 }
 
 /** `system` subtypes `applySystem` turns into items, tasks or a flag something draws from (all others it ignores). */
-const DRAWN_SYSTEM = new Set(['status', 'cw_notice', 'compact_boundary', 'task_started', 'task_progress', 'task_updated', 'task_notification', 'background_tasks_changed', 'local_command_output', 'api_retry', 'model_refusal_fallback', 'model_refusal_no_fallback', 'informational', 'notification', 'permission_denied', ELSEWHERE]);
+const DRAWN_SYSTEM = new Set(['status', 'cw_notice', 'cw_context', 'compact_boundary', 'task_started', 'task_progress', 'task_updated', 'task_notification', 'background_tasks_changed', 'local_command_output', 'api_retry', 'model_refusal_fallback', 'model_refusal_no_fallback', 'informational', 'notification', 'permission_denied', ELSEWHERE]);
 
 /**
  * A message the store renders with the next frame, like a streamed delta, instead of as a whole message: deltas, a
@@ -667,6 +667,8 @@ function turnBeganAt(c: Conversation): number | undefined {
 }
 
 function applyResult(c: Conversation, m: any) {
+  // an agent's turn may end with no answer of its own to carry it (a turn of tool calls, a /compact): the result does
+  if (m.context_usage) c.contextUsage = toContextUsage(m.context_usage);
   const errText = m.is_error ? m.result ?? shownErrors(m.errors) : undefined;
   const prevEnd = c.lastResult?.ts ? Date.parse(c.lastResult.ts) : NaN;
   const start = turnBeganAt(c);
@@ -714,6 +716,12 @@ function applySystem(c: Conversation, m: any) {
       if (m.status === 'compacting') c.compacting = true;
       else if (c.compacting && m.status !== 'compacting') c.compacting = false;
       if (m.compact_result === 'failed') c.items.push({ kind: 'system', id: m.uuid ?? `cf-${clock()}`, subtype: 'compact_failed', level: 'error', text: tr('上下文压缩失败{v}', { v: m.compact_error ? `：${m.compact_error}` : '' }) });
+      return;
+    }
+    case 'cw_context': {
+      // how full an agent's context is, as each model call reports it (Codex: the last call against its window) — the
+      // composer's ring draws it; no item. Drawn (DRAWN_SYSTEM): the settled view moves, once per call
+      if (m.context_usage) c.contextUsage = toContextUsage(m.context_usage);
       return;
     }
     case 'cw_notice': {

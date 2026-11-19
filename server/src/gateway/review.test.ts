@@ -162,6 +162,12 @@ describe('second review', () => {
       expect(qwen).toEqual({ env: { OPENAI_BASE_URL: 'https://relay.example/v1', OPENAI_API_KEY: 'sk-test', OPENAI_MODEL: 'gpt-x' }, args: [] });
       const anth = await meta.upsertProvider({ name: 'a', type: 'anthropic', baseUrl: 'https://a.example', apiKey: 'k' });
       expect(svc.agentLaunch(anth.id, 'codex', 'codex')).toEqual({ env: {}, args: [] });
+      // the window Codex compacts against is the one of the model the conversation opens on, not always the default's
+      const multi = await meta.upsertProvider({ name: 'multi', type: 'openai', baseUrl: 'https://relay.example/', apiKey: 'sk-test', defaultModel: 'deepseek-v4-pro', contextWindows: { 'gpt-5.5': 400_000 } });
+      expect(svc.agentLaunch(multi.id, 'codex', 'codex').args).toContain('model_context_window=1048576');
+      const picked = svc.agentLaunch(multi.id, 'codex', 'codex', undefined, 'gpt-5.5').args;
+      expect(picked).toContain('model_context_window=400000');
+      expect(picked.slice(0, 2)).toEqual(['-c', 'model="gpt-5.5"']);
     } finally {
       if (prev === undefined) delete process.env.CLAUDE_WEB_DIR; else process.env.CLAUDE_WEB_DIR = prev;
       fs.rmSync(dir, { recursive: true, force: true });

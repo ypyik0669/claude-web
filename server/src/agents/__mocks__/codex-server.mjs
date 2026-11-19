@@ -221,6 +221,13 @@ rl.on('line', async (line) => {
         extra = ` (mcp answer: ${a?.action ?? 'error'}${a?._meta?.persist ? ` persist=${a._meta.persist}` : ''})`;
         notify('item/agentMessage/delta', { threadId, turnId: 'turn-1', itemId: 'am-1', delta: extra });
       }
+      // 'COMPACTAUTO': Codex compacts the thread itself in the middle of the turn — the contextCompaction item, and the
+      // deprecated thread/compacted notification some versions send beside it (codex-cli 0.163 sends both)
+      if (text.includes('COMPACTAUTO')) {
+        notify('item/started', { threadId, turnId: 'turn-1', item: { type: 'contextCompaction', id: 'cc-1' } });
+        notify('item/completed', { threadId, turnId: 'turn-1', item: { type: 'contextCompaction', id: 'cc-1' } });
+        notify('thread/compacted', { threadId, turnId: 'turn-1' });
+      }
       // a sub-agent thread's usage arrives on the same connection: it is not this thread's turn
       notify('thread/tokenUsage/updated', { threadId: 'thr-subagent', turnId: 'turn-x', tokenUsage: { total: bd(777_000, 1, 0, 5), last: bd(777_000, 1, 0, 5), modelContextWindow: 200000 } });
       for (const call of TURN_CALLS) {
@@ -233,6 +240,18 @@ rl.on('line', async (line) => {
       break;
     }
     case 'turn/interrupt': reply({}); break;
+    // the user's /compact: answered at once, then run as a turn of its own (as codex-cli 0.163 does: turn/started, the
+    // contextCompaction item, a token count whose last call is 0, turn/completed)
+    case 'thread/compact/start': {
+      const threadId = m.params.threadId;
+      reply({});
+      notify('turn/started', { threadId, turn: { id: 'turn-c' } });
+      notify('item/started', { threadId, turnId: 'turn-c', item: { type: 'contextCompaction', id: 'cc-m' } });
+      notify('item/completed', { threadId, turnId: 'turn-c', item: { type: 'contextCompaction', id: 'cc-m' } });
+      notify('thread/tokenUsage/updated', { threadId, turnId: 'turn-c', tokenUsage: { total: usageTotal, last: bd(0, 0, 0, 0), modelContextWindow: 200000 } });
+      notify('turn/completed', { threadId, turn: { id: 'turn-c', items: [], status: 'completed', error: null } });
+      break;
+    }
     default: if (m.id !== undefined) send({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'nope' } });
   }
 });

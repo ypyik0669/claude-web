@@ -46,7 +46,16 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
   private pending = new Map<string, PendingPerm>();
   private items: CodexItemState = new Map();
   private turnActive = false;
-  private queue: { text: string; images?: { mediaType: string; data: string }[] }[] = [];
+  /** `compact`: the user's `/compact` — a `thread/compact/start`, not a prompt (Codex reads slash commands in its TUI only) */
+  private queue: { text: string; images?: { mediaType: string; data: string }[]; compact?: boolean }[] = [];
+  /** the turn in flight is the user's /compact (its 「上下文已压缩」 line says so) */
+  private manualCompact = false;
+  /** compactions drawn already: `contextCompaction` item ids, and whether this turn had one (the deprecated
+   *  `thread/compacted` notification, sent beside the item by some versions, alone by older ones, is then a repeat) */
+  private compactionsSeen = new Set<string>();
+  private compactedThisTurn = false;
+  /** how full the context was when the compaction in progress began (its line's 「N tok」) */
+  private compactFrom?: number;
   private closed = false;
   private model?: string;
   private effort?: EffortLevel;
@@ -193,7 +202,7 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
 
   private onNotification(method: string, p: any) {
     switch (method) {
-      case 'turn/started': this.turnId = p?.turn?.id ?? null; break;
+      case 'turn/started': this.turnId = p?.turn?.id ?? null; this.compactedThisTurn = false; break;
       case 'item/agentMessage/delta': this.pushAll(this.synth.delta('text', p.delta ?? '')); break;
       case 'account/rateLimits/updated': {
         const rl = p.rateLimits ?? {};
@@ -211,8 +220,15 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
       case 'item/started': this.onItem(p.item, false); break;
       case 'item/completed': this.onItem(p.item, true); break;
       case 'item/commandExecution/outputDelta': { const it = this.items.get(p.itemId); if (it) it.output += p.delta ?? ''; break; }
-      // only this thread's: sub-agent threads report their own cumulative totals on the same connection
-      case 'thread/tokenUsage/updated': if (!p?.threadId || p.threadId === this.threadId) this.usage.update(p?.tokenUsage); break;
+      // only this thread's: sub-agent threads report their own cumulative totals on the same connection. The context
+      // figure goes to the composer's ring as each call reports it (not recorded: one line per model call)
+      case 'thread/tokenUsage/updated': {
+        if (p?.threadId && p.threadId !== this.threadId) break;
+        if (this.usage.update(p?.tokenUsage)) { const c = this.ringFigure(); if (c) this.emit('message', this.synth.contextUsage(c)); }
+        break;
+      }
+      // deprecated beside the `contextCompaction` item, the only word of a compaction from older Codex versions
+      case 'thread/compacted': if (!p?.threadId || p.threadId === this.threadId) this.onCompacted(); break;
       case 'error': if (!p?.willRetry) this.push(this.synth.systemNote(tr('Codex 错误：{message}', { message: p?.error?.message ?? '' }), 'error')); break;
       case 'turn/completed': this.onTurnCompleted(p?.turn); break;
       case 'thread/name/updated': if (p?.name) void this.transcripts.patchHead(this.sessionId, { title: p.name }); break;
@@ -221,14 +237,41 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
   }
 
   private onItem(item: any, completed: boolean) {
+    if (item?.type === 'contextCompaction') {
+      // its 「…（N tok）」 is how full the context was before: the summary call and the count after it arrive before the
+      // item completes (real Codex 0.163: 36K for the summary call, then 27K, then the item — the context had been 46K)
+      if (!completed) this.compactFrom ??= this.usage.context()?.totalTokens;
+      else this.onCompacted(typeof item.id === 'string' ? item.id : undefined);
+      return;
+    }
     this.pushAll(codexItemMessages(this.synth, this.items, item, completed));
+  }
+
+  /** The context figure for the composer's ring — only with the window it is a share of (Codex sends null when it has none). */
+  private ringFigure() {
+    const c = this.usage.context();
+    return c?.rawMaxTokens ? c : null;
+  }
+
+  /**
+   * Codex compacted the thread — on its own past `modelContextWindow`, or for the user's /compact: the same
+   * 「上下文已压缩」 line a Claude conversation gets (it was silent: the ring stayed full and nothing said why).
+   */
+  private onCompacted(itemId?: string) {
+    if (itemId ? this.compactionsSeen.has(itemId) : this.compactedThisTurn) return;
+    if (itemId) this.compactionsSeen.add(itemId);
+    this.compactedThisTurn = true;
+    const pre = this.compactFrom ?? this.usage.context()?.totalTokens;
+    this.compactFrom = undefined;
+    this.push(this.synth.compactBoundary(this.manualCompact ? 'manual' : 'auto', pre));
   }
 
   private onTurnCompleted(turn: any) {
     const status = turn?.status;
     const ok = status === 'completed' || status === 'interrupted';
-    this.pushAll(this.synth.endTurn({ ok, error: turn?.error?.message, stopReason: status, usage: this.usage.turn() }));
+    this.pushAll(this.synth.endTurn({ ok, error: turn?.error?.message, stopReason: status, usage: this.usage.turn(), context: this.ringFigure() }));
     this.turnActive = false;
+    this.manualCompact = false;
     this.turnId = null;
     if (!this.closed && this.state !== 'error') { this.setState('idle'); this.flush(); }
   }
@@ -291,6 +334,13 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
     if (this.mirrorIsReady) this.record(user);
     else void this.mirrorReady.then(() => this.record(user));
     this.emit('sent', user);
+    // /compact (the composer's 「/compact 压缩」 links send it as text): Codex's own compaction of the thread — as a
+    // prompt the model only talked about it. It waits its turn like a prompt (never a steer into the running one)
+    if (/^\/compact(?:\s|$)/i.test(text.trim())) {
+      this.queue.push({ text: body, compact: true });
+      this.flush();
+      return;
+    }
     if (steer && this.turnActive && this.rpc && this.threadId) {
       this.rpc.request('turn/steer', { threadId: this.threadId, turnId: this.turnId, input: [{ type: 'text', text: body, text_elements: [] }] }, 30_000).catch(() => this.queue.push({ text: body, images }));
       return;
@@ -307,6 +357,18 @@ export class CodexDriver extends EventEmitter implements AgentDriver {
     this.setState('running');
     this.synth.beginTurn();
     this.usage.beginTurn();
+    if (next.compact) {
+      // runs as a turn of its own (turn/started … the contextCompaction item … turn/completed → the result)
+      this.manualCompact = true;
+      this.compactFrom = this.usage.context()?.totalTokens;
+      this.rpc.request('thread/compact/start', { threadId: this.threadId }, 0).catch((e) => {
+        this.manualCompact = false;
+        this.pushAll(this.synth.endTurn({ ok: false, error: e.message }));
+        this.turnActive = false;
+        if (!this.closed && this.state !== 'error') { this.setState('idle'); this.flush(); }
+      });
+      return;
+    }
     const input: any[] = [{ type: 'text', text: next.text, text_elements: [] }];
     for (const im of next.images ?? []) input.push({ type: 'image', url: `data:${im.mediaType};base64,${im.data}` });
     const pol = this.policy();

@@ -91,9 +91,14 @@ export class MessageSynth {
   /** Assistant text that arrived whole (non-streaming) — emitted as deltas + final so both paths look the same. */
   text(t: string): any[] { return this.delta('text', t); }
 
-  /** End of turn: close the streamed message, then the result. */
-  endTurn(o: { ok?: boolean; error?: string; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }; costUsd?: number; stopReason?: string } = {}): any[] {
+  /**
+   * End of turn: close the streamed message, then the result. `usage` is the whole turn's (every model call: the
+   * ledger's); `context` how full the context is after it (the last call's, Codex: codex-usage.ts) — the composer's ring
+   * reads that one (`context_usage`, recorded with the turn so a reopened conversation has it too).
+   */
+  endTurn(o: { ok?: boolean; error?: string; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }; costUsd?: number; stopReason?: string; context?: { totalTokens: number; rawMaxTokens?: number } | null } = {}): any[] {
     const out: any[] = [];
+    const ctx = o.context ? { context_usage: o.context } : {};
     if (this.turnMsgId && this.started) {
       this.closeOpenBlock(out);
       out.push(this.stream({ type: 'message_delta', delta: { stop_reason: o.stopReason ?? 'end_turn' }, usage: { output_tokens: o.usage?.output ?? 0 } }));
@@ -101,7 +106,7 @@ export class MessageSynth {
       const content: any[] = [];
       if (this.turnThinking) content.push({ type: 'thinking', thinking: this.turnThinking });
       if (this.turnText) content.push({ type: 'text', text: this.turnText });
-      if (content.length) out.push({ type: 'assistant', uuid: randomUUID(), session_id: this.sessionId, parent_tool_use_id: null, message: { id: this.turnMsgId, role: 'assistant', model: this.model, content, usage: o.usage ? { input_tokens: o.usage.input ?? 0, output_tokens: o.usage.output ?? 0, cache_read_input_tokens: o.usage.cacheRead ?? 0, cache_creation_input_tokens: o.usage.cacheWrite ?? 0 } : undefined } });
+      if (content.length) out.push({ type: 'assistant', uuid: randomUUID(), session_id: this.sessionId, parent_tool_use_id: null, message: { id: this.turnMsgId, role: 'assistant', model: this.model, content, usage: o.usage ? { input_tokens: o.usage.input ?? 0, output_tokens: o.usage.output ?? 0, cache_read_input_tokens: o.usage.cacheRead ?? 0, cache_creation_input_tokens: o.usage.cacheWrite ?? 0 } : undefined }, ...ctx });
     }
     const ok = o.ok !== false;
     out.push({
@@ -121,9 +126,23 @@ export class MessageSynth {
       modelUsage: this.model ? { [this.model]: { inputTokens: o.usage?.input ?? 0, outputTokens: o.usage?.output ?? 0, costUSD: o.costUsd ?? 0 } } : {},
       terminal_reason: ok ? 'completed' : 'api_error',
       permission_denials: [],
+      ...ctx,
     });
     this.turnMsgId = null;
     return out;
+  }
+
+  /**
+   * The context figure while a turn runs (`system/cw_context`): drawn by the composer's ring only — the reducer adds no
+   * item for it, and the drivers emit it without recording it (each model call would otherwise be a transcript line).
+   */
+  contextUsage(c: { totalTokens: number; rawMaxTokens?: number }): any {
+    return { type: 'system', subtype: 'cw_context', session_id: this.sessionId, uuid: randomUUID(), context_usage: c };
+  }
+
+  /** A compaction the agent did on its own (`trigger: 'auto'`) or was asked for (`manual`): the 「上下文已压缩」 line. */
+  compactBoundary(trigger: 'auto' | 'manual', preTokens?: number): any {
+    return { type: 'system', subtype: 'compact_boundary', session_id: this.sessionId, uuid: randomUUID(), compact_metadata: { trigger, ...(preTokens ? { pre_tokens: preTokens } : {}) } };
   }
 
   systemNote(text: string, level: 'info' | 'warning' | 'error' = 'info') {

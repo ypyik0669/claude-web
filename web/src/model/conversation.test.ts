@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { contextUsageOf, applyMessage, applyTranscript, createConversation, decodeAttachments, sessionRefMarker, shownErrors, findChainUuidBefore, prependTranscript, setConversationClock, turnItems, walkTools, type AssistantItem, type Conversation, type UserItem } from './conversation';
+import { contextUsageOf, applyMessage, applyTranscript, createConversation, decodeAttachments, isLightMessage, sessionRefMarker, shownErrors, findChainUuidBefore, prependTranscript, setConversationClock, turnItems, walkTools, type AssistantItem, type Conversation, type UserItem } from './conversation';
 import { credentialHint, noResponseHint } from './health';
 import { groupTurns, taskPlan, turnSummary } from './turn';
 
@@ -655,6 +655,30 @@ describe('contextUsageOf: both spellings', () => {
     expect(contextUsageOf({ totalTokens: 402_000, rawMaxTokens: 1_000_000, maxTokens: 967_000, percentage: 40, model: 'm' })).toMatchObject({ totalTokens: 402_000, maxTokens: 1_000_000, percentage: 40 });
     expect(contextUsageOf({ total_tokens: 50_000, raw_max_tokens: 200_000 })).toMatchObject({ totalTokens: 50_000, maxTokens: 200_000, percentage: 25 });
     expect(contextUsageOf({ totalTokens: 1, rawMaxTokens: 2, overLimit: { tokensOver: 5, kind: 'k' } }).overLimit).toEqual({ tokensOver: 5, kind: 'k' });
+  });
+});
+
+// 2026-11-19 「窗口显示 100%，但是他还在跑」: a Codex turn's usage adds up every call of it; the driver reports how full
+// the context is on its own (server agents/codex-usage.ts) and the ring takes that
+describe('an agent’s context figure (system/cw_context, a turn end’s context_usage)', () => {
+  it('cw_context sets what the ring draws, adds no item, and counts as a whole message (the settled view moves)', () => {
+    const c = createConversation();
+    applyMessage(c, { type: 'system', subtype: 'cw_context', uuid: 'x1', context_usage: { totalTokens: 52_700, rawMaxTokens: 258_400 } });
+    expect(c.contextUsage).toMatchObject({ totalTokens: 52_700, maxTokens: 258_400, percentage: 20 });
+    expect(c.items).toEqual([]);
+    expect(isLightMessage({ type: 'system', subtype: 'cw_context' })).toBe(false);
+  });
+
+  it('a result can carry it (a turn with no answer of its own: tool calls only, a /compact)', () => {
+    const c = createConversation();
+    applyMessage(c, { type: 'result', subtype: 'success', uuid: 'r1', is_error: false, result: '', usage: { input_tokens: 900_000, output_tokens: 10 }, context_usage: { totalTokens: 30_000, rawMaxTokens: 200_000 } });
+    expect(c.contextUsage).toMatchObject({ totalTokens: 30_000, percentage: 15 });
+  });
+
+  it('Codex’s own compaction is the usual 「上下文已自动压缩」 line', () => {
+    const c = createConversation();
+    applyMessage(c, { type: 'system', subtype: 'compact_boundary', uuid: 'cb1', compact_metadata: { trigger: 'auto', pre_tokens: 245_000 } });
+    expect(c.items).toMatchObject([{ kind: 'system', subtype: 'compact', text: '上下文已自动压缩（245K tok）' }]);
   });
 });
 

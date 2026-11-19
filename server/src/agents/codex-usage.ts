@@ -7,6 +7,13 @@
 
 export interface CodexBreakdown { totalTokens?: number; inputTokens?: number; cachedInputTokens?: number; cacheWriteInputTokens?: number; outputTokens?: number; reasoningOutputTokens?: number }
 export interface TurnUsage { input: number; output: number; cacheRead: number; cacheWrite: number }
+/**
+ * How full the context is: the most recent model call's own total (`last.totalTokens`, what Codex's own "context left"
+ * counts) against `modelContextWindow` (the window it compacts against: 95 % of `model_context_window`). Not the turn's
+ * usage — that adds up every call of the turn (a compaction's too): the composer's ring read it as the context and sat
+ * at 100 % through long turns while Codex had compacted (2026-11-19 user reports, 「窗口显示 100%，但是他还在跑」).
+ */
+export interface ContextFigure { totalTokens: number; rawMaxTokens?: number }
 
 interface Counts { input: number; cached: number; write: number; output: number }
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -21,22 +28,38 @@ export class CodexUsageMeter {
   /** Total when the current turn began (null until known). */
   private base: Counts | null = null;
   private seen = false;
+  /** The context at the most recent model call (survives turns: a new turn starts from where the last one ended). */
+  private ctx: ContextFigure | null = null;
 
   beginTurn() {
     this.base = this.total;
     this.seen = false;
   }
 
-  update(u: { total?: CodexBreakdown | null; last?: CodexBreakdown | null } | null | undefined) {
+  /** Takes a `thread/tokenUsage/updated`; true when the context figure changed (the composer's ring is to be told). */
+  update(u: { total?: CodexBreakdown | null; last?: CodexBreakdown | null; modelContextWindow?: number | null } | null | undefined): boolean {
+    const before = this.ctx;
+    // a compaction reports a last call of 0: nothing new about the context — the next call says what is left
+    const lastTotal = u?.last ? num(u.last.totalTokens) || num(u.last.inputTokens) + num(u.last.outputTokens) : 0;
+    const window = num(u?.modelContextWindow) || before?.rawMaxTokens;
+    if (lastTotal > 0) this.ctx = { totalTokens: lastTotal, ...(window ? { rawMaxTokens: window } : {}) };
+    else if (before && window && window !== before.rawMaxTokens) this.ctx = { ...before, rawMaxTokens: window };
+    const changed = !!this.ctx && (this.ctx.totalTokens !== before?.totalTokens || this.ctx.rawMaxTokens !== before?.rawMaxTokens);
     const total = counts(u?.total);
     const last = counts(u?.last);
-    if (!total && !last) return;
+    if (!total && !last) return changed;
     // a server without `total`: add each call up (cannot tell a re-send apart, but that is all it gives us)
     const next = total ?? plus(this.total ?? ZERO, last!);
     // first update ever (a resumed thread's total already holds earlier turns): the turn began at total − last
     if (!this.base) this.base = total && last ? minus(total, last) : total ? ZERO : this.total ?? ZERO;
     this.total = next;
     this.seen = true;
+    return changed;
+  }
+
+  /** How full the context is now (null until a model call reported it). */
+  context(): ContextFigure | null {
+    return this.ctx;
   }
 
   /** Usage of the current (or just finished) turn. */

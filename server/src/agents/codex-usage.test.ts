@@ -57,4 +57,44 @@ describe('CodexUsageMeter', () => {
     m.update({ last: bd(120, 90, 5) });
     expect(m.turn()).toEqual({ input: 70, cacheRead: 150, cacheWrite: 0, output: 10 });
   });
+
+  // 2026-11-19 「窗口显示 100%，但是他还在跑」: the turn's usage (every call added up) is not how full the context is
+  describe('context(): how full the context is — the last call against Codex’s window', () => {
+    it('the most recent call’s own total and modelContextWindow; true only when the figure moved', () => {
+      const m = new CodexUsageMeter();
+      expect(m.context()).toBeNull();
+      m.beginTurn();
+      let total = bd(0, 0, 0);
+      const call = (c: ReturnType<typeof bd>) => { total = add(total, c); return m.update({ total, last: c, modelContextWindow: 258_400 }); };
+      expect(call(bd(40_000, 30_000, 500))).toBe(true);
+      expect(m.context()).toEqual({ totalTokens: 40_500, rawMaxTokens: 258_400 });
+      expect(call(bd(52_000, 40_000, 700))).toBe(true);
+      // the turn adds the two calls up (the ledger's), the context is the second call alone
+      expect(m.turn().input + m.turn().cacheRead + m.turn().output).toBe(93_200);
+      expect(m.context()).toEqual({ totalTokens: 52_700, rawMaxTokens: 258_400 });
+      // the same count again (Codex re-sends it with rate-limit refreshes): nothing new
+      expect(m.update({ total, last: bd(52_000, 40_000, 700), modelContextWindow: 258_400 })).toBe(false);
+    });
+
+    it('a compaction’s last call of 0 keeps the figure until the next call; a window alone can change it; none without a call', () => {
+      const m = new CodexUsageMeter();
+      expect(m.update({ total: bd(0, 0, 0), last: bd(0, 0, 0), modelContextWindow: 200_000 })).toBe(false);
+      expect(m.context()).toBeNull();
+      m.update({ total: bd(90_000, 0, 100), last: bd(90_000, 0, 100), modelContextWindow: 200_000 });
+      expect(m.update({ total: bd(90_000, 0, 100), last: bd(0, 0, 0), modelContextWindow: 200_000 })).toBe(false);
+      expect(m.context()).toEqual({ totalTokens: 90_100, rawMaxTokens: 200_000 });
+      expect(m.update({ total: bd(90_000, 0, 100), last: bd(0, 0, 0), modelContextWindow: 380_000 })).toBe(true);
+      expect(m.context()?.rawMaxTokens).toBe(380_000);
+      // no window reported (null): the figure has no share to be — the driver leaves the ring alone then
+      const n = new CodexUsageMeter();
+      n.update({ last: bd(10_000, 0, 10), modelContextWindow: null });
+      expect(n.context()).toEqual({ totalTokens: 10_010 });
+    });
+
+    it('a server without totalTokens: input + output', () => {
+      const m = new CodexUsageMeter();
+      m.update({ last: { inputTokens: 1_000, outputTokens: 20 }, modelContextWindow: 100_000 });
+      expect(m.context()).toEqual({ totalTokens: 1_020, rawMaxTokens: 100_000 });
+    });
+  });
 });

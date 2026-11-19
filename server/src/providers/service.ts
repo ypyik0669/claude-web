@@ -508,7 +508,7 @@ export class ProviderService {
    * Extra env + global args for a non-Claude agent session that picked a gateway or OpenAI-compatible profile
    * (nothing for any other type). Without this Codex ignores the profile and talks to api.openai.com.
    */
-  agentLaunch(id: string | undefined, agent: 'codex' | 'acp', kind?: string, sessionId?: string): { env: Record<string, string>; args: string[] } {
+  agentLaunch(id: string | undefined, agent: 'codex' | 'acp', kind?: string, sessionId?: string, model?: string): { env: Record<string, string>; args: string[] } {
     // its own login (no profile): 隐私保护 reaches Codex / Gemini CLI through their endpoint overrides (privacy/agents.ts)
     if (!id || id === CLAUDE_PROVIDER_ID) return ownLoginLaunch(kind ?? (agent === 'codex' ? 'codex' : undefined), (t) => privacyRoute(t));
     const type = this.meta.provider(id)?.type;
@@ -519,9 +519,13 @@ export class ProviderService {
         // it into chat/completions for relays without the Responses API (most of them) — direct, those 404
         const base = p.shim ? shimBaseUrl(p.shim, sessionId) : viaPrivacy(openaiBase(p.baseUrl));
         const key = p.shim ? p.shim.key : p.apiKey;
-        // the default model's context window (Codex assumes its own for a model it does not know)
-        const window = p.defaultModel ? contextWindowFor(p, p.defaultModel) : undefined;
-        return { env: { OPENAI_BASE_URL: base, OPENAI_API_KEY: key, [CODEX_KEY_ENV]: key }, args: [...codexProviderArgs(base, p.name, p.defaultModel), ...(window ? ['-c', `model_context_window=${window}`] : [])] };
+        // the context window of the model this conversation opens on (else the profile's default): Codex assumes its own
+        // for a model it does not know, and compacts against it (95 % of it). It was always the default model's, so a
+        // conversation on another model of the profile compacted at the default's size (2026-11-19). A model switched to
+        // later keeps the window the process started with
+        const pick = model?.replace(/\[1m\]$/i, '').trim() || p.defaultModel;
+        const window = pick ? contextWindowFor(p, pick) : undefined;
+        return { env: { OPENAI_BASE_URL: base, OPENAI_API_KEY: key, [CODEX_KEY_ENV]: key }, args: [...codexProviderArgs(base, p.name, pick), ...(window ? ['-c', `model_context_window=${window}`] : [])] };
       }
       const env: Record<string, string> = { OPENAI_BASE_URL: viaPrivacy(openaiBase(p.baseUrl)), OPENAI_API_KEY: p.apiKey };
       if (p.defaultModel) env.OPENAI_MODEL = p.defaultModel;

@@ -366,6 +366,67 @@ describe('CodexDriver (mock app-server)', () => {
     await d.close();
   });
 
+  // 2026-11-19 user reports 「窗口显示 100%，但是他还在跑」: the ring read the turn's usage — every call of it added up — as
+  // the context, and sat at 100 % through long turns while Codex had compacted; nothing said it had
+  it('the composer’s ring gets the last call’s context against Codex’s window, not the turn’s sum', async () => {
+    const d = new CodexDriver('codex', { command: process.execPath, args: [path.join(here, '__mocks__', 'codex-server.mjs')], env: {}, name: 'Mock' }, { cwd: tmp, permissionMode: 'bypassPermissions' }, transcripts);
+    const msgs = collect(d);
+    await waitFor(() => d.state === 'idle');
+    d.send('hello');
+    await waitFor(() => msgs.some((m) => m.type === 'result'));
+    // one per model call (the re-sent update and the sub-agent thread's 777K are not), as it reports them
+    const ctx = msgs.filter((m) => m.type === 'system' && m.subtype === 'cw_context').map((m) => m.context_usage);
+    expect(ctx).toEqual([{ totalTokens: 30, rawMaxTokens: 200000 }, { totalTokens: 34, rawMaxTokens: 200000 }]);
+    // the turn's end carries it (recorded: a reopened conversation has it), the turn's usage stays the ledger's sum
+    const final = msgs.filter((m) => m.type === 'assistant').pop();
+    expect(final.context_usage).toEqual({ totalTokens: 34, rawMaxTokens: 200000 });
+    expect(final.message.usage).toMatchObject({ input_tokens: 25, cache_read_input_tokens: 23, output_tokens: 14 });
+    expect(msgs.find((m) => m.type === 'result').context_usage).toEqual({ totalTokens: 34, rawMaxTokens: 200000 });
+    // live figures are not transcript lines
+    expect(d.getHistory().some((m: any) => m.subtype === 'cw_context')).toBe(false);
+    await d.close();
+  });
+
+  it('a compaction Codex does on its own is one 「上下文已压缩」 line (item and the deprecated notification together)', async () => {
+    const d = new CodexDriver('codex', { command: process.execPath, args: [path.join(here, '__mocks__', 'codex-server.mjs')], env: {}, name: 'Mock' }, { cwd: tmp, permissionMode: 'bypassPermissions' }, transcripts);
+    const msgs = collect(d);
+    await waitFor(() => d.state === 'idle');
+    d.send('COMPACTAUTO please');
+    await waitFor(() => msgs.some((m) => m.type === 'result'));
+    const lines = msgs.filter((m) => m.type === 'system' && m.subtype === 'compact_boundary');
+    expect(lines).toHaveLength(1);
+    expect(lines[0].compact_metadata.trigger).toBe('auto');
+    // a contextCompaction item is no tool card or text
+    expect(JSON.stringify(msgs.filter((m) => m.type === 'assistant' || m.type === 'user'))).not.toContain('contextCompaction');
+    await d.close();
+  });
+
+  it('/compact is Codex’s thread/compact/start, not a prompt — a turn of its own that ends with a result', async () => {
+    const log = path.join(tmp, 'rpc-compact.log');
+    await fs.rm(log, { force: true });
+    const d = new CodexDriver('codex', { command: process.execPath, args: [path.join(here, '__mocks__', 'codex-server.mjs')], env: { CW_MOCK_RPC_LOG: log }, name: 'Mock' }, { cwd: tmp, permissionMode: 'bypassPermissions' }, transcripts);
+    const msgs = collect(d);
+    await waitFor(() => d.state === 'idle');
+    d.send('hello');
+    await waitFor(() => msgs.filter((m) => m.type === 'result').length === 1);
+    d.send('/compact');
+    await waitFor(() => msgs.filter((m) => m.type === 'result').length === 2);
+    await waitFor(() => d.state === 'idle');
+    const calls = (await fs.readFile(log, 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
+    expect(calls.filter((c) => c.method === 'thread/compact/start')).toEqual([{ method: 'thread/compact/start', params: { threadId: 'thr-1' } }]);
+    expect(calls.filter((c) => c.method === 'turn/start').map((c) => c.params.input[0].text)).toEqual(['hello']);
+    const line = msgs.find((m) => m.type === 'system' && m.subtype === 'compact_boundary');
+    // how full it was before (the previous turn's last call), not the count after the summary
+    expect(line.compact_metadata).toEqual({ trigger: 'manual', pre_tokens: 34 });
+    // the compaction's 0-token call says nothing about the context: no figure of 0 for the ring
+    expect(msgs.filter((m) => m.subtype === 'cw_context').every((m) => m.context_usage.totalTokens > 0)).toBe(true);
+    // the next prompt is a plain turn again (the trigger does not stick)
+    d.send('COMPACTAUTO again');
+    await waitFor(() => msgs.filter((m) => m.type === 'result').length === 3);
+    expect(msgs.filter((m) => m.subtype === 'compact_boundary').map((m) => m.compact_metadata.trigger)).toEqual(['manual', 'auto']);
+    await d.close();
+  });
+
   it('a project’s extra folders become writable roots of the workspace-write sandbox (stage C2); not in a read-only one', async () => {
     const log = path.join(tmp, 'rpc-extra.log');
     // an empty CODEX_HOME: the machine's own ~/.codex/config.toml must not leak into the expectation
