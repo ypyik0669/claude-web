@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { linuxPickDir, terminalShell } from './service.js';
+import { linuxPickDir, terminalShell, windowsPickDir } from './service.js';
 
 describe('terminalShell: the terminal panel is a real shell, not the claude TUI', () => {
   const claudeExe = path.join('C:', 'app', 'sdk-win32-x64', 'claude.exe');
@@ -65,5 +65,39 @@ describe('linuxPickDir: the native folder dialog on Linux, or why there is none'
 
   it('a DISPLAY nobody can open (ssh without forwarding, a service): unavailable (no-display)', async () => {
     expect(await linuxPickDir({ DISPLAY: ':9' }, runner({ zenity: { code: 1, out: '', err: '(zenity:42): Gtk-WARNING **: cannot open display: :9' } }).run)).toEqual({ unavailable: 'no-display' });
+  });
+});
+
+// 2026-11-12 用户报告「新会话打不开新文件夹」：对话框建了却压在别的窗口后面，任务栏里也没有它，点一次留下一个 powershell
+describe('windowsPickDir: the native folder dialog on Windows, or why there is none', () => {
+  const runner = (r: { code: number | string | null; out: string; err?: string }) => {
+    const calls: Array<{ file: string; args: string[] }> = [];
+    const run = async (file: string, args: string[]) => { calls.push({ file, args }); return { code: r.code, out: r.out, err: r.err ?? '' }; };
+    return { run, calls };
+  };
+
+  it('picks a folder (surrounding whitespace dropped)', async () => {
+    expect(await windowsPickDir(runner({ code: 0, out: 'C:\\Users\\u\\proj\r\n' }).run)).toBe('C:\\Users\\u\\proj');
+  });
+
+  it('cancelled: null — exit 0 with nothing printed', async () => {
+    expect(await windowsPickDir(runner({ code: 0, out: '' }).run)).toBeNull();
+  });
+
+  it('PowerShell could not run, or the script failed: unavailable, so the page opens its own folder browser', async () => {
+    expect(await windowsPickDir(runner({ code: 'ENOENT', out: '' }).run)).toEqual({ unavailable: 'no-dialog' });
+    expect(await windowsPickDir(runner({ code: 1, out: '', err: 'Add-Type : cannot add type' }).run)).toEqual({ unavailable: 'no-dialog' });
+  });
+
+  it('STA, and the dialog owned by a topmost form parked off-screen: with no owner it opens behind the app, on-screen it is a white box', async () => {
+    const r = runner({ code: 0, out: '' });
+    await windowsPickDir(r.run);
+    expect(r.calls[0].file).toBe('powershell');
+    expect(r.calls[0].args).toContain('-STA');
+    const script = r.calls[0].args[r.calls[0].args.length - 1];
+    expect(script).toContain('$f.TopMost = $true');
+    expect(script).toContain('$f.Location = New-Object System.Drawing.Point(-32000, -32000)');
+    expect(script).toContain('$d.ShowDialog($f)');
+    expect(script).not.toContain('$d.ShowDialog()');
   });
 });
