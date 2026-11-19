@@ -4,6 +4,13 @@
 
 Every version's changes are recorded here; installers are on the [Releases](https://github.com/ypyik0669/claude-web/releases) page. Versions follow [semantic versioning](https://semver.org/).
 
+## [0.5.14] — 2026-11-19
+
+### Fixed
+
+- **With a subagent model picked, the main model really hands the work over.** Picking a subagent model used to rely on the system prompt asking the main model to delegate, and Opus 5.5 often ignored it: it read the files and ran the commands itself, the subagent model was never used, and the relay never saw a request for it. Now the main conversation's own file reads, searches, commands, edits and web lookups are refused with a pointer to hand them to a subagent, and subagents work as before. To let the main model do things itself, set the subagent model back to "Same as main model" — it takes effect at once.
+- **The context ring no longer says "Context almost full" when it isn't.** On a relay set up in your own settings.json (for example a 500K window set with magpie), Claude Web assumed 200K: the ring showed 100% with "Context almost full", and the info panel's "Window 200K" didn't match the "276k / 500k" under it. It now uses the window Claude Code itself reports, updated after every turn, so all three agree.
+
 ## [0.5.13] — 2026-11-17
 
 (0.5.12 was built but never published; everything in it is in this version.)
