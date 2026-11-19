@@ -1,12 +1,12 @@
-// Opening / closing the 扩展 page (structure round 2, spec 2026-10-10-ui-structure §2.2 / §4). A small store of its
-// own, like the automation page's; the two register with features/sections/pages.ts, which keeps one open at a time.
+// Opening / closing the 自定义 page (structure round 2's 扩展, spec 2026-10-10-ui-structure §2.2 / §4). A small store of
+// its own, like the automation page's; they register with features/sections/pages.ts, which keeps one open at a time.
 import { create } from 'zustand';
 import { hideSheet, useStore } from '@/store';
 import { closeOtherPages, registerPage } from '@/features/sections/pages';
 import { markPageOpened } from '@/features/automation/state';
 import { EXTENSION_TABS, type ExtensionTab } from './page';
 
-export { EXTENSIONS_TITLE, EXTENSION_TABS, EXTENSION_TAB_INFO, type ExtensionTab } from './page';
+export { EXTENSIONS_TITLE, EXTENSION_NAV, EXTENSION_TABS, EXTENSION_TAB_INFO, type ExtensionTab } from './page';
 
 interface ExtensionsState {
   open: boolean;

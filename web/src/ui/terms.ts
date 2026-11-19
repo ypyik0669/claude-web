@@ -122,6 +122,8 @@ export const EMPTY = {
   filesSession: { what: tr('文件'), when: tr('Claude 读文件或改文件'), line: tr('Claude 读过和改过的文件会显示在这里') },
   filesNoFolder: { what: tr('打开的文件夹'), when: tr('打开一个文件夹'), subject: tr('文件夹里的文件') },
   artifacts: { what: tr('生成的文件'), when: tr('Claude 新建了文件') },
+  // the Artifacts page (redesign 2026-11 stage 1): the word is the same in both languages
+  artifactsPage: { what: 'Artifacts', when: '', line: tr('还没有 Artifact。Claude 在对话里写出网页、文档、图片这类文件之后，会出现在这里。') },
   tasksNoChat: { what: tr('打开对话'), when: tr('打开一个对话'), subject: tr('它的子代理、后台任务和计划') },
   tasks: { what: tr('子代理或后台任务'), when: tr('Claude 派出子代理、在后台跑命令') },
   // 后台

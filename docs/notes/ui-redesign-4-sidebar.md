@@ -29,6 +29,7 @@ spec §5.1 / §4.2 / `mock-home.png`。全部在 `web/src/features/sidebar/`。
 - 分组 / 排序是纯函数 `view.ts` 的 `groupSessions` / `sortSessions` / `dateBucket`（`view.test.ts`）。按项目：和以前一样（项目 + 「文件夹」区）；按文件夹：没有项目 / 文件夹之分，项目的主文件夹那组用项目名和项目菜单，标题写「对话」；按日期：今天 / 昨天 / 最近 7 天 / 最近 30 天 / 更早，默认展开；不分组：一个平的列表（`Group section`，没有 `.sb-group-head`）。其它机器的组在所有模式下都按机器分。每组 N 是 `Group` 的 `first`（原来写死的 `PAGE_FIRST`），`renderedRows` 用同一个数。
 - 「其它 agent 的对话」关掉时只在来源选「全部」时生效（`filterSessions` 的 `otherAgents`）；来源计数不受它影响，不然别家的 chip 会变成 0。
 - 自建分区：在「已固定」下面，行拖到分区标题上加入（`MIME_SESSION`，对话同时还在原分组里），行上的 × 移出，分区的 ··· / 右键菜单可重命名、删除（删除前确认）。
+- （2026-11 阶段 1 又改了侧栏顶部、账号行、账号菜单和入口表：见「界面改版（2026-11）阶段 1：外壳」。）
 - 入口表（`entries.ts`）：`filter` 改名 `view`；`view` place 新增 `group-by` / `sort-by` / `other-agents` / `per-group` / `new-section` / `reset` / `all`；新 place `custom`（`custom-section` / `custom-rename` / `custom-delete` / `custom-out`）、新 section `custom`；项目菜单加 `edit`（编辑项目，见 `phase03-files-git` 的多根面板）。外框控件计数仍是 16（一个按钮换一个按钮）。
 - ui-smoke：旧选择器 `data-id="filter"` / `.menu.sb-filter` 全部迁到 `data-id="view"` / `.menu.sb-view`（断言没删、只换选择器），`SCOPES` 加 `custom`；侧栏段里新增「显示」菜单的整套检查。
 

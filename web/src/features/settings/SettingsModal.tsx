@@ -27,6 +27,7 @@ import { McpCatalog } from './McpCatalog';
 import { AccountSection } from './AccountSection';
 import { EnvEditor } from './EnvEditor';
 import { MemorySettings } from '@/features/memory/MemorySettings';
+import { openHub } from '@/features/model-hub/state';
 import { Icon } from '@/ui/icons';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { MODE_LABEL } from '@/ui/terms';
@@ -384,6 +385,15 @@ function Page({ sec, tab, reveal, moreOpen, setMoreOpen, setTab }: { sec: Sectio
     <>
       <h1 className="sp-title">{sec.l}</h1>
       <div className="sp-lead">{sec.desc}</div>
+      {/* 设置 › 模型 (redesign 2026-11 stage 1): the model hub — sources, accounts, routing, usage — opens from here
+          (the rail's 模型 is gone; stage 2 makes these three pages one with the hub's own tabs) */}
+      {sec.group === 'model' && (
+        <div className="sp-hub-link" data-act="open-hub">
+          <Icon name="gateway" size={16} />
+          <span className="t">{tr('来源、账号、路由和用量都在模型看板里')}</span>
+          <button className="btn sm" onClick={() => { useStore.setState({ settingsOpen: null }); openHub(); }}>{tr('打开模型看板')}</button>
+        </div>
+      )}
       {sec.tabs && (
         <div className="sp-tabs" role="tablist">
           {sec.tabs.map((x) => <button key={x.id} role="tab" aria-selected={x.id === t?.id} data-tab={x.id} className={clsx(x.id === t?.id && 'on')} onClick={() => setTab(x.id)}>{x.l}</button>)}

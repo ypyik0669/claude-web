@@ -1,29 +1,30 @@
 // The text set in the heading face 「CW Heading」 (UI refresh spec §4.2): a Songti cut from Noto Serif SC 600 down to
 // the characters of these strings and nothing else — assets/fonts/cw-heading.woff2, with the list of what is in it
-// next to it (cw-heading.chars.txt). The home greeting, the name of every settings page, the automation and
-// extension pages' titles (and their parts' names) and the titles of the first-run steps use it; a conversation's title and anything else a user wrote never do.
+// next to it (cw-heading.chars.txt). The home greeting, the name of every settings page, the titles of the pages over
+// the main area (自动化, 自定义, Artifacts, 模型) and the titles of the first-run steps use it; a conversation's title and
+// anything else a user wrote never do. (Redesign 2026-11 stage 1: a page's parts are tabs now, never its heading —
+// the sidebar no longer lists them — so their names left the list.)
 //
 // Each string is imported from where it is drawn from, so a renamed page changes the list by itself; the font is
 // then cut again with `npx tsx scripts/subset-heading-font.ts` (heading-text.test.ts fails until it is). Pure: the
 // script and the test both read this module in node.
 import { GREETING } from '@/features/home/model';
 import { SETTINGS_SECTIONS } from '@/features/settings/catalog';
-import { AUTOMATION_TAB_INFO, AUTOMATION_TITLE } from '@/features/automation/page';
+import { AUTOMATION_TITLE } from '@/features/automation/page';
 import { SCHEDULES_HERO } from '@/features/automation/templates';
-import { EXTENSIONS_TITLE, EXTENSION_TAB_INFO } from '@/features/extensions/page';
+import { EXTENSIONS_TITLE } from '@/features/extensions/page';
+import { ARTIFACTS_TITLE } from '@/features/artifacts/page';
+import { HUB_TITLE } from '@/features/model-hub/page';
 import { STEP_TITLE } from '@/features/onboarding/steps';
-import { BG_TITLE } from '@/features/background/model';
 
 export const HEADING_STRINGS: readonly string[] = [...new Set([
   GREETING,
   ...SETTINGS_SECTIONS.map((s) => s.l),
   AUTOMATION_TITLE,
-  // with the icon rail a page section shows one part under that part's own name (structure round 2)
-  ...Object.values(AUTOMATION_TAB_INFO).map((t) => t.label),
   SCHEDULES_HERO.title,
   EXTENSIONS_TITLE,
-  BG_TITLE,
-  ...Object.values(EXTENSION_TAB_INFO).map((t) => t.label),
+  ARTIFACTS_TITLE,
+  HUB_TITLE,
   ...Object.values(STEP_TITLE),
 ])];
 

@@ -15,12 +15,12 @@ export const usePaneEdge = () => useContext(PaneEdgeContext);
 
 /**
  * 「展开侧栏」 in the top-left row, only while the sidebar is collapsed (spec §5.2) — on a phone, where it is the
- * drawer's handle. At desktop width the icon rail has the sidebar's switch (structure round 2), open or collapsed.
+ * drawer's handle. Collapsing the sidebar (Ctrl+B) puts every entry away (redesign 2026-11 stage 1: there is no icon
+ * rail any more), so on a desktop this is the way back too.
  */
 export function SidebarReveal() {
   const open = useStore((s) => s.sidebarOpen);
-  const mobile = useStore((s) => s.mobile);
-  if (open || !mobile) return null;
+  if (open) return null;
   return (
     <button className="icon-btn sb-reveal" title={tr('展开侧栏 ({modKey}+B)', { modKey })} aria-label={tr('展开侧栏')} onClick={() => useStore.setState({ sidebarOpen: true })}>
       <Icon name="sidebar" size={16} />

@@ -1,5 +1,9 @@
 # 图标栏 / 分区 / 联网（2026-10-10，界面第二轮）
 
+> **2026-11-19 起没有图标栏了**（「界面改版（2026-11）阶段 1：外壳」）：下面讲图标栏（`features/rail/`、`rail.css`、
+> `RAIL_MORE`、钉住 / `ui.railPins`）和分区侧栏（`AutomationSide` / `ExtensionsSide` / `ModelHubSide`）的地方只是历史；
+> 窄页也不再居中（一条左边线）。分区登记表、`OverPage`、扩展（现在叫自定义）页的内容、联网这些仍然成立。
+
 spec 和实施记录：`docs/superpowers/specs/2026-10-10-ui-structure/design.md`（§7 记了做了什么、和设计不一样的地方、没验的）。起因：用户对着 Codex 桌面版的截图说按钮的位置不对、不好看、不顺手，并要内置的网络搜索 / 浏览器 / computer use。**下面和前面各节冲突的地方，以这一节为准**（末尾有清单）。
 
 - **图标栏**（`features/rail/`：`Rail.tsx` + 纯逻辑 `rail-model.ts`，样式 `styles/rail.css`，`main.tsx` 里排在 `corners.css` 前面）：桌面上窗口最左边 52px（`RAIL_WIDTH`）：收起侧栏 · 对话 · 自动化 · 扩展 · ···，底下是设置和账户头像（头像外面一圈是额度）。手机没有图标栏，侧栏抽屉里多一行「扩展」。`RAIL_SECTIONS` 是分区表；`RAIL_MORE`（`mission, usage, memory, board, android, config`）是 ··· 菜单里的面板，每行名字 + 一句话（`railPanel()`），可以钉到图标栏上（最多 `MAX_PINS` 4 个，meta.json `ui.railPins`，`readPins` / `togglePin`）。「显示工作台工具」下那排没有文字的面板图标 **`DockRail` 删了**。

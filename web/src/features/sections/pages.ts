@@ -1,10 +1,10 @@
-// The pages that lie over the main area — 后台, 自动化, 扩展 (structure round 2, spec 2026-10-10-ui-structure §2.2). Each has
-// its own small store; this is what they share: only one is open at a time, and everything that used to ask "is the
-// automation page open" (the composer under it, the shortcuts, the pane layer's `inert`) asks about any of them.
-// The icon rail's sections are these pages plus 对话, which is "none of them open".
+// The pages that lie over the main area — 自动化 (with 运行中 and Bot), 自定义, Artifacts, the model hub (structure round 2,
+// spec 2026-10-10-ui-structure §2.2; redesign 2026-11 stage 1). Each has its own small store; this is what they share:
+// only one is open at a time, and everything that used to ask "is the automation page open" (the composer under it,
+// the shortcuts, the pane layer's `inert`) asks about any of them. 对话 is "none of them open".
 import { useSyncExternalStore } from 'react';
 
-export type Section = 'chat' | 'background' | 'automation' | 'extensions' | 'gateway' | 'bots';
+export type Section = 'chat' | 'background' | 'automation' | 'extensions' | 'gateway' | 'bots' | 'artifacts';
 export type PageId = Exclude<Section, 'chat'>;
 
 interface Page { isOpen(): boolean; close(): void; subscribe(fn: () => void): () => void }

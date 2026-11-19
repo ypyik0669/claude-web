@@ -32,6 +32,8 @@ export function useAnchoredMenu(ref: React.RefObject<HTMLElement | null>, onClos
   const sheet = useSheetMenu();
   // decided as the menu mounts: a click handler mounts it within the same task as the pointer event
   const [kb] = useState(() => !byPointer());
+  // where the anchor was when the menu was last placed: a scroll closes the menu only when it moved the anchor from there
+  const anchorAt = useRef<{ top: number; left: number } | null>(null);
   useLayoutEffect(() => {
     if (sheet) return;
     const el = ref.current, anchor = el?.parentElement;
@@ -42,6 +44,7 @@ export function useAnchoredMenu(ref: React.RefObject<HTMLElement | null>, onClos
       const scrolled = el.scrollTop;
       Object.assign(el.style, { position: 'fixed', right: 'auto', bottom: 'auto', maxHeight: '', overflowY: '', overscrollBehavior: '' });
       const a = anchor.getBoundingClientRect(), size = { w: el.offsetWidth, h: el.scrollHeight };
+      anchorAt.current = { top: a.top, left: a.left };
       const side = anchor.closest('.sidebar')?.getBoundingClientRect();
       const spot = placeFixed(a, size, { vw: window.innerWidth, vh: window.innerHeight }, { ...opts.current, caption: captionBox(), ...(side && opts.current.side !== 'right' ? { minLeft: Math.max(8, Math.round(side.left) + 4) } : {}) });
       el.style.left = `${spot.left}px`;
@@ -69,7 +72,13 @@ export function useAnchoredMenu(ref: React.RefObject<HTMLElement | null>, onClos
       const anchor = ref.current?.parentElement;
       const t = e.target as Node | null;
       if (!anchor || !t || ref.current?.contains(t)) return;
-      if (t === document || (t as Node).contains?.(anchor)) closeRef.current();
+      if (!(t === document || (t as Node).contains?.(anchor))) return;
+      // only a scroll that moved the anchor: the browser's scroll anchoring (rows inserted above a scrolled list keep
+      // the visible ones still) and a scroll made just before the menu opened (its event comes a frame later) fire
+      // `scroll` with the anchor where it was (the sidebar's list is shorter since the account row moved into it)
+      const at = anchorAt.current, now = anchor.getBoundingClientRect();
+      if (at && Math.abs(now.top - at.top) < 1 && Math.abs(now.left - at.left) < 1) return;
+      closeRef.current();
     };
     const k = () => closeRef.current();
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); closeRef.current(); } };

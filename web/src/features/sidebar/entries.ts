@@ -6,16 +6,16 @@ import type { PanelId } from '@/model/layout';
 import { tr } from '@/i18n';
 
 /**
- * Top: the brand row and the navigation. At desktop width the icon rail (features/rail/) has the sidebar's switch,
- * the sections (对话 · 后台 · 自动化 · 扩展) and ···; the sidebar keeps 新对话 and 搜索. A phone has them all in its drawer
- * (no 对话 / ··· there: the drawer is the conversation list, the panels are in each header's ···).
+ * Top: the brand row and the five entries (redesign 2026-11 stage 1: no icon rail any more). The brand mark is the
+ * application menu, then the sidebar's switch and ← →; under them 新对话 · 搜索 · Artifacts · 自动化 · 自定义 (自定义
+ * keeps the id of the 扩展 page it opens). A phone's drawer has the same entries under a search box.
  */
-export const TOP = ['app-menu', 'collapse', 'back', 'forward', 'new', 'search', 'chat', 'background', 'automation', 'bots', 'extensions', 'more'] as const;
+export const TOP = ['app-menu', 'collapse', 'back', 'forward', 'new', 'search', 'artifacts', 'automation', 'extensions'] as const;
 /**
- * 自动化 opens the automation page (redesign phase 7, `features/automation/`): these are its tabs (定时任务 · 目标 ·
- * 编排), the same ids as `AUTOMATION_TABS` there. The phase-4 menu they used to be in is gone.
+ * 自动化 opens one page with five tabs (stage 1: 后台 and Bot moved in) — 运行中 · 定时任务 · Bot · 目标 · 编排, the same
+ * ids as `FAMILY_TABS` in features/automation/page.ts.
  */
-export const AUTOMATION = ['schedules', 'goals', 'orchestra'] as const;
+export const AUTOMATION = ['running', 'schedules', 'bots', 'goals', 'orchestra'] as const;
 /** Sections of the list, in order. */
 export const SECTIONS = ['attention', 'pinned', 'custom', 'projects', 'other', 'peers'] as const;
 /** The 项目 / 对话 header row. */
@@ -33,8 +33,11 @@ export const PROJECT_MENU = ['new-here', 'worktree', 'terminal', 'move-top', 'mo
 export const ROW_MENU = ['open-tab', 'open-split', 'resume', 'pin', 'explorer', 'vscode', 'stop', 'reference', 'rename', 'fork', 'archive', 'handoff', 'handoff-peer', 'native-cli', 'copy-id', 'delete', 'section-add', 'section-out'] as const;
 /** On the rows themselves. */
 export const ROW = ['status', 'kids', 'more', 'less', 'select-bar', 'select-section'] as const;
-/** The account row at the bottom and its popover. */
-export const ACCOUNT = ['account', 'quota', 'connection', 'today', 'expired', 'login', 'logout', 'theme', 'usage', 'settings', 'config', 'ascii-themes', 'appearance', 'shortcuts', 'palette'] as const;
+/**
+ * The account row at the bottom and its menu (stage 1: eight rows — 设置 · 用量与账本 · 语言 › · 主题 › · 键盘快捷键 ·
+ * 帮助与反馈 › · 更新内容 · 登录 / 退出; 字符画主题 / 外观 are in 主题 ›).
+ */
+export const ACCOUNT = ['account', 'quota', 'connection', 'today', 'expired', 'login', 'logout', 'settings', 'usage', 'language', 'theme', 'ascii-themes', 'appearance', 'shortcuts', 'help', 'whats-new'] as const;
 /** The light, dismissable hint. */
 export const HINT = ['library-join', 'library-later'] as const;
 
@@ -52,12 +55,12 @@ export type HintId = (typeof HINT)[number];
 
 /**
  * The panels whose content the sidebar reaches — 自动化 → the page's 目标 / 编排 tabs (the same GoalsPanel /
- * OrchestraPanel the right panel shows; 定时任务 is a view, not a panel), the account popover → 用量 / 配置中心.
+ * OrchestraPanel the right panel shows; 定时任务 is a view, not a panel), the account menu → 用量与账本.
  * `workbench/panel-entries.ts` counts them as the sidebar's 2-click entries (`sidebarAutomation` / `accountMenu`), so
  * both tables use the same ids.
  */
 export const AUTOMATION_PANELS = { goals: 'goals', orchestra: 'orchestra' } as const satisfies Partial<Record<AutomationId, PanelId>>;
-export const ACCOUNT_PANELS = { usage: 'usage', config: 'config' } as const satisfies Partial<Record<AccountId, PanelId>>;
+export const ACCOUNT_PANELS = { usage: 'usage' } as const satisfies Partial<Record<AccountId, PanelId>>;
 
 export const PLACES = {
   top: TOP, automation: AUTOMATION, section: SECTIONS, head: PROJECTS_HEAD, view: VIEW, custom: CUSTOM,
@@ -71,12 +74,12 @@ export const LEGACY: { old: string; now: `${Place}:${string}`[] }[] = [
   { old: tr('新会话 (Alt N)'), now: ['top:new'] },
   { old: tr('命令 / 搜索 (Ctrl K)'), now: ['top:search'] },
   { old: tr('设置 (Ctrl ,)'), now: ['account:settings'] },
-  { old: tr('设置 · 右键：在右侧面板打开配置中心'), now: ['account:config'] },
+  { old: tr('设置 · 右键：在右侧面板打开配置中心'), now: ['account:settings'] },
   { old: tr('用量（右侧面板）'), now: ['account:usage'] },
   { old: tr('额度环 + 明细'), now: ['account:quota'] },
   { old: tr('连接状态点 / 重连中…'), now: ['account:connection'] },
   { old: tr('显示已归档（底部开关）'), now: ['view:archived'] },
-  { old: tr('主题 / 设置（底部月亮 → 命令面板）'), now: ['account:theme', 'account:appearance', 'account:palette'] },
+  { old: tr('主题 / 设置（底部月亮 → 命令面板）'), now: ['account:theme', 'account:appearance', 'top:search'] },
   { old: tr('会话库发现横幅：加入 X'), now: ['hint:library-join'] },
   { old: tr('会话库发现横幅：以后再说'), now: ['hint:library-later'] },
   { old: tr('来源 chip 行'), now: ['view:source'] },
@@ -112,10 +115,24 @@ export const LEGACY: { old: string; now: `${Place}:${string}`[] }[] = [
   { old: tr('会话 ··· · 在原生 CLI 打开'), now: ['rowMenu:native-cli'] },
   { old: tr('会话 ··· · 复制 ID'), now: ['rowMenu:copy-id'] },
   { old: tr('会话 ··· · 删除…'), now: ['rowMenu:delete'] },
+  // the icon rail (structure round 2 → redesign 2026-11 stage 1): what it held, where it is now. Its ··· panels that
+  // left the sidebar altogether (总览, 共享记忆, Issue 与 PR, Android, 配置中心, 网吧) are in features/palette/moved.ts
+  { old: tr('图标栏 · ☰ 应用菜单'), now: ['top:app-menu'] },
+  { old: tr('图标栏 · 收起 / 展开侧栏'), now: ['top:collapse'] },
+  { old: tr('图标栏 · 对话'), now: ['top:new', 'section:projects'] },
+  { old: tr('图标栏 · 后台'), now: ['top:automation', 'automation:running'] },
+  { old: tr('图标栏 · 自动化'), now: ['top:automation', 'automation:schedules', 'automation:goals', 'automation:orchestra'] },
+  { old: tr('图标栏 · Bot'), now: ['top:automation', 'automation:bots'] },
+  { old: tr('图标栏 · 模型'), now: ['account:settings'] },
+  { old: tr('图标栏 · 扩展'), now: ['top:extensions'] },
+  { old: tr('图标栏 · 更多 · 用量与账本'), now: ['account:usage'] },
+  { old: tr('图标栏 · 设置'), now: ['account:settings'] },
+  { old: tr('图标栏 · 账号'), now: ['account:account', 'account:quota'] },
+  { old: tr('账号菜单 · 字符画主题… / 外观与主题…'), now: ['account:theme', 'account:ascii-themes', 'account:appearance'] },
 ];
 
 /** Where the spec's new L0 / L1 entries live (§4.2 / §5.1), beyond the old ones. */
-export const ADDED: `${Place}:${string}`[] = ['top:app-menu', 'top:back', 'top:forward', 'top:chat', 'top:background', 'top:extensions', 'top:more', 'top:automation', 'top:bots', 'automation:schedules', 'automation:goals', 'automation:orchestra', 'section:attention', 'section:projects', 'head:view', 'account:account', 'account:today', 'account:shortcuts', 'view:library', 'view:group-by', 'view:sort-by', 'view:other-agents', 'view:per-group', 'view:new-section', 'view:reset', 'view:all', 'section:custom', 'custom:custom-section', 'custom:custom-rename', 'custom:custom-delete', 'custom:custom-out', 'row:less', 'project:move-top', 'project:move-up', 'project:move-down', 'project:edit', 'account:ascii-themes', 'account:expired', 'account:login', 'account:logout', 'rowMenu:handoff-peer', 'rowMenu:section-add', 'rowMenu:section-out', 'row:select-section'];
+export const ADDED: `${Place}:${string}`[] = ['top:back', 'top:forward', 'top:artifacts', 'automation:running', 'automation:schedules', 'automation:bots', 'automation:goals', 'automation:orchestra', 'section:attention', 'section:projects', 'head:view', 'account:account', 'account:today', 'account:shortcuts', 'account:language', 'account:help', 'account:whats-new', 'view:library', 'view:group-by', 'view:sort-by', 'view:other-agents', 'view:per-group', 'view:new-section', 'view:reset', 'view:all', 'section:custom', 'custom:custom-section', 'custom:custom-rename', 'custom:custom-delete', 'custom:custom-out', 'row:less', 'project:move-top', 'project:move-up', 'project:move-down', 'project:edit', 'account:ascii-themes', 'account:expired', 'account:login', 'account:logout', 'rowMenu:handoff-peer', 'rowMenu:section-add', 'rowMenu:section-out', 'row:select-section'];
 
 export function resolves(ref: `${Place}:${string}`): boolean {
   const [place, id] = ref.split(':') as [Place, string];

@@ -615,8 +615,9 @@ function driver() {
       }
       // redesign phase 1: one pane, one tab, no workbench setting → no global top bar, no group bar, no tab strip, no panel rail
       if (E.SMOKE_READONLY !== '1') {
-        const chrome = await js('({ wb: window.__store.getState().settings["ui.workbench"], topbar: !!document.querySelector(".topbar"), groupbar: !!document.querySelector(".groupbar"), strips: document.querySelectorAll(".tabstrip").length, rail: !!document.querySelector(".dock-rail"), iconRail: [...document.querySelectorAll(".rail .rail-main > [data-id], .rail .rail-main > .rail-anchor > [data-id]")].map((b) => b.dataset.id).join(" ") })');
-        check('default chrome: no top bar / group bar / tab strip / row of panel icons; the icon rail is 对话 · 后台 · 自动化 · Bot · 网关 · 扩展 · 更多', chrome.wb === false && !chrome.topbar && !chrome.groupbar && !chrome.strips && !chrome.rail && chrome.iconRail === 'chat background automation bots gateway extensions more', JSON.stringify(chrome));
+        const chrome = await js('({ wb: window.__store.getState().settings["ui.workbench"], topbar: !!document.querySelector(".topbar"), groupbar: !!document.querySelector(".groupbar"), strips: document.querySelectorAll(".tabstrip").length, rail: !!document.querySelector(".dock-rail"), iconRail: !!document.querySelector(".rail"), nav: [...document.querySelectorAll(".sidebar .sb-nav > [data-id]")].map((b) => b.dataset.id).join(" ") })');
+        // redesign 2026-11 stage 1: no icon rail — the sidebar's top has the five places
+        check('default chrome: no top bar / group bar / tab strip / row of panel icons / icon rail; the sidebar starts with 新对话 · 搜索 · Artifacts · 自动化 · 自定义', chrome.wb === false && !chrome.topbar && !chrome.groupbar && !chrome.strips && !chrome.rail && !chrome.iconRail && chrome.nav === 'new search artifacts automation extensions', JSON.stringify(chrome));
         const quota = await js('[...document.querySelectorAll(".quota")].every((q) => q.closest(".sb-foot"))');
         check('the quota ring lives in the sidebar bottom row', quota);
       }
@@ -1605,42 +1606,45 @@ function driver() {
           check('钉住 a reply: listed in the info column (SessionMeta.pinnedMsgs), a click there finds it, × unpins', hasPin && pins.card && pins.stored === 1 && pins.flashed && pins.gone, JSON.stringify({ hasPin, pins }));
           const speak = await js(`!('speechSynthesis' in window) || !!document.querySelector('.pane.focused .msg-actions [data-act="speak"]')`);
           check('朗读 sits in the reply row (where the browser can speak)', speak);
-          // ☰: the browser's own menu with the official groups
+          // ☰: the browser's own menu with the official groups — the logo at the sidebar's top (redesign 2026-11 stage 1;
+          // the icon rail's ☰ before, there with the sidebar collapsed too): the sidebar is collapsed at this point
+          await js('window.__store.setState({ sidebarOpen: true })');
+          await sleep(300);
           await click('[data-id="app-menu"]');
           const appMenu = await waitFor(`!!document.querySelector('.menu.app-menu')`, 2000);
           const groups = await js(`[...document.querySelectorAll('.menu.app-menu .menu-label')].map((e) => e.textContent)`);
           await key('Escape');
           await sleep(200);
           check('☰ opens the application menu: 对话 · 编辑 · 视图 · 前往 · 帮助', appMenu && JSON.stringify(groups) === JSON.stringify(['对话', '编辑', '视图', '前往', '帮助']), JSON.stringify(groups));
-          // the account menu over a full page (扩展): nothing of it under the page (user report, macOS)
-          await js(`(() => { const b = [...document.querySelectorAll('.rail [data-id]')].find((e) => e.dataset.id === 'extensions'); b && b.click(); })()`);
-          await waitFor(`!!document.querySelector('.ext-page')`, 3000);
-          // 模型: one hub with eight first-level pages (no tabs, no 高级设置); 上游 has one filter strip; 设置 holds sharing
+          // the account menu over a full page (自定义): nothing of it under the page (user report, macOS)
           await js(`window.__store.setState({ sidebarOpen: true })`);
           await sleep(200);
-          await js(`(() => { const b = [...document.querySelectorAll('.rail [data-id]')].find((e) => e.dataset.id === 'gateway'); b && b.click(); })()`);
-          const hubReady = await waitFor(`(() => { const p = document.querySelector('.over-page.hub-page'); return !!p && !p.hidden && document.querySelectorAll('.hub-side [data-id]').length >= 8; })()`, 20000);
-          const hub = hubReady ? await js(`(() => ({ pages: [...document.querySelectorAll('.hub-side [data-id]')].map((x) => x.dataset.id).join(','), tabs: !!document.querySelector('.hub-page .over-tabs'), adv: document.body.innerText.includes('高级设置') }))()`) : null;
-          check('模型 opens on the hub with eight pages (概览 · 上游 · 路由 · 用量 · 隐私 · 插件 · 接入 · 设置), no tabs, no 高级设置', hub && hub.pages === 'overview,sources,routing,usage,privacy,plugins,agents,settings' && !hub.tabs && !hub.adv, JSON.stringify(hub));
-          await js(`document.querySelector('.hub-side [data-id="sources"]')?.click()`);
-          await waitFor(`document.querySelectorAll('.hub-filters [data-id]').length >= 6`, 10000);
-          const filters = await js(`(() => ({ ids: [...document.querySelectorAll('.hub-filters [data-id]')].map((x) => x.dataset.id).join(','), cards: document.querySelectorAll('.hub-pgrid .hub-provider').length }))()`);
-          check('上游 has the six source filters and one card per source/preset', filters.ids === 'all,subscription,api,local,custom,remote' && filters.cards > 0, JSON.stringify(filters));
-          await js(`document.querySelector('.hub-side [data-id="settings"]')?.click()`);
-          const share = await waitFor(`(() => { const p = document.querySelector('.hub-settings'); return !!p && p.innerText.includes('本机地址') && p.innerText.includes('网关密钥'); })()`, 10000);
-          const afterSettings = await js(`({ settings: !!document.querySelector('.hub-settings'), page: !!document.querySelector('.hub-page:not([hidden])'), drawer: !!document.querySelector('.gw-drawer-wrap[data-drawer="share"]:not([hidden])') })`);
-          check('设置 shows gateway address/key and sharing in the page (no drawer)', share && afterSettings.settings && afterSettings.page && !afterSettings.drawer, JSON.stringify(afterSettings));
-          await js(`(() => { const b = [...document.querySelectorAll('.rail [data-id]')].find((e) => e.dataset.id === 'chat'); b && b.click(); })()`);
-          await waitFor(`!document.querySelector('.hub-page:not([hidden])')`, 3000);
-          await click('.rail-acct');
+          await click('.sidebar .sb-nav [data-id="extensions"]');
+          await waitFor(`(() => { const p = document.querySelector('.ext-page'); return !!p && !p.hidden; })()`, 3000);
+          await click('.sidebar .sb-account .acct');
           await waitFor(`!!document.querySelector('.sb-acct-menu')`, 2000);
           const onTop = await js(`(() => { const m = document.querySelector('.sb-acct-menu'); if (!m) return null; const b = m.getBoundingClientRect(); return [[b.right - 10, b.top + 16], [b.right - 10, b.bottom - 16], [b.left + 10, b.top + 16]].every(([x, y]) => m.contains(document.elementFromPoint(x, y))); })()`);
           await key('Escape');
-          await js(`(() => { const b = [...document.querySelectorAll('.rail [data-id]')].find((e) => e.dataset.id === 'chat'); b && b.click(); })()`);
-          await waitFor(`!document.querySelector('.ext-page:not([hidden])') && !!document.querySelector('.sidebar .sb-list [data-sid]')`, 4000);
-          await js(`window.__store.setState({ sidebarOpen: true })`);
+          check('the account menu lies over the 自定义 page, not under it', onTop === true, String(onTop));
+          // 模型 (redesign 2026-11 stage 1: 设置 › 模型 opens the hub — the rail's 模型 is gone): one hub with eight pages
+          // as its tabs (no 高级设置); 上游 has one filter strip; 设置 holds sharing
+          await js(`window.__store.getState().openSettings({ section: 'providers' })`);
+          await waitFor(`!!document.querySelector('.modal.settings .sp-hub-link button')`, 4000);
+          await click('.modal.settings .sp-hub-link button');
+          const hubReady = await waitFor(`(() => { const p = document.querySelector('.over-page.hub-page'); return !!p && !p.hidden && !document.querySelector('.modal.settings') && document.querySelectorAll('.hub-page .over-tabs [data-id]').length >= 8; })()`, 20000);
+          const hub = hubReady ? await js(`(() => ({ pages: [...document.querySelectorAll('.hub-page .over-tabs [data-id]')].map((x) => x.dataset.id).join(','), extGone: !!document.querySelector('.ext-page')?.hidden, adv: document.body.innerText.includes('高级设置') }))()`) : null;
+          check('设置 › 模型 › 打开模型看板: the hub over the main area with eight tabs (概览 · 上游 · 路由 · 用量 · 隐私 · 插件 · 接入 · 设置), the settings closed, no 高级设置', hub && hub.pages === 'overview,sources,routing,usage,privacy,plugins,agents,settings' && hub.extGone && !hub.adv, JSON.stringify(hub));
+          await click('.hub-page .over-tabs [data-id="sources"]');
+          await waitFor(`document.querySelectorAll('.hub-filters [data-id]').length >= 6`, 10000);
+          const filters = await js(`(() => ({ ids: [...document.querySelectorAll('.hub-filters [data-id]')].map((x) => x.dataset.id).join(','), cards: document.querySelectorAll('.hub-pgrid .hub-provider').length }))()`);
+          check('上游 has the six source filters and one card per source/preset', filters.ids === 'all,subscription,api,local,custom,remote' && filters.cards > 0, JSON.stringify(filters));
+          await click('.hub-page .over-tabs [data-id="settings"]');
+          const share = await waitFor(`(() => { const p = document.querySelector('.hub-settings'); return !!p && p.innerText.includes('本机地址') && p.innerText.includes('网关密钥'); })()`, 10000);
+          const afterSettings = await js(`({ settings: !!document.querySelector('.hub-settings'), page: !!document.querySelector('.hub-page:not([hidden])'), drawer: !!document.querySelector('.gw-drawer-wrap[data-drawer="share"]:not([hidden])') })`);
+          check('设置 shows gateway address/key and sharing in the page (no drawer)', share && afterSettings.settings && afterSettings.page && !afterSettings.drawer, JSON.stringify(afterSettings));
+          await click('.hub-page .over-close');
+          await waitFor(`!document.querySelector('.hub-page:not([hidden])') && !!document.querySelector('.sidebar .sb-list [data-sid]')`, 4000);
           await sleep(300);
-          check('the account menu lies over the 扩展 page, not under it', onTop === true, String(onTop));
           // projects / folders start folded (GitHub issue #3); the current conversation's stays open
           await js(`window.__store.getState().setSetting('ui.sidebarFolded', true)`);
           await sleep(500);
@@ -1682,17 +1686,17 @@ function driver() {
         const inView = await waitFor(autoShown, 4000);
         const noPill = await js('!document.querySelector(".pane.focused .sh-view") && !!document.querySelector(".pane.focused .chat")');
         await shot('automation-from-header');
-        await click(':is(.app.has-rail .rail [data-id="chat"], .app.mobile .auto-page .auto-head button[aria-label="关闭自动化"])');
+        await click('.over-page:not([hidden]) .over-close');
         const back = await waitFor('document.querySelector(".auto-page")?.hidden === true && !document.querySelector(".pane-layer[inert]") && !!document.querySelector(".pane.focused .chat")', 4000);
         check('··· 定时任务 opens the automation page over the conversation (kept mounted underneath); × returns to it', inView && noPill && back, JSON.stringify({ inView, noPill, back }));
 
         // collapsed sidebar: the centre takes the whole width and the header's first button brings the sidebar back
         await js('window.__store.setState({ sidebarOpen: false })');
         await sleep(500);
-        const collapsed = await js(`(() => { const c = document.querySelector('.center').getBoundingClientRect(); return { left: Math.round(c.left), reveal: !!document.querySelector('.rail .sb-reveal'), inHeader: !!document.querySelector('.pane .sess-head .sb-reveal') }; })()`);
-        // (the centre is a card on the shell, right after the icon rail — 52px; 展开侧栏 is the rail's first button, not
-        // one more button in the conversation's header)
-        check('collapsed sidebar: the centre starts right after the icon rail, whose first button is 展开侧栏', collapsed.left === 52 && collapsed.reveal && !collapsed.inHeader, JSON.stringify(collapsed));
+        const collapsed = await js(`(() => { const c = document.querySelector('.center').getBoundingClientRect(); return { left: Math.round(c.left), rail: !!document.querySelector('.rail'), inHeader: !!document.querySelector('.pane.focused .sess-head > .sb-reveal') }; })()`);
+        // (redesign 2026-11 stage 1: no icon rail — the centre is a card right after the shell's gap, and 展开侧栏 is the
+        // first button of the conversation's header; Ctrl+B does the same)
+        check('collapsed sidebar: the centre takes the whole width (after the shell gap), the header\'s first button is 展开侧栏', collapsed.left <= 12 && !collapsed.rail && collapsed.inHeader, JSON.stringify(collapsed));
         // review M10: 「连接断开，正在重连…」 at the top of the main area — seen with the sidebar (and its account row) away
         const banner = `(() => { const b = document.querySelector('.center .conn-banner'); if (!b) return null; const r = b.getBoundingClientRect(), c = document.querySelector('.center').getBoundingClientRect(); return { text: b.textContent, inCenter: r.left >= c.left && r.right <= c.right + 1, top: Math.round(r.top), visible: r.width > 0 && r.height > 0 && getComputedStyle(b).visibility !== 'hidden' }; })()`;
         if (E.SMOKE_READONLY !== '1') {
@@ -1704,7 +1708,7 @@ function driver() {
           const gone = await waitFor(`!${banner}`, 2000);
           check('disconnected: 「连接断开，正在重连…」 at the top of the main area with the sidebar collapsed; gone when back', down && down.text === '连接断开，正在重连…' && down.inCenter && down.visible && down.top < 140 && gone, JSON.stringify({ down, gone }));
         }
-        await click('.rail .sb-reveal');
+        await click('.pane.focused .sess-head > .sb-reveal');
         const reopened = await waitFor(`!!document.querySelector('.sidebar.has-resizer') && Math.round(document.querySelector('.center').getBoundingClientRect().left) === Math.round(document.querySelector('.sidebar.has-resizer').getBoundingClientRect().right) && !document.querySelector('.sb-reveal')`, 4000);
         check('展开侧栏 brings the sidebar back beside the centre', reopened);
 
@@ -1728,7 +1732,7 @@ function driver() {
         if (E.SMOKE_READONLY !== '1') {
           await js('window.__store.getState().setSetting("ui.workbench", true)');
           const on = await waitFor('!!document.querySelector(".groupbar") && !document.querySelector(".dock-rail") && document.querySelectorAll(".pane .tabstrip").length === 1', 4000);
-          check('workbench tools on: group bar and tab strip (no row of panel icons: they are behind the rail\'s ···)', on);
+          check('workbench tools on: group bar and tab strip (no row of panel icons: they are in the header\'s ··· and the palette)', on);
           await shot('workbench');
           // the tab strip's ＋ menu is not clipped by the sideways-scrolling tab row (Enroll 2026-10-14: the ＋ looked dead)
           await click('.pane .tabstrip .tab-add');
@@ -1786,8 +1790,9 @@ function driver() {
           const drawer = await waitFor('document.querySelector(".app").classList.contains("drawer-open") && !!document.querySelector(".sidebar.has-resizer")', 3000);
           check('phone: 展开侧栏 opens the sidebar drawer', drawer);
           await shot('phone-drawer');
-          const drawerParts = await js(`({ nav: [...document.querySelectorAll('.sidebar .sb-nav [data-id]')].map((e) => e.dataset.id), account: !!document.querySelector('.sidebar .sb-account [data-id="account"]') })`);
-          check('phone: the drawer is the same sidebar (新对话 / 搜索 / 自动化, account row)', ['new', 'search', 'automation'].every((x) => drawerParts.nav.includes(x)) && drawerParts.account, JSON.stringify(drawerParts));
+          // (redesign 2026-11 stage 1: a search box, then four rows — no 搜索 row, and 派活 is in 新对话)
+          const drawerParts = await js(`({ search: !!document.querySelector('.sidebar .sb-search[data-id="search"]'), nav: [...document.querySelectorAll('.sidebar .sb-nav > [data-id]')].map((e) => e.dataset.id).join(' '), account: !!document.querySelector('.sidebar .sb-account [data-id="account"]') })`);
+          check('phone: the drawer is the same sidebar — a search box, then 新对话 · Artifacts · 自动化 · 自定义, the account row', drawerParts.search && drawerParts.nav === 'new artifacts automation extensions' && drawerParts.account, JSON.stringify(drawerParts));
           // final review M4: Ctrl+K / `?` from the keyboard with the drawer open — the drawer (z 60) makes way, the
           // palette / the shortcut sheet is what a tap where the drawer was reaches
           const overDrawer = async (open, sel) => {
@@ -1875,21 +1880,22 @@ function driver() {
           // (the automation page / the drawer), no unrelated 「手机上没有右侧面板」, and both close the drawer alike
           await click('.pane .sess-head .sb-reveal');
           await waitFor('document.querySelector(".app").classList.contains("drawer-open")', 3000);
-          await click(':is(.rail, .sidebar) [data-id="automation"]');
-          const autoPhone = await waitFor(`(() => { const p = document.querySelector('.auto-page'); return !!p && !p.hidden && !document.querySelector('.app').classList.contains('drawer-open'); })()`, 3000);
-          await click(':is(.auto-page .auto-tabs, .sb-sect:not([hidden]) .auto-side .sect-nav) [data-id="goals"]');
+          await click('.sidebar .sb-nav [data-id="automation"]');
+          const autoPhone = await waitFor(`(() => { const p = document.querySelector('.over-page.in-family:not([hidden])'); return !!p && !!p.querySelector('.fam-tabs') && !document.querySelector('.app').classList.contains('drawer-open'); })()`, 3000);
+          await click('.over-page:not([hidden]) .fam-tabs [data-id="goals"]');
           const goalsPhone = await waitFor(`(() => { const b = document.querySelector('.auto-page .auto-body[data-body="goals"]:not([hidden])'); return !!b && b.getBoundingClientRect().height > 0; })()`, 3000);
-          await click(':is(.auto-page .auto-tabs, .sb-sect:not([hidden]) .auto-side .sect-nav) [data-id="orchestra"]');
+          await click('.over-page:not([hidden]) .fam-tabs [data-id="orchestra"]');
           const orchPhone = await waitFor(`(() => { const b = document.querySelector('.auto-page .auto-body[data-body="orchestra"]:not([hidden])'); return !!b && b.getBoundingClientRect().height > 0; })()`, 3000);
           const autoToasts = await js(`[...document.querySelectorAll('.toast')].map((t) => t.textContent)`);
           await shot('phone-automation');
           check('phone: sidebar 自动化 opens the automation page (目标 / 编排 tabs there), the drawer shuts, no toast', autoPhone && goalsPhone && orchPhone && !autoToasts.some((t) => /手机/.test(t)), JSON.stringify({ autoPhone, goalsPhone, orchPhone, autoToasts }));
           await key('Escape');
           await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000);
-          for (const [item, label] of [['usage', '用量与账本'], ['config', '配置中心']]) {
+          // (配置中心 left the account menu in the redesign's stage 1: 自定义 and 设置 › 高级 have it)
+          for (const [item, label] of [['usage', '用量与账本']]) {
             await click('.pane .sess-head .sb-reveal');
             await waitFor('document.querySelector(".app").classList.contains("drawer-open")', 3000);
-            await click(':is(.rail, .sidebar) [data-id="account"]');
+            await click('.sidebar .sb-account [data-id="account"]');
             await click(`.menu.sb-acct-menu [data-id="${item}"]`);
             await waitFor(`(${drawerUp.toString()})(${sheet}, '${item}')`, 4000);
             const s = await js(sheet);
@@ -1950,6 +1956,104 @@ function driver() {
           await js('window.__store.setState({ connected: true })');
           await waitFor(`!${banner}`, 2000);
           check('phone: the disconnect banner shows over the conversation with the drawer shut', downPhone && downPhone.inCenter && downPhone.visible && downPhone.top < 120, JSON.stringify(downPhone));
+
+          // ---- redesign 2026-11 stage 1: the phone check (scripts/lib/phone-audit.cjs) at 390 × 844, 360 × 780 and
+          // 430 × 932, light and dark. This stage's screens — the drawer, the account sheet, 自动化's head and tab row on
+          // each of its five tabs, 自定义's, Artifacts — get every rule: tap targets 44 × 44, text boxes 16px, nothing
+          // scrolls sideways or sticks out, nothing covered. The conversation, the new-conversation page and the pages'
+          // bodies get all but the 44 rule (stage 4 does those; 运行中's 3D cafe is the background page as it was)
+          phase = 'phone-audit';
+          {
+            const { auditJs, problems } = require(path.join(ROOT, 'scripts', 'lib', 'phone-audit.cjs'));
+            const themeWas = await js('JSON.stringify(window.__store.getState().settings["ui.theme"] ?? null)');
+            await js('window.__store.getState().setSetting("ui.workbench", false)');
+            const putAway = async () => {
+              await key('Escape');
+              await js(`(() => { window.__store.setState({ settingsOpen: null, paletteOpen: false, shortcutsOpen: false }); document.querySelectorAll('.over-page:not([hidden]) .over-close').forEach((b) => b.click()); })()`);
+              await sleep(250);
+            };
+            const faults = [];
+            const audit = async (name, scope, opts = {}) => {
+              const r = await js(auditJs(scope));
+              const bad = problems(r, opts);
+              if (bad.length) faults.push(`${name}: ${bad.join('; ')}`);
+              return r;
+            };
+            const drawerIn = async () => {
+              await js('window.__store.setState({ sidebarOpen: true })');
+              await waitFor('document.querySelector(".app").classList.contains("drawer-open")', 3000);
+              await sleep(350);
+            };
+            let screens = 0;
+            for (const theme of ['light', 'dark']) {
+              await js(`window.__store.getState().setSetting('ui.theme', '${theme}')`);
+              for (const [w, h] of [[390, 844], [360, 780], [430, 932]]) {
+                const tag = `${w}×${h} ${theme}`;
+                win.setContentSize(w, h);
+                await waitFor(`innerWidth === ${w} && window.__store.getState().mobile === true`, 4000);
+                await putAway();
+                // the conversation
+                await js(`(() => { window.__store.setState({ sidebarOpen: false }); window.__store.getState().openInPane(${sidJs}, 'replace'); })()`);
+                await waitFor('!!document.querySelector(".pane.focused .composer textarea")', 4000);
+                await sleep(400);
+                await audit(`${tag} · conversation`, '.workbench', { tapTargets: false });
+                // the drawer: a search box and four rows on top
+                await drawerIn();
+                const top = await js(`({ search: !!document.querySelector('.sidebar .sb-search'), nav: [...document.querySelectorAll('.sidebar .sb-nav > [data-id]')].map((b) => b.dataset.id).join(' ') })`);
+                if (!top.search || top.nav !== 'new artifacts automation extensions') faults.push(`${tag} · drawer top: ${JSON.stringify(top)}`);
+                await audit(`${tag} · drawer`, '.app.mobile .sidebar');
+                if (w === 390) await shot(`phone-check-${theme}-drawer`);
+                // the account sheet
+                await click('.sidebar .sb-account [data-id="account"]');
+                await waitFor('!!document.querySelector(".menu.sb-acct-menu")', 2000);
+                await sleep(400);
+                await audit(`${tag} · account`, '.action-sheet, .as-sheet');
+                if (w === 390) await shot(`phone-check-${theme}-account`);
+                await putAway();
+                // 自动化: its head and tab row on each tab; the bodies (but 运行中's cafe) without the 44 rule
+                await drawerIn();
+                await click('.sidebar .sb-nav [data-id="automation"]');
+                await waitFor(`!!document.querySelector('.over-page.in-family:not([hidden]) .fam-tabs')`, 3000);
+                for (const tab of ['running', 'schedules', 'bots', 'goals', 'orchestra']) {
+                  await click(`.over-page:not([hidden]) .fam-tabs [data-id="${tab}"]`);
+                  await waitFor(`document.querySelector('.over-page:not([hidden]) .fam-tabs [data-id="${tab}"]')?.getAttribute('aria-selected') === 'true'`, 3000);
+                  await sleep(500);
+                  await audit(`${tag} · 自动化 › ${tab}`, '.over-page:not([hidden]) :is(.over-head, .fam-tabs)');
+                  if (tab !== 'running') await audit(`${tag} · 自动化 › ${tab} (page)`, '.over-page:not([hidden])', { tapTargets: false });
+                  if (w === 390 && tab === 'schedules') await shot(`phone-check-${theme}-automation`);
+                }
+                await putAway();
+                // 自定义
+                await drawerIn();
+                await click('.sidebar .sb-nav [data-id="extensions"]');
+                await waitFor(`(() => { const p = document.querySelector('.ext-page'); return !!p && !p.hidden; })()`, 4000);
+                await sleep(500);
+                await audit(`${tag} · 自定义`, '.ext-page :is(.over-head, .over-tabs)');
+                await audit(`${tag} · 自定义 (page)`, '.ext-page', { tapTargets: false });
+                await putAway();
+                // Artifacts
+                await drawerIn();
+                await click('.sidebar .sb-nav [data-id="artifacts"]');
+                await waitFor(`(() => { const p = document.querySelector('.arts-page'); return !!p && !p.hidden && !p.querySelector('.arts-loading'); })()`, 5000);
+                await sleep(300);
+                await audit(`${tag} · Artifacts`, '.arts-page');
+                if (w === 390) await shot(`phone-check-${theme}-artifacts`);
+                await putAway();
+                // the new-conversation page
+                await js(`(() => { window.__store.setState({ sidebarOpen: false }); window.__store.getState().openInPane(null, 'replace'); })()`);
+                await waitFor('!!document.querySelector(".pane.focused .welcome .composer")', 4000);
+                await sleep(400);
+                await audit(`${tag} · new conversation`, '.workbench', { tapTargets: false });
+                screens += 1;
+              }
+            }
+            await js(`window.__store.getState().setSetting('ui.theme', ${themeWas} ?? 'system')`);
+            await js(`window.__store.getState().openInPane(${sidJs}, 'replace')`);
+            win.setContentSize(740, 860);
+            await waitFor('innerWidth === 740', 4000);
+            await sleep(300);
+            check('phone check (390 / 360 / 430 × light / dark): this stage\'s screens with 44 × 44 targets, no text box under 16px, nothing sideways or covered; the others but the 44 rule', screens === 6 && !faults.length, faults.slice(0, 12).join(' | ') + (faults.length > 12 ? ` … (${faults.length})` : ''));
+          }
           await js('window.__store.getState().setSetting("ui.workbench", true)');
           win.setContentSize(1360, 860);
           await js('window.__store.getState().setSetting("ui.workbench", false)');
@@ -2186,7 +2290,7 @@ function driver() {
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'goals' })`);
           await sleep(900);
           const fit = await js(`(() => { const vw = innerWidth; const rp = document.querySelector('.rpanel').getBoundingClientRect(); const tabs = [...document.querySelectorAll('.dock .dock-tabs .tab.fixed')].map((t) => { const r = t.getBoundingClientRect(); const whole = r.width > 0 && r.left >= rp.left - 0.5 && r.right <= Math.min(rp.right, vw) + 0.5; const underCaption = r.top < 60 && r.right > vw - 150; return { id: t.dataset.panel, ok: whole && !underCaption }; }); return { vw, rp: Math.round(rp.width), stacked: !!document.querySelector('.dock-tabs.stacked'), tabs }; })()`);
-          check('desktop · Windows, 1080 wide (1024 + the icon rail), a temporary tab open: the five fixed tabs are fully visible', fit.tabs.length === 5 && fit.tabs.every((x) => x.ok), JSON.stringify(fit));
+          check('desktop · Windows, 1080 wide, a temporary tab open: the five fixed tabs are fully visible', fit.tabs.length === 5 && fit.tabs.every((x) => x.ok), JSON.stringify(fit));
           // the temporary tab is reachable here too: its own tab in the strip (then no title row on the panel as well),
           // or — no room for a strip beside five fixed tabs — in 「更多」 with the panel named on top
           const narrowTemp = await js(`({ strip: !!document.querySelector('.dock .dock-tablist .tab.active[data-panel="goals"]'), head: !!document.querySelector('.dock .dock-foldhead[data-panel="goals"]'), badge: document.querySelector('.dock .dock-more-n')?.textContent ?? null })`);
@@ -2377,8 +2481,8 @@ function driver() {
           // every id of entries.ts PLACES must be seen in the DOM, each in its own place, at some point of this phase
           const PLACES = inv.sidebar;
           const SCOPES = {
-            top: '.rail .rail-top > [data-id], .rail .rail-top > .rail-anchor > [data-id], .rail .rail-main > [data-id]:not(.pinned), .rail .rail-main > .rail-anchor > [data-id], .sidebar .sb-top [data-id], .sidebar .sb-nav [data-id]',
-            automation: ':is(.auto-page .auto-tabs, .sb-sect:not([hidden]) .auto-side .sect-nav) [data-id]',
+            top: '.sidebar .sb-top [data-id], .sidebar .sb-nav [data-id]',
+            automation: '.over-page:not([hidden]) .fam-tabs [data-id]',
             section: '.sidebar .sb-sec[data-id], .sidebar .sb-group[data-id]',
             head: '.sidebar [data-id="projects"] > .sb-sec-h [data-id]',
             view: '.menu.sb-view [data-id]',
@@ -2386,7 +2490,7 @@ function driver() {
             project: '.menu.sb-menu[aria-label^="项目"] [data-id], .sidebar .sb-group-head .acts [data-id]',
             row: '.sidebar .sb-list [data-id], .sidebar .sb-attn [data-id]',
             rowMenu: '.menu.sess-menu [data-id]',
-            account: '.rail .rail-foot [data-id], .sidebar .sb-account [data-id]',
+            account: '.sidebar .sb-account [data-id], .menu.sb-acct-menu [data-id]',
             hint: '.sidebar .sb-hint [data-id]',
           };
           const seen = {};
@@ -2394,9 +2498,11 @@ function driver() {
             const got = await js(`(() => { const S = ${JSON.stringify(SCOPES)}; const o = {}; for (const p of Object.keys(S)) o[p] = [...document.querySelectorAll(S[p])].map((e) => e.dataset.id); return o; })()`);
             for (const p of Object.keys(got)) for (const id of got[p]) if ((PLACES[p] || []).includes(id)) (seen[p] = seen[p] || new Set()).add(id);
           };
-          const sb = await js(`({ chipRows: !!document.querySelector('.sidebar .sb-sources, .sidebar .src-chip, .sidebar .sb-search, .sidebar .lib-banner'), top: [...document.querySelectorAll('.sidebar .sb-top [data-id], .sidebar .sb-nav [data-id]')].map((e) => e.dataset.id), rail: [...document.querySelectorAll('.rail .rail-top > [data-id], .rail .rail-main > [data-id], .rail .rail-main > .rail-anchor > [data-id]')].map((e) => e.dataset.id), head: [...document.querySelectorAll('.sidebar [data-id="projects"] > .sb-sec-h [data-id]')].map((e) => e.dataset.id), account: [...document.querySelectorAll('.rail .rail-foot [data-id]')].map((e) => e.dataset.id), inSidebar: document.querySelectorAll('.sidebar .sb-account, .sidebar .sb-nav [data-id="automation"]').length, row: !!document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + '] [data-id="status"]') })`);
-          check('sidebar: no chip / filter-box rows; 新对话 · 搜索; the rail: the switch · 对话 · 后台 · 自动化 · 扩展 · 更多, at its foot 设置 and the account (connection); funnel + 打开文件夹 on 项目; the row ends in one status',
-            !sb.chipRows && has(sb.top, ['new', 'search']) && has(sb.rail, ['collapse', 'chat', 'background', 'automation', 'extensions', 'more']) && has(sb.head, ['view', 'add-project']) && has(sb.account, ['account', 'connection', 'settings']) && sb.inSidebar === 0 && sb.row, JSON.stringify(sb));
+          const sb = await js(`({ chipRows: !!document.querySelector('.sidebar .sb-sources, .sidebar .src-chip, .sidebar .lib-banner'), top: [...document.querySelectorAll('.sidebar .sb-top [data-id]')].map((e) => e.dataset.id), nav: [...document.querySelectorAll('.sidebar .sb-nav > [data-id]')].map((e) => e.dataset.id), rail: !!document.querySelector('.rail'), head: [...document.querySelectorAll('.sidebar [data-id="projects"] > .sb-sec-h [data-id]')].map((e) => e.dataset.id), account: [...document.querySelectorAll('.sidebar .sb-account [data-id]')].map((e) => e.dataset.id), row: !!document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + '] [data-id="status"]') })`);
+          // redesign 2026-11 stage 1: no icon rail; the sidebar's top row is the brand (☰ menu) · 收起 · ← →, then the five
+          // places; at its foot the account row (avatar in its quota ring · name · ⚙)
+          check('sidebar: no chip rows, no icon rail; ☰ · 收起 · ← →, then 新对话 · 搜索 · Artifacts · 自动化 · 自定义; funnel + 打开文件夹 on 项目; the account row (connection · account · ⚙) at its foot; the row ends in one status',
+            !sb.chipRows && !sb.rail && has(sb.top, ['app-menu', 'collapse', 'back', 'forward']) && sb.nav.join(' ') === 'new search artifacts automation extensions' && has(sb.head, ['view', 'add-project']) && has(sb.account, ['account', 'connection', 'settings']) && sb.row, JSON.stringify(sb));
           // final review I3: 收起侧栏 shows with the pointer over the sidebar or the key focus on it, not at rest
           // (and the 项目 header's funnel and +, the same way)
           const collapseOp = () => js(`['.sb-sec-h [data-id="view"]', '.sb-sec-h [data-id="add-project"]'].map((s) => getComputedStyle(document.querySelector('.sidebar ' + s)).opacity).join(',')`);
@@ -2448,24 +2554,25 @@ function driver() {
             check('清除 brings the list back', await waitFor(`!document.querySelector('.sidebar .sb-filtered') && !!document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + ']')`, 3000));
           }
           await closeMenus();
-          // redesign phase 7: 自动化 is a page over the main area (spec §5.9) — tabs 定时任务 / 目标 / 编排, 新建 at the
-          // top right. Opening it closes whatever sidebar menu was open (here: the funnel)
+          // redesign phase 7: 自动化 is a page over the main area (spec §5.9); redesign 2026-11 stage 1: one tab row for
+          // 运行中 · 定时任务 · Bot · 目标 · 编排 (the background and Bot pages are two of its tabs), 新建 at the top right.
+          // Opening it closes whatever sidebar menu was open (here: the funnel)
           const dockClosed = `window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`;
           const autoTab = (tab) => `(() => { const p = document.querySelector('.auto-page'); const b = p && p.querySelector('.auto-body[data-body="${tab}"]:not([hidden])'); return !!p && !p.hidden && p.dataset.tab === '${tab}' && !!b && b.getBoundingClientRect().height > 0; })()`;
           await click('.sidebar [data-id="view"]');
-          await click(':is(.rail, .sidebar) [data-id="automation"]');
+          await click('.sidebar .sb-nav [data-id="automation"]');
           // a closed menu leaves an inert fading copy (.leaving, ui/ghost.ts) for ~120ms: not a menu
           await waitFor('!document.querySelector(".menu.sb-menu:not(.leaving), .menu.sess-menu:not(.leaving)")', 1000);
-          const one = { menus: await count('.menu.sb-menu:not(.leaving), .menu.sess-menu:not(.leaving)'), page: await waitFor(`(() => { const p = document.querySelector('.auto-page'); return !!p && !p.hidden; })()`, 3000), funnel: await exists('.menu.sb-view:not(.leaving)'), inert: await exists('.pane-layer[inert]'), active: await exists('.rail [data-id="automation"].on') };
+          const one = { menus: await count('.menu.sb-menu:not(.leaving), .menu.sess-menu:not(.leaving)'), page: await waitFor(`(() => { const p = document.querySelector('.auto-page'); return !!p && !p.hidden; })()`, 3000), funnel: await exists('.menu.sb-view:not(.leaving)'), inert: await exists('.pane-layer[inert]'), active: await exists('.sidebar .sb-nav [data-id="automation"].on') };
           check('自动化 opens the automation page (panes underneath inert, the entry marked) and closes the funnel', !one.menus && one.page && !one.funnel && one.inert && one.active, JSON.stringify(one));
-          const am = await ids(':is(.auto-page .auto-tabs, .sb-sect:not([hidden]) .auto-side .sect-nav) [data-id]');
+          const am = await ids('.over-page:not([hidden]) .fam-tabs [data-id]');
           const newBtn = await js(`document.querySelector('.auto-page .auto-head [data-new]')?.textContent ?? null`);
-          check('自动化 page: tabs 定时任务 / 目标 / 编排, 新建 at the top right', has(am, ['schedules', 'goals', 'orchestra']) && !!newBtn, JSON.stringify({ am, newBtn }));
+          check('自动化 page: one tab row 运行中 / 定时任务 / Bot / 目标 / 编排, 新建 at the top right', am.join(' ') === 'running schedules bots goals orchestra' && !!newBtn, JSON.stringify({ am, newBtn }));
           await harvest();
           await shot('automation-schedules');
           const autoMiss = [];
           for (const tab of ['goals', 'orchestra', 'schedules']) {
-            await click(`:is(.auto-page .auto-tabs, .sb-sect:not([hidden]) .auto-side .sect-nav) [data-id="${tab}"]`);
+            await click(`.over-page:not([hidden]) .fam-tabs [data-id="${tab}"]`);
             if (!(await waitFor(autoTab(tab), 4000))) autoMiss.push(tab);
             const newFor = await js(`document.querySelector('.auto-page .auto-head [data-new]')?.dataset.new`);
             if (newFor !== tab) autoMiss.push(`${tab}: 新建 is for ${newFor}`);
@@ -2498,33 +2605,33 @@ function driver() {
           await waitFor(`!document.querySelector('.menu.select-popover')`, 3000);
           check('新定时任务: 「项目」 is a dropdown (a project chosen, 其它文件夹… last), nothing sticks out of the form', !!sf && sf.w >= 150 && !!sf.value && sf.dropdown === 'menu' && sfOpts.at(-1) === '其它文件夹…' && sf.over === 0, JSON.stringify({ ...sf, sfOpts }));
           await shot('automation-new');
-          // the main area goes elsewhere (a conversation opened from the palette, a notification, a link — the sidebar
-          // column is the automation section's own while the page is up): the page gets out of the way, stays mounted
-          const sideIsSection = await js(`(() => { const list = document.querySelector('.sidebar .sb-sect[data-section="chat"]'); const auto = document.querySelector('.sidebar .sb-sect[data-section="automation"]'); return !!list && list.hidden && !!auto && !auto.hidden && [...auto.querySelectorAll('.sect-nav [data-id]')].map((b) => b.dataset.id).join(' ') === 'schedules goals orchestra'; })()`);
-          check('自动化 in front: the sidebar column is its own (定时任务 · 目标 · 编排), the conversation list kept mounted behind it', sideIsSection);
+          // the main area goes elsewhere (a conversation opened from the palette, a notification, a link, a row of the
+          // sidebar — which stays the conversation list while the page is up): the page gets out of the way, stays mounted
+          const sideStays = await js(`(() => { const list = document.querySelector('.sidebar .sb-list'); return !!list && list.getClientRects().length > 0 && !!list.querySelector('[data-sid]') && !document.querySelector('.sidebar .sect-side, .sidebar .auto-side') && !!document.querySelector('.sidebar .sb-nav [data-id="automation"].on'); })()`);
+          check('自动化 in front: the sidebar stays the conversation list (no column of its own), its 自动化 entry lit', sideStays);
           await js(`window.__store.getState().openInPane(${SID}, 'replace')`);
           const away = await waitFor(`(() => { const p = document.querySelector('.auto-page'); return !!p && p.hidden && p.querySelectorAll('.auto-body').length === 3 && !document.querySelector('.pane-layer[inert]'); })()`, 3000);
-          const listBack = await waitFor(`(() => { const list = document.querySelector('.sidebar .sb-sect[data-section="chat"]'); return !!list && !list.hidden && !!list.querySelector('.sb-list [data-sid=' + ${JSON.stringify(SID)} + ']') && !!document.querySelector('.rail [data-id="chat"].on'); })()`, 2000);
-          check('opening a conversation closes the automation page (kept mounted, hidden); the sidebar is the conversation list again, the rail on 对话', away && listBack, JSON.stringify({ away, listBack }));
+          const listBack = await waitFor(`(() => !!document.querySelector('.sidebar .sb-list [data-sid=' + ${JSON.stringify(SID)} + ']') && !document.querySelector('.sidebar .sb-nav [data-id="automation"].on'))()`, 2000);
+          check('opening a conversation closes the automation page (kept mounted, hidden); the 自动化 entry is no longer lit', away && listBack, JSON.stringify({ away, listBack }));
           // 自动化 → 定时任务: 1 click when it is the tab shown last, 2 from another tab (spec §4.2: ≤ 2)
           let clicks = 0;
           const counted = async (sel) => { clicks++; return click(sel); };
-          await counted(':is(.rail, .sidebar) [data-id="automation"]');
+          await counted('.sidebar .sb-nav [data-id="automation"]');
           const sched1 = await waitFor(`${autoTab('schedules')} && !!document.querySelector('.auto-page .auto-body[data-body="schedules"] .sched-view')`, 3000);
           check('自动化 → 定时任务 in 1 click (the tab shown last), the scheduled-task list on screen', sched1 && clicks === 1, await js(`JSON.stringify({ clicks: ${clicks}, tab: document.querySelector('.auto-page')?.dataset.tab, toasts: [...document.querySelectorAll('.toast')].map((t) => t.textContent) })`));
-          await click(':is(.auto-page .auto-tabs, .sb-sect:not([hidden]) .auto-side .sect-nav) [data-id="goals"]');
+          await click('.over-page:not([hidden]) .fam-tabs [data-id="goals"]');
           await key('Escape');
           const escClosed = await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000);
           clicks = 0;
-          await counted(':is(.rail, .sidebar) [data-id="automation"]');
-          await counted(':is(.auto-page .auto-tabs, .sb-sect:not([hidden]) .auto-side .sect-nav) [data-id="schedules"]');
+          await counted('.sidebar .sb-nav [data-id="automation"]');
+          await counted('.over-page:not([hidden]) .fam-tabs [data-id="schedules"]');
           const sched2 = await waitFor(autoTab('schedules'), 3000);
           check('Esc closes the page; from another tab 定时任务 is 2 clicks', escClosed && sched2 && clicks === 2, JSON.stringify({ escClosed, sched2, clicks }));
-          await click(':is(.app.has-rail .rail [data-id="chat"], .app.mobile .auto-page .auto-head button[aria-label="关闭自动化"])');
+          await click('.over-page:not([hidden]) .over-close');
           await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000);
           // review 7 M1: Esc with the focus nowhere (on <body>, after a click on empty space) closes the page too, and
           // the focus goes back to the conversation's composer (it was under the page)
-          await click(':is(.rail, .sidebar) [data-id="automation"]');
+          await click('.sidebar .sb-nav [data-id="automation"]');
           await waitFor(autoTab('schedules'), 3000);
           await js('document.activeElement?.blur()');
           const onBody = await js('document.activeElement === document.body');
@@ -2537,7 +2644,7 @@ function driver() {
             // front closes the page, the terminal (its shell) stays
             await js(`window.__store.getState().openTile({ id: 'smoke-altw', kind: 'term', cwd: ${JSON.stringify(E.SMOKE_REPO || '')} }, 'tab')`);
             await waitFor('!!document.querySelector(".pane.focused .xterm")', 8000);
-            await click(':is(.rail, .sidebar) [data-id="automation"]');
+            await click('.sidebar .sb-nav [data-id="automation"]');
             await waitFor(autoTab('schedules'), 3000);
             wc.focus();
             wc.sendInputEvent({ type: 'keyDown', keyCode: 'W', modifiers: ['alt'] });
@@ -2579,26 +2686,39 @@ function driver() {
           await waitFor(`!!document.querySelector('.dock:not([hidden]) .dock-panel[data-panel="tasks"]:not([hidden]) .tasks-link')`, 3000);
           await click('.dock-panel[data-panel="tasks"] .tasks-link');
           check('任务 → 「定时任务 … 在「自动化」里」 opens the page on 定时任务', await waitFor(autoTab('schedules'), 3000));
-          await click(':is(.app.has-rail .rail [data-id="chat"], .app.mobile .auto-page .auto-head button[aria-label="关闭自动化"])');
+          await click('.over-page:not([hidden]) .over-close');
           await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000);
           await js(dockClosed);
           await sleep(300);
-          // the account row: quota, today's spend, usage & ledger, the config panel, appearance, shortcuts, palette
-          await click(':is(.rail, .sidebar) [data-id="account"]');
+          // the account menu (redesign 2026-11 stage 1): 设置 · 用量与账本 (今日费用 beside it) · 语言 › · 主题 › · 键盘快捷键 ·
+          // 帮助与反馈 › · 更新内容 · 登录; the old 配置中心 / 命令面板 rows are gone. The three › rows open in place, one at a time
+          await click('.sidebar .sb-account [data-id="account"]');
           const acc = await ids('.menu.sb-acct-menu [data-id]');
-          check('account popover: 今日费用, 用量与账本, 配置中心, 外观, 快捷键, 命令面板', has(acc, ['today', 'usage', 'config', 'appearance', 'shortcuts', 'palette']), JSON.stringify(acc));
+          const order = acc.filter((x) => ['settings', 'usage', 'language', 'theme', 'shortcuts', 'help', 'whats-new'].includes(x));
+          check('account menu: 设置 · 用量与账本 (今日费用) · 语言 › · 主题 › · 键盘快捷键 · 帮助与反馈 › · 更新内容, no 配置中心 / 命令面板',
+            order.join(' ') === 'settings usage language theme shortcuts help whats-new' && acc.includes('today') && !acc.includes('config') && !acc.includes('palette'), JSON.stringify(acc));
           await harvest();
           await shot('sidebar-account');
+          const subOpen = () => js(`(() => { const m = document.querySelector('.menu.sb-acct-menu'); return m ? { open: [...m.querySelectorAll('.acct-sub-h[aria-expanded="true"]')].map((b) => b.dataset.id), langs: m.querySelectorAll('.acct-sub [data-lang]').length, help: m.querySelectorAll('.acct-sub [data-help]').length, themes: m.querySelectorAll('.acct-sub [data-theme-pick]').length } : null; })()`);
+          await click('.menu.sb-acct-menu [data-id="language"]');
+          const sLang = await subOpen();
+          await click('.menu.sb-acct-menu [data-id="help"]');
+          const sHelp = await subOpen();
+          await click('.menu.sb-acct-menu [data-id="theme"]');
+          const sTheme = await subOpen();
+          await harvest();
+          check('account menu: 语言 › / 帮助与反馈 › / 主题 › open in place under their row, one at a time (the languages; 使用说明 · 报告问题 · 官网 · 诊断包; 浅色 / 深色 / 跟随系统 + 字符画主题… + 外观…)',
+            !!sLang && sLang.open.join() === 'language' && sLang.langs >= 3 && !!sHelp && sHelp.open.join() === 'help' && sHelp.help === 4 && !!sTheme && sTheme.open.join() === 'theme' && sTheme.themes === 3 && (await exists('.menu.sb-acct-menu [data-id="ascii-themes"]')) && (await exists('.menu.sb-acct-menu [data-id="appearance"]')), JSON.stringify({ sLang, sHelp, sTheme }));
           // final review §9 #3: dark mode within two clicks — account → 深色 (the popover stays open to show it), and 设置 →
           // 外观 has the themes as swatches, not a dropdown
           if (E.SMOKE_READONLY !== '1') {
             const themeBefore = await js('JSON.stringify(window.__store.getState().settings["ui.theme"] ?? null)');
-            const quick = await js(`[...document.querySelectorAll('.menu.sb-acct-menu [data-id="theme"] [role="radio"]')].map((b) => b.textContent)`);
-            await click('.menu.sb-acct-menu [data-id="theme"] [data-theme-pick="dark"]');
+            const quick = await js(`[...document.querySelectorAll('.menu.sb-acct-menu .acct-sub [role="radio"]')].map((b) => b.textContent)`);
+            await click('.menu.sb-acct-menu .acct-sub [data-theme-pick="dark"]');
             const dark = await waitFor(`document.documentElement.dataset.theme === 'dark' && window.__store.getState().settings['ui.theme'] === 'dark' && document.querySelector('.menu.sb-acct-menu [data-theme-pick="dark"]')?.getAttribute('aria-checked') === 'true'`, 2000);
-            await click('.menu.sb-acct-menu [data-id="theme"] [data-theme-pick="light"]');
+            await click('.menu.sb-acct-menu .acct-sub [data-theme-pick="light"]');
             const light = await waitFor(`document.documentElement.dataset.theme === 'light' && !!document.querySelector('.menu.sb-acct-menu')`, 2000);
-            check('account → 深色 / 浅色: the theme in two clicks (浅色 / 深色 / 跟随系统), the popover stays open', JSON.stringify(quick) === JSON.stringify(['浅色', '深色', '跟随系统']) && dark && light, JSON.stringify({ quick, dark, light }));
+            check('account → 主题 › 深色 / 浅色: the theme in three clicks (浅色 / 深色 / 跟随系统), the popover stays open', JSON.stringify(quick) === JSON.stringify(['浅色', '深色', '跟随系统']) && dark && light, JSON.stringify({ quick, dark, light }));
             await closeMenus();
             await js(`window.__store.getState().openSettings({ section: 'appearance' })`);
             await waitFor(`!!document.querySelector('.sp [data-entry="ui.theme"] .theme-sw')`, 4000);
@@ -2676,11 +2796,12 @@ function driver() {
             await sleep(300);
           }
           await closeMenus();
-          // 账户 → 用量与账本 / 配置中心: two clicks to that right-panel tab
-          for (const [item, label] of [['usage', '用量与账本'], ['config', '配置中心']]) {
+          // 账户 → 用量与账本: two clicks to that right-panel tab (配置中心 is 自定义's and 设置 › 高级's now; the gear's
+          // right-click still opens it in the right panel)
+          for (const [item, label] of [['usage', '用量与账本']]) {
             await js(dockClosed);
             await sleep(300);
-            await click(':is(.rail, .sidebar) [data-id="account"]');
+            await click('.sidebar .sb-account [data-id="account"]');
             await click(`.menu.sb-acct-menu [data-id="${item}"]`);
             const shown = await waitFor(`(() => { const d = window.__store.getState().layout.dock; return d.open && d.active === '${item}' && !!document.querySelector('.dock:not([hidden]) .dock-panel[data-panel="${item}"]:not([hidden])'); })()`, 4000);
             check(`账户 → ${label} shows that right-panel tab (2 clicks)`, shown, await js('JSON.stringify(window.__store.getState().layout.dock)'));
@@ -3029,11 +3150,17 @@ function driver() {
               check('删除分区 (after a confirm) removes the section, the conversations stay', await waitFor('!document.querySelector(".sidebar .sb-custom")', 3000) && !!(await exists('.sidebar .sb-list .sb-row')));
               await closeMenus();
             }
-            // the account popover with the account's limits: the quota windows
-            await click(':is(.rail, .sidebar) [data-id="account"]');
+            // the account popover with the account's limits: the quota windows; and a Claude login that has expired (faked
+            // for a moment — this HOME has no Claude login): the alert on top and 退出 Claude 账号 at the end
+            const authWas = await js('JSON.stringify(window.__store.getState().auth ?? null)');
+            await js(`window.__store.setState({ auth: { ...(window.__store.getState().auth || {}), loggedIn: true, expired: true, expiredMessage: 'smoke: expired', email: 'smoke@example.com' } })`);
+            await click('.sidebar .sb-account [data-id="account"]');
+            await waitFor(`!!document.querySelector('.menu.sb-acct-menu [data-id="expired"]')`, 2000);
             await harvest();
-            check('account popover: the quota windows when the limits are known', await exists('.menu.sb-acct-menu [data-id="quota"]'));
+            const acctStates = { quota: await exists('.menu.sb-acct-menu [data-id="quota"]'), expired: await exists('.menu.sb-acct-menu [data-id="expired"]'), logout: await exists('.menu.sb-acct-menu [data-id="logout"]') };
+            check('account popover: the quota windows when the limits are known; an expired login has its alert and 退出 Claude 账号', acctStates.quota && acctStates.expired && acctStates.logout, JSON.stringify(acctStates));
             await closeMenus();
+            await js(`window.__store.setState({ auth: ${authWas} })`);
             // a live runner: 结束进程 in the conversation menu
             await js(`window.__store.setState((s) => { const o = s.open[${SID}]; return o ? { open: { ...s.open, [${SID}]: { ...o, state: 'idle' } } } : {}; })`);
             await ctxMenu(`.sidebar .sb-list [data-sid=${SID}]`);
@@ -3052,7 +3179,7 @@ function driver() {
         }
       }
 
-      // ---- structure round 2 (spec 2026-10-10-ui-structure): the rail's ··· menu and its pins, the 扩展 page, and 浏览器
+      // ---- structure round 2 (spec 2026-10-10-ui-structure; redesign 2026-11 stage 1): the old names in the palette, the 自定义 page, and 浏览器
       // in the right panel (here the web app's: pages are <iframe>s; the real one is scripts/browser-smoke.cjs)
       if (E.SMOKE_READONLY !== '1') {
         phase = 'structure';
@@ -3060,36 +3187,50 @@ function driver() {
         await waitFor('innerWidth === 1360', 4000);
         await js(`(() => { document.documentElement.classList.remove('desktop', 'win'); window.__store.setState({ sidebarOpen: true, settingsOpen: null }); const st = window.__store.getState(); st.setSetting('ui.workbench', false); })()`);
         await sleep(500);
-        // ··· on the rail: the panels that are neither a fixed tab of the right panel nor a section
-        await click('.rail [data-id="more"]');
-        const moreRows = (await waitFor(`document.querySelectorAll('.menu.rail-menu [data-id^="open-"]').length === 7`, 3000)) && await js(`[...document.querySelectorAll('.menu.rail-menu [data-id^="open-"]')].map((b) => b.dataset.id.slice(5)).join(',')`);
-        const hints = await js(`[...document.querySelectorAll('.menu.rail-menu .rm-t .h')].every((h) => h.scrollWidth <= h.clientWidth + 1)`);
-        check('rail ···: 总览 · 网吧 · 用量 · 记忆 · Issue 与 PR · Android · 配置中心, each with one line that is not cut off', moreRows === 'mission,cafe,usage,memory,board,android,config' && hints, JSON.stringify({ moreRows, hints }));
-        await shot('rail-more');
-        await js(`document.querySelector('.menu.rail-menu [data-id="pin-usage"]').click()`);
-        const pinned = await waitFor(`!!document.querySelector('.rail [data-id="panel-usage"]') && JSON.stringify(window.__store.getState().settings['ui.railPins']) === '["usage"]'`, 3000);
-        check('pinning 用量 puts its button on the rail (meta.json ui.railPins)', pinned, JSON.stringify(await js(`window.__store.getState().settings['ui.railPins']`)));
-        await key('Escape');
-        await waitFor(`!document.querySelector('.menu.rail-menu')`, 2000);
-        await click('.rail [data-id="panel-usage"]');
-        const usageOpen = await waitFor(`!!document.querySelector('.dock .dock-panel[data-panel="usage"]:not([hidden])')`, 5000);
-        check('the pinned button opens its panel in the right panel', usageOpen);
-        await click('.rail [data-id="more"]');
-        await waitFor(`!!document.querySelector('.menu.rail-menu [data-id="pin-usage"]')`, 2000);
-        await js(`document.querySelector('.menu.rail-menu [data-id="pin-usage"]').click()`);
-        const unpinned = await waitFor(`!document.querySelector('.rail [data-id="panel-usage"]')`, 3000);
-        check('unpinning takes it off the rail again', unpinned);
-        await key('Escape');
-        await js(`window.__store.getState().dispatchLayout({ t: 'dock.close', panel: 'usage', workbench: false })`);
-        await sleep(200);
+        // redesign 2026-11 stage 1: the rail and its ··· (with its pins, ui.railPins — not read any more) are gone. Each old
+        // name still lands somewhere in the palette (palette/moved.ts): 后台 → 自动化 › 运行中, 扩展 → 自定义, 模型 → the
+        // model hub, 用量与账本 → its panel, 共享记忆 → 设置
+        const viaPalette = async (q, label) => {
+          await js('window.__store.setState({ paletteOpen: true })');
+          await waitFor('!!document.querySelector(".cmdk input")', 3000);
+          await js('document.querySelector(".cmdk input").focus()');
+          wc.insertText(q);
+          await sleep(300);
+          const hit = await js(`(() => { const it = [...document.querySelectorAll('.cmdk .it')].find((x) => (x.querySelector('.t')?.textContent ?? '') === ${JSON.stringify(label)}); if (!it) return false; it.click(); return true; })()`);
+          if (!hit) await js('window.__store.setState({ paletteOpen: false })');
+          return hit;
+        };
+        const pageUp = (cls, tab) => `(() => { const p = document.querySelector('.over-page.${cls}'); return !!p && !p.hidden && (${JSON.stringify(tab ?? '')} === '' || p.dataset.tab === ${JSON.stringify(tab ?? '')}); })()`;
+        const moved = {};
+        moved.background = (await viaPalette('后台', '自动化 › 运行中')) && await waitFor(`${pageUp('bg-page')} && document.querySelector('.over-page.bg-page .fam-tabs [data-id="running"]')?.getAttribute('aria-selected') === 'true'`, 4000);
+        await click('.over-page:not([hidden]) .over-close');
+        moved.extensions = (await viaPalette('扩展', '自定义 › Skills')) && await waitFor(pageUp('ext-page', 'skills'), 4000);
+        await click('.over-page:not([hidden]) .over-close');
+        moved.models = (await viaPalette('模型', '模型看板 › 路由')) && await waitFor(pageUp('hub-page', 'routing'), 8000);
+        await click('.over-page:not([hidden]) .over-close');
+        await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`); // (its command says 打开… while the panel is away)
+        moved.usage = (await viaPalette('用量与账本', '打开用量面板')) && await waitFor(`!!document.querySelector('.dock .dock-panel[data-panel="usage"]:not([hidden])')`, 5000);
+        // the panel away and the right panel shut (the 自定义 checks below measure a page as wide as the main area)
+        await js(`(() => { const st = window.__store.getState(); st.dispatchLayout({ t: 'dock.close', panel: 'usage', workbench: false }); st.dispatchLayout({ t: 'dock.set', patch: { open: false } }); })()`);
+        moved.memory = (await viaPalette('共享记忆', '设置 › 共享记忆')) && await waitFor(`!!document.querySelector('.modal.settings.sp')`, 4000);
+        await js('window.__store.setState({ settingsOpen: null })');
+        await sleep(300);
+        check('the rail\'s old names in the palette: 后台 → 自动化 › 运行中, 扩展 → 自定义 › Skills, 模型 → 模型看板 › 路由, 用量与账本 → its panel, 共享记忆 → 设置', Object.values(moved).every(Boolean), JSON.stringify(moved));
+        await shot('palette-moved');
 
-        // 扩展: the connector directory on a page; its three parts are the sidebar's rows
-        await click('.rail [data-id="extensions"]');
+        // 自定义 (the old 扩展, redesign 2026-11 stage 1): the connector directory on a page from the sidebar; its three parts
+        // are the page's own tabs (the sidebar stays the conversation list), its × closes it
+        await click('.sidebar .sb-nav [data-id="extensions"]');
+        // (it opens on the part shown last — Skills, from the palette above)
+        await waitFor(`(() => { const p = document.querySelector('.ext-page'); return !!p && !p.hidden; })()`, 4000);
+        await click('.ext-page .over-tabs [data-id="connectors"]');
         const extUp = await waitFor(`!!document.querySelector('.ext-page:not([hidden]) .ext-body[data-body="connectors"] .cx-grid .cx-row')`, 10_000);
-        const extInfo = await js(`({ rows: document.querySelectorAll('.ext-page .ext-body[data-body="connectors"] [data-id="directory"] .cx-row, .ext-page .ext-body[data-body="connectors"] .cx-grid .cx-row').length, side: [...document.querySelectorAll('.sb-sect:not([hidden]) .ext-side .sect-nav [data-id]')].map((b) => b.dataset.id).join(','), title: document.querySelector('.ext-page .over-title h2')?.textContent, marks: document.querySelectorAll('.ext-page .tile-ic svg').length, railOn: !!document.querySelector('.rail [data-id="extensions"].on'), tabs: !!document.querySelector('.ext-page .over-tabs'), close: (() => { const c = document.querySelector('.ext-page .over-close'); return !!c && c.getClientRects().length > 0; })() })`);
-        check('扩展 opens a page: the connector directory (each with its mark), the three parts as the sidebar\'s rows — no second tab row, no × beside the rail', extUp && extInfo.rows >= 20 && extInfo.marks >= 20 && extInfo.side === 'connectors,skills,plugins' && extInfo.title === '连接器' && extInfo.railOn && !extInfo.tabs && !extInfo.close, JSON.stringify(extInfo));
-        const centred = await js(`(() => { const p = document.querySelector('.ext-page').getBoundingClientRect(); const h = document.querySelector('.ext-page .over-head-in').getBoundingClientRect(); const b = document.querySelector('.ext-page .ext-body[data-body="connectors"] > *').getBoundingClientRect(); return { head: Math.round((h.left + h.right) / 2 - (p.left + p.right) / 2), body: Math.round((b.left + b.right) / 2 - (p.left + p.right) / 2), same: Math.abs(h.left - b.left) <= 1 && Math.abs(h.right - b.right) <= 1 }; })()`);
-        check('…its column sits in the middle of the card, the title row over the same edges', Math.abs(centred.head) <= 1 && Math.abs(centred.body) <= 6 && centred.same, JSON.stringify(centred));
+        const extInfo = await js(`({ rows: document.querySelectorAll('.ext-page .ext-body[data-body="connectors"] [data-id="directory"] .cx-row, .ext-page .ext-body[data-body="connectors"] .cx-grid .cx-row').length, tabs: [...document.querySelectorAll('.ext-page .over-tabs [data-id]')].map((b) => b.dataset.id).join(','), title: document.querySelector('.ext-page .over-title h2')?.textContent, marks: document.querySelectorAll('.ext-page .tile-ic svg').length, entryOn: !!document.querySelector('.sidebar .sb-nav [data-id="extensions"].on'), side: !!document.querySelector('.sidebar .ext-side, .sidebar .sect-side'), close: (() => { const c = document.querySelector('.ext-page .over-close'); return !!c && c.getClientRects().length > 0; })() })`);
+        check('自定义 opens a page: the connector directory (each with its mark), its three parts as its own tabs (连接器 · Skills · 插件), the sidebar entry lit and no column of its own, its ×', extUp && extInfo.rows >= 20 && extInfo.marks >= 20 && extInfo.tabs === 'connectors,skills,plugins' && extInfo.title === '自定义' && extInfo.entryOn && !extInfo.side && extInfo.close, JSON.stringify(extInfo));
+        // one left edge (the plan's pages; before, a narrow page was centred): the title, the tabs' first label and the
+        // column (860 at most) start together, and the head's actions end where the column ends
+        const edges = await js(`(() => { const h = document.querySelector('.ext-page .over-head-in').getBoundingClientRect(); const t = document.querySelector('.ext-page .over-tabs .ht')?.getBoundingClientRect(); const tl = document.querySelector('.ext-page .over-tabs .ht svg')?.getBoundingClientRect(); const b = document.querySelector('.ext-page .ext-body[data-body="connectors"] > *').getBoundingClientRect(); return { head: Math.round(h.left), tab: Math.round(tl ? tl.left : t ? t.left : -1), body: Math.round(b.left), width: Math.round(b.width), right: Math.abs(h.right - b.right) <= 1 }; })()`);
+        check('…its title, tabs and column share one left edge (the column 860 at most, the head as wide)', Math.abs(edges.head - edges.body) <= 1 && Math.abs(edges.tab - edges.body) <= 12 && edges.width <= 860 && edges.right, JSON.stringify(edges));
         await shot('extensions-connectors');
         // 连接器 → 编辑 (2026-10-30): the seeded smoke-edit server; the credential comes masked, a renamed masked row
         // keeps its value, the edited variable and command land in ~/.claude.json
@@ -3121,18 +3262,18 @@ function driver() {
         const narrowed = await waitFor(`(() => { const n = document.querySelectorAll('.ext-page .ext-body[data-body="connectors"] .cx-grid .cx-row').length; return n >= 1 && n <= 4; })()`, 3000);
         check('…searching narrows the directory', narrowed, String(await js(`document.querySelectorAll('.ext-page .ext-body[data-body="connectors"] .cx-grid .cx-row').length`)));
         await js(`(() => { const i = document.querySelector('.ext-page .cx-search input'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, ''); i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-        await click('.sb-sect:not([hidden]) .ext-side [data-id="skills"]');
-        const skillsUp = await waitFor(`document.querySelector('.ext-page')?.dataset.tab === 'skills' && !!document.querySelector('.ext-page .ext-body[data-body="skills"]:not([hidden]) .cx') && document.querySelector('.ext-page .over-title h2')?.textContent === 'Skills'`, 8000);
+        await click('.ext-page .over-tabs [data-id="skills"]');
+        const skillsUp = await waitFor(`document.querySelector('.ext-page')?.dataset.tab === 'skills' && !!document.querySelector('.ext-page .ext-body[data-body="skills"]:not([hidden]) .cx') && document.querySelector('.ext-page .over-tabs [data-id="skills"]')?.getAttribute('aria-selected') === 'true'`, 8000);
         await shot('extensions-skills');
-        await click('.sb-sect:not([hidden]) .ext-side [data-id="plugins"]');
+        await click('.ext-page .over-tabs [data-id="plugins"]');
         const pluginsUp = await waitFor(`document.querySelector('.ext-page')?.dataset.tab === 'plugins' && !!document.querySelector('.ext-page .ext-body[data-body="plugins"]:not([hidden]) [data-id="install"]')`, 8000);
         await sleep(1200);
         const extErr = await noBoundary('.ext-page');
         check('Skills and 插件 are its other two parts; each is mounted when first shown and the three stay', skillsUp && pluginsUp && !extErr && (await js(`document.querySelectorAll('.ext-page .ext-body').length`)) === 3, extErr || JSON.stringify({ skillsUp, pluginsUp }));
         await shot('extensions-plugins');
         await key('Escape');
-        const extClosed = await waitFor(`document.querySelector('.ext-page')?.hidden === true && !!document.querySelector('.rail [data-id="chat"].on') && !document.querySelector('.sb-sect:not([hidden]) .ext-side')`, 3000);
-        check('Esc leaves the page: 对话 is in front again, with its own sidebar', extClosed);
+        const extClosed = await waitFor(`document.querySelector('.ext-page')?.hidden === true && !document.querySelector('.sidebar .sb-nav [data-id="extensions"].on') && !!document.querySelector('.pane.focused')`, 3000);
+        check('Esc leaves the page: the conversation is in front again, the 自定义 entry no longer lit', extClosed);
 
         // 浏览器: the right panel's fifth fixed tab
         await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'browser' })`);
@@ -3173,9 +3314,13 @@ function driver() {
         const up = await waitFor(`!!document.querySelector('.bg-page:not([hidden]) .office-canvas') && document.querySelectorAll('.bg-page .office-bot').length >= 6 && (window.__cwCafe?.frames ?? 0) > 2`, 15000);
         await sleep(600);
         await waitFor(`document.querySelectorAll('.bg-page .bg-graph .ng-card').length >= 9`, 8000);   // the node graph is its own chunk (spec D2)
+        // (the cafe was mounted earlier in this run — 自动化 › 运行中 from the palette and the phone check — and then it
+        // follows the pill's conversation into its zone, Office.tsx `follow`; the floor tags are the whole cafe's: back to it)
+        await js(`(() => { const b = document.querySelector('.bg-page .office-bread button'); if (b && !b.classList.contains('on')) b.click(); })()`);
+        await sleep(500);
         const sidSel = JSON.stringify(JSON.stringify(E.SMOKE_SID));
-        const page = await js(`(() => { const p = document.querySelector('.bg-page'); return { title: p.querySelector('.over-title h2')?.textContent, desc: p.querySelector('.over-sub, .over-desc')?.textContent ?? '', cards: p.querySelectorAll('.bg-card:not(.bg-card-more)').length, chars: p.querySelectorAll('.office-bot').length, admin: !!p.querySelector('.office-bot[aria-label^="前台网管"]'), floor: p.querySelector('.office-ftag')?.textContent ?? '', zoneTag: p.querySelector('.office-ftag[data-anchor="zone:0"]')?.getAttribute('aria-label') ?? '', lit: (() => { const c = p.querySelector('.office-canvas'); const t = document.createElement('canvas'); t.width = c.width; t.height = c.height; const g = t.getContext('2d'); g.drawImage(c, 0, 0); const d = g.getImageData(0, 0, t.width, t.height).data; const r0 = d[0], g0 = d[1], b0 = d[2]; let n = 0, k = 0; for (let i = 0; i < d.length; i += 4 * 97) { k++; if (Math.abs(d[i] - r0) + Math.abs(d[i + 1] - g0) + Math.abs(d[i + 2] - b0) > 40) n++; } return Math.round((n / k) * 100); })(), nodes: p.querySelectorAll('.bg-graph .ng-card').length, edges: p.querySelectorAll('.bg-graph .ng-edge').length, strong: p.querySelector('.bg-graph .ng-edge[data-edge="wf|wf1|p1>wf1|w1"]')?.dataset.style, feed: p.querySelector('.bg-feed')?.textContent ?? '', chips: p.querySelectorAll('.bg-chips .bg-chip').length, rail: !!document.querySelector('.rail [data-id="background"].on'), side: !!document.querySelector('.sb-sect:not([hidden]) .bg-side .bg-srow.active[data-sid=' + ${sidSel} + ']') }; })()`);
-        check('the pill opens 后台 on this conversation: five cards (three of a workflow, a sub-agent, a command), A区 with its 网管 and five people in the 3D cafe (the picture drawn), a node each in the graph, the feed, a chip per task', up && page.title && page.title !== '后台' && /运行中/.test(page.desc) && page.cards === 5 && page.chars >= 6 && page.admin && /^A/.test(page.floor) && /^A区 · /.test(page.zoneTag) && page.lit > 3 && page.nodes === 9 && page.edges === 8 && page.strong === 'strong' && /alpha/.test(page.feed) && page.chips === 4 && page.rail && page.side, JSON.stringify(page));
+        const page = await js(`(() => { const p = document.querySelector('.bg-page'); return { fam: p.querySelector('.over-title h2')?.textContent, sub: p.querySelector('.fam-sub')?.textContent ?? '', cards: p.querySelectorAll('.bg-card:not(.bg-card-more)').length, chars: p.querySelectorAll('.office-bot').length, admin: !!p.querySelector('.office-bot[aria-label^="前台网管"]'), floor: p.querySelector('.office-ftag')?.textContent ?? '', zoneTag: p.querySelector('.office-ftag[data-anchor="zone:0"]')?.getAttribute('aria-label') ?? '', lit: (() => { const c = p.querySelector('.office-canvas'); const t = document.createElement('canvas'); t.width = c.width; t.height = c.height; const g = t.getContext('2d'); g.drawImage(c, 0, 0); const d = g.getImageData(0, 0, t.width, t.height).data; const r0 = d[0], g0 = d[1], b0 = d[2]; let n = 0, k = 0; for (let i = 0; i < d.length; i += 4 * 97) { k++; if (Math.abs(d[i] - r0) + Math.abs(d[i + 1] - g0) + Math.abs(d[i + 2] - b0) > 40) n++; } return Math.round((n / k) * 100); })(), nodes: p.querySelectorAll('.bg-graph .ng-card').length, edges: p.querySelectorAll('.bg-graph .ng-edge').length, strong: p.querySelector('.bg-graph .ng-edge[data-edge="wf|wf1|p1>wf1|w1"]')?.dataset.style, feed: p.querySelector('.bg-feed')?.textContent ?? '', chips: p.querySelectorAll('.bg-chips .bg-chip').length, entry: !!document.querySelector('.sidebar .sb-nav [data-id="automation"].on'), side: !!document.querySelector('.bg-page .over-side .bg-side .bg-srow.active[data-sid=' + ${sidSel} + ']') }; })()`);
+        check('the pill opens 自动化 › 运行中 on this conversation (its name under the tabs, the conversations in the page\'s own column, the sidebar\'s 自动化 lit): five cards (three of a workflow, a sub-agent, a command), A区 with its 网管 and five people in the 3D cafe (the picture drawn), a node each in the graph, the feed, a chip per task', up && page.fam === '自动化' && !!page.sub && !page.sub.startsWith('后台') && /运行中/.test(page.sub) && page.cards === 5 && page.chars >= 6 && page.admin && /^A/.test(page.floor) && /^A区 · /.test(page.zoneTag) && page.lit > 3 && page.nodes === 9 && page.edges === 8 && page.strong === 'strong' && /alpha/.test(page.feed) && page.chips === 4 && page.entry && page.side, JSON.stringify(page));
         const bgErr = await noBoundary('.bg-page');
         check('后台 without error boundary', !bgErr, bgErr);
         await shot('background-page');
@@ -3251,7 +3396,7 @@ function driver() {
         await key('Escape');
         const drawerGone = await waitFor(`!document.querySelector('.bg-page .bg-drawer') && !document.querySelector('.bg-page').hidden`, 3000);
         await key('Escape');
-        const pageGone = await waitFor(`document.querySelector('.bg-page').hidden === true && !!document.querySelector('.rail [data-id="chat"].on')`, 3000);
+        const pageGone = await waitFor(`document.querySelector('.bg-page').hidden === true && !document.querySelector('.sidebar .sb-nav [data-id="automation"].on')`, 3000);
         check('Esc closes the drawer first, then the page', drawerGone && pageGone, JSON.stringify({ drawerGone, pageGone }));
         await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'tasks' })`);
         const tasks = (await waitFor(`!!document.querySelector('.dock-panel[data-panel="tasks"]:not([hidden]) .bg-tasks .bg-graph .ng-card')`, 5000)) && await js(`(() => { const p = document.querySelector('.dock-panel[data-panel="tasks"] .bg-tasks'); return { tasks: p.querySelectorAll('.bg-ttask').length, agents: p.querySelectorAll('.bg-tagent').length, stops: p.querySelectorAll('.bg-ttask .btn.danger').length }; })()`);
@@ -3680,7 +3825,7 @@ function driver() {
         check('Mission Control still lists the request (允许 / 拒绝 there)', await waitFor(`!!document.querySelector('.dock-panel[data-panel="mission"]:not([hidden]) .mcard .perm')`, 4000));
         await js(`window.__store.getState().dispatchLayout({ t: 'dock.set', patch: { open: false } })`);
         // …and the sidebar's 需要你 (phase 4) lists it from the same pending list (the sidebar was collapsed earlier)
-        if (await js(`!!document.querySelector('.rail .sb-reveal')`)) await click('.rail .sb-reveal');
+        if (await js('!window.__store.getState().sidebarOpen')) { await js('window.__store.setState({ sidebarOpen: true })'); await sleep(300); }
         await waitFor(`!!document.querySelector('.sidebar .sb-attn .sb-attn-item')`, 4000);
         const attnCount = `document.querySelectorAll('.sidebar .sb-attn .sb-attn-item').length`;
         const attn1 = await js(attnCount);
@@ -3842,11 +3987,14 @@ function driver() {
           const id = `smoke-covered-${cover}`;
           await click('.pane.focused .composer textarea');
           if (cover === 'automation') {
-            if (!(await js(`!!document.querySelector(':is(.rail, .sidebar) [data-id="automation"]')`)) && await js(`!!document.querySelector('.rail .sb-reveal')`)) await click('.rail .sb-reveal');
-            await click(':is(.rail, .sidebar) [data-id="automation"]');
+            if (await js('!window.__store.getState().sidebarOpen')) { await js('window.__store.setState({ sidebarOpen: true })'); await sleep(300); }
+            // 自动化 opens on the tab shown last (运行中 since the pill above): 定时任务 is the automation page's
+            await click('.sidebar .sb-nav [data-id="automation"]');
+            await waitFor(`!!document.querySelector('.over-page.in-family:not([hidden]) .fam-tabs')`, 3000);
+            await click('.over-page:not([hidden]) .fam-tabs [data-id="schedules"]');
             await waitFor(`(() => { const p = document.querySelector('.auto-page'); return !!p && !p.hidden; })()`, 3000);
             // the section page's header and the Windows caption buttons (114px, drawn by the page): 16px of air as on the other rows (the
-            // verification of 2026-10-16 found 12 — rail.css kept the old reserve); measured with the desktop class on
+            // verification of 2026-10-16 found 12 — the old rail.css kept the old reserve); measured with the desktop class on
             const capAir = await js(`(() => { const de = document.documentElement; const had = de.classList.contains('desktop'); de.classList.add('desktop'); const app = document.querySelector('.app'); const wb = document.querySelector('.workbench'); const h = [...document.querySelectorAll('.auto-page .over-head')].find((x) => x.getClientRects().length); let res; if (h && !app.classList.contains('dock-open') && !wb.classList.contains('gb')) { const bs = [...h.querySelectorAll('button')].filter((b) => b.getClientRects().length && getComputedStyle(b).visibility !== 'hidden' && getComputedStyle(b).display !== 'none' && b.getBoundingClientRect().top < 60); const right = Math.max(...bs.map((b) => b.getBoundingClientRect().right)); res = { air: Math.round(innerWidth - 114 - right), vw: innerWidth, buttons: bs.length }; } else res = { notApplicable: { dockOpen: app.classList.contains('dock-open'), groupBar: wb.classList.contains('gb'), head: !!h } }; if (!had) de.classList.remove('desktop'); return res; })()`);
             check('desktop · Windows: the automation page header keeps 16px+ before the caption buttons', capAir.notApplicable ? true : capAir.buttons > 0 && capAir.air >= 16, JSON.stringify(capAir));
           } else if (cover === 'settings') {
@@ -3915,7 +4063,7 @@ function driver() {
           const keyOn = (k, o = {}) => js(`(() => { const t = document.activeElement || document.body; t.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, cancelable: true, ctrlKey: ${!!o.ctrl}, isComposing: ${!!o.composing} })); return true; })()`);
           const inCard = () => js(`!!document.activeElement?.closest('${card}')`);
           const page = () => js(`document.querySelector('${card} .ask-page')?.textContent ?? null`);
-          if (await exists('.rail .sb-reveal')) await click('.rail .sb-reveal');
+          if (await js('!window.__store.getState().sidebarOpen')) { await js('window.__store.setState({ sidebarOpen: true })'); await sleep(300); }
           await sleep(300);
           const attnBefore = await count('.sidebar .sb-attn .sb-attn-item');
           await putAsk('smoke-ask-1');
@@ -4024,7 +4172,7 @@ function driver() {
           const extraDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cw-smoke-extra-'));
           fs.writeFileSync(path.join(extraDir, 'extra-file.txt'), 'extra');
           await js(`(async () => { const st = window.__store.getState(); if (!st.workspaces.some((w) => w.path.toLowerCase() === ${JSON.stringify(E.SMOKE_REPO.toLowerCase())})) await st.addWorkspace(${JSON.stringify(E.SMOKE_REPO)}); })()`);
-          if (await exists('.rail .sb-reveal')) await click('.rail .sb-reveal');
+          if (await js('!window.__store.getState().sidebarOpen')) { await js('window.__store.setState({ sidebarOpen: true })'); await sleep(300); }
           await sleep(300);
           const wsId = await js(`window.__store.getState().workspaces.find((w) => w.path.toLowerCase() === ${JSON.stringify(E.SMOKE_REPO.toLowerCase())})?.id ?? null`);
           await js(`(() => { window.__reqKinds = []; const orig = WebSocket.prototype.send; const wrap = function (d) { try { const m = JSON.parse(d); if (m && m.request && m.request.req) window.__reqKinds.push(m.request.req.kind); } catch {} return orig.call(this, d); }; wrap.__smoke = true; WebSocket.prototype.send = wrap; })()`);
@@ -4075,7 +4223,7 @@ function driver() {
           const wsF = await js(`window.__store.getState().workspaces[0]?.id ?? null`);
           let tabs = null;
           if (wsF) {
-            if (await exists('.rail .sb-reveal')) await click('.rail .sb-reveal');
+            if (await js('!window.__store.getState().sidebarOpen')) { await js('window.__store.setState({ sidebarOpen: true })'); await sleep(300); }
             await sleep(250);
             await ctxMenuAt(`.sidebar [data-group="${wsF}"] > .sb-group-head`);
             if (await waitFor('!!document.querySelector(".menu [data-id=\\"edit\\"]")', 2000)) await click('.menu [data-id="edit"]');
@@ -4201,7 +4349,7 @@ function driver() {
           await click('.pane.focused .goal-bar .gb-go');
           const goalsPhone = await waitFor(`(() => { const p = document.querySelector('.auto-page'); const b = p && p.querySelector('.auto-body[data-body="goals"]:not([hidden])'); return !!b && !p.hidden && p.dataset.tab === 'goals' && !document.querySelector('.app').classList.contains('sheet-open'); })()`, 4000);
           check('phone: the goal bar has 查看 and it opens the automation page on 目标 (not the drawer)', goPhone && goalsPhone, JSON.stringify({ goPhone, goalsPhone }));
-          await click(':is(.app.has-rail .rail [data-id="chat"], .app.mobile .auto-page .auto-head button[aria-label="关闭自动化"])');
+          await click('.over-page:not([hidden]) .over-close');
           await waitFor('document.querySelector(".auto-page")?.hidden === true', 2000);
           win.setContentSize(1360, 860);
           await waitFor('!document.querySelector(".app").classList.contains("mobile")', 4000);
@@ -4648,8 +4796,9 @@ window.desktop = {
           const rosterUp = await waitFor(`(${inject}, document.querySelectorAll('${R}').length === 2)`, 8000);
           const rows = await js(`[...document.querySelectorAll('${R}')].map((r) => ({ id: r.dataset.id, group: r.closest('.br-group')?.dataset.group ?? null, face: r.querySelector('.bot-face')?.closest('[data-state]')?.dataset.state ?? null, line: r.querySelector('.br-last')?.textContent.trim() ?? '' }))`);
           check('bots: the roster column has 2 rows, the attention one first (需要你), each with a face (data-state) and its last line', rosterUp && rows.length === 2 && rows[0].id === 'b_smoke1' && rows[0].group === 'attention' && rows.every((r) => r.face && r.line), JSON.stringify(rows));
-          const side = await js(`({ copies: document.querySelectorAll('.sidebar .bot-roster').length, head: document.querySelector('.bots-page .over-head') ? 'page head' : null, colHead: document.querySelector('.bots-col-roster .br-top .sect-title')?.textContent.trim() ?? null })`);
-          check('bots: no roster in the app sidebar, no page head row; the roster column says Bot', side.copies === 0 && !side.head && side.colHead === 'Bot', JSON.stringify(side));
+          // (redesign 2026-11 stage 1: the Bot page is 自动化 › Bot — the family's head and tab row over its columns)
+          const side = await js(`({ copies: document.querySelectorAll('.sidebar .bot-roster').length, head: document.querySelector('.bots-page .over-head .over-title h2')?.textContent ?? null, tab: document.querySelector('.bots-page .fam-tabs [data-id="bots"]')?.getAttribute('aria-selected') ?? null, colHead: document.querySelector('.bots-col-roster .br-top .sect-title')?.textContent.trim() ?? null })`);
+          check('bots: no roster in the app sidebar; the page is 自动化 › Bot (the family head and tabs over its columns); the roster column says Bot', side.copies === 0 && side.head === '自动化' && side.tab === 'true' && side.colHead === 'Bot', JSON.stringify(side));
           // the app's sidebar closed: the roster is still there
           await js(`window.__store.setState({ sidebarOpen: false })`);
           const noSide = await waitFor(`document.querySelector('.bots-col-roster')?.getClientRects().length > 0 && document.querySelectorAll('${R}').length === 2`, 3000);

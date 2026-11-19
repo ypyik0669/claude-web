@@ -6,7 +6,7 @@ import { CORE_PANELS, PANELS, WORKBENCH_TABS, type Dock } from '@/model/layout';
 import { ENTRY_CLICKS, MORE_PANELS, minClicks, panelCommandLabel, panelEntries, viewEntries, viewTarget } from './panel-entries';
 import { WB_VIEWS } from './wb-views';
 import { ACCOUNT, ACCOUNT_PANELS, AUTOMATION, AUTOMATION_PANELS } from '@/features/sidebar/entries';
-import { AUTOMATION_TABS, tabClicks } from '@/features/automation/page';
+import { FAMILY_TABS, tabClicks } from '@/features/automation/page';
 
 // the 11 panels of the pre-redesign dock: none may disappear
 const OLD_PANELS = ['mission', 'goals', 'orchestra', 'memory', 'tasks', 'files', 'usage', 'config', 'terminal', 'inspector', 'android'];
@@ -40,12 +40,13 @@ describe('every panel is reachable in ≤ 2 clicks', () => {
     expect(panelCommandLabel(d, p('files'), true)).toBe('关闭审阅面板');
   });
 
-  it('the sidebar\'s entries (same ids as sidebar/entries.ts): 自动化 → the page\'s 定时任务 / 目标 / 编排, account → 用量 / 配置中心, 2 clicks', () => {
+  it('the sidebar\'s entries (same ids as sidebar/entries.ts): 自动化 → its five tabs (目标 / 编排 among them), account → 用量与账本, 2 clicks', () => {
     expect(ENTRY_CLICKS.sidebarAutomation).toBe(2);
     expect(ENTRY_CLICKS.accountMenu).toBe(2);
-    // the automation page's tabs are the sidebar's automation ids; the two that show a panel's content are counted
-    expect([...AUTOMATION]).toEqual([...AUTOMATION_TABS]);
-    for (const t of AUTOMATION_TABS) for (const last of AUTOMATION_TABS) expect(tabClicks(t, last)).toBeLessThanOrEqual(ENTRY_CLICKS.sidebarAutomation);
+    // 自动化's five tabs are the sidebar's automation ids (redesign 2026-11 stage 1: 运行中 and Bot moved in); the two
+    // that show a panel's content are counted
+    expect([...AUTOMATION]).toEqual([...FAMILY_TABS]);
+    for (const t of FAMILY_TABS) for (const last of FAMILY_TABS) expect(tabClicks(t, last)).toBeLessThanOrEqual(ENTRY_CLICKS.sidebarAutomation);
     expect(Object.keys(AUTOMATION_PANELS).sort()).toEqual(['goals', 'orchestra']);
     for (const k of Object.keys(ACCOUNT_PANELS)) expect(ACCOUNT as readonly string[]).toContain(k);
     for (const p of PANELS) {
@@ -58,7 +59,9 @@ describe('every panel is reachable in ≤ 2 clicks', () => {
     expect(panelEntries('goals')).toContain('sidebarAutomation');
     expect(panelEntries('orchestra')).toContain('sidebarAutomation');
     expect(panelEntries('usage')).toContain('accountMenu');
-    expect(panelEntries('config')).toContain('accountMenu');
+    // 配置中心 left the account menu (自定义 and 设置 › 高级 have what it held); the palette still opens the panel
+    expect(panelEntries('config')).not.toContain('accountMenu');
+    expect(minClicks(panelEntries('config'))).toBeLessThanOrEqual(2);
     // 定时任务 is also a view: 自动化 reaches it in 2 clicks with or without a conversation
     expect(viewEntries('schedules')).toContain('sidebarAutomation');
   });

@@ -22,8 +22,26 @@ import { commandHits } from './filter';
 import { tr } from '@/i18n';
 import { openWhatsNew } from '@/features/update/WhatsNew';
 import { pickFolder } from '@/ui/pick-folder';
+import { openFamily } from '@/features/automation/family';
+import { openExtensions } from '@/features/extensions/state';
+import { openHub } from '@/features/model-hub/state';
+import { openArtifacts } from '@/features/artifacts/state';
+import { showPanel } from '@/features/workbench/right-panel';
+import { MOVED, PANEL_OLD_NAMES, type MovedTarget } from './moved';
 
-interface Cmd { id: string; label: string; sub?: string; ic?: IconName; group: string; run: () => void }
+interface Cmd { id: string; label: string; sub?: string; ic?: IconName; group: string; keywords?: string[]; run: () => void }
+
+/** What a moved entry's command opens (moved.ts: where the icon rail's entries are now). */
+function goTo(t: MovedTarget): void {
+  switch (t.to) {
+    case 'automation': openFamily(t.tab); return;
+    case 'extensions': openExtensions(t.tab); return;
+    case 'hub': openHub(t.page); return;
+    case 'artifacts': openArtifacts(); return;
+    case 'panel': showPanel(t.panel); return;
+    case 'settings': useStore.getState().openSettings({ section: t.section }); return;
+  }
+}
 
 /** `agent:codex in:proj rest` → the same filters the server's library search understands. */
 function parseFilters(raw: string): { agent?: string; cwd?: string; rest: string; filtered: boolean } {
@@ -75,7 +93,7 @@ function PaletteBody() {
   const showView = (view: WbView) => openSessionView(view);
   const commands = useMemo<Cmd[]>(() => {
     // the label says what the toggle will do right now (a hidden or minimized panel is opened; the terminal is hidden, not closed)
-    const panel = (p: (typeof PANELS)[number]): Cmd => ({ id: `panel.${p.id}`, label: panelCommandLabel(st.layout.dock, p, st.settings['ui.workbench'] === true), ic: p.icon, group: tr('面板'), run: () => st.togglePanel(p.id) });
+    const panel = (p: (typeof PANELS)[number]): Cmd => ({ id: `panel.${p.id}`, label: panelCommandLabel(st.layout.dock, p, st.settings['ui.workbench'] === true), ic: p.icon, group: tr('面板'), keywords: PANEL_OLD_NAMES[p.id], run: () => st.togglePanel(p.id) });
     const c: Cmd[] = [
       { id: 'new', label: tr('新对话'), sub: keyLabel(SHORTCUTS[0]), ic: 'plus', group: tr('对话'), run: () => runCommand('new') },
       // stage F (local versions of claude.ai features)
@@ -83,6 +101,8 @@ function PaletteBody() {
       { id: 'published', label: tr('已发布的文件'), ic: 'share', group: tr('对话'), run: () => openPublished() },
       { id: 'claudeai.import', label: tr('导入 claude.ai 数据…'), ic: 'cloud', group: tr('对话'), run: () => openClaudeAiImport() },
       { id: 'ws.add', label: tr('打开项目文件夹…'), ic: 'folder', group: tr('对话'), run: async () => { const p = await pickFolder(); if (p) await st.addWorkspace(p); } },
+      // the pages, by their new place and by every old name (redesign 2026-11 stage 1: the icon rail is gone)
+      ...MOVED.map<Cmd>((m) => ({ id: m.id, label: m.label, ic: m.icon, group: tr('前往'), keywords: m.old, run: () => goTo(m.target) })),
       { id: 'sidebar', label: st.sidebarOpen ? tr('收起侧栏') : tr('展开侧栏'), sub: 'Ctrl+B', ic: 'sidebar', group: tr('视图'), run: () => useStore.setState((s) => ({ sidebarOpen: !s.sidebarOpen })) },
       { id: 'archived', label: st.showArchived ? tr('隐藏已归档的对话') : tr('显示已归档的对话'), ic: 'archive', group: tr('视图'), run: () => useStore.getState().setShowArchived(!useStore.getState().showArchived) },
       { id: 'keys', label: tr('键盘快捷键'), sub: 'Ctrl+/', ic: 'keyboard', group: tr('视图'), run: () => useStore.setState({ shortcutsOpen: true }) },

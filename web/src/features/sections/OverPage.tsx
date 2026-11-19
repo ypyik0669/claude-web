@@ -5,6 +5,7 @@ import { Icon, type IconName } from '@/ui/icons';
 import { anchoredMenuOpen } from '@/ui/menus';
 import { SidebarReveal } from '@/features/workbench/pane-edge';
 import { tr } from '@/i18n';
+import { pageFrame } from './frame';
 
 /** Something else has the keyboard's Esc: a dialog, a menu, the palette, the settings page, the shortcut sheet. */
 const escTaken = () => {
@@ -29,16 +30,20 @@ function focusComposer() {
 export interface OverTab { id: string; label: string; icon: IconName; count?: React.ReactNode; title?: string }
 
 /**
- * A page laid over the main area — 自动化, 扩展 (spec 2026-10-10-ui-structure §2.2). Mounted once it has been opened
- * and only hidden after that; while it is open it has the keyboard (the panes under it are inert) and closing gives
- * the keyboard back to the composer. It closes with Esc, its × (where there is no icon rail to leave by), or
- * whenever the main area is sent somewhere (automation/state.ts `installAutomation`).
+ * A page laid over the main area — 自动化, 自定义, Artifacts… (spec 2026-10-10-ui-structure §2.2). Mounted once it has
+ * been opened and only hidden after that; while it is open it has the keyboard (the panes under it are inert) and
+ * closing gives the keyboard back to the composer. It closes with Esc, its ×, a conversation or 新对话 picked in the
+ * sidebar — whenever the main area is sent somewhere (automation/state.ts `installAutomation`).
  *
- * `name` prefixes the class names the page had before the two pages shared this shell (`auto-page`, `auto-head`…):
+ * `name` prefixes the class names the page had before the pages shared this shell (`auto-page`, `auto-head`…):
  * tests and scripts find the pages by them; the style sheet uses the shared `over-*` ones.
  *
- * `tabs`: drawn in the page only while the section's own sidebar is not there to show them (a phone, a collapsed
- * sidebar) — the caller decides and passes `showTabs`.
+ * `tabs`: the page's own parts; drawn when the caller says so (`showTabs`). The sidebar never shows a page's parts any
+ * more (redesign 2026-11 stage 1: it stays the conversation list), so most pages always do.
+ *
+ * A page of a family (sections/frame.ts — 自动化's three pages) gets the family's heading and tab row instead of its
+ * own heading; its own title (when it is not its label) and line go under the tabs, and its own column, if it has one,
+ * stands at its left on a desktop (there its own tabs are not drawn: the column lists the same).
  */
 export function OverPage(p: {
   name: string;
@@ -90,9 +95,16 @@ export function OverPage(p: {
     return () => window.removeEventListener('keydown', onKey);
   }, [p.open]);
   const n = p.name;
+  const frame = pageFrame(n);
+  // a family page's own column (a desktop): it lists what the page's own tabs would, so those are not drawn
+  const Side = !mobile ? frame?.Side : undefined;
+  const showTabs = p.showTabs && !Side;
+  const title = frame ? frame.title : p.title;
+  // under a family's tabs: the page's own title (a conversation's name on 运行中) and its line
+  const sub = frame && p.head !== false ? [p.title !== p.label ? p.title : '', p.desc].filter(Boolean).join(' · ') : '';
   return (
     <div
-      className={clsx('over-page', `${n}-page`, mobile && 'phone')}
+      className={clsx('over-page', `${n}-page`, mobile && 'phone', frame && 'in-family', Side && 'with-side')}
       hidden={!p.open}
       ref={root}
       tabIndex={-1}
@@ -110,20 +122,22 @@ export function OverPage(p: {
         p.onClose();
       }}
     >
-      {(p.head !== false || mobile) && <div className={clsx('over-head', `${n}-head`, p.narrow && 'narrow')}>
+      {(p.head !== false || mobile || frame) && <div className={clsx('over-head', `${n}-head`, p.narrow && 'narrow')}>
         <SidebarReveal />
         {/* the title and the actions span the content's width (新建 lines up with the list's right edge, review 7 M13) */}
         <div className={clsx('over-head-in', `${n}-head-in`)}>
           <div className="over-title">
-            <h2>{p.title}</h2>
-            {p.desc && !p.showTabs && <span className="over-sub">{p.desc}</span>}
+            <h2>{title}</h2>
+            {frame ? frame.desc && <span className="over-sub">{frame.desc}</span> : p.desc && !showTabs && <span className="over-sub">{p.desc}</span>}
           </div>
           <span className="grow" />
           {p.actions}
         </div>
-        <button className="icon-btn over-close" title={tr('关闭 (Esc)')} aria-label={tr('关闭{label}', { label: p.label })} onClick={p.onClose}><Icon name="close" size={16} /></button>
+        <button className="icon-btn over-close" title={tr('关闭 (Esc)')} aria-label={tr('关闭{label}', { label: frame ? frame.title : p.label })} onClick={p.onClose}><Icon name="close" size={16} /></button>
       </div>}
-      {p.showTabs && (
+      {frame && <frame.Tabs />}
+      {sub && <div className={clsx('over-desc fam-sub', `${n}-desc`)} title={sub}>{sub}</div>}
+      {showTabs && (
         <div className={clsx('utabs over-tabs', `${n}-tabs`)} role="tablist" aria-label={p.label}>
           {p.tabs.map((t) => (
             <button key={t.id} role="tab" aria-selected={p.tab === t.id} className={clsx('ht', p.tab === t.id && 'on')} data-id={t.id} title={t.title} onClick={() => p.onTab(t.id)}>
@@ -132,8 +146,13 @@ export function OverPage(p: {
           ))}
         </div>
       )}
-      {p.showTabs && p.desc && <div className={clsx('over-desc', `${n}-desc`)}>{p.desc}</div>}
-      {p.children}
+      {!frame && showTabs && p.desc && <div className={clsx('over-desc', `${n}-desc`)}>{p.desc}</div>}
+      {Side ? (
+        <div className="over-cols">
+          <div className="over-side"><Side /></div>
+          <div className="over-main">{p.children}</div>
+        </div>
+      ) : p.children}
     </div>
   );
 }

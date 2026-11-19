@@ -72,6 +72,7 @@ npm run dev          # 开发：server tsx watch + vite :5173（代理 /ws 到 3
 | [ui-redesign-5-chat](docs/notes/ui-redesign-5-chat.md) | 界面改版 阶段 5：对话渲染（2026-09-29） | 回合折叠、改动文件卡、停靠的权限卡与防误触、消息操作、目标细条 |
 | [ui-redesign-6-settings](docs/notes/ui-redesign-6-settings.md) | 界面改版 阶段 6：设置重组（2026-09-28） | 设置表 catalog、旧 id、全窗页与焦点、wording 闸 |
 | [ui-redesign-7-home](docs/notes/ui-redesign-7-home.md) | 界面改版 阶段 7：首页 / 首次引导 / 自动化页 / 手机（2026-09-29） | 首页、入门清单、首次引导、自动化页、手机底部抽屉、断线条、空状态、文案闸 |
+| [ui-redesign-2026-11-stage1](docs/notes/ui-redesign-2026-11-stage1.md) | 界面改版（2026-11）阶段 1：外壳（2026-11-19） | 去掉图标栏、侧栏五个入口、品牌菜单、账号行和八行账号菜单、自动化家族（frame.ts / family.tsx）、一条左边线、旧名字进命令面板、Artifacts 页、手机体检（phone-audit） |
 | [quick-connect](docs/notes/quick-connect.md) | 首次使用：接一个模型 / Agent 检测（2026-09-30） | 快速连接、模型挑选、接一个模型对话框、Agent 检测 |
 | [provider-routing](docs/notes/provider-routing.md) | 供应商：IM / 定时任务 / 其它 Agent（2026-09-30 用户报告） | 对话池里定供应商、IM 供应商、Codex 经垫片 |
 | [proxy-external](docs/notes/proxy-external.md) | 网络代理 / 外部写入的对话 / Codex 读取（2026-09-30 用户报告） | 网络代理、外部写入的对话实时显示、Codex 读历史 |

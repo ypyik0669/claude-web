@@ -1,76 +1,10 @@
-/* ---- structure round 2 (spec 2026-10-10-ui-structure): the icon rail, a section's own sidebar, the page shell ---- */
+/* ---- the window's shell (redesign 2026-11 stage 1; structure round 2 before): the sidebar's top, a page's own column, the page shell ---- */
 
-/* The rail is the window's first column: fixed to the left edge, the grid starts after it (`--rail`, set by App;
-   0 on a phone, which has no rail). */
-.app.has-rail { padding-left: var(--rail); }
-.app.has-rail.no-sidebar:not(.mobile) { padding-left: var(--rail); }
-
-.rail { position: fixed; left: 0; top: 0; bottom: 0; width: var(--rail); z-index: 3; display: flex; flex-direction: column; align-items: center; padding: var(--shell-gap) 0 calc(var(--shell-gap) + 4px); }
-/* a menu out of the rail (account, ···) goes over a full page (z 6: 扩展 / 后台 / 自动化…), still under modals (50+) —
-   2026-10-17 user report: the account menu was cut off by the 扩展 page */
-.rail:has(.menu) { z-index: 40; }
-/* ☰ in the title bar's row, the sidebar toggle under it: side by side the two did not fit the rail (☰ was cut off at
-   the window's left edge) */
-.rail-top { flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; padding-bottom: 4px; }
-.rail-top > .rail-anchor { height: var(--h-head); align-items: center; }
-.rail-main { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; padding-top: 2px; }
-.rail-foot { flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.rail-anchor { position: relative; display: inline-flex; }
-.rail-div { width: 18px; height: 1px; margin: 5px 0; background: var(--edge-default); flex: none; }
-
-.rail-btn { position: relative; width: 36px; height: 36px; flex: none; border-radius: var(--r-md); display: inline-flex; align-items: center; justify-content: center; color: var(--ink-3); transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), transform var(--dur-instant) var(--ease-out); }
-.rail-btn:hover { background: var(--layer-hover); color: var(--ink-1); }
-.rail-btn:active { transform: scale(0.94); }
-/* the section in front: a raised tile of the cards' colour on the shell */
-.rail-btn.on { background: var(--surface-0); color: var(--ink-1); box-shadow: var(--elev-1); }
-.rail-btn.on svg { stroke-width: 2; }
-.rail-side { color: var(--ink-4); }
-.rail-dot { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px var(--surface-1); }
-.rail-btn.on .rail-dot { box-shadow: 0 0 0 2px var(--surface-0); }
-
-/* a button's name, beside it: after a moment on hover, at once for the keyboard; not while its own menu is open */
-.rail [data-tip]::after { content: attr(data-tip); position: absolute; left: calc(100% + 10px); top: 50%; z-index: 80; padding: 5px 9px; border-radius: var(--r-row); background: var(--surface-elev); color: var(--ink-1); box-shadow: var(--elev-2); font-size: var(--fs-sm); font-weight: 400; line-height: 1.3; white-space: nowrap; pointer-events: none; opacity: 0; transform: translate(-4px, -50%); transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); }
-.rail [data-tip]:hover::after { opacity: 1; transform: translate(0, -50%); transition-delay: 400ms; }
-.rail [data-tip]:focus-visible::after { opacity: 1; transform: translate(0, -50%); }
-.rail [data-tip][aria-expanded='true']::after { display: none; }
-.rail-side[aria-expanded]::after { display: block; }
-
-/* the account: the avatar inside the ring of the quota window closest to its limit */
-.rail-acct { position: relative; width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; transition: background-color var(--dur-fast) var(--ease-out); }
-.rail-acct:hover, .rail-acct.on { background: var(--layer-hover); }
-.rail-avatar { position: relative; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; color: var(--ink-3); }
-.rail-avatar.hot { color: var(--warn); }
-.rail-avatar.crit { color: var(--err); }
-.rail-avatar .ring { position: absolute; inset: 0; }
-.rail-avatar .face { width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--primary); color: var(--primary-fg); font-size: 12px; font-weight: 600; line-height: 1; }
-.rail-avatar.anon .face { background: var(--surface-3); color: var(--ink-3); }
-.rail-avatar .off-dot { position: absolute; right: 2px; bottom: 2px; width: 9px; height: 9px; border-radius: 50%; background: var(--err); box-shadow: 0 0 0 2px var(--surface-1); }
-
-/* ···: a panel per row (name + what it is for), its pin at the end */
-.menu.rail-menu { width: 296px; padding: 6px; }
-.menu.rail-menu .rm-h { padding: 6px 10px 4px; font-size: var(--fs-meta); color: var(--ink-4); }
-.menu.rail-menu .rm-row { display: flex; align-items: center; gap: 2px; padding-right: 4px; border-radius: var(--r-row); transition: background-color 150ms linear; }
-.menu.rail-menu .rm-row:hover, .menu.rail-menu .rm-row:focus-within { background: var(--layer-hover); transition-duration: 0s; }
-.menu.rail-menu .rm-open { flex: 1 1 auto; width: auto; min-width: 0; min-height: 44px; display: flex; align-items: center; gap: 11px; padding: 6px 6px 6px 10px; text-align: left; background: none; color: var(--ink-2); }
-.menu.rail-menu .rm-open:hover { background: none; }
-.menu.rail-menu .rm-open > svg { flex: none; color: var(--ink-3); }
-.menu.rail-menu .rm-t { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.menu.rail-menu .rm-t .l { color: var(--ink-1); font-size: var(--fs-base); line-height: 1.35; }
-.menu.rail-menu .rm-t .h { color: var(--ink-3); font-size: var(--fs-meta); line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.menu.rail-menu .rm-pin { flex: none; width: 28px; min-height: 28px; height: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-sm); color: var(--ink-4); opacity: 0; }
-.menu.rail-menu .rm-row:hover .rm-pin, .menu.rail-menu .rm-pin:focus-visible, .menu.rail-menu .rm-pin.on { opacity: 1; }
-.menu.rail-menu .rm-pin:hover { background: var(--layer-selected); color: var(--ink-1); }
-.menu.rail-menu .rm-pin:not(.on) svg { fill: none; }
-.menu.rail-menu .rm-pin.on { color: var(--accent-text); }
-@media (hover: none) { .menu.rail-menu .rm-pin { opacity: 1; } }
-
-/* the sidebar column: one box per section, only the one in front shown */
+/* the sidebar column: the conversation list (one box; the section sidebars of the icon rail are gone) */
 .sb-sect { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .sb-sect[hidden] { display: none; }
-.sb-top .sb-find { color: var(--ink-3); }
-.sb-top .sb-find:hover { color: var(--ink-1); }
 
-/* a page section's own sidebar: its name, its one action, its parts as rows */
+/* a page's own column (sections/frame.ts `Side`: 运行中's conversations), drawn with the old section sidebar's rows */
 .sect-side { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .sect-top { height: var(--h-head); flex: none; display: flex; align-items: center; gap: var(--sp-2); padding: 0 var(--sp-3) 0 var(--sp-4); }
 .sect-title { flex: 1 1 auto; min-width: 0; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink-1); }
@@ -85,33 +19,17 @@
 .sect-nav .nav .n.need { color: var(--warn); }
 .sect-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 var(--sp-2) var(--sp-3); }
 
-/* the page shell: the section's (or the part's) name with one line under it; the × only where there is no rail to
-   leave by (a phone) */
+/* the page shell: the page's (or its family's) name with one line beside it; its × at the end of the row */
 .over-title { min-width: 0; display: flex; align-items: baseline; gap: var(--sp-3); }
 .over-title h2 { flex: none; }
 .over-sub { min-width: 0; color: var(--ink-3); font-size: var(--fs-base); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app.has-rail .over-close { display: none; }
-/* a narrow page's column sits in the middle of the card, and the head's row shares its edges: both are centred in the
-   same width (the body keeps a scrollbar's gutter on both sides so it stays centred with or without one) */
-.over-head.narrow { padding: 0 calc(var(--sp-5) + 10px); }
-.over-head.narrow .over-head-in { margin-inline: auto; }
-.over-body.narrow { align-items: center; scrollbar-gutter: stable both-edges; }
-.app:not(.mobile) .over-head.narrow ~ :is(.over-tabs, .over-desc) { width: 100%; max-width: calc(860px + 2 * (var(--sp-5) + 10px)); margin-inline: auto; padding-inline: calc(var(--sp-5) + 10px); }
-/* Windows / Linux: the row stays clear of the system's buttons by getting narrower from both sides, not by moving
-   (--caption-w: the caption buttons and air, as in styles.css and tab-row.ts CAPTION_W) */
-html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .over-head.narrow { padding-right: calc(var(--sp-5) + 10px); }
-html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .over-head.narrow .over-head-in { max-width: min(860px, calc(100% - 2 * (var(--caption-w) - var(--sp-5) - 10px))); }
+/* one left edge for the whole page — the title, the tabs, the line and the column under them, as on the plan's pages
+   (redesign 2026-11 stage 1). A narrow page's column is 860 at most and starts there too; the head's actions end where
+   it ends (styles.css `.over-head.narrow .over-head-in`). Before, a narrow page was centred in the card: a family's
+   title jumped sideways between a narrow tab (定时任务) and a full one (运行中), and the × of a narrow page lost the room
+   kept for the Windows caption buttons (it now has the head's usual --caption-w there) */
+.over-body.narrow { align-items: flex-start; scrollbar-gutter: stable; }
 .ext-plain { display: flex; flex-direction: column; gap: var(--sp-3); padding-top: var(--sp-2); }
-
-/* desktop: the rail's column is part of the title bar; its buttons are not */
-html.desktop .rail { -webkit-app-region: drag; }
-html.desktop .rail button, html.desktop .rail .menu { -webkit-app-region: no-drag; }
-html.desktop .sect-top { -webkit-app-region: drag; }
-html.desktop .sect-top button { -webkit-app-region: no-drag; }
-/* macOS: the traffic lights sit over the rail's top and reach into the column after it */
-html.desktop.mac .rail { padding-top: calc(40px / var(--zoom, 1)); }
-html.desktop.mac .rail-top > .rail-anchor { height: 40px; }
-html.desktop.mac .app.has-rail .sb-top, html.desktop.mac .app.has-rail .sect-top { padding-left: max(var(--sp-4), calc(84px / var(--zoom, 1) - var(--rail))); }
 
 /* ---- 想多深: its own chip next to the model's (spec §3). 深度编排 on: the chip takes the accent ---- */
 .cb .depth-chip.ultra > svg, .cb .depth-chip.ultra .cc-l { color: var(--accent-text); }
@@ -255,5 +173,128 @@ html.desktop.mac .app.has-rail .sb-top, html.desktop.mac .app.has-rail .sect-top
 .sb-top .sb-nav-arrows { display: inline-flex; gap: 2px; }
 .sb-top .sb-nav-arrows .icon-btn { width: 26px; height: 26px; }
 .sb-top .sb-nav-arrows .icon-btn:disabled { opacity: 0.35; cursor: default; background: none; }
-/* ☰ in a browser: our own menu with headings */
+/* the brand mark's menu in a browser: our own menu with headings */
 .menu.app-menu { min-width: 240px; }
+
+/* ==== redesign 2026-11 stage 1: one column of navigation (no icon rail) ==== */
+
+/* the sidebar's top row: the brand mark (the application menu) · the sidebar's switch · ← → */
+.app:not(.mobile) .sb-top { padding-left: 13px; gap: 2px; }
+.sb-top .grow { flex: 1 1 auto; }
+.sb-brand-anchor { position: relative; display: inline-flex; }
+.sb-brand { height: 30px; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px 0 5px; border-radius: var(--r-md); color: var(--ink-3); transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.sb-brand:hover, .sb-brand.on { background: var(--layer-hover); color: var(--ink-1); }
+.sb-brand > svg:first-child { flex: none; }
+.sb-brand .chev { opacity: 0.6; }
+.sb-top .sb-collapse { color: var(--ink-3); }
+.sb-top .sb-collapse:hover { color: var(--ink-1); }
+
+/* the five entries: the page in front is a selected row; 自动化 carries what waits for you */
+.sb-nav .nav.on > svg { color: var(--ink-1); }
+.sb-nav .nav .cnt { margin-left: auto; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent-text); font-size: 11px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+
+/* a phone's drawer: a search box under the name (the palette) */
+.sb-search { flex: none; display: flex; align-items: center; gap: 10px; height: 44px; margin: 2px var(--sp-3) 6px; padding: 0 14px; border-radius: var(--r-lg); background: var(--fill-subtle); color: var(--ink-3); font-size: 16px; text-align: left; }
+.sb-search:hover, .sb-search:active { background: var(--layer-hover); }
+.sb-search .ph { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* the account row: the avatar wears the ring of the quota window closest to its limit */
+.sb-account .avatar-ring { position: relative; flex: none; width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; color: var(--ink-3); }
+.sb-account .avatar-ring.hot { color: var(--warn); }
+.sb-account .avatar-ring.crit { color: var(--err); }
+.sb-account .avatar-ring .ring { position: absolute; inset: 0; }
+.sb-account .avatar-ring .avatar { width: 28px; height: 28px; }
+.sb-account .sb-gear { flex: none; color: var(--ink-3); }
+.sb-account .sb-gear:hover { color: var(--ink-1); }
+
+/* the account menu: a value at the end of a row; a row with a choice behind it opens in place under it */
+.menu.sb-acct-menu button .grow { flex: 1 1 auto; min-width: 0; }
+.menu.sb-acct-menu button .v { margin-left: auto; padding-left: 8px; display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--ink-4); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.menu.sb-acct-menu button .v > svg { color: var(--ink-4); }
+.menu.sb-acct-menu .acct-sub-h.open { background: var(--layer-hover); }
+.menu.sb-acct-menu .acct-sub { padding: 2px 0 4px 18px; }
+.menu.sb-acct-menu .acct-sub .theme-quick { margin: 2px 4px 4px 6px; }
+.menu.sb-acct-menu .acct-sub .ck { color: var(--ink-1); }
+.menu.sb-acct-menu .acct-sub .ck.off { visibility: hidden; }
+.menu.sb-acct-menu .acct-sub .ext { margin-left: auto; }
+.menu.sb-acct-menu .acct-sub .menu-note { padding-left: 32px; }
+
+/* 自动化's five tabs over each of its pages (features/automation/family.tsx) */
+.fam-tabs { flex: none; display: flex; align-items: center; gap: 2px; min-height: 36px; padding: 0 var(--sp-5); overflow-x: auto; scrollbar-width: none; }
+.fam-tabs::-webkit-scrollbar { display: none; }
+.fam-tabs .ft { flex: none; height: 30px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border-radius: var(--r-pill); font-size: var(--fs-sm); color: var(--ink-3); white-space: nowrap; transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.fam-tabs .ft:first-child { margin-left: -12px; }
+.fam-tabs .ft:hover { color: var(--ink-1); background: var(--layer-hover); }
+.fam-tabs .ft.on { color: var(--ink-1); background: var(--layer-selected); }
+.fam-tabs .ft > svg { flex: none; }
+.fam-tabs .ft .n { font-size: var(--fs-meta); color: var(--ink-4); font-weight: 400; font-variant-numeric: tabular-nums; }
+.fam-tabs .ft .n.need { color: var(--warn); }
+.over-desc.fam-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* a family page's own column at its left (运行中: the conversations with background work, their finished runs) */
+.over-cols { flex: 1 1 auto; min-height: 0; display: flex; }
+.over-side { flex: none; width: 240px; min-height: 0; display: flex; flex-direction: column; padding-top: var(--sp-2); border-right: var(--hairline) solid var(--edge-subtle); }
+.over-side .sect-top { display: none; }
+.over-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+
+/* the Artifacts page (a first, simple version): one card per file */
+.arts-body { padding: var(--sp-3) var(--sp-5) var(--sp-6); }
+.arts-loading { padding: var(--sp-6) 0; color: var(--ink-3); text-align: center; }
+.arts-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--sp-3); align-content: start; }
+.arts-card { min-width: 0; display: flex; flex-direction: column; border-radius: var(--r-lg); background: var(--surface-0); box-shadow: var(--elev-1); overflow: hidden; transition: box-shadow var(--dur-fast) var(--ease-out); }
+.arts-card:hover { box-shadow: var(--elev-2); }
+.arts-open { min-width: 0; display: flex; flex-direction: column; align-items: stretch; text-align: left; }
+.arts-th { position: relative; height: 112px; display: flex; align-items: center; justify-content: center; color: var(--tint, var(--ink-3)); background: color-mix(in oklab, var(--tint, var(--ink-3)) 9%, transparent); border-bottom: var(--hairline) solid var(--edge-subtle); }
+.arts-th .x { position: absolute; right: 10px; bottom: 8px; padding: 0 6px; border-radius: var(--r-xs); background: var(--surface-0); color: var(--ink-3); font: 600 10.5px/18px var(--mono); letter-spacing: 0.02em; }
+.arts-card.k-page { --tint: var(--info); }
+.arts-card.k-doc, .arts-card.k-pdf { --tint: var(--ink-2); }
+.arts-card.k-image { --tint: var(--accent-text); }
+.arts-card.k-data { --tint: var(--ok); }
+.arts-tx { min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px 2px; }
+.arts-n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-base); font-weight: 600; color: var(--ink-1); }
+.arts-d { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-meta); color: var(--ink-4); }
+.arts-foot { display: flex; align-items: center; gap: 4px; padding: 2px 6px 6px 12px; }
+.arts-from { flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 5px; color: var(--ink-3); font-size: var(--fs-meta); text-align: left; }
+.arts-from > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arts-from:hover { color: var(--ink-1); }
+.arts-share { flex: none; color: var(--ink-4); }
+.arts-share:hover { color: var(--ink-1); }
+.arts-published { display: inline-flex; align-items: center; gap: 6px; }
+
+/* 设置 › 模型 (stage 1): the model hub is one click away; stage 2 makes these pages and the hub one */
+.sp-hub-link { display: flex; align-items: center; gap: var(--sp-3); margin: -10px 0 22px; padding: 10px 10px 10px 14px; border-radius: var(--r-lg); background: var(--fill-subtle); color: var(--ink-2); font-size: var(--fs-base); line-height: 1.5; }
+.sp-hub-link > svg { flex: none; color: var(--ink-3); }
+.sp-hub-link .t { flex: 1 1 auto; min-width: 0; }
+.sp-hub-link .btn { flex: none; white-space: nowrap; }
+.app.mobile .sp-hub-link .btn { min-height: 44px; padding: 0 14px; }
+
+/* ---- a phone (redesign 2026-11 stage 1 · the mobile check in ui-smoke): what can be tapped is 44 × 44 ---- */
+.app.mobile .sb-top .icon-btn, .app.mobile .sb-account .sb-gear { width: 44px; height: 44px; }
+.app.mobile .sb-account .acct { min-height: 48px; }
+.app.mobile .sb-nav .nav .cnt { min-width: 20px; height: 20px; border-radius: 10px; font-size: 12px; }
+.app.mobile .sb-row .more { width: 44px; height: 44px; margin-left: -8px; margin-right: -4px; }
+.app.mobile .sb-row .st.stat { font-size: 12px; } /* a phone: no text under 12px (the +6 −1 is 11px on a desktop) */
+.app.mobile .sb-sec-h { height: 44px; }
+.app.mobile .sb-sec-h .icon-btn.xs, .app.mobile .sb-group-head .icon-btn.xs { width: 44px; height: 44px; }
+.app.mobile .over-head { height: calc(var(--h-head) + 4px); }
+.app.mobile .over-head .icon-btn { width: 44px; height: 44px; }
+.app.mobile .over-head .btn { min-height: 44px; min-width: 44px; padding: 0 14px; justify-content: center; }
+/* a page's head on a phone: the name, the actions and × — its line beside the name has no room there (the family's
+   line is under the tabs), an action keeps its label on one line, and Artifacts' 已发布的文件 is just its icon */
+.app.mobile .over-head .over-sub { display: none; }
+.app.mobile .over-head .btn { white-space: nowrap; }
+.app.mobile .over-head .arts-published { width: 44px; padding: 0; justify-content: center; }
+.app.mobile .arts-published .l { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.app.mobile .fam-tabs, .app.mobile .over-tabs { min-height: 48px; margin-bottom: 4px; padding: 0 var(--sp-3); flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+/* (the 4px under the row: a 34px icon button right below it reaches 44 with an invisible ring — phone.css — which must
+   not climb onto the tabs: the phone check found the Bot page's ＋ there) */
+.app.mobile .over-tabs::-webkit-scrollbar { display: none; }
+.app.mobile .fam-tabs .ft, .app.mobile .over-tabs .ht { height: 44px; padding: 0 14px; font-size: var(--fs-base); }
+.app.mobile .fam-tabs .ft:first-child, .app.mobile .over-tabs .ht:first-child { margin-left: 0; }
+.app.mobile .arts-body { padding: var(--sp-3) var(--sp-3) var(--sp-6); }
+.app.mobile .arts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-2); }
+.app.mobile .arts-th { height: 96px; }
+.app.mobile .arts-foot { padding: 0 0 0 12px; }
+.app.mobile .arts-from { min-height: 44px; }
+.app.mobile .arts-share { width: 44px; height: 44px; }
+/* a phone's text boxes are 16px: iOS zooms the page into anything smaller (the page may zoom again: no maximum-scale) */
+.app.mobile :is(input:not([type='checkbox'], [type='radio'], [type='range'], [type='color'], [type='file']), textarea, select) { font-size: 16px; }

@@ -1,10 +1,12 @@
-// The 扩展 page (structure round 2, spec 2026-10-10-ui-structure §4): its name and its parts. Pure — ExtensionsPage.tsx
-// draws it, state.ts opens / closes it (and ui/heading-text.ts reads the titles in node).
+// The 自定义 page (structure round 2's 扩展, spec 2026-10-10-ui-structure §4; renamed in the redesign 2026-11 stage 1,
+// one of the sidebar's five entries): its name and its parts. Pure — ExtensionsPage.tsx draws it, state.ts opens /
+// closes it (and ui/heading-text.ts reads the titles in node). The ids stay `extensions` (meta, tests, scripts).
 import type { IconName } from '@/ui/icons';
-import { tr } from '@/i18n';
+import type { OverTab } from '@/features/sections/OverPage';
+import { tr, trAs } from '@/i18n';
 
 /** The page's title. It is set in the heading face, so ui/heading-text.ts lists it. */
-export const EXTENSIONS_TITLE = tr('扩展');
+export const EXTENSIONS_TITLE = trAs('自定义', 'Customize');
 
 export const EXTENSION_TABS = ['connectors', 'skills', 'plugins'] as const;
 export type ExtensionTab = (typeof EXTENSION_TABS)[number];
@@ -15,3 +17,6 @@ export const EXTENSION_TAB_INFO: Record<ExtensionTab, { label: string; icon: Ico
   skills: { label: 'Skills', icon: 'skill', desc: tr('写好的做事方法：Agent 遇到对应的任务时自己取用') },
   plugins: { label: tr('插件'), icon: 'artifact', desc: tr('成套的扩展：一次装上命令、Skills、子代理和连接器') },
 };
+
+/** The parts as the page's tabs (the sidebar never shows them: it stays the conversation list). */
+export const EXTENSION_NAV: OverTab[] = EXTENSION_TABS.map((t) => ({ id: t, label: EXTENSION_TAB_INFO[t].label, icon: EXTENSION_TAB_INFO[t].icon }));

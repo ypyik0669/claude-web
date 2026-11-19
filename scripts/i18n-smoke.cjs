@@ -109,7 +109,15 @@ async function driver() {
     await step(`welcome · ${name}`, async () => { await click(sel); await sleep(500); });
     await closeMenus();
   }
-  await step('rail · more menu', async () => { await click('.rail-btn[data-id="more"]'); await sleep(400); });
+  // the sidebar's brand menu and the account menu with each of its rows that open in place (redesign 2026-11 stage 1)
+  await step('sidebar · app menu', async () => { await click('.sidebar .sb-brand'); await sleep(400); });
+  await closeMenus();
+  for (const sub of ['', 'language', 'theme', 'help']) {
+    await step(`sidebar · account menu${sub ? ' · ' + sub : ''}`, async () => {
+      if (!(await js('!!document.querySelector(".menu.sb-acct-menu")'))) { await click('.sidebar .sb-account .acct'); await sleep(400); }
+      if (sub) { await click(`.menu.sb-acct-menu [data-id="${sub}"]`); await sleep(300); }
+    });
+  }
   await closeMenus();
   await step('command palette', async () => { await js('window.__store.setState({ paletteOpen: true })'); await sleep(500); });
   await js('window.__store.setState({ paletteOpen: false })');
@@ -137,10 +145,17 @@ async function driver() {
   await js('window.__store.setState({ settingsOpen: null })');
   await sleep(300);
 
-  for (const [name, rail] of [['automation page', 'automation'], ['extensions page', 'extensions'], ['background page', 'background']]) {
-    await step(name, async () => { await click(`.rail-btn[data-id="${rail}"]`); await sleep(1500); });
+  // 自动化's five tabs (the background and Bot pages are two of them), 自定义, Artifacts — from the sidebar
+  for (const tab of ['running', 'schedules', 'bots', 'goals', 'orchestra']) {
+    await step(`automation · ${tab}`, async () => {
+      if (!(await js('!!document.querySelector(".over-page.in-family:not([hidden])")'))) { await click('.sidebar .sb-nav [data-id="automation"]'); await sleep(800); }
+      await click(`.over-page:not([hidden]) .fam-tabs [data-id="${tab}"]`); await sleep(1500);
+    });
   }
-  await click('.rail-btn[data-id="chat"]');
+  for (const [name, id] of [['customize page', 'extensions'], ['artifacts page', 'artifacts']]) {
+    await step(name, async () => { await click(`.sidebar .sb-nav [data-id="${id}"]`); await sleep(1500); });
+  }
+  await js("document.querySelectorAll('.over-page:not([hidden]) .over-close').forEach((b) => b.click())");
   await step('mission control', async () => { await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'mission' })`); await sleep(800); });
   await step('conversation waiting for a permission', async () => {
     await js(`window.__store.getState().loadHistory(${JSON.stringify(E.I18N_PERM_SID)}, { focus: true })`);

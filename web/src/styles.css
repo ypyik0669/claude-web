@@ -1459,11 +1459,11 @@ html.desktop:not(.mac) .dock.min .dock-tabs { padding-top: var(--h-head); }
 /* the full-window viewer (pictures, a node graph made big) covers the window: its bar keeps clear of the caption buttons / the traffic lights */
 html.desktop:not(.mac) .viewer-bar { padding-right: calc(var(--caption-w)); }
 html.desktop.mac .viewer-bar { padding-left: calc(84px / var(--zoom, 1)); }
-html.desktop.mac .sb-top { padding-left: max(0px, calc(84px / var(--zoom, 1) - var(--rail, 0px))); }
+html.desktop.mac .sb-top { padding-left: max(0px, calc(84px / var(--zoom, 1))); }
 html.desktop.mac .app.no-sidebar .groupbar,
 html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left] > .tabstrip,
 html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:not(.tabs) .sess-head,
-html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:not(.tabs) .welcome-top { padding-left: max(0px, calc(84px / var(--zoom, 1) - var(--rail, 0px))); }
+html.desktop.mac .app.no-sidebar .workbench:not(.gb) .pane[data-top][data-left]:not(.tabs) .welcome-top { padding-left: max(0px, calc(84px / var(--zoom, 1))); }
 /* …where 展开侧栏 starts at 84px like the sidebar's own top row — not pulled 8px back into the traffic lights' room
    by the -8px it has elsewhere (final review M5) */
 html.desktop.mac .app.no-sidebar .sess-head > .sb-reveal,
@@ -1680,8 +1680,8 @@ html[data-density='compact'] .sb-row.sess { height: 28px; padding: 0 10px 0 var(
 /* ---- redesign phase 2: right panel ---- */
 /* a narrow window: the right panel gives way so the conversation keeps ≥ 360px (it never goes below 300px itself);
    hidden (0) and the 36px icon strip stay as they are */
-.app:not(.mobile) { grid-template-columns: var(--sb, 264px) 1fr min(var(--rp, 0px), max(300px, calc(100vw - var(--rail, 0px) - var(--sb, 264px) - 360px))); }
-.app.no-sidebar:not(.mobile) { grid-template-columns: 1fr min(var(--rp, 0px), max(300px, calc(100vw - var(--rail, 0px) - 360px))); }
+.app:not(.mobile) { grid-template-columns: var(--sb, 264px) 1fr min(var(--rp, 0px), max(300px, calc(100vw - var(--sb, 264px) - 360px))); }
+.app.no-sidebar:not(.mobile) { grid-template-columns: 1fr min(var(--rp, 0px), max(300px, calc(100vw - 360px))); }
 /* the default right panel (spec §5.6, mock-session.png): a white sheet, four text tabs, temporary tabs with a × */
 .dock.simple { background: var(--surface-0); }
 /* the tab row: the fixed tabs never scroll; only the temporary tabs do, in their own strip, whose edges fade and get
@@ -2267,7 +2267,7 @@ html.desktop.mac .sp-nav-top { min-height: 40px; padding-left: calc(76px / var(-
 html.desktop .workbench:not(.gb) .over-head { -webkit-app-region: drag; }
 html.desktop .over-head button, html.desktop .over-head [title] { -webkit-app-region: no-drag; }
 html.desktop:not(.mac) .app:not(.dock-open) .workbench:not(.gb) .over-head { padding-right: calc(var(--caption-w)); }
-html.desktop.mac .app.no-sidebar .workbench:not(.gb) .over-head { padding-left: max(0px, calc(84px / var(--zoom, 1) - var(--rail, 0px))); }
+html.desktop.mac .app.no-sidebar .workbench:not(.gb) .over-head { padding-left: max(0px, calc(84px / var(--zoom, 1))); }
 
 /* 「连接断开，正在重连…」 at the top of the main area */
 /* a thin full-width strip under the main area's first row (review 7 M7): it takes no clicks, and while the settings

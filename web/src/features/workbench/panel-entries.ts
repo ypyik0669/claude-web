@@ -20,8 +20,8 @@ export const ENTRY_CLICKS: Record<EntryVia, number> = {
   headerMore: 2, // the session header's ··· → an item
   palette: 2, // the sidebar's 搜索 (command palette) → an item; every panel is listed there
   panelMore: 3, // right-panel button → 「更多」 → an item (2 once the panel is open)
-  sidebarAutomation: 2, // the sidebar's 自动化 → the automation page's tab 定时任务 / 目标 / 编排 (1 when it is the tab shown last)
-  accountMenu: 2, // the sidebar's account row → 用量与账本 / 配置中心 (sidebar/entries.ts ACCOUNT_PANELS)
+  sidebarAutomation: 2, // the sidebar's 自动化 → one of its five tabs, 目标 / 编排 among them (1 when it is the tab shown last)
+  accountMenu: 2, // the sidebar's account row → 用量与账本 (sidebar/entries.ts ACCOUNT_PANELS)
 };
 
 const SIDEBAR_AUTOMATION: readonly PanelId[] = Object.values(AUTOMATION_PANELS);

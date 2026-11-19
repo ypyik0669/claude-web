@@ -3,23 +3,31 @@ import type { LedgerEntry } from '@shared';
 import { useStore, type AccountAuth } from '@/store';
 import { ws } from '@/ws/client';
 import { clsx } from '@/util';
-import { Icon } from '@/ui/icons';
+import { Icon, type IconName } from '@/ui/icons';
 import { fmtCost } from '@/model/cost';
 import { modKey } from '@/features/workbench/shortcuts';
 import { Menu, closeDrawer } from './menus';
-import { QuotaWindows, UsageRing } from './UsageRing';
+import { QuotaWindows, UsageRing, worstWindow } from './UsageRing';
 import { accountName, planLabel, todayCost } from './status';
 import { ACCOUNT_PANELS, type AccountId } from './entries';
 import { showPanel } from '@/features/workbench/right-panel';
 import { ThemeQuick } from '@/features/settings/ThemePicker';
+import { THEME_LABEL, themeChoice } from '@/features/settings/theme-preview';
+import { LANGUAGES } from '@/features/settings/ui-settings';
+import { openWhatsNew } from '@/features/update/WhatsNew';
+import { openExternal } from '@/features/chat/link-route';
 import { tr } from '@/i18n';
 import { ProcessGlyph } from '@/themes/ProcessGlyph';
 import { dlg } from '@/ui/dialog';
 import { loginInTerminal } from '@/features/providers/ConnectModel';
 
+/** The project's pages: 帮助与反馈 opens them in the browser. */
+const REPO = 'https://github.com/ypyik0669/claude-web';
+const HELP_LINKS = { guide: `${REPO}#readme`, issue: `${REPO}/issues/new`, site: 'https://psycioxyxs.my' } as const;
+
 /**
- * Today's spend for the account popover: `ledger.list` parses the whole ledger file on the server, so one answer is
- * reused for 60 s (opening and closing the popover repeatedly asks once). Module-level: the sidebar unmounts.
+ * Today's spend for the account menu: `ledger.list` parses the whole ledger file on the server, so one answer is
+ * reused for 60 s (opening and closing the menu repeatedly asks once). Module-level: the sidebar unmounts.
  */
 const TODAY_TTL_MS = 60_000;
 type Today = ReturnType<typeof todayCost>;
@@ -37,12 +45,37 @@ function loadToday(): Promise<Today> {
   return todayInflight;
 }
 
+/** The avatar inside a ring that fills with the quota window closest to its limit (the rail's, now the row's). */
+function Avatar({ initial, signedIn, connected, expired }: { initial: string; signedIn: boolean; connected: boolean; expired: boolean }) {
+  const limits = useStore((s) => s.limits);
+  const worst = worstWindow(limits);
+  const percent = worst ? worst.percent : null;
+  const r = 16, c = 2 * Math.PI * r;
+  const tone = percent === null ? '' : percent >= 90 ? 'crit' : percent >= 70 ? 'hot' : '';
+  const id = (x: AccountId) => x;
+  return (
+    <span className={clsx('avatar-ring', tone)}>
+      {percent !== null && (
+        <svg className="ring" width="36" height="36" viewBox="0 0 36 36" aria-hidden>
+          <circle cx="18" cy="18" r={r} fill="none" stroke="var(--edge-default)" strokeWidth="2" />
+          <circle cx="18" cy="18" r={r} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeDasharray={`${(percent / 100) * c} ${c}`} transform="rotate(-90 18 18)" />
+        </svg>
+      )}
+      <span className={clsx('avatar', !signedIn && 'anon')} data-id={id('connection')} data-state={connected ? 'on' : 'off'} title={connected ? tr('已连接') : tr('连接断开，正在重连…')}>
+        {initial || <Icon name="user" size={15} />}
+        {!connected && <span className="off-dot" />}
+        {connected && expired && <span className="off-dot" title={tr('Claude 登录已过期')} />}
+      </span>
+    </span>
+  );
+}
+
 /**
- * The account row at the bottom of the sidebar (spec §5.1): avatar · name · 「Max 套餐 · 已用 34%」 · settings gear.
- * The row opens a popover upwards (quota windows, today's spend, 浅色 / 深色 / 跟随系统, usage & ledger, the config
- * panel, appearance, shortcuts, the command palette). The connection shows only when it is lost (red dot on the avatar + the line).
+ * The account row at the bottom of the sidebar (spec §5.1; redesign 2026-11 stage 1 on every width — the rail's
+ * avatar and gear moved here): the avatar in its quota ring · name · 「Max 套餐 · 已用 34%」 · the settings gear. The
+ * row opens the account menu upwards. The connection shows only when it is lost (red dot on the avatar + the line).
  * Who is signed in comes from the store (`auth`: asked once per connection, and updated by every `checkAuth` — the
- * welcome page's 重新检查 / focus re-check, onboarding, settings); the popover is the sidebar's one menu.
+ * welcome page's 重新检查 / focus re-check, onboarding, settings); the menu is the sidebar's one menu.
  */
 export function AccountRow({ open, setOpen }: { open: boolean; setOpen(v: boolean): void }) {
   const auth = useStore((s) => s.auth);
@@ -54,17 +87,13 @@ export function AccountRow({ open, setOpen }: { open: boolean; setOpen(v: boolea
   return (
     <div className="sb-foot sb-account">
       <button className={clsx('acct', open && 'on')} data-id={id('account')} aria-haspopup="menu" aria-expanded={open} title={auth?.email ?? who.name} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>
-        <span className={clsx('avatar', !who.signedIn && 'anon')} data-id={id('connection')} data-state={connected ? 'on' : 'off'} title={connected ? tr('已连接') : tr('连接断开，正在重连…')}>
-          {who.initial || <Icon name="user" size={15} />}
-          {!connected && <span className="off-dot" />}
-          {connected && auth?.expired && !auth.relay && <span className="off-dot" title={tr('Claude 登录已过期')} />}
-        </span>
+        <Avatar initial={who.initial} signedIn={who.signedIn} connected={connected} expired={!!auth?.expired && !auth.relay} />
         <span className="who">
           <span className="nm">{who.name}</span>
-          <span className="sub">{connected ? <UsageRing tip={false} fallbackPlan={auth?.subscriptionType} /> : <span className="conn-off"><ProcessGlyph process="connect" /> {tr('连接断开，正在重连…')}</span>}</span>
+          <span className="sub">{connected ? <UsageRing tip={false} ring={false} fallbackPlan={auth?.subscriptionType} /> : <span className="conn-off"><ProcessGlyph process="connect" /> {tr('连接断开，正在重连…')}</span>}</span>
         </span>
       </button>
-      <button className="icon-btn" data-id={id('settings')} title={tr('设置 ({modKey}+,) · 右键：在右侧面板打开配置中心', { modKey })} aria-label={tr('设置')} onClick={settings} onContextMenu={(e) => { e.preventDefault(); if (showPanel(ACCOUNT_PANELS.config)) closeDrawer(); }}>
+      <button className="icon-btn sb-gear" data-id={id('settings')} title={tr('设置 ({modKey}+,) · 右键：在右侧面板打开配置中心', { modKey })} aria-label={tr('设置')} onClick={settings} onContextMenu={(e) => { e.preventDefault(); if (showPanel('config')) closeDrawer(); }}>
         <Icon name="settings" size={16} />
       </button>
       {open && <AccountMenu auth={auth} name={who.name} onClose={() => setOpen(false)} />}
@@ -85,9 +114,37 @@ async function logoutClaude() {
   await st.checkAuth(true).catch(() => {});
 }
 
-export function AccountMenu({ auth, name, onClose, side }: { auth: AccountAuth | null; name: string; onClose: () => void; side?: 'right' }) {
+type SubId = 'language' | 'theme' | 'help';
+
+/**
+ * A row of the account menu with a choice behind it (语言 ›, 主题 ›, 帮助与反馈 ›): it opens in place under the row,
+ * like the 显示 menu's sub-options (one anchored menu at a time app-wide: a second one would close the first).
+ */
+function SubRow({ id, icon, label, value, open, onToggle, children }: { id: AccountId; icon: IconName; label: string; value?: string; open: boolean; onToggle(): void; children: React.ReactNode }) {
+  return (
+    <>
+      <button data-id={id} className={clsx('acct-sub-h', open && 'open')} aria-expanded={open} onClick={(e) => { e.stopPropagation(); onToggle(); }}>
+        <Icon name={icon} size={14} /> <span className="grow">{label}</span>
+        <span className="v">{value}<Icon name={open ? 'chevronDown' : 'chevronRight'} size={12} /></span>
+      </button>
+      {open && <div className="acct-sub" role="group" aria-label={label}>{children}</div>}
+    </>
+  );
+}
+
+/**
+ * The account menu (redesign 2026-11 stage 1, eight rows): who and the two quota windows at the top; 设置 · 用量与账本
+ * (today's spend beside it) · 语言 › · 主题 › (浅色 / 深色 / 跟随系统, 字符画主题…, 外观…) · 键盘快捷键 (not on a phone) ·
+ * 帮助与反馈 › · 更新内容 · 登录 / 退出 Claude 账号. The old 配置中心 and 命令面板 rows are gone: 自定义 / 设置 › 高级
+ * and the sidebar's 搜索 have them.
+ */
+export function AccountMenu({ auth, name, onClose }: { auth: AccountAuth | null; name: string; onClose: () => void }) {
   const limits = useStore((s) => s.limits);
+  const mobile = useStore((s) => s.mobile);
+  const lang = useStore((s) => (s.settings['ui.language'] as string | undefined) ?? 'auto');
+  const theme = useStore((s) => themeChoice(s.settings['ui.theme']));
   const [today, setToday] = useState(cachedToday);
+  const [sub, setSub] = useState<SubId | null>(null);
   useEffect(() => {
     let live = true;
     loadToday().then((v) => { if (live) setToday(v); }).catch(() => {});
@@ -98,8 +155,10 @@ export function AccountMenu({ auth, name, onClose, side }: { auth: AccountAuth |
   const act = (fn: () => boolean | void) => () => { onClose(); if (fn() !== false) closeDrawer(); };
   const st = useStore.getState;
   const plan = planLabel(limits?.subscriptionType ?? auth?.subscriptionType, limits?.planName);
+  const toggle = (k: SubId) => () => setSub((v) => (v === k ? null : k));
+  const langLabel = LANGUAGES.find((l) => l.id === lang)?.l ?? LANGUAGES[0].l;
   return (
-    <Menu onClose={onClose} className="sb-acct-menu" align="left" prefer="up" side={side} label={tr('账户')}>
+    <Menu onClose={onClose} className="sb-acct-menu" align="left" prefer="up" label={tr('账号')}>
       <div className="acct-head">
         <div className="nm">{name}</div>
         <div className="sub">{[auth?.email, plan].filter(Boolean).join(' · ') || (auth?.loggedIn === false ? tr('没有登录 Claude 账号') : '')}</div>
@@ -117,10 +176,33 @@ export function AccountMenu({ auth, name, onClose, side }: { auth: AccountAuth |
       {/* not signed in to a Claude account: there is no quota to read (the raw error is a missing credentials path);
           otherwise one plain line, the raw error only in the tooltip */}
       {limits && !limits.ok && auth?.loggedIn !== false && <div className="menu-note" title={limits.error ?? undefined}>{tr('暂时读不到账号额度，稍后会自动重试')}</div>}
-      <div className="acct-today" data-id={id('today')} title={tr('今天（本地时间）各对话的费用合计，来自账本')}>
-        <span>{tr('今日费用')}</span>
-        <span className="v">{today ? fmtCost(today.cost, today.unknown) : '…'}</span>
-      </div>
+      <div className="menu-sep" />
+      <button data-id={id('settings')} onClick={act(() => st().openSettings())}><Icon name="settings" size={14} /> <span className="grow">{tr('设置')}</span>{!mobile && <span className="k">{modKey} ,</span>}</button>
+      <button data-id={id('usage')} onClick={act(() => showPanel(ACCOUNT_PANELS.usage))}>
+        <Icon name="usage" size={14} /> <span className="grow">{tr('用量与账本')}</span>
+        <span className="v" data-id={id('today')} title={tr('今天（本地时间）各对话的费用合计，来自账本')}>{tr('今日 {cost}', { cost: today ? fmtCost(today.cost, today.unknown) : '…' })}</span>
+      </button>
+      <SubRow id={id('language')} icon="web" label={tr('语言')} value={langLabel} open={sub === 'language'} onToggle={toggle('language')}>
+        {LANGUAGES.map((l) => (
+          <button key={l.id} role="menuitemradio" aria-checked={lang === l.id} data-lang={l.id} onClick={(e) => { e.stopPropagation(); if (lang !== l.id) void st().setSetting('ui.language', l.id); }}>
+            <Icon name="check" size={13} className={clsx('ck', lang !== l.id && 'off')} /> {l.l}
+          </button>
+        ))}
+        <div className="menu-note">{tr('换语言会重新加载界面')}</div>
+      </SubRow>
+      <SubRow id={id('theme')} icon="sun" label={tr('主题')} value={theme ? THEME_LABEL[theme] : tr('字符画主题')} open={sub === 'theme'} onToggle={toggle('theme')}>
+        <ThemeQuick />
+        <button data-id={id('ascii-themes')} onClick={act(() => st().openSettings({ section: 'appearance', reveal: 'ui.theme' }))}><Icon name="sparkle" size={14} /> {tr('字符画主题…')}</button>
+        <button data-id={id('appearance')} onClick={act(() => st().openSettings({ section: 'appearance' }))}><Icon name="settings" size={14} /> {tr('外观…')}</button>
+      </SubRow>
+      {!mobile && <button data-id={id('shortcuts')} onClick={act(() => useStore.setState({ shortcutsOpen: true }))}><Icon name="keyboard" size={14} /> <span className="grow">{tr('键盘快捷键')}</span><span className="k">{modKey} /</span></button>}
+      <SubRow id={id('help')} icon="info" label={tr('帮助与反馈')} open={sub === 'help'} onToggle={toggle('help')}>
+        <button data-help="guide" onClick={act(() => openExternal(HELP_LINKS.guide))}><Icon name="read" size={14} /> {tr('使用说明')}<Icon name="external" size={12} className="ext" /></button>
+        <button data-help="issue" onClick={act(() => openExternal(HELP_LINKS.issue))}><Icon name="chat" size={14} /> {tr('报告问题或提建议')}<Icon name="external" size={12} className="ext" /></button>
+        <button data-help="site" onClick={act(() => openExternal(HELP_LINKS.site))}><Icon name="web" size={14} /> {tr('官网')}<Icon name="external" size={12} className="ext" /></button>
+        <button data-help="diagnostics" onClick={act(() => st().openSettings({ section: 'diagnostics' }))}><Icon name="clipboard" size={14} /> {tr('导出诊断包…')}</button>
+      </SubRow>
+      <button data-id={id('whats-new')} onClick={act(() => openWhatsNew())}><Icon name="sparkle" size={14} /> {tr('更新内容')}</button>
       {!auth?.relay && (
         <>
           <div className="menu-sep" />
@@ -128,14 +210,6 @@ export function AccountMenu({ auth, name, onClose, side }: { auth: AccountAuth |
           {auth?.loggedIn && <button data-id={id('logout')} className="danger" onClick={() => { onClose(); void logoutClaude(); }}><Icon name="close" size={14} /> {tr('退出 Claude 账号')}</button>}
         </>
       )}
-      <div className="menu-sep" />
-      <ThemeQuick dataId={id('theme')} />
-      <button data-id={id('usage')} onClick={act(() => showPanel(ACCOUNT_PANELS.usage))}><Icon name="usage" size={14} /> {tr('用量与账本')}</button>
-      <button data-id={id('config')} onClick={act(() => showPanel(ACCOUNT_PANELS.config))}><Icon name="config" size={14} /> {tr('配置中心（右侧面板）')}</button>
-      <button data-id={id('ascii-themes')} onClick={act(() => st().openSettings({ section: 'appearance', reveal: 'ui.theme' }))}><Icon name="sparkle" size={14} /> {tr('字符画主题…')}</button>
-      <button data-id={id('appearance')} onClick={act(() => st().openSettings({ section: 'appearance' }))}><Icon name="sun" size={14} /> {tr('外观与主题…')}</button>
-      <button data-id={id('shortcuts')} onClick={act(() => useStore.setState({ shortcutsOpen: true }))}><Icon name="keyboard" size={14} /> {tr('键盘快捷键')}<span className="k">?</span></button>
-      <button data-id={id('palette')} onClick={act(() => useStore.setState({ paletteOpen: true }))}><Icon name="command" size={14} /> {tr('命令面板')}<span className="k">{modKey} K</span></button>
     </Menu>
   );
 }

@@ -17,7 +17,7 @@ import { imeComposing } from '@/ui/ime';
 import { useMenuMotion } from '@/ui/menu-motion';
 import { ActionSheet, useSheetMenu } from '@/ui/ActionSheet';
 import { tr } from '@/i18n';
-import { openGateway } from '@/features/gateway/state';
+import { openHub } from '@/features/model-hub/state';
 import { Switch } from '@/ui/Switch';
 import { openCodexLogin } from '@/features/settings/CodexLoginDialog';
 
@@ -340,7 +340,7 @@ export function ModelMenu(p: ModelMenuProps) {
             <Icon name="agent" size={13} /> {TERMS.agents}…
           </button>
         )}
-        <button data-id={MODEL_MENU_ID.sources} onClick={() => { p.onClose(); openGateway(); }} title={tr('上游：账号、免费额度和 API 来源')}>
+        <button data-id={MODEL_MENU_ID.sources} onClick={() => { p.onClose(); openHub('sources'); }} title={tr('模型看板 › 上游：账号、免费额度和 API 来源')}>
           <Icon name="gateway" size={13} /> {tr('管理来源')}
         </button>
         <button data-id={MODEL_MENU_ID.manage} onClick={() => { p.onClose(); useStore.getState().openSettings({ section: 'models' }); }}>

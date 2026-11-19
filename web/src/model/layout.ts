@@ -180,7 +180,7 @@ export function dockView(dock: Dock, o: { workbench: boolean; inspect: boolean }
  *  - group bar: more than one group;
  *  - a pane's tab strip: more than one tab, more than one pane in the group, or a lone non-chat tile
  *    (a document / terminal has no session header, the strip is where it is named and closed).
- * (The dock's own icon rail is gone: its panels are in the window's icon rail, features/rail.)
+ * (The dock's own icon rail is gone: its panels are behind the palette and the menus — features/palette/moved.ts.)
  * A phone (≤ 760px, spec §5.11) never shows either, whatever the setting or the layout: its one row is
  * the conversation's own header.
  * Only the chrome — pane contents are never unmounted by this.

@@ -162,9 +162,13 @@ function writeTranscript(home, cwd, sid, lines, startMsAgo) {
   fs.utimesSync(file, end, end);
 }
 
-/** C:/work on Windows when it can be made (a plain path in the pictures), else a folder in the throwaway HOME. */
+/**
+ * C:/work on Windows when it can be made (a plain path in the pictures), else a folder in the throwaway HOME.
+ * `CW_DEMO_WORK_IN_HOME=1`: always the folder in the HOME — two demo runs at once (two sessions taking screenshots)
+ * would otherwise make and delete the same C:/work repositories under each other.
+ */
 function workRoot(home) {
-  if (process.platform === 'win32') {
+  if (process.platform === 'win32' && process.env.CW_DEMO_WORK_IN_HOME !== '1') {
     try {
       const d = 'C:/work';
       fs.mkdirSync(d, { recursive: true });

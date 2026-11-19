@@ -44,10 +44,11 @@ export function QuotaWindows({ limits }: { limits: Limits }) {
 /**
  * Account quota in the sidebar's bottom row (spec §4.2: the top bar's ring moved here): one ring for the window
  * closest to its limit + 「Max 套餐 · 已用 N%」. `tip`: the full 5h / 7d breakdown on hover, in a portal fixed to the
- * viewport (the sidebar clips its overflow) — off inside the account row, whose popover shows it on click.
+ * viewport (the sidebar clips its overflow) — off inside the account row, whose menu shows it on click. `ring`: off
+ * there too (the avatar wears the ring, redesign 2026-11 stage 1).
  * The usage endpoint 429s readily and the server backs off for 15 minutes — no reading is not an alarm.
  */
-export function UsageRing({ tip = true, fallbackPlan }: { tip?: boolean; fallbackPlan?: string }) {
+export function UsageRing({ tip = true, ring = true, fallbackPlan }: { tip?: boolean; ring?: boolean; fallbackPlan?: string }) {
   const limits = useStore((s) => s.limits);
   const [at, setAt] = useState<{ left: number; bottom: number } | null>(null);
   const ref = useRef<HTMLSpanElement>(null);
@@ -63,7 +64,7 @@ export function UsageRing({ tip = true, fallbackPlan }: { tip?: boolean; fallbac
   const tone = worst.percent >= 90 ? 'crit' : worst.percent >= 70 ? 'hot' : '';
   return (
     <span ref={ref} className={clsx('quota', tone)} data-id="quota" onMouseEnter={show} onMouseLeave={() => setAt(null)} title={tip ? tr('{label}: 已用 {percent}%', { label: worst.label, percent: worst.percent }) : undefined}>
-      <Ring percent={worst.percent} size={12} />
+      {ring && <Ring percent={worst.percent} size={12} />}
       <span className="pct">{tr('{v}已用 {percent}%', { v: plan ? `${plan} · ` : '', percent: worst.percent })}</span>
       {at && createPortal(
         <div className="tip up quota-tip" style={{ position: 'fixed', left: at.left, bottom: at.bottom, top: 'auto', right: 'auto', margin: 0 }}>

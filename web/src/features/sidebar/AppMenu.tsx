@@ -1,4 +1,4 @@
-import { Menu } from '@/features/sidebar/menus';
+import { Menu } from './menus';
 import { runCommand } from '@/features/workbench/commands';
 import { modKey } from '@/features/workbench/shortcuts';
 import { useNav } from '@/features/workbench/nav-history';
@@ -7,8 +7,9 @@ import { Icon } from '@/ui/icons';
 import { tr } from '@/i18n';
 
 /**
- * ☰ in a browser (the official title bar's application menu; the desktop app pops up its native menu instead — it has
- * every item with its accelerator): the same groups, as one menu with headings.
+ * The brand mark's menu in a browser (the official title bar's application menu; redesign 2026-11 stage 1: the
+ * sidebar's brand mark, the rail's ☰ before). The desktop app pops up its native menu instead — it has every item with
+ * its accelerator. The same groups, as one menu with headings.
  */
 export function AppMenu({ onClose }: { onClose: () => void }) {
   const canBack = useNav((n) => n.back.length > 0);
@@ -19,7 +20,7 @@ export function AppMenu({ onClose }: { onClose: () => void }) {
   // the edit rows act on the text box that had the focus: the menu must not take it
   const keep = (e: React.MouseEvent) => e.preventDefault();
   return (
-    <Menu onClose={onClose} className="app-menu" align="left" prefer="down" side="right" label={tr('应用菜单')}>
+    <Menu onClose={onClose} className="app-menu" align="left" prefer="down" label={tr('应用菜单')}>
       <div className="menu-label">{tr('对话')}</div>
       <button data-act="new" onClick={run('new')}><Icon name="edit" size={14} /> {tr('新对话')}<span className="k">Alt N</span></button>
       <button data-act="palette" onClick={run('palette')}><Icon name="search" size={14} /> {tr('搜索对话 / 命令面板')}<span className="k">{modKey} K</span></button>

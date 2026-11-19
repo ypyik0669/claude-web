@@ -23,7 +23,6 @@ import { FilesView } from './FilesView';
 import { MORE_PANELS } from './panel-entries';
 import { Popover } from '@/features/composer/Popover';
 import { useRightPanel } from './right-panel';
-import { RAIL_WIDTH } from '@/features/rail/rail-model';
 import { SHELL_GAP, countText, fixedShort, panelColumnWidth, rowStacked, shortFixedWidth, tempTabWidth, tempsFolded, type RowMeasure } from './tab-row';
 import { BrowserPanel } from '@/features/browser/BrowserPanel';
 import { getZoom } from '@/ui/zoom';
@@ -252,7 +251,7 @@ export function Dock() {
       const caption = root.classList.contains('desktop') && !root.classList.contains('mac');
       const cs = getComputedStyle(r);
       const m: RowMeasure = {
-        row: panelColumnWidth({ dock: dock.width, viewport: window.innerWidth, sidebar: (sidebarOpen ? sbWidth : 0) + RAIL_WIDTH }) - SHELL_GAP,
+        row: panelColumnWidth({ dock: dock.width, viewport: window.innerWidth, sidebar: sidebarOpen ? sbWidth : 0 }) - SHELL_GAP,
         padLeft: parseFloat(cs.paddingLeft) || 0,
         ...fixedWidths(fixedRef.current),
         controls: ctlRef.current?.getBoundingClientRect().width ?? 0,

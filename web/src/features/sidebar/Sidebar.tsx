@@ -1,4 +1,3 @@
-import { openDispatch } from '@/features/cloud/cloud-open';
 import { modKey } from '@/features/workbench/shortcuts';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useStore } from '@/store';
@@ -30,11 +29,14 @@ import { hintReady, makeProjectSpelled, projectsEmpty } from './newcomer';
 import { CHECKLIST_KEY } from '@/features/home/model';
 import { Menu, closeDrawer } from './menus';
 import { anchoredMenuOpen } from '@/ui/menus';
-import { openAutomation } from '@/features/automation/state';
 import { openExtensions } from '@/features/extensions/state';
-import { openBackground } from '@/features/background/state';
-import { openBots, useInboxPending } from '@/features/bots/state';
+import { openArtifacts } from '@/features/artifacts/state';
+import { ARTIFACTS_TITLE } from '@/features/artifacts/page';
+import { openFamily, useAutomationWaiting } from '@/features/automation/family';
+import { AUTOMATION_TITLE } from '@/features/automation/page';
+import { EXTENSIONS_TITLE } from '@/features/extensions/page';
 import { useSection } from '@/features/sections';
+import { AppMenu } from './AppMenu';
 import type { CustomId, ProjectMenuId, ProjectsHeadId, RowId, SectionId, TopId } from './entries';
 import { tr, trAs } from '@/i18n';
 import { pickFolder } from '@/ui/pick-folder';
@@ -68,11 +70,12 @@ function escForSidebar(e: KeyboardEvent): boolean {
 }
 
 /**
- * The sidebar (spec 2026-09-28 §5.1; structure round 2: at desktop width this is the 对话 section's sidebar, next to
- * the icon rail): 新对话 · 搜索 (· 自动化 · 扩展 on a phone); 「需要你」 while something waits; conversations by
- * project — each row a title and one status at its end; source / machine / archived / multi-select behind the
- * funnel on the 项目 row; the account row (quota ring, settings) at the bottom. Every entry point of the old sidebar
- * is listed in entries.ts (and asserted there and by ui-smoke).
+ * The sidebar (spec 2026-09-28 §5.1; redesign 2026-11 stage 1: the window's one column of navigation — no icon rail):
+ * the brand mark (the application menu), the sidebar's switch and ← →; the five entries 新对话 · 搜索 · Artifacts ·
+ * 自动化 · 自定义; 「需要你」 while something waits; conversations by project — each row a title and one status at its
+ * end; how the list is shown behind 显示 on the 项目 row; the account row (quota ring, settings, the account menu) at
+ * the bottom. A phone's drawer: the name, a search box and four rows (新对话 · Artifacts · 自动化 · 自定义). Every entry
+ * point of the old sidebar and the rail is listed in entries.ts (and asserted there and by ui-smoke).
  */
 export function Sidebar({ onNew }: { onNew: () => void }) {
   const sessions = useStore((s) => s.sessions);
@@ -97,12 +100,11 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const setSourceFilter = useStore((s) => s.setSourceFilter);
   const busy = useStore(busyIds);
   const section = useSection();
-  const inboxPending = useInboxPending();
-  // at desktop width the icon rail has 搜索's neighbours (自动化 · 扩展), the sidebar's switch, 设置 and the account
-  // (structure round 2); a phone has no rail: they stay in its drawer
+  // what waits for the user in 自动化 (the Bot inbox, the orchestra's approvals): a number on its entry
+  const autoWaiting = useAutomationWaiting();
   const mobile = useStore((s) => s.mobile);
   const [q, setQ] = useState('');
-  // the sidebar's one open menu: `filter` · `account` · `proj:<id>` · `row:<list|attn>:<id>` (opening one closes the others)
+  // the sidebar's one open menu: `app` · `view` · `account` · `proj:<id>` · `row:<list|attn>:<id>` (opening one closes the others)
   const [menu, setMenu] = useState<string | null>(null);
   const [shown, setShown] = useState<Record<string, number | undefined>>({});
   const [selecting, setSelecting] = useState(false);
@@ -345,6 +347,8 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   );
   const top = (x: TopId) => x;
   const sec = (x: SectionId) => x;
+  // 自动化 is three pages behind one tab row (features/automation/family.tsx): any of them in front lights it
+  const autoOn = section === 'automation' || section === 'background' || section === 'bots';
   const head = (x: ProjectsHeadId) => x;
   const pm = (x: ProjectMenuId) => x;
   const cu = (x: CustomId) => x;
@@ -360,26 +364,32 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   return (
     <>
       <div className="sb-top">
-        <span className="brand"><span className="logo"><AppLogo size={20} /></span>Claude Web</span>
-        {!mobile && <NavButtons />}
         {mobile
-          ? <button className="icon-btn" data-id={top('collapse')} title={tr('收起侧栏 ({modKey}+B)', { modKey })} aria-label={tr('收起侧栏')} onClick={() => useStore.setState({ sidebarOpen: false })}><Icon name="sidebar" size={16} /></button>
-          : <button className="icon-btn sb-find" data-id={top('search')} title={tr('搜索对话、命令和设置 ({modKey}+K)', { modKey })} aria-label={tr('搜索')} onClick={() => useStore.setState({ paletteOpen: true })}><Icon name="search" size={16} /></button>}
+          ? <span className="brand"><span className="logo"><AppLogo size={20} /></span>Claude Web</span>
+          : <BrandMenu open={menu === 'app'} toggle={toggleMenu('app')} close={() => closeMenu('app')} />}
+        {/* a desktop: [logo ▾] [⧉] … [← →]; the phone's drawer closes with the × at its far end (the plan's drawer) */}
+        {!mobile && <button className="icon-btn sb-collapse" data-id={top('collapse')} title={tr('收起侧栏 ({modKey}+B)', { modKey })} aria-label={tr('收起侧栏')} onClick={() => useStore.setState({ sidebarOpen: false })}><Icon name="sidebar" size={16} /></button>}
+        <span className="grow" />
+        {!mobile && <NavButtons />}
+        {mobile && <button className="icon-btn sb-collapse" data-id={top('collapse')} aria-label={tr('收起侧栏')} onClick={() => useStore.setState({ sidebarOpen: false })}><Icon name="close" size={18} /></button>}
       </div>
+      {/* a phone: the drawer opens with a search box (the palette: conversations and commands) */}
+      {mobile && (
+        <button type="button" className="sb-search" data-id={top('search')} onClick={() => { useStore.setState({ paletteOpen: true }); closeDrawer(); }}>
+          <Icon name="search" size={16} /><span className="ph">{tr('搜索对话和命令')}</span>
+        </button>
+      )}
       <nav className="sb-nav" aria-label={tr('导航')}>
-        <button className={clsx('nav', !activeId && section === 'chat' && 'active')} data-id={top('new')} onClick={() => { onNew(); closeDrawer(); }}><Icon name="edit" size={16} />{tr('新对话')}<span className="k">{desktop ? `${modKey} N` : 'Alt N'}</span></button>
-        {mobile && <>
-          <button className="nav" data-id={top('search')} title={tr('搜索对话、命令和设置')} onClick={() => { useStore.setState({ paletteOpen: true }); closeDrawer(); }}><Icon name="search" size={16} />{tr('搜索')}<span className="k">{modKey} K</span></button>
-          {/* 派活 (stage F3): a task from the phone → a new conversation on a computer (phone only: not an entries.ts place) */}
-          <button className="nav" data-act="dispatch" title={tr('一句话交代任务，电脑上开一个新对话去做')} onClick={() => { setMenu(null); closeDrawer(); openDispatch(); }}><Icon name="send" size={16} />{tr('派活')}</button>
-          {/* 自动化 → the automation page (定时任务 · 目标 · 编排, spec §5.9) over the main area, on the tab shown last */}
-          {/* 后台 → what runs besides the turns (sub-agents, workflows, background commands), spec 2026-10-12 */}
-          <button className={clsx('nav', section === 'background' && 'active')} data-id={top('background')} title={tr('在跑的子代理、工作流和后台命令')} aria-pressed={section === 'background'} onClick={() => { setMenu(null); openBackground(); }}><Icon name="office" size={16} />{tr('后台')}</button>
-          <button className={clsx('nav', section === 'automation' && 'active')} data-id={top('automation')} title={tr('定时任务、目标、编排')} aria-pressed={section === 'automation'} onClick={() => { setMenu(null); openAutomation(); }}><Icon name="tasks" size={16} />{tr('自动化')}</button>
-          {/* Bot → the duty bots' page (spec 2026-10-30): on a phone it opens on the inbox */}
-          <button className={clsx('nav', section === 'bots' && 'active')} data-id={top('bots')} title={tr('Bot：住在你电脑里的值班队友')} aria-pressed={section === 'bots'} onClick={() => { setMenu(null); openBots(); }}><Icon name="bot" size={16} />{tr('Bot')}{inboxPending > 0 && <span className="k">{inboxPending}</span>}</button>
-          <button className={clsx('nav', section === 'extensions' && 'active')} data-id={top('extensions')} title={tr('连接器、Skills、插件')} aria-pressed={section === 'extensions'} onClick={() => { setMenu(null); openExtensions(); }}><Icon name="extensions" size={16} />{tr('扩展')}</button>
-        </>}
+        {/* 新对话 · (搜索) · Artifacts · 自动化 · 自定义 (redesign 2026-11 stage 1). A phone's 新对话 also picks a computer
+            and a folder on the page it opens: the old 派活 is in there (and in the palette) */}
+        <button className={clsx('nav', !activeId && section === 'chat' && 'on')} data-id={top('new')} aria-current={!activeId && section === 'chat' ? 'page' : undefined} onClick={() => { onNew(); closeDrawer(); }}><Icon name="edit" size={16} />{tr('新对话')}<span className="k">{desktop ? `${modKey} N` : 'Alt N'}</span></button>
+        {!mobile && <button className="nav" data-id={top('search')} title={tr('搜索对话、命令和设置')} onClick={() => useStore.setState({ paletteOpen: true })}><Icon name="search" size={16} />{tr('搜索')}<span className="k">{modKey} K</span></button>}
+        <button className={clsx('nav', section === 'artifacts' && 'on')} data-id={top('artifacts')} title={tr('Claude 在最近的对话里做出来的网页、文档、图片和数据')} aria-current={section === 'artifacts' ? 'page' : undefined} onClick={() => { setMenu(null); openArtifacts(); }}><Icon name="works" size={16} />{ARTIFACTS_TITLE}</button>
+        <button className={clsx('nav', autoOn && 'on')} data-id={top('automation')} title={tr('运行中、定时任务、Bot、目标、编排')} aria-current={autoOn ? 'page' : undefined} onClick={() => { setMenu(null); openFamily(); }}>
+          <Icon name="workflow" size={16} />{AUTOMATION_TITLE}
+          {autoWaiting > 0 && <span className="cnt" title={tr('{autoWaiting} 件事等你：Bot 收件箱、等你审批的编排', { autoWaiting })}>{autoWaiting}</span>}
+        </button>
+        <button className={clsx('nav', section === 'extensions' && 'on')} data-id={top('extensions')} title={tr('连接器、Skills、插件')} aria-current={section === 'extensions' ? 'page' : undefined} onClick={() => { setMenu(null); openExtensions(); }}><Icon name="extensions" size={16} />{EXTENSIONS_TITLE}</button>
       </nav>
       <NeedsYou ctx={ctx} />
       <div className={clsx('sb-list', selecting && 'selecting')}>
@@ -531,8 +541,36 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         )}
       </div>
       {pending.length > 0 && hintOk && <DiscoveryHint pending={pending} />}
-      {mobile && <AccountRow open={menu === 'account'} setOpen={(v) => (v ? setMenu('account') : closeMenu('account'))} />}
+      <AccountRow open={menu === 'account'} setOpen={(v) => (v ? setMenu('account') : closeMenu('account'))} />
     </>
+  );
+}
+
+/**
+ * The brand mark is the application menu (redesign 2026-11 stage 1; the rail's ☰ before): the desktop pops up its
+ * native menu (every item with its accelerator), a browser our own (AppMenu.tsx).
+ */
+function BrandMenu({ open, toggle, close }: { open: boolean; toggle: (e: React.MouseEvent) => void; close: () => void }) {
+  return (
+    <span className="anchor sb-brand-anchor">
+      <button
+        type="button"
+        className={clsx('sb-brand', open && 'on')}
+        data-id={'app-menu' satisfies TopId}
+        title={tr('Claude Web 菜单')}
+        aria-label={tr('Claude Web 菜单')}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={(e) => {
+          if (desktop?.showAppMenu) { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); const z = desktop.getZoom?.() ?? 1; desktop.showAppMenu(r.left * z, (r.bottom + 4) * z); return; }
+          toggle(e);
+        }}
+      >
+        <AppLogo size={20} />
+        <Icon name="chevronDown" size={11} className="chev" />
+      </button>
+      {open && <AppMenu onClose={close} />}
+    </span>
   );
 }
 

@@ -144,8 +144,8 @@
 @keyframes fl-rp-in { from { opacity: 0; transform: translateX(24px); } }
 @keyframes fl-rp-out { to { opacity: 0; } }
 .app:not(.mobile) > .rpanel:has(> .dock:not(.min)) { animation: fl-rp-in var(--spring-gentle-dur) var(--spring-gentle); }
-.app[data-rp-closing]:not(.mobile) { grid-template-columns: var(--sb, 264px) 1fr min(var(--rp-was, 0px), max(300px, calc(100vw - var(--rail, 0px) - var(--sb, 264px) - 360px))); }
-.app[data-rp-closing].no-sidebar:not(.mobile) { grid-template-columns: 1fr min(var(--rp-was, 0px), max(300px, calc(100vw - var(--rail, 0px) - 360px))); }
+.app[data-rp-closing]:not(.mobile) { grid-template-columns: var(--sb, 264px) 1fr min(var(--rp-was, 0px), max(300px, calc(100vw - var(--sb, 264px) - 360px))); }
+.app[data-rp-closing].no-sidebar:not(.mobile) { grid-template-columns: 1fr min(var(--rp-was, 0px), max(300px, calc(100vw - 360px))); }
 /* (`display` is inline on the element — App — hence !important; the selector out-ranks the opening rule above.
    Dock.tsx waits for this animation by name) */
 .app[data-rp-closing]:not(.mobile) > .rpanel:has(> .dock:not(.min)) { display: flex !important; pointer-events: none; animation: fl-rp-out 150ms var(--ease-in) forwards; }

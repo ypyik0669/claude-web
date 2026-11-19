@@ -3,8 +3,8 @@ import { useGateway } from '@/features/gateway/state';
 import { useStore } from '@/store';
 import { Icon } from '@/ui/icons';
 import { tr } from '@/i18n';
-import { HUB_TITLE, hubPage } from './page';
-import { closeHub, useHub } from './state';
+import { HUB_PAGES, HUB_TITLE, hubPage, type HubPageId } from './page';
+import { closeHub, showHubPage, useHub } from './state';
 import { OverviewPage } from './pages/OverviewPage';
 import { SourcesPage } from './pages/SourcesPage';
 import { RoutingPage } from './pages/RoutingPage';
@@ -15,8 +15,10 @@ import { AgentsPage } from './pages/AgentsPage';
 import { SettingsPage } from './pages/SettingsPage';
 
 /**
- * The model hub: one left rail entry (`gateway`, labelled 模型), nine first-level pages. The pages are mounted once
- * they have been seen and then only hidden — a scroll position and a half-filled form survive a page switch.
+ * The model hub: 模型 — sources, accounts, routing, usage — on eight first-level pages, as the page's tabs (redesign
+ * 2026-11 stage 1: no icon rail any more; it opens from 设置 › 模型, the model menu's 管理来源 and Ctrl K). The section
+ * id stays `gateway`. The pages are mounted once they have been seen and then only hidden — a scroll position and a
+ * half-filled form survive a page switch.
  */
 export function ModelHubPage() {
   const open = useHub((s) => s.open);
@@ -45,12 +47,12 @@ export function ModelHubPage() {
       label={HUB_TITLE}
       open={open}
       onClose={closeHub}
-      title={def.title}
+      title={HUB_TITLE}
       desc={def.desc}
       tab={page}
-      tabs={[]}
-      showTabs={false}
-      onTab={() => {}}
+      tabs={HUB_PAGES.map((p) => ({ id: p.id, label: p.label, icon: p.icon, title: p.desc, count: p.id === 'sources' && accounts ? <span className="n">{accounts}</span> : undefined }))}
+      showTabs
+      onTab={(id) => showHubPage(id as HubPageId)}
       actions={actions}
     >
       {seen.includes('overview') && <div className="hub-pane" hidden={page !== 'overview'}><OverviewPage /></div>}

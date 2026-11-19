@@ -98,6 +98,8 @@ function HeaderMenu({ tile, paneId, s, live, remote, gone, onClose }: { tile: Ch
         {mobile && !remote && <button onClick={act(() => st().dispatchLayout({ t: 'dock.show', panel: 'terminal' }))} data-view="terminal"><Icon name="terminal" size={13} /> {tr('终端')}</button>}
         {mobile && <button onClick={act(() => st().dispatchLayout({ t: 'dock.show', panel: 'tasks' }))} data-view="tasks"><Icon name="tasks" size={13} /> {tr('任务')}</button>}
       </div>
+      {/* the rail's ··· had it (redesign 2026-11 stage 1): a phone or emulator screen, in the right panel */}
+      {!remote && <button data-act="android" onClick={act(() => st().dispatchLayout({ t: 'dock.show', panel: 'android' }))}><Icon name="android" size={14} /> {tr('Android 屏幕')}</button>}
       <div className="menu-sep" />
       {!gone && <button onClick={act(() => st().setSessionMeta(s.sessionId, { pinned: !pinned }))}><Icon name="pin" size={14} /> {pinned ? tr('取消置顶') : tr('置顶')}</button>}
       {!remote && <button onClick={act(() => ws.request({ kind: 'shell.open', path: s.cwd }))}><Icon name="folder" size={14} /> {tr('在资源管理器打开')}</button>}

@@ -1,13 +1,10 @@
-import { useMemo } from 'react';
-import { useStore } from '@/store';
 import { clsx } from '@/util';
 import { Icon } from '@/ui/icons';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { GoalsPanel } from '@/features/goals/GoalsPanel';
 import { OrchestraPanel } from '@/features/orchestra/OrchestraPanel';
-import { useOrch, waitingOf } from '@/features/orchestra/state';
-import { OverPage, type OverTab } from '@/features/sections/OverPage';
-import { AUTOMATION_TABS, AUTOMATION_TAB_INFO, AUTOMATION_TITLE, type AutomationTab } from './page';
+import { OverPage } from '@/features/sections/OverPage';
+import { AUTOMATION_TAB_INFO, AUTOMATION_TITLE, type AutomationTab } from './page';
 import { closeAutomation, newInAutomation, showAutomationTab, useAutomation } from './state';
 import { SchedulesView } from './SchedulesView';
 import { tr } from '@/i18n';
@@ -22,42 +19,16 @@ function Body({ tab }: { tab: AutomationTab }) {
 }
 
 /**
- * 定时任务 · 目标 · 编排 as tabs: the page draws them when the section's sidebar is not there (a phone, a collapsed
- * sidebar), the sidebar draws them otherwise (AutomationSide). The tab says how many there are (review 7 M3: not
- * 「2/3」); how many are on is the tooltip. 编排's number is what waits for you (审批 / 比选), a status rather than a count.
- */
-export function useAutomationTabs(): OverTab[] {
-  const schedules = useStore((s) => s.schedules);
-  const orchFull = useOrch((s) => s.full);
-  const orchWaiting = useMemo(() => waitingOf(orchFull).length, [orchFull]);
-  return useMemo(() => {
-    const count: Record<AutomationTab, React.ReactNode> = {
-      schedules: schedules.length ? <span className="n">{schedules.length}</span> : null,
-      goals: null,
-      orchestra: orchWaiting ? <span className="n need">{tr('{orchWaiting} 等你', { orchWaiting })}</span> : null,
-    };
-    const title: Record<AutomationTab, string | undefined> = {
-      schedules: schedules.length ? tr('{schedulesCount} 个定时任务，{filterCount} 个启用', { schedulesCount: schedules.length, filterCount: schedules.filter((s) => s.enabled).length }) : undefined,
-      goals: undefined,
-      orchestra: orchWaiting ? tr('{orchWaiting} 个审批 / 比选在等你', { orchWaiting }) : undefined,
-    };
-    return AUTOMATION_TABS.map((t) => ({ id: t, label: AUTOMATION_TAB_INFO[t].label, icon: AUTOMATION_TAB_INFO[t].icon, count: count[t], title: title[t] }));
-  }, [schedules, orchWaiting]);
-}
-
-/**
- * 自动化 (spec §5.9; structure round 2 §2.2): 定时任务 · 目标 · 编排 on one page laid over the main area, 新建 at the
- * top right. With the icon rail the three are rows of the section's own sidebar and the page shows one of them under
- * its own name; where that sidebar is not on screen the page has them as tabs. A tab's body is mounted the first time
- * it is shown and only hidden after that — nothing here is unmounted by switching tabs or closing the page (a
- * half-written workflow, a goal form, the scroll position all survive).
+ * 定时任务 · 目标 · 编排 — three of 自动化's five tabs (spec §5.9; redesign 2026-11 stage 1: 运行中 and Bot are the
+ * background and Bot pages, features/automation/family.tsx draws the one tab row over all three pages). 新建 at the top
+ * right is the tab's own (a schedule, a goal, a workflow). A tab's body is mounted the first time it is shown and
+ * only hidden after that — nothing here is unmounted by switching tabs or closing the page (a half-written workflow, a
+ * goal form, the scroll position all survive).
  */
 export function AutomationPage() {
   const open = useAutomation((s) => s.open);
   const tab = useAutomation((s) => s.tab);
   const seen = useAutomation((s) => s.seen);
-  const sideNav = useStore((s) => !s.mobile && s.sidebarOpen);
-  const tabs = useAutomationTabs();
   const info = AUTOMATION_TAB_INFO[tab];
   return (
     <OverPage
@@ -65,11 +36,11 @@ export function AutomationPage() {
       label={AUTOMATION_TITLE}
       open={open}
       onClose={closeAutomation}
-      title={sideNav ? info.label : AUTOMATION_TITLE}
+      title={AUTOMATION_TITLE}
       desc={info.desc}
       tab={tab}
-      tabs={tabs}
-      showTabs={!sideNav}
+      tabs={[]}
+      showTabs={false}
       onTab={(t) => showAutomationTab(t as AutomationTab)}
       narrow={tab !== 'orchestra'}
       actions={<button className="btn sm primary auto-new" onClick={() => newInAutomation(tab)} data-new={tab}><Icon name="plus" size={13} />{info.newLabel}</button>}

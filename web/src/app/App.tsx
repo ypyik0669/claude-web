@@ -36,15 +36,8 @@ import { installBots } from '@/features/bots/state';
 import { installCafe } from '@/features/cafe/state';
 import { CharacterLibrary } from '@/features/cafe/CharacterLibrary';
 import { CodexLoginHost } from '@/features/settings/CodexLoginDialog';
-import { BackgroundSide } from '@/features/background/BackgroundSide';
 import { installBrowserHost } from '@/features/browser/host';
 import { installThemes } from '@/themes/trial';
-import { useSection } from '@/features/sections';
-import { Rail } from '@/features/rail/Rail';
-import { RAIL_WIDTH } from '@/features/rail/rail-model';
-import { AutomationSide } from '@/features/automation/AutomationSide';
-import { ExtensionsSide } from '@/features/extensions/ExtensionsSide';
-import { ModelHubSide } from '@/features/model-hub/ModelHubSide';
 import { installChecklist } from '@/features/home/checklist-sync';
 import { installAccountDefault } from '@/features/models/account-default';
 import { installSettingsClose } from '@/features/settings/close-on-nav';
@@ -69,7 +62,11 @@ import { CloudDialogsLazy } from '@/features/cloud/CloudDialogsLazy';
 /** Width of the right panel minimized to its icon rail. */
 const MIN_RAIL = 36;
 
-/** Sidebar column with a drag handle on its right edge (width lives in the layout state). */
+/**
+ * Sidebar column with a drag handle on its right edge (width lives in the layout state). Always the conversation list
+ * with the five entries on top (redesign 2026-11 stage 1): a page over the main area shows its own parts as tabs,
+ * the sidebar no longer changes with it — so 自动化, 自定义 and Artifacts are one click away from any page.
+ */
 function SidebarColumn() {
   const width = useStore((s) => s.layout.sidebar.width);
   const dispatch = useStore((s) => s.dispatchLayout);
@@ -77,24 +74,11 @@ function SidebarColumn() {
   const el = useRef<HTMLDivElement>(null);
   // phone: the drawer a tap opened slides in (nothing happens anywhere else — ui/phone-drawer.ts)
   useLayoutEffect(() => { if (el.current) drawerEnter(el.current); }, []);
-  // which section's sidebar: the conversations, or a page section's own (structure round 2). A phone's drawer is
-  // always the conversations — the pages draw their parts as tabs there. Each is mounted when first shown and only
-  // hidden after that (the list's filter, what was unfolded, a multi-select all survive a visit to 自动化). The Bot
-  // page keeps its roster in its own first column, so beside it the sidebar is the conversations too (no second copy)
-  const mobile = useStore((s) => s.mobile);
-  const current = useSection();
-  const section = mobile || current === 'bots' ? 'chat' : current;
-  const [seen, setSeen] = useState<string[]>([section]);
-  if (!seen.includes(section)) setSeen([...seen, section]);
   // NOTE: no inline `position` here — an inline style beats `.app.mobile .sidebar { position: fixed }`
   // regardless of specificity, which would leave the drawer in the grid flow and squash the workbench to 0px.
   return (
     <div className="sidebar has-resizer" ref={el}>
-      <div className="sb-sect" data-section="chat" hidden={section !== 'chat'}><ErrorBoundary area={tr('侧栏')}><Sidebar onNew={() => runCommand('new')} /></ErrorBoundary></div>
-      {seen.includes('background') && <div className="sb-sect" data-section="background" hidden={section !== 'background'}><ErrorBoundary area={tr('侧栏 · 后台')}><BackgroundSide /></ErrorBoundary></div>}
-      {seen.includes('automation') && <div className="sb-sect" data-section="automation" hidden={section !== 'automation'}><ErrorBoundary area={tr('侧栏 · 自动化')}><AutomationSide /></ErrorBoundary></div>}
-      <div className="sb-sect" data-section="gateway" hidden={section !== 'gateway'}><ErrorBoundary area={tr('侧栏 · 模型')}><ModelHubSide /></ErrorBoundary></div>
-      {seen.includes('extensions') && <div className="sb-sect" data-section="extensions" hidden={section !== 'extensions'}><ErrorBoundary area={tr('侧栏 · 扩展')}><ExtensionsSide /></ErrorBoundary></div>}
+      <div className="sb-sect"><ErrorBoundary area={tr('侧栏')}><Sidebar onNew={() => runCommand('new')} /></ErrorBoundary></div>
       <div
         className="resizer right"
         onPointerDown={(e) => { drag.current = { x0: e.clientX, w0: width }; (e.target as HTMLElement).setPointerCapture(e.pointerId); }}
@@ -313,9 +297,7 @@ export function App() {
   return (
     // `dock-open`: the right panel owns the window's top-right corner (desktop caption buttons sit over its tab row).
     // Not when it is minimized to its 36px icon rail: the buttons then cover the workbench's top-right row as well.
-    <div ref={app} className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', !mobile && 'has-rail', mobile && sidebarOpen && 'drawer-open', rpWidth > MIN_RAIL && !mobile && 'dock-open', sheetOn && 'sheet-open', sheetOn && covered && 'sheet-covered')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px`, ['--rail' as any]: `${mobile ? 0 : RAIL_WIDTH}px` }}>
-      {/* desktop width: the icon rail, the window's first column (fixed to the left edge; the grid starts after it) */}
-      {!mobile && <ErrorBoundary area={tr('图标栏')}><Rail /></ErrorBoundary>}
+    <div ref={app} className={clsx('app', !sidebarOpen && 'no-sidebar', mobile && 'mobile', mobile && sidebarOpen && 'drawer-open', rpWidth > MIN_RAIL && !mobile && 'dock-open', sheetOn && 'sheet-open', sheetOn && covered && 'sheet-covered')} style={{ ['--rp' as any]: `${mobile ? 0 : rpWidth}px`, ['--sb' as any]: `${sbWidth}px` }}>
       {/* phone: both scrims are in the document the whole time — transparent and taking no taps until their surface
           is up (the style sheet) — so they fade with it and follow a drag. A tap on one puts its surface away */}
       {mobile && <div className="drawer-backdrop" onClick={() => useStore.setState({ sidebarOpen: false })} />}
