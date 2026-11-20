@@ -6,16 +6,17 @@ import { hideSheet, setBgStopNote, useStore } from '@/store';
 import { ws } from '@/ws/client';
 import { closeOtherPages, registerPage } from '@/features/sections/pages';
 import { markPageOpened } from '@/features/automation/state';
-import { hasLive, reopenRun, sortSessions, stopNote } from './model';
+import { hasLive, sortSessions, stopNote } from './model';
+import { RUN_VIEW_KEY, runViewOf, type RunView } from './run-list';
 import { pickHistory, useHistory } from './history-state';
 import { pauseReplay, playPause, seekReplay, setReplaySpeed, stopReplay, useReplay } from './replay';
 import { tr } from '@/i18n';
 
 /** `task`: a finished run's (跑过的, or the cafe replaying one) — not in the live snapshot; `from: 'history'` is the
- *  跑过的 page's own drawer (the live board leaves it alone). */
-export interface BgDrawer { sessionId: string; taskId: string; agentKey: string; runId?: string; task?: BgTask; from?: 'history' }
+ *  跑过的 page's own drawer (the live list and cafe leave it alone). */
+export interface BgDrawer { sessionId: string; taskId: string; agentKey: string; task?: BgTask; from?: 'history' }
 
-/** 在跑 (the cafe and the board of a conversation) or 跑过的 (every conversation's finished work). */
+/** 在跑 (every conversation's work now: the list or the cafe) or 跑过的 (every conversation's finished work). */
 export type BgView = 'live' | 'history';
 
 interface BackgroundState {
@@ -25,19 +26,21 @@ interface BackgroundState {
   view: BgView;
   /** 跑过的 was shown at least once: mounted from then on, like the page */
   historySeen: boolean;
+  /** a phone looking at the cafe (⋯ › 网吧): for this visit only — a phone opens 运行中 on the list (saves battery) */
+  phoneCafe: boolean;
   /** the server's background of every conversation that has had any (since it started; ended ones for a day) */
   sessions: Record<string, BgSession>;
-  /** the conversation the page shows */
+  /** the conversation the page was opened on (the composer's pill, a workflow card): the cafe follows its zone */
   selected?: string;
-  /** one task of it in the office / graph (a workflow card's 打开), or all of them */
+  /** one task of it (a workflow card's 在「后台」里看) */
   taskId?: string;
-  /** a finished run read from disk (the sidebar's history) in place of the live tasks */
-  runId?: string;
+  /** asked for at this moment (`openBackground(sessionId)`): the list brings that conversation's group into view */
+  focusAt?: number;
   /** an agent's own conversation, open at the page's side */
   drawer?: BgDrawer;
 }
 
-export const useBackground = create<BackgroundState>(() => ({ open: false, seen: false, view: 'live', historySeen: false, sessions: {} }));
+export const useBackground = create<BackgroundState>(() => ({ open: false, seen: false, view: 'live', historySeen: false, phoneCafe: false, sessions: {} }));
 
 /** The conversation to show when none was asked for: one with something running, else the latest. */
 function defaultSelection(): string | undefined {
@@ -48,7 +51,7 @@ function defaultSelection(): string | undefined {
   return sortSessions(Object.values(s.sessions))[0]?.sessionId;
 }
 
-/** Show the page — on a conversation (and one of its tasks), or the one shown last. Returns true: it is on screen. */
+/** Show the page — on a conversation (and one of its tasks), or as it was last. Returns true: it is on screen. */
 export function openBackground(sessionId?: string, taskId?: string): boolean {
   closeOtherPages('background');
   if (!useBackground.getState().open) markPageOpened();
@@ -60,11 +63,33 @@ export function openBackground(sessionId?: string, taskId?: string): boolean {
     view: sessionId ? 'live' : s.view,
     selected,
     taskId: sessionId ? taskId : s.taskId,
-    runId: reopenRun({ asked: sessionId, selected, was: s.selected, runId: s.runId, sessions: s.sessions }),
+    focusAt: sessionId ? Date.now() : s.focusAt,
     drawer: sessionId && s.drawer?.sessionId !== sessionId ? undefined : s.drawer,
   }));
   if (useStore.getState().mobile) { useStore.setState({ sidebarOpen: false }); hideSheet(); }
   return true;
+}
+
+/**
+ * 列表 or 网吧 as shown now. A desktop remembers the choice in meta.json (`background.view`, default 列表); a phone
+ * starts each visit on the list and shows the cafe only after ⋯ › 网吧 (the 3D scene is what drains a battery). A run
+ * replayed in the cafe (跑过的 › 在网吧里回放, 刚跑完的 › 回放) shows the cafe while it plays, whatever was chosen.
+ */
+export function useRunView(): RunView {
+  const mobile = useStore((s) => s.mobile);
+  const saved = useStore((s) => s.settings[RUN_VIEW_KEY]);
+  const phoneCafe = useBackground((s) => s.phoneCafe);
+  const replaying = useReplay((s) => s.show?.where === 'cafe');
+  if (replaying) return 'cafe';
+  return mobile ? (phoneCafe ? 'cafe' : 'list') : runViewOf(saved);
+}
+
+/** The 列表 / 网吧 switch (a desktop's segment, a phone's ⋯). Back to the list ends a replay in the cafe. */
+export function setRunView(v: RunView): void {
+  if (v === 'list' && useReplay.getState().show?.where === 'cafe') stopReplay();
+  const st = useStore.getState();
+  if (st.mobile) { useBackground.setState({ phoneCafe: v === 'cafe' }); return; }
+  if (runViewOf(st.settings[RUN_VIEW_KEY]) !== v || st.settings[RUN_VIEW_KEY] === undefined) void st.setSetting(RUN_VIEW_KEY, v);
 }
 
 /** The page on 跑过的 (the cafe's 看全部跑过的 / a row of 刚跑完的: that row open). */
@@ -79,13 +104,15 @@ export function setBgView(view: BgView): void {
 }
 
 export function closeBackground(): void {
-  if (useBackground.getState().open) useBackground.setState({ open: false });
+  // (a phone's cafe was for that visit: the next one starts on the list again)
+  if (useBackground.getState().open) useBackground.setState({ open: false, phoneCafe: false });
   // nobody is watching it any more
   pauseReplay();
 }
 
-export function selectBackground(sessionId: string, o: { taskId?: string; runId?: string } = {}): void {
-  useBackground.setState((s) => ({ view: 'live', selected: sessionId, taskId: o.taskId, runId: o.runId, drawer: s.drawer?.sessionId === sessionId && s.drawer.from !== 'history' ? s.drawer : undefined }));
+/** A conversation picked in the cafe (a zone, a person): the page's own conversation from now on. */
+export function selectBackground(sessionId: string, o: { taskId?: string } = {}): void {
+  useBackground.setState((s) => ({ view: 'live', selected: sessionId, taskId: o.taskId, drawer: s.drawer?.sessionId === sessionId && s.drawer.from !== 'history' ? s.drawer : undefined }));
 }
 
 export function openAgent(d: BgDrawer): void { useBackground.setState({ drawer: d }); }

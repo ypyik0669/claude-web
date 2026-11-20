@@ -1,36 +1,82 @@
-/* ---- 后台 (spec 2026-10-12-background-office-design.md §3): the page's layout, its sidebar, the agent's drawer, the
-   composer's pill, a workflow card's live agents, the task panel's part. The office, the characters, the graph, the
-   cards and the feed are in background.css. ---- */
+/* ---- 后台 = 自动化 › 运行中 (spec 2026-10-12-background-office-design.md §3; redesign 2026-11): the page's layout
+   (在跑 · 列表 or 网吧, 跑过的 in background-history.css), the list's groups, the 列表 / 网吧 switch, the agent's
+   drawer, the composer's pill, a workflow card's live agents, the task panel's part. The office, the characters, the
+   graph and the feed are in background.css; the cafe in office.css. ---- */
 
-/* the page: a conversation's title is the user's words — the body font, not the heading face (only 后台 is cut in it) */
-.bg-page .over-head h2 { font-family: var(--font); font-size: 18px; max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bg-body { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 var(--sp-6) var(--sp-6); }
-.bg-board { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-4); align-items: start; }
-.bg-board.with-drawer { grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); }
-.bg-main { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
-.bg-stage { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(260px, 1fr); gap: var(--sp-4); align-items: start; }
-.bg-board.with-drawer .bg-stage { grid-template-columns: minmax(0, 1fr); }
-.bg-office-wrap, .bg-graph-wrap, .bg-feed-wrap { background: var(--bg-1); border-radius: var(--r-card, var(--r-lg)); box-shadow: var(--elev-1); overflow: hidden; }
-.bg-side-col { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
-.bg-feed-wrap { padding: var(--sp-3) var(--sp-3) var(--sp-2); }
-.bg-h { font-size: var(--fs-meta); color: var(--ink-3); margin: 0 0 var(--sp-2) 2px; letter-spacing: 0.02em; }
+/* the body: 在跑 is the list (it scrolls) or the cafe (it fills the body), an agent's drawer beside either */
+.bg-body { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; padding: var(--sp-2) var(--sp-6) var(--sp-6); display: flex; flex-direction: row; gap: var(--sp-4); align-items: flex-start; }
+.bg-body[hidden] { display: none; }
+.bg-body.cafe { overflow: hidden; align-items: stretch; }
+.bg-live-main { flex: 1 1 auto; min-width: 0; }
+.bg-live-main[hidden] { display: none; }
+.bg-graph-wrap, .bg-feed-wrap { background: var(--bg-1); border-radius: var(--r-md); overflow: hidden; }
+.bg-feed-wrap { padding: var(--sp-2); }
 .bg-idle { color: var(--ink-3); font-size: var(--fs-sm); padding: var(--sp-4); }
 
-/* the tasks of a conversation, when there is more than one: 全部 / one each, a Stop on the running ones */
-.bg-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.bg-chip { display: inline-flex; align-items: center; height: 28px; border-radius: var(--r-pill); background: var(--fill-subtle, var(--layer-hover)); color: var(--ink-2); font-size: var(--fs-sm); padding: 0 10px; gap: 6px; }
-button.bg-chip { cursor: pointer; }
-span.bg-chip { padding: 0 2px 0 0; }
-.bg-chip .bg-chip-b { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px 0 10px; border-radius: var(--r-pill); color: inherit; max-width: 280px; }
-.bg-chip .bg-chip-b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bg-chip .k { color: var(--ink-4); }
-.bg-chip.on { background: var(--layer-selected); color: var(--ink-1); }
-.bg-chip.live .bg-chip-b::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
-.bg-chip-x { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; color: var(--ink-3); }
-.bg-chip-x:hover { background: var(--layer-hover); color: var(--err, var(--red)); }
+/* 列表 / 网吧 at the end of 自动化's tab row (OverPage `tabsEnd`), the plan's segment */
+.fam-line { flex: none; display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+.fam-line > .fam-tabs { flex: 1 1 auto; min-width: 0; }
+.fam-line > .bg-runview { margin-right: var(--sp-5); }
+.bg-runview { flex: none; display: inline-flex; padding: 2px; border-radius: var(--r-pill); background: var(--fill-subtle); }
+.bg-runview button { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 11px; border-radius: var(--r-pill); color: var(--ink-2); font-size: var(--fs-sm); white-space: nowrap; transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.bg-runview button:hover { color: var(--ink-1); }
+.bg-runview button.on { background: var(--bg-elev); color: var(--ink-1); box-shadow: var(--elev-1); }
 
-/* an agent's own conversation, beside the board */
-.bg-drawer { position: sticky; top: 0; display: flex; flex-direction: column; max-height: calc(100vh - 120px); background: var(--bg-1); border-radius: var(--r-card, var(--r-lg)); box-shadow: var(--elev-2); overflow: hidden; border-top: 3px solid var(--c); }
+/* the list: one card per thing a conversation runs — its head (what, where, how long; its phase, 停止, 打开对话) and
+   its agents' rows (dot · name · what it does · tokens); a workflow's graph and 动态 fold out under them */
+.bg-runs { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+.bg-run { min-width: 0; border-radius: var(--r-xl); background: var(--bg); box-shadow: var(--elev-1); overflow: hidden; }
+.bg-run.flash { box-shadow: 0 0 0 2px var(--accent), var(--elev-1); transition: box-shadow var(--dur-slow) var(--ease-out); }
+.bg-run-h { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 12px 14px; }
+.bg-run-h > svg { flex: none; color: var(--ink-2); }
+.bg-run-h .tx { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+.bg-run-h .tx b { flex: 0 1 auto; min-width: 0; font-size: var(--fs-base); font-weight: var(--fw-strong); color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bg-run-h .tx small { flex: 0 10 auto; min-width: 0; font-size: var(--fs-meta); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bg-run.k-shell .bg-run-h .tx b { font-family: var(--mono); font-weight: var(--fw-regular); font-size: var(--fs-sm); }
+.bg-run-h .r { flex: none; display: flex; align-items: center; gap: 6px; }
+.bg-run-h .btn { white-space: nowrap; }
+.bg-run-phase { padding: 2px 8px; border-radius: var(--r-pill); background: var(--fill-subtle); color: var(--ink-2); font-size: var(--fs-meta); white-space: nowrap; }
+.bg-run-st { padding: 2px 8px; border-radius: var(--r-pill); background: var(--fill-subtle); color: var(--ink-3); font-size: var(--fs-meta); white-space: nowrap; }
+.bg-run-st.completed { background: var(--ok-soft); color: var(--ok); }
+.bg-run-st.failed { background: var(--err-soft); color: var(--err); }
+.bg-run.ended .bg-run-h > svg, .bg-run.ended .bg-run-h .tx b { color: var(--ink-3); }
+.bg-run-as { display: flex; flex-direction: column; border-top: var(--hairline) solid var(--edge-subtle); padding: 4px 0; }
+.bg-run-a { --c: var(--ink-3); display: grid; grid-template-columns: 18px minmax(60px, 120px) minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; min-width: 0; padding: 7px 14px; color: var(--ink-1); font-size: var(--fs-sm); text-align: left; transition: background-color var(--dur-fast) var(--ease-out); }
+.bg-run-a:hover { background: var(--layer-hover); }
+.bg-run-a .dot { justify-self: center; width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-sizing: border-box; }
+.bg-run-a.is-running .dot { box-shadow: 0 0 0 3px color-mix(in oklab, var(--c) 22%, transparent); }
+.bg-run-a.is-done .dot { background: var(--ink-4); }
+.bg-run-a.is-failed .dot { background: var(--err); }
+.bg-run-a:is(.is-queued, .is-stopped) .dot { background: transparent; border: 1.5px solid var(--ink-4); }
+.bg-run-a .who { min-width: 0; font-family: var(--mono); font-size: var(--fs-meta); color: color-mix(in oklab, var(--c) 72%, var(--ink-1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bg-run-a:is(.is-done, .is-queued, .is-stopped) .who { color: var(--ink-3); }
+.bg-run-a .say { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bg-run-a:is(.is-queued, .is-stopped) .say { color: var(--ink-3); }
+.bg-run-a.is-failed .say { color: var(--err); }
+.bg-run-a small { color: var(--ink-3); font-size: var(--fs-meta); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bg-run-more { align-self: flex-start; margin: 2px 0 2px 42px; padding: 3px 8px; border-radius: var(--r-pill); color: var(--ink-3); font-size: var(--fs-meta); }
+.bg-run-more:hover { color: var(--ink-1); background: var(--layer-hover); }
+.bg-run-x { border-top: var(--hairline) solid var(--edge-subtle); }
+.bg-run-xt { display: flex; align-items: center; gap: 6px; width: 100%; padding: 8px 14px; color: var(--ink-3); font-size: var(--fs-meta); text-align: left; }
+.bg-run-xt:hover { color: var(--ink-1); }
+.bg-run-xb { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 300px); gap: var(--sp-3); padding: 0 14px 14px; align-items: start; }
+.bg-run-xb > :only-child { grid-column: 1 / -1; }
+@container (max-width: 760px) { .bg-run-xb { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1100px) { .bg-run-xb { grid-template-columns: minmax(0, 1fr); } }
+/* nothing running: the sentence, then 刚跑完的 (the cafe's glass card colours fall back to the page's) */
+.bg-runs.empty { align-items: center; padding: var(--sp-8) var(--sp-4) var(--sp-4); }
+.bg-runs.empty .empty-state { color: var(--ink-3); text-align: center; text-wrap: balance; max-width: 34em; }
+.bg-runs.empty .hx-recent { width: min(520px, 100%); min-width: 0; margin-top: var(--sp-4); }
+
+/* a phone's ⋯ on 在跑: its menu (an action sheet there) — a tick on the chosen view and the chosen light */
+.bg-more { position: relative; display: inline-flex; flex: none; }
+.menu.bg-more-menu { min-width: 220px; }
+.menu.bg-more-menu button > svg.ck { visibility: hidden; margin-left: auto; color: var(--ink-1); }
+.menu.bg-more-menu button.on > svg.ck { visibility: visible; }
+
+/* an agent's own conversation, beside the list or the cafe */
+.bg-drawer { position: sticky; top: 0; flex: none; width: min(420px, 40%); display: flex; flex-direction: column; max-height: calc(100vh - 160px); background: var(--bg-1); border-radius: var(--r-card, var(--r-lg)); box-shadow: var(--elev-2); overflow: hidden; border-top: 3px solid var(--c); }
+.bg-body.cafe > .bg-drawer { position: relative; max-height: none; align-self: stretch; }
 .bg-drawer-head { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-3) var(--sp-2); }
 .bg-drawer-title { flex: 1 1 auto; min-width: 0; }
 .bg-drawer-head .btn { flex: none; white-space: nowrap; }
@@ -38,16 +84,6 @@ span.bg-chip { padding: 0 2px 0 0; }
 .bg-drawer-title .sub { font-size: var(--fs-meta); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bg-drawer-err { margin: 0 var(--sp-3) var(--sp-2); padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md); background: color-mix(in oklab, var(--red) 10%, transparent); color: var(--red); font-size: var(--fs-sm); white-space: pre-wrap; }
 .bg-drawer-body { flex: 1 1 auto; min-height: 120px; overflow: auto; padding: 0 var(--sp-3) var(--sp-3); font-size: var(--fs-sm); }
-
-/* the section's sidebar */
-.bg-side .sect-list { display: flex; flex-direction: column; gap: var(--sp-3); }
-.bg-sgroup { display: flex; flex-direction: column; gap: 1px; }
-.bg-sh { font-size: var(--fs-micro); color: var(--ink-4); padding: 4px 10px; letter-spacing: 0.04em; }
-.bg-srow, .bg-rrow { display: flex; align-items: center; gap: 8px; }
-.bg-srow .l, .bg-rrow .l { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-.bg-srow .n, .bg-rrow .n { flex: none; font-size: var(--fs-meta); color: var(--ink-3); font-variant-numeric: tabular-nums; }
-.bg-srow .n.live { min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-fg); text-align: center; line-height: 18px; }
-.bg-side-empty { color: var(--ink-3); font-size: var(--fs-sm); padding: var(--sp-2) 10px; line-height: 1.6; }
 
 /* the composer's pill: right over the box (over the status tab when a turn runs) */
 .bg-pill-row { display: flex; justify-content: flex-end; margin: 0 var(--sp-4) 6px; }
@@ -86,15 +122,36 @@ span.bg-chip { padding: 0 2px 0 0; }
 .bg-tagent .st.running { color: var(--c); }
 .bg-tagent .st.failed { color: var(--red); }
 
-/* narrow / phone: one column — cards, office, graph, feed; the drawer over the page */
-@container (max-width: 900px) { .bg-stage { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 1100px) { .bg-stage { grid-template-columns: minmax(0, 1fr); } .bg-board.with-drawer { grid-template-columns: minmax(0, 1fr); } .bg-drawer { position: fixed; right: 12px; top: 72px; bottom: 12px; width: min(420px, calc(100vw - 24px)); max-height: none; z-index: 30; } }
+/* narrow: the drawer over the page */
+@media (max-width: 1100px) { .bg-drawer, .bg-body.cafe > .bg-drawer { position: fixed; right: 12px; top: 72px; bottom: 12px; width: min(420px, calc(100vw - 24px)); max-height: none; z-index: 30; } }
+
+/* a phone (the plan's 自动化 screen): 在跑 / 跑过的 · ⋯ · × in the head (the conversations' 停止 and 打开对话 are their
+   groups'), a group's name may take two lines, 停止 and › at its end; every row a 44px target; the cafe fills the body */
 .app.mobile .bg-body { padding: 0 var(--sp-3) var(--sp-4); }
-/* a phone's header row: the buttons are their icons (the words in their titles), the line under the title is one line */
-.bg-page .over-head-in .btn { white-space: nowrap; }
-.app.mobile .bg-page .over-head-in .btn .l { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.app.mobile .bg-page .over-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app.mobile .bg-drawer { inset: auto 0 0 0; top: 64px; width: auto; border-radius: var(--r-xl) var(--r-xl) 0 0; }
+.app.mobile .bg-body.cafe { padding: 0; }
+.app.mobile .bg-drawer, .app.mobile .bg-body.cafe > .bg-drawer { inset: auto 0 0 0; top: 64px; width: auto; border-radius: var(--r-xl) var(--r-xl) 0 0; }
+.app.mobile .bg-runs { gap: var(--sp-3); }
+.app.mobile .bg-run { border-radius: 16px; }
+.app.mobile .bg-run-h { gap: 10px; padding: 6px 4px 6px 14px; min-height: 56px; }
+.app.mobile .bg-run-h .tx { flex-direction: column; align-items: stretch; gap: 1px; }
+.app.mobile .bg-run-h .tx b { font-size: var(--fs-body); white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+/* (two lines at most: on 360 px the phase at its end was cut off; it breaks after a 「 · 」 — RunList keepParts — and
+   never inside a word like 改代码) */
+.app.mobile .bg-run-h .tx small { font-size: var(--fs-sm); white-space: normal; word-break: keep-all; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.app.mobile .bg-run-h .r { gap: 2px; }
+.app.mobile .bg-run-phase { display: none; } /* (the phase is in the line under the name there, as the plan draws it) */
+.app.mobile .bg-run-st { font-size: var(--fs-sm); }
+.app.mobile .bg-run-stop { position: relative; height: 36px; min-height: 36px; padding: 0 14px; margin-right: 4px; font-size: var(--fs-base); }
+.app.mobile .bg-run-stop::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 44px; transform: translateY(-50%); }
+.app.mobile .bg-run-open { width: 44px; height: 44px; min-height: 44px; padding: 0; justify-content: center; border: 0; border-radius: 50%; background: transparent; box-shadow: none; color: var(--ink-2); }
+.app.mobile .bg-run-open .l { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.app.mobile .bg-run-as { padding: 0; }
+.app.mobile .bg-run-a { grid-template-columns: 14px minmax(44px, 76px) minmax(0, 1fr); gap: 8px; min-height: 44px; padding: 0 14px; font-size: var(--fs-base); }
+.app.mobile .bg-run-a + .bg-run-a { border-top: var(--hairline) solid var(--edge-subtle); }
+.app.mobile .bg-run-a .who { font-size: var(--fs-sm); }
+.app.mobile .bg-run-more { min-height: 44px; margin: 0; padding: 0 14px 0 36px; width: 100%; text-align: left; border-radius: 0; font-size: var(--fs-sm); }
+.app.mobile .bg-runs.empty { padding-top: var(--sp-6); }
+.app.mobile .bg-runs.empty .hx-recent { width: 100%; }
 
 :root[data-reduce-motion='1'] :is(.bg-pill, .bg-pill-dots i, .bg-wf.live .bg-wf-head .t::before) { animation: none; }
 @media (prefers-reduced-motion: reduce) { :is(.bg-pill, .bg-pill-dots i, .bg-wf.live .bg-wf-head .t::before) { animation: none; } }

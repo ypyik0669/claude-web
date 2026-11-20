@@ -123,7 +123,7 @@
 .hx-recent .tx b { font-weight: var(--fw-regular); color: var(--o-ink, var(--ink-1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 4px; }
 .hx-recent .tx small { font-size: var(--fs-micro); color: var(--o-ink-3, var(--ink-3)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hx-recent .btn { flex: none; color: var(--o-ink, var(--ink-1)); border-color: var(--o-line, var(--edge-strong)); }
-.office.compact .office-empty { left: 8px; right: 8px; bottom: 48px; transform: none; padding: 8px 12px; }
+.office.compact .office-empty { left: 8px; right: 8px; bottom: 48px; width: auto; max-width: none; transform: none; padding: 8px 12px; }
 .office.compact .hx-recent { min-width: 0; }
 .office-flat .hx-recent { max-width: 480px; margin: var(--sp-3) auto 0; }
 
@@ -143,6 +143,25 @@
   .office-replay .hx-replay { flex: 1 1 100%; min-width: 0; }
   .hx { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* a phone (the phone check's full rules, redesign 2026-11 automation piece): every control of 跑过的 and of 刚跑完的 a
+   44px target — the chips one row that scrolls sideways, each pill with a ring to 44; rows and buttons 44 tall */
+.app.mobile .hx-search { height: 44px; padding: 0 12px; }
+.app.mobile .hx-search input { align-self: stretch; }
+.app.mobile .hx-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 6px; padding: 4px 0; }
+.app.mobile .hx-chips::-webkit-scrollbar { display: none; }
+.app.mobile .hx-chips button { position: relative; flex: none; height: 36px; padding: 0 14px; font-size: var(--fs-sm); }
+.app.mobile .hx-chips button::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 44px; transform: translateY(-50%); }
+.app.mobile .hx-row { min-height: 52px; }
+.app.mobile .hx-dh { align-items: center; }
+.app.mobile .hx-dh .btn { min-height: 44px; padding: 0 14px; }
+.app.mobile .hx-tag { min-height: 44px; padding: 0 12px; }
+.app.mobile .hx-replay .hx-play { width: 44px; height: 44px; }
+.app.mobile .hx-replay .hx-speed1 { height: 44px; padding: 0 12px; }
+.app.mobile .hx-recent .lk { min-height: 44px; padding: 0 6px; font-size: var(--fs-sm); }
+.app.mobile .hx-recent .rr { gap: 8px; }
+.app.mobile .hx-recent .tx { min-height: 44px; justify-content: center; }
+.app.mobile .hx-recent .btn { min-height: 44px; padding: 0 14px; }
 
 :root[data-reduce-motion='1'] .hx-tag.running .dot { animation: none; }
 @media (prefers-reduced-motion: reduce) { .hx-tag.running .dot { animation: none; } }

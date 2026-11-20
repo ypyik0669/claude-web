@@ -11,7 +11,6 @@ import { Icon } from '@/ui/icons';
 import { registerPageFrame, type PageFrame } from '@/features/sections/frame';
 import { openBackground, useBackground } from '@/features/background/state';
 import { liveCounts } from '@/features/background/model';
-import { BackgroundSide } from '@/features/background/BackgroundSide';
 import { openBots, useBots } from '@/features/bots/state';
 import { useOrch, waitingOf } from '@/features/orchestra/state';
 import { openAutomation, useAutomation } from './state';
@@ -93,5 +92,7 @@ export function FamilyTabs() {
 const FRAME: PageFrame = { title: AUTOMATION_TITLE, desc: AUTOMATION_DESC, Tabs: FamilyTabs };
 registerPageFrame('auto', FRAME);
 registerPageFrame('bots', FRAME);
-// 运行中: the conversations with background work (and the selected one's finished runs) are the page's own column
-registerPageFrame('bg', { ...FRAME, Side: BackgroundSide });
+// 运行中 has no column of its own any more (redesign 2026-11, the automation piece): its list shows every conversation's
+// work grouped by conversation, the cafe has its zones, 跑过的 its own list — a conversation picker beside them said
+// nothing new, and under 跑过的 it still listed what runs now
+registerPageFrame('bg', FRAME);

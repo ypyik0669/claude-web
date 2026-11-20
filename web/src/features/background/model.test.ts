@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BgAgent, BgSession, BgTask } from '@shared';
-import { agentColor, agentStateText, clock, liveCounts, orderedTasks, pillText, reopenRun, sortSessions, stopNote, taskStateText, taskTitle, tokensText, unwrapHarness, unwrapHarnessMessage } from './model';
+import { agentColor, agentStateText, clock, liveCounts, orderedTasks, pillText, sortSessions, stopNote, taskStateText, taskTitle, tokensText, unwrapHarness, unwrapHarnessMessage } from './model';
 
 const agent = (o: Partial<BgAgent> = {}): BgAgent => ({ key: 'w1', color: 1, label: 'a', state: 'running', beats: [], ...o });
 const task = (o: Partial<BgTask> = {}): BgTask => ({ id: 't', kind: 'workflow', description: 'd', status: 'running', startedAt: 1, agents: [], ...o });
@@ -35,16 +35,6 @@ describe('后台 words', () => {
     expect(taskTitle(task({ name: 'bench' }))).toBe('bench');
     expect(taskTitle(task({ kind: 'agent', agents: [agent({ label: '查 reducer' })] }))).toBe('查 reducer');
     expect(taskTitle(task({ kind: 'shell', description: '' }))).toBe('后台命令');
-  });
-
-  it('opening the page again: the run looked at last time, unless something runs now', () => {
-    const quiet = { ...session([task({ status: 'completed' })]), sessionId: 'q' };
-    const busy = { ...session([task()]), sessionId: 'b' };
-    const sessions = { q: quiet, b: busy };
-    expect(reopenRun({ selected: 'q', was: 'q', runId: 'w1', sessions })).toBe('w1');
-    expect(reopenRun({ selected: 'b', was: 'b', runId: 'w1', sessions })).toBeUndefined();
-    expect(reopenRun({ selected: 'q', was: 'b', runId: 'w1', sessions })).toBeUndefined();
-    expect(reopenRun({ asked: 'q', selected: 'q', was: 'q', runId: 'w1', sessions })).toBeUndefined();
   });
 
   it('colours go round ten', () => {
