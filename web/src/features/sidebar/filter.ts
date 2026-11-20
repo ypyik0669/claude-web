@@ -43,15 +43,60 @@ export const isArchived = (s: SessionSummary, meta: Record<string, SessionMeta>)
  * 测试 folder's parent and every plan that said 测试).
  */
 export function filterSessions(all: SessionSummary[], o: SessionFilter): SessionSummary[] {
+  return all.filter((s) => !s.parentId && passes(s, o));
+}
+
+/** `filterSessions`' test of one conversation, its parent link aside (a fork shown under its root is tested by it too). */
+export function passes(s: SessionSummary, o: SessionFilter): boolean {
   const q = o.query.trim().toLowerCase();
-  return all.filter((s) => {
-    if (s.parentId) return false;
-    if (o.source !== 'all' && agentOf(s) !== o.source) return false;
-    if (o.source === 'all' && o.otherAgents === false && agentOf(s) !== 'claude') return false;
-    if (o.machine && o.machine !== 'all' && machineOf(s) !== o.machine) return false;
-    if (!o.showArchived && isArchived(s, o.meta)) return false;
-    return !q || s.title.toLowerCase().includes(q) || folderName(s.cwd).toLowerCase().includes(q);
-  });
+  if (o.source !== 'all' && agentOf(s) !== o.source) return false;
+  if (o.source === 'all' && o.otherAgents === false && agentOf(s) !== 'claude') return false;
+  if (o.machine && o.machine !== 'all' && machineOf(s) !== o.machine) return false;
+  if (!o.showArchived && isArchived(s, o.meta)) return false;
+  return !q || s.title.toLowerCase().includes(q) || folderName(s.cwd).toLowerCase().includes(q);
+}
+
+/** A root with more forks / side conversations than this starts with them folded (Codex threads can spawn dozens). */
+export const KIDS_SHOWN = 3;
+
+export interface Families {
+  /** a root's forks / side conversations (one level, however deep they were made), newest first */
+  kids: Map<string, SessionSummary[]>;
+  /** each of those → its root */
+  rootOf: Map<string, string>;
+}
+
+/**
+ * Forks and side conversations sit one level under the conversation they came from (redesign 2026-11 stage 3). A
+ * conversation's root is the top of its chain: its `parentId` (Codex / OpenCode sub-agent threads, forks a source
+ * reports — the server sends those with the list) or, for a Claude conversation forked here, the conversation its
+ * prompt-cache key names (`SessionMeta.cacheKey`: a fork keeps its root's key so it routes like it). Only a root that
+ * the list shows (`tops`, already filtered) takes kids, and a kid must pass the same filter itself (`o`, its parent
+ * link aside): one that does while its root does not stays a row of its own (a Claude fork) or is not listed (a
+ * `parentId` child never shows alone). A pinned conversation stays a row of its own (in 置顶); a cycle stops where it
+ * started.
+ */
+export function families(all: SessionSummary[], tops: SessionSummary[], o: SessionFilter): Families {
+  const byId = new Map(all.map((s) => [s.sessionId, s]));
+  const shown = new Set(tops.map((s) => s.sessionId));
+  const up = (s: SessionSummary): SessionSummary | undefined => {
+    const k = s.parentId ?? o.meta[s.sessionId]?.cacheKey;
+    return k && k !== s.sessionId ? byId.get(k) : undefined;
+  };
+  const kids = new Map<string, SessionSummary[]>();
+  const rootOf = new Map<string, string>();
+  for (const s of all) {
+    if (o.meta[s.sessionId]?.pinned) continue;
+    let root = s;
+    const seen = new Set([s.sessionId]);
+    for (let p = up(s); p && !seen.has(p.sessionId); p = up(p)) { seen.add(p.sessionId); root = p; }
+    if (root === s || !shown.has(root.sessionId) || !passes(s, o)) continue;
+    const list = kids.get(root.sessionId);
+    if (list) list.push(s); else kids.set(root.sessionId, [s]);
+    rootOf.set(s.sessionId, root.sessionId);
+  }
+  for (const list of kids.values()) list.sort((a, b) => b.lastModified - a.lastModified);
+  return { kids, rootOf };
 }
 
 const folderName = (cwd: string) => cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
@@ -96,11 +141,6 @@ export function renderedRows(groups: RowGroup[], shown: Record<string, number>, 
     }
   }
   return out;
-}
-
-/** A parent's child sessions (forks / sub-agent threads), newest first, following the archive toggle. */
-export function childrenOf(all: SessionSummary[], parentId: string, o: Pick<SessionFilter, 'showArchived' | 'meta'>): SessionSummary[] {
-  return all.filter((s) => s.parentId === parentId && (o.showArchived || !isArchived(s, o.meta))).sort((a, b) => b.lastModified - a.lastModified);
 }
 
 /**

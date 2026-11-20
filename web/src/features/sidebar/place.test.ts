@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { placeFixed, spotOrigin } from './place';
+import { FLY_OVERLAP, flyOrigin, placeFixed, placeFly, spotOrigin } from './place';
 
 const view = { vw: 1440, vh: 900 };
 const anchor = (left: number, top: number, w = 200, h = 30) => ({ left, top, right: left + w, bottom: top + h });
@@ -65,6 +65,44 @@ describe('spotOrigin: where a sidebar menu scales in from (UI refresh §4.5)', (
     const a = anchor(20, 400);
     const spot = placeFixed(a, { w: 180, h: 2000 }, view); // top 8, maxHeight 884
     expect(spotOrigin(a, spot, { w: 180, h: 2000 })).toBe('166px 407px'); // anchor centre y 415 − 8
+  });
+});
+
+describe('placeFly: a submenu flies out beside its menu (redesign 2026-11 stage 3)', () => {
+  // the 显示 menu at 20..252, its 分组方式 row at y 140..174
+  const box = { left: 20, top: 120, right: 252, bottom: 420 };
+  const row = { left: 26, top: 140, right: 246, bottom: 174 };
+  it('to the right, tucked under the menu\'s edge, its first row level with the row', () => {
+    expect(placeFly(row, box, { w: 180, h: 160 }, view)).toEqual({ left: 252 - FLY_OVERLAP, top: 134, side: 'right' });
+  });
+  it('to the left when the right has no room and the left has', () => {
+    const far = { left: 1180, top: 120, right: 1412, bottom: 420 };
+    expect(placeFly({ ...row, left: 1186, right: 1406 }, far, { w: 180, h: 160 }, view)).toEqual({ left: 1180 - 180 + FLY_OVERLAP, top: 134, side: 'left' });
+  });
+  it('neither side has room: right, kept inside the window', () => {
+    const narrow = { vw: 400, vh: 900 };
+    const spot = placeFly(row, { left: 100, top: 120, right: 300, bottom: 420 }, { w: 260, h: 160 }, narrow);
+    expect(spot.side).toBe('right');
+    expect(spot.left).toBe(400 - 260 - 8);
+  });
+  it('pushed up to stay inside the window (the account menu\'s rows near the bottom)', () => {
+    const low = { left: 26, top: 820, right: 246, bottom: 854 };
+    expect(placeFly(low, box, { w: 180, h: 200 }, view).top).toBe(900 - 200 - 8);
+  });
+  it('taller than the window: pinned to the top with a max height', () => {
+    expect(placeFly(row, box, { w: 180, h: 1200 }, view)).toEqual({ left: 248, top: 8, maxHeight: 884, side: 'right' });
+  });
+  it('never under the desktop window buttons', () => {
+    const caption = { left: 300, top: 0, right: 440, bottom: 40 };
+    const top = { left: 26, top: 10, right: 246, bottom: 44 };
+    expect(placeFly(top, { ...box, top: 4 }, { w: 180, h: 160 }, { vw: 440, vh: 900 }, caption).top).toBe(44);
+  });
+  it('scales in from the edge that faces the menu, level with the row', () => {
+    const spot = placeFly(row, box, { w: 180, h: 160 }, view);
+    expect(flyOrigin(row, spot, { w: 180, h: 160 })).toBe('0% 23px');
+    const far = { left: 1180, top: 120, right: 1412, bottom: 420 };
+    const leftSpot = placeFly(row, far, { w: 180, h: 160 }, view);
+    expect(flyOrigin(row, leftSpot, { w: 180, h: 160 })).toBe('100% 23px');
   });
 });
 

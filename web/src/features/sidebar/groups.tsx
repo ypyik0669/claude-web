@@ -12,6 +12,8 @@ import type { ProjectMenuId, RowId } from './entries';
 import { moveTo } from './reorder';
 import { tr } from '@/i18n';
 import { openProjectDialog } from './project-dialog-open';
+import { useLongPress } from '@/ui/long-press';
+import { haptic } from '@/ui/haptics';
 
 /** A project's ··· / right-click menu (a project = a workspace folder; the data keeps calling it a workspace). */
 export function ProjectMenu({ w, onClose }: { w: Workspace; onClose: () => void }) {
@@ -44,6 +46,28 @@ export function ProjectMenu({ w, onClose }: { w: Workspace; onClose: () => void 
   );
 }
 
+/**
+ * A folder's right-click menu (redesign 2026-11 stage 3: its header shows 显示 and ＋ like a project's, so 设为项目 moved
+ * in here — it stays written out on the header while there is no project yet). A folder is a project not pinned yet:
+ * the same ways in, and 设为项目.
+ */
+export function FolderMenu({ cwd, name, onClose }: { cwd: string; name: string; onClose: () => void }) {
+  const st = useStore();
+  const act = (fn: () => unknown) => () => { onClose(); closeDrawer(); void fn(); };
+  const id = (x: ProjectMenuId) => x;
+  return (
+    <Menu onClose={onClose} label={tr('文件夹 {name}', { name })}>
+      <button data-id={id('new-here')} onClick={act(() => st.openSession({ cwd }).catch((e) => st.toast(e.message)))}><Icon name="plus" size={14} /> {tr('在这里新建对话')}</button>
+      <button data-id={id('worktree')} onClick={act(async () => { const n = await dlg.prompt(tr('{worktree}的名称', { worktree: TERMS.worktree }), 'feature', { message: tr('在这个项目的一份独立副本里开一个新对话，改动不影响当前的工作目录。') }); if (n) await st.openSession({ cwd, worktree: n }).catch((e) => st.toast(e.message)); })}><Icon name="branch" size={14} /> {tr('在{worktree}里新建对话', { worktree: TERMS.worktree })}</button>
+      <button data-id={id('terminal')} onClick={act(() => st.openTile({ id: `t${Date.now()}`, kind: 'term', cwd }, 'tab'))}><Icon name="terminal" size={14} /> {tr('在这里开终端')}</button>
+      <div className="menu-sep" />
+      <button data-id={id('make-project')} onClick={act(() => st.addWorkspace(cwd).catch((e) => st.toast(e.message)))}><Icon name="pin" size={14} /> {tr('设为项目')}</button>
+      <button data-id={id('explorer')} onClick={act(() => ws.request({ kind: 'shell.open', path: cwd }).catch((e) => useStore.getState().toast(e.message)))}><Icon name="folder" size={14} /> {tr('在资源管理器打开')}</button>
+      <button data-id={id('vscode')} onClick={act(() => ws.request({ kind: 'shell.open', path: cwd, app: 'code' }).catch((e) => useStore.getState().toast(e.message)))}><Icon name="keyboard" size={14} /> {tr('在 VS Code 打开')}</button>
+    </Menu>
+  );
+}
+
 export const PAGE_FIRST = 5;
 export const PAGE_MORE = 20;
 
@@ -63,9 +87,13 @@ export interface GroupProps {
   /** something in here is running (shown on the collapsed header instead of the count) */
   busy?: boolean;
   badge?: React.ReactNode;
-  /** hover actions on the header (new chat here, ···) */
+  /** hover actions on the header (显示, ＋ new chat here); none on a phone */
   actions?: React.ReactNode;
+  /** what a phone shows on the header instead (a newcomer's 「设为项目」) */
+  phoneActions?: React.ReactNode;
   onContextMenu?(e: React.MouseEvent): void;
+  /** the header's menu from a long press (a phone) or the keyboard's menu key */
+  onHold?(): void;
   menu?: React.ReactNode;
   className?: string;
   emptyText?: string;
@@ -82,22 +110,33 @@ export interface GroupProps {
 /**
  * A project (or folder / machine / 置顶) with its conversations: folder icon (a chevron on hover) + name; collapsed
  * shows the count (a spinner while something inside runs). The first PAGE_FIRST rows, then 「再显示 N 个」; the active
- * row and running ones stay in view past the cut.
+ * row and running ones stay in view past the cut. Each row's forks / side conversations right under it, one level in
+ * (`kidsOf`: none while folded, but the current / running ones).
  */
 export function Group(p: GroupProps) {
   const first = p.first ?? PAGE_FIRST;
   const limit = p.shown ?? first;
   const { rows, hidden } = pageRows(p.items, limit, p.keep);
   const more: RowId = 'more', less: RowId = 'less';
+  const mobile = useStore((s) => s.mobile);
+  // a phone has no hover: holding the header opens its menu (the project's / folder's), like a row's
+  const hold = useLongPress(() => { haptic('menu'); p.onHold?.(); }, mobile && !!p.onHold);
   return (
     <div className={clsx('sb-group', p.section && 'sb-sec', p.className, p.collapsed && 'collapsed', p.drag?.dragging && 'dragging', p.drag?.over && `drop-${p.drag.over}`)} data-group={p.k} data-id={p.dataId}>
-      <div className={clsx(p.section ? 'sb-sec-h fold' : 'ws-head sb-group-head')} draggable={!!p.drag || undefined} onDragStart={p.drag?.onDragStart} onDragEnd={p.drag?.onDragEnd} onDragOver={p.drag?.onDragOver} onDragLeave={p.drag?.onDragLeave} onDrop={p.drag?.onDrop} onClick={p.onToggle} onContextMenu={p.onContextMenu} title={p.title} role="button" tabIndex={0} aria-expanded={!p.collapsed} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); p.onToggle(); } }}>
+      <div className={clsx(p.section ? 'sb-sec-h fold' : 'ws-head sb-group-head')} {...hold.handlers} draggable={!!p.drag || undefined} onDragStart={p.drag?.onDragStart} onDragEnd={p.drag?.onDragEnd} onDragOver={p.drag?.onDragOver} onDragLeave={p.drag?.onDragLeave} onDrop={p.drag?.onDrop} onClick={p.onToggle}
+        onContextMenu={p.onContextMenu ? (e) => { if (hold.trigger()) { e.preventDefault(); e.stopPropagation(); return; } p.onContextMenu?.(e); } : undefined}
+        title={p.title} role="button" tabIndex={0} aria-expanded={!p.collapsed}
+        onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return;
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); p.onToggle(); }
+          else if (p.onHold && (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey))) { e.preventDefault(); p.onHold(); }
+        }}>
         {!p.section && <span className="ic"><Icon name={p.icon} size={15} className="gi" /><Icon name={p.collapsed ? 'chevronRight' : 'chevronDown'} size={13} className="gc" /></span>}
         <span className="name">{p.name}</span>
         {p.section && <Icon name={p.collapsed ? 'chevronRight' : 'chevronDown'} size={12} className="sec-chev" />}
         {p.badge}
         {p.collapsed && (p.busy ? <span className="spin" title={tr('有对话在运行')} /> : <span className="cnt">{p.items.length}</span>)}
-        {p.actions && <span className="acts" onClick={(e) => e.stopPropagation()}>{p.actions}</span>}
+        {(mobile ? p.phoneActions : p.actions) && <span className="acts" onClick={(e) => e.stopPropagation()}>{mobile ? p.phoneActions : p.actions}</span>}
         {p.menu}
       </div>
       {!p.collapsed && (
@@ -105,7 +144,7 @@ export function Group(p: GroupProps) {
           {rows.map((s) => (
             <div key={s.sessionId} className="sb-row-wrap">
               <SessionRow s={s} ctx={p.ctx} flat={p.section} />
-              {p.ctx.expanded.has(s.sessionId) && p.kidsOf(s).map((k) => <SessionRow key={k.sessionId} s={k} ctx={p.ctx} depth={1} flat={p.section} />)}
+              {p.kidsOf(s).map((k) => <SessionRow key={k.sessionId} s={k} ctx={p.ctx} depth={1} flat={p.section} />)}
             </div>
           ))}
           {!p.items.length && p.emptyText && <div className="sb-empty-row">{p.emptyText}</div>}

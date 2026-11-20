@@ -28,8 +28,14 @@ import { openHub } from '@/features/model-hub/state';
 import { openArtifacts } from '@/features/artifacts/state';
 import { showPanel } from '@/features/workbench/right-panel';
 import { MOVED, PANEL_OLD_NAMES, type MovedTarget } from './moved';
+import type { ArtifactRef } from '@shared';
+import { KIND_INFO, artifactKind } from '@/features/artifacts/page';
+import { artifactHits, loadArtifacts } from './artifacts';
 
 interface Cmd { id: string; label: string; sub?: string; ic?: IconName; group: string; keywords?: string[]; run: () => void }
+
+/** A command's `sub` that names keys (a shortcut): a phone shows none (no keyboard there). */
+const KEY_HINT = /Ctrl|Alt|Shift|Cmd|⌘|⌥|⇧|⌃/;
 
 /** What a moved entry's command opens (moved.ts: where the icon rail's entries are now). */
 function goTo(t: MovedTarget): void {
@@ -70,6 +76,8 @@ function PaletteBody() {
   const [q, setQ] = useState('');
   const [idx, setIdx] = useState(0);
   const [hits, setHits] = useState<{ session: SessionSummary; snippet?: string }[]>([]);
+  // the Artifacts (redesign 2026-11 stage 3: 搜索 finds them too) — the Artifacts page's list, read once per opening
+  const [arts, setArts] = useState<ArtifactRef[]>([]);
   const inp = useRef<HTMLInputElement>(null);
   const pf = useMemo(() => parseFilters(q), [q]);
   const close = () => useStore.setState({ paletteOpen: false });
@@ -77,6 +85,11 @@ function PaletteBody() {
   useEffect(() => {
     if (open) { setQ(''); setIdx(0); setTimeout(() => inp.current?.focus(), 0); }
   }, [open]);
+  useEffect(() => {
+    let live = true;
+    loadArtifacts().then((x) => { if (live) setArts(x); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
 
   // server-side full-text search (debounced) when the query is not a command prefix
   useEffect(() => {
@@ -147,9 +160,12 @@ function PaletteBody() {
   // local fallback (and the only list before the index exists / for filter-only queries the index cannot answer)
   const localHits = () => st.sessions.filter((s) => !s.parentId && (!pf.agent || (s.agent ?? 'claude') === pf.agent) && (!pf.cwd || (s.cwd ?? '').toLowerCase().includes(pf.cwd)) && (!pf.rest || s.title.toLowerCase().includes(pf.rest.toLowerCase()))).slice(0, pf.filtered ? 30 : 12);
   const sessHits: SessionSummary[] = q.startsWith('>') ? [] : hits.length ? hits.map((h) => h.session) : localHits();
-  const items: { kind: 'cmd'; c: Cmd }[] | { kind: 'sess'; s: SessionSummary; snippet?: string }[] | any[] = [
+  // the Artifacts a query finds (not for `>` commands only, nor the `agent:` / `in:` conversation filters)
+  const artHits = q.startsWith('>') || pf.filtered ? [] : artifactHits(arts, ql);
+  const items: { kind: 'cmd'; c: Cmd }[] | { kind: 'sess'; s: SessionSummary; snippet?: string }[] | { kind: 'art'; a: ArtifactRef }[] | any[] = [
     ...cmdHits.map((c) => ({ kind: 'cmd' as const, c })),
     ...sessHits.map((s) => ({ kind: 'sess' as const, s, snippet: hits.find((h) => h.session.sessionId === s.sessionId)?.snippet })),
+    ...artHits.map((a) => ({ kind: 'art' as const, a })),
     ...groupHits.map((c) => ({ kind: 'cmd' as const, c })),
   ];
   useEffect(() => setIdx(0), [q, hits.length]);
@@ -158,6 +174,8 @@ function PaletteBody() {
   const run = (it: any) => {
     close();
     if (it.kind === 'cmd') it.c.run();
+    // an Artifact opens where the Artifacts page opens it: a document tab
+    else if (it.kind === 'art') st.openTile({ id: `d${Date.now()}`, kind: 'doc', path: it.a.path }, 'tab');
     else st.open[it.s.sessionId] ? st.setActive(it.s.sessionId) : void st.loadHistory(it.s.sessionId);
   };
   const onKey = (e: React.KeyboardEvent) => {
@@ -172,12 +190,26 @@ function PaletteBody() {
   return (
     <div className="palette-bg" onMouseDown={(e) => e.target === e.currentTarget && close()}>
       <div className="cmdk" onKeyDown={onKey}>
-        <input ref={inp} value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr('输入命令，或搜索对话（全文）…  > 只搜命令 · agent:codex · in:目录')} />
+        <input ref={inp} value={q} onChange={(e) => setQ(e.target.value)} placeholder={st.mobile ? tr('搜索对话、Artifacts 和命令') : tr('输入命令，或搜索对话和 Artifacts…  > 只搜命令 · agent:codex · in:目录')} />
         <div className="list">
           {items.map((it, i) => {
-            const group = it.kind === 'cmd' ? it.c.group : hits.length ? tr('对话 · 全文匹配') : ql ? tr('匹配的对话') : tr('最近的对话');
+            const group = it.kind === 'cmd' ? it.c.group : it.kind === 'art' ? 'Artifacts' : hits.length ? tr('对话 · 全文匹配') : ql ? tr('匹配的对话') : tr('最近的对话');
             const head = group !== lastGroup ? <div className="grp" key={`g${i}`}>{group}</div> : null;
             lastGroup = group;
+            if (it.kind === 'art') {
+              const a = it.a as ArtifactRef;
+              return (
+                <div key={`art:${a.path}`}>
+                  {head}
+                  <div className={`it ${i === idx ? 'sel' : ''}`} data-art={a.path} onMouseEnter={() => setIdx(i)} onClick={() => run(it)}>
+                    <span className="ic"><Icon name={KIND_INFO[artifactKind(a.path)].icon} size={15} /></span>
+                    <span className="t" title={a.path}>{basename(a.path)}</span>
+                    <span className="dir" title={a.title}>{a.title || basename(a.path.replace(/[\\/][^\\/]*$/, ''))}</span>
+                    <span className="sub">{ago(a.at)}</span>
+                  </div>
+                </div>
+              );
+            }
             return (
               <div key={it.kind === 'cmd' ? it.c.id : it.s.sessionId}>
                 {head}
@@ -185,14 +217,15 @@ function PaletteBody() {
                   <span className="ic" title={it.kind === 'sess' ? it.s.agent ?? 'claude' : undefined}><Icon name={it.kind === 'cmd' ? it.c.ic ?? 'chevronRight' : AGENT_ICONS[it.s.agent ?? 'claude'] ?? 'agent'} size={15} /></span>
                   <span className="t">{it.kind === 'cmd' ? it.c.label : it.s.title}</span>
                   {it.kind === 'sess' && <span className="dir" title={it.s.cwd}>{basename(it.s.cwd ?? '')}</span>}
-                  <span className="sub">{it.kind === 'cmd' ? it.c.sub ?? '' : it.snippet ? `…${it.snippet}…` : ago(it.s.lastModified)}</span>
+                  <span className="sub">{it.kind === 'cmd' ? (st.mobile && KEY_HINT.test(it.c.sub ?? '') ? '' : it.c.sub ?? '') : it.snippet ? `…${it.snippet}…` : ago(it.s.lastModified)}</span>
                 </div>
               </div>
             );
           })}
           {!items.length && <div className="empty">{tr('没有匹配')}</div>}
         </div>
-        <div className="foot"><span>{tr('↑↓ 选择')}</span><span>{tr('Enter 执行')}</span><span>{tr('Esc 关闭')}</span><span>{tr('> 只看命令')}</span></div>
+        {/* (no keyboard on a phone: no keys to name) */}
+        {!st.mobile && <div className="foot"><span>{tr('↑↓ 选择')}</span><span>{tr('Enter 执行')}</span><span>{tr('Esc 关闭')}</span><span>{tr('> 只看命令')}</span></div>}
       </div>
     </div>
   );

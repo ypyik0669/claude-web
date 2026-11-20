@@ -1,5 +1,5 @@
 import { modKey } from '@/features/workbench/shortcuts';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '@/store';
 import { desktop } from '@/desktop';
 import { clsx } from '@/util';
@@ -13,16 +13,17 @@ import { AppLogo } from '@/ui/AppLogo';
 import { navGo, useNav } from '@/features/workbench/nav-history';
 import { Icon } from '@/ui/icons';
 import { projectFor } from '@/features/paths';
-import { agentOf, childrenOf, filterSessions, filterSummary, isArchived, machineCounts, renderedRows, sourceCounts } from './filter';
+import { agentOf, families, filterSessions, filterSummary, isArchived, KIDS_SHOWN, machineCounts, renderedRows, sourceCounts, type SessionFilter } from './filter';
 import { capsIntersection, deleteSessions, saveSections, setArchived } from './session-actions';
 import { rangeIds } from './status';
 import { SessionRow, type RowCtx, type Selection } from './rows';
-import { Group, ProjectMenu } from './groups';
+import { FolderMenu, Group, ProjectMenu } from './groups';
 import { NeedsYou } from './attention';
 import { ViewMenu, type SourceChip } from './view-menu';
 import { addAllToSection, addSection, addToSection, DEFAULT_VIEW, deleteSection, groupSessions, perGroupLimit, readSections, readView, removeFromSection, renameSection, SECTIONS_KEY, sortSessions, VIEW_KEY, type DateBucket } from './view';
 import { MIME_SESSION } from '@/features/workbench/dnd';
 import { dlg } from '@/ui/dialog';
+import { imeComposing } from '@/ui/ime';
 import { AccountRow } from './account';
 import { DiscoveryHint } from './hint';
 import { hintReady, makeProjectSpelled, projectsEmpty } from './newcomer';
@@ -37,7 +38,7 @@ import { AUTOMATION_TITLE } from '@/features/automation/page';
 import { EXTENSIONS_TITLE } from '@/features/extensions/page';
 import { useSection } from '@/features/sections';
 import { AppMenu } from './AppMenu';
-import type { CustomId, ProjectMenuId, ProjectsHeadId, RowId, SectionId, TopId } from './entries';
+import type { CustomId, GroupHeadId, ProjectMenuId, ProjectsHeadId, RowId, SectionId, TopId } from './entries';
 import { tr, trAs } from '@/i18n';
 import { pickFolder } from '@/ui/pick-folder';
 
@@ -57,8 +58,9 @@ const OVER_SIDEBAR = '.menu, .modal-bg, .palette-bg, .viewer';
  * takes the key first open — no anchored menu (`anchoredMenuOpen()`: the sidebar's own, the header ···, a composer /
  * right-panel popover, the model / directory menu, a workbench dropdown, the file tree's right-click menu…; polish P1:
  * with the focus on <body> the header ··· used to close and the selection went with it), nothing of OVER_SIDEBAR, no
- * settings page / image viewer. One Esc does one thing. Runs in the capture phase on window — before anything else
- * sees the key, so before those overlays close themselves on it — and only reads, never stops the event.
+ * settings page / image viewer, not the list's / filter box (it takes its own Esc). One Esc does one thing. Runs in
+ * the capture phase on window — before anything else sees the key, so before those overlays close themselves on it —
+ * and only reads, never stops the event.
  */
 function escForSidebar(e: KeyboardEvent): boolean {
   if (e.key !== 'Escape') return false;
@@ -66,16 +68,23 @@ function escForSidebar(e: KeyboardEvent): boolean {
   if (st.paletteOpen || st.settingsOpen || st.shortcutsOpen || st.viewer) return false;
   if (anchoredMenuOpen() || document.querySelector(OVER_SIDEBAR)) return false;
   const a = document.activeElement;
+  if (a?.closest('.sb-slash')) return false;
   return !a || a === document.body || !!a.closest('.sidebar');
 }
 
+/** A text box, an editor or a terminal has the keys: a / typed there is text, not the sidebar's filter. */
+const typing = (a: Element | null) => !!a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || (a as HTMLElement).isContentEditable || !!a.closest('.monaco-editor, .xterm'));
+
 /**
- * The sidebar (spec 2026-09-28 §5.1; redesign 2026-11 stage 1: the window's one column of navigation — no icon rail):
- * the brand mark (the application menu), the sidebar's switch and ← →; the five entries 新对话 · 搜索 · Artifacts ·
- * 自动化 · 自定义; 「需要你」 while something waits; conversations by project — each row a title and one status at its
- * end; how the list is shown behind 显示 on the 项目 row; the account row (quota ring, settings, the account menu) at
- * the bottom. A phone's drawer: the name, a search box and four rows (新对话 · Artifacts · 自动化 · 自定义). Every entry
- * point of the old sidebar and the rail is listed in entries.ts (and asserted there and by ui-smoke).
+ * The sidebar (spec 2026-09-28 §5.1; redesign 2026-11 stage 1: the window's one column of navigation — no icon rail;
+ * stage 3: 图 7): the brand mark (the application menu), the sidebar's switch and ← →; the five entries 新对话 · 搜索 ·
+ * Artifacts · 自动化 · 自定义; 「需要你」 while something waits; conversations by project — each row a title and one
+ * status at its end, its forks / side conversations one level in under it; on hover a project / folder header shows
+ * 显示 (how the list is shown: six rows, the choices fly out to the right) and ＋ (a new conversation there); / filters
+ * the list in place; the account row (quota ring, settings, the account menu) at the bottom. A phone's drawer: the
+ * name, a search box and four rows (新对话 · Artifacts · 自动化 · 自定义), the list's one ≡ (显示) on its header, rows with
+ * their status only (a long press opens a row's menu, or a header's). Every entry point of the old sidebar and the rail
+ * is listed in entries.ts (and asserted there and by ui-smoke).
  */
 export function Sidebar({ onNew }: { onNew: () => void }) {
   const sessions = useStore((s) => s.sessions);
@@ -104,14 +113,17 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const autoWaiting = useAutomationWaiting();
   const mobile = useStore((s) => s.mobile);
   const [q, setQ] = useState('');
-  // the sidebar's one open menu: `app` · `view` · `account` · `proj:<id>` · `row:<list|attn>:<id>` (opening one closes the others)
+  // the list's own filter box (stage 3: the 显示 menu's box moved to 搜索; / in the sidebar filters in place)
+  const [slash, setSlash] = useState(false);
+  const slashBox = useRef<HTMLInputElement>(null);
+  // the sidebar's one open menu: `app` · `view` / `view:<group>` · `account` · `proj:<id>` · `folder:<cwd>` ·
+  // `row:<list|attn|custom>:<id>` (opening one closes the others)
   const [menu, setMenu] = useState<string | null>(null);
   const [shown, setShown] = useState<Record<string, number | undefined>>({});
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   const [anchor, setAnchor] = useState<string | null>(null);
   const [machine, setMachine] = useState<string>('all');
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   // projects reordered by dragging their header (2026-10-14 user report): which one is dragged, where it would land
   const [dragWs, setDragWs] = useState<string | null>(null);
   const [overWs, setOverWs] = useState<{ id: string; after: boolean } | null>(null);
@@ -120,7 +132,12 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const closeMenu = useCallback((k: string) => setMenu((m) => (m === k ? null : m)), []);
 
   const ql = q.trim();
-  const visible = useMemo(() => filterSessions(sessions, { source: sourceFilter, query: q, showArchived, meta: sessionMeta, machine, otherAgents: view.show.otherAgents }), [sessions, sessionMeta, showArchived, q, sourceFilter, machine, view.show.otherAgents]);
+  const filterOpts = useMemo<SessionFilter>(() => ({ source: sourceFilter, query: q, showArchived, meta: sessionMeta, machine, otherAgents: view.show.otherAgents }), [sourceFilter, q, showArchived, sessionMeta, machine, view.show.otherAgents]);
+  const visible = useMemo(() => filterSessions(sessions, filterOpts), [sessions, filterOpts]);
+  // forks and side conversations sit one level under the conversation they came from (stage 3): the list's own rows
+  // are the rest
+  const fam = useMemo(() => families(sessions, visible, filterOpts), [sessions, visible, filterOpts]);
+  const tops = useMemo(() => (fam.rootOf.size ? visible.filter((s) => !fam.rootOf.has(s.sessionId)) : visible), [visible, fam]);
   // counts follow the archive toggle but not the source filter itself
   const counts = useMemo(() => sourceCounts(filterSessions(sessions, { source: 'all', query: '', showArchived, meta: sessionMeta, machine })), [sessions, sessionMeta, showArchived, machine]);
   // machines (federation): 本机 + every other machine with sessions; follows the source filter, not itself
@@ -134,20 +151,23 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   if (!chips.length) chips.push({ kind: 'claude', name: nameOf('claude') });
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
   // what narrows the list (source / machine / text); 显示已归档 widens it, so it is not a filter: empty projects stay
-  // listed, there is no 「已筛选」 row for it and 清除 leaves it on (it still lights the funnel: a non-default setting)
-  const summary = filterSummary({ source: sourceFilter, machine, query: q }, nameOf, (m) => machines.find((x) => x.id === m)?.name ?? m);
-  const narrowed = summary.length > 0;
+  // listed, there is no 「已筛选」 row for it and 清除 leaves it on (it still lights the 显示 button: a non-default setting)
+  const machineName = (m: string) => machines.find((x) => x.id === m)?.name ?? m;
+  const narrowed = filterSummary({ source: sourceFilter, machine, query: q }, nameOf, machineName).length > 0;
+  // the / box shows its own text: the 「已筛选」 row then says only what else narrows the list
+  const slashOn = !mobile && (slash || !!ql);
+  const summary = filterSummary({ source: sourceFilter, machine, query: slashOn ? '' : q }, nameOf, machineName);
   // the 显示 button's dot (and the button staying shown at rest): something narrows, widens or hides part of the list.
   // A deliberate 分组 / 排序 / 每组几条 choice is not that — the list itself shows it — and lighting it for good would
   // add a control at rest (外框控件计数, 界面改版 阶段 0–1; stage C fix wave C-U4)
   const viewDot = narrowed || showArchived || !view.show.otherAgents;
-  const clearFilters = () => { setQ(''); setSourceFilter('all'); setMachine('all'); };
+  const clearFilters = () => { setQ(''); setSlash(false); setSourceFilter('all'); setMachine('all'); };
   const pending = sources.filter((x) => x.kind !== 'claude' && x.detected && !x.joined && !x.dismissed);
-  const pinned = visible.filter((s) => sessionMeta[s.sessionId]?.pinned);
+  const pinned = tops.filter((s) => sessionMeta[s.sessionId]?.pinned);
 
   // grouped as the 显示 menu says (view.ts: by project — the folder it ran in, the rest by folder —, by folder, by
   // date or not at all), other machines by machine; pinned ones are in 置顶 only
-  const vgroups = useMemo(() => groupSessions(visible, view, { workspaces, meta: sessionMeta, now: Date.now() }), [visible, view, workspaces, sessionMeta]);
+  const vgroups = useMemo(() => groupSessions(tops, view, { workspaces, meta: sessionMeta, now: Date.now() }), [tops, view, workspaces, sessionMeta]);
   const grouped = useMemo(() => {
     const byWs = new Map<string, SessionSummary[]>();
     const other: [string, SessionSummary[]][] = [];
@@ -173,24 +193,43 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const folders = useMemo(() => splitFolders(grouped.other), [grouped]);
   const labels = useMemo(() => folderLabels(grouped.other.map(([cwd]) => cwd), workspaces.map((w) => w.name)), [grouped, workspaces]);
   const otherCollapsed = collapsed.__older ?? true;
+  // the current conversation's row in the list: itself, or the conversation it was forked from (it sits under it)
+  const activeRoot = activeId ? fam.rootOf.get(activeId) ?? activeId : null;
   // projects / folders / machines start folded (GitHub issue #3) unless the user opened them, or the current conversation
   // is in there; a search shows every match
   const foldDefault = useStore((s) => s.settings['ui.sidebarFolded'] !== false);
-  const folded = useCallback((k: string, items: SessionSummary[]) => collapsed[k] ?? (!ql && foldDefault && !items.some((s) => s.sessionId === activeId)), [collapsed, ql, foldDefault, activeId]);
+  const folded = useCallback((k: string, items: SessionSummary[]) => collapsed[k] ?? (!ql && foldDefault && !items.some((s) => s.sessionId === activeRoot)), [collapsed, ql, foldDefault, activeRoot]);
   const busySet = useMemo(() => new Set(busy ? busy.split('|') : []), [busy]);
   const keep = useCallback((s: SessionSummary) => s.sessionId === activeId || busySet.has(s.sessionId) || s.live === 'running' || s.live === 'waiting', [activeId, busySet]);
-  const kidsOf = useCallback((s: SessionSummary) => (expanded.has(s.sessionId) ? childrenOf(sessions, s.sessionId, { showArchived, meta: sessionMeta }) : []), [expanded, sessions, showArchived, sessionMeta]);
   const isBusy = useCallback((s: SessionSummary) => busySet.has(s.sessionId) || s.live === 'running' || s.live === 'waiting', [busySet]);
+  // a row's forks / side conversations: shown unless folded (a root with more than KIDS_SHOWN starts folded; the
+  // user's fold is kept as `kids:<id>` with the groups'); folded, the current / running ones still show
+  const kidsFolded = useCallback((id: string, n: number) => collapsed[`kids:${id}`] ?? n > KIDS_SHOWN, [collapsed]);
+  const kidsOf = useCallback((s: SessionSummary) => {
+    const ks = fam.kids.get(s.sessionId);
+    if (!ks) return [];
+    return kidsFolded(s.sessionId, ks.length) ? ks.filter(keep) : ks;
+  }, [fam, kidsFolded, keep]);
+  const expanded = useMemo(() => new Set([...fam.kids].filter(([id, ks]) => !kidsFolded(id, ks.length)).map(([id]) => id)), [fam, kidsFolded]);
+  // a root stays in view past a group's cut for what is under it too
+  const keepFam = useCallback((s: SessionSummary) => keep(s) || !!fam.kids.get(s.sessionId)?.some(keep), [keep, fam]);
+  const busyFam = useCallback((s: SessionSummary) => isBusy(s) || !!fam.kids.get(s.sessionId)?.some(isBusy), [isBusy, fam]);
   // folded 更早的文件夹 still shows what must stay in view (the current conversation, running / waiting ones), like a
   // group's page cut does; its header spins while something in there runs
   const otherAll = useMemo(() => folders.older.flatMap(([, a]) => a), [folders]);
-  const otherKept = useMemo(() => (otherCollapsed ? otherAll.filter(keep) : []), [otherCollapsed, otherAll, keep]);
-  const otherBusy = otherAll.some(isBusy);
+  const otherKept = useMemo(() => (otherCollapsed ? otherAll.filter(keepFam) : []), [otherCollapsed, otherAll, keepFam]);
+  const otherBusy = otherAll.some(busyFam);
   // someone new (final review §9 #5): no project yet → the empty state points at 其它文件夹's folders, whose 设为项目
   // is written out; the library's discovery hint waits until the newcomer checklist is finished or closed
   const empty = byProject ? projectsEmpty({ projects: workspaces.length, otherFolders: grouped.other.length }) : null;
   const spellMake = makeProjectSpelled(workspaces.length);
   const hintOk = useStore((s) => hintReady(s.settings[CHECKLIST_KEY], Date.now()));
+  // 显示 (stage 3, 图 7): a desktop's is on each project / folder / date header (on hover); the 项目 row has it where no
+  // header carries it — the flat list, an empty one, a newcomer's folders (their header says 设为项目) — and while it
+  // has something to say (its dot). A phone: the list's one ≡, on this row
+  const groupViews = !mobile && !spellMake && view.groupBy !== 'none';
+  const hasGroupHeads = byProject ? workspaces.length + grouped.other.length > 0 : view.groupBy === 'folder' ? grouped.other.length > 0 : view.groupBy === 'date' && grouped.dates.length > 0;
+  const headView = mobile || !groupViews || !hasGroupHeads || viewDot || menu === 'view';
 
   // selection (全选, Shift ranges) only ever covers rows that are on screen: expanded groups, within their page limit
   // a folder's group key: by 文件夹, a project's own folder is that project's group (its name, menu, fold state)
@@ -207,7 +246,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         { key: '__other_kept', items: otherKept, collapsed: false },
       ]),
     ...grouped.peers.map(([id, arr]) => ({ key: `peer:${id}`, items: arr, collapsed: folded(`peer:${id}`, arr) })),
-  ], { ...(shown as Record<string, number>), ...Object.fromEntries(customs.map(({ c }) => [`custom:${c.id}`, Infinity])) }, first, { keep, kids: kidsOf }), [pinned, customs, view.groupBy, workspaces, grouped, folders, collapsed, otherCollapsed, otherKept, shown, first, keep, kidsOf, folded, byProject]);
+  ], { ...(shown as Record<string, number>), ...Object.fromEntries(customs.map(({ c }) => [`custom:${c.id}`, Infinity])) }, first, { keep: keepFam, kids: kidsOf }), [pinned, customs, view.groupBy, workspaces, grouped, folders, collapsed, otherCollapsed, otherKept, shown, first, keepFam, kidsOf, folded, byProject]);
   const order = useMemo(() => rendered.map((s) => s.sessionId), [rendered]);
   const selected = useMemo(() => rendered.filter((s) => picked.has(s.sessionId)), [rendered, picked]);
   const allOn = rendered.length > 0 && selected.length === rendered.length;
@@ -229,12 +268,32 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     window.addEventListener('keydown', k, true);
     return () => window.removeEventListener('keydown', k, true);
   }, [selecting]);
+  // / in the sidebar (the focus there, or nowhere with the pointer over it) opens the list's filter box (a desktop:
+  // a phone has no keys — its drawer's search box is the search). Not over a menu, a dialog, the palette or settings
+  useEffect(() => {
+    if (mobile) return;
+    const k = (e: KeyboardEvent) => {
+      if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented || imeComposing(e)) return;
+      const st = useStore.getState();
+      if (st.paletteOpen || st.settingsOpen || st.shortcutsOpen || st.viewer || !st.sidebarOpen) return;
+      const a = document.activeElement;
+      if (typing(a)) return;
+      const here = !!a?.closest('.sidebar') || ((!a || a === document.body) && !!document.querySelector('.sidebar:hover'));
+      if (!here || anchoredMenuOpen() || document.querySelector(OVER_SIDEBAR)) return;
+      e.preventDefault();
+      setSlash(true);
+      requestAnimationFrame(() => slashBox.current?.focus({ preventScroll: true }));
+    };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, [mobile]);
   const selCaps = capsIntersection(selected);
   const allArchived = selected.length > 0 && selected.every((s) => isArchived(s, sessionMeta));
 
   const ctx: RowCtx = {
     where: 'list', menu, setMenu, closeMenu, sel, expanded,
-    toggleKids: (id) => setExpanded((e) => { const n = new Set(e); if (n.has(id)) n.delete(id); else n.add(id); return n; }),
+    toggleKids: (id) => { const n = fam.kids.get(id)?.length ?? 0; dispatch({ t: 'sidebar.set', patch: { sections: { ...collapsed, [`kids:${id}`]: !kidsFolded(id, n) } } }); },
+    kidCount: (s) => fam.kids.get(s.sessionId)?.length ?? 0,
     tagFor: (s) => { const k = agentOf(s); return k === 'claude' ? null : nameOf(k); },
   };
   // a section's rows are also in their own group: a menu key of their own, or right-clicking one opened both menus
@@ -245,38 +304,75 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
     const p = await pickFolder().catch((e) => { toast((e as Error).message); return null; });
     if (p) await addWorkspace(p).catch((e) => toast(e.message));
   };
+  const newHere = (cwd: string) => { void useStore.getState().openSession({ cwd }).catch((e) => toast(e.message)); closeDrawer(); };
   const groupProps = (k: string, items: SessionSummary[]) => ({
-    k, items, ctx, keep, kidsOf, first,
+    k, items, ctx, keep: keepFam, kidsOf, first,
     collapsed: k === '__pinned' ? !!collapsed[k] : folded(k, items),
     onToggle: () => toggleGroup(k, k === '__pinned' ? !!collapsed[k] : folded(k, items)),
     shown: shown[k],
     setShown: (n: number | undefined) => setShown((m) => ({ ...m, [k]: n })),
-    busy: items.some(isBusy),
+    busy: items.some(busyFam),
     emptyText: ql ? tr('没有匹配的对话') : narrowed ? '' : tr('还没有对话'),
   });
+  const newSection = async () => {
+    const name = (await dlg.prompt(tr('分区名称'), '', { placeholder: tr('比如：本周要交') }))?.trim();
+    if (name) await saveSections(addSection(sections, `sec-${Date.now().toString(36)}`, name));
+  };
+  // the 显示 menu, anchored to the button that opened it (a header's, or the 项目 row's)
+  const viewMenu = (k: string) => menu === k && (
+    <ViewMenu
+      onClose={() => closeMenu(k)}
+      view={view} setView={(v) => void setSetting(VIEW_KEY, v)}
+      sources={chips} counts={counts} total={total} source={sourceFilter} setSource={(x: AgentKind | 'all') => setSourceFilter(x)}
+      machines={machines} machine={machine} setMachine={setMachine} showMachines={showMachines}
+      onNewSection={() => void newSection()}
+      onReset={() => { void setSetting(VIEW_KEY, DEFAULT_VIEW); useStore.getState().setShowArchived(false); }}
+      onAll={() => useStore.setState({ paletteOpen: true })}
+    />
+  );
+  const viewButton = (k: string, dataId: 'view' | 'group-view') => (
+    <span className="anchor">
+      <button className={clsx('icon-btn xs', (viewDot || menu === k) && 'on')} data-id={dataId} title={tr('显示：分组方式、排序、已归档、来源、机器')} aria-label={tr('显示')} aria-haspopup="menu" aria-expanded={menu === k} onClick={toggleMenu(k)}>
+        <Icon name="filter" size={14} />{viewDot && <span className="fdot" />}
+      </button>
+      {viewMenu(k)}
+    </span>
+  );
+  const gh = (x: GroupHeadId) => x;
+  // a project / folder / date header's 显示 and ＋ (on hover; none on a phone, whose list has its one ≡)
+  const headActs = (key: string, cwd?: string) => groupViews && (
+    <>
+      {viewButton(`view:${key}`, 'group-view')}
+      {cwd !== undefined && <button className="icon-btn xs" data-id={gh('new-here')} title={tr('在这里新建对话')} aria-label={tr('在这里新建对话')} onClick={() => newHere(cwd)}><Icon name="plus" size={14} /></button>}
+    </>
+  );
   // one folder of 文件夹: named like the folder (its parent's name after it when another one has the same name)
   const folderGroup = (cwd: string, arr: SessionSummary[]) => {
     const w = byProject ? undefined : projectFor(cwd, workspaces);
-    return w ? projectGroup(w, arr) : (
-    <Group
-      key={cwd}
-      {...groupProps(cwd, arr)}
-      name={labels.get(cwd) ?? cwd}
-      icon="folder"
-      title={cwd}
-      className={clsx('other', spellMake && 'spelled')}
-      actions={spellMake
-        ? <button className="mk-proj" data-id={pm('make-project')} title={tr('设为项目：{cwd} 钉在「项目」里', { cwd })} onClick={() => void addWorkspace(cwd).catch((e) => toast(e.message))}>{tr('设为项目')}</button>
-        : <>
-          <button className="icon-btn xs" data-id={pm('new-here')} title={tr('在这里新建对话')} aria-label={tr('在这里新建对话')} onClick={() => { void useStore.getState().openSession({ cwd }).catch((e) => toast(e.message)); closeDrawer(); }}><Icon name="edit" size={13} /></button>
-          <button className="icon-btn xs" data-id={pm('make-project')} title={tr('设为项目（钉在上面）')} aria-label={tr('设为项目')} onClick={() => void addWorkspace(cwd).catch((e) => toast(e.message))}><Icon name="pin" size={13} /></button>
-        </>}
-    />
-  ); };
-  // a project with its conversations (a header that can be dragged to reorder the projects, the project's menu)
+    if (w) return projectGroup(w, arr);
+    const mk = `folder:${cwd}`;
+    const name = labels.get(cwd) ?? cwd;
+    const spelled = spellMake && <button className="mk-proj" data-id={pm('make-project')} title={tr('设为项目：{cwd} 钉在「项目」里', { cwd })} onClick={() => void addWorkspace(cwd).catch((e) => toast(e.message))}>{tr('设为项目')}</button>;
+    return (
+      <Group
+        key={cwd}
+        {...groupProps(cwd, arr)}
+        name={name}
+        icon="folder"
+        title={cwd}
+        className={clsx('other', spellMake && 'spelled', menu === `view:${cwd}` && 'menu-on')}
+        actions={spelled || headActs(cwd, cwd)}
+        phoneActions={spelled}
+        onContextMenu={toggleMenu(mk)}
+        onHold={() => setMenu(mk)}
+        menu={menu === mk ? <FolderMenu cwd={cwd} name={name} onClose={() => closeMenu(mk)} /> : undefined}
+      />
+    );
+  };
+  // a project with its conversations (a header that can be dragged to reorder the projects, the project's menu on a
+  // right-click / a long press)
   function projectGroup(w: (typeof workspaces)[number], arr: SessionSummary[]) {
     const mk = `proj:${w.id}`;
-    const projMenu = toggleMenu(mk);
     const half = (e: React.DragEvent) => { const r = e.currentTarget.getBoundingClientRect(); return e.clientY > r.top + r.height / 2; };
     const drag = mobile || selecting || narrowed || !byProject || workspaces.length < 2 ? undefined : {
       onDragStart: (e: React.DragEvent) => { e.dataTransfer.setData(PROJECT_DRAG, w.id); e.dataTransfer.effectAllowed = 'move'; setDragWs(w.id); setMenu(null); },
@@ -308,13 +404,12 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         {...groupProps(w.id, arr)}
         name={w.name}
         icon="folder"
+        className={clsx(menu === `view:${w.id}` && 'menu-on')}
         title={drag ? tr("{path}\n拖动可以调整项目的顺序", { path: w.path }) : w.path}
-        onContextMenu={projMenu}
+        onContextMenu={toggleMenu(mk)}
+        onHold={() => setMenu(mk)}
         drag={drag}
-        actions={<>
-          <button className="icon-btn xs" data-id={pm('new-here')} title={tr('在这里新建对话')} aria-label={tr('在这里新建对话')} onClick={() => { void useStore.getState().openSession({ cwd: w.path }).catch((e) => toast(e.message)); closeDrawer(); }}><Icon name="edit" size={13} /></button>
-          <button className="icon-btn xs" title={tr('更多')} aria-label={tr('项目菜单')} aria-haspopup="menu" aria-expanded={menu === mk} onClick={projMenu}><Icon name="more" size={14} /></button>
-        </>}
+        actions={headActs(w.id, w.path)}
         menu={menu === mk ? <ProjectMenu w={w} onClose={() => closeMenu(mk)} /> : undefined}
       />
     );
@@ -335,7 +430,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
               {otherKept.map((s) => (
                 <div key={s.sessionId} className="sb-row-wrap">
                   <SessionRow s={s} ctx={ctx} flat />
-                  {expanded.has(s.sessionId) && kidsOf(s).map((k) => <SessionRow key={k.sessionId} s={k} ctx={ctx} depth={1} flat />)}
+                  {kidsOf(s).map((k) => <SessionRow key={k.sessionId} s={k} ctx={ctx} depth={1} flat />)}
                 </div>
               ))}
             </div>
@@ -353,13 +448,11 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
   const pm = (x: ProjectMenuId) => x;
   const cu = (x: CustomId) => x;
   const [dropOn, setDropOn] = useState<string | null>(null);
-  const newSection = async () => {
-    const name = (await dlg.prompt(tr('分区名称'), '', { placeholder: tr('比如：本周要交') }))?.trim();
-    if (name) await saveSections(addSection(sections, `sec-${Date.now().toString(36)}`, name));
-  };
   const DATE_NAME: Record<DateBucket, string> = { today: tr('今天'), yesterday: tr('昨天'), week: tr('最近 7 天'), month: tr('最近 30 天'), older: tr('更早') };
   const selBar: RowId = 'select-bar';
   const selSec: RowId = 'select-section';
+  const slashId: RowId = 'filter';
+  const closeSlash = () => { setQ(''); setSlash(false); };
 
   return (
     <>
@@ -373,17 +466,17 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
         {!mobile && <NavButtons />}
         {mobile && <button className="icon-btn sb-collapse" data-id={top('collapse')} aria-label={tr('收起侧栏')} onClick={() => useStore.setState({ sidebarOpen: false })}><Icon name="close" size={18} /></button>}
       </div>
-      {/* a phone: the drawer opens with a search box (the palette: conversations and commands) */}
+      {/* a phone: the drawer opens with a search box (the palette: conversations, Artifacts, commands) */}
       {mobile && (
         <button type="button" className="sb-search" data-id={top('search')} onClick={() => { useStore.setState({ paletteOpen: true }); closeDrawer(); }}>
-          <Icon name="search" size={16} /><span className="ph">{tr('搜索对话和命令')}</span>
+          <Icon name="search" size={16} /><span className="ph">{tr('搜索对话和 Artifacts')}</span>
         </button>
       )}
       <nav className="sb-nav" aria-label={tr('导航')}>
         {/* 新对话 · (搜索) · Artifacts · 自动化 · 自定义 (redesign 2026-11 stage 1). A phone's 新对话 also picks a computer
             and a folder on the page it opens: the old 派活 is in there (and in the palette) */}
-        <button className={clsx('nav', !activeId && section === 'chat' && 'on')} data-id={top('new')} aria-current={!activeId && section === 'chat' ? 'page' : undefined} onClick={() => { onNew(); closeDrawer(); }}><Icon name="edit" size={16} />{tr('新对话')}<span className="k">{desktop ? `${modKey} N` : 'Alt N'}</span></button>
-        {!mobile && <button className="nav" data-id={top('search')} title={tr('搜索对话、命令和设置')} onClick={() => useStore.setState({ paletteOpen: true })}><Icon name="search" size={16} />{tr('搜索')}<span className="k">{modKey} K</span></button>}
+        <button className={clsx('nav', !activeId && section === 'chat' && 'on')} data-id={top('new')} aria-current={!activeId && section === 'chat' ? 'page' : undefined} onClick={() => { onNew(); closeDrawer(); }}><Icon name="edit" size={16} />{tr('新对话')}{!mobile && <span className="k">{desktop ? `${modKey} N` : 'Alt N'}</span>}</button>
+        {!mobile && <button className="nav" data-id={top('search')} title={tr('搜索对话、Artifacts、命令和设置；在侧栏里按 / 就地筛选')} onClick={() => useStore.setState({ paletteOpen: true })}><Icon name="search" size={16} />{tr('搜索')}<span className="k">{modKey} K</span></button>}
         <button className={clsx('nav', section === 'artifacts' && 'on')} data-id={top('artifacts')} title={tr('Claude 在最近的对话里做出来的网页、文档、图片和数据')} aria-current={section === 'artifacts' ? 'page' : undefined} onClick={() => { setMenu(null); openArtifacts(); }}><Icon name="works" size={16} />{ARTIFACTS_TITLE}</button>
         <button className={clsx('nav', autoOn && 'on')} data-id={top('automation')} title={tr('运行中、定时任务、Bot、目标、编排')} aria-current={autoOn ? 'page' : undefined} onClick={() => { setMenu(null); openFamily(); }}>
           <Icon name="workflow" size={16} />{AUTOMATION_TITLE}
@@ -393,6 +486,26 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
       </nav>
       <NeedsYou ctx={ctx} />
       <div className={clsx('sb-list', selecting && 'selecting')}>
+        {slashOn && !selecting && (
+          <div className="sb-filter-q sb-slash" data-id={slashId}>
+            <Icon name="search" size={13} />
+            <input
+              ref={slashBox}
+              value={q}
+              placeholder={tr('筛选对话…')}
+              aria-label={tr('按标题或文件夹筛选侧栏里的对话')}
+              onChange={(e) => setQ(e.target.value)}
+              onBlur={() => { if (!q.trim()) setSlash(false); }}
+              onKeyDown={(e) => {
+                if (imeComposing(e.nativeEvent)) return;
+                if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSlash(); }
+                // ↓ / Enter: on to the list's first row
+                else if (e.key === 'ArrowDown' || e.key === 'Enter') { e.preventDefault(); document.querySelector<HTMLElement>('.sidebar .sb-list .sb-row[data-sid]')?.focus({ preventScroll: false }); }
+              }}
+            />
+            <button className="icon-btn xs" title={tr('关闭筛选')} aria-label={tr('关闭筛选')} onClick={closeSlash}><Icon name="close" size={12} /></button>
+          </div>
+        )}
         {selecting && (
           <div className="sel-bar" data-id={selBar} role="toolbar" aria-label={tr('批量操作')}>
             <span className="n">{tr('已选 {selectedCount}', { selectedCount: selected.length })}</span>
@@ -412,11 +525,11 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
                 )}
               </span>
             )}
-            <button className="btn sm ghost" title={tr('退出多选 (Esc)')} onClick={endSelect}>{tr('完成')}</button>
+            <button className="btn sm ghost" title={mobile ? undefined : tr('退出多选 (Esc)')} onClick={endSelect}>{tr('完成')}</button>
             {selected.length > 0 && !selCaps.archive && !selCaps.delete && <span className="hint">{tr('选中的对话来源不支持批量操作')}</span>}
           </div>
         )}
-        {narrowed && !selecting && (
+        {summary.length > 0 && !selecting && (
           <div className="sb-filtered" role="status">
             <Icon name="filter" size={12} />
             <span className="what" title={summary.join(' · ')}>{summary.join(' · ')}</span>
@@ -472,25 +585,9 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
           <div className="sb-sec-h">
             <span>{byProject ? trAs('项目', 'Projects') : tr('对话')}</span>
             <span className="grow" />
-            <span className="anchor">
-              <button className={clsx('icon-btn xs', (viewDot || menu === 'view') && 'on')} data-id={head('view')} title={tr('显示：分组、排序、筛选、来源、已归档、选择多个')} aria-label={tr('显示')} aria-haspopup="menu" aria-expanded={menu === 'view'} onClick={toggleMenu('view')}>
-                <Icon name="filter" size={14} />{viewDot && <span className="fdot" />}
-              </button>
-              {menu === 'view' && (
-                <ViewMenu
-                  onClose={() => closeMenu('view')}
-                  view={view} setView={(v) => void setSetting(VIEW_KEY, v)}
-                  query={q} setQuery={setQ}
-                  sources={chips} counts={counts} total={total} source={sourceFilter} setSource={(k: AgentKind | 'all') => setSourceFilter(k)}
-                  machines={machines} machine={machine} setMachine={setMachine} showMachines={showMachines}
-                  onSelect={() => { setSelecting(true); closeMenu('view'); }}
-                  onNewSection={() => void newSection()}
-                  onReset={() => { void setSetting(VIEW_KEY, DEFAULT_VIEW); useStore.getState().setShowArchived(false); }}
-                  onAll={() => useStore.setState({ paletteOpen: true })}
-                />
-              )}
-            </span>
-            <button className="icon-btn xs" data-id={head('add-project')} title={tr('打开文件夹（添加项目）')} aria-label={tr('打开文件夹')} onClick={pickWorkspace}><Icon name="plus" size={15} /></button>
+            {headView && viewButton('view', 'view')}
+            {/* (a desktop's ＋ on a project header is a new conversation there: this one is a folder icon) */}
+            <button className="icon-btn xs" data-id={head('add-project')} title={tr('打开文件夹（添加项目）')} aria-label={tr('打开文件夹')} onClick={pickWorkspace}><Icon name={mobile ? 'plus' : 'folder'} size={mobile ? 15 : 14} /></button>
           </div>
           {empty && (
             <div className="ws-empty sb-empty" data-empty={empty.openButton ? 'open' : 'make-project'}>
@@ -504,7 +601,7 @@ export function Sidebar({ onNew }: { onNew: () => void }) {
           })}
           {view.groupBy === 'folder' && foldersBlock()}
           {view.groupBy === 'date' && grouped.dates.map((d) => (
-            <Group key={`date:${d.bucket}`} {...groupProps(`date:${d.bucket}`, d.items)} collapsed={!!collapsed[`date:${d.bucket}`]} onToggle={() => toggleGroup(`date:${d.bucket}`, !!collapsed[`date:${d.bucket}`])} name={DATE_NAME[d.bucket]} icon="calendar" className="date" />
+            <Group key={`date:${d.bucket}`} {...groupProps(`date:${d.bucket}`, d.items)} collapsed={!!collapsed[`date:${d.bucket}`]} onToggle={() => toggleGroup(`date:${d.bucket}`, !!collapsed[`date:${d.bucket}`])} name={DATE_NAME[d.bucket]} icon="calendar" className={clsx('date', menu === `view:date:${d.bucket}` && 'menu-on')} actions={headActs(`date:${d.bucket}`)} />
           ))}
           {view.groupBy === 'none' && grouped.all.length > 0 && (
             <Group {...groupProps('__all', grouped.all)} collapsed={!!collapsed.__all} onToggle={() => toggleGroup('__all', !!collapsed.__all)} section name={tr('全部对话')} icon="chat" className="flat" />

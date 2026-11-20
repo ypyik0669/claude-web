@@ -2,6 +2,7 @@
 // overflow and a pane edge never clip it. Pure; `useAnchoredMenu` (menus.tsx) measures and applies it.
 
 import { clearOfCaption, type CaptionBox } from '@/ui/caption';
+export type { CaptionBox };
 
 export interface AnchorRect { left: number; top: number; right: number; bottom: number }
 export interface MenuSpot { left: number; top: number; maxHeight?: number }
@@ -47,6 +48,37 @@ function placeRaw(a: AnchorRect, size: { w: number; h: number }, view: { vw: num
 }
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
+
+/** How far a fly-out tucks under the edge of the menu it comes out of: the pointer never crosses a gap to reach it. */
+export const FLY_OVERLAP = 4;
+/** A menu's padding: the fly-out's first row is level with the row that opened it. */
+const FLY_PAD = 6;
+
+export interface FlySpot extends MenuSpot { side: 'right' | 'left' }
+
+/**
+ * Where a submenu flies out (redesign 2026-11 stage 3, 图 7: 「子菜单往右展开」): beside the menu it comes out of
+ * (`box`, the whole menu, not just the row — a row is narrower than its menu), to the right, its first row level with
+ * the row that opened it (`row`); to the left when the right has no room and the left has; pushed up to stay inside
+ * the window; taller than the window → pinned to the top with a max height. Never under the desktop window buttons.
+ */
+export function placeFly(row: AnchorRect, box: AnchorRect, size: { w: number; h: number }, view: { vw: number; vh: number }, caption: CaptionBox | null = null): FlySpot {
+  const right = box.right - FLY_OVERLAP, left = box.left - size.w + FLY_OVERLAP;
+  const side: FlySpot['side'] = right + size.w <= view.vw - EDGE || left < EDGE ? 'right' : 'left';
+  const x = clamp(side === 'right' ? right : left, EDGE, Math.max(EDGE, view.vw - size.w - EDGE));
+  if (size.h > view.vh - 2 * EDGE) return { left: x, top: EDGE, maxHeight: view.vh - 2 * EDGE, side };
+  const y = clamp(row.top - FLY_PAD, EDGE, view.vh - size.h - EDGE);
+  const top = clearOfCaption(x, y, size.w, caption);
+  if (top === y) return { left: x, top: y, side };
+  const room = view.vh - top - EDGE;
+  return size.h > room ? { left: x, top, maxHeight: room, side } : { left: x, top, side };
+}
+
+/** Where a fly-out scales in from: the edge that faces the menu, level with the row that opened it. */
+export function flyOrigin(row: AnchorRect, spot: FlySpot, size: { w: number; h: number }): string {
+  const h = Math.min(size.h, spot.maxHeight ?? size.h);
+  return `${spot.side === 'right' ? '0%' : '100%'} ${Math.round(clamp((row.top + row.bottom) / 2 - spot.top, 0, h))}px`;
+}
 
 /**
  * Where the placed menu scales in from (UI refresh §4.5: from its anchor), as a `transform-origin`: on the menu's

@@ -52,23 +52,25 @@ function Item({ it, ctx, dismiss }: { it: AttentionItem; ctx: RowCtx; dismiss: (
     // ask() brings the orchestration panel to the front (hidden, minimized or behind another tab) and opens the run;
     // on a phone it is the automation page's 编排 tab (the graph needs the whole screen)
     const go = () => useOrch.getState().ask('open', w.runId);
+    // (redesign 2026-11 stage 3: like a conversation's row — the title, an orange dot at its end; the tooltip says what)
+    const what = w.kind === 'approval' ? tr('待审批') : tr('待选择');
     return (
       <div className="sess sb-row flat orch" role="button" tabIndex={0} title={tr('编排「{runName}」· {v}', { runName: w.runName, v: w.kind === 'approval' ? tr('等你审批') : tr('候选跑完了，等你选一个合并') })}
         onClick={go} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } }}>
-        <span className="pip" />
         <Icon name={w.kind === 'approval' ? 'approval' : 'compare'} size={13} className="orch-ic" />
         <span className="t">{w.title}</span>
-        <span className="st need">{w.kind === 'approval' ? tr('待审批') : tr('待选择')}</span>
+        <span className="st wait" role="img" aria-label={what} title={what} />
       </div>
     );
   }
   const x = (
     <button className="dismiss" title={tr('忽略（出错信息变了会再出现）')} aria-label={tr('忽略')} onClick={(e) => { e.stopPropagation(); dismiss(dismissKey(it.sessionId, error)); }}><Icon name="close" size={12} /></button>
   );
+  // (redesign 2026-11 stage 3, 图 7: the row's own dot at its end says it waits — no second, pulsing one in front)
   if (it.summary) {
     return (
       <div className={clsx('sb-attn-item', it.status.kind === 'error' && 'can-dismiss')}>
-        <SessionRow s={it.summary} ctx={ctx} flat pip />
+        <SessionRow s={it.summary} ctx={ctx} flat />
         {it.status.kind === 'error' && x}
       </div>
     );
@@ -77,7 +79,6 @@ function Item({ it, ctx, dismiss }: { it: AttentionItem; ctx: RowCtx; dismiss: (
   return (
     <div className={clsx('sb-attn-item', it.status.kind === 'error' && 'can-dismiss')}>
       <div className="sess sb-row flat" role="button" tabIndex={0} onClick={() => openFromSidebar(it.sessionId, 'replace')} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openFromSidebar(it.sessionId, 'replace'); } }} title={it.status.title}>
-        <span className={clsx('pip', it.status.kind === 'error' && 'err')} />
         <span className="t">{it.title}</span>
         <StatusMark st={it.status} />
       </div>
