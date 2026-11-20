@@ -44,8 +44,16 @@ export const IGNITE = { word: 2.05, out: 3.7, end: 4.35 } as const;
 export const IGNITE_SHORT_SPEED = 2;
 /** The scheme the desktop shell serves pack files on to the opening page (desktop/src/opening-pack.ts). */
 export const OPENING_SCHEME = 'cw-opening';
-/** Where the logo lands, in window pixels: the top-left corner, over the icon bar's first button. */
-export const LOGO_TARGET = { x: 26, y: 34, size: 20 } as const;
+/**
+ * Where the logo lands, in window pixels at zoom 1: the centre of the app's own logo, the app menu at the sidebar's
+ * top-left (web Sidebar.tsx `BrandMenu`; before the redesign of 2026-11 it was the icon bar's first button, at 26). A
+ * Mac's sidebar row starts after the traffic lights (styles.css `html.desktop.mac .sb-top`, 84px). ui-smoke measures
+ * the sidebar's logo against both.
+ */
+export const LOGO_TARGET = { x: 28, y: 34, size: 20 } as const;
+export const LOGO_TARGET_MAC = { x: 99, y: 34, size: 20 } as const;
+export type LogoTarget = { x: number; y: number; size: number };
+export function logoTarget(platform: string): LogoTarget { return platform === 'darwin' ? LOGO_TARGET_MAC : LOGO_TARGET; }
 
 /** The kit's easing: quintic smoothstep. */
 export function ease(x: number): number {
@@ -172,6 +180,8 @@ export interface FancyOpeningOptions {
   video?: { intro: string; logoAt?: number | null; shortFrom?: number | null; maxSeconds?: number | null };
   text: OpeningTexts;
   note?: string;
+  /** where the logo lands (default LOGO_TARGET): the shell's `logoTarget(platform)`, a preview the app's logo on screen */
+  target?: LogoTarget;
 }
 
 /** A pack's numbers made safe: the film at most OPENING_MAX_SECONDS, logoAt / shortFrom inside it. */
@@ -201,7 +211,7 @@ export function fancyOpeningHtml(o: FancyOpeningOptions): string {
   const cfg: PlayerConfig = {
     kind: o.kind, mode: o.mode ?? 'splash', full: o.full, sound: o.sound, reduced: !!o.reduced, dark: o.kind === 'video' ? true : o.dark,
     intro: o.video?.intro ?? '', logoAt: t.logoAt, shortFrom: t.shortFrom, maxSeconds: t.maxSeconds,
-    target: { ...LOGO_TARGET }, waitingMs: OPENING_WAITING_MS, text: o.text,
+    target: { ...(o.target ?? LOGO_TARGET) }, waitingMs: OPENING_WAITING_MS, text: o.text,
   };
   const dark = cfg.dark;
   const preview = cfg.mode === 'preview';

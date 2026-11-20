@@ -10,7 +10,7 @@
 
 ## 开场页（`desktop/src/opening.ts` 的 `fancyOpeningHtml`）
 
-- 一页 data: URL，两种场景共用一个播放器：`kind: 'video'`（交付包 preview.html 的时间轴：片子 → 在 `logoAt` 切黑 → 黑里点亮 logo、描边、填色、高光、字标 2.25 s）和 `kind: 'ignite'`（方案的轻量版点火，简短版 2 倍速）。之后停在字标等 server（3.5 s 后出「正在启动…」），server 好了 0.7 s 把 logo 飞到左上角（`LOGO_TARGET` 26/34/20，应用标题栏 logo 的位置）、黑淡成底色，然后告诉壳「放完了」。
+- 一页 data: URL，两种场景共用一个播放器：`kind: 'video'`（交付包 preview.html 的时间轴：片子 → 在 `logoAt` 切黑 → 黑里点亮 logo、描边、填色、高光、字标 2.25 s）和 `kind: 'ignite'`（方案的轻量版点火，简短版 2 倍速）。之后停在字标等 server（3.5 s 后出「正在启动…」），server 好了 0.7 s 把 logo 飞到左上角、黑淡成底色，然后告诉壳「放完了」。落点是应用自己 logo 的中心（缩放 1）：界面改版阶段 1 以后是侧栏左上角的 logo（应用菜单），`LOGO_TARGET` 28/34/20；Mac 的侧栏那一行先让出红绿灯（84px），`LOGO_TARGET_MAC` 99/34/20，主进程按 `logoTarget(process.platform)` 给；试放一次直接量屏幕上那个 logo。改版前是图标栏第一个按钮（26/34），Mac 上图标栏往下让了 40px，其实一直没对上。`ui-smoke` 的 right-panel-desktop 段量侧栏 logo 和这两个常量（Windows 排法、Mac 排法各一次），改侧栏顶上那一行的边距要一起改。
 - **播放器是 `player.toString()` 序列化进页面的**：函数外的任何东西在页面里都不存在（常量要在函数里再写一遍，比如 `HOLD` / `IG`）。esbuild 会改字符串的引号，测试里匹配源码要用 `["']`。配置是 JSON，`<` 转义成 `\u003c`，`</script>` 断不了。
 - 跳过：点一下或按任意键（修饰键、Tab、CapsLock 不算；声音按钮不算）→ 直接到字标那一帧。窗口中途被藏起来（最小化 / 收进托盘）也到那一帧；藏着的时候没有 rAF，飞行永远飞不完，所以 `startOut` 在 `document.hidden` 或减少动画时直接结束。系统或应用里的减少动画（`prefers-reduced-motion` / `ui.reduceMotion`）→ 只有最后一帧，不放片子，声音按钮和进度线也不出。
 - 自动播放：带声音被拒就静音重试，再被拒出「点一下播放」。片子 6 s 不前进、或超过自己的长度 8 s 还没完 → 直接进 logo（坏片子不卡人）。

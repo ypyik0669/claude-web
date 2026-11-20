@@ -23,7 +23,7 @@ import { CrashGuard, allowNavigation, externalAllowed, sameOrigin, windowOpenAct
 import { FileGuard, guardSession } from './file-guard';
 import { fromOurWindow, openablePath, type IpcAsker } from './ipc-guard';
 import { pastedFiles } from './clipboard-files';
-import { OPENING_SCHEME, fancyOpeningHtml, openingHold, openingHtml, openingLength, setOpeningNote } from './opening';
+import { OPENING_SCHEME, fancyOpeningHtml, logoTarget, openingHold, openingHtml, openingLength, setOpeningNote } from './opening';
 import { IGNITE_ID, dataDir, groundOf, localDay, openingSettings, packFileUrl, packResponse, pickOpening, readMetaSettings, resolvePack } from './opening-pack';
 
 const isMac = process.platform === 'darwin';
@@ -228,6 +228,7 @@ function decideOpening(hidden: boolean): Opening {
     reduced: settings['ui.reduceMotion'] === true, ground, dark,
     video: pack ? { intro: packFileUrl(pack.id, pack.intro), logoAt: pack.logoAt, shortFrom: pack.shortFrom, maxSeconds: pack.maxSeconds } : undefined,
     text: { skip: tr('点一下跳过'), waiting: tr('正在启动…'), soundOn: tr('开声音'), soundOff: tr('关声音'), tap: tr('点一下播放') },
+    target: logoTarget(process.platform),
   });
   mainLog(`[opening] ${kind}${pack ? ` ${pack.id}` : ''} ${o.full ? 'full' : 'short'}${o.pack !== IGNITE_ID && !pack ? ` (pack ${o.pack} missing)` : ''}`);
   return { page: 'fancy', html, lengthMs: openingLength({ kind, full: o.full, ...(pack ?? {}) }), ground, dark };

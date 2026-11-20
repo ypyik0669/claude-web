@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  IGNITE, LOGO_HOLD, OPENING_CREDIT, OPENING_END_MS, OPENING_MAX_SECONDS, OPENING_MIN_MS, ease, fancyOpeningHtml, filmTimes, frameAt,
-  openingHold, openingHtml, openingLength, setOpeningNote, type FancyOpeningOptions,
+  IGNITE, LOGO_HOLD, LOGO_TARGET, LOGO_TARGET_MAC, OPENING_CREDIT, OPENING_END_MS, OPENING_MAX_SECONDS, OPENING_MIN_MS, ease, fancyOpeningHtml, filmTimes, frameAt,
+  logoTarget, openingHold, openingHtml, openingLength, setOpeningNote, type FancyOpeningOptions,
 } from './opening';
 
 describe('开场动画', () => {
@@ -137,5 +137,14 @@ describe('开场动画 · 人设版 / 点火', () => {
   it('motion reduced in the app: the config says so (the page shows its last frame only)', () => {
     expect(configOf(video({ reduced: true })).reduced).toBe(true);
     expect(configOf(video()).reduced).toBe(false);
+  });
+  it('the logo lands on the sidebar\'s logo: after the traffic lights on a Mac; a preview passes the one on screen', () => {
+    expect(logoTarget('win32')).toEqual(LOGO_TARGET);
+    expect(logoTarget('linux')).toEqual(LOGO_TARGET);
+    expect(logoTarget('darwin')).toEqual(LOGO_TARGET_MAC);
+    expect(LOGO_TARGET_MAC.x).toBeGreaterThan(84);
+    expect(configOf(video()).target).toEqual(LOGO_TARGET);
+    expect(configOf(video({ target: logoTarget('darwin') })).target).toEqual(LOGO_TARGET_MAC);
+    expect(configOf(video({ mode: 'preview', target: { x: 40.5, y: 30, size: 25 } })).target).toEqual({ x: 40.5, y: 30, size: 25 });
   });
 });

@@ -19,7 +19,10 @@ export default function PreviewFrame({ req }: { req: PreviewRequest }) {
     const s = useStore.getState().settings;
     const light = document.documentElement.dataset.theme === 'light' || document.documentElement.dataset.theme === 'paper';
     const abs = (rel: string) => new URL(appUrl(rel), location.href).href;
+    // the logo lands on the app's own one where it is on screen (the sidebar's top-left; a Mac's after the traffic lights)
+    const logo = document.querySelector('.sidebar .sb-brand svg')?.getBoundingClientRect();
     return fancyOpeningHtml({
+      target: logo && logo.width > 0 ? { x: logo.left + logo.width / 2, y: logo.top + logo.height / 2, size: logo.width } : undefined,
       kind: req.kind, mode: 'preview', lang: getLocale(), title: 'Claude Web', full: fullOf(s), sound: soundOf(s),
       reduced: s['ui.reduceMotion'] === true, ground: 'transparent', dark: !light, colorScheme: light ? 'light' : 'dark',
       video: req.kind === 'video' ? { intro: abs(packFileUrl(req.pack.id, req.pack.intro, authToken())), logoAt: req.pack.logoAt ?? null, shortFrom: req.pack.shortFrom ?? 0, maxSeconds: req.pack.maxSeconds } : undefined,

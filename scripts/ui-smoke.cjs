@@ -2298,6 +2298,18 @@ function driver() {
           win.setContentSize(1080, 860);
           await waitFor('innerWidth === 1080', 4000);
           await js(`document.documentElement.classList.add('desktop', 'win'); window.__store.setState({ sidebarOpen: true })`);
+          // the desktop opening lands its logo on the app's (desktop/src/opening.ts LOGO_TARGET / LOGO_TARGET_MAC: the
+          // centre of the sidebar's logo at zoom 1) — measured as Windows lays the sidebar out, then as a Mac does
+          {
+            const opSrc = fs.readFileSync(path.join(ROOT, 'desktop/src/opening.ts'), 'utf8');
+            const target = (name) => { const m = opSrc.match(new RegExp(`export const ${name} = \\{ x: (\\d+), y: (\\d+), size: (\\d+) \\}`)); return m ? { x: +m[1], y: +m[2], size: +m[3] } : null; };
+            const logoAs = (cls) => js(`new Promise((res) => { const de = document.documentElement; de.classList.remove('win', 'mac'); de.classList.add(${JSON.stringify(cls)}); requestAnimationFrame(() => requestAnimationFrame(() => { const b = document.querySelector('.sidebar .sb-brand svg')?.getBoundingClientRect(); res(b ? { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2), size: Math.round(b.width) } : null); })); })`);
+            const logoWin = await logoAs('win'), logoMac = await logoAs('mac');
+            await js(`(() => { const de = document.documentElement; de.classList.remove('mac'); de.classList.add('win'); })()`);
+            const tWin = target('LOGO_TARGET'), tMac = target('LOGO_TARGET_MAC');
+            const near = (a, b) => !!a && !!b && Math.abs(a.x - b.x) <= 1 && Math.abs(a.y - b.y) <= 1 && a.size === b.size;
+            check('the opening lands its logo on the sidebar\'s: LOGO_TARGET as Windows lays it out, LOGO_TARGET_MAC as a Mac does (after the traffic lights)', near(logoWin, tWin) && near(logoMac, tMac), JSON.stringify({ logoWin, tWin, logoMac, tMac }));
+          }
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'files' })`);
           await js(`window.__store.getState().dispatchLayout({ t: 'dock.show', panel: 'goals' })`);
           await sleep(900);

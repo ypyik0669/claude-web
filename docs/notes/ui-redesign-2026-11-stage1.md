@@ -102,8 +102,13 @@ lazy 的，首屏入口 1 800 165 字节（上限 1 900 000）。
 - **Git Bash 的 heredoc 会吃反斜杠**（`\'` 变成 `'`，CLAUDE.md 也写了）：带反斜杠的改动脚本用 Write 写成文件再跑。
 - **ui-smoke 的 `click` 是真鼠标事件**（先量位置、命中检查），点不到隐藏的东西；页常驻只 `hidden`，每个页头都有自己的
   「展开侧栏」，`document.querySelector('.sb-reveal')` 可能拿到隐藏页里那个——要开侧栏就 `setState({ sidebarOpen: true })`。
-- **临时 HOME 里没有 Claude 登录**：账号菜单的 `expired` / `logout` 两项看不到，PLACES 全找到的检查会缺；ui-smoke 在
-  「额度」那一步临时假一个过期的登录，看完换回去。
+- **临时 HOME 里没有 Claude 登录**：账号菜单的 `expired` / `logout` 两项看不到，PLACES 全找到的检查会缺。ui-smoke 用
+  开场分支那份（合 main 时留下的，11-20）：额度那步之后临时假一个「登录着、已过期」，用订阅挡住 `auth.changed`，看完马上
+  换回去。三个分支各修过一份，合并时只留这一份。
+- **桌面开场的 logo 落在哪**（和「人设版开场与背景」叠在一起以后，11-20）：开场最后把 logo 飞到 `LOGO_TARGET`，原来是
+  图标栏第一个按钮（26/34）。图标栏没了，现在对着侧栏左上角的 logo：Windows 28/34、Mac 99/34（侧栏那一行让出红绿灯），
+  `logoTarget(process.platform)`；ui-smoke 的 right-panel-desktop 段两种排法各量一次。侧栏收起时应用里没有 logo，开场
+  照样落在那个角上再淡掉。
 - 自动化的入口打开的是**上次的标签**：测试里点完侧栏「自动化」要等的是「家族里某个页」（`.over-page.in-family`），想要
   哪个标签再点哪个，别直接等 `.auto-page`（上一步开过后台页的话打开的是运行中）。
 
