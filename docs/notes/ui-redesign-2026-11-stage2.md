@@ -46,8 +46,9 @@
   `openExtensions(tab, { json })` / `openBotSettings(reveal)`。搜索照样搜得到：Bot 的行在结果里原样可改（`away-entry`，
   面包屑「自动化 › Bot › 设置」），MCP / 插件 / Skills 是一行跳转（`away`）。
 - 设置 › 模型 顶上「账号额度、每一轮去了哪个模型、用量和费用，在模型看板里看 [打开看板]」（`HubLinks.tsx` 的
-  `ModelHubLink`，关设置再 `openHub()`）；隐私与密钥里的「打开隐私」→ `openHub('privacy')`。模型菜单的「管理来源」不变
-  （`openHub('sources')`）。
+  `ModelHubLink`，关设置再 `openHub()`）；隐私与密钥里的「打开隐私」→ `openHub('privacy')`。模型菜单的「管理来源」合并时
+  （11-20）照方案 #ia 改成直达 设置 › 模型 › 来源（`openSettings({ section: 'model', tab: 'sources' })`），旁边的
+  「管理模型与供应商…」改叫「管理模型…」、去 模型 › 模型 标签；看板只从「打开看板」和 Ctrl K 进。
 
 ## 配置中心拆掉
 
@@ -113,8 +114,8 @@ federation / gateway / im / providers / session-runner，web 的 health、tokens
 
 ## 和方案不一样的地方
 
-- 模型看板没有并进设置：设置 › 模型 是来源 / 路由 / 模型三个标签 + 一个「打开看板」整页打开；「管理来源」照旧直接去看板的
-  上游。
+- 模型看板没有并进设置：设置 › 模型 是来源 / 路由 / 模型三个标签 + 一个「打开看板」整页打开；「管理来源」本来照旧去看板的
+  上游，合并时改成了直达 设置 › 模型 › 来源（方案 #ia：「模型菜单底部『管理来源』直达；大看板从这页点开」）。
 - Artifact 类型只是占位（只列 `~/.agents/artifact-types`），每种一行的开关 / 用在哪些项目 / ⋯ 要等 open-artifact。
 - 桌面导航不写组名、只画分隔线（mock 就是这样）；手机写组名。
 - Agents 卡片的「配置中心」改名「配置文件」（方案没提，名字冲突）。

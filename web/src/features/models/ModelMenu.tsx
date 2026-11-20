@@ -17,7 +17,6 @@ import { imeComposing } from '@/ui/ime';
 import { useMenuMotion } from '@/ui/menu-motion';
 import { ActionSheet, useSheetMenu } from '@/ui/ActionSheet';
 import { tr } from '@/i18n';
-import { openHub } from '@/features/model-hub/state';
 import { Switch } from '@/ui/Switch';
 import { openCodexLogin } from '@/features/settings/CodexLoginDialog';
 
@@ -340,11 +339,12 @@ export function ModelMenu(p: ModelMenuProps) {
             <Icon name="agent" size={13} /> {TERMS.agents}…
           </button>
         )}
-        <button data-id={MODEL_MENU_ID.sources} onClick={() => { p.onClose(); openHub('sources'); }} title={tr('模型看板 › 上游：账号、免费额度和 API 来源')}>
+        {/* the redesign's #ia: 管理来源 goes straight to 设置 › 模型 (its 来源 tab); the hub opens from that page */}
+        <button data-id={MODEL_MENU_ID.sources} onClick={() => { p.onClose(); useStore.getState().openSettings({ section: 'model', tab: 'sources' }); }} title={tr('设置 › 模型')}>
           <Icon name="gateway" size={13} /> {tr('管理来源')}
         </button>
-        <button data-id={MODEL_MENU_ID.manage} onClick={() => { p.onClose(); useStore.getState().openSettings({ section: 'models' }); }}>
-          <Icon name="settings" size={13} /> {tr('管理模型与供应商…')}
+        <button data-id={MODEL_MENU_ID.manage} onClick={() => { p.onClose(); useStore.getState().openSettings({ section: 'model', tab: 'models' }); }}>
+          <Icon name="settings" size={13} /> {tr('管理模型…')}
         </button>
       </div>
     </div>

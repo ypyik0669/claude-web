@@ -16,7 +16,7 @@ import { SettingsPage } from './pages/SettingsPage';
 
 /**
  * The model hub: 模型 — sources, accounts, routing, usage — on eight first-level pages, as the page's tabs (redesign
- * 2026-11 stage 1: no icon rail any more; it opens from 设置 › 模型, the model menu's 管理来源 and Ctrl K). The section
+ * 2026-11 stage 1: no icon rail any more; it opens from 设置 › 模型's 打开看板 and Ctrl K; the model menu's 管理来源 goes to 设置 › 模型 › 来源). The section
  * id stays `gateway`. The pages are mounted once they have been seen and then only hidden — a scroll position and a
  * half-filled form survive a page switch.
  */
