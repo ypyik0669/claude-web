@@ -17,6 +17,7 @@ import { clsx, fmtMs, fmtTok } from '@/util';
 import { fmtCost } from '@/model/cost';
 import { coldCache, usageParts } from '@/model/tokens';
 import { AssistantActions, UserActions, UserEditor } from './MessageActions';
+import { EDIT_MESSAGE_EVENT, useLongPressHint, useMessageLongPress } from './MessageSheet';
 import { FindBar } from './FindBar';
 import { Markdown } from './Markdown';
 import type { CodeRunContext } from './CodeBlock';
@@ -339,6 +340,12 @@ function UserRow({ it, version }: { it: UserItem; version: number }) {
   // is there when the list is drawn, or that came from another window, does not
   const arrival = useContext(ArrivalCtx);
   const enter = useEntrance(() => arrival.current && !it.meta && !!sessionId && useStore.getState().open[sessionId]?.lastSent?.id === it.id && !reducedMotion(), BUBBLE_IN_MS);
+  // 编辑 from a phone's message sheet (MessageSheet.tsx)
+  useEffect(() => {
+    const on = (e: Event) => { if ((e as CustomEvent<{ id: string }>).detail?.id === it.id) setEditing(true); };
+    window.addEventListener(EDIT_MESSAGE_EVENT, on);
+    return () => window.removeEventListener(EDIT_MESSAGE_EVENT, on);
+  }, [it.id]);
   return (
     <div className={clsx('msg user', it.meta && 'meta', enter && 'enter')} data-item-id={it.id}>
       {editing && sessionId ? (
@@ -776,6 +783,11 @@ export function ChatView({ extras }: { extras?: ChatExtra[] } = {}) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [pane?.paneId, pane?.tileId]);
+
+  // a phone (problem 7): no icons under every message — a long press opens their sheet; a hint the first time
+  const phone = useStore((s) => s.mobile);
+  useMessageLongPress(ref, active?.sessionId, phone);
+  useLongPressHint(phone && !!items?.some((x) => x.kind === 'assistant' || (x.kind === 'user' && !(x as UserItem).meta)));
 
   if (!active) return null;
   const onScroll = () => {

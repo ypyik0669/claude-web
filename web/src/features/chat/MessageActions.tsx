@@ -89,7 +89,8 @@ export function UserActions({ it, sessionId, onEdit }: { it: UserItem; sessionId
 
 /** 朗读 (the official row's speaker): the reply's words, without the Markdown marks, in the voice of its language. */
 let speaking: string | null = null;
-function speak(id: string, text: string, onEnd: () => void): boolean {
+/** Read `text` aloud (id: the message — the same id again stops it). false = not speaking now. */
+export function speak(id: string, text: string, onEnd: () => void): boolean {
   const synth = window.speechSynthesis;
   if (!synth) return false;
   synth.cancel();

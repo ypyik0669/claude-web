@@ -7,6 +7,9 @@
   html, body { overscroll-behavior-y: none; } /* no pull-to-refresh under a conversation */
 }
 .app.mobile { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+/* no keyboard on a phone: no keyboard hints anywhere (ui/kbd.ts) — a hint is a <kbd>, a .kbd or has data-kbd. `html.phone`
+   (App) reaches what is portalled to <body> too: the action sheets, the context card, the palette */
+html.phone :is(kbd, .kbd, [data-kbd]) { display: none !important; }
 .app.mobile :is(.chat, .sb-list, .dock-panel, .welcome, .sp-scroll, .over-body, .rv-list, .menu) { overscroll-behavior: contain; }
 
 /* ---- a tap lands on anything within 44px: the drawing stays its size, the target grows around it ---- */
